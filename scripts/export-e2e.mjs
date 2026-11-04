@@ -1,48 +1,55 @@
 /**
- * 导出端到端:自己起一台 dev server,把一份项目 JSON 从导出页完整导一遍,收工时连服务一起关掉。
+ * Export end-to-end: starts its own dev server, exports a project JSON completely from the export
+ * page, and shuts down the service upon completion.
  *
- *   node scripts/export-e2e.mjs --project <project.json> [--frames a-b] [--determinism] [--media-lib [目录]]
+ *   node scripts/export-e2e.mjs --project <project.json> [--frames a-b] [--determinism] [--media-lib [dir]]
  *
- * | 参数 | 说明 |
+ * | Parameter | Description |
  * |---|---|
- * | `--project <文件>` | 必填。Timeline 或 Project 形状的 JSON(顶层有 `tracks`)。`.proc` 要先取出它的 `project` 字段 |
- * | `--id <id>` | 导出 id,默认 `e2e`。页面地址是 `/@export/<id>/project.json` |
- * | `--frames a-b` | 只导这一段,同时交给确定性检查 |
- * | `--video` | 合成 `overlay.mov` / `preview.mp4`。默认 `--no-video` |
- * | `--determinism` | 同时(并行)跑 `verify-determinism.mjs`:同一段导两遍逐像素比。两边都过才退出 0 |
- * | `--media-lib [目录]` | 在导出目录里建 `media` 镜像:素材逐个硬链接进来(素材目录只读),默认取 `%USERPROFILE%\Videos\PromptCut\media`。项目里 `/@media/<文件>` 的素材从这里取。要和 `--work` 在同一个盘 |
- * | `--work <目录>` | 导出目录(`PROMPTCUT_EXPORT_DIR`),默认 `%TEMP%\promptcut-e2e\export-<时间>` |
- * | `--port N` | 指定编辑器端口,N、N+1、N+2 都得空;默认随机挑 |
- * | `-- …` | 之后的参数原样交给 `export-frames.mjs`,如 `-- --workers 1 --media ffmpeg` |
+ * | `--project <file>` | Required. Timeline- or Project-shaped JSON (has `tracks` at top level). For `.proc`, extract its `project` field first |
+ * | `--id <id>` | Export id, defaults to `e2e`. Page URL is `/@export/<id>/project.json` |
+ * | `--frames a-b` | Only export this range, also fed to determinism check |
+ * | `--video` | Synthesizes `overlay.mov` / `preview.mp4`. Defaults to `--no-video` |
+ * | `--determinism` | Concurrently (in parallel) runs `verify-determinism.mjs`: exports same range twice for pixel comparison. Exits 0 only if both pass |
+ * | `--media-lib [dir]` | Creates `media` mirror in export dir: assets hardlinked one by one (media dir read-only), defaults to `%USERPROFILE%\Videos\PromptCut\media`. Assets for `/@media/<file>` are resolved from here. Must be on same drive as `--work` |
+ * | `--work <dir>` | Export directory (`PROMPTCUT_EXPORT_DIR`), defaults to `%TEMP%\promptcut-e2e\export-<time>` |
+ * | `--port N` | Specifies editor port; N, N+1, N+2 must all be free; defaults to picking randomly |
+ * | `-- …` | Subsequent args passed as-is to `export-frames.mjs`, e.g. `-- --workers 1 --media ffmpeg` |
  *
- * 目录:
+ * Layout:
  *
- *   <work>/vite.log                      dev server 的输出
- *   <work>/export-<id>/project.json      页面读的项目;`--out` 就是这个目录,帧在 frames/,音频在 audio/
- *   <work>/export-<id>/export.log        export-frames 的输出
- *   <work>/determinism/out/verify-a|b    确定性检查的两趟(它按工作目录定输出位置)
- *   <work>/media                         `--media-lib` 时的硬链接镜像(真目录,留着;删它不动素材本身)
+ *   <work>/vite.log                      dev server output
+ *   <work>/export-<id>/project.json      project read by page; `--out` is this dir, frames in frames/, audio in audio/
+ *   <work>/export-<id>/export.log        export-frames output
+ *   <work>/determinism/out/verify-a|b    two passes of determinism check (determines output by cwd)
+ *   <work>/media                         hardlink mirror for `--media-lib` (real dir, kept; deleting leaves assets intact)
  *
- * 为什么这样搭:
+ * Why it is set up this way:
  *
- * - 导出目录设成临时目录,测试产物不落进用户的导出目录;导出子进程也拿同一个
- *   `PROMPTCUT_EXPORT_DIR`,ffmpeg 那条路按它找素材。
- * - `--out` 必须就是 `export-<id>`:Chrome 混音页从 `/@export/<id>/audio/` 取裁好的音频。
- * - 端口三个连号都要空着:每台 dev server 另占 +1、+2 当舞台端口。5190~5192 是用户常驻的那台。
- * - media 用硬链接镜像,不用 junction:导出目录里的 media 就是编辑器的本地内容库,编辑器会往里写
- *   (按需拉取的素材、导入、Agent 预渲染的 bake 图、索引 `index.json`),经 junction 就全写进了用户的素材目录。
- *   镜像是真目录,新写的文件只落在镜像里;素材文件是硬链接,`index.json` 与点开头的元数据是复制的。
- *   旧版本留下的 junction(被强杀没来得及拆的)下次运行时按标记清掉。脚本从不删导出目录。
- * - 本脚本不继承外部的 `PROMPTCUT_EXPORT_DIR` / `PROMPTCUT_DATA_DIR`(`scripts/lib/no-user-dirs.mjs`),
- *   `--work` 指到用户的 `Videos\PromptCut` 下面直接报错。
+ * - Export directory is set to a temp dir so test artifacts do not land in user's export directory;
+ *   export subprocesses receive the same `PROMPTCUT_EXPORT_DIR`, used by ffmpeg path to find assets.
+ * - `--out` must be `export-<id>`: Chrome mix page fetches trimmed audio from `/@export/<id>/audio/`.
+ * - All three consecutive ports must be free: each dev server uses +1 and +2 as stage ports.
+ *   5190-5192 is the resident instance used by the user.
+ * - media uses a hardlink mirror, not a junction: media in the export directory is the editor's
+ *   local content store, and the editor writes into it (on-demand fetched assets, imports, bake
+ *   images prerendered by Agent, index `index.json`); through a junction, everything would be
+ *   written into the user's media directory. Real directory mirror ensures new files land only in
+ *   the mirror; asset files are hardlinked, while `index.json` and dot-prefixed metadata are copied.
+ *   Junctions left by older versions (force-killed before cleanup) are purged by marker on next run.
+ *   The script never deletes export directories.
+ * - This script does not inherit external `PROMPTCUT_EXPORT_DIR` / `PROMPTCUT_DATA_DIR`
+ *   (`scripts/lib/no-user-dirs.mjs`); pointing `--work` under user's `Videos\PromptCut` throws an error.
  *
- * 坑:
+ * Pitfalls:
  *
- * - 导出期间别改 `server/*.ts`、`vite.config.ts`、`scripts/export-*.mjs`(别的会话改也算):
- *   dev server 会重启,页面等不到就绪,导出中途失败。脚本看到重启会打 ⚠。
- * - 比对第一趟差几十帧多半是字体预热,丢掉冷启动那一趟;更多见 docs/guides/compare-pitfalls.md。
+ * - Do not edit `server/*.ts`, `vite.config.ts`, or `scripts/export-*.mjs` during export (changes by
+ *   other sessions also count): dev server will restart, page fails to wait for ready, and export
+ *   fails midway. The script logs ⚠ upon detecting a restart.
+ * - A discrepancy of dozens of frames in the first pass is mostly font warmup; discard that cold-start
+ *   pass; see docs/guides/compare-pitfalls.md for more details.
  */
-import './lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import './lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -63,7 +70,7 @@ function parseArgs(argv) {
   for (let i = 0; i < own.length; i++) {
     const a = own[i];
     const next = () => {
-      if (i + 1 >= own.length) throw new Error(`${a} 后面要跟一个值`);
+      if (i + 1 >= own.length) throw new Error(`${a} must be followed by a value`);
       return own[++i];
     };
     if (a === '--project') o.project = next();
@@ -74,11 +81,11 @@ function parseArgs(argv) {
     else if (a === '--media-lib') o.mediaLib = own[i + 1] && !own[i + 1].startsWith('--') ? own[++i] : DEFAULT_MEDIA;
     else if (a === '--work') o.work = next();
     else if (a === '--port') o.port = Number(next());
-    else throw new Error(`不认识的参数 ${a}(要交给 export-frames 的参数放在 -- 后面)`);
+    else throw new Error(`Unknown argument ${a} (arguments meant for export-frames go after --)`);
   }
-  if (!o.project) throw new Error('要给 --project <project.json>');
-  if (!/^[A-Za-z0-9_-]+$/.test(o.id)) throw new Error('--id 只能用字母、数字、_ 和 -');
-  if (o.port !== undefined && !(Number.isInteger(o.port) && o.port > 0 && o.port < 65534)) throw new Error('--port 要是一个端口号');
+  if (!o.project) throw new Error('--project <project.json> is required');
+  if (!/^[A-Za-z0-9_-]+$/.test(o.id)) throw new Error('--id may only contain letters, digits, _ and -');
+  if (o.port !== undefined && !(Number.isInteger(o.port) && o.port > 0 && o.port < 65534)) throw new Error('--port must be a port number');
   return o;
 }
 
@@ -86,7 +93,7 @@ let opts;
 try {
   opts = parseArgs(process.argv.slice(2));
 } catch (e) {
-  console.error(`${e.message}\n用法见 scripts/export-e2e.mjs 文件头`);
+  console.error(`${e.message}\nUsage: see the header of scripts/export-e2e.mjs`);
   process.exit(2);
 }
 
@@ -94,7 +101,7 @@ const work = path.resolve(opts.work || path.join(DEFAULT_ROOT, `export-${stamp()
 const outDir = path.join(work, `export-${opts.id}`);
 const mediaMirror = path.join(work, 'media');
 
-/* ---------------- 收工:子进程 → dev server ---------------- */
+/* ---------------- Teardown: child processes → dev server ---------------- */
 
 const children = new Set();
 let server = null;
@@ -103,18 +110,18 @@ let cleaned = false;
 function cleanup() {
   if (cleaned) return;
   cleaned = true;
-  // 先停用着素材的进程,再拆它们脚下的链接
+  // First stop processes using the assets, then dismantle the links beneath them
   for (const c of children) if (c.exitCode === null) killTree(c.pid);
-  if (server) { server.stop(); log('已关 dev server'); }
+  if (server) { server.stop(); log('dev server stopped'); }
 }
 
 process.on('exit', cleanup);
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
-  process.on(sig, () => { log(`收到 ${sig},收工`); cleanup(); process.exit(130); });
+  process.on(sig, () => { log(`Received ${sig}, wrapping up`); cleanup(); process.exit(130); });
 }
 process.on('uncaughtException', (e) => { console.error(e); cleanup(); process.exit(1); });
 
-/* ---------------- 子进程:输出加前缀转到控制台,原样落一份日志 ---------------- */
+/* ---------------- Child process: prefix output to console, write raw copy to log ---------------- */
 
 function run(label, args, { cwd, env, logFile }) {
   return new Promise((resolve) => {
@@ -142,57 +149,58 @@ const countFrames = (dir) => {
 async function main() {
   const project = JSON.parse(fs.readFileSync(opts.project, 'utf8'));
   if (!Array.isArray(project?.tracks)) {
-    const hint = Array.isArray(project?.project?.tracks) ? '看起来是 .proc,把它的 project 字段另存成一份 JSON 再给' : '顶层没有 tracks 数组';
-    throw new Error(`${opts.project} 不是 Timeline / Project 形状:${hint}`);
+    const hint = Array.isArray(project?.project?.tracks) ? 'Looks like a .proc; save its project field as a separate JSON and pass that instead' : 'no tracks array at the top level';
+    throw new Error(`${opts.project} is not a Timeline / Project shape: ${hint}`);
   }
   const libraryRefs = JSON.stringify(project).match(/"\/@media\//g)?.length || 0;
-  if (libraryRefs && !opts.mediaLib) log(`⚠ 项目引用了 ${libraryRefs} 处 /@media/ 素材,没带 --media-lib,这些素材取不到`);
+  if (libraryRefs && !opts.mediaLib) log(`⚠ the project references ${libraryRefs} /@media/ assets but --media-lib was not given, so these assets can't be fetched`);
 
-  // 默认根目录,加上自定的 --work 所在的那一层(同一个 --work 反复用时,上次的链接就在这里)
+  // Default root directory, plus the level where custom --work resides (when reusing the same
+  // --work, links from the previous run are here)
   for (const root of new Set([DEFAULT_ROOT, path.dirname(work)])) {
-    for (const link of sweepStaleJunctions(root)) log(`清掉上次被强杀留下的 junction:${link}`);
+    for (const link of sweepStaleJunctions(root)) log(`Removed junctions left behind by the last forced kill: ${link}`);
   }
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'project.json'), JSON.stringify(project));
-  log(`导出目录 ${work}`);
+  log(`Export directory ${work}`);
 
   if (opts.mediaLib) {
     const n = mirrorMediaLibrary(opts.mediaLib, mediaMirror);
-    log(`media ← ${path.resolve(opts.mediaLib)}(硬链接 ${n.linked} 个、复制 ${n.copied} 个元数据${n.skipped ? `、跳过 ${n.skipped} 个链接` : ''};素材目录只读)`);
+    log(`media ← ${path.resolve(opts.mediaLib)} (${n.linked} hard-linked, ${n.copied} metadata copied${n.skipped ? `, ${n.skipped} links skipped` : ''}; asset directory read-only)`);
   }
 
   const env = { PROMPTCUT_EXPORT_DIR: work };
-  assertNoUserExportDir(env, 'export-e2e 的导出目录');
+  assertNoUserExportDir(env, 'export directory of export-e2e');
   const started = Date.now();
   server = await startDevServer({ env, logFile: path.join(work, 'vite.log'), port: opts.port, log });
-  log(`dev server 就绪 ${server.origin}(舞台 ${server.stagePorts.join(' / ')},${((Date.now() - started) / 1000).toFixed(1)}s)`);
+  log(`dev server ready ${server.origin} (stages ${server.stagePorts.join(' / ')}, ${((Date.now() - started) / 1000).toFixed(1)}s)`);
 
   const url = `${server.origin}/?export=1&timeline=/@export/${opts.id}/project.json`;
   const frames = opts.frames ? ['--frames', opts.frames] : [];
   const exportArgs = [path.join(REPO, 'scripts', 'export-frames.mjs'), '--url', url, '--out', outDir, ...frames,
     ...(opts.video ? [] : ['--no-video']), ...opts.passthrough];
-  log(`导出:node scripts/export-frames.mjs ${exportArgs.slice(1).join(' ')}`);
+  log(`Export: node scripts/export-frames.mjs ${exportArgs.slice(1).join(' ')}`);
 
   const jobs = [run('export', exportArgs, { cwd: REPO, env, logFile: path.join(outDir, 'export.log') })];
   if (opts.determinism) {
     const detDir = path.join(work, 'determinism');
     fs.mkdirSync(detDir, { recursive: true });
-    log('确定性:node scripts/verify-determinism.mjs(并行,输出在 determinism/out/)');
+    log('Determinism: node scripts/verify-determinism.mjs (parallel, output in determinism/out/)');
     jobs.push(run('determinism', [path.join(REPO, 'scripts', 'verify-determinism.mjs'), '--url', url, ...frames],
       { cwd: detDir, env, logFile: path.join(detDir, 'determinism.log') }));
   }
   const [exportCode, detCode] = await Promise.all(jobs);
 
   const restarts = server.restarts();
-  log('—— 结果 ——');
-  log(`导出:${exportCode === 0 ? '完成' : `失败(退出码 ${exportCode})`},${countFrames(path.join(outDir, 'frames'))} 帧 → ${path.join(outDir, 'frames')}`);
-  if (opts.video && exportCode === 0) log(`成片:${path.join(outDir, 'preview.mp4')}`);
-  if (opts.determinism) log(`确定性:${detCode === 0 ? '两趟逐像素相同' : `没过(退出码 ${detCode}),明细见上面 [determinism] 的输出`}`);
-  if (restarts) log(`⚠ 期间 dev server 重启过 ${restarts} 次,结果可能不可信`);
+  log('-- Result --');
+  log(`Export: ${exportCode === 0 ? 'done' : `failed (exit code ${exportCode})`}, ${countFrames(path.join(outDir, 'frames'))} frames → ${path.join(outDir, 'frames')}`);
+  if (opts.video && exportCode === 0) log(`Final video: ${path.join(outDir, 'preview.mp4')}`);
+  if (opts.determinism) log(`Determinism: ${detCode === 0 ? 'two passes pixel-identical' : `failed (exit code ${detCode}), see the [determinism] output above for details`}`);
+  if (restarts) log(`⚠ dev server restarted ${restarts} times during the run, results may be unreliable`);
   return exportCode === 0 && (!opts.determinism || detCode === 0) ? 0 : 1;
 }
 
 main()
-  // 别处已把 exitCode 置 1 的,不能被「导出成功」的 0 盖掉
+  // If exitCode was set to 1 elsewhere, do not overwrite it with 0 from "export succeeded"
   .then((code) => { cleanup(); process.exit(process.exitCode || code); })
   .catch((e) => { console.error(`[export-e2e] ✖ ${e.message}`); cleanup(); process.exit(1); });

@@ -1,21 +1,27 @@
-// 测试用的 provider(模拟模型提供方)。`ai.json` 或 `opts.apiConfig` 里 `vendor: 'mock'` 时启用,不需要 Key。
+// Test provider (simulates a model provider). Enabled when `vendor: 'mock'` in `ai.json` or
+// `opts.apiConfig`, requires no Key.
 //
-// 两种走法:
-//   - 没有脚本:写死的两回合(调一次工具、说一句话),与原来相同;
-//   - 有脚本:用户消息里出现一个 ```mock-script 代码块(JSON 数组)时,逐回合照它做
-//     (契约 docs/plan/cloud-agent-contract.md 第 8.3 节)。每一项是下面四种之一:
-//       { "tool": "<工具名>", "input": { … } }   这一回合调这个工具
-//       { "say": "<文字>" }                       说这句话并结束这一轮
-//       { "sleepMs": 300 }                        等这么久再做下一项(测停止与并发;认中止信号)
-//       { "fail": "<原因>" }                      这一次模型请求报错
-//       { "truncate": { "tool", "args", "say" } } 这一回合写到输出上限被截断(见下面那一支)
-//       { "cut": { "tool", "args", "say" } }      这一回合写到一半被网关中途掐断(停止原因 stream_cut,其余同 truncate)
-//     脚本走完还没有 say 的,补一句「完成。」结束。每个回合报一次 usage(按字符数算的确定值)。
-//     一轮对话里有多个脚本块时用最近一条用户消息里的那个。
+// Two paths:
+//   - Without script: hardcoded two turns (call a tool once, say one sentence), same as before;
+//   - With script: when a ```mock-script code block (JSON array) appears in a user message, follow it
+//     turn by turn (contract docs/plan/cloud-agent-contract.md section 8.3). Each item is one of
+//     the four types below:
+//       { "tool": "<tool_name>", "input": { … } }   Call this tool in this turn
+//       { "say": "<text>" }                         Say this text and end this turn
+//       { "sleepMs": 300 }                          Wait this long before doing next item (test
+//                                                   stop and concurrency; honors abort signal)
+//       { "fail": "<reason>" }                      Error out on this model request
+//       { "truncate": { "tool", "args", "say" } }   Truncated by hitting output limit in this
+//                                                   turn (see the branch below)
+//       { "cut": { "tool", "args", "say" } }        Cut off midway by gateway in this turn (stop
+//                                                   reason stream_cut, otherwise same as truncate)
+//     If the script finishes without say, append "Done." to end. Report usage once per turn
+//     (deterministic value calculated by character count).
+//     When multiple script blocks exist in a chat turn, use the one in the most recent user message.
 
 const SCRIPT_RE = /```mock-script\s*\n([\s\S]*?)```/g;
 
-/** 从消息历史里找最近一条用户文字里的脚本;没有回 null */
+/** Find script from the most recent user text in message history; returns null if none */
 export function mockScriptOf(messages) {
   for (let i = (messages?.length ?? 0) - 1; i >= 0; i -= 1) {
     const m = messages[i];
@@ -48,7 +54,7 @@ function sleep(ms, signal) {
 
 export function createProvider(cfg) {
   let turn = 0;
-  /** 脚本模式:下一项的下标;脚本在第一次请求时定下 */
+  /** Script mode: index of the next item; script is determined on the first request */
   let script;
   let at = 0;
 
@@ -62,7 +68,8 @@ export function createProvider(cfg) {
           const step = script[at] ?? {};
           at += 1;
           if (Number.isFinite(step.sleepMs)) { await sleep(Math.max(0, Math.min(60_000, step.sleepMs)), signal); continue; }
-          // `{{apiKey}}`、`{{baseUrl}}` 换成配置里的值:测「模型接口的报错里带着 Key 与地址」时用,免得把它们写进提示词
+          // Replace `{{apiKey}}` and `{{baseUrl}}` with config values: used when testing "model API errors
+          // containing Key and address" to avoid writing them into prompts
           if (typeof step.fail === 'string') throw new Error(step.fail.replaceAll('{{apiKey}}', String(cfg?.apiKey ?? '')).replaceAll('{{baseUrl}}', String(cfg?.baseUrl ?? '')));
           if (typeof step.tool === 'string') {
             const input = step.input && typeof step.input === 'object' ? step.input : {};
@@ -72,15 +79,17 @@ export function createProvider(cfg) {
             return;
           }
           /*
-           * 写到输出上限被截断(A07):`{ "truncate": { "tool": "create_card", "args": "{\"source\":\"写了一半" }, "say"?: "…" }`
-           * 交一个没写完的工具调用(参数原文就是 args)、以 `length` 收尾;不给 tool 时只交 say 的文字、以 `length` 收尾。
+           * Truncated by hitting output limit (A07):
+           * `{ "truncate": { "tool": "create_card", "args": "{\"source\":\"half-written" }, "say"?: "…" }`
+           * Deliver an incomplete tool call (raw arguments are args) and finalize with `length`; if tool is
+           * not provided, deliver only the text in say and finalize with `length`.
            */
           const cutStep = step.truncate && typeof step.truncate === 'object' ? step.truncate : (step.cut && typeof step.cut === 'object' ? step.cut : null);
           if (cutStep) {
             if (typeof cutStep.say === 'string') yield { type: 'text_delta', text: cutStep.say };
             if (typeof cutStep.tool === 'string') yield { type: 'tool_use_partial', id: `mock_${at}`, name: cutStep.tool, args: String(cutStep.args ?? '') };
             yield { ...usage, output: Math.ceil(String(cutStep.args ?? '').length / 4) + 8 };
-            // 被网关中途掐断(stream-cut,2026-10-22):停止原因 stream_cut,agent.mjs 按截断处理
+            // Cut off midway by gateway (stream-cut, 2026-10-22): stop reason stream_cut, agent.mjs handles as truncation
             yield { type: 'stop', reason: cutStep === step.truncate ? 'length' : 'stream_cut' };
             return;
           }
@@ -91,7 +100,7 @@ export function createProvider(cfg) {
             return;
           }
         }
-        yield { type: 'text_delta', text: '完成。' };
+        yield { type: 'text_delta', text: 'Done.' };
         yield { ...usage, output: 2 };
         yield { type: 'stop', reason: 'end_turn' };
         return;
@@ -102,14 +111,14 @@ export function createProvider(cfg) {
         yield { type: 'tool_use', id: 'call_1', name: cfg?.toolName || 'get_editor_state', input: {} };
         yield { type: 'stop', reason: 'tool_use' };
       } else if (turn === 2) {
-        const text = cfg?.finalText || '时间轴上有 2 张卡。';
+        const text = cfg?.finalText || 'There are 2 cards on the timeline.';
         const mid = Math.floor(text.length / 2);
         yield { type: 'text_delta', text: text.slice(0, mid) };
         yield { type: 'text_delta', text: text.slice(mid) };
         yield { type: 'usage', input: 10, output: 20 };
         yield { type: 'stop', reason: 'end_turn' };
       } else {
-        yield { type: 'text_delta', text: '没别的事了。' };
+        yield { type: 'text_delta', text: 'Nothing else to do.' };
         yield { type: 'stop', reason: 'end_turn' };
       }
     }

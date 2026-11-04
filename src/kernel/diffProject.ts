@@ -1,10 +1,13 @@
 /**
- * 项目的路径操作:算差异(diffProject)与应用(applyOps)。
+ * Project path operations: compute diffs (diffProject) and apply them (applyOps).
  *
- * 规范在 docs/plan/c65-ops-spec.md,文档服务那边的通用 JSON 引擎照同一页实现,两边必须
- * 逐条一致 —— 同一串操作在两边要得到逐字节相同的结果(含键的顺序)。改这里的语义先改那一页。
+ * The spec is in docs/plan/c65-ops-spec.md, and the generic JSON engine in the document service
+ * is implemented against the same page. Both sides must match item by item: the same sequence
+ * of operations must produce byte-for-byte identical results on both sides (including key order).
+ * To change semantics here, update that page first.
  *
- * 纯函数、确定性,不认识项目的业务结构:只认「带 id 的数组」这一条通用规则。
+ * Pure function, deterministic, unaware of the project's business structure: only recognizes
+ * the single generic rule of "arrays with ids".
  */
 
 export type PathOp =
@@ -15,7 +18,7 @@ export type PathOp =
 
 export interface ProjectDiff {
   ops: PathOp[];
-  /** 把 next 变回 prev 的操作,撤销用 */
+  /** Operations to turn next back into prev, used for undo */
   inverse: PathOp[];
 }
 
@@ -23,7 +26,7 @@ export type ApplyResult<T> =
   | { ok: true; value: T }
   | { ok: false; code: "bad-path"; index: number; detail: string };
 
-/** 单次差异超过这么多条就改成一条根替换 */
+/** If a single diff exceeds this many operations, convert it into a single root replacement */
 export const MAX_DIFF_OPS = 500;
 
 type Obj = Record<string, unknown>;
@@ -34,7 +37,7 @@ function isPlainObject(v: unknown): v is Obj {
   return proto === Object.prototype || proto === null;
 }
 
-/** 带 id 的数组:每个元素都是普通对象、有非空字符串 id、id 互不相同。空数组也算 */
+/** Array with ids: each element is a plain object with a unique non-empty string id. Empty arrays also count */
 export function isIdArray(a: unknown): a is Obj[] {
   if (!Array.isArray(a)) return false;
   if (a.length === 0) return true;
@@ -48,7 +51,7 @@ export function isIdArray(a: unknown): a is Obj[] {
   return true;
 }
 
-/* ---------------- 路径编码 ---------------- */
+/* ---------------- Path encoding ---------------- */
 
 export function escapeSegment(s: string): string {
   if (s.indexOf("~") < 0 && s.indexOf("/") < 0) return s;
@@ -67,20 +70,20 @@ export function idPath(base: string, id: string): string {
   return `${base}/@${escapeSegment(id)}`;
 }
 
-/** 路径拆成还原过的段;"" 是根,返回 []。格式不对(不以 / 开头、~ 后面不是 0 或 1)返回 null */
+/** Splits path into decoded segments; "" is the root, returning []. Invalid format (does not start with /, or ~ is not followed by 0 or 1) returns null */
 export function parsePath(path: string): string[] | null {
   if (path === "") return [];
   if (typeof path !== "string" || path[0] !== "/") return null;
   if (/~[^01]|~$/.test(path)) return null;
   const segs = path.slice(1).split("/").map(unescapeSegment);
-  // 只有一个 @ 的段不合法(落在对象上也不认),与文档服务的引擎一致
+  // A segment with only @ is invalid (rejected even on an object), matching the document service engine
   if (segs.some((seg) => seg === "@")) return null;
   return segs;
 }
 
-/* ---------------- 深相等 ---------------- */
+/* ---------------- Deep equality ---------------- */
 
-/** 结构相等(对象不看键的顺序;undefined 的键当不存在) */
+/** Structural equality (objects ignore key order; undefined keys treated as nonexistent) */
 export function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
@@ -105,13 +108,13 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   return na === nb;
 }
 
-/* ---------------- 差异 ---------------- */
+/* ---------------- Diff ---------------- */
 
 class TooMany extends Error {}
 
 interface DiffCtx {
   ops: PathOp[];
-  /** 与 ops 一一对应,每条是「把这条之后的状态变回这条之前」的操作;最后整体倒序 */
+  /** Corresponds 1:1 with ops, each reverses the state after it to before it; finally reversed as a whole */
   inv: PathOp[];
   limit: number;
 }
@@ -124,7 +127,7 @@ function push(ctx: DiffCtx, op: PathOp, inv: PathOp) {
 
 const has = (o: Obj, k: string) => Object.prototype.hasOwnProperty.call(o, k) && o[k] !== undefined;
 
-/** 写键。`__proto__` 走 defineProperty,免得改到原型上 */
+/** Set key. `__proto__` uses defineProperty to avoid modifying the prototype */
 function setKey(o: Obj, k: string, v: unknown) {
   if (k === "__proto__") Object.defineProperty(o, k, { value: v, enumerable: true, writable: true, configurable: true });
   else o[k] = v;
@@ -161,15 +164,16 @@ function diffObject(prev: Obj, next: Obj, path: string, ctx: DiffCtx) {
       continue;
     }
     const a = prev[k];
-    // 相同(含同一个对象)的键不拼路径 —— 深拷贝过的大项目里这是大头
+    // Keys with identical values (including same object) skip path building: this is the bulk in
+    // deep-copied large projects
     if (a === b) continue;
     diffValue(a, b, keyPath(path, k), ctx);
   }
 }
 
-/** 最长递增子序列,返回被选中的下标集合(下标指 seq 的位置) */
+/** Longest increasing subsequence; returns the set of selected indices (indices refer to positions in seq) */
 function lisIndices(seq: number[]): Set<number> {
-  const tails: number[] = []; // tails[len-1] = 以它结尾的下标
+  const tails: number[] = []; // tails[len-1] = index ending with it
   const prevIdx = new Array<number>(seq.length).fill(-1);
   for (let i = 0; i < seq.length; i++) {
     let lo = 0;
@@ -197,7 +201,7 @@ function diffIdArray(prev: Obj[], next: Obj[], path: string, ctx: DiffCtx) {
   const prevById = new Map<string, Obj>();
   for (const e of prev) prevById.set(e.id as string, e);
 
-  // 1. 删掉消失的元素(从后往前,记下的下标就是删之前它所在的位置)
+  // 1. Delete removed elements (back-to-front; the recorded index is its position before deletion)
   const work: string[] = prev.map((e) => e.id as string);
   for (let i = work.length - 1; i >= 0; i--) {
     const id = work[i];
@@ -207,7 +211,8 @@ function diffIdArray(prev: Obj[], next: Obj[], path: string, ctx: DiffCtx) {
     work.splice(i, 1);
   }
 
-  // 2. 排位:不在最长保序子序列里的旧元素各挪一次,新元素各插一次,按 next 的顺序处理
+  // 2. Ordering: move old elements not in the longest order-preserving subsequence once,
+  //    insert new elements once, in next's order
   const targets = work.map((id) => nextIndex.get(id)!);
   const keepPos = lisIndices(targets);
   const stable = new Set<string>();
@@ -234,8 +239,9 @@ function diffIdArray(prev: Obj[], next: Obj[], path: string, ctx: DiffCtx) {
     }
   }
 
-  // 3. 两边都有的元素逐个递归。身份不同但内容一样的元素(整份深拷贝过的项目里几乎全是)
-  //    先用 noOpsBetween 廉价地排除掉,不拼路径、不建索引
+  // 3. Recurse element-by-element for elements present on both sides. Elements with different identities
+  //    but identical content (almost all of them in a fully deep-copied project) are cheaply ruled out
+  //    first with noOpsBetween, without building paths or indexing
   for (const e of next) {
     const id = e.id as string;
     const before = prevById.get(id);
@@ -244,27 +250,30 @@ function diffIdArray(prev: Obj[], next: Obj[], path: string, ctx: DiffCtx) {
 }
 
 /*
- * noOpsBetween(prev, next) 为 true 时,diffValue(prev, next) 保证一条操作也不出。
- * 它逐分支照着 diffValue / diffObject / diffIdArray 的判断走,只是不拼路径、不记操作、
- * 遇到第一处会出操作的地方就返回 false。拿不准的情形一律返回 false(交给 diffValue 照常算),
- * 所以用它跳过只会少做无用功,不会改变输出。
+ * When noOpsBetween(prev, next) is true, diffValue(prev, next) is guaranteed to yield zero operations.
+ * It follows the branch checks of diffValue / diffObject / diffIdArray, but without building paths or
+ * recording operations, returning false at the first place that would produce an operation. Any
+ * uncertain case returns false (leaving diffValue to compute normally), so skipping with it only avoids
+ * useless work and never changes the output.
  */
 function noOpsBetween(prev: unknown, next: unknown): boolean {
   if (prev === next) return true;
-  // 不都是对象:diffValue 落到 deepEqual,两者不 === 时 deepEqual 必为 false
+  // Not both objects: diffValue falls back to deepEqual; when they are not ===, deepEqual is definitely false
   if (typeof prev !== "object" || typeof next !== "object" || prev === null || next === null) return false;
-  // 一边数组一边不是:diffValue 落到 deepEqual,必为 false
+  // One is an array and the other is not: diffValue falls back to deepEqual, which is guaranteed to be false
   if (Array.isArray(prev)) return Array.isArray(next) && noOpsArray(prev, next);
   if (Array.isArray(next)) return false;
   if (isPlainObject(prev) && isPlainObject(next)) return noOpsObject(prev, next);
-  // 其余(至少一边是非普通对象):diffValue 用 deepEqual 判
+  // Otherwise (at least one side is a non-plain object): diffValue checks with deepEqual
   return deepEqual(prev, next);
 }
 
-/** 与 diffObject 的两个循环一一对应:第一个循环出 remove,第二个出 set 或递归 */
+/** Corresponds 1:1 with the two loops in diffObject: the first emits remove, the second emits set or recurses */
 function noOpsObject(prev: Obj, next: Obj): boolean {
-  // 快路:两边自有可枚举键逐位相同(深拷贝、{ ...o, k: v } 都保持键序)。这时 has(o, k) 就是 o[k] !== undefined,
-  // 两个循环合成一个,也省掉在另一个对象上逐键 hasOwnProperty(for-in 里对别的对象查键是这里的大头)
+  // Fast path: own enumerable keys on both sides match order-for-order (deep copies and { ...o, k: v }
+  // both preserve key order). Here has(o, k) is simply o[k] !== undefined, combining two loops into
+  // one and avoiding key-by-key hasOwnProperty on the other object (checking keys on other objects in
+  // for-in is the main bottleneck here)
   const ka = Object.keys(prev);
   const kb = Object.keys(next);
   let sameKeys = ka.length === kb.length;
@@ -275,12 +284,12 @@ function noOpsObject(prev: Obj, next: Obj): boolean {
       const a = prev[k];
       const b = next[k];
       if (a === b) continue;
-      if (a === undefined || b === undefined) return false; // 一边有值一边没有:remove 或 set
+      if (a === undefined || b === undefined) return false; // Present on one side but not the other: remove or set
       if (!noOpsBetween(a, b)) return false;
     }
     return true;
   }
-  // 键不同或键序不同:照 diffObject 原样走两遍
+  // Different keys or different key order: run both passes as in diffObject
   for (const k in prev) {
     if (has(prev, k) && !has(next, k)) return false;
   }
@@ -295,30 +304,35 @@ function noOpsObject(prev: Obj, next: Obj): boolean {
 }
 
 function noOpsArray(prev: unknown[], next: unknown[]): boolean {
-  // 长度不同:两边都是带 id 的数组时必有 insert / remove;否则 deepEqual 为 false
+  // Different lengths: when both sides are arrays with ids, insert / remove is guaranteed;
+  // otherwise deepEqual is false
   if (prev.length !== next.length) return false;
   for (let i = 0; i < prev.length; i++) {
     const a = prev[i];
-    // prev 的元素不全是带非空字符串 id 的普通对象:prev 不是带 id 的数组,diffValue 用 deepEqual 判
+    // Not all elements in prev are plain objects with non-empty string ids: prev is not an array
+    // with ids, diffValue checks with deepEqual
     if (!isPlainObject(a) || typeof a.id !== "string" || a.id === "") return deepEqual(prev, next);
-    // 两边 id 逐位相同才可能没有操作;不同的情形(换序、换元素、next 不是带 id 的数组)交给 diffValue
+    // Only when ids on both sides match element-by-element can there be no operations; differing
+    // cases (reordered, changed elements, next is not an array with ids) are left to diffValue
     const b = next[i];
     if (!isPlainObject(b) || b.id !== a.id) return false;
   }
-  // 若两边都是带 id 的数组:id 顺序完全相同,diffIdArray 不删不挪不插,只逐个递归。
-  // 先逐个比(有一个会出操作就返回 false —— 返回 false 总是安全的),都没有操作再确认 id 不重复
+  // If both sides are arrays with ids: with identical id order, diffIdArray does not delete, move, or
+  // insert, only recursing element by element. Compare one by one first (returns false if any produces
+  // operations: returning false is always safe); if none produce operations, verify ids are unique
   for (let i = 0; i < next.length; i++) {
     const a = prev[i];
     const b = next[i];
     if (a !== b && !noOpsBetween(a, b)) return false;
   }
-  // id 有重复:两边都不是带 id 的数组,diffValue 用 deepEqual 判
+  // Duplicate ids: neither side is an array with ids, diffValue checks with deepEqual
   return isIdArray(prev) || deepEqual(prev, next);
 }
 
 /**
- * 算 prev → next 的路径操作和逆操作。确定性:同样的输入永远同样的输出。
- * 单次超过 MAX_DIFF_OPS 条时退化成一条根替换。
+ * Computes path operations and inverse operations for prev → next. Deterministic: identical
+ * inputs always produce identical outputs. Degenerates into a single root replacement when
+ * exceeding MAX_DIFF_OPS operations in a single diff.
  */
 export function diffProject<T>(prev: T, next: T, opts: { limit?: number } = {}): ProjectDiff {
   const limit = opts.limit ?? MAX_DIFF_OPS;
@@ -335,7 +349,7 @@ export function diffProject<T>(prev: T, next: T, opts: { limit?: number } = {}):
   return { ops: ctx.ops, inverse: ctx.inv.reverse() };
 }
 
-/* ---------------- 应用 ---------------- */
+/* ---------------- Apply ---------------- */
 
 class BadPath extends Error {}
 
@@ -344,8 +358,9 @@ function fail(detail: string): never {
 }
 
 /**
- * 写时复制:同一次 applyOps 里新建的节点记在 owned 里,之后可以原地改;
- * 没碰过的子树与原对象共享,原对象一概不动。
+ * Copy-on-write: nodes newly created within the same applyOps call are tracked in owned and can
+ * subsequently be modified in place; untouched subtrees are shared with the original object,
+ * and the original object is never mutated.
  */
 class Cow {
   owned = new Set<object>();
@@ -366,44 +381,45 @@ function findById(arr: unknown[], id: string): number {
 }
 
 function arrayIdOf(seg: string): string {
-  if (seg[0] !== "@" || seg.length < 2) fail(`数组段必须是 @<id>:${seg}`);
+  if (seg[0] !== "@" || seg.length < 2) fail(`Array segment must be @<id>:${seg}`);
   return seg.slice(1);
 }
 
 /**
- * 从根走到 segs 所指节点的父级,沿途复制,返回可原地改的父节点和最后一段。
- * createMissing:对象上缺的键建成 {}(只有 set 用)。
+ * Walks from root to the parent of the node referenced by segs, copying along the way,
+ * returning the mutable parent node and the last segment.
+ * createMissing: missing keys on objects are created as {} (only used by set).
  */
 function walkToParent(root: unknown, segs: string[], cow: Cow, createMissing: boolean): { root: unknown; parent: unknown; last: string } {
-  if (root === null || typeof root !== "object") fail("根不是对象");
+  if (root === null || typeof root !== "object") fail("Root is not an object");
   const newRoot = cow.own(root as object);
   let node: unknown = newRoot;
   for (let i = 0; i < segs.length - 1; i++) {
     const seg = segs[i];
     if (Array.isArray(node)) {
       const idx = findById(node, arrayIdOf(seg));
-      if (idx < 0) fail(`找不到元素:${seg}`);
+      if (idx < 0) fail(`Element not found: ${seg}`);
       const child = node[idx];
-      if (child === null || typeof child !== "object") fail(`途经的值不是对象:${seg}`);
+      if (child === null || typeof child !== "object") fail(`Intermediate value is not an object: ${seg}`);
       const copy = cow.own(child as object);
       node[idx] = copy;
       node = copy;
     } else if (isPlainObject(node)) {
       let child = has(node, seg) ? node[seg] : undefined;
       if (child === undefined) {
-        if (!createMissing) fail(`路径不存在:${seg}`);
+        if (!createMissing) fail(`Path does not exist: ${seg}`);
         child = {};
         cow.owned.add(child as object);
         setKey(node, seg, child);
         node = child;
         continue;
       }
-      if (child === null || typeof child !== "object") fail(`途经的值不是对象:${seg}`);
+      if (child === null || typeof child !== "object") fail(`Intermediate value is not an object: ${seg}`);
       const copy = cow.own(child as object);
       setKey(node, seg, copy);
       node = copy;
     } else {
-      fail(`途经的值不是对象:${seg}`);
+      fail(`Intermediate value is not an object: ${seg}`);
     }
   }
   return { root: newRoot, parent: node, last: segs[segs.length - 1] };
@@ -414,112 +430,116 @@ function validIndex(i: unknown): i is number {
 }
 
 /**
- * 只读地走到父级(不复制),规则与 walkToParent(createMissing = false)相同:走不通就 bad-path。
- * remove / move 先用它判断目标在不在 —— 不在就是空操作,原对象原样返回,不白复制一路。
+ * Walks read-only to parent (without copying), following the same rules as
+ * walkToParent(createMissing = false): returns bad-path if unreachable.
+ * remove / move uses it first to check whether the target exists: if absent, it is a no-op,
+ * returning the original object as-is without wastefully copying along the way.
  */
 function peekParent(root: unknown, segs: string[]): unknown {
-  if (root === null || typeof root !== "object") fail("根不是对象");
+  if (root === null || typeof root !== "object") fail("Root is not an object");
   let node: unknown = root;
   for (let i = 0; i < segs.length - 1; i++) {
     const seg = segs[i];
     if (Array.isArray(node)) {
       const idx = findById(node, arrayIdOf(seg));
-      if (idx < 0) fail(`找不到元素:${seg}`);
+      if (idx < 0) fail(`Element not found: ${seg}`);
       node = node[idx];
     } else if (isPlainObject(node)) {
-      if (!has(node, seg)) fail(`路径不存在:${seg}`);
+      if (!has(node, seg)) fail(`Path does not exist: ${seg}`);
       node = node[seg];
-    } else fail(`途经的值不是对象:${seg}`);
-    if (node === null || typeof node !== "object") fail(`途经的值不是对象:${seg}`);
+    } else fail(`Intermediate value is not an object: ${seg}`);
+    if (node === null || typeof node !== "object") fail(`Intermediate value is not an object: ${seg}`);
   }
   return node;
 }
 
-/** 操作本身的格式(不看文档);不对返回原因 */
+/** Format of the operation itself (without inspecting document); returns reason if invalid */
 function formatError(op: PathOp): string | null {
-  if (!isPlainObject(op)) return "每条操作必须是对象";
-  if (op.op !== "set" && op.op !== "remove" && op.op !== "insert" && op.op !== "move") return `不认识的操作:${String((op as { op?: unknown }).op)}`;
+  if (!isPlainObject(op)) return "Each operation must be an object";
+  if (op.op !== "set" && op.op !== "remove" && op.op !== "insert" && op.op !== "move") return `Unknown operation: ${String((op as { op?: unknown }).op)}`;
   const segs = typeof op.path === "string" ? parsePath(op.path) : null;
-  if (!segs) return `路径格式不对:${String(op.path)}`;
+  if (!segs) return `Invalid path format: ${String(op.path)}`;
   switch (op.op) {
     case "set":
-      if (!Object.prototype.hasOwnProperty.call(op, "value") || op.value === undefined) return "set 缺 value";
-      if (segs.length === 0 && !isPlainObject(op.value)) return "根替换的值必须是对象";
+      if (!Object.prototype.hasOwnProperty.call(op, "value") || op.value === undefined) return "set is missing value";
+      if (segs.length === 0 && !isPlainObject(op.value)) return "Value replacing the root must be an object";
       return null;
     case "remove":
-      return segs.length === 0 ? "不能删根" : null;
+      return segs.length === 0 ? "Cannot delete the root" : null;
     case "insert":
-      if (!isPlainObject(op.value) || typeof op.value.id !== "string" || op.value.id === "") return "insert 的 value 必须是带非空字符串 id 的对象";
-      return validIndex(op.index) ? null : "index 必须是非负整数";
+      if (!isPlainObject(op.value) || typeof op.value.id !== "string" || op.value.id === "") return "The value of insert must be an object with a non-empty string id";
+      return validIndex(op.index) ? null : "index must be a non-negative integer";
     case "move":
-      if (segs.length === 0 || segs[segs.length - 1][0] !== "@") return "move 的 path 必须以 @<id> 结尾";
-      return validIndex(op.index) ? null : "index 必须是非负整数";
+      if (segs.length === 0 || segs[segs.length - 1][0] !== "@") return "move path must end with @<id>";
+      return validIndex(op.index) ? null : "index must be a non-negative integer";
   }
 }
 
 function applyOne(root: unknown, op: PathOp, cow: Cow): unknown {
-  if (!op || typeof op !== "object" || typeof (op as { path?: unknown }).path !== "string") fail("操作缺 path");
+  if (!op || typeof op !== "object" || typeof (op as { path?: unknown }).path !== "string") fail("Operation is missing path");
   const segs = parsePath(op.path);
-  if (!segs) fail(`路径格式不对:${op.path}`);
+  if (!segs) fail(`Invalid path format: ${op.path}`);
   switch (op.op) {
     case "set": {
-      if (!("value" in op) || op.value === undefined) fail("set 缺 value");
+      if (!("value" in op) || op.value === undefined) fail("set is missing value");
       if (segs.length === 0) {
-        if (!isPlainObject(op.value)) fail("根替换的值必须是对象");
+        if (!isPlainObject(op.value)) fail("Value replacing the root must be an object");
         return op.value;
       }
-      // 还没有真身(根缺失)时从 {} 建起
+      // When no instance exists yet (root missing), build from {}
       const { root: r, parent, last } = walkToParent(root ?? {}, segs, cow, true);
       if (Array.isArray(parent)) {
         const id = arrayIdOf(last);
         const idx = findById(parent, id);
-        if (idx < 0) fail(`找不到元素:${last}`);
-        if (!isPlainObject(op.value) || op.value.id !== id) fail("替换数组元素时 value.id 必须等于路径里的 id");
+        if (idx < 0) fail(`Element not found: ${last}`);
+        if (!isPlainObject(op.value) || op.value.id !== id) fail("When replacing an array element, value.id must equal the id in the path");
         parent[idx] = op.value;
       } else if (isPlainObject(parent)) {
         setKey(parent, last, op.value);
-      } else fail("父级不是对象");
+      } else fail("Parent is not an object");
       return r;
     }
     case "remove": {
-      if (segs.length === 0) fail("不能删根");
-      // 父级必须在;目标不在是空操作(两人同时删同一个片段,后到的那批照常落地)
+      if (segs.length === 0) fail("Cannot delete the root");
+      // Parent must exist; absent target is a no-op (two users delete the same clip simultaneously,
+      // and the later batch lands normally)
       const last = segs[segs.length - 1];
       const peek = peekParent(root, segs);
       if (Array.isArray(peek)) {
         if (findById(peek, arrayIdOf(last)) < 0) return root;
       } else if (isPlainObject(peek)) {
         if (!has(peek, last)) return root;
-      } else fail("父级不是对象");
+      } else fail("Parent is not an object");
       const { root: r, parent } = walkToParent(root, segs, cow, false);
       if (Array.isArray(parent)) parent.splice(findById(parent, arrayIdOf(last)), 1);
       else delete (parent as Obj)[last];
       return r;
     }
     case "insert": {
-      if (!validIndex(op.index)) fail("index 必须是非负整数");
+      if (!validIndex(op.index)) fail("index must be a non-negative integer");
       const v = op.value;
-      if (!isPlainObject(v) || typeof v.id !== "string" || v.id === "") fail("insert 的 value 必须是带非空字符串 id 的对象");
-      // 目标是数组本身(数组总是挂在对象的某个键上):走到它的父级,再把数组也复制出来
-      if (segs.length === 0) fail("根不是数组");
+      if (!isPlainObject(v) || typeof v.id !== "string" || v.id === "") fail("The value of insert must be an object with a non-empty string id");
+      // Target is array itself (arrays are always attached to some key on an object): walk to its parent,
+      // then copy out the array as well
+      if (segs.length === 0) fail("Root is not an array");
       const { root: r, parent, last } = walkToParent(root, segs, cow, false);
-      if (!isPlainObject(parent)) fail("insert 的目标不是数组");
+      if (!isPlainObject(parent)) fail("The target of insert is not an array");
       const cur = has(parent, last) ? parent[last] : undefined;
-      if (!Array.isArray(cur) || !isIdArray(cur)) fail("insert 的目标不是带 id 的数组");
-      if (findById(cur, v.id as string) >= 0) fail(`id 已存在:${v.id}`);
+      if (!Array.isArray(cur) || !isIdArray(cur)) fail("The target of insert is not an array with ids");
+      if (findById(cur, v.id as string) >= 0) fail(`id already exists: ${v.id}`);
       const a = cow.own(cur);
       setKey(parent, last, a);
       a.splice(Math.min(op.index, a.length), 0, v);
       return r;
     }
     case "move": {
-      if (!validIndex(op.index)) fail("index 必须是非负整数");
-      if (segs.length === 0) fail("不能挪根");
+      if (!validIndex(op.index)) fail("index must be a non-negative integer");
+      if (segs.length === 0) fail("Cannot move the root");
       const last = segs[segs.length - 1];
       const id = arrayIdOf(last);
-      // 所在的数组必须在;元素不在是空操作
+      // Containing array must exist; absent element is a no-op
       const peek = peekParent(root, segs);
-      if (!Array.isArray(peek)) fail("move 的目标不在数组里");
+      if (!Array.isArray(peek)) fail("The target of move is not in the array");
       if (findById(peek, id) < 0) return root;
       const { root: r, parent } = walkToParent(root, segs, cow, false);
       const arr = parent as unknown[];
@@ -528,17 +548,19 @@ function applyOne(root: unknown, op: PathOp, cow: Cow): unknown {
       return r;
     }
     default:
-      fail(`不认识的操作:${(op as { op?: unknown }).op}`);
+      fail(`Unknown operation: ${(op as { op?: unknown }).op}`);
   }
 }
 
 /**
- * 按顺序应用一串路径操作。原子:任何一条失败都返回 bad-path,原对象不变。
- * 没碰过的子树与输入共享(不深拷贝),所以输入必须当不可变对象用。
+ * Applies a sequence of path operations in order. Atomic: if any operation fails, returns
+ * bad-path and leaves the original object unchanged. Untouched subtrees are shared with input
+ * (no deep copy), so input must be treated as an immutable object.
  */
 export function applyOps<T>(doc: T, ops: readonly PathOp[]): ApplyResult<T> {
-  if (!Array.isArray(ops)) return { ok: false, code: "bad-path", index: -1, detail: "ops 必须是数组" };
-  // 先整批查格式(与文档无关),再逐条应用 —— 与文档服务的引擎一样,失败下标先报格式错的那条
+  if (!Array.isArray(ops)) return { ok: false, code: "bad-path", index: -1, detail: "ops must be an array" };
+  // Check format for entire batch first (independent of document), then apply operation by
+  // operation: like the document service engine, failure index reports format error first
   for (let i = 0; i < ops.length; i++) {
     const err = formatError(ops[i]);
     if (err) return { ok: false, code: "bad-path", index: i, detail: err };
@@ -556,7 +578,7 @@ export function applyOps<T>(doc: T, ops: readonly PathOp[]): ApplyResult<T> {
   return { ok: true, value: cur as T };
 }
 
-/** 取路径上的值;取不到返回 undefined */
+/** Retrieves value at path; returns undefined if not found */
 export function getAt(doc: unknown, path: string): unknown {
   const segs = parsePath(path);
   if (!segs) return undefined;
@@ -575,26 +597,28 @@ export function getAt(doc: unknown, path: string): unknown {
   return node;
 }
 
-/* ---------------- 实体 ---------------- */
+/* ---------------- Entity ---------------- */
 
-/** 嵌套实体只认这几个集合名(第一层不限):序列里的片段、剪辑里的序列与转场 */
+/** Nested entities only recognize these collection names (first level unrestricted): clips in tracks, tracks and transitions in cuts */
 const NESTED_ENTITY = new Set(["tracks", "clips", "transitions"]);
 
-/** 所有实体 */
+/** All entities */
 export const ALL_ENTITIES = "*";
 /**
- * 取不到任何一对 `/<名>/@<id>` 的路径按顶层键各算一个实体 `/meta/<顶层键>`(`/fps` → `/meta/fps`,
- * `/style/x` → `/meta/style`)。2026-09-26 集成裁定:别人改了 fps 不该让我撤不回自己改的 name。
+ * Paths without any `/<name>/@<id>` pair count as one entity `/meta/<top-level-key>` per top-level
+ * key (`/fps` → `/meta/fps`, `/style/x` → `/meta/style`). Integration ruling, 2026-09-26: someone else
+ * changing fps should not prevent me from undoing my own changes to name.
  */
 export const META_ENTITY = "/meta";
 
-/** 一条路径归哪个实体(规范第 4 节) */
+/** Which entity a path belongs to (spec section 4) */
 export function entityOfPath(path: string): string {
   if (path === "") return ALL_ENTITIES;
   const segs = parsePath(path);
   if (!segs || segs.length === 0) return ALL_ENTITIES;
   let end = 0;
-  // 名字段不能以 @ 开头(文档服务的引擎把 @ 开头的段当 id 段),第一对之后的名字只认 NESTED_ENTITY
+  // Name segment cannot start with @ (document service engine treats segments starting with @ as id
+  // segments); names after first pair only recognize NESTED_ENTITY
   while (
     end + 1 < segs.length &&
     segs[end][0] !== "@" &&
@@ -606,8 +630,8 @@ export function entityOfPath(path: string): string {
 }
 
 /**
- * 实体 → 它的值在项目里的路径(覆盖备份取值用):`*` 是根 `""`;`/meta/<键>` 是 `/<键>`;
- * 其余实体本身就是路径。
+ * Entity → path of its value in the project (used to retrieve values for overlay backup):
+ * `*` is root `""`; `/meta/<key>` is `/<key>`; other entities are paths themselves.
  */
 export function entityValuePath(entity: string): string {
   if (entity === ALL_ENTITIES) return "";
@@ -616,7 +640,7 @@ export function entityValuePath(entity: string): string {
   return entity;
 }
 
-/** 一条操作写到的实体(insert 按插进去的那个元素算) */
+/** Entity written by an operation (insert counts as the inserted element) */
 export function entityOfOp(op: PathOp): string {
   if (op.op === "insert" && isPlainObject(op.value) && typeof op.value.id === "string") {
     return entityOfPath(idPath(op.path, op.value.id));
@@ -624,7 +648,7 @@ export function entityOfOp(op: PathOp): string {
   return entityOfPath(op.path);
 }
 
-/** 一串操作写到的实体,按首次出现的顺序去重 */
+/** Entities written by a sequence of operations, deduplicated by order of first appearance */
 export function entitiesOf(ops: readonly PathOp[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -638,7 +662,7 @@ export function entitiesOf(ops: readonly PathOp[]): string[] {
   return out;
 }
 
-/** 两个实体是否算写到同一处 */
+/** Whether two entities count as writing to the same location */
 export function entitiesOverlap(a: string, b: string): boolean {
   return a === b || a === ALL_ENTITIES || b === ALL_ENTITIES;
 }

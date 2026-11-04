@@ -11,8 +11,9 @@ export function cardNodeIdentities(graph, { style = {}, environment = {}, source
   const definitions = new Map((graph.definitions ?? []).map(def => [def.id, def]));
   const keys = new Map();
   for (const level of levels) for (const id of level) {
-    // `inputs` 是 validateCardGraph 丢边之后剩下的那些;丢掉的名字留在 node.missingInputs 里
-    // 一并进 digest —— 输入片段删没删是不同的画面。
+    // `inputs` are those remaining after validateCardGraph drops edges; dropped names remain in
+    // node.missingInputs and enter the digest as well: whether input clips are deleted results in
+    // different frames.
     const { id: _id, inputs, definitionId, ...node } = byId.get(id);
     const definition = definitions.get(definitionId);
     if (definitionId && !definition) throw new Error(`Missing card definition ${definitionId}`);
@@ -73,30 +74,35 @@ const ratio = value => {
 };
 
 /**
- * 共享快照键(A3a)。和 `cardNodeIdentities` 用同一个 `digest`、同一份输入结构,
- * 但输入节点先剥掉片段身份:在 `:13` 已剥的 `id` / `inputs` / `definitionId`
- * 之外**再剥 `clipId`**(`cardGraph.mjs:121-127` 合成 `@clip/<id>/source` 节点时
- * 写进去的)。同一张卡放在两个片段里、同参数同框宽高,内容完全一样,快照应当共享。
- * `cardNodeIdentities` 本身不改 —— 它的 `clipId` 是刻意的,给 `CardFrameCache`
- * 的缓存校验用。
+ * Shared snapshot key (A3a). Uses the same `digest` and input structure as `cardNodeIdentities`,
+ * but input nodes first strip clip identity: in addition to `id` / `inputs` / `definitionId`
+ * already stripped at `:13`, **`clipId` is also stripped** (written when `cardGraph.mjs:121-127`
+ * synthesizes the `@clip/<id>/source` node). The same card placed in two clips with identical
+ * parameters and frame dimensions has identical content, so the snapshot should be shared.
+ * `cardNodeIdentities` itself is not modified: its `clipId` is intentional, used for cache
+ * validation in `CardFrameCache`.
  *
- * `inputs`:**不能**拿 `cardNodeIdentities` 现成的上游键,那些键里带上游片段的
- * clipId,同一条转场换个片段就不共享了。输出节点没有上游的传 `{}`;有上游的
- * (片段挂了强调、滤镜、声音效果时输出节点是外面那一层,卡片在它的输入后面;素材
- * 效果卡的素材在它的输入后面)传 `cardSnapshotInputKeys` 给这个节点算出的那一栏 ——
- * 上游各自剥掉 clipId、沿输入一层层算上去。漏传就是「外面相同、里面不同」的两个
- * 片段同键、互相取到对方的预渲染结果。
+ * `inputs`: **cannot** use ready-made upstream keys from `cardNodeIdentities`; those keys contain
+ * upstream clip clipIds, so the same transition swapped to another clip would no longer be shared.
+ * Pass `{}` when the output node has no upstream; when it has upstream (when a clip attaches
+ * emphasis, filters, or sound effects, the output node is the outer layer and the card is behind
+ * its input; for media effect cards, media is behind its input), pass the entry computed for this
+ * node by `cardSnapshotInputKeys`: each upstream strips its clipId and computes upward along inputs
+ * layer by layer. Omitting it leads to two clips that are "identical outside, different inside"
+ * having the same key and fetching each other's prerender outputs.
  *
- * 片段框宽高:用 `src/kernel/frameSize.mjs` 的 `resolveFrameSize` 解析,和舞台
- * `layout.ts` 的 `resolveFrame` 同一份实现(选它而不是在浏览器侧算好传进来:
- * Node 端也要能独立复算键,`__pcCardPlan` 只负责给 `environment`)。调用方若已
- * 经算好,也可以直接传 `frameWidth` / `frameHeight` 覆盖。
+ * Clip frame dimensions: resolved with `resolveFrameSize` in `src/kernel/frameSize.mjs`, sharing the
+ * same implementation with `resolveFrame` in stage `layout.ts` (chosen over computing on the
+ * browser side and passing in: the Node side must also recompute keys independently, while
+ * `__pcCardPlan` is only responsible for providing `environment`). If the caller has already
+ * computed them, `frameWidth` / `frameHeight` can also be passed directly to override.
  *
- * 不进键:x / y / anchor / scale / rotate、不透明度、淡入淡出、motion、强调 ——
- * A2(5) 之后这些不在快照里,同一份共享快照挂到两个位置,各自画在自己的框里。
- * 进键:参数、源码版本、片段时长、采样相位、fps、框宽高、画幅、`camera3dFov`、
- * parts、主题 id、`fontFingerprint`、`snapshotCode`、`capabilities`(审阅表内容,
- * 已经在节点里)。
+ * Excluded from key: x / y / anchor / scale / rotate, opacity, fade in/out, motion, emphasis: after
+ * A2(5) these are not in snapshots; the same shared snapshot attached at two positions is rendered
+ * in each respective frame.
+ * Included in key: parameters, source version, clip duration, sample phase, fps, frame dimensions,
+ * aspect ratio, `camera3dFov`, parts, theme id, `fontFingerprint`, `snapshotCode`, `capabilities`
+ * (review table contents, already in the node).
  */
 export function cardSnapshotIdentity(node, {
   definition, style = {}, environment = {}, sourceVersions = {}, sourceVersion,
@@ -112,8 +118,9 @@ export function cardSnapshotIdentity(node, {
     abi: CARD_RUNTIME_ABI, environment, node: stripped, definition, style: usedStyle,
     sourceVersion: sourceVersion ?? (stripped.cardId ? sourceVersions[stripped.cardId] : undefined),
     inputs: inputKeys,
-    // 快照特有的一段单独放,免得和节点自身的字段重名;`cardNodeIdentities` 的
-    // 输入结构原样保留在上面,两个函数的键永远不会相等(这一段一定在)。
+    // The snapshot-specific section is placed separately to avoid name collisions with the node's own
+    // fields; the input structure of `cardNodeIdentities` is preserved as-is above, so keys from the two
+    // functions will never equal each other (this section is always present).
     snapshot: {
       fps: ratio(fps), phase: ratio(phase), duration,
       stage: { width: parent.width, height: parent.height, camera3dFov: stage.camera3dFov },
@@ -124,32 +131,46 @@ export function cardSnapshotIdentity(node, {
 }
 
 /**
- * 每个节点的上游在共享快照键里的那一栏:`节点 id → { 输入名: { key, offset, rate } }`,交给 `cardSnapshotIdentity` 的 `inputKeys`
- * (`CardFrameCache.plan` 对每个输出节点取一次,共享快照的内容键和单卡流的成员键都用它)。
+ * The entry for each node's upstream in the shared snapshot key:
+ * `node id → { inputName: { key, offset, rate } }`, passed to `inputKeys` of `cardSnapshotIdentity`
+ * (`CardFrameCache.plan` fetches this once per output node; both the content key of a shared snapshot
+ * and the member key of a single-card stream use it).
  *
- * 形状和 `cardNodeIdentities` 里的 `inputs` 一样,只是上游的 `key` 换了算法:上游节点的身份在 `id` / `inputs` /
- * `definitionId` 之外**再剥 `clipId`**(和 `cardSnapshotIdentity` 对输出节点做的一样),它自己的上游照同样的办法一层层算上去。
- * 所以:
+ * The shape is identical to `inputs` in `cardNodeIdentities`, except that the upstream `key` uses
+ * a different algorithm: on top of `id` / `inputs` / `definitionId`, the upstream node's identity
+ * **further strips `clipId`** (just as `cardSnapshotIdentity` does for output nodes), and its own
+ * upstreams are computed layer by layer up the chain in the same way. Therefore:
  *
- *   - 外面相同、里面不同的两个片段(挂同样强调的两张不同的卡、同一张卡参数不同、卡的源码版本不同、同一张素材效果卡接不同的素材、
- *     输入的时间映射不同、链路中间某一层不同)这一栏不同,键也就不同;
- *   - 里外都相同的两个片段这一栏相同 —— 上游的身份里没有片段的 id,同一张卡两个片段照旧共用一份;
- *   - **没有上游的节点这一栏是 `{}`**,和原来 `inputKeys: {}` 的写法逐字相同,这类片段的键一个字不变。
+ *   - For two clips that are identical on the outside but different on the inside (two different
+ *     cards with the same emphasis attached, the same card with different parameters, different
+ *     card source code versions, the same media effect card connected to different media, different
+ *     input time mappings, or a different layer in the middle of the chain), this entry differs, so
+ *     the key also differs;
+ *   - For two clips that are identical inside and out, this entry is identical: upstream identities
+ *     do not contain the clip id, so two clips of the same card still share one copy;
+ *   - **For nodes with no upstream, this entry is `{}`**, verbatim identical to the previous
+ *     `inputKeys: {}` form; the keys of such clips do not change by a single character.
  *
- * 上游的身份里没有片段的时长、相位、框:那些在 `cardSnapshotIdentity` 的 `snapshot` 一段里,取的是输出节点所在片段的;
- * 上游就在同一个片段里(强调、滤镜、声音效果、接自己那段素材的素材效果卡)时这就够了。上游是**别的片段**的节点时
- * (转场接两段素材),那个片段相对这一个的入点没有进键 —— `cardNodeIdentities` 也一样(它刻意不带时间上的摆放)。
- * 源依赖卡现在各产一条单卡流(`frame-stream.mjs` 的 `soloStreamKind`),这一处查过,不用补:素材效果卡取输入的时刻是
- * 「这张卡自己的时间 × 输入的倍速 + 输入的偏移 + 那段素材的裁剪起点」(`src/render/cards/GraphCard.tsx` 的 `renderNode`),
- * 那个片段摆在时间轴的哪一帧不是画面的输入;上面几样都在节点和边上,已经进键。
+ * An upstream's identity does not contain the clip's duration, phase, or box: those are in the
+ * `snapshot` section of `cardSnapshotIdentity`, taken from the clip where the output node resides;
+ * when an upstream is in the same clip (emphasis, filter, sound effects, a media effect card connecting
+ * to its own media), this is sufficient. When the upstream is a node of **another clip** (a transition
+ * connecting two media clips), that clip's in point relative to this one does not enter the key, and
+ * `cardNodeIdentities` is the same (it deliberately omits temporal placement). Source-dependent cards
+ * now each produce a single-card stream (`soloStreamKind` in `frame-stream.mjs`); this spot was checked
+ * and does not need patching: the moment a media effect card fetches its input is "this card's own
+ * time × input rate + input offset + trim start of that media clip" (`renderNode` in
+ * `src/render/cards/GraphCard.tsx`); which frame of the timeline that clip is placed at is not an input
+ * to the visual frame; all of the above are on nodes and edges and have already entered the key.
  *
- * 指向已删片段的输入:`validateCardGraph` 丢了边、把名字记在节点的 `missingInputs` 里,它留在节点上一并进摘要。
+ * Inputs pointing to deleted clips: `validateCardGraph` drops the edge and records the name in
+ * the node's `missingInputs`, which remains on the node and enters the digest together.
  */
 export function cardSnapshotInputKeys(graph, { style = {}, environment = {}, sourceVersions = {} } = {}) {
   const { nodes, levels } = validateCardGraph(graph);
   const byId = new Map(nodes.map(node => [node.id, node]));
   const definitions = new Map((graph.definitions ?? []).map(def => [def.id, def]));
-  const upstream = new Map(); // 节点 id → 它当别人的上游时的身份(不带片段的 id)
+  const upstream = new Map(); // Node id → its identity when acting as upstream to others (without the clip id)
   const inputKeys = new Map();
   for (const level of levels) for (const id of level) {
     const { id: _id, inputs, definitionId, clipId: _clipId, ...node } = byId.get(id);
@@ -165,29 +186,37 @@ export function cardSnapshotInputKeys(graph, { style = {}, environment = {}, sou
 }
 
 /**
- * 轨道流的流键(R8;任务书说 `streamKey` 的命名在本任务定、A3b 回头对齐 —— 这里先用 `streamKey`)。
+ * Stream key of track streams (R8; the task brief says the naming of `streamKey` is decided in this
+ * task, with A3b aligning later: using `streamKey` here for now).
  *
- * 两种流,键的口径不同:
+ * Two stream types with different key criteria:
  *
- *   - **单卡流**(`kind: 'card'`):画面在**包裹层自己的坐标系**里(和快照一样,A2(5) 之后
- *     x / y / 缩放 / 旋转 / 不透明度 / 淡入淡出 / motion / 强调都不在里面,由包裹层照常加上),
- *     所以内容身份用共享快照键 `snapshotKey`(同参数同框宽高就共享);再加上**时间上的摆放**
- *     (`sampling`:第一帧、相位、fps)—— 流按**全局帧号**分段(G4:时间不平移),入点挪了一帧
- *     分段里的内容就整体错一帧,不能复用;
- *   - **组流**(`kind: 'group'`):画面在舞台坐标里,包裹层的 `frameCss` / `opacity` / `filter` /
- *     `motion` 全部已经画进流里(G1),所以每张卡用带外观的缓存键 `control.key`,按画家顺序排。
+ *   - **Single-card stream** (`kind: 'card'`): the visual frame is in the **wrapper layer's own
+ *     coordinate system** (just like snapshots; after A2(5), x / y / scale / rotation / opacity /
+ *     fade / motion / emphasis are not included, added as usual by the wrapper layer), so content
+ *     identity uses shared snapshot key `snapshotKey` (shared with the same parameters and same box
+ *     width and height); plus **temporal placement** (`sampling`: first frame, phase, fps): streams
+ *     are segmented by **global frame numbers** (G4: time is not shifted), so shifting the in point
+ *     by one frame offsets the content in the segment by one frame overall, preventing reuse;
+ *   - **Group stream** (`kind: 'group'`): the visual frame is in stage coordinates, and `frameCss` /
+ *     `opacity` / `filter` / `motion` of the wrapper layer are all already rendered into the
+ *     stream (G1), so each card uses the cached key with appearance `control.key`, ordered in
+ *     painter's order.
  *
- * 两种都带上画幅、fps 和 `codeVersion`(生产这条流的代码指纹:截图 / 编码那几份文件一改,
- * 旧流全部作废)。**矩形和编码器不进流键**:它们只决定分段的「变体」(`init` 不同),
- * 页面按分段各自找自己的 `init`,见 `server/frame-stream.mjs`。
+ * Both include aspect ratio, fps, and `codeVersion` (code fingerprint that produced this stream:
+ * if any of the screenshot / encoding files change, old streams are entirely invalidated).
+ * **Rectangles and encoders do not enter the stream key**: they only determine segment "variants"
+ * (different `init`), and pages look up their own `init` per segment; see `server/frame-stream.mjs`.
  *
- * 第三种,**依赖下层的流**(`kind: 'below'`,`docs/plan/prerender-products-contract.md` 第 5.2 节):目标卡连同它下面的层一起渲,
- * 按舞台坐标产。成员只有目标卡一张,键见 `belowStreamIdentity`;上面两种的摘要一个字不变。
+ * A third type, **below-dependent stream** (`kind: 'below'`, `docs/plan/prerender-products-contract.md`
+ * Section 5.2): the target card is rendered together with the layers below it, produced in stage
+ * coordinates. There is only one member (the target card); see `belowStreamIdentity` for its key;
+ * digests of the two types above remain verbatim unchanged.
  */
 export function cardStreamIdentity({ kind = 'card', members = [], fps, stage = {}, codeVersion = '', below = null } = {}) {
   if (kind === 'below') return belowStreamIdentity({ members, fps, stage, codeVersion, below });
-  if (kind !== 'card' && kind !== 'group') throw new Error(`未知的流种类 ${kind}`);
-  if (!members.length) throw new Error('流里至少要有一张卡');
+  if (kind !== 'card' && kind !== 'group') throw new Error(`Unknown stream kind ${kind}`);
+  if (!members.length) throw new Error('A stream needs at least one card');
   return digest({
     stream: 1, kind, fps: ratio(fps), codeVersion,
     stage: { width: stage.width, height: stage.height, camera3dFov: stage.camera3dFov },
@@ -202,41 +231,57 @@ export function cardStreamIdentity({ kind = 'card', members = [], fps, stage = {
 }
 
 /**
- * 依赖下层的流里**放的是什么**的版本。每改一次流里放的东西就加一 —— 开关打开时(`belowStreamsEnabled`)用旧办法产出来的分段
- * 就不会被新的读法拿去贴。不动 `STREAM_CODE_VERSION`:那一个管所有的流。
+ * Version of **what is stored** inside below-dependent streams. Incremented each time the stream
+ * payload changes: when the switch is on (`belowStreamsEnabled`), segments produced by the old method
+ * will not be pasted by the new reader. Leaves `STREAM_CODE_VERSION` untouched: that one governs
+ * all streams.
  *
- *   0  只有身份(本文件)和计划(`frame-stream.mjs` 的 `planStreams`),流里照单卡流的办法放整幅截图(带着下层);
- *   1  差分取层(契约第 5.3 节,`./bakery/capture-below.mjs`):流里是「盖在只有下层的画面上正好得到带目标卡的画面」的那一层,
- *      目标卡没有改动的地方全透明。
- *   2  要回放的这种流,推过去而不取图的帧也画一张(`frame-stream.mjs` 的 `BELOW_DISCARD_SHOT`):之前稀疏版和断了租约重产的分段里,
- *      下层中途挂载的 motion 式卡会落后好几帧。
+ *   0  Identity only (this file) and planning (`planStreams` in `frame-stream.mjs`); the stream
+ *      contains full screenshots (including lower layers) following the single-card stream approach;
+ *   1  Differential layer extraction (Contract Section 5.3, `./bakery/capture-below.mjs`): the stream
+ *      contains the layer that "when overlaid on the frame with only lower layers, yields exactly
+ *      the frame with the target card", with untouched areas of the target card fully transparent;
+ *   2  For below-dependent streams that need playback, also draw frames that are stepped through
+ *      without capturing (`BELOW_DISCARD_SHOT` in `frame-stream.mjs`): previously in sparse versions
+ *      and segments re-produced after broken leases, motion-style cards mounted midway in lower
+ *      layers would lag behind by several frames.
  */
 export const BELOW_STREAM_VERSION = 2;
 
 /**
- * 依赖下层的流(`kind: 'below'`)的内容键。摘要里是(契约第 5.2 节):
+ * Content key of below-dependent streams (`kind: 'below'`). The digest contains (Contract Section 5.2):
  *
- *   - **目标卡**(`members` 恰好一项):带外观的缓存内容键(`control.cacheContentKey`:位置、缩放、旋转、不透明度、淡入淡出、
- *     轨迹都在里面 —— 这种流按舞台坐标产,外观画进流里),加采样的第一帧、相位、帧数;
- *   - **下层**(`below.layers`):画家顺序排在目标卡下面、活跃时间和它有重叠的每一个画面层,各自的缓存内容键、第一帧、相位、帧数,
- *     **按画家顺序排成一列**(下面的在前)。每项可另带 `extra`:缓存内容键没管到、又会改这一层画面的项目数据
- *     (现在是素材段的像素映射,见 `frame-stream.mjs` 的 `belowLayerExtra`);
- *   - 画幅、帧率、`codeVersion`,同别的流;再加 `BELOW_STREAM_VERSION`。
+ *   - **Target card** (`members` has exactly one item): cache content key with appearance
+ *     (`control.cacheContentKey`: position, scale, rotation, opacity, fade, and trajectory are all
+ *     included: this stream type is produced in stage coordinates, with appearance rendered into
+ *     the stream), plus the first sampling frame, phase, and frame count;
+ *   - **Lower layers** (`below.layers`): every visual layer ordered below the target card in
+ *     painter's order whose active time overlaps with it, with each layer's cache content key,
+ *     first frame, phase, and frame count, **arranged in a list in painter's order** (lower layers
+ *     first). Each item may additionally include `extra`: project data that alters this layer's
+ *     visual frame but is not covered by the cache content key (currently pixel maps of media clips;
+ *     see `belowLayerExtra` in `frame-stream.mjs`);
+ *   - Aspect ratio, frame rate, and `codeVersion`, same as other streams; plus `BELOW_STREAM_VERSION`.
  *
- * 所以下层任一层的参数、位置、时间、上下顺序变了,或者下层多了少了一层,键就变;排在上面的层怎么改都不变
- * (`mechanism/cards.md`「轴三」:下层依赖卡的预渲染结果,同一时刻下层任一控件的参数变了就失效)。
+ * Therefore, if parameters, position, timing, or stacking order of any lower layer change, or if
+ * a lower layer is added or removed, the key changes; changes to layers stacked above never alter
+ * it (`mechanism/cards.md` "Axis 3": prerender output of below-dependent cards is invalidated whenever
+ * parameters of any lower-layer control at the same moment change).
  *
- * 算不出某个下层的键时不许拿残缺的一列出键:调用方改传 `below.scene`(整个项目的键 `entry.key`),摘要里就只有目标卡加这一个键 ——
- * 更粗(项目里任何改动都作废),但不会错。`layers` 与 `scene` 都没有、或哪一项缺键就抛。
+ * When the key of a lower layer cannot be computed, producing a key from an incomplete list is
+ * prohibited: the caller instead passes `below.scene` (the key of the entire project, `entry.key`),
+ * so the digest contains only the target card plus this single key: coarser (any change in the
+ * project invalidates it), but safe. Throws if neither `layers` nor `scene` is provided, or if any
+ * item lacks a key.
  */
 function belowStreamIdentity({ members = [], fps, stage = {}, codeVersion = '', below = null } = {}) {
-  if (members.length !== 1) throw new Error('依赖下层的流只有目标卡一个成员');
+  if (members.length !== 1) throw new Error('A stream that depends on lower layers has only the target card as its member');
   const scene = below?.scene;
   const layers = below?.layers;
-  if (scene !== undefined && scene !== null && (typeof scene !== 'string' || !scene)) throw new Error('依赖下层的流:整个项目的键不对');
-  if (!scene && !Array.isArray(layers)) throw new Error('依赖下层的流:要给下层的键,或者整个项目的键');
+  if (scene !== undefined && scene !== null && (typeof scene !== 'string' || !scene)) throw new Error('Stream that depends on lower layers: the key for the whole project is invalid');
+  if (!scene && !Array.isArray(layers)) throw new Error('Stream that depends on lower layers: provide the keys of the lower layers, or the key of the whole project');
   const item = m => {
-    if (typeof m?.key !== 'string' || !m.key) throw new Error('依赖下层的流:有一层没有键');
+    if (typeof m?.key !== 'string' || !m.key) throw new Error('Stream that depends on lower layers: one layer has no key');
     return {
       key: m.key,
       firstFrame: m.sampling?.firstFrame,

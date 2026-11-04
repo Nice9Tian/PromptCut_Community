@@ -6,8 +6,9 @@ import { dataDemoClips } from "./cards/native/batch-data";
 import { timelineDemoClips } from "./cards/native/batch-timeline";
 
 /**
- * 演示时间轴:预览和导出共用。
- * 0–10 秒 Magic UI 适配卡,10–20 秒自家 Motion 卡,探针卡和第一张 Magic UI 卡同屏(0–2 秒)。
+ * Demo timeline: shared by preview and export.
+ * 0–10 s Magic UI adapter cards, 10–20 s built-in Motion cards; the probe card and the first Magic
+ * UI card are on screen together (0–2 s).
  */
 export const demoTimeline: Timeline = {
   width: 1920,

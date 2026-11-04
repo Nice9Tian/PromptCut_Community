@@ -11,24 +11,28 @@ import { exportBegin, exportEnd } from "./render-pool-state.mjs";
 import { exportOriginalsGate } from "./export-originals";
 import { hashFromUrl, originalHashOf } from "../src/render/mediaTier";
 import { EXPORT_KEEP, claimExportDir, pruneExportDir, sweepExportRoot } from "./storage-leftovers.mjs";
+import { tr as trText } from "./i18n.mjs";
 
 interface ExportJob {
   id: string;
   status: "running" | "done" | "error" | "cancelled";
   done: number;
   total: number;
-  /** 进行到哪一步:render = Chrome 逐帧渲卡片,compose = ffmpeg 合素材编码。done/total 是这一步的帧数 */
+  /**
+   * Which step is in progress: render = Chrome renders cards frame-by-frame, compose = ffmpeg merges
+   * assets and encodes. done/total is the frame count of this step
+   */
   stage?: "render" | "compose";
   message?: string;
   outDir: string;
-  /** 绝对路径,给「打开文件夹」和取件用;不回给浏览器以外的地方 */
+  /** Absolute path, for "Open folder" and retrieving outputs; not returned outside the browser */
   absOutDir: string;
-  /** 渲染子进程,取消时要连它的子孙一起杀(它自己还会拉起 Chrome 和 ffmpeg) */
+  /** Render child process; on cancel, kill its descendants too (it also spawns Chrome and ffmpeg) */
   child?: ReturnType<typeof spawn>;
   cancelled?: boolean;
 }
 
-/** 允许被浏览器取走的产物,白名单挡住任意读盘 */
+/** Outputs allowed to be fetched by the browser, with allowlist blocking arbitrary disk reads */
 const DELIVERABLES = ["preview.mp4", "overlay.mov"] as const;
 
 const jobs = new Map<string, ExportJob>();
@@ -39,8 +43,9 @@ function sanitizeFilename(name: string) {
 }
 
 /**
- * 导出根目录。桌面版里 root 是安装目录下的 runtime/app,成品不能落在那里(卸载会一起删),
- * 所以优先读壳设置的 PROMPTCUT_EXPORT_DIR(默认 %USERPROFILE%VideosPromptCut);开发期回落到 <root>/out。
+ * Export root directory. In the desktop app, root is runtime/app under installation directory, and
+ * final video must not land there (deleted on uninstall), so it prefers PROMPTCUT_EXPORT_DIR set by
+ * the shell (default %USERPROFILE%VideosPromptCut); falls back to <root>/out during development.
  */
 function outRoot(root: string): string {
   return process.env.PROMPTCUT_EXPORT_DIR || path.resolve(root, "out");
@@ -60,21 +65,30 @@ function allowedMediaRoots(root: string): string[] {
 }
 
 /**
- * 导出页拿到的项目里,每条素材该用哪个地址(写回 `project.media[].url`,就地改的是这次导出自己的那份 JSON)。
+ * Which URL each asset should use in the project received by export page (written back to
+ * `project.media[].url`, modifying this export's own JSON copy in place).
  *
- * - **有合法哈希的**:哈希就是素材的身份,只认素材服务的按哈希地址 `/@media/<素材原尺寸哈希>`(与
- *   `render-project.mjs`、`vite-plugin-vision.ts` 同一条规矩)。不看 `path`:那是导入那台机器上的落点,
- *   在另一台机器上直接打开带对方路径的 `.proc` 再导出,按路径读会解码失败(2026-09-30 `claude/pack-hash` 发现)。
- *   地址本来就是这份哈希的(`/@media/<hash>` 或带扩展名的写法)原样留着。
- * - **没有哈希、地址为空的**(打开项目后本机取不到文件、已标「(缺失)」的老素材,见 `src/editor/io/mediaUpload.ts`):
- *   地址留空,不再按 `path` 读 —— 那台机器上的路径在这里读不到,读了导出页会解码失败、整次导出作废。回在 `skipped` 里,
- *   由 `dropSkippedMediaClips` 从这次导出的时间轴上去掉引用它的片段,并告诉用户(`/api/export` 回包的 `skippedMedia`)。
- *   上传中(`pending`)的不在此列,照旧。
- * - **没有哈希的**(迁移期老素材):照旧按 `path` 走受保护的读接口 `/api/media/file?path=…`;
- *   路径在 PromptCut 的素材目录里、文件又在的,用解析后的绝对路径(老 `.proc` 可能同时带着过期的短地址 `/@media/<文件名>`)。
- * - 浏览器上传进暂存区的(`/@export/media/<文件>`)换成这次导出目录里的地址。
+ * - **Those with a valid hash**: Hash is the asset's identity, recognizing only the asset service's
+ *   hash-based URL `/@media/<original-size-asset-hash>` (same rule as `render-project.mjs` and
+ *   `vite-plugin-vision.ts`). Do not check `path`: that is the drop target on importing machine;
+ *   opening a `.proc` carrying the other party's path directly on another machine and exporting will
+ *   cause decoding to fail if read by path (discovered 2026-09-30 by `claude/pack-hash`).
+ *   URLs that are already this hash (`/@media/<hash>` or written with an extension) are kept as is.
+ * - **Those without a hash and with empty URL** (legacy assets where files cannot be fetched locally
+ *   after opening project and are marked "(missing)", see `src/editor/io/mediaUpload.ts`):
+ *   Leave URL empty, no longer read by `path`: paths on that machine cannot be read here, and reading
+ *   them causes export page decoding to fail, invalidating the entire export. Returned in `skipped`,
+ *   where `dropSkippedMediaClips` removes clips referencing it from this export's timeline, and
+ *   informs user (`skippedMedia` in `/api/export` response). Those uploading (`pending`) are not
+ *   included here, proceeding as usual.
+ * - **Those without a hash** (legacy assets during transition period): Route through protected read
+ *   endpoint `/api/media/file?path=…` by `path` as usual; if path is in PromptCut's asset catalog and
+ *   file exists, use resolved absolute path (legacy `.proc` may simultaneously carry an expired
+ *   short URL `/@media/<filename>`).
+ * - Assets uploaded by browser into staging area (`/@export/media/<file>`) are replaced with URLs in
+ *   this export's directory.
  *
- * `opts` 给单测:素材目录与「文件在不在」可以换掉。
+ * `opts` is for unit tests: asset catalog and "whether file exists" can be substituted.
  */
 export async function normalizeExportMedia(
   project: any,
@@ -88,9 +102,11 @@ export async function normalizeExportMedia(
   const exists = opts.exists ?? (async (file: string) => { try { await fs.access(file); return true; } catch { return false; } });
   for (const m of project.media) {
     if (!m || typeof m !== "object") continue;
-    // 认定过「确认缺失」的素材不改地址、也不跳过:画面与声音的占位核对记录与素材的地址逐字相同(src/audio/missingMaterial.ts),
-    // 导出时这些片段照原位置出占位,不去读它的文件。
-    // 判定与画面、声音那一侧用同一个函数(记录与素材的类别、名字、地址、哈希都对得上才算)
+    // Assets deemed "confirmed missing" do not change URLs or get skipped: placeholder reconciliation
+    // records for video and audio match the asset URL verbatim (src/audio/missingMaterial.ts);
+    // during export, these clips output placeholders at original positions without reading their files.
+    // Determination uses the same function as video and audio sides (counted only when record matches
+    // category, name, URL, and hash of asset)
     if (confirmedMissing(m) && m.url) continue;
     const hash = originalHashOf(m);
     if (hash) {
@@ -99,7 +115,7 @@ export async function normalizeExportMedia(
       continue;
     }
     if (!String(m.url || "") && !m.pending) {
-      // 已标缺失:地址留空,不按 path 读(见函数头)
+      // Already marked missing: leave URL empty, do not read by path (see function header)
       m.url = "";
       skipped.push({ id: String(m.id ?? ""), name: String(m.name ?? "") });
       continue;
@@ -123,8 +139,10 @@ export async function normalizeExportMedia(
 }
 
 /**
- * 从这次导出的项目(导出自己的那份 JSON,就地改)里去掉引用 `skipped` 素材的片段,跳过这一段而不是让导出页解码失败。
- * 回真的被去掉了片段的素材(同一条素材只列一次,带去掉的片段数);没有片段引用的缺失素材不影响导出,不列。
+ * Remove clips referencing `skipped` assets from this exported project (modifying the export's own
+ * JSON copy in place), skipping this section instead of causing the export page to fail decoding.
+ * Returns assets that genuinely had clips removed (each asset listed once, with count of removed
+ * clips); missing assets with no clip references do not affect export and are not listed.
  */
 export function dropSkippedMediaClips(project: any, skipped: Array<{ id: string; name: string }>): Array<{ id: string; name: string; clips: number }> {
   if (!skipped.length || !Array.isArray(project?.tracks)) return [];
@@ -166,13 +184,16 @@ async function handleMediaUpload(req: Connect.IncomingMessage, res: ServerRespon
 }
 
 /**
- * 导出进程退出后收拾产物目录:只留成片、透明层与 project.json(`storage-leftovers.mjs` 的 `pruneExportDir`)。
- * 成功、取消、失败都做 —— 取消和失败留下的 frames / parts 同样是大块的废料;已有的成片、透明层照留,
- * 列表里能看到这次导出。取消时 Chrome / ffmpeg 孙进程可能比渲染进程晚一点退、还占着文件,
- * 删不掉的隔一会儿再试几次。
+ * Clean up output directory after export process exits: keep only final video, transparent layer,
+ * and project.json (`pruneExportDir` in `storage-leftovers.mjs`).
+ * Performed on success, cancellation, and failure: frames / parts left behind by cancellation and
+ * failure are similarly large chunks of waste; existing final videos and transparent layers are kept
+ * as is, so this export remains visible in list. On cancellation, Chrome / ffmpeg grandchild
+ * processes might exit slightly later than render process and still hold files; retry a few times
+ * after a brief interval for those that cannot be deleted.
  */
 async function cleanupExportDir(dir: string, { framesOnly = false } = {}) {
-  // --no-video 的导出只有逐帧 PNG,那就是产物,不删
+  // Exports with --no-video only produce frame-by-frame PNGs, which are outputs and not deleted
   const keep = framesOnly ? [...EXPORT_KEEP, "frames"] : EXPORT_KEEP;
   for (let attempt = 0; attempt < 4; attempt++) {
     const report = await pruneExportDir(dir, { keep, log: (m: string) => console.log(m) });
@@ -201,7 +222,8 @@ async function handleExportStart(req: Connect.IncomingMessage, res: ServerRespon
         workers = body.workers;
       }
 
-      // C6.6:导出只用素材原尺寸。被片段引用的素材原尺寸在当前素材服务上没到齐就不出片(设计稿第 9 节第 3 条)
+      // C6.6: Export only uses original-size assets. If original-size assets referenced by clips
+      // are not all present on current asset service, do not render final video (design doc Section 9, item 3)
       const gate = await exportOriginalsGate(project);
       if (!gate.ok) {
         res.statusCode = 409;
@@ -225,16 +247,18 @@ async function handleExportStart(req: Connect.IncomingMessage, res: ServerRespon
         // staging dir might not exist, ignore
       }
       
-      // 素材地址:有哈希按哈希、没哈希才按路径;已标缺失的跳过它所在的片段并告诉用户(规则见 normalizeExportMedia)
+      // Asset URL: use hash if present, use path only if absent; for those marked missing, skip clips
+      // containing them and inform user (see normalizeExportMedia for rules)
       const { skipped } = await normalizeExportMedia(project, root, id);
       const skippedMedia = dropSkippedMediaClips(project, skipped);
-      if (skippedMedia.length) console.warn(`[export] 跳过缺失素材所在的片段:${skippedMedia.map((m) => `${m.name || m.id}×${m.clips}`).join("、")}`);
+      if (skippedMedia.length) console.warn(`[export] Skipping clips whose media is missing: ${skippedMedia.map((m) => `${m.name || m.id}×${m.clips}`).join(", ")}`);
       
       const projectJsonPath = path.resolve(outDir, "project.json");
       await fs.writeFile(projectJsonPath, JSON.stringify(project, null, 2));
       
       lastJobId = id;
-      // 回给浏览器的路径:开发期是相对项目根的 out/export-<id>,桌面版(设了 PROMPTCUT_EXPORT_DIR)给绝对路径
+      // Path returned to browser: out/export-<id> relative to project root during development;
+      // absolute path in desktop app (with PROMPTCUT_EXPORT_DIR set)
       const relOutDir = process.env.PROMPTCUT_EXPORT_DIR ? outDir : `out/export-${id}`;
       // The child does not print its first frame until Chrome has loaded and
       // sampled the project.  Seed the job with the real render total so the
@@ -259,7 +283,8 @@ async function handleExportStart(req: Connect.IncomingMessage, res: ServerRespon
         `http://127.0.0.1:${port}/?export=1&timeline=/@export/${id}/project.json`,
         "--out",
         relOutDir,
-        // 默认按机器资源并行；每个分片仍从第 0 帧推起，且只在安全卡片边界切开。
+        // Parallelize by machine resources by default; each chunk still pushes from frame 0,
+        // and only splits at safe card boundaries.
         "--workers",
         workers !== undefined && workers !== null && workers !== ""
           ? String(workers)
@@ -278,9 +303,11 @@ async function handleExportStart(req: Connect.IncomingMessage, res: ServerRespon
       const child = spawn(process.execPath, args, { cwd: root, windowsHide: true });
       job.child = child;
       /*
-       * 记账(render-pool-state.mjs):导出也起 Chrome、也吃核,渲染池算槽位时要把它算进去,
-       * 而且导出期间暂停空闲预渲染(docs/archive/topics/decoupling-plan.md 3.3 节「导出优先级最低」)。
-       * 结束只记一次:子进程起不来时可能只有 error 没有 close,两条路都要收。
+       * Accounting (render-pool-state.mjs): export also spawns Chrome and consumes cores, so the
+       * render pool must count it when calculating slots, and idle prerendering is paused during
+       * export (docs/archive/topics/decoupling-plan.md section 3.3 "Export has lowest priority").
+       * Record completion only once: when a child process fails to start, there may only be error
+       * and no close, so both paths must be handled.
        */
       exportBegin();
       let accounted = true;
@@ -295,8 +322,9 @@ async function handleExportStart(req: Connect.IncomingMessage, res: ServerRespon
       let stderrLog: string[] = [];
       child.stdout.on("data", (data) => {
         const str = data.toString();
-        // 两步各自报进度:「Exported frame 0 (1/90)」是 Chrome 渲卡片,「Composited frame 45/90」是 ffmpeg 合素材。
-        // 一块输出里可能有好几行,取最后一行
+        // Both steps report progress separately: "Exported frame 0 (1/90)" is Chrome rendering cards,
+        // and "Composited frame 45/90" is ffmpeg compositing assets.
+        // A chunk of output may contain multiple lines; take the last line
         const composed = [...str.matchAll(/Composited frame (\d+)\/(\d+)/g)].pop();
         const rendered = [...str.matchAll(/Exported frame \d+ \((\d+)\/(\d+)\)/g)].pop();
         const m = composed || rendered;
@@ -314,22 +342,24 @@ async function handleExportStart(req: Connect.IncomingMessage, res: ServerRespon
       
       child.on("close", async (code) => {
         job.child = undefined;
-        // 先收拾目录再报结束:界面看到「完成」时目录已经是最终的样子(成片与透明层不动,取件不受影响)
+        // Clean up the directory before reporting completion: when the UI displays "Done", the
+        // directory is already in its final state (final video and transparent layer remain untouched,
+        // file retrieval is unaffected)
         await cleanupExportDir(outDir, { framesOnly: !!noVideo }).catch(() => {});
         if (job.cancelled) {
           job.status = "cancelled";
-          job.message = "已取消";
+          job.message = "Cancelled";
         } else if (code === 0) {
           job.status = "done";
         } else {
           job.status = "error";
           const tail = stderrLog.join("").trim();
-          // 0xC0000142 = STATUS_DLL_INIT_FAILED,子进程连 DLL 都没加载起来,
-          // 所以 stderr 是空的。裸报一个十进制数字没人看得懂,这里给一句人话。
+          // 0xC0000142 = STATUS_DLL_INIT_FAILED: the child process failed to even load DLLs, so stderr
+          // is empty. Reporting a bare decimal number is incomprehensible, so give a plain-English message here.
           job.message = tail
             || (code === 3221225794
-              ? "渲染进程启动失败(0xC0000142)。通常是同时开了太多浏览器实例,关掉一些再试;若持续出现请重启软件。"
-              : `渲染进程异常退出(代码 ${code})`);
+              ? trText("Render process failed to start (0xC0000142). This is usually caused by too many browser instances open at once. Close some and try again; if it keeps happening, restart the app.")
+              : trText("Render process exited abnormally (code {0})", code));
         }
       });
       
@@ -436,7 +466,7 @@ async function serveFile(filePath: string, req: Connect.IncomingMessage, res: Se
   }
 }
 
-/** 把某个产物流给浏览器。只认白名单里的文件名,不接受路径。 */
+/** Stream a deliverable to the browser. Only whitelisted filenames are accepted; paths are not accepted. */
 async function handleDeliverable(res: ServerResponse, id: string, name: string) {
   const job = jobs.get(id);
   if (!job) {
@@ -448,7 +478,7 @@ async function handleDeliverable(res: ServerResponse, id: string, name: string) 
     return res.end("Not a deliverable");
   }
   const file = path.resolve(job.absOutDir, name);
-  // 名字来自白名单,这里再确认一次没跑出产物目录
+  // The name comes from the whitelist; confirm once more here that it has not escaped the deliverables directory
   if (!file.startsWith(path.resolve(job.absOutDir) + path.sep)) {
     res.statusCode = 400;
     return res.end("Path escaped output dir");
@@ -464,11 +494,11 @@ async function handleDeliverable(res: ServerResponse, id: string, name: string) 
     createReadStream(file).on("error", () => { if (!res.headersSent) res.statusCode = 404; res.destroy(); }).pipe(res);
   } catch {
     res.statusCode = 404;
-    res.end("产物还没生成");
+    res.end(trText("Output not generated yet"));
   }
 }
 
-/** 在文件管理器里定位产物目录。Windows 用 explorer,其余平台各按各的。 */
+/** Reveal the deliverables directory in the file manager. Windows uses explorer; other platforms use their own. */
 function handleReveal(res: ServerResponse, id: string) {
   const job = jobs.get(id);
   if (!job) {
@@ -477,15 +507,15 @@ function handleReveal(res: ServerResponse, id: string) {
   }
   const opener = process.platform === "win32" ? "explorer.exe"
     : process.platform === "darwin" ? "open" : "xdg-open";
-  // explorer 打开目录时返回码是 1,这不是失败,所以不看退出码
+  // explorer returns exit code 1 when opening a directory; this is not a failure, so ignore the exit code
   spawn(opener, [job.absOutDir], { detached: true, stdio: "ignore" }).unref();
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify({ ok: true, dir: job.outDir }));
 }
 
 /**
- * 取消导出。渲染进程自己还会拉起 Chrome 和 ffmpeg,只杀它会留下孤儿,
- * 所以 Windows 上走 taskkill /T 把整棵进程树带走。
+ * Cancel export. The render process also spawns Chrome and ffmpeg itself; killing only that
+ * process leaves orphans, so on Windows use taskkill /T to terminate the entire process tree.
  */
 function handleCancel(res: ServerResponse, id: string) {
   const job = jobs.get(id);
@@ -511,12 +541,13 @@ export function exportPlugin(): Plugin {
     name: "vite-plugin-export",
     configureServer(server) {
       const root = server.config.root;
-      // 启动清理:死进程留下的视觉工具临时导出 `export-vision-<pid>-*`(只认这一种形态)
+      // Startup cleanup: temporary vision tool exports left behind by dead processes
+      // `export-vision-<pid>-*` (only this pattern is recognized)
       void sweepExportRoot(outRoot(root), { log: (m: string) => console.log(m) }).catch(() => {});
       server.middlewares.use(async (req, res, next) => {
         if (!req.url) return next();
         
-        // POST /api/export/media/<文件名>
+        // POST /api/export/media/<filename>
         if (req.method === "POST" && req.url.startsWith("/api/export/media/")) {
           return handleMediaUpload(req, res, root);
         }
@@ -526,23 +557,26 @@ export function exportPlugin(): Plugin {
           return handleExportStart(req, res, server, root);
         }
         
-        // GET /api/export/<id>/file/<名字> —— 把产物交给浏览器,好让它写到用户
-        // 用「另存为」挑的位置去(和保存项目走同一套 File System Access API)
+        // GET /api/export/<id>/file/<name>: hand deliverables to the browser so it can write them to
+        // the location chosen by the user via "Save as" (uses the same File System Access API as saving projects)
         const fileMatch = req.method === "GET" && req.url.match(/^\/api\/export\/([^/]+)\/file\/([^/?]+)$/);
         if (fileMatch) {
           return handleDeliverable(res, fileMatch[1], decodeURIComponent(fileMatch[2]));
         }
 
-        // POST /api/export/audio-mix/<id> —— 混音页(src/AudioMixView.tsx)把渲好的 mix.wav 原样交回来,
-        // 写到 export-<id>/audio/mix.wav,server/bakery 再用 ffmpeg 合进 preview.mp4。
-        // 路径是「前缀 + id」的形状,因为 api-guard 只按前缀放行原始体(RAW_BODY_PREFIXES)
+        // POST /api/export/audio-mix/<id>: the audio mix page (src/AudioMixView.tsx) returns rendered
+        // mix.wav as-is, writes it to export-<id>/audio/mix.wav, and server/bakery uses ffmpeg to
+        // composite into preview.mp4.
+        // The path has the shape "prefix + id" because api-guard only allows raw bodies by prefix
+        // (RAW_BODY_PREFIXES)
         const mixMatch = req.method === "POST" && req.url.match(/^\/api\/export\/audio-mix\/([^/?]+)$/);
         if (mixMatch) {
           const id = sanitizeFilename(mixMatch[1]);
           const dir = path.resolve(outRoot(root), `export-${id}`, "audio");
           try {
             await fs.mkdir(dir, { recursive: true });
-            // 直接落盘、不在内存里拼:float32 立体声 48k 一小时 1.4 GB。上限 3 GB(约两小时)
+            // Write directly to disk without assembling in memory: float32 stereo 48k is 1.4 GB per hour.
+            // Cap at 3 GB (about two hours)
             const MAX = 3 * 1024 * 1024 * 1024;
             let bytes = 0;
             let over = false;
@@ -560,7 +594,7 @@ export function exportPlugin(): Plugin {
             });
             if (over) {
               res.statusCode = 413;
-              return res.end(JSON.stringify({ ok: false, error: "混音超过 3 GB,没有保存" }));
+              return res.end(JSON.stringify({ ok: false, error: trText("Audio mix exceeds 3 GB, not saved") }));
             }
             const buf = { length: bytes };
             res.setHeader("Content-Type", "application/json");
@@ -571,13 +605,13 @@ export function exportPlugin(): Plugin {
           }
         }
 
-        // POST /api/export/<id>/reveal —— 在文件管理器里打开产物目录
+        // POST /api/export/<id>/reveal: open the deliverables directory in the file manager
         const revealMatch = req.method === "POST" && req.url.match(/^\/api\/export\/([^/]+)\/reveal$/);
         if (revealMatch) {
           return handleReveal(res, revealMatch[1]);
         }
 
-        // DELETE /api/export/<id> —— 取消
+        // DELETE /api/export/<id>: cancel
         const cancelMatch = req.method === "DELETE" && req.url.match(/^\/api\/export\/([^/?]+)$/);
         if (cancelMatch) {
           return handleCancel(res, cancelMatch[1]);
@@ -607,7 +641,7 @@ export function exportPlugin(): Plugin {
             const name = sanitizeFilename(decodeURIComponent(match[2]));
             return serveFile(path.resolve(outRoot(root), `export-${id}`, "media", name), req, res);
           }
-          // GET /@export/<id>/audio/<文件> —— 混音页读裁好的 wav 和 plan.json
+          // GET /@export/<id>/audio/<file>: the audio mix page reads the trimmed wav and plan.json
           match = url.match(/^\/@export\/([^/]+)\/audio\/([^/]+)$/);
           if (match) {
             const id = sanitizeFilename(match[1]);

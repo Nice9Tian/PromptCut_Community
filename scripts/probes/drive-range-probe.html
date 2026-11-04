@@ -2,21 +2,21 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Drive 分段取字节探针</title>
+<title>Drive segmented byte fetch probe</title>
 <!--
-  网盘连接器 D1 探针（任务书 docs/plan/drive-connector-task.md 第 6 节）。
+  Cloud drive connector D1 probe (task brief docs/plan/drive-connector-task.md, section 6).
 
-  一次验两件事：
-    1. Google Picker 选中的文件，在只要 drive.file 这个非敏感范围下读不读得到；
-    2. files.get?alt=media 支不支持 Range（官方文档没写明，只能实测）。
+  Verifies two things at once:
+    1. Whether a file chosen in Google Picker can be read under the non-sensitive scope drive.file alone;
+    2. Whether files.get?alt=media supports Range (the official docs do not say, so it can only be measured).
 
-  怎么跑（不要用项目的开发服务器，免得碰到用户常驻的那个）：
-      cd <这个文件所在目录>
+  How to run it (do not use the project's dev server, to avoid touching the one the user keeps running):
+      cd <directory containing this file>
       python -m http.server 5321
-    然后浏览器开 http://localhost:5321/drive-range-probe.html
+    then open http://localhost:5321/drive-range-probe.html in a browser
 
-  Google Cloud 那边要先配好（任务书第 8 节）：已获授权的 JavaScript 来源里要有
-  http://localhost:5321，范围只加 .../auth/drive.file。
+  Google Cloud must be configured first (task brief, section 8): the authorized JavaScript origins must include
+  http://localhost:5321, and the only scope to add is .../auth/drive.file.
 -->
 <style>
   :root { color-scheme: light dark; --bg:#fff; --fg:#1a1a1a; --mut:#666; --line:#ddd; --ok:#0a7d32; --bad:#c0271d; --card:#f7f7f8; }
@@ -39,25 +39,25 @@
 </head>
 <body>
 <main>
-  <h1>Drive 分段取字节探针</h1>
-  <p class="sub">验两件事：<code>drive.file</code> 够不够用、<code>files.get?alt=media</code> 支不支持 Range。</p>
+  <h1>Drive segmented byte fetch probe</h1>
+  <p class="sub">Verifies two things: whether <code>drive.file</code> is enough, and whether <code>files.get?alt=media</code> supports Range.</p>
 
   <fieldset>
-    <legend>Google Cloud 的三样（都不是秘密，会出现在页面里）</legend>
-    <label for="cid">OAuth 客户端 ID（<code>…apps.googleusercontent.com</code>）</label>
+    <legend>Three items from Google Cloud (none is a secret; they appear on the page)</legend>
+    <label for="cid">OAuth client ID (<code>…apps.googleusercontent.com</code>)</label>
     <input type="text" id="cid" autocomplete="off" spellcheck="false">
-    <label for="key">API 密钥（Picker 要用）</label>
+    <label for="key">API key (needed by Picker)</label>
     <input type="text" id="key" autocomplete="off" spellcheck="false">
-    <label for="app">Cloud 项目编号（纯数字，Picker 的 appId；<code>drive.file</code> 的按文件授权靠它记账）</label>
+    <label for="app">Cloud project number (digits only, the Picker appId; the per-file authorization of <code>drive.file</code> is accounted against it)</label>
     <input type="text" id="app" autocomplete="off" spellcheck="false">
   </fieldset>
 
   <p>
-    <button id="go" disabled>授权并选一个视频</button>
-    <button id="clear">清空日志</button>
+    <button id="go" disabled>Authorize and pick a video</button>
+    <button id="clear">Clear log</button>
   </p>
 
-  <div id="log">正在载入 Google 的脚本…</div>
+  <div id="log">Loading Google's scripts…</div>
 </main>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -77,19 +77,19 @@ function log(text, cls) {
 function reset() { lines = []; logEl.textContent = ""; }
 document.getElementById("clear").onclick = reset;
 
-// 三个输入框记在本地，省得每次重填；它们不是秘密
+// The three input boxes are remembered locally so they need not be refilled every time; they are not secrets
 for (const [k, el] of Object.entries(fields)) {
   try { el.value = localStorage.getItem(`${LS}.${k}`) ?? ""; } catch {}
   el.addEventListener("input", () => { try { localStorage.setItem(`${LS}.${k}`, el.value.trim()); } catch {} });
 }
 
-// 两个脚本都到齐才放行
+// Let it through only once both scripts have arrived
 let gisReady = false, pickerReady = false;
 function maybeEnable() {
   if (!gisReady || !pickerReady) return;
   goEl.disabled = false;
   reset();
-  log("脚本到齐。填好上面三样，点「授权并选一个视频」。", "mut");
+  log("Scripts loaded. Fill in the three items above, then click \"Authorize and pick a video\".", "mut");
 }
 const waitFor = (test, done) => {
   const t = setInterval(() => { if (test()) { clearInterval(t); done(); } }, 120);
@@ -100,33 +100,33 @@ waitFor(() => window.gapi, () => gapi.load("picker", () => { pickerReady = true;
 
 goEl.onclick = () => {
   const cid = fields.cid.value.trim(), key = fields.key.value.trim(), app = fields.app.value.trim();
-  if (!cid || !key || !app) { reset(); log("三样都要填。", "bad"); return; }
+  if (!cid || !key || !app) { reset(); log("All three items are required.", "bad"); return; }
   reset();
-  log("① 请求授权，范围只要 " + SCOPE);
+  log("① Requesting authorization, the scope needed is only " + SCOPE);
   google.accounts.oauth2.initTokenClient({
     client_id: cid,
     scope: SCOPE,
     callback: (resp) => {
-      if (resp.error) { log(`授权失败：${resp.error} ${resp.error_description ?? ""}`, "bad"); return; }
-      log(`   拿到 access token，约 ${resp.expires_in} 秒后过期（${(resp.expires_in / 60).toFixed(0)} 分钟）`, "ok");
-      log(`   实际给到的范围：${resp.scope}`);
+      if (resp.error) { log(`Authorization failed: ${resp.error} ${resp.error_description ?? ""}`, "bad"); return; }
+      log(`   Got an access token, expires in about ${resp.expires_in} seconds (${(resp.expires_in / 60).toFixed(0)} minutes)`, "ok");
+      log(`   Scope actually granted: ${resp.scope}`);
       openPicker(resp.access_token, key, app);
     },
   }).requestAccessToken();
 };
 
 function openPicker(token, key, appId) {
-  log("② 打开 Picker，选一个视频文件");
+  log("② Opening Picker, pick a video file");
   new google.picker.PickerBuilder()
     .addView(new google.picker.DocsView(google.picker.ViewId.DOCS_VIDEOS).setIncludeFolders(true))
     .setOAuthToken(token)
     .setDeveloperKey(key)
     .setAppId(appId)
     .setCallback((data) => {
-      if (data.action === google.picker.Action.CANCELLED) { log("   取消了。", "mut"); return; }
+      if (data.action === google.picker.Action.CANCELLED) { log("   Cancelled.", "mut"); return; }
       if (data.action !== google.picker.Action.PICKED) return;
       const doc = data.docs[0];
-      log(`   选中：${doc.name}（id ${doc.id}）`, "ok");
+      log(`   Selected: ${doc.name} (id ${doc.id})`, "ok");
       runChecks(token, doc.id);
     })
     .build()
@@ -139,45 +139,45 @@ async function runChecks(token, id) {
   const auth = { Authorization: `Bearer ${token}` };
   let size = null;
 
-  // 第 1 问：drive.file 这个窄范围下，Picker 选中的文件读不读得到元信息
-  log("③ 用 drive.file 读元信息（验「选中即授权」是否成立）");
+  // Question 1: under the narrow scope drive.file, can the file chosen in Picker have its metadata read
+  log("③ Reading metadata with drive.file (verifying whether \"choosing equals authorizing\" holds)");
   try {
     const r = await fetch(api(id, "fields=id,name,size,mimeType&supportsAllDrives=true"), { headers: auth });
     const body = await r.json();
     if (!r.ok) { log(`   ✗ ${r.status} ${JSON.stringify(body?.error?.message ?? body)}`, "bad"); return; }
     size = Number(body.size);
-    log(`   ✓ 读到了：${body.mimeType}，${(size / 1e6).toFixed(1)} MB`, "ok");
-    log("   → drive.file 够用，不需要受限范围 drive.readonly", "ok");
+    log(`   ✓ Read it: ${body.mimeType}, ${(size / 1e6).toFixed(1)} MB`, "ok");
+    log("   → drive.file is enough, the restricted scope drive.readonly is not needed", "ok");
   } catch (e) { log(`   ✗ ${e}`, "bad"); return; }
 
-  // 第 2 问：alt=media 支不支持 Range。文件头
-  log("④ 取头 1024 字节（Range: bytes=0-1023）");
+  // Question 2: does alt=media support Range. File head
+  log("④ Fetching the first 1024 bytes (Range: bytes=0-1023)");
   const head = await ranged(api(id, "alt=media&supportsAllDrives=true"), auth, "bytes=0-1023");
   if (!head) return;
 
-  // 第 3 问：中段也能取吗——只回 206 不够，要确认它真按偏移给字节，而不是从头给
+  // Question 3: can the middle be fetched too? A 206 alone is not enough, we must confirm it really gives bytes by offset rather than from the start
   let mid = null;
   if (size && size > 4 * 1024 * 1024) {
     const from = Math.floor(size / 2), to = from + 1023;
-    log(`⑤ 取中段 1024 字节（Range: bytes=${from}-${to}）`);
+    log(`⑤ Fetching 1024 bytes from the middle (Range: bytes=${from}-${to})`);
     mid = await ranged(api(id, "alt=media&supportsAllDrives=true"), auth, `bytes=${from}-${to}`);
   } else {
-    log("⑤ 文件太小，跳过中段检查（换个大于 4 MB 的文件再跑一次更有说服力）", "mut");
+    log("⑤ File too small, skipping the middle check (rerunning with a file larger than 4 MB is more convincing)", "mut");
   }
 
   log("");
   if (head.status === 206 && head.bytes === 1024) {
-    log("结论：Drive 支持 Range，分段取字节成立。", "ok");
+    log("Conclusion: Drive supports Range, fetching bytes in segments works.", "ok");
     if (mid && mid.status === 206 && mid.bytes === 1024) {
       const same = head.sha === mid.sha;
       log(same
-        ? "但中段和头部的内容一样 —— 可疑，它可能没按偏移给。请换个文件再验。"
-        : "中段与头部内容不同，确认是按偏移给的字节。", same ? "bad" : "ok");
+        ? "But the middle and the head have the same content, which is suspicious: it may not have given bytes by offset. Please try another file."
+        : "The middle differs from the head, confirming the bytes were given by offset.", same ? "bad" : "ok");
     }
-    log("→ 任务书 D1 通过：A3 短命票那条路可以按分段取设计，断点续传能落到片级。", "ok");
+    log("→ Task brief D1 passed: the A3 short-lived ticket route can be designed around segmented fetching, and resumable transfer can work down to the chunk level.", "ok");
   } else {
-    log(`结论：没拿到 206（实际 ${head.status}，收到 ${head.bytes} 字节）。`, "bad");
-    log("→ 只能整件拉。任务书第 9 节「不支持就整件拉」那条生效，断点续传退化成整件重来。", "bad");
+    log(`Conclusion: did not get 206 (actual ${head.status}, received ${head.bytes} bytes).`, "bad");
+    log("→ It can only be pulled as a whole file. The rule \"if unsupported, pull the whole file\" in section 9 of the task brief takes effect, and resumable transfer degrades to redoing the whole file.", "bad");
   }
 }
 
@@ -189,14 +189,14 @@ async function ranged(url, auth, range) {
       return null;
     }
     const buf = new Uint8Array(await r.arrayBuffer());
-    // Content-Range 要服务端用 Access-Control-Expose-Headers 放出来才读得到，读不到不算失败
+    // Content-Range can only be read if the server exposes it via Access-Control-Expose-Headers; failing to read it does not count as a failure
     const cr = r.headers.get("Content-Range");
     const digest = await crypto.subtle.digest("SHA-256", buf);
     const sha = [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
-    log(`   状态 ${r.status}${r.status === 206 ? "（Partial Content）" : "（整件，Range 被忽略）"}，收到 ${buf.length} 字节`,
+    log(`   Status ${r.status}${r.status === 206 ? " (Partial Content)" : " (whole file, Range ignored)"}, received ${buf.length} bytes`,
         r.status === 206 ? "ok" : "bad");
-    log(`   Content-Range: ${cr ?? "（跨源未放出，不影响判断）"}`, "mut");
-    log(`   前 8 字节 sha256: ${sha}`, "mut");
+    log(`   Content-Range: ${cr ?? "(not exposed cross-origin, does not affect the judgment)"}`, "mut");
+    log(`   sha256 of the first 8 bytes: ${sha}`, "mut");
     return { status: r.status, bytes: buf.length, sha };
   } catch (e) { log(`   ✗ ${e}`, "bad"); return null; }
 }

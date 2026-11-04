@@ -1,25 +1,31 @@
 /**
- * HT7 探针：从外面敲一个托管端，核对三项匿名拒绝（契约 `docs/plan/http-transport-contract.md` 第 11 节 HT7、第 10 节）。
+ * HT7 probe: hit a hosted side from the outside to verify three anonymous rejections (contract
+ * `docs/plan/http-transport-contract.md` Section 11 HT7, Section 10).
  *
- *   node scripts/probes/ht7-probe.mjs --base https://<host>/hosted [--asset <素材服务 API 基址>] [--admin <管理接口基址>] [--timeout-ms 15000]
+ *   node scripts/probes/ht7-probe.mjs --base https://<host>/hosted
+ *        [--asset <asset service API base>] [--admin <admin API base>] [--timeout-ms 15000]
  *
- * 缺省不连任何地址：**必须显式给 `--base`**（文档服务的 http(s) 基址，经 nginx 时带 `/hosted`；给 ws(s):// 也收）。
- * 另两项不给时按阿里云的同形路由推：
- *   --asset  缺省 `<base 的 origin>/media/api/asset`
- *   --admin  缺省 `--asset` 去掉结尾的 `/api/asset`（管理接口在素材服务那个端口上：`<admin>/admin/inventory`）
+ * Does not connect to any address by default: **must explicitly provide `--base`** (http(s) base
+ * address for document service, with `/hosted` when routed through nginx; ws(s):// is also accepted).
+ * When the other two are omitted, infer from Alibaba Cloud isomorphic routes:
+ *   --asset  defaults to `<origin of base>/media/api/asset`
+ *   --admin  defaults to `--asset` with trailing `/api/asset` removed (admin API is on the asset
+ *            service port: `<admin>/admin/inventory`)
  *
- * 核对（全部要过）：
- *   ws-anonymous       不带任何凭证的 WebSocket 升级（子协议只有 promptcut.v1）→ 401
- *   ws-bad-token       带一个随机的集群令牌项 → 401
- *   asset-anonymous    不带票据读一个随机哈希的素材 → 401
- *   admin-no-token     不带令牌 GET <admin>/admin/inventory → 被拒（401 或 403）
- *   admin-bad-token    带随机令牌 → 被拒（401 或 403）
+ * Verification (all must pass):
+ *   ws-anonymous       WebSocket upgrade without any credentials (subprotocol only promptcut.v1) → 401
+ *   ws-bad-token       with a random cluster token item → 401
+ *   asset-anonymous    read an asset with a random hash without a ticket → 401
+ *   admin-no-token     GET <admin>/admin/inventory without token → rejected (401 or 403)
+ *   admin-bad-token    with random token → rejected (401 or 403)
  *
- * 输出：最后一行一行 JSON `{ ok, base, asset, admin, checks: [{ name, ok, status, expect }], fails }`。
- * 退出码：全过 0；有一项不过 1；参数不对或一项都连不上 2。
- * 在只能出网、要经代理的机器上跑：Node 22.22 起加 `NODE_USE_ENV_PROXY=1`（本脚本的升级请求走 `node:http(s)`，
- * 该开关对它是否生效以所用 Node 版本为准；不生效时在能直连的机器上跑）。
- * 只用 Node 内置模块；不带、不打印任何真实凭证（令牌项是现生成的随机串）。
+ * Output: last line is a single JSON line `{ ok, base, asset, admin, checks: [{ name, ok, status, expect }], fails }`.
+ * Exit code: all pass 0; any failure 1; invalid arguments or cannot connect to any 2.
+ * Running on egress-only machines behind a proxy: add `NODE_USE_ENV_PROXY=1` from Node 22.22
+ * (this script's upgrade requests go through `node:http(s)`, and whether this flag takes effect
+ * depends on the Node version used; run on directly connectable machines if it does not take effect).
+ * Uses only Node built-in modules; carries and prints no real credentials (token items are freshly
+ * generated random strings).
  */
 import http from 'node:http';
 import https from 'node:https';
@@ -29,28 +35,28 @@ const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 
 function usage(msg) {
-  process.stderr.write(`${msg}\n用法：node scripts/probes/ht7-probe.mjs --base https://<host>/hosted [--asset <url>] [--admin <url>] [--timeout-ms 15000]\n`);
+  process.stderr.write(`${msg}\nUsage: node scripts/probes/ht7-probe.mjs --base https://<host>/hosted [--asset <url>] [--admin <url>] [--timeout-ms 15000]\n`);
   process.stdout.write(`${JSON.stringify({ ok: false, error: 'usage', message: msg })}\n`);
   process.exit(2);
 }
 
 const rawBase = arg('--base', null);
-if (!rawBase) usage('缺 --base（本探针缺省不连任何地址）');
+if (!rawBase) usage('Missing --base (this probe connects to no address by default)');
 let base;
 try {
   base = new URL(rawBase);
 } catch {
-  usage(`--base 不是合法地址：${rawBase}`);
+  usage(`--base is not a valid address: ${rawBase}`);
 }
 if (base.protocol === 'ws:') base.protocol = 'http:';
 if (base.protocol === 'wss:') base.protocol = 'https:';
-if (base.protocol !== 'http:' && base.protocol !== 'https:') usage('--base 要是 http(s):// 或 ws(s)://');
+if (base.protocol !== 'http:' && base.protocol !== 'https:') usage('--base must be http(s):// or ws(s)://');
 const basePath = base.pathname.replace(/\/+$/, '');
 const asset = (arg('--asset', null) ?? `${base.origin}/media/api/asset`).replace(/\/+$/, '');
 const admin = (arg('--admin', null) ?? asset.replace(/\/api\/asset$/, '')).replace(/\/+$/, '');
 const timeoutMs = Number(arg('--timeout-ms', '15000')) || 15_000;
 
-/** 发一个 WebSocket 升级请求，只看状态码：101 → 101；别的 → 那个状态码；连不上 → null */
+/** Send WebSocket upgrade request, checking only status code: 101 → 101; other → status code; unreachable → null */
 function upgradeStatus(url, protocols) {
   const u = new URL(url);
   const lib = u.protocol === 'https:' ? https : http;
@@ -99,8 +105,9 @@ check('asset-anonymous', await httpStatus(`${asset}/media/${randomBytes(32).toSt
 check('admin-no-token', await httpStatus(`${admin}/admin/inventory`), [401, 403]);
 check('admin-bad-token', await httpStatus(`${admin}/admin/inventory`, { Authorization: `Bearer ${randomToken()}` }), [401, 403]);
 
-const fails = checks.filter((c) => !c.ok).map((c) => `${c.name}：期望 ${c.expect.join(' / ')}，实际 ${c.status ?? '连不上'}`);
+const fails = checks.filter((c) => !c.ok).map((c) => `${c.name}: expected ${c.expect.join(' / ')}, got ${c.status ?? 'unreachable'}`);
 const ok = fails.length === 0;
 process.stdout.write(`${JSON.stringify({ ok, base: `${base.origin}${basePath}`, asset, admin, checks, fails })}\n`);
-// 不用 process.exit：Windows 上在套接字还没关完时强退会让 Node 以 0xC0000409 崩掉，退出码就不是我们给的了
+// Do not use process.exit: force exiting on Windows before sockets finish closing crashes Node
+// with 0xC0000409, losing our intended exit code
 process.exitCode = ok ? 0 : checks.every((c) => c.status === null) ? 2 : 1;

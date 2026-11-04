@@ -1,11 +1,12 @@
-// 轨道流（目标 G）编码原型的共用件：G0-b 的各支探针都从这里拿 ffmpeg 路径、G3 滤镜链、
-// 严格 GOP 参数、fMP4 按 box 切分、以及生成 / 读取带透明的 PNG。
+// Shared utilities for track stream (Target G) encoding prototype: all G0-b probes get ffmpeg path,
+// G3 filter chain, strict GOP parameters, fMP4 splitting by box, and generating / reading
+// transparent PNGs from here.
 //
-// 口径按 docs/archive/restructure_planning/r75/fold-notes.md 的 r75-05（已采纳）：
-//   - 画面尺寸外扩到偶数宽高（yuv420p 要求）
-//   - 色半区存**预乘**色：滤镜链开头 format=gbrap,premultiply=inplace=1
-//   - Node 端按 MP4 box 切 init.mp4 / 分段、丢 mfra
-//   - 编码器参数前要写 -c:v，各编码器的严格 GOP 参数分列
+// Spec follows r75-05 (accepted) in docs/archive/restructure_planning/r75/fold-notes.md:
+//   - Expand frame dimensions to even width and height (required by yuv420p)
+//   - Store **premultiplied** color in color half: filter chain starts with format=gbrap,premultiply=inplace=1
+//   - Node side splits init.mp4 / segments by MP4 box, discards mfra
+//   - Prepend -c:v before encoder parameters, list strict GOP parameters for each encoder separately
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -16,7 +17,7 @@ const execFileAsync = promisify(execFile);
 
 // ── ffmpeg / ffprobe ─────────────────────────────────────────────────────────
 
-/** 与 server/bakery/ffmpeg.mjs 的 findFfmpeg 同策略：PATH 上有就用，没有退到 winget 那份。 */
+/** Same strategy as findFfmpeg in server/bakery/ffmpeg.mjs: use PATH if available, otherwise fall back to winget copy. */
 export function findFfmpeg() {
   const fallback = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Packages',
     'Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe', 'ffmpeg-9.0.1-full_build', 'bin', 'ffmpeg.exe');
@@ -36,7 +37,7 @@ export async function ffmpegVersion(ffmpeg) {
   return stdout.split(/\r?\n/)[0];
 }
 
-/** 这台机器上哪些 h264 编码器真的能跑（不是 -encoders 里列着就算）。 */
+/** Which h264 encoders can actually run on this machine (not just listed in -encoders). */
 export async function probeEncoders(ffmpeg, names = ['libx264', 'h264_nvenc', 'h264_qsv', 'h264_amf', 'h264_mf']) {
   const out = [];
   for (const name of names) {
@@ -54,15 +55,17 @@ export async function probeEncoders(ffmpeg, names = ['libx264', 'h264_nvenc', 'h
   return out;
 }
 
-// ── G3 滤镜链 ────────────────────────────────────────────────────────────────
+// ── G3 filter chain ───────────────────────────────────────────────────────────
 
 /**
- * 上下拼合：上半预乘 RGB（H 行）+ 8 行填充 + 下半 alpha 灰度（H 行）+ 8 行填充。
- * `premultiplied: false` 只用来做对照（量渗边），线上口径是 true。
+ * Vertically stacked: upper half premultiplied RGB (H lines) + 8 lines padding + lower half alpha
+ * grayscale (H lines) + 8 lines padding.
+ * `premultiplied: false` is only used as a control (measuring color bleeding), production spec is true.
  */
 export function stackFilter({ premultiplied = true, colorMatrix = 'bt709', pixFmt = 'yuv420p', range = 'pc', crop = null } = {}) {
-  // 裁剪矩形。线上是 `captureFrame` 带 clip 只截这块（G1 / r75-05 第 3 条），这里在滤镜里裁，
-  // 等价于拿到一张已经裁好的 PNG——用来量「裁剪矩形取大取小」对编码耗时和体积的影响。
+  // Crop rectangle. In production, `captureFrame` with clip only captures this area (G1 / r75-05
+  // item 3); here it is cropped in the filter, equivalent to getting an already-cropped PNG: used to
+  // measure the impact of "crop rectangle size" on encoding duration and file size.
   const cropF = crop ? `crop=${crop.w}:${crop.h}:${crop.x}:${crop.y},` : '';
   const head = premultiplied
     ? `${cropF}format=gbrap,premultiply=inplace=1,format=rgba,split=2[c][a]`
@@ -76,7 +79,7 @@ export function stackFilter({ premultiplied = true, colorMatrix = 'bt709', pixFm
     `[rgb][mask]vstack=inputs=2,${tail}`;
 }
 
-/** 各编码器的严格 GOP 参数（r75-05 非阻塞 3.2；具体值以 (7) 实测为准）。 */
+/** Strict GOP parameters for each encoder (r75-05 non-blocking 3.2; specific values subject to actual measurements in (7)). */
 export const ENCODER_ARGS = {
   libx264: (q = 16) => ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(q),
     '-g', '15', '-keyint_min', '15', '-sc_threshold', '0', '-bf', '0'],
@@ -88,30 +91,32 @@ export const ENCODER_ARGS = {
     '-g', '15', '-bf', '0'],
   h264_amf: (q = 16) => ['-c:v', 'h264_amf', '-quality', 'speed', '-rc', 'cqp', '-qp_i', String(q), '-qp_p', String(q),
     '-g', '15', '-bf', '0'],
-  // MediaFoundation：本机 nvenc 被驱动的 nvenc API 版本卡住（见 (7) 报告）时，Windows 上
-  // 唯一还能用的硬件编码路径（背后是 NVIDIA 的 MFT）。`-quality` 是 0..100，越大越好。
+  // MediaFoundation: when local nvenc is stuck on driver nvenc API version (see report (7)),
+  // the only usable hardware encoding path on Windows (backed by NVIDIA MFT). `-quality` is 0..100,
+  // higher is better.
   h264_mf: (q = 90) => ['-c:v', 'h264_mf', '-hw_encoding', '1', '-rate_control', 'quality', '-quality', String(q),
     '-g', '15', '-bf', '0'],
   h264_mf_sw: (q = 90) => ['-c:v', 'h264_mf', '-rate_control', 'quality', '-quality', String(q),
     '-g', '15', '-bf', '0'],
 };
 
-/** 各编码器「质量」参数的量纲不同：x264/nvenc/qsv 是越小越好的 CRF/CQ，h264_mf 是 0..100 越大越好。 */
+/** Different encoders use different scales for "quality" parameter: x264/nvenc/qsv use lower-is-better CRF/CQ, h264_mf is 0..100 where higher is better. */
 export const QUALITY_DEFAULT = {
   libx264: 16, h264_nvenc: 16, h264_nvenc_ll: 16, h264_qsv: 16, h264_amf: 16, h264_mf: 90, h264_mf_sw: 90,
 };
 
 /**
- * 各编码器接受的像素格式。h264_mf 的**硬件**路径只收 nv12——滤镜链尾巴写 `format=yuv420p`
- * 时它直接 `format negotiation failed (1/0)`（(7) 实测，见报告）。nv12 与 yuv420p 同为
- * 8 bit 4:2:0，只是 chroma 交织，不影响画质。
+ * Pixel formats accepted by each encoder. The **hardware** path of h264_mf only accepts nv12: when
+ * `format=yuv420p` is at the end of the filter chain, it fails directly with `format negotiation failed (1/0)`
+ * ((7) live test, see report). Both nv12 and yuv420p are 8 bit 4:2:0, differing only in chroma
+ * interleaving, without affecting image quality.
  */
 export const PIX_FMT = { h264_mf: 'nv12', h264_mf_sw: 'nv12' };
 
-/** G3 的整条命令行（不含 -i 之前的输入声明和最后的输出）。 */
+/** Entire command line for G3 (excluding input declaration before -i and final output). */
 export function encodeArgs({ encoder, fps, quality, premultiplied = true, colorMatrix = 'bt709', tagColor = true, pixFmt, range = 'pc', crop = null }) {
   const enc = ENCODER_ARGS[encoder];
-  if (!enc) throw new Error(`未知编码器 ${encoder}`);
+  if (!enc) throw new Error(`unknown encoder ${encoder}`);
   if (quality == null) quality = QUALITY_DEFAULT[encoder] ?? 16;
   if (pixFmt == null) pixFmt = PIX_FMT[encoder] ?? 'yuv420p';
   return [
@@ -125,8 +130,8 @@ export function encodeArgs({ encoder, fps, quality, premultiplied = true, colorM
 }
 
 /**
- * 一次 ffmpeg 调用 = 一个分段。PNG 从 stdin 喂进去，fMP4 从 stdout 收回来。
- * `stride` > 1 时每张 PNG 连续喂 stride 次（G2 的稀疏分段，timescale 不变）。
+ * One ffmpeg invocation = one segment. PNG is fed from stdin, fMP4 is collected from stdout.
+ * When `stride` > 1, each PNG is fed stride consecutive times (G2 sparse segment, timescale unchanged).
  */
 export function encodeSegment(ffmpeg, pngs, opts) {
   const { stride = 1, format = 'mp4' } = opts;
@@ -156,9 +161,9 @@ export function encodeSegment(ffmpeg, pngs, opts) {
   });
 }
 
-// ── fMP4 按 box 切分（r75-05 非阻塞 3.4）──────────────────────────────────────
+// ── fMP4 split by box (r75-05 non-blocking 3.4) ───────────────────────────────────
 
-/** 顶层 box 列表：[{ type, start, end, size }]。 */
+/** Top-level box list: [{ type, start, end, size }]. */
 export function topLevelBoxes(buf) {
   const out = [];
   let off = 0;
@@ -176,8 +181,8 @@ export function topLevelBoxes(buf) {
 }
 
 /**
- * ftyp+moov -> init.mp4；每对 moof+mdat -> 一个分段；mfra 丢弃。
- * 返回 { init, segments: Buffer[], dropped: string[], boxes }。
+ * ftyp+moov -> init.mp4; each moof+mdat pair -> one segment; mfra discarded.
+ * Returns { init, segments: Buffer[], dropped: string[], boxes }.
  */
 export function splitFmp4(buf) {
   const boxes = topLevelBoxes(buf);
@@ -197,7 +202,7 @@ export function splitFmp4(buf) {
       if (segStart >= 0) segments.push(buf.subarray(segStart, b.start));
       segStart = b.start;
     } else if (b.type === 'mdat') {
-      // 跟在当前 moof 后面，留着
+      // Follows current moof, kept
     } else {
       if (segStart >= 0) { segments.push(buf.subarray(segStart, b.start)); segStart = -1; }
       dropped.push(b.type);
@@ -207,7 +212,7 @@ export function splitFmp4(buf) {
   return { init: Buffer.from(init), segments: segments.map(Buffer.from), dropped, boxes: boxes.map((b) => b.type) };
 }
 
-/** 递归找第一个某类型的 box（返回它的 payload）。 */
+/** Recursively find the first box of a given type (returns its payload). */
 export function findBox(buf, type, start = 0, end = buf.length) {
   let off = start;
   while (off + 8 <= end) {
@@ -218,17 +223,17 @@ export function findBox(buf, type, start = 0, end = buf.length) {
     else if (size === 0) size = end - off;
     if (size < header || off + size > end) return null;
     if (t === type) return { payload: buf.subarray(off + header, off + size), start: off, end: off + size, header };
-    // 这些是容器 box，往里找
+    // These are container boxes, look inside
     if (['moov', 'trak', 'mdia', 'minf', 'stbl', 'moof', 'traf', 'mvex', 'edts'].includes(t)) {
       const inner = findBox(buf, type, off + header, off + size);
       if (inner) return inner;
     }
-    // stsd 的 payload 前 8 字节是 version/flags + entry_count
+    // The first 8 bytes of the stsd payload are version/flags + entry_count
     if (t === 'stsd') {
       const inner = findBox(buf, type, off + header + 8, off + size);
       if (inner) return inner;
     }
-    // avc1 这类 sample entry：前 78 字节是固定头
+    // Sample entries like avc1: the first 78 bytes are a fixed header
     if (['avc1', 'avc3'].includes(t)) {
       const inner = findBox(buf, type, off + header + 78, off + size);
       if (inner) return inner;
@@ -238,20 +243,20 @@ export function findBox(buf, type, start = 0, end = buf.length) {
   return null;
 }
 
-/** avcC -> `avc1.PPCCLL`（G0-a 实测 1920x2176 拿到的是 avc1.640033）。 */
+/** avcC -> `avc1.PPCCLL` (G0-a measured 1920x2176 returned avc1.640033). */
 export function codecStringFromAvcC(avcC) {
   const p = avcC.readUInt8(1), c = avcC.readUInt8(2), l = avcC.readUInt8(3);
   return `avc1.${[p, c, l].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
-/** 从 init.mp4 里取 avcC / 尺寸 / timescale。 */
+/** Extract avcC / dimensions / timescale from init.mp4. */
 export function initInfo(init) {
   const avcC = findBox(init, 'avcC');
   const avc1 = findBox(init, 'avc1');
   const mdhd = findBox(init, 'mdhd');
   let width = null, height = null;
   if (avc1) {
-    // sample entry: 6 reserved + 2 dataRefIdx + 16 pre_defined/reserved = 24, 然后 width/height
+    // sample entry: 6 reserved + 2 dataRefIdx + 16 pre_defined/reserved = 24, then width/height
     const p = avc1.payload;
     width = p.readUInt16BE(24); height = p.readUInt16BE(26);
   }
@@ -267,7 +272,7 @@ export function initInfo(init) {
   };
 }
 
-/** 一个分段里的样本数与首样本是否同步样本（从 trun/tfhd 读）。 */
+/** Sample count in a segment and whether the first sample is a sync sample (read from trun/tfhd). */
 export function segmentInfo(seg) {
   const tfhd = findBox(seg, 'tfhd');
   const trun = findBox(seg, 'trun');
@@ -294,12 +299,12 @@ export function segmentInfo(seg) {
     if (flags & 0x000004) { out.firstSampleFlags = trun.payload.readUInt32BE(o); o += 4; }
   }
   const eff = out.firstSampleFlags ?? out.defaultSampleFlags;
-  // sample_is_non_sync_sample 是第 16 位（bit 0x00010000）
+  // sample_is_non_sync_sample is bit 16 (bit 0x00010000)
   if (eff != null) out.firstSampleIsSync = (eff & 0x00010000) === 0;
   return out;
 }
 
-// ── PNG（带 alpha）：生成与读取 ───────────────────────────────────────────────
+// ── PNG (with alpha): generation and reading ──────────────────────────────────────────
 
 const crcTable = (() => {
   const t = new Int32Array(256);
@@ -324,7 +329,7 @@ function chunk(type, data) {
   return out;
 }
 
-/** RGBA（非预乘，straight alpha）字节 -> PNG 字节。 */
+/** RGBA (non-premultiplied, straight alpha) bytes -> PNG bytes. */
 export function encodePng(rgba, width, height) {
   const raw = Buffer.alloc((width * 4 + 1) * height);
   for (let y = 0; y < height; y++) {
@@ -339,7 +344,7 @@ export function encodePng(rgba, width, height) {
   ]);
 }
 
-/** PNG 文件 -> 非预乘 RGBA 字节（交给 ffmpeg 解，省得自己写解码器）。 */
+/** PNG file -> non-premultiplied RGBA bytes (let ffmpeg decode, saving us writing a decoder). */
 export async function pngToRgba(ffmpeg, file, width, height) {
   const { stdout } = await execFileAsync(ffmpeg,
     ['-hide_banner', '-loglevel', 'error', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'rgba', 'pipe:1'],
@@ -347,14 +352,16 @@ export async function pngToRgba(ffmpeg, file, width, height) {
   return stdout;
 }
 
-/** PNG 的像素尺寸（只读 IHDR）。 */
+/** PNG pixel dimensions (reads only IHDR). */
 export function pngSize(buf) {
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
 
 /**
- * 合成一张带透明的测试画面：软边圆、半透明渐变、硬边方块、细线。
- * 专门造 (5) 要看的那几种情形——半透明边缘、透明区里的彩色残留、硬边。
+ * Synthesize a test frame with transparency: soft-edged circle, semi-transparent gradient,
+ * hard-edged square, thin line.
+ * Specifically crafts the cases to inspect in (5): semi-transparent edges, color residue in
+ * transparent areas, hard edges.
  */
 export function syntheticFrame(width, height, t = 0) {
   const rgba = Buffer.alloc(width * height * 4);
@@ -365,22 +372,22 @@ export function syntheticFrame(width, height, t = 0) {
     for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 4;
       let R = 0, G = 0, B = 0, A = 0;
-      // 软边圆：边缘 6 px 内 alpha 线性过渡（半透明边缘）
+      // Soft-edged circle: linear alpha transition within 6 px of edge (semi-transparent edge)
       const d = Math.hypot(x - cx, y - cy);
       if (d < r) {
         const a = Math.max(0, Math.min(1, (r - d) / 6));
         R = 240; G = 60 + ((x * 7 + t * 3) % 160); B = 200; A = Math.round(a * 255);
       }
-      // 左上硬边方块：不透明，饱和色
+      // Top-left hard-edged square: opaque, saturated color
       if (x > width * 0.05 && x < width * 0.05 + 120 && y > height * 0.05 && y < height * 0.05 + 80) {
         R = 255; G = 20; B = 20; A = 255;
       }
-      // 右侧半透明渐变条：alpha 从 0 到 255，颜色恒定亮青
+      // Right semi-transparent gradient bar: alpha from 0 to 255, constant bright cyan color
       if (x > width * 0.72) {
         const a = Math.round(((x - width * 0.72) / (width * 0.28)) * 255);
         R = 0; G = 220; B = 255; A = Math.max(A, a);
       }
-      // 细横线（硬边 1 px）
+      // Thin horizontal line (hard edge 1 px)
       if (y % 37 === (Math.floor(t) % 37)) { R = 255; G = 255; B = 255; A = 255; }
       rgba[i] = R; rgba[i + 1] = G; rgba[i + 2] = B; rgba[i + 3] = A;
     }
@@ -388,7 +395,7 @@ export function syntheticFrame(width, height, t = 0) {
   return rgba;
 }
 
-// ── 统计 ─────────────────────────────────────────────────────────────────────
+// ── Statistics ───────────────────────────────────────────────────────────────
 
 export const median = (a) => {
   if (!a.length) return null;
@@ -418,7 +425,7 @@ export function writeJson(file, data) {
   return file;
 }
 
-/** `--flag value`；`--flag` 单独出现视为 true。 */
+/** `--flag value`; `--flag` appearing alone is treated as true. */
 export function arg(name, fallback = null, argv = process.argv.slice(2)) {
   const i = argv.indexOf(`--${name}`);
   if (i === -1) return fallback;

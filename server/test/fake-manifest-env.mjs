@@ -1,21 +1,31 @@
 /**
- * 仅供测试，生产代码不得引用。
+ * For testing only; production code must not import this.
  *
- * C6.4（契约 `docs/plan/manifest-contract.md` 第 6 节）四个测试文件共用的小工具：
+ * Shared utilities for four test files in C6.4 (contract `docs/plan/manifest-contract.md`
+ * Section 6):
  *
- *   loadContentClient()                     动态 import `server/render-node/content-client.mjs`，缺失时抛出带原因的错误
- *   startContentService({ modules?, ... })  独立模式的真文档服务（端口 0、`autoTick: false`），缺省挂 C6.3 的内容库模块、memory 存储
- *   connectEndpoint(url)                    M5a 的 `createWsEndpoint`，等到连上
- *   connectContent(env, { user, timeoutMs }) 上面两步 + `createContentClient(endpoint)`；回 { endpoint, content }
- *   countingContent(content)                记 put / get / list 调用的包装
- *   countingAsset(client)                   记 put / get / has 调用的包装（put 记下字节的 sha256）
- *   createManualClock(start)                可注入的假时钟：{ now, setTimeout, clearTimeout, advance(ms), pending() }
- *   until(cond, { timeoutMs, stepMs, what }) 用真时间轮询到条件成立
+ *   loadContentClient()                     dynamically imports
+ *                                           `server/render-node/content-client.mjs`; throws an
+ *                                           error with reason when missing
+ *   startContentService({ modules?, ... })  real document service in standalone mode (port 0,
+ *                                           `autoTick: false`); mounts C6.3 content store module
+ *                                           and memory storage by default
+ *   connectEndpoint(url)                    `createWsEndpoint` from M5a, waits until connected
+ *   connectContent(env, { user, timeoutMs }) the two steps above + `createContentClient(endpoint)`;
+ *                                           returns { endpoint, content }
+ *   countingContent(content)                wrapper recording put / get / list calls
+ *   countingAsset(client)                   wrapper recording put / get / has calls (put records
+ *                                           sha256 of bytes)
+ *   createManualClock(start)                injectable fake clock: { now, setTimeout, clearTimeout,
+ *                                           advance(ms), pending() }
+ *   until(cond, { timeoutMs, stepMs, what }) polls with real time until condition is met
  *
- * `startContentService` 回 `{ url(user), cleanup(), service, port, logs }`；
- * `cleanup()` 关掉本文件建过的全部端点（停止重连）与服务，可重复调用。
+ * `startContentService` returns `{ url(user), cleanup(), service, port, logs }`; `cleanup()` closes
+ * all endpoints created by this file (stops reconnecting) and the service; can be called
+ * repeatedly.
  *
- * 只引 Node 内置模块、同目录的 `fake-docservice-env.mjs`，以及被测的 `ws-transport.mjs` / 内容库模块。
+ * Only imports Node built-in modules, `fake-docservice-env.mjs` in the same directory, and the
+ * `ws-transport.mjs` / content store modules under test.
  */
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -29,12 +39,12 @@ export async function loadContentClient() {
   if (!contentClientMod && !contentClientError) {
     try { contentClientMod = await import('../render-node/content-client.mjs'); } catch (err) { contentClientError = err; }
   }
-  if (contentClientError) throw new Error(`载不进 server/render-node/content-client.mjs：${contentClientError.message}`);
-  assert.equal(typeof contentClientMod.createContentClient, 'function', `content-client.mjs 要导出 createContentClient；导出：${Object.keys(contentClientMod).join(', ')}`);
+  if (contentClientError) throw new Error(`cannot load server/render-node/content-client.mjs: ${contentClientError.message}`);
+  assert.equal(typeof contentClientMod.createContentClient, 'function', `content-client.mjs must export createContentClient; exports: ${Object.keys(contentClientMod).join(', ')}`);
   return contentClientMod;
 }
 
-/** 独立模式起一台文档服务。缺省挂内容库模块（memory 存储）；`modules` 给了就用给的 */
+/** Starts a document service in standalone mode. Attaches content store module by default (memory storage); uses `modules` if provided */
 export async function startContentService({ modules, ...rest } = {}) {
   let mods = modules;
   if (!mods) {
@@ -49,19 +59,19 @@ export async function startContentService({ modules, ...rest } = {}) {
   const cleanup = async () => {
     if (closed) return;
     closed = true;
-    for (const ep of endpoints) { try { ep.close(); } catch { /* 已关 */ } }
+    for (const ep of endpoints) { try { ep.close(); } catch { /* Closed */ } }
     await env.cleanup();
   };
   return { ...env, url, endpoints, cleanup };
 }
 
-/** 连上一条 M5a 端点；`env` 给了就登记进去，cleanup 时一起关（停止重连） */
+/** Connects an M5a endpoint; registers into `env` if provided, and closes together during cleanup (stops reconnecting) */
 export async function connectEndpoint(url, { env, ms = 3000 } = {}) {
   const endpoint = createWsEndpoint({ url, backoff: { baseMs: 50, maxMs: 200 } });
   env?.endpoints?.add(endpoint);
   if (!endpoint.connected) {
     await new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error(`端点 ${ms} ms 内没连上：${url}`)), ms);
+      const t = setTimeout(() => reject(new Error(`endpoint did not connect within ${ms} ms: ${url}`)), ms);
       endpoint.onOpen(() => { clearTimeout(t); resolve(); });
     });
   }
@@ -87,7 +97,7 @@ export function countingContent(content) {
   };
 }
 
-/** `hooks.beforePut({ ns, hash, bytes })` 可以抛错或返回 promise（阻塞），用来注入失败与卡住 */
+/** `hooks.beforePut({ ns, hash, bytes })` can throw or return a promise (blocking), used to inject failures and hangs */
 export function countingAsset(client, hooks = {}) {
   const puts = [], gets = [], hases = [];
   return {
@@ -108,8 +118,9 @@ export function countingAsset(client, hooks = {}) {
 }
 
 /**
- * 可注入的假时钟。`setTimeout(fn, ms)` 只登记，`advance(ms)` 把时间推过去并按到期先后调；
- * 调完之后让出几次事件循环，让续体跑完。`delays` 记下每次登记的 ms（诊断用）。
+ * Injectable fake clock. `setTimeout(fn, ms)` only registers; `advance(ms)` advances time and
+ * invokes callbacks in expiration order; yields the event loop a few times after invocation so
+ * continuations finish running. `delays` records the ms of each registration (for diagnostics).
  */
 export function createManualClock(start = 1_700_000_000_000) {
   let t = start;
@@ -139,7 +150,7 @@ export function createManualClock(start = 1_700_000_000_000) {
         if (!next) break;
         timers.delete(next[0]);
         t = Math.max(t, next[1].at);
-        try { next[1].fn(); } catch { /* 计时器回调的错误不往外抛 */ }
+        try { next[1].fn(); } catch { /* Errors from timer callbacks are not rethrown */ }
         await settleTicks();
       }
       t = target;
@@ -153,15 +164,15 @@ export async function settleTicks(n = 5) {
   for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
-/** 用真时间轮询，直到 cond() 为真（可以是 async）；超时抛出，带 what() 的诊断 */
+/** Polls with real time until cond() is true (can be async); throws on timeout with what() diagnostics */
 export async function until(cond, { timeoutMs = 10_000, stepMs = 10, what = () => '' } = {}) {
   const t0 = Date.now();
   for (;;) {
     if (await cond()) return Date.now() - t0;
     if (Date.now() - t0 > timeoutMs) {
       let info = '';
-      try { info = await what(); } catch (err) { info = `（诊断出错：${err.message}）`; }
-      throw new Error(`等了 ${timeoutMs} ms 条件仍不成立。${info}`);
+      try { info = await what(); } catch (err) { info = `(diagnostics error: ${err.message})`; }
+      throw new Error(`waited ${timeoutMs} ms and the condition still does not hold. ${info}`);
     }
     await new Promise((resolve) => setTimeout(resolve, stepMs));
   }

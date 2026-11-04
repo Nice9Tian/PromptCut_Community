@@ -1,18 +1,24 @@
 /**
- * `POST /api/audio/measure` 的主体(测响度 `measure_audio`)。原来写在 `vite-plugin-audio.ts` 里,搬出来是为了
- * 不依赖 vite 就能测(`server/test/audio-asset-path.test.mjs`)。回包的形状、状态码、报错文字与搬之前一致,
- * 只多了一种:素材服务不可达或拒绝读取(`AssetSourceError`)回 502 与写明原因的错。
+ * Main body of `POST /api/audio/measure` (loudness measurement `measure_audio`). Originally
+ * written in `vite-plugin-audio.ts`, moved out so it can be tested without depending on vite
+ * (`server/test/audio-asset-path.test.mjs`). Response shape, status code, and error text remain
+ * identical to before the move, with one addition: returns 502 and an error stating the reason
+ * when the asset service is unreachable or refuses to read (`AssetSourceError`).
  *
- * 素材从哪儿读由调用方注入(`resolveSource`,见 `audio-source.mjs`):素材服务上的 HTTP 地址,ffmpeg 自己按 Range 取。
+ * Where to read assets is injected by the caller (`resolveSource`, see `audio-source.mjs`): an
+ * HTTP URL on the asset service, from which ffmpeg fetches via Range requests on its own.
  */
 import { spawn } from "node:child_process";
 import { measureArgs, timelineMeasureArgs, parseEbur128 } from "./audio-measure.mjs";
 import { AssetSourceError, hasAudioStreamAsync } from "./audio-source.mjs";
+import { tr } from "./i18n.mjs";
 
 /**
  * @param {object} p
  * @param {any} p.body
- * @param {(media: any) => (string | null | Promise<string | null>)} p.resolveSource 素材 → ffmpeg 的输入;没有这份素材回 null;素材服务不可达抛 AssetSourceError
+ * @param {(media: any) => (string | null | Promise<string | null>)} p.resolveSource asset →
+ *   ffmpeg input; returns null if this asset is missing; throws AssetSourceError if asset service
+ *   is unreachable
  * @param {string} p.ffmpeg
  * @param {string} p.ffprobe
  * @param {(src: string, ffprobe: string) => (boolean | Promise<boolean>)} [p.hasAudio]
@@ -26,8 +32,8 @@ export async function measureLoudness({ body, resolveSource, ffmpeg, ffprobe, ha
   try {
     if (body.scope === "media" || body.scope === "clip") {
       const file = await resolveSource(body.media);
-      if (!file) return { status: 400, body: { ok: false, error: "素材文件不存在" } };
-      if (!(await hasAudio(file, ffprobe))) return { status: 400, body: { ok: false, error: "该文件没有音频流" } };
+      if (!file) return { status: 400, body: { ok: false, error: tr("Media file does not exist") } };
+      if (!(await hasAudio(file, ffprobe))) return { status: 400, body: { ok: false, error: tr("This file has no audio stream") } };
       args = measureArgs({
         file,
         offset: body.scope === "clip" ? body.offset : undefined,
@@ -42,13 +48,13 @@ export async function measureLoudness({ body, resolveSource, ffmpeg, ffprobe, ha
         const file = await resolveSource(e.media);
         if (!file || !(await hasAudio(file, ffprobe))) {
           skipped++;
-          skippedNames.push(e.media?.name || e.clipId || "未知片段");
+          skippedNames.push(e.media?.name || e.clipId || tr("Unknown clip"));
           continue;
         }
         validEntries.push({ ...e, file });
       }
       if (skipped > 0) {
-        notes.push("有 " + skipped + " 段没有音频流或文件不存在，已跳过：" + skippedNames.join("、"));
+        notes.push(tr("Skipped ") + skipped + tr(" clips with no audio stream or missing file: ") + skippedNames.join(", "));
       }
       if (validEntries.length === 0) {
         return {
@@ -64,7 +70,7 @@ export async function measureLoudness({ body, resolveSource, ffmpeg, ffprobe, ha
       }
       args = timelineMeasureArgs(validEntries, Number(body.duration) > 0 ? Number(body.duration) : undefined);
     } else {
-      return { status: 400, body: { ok: false, error: "无效的 scope" } };
+      return { status: 400, body: { ok: false, error: tr("Invalid scope") } };
     }
   } catch (e) {
     if (e instanceof AssetSourceError) return { status: 502, body: { ok: false, error: e.message } };
@@ -81,13 +87,13 @@ export async function measureLoudness({ body, resolveSource, ffmpeg, ffprobe, ha
     const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
     child.on("error", (e) => {
       clearTimeout(timer);
-      done(500, { ok: false, error: "启动 ffmpeg 失败: " + e.message });
+      done(500, { ok: false, error: tr("Failed to start ffmpeg: ") + e.message });
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (timedOut) return done(500, { ok: false, error: "分析超时" });
+      if (timedOut) return done(500, { ok: false, error: tr("Analysis timed out") });
       if (code !== 0 && !stderr.includes("Parsed_ebur128")) {
-        return done(500, { ok: false, error: "ffmpeg 运行失败: " + stderr.slice(-300) });
+        return done(500, { ok: false, error: tr("ffmpeg failed to run: ") + stderr.slice(-300) });
       }
       try {
         const parsed = parseEbur128(stderr);
@@ -95,7 +101,7 @@ export async function measureLoudness({ body, resolveSource, ffmpeg, ffprobe, ha
         if (notes.length > 0) parsed.notes = (parsed.notes || []).concat(notes);
         done(200, { ok: true, ...parsed });
       } catch (err) {
-        done(500, { ok: false, error: "解析输出失败: " + String(err) });
+        done(500, { ok: false, error: tr("Failed to parse output: ") + String(err) });
       }
     });
   });

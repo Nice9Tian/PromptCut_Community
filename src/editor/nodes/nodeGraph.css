@@ -1,4 +1,4 @@
-/* 节点管线页:放在左栏「编辑」分区里,底色交给抽屉卡片,节点卡用面板层级,激活的连线 / 节点用强调色 */
+/* Node pipeline page: placed in the left rail's "Edit" section, background left to the drawer card, node cards use the panel level, active connection lines / nodes use the accent color */
 .pc-node-page { position: relative; flex: 1; min-height: 0; height: 100%; overflow: auto; background: transparent; color: var(--ui-fg, #e5e7eb); }
 .pc-node-help { position: sticky; top: 0; left: 0; z-index: 3; padding: 8px 12px; font-size: 11px; color: var(--ui-fg-muted, #94a3b8); background: var(--ui-bg-2, #0a0d12); border-bottom: 1px solid var(--ui-border, #1f2937); }
 .pc-node-canvas { position: relative; padding: 1px; }

@@ -1,4 +1,4 @@
-/* 诊断报告子窗口。盖在 AI 设置对话框(z-index 10000)之上,所以要更高一档。 */
+/* Diagnostic report sub-window. It sits above the AI settings dialog (z-index 10000), so it needs to be one level higher. */
 .rpt-backdrop {
   position: fixed;
   inset: 0;
@@ -58,8 +58,8 @@
 }
 .rpt-hint { flex: 1 1 auto; }
 
-/* 报告本体。撑满剩下的高度 —— 这个窗口存在的意义就是让人看得见报告,
-   textarea 缩成一条的话还不如原来那个「盲发」的按钮。 */
+/* The report itself. It fills the remaining height: the whole point of this window is to let people see the report,
+   and if the textarea shrank to a sliver it would be no better than the old "blind send" button. */
 .rpt-text {
   flex: 1 1 auto;
   min-height: 220px;

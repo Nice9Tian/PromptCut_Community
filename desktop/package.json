@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.2.9",
   "type": "module",
-  "description": "PromptCut 的 Tauri 桌面壳：自带 Node、Chrome for Testing、ffmpeg、Python，双击即用",
+  "description": "PromptCut's Tauri desktop shell: bundles Node, Chrome for Testing, ffmpeg and Python, double-click to run",
   "scripts": {
     "prepare-runtime": "node scripts/prepare-runtime.mjs",
     "prepare-python": "node scripts/prepare-python.mjs",

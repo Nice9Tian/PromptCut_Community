@@ -1,11 +1,14 @@
 /**
- * `node --test` 的解析钩子:相对路径没写扩展名时,依次试 `.ts` / `.tsx` / `/index.ts`。
+ * Resolve hook for `node --test`: when a relative path has no extension, try `.ts` / `.tsx` /
+ * `/index.ts` in order.
  *
- * 编辑台的很多模块照 Vite 的习惯写 `import … from "../store/project"`,node 的 ESM 解析器
- * 不认,一 import 就 `ERR_MODULE_NOT_FOUND`。单测里用 `import "../testing/registerTs.mjs"`
- * 装上它,再配 `mock.module` 把拉不进 node 的重依赖(store、卡片注册表)换掉。
+ * Many editor modules follow Vite conventions like `import … from "../store/project"`, which
+ * Node's ESM resolver does not recognize, throwing `ERR_MODULE_NOT_FOUND` on import. Install this
+ * in unit tests via `import "../testing/registerTs.mjs"`, and use `mock.module` to replace heavy
+ * dependencies that cannot be loaded into Node (stores, card registry).
  *
- * 只补解析,不做转译:`.tsx` 能解析到,但 node 的类型剥离不认 JSX,真走到 `.tsx` 还是要 mock。
+ * Only adds resolution, does not transpile: `.tsx` can be resolved, but Node's type stripping does
+ * not support JSX; if execution actually reaches `.tsx`, it still needs to be mocked.
  */
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";

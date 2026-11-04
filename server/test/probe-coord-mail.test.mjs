@@ -1,4 +1,4 @@
-// 协调口里两个 Agent 之间的 HTTP 信箱（scripts/probes/probe-coord.mjs 的 createMailbox）。
+// HTTP mailbox between two Agents in coordination port (createMailbox in scripts/probes/probe-coord.mjs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +13,7 @@ async function withCoord(mail, fn) {
   try { await fn(c); } finally { await c.close(); }
 }
 
-test('没有令牌或令牌不对回 401；没开信箱回 404', async () => {
+test('responds 401 without a token or with a wrong token; responds 404 when the mailbox is not enabled', async () => {
   await withCoord({ token: TOKEN }, async (c) => {
     const none = await fetch(`${c.url}/mail/to-cloud`);
     assert.equal(none.status, 401);
@@ -29,12 +29,12 @@ test('没有令牌或令牌不对回 401；没开信箱回 404', async () => {
   });
 });
 
-test('追加补 seq 与时间戳，按 after 取；两个队列各自编号', async () => {
+test('append fills in seq and a timestamp, fetch by after; the two queues are numbered separately', async () => {
   await withCoord({ token: TOKEN }, async (c) => {
     const mc = mailClient(c.url, TOKEN);
-    const a = await mc.send('to-cloud', { from: 'local', kind: 'instruction', body: '第一条' });
+    const a = await mc.send('to-cloud', { from: 'local', kind: 'instruction', body: 'first message' });
     const b = await mc.send('to-cloud', { from: 'local', kind: 'question', body: { q: 1 } });
-    const r = await mc.send('to-local', { from: 'cloud', kind: 'receipt', ref: a.seq, body: '收到' });
+    const r = await mc.send('to-local', { from: 'cloud', kind: 'receipt', ref: a.seq, body: 'Got it' });
     assert.deepEqual([a.seq, b.seq, r.seq], [1, 2, 1]);
     const all = await mc.read('to-cloud', 0, 0);
     assert.equal(all.last, 2);
@@ -43,11 +43,11 @@ test('追加补 seq 与时间戳，按 after 取；两个队列各自编号', as
     assert.deepEqual((await mc.read('to-cloud', 1, 0)).messages.map((m) => m.seq), [2]);
     const back = await mc.read('to-local', 0, 0);
     assert.equal(back.messages[0].ref, 1);
-    assert.equal(back.messages[0].body, '收到');
+    assert.equal(back.messages[0].body, 'Got it');
   });
 });
 
-test('长轮询：没有新消息就挂着，新消息一到就回', async () => {
+test('long polling: with no new messages it hangs, and responds as soon as a new message arrives', async () => {
   await withCoord({ token: TOKEN }, async (c) => {
     const mc = mailClient(c.url, TOKEN);
     const started = Date.now();
@@ -62,7 +62,7 @@ test('长轮询：没有新消息就挂着，新消息一到就回', async () =>
   });
 });
 
-test('挂起时长有上限，到时回空列表', async () => {
+test('the hold time has an upper limit; an empty list is returned when it expires', async () => {
   await withCoord({ token: TOKEN, maxWaitMs: 200 }, async (c) => {
     const started = Date.now();
     const r = await mailClient(c.url, TOKEN).read('to-cloud', 0, 25);
@@ -72,7 +72,7 @@ test('挂起时长有上限，到时回空列表', async () => {
   });
 });
 
-test('信封校验：kind、from、ref、body、队列名', async () => {
+test('envelope validation: kind, from, ref, body, queue name', async () => {
   await withCoord({ token: TOKEN }, async (c) => {
     const post = (queue, body) => fetch(`${c.url}/mail/${queue}`, { method: 'POST', headers: { 'X-Mail-Token': TOKEN }, body: JSON.stringify(body) });
     const ok = { from: 'local', kind: 'instruction', body: 'x' };
@@ -86,7 +86,7 @@ test('信封校验：kind、from、ref、body、队列名', async () => {
   });
 });
 
-test('给了文件就持久化，重启后 seq 接着编', async () => {
+test('persists when a file is given; seq numbering continues after a restart', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mail-'));
   const file = path.join(dir, 'mail.jsonl');
   try {
@@ -106,7 +106,7 @@ test('给了文件就持久化，重启后 seq 接着编', async () => {
   }
 });
 
-test('没开信箱时 KV 不要令牌（本机与局域网探针照旧）', async () => {
+test('with the mailbox off, KV needs no token (probes on this machine and the LAN work as before)', async () => {
   await withCoord(undefined, async (c) => {
     const kv = coordClient(c.url, '');
     await kv.put('k', { v: 3 });
@@ -114,7 +114,7 @@ test('没开信箱时 KV 不要令牌（本机与局域网探针照旧）', asyn
   });
 });
 
-test('KV 照旧能用，healthz 带信箱摘要', async () => {
+test('KV still works, healthz carries a mailbox summary', async () => {
   await withCoord({ token: TOKEN }, async (c) => {
     const kv = coordClient(c.url, TOKEN);
     await kv.put('k', { v: 1 });
@@ -124,7 +124,7 @@ test('KV 照旧能用，healthz 带信箱摘要', async () => {
   });
 });
 
-test('开了信箱时 KV 也要令牌；coordClient 带上令牌照常可用', async () => {
+test('with the mailbox on, KV also needs a token; coordClient works as usual when it sends the token', async () => {
   await withCoord({ token: TOKEN }, async (c) => {
     assert.equal((await fetch(`${c.url}/kv/k?wait=0`)).status, 401);
     assert.equal((await fetch(`${c.url}/kv/k`, { method: 'PUT', body: '{}' })).status, 401);
@@ -135,18 +135,18 @@ test('开了信箱时 KV 也要令牌；coordClient 带上令牌照常可用', a
   });
 });
 
-test('MB10 kind: status 能写进信箱并按 seq 读回（云端报到用）', async () => {
+test('MB10 kind: status can be written to the mailbox and read back by seq (for cloud check-in)', async () => {
   await withCoord({ token: TOKEN }, async (c) => {
     const mc = mailClient(c.url, TOKEN);
-    const s = await mc.send('to-local', { from: 'cloud', kind: 'status', body: { title: '云端会话', node: 'v24' } });
+    const s = await mc.send('to-local', { from: 'cloud', kind: 'status', body: { title: 'Cloud session', node: 'v24' } });
     assert.equal(s.seq, 1);
     const r = await mc.read('to-local', 0, 0);
     assert.deepEqual(r.messages.map((m) => [m.seq, m.from, m.kind, m.ref, m.queue]), [[1, 'cloud', 'status', null, 'to-local']]);
-    assert.deepEqual(r.messages[0].body, { title: '云端会话', node: 'v24' });
+    assert.deepEqual(r.messages[0].body, { title: 'Cloud session', node: 'v24' });
   });
 });
 
-test('MB11 未知的 kind 仍回 400 bad-kind，不写进队列', async () => {
+test('MB11 an unknown kind still responds 400 bad-kind and is not written to the queue', async () => {
   await withCoord({ token: TOKEN }, async (c) => {
     const post = (kind) => fetch(`${c.url}/mail/to-local`, { method: 'POST', headers: { 'X-Mail-Token': TOKEN }, body: JSON.stringify({ from: 'cloud', kind, body: 'x' }) });
     for (const kind of ['report', 'STATUS', '', undefined]) {

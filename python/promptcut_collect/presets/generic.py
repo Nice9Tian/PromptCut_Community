@@ -1,4 +1,4 @@
-"""兜底预设：不加任何站点特化，全交给 yt-dlp 自己的 extractor。"""
+"""Fallback preset: no site-specific handling at all, everything is left to yt-dlp's own extractor."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from typing import Any, Dict
 NAME = "generic"
 
 notes = (
-    "通用预设。yt-dlp 认得一千多个站点（YouTube、抖音、Twitter/X、Vimeo 等），"
-    "这里只带浏览器 User-Agent，不做别的站点特化。"
+    "Generic preset. yt-dlp knows more than a thousand sites (YouTube, Douyin, Twitter/X, Vimeo, etc.), "
+    "Here only the browser User-Agent is sent, with no other site-specific handling."
 )
 
 USER_AGENT = (
@@ -36,6 +36,6 @@ def ydl_opts(url: str, quality: int) -> Dict[str, Any]:
 
 
 def retryable(message: str) -> bool:
-    """哪些报错值得等一等再试。默认只认明显的临时性错误。"""
+    """Which errors are worth waiting a moment and retrying. By default only clearly transient errors are recognized."""
     m = message.lower()
     return any(k in m for k in ("timed out", "timeout", "temporarily", "503", "429"))

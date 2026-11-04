@@ -1,16 +1,22 @@
 /**
- * 仅供测试，生产代码不得引用。
+ * For testing only; production code must not import this.
  *
- * C6.3 文档服务本体测试（契约 `docs/plan/docservice-contract.md` 第 7 节）共用的小工具：
+ * Shared utilities for C6.3 document service core tests (contract
+ * `docs/plan/docservice-contract.md` Section 7):
  *
- *   loadStore() / loadProject() / loadContent()   动态 import 被测模块，缺失时各条用例各自失败、原因写清楚
- *   tempDir(t)                                     建临时目录，用例结束时删掉
- *   authByQuery                                    按 URL 查询串 `?user=<id>` 定 principal；`user=deny` 拒绝（401）
- *   startStandalone({ modules, ... })              独立模式起服务（端口 0、autoTick: false），连上的客户端在 cleanup 时关掉
- *   replyTo(c, reqId, ms?)                         等带这个 reqId 的回包
- *   untilType(c, types, ms?)                       等下一条类型在 types 里的消息
+ *   loadStore() / loadProject() / loadContent()   dynamically imports modules under test; when
+ *                                                 missing, each test case fails individually with a
+ *                                                 clear reason
+ *   tempDir(t)                                    creates a temp directory, deleted when test ends
+ *   authByQuery                                   determines principal by URL query string
+ *                                                 `?user=<id>`; `user=deny` rejects (401)
+ *   startStandalone({ modules, ... })             starts service in standalone mode (port 0,
+ *                                                 autoTick: false); connected clients closed on
+ *                                                 cleanup
+ *   replyTo(c, reqId, ms?)                        waits for a response with this reqId
+ *   untilType(c, types, ms?)                      waits for the next message whose type is in types
  *
- * 只引 Node 内置模块与同目录的 `fake-ws-kit.mjs`。
+ * Only imports Node built-in modules and `fake-ws-kit.mjs` in the same directory.
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -21,8 +27,8 @@ import { wsClient } from './fake-ws-kit.mjs';
 
 export async function loadStore() {
   const mod = await import('../docservice/store/index.mjs');
-  assert.equal(typeof mod.createFileStore, 'function', `store/index.mjs 要导出 createFileStore；导出：${Object.keys(mod).join(', ')}`);
-  assert.equal(typeof mod.createMemoryStore, 'function', `store/index.mjs 要导出 createMemoryStore；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.createFileStore, 'function', `store/index.mjs must export createFileStore; exports: ${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.createMemoryStore, 'function', `store/index.mjs must export createMemoryStore; exports: ${Object.keys(mod).join(', ')}`);
   return mod;
 }
 
@@ -30,36 +36,36 @@ const isModule = (v) => v && typeof v === 'object' && Array.isArray(v.types) && 
 
 export async function loadProject() {
   const mod = await import('../docservice/modules/project.mjs');
-  assert.equal(typeof mod.projectModule, 'function', `modules/project.mjs 要导出 projectModule；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.projectModule, 'function', `modules/project.mjs must export projectModule; exports: ${Object.keys(mod).join(', ')}`);
   return (options) => {
     const m = mod.projectModule(options);
-    assert.ok(isModule(m), 'projectModule 要返回模块对象');
-    assert.deepEqual(m.types, ['project.'], 'types 是 [\'project.\']（契约第 1 节）');
-    assert.deepEqual(m.channels, ['project'], 'channels 是 [\'project\']（契约第 1 节）');
+    assert.ok(isModule(m), 'projectModule must return a module object');
+    assert.deepEqual(m.types, ['project.'], 'types is [\'project.\'] (contract section 1)');
+    assert.deepEqual(m.channels, ['project'], 'channels is [\'project\'] (contract section 1)');
     return m;
   };
 }
 
 export async function loadContent() {
   const mod = await import('../docservice/modules/content.mjs');
-  assert.equal(typeof mod.contentModule, 'function', `modules/content.mjs 要导出 contentModule；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.contentModule, 'function', `modules/content.mjs must export contentModule; exports: ${Object.keys(mod).join(', ')}`);
   return (options) => {
     const m = mod.contentModule(options);
-    assert.ok(isModule(m), 'contentModule 要返回模块对象');
-    assert.deepEqual(m.types, ['content.'], 'types 是 [\'content.\']（契约第 2 节）');
-    assert.deepEqual(m.channels, ['content'], 'channels 是 [\'content\']（契约第 2 节）');
+    assert.ok(isModule(m), 'contentModule must return a module object');
+    assert.deepEqual(m.types, ['content.'], 'types is [\'content.\'] (contract section 2)');
+    assert.deepEqual(m.channels, ['content'], 'channels is [\'content\'] (contract section 2)');
     return m;
   };
 }
 
-/** 建临时目录，用例结束时删掉 */
+/** Create temporary directory and delete it when the test case finishes */
 export function tempDir(t, prefix = 'pc-c63-') {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
 
-/** 按 URL 查询串定 principal：`?user=alice` → { userId: 'alice', tenantId: 't-test' }；`?user=deny` → 401；缺省 'u-default' */
+/** Determines principal by URL query string: `?user=alice` → { userId: 'alice', tenantId: 't-test' }; `?user=deny` → 401; defaults to 'u-default' */
 export function authByQuery(req) {
   const user = new URL(req.url ?? '/', 'http://localhost').searchParams.get('user') ?? 'u-default';
   if (user === 'deny') return null;
@@ -67,8 +73,9 @@ export function authByQuery(req) {
 }
 
 /**
- * 独立模式起服务。`url(user?)` 给出 ws 地址；`connect(user?)` 连上并等 open。
- * 日志收进 `logs`。`cleanup()` 关掉客户端与服务，可重复调用。
+ * Starts service in standalone mode. `url(user?)` provides ws address; `connect(user?)` connects
+ * and waits for open. Logs are collected into `logs`. `cleanup()` closes clients and service, and
+ * can be called repeatedly.
  */
 export async function startStandalone({ modules, path = '/', authenticate = authByQuery, now = Date.now, ...rest } = {}) {
   const logs = [];
@@ -94,7 +101,7 @@ export async function startStandalone({ modules, path = '/', authenticate = auth
       await c.opened;
     } catch (err) {
       await new Promise((resolve) => setTimeout(resolve, 20));
-      throw new Error(`${err.message}：${url(user)}${why}`);
+      throw new Error(`${err.message}: ${url(user)}${why}`);
     }
     return c;
   };
@@ -109,14 +116,14 @@ export async function startStandalone({ modules, path = '/', authenticate = auth
   return { service, port, url, connect, health, cleanup, logs };
 }
 
-/** 等带这个 reqId 的回包 */
+/** Waits for the response with this reqId */
 export const replyTo = (c, reqId, ms = 2000) => c.next((m) => m?.reqId === reqId, ms);
 
-/** 等下一条类型在 types 里的消息 */
+/** Waits for the next message whose type is in types */
 export const untilType = (c, types, ms = 2000) => c.next((m) => [].concat(types).includes(m?.type), ms);
 
 let reqSeq = 0;
-/** 发一条带新 reqId 的消息，等它的回包 */
+/** Sends a message with a new reqId and waits for its response */
 export async function ask(c, message, ms = 2000) {
   const reqId = `r-${++reqSeq}`;
   c.send({ ...message, reqId });

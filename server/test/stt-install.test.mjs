@@ -1,6 +1,6 @@
-// 安装进度解析。喂的是真实形状的 pip 输出,重点是别把「有进度」和「不知道进度」
-// 搞混 —— 编出来的百分比比没有百分比更糟。
-// 跑法:node --test server/test/stt-install.test.mjs
+// Installation progress parsing. Fed with realistic pip output shape; key point is not confusing
+// "has progress" with "unknown progress": fabricated percentages are worse than no percentages.
+// Run: node --test server/test/stt-install.test.mjs
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,12 +14,13 @@ const ts = require_('typescript');
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-stt-test-'));
 
-// 转译产物落在临时目录,解析不到 node_modules,所以把 react 换成绝对 URL
+// Transpiled artifacts land in temp directory and cannot resolve node_modules,
+// so replace react with absolute URL
 const reactUrl = pathToFileURL(require_.resolve('react')).href;
 const i18nUrl = pathToFileURL(path.join(ROOT, 'src/i18n/index.ts')).href;
 let src = fs.readFileSync(path.join(ROOT, 'src/ai/sttInstallStore.ts'), 'utf8')
   .replace('from "react"', `from '${reactUrl}'`)
-  // tr() 来自 src/i18n:同理换成绝对 URL
+  // tr() comes from src/i18n: likewise replace with an absolute URL
   .replace('from "../i18n/index.ts"', `from '${i18nUrl}'`);
 const js = ts.transpileModule(src, {
   compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
@@ -28,7 +29,7 @@ const file = path.join(OUT, 'store.mjs');
 fs.writeFileSync(file, js);
 const store = await import(pathToFileURL(file).href);
 
-/** 真实 pip 装 faster-whisper 时的输出形状 */
+/** Realistic output shape of pip installing faster-whisper */
 const PIP_LINES = [
   'Collecting faster-whisper>=1.0.3',
   '  Downloading faster_whisper-1.0.3-py3-none-any.whl.metadata (14 kB)',
@@ -45,29 +46,29 @@ function fresh(id = 'job1') {
   return id;
 }
 
-test('刚启动是 starting,且没有假的百分比', () => {
+test('Just started: the state is starting, with no fake percentage', () => {
   const id = fresh('t-start');
   const job = store.getJob(id);
   assert.equal(job.phase, 'starting');
   assert.equal(store.fractionOf(job), null);
 });
 
-test('Collecting 进入解析依赖阶段并记下包名', () => {
+test('Collecting enters the dependency-resolving stage and records the package name', () => {
   const id = fresh('t-collect');
   store.feedLine(id, 'Collecting faster-whisper>=1.0.3');
   const job = store.getJob(id);
   assert.equal(job.phase, 'resolving');
   assert.equal(job.currentPackage, 'faster-whisper');
-  assert.equal(store.fractionOf(job), null, '解析阶段不该有百分比');
+  assert.equal(store.fractionOf(job), null, 'The resolving stage should have no percentage');
 });
 
-test('.whl.metadata 不算下载了一个包', () => {
+test('.whl.metadata does not count as a downloaded package', () => {
   const id = fresh('t-meta');
   store.feedLine(id, '  Downloading faster_whisper-1.0.3-py3-none-any.whl.metadata (14 kB)');
-  assert.equal(store.getJob(id).downloaded, 0, 'metadata 是解依赖时顺手拉的,不是包体');
+  assert.equal(store.getJob(id).downloaded, 0, 'metadata is fetched on the side while resolving dependencies, it is not the package body');
 });
 
-test('真正的 whl 下载才计数,并读出包名', () => {
+test('Only a real whl download is counted, and the package name is read from it', () => {
   const id = fresh('t-dl');
   store.feedLine(id, '  Downloading ctranslate2-4.4.0-cp311-cp311-win_amd64.whl (43.2 MB)');
   const job = store.getJob(id);
@@ -76,7 +77,7 @@ test('真正的 whl 下载才计数,并读出包名', () => {
   assert.equal(job.currentPackage, 'ctranslate2');
 });
 
-test('进度行给出当前文件的真实比例', () => {
+test('The progress line gives the real ratio of the current file', () => {
   const id = fresh('t-frac');
   store.feedLine(id, '  Downloading ctranslate2-4.4.0-cp311-cp311-win_amd64.whl (43.2 MB)');
   store.feedLine(id, '     ------------------                       20.1/43.2 MB 8.1 MB/s eta 0:00:03');
@@ -85,7 +86,7 @@ test('进度行给出当前文件的真实比例', () => {
   assert.match(store.describe(job), /Downloading ctranslate2/);
 });
 
-test('kB 单位换算成 MB', () => {
+test('kB units convert to MB', () => {
   const id = fresh('t-kb');
   store.feedLine(id, '  Downloading tiny-0.1.whl (900 kB)');
   store.feedLine(id, '     ------ 450/900 kB 1.0 MB/s');
@@ -94,26 +95,26 @@ test('kB 单位换算成 MB', () => {
   assert.ok(Math.abs(store.fractionOf(job) - 0.5) < 1e-6);
 });
 
-test('进入安装阶段:知道包数,但**不给**百分比', () => {
+test('Entering the install stage: the package count is known, but a percentage is **not given**', () => {
   const id = fresh('t-install');
   store.feedLine(id, 'Installing collected packages: tokenizers, onnxruntime, ctranslate2, av, faster-whisper');
   const job = store.getJob(id);
   assert.equal(job.phase, 'installing');
   assert.equal(job.packageCount, 5);
-  assert.equal(store.fractionOf(job), null, 'pip 在这一段一行不打,给百分比就是假的');
+  assert.equal(store.fractionOf(job), null, 'pip prints no line at all in this stage, so giving a percentage would be fake');
   assert.match(store.describe(job), /Installing 5 packages/);
 });
 
-test('走完整条真实输出不会崩,阶段推进正确', () => {
+test('Running through the whole real output does not crash, and the stages advance correctly', () => {
   const id = fresh('t-all');
   for (const l of PIP_LINES) store.feedLine(id, l);
   const job = store.getJob(id);
   assert.equal(job.phase, 'downloading');
-  assert.equal(job.downloaded, 2, 'metadata 那两行不算');
+  assert.equal(job.downloaded, 2, 'The two metadata lines do not count');
   assert.ok(store.fractionOf(job) > 0 && store.fractionOf(job) < 1);
 });
 
-test('成功收尾:进度满、有耗时、无错误', () => {
+test('Successful finish: progress full, elapsed time recorded, no error', () => {
   const id = fresh('t-done');
   store.feedLine(id, 'Successfully installed av-12.0.0 ctranslate2-4.4.0 faster-whisper-1.0.3');
   store.finishJob(id, true);
@@ -124,53 +125,53 @@ test('成功收尾:进度满、有耗时、无错误', () => {
   assert.equal(job.error, undefined);
 });
 
-test('失败收尾:保留原因和日志尾巴', () => {
+test('Failed finish: the reason and the log tail are kept', () => {
   const id = fresh('t-fail');
   store.feedLine(id, 'ERROR: Could not find a version that satisfies the requirement');
-  store.finishJob(id, false, '网络不可达');
+  store.finishJob(id, false, 'Network unreachable');
   const job = store.getJob(id);
   assert.equal(job.phase, 'failed');
-  assert.equal(store.describe(job), '网络不可达');
+  assert.equal(store.describe(job), 'Network unreachable');
   assert.ok(job.logTail.some((l) => l.includes('Could not find')));
 });
 
-test('runningJob 只认没收尾的那个', () => {
+test('runningJob recognizes only the one that has not finished', () => {
   for (const id of ['r1', 'r2']) store.startJob(id, 'faster-whisper');
   store.finishJob('r1', true);
   const running = store.getJobs().filter((j) => j.phase !== 'done' && j.phase !== 'failed');
   assert.ok(running.every((j) => j.jobId !== 'r1'));
 });
 
-test('日志尾巴有上限,长安装不会把内存吃光', () => {
+test('The log tail has a cap, so a long install does not exhaust memory', () => {
   const id = fresh('t-cap');
   for (let i = 0; i < 500; i++) store.feedLine(id, `line ${i}`);
   assert.ok(store.getJob(id).logTail.length <= 60);
 });
 
-// ── 工具调用 ↔ 安装任务的匹配 ────────────────────────────────
+// ── Matching tool calls ↔ installation tasks ────────────────────────────────
 const A = { jobId: 'install-faster-whisper-abc123', engine: 'faster-whisper', phase: 'done', downloaded: 3, startedAt: 1, logTail: [] };
 const B = { jobId: 'install-faster-whisper-xyz789', engine: 'faster-whisper', phase: 'downloading', downloaded: 1, startedAt: 2, logTail: [] };
 
-test('summary 里有 jobId 时精确匹配,不会串到新任务上', () => {
+test('When the summary has a jobId it matches exactly and does not get mixed up with a new job', () => {
   const tool = { name: 'stt_install', ok: true, summary: '{"jobId":"install-faster-whisper-abc123","started":true}' };
-  assert.equal(store.matchInstallJob(tool, [A, B]), A, '旧消息该显示它当时那次的结果');
+  assert.equal(store.matchInstallJob(tool, [A, B]), A, 'An old message should show the result of its own run at the time');
 });
 
-test('结果还没回来时退回当前正在跑的那个', () => {
+test('When the result has not come back yet, fall back to the one currently running', () => {
   const tool = { name: 'stt_install', ok: undefined };
   assert.equal(store.matchInstallJob(tool, [A, B]), B);
 });
 
-test('已完成但没有 jobId 的调用不乱认任务', () => {
+test('A finished call without a jobId is not matched to just any job', () => {
   const tool = { name: 'stt_install', ok: true };
   assert.equal(store.matchInstallJob(tool, [A, B]), undefined);
 });
 
-test('别的工具一律不认', () => {
+test('Other tools are never matched', () => {
   assert.equal(store.matchInstallJob({ name: 'add_clip', ok: undefined }, [B]), undefined);
 });
 
-test('jobId 指向一个已经不存在的任务时返回 undefined,而不是抓错一个', () => {
+test('When jobId points to a job that no longer exists, return undefined instead of grabbing the wrong one', () => {
   const tool = { name: 'stt_install', ok: true, summary: '{"jobId":"install-whisper-gone999"}' };
   assert.equal(store.matchInstallJob(tool, [A, B]), undefined);
 });

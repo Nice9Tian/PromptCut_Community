@@ -1,23 +1,23 @@
 /*
- * K1 的加载遮罩。**只用已有的主题变量**（pinned 交互 2 / 3）：
- * 这里一个固定色都没有，换皮肤时它跟着换。
+ * The loading overlay of K1. **Use only existing theme variables** (pinned interaction 2 / 3):
+ * There is not a single fixed color here, so it changes along with the skin.
  */
 
 .pc-probe-gate {
   position: fixed;
   inset: 0;
-  /* 顶栏、对话框、AI 面板都在 60 以下；遮罩要盖住整个编辑器界面 */
+  /* The top bar, dialogs and AI panel are all below 60; the overlay must cover the whole editor */
   z-index: 900;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 18px;
-  /* 不透明：编辑操作被挡（加载阶段的遮罩是 pinned 渲染 1 明写的例外） */
+  /* Opaque: editing actions are blocked (the loading-phase overlay is an exception explicitly written into pinned render 1) */
   background: var(--ui-bg);
   color: var(--ui-fg);
   font-family: var(--ui-font);
-  /* 键盘也别穿过去 */
+  /* Keyboard input must not pass through either */
   user-select: none;
 }
 
@@ -34,7 +34,7 @@
   to { transform: rotate(360deg); }
 }
 
-/* 转圈会让一部分人不舒服；不转也看得出在忙（下面的进度条和计数在动） */
+/* Spinning makes some people uncomfortable; it is still clear that work is in progress without it (the progress bar and count below keep moving) */
 @media (prefers-reduced-motion: reduce) {
   .pc-probe-gate-ring { animation-duration: 3s; }
 }

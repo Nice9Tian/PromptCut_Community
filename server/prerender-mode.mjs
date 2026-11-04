@@ -1,55 +1,68 @@
 /**
- * 预渲染进程的三种模式(`docs/semantics/mechanism/rendering.md`「查询渲染与预渲染进程」;计划 `docs/plan/cloud-task.md` I1、I4(a))。
+ * Three modes of the prerender process (`docs/semantics/mechanism/rendering.md`
+ * "Query rendering and prerender process"; plan `docs/plan/cloud-task.md` I1, I4(a)).
  *
- *   - `user`  :本机只有用户在编辑。只做预渲染(后台那一趟、队列任务、轨道流、AI 栏操作预览、3D 视图贴图),
- *              **不建 Agent lane**,Agent 的查询回 `503 NO_AGENT_LANE`。
- *   - `agent` :本机只有 Agent(或 Agent 云端环境)。只接 Agent 的查询,**不预渲染**:只建 Agent lane;
- *              `/preload` 回 `{ ok: true, skipped: 'agent' }`,其余预渲染的请求回 `503 NO_PRERENDER`;不起渲染节点、不产流。
- *   - `full`  :两者都在本机。三种都建,Agent 优先只是插队(现在的行为,缺省)。
+ *   - `user`  : Only the user is editing on this machine. Only performs prerendering (the
+ *               background pass, queue tasks, track streams, AI panel operation preview, 3D view
+ *               textures), **does not create an Agent lane**, and Agent queries return
+ *               `503 NO_AGENT_LANE`.
+ *   - `agent` : Only the Agent (or Agent cloud environment) is on this machine. Only accepts Agent
+ *               queries, **does not prerender**: only creates the Agent lane; `/preload` returns
+ *               `{ ok: true, skipped: 'agent' }`, and other prerender requests return
+ *               `503 NO_PRERENDER`; does not start render nodes, does not produce streams.
+ *   - `full`  : Both are on this machine. Creates all three, with Agent priority simply jumping the
+ *               queue (current behavior, default).
  *
- * 模式名和 lane 名(`user` / `agent` / `background` …)同字不同物:这里的常量叫 `PRERENDER_MODE`,别和 lane 混。
+ * Mode names and lane names (`user` / `agent` / `background` …) share words but represent different
+ * things: the constant here is called `PRERENDER_MODE`, do not confuse it with lane.
  *
- * 由编辑器进程拉起预渲染进程时经环境变量 `PROMPTCUT_PRERENDER_MODE` 传进去(`vite-plugin-prerender.ts`);
- * Agent 云端环境不经编辑器进程,自己带 `PROMPTCUT_ROLE=prerender PROMPTCUT_PRERENDER_MODE=agent` 起。
+ * Passed via the environment variable `PROMPTCUT_PRERENDER_MODE` when the editor process starts the
+ * prerender process (`vite-plugin-prerender.ts`); the Agent cloud environment bypasses the editor
+ * process and starts on its own with `PROMPTCUT_ROLE=prerender PROMPTCUT_PRERENDER_MODE=agent`.
  */
 
 export const PRERENDER_MODE = Object.freeze({ USER: 'user', AGENT: 'agent', FULL: 'full' });
 const MODES = new Set(Object.values(PRERENDER_MODE));
 
-/** 规整一个模式值:认得的回小写模式名,认不得(含空)回 null */
+/** Normalizes a mode value: returns the lowercase mode name if recognized, or null if unrecognized (including empty) */
 export function parsePrerenderMode(value) {
   if (typeof value !== 'string') return null;
   const mode = value.trim().toLowerCase();
   return MODES.has(mode) ? mode : null;
 }
 
-/** 预渲染进程这一侧:按环境变量定自己的模式。没设或认不得都按 `full`(和加模式之前的行为相同) */
+/** Prerender process side: determines its mode from environment variables. Defaults to `full` if unset or unrecognized (same behavior as before adding modes) */
 export function prerenderModeOf(env = process.env) {
   return parsePrerenderMode(env?.PROMPTCUT_PRERENDER_MODE) ?? PRERENDER_MODE.FULL;
 }
 
 /**
- * 编辑器进程拉起本机预渲染进程时选哪种模式(I4(a):用户机缺省一个进程,本机有 Agent 时 `full`,没有时 `user`)。
+ * Which mode to select when the editor process starts the local prerender process (I4(a): defaults
+ * to one process on the user's machine, `full` when an Agent is local, `user` when not).
  *
- * 〔裁〕「本机有 Agent」按代码现状判:编辑器进程总是挂着 `vite-plugin-ai`(本机 Agent 的服务端工具就在编辑器进程里,
- * `vite.config.ts` 的插件表),桌面版与 dev server 都一样,所以缺省 `full`,现有用户看不出区别。
- * 编辑器进程的环境里显式给了合法的 `PROMPTCUT_PRERENDER_MODE` 时照它(排障、验收用;例如 `user` 表示不给本机 Agent 开查询)。
+ * [ruling] "Agent is local" is judged by current code status: the editor process always mounts
+ * `vite-plugin-ai` (server-side tools for the local Agent reside in the editor process, plugin list
+ * in `vite.config.ts`), identical in both the desktop app and dev server, so it defaults to `full`,
+ * and existing users will see no difference.
+ * When a valid `PROMPTCUT_PRERENDER_MODE` is explicitly provided in the editor process environment,
+ * follow it (for troubleshooting and acceptance check; e.g. `user` means not opening queries for
+ * the local Agent).
  */
 export function localPrerenderMode(env = process.env) {
   return parsePrerenderMode(env?.PROMPTCUT_PRERENDER_MODE) ?? PRERENDER_MODE.FULL;
 }
 
-/** 这种模式接不接 Agent 的查询(建不建 Agent lane) */
+/** Whether this mode accepts Agent queries (whether it creates an Agent lane) */
 export function modeServesAgent(mode) {
   return mode === PRERENDER_MODE.AGENT || mode === PRERENDER_MODE.FULL;
 }
 
-/** 这种模式做不做预渲染(后台那一趟、队列、流、用户的交互帧与播放、操作预览) */
+/** Whether this mode runs prerendering (the background pass, queue, streams, user interactive frames and playback, operation preview) */
 export function modeServesPrerender(mode) {
   return mode === PRERENDER_MODE.USER || mode === PRERENDER_MODE.FULL;
 }
 
-/** 这种模式建哪些 lane(`FramePipeline.laneChains` 的键,外加 `'queue'` 与轨道流;只给诊断和单测看) */
+/** Which lanes this mode creates (keys of `FramePipeline.laneChains`, plus `'queue'` and track streams; for diagnostics and unit tests only) */
 export function lanesOfMode(mode) {
   const lanes = [];
   if (modeServesPrerender(mode)) lanes.push('user', 'background', 'queue', 'stream');
@@ -58,19 +71,22 @@ export function lanesOfMode(mode) {
 }
 
 /**
- * 某条 lane 的请求在这种模式下被拒时的错误(`status` / `code` / `retryable`,路由原样回);不拒回 null。
+ * Error when a request for a lane is rejected in this mode (`status` / `code` / `retryable`,
+ * returned as is by the router); returns null if not rejected.
  *
- * - Agent 的请求(`lane === 'agent'`)到了 `user` 模式:`503 NO_AGENT_LANE`(与编辑器进程没有 Agent lane 同一个码,
- *   调用方已经认它);不可重试 —— 模式在进程启动时定下,重试也还是这个进程。
- * - 预渲染的请求(其余 lane)到了 `agent` 模式:`503 NO_PRERENDER`,同样不可重试。
+ * - Agent requests (`lane === 'agent'`) arriving in `user` mode: `503 NO_AGENT_LANE` (same code as
+ *   when editor process has no Agent lane, which callers already recognize); not retryable: mode
+ *   is fixed at process startup, retrying still hits this process.
+ * - Prerender requests (remaining lanes) arriving in `agent` mode: `503 NO_PRERENDER`, likewise not
+ *   retryable.
  */
 export function modeRefusal(mode, lane) {
   if (lane === 'agent') {
     if (modeServesAgent(mode)) return null;
-    return Object.assign(new Error(`这个预渲染进程是 ${mode} 模式,没有 Agent lane:不接 Agent 的查询。`),
+    return Object.assign(new Error(`This prerender process is in ${mode} mode and has no Agent lane: it does not accept Agent queries.`),
       { status: 503, code: 'NO_AGENT_LANE', retryable: false, mode });
   }
   if (modeServesPrerender(mode)) return null;
-  return Object.assign(new Error(`这个预渲染进程是 ${mode} 模式,只接 Agent 的查询,不做预渲染(请求的 lane:${lane})。`),
+  return Object.assign(new Error(`This prerender process is in ${mode} mode: it only accepts Agent queries and does not prerender (requested lane: ${lane}).`),
     { status: 503, code: 'NO_PRERENDER', retryable: false, mode });
 }

@@ -3,46 +3,51 @@ import { useTimelineContext } from "./TimelineContext";
 import { snapTime, timeOfX } from "./utils";
 
 /**
- * 拖播放头(scrub)。卡尺和播放头本体共用这一份:
- * - 卡尺:按下就把播放头挪到指针处,按住不放接着拖(jumpToPointer)
- * - 播放头本体:按下不跳,保持抓取时的偏移
- * 两者都在拖动过程中实时 seek,画面跟着走,不是松手才跳一下。
+ * Dragging the playhead (scrub). The ruler and the playhead itself share this one implementation:
+ * - Ruler: pressing moves the playhead to the pointer, and holding on keeps dragging (jumpToPointer)
+ * - Playhead itself: pressing does not jump, and keeps the offset from when it was grabbed
+ * Both seek in real time during the drag, so the picture follows along instead of jumping only on release.
  *
- * 时间原点统一取轨道区(trackArea)的左边——卡尺和播放头都在它里面,
- * 各自元素的左边并不是 0 秒。
+ * The time origin is always the left edge of the track area (trackArea): the ruler and the playhead are
+ * both inside it, and the left edge of each element is not second 0.
  */
 export interface ScrubOptions {
-  /** 按下就跳到指针处(卡尺用);false 表示保持抓取偏移(拖播放头本体用) */
+  /** Jump to the pointer on press (used by the ruler); false means keep the grab offset (used when dragging the playhead itself) */
   jumpToPointer: boolean;
 }
 
 /**
- * 「手正按在播放头上」的对外信号。
+ * External signal for "a hand is pressing on the playhead".
  *
- * # 为什么预渲染那边需要知道这件事
+ * # Why the prerender side needs to know this
  *
- * 3D 视图看到板子缺这一刻的贴图就会立刻发一次前台渲染。拖动时播放头每跨过一个格子
- * (0.25 秒)就换一个时刻,于是**按着不放拖过去一路就是一串渲染请求** —— 每一个都会
- * 占住一个 Chrome 好几秒,而它们渲的都是用户一闪而过、根本没停下来看的位置。
- * 前一个还没跑完下一个就来了,池子被这些注定作废的活占满,等用户真的松手停在某处,
- * 反而得排在它们后面等。
+ * When the 3D view sees that the board lacks the texture for this moment, it immediately fires a foreground
+ * render. During a drag, every time the playhead crosses a cell (0.25 s) the moment changes, so **dragging
+ * across while holding yields a stream of render requests**: each one occupies a Chrome for several seconds,
+ * yet they render positions the user flashes past and never stops to look at. The next one arrives before
+ * the previous one finishes, the pool is filled with these jobs that are bound to be discarded, and when the
+ * user finally releases and stops somewhere, that render has to queue behind them.
  *
- * 所以:**按着的时候一张都不渲,松手那一刻再渲**。这比"防抖 N 毫秒"准 ——
- * 松手是一个明确的事件,不用猜多久算停下;而点一下卡尺跳过去(按下即松开)也不会
- * 因此多等,因为松手立刻就发生了。
+ * So: **render nothing while pressed, and render at the moment of release**. This is more accurate than
+ * "debounce N ms": release is a definite event, with no need to guess how long counts as stopped; and a
+ * click on the ruler that jumps there (press and release at once) doesn't wait longer either, because the
+ * release happens immediately.
  *
- * 走模块级 + useSyncExternalStore,理由和 bakeCoverage 那个小仓库一样:时间轴和预览面板
- * 在组件树上离得很远,中间那一整条链路没有一个组件需要这个值。
+ * It goes through a module-level store + useSyncExternalStore, for the same reason as the small store of
+ * bakeCoverage: the timeline and the preview panel are far apart in the component tree, and no component in
+ * the whole chain between them needs this value.
  *
- * # 记的是「哪几根指头按着」,不是一个计数
+ * # What is recorded is "which fingers are pressing", not a count
  *
- * 计数器有一个致命的失败模式:**漏掉一次松手,预渲染就永久停摆**。而漏是会发生的 ——
- * 指针被别的元素接管、拖到一半元素被卸载、浏览器把 pointerup 送到了别处。
- * 那时候界面看上去一切正常,只是再也不渲了,而且不报错。
+ * A counter has a fatal failure mode: **miss one release and prerender stalls permanently**. And misses do
+ * happen: the pointer taken over by another element, the element unmounted halfway through a drag, the
+ * browser delivering pointerup elsewhere. Then the UI looks completely normal, but it never renders again,
+ * and reports no error.
  *
- * 所以按 pointerId 存进 Set(重复 add / 重复 delete 都是幂等的),并且**在 window 上收尾**:
- * 不管松手发生在哪个元素上都算数,窗口失焦时直接全清。哪怕某一次真的漏了,
- * 下一次点任何地方的 pointerup 都会把它清掉,不会烂在那儿。
+ * So pointerIds are stored in a Set (repeated add / repeated delete are idempotent), and the cleanup happens
+ * **on window**: a release counts no matter which element it lands on, and when the window loses focus
+ * everything is cleared directly. Even if one release really was missed, the pointerup of the next click
+ * anywhere clears it, so it won't rot there.
  */
 const scrubbers = new Set<number>();
 const scrubListeners = new Set<() => void>();
@@ -62,10 +67,10 @@ function endScrub(id: number) {
   notifyScrub();
 }
 if (typeof window !== "undefined") {
-  // 收尾一律挂在 window 上:松手落在哪个元素上都算,漏不掉
+  // Cleanup is always attached to window: a release counts no matter which element it lands on, so none can be missed
   window.addEventListener("pointerup", (e) => endScrub(e.pointerId), true);
   window.addEventListener("pointercancel", (e) => endScrub(e.pointerId), true);
-  // 拖着拖着切走了窗口,pointerup 可能永远不来 —— 失焦就当全松了
+  // If the window is switched away mid-drag, pointerup may never come: treat losing focus as everything released
   window.addEventListener("blur", () => {
     if (!scrubbers.size) return;
     scrubbers.clear();
@@ -86,10 +91,10 @@ export function useScrub() {
       const left = trackAreaRef.current?.getBoundingClientRect().left ?? 0;
       return Math.max(0, timeOfX(clientX - left, pxPerSec));
     };
-    // 播放中拖播放头会被播放循环拽回去,先停下来
+    // Dragging the playhead during playback gets pulled back by the playback loop, so stop first
     if (getState().playing) actions.pause();
 
-    // -1:不要把播放头自己当吸附点,否则拖动时会黏在原地
+    // -1: don't treat the playhead itself as a snap point, or it would stick in place while dragging
     const snap = (raw: number, altKey: boolean) =>
       Math.max(0, snapTime(raw, altKey, getState().project, -1, undefined, pxPerSec));
 
@@ -97,17 +102,19 @@ export function useScrub() {
     try {
       el.setPointerCapture(e.pointerId);
     } catch {
-      // 指针已经不在了(比如合成事件、鼠标已松开),照样能拖,只是没有捕获
+      // The pointer is already gone (e.g. a synthetic event, or the mouse is already released); dragging still works, just without capture
     }
     actions.seek(snap(secAt(e.clientX) + offset, e.altKey));
 
     /*
-     * pointermove 只记「想去哪」,每个 animation frame 最多交一次给 store。
+     * pointermove only records "where to go" and hands it to the store at most once per animation frame.
      *
-     * 每交一次,整条时间轴、舞台、素材层都要跟着重渲、视频还要 seek;鼠标事件比屏幕刷新密的时候
-     * (高回报率鼠标、事件在主线程堆着),一帧里交好几次,前面几次画出来之前就作废了。
-     * 卡片层照样每帧跟着走;视频由素材层自己再节流(mediaSync 的 SCRUB_SEEK_MIN_MS),
-     * 拖动时允许比播放头晚一两帧,松手时补齐。
+     * Every hand-off makes the whole timeline, stage and media layer re-render, and the video has to seek; when
+     * mouse events are denser than the screen refresh (high polling rate mice, events piling up on the main
+     * thread), several hand-offs happen in one frame, and the earlier ones are invalidated before they are drawn.
+     * The card layer still follows every frame; the video is throttled again by the media layer itself
+     * (SCRUB_SEEK_MIN_MS in mediaSync), allowed to lag the playhead by a frame or two while dragging, and
+     * caught up on release.
      */
     let pending: number | null = null;
     let raf = 0;
@@ -121,14 +128,19 @@ export function useScrub() {
       pending = snap(secAt(ev.clientX) + offset, ev.altKey);
       if (!raf) raf = requestAnimationFrame(flush);
     };
-    // 手按下了 —— 从这一刻起前台渲染让路,直到松手。收尾挂在 window 上(见上面 isScrubbing)
+    // Pointer pressed: from this moment foreground rendering yields until release. Cleanup is hooked
+    // on window (see isScrubbing above)
     beginScrub(e.pointerId);
     const onUp = (ev: PointerEvent) => {
       /*
-       * 松手落在精确位置:按松手处的指针交最后一次,还没交出去的那一帧就不用交了(被它盖掉)。
-       * pointercancel 的坐标不可信(可能是 0),那种情况只交已经记下的。
-       * 和 store 里已经一样就不交:每交一次整个编辑器都要重渲一遍,松手时多交一次就多等一遍。
-       * 视频那边不靠这里 —— isScrubbing 变回 false 时素材层自己按 0.03s 精确对齐一次。
+       * Release lands on the exact position: submit one last time with the pointer at the release point;
+       * any frame that has not been submitted yet is dropped (overridden by it).
+       * The pointercancel coordinates cannot be trusted (may be 0), so in that case only submit what has
+       * already been recorded.
+       * Do not submit if it already equals the store: every submit re-renders the whole editor, so one
+       * extra submit on release means one extra wait.
+       * Video does not rely on this: when isScrubbing goes back to false, the media layer aligns itself
+       * exactly once at 0.03s.
        */
       if (raf) cancelAnimationFrame(raf);
       raf = 0;
@@ -142,7 +154,7 @@ export function useScrub() {
       try {
         el.releasePointerCapture(ev.pointerId);
       } catch {
-        // 指针已经被别处接管,忽略
+        // The pointer has been taken over elsewhere, ignore
       }
     };
     el.addEventListener("pointermove", onMove);

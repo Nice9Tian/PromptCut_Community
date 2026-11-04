@@ -1,11 +1,17 @@
 /**
- * 时间轴上「谁在什么时候出声、多响」的清单,纯函数,不碰磁盘。
+ * Manifest of "who makes sound when, and how loud" on the timeline; pure function, does not
+ * touch disk.
  *
- * 三处用同一份规则,免得各写一遍又对不上:
- *   - 导出混音(server/bakery/mux-audio.mjs 的 buildAudioPlan → ffmpeg;server/bakery/audio-mix.mjs 的 Chrome 离线渲染)
- *   - 测响度(measure_audio 的 timeline 档,浏览器把这份清单发给服务端)
- *   - 预览不用它(预览按时刻查 audioClipsAt / videoLayersAt),但规则一致:隐藏 / 静音的序列不出声,
- *     片段 audioMuted 不出声,变速的视频段不出原声(`speedMutesSource`;变速的声音段照常出声、变调;挂在变速段上的声画一体卡照常出声),图片没声音,音量 = opacity × audioVolume,淡入淡出线性。
+ * Three places share the same rules to avoid implementing them separately and getting out of sync:
+ *   - Export mix (buildAudioPlan in server/bakery/mux-audio.mjs → ffmpeg; Chrome offline rendering
+ *     in server/bakery/audio-mix.mjs)
+ *   - Loudness measurement (timeline tier of measure_audio; browser sends this manifest to server)
+ *   - Preview does not use it (preview queries audioClipsAt / videoLayersAt by timestamp), but
+ *     rules match: hidden / muted tracks make no sound, clips with audioMuted make no sound,
+ *     speed-changed video clips do not emit original audio (`speedMutesSource`; speed-changed
+ *     audio clips emit sound and pitch-shift as usual; integrated audio-visual cards attached
+ *     to speed-changed clips emit sound as usual), images have no sound,
+ *     volume = opacity × audioVolume, linear fade-in / fade-out.
  */
 
 import { audioFxOfClip } from "./audioFx.mjs";
@@ -16,11 +22,14 @@ import { clipSpeed, speedMutesSource } from "./clipTime.mjs";
 const r3 = (n) => +Number(n).toFixed(3);
 
 /**
- * @returns 每一条:{ clipId, trackId, mediaId, start, dur, offset, volume, fadeIn, fadeOut, fx: { def, params } | null, env? }
- *   start / dur 是时间轴上的位置(秒),offset 是从素材第几秒开始。顺序按序列从上到下、片段原顺序。
- *   剪辑段(kernel/cutSegments.ts):先按 `audioProjectOf` 把激活剪辑里的剪辑段展开成平移、裁好的片段,
- *   它们的 clipId 带剪辑段路径前缀,`env` 是外层各段的包络(时间轴绝对时间),混音器乘上去(`gainCurve`)。
- *   没有剪辑段的项目和以前逐字节相同。
+ * @returns Each entry: { clipId, trackId, mediaId, start, dur, offset, volume, fadeIn, fadeOut, fx: { def, params } | null, env? }
+ *   start / dur are timeline positions (seconds), offset is start second within media. Order is
+ *   tracks top-to-bottom, clips in original order.
+ *   Cut segments (kernel/cutSegments.ts): first expands cut segments in the active cut into
+ *   translated, trimmed clips via `audioProjectOf`; their clipId carries the cut segment path
+ *   prefix, and `env` is the envelope of outer segments (absolute timeline time), multiplied by
+ *   the mixer (`gainCurve`).
+ *   Projects without cut segments remain byte-for-byte identical to before.
  */
 export function audioPlanOf(source) {
   const project = audioProjectOf(source);
@@ -29,21 +38,27 @@ export function audioPlanOf(source) {
     if (tr.hidden || tr.muted) continue;
     for (const c of tr.clips || []) {
       if (c.audioMuted) continue;
-      // 〔裁〕第一版变速段的原声不出(kernel/clipTime.mjs 文件头):浏览器离线混音与 ffmpeg 做不出一样的变速声音,
-      // 只有「不出」两边一致。挂在它上面的音频效果同样不出(声音来源就是这段原声)。
-      // 声画一体卡照常出声(2026-10-23 用户定「出声。」):它的声音是已生成的 WAV,本来就按时间轴长度生成
-      // (读这段素材时已随倍率变速变调,卡片时钟见 clipTime.mjs 的 cardClockOffset),这里照 1 倍摆位,不再带 speed。
-      // 音频素材效果卡不走这份清单(mux-audio 的 buildAudioPlan 另收),变速段当它的输入时随倍率变速变调(2026-10-23 用户定「放开。」)。
+      // [ruling] In v1, speed-changed clips emit no original audio (header of kernel/clipTime.mjs):
+      // browser offline mixing and ffmpeg cannot produce identical varispeed audio; only "no audio"
+      // matches on both sides. Audio effects attached to it also emit no sound (their audio source is
+      // this original audio).
+      // Integrated audio-visual cards emit sound as usual (user decision, 2026-10-23: "Emit sound."):
+      // their audio is already-generated WAV, originally generated according to timeline duration
+      // (reading this media was already varispeeded and pitch-shifted with rate; see cardClockOffset in
+      // clipTime.mjs for card clock), positioned here at 1x without carrying speed.
+      // Audio media effect cards do not use this manifest (handled separately by buildAudioPlan in
+      // mux-audio); when a speed-changed clip is its input, it varispeeds and pitch-shifts with rate
+      // (user decision, 2026-10-23: "Allow.").
       const embedded = clipHasEmbeddedAudio(project, c);
       if (!embedded && speedMutesSource(c, project)) continue;
       const rendition = embedded ? resolveCardAudioRendition(project, c) : null;
       const m = rendition?.media ?? (project.media || []).find((x) => x.id === c.mediaId);
-      // 合成声音是已入库的项目内容；丢了引用不能悄悄导出无声片段。
+      // Synthesized audio is stored project content; losing references must not silently export silent clips.
       const generated = embedded || !!(c.soundEffect || m?.soundEffect);
-      if (generated && (!m || !m.url)) throw new Error(`${c.id} 的合成音效素材缺失，请重新生成或恢复素材`);
+      if (generated && (!m || !m.url)) throw new Error(`The synthesized sound effect media for ${c.id} is missing, please regenerate it or restore the media`);
       if (!c.mediaId && !embedded) continue;
       if (!m || !m.url || m.kind === "image") continue;
-      // 普通旧素材保持既有口径；合成 WAV 的定位保留到采样，不能先舍入成毫秒。
+      // Ordinary legacy media keeps existing standards; synthesized WAV positioning is kept to samples, not rounded to ms first.
       const time = generated ? (value) => value : r3;
       const dur = time(c.end - c.start);
       if (!(dur > 0)) continue;
@@ -59,8 +74,9 @@ export function audioPlanOf(source) {
         fadeIn: c.fadeIn ?? 0,
         fadeOut: c.fadeOut ?? 0,
         fx: def ? { def, params: c.audioFx.params } : null,
-        // 声音段变速(音画分离出来的那种):随倍率变速变调,两条混音路都按 ffmpegVarispeed 做(kernel/clipTime.mjs);
-        // 缺省 1 不写这一项,清单逐字不变
+        // Speed-changed audio clips (separated from audio-visual): varispeed and pitch-shift with rate;
+        // both mix paths use ffmpegVarispeed (kernel/clipTime.mjs); default 1 omits this field, keeping
+        // the manifest verbatim.
         ...(!generated && clipSpeed(c) !== 1 ? { speed: clipSpeed(c) } : null),
         ...(c.cutEnv?.length ? { env: c.cutEnv } : null),
       });
@@ -70,11 +86,16 @@ export function audioPlanOf(source) {
 }
 
 /**
- * 一段的音量包络:volume × 淡入(线性 0→1)× 淡出(线性 1→0),采成 n 个点(首尾各一个,之间等距)。
- * 和 ffmpeg 那条路(server/bakery/mux-audio.mjs:afade t=in 再 afade t=out,默认 tri 曲线)语义完全一样 —— 两条淡化相乘。
- * 淡入淡出重叠(fadeIn + fadeOut > dur)时是两条斜线的乘积(抛物线),淡入比片段还长时终点只到 dur/fadeIn,
- * 都由乘法自然给出;以前用「两段自动化拼起来」在重叠时会被 AudioParam 的事件排序吃掉整段淡入(实测硬跳)。
- * 导出用 setValueCurveAtTime 铺进去,点间线性插值,5 ms 一个点足够。
+ * Volume envelope of a clip: volume × fade-in (linear 0→1) × fade-out (linear 1→0), sampled
+ * into n points (one each at start and end, equidistant between).
+ * Semantics are identical to the ffmpeg path (server/bakery/mux-audio.mjs: afade t=in then
+ * afade t=out, default tri curve): multiplying two fades together.
+ * When fade-in and fade-out overlap (fadeIn + fadeOut > dur), it is the product of two slopes
+ * (parabola); when fade-in is longer than the clip, the end reaches only dur/fadeIn, naturally
+ * yielded by multiplication. Previously, "stitching two automations together" would have the
+ * entire fade-in swallowed by AudioParam event ordering during overlap (tested: hard jump).
+ * Export fills it via setValueCurveAtTime with linear interpolation between points; 5 ms per
+ * point is sufficient.
  */
 export function fadeEnvelope(volume, fadeIn, fadeOut, dur, n) {
   const count = Math.max(2, Math.floor(n) || 2);
@@ -90,27 +111,29 @@ export function fadeEnvelope(volume, fadeIn, fadeOut, dur, n) {
 }
 
 /**
- * 一段的完整增益曲线:`fadeEnvelope` 再乘上剪辑段的包络(`entry.env`,时间轴绝对时间)。
- * 没有包络时和 `fadeEnvelope` 逐点相同。
+ * Full gain curve for a clip: `fadeEnvelope` multiplied by the cut segment envelope (`entry.env`,
+ * absolute timeline time).
+ * Point-by-point identical to `fadeEnvelope` when there is no envelope.
  */
 export function gainCurve(entry, n) {
   const curve = fadeEnvelope(entry.volume, entry.fadeIn, entry.fadeOut, entry.dur, n);
   if (!entry.env?.length) return curve;
   const count = curve.length;
   for (let i = 0; i < count; i++) {
-    // 包络在区间右端是开的;曲线最后一个点落在段尾,取一个极小的回退,免得最后一点被算成 0 产生咔哒声
+    // The envelope is open at the interval's right end; the curve's last point falls at the clip end,
+    // so step back slightly to avoid the last point computing as 0 and causing clicks
     const t = entry.start + Math.min((i / (count - 1)) * entry.dur, entry.dur - 1e-6);
     for (const e of entry.env) curve[i] *= envelopeAt(e, t, false);
   }
   return curve;
 }
 
-/** 这一段需不需要逐点的增益曲线(有淡化或剪辑段包络) */
+/** Whether this segment needs a point-by-point gain curve (has fading or cut segment envelopes) */
 export function needsGainCurve(entry) {
   return entry.fadeIn > 0 || entry.fadeOut > 0 || !!entry.env?.some((e) => (e.fadeIn ?? 0) > 0 || (e.fadeOut ?? 0) > 0);
 }
 
-/** 时间轴时刻 T 正在出声的片段(给测响度的逐秒归因用) */
+/** Clips currently producing sound at timeline time T (for second-by-second loudness attribution) */
 export function soundingAt(plan, T) {
   return plan.filter((p) => T >= p.start && T < p.start + p.dur).map((p) => p.clipId);
 }

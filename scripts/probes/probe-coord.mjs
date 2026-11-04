@@ -1,30 +1,43 @@
 /**
- * 跨机探针共用的协调口（`shared-project-probe.mjs` 互联网 / 局域网模式、`render-host-probe.mjs` 跨机模式）。
- * 各角色只经它交换配置与完成信号，不共享文件系统。只用 Node 内置模块。
+ * Shared coordination endpoint for cross-machine probes (`shared-project-probe.mjs` internet /
+ * LAN mode, `render-host-probe.mjs` cross-machine mode). Roles only exchange configuration and
+ * completion signals through it, without sharing filesystems. Uses only Node built-in modules.
  *
- * 形状（一个协调口同时答这几条，几个探针可以共用同一个口）：
+ * Shape (one coordination endpoint serves these routes simultaneously; multiple probes can share
+ * the same endpoint):
  *   GET  /healthz                    `{ ok: true, keys: [...] }`
- *   PUT  /kv/<键>                     JSON 请求体，存起来并叫醒在等这个键的
- *   GET  /kv/<键>?wait=<毫秒>         `{ ok: true, value }`；没有就等（至多 60 s），等不到 404
- *   其余路径交给 `extra(req, res, url)`（`render-host-probe` 的 `/configs/*`、`/ready/*`、`/round/*`、`/result/*`、`/state`、`/stop`）；
- *   没有 `extra` 或它不认就 404。
- * 键：`[A-Za-z0-9._-]{1,64}`。协调口不设鉴权，配置里有探针自建项目的口令：只绑在可信网段上，跑完就关。
+ *   PUT  /kv/<key>                   JSON request body, stored and wakes up waiters for this key
+ *   GET  /kv/<key>?wait=<ms>         `{ ok: true, value }`; if absent, wait (up to 60 s); 404 on timeout
+ *   Remaining paths handled by `extra(req, res, url)` (`render-host-probe`'s `/configs/*`,
+ *   `/ready/*`, `/round/*`, `/result/*`, `/state`, `/stop`); 404 if no `extra` or unrecognized.
+ * Keys: `[A-Za-z0-9._-]{1,64}`. The coordination endpoint has no authentication, and config
+ * contains passphrases for probe-created projects: bind only to trusted subnets, shut down after
+ * run.
  *
- * 另有两个 Agent 之间的 HTTP 信箱（`mail` 选项，见 `createMailbox`；与文档服务的传输无关）：
- *   POST /mail/<队列>、GET /mail/<队列>?after=<seq>&wait=<秒>，每个请求带 `X-Mail-Token`。
- *   开了信箱时 `/kv/*` 也要同一个令牌（`coordClient` 自动从环境变量 `PROBE_MAIL_TOKEN` 取）；`/healthz` 不要。
+ * Additionally, an HTTP mailbox between two Agents (`mail` option, see `createMailbox`; unrelated
+ * to document service transport):
+ *   POST /mail/<queue>, GET /mail/<queue>?after=<seq>&wait=<seconds>, each request carries `X-Mail-Token`.
+ *   When mailbox is enabled, `/kv/*` also requires the same token (`coordClient` automatically
+ *   gets it from environment variable `PROBE_MAIL_TOKEN`); `/healthz` does not.
  *
- * 命令行（令牌只从环境变量 `PROBE_MAIL_TOKEN` 取，不收命令行参数，免得进进程列表与历史）：
- *   node scripts/probes/probe-coord.mjs serve --port 8799 [--host 0.0.0.0] [--mail-file <文件>]
- *   node scripts/probes/probe-coord.mjs send --base <url> --queue to-cloud --from local --kind instruction [--ref <seq>] (--body <文本> | --body-file <文件>)
- *   node scripts/probes/probe-coord.mjs wait --base <url> --queue to-local [--after <seq> | --state <文件>] [--timeout-min 0]
- *     `wait` 反复长轮询，收到至少一条就打印（一行一条 JSON）并退出 0；`--state` 记最后读到的 seq，下次从它之后读；
- *     `--timeout-min` 到时没收到退出 3（0 为不限）；网络错误按退避一直重试。
- *   `--kind` 取 instruction（指令）/ receipt（回执，`--ref` 指向指令的 seq）/ question（要对方或用户定的事）/ status（报到与状态）。
+ * CLI (token is only taken from environment variable `PROBE_MAIL_TOKEN`, no CLI arguments accepted
+ * to avoid entering process list and history):
+ *   node scripts/probes/probe-coord.mjs serve --port 8799 [--host 0.0.0.0] [--mail-file <file>]
+ *   node scripts/probes/probe-coord.mjs send --base <url> --queue to-cloud --from local --kind instruction [--ref <seq>] (--body <text> | --body-file <file>)
+ *   node scripts/probes/probe-coord.mjs wait --base <url> --queue to-local [--after <seq> | --state <file>] [--timeout-min 0]
+ *     `wait` repeatedly long polls, prints when at least one message is received (one JSON per line)
+ *     and exits with 0; `--state` records the last read seq, reading after it next time;
+ *     `--timeout-min` exits with 3 if nothing received by timeout (0 means no limit); network errors
+ *     retry continuously with backoff.
+ *   `--kind` takes instruction / receipt (`--ref` points to instruction seq) / question (matters to
+ *   be decided by peer or user) / status (check in and status).
  *
- * 在 Claude Code 里等消息：用一条后台运行的 `wait` 命令（Bash 的后台运行），由它在进程内反复长轮询（每次挂 25 s），
- * 收到消息才退出、唤醒会话；不要让模型隔一会儿调一次去逐次轮询。`--state` 文件记最后读到的 seq，下一条 `wait` 从它之后读，
- * 所以每次被唤醒、处理完消息后再起一条同样的后台 `wait` 即可，不漏读也不重读。
+ * Waiting for messages in Claude Code: Use a `wait` command running in background (Bash background
+ * mode), having it repeatedly long poll within process (holding for 25 s each time); exit and wake
+ * the session only upon receiving messages; do not have model poll periodically at intervals.
+ * `--state` file records the last read seq, and the next `wait` reads after it, so each time after
+ * being awakened and processing messages, simply start another identical background `wait` to
+ * avoid missed reads or duplicate reads.
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -40,7 +53,7 @@ const sendJson = (res, status, body) => {
   res.end(JSON.stringify(body));
 };
 
-/** 读 JSON 请求体（空体回 `{}`）；超过 4 MiB 或不是 JSON 抛错 */
+/** Read JSON request body (returns `{}` for empty body); throws error if over 4 MiB or not JSON */
 export function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -59,25 +72,30 @@ export function readJsonBody(req) {
 export const MAIL_DEFAULTS = Object.freeze({
   QUEUES: Object.freeze(['to-cloud', 'to-local']),
   KINDS: Object.freeze(['instruction', 'receipt', 'question', 'status']),
-  /** 长轮询最长挂多久（nginx 缺省 `proxy_read_timeout` 60 s 之内） */
+  /** Maximum duration to hold long polling (within nginx default `proxy_read_timeout` 60 s) */
   MAX_WAIT_MS: 25_000,
-  /** 每个队列在内存里留多少条；更早的只在文件里 */
+  /** How many entries each queue keeps in memory; earlier ones are stored only in files */
   KEEP: 1000,
-  /** 一条消息（整个信封的 JSON）上限 */
+  /** Upper limit for a single message (JSON of the entire envelope) */
   MAX_MESSAGE_BYTES: 256 * 1024,
-  /** 一次 GET 最多回多少条 */
+  /** Maximum number of entries returned by a single GET */
   MAX_BATCH: 100,
 });
 
 const FROM_RE = /^[A-Za-z0-9._@-]{1,64}$/;
 
 /**
- * 两个 Agent 之间的 HTTP 信箱（不是文档服务的传输）。每个队列单向、只追加，服务端补 `seq`（每队列从 1 起）与 `t`。
- *   POST /mail/<队列>                     `{ from, kind, ref?, body }` → `{ ok, seq, t }`
- *   GET  /mail/<队列>?after=<seq>&wait=<秒> → `{ ok, messages: [信封…], last }`；没有新消息就挂着等，最长 `MAX_WAIT_MS`
- * 信封：`{ queue, seq, t, from, kind, ref, body }`；`kind` 是 instruction / receipt / question / status，`ref` 是回执引用的对方 seq（没有为 null）。
- * 每个请求都要带请求头 `X-Mail-Token`，不对回 401。令牌不进日志、不进回包。
- * `file` 给了就逐条追加成 JSON 行，重启时读回来，seq 接着编。
+ * HTTP mailbox between two Agents (not document service transport). Each queue is unidirectional
+ * and append-only; the server adds `seq` (starting from 1 per queue) and `t`.
+ *   POST /mail/<queue>                    `{ from, kind, ref?, body }` → `{ ok, seq, t }`
+ *   GET  /mail/<queue>?after=<seq>&wait=<sec> → `{ ok, messages: [envelope…], last }`;
+ *        hangs and waits if no new messages, up to `MAX_WAIT_MS`
+ * Envelope: `{ queue, seq, t, from, kind, ref, body }`; `kind` is instruction / receipt / question /
+ * status, and `ref` is the peer seq referenced by the receipt (null if none).
+ * Every request must include the `X-Mail-Token` header, returning 401 if incorrect. Tokens do not
+ * enter logs or responses.
+ * If `file` is provided, append line by line as JSON lines, read back on restart, and continue
+ * numbering seq.
  */
 export function createMailbox({
   token,
@@ -88,7 +106,7 @@ export function createMailbox({
   now = () => new Date(),
   log = () => {},
 } = {}) {
-  if (typeof token !== 'string' || token.length < 16) throw new TypeError('信箱令牌至少 16 个字符');
+  if (typeof token !== 'string' || token.length < 16) throw new TypeError('Mailbox token must be at least 16 characters');
   const expected = Buffer.from(token, 'utf8');
   const state = new Map(queues.map((q) => [q, { last: 0, messages: [], waiters: new Set() }]));
 
@@ -188,13 +206,13 @@ export function createMailbox({
 }
 
 /**
- * 起协调口。
+ * Start the coordination port.
  * @param {object} o
- * @param {number} o.port 0 取随机端口
- * @param {string} [o.host] 缺省 127.0.0.1；跨机时给 0.0.0.0
- * @param {(req, res, url: URL, send: typeof sendJson) => Promise<boolean> | boolean} [o.extra] 别的路径；认了回 true
- * @param {Parameters<typeof createMailbox>[0]} [o.mail] 给了就开信箱（`/mail/*`），不给回 404 `mail-disabled`
- * @returns {Promise<{ server: http.Server, port: number, url: string, kv: Map<string, unknown>, close: () => Promise<void> }>} 绑不上时 reject
+ * @param {number} o.port 0 picks a random port
+ * @param {string} [o.host] defaults to 127.0.0.1; specify 0.0.0.0 for cross-machine access
+ * @param {(req, res, url: URL, send: typeof sendJson) => Promise<boolean> | boolean} [o.extra] other routes; return true if handled
+ * @param {Parameters<typeof createMailbox>[0]} [o.mail] if provided, enable mailbox (`/mail/*`); otherwise return 404 `mail-disabled`
+ * @returns {Promise<{ server: http.Server, port: number, url: string, kv: Map<string, unknown>, close: () => Promise<void> }>} reject if binding fails
  */
 export function startCoordServer({ port, host = '127.0.0.1', extra, mail } = {}) {
   const kv = new Map();
@@ -213,7 +231,8 @@ export function startCoordServer({ port, host = '127.0.0.1', extra, mail } = {})
       const m = /^\/kv\/([^/]+)$/.exec(url.pathname);
       if (m) {
         const key = decodeURIComponent(m[1]);
-        // 开了信箱（公网上的协调口）时 KV 也要同一个令牌：成员配置里有项目口令
+        // When mailbox is enabled (coordination port on public internet), KV also requires the same token:
+        // member config has the project passphrase
         if (mailbox && !mailbox.authorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
         if (!KEY_RE.test(key)) return sendJson(res, 400, { ok: false, error: 'bad-key' });
         if (req.method === 'PUT') {
@@ -259,9 +278,10 @@ export function startCoordServer({ port, host = '127.0.0.1', extra, mail } = {})
 }
 
 /**
- * 协调口的客户端（KV 那几条）。
- * @param {string} base 形如 `http://192.168.50.96:5409`
- * @param {string} [token] 协调口开了信箱时 KV 要的 `X-Mail-Token`；缺省取环境变量 `PROBE_MAIL_TOKEN`，都没有就不带
+ * Coordination port client (the KV endpoints).
+ * @param {string} base e.g. `http://192.168.50.96:5409`
+ * @param {string} [token] `X-Mail-Token` required by KV when coordination port has mailbox enabled;
+ * defaults to env var `PROBE_MAIL_TOKEN`, omitted if neither exists
  */
 export function coordClient(base, token = process.env.PROBE_MAIL_TOKEN) {
   const root = String(base).replace(/\/+$/, '');
@@ -273,16 +293,16 @@ export function coordClient(base, token = process.env.PROBE_MAIL_TOKEN) {
       const res = await fetch(`${root}/kv/${encodeURIComponent(key)}`, {
         method: 'PUT', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(value), signal: AbortSignal.timeout(15_000),
       });
-      if (!res.ok) throw new Error(`协调口 PUT ${key} 回 ${res.status}`);
+      if (!res.ok) throw new Error(`Coordination endpoint PUT ${key} returned ${res.status}`);
     },
-    /** 取一次（最多等 waitMs）；没有回 null */
+    /** Fetch once (wait up to waitMs); return null if none */
     async get(key, waitMs = 0) {
       const res = await fetch(`${root}/kv/${encodeURIComponent(key)}?wait=${Math.max(0, waitMs)}`, { headers: auth, signal: AbortSignal.timeout(waitMs + 10_000) });
       if (res.status === 404) return null;
-      if (!res.ok) throw new Error(`协调口 GET ${key} 回 ${res.status}`);
+      if (!res.ok) throw new Error(`Coordination endpoint GET ${key} returned ${res.status}`);
       return (await res.json()).value ?? null;
     },
-    /** 等到这个键出现，或者到 deadline（毫秒时间戳）；协调口暂时连不上就隔 500 ms 再试 */
+    /** Wait until this key appears or deadline (millisecond timestamp); retry every 500 ms if coordination port is temporarily unreachable */
     async take(key, deadline) {
       while (Date.now() < deadline) {
         const wait = Math.max(1, Math.min(30_000, deadline - Date.now()));
@@ -298,8 +318,8 @@ export function coordClient(base, token = process.env.PROBE_MAIL_TOKEN) {
 }
 
 /**
- * 信箱的客户端。
- * @param {string} base 形如 `https://203-0-113-16.sslip.io/coord`
+ * Mailbox client.
+ * @param {string} base e.g. `https://203-0-113-16.sslip.io/coord`
  * @param {string} token `X-Mail-Token`
  */
 export function mailClient(base, token) {
@@ -312,16 +332,16 @@ export function mailClient(base, token) {
         body: JSON.stringify({ from, kind, ref, body }), signal: AbortSignal.timeout(15_000),
       });
       const j = await res.json().catch(() => null);
-      if (!res.ok || !j?.ok) throw Object.assign(new Error(`信箱 POST ${queue} 回 ${res.status}${j?.error ? `：${j.error}` : ''}`), { status: res.status });
+      if (!res.ok || !j?.ok) throw Object.assign(new Error(`Mailbox POST ${queue} returned ${res.status}${j?.error ? `: ${j.error}` : ''}`), { status: res.status });
       return j;
     },
-    /** 取 after 之后的消息，最多挂 waitS 秒 */
+    /** Fetch messages after after, holding for up to waitS seconds */
     async read(queue, after = 0, waitS = 0) {
       const res = await fetch(`${root}/mail/${encodeURIComponent(queue)}?after=${after}&wait=${waitS}`, {
         headers, signal: AbortSignal.timeout((waitS + 15) * 1000),
       });
       const j = await res.json().catch(() => null);
-      if (!res.ok || !j?.ok) throw Object.assign(new Error(`信箱 GET ${queue} 回 ${res.status}${j?.error ? `：${j.error}` : ''}`), { status: res.status });
+      if (!res.ok || !j?.ok) throw Object.assign(new Error(`Mailbox GET ${queue} returned ${res.status}${j?.error ? `: ${j.error}` : ''}`), { status: res.status });
       return j;
     },
   };
@@ -333,7 +353,7 @@ async function cli(argv) {
   const token = process.env.PROBE_MAIL_TOKEN;
   const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
   if (cmd === 'serve') {
-    if (!token) { console.error('缺环境变量 PROBE_MAIL_TOKEN'); return 2; }
+    if (!token) { console.error('Missing environment variable PROBE_MAIL_TOKEN'); return 2; }
     const c = await startCoordServer({
       port: Number(arg('--port', '8799')), host: arg('--host', '127.0.0.1'),
       mail: { token, file: arg('--mail-file', null), log: (event, fields) => out({ t: new Date().toISOString(), event, ...fields }) },
@@ -341,15 +361,15 @@ async function cli(argv) {
     out({ t: new Date().toISOString(), event: 'coord.listen', port: c.port, mail: c.mailbox.summary() });
     return new Promise(() => {});
   }
-  if (!token) { console.error('缺环境变量 PROBE_MAIL_TOKEN'); return 2; }
+  if (!token) { console.error('Missing environment variable PROBE_MAIL_TOKEN'); return 2; }
   const base = arg('--base', null);
   const queue = arg('--queue', null);
-  if (!base || !queue) { console.error('要给 --base 与 --queue'); return 2; }
+  if (!base || !queue) { console.error('--base and --queue are required'); return 2; }
   const mc = mailClient(base, token);
   if (cmd === 'send') {
     const bodyFile = arg('--body-file', null);
     const body = bodyFile ? fs.readFileSync(bodyFile, 'utf8') : arg('--body', null);
-    if (body === null) { console.error('要给 --body 或 --body-file'); return 2; }
+    if (body === null) { console.error('--body or --body-file is required'); return 2; }
     const ref = arg('--ref', null);
     const r = await mc.send(queue, { from: arg('--from', 'local'), kind: arg('--kind', 'instruction'), ref: ref === null ? null : Number(ref), body });
     out({ ok: true, queue, seq: r.seq, t: r.t });
@@ -380,11 +400,12 @@ async function cli(argv) {
     }
     return 3;
   }
-  console.error('用法见文件头：serve / send / wait');
+  console.error('See the file header for usage: serve / send / wait');
   return 2;
 }
 
 if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
-  // 用 exitCode 自然退出，不调 process.exit：Windows 上 fetch 的连接还没收完时硬退会撞 libuv 断言（退出码 127）
+  // Exit naturally via exitCode instead of calling process.exit: hard exit on Windows while fetch
+  // connections are still closing hits a libuv assertion (exit code 127)
   cli(process.argv.slice(2)).then((code) => { if (code !== undefined) process.exitCode = code; }, (e) => { console.error(String(e?.message ?? e)); process.exitCode = 1; });
 }

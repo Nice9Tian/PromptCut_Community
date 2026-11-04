@@ -15,7 +15,7 @@ export interface LocalCostRecord {
   mode: string;
 }
 
-/** 本地复用（与 L2 的方法同名） */
+/** Local reuse (same name as L2 methods) */
 export interface CostStore {
   getCost(key: string): unknown;
   putCost(key: string, rec: LocalCostRecord): unknown;

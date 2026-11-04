@@ -5,22 +5,22 @@ import { isAgentItem, type ItemId, type Side } from "./railLayout";
 import { moveRailItem } from "./railStore";
 
 /**
- * rail 项的拖放。用指针事件自己做,不用 HTML5 drag(那套拖影不跟样式、拖过预览 iframe 会断)。
+ * Drag and drop of rail items. Done by hand with pointer events, not HTML5 drag (whose drag image ignores styles and which breaks when dragging over the preview iframe).
  *
- *   按下(左键 / 主指针)→ 记下起点,还不算拖;
- *   移动距离超过 DRAG_THRESHOLD_PX(4px,欧氏距离)→ 开始拖:按钮克隆一份当跟手的半透明图标(data-pc="rail-drag-ghost"),
- *     原位那一项变淡(data-pc-dragging),对按钮 setPointerCapture,滑过预览 iframe 也不断;
- *   拖动中 → 指针落在哪条 rail 上(左右各放宽 8px),按各项的竖向中线算出落点,
- *     画一条落点指示线(data-pc="rail-drop-indicator",带 data-pc-drop-side / data-pc-drop-index),那条 rail 挂 data-pc-drop-target;
- *   松开 → 在 rail 上就 moveRailItem(落点按画出来的项数,含被拖项本身),吞掉紧跟着的那次 click;不在 rail 上 = 放弃;
- *   Esc / pointercancel / 窗口失焦 → 取消,松开时同样吞掉 click。
- * 没超过阈值就松开 = 普通点击,照旧切换 / 收起。
+ *   Press (left button / primary pointer) → record the start point, not yet a drag;
+ *   Move distance exceeds DRAG_THRESHOLD_PX (4px, Euclidean distance) → drag starts: the button is cloned as a semi-transparent icon following the pointer (data-pc="rail-drag-ghost"),
+ *     the item in its original place fades (data-pc-dragging), setPointerCapture on the button, so it does not break when sliding over the preview iframe;
+ *   While dragging → whichever rail the pointer is over (8px wider on each side), the drop position is computed from the vertical midline of each item,
+ *     a drop indicator line is drawn (data-pc="rail-drop-indicator", with data-pc-drop-side / data-pc-drop-index), and that rail gets data-pc-drop-target;
+ *   Release → if over a rail, moveRailItem (drop position counted by drawn items, including the dragged item itself), and swallow the click that follows immediately; not over a rail = abandon;
+ *   Esc / pointercancel / window blur → cancel, and the click is swallowed on release likewise.
+ * Release without exceeding the threshold = a plain click, switching / collapsing as before.
  *
- * 放下之后两条 rail 上的项做一次 FLIP 过渡(220ms,house 曲线;系统要求减少动效时不做)。
+ * After the drop, the items on both rails do one FLIP transition (220ms, house curve; skipped when the system asks for reduced motion).
  */
 
 export const DRAG_THRESHOLD_PX = 4;
-/** 指针在 rail 左右多宽的范围里也算落在这条 rail 上 */
+/** How far to the left and right of a rail the pointer still counts as being on this rail */
 const RAIL_SLOP_PX = 8;
 const EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
 
@@ -33,7 +33,7 @@ interface Session {
   pointerId: number;
   item: ItemId;
   button: HTMLElement;
-  /** 跟手克隆的元素:普通项是按钮本身,成组的项是整组 */
+  /** The element cloned to follow the pointer: for a normal item it is the button itself, for a grouped item it is the whole group */
   grab: HTMLElement;
   slot: HTMLElement | null;
   startX: number;
@@ -49,13 +49,13 @@ interface Session {
 
 let session: Session | null = null;
 
-/** rail 项按钮的 onPointerDown */
+/** onPointerDown of a rail item button */
 export function beginRailPointer(e: ReactPointerEvent<HTMLElement>, item: ItemId): void {
   if (e.button !== 0 || !e.isPrimary) return;
   if (session) finish();
   const button = e.currentTarget;
   const slot = button.closest<HTMLElement>("[data-pc-dock-item]");
-  // 成组的项(剪辑组):按住组里任何一个按钮,拖起来的是整组
+  // Grouped item (cut group): pressing any button in the group drags the whole group
   const grab = slot?.hasAttribute("data-pc-dock-group") ? slot : button;
   const rect = grab.getBoundingClientRect();
   session = {
@@ -97,7 +97,7 @@ function onUp(ev: PointerEvent) {
   const s = session;
   if (!s || ev.pointerId !== s.pointerId) return;
   if (!s.dragging) {
-    // 没拖起来:普通点击,click 照常到按钮上
+    // Not dragged: a plain click, so the click reaches the button as usual
     finish();
     return;
   }
@@ -131,7 +131,7 @@ function startDrag(s: Session) {
   s.dragging = true;
   const rect = s.grab.getBoundingClientRect();
   const ghost = s.grab.cloneNode(true) as HTMLElement;
-  // 克隆出来的不许再被当成 rail 项找到
+  // The clone must never be found as a rail item again
   for (const el of [ghost, ...Array.from(ghost.querySelectorAll<HTMLElement>("*"))]) {
     for (const attr of ["id", "data-pc", "data-pc-rail", "data-pc-agent-tab", "data-pc-dock-item", "data-pc-dock-group", "data-pc-cut", "aria-pressed", "aria-expanded", "aria-current", "aria-selected"]) {
       el.removeAttribute(attr);
@@ -159,7 +159,7 @@ function startDrag(s: Session) {
   try {
     s.button.setPointerCapture(s.pointerId);
   } catch {
-    // 指针已经不在了(合成事件等):没有捕获也能拖,只是滑进 iframe 会断
+    // The pointer is already gone (synthetic events etc.): dragging works without capture, but sliding into an iframe breaks it
   }
 }
 
@@ -190,9 +190,10 @@ function updateTarget(s: Session, x: number, y: number) {
   const side = rail.dataset.pcDockRail === "left" ? "left" : "right";
   const list = rail.querySelector<HTMLElement>("[data-pc-dock-list]") ?? rail;
   const slots = Array.from(list.querySelectorAll<HTMLElement>("[data-pc-dock-item]"));
-  // 一侧 rail 分上下两截(RailBar 的 head / tail):下面那截的落点要加上上面那截的项数
+  // One side's rail has an upper and a lower half (head / tail of RailBar): the drop position of the lower half
+  // must add the item count of the upper half
   const offset = Number(list.dataset.pcDockOffset) || 0;
-  // 落点 = 中线在指针上方的项数
+  // Drop position = number of items whose midline is above the pointer
   let gap = 0;
   for (const slot of slots) {
     const r = slot.getBoundingClientRect();
@@ -201,8 +202,9 @@ function updateTarget(s: Session, x: number, y: number) {
   }
   s.target = { side, gap: gap + offset };
 
-  // 指示线画在两项之间那 4px 缝的中间。落点前一项是这一侧最后一个 Agent(下面紧跟着「+」)时:
-  // 拖的是 Agent 就画在 Agent 和「+」之间(放下后它排在「+」上面),拖别的就画在「+」下面
+  // The indicator line is drawn in the middle of the 4px gap between two items. When the item before the drop
+  // position is the last Agent on this side (directly followed by "+"): if an Agent is being dragged, draw it
+  // between the Agent and "+" (after the drop it sits above "+"); if anything else is dragged, draw it below "+"
   const listRect = list.getBoundingClientRect();
   let lineY: number;
   if (slots.length === 0) {
@@ -223,7 +225,7 @@ function showLine(s: Session, railRect: DOMRect, y: number, side: Side, gap: num
   const line = s.line;
   if (!line) return;
   const w = Math.max(24, railRect.width - 20);
-  // 刚出现、或者换了一条 rail:直接到位,不从上一个位置滑过来
+  // Just appeared, or switched to another rail: snap into place, do not slide in from the previous position
   const jump = line.hidden || line.dataset.pcDropSide !== side;
   if (jump) line.style.transition = "none";
   line.hidden = false;
@@ -268,13 +270,15 @@ function finish() {
   try {
     if (s.button.hasPointerCapture(s.pointerId)) s.button.releasePointerCapture(s.pointerId);
   } catch {
-    // 已经放开了
+    // Already released
   }
 }
 
 /**
- * 拖完松手紧跟着会来一次 click(落在按钮或它的祖先上),不吞掉就会被当成「点当前项 = 收起」。
- * 浏览器在处理同一次松开时就派发 click,排在任何定时器之前,所以 0ms 之后撤掉监听就够了。
+ * Right after a drag is released a click follows (landing on the button or one of its ancestors); if it is
+ * not swallowed it is treated as "click the current item = collapse".
+ * The browser dispatches that click while handling the same release, before any timer, so removing the
+ * listener after 0ms is enough.
  */
 function swallowNextClick() {
   const swallow = (e: MouseEvent) => {
@@ -301,7 +305,7 @@ function flipKey(el: HTMLElement): string {
 function drop(item: ItemId, target: DropTarget, ghostRect: DOMRect | null) {
   const before = railRects();
   if (ghostRect) before.set(item, ghostRect);
-  // 同步提交:下面紧接着要量放下之后的位置做 FLIP
+  // Commit synchronously: the next step measures the position after the drop to do FLIP
   flushSync(() => moveRailItem(item, target.side, target.gap));
   if (prefersReducedMotion()) return;
   for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-pc-dock-rail] [data-pc-dock-item], [data-pc-dock-rail] [data-pc-dock-add]"))) {

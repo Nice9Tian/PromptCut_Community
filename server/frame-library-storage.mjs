@@ -1,41 +1,59 @@
 /**
- * 帧库的使用索引、容量上限、按最近使用淘汰与「清理缓存」（存储占用计划 B 部分，`docs/plan/storage-plan.md` 第 3.2、3.3 节）。
+ * Usage index, capacity limit, eviction by least recent use, and "Clear cache" for the frame store
+ * (storage footprint plan Part B, `docs/plan/storage-plan.md` Sections 3.2 and 3.3).
  *
- * # 帧库里认得的键目录（淘汰和计量的单位）
+ * # Recognized key directories in the frame store (units of eviction and measurement)
  *
- *   <root>/<entryKey>                     整场景目录
- *   <root>/controls-local/<entryKey>      这个整场景的本地档快照（整个外层目录算一个）
- *   <root>/controls-html/<键>             共享档快照
- *   <root>/controls/<键>                  独立卡的 PNG / MOV
- *   <root>/streams/<键>                   轨道流
- *   <root>/tracks/<键>                    轨道前缀
+ *   <root>/<entryKey>                     Whole-scene directory
+ *   <root>/controls-local/<entryKey>      Local tier snapshots for this whole scene (entire outer directory counted as one)
+ *   <root>/controls-html/<key>            Shared tier snapshots
+ *   <root>/controls/<key>                 Standalone card PNG / MOV
+ *   <root>/streams/<key>                  Track streams
+ *   <root>/tracks/<key>                   Track prefixes
  *
- * 键一律是 64 位小写十六进制。别的名字、别的目录（`controls-lock`、`push-queue.json`……）不认、不计、不删。
- * 整场景目录和它的 `controls-local/<entryKey>` 是一个淘汰单元：一起判、一起删。
+ * Keys are always 64-bit lowercase hexadecimal. Other names and other directories (`controls-lock`,
+ * `push-queue.json`...) are ignored, uncounted, and never deleted. A whole-scene directory and its
+ * `controls-local/<entryKey>` form a single eviction unit: evaluated together and deleted together.
  *
- * # 使用索引 `<root>/usage.json`
+ * # Usage index `<root>/usage.json`
  *
- * 按键目录（上表的相对路径，斜杠分隔）记 `[最近使用时刻, 字节数, 其中遗留文件的字节数, 量的时刻]`。
- *   - **记使用**：预加载打开一个项目的某个版本时，这个版本用到的键一起记（`touchEntry`，由 `FramePipeline` 调）；
- *     项目开着时每 `TICK_MS` 再记一次（本模块的节拍，按就绪索引里还活着的会话判「开着」）。
- *   - **字节数增量维护**：记过使用的键在下一次检查时重量（它们正在被写）；检查时列一遍各族目录（只读目录名，不进去），
- *     新出现的键量一次、消失的键从索引删掉。全量重扫只在索引缺失、读不懂、或距上次全量超过 `CALIBRATE_MS` 时做，异步、不挡预加载。
- *   - 索引丢了（或第一次运行）按目录重扫，最近使用时刻取目录里最新文件的修改时刻。
+ * Records `[last used time, byte count, leftover file bytes, measured time]` keyed by key directory
+ * (slash-separated relative paths from the table above).
+ *   - **Record usage**: When preload opens a version of a project, keys used by this version are
+ *     recorded together (`touchEntry`, called by `FramePipeline`); while the project remains open,
+ *     they are recorded again every `TICK_MS` (this module's tick, determining "open" by active
+ *     sessions still alive in the ready index).
+ *   - **Incremental byte-count maintenance**: Keys with recorded usage are remeasured at the next
+ *     check (they are actively being written); the check lists family directories once (reading
+ *     directory names only, without entering), measuring newly appeared keys once and removing
+ *     vanished keys from the index. A full rescan is only performed when the index is missing,
+ *     unreadable, or when `CALIBRATE_MS` has elapsed since the last full scan; it runs
+ *     asynchronously without blocking preload.
+ *   - If the index is lost (or on first run), directories are rescanned, taking the modification
+ *     time of the newest file in the directory as the last used time.
  *
- * # 多进程
+ * # Multi-process
  *
- * 编辑器进程、预渲染进程、无头实例（Skill）的预渲染进程可能共用一个帧库。**同一时刻只有一个进程写索引、做淘汰**：
- * 它持有 `<root>/.storage/owner.json`（pid + 心跳，`LOCK_STALE_MS` 没心跳或 pid 不在了就可接管）。
- * 别的进程把自己记的使用写进 `<root>/.storage/touch/<pid>.json`（只有它自己写），主进程每次检查时并进索引，
- * pid 不在了的文件并完即删。编辑器进程不建本模块（它的管线 `interactive: false`，几乎不写帧库）；
- * 没人记过使用的目录按最新文件的修改时刻兜底。
+ * The editor process, prerender process, and prerender processes of headless instances (Skill) may
+ * share a single frame store. **Only one process writes the index and performs eviction at any given
+ * time**: it holds `<root>/.storage/owner.json` (pid + heartbeat; can be taken over if there is no
+ * heartbeat for `LOCK_STALE_MS` or if the pid is gone). Other processes write their recorded usage
+ * into `<root>/.storage/touch/<pid>.json` (written exclusively by itself); the main process merges
+ * them into the index on each check, deleting files whose pid no longer exists after merging. The
+ * editor process does not instantiate this module (its pipeline has `interactive: false` and rarely
+ * writes to the frame store); directories with no recorded usage fall back to the modification time of
+ * their newest file.
  *
- * # 淘汰
+ * # Eviction
  *
- * 总量超过上限时按最近使用时刻从旧到新删单元，删到上限的 `EVICT_TARGET_RATIO`；`PROTECT_MS` 内用过的不删，
- * 正在打开的项目的键不删。删法：先把目录**改名**进 `<root>/.storage/trash/`（Windows 上目录里有任何文件被打开时改名失败 ——
- * 失败就跳过、下一轮再试，不会删一半），再递归删垃圾目录（删不完的下一轮接着删）。键目录本身、它所在的族目录、
- * 目录里任何一处是符号链接或 junction 的，一律跳过。
+ * When total usage exceeds the capacity limit, units are deleted from oldest to newest by last used
+ * time down to `EVICT_TARGET_RATIO` of the limit; units used within `PROTECT_MS` are not deleted, and
+ * keys of currently open projects are not deleted. Deletion procedure: the directory is first
+ * **renamed** into `<root>/.storage/trash/` (on Windows, renaming fails if any file in the directory
+ * is open: on failure it is skipped and retried in the next round, preventing partial deletion), then
+ * the trash directory is recursively deleted (any remaining items will continue being deleted in the
+ * next round). If the key directory itself, its parent family directory, or anything inside the
+ * directory is a symbolic link or junction, it is skipped entirely.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -45,37 +63,38 @@ import { isDeadSpillDir, isExportDirName, leftoverFileKind, pidAlive as leftover
 import { summarizeExports } from './exports-list.mjs';
 
 /**
- * 容量的 GB 按 1024³ 字节算（与 Windows 资源管理器显示的「GB」、开始页草稿列表的大小同一口径）：
- * 缺省 50 GB、下限 5 GB、「磁盘小于 500 GB 取 10%」的 500 GB 都是这个 GB。
+ * Capacity GB is calculated as 1024³ bytes (aligned with "GB" shown in Windows Explorer and sizes in
+ * the start page draft list): the default 50 GB, lower limit 5 GB, and the 500 GB in "10% if disk is
+ * under 500 GB" all use this GB.
  */
 export const GB = 1024 ** 3;
 export const DEFAULT_CAP_BYTES = 50 * GB;
-/** 所在磁盘总容量小于它时，缺省上限取总容量的 `SMALL_DISK_RATIO` */
+/** When total capacity of the disk is less than this, the default limit takes `SMALL_DISK_RATIO` of total capacity */
 export const SMALL_DISK_BYTES = 500 * GB;
 export const SMALL_DISK_RATIO = 0.1;
-/** 用户可设的下限；上限是磁盘总容量 */
+/** User-configurable lower limit; upper limit is total disk capacity */
 export const MIN_CAP_BYTES = 5 * GB;
-/** 超上限时删到上限的这个比例 */
+/** Ratio of the limit to delete down to when exceeding the limit */
 export const EVICT_TARGET_RATIO = 0.9;
-/** 这么久内用过的不删 */
+/** Items used within this window are not deleted */
 export const PROTECT_MS = 30 * 60 * 1000;
-/** 「清理缓存」留下这么久内用过的 */
+/** "Clear cache" retains items used within this window */
 export const CLEAR_KEEP_MS = 10 * 60 * 1000;
-/** 开着的项目再记一次使用、检查一次要不要淘汰的节拍；检查最多这么频繁 */
+/** Tick interval to re-record usage for open projects and check whether to evict; checks are at most this frequent */
 export const TICK_MS = 5 * 60 * 1000;
-/** 启动后第一次判淘汰前等这么久(页面重连、重发 preload,正在打开的项目先记上使用) */
+/** Waits this long after startup before evaluating eviction for the first time (page reconnects, resends preload, so opening projects record usage first) */
 export const STARTUP_GRACE_MS = 2 * 60 * 1000;
-/** 全量重扫校正字节数的周期 */
+/** Interval for full rescan to calibrate byte counts */
 export const CALIBRATE_MS = 24 * 60 * 60 * 1000;
-/** 主进程心跳 */
+/** Main process heartbeat */
 export const HEARTBEAT_MS = 60 * 1000;
-/** 这么久没心跳的主进程锁可以接管 */
+/** Main process lock without a heartbeat for this long can be taken over */
 export const LOCK_STALE_MS = 3 * 60 * 1000;
-/** 使用记录落盘的防抖 */
+/** Debounce for persisting usage records to disk */
 export const FLUSH_MS = 60 * 1000;
-/** 就绪索引里的会话这么久没动静、又没有订阅者，就不算「开着」 */
+/** Sessions in the ready index without activity for this long and with no subscribers are no longer considered "open" */
 export const OPEN_SESSION_IDLE_MS = 10 * 60 * 1000;
-/** `GET /api/storage` 时上一次检查（或量）早于这么久，就在后台量一次（不淘汰），回包带 `scanning: true` */
+/** On `GET /api/storage`, if the last check (or measurement) was earlier than this duration, measure once in the background (no eviction) with `scanning: true` in the response */
 export const SUMMARY_STALE_MS = 60 * 1000;
 
 export const INDEX_FILE = 'usage.json';
@@ -84,17 +103,19 @@ export const SETTINGS_FILE = 'storage.json';
 const INDEX_VERSION = 1;
 
 const KEY = /^[0-9a-f]{64}$/;
-/** 帧库根下「族目录/键」形状的族 */
+/** Families shaped like "family-directory/key" under the frame store root */
 export const FAMILIES = ['controls-html', 'controls', 'streams', 'tracks'];
 const LOCAL = 'controls-local';
 
 /* ======================================================================== *
- * 键目录的形状
+ * Shape of key directories
  * ======================================================================== */
 
 /**
- * 认一个相对路径（斜杠分隔）：回 `{ rel, family, key, unit }`，认不出回 null。
- * `family` 为 `entry`（整场景目录）、`controls-local` 或上面四个族之一；`unit` 是淘汰单元的 id。
+ * Recognizes a relative path (slash-separated): returns `{ rel, family, key, unit }`, or null if
+ * not recognized.
+ * `family` is `entry` (whole-scene directory), `controls-local`, or one of the four families above;
+ * `unit` is the eviction unit id.
  */
 export function parseRel(rel) {
   if (typeof rel !== 'string') return null;
@@ -106,14 +127,17 @@ export function parseRel(rel) {
   return null;
 }
 
-/** 相对路径在盘上的位置（先过 `parseRel`，认不出抛） */
+/** Location of a relative path on disk (passes through `parseRel` first; throws if not recognized) */
 export function relDir(root, rel) {
   const parsed = parseRel(rel);
-  if (!parsed) throw new Error(`不认得的键目录:${rel}`);
+  if (!parsed) throw new Error(`Unrecognized key directory: ${rel}`);
   return parsed.family === 'entry' ? path.join(root, parsed.key) : path.join(root, parsed.family, parsed.key);
 }
 
-/** 帧库里一个文件或目录所属的键目录（相对路径）；不在认得的键目录里回 null */
+/**
+ * Key directory (relative path) of a file or directory in the frame store; returns null if not in
+ * a recognized key directory
+ */
 export function relOfPath(root, file) {
   const parts = path.relative(path.resolve(root), path.resolve(file)).split(/[\\/]/);
   if (!parts.length || parts[0] === '..' || path.isAbsolute(parts[0])) return null;
@@ -121,7 +145,10 @@ export function relOfPath(root, file) {
   return parts.length >= 2 ? (parseRel(`${parts[0]}/${parts[1]}`)?.rel ?? null) : null;
 }
 
-/** 一个整场景版本用到的键（`FramePipeline` 的 entry）：整场景、本地档、共享档、独立卡、轨道前缀、轨道流 */
+/**
+ * Keys used by a whole-scene version (`FramePipeline` entry): whole scene, local tier, shared tier,
+ * standalone card, track prefix, track stream
+ */
 export function entryUsageRels(pipeline, entry) {
   if (!entry?.key || !KEY.test(entry.key)) return [];
   const plan = Array.isArray(entry.cardPlan) ? entry.cardPlan : null;
@@ -132,7 +159,7 @@ export function entryUsageRels(pipeline, entry) {
       if (state?.entryKey === entry.key && typeof state?.spec?.streamKey === 'string') streams.push(state.spec.streamKey);
     }
   }
-  // 同一个计划、同一组流不重算（轨道前缀要按轨道各算一次哈希）
+  // Do not recompute for the same plan and group stream (track prefix hashes are computed per track)
   const cached = entry.__usageRels;
   const streamSig = streams.join(',');
   if (cached && cached.plan === plan && cached.streams === streamSig) return cached.rels;
@@ -154,7 +181,10 @@ export function entryUsageRels(pipeline, entry) {
   return out;
 }
 
-/** 此刻「开着」的整场景版本：就绪索引里有订阅者、或 `OPEN_SESSION_IDLE_MS` 内发过 preload 的会话的当前版本 */
+/**
+ * Currently "open" whole-scene versions: current versions with subscribers in ready index, or
+ * sessions that sent preload within `OPEN_SESSION_IDLE_MS`
+ */
 export function openEntryKeys(pipeline, now = Date.now()) {
   const keys = new Set();
   let sessions = [];
@@ -170,26 +200,32 @@ export function openEntryKeys(pipeline, now = Date.now()) {
 }
 
 /* ======================================================================== *
- * 上限
+ * Caps
  * ======================================================================== */
 
-/** 缺省上限：50 GB；磁盘总容量小于 500 GB 时取总容量的 10% */
+/** Default cap: 50 GB; uses 10% of total disk capacity when total capacity is under 500 GB */
 export function defaultCapBytes(diskBytes) {
   return Number.isFinite(diskBytes) && diskBytes > 0 && diskBytes < SMALL_DISK_BYTES ? Math.floor(diskBytes * SMALL_DISK_RATIO) : DEFAULT_CAP_BYTES;
 }
 
-/** 用户可设的范围：`[minCap, 磁盘总容量]`（磁盘总容量量不到时上界不限） */
+/**
+ * User-configurable range: `[minCap, total disk capacity]` (no upper bound when total disk capacity
+ * cannot be measured)
+ */
 export function capRange(diskBytes, minCapBytes = MIN_CAP_BYTES) {
   return { min: minCapBytes, max: Number.isFinite(diskBytes) && diskBytes > 0 ? Math.max(minCapBytes, diskBytes) : Number.MAX_SAFE_INTEGER };
 }
 
-/** 用户设的值合法吗（整数字节，落在 `capRange` 里） */
+/** Whether the user-configured value is valid (integer bytes, falling within `capRange`) */
 export function validCap(bytes, diskBytes, minCapBytes = MIN_CAP_BYTES) {
   const { min, max } = capRange(diskBytes, minCapBytes);
   return Number.isSafeInteger(bytes) && bytes >= min && bytes <= max;
 }
 
-/** 此刻生效的上限：`storage.json` 里有合法的用户值就用它（越界的收进范围），否则缺省 */
+/**
+ * Currently effective cap: uses valid user value from `storage.json` (clamped if out of bounds),
+ * otherwise default
+ */
 export function resolveCap(settings, diskBytes, minCapBytes = MIN_CAP_BYTES) {
   const user = settings?.frameLibraryCapBytes;
   if (Number.isFinite(user) && user > 0) {
@@ -199,7 +235,10 @@ export function resolveCap(settings, diskBytes, minCapBytes = MIN_CAP_BYTES) {
   return { capBytes: defaultCapBytes(diskBytes), capSource: 'default' };
 }
 
-/** 路径所在磁盘的总容量（字节）；路径还不存在就往上找到存在的那一级；量不到回 null */
+/**
+ * Total disk capacity where path resides (bytes); searches upward to an existing ancestor if path
+ * does not exist yet; returns null if unmeasurable
+ */
 export async function diskBytesOf(dir) {
   let current = path.resolve(dir);
   for (;;) {
@@ -215,7 +254,10 @@ export async function diskBytesOf(dir) {
   }
 }
 
-/** 数据目录（`storage.json` 所在）：`PROMPTCUT_DATA_DIR`，缺省 `<viteRoot>/out`，和 `costs-store.mjs` 同一口径 */
+/**
+ * Data directory (where `storage.json` resides): `PROMPTCUT_DATA_DIR`, default `<viteRoot>/out`,
+ * aligned with `costs-store.mjs`
+ */
 export function storageDataDir(viteRoot, env = process.env) {
   return env.PROMPTCUT_DATA_DIR || path.join(viteRoot, 'out');
 }
@@ -235,10 +277,13 @@ export async function writeStorageSettings(dataDir, patch) {
 }
 
 /* ======================================================================== *
- * 盘上的小工具
+ * Disk utilities
  * ======================================================================== */
 
-/** 先写临时文件再改名；目标正被别人读着（Windows 的 EPERM / EBUSY）时退避重试几次 */
+/**
+ * Writes temporary file first then renames; retries with backoff a few times if target is being
+ * read by another process (Windows EPERM / EBUSY)
+ */
 export async function atomicWrite(file, text) {
   const temp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   await fs.writeFile(temp, text);
@@ -254,7 +299,7 @@ export async function atomicWrite(file, text) {
   }
 }
 
-/** 这个 pid 还活着吗（同一台机器上） */
+/** Whether this pid is still alive (on the same machine) */
 export function pidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   if (pid === process.pid) return true;
@@ -263,9 +308,12 @@ export function pidAlive(pid) {
 }
 
 /**
- * 量一个目录：总字节、最新修改时刻、里面有没有链接、其中遗留文件（计划第 3.3 节「遗留文件」那几种）的字节。
- * 遗留按名字认，规则与启动清理同一套（`storage-leftovers.mjs` 的 `leftoverFileKind`、`isDeadSpillDir`），
- * 进程死活也用那边偏保守的判法（拿不准按活）。碰到链接不进去。目录不存在回 `{ missing: true }`。
+ * Measures a directory: total bytes, latest mtime, whether it contains links, and bytes of leftover
+ * files (the kinds in Section 3.3 "Leftover files" of the plan).
+ * Leftovers are recognized by name, using the same rules as startup cleanup (`leftoverFileKind`,
+ * `isDeadSpillDir` in `storage-leftovers.mjs`), and process liveness also uses the more conservative
+ * check from there (assumed alive if unsure). Does not enter links. Returns `{ missing: true }` if
+ * directory does not exist.
  */
 export async function measureDir(dir, { now = Date.now(), alive = leftoverPidAlive, concurrency = 8 } = {}) {
   let bytes = 0, newest = 0, leftover = 0, linked = false, files = 0;
@@ -300,7 +348,7 @@ export async function measureDir(dir, { now = Date.now(), alive = leftoverPidAli
     for (;;) {
       const next = queue.shift();
       if (!next) {
-        // 别的 worker 可能还在往队列里放：等一拍再看
+        // Other workers may still be pushing to the queue: wait a tick and check again
         if (active === 0) return;
         await new Promise(resolve => setImmediate(resolve));
         continue;
@@ -318,7 +366,10 @@ async function listDirNames(dir) {
   catch { return []; }
 }
 
-/** 列出帧库根下全部认得的键目录（只读目录名，不进去）。族目录本身是链接的整族跳过。 */
+/**
+ * Lists all recognized key directories under frame store root (reads directory names only, does not
+ * enter). Skips whole family if family directory itself is a link.
+ */
 export async function listRels(root) {
   const rels = [];
   for (const name of await listDirNames(root)) if (KEY.test(name)) rels.push(name);
@@ -331,27 +382,32 @@ export async function listRels(root) {
 }
 
 /* ======================================================================== *
- * 管理器
+ * Manager
  * ======================================================================== */
 
 /**
  * @param {object} options
- * @param {string} options.root        帧库目录
- * @param {string} options.dataDir     `storage.json` 所在的数据目录
+ * @param {string} options.root        Frame store directory
+ * @param {string} options.dataDir     Data directory where `storage.json` resides
  * @param {() => number} [options.now]
- * @param {number} [options.minCapBytes]   用户可设的下限（测试与探针调小，见 `vite-plugin-frames.ts` 的 `PROMPTCUT_TEST_STORAGE_MIN_CAP`）
- * @param {boolean} [options.evict]    false = 只记、只量，不淘汰（`PROMPTCUT_STORAGE_EVICT=0`）
- * @param {boolean} [options.timers]   false = 不起节拍（单测手动调）
+ * @param {number} [options.minCapBytes]   User-configurable lower limit (reduced for tests and
+ *   probes, see `PROMPTCUT_TEST_STORAGE_MIN_CAP` in `vite-plugin-frames.ts`)
+ * @param {boolean} [options.evict]    false = record and measure only, do not evict
+ *   (`PROMPTCUT_STORAGE_EVICT=0`)
+ * @param {boolean} [options.timers]   false = do not start ticks (invoked manually in unit tests)
  */
 export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(), minCapBytes = MIN_CAP_BYTES, evict = true, timers = true,
   tickMs = TICK_MS, protectMs = PROTECT_MS, clearKeepMs = CLEAR_KEEP_MS, calibrateMs = CALIBRATE_MS, flushMs = FLUSH_MS,
   heartbeatMs = HEARTBEAT_MS, lockStaleMs = LOCK_STALE_MS, startupGraceMs = STARTUP_GRACE_MS, pid = process.pid, alive: aliveOpt, log = () => {},
   sweepLeftovers } = {}) {
   root = path.resolve(root);
-  // 主进程锁按「拿不准算死」接管（本模块的 `pidAlive`）；遗留文件按「拿不准算活」不删（`storage-leftovers.mjs`）。测试注入的一个管两处
+  // Lead process lock takes over assuming dead if unsure (`pidAlive` in this module); leftover files
+  // are kept assuming alive if unsure (`storage-leftovers.mjs`). A single test-injected setting
+  // controls both places.
   const alive = aliveOpt ?? pidAlive;
   const leftoverAlive = aliveOpt ?? leftoverPidAlive;
-  // 遗留清理与启动清理一样只对真正的帧库根（`<导出目录>/frame-library`）动手；`PROMPTCUT_STORAGE_EVICT=0` 时照清
+  // Like startup cleanup, leftover cleanup only operates on the real frame store root
+  // (`<exportDir>/frame-library`); still cleans up when `PROMPTCUT_STORAGE_EVICT=0`
   const sweeping = sweepLeftovers ?? path.basename(root) === 'frame-library';
   const storageDir = path.join(root, STORAGE_DIR);
   const indexFile = path.join(root, INDEX_FILE);
@@ -362,18 +418,21 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
 
   /** rel -> { at, bytes, leftover, measuredAt } */
   let keys = new Map();
-  /** 记过使用、还没重量的键 */
+  /** Keys that recorded usage and have not been remeasured yet */
   const dirty = new Set();
-  /** 本进程记的使用（不是主进程时写进自己的 touch 文件） */
+  /** Usage recorded by this process (written to its own touch file when not the lead process) */
   const ownTouches = new Map();
   let owner = false;
   let loaded = false;
   let indexDirty = false, touchDirty = false;
   let scannedAt = null, calibratedAt = null, lastEvict = null, lastEvictDetail = null, lastCheckAt = 0;
-  /** 上一次清遗留（诊断用，?detail=1 里带） */
+  /** Last leftover cleanup (for diagnostics, included in ?detail=1) */
   let lastLeftoverSweep = null;
   let scanning = null;
-  /** `refreshIfStale` 发起的后台量（只量不淘汰）；上一次量完的时刻 */
+  /**
+   * Background measurement initiated by `refreshIfStale` (measure only, no eviction); timestamp when
+   * last completed
+   */
   let measuring = null, lastMeasureAt = 0;
   let chain = Promise.resolve();
   let pipeline = null;
@@ -387,7 +446,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     return run;
   };
 
-  /* ---------------- 主进程锁 ---------------- */
+  /* ---------------- Lead process lock ---------------- */
 
   async function readOwner() {
     try { return JSON.parse(await fs.readFile(ownerFile, 'utf8')); } catch { return null; }
@@ -407,7 +466,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     const stale = !current || !alive(current.pid) || !(now() - Number(current.at) <= lockStaleMs);
     if (!stale) return false;
     await atomicWrite(ownerFile, mine).catch(() => {});
-    // 两个进程同时接管：各写各的，稍等再读，留下的那个赢
+    // Two processes take over simultaneously: each writes its own, waits briefly, remaining one wins
     await new Promise(resolve => setTimeout(resolve, 30));
     return (await readOwner())?.pid === pid;
   }
@@ -422,14 +481,14 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     if (!(await tryOwn())) return false;
     owner = true;
     log('storage.owner', { pid });
-    // 从前一个主进程写下的索引接着来；本进程此前记的使用并进去
+    // Resumes from index written by previous lead process; merges in usage recorded by this process
     await loadIndex();
     for (const [rel, at] of ownTouches) noteUse(rel, at);
     await fs.rm(ownTouchFile, { force: true }).catch(() => {});
     return true;
   }
 
-  /* ---------------- 索引 ---------------- */
+  /* ---------------- Index ---------------- */
 
   async function loadIndex() {
     let doc = null;
@@ -477,7 +536,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     indexDirty = true;
   }
 
-  /** 并进别的进程记的使用；pid 不在了的文件并完就删 */
+  /** Merges in usage recorded by other processes; deletes files whose pid is gone after merging */
   async function mergePeerTouches() {
     let names = [];
     try { names = await fs.readdir(touchDir); } catch { return 0; }
@@ -499,7 +558,10 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     return merged;
   }
 
-  /** 量一个键，写回索引；没有使用记录的最近使用时刻按最新文件的修改时刻兜底 */
+  /**
+   * Measures a key and writes back to index; for keys without usage records, last used timestamp falls
+   * back to latest file mtime
+   */
   async function measureRel(rel, { concurrency = 8 } = {}) {
     const result = await measureDir(relDir(root, rel), { now: now(), alive: leftoverAlive, concurrency });
     if (result.missing) { keys.delete(rel); dirty.delete(rel); indexDirty = true; return null; }
@@ -515,7 +577,10 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     return row;
   }
 
-  /** 全量重扫（索引缺失、读不懂，或周期性校正）。`keep` = 保留已有的最近使用时刻 */
+  /**
+   * Full rescan (index missing, unparseable, or periodic correction); `keep` = preserve existing
+   * last-used timestamps
+   */
   function rescan(reason) {
     if (scanning) return scanning;
     const started_ = now();
@@ -527,7 +592,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
       let i = 0;
       const next = () => rels[i++];
       await Promise.all(Array.from({ length: 4 }, async () => {
-        for (let rel = next(); rel; rel = next()) { if (closed) return; try { await measureRel(rel, { concurrency: 4 }); } catch { /* 下一轮再量 */ } }
+        for (let rel = next(); rel; rel = next()) { if (closed) return; try { await measureRel(rel, { concurrency: 4 }); } catch { /* Measure in the next round */ } }
       }));
       scannedAt = calibratedAt = now();
       loaded = true;
@@ -538,18 +603,21 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     return scanning;
   }
 
-  /** 增量：列一遍目录名，新出现的量一次、消失的删掉；记过使用的重量 */
+  /**
+   * Delta: lists directory names, measures newly appeared ones, deletes vanished ones, and remeasures
+   * keys with recorded usage
+   */
   async function refresh() {
     const rels = await listRels(root);
     const seen = new Set(rels);
     for (const rel of [...keys.keys()]) if (!seen.has(rel)) { keys.delete(rel); dirty.delete(rel); indexDirty = true; }
     for (const rel of rels) {
       const row = keys.get(rel);
-      if (!row || row.bytes === null || dirty.has(rel)) { try { await measureRel(rel); } catch { /* 下一轮 */ } }
+      if (!row || row.bytes === null || dirty.has(rel)) { try { await measureRel(rel); } catch { /* Next round */ } }
     }
   }
 
-  /* ---------------- 单元、保护、淘汰 ---------------- */
+  /* ---------------- Units, protection, eviction ---------------- */
 
   function pinnedRels(at = now()) {
     const pinned = new Set();
@@ -562,7 +630,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     return pinned;
   }
 
-  /** 按淘汰单元汇总：`[{ unit, rels, at, bytes, leftover, linked, protected }]` */
+  /** Summarizes by eviction unit: `[{ unit, rels, at, bytes, leftover, linked, protected }]` */
   function units(at = now(), keepMs = protectMs) {
     const pinned = pinnedRels(at);
     const byUnit = new Map();
@@ -580,7 +648,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     }
     for (const unit of byUnit.values()) {
       unit.protected = unit.pinned || at - unit.at < keepMs;
-      // 整场景目录先删（它最大，也最可能被打开）
+      // Delete the whole-scene directory first (it is largest and most likely to be open)
       unit.rels.sort((a, b) => parseRel(a).family === 'entry' ? -1 : parseRel(b).family === 'entry' ? 1 : 0);
     }
     return [...byUnit.values()];
@@ -593,8 +661,10 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
   };
 
   /**
-   * 清遗留文件（计划第 3.3 节「启动时与每次淘汰时一并清掉」；删哪些见 `storage-leftovers.mjs` 的 `sweepFrameLibrary`）。
-   * 删过东西的键目录记为要重量，接着的 `refresh()` 量完，`leftovers.bytes` 就是清完之后的数。
+   * Cleans up leftover files (Section 3.3 of the plan: "clean up together at startup and on each
+   * eviction"; see `sweepFrameLibrary` in `storage-leftovers.mjs` for what is deleted).
+   * Key directories where files were deleted are marked for remeasuring; after the subsequent
+   * `refresh()` finishes measuring, `leftovers.bytes` reflects the count after cleanup.
    */
   async function sweepLeftoverFiles() {
     if (!sweeping) return null;
@@ -612,14 +682,17 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     return report;
   }
 
-  /** 清掉垃圾目录（上一轮改了名没删完的） */
+  /** Cleans up trash directory (renamed in previous round but deletion not completed) */
   async function sweepTrash() {
     let names = [];
     try { names = await fs.readdir(trashDir); } catch { return; }
     for (const name of names) await fs.rm(path.join(trashDir, name), { recursive: true, force: true, maxRetries: 2 }).catch(() => {});
   }
 
-  /** 删一个单元：先改名进垃圾目录（有文件被打开就失败 = 跳过），再删 */
+  /**
+   * Deletes a unit: renames into trash directory first (fails and skips if any file is open), then
+   * deletes
+   */
   async function removeUnit(unit) {
     const moved = [];
     let skipped = null;
@@ -644,7 +717,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
         moved.push({ rel, target });
       } catch (error) {
         if (error?.code === 'ENOENT') { keys.delete(rel); indexDirty = true; continue; }
-        // EBUSY / EPERM / EACCES:目录里有文件被别的进程（或本进程）打开着
+        // EBUSY / EPERM / EACCES: a file in the directory is held open by another process (or this process)
         skipped = ['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY'].includes(error?.code) ? 'busy' : 'error';
         break;
       }
@@ -658,7 +731,10 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     return { freed, moved: moved.map(item => item.rel), skipped };
   }
 
-  /** 删掉本进程内存里还指着被删目录的东西（整场景 entry、就绪索引挂着的键、流清单缓存） */
+  /**
+   * Removes in-memory items in this process still pointing to deleted directories (whole-scene entry,
+   * keys attached to ready index, stream manifest cache)
+   */
   function forget(rels) {
     if (!pipeline || !rels.length) return;
     for (const rel of rels) {
@@ -670,7 +746,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
             if (generation?.key === parsed.key) { generation.controller?.abort?.(); pipeline.generations.delete(ownerId); }
           }
           const entry = pipeline.entries?.get?.(parsed.key);
-          if (entry) { pipeline.entries.delete(parsed.key); try { entry.disposeArchive?.(); } catch { /* 目录已经没了 */ } }
+          if (entry) { pipeline.entries.delete(parsed.key); try { entry.disposeArchive?.(); } catch { /* Directory already gone */ } }
         } else if (parsed.family === LOCAL) {
           pipeline.ready?.unstage?.({ kind: 'local', prefix: `${parsed.key}/` });
         } else if (parsed.family === 'controls-html') {
@@ -679,13 +755,14 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
           pipeline.ready?.unstage?.({ kind: 'stream', key: parsed.key });
           pipeline._streams?.store?.manifests?.delete?.(parsed.key);
         }
-      } catch { /* 尽力而为 */ }
+      } catch { /* Best effort */ }
     }
   }
 
   /**
-   * 删单元直到总量不超过 `targetBytes`（`targetBytes === null` = 删光全部候选）。
-   * 候选：不受保护、没有链接；按最近使用时刻从旧到新。
+   * Deletes units until total bytes do not exceed `targetBytes` (`targetBytes === null` = delete all
+   * candidates).
+   * Candidates: unprotected, no links; ordered by last used timestamp from oldest to newest.
    */
   async function evictTo(targetBytes, { keepMs = protectMs, reason = 'cap' } = {}) {
     const at = now();
@@ -720,7 +797,10 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     return { diskBytes, ...resolveCap(settings, diskBytes, minCapBytes) };
   }
 
-  /** 只量不淘汰（`refreshIfStale`）：并进别的进程的使用、清遗留、增量量 */
+  /**
+   * Measure only without eviction (`refreshIfStale`): merges usage from other processes, cleans
+   * leftovers, and measures deltas
+   */
   async function measureNow() {
     if (closed) return null;
     if (!(await becomeOwner())) { await saveTouches().catch(() => {}); return { owner: false }; }
@@ -732,7 +812,10 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     return { bytes: totals().bytes };
   }
 
-  /** 一次检查：并进别的进程的使用、增量量、超上限就淘汰。`force` 不受节拍限制 */
+  /**
+   * A single check: merges usage from other processes, measures deltas, and evicts when exceeding cap;
+   * `force` is not constrained by ticks
+   */
   async function checkNow({ force = false } = {}) {
     if (closed) return null;
     if (!force && now() - lastCheckAt < tickMs) return { skipped: 'rate' };
@@ -752,7 +835,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     return result;
   }
 
-  /* ---------------- 节拍 ---------------- */
+  /* ---------------- Ticks ---------------- */
 
   function touchOpen() {
     if (!pipeline) return;
@@ -767,13 +850,18 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     root, dataDir,
     get owner() { return owner; },
     get scanning() { return !!scanning; },
-    /** 把管线接上：管线在预加载时调 `usage.touchEntry`，本模块按它的会话判「开着」 */
+    /**
+     * Connects the pipeline: pipeline calls `usage.touchEntry` during preload, and this module determines
+     * "open" status by its session
+     */
     attachPipeline(p) { pipeline = p; if (p) p.usage = api; return api; },
     start() {
       if (started) return started;
       started = serial(() => becomeOwner()).then(() => {
-        // 索引缺失:马上开始重扫(只量不删);第一次判淘汰等 `startupGraceMs`,让页面重连、重发 preload,
-        // 正在打开的项目先记上使用 —— 不然用户昨天开着的项目可能在它的 preload 到达之前就被判成最久没用的
+        // Missing index: starts rescan immediately (measure only, do not delete); first eviction check waits
+        // `startupGraceMs` to let pages reconnect and resend preload, recording usage for opening projects
+        // first: otherwise a project open yesterday might be judged least recently used before its preload
+        // arrives
         if (owner && !loaded) void api.rescan('missing-index').catch(() => {});
         if (!timers) { void api.check({ force: true }).catch(() => {}); return; }
         const first = setTimeout(() => { void api.check({ force: true }).catch(() => {}); }, startupGraceMs);
@@ -788,7 +876,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
       }
       return started;
     },
-    /** 记使用（相对路径）。不落盘，由节拍或检查落 */
+    /** Records usage (relative path). In-memory only, flushed to disk on tick or check */
     touch(rels, at = now()) {
       for (const rel of rels ?? []) {
         if (!parseRel(rel)) continue;
@@ -797,20 +885,23 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
         if (owner) noteUse(rel, at);
       }
     },
-    /** 一个整场景版本（`FramePipeline` 的 entry）用到的键一起记为使用 */
+    /** Records all keys used by a whole-scene version (`FramePipeline` entry) as used together */
     touchEntry(entry, at = now()) {
-      try { api.touch(entryUsageRels(pipeline, entry), at); } catch { /* 记不上不挡预渲染 */ }
+      try { api.touch(entryUsageRels(pipeline, entry), at); } catch { /* Failure to record does not block prerender */ }
     },
-    /** 预加载或预渲染一批做完后：到节拍了就检查一次 */
+    /** After a batch of preloads or prerenders finishes: checks once when a tick arrives */
     afterBatch() {
       if (now() - lastCheckAt < tickMs) return;
       void api.check().catch(() => {});
     },
     check(options) { return serial(() => checkNow(options)); },
     /**
-     * 占用数字过期了就在后台量一次：上一次检查或量早于 `maxAgeMs` 时，并进别的进程的使用、清遗留、
-     * 增量量（与检查相同），但**不淘汰**、也不动淘汰检查的节拍（启动宽限、每 5 分钟最多一次照旧）。
-     * 不等量完就返回：回 true 表示此刻有一趟在量（`summary().scanning` 为 true）。
+     * Measures once in background when usage numbers expire: when the last check or measurement is older
+     * than `maxAgeMs`, merges usage from other processes, cleans leftovers, and performs delta
+     * measurement (same as a check), but **does not evict** and does not touch eviction check ticks
+     * (startup grace and at most once every 5 minutes remain as before).
+     * Returns without waiting for measurement to finish: returns true if a pass is currently measuring
+     * (`summary().scanning` is true).
      */
     refreshIfStale({ maxAgeMs = SUMMARY_STALE_MS } = {}) {
       if (closed) return false;
@@ -820,7 +911,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
       measuring = serial(() => measureNow()).catch(() => {}).finally(() => { measuring = null; lastMeasureAt = now(); });
       return true;
     },
-    /** 全量重扫（诊断、测试） */
+    /** Full rescan (diagnostics, testing) */
     rescan(reason = 'manual') { return serial(() => rescan(reason)); },
     async summary({ detail = false } = {}) {
       const at = now();
@@ -839,23 +930,29 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
       }
       return out;
     },
-    /** 设上限（`bytes` 须过 `validCap`），设完立即判一次（不等淘汰做完） */
+    /**
+     * Sets cap (`bytes` must pass `validCap`); evaluates immediately after setting without waiting for
+     * eviction
+     */
     async setCap(bytes) {
       const diskBytes = await diskBytesOf(root);
       if (!validCap(bytes, diskBytes, minCapBytes)) {
         const range = capRange(diskBytes, minCapBytes);
-        throw Object.assign(new Error(`上限要在 ${range.min} 到 ${range.max} 字节之间`), { code: 'CAP_OUT_OF_RANGE', status: 400, min: range.min, max: range.max });
+        throw Object.assign(new Error(`The limit must be between ${range.min} and ${range.max} bytes`), { code: 'CAP_OUT_OF_RANGE', status: 400, min: range.min, max: range.max });
       }
-      if (!owner && !(await serial(() => becomeOwner()))) throw Object.assign(new Error('另一个 PromptCut 进程正在管理这个帧库'), { code: 'STORAGE_NOT_OWNER', status: 409 });
+      if (!owner && !(await serial(() => becomeOwner()))) throw Object.assign(new Error('Another PromptCut process is managing this frame store'), { code: 'STORAGE_NOT_OWNER', status: 409 });
       await writeStorageSettings(dataDir, { frameLibraryCapBytes: bytes });
       const pending = api.check({ force: true });
       pending.catch(() => {});
       return { capBytes: bytes, pending };
     },
-    /** 清理缓存：删 `clearKeepMs` 内没用过的全部单元（正在打开的项目不删） */
+    /**
+     * Clears cache: deletes all units not used within `clearKeepMs` (projects currently being opened
+     * are kept)
+     */
     clearCache() {
       return serial(async () => {
-        if (!(await becomeOwner())) throw Object.assign(new Error('另一个 PromptCut 进程正在管理这个帧库'), { code: 'STORAGE_NOT_OWNER', status: 409 });
+        if (!(await becomeOwner())) throw Object.assign(new Error('Another PromptCut process is managing this frame store'), { code: 'STORAGE_NOT_OWNER', status: 409 });
         if (!loaded) await rescan('missing-index');
         await sweepTrash();
         await sweepLeftoverFiles();
@@ -866,7 +963,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
         return result;
       });
     },
-    /** 测试用：此刻的索引 */
+    /** For testing: current index */
     snapshot: () => Object.fromEntries([...keys].map(([rel, row]) => [rel, { ...row }])),
     flush: () => serial(() => flush()),
     async close() {
@@ -884,12 +981,12 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
 }
 
 /* ======================================================================== *
- * 每个帧库一个（按目录）
+ * One per frame store (by directory)
  * ======================================================================== */
 
 const managers = new Map();
 
-/** 这个帧库的管理器（没有就建、起节拍） */
+/** Manager for this frame store (creates one and starts ticks if none exists) */
 export function storageFor({ root, dataDir, ...options }) {
   const key = path.resolve(root);
   let manager = managers.get(key);
@@ -901,7 +998,7 @@ export function storageFor({ root, dataDir, ...options }) {
   return manager;
 }
 
-/** 关掉并忘掉这个帧库的管理器（dev server 关闭时） */
+/** Closes and forgets the manager for this frame store (when dev server shuts down) */
 export async function closeStorage(root) {
   const key = path.resolve(root);
   const manager = managers.get(key);
@@ -910,13 +1007,16 @@ export async function closeStorage(root) {
 }
 
 /* ======================================================================== *
- * 导出产物的汇总（`GET /api/storage` 的 `exports`）
+ * Summary of export artifacts (`exports` in `GET /api/storage`)
  * ======================================================================== */
 
 /**
- * 带缓存的导出汇总：`maxAgeMs` 内复用；过期先回旧值、后台刷新（第一次要等）。
- * 认目录、算中间文件直接用导出列表那一支的 `summarizeExports`（`exports-list.mjs`，规则定义在 `storage-leftovers.mjs`），
- * 与 `GET /api/exports` 的列表同一套：只认 `export-YYYYMMDD-HHMMSS[-n]` 的真目录、不含 `export-vision-*`、不跟链接。
+ * Cached export summary: reused within `maxAgeMs`; on expiry returns stale value first and refreshes
+ * in background (waits on first run).
+ * Recognizing directories and computing intermediate files directly uses `summarizeExports` from
+ * the export list (`exports-list.mjs`, rules defined in `storage-leftovers.mjs`), same rules as the
+ * `GET /api/exports` list: only recognizes real directories matching `export-YYYYMMDD-HHMMSS[-n]`,
+ * excludes `export-vision-*`, and does not follow links.
  */
 export function createExportSummary(exportDir, { maxAgeMs = 60_000, now = () => Date.now(), summarize = summarizeExports } = {}) {
   let value = null, valueSig = null, at = 0, pending = null;
@@ -929,8 +1029,9 @@ export function createExportSummary(exportDir, { maxAgeMs = 60_000, now = () => 
   return {
     async get({ fresh = false } = {}) {
       if (!value || fresh) return refresh();
-      // 导出列表那边(编辑器进程)删了一份、只删了中间文件、或新导出了一份:顶层目录的名字或修改时刻变了,马上重算,
-      // 不回 60 秒前的旧数(只看顶层,很便宜)
+      // When the export list side (editor process) deletes an export, deletes intermediate files only,
+      // or exports a new one: top-level directory name or mtime changed, recomputes immediately instead
+      // of returning stale numbers from 60 seconds ago (checks top level only, very cheap)
       if ((await exportDirSignature(exportDir)) !== valueSig) return refresh();
       if (now() - at > maxAgeMs) void refresh().catch(() => {});
       return value;
@@ -938,14 +1039,17 @@ export function createExportSummary(exportDir, { maxAgeMs = 60_000, now = () => 
   };
 }
 
-/** 导出目录下各份导出(名字认得的真目录)的名字与修改时刻,串成一个签名 */
+/**
+ * Concatenates names and mtimes of each export (recognized real directory) under export directory
+ * into a signature
+ */
 async function exportDirSignature(exportDir) {
   let items = [];
   try { items = await fs.readdir(exportDir, { withFileTypes: true }); } catch { return ''; }
   const parts = [];
   for (const item of items) {
     if (!item.isDirectory() || !isExportDirName(item.name)) continue;
-    try { parts.push(`${item.name}:${(await fs.lstat(path.join(exportDir, item.name))).mtimeMs}`); } catch { /* 刚没了 */ }
+    try { parts.push(`${item.name}:${(await fs.lstat(path.join(exportDir, item.name))).mtimeMs}`); } catch { /* Just gone */ }
   }
   return parts.sort().join('|');
 }

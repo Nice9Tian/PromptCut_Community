@@ -1,46 +1,76 @@
 /**
- * 项目模块：C6.5 的项目真身（设计稿 `docs/plan/c65-design.md` 第 2、3 节），以及保留兼容的
- * C6.3 项目版本（`docs/plan/docservice-contract.md` 第 1 节）与 M5b 项目快照（`docs/plan/render-queue-contract.md` J.1）。
+ * Project module: authoritative project of C6.5 (design draft `docs/plan/c65-design.md` sections 2
+ * and 3), as well as backwards-compatible C6.3 project versions (`docs/plan/docservice-contract.md`
+ * section 1) and M5b project snapshots (`docs/plan/render-queue-contract.md` J.1).
  *
- * **项目真身**（C6.5）：文档服务持有每个项目的当前内容，各方手里的都是副本（语义
- * `docs/semantics/product/document-service.md`「职责」）。
- * - `project.open`：回 `project.state`（当前内容、版本号、最近写入者），并订阅 `project:<projectId>` 频道；
- *   内容大时先回不带内容的 `project.state`，再按积压节流分片发 `project.state.part`，最后 `project.state.end`。
- * - `project.op`：一批路径操作（`../json-ops.mjs`），整批原子生效、版本号加一，回 `project.op.ok`；
- *   频道上给除提交者以外的订阅者广播 `project.ops`。拒绝时回 `project.op.rejected`，理由是
- *   `stale`（带了 `expectRev` 而版本不符，附 `since`）、`bad-path`、`too-large`（ops 序列化后超过 256 KiB）、`forbidden`。
- * - 同一 `opId` 已落地过：直接回当初的 `rev`（带 `duplicate: true`），不再应用、不再广播；这一步先于 `expectRev` 检查。
- * - 覆盖通知：按「实体」（`json-ops.mjs` 的 `entitiesOf`，名字口径见 `PROJECT_ENTITY_NAMES`）记最近写入者；
- *   一次提交写到的实体，若最近写入者是另一个写入身份、且在 10 分钟内，覆盖方的 `ok` 带 `overwrote`，
- *   被覆盖方（它此刻在线的、以那个身份提交过的连接）先于 `project.ops` 单独收 `project.overwritten`。
- * - `project.follow { entity, on: false }`：这个写入身份对这个实体退出跟踪，之后别人覆盖它时不再收 `project.overwritten`。
- * - 写入身份 `actor` 取连接的 principal 加消息里的 `session`（`actor.mjs`），消息里自报的其它身份一律不认。
- * - 存储：每个项目一份快照（`writeBlob`，`projects/<编码>.state-<散列>.json`）加一条操作日志
- *   （stream `projects/<projectId>.ops`，每行一次提交）。每 200 次提交落一次快照，日志随之截断到快照之后
- *   （存储有 `rewrite` 时）；第一次用到某个项目时读快照再回放日志。
- * - 大的根替换：`project.upload` 分片传一个整份项目，`project.op` 里写 `{ op: 'set', path: '', upload: <uploadId> }`
- *   引用它；这样的提交广播时太大，广播成不带 `ops` 的 `project.ops { resync: true }`，订阅者重新 `project.open`。
+ * **Authoritative project** (C6.5): the document service holds the current content of each project,
+ * while everyone else holds replicas (semantics `docs/semantics/product/document-service.md`
+ * "Responsibilities").
+ * - `project.open`: returns `project.state` (current content, version number, recent writers) and
+ *   subscribes to the `project:<projectId>` channel; when content is large, returns `project.state`
+ *   without content first, then sends chunks of `project.state.part` throttled by backlog, and
+ *   finally `project.state.end`.
+ * - `project.op`: a batch of path operations (`../json-ops.mjs`), applied atomically as a batch,
+ *   version incremented by one, returning `project.op.ok`; broadcasts `project.ops` on the channel
+ *   to subscribers other than the submitter. When rejected, returns `project.op.rejected` with
+ *   reason `stale` (carried `expectRev` but version did not match, with `since` attached),
+ *   `bad-path`, `too-large` (ops exceeded 256 KiB serialized), or `forbidden`.
+ * - When the same `opId` has already landed: directly returns the original `rev` (with
+ *   `duplicate: true`), without applying or broadcasting again; this step precedes the `expectRev`
+ *   check.
+ * - Overwrite notifications: records the most recent writer by "entity" (`entitiesOf` in
+ *   `json-ops.mjs`, naming criteria in `PROJECT_ENTITY_NAMES`); for entities written in a commit,
+ *   if the most recent writer is a different write identity and within 10 minutes, the overwriting
+ *   party's `ok` includes `overwrote`, while the overwritten party (its currently online
+ *   connections that submitted under that identity) receives `project.overwritten` separately prior
+ *   to `project.ops`.
+ * - `project.follow { entity, on: false }`: this write identity stops tracking this entity, and will
+ *   no longer receive `project.overwritten` when others overwrite it later.
+ * - Write identity `actor` takes the connection's principal plus `session` from the message
+ *   (`actor.mjs`); any other self-reported identities in messages are never accepted.
+ * - Storage: one snapshot per project (`writeBlob`, `projects/<encoded>.state-<hash>.json`) plus an
+ *   operation log (stream `projects/<projectId>.ops`, one commit per line). A snapshot is taken every
+ *   200 commits, and the log is truncated after the snapshot accordingly (when storage supports
+ *   `rewrite`); on first use of a project, reads the snapshot then replays the log.
+ * - Large root replacements: `project.upload` uploads an entire project in chunks, referenced in
+ *   `project.op` by `{ op: 'set', path: '', upload: <uploadId> }`; such a commit is too large to
+ *   broadcast, so it is broadcast without `ops` as `project.ops { resync: true }`, and subscribers
+ *   reopen via `project.open`.
  *
- * **与旧消息的关系**：版本号只有一个。项目还没有真身（从没收到过 `project.op`）时，`project.announce` 照 C6.3
- * 发号、记版本日志、广播 `project.rev`；一旦有了真身，**摘要以真身为准**：`announce` 不再发号，回当前版本号与
- * 真身的摘要（`sha256(JSON.stringify(真身))`，`changed: false`、`authoritative: true`、`matches` 表示报上来的摘要
- * 是否与真身相同）。M5b 快照照旧按版本登记的摘要校验；当前版本的摘要就是真身的摘要，所以当前版本的快照也能
- * 由真身直接发回（存储里没有那个文件时）。
+ * **Relationship with legacy messages**: there is only one version number. When a project does not
+ * yet have an authoritative project (has never received `project.op`), `project.announce` issues
+ * numbers, logs version history, and broadcasts `project.rev` according to C6.3; once it has an
+ * authoritative project, **the digest is based on the authoritative project**: `announce` no longer
+ * issues numbers, returning the current version number and the authoritative project's digest
+ * (`sha256(JSON.stringify(authoritativeProject))`, with `changed: false`, `authoritative: true`,
+ * and `matches` indicating whether the reported digest matches the authoritative project). M5b
+ * snapshots are validated against the digest registered for that version as before; the current
+ * version's digest is the authoritative project's digest, so the current version's snapshot can
+ * also be sent back directly from the authoritative project (when that file does not exist in
+ * storage).
  *
- * 快照（J.1）的其余细节不变：
- * - 上传的分片按 `(projectId, projectRev)` 汇在一起，可以乱序、可以重传、可以来自不同连接；
- *   摘要不符时已收的分片全部丢弃。未收齐的上传放在内存里，闲置太久或太多时丢掉最旧的（见 `SNAPSHOT_LIMITS`）。
- * - 取回时先核对文件内容的 sha256 等于这一版登记的摘要：Windows 文件名不分大小写，只差大小写的两个项目
- *   同一版会落进同一个文件，对不上就当没有（回 `missing`），不会把别的项目的内容发出去。
- * - 发回的分片按积压节流：核心的出站队列加底层积压超过上限（缺省 1 MiB）就以 1013 断开（H.2），整份一次发完会被断开。
- *   每发一片之前等这条连接的积压（`ctx.pendingBytes`）降到上限（`ctx.maxPendingBytes`）的一半以下（J.11）。
- *   同一条连接上的多次取回排队依次发，连接断开就停。`project.state` 的分片走同一条队列。
+ * Other snapshot (J.1) details remain unchanged:
+ * - Uploaded parts are gathered by `(projectId, projectRev)`, and can arrive out of order, be
+ *   retransmitted, or come from different connections; if the digest does not match, all received
+ *   parts are discarded. Incomplete uploads are kept in memory, dropping the oldest when idle for
+ *   too long or exceeding capacity (see `SNAPSHOT_LIMITS`).
+ * - On retrieval, first verify that the file content's sha256 equals the digest registered for this
+ *   version: Windows file names are case-insensitive, so two projects differing only in case would
+ *   end up in the same file for the same version; if it doesn't match, treat it as non-existent
+ *   (return `missing`), preventing another project's content from being sent out.
+ * - Parts sent back are throttled by backlog: if core outbound queue plus underlying backlog exceeds
+ *   the limit (default 1 MiB), the connection is closed with 1013 (H.2); sending the entire payload
+ *   at once would cause a disconnect. Before sending each part, wait until this connection's
+ *   backlog (`ctx.pendingBytes`) drops below half the limit (`ctx.maxPendingBytes`) (J.11). Multiple
+ *   retrievals on the same connection are queued and sent sequentially, stopping if the connection
+ *   disconnects. Chunks for `project.state` use the same queue.
  */
 import { createHash } from 'node:crypto';
 import { createMemoryStore, fileNameOf } from '../store/index.mjs';
 import { actorOf } from './actor.mjs';
 import { applyOps, entitiesOf, normalizeEntity, parsePath, formatPath, idSegment, OpError } from '../json-ops.mjs';
 import { canonical, digest as historyDigest, historyError } from './operation-history.mjs';
+import { tr } from '../../i18n.mjs';
 export const ROLLBACK_OP_PREFIX = 'logout-rollback:';
 let customRollbackPolicy = null;
 export function registerProjectRollbackPolicy(policy) {
@@ -55,7 +85,10 @@ export const rollbackOpId = (eventId, attempt) =>
     ? customRollbackPolicy.rollbackOpId(eventId, attempt)
     : `${ROLLBACK_OP_PREFIX}${eventId}:${attempt}`;
 
-/** 账号项目的一次提交从收到到回包超过这么久,记一行 `project.op.slow`(诊断;三级数字) */
+/**
+ * If an account project commit takes longer than this from receipt to response, log a line of
+ * `project.op.slow` (diagnostic; tier-3 number)
+ */
 export const SLOW_OP_MS = 5_000;
 
 export const PROJECT_MODULE = 'project';
@@ -64,52 +97,69 @@ const PROJECT_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 const DIGEST_RE = /^[0-9a-f]{16,128}$/;
 const TOKEN_RE = /^[A-Za-z0-9._:@-]{1,128}$/;
 
-/** 快照的上限（J.1）：每片 ≤ 512 KiB（UTF-8 字节）、最多 64 片；未收齐的上传最多留这么多份、闲置这么久 */
+/**
+ * Snapshot limits (J.1): ≤ 512 KiB per part (UTF-8 bytes), at most 64 parts; at most this many
+ * incomplete uploads kept, idle for this long
+ */
 export const SNAPSHOT_LIMITS = Object.freeze({
   PART_BYTES: 512 * 1024,
   MAX_PARTS: 64,
-  /** 发回时每片的上限（按 JSON 转义后的字节数），比上传的小，便于按节奏发 */
+  /**
+   * Upper limit per part when sending back (by bytes after JSON escaping); smaller than upload to
+   * facilitate paced sending
+   */
   OUT_PART_BYTES: 256 * 1024,
   MAX_PENDING_UPLOADS: 32,
   PENDING_IDLE_MS: 10 * 60_000,
 });
 
-/** 发回快照的节流（J.11）：积压没降到上限的一半以下时，隔 `pollMs` 再查 */
+/**
+ * Snapshot send-back throttling (J.11): when backlog has not dropped below half the limit, check
+ * again after `pollMs`
+ */
 export const SNAPSHOT_PACE = Object.freeze({ pollMs: 20 });
 
-/** 项目真身的上限与口径（C6.5 第 3 节） */
+/** Limits and criteria for authoritative projects (C6.5 section 3) */
 export const PROJECT_LIMITS = Object.freeze({
-  /** 一次提交的 `ops` 序列化后的上限（UTF-8 字节） */
+  /** Upper limit for serialized `ops` in a single commit (UTF-8 bytes) */
   MAX_OPS_BYTES: 256 * 1024,
-  /** 每多少次提交落一次快照、截断日志 */
+  /** How many commits between taking a snapshot and truncating the log */
   SNAPSHOT_EVERY: 200,
-  /** 覆盖通知的时间窗 */
+  /** Time window for overwrite notifications */
   OVERWRITE_WINDOW_MS: 10 * 60_000,
-  /** 为 `stale.since` 留的提交摘要条数 */
+  /** Number of commit summary entries kept for `stale.since` */
   HISTORY: 1000,
-  /** 一次 `stale` 回包里 `since` 最多列多少次提交（多了只列最近的，`sinceComplete: false`） */
+  /**
+   * Maximum commits listed in `since` in a single `stale` response (if more, lists only the most
+   * recent with `sinceComplete: false`)
+   */
   SINCE_MAX: 200,
-  /** 每条提交摘要最多列多少个路径 */
+  /** Maximum paths listed per commit summary */
   PATHS_PER_COMMIT: 256,
-  /** 幂等用：记住最近多少个 `opId` */
+  /** For idempotency: how many recent `opId`s to remember */
   OP_IDS: 5000,
-  /** `project.state.writers` 最多列多少个实体 */
+  /** Maximum number of entities listed in `project.state.writers` */
   WRITERS_IN_STATE: 200,
-  /** 内容序列化后不超过这么多字节时，`project.state` 直接带内容；`project.ops` 超过它就改成 `resync` */
+  /**
+   * When serialized content is within this limit, `project.state` carries content directly;
+   * `project.ops` exceeding it switches to `resync`.
+   */
   INLINE_BYTES: 256 * 1024,
-  /** 大的根替换：每片上限、最多片数、未用的上传最多留几份 */
+  /** Large root replacement: per-chunk limit, max chunk count, max unused uploads kept */
   UPLOAD_PART_BYTES: 512 * 1024,
   UPLOAD_MAX_PARTS: 64,
   UPLOAD_MAX_PENDING: 8,
 });
 
 /**
- * 实体口径（`c65-ops-spec.md` 第 4 节）：从根开始成对的 `/<名>/@<id>`，第一对之后的名字只能是这几个。
- * 这是本模块唯一认识的项目结构，只用来划覆盖通知的粒度；可由组装层经 `entityNames` 换掉。
+ * Entity scope (c65-ops-spec.md Section 4): pairs of `/<name>/@<id>` starting from the root;
+ * names after the first pair can only be these few.
+ * This is the only project structure recognized by this module, used only to define the
+ * granularity of overwrite notifications; can be overridden by the assembly layer via `entityNames`.
  */
 export const PROJECT_ENTITY_NAMES = Object.freeze(['tracks', 'clips', 'transitions']);
 
-/** 核心没给 `ctx.maxPendingBytes` 时按这个上限算（与核心的缺省值相同，H.2） */
+/** Used as the limit when core omits `ctx.maxPendingBytes` (same as the core default, H.2) */
 const DEFAULT_MAX_PENDING_BYTES = 1024 * 1024;
 
 const isReqId = (v) => typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v));
@@ -118,7 +168,7 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 class BadMessage extends Error {}
 function bad(detail) { throw new BadMessage(detail); }
 
-/** 业务错误：回 `error { reason }`，不算 bad-message */
+/** Business error: returns `error { reason }`, not counted as bad-message */
 class Refused extends Error {
   constructor(reason, detail) {
     super(detail);
@@ -127,42 +177,46 @@ class Refused extends Error {
 }
 
 function checkProjectId(v) {
-  if (typeof v !== 'string' || !PROJECT_ID_RE.test(v)) bad('projectId 不合法');
+  if (typeof v !== 'string' || !PROJECT_ID_RE.test(v)) bad('projectId is invalid');
   return v;
 }
 
 function checkDigest(v) {
-  if (typeof v !== 'string' || !DIGEST_RE.test(v)) bad('digest 必须是 16～128 位小写十六进制');
+  if (typeof v !== 'string' || !DIGEST_RE.test(v)) bad('digest must be 16-128 lowercase hex characters');
   return v;
 }
 
 function checkRev(v) {
-  if (!Number.isSafeInteger(v) || v < 1) bad('projectRev 必须是正整数');
+  if (!Number.isSafeInteger(v) || v < 1) bad('projectRev must be a positive integer');
   return v;
 }
 
-/** `session` 可选：没给（或 null）记为 null；给了就得是 1～128 个字符的字符串 */
+/** `session` is optional: recorded as null if omitted (or null); if provided, must be a 1-128 character string */
 function checkSession(v) {
   if (v === undefined || v === null) return null;
-  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad('session 必须是 1～128 个字符的字符串');
+  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad('session must be a string of 1-128 characters');
   return v;
 }
 
-/** `opId`、`undoOf`、`uploadId`：1～128 个字符的字符串（不限字符集，客户端自己保证全局唯一） */
+/** `opId`, `undoOf`, `uploadId`: 1-128 character string (any character set, client ensures global uniqueness) */
 function checkToken(v, name) {
-  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad(`${name} 必须是 1～128 个字符的字符串`);
+  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad(`${name} must be a string of 1-128 characters`);
   return v;
 }
 
 const streamOf = (projectId) => `projects/${projectId}`;
 const opsStreamOf = (projectId) => `projects/${projectId}.ops`;
 const channelOf = (projectId) => `project:${projectId}`;
-/** 快照文件名（J.1）：projectId 按 C6.3 第 10 节第 10 条编码，`@<projectRev>.json` 原样 */
+/** Snapshot filename (J.1): projectId encoded per C6.3 Section 10 Item 10, `@<projectRev>.json` as is */
 export const snapshotBlobName = (projectId, projectRev) => `projects/${fileNameOf(projectId)}@${projectRev}.json`;
 
 const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
 
-/** 发给页面的写入身份与操作号里不带改密退出撤回的事件号（安全专审 Q5 / SEC-01：事件号是占号的凭据）。存储里照旧是全的。 */
+/**
+ * Write identities and op numbers sent to pages omit event numbers for password-change logout
+ * rollbacks (security review Q5 / SEC-01: event numbers are credentials for claiming numbers).
+ * Storage remains complete as before.
+ */
 const shownActor = (actor) => {
   if (!actor || typeof actor !== 'object' || actor.rollbackEventId === undefined) return actor;
   const { rollbackEventId: _event, ...rest } = actor;
@@ -171,12 +225,13 @@ const shownActor = (actor) => {
 const shownOpId = (opId) => (isReservedOpId(opId) ? `${ROLLBACK_OP_PREFIX}${sha256(opId).slice(0, 24)}` : opId);
 
 /**
- * 真身快照的文件名：编码后的 projectId 加它的散列前缀。Windows 文件名不分大小写，只差大小写的两个项目
- * 编码后会撞上，加上按原样算的散列就不会（M5b 快照靠读回时核对摘要，这里靠文件名）。
+ * Body snapshot filename: encoded projectId plus its hash prefix. Windows filenames are
+ * case-insensitive, so two projects differing only in case collide after encoding; adding a hash
+ * computed as-is avoids collisions (M5b snapshots verify digests on read-back; here uses filenames).
  */
 export const stateBlobName = (projectId) => `projects/${fileNameOf(projectId)}.state-${sha256(projectId).slice(0, 16)}.json`;
 
-/** 一个 UTF-16 码元在 JSON 字符串里转义后的 UTF-8 字节数；代理对整体算 4 */
+/** UTF-8 byte count of a UTF-16 code unit escaped in a JSON string; surrogate pairs count as 4 overall */
 function escapedWidth(text, i) {
   const c = text.charCodeAt(i);
   if (c === 0x22 || c === 0x5c) return [2, 1];
@@ -191,7 +246,10 @@ function escapedWidth(text, i) {
   return [3, 1];
 }
 
-/** 按「JSON 转义后的 UTF-8 字节数 ≤ limit」切文本，不拆代理对；空文本也回一片 */
+/**
+ * Splits text by "escaped UTF-8 byte count in JSON ≤ limit" without splitting surrogate pairs;
+ * returns one chunk even for empty text.
+ */
 export function splitSnapshotText(text, limit) {
   const parts = [];
   let start = 0;
@@ -210,12 +268,18 @@ export function splitSnapshotText(text, limit) {
   return parts;
 }
 
-/** 写入身份的比较键：用户 + 设备 + 角色 + 对话 + 会话（语义「哪个用户的哪个页面，或哪个 Agent 的哪个对话」） */
+/**
+ * Comparison key for write identity: user + device + role + chat + session
+ * (semantics: "which page of which user, or which chat of which Agent").
+ */
 export function identityOf(actor) {
   return JSON.stringify([actor?.userId ?? null, actor?.deviceId ?? null, actor?.role ?? null, actor?.conversation ?? null, actor?.session ?? null]);
 }
 
-/** 一批操作各自写到的位置（`insert` 是新元素的路径），规范写法、去重、保序；格式不对的操作跳过 */
+/**
+ * Target locations written by a batch of operations (`insert` is path of new element),
+ * normalized, deduplicated, order-preserving; malformed operations are skipped.
+ */
 function targetsOf(ops) {
   const out = new Set();
   for (const op of Array.isArray(ops) ? ops : []) {
@@ -236,14 +300,18 @@ function capPaths(paths) {
  * @param {{ append(stream: string, record: object): void, read(stream: string): object[],
  *   writeBlob?(name: string, text: string): void, readBlob?(name: string): string | null,
  *   rewrite?(stream: string, records: object[]): void }} [options.store]
- *   日志与快照存储（`../store/index.mjs`）；缺省用内存存储，不跨重启。没有 `writeBlob` / `readBlob` 的存储
- *   不支持快照（M5b 快照消息回 `unsupported`，真身只靠日志回放）；没有 `rewrite` 的不截断日志
- * @param {() => number} [options.now] 缺省用 `ctx.now()`
- * @param {number} [options.pollMs] 积压没降下来时隔多久再查，缺省 `SNAPSHOT_PACE.pollMs`（20 ms）
- * @param {number} [options.snapshotEvery] 每多少次提交落一次真身快照，缺省 200
- * @param {number} [options.maxOpsBytes] 一次提交的上限，缺省 256 KiB
- * @param {number} [options.overwriteWindowMs] 覆盖通知的时间窗，缺省 10 分钟
- * @param {string[] | null} [options.entityNames] 实体口径，缺省 `PROJECT_ENTITY_NAMES`
+ *   Log and snapshot store (`../store/index.mjs`); defaults to in-memory store, does not persist
+ *   across restarts. Stores without `writeBlob` / `readBlob` do not support snapshots (M5b
+ *   snapshot messages return `unsupported`, body relies only on log replay); stores without
+ *   `rewrite` do not truncate logs.
+ * @param {() => number} [options.now] Defaults to `ctx.now()`
+ * @param {number} [options.pollMs] How often to re-check when backlog has not dropped, defaults
+ *   to `SNAPSHOT_PACE.pollMs` (20 ms)
+ * @param {number} [options.snapshotEvery] Commits between body snapshots, defaults to 200
+ * @param {number} [options.maxOpsBytes] Upper limit per commit, defaults to 256 KiB
+ * @param {number} [options.overwriteWindowMs] Time window for overwrite notifications, defaults
+ *   to 10 minutes
+ * @param {string[] | null} [options.entityNames] Entity scope, defaults to `PROJECT_ENTITY_NAMES`
  */
 export function projectModule({
   store = createMemoryStore(),
@@ -257,32 +325,38 @@ export function projectModule({
 } = {}) {
   const entityOpts = { names: entityNames === null ? null : [...entityNames] };
   /**
-   * projectId → 项目状态；第一次用到时从日志与快照恢复：
-   * { projectRev, digest, at,                 C6.3：版本号（与真身共用）、最近一次 announce 的摘要、最近一次写入的时间
-   *   hasBody, body, bodyDigest,              C6.5：有没有真身（收到过 project.op）、当前内容、{ rev, digest } 缓存
-   *   writers: Map<entity, { actor, identity, at, rev }>, history: 提交摘要[], opIds: Map<opId, rev>, sinceSnapshot }
+   * projectId → project state; recovered from logs and snapshots on first use:
+   * { projectRev, digest, at,                 C6.3: revision number (shared with body),
+   *                                           digest of most recent announce, time of most recent write
+   *   hasBody, body, bodyDigest,              C6.5: whether there is a body (received project.op),
+   *                                           current content, { rev, digest } cache
+   *   writers: Map<entity, { actor, identity, at, rev }>, history: commit digest[],
+   *   opIds: Map<opId, rev>, sinceSnapshot }
    */
   const projects = new Map();
-  /** projectId → Map<rev, digest>：每一版登记的摘要，快照按它校验 */
+  /** projectId → Map<rev, digest>: registered digest for each revision, which snapshots verify against */
   const revDigests = new Map();
   /** connId → principal */
   const principals = new Map();
   /** `${projectId}@${rev}` → { projectId, projectRev, digest, count, parts: Map<index, data>, bytes, touched } */
   const uploads = new Map();
-  /** `${projectId}|${uploadId}` → { count, parts: Map, touched, value? }：大的根替换 */
+  /** `${projectId}|${uploadId}` → { count, parts: Map, touched, value? }: large root replacement */
   const bodyUploads = new Map();
-  /** connId → { chain: Promise, alive: boolean }：分片发送队列（快照取回与 project.state 共用） */
+  /**
+   * connId → { chain: Promise, alive: boolean }: chunked sending queue
+   * (shared between snapshot retrieval and `project.state`)
+   */
   const senders = new Map();
-  /** 写入身份 → 以它提交过的在线连接；connId → 它用过的写入身份 */
+  /** write identity → online connections that committed with it; connId → write identities it used */
   const identityConns = new Map();
   const connIdentities = new Map();
-  /** projectId → Map<identity, Set<entity>>：退出跟踪的 */
+  /** projectId → Map<identity, Set<entity>>: tracked for logout */
   const unfollowed = new Map();
   const stats = {
     snapshotsStored: 0, snapshotsServed: 0, digestMismatches: 0, uploadsEvicted: 0,
     commits: 0, rejected: 0, duplicates: 0, stateSnapshots: 0, overwrites: 0,
   };
-  /** 最近一次拿到的上下文：事件模块借项目频道广播时用（`publishToProject`） */
+  /** Most recently obtained context: used when event module broadcasts via project channel (`publishToProject`) */
   let lastCtx = null;
 
   const clock = (ctx) => (typeof now === 'function' ? now() : ctx.now());
@@ -308,10 +382,14 @@ export function projectModule({
       return { projectRev: st.projectRev, value: st.body, orderProjection: raw ? JSON.parse(raw).orderProjection : null };
     },
     /**
-     * 改密退出撤回一个项目（`server/account/logout-rollback.mjs` 经 `doc-assembly.mjs` 叫进来）。在项目锁里按当时的内容算撤回
-     * （`plan(内容)` 回 `{ ops, reverted, kept }`），有要撤的就作为一次补偿操作落地：写入身份是 `{ accountId, rollbackEventId }`，
-     * 广播给订阅了这个项目的连接（各方照常应用），并给这个项目此刻在线的成员页面各发一条气泡 `shared.notice { event: 'content-rolled-back', name }`。
-     * 不在线的不补：重启后认出已落地的同一次（`duplicate`）不再发。没有要撤的不落地、不发气泡。
+     * Rolls back a project upon password-change logout (invoked by `server/account/logout-rollback.mjs`
+     * via `doc-assembly.mjs`). Computes rollback against content at the time inside project lock
+     * (`plan(content)` returns `{ ops, reverted, kept }`); if there are changes to revert, commits
+     * them as a compensating operation: write identity is `{ accountId, rollbackEventId }`, broadcast
+     * to connections subscribed to this project (applied normally by all parties), and sends a bubble
+     * `shared.notice { event: 'content-rolled-back', name }` to each currently online member page of
+     * this project. Offline pages do not receive catch-ups; already-committed instances (`duplicate`)
+     * recognized after restart are not re-sent. If nothing to revert, does not commit or send bubbles.
      */
     async rollback({ projectId, eventId, accountId, attempt = 1, name = null, notify = true, plan }) {
       if (typeof plan !== 'function' || !Number.isSafeInteger(attempt) || attempt < 1) throw historyError('bad-rollback', 400);
@@ -336,10 +414,10 @@ export function projectModule({
         if (duplicate) return;
         const { record } = operation.result;
         stats.commits++;
-        // 广播里不带事件号（安全专审 Q5）：成员只需知道是谁的撤回
+        // Broadcast omits event number (security review Q5): members only need to know whose rollback it is
         lastCtx?.publish(channelOf(projectId), { type: 'project.ops', projectId, rev: record.rev, opId: shownOpId(opId), ops: record.ops,
           actor: shownActor(record.actor), at: record.at });
-        if (!notify) return; // 同一个项目分批撤时只在第一批发气泡
+        if (!notify) return; // When rolling back the same project in batches, only send bubbles for the first batch
         for (const [connId, principal] of principals) {
           if (principal?.projectId !== projectId || principal.role !== 'page' || principal.scope === 'service' || typeof principal.service === 'string') continue;
           lastCtx?.send(connId, { type: 'shared.notice', event: 'content-rolled-back', projectId, name });
@@ -384,7 +462,7 @@ export function projectModule({
   function log(event, fields) {
     try {
       lastCtx?.log(event, fields);
-    } catch { /* 日志失败不影响业务 */ }
+    } catch { /* Logging failure does not affect business operations */ }
   }
 
   function pushHistory(st, entry) {
@@ -409,7 +487,7 @@ export function projectModule({
     for (const entity of entities) st.writers.set(entity, { actor, identity, at, rev });
   }
 
-  /** 一条提交记录落到内存状态上（实时提交与回放共用） */
+  /** Applies a commit record to in-memory state (shared between real-time commits and replay) */
   function landCommit(st, rec, body) {
     st.body = body;
     st.hasBody = true;
@@ -434,7 +512,8 @@ export function projectModule({
     };
     const revs = new Map();
     for (const rec of store.read(streamOf(projectId))) {
-      // 同一个文件里可能混进只差大小写的项目（Windows 文件名不分大小写），按记录自己的键过滤
+      // Projects differing only in case may be mixed into the same file (Windows filenames are
+      // case-insensitive); filter by record's own key
       if (rec.projectId !== projectId) continue;
       if (!Number.isSafeInteger(rec.rev) || rec.rev <= st.projectRev) continue;
       if (typeof rec.digest !== 'string') continue;
@@ -445,7 +524,7 @@ export function projectModule({
       pushHistory(st, { rev: rec.rev, actor: rec.actor ?? null, at: st.at, paths: [], entities: [], announce: true });
     }
 
-    // 真身：先读快照，再回放快照之后的日志
+    // Body: read snapshot first, then replay logs after snapshot
     let snapRev = 0;
     if (typeof store.readBlob === 'function') {
       let snap = null;
@@ -476,7 +555,8 @@ export function projectModule({
       try {
         applied = applyOps(st.body, rec.ops);
       } catch (err) {
-        // 日志里的提交当初都落地过，回放不该失败；失败说明日志坏了，停在这里，别在错的内容上接着回放
+        // Commits in the log were all committed previously, replay should not fail; failure indicates
+        // corrupted log, stop here, do not continue replaying on incorrect content
         log('project.replay-failed', { projectId, rev: rec.rev, message: String(err?.message ?? err) });
         break;
       }
@@ -489,7 +569,10 @@ export function projectModule({
     return st;
   }
 
-  /** 真身的摘要（按版本缓存）；同时登记成这一版的摘要，M5b 快照能按它校验 */
+  /**
+   * Body digest (cached by revision); also registered as digest for this revision for M5b snapshot
+   * verification.
+   */
   function bodyDigestOf(projectId, st, text) {
     if (st.bodyDigest && st.bodyDigest.rev === st.projectRev) return st.bodyDigest.digest;
     const digest = sha256(text ?? JSON.stringify(st.body));
@@ -498,7 +581,10 @@ export function projectModule({
     return digest;
   }
 
-  /** 这一版登记的摘要；没登记过回 undefined。有真身时当前版本的摘要就是真身的摘要 */
+  /**
+   * Registered digest for this revision; returns undefined if not registered. When there is a body,
+   * the current revision's digest is the body digest.
+   */
   function digestOfRev(projectId, rev) {
     const st = stateOf(projectId);
     const known = revDigests.get(projectId)?.get(rev);
@@ -512,7 +598,7 @@ export function projectModule({
     ctx.send(connId, message);
   }
 
-  /** 时间窗内的最近写入者，按版本从新到旧，最多 `WRITERS_IN_STATE` 个 */
+  /** Recent writers within time window, ordered newest to oldest by revision, up to `WRITERS_IN_STATE` */
   function recentWriters(st, nowMs) {
     return [...st.writers.entries()]
       .filter(([, w]) => nowMs - w.at <= overwriteWindowMs)
@@ -541,7 +627,8 @@ export function projectModule({
       head.project = st.body;
       return reply(ctx, connId, head, reqId);
     }
-    // 大项目：先回不带内容的头，再分片（与 M5b 快照同一条节流队列）
+    // Large projects: return header without content first, then chunk (same throttling queue as
+    // M5b snapshots)
     const withReq = (m) => (reqId === undefined ? m : { ...m, reqId });
     const parts = splitSnapshotText(text, partBytesOf(ctx));
     head.parts = parts.length;
@@ -557,7 +644,8 @@ export function projectModule({
     const session = checkSession(msg.session);
     const st = stateOf(projectId);
     if (st.hasBody) {
-      // 有真身：摘要以真身为准，announce 不再发号（见文件头「与旧消息的关系」）
+      // Has body: digest is determined by body, announce no longer issues numbers
+      // (see "Relationship with legacy messages" in file header)
       const bodyDigest = bodyDigestOf(projectId, st);
       return reply(ctx, connId, {
         type: 'project.announced', projectId, projectRev: st.projectRev, changed: false,
@@ -571,7 +659,7 @@ export function projectModule({
     const actor = actorOf(principal, session);
     const at = clock(ctx);
     const rev = st.projectRev + 1;
-    // 先落日志再改内存：落盘失败时状态不变，核心回 internal
+    // Append to log before updating memory: state remains unchanged on disk failure, core returns internal
     store.append(streamOf(projectId), { projectId, rev, digest, actor, at });
     st.projectRev = rev;
     st.digest = digest;
@@ -588,7 +676,7 @@ export function projectModule({
     reply(ctx, connId, { type: 'project.closed', projectId }, reqId);
   }
 
-  // ---------- 真身：提交 ----------
+  // ---------- Body: Commit ----------
 
   function trackIdentity(connId, identity) {
     let set = identityConns.get(identity);
@@ -604,14 +692,14 @@ export function projectModule({
     return !!set && (set.has(entity) || set.has('*'));
   }
 
-  /** 把 `{ op: 'set', path: '', upload }` 换成上传好的内容；引用不到回 null 与原因 */
+  /** Replaces `{ op: 'set', path: '', upload }` with uploaded content; returns null and reason if not found */
   function resolveUploads(projectId, ops) {
     let used = null;
     const out = ops.map((op) => {
       if (!isObj(op) || op.op !== 'set' || op.path !== '' || !Object.hasOwn(op, 'upload') || Object.hasOwn(op, 'value')) return op;
       const key = `${projectId}|${op.upload}`;
       const up = typeof op.upload === 'string' ? bodyUploads.get(key) : undefined;
-      if (!up || !Object.hasOwn(up, 'value')) throw new OpError('bad-path', ops.indexOf(op), `上传 ${String(op.upload)} 不存在或没收齐`);
+      if (!up || !Object.hasOwn(up, 'value')) throw new OpError('bad-path', ops.indexOf(op), `Upload ${String(op.upload)} does not exist or was not fully received`);
       (used ??= []).push(key);
       const { upload, ...rest } = op;
       return { ...rest, value: up.value };
@@ -620,8 +708,9 @@ export function projectModule({
   }
 
   /**
-   * `stale` 回包里的 `expectRev`、`since`（期间别人的提交摘要）、`sinceComplete`。
-   * 非账号路径与账号路径共用，模型读到的「你读到的是 rev X，现在是 rev Y，期间谁改了什么」都靠它。
+   * `expectRev`, `since` (others' commit digests in the interim), and `sinceComplete` in `stale` response.
+   * Shared between non-account and account paths; the model relies on this to see "you read rev X,
+   * now it is rev Y, who changed what in the interim".
    */
   function staleDetail(st, expectRev) {
     const later = st.history.filter((h) => h.rev > expectRev && h.rev <= st.projectRev);
@@ -648,7 +737,7 @@ export function projectModule({
     const undoOf = msg.undoOf === undefined || msg.undoOf === null ? undefined : checkToken(msg.undoOf, 'undoOf');
     let expectRev;
     if (msg.expectRev !== undefined && msg.expectRev !== null) {
-      if (!Number.isSafeInteger(msg.expectRev) || msg.expectRev < 0) bad('expectRev 必须是非负整数');
+      if (!Number.isSafeInteger(msg.expectRev) || msg.expectRev < 0) bad('expectRev must be a non-negative integer');
       expectRev = msg.expectRev;
     }
     const st = stateOf(projectId);
@@ -658,9 +747,10 @@ export function projectModule({
     };
 
     const principal = principals.get(connId);
-    if (principal?.role === 'render') return reject('forbidden', { detail: '渲染节点的连接不能改项目' });
-    // 只读成员的云端 Agent 连接（principal 带 `access: 'r'`，`docs/plan/cloud-agent-contract.md` 第 4.6 节）；组装层的 gate 已经挡过一次
-    if (principal?.access === 'r') return reject('forbidden', { detail: '只读的连接不能改项目' });
+    if (principal?.role === 'render') return reject('forbidden', { detail: 'A render node connection cannot modify the project' });
+    // Cloud Agent connection for read-only member (principal has `access: 'r'`, Section 4.6 of
+    // `docs/plan/cloud-agent-contract.md`); assembly layer gate has already blocked it once
+    if (principal?.access === 'r') return reject('forbidden', { detail: tr("A read-only connection cannot modify the project") });
 
     const done = st.opIds.get(opId);
     if (done !== undefined) {
@@ -668,9 +758,9 @@ export function projectModule({
       return reply(ctx, connId, { type: 'project.op.ok', projectId, opId, rev: done, overwrote: [], duplicate: true }, reqId);
     }
 
-    if (!Array.isArray(msg.ops) || msg.ops.length === 0) return reject('bad-path', { detail: 'ops 必须是非空数组', index: -1 });
+    if (!Array.isArray(msg.ops) || msg.ops.length === 0) return reject('bad-path', { detail: 'ops must be a non-empty array', index: -1 });
     if (Buffer.byteLength(JSON.stringify(msg.ops), 'utf8') > maxOpsBytes) {
-      return reject('too-large', { detail: `ops 序列化后超过 ${maxOpsBytes} 字节` });
+      return reject('too-large', { detail: `ops exceeds ${maxOpsBytes} bytes when serialized` });
     }
 
     if (expectRev !== undefined && expectRev !== st.projectRev) {
@@ -685,7 +775,8 @@ export function projectModule({
       applied = applyOps(st.body, ops);
     } catch (err) {
       if (!(err instanceof OpError)) throw err;
-      // 格式不对（bad-op）与走不通（bad-path）对提交者一样：整批不落地。对外理由只有四种，都记 bad-path
+      // Malformed (bad-op) and unreachable (bad-path) are identical to submitter: entire batch is not
+      // committed. Only four external reasons exist, all recorded as bad-path
       return reject('bad-path', { detail: err.message, index: err.index });
     }
 
@@ -696,11 +787,12 @@ export function projectModule({
     const rev = st.projectRev + 1;
     const record = { projectId, rev, opId, ops, actor, at, entities };
     if (undoOf !== undefined) record.undoOf = undoOf;
-    // 先落日志再改内存：落盘失败时状态不变，核心回 internal
+    // Append to log before updating memory: state remains unchanged on disk failure, core returns internal
     store.append(opsStreamOf(projectId), record);
     for (const key of used ?? []) bodyUploads.delete(key);
 
-    // 覆盖：写到的实体上一次是别的写入身份、且在时间窗内（先算，再记新的写入者）
+    // Overwrite: written entity belonged to another write identity last time and within time window
+    // (compute first, then record new writer)
     const overwrote = [];
     const victims = [];
     for (const entity of entities) {
@@ -716,9 +808,11 @@ export function projectModule({
     trackIdentity(connId, identity);
 
     reply(ctx, connId, { type: 'project.op.ok', projectId, opId, rev, overwrote }, reqId);
-    // 被覆盖方先收 overwritten，再收 ops：它要在应用新版本之前先把自己那一版存成本地备份。
-    // `writer` 是被覆盖的那次写入的身份：一条连接上跑着多个会话（例：Agent 服务端的多个对话）时据此分给对应的会话；
-    // 所以提交者自己的连接若也以被覆盖的身份提交过，照样收
+    // Overwritten party receives overwritten first, then ops: it must save its revision as a local
+    // backup before applying the new revision.
+    // `writer` is identity of overwritten write: when multiple sessions run on one connection
+    // (e.g., multiple chats on Agent server), dispatches to corresponding session accordingly;
+    // so if submitter's own connection also submitted with overwritten identity, it receives it as well
     for (const v of victims) {
       for (const target of identityConns.get(v.identity) ?? []) {
         ctx.send(target, { type: 'project.overwritten', projectId, entity: v.entity, by: actor, writer: shownActor(v.writer), rev, at });
@@ -746,12 +840,15 @@ export function projectModule({
     if (principal.role === 'render' || principal.access === 'r') throw historyError('operation-forbidden', 403);
     if (!Array.isArray(msg.ops) || !msg.ops.length) throw historyError('bad-path', 400);
     if (Buffer.byteLength(JSON.stringify(msg.ops)) > maxOpsBytes) throw historyError('too-large', 413);
-    if (msg.expectRev != null && (!Number.isSafeInteger(msg.expectRev) || msg.expectRev < 0)) bad('expectRev 必须是非负整数');
+    if (msg.expectRev != null && (!Number.isSafeInteger(msg.expectRev) || msg.expectRev < 0)) bad('expectRev must be a non-negative integer');
     const undoOf = msg.undoOf == null ? null : checkToken(msg.undoOf, 'undoOf');
     const request = { opId, ops: msg.ops, expectRev: msg.expectRev ?? null, undoOf, session };
     /*
-     * 慢提交的诊断(线上 2026-10-21:Agent 的 switch_cut 约 60 秒才落地,日志里看不出卡在哪;`docs/archive/agent-reports/AGENT-cut-stream-fix.md`
-     * 缺陷 5):从收到到回包超过 `SLOW_OP_MS` 记一行 `project.op.slow`,分出排队(进有序提交之前:授权核对、项目锁)与落地(进锁之后)各多久。
+     * Diagnostics for slow commits (production 2026-10-21: Agent's switch_cut took ~60s to commit,
+     * logs could not show where it was stuck; `docs/archive/agent-reports/AGENT-cut-stream-fix.md`
+     * Defect 5): logs a line `project.op.slow` when receipt-to-response time exceeds `SLOW_OP_MS`,
+     * breaking down queuing (before ordered commit: auth check, project lock) and commit (after
+     * acquiring lock) durations.
      */
     const t0 = Date.now();
     let tPrepare = null, tCommitted = null;
@@ -805,7 +902,10 @@ export function projectModule({
     }).then((out) => { slow('ok'); return out; }, (error) => { slow(String(error?.code ?? 'error').slice(0, 40)); throw error; });
   }
 
-  /** 落一次真身快照，再把日志截断到快照之后（存储支持时）。出错只记日志：日志本身已经完整 */
+  /**
+   * Takes a body snapshot, then truncates logs up to snapshot (when storage supports it).
+   * On error, only logs: log itself is already complete.
+   */
   function persistState(ctx, projectId, st) {
     if (typeof store.writeBlob !== 'function') return;
     try {
@@ -825,11 +925,12 @@ export function projectModule({
       store.writeBlob(stateBlobName(projectId), JSON.stringify(snap));
       st.sinceSnapshot = 0;
       stats.stateSnapshots += 1;
-      // 时间窗外的写入者用不上了，顺手丢掉
+      // Writers outside the time window are no longer needed; discard them along the way
       for (const [entity, w] of st.writers) if (nowMs - w.at > overwriteWindowMs) st.writers.delete(entity);
       if (typeof store.rewrite === 'function') {
         const stream = opsStreamOf(projectId);
-        // 只丢这个项目、快照已含的记录；同一个文件里别的项目（只差大小写）的记录原样留下
+        // Only discard records of this project already included in snapshot; keep records of other
+        // projects in the same file (differing only in case) as is
         const keep = store.read(stream).filter((r) => r.projectId !== projectId || !(Number.isSafeInteger(r.rev) && r.rev <= snap.rev));
         store.rewrite(stream, keep);
       }
@@ -842,10 +943,10 @@ export function projectModule({
   function follow(ctx, connId, msg, reqId) {
     const projectId = checkProjectId(msg.projectId);
     const session = checkSession(msg.session);
-    if (typeof msg.entity !== 'string') bad('entity 必须是路径字符串');
+    if (typeof msg.entity !== 'string') bad('entity must be a path string');
     const entity = normalizeEntity(msg.entity, entityOpts);
-    if (entity === null) bad('entity 必须是空串或以 / 开头的 JSON 指针');
-    if (typeof msg.on !== 'boolean') bad('on 必须是布尔值');
+    if (entity === null) bad('entity must be an empty string or a JSON pointer starting with /');
+    if (typeof msg.on !== 'boolean') bad('on must be a boolean');
     const identity = identityOf(actorOf(principals.get(connId), session));
     let byIdentity = unfollowed.get(projectId);
     if (!byIdentity) unfollowed.set(projectId, (byIdentity = new Map()));
@@ -859,16 +960,19 @@ export function projectModule({
     reply(ctx, connId, { type: 'project.following', projectId, entity, on: msg.on }, reqId);
   }
 
-  /** 大的根替换：分片收一个整份项目，收齐后解析好，等 `project.op` 引用 */
+  /**
+   * Large root replacement: receives an entire project in chunks, parses once fully collected,
+   * awaits `project.op` reference.
+   */
   function upload(ctx, connId, msg, reqId) {
     const projectId = checkProjectId(msg.projectId);
     const uploadId = checkToken(msg.uploadId, 'uploadId');
-    if (principals.get(connId)?.access === 'r') return reply(ctx, connId, { type: 'error', reason: 'forbidden', detail: '只读的连接不能上传项目' }, reqId);
+    if (principals.get(connId)?.access === 'r') return reply(ctx, connId, { type: 'error', reason: 'forbidden', detail: tr("A read-only connection cannot upload the project") }, reqId);
     const { index, count, data } = msg;
-    if (!Number.isSafeInteger(count) || count < 1 || count > PROJECT_LIMITS.UPLOAD_MAX_PARTS) bad(`count 必须是 1～${PROJECT_LIMITS.UPLOAD_MAX_PARTS} 的整数`);
-    if (!Number.isSafeInteger(index) || index < 0 || index >= count) bad('index 必须是 0～count-1 的整数');
-    if (typeof data !== 'string') bad('data 必须是字符串');
-    if (Buffer.byteLength(data, 'utf8') > PROJECT_LIMITS.UPLOAD_PART_BYTES) bad(`每片不能超过 ${PROJECT_LIMITS.UPLOAD_PART_BYTES} 字节`);
+    if (!Number.isSafeInteger(count) || count < 1 || count > PROJECT_LIMITS.UPLOAD_MAX_PARTS) bad(`count must be an integer from 1 to ${PROJECT_LIMITS.UPLOAD_MAX_PARTS}`);
+    if (!Number.isSafeInteger(index) || index < 0 || index >= count) bad('index must be an integer from 0 to count-1');
+    if (typeof data !== 'string') bad('data must be a string');
+    if (Buffer.byteLength(data, 'utf8') > PROJECT_LIMITS.UPLOAD_PART_BYTES) bad(`Each part cannot exceed ${PROJECT_LIMITS.UPLOAD_PART_BYTES} bytes`);
     const key = `${projectId}|${uploadId}`;
     const nowMs = Date.now();
     let up = bodyUploads.get(key);
@@ -897,26 +1001,26 @@ export function projectModule({
       value = JSON.parse(text);
     } catch {
       bodyUploads.delete(key);
-      bad('收齐的内容不是合法的 JSON');
+      bad('The received content is not valid JSON');
     }
     if (!isObj(value)) {
       bodyUploads.delete(key);
-      bad('收齐的内容必须是 JSON 对象');
+      bad('The received content must be a JSON object');
     }
     up.parts.clear();
     up.value = value;
     reply(ctx, connId, { type: 'project.uploaded', projectId, uploadId, received: count, count, complete: true }, reqId);
   }
 
-  // ---------- 快照：上传 ----------
+  // ---------- Snapshot: Upload ----------
 
   function requireBlobStore() {
     if (typeof store.writeBlob !== 'function' || typeof store.readBlob !== 'function') {
-      throw new Refused('unsupported', '这个存储不支持项目快照');
+      throw new Refused('unsupported', tr("This storage does not support project snapshots"));
     }
   }
 
-  /** 丢掉闲置太久的上传；超过份数上限时丢最旧的 */
+  /** Discards uploads idle for too long; discards oldest when exceeding max upload count */
   function evictUploads(nowMs, keep) {
     for (const [key, up] of uploads) {
       if (key !== keep && nowMs - up.touched > SNAPSHOT_LIMITS.PENDING_IDLE_MS) {
@@ -941,27 +1045,28 @@ export function projectModule({
     const projectRev = checkRev(msg.projectRev);
     const digest = checkDigest(msg.digest);
     const { index, count, data } = msg;
-    if (!Number.isSafeInteger(count) || count < 1 || count > SNAPSHOT_LIMITS.MAX_PARTS) bad(`count 必须是 1～${SNAPSHOT_LIMITS.MAX_PARTS} 的整数`);
-    if (!Number.isSafeInteger(index) || index < 0 || index >= count) bad('index 必须是 0～count-1 的整数');
-    if (typeof data !== 'string') bad('data 必须是字符串');
-    if (Buffer.byteLength(data, 'utf8') > SNAPSHOT_LIMITS.PART_BYTES) bad(`每片不能超过 ${SNAPSHOT_LIMITS.PART_BYTES} 字节`);
+    if (!Number.isSafeInteger(count) || count < 1 || count > SNAPSHOT_LIMITS.MAX_PARTS) bad(`count must be an integer from 1 to ${SNAPSHOT_LIMITS.MAX_PARTS}`);
+    if (!Number.isSafeInteger(index) || index < 0 || index >= count) bad('index must be an integer from 0 to count-1');
+    if (typeof data !== 'string') bad('data must be a string');
+    if (Buffer.byteLength(data, 'utf8') > SNAPSHOT_LIMITS.PART_BYTES) bad(`Each part cannot exceed ${SNAPSHOT_LIMITS.PART_BYTES} bytes`);
     requireBlobStore();
 
     const key = `${projectId}@${projectRev}`;
     const announced = digestOfRev(projectId, projectRev);
     if (announced === undefined) {
       uploads.delete(key);
-      throw new Refused('unknown-rev', `项目 ${projectId} 没有登记过版本 ${projectRev}`);
+      throw new Refused('unknown-rev', tr("Project {0} has no registered version {1}", projectId, projectRev));
     }
     if (announced !== digest) {
       uploads.delete(key);
       stats.digestMismatches += 1;
-      throw new Refused('digest-mismatch', '摘要与这一版登记的不一致');
+      throw new Refused('digest-mismatch', 'The digest does not match the one registered for this version');
     }
 
     const nowMs = Date.now();
     let up = uploads.get(key);
-    // 分片数变了（发布方换了切法重传）：按新的切法从头收
+    // Chunk count changed (publisher retransmitted with a different chunking strategy):
+    // receive from scratch using new chunking
     if (up && up.count !== count) {
       uploads.delete(key);
       up = undefined;
@@ -983,7 +1088,7 @@ export function projectModule({
     for (let i = 0; i < up.count; i += 1) text += up.parts.get(i);
     if (sha256(text) !== digest) {
       stats.digestMismatches += 1;
-      throw new Refused('digest-mismatch', '收齐后的内容与摘要不符');
+      throw new Refused('digest-mismatch', 'The received content does not match the digest');
     }
     store.writeBlob(snapshotBlobName(projectId, projectRev), text);
     stats.snapshotsStored += 1;
@@ -991,7 +1096,7 @@ export function projectModule({
     reply(ctx, connId, { type: 'project.snapshot.stored', projectId, projectRev, received: count, count, complete: true }, reqId);
   }
 
-  // ---------- 分片发送（快照取回、project.state 共用） ----------
+  // ---------- Chunked sending (shared between snapshot retrieval and project.state) ----------
 
   const wait = (ms) => new Promise((resolve) => {
     const t = setTimeout(resolve, ms);
@@ -999,14 +1104,21 @@ export function projectModule({
   });
   const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
   const maxPendingOf = (ctx) => (Number.isFinite(ctx.maxPendingBytes) && ctx.maxPendingBytes > 0 ? ctx.maxPendingBytes : DEFAULT_MAX_PENDING_BYTES);
-  /** 每片不超过 256 KiB，也不超过积压上限的四分之一：节流线是上限的一半，发出一片后仍留余量 */
+  /**
+   * Each chunk does not exceed 256 KiB or one-fourth of backlog limit: throttling threshold is half
+   * the limit, leaving headroom after sending a chunk.
+   */
   const partBytesOf = (ctx) => Math.max(1024, Math.min(SNAPSHOT_LIMITS.OUT_PART_BYTES, Math.floor(maxPendingOf(ctx) / 4)));
 
   /**
-   * 按积压节流，把一串消息发给一条连接（J.11）：每发一条之前，这条连接的积压（核心出站队列 + 底层缓冲，
-   * `ctx.pendingBytes`）必须低于上限（`ctx.maxPendingBytes`）的一半，否则隔 `pollMs` 再查。
-   * 每片 ≤ min(256 KiB, 上限的四分之一)，所以发出后积压不超过上限的四分之三，到不了 1013。连接断开或被核心关掉就停。
-   * 核心没有这两个接口时（测试替身）按上限 1 MiB 算、积压当 0，每条之间只让一次事件循环。
+   * Throttles by backlog, sending a sequence of messages to a connection (J.11): before sending
+   * each message, the connection's backlog (core outbound queue + underlying buffer,
+   * `ctx.pendingBytes`) must be below half the limit (`ctx.maxPendingBytes`), otherwise re-checks
+   * after `pollMs`.
+   * Each chunk ≤ min(256 KiB, one-fourth of limit), so backlog after sending does not exceed
+   * three-fourths of limit, never reaching 1013. Stops if connection disconnects or is closed by core.
+   * When core lacks these two interfaces (test double), assumes 1 MiB limit and 0 backlog,
+   * yielding to event loop once between messages.
    */
   async function stream(ctx, connId, sender, messages) {
     const limit = maxPendingOf(ctx);
@@ -1020,7 +1132,10 @@ export function projectModule({
     }
   }
 
-  /** 排进这条连接的发送队列（同一条连接上依次发，连接断开就停） */
+  /**
+   * Enqueues into this connection's send queue (sent sequentially on the same connection,
+   * stops on disconnect).
+   */
   function enqueue(ctx, connId, messages, type) {
     let sender = senders.get(connId);
     if (!sender) senders.set(connId, (sender = { chain: Promise.resolve(), alive: true }));
@@ -1037,9 +1152,12 @@ export function projectModule({
 
     const withReq = (m) => (reqId === undefined ? m : { ...m, reqId });
     /*
-     * 有真身的项目只给得出当前这一版(旧版本没有人上传过快照)。要的不是当前版本时,回包多带一项 `currentRev`:
-     * 渲染节点据此改按当前版本核对手里的任务(内容没变的照做,内容已经换掉的作废),不把「项目往前走了」当成失败
-     * (`docs/plan/render-queue-contract.md` J.15)。没有真身的项目不带这一项,行为同前。
+     * Projects with a body can only provide the current revision (no one uploaded snapshots for older
+     * revisions). When requested revision is not current, response includes an extra `currentRev`:
+     * render nodes use this to verify tasks at hand against current revision instead (proceed if
+     * content unchanged, invalidate if content replaced), not treating "project moved forward" as
+     * a failure (`docs/plan/render-queue-contract.md` J.15). Projects without a body omit this field,
+     * behaving as before.
      */
     const missing = () => {
       const st = stateOf(projectId);
@@ -1051,7 +1169,7 @@ export function projectModule({
     if (digest === undefined) return missing();
     let text = store.readBlob(snapshotBlobName(projectId, projectRev));
     if (text === null) {
-      // 存储里没有这一版的文件，但它就是当前的真身：直接由真身发回
+      // Storage has no file for this revision, but it is the current body: send back directly from the body
       const st = stateOf(projectId);
       if (!st.hasBody || projectRev !== st.projectRev) return missing();
       text = JSON.stringify(st.body);
@@ -1091,7 +1209,7 @@ export function projectModule({
     },
 
     disconnect(ctx, connId) {
-      // 频道订阅由核心在断开时清掉
+      // Channel subscriptions are cleaned up by core upon disconnect
       principals.delete(connId);
       const sender = senders.get(connId);
       if (sender) {
@@ -1111,7 +1229,7 @@ export function projectModule({
       lastCtx = ctx;
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '项目模块不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The project module does not support this message' }, reqId);
       const principal = principals.get(connId);
       if (principal?.realm === 'account' || principal?.identityVersion === 2) {
         return Promise.resolve().then(async () => {
@@ -1132,8 +1250,10 @@ export function projectModule({
           const reason = error instanceof BadMessage ? 'bad-message' : error.code ?? 'operation-unavailable';
           if (msg.type === 'project.op') {
             stats.rejected++;
-            // 过期（stale）是在授权通过、进了有序提交之后才判的：和非账号路径一样带上当前版本和期间的改动，模型据此重读。
-            // 其它拒绝理由（没授权、顺序服务不可用……）不带版本号，不向没通过授权的连接透露项目的进度。
+            // Stale is only evaluated after authorization passes and entering ordered commit: includes current
+            // revision and interim changes like non-account path, and model re-reads accordingly.
+            // Other rejection reasons (unauthorized, ordering service unavailable...) omit revision number,
+            // avoiding revealing project progress to unauthorized connections.
             const stale = reason === 'stale' && Number.isSafeInteger(msg.expectRev) && msg.expectRev >= 0 && PROJECT_ID_RE.test(String(msg.projectId))
               ? (() => { const st = stateOf(msg.projectId); return { currentRev: st.projectRev, ...staleDetail(st, msg.expectRev) }; })() : {};
             return reply(ctx, connId, { type: 'project.op.rejected', projectId: msg.projectId, opId: msg.opId, reason, ...stale }, reqId);
@@ -1160,8 +1280,9 @@ export function projectModule({
     },
 
     /**
-     * 借项目频道广播一条消息（C6.5 第 7 节：工具调用事件走项目频道）。给同一空间里的别的模块用，
-     * 频道名与订阅都归本模块管。还没有任何连接进来过时回 0。
+     * Broadcasts a message via the project channel (C6.5 Section 7: tool call events go through
+     * the project channel). Used by other modules in the same space; channel name and subscriptions
+     * are managed by this module. Returns 0 when no connection has connected yet.
      * @param {string} projectId
      * @param {object} message
      * @param {{ except?: string }} [opts]
@@ -1171,7 +1292,7 @@ export function projectModule({
       return lastCtx.publish(channelOf(projectId), message, opts);
     },
 
-    /** 当前版本号（别的模块与诊断用）；没见过的项目回 0 */
+    /** Current revision number (for other modules and diagnostics); returns 0 for unseen projects */
     revOf(projectId) {
       return PROJECT_ID_RE.test(projectId) ? stateOf(projectId).projectRev : 0;
     },
@@ -1185,6 +1306,6 @@ export function projectModule({
   };
 }
 
-/** 别名：与其它工厂的命名习惯对齐 */
+/** Alias: aligned with naming conventions of other factories */
 export const createProjectModule = projectModule;
 export default projectModule;

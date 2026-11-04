@@ -1,6 +1,8 @@
 /**
- * 云端工具条(CloudModelBar)渲染出来的样子:模型下拉在托管方配了多个模型时才有;思考强度下拉在节点报了档位时才有,
- * 存着的档位不在清单里就显示「默认」。跑:node --test src/editor/right/CloudModelBar.test.mjs
+ * Rendered appearance of the cloud toolbar (CloudModelBar): model dropdown only appears when the
+ * host configures multiple models; thinking effort dropdown only appears when the node reports
+ * tiers; if the stored tier is not in the manifest, display "Default".
+ * Run: node --test src/editor/right/CloudModelBar.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,22 +37,22 @@ const info = extra => ({ enabled: true, models: [], defaultModel: null, running:
 const select = (html, pc) => html.match(new RegExp(`<select[^>]*data-pc="${pc}"[\\s\\S]*?</select>`))?.[0] ?? null;
 const options = html => [...html.matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)].map(m => [m[1], m[2]]);
 
-test('CMB1 节点报了档位:出思考强度下拉,「默认」在最前,标签与本机相同', async () => {
+test('CMB1 The node reported tiers: a thinking effort dropdown appears, "Default" comes first, and the labels are the same as local', async () => {
   const html = await render({ info: info({ efforts: ['low', 'medium', 'high'] }), effort: 'high', onEffort() {} });
   const effort = select(html, 'ai-cloud-effort');
-  assert.ok(effort, '有思考强度下拉');
+  assert.ok(effort, 'There is a thinking effort dropdown');
   assert.deepEqual(options(effort), [['', 'Thinking default'], ['low', 'Thinking Low'], ['medium', 'Thinking Medium'], ['high', 'Thinking High']]);
-  assert.match(effort, /<option value="high" selected="">/, '选中存着的档位');
+  assert.match(effort, /<option value="high" selected="">/, 'The stored tier is selected');
 });
 
-test('CMB2 节点没报档位、或不给回调:不出思考强度下拉;存着的档位不在清单里显示「默认」', async () => {
+test('CMB2 The node reports no tiers, or no callback is given: no thinking effort dropdown; a stored tier that is not in the list shows "Default"', async () => {
   assert.equal(select(await render({ info: info(), effort: 'high', onEffort() {} }), 'ai-cloud-effort'), null);
   assert.equal(select(await render({ info: info({ efforts: ['low'] }), effort: 'low' }), 'ai-cloud-effort'), null);
   const stale = select(await render({ info: info({ efforts: ['low', 'medium', 'high'] }), effort: 'max', onEffort() {} }), 'ai-cloud-effort');
   assert.match(stale, /<option value="" selected="">/);
 });
 
-test('CMB3 模型下拉:配了两个及以上才出现,缺省一项写明是哪个', async () => {
+test('CMB3 Model dropdown: appears only when two or more are configured, and the default entry says which one it is', async () => {
   assert.equal(select(await render({ info: info({ models: [{ id: 'a' }], defaultModel: 'a' }) }), 'ai-cloud-model'), null);
   const model = select(await render({ info: info({ models: [{ id: 'claude-sonnet-5-5' }, { id: 'claude-opus-5-5' }], defaultModel: 'claude-sonnet-5-5' }),
     model: 'claude-opus-5-5' }), 'ai-cloud-model');

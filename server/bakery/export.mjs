@@ -1,7 +1,9 @@
 /**
- * 整片导出编排:开预渲染间 / 分片 / 统一管线 → 卡片层 → 素材合成 → 音轨。
+ * Full-video export arrangement: open prerender room / sharding / unified pipeline → card layer →
+ * asset compositing → audio tracks.
  *
- * 从 scripts/export-frames.mjs 拆出来(纯重构,逐字搬运)。命令行入口在 scripts/export-frames.mjs。
+ * Split out from scripts/export-frames.mjs (pure refactoring, ported verbatim). The CLI entry
+ * point is in scripts/export-frames.mjs.
  */
 
 import path from 'path';
@@ -16,8 +18,9 @@ import { bakeFrames } from './bake.mjs';
 import { bakeSharded, resolveWorkers } from './shards.mjs';
 import { fillGlassGaps, loadProject, mediaSourceOf, planMedia } from './media.mjs';
 import { mixAudioInChrome } from './audio-mix.mjs';
-// 统一管线。以前是 exportFrames 里的动态 import,只为绕开 export-frames ↔ export-unified
-// 的运行时环;环已经解开(export-unified 只依赖 chrome / bake / shards / ffmpeg),这里静态引。
+// Unified pipeline. Previously a dynamic import in exportFrames solely to bypass the runtime
+// cycle of export-frames ↔ export-unified; the cycle is now resolved (export-unified only depends
+// on chrome / bake / shards / ffmpeg), statically imported here.
 import { exportUnified } from './export-unified.mjs';
 import { reachableCutContents } from '../../src/kernel/cutIdentity.mjs';
 
@@ -46,25 +49,34 @@ export function findMissingMaterialFontFile({ platform = process.platform, windi
   const fontFile = candidates.find((candidate) => exists(candidate));
   if (!fontFile) {
     const platformName = platform === 'win32' ? 'Windows Fonts' : platform === 'linux' ? 'Noto Sans CJK' : 'supported platform font locations';
-    throw new Error(`确认缺失素材需要中文代理字体，但未找到可用字体（${platformName}）。`);
+    throw new Error(`Confirmed missing media needs a Chinese fallback font, but no usable font was found (${platformName}).`);
   }
   return fontFile;
 }
 
 /**
- * 一次性导出:自己开 bakery、渲帧、合成视频、关掉。CLI 和现有的 /api/export 走这条。
- * opts.workers:数字 / 'auto'（默认）。离散取样(targetFrames)和外部传进来的 bakery 一律单进程。
- * opts.media:素材怎么进成片。
- *   'chrome'(默认)—— 预览、see_frames、导出共用 FramePipeline/Chrome 页面，视频素材在截图帧才加载。
- *   'ffmpeg'       —— 兼容旁路:页面只渲卡片的透明层(?cardsOnly=1),视频 / 图片由 ffmpeg 合进 preview.mp4
- *                      (server/export-compose.mjs)。frames/ 和 overlay.mov 因此只有卡片。
- *   外部传进来的 bakery 已经导航到某个地址,改不了页面,按 'chrome' 处理。
- * opts.audio:声音怎么混。默认在 Chrome 里(OfflineAudioContext,带音频效果,见 mixAudioInChrome);
- *   'ffmpeg' 走 scripts/mux-audio.mjs 的滤镜图直接混(没有效果),对账和兜底用。
+ * One-off export: opens its own bakery, renders frames, composites video, and closes it. CLI and
+ * existing /api/export take this path.
+ * opts.workers: number / 'auto' (default). Discrete sampling (targetFrames) and externally passed
+ * bakery always run single-process.
+ * opts.media: how assets enter the final video.
+ *   'chrome' (default): preview, see_frames, and export share the FramePipeline/Chrome page, and
+ *     video assets are loaded only on screenshot frames.
+ *   'ffmpeg': compatibility bypass: the page only renders the card transparent layer
+ *     (?cardsOnly=1), and video / images are composited into preview.mp4 by ffmpeg
+ *     (server/export-compose.mjs). frames/ and overlay.mov therefore only contain cards.
+ *   Externally passed bakery is already navigated to a URL and cannot change the page; treated as
+ *     'chrome'.
+ * opts.audio: how audio is mixed. Default is in Chrome (OfflineAudioContext, with audio effects,
+ *   see mixAudioInChrome);
+ *   'ffmpeg' mixes directly via the filtergraph in scripts/mux-audio.mjs (without effects), used
+ *     for reconciliation and fallback.
  */
 /**
- * 剪辑段里有没有视频 / 图片(任意深度)。兼容旁路的 ffmpeg 合成只摆得了激活剪辑里的素材段,
- * 剪辑段里的素材要经段的框、裁切、组不透明度嵌套摆放,这一路摆不出来。
+ * Whether there are videos / images inside cut segments (at any depth). The compatibility bypass
+ * ffmpeg compositing can only lay out media clips in the active cut; assets inside cut segments
+ * must be laid out nested through the segment's box, cropping, and group opacity, which this path
+ * cannot lay out.
  */
 export function cutSegmentsHaveVisualMedia(project) {
   if (!project) return false;
@@ -77,10 +89,11 @@ export async function exportFrames(opts) {
   const noVideo = opts.noVideo || false;
   const workers = (opts.bakery || opts.targetFrames) ? 1 : await resolveWorkers(opts.workers);
   let mediaMode = opts.media === 'ffmpeg' && !opts.bakery ? 'ffmpeg' : 'chrome';
-  // 剪辑段里有视频 / 图片:兼容旁路画不出它们,改走缺省的完整整帧路线(FrameScene 连素材一起渲),成片里照样有
-  // (`mechanism/rendering.md`「剪辑段」的兼容旁路一条)
+  // Cut segments contain videos / images: the compatibility bypass cannot render them, so switch to
+  // the default full-frame route (FrameScene renders along with assets), still present in the final
+  // video (`mechanism/rendering.md` compatibility bypass item under "Cut segment")
   if (mediaMode === 'ffmpeg' && cutSegmentsHaveVisualMedia(await loadProject(opts.url || DEFAULT_URL, outDir).catch(() => null))) {
-    console.log('[export] 剪辑段里有视频或图片:--media=ffmpeg 的兼容旁路摆不出嵌套的素材,这次改走缺省的完整整帧路线');
+    console.log('[export] The cut segment contains videos or images: the --media=ffmpeg compatibility bypass cannot lay out nested media, so this run uses the default full whole-frame path');
     mediaMode = 'chrome';
   }
   const ffmpegCmd = await findFfmpeg();
@@ -89,7 +102,8 @@ export async function exportFrames(opts) {
   if (mediaMode === 'ffmpeg') {
     const url = opts.url || DEFAULT_URL;
     bakeOpts = { ...opts, url: url + (url.includes('?') ? '&' : '?') + 'cardsOnly=1' };
-    // 不出视频(--no-video)、离散取样都不合成,也就用不上素材规划和遮罩
+    // No video output (--no-video) and discrete sampling do not composite, so asset planning and masks
+    // are not needed
     if (!noVideo && !opts.targetFrames) {
       plan = await planMedia(opts, outDir, ffmpegCmd);
       if (plan?.glassFrames.size) bakeOpts.glassFrames = plan.glassFrames;
@@ -132,10 +146,11 @@ export async function exportFrames(opts) {
       proc.on('error', reject);
     });
     try {
-      // 卡片透明层。素材走 ffmpeg 时这里只有卡片 —— 名字说的就是它:叠到别的画面上用的那一层
+      // Card transparent layer. When assets go through ffmpeg, there are only cards here: that is what
+      // the name refers to: the layer used to overlay onto other visuals
       const bakedCardsVideo = baked.cardsVideo || null;
       if (streamCards || bakedCardsVideo) {
-        console.log(`${bakedCardsVideo ? '分片 overlay.mov 已合并' : 'overlay.mov 已由 Chrome 帧流式写入'}本地 ffmpeg。`);
+        console.log(`${bakedCardsVideo ? 'Sharded overlay.mov merged' : 'overlay.mov streamed from Chrome frames'} via local ffmpeg.`);
       }
       else {
         console.log('Creating overlay.mov...');
@@ -144,30 +159,37 @@ export async function exportFrames(opts) {
           '-pix_fmt', 'yuva444p10le', path.join(outDir, 'overlay.mov')]);
       }
       /*
-       * 没有素材的项目也走同一条合成(0 个素材层 = 灰底 + 卡片)。以前这里单留一条老命令,它踩的是同一个坑:
-       * 整帧不透明的卡片 PNG 不带 alpha,ffmpeg 中途重建滤镜图,随机丢帧、还可能卡死(实测旧 preview.mp4 1792/1800)。
-       * buildComposeArgs 每个输入都带 -reinit_filter 0,还有看门狗;走它两条路就一起好了。
+       * Projects without assets also follow the same compositing path (0 asset layers = gray background +
+       * cards). Previously a legacy command was kept here alone, which fell into the exact same trap:
+       * card PNGs opaque for the entire frame lack alpha, causing ffmpeg to rebuild the filtergraph
+       * midstream, randomly dropping frames and potentially hanging (measured on legacy preview.mp4 at
+       * 1792/1800). Every input in buildComposeArgs carries -reinit_filter 0, plus a watchdog; routing
+       * through it fixes both paths together.
        */
       const layers = (plan?.layers || []).filter((l) => clipFrameRange(l.clip, fps, startFrame, endFrame));
       await composePreview({ ffmpegCmd, baked, layers, outDir,
         cardsVideo: bakedCardsVideo || (streamCards ? path.join(outDir, 'overlay.mov') : null) });
-      // 音轨:逐帧截图只有画面,声音在这里拼回去(配乐 + 视频自带的声音 + 音频效果)
+      // Audio track: frame-by-frame screenshots only have visuals; audio is assembled back here
+      // (soundtrack + audio that came with the video + audio effects)
       try {
-        // 页面拿的是哪份项目就混哪份(和 planMedia 同一个 loadProject):以前只认 <out>/project.json,
-        // 命令行 --out 指到别处时就静悄悄地没声音
+        // Mix whichever project the page loaded (the same loadProject as planMedia): previously it only
+        // recognized <out>/project.json, so when CLI --out pointed elsewhere it was silently without sound
         const proj = await loadProject(opts.url || DEFAULT_URL, outDir);
         if (proj) {
           const ffprobeCmd = ffprobeOf(ffmpegCmd);
-          // 和画面层同一套找素材的规则:/@media/<文件> 也要经素材服务的 HTTP 找得到,不然配乐 / 配音全被跳过
+          // Same asset lookup rules as the visual layer: /@media/<file> must also be reachable via the asset
+          // service's HTTP, otherwise soundtrack / voiceover will all be skipped
           const sourceOf = (m) => mediaSourceOf(m, { outDir, pageUrl: opts.url || DEFAULT_URL });
           const plan = playableAudioPlan(buildAudioPlan(proj, outDir, undefined, sourceOf), ffprobeCmd);
           if (plan.length > 0) {
             const preview = path.join(outDir, 'preview.mp4');
             const withAudio = path.join(outDir, 'preview-audio.mp4');
             /*
-             * 默认在 Chrome 里混(OfflineAudioContext,和编辑台预览同一套效果链,见 src/audio/renderMix.ts):
-             * 音频效果只有这条路才有。失败(混音页起不来、页面地址没有 /@export/<id>)就退回 ffmpeg 直接混 ——
-             * 那样效果没了,但配乐 / 配音 / 原声都在;--audio ffmpeg 强制走老路(对账用)。
+             * Mixed in Chrome by default (OfflineAudioContext, same effect chain as editor preview, see
+             * src/audio/renderMix.ts): audio effects are only available via this path. If it fails (mix page
+             * fails to launch, page URL lacks /@export/<id>), fall back to mixing directly with ffmpeg:
+             * effects will be gone, but soundtrack / voiceover / original audio are all preserved;
+             * --audio ffmpeg forces the legacy path (for reconciliation).
              */
             let mixed = false;
             if (opts.audio !== 'ffmpeg') {
@@ -175,12 +197,13 @@ export async function exportFrames(opts) {
                 const r = await mixAudioInChrome({ ffmpegCmd, outDir, plan, project: proj, pageUrl: opts.url || DEFAULT_URL, durationSec });
                 await runFfmpeg(['-y', '-i', preview, '-i', r.mixWav, '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', String(durationSec), withAudio]);
                 mixed = true;
-                // 裁好的 float32 wav 和整条 mix.wav 一小时就是一两 GB,合进成片之后就没用了
+                // Trimmed float32 wav and the entire mix.wav amount to 1-2 GB per hour, useless once composited
+                // into the final video
                 await fs.rm(path.join(outDir, 'audio'), { recursive: true, force: true }).catch(() => {});
               } catch (e) {
                 if (plan.some(c => c.cardAudio || c.soundEffect)) throw e;
                 const fx = plan.filter((c) => c.fx).length;
-                console.error('Chrome 混音失败,退回 ffmpeg 直接混' + (fx ? '(' + fx + ' 段挂着的音频效果会丢)' : '') + ':', e.message);
+                console.error('Chrome mixing failed, falling back to direct ffmpeg mixing' + (fx ? '(' + fx + ' segments with audio effects attached will be lost)' : '') + ':', e.message);
               }
             }
             if (!mixed) {
@@ -200,15 +223,18 @@ export async function exportFrames(opts) {
       console.log('Video synthesis complete.');
     } catch (e) {
       console.error('FFmpeg failed:', e.message);
-      // 以前这里吞掉错误照常退出 0,界面报「导出完成」、取件时才发现没有 preview.mp4
+      // Previously errors were swallowed here with a normal exit 0; the UI reported "Export complete",
+      // and only upon retrieving the output did users find no preview.mp4
       process.exitCode = 1;
     }
   }
 }
 
 /**
- * 素材合成那一步:灰底 + 素材层(+ 毛玻璃)+ 卡片层 → preview.mp4,一趟 ffmpeg。
- * 进度用 -progress 读出来,打成 `Composited frame n/N`,vite-plugin-export 转给界面。
+ * The asset compositing step: gray background + asset layer (+ frosted glass) + card layer →
+ * preview.mp4, in one ffmpeg pass.
+ * Progress is read using -progress and logged as `Composited frame n/N`, forwarded to the UI by
+ * vite-plugin-export.
  */
 async function composePreview({ ffmpegCmd, baked, layers, outDir, cardsVideo = null }) {
   const { framesDir, ext, fps, width, height, startFrame, endFrame } = baked;
@@ -216,7 +242,7 @@ async function composePreview({ ffmpegCmd, baked, layers, outDir, cardsVideo = n
   const glassList = baked.glass?.list || [];
   const blurs = baked.glass?.blurs || [];
   const blur = blurs.length ? Math.max(...blurs) : 0;
-  if (blurs.length > 1) console.warn(`毛玻璃的模糊量不止一种(${blurs.join(' / ')} px),统一按最大的 ${blur}px 合成`);
+  if (blurs.length > 1) console.warn(`Frosted glass has more than one blur amount (${blurs.join(' / ')} px), compositing with the largest, ${blur}px`);
   let mask = null;
   if (glassList.length && blur > 0) {
     await fillGlassGaps(baked.glass.dir, startFrame, endFrame, width, height);
@@ -231,13 +257,15 @@ async function composePreview({ ffmpegCmd, baked, layers, outDir, cardsVideo = n
     cardsVideo,
     out: path.join(outDir, 'preview.mp4'),
     fontFile,
-    // 随时间变化的滤镜每段一份 sendcmd 脚本,写进导出目录;给绝对路径,不依赖 ffmpeg 的工作目录
+    // Time-varying filters have one sendcmd script per clip, written into the export directory; use
+    // absolute paths so as not to depend on ffmpeg's working directory
     sidecarDir: path.resolve(outDir),
   });
   await Promise.all(sidecars.map((s) => fs.writeFile(s.file, s.text, 'utf8')));
-  for (const n of notes) console.warn('合成:', n);
+  for (const n of notes) console.warn('Compositing:', n);
   let finalArgs = args;
-  // 片段多、带强调时 filter graph 会很长;Windows 命令行上限 32K 字符,长了改用文件传
+  // When there are many clips or with emphasis, the filter graph can be very long; the Windows
+  // command line limit is 32K characters, passed via file if too long
   if (graph.length > 8000) {
     const f = path.join(outDir, 'compose-filter.txt');
     await fs.writeFile(f, graph, 'utf8');

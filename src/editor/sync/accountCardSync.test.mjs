@@ -1,13 +1,18 @@
 /**
- * 账号云端项目里卡片源码同步的票据(`accountCardSync.ts`)与 Agent 服务端的绑定(`agentSideBinding.ts`)。报告 `docs/reports/AGENT-v18-cardsync.md`。
- * 跑:npm test -- src/editor/sync/accountCardSync.test.mjs
+ * Tickets for card source sync in account cloud projects (`accountCardSync.ts`) and Agent server
+ * bindings (`agentSideBinding.ts`). Report `docs/reports/AGENT-v18-cardsync.md`.
+ * Run: npm test -- src/editor/sync/accountCardSync.test.mjs
  *
- *   ACS-01 还在项目里:凭登录取一份会话,交出其中的连接票据与它的到期时刻;每次要都现取
- *   ACS-02 已经不在项目里(换了项目、换了账号):不取会话,解绑
- *   ACS-03 会话接口回 401 / 403 / 404:解绑并抛;断网、503 只抛不解绑
- *   ACS-04 取票据的途中离开:票据不交出去,解绑
- *   ASB-01 复现原问题:服务端还绑着上一个本机项目、页面整页重载后什么都不记得,直接进账号项目 —— 必须发解绑
- *   ASB-02 绑定还在路上时解绑:解绑排在后面,不会被盖回去;之后回同一个本机项目会重新绑
+ *   ACS-01 Still in project: fetch a session based on login, return connection ticket and its
+ *     expiration time; fetch fresh whenever needed
+ *   ACS-02 No longer in project (switched project, switched account): do not fetch session, unbind
+ *   ACS-03 Session API returns 401 / 403 / 404: unbind and throw; network disconnect or 503 only
+ *     throws without unbinding
+ *   ACS-04 Leave while fetching ticket: ticket is not returned, unbind
+ *   ASB-01 Reproduce original issue: server still bound to previous local project, page remembers
+ *     nothing after full reload and enters account project directly: must send unbind
+ *   ASB-02 Unbind while bind is in flight: unbind queues behind, will not be overwritten; rebinds
+ *     when returning to the same local project afterwards
  */
 import "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -27,20 +32,20 @@ function harness({ current = true, session } = {}) {
   return { ticket, calls, state };
 }
 
-test("ACS-01 还在项目里:每次现取一份会话,交出连接票据", async () => {
+test("ACS-01 still in the project: fetch a fresh session each time and hand out the connection ticket", async () => {
   const h = harness();
   assert.deepEqual(await h.ticket("sp_x"), { ticket: `${TICKET.slice(0, 42)}1`, expiresAt: 1001 });
   assert.deepEqual(await h.ticket("sp_x"), { ticket: `${TICKET.slice(0, 42)}2`, expiresAt: 1002 });
   assert.deepEqual(h.calls, { session: 2, stop: 0 });
 });
 
-test("ACS-02 已经不在项目里:不取会话,解绑", async () => {
+test("ACS-02 no longer in the project: do not fetch a session, unbind", async () => {
   const h = harness({ current: false });
   await assert.rejects(h.ticket("sp_x"), /no longer in this cloud project/);
   assert.deepEqual(h.calls, { session: 0, stop: 1 });
 });
 
-test("ACS-03 401 / 403 / 404 解绑并抛;断网与 503 只抛", async () => {
+test("ACS-03 401 / 403 / 404 unbind and throw; network loss and 503 only throw", async () => {
   for (const status of [401, 403, 404]) {
     const h = harness({ session: async () => { throw Object.assign(new Error("x"), { status, code: "c" }); } });
     await assert.rejects(h.ticket("sp_x"), (e) => e.status === status);
@@ -54,13 +59,16 @@ test("ACS-03 401 / 403 / 404 解绑并抛;断网与 503 只抛", async () => {
   assert.equal(A.isTerminalAccountFailure(new Error("plain")), false);
 });
 
-test("ACS-04 取票据的途中离开:票据不交出去", async () => {
+test("ACS-04 leaving while the ticket is being fetched: the ticket is not handed out", async () => {
   const h = harness({ session: async (_p, state) => { state.current = false; return { connectionTicket: TICKET, expiresAt: 1 }; } });
   await assert.rejects(h.ticket("sp_x"), /no longer in this cloud project/);
   assert.deepEqual(h.calls, { session: 1, stop: 1 });
 });
 
-/** 编辑器进程里 Agent 服务端的绑定状态(`server/agent/service/instance.mjs` 的 agentBinding)的替身:只认 bind / unbind 两个接口 */
+/**
+ * Test double for Agent server binding state (agentBinding in `server/agent/service/instance.mjs`)
+ * in editor process: only recognizes the two interfaces bind / unbind
+ */
 function fakeAgentServer(initial = null) {
   const server = { bound: initial, log: [], gate: null };
   globalThis.fetch = async (path, init) => {
@@ -74,22 +82,24 @@ function fakeAgentServer(initial = null) {
   return server;
 }
 
-test("ASB-01 服务端还绑着上一个本机项目、页面重载后直接进账号项目:必须解绑", async () => {
+test("ASB-01 the server is still bound to the previous local project and the page reloads straight into an account project: it must unbind", async () => {
   const realFetch = globalThis.fetch;
   try {
-    // 重载前的页面绑过本机项目 local-1;重载后的页面是一份全新的模块状态(这里用新载入的模块实例表示)
+    // The page before reload was bound to local project local-1; the page after reload is a fresh
+    // module state (represented here by a newly loaded module instance)
     const server = fakeAgentServer("local-1");
     const S = await import(`./agentSideBinding.ts?fresh=${Date.now()}`);
-    // 改之前:进账号项目时既不绑也不解,服务端一直是 local-1,side: "agent" 的工具读写的就是它
+    // Before the change: entering an account project neither bound nor unbound, the server remained
+    // local-1, and tools with side: "agent" read and wrote to it
     assert.equal(server.bound, "local-1");
     S.releaseAgentSide();
     await S.agentSideSettled();
-    assert.equal(server.bound, null, "进账号项目后服务端不再绑着别的项目");
+    assert.equal(server.bound, null, "after entering an account project the server is no longer bound to another project");
     assert.deepEqual(server.log, ["/api/agent/unbind"]);
   } finally { globalThis.fetch = realFetch; }
 });
 
-test("ASB-02 绑定还在路上时解绑不会被盖回去;之后回同一个本机项目重新绑", async () => {
+test("ASB-02 an unbind issued while a bind is still in flight is not overwritten; afterwards, returning to the same local project binds again", async () => {
   const realFetch = globalThis.fetch;
   try {
     const server = fakeAgentServer(null);
@@ -104,9 +114,9 @@ test("ASB-02 绑定还在路上时解绑不会被盖回去;之后回同一个本
     assert.equal(server.bound, null);
     S.bindAgentSide("local", "local-1", "ws://127.0.0.1/docservice");
     await S.agentSideSettled();
-    assert.equal(server.bound, "local-1", "同一个绑定在解绑之后会重发");
+    assert.equal(server.bound, "local-1", "the same bind is resent after an unbind");
     S.bindAgentSide("local", "local-1", "ws://127.0.0.1/docservice");
     await S.agentSideSettled();
-    assert.equal(server.log.length, 3, "同样的绑定不重发");
+    assert.equal(server.log.length, 3, "an identical bind is not resent");
   } finally { globalThis.fetch = realFetch; }
 });

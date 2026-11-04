@@ -10,8 +10,8 @@ import "./agent.css";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * 取一条消息的有序片段。新消息自带 parts;旧会话历史里没有,
- * 就按「文字 → 状态 → 工具」的老顺序兜底,保证读得出来。
+ * Gets the ordered parts of a message. New messages carry parts; old session history has none,
+ * so fall back to the old "text → status → tool" order, to make sure it stays readable.
  */
 export function partsOf(m: ChatMessage): MessagePart[] {
   if (m.parts && m.parts.length > 0) return m.parts;
@@ -23,15 +23,19 @@ export function partsOf(m: ChatMessage): MessagePart[] {
 }
 
 /**
- * 思考里那些步骤名,做成一条走马灯。
+ * The step names inside the thinking, rendered as a ticker.
  *
- * 为什么不是纯文本:模型经中转站发回来的 `<think>` 里装的常常不是思维链,而是一句话的
- * 步骤名(「**Clarifying article link and scope**」)。原样铺在气泡里会把正文顶开,
- * 用户读一半被一段英文打断;藏进「显示思考」开关里又等于没有,他不知道它在忙什么。
- * 折中:只把步骤名抽出来排成一行行,最后一条在消息还没结束时带呼吸动画 ——
- * 一眼能看出「还在走、走到哪一步」,又不抢正文的位置。
+ * Why not plain text: the `<think>` that comes back through the relay service often does not hold a
+ * chain of thought, but a one-sentence step name ("**Clarifying article link and scope**").
+ * Laying it out as-is in the bubble pushes the body text apart, and the user is interrupted
+ * mid-read by a block of English; hiding it behind the "Show thinking" switch is as good as not
+ * having it, since he cannot tell what it is busy with.
+ * Compromise: extract only the step names and lay them out line by line, with the last one
+ * breathing-animated while the message is not finished: you see at a glance "it is still going and
+ * where it has got to", without taking the body text's place.
  *
- * 现在只有详细模式还用它;简洁模式的「当前一步」挪到了输入框上方的 ThinkingStrip。
+ * Now only Detailed mode still uses it; Concise mode's "current step" moved to the ThinkingStrip
+ * above the input box.
  */
 export function StepStrip({ steps, live }: { steps: string[]; live: boolean }) {
   if (!steps.length) return null;
@@ -50,7 +54,7 @@ export function StepStrip({ steps, live }: { steps: string[]; live: boolean }) {
   );
 }
 
-/** 正在执行、还没有结果的那个工具(有就说明这一刻在跑它) */
+/** The tool that is executing and has no result yet (if there is one, it is the one running at this moment) */
 export function runningTool(parts: MessagePart[]): ToolCallInfo | null {
   for (let i = parts.length - 1; i >= 0; i--) {
     const p = parts[i];
@@ -59,21 +63,23 @@ export function runningTool(parts: MessagePart[]): ToolCallInfo | null {
   return null;
 }
 
-/** 一条没跑完的消息:优先用内核报上来的进度,没有就退回「正在思考 / 正在执行 X」 */
+/** An unfinished message: prefer the progress reported by the kernel, otherwise fall back to "Thinking / Running X" */
 export function activityText(m: ChatMessage, busyTool: ToolCallInfo | null): string {
   if (m.progress?.text) return m.progress.text;
   return busyTool ? tr("Running {0}", bareToolName(busyTool.name)) : tr("Thinking");
 }
 
 /**
- * 进度里的轮次和成败,单独放一行小字;没有轮次信息(CLI 驱动)就不显示。
- * `liveElapsedMs`:界面自己往前走的已用时间(见 LiveProgressMeta);不给就用进度里报的那个数。
+ * The round count and success or failure in the progress, on a line of small text of its own; not
+ * shown when there is no round information (CLI driver).
+ * `liveElapsedMs`: elapsed time that the UI advances by itself (see LiveProgressMeta); if not
+ * given, use the number reported in the progress.
  */
 export function progressMeta(m: ChatMessage, liveElapsedMs?: number): string | null {
   const p = m.progress;
   if (!p?.round) return null;
-  // maxRounds 为 null 是「不限轮次」(深度自主 + 自主轮次填 0):Infinity 过一趟 JSON 就是 null。
-  // 写成「第 12/? 轮」会让人以为丢了信息,其实是本来就没有分母
+  // maxRounds being null means "unlimited rounds" (deep autonomy + autonomy rounds set to 0): Infinity passed through JSON becomes null.
+  // Writing "round 12/?" would make people think information was lost, but there is simply no denominator
   const bits = [p.maxRounds ? tr("Round {0}/{1}", p.round, p.maxRounds) : tr("Round {0} (unlimited)", p.round)];
   if (p.completed || p.failed) bits.push(tr("Succeeded {0} · Failed {1}", p.completed ?? 0, p.failed ?? 0));
   const elapsed = liveElapsedMs ?? p.elapsedMs;
@@ -82,9 +88,13 @@ export function progressMeta(m: ChatMessage, liveElapsedMs?: number): string | n
 }
 
 /**
- * 轮次那行小字里的已用时间每秒往前走。进度只在换一步时才报一次(等模型回话的那一段可能好几十秒都没有新的),
- * 原来照抄进度里那个数,「第 1/24 轮 · 0 秒」就一直停在 0 秒(2026-10-19 在线实测)。
- * 以收到这条进度的时刻为起点,在它报的已用时间上往前加;换了一条进度就重新对齐;也按这一轮的开始时间算一份,取大的。跑完了就停表。
+ * The elapsed time in the small round-count text advances every second. Progress is reported only
+ * when the step changes (while waiting for the model to reply there may be no new report for tens
+ * of seconds), and it used to copy the number in the progress as-is, so "Round 1/24 · 0 s" stayed
+ * stuck at 0 s (online test, 2026-10-19).
+ * It starts from the moment this progress was received and adds on top of the elapsed time it
+ * reported; when a new progress arrives it realigns; it also computes one from this round's start
+ * time and takes the larger. Once the run is finished the clock stops.
  */
 export function LiveProgressMeta({ m }: { m: ChatMessage }) {
   const p = m.progress;
@@ -99,8 +109,8 @@ export function LiveProgressMeta({ m }: { m: ChatMessage }) {
     return () => window.clearInterval(timer);
   }, [ticking]);
   const now = Date.now();
-  // 这一轮的开始时间(云端的 `run` 事件带的时刻)也算一份：重新打开页面时进度是重放来的，按收到时刻对齐会少算；
-  // 两边取大的。开始时间离谱(比现在还晚、或超过一天，多半是两边时钟不准)就不用它
+  // This round's start time (the moment carried by the cloud's `run` event) is also counted as one: when the page is reopened the progress is replayed, and aligning by receive time would undercount;
+  // take the larger of the two. If the start time is absurd (later than now, or more than a day ago, most likely because the clocks on the two sides are off), do not use it
   const sinceStart = typeof m.startedAt === "number" && now >= m.startedAt && now - m.startedAt < 86_400_000 ? now - m.startedAt : 0;
   const live = ticking && anchor.current ? Math.max(anchor.current.elapsed + (now - anchor.current.at), sinceStart) : undefined;
   const text = progressMeta(m, live);
@@ -108,9 +118,10 @@ export function LiveProgressMeta({ m }: { m: ChatMessage }) {
 }
 
 /**
- * 跑完之后的结论。completed 不显示(正常结束不用多说一句),
- * 其余几种都要让用户看见:停下来的原因不同,该做的事也不同。
- * 用户自己停的只写「已停止」:是他按的,不用解释。
+ * The conclusion after a run finishes. completed is not shown (a normal finish needs no extra
+ * word), while all the other kinds must be visible to the user: different reasons for stopping call
+ * for different things to do.
+ * When the user stopped it himself, only write "Stopped": he pressed it, so no explanation needed.
  */
 export const OUTCOME_TEXT: Record<string, string> = {
   stalled: tr("Repeated actions were detected with no progress, so it stopped. The summary above explains how far it got."),
@@ -122,27 +133,29 @@ export function outcomeText(m: ChatMessage): string | null {
   return OUTCOME_TEXT[m.outcome] || tr("This run ended with: {0}", m.outcome);
 }
 
-/** 简洁模式的一段:几次操作,结尾可能跟着一份报告 */
+/** One segment in Concise mode: several actions, possibly followed by a report at the end */
 export interface Segment {
-  /** 这一段的操作,不含报告工具本身 */
+  /** The actions of this segment, not including the report tool itself */
   tools: ToolCallInfo[];
-  /** 结尾那次 report_progress 的参数;这一段没以报告收尾,或参数解析不出来时为 null */
+  /** The parameters of the final report_progress call; null if this segment did not end with a report or the parameters cannot be parsed */
   report: ProgressReport | null;
 }
 
 /**
- * 按 parts 的先后把消息切段:遇到一次报告工具调用就「结一段」。
+ * Splits a message into segments following the order of parts: each report tool call "closes a
+ * segment".
  *
- * 读下来是「做了几件事(图标)→ 交一份阶段小结(卡片)→ 再做几件事 → 本轮小结」。
- * 报告卡的数据直接取调用参数,不等工具结果 —— 结果只是一句「已记录」。
- * 最后一次报告之后还有操作的话,它们单独成一段,没有卡片。
+ * Read through, it goes "did a few things (icons) → hand in a stage summary (card) → did a few more
+ * things → round summary". The report card's data is taken straight from the call parameters
+ * without waiting for the tool result, which is only the line "Recorded".
+ * If there are actions after the last report, they form a segment of their own, with no card.
  */
 export function segmentsOf(parts: MessagePart[]): Segment[] {
   const out: Segment[] = [];
   let tools: ToolCallInfo[] = [];
   for (const p of parts) {
     if (p.kind !== "tool") continue;
-    // 对用户说的话(send_message 发给 user)画在气泡里,不算操作
+    // Words addressed to the user (send_message sent to user) are drawn in the bubble and do not count as actions
     if (isUserMessageCall(p.name, p.input)) continue;
     if (isReportTool(p.name)) {
       out.push({ tools, report: parseProgressReport(p.input) });
@@ -162,18 +175,21 @@ const REPORT_GROUPS = [
 ] as const;
 
 /**
- * 一份报告卡。
+ * A report card.
  *
- * Agent 的文字回复默认不显示之后,这就是用户读到的「结论」。阶段卡紧凑、退一档;
- * 本轮小结多一圈半透明强调色描边,醒目一点。三组条目空的不显示,全空写一句,别留个空壳。
+ * Now that the Agent's text replies are hidden by default, this is the "conclusion" the user reads.
+ * Stage cards are compact and one tier lower; the round summary has an extra ring of translucent
+ * accent-color outline, to stand out a bit. Any of the three groups of entries is not shown when
+ * empty, and when all are empty write one line, rather than leave an empty shell.
  *
- * blocked 的那一份要和「本轮小结」长得不一样:球在用户那边,他得看一眼就知道这不是做完了,
- * 而是在等他回话。否则「撞上轮次上限停了」和「在等你」一个样(docs/plan/agent-blind-stop.md)。
+ * A blocked one must look different from the "round summary": the ball is in the user's court, and
+ * he must see at a glance that this is not done but waiting for his reply. Otherwise "stopped after
+ * hitting the round limit" looks the same as "waiting for you" (docs/plan/agent-blind-stop.md).
  */
 export function ReportCard({ r, enter }: { r: ProgressReport; enter?: boolean }) {
   const groups = REPORT_GROUPS.filter((g) => r[g.field].length > 0);
   const ref = useRef<HTMLDivElement>(null);
-  // 流式里刚交上来的报告淡入(enterMotion);历史里的、分页切回来重新显示的不演。只在挂上来那一刻看一次
+  // A report just handed in during streaming fades in (enterMotion); ones in history, or redisplayed when switching back to a tab, do not play it. It is seen only once, at the moment it mounts
   useLayoutEffect(() => {
     if (enter) playEnter(ref.current, "pc-enter-rise");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -205,13 +221,18 @@ export function ReportCard({ r, enter }: { r: ProgressReport; enter?: boolean })
 }
 
 /**
- * 「思考与原文」:打开「显示思考」时气泡底部的一块。
+ * "Thinking and original text": the block at the bottom of the bubble when "Show thinking" is on.
  *
- * 文字回复默认不显示了(结论看报告卡),但排查时还得看得到它说了什么、想了什么。
- * 按发生顺序铺:相邻的文字并成一段、相邻的思考并成一段,读起来是「想 → 说 → 再想」。
- * 能折起来:原文往往很长,看完就收,不用去顶栏把开关关掉。
- * 合并了几轮的气泡按轮分节(sections):只在同一轮里并段,只有正在跑的那一轮按流式解析 ——
- * 不然整组几百轮的原文并成一段,每 250ms 整个重新解析一遍。
+ * Text replies are no longer shown by default (see the report card for the conclusion), but when
+ * troubleshooting you still need to see what it said and thought.
+ * Laid out in the order they happened: adjacent text is merged into one paragraph, adjacent thinking
+ * is merged into one paragraph, so it reads "think → say → think again".
+ * It can be folded: the original text is often very long, so fold it when done, without going to the
+ * top bar to turn the switch off.
+ * A bubble that merged several rounds is divided into sections per round (sections): paragraphs
+ * merge only within the same round, and only the round that is running is parsed as a stream,
+ * otherwise the original text of hundreds of rounds in the whole group would be merged into one
+ * paragraph and fully re-parsed every 250ms.
  */
 function RawLog({ sections }: { sections: { key: string; parts: MessagePart[]; live: boolean }[] }) {
   const [open, setOpen] = useState(true);
@@ -239,7 +260,7 @@ function RawLog({ sections }: { sections: { key: string; parts: MessagePart[]; l
         <div className="ai-rawlog-body">
           {items.map((it) => {
             if (!it.text.trim()) return null;
-            // 文字一律走 LiveMarkdown:流式时逐 token 全量解析 Markdown / KaTeX 会把界面卡死
+            // Text always goes through LiveMarkdown: fully parsing Markdown / KaTeX token by token while streaming freezes the UI
             return it.kind === "text" ? (
               <div key={it.key} className="ai-message-text">
                 <LiveMarkdown text={it.text} live={it.live} />
@@ -256,19 +277,23 @@ function RawLog({ sections }: { sections: { key: string; parts: MessagePart[]; l
 
 
 /**
- * 一轮回复的气泡:只放 Agent「在做什么」(2026-10-20 用户定,原话「气泡里面只展示在做什么」)。
+ * The bubble for one round of replies: it holds only "what the Agent is doing" (user decision,
+ * 2026-10-20, original words: "the bubble should only show what is being done").
  *
- * 按先后列出它用 send_message(to: "user")说的话;一次都没调、只回了文字的,那段文字当一句话(src/ai/userMessages.ts)。
- * 跑着的时候底下一行转圈写着此刻在做什么;出错、停下、云端渲染的进展照旧写在最下面。
- * 做过的操作、看过的画面、汇报(本轮小结)不在气泡里,在气泡下面的「Agent 操作」里按轮显示(ActivityPanel.tsx);
- * 点气泡就让「Agent 操作」切到这一轮。
+ * It lists, in order, what it said with send_message(to: "user"); if it never called it and replied
+ * with text only, that text counts as one sentence (src/ai/userMessages.ts).
+ * While running, a spinning line below says what is being done at this moment; errors, stops and the
+ * progress of cloud rendering are still written at the very bottom.
+ * Actions done, frames viewed and reports (round summary) are not in the bubble, but shown per round
+ * in "Agent actions" below the bubble (ActivityPanel.tsx);
+ * clicking the bubble makes "Agent actions" switch to this round.
  */
 export function AgentBubble(props: {
   m: ChatMessage;
   showThinking: boolean;
-  /** 「Agent 操作」此刻显示的是不是这一轮 */
+  /** Whether "Agent actions" is currently showing this round */
   selected?: boolean;
-  /** 点气泡:让「Agent 操作」切到这一轮 */
+  /** Click the bubble: make "Agent actions" switch to this round */
   onSelect?: (id: string) => void;
 }) {
   const { m, showThinking, selected, onSelect } = props;
@@ -286,7 +311,7 @@ export function AgentBubble(props: {
       data-pc="agent-bubble"
       data-selected={selected ? "1" : undefined}
       onClick={onSelect ? (e) => {
-        // 点在链接、按钮上是它们自己的事;选中文字时不切
+        // A click on a link or button is their own business; do not switch while text is being selected
         if ((e.target as HTMLElement).closest("a,button,input,textarea")) return;
         if (window.getSelection?.()?.toString()) return;
         onSelect(m.id);
@@ -299,7 +324,7 @@ export function AgentBubble(props: {
 
       {sayings.map((s) => (
         <div key={s.key} className="ai-saying" data-pc="agent-saying" data-from={s.from}>
-          {/* 文字回复可能是 Markdown;流式时只有最后那句按流式解析 */}
+          {/* A text reply may be Markdown; while streaming, only the last sentence is parsed as a stream */}
           <LiveMarkdown text={s.text} live={live && s === lastText && s.from === "text"} />
         </div>
       ))}
@@ -307,7 +332,7 @@ export function AgentBubble(props: {
         <div className="ai-saying-none" data-pc="agent-saying-none">{tr("Did {0} operations, see \"Agent operations\" below", ops)}</div>
       )}
 
-      {/* 「正在做什么」和下面那行轮次小字包成一块:气泡里各块之间只靠 gap 隔开,这两行要贴得比 gap 近 */}
+      {/* Wrap "what is being done" and the small round-count line below it into one block: blocks in the bubble are separated only by gap, and these two lines must sit closer than the gap */}
       {live && (
         <div className="ai-activity-block">
           <div className="ai-activity" role="status" aria-live="polite">
@@ -325,7 +350,7 @@ export function AgentBubble(props: {
 
       {m.error && <div className="ai-message-error" data-pc="agent-error" role="alert">{m.error}</div>}
       {outcome && <div className="ai-message-outcome">{outcome}</div>}
-      {/* 云端对话:改动引出的预渲染重试进展常驻一行(渲染失败不能只藏在「Agent 操作」里) */}
+      {/* Cloud chat: the progress of prerender retries triggered by changes stays on one line (a render failure must not hide only in "Agent actions") */}
       {m.cloudRender && (
         <div className={m.cloudRender.state === "failed" || m.cloudRender.state === "unavailable" ? "ai-message-error" : "ai-message-outcome"} data-pc="cloud-render-note" data-state={m.cloudRender.state}>
           {m.cloudRender.text}

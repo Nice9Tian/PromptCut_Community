@@ -4,16 +4,19 @@ import type { TrackClip } from "../../kernel/project";
 import { CLIP_SPEED_MAX, CLIP_SPEED_MIN, CLIP_SPEED_PRESETS, SPEED_AUDIO_NOTE, SPEED_MUTE_NOTE, clipSpeed, speedChangeNotes, speedLabel } from "../../kernel/clipTime.mjs";
 import { tr } from "../../i18n/index.ts";
 
-/** 改速度的结果说给人听:转场跟着缩了多少、谁跟着挪了、推开了几段(kernel/clipTime.mjs 的 speedChangeNotes) */
+/** Explain the result of a speed change in human terms: how much the transitions shrank, who moved along, how many clips were pushed apart (speedChangeNotes in kernel/clipTime.mjs) */
 export function speedResultText(r: ReturnType<typeof actions.setClipSpeed>, clipId: string): string | null {
   if (!r.ok) return r.error;
   return speedChangeNotes(r, clipId);
 }
 
 /**
- * 编辑分区里视频段、声音段的「速度」一栏:几档倍数,也能手动输入(0.25～4,可带小数,超出范围拒绝并提示,不夹)。
- * 起点不动、终点按新速度重算(store 的 setClipSpeed:变长碰到后面的段整体推开、变短尾部留空)。
- * 手机版的入口在子导航栏的「速度」(`src/mobile/sheets.tsx` 的 SpeedSheet),两边同一个动作、同一句说明。
+ * The "Speed" field in the editing section for video clips and audio clips: a few multiplier tiers, or
+ * manual input (0.25 to 4, decimals allowed; values out of range are rejected with a message, not clamped).
+ * The start stays fixed and the end is recomputed from the new speed (store's setClipSpeed: when longer,
+ * the following clips are pushed back as a whole; when shorter, the tail is left empty).
+ * The mobile app entry is "Speed" in the sub-navigation bar (SpeedSheet in `src/mobile/sheets.tsx`);
+ * both sides use the same action and the same description.
  */
 export function ClipSpeedForm({ clip }: { clip: TrackClip }) {
   const kind = useStore((s) => s.project.media.find((m) => m.id === clip.mediaId)?.kind);

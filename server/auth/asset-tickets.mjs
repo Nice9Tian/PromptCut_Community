@@ -1,12 +1,16 @@
 /**
- * 素材服务核对票据用的外观（契约 `docs/plan/auth-contract.md` 第 8 节「素材服务的读写」）。
+ * Facade for verifying tickets in the asset service (contract `docs/plan/auth-contract.md`
+ * Section 8 "Asset service reads and writes").
  *
- * 素材服务与文档服务跑在同一个进程里，直接读凭证存储的内存状态（签名密钥、项目代数、用户代数）：
- * 改项目口令、改名单、踢人之后，已发的票据下一次请求就失效。不同进程之间不支持共用。
+ * The asset service and document service run in the same process, directly reading the in-memory
+ * state of the credential store (signing key, project generation, user generation): after changing
+ * the project passphrase, changing the list, or kicking members, previously issued tickets become
+ * invalid on the next request. Sharing across different processes is not supported.
  *
- * - `createAssetTicketVerifier({ store, now })`：`store` 是凭证存储或取它的函数；
- * - `assetTicketVerifierFor(authDir)`：按 `auth/` 目录取进程内单例（`store.mjs` 的 `credentialStoreFor`），
- *   第一次核对时才打开；打不开就一律无效（失败即关）。
+ * - `createAssetTicketVerifier({ store, now })`: `store` is the credential store or a getter for it;
+ * - `assetTicketVerifierFor(authDir)`: gets the in-process singleton by `auth/` directory
+ *   (`credentialStoreFor` in `store.mjs`), opening it only on first verification; if it cannot be
+ *   opened, always invalid (close on failure).
  */
 import { verifyTicket } from './tickets.mjs';
 import { credentialStoreFor } from './store.mjs';
@@ -19,9 +23,12 @@ import { memberAccess } from './delegation.mjs';
  * @param {object} options
  * @param {object | (() => object | null)} options.store
  * @param {() => number} [options.now]
- * @param {object | (() => object | null)} [options.services] 托管方服务的登记表（`service-identity.mjs`）。带 `sv` 的票据
- *   （服务身份的素材票据，`docs/plan/hosted-render-contract.md` 第 1.6 节）每次核对都另看登记表与项目的开关，不满足当场无效，
- *   不等票据过期；没给登记表时这种票据一律无效。回的结果多一个 `service`，素材服务据此限制它能写的命名空间
+ * @param {object | (() => object | null)} [options.services] Host service registry
+ *   (`service-identity.mjs`). Tickets with `sv` (service identity asset tickets,
+ *   `docs/plan/hosted-render-contract.md` Section 1.6) also check the registry and project toggles
+ *   on each verification; if unsatisfied, invalidated immediately without waiting for ticket
+ *   expiration; if no registry is provided, such tickets are always invalid. The returned result
+ *   includes an extra `service`, which the asset service uses to restrict its writable namespaces
  * @returns {{ verify(ticket: string): { ok: true, access: 'r' | 'rw', projectId: string, userId: string, service?: string, actsFor?: 'member' } | { ok: false, reason: string } }}
  */
 export function createAssetTicketVerifier({ store, now = Date.now, services = null } = {}) {
@@ -43,9 +50,12 @@ export function createAssetTicketVerifier({ store, now = Date.now, services = nu
         try { registry = registryOf(); } catch { registry = null; }
         const refused = serviceAdmission({ registry, record: v.record, service: v.payload.sv, kid: v.payload.sk });
         if (refused) return { ok: false, reason: refused };
-        // 代成员进项目的服务（云端 Agent，`docs/plan/cloud-agent-contract.md` 第 4.4 节）：按成员本人的权限——
-        // 名单与禁入表照成员查（被移出、被踢后当场失效）；票据要的是读写而成员此刻只读的，无效（只读成员写不进）。
-        // 回的结果带 `actsFor: 'member'`，素材服务据此只许它写素材原件（`media`），不许写预渲染产物
+        // Services acting for members entering projects (Cloud Agent, `docs/plan/cloud-agent-contract.md`
+        // Section 4.4): based on the member's own permissions: the list and ban list are checked against
+        // the member (invalidated immediately upon being removed or kicked); if the ticket requests
+        // read-write while the member is currently read-only, it is invalid (read-only members cannot write).
+        // The returned result has `actsFor: 'member'`, by which the asset service only allows it to write
+        // original media (`media`), forbidding writes to prerender outputs
         if (registry.get(v.payload.sv)?.actsFor === 'member') {
           const who = splitUserId(v.payload.u);
           if (!who || isReservedUsername(who.username)) return { ok: false, reason: 'format' };
@@ -62,7 +72,7 @@ export function createAssetTicketVerifier({ store, now = Date.now, services = nu
   };
 }
 
-/** 按 `auth/` 目录取进程内的凭证存储来核对；打不开时每次都再试一次，仍打不开就回无效 */
+/** Gets in-process credential store by `auth/` to verify; retries each time if unopened, invalid if still failing */
 export function assetTicketVerifierFor(authDir, { now = Date.now } = {}) {
   return createAssetTicketVerifier({ store: () => credentialStoreFor(authDir), now });
 }

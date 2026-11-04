@@ -1,10 +1,10 @@
-/** 层表条目的输入签名(见 `layerInputSig.mjs` 文件头) */
+/** Input signature of a layer table entry (see header of `layerInputSig.mjs`) */
 export const LAYER_INPUT_SIG_VERSION: number;
-/** 这个片段的签名输入(还没哈希的那份对象);片段不在项目里回 null */
+/** Signature input for this clip (the object before hashing); returns null if clip not in project */
 export function clipInputs(project: unknown, clipId: string): Record<string, unknown> | null;
-/** 片段的输入签名;片段不在项目里、或输入序列化不了回 null */
+/** Input signature of clip; returns null if clip is not in project or input cannot be serialized */
 export function clipInputSig(project: unknown, clipId: string): string | null;
-/** 两边都有、同一算法版本、而且不同 → 过期 */
+/** Present on both sides, same algorithm version, and different → expired */
 export function inputSigStale(layerSig: unknown, pageSig: unknown): boolean;
-/** 按项目对象引用缓存的 `clipInputSig` */
+/** `clipInputSig` cached by project object reference */
 export function cachedClipInputSig(project: unknown, clipId: string): string | null;

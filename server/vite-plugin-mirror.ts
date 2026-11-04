@@ -6,63 +6,74 @@ import { prerenderState } from "./prerender-client.mjs";
 import { createReadySessionRegistry, replayReadySessions as replaySessions } from "./ready-session-registry.mjs";
 
 /**
- * 数据管理的只读镜像(A7)。**两个进程都挂这一份插件。**
+ * Read-only mirror for data management (A7). **Both processes mount this plugin.**
  *
- * # 它解决什么
+ * # What it solves
  *
- * 以前镜像住在 `vite-plugin-ai` 里,而 ai 插件只在编辑器那一端挂(预渲染那一端不挂它 ——
- * 它会改写全局 port.json,把 MCP 指到预渲染去)。于是预渲染进程手里没有项目,每一个帧请求
- * 都得把整份项目塞进 body 再发一遍:拖一个片段的 2 秒里几百 KB 发十几次,而真正变的
- * 只有一段。镜像单独成插件之后两个进程各存一份,帧请求的 body 只剩 `{session, localRev, lane}`。
+ * Previously, the mirror lived inside `vite-plugin-ai`, and the ai plugin was only mounted on
+ * the editor side (not on the prerender side: it would overwrite global port.json, pointing MCP
+ * to prerender). Consequently, the prerender process had no project in hand, and every frame
+ * request had to pack the entire project into the body and send it again: dragging a clip for
+ * 2 seconds sent hundreds of KB over a dozen times, when only one segment actually changed.
+ * After splitting the mirror into its own plugin, both processes keep a copy, leaving only
+ * `{session, localRev, lane}` in the frame request body.
  *
- * # 键、版本窗口、两种拒收
+ * # Keys, version windows, and two types of rejection
  *
- * 见 `server/mirror-store.mjs` 的说明(存储本体在那儿,这里只是 HTTP 面)。
+ * See description in `server/mirror-store.mjs` (the storage itself lives there;
+ * this is only the HTTP surface).
  *
- * # 谁把项目送到预渲染进程手里
+ * # Who delivers the project to the prerender process
  *
- * 三条路,缺一不可:
+ * Three paths, all indispensable:
  *
- * 1. **转发**:编辑器进程每收到一次推送(整份或补丁)就原样转给当前就绪的预渲染进程。
- *    补丁被它回 409 的话(它刚重启、手里没有基线)当场补一次整份。
- * 2. **回拉**:预渲染进程按 `PROMPTCUT_EDITOR_URL`(spawn 时给的,见 vite-plugin-prerender)
- *    向编辑器 `GET /api/data/project?session=&localRev=` 要那一版。转发丢了、或者进程
- *    刚起来就收到帧请求时走这条。`agent` 模式的预渲染进程不带这个变量 —— 它的项目由
- *    Agent 服务端推(I2),回拉自然空转。
- * 3. **补推**:预渲染进程重启、健康检查刚过时,编辑器把每个 session 的最新一版整份推过去。
+ * 1. **Forwarding**: Every time editor process receives a push (full or patch), it forwards it
+ *    as-is to the currently ready prerender process. If the patch gets a 409 (it just restarted
+ *    and has no baseline), immediately catch up with a full copy.
+ * 2. **Pull-back**: Prerender process uses `PROMPTCUT_EDITOR_URL` (given at spawn, see
+ *    vite-plugin-prerender) to request that version from editor via
+ *    `GET /api/data/project?session=&localRev=`. This path is taken when forwarding drops, or
+ *    when frame requests arrive right after process startup. Prerender processes in `agent` mode
+ *    do not carry this variable: their projects are pushed by Agent server (I2), so pull-back
+ *    naturally no-ops.
+ * 3. **Catch-up push**: When prerender process restarts and health check just passes, the editor
+ *    pushes the latest full version of each session.
  *
- * 转发按目标串成一条链发(一次只飞一个),否则到达顺序没保证,补丁会踩空基线。
+ * Forwarding is chained per target (only one in flight at a time); otherwise arrival order is
+ * not guaranteed, and patches would miss the baseline.
  *
- * 补推之后还有一步(Item 4 方案 A):照「会话版本登记」把每个会话最后一次被接受的 preload
- * 串行重放一遍,预渲染进程据此重新知道每个会话当前是哪一版、把就绪索引长回来(`replayReadySessions`)。
+ * After catch-up push, there is one more step (Item 4 Option A): serially replay the last
+ * accepted preload of each session per "session version registry", so the prerender process
+ * relearns which version each session is on and restores the ready index (`replayReadySessions`).
  */
 
 const store = createMirrorStore();
 
 export type MirrorVersion = { session: string; localRev: number; project: any; hash: string; at: number };
 
-/** 当前编辑页 session 的最新一版 */
+/** Latest version of current editor page session */
 export function latestMirror(): MirrorVersion | null { return store.latestMirror() as MirrorVersion | null; }
 (globalThis as any).__PC_LATEST_MIRROR__ = latestMirror;
-/** 按 `{session, localRev}` 取。`localRev` 省略 = 那个 session 的最新一版 */
+/** Fetch by `{session, localRev}`. Omitting `localRev` = latest version of that session */
 export function getMirror(session: string, localRev?: number | string | null): MirrorVersion | null {
   return store.getMirror(session, localRev as any) as MirrorVersion | null;
 }
-/** C4:页面报上来的「播放头附近现在缺哪些层」,最多 8 条 */
+/** C4: "which layers are currently missing near playhead" reported by the page, up to 8 entries */
 export type WantedFrame = { clipId: string; frame: number };
-/** 当前编辑页 session 的播放头 */
+/** Playhead of current editor page session */
 export function latestPlayhead(): { session: string; t: number; playing: boolean; at: number; wanted?: WantedFrame[] } | null {
   return store.latestPlayhead() as any;
 }
 
-/** 编辑器那一端的地址(只有预渲染进程有);`agent` 模式不带 */
+/** Address on editor side (only prerender process has it); omitted in `agent` mode */
 function editorUrl(): string { return String(process.env.PROMPTCUT_EDITOR_URL || "").replace(/\/+$/, ""); }
 
 const pulling = new Map<string, Promise<MirrorVersion | null>>();
 
 /**
- * 取一版项目;本进程没有就按 `PROMPTCUT_EDITOR_URL` 回拉一次。
- * 拿不到返回 null —— 调用方(帧插件的 prologue)据此回 409 `MIRROR_MISSING`。
+ * Get a project version; if not in this process, pull back once via `PROMPTCUT_EDITOR_URL`.
+ * Returns null if unavailable: callers (prologue of frame plugin) use this
+ * to return 409 `MIRROR_MISSING`.
  */
 export async function ensureMirror(session: string, localRev?: number | string | null): Promise<MirrorVersion | null> {
   if (!session) return null;
@@ -80,8 +91,10 @@ export async function ensureMirror(session: string, localRev?: number | string |
         if (!res.ok) return null;
         const data: any = await res.json();
         if (!data?.ok || !data.project) return null;
-        // 回拉回来的按定义是「本进程缺的那一版」,常常比手里最新的还旧 —— 走 insert,
-        // 不走 pushFull 的 stale 闸(那道是拦乱序推送的,拦到回拉就再也补不回来了)
+        // What is pulled back is by definition "the version missing in this process",
+        // often older than the latest in hand: use insert,
+        // bypass pushFull's stale gate (that gate blocks out-of-order pushes;
+        // if it blocks pull-backs, it can never be recovered)
         store.insert({ session: data.session || session, localRev: data.localRev, project: data.project });
         return getMirror(data.session || session, data.localRev);
       } catch { return null; }
@@ -92,7 +105,7 @@ export async function ensureMirror(session: string, localRev?: number | string |
   return inFlight;
 }
 
-/* ---------------------------------------------------------------- 转发 */
+/* ---------------------------------------------------------------- Forwarding */
 
 let forwardChain: Promise<unknown> = Promise.resolve();
 
@@ -108,7 +121,7 @@ async function postJson(url: string, body: unknown, timeoutMs = 15000) {
   return { status: res.status, data: await res.json().catch(() => null) as any };
 }
 
-/** 把这一次推送转给预渲染进程。只有编辑器进程做这件事 */
+/** Forward this push to the prerender process. Only the editor process does this */
 function forward(pathname: string, payload: any, fallbackFull: () => any | null) {
   if (isPrerender) return;
   const remote = prerenderState();
@@ -117,35 +130,39 @@ function forward(pathname: string, payload: any, fallbackFull: () => any | null)
   forwardChain = forwardChain.then(async () => {
     try {
       const { status } = await postJson(url + pathname, payload);
-      // 它刚重启、手里没有基线:补一次整份,不然接下来每一版补丁都会踩空
+      // It just restarted and has no baseline: backfill a full copy,
+      // otherwise every subsequent patch will miss the baseline
       if (status === 409) {
         const full = fallbackFull();
         if (full) await postJson(url + "/api/data/project", full);
       }
-    } catch { /* 预渲染没就绪 / 正在重启:回拉和补推还能兜住 */ }
+    } catch { /* Prerender not ready / restarting: pull-back and catch-up push can still cover it */ }
   }, () => {});
 }
 
-/** 预渲染进程重启之后:把每个 session 的最新一版整份补过去 */
+/** After prerender process restarts: push the latest full copy of each session to catch up */
 export async function repushMirror(url: string): Promise<void> {
   const all = store.allLatest() as MirrorVersion[];
   for (const v of all) {
     try { await postJson(url + "/api/data/project", { session: v.session, localRev: v.localRev, project: v.project }); }
-    catch { /* 补不上就等下一次推送或回拉 */ }
+    catch { /* If catch-up fails, wait for the next push or pull-back */ }
   }
 }
 
-/* ------------------------------------------------ 会话版本登记(Item 4 方案 A) */
+/* ------------------------------------------------ Session version registry (Item 4 Option A) */
 
 /**
- * 每个页面会话最后一次被预渲染进程接受的 preload(`server/ready-session-registry.mjs`)。
- * 只在编辑器进程里有内容;预渲染进程重启后由 `replayReadySessions` 照着重放。
+ * The last preload accepted by the prerender process for each page session
+ * (`server/ready-session-registry.mjs`). Only populated in the editor process;
+ * replayed by `replayReadySessions` after the prerender process restarts.
  */
 const readySessions = createReadySessionRegistry();
 
 /**
- * 预渲染进程接受了一次 preload:报给编辑器进程登记。编辑器进程自己收到的就地登记。
- * 发出去就不管 —— 登记只为重启恢复,丢一次无妨(下一次 preload 会再报)。
+ * Prerender process accepted a preload: report to editor process to register.
+ * What editor process receives itself is registered in place.
+ * Fire and forget: registration is only for restart recovery, dropping one does not matter
+ * (the next preload will report again).
  */
 export function reportReadySession(session: string, localRev: unknown): void {
   if (!session) return;
@@ -155,12 +172,14 @@ export function reportReadySession(session: string, localRev: unknown): void {
   void postJson(base + "/api/data/ready-session", { session, localRev }, 3000).catch(() => {});
 }
 
-/** 测试 / 诊断用 */
+/** For testing / diagnostics */
 export function readySessionList() { return readySessions.list(); }
 
 /**
- * 预渲染进程重启、镜像补推完之后:按登记表把 preload 串行重放一遍(一次一个,最近活跃的先)。
- * `isCurrent`:重放途中预渲染进程又换了(再次重启)就停,交给下一轮。
+ * After prerender process restarts and mirror catch-up push finishes: serially replay preload
+ * per registry (one at a time, most recently active first).
+ * `isCurrent`: if prerender process changes again during replay (restarts again),
+ * stop and hand off to the next round.
  */
 export async function replayReadySessions(url: string, isCurrent: () => boolean = () => true) {
   return replaySessions({
@@ -189,7 +208,7 @@ function readBody(req: IncomingMessage, res: ServerResponse, limit: number, then
   req.on("data", (c: Buffer) => {
     if (over) return;
     size += c.length;
-    if (size > limit) { over = true; sendJson(res, 413, { ok: false, error: "推送体太大" }); req.destroy(); return; }
+    if (size > limit) { over = true; sendJson(res, 413, { ok: false, error: "Push body too large" }); req.destroy(); return; }
     body += c;
   });
   req.on("end", () => {
@@ -207,15 +226,15 @@ export function mirrorPlugin(): Plugin {
   return {
     name: "promptcut-mirror",
     configureServer(server: ViteDevServer) {
-      /* 整份推送 + 按键读取 */
+      /* Full push + read by key */
       server.middlewares.use("/api/data/project", (req, res) => {
         if (req.method === "GET") {
           const session = query(req, "session");
           const localRev = query(req, "localRev");
           const v = session ? getMirror(session, localRev) : latestMirror();
-          if (!v) return sendJson(res, 404, { ok: false, error: "还没有镜像:编辑器页面没打开过,或者这一版已经滑出窗口" });
+          if (!v) return sendJson(res, 404, { ok: false, error: "No mirror yet: the editor page has never been opened, or this version has already slid out of the window" });
           const head = latestPlayhead();
-          // rev / t 是老字段名,留着给还没改口的调用方
+          // rev / t are legacy field names, kept for callers that have not yet updated
           return sendJson(res, 200, { ok: true, session: v.session, localRev: v.localRev, rev: v.localRev, projectHash: v.hash, at: v.at, t: head?.t ?? 0, project: v.project });
         }
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "GET / POST only" });
@@ -226,11 +245,13 @@ export function mirrorPlugin(): Plugin {
             const out = store.pushFull({ session, localRev, project: d.project });
             sendJson(res, 200, { ok: true, session, localRev: out.localRev, projectHash: out.hash, ...(out.status === "stale" ? { stale: true } : {}) });
             /*
-             * 整份推送**一律**转发,`stale` 也转 —— 页面收到帧请求的 409 MIRROR_MISSING 之后
-             * 会整份重推一次,而这一版编辑器这边多半已经有了(缺的是预渲染那边)。这时候不转发的话,
-             * 「重推」就只在编辑器里打转,预渲染永远补不上那一版。
-             * 转过去的整份是自带基线的,到得晚了对面按 `stale` 自己挡掉,不会踩乱顺序
-             * (补丁不能这么干:它要基线,所以只在 `ok` 时转)。
+             * Full pushes are **always** forwarded, even on `stale`: after the page receives a 409
+             * MIRROR_MISSING for a frame request, it re-pushes the full copy once, and the editor side
+             * most likely already has this version (what lacks it is the prerender side). If not forwarded
+             * here, the "re-push" only loops within the editor, and prerender will never catch up on that
+             * version. The forwarded full copy carries its own baseline; if it arrives late, the other side
+             * drops it itself via `stale` without corrupting the sequence (patches cannot do this: they need
+             * a baseline, so they are only forwarded on `ok`).
              */
             const payload = { session, localRev, project: d.project };
             forward("/api/data/project", payload, () => payload);
@@ -240,7 +261,7 @@ export function mirrorPlugin(): Plugin {
         });
       });
 
-      /* 两层 diff */
+      /* Two-level diff */
       server.middlewares.use("/api/data/diff", (req, res) => {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST only" });
         readBody(req, res, 16 * 1024 * 1024, (d) => {
@@ -248,7 +269,7 @@ export function mirrorPlugin(): Plugin {
             const session = String(d.session || "");
             const out = store.pushDiff({ session, fromLocalRev: d.fromLocalRev, toLocalRev: d.toLocalRev, hash: d.projectHash, patch: d.patch });
             if (out.status === "resync") {
-              return sendJson(res, 409, { ok: false, code: "MIRROR_RESYNC", reason: out.reason, localRev: out.localRev, error: `镜像对不上(${out.reason}),请整份重推` });
+              return sendJson(res, 409, { ok: false, code: "MIRROR_RESYNC", reason: out.reason, localRev: out.localRev, error: `Mirror mismatch (${out.reason}), push the whole project again` });
             }
             sendJson(res, 200, { ok: true, session, localRev: out.localRev, projectHash: out.hash, ...(out.status === "stale" ? { stale: true } : {}) });
             if (out.status === "ok") {
@@ -265,33 +286,37 @@ export function mirrorPlugin(): Plugin {
       });
 
       /*
-       * 会话版本登记(Item 4 方案 A):预渲染进程每接受一次 preload 就报到这里。
-       * 只在编辑器进程里登记 —— 它是预渲染进程的父进程,预渲染崩溃重启后由它照表重放 preload。
+       * Session version registry (Item 4 Option A): the prerender process checks in here every time
+       * it accepts a preload. Registered only in the editor process: it is the parent process of the
+       * prerender process, and after prerender crashes and restarts, it replays preloads from the table.
        */
       server.middlewares.use("/api/data/ready-session", (req, res) => {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST only" });
-        if (isPrerender) return sendJson(res, 404, { ok: false, error: "会话版本只登记在编辑器进程" });
+        if (isPrerender) return sendJson(res, 404, { ok: false, error: "Session versions are only registered in the editor process" });
         readBody(req, res, 4 * 1024, (d) => {
           const session = typeof d.session === "string" ? d.session : "";
-          if (!session || session.length > 200) return sendJson(res, 400, { ok: false, error: "session 参数不合法" });
+          if (!session || session.length > 200) return sendJson(res, 400, { ok: false, error: "Invalid session parameter" });
           sendJson(res, 200, { ok: true, changed: readySessions.record(session, d.localRev) });
         });
       });
 
       /*
-       * 播放头单独一条路。它和项目的节奏完全不同:项目是「改了才推」,播放头是
-       * 「停下来的时候报一次当前时刻」—— 混在一起的话,拖播放头会带着整份项目再飞一趟。
+       * The playhead takes a separate path. Its cadence is completely different from the project:
+       * the project is "push only on change", while the playhead is "report current time once when
+       * stopped": if mixed together, scrubbing the playhead would send the whole project on another
+       * round trip.
        *
-       * C4 的 `wanted` 搭在同一条路上(最多 8 条 `{clipId, frame}`):页面每 100 ms
-       * 至多报一次「播放头附近现在缺哪些层」,编辑器进程**和 diff 一样原样转发**给
-       * 预渲染进程、不等回复,预渲染进程的 `latestPlayhead()` 才带得上它。
-       * 转发体漏掉 `wanted` 就等于整条提示静默丢掉,所以这里和 `setPlayhead` 的
-       * 白名单必须一起改。
+       * C4's `wanted` rides on the same path (up to 8 `{clipId, frame}` entries): the page reports
+       * at most once every 100 ms "which layers are currently missing near the playhead", and the
+       * editor process **forwards it as-is, just like diffs**, to the prerender process without waiting
+       * for a reply, so that `latestPlayhead()` in the prerender process can include it.
+       * Omitting `wanted` from the forwarded body means silently dropping the entire hint, so the
+       * whitelist here and in `setPlayhead` must be updated together.
        */
       server.middlewares.use("/api/data/playhead", (req, res) => {
         if (req.method === "GET") {
           const head = latestPlayhead();
-          return sendJson(res, head ? 200 : 404, head ? { ok: true, ...head } : { ok: false, error: "还没有播放头" });
+          return sendJson(res, head ? 200 : 404, head ? { ok: true, ...head } : { ok: false, error: "No playhead yet" });
         }
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "GET / POST only" });
         readBody(req, res, 64 * 1024, (d) => {

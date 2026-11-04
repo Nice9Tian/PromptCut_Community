@@ -19,7 +19,7 @@ function service({ holdComplete } = {}) {
   };
   return { calls, restore: () => { globalThis.fetch = real; } };
 }
-const fresh = () => { actions.newProject("音效集成"); return getState().project; };
+const fresh = () => { actions.newProject("Sound effect integration"); return getState().project; };
 const finished = async options => waitSoundGeneration(startSoundGeneration(options).id);
 async function until(fn) { for (let i = 0; i < 200; i++) { if (fn()) return; await new Promise(r => setTimeout(r, 1)); } throw new Error("timeout"); }
 

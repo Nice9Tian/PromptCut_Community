@@ -4,9 +4,9 @@ import { easeExpoOut, accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 翻牌数字:大号的机械滚轮数字加上单位。
- * 从 odometer 拆出,去除了说明小字和玻璃板外壳。
- * 进场:数字轮盘由上往下拨动到位。
+ * Odometer numbers: large mechanical roller numbers plus units.
+ * Extracted from odometer, stripped of explanatory small text and glass board shell.
+ * Entrance: number wheels scroll down into place.
  */
 interface Params {
   value: number;
@@ -61,10 +61,10 @@ function MetricOdometerPart({ params, width, height }: PartProps<Params>) {
 
 export const metricOdometer: PartDef<Params> = {
   id: "metric-odometer",
-  name: "翻牌数字",
-  description: "大数字翻牌效果",
-  useWhen: "大整数累计量(播放量、用户数)做成机械滚轮翻牌时使用。只支持非负整数,小数会被截断,也没有涨跌符号;要带正负号或注脚用 metric-stat,百分比进度用 metric-ring。",
-  tags: ["数字", "增长", "翻牌", "变化"],
+  name: "Odometer number",
+  description: "Big-number flip effect",
+  useWhen: "Use when a large cumulative integer (views, user count) should be shown as a mechanical rolling odometer. Only non-negative integers are supported, decimals are truncated, and there are no rise/fall signs. Use metric-stat for signs or footnotes and metric-ring for percentage progress.",
+  tags: ["number", "growth", "flip", "change"],
   role: "text",
   from: "odometer",
   defaults: {
@@ -74,10 +74,10 @@ export const metricOdometer: PartDef<Params> = {
     accent: "",
   },
   controls: [
-    { key: "value", label: "数值", type: "number" },
-    { key: "unit", label: "单位", type: "text" },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 400, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
-    { key: "accent", label: "颜色", type: "color" },
+    { key: "value", label: "Value", type: "number" },
+    { key: "unit", label: "Unit", type: "text" },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 400, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
+    { key: "accent", label: "Color", type: "color" },
   ],
   defaultFrame: { x: 960, y: 540, w: 800, h: 200, anchor: [0.5, 0.5] },
   settleMs: (p) => 800 + (String(Math.floor(Number(p.value) || 0)).length - 1) * 120,

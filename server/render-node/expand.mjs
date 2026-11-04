@@ -1,27 +1,44 @@
 /**
- * 多项目模式的「展开」（语义 `docs/semantics/product/rendering.md`「渲染服务的两种模式」；机制 `docs/semantics/mechanism/rendering.md`
- * 「多项目模式的做法」第一条）：从一个请求要的那几帧（或那张卡的那一段）出发，拼一份只含用到的片段的项目交给渲染页。
+ * "Expansion" in multi-project mode (semantics: `docs/semantics/product/rendering.md` "Two modes of
+ * render services"; mechanism: `docs/semantics/mechanism/rendering.md` "Practices in multi-project
+ * mode", item 1): starting from the frames (or the card segment) requested by a request, assemble
+ * a project containing only the clips used and pass it to the render page.
  *
- *   - 取这些帧上挂着的片段（含挂载提前量 `CARD_MOUNT_LEAD`）；每个片段带上它的卡（源码身份 `cardId`、参数、部件，都在片段上原样留着）
- *     和用到的素材；
- *   - 顺着依赖找，直到找不出新的：
- *       · 依赖下层的卡带上它下面的层——帧请求里同一刻挂着的下层片段本来就在；「一张卡的一段」的请求按整段取，这一段里挂过的下层都在；
- *       · 转场带上前后两段（`transitions` 里 `aId` / `bId` 有一个留下，两个都留，转场记录也留）；
- *       · 素材效果卡带上它的输入（片段的 `nodeId` → `cardNodes` 里这个节点、沿 `inputs` 走得到的节点；输入指向别的片段 `@clip/<id>/…` 时
- *         那个片段也留，不管它在不在这几帧上）；
- *       · 剪辑段（`cutId`）带上被引用的那条剪辑里、按段的时间换算之后同样挂在这几帧上的片段（任意深度，有环就停）；
- *   - 另加项目级设置：画幅、帧率、时长、主题、样式、三维视场角等字段**原样保留**（只换掉 `tracks`、`transitions`、`cardNodes`、
- *     `media`、效果库与 `cuts` 里的内容）；
- *   - **时间位置不变**：留下的片段一个字都不改，序列一条不删（只是里面的片段变少），画家顺序不变；推帧卡照旧从自己的挂载帧回放。
+ *   - Take clips mounted on these frames (including mount lead `CARD_MOUNT_LEAD`); each clip keeps
+ *     its card (code identity `cardId`, parameters, parts, all preserved as-is on the clip) and
+ *     used assets;
+ *   - Follow dependencies until no new ones can be found:
+ *       · Below-dependent cards include layers below them: lower-layer clips mounted at the same
+ *         moment in frame requests are already present; requests for "a segment of a card" take
+ *         the whole segment, so all lower layers mounted during this segment are included;
+ *       · Transitions include both adjacent clips (if either `aId` or `bId` in `transitions` is
+ *         retained, both are retained, and the transition record is also retained);
+ *       · Media effect cards include their inputs (clip `nodeId` → this node in `cardNodes`, and
+ *         nodes reached by traversing `inputs`; when an input points to another clip
+ *         `@clip/<id>/…`, that clip is also retained, whether or not it is on these frames);
+ *       · Cut segments (`cutId`) include clips in the referenced cut that, after time conversion
+ *         for the segment, are also mounted on these frames (arbitrary depth, stops on cycles);
+ *   - In addition, project-level settings: fields such as aspect ratio, frame rate, duration,
+ *     theme, style, and 3D field of view are **preserved as-is** (only replacing contents in
+ *     `tracks`, `transitions`, `cardNodes`, `media`, effects library, and `cuts`);
+ *   - **Timeline positions unchanged**: retained clips are not altered at all, no tracks are
+ *     deleted (only clips inside them are reduced), painter's order is unchanged; frame-push cards
+ *     replay from their own mount frames as usual.
  *
- * **取超集，不取少**：没挂在这几帧上的片段不出画，多留一个不改画面；少留一个才会错。所以判「挂没挂」时前后各多放一帧
- * （`1 / fps`），和舞台的挂载公式（`frameWindow.mjs` 的 `cardMountedAt`）比只多不少。
+ * **Take supersets, never omit**: clips not mounted on these frames do not render into the picture,
+ * so retaining an extra one does not alter the image; omitting one causes errors. Therefore, when
+ * checking "mounted or not", an extra frame (`1 / fps`) is added before and after, which is
+ * strictly greater than or equal to the stage's mounting formula (`cardMountedAt` in
+ * `frameWindow.mjs`).
  *
- * 纯函数，不改入参，不引 `src/`。单项目模式（桌面版的预渲染进程）不经过这里。
+ * Pure function, does not mutate input arguments, does not import `src/`. Single-project mode
+ * (prerender process in desktop app) does not go through here.
  */
 /**
- * 挂载提前量（秒），与舞台的 `src/render/frameWindow.mjs` 的 `CARD_MOUNT_LEAD` 同一个数。这里抄一份而不引用：渲染服务、Agent 服务这些
- * 独立入口不许引 `src/`（`server/test/accept-018-rest-ssr-seam.test.mjs`）。两边相等由 `server/test/multi-project-expand.test.mjs` 核对
+ * Mount lead (seconds), same value as `CARD_MOUNT_LEAD` in stage's `src/render/frameWindow.mjs`.
+ * Copied here instead of imported: standalone entry points like render service and Agent service
+ * are not allowed to import `src/` (`server/test/accept-018-rest-ssr-seam.test.mjs`). Equality on
+ * both sides is verified by `server/test/multi-project-expand.test.mjs`
  */
 export const CARD_MOUNT_LEAD = 0.05;
 
@@ -32,14 +49,14 @@ const HEX64 = /[0-9a-f]{64}/g;
 const num = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
-/** 剪辑表里激活的那一条（同 `kernel/cutFlatten.mjs` 的 `activeIdOf`） */
+/** Active cut in the cuts list (same as `activeIdOf` in `kernel/cutFlatten.mjs`) */
 function activeIdOf(p) {
   const cuts = Array.isArray(p?.cuts) ? p.cuts : [];
   if (!cuts.length) return undefined;
   return p.activeCutId && cuts.some((c) => c?.id === p.activeCutId) ? p.activeCutId : cuts[0].id;
 }
 
-/** 一条时间轴（激活的那条是 `project.tracks`；停放的在 `cuts[].tracks`）的序列表；找不到回 null */
+/** Track list for a timeline (active is `project.tracks`; parked are in `cuts[].tracks`); returns null if not found */
 function tracksOf(project, timelineId) {
   if (timelineId === ACTIVE) return Array.isArray(project.tracks) ? project.tracks : [];
   if (timelineId === activeIdOf(project)) return Array.isArray(project.tracks) ? project.tracks : [];
@@ -47,7 +64,7 @@ function tracksOf(project, timelineId) {
   return entry && Array.isArray(entry.tracks) ? entry.tracks : null;
 }
 
-/** 区间表（闭区间 `[lo, hi]`，单个时刻是 `[t, t]`）合并去重 */
+/** Merges and deduplicates interval lists (closed intervals `[lo, hi]`, single time point is `[t, t]`) */
 function mergeIntervals(list) {
   const sorted = list.filter(([lo, hi]) => Number.isFinite(lo) && Number.isFinite(hi) && hi >= lo).map(([lo, hi]) => [lo, hi]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   const out = [];
@@ -61,21 +78,21 @@ function mergeIntervals(list) {
 
 const sameIntervals = (a, b) => a.length === b.length && a.every((r, i) => r[0] === b[i][0] && r[1] === b[i][1]);
 
-/** 这个片段挂着的区间（含提前量，前后各多放 `margin`）与要的区间有没有交集 */
+/** Whether the clip's mounted interval (with lead, extra `margin` before/after) intersects requested interval */
 function clipNeeded(clip, intervals, margin) {
   const start = num(clip.start, NaN), end = num(clip.end, NaN);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return true; // 认不出起止的留着（超集）
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return true; // Retain clips whose start/end cannot be recognized (superset)
   const lo = start - CARD_MOUNT_LEAD - margin, hi = end + margin;
   return intervals.some(([a, b]) => lo <= b && hi > a);
 }
 
-/** 节点 id 引用的片段：`@clip/<片段 id>/<后缀>` */
+/** Clips referenced by node id: `@clip/<clip id>/<suffix>` */
 function clipRefOf(nodeId) {
   const m = /^@clip\/([^/]+)\//.exec(String(nodeId ?? ''));
   return m ? m[1] : null;
 }
 
-/** 把一个值里所有字符串收进 `out`（素材引用：id、哈希、地址都可能出现在参数、部件、节点、效果定义里） */
+/** Collects all strings in a value into `out` (asset references: id, hash, URL in params, parts, nodes, effect defs) */
 function collectStrings(value, out, depth = 0) {
   if (depth > 64 || value === null || value === undefined) return;
   if (typeof value === 'string') { out.add(value); return; }
@@ -84,15 +101,15 @@ function collectStrings(value, out, depth = 0) {
 }
 
 /**
- * 展开。
- * @param {any} project 整份项目（不改它）
- * @param {object} need 这个请求要什么
- * @param {number[]} [need.times] 要的时刻（秒）
- * @param {number[]} [need.frames] 要的帧号（按项目帧率换成时刻）
- * @param {[number, number][]} [need.spans] 要的时间段（秒，`[起, 止)`）——「一张卡的一段」
- * @param {string[]} [need.clipIds] 必须留下的片段（请求点名的那张卡），不管它在不在这几帧上
+ * Expand.
+ * @param {any} project Entire project (not mutated)
+ * @param {object} need What this request needs
+ * @param {number[]} [need.times] Requested times (seconds)
+ * @param {number[]} [need.frames] Requested frame numbers (converted to times using project frame rate)
+ * @param {[number, number][]} [need.spans] Requested time spans (seconds, `[start, end)`): "a segment of a card"
+ * @param {string[]} [need.clipIds] Clips that must be retained (the card specified by request), whether or not on these frames
  * @returns {{ project: any, clipIds: string[], cardIds: string[], mediaIds: string[], nodeIds: string[], cutIds: string[] }}
- *   `project` 是只含用到的片段的项目；其余是留下了什么（诊断与测试用）
+ *   `project` is the project containing only used clips; the rest records what was retained (for diagnostics and tests)
  */
 export function expandProject(project, need = {}) {
   if (!isObj(project) || !Array.isArray(project.tracks)) {
@@ -108,7 +125,7 @@ export function expandProject(project, need = {}) {
 
   const nodeList = Array.isArray(project.cardNodes) ? project.cardNodes : isObj(project.cardNodes) ? Object.values(project.cardNodes) : [];
   const nodeById = new Map(nodeList.filter((n) => n && typeof n.id === 'string').map((n) => [n.id, n]));
-  /** 全部时间轴（激活的 + 停放的）：剪辑段换算、点名的片段、转场都要在里面找 */
+  /** All timelines (active + parked): cut segment conversions, specified clips, transitions are all looked up here */
   const timelines = [ACTIVE, ...(Array.isArray(project.cuts) ? project.cuts.map((c) => c?.id).filter((id) => typeof id === 'string' && id !== activeIdOf(project)) : [])];
   const transitionsOf = (tid) => {
     if (tid === ACTIVE) return Array.isArray(project.transitions) ? project.transitions : [];
@@ -116,7 +133,7 @@ export function expandProject(project, need = {}) {
     return Array.isArray(entry?.transitions) ? entry.transitions : [];
   };
 
-  /** 时间轴 → 要的区间（剪辑段换算出来的会往停放的时间轴里加） */
+  /** Timeline → requested intervals (intervals converted from cut segments are added to parked timelines) */
   let needs = new Map([[ACTIVE, mergeIntervals(base)]]);
   let kept = new Map();
   let keptNodes = new Set();
@@ -124,7 +141,7 @@ export function expandProject(project, need = {}) {
     kept = new Map();
     const nextNeeds = new Map([[ACTIVE, needs.get(ACTIVE)]]);
     const addNeed = (tid, list) => { nextNeeds.set(tid, mergeIntervals([...(nextNeeds.get(tid) ?? []), ...list])); };
-    /** 一条时间轴里留下的片段；剪辑段按换算后的区间把需要传给被引用的那条 */
+    /** Retained clips in a timeline; cut segments pass requirements to referenced cuts using converted intervals */
     const visit = (tid, depth, path) => {
       const tracks = tracksOf(project, tid);
       if (!tracks) return;
@@ -137,12 +154,12 @@ export function expandProject(project, need = {}) {
           if (!(forced.has(clip.id) || clipNeeded(clip, intervals, margin))) continue;
           set.add(clip.id);
           if (typeof clip.cutId === 'string' && clip.cutId) {
-            if (path.includes(clip.cutId) || depth >= MAX_DEPTH) continue; // 有环、太深：不再往下（舞台也不画）
+            if (path.includes(clip.cutId) || depth >= MAX_DEPTH) continue; // Cycle or too deep: stop traversing (stage does not render either)
             const start = num(clip.start, NaN), end = num(clip.end, NaN);
             if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
             const offset = Math.max(0, num(clip.cutOffset, 0));
             const shift = start - offset;
-            // 点名的剪辑段按整段取；否则按要的区间与这一段露出来的窗口的交集换算
+            // Specified cut segments taken as whole segment; otherwise convert by intersecting requested spans with visible window
             const outer = forced.has(clip.id) ? [[start, end]] : intervals;
             const local = [];
             for (const [a, b] of outer) {
@@ -158,7 +175,7 @@ export function expandProject(project, need = {}) {
       }
     };
     visit(ACTIVE, 0, [activeIdOf(project) ?? ACTIVE]);
-    // 点名的片段（素材效果卡的输入、转场的另一段）可能在没被剪辑段引用到的停放时间轴里：也看一遍
+    // Specified clips (media effect card inputs, other side of transitions) may reside in parked timelines: inspect those too
     for (const tid of timelines) {
       if (kept.has(tid)) continue;
       const tracks = tracksOf(project, tid);
@@ -167,7 +184,7 @@ export function expandProject(project, need = {}) {
       for (const track of tracks) for (const clip of track?.clips ?? []) if (clip && forced.has(clip.id)) set.add(clip.id);
       if (set.size) kept.set(tid, set);
     }
-    // 依赖：素材效果卡的节点与它的输入、转场的两段
+    // Dependencies: media effect card nodes and their inputs, both clips of transitions
     let grew = false;
     const force = (id) => { if (typeof id === 'string' && id && !forced.has(id)) { forced.add(id); grew = true; } };
     keptNodes = new Set();
@@ -193,7 +210,7 @@ export function expandProject(project, need = {}) {
     if (!grew && !needsChanged) break;
   }
 
-  // ---------- 拼出只含这些片段的项目
+  // ---------- Assemble a project containing only these clips
   const keepIn = (tid) => kept.get(tid) ?? new Set();
   const trimTracks = (tracks, set) => tracks.map((track) => ({ ...track, clips: (track?.clips ?? []).filter((c) => c && set.has(c.id)) }));
   const keptClips = [];
@@ -216,13 +233,13 @@ export function expandProject(project, need = {}) {
       return trimmed;
     });
   }
-  // 效果库：只留留下的片段引用到的那几条
+  // Effects library: retain only entries referenced by retained clips
   for (const [field, library] of [['filter', 'filters'], ['pixelMap', 'pixelMaps'], ['audioFx', 'audioFx']]) {
     if (!Array.isArray(project[library])) continue;
     const ids = new Set(keptClips.map((c) => c?.[field]?.id).filter(Boolean));
     out[library] = project[library].filter((d) => ids.has(d?.id));
   }
-  // 素材：留下的片段、节点、效果定义、项目样式里出现过的（id、哈希、地址）
+  // Assets: entries that appeared in retained clips, nodes, effect definitions, or project styles (id, hash, URL)
   const strings = new Set();
   collectStrings(keptClips, strings);
   collectStrings([...keptNodes].map((id) => nodeById.get(id)), strings);
@@ -248,16 +265,16 @@ export function expandProject(project, need = {}) {
   };
 }
 
-/* ------------------------------------------------------------------ 看画面请求：要的是哪几帧 */
+/* ------------------------------------------------------------------ Look requests: which frames are needed */
 
-/** 项目时长内最后一帧的时刻（与工作进程 `/api/vision/snapshot` 的夹法一致：超出的按最后一帧渲） */
+/** Time of last frame in project duration (matches clamping in `/api/vision/snapshot`: out-of-bounds renders as last frame) */
 function clampTime(project, t) {
   const fps = num(project?.fps, 30) > 0 ? num(project.fps, 30) : 30;
   const last = Math.max(0, Math.floor(num(project?.duration, 0) * fps) - 1) / fps;
   return Math.min(Math.max(0, t), last);
 }
 
-/** 一个时刻在工作进程里实际渲的是哪一帧：原时刻与那一帧的时刻都算上（超集） */
+/** Frame rendered for a time in worker process: includes both original time and that frame's time (superset) */
 function frameTimes(project, t) {
   const fps = num(project?.fps, 30) > 0 ? num(project.fps, 30) : 30;
   const c = clampTime(project, t);
@@ -270,9 +287,10 @@ function clipSpan(project, clipId) {
 }
 
 /**
- * 看画面的请求（`server/hosted-render/look.mjs` 的 `LOOK_ROUTES`）要的是哪几帧、哪张卡。认不出的回 null（不展开，原样转发）。
+ * Frames and card needed by look requests (`LOOK_ROUTES` in `server/hosted-render/look.mjs`).
+ * Returns null if unrecognized (not expanded, forwarded as-is).
  * @returns {null | { key: 'project' | 'after', need: { times?: number[], spans?: [number, number][], clipIds?: string[] } }}
- *   `key`：项目在请求体里的哪个字段
+ *   `key`: which field in the request body holds the project
  */
 export function lookNeed(pathname, body) {
   if (!isObj(body)) return null;
@@ -292,7 +310,7 @@ export function lookNeed(pathname, body) {
         let at = Number(body.t);
         if (clipId && !Number.isFinite(at)) {
           const span = clipSpan(project, clipId);
-          if (!span) return null; // 工作进程会回「没有这个片段」：原样转发
+          if (!span) return null; // Worker process will return "no such clip": forward as-is
           at = (span[0] + span[1]) / 2;
         }
         times = [Number.isFinite(at) ? at : 0];
@@ -322,7 +340,8 @@ export function lookNeed(pathname, body) {
 }
 
 /**
- * 把看画面请求体里的项目换成展开后的那一份。认不出的请求原样回。
+ * Replaces the project in a look request body with the expanded version. Returns unrecognized
+ * requests as-is.
  * @returns {{ body: object, expanded: null | ReturnType<typeof expandProject> }}
  */
 export function expandLookBody(pathname, body) {
@@ -332,17 +351,21 @@ export function expandLookBody(pathname, body) {
   return { body: { ...body, [hit.key]: expanded.project }, expanded };
 }
 
-/* ------------------------------------------------------------------ 产流任务：一条流要的是哪一段 */
+/* ------------------------------------------------------------------ Stream tasks: which segment a stream needs */
 
-/** 剪辑段里摊出来的虚拟片段 id 的分隔符（同 `src/kernel/cutFlatten.mjs` 的 `FLAT_SEP`；这里不引 `src/`） */
+/** Separator for virtual clip IDs flattened from cut segments (same as `FLAT_SEP` in `src/kernel/cutFlatten.mjs`; no `src/` import) */
 const FLAT_SEP = '~';
-/** 片段 id 在顶层时间轴上对应的那个片段：摊出来的虚拟片段（`段 id~里面的片段 id`）对应它最外层的剪辑段 */
+/** Top-level timeline clip for a clip id: flattened virtual clips (`segment id~inner clip id`) map to outermost cut segment */
 const topLevelIdOf = (id) => (typeof id === 'string' && id.includes(FLAT_SEP) ? id.slice(0, id.indexOf(FLAT_SEP)) : id);
 
 /**
- * 一条轨道流（或导出位图）要的是哪一段：从回放起点（挂载帧，推帧卡要从这里推）到最后一帧，点名这条流的卡、它下面的层。
- * 发布方（切分时写 `requires.cardSources`、算依赖下层的流退回整场景时的键）与节点（产流时只装这一段用到的）**用同一个函数**，
- * 对同一条流算出同一个 `need`，展开出同一个子集（`expandProject` 是确定的）。认不出（没有帧号、没有帧率）回 null。
+ * Which segment a track stream (or export bitmap) needs: from playback start (mount frame, where
+ * frame-push cards push from) to the last frame, naming this stream's card and its lower layers.
+ * Publisher (writing `requires.cardSources` during splitting, computing keys when below-dependent
+ * streams fall back to whole scene) and node (loading only what is used in this segment during
+ * stream generation) **use the same function**, computing the same `need` and expanding to the
+ * same subset for the same stream (`expandProject` is deterministic). Returns null if unrecognized
+ * (missing frame numbers or frame rate).
  * @param {{ fps?: number, mountFrame?: number, firstFrame?: number, lastFrame?: number, clipIds?: string[], belowClipIds?: string[], topClipId?: string }} spec
  * @returns {null | { spans: [number, number][], clipIds: string[] }}
  */
@@ -357,9 +380,12 @@ export function streamNeed(spec) {
 }
 
 /**
- * 子集里用到的定制卡的代码身份：`versions`（卡片 id → 代码身份，整个项目的）里，卡片 id 在展开后的子集里出现过的那几项
- * （片段的 `cardId`、素材效果卡节点、部件参数里按 id 引用的都算：按子集里的字符串找，取超集）。
- * 切分时写进流任务的 `requires.cardSources`：节点手里有这几份代码就能认领，不必有整个项目的卡。
+ * Code identities of custom cards used in the subset: entries in `versions` (card id → code
+ * identity for the entire project) whose card ids appear in the expanded subset (clip `cardId`,
+ * media effect card nodes, and part parameters referenced by id all count: matched by strings in
+ * the subset, taking supersets).
+ * Written into `requires.cardSources` of the stream task during splitting: the node can claim as
+ * long as it has these code pieces, without needing cards for the entire project.
  */
 export function subsetCardSources(project, need, versions = {}) {
   const out = {};
@@ -373,5 +399,5 @@ export function subsetCardSources(project, need, versions = {}) {
   return out;
 }
 
-/** 这个进程是不是多项目模式的渲染节点（独立渲染主机、托管方渲染服务的工作进程：`profile: 'host'`）。桌面版的预渲染进程是单项目模式 */
+/** Whether process is a multi-project render node (standalone host, hosted render worker: `profile: 'host'`). Desktop prerender is single-project */
 export const multiProjectNode = (env = process.env) => String(env?.PROMPTCUT_NODE_PROFILE ?? '') === 'host';

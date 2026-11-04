@@ -1,24 +1,33 @@
 /**
- * 舞台端口的闸:**从舞台端口来的请求缺省全拒,只放行下面这张白名单。**
+ * Gate for stage ports: **requests from stage ports are rejected by default; only the allowlist
+ * below is permitted.**
  *
- * # 为什么
+ * # Why
  *
- * 舞台窗口(两个 iframe,`server/vite-plugin-stage-ports.ts`)里跑的是卡片代码,其中有用户自己写的、
- * 也有共享项目里别的成员写的。舞台端口对舞台窗口是同源,`/api/**` 的同源守卫(`http-guard.mjs` 的 `originOk`)拦不住它:
- * 不设这道闸,一张卡可以从舞台里调编辑器进程的任何本机接口(实测过 `POST /api/agent/bind` 回 200),
- * 也可以经开发服务器的静态服务读项目根下的任意文件。
+ * Stage windows (two iframes, `server/vite-plugin-stage-ports.ts`) run card code, including code
+ * written by the user and code written by other members in shared projects. Stage ports are
+ * same-origin to stage windows, so the same-origin guard for `/api/**` (`originOk` in
+ * `http-guard.mjs`) cannot stop them: without this gate, a card could call any local API of the
+ * editor process from within the stage (tested `POST /api/agent/bind` returning 200), or read any
+ * file under the project root through the dev server's static file serving.
  *
- * # 闸在哪
+ * # Where the gate is
  *
- * 在舞台端口的反向代理里(`vite-plugin-stage-ports.ts`),**转给编辑器进程之前**:不在白名单里的请求当场回 403,
- * 编辑器进程根本收不到;WebSocket 升级同理。编辑器进程那一侧另按代理写的头(`http-guard.mjs` 的 `viaStagePort`)
- * 用同一个函数再判一次,是第二道。直连编辑器端口的请求不经过这里,一个字不变。
+ * In the reverse proxy of stage ports (`vite-plugin-stage-ports.ts`), **before forwarding to the
+ * editor process**: requests not on the allowlist return 403 on the spot, and the editor process
+ * never receives them; the same applies to WebSocket upgrades. The editor process side checks again
+ * with the same function based on the header written by the proxy (`viaStagePort` in
+ * `http-guard.mjs`), serving as a second line of defense. Requests connecting directly to the editor
+ * port do not pass through here, completely unchanged.
  *
- * # 白名单只写在这一处
+ * # The allowlist is written only in this one place
  *
- * 每一条写明:什么方法、什么路径、谁用、为什么要。加一条之前先确认它在舞台里真的发得出来(探针
- * `scripts/probes/stage-gate-probe.mjs` 会把舞台端口的全部请求记下来),并且它不能让卡片代码拿到
- * 舞台本来拿不到的东西:不放行会改编辑器进程状态的接口,不放行会回票据、密钥、对话、别的项目的接口。
+ * Each entry specifies: what method, what path, who uses it, and why it is needed. Before adding an
+ * entry, first verify that it can really be sent from within the stage (the probe
+ * `scripts/probes/stage-gate-probe.mjs` records all requests on stage ports), and ensure it does not
+ * let card code obtain anything the stage was not meant to access: do not permit APIs that modify
+ * the editor process state, and do not permit APIs that return tickets, keys, chats, or other
+ * projects.
  */
 import fs from "node:fs";
 import { apiPath } from "./http-guard.mjs";
@@ -26,71 +35,86 @@ import { apiPath } from "./http-guard.mjs";
 const READ = ["GET", "HEAD"];
 
 /**
- * 白名单。`exact` 按整条路径比,`prefix` 按前缀比(写到斜杠为止);比的是 `apiPath` 归一化之后的形式(小写、折掉重复斜杠、不含查询串)。
- * `test` 是在路径之外再加的条件(拿到请求行里的原始地址和请求头)。`upgrade: true` 的只对 WebSocket 升级生效,别的只对普通请求生效。
+ * Allowlist. `exact` matches against the entire path, while `prefix` matches prefixes (up to the
+ * slash); comparisons use the normalized form of `apiPath` (lowercase, collapsing duplicate
+ * slashes, without query strings). `test` adds conditions beyond the path (accessing the raw URL
+ * and headers in the request line). `upgrade: true` takes effect only for WebSocket upgrades;
+ * others take effect only for regular requests.
  *
- * 这张表是照真编辑器里舞台端口实际发出的请求定的(新建项目、点、拖、播放、贴轨道流、视频、声音、用户卡、内置卡全走一遍,
- * 流水见探针):舞台自己的页面与脚本、素材字节、动效素材目录,外加两条只读接口。全部只读;没有一条会改编辑器进程的状态。
+ * This table is determined by requests actually sent by stage ports in the real editor (running
+ * through new project, click, scrub, playback, track stream paste, video, sound, user cards, and
+ * built-in cards; see probe for access logs): the stage's own pages and scripts, asset bytes,
+ * motion graphics asset catalog, plus two read-only APIs. All read-only; none modify the state of
+ * the editor process.
  *
- * 舞台**不经这个端口**的东西不在这里:生成快照与轨道流的字节舞台直接向预渲染进程那个端口取(`src/render/prerender.ts`),
- * 远程素材直接向素材服务取,项目数据由父页经 `postMessage` 给。
+ * Things that **do not pass through this port** for the stage are not here: bytes for generating
+ * snapshots and track streams are fetched by the stage directly from the prerender process port
+ * (`src/render/prerender.ts`), remote assets are fetched directly from the asset service, and
+ * project data is provided by the parent page via `postMessage`.
  */
 export const STAGE_ALLOW = [
-  // —— 舞台页面自己(开发服务器给的页面与模块;打包后的桌面版跑的也是这台开发服务器)——
-  { methods: READ, exact: "/", who: "舞台 iframe", why: "舞台文档 `/?stage=1&id=…`;热更新客户端探活也打这一条" },
-  { methods: READ, prefix: "/src/", who: "舞台 iframe", why: "页面脚本、样式、卡片与部件的源码(含改动层里的用户卡,它们映射在 /src/cards/user/ 下)" },
-  { methods: READ, prefix: "/server/", who: "舞台 iframe", why: "页面脚本引用的几份两端共用的模块和动效素材目录的索引(都是随包发出去的代码,没有数据)" },
-  { methods: READ, prefix: "/node_modules/", who: "舞台 iframe", why: "预构建好的依赖(React、粒子、Lottie 等)" },
-  { methods: READ, prefix: "/@fs/", test: (raw) => raw.split("?")[0].includes("/node_modules/"), who: "舞台 iframe",
-    why: "不在项目根下的依赖(依赖向上解析时走这个前缀);只放行路径里带 /node_modules/ 的,别的文件一概不给" },
-  { methods: READ, prefix: "/@vite/", who: "舞台 iframe", why: "开发服务器的热更新客户端" },
-  { methods: READ, exact: "/@id/__x00__vite/dynamic-import-helper.js", who: "舞台 iframe", why: "开发服务器动态 import 的运行时辅助模块" },
-  { methods: READ, exact: "/@react-refresh", who: "舞台 iframe", why: "React 热更新的运行时" },
+  // Stage page itself (pages and modules provided by the dev server; packaged desktop apps also run
+  // this dev server)
+  { methods: READ, exact: "/", who: "stage iframe", why: "Stage document `/?stage=1&id=…`; the hot-reload client liveness probe also hits this one" },
+  { methods: READ, prefix: "/src/", who: "stage iframe", why: "Source code of page scripts, styles, cards and parts (including user cards in the overlay layer, which are mapped under /src/cards/user/)" },
+  { methods: READ, prefix: "/server/", who: "stage iframe", why: "Index of a few modules shared by both sides and the motion graphics asset catalog that page scripts reference (all code shipped with the package, no data)" },
+  { methods: READ, prefix: "/node_modules/", who: "stage iframe", why: "Prebuilt dependencies (React, particles, Lottie, etc.)" },
+  { methods: READ, prefix: "/@fs/", test: (raw) => raw.split("?")[0].includes("/node_modules/"), who: "stage iframe",
+    why: "Dependencies outside the project root (this prefix is used when dependencies resolve upward); only paths containing /node_modules/ are allowed, no other files are served" },
+  { methods: READ, prefix: "/@vite/", who: "stage iframe", why: "Hot-reload client of the dev server" },
+  { methods: READ, exact: "/@id/__x00__vite/dynamic-import-helper.js", who: "stage iframe", why: "Runtime helper module for the dev server's dynamic import" },
+  { methods: READ, exact: "/@react-refresh", who: "stage iframe", why: "React hot-reload runtime" },
   { upgrade: true, methods: ["GET"], exact: "/", test: (_raw, headers) => /(^|,)\s*vite-(hmr|ping)\s*(,|$)/.test(String(headers["sec-websocket-protocol"] ?? "")),
-    who: "舞台 iframe", why: "热更新的 WebSocket(改卡之后舞台跟着换);只认开发服务器自己的子协议,文档服务等别的升级不放行" },
-  // —— 素材 ——
-  { methods: READ, prefix: "/@media/", who: "舞台里的 <video>、<img>、音频素材效果卡、素材效果卡", why: "本机内容库里的素材字节(按哈希或文件名,分段取);含 `/@media/<哈希>/pcm`" },
-  { methods: READ, exact: "/api/media/file", who: "舞台里的 <video>、<img>", why: "迁移期的老项目按路径取素材;接口自己只给素材目录里的文件" },
-  { methods: READ, prefix: "/catalog/", who: "Lottie 卡、粒子卡", why: "动效素材目录里登记过的 JSON(接口只认登记过的名字)" },
-  // —— 两条只读接口 ——
-  { methods: READ, exact: "/api/cards/scopes", who: "舞台里的卡片注册表", why: "定制卡的归属表(哪张卡属于哪个项目),只读;改档位的 POST 不放行" },
-  { methods: READ, exact: "/api/prerender/info", who: "舞台里取生成快照与轨道流的那一层", why: "问预渲染进程在哪个端口,只读(预渲染进程侧由 prerender-gate 拦死除流与快照字节外的一切请求)" },
+    who: "stage iframe", why: "Hot-reload WebSocket (the stage follows after a card is edited); only the dev server's own subprotocol is accepted, other upgrades such as the document service are not allowed" },
+  // Assets
+  { methods: READ, prefix: "/@media/", who: "<video>, <img>, audio media effect cards and media effect cards in the stage", why: "Asset bytes in the local content store (by hash or file name, fetched in segments); includes `/@media/<hash>/pcm`" },
+  { methods: READ, exact: "/api/media/file", who: "<video> and <img> in the stage", why: "Legacy projects in the migration period fetch assets by path; the endpoint itself only serves files in the asset directory" },
+  { methods: READ, prefix: "/catalog/", who: "Lottie cards, particle cards", why: "JSON registered in the motion graphics asset catalog (the endpoint only accepts registered names)" },
+  // Two read-only APIs
+  { methods: READ, exact: "/api/cards/scopes", who: "Card registry in the stage", why: "Ownership table of custom cards (which card belongs to which project), read-only; the POST that changes tiers is not allowed" },
+  { methods: READ, exact: "/api/prerender/info", who: "The layer in the stage that fetches generate snapshots and track streams", why: "Asks which port the prerender process is on, read-only (on the prerender process side, prerender-gate blocks every request except streams and snapshot bytes)" },
 ];
 
 const EXTRA_ALLOW = Symbol.for("promptcut.stage-allow");
 
 /**
- * 闭源版的页面脚本多引几个目录,放行规则由它的构建清单给(`buildExtensions.stageAllow`),公开侧不写这些路径。
- * 记在 `globalThis` 上:本模块在 vite 配置的打包结果里和编辑器进程里各有一份,两道闸要看同一张表。
+ * Page scripts in the commercial edition import a few more directories; allow rules are provided
+ * by its build manifest (`buildExtensions.stageAllow`), and these paths are not written on the
+ * open-source side. Recorded on `globalThis`: this module has one copy in the vite config bundle
+ * and one in the editor process; both gates must check the same table.
  * @param {typeof STAGE_ALLOW} rules
  */
 export function registerStageAllow(rules) {
   globalThis[EXTRA_ALLOW] = rules;
 }
 
-/** 匹配 /@media/<hash>、/@media/<hash>.<ext>、/@media/<hash>/pcm */
+/** Matches /@media/<hash>, /@media/<hash>.<ext>, /@media/<hash>/pcm */
 const MEDIA_HASH_RE = /^\/@media\/([0-9a-fA-F]{64})(?:\.[a-zA-Z0-9]+)?(?:\/pcm)?$/i;
 
 let stageMediaHashesGetter = null;
 
 /**
- * 注册当前项目素材哈希的获取函数（供桌面版舞台端口代理校验）
+ * Registers the getter function for current project asset hashes (for validation by the desktop
+ * app stage port proxy)
  * @param {(() => Set<string> | string[] | null) | null} fn
  */
 export function setStageMediaHashesGetter(fn) {
   stageMediaHashesGetter = fn;
 }
 
-/** 路径里有没有想跳出前缀的写法:`..` 段、反斜杠、编码过的点、斜杠、反斜杠。浏览器发出来的地址不会有这些 */
+/**
+ * Whether the path contains patterns attempting to escape the prefix: `..` segments, backslashes,
+ * encoded dots, slashes, or backslashes. URLs sent by browsers will not contain these.
+ */
 function sneaky(rawPath) {
   return /(^|\/)\.\.(\/|$)/.test(rawPath) || /\\|%2e|%2f|%5c|%00/i.test(rawPath);
 }
 
 /**
- * 这条从舞台端口来的请求放不放行。
+ * Whether to permit this request coming from a stage port.
  * @param {string} method
- * @param {string} url 请求行里的地址(含查询串)
- * @param {{ upgrade?: boolean, headers?: Record<string, unknown>, projectMediaHashes?: Set<string> | string[] | (() => Set<string> | string[] | null) }} [opts] `upgrade`:这是一次 WebSocket 升级
+ * @param {string} url URL in the request line (including query string)
+ * @param {{ upgrade?: boolean, headers?: Record<string, unknown>, projectMediaHashes?: Set<string> | string[] | (() => Set<string> | string[] | null) }} [opts] `upgrade`: this is a WebSocket upgrade
  */
 export function stageRequestAllowed(method, url, opts = {}) {
   const m = String(method || "GET").toUpperCase();
@@ -98,7 +122,7 @@ export function stageRequestAllowed(method, url, opts = {}) {
   const rawPath = raw.split("?")[0];
   if (!rawPath.startsWith("/") || sneaky(rawPath)) return false;
 
-  // 舞台按哈希读素材只放行当前项目 project.media 里的素材
+  // Reading assets by hash from the stage only permits assets in `project.media` of the current project
   const mediaHashMatch = MEDIA_HASH_RE.exec(rawPath);
   if (mediaHashMatch) {
     const hash = mediaHashMatch[1].toLowerCase();
@@ -122,17 +146,19 @@ export function stageRequestAllowed(method, url, opts = {}) {
   return false;
 }
 
-/** 拒绝时回的内容(代理和编辑器进程那一侧回的是同一句) */
-export const STAGE_DENY_BODY = JSON.stringify({ ok: false, error: "舞台端口不提供这个接口" });
+/** Content returned upon rejection (both the proxy and the editor process side return the same message) */
+export const STAGE_DENY_BODY = JSON.stringify({ ok: false, error: "The stage port does not provide this endpoint" });
 
 /**
- * 排障和探针用的流水:设了 `PROMPTCUT_STAGE_PORT_LOG=<文件>` 时,舞台端口每来一个请求追加一行
- * `{ m, u, ws, ok }`(方法、地址、是不是升级、放没放行)。不设时什么都不做。只记不判,不影响放行与否。
+ * Log for troubleshooting and probes: when `PROMPTCUT_STAGE_PORT_LOG=<file>` is set, each incoming
+ * request on stage ports appends a line `{ m, u, ws, ok }` (method, URL, whether it is an upgrade,
+ * whether permitted). Does nothing when unset. Only logs without checking, not affecting whether
+ * permitted.
  */
 export function stageGateLog(method, url, upgrade, ok) {
   const file = process.env.PROMPTCUT_STAGE_PORT_LOG;
   if (!file) return;
-  try { fs.appendFileSync(file, JSON.stringify({ m: String(method || "GET").toUpperCase(), u: String(url || "/"), ws: !!upgrade, ok }) + "\n"); } catch { /* 记不下来不影响请求 */ }
+  try { fs.appendFileSync(file, JSON.stringify({ m: String(method || "GET").toUpperCase(), u: String(url || "/"), ws: !!upgrade, ok }) + "\n"); } catch { /* Logging failure does not affect the request */ }
 }
 
 export { READ as STAGE_READ_METHODS };

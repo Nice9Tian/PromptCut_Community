@@ -1,21 +1,27 @@
 /**
- * K6 自动再平衡的父页一半（只降不升）。
+ * The parent-page half of K6 automatic rebalancing (downgrade only, never upgrade).
  *
- * 舞台侧（`StageView` 的 `checkDemote`）算一秒窗口、挑出本窗口实测累计耗时最大的那张轻卡、
- * post `{ type: 'demote', clipId }`；这里做四件事：
+ * The stage side (`checkDemote` in `StageView`) computes a one-second window, picks the light card
+ * with the largest cumulative measured time in this window, and posts `{ type: 'demote', clipId }`;
+ * this side does four things:
  *
- *  1. 按 clipId 反查 `identityKey`（`costs` 是内容寻址的，记录里没有 clipId），拿到**旧记录**；
- *  2. **整条 PUT** `{ ...旧记录, capped: true, demoted: true }` —— `costs-store` 是整条替换、
- *     `validRecord` 要 `identityKey` + `device`，只发几项会被拒；各测量值保留旧值、不写 `null`；
- *     **只用 `demoted` 这一面旗**，不写 `pinnedHeavy`；
- *  3. 就地并进 `planDispatch` 手里那份 `costs` —— `planPipelines` 见到 `demoted` 就当 `capped`，
- *     于是这张卡在每个位置都判重、并进预渲染集合。**两端各自重算**：页面这边是 `setPlan`，
- *     预渲染进程那边由 `vite-plugin-costs` 的 `forwardToPrerender` 把同一条 PUT 转过去；
- *  4. 记进 `pendingDemote`（`snapshotFeed`）：**死素材就绪之前照常活渲**（用户看到的画面不变，
- *     只是可能慢），就绪之后的下一拍才切进 `suppressed` / `snapshots`。
+ *  1. Look up `identityKey` from the clipId (`costs` is content-addressed and the records have no
+ *     clipId), and get the **old record**;
+ *  2. **PUT the whole record** `{ ...old record, capped: true, demoted: true }`: `costs-store`
+ *     replaces whole records, and `validRecord` requires `identityKey` + `device`, so sending only a
+ *     few fields would be rejected; keep the old values of the measured values, do not write `null`;
+ *     **use only the `demoted` flag**, do not write `pinnedHeavy`;
+ *  3. Merge in place into the `costs` that `planDispatch` holds: `planPipelines` treats `demoted` as
+ *     `capped`, so this card is judged heavy at every position and merged into the prerender set.
+ *     **Both ends recompute on their own**: on the page side that is `setPlan`; on the prerender
+ *     process side, `forwardToPrerender` of `vite-plugin-costs` forwards the same PUT over;
+ *  4. Record it in `pendingDemote` (`snapshotFeed`): **until the dead assets are ready, keep live
+ *     rendering as usual** (the picture the user sees does not change, it may just be slower), and
+ *     only on the next tick after they are ready does it switch into `suppressed` / `snapshots`.
  *
- * `demoted` 只在本次会话生效：下次打开项目 `probeRunner` 的「已有记录且 `demoted !== true`
- * 才跳过」会让这张卡重新探针，探针显式写回 `demoted: false`。
+ * `demoted` only takes effect for this session: the next time the project is opened, the rule in
+ * `probeRunner` that "skips only when a record exists and `demoted !== true`" makes this card be
+ * probed again, and the probe explicitly writes back `demoted: false`.
  */
 import type { CardCostRecord } from "../render/cardCostKey.mjs";
 import { getState } from "../store/project";
@@ -23,14 +29,14 @@ import { clipIdentityOf } from "./costIdentity";
 import { currentCosts, mergePlanCosts } from "./planDispatch";
 import { markPendingDemote } from "./snapshotFeed";
 
-/** 这一次会话里已经降过的（别对同一张卡反复 PUT） */
+/** Cards already downgraded in this session (do not PUT repeatedly for the same card) */
 const demoted = new Set<string>();
 
 export function demotedClips(): ReadonlySet<string> {
   return demoted;
 }
 
-/** 验收探针要看这条真的写进去了没有 */
+/** The acceptance check probe needs to see whether this was really written */
 export interface DemoteResult {
   ok: boolean;
   clipId: string;
@@ -46,10 +52,10 @@ export async function onStageDemote(clipId: string): Promise<DemoteResult> {
   const old = currentCosts().find((r) => r.identityKey === identityKey);
   if (!old) return { ok: false, clipId, identityKey, reason: "no-record" };
   demoted.add(clipId);
-  // 就绪之前照常活渲（pinned 渲染 6：降级不立即生效）
+  // Keep live rendering as usual until ready (pinned rendering 6: the downgrade does not take effect immediately)
   markPendingDemote(clipId);
   const next: CardCostRecord = { ...old, capped: true, demoted: true };
-  // 先并进手里这一份：setPlan 立刻重算，不用等 PUT 的往返
+  // Merge into the copy in hand first: setPlan recomputes immediately, no need to wait for the PUT round trip
   mergePlanCosts([next]);
   try {
     const res = await fetch("/api/data/costs", {
@@ -63,7 +69,7 @@ export async function onStageDemote(clipId: string): Promise<DemoteResult> {
   }
 }
 
-/** 测试用 */
+/** For tests */
 export function resetDemote(): void {
   demoted.clear();
 }

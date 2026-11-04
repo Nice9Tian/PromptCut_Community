@@ -1,9 +1,11 @@
 /**
- * 「去字幕分页转写这份素材」的全局入口。
+ * Global entry point for "go to the captions tab and transcribe this media".
  *
- * 左栏的字幕分页归 LeftPanel 管,但想打开它的人不止左栏自己:时间轴上右键一段视频 /
- * 音频也要能直接跳过去转写。两边隔着好几层组件、又不共享 store 里的界面状态,
- * 所以用一个 window 事件搭桥:谁都能喊,LeftPanel 挂载时监听并切到字幕分页。
+ * The captions tab in the left rail belongs to LeftPanel, but the left rail is not the only one that
+ * wants to open it: right-clicking a video / audio clip on the timeline must also jump straight
+ * there to transcribe. The two sides are separated by several component layers and do not share UI
+ * state in the store, so a window event bridges them: anyone can fire it, and LeftPanel listens on
+ * mount and switches to the captions tab.
  */
 const EVENT = "pc-open-captions";
 

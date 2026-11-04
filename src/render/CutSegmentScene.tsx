@@ -7,27 +7,38 @@ import { FrameScene } from "./FrameScene";
 import type { StagePlaneProps } from "./Stage";
 
 /**
- * 剪辑段的画面(`kernel/cutSegments.ts` 文件头、`mechanism/rendering.md`「剪辑段」)。
+ * Cut segment visuals (`kernel/cutSegments.ts` file header, `mechanism/rendering.md` "Cut segment").
  *
- * 舞台把剪辑段当成一张卡:包裹层照卡片的规矩摆框、算不透明度与淡入淡出、定层序;包裹层里就是这里 ——
- * 一个嵌套的 `FrameScene`,按 `offset + 本地时间` 渲被引用剪辑的整帧。被引用剪辑的画面先在自己的
- * 画幅(项目宽高)里合成,再整块缩放进段的框里、超出的部分裁掉(包裹层 `overflow: hidden`)。
+ * The stage treats cut segments as a card: the wrapper layer positions the box, calculates opacity
+ * and fade in/out, and sets layer order according to card rules; inside the wrapper layer is right
+ * here: a nested `FrameScene` that renders the referenced cut's entire frame by `offset + local time`.
+ * The referenced cut's visuals are first composited in its own aspect ratio (project width and
+ * height), then scaled as a whole into the segment box, clipping overflow (wrapper layer
+ * `overflow: hidden`).
  *
- * 宿主(外层 `FrameScene`)是哪种素材变体、播没播、拖没拖、素材服务报了哪些哈希,经 `SceneHostContext`
- * 递进来:嵌套的场景照同一种变体渲 —— 舞台里是真在放的素材层,导出页是截图那一步才装的占位
- * (`__pcPrepareFrameMedia` 按 `data-pc-media-*` 找到它们,嵌套的也在同一个文档里),所以
- * 预览、导出、预渲染出的是同一帧。没有宿主(平铺时间轴的导出页)按导出页的占位变体。
+ * Which asset variant the host (outer `FrameScene`) uses, whether playing or scrubbing, and which
+ * hashes the asset service reported are passed in via `SceneHostContext`: the nested scene renders
+ * with the same variant: in the stage it is the actually playing media layer, while on the export
+ * page it uses placeholders installed only at the screenshot step (`__pcPrepareFrameMedia` locates
+ * them by `data-pc-media-*`, and nested ones are also in the same document), so preview, export, and
+ * prerender produce the same frame. When there is no host (export page with a flattened timeline),
+ * it follows the export page's placeholder variant.
  *
- * 嵌套场景里的包裹层不挂 `data-pc-clip`(挂 `data-pc-nested-clip`):命中测试、钉动画、量实体框、
- * 预渲染按轨道前缀拆层这些按「舞台顶层片段」工作的地方,看到的只有剪辑段自己这一层。
+ * The wrapper layer in a nested scene does not attach `data-pc-clip` (attaches
+ * `data-pc-nested-clip`): places operating on "stage top-level clips", such as hit testing,
+ * pinning animations, measuring entity boxes, and prerender splitting layers by track prefix,
+ * see only the cut segment's own layer.
  *
- * 剪辑段里的卡和父时间轴上的卡一样分轻重(用户 2026-10-21 定;`kernel/cutFlatten.mjs` 的摊平视图):舞台把六个平面 prop
- * 原样递进来(`planes`),嵌套舞台按「`flatPrefix` + 片段 id」(计划一侧的虚拟片段 id)查 —— 判重的卡藏活子树、贴自己的流,
- * 没流时显示占位;轻卡照常活渲。导出页、预渲染页不传平面,DOM 一个字不变。
+ * Cards in a cut segment are split into light and heavy just like cards on the parent timeline
+ * (user decision, 2026-10-21; `kernel/cutFlatten.mjs` flattened view): the stage passes in the six
+ * plane props as-is (`planes`), and the nested stage looks up by "`flatPrefix` + clip id" (virtual
+ * clip id on the plan side): cards classified as heavy hide live subtrees and paste their own
+ * streams, displaying placeholders when there is no stream; light cards live render as usual.
+ * The export and prerender pages do not pass planes, leaving the DOM completely unchanged.
  */
 export interface SceneHost {
   live: boolean;
-  /** 素材层跟的时刻(宿主场景的时间) */
+  /** Timestamp tracked by the media layer (time in the host scene) */
   mediaT: number;
   playing: boolean;
   scrubbing: boolean;
@@ -41,10 +52,11 @@ function subGraph(project: CutSegmentRender["project"]): Timeline["graph"] | und
   if (graphMemo.has(project)) return graphMemo.get(project) ?? undefined;
   let graph: Timeline["graph"] | null = null;
   try {
-    // 变速段的素材节点补上倍率(kernel/clipTime.mjs 的 withMediaRates;没有变速段时原样)
+    // Add the rate to media nodes of speed-change segments (withMediaRates in kernel/clipTime.mjs;
+    // unchanged when there are no speed-change segments)
     graph = project.cardNodes?.length ? withMediaRates(project, projectCardGraph(project)) : null;
   } catch {
-    // 算不出来(悬空输入之类)时和顶层一样按「图卡不画」兜底
+    // When it cannot be calculated (dangling input, etc.), fall back to "do not draw image cards" like the top level
     graph = null;
   }
   graphMemo.set(project, graph);
@@ -53,24 +65,25 @@ function subGraph(project: CutSegmentRender["project"]): Timeline["graph"] | und
 
 export function CutSegmentScene({ seg, start, localT, localDirectT = localT, playToken, size, flatPrefix, planes }: {
   seg: CutSegmentRender;
-  /** 这一段在父剪辑上的起点(秒) */
+  /** Start point of this segment on the parent cut (seconds) */
   start: number;
-  /** 段内本地时间(秒):舞台传给卡片的那个 `t` */
+  /** Local time within the segment (seconds): the `t` passed from the stage to the card */
   localT: number;
   localDirectT?: number;
   playToken: number;
-  /** 段的框(像素) */
+  /** Segment box (pixels) */
   size: { width: number; height: number };
-  /** 这一段里的片段在计划一侧的 id 前缀(`<段 id>~`,`kernel/cutFlatten.mjs`) */
+  /** Plan-side id prefix for clips in this segment (`<segment id>~`, `kernel/cutFlatten.mjs`) */
   flatPrefix?: string;
-  /** 舞台的六个平面 prop(按虚拟片段 id 发的);导出页、预渲染页不传 */
+  /** The stage's six plane props (dispatched by virtual clip id); omitted on export and prerender pages */
   planes?: StagePlaneProps;
 }) {
   const host = useContext(SceneHostContext);
   const { project, offset, duration } = seg;
   const tau = offset + localT;
   const tauDirect = offset + localDirectT;
-  // 被引用剪辑事后变短:超出它总时长的部分透明无声(Argon 审核意见冲突 3)
+  // Referenced cut shortened afterward: portions exceeding its total duration are transparent and
+  // silent (Argon review comment conflict 3)
   if (!(tau >= 0 && tau < duration) && !(tauDirect >= 0 && tauDirect < duration)) return null;
   const W = Math.max(1, project.width), H = Math.max(1, project.height);
   const sx = size.width / W, sy = size.height / H;

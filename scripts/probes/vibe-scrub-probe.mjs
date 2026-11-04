@@ -1,28 +1,37 @@
 // First import protects user directories and the shared port file before any fixture import.
 import '../lib/no-user-dirs.mjs';
 /**
- * 氛围式进度条发光与拖动选区验收探针（issue #31）。
+ * Acceptance probe for Vibe mode progress bar glow and drag selection (issue #31).
  *
- * 复用 `src/start/extchat-harness.tsx`（传 `showScrub: true`），在同一套真实皮肤与 `src/start/start.css` 下
- * 把「详细编辑」传输栏进度条（`[data-pc="start-detail-scrub"]`）与右侧拓展栏「画面」小窗进度条
- * （`[data-pc="start-ext-scrub"]`）画出来，并用带 `--enable-caret-browsing` 的无头浏览器实测：
+ * Reuses `src/start/extchat-harness.tsx` (passing `showScrub: true`) under the same real skin and
+ * `src/start/start.css` to render the "detail editing" transport bar progress bar
+ * (`[data-pc="start-detail-scrub"]`) and the right side panel "Video" mini-window progress bar
+ * (`[data-pc="start-ext-scrub"]`), tested with a headless browser with `--enable-caret-browsing`:
  *
- *   node scripts/probes/vibe-scrub-probe.mjs [--out <截图目录>] [--port 5953]
- *   端口：分给本探针的 5950～5959
+ *   node scripts/probes/vibe-scrub-probe.mjs [--out <screenshot-dir>] [--port 5953]
+ *   Port: 5950-5959 assigned to this probe
  *
- * 验收（每项一行进最后那行 JSON 的 `fails`）：
- *   V1 两条进度条在 `:hover`、`:focus`、`:focus-visible` 下都不挂矩形 `box-shadow` 与 `outline`
- *      （`boxShadow === "none"`、`outlineStyle === "none"`），改由 `filter: drop-shadow(...)` 顺着轨道和圆钮轮廓发光。
- *   V2 像素抽样核对：进度条聚焦/悬停发光时，轨道上下外侧 2px（仍在 `<input>` 16px 矩形盒内）比远端背景亮，
- *      不再出现把发光截断成一圈黑框的矩形暗槽。
- *   V3 传输栏与滑杆（`.ps-detail-head`、`.ps-detail-stage`、`.ps-detail-transport`、`.ps-stage-over`、
- *      `.ps-ext-transport`、`.ps-card-head`、`.ps-detail-scrub`、`.ps-ext-scrub`）均为 `user-select: none`，
- *      两条滑杆均为 `caret-color: transparent`。
- *   V4 开启 `--enable-caret-browsing` 拖动两条进度条，以及从滑杆上方 4px 的传输栏留白起拖横穿时间文字、标题和聊天气泡：
- *      原有的页面选区被立刻清掉，全程 `getSelection().type === "None"`、`getSelection().toString() === ""`，
- *      滑杆数值正常随拖动更新，圆钮左侧不出现竖线光标。
- *   V5 静态核对 `src/start/DetailEdit.tsx` 与 `src/start/ChatSidePanel.tsx`：两处进度滑杆都在 `onPointerDown` 清掉页面选区。
- * 截图：`scrub-detail-focus.png`、`scrub-ext-hover.png`、`scrub-after-drag.png`。最后一行输出 JSON：{ ok, fails, ... }。
+ * Acceptance (each item adds a line to `fails` in the final JSON line):
+ *   V1 Neither progress bar has a rectangular `box-shadow` or `outline` under `:hover`, `:focus`,
+ *      or `:focus-visible` (`boxShadow === "none"`, `outlineStyle === "none"`), glowing along the
+ *      track and thumb contours via `filter: drop-shadow(...)` instead.
+ *   V2 Pixel sampling check: when the progress bar glows on focus/hover, 2px outside the top and
+ *      bottom of the track (still within the `<input>` 16px rectangular box) is brighter than the
+ *      far background, no longer cutting off the glow into a rectangular dark groove with a black
+ *      border.
+ *   V3 Transport bar and sliders (`.ps-detail-head`, `.ps-detail-stage`, `.ps-detail-transport`,
+ *      `.ps-stage-over`, `.ps-ext-transport`, `.ps-card-head`, `.ps-detail-scrub`,
+ *      `.ps-ext-scrub`) are all `user-select: none`, and both sliders are
+ *      `caret-color: transparent`.
+ *   V4 Dragging both progress bars with `--enable-caret-browsing` enabled, as well as dragging from
+ *      the 4px transport bar whitespace above the slider across time text, headers, and chat
+ *      bubbles: existing page selection is cleared immediately, throughout
+ *      `getSelection().type === "None"` and `getSelection().toString() === ""`, slider values
+ *      update normally with dragging, and no vertical caret appears to the left of the thumb.
+ *   V5 Static check of `src/start/DetailEdit.tsx` and `src/start/ChatSidePanel.tsx`: both progress
+ *      sliders clear page selection in `onPointerDown`.
+ * Screenshots: `scrub-detail-focus.png`, `scrub-ext-hover.png`, `scrub-after-drag.png`. The last
+ * line outputs JSON: { ok, fails, ... }.
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -43,7 +52,7 @@ const arg = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OUT = path.resolve(arg('--out', path.join(os.tmpdir(), 'vibe-scrub-shots')));
 const PORT = Number(arg('--port', 5953));
-if (PORT < 5950 || PORT > 5959) throw new Error(`端口 ${PORT} 不在分给本探针的 5950～5959 里`);
+if (PORT < 5950 || PORT > 5959) throw new Error(`Port ${PORT} is not within 5950-5959, the range assigned to this probe`);
 fs.mkdirSync(OUT, { recursive: true });
 
 const fails = [];
@@ -52,17 +61,17 @@ const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra ===
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const portOpen = (port) => new Promise((resolve) => { const s = net.connect(port, '127.0.0.1'); s.once('connect', () => { s.destroy(); resolve(true); }); s.once('error', () => resolve(false)); });
-if (await portOpen(PORT)) throw new Error(`端口 ${PORT} 已被占用`);
+if (await portOpen(PORT)) throw new Error(`Port ${PORT} is already in use`);
 
-/* ================================================================ V5 源码静态核对 */
+/* ================================================================ V5 Source code static check */
 {
   const detailSrc = fs.readFileSync(path.join(ROOT, 'src/start/DetailEdit.tsx'), 'utf8');
   const extSrc = fs.readFileSync(path.join(ROOT, 'src/start/ChatSidePanel.tsx'), 'utf8');
   const detailHasClear = /start-detail-scrub[\s\S]{0,240}onPointerDown=\{[^}]*getSelection\(\)\?\.removeAllRanges\(\)/.test(detailSrc);
   const extHasClear = /start-ext-scrub[\s\S]{0,240}onPointerDown=\{[^}]*getSelection\(\)\?\.removeAllRanges\(\)/.test(extSrc);
   out.V5 = { detailHasClear, extHasClear };
-  check(detailHasClear, 'V5 DetailEdit.tsx 的进度滑杆在 onPointerDown 清掉选区', out.V5);
-  check(extHasClear, 'V5 ChatSidePanel.tsx 的进度滑杆在 onPointerDown 清掉选区', out.V5);
+  check(detailHasClear, 'V5 the progress slider in DetailEdit.tsx clears the selection on onPointerDown', out.V5);
+  check(extHasClear, 'V5 the progress slider in ChatSidePanel.tsx clears the selection on onPointerDown', out.V5);
 }
 
 const vite = await createViteServer({
@@ -86,9 +95,9 @@ const now = Date.now();
 const tool = (name, input = {}, ok) => ({ kind: 'tool', name: `mcp__promptcut__${name}`, input, ...(ok === undefined ? {} : { ok }) });
 const say = (text) => tool('send_message', { to: 'user', text }, true);
 const MSGS = [
-  { id: 'u1', role: 'user', text: '把开场节奏调快一点，让镜头推进更干脆。' },
+  { id: 'u1', role: 'user', text: 'Speed up the opening pacing a bit, and make the shot push-in crisper.' },
   { id: 'a1', role: 'assistant', text: '', startedAt: now, finishedAt: now, outcome: 'completed', parts: [
-    say('已经把前两段的切换提前了 0.8 秒，你拖一下进度条看看卡点顺不顺。'),
+    say('I moved the switch between the first two segments 0.8 s earlier. Drag the progress bar to see whether the beat points feel smooth.'),
     tool('set_clip_param', { id: 'c1' }, true),
   ] },
 ];
@@ -117,7 +126,7 @@ try {
   });
   await sleep(450);
 
-  /* ================================================================ V1 & V3 样式核对 */
+  /* ================================================================ V1 & V3 Style check */
   await page.focus('[data-pc="start-detail-scrub"]');
   await page.hover('[data-pc="start-ext-scrub"]');
   await sleep(100);
@@ -148,19 +157,19 @@ try {
   });
 
   out.V1 = { detailScrub: styleInfo.detailScrub, extScrub: styleInfo.extScrub };
-  check(styleInfo.detailScrub?.boxShadow === 'none' && styleInfo.detailScrub?.outlineStyle === 'none', 'V1 详细编辑进度条无矩形 box-shadow 与 outline', styleInfo.detailScrub);
-  check(styleInfo.detailScrub?.filter?.includes('drop-shadow('), 'V1 详细编辑进度条用 drop-shadow 顺着轨道发光', styleInfo.detailScrub);
-  check(styleInfo.extScrub?.boxShadow === 'none' && styleInfo.extScrub?.outlineStyle === 'none', 'V1 小窗进度条无矩形 box-shadow 与 outline', styleInfo.extScrub);
-  check(styleInfo.extScrub?.filter?.includes('drop-shadow('), 'V1 小窗进度条用 drop-shadow 顺着轨道发光', styleInfo.extScrub);
+  check(styleInfo.detailScrub?.boxShadow === 'none' && styleInfo.detailScrub?.outlineStyle === 'none', 'V1 the detail editing progress bar has no rectangular box-shadow or outline', styleInfo.detailScrub);
+  check(styleInfo.detailScrub?.filter?.includes('drop-shadow('), 'V1 the detail editing progress bar uses drop-shadow to glow along the track', styleInfo.detailScrub);
+  check(styleInfo.extScrub?.boxShadow === 'none' && styleInfo.extScrub?.outlineStyle === 'none', 'V1 the mini window progress bar has no rectangular box-shadow or outline', styleInfo.extScrub);
+  check(styleInfo.extScrub?.filter?.includes('drop-shadow('), 'V1 the mini window progress bar uses drop-shadow to glow along the track', styleInfo.extScrub);
 
   out.V3 = styleInfo;
   for (const [k, v] of Object.entries(styleInfo)) {
-    check(v?.userSelect === 'none', `V3 ${k} 已设 user-select: none`, v);
+    check(v?.userSelect === 'none', `V3 ${k} has user-select: none set`, v);
   }
-  check(styleInfo.detailScrub?.caretColor === 'rgba(0, 0, 0, 0)', 'V3 详细编辑进度条 caret-color 为透明', styleInfo.detailScrub);
-  check(styleInfo.extScrub?.caretColor === 'rgba(0, 0, 0, 0)', 'V3 小窗进度条 caret-color 为透明', styleInfo.extScrub);
+  check(styleInfo.detailScrub?.caretColor === 'rgba(0, 0, 0, 0)', 'V3 the detail editing progress bar\'s caret-color is transparent', styleInfo.detailScrub);
+  check(styleInfo.extScrub?.caretColor === 'rgba(0, 0, 0, 0)', 'V3 the mini window progress bar\'s caret-color is transparent', styleInfo.extScrub);
 
-  /* ================================================================ V2 像素核对(发光不截断成矩形框) */
+  /* ================================================================ V2 Pixel check (glow not cut off into rectangular box) */
   const detailShotPath = path.join(OUT, 'scrub-detail-focus.png');
   const detailClip = await page.$eval('.ps-detail-transport', (el) => {
     const r = el.getBoundingClientRect();
@@ -175,9 +184,12 @@ try {
   });
   await page.screenshot({ path: extShotPath, clip: extClip });
 
-  // 在详细编辑进度条已填充段(左侧强调色轨道)正上方量亮度分布:
-  // 轨道高 8px、`<input>` 盒高 16px。旧的 `box-shadow` 会在距中心 4~7px 处留出黑框、8px 外才亮;
-  // 改成 `drop-shadow` 后,距轨道中心 5~6px(仍在 `<input>` 盒内)就有发光过渡,比远端背景亮且向远端单调衰减。
+  // Measure luminance distribution directly above the filled segment of the detail editing
+  // progress bar (left accent color track):
+  // Track height 8px, `<input>` box height 16px. The old `box-shadow` left a black border 4-7px from
+  // the center, glowing only beyond 8px;
+  // after switching to `drop-shadow`, a glow transition appears 5-6px from the track center (still
+  // within the `<input>` box), brighter than the far background and decaying monotonically outward.
   const detailBox = await page.$eval('[data-pc="start-detail-scrub"]', (el) => {
     const r = el.getBoundingClientRect();
     return { x: r.x, y: r.y, width: r.width, height: r.height };
@@ -190,16 +202,18 @@ try {
     const idx = (py * png.width + px) * 4;
     return Math.round((png.data[idx] * 0.2126 + png.data[idx + 1] * 0.7152 + png.data[idx + 2] * 0.0722) * 10) / 10;
   };
-  // dyCss = 6px 仍在 `<input>` 16px 盒内(紧贴 8px 轨道上方 2px),dyCss = 10px 在 `<input>` 盒外,dyCss = 16px 是远端背景
+  // dyCss = 6px is still within the `<input>` 16px box (2px directly above the 8px track),
+  // dyCss = 10px is outside the `<input>` box, and dyCss = 16px is the far background
   const lumNearTrack = lumAt(sampleX, centerY - 6 * dpr);
   const lumMidGlow = lumAt(sampleX, centerY - 10 * dpr);
   const lumFarBg = lumAt(sampleX, centerY - 16 * dpr);
   out.V2 = { lumNearTrack, lumMidGlow, lumFarBg };
-  check(lumNearTrack > lumFarBg + 3, 'V2 轨道外侧 (<input> 盒内) 有真实发光而非被裁空的黑框', out.V2);
-  check(lumNearTrack >= lumMidGlow && lumMidGlow >= lumFarBg, 'V2 发光从轨道向外平滑衰减、没有矩形边界跳变', out.V2);
+  check(lumNearTrack > lumFarBg + 3, 'V2 outside the track (inside the <input> box) there is a real glow, not a clipped-out black box', out.V2);
+  check(lumNearTrack >= lumMidGlow && lumMidGlow >= lumFarBg, 'V2 the glow fades smoothly outward from the track, with no jump at a rectangular boundary', out.V2);
 
-  /* ================================================================ V4 拖动与选区核对 */
-  // 1) 先故意全选一段聊天文字,再按下并拖动详细编辑进度条:旧选区应立刻被清掉,且拖动后无选区
+  /* ================================================================ V4 Dragging and selection check */
+  // 1) Intentionally select a section of chat text first, then press and drag the detail editing
+  // progress bar: the old selection should be cleared immediately, with no selection after dragging
   await page.evaluate(() => {
     const msg = document.querySelector('.ps-xtext');
     if (msg) {
@@ -221,7 +235,8 @@ try {
     value: Number(document.querySelector('[data-pc="start-detail-scrub"]').value),
   }));
 
-  // 2) 从详细编辑进度条上方 4px(传输栏留白处)按下并一路拖过右侧时间文字和顶栏标题:不应触发任何内容选中
+  // 2) Press 4px above the detail editing progress bar (transport bar whitespace) and drag all the
+  // way across the right time text and top bar header: no content selection should be triggered
   await page.mouse.move(detailBox.x + 40, detailBox.y - 4);
   await page.mouse.down();
   await page.mouse.move(detailBox.x + detailBox.width + 80, detailBox.y + 8, { steps: 10 });
@@ -232,7 +247,8 @@ try {
     selText: window.getSelection()?.toString() ?? '',
   }));
 
-  // 3) 拖动小窗进度条,并从小窗传输栏留白拖向下面的聊天面板:同样不触发任何选中,且滑杆值正常改变
+  // 3) Drag the mini-window progress bar, and drag from the mini-window transport bar whitespace
+  // toward the chat panel below: likewise triggers no selection, and slider value changes normally
   const extBox = await page.$eval('[data-pc="start-ext-scrub"]', (el) => {
     const r = el.getBoundingClientRect();
     return { x: r.x, y: r.y, width: r.width, height: r.height };
@@ -259,14 +275,14 @@ try {
   await page.screenshot({ path: path.join(OUT, 'scrub-after-drag.png') });
 
   out.V4 = { preSelLen: preSel.length, afterDetailDrag, afterDetailMissDrag, afterExtDrag, afterExtMissDrag, errors };
-  check(preSel.length > 0, 'V4 拖动前先造出一条非空选区供对照', out.V4);
-  check(afterDetailDrag.selType === 'None' && afterDetailDrag.selText === '', 'V4 按下拖动详细编辑进度条后选区被清空、不留竖线光标', afterDetailDrag);
-  check(afterDetailDrag.value > 30, 'V4 拖动详细编辑进度条后进度值更新', afterDetailDrag);
-  check(afterDetailMissDrag.selType === 'None' && afterDetailMissDrag.selText === '', 'V4 从详细编辑传输栏留白拖过时间与标题不意外选中内容', afterDetailMissDrag);
-  check(afterExtDrag.selType === 'None' && afterExtDrag.selText === '', 'V4 拖动小窗进度条不产生选区与竖线光标', afterExtDrag);
-  check(afterExtDrag.value > 35, 'V4 拖动小窗进度条后进度值更新', afterExtDrag);
-  check(afterExtMissDrag.selType === 'None' && afterExtMissDrag.selText === '', 'V4 从小窗传输栏留白拖向下方聊天区不意外选中内容', afterExtMissDrag);
-  check(errors.length === 0, 'V4 页面无报错', errors.slice(0, 3));
+  check(preSel.length > 0, 'V4 create a non-empty selection before dragging, for comparison', out.V4);
+  check(afterDetailDrag.selType === 'None' && afterDetailDrag.selText === '', 'V4 after pressing and dragging the detail editing progress bar, the selection is cleared and no vertical-line caret is left', afterDetailDrag);
+  check(afterDetailDrag.value > 30, 'V4 the progress value updates after dragging the detail editing progress bar', afterDetailDrag);
+  check(afterDetailMissDrag.selType === 'None' && afterDetailMissDrag.selText === '', 'V4 dragging across the time and title from the blank area of the detail editing transport bar does not unexpectedly select content', afterDetailMissDrag);
+  check(afterExtDrag.selType === 'None' && afterExtDrag.selText === '', 'V4 dragging the mini window progress bar produces no selection or vertical-line caret', afterExtDrag);
+  check(afterExtDrag.value > 35, 'V4 the progress value updates after dragging the mini window progress bar', afterExtDrag);
+  check(afterExtMissDrag.selType === 'None' && afterExtMissDrag.selText === '', 'V4 dragging from the blank area of the mini window transport bar down to the chat area does not unexpectedly select content', afterExtMissDrag);
+  check(errors.length === 0, 'V4 the page has no errors', errors.slice(0, 3));
 } finally {
   await browser.close().catch(() => {});
   await new Promise((r) => server.close(r));

@@ -1,23 +1,36 @@
 /**
- * 云端 Agent 的出网闸(任务书 `docs/plan/cloud-agent-task.md` J;契约 `docs/plan/cloud-agent-contract.md` 第 9.6 节)。
+ * Cloud Agent egress gate (task brief `docs/plan/cloud-agent-task.md` J;
+ * contract `docs/plan/cloud-agent-contract.md` Section 9.6).
  *
- * 凡是按模型给的地址发请求的工具(网页采集、下载、按地址导入素材、网页接管),在托管档一律经这一处:
+ * All tools that send requests to model-provided addresses (web collection, downloads, importing
+ * media by URL, web handoff) must go through here in the hosted tier:
  *
- *   - 只许 http / https;地址里不许带用户名口令;端口只许清单里的;
- *   - 主机名先解析,**解析出的每一个地址**都要过黑名单:回环、链路本地(含 169.254.169.254)、私有网段、运营商级 NAT、
- *     组播与保留段、本机各网卡的地址,以及 IPv6 的对应范围(含 IPv4 映射、NAT64、6to4、Teredo 这些能把内网地址包进去的前缀)。
- *     有一个不过就整个拒绝(一个名字同时指着外网与内网的,不赌它这次连哪个);
- *   - **按解析结果连接,不二次解析**:连接时的 `lookup` 钉死在刚核过的那个地址上,防 DNS 重绑定;
- *   - 重定向不交给底层跟:每一跳都重新走上面全部检查,最多 `maxRedirects` 跳;跨源的跳不带鉴权头;
- *   - 响应体有上限,超了当场断开;整体有时限。
+ *   - Only http / https permitted; URLs must not contain username or password; ports must be in
+ *     the allowlist;
+ *   - Hostnames are resolved first, and **every resolved address** must pass the blacklist:
+ *     loopback, link-local (including 169.254.169.254), private subnets, carrier-grade NAT,
+ *     multicast and reserved ranges, addresses of local network interfaces, and corresponding
+ *     IPv6 ranges (including prefixes that can enclose intranet addresses, such as IPv4-mapped,
+ *     NAT64, 6to4, and Teredo). If any fails, reject entirely (if a hostname points to both external
+ *     and internal networks, do not gamble on which one it connects to);
+ *   - **Connect using resolved results without re-resolving**: pin the connection's `lookup` to the
+ *     just-verified address to prevent DNS rebinding;
+ *   - Do not delegate redirects to the underlying layer: every hop reruns all checks above, up to
+ *     `maxRedirects` hops; cross-origin hops omit authorization headers;
+ *   - Response bodies have a maximum size limit, aborting immediately if exceeded; overall requests
+ *     have a timeout.
  *
- * 两种用法:进程内的 `request()`;子进程(下载器、浏览器)经 `startProxy()` 起的一个只绑回环的正向代理出网,
- * 代理对每个目标做同样的检查——子进程自己解析、自己连的,靠部署时的系统级限制兜底(部署说明里写)。
+ * Two usage modes: in-process `request()`; subprocesses (downloader, browser) egress via a forward
+ * proxy spawned by `startProxy()` bound strictly to loopback. The proxy performs the same checks on
+ * every target: subprocesses that resolve and connect on their own rely on system-level restrictions
+ * during deployment as a fallback (described in deployment instructions).
  *
- * 测试例外:`testAllow` 是一组「IP:端口」,只有探针与单测给;给了就在日志里打一行 `agent.egress.test-allow`,
- * 状态口也报。生产不设这个环境变量(`PROMPTCUT_AGENT_EGRESS_TEST_ALLOW`),缺省为空。
+ * Test exceptions: `testAllow` is a set of "IP:port" pairs, provided only by probes and unit tests;
+ * when provided, logs a line `agent.egress.test-allow`, also reported by the status endpoint.
+ * Production does not set this environment variable (`PROMPTCUT_AGENT_EGRESS_TEST_ALLOW`),
+ * defaulting to empty.
  *
- * 纯 Node,不引用 `src/`,不引第三方包。
+ * Pure Node, does not import `src/` or third-party packages.
  */
 import dns from 'node:dns';
 import http from 'node:http';
@@ -26,14 +39,14 @@ import net from 'node:net';
 import os from 'node:os';
 
 export const EGRESS_DEFAULTS = Object.freeze({
-  /** 许连的端口 */
+  /** Permitted ports */
   ports: Object.freeze([80, 443, 8080, 8443]),
   maxRedirects: 5,
-  /** 单个响应体的上限 */
+  /** Limit for a single response body */
   maxBytes: 512 * 1024 * 1024,
-  /** 一次请求(含各跳)的时限 */
+  /** Timeout for a request (including all hops) */
   timeoutMs: 60_000,
-  /** 本机网卡地址缓存多久 */
+  /** How long to cache local network interface addresses */
   interfaceTtlMs: 30_000,
 });
 
@@ -52,10 +65,10 @@ const V4_BLOCKED = [
   ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4],
 ];
 const V6_BLOCKED = [
-  ['::', 127], // :: 与 ::1
-  ['64:ff9b::', 96], ['64:ff9b:1::', 48], // NAT64:后 32 位是 IPv4,整段不许
-  ['100::', 64], ['2001::', 32], // 丢弃段、Teredo
-  ['2001:db8::', 32], ['2002::', 16], // 文档段、6to4
+  ['::', 127], // :: and ::1
+  ['64:ff9b::', 96], ['64:ff9b:1::', 48], // NAT64: last 32 bits are IPv4, entire range disallowed
+  ['100::', 64], ['2001::', 32], // Discard range, Teredo
+  ['2001:db8::', 32], ['2002::', 16], // Documentation range, 6to4
   ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8],
 ];
 
@@ -67,7 +80,7 @@ function buildBlockList() {
 }
 const STATIC_BLOCK = buildBlockList();
 
-/** `::ffff:a.b.c.d`、`::a.b.c.d` 这类把 IPv4 包在 IPv6 里的写法 → 里面的 IPv4;不是就回 null */
+/** Notation wrapping IPv4 inside IPv6 like `::ffff:a.b.c.d`, `::a.b.c.d` → inner IPv4; otherwise returns null */
 export function embeddedV4(ip) {
   if (net.isIP(ip) !== 6) return null;
   const lower = ip.toLowerCase();
@@ -82,15 +95,16 @@ export function embeddedV4(ip) {
   return null;
 }
 
-/** 主机名去掉 IPv6 的方括号与结尾的点 */
+/** Strip IPv6 square brackets and trailing dots from hostname */
 const bareHost = (h) => String(h ?? '').replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
 
 /**
  * @param {object} [o]
  * @param {readonly number[]} [o.ports]
- * @param {readonly string[]} [o.testAllow] 「IP:端口」;只给测试
- * @param {(hostname: string) => Promise<Array<{ address: string, family: number }>>} [o.resolve] 解析(测试可换)
- * @param {() => string[]} [o.localAddresses] 本机各网卡的地址(测试可换)
+ * @param {readonly string[]} [o.testAllow] "IP:port" pairs; testing only
+ * @param {(hostname: string) => Promise<Array<{ address: string, family: number }>>} [o.resolve]
+ *   Resolve function (replaceable for testing)
+ * @param {() => string[]} [o.localAddresses] Local network interface addresses (replaceable for testing)
  * @param {(event: string, fields?: object) => void} [o.log]
  */
 export function createEgressGate({
@@ -104,7 +118,7 @@ export function createEgressGate({
   now = () => Date.now(),
   log = () => {},
 } = {}) {
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响判定 */ } };
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failure does not affect decision */ } };
   const portSet = new Set(ports);
   const allow = new Set((testAllow ?? []).map((s) => String(s).trim().toLowerCase()).filter(Boolean));
   if (allow.size) say('agent.egress.test-allow', { count: allow.size });
@@ -122,12 +136,12 @@ export function createEgressGate({
         ? localAddresses()
         : Object.values(os.networkInterfaces()).flat().map((i) => i?.address);
       for (const a of list) if (typeof a === 'string' && a) out.add(a.split('%')[0].toLowerCase());
-    } catch { /* 读不到网卡就只靠静态表 */ }
+    } catch { /* Rely solely on static table if network interfaces cannot be read */ }
     ifaceSet = out;
     return out;
   }
 
-  /** 一个 IP 能不能连;不能回原因,能回 null */
+  /** Whether an IP can be connected to; returns reason if not, null if allowed */
   function addressRefusal(ip) {
     const family = net.isIP(ip);
     if (!family) return 'not-ip';
@@ -145,47 +159,50 @@ export function createEgressGate({
   };
 
   /**
-   * 核一个目标(主机 + 端口),回钉死的连接地址 `{ address, family, hostname, port }`;不许就抛 `EgressError`。
-   * 日志里只有原因码与端口,不记地址原文以外的东西(主机名是模型给的,可能带用户的东西,只记长度)。
+   * Verify a target (host + port), returning pinned connection address
+   * `{ address, family, hostname, port }`; throws `EgressError` if disallowed.
+   * Logs contain only reason code and port, recording nothing beyond raw address (hostname is
+   * model-provided and may contain user data, so only length is logged).
    */
   async function admit(hostnameIn, port) {
     const hostname = bareHost(hostnameIn);
-    if (!hostname) throw refuse('unresolved', '地址里没有主机名');
-    if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw refuse('port', `端口 ${port} 不合法`);
+    if (!hostname) throw refuse('unresolved', 'The address has no hostname');
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw refuse('port', `Port ${port} is invalid`);
     let addrs;
     if (net.isIP(hostname)) addrs = [{ address: hostname, family: net.isIP(hostname) }];
     else {
       try { addrs = await resolve(hostname); } catch { addrs = []; }
       addrs = (Array.isArray(addrs) ? addrs : []).filter((a) => a && net.isIP(a.address));
-      if (!addrs.length) throw refuse('unresolved', `解析不了这个主机名`, { port });
+      if (!addrs.length) throw refuse('unresolved', `Cannot resolve this hostname`, { port });
     }
-    // 测试例外:每一个解析结果都在例外表里才算(只给探针在本机回环上起的「测试专用外部地址」)
+    // Test exception: valid only if every resolved result is in the exception table (only for
+    // "test-only external addresses" created by probes on local loopback)
     if (allow.size && addrs.every((a) => allow.has(`${a.address.toLowerCase()}:${port}`))) {
       stats.allowed += 1;
       return { address: addrs[0].address, family: addrs[0].family, hostname, port, testAllowed: true };
     }
-    if (!portSet.has(port)) throw refuse('port', `云端 Agent 不许访问 ${port} 端口`, { port });
+    if (!portSet.has(port)) throw refuse('port', `The Cloud Agent is not allowed to access port ${port}`, { port });
     for (const a of addrs) {
       if (addressRefusal(a.address)) {
-        throw refuse('blocked-address', '云端 Agent 不许访问节点本机、内网与保留地址', { port });
+        throw refuse('blocked-address', 'The Cloud Agent is not allowed to access the node itself, internal networks or reserved addresses', { port });
       }
     }
     stats.allowed += 1;
     return { address: addrs[0].address, family: addrs[0].family, hostname, port, testAllowed: false };
   }
 
-  /** 核一个地址(字符串或 URL);回 `{ url, target }` */
+  /** Verify an address (string or URL); returns `{ url, target }` */
   async function admitUrl(input) {
     let url;
-    try { url = input instanceof URL ? input : new URL(String(input)); } catch { throw refuse('protocol', '地址不合法'); }
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw refuse('protocol', '云端 Agent 只许访问 http / https 地址');
-    if (url.username || url.password) throw refuse('credentials', '地址里不许带用户名口令');
+    try { url = input instanceof URL ? input : new URL(String(input)); } catch { throw refuse('protocol', 'The address is invalid'); }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw refuse('protocol', 'The Cloud Agent may only access http / https addresses');
+    if (url.username || url.password) throw refuse('credentials', 'The address must not contain a username or password');
     const port = url.port ? Number(url.port) : (url.protocol === 'https:' ? 443 : 80);
     const target = await admit(url.hostname, port);
     return { url, target };
   }
 
-  /** 钉死解析结果的 `lookup`(Node 新旧两种回调形状都认) */
+  /** `lookup` pinning resolution results (recognizes both legacy and modern Node callback signatures) */
   const pinnedLookup = (target) => (_hostname, options, callback) => {
     const cb = typeof options === 'function' ? options : callback;
     const all = typeof options === 'object' && options?.all === true;
@@ -193,13 +210,14 @@ export function createEgressGate({
     else cb(null, target.address, target.family);
   };
 
-  /** 发一跳,不跟重定向。回 `{ res, req }`,`res` 是还没读的响应流 */
+  /** Send a single hop without following redirects. Returns `{ res, req }`, where `res` is the unread response stream */
   function hop(url, target, { method = 'GET', headers = {}, body = null, signal } = {}) {
     return new Promise((resolvePromise, reject) => {
       const mod = url.protocol === 'https:' ? https : http;
       const req = mod.request({
         protocol: url.protocol,
-        // 主机名原样给(TLS 的 SNI 与证书核对用它);真正连哪里由 lookup 钉死。IP 字面量不经 lookup,它已经核过
+        // Pass hostname as is (used by TLS SNI and certificate verification); actual connection target
+        // is pinned by lookup. IP literals bypass lookup as they are already verified
         host: target.hostname,
         port: target.port,
         path: `${url.pathname}${url.search}`,
@@ -210,21 +228,22 @@ export function createEgressGate({
         signal,
       });
       req.once('response', (res) => resolvePromise({ res, req }));
-      req.once('error', (err) => reject(err?.egress ? err : new EgressError(err?.name === 'AbortError' ? 'timeout' : 'network', `连不上:${String(err?.code ?? err?.message ?? err).slice(0, 120)}`)));
+      req.once('error', (err) => reject(err?.egress ? err : new EgressError(err?.name === 'AbortError' ? 'timeout' : 'network', `Cannot connect: ${String(err?.code ?? err?.message ?? err).slice(0, 120)}`)));
       if (body !== null && body !== undefined) req.end(body); else req.end();
     });
   }
 
   /**
-   * 进程内发请求。跟重定向(每一跳重查)、限大小、限时。
+   * In-process request. Follows redirects (re-checking each hop), limits size, limits time.
    * @param {string | URL} input
    * @param {object} [o]
    * @param {string} [o.method]
    * @param {Record<string, string>} [o.headers]
    * @param {Buffer | string | null} [o.body]
-   * @param {number} [o.maxBytes] 这次的响应体上限(不超过闸的上限)
+   * @param {number} [o.maxBytes] Limit for this response body (does not exceed gate limit)
    * @param {number} [o.timeoutMs]
-   * @param {(chunk: Buffer) => void | Promise<void>} [o.onChunk] 给了就不攒在内存里,逐块交出去(下载落盘用)
+   * @param {(chunk: Buffer) => void | Promise<void>} [o.onChunk] If provided, streams chunk by chunk instead of
+   *   accumulating in memory (for downloading to disk)
    * @param {AbortSignal} [o.signal]
    * @returns {Promise<{ status: number, headers: object, url: string, body: Buffer | null, bytes: number, hops: number }>}
    */
@@ -247,9 +266,9 @@ export function createEgressGate({
         const status = res.statusCode ?? 0;
         if ([301, 302, 303, 307, 308].includes(status) && typeof res.headers.location === 'string') {
           res.resume();
-          if (hops >= maxRedirects) throw refuse('redirects', `重定向超过 ${maxRedirects} 次`);
+          if (hops >= maxRedirects) throw refuse('redirects', `More than ${maxRedirects} redirects`);
           let next;
-          try { next = new URL(res.headers.location, url); } catch { throw refuse('protocol', '重定向的地址不合法'); }
+          try { next = new URL(res.headers.location, url); } catch { throw refuse('protocol', 'The redirect address is invalid'); }
           if (next.origin !== url.origin) {
             headers = Object.fromEntries(Object.entries(headers).filter(([k]) => !/^(authorization|cookie|proxy-authorization)$/i.test(k)));
           }
@@ -260,7 +279,7 @@ export function createEgressGate({
         const declared = Number(res.headers['content-length']);
         if (Number.isFinite(declared) && declared > cap) {
           res.destroy();
-          throw refuse('too-large', `响应体超过上限(${cap} 字节)`);
+          throw refuse('too-large', `Response body exceeds the limit (${cap} bytes)`);
         }
         const chunks = [];
         let bytes = 0;
@@ -268,7 +287,7 @@ export function createEgressGate({
           bytes += chunk.length;
           if (bytes > cap) {
             res.destroy();
-            throw refuse('too-large', `响应体超过上限(${cap} 字节)`);
+            throw refuse('too-large', `Response body exceeds the limit (${cap} bytes)`);
           }
           if (typeof o.onChunk === 'function') await o.onChunk(chunk);
           else chunks.push(chunk);
@@ -277,8 +296,8 @@ export function createEgressGate({
       }
     } catch (err) {
       if (err?.egress) throw err;
-      if (ctl.signal.aborted) throw new EgressError('timeout', `请求超过 ${Math.round(limitMs / 1000)} 秒没有完成`);
-      throw new EgressError('network', `请求失败:${String(err?.code ?? err?.message ?? err).slice(0, 120)}`);
+      if (ctl.signal.aborted) throw new EgressError('timeout', `The request did not complete within ${Math.round(limitMs / 1000)} seconds`);
+      throw new EgressError('network', `Request failed: ${String(err?.code ?? err?.message ?? err).slice(0, 120)}`);
     } finally {
       clearTimeout(timer);
       o.signal?.removeEventListener?.('abort', onOuterAbort);
@@ -286,17 +305,18 @@ export function createEgressGate({
   }
 
   /**
-   * 给子进程用的正向代理(只绑回环、随机端口)。CONNECT 与明文 HTTP 的每个目标都过 `admit`,连到钉死的地址上。
-   * 回 `{ url, port, close }`。
+   * Forward proxy for subprocesses (bound only to loopback, random port). Every target of CONNECT
+   * and plaintext HTTP passes `admit` and connects to the pinned address.
+   * Returns `{ url, port, close }`.
    */
   async function startProxy({ host = '127.0.0.1' } = {}) {
     const sockets = new Set();
     const server = http.createServer((req, res) => {
-      // 明文 HTTP:请求行里是绝对地址
+      // Plaintext HTTP: request line contains absolute URL
       void (async () => {
         try {
           const { url, target } = await admitUrl(req.url ?? '');
-          if (url.protocol !== 'http:') throw refuse('protocol', '代理的明文通道只接 http 地址');
+          if (url.protocol !== 'http:') throw refuse('protocol', 'The proxy\'s plaintext channel only accepts http addresses');
           const headers = { ...req.headers };
           for (const k of Object.keys(headers)) if (/^proxy-/i.test(k)) delete headers[k];
           const up = http.request({
@@ -319,7 +339,7 @@ export function createEgressGate({
       void (async () => {
         try {
           const m = /^(\[[^\]]+\]|[^:]+):(\d{1,5})$/.exec(String(req.url ?? ''));
-          if (!m) throw refuse('protocol', 'CONNECT 的目标不合法');
+          if (!m) throw refuse('protocol', 'The CONNECT target is invalid');
           const target = await admit(m[1], Number(m[2]));
           const up = net.connect({ host: target.address, port: target.port, family: target.family });
           sockets.add(up);
@@ -330,10 +350,10 @@ export function createEgressGate({
             up.pipe(client);
             client.pipe(up);
           });
-          up.once('error', () => { try { client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'); } catch { /* 已经断了 */ } });
+          up.once('error', () => { try { client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'); } catch { /* Already disconnected */ } });
           client.once('close', () => up.destroy());
         } catch (err) {
-          try { client.end(`HTTP/1.1 403 Forbidden\r\nx-egress-refused: ${String(err?.code ?? 'error')}\r\n\r\n`); } catch { /* 已经断了 */ }
+          try { client.end(`HTTP/1.1 403 Forbidden\r\nx-egress-refused: ${String(err?.code ?? 'error')}\r\n\r\n`); } catch { /* Already disconnected */ }
         }
       })();
     });
@@ -346,7 +366,7 @@ export function createEgressGate({
       port,
       url: `http://${host}:${port}`,
       close() {
-        for (const s of sockets) { try { s.destroy(); } catch { /* 已经关了 */ } }
+        for (const s of sockets) { try { s.destroy(); } catch { /* Already closed */ } }
         return new Promise((resolvePromise) => { server.closeAllConnections?.(); server.close(() => resolvePromise()); });
       },
     };
@@ -358,13 +378,13 @@ export function createEgressGate({
     addressRefusal,
     request,
     startProxy,
-    /** 测试例外开没开(状态口报它;生产必须是 false) */
+    /** Whether test exceptions are enabled (reported by status endpoint; must be false in production) */
     testAllowActive: allow.size > 0,
     describe: () => ({ ...stats, testAllow: allow.size > 0, ports: [...portSet] }),
   };
 }
 
-/** 环境变量里的测试例外:逗号分隔的「IP:端口」。只认字面 IP */
+/** Test exceptions from environment variable: comma-separated "IP:port" pairs. Only literal IPs are recognized */
 export function parseTestAllow(text) {
   return String(text ?? '').split(',').map((s) => s.trim().toLowerCase()).filter((s) => {
     const m = /^(\[[^\]]+\]|[^:]+):(\d{1,5})$/.exec(s);

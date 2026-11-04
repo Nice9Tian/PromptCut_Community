@@ -6,8 +6,8 @@ const FIXED = {
   playing: false,
   trackCount: 2,
   cards: [
-    { id: "card-1", kind: "punch-pill", name: "金句卡", start: 3, end: 8, track: 0 },
-    { id: "card-2", kind: "term-card", name: "术语卡", start: 12, end: 18, track: 1 }
+    { id: "card-1", kind: "punch-pill", name: "Punchline card", start: 3, end: 8, track: 0 },
+    { id: "card-2", kind: "term-card", name: "Term card", start: 12, end: 18, track: 1 }
   ]
 };
 
@@ -41,7 +41,7 @@ rl.on('line', (line) => {
         result: {
           tools: [{
             name: "get_editor_state",
-            description: "读取编辑台当前状态",
+            description: "Read the editor's current state",
             inputSchema: { type: "object", properties: {}, required: [] }
           }]
         }

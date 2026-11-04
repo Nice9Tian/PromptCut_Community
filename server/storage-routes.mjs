@@ -1,23 +1,34 @@
+import { tr } from "./i18n.mjs";
 /**
- * `/api/storage*`(存储占用计划第 4 节的前三条;`/api/exports*` 归界面那一支)。
+ * `/api/storage*` (the first three items in section 4 of the storage footprint plan;
+ * `/api/exports*` belongs to the UI branch).
  *
  *   GET  /api/storage               { ok, frameLibrary: { bytes, capBytes, capSource, diskBytes, pinnedBytes, scannedAt, lastEvict, … },
  *                                     exports: { bytes, count, intermediateBytes }, leftovers: { bytes } }
- *                                   `?detail=1` 另带 `frameLibrary.units`(每个淘汰单元的最近使用时刻、字节数、保护与否)和
- *                                   `frameLibrary.lastEvictDetail`(上一轮删了哪些、跳过哪些),给探针和诊断。
- *                                   上一次检查早于 60 秒时先在后台发起一次量(只量不淘汰,`refreshIfStale`),
- *                                   这次回包照旧立刻回,`frameLibrary.scanning` 为 true;界面见到它隔几秒再取
- *   POST /api/storage/cap           { bytes }  → { ok, capBytes };越界 400 `CAP_OUT_OF_RANGE`(带 min / max)。设了立即判一次(不等删完)
- *   POST /api/storage/clear-cache   → { ok, freedBytes, removed, skipped }(删完才回)
+ *                                   `?detail=1` also includes `frameLibrary.units` (most recent use
+ *                                   timestamp, byte count, whether protected for each eviction unit)
+ *                                   and `frameLibrary.lastEvictDetail` (what was deleted and skipped
+ *                                   in the last round), for probes and diagnostics.
+ *                                   If the last check was more than 60 seconds ago, initiates a
+ *                                   measurement in the background first (measure only, no eviction,
+ *                                   `refreshIfStale`); this response is still returned immediately
+ *                                   as usual with `frameLibrary.scanning` set to true; the UI
+ *                                   fetches again after a few seconds upon seeing it
+ *   POST /api/storage/cap           { bytes }  → { ok, capBytes }; out of range 400 `CAP_OUT_OF_RANGE`
+ *                                   (with min / max). Evaluates immediately once set (does not wait
+ *                                   for deletion to finish)
+ *   POST /api/storage/clear-cache   → { ok, freedBytes, removed, skipped } (returns only after deletion)
  *
- * 只在预渲染进程里答(它是帧库的主要写入方,扫描与淘汰在它这里);编辑器进程原样转过去(`vite-plugin-frames.ts`)。
- * 都在 `/api` 同源守卫之后(`vite-plugin-api-guard.ts` 排在全部插件之前)。在线构建没有 dev server,也没有这些路由。
+ * Answered only in the prerender process (it is the primary writer of the frame store; scanning and
+ * eviction take place here); the editor process forwards it as is (`vite-plugin-frames.ts`).
+ * All are behind the `/api` same-origin guard (`vite-plugin-api-guard.ts` placed before all plugins).
+ * Online builds have no dev server and none of these routes.
  */
 
-/** 挂在 `/api/storage` 下时,connect 剥掉前缀之后剩下的路径 */
+/** The remaining path after connect strips the prefix when mounted under `/api/storage` */
 export const STORAGE_ROUTES = ['/', '/cap', '/clear-cache'];
 
-/** 这个请求是不是 `/api/storage*` 的三条之一(不是就 `next()`) */
+/** Whether this request is one of the three `/api/storage*` routes (if not, `next()`) */
 export function storageRouteOf(req) {
   const pathname = String(req.url || '/').split('?')[0].replace(/\/+$/, '') || '/';
   if (!STORAGE_ROUTES.includes(pathname)) return null;
@@ -36,7 +47,7 @@ const json = (res, status, data) => {
 function readBody(req, limit = 4096) {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => { body += chunk; if (body.length > limit) { reject(Object.assign(new Error('请求体太大'), { status: 413 })); req.destroy(); } });
+    req.on('data', chunk => { body += chunk; if (body.length > limit) { reject(Object.assign(new Error(tr("Request body too large")), { status: 413 })); req.destroy(); } });
     req.on('end', () => resolve(body));
     req.on('error', reject);
   });
@@ -55,15 +66,16 @@ export function createStorageHandler({ storage, exports: exportSummary }) {
       const manager = storage();
       if (route === '/') {
         const detail = new URL(req.url || '/', 'http://x').searchParams.get('detail') === '1';
-        // 上一次检查早于 60 秒:后台量一次(不挡这次回包;回包的 scanning 为 true,界面过几秒再取)
-        try { manager.refreshIfStale?.(); } catch { /* 量不了不挡回包 */ }
+        // Last check was over 60s ago: measure once in background (does not block this response;
+        // response scanning is true, UI fetches again in a few seconds)
+        try { manager.refreshIfStale?.(); } catch { /* Failure to measure does not block response */ }
         const [frameLibrary, exportsInfo] = await Promise.all([manager.summary({ detail }), exportSummary.get()]);
         const { leftoverBytes, ...library } = frameLibrary;
         return json(res, 200, { ok: true, frameLibrary: library, exports: exportsInfo, leftovers: { bytes: leftoverBytes } });
       }
       if (route === '/cap') {
         let input;
-        try { input = JSON.parse((await readBody(req)) || '{}'); } catch { return json(res, 400, { ok: false, code: 'BAD_JSON', error: '请求体不是 JSON' }); }
+        try { input = JSON.parse((await readBody(req)) || '{}'); } catch { return json(res, 400, { ok: false, code: 'BAD_JSON', error: 'Request body is not JSON' }); }
         const bytes = Number(input?.bytes);
         const { capBytes } = await manager.setCap(bytes);
         return json(res, 200, { ok: true, capBytes });

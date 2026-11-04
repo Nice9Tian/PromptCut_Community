@@ -9,7 +9,7 @@ function run(code,env=process.env) {
   return execFileSync(process.execPath,['--import',preload,'--input-type=module','--eval',code],{env,windowsHide:true,encoding:'utf8',timeout:15000});
 }
 
-test('SILENT-1 保留 execFile 的 Promise 输出、子进程及失败回包',()=>{
+test('SILENT-1 preserves execFile\'s Promise output, child process and failure response',()=>{
   const output=run(`
     import assert from 'node:assert/strict';
     import { execFile } from 'node:child_process';
@@ -23,7 +23,7 @@ test('SILENT-1 保留 execFile 的 Promise 输出、子进程及失败回包',()
   assert.equal(output,'passed');
 });
 
-test('SILENT-2 保留 exec 的 Promise 输出与子进程',()=>{
+test('SILENT-2 preserves exec\'s Promise output and child process',()=>{
   const output=run(`
     import assert from 'node:assert/strict';
     import { exec } from 'node:child_process';
@@ -37,7 +37,7 @@ test('SILENT-2 保留 exec 的 Promise 输出与子进程',()=>{
   assert.equal(output,'passed');
 });
 
-test('SILENT-3 显式隔离数据目录不被预加载清除，后代仍继承静默设置',()=>{
+test('SILENT-3 an explicitly isolated data directory is not cleared by the preload, and descendants still inherit the silent setting',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pc-silent-contract-'));
   try {
     const output=run(`
@@ -52,7 +52,7 @@ test('SILENT-3 显式隔离数据目录不被预加载清除，后代仍继承�
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
 });
 
-test('SILENT-4 原生 fork 后代保留 IPC 与静默设置',()=>{
+test('SILENT-4 native fork descendants keep IPC and the silent setting',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pc-silent-fork-'));
   try {
     const file=path.join(dir,'child.mjs');

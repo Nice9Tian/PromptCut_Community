@@ -5,9 +5,9 @@ import { easeExpoOut, accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 增长折线图:一条动态画出的平滑渐变折线,并在最高点标注数字。
- * 从 growth-curve 拆出,去除了外壳及所有标题和脚注。
- * 进场:曲线 pathLength 从 0 到 1,渐变面积淡入,之后最高点弹出数值。
+ * Growth line chart: a dynamically drawn smooth gradient line chart that annotates numbers at the peak.
+ * Extracted from growth-curve, stripped of shell and all titles and footnotes.
+ * Entrance: curve pathLength goes from 0 to 1, gradient area fades in, then peak pops up the value.
  */
 interface Params {
   points: string;
@@ -161,10 +161,10 @@ function ChartGrowthPart({ params, width, height }: PartProps<Params>) {
 
 export const chartGrowth: PartDef<Params> = {
   id: "chart-growth",
-  name: "增长曲线",
-  description: "平滑增长折线图,仅标出最高值",
-  useWhen: "一串随时间变化的数值画走势时使用。**只有最高点会标出数值**,其余点只显示标签名;单个数字用 metric-odometer 或 metric-stat,多项比大小用 chart-rank。",
-  tags: ["折线", "走势", "增长", "图表"],
+  name: "Growth curve",
+  description: "Smooth growth line chart that labels only the highest value",
+  useWhen: "Use when plotting a trend of values that change over time. **Only the highest point shows its value**; the other points show just their label names. For a single number use metric-odometer or metric-stat; to compare several items by size use chart-rank.",
+  tags: ["line chart", "trend", "growth", "chart"],
   role: "media",
   from: "growth-curve",
   defaults: {
@@ -175,11 +175,11 @@ export const chartGrowth: PartDef<Params> = {
     size: 0,
   },
   controls: [
-    { key: "points", label: "数据点(标签 数值|...)", type: "text" },
-    { key: "unit", label: "单位", type: "text" },
-    { key: "drawMs", label: "绘制时长(ms)", type: "number", min: 500, max: 2000, step: 100 },
-    { key: "accent", label: "颜色", type: "color" },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 120, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
+    { key: "points", label: "Data points (label value|...)", type: "text" },
+    { key: "unit", label: "Unit", type: "text" },
+    { key: "drawMs", label: "Draw duration (ms)", type: "number", min: 500, max: 2000, step: 100 },
+    { key: "accent", label: "Color", type: "color" },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 120, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
   ],
   defaultFrame: { x: 960, y: 540, w: 1100, h: 420, anchor: [0.5, 0.5] },
   settleMs: (p) => (p.drawMs > 0 ? p.drawMs : 1000) * 0.85 + 400,

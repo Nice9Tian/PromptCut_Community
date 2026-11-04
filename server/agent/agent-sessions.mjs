@@ -1,39 +1,51 @@
 /**
- * Agent 会话登记表(计划 `docs/plan/agent-workflow-plan.md` A1,供 A2～A4 用):对话 ID → 这个会话是谁。
+ * Agent session registry (plan `docs/plan/agent-workflow-plan.md` A1, used by A2-A4):
+ * chat ID → who this session is.
  *
- *   - `type`:`api`(AI 栏 API 直连)/ `cli`(AI 栏走命令行工具,经 MCP 回调)/ `desktop`(桌面 APP 的会话,
- *     经 MCP 直连来的,计划 A4:`server/mcp-server.mjs` 每个会话一个身份,`/api/mcp/call` 登记);
- *   - `vendor`:厂商(claude、codex、agy,API 直连填设置里的厂商;桌面 APP 的会话是 claude-code、codex 等,从 MCP 的
- *     `clientInfo` 认);`label`:给人看的厂商名(桌面 APP 的会话才有,如「Claude Code」);`client`:它自报的客户端名与版本;
- *   - `role`:角色(AI 栏的主对话 `main`;A3 `spawn_agent` 拉起的子 Agent 带预设角色的 id);
- *   - `parent`:拉起它的对话 ID(A3 子 Agent;主对话是 `null`)。子 Agent 不能再拉起(深度 1);
- *   - `override`:这个对话单独设的创造力等级,`null` = 跟项目。
+ *   - `type`: `api` (AI panel direct API) / `cli` (AI panel via CLI tool, callback via MCP) /
+ *     `desktop` (desktop app session, directly connected via MCP, plan A4: one identity per session
+ *     in `server/mcp-server.mjs`, registered via `/api/mcp/call`);
+ *   - `vendor`: vendor (claude, codex, agy; direct API uses vendor in settings; desktop app sessions
+ *     are claude-code, codex, etc., identified from MCP `clientInfo`); `label`: human-readable vendor
+ *     name (only present for desktop app sessions, e.g. "Claude Code"); `client`: self-reported client
+ *     name and version;
+ *   - `role`: role (lead chat in AI panel is `main`; subagents spawned via A3 `spawn_agent` carry
+ *     preset role id);
+ *   - `parent`: chat ID that spawned it (A3 subagent; lead chat is `null`). Subagents cannot spawn
+ *     further (depth 1);
+ *   - `override`: creativity level individually configured for this chat, `null` = follow project.
  *
- * 子 Agent 的等级(A3〔裁〕):拉起时取父对话此刻生效的等级作为它的覆盖值;之后每次判都再和父对话此刻生效的等级取低的,
- * 不能高于父对话 —— 用户在子页签里调高也只到父对话那一档。
+ * Subagent level (A3 [ruling]): when spawned, takes parent chat's currently effective level as its
+ * override; subsequent checks take the lower of its level and parent chat's currently effective
+ * level, never exceeding parent chat: user raising it in a child tab only goes up to parent chat tier.
  *
- * 等级规则(`user-workflow.md`「创造力等级」):AI 栏的对话取自己的覆盖值,没有就跟项目;
- * 桌面 APP 的会话一律跟项目。**没登记过的对话 ID 当桌面 APP 会话**:AI 栏的对话每次发消息都会先登记
- * (`/api/ai/chat`),桌面 APP 的会话每次调用也先登记(`/api/mcp/call`),登记表里没有的调用只可能来自别处
- * (手工挂上、没按约定报身份的 MCP 客户端)。
+ * Level rules (`user-workflow.md` "Creativity level"): AI panel chats take their own overrides,
+ * falling back to project; desktop app sessions always follow project. **Unregistered chat IDs are
+ * treated as desktop app sessions**: AI panel chats register before each message (`/api/ai/chat`),
+ * desktop app sessions register before each tool call (`/api/mcp/call`), and calls missing from
+ * registry can only come from elsewhere (manually mounted MCP clients that did not report identity
+ * per contract).
  *
- * 登记表只在内存里,进程重启就清空 —— AI 栏下一次发消息会重新登记,没有要持久化的东西。
+ * Registry resides in memory only and is cleared on process restart: AI panel re-registers on its
+ * next message, so nothing needs persistence.
  */
 import { effectiveCreativity, normalizeCreativity, creativityRank } from './ssr-host.mjs';
+import { tr } from '../i18n.mjs';
 
-// 创造力等级的几个名字从这里转出:server/agent/service/ 不直接引用 src/(契约 cloud-agent-contract.md 第 2.1 节「载入缝」),经 ssr-host.mjs 取
+// Creativity level names are re-exported here: server/agent/service/ does not directly import
+// src/ (contract cloud-agent-contract.md section 2.1 "Loading seam"); retrieved via ssr-host.mjs
 export { CREATIVITY_HINT, CREATIVITY_LABEL, normalizeCreativity, projectCreativity } from './ssr-host.mjs';
 
 export const SESSION_TYPES = Object.freeze(['api', 'cli', 'desktop']);
 
-/** 登记表的上限:超了按最久没动的先丢(一个编辑器进程正常只有几个对话) */
+/** Registry limit: evict least recently active when exceeded (an editor process normally has only a few chats) */
 const MAX_SESSIONS = 256;
 
 /**
  * @param {{ now?: () => number }} [options]
  */
 export function createAgentSessions({ now = () => Date.now() } = {}) {
-  /** key('' = 没带对话 ID)→ 记录 */
+  /** key ('' = call without chat ID) → record */
   const sessions = new Map();
 
   const keyOf = (id) => (typeof id === 'string' ? id : '');
@@ -44,14 +56,16 @@ export function createAgentSessions({ now = () => Date.now() } = {}) {
 
   return {
     /**
-     * 登记或更新一个对话。AI 栏每次发消息调一次:驱动、等级都可能在两条消息之间被用户换掉;
-     * 桌面 APP 的会话每次工具调用调一次(`role` 传 null,厂商与客户端名来自它的 MCP 进程)。
+     * Registers or updates a chat. Called once per message from AI panel: driver and level may both be
+     * changed by user between two messages; called once per tool call for desktop app sessions
+     * (`role` passes null, vendor and client name come from its MCP process).
      */
     register(id, { type, vendor = null, label = null, client = null, role = 'main', creativity = null, parent = undefined } = {}) {
       const key = keyOf(id);
       const t = SESSION_TYPES.includes(type) ? type : 'desktop';
       const old = sessions.get(key);
-      // 子 Agent 的角色与父对话在拉起时定下,之后 AI 栏每条消息的登记(role 固定是 main)不改它们
+      // Subagent role and parent chat are set when spawned; subsequent AI panel registrations
+      // per message (role fixed to main) do not modify them
       const parentKey = parent !== undefined ? (typeof parent === 'string' && parent ? parent : null) : (old?.parent ?? null);
       const roleOut = old?.parent && parent === undefined ? old.role : (typeof role === 'string' && role ? role.slice(0, 64) : null);
       const entry = {
@@ -64,7 +78,7 @@ export function createAgentSessions({ now = () => Date.now() } = {}) {
           : null,
         role: roleOut,
         parent: parentKey,
-        // 桌面 APP 的会话跟随项目,不收覆盖值
+        // Desktop app sessions follow project, do not accept overrides
         override: t === 'desktop' ? null : normalizeCreativity(creativity),
         registeredAt: sessions.get(key)?.registeredAt ?? now(),
         lastSeen: now(),
@@ -75,43 +89,43 @@ export function createAgentSessions({ now = () => Date.now() } = {}) {
       return { ...entry };
     },
 
-    /** 这个对话的记录;没登记过回一条桌面 APP 会话的记录(不写进表) */
+    /** Record for this chat; returns desktop app session record if not registered (not written to table) */
     get(id) {
       const key = keyOf(id);
       const hit = sessions.get(key);
       return hit ? { ...hit } : desktopEntry(key);
     },
 
-    /** 这个对话生效的等级与来源。`projectLevel` 是项目当前的默认等级 */
+    /** Effective level and source for this chat. `projectLevel` is current project default level */
     creativityOf(id, projectLevel, depth = 0) {
       const entry = this.get(id);
       let level = effectiveCreativity(entry.override, projectLevel);
       let source = entry.override
-        ? '这个对话单独设的'
-        : entry.type === 'desktop' ? '桌面 APP 会话跟随项目的默认等级' : '跟随项目的默认等级';
-      // 子 Agent 不高于拉起它的对话(A3〔裁〕);深度只有 1,多判一层防环
+        ? tr("Set for this chat only")
+        : entry.type === 'desktop' ? tr("Desktop app sessions follow the project's default level") : tr("Follows the project's default level");
+      // Subagent cannot exceed chat that spawned it (A3 [ruling]); depth is only 1, extra check prevents cycles
       if (entry.parent && depth < 4) {
         const up = this.creativityOf(entry.parent, projectLevel, depth + 1);
         if (creativityRank(up.level) < creativityRank(level)) {
           level = up.level;
-          source = `子 Agent 不高于拉起它的对话 ${entry.parent}`;
+          source = tr("A sub-Agent is not higher than the chat {0} that launched it", entry.parent);
         }
       }
       return { level, source, entry };
     },
 
-    /** 拉起失败(页面没开出页签)时撤掉登记 */
+    /** Deregister when spawn fails (page did not open tab) */
     unregister(id) {
       sessions.delete(keyOf(id));
     },
 
-    /** 某个对话拉起的子 Agent(登记表里 parent 是它的) */
+    /** Subagents spawned by a chat (parent in registry matches this chat) */
     childrenOf(id) {
       const key = keyOf(id);
       return [...sessions.values()].filter((e) => e.parent === key).map((e) => ({ ...e }));
     },
 
-    /** 记一次调用(给 A2 起的「谁在动」用;没登记过的不写进表) */
+    /** Records a call (used by A2 "who is active"; unregistered calls are not written to table) */
     touch(id) {
       const hit = sessions.get(keyOf(id));
       if (hit) hit.lastSeen = now();

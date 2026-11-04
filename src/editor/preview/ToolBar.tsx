@@ -1,7 +1,8 @@
 /**
- * 预览工具行(配色诊断与修正 v2 整屏,中栏顶部)。
- * 直接铺在 L0 画布上,没有条底:三个 28 方工具钮(选中 L3 底 + 强调色描边),
- * 右侧是画幅 / 帧率的等宽小字、当前缩放比,和「适应窗口」按钮。
+ * Preview tool row (color diagnosis and correction v2, full screen, top of the middle rail).
+ * It is laid directly on the L0 canvas with no bar background: three 28-square tool buttons
+ * (selected: L3 background + accent outline); on the right are the monospace small text for
+ * aspect ratio / frame rate, the current zoom ratio, and the "Fit window" button.
  */
 import { useStore } from "../../store/project";
 import { IconCursor, IconText, IconMove } from "../../ui/icons";
@@ -26,16 +27,16 @@ export function ToolBar({
 }: {
   tool: ToolType;
   onToolChange: (tool: ToolType) => void;
-  /** 当前缩放比(1 = 一个画面像素占一个屏幕像素) */
+  /** Current zoom ratio (1 = one picture pixel takes one screen pixel) */
   zoom: number;
-  /** 是不是正跟着窗口自动适应 */
+  /** Whether it is automatically fitting to the window */
   fitted: boolean;
   onFit: () => void;
 }) {
   const width = useStore((s) => s.project.width);
   const height = useStore((s) => s.project.height);
   const fps = useStore((s) => s.project.fps);
-  // 这个项目只给了只读权限(游客):移动、文字两个工具会改项目,置灰;选择照常
+  // This project only grants read-only access (guest): the move and text tools would change the project, so they are grayed out; select works as usual
   const ro = useReadOnly();
   return (
     <div className="pc-pv-tools" role="toolbar" aria-label={tr("Preview tools")}>
@@ -56,10 +57,11 @@ export function ToolBar({
         {width} × {height} · {fps} fps · {Math.round(zoom * 100)}%
       </span>
       {/*
-        以前这里是个 <span>,写着「适应窗口」却点不动 —— 它只是在陈述「现在正适应着窗口」,
-        可是看起来就是个按钮,点了没反应。现在滚轮能缩放、中键能平移了,
-        它才有事可做:自己调过视角之后点一下回到适应窗口。
-        还在自动适应时按钮是禁用的(点了也没有任何变化,不如直接说明白)。
+        Previously this was a <span> that read "Fit window" but could not be clicked: it was merely
+        stating "currently fitting to window", yet looked like a button with no response on click. Now
+        that the scroll wheel zooms and middle click pans, it has a purpose: click once after adjusting
+        the view manually to return to fitting the window. While still auto-fitting, the button is
+        disabled (clicking produces no change anyway, better to make that clear directly).
       */}
       <button
         type="button"

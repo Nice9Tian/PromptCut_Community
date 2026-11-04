@@ -1,10 +1,12 @@
 /**
- * 把页面发来的项目换成预渲染间认得的样子(素材地址)。从 `vite-plugin-frames.ts` 原样搬来
- * (契约 `docs/plan/render-queue-contract.md` J.5),那边照旧转出同名函数,调用方不用改。
+ * Convert project sent from the page into a format recognized by prerender (asset addresses).
+ * Moved as-is from `vite-plugin-frames.ts` (contract `docs/plan/render-queue-contract.md` J.5); that
+ * side re-exports the function with the same name, callers need no changes.
  *
- * 搬出来是因为队列执行器(`prerender-executor.mjs`)按版本从文档服务取回项目之后,要和
- * `/api/frames/preload` 路由对镜像做同一件事:同一份 JSON 算出同一个 `entry.key`。
- * 这里只引 Node 内置模块也不引,纯函数,不改入参。
+ * Moved out because after the queue executor (`prerender-executor.mjs`) fetches the project by
+ * version from the document service, it must do the same thing to the mirror as the
+ * `/api/frames/preload` route: calculate the same `entry.key` from the same JSON. Doesn't even
+ * import Node built-in modules; pure function, does not mutate input arguments.
  *
  * @param {any} project
  * @returns {any}

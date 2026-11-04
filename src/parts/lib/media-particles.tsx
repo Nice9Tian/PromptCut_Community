@@ -3,9 +3,9 @@ import { ParticlesView } from "../../cards/native/particles";
 import { assetOptions } from "../../cards/catalogAssets";
 
 /**
- * 粒子背景。
- * 从 particles 卡片拆出的媒体部件，铺满整个画面。
- * 进场: 随机生成，实时漂浮。
+ * Particle background.
+ * Media part extracted from particles card, covering the entire frame.
+ * Entrance: randomly generated, floating in real time.
  */
 interface Params {
   config: string;
@@ -52,10 +52,10 @@ function MediaParticlesPart({ params, width, height, t }: PartProps<Params>) {
 
 export const mediaParticles: PartDef<Params> = {
   id: "media-particles",
-  name: "粒子背景",
-  description: "漂浮的粒子,可带连线,铺满整个画面",
-  useWhen: "整段画面需要一层动态的科技感 / 星空感底纹时用,通常放最底层;不填 config 用简单参数,要雪花 / 星空 / 气泡这类现成效果就在 config 填 /catalog/particles/ 下的 URL(此时简单参数不起作用);粒子排布由 seed 决定,同一个 seed 每次导出都一样;它是背景不是主角,要强调数字或文字用别的部件叠在上面。",
-  tags: ["粒子", "背景", "科技", "星空", "雪花", "canvas"],
+  name: "Particle background",
+  description: "Floating particles, optionally linked by lines, filling the whole frame",
+  useWhen: "Use when the whole frame needs a dynamic tech / starry-sky texture layer, usually on the bottom layer. Leave config empty to use the simple parameters; for ready-made effects like snowflakes / starry sky / bubbles, put a URL under /catalog/particles/ in config (the simple parameters then have no effect). The particle layout is determined by seed, and the same seed gives the same result on every export. It is a background, not the main subject; to emphasize numbers or text, overlay other parts on top.",
+  tags: ["particles", "background", "tech", "starry sky", "snowflake", "canvas"],
   role: "media",
   from: "particles",
   defaults: {
@@ -68,13 +68,13 @@ export const mediaParticles: PartDef<Params> = {
     seed: 1,
   },
   controls: [
-    { key: "config", label: "现成配置", type: "asset", kind: "particles", options: assetOptions("particles"), hint: "从素材目录里挑一个(options 里的 URL),或填别的 URL / 内联 JSON;填了就用它,下面的颜色/数量/速度不起作用" },
-    { key: "color", label: "颜色", type: "color" },
-    { key: "quantity", label: "数量", type: "number", min: 0, max: 400, step: 10 },
-    { key: "speed", label: "速度", type: "number", min: 0, max: 10, step: 0.2 },
-    { key: "size", label: "大小(px)", type: "number", min: 0.5, max: 20, step: 0.5 },
-    { key: "links", label: "连线", type: "select", options: [{ value: "yes", label: "有" }, { value: "no", label: "无" }] },
-    { key: "seed", label: "随机种子", type: "number", min: 1, max: 99999, step: 1, hint: "换一个数就换一种排布" },
+    { key: "config", label: "Preset config", type: "asset", kind: "particles", options: assetOptions("particles"), hint: "Pick one from the media catalog (a URL in options), or enter another URL / inline JSON; when set, it is used and the color/count/speed below have no effect" },
+    { key: "color", label: "Color", type: "color" },
+    { key: "quantity", label: "Count", type: "number", min: 0, max: 400, step: 10 },
+    { key: "speed", label: "Speed", type: "number", min: 0, max: 10, step: 0.2 },
+    { key: "size", label: "Size (px)", type: "number", min: 0.5, max: 20, step: 0.5 },
+    { key: "links", label: "Links", type: "select", options: [{ value: "yes", label: "present" }, { value: "no", label: "none" }] },
+    { key: "seed", label: "Random seed", type: "number", min: 1, max: 99999, step: 1, hint: "Change the number to get a different layout" },
   ],
   defaultFrame: { x: 960, y: 540, w: 1920, h: 1080, anchor: [0.5, 0.5] },
   settleMs: () => 0,

@@ -1,13 +1,16 @@
 /**
- * 页面上报渲染环境（契约 `docs/plan/render-queue-contract.md` F.4，测试表 F.5 的 W1～W2）。
- * 跑：node --experimental-test-module-mocks --test src/editor/pageEnvironment.test.mjs
+ * Page reports render environment (contract `docs/plan/render-queue-contract.md` F.4, test table F.5
+ * W1-W2).
+ * Run: node --experimental-test-module-mocks --test src/editor/pageEnvironment.test.mjs
  *
- * 只照契约 F.4 写，不看实现。被测模块 `src/editor/pageEnvironment.mjs` 是 F.4 新建的，按需动态引入：
- * 它不存在时这几条用例失败，不影响别的文件。
+ * Written strictly according to contract F.4, without looking at implementation. The tested module
+ * `src/editor/pageEnvironment.mjs` is newly created in F.4 and dynamically imported on demand:
+ * if it does not exist, these test cases fail without affecting other files.
  *
- * 假的 `navigator` / `document` / WebGL 只实现契约写明的调用：
- *   `document.createElement('canvas')`、`canvas.getContext('webgl2' | 'webgl')`、
- *   `gl.getExtension('WEBGL_debug_renderer_info' | 'WEBGL_lose_context')`、`gl.getParameter(...)`、`loseContext()`。
+ * Mock `navigator` / `document` / WebGL only implements calls specified in the contract:
+ *   `document.createElement('canvas')`, `canvas.getContext('webgl2' | 'webgl')`,
+ *   `gl.getExtension('WEBGL_debug_renderer_info' | 'WEBGL_lose_context')`, `gl.getParameter(...)`,
+ *   `loseContext()`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,8 +24,9 @@ const VENDOR = 0x1F00;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
 
 /**
- * 假的 WebGL 环境。`contexts`：{ webgl2?: glOptions, webgl?: glOptions }，没给的类型 getContext 回 null。
- * glOptions：{ debug = true, unmasked = ['U-R', 'U-V'], masked = ['M-R', 'M-V'] }。
+ * Mock WebGL environment. `contexts`: { webgl2?: glOptions, webgl?: glOptions }; types not provided
+ * return null for getContext.
+ * glOptions: { debug = true, unmasked = ['U-R', 'U-V'], masked = ['M-R', 'M-V'] }.
  */
 function fakeDom({ contexts = {}, getContextThrows = false, createThrows = false, getParameterThrows = false } = {}) {
   const log = { created: [], tried: [], extensions: [], params: [], lost: 0, appended: 0 };
@@ -64,47 +68,47 @@ const nav = (over = {}) => ({ platform: 'Win32', userAgent: UA, ...over });
 
 /* ================================================================== W1 */
 
-test('W1 读出四项：platform / userAgent / renderer / vendor；userAgentData.platform 优先；有 debug 扩展读 UNMASKED_*、读完释放上下文、canvas 不挂进文档', async () => {
+test('W1 reads four fields: platform / userAgent / renderer / vendor; userAgentData.platform takes priority; with a debug extension it reads UNMASKED_*, releases the context after reading, and the canvas is not attached to the document', async () => {
   const { readPageEnvironment } = await load();
   const { document, log } = fakeDom({ contexts: { webgl2: { unmasked: ['ANGLE (NVIDIA, NVIDIA GeForce RTX 3060)', 'Google Inc. (NVIDIA)'] } } });
   const env = readPageEnvironment({ navigator: nav({ userAgentData: { platform: 'Windows' } }), document });
   assert.deepEqual(env, { platform: 'Windows', userAgent: UA, renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060)', vendor: 'Google Inc. (NVIDIA)' });
   assert.deepEqual(log.created, ['canvas']);
-  assert.deepEqual(log.tried, ['webgl2'], 'webgl2 拿到了就不再试 webgl');
+  assert.deepEqual(log.tried, ['webgl2'], 'Once webgl2 is obtained, webgl is not tried again');
   assert.ok(log.extensions.includes('WEBGL_debug_renderer_info'));
   assert.ok(log.params.includes(UNMASKED_RENDERER_WEBGL) && log.params.includes(UNMASKED_VENDOR_WEBGL));
-  assert.equal(log.lost, 1, '读完用 WEBGL_lose_context 释放');
-  assert.equal(log.appended, 0, 'canvas 不挂进文档');
+  assert.equal(log.lost, 1, 'Released with WEBGL_lose_context after reading');
+  assert.equal(log.appended, 0, 'the canvas is not attached to the document');
 });
 
-test('W1 platform 的取法：userAgentData.platform → navigator.platform → 空串', async () => {
+test('W1 how platform is obtained: userAgentData.platform → navigator.platform → empty string', async () => {
   const { readPageEnvironment } = await load();
   const run = navigator => readPageEnvironment({ navigator, document: fakeDom({ contexts: { webgl2: {} } }).document }).platform;
-  assert.equal(run(nav({ userAgentData: { platform: 'macOS' }, platform: 'MacIntel' })), 'macOS', 'userAgentData 优先');
-  assert.equal(run(nav({ platform: 'MacIntel' })), 'MacIntel', '没有 userAgentData');
-  assert.equal(run(nav({ userAgentData: { platform: '' }, platform: 'Linux x86_64' })), 'Linux x86_64', 'userAgentData.platform 为空串时退到 navigator.platform');
+  assert.equal(run(nav({ userAgentData: { platform: 'macOS' }, platform: 'MacIntel' })), 'macOS', 'userAgentData takes priority');
+  assert.equal(run(nav({ platform: 'MacIntel' })), 'MacIntel', 'No userAgentData');
+  assert.equal(run(nav({ userAgentData: { platform: '' }, platform: 'Linux x86_64' })), 'Linux x86_64', 'When userAgentData.platform is an empty string, fall back to navigator.platform');
   assert.equal(run(nav({ userAgentData: {}, platform: 'Win32' })), 'Win32');
-  assert.equal(run({ userAgent: UA }), '', '都没有 → 空串');
-  assert.equal(readPageEnvironment({ navigator: { platform: 'Win32' }, document: fakeDom().document }).userAgent, '', '没有 userAgent → 空串');
+  assert.equal(run({ userAgent: UA }), '', 'Neither → empty string');
+  assert.equal(readPageEnvironment({ navigator: { platform: 'Win32' }, document: fakeDom().document }).userAgent, '', 'No userAgent → empty string');
 });
 
-test('W1 没有 webgl2 时试 webgl；没有 debug 扩展时读 RENDERER / VENDOR', async () => {
+test('W1 try webgl when there is no webgl2; read RENDERER / VENDOR when there is no debug extension', async () => {
   const { readPageEnvironment } = await load();
   const a = fakeDom({ contexts: { webgl: { unmasked: ['U-only-webgl', 'U-V'] } } });
   const envA = readPageEnvironment({ navigator: nav(), document: a.document });
   assert.deepEqual([envA.renderer, envA.vendor], ['U-only-webgl', 'U-V']);
-  assert.deepEqual(a.log.tried, ['webgl2', 'webgl'], '依次试 webgl2、webgl');
+  assert.deepEqual(a.log.tried, ['webgl2', 'webgl'], 'Tried in order: webgl2, webgl');
   assert.equal(a.log.lost, 1);
 
   const b = fakeDom({ contexts: { webgl2: { debug: false, masked: ['WebKit WebGL', 'WebKit'] } } });
   const envB = readPageEnvironment({ navigator: nav(), document: b.document });
-  assert.deepEqual([envB.renderer, envB.vendor], ['WebKit WebGL', 'WebKit'], '没有 debug 扩展：gl.RENDERER / gl.VENDOR');
+  assert.deepEqual([envB.renderer, envB.vendor], ['WebKit WebGL', 'WebKit'], 'No debug extension: gl.RENDERER / gl.VENDOR');
   assert.ok(b.log.params.includes(RENDERER) && b.log.params.includes(VENDOR));
   assert.ok(!b.log.params.includes(UNMASKED_RENDERER_WEBGL));
   assert.equal(b.log.lost, 1);
 });
 
-test('W1 pageEnvironment()：缓存一次的 readPageEnvironment()（读 globalThis 的 navigator / document）', async () => {
+test('W1 pageEnvironment(): readPageEnvironment() cached once (reads navigator / document from globalThis)', async () => {
   const { pageEnvironment } = await load();
   const { document, log } = fakeDom({ contexts: { webgl2: { unmasked: ['G-R', 'G-V'] } } });
   const saved = {
@@ -118,7 +122,7 @@ test('W1 pageEnvironment()：缓存一次的 readPageEnvironment()（读 globalT
     assert.deepEqual(first, { platform: 'Windows', userAgent: UA, renderer: 'G-R', vendor: 'G-V' });
     const second = pageEnvironment();
     assert.deepEqual(second, first);
-    assert.equal(log.created.length, 1, '只读一次（第二次用缓存，不再建 canvas）');
+    assert.equal(log.created.length, 1, 'Read only once (the second time uses the cache and no longer creates a canvas)');
   } finally {
     for (const [name, desc] of Object.entries(saved)) {
       if (desc) Object.defineProperty(globalThis, name, desc);
@@ -129,7 +133,7 @@ test('W1 pageEnvironment()：缓存一次的 readPageEnvironment()（读 globalT
 
 /* ================================================================== W2 */
 
-test('W2 没有 WebGL（两种上下文都拿不到）：renderer / vendor 为空串，不抛', async () => {
+test('W2 no WebGL (neither context type can be obtained): renderer / vendor are empty strings, no throw', async () => {
   const { readPageEnvironment } = await load();
   const { document, log } = fakeDom({ contexts: {} });
   const env = readPageEnvironment({ navigator: nav(), document });
@@ -137,27 +141,27 @@ test('W2 没有 WebGL（两种上下文都拿不到）：renderer / vendor 为�
   assert.deepEqual(log.tried, ['webgl2', 'webgl']);
 });
 
-test('W2 getContext 抛出、createElement 抛出、getParameter 抛出、没有 document：回空串，不抛；其余两项照读', async () => {
+test('W2 getContext throws, createElement throws, getParameter throws, or there is no document: returns empty strings, no throw; the other two fields are read as usual', async () => {
   const { readPageEnvironment } = await load();
   for (const [label, options] of [
-    ['getContext 抛出', { contexts: { webgl2: {}, webgl: {} }, getContextThrows: true }],
-    ['createElement 抛出', { contexts: { webgl2: {} }, createThrows: true }],
-    ['getParameter 抛出', { contexts: { webgl2: {} }, getParameterThrows: true }],
+    ['getContext throws', { contexts: { webgl2: {}, webgl: {} }, getContextThrows: true }],
+    ['createElement throws', { contexts: { webgl2: {} }, createThrows: true }],
+    ['getParameter throws', { contexts: { webgl2: {} }, getParameterThrows: true }],
   ]) {
     const { document } = fakeDom(options);
     let env;
     assert.doesNotThrow(() => { env = readPageEnvironment({ navigator: nav({ userAgentData: { platform: 'Windows' } }), document }); }, label);
     assert.deepEqual(env, { platform: 'Windows', userAgent: UA, renderer: '', vendor: '' }, label);
   }
-  for (const [label, document] of [['document 为 undefined', undefined], ['document 为 null', null], ['空对象', {}]]) {
+  for (const [label, document] of [['document is undefined', undefined], ['document is null', null], ['empty object', {}]]) {
     let env;
     assert.doesNotThrow(() => { env = readPageEnvironment({ navigator: nav(), document }); }, label);
     assert.deepEqual(env, { platform: 'Win32', userAgent: UA, renderer: '', vendor: '' }, label);
   }
-  // navigator 本身缺失也不抛
+  // Does not throw even if navigator itself is missing
   let env;
   assert.doesNotThrow(() => { env = readPageEnvironment({ navigator: undefined, document: fakeDom().document }); });
   assert.deepEqual(env, { platform: '', userAgent: '', renderer: '', vendor: '' });
-  // 四项都是字符串
+  // All four items are strings
   for (const value of Object.values(env)) assert.equal(typeof value, 'string');
 });

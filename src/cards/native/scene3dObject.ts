@@ -1,15 +1,17 @@
 /**
- * `scene-3d` 那个立体物件到底长什么样 —— **唯一的一份构造**。
+ * What the 3D object in `scene-3d` actually looks like: **the single construction**.
  *
- * 两个地方要造同一个东西:
- *   1. 卡片本身(`scene-3d.tsx`),画在自己的 canvas 上,进预览和导出;
- *   2. 3D 检视视图(`src/editor/preview/Scene3DView.tsx`),把它当**真的立体物件**摆进场景里。
+ * Two places need to build the same thing:
+ *   1. The card itself (`scene-3d.tsx`), drawn on its own canvas, entering preview and export;
+ *   2. 3D inspection view (`src/editor/preview/Scene3DView.tsx`), placing it in the scene as a **real 3D object**.
  *
- * 第二处一开始是拿一张预渲染出来的贴图糊在平板上的 —— 那是错的:绕着转它还是一张画,
- * 而这个视图存在的理由就是"看清楚东西在空间里是怎么摆的"。三维的东西在三维视图里就得是三维的。
+ * The second place initially pasted a prerendered texture onto a flat quad: that was wrong: orbiting
+ * around it was still just a flat picture, whereas this view exists to "see clearly how things are
+ * positioned in space". 3D objects in a 3D view must be three-dimensional.
  *
- * 所以几何、材质、灯光、姿势全部收在这里,两边都从这儿取。分开写的话两边迟早长得不一样,
- * 而且不会报错 —— 只是"检视里看到的和成片里的不是一个东西",那比没有检视更糟。
+ * Therefore geometry, materials, lighting, and poses are all consolidated here, retrieved by both
+ * sides. If written separately, they would diverge sooner or later without throwing errors: simply
+ * "what is seen in inspection is not what appears in the final video", which is worse than no inspection.
  */
 
 export type ThreeMod = typeof import("three");
@@ -34,21 +36,21 @@ export interface Scene3DParams {
 
 const TAU = Math.PI * 2;
 
-/** 参数里的 shape 不认识就退回方块,别让一个拼错的词把整张卡搞黑 */
+/** Fall back to a box if shape in params is unknown; don't let a typo black out the entire card */
 export function shapeOf(raw: string): Shape {
   return (SHAPES as readonly string[]).includes(raw) ? (raw as Shape) : "cube";
 }
 
 /**
- * 物件的"半径",单位是世界单位(= 舞台像素)。
- * `size` 是占画布高度的比例,所以半径 = size × 高 / 2 —— 卡片和检视视图必须用同一个式子,
- * 否则同一张卡在两处大小不一样。
+ * "Radius" of the object, in world units (= stage pixels).
+ * `size` is the proportion of canvas height, so radius = size × height / 2: the card and inspection
+ * view must use the same formula, otherwise the same card would have different sizes in the two places.
  */
 export function radiusFor(params: Scene3DParams, canvasHeight: number): number {
   return (Math.min(Math.max(params.size, 0.05), 1) * canvasHeight) / 2;
 }
 
-/** 每种形状的几何体。`r` 见 radiusFor */
+/** Geometry for each shape. See radiusFor for `r` */
 export function geometryOf(THREE: ThreeMod, shape: Shape, r: number) {
   switch (shape) {
     case "sphere":
@@ -79,33 +81,35 @@ export function materialOf(THREE: ThreeMod, params: Scene3DParams) {
 }
 
 /**
- * 灯光预设。三档都是"环境光 + 主光 + 补光"的老套路,区别只在强弱和方向 ——
- * 让 Agent 挑一个词,比让它填三个光源的位置靠谱得多。
+ * Lighting presets. All three presets follow the classic pattern of "ambient + key + fill light",
+ * differing only in intensity and direction: having an Agent pick a word is far more reliable
+ * than asking it to fill in positions for three light sources.
  *
- * 光加到 `target` 上(卡片里是整个 scene,检视视图里是这个物件自己的 group)。
- * 加到 group 上的好处是灯跟着物件走:检视视图里同屏可能有好几个 scene-3d,
- * 各自带各自的灯,每一个才和它在成片里的样子对得上。
+ * Lights are added to `target` (the whole scene in cards, or this object's own group in the inspection
+ * view). The benefit of adding to a group is that lights move with the object: multiple scene-3d objects
+ * may appear on screen simultaneously in the inspection view, each carrying its own lights, so each
+ * matches how it looks in the final video.
  */
 export function addLights(THREE: ThreeMod, target: any, preset: string, d: number) {
   const key = new THREE.DirectionalLight(0xffffff, 1);
   const fill = new THREE.DirectionalLight(0xffffff, 1);
   let ambient = 0.5;
   if (preset === "rim") {
-    // 逆光:主光从后上方压过来,只留一条亮边,适合剪影感
+    // Backlight: key light comes from above and behind, leaving only a bright rim, ideal for silhouettes
     ambient = 0.18;
     key.position.set(-0.4, 0.9, -1).multiplyScalar(d);
     key.intensity = 3.2;
     fill.position.set(0.6, -0.2, 0.8).multiplyScalar(d);
     fill.intensity = 0.35;
   } else if (preset === "soft") {
-    // 柔光:大环境光 + 弱方向光,几乎没有硬阴影
+    // Soft light: high ambient light + weak directional light, virtually no hard shadows
     ambient = 1.1;
     key.position.set(0.5, 0.8, 1).multiplyScalar(d);
     key.intensity = 0.9;
     fill.position.set(-0.7, 0.1, 0.5).multiplyScalar(d);
     fill.intensity = 0.5;
   } else {
-    // studio:标准三点光的前两点,金属质感最出彩
+    // studio: first two lights of standard three-point lighting, brings out metallic textures best
     ambient = 0.45;
     key.position.set(0.7, 1, 0.8).multiplyScalar(d);
     key.intensity = 2.4;
@@ -118,9 +122,10 @@ export function addLights(THREE: ThreeMod, target: any, preset: string, d: numbe
 }
 
 /**
- * 姿势只由 t 和几个参数决定 —— 这是「画面是 t 的纯函数」的全部实现。
- * 没有 delta 累积,所以顺着播、往回拖、跳着截都是同一帧(理由见 scene-3d.tsx 开头)。
- * `t` 是**相对这张卡起点**的秒数。
+ * Pose is determined solely by t and a few parameters: this is the complete implementation of
+ * "visual output is a pure function of t". With no delta accumulation, playing forward, scrubbing back,
+ * or seeking all yield the same frame (see rationale at the start of scene-3d.tsx).
+ * `t` is the seconds **relative to the start of this card**.
  */
 export function poseMesh(mesh: any, params: Scene3DParams, t: number) {
   mesh.rotation.set(
@@ -131,9 +136,9 @@ export function poseMesh(mesh: any, params: Scene3DParams, t: number) {
 }
 
 /**
- * 贴图。URL 通常是 `bake_card` 预渲染出来的 `/@media/xxx.png`。
- * 加载是异步的,拿到之后要调 `onReady` 让调用方重画一帧 —— 那时 t 不一定变,
- * 不能指望渲染循环自己跟上。
+ * Texture. The URL is usually `/@media/xxx.png` prerendered by `bake_card`.
+ * Loading is asynchronous; once received, `onReady` must be called to let the caller redraw a
+ * frame: t might not change at that moment, so we cannot rely on the render loop catching up on its own.
  */
 export function applyTexture(
   THREE: ThreeMod,
@@ -145,10 +150,11 @@ export function applyTexture(
   return new THREE.TextureLoader().load(
     url,
     (tex: any) => {
-      // 颜色空间要标对,否则贴上去整体偏暗(three 默认按线性解释)
+      // Color space must be marked correctly, otherwise it appears dark overall (three interprets as
+      // linear by default)
       tex.colorSpace = THREE.SRGBColorSpace;
       material.map = tex;
-      // 预渲染出来的卡是透明底,不开 transparent 的话四周会变成黑块
+      // Prerendered cards have transparent backgrounds; without transparent, edges become black blocks
       material.transparent = true;
       material.needsUpdate = true;
       onReady(tex);

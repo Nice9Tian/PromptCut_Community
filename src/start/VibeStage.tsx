@@ -1,12 +1,17 @@
 /**
- * Vibe 模式里的真画面:右侧拓展栏「画面」那一格、「详细编辑」上面那块舞台都用它。
+ * The real picture in Vibe mode: used both by the "Picture" cell of the right side panel and by the stage
+ * above "Detail editing".
  *
- * 就是编辑界面的预览(`src/editor/Preview.tsx`,手机版用的那一种只出画面的样子 `variant="mobile"`)加它的测量遮罩
- * (`ProbeGate`,打开项目时把卡片测一遍;成本记录全命中时一帧都不出现)—— 和手机版编辑界面挂的同一套
- * (`src/mobile/MobileEditor.tsx`)。播放、跳转走 store 的同一套动作,所以「画面」和「详细编辑」看的是同一个播放头。
+ * It is the editor's preview (`src/editor/Preview.tsx`, the picture-only form the mobile app uses,
+ * `variant="mobile"`) plus its measurement overlay (`ProbeGate`, which measures the cards when a project
+ * opens; when the cost records all hit, it does not appear for even one frame): the same set that the
+ * mobile app's editor mounts (`src/mobile/MobileEditor.tsx`). Playback and seeking go through the same
+ * actions of the store, so "Picture" and "Detail editing" watch the same playhead.
  *
- * 同一时刻只挂一个(舞台是 iframe,挂两份就是两套舞台):「详细编辑」展开时拓展栏那一格换成一行字。
- * 项目还没连上(store 里不是云端项目)时不挂,调用方给空态。
+ * Only one is mounted at any moment (the stage is an iframe, so mounting two copies means two stages):
+ * when "Detail editing" is expanded, that cell of the side panel is replaced by a line of text.
+ * When the project is not connected yet (the store does not hold a cloud project) it is not mounted, and
+ * the caller supplies an empty state.
  */
 import type { JSX, ReactNode } from "react";
 import { Preview } from "../editor/Preview";
@@ -25,7 +30,7 @@ export function VibeStage(props: { className?: string; children?: ReactNode; pc?
   );
 }
 
-/** 秒写成 mm:ss */
+/** Seconds written as mm:ss */
 export const mmss = (sec: number): string => {
   const s = Math.max(0, Math.floor(Number.isFinite(sec) ? sec : 0));
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;

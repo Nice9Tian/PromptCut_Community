@@ -1,27 +1,32 @@
 #!/usr/bin/env node
 /**
- * 最小的 HTTP 出站代理（M8 执行计划裁定 D5：「只能出网的节点」的本机替身）。只用 Node 内置模块。
+ * Minimal HTTP outbound proxy (M8 execution plan ruling D5: local stand-in for "egress-only node").
+ * Uses Node built-in modules only.
  *
- * 独立渲染主机以 `NODE_USE_ENV_PROXY=1` 加 `HTTP_PROXY` / `HTTPS_PROXY` 指向它运行时，主机的出站连接都经它走：
- *   - `CONNECT host:port`（隧道）：全局 `fetch`、全局 `WebSocket`（Node 自带的 undici）不论目标是 http 还是 https 都这样走；
- *     `http.request` / `https.request` 走 https 目标时也是这样；
- *   - 绝对地址形式的请求（`GET http://host:port/…`，「转发」）：Node 的 `http.request` 走 **明文 http** 目标时这样走；
- *     带 `Upgrade` 的也照转（「转发升级」）。
- * 真实的云端出网代理只放行 443 的 CONNECT；本替身的目标是明文端口，所以两种都接，照实记下是哪一种。
+ * When a standalone render host runs with `NODE_USE_ENV_PROXY=1` plus `HTTP_PROXY` / `HTTPS_PROXY`
+ * pointing to it, all outbound host connections go through it:
+ *   - `CONNECT host:port` (tunnel): global `fetch`, global `WebSocket` (Node's built-in undici) go
+ *     this way regardless of whether target is http or https; `http.request` / `https.request` also
+ *     go this way for https targets;
+ *   - Requests in absolute URI form (`GET http://host:port/…`, "forward"): Node's `http.request` goes
+ *     this way for **plaintext http** targets; those with `Upgrade` are also forwarded ("forward-upgrade").
+ * Real cloud egress proxies only allow CONNECT on 443; this stand-in targets plaintext ports, so it
+ * accepts both, recording faithfully which type it was.
  *
- * 每条连接记一条：`{ id, kind: 'connect' | 'forward' | 'forward-upgrade', target: 'host:port', up, down, ms, status, error }`，
- * `up` 是客户端发往目标的字节、`down` 是目标回给客户端的字节（隧道按原始字节计；转发按请求体 / 响应体计，不含头）。
- * 不记路径、查询串与请求头（里面可能有票据与会话号）。
+ * One record per connection: `{ id, kind: 'connect' | 'forward' | 'forward-upgrade', target: 'host:port', up, down, ms, status, error }`,
+ * where `up` is bytes sent from client to target, and `down` is bytes returned from target to
+ * client (tunnel counts raw bytes; forward counts request/response body, excluding headers).
+ * Does not record path, query string, or request headers (which may contain tickets and session ids).
  *
- * 作为模块：
+ * As a module:
  *   const px = await startConnectProxy({ host: '127.0.0.1', port: 0, allow: ['127.0.0.2:*'], log })
  *   px.url / px.port / px.records() / px.summary() / await px.close()
- * 作为命令：
- *   node scripts/probes/m8/connect-proxy.mjs [--listen 127.0.0.1:5798] [--allow <host:port|host:*>,…] [--log <文件>]
- *   - stdout 一行一条 JSON：`listen`、每条连接结束时 `conn.close`、被拒的 `conn.denied`；
- *   - 标准输入写 `status` 打一行 `summary`，写 `quit`（或 SIGINT / SIGTERM；给了 `--quit-on-stdin-end` 时标准输入关闭也算）打 `summary` 后退出；
- *   - `GET http://<代理>/__status`（原始形式、只答回环来源）回 `summary` 的 JSON，给探针跨进程取记录用。
- *   `--allow` 不给就全放行（只记录）；给了就只放行列出的目标，别的回 403 并记 `denied`。
+ * As a command:
+ *   node scripts/probes/m8/connect-proxy.mjs [--listen 127.0.0.1:5798] [--allow <host:port|host:*>,…] [--log <file>]
+ *   - stdout outputs one JSON per line: `listen`, `conn.close` when each connection ends, `conn.denied` for rejected connections;
+ *   - Write `status` to stdin to print one `summary` line; write `quit` (or SIGINT / SIGTERM; closing stdin also counts when `--quit-on-stdin-end` is provided) to print `summary` and exit;
+ *   - `GET http://<proxy>/__status` (raw form, answers loopback origin only) returns `summary` JSON for probe to retrieve records across processes.
+ *   If `--allow` is omitted, all are allowed (record only); if provided, only listed targets are allowed, returning 403 and recording `denied` for others.
  */
 import http from 'node:http';
 import net from 'node:net';
@@ -32,13 +37,13 @@ import { fileURLToPath } from 'node:url';
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const HOP = new Set(['proxy-connection', 'proxy-authorization', 'connection', 'keep-alive', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
 
-/** `host:port` 规整（IPv6 去方括号再加回，端口缺省按协议） */
+/** Normalize `host:port` (strip square brackets from IPv6 and add back; port defaults by protocol) */
 export function targetOf(host, port) {
   const h = String(host).replace(/^\[|\]$/g, '');
   return h.includes(':') ? `[${h}]:${port}` : `${h}:${port}`;
 }
 
-/** 解析 CONNECT 的 `host:port`（支持 `[v6]:port`）；不合格回 null */
+/** Parse CONNECT `host:port` (supports `[v6]:port`); returns null if invalid */
 export function parseAuthority(s) {
   const m = /^\[([^\]]+)\]:(\d{1,5})$/.exec(String(s)) ?? /^([^:\s/]+):(\d{1,5})$/.exec(String(s));
   if (!m) return null;
@@ -46,7 +51,7 @@ export function parseAuthority(s) {
   return port > 0 && port < 65536 ? { host: m[1], port } : null;
 }
 
-/** 放行规则：`host:port` 或 `host:*`；列表为空 / null = 全放行 */
+/** Allow rules: `host:port` or `host:*`; empty list / null = allow all */
 export function allowed(allow, host, port) {
   if (!allow || allow.length === 0) return true;
   const h = String(host).replace(/^\[|\]$/g, '').toLowerCase();
@@ -58,7 +63,7 @@ export function allowed(allow, host, port) {
   });
 }
 
-/** 由记录算汇总：每个目标的连接数、字节、种类 */
+/** Compute summary from records: connection count, bytes, and kinds for each target */
 export function summarize(records, extra = {}) {
   const byTarget = {};
   for (const r of records) {
@@ -82,7 +87,7 @@ export function summarize(records, extra = {}) {
 }
 
 /**
- * 起代理。
+ * Start the proxy.
  * @param {{ host?: string, port?: number, allow?: string[] | null, log?: (line: object) => void, keep?: number }} [o]
  */
 export function startConnectProxy({ host = '127.0.0.1', port = 0, allow = null, log = () => {}, keep = 20_000 } = {}) {
@@ -110,7 +115,7 @@ export function startConnectProxy({ host = '127.0.0.1', port = 0, allow = null, 
   };
 
   const server = http.createServer((req, res) => {
-    // 原始形式：代理自己的状态页（只答回环来源）
+    // Raw form: proxy's own status page (answers loopback origin only)
     if (req.url?.startsWith('/')) {
       if (req.url === '/__status' && LOOPBACK.has(req.socket.remoteAddress ?? '')) {
         res.writeHead(200, { 'content-type': 'application/json' });
@@ -118,7 +123,7 @@ export function startConnectProxy({ host = '127.0.0.1', port = 0, allow = null, 
       } else { res.writeHead(404); res.end(); }
       return;
     }
-    // 绝对地址形式：转发
+    // Absolute URI form: forward
     let u;
     try { u = new URL(req.url); } catch { res.writeHead(400); res.end(); return; }
     if (u.protocol !== 'http:') { res.writeHead(400); res.end(); return; }
@@ -145,7 +150,7 @@ export function startConnectProxy({ host = '127.0.0.1', port = 0, allow = null, 
     req.pipe(up);
   });
 
-  /** 两条 socket 对接、记字节，任一端结束就都结束 */
+  /** Bridge two sockets, count bytes; ends whenever either end terminates */
   const splice = (r, client, upstream, first = null) => {
     open.add(client);
     open.add(upstream);
@@ -220,7 +225,7 @@ export function startConnectProxy({ host = '127.0.0.1', port = 0, allow = null, 
   });
 }
 
-/* ================================================================== 命令 */
+/* ================================================================== Command */
 
 async function main(argv) {
   const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
@@ -228,14 +233,14 @@ async function main(argv) {
   const i = listen.lastIndexOf(':');
   const host = listen.slice(0, i).replace(/^\[|\]$/g, '') || '127.0.0.1';
   const port = Number(listen.slice(i + 1));
-  if (!Number.isInteger(port) || port < 0 || port > 65535) { process.stderr.write('--listen 形如 127.0.0.1:5798\n'); process.exit(2); }
+  if (!Number.isInteger(port) || port < 0 || port > 65535) { process.stderr.write('--listen looks like 127.0.0.1:5798\n'); process.exit(2); }
   const allowRaw = arg('--allow', null);
   const allow = allowRaw ? allowRaw.split(',').map((s) => s.trim()).filter(Boolean) : null;
   const logFile = arg('--log', null);
   const out = (line) => {
     const text = `${JSON.stringify({ t: new Date().toISOString(), ...line })}\n`;
     process.stdout.write(text);
-    if (logFile) { try { fs.appendFileSync(logFile, text); } catch { /* 写不了只丢日志 */ } }
+    if (logFile) { try { fs.appendFileSync(logFile, text); } catch { /* If unable to write, just drop the log */ } }
   };
   const px = await startConnectProxy({ host, port, allow, log: out });
   let quitting = false;

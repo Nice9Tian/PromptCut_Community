@@ -47,13 +47,13 @@ function moveSoundCompanions(p: import("../../kernel/project").Project, before: 
 export const clips = {
 
   /* ---------- clip ---------- */
-  /** 往序列里加一张卡。不给 trackId 就挑一条这段时间空着的序列。返回 clip。 */
+  /** Add a card to a track. If trackId is not provided, pick a track that is free during this time. Returns clip. */
   addCardClip(cardId: string, start: number, opts: { trackId?: string; duration?: number; params?: Record<string, unknown>; parts?: PartInstance[] } = {}): TrackClip | null {
     const def = getCard(cardId);
     if (!def) return null;
     assertAudiovisualCardKind(def);
-    // 音频素材效果卡拖进时间轴是个既无声又无画的空片段(没有 nodeId,消费方只看节点):
-    // 它只能经 apply_card 挂到片段上。
+    // Dragging an audio media effect card into the timeline yields an empty clip with neither sound
+    // nor picture (no nodeId, consumers only inspect nodes): it can only be attached to clips via apply_card.
     if (def.kind === "audio" && !isAudiovisualCard(def)) throw new Error(trText("For audio media effect cards, use apply_card"));
     const p = state.project;
     const track = opts.trackId ? p.tracks.find((t) => t.id === opts.trackId) : p.tracks[0];
@@ -61,16 +61,17 @@ export const clips = {
     const dur = opts.duration ?? DEFAULT_CARD_DUR;
     const target = opts.trackId ? track : pickTrack(p, start, dur);
     if (!target) return null;
-    // 参数在写入时就展开成完整的一份,不留「空 = 用默认值」这种隐式状态。
-    // 调用方(界面、AI)照旧只传要改的项,但存进 clip 的是全量:
-    // 存的和渲染的一致,代码页能直接看,导出的项目也不会因为以后调了卡片默认值而变样。
+    // Parameters are expanded into a complete set upon writing, leaving no implicit states like
+    // "empty = use default value". Callers (UI, AI) still only pass fields to change, but what gets
+    // stored into clip is the full set: stored values match rendering, can be inspected directly in
+    // the code tab, and exported projects won't change if card defaults are adjusted later.
     let clip: TrackClip = { id: newId("c"), cardId, ...(isAudiovisualCard(def) ? { embeddedAudio: true } : {}), start, end: start + dur, params: { ...def.defaults, ...(opts.params ?? {}) }, ...(opts.parts?.length ? { parts: opts.parts } : {}) };
     clip = placeOrShift(target, clip);
     setProject(updateTrack(p, target.id, (t) => ({ ...t, clips: sortClips([...t.clips, clip]) })));
     set({ selection: [clip.id] });
     return clip;
   },
-  /** 往序列里加一段素材。不给 trackId 就挑一条这段时间空着的序列。 */
+  /** Add a media clip to a track. If trackId is not provided, pick a track that is free during this time. */
   addMediaClip(mediaId: string, start: number, opts: { trackId?: string; duration?: number; mediaOffset?: number } = {}): TrackClip | null {
     const p = state.project;
     const media = p.media.find((m) => m.id === mediaId);
@@ -88,8 +89,9 @@ export const clips = {
     return clip;
   },
   /**
-   * 新建一条序列,并把片段直接落上去。一次手势 = 一步撤销(时间轴上「拖到序列之间」和「拖到新建落区」用)。
-   * 新序列是空的,所以片段一定落在 start 上,不会被顺延。
+   * Create a new track and place the clip directly on it. One gesture = one-step undo (used for
+   * "drag between tracks" and "drag to new track drop zone" on the timeline). The new track is empty,
+   * so the clip always lands at start without being shifted forward.
    */
   addClipOnNewTrack(spec: { index?: number; cardId?: string; mediaId?: string; start: number; duration?: number }): TrackClip | null {
     const p = state.project;
@@ -117,20 +119,22 @@ export const clips = {
     set({ selection: [clip.id] });
     return clip;
   },
-  /** 移动 / 缩放 clip(可跨序列)。 */
+  /** Move / resize clip (can span across tracks). */
   moveClip(clipId: string, patch: { start?: number; end?: number; trackId?: string }) {
     const p = state.project;
     const hit = findClip(p, clipId);
     if (!hit) return;
     /*
-     * 挂着转场的片段:相对关系是转场的一部分,不许单独动。
-     * 允许的只有「整组一起平移」—— 那不改相对关系,转场照旧成立。
-     * 改长度、换序列都会把转场弄坏,直接拒绝(要改先删转场)。
+     * Clips with transitions attached: relative positions are part of the transition and must not
+     * move independently. The only permitted action is "translate the whole group together": that
+     * preserves relative positions, keeping transitions valid. Changing duration or switching tracks
+     * breaks transitions and is rejected immediately (delete transitions first to modify).
      */
     if (timingLock(p, clipId)) {
       const wantStart = patch.start ?? hit.clip.start;
-      // 只给 start:意思是「把这段挪到这儿」,时长不变(单独修边本来就会被下面拒掉,
-      // 按修边理解等于永远拒绝,那 Agent 就没法平移整组了)
+      // Only start is provided: means "move this clip here" with duration unchanged (trimming edges alone
+      // would already be rejected below; interpreting as trim equals permanent rejection, which prevents
+      // Agent from translating the whole group)
       const wantEnd = patch.end ?? (patch.start !== undefined ? wantStart + (hit.clip.end - hit.clip.start) : hit.clip.end);
       const lenChanged = Math.abs(wantEnd - wantStart - (hit.clip.end - hit.clip.start)) > 1e-3;
       const trackChanged = !!patch.trackId && patch.trackId !== hit.track.id;
@@ -164,9 +168,12 @@ export const clips = {
     let clip: TrackClip | null = { ...hit.clip, start: patch.start ?? hit.clip.start, end: patch.end ?? hit.clip.end };
     if (clip.end - clip.start < 0.1) clip.end = clip.start + 0.1;
     /*
-     * 剪辑段(kernel/cutSegments.ts):修头 = 起点偏移跟着走(画面留在原处),往前拉不能越过被引用剪辑的开头;
-     * 往后拉出点不能超出被引用剪辑此刻剩下的长度。被引用剪辑事后变短、段已经超出的,不自动裁,
-     * 只是出点不能再往外拉(Argon 审核意见决定 4 补充 1)。整段平移不动偏移。
+     * Cut segments (kernel/cutSegments.ts): trimming head = start offset tracks along (video stays in
+     * place), pulling forward cannot cross the beginning of the referenced cut; pulling backward cannot
+     * exceed the remaining duration of the referenced cut at this moment. If the referenced cut later
+     * becomes shorter and the segment already exceeds it, it is not automatically cut, but the out
+     * point cannot be pulled out any further (Argon review decision 4 supplement 1). Translating the
+     * entire segment leaves the offset untouched.
      */
     if (clip.cutId) {
       const trimming = Math.abs((clip.end - hit.clip.end) - (clip.start - hit.clip.start)) > 1e-9;
@@ -182,10 +189,11 @@ export const clips = {
     }
     const collisionTarget = { ...target, clips: target.clips.filter(c => c.soundEffect?.sourceClipId !== clipId) };
     clip = resolveOverlap(collisionTarget, clip);
-    if (!clip) return; // 目标位置放不下整段:拒绝移动,不压扁
+    if (!clip) return; // Target position cannot fit the entire clip: reject move, do not squash
     // A trim advances the existing source clock; translation (both boundaries) keeps the source offset.
     if ((clip.soundEffect || clip.cardId === "mu-typing" || clipHasEmbeddedAudio(p, clip, getCard)) && Math.abs((clip.end - hit.clip.end) - (clip.start - hit.clip.start)) > 1e-9) {
-      // 变速段按倍率推进源时钟(kernel/clipTime.mjs);缺省 1 保留原来的写法
+      // Speed-changed clips advance the source clock by rate multiplier (kernel/clipTime.mjs);
+      // default 1 retains original syntax
       clip = { ...clip, mediaOffset: Math.max(0, clipSpeed(hit.clip) === 1 ? (hit.clip.mediaOffset ?? 0) + clip.start - hit.clip.start : mediaOffsetAfter(hit.clip, clip.start - hit.clip.start)) };
     }
     const placed = clip;
@@ -195,14 +203,16 @@ export const clips = {
     if (linked) setProject(linked);
   },
   /**
-   * 改片段自身的属性(不是卡片参数):淡入淡出、整体不透明度、显示名。
-   * 两段素材重叠 + 各自淡化 = 交叉溶解,所以「转场」不需要单独的对象,改这几个字段就够。
+   * Modify a clip's own properties (not card parameters): fade-in/fade-out, overall opacity,
+   * display name. Two overlapping media clips + respective fading = crossfade, so "transitions"
+   * do not need a separate object; modifying these fields is sufficient.
    */
   updateClip(clipId: string, patch: Partial<Pick<TrackClip, "fadeIn" | "fadeOut" | "opacity" | "label">>): { ok: boolean; blocked?: ("fadeIn" | "fadeOut")[] } {
     const p = state.project;
     const hit = findClip(p, clipId);
     if (!hit) return { ok: false };
-    // 转场管着的淡化不许直接改:那是转场的时长,改了两边就对不上。要改先删转场再重加
+    // Fades managed by transitions cannot be modified directly: that is the transition duration, and
+    // modifying it causes mismatches between both ends. To modify, delete the transition first and re-add
     const blocked: ("fadeIn" | "fadeOut")[] = [];
     const clean: typeof patch = { ...patch };
     for (const side of ["fadeIn", "fadeOut"] as const) {
@@ -219,28 +229,50 @@ export const clips = {
     return { ok: true, ...(blocked.length ? { blocked } : {}) };
   },
   /**
-   * 改素材段的播放速度(`TrackClip.speed`,kernel/clipTime.mjs)。一次调用一步撤销(连带挪动的段一起)。
+   * Modifies the playback speed of a media clip (`TrackClip.speed`, kernel/clipTime.mjs). One call =
+   * one-step undo (along with clips moved together).
    *
-   * - 速度 0.25～4 倍,超出范围**拒绝并说明**(不夹到边界:手动输入的数被悄悄改掉,用户不知道实际是几倍);取到百分之一倍。
-   * - 保住入点(起点、`mediaOffset` 不动),用到的那截素材不变,终点按新速度重算:素材 4 秒、2 倍速 → 2 秒。
-   * - **变长会和下一段重合时把后面的段推开**(用户 2026-10-23 定:「变长以后如果会重合就推着后移,但是变短的时候尾部留空。」):
-   *   同一条序列里排在它后面的所有段整体后移「新终点 − 下一段起点」(相对关系不变,原有空档先被吃掉);被推的段挂着转场时整组一起推,
-   *   声音伴随段跟着走;推不动就整个拒绝并说明,**不截断**。变短时尾部留空,后面的段不动。
-   * - **挂着转场的段可以改速度**(用户 2026-10-23 定「可以改」):
-   *   - 淡入、淡出、交叉溶解的淡化都写在片段两端(fadeIn / fadeOut 相对片段),跟着片段两端走,时长不变;
-   *   - 这一段是交叉溶解的**前一段**:后一段(在另一条序列上)跟着终点平移同样多,溶解的重叠长度不变——变长往后挪、变短往前挪;
-   *     后一段所在序列上它后面的段照上面的推开规则让位;往前挪撞上那条序列上前面的段就拒绝;
-   *   - 这一段是交叉溶解的**后一段**:起点不动,前一段不动,重叠不变;
-   *   - 新长度装不下它身上的转场时,转场跟着缩到比新长度短一点(用户 2026-10-23 定「气泡提示即可」),结果里带上缩了哪几条、
-   *     从几秒到几秒,界面弹气泡说清楚;是交叉溶解的后一段时,溶解缩短靠这一段整体往后挪那么多(入点内容不变)。
-   * - 改回 1 删掉 `speed` 字段,不留 `speed: 1`(身份键才逐字回到原样)。只给视频段与声音段;序列锁着的拒绝。
-   * 〔裁〕第一版变速的视频段不出原声,界面写明;声音段(含音画分离出来的)随倍率变速变调。
+   * - Speed 0.25-4x; values out of range are **rejected with an explanation** (not clamped to
+   *   boundaries: silently altering manually entered values leaves users unaware of the actual
+   *   multiplier); rounded to hundredths (0.01x).
+   * - Preserves the in point (start point and `mediaOffset` remain untouched); the used media portion
+   *   stays unchanged, and the end point is recalculated from the new speed: 4s media, 2x speed → 2s.
+   * - **When lengthening overlaps the next clip, push subsequent clips backward** (user decision,
+   *   2026-10-23: "If lengthening causes overlap, push subsequent clips backward, but leave trailing
+   *   space when shortening."):
+   *   All clips following it on the same track shift backward as a whole by "new end point - next clip
+   *   start point" (relative positions unchanged, existing gaps consumed first); when pushed clips have
+   *   transitions attached, push the entire group together, and companion audio clips follow along;
+   *   if they cannot be pushed, reject entirely with an explanation, **do not truncate**. When
+   *   shortening, leave trailing space, and subsequent clips do not move.
+   * - **Clips with transitions can change speed** (user decision, 2026-10-23: "can change"):
+   *   - Fade-in, fade-out, and crossfade fades are written on both ends of the clip (fadeIn / fadeOut
+   *     relative to the clip), following both ends of the clip with durations unchanged;
+   *   - When this clip is the **first clip** of a crossfade: the second clip (on another track)
+   *     translates by the same amount following the end point, keeping crossfade overlap duration
+   *     unchanged: moves backward when lengthening, forward when shortening; clips behind the second
+   *     clip on its track yield according to the push rules above; moving forward and colliding with
+   *     preceding clips on that track is rejected;
+   *   - When this clip is the **second clip** of a crossfade: start point does not move, the first
+   *     clip does not move, and overlap remains unchanged;
+   *   - When the new duration cannot fit transitions on it, transitions shrink to slightly shorter
+   *     than the new duration (user decision, 2026-10-23: "bubble notice is sufficient"); the result
+   *     includes which transitions shrank, from what second to what second, and the UI pops up a
+   *     bubble notice to explain clearly; when it is the second clip of a crossfade, crossfade
+   *     shortening is achieved by moving this clip backward as a whole by that amount (in point
+   *     content remains unchanged).
+   * - Changing back to 1 deletes the `speed` field, leaving no `speed: 1` (so the identity key returns
+   *   to its exact original form). Only for video and audio clips; reject if the track is locked.
+   * [ruling] The first version of speed-changed video clips does not output original audio, stated
+   * clearly in the UI; audio clips (including those from audio-visual separation) shift tempo and
+   * pitch with the rate multiplier.
    */
   setClipSpeed(clipId: string, speed: number): { ok: true; pushed?: { clips: number; by: number }; moved?: string[]; transitions?: { kind: Transition["kind"]; from: number; to: number }[] } | { ok: false; error: string } {
     const p = state.project;
     const hit = findClip(p, clipId);
     if (!hit) return { ok: false, error: trText("Clip not found") };
-    // 速度是素材的属性:套了素材效果卡的视频段(片段同时带 cardId)也认,取帧走素材节点的倍率(kernel/clipTime.mjs 的 withMediaRates)
+    // Speed is a media property: video clips wrapped with a media effect card (clip also carries cardId)
+    // also recognize it; frame fetching uses the media node's rate (withMediaRates in kernel/clipTime.mjs)
     const media = hit.clip.mediaId && !hit.clip.cutId ? p.media.find((m) => m.id === hit.clip.mediaId) : undefined;
     if (!media || (media.kind !== "video" && media.kind !== "audio")) return { ok: false, error: trText("Only video clips and audio clips can change speed") };
     if (hit.track.locked) return { ok: false, error: trText("Unlock the track first") };
@@ -255,9 +287,13 @@ export const clips = {
     if (len < 0.1) return { ok: false, error: trText("This clip is too short; at this speed it would be under 0.1 seconds") };
     const own = transitionsOfClip(p, clipId);
     /*
-     * 转场装不下时跟着缩(用户 2026-10-23 定:挂着转场「可以改」,装不下「气泡提示即可」):这一段身上比新长度还长(或一样长)的转场
-     * 缩到「比新长度短一点」(和加转场时「转场要比片段短」同一条规矩,取到百分之一秒,不短于 MIN_TRANSITION_DUR),
-     * 结果里带上每一条缩了多少(`transitions`),界面弹气泡说清楚。连最短的转场都装不下才拒绝。
+     * Transitions shrink when they cannot fit (user decision, 2026-10-23: clips with transitions "can
+     * change", when cannot fit "bubble notice is sufficient"): transitions on this clip that are longer
+     * than (or equal to) the new duration shrink to "slightly shorter than the new duration" (same rule
+     * as "transitions must be shorter than clips" when adding transitions, rounded to hundredths of a
+     * second, not shorter than MIN_TRANSITION_DUR); the result includes how much each shrank
+     * (`transitions`), and the UI pops up a bubble notice to state clearly. Only reject if even the
+     * shortest transition cannot fit.
      */
     const shrunk = new Map<string, { kind: Transition["kind"]; from: number; to: number }>();
     for (const tr of own) {
@@ -267,18 +303,28 @@ export const clips = {
       shrunk.set(tr.id, { kind: tr.kind, from: tr.dur, to });
     }
     const durOf = (tr: Transition) => shrunk.get(tr.id)?.to ?? tr.dur;
-    /** 这一段是交叉溶解的后一段、溶解缩短了:这一段整段往后挪「缩掉的那么多」,重叠才跟着变短(入点内容不变) */
+    /**
+     * This clip is the second clip of a crossfade and crossfade is shortened: this entire clip moves
+     * backward by the shortened amount so overlap shortens accordingly (in point content remains
+     * unchanged)
+     */
     const asB = own.find((tr) => tr.kind === "crossfade" && tr.bId === clipId);
     const lateBy = asB && shrunk.has(asB.id) ? asB.dur - durOf(asB) : 0;
     const delta = end - hit.clip.end;
     let placed: TrackClip = { ...withSpeed(hit.clip, next), start: start + lateBy, end: end + lateBy };
 
-    /** 要平移的段 → 平移量。交叉溶解的后一段跟着终点走(溶解缩短时再多挪缩掉的那么多) */
+    /**
+     * Clips to translate → translation offset. The second clip of a crossfade follows the end point
+     * (and shifts further by the shortened amount when crossfade is shortened)
+     */
     const moves = new Map<string, number>();
     const asA = own.find((tr) => tr.kind === "crossfade" && tr.aId === clipId && tr.bId);
     const partner = asA?.bId;
     if (partner) moves.set(partner, delta + lateBy + (asA!.dur - durOf(asA!)));
-    /** 一条序列上「这一段(新终点 end2,原终点 end1)」后面的段:碰上了就整体推开 */
+    /**
+     * Clips behind "this clip (new end end2, original end end1)" on a track: pushed away as a whole
+     * when encountering overlap
+     */
     const pushAfter = (trackId: string, selfId: string, end1: number, end2: number) => {
       const track = p.tracks.find((t) => t.id === trackId)!;
       const followers = track.clips.filter((c) => c.id !== selfId && c.id !== clipId && !moves.has(c.id) && c.soundEffect?.sourceClipId !== selfId && c.start >= end1 - 1e-9);
@@ -297,7 +343,8 @@ export const clips = {
     const lockedTrack = p.tracks.find((t) => t.locked && t.clips.some((c) => moves.has(c.id)));
     if (lockedTrack) return { ok: false, error: trText("The clip to move is on the locked track \"{0}\"; unlock that track first", lockedTrack.name) };
 
-    // 缩了的转场:片段两端的淡化跟着改(交叉溶解两头都改),转场记录换新对象
+    // Shrunk transitions: fades on both ends of the clip change accordingly (both ends change for
+    // crossfade), and the transition record is replaced with a new object
     if (shrunk.size) {
       const fades = new Map<string, Partial<TrackClip>>();
       const set = (id: string, patch: Partial<TrackClip>) => fades.set(id, { ...fades.get(id), ...patch });
@@ -311,7 +358,9 @@ export const clips = {
       placed = { ...placed, ...fades.get(clipId) };
       fadePatches = fades;
     }
-    // 平移:被挪的段的声音伴随段先拿出来,挪完再按各自的源片段平移回去(同 moveClip 整组平移的做法)
+    // Translation: companion audio clips of moved clips are extracted first; after moving, translate
+    // them back according to their respective source clips (same approach as translating the entire
+    // group in moveClip)
     let base: import("../../kernel/project").Project = updateTrack(p, hit.track.id, (t) => ({ ...t, clips: t.clips.map((c) => (c.id === clipId ? placed : c)) }));
     if (fadePatches.size) {
       base = { ...base, tracks: base.tracks.map((t) => ({ ...t, clips: t.clips.map((c) => (c.id !== clipId && fadePatches.has(c.id) ? { ...c, ...fadePatches.get(c.id) } : c)) })),
@@ -333,10 +382,12 @@ export const clips = {
       base = moved!;
     }
     base = updateTrack(base, hit.track.id, (t) => ({ ...t, clips: sortClips(t.clips) }));
-    // 自己的声音伴随段:溶解缩短把这一段往后挪了时先整体平移,再按新长度裁到片段里
+    // Own companion audio clip: when crossfade shortening shifts this clip backward, translate as a
+    // whole first, then trim into the clip according to the new duration
     const linked = moveSoundCompanions(base, hit.clip, placed, false);
     if (!linked) return { ok: false, error: trText("The companion audio clip of this clip doesn't fit; speed was not changed") };
-    // 挪完整体核一遍:任何序列上重叠或跑到 0 之前都整个拒绝(不截断)
+    // Verify entirely after moving: reject completely (do not truncate) if any track has overlap or
+    // runs before 0
     const clash = linked.tracks.find((t) => { const s2 = sortClips(t.clips); return s2.some((c, i) => c.start < -1e-9 || (i > 0 && c.start < s2[i - 1].end - 1e-9)); });
     if (clash) return { ok: false, error: trText("After the move, clips on track \"{0}\" would overlap; speed unchanged", clash.name) };
     setProject(linked);
@@ -348,8 +399,8 @@ export const clips = {
     const p = state.project;
     const hit = findClip(p, clipId);
     if (!hit) return;
-    // 片段没了,引用它的转场也就没了意义:一并撤掉,并把另一头的淡化擦干净,
-    // 免得留下一段「无缘无故淡出」的画面
+    // When a clip is gone, transitions referencing it lose meaning: remove them together, and wipe
+    // clean the fade on the other end to avoid leaving video that "fades out for no reason"
     const doomed = transitionsOfClip(p, clipId);
     let next = updateTrack(p, hit.track.id, (t) => ({ ...t, clips: t.clips.filter((c) => c.id !== clipId) }));
     for (const tr of doomed) next = clearTransitionFades(next, tr);
@@ -371,18 +422,21 @@ export const clips = {
     set({ selection: [clip.id] });
     return clip;
   },
-  /** 在 t 处把 clip 一切为二 */
+  /** Split clip in two at t */
   splitClip(clipId: string, t: number): TrackClip | null {
     const p = state.project;
     const hit = findClip(p, clipId);
     if (!hit || t <= hit.clip.start + 0.05 || t >= hit.clip.end - 0.05) return null;
-    // 切开会凭空多出一段,转场两头就对不上了 —— 先删转场
+    // Splitting creates an extra clip out of nowhere, causing transition ends to mismatch:
+    // delete transitions first
     if (timingLock(p, clipId)) return null;
     if (hit.track.locked || p.tracks.some(track => track.locked && track.clips.some(c => c.soundEffect?.sourceClipId === clipId))) return null;
     const left: TrackClip = { ...hit.clip, end: t };
-    // 后半段的素材起点按片段速度推进(kernel/clipTime.mjs;缺省 1 与原来的 off + (t − start) 逐位相同),速度原样带着
+    // Media start point of the second half advances by clip speed (kernel/clipTime.mjs; default 1 is
+    // bitwise identical to original off + (t − start)), carrying speed as is
     let right: TrackClip = { ...hit.clip, id: newId("c"), start: t, mediaOffset: mediaOffsetAfter(hit.clip, t - hit.clip.start), ...(hit.clip.parts ? { parts: JSON.parse(JSON.stringify(hit.clip.parts)) } : {}) };
-    // 剪辑段:后半段从被引用剪辑的「前半段的偏移 + 前半段的长度」开始(不用 mediaOffset)
+    // Cut segments: second half starts from the referenced cut's "first-half offset + first-half
+    // duration" (does not use mediaOffset)
     if (hit.clip.cutId) {
       const { mediaOffset: _m, ...rest } = right;
       right = { ...rest, cutOffset: Math.max(0, hit.clip.cutOffset ?? 0) + (t - hit.clip.start) };
@@ -415,13 +469,15 @@ export const clips = {
     const def = getCard(cardId);
     if (!hit || !def) return;
     assertAudiovisualCardKind(def);
-    // 同样写全:先铺新卡的默认值,再把旧卡里同名的参数覆盖上去
+    // Also write fully: populate new card defaults first, then overwrite with matching parameters
+    // from the old card
     const kept: Record<string, unknown> = {};
     if (opts.keepParams) {
       for (const k of Object.keys(def.defaults)) if (k in hit.clip.params) kept[k] = hit.clip.params[k];
     }
     const params: Record<string, unknown> = { ...def.defaults, ...kept };
-    // 换成别的卡时部件树跟着丢:parts 只属于组合卡,留着会让舞台继续画旧的部件、面板还当它是组合卡
+    // Part tree is discarded when switching to another card: parts only belongs to composite cards;
+    // keeping it makes the stage keep rendering old parts and the panel still treat it as a composite card
     setProject(updateTrack(p, hit.track.id, (t) => ({
       ...t,
       clips: t.clips.map((c) => {

@@ -1,33 +1,44 @@
 /*
- * 云端 AI 提供方的**浏览器侧注册**（公开侧）。由页面启动序列 `src/online/pageBoot.ts` 引一次。
+ * **Browser-side registration** of the cloud AI provider (public side). Imported once by the page
+ * boot sequence `src/online/pageBoot.ts`.
  *
- * ── 为什么必须是同步的、而且在入口 ──
+ * ── Why it must be synchronous, and at the entry point ──
  *
- * `src/ai/extensions.ts` 的 `useCloudAgent` / `useCloudDigest` / `useCloudChat` / `useCloudNotices`
- * 都是转发给 `currentProvider` 的。社区版缺省那几个几乎不调 hook，云端真实现（`useCloud.ts`）
- * 调一大串。所以**提供方一旦在两次渲染之间被换掉，同一个组件的 hook 数量就变了** ——
- * React 当场抛：
+ * `useCloudAgent` / `useCloudDigest` / `useCloudChat` / `useCloudNotices` in `src/ai/extensions.ts`
+ * all forward to `currentProvider`. The community edition's defaults for these barely call any
+ * hooks, while the real cloud implementation (`useCloud.ts`) calls a whole string of them. So
+ * **once the provider is swapped between two renders, the number of hooks in the same component
+ * changes**, and React throws on the spot:
  *
  *     React has detected a change in the order of Hooks called by AiPanel
  *     The final argument passed to useSyncExternalStore changed size between renders
  *     TypeError: Cannot read properties of null (reading 'getSnapshot')
  *
- * 2026-10-28 的局域网端到端探针就是这么崩的：`AiPanel` 抛出去把半棵树带走，协作设置那一段
- * 根本没渲染出来，探针等不到邀请链接（而服务端的 `invite-create` 其实已经成了）。
- * 这个文件的第一版写成「模块被引到就 `void` 一个异步 import」，正是在造那个中途替换。
+ * That is exactly how the LAN end-to-end probe of 2026-10-28 crashed: `AiPanel` threw and took half
+ * the tree with it, the collaboration settings section never rendered at all, and the probe never got
+ * the invite link (although the server's `invite-create` had in fact succeeded).
+ * The first version of this file was written as "a `void` async import as soon as the module is
+ * imported", which is exactly what builds that mid-way swap.
  *
- * 所以：**静态 import + 同步 apply，并且由入口引**。两条缺一不可 ——
- *   - 静态 import：云端表在本模块函数体之前求值完（ES 模块深度优先），不存在「之后才换上」；
- *   - 由入口引：`CloudAiPanel` 那种深在树里、可能懒加载的地方引它，注册仍然可能晚于首次渲染。
+ * So: **static import + synchronous apply, and imported by the entry point**. Both are required:
+ *   - Static import: the cloud table is fully evaluated before this module's function bodies run
+ *     (ES modules are depth-first), so there is no "swapped in later";
+ *   - Imported by the entry point: if it is imported somewhere deep in the tree and possibly
+ *     lazy-loaded, like `CloudAiPanel`, registration can still come after the first render.
  *
- * 社区版里这个别名解析到空桩（`src/community/cloudSeamStub.ts`），什么都不导出 ——
- * `applyAiManifest` 拿不到表，公开侧的「云端关着」缺省一直生效，也就不存在替换。
+ * In the community edition this alias resolves to an empty stub (`src/community/cloudSeamStub.ts`)
+ * that exports nothing: `applyAiManifest` gets no table, the public side's default of "cloud is
+ * off" stays in effect throughout, and so there is no swap.
  */
 import { applyAiManifest } from "./extensions.ts";
-// 云端 AI 加载表。社区版是空桩；说明符必须是字面量，Vite 才解析得到
+// Cloud AI load table. In the community edition it is an empty stub; the specifier must be a
+// literal for Vite to be able to resolve it
 import * as cloudAi from "#promptcut-cloud-ai";
 
-/** 入口调一次。返回有没有真的登记上云端提供方（社区版是 false）。 */
+/**
+ * Called once by the entry point. Returns whether a cloud provider was actually registered (false
+ * in the community edition).
+ */
 export function registerAiCloudProviderFromTable(): boolean {
   const table = cloudAi.manifest ?? cloudAi.default;
   if (!table) return false;

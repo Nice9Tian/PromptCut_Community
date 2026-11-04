@@ -1,27 +1,30 @@
 export const coreTools = [
   /*
-   * 等一会儿。看着多余,其实是必需品。
+   * Wait a moment. Looks redundant, but is actually a necessity.
    *
-   * 有十来个工具是「立刻返回 jobId,你去轮询」的形状,说明里也写着「隔几秒问一次」——
-   * 但在有这个工具之前,**模型根本没有等待的手段**。它唯一想得到的办法就是借壳跑一条
-   * shell 命令(实测 agy 就发了 `powershell -Command "Start-Sleep -Seconds 3"`),
-   * 而无人值守模式下 Antigravity 会把自己的 run_command 自动拒掉,一拒**整轮就废** ——
-   * 用户那边看到的是一串工具调用之后毫无征兆地结束,没有回复也没有报错。
+   * Over a dozen tools take the shape of "return jobId immediately, you poll for it", and the
+   * descriptions also say "poll every few seconds": but before this tool existed, **the model had no
+   * means of waiting at all**. The only way it could think of was borrowing a shell to run a command
+   * (in testing, agy actually issued `powershell -Command "Start-Sleep -Seconds 3"`), and in
+   * unattended mode Antigravity automatically rejects its own run_command; once rejected, **the whole
+   * round is ruined**: what the user sees is an abrupt end without warning after a string of tool
+   * calls, with neither reply nor error.
    *
-   * 换句话说:是我们让它去等,却没给它表针。补上这一个,那条借道 shell 的路就不用走了。
+   * In other words: we told it to wait, but gave it no clock hands. With this added, that detour
+   * through the shell is no longer needed.
    */
   {
     name: "wait",
-    description: "等待若干秒之后再继续（用于轮询之间的间隔）。凡是返回 jobId 让你轮询的工具（collect_job、stt_status、get_transcript、list_shots 等），两次查询之间用它来等，**不要用 shell 命令或别的办法自己睡** —— 那些在无人值守模式下会被拒绝，并且会让整轮对话直接中断。参数 seconds：1~30，默认 3。",
+    description: "Wait a number of seconds before continuing (use for the interval between polls). For any tool that returns a jobId for you to poll (collect_job, stt_status, get_transcript, list_shots, etc.), use this to wait between two queries, **do not sleep by yourself with shell commands or other means**: those are rejected in unattended mode and abort the whole conversation turn. Parameter seconds: 1~30, default 3.",
     inputSchema: {
       type: "object",
-      properties: { seconds: { type: "number", description: "等多少秒，1~30，默认 3" } }
+      properties: { seconds: { type: "number", description: "How many seconds to wait, 1~30, default 3" } }
     },
     side: "server",
   },
   {
     name: "report_progress",
-    description: "给用户看的唯一进度汇报渠道。每完成一个小阶段调一次(final: false),整个任务结束前必须调一次(final: true),因为出错或卡住而停下来也算结束;先填三个布尔再填列表;每条一句简洁中文、不超过 40 字、每类不超过 8 条。要用户回话之后才能继续时(缺了用不了的能力、指令含糊要澄清、候选要他挑)把 blocked 填 true,并把要他做什么写进 todo —— 界面会把这份报告画成「等你回话」而不是「已暂停」,他才知道球在他那边;blocked 为 true 就表示这一轮停在这里,交完不要再调工具。",
+    description: "The only progress report channel shown to the user. Call it once after each small stage (final: false), and you must call it once before the whole task ends (final: true); stopping because of an error or getting stuck also counts as ending. Fill in the three booleans first, then the lists; each item is one concise sentence in the user's language, no more than 40 characters in Chinese or Japanese (about 15 words in English), and no more than 8 items per category. When you cannot continue until the user replies (a missing capability, an ambiguous instruction that needs clarifying, candidates for them to pick), set blocked to true and write what you need them to do into todo: the interface will draw this report as \"waiting for your reply\" instead of \"paused\", so they know the ball is in their court; blocked being true means this turn stops here, so do not call any more tools after submitting.",
     inputSchema: {
       type: "object",
       properties: {
@@ -29,7 +32,7 @@ export const coreTools = [
         has_done: { type: "boolean" },
         has_todo: { type: "boolean" },
         has_problem: { type: "boolean" },
-        blocked: { type: "boolean", description: "true 表示停下来等用户回话(要他做事或答复才能继续);要用户做什么写进 todo。缺省 false" },
+        blocked: { type: "boolean", description: "true means stop and wait for the user to reply (they must do something or answer before you can continue); write what they need to do into todo. Defaults to false" },
         stage: { type: "string" },
         done: { type: "array", items: { type: "string" } },
         todo: { type: "array", items: { type: "string" } },
@@ -39,10 +42,10 @@ export const coreTools = [
     },
     side: "server"
   },
-  { name: "background_job_status", description: "查询 stt_install 或 transcribe_media 返回的 jobId，得到 done、ok、error 和进度；done=true 且 ok=false 表示失败，不要继续轮询。", inputSchema: { type: "object", properties: { jobId: { type: "string" } }, required: ["jobId"] }, side: "page" },
+  { name: "background_job_status", description: "Query the jobId returned by stt_install or transcribe_media to get done, ok, error and progress; done=true with ok=false means failure, so do not keep polling.", inputSchema: { type: "object", properties: { jobId: { type: "string" } }, required: ["jobId"] }, side: "page" },
   {
     name: "auto_workflow",
-    description: "对指定素材一键完成 视频到文字稿到动效卡 的整条流程 —— 没有文字稿就先自动转写并等待完成（最多 10 分钟），然后按文字稿切成 5 到 15 秒的段落、用确定性规则给每段配一张合适的动效卡，再给整条文字稿铺一张 caption-track 常驻字幕卡（放在单独的字幕轨上）。参数 mediaId 必填，maxCards 默认 12。用户说 自动做 或 一键配特效 时直接用这个工具。素材较长时本工具会在 50 秒后先返回一个带 jobId 且 running 为 true 的对象，流程在后台继续，用 auto_workflow_status 轮询即可，不要重复调用本工具。",
+    description: "For the given media, completes the whole flow from video to transcript to motion graphics cards in one click: if there is no transcript it first transcribes automatically and waits for completion (up to 10 minutes), then splits the transcript into 5 to 15 second paragraphs, assigns each paragraph a suitable motion graphics card using deterministic rules, and then lays one persistent caption-track captions card over the whole transcript (placed on a separate captions track). Parameter mediaId is required, maxCards defaults to 12. Use this tool directly when the user says \"auto make\" or \"one-click effects\". For longer media, after 50 seconds this tool first returns an object with a jobId and running set to true while the flow continues in the background; poll with auto_workflow_status and do not call this tool again.",
     inputSchema: {
       type: "object",
       properties: {
@@ -56,7 +59,7 @@ export const coreTools = [
   },
   {
     name: "auto_workflow_status",
-    description: "轮询 auto_workflow 后台作业的进度；auto_workflow 在 50 秒内跑完会直接返回完整结果，只有返回里 running 为 true 时才需要用本工具轮询，done 变成 true 后 result 里就是完整结果。",
+    description: "Poll the progress of the auto_workflow background job; if auto_workflow finishes within 50 seconds it returns the full result directly, so you only need this tool to poll when running is true in the return, and once done becomes true, result holds the full result.",
     inputSchema: {
       type: "object",
       properties: {
@@ -68,7 +71,7 @@ export const coreTools = [
   },
   {
     name: "user_interface_seek",
-    description: "**会动用户的界面**:把用户编辑台上的播放头跳到时间轴的指定秒数。看某一刻的画面不用它(see_frames 传 t);只有用户要你把播放头放到某处时才用。",
+    description: "**Touches the user's interface**: jumps the playhead in the user's editor to the given second of the timeline. Do not use it to look at the picture at a given moment (pass t to see_frames); use it only when the user asks you to put the playhead somewhere.",
     inputSchema: {
       type: "object",
       properties: { t: { type: "number" } },
@@ -78,13 +81,13 @@ export const coreTools = [
   },
   {
     name: "user_interface_play",
-    description: "**会动用户的界面**:在用户的编辑台上开始播放。只有用户要你播放时才用。",
+    description: "**Touches the user's interface**: starts playback in the user's editor. Use only when the user asks you to play.",
     inputSchema: { type: "object", properties: {} },
     side: "page"
   },
   {
     name: "user_interface_pause",
-    description: "**会动用户的界面**:暂停用户编辑台上的播放。只有用户要你暂停时才用。",
+    description: "**Touches the user's interface**: pauses playback in the user's editor. Use only when the user asks you to pause.",
     inputSchema: { type: "object", properties: {} },
     side: "page"
   }

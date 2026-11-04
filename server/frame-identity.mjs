@@ -21,7 +21,7 @@ export function frameIdentity(project, code = '') {
 export function trackPrefixes(project, code = '') {
   return [...project.tracks].reverse().filter(t => !t.hidden).map((track, i, bottomUp) => {
     const tracks = bottomUp.slice(0, i + 1).reverse();
-    // 剪辑段:被引用剪辑里用到的素材也要留在子集里(kernel/cutIdentity.mjs)
+    // Cut segment: assets used in referenced cuts must also remain in the subset (kernel/cutIdentity.mjs)
     const mediaIds = reachableMediaIds(project, tracks);
     const subset = { ...project, tracks, media: project.media.filter(m => mediaIds.has(m.id)) };
     return { trackId: track.id, trackIds: tracks.map(t => t.id), key: frameIdentity(subset, code) };

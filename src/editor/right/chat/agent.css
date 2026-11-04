@@ -1,7 +1,7 @@
 /*
- * 思考块。按配色规范「全屏只留一个实心强调色」(导出按钮),这里绝不能用
- * --accent 做背景,否则又是两个强调色打架。思考是过程不是结论,所以比助手
- * 气泡再退一档:L1 底 + 虚线描边 + 弱化文字,一眼看出它不是回复本身。
+ * Thinking block. Under the color spec "keep only one solid accent color on the whole screen" (the export button), --accent must never be used
+ * as a background here, otherwise two accent colors fight again. Thinking is a process, not a conclusion, so it steps back one level further than the assistant
+ * bubble: L1 background + dashed outline + muted text, so it is obvious at a glance that it is not the reply itself.
  */
 .ai-thinking {
   background: var(--ui-bg-2);
@@ -73,7 +73,7 @@
   flex-direction: column;
   gap: 2px;
 }
-/* 末尾那一块(结果 / 文件 / 原始数据里最后一段)的下外边距清掉:它可能正好是气泡里最后一样东西 */
+/* Clear the bottom margin of the last block (the last section among result / file / raw data): it may be exactly the last thing in the bubble */
 .ai-tool-detail > :last-child,
 .ai-tool-raw > :last-child {
   margin-bottom: 0;
@@ -107,7 +107,7 @@
   color: var(--ink-muted);
   overflow-wrap: anywhere;
 }
-/* ── 工具结果的可视化(ToolVisual.tsx):看图的位图、改卡的参数差异、前后两段动图 ── */
+/* ── Visualization of tool results (ToolVisual.tsx): bitmaps for viewing frames, parameter diffs for card edits, two animated images before and after ── */
 .ai-visual { display: flex; flex-direction: column; gap: 10px; }
 .ai-visual-note { font-size: 12px; color: var(--ink-muted); }
 .ai-visual-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
@@ -138,10 +138,10 @@
   display: block;
 }
 
-/* ── 简洁模式:做过的操作折成一行 ───────────────────────── */
+/* ── Concise mode: past actions folded into one row ───────────────────────── */
 
-/* ── 执行中动画 ─────────────────────────────────────── */
-/* 「正在做什么」+ 轮次小字这一块:两行之间 2px;和气泡里别的块之间仍是气泡的 gap */
+/* ── Animation while running ─────────────────────────────────────── */
+/* The "what is being done" + small round-count text block: 2px between the two rows; spacing to the other blocks in the bubble is still the bubble's gap */
 .ai-activity-block {
   display: flex;
   flex-direction: column;
@@ -149,8 +149,8 @@
   min-width: 0;
 }
 /*
- * 单行居中:行高取整数 17px,11px 的转圈图标上下各 3px、3px 的跳点上下各 7px,都落在整像素上,
- * 和文字行盒的中线对齐。不带外边距,只有这一行的气泡四边留白才一样。
+ * Single-line centering: the line height is the integer 17px, the 11px spinner icon has 3px above and below, the 3px bouncing dot has 7px above and below, all landing on whole pixels,
+ * aligned with the midline of the text line box. No margins are carried, so only then is the padding on all four sides of this one-line bubble equal.
  */
 .ai-activity {
   display: flex;
@@ -163,7 +163,7 @@
 .ai-activity-text {
   overflow-wrap: anywhere;
 }
-/* 轮次和成败,比正在做什么次要一档,所以缩进对齐在转圈图标之后(11px 图标 + 6px 间距) */
+/* Round count and success/failure are one level less important than what is being done, so they are indented to align after the spinner icon (11px icon + 6px gap) */
 .ai-activity-meta {
   margin: 0 0 0 17px;
   font-size: 11px;
@@ -203,16 +203,16 @@
   30% { opacity: 1; transform: translateY(-2px); }
 }
 
-/* 系统设了「减少动态效果」就不要转圈跳点 */
+/* If the system is set to "reduce motion", no spinner and no bouncing dots */
 @media (prefers-reduced-motion: reduce) {
   .ai-spinner { animation: none; border-top-color: var(--accent); }
   .ai-activity-dots i { animation: none; opacity: 0.6; }
 }
 
-/* ── 简洁模式:一排图标代表刚做过的几件事 ──────────────
-   相邻的同类操作叠进一个图标(最多 5 个,见 iconRuns.ts),颜色区分动作类型,新的会弹出来 ——
-   用户看得见条目在变多,不会以为卡住了。点一下让气泡里的操作详细预览控件跳到它那一项(不在这里摊开清单)。
-   图标边长用 small_cube(--pc-cube-s),和素材库的方块同一个尺度。 */
+/* ── Concise mode: a row of icons stands for the few things just done ──────────────
+   Adjacent operations of the same kind are folded into one icon (at most 5, see iconRuns.ts), color tells the action type apart, and new ones pop out,
+   so the user can see the entries multiplying and does not think it is stuck. A click makes the operation detail preview control inside the bubble jump to that entry (the list is not expanded here).
+   The icon side length uses small_cube (--pc-cube-s), the same scale as the squares in the media library. */
 .ai-ops-wrap {
   display: flex;
   flex-direction: column;
@@ -222,7 +222,7 @@
 .ai-ops {
   display: flex;
   flex-wrap: wrap;
-  /* 10px 而不是方块间距的 8px:hover / 聚焦时要放大、发光,挨太近会压到邻居 */
+  /* 10px rather than the 8px square gap: on hover / focus they scale up and glow, and sitting too close would overlap the neighbors */
   gap: 10px;
   padding: 2px;
   align-items: center;
@@ -237,14 +237,14 @@
   border-radius: var(--ui-radius-lg, 8px);
   cursor: pointer;
   background-color: var(--chip, var(--ui-fg-faint, #6b6a75));
-  /* 中央一枚白色字形(见下面按动作类型给的 --chip-icon),颜色和字形各说一遍,色觉障碍也认得出 */
+  /* A white glyph in the center (see the --chip-icon given per action type below); color and glyph each say it once, so users with color vision deficiency can still tell */
   background-image: var(--chip-icon, none);
   background-repeat: no-repeat;
   background-position: center;
   background-size: 28px 28px;
   transition: transform 160ms ease, box-shadow 160ms ease;
-  /* 新图标挂载时弹一下。历史消息一次性铺开时也只弹这一次,不循环。
-     动的是独立的 scale 属性而不是 transform:动画填充住的 transform 会一直压着 hover / 聚焦时的放大 */
+  /* A new icon pops once when it mounts. When history messages are laid out all at once it also pops only this once, with no looping.
+     What animates is the standalone scale property rather than transform: a transform held by animation fill would keep overriding the hover / focus enlargement */
   animation: ai-op-pop 260ms cubic-bezier(0.16, 1, 0.5, 1) both;
 }
 .ai-op:hover {
@@ -255,9 +255,9 @@
   outline-offset: 2px;
 }
 /*
- * 操作详细预览控件当前显示的那一项:
- *   用户在这个气泡里点过图标 / 翻过页 → is-selected:强调色描边 + 略放大;
- *   还没点过、消息在跑(自动跟踪最新)→ is-focus:只发光。
+ * The entry currently shown by the operation detail preview control:
+ *   The user has clicked an icon / turned a page in this bubble → is-selected: accent-color outline + slightly enlarged;
+ *   Not clicked yet and the message is running (auto-following the latest) → is-focus: glow only.
  */
 .ai-op.is-focus {
   box-shadow: 0 0 16px var(--ui-accent-soft, rgba(0, 219, 219, 0.35));
@@ -267,16 +267,16 @@
   box-shadow: 0 0 0 2px var(--ui-accent, #00DBDB), 0 0 12px var(--ui-accent-soft, rgba(0, 219, 219, 0.35));
 }
 /*
- * 小结图标:外面一张折了角的文档,里面画 ✓ 或 !。和操作失败的「红底一个大 !」分得开 ——
- * 绿底文档 ✓ = 没问题,黄底文档 ! = 报了问题,红底文档 ! = 这一轮出错收尾
+ * Summary icon: a document with a folded corner on the outside, with ✓ or ! drawn inside. It stays distinct from the "big ! on red" of a failed operation:
+ * green document ✓ = no problem, yellow document ! = problems reported, red document ! = this round ended in an error
  */
 .ai-op--summary.tone-ok { --chip: var(--ui-success, #4f9e5c); --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2014%2014'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20stroke-width%3D'1.4'%20d%3D'M2.1%201h6.7l3.1%203.1V13H2.1z'%2F%3E%3Cpath%20stroke-width%3D'1.4'%20d%3D'M8.8%201v3.1h3.1'%2F%3E%3Cpath%20stroke-width%3D'1.5'%20d%3D'M4.7%208.4l1.6%201.6%203.1-3.4'%2F%3E%3C%2Fsvg%3E"); }
 .ai-op--summary.tone-warn,
 .ai-op--summary.tone-err { --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2014%2014'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20stroke-width%3D'1.4'%20d%3D'M2.1%201h6.7l3.1%203.1V13H2.1z'%2F%3E%3Cpath%20stroke-width%3D'1.4'%20d%3D'M8.8%201v3.1h3.1'%2F%3E%3Cpath%20stroke-width%3D'1.5'%20d%3D'M7%205.6v3.1'%2F%3E%3Ccircle%20cx%3D'7'%20cy%3D'10.6'%20r%3D'.8'%20fill%3D'%23fff'%20stroke%3D'none'%2F%3E%3C%2Fsvg%3E"); }
 /*
- * 文档字形画在 14 格里(别的图标是 12 格),上下才放得下;背景取 32px —— 偶数,(64 − 32) / 2 落在整像素上,
- * 不会被浏览器把位置吸附到半像素而偏到一边。比例尺比别的图标略小一点(32/14 对 28/12),
- * 所以文档画宽一点(2.1 ~ 11.8+ 描边,关于中线对称),量出来和「查看」的眼睛一样宽
+ * The document glyph is drawn in a 14-unit grid (other icons use 12), so it fits vertically; the background is 32px, an even number, so (64 − 32) / 2 lands on whole pixels,
+ * and the browser will not snap its position to a half pixel and shift it to one side. The scale is slightly smaller than the other icons (32/14 vs 28/12),
+ * so the document is drawn a bit wider (2.1 ~ 11.8+ stroke, symmetric about the center line), and measured it is as wide as the eye of "View"
  */
 .ai-op--summary {
   background-size: 32px 32px;
@@ -286,7 +286,7 @@
 }
 .ai-op--summary.tone-warn { --chip: var(--ui-warn, #e0a13a); }
 .ai-op--summary.tone-err { --chip: var(--ui-danger, #e2564d); }
-/* 叠了 2 个以上:右下角一个 ×n */
+/* When 2 or more are stacked: a ×n in the bottom right corner */
 .ai-op-count {
   position: absolute;
   right: 4px;
@@ -304,51 +304,51 @@
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
-/* 装引擎的进度条占整行,不挤在图标中间 */
+/* The progress bar for installing the engine takes the whole row, instead of being squeezed into the middle of an icon */
 .ai-ops-install {
   flex: 1 1 100%;
   min-width: 0;
 }
 
 /*
- * 动作类型 —— 读取最暗(深灰底 + 放大镜),它们数量最多但最不值得注意。
- * 颜色的分工:红色只留给「失败」。删除是灰底垃圾桶,不用红 —— 以前删除和失败都是红的,
- * 用户扫一眼分不出「删了东西」和「出错了」。修改用黄绿而不是黄:黄在用户眼里是警告。
+ * Action types: reading is the darkest (dark gray background + magnifying glass), the most numerous but the least worth noticing.
+ * Division of colors: red is reserved for "failure". Delete is a gray trash can, not red: previously both delete and failure were red,
+ * so at a glance the user could not tell "something was deleted" from "an error occurred". Edit uses yellow-green rather than yellow: yellow reads as a warning to users.
  */
 .ai-op--add { --chip: var(--ui-success, #4ade80); --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M6%202.5v7M2.5%206h7'%2F%3E%3C%2Fsvg%3E"); }
 .ai-op--remove { --chip: #6b7280; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M2%203.5h8M4.8%203.5V2.3h2.4v1.2M3.2%203.5l.5%206h4.6l.5-6M5.2%205.5v2.5M6.8%205.5v2.5'%2F%3E%3C%2Fsvg%3E"); }
 .ai-op--edit { --chip: #a3c22a; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M2.5%209.5l.6-2.4%205-5%201.8%201.8-5%205zM7.3%202.9l1.8%201.8'%2F%3E%3C%2Fsvg%3E"); }
-/* 下载:和「处理」同色(都是要等的活儿),白色下箭头 + 托盘把它认出来 —— 光靠蓝方块看不出在下东西 */
+/* Download: same color as "Process" (both are jobs you have to wait for), recognized by a white down arrow + tray: a blue square alone does not show that something is being downloaded */
 .ai-op--download { --chip: var(--ui-accent, #60a5fa); --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M6%202.1v5.3M3.7%205.9L6%208.2l2.3-2.3M2.9%2010h6.2'%2F%3E%3C%2Fsvg%3E"); }
 /*
- * 处理(转写、追踪、检测、预渲染、自动流程这类要跑一阵的):深黄底 + 一圈白点。
- * 先算出 10 个圆心,从正上方顺时针排(起点 -> 末尾),末尾 4 个透明度 0.8 / 0.6 / 0.4 / 0.2 递减,
- * 看着像转圈的加载,一眼知道是在跑的活儿。和「修改」的黄绿分得开:这边偏橙
+ * Process (things that run for a while, such as transcription, tracking, detection, prerender, automatic workflows): dark yellow background + a ring of white dots.
+ * First compute 10 circle centers, arranged clockwise from straight above (start -> end), with the last 4 having decreasing opacity 0.8 / 0.6 / 0.4 / 0.2,
+ * looking like a spinning loader, so it is obvious at a glance that it is a running job. It stays distinct from the yellow-green of "Edit": this one leans orange
  */
 .ai-op--job { --chip: #b8860b; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'%23fff'%3E%3Ccircle%20cx%3D'6'%20cy%3D'2.1'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'8.29'%20cy%3D'2.84'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'9.71'%20cy%3D'4.79'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'9.71'%20cy%3D'7.21'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'8.29'%20cy%3D'9.16'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'6'%20cy%3D'9.9'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'3.71'%20cy%3D'9.16'%20r%3D'0.95'%20fill-opacity%3D'0.8'%2F%3E%3Ccircle%20cx%3D'2.29'%20cy%3D'7.21'%20r%3D'0.95'%20fill-opacity%3D'0.6'%2F%3E%3Ccircle%20cx%3D'2.29'%20cy%3D'4.79'%20r%3D'0.95'%20fill-opacity%3D'0.4'%2F%3E%3Ccircle%20cx%3D'3.71'%20cy%3D'2.84'%20r%3D'0.95'%20fill-opacity%3D'0.2'%2F%3E%3C%2Fsvg%3E"); }
-/* 多 Agent(declare_scope、send_message、check_messages、list_agents):深紫底 + 白色聊天气泡 */
+/* Multi-Agent (declare_scope, send_message, check_messages, list_agents): dark purple background + white chat bubble */
 .ai-op--agent { --chip: #5b2aa8; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.4'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M3.4%202.3h5.2a1.9%201.9%200%200%201%201.9%201.9v2.9a1.9%201.9%200%200%201-1.9%201.9H5.6L3.2%2010.4V9A1.9%201.9%200%200%201%201.5%207.1V4.2a1.9%201.9%200%200%201%201.9-1.9z'%2F%3E%3C%2Fsvg%3E"); }
-/* 界面操作(play、pause、seek、switch_*):只动编辑台界面、不改项目。比「查看」再深一档的蓝 + 白色点击的手 */
+/* UI operations (play, pause, seek, switch_*): they only move the editor UI and do not change the project. A blue one level deeper than "View" + a white clicking hand */
 .ai-op--ui { --chip: #23489c; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'2.3'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M9%2012.5V4.6a1.6%201.6%200%200%201%203.2%200V11'%2F%3E%3Cpath%20d%3D'M12.2%2010.6a1.6%201.6%200%200%201%203.2%200V12'%2F%3E%3Cpath%20d%3D'M15.4%2011.2a1.6%201.6%200%200%201%203.2%200v1.3'%2F%3E%3Cpath%20d%3D'M18.6%2012.2a1.6%201.6%200%200%201%203.2%200v3.3a6.5%206.5%200%200%201-6.5%206.5h-1.6a6%206%200%200%201-4.9-2.6l-4-5.7a1.7%201.7%200%200%201%202.6-2.2L9%2013.2'%2F%3E%3C%2Fsvg%3E"); }
-/* 查看画面(see_frames、view_*):比「处理」深一档的蓝 + 白色眼睛,和翻数据的放大镜分开 */
+/* View picture (see_frames, view_*): a blue one level deeper than "Process" + a white eye, kept apart from the magnifying glass for browsing data */
 .ai-op--look { --chip: #2b5fc7; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.4'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M1.2%206C2.6%203.5%204.2%202.7%206%202.7s3.4.8%204.8%203.3C9.4%208.5%207.8%209.3%206%209.3S2.6%208.5%201.2%206z'%2F%3E%3Ccircle%20cx%3D'6'%20cy%3D'6'%20r%3D'1.5'%20fill%3D'%23fff'%20stroke%3D'none'%2F%3E%3C%2Fsvg%3E"); }
 /*
- * 等待:没在干活,灰蓝底 + 白色 Zzz。先定两端 —— 左下大 Z(边长 2.4、笔画 1.1)、右上小 Z(1.8、0.95),
- * 关于方块中心对称;中间那个取两者插值(中心、边长、笔画都取中点),正好落在正中。拐角圆角 r = 边长/4。
+ * Waiting: not working, gray-blue background + white Zzz. Fix the two ends first: a large Z at the bottom left (side 2.4, stroke 1.1) and a small Z at the top right (1.8, 0.95),
+ * symmetric about the center of the square; the middle one interpolates between the two (center, side and stroke all take the midpoint) and lands exactly in the middle. Corner radius r = side/4.
  */
 .ai-op--wait { --chip: #475569; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20stroke-width%3D'1.1'%20d%3D'M1.25%208.35H3.05Q3.65%208.35%203.23%208.77L1.67%2010.33Q1.25%2010.75%201.85%2010.75H3.65'%2F%3E%3Cpath%20stroke-width%3D'1.02'%20d%3D'M4.95%204.95H6.53Q7.05%204.95%206.68%205.32L5.32%206.68Q4.95%207.05%205.48%207.05H7.05'%2F%3E%3Cpath%20stroke-width%3D'0.95'%20d%3D'M8.65%201.55H10Q10.45%201.55%2010.13%201.87L8.97%203.03Q8.65%203.35%209.1%203.35H10.45'%2F%3E%3C%2Fsvg%3E"); }
 .ai-op--read {
-  /* 深灰:比别的动作暗一档(读取最不值得注意),但比面板亮,不至于看成空位 */
+  /* Dark gray: one level darker than the other actions (reading is the least worth noticing), but brighter than the panel, so it is not mistaken for an empty slot */
   --chip: #3c4552;
   --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%3E%3Ccircle%20cx%3D'5.2'%20cy%3D'5.2'%20r%3D'2.8'%2F%3E%3Cpath%20d%3D'M7.3%207.3l2.4%202.4'%2F%3E%3C%2Fsvg%3E");
 }
 
-/* 还没出结果:轻轻呼吸,和「已经做完」区分开 */
+/* No result yet: breathes gently, to tell it apart from "already done" */
 .ai-op.is-run {
   animation: ai-op-pop 260ms cubic-bezier(0.16, 1, 0.5, 1) both,
     ai-op-breathe 1.1s ease-in-out 260ms infinite;
 }
-/* 失败:红色方块 + 白色叹号,盖过动作类型的颜色和图标 —— 出错比「做的是哪类动作」更要紧 */
+/* Failure: red square + white exclamation mark, overriding the color and icon of the action type: an error matters more than "which kind of action it was" */
 .ai-op.is-err {
   --chip: var(--ui-danger, #f87171);
   --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M6%202.6v4.2'%2F%3E%3Ccircle%20cx%3D'6'%20cy%3D'9.2'%20r%3D'.9'%20fill%3D'%23fff'%20stroke%3D'none'%2F%3E%3C%2Fsvg%3E");
@@ -364,7 +364,7 @@
   50% { opacity: 0.45; }
 }
 
-/* 动效敏感的人只要状态,不要跳动 */
+/* People sensitive to motion only need the state, not the bouncing */
 @media (prefers-reduced-motion: reduce) {
   .ai-op,
   .ai-op.is-run {
@@ -378,16 +378,16 @@
 }
 
 /*
- * 思考里的步骤条。
+ * The step bar inside thinking.
  *
- * 这些「**Clarifying article link and scope**」是模型报的进度,不是给人读的推理。
- * 原样铺成文字会把正文顶开、把阅读切断,所以压成一行行的小字,和 .ai-thinking 一样
- * 退到 ink-faint 那一档 —— 存在感低于回复本身,但一眼能看到走到哪一步了。
+ * These "**Clarifying article link and scope**" lines are progress reported by the model, not reasoning meant to be read by people.
+ * Laying them out as text verbatim would push the body text apart and break the reading flow, so they are compressed into lines of small text, like .ai-thinking
+ * and stepped back to the ink-faint level: less prominent than the reply itself, yet it is clear at a glance which step we have reached.
  *
- * 只有最后一条、且消息还没结束时才动(is-live)。已经过去的步骤是静止的小圆点,
- * 满屏都在呼吸的话反而看不出哪一步是当下。
+ * Only the last one, and only while the message has not finished, moves (is-live). Steps that have passed are static small dots,
+ * because if the whole screen is breathing, you can no longer tell which step is the current one.
  */
-/* 详细模式里的一段思考:步骤条 +(打开「显示思考」时)原文块,两者之间 6px,外面不带外边距 */
+/* One piece of thinking in detailed mode: step bar + (when "Show thinking" is on) the original text block, 6px between them, no margin on the outside */
 .ai-thinking-part {
   display: flex;
   flex-direction: column;
@@ -434,12 +434,12 @@
   0%, 100% { transform: scale(1); opacity: 0.45; }
   50% { transform: scale(1.6); opacity: 1; }
 }
-/* 跟随系统「减少动态效果」:呼吸只是提示,不该硬塞给对动画敏感的人 */
+/* Follow the system "Reduce motion": breathing is only a hint and should not be forced on people sensitive to animation */
 @media (prefers-reduced-motion: reduce) {
   .ai-step.is-live .ai-step-dot { animation: none; opacity: 1; }
 }
 
-/* ── 操作清单里的一行:名称、成败、耗时、结果摘要 ── */
+/* ── One row in the operation list: name, success/failure, duration, result summary ── */
 .ai-tool-chip.has-meta {
   display: flex;
   width: 100%;
@@ -468,15 +468,15 @@
 }
 
 /*
- * 报告卡(report_progress 交上来的三组条目)。
- * 文字回复默认不显示之后,这就是用户读到的「结论」:阶段卡紧凑、退一档;
- * 本轮小结多一圈半透明强调色描边 —— 醒目一点,但不用实心强调色(全屏只留导出按钮那一个)。
+ * Report card (the three groups of entries submitted by report_progress).
+ * Now that text replies are hidden by default, this is the "conclusion" the user reads: the stage card is compact and one level back;
+ * The round summary gets an extra semi-transparent accent-color outline: a bit more eye-catching, but without a solid accent color (the whole screen keeps only the one on the export button).
  */
 .ai-report {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* 四边内边距一样;和气泡里前后块的间距交给气泡的 gap,自己不带外边距 */
+  /* Equal padding on all four sides; the spacing to the blocks before and after it in the bubble is left to the bubble's gap, and it carries no margin of its own */
   padding: 10px;
   border-radius: var(--ui-radius-lg, 8px);
   background: var(--ui-panel, rgb(255 255 255 / 0.04));
@@ -489,7 +489,7 @@
   padding: 12px;
   border-color: var(--ui-accent-soft, rgba(0, 219, 219, 0.45));
 }
-/* 在等用户回话:球在他那边,所以换成提醒色,和「做完了」的强调色分开 */
+/* Waiting for the user to reply: the ball is in their court, so it switches to the reminder color, kept apart from the accent color of "done" */
 .ai-report.is-blocked {
   border-color: var(--ui-warn, #e0a13a);
   box-shadow: inset 2px 0 0 var(--ui-warn, #e0a13a);
@@ -530,7 +530,7 @@
   font-weight: 700;
   line-height: 1;
 }
-/* 已完成:绿色 ✓;待办:弱色 ○(没有底色,存在感最低);问题:琥珀色 ! —— 红色只留给「失败」 */
+/* Done: green ✓; to do: muted ○ (no background, lowest presence); issues: amber !: red is reserved for "failure" */
 .ai-report-group.is-done .ai-report-mark {
   background: var(--ui-success, #4ade80);
   color: #0b0b0f;
@@ -553,7 +553,7 @@
 .ai-report-group.is-todo .ai-report-list {
   color: var(--ui-fg-muted, var(--ink-muted));
 }
-/* 条目之间 1px(和原来两边 1px 折叠后一样),首尾不带外边距:报告卡四边的内边距才一样 */
+/* 1px between entries (the same as the original 1px margins on both sides after collapsing), no margin at the start and end: only then is the padding on all four sides of the report card equal */
 .ai-report-list li {
   margin: 0;
 }
@@ -568,14 +568,14 @@
 }
 
 /*
- * 「思考与原文」。文字回复和思考原文默认都不显示,打开「显示思考」才在气泡底部出现这一块:
- * 左边一道 2px 竖线、底色退一档,一眼看出这是过程材料,不是交给用户的结论。
+ * "Thinking and original text". Text replies and the original thinking text are both hidden by default, and this block appears at the bottom of the bubble only after "Show thinking" is turned on:
+ * A 2px vertical line on the left and a background one level back, so it is obvious at a glance that this is working material, not a conclusion delivered to the user.
  */
 .ai-rawlog {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* 四边内边距一样;和上面报告卡之间的距离交给气泡的 gap */
+  /* Equal padding on all four sides; the distance to the report card above is left to the bubble's gap */
   padding: 10px;
   border-left: 2px solid var(--ui-border-strong, var(--hairline-strong));
   background: var(--ui-bg, rgb(0 0 0 / 0.12));
@@ -613,13 +613,13 @@
 }
 
 /*
- * 操作详细预览控件(OpDetailPreview.tsx)。一个气泡只放一个,画面、操作卡、小结、收到的消息都一页页排在这里。
- * 画框固定 180px 高:聊天栏只有三百来像素宽,再高就把下一条消息顶出一屏;文字页在框里滚。
- * 翻页靠 translateX 平移整条轨道;拖动时关掉过渡,画面跟手。
+ * Operation detail preview control (OpDetailPreview.tsx). A bubble holds only one; pictures, operation cards, summaries and received messages are all laid out here page by page.
+ * The picture frame is fixed at 180px tall: the chat panel is only about three hundred pixels wide, and any taller would push the next message off a whole screen; text pages scroll inside the frame.
+ * Turning pages translates the whole track with translateX; during a drag the transition is turned off so the picture follows the pointer.
  */
-/* 助手气泡的宽度本来跟着内容走,画框自己没有内容宽度,气泡会缩成一个图标那么宽。
-   所以带轮播的气泡直接占满它能占的宽度(和 .ai-message 的 max-width 一致),轮播铺满气泡;
-   画框高度封顶 180px,图片按原尺寸显示(只缩不放),在画框里居中 */
+/* The width of an assistant bubble normally follows its content, but the picture frame has no content width of its own, so the bubble would shrink to the width of an icon.
+   So a bubble with a carousel takes all the width it can (consistent with the max-width of .ai-message), and the carousel fills the bubble;
+   the frame height is capped at 180px, and images are shown at their original size (shrink only, never enlarge), centered in the frame */
 .ai-message.assistant:has(.ai-carousel) {
   width: 85%;
 }
@@ -639,7 +639,7 @@
   overflow: hidden;
   cursor: grab;
   user-select: none;
-  /* 竖着的触摸滚动留给消息列表,横着的归轮播 */
+  /* Vertical touch scrolling is left to the message list, horizontal belongs to the carousel */
   touch-action: pan-y;
   outline: none;
 }
@@ -668,7 +668,7 @@
   justify-content: center;
   overflow: hidden;
 }
-/* 图片别被浏览器当成可拖走的东西,否则按住一拖出来的是图片的拖影而不是翻页 */
+/* Images must not be treated by the browser as something draggable, otherwise pressing and dragging produces the image's drag ghost instead of turning the page */
 .ai-carousel img {
   -webkit-user-drag: none;
 }
@@ -681,7 +681,7 @@
   display: block;
   pointer-events: none;
 }
-/* 当前页还没渲染好:盖一层提示,不露出半截图 */
+/* The current page is not rendered yet: cover it with a notice, so half an image is never shown */
 .ai-carousel-wait {
   position: absolute;
   inset: 0;
@@ -698,7 +698,7 @@
   text-align: center;
   color: var(--ui-fg-faint, var(--ink-faint));
 }
-/* 左右 22% 是翻页区:鼠标停在哪一侧,那一侧的箭头才露出来 */
+/* The left and right 22% are page-turning zones: the arrow shows only on the side where the mouse rests */
 .ai-carousel-arrow {
   position: absolute;
   top: 50%;
@@ -725,11 +725,11 @@
 .ai-carousel-arrow.is-on {
   opacity: 1;
 }
-/* 键盘聚焦时两侧箭头都淡淡露出来,提示可以按 ← / → */
+/* On keyboard focus both arrows show faintly, hinting that ← / → can be pressed */
 .ai-carousel-frame:focus-visible .ai-carousel-arrow {
   opacity: 0.7;
 }
-/* 修改页:上面前后两段动图,下面参数差异;画框只有 180px 高,差异多了就在框里滚 */
+/* Edit page: the before and after animated images on top, the parameter diff below; the frame is only 180px tall, so a long diff scrolls inside the frame */
 .ai-carousel-change {
   width: 100%;
   height: 100%;
@@ -744,7 +744,7 @@
   flex: 1 1 auto;
   min-height: 0;
   align-items: stretch;
-  /* 气泡变宽时动图不跟着拉宽,成对居中 */
+  /* When the bubble widens the animated images do not stretch with it, and stay centered as a pair */
   justify-content: center;
 }
 .ai-carousel-change .ai-visual-gifs .ai-visual-gif {
@@ -772,7 +772,7 @@
   padding: 10px;
   overflow-y: auto;
 }
-/* 文字页(操作卡、小结、收到的消息)和画面页的「详情」:卡片一张张竖排,在画框里滚;文字能选中复制 */
+/* Text pages (operation cards, summaries, received messages) and the "Details" of picture pages: cards are stacked vertically and scroll inside the frame; text can be selected and copied */
 .ai-carousel-page.is-ops,
 .ai-carousel-page.is-summary,
 .ai-carousel-page.is-inbound {
@@ -791,7 +791,7 @@
   cursor: auto;
   user-select: text;
 }
-/* 一次操作 / 一条收到的消息一张卡:头一行类别小方块 + 类别 + 名字 + 耗时,下面是内容 */
+/* One card per operation / received message: the first row has the category square + category + name + duration, with the content below */
 .ai-opcard {
   flex: none;
   display: flex;
@@ -812,7 +812,7 @@
   min-width: 0;
   font-size: 12px;
 }
-/* 行首小方块复用操作图标的底色和字形(ai-op--*、tone-*),缩成 20px,不吃鼠标、不弹不放大 */
+/* The square at the start of the row reuses the background color and glyph of the operation icons (ai-op--*, tone-*), shrunk to 20px, takes no mouse events and neither pops nor enlarges */
 .ai-op.ai-opcard-chip {
   flex: none;
   width: 20px;
@@ -911,7 +911,7 @@
   list-style: none;
   color: var(--ui-fg-faint, #6b6a75);
 }
-/* 画面页上叠的两层:上方这次操作的头一行(字加阴影,压在亮画面上也看得清),下方结果里的 note(半透明加深底)。都不吃鼠标 */
+/* The two layers stacked on a picture page: on top, the first row of this operation (text with a shadow, legible even over a bright picture), and at the bottom, the note from the result (semi-transparent darkened background). Neither takes mouse events */
 .ai-odp-over-head {
   position: absolute;
   top: 0;
@@ -942,13 +942,13 @@
   background: rgb(0 0 0 / 0.55);
   overflow-wrap: anywhere;
   pointer-events: none;
-  /* 太长就截成两行 */
+  /* Truncate to two lines if too long */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-/* 修改页 / 差异页自己有标签和文字:给上下两层让出位置 */
+/* Edit pages / diff pages have their own labels and text: make room for the two layers above and below */
 .ai-carousel-page:has(> .ai-odp-over-head) > .ai-carousel-change,
 .ai-carousel-page:has(> .ai-odp-over-head) > .ai-carousel-diff {
   padding-top: 36px;
@@ -957,7 +957,7 @@
 .ai-carousel-page:has(> .ai-odp-over-note) > .ai-carousel-diff {
   padding-bottom: 32px;
 }
-/* 顶部一行:这一页是什么 +「详情」+ 不在跟踪最新时的「点击跟踪最新」 */
+/* Top row: what this page is + "Details" + "Click to follow latest" when not following the latest */
 .ai-odp-head {
   display: flex;
   align-items: center;
@@ -967,7 +967,7 @@
   font-size: 11px;
   color: var(--ui-fg-muted, var(--ink-muted));
 }
-/* 「点击跟踪最新」:图标 + 文字,平时没有底色,鼠标移上去才出底色 */
+/* "Click to follow latest": icon + text, no background normally, a background appears only when the mouse moves over it */
 .ai-odp-follow {
   flex: none;
   display: inline-flex;
@@ -995,7 +995,7 @@
   outline: 2px solid var(--ui-accent, #00DBDB);
   outline-offset: 1px;
 }
-/* 底部一行:圆点居中,页数靠右 */
+/* Bottom row: dots centered, page count on the right */
 .ai-odp-foot {
   position: relative;
   display: flex;
@@ -1027,7 +1027,7 @@
   flex-wrap: wrap;
   justify-content: center;
 }
-/* 圆点本身 6px,外面一圈透明边框把点击范围撑到 12px */
+/* The dot itself is 6px, and a ring of transparent border outside it extends the click area to 12px */
 .ai-carousel-dot {
   width: 6px;
   height: 6px;
@@ -1053,11 +1053,11 @@
   outline: 2px solid var(--ui-accent, #00DBDB);
   outline-offset: -1px;
 }
-/* 圆点只显示当前页附近几个(OpDetailPreview 的 MAX_DOTS):窗口外还有页时最外侧的点缩小 */
+/* Only the few dots near the current page are shown (MAX_DOTS of OpDetailPreview): when there are more pages outside the window, the outermost dots shrink */
 .ai-carousel-dot.is-edge {
   transform: scale(0.6);
 }
-/* 还没渲染好的页:点更淡;点过它(等它好了自动切)就一闪一闪 */
+/* Pages not rendered yet: the dot is fainter; once it has been clicked (it switches automatically when ready) it blinks */
 .ai-carousel-dot.is-pending {
   opacity: 0.25;
   cursor: progress;
@@ -1080,15 +1080,15 @@
 }
 
 /*
- * 输入框上方的思考条带(ThinkingStrip.tsx):只显示此刻这一步。
- * 以前是气泡里一串竖排的步骤,几十步之后很长,「现在」反而沉在最底下。
+ * The thinking strip above the input box (ThinkingStrip.tsx): shows only the current step.
+ * It used to be a vertical list of steps inside the bubble; after dozens of steps it got very long, and "now" sank to the very bottom.
  */
 .ai-tstrip {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
-  /* 四边内边距一样:16px 的行高 + 上下各 8px = 32px 高,单行文字、圆点、计时都居中 */
+  /* Equal padding on all four sides: 16px line height + 8px above and below = 32px tall, and the single-line text, dot and timer are all centered */
   min-height: 32px;
   box-sizing: border-box;
   margin: 0 8px 6px;
@@ -1126,7 +1126,7 @@
   font-variant-numeric: tabular-nums;
   color: var(--ui-fg-faint, var(--ink-faint));
 }
-/* 步骤变了:新的一句从下面淡入 */
+/* The step changed: the new sentence fades in from below */
 @keyframes ai-tstrip-in {
   from { opacity: 0; transform: translateY(3px); }
   to { opacity: 1; transform: none; }
@@ -1139,8 +1139,8 @@
 }
 
 /*
- * 气泡里 Agent 说的话(send_message 发给 user,或没调它时的文字回复),2026-10-20 用户定「气泡里面只展示在做什么」。
- * 一句一块,按先后排;操作和汇报在下面的「Agent 操作」里。
+ * What the Agent says in the bubble (send_message to user, or the text reply when it was not called) (user decision, 2026-10-20): "the bubble shows only what is being done".
+ * One block per sentence, in chronological order; operations and reports are in "Agent operations" below.
  */
 .ai-saying {
   overflow-wrap: anywhere;
@@ -1151,13 +1151,13 @@
   font-size: 12px;
   color: var(--ui-fg-muted, #A6A4B2);
 }
-/* 点气泡让「Agent 操作」切到这一轮:可点的有手型,正在看的那一轮描一圈淡强调色 */
+/* Clicking a bubble switches "Agent operations" to that round: clickable ones get a hand cursor, and the round being viewed gets a faint accent-color outline */
 .ai-message.assistant.is-selectable { cursor: pointer; }
 .ai-message.assistant.is-selected {
   box-shadow: 0 0 0 1px var(--ui-accent-soft, rgba(0, 219, 219, 0.35));
 }
 
-/* AI 栏底部的「Agent 操作」:一轮的操作图标、操作详细预览、阶段 / 本轮小结(ActivityPanel.tsx) */
+/* "Agent operations" at the bottom of the AI panel: the operation icons of a round, the operation detail preview, stage / round summary (ActivityPanel.tsx) */
 .pc-activity {
   margin: 0 10px 6px;
   border: 1px solid var(--ui-border, #3A3944);
@@ -1214,12 +1214,12 @@
   gap: 8px;
   padding: 8px;
   border-top: 1px solid var(--ui-border, #3A3944);
-  /* 窗口矮时不把上面的对话挤没:正文最多占三成高,其余滚动 */
+  /* When the window is short, do not squeeze out the chat above: the body takes at most 30% of the height and the rest scrolls */
   max-height: 30vh;
   overflow-y: auto;
   min-width: 0;
 }
-/* 内容比最大高度高时滚动,子块不被压扁 */
+/* Scroll when the content is taller than the maximum height; child blocks are not squashed */
 .pc-activity-body > * { flex: none; }
 .pc-activity-prompt {
   color: var(--ui-fg-faint, #77758A);
@@ -1237,7 +1237,7 @@
   min-width: 0;
 }
 
-/* 画面页右上角的「撤销这步」:叠层本身不吃鼠标,按钮要吃 */
+/* "Undo this step" in the top right of a picture page: the overlay itself takes no mouse events, the button does */
 .ai-odp-over-undo {
   position: absolute;
   top: 4px;

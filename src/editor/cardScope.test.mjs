@@ -1,11 +1,15 @@
 /**
- * 卡片三档可见性的单测。跑:node --test src/editor/cardScope.test.mjs
+ * Unit test for three-tier card visibility. Run: node --test src/editor/cardScope.test.mjs
  *
- * 这段逻辑是「定制卡从上个项目串过来」那个 bug 的唯一修复点,而它错了**不报错** ——
- * 只是 Agent 的 list_cards 里多出或少了几张卡,要等成片做错了才发现。所以钉死:
- *   - 项目素材只在建它的那个项目里出现;
- *   - 老卡(表里没条目)**不许消失**,悄悄少几张比泄露更难查;
- *   - 拿不到归属表时一律放行,一次网络抖动不该让 Agent 突然无卡可用。
+ * This logic is the sole fix for the bug where "custom cards leaked over from the previous project",
+ * and when it breaks it **throws no errors**:
+ * only extra or missing cards appear in Agent's list_cards, discovered only when final video is made
+ * incorrectly. So lock down:
+ *   - Project assets only appear in the project where they were created;
+ *   - Old cards (no entry in table) **must not disappear**; silently missing cards is harder to debug
+ *     than a leak;
+ *   - Allow all when ownership table is unavailable; single network jitter should not suddenly leave
+ *     Agent with no cards available.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -15,7 +19,7 @@ import { isCardVisible, usedCardIds, localCardImports } from "./cardScope.ts";
 const V = { base: true, groups: { native: true, magicui: true, asset: true }, custom: true, project: true };
 const card = (id, source) => ({ id, source, name: id, description: "", defaults: {}, controls: [], Component: () => null });
 
-test("内置卡按组开关,和归属表无关", () => {
+test("Built-in cards are toggled by group, independent of the ownership table", () => {
   const n = card("odometer", "native");
   const m = card("mu-x", "magicui");
   const a = card("lottie-x", "asset");
@@ -24,64 +28,64 @@ test("内置卡按组开关,和归属表无关", () => {
   assert.equal(isCardVisible(a, V, {}, "p1"), true);
 
   const noMagic = { ...V, groups: { ...V.groups, magicui: false } };
-  assert.equal(isCardVisible(m, noMagic, {}, "p1"), false, "关掉第三方组之后 mu- 卡就不该出现");
-  assert.equal(isCardVisible(n, noMagic, {}, "p1"), true, "别的组不受影响");
+  assert.equal(isCardVisible(m, noMagic, {}, "p1"), false, "After the third-party group is turned off, mu- cards must not appear");
+  assert.equal(isCardVisible(n, noMagic, {}, "p1"), true, "Other groups are unaffected");
 
-  assert.equal(isCardVisible(n, { ...V, base: false }, {}, "p1"), false, "基础总开关关掉就都不出现");
+  assert.equal(isCardVisible(n, { ...V, base: false }, {}, "p1"), false, "With the master base switch off, none appear");
 });
 
-test("项目素材只在建它的那个项目里出现 —— 这就是那个泄露", () => {
+test("Project assets appear only in the project that created them: this is the leak in question", () => {
   const logo = card("logo-3d-9tian", "user");
-  const scopes = { "logo-3d-9tian": { scope: "project", projectId: "客户A" } };
-  assert.equal(isCardVisible(logo, V, scopes, "客户A"), true, "在它自己的项目里要看得见");
-  assert.equal(isCardVisible(logo, V, scopes, "客户B"), false, "换个项目就不该再出现");
-  assert.equal(isCardVisible(logo, V, scopes, null), false, "没有当前项目时也不该漏出去");
+  const scopes = { "logo-3d-9tian": { scope: "project", projectId: "Client A" } };
+  assert.equal(isCardVisible(logo, V, scopes, "Client A"), true, "It must be visible in its own project");
+  assert.equal(isCardVisible(logo, V, scopes, "Client B"), false, "In another project it must no longer appear");
+  assert.equal(isCardVisible(logo, V, scopes, null), false, "It must not leak even when there is no current project");
 });
 
-test("标成自定义的定制卡跨项目可见,关掉那一档就全隐藏", () => {
+test("Custom cards marked as custom are visible across projects, and turning off that tier hides them all", () => {
   const brand = card("brand-logo", "user");
-  const scopes = { "brand-logo": { scope: "custom", projectId: "客户A" } };
-  assert.equal(isCardVisible(brand, V, scopes, "客户B"), true, "共享卡就是要能跨项目用");
-  assert.equal(isCardVisible(brand, { ...V, custom: false }, scopes, "客户B"), false);
+  const scopes = { "brand-logo": { scope: "custom", projectId: "Client A" } };
+  assert.equal(isCardVisible(brand, V, scopes, "Client B"), true, "A shared card is meant to be usable across projects");
+  assert.equal(isCardVisible(brand, { ...V, custom: false }, scopes, "Client B"), false);
 });
 
-test("关掉项目素材那一档,本项目的定制卡也隐藏(用于「这轮只用现成的卡」)", () => {
+test("Turning off the project assets tier also hides this project's custom cards (used for \"use only ready-made cards this round\")", () => {
   const c = card("x", "user");
   const scopes = { x: { scope: "project", projectId: "p1" } };
   assert.equal(isCardVisible(c, V, scopes, "p1"), true);
   assert.equal(isCardVisible(c, { ...V, project: false }, scopes, "p1"), false);
 });
 
-test("老卡(表里没条目)不许消失 —— 悄悄少几张比泄露更难查", () => {
+test("Old cards (no entry in the table) must not disappear: a few cards silently missing is harder to track down than a leak", () => {
   const old = card("vertical-trend", "user");
-  assert.equal(isCardVisible(old, V, {}, "任何项目"), true);
-  // 但它按「自定义」处理,所以关掉自定义那一档就能一次性清干净
-  assert.equal(isCardVisible(old, { ...V, custom: false }, {}, "任何项目"), false);
+  assert.equal(isCardVisible(old, V, {}, "Any project"), true);
+  // But it is treated as "custom", so turning off the custom tier cleans it up completely
+  assert.equal(isCardVisible(old, { ...V, custom: false }, {}, "Any project"), false);
 });
 
-test("归属表拿不到时一律放行:一次网络抖动不该让 Agent 突然无卡可用", () => {
+test("When the ownership table cannot be fetched, let everything through: a single network blip must not leave the Agent suddenly without cards", () => {
   const c = card("whatever", "user");
   assert.equal(isCardVisible(c, V, {}, "p1"), true);
 });
 
-test("记了档位但没记项目 id 的老数据,按本项目算,不藏", () => {
+test("Old data that recorded the tier but not the project id counts as this project's and is not hidden", () => {
   const c = card("y", "user");
   assert.equal(isCardVisible(c, V, { y: { scope: "project" } }, "p1"), true);
 });
 
-test("时间轴上正用着的定制卡算本项目的,不管归属表记的是哪个项目 id", () => {
-  // 东京七日那份 .proc:卡记在草稿 20260910-wu2hng 名下,从桌面打开时根本没有草稿 id
+test("A custom card in use on the timeline counts as this project's, whatever project id the ownership table records", () => {
+  // The "Seven Days in Tokyo" .proc: card is recorded under draft 20260910-wu2hng; opened from desktop has no draft id at all
   const map = card("tokyo7-map", "user");
   const scopes = { "tokyo7-map": { scope: "project", projectId: "20260910-wu2hng" } };
   const used = new Set(["tokyo7-map"]);
-  assert.equal(isCardVisible(map, V, scopes, null), false, "不看用没用到时,它就是被藏起来的那张");
-  assert.equal(isCardVisible(map, V, scopes, null, used), true, "片子里正用着,卡库里就得看得见");
-  assert.equal(isCardVisible(map, V, scopes, "p-别的", used), true);
-  assert.equal(isCardVisible(map, { ...V, project: false }, scopes, null, used), false, "关掉项目素材那一档照样藏");
-  assert.equal(isCardVisible(card("other", "user"), V, { other: { scope: "project", projectId: "x" } }, null, used), false, "没用到的别人家的卡照旧不漏");
+  assert.equal(isCardVisible(map, V, scopes, null), false, "Ignoring whether it is in use, it is the card that gets hidden");
+  assert.equal(isCardVisible(map, V, scopes, null, used), true, "If it is in use in the video, it must be visible in the card library");
+  assert.equal(isCardVisible(map, V, scopes, "p-other", used), true);
+  assert.equal(isCardVisible(map, { ...V, project: false }, scopes, null, used), false, "Turning off the project assets tier still hides it");
+  assert.equal(isCardVisible(card("other", "user"), V, { other: { scope: "project", projectId: "x" } }, null, used), false, "Other people's unused cards still do not leak");
 });
 
-test("usedCardIds 扫所有剪辑:激活的在 tracks,停放的在 cuts[].tracks", () => {
+test("usedCardIds scans all cuts: the active one is in tracks, parked ones are in cuts[].tracks", () => {
   const p = {
     tracks: [{ clips: [{ cardId: "a" }, { mediaId: "m" }] }],
     cuts: [{ id: "cut-1" }, { id: "cut-2", tracks: [{ clips: [{ cardId: "b" }, { cardId: "a" }] }] }],
@@ -90,7 +94,7 @@ test("usedCardIds 扫所有剪辑:激活的在 tracks,停放的在 cuts[].tracks
   assert.deepEqual([...usedCardIds({})], []);
 });
 
-test("localCardImports 只认同目录的文件,顺带把 .tsx 后缀去掉", () => {
+test("localCardImports only recognizes files in the same directory, and strips the .tsx suffix along the way", () => {
   const src = `import { a } from "./shared-bits";\nimport x from "./logo.tsx";\nimport "./side";\nimport { m } from "motion/react";\nimport t from "../../kernel/types";`;
   assert.deepEqual(localCardImports(src).sort(), ["logo", "shared-bits", "side"]);
 });

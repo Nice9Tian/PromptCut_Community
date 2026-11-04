@@ -1,23 +1,32 @@
 /**
- * 变速的素材段当音频素材效果卡的声音输入(2026-10-23 用户定「放开。」)的导出端到端探针:成片里那几段的主频按倍率变。
+ * End-to-end export probe for speed-changed media clips as audio input to audio media effect cards
+ * (user decision, 2026-10-23: "Allow."): dominant frequency of segments in final video changes with
+ * the speed multiplier.
  *
- *   node scripts/probes/speed-audio-input-probe.mjs --port 6480 [--tree <检出根>] [--out <目录>]
+ *   node scripts/probes/speed-audio-input-probe.mjs --port 6480 [--tree <checkout-root>] [--out <dir>]
  *
- * 素材:20 秒的视频,带一条 440 Hz 正弦声(画面无所谓)。卡:临时写进改动层的音频素材效果卡 `probe-audio-pass`
- * (`kind: "audio"`,把输入 `source` 的采样原样交出去)。项目 8 秒,两种接法各来几段:
+ * Asset: 20-second video with a 440 Hz sine tone (visual does not matter). Card: audio media effect
+ * card `probe-audio-pass` temporarily written into overlay layer (`kind: "audio"`, passing samples
+ * from input `source` through as-is). 8-second project, several segments for each of the two
+ * connection approaches:
  *
- *   主序列(卡挂在片段自己身上,和 apply_card 之后一样:片段带 cardId / mediaId / nodeId,节点输入是这段自己的素材)
- *     A 0～2 秒 1×    从素材第 1 秒起      期望 440 Hz
- *     B 2～4 秒 2×    从第 0.5 秒起         期望 880 Hz
- *     C 4～6 秒 0.5×  从第 3 秒起           期望 220 Hz
- *   主序列 V 6～8 秒 2× 的普通视频段(原声不出);另一条序列上 6～8 秒一段卡片段,节点输入接 `@clip/V/source`
- *     D                                      期望 880 Hz
+ *   Main track (card attached directly to the clip itself, same as after apply_card: clip carries
+ *   cardId / mediaId / nodeId, node input is this clip's own media)
+ *     A 0-2 s 1×    from asset second 1      expected 440 Hz
+ *     B 2-4 s 2×    from second 0.5          expected 880 Hz
+ *     C 4-6 s 0.5×  from second 3            expected 220 Hz
+ *   Main track V 6-8 s 2× standard video clip (original audio muted); a card clip at 6-8 s on another
+ *   track, node input connected to `@clip/V/source`
+ *     D                                      expected 880 Hz
  *
- * 只导缺省的 Chrome 离线混音一路:`--audio ffmpeg` 那条老路明确拒绝音频素材效果卡(`mux-audio.mjs` 的 buildAudioPlan 注释),
- * 1 倍时也一样,与变速无关。核对:各段中间 1.4 秒有声(高于 −30 dBFS)、主频(过零点与 DFT 峰)在期望值 ±2% 内。
- * 输出 JSON;任何一条不过以非零退出。素材、数据、改动层都建在 `--out` 下;开发服务器用完收掉,不写端口文件。
+ * Only exports the default Chrome offline mix lane: the legacy `--audio ffmpeg` path explicitly
+ * rejects audio media effect cards (`buildAudioPlan` comment in `mux-audio.mjs`), same at 1×,
+ * unrelated to speed changes. Verification: middle 1.4 s of each segment has audio (above -30 dBFS),
+ * dominant frequency (zero crossings and DFT peak) within ±2% of expected value. Outputs JSON; exits
+ * with non-zero if any item fails. Assets, data, and overlay layer are all created under `--out`; dev
+ * server is torn down after use, without writing port files.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -63,15 +72,15 @@ async function makeVideo(ffmpeg) {
 const CARD_SOURCE = [
   'import type { CardDef } from "../../kernel/types";',
   '',
-  '/** 探针用(speed-audio-input-probe.mjs 临时写进改动层):把输入的声音原样交出去 */',
+  '/** For the probe (speed-audio-input-probe.mjs temporarily writes it into the overlay layer): hands the input sound out unchanged */',
   'export const probeAudioPass: CardDef<{ gain: number }> = {',
   `  id: "${PASS}",`,
-  '  name: "速度探针:直通",',
-  '  description: "输入的声音原样输出",',
+  '  name: "Speed probe: passthrough",',
+  '  description: "Outputs the input sound unchanged",',
   '  source: "user",',
   '  kind: "audio",',
   '  frameMode: "direct",',
-  '  inputs: { source: { description: "输入声音" } },',
+  '  inputs: { source: { description: "Input sound" } },',
   '  defaults: { gain: 1 },',
   '  controls: [],',
   '  audio: async (sources, range, params) => {',
@@ -115,7 +124,7 @@ function projectOf(media) {
   return {
     version: 1, id: 'p-speed-audio-input', name: 'speed-audio-input', width: W, height: H, fps: FPS, duration: DURATION, themeId: 'midnight',
     media: [media], filters: [], audioFx: [], cardNodes,
-    tracks: [{ id: 't-main', name: '序列 1', clips: main }, { id: 't-fx', name: '卡', clips: fx }],
+    tracks: [{ id: 't-main', name: 'Track 1', clips: main }, { id: 't-fx', name: 'Card', clips: fx }],
   };
 }
 
@@ -144,14 +153,14 @@ function loudness(pcm, a, b) {
   for (const v of x) sum += v * v;
   return 10 * Math.log10(sum / x.length + 1e-20);
 }
-/** 过零点数 / 2 / 时长(clip-speed-export-probe.mjs 同一个做法) */
+/** Zero-crossing count / 2 / duration (same approach as clip-speed-export-probe.mjs) */
 function pitch(pcm, a, b) {
   const x = win(pcm, a, b);
   let n = 0;
   for (let i = 1; i < x.length; i++) if ((x[i - 1] < 0) !== (x[i] < 0)) n++;
   return n / 2 / ((b - a) || 1);
 }
-/** 单频 DFT 找峰(100～2000 Hz,1 Hz 一档),和过零点互相印证 */
+/** Single-frequency DFT peak finding (100~2000 Hz, 1 Hz per step), cross-validated with zero-crossings */
 function peakHz(pcm, a, b) {
   const x = win(pcm, a, b);
   let best = 0, bestHz = 0;
@@ -189,15 +198,15 @@ try {
   const url = `${dev.origin}/?export=1&timeline=${encodeURIComponent(`/@export/${id}/project.json`)}`;
   let code = 1;
   for (let attempt = 1; attempt <= 3 && code !== 0; attempt++) {
-    say(`导出成片第 ${attempt} 次`);
+    say(`Exporting final video, attempt ${attempt}`);
     code = await run(process.execPath, ['scripts/export-frames.mjs', '--url', url, '--out', outDir, '--fps', String(FPS), '--workers', '1'], env, path.join(OUT, 'export.log'));
   }
-  if (code !== 0) throw new Error(`导出退出码 ${code}(日志 ${path.join(OUT, 'export.log')})`);
+  if (code !== 0) throw new Error(`Export exit code ${code} (log ${path.join(OUT, 'export.log')})`);
   const log = await fs.readFile(path.join(OUT, 'export.log'), 'utf8');
-  result.mixedIn = /退回 ffmpeg/.test(log) ? 'ffmpeg(Chrome 失败后退回)' : /in Chrome/.test(log) ? 'chrome' : /Muxing .* with ffmpeg/.test(log) ? 'ffmpeg' : '不明';
-  if (result.mixedIn !== 'chrome') result.fails.push(`实际在 ${result.mixedIn} 里混音`);
+  result.mixedIn = /falling back to ffmpeg/.test(log) ? 'ffmpeg (fell back after Chrome failed)' : /in Chrome/.test(log) ? 'chrome' : /Muxing .* with ffmpeg/.test(log) ? 'ffmpeg' : 'unknown';
+  if (result.mixedIn !== 'chrome') result.fails.push(`Audio was actually mixed in ${result.mixedIn}`);
   const mp4 = (await fs.readdir(outDir)).find((f) => f.endsWith('.mp4'));
-  if (!mp4) throw new Error('没有 mp4');
+  if (!mp4) throw new Error('No mp4');
   result.file = path.join(outDir, mp4);
   const pcm = await pcmOf(ffmpeg, result.file);
   result.segs = {};
@@ -206,7 +215,7 @@ try {
     const db = loudness(pcm, a, b), hz = pitch(pcm, a, b), peak = peakHz(pcm, a, b);
     const ok = db > -30 && Math.abs(hz - s.hz) <= s.hz * 0.02 && Math.abs(peak - s.hz) <= s.hz * 0.02;
     result.segs[s.id] = { speed: s.speed ?? s.external?.speed ?? 1, expectHz: s.hz, zeroCrossHz: +hz.toFixed(1), dftPeakHz: peak, dBFS: +db.toFixed(1), ok };
-    if (!ok) result.fails.push(`${s.id} 段应为 ${s.hz} Hz 有声,实测过零 ${hz.toFixed(1)} Hz、DFT 峰 ${peak} Hz、${db.toFixed(1)} dBFS`);
+    if (!ok) result.fails.push(`Segment ${s.id} should sound at ${s.hz} Hz, measured zero-crossing ${hz.toFixed(1)} Hz, DFT peak ${peak} Hz, ${db.toFixed(1)} dBFS`);
   }
   result.ok = result.fails.length === 0;
 } catch (error) {

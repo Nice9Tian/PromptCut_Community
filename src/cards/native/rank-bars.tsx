@@ -12,9 +12,12 @@ interface Params extends HudParams {
 
 function NumberTicker({ value, duration }: { value: number; duration: number }) {
   const v = useMotionValue(0);
-  // 数字直接同步写进 DOM,不走 React state:导出时每帧截图前 React 的异步提交会和截图抢跑,
-  // 实测 10~15% 的帧数字停在上一帧的值,导两遍不一样。同步写就落在 Motion 的同一次 rAF 里。
-  // 写法照 magicui/vendor/number-ticker.tsx;初值写死在 JSX 里,免得重挂载后首帧空一下。
+  // The number is written into the DOM synchronously, not through React state: during export React's
+  // asynchronous commit races with the screenshot before each frame, and in testing 10~15% of frames
+  // had the number stuck at the previous frame's value, so two exports differed. Writing synchronously
+  // lands it in the same rAF as Motion's.
+  // The approach follows magicui/vendor/number-ticker.tsx; the initial value is hardcoded in the JSX,
+  // so the first frame after a remount is not blank for a moment.
   const ref = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -92,12 +95,13 @@ function RankBarsCard({ params }: CardProps<Params>) {
 
 export const rankBars: CardDef<Params> = {
   id: "rank-bars",
-  name: "排名条",
-  description: "柱状条形排名及滚动数值",
-  useWhen: "3 到 5 个项目比大小、排榜单时用条形图,条长和整数数值一起滚动,最大值那条自动高亮。**卡片不会自动排序**,rows 要按数值从大到小传进来;项目名不超过 5 字,超出会被截断。单个数字不要用,两项对决用 versus-card,时间走势用 growth-curve。",
-  tags: ["排名","条形图","对比","榜单"],
+  name: "Rank bars",
+  description: "Bar chart ranking with rolling values",
+  useWhen: "Use a bar chart to compare or rank 3 to 5 items: bar length and integer value scroll together, and the bar with the max value is highlighted automatically. **The card does not sort automatically**, so pass rows in descending order of value; item names should be at most 5 characters, longer ones are truncated. Do not use it for a single number; use versus-card for a head-to-head of two items and growth-curve for trends over time.",
+  tags: ["ranking","bar chart","comparison","leaderboard"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -107,13 +111,13 @@ export const rankBars: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "title", label: "标题", type: "text" },
-    { key: "rows", label: "数据行 (名称,数值|名称,数值)", type: "text" },
-    { key: "suffix", label: "数值后缀", type: "text" },
+    { key: "title", label: "Title", type: "text" },
+    { key: "rows", label: "Data rows (name,value|name,value)", type: "text" },
+    { key: "suffix", label: "Value suffix", type: "text" },
   ],
   parts: [
-    { id: "title", label: "标题", role: "text", params: ["title"], enterMs: 0, settleMs: 0 },
-    { id: "rows", label: "数据行", role: "list", params: ["rows", "suffix"], enterMs: 0, settleMs: 3 * 120 + 900 },
+    { id: "title", label: "Title", role: "text", params: ["title"], enterMs: 0, settleMs: 0 },
+    { id: "rows", label: "Data rows", role: "list", params: ["rows", "suffix"], enterMs: 0, settleMs: 3 * 120 + 900 },
   ],
   lifecycle: { settleMs: 1260, after: "hold", exit: ["fade"] },
   timing: (p) => {

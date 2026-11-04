@@ -1,14 +1,20 @@
 /**
- * 时间轴类工具（add_clip / update_clip / remove_clip）返回值里的附加物，以及成批删除的门槛。
- * 抽成纯函数是为了能用 node --test 把行为钉住。
+ * Additions in return values of timeline tools (add_clip / update_clip / remove_clip), as well as
+ * gates for batch deletion. Extracted into pure functions so behavior can be pinned down with
+ * node --test.
  *
- * 为什么要有这些——来自一份真实对话导出的复盘：4 轮对话、79 次工具调用只失败 1 次，
- * 用户还是没拿到想要的结果。时间耗在三件事上：
- *   - 前两轮 47 次调用里 0 次 see_frames，却在总结里写「已避开人物主体」；
- *   - 18 次 remove_clip + 13 次 add_clip：第 2 轮把第 1 轮刚建的 5 张卡全删了、再建 5 张几乎一样的；
- *   - 第 3 轮拿着第 1 轮的 clipId 去 update_clip，那个 id 第 2 轮已经被它自己删了。
- * 三样东西分别对着这三件事：lookHint 给它一个看画面的入口，timelineDigest 让它手里的 id 永远是新的，
- * createClipGuard 让「删自己刚建的卡」和「连着删一串」必须停下来说理由。
+ * Why these exist: from a postmortem exported from a real chat: across 4 chat rounds and 79 tool
+ * calls with only 1 failure, the user still did not get the desired result. Time was spent on
+ * three things:
+ *   - In the first two rounds with 47 calls, 0 see_frames calls, yet wrote "avoided human subjects"
+ *     in the summary;
+ *   - 18 remove_clip + 13 add_clip: round 2 deleted all 5 cards just created in round 1, then
+ *     created 5 nearly identical ones;
+ *   - Round 3 used clipId from round 1 for update_clip, but that id was already deleted by itself
+ *     in round 2.
+ * The three additions target these three issues: lookHint provides an entry point to view visuals,
+ * timelineDigest keeps the ids in its hands always fresh, and createClipGuard forces "deleting
+ * cards it just created" and "deleting a series consecutively" to stop and give a reason.
  */
 
 import type { Project } from "../../kernel/project";
@@ -19,11 +25,14 @@ export interface TimelineDigestClip {
   id: string;
   cardId?: string;
   mediaId?: string;
-  /** 挂着的滤镜(project.filters 里的 id) */
+  /** Attached filters (ids in project.filters) */
   filterId?: string;
-  /** 挂着的音频效果(project.audioFx 里的 id) */
+  /** Attached audio effects (ids in project.audioFx) */
   audioFxId?: string;
-  /** 只在变速时出现:视频段的播放速度(kernel/clipTime.mjs)。变速段不出原声 */
+  /**
+   * Appears only when speed is changed: playback speed of video clip (kernel/clipTime.mjs).
+   * Speed-changed clips do not emit original audio
+   */
   speed?: number;
   start: number;
   end: number;
@@ -31,31 +40,36 @@ export interface TimelineDigestClip {
 export interface TimelineDigestTrack {
   trackId: string;
   name: string;
-  /** 只在为 true 时出现:隐藏 / 静音 / 锁定的序列,模型要知道那上面的东西看不见、听不见或改不了 */
+  /**
+   * Appears only when true: hidden / muted / locked tracks; the model needs to know that items on
+   * them cannot be seen, heard, or modified
+   */
   hidden?: true;
   muted?: true;
   locked?: true;
   clips: TimelineDigestClip[];
 }
 export interface TimelineDigest {
-  /** 整条片子多长(秒)。预览和导出都在这里停 */
+  /** Total length of the video (seconds). Both preview and export stop here */
   duration: number;
-  /** 最后一张卡 / 一段素材结束在哪(秒)。空时间轴是 0 */
+  /** Where the last card / media clip ends (seconds). 0 for an empty timeline */
   contentEnd: number;
   tracks: TimelineDigestTrack[];
   /**
-   * 只在项目里还有别的有内容的剪辑时出现:上面的 tracks 只是激活剪辑的,这里告诉模型别的剪辑的片段
-   * 不用 switch_cut 就能改(索引在 get_project 的 parkedCuts / list_cuts)。见 kernel/agentScopes.mjs。
+   * Appears only when there are other cuts with content in the project: tracks above is only for the
+   * active cut; this tells the model that clips in other cuts can be modified without switch_cut
+   * (indexed in parkedCuts of get_project / list_cuts). See kernel/agentScopes.mjs.
    */
   otherCuts?: { cuts: { cutId: string; name: string; clipCount: number }[]; hint: string };
 }
 
 /**
- * 工具结果里回显的时间轴一览。只有 id / 卡或素材 / 起止，不带 params，省 token。
+ * Timeline overview echoed in tool results. Only contains id / card or media / start and end,
+ * without params, saving tokens.
  *
- * duration 和 contentEnd 一起给出来:时长缺省跟着内容走,平时两者相等;
- * duration 比 contentEnd 小说明片子被截断了(规则见 kernel/duration.ts),
- * 模型得看得到这件事,才知道后面那截内容播不到。
+ * duration and contentEnd are given together: duration follows content by default and the two are
+ * normally equal; duration smaller than contentEnd indicates the video is truncated (for rules see
+ * kernel/duration.ts), which the model must see to know that the following section cannot play.
  */
 export function timelineDigest(p: Project): TimelineDigest {
   const tracks = p.tracks.map((tr) => ({
@@ -86,22 +100,23 @@ export function timelineDigest(p: Project): TimelineDigest {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
- * 「去看真实画面」的入口。
- * 不硬塞图：每张图要起一个渲染进程（几秒到十几秒），进上下文还烧 token。
- * 给出现成的调用，让模型在涉及位置和遮挡的决定上按需去看。
+ * Entry point to "view real visuals".
+ * Avoid forcing images: each image requires spinning up a render process (several to a dozen
+ * seconds), and entering context also burns tokens. Provide ready-to-use calls so the model can
+ * inspect on demand when making decisions involving positioning and occlusion.
  */
 export function lookHint(clipId: string) {
   return {
     tool: "see_frames",
     args: { source: "timeline", clipId },
-    why: "先确认真实画面再下结论：这张卡会不会压到人物、文字会不会被别的卡盖住。要看整屏就不传 clipId、传 t。",
+    why: "Confirm the actual frame before concluding: whether this card covers a person, and whether the text is covered by other cards. To view the whole screen, omit clipId and pass t.",
   };
 }
 
 export interface ClipGuardOptions {
-  /** add_clip 之后多少次时间轴改动之内算「刚建的」 */
+  /** Within how many timeline changes after add_clip is considered "just created" */
   freshWindow?: number;
-  /** 连续 remove_clip 到第几张要停下来 */
+  /** At which count of consecutive remove_clip calls to stop */
   deleteStreakMax?: number;
 }
 
@@ -112,57 +127,63 @@ export interface RemoveArgs {
 }
 
 /**
- * 成批删除的门槛。两条规则都能用 force:true + reason 越过，但理由会原样回显给用户看——
- * 目的不是禁止删除，是逼它在「推倒重来」之前停一下、说清楚。
- * 默认值来自那份复盘：一轮里删到第 5 张，基本就是清空重铺的形状了。
+ * Gate for batch deletion. Both rules can be bypassed with force:true + reason, but the reason is
+ * echoed as-is for the user to see: the goal is not to forbid deletion, but to force it to pause
+ * and explain before "tearing down and starting over".
+ * Default values come from that postmortem: deleting up to the 5th card in one round is basically
+ * the shape of clearing and rebuilding from scratch.
  */
 export function createClipGuard(opts: ClipGuardOptions = {}) {
   const freshWindow = opts.freshWindow ?? 30;
   const deleteStreakMax = opts.deleteStreakMax ?? 5;
-  /** clipId → 建它时的改动序号 */
+  /** clipId → change sequence number when it was created */
   const born = new Map<string, number>();
   let seq = 0;
   let deleteStreak = 0;
 
   return {
-    /** add_clip / duplicate_clip / split_clip 产生新 clip 之后记一笔 */
+    /** Record an entry after add_clip / duplicate_clip / split_clip produces a new clip */
     noteCreated(clipId: string) {
       seq++;
       deleteStreak = 0;
       born.set(clipId, seq);
     },
-    /** 任何不是删除的时间轴改动（update / add_track …）都打断连删计数 */
+    /**
+     * Any timeline change that is not a deletion (update / add_track …) resets the consecutive
+     * deletion count
+     */
     noteMutation() {
       seq++;
       deleteStreak = 0;
     },
     /**
-     * remove_clip 之前调。不放行就抛错；错误文案是写给模型看的，要告诉它该怎么办。
-     * 放行返回 { reason }：force 越过门槛时的理由，工具结果里原样回显。
+     * Called before remove_clip. Throws if not allowed; error text is written for the model, telling it
+     * what to do. If allowed, returns { reason }: the reason when force bypasses the gate, echoed as-is
+     * in the tool results.
      */
     checkRemove(args: RemoveArgs): { reason?: string } {
       const reason = typeof args.reason === "string" ? args.reason.trim() : "";
       if (args.force) {
-        if (!reason) throw new Error("传了 force:true 就必须在 reason 里写明为什么要删这张卡，用户会看到这句话。");
+        if (!reason) throw new Error("If force:true is passed, you must state in reason why this card is being deleted; the user will see this sentence.");
         return { reason };
       }
       const b = born.get(args.clipId);
       if (b !== undefined && seq - b < freshWindow) {
         throw new Error(
-          `clip ${args.clipId} 是你刚用 add_clip 建的（之后只过了 ${seq - b} 次改动）。` +
-            `要改它（参数、时段、换卡）用 update_clip，不要删了重建——重建会丢掉这次没提到的细节，` +
-            `也会让你手里的 clipId 失效。确实要删就传 force:true 并在 reason 里说明。`,
+          `clip ${args.clipId} was just created by you with add_clip (only ${seq - b} changes since then).` +
+            ` To change it (parameters, time range, swapping the card) use update_clip; do not delete and recreate it, because recreating loses details not mentioned this time, ` +
+            `and also invalidates the clipId you hold. If you really need to delete it, pass force:true and explain in reason.`,
         );
       }
       if (deleteStreak >= deleteStreakMax) {
         throw new Error(
-          `已经连续删了 ${deleteStreak} 张。先停一下：用 get_project 看清现在还剩什么、哪些才是用户说的冗余；` +
-            `确实要继续删就传 force:true 并在 reason 里逐条说明。`,
+          `${deleteStreak} cards have been deleted in a row. Stop for a moment: use get_project to see what remains and which ones the user actually called redundant; ` +
+            `If you really need to keep deleting, pass force:true and explain each one in reason.`,
         );
       }
       return {};
     },
-    /** remove_clip 成功后记一笔 */
+    /** Record an entry after remove_clip succeeds */
     noteRemoved(clipId: string) {
       seq++;
       deleteStreak++;
@@ -173,21 +194,25 @@ export function createClipGuard(opts: ClipGuardOptions = {}) {
 export type ClipGuard = ReturnType<typeof createClipGuard>;
 
 /**
- * update_clip 改完参数后回显「这次真正变了什么」。
+ * Echoes "what actually changed this time" after update_clip modifies parameters.
  *
- * 为什么:params 是增量补丁(store 的 setClipParams 默认合并),但模型常凭几轮前的记忆把整份参数带回来;
- * 线上 2026-10-21 它在只想改大小的一轮里把 color 带成了旧值,把用户刚点「撤销这步」撤掉的颜色悄悄写了回去。
- * 回包里列出每个真正变了的键(from → to),带回旧值的那一刻它自己就看得见;`params` 给改完后的全貌,
- * 下一轮不必再靠记忆。太大的值只给摘要、太大的整份只给键名,不撑爆上下文。
+ * Why: params is a delta patch (the store's setClipParams merges by default), but the model often
+ * brings back the entire parameter set based on memory from several turns ago; in production on
+ * 2026-10-21, in a turn where it only wanted to resize, it brought back color with an old value,
+ * quietly writing back the color that the user had just removed by clicking "Undo this step".
+ * The response lists each key that actually changed (from → to), so it can see it the moment it
+ * brings back an old value; `params` provides the full picture after changes, so the next turn
+ * no longer needs to rely on memory. Oversized values only provide a summary, and an entire object
+ * that is too large only provides key names, avoiding blowing up context.
  */
 const ECHO_VALUE_MAX = 80;
 const ECHO_PARAMS_MAX = 2000;
 
 function briefValue(v: unknown): unknown {
-  if (typeof v === "string") return v.length > ECHO_VALUE_MAX ? `${v.slice(0, ECHO_VALUE_MAX)}…(共 ${v.length} 字)` : v;
+  if (typeof v === "string") return v.length > ECHO_VALUE_MAX ? `${v.slice(0, ECHO_VALUE_MAX)}… (${v.length} characters in total)` : v;
   if (v === null || typeof v !== "object") return v;
   const text = JSON.stringify(v);
-  return text.length > ECHO_VALUE_MAX ? `${text.slice(0, ECHO_VALUE_MAX)}…(共 ${text.length} 字)` : v;
+  return text.length > ECHO_VALUE_MAX ? `${text.slice(0, ECHO_VALUE_MAX)}… (${text.length} characters in total)` : v;
 }
 
 export function paramsEcho(before: Record<string, unknown> | undefined, after: Record<string, unknown> | undefined) {
@@ -201,6 +226,6 @@ export function paramsEcho(before: Record<string, unknown> | undefined, after: R
   const whole = JSON.stringify(a);
   return {
     changedParams,
-    ...(whole.length <= ECHO_PARAMS_MAX ? { params: a } : { paramKeys: Object.keys(a), paramsNote: "参数太长没有全部回显,用 get_clip 读" }),
+    ...(whole.length <= ECHO_PARAMS_MAX ? { params: a } : { paramKeys: Object.keys(a), paramsNote: "Parameters are too long to echo in full; read them with get_clip" }),
   };
 }

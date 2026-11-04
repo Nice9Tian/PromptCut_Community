@@ -1,14 +1,16 @@
 /**
- * 真实的浏览器 + vision HTTP 错误传输，不是打桩的 shader。
+ * Real browser + vision HTTP error transport, not a stubbed shader.
  *
- * 测的是「GLSL 编译诊断经 frameReady → see_frames 原样传出来」。素材效果卡走的是和从前
- * Python 卡同一条路（`CardGpuExecutor` 在 WebGL 上编译），所以断言一个字没改。
+ * Tests that "GLSL compilation diagnostics are passed out as-is via frameReady → see_frames". Media
+ * effect cards follow the same path as the former Python card (`CardGpuExecutor` compiles on
+ * WebGL), so assertions have not changed by a single word.
  *
- * 仓库里没有「注册」函数，素材效果卡只能是文件：脚本先把这张故意写错 uniform 的素材效果卡写成
- * 临时文件 `src/cards/user/__probe-broken-shader.tsx`（**写在 createServer 之前**，
- * 别和 vite 的文件发现抢时间），再用 `server.ssrLoadModule` 把它加载进来当 `getCard`
- * 传给 `applyCardDefinition`（裸 Node `import('*.tsx')` 会 ERR_UNKNOWN_FILE_EXTENSION，
- * `scripts/` 没有 TS loader）。跑完删掉。
+ * There is no "register" function in the repository, so media effect cards can only be files: the
+ * script first writes this media effect card with an intentionally incorrect uniform to a temporary
+ * file `src/cards/user/__probe-broken-shader.tsx` (**written before createServer** to avoid racing
+ * vite's file discovery), then uses `server.ssrLoadModule` to load it in and pass it as `getCard`
+ * to `applyCardDefinition` (bare Node `import('*.tsx')` triggers ERR_UNKNOWN_FILE_EXTENSION;
+ * `scripts/` has no TS loader). Deleted after the run.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -22,11 +24,11 @@ const cardFile = path.join(process.cwd(), 'src', 'cards', 'user', `${CARD_ID}.ts
 const CARD_SOURCE = `import type { CardDef } from "../../kernel/types";
 import { glsl } from "../../render/cards/graphValues";
 
-/** 验证脚本的临时卡:故意引用一个没有声明的 uniform,用来看编译诊断有没有原样传出来。 */
+/** Temporary card for the verify script: deliberately references an undeclared uniform, to check that the compile diagnostics are passed through unchanged. */
 export const brokenShader: CardDef<Record<string, never>> = {
   id: "${CARD_ID}",
-  name: "编译诊断探针",
-  description: "故意写错 uniform 的 GLSL 素材效果卡,只给 verify-card-gpu-diagnostics 用",
+  name: "Compile diagnostics probe",
+  description: "A GLSL media effect card with a deliberately wrong uniform, used only by verify-card-gpu-diagnostics",
   source: "user",
   kind: "animation",
   frameMode: "direct",
@@ -40,15 +42,16 @@ fs.mkdirSync(path.dirname(cardFile), { recursive: true });
 fs.writeFileSync(cardFile, CARD_SOURCE);
 
 process.env.PROMPTCUT_ROLE = 'prerender';
-// 端口可以用 PC_VERIFY_PORT 换掉:同一台机器上并行跑几个验证脚本时别互相抢
+// Port can be overridden with PC_VERIFY_PORT: avoid collisions when running multiple verification
+// scripts in parallel on the same machine
 const port = Number(process.env.PC_VERIFY_PORT) || 5199;
 const server = await createServer({ configFile: 'vite.prerender.config.ts', server: { host: '127.0.0.1', port, strictPort: true } });
 try {
   await server.listen();
   const mod = await server.ssrLoadModule(`/src/cards/user/${CARD_ID}.tsx`);
-  // ssrLoadModule 回的是模块命名空间,不是函数 —— 取出里面那个 CardDef 再包成 getCard
+  // ssrLoadModule returns a module namespace, not a function: extract CardDef inside and wrap it as getCard
   const definition = Object.values(mod).find((value) => value && typeof value === 'object' && value.id === CARD_ID);
-  assert.ok(definition, `临时素材效果卡没有导出 id 为 ${CARD_ID} 的 CardDef`);
+  assert.ok(definition, `The temporary media effect card does not export a CardDef with id ${CARD_ID}`);
   const getCard = (id) => (id === definition.id ? definition : undefined);
 
   const base = { id: 'shader-error-' + randomUUID(), width: 64, height: 64, fps: 10, duration: 1, themeId: 'default', media: [], tracks: [{ id: 'main', kind: 'video', clips: [] }] };

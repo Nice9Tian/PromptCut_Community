@@ -1,8 +1,9 @@
 import type { SVGProps } from "react";
 
 /**
- * 左 rail 五项的图标:24 网格、1.6 描边、跟着文字色走。
- * 显示尺寸由共享样式 .pc-rail-item svg 定(22px),这里的 width / height 只是兜底。
+ * Icons for the five left rail items: 24 grid, 1.6 stroke, following the text color.
+ * The display size is set by the shared style .pc-rail-item svg (22px); the width / height here
+ * are only a fallback.
  */
 const base: SVGProps<SVGSVGElement> = {
   width: 22,
@@ -16,7 +17,7 @@ const base: SVGProps<SVGSVGElement> = {
   "aria-hidden": true,
 };
 
-/** 素材库:叠着的两张画面,前面那张带播放三角 */
+/** Media library: two stacked frames, the front one with a play triangle */
 export function RailIconLibrary() {
   return (
     <svg {...base}>
@@ -27,7 +28,7 @@ export function RailIconLibrary() {
   );
 }
 
-/** 动画:往右跑的播放三角,左边拖着三道动势线 */
+/** Animation: a play triangle running right, trailing three motion lines on the left */
 export function RailIconAnimations() {
   return (
     <svg {...base}>
@@ -37,7 +38,7 @@ export function RailIconAnimations() {
   );
 }
 
-/** 特效:一大一小两颗星 */
+/** Effects: two stars, one big and one small */
 export function RailIconEffects() {
   return (
     <svg {...base}>
@@ -47,7 +48,7 @@ export function RailIconEffects() {
   );
 }
 
-/** 编辑:三根滑杆 */
+/** Edit: three slider bars */
 export function RailIconEdit() {
   return (
     <svg {...base}>
@@ -59,7 +60,7 @@ export function RailIconEdit() {
   );
 }
 
-/** 字幕:画框底下两行字 */
+/** Captions: two lines of text under a picture frame */
 export function RailIconCaptions() {
   return (
     <svg {...base}>

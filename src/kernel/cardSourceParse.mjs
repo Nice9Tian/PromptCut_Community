@@ -1,52 +1,73 @@
 /**
- * 从一份卡片源码(`src/cards/user/*.tsx` 的原文)里取出它定义的卡片的 id、名字、说明、参数默认值与参数控件,**不执行源码**。
+ * From one card source (the original text of `src/cards/user/*.tsx`), extracts the id, name, description,
+ * parameter defaults and parameter controls of the cards it defines, **without executing the source**.
  *
- * 用处(C10 契约第 9 节「识别」):在线浏览器模式的页面经文档服务读到内容库里同步来的卡片源码,但本机不能运行它们;
- * 页面要知道「这个 id 是一张用户卡、叫什么名字」(时间轴标真名、预览按本机跑不了的卡处理),以及它有哪些参数
- * (参数面板照常能改;片段照常可以改参数)。
+ * Purpose (C10 contract section 9, "recognition"): a page in online browser mode reads, through the
+ * document service, the card source synced into the content store, but this machine cannot run those
+ * cards. The page needs to know "this id is a user card and what it is called" (the timeline shows the
+ * real name, and the preview treats it as a card this machine cannot run), and which parameters it has
+ * (the parameters panel can edit them as usual; clips can change their parameters as usual).
  *
- * `defaults` / `controls` / `description` 只认字面量:字符串、没有替换的模板字符串、数字(含负数)、布尔、null、数组、对象,
- * 以及同文件顶层 `const X = 字面量` 的引用(对象、数组里的展开也认同文件的字面量)。
+ * `defaults` / `controls` / `description` only accept literals: strings, template strings without
+ * substitutions, numbers (including negatives), booleans, null, arrays, objects, and references to a
+ * top-level `const X = literal` of the same file (spreads inside objects and arrays also accept literals
+ * of the same file).
  *
- * **跟着 import 找**(C10 契约第 9 节〔裁〕2026-09-30):给了 `opts.key` 与 `opts.files` / `opts.builtins` 时,引进来的名字也照样求值:
- *   - 相对导入到的文件在 `files` 里(在线页面给的是内容库里同一个用户卡目录下同步来的 `card-source`):解析那个文件,
- *     取它用字面量写的导出——`export const`、`export default`、`export { a as b }`、转出 `export { a } from` / `export * from`、
- *     导入时的别名 `import { a as b }`、默认导入、`import * as ns` 的 `ns.x`;引进来的文件再引别的文件照样跟,有环就停(那一个认不出);
- *   - 相对导入到的是页面自己带着的内置模块(`builtins`,例如 `src/cards/native/hud.ts` 的 `hudControls`):用页面里那份现成的值
- *     (只收纯数据);内置模块登记的纯函数(`pureCall`,例如 `assetOptions`)以字面量为参数调用时照样求值;
- *   - 都不是(包名、别名、内容库里没有的文件)的认不出,原因记下。
- * 始终不执行用户源码、不 eval。
+ * **Following imports** (C10 contract section 9 [ruling] 2026-09-30): when `opts.key` and `opts.files` /
+ * `opts.builtins` are given, imported names are evaluated too:
+ *   - a relative import that lands on a file in `files` (the online page supplies the `card-source` synced
+ *     from the same user-card directory of the content store): parse that file and take the exports it
+ *     writes as literals: `export const`, `export default`, `export { a as b }`, re-exports
+ *     `export { a } from` / `export * from`, import aliases `import { a as b }`, default imports, and
+ *     `ns.x` of `import * as ns`; a file brought in that imports other files is followed the same way, and
+ *     a cycle stops it (that one is not recognized);
+ *   - a relative import that lands on a built-in module the page ships with (`builtins`, for example
+ *     `hudControls` of `src/cards/native/hud.ts`): use the ready-made value from the page (plain data
+ *     only); pure functions registered by the built-in module (`pureCall`, for example `assetOptions`) are
+ *     also evaluated when called with literal arguments;
+ *   - anything else (package names, aliases, files not in the content store) is not recognized, and the
+ *     reason is recorded.
+ * User source is never executed and never passed to eval.
  *
- * 认不出的部分按下面的规矩丢:
- *   - 控件逐个解析:`key`、`type`、`label` 不是字面量(或缺)的那一个跳过;个别字段不是字面量就丢掉那个字段;
- *   - `select` 的 `options` 认:`{ value, label }`(缺 `label` 用 `value`)、纯字符串数组、`{ 值: 标签 }` 对象;缺了或认不出就跳过;
- *   - `asset` 缺 `kind` 时,选项与默认值的地址都指向同一种素材目录(`/catalog/lottie/…`、`/catalog/particles/…`)就推断为那一种,
- *     推断不了跳过;`asset` 没了 `options` 按空表;
- *   - `defaults` 里不是字面量的键丢掉;
- *   - 有控件被跳过(或整个 `controls` 不是字面量)时 `controlsIncomplete` 为 true,参数面板据此说明「在线改不了」;
- *     `skippedControls` 逐条记被跳过的是哪一个(认得出的 key / label / type)和为什么,面板照着列出来。
+ * What is not recognized is dropped by these rules:
+ *   - controls are parsed one by one: a control whose `key`, `type` or `label` is not a literal (or is
+ *     missing) is skipped; a single field that is not a literal is dropped;
+ *   - for `select`, `options` accepts `{ value, label }` (a missing `label` uses `value`), a plain array
+ *     of strings, and a `{ value: label }` object; missing or unrecognized options skip the control;
+ *   - when `asset` has no `kind` and the addresses of its options and of its default value all point to
+ *     the same kind of asset catalog (`/catalog/lottie/…`, `/catalog/particles/…`), that kind is
+ *     inferred; if it cannot be inferred the control is skipped; an `asset` without `options` is treated
+ *     as an empty list;
+ *   - keys in `defaults` that are not literals are dropped;
+ *   - when a control is skipped (or the whole `controls` is not a literal), `controlsIncomplete` is true,
+ *     and the parameters panel uses it to explain "cannot be edited online"; `skippedControls` records
+ *     each skipped control (the recognizable key / label / type) and why, and the panel lists them as is.
  *
- * 判据照 `src/cards/user/index.ts` 的 `isCardDef`,只是换成读源码:具名导出(含 `export default`、`export { a as b }`)
- * 的值是一个对象字面量,顶层写着字符串的 `id` 与 `name`,并写了 `defaults`、`controls`,以及 `Component` / `card` /
- * `audio` 之一(属性、简写、方法都算)。`id` / `name` 也认同一文件顶层 `const X = "..."` 定义的常量。
- * 值不是字面量(函数返回、展开别的对象)的认不出来,当它不是卡。
+ * The criterion follows `isCardDef` in `src/cards/user/index.ts`, only reading source instead: the value
+ * of a named export (including `export default` and `export { a as b }`) is an object literal that has
+ * top-level string `id` and `name`, writes `defaults` and `controls`, and has one of `Component` / `card` /
+ * `audio` (a property, a shorthand or a method all count). `id` / `name` also accept constants defined
+ * at the top level of the same file as `const X = "..."`.
+ * A value that is not a literal (a function return, spreading another object) is not recognized, and it
+ * is treated as not a card.
  *
- * 为此带一个够用的 TSX 词法器:字符串、模板字符串(含 `${}` 嵌套)、注释、正则字面量、JSX(文字里的撇号不当字符串)。
- * 纯函数,浏览器与 Node 同一份。
+ * For this it carries a TSX lexer that is good enough: strings, template strings (including nested `${}`),
+ * comments, regex literals, JSX (apostrophes in text are not strings).
+ * Pure function, the same copy for the browser and Node.
  */
 
 const PUNCT3 = ["...", "===", "!==", "**=", "<<=", ">>=", "&&=", "||=", "??="];
 const PUNCT2 = ["=>", "==", "!=", "<=", ">=", "&&", "||", "??", "?.", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**", "<<", ">>"];
-/** 这些关键字之后是表达式开头(`/` 是正则,`<` 是 JSX) */
+/** After these keywords an expression starts (`/` is a regex, `<` is JSX) */
 const EXPR_KEYWORDS = new Set(["return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield", "await", "instanceof", "default", "export"]);
-/** 这些标点之后是表达式开头 */
+/** After this punctuation an expression starts */
 const EXPR_PUNCT = new Set(["(", "[", "{", ",", ";", ":", "?", "=", "=>", "==", "===", "!=", "!==", "+", "-", "*", "%", "&", "|", "^", "!", "~",
   "<", ">", "<=", ">=", "&&", "||", "??", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**", "...", "}"]);
 
 const isIdStart = (c) => /[\p{ID_Start}$_]/u.test(c);
 const isIdPart = (c) => /[\p{ID_Continue}$‌‍]/u.test(c);
 
-/** 解码字符串字面量的正文(不含引号) */
+/** Decodes the body of a string literal (without the quotes) */
 function decodeString(raw) {
   let out = "";
   for (let i = 0; i < raw.length; i++) {
@@ -65,23 +86,26 @@ function decodeString(raw) {
     else if (n === "u") {
       if (raw[i + 1] === "{") {
         const end = raw.indexOf("}", i);
-        // 没闭合的 `\u{`(源码本身不合法):余下的原样留下就收尾。照常写 `i = end` 会把 i 拨回 -1、从头重扫,永远出不来
+        // Unclosed `\u{` (the source itself is invalid): leave the rest as is and finish. Writing `i = end` as
+        // usual would reset i to -1 and rescan from the start, never getting out
         if (end < 0) { out += raw.slice(i); break; }
         out += String.fromCodePoint(parseInt(raw.slice(i + 2, end), 16) || 0);
         i = end;
       } else { out += String.fromCharCode(parseInt(raw.slice(i + 1, i + 5), 16) || 0); i += 4; }
     } else if (n === "\r") { if (raw[i + 1] === "\n") i++; }
-    else if (n === "\n" || n === " " || n === " ") { /* 续行 */ }
+    else if (n === "\n" || n === " " || n === " ") { /* line continuation */ }
     else out += n;
   }
   return out;
 }
 
 /**
- * 词法器。`tokens` 只收最外层上下文的记号(模板里的 `${}`、JSX 里的 `{}` 整个吞掉,不出记号);
- * 每个记号带它所在的花括号 / 圆括号 / 方括号深度 `depth`。
- * 记号:`{ t: 'word' | 'punct' | 'string' | 'template' | 'number' | 'regex' | 'jsx', v, depth }`,
- * `string` 的 `v` 是解码后的值,不带替换的模板字符串的 `v` 也是它的值(带替换的 `v` 为 null)。
+ * Lexer. `tokens` only collects the tokens of the outermost context (`${}` inside templates and `{}`
+ * inside JSX are swallowed whole and emit no tokens);
+ * each token carries the brace / parenthesis / bracket depth `depth` it sits at.
+ * Token: `{ t: 'word' | 'punct' | 'string' | 'template' | 'number' | 'regex' | 'jsx', v, depth }`,
+ * the `v` of `string` is the decoded value, and the `v` of a template string without substitutions is
+ * also its value (`v` is null when it has substitutions).
  */
 class Lexer {
   constructor(src) {
@@ -132,7 +156,7 @@ class Lexer {
     return decodeString(raw);
   }
 
-  /** 模板字符串;回它的值(带替换时回 null) */
+  /** Template string; returns its value (null when it has substitutions) */
   readTemplate() {
     this.i++;
     let raw = "";
@@ -153,7 +177,10 @@ class Lexer {
     return plain ? decodeString(raw) : null;
   }
 
-  /** 吞到与已经吃掉的那个 `{` 配对的 `}`(含);里面的字符串、模板、JSX、正则照常识别 */
+  /**
+   * Swallows up to and including the `}` that pairs with the `{` already consumed; strings, templates,
+   * JSX and regexes inside are still recognized as usual
+   */
   skipBalanced() {
     const saved = this.last;
     this.last = { t: "punct", v: "{" };
@@ -187,7 +214,7 @@ class Lexer {
     while (this.i < this.s.length && isIdPart(this.s[this.i])) this.i++;
   }
 
-  /** `<` 后面像不像 JSX(不是 TS 泛型箭头函数 `<T,>` / `<T extends X>`) */
+  /** Whether what follows `<` looks like JSX (not a TS generic arrow function `<T,>` / `<T extends X>`) */
   looksLikeJsx() {
     const s = this.s;
     let j = this.i + 1;
@@ -201,14 +228,14 @@ class Lexer {
     return true;
   }
 
-  /** 吞一个 JSX 元素或片段(从 `<` 起) */
+  /** Swallows one JSX element or fragment (starting at `<`) */
   skipJsx() {
     const s = this.s;
     this.i++;
-    // 片段 `<>`
+    // Fragment `<>`
     if (s[this.i] === ">") { this.i++; this.skipJsxChildren(); return; }
     while (this.i < s.length && (isIdPart(s[this.i]) || s[this.i] === "." || s[this.i] === "-" || s[this.i] === ":")) this.i++;
-    // 属性
+    // Attributes
     for (;;) {
       this.skipSpace();
       const c = s[this.i];
@@ -246,7 +273,7 @@ class Lexer {
     }
   }
 
-  /** 下一个记号;到头回 null */
+  /** The next token; returns null at the end */
   token() {
     this.skipSpace();
     const s = this.s;
@@ -275,7 +302,7 @@ class Lexer {
     return tok;
   }
 
-  /** 整份源码的记号表(带深度) */
+  /** The token table of the whole source (with depth) */
   all() {
     const out = [];
     let depth = 0;
@@ -291,7 +318,7 @@ class Lexer {
   }
 }
 
-/** 从 `open`(一个 `{` 记号)起配对到它的 `}`,回 `}` 的下标 */
+/** Pairs from `open` (a `{` token) to its `}` and returns the index of the `}` */
 function closeOf(tokens, open) {
   const d = tokens[open].depth;
   for (let k = open + 1; k < tokens.length; k++) {
@@ -302,14 +329,19 @@ function closeOf(tokens, open) {
 }
 
 /**
- * 对象字面量(`open` 是它的 `{`)的顶层属性:`Map<键, 值的记号数组>`;简写属性与方法的值记成 null。
- * 展开(`...x`)记在 `spreads` 里(同文件顶层对象的名字;别的表达式记 null)。
+ * Top-level properties of an object literal (`open` is its `{`): `Map<key, token array of the value>`;
+ * the values of shorthand properties and methods are recorded as null.
+ * Spreads (`...x`) are recorded in `spreads` (the name of a top-level object of the same file; null for
+ * other expressions).
  */
 function objectProps(tokens, open) {
   const end = closeOf(tokens, open);
   const inner = tokens[open].depth + 1;
   const props = new Map();
-  /** 展开的顶层标识符(`...base`),按出现先后;展开别的表达式时记 null */
+  /**
+   * Top-level identifiers that are spread (`...base`), in order of appearance; null is recorded when
+   * another expression is spread
+   */
   const spreads = [];
   let k = open + 1;
   while (k < end) {
@@ -323,7 +355,7 @@ function objectProps(tokens, open) {
       while (k < end && !(tokens[k].depth === inner && tokens[k].t === "punct" && tokens[k].v === ",")) k++;
       continue;
     }
-    // 键:标识符、字符串、数字;`get` / `set` / `async` 修饰的方法跳过修饰词
+    // Key: identifier, string or number; for methods modified by `get` / `set` / `async`, the modifier is skipped
     let keyTok = t;
     if (t.t === "word" && (t.v === "get" || t.v === "set" || t.v === "async") && tokens[k + 1] && tokens[k + 1].depth === inner
       && (tokens[k + 1].t === "word" || tokens[k + 1].t === "string")) { k++; keyTok = tokens[k]; }
@@ -333,7 +365,7 @@ function objectProps(tokens, open) {
     else if (keyTok.t === "template" && keyTok.v !== null) key = keyTok.v;
     const after = tokens[k + 1];
     if (key !== null && after && after.t === "punct" && after.v === ":" && after.depth === inner) {
-      // `key: value` —— 值吃到下一个同层逗号或对象结尾
+      // `key: value`: the value is consumed up to the next comma at the same level or the end of the object
       const from = k + 2;
       let to = from;
       while (to < end && !(tokens[to].depth === inner && tokens[to].t === "punct" && tokens[to].v === ",")) to++;
@@ -342,28 +374,30 @@ function objectProps(tokens, open) {
       continue;
     }
     if (key !== null && (!after || after.depth !== inner || (after.t === "punct" && (after.v === "," || after.v === "}")) || k + 1 >= end)) {
-      // 简写
+      // Shorthand
       if (!props.has(key)) props.set(key, null);
       k++;
       continue;
     }
     if (key !== null && after && after.t === "punct" && (after.v === "(" || after.v === "<" || after.v === "?")) {
-      // 方法 `key(...) {...}` / `key<T>(...)`
+      // Method `key(...) {...}` / `key<T>(...)`
       if (!props.has(key)) props.set(key, null);
       let to = k + 1;
       while (to < end && !(tokens[to].depth === inner && tokens[to].t === "punct" && tokens[to].v === ",")) to++;
       k = to;
       continue;
     }
-    // 计算键 `[x]: v` 之类:跳到下一个同层逗号
+    // Computed keys such as `[x]: v`: skip to the next comma at the same level
     while (k < end && !(tokens[k].depth === inner && tokens[k].t === "punct" && tokens[k].v === ",")) k++;
   }
   return { props, spreads, end };
 }
 
 /**
- * 对象的顶层属性,展开的同文件顶层对象(`...base`)并进来;写在展开后面的属性覆盖展开进来的(简化:展开的属性只补缺,
- * 与卡片源码里「先展开、后覆盖」的常见写法一致)。展开链有环时停。
+ * Top-level properties of an object, with the same-file top-level objects it spreads (`...base`) merged
+ * in; properties written after the spread override the spread-in ones (simplification: spread-in
+ * properties only fill gaps, consistent with the common "spread first, override after" pattern in card
+ * sources). Stops when the spread chain has a cycle.
  */
 function mergedProps(tokens, objects, at, seen = new Set()) {
   if (seen.has(at)) return new Map();
@@ -379,11 +413,14 @@ function mergedProps(tokens, objects, at, seen = new Set()) {
   return out;
 }
 
-/** 一个值的记号数组 → 字符串(字面量、无替换模板、同文件顶层字符串常量);认不出回 null */
+/**
+ * Token array of a value → string (literal, template without substitutions, top-level string constant
+ * of the same file); returns null if not recognized
+ */
 function stringValue(valueTokens, consts) {
   if (!valueTokens || !valueTokens.length) return null;
   const first = valueTokens[0];
-  // 允许尾随 `as const` / `satisfies X` / `as string`
+  // Trailing `as const` / `satisfies X` / `as string` is allowed
   const rest = valueTokens.slice(1);
   if (rest.length && !(rest[0].t === "word" && (rest[0].v === "as" || rest[0].v === "satisfies"))) return null;
   if (first.t === "string") return first.v;
@@ -392,7 +429,10 @@ function stringValue(valueTokens, consts) {
   return null;
 }
 
-/** 顶层声明:`const|let|var NAME [: 类型] = <初值>`,回 `{ name, valueAt }`(初值第一个记号的下标) */
+/**
+ * Top-level declaration: `const|let|var NAME [: type] = <init>`, returns `{ name, valueAt }`
+ * (the index of the first token of the initial value)
+ */
 function declarationAt(tokens, k) {
   const kw = tokens[k];
   if (!kw || kw.t !== "word" || !(kw.v === "const" || kw.v === "let" || kw.v === "var")) return null;
@@ -401,7 +441,7 @@ function declarationAt(tokens, k) {
   let j = k + 2;
   const d = kw.depth;
   if (tokens[j] && tokens[j].t === "punct" && tokens[j].v === ":") {
-    // 跳过类型注解,直到同层的 `=`(类型里的 `<>` 也算一层)
+    // Skip the type annotation up to the `=` at the same level (`<>` inside the type also counts as a level)
     let angle = 0;
     j++;
     while (j < tokens.length) {
@@ -420,14 +460,16 @@ function declarationAt(tokens, k) {
   return { name: nameTok.v, valueAt: j + 1 };
 }
 
-/* ------------------------------------------------------------------ 跨文件:模块路径 */
+/* ------------------------------------------------------------------ Cross-file: module paths */
 
-/** 相对导入补的扩展名(同 vite 的解析顺序,够用) */
+/** Extensions appended to relative imports (same resolution order as vite; good enough) */
 const MODULE_EXTS = [".ts", ".tsx", ".mjs", ".js"];
 
 /**
- * 相对导入 → 候选的仓库相对路径(按先后试)。`fromKey` 是导入方的键(`src/cards/user/x.tsx`)。
- * 不是相对路径(包名、别名)、带查询(`?raw`)、爬出仓库根的回 null。
+ * Relative import → candidate repo-relative paths (tried in order). `fromKey` is the key of the
+ * importer (`src/cards/user/x.tsx`).
+ * Returns null for non-relative paths (package names, aliases), paths with a query (`?raw`), and paths
+ * that climb out of the repo root.
  */
 export function resolveSpecifier(fromKey, spec) {
   if (typeof fromKey !== "string" || typeof spec !== "string") return null;
@@ -447,7 +489,10 @@ export function resolveSpecifier(fromKey, spec) {
   return [...MODULE_EXTS.map((e) => base + e), `${base}/index.ts`, `${base}/index.tsx`];
 }
 
-/** 这份源码里所有 `import … from`、`export … from` 的说明符(词法器认的,注释与字符串里的不算) */
+/**
+ * All specifiers of `import … from` and `export … from` in this source (as recognized by the lexer;
+ * those inside comments and strings do not count)
+ */
 export function importSpecifiers(source) {
   if (typeof source !== "string" || !source) return [];
   let tokens;
@@ -457,7 +502,7 @@ export function importSpecifiers(source) {
     const t = tokens[k];
     if (t.depth !== 0 || t.t !== "word" || (t.v !== "import" && t.v !== "export")) continue;
     if (t.v === "import" && tokens[k + 1]?.t === "string") { out.push(tokens[k + 1].v); continue; }
-    // 同层往后找 `from "<说明符>"`;遇到分号、下一条语句就停
+    // Look ahead at the same level for `from "<specifier>"`; stop at a semicolon or the next statement
     for (let j = k + 1; j < tokens.length && j < k + 400; j++) {
       const n = tokens[j];
       if (n.depth === 0 && n.t === "punct" && n.v === ";") break;
@@ -469,8 +514,9 @@ export function importSpecifiers(source) {
 }
 
 /**
- * 一份源码经相对导入可能引到的仓库相对路径(每个说明符的全部候选;调用方拿去和内容库的列表取交集)。
- * 在线页面据此决定还要取哪几份 `card-source`。
+ * Repo-relative paths a source may reach through relative imports (all candidates of every specifier;
+ * the caller intersects them with the content store list).
+ * The online page uses this to decide which other `card-source` files still need to be fetched.
  */
 export function cardSourceImports(source, key) {
   const out = [];
@@ -478,21 +524,29 @@ export function cardSourceImports(source, key) {
   return [...new Set(out)];
 }
 
-/* ------------------------------------------------------------------ 页面内置模块的值 */
+/* ------------------------------------------------------------------ Values of the page's built-in modules */
 
-/** 内置模块表里「可以拿字面量参数调用」的纯函数标记(见 `pureCall`) */
+/**
+ * Marker of pure functions in the built-in module table that "can be called with literal arguments"
+ * (see `pureCall`)
+ */
 export const PURE_CALL = Symbol.for("promptcut.cardSourceParse.pureCall");
 
 /**
- * 把页面自己的一个纯函数(输入字面量、输出纯数据,例如 `assetOptions(kind)`)登记进内置模块表:
- * 用户卡源码里 `assetOptions("lottie")` 这种以字面量为参数的调用就按它求值。调用的是页面自己的代码,不执行用户源码。
+ * Registers a pure function of the page itself (literal input, plain data output, for example
+ * `assetOptions(kind)`) into the built-in module table: calls in user card source such as
+ * `assetOptions("lottie")` that use literal arguments are evaluated with it. It calls the page's own
+ * code and does not execute user source.
  */
 export function pureCall(fn) {
   return Object.freeze({ [PURE_CALL]: fn });
 }
 const isPureCall = (v) => !!v && typeof v === "object" && typeof v[PURE_CALL] === "function";
 
-/** 内置模块的导出值 → 纯数据的拷贝(字符串、有限数字、布尔、null、数组、普通对象);别的回 undefined */
+/**
+ * Exported value of a built-in module → a copy as plain data (string, finite number, boolean, null,
+ * array, plain object); anything else returns undefined
+ */
 function toPlain(v, depth = 0) {
   if (depth > 24) return undefined;
   if (v === null || typeof v === "string" || typeof v === "boolean") return v;
@@ -517,11 +571,11 @@ function toPlain(v, depth = 0) {
   return undefined;
 }
 
-/* ------------------------------------------------------------------ 字面量求值 */
+/* ------------------------------------------------------------------ Literal evaluation */
 
-/** 值后面跟着这些标点就算结束 */
+/** A value ends when it is followed by this punctuation */
 const VALUE_END = new Set([",", ";", ")", "]", "}"]);
-/** 顶层语句开头的词:没写分号时,前一条语句的值到这里结束 */
+/** Words that start a top-level statement: without a semicolon, the previous statement's value ends here */
 const STATEMENT_WORDS = new Set(["const", "let", "var", "export", "function", "import", "type", "interface", "class", "declare", "enum", "async"]);
 
 const isPlainObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
@@ -533,10 +587,15 @@ function numberOf(raw) {
 }
 
 /**
- * 求值器:在一个模块的记号表上按下标走。标识符先找同文件顶层声明,再找导入(经 `ctx` 跨文件、查内置模块)。
- * 每个 `parse*` 回 `{ ok, value, end }`:`ok` 是整段都是字面量;对象、数组即使 `ok` 为 false,`value` 里也留着认得出的那部分
- * (对象丢掉认不出的键并记在 `dropped`,数组丢掉认不出的元素,`items` 里逐个留着每个元素的结果);`end` 是这个值之后的下标。
- * 认不出的标识符把原因记在 `whys`(参数面板说明是哪一条用)。
+ * Evaluator: walks by index over the token table of one module. An identifier is looked up first among
+ * the top-level declarations of the same file, then among imports (across files via `ctx`, and in the
+ * built-in modules).
+ * Each `parse*` returns `{ ok, value, end }`: `ok` means the whole span is literal; for objects and
+ * arrays, even when `ok` is false, `value` keeps the part that was recognized (an object drops the keys
+ * it cannot recognize and records them in `dropped`; an array drops the elements it cannot recognize,
+ * and `items` keeps the result of every element one by one); `end` is the index after this value.
+ * The reason an unrecognized identifier is not recognized is recorded in `whys` (used by the
+ * parameters panel to say which one).
  */
 class Evaluator {
   constructor(mod, ctx) {
@@ -546,11 +605,14 @@ class Evaluator {
     this.constAt = mod.constAt;
     this.cache = new Map();
     this.resolving = new Set();
-    /** 名字 → 认不出的原因 */
+    /** Name → reason it is not recognized */
     this.whys = new Map();
   }
 
-  /** 跳过一个认不出的表达式:到同层的 `,` / `;`,或者会让层数变负的那个右括号(不吃掉) */
+  /**
+   * Skips an expression that is not recognized: up to the `,` / `;` at the same level, or the closing
+   * bracket that would make the depth negative (not consumed)
+   */
   skipExpr(i) {
     const t = this.t;
     let depth = 0;
@@ -564,7 +626,7 @@ class Evaluator {
     return i;
   }
 
-  /** 跳过尾随的类型断言(`as const`、`satisfies X`、`as Record<K, V>`):到值的结尾 */
+  /** Skips a trailing type assertion (`as const`, `satisfies X`, `as Record<K, V>`): up to the end of the value */
   skipType(i) {
     const t = this.t;
     let depth = 0;
@@ -583,7 +645,10 @@ class Evaluator {
     return i;
   }
 
-  /** 一个值读完之后:后面是结尾就收;是类型断言就跳过;是别的(运算符、调用……)就整个不算字面量 */
+  /**
+   * After a value has been read: if the end follows, finish; if a type assertion follows, skip it;
+   * if anything else follows (an operator, a call, ...), the whole thing is not a literal
+   */
   finish(r) {
     const n = this.t[r.end];
     if (!n || (n.t === "punct" && VALUE_END.has(n.v))) return r;
@@ -592,13 +657,16 @@ class Evaluator {
     return { ok: false, value: undefined, end: this.skipExpr(r.end) };
   }
 
-  /** 标识符的值:同文件顶层常量,或导入的(跨文件、内置模块) */
+  /**
+   * Value of an identifier: a top-level constant of the same file, or an imported
+   * one (across files, built-in modules)
+   */
   resolve(name) {
     if (this.cache.has(name)) return this.cache.get(name);
     let out;
     const at = this.constAt.get(name);
     if (at !== undefined) {
-      if (this.resolving.has(name)) return { ok: false, value: undefined, why: "循环引用" };
+      if (this.resolving.has(name)) return { ok: false, value: undefined, why: "circular reference" };
       this.resolving.add(name);
       const r = this.parse(at);
       this.resolving.delete(name);
@@ -606,14 +674,14 @@ class Evaluator {
     } else if (this.mod.imports.has(name)) {
       out = this.ctx.importValue(this.mod, this.mod.imports.get(name));
     } else {
-      out = { ok: false, value: undefined, why: "不是字面量" };
+      out = { ok: false, value: undefined, why: "not a literal" };
     }
     if (!out.ok && out.why) this.whys.set(name, out.why);
     this.cache.set(name, out);
     return out;
   }
 
-  /** `ns.x`(`import * as ns`)的值;不是命名空间导入回 null */
+  /** Value of `ns.x` (`import * as ns`); returns null if it is not a namespace import */
   member(nsName, prop) {
     const b = this.mod.imports.get(nsName);
     if (!b || b.name !== "*" || this.constAt.has(nsName)) return null;
@@ -622,7 +690,10 @@ class Evaluator {
     return r;
   }
 
-  /** 调用内置模块登记过的纯函数(`pureCall`),参数全是字面量才调;别的回 null(照常按「不是字面量」处理) */
+  /**
+   * Calls a pure function registered by a built-in module (`pureCall`), only when all arguments are
+   * literals; otherwise returns null (handled as usual as "not a literal")
+   */
   call(i) {
     const tok = this.t[i];
     let callee = null;
@@ -670,15 +741,16 @@ class Evaluator {
     if (tok.t === "word") {
       if (tok.v === "true" || tok.v === "false") return this.finish({ ok: true, value: tok.v === "true", end: i + 1 });
       if (tok.v === "null") return this.finish({ ok: true, value: null, end: i + 1 });
-      // 内置模块登记过的纯函数、以字面量为参数调用
+      // A pure function registered by a built-in module, called with literal arguments
       const called = this.call(i);
       if (called) return called;
-      // `ns.x`:命名空间导入的成员
+      // `ns.x`: a member of a namespace import
       if (this.t[i + 1]?.t === "punct" && this.t[i + 1].v === "." && this.t[i + 2]?.t === "word") {
         const m = this.member(tok.v, this.t[i + 2].v);
         if (m) return this.finish({ ...m, end: i + 3 });
       }
-      // 同文件顶层常量或导入的值(`X` 后面紧跟 `.` / `(` / `[` 是成员访问或调用,由 `finish` 判成不是字面量)
+      // A top-level constant of the same file or an imported value (an `X` directly followed by `.` / `(` / `[`
+      // is a member access or a call, which `finish` judges as not a literal)
       const r = this.resolve(tok.v);
       return this.finish({ ...r, end: i + 1 });
     }
@@ -693,7 +765,10 @@ class Evaluator {
     return fail();
   }
 
-  /** 元素是一个裸标识符(`X` 或 `ns.x`)时它的名字(说明认不出的原因用) */
+  /**
+   * The name of an element when it is a bare identifier (`X` or `ns.x`) (used to explain why it is not
+   * recognized)
+   */
   nameAt(k) {
     const a = this.t[k], b = this.t[k + 1];
     if (!a || a.t !== "word") return null;
@@ -716,13 +791,14 @@ class Evaluator {
         const name = this.nameAt(k + 1);
         const r = this.parse(k + 1);
         if (Array.isArray(r.value)) {
-          // 展开进来的每个元素照样逐个留着(引进来的数组里个别元素认不出时,其余的照常用)
+          // Every spread-in element is still kept one by one (when some elements of an imported array are not
+          // recognized, the rest are used as usual)
           const sub = r.items ?? r.value.map((v) => ({ ok: true, value: v }));
           for (const it of sub) { items.push(it); if (it.ok) value.push(it.value); }
           if (!r.ok) ok = false;
         } else {
           ok = false;
-          items.push({ ok: false, value: undefined, spread: true, name, why: (name && this.whys.get(name)) || r.why || "不是字面量" });
+          items.push({ ok: false, value: undefined, spread: true, name, why: (name && this.whys.get(name)) || r.why || "not a literal" });
         }
         k = Math.max(r.end, k + 1);
         continue;
@@ -730,11 +806,11 @@ class Evaluator {
       const name = this.nameAt(k);
       const r = this.parse(k);
       items.push({ ok: r.ok, value: r.value, ...(r.dropped ? { dropped: r.dropped } : {}), ...(name ? { name } : {}),
-        ...(!r.ok ? { why: (name && this.whys.get(name)) || r.why || "不是字面量" } : {}) });
+        ...(!r.ok ? { why: (name && this.whys.get(name)) || r.why || "not a literal" } : {}) });
       if (r.ok) value.push(r.value);
       else ok = false;
       k = Math.max(r.end, k + 1);
-      // 元素后面既不是逗号也不是 `]`:认不出(比如截断),收掉
+      // The element is followed by neither a comma nor `]`: not recognized (for example truncated); close it off
       const next = t[k];
       if (next && !(next.t === "punct" && (next.v === "," || next.v === "]"))) { ok = false; k = this.skipExpr(k); if (t[k]?.v === ";") return { ok: false, value, items, end: k }; }
     }
@@ -754,7 +830,8 @@ class Evaluator {
       if (tok.t === "punct" && tok.v === "}") return done({ ok, value, end: k + 1 });
       if (tok.t === "punct" && tok.v === ",") { k++; continue; }
       if (tok.t === "punct" && tok.v === "...") {
-        // 展开:字面量对象(同文件或引进来的);先展开、后写的键覆盖它,和 JS 一样按先后
+        // Spread: a literal object (of the same file or imported); keys written after the spread override it,
+        // as in JS, by order
         const r = this.parse(k + 1);
         if (isPlainObject(r.value)) for (const [kk, vv] of Object.entries(r.value)) set(kk, vv);
         if (!r.ok) ok = false;
@@ -774,14 +851,14 @@ class Evaluator {
         continue;
       }
       if (key !== null && tok.t === "word" && (!after || (after.t === "punct" && (after.v === "," || after.v === "}")))) {
-        // 简写 `{ a }`:同名的顶层常量或导入
+        // Shorthand `{ a }`: the top-level constant or import of the same name
         const r = this.resolve(key);
         if (r.ok) set(key, r.value);
         else { ok = false; dropped.push(key); }
         k++;
         continue;
       }
-      // 方法、getter、计算键:认不出这一项
+      // Methods, getters, computed keys: this entry is not recognized
       ok = false;
       if (key !== null) dropped.push(key);
       const next = this.skipExpr(k + 1);
@@ -791,9 +868,12 @@ class Evaluator {
   }
 }
 
-/* ------------------------------------------------------------------ 模块 */
+/* ------------------------------------------------------------------ Module */
 
-/** `{ a, b as c, type d, default as e }` 的内部(`from`..`to`,不含花括号)→ `[[原名, 新名]]`;类型项不算 */
+/**
+ * The inside of `{ a, b as c, type d, default as e }` (`from`..`to`, without the braces) →
+ * `[[original name, new name]]`; type items do not count
+ */
 function namePairs(tokens, from, to) {
   const out = [];
   let group = [];
@@ -816,7 +896,11 @@ function namePairs(tokens, from, to) {
   return out;
 }
 
-/** 顶层 `import` 语句(`k` 是 `import` 记号)→ 绑定:本地名 → `{ spec, name }`(`name`:`default` / `*` / 导出名);类型导入、副作用导入、动态导入不算 */
+/**
+ * Top-level `import` statement (`k` is the `import` token) → bindings: local name → `{ spec, name }`
+ * (`name`: `default` / `*` / exported name); type imports, side-effect imports and dynamic imports
+ * do not count
+ */
 function importAt(tokens, k, imports) {
   let j = k + 1;
   const first = tokens[j];
@@ -849,9 +933,12 @@ function importAt(tokens, k, imports) {
 const NOT_VALUE_WORDS = ["function", "class", "async", "abstract"];
 
 /**
- * 扫一份源码的顶层:声明、导入、导出。回模块对象;词法出错回 null。
- * `exportsMap`:导出名 → `{ local }`(本文件的名字)或 `{ from, name }`(转出);`starFrom`:`export * from` 的说明符;
- * `defaultAt`:`export default <表达式>` 的表达式开头下标。卡片识别另用 `exported`(本地名)与 `exportedObjects`(对象字面量的下标)。
+ * Scans the top level of a source: declarations, imports, exports. Returns the module object; returns
+ * null on a lexing error.
+ * `exportsMap`: export name → `{ local }` (a name in this file) or `{ from, name }` (re-export);
+ * `starFrom`: the specifiers of `export * from`;
+ * `defaultAt`: the index of the start of the expression of `export default <expression>`. Card
+ * recognition uses `exported` (local names) and `exportedObjects` (indices of object literals) separately.
  */
 function scanModule(key, source) {
   if (typeof source !== "string" || !source) return null;
@@ -914,7 +1001,7 @@ function scanModule(key, source) {
       continue;
     }
     if (next.t === "punct" && next.v === "{") {
-      // export { a, b as c };转出:export { a as b } from "x"
+      // export { a, b as c }; re-export: export { a as b } from "x"
       const end = closeOf(tokens, k + 1);
       const from = tokens[end + 1];
       const spec = from && from.t === "word" && from.v === "from" && tokens[end + 2]?.t === "string" ? tokens[end + 2].v : null;
@@ -922,7 +1009,7 @@ function scanModule(key, source) {
         if (mod.exportsMap.has(alias)) continue;
         mod.exportsMap.set(alias, spec !== null ? { from: spec, name: orig } : { local: orig });
       }
-      if (spec !== null) continue; // 从别处转出的卡对象不在本文件里,卡片识别认不出来(控件的值照样跟得过去)
+      if (spec !== null) continue; // A card object re-exported from elsewhere is not in this file, so card recognition cannot recognize it (control values can still be followed)
       for (let j = k + 2; j < end; j++) {
         const n = tokens[j];
         if (n.t === "word" && n.v !== "as" && n.v !== "type" && !(tokens[j - 1]?.t === "word" && tokens[j - 1].v === "as")) mod.exported.push(n.v);
@@ -934,7 +1021,10 @@ function scanModule(key, source) {
 
 const hasOwn = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);
 
-/** 一次解析的上下文:取别的文件(`files`)、页面内置模块(`builtins`)、模块缓存、跨文件的环检测 */
+/**
+ * Context of one parse: fetching other files (`files`), the page's built-in modules (`builtins`),
+ * the module cache, cross-file cycle detection
+ */
 function createContext({ files, builtins } = {}) {
   const modules = new Map();
   const resolving = new Set();
@@ -948,20 +1038,20 @@ function createContext({ files, builtins } = {}) {
       modules.set(key, mod);
       return mod;
     },
-    /** 说明符 → `{ kind: 'file' | 'builtin', key }`;找不到回 `{ why }` */
+    /** Specifier → `{ kind: 'file' | 'builtin', key }`; returns `{ why }` if not found */
     locate(fromKey, spec) {
       const cands = resolveSpecifier(fromKey, spec);
-      if (!cands) return { why: `引自 ${spec}(不是相对路径,在线页面读不到)` };
+      if (!cands) return { why: `imported from ${spec} (not a relative path, the online page cannot read it)` };
       for (const c of cands) if (fileOf(c) !== null) return { kind: "file", key: c };
       for (const c of cands) if (builtinOf(c)) return { kind: "builtin", key: c };
-      return { why: cands[0].startsWith("src/cards/user/") ? `内容库里没有 ${spec} 这个文件` : `${spec} 不是在线页面认得的内置模块` };
+      return { why: cands[0].startsWith("src/cards/user/") ? `the content store has no file ${spec}` : `${spec} is not a built-in module the online page recognizes` };
     },
-    /** 一个文件的某个导出的值 */
+    /** The value of one export of a file */
     exportValue(key, name) {
       const mod = ctx.load(key);
-      if (!mod) return { ok: false, value: undefined, why: `${key} 读不出来` };
+      if (!mod) return { ok: false, value: undefined, why: `${key} cannot be read` };
       const guard = `${key}#${name}`;
-      if (resolving.has(guard)) return { ok: false, value: undefined, why: "循环引用" };
+      if (resolving.has(guard)) return { ok: false, value: undefined, why: "circular reference" };
       resolving.add(guard);
       try {
         if (name === "default" && mod.defaultAt !== undefined) return mod.ev.parse(mod.defaultAt);
@@ -976,12 +1066,12 @@ function createContext({ files, builtins } = {}) {
             if (has) return ctx.importValue(mod, { spec, name });
           }
         }
-        return { ok: false, value: undefined, why: `${key.split("/").pop()} 没有导出 ${name}` };
+        return { ok: false, value: undefined, why: `${key.split("/").pop()} does not export ${name}` };
       } finally {
         resolving.delete(guard);
       }
     },
-    /** 这个文件有没有这个导出(`export *` 的查找用;带环检测) */
+    /** Whether this file has this export (used for `export *` lookup; with cycle detection) */
     exports(key, name, seen = new Set()) {
       if (seen.has(key)) return false;
       seen.add(key);
@@ -995,39 +1085,44 @@ function createContext({ files, builtins } = {}) {
       }
       return false;
     },
-    /** 内置模块的导出原值(纯函数标记原样回,调用方判);不是内置模块回 null */
+    /**
+     * The raw exported value of a built-in module (a pure function marker is returned as is, for the caller
+     * to judge); returns null if it is not a built-in module
+     */
     importRaw(mod, binding) {
       const loc = ctx.locate(mod.key, binding.spec);
       if (loc.kind !== "builtin" || binding.name === "*") return null;
       const ns = builtinOf(loc.key);
       return hasOwn(ns, binding.name) ? ns[binding.name] : null;
     },
-    /** 导入绑定的值 */
+    /** The value of an import binding */
     importValue(mod, binding) {
       const loc = ctx.locate(mod.key, binding.spec);
       if (!loc.key) return { ok: false, value: undefined, why: loc.why };
-      if (binding.name === "*") return { ok: false, value: undefined, why: `整个模块 ${binding.spec} 不能当值用` };
+      if (binding.name === "*") return { ok: false, value: undefined, why: `the whole module ${binding.spec} cannot be used as a value` };
       if (loc.kind === "file") return ctx.exportValue(loc.key, binding.name);
       const ns = builtinOf(loc.key);
-      if (!hasOwn(ns, binding.name)) return { ok: false, value: undefined, why: `内置模块 ${binding.spec} 里没有 ${binding.name}` };
+      if (!hasOwn(ns, binding.name)) return { ok: false, value: undefined, why: `built-in module ${binding.spec} has no ${binding.name}` };
       const raw = ns[binding.name];
-      if (isPureCall(raw)) return { ok: false, value: undefined, why: `${binding.name} 是函数,只认以字面量为参数的调用` };
+      if (isPureCall(raw)) return { ok: false, value: undefined, why: `${binding.name} is a function; only calls with literal arguments are supported` };
       const value = toPlain(raw);
-      if (value === undefined) return { ok: false, value: undefined, why: `内置模块 ${binding.spec} 的 ${binding.name} 不是纯数据` };
+      if (value === undefined) return { ok: false, value: undefined, why: `${binding.name} of built-in module ${binding.spec} is not plain data` };
       return { ok: true, value };
     },
   };
   return ctx;
 }
 
-/* ------------------------------------------------------------------ 控件 */
+/* ------------------------------------------------------------------ Controls */
 
 const CONTROL_TYPES = new Set(["text", "number", "select", "color", "asset"]);
 const ASSET_KINDS = new Set(["lottie", "particles"]);
 
 /**
- * `options` 表 → `[{ value, label }]`。认:`{ value: 字符串, label: 字符串 }`;缺 `label` 的用 `value` 当标签;
- * 纯字符串数组(每项既当值也当标签);`{ 值: 标签 }` 形式的对象。有一项认不出就整个不认,回 null。
+ * `options` table → `[{ value, label }]`. Recognizes: `{ value: string, label: string }`; one with a
+ * missing `label` uses `value` as the label; a plain string array (each item is both value and label);
+ * an object of the form `{ value: label }`. If a single item is not recognized, the whole thing is not
+ * recognized and null is returned.
  */
 function optionsOf(v) {
   if (isPlainObject(v)) {
@@ -1046,7 +1141,7 @@ function optionsOf(v) {
   return out;
 }
 
-/** 从 URL 推 `asset` 的 kind:素材目录的地址形如 `/catalog/<kind>/<名>.json` */
+/** Infers the kind of an `asset` from a URL: the address of an asset catalog looks like `/catalog/<kind>/<name>.json` */
 function kindOfUrl(u) {
   if (typeof u !== "string") return null;
   const m = /(?:^|\/)catalog\/(lottie|particles)\//.exec(u);
@@ -1054,18 +1149,20 @@ function kindOfUrl(u) {
 }
 
 /**
- * 一个控件对象(已经求值、可能缺了认不出的字段)→ `{ control }` 或 `{ reason }`(画不出来的原因,面板说明用)。
- * `dropped`:这个对象里写了、但值不是字面量的键;`defaultValue`:这张卡 `defaults` 里这个键的值(推断 `asset` 的 kind 用)。
- * 能推断的补上(见文件头),推断不了的给原因。
+ * A control object (already evaluated, possibly missing fields that were not recognized) → `{ control }`
+ * or `{ reason }` (why it cannot be drawn, used for the panel's explanation).
+ * `dropped`: keys written in this object whose values are not literals; `defaultValue`: the value of this
+ * key in the `defaults` of this card (used to infer the kind of an `asset`).
+ * Fills in what can be inferred (see the file header), and gives a reason for what cannot.
  */
 export function controlFix(v, { dropped = [], defaultValue } = {}) {
-  if (!isPlainObject(v)) return { reason: "不是字面量" };
-  const miss = (f, what) => (dropped.includes(f) ? `${what}不是字面量` : `缺${what}`);
+  if (!isPlainObject(v)) return { reason: "not a literal" };
+  const miss = (f, what) => (dropped.includes(f) ? `${what} is not a literal` : `missing ${what}`);
   const { key, type, label } = v;
-  if (typeof key !== "string" || !key) return { reason: miss("key", " key") };
-  if (typeof label !== "string") return { reason: miss("label", " label") };
-  if (typeof type !== "string") return { reason: miss("type", " type") };
-  if (!CONTROL_TYPES.has(type)) return { reason: `type 不认识(${type})` };
+  if (typeof key !== "string" || !key) return { reason: miss("key", "key") };
+  if (typeof label !== "string") return { reason: miss("label", "label") };
+  if (typeof type !== "string") return { reason: miss("type", "type") };
+  if (!CONTROL_TYPES.has(type)) return { reason: `unknown type (${type})` };
   const c = { key, label, type };
   if (typeof v.required === "boolean") c.required = v.required;
   if (typeof v.hint === "string") c.hint = v.hint;
@@ -1073,33 +1170,36 @@ export function controlFix(v, { dropped = [], defaultValue } = {}) {
     for (const f of ["min", "max", "step"]) if (typeof v[f] === "number" && Number.isFinite(v[f])) c[f] = v[f];
   }
   if (type === "select") {
-    if (v.options === undefined) return { reason: `下拉${miss("options", "选项(options)")}` };
+    if (v.options === undefined) return { reason: `dropdown: ${miss("options", "options (options)")}` };
     const options = optionsOf(v.options);
-    if (!options) return { reason: "下拉选项(options)的写法认不出" };
+    if (!options) return { reason: "Can't recognize how the dropdown options (options) are written" };
     c.options = options;
   }
   if (type === "asset") {
     const options = v.options === undefined ? [] : optionsOf(v.options) ?? [];
     let kind = v.kind;
     if (kind === undefined) {
-      // 推断:选项的地址、默认值的地址都指向同一种素材目录
+      // Inference: the addresses of the options and of the default value all point to the same kind of asset catalog
       const kinds = new Set([...options.map((o) => kindOfUrl(o.value)), kindOfUrl(defaultValue)].filter(Boolean));
       if (kinds.size === 1) kind = [...kinds][0];
-      else return { reason: `素材控件${miss("kind", "类别(kind)")},也推断不了是 lottie 还是 particles` };
+      else return { reason: `media control: ${miss("kind", "kind (kind)")}; also cannot infer whether it is lottie or particles` };
     }
-    if (!ASSET_KINDS.has(kind)) return { reason: `素材类别(kind)不认识(${String(kind)})` };
+    if (!ASSET_KINDS.has(kind)) return { reason: `unknown media kind (kind) (${String(kind)})` };
     c.kind = kind;
     c.options = options;
   }
   return { control: c };
 }
 
-/** 一个控件对象(已经求值、可能缺了认不出的字段)→ `Control`;画不出来的回 null(见文件头) */
+/**
+ * A control object (already evaluated, possibly missing fields that were not recognized) → `Control`;
+ * returns null if it cannot be drawn (see the file header)
+ */
 export function controlOf(v) {
   return controlFix(v).control ?? null;
 }
 
-/** 被跳过的控件:认得出的 key / label / type 与原因 */
+/** A skipped control: the recognizable key / label / type and the reason */
 function skippedOf(it, reason) {
   const v = isPlainObject(it.value) ? it.value : {};
   return {
@@ -1110,10 +1210,10 @@ function skippedOf(it, reason) {
   };
 }
 
-/** 卡片对象上的 `defaults` / `controls` / `description` */
+/** `defaults` / `controls` / `description` on the card object */
 function literalFields(mod, props) {
   const ev = mod.ev;
-  /** 属性值的求值结果;简写属性按同名常量或导入 */
+  /** The evaluation result of a property value; a shorthand property uses the constant or import of the same name */
   const valueOf = (key) => {
     if (!props.has(key)) return undefined;
     const slice = props.get(key);
@@ -1127,13 +1227,14 @@ function literalFields(mod, props) {
   if (d && isPlainObject(d.value)) out.defaults = d.value;
   const r = valueOf("controls") ?? { ok: false, value: undefined };
   if (Array.isArray(r.value)) {
-    // `items` 里逐个留着每个元素(对象即使有认不出的字段,也留着认得出的那部分)
+    // `items` keeps every element one by one (an object keeps the recognized part even if it has fields
+    // that are not recognized)
     const items = r.items ?? r.value.map((v) => ({ ok: true, value: v }));
     for (const it of items) {
       if (!isPlainObject(it.value)) {
         out.controlsIncomplete = true;
-        const what = it.spread ? `展开的 ${it.name ?? "表达式"}` : it.name;
-        out.skippedControls.push(skippedOf(it, what ? `${what} 取不到:${it.why ?? "不是字面量"}` : "不是字面量"));
+        const what = it.spread ? `spread ${it.name ?? "expression"}` : it.name;
+        out.skippedControls.push(skippedOf(it, what ? `${what} could not be resolved: ${it.why ?? "not a literal"}` : "not a literal"));
         continue;
       }
       const key = typeof it.value.key === "string" ? it.value.key : undefined;
@@ -1141,13 +1242,13 @@ function literalFields(mod, props) {
       if (fix.control) out.controls.push(fix.control);
       else { out.controlsIncomplete = true; out.skippedControls.push(skippedOf(it, fix.reason)); }
     }
-    if (!r.ok && !out.controlsIncomplete) { out.controlsIncomplete = true; out.skippedControls.push({ reason: "控件表里有写法认不出" }); }
+    if (!r.ok && !out.controlsIncomplete) { out.controlsIncomplete = true; out.skippedControls.push({ reason: "the controls table has syntax that is not recognized" }); }
   } else {
     out.controlsIncomplete = true;
     const slice = props.get("controls");
     const name = slice === null ? "controls" : slice?.length === 1 && slice[0].t === "word" ? slice[0].v : null;
     const why = name ? ev.whys.get(name) : null;
-    out.skippedControls.push({ reason: why ? `整个控件表 ${name} 取不到:${why}` : "整个控件表(controls)不是字面量" });
+    out.skippedControls.push({ reason: why ? `the whole controls table ${name} could not be resolved: ${why}` : "the whole controls table (controls) is not a literal" });
   }
   const desc = valueOf("description");
   if (desc && desc.ok && typeof desc.value === "string") out.description = desc.value;
@@ -1155,13 +1256,18 @@ function literalFields(mod, props) {
 }
 
 /**
- * 一份卡片源码里定义的卡:`[{ id, name, description?, defaults, controls, controlsIncomplete, skippedControls }]`,按源码里的先后;
- * 同一个 id 只留第一张。认不出任何卡回空数组,不抛。
+ * The cards defined in one card source:
+ * `[{ id, name, description?, defaults, controls, controlsIncomplete, skippedControls }]`, in source order;
+ * only the first card of the same id is kept. Returns an empty array if no card is recognized; does not throw.
  *
- * `opts`(都可省;省了就只看同一文件):
- *   - `key`:这份源码的仓库相对路径(`src/cards/user/x.tsx`),相对导入按它解析;
- *   - `files(key)`:别的文件的源码(内容库里同步来的 `card-source`),没有回 null / undefined;
- *   - `builtins(key)`:页面自己带着的内置模块的导出(`{ 名字: 值 }`,值是纯数据,或 `pureCall` 登记的纯函数),没有回 null / undefined。
+ * `opts` (all optional; if omitted only the same file is looked at):
+ *   - `key`: the repo-relative path of this source (`src/cards/user/x.tsx`), against which relative
+ *     imports are resolved;
+ *   - `files(key)`: the source of another file (the `card-source` synced into the content store); returns
+ *     null / undefined if there is none;
+ *   - `builtins(key)`: the exports of a built-in module the page ships with (`{ name: value }`, where the
+ *     value is plain data, or a pure function registered via `pureCall`); returns null / undefined if
+ *     there is none.
  */
 export function parseCardSource(source, opts = {}) {
   if (typeof source !== "string" || !source) return [];
@@ -1178,7 +1284,10 @@ export function parseCardSource(source, opts = {}) {
   const out = [];
   const seen = new Set();
   const usedAt = new Set();
-  /** id / name:字面量或同文件字符串常量;都不是时按求值器(引进来的字符串常量) */
+  /**
+   * id / name: a literal or a string constant of the same file; if neither, use the evaluator
+   * (an imported string constant)
+   */
   const stringOf = (props, k) => {
     const s = stringValue(props.get(k), mod.consts);
     if (s !== null) return s;
@@ -1200,14 +1309,17 @@ export function parseCardSource(source, opts = {}) {
     if (seen.has(id)) continue;
     seen.add(id);
     let fields;
-    try { fields = literalFields(mod, props); } catch { fields = { defaults: {}, controls: [], controlsIncomplete: true, skippedControls: [{ reason: "解析出错" }] }; }
+    try { fields = literalFields(mod, props); } catch { fields = { defaults: {}, controls: [], controlsIncomplete: true, skippedControls: [{ reason: "parse error" }] }; }
     const { description, defaults, controls, controlsIncomplete, skippedControls } = fields;
     out.push({ id, name, ...(props.has("audio") && (props.has("Component") || props.has("card")) ? { embeddedAudio: true } : {}), ...(description !== undefined ? { description } : {}), defaults, controls, controlsIncomplete, skippedControls });
   }
   return out;
 }
 
-/** 内容库里的卡片源码键是不是一张用户卡的入口文件(同 `src/cards/user/index.ts` 的 glob `./*.tsx`) */
+/**
+ * Whether a card source key in the content store is the entry file of a user card (same as the glob
+ * `./*.tsx` of `src/cards/user/index.ts`)
+ */
 export function isUserCardEntryKey(key) {
   return typeof key === "string" && /^src\/cards\/user\/[^/]+\.tsx$/.test(key);
 }

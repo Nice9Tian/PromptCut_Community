@@ -1,4 +1,4 @@
-// 对应 claude-quickstarts/agents/tools/text_editor.py
+// Corresponds to claude-quickstarts/agents/tools/text_editor.py
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -8,12 +8,12 @@ const SENTINEL_NOT_EXIST = Symbol('NOT_EXIST');
 export function createTextEditorTool(workspaceDir) {
   return {
     name: "text_editor",
-    description: "查看/新建/修改工作目录里的文本文件(只限 exports/ai-workspace/)",
+    description: "View/create/edit text files in the working directory (only under exports/ai-workspace/)",
     inputSchema: {
       type: "object",
       properties: {
         command: { type: "string", enum: ["view", "create", "str_replace", "insert", "undo_edit"] },
-        path: { type: "string", description: "相对 exports/ai-workspace/ 的路径" },
+        path: { type: "string", description: "Path relative to exports/ai-workspace/" },
         file_text: { type: "string" },
         old_str: { type: "string" },
         new_str: { type: "string" },
@@ -24,7 +24,7 @@ export function createTextEditorTool(workspaceDir) {
     },
     async execute(input) {
       if (typeof input.path !== 'string' || input.path.trim() === '') {
-         throw new Error("path 参数缺失");
+         throw new Error("path parameter missing");
       }
       if (!fs.existsSync(workspaceDir)) {
          fs.mkdirSync(workspaceDir, { recursive: true });
@@ -34,7 +34,7 @@ export function createTextEditorTool(workspaceDir) {
       const target = path.resolve(root, input.path);
       
       if (target !== root && !target.startsWith(root + path.sep)) {
-         throw new Error("路径越界:只能访问工作目录内的文件");
+         throw new Error("Path out of bounds: only files inside the working directory are accessible");
       }
 
       const cmd = input.command;
@@ -57,10 +57,10 @@ export function createTextEditorTool(workspaceDir) {
              }
            }
            walk(target, 1);
-           return out.length ? out.join('\n') : '(空目录)';
+           return out.length ? out.join('\n') : '(empty directory)';
         } else {
            if (!fs.existsSync(target)) {
-              throw new Error("文件或目录不存在");
+              throw new Error("File or directory does not exist");
            }
            const text = fs.readFileSync(target, 'utf8');
            const lines = text.split('\n');
@@ -82,7 +82,7 @@ export function createTextEditorTool(workspaceDir) {
         }
       } else if (cmd === 'create') {
          if (fs.existsSync(target)) {
-            throw new Error(`文件已存在,不能覆盖:${input.path}`);
+            throw new Error(`File already exists and cannot be overwritten: ${input.path}`);
          }
          if (!undoStacks.has(target)) undoStacks.set(target, []);
          undoStacks.get(target).push(SENTINEL_NOT_EXIST);
@@ -91,15 +91,15 @@ export function createTextEditorTool(workspaceDir) {
          fs.writeFileSync(target, input.file_text || '', 'utf8');
          return 'ok';
       } else if (cmd === 'str_replace') {
-         if (!fs.existsSync(target)) throw new Error("文件不存在");
+         if (!fs.existsSync(target)) throw new Error("File does not exist");
          const text = fs.readFileSync(target, 'utf8');
          const oldStr = input.old_str || '';
          const count = text.split(oldStr).length - 1;
          if (count === 0) {
-            throw new Error("没有找到要替换的内容");
+            throw new Error("No content to replace was found");
          }
          if (count > 1) {
-            throw new Error(`old_str 命中 ${count} 处,必须唯一`);
+            throw new Error(`old_str matched ${count} places, must be unique`);
          }
          
          if (!undoStacks.has(target)) undoStacks.set(target, []);
@@ -109,13 +109,13 @@ export function createTextEditorTool(workspaceDir) {
          fs.writeFileSync(target, newText, 'utf8');
          return 'ok';
       } else if (cmd === 'insert') {
-         if (!fs.existsSync(target)) throw new Error("文件不存在");
+         if (!fs.existsSync(target)) throw new Error("File does not exist");
          const text = fs.readFileSync(target, 'utf8');
          const lines = text.split('\n');
          
          const insertLine = input.insert_line;
          if (insertLine < 0 || insertLine > lines.length) {
-            throw new Error("行号越界");
+            throw new Error("Line number out of range");
          }
          
          if (!undoStacks.has(target)) undoStacks.set(target, []);
@@ -126,7 +126,7 @@ export function createTextEditorTool(workspaceDir) {
          return 'ok';
       } else if (cmd === 'undo_edit') {
          if (!undoStacks.has(target) || undoStacks.get(target).length === 0) {
-            throw new Error("没有可撤销的编辑");
+            throw new Error("No edit to undo");
          }
          const lastContent = undoStacks.get(target).pop();
          if (lastContent === SENTINEL_NOT_EXIST) {
@@ -137,7 +137,7 @@ export function createTextEditorTool(workspaceDir) {
          return 'ok';
       }
       
-      throw new Error(`未知的命令 ${cmd}`);
+      throw new Error(`Unknown command ${cmd}`);
     }
   };
 }

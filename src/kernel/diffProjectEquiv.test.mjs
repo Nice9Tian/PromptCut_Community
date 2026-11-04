@@ -1,11 +1,16 @@
 /**
- * V8B:diffProject 提速前后的等价性对拍。跑:node --test src/kernel/diffProjectEquiv.test.mjs
+ * V8B: equivalence differential testing of diffProject before and after speedup.
+ * Run: node --test src/kernel/diffProjectEquiv.test.mjs
  *
- * 2026-09-27 为了给 V8(1000 个片段的项目,单次差异 ≤ 5 ms)留出余量,diffProject 在带 id 数组的
- * 元素递归之前加了一道「这一对肯定不出操作」的廉价判断(noOpsBetween)。要求是任何输入下输出与
- * 提速前逐字节相同。下面的 referenceDiffProject 是提速前(main 8a5d6ff)的原样实现,只去掉了类型,
- * 只放在测试里当参照;每组随机输入两边各算一遍,逐条比操作:op、path、index 相等,value 是同一个
- * 对象(===,连引用都一样),另外再比一遍 JSON。详见 docs/archive/agent-reports/AGENT-v8-diff-perf.md。
+ * On 2026-09-27, to leave headroom for V8 (project with 1000 clips, single diff ≤ 5 ms),
+ * diffProject added a cheap "this pair definitely produces no operations" check (noOpsBetween)
+ * before recursing into elements of arrays with IDs. The requirement is that output under any input
+ * must be byte-for-byte identical to before the speedup. Below, referenceDiffProject is the verbatim
+ * implementation before the speedup (main 8a5d6ff), with only types removed, kept only in tests as
+ * a reference; for each set of random inputs, both sides compute once, comparing operations item by
+ * item: op, path, index are equal, value is the same object (===, even references match), plus an
+ * additional byte-for-byte JSON comparison. See
+ * docs/archive/agent-reports/AGENT-v8-diff-perf.md for details.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -13,7 +18,7 @@ import assert from "node:assert/strict";
 import { diffProject } from "./diffProject.ts";
 import { rng, randProject, mutate, mutateOnce, realisticEdit, bigProject } from "../testing/randomProject.mjs";
 
-/* ---------------- 提速前的实现(参照,勿改) ---------------- */
+/* ---------------- Implementation before speedup (reference, do not modify) ---------------- */
 
 function refIsPlainObject(v) {
   if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
@@ -189,19 +194,19 @@ function referenceDiffProject(prev, next, opts = {}) {
   return { ops: ctx.ops, inverse: ctx.inv.reverse() };
 }
 
-/* ---------------- 对拍 ---------------- */
+/* ---------------- Differential testing ---------------- */
 
-/** 逐条比:键的顺序、op、path、index 相同,value 是同一个引用;再比一遍 JSON(逐字节) */
+/** Compare item by item: key order, op, path, index identical, value is same reference; JSON re-compared byte-for-byte */
 function sameOps(label, got, want) {
-  assert.equal(got.length, want.length, `${label}:条数 ${got.length} ≠ ${want.length}`);
+  assert.equal(got.length, want.length, `${label}: entry count ${got.length} ≠ ${want.length}`);
   for (let i = 0; i < want.length; i++) {
     const g = got[i];
     const w = want[i];
-    assert.deepEqual(Object.keys(g), Object.keys(w), `${label} 第 ${i} 条的键`);
-    assert.equal(g.op, w.op, `${label} 第 ${i} 条的 op`);
-    assert.equal(g.path, w.path, `${label} 第 ${i} 条的 path`);
-    assert.ok(Object.is(g.index, w.index), `${label} 第 ${i} 条的 index`);
-    assert.ok(Object.is(g.value, w.value), `${label} 第 ${i} 条的 value 不是同一个引用`);
+    assert.deepEqual(Object.keys(g), Object.keys(w), `${label} entry ${i} keys`);
+    assert.equal(g.op, w.op, `${label} entry ${i} op`);
+    assert.equal(g.path, w.path, `${label} entry ${i} path`);
+    assert.ok(Object.is(g.index, w.index), `${label} entry ${i} index`);
+    assert.ok(Object.is(g.value, w.value), `${label} entry ${i} value is not the same reference`);
   }
 }
 
@@ -211,14 +216,14 @@ function check(label, prev, next, opts) {
   const got = diffProject(prev, next, opts);
   sameOps(`${label} ops`, got.ops, want.ops);
   sameOps(`${label} inverse`, got.inverse, want.inverse);
-  assert.equal(JSON.stringify(got), JSON.stringify(want), `${label}:JSON 不同`);
+  assert.equal(JSON.stringify(got), JSON.stringify(want), `${label}: JSON differs`);
   checked++;
   return want.ops.length;
 }
 
 const randLimit = (r) => (r.chance(0.2) ? r.int(8) : undefined);
 
-test("V8B-1 随机项目 × 深拷贝后随机改 1~12 处(mutate),3000 组", () => {
+test("V8B-1 random projects × 1~12 random edits after a deep copy (mutate), 3000 cases", () => {
   const r = rng(80001);
   let withOps = 0;
   for (let i = 0; i < 3000; i++) {
@@ -226,22 +231,22 @@ test("V8B-1 随机项目 × 深拷贝后随机改 1~12 处(mutate),3000 组", ()
     const next = mutate(r, prev, 1 + r.int(12));
     if (check(`V8B-1 #${i}`, prev, next, { limit: randLimit(r) }) > 0) withOps++;
   }
-  assert.ok(withOps > 2500, `出操作的组太少:${withOps}`);
+  assert.ok(withOps > 2500, `Too few cases produce ops: ${withOps}`);
 });
 
-test("V8B-2 像编辑器 action 的不可变更新(拖动、改参数、删、加、换序、改序列、加删序列、改设置),连改链 3000 步;每步另比一次整份深拷贝", () => {
+test("V8B-2 immutable updates like editor actions (drag, param edit, delete, add, reorder, edit track, add/delete track, edit settings), a chain of 3000 steps; each step is also compared against a whole deep copy", () => {
   const r = rng(80002);
   let p = randProject(r, { maxTracks: 5 });
   for (let i = 0; i < 3000; i++) {
     if (i % 100 === 0) p = randProject(r, { maxTracks: 5 });
     const next = realisticEdit(r, p);
-    check(`V8B-2 #${i} 不可变`, p, next, { limit: randLimit(r) });
-    check(`V8B-2 #${i} 深拷贝`, p, structuredClone(next));
+    check(`V8B-2 #${i} immutable`, p, next, { limit: randLimit(r) });
+    check(`V8B-2 #${i} deep copy`, p, structuredClone(next));
     p = next;
   }
 });
 
-test("V8B-3 整份深拷贝后只改一处 / 一处不改,3000 组", () => {
+test("V8B-3 edit one spot / edit nothing after a whole deep copy, 3000 cases", () => {
   const r = rng(80003);
   let empty = 0;
   for (let i = 0; i < 3000; i++) {
@@ -250,10 +255,10 @@ test("V8B-3 整份深拷贝后只改一处 / 一处不改,3000 组", () => {
     if (r.chance(0.85)) mutateOnce(r, next);
     if (check(`V8B-3 #${i}`, prev, next) === 0) empty++;
   }
-  assert.ok(empty > 300, `不出操作的组太少:${empty}`);
+  assert.ok(empty > 300, `Too few cases produce no ops: ${empty}`);
 });
 
-test("V8B-4 1000 个片段的大项目:深拷贝后在随机位置改一处 / 换序 / 删加,300 组", () => {
+test("V8B-4 large project with 1000 clips: after a deep copy, edit one spot / reorder / delete and add at random positions, 300 cases", () => {
   const r = rng(80004);
   const prev = bigProject(r, 1000);
   for (let i = 0; i < 300; i++) {
@@ -274,13 +279,15 @@ test("V8B-4 1000 个片段的大项目:深拷贝后在随机位置改一处 / �
   }
 });
 
-test("V8B-5 毫不相干的两个随机项目,1000 组", () => {
+test("V8B-5 two completely unrelated random projects, 1000 cases", () => {
   const r = rng(80005);
   for (let i = 0; i < 1000; i++) check(`V8B-5 #${i}`, randProject(r), randProject(r), { limit: randLimit(r) });
 });
 
-/* 刁钻输入:undefined 值、NaN、-0、无原型对象、类实例、Date、键的顺序不同、不可枚举的自有属性、
-   继承来的可枚举属性、稀疏数组、重复 id、空 id、非字符串 id、元素不是普通对象的「带 id 数组」 */
+/* Corner-case inputs: undefined values, NaN, -0, prototype-less objects, class instances, Date,
+   differing key orders, non-enumerable own properties, inherited enumerable properties,
+   sparse arrays, duplicate ids, empty ids, non-string ids, "id-bearing arrays" whose elements
+   are not plain objects */
 
 class Box {
   constructor(v) {
@@ -323,28 +330,28 @@ function weirdIdArray(r, depth) {
     const roll = r.int(20);
     if (roll === 0) e.id = "";
     else if (roll === 1) e.id = 7;
-    else if (roll === 2 && out.length) e.id = out[0].id; // 重复 id
+    else if (roll === 2 && out.length) e.id = out[0].id; // Duplicate id
     else e.id = `w${(wid++).toString(36)}${r.chance(0.1) ? "/~" : ""}`;
-    out.push(roll === 3 ? Object.defineProperties(new Box(1), Object.getOwnPropertyDescriptors(e)) : e); // 带 id 的类实例
+    out.push(roll === 3 ? Object.defineProperties(new Box(1), Object.getOwnPropertyDescriptors(e)) : e); // Class instance with id
   }
-  if (r.chance(0.05)) out.length += 1; // 末尾一个空位
+  if (r.chance(0.05)) out.length += 1; // Empty slot at the end
   return out;
 }
 
-/** 深拷贝,并按概率在各处做刁钻的改动;有时整棵子树原样共享(身份相同) */
+/** Deep copy with probabilistic corner-case mutations; sometimes an entire subtree is shared as-is (same identity) */
 function perturb(r, v, p) {
   if (v === null || typeof v !== "object") {
     if (r.chance(p)) return weirdScalar(r);
     return v;
   }
-  if (r.chance(0.15)) return v; // 共享
+  if (r.chance(0.15)) return v; // Shared
   if (Object.prototype.toString.call(v) === "[object Date]") return r.chance(p) ? new Date(v.getTime() + 1) : new Date(v.getTime());
   if (v instanceof Box) {
     const b = new Box(perturb(r, v.v, p));
     for (const k of Object.keys(v)) {
       if (k !== "v") Object.defineProperty(b, k, { value: perturb(r, v[k], p), enumerable: true, writable: true, configurable: true });
     }
-    return r.chance(p) ? { ...b } : b; // 类实例变成普通对象
+    return r.chance(p) ? { ...b } : b; // Class instance becomes a plain object
   }
   if (Array.isArray(v)) {
     const a = new Array(v.length);
@@ -352,22 +359,22 @@ function perturb(r, v, p) {
     if (a.length > 1 && r.chance(p)) { const i = r.int(a.length); const j = r.int(a.length); [a[i], a[j]] = [a[j], a[i]]; }
     if (a.length && r.chance(p / 2)) a.splice(r.int(a.length), 1);
     if (r.chance(p / 2)) a.splice(r.int(a.length + 1), 0, weirdValue(r, 3));
-    if (a.length && r.chance(p / 3) && a[0] && typeof a[0] === "object") a.push({ ...a[0] }); // 造重复 id
+    if (a.length && r.chance(p / 3) && a[0] && typeof a[0] === "object") a.push({ ...a[0] }); // Create duplicate id
     return a;
   }
-  // 普通对象 / 无原型对象:可能换原型、倒序键、加不可枚举属性
+  // Plain object / prototype-less object: may swap prototype, reverse keys, add non-enumerable properties
   const keys = Object.keys(v);
   if (r.chance(0.2)) keys.reverse();
   const proto = r.chance(p / 2) ? (Object.getPrototypeOf(v) === null ? Object.prototype : null) : Object.getPrototypeOf(v);
   const o = Object.create(proto);
   for (const k of keys) {
-    if (r.chance(p / 2)) continue; // 删键
+    if (r.chance(p / 2)) continue; // Delete key
     const val = r.chance(p / 3) ? undefined : perturb(r, v[k], p);
     Object.defineProperty(o, k, { value: val, enumerable: true, writable: true, configurable: true });
   }
   if (r.chance(p / 2)) o[r.pick(WK.filter((k) => k !== "__proto__"))] = weirdValue(r, 3);
   if (r.chance(p / 4) && keys.length) {
-    // 把一个键改成不可枚举(值不变)
+    // Make a key non-enumerable (value unchanged)
     const k = r.pick(keys);
     if (Object.prototype.hasOwnProperty.call(o, k)) Object.defineProperty(o, k, { enumerable: false });
   }
@@ -375,10 +382,10 @@ function perturb(r, v, p) {
   return o;
 }
 
-test("V8B-6 刁钻输入(undefined、NaN、-0、无原型、类实例、Date、键序、不可枚举、稀疏、重复 id…),5000 组", () => {
+test("V8B-6 tricky inputs (undefined, NaN, -0, no prototype, class instances, Date, key order, non-enumerable, sparse, duplicate id…), 5000 cases", () => {
   const r = rng(80006);
   let empty = 0;
-  // 继承来的可枚举属性:让一部分对象的原型带一个可枚举键
+  // Inherited enumerable property: give some objects' prototypes an enumerable key
   const protoWithKey = Object.create(Object.prototype, { a: { value: 9, enumerable: true, writable: true } });
   for (let i = 0; i < 5000; i++) {
     const prev = weirdObject(r, 0);
@@ -387,10 +394,10 @@ test("V8B-6 刁钻输入(undefined、NaN、-0、无原型、类实例、Date、�
     const next = perturb(r, prev, r.pick([0, 0.02, 0.1, 0.3]));
     if (check(`V8B-6 #${i}`, prev, next, { limit: randLimit(r) }) === 0) empty++;
   }
-  assert.ok(empty > 500, `不出操作的组太少:${empty}`);
+  assert.ok(empty > 500, `Too few cases produce no ops: ${empty}`);
 });
 
-test("V8B-7 刁钻值塞进随机项目的片段里,再深拷贝加刁钻改动,2000 组", () => {
+test("V8B-7 tricky values stuffed into the clips of random projects, then a deep copy plus tricky edits, 2000 cases", () => {
   const r = rng(80007);
   for (let i = 0; i < 2000; i++) {
     const prev = randProject(r);
@@ -400,14 +407,16 @@ test("V8B-7 刁钻值塞进随机项目的片段里,再深拷贝加刁钻改动,
   }
 });
 
-test("V8B-8 手写的边角:只在不可枚举属性、重复 id、NaN、undefined 键、键序、原型上才分得出来的情形", () => {
+test("V8B-8 hand-written corner cases: situations only distinguishable by non-enumerable properties, duplicate ids, NaN, undefined keys, key order, prototypes", () => {
   const hidden = (o, k, v) => Object.defineProperty(o, k, { value: v, enumerable: false, writable: true, configurable: true });
-  // 都包在一个带 id 数组的元素里,这样才会走到「先判不出操作」那一步
+  // All wrapped in an element of an id-bearing array so it reaches the "determine no operations first" step
   const wrap = (v) => ({ list: [{ id: "outer", v }] });
   const cases = [
-    // id 有重复(不是带 id 的数组)、逐个比都不出操作、但 deepEqual 为 false:旧实现整个 set
+    // Duplicate id (not an id-bearing array), item-by-item comparison produces no operations,
+    // but deepEqual is false: old implementation sets the whole thing
     () => [[hidden({ id: "d", x: 1 }, "y", 2), { id: "d" }], [{ id: "d", x: 1, y: 2 }, { id: "d" }]],
-    // id 不可枚举且两边换了顺序:逐个比看不见 id,只有 id 对齐那一步拦得住
+    // id is non-enumerable and order is swapped on both sides: item-by-item comparison cannot
+    // see id, only the id-alignment step catches it
     () => [[hidden({ v: 1 }, "id", "a"), hidden({ v: 1 }, "id", "b")], [hidden({ v: 1 }, "id", "b"), hidden({ v: 1 }, "id", "a")]],
     () => [{ a: NaN }, { a: NaN }],
     () => [{ a: 1, b: undefined }, { a: 1 }],
@@ -426,13 +435,13 @@ test("V8B-8 手写的边角:只在不可枚举属性、重复 id、NaN、undefin
   let n = 0;
   for (const make of cases) {
     const [a, b] = make();
-    check(`V8B-8 #${n} 直接`, a, b);
-    check(`V8B-8 #${n} 包一层`, wrap(a), wrap(b));
+    check(`V8B-8 #${n} direct`, a, b);
+    check(`V8B-8 #${n} wrapped one level`, wrap(a), wrap(b));
     n++;
   }
 });
 
-test("V8B-9 合计对拍组数", () => {
-  assert.ok(checked >= 20000, `对拍组数不够:${checked}`);
-  console.log(`V8B 对拍 ${checked} 组,两边逐条相同`);
+test("V8B-9 total cross-checked cases", () => {
+  assert.ok(checked >= 20000, `Not enough cross-checked cases: ${checked}`);
+  console.log(`V8B cross-checked ${checked} cases, both sides identical entry by entry`);
 });

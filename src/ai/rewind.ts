@@ -1,24 +1,28 @@
 import type { ChatAttachment, ChatMessage } from "./types.ts";
 
 /**
- * 「回退到这里」:回到发某条用户消息之前。
+ * "Roll back to here": return to the point before a given user message was sent.
  *
- * 那条用户消息和它之后的所有消息都从界面上拿掉(一问多答时,带 roleId 的几条 Agent 回复
- * 都排在它后面,一起走),那条消息的原文和附件放回输入框,用户改一改再发。
- * 时间轴上已经做过的修改不在这里管 —— 那些不是对话的一部分,撤不回来,确认框里要说清楚。
+ * That user message and every message after it are removed from the UI (when one question gets
+ * several answers, the Agent replies carrying a roleId all come after it and go together), and the
+ * original text and attachments of that message are put back in the input box for the user to edit
+ * and send again.
+ * Changes already made on the timeline are not handled here: they are not part of the chat and
+ * cannot be undone, and the confirmation dialog must say so clearly.
  *
- * 纯函数:不碰 store、不碰会话 id,执行步骤在 useAiChat.rewindTo / AiPanel 里。
+ * Pure function: it touches neither the store nor the session id; the execution steps are in
+ * useAiChat.rewindTo / AiPanel.
  */
 export interface RewindResult {
-  /** 留下来的消息(那条用户消息之前的) */
+  /** The messages that remain (those before that user message) */
   kept: ChatMessage[];
-  /** 被移除的消息,第一条就是那条用户消息 */
+  /** The messages that were removed; the first one is that user message */
   removed: ChatMessage[];
-  /** 放回输入框的东西 */
+  /** What is put back into the input box */
   restored: { text: string; attachments: ChatAttachment[] };
 }
 
-/** id 不存在、或者那条不是用户消息时返回 null */
+/** Returns null if the id does not exist or that message is not a user message */
 export function rewindAt(messages: ChatMessage[], userMessageId: string): RewindResult | null {
   const idx = messages.findIndex((m) => m.id === userMessageId && m.role === "user");
   if (idx < 0) return null;
@@ -28,7 +32,8 @@ export function rewindAt(messages: ChatMessage[], userMessageId: string): Rewind
     removed: messages.slice(idx),
     restored: {
       text: target.text ?? "",
-      // 拷一份:输入区会改附件的状态,别改到已经归档的那条消息身上
+      // Make a copy: the input area modifies the attachments' state, so it must not modify the message
+      // that is already archived
       attachments: (target.attachments ?? []).map((a) => ({ ...a })),
     },
   };

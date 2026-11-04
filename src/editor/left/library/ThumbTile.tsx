@@ -1,12 +1,15 @@
 import type { ReactNode } from "react";
 
 /**
- * 总览组框里的缩略预览:和 PreviewCard 同一套外观,但纯展示 ——
- * 不接点击、拖动、右键,也不挂 data-pc-card / data-pc-media 这类钩子(那些只属于详情里的真卡片),
- * 否则点缩略图会一边加到播放头一边打开组,自动化脚本也会找到两份同名元素。
+ * Thumbnail preview in an overview group box: same look as PreviewCard, but display only ——
+ * no click, drag or context menu, and no data-pc-card / data-pc-media hooks (those belong only to the
+ * real cards in the detail),
+ * otherwise clicking a thumbnail would both add to the playhead and open the group, and automation
+ * scripts would find two elements with the same name.
  *
- * 唯一的例外是 `onHover`(视频缩略悬停播放):给了它,这一格就接指针(.is-hoverplay 把组框缩略区的
- * pointer-events: none 翻回来),但只听进出,点击照样冒泡到组框上打开组。
+ * The one exception is `onHover` (hover to play a video thumbnail): when given, this cell takes the
+ * pointer (.is-hoverplay flips back the pointer-events: none of the group box's thumbnail area), but
+ * it only listens for enter and leave; a click still bubbles up to the group box to open the group.
  */
 export function ThumbTile({
   title,
@@ -17,16 +20,16 @@ export function ThumbTile({
   desc,
   onHover,
 }: {
-  /** 压在底边的标题条 */
+  /** Title bar pressed against the bottom edge */
   title?: string;
   subtitle?: string;
-  /** 画面区内容(图片、视频首帧、示意图) */
+  /** Picture area content (image, video first frame, diagram) */
   preview?: ReactNode;
   badge?: ReactNode;
-  /** 动效卡不悬停时那种「名字 + 说明」的文字画面 */
+  /** The "name + description" text picture of a motion graphics card when not hovered */
   name?: string;
   desc?: string;
-  /** 指针进 / 出这一格 */
+  /** Pointer enters / leaves this cell */
   onHover?: (hot: boolean) => void;
 }) {
   return (

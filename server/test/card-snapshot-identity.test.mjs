@@ -6,7 +6,7 @@ import path from 'node:path';
 import { cardNodeIdentities, cardSnapshotIdentity, cardSampling } from '../card-identity.mjs';
 import { snapshotCode, invalidateFrameCode } from '../frame-code.mjs';
 
-/** 同一张卡、同参数,放在两个片段里:`cardGraph` 合成节点时写进去的 `clipId` 不同。 */
+/** Same card, same params in two clips: `clipId` written during `cardGraph` node synthesis differs. */
 const node = (clipId, overrides = {}) => ({
   id: `@clip/${clipId}/source`, adapter: 'chrome', cardId: 'stat-proof', clipId,
   params: { value: 42, label: 'a' }, parts: [], inputs: {},
@@ -27,7 +27,7 @@ const key = (clipId, opts = {}, nodeOverrides = {}) => cardSnapshotIdentity(node
 
 test('shared key ignores clip identity: the same card in two clips is one snapshot', () => {
   assert.equal(key('clip-a'), key('clip-b'));
-  // 对照:`cardNodeIdentities` 的 clipId 是刻意的,它必须仍然区分两个片段。
+  // Contrast: clipId in `cardNodeIdentities` is intentional; it must still distinguish between two clips.
   const graph = clipId => ({ definitions: [], nodes: [node(clipId)], outputs: [{ nodeId: `@clip/${clipId}/source`, clipId }] });
   const left = cardNodeIdentities(graph('clip-a'));
   const right = cardNodeIdentities(graph('clip-b'));
@@ -36,10 +36,10 @@ test('shared key ignores clip identity: the same card in two clips is one snapsh
 
 test('shared key ignores placement inside the frame, opacity, fades, motion and emphasis', () => {
   const plain = key('clip-a');
-  // x / y / anchor / scale / rotate:框宽高不变,快照就是同一张。
+  // x / y / anchor / scale / rotate: if box width and height remain unchanged, snapshot is the same.
   assert.equal(key('clip-a', { frame: { x: 400, y: 300, w: 800, h: 600, anchor: [0.5, 0.5], scale: 2, rotate: 35 } }), plain);
-  // 不透明度 / 淡入淡出 / motion / 强调根本不是这个函数的入参 —— 传进来也不影响,
-  // A2(5) 之后它们不进快照,由舞台在挂载时施加。
+  // Opacity / fade / motion / emphasis are not arguments to this function at all: passing them in has
+  // no effect; after A2(5) they do not enter snapshots and are applied by the stage at mount time.
   assert.equal(cardSnapshotIdentity(node('clip-a'), { ...base(), opacity: 0.3, fadeIn: 1, fadeOut: 1, motion: { kind: 'slide' }, emphasis: { kind: 'pop' } }), plain);
 });
 
@@ -47,7 +47,7 @@ test('shared key is sensitive to params, parts, capabilities and source version'
   const plain = key('clip-a');
   assert.notEqual(key('clip-a', {}, { params: { value: 43, label: 'a' } }), plain);
   assert.notEqual(key('clip-a', {}, { parts: [{ id: 'title' }] }), plain);
-  // 审阅表内容(capabilities 已经在节点里)。
+  // Review table contents (capabilities already in node).
   assert.notEqual(key('clip-a', {}, { capabilities: { frameMode: 'stateful', need_prerendering: true, compositing: 'sourceDependent' } }), plain);
   assert.notEqual(key('clip-a', { sourceVersions: { 'stat-proof': 'builtin:v2' } }), plain);
 });
@@ -55,26 +55,28 @@ test('shared key is sensitive to params, parts, capabilities and source version'
 test('shared key is sensitive to duration, phase, fps, theme, font fingerprint and freeze code', () => {
   const plain = key('clip-a');
   assert.notEqual(key('clip-a', { duration: 4 }), plain);
-  // 相位:10.005s 起的片段采样落在片段内的另一个瞬间。
+  // Phase: clip starting at 10.005s samples at another moment within the clip.
   assert.notEqual(key('clip-a', { sampling: cardSampling(10.005, 30) }), plain);
   assert.notEqual(key('clip-a', { fps: 60 }), plain);
   assert.notEqual(key('clip-a', { themeId: 'light' }), plain);
   assert.notEqual(key('clip-a', { fontFingerprint: 'deadbeef' }), plain);
   assert.notEqual(key('clip-a', { snapshotCode: 'def456' }), plain);
-  // 整数 fps 和有理数对写法必须同键,否则换个调用方就全体失效。
+  // Integer fps and rational pair notations must yield the same key, otherwise changing callers
+  // invalidates everything.
   assert.equal(key('clip-a', { fps: { numerator: '60', denominator: '2' } }), plain);
 });
 
 test('shared key is sensitive to the resolved frame size, stage size and camera3dFov', () => {
   const plain = key('clip-a');
-  // 快照内联的是使用值(px):框宽高不同必须是两张快照。
+  // Snapshots inline used values (px): differing box width and height must be two distinct snapshots.
   assert.notEqual(key('clip-a', { frame: { x: 0, y: 0, w: 801, h: 600 } }), plain);
   assert.notEqual(key('clip-a', { frame: { x: 0, y: 0, w: 800, h: 601 } }), plain);
   assert.notEqual(key('clip-a', { stage: { width: 1280, height: 1080, camera3dFov: 50 } }), plain);
   assert.notEqual(key('clip-a', { stage: { width: 1920, height: 1080, camera3dFov: 35 } }), plain);
-  // 没有 frame = 铺满画幅:和显式写成画幅大小的框同键(resolveFrameSize 的默认值)。
+  // No frame = fill aspect ratio: same key as box explicitly sized to aspect ratio
+  // (resolveFrameSize default).
   assert.equal(key('clip-a', { frame: undefined }), key('clip-a', { frame: { w: 1920, h: 1080 } }));
-  // 调用方自己算好的宽高覆盖解析结果。
+  // Width and height precomputed by caller override resolution results.
   assert.equal(key('clip-a', { frame: undefined, frameWidth: 800, frameHeight: 600 }), plain);
 });
 
@@ -93,7 +95,7 @@ test('snapshotCode covers only the snapshot files and reports missing ones deter
   };
   await write('server/bakery/chrome.mjs', 'freeze v1');
   await write('server/bakery/capture-snapshot.mjs', 'restore v1');
-  // 截图相关但和生成快照无关的文件不进指纹。
+  // Files related to screenshotting but unrelated to generating snapshots do not enter fingerprint.
   await write('server/bakery/capture-frame.mjs', 'shot v1');
   const first = snapshotCode(root);
   await write('server/bakery/capture-frame.mjs', 'shot v2');
@@ -102,8 +104,8 @@ test('snapshotCode covers only the snapshot files and reports missing ones deter
   await write('server/bakery/chrome.mjs', 'freeze v2');
   invalidateFrameCode(root);
   assert.notEqual(snapshotCode(root), first, 'changing snapshot code must change the key');
-  // J1:生成快照的逻辑搬进 src/ 之后集合不变,但那两个文件从 'missing' 变成有内容,
-  // 指纹必然变一次 —— 这正是搬家那一刻该发生的事。
+  // J1: after snapshot generation logic moves into src/, the set is unchanged, but those two files
+  // turn from 'missing' to having content; fingerprint must change once: exactly what migration calls for.
   await write('src/render/createSnapshot.ts', 'export function createSnapshot() {}');
   invalidateFrameCode(root);
   const moved = snapshotCode(root);
@@ -112,38 +114,40 @@ test('snapshotCode covers only the snapshot files and reports missing ones deter
 });
 
 /**
- * 服务端的键和舞台画出来的框必须是同一个宽高 —— 快照内联的是使用值(px)。
- * 两边各写一遍 `frame?.w ?? parent.width` 的话,将来改默认值会漏一处,而漏掉不
- * 报错:键和实际的框悄悄对不上,B 机贴到一张按别的宽高冻出来的快照。
- * 所以直接把 Node 端的 `resolveFrameSize` 和舞台 `layout.ts` 的 `frameBox` 对账。
+ * The server key and the box drawn by the stage must have the same width and height: snapshots inline
+ * used values (px). If both sides write `frame?.w ?? parent.width` separately, changing the default
+ * later will miss one side without throwing errors: key and actual box quietly mismatch, and machine B
+ * pastes a snapshot frozen at different dimensions. Thus, Node-side `resolveFrameSize` is directly
+ * reconciled with stage `layout.ts`'s `frameBox`.
  *
- * 注:`ClipFrame` 的 w / h 是像素数,没有百分比写法(百分比在 parts 那一层),
- * 所以这里覆盖的是「缺省 = 铺满画幅」和各种锚点 / 缩放 / 旋转 / 三维的组合。
+ * Note: `ClipFrame`'s w / h are in pixels with no percentage notation (percentages are at the parts
+ * layer), so this covers "default = fill aspect ratio" and combinations of anchor / scale / rotate / 3D.
  */
 test('resolveFrameSize agrees with layout.ts frameBox for every frame shape', async () => {
   const { frameBox } = await import('../../src/kernel/layout.ts');
   const { resolveFrameSize } = await import('../../src/kernel/frameSize.mjs');
   const stage = { width: 1920, height: 1080 };
   const cases = [
-    undefined,                                             // 没有 frame = 铺满画幅
-    {},                                                    // 有 frame 但没写宽高
+    undefined,                                             // No frame = fill the aspect ratio
+    {},                                                    // Has frame but width and height are not specified
     { x: 0, y: 0 },
     { x: 10, y: 20, w: 800, h: 600 },
-    { x: 10, y: 20, w: 800, h: 600, anchor: [0.5, 0.5] },  // 锚点只挪左上角,不动宽高
+    { x: 10, y: 20, w: 800, h: 600, anchor: [0.5, 0.5] },  // Anchor point only moves top-left corner, leaving width and height unchanged
     { x: 10, y: 20, w: 800, h: 600, anchor: [1, 1], scale: 2, rotate: 35 },
-    { w: 640 },                                            // 只写一边,另一边取画幅
+    { w: 640 },                                            // Specify only one side, the other side takes the aspect ratio
     { h: 360 },
-    { x: 0, y: 0, w: 1920, h: 1080 },                      // 显式写成画幅大小
+    { x: 0, y: 0, w: 1920, h: 1080 },                      // Explicitly set to the aspect ratio size
     { w: 801, h: 601, rotateX: 30, rotateY: -12, translateZ: 90 },
-    { w: 0.5, h: 1e-3 },                                   // 亚像素框不被取整
+    { w: 0.5, h: 1e-3 },                                   // Subpixel box is not rounded
   ];
   for (const frame of cases) {
     const box = frameBox(frame, stage);
     const size = resolveFrameSize(frame, stage);
     assert.deepEqual({ w: size.w, h: size.h }, { w: box.width, h: box.height }, JSON.stringify(frame ?? null));
   }
-  // 和共享键联动:框宽高一样就同键,差一像素就换键(上面 frameBox 已证明这两个
-  // frame 在舞台上就是同一个宽高 / 不同宽高)。
+  // Linked with the shared key: same box width and height means the same key, a one-pixel difference
+  // switches the key (frameBox above already proved that these two frames on stage have the same
+  // width and height / different widths and heights).
   assert.equal(key('clip-a', { frame: { x: 0, y: 0, w: 1920, h: 1080 } }), key('clip-b', { frame: undefined }));
   assert.notEqual(key('clip-a', { frame: { w: 640 } }), key('clip-a', { frame: { w: 640, h: 360 } }));
 });

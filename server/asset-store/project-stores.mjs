@@ -1,4 +1,7 @@
-/** 项目物理素材库；不拥有项目/成员权威。只由可信服务接线传 projectId，不从 HTTP body 选库。 */
+/**
+ * Physical project asset store; does not own project/member authority. Only wired by trusted
+ * services passing projectId; does not select stores from HTTP body.
+ */
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -14,17 +17,26 @@ export function assertProjectId(value) {
   return value;
 }
 export function projectStorageKey(projectId) { return crypto.createHash('sha256').update(assertProjectId(projectId)).digest('hex'); }
-/** 内部 root 注册表使用全局 symbol，兼容 Vite 打包与直接模块实例；环境变量不能覆盖项目 root。 */
+/**
+ * Internal root registry uses a global symbol, compatible with Vite bundling and direct module
+ * instances; environment variables cannot override project root.
+ */
 export function projectScopeOfRoot(root) { return roots().get(path.resolve(root)) ?? null; }
 
 /**
  * createProjectAssetStores({ dir, kind:'fs'|'memory', contentTypeForExt?, chunkSize? })
  * -> { v:2, project(id):{projectId,root,dir,stores:{media,snap,px}}, store(id,ns), removeProject(id, { recreatable? }) }
- * 每项目独立完整库/分片/索引/tiers/queue/px usage；同 hash 不跨库复用。removeProject 是内部删除机制，非用户权限决策。
- * `recreatable: true`（删掉的项目回收字节用，`project-reaper.mjs`，claude/guest-fix）：目录删干净之后撤掉「已删除」标记，
- * 同一个项目号以后还能再建一个**空的**库。谁能再建由文档服务（中央 owner）定：它只让原创建者重用自己删掉的项目号
- * （`server/account/authority.mjs` 的 `createProject`），每一次读写都先过它的核权。删的途中、删失败时标记一直在，
- * 这个项目号的库一律 `project-gone`，不会有新字节写进删了一半的目录。
+ * Each project has an independent complete store/chunks/indices/tiers/queue/px usage; identical
+ * hashes are not reused across stores. removeProject is an internal deletion mechanism, not a user
+ * permission decision.
+ * `recreatable: true` (used for reclaiming bytes of deleted projects, `project-reaper.mjs`,
+ * claude/guest-fix): removes the "deleted" flag after the directory is cleanly deleted, so an
+ * **empty** store can be created again later under the same project id. Who can recreate it is
+ * determined by the document service (central owner): it only allows the original creator to reuse
+ * project ids they deleted (`createProject` in `server/account/authority.mjs`), and every read and
+ * write must first pass its permission check. During deletion and on deletion failure, the flag
+ * remains in place, and stores for this project id always yield `project-gone`, preventing new
+ * bytes from being written into a half-deleted directory.
  */
 export function createProjectAssetStores({ dir, kind = 'fs', contentTypeForExt, chunkSize } = {}) {
   if (typeof dir !== 'string' || !dir) throw new TypeError('project asset dir required');
@@ -68,16 +80,19 @@ export function createProjectAssetStores({ dir, kind = 'fs', contentTypeForExt, 
     v: 2, dir: base, project,
     store(projectId, ns) { if (!['media', 'snap', 'px'].includes(ns)) throw new TypeError('invalid-namespace'); return project(projectId).stores[ns]; },
     async removeProject(projectId, { recreatable = false } = {}) {
-      // 上一次删到一半失败（已标成删除、目录还在）的再删一次：不经 project()，它对已删除的号只会抛 project-gone
+      // Retry deletion that failed halfway last time (marked as deleted, directory still exists):
+      // bypasses project(), which only throws project-gone for deleted ids
       const p = removed.has(assertProjectId(projectId)) ? projects.get(projectId) ?? null : project(projectId);
       const dir = p?.dir ?? path.join(base, 'projects', projectStorageKey(projectId));
-      // 先标成删除、让旧引用失效，再删物理目录；旧引用不能被重用为新库。调用者必须先关闭该项目任务/流。
+      // First mark as deleted and invalidate old references, then delete physical directory; old
+      // references cannot be reused as new stores. Callers must first close tasks/streams for this project.
       removed.add(projectId);
       p?.retire();
       projects.delete(projectId);
       if (kind === 'fs') await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       if (recreatable) removed.delete(projectId);
-      // 保持 root 身份，避免删除后迟到代码退回全局环境路径。中央 owner 必须授权重新创建。
+      // Preserve root identity to prevent late code from falling back to global environment paths after
+      // deletion. Central owner must authorize recreation.
       return { projectId, removed: true };
     },
   };

@@ -1,43 +1,61 @@
 /**
- * 兜底顺序的端到端探针(rendering.md「兜底顺序」):真编辑台里播放含重卡的工程,**逐拍**记录每张被抑制的卡
- * 落在哪一级 —— `dense`(满帧流)/ `sparse`(稀疏流)/ `snapshot`(同区间最近快照)/ `placeholder`(占位符)/
- * `transparent`(无提示透明,不许出现)。满 120 ms 才显示的那段空档记成 `placeholder-delay`,单列统计。
+ * End-to-end probe for fallback order (rendering.md "Fallback order"): plays projects containing
+ * heavy cards in a real editor, and records **tick by tick** which level each suppressed card falls
+ * into: `dense` (full-frame stream) / `sparse` (sparse stream) / `snapshot` (nearest snapshot in
+ * the same interval) / `placeholder` (placeholder) / `transparent` (transparent without notice,
+ * must not occur). The gap before reaching 120 ms to display is recorded as `placeholder-delay`
+ * and counted separately.
  *
  *   node scripts/probes/preview-fallback-probe.mjs --origin http://127.0.0.1:5230 [--seconds 10] [--out <dir>] [--json <file>]
  *        [--label after|before] [--baseline <before.json>] [--no-pills] [--page-preload]
  *
- * `--no-pills`:不加那两张药丸(没有占位符),只量流 + 海报快照那一部分的主线程开销;「编辑后」改成给粒子卡
- * 重设一遍同样的参数(localRev + 1、身份不变)。
+ * `--no-pills`: Do not add the two pills (no placeholders); only measure main-thread overhead for
+ * the stream + poster snapshot portion; change "After edit" to reset the particle card to the same
+ * parameters (localRev + 1, identity unchanged).
  *
- * `--page-preload`:探针自己不调 preload,只等页面的 `usePrerenderPreload`(编辑推送成功、空闲时防抖触发)——
- * 验证双舞台模式下页面真的会触发预渲染。
+ * `--page-preload`: The probe does not invoke preload itself; it only waits for the page's
+ * `usePrerenderPreload` (triggered with debounce when edit push succeeds and idle): verifies that
+ * the page really triggers prerender under dual stage mode.
  *
- * 端口按分配的端口段:dev server 用 `npx vite --port 5230 --strictPort --host 127.0.0.1`(舞台端口 5231 / 5232)。
+ * Ports follow the allocated port range: dev server uses `npx vite --port 5230 --strictPort --host 127.0.0.1`
+ * (stage ports 5231 / 5232).
  *
- * 流程(和 `scripts/archive/probes/stream-editor-e2e.mjs`（已归档） 同一套打法:编辑台 `?preview=stage`,探针自己按 `{ session, localRev }`
- * 调预渲染进程的 preload,不等页面的防抖;`--page-preload` 时改由页面自己触发):
- *   0. 换空项目,加一张长粒子卡(重卡:按追帧上界判重),等它的轨道流满密度、快照铺上一截;
- *      再加两张金句药丸(一张旋转 25°、一张缩放 0.6),在父页的分派表里钉成重卡、**不给它们预渲染** ——
- *      播放时它们走到兜底顺序尽头,显示占位符(旋转 / 缩放那两张截图);
- *   1. **起播**:停在 0 秒,播 3 秒;
- *   2. **跳转**:暂停中跳到片段 60% 处,播 2 秒;
- *   3. **超过 6 路流**:再加 6 张同样的粒子卡,把第一张的 `stream` / `html` 层复制给它们(父页就绪索引),
- *      一共 7 条流、解码器预算 6 —— 第 7 张当「无流」、每拍换快照;播 2 秒;
- *   4. **编辑后**:删掉那 6 张,暂停在 2 秒,改一张药丸的文字(localRev + 1),**紧接着**播 2 秒 ——
- *      以前这一下会清空就绪索引、重连 SSE(根因 E),空档里重卡全透明。
- *   另外核对:后台舞台上没有任何占位节点、没有注入占位样式;可见舞台 `__pcCreateSnapshot()` 的产物里没有占位节点;
- *   点中占位符命中它所在的卡。
+ * Flow (same approach as `scripts/archive/probes/stream-editor-e2e.mjs` (archived): editor
+ * `?preview=stage`, probe invokes the prerender process's preload itself with `{ session, localRev }`
+ * without waiting for page debounce; with `--page-preload`, triggered by the page itself):
+ *   0. Switch to an empty project, add a long particle card (heavy card: classified as heavy by
+ *      frame catch-up upper bound), wait for its track stream to reach full density and snapshots
+ *      to cover a stretch; add two punchline pills (one rotated 25°, one scaled 0.6), pin them as
+ *      heavy cards in the parent page's dispatch table, and **do not prerender them**: on playback
+ *      they reach the end of the fallback order and display placeholders (screenshots of the
+ *      rotated / scaled ones);
+ *   1. **Start playback**: Stay at 0 s, play for 3 s;
+ *   2. **Seek**: While paused, seek to 60% of the clip, play for 2 s;
+ *   3. **More than 6 streams**: Add 6 more identical particle cards, copy the `stream` / `html`
+ *      layers of the first card to them (parent page ready index); with 7 streams total and decoder
+ *      budget 6: treat the 7th card as "no stream" and swap snapshot each tick; play for 2 s;
+ *   4. **After edit**: Delete those 6 cards, pause at 2 s, modify text on one pill (localRev + 1),
+ *      and **immediately** play for 2 s: previously this action cleared the ready index and
+ *      reconnected SSE (root cause E), leaving heavy cards completely transparent during the gap.
+ *   Also verify: background stage has no placeholder nodes and no injected placeholder styles;
+ *   visible stage `__pcCreateSnapshot()` output contains no placeholder nodes; clicking a
+ *   placeholder hits the card it belongs to.
  *
- * 逐拍分级靠舞台的 `window.__pcFallbackTrace`(`StageView` 的 `traceFallback`,数组时才记)。
- * 每拍主线程耗时有两份:`trace.workMs`(舞台自己量的一拍干活时长,只有修复后的代码有)和
- * `taskMs`(CDP `Performance.getMetrics` 的 `TaskDuration` 按 1/fps 采样取差 —— 修复前后的代码都能量,
- * 用它比「相对修复前 p90 涨幅 ≤ 1 ms」)。修复前那一份用 `--label before` 在修复前的代码上跑出来,
- * 再用 `--baseline <那份 json>` 比。
+ * Tick-by-tick classification relies on the stage's `window.__pcFallbackTrace` (`traceFallback`
+ * in `StageView`, recorded only when it is an array). Main-thread time per tick has two parts:
+ * `trace.workMs` (work duration for a tick measured by the stage itself, present only in fixed
+ * code) and `taskMs` (delta of CDP `Performance.getMetrics` `TaskDuration` sampled at 1/fps:
+ * measurable in both pre-fix and post-fix code, used to compare "relative to pre-fix p90
+ * increase ≤ 1 ms"). The pre-fix portion is run on pre-fix code with `--label before`, then
+ * compared with `--baseline <that json>`.
  *
- * 验收:`transparent` 拍数为 0(`placeholder-delay` 单列、不算)。
- * 耗时只记录(verification.md「耗时只记录,不当闸门」):每拍主线程耗时、给了 `--baseline` 时 `taskMs` 的 p90 涨幅
- * (原门槛 ≤ 1 ms)都只写进 `TIMINGS` 行与结果的 `timings`,不决定过不过。等待时限(60 秒的记录等待是软的、
- * 600 秒的满密度等待)只为防卡死。
+ * Acceptance check: `transparent` tick count is 0 (`placeholder-delay` is listed separately and
+ * excluded).
+ * Timings are recorded only (verification.md "Record timings only, do not treat as gate"):
+ * main-thread duration per tick and p90 increase of `taskMs` when `--baseline` is provided
+ * (original gate ≤ 1 ms) are only written to the `TIMINGS` line and `timings` in the result,
+ * and do not determine pass/fail. Wait timeouts (60 s wait for recording is soft; 600 s wait for
+ * full density) are only to prevent hangs.
  */
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -70,7 +88,7 @@ async function until(label, fn, timeoutMs, everyMs = 1000, soft = false) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { (soft ? notes : fails).push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { (soft ? notes : fails).push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
@@ -102,17 +120,20 @@ try {
     return stageFrames().find((f) => f.url().includes(`id=${id}`)) ?? null;
   };
 
-  /* ---------------------------------------------------------------- 0. 工程 */
+  /* ---------------------------------------------------------------- 0. Project */
   const clipId = await store(`actions.newProject('fallback-${RUN}');
     const c = actions.addCardClip('particles', 0, { duration: args[0], params: { color: '#30ff60', quantity: 100, links: 'yes', seed: 5 } });
     actions.seek(0);
     return c?.id;`, SECONDS);
   out.clipId = clipId;
-  check(!!clipId, '加上了粒子卡');
+  check(!!clipId, 'particle card added');
   /**
-   * 把这几张卡钉成重卡(`pinnedHeavy`):父页的分派表当场生效(`mergePlanCosts`);`persist` 时再整条 PUT 到
-   * 本 dev server 的成本存档(worktree 自己的 `out/card-costs.json`),预渲染进程据此把它们放进预渲染集合。
-   * 粒子卡实测是轻卡(K1 量得 stepMs ≈ 1 ms),不钉的话播放时它活渲、根本不走兜底顺序。
+   * Pin these cards as heavy cards (`pinnedHeavy`): the parent page dispatch table takes effect
+   * immediately (`mergePlanCosts`); upon `persist`, PUT the entire record to this dev server's
+   * cost archive (the worktree's own `out/card-costs.json`), and the prerender process places them
+   * into the prerender set accordingly. In testing, the particle card is a light card (K1 measured
+   * stepMs ≈ 1 ms); without pinning, it live renders during playback and does not enter the fallback
+   * order at all.
    */
   const pinHeavy = (ids, persist = false) => page.evaluate(async (ids, persist) => {
     const { getState } = await import('/src/store/project.ts');
@@ -136,11 +157,11 @@ try {
     const keys = clipIdentityOf(getState().project).identityKeys;
     return ids.every((id) => pd.currentCosts().some((r) => r.identityKey === keys[id]));
   }, ids);
-  await until('粒子卡的 K1 记录', () => hasRecords([clipId]), 60000, 500, true);
+  await until('K1 record of the particle card', () => hasRecords([clipId]), 60000, 500, true);
   await pinHeavy([clipId], true);
   const prerender = await (await fetch(origin + '/api/prerender/info')).json();
   const segCount = Math.ceil(SECONDS * 30 / 15);
-  const ready = await until('粒子卡的轨道流满密度', async () => {
+  const ready = await until('Track stream of the particle card at full density', async () => {
     const k = await page.evaluate(async () => (await import('/src/render/dataMirror.ts')).mirrorKey());
     if (!k) return null;
     if (!PAGE_PRELOAD) await fetch(prerender.url + '/api/frames/preload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: k.session, localRev: k.localRev, lane: 'background' }) }).catch(() => {});
@@ -155,8 +176,10 @@ try {
   }, 600000, 2000);
   out.readyLayers = ready ? Object.fromEntries(Object.entries(ready).map(([k, v]) => [k, v.length])) : null;
 
-  // 两张药丸:一张旋转、一张缩放。等 K1 量完再在父页的分派表里钉成重卡(不给它们预渲染 → 兜底尽头)
-  // 放在最上面两条序列(index 0):占位符不被下面的粒子流盖住,点得中
+  // Two pills: one rotated, one scaled. Wait for K1 measurement, then pin as heavy cards in the
+  // parent page dispatch table (do not prerender them → end of fallback order)
+  // Placed on the top two tracks (index 0): placeholders are not covered by particle streams below,
+  // and can be clicked
   const pills = NO_PILLS ? [] : await store(`const a = actions.addClipOnNewTrack({ index: 0, cardId: 'punch-pill', start: 0, duration: args[0] });
     const b = actions.addClipOnNewTrack({ index: 0, cardId: 'punch-pill', start: 0, duration: args[0] });
     actions.setClipParams(a.id, { text: '旋转 ${RUN}' });
@@ -165,15 +188,17 @@ try {
     actions.setClipFrame(b.id, { x: 1360, y: 760, w: 640, h: 360, anchor: [0.5, 0.5], scale: 0.6 });
     return [a.id, b.id];`, SECONDS);
   out.pills = pills;
-  if (pills.length) await until('药丸的 K1 记录', () => hasRecords(pills), 60000, 500, true);
-  // 药丸只在父页钉(不 PUT):预渲染进程不产它们,播放时它们走到兜底顺序尽头
+  if (pills.length) await until('K1 record of the pill', () => hasRecords(pills), 60000, 500, true);
+  // Pills are only pinned in the parent page (no PUT): the prerender process does not produce them,
+  // and during playback they reach the end of the fallback order
   const pinAll = async (extraIds = []) => { await pinHeavy([clipId, ...extraIds]); if (pills.length) await pinHeavy(pills); await sleep(300); };
   await pinAll();
-  // 暂停在 1 秒让药丸活渲一次(占位符的墨迹框在暂停后防抖量)
+  // Pause at 1 s to let the pill live render once (the placeholder's ink box is measured with
+  // debounce after pause)
   await store(`actions.seek(1);`);
   await sleep(1500);
 
-  /* ---------------------------------------------------------------- 逐拍记录 + 主线程采样 */
+  /* ---------------------------------------------------------------- Tick-by-tick recording + main-thread sampling */
   const cdp = [];
   for (const target of browser.targets()) {
     if (!stagePorts.some((p) => target.url().includes(`:${p}/`))) continue;
@@ -181,13 +206,14 @@ try {
       const s = await target.createCDPSession();
       await s.send('Performance.enable');
       cdp.push({ url: target.url(), s });
-    } catch { /* 同进程的 frame 没有单独的 target */ }
+    } catch { /* Frames in the same process do not have separate targets */ }
   }
   out.cdpTargets = cdp.map((c) => c.url.replace(/\?.*$/, ''));
   const taskDuration = async (s) => (await s.send('Performance.getMetrics')).metrics.find((m) => m.name === 'TaskDuration')?.value ?? 0;
 
   async function scenario(name, run) {
-    // 可见舞台是哪一个进程(按起播前的 front 定;TaskDuration 只取它那一路)
+    // Which process is the visible stage (determined by front before playback starts; TaskDuration
+    // is taken only from its side)
     const frontId = await page.evaluate(() => window.__pcPreviewDiag?.().frontId ?? 'A');
     for (const f of stageFrames()) await f.evaluate(() => { window.__pcFallbackTrace = []; }).catch(() => {});
     const samples = cdp.map(() => []);
@@ -209,7 +235,8 @@ try {
       if (t) traces.push(...t);
       await f.evaluate(() => { delete window.__pcFallbackTrace; }).catch(() => {});
     }
-    // 可见舞台那一路的主线程(另一路是后台舞台,单列出来备查)
+    // Main thread for the visible stage side (the other side is the background stage, listed
+    // separately for inspection)
     const frontIdx = cdp.findIndex((c) => c.url.includes(`id=${frontId}`));
     const task = samples[frontIdx] ?? [];
     const backTask = samples.find((_, i) => i !== frontIdx) ?? [];
@@ -227,14 +254,14 @@ try {
       backTaskMs: { p50: pct(backTask, 0.5), p90: pct(backTask, 0.9) }, frontId, shots };
     out.scenarios[name] = res;
     if (LABEL !== 'before') {
-      check(traces.length > 0, `${name}:舞台记下了逐拍分级`);
-      check(transparent.length === 0, `${name}:没有无提示透明的拍`, transparent.slice(0, 10));
+      check(traces.length > 0, `${name}: the stage recorded per-tick grading`);
+      check(transparent.length === 0, `${name}: no tick is transparent without a hint`, transparent.slice(0, 10));
     }
     return res;
   }
   const play = () => store(`actions.play();`);
   const pause = () => store(`actions.pause();`);
-  /** 只截预览里那块可见舞台(整页太小看不清占位符) */
+  /** Only capture the visible stage area in preview (the whole page is too small to see placeholders) */
   const shot = async (name) => {
     const file = path.join(OUT, `${LABEL}-${name}.png`);
     const box = await page.evaluate(() => {
@@ -246,28 +273,31 @@ try {
     return file;
   };
 
-  /* ---------------------------------------------------------------- 1. 起播 */
+  /* ---------------------------------------------------------------- 1. Start playback */
   await pinAll();
   await store(`actions.seek(0);`);
   await sleep(1500);
-  await scenario('起播', async () => {
+  await scenario('playback start', async () => {
     await play();
     await sleep(350);
-    const a = await shot('起播');
+    const a = await shot('playback start');
     await sleep(1200);
-    // 旋转 / 缩放的药丸此刻在兜底尽头(被抑制、没有流、没有快照):占位符
+    // Rotated / scaled pills are currently at the end of fallback order (suppressed, no stream, no
+    // snapshot): placeholder
     const front = await frontFrame();
     const ph = front ? await front.evaluate(() => [...document.querySelectorAll('[data-pc-placeholder-slot]:not([hidden])')].map((s) => {
       const plane = s.querySelector('[data-pc-placeholder-plane]');
       const r = (plane ?? s).getBoundingClientRect();
-      // 沙漏的放大倍数(舞台按父页的预览缩放补偿,`placeholderFit.ts`):徽标写在根元素上,铺满形态写在中间那个上
+      // Hourglass scale factor (stage compensates for parent page preview zoom, `placeholderFit.ts`):
+      // badge is on root element, fill mode is on the middle one
       const tf = (plane?.style.transform || plane?.querySelector('.pc-ph-center')?.style.transform || '');
       const m = /scale\(([\d.]+)\)/.exec(tf);
       return { clip: s.parentElement?.getAttribute('data-pc-clip'), reason: s.getAttribute('data-pc-placeholder-reason'), kind: plane?.getAttribute('data-pc-placeholder-kind') ?? null,
         glassScale: m ? Number(m[1]) : 1, cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: r.width, h: r.height };
     })).catch(() => []) : [];
     out.placeholdersWhilePlaying = ph;
-    // 沙漏在屏幕上约 28 像素(只抵消预览缩放,不抵消这一层自己的缩放):28 × 放大倍数 × 预览缩放
+    // Hourglass is ~28 pixels on screen (only cancels preview zoom, does not cancel this layer's own
+    // zoom): 28 × scale factor × preview zoom
     const viewScale = await page.evaluate(() => {
       const f = [...document.querySelectorAll('iframe')].filter((el) => /stage=1/.test(el.src) && getComputedStyle(el).opacity !== '0')
         .find((el) => el.getBoundingClientRect().width > 100);
@@ -275,23 +305,25 @@ try {
     }).catch(() => null);
     out.hourglassScreen = ph.filter((x) => x.kind === 'badge' || x.kind === 'solid').map((x) => ({ clip: x.clip, kind: x.kind, glassScale: x.glassScale, viewScale, screenPxNoLayerScale: viewScale ? +(28 * x.glassScale * viewScale).toFixed(1) : null }));
     if (LABEL !== 'before' && viewScale && out.hourglassScreen.length) {
-      check(out.hourglassScreen.every((x) => Math.abs(x.screenPxNoLayerScale - 28) <= 3), '沙漏在屏幕上约 28 像素(按预览缩放补偿)', out.hourglassScreen);
+      check(out.hourglassScreen.every((x) => Math.abs(x.screenPxNoLayerScale - 28) <= 3), 'The hourglass is about 28 pixels on screen (compensated for the preview scale)', out.hourglassScreen);
     }
-    const b = await shot('占位符-旋转与缩放');
-    // 点中占位符命中它所在的卡;快照里没有占位节点
+    const b = await shot('placeholder-rotation-and-scaling');
+    // Clicking a placeholder hits the card it belongs to; no placeholder nodes in snapshots
     if (front && ph.length) {
       const hit = await front.evaluate((x, y) => window.__pcStage.hitTest(x, y), ph[0].cx, ph[0].cy).catch((e) => ({ error: String(e) }));
       out.placeholderHit = { want: ph[0].clip, hit };
-      check(hit?.clipId === ph[0].clip, '点中占位符命中它所在的卡', out.placeholderHit);
+      check(hit?.clipId === ph[0].clip, 'Clicking a placeholder hits the card it belongs to', out.placeholderHit);
       const snap = await front.evaluate(() => { const s = window.__pcCreateSnapshot(); return { html: s.html.includes('data-pc-placeholder'), controls: s.controls.some((c) => c.html.includes('data-pc-placeholder')) }; }).catch((e) => ({ error: String(e) }));
       out.snapshotHasPlaceholder = snap;
-      check(snap && snap.html === false && snap.controls === false, '生成快照不带占位节点', snap);
+      check(snap && snap.html === false && snap.controls === false, 'Generate snapshots carries no placeholder nodes', snap);
     }
     if (LABEL !== 'before') {
       /*
-       * 药丸要么走到兜底尽头显示占位符,要么已经有预渲染结果垫着(快照 / 流)——
-       * 页面自己触发预渲染(Item 5,`usePrerenderPreload`)之后,药丸也会被预渲染,不一定再走到尽头。
-       * 不许的只有「两样都没有」(那就是透明,另由逐拍分级的 transparent 统计兜住)。
+       * Pills either reach the end of the fallback order to display placeholders, or already have
+       * prerender output backing them (snapshot / stream): after the page itself triggers prerender
+       * (Item 5, `usePrerenderPreload`), pills will also be prerendered and won't necessarily reach
+       * the end. The only forbidden case is "neither exists" (which would be transparent, guarded
+       * separately by tick-by-tick classification's transparent count).
        */
       const covered = front ? await front.evaluate(() => {
         const d = window.__pcStageDiag();
@@ -300,7 +332,7 @@ try {
       out.pillsCovered = covered;
       for (const id of pills) {
         check(ph.some((p) => p.clip === id) || covered.snapshots.includes(id) || covered.planes.includes(id),
-          `药丸 ${id} 显示占位符,或已有预渲染结果垫着`, { ph, covered });
+          `Pill ${id} shows a placeholder, or already has a prerender output underneath`, { ph, covered });
       }
     }
     await sleep(1400);
@@ -309,21 +341,21 @@ try {
   });
   await sleep(1500);
 
-  /* ---------------------------------------------------------------- 2. 跳转 */
+  /* ---------------------------------------------------------------- 2. Seek */
   await pinAll();
   await store(`actions.seek(args[0]);`, +(SECONDS * 0.6).toFixed(2));
   await sleep(1200);
-  await scenario('跳转', async () => {
+  await scenario('jump', async () => {
     await play();
     await sleep(300);
-    const a = await shot('跳转');
+    const a = await shot('jump');
     await sleep(1700);
     await pause();
     return [a];
   });
   await sleep(1500);
 
-  /* ---------------------------------------------------------------- 3. 超过 6 路流 */
+  /* ---------------------------------------------------------------- 3. More than 6 streams */
   const extra = await store(`const out = [];
     for (let i = 0; i < 6; i++) { const c = actions.addClipOnNewTrack({ cardId: 'particles', start: 0, duration: args[0] }); actions.setClipParams(c.id, { color: '#30ff60', quantity: 100, links: 'yes', seed: 5 }); out.push(c.id); }
     actions.seek(0.5);
@@ -338,11 +370,11 @@ try {
     for (const id of ids) idx.set(id, new Map([...src].map(([k, v]) => [k, { ...v }])));
     return ids.length;
   }, clipId, extra);
-  check(injected === 6, '给 6 张新粒子卡复制了流层', injected);
-  // 新卡同一身份;一并钉成重卡
+  check(injected === 6, 'Cloned stream layers for 6 new particle cards', injected);
+  // New cards share the same identity; pin as heavy cards together
   await pinAll(extra);
   await sleep(500);
-  await scenario('超过6路流', async () => {
+  await scenario('more than 6 streams', async () => {
     await play();
     await sleep(1000);
     const front = await frontFrame();
@@ -351,37 +383,37 @@ try {
       const planesWithin = d.streamPlanes.filter((p) => !p.over).length;
       return { planes: d.streamPlanes.length, planesWithin, tracks: d.streams.tracks.length, snapshots: d.snapshots.length, suppressed: d.suppressed.length, over: d.streams.over?.length ?? 0 };
     }).catch(() => null) : null;
-    const a = await shot('超过6路流');
+    const a = await shot('more than 6 streams');
     await sleep(1000);
     await pause();
     return [a];
   });
-  if (LABEL !== 'before') check(out.overBudget && out.overBudget.planesWithin === out.overBudget.tracks && out.overBudget.tracks <= 32, '舞台解码器数与预算内流平面数一致且不超过硬上限(≤ 32)', out.overBudget);
+  if (LABEL !== 'before') check(out.overBudget && out.overBudget.planesWithin === out.overBudget.tracks && out.overBudget.tracks <= 32, 'The number of stage decoders matches the number of in-budget stream planes and does not exceed the hard limit (≤ 32)', out.overBudget);
   await sleep(1200);
 
-  /* ---------------------------------------------------------------- 4. 编辑后 */
+  /* ---------------------------------------------------------------- 4. After edit */
   await store(`for (const id of args[0]) actions.removeClip(id); actions.seek(2);`, extra);
   await pinAll();
   await sleep(1500);
-  await scenario('编辑后', async () => {
+  await scenario('after editing', async () => {
     if (pills.length) await store(`actions.setClipParams(args[0], { text: '改过 ${RUN}' }); actions.play();`, pills[0]);
     else await store(`actions.setClipParams(args[0], { seed: 5 }); actions.play();`, clipId);
     await sleep(400);
-    const a = await shot('编辑后');
+    const a = await shot('after editing');
     await sleep(1600);
     await pause();
     return [a];
   });
   await sleep(1000);
 
-  /* ---------------------------------------------------------------- 后台舞台 */
+  /* ---------------------------------------------------------------- Background stage */
   const backId = await page.evaluate(() => ((window.__pcPreviewDiag?.().frontId ?? 'A') === 'A' ? 'B' : 'A'));
   const back = stageFrames().find((f) => f.url().includes(`id=${backId}`));
   out.backStage = back ? await back.evaluate(() => ({ slots: document.querySelectorAll('[data-pc-placeholder-slot],[data-pc-placeholder-plane]').length,
     style: !!document.querySelector('style[data-pc-placeholder]'), role: window.__pcStageDiag?.().role })).catch((e) => ({ error: String(e) })) : null;
-  if (LABEL !== 'before') check(out.backStage && out.backStage.slots === 0 && out.backStage.style === false, '后台舞台不挂占位节点、不注入占位样式', out.backStage);
+  if (LABEL !== 'before') check(out.backStage && out.backStage.slots === 0 && out.backStage.style === false, 'The background stage mounts no placeholder nodes and injects no placeholder styles', out.backStage);
 
-  /* ---------------------------------------------------------------- 汇总 */
+  /* ---------------------------------------------------------------- Summary */
   const all = Object.values(out.scenarios);
   out.total = {
     beats: all.reduce((n, s) => n + s.beats, 0),
@@ -398,17 +430,18 @@ try {
       if (!b?.taskMs?.p90 || s.taskMs.p90 === null) continue;
       const delta = +(s.taskMs.p90 - b.taskMs.p90).toFixed(3);
       out.vsBaseline[name] = { before: b.taskMs.p90, after: s.taskMs.p90, delta };
-      // 耗时只记录(verification.md「耗时只记录,不当闸门」):原来 delta ≤ 1 ms 是通过条件
-      timings.record(`${name}:每拍主线程耗时 p90 相对基线的涨幅`, delta, { formerLimit: '≤ 1 ms' });
+      // Record timings only (verification.md "Record timings only, do not treat as gate"): originally
+      // delta ≤ 1 ms was the pass condition
+      timings.record(`${name}: increase in p90 per-tick main-thread time relative to baseline`, delta, { formerLimit: '≤ 1 ms' });
     }
   }
   for (const [name, s] of Object.entries(out.scenarios)) {
-    timings.record(`${name}:每拍主线程耗时 p90(CDP TaskDuration)`, s.taskMs.p90);
-    timings.record(`${name}:舞台一拍干活时长 p90`, s.workMs.p90);
+    timings.record(`${name}: p90 per-tick main-thread time (CDP TaskDuration)`, s.taskMs.p90);
+    timings.record(`${name}: p90 stage work time per tick`, s.workMs.p90);
   }
   out.pageErrors = errors;
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
 } finally {
   out.fails = fails;
   out.notes = notes;

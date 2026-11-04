@@ -1,25 +1,34 @@
 /**
- * 用量记录(契约 `docs/plan/cloud-agent-contract.md` 第 6.3 节)。
+ * Usage records (contract Section 6.3 in `docs/plan/cloud-agent-contract.md`).
  *
- *   usage/<yyyy-mm>.jsonl   每次模型请求一行,追加写,0600(`shared` 时 0640,见下)。不含提示词、回复、工具参数、Key
- *   usage/totals.json       各项目、各成员的累计(检查点):定时落、退出时落;起来时用它加上之后的流水重建,
- *                           坏了就从流水全量重算
+ *   usage/<yyyy-mm>.jsonl   One row per model request, append-only, 0600 (0640 when `shared`,
+ *                           see below). Contains no prompts, responses, tool arguments, or Keys
+ *   usage/totals.json       Totals (checkpoints) for each project and member: written
+ *                           periodically and on exit; rebuilt on startup using this plus
+ *                           subsequent logs, or recomputed from logs from scratch if corrupted
  *
- * 一行的形状:
- *   {"t":毫秒,"projectId":"…","userId":"…","username":"…","conversationId":"…","runId":"…",
+ * Row shape:
+ *   {"t":milliseconds,"projectId":"…","userId":"…","username":"…","conversationId":"…","runId":"…",
  *    "vendor":"…","model":"…","input":N,"output":N,"cacheRead":N,"ok":true,"ms":N}
  *
- * 要花钱的外部调用(配音等,用托管方的配置)也各记一行,多四个字段,token 数是 0、不占额度:
- *   {…同上…,"kind":"service","service":"voice","units":N,"unit":"chars"}
- * `vendor` 是服务商,`model` 是它的型号;`units` 是这次的计量(配音按字数)。汇总里单列在 `services` 下,不混进模型的调用次数。
+ * Billable external calls (voiceover etc., using host configuration) are also logged with one row
+ * each, with four additional fields, token count is 0, and does not consume quota:
+ *   {…same as above…,"kind":"service","service":"voice","units":N,"unit":"chars"}
+ * `vendor` is the provider, `model` is its model; `units` is the count for this run (voiceover
+ * is by character count). Listed separately under `services` in summaries, not mixed into model
+ * call counts.
  *
- * 额度按「输入加输出的 token 数」算(`cacheRead` 已含在 `input` 里,只是看命中率用)。窗口按 UTC:累计、当月、当天。
+ * Quota is calculated by "input plus output tokens" (`cacheRead` is already included in `input`,
+ * used only for hit rate). Windows are in UTC: cumulative, current month, current day.
  *
- * 权限:缺省目录 0700、文件 0600(只有写它的那个用户读得到)。账号模式下写的是任务进程、读的是主服务(`GET /v1/usage`),
- * 两者是两个系统用户、同在一个组里:建的时候给 `shared: true`,目录 0750、流水 0640(组内只读),已有的目录和流水也补上组内可读。
- * 累计检查点(`totals.json`)只有写的一方用,仍是 0600。
- * 读不到流水时,`queryUsage` 的 `strict` 档抛 `usage-unreadable`,不拿空结果冒充「没有用量」。
- * 本文件不引用 `src/`。
+ * Permissions: default directory 0700, files 0600 (readable only by the user that wrote it).
+ * In account mode, the task process writes while the main service (`GET /v1/usage`) reads;
+ * both are two system users in the same group: specify `shared: true` on creation, directory 0750,
+ * logs 0640 (group read-only), and existing directories and logs are also made group-readable.
+ * Totals checkpoint (`totals.json`) is used only by the writer, remaining 0600.
+ * When logs cannot be read, the `strict` tier of `queryUsage` throws `usage-unreadable` instead of
+ * faking "no usage" with an empty result.
+ * This file does not import `src/`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -45,7 +54,10 @@ function add(bucket, t, tokens) {
   bucket.day.calls += 1;
 }
 
-/** 把一行流水整理成规定的字段(多的丢掉:正文之类不会经这里落盘) */
+/**
+ * Format a log row into the specified fields (extras are dropped: body text etc. are not saved
+ * to disk here).
+ */
 export function usageRow(row, now = Date.now()) {
   return {
     t: Number.isFinite(row?.t) ? row.t : now,
@@ -70,12 +82,16 @@ export function usageRow(row, now = Date.now()) {
   };
 }
 
-/** 这一行是不是外部服务的调用(不是模型请求) */
+/** Whether this row is an external service call (not a model request) */
 const isServiceRow = (r) => r?.kind === 'service';
 
 const unreadable = (what, error) => Object.assign(new Error(`usage-unreadable: ${what}`), { code: 'usage-unreadable', cause: error, errno: typeof error?.code === 'string' ? error.code : 'error' });
 
-/** 读一个流水文件里从 `from` 字节起的整行;回 `{ rows, bytes }`(`bytes` 是读到的最后一个整行的末尾)。`strict`:文件在但读不了就抛,不当成空的 */
+/**
+ * Read complete lines from a log file starting from `from` bytes; returns `{ rows, bytes }`
+ * (`bytes` is the end of the last complete line read). `strict`: throws if the file exists
+ * but cannot be read, rather than treating it as empty.
+ */
 function readRows(file, from = 0, { strict = false } = {}) {
   let buf;
   try { buf = fs.readFileSync(file); } catch (error) {
@@ -88,12 +104,15 @@ function readRows(file, from = 0, { strict = false } = {}) {
   const rows = [];
   for (const line of buf.subarray(from, end).toString('utf8').split('\n')) {
     if (!line.trim()) continue;
-    try { rows.push(JSON.parse(line)); } catch { /* 坏行跳过 */ }
+    try { rows.push(JSON.parse(line)); } catch { /* Skip bad lines */ }
   }
   return { rows, bytes: end + 1 };
 }
 
-/** `strict`:目录在但列不了就抛。目录还不存在(这台节点还没有任务进程起来过)是「确实没有流水」,回空 */
+/**
+ * `strict`: throws if directory exists but cannot be listed. If directory does not exist yet
+ * (no task process has ever started on this node), it is "genuinely no logs", returns empty.
+ */
 function listFiles(dir, { strict = false } = {}) {
   try { return fs.readdirSync(dir).filter((n) => /^\d{4}-\d{2}\.jsonl$/.test(n)).sort(); } catch (error) {
     if (strict && error?.code !== 'ENOENT') throw unreadable('directory', error);
@@ -102,10 +121,12 @@ function listFiles(dir, { strict = false } = {}) {
 }
 
 /**
- * 按条件汇总流水(给 `GET /v1/usage` 与 `admin.mjs usage` 用,读文件,不读内存里的累计)。
- * @param {string} dir `usage/` 目录
- * @param {{ projectId?: string | null, since?: number | null, strict?: boolean }} [q] `strict`:流水目录或文件在但读不到时抛 `usage-unreadable`
- *   (读的一方和写的一方不是同一个用户时用:读不到不等于没有用量)
+ * Summarize logs by condition (for `GET /v1/usage` and `admin.mjs usage`, reads files, does not read
+ * in-memory totals).
+ * @param {string} dir `usage/` directory
+ * @param {{ projectId?: string | null, since?: number | null, strict?: boolean }} [q] `strict`:
+ *   throws `usage-unreadable` when log directory or file exists but cannot be read (used when
+ *   reader and writer are not the same user: unreadable does not mean no usage)
  * @returns {{ calls: number, tokens: number, projects: Record<string, { tokens: number, calls: number, input: number, output: number,
  *   members: Record<string, { username: string, tokens: number, calls: number }>, models: Record<string, { tokens: number, calls: number }> }>, rows: object[] }}
  */
@@ -120,7 +141,8 @@ export function queryUsage(dir, { projectId = null, since = null, strict = false
       const tokens = num(r.input) + num(r.output);
       const p = (out.projects[r.projectId] ??= { tokens: 0, calls: 0, input: 0, output: 0, members: {}, models: {} });
       if (isServiceRow(r)) {
-        // 外部服务的调用单列:按「服务 / 服务商」累计次数与计量,另按成员累计次数
+        // External service calls are listed separately: accumulate counts and units by "service / provider",
+        // and accumulate counts by member separately.
         const sk = `${r.service}/${r.vendor}`;
         const sv = ((p.services ??= {})[sk] ??= { calls: 0, units: 0, unit: r.unit ?? '', members: {} });
         sv.calls += 1; sv.units += num(r.units);
@@ -144,13 +166,18 @@ export function queryUsage(dir, { projectId = null, since = null, strict = false
 
 /**
  * @param {object} o
- * @param {string | null} o.dir `usage/` 目录;null 时只在内存里记(测试)
- * @param {boolean} [o.shared] 流水要给同组的另一个用户读(账号模式:任务进程写、主服务读)。见文件头「权限」
+ * @param {string | null} o.dir `usage/` directory; when null, records in memory only (tests)
+ * @param {boolean} [o.shared] logs need to be read by another user in the same group (account
+ *   mode: task process writes, main service reads). See "Permissions" at file header
  */
 export function createUsageLog({ dir = null, now = () => Date.now(), flushMs = 30_000, log = () => {}, shared = false } = {}) {
   const dirMode = shared ? 0o750 : 0o700;
   const rowsMode = shared ? 0o640 : 0o600;
-  /** `shared` 时把已有的目录、流水补成组内可读(以前按 0700 / 0600 建的;进程的 umask 比预期严时新建的也会少给) */
+  /**
+   * When `shared`, make existing directories and logs group-readable (previously created as
+   * 0700 / 0600; newly created ones may also lack permissions when process umask is stricter
+   * than expected).
+   */
   const share = (target, bits) => {
     if (!shared) return;
     try { const mode = fs.statSync(target).mode & 0o7777; if ((mode & bits) !== bits) fs.chmodSync(target, mode | bits); }
@@ -158,13 +185,13 @@ export function createUsageLog({ dir = null, now = () => Date.now(), flushMs = 3
   };
   /** projectId → { ...bucket, members: Map(userId → bucket) } */
   const projects = new Map();
-  /** 流水文件名 → 已经折进累计的字节数 */
+  /** Log filename → byte count already folded into totals */
   const offsets = {};
   let dirty = false;
   const totalsFile = dir ? path.join(dir, 'totals.json') : null;
 
   function fold(r) {
-    if (isServiceRow(r)) return; // 外部服务的调用不占 token 额度,不进这份累计(汇总时从流水读)
+    if (isServiceRow(r)) return; // External service calls do not consume token quota and are not included in these totals (read from logs during summarization).
     const tokens = num(r.input) + num(r.output);
     const t = Number.isFinite(r.t) ? r.t : now();
     let p = projects.get(r.projectId);
@@ -182,11 +209,13 @@ export function createUsageLog({ dir = null, now = () => Date.now(), flushMs = 3
       const { rows, bytes } = readRows(path.join(dir, name), offsets[name] ?? 0);
       for (const r of rows) fold(r);
       offsets[name] = bytes;
-      // 上次进程在写一行的半路被杀:末尾留着没写完的半行。补一个换行把它隔开(那半行解析不了,会被跳过),之后的行不受它连累
+      // Previous process was killed midway while writing a line: an unfinished partial line remains at
+      // the end. Append a newline to separate it (that partial line cannot be parsed and will be skipped),
+      // so subsequent lines are not affected.
       try {
         const size = fs.statSync(path.join(dir, name)).size;
         if (size > bytes) { fs.appendFileSync(path.join(dir, name), '\n'); offsets[name] = size + 1; }
-      } catch { /* 文件刚被拿走 */ }
+      } catch { /* File was just moved away */ }
     }
   }
 
@@ -198,8 +227,8 @@ export function createUsageLog({ dir = null, now = () => Date.now(), flushMs = 3
       if (saved?.v === 1 && saved.files && typeof saved.files === 'object' && saved.projects && typeof saved.projects === 'object') {
         for (const [name, bytes] of Object.entries(saved.files)) {
           let size = -1;
-          try { size = fs.statSync(path.join(dir, name)).size; } catch { /* 文件没了 */ }
-          if (!Number.isSafeInteger(bytes) || bytes > size) throw new Error('检查点比流水新');
+          try { size = fs.statSync(path.join(dir, name)).size; } catch { /* File is gone */ }
+          if (!Number.isSafeInteger(bytes) || bytes > size) throw new Error('Checkpoint is newer than the log');
           offsets[name] = bytes;
         }
         for (const [id, p] of Object.entries(saved.projects)) {
@@ -246,7 +275,7 @@ export function createUsageLog({ dir = null, now = () => Date.now(), flushMs = 3
   return {
     dir,
 
-    /** 记一次模型请求:先落流水,再进累计 */
+    /** Record a model request: write to log first, then add to totals */
     append(rowIn) {
       const row = usageRow(rowIn, now());
       if (dir) {
@@ -266,12 +295,15 @@ export function createUsageLog({ dir = null, now = () => Date.now(), flushMs = 3
       return row;
     },
 
-    /** 这个项目在这个窗口里已经用了多少 token */
+    /** How many tokens this project has used in this window */
     used(projectId, window = 'total', at = now()) {
       return usedOf(projects.get(projectId), window, at);
     },
 
-    /** 这个项目的总量与各成员的量:有流水就读流水(带用户名、认 `since`),没有(只在内存里记)读内存里的累计 */
+    /**
+     * Totals and per-member usage for this project: read logs if available (includes usernames,
+     * respects `since`); if none (recorded only in memory), read in-memory totals.
+     */
     summary(projectId, since = null) {
       if (dir) {
         const q = queryUsage(dir, { projectId, since }).projects[projectId];

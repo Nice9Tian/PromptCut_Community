@@ -14,9 +14,9 @@ const { startSoundGeneration, waitSoundGeneration } = await import('./soundGener
 
 let evaluations = 0;
 const audio = (_sources, range, p) => { evaluations++; return new Float32Array(range.count * 2).fill(p.value); };
-const builtin = { id: 'b-av', name: '内置有声卡', source: 'native', defaults: { value: .25 }, controls: [], frameMode: 'direct', kind: 'animation', inputs: {}, Component() {}, audio };
-const userCard = { ...builtin, id: 'u-av', name: '用户有声卡', source: 'user' };
-const audioOnly = { id: 'b-audio', name: '内置音频卡', source: 'native', defaults: { value: .5 }, controls: [], frameMode: 'direct', kind: 'audio', inputs: {}, audio };
+const builtin = { id: 'b-av', name: 'Built-in AV card', source: 'native', defaults: { value: .25 }, controls: [], frameMode: 'direct', kind: 'animation', inputs: {}, Component() {}, audio };
+const userCard = { ...builtin, id: 'u-av', name: 'User AV card', source: 'user' };
+const audioOnly = { id: 'b-audio', name: 'Built-in audio card', source: 'native', defaults: { value: .5 }, controls: [], frameMode: 'direct', kind: 'audio', inputs: {}, audio };
 registerCards([builtin, userCard, audioOnly]);
 const defs = new Map([builtin, userCard, audioOnly].map(d => [d.id, d]));
 configureCardAudio({ getCard: id => defs.get(id), sourceVersionOf: () => 'v1' });
@@ -29,7 +29,7 @@ function setup({ online = true } = {}) {
   return { store, restore };
 }
 function clipOf(cardId, duration = .5) {
-  actions.newProject('在线声音');
+  actions.newProject('Online sound');
   const clip = actions.addCardClip(cardId, 0, { duration });
   return { project: getState().project, clip: findClip(getState().project, clip.id).clip };
 }
@@ -49,12 +49,12 @@ function assetService() {
   return { stored, restore() { globalThis.fetch = real; } };
 }
 
-test('B9 放开的范围:内置卡的声音代码在线能跑,用户卡不能;第二段的接口接上才放开用户卡', () => {
+test('B9 Scope of what is enabled: a built-in card\'s sound code can run online, a user card cannot; user cards are enabled only once the second stage\'s interface is connected', () => {
   assert.equal(onlineCardAudioRunnable(builtin), true);
   assert.equal(onlineCardAudioRunnable(audioOnly), true);
   assert.equal(onlineCardAudioRunnable(userCard), false);
   assert.equal(onlineCardAudioRunnable(undefined), false);
-  assert.equal(onlineCardAudioRunnable({ source: 'native' }), false, '没有 audio() 的不算');
+  assert.equal(onlineCardAudioRunnable({ source: 'native' }), false, 'Without audio() does not count');
   setOnlineUserCardAudioGate(() => true);
   try { assert.equal(onlineCardAudioRunnable(userCard), true); } finally { setOnlineUserCardAudioGate(null); }
   assert.equal(onlineCardAudioRunnable(userCard), false);
@@ -63,10 +63,10 @@ test('B9 放开的范围:内置卡的声音代码在线能跑,用户卡不能;�
   assert.equal(onlineCardAudioSynthesizable(u.project, cardAudioNodeOf(u.project, u.clip)), false);
   assert.equal(clipSoundRunnable(b.project, b.clip), true);
   assert.equal(clipSoundRunnable(u.project, u.clip), false);
-  assert.equal(clipSoundRunnable(b.project, effectClip()), true, '独立音效只有配方,没有卡片代码');
+  assert.equal(clipSoundRunnable(b.project, effectClip()), true, 'A standalone sound effect has only a recipe and no card code');
 });
 
-test('B10 在线页面里内置卡的 audio() 真的被执行,用户卡的被拦下、一次都不执行', async () => {
+test('B10 In the online page a built-in card\'s audio() is really executed, while a user card\'s is blocked and never executed', async () => {
   globalThis.__pcOnlinePage = true;
   try {
     const b = clipOf('b-av', .1), nodeId = cardAudioNodeOf(b.project, b.clip);
@@ -83,7 +83,7 @@ test('B10 在线页面里内置卡的 audio() 真的被执行,用户卡的被拦
   } finally { delete globalThis.__pcOnlinePage; }
 });
 
-test('B11 桌面运行环境不判:一律合成,不测量、不写记录', async () => {
+test('B11 The desktop runtime does not classify: always synthesize, no measurement, no record written', async () => {
   const { store, restore } = setup({ online: false });
   try {
     const u = clipOf('u-av');
@@ -93,29 +93,29 @@ test('B11 桌面运行环境不判:一律合成,不测量、不写记录', async
   } finally { restore(); }
 });
 
-test('B12 在线判轻:测一次(不出声)、记下、在浏览器里合成;再问复用记录', async () => {
+test('B12 Online classified as light: measure once (silently), record it, synthesize in the browser; asking again reuses the record', async () => {
   const { store, restore } = setup();
   try {
     const b = clipOf('b-av');
     const first = await decideClipSound(b.project, b.clip);
     assert.equal(first.synth, true); assert.equal(first.verdict.reused, false); assert.equal(first.verdict.record.kind, 'card');
-    assert.equal(evaluations, 16, '测量调了 16 块 audio()');
+    assert.equal(evaluations, 16, 'The measurement called audio() for 16 chunks');
     assert.equal(store.size(), 1);
     const again = await decideClipSound(b.project, b.clip);
     assert.equal(again.verdict.reused, true); assert.equal(evaluations, 16);
     actions.setClipParams(b.clip.id, { value: .6 });
     const changed = getState().project, clip = findClip(changed, b.clip.id).clip;
-    assert.notEqual(soundTargetOf(changed, clip).soundKey, soundTargetOf(b.project, b.clip).soundKey, '参数进身份');
+    assert.notEqual(soundTargetOf(changed, clip).soundKey, soundTargetOf(b.project, b.clip).soundKey, 'Parameters are part of the identity');
     assert.equal((await decideClipSound(changed, clip)).verdict.reused, false);
     const fx = effectClip();
     const effect = await decideClipSound(b.project, fx);
     assert.equal(effect.synth, true); assert.equal(effect.verdict.record.kind, 'effect');
     assert.match(effect.verdict.record.soundKey, /^effect:/);
-    assert.equal((await decideRecipeSound(fx.soundEffect.recipe)).verdict.reused, true, '同一份配方,有没有片段都是同一条记录');
+    assert.equal((await decideRecipeSound(fx.soundEffect.recipe)).verdict.reused, true, 'The same recipe is the same record whether or not there is a clip');
   } finally { restore(); }
 });
 
-test('B13 在线判重:不在浏览器里合成;本页跑不了的用户卡同样不合成,各有说明;不再有按档一律不合成的那一条', async () => {
+test('B13 Online classified as heavy: not synthesized in the browser; a user card that cannot run on this page is likewise not synthesized, each with its own explanation; the rule of never synthesizing by tier is gone', async () => {
   const { store, restore } = setup();
   try {
     const b = clipOf('b-av');
@@ -127,15 +127,16 @@ test('B13 在线判重:不在浏览器里合成;本页跑不了的用户卡同�
     const blocked = await decideClipSound(u.project, u.clip);
     assert.equal(blocked.synth, false); assert.equal(blocked.reason, 'not-runnable'); assert.equal(evaluations, 0);
   } finally { restore(); }
-  // 原来按档一律不合成(2026-10-07 撤销):判定的结果只有「合成」「判重」「跑不了」三种
+  // Previously never synthesized by tier (revoked 2026-10-07): classification results are only
+  // "synthesize", "classify as heavy", and "cannot run"
   const again = setup();
   try {
     const recipe = await decideRecipeSound(createNotificationRecipe());
-    assert.ok(recipe.synth === true || recipe.reason === 'heavy', `只按轻重判:${JSON.stringify(recipe)}`);
+    assert.ok(recipe.synth === true || recipe.reason === 'heavy', `Classified only by light or heavy: ${JSON.stringify(recipe)}`);
   } finally { again.restore(); }
 });
 
-test('B14 在线「生成声音」与新加音效:判轻照常生成入库,判重拒绝并说明、项目不动', async () => {
+test('B14 Online "Generate sound" and adding a new sound effect: those classified as light are generated and stored as usual, those classified as heavy are rejected with an explanation and the project is untouched', async () => {
   const service = assetService();
   const { store, restore } = setup();
   try {
@@ -148,7 +149,7 @@ test('B14 在线「生成声音」与新加音效:判轻照常生成入库,判�
     const before = getState().project;
     await assert.rejects(() => generateCardAudio(h.clip.id), /too slow to synthesize on this device/);
     assert.equal(getState().project, before);
-    actions.newProject('在线音效');
+    actions.newProject('Online sound effect');
     const job = await waitSoundGeneration(startSoundGeneration({ preset: 'notification', start: 0 }).id);
     assert.equal(job.state, 'succeeded'); assert.equal(getState().project.media.length, 1);
     const recipe = createNotificationRecipe({ frequency: 990 });
@@ -159,7 +160,7 @@ test('B14 在线「生成声音」与新加音效:判轻照常生成入库,判�
   } finally { restore(); service.restore(); }
 });
 
-test('B15 交给渲染节点的接口:没有接收方回 false,接上后把片段和原因交过去', async () => {
+test('B15 The interface that hands off to a render node: returns false when there is no receiver; once connected, it passes over the clip and the reason', async () => {
   const b = clipOf('b-av');
   assert.equal(await requestSoundBackfill({ project: b.project, clip: b.clip, reason: 'heavy' }), false);
   const seen = [];
@@ -168,21 +169,21 @@ test('B15 交给渲染节点的接口:没有接收方回 false,接上后把片�
   assert.deepEqual(seen, [[b.clip.id, 'heavy']]);
 });
 
-test('B16 内置有声动效卡不是素材效果卡:在线页面照常渲染它的画面;写了 card() 的、只有 audio() 的、用户卡仍要本地 PC', async () => {
+test('B16 A built-in audio motion card is not a media effect card: the online page still renders its picture; cards that define card(), cards with only audio(), and user cards still need a local PC', async () => {
   const { needsLocalPc, unsupportedHere, setOnlineBrowserMode, onlineBrowserMode } = await import('../../render/placeholderHost.ts');
   const never = () => false, Component = () => null;
-  assert.equal(needsLocalPc('av', { Component, audio() {} }, never), false, '有画面组件又带 audio():普通 DOM 卡加声音');
-  assert.equal(needsLocalPc('audio-only', { audio() {} }, never), true, '只有 audio():音频素材效果卡');
-  assert.equal(needsLocalPc('gpu', { card() {} }, never), true, '写了 card():视觉素材效果卡');
-  assert.equal(needsLocalPc('gpu-av', { card() {}, audio() {}, Component }, never), true, '写了 card() 的不因为带了组件就放开');
+  assert.equal(needsLocalPc('av', { Component, audio() {} }, never), false, 'Has a visual component plus audio(): an ordinary DOM card with sound');
+  assert.equal(needsLocalPc('audio-only', { audio() {} }, never), true, 'Only audio(): an audio media effect card');
+  assert.equal(needsLocalPc('gpu', { card() {} }, never), true, 'Defines card(): a visual media effect card');
+  assert.equal(needsLocalPc('gpu-av', { card() {}, audio() {}, Component }, never), true, 'A card that defines card() is not enabled just because it has a component');
   assert.equal(needsLocalPc('dom', { Component }, never), false);
-  assert.equal(needsLocalPc('u', { Component, audio() {} }, (id) => id === 'u'), true, '用户卡不看形态');
+  assert.equal(needsLocalPc('u', { Component, audio() {} }, (id) => id === 'u'), true, 'User cards are judged regardless of shape');
   const before = onlineBrowserMode();
   try {
     setOnlineBrowserMode(true);
     assert.equal(unsupportedHere('av', { Component, audio() {} }, never), false);
     assert.equal(unsupportedHere('audio-only', { audio() {} }, never), true);
     setOnlineBrowserMode(false);
-    assert.equal(unsupportedHere('audio-only', { audio() {} }, never), false, '桌面运行环境不受影响');
+    assert.equal(unsupportedHere('audio-only', { audio() {} }, never), false, 'The desktop runtime is unaffected');
   } finally { setOnlineBrowserMode(before); }
 });

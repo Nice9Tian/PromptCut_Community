@@ -1,16 +1,19 @@
 /**
- * AI 云端扩展加载入口（Node 侧 `.mjs`，参照 `server/docservice/extensions.mjs`）。
+ * AI cloud extension loading entry (Node-side `.mjs`, modeled on `server/docservice/extensions.mjs`).
  *
- * 1. 为什么拆成单独的 `.mjs`：
- *    `src/ai/extensions.ts` 会被浏览器侧 React 组件直接引入，而 `tsconfig.json` 为纯浏览器环境（`types: ["vite/client"]`），
- *    不含 `node:fs` / `node:path` / `node:url` / `process`。将 Node 目录探测与动态加载放在 `.mjs` 中，
- *    保持浏览器侧 `extensions.ts` 纯净无 Node 依赖，同时供 Node 单测验证加载表契约。
+ * 1. Why it is split into a separate `.mjs`:
+ *    `src/ai/extensions.ts` is imported directly by browser-side React components, and
+ *    `tsconfig.json` targets a pure browser environment (`types: ["vite/client"]`), which does not
+ *    include `node:fs` / `node:path` / `node:url` / `process`. Putting the Node directory probing
+ *    and dynamic loading in a `.mjs` keeps the browser-side `extensions.ts` clean with no Node
+ *    dependency, and lets Node unit tests verify the load table contract.
  *
- * 2. 查找顺序（与 `server/docservice/extensions.mjs` 一致）：
- *    - 调用 `loadAiExtensions({ cloudDir })` 显式传入的目录（单测用）；
- *    - 环境变量 `PROMPTCUT_CLOUD_DIR`；
- *    - 仓库根下的 `<repoRoot>/cloud`。
- *    找不到 `<cloudDir>/ai/manifest.{ts,mjs,js}` 时返回空冻结数组 `[]`，不抛异常。
+ * 2. Lookup order (same as `server/docservice/extensions.mjs`):
+ *    - the directory passed explicitly via `loadAiExtensions({ cloudDir })` (used by unit tests);
+ *    - the environment variable `PROMPTCUT_CLOUD_DIR`;
+ *    - `<repoRoot>/cloud` under the repository root.
+ *    If `<cloudDir>/ai/manifest.{ts,mjs,js}` is not found, an empty frozen array `[]` is returned
+ *    and no exception is thrown.
  */
 import fs from "node:fs";
 import path from "node:path";

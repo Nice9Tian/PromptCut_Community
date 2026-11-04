@@ -5,9 +5,10 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * A/B 对比面板。
- * 从 versus-card 拆出来的组合部件。包含左右两张卡片和中间的 VS 徽章。
- * 进场: 两侧卡片从外向内滑入(0.5s)，然后中间的徽章弹缩出现(延时 0.3s + 0.6s)。可以高亮胜出者并让另一侧变暗。
+ * A/B comparison panel.
+ * Composite part extracted from versus-card. Contains left and right cards and a center VS badge.
+ * Entrance: cards on both sides slide in from outside inward (0.5s), then center badge springs into
+ * view (delay 0.3s + 0.6s). Can highlight winner and dim the other side.
  */
 interface Params {
   aKicker: string;
@@ -86,10 +87,10 @@ function GroupVersusPart({ params, width, height }: PartProps<Params>) {
 
 export const groupVersus: PartDef<Params> = {
   id: "group-versus",
-  name: "对比卡",
-  description: "左右对比面板，可高亮胜出者",
-  useWhen: "两个方案 / 两条路线做对照(「相比」「而不是」「区别在于」「vs」),可高亮胜出的一方;3 项以上比大小用 chart-rank,单个数字用 metric-stat。",
-  tags: ["对比","versus","左右","对照"],
+  name: "Versus card",
+  description: "Side-by-side comparison panel, can highlight the winner",
+  useWhen: "Use to contrast two options / two routes (\"compared to\", \"instead of\", \"the difference is\", \"vs\"); the winning side can be highlighted. Use chart-rank to compare 3 or more items and metric-stat for a single number.",
+  tags: ["comparison","versus","side by side","contrast"],
   role: "group",
   from: "versus-card",
   defaults: {
@@ -105,25 +106,25 @@ export const groupVersus: PartDef<Params> = {
     size: 0,
   },
   controls: [
-    { key: "aKicker", label: "A侧小字", type: "text" },
-    { key: "aTitle", label: "A侧大字", type: "text" },
-    { key: "aSub", label: "A侧说明", type: "text" },
-    { key: "aAccent", label: "A侧独立主色", type: "color" },
-    { key: "bKicker", label: "B侧小字", type: "text" },
-    { key: "bTitle", label: "B侧大字", type: "text" },
-    { key: "bSub", label: "B侧说明", type: "text" },
+    { key: "aKicker", label: "Side A kicker", type: "text" },
+    { key: "aTitle", label: "Side A title", type: "text" },
+    { key: "aSub", label: "Side A description", type: "text" },
+    { key: "aAccent", label: "Side A accent color", type: "color" },
+    { key: "bKicker", label: "Side B kicker", type: "text" },
+    { key: "bTitle", label: "Side B title", type: "text" },
+    { key: "bSub", label: "Side B description", type: "text" },
     {
       key: "winner",
-      label: "胜出方",
+      label: "Winner",
       type: "select",
       options: [
-        { value: "none", label: "无" },
-        { value: "a", label: "A胜出" },
-        { value: "b", label: "B胜出" },
+        { value: "none", label: "none" },
+        { value: "a", label: "A wins" },
+        { value: "b", label: "B wins" },
       ],
     },
-    { key: "accent", label: "主色/B侧颜色", type: "color" },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 200, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
+    { key: "accent", label: "Main color / side B color", type: "color" },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 200, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
   ],
   defaultFrame: { x: 960, y: 540, w: 1200, h: 600, anchor: [0.5, 0.5] },
   settleMs: () => 900,

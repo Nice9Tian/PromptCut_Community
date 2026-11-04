@@ -1,8 +1,8 @@
-"""命令行入口：python -m promptcut_track <子命令>
+"""Command-line entry: python -m promptcut_track <subcommand>
 
-子命令：status / install / track
-输出约定和 promptcut_stt、promptcut_shots 一致：stdout 一行一个 JSON，
-stderr 是给人看的提示。
+Subcommands: status / install / track
+The output convention matches promptcut_stt and promptcut_shots: stdout has one JSON per line,
+stderr carries hints for humans.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import subprocess
 import sys
 from typing import Any, Dict, List, Optional
 
-# 复用听写那套 JSONL：Windows 控制台的 UTF-8 和换行处理有坑，只想维护一份。
+# Reuse the speech-to-text JSONL helpers: UTF-8 and newline handling on the Windows console is tricky, and we want to maintain only one copy.
 from promptcut_stt.jsonl import emit, emit_error, emit_log, warn
 
 from . import __version__, is_media_url
@@ -24,10 +24,10 @@ from .tracker import MODEL_FILENAME
 REQUIREMENTS = "requirements-track.txt"
 
 
-# 命令行总开关(放在子命令前面)覆盖环境变量。云端 Agent 服务经工作区起这个进程时,
-# 工作区会把所有 PROMPTCUT_* 环境变量剥掉(不让服务自己的配置泄进子进程),
-# 所以解释器、依赖目录、权重目录、ffmpeg 由服务按部署配置用这几个参数递进来。
-# 它们只来自部署者的配置,从不来自模型给的参数。
+# Global command-line options (placed before the subcommand) override environment variables. When the Cloud Agent service starts this process through the workspace,
+# the workspace strips all PROMPTCUT_* environment variables (so the service's own configuration does not leak into the child process),
+# so the interpreter, dependency directory, weights directory, and ffmpeg are passed in by the service through these options according to the deployment configuration.
+# They come only from the deployer's configuration, never from parameters supplied by the model.
 _OVERRIDES: Dict[str, Optional[str]] = {}
 
 
@@ -58,12 +58,12 @@ def model_path(paths: Dict[str, Optional[str]]) -> str:
 
 
 def probe(paths: Dict[str, Optional[str]]) -> Dict[str, Any]:
-    """报告能跑到哪一档。
+    """Report which tier it can run at.
 
-    ready 只说神经网络那档（torch 装了 + 权重在）。**它不等于「能不能追」**——
-    未就绪时还有 numpy 的模板匹配兜底，那一档只要 numpy 和 ffmpeg 在就能跑，
-    而 numpy 在基础运行时里。两者要分开报，否则调用方会把「没装拓展」
-    读成「这个功能用不了」。
+    ready only describes the neural-network tier (torch installed + weights present). **It does not mean "whether tracking is possible"**:
+    when it is not ready there is still the numpy template-matching fallback, and that tier runs as long as numpy and ffmpeg are present,
+    and numpy is in the base runtime. The two must be reported separately, otherwise the caller would read "extension not installed"
+    as "this feature is unavailable".
     """
     add_pylibs(paths["pylibs"])
     runtime: Dict[str, Any] = {"installed": False, "version": None}
@@ -85,7 +85,7 @@ def probe(paths: Dict[str, Optional[str]]) -> Dict[str, Any]:
 
         fallback = {"available": bool(paths["ffmpeg"]), "numpy": numpy.__version__}
         if not paths["ffmpeg"]:
-            fallback["error"] = "找不到 ffmpeg"
+            fallback["error"] = "ffmpeg not found"
     except Exception as exc:
         fallback["error"] = str(exc)
 
@@ -110,18 +110,18 @@ def cmd_install(_args: argparse.Namespace) -> int:
     paths = env_paths()
     target = paths["pylibs"]
     if not target:
-        emit_error("没有设置 PROMPTCUT_PYLIBS，不知道该把依赖装到哪。", code="pylibs-missing")
+        emit_error("PROMPTCUT_PYLIBS is not set, so it is unknown where to install the dependencies.", code="pylibs-missing")
         return 2
 
-    # --requirements 只给部署者用(指向锁定了版本与哈希的清单);缺省是包里随发的那份
+    # --requirements is for deployers only (it points to a manifest with pinned versions and hashes); the default is the one shipped inside the package
     req = _OVERRIDES.get("requirements") or os.path.join(os.path.dirname(os.path.abspath(__file__)), REQUIREMENTS)
     if not os.path.isfile(req):
-        emit_error(f"找不到依赖清单 {REQUIREMENTS}", code="requirements-missing")
+        emit_error(f"Dependency manifest {REQUIREMENTS} not found", code="requirements-missing")
         return 2
 
     os.makedirs(target, exist_ok=True)
-    # 必须用 sys.executable —— 内置解释器自己的 pip。写死 "python" 会打到系统里
-    # 本进程是隔离模式(-I)起的(云端 Agent 服务:工作目录是对话工作区),pip 也用隔离模式起,否则 `-m pip` 会把当前目录排进模块搜索路径最前。
+    # Must use sys.executable: the built-in interpreter's own pip. Hard-coding "python" would end up using the system's
+    # This process was started in isolated mode (-I) (Cloud Agent service: the working directory is the chat workspace), and pip is also started in isolated mode, otherwise `-m pip` would put the current directory at the very front of the module search path.
     isolated = ["-I"] if sys.flags.isolated else []
     cmd = [sys.executable, *isolated, "-m", "pip", "install", "--target", target, "-r", req]
     emit({"event": "log", "line": " ".join(cmd)})
@@ -132,7 +132,7 @@ def cmd_install(_args: argparse.Namespace) -> int:
             text=True, encoding="utf-8", errors="replace",
         )
     except OSError as exc:
-        emit_error(f"无法启动 pip：{exc}")
+        emit_error(f"Cannot start pip: {exc}")
         return 2
 
     assert proc.stdout is not None
@@ -141,44 +141,44 @@ def cmd_install(_args: argparse.Namespace) -> int:
     code = proc.wait()
     if code != 0:
         emit_error(
-            f"pip 安装失败（退出码 {code}）。torch 有 190 MB 以上，"
-            "常见原因是网络中断或磁盘空间不足。"
+            f"pip install failed (exit code {code}). torch is over 190 MB, "
+            "so the usual causes are a network interruption or insufficient disk space."
         )
         return 1
 
     info = probe(paths)
     needs_model = not info["model"]["exists"]
     if needs_model:
-        warn(f"依赖装好了，但还缺模型文件 {info['model']['path']}；它由拓展库包提供。")
+        warn(f"Dependencies are installed, but the model file {info['model']['path']} is still missing; it is provided by the extension library package.")
     emit({"event": "installed", "needsModel": needs_model, **info})
-    # 同 promptcut_shots:退出码只说 pip 成没成。BootsTAPIR 的权重有 208 MB,
-    # 不在 requirements 里,只随拓展库包发。用 `0 if ready else 1` 的话,用户会
-    # 下完 190 MB 的 torch 再收到一句「进程退出码 1」,而依赖其实装好了。
+    # Same as promptcut_shots: the exit code only says whether pip succeeded. The BootsTAPIR weights are 208 MB,
+    # not in requirements, they ship only with the extension library package. If `0 if ready else 1` were used, the user would
+    # finish downloading 190 MB of torch and then receive "process exit code 1", even though the dependencies were in fact installed.
     return 0
 
 
 def _parse_points(raw: str) -> List[List[float]]:
-    """--points 收 JSON：[[帧号, x, y], ...]，坐标是原始视频像素。"""
+    """--points takes JSON: [[frame number, x, y], ...], with coordinates in original video pixels."""
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"--points 不是合法 JSON：{exc}") from exc
+        raise ValueError(f"--points is not valid JSON: {exc}") from exc
     if not isinstance(data, list) or not data:
-        raise ValueError("--points 至少要有一个点")
+        raise ValueError("--points needs at least one point")
     out: List[List[float]] = []
     for item in data:
         if not isinstance(item, (list, tuple)) or len(item) != 3:
-            raise ValueError("每个点要写成 [帧号, x, y]")
+            raise ValueError("Each point must be written as [frame number, x, y]")
         out.append([float(item[0]), float(item[1]), float(item[2])])
     return out
 
 
 def _track_template(paths: Dict[str, Optional[str]], video: str,
                     queries_px: List[List[float]]) -> int:
-    """兜底档。输出格式和神经网络那档**逐字段一致**，只有 engine 不同。
+    """Fallback tier. The output format is **field-for-field identical** to the neural-network tier; only engine differs.
 
-    格式一致是刻意的：调用方（Node 服务端、MCP 工具、将来的界面）不该为两档
-    各写一套解析。哪一档跑的看 engine 字段，别的都一样。
+    The identical format is deliberate: callers (the Node server, MCP tools, a future UI) should not have to write
+    a separate parser for each of the two tiers. Look at the engine field to see which tier ran; everything else is the same.
     """
     from .template import decode_gray, track_template
 
@@ -190,7 +190,7 @@ def _track_template(paths: Dict[str, Optional[str]], video: str,
     emit({"event": "progress", "phase": "decoded",
           "frames": int(len(frames)), "width": src[0], "height": src[1]})
 
-    # 用户给的是原始像素，解码时缩过，要换到解码分辨率上再匹配
+    # The user gives original pixels but decoding scaled the frames, so convert to the decode resolution before matching
     sx, sy = dst[0] / src[0], dst[1] / src[1]
     queries = [(p[0], p[1] * sx, p[2] * sy) for p in queries_px]
 
@@ -202,7 +202,7 @@ def _track_template(paths: Dict[str, Optional[str]], video: str,
     try:
         result = track_template(frames, queries, on_progress=on_progress)
     except Exception as exc:
-        emit_error(f"追踪失败：{exc}")
+        emit_error(f"Tracking failed: {exc}")
         return 1
 
     emit({
@@ -214,7 +214,7 @@ def _track_template(paths: Dict[str, Optional[str]], video: str,
         "points": [
             {
                 "query": queries_px[i],
-                # 换回原始像素，前端不用关心这一档解码到了多大
+                # Convert back to original pixels, so the frontend does not need to care how large this tier decoded to
                 "xy": [[round(float(x) / sx, 2), round(float(y) / sy, 2)]
                        for x, y in result["tracks"][i]],
                 "visible": [bool(v) for v in result["visible"][i]],
@@ -230,10 +230,10 @@ def cmd_track(args: argparse.Namespace) -> int:
     paths = env_paths()
     info = probe(paths)
     if not paths["ffmpeg"]:
-        emit_error("找不到 ffmpeg，无法解码视频。", code="ffmpeg-missing")
+        emit_error("ffmpeg not found, cannot decode the video.", code="ffmpeg-missing")
         return 2
     if not (is_media_url(args.video) or os.path.isfile(args.video)):
-        emit_error(f"找不到视频文件：{args.video}", code="video-missing")
+        emit_error(f"Video file not found: {args.video}", code="video-missing")
         return 2
 
     try:
@@ -244,22 +244,22 @@ def cmd_track(args: argparse.Namespace) -> int:
 
     engine = args.engine or info["engine"]
     if engine is None:
-        emit_error("既没装运动追踪拓展，兜底档也用不了", code="engine-unavailable", detail=info)
+        emit_error("The motion tracking extension is not installed and the fallback tier is unavailable too", code="engine-unavailable", detail=info)
         return 2
     if engine == "bootstapir" and not info["ready"]:
-        emit_error("运动追踪拓展未就绪", code="engine-unavailable", detail=info)
+        emit_error("The motion tracking extension is not ready", code="engine-unavailable", detail=info)
         return 2
 
-    # 整段视频要解进内存:先估一下帧数,超过上限**直接拒**,不截断。
-    # 截断会让轨迹只盖住视频的前半段,而 attach_clip_motion 按「轨迹覆盖整段素材」对时间,
-    # 悄悄截断等于悄悄对错时间。
+    # The whole video has to be decoded into memory: estimate the frame count first and **reject outright** if it exceeds the limit, no truncation.
+    # Truncation would make the trajectory cover only the first half of the video, while attach_clip_motion aligns times assuming "the trajectory covers the whole asset",
+    # Truncating silently means silently getting the timing wrong.
     if args.max_frames:
         from .tracker import estimate_frames
 
         est = estimate_frames(paths["ffmpeg"], args.video)
         if est is not None and est > args.max_frames:
             emit_error(
-                f"视频约 {est} 帧,超过这台机器一次能追的 {args.max_frames} 帧;请先把素材剪短再追。",
+                f"The video has about {est} frames, more than the {args.max_frames} frames this machine can track at once; please trim the media shorter before tracking.",
                 code="too-long", frames=est, limit=args.max_frames,
             )
             return 2
@@ -276,7 +276,7 @@ def cmd_track(args: argparse.Namespace) -> int:
     emit({"event": "progress", "phase": "decoded",
           "frames": int(len(frames)), "width": src[0], "height": src[1]})
 
-    # 点的坐标换到模型空间；帧号不变
+    # Convert the point coordinates to model space; frame numbers stay unchanged
     xy = scale_points([[p[1], p[2]] for p in queries_px], src, to_model=True)
     queries = [(queries_px[i][0], float(xy[i][0]), float(xy[i][1]))
                for i in range(len(queries_px))]
@@ -291,10 +291,10 @@ def cmd_track(args: argparse.Namespace) -> int:
     try:
         result = track(model, frames, queries, on_progress=on_progress)
     except Exception as exc:
-        emit_error(f"追踪失败：{exc}")
+        emit_error(f"Tracking failed: {exc}")
         return 1
 
-    # 轨迹换回原始像素坐标再交出去，前端不用关心模型的 256 空间
+    # Convert the trajectories back to original pixel coordinates before handing them out, so the frontend does not need to care about the model's 256 space
     back = scale_points(result["tracks"], src, to_model=False)
     emit({
         "event": "result",
@@ -316,23 +316,23 @@ def cmd_track(args: argparse.Namespace) -> int:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="promptcut_track")
-    parser.add_argument("--pylibs", default=None, help="第三方库目录(覆盖 PROMPTCUT_PYLIBS)")
-    parser.add_argument("--models", default=None, help="权重目录(覆盖 PROMPTCUT_MODELS)")
-    parser.add_argument("--ffmpeg", default=None, help="ffmpeg 可执行文件(覆盖 PROMPTCUT_FFMPEG)")
-    parser.add_argument("--requirements", default=None, help="install 用的依赖清单(缺省是包里随发的)")
+    parser.add_argument("--pylibs", default=None, help="Third-party library directory (overrides PROMPTCUT_PYLIBS)")
+    parser.add_argument("--models", default=None, help="Weights directory (overrides PROMPTCUT_MODELS)")
+    parser.add_argument("--ffmpeg", default=None, help="ffmpeg executable (overrides PROMPTCUT_FFMPEG)")
+    parser.add_argument("--requirements", default=None, help="Dependency manifest used by install (the default is the one shipped in the package)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("status", help="报告拓展是否就绪").set_defaults(func=cmd_status)
-    sub.add_parser("install", help="安装 torch 等依赖").set_defaults(func=cmd_install)
+    sub.add_parser("status", help="Report whether the extension is ready").set_defaults(func=cmd_status)
+    sub.add_parser("install", help="Install torch and other dependencies").set_defaults(func=cmd_install)
 
-    t = sub.add_parser("track", help="追踪视频里的点")
+    t = sub.add_parser("track", help="Track points in a video")
     t.add_argument("--video", required=True)
     t.add_argument("--points", required=True,
-                   help='JSON：[[帧号, x, y], ...]，坐标为原始视频像素')
+                   help='JSON: [[frame number, x, y], ...], coordinates in original video pixels')
     t.add_argument("--engine", choices=["bootstapir", "template"], default=None,
-                   help="强制用哪一档。默认按 status 报的 engine 自动选")
+                   help="Force which tier to use. By default it is chosen automatically from the engine reported by status")
     t.add_argument("--max-frames", type=int, default=0,
-                   help="视频超过这么多帧就拒绝(0 = 不限)")
+                   help="Reject videos with more frames than this (0 = unlimited)")
     t.set_defaults(func=cmd_track)
 
     args = parser.parse_args(argv)
@@ -344,7 +344,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         return args.func(args)
     except Exception as exc:  # noqa: BLE001
-        emit_error(f"未预期的错误：{exc}")
+        emit_error(f"Unexpected error: {exc}")
         return 1
 
 

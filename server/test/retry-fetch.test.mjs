@@ -1,4 +1,4 @@
-// node --test server/test/retry-fetch.test.mjs —— API 直连的自动重试
+// node --test server/test/retry-fetch.test.mjs: automatic retry for direct API
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -7,7 +7,7 @@ const { createRetryingFetch, RETRYABLE_STATUS, backoffMs, DEFAULT_RETRY, isRetry
 const { withIdleTimeout } = await import('../harness/idle-timeout.mjs');
 const { readSse } = await import('../harness/providers/base.mjs');
 
-/** 假响应。headers.get 只认 retry-after */
+/** Mock response. headers.get only recognizes retry-after */
 function res(status, { retryAfter } = {}) {
   return {
     status,
@@ -17,7 +17,7 @@ function res(status, { retryAfter } = {}) {
   };
 }
 
-/** 构造一条 HTTP 200 SSE 流响应 */
+/** Construct an HTTP 200 SSE stream response */
 function sseRes(chunks) {
   return {
     status: 200,
@@ -33,7 +33,7 @@ function sseRes(chunks) {
   };
 }
 
-/** 按剧本依次返回;数字 = 状态码,Error 实例 = 抛出去,函数 = 调用取响应 */
+/** Return in sequence by script; number = status code, Error instance = throw, function = call to get response */
 function scripted(seq) {
   const calls = [];
   const fetchImpl = async (url, init) => {
@@ -46,49 +46,49 @@ function scripted(seq) {
   return { fetchImpl, calls };
 }
 
-/** 不真的睡:把等待时间记下来 */
+/** Do not actually sleep: record the wait time */
 function noSleep() {
   const waits = [];
   return { waits, opts: { rand: () => 0.5, onRetry: (i) => waits.push(i.delayMs) } };
 }
 
-test('文档里那几个码才重试:408/429/500/502/503/504', () => {
+test('Only the status codes listed in the docs are retried: 408/429/500/502/503/504', () => {
   assert.deepEqual([...RETRYABLE_STATUS].sort((a, b) => a - b), [408, 429, 500, 502, 503, 504]);
   for (const s of [400, 401, 403, 404, 200, 201]) {
-    assert.ok(!RETRYABLE_STATUS.has(s), `${s} 不该重试`);
+    assert.ok(!RETRYABLE_STATUS.has(s), `${s} should not be retried`);
   }
 });
 
-test('429 之后重试,成功就返回成功那次 —— 用户报的正是这一个', async () => {
+test('Retry after 429 and return the successful attempt: this is exactly the case the user reported', async () => {
   const { fetchImpl, calls } = scripted([429, 429, 200]);
   const { waits, opts } = noSleep();
   const f = createRetryingFetch(fetchImpl, { ...opts, baseDelayMs: 1, maxDelayMs: 2 });
   const r = await f('u', {});
   assert.equal(r.status, 200);
-  assert.equal(calls.length, 3, '第一次 + 两次重试');
+  assert.equal(calls.length, 3, 'First attempt + two retries');
   assert.equal(waits.length, 2);
 });
 
-test('401 / 400 这种立刻返回,一次都不重试 —— 再发一百次也是同一个结果', async () => {
+test('Responses like 401 / 400 return immediately without a single retry: sending a hundred more times gives the same result', async () => {
   for (const code of [400, 401, 403, 404]) {
     const { fetchImpl, calls } = scripted([code]);
     const f = createRetryingFetch(fetchImpl, { baseDelayMs: 1 });
     const r = await f('u', {});
     assert.equal(r.status, code);
-    assert.equal(calls.length, 1, `${code} 不该重试`);
+    assert.equal(calls.length, 1, `${code} should not be retried`);
   }
 });
 
-test('一直 429:重试满 10 次就把最后那个响应交上去,由上层报错', async () => {
+test('429 every time: after 10 retries, hand over the last response and let the upper layer report the error', async () => {
   const { fetchImpl, calls } = scripted([429]);
   const { opts } = noSleep();
   const f = createRetryingFetch(fetchImpl, { ...opts, baseDelayMs: 1, maxDelayMs: 2 });
   const r = await f('u', {});
   assert.equal(r.status, 429);
-  assert.equal(calls.length, 1 + DEFAULT_RETRY.maxRetries, '一共 11 次尝试');
+  assert.equal(calls.length, 1 + DEFAULT_RETRY.maxRetries, '11 attempts in total');
 });
 
-test('网络异常也重试;但 AbortError 立刻抛出 —— 用户点了停止就别再发了', async () => {
+test('Network errors are retried too, but AbortError is thrown immediately: once the user clicks stop, stop sending', async () => {
   const net = scripted([new Error('socket hang up'), 200]);
   const { opts } = noSleep();
   const f1 = createRetryingFetch(net.fetchImpl, { ...opts, baseDelayMs: 1 });
@@ -100,26 +100,26 @@ test('网络异常也重试;但 AbortError 立刻抛出 —— 用户点了停�
   const stopped = scripted([abort, 200]);
   const f2 = createRetryingFetch(stopped.fetchImpl, { baseDelayMs: 1 });
   await assert.rejects(() => f2('u', {}), /abort/i);
-  assert.equal(stopped.calls.length, 1, '停止之后不该再发');
+  assert.equal(stopped.calls.length, 1, 'Nothing should be sent after stop');
 });
 
-test('全程网络异常、退无可退时,抛的是最后那个异常而不是 undefined', async () => {
+test('When every attempt hits a network error and there is nothing left to fall back on, the last error is thrown, not undefined', async () => {
   const { fetchImpl } = scripted([new Error('ECONNRESET')]);
   const { opts } = noSleep();
   const f = createRetryingFetch(fetchImpl, { ...opts, baseDelayMs: 1, maxRetries: 2 });
   await assert.rejects(() => f('u', {}), /ECONNRESET/);
 });
 
-test('服务端给了 Retry-After 就听它的,而不是自己算的退避', async () => {
+test('If the server sends Retry-After, follow it rather than our own computed backoff', async () => {
   const { fetchImpl } = scripted([429, 200]);
   const waits = [];
   const f = createRetryingFetch(fetchImpl, {
     baseDelayMs: 1, maxDelayMs: 60000,
     onRetry: (i) => waits.push(i.delayMs),
   });
-  // 假响应里没带 retry-after,先确认走的是退避
+  // Mock response does not include retry-after; first confirm that backoff is used
   await f('u', {});
-  assert.ok(waits[0] <= 1, `没有 Retry-After 时该用退避,实际 ${waits[0]}`);
+  assert.ok(waits[0] <= 1, `Without Retry-After the backoff should be used, got ${waits[0]}`);
 
   const withHeader = {
     fetchImpl: (() => {
@@ -133,10 +133,10 @@ test('服务端给了 Retry-After 就听它的,而不是自己算的退避', asy
     onRetry: (i) => waits2.push(i.delayMs),
   });
   await f2('u', {});
-  assert.equal(waits2[0], 2000, 'Retry-After: 2 应该等 2 秒');
+  assert.equal(waits2[0], 2000, 'Retry-After: 2 should wait 2 seconds');
 });
 
-test('Retry-After 再大也被 maxDelayMs 夹住,别让对方把我们挂死', async () => {
+test('However large Retry-After is, it is clamped by maxDelayMs so the other side cannot hang us', async () => {
   let n = 0;
   const fetchImpl = async () => (n++ === 0 ? res(503, { retryAfter: '9999' }) : res(200));
   const waits = [];
@@ -145,33 +145,33 @@ test('Retry-After 再大也被 maxDelayMs 夹住,别让对方把我们挂死', a
   assert.equal(waits[0], 3000);
 });
 
-test('退避是指数的,并且带抖动;上限夹得住', () => {
+test('Backoff is exponential with jitter, and the cap holds', () => {
   const cfg = { baseDelayMs: 500, maxDelayMs: 8000 };
-  const half = (n) => backoffMs(n, cfg, () => 1); // rand=1 → 取满额
+  const half = (n) => backoffMs(n, cfg, () => 1); // rand=1 → take full amount
   assert.equal(half(0), 500);
   assert.equal(half(1), 1000);
   assert.equal(half(2), 2000);
-  assert.equal(half(5), 8000, '涨到上限就不再涨');
+  assert.equal(half(5), 8000, 'Stops growing once it reaches the cap');
   assert.equal(half(9), 8000);
-  // 抖动:同一档在 50%~100% 之间
+  // Jitter: same tier is between 50% and 100%
   assert.equal(backoffMs(1, cfg, () => 0), 500);
   assert.equal(backoffMs(1, cfg, () => 1), 1000);
 });
 
-test('总预算到点就不再重试,哪怕次数还没用完', async () => {
+test('Stop retrying once the total budget runs out, even if retries remain', async () => {
   const { fetchImpl, calls } = scripted([429]);
   let clock = 0;
   const f = createRetryingFetch(fetchImpl, {
     baseDelayMs: 1, maxDelayMs: 1, maxTotalMs: 50,
-    now: () => (clock += 30),   // 每次问时间都往前跳 30ms
+    now: () => (clock += 30),   // Jump forward 30ms each time time is queried
     onRetry: () => {},
   });
   const r = await f('u', {});
   assert.equal(r.status, 429);
-  assert.ok(calls.length < 1 + DEFAULT_RETRY.maxRetries, `该被预算截断,实际发了 ${calls.length} 次`);
+  assert.ok(calls.length < 1 + DEFAULT_RETRY.maxRetries, `Should have been cut off by the budget, actually sent ${calls.length} times`);
 });
 
-test('错误响应的正文会被消费掉,连接才还得回去', async () => {
+test('The body of an error response is consumed so that the connection can be returned', async () => {
   let drained = 0;
   let n = 0;
   const fetchImpl = async () => {
@@ -183,7 +183,7 @@ test('错误响应的正文会被消费掉,连接才还得回去', async () => {
   assert.equal(drained, 1);
 });
 
-test('HTTP 200 SSE 流首包返回 upstream timed out 错误时自动重试,后续正常流式返回', async () => {
+test('When the first packet of an HTTP 200 SSE stream returns an upstream timed out error, retry automatically, and the rest then streams back normally', async () => {
   const upstreamTimeoutChunk =
     'data: {"error":{"message":"The upstream service timed out. Please try again later. (request id: 202610180052009722857049rKYajio)"}}\n\n';
   const { fetchImpl, calls } = scripted([
@@ -193,7 +193,7 @@ test('HTTP 200 SSE 流首包返回 upstream timed out 错误时自动重试,后�
       upstreamTimeoutChunk,
     ]),
     () => sseRes([
-      'data: {"choices":[{"delta":{"content":"恢复正常"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"Back to normal"}}]}\n\n',
       'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
       'data: [DONE]\n\n',
     ]),
@@ -205,29 +205,29 @@ test('HTTP 200 SSE 流首包返回 upstream timed out 错误时自动重试,后�
     onRetry: (i) => reasons.push(i.reason),
   });
   const r = await f('u', {});
-  assert.equal(calls.length, 3, '前两次 SSE 首包超时均应触发重试');
+  assert.equal(calls.length, 3, 'The first two SSE first-packet timeouts should each trigger a retry');
   assert.equal(reasons.length, 2);
   assert.match(reasons[0], /upstream service timed out/i);
 
   const evs = [];
   for await (const ev of readSse(r)) evs.push(ev.data);
-  assert.ok(evs.some((d) => d.includes('恢复正常')), '成功那次的首包不能在预读时丢失');
-  assert.ok(evs.includes('[DONE]'), '后续流也完整接着读完');
+  assert.ok(evs.some((d) => d.includes('Back to normal')), 'The first packet of the successful attempt must not be lost during pre-read');
+  assert.ok(evs.includes('[DONE]'), 'The rest of the stream is also read to the end');
 });
 
-test('单次尝试触发 withIdleTimeout(外部 signal 未 abort)时自动重试并成功;外部 signal.aborted 时立即停止不重试', async () => {
+test('A single attempt that triggers withIdleTimeout (external signal not aborted) is retried automatically and succeeds; when the external signal.aborted is set, stop immediately without retrying', async () => {
   let attempt = 0;
   const userAc = new AbortController();
   const rawFetch = (url, init) => {
     attempt++;
     if (attempt === 1) {
-      // 第一次尝试卡死,直到 withIdleTimeout 触发
+      // First attempt hangs until withIdleTimeout triggers
       return new Promise((_res, rej) => {
         init.signal.addEventListener('abort', () => rej(init.signal.reason), { once: true });
       });
     }
     return Promise.resolve(sseRes([
-      'data: {"choices":[{"delta":{"content":"第二次成了"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"Second try worked"}}]}\n\n',
       'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
       'data: [DONE]\n\n',
     ]));
@@ -237,13 +237,13 @@ test('单次尝试触发 withIdleTimeout(外部 signal 未 abort)时自动重试
     { signal: userAc.signal, baseDelayMs: 1, maxDelayMs: 2 },
   );
   const r = await f('u', { signal: userAc.signal });
-  assert.equal(attempt, 2, '闲置超时(外部 signal 未 abort)必须触发重试');
+  assert.equal(attempt, 2, 'Idle timeout (external signal not aborted) must trigger a retry');
   assert.equal(userAc.signal.aborted, false);
   const evs = [];
   for await (const ev of readSse(r)) evs.push(ev.data);
-  assert.ok(evs.some((d) => d.includes('第二次成了')));
+  assert.ok(evs.some((d) => d.includes('Second try worked')));
 
-  // 用户主动点停止(外部 signal.aborted === true)时绝不重试
+  // Never retry when the user explicitly clicks stop (external signal.aborted === true)
   let stopAttempts = 0;
   const stopAc = new AbortController();
   const stopFetch = (url, init) => {
@@ -259,34 +259,34 @@ test('单次尝试触发 withIdleTimeout(外部 signal 未 abort)时自动重试
   const p = fStop('u', { signal: stopAc.signal });
   setTimeout(() => stopAc.abort(new Error('user stopped')), 15);
   await assert.rejects(() => p, /user stopped|abort/i);
-  assert.equal(stopAttempts, 1, '用户主动停止后绝不重试');
+  assert.equal(stopAttempts, 1, 'Never retry after the user stops it');
 });
 
-test('SSE 流首包返回不可重试错误(invalid api key / invalid argument)时不白白重试', async () => {
+test('Do not retry in vain when the first packet of an SSE stream returns a non-retryable error (invalid api key / invalid argument)', async () => {
   for (const msg of ['Invalid API key provided', 'Invalid argument: model parameters malformed']) {
-    assert.equal(isRetryableSseError({ message: msg }), false, `${msg} 不应判定为可重试`);
+    assert.equal(isRetryableSseError({ message: msg }), false, `${msg} should not be classified as retryable`);
     const { fetchImpl, calls } = scripted([
       () => sseRes([`data: ${JSON.stringify({ error: { message: msg } })}\n\n`]),
-      () => sseRes(['data: {"choices":[{"delta":{"content":"不该走到这"}}]}\n\n']),
+      () => sseRes(['data: {"choices":[{"delta":{"content":"Should not get here"}}]}\n\n']),
     ]);
     const f = createRetryingFetch(fetchImpl, { baseDelayMs: 1, maxDelayMs: 2 });
     const r = await f('u', {});
-    assert.equal(calls.length, 1, `不可重试错误 "${msg}" 应该一次就停`);
+    assert.equal(calls.length, 1, `Non-retryable error "${msg}" should stop after one attempt`);
     const evs = [];
     for await (const ev of readSse(r)) evs.push(ev.data);
-    assert.ok(evs[0].includes(msg), '错误事件应原样留给下游 provider 抛错');
+    assert.ok(evs[0].includes(msg), 'The error event should be left as is for the downstream provider to throw');
   }
 });
 
-test('DEFAULT_RETRY.maxTotalMs 为 20 分钟:每次耗时 95 秒返回 SSE upstream timed out、连续失败 4 次(累计 380 秒 > 旧 5 分钟)后不提前中止,继续第 4 次重试并在第 5 次尝试成功返回正文', async () => {
-  assert.equal(DEFAULT_RETRY.maxTotalMs, 20 * 60 * 1000, '默认总时间预算应为 20 分钟');
-  assert.equal(DEFAULT_RETRY.maxRetries, 10, '默认最大重试次数应为 10 次');
+test('DEFAULT_RETRY.maxTotalMs is 20 minutes: when each attempt takes 95 seconds to return an SSE upstream timed out and 4 failures in a row occur (380 seconds in total > the old 5 minutes), it does not abort early, continues with the 4th retry, and returns the body successfully on the 5th attempt', async () => {
+  assert.equal(DEFAULT_RETRY.maxTotalMs, 20 * 60 * 1000, 'The default total time budget should be 20 minutes');
+  assert.equal(DEFAULT_RETRY.maxRetries, 10, 'The default maximum number of retries should be 10');
 
   const upstreamTimeoutChunk =
     'data: {"error":{"message":"The upstream service timed out. Please try again later. (request id: 202610180052009722857049rKYajio)"}}\n\n';
   let clock = 0;
   const timedTimeoutStep = () => {
-    clock += 95_000; // 模拟单次上游挂起 95 秒后返回 SSE error
+    clock += 95_000; // Simulate a single upstream hang of 95 seconds before returning SSE error
     return sseRes([upstreamTimeoutChunk]);
   };
   const { fetchImpl, calls } = scripted([
@@ -295,7 +295,7 @@ test('DEFAULT_RETRY.maxTotalMs 为 20 分钟:每次耗时 95 秒返回 SSE upstr
     timedTimeoutStep,
     timedTimeoutStep,
     () => sseRes([
-      'data: {"choices":[{"delta":{"content":"第5次尝试成功返回正文"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"Attempt 5 succeeded and returned the body"}}]}\n\n',
       'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
       'data: [DONE]\n\n',
     ]),
@@ -313,15 +313,15 @@ test('DEFAULT_RETRY.maxTotalMs 为 20 分钟:每次耗时 95 秒返回 SSE upstr
   });
 
   const r = await f('u', {});
-  assert.ok(clock >= 380_000, `4 次 95 秒超时累计耗时应超过旧的 5 分钟(300_000ms),实际 ${clock}ms`);
-  assert.equal(calls.length, 5, '首次 + 4 次重试共 5 次尝试');
-  assert.equal(retries.length, 4, '应完整经历 4 次重试而不在第 3 次重试后因旧 5 分钟预算耗尽放弃');
+  assert.ok(clock >= 380_000, `4 timeouts of 95 seconds should add up to more than the old 5 minutes (300_000ms), actual ${clock}ms`);
+  assert.equal(calls.length, 5, 'First attempt + 4 retries make 5 attempts');
+  assert.equal(retries.length, 4, 'Should go through all 4 retries instead of giving up after the 3rd retry because the old 5-minute budget ran out');
   assert.equal(retries[3].attempt, 4);
   assert.equal(retries[3].of, 10);
 
   const evs = [];
   for await (const ev of readSse(r)) evs.push(ev.data);
-  assert.ok(evs.some((d) => d.includes('第5次尝试成功返回正文')), '第 5 次尝试应正常拿到正文');
+  assert.ok(evs.some((d) => d.includes('Attempt 5 succeeded and returned the body')), 'Attempt 5 should get the body normally');
   assert.ok(evs.includes('[DONE]'));
 });
 

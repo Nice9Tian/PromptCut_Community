@@ -1,34 +1,52 @@
 /**
- * 画布与 WebGL 的卡产轨道流时不经过 PNG(渲染重构「己一」)的端到端探针
- * (`docs/plan/render-refactor-task.md`「己」的验收;`docs/plan/prerender-products-contract.md` 第 6.1、6.2 节)。
+ * End-to-end probe for producing track streams without going through PNG for canvas and WebGL
+ * cards (render refactor "Ji-1") (acceptance check for "Ji" in `docs/plan/render-refactor-task.md`;
+ * `docs/plan/prerender-products-contract.md` sections 6.1, 6.2).
  *
  *   node scripts/probes/stream-canvas-direct-probe.mjs [--origin http://127.0.0.1:27700 | --port 27700]
  *        [--sizes 960x540,1920x1080] [--rounds 2] [--all-cards] [--out <dir>] [--keep] [--json <file>]
  *
- * 给了 `--origin` 就用那台 dev server;没给就自己在检出根起一台(`--port`,另占 +1、+2 当舞台端口;不碰 5190～5192),
- * 用完按进程号收掉。本进程里直接起 `FramePipeline`(同预渲染进程的代码),库根放临时目录。每种画幅灌一个项目:
+ * If `--origin` is given, use that dev server; if omitted, start one at the checkout root (`--port`,
+ * taking +1 and +2 as stage ports; does not touch 5190-5192), and terminate it by PID when done.
+ * Start `FramePipeline` directly in this process (same code as prerender process), with library
+ * root placed in temporary directory. Seed one project for each aspect ratio:
  *
- *   clip-particles  通用粒子卡 `particles`(2D 画布,tsParticles 自己画)
- *   clip-3d         三维场景 `scene-3d`(共享 WebGL 渲染器的平面)
- *   clip-outside    探针卡 `r6-canvas`,探针在导出页里给它的包裹层加一个伪元素色块 —— 「画布外面还有别的元素」的卡
+ *   clip-particles  generic particle card `particles` (2D canvas, drawn by tsParticles)
+ *   clip-3d         3D scene `scene-3d` (plane sharing WebGL renderer)
+ *   clip-outside    probe card `r6-canvas`, where probe adds a pseudo-element color block to its
+ *                   wrapper layer on export page: card with "other elements outside canvas"
  *
- * 三张卡都钉成重卡(`pipeline.streamPicked` 全选)。逐条核对:
+ * All three cards are pinned as heavy cards (`pipeline.streamPicked` all selected). Verify item by
+ * item:
  *
- *   1. 缺省档(`auto`)照常产完:粒子卡和三维卡过了实测(`direct.last.pass`),没有判成不能直取;
- *      「画布外面还有别的元素」的那张退回截图(`direct.failed === 'differs'`),生产者的诊断里有一条;
- *   2. 新旧两条路各产一遍(同一条流、同一个会话,先 `off` 每帧截图,再 `always` 过了实测就直取):
- *      分段逐字节比;再用 ffmpeg 把两边解出来逐帧比,颜色平均差不到 1、不透明度平均差不到 0.5(满分 255);
- *      带对照:和同一分段里别的时刻的帧比,差明显更大(证明这套比法分得出帧对不对);
- *   3. 「画布外面还有别的元素」的那张:`always` 档下同样退回截图,产出的分段和 `off` 逐字节相同;
- *   4. 每帧耗时,改前改后(只记录,不当通过条件):稀疏一趟、满密度一趟各自的墙钟;取图那一段拆成
- *      读像素、搬到 Node(改后)对截图(改前);另把 15 帧先取在内存里,单独喂编码器量编码那一段(PNG 输入对原始像素输入);
- *   5. `--all-cards`:登记为画布卡的 56 张内置卡(`particles`、53 张 `particles-*`、`scene-3d`、`r6-canvas`)逐张实测,
- *      画面是不是全在画布里(过没过实测、差多少)、搬运量占原始像素的比例,记进结论;登记本身也核对
- *      (审阅表里 `canvasHeavy` 的正好是这几样,页面给出的能力对象里它们都是 `canvasHeavy: true`)。
+ *   1. Default tier (`auto`) completes production as usual: particle card and 3D card pass
+ *      verification (`direct.last.pass`) and are not classified as unable to direct capture;
+ *      the card with "other elements outside canvas" falls back to screenshots
+ *      (`direct.failed === 'differs'`), with one entry in producer diagnostics;
+ *   2. Produce once for each of the new and old paths (same stream, same session; first `off`
+ *      screenshotting each frame, then `always` direct capture once passing verification): compare
+ *      segments byte-by-byte; then decode both sides with ffmpeg and compare frame-by-frame, with
+ *      average color difference under 1 and average opacity difference under 0.5 (out of 255); with
+ *      control: compared with frames at other timestamps in the same segment, the difference is
+ *      significantly larger (proving this comparison method can distinguish whether frames are
+ *      correct);
+ *   3. The card with "other elements outside canvas": also falls back to screenshots under `always`
+ *      tier, producing segments byte-identical to `off`;
+ *   4. Per-frame duration, before and after changes (recorded only, not a pass condition):
+ *      wall-clock time for each of sparse pass and full-density pass; image capture section split
+ *      into reading pixels and transferring to Node (after) vs. screenshots (before); additionally,
+ *      capture 15 frames into memory first and feed to encoder separately to measure encoding
+ *      section (PNG input vs. raw pixel input);
+ *   5. `--all-cards`: verify all 56 built-in cards registered as canvas cards (`particles`, 53
+ *      `particles-*` cards, `scene-3d`, `r6-canvas`) card by card, recording whether content is
+ *      entirely within canvas (whether it passed verification and by how much) and transfer volume
+ *      ratio relative to raw pixels into conclusion; registration itself is also checked (those with
+ *      `canvasHeavy` in review table match exactly these, and page capability objects have
+ *      `canvasHeavy: true` for all of them).
  *
- * 输出 JSON 结论,过程写 stderr;任何一条不过就以非零退出。
+ * Output JSON conclusion, write progress to stderr; exit non-zero if any check fails.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
@@ -56,8 +74,8 @@ const ALL_CARDS = args.includes('--all-cards');
 const KEEP = args.includes('--keep');
 const JSON_OUT = flagArg('json', null, args);
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-canvas-direct-probe-${Date.now().toString(36)}`));
-if (!ORIGIN && [5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2)) throw new Error('这一段是用户常驻的开发服务器的端口,换一个');
-// 一个会话、一条一条地产:量出来的墙钟不掺别的流
+if (!ORIGIN && [5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2)) throw new Error('This port range belongs to the user\'s resident dev servers; use another one');
+// One session, produce one by one: measured wall-clock time is not mixed with other streams
 process.env.PROMPTCUT_STREAM_POOL = '1';
 
 const say = (step, fields = {}) => process.stderr.write(`${JSON.stringify({ step, t: Date.now(), ...fields })}\n`);
@@ -72,14 +90,14 @@ async function until(label, fn, timeoutMs, everyMs = 500) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
 
-const DURATION = 3; // 秒:6 个分段
+const DURATION = 3; // Seconds: 6 segments
 const projectOf = (width, height) => ({
-  id: `canvas-direct-${width}x${height}`, name: '画布直取探针', width, height, fps: 30, duration: DURATION,
+  id: `canvas-direct-${width}x${height}`, name: 'Canvas direct capture probe', width, height, fps: 30, duration: DURATION,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-particles', name: 'particles', hidden: false, clips: [{ id: 'clip-particles', kind: 'card', cardId: 'particles', start: 0, end: DURATION, params: {} }] },
@@ -88,7 +106,7 @@ const projectOf = (width, height) => ({
       frame: { x: 0, y: 0, w: Math.min(640, width), h: Math.min(480, height), anchor: [0, 0] } }] },
   ],
 });
-/** 「画布外面的元素」:包裹层上的一个伪元素色块,画布读不到它,截图截得到 */
+/** "Elements outside canvas": a pseudo-element color block on wrapper layer, unreadable by canvas, captured by screenshot */
 const OUTSIDE_CSS = '[data-pc-clip="clip-outside"]::after{content:"";position:absolute;left:24px;top:24px;width:120px;height:40px;background:rgba(255,51,102,.9);border-radius:8px}';
 const REAL = ['clip-particles', 'clip-3d'];
 
@@ -100,7 +118,7 @@ function viteBin() {
   return path.join(main.slice(0, at + 6), 'bin', 'vite.js');
 }
 
-/** ffmpeg 把 init + 一个分段解成逐帧 RGB(上下拼合的编码画面:上半预乘色,下半不透明度) */
+/** ffmpeg decodes init + one segment into frame-by-frame RGB (vertically stacked encoded image: upper half premultiplied color, lower half opacity) */
 async function decodeSegment(init, seg, dir, name) {
   const file = path.join(dir, `${name}.mp4`);
   await fs.writeFile(file, Buffer.concat([init, seg]));
@@ -109,7 +127,7 @@ async function decodeSegment(init, seg, dir, name) {
   await fs.rm(file, { force: true });
   return stdout;
 }
-/** 两帧解出来的编码画面的差:颜色(上半 RGB)平均差、不透明度(下半)平均差、明显不同的像素数 */
+/** Difference between decoded encoded frames of two frames: average color difference (upper RGB), average opacity difference (lower half), visibly different pixel count */
 function frameDiff(a, b, width, codedHeight) {
   const h = codedHeight / 2 - 8;
   let color = 0, alpha = 0, bad = 0;
@@ -144,11 +162,11 @@ try {
     child.stderr.on('data', keep);
     say('spawn', { pid: child.pid, port: PORT });
     origin = `http://127.0.0.1:${PORT}`;
-    const up = await until('dev server 起来', async () => {
-      if (child.exitCode !== null) throw new Error(`dev server 退出了:${log.join('').slice(-600)}`);
+    const up = await until('dev server is up', async () => {
+      if (child.exitCode !== null) throw new Error(`dev server exited: ${log.join('').slice(-600)}`);
       return fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
     }, 180_000, 300);
-    if (!up) throw new Error(`dev server 没起来:${log.join('').slice(-600)}`);
+    if (!up) throw new Error(`dev server did not start: ${log.join('').slice(-600)}`);
   }
   out.origin = origin;
 
@@ -159,11 +177,11 @@ try {
     const cmpDir = path.join(OUT, `cmp-${tag}`);
     await fs.mkdir(cmpDir, { recursive: true });
 
-    // ---------- 1. 缺省档(auto)照常产完
+    // ---------- 1. Default tier (auto) completes production as usual
     const pipeline = new FramePipeline({ root: path.join(OUT, `lib-${tag}`), origin: () => origin, interactive: true, playhead: () => null });
     pipelines.push(pipeline);
-    pipeline.streamPicked = () => true; // 钉成重卡
-    // 每次换页以后给导出页加上那个伪元素(只对 clip-outside 的包裹层起作用)
+    pipeline.streamPicked = () => true; // Pin as heavy cards
+    // After each page navigation, add that pseudo-element to export page (only affects wrapper layer of clip-outside)
     const lease = pipeline.leaseStreamBakery.bind(pipeline);
     pipeline.leaseStreamBakery = async () => {
       const bakery = await lease();
@@ -178,7 +196,7 @@ try {
       return bakery;
     };
     const producer = pipeline.streamProducer();
-    check(producer.direct === 'always', `${tag}:生产者缺省是 always 档`, producer.direct);
+    check(producer.direct === 'always', `${tag}: the producer's default is the always tier`, producer.direct);
     producer.attachRoute();
     const dense = () => {
       const status = producer.status();
@@ -188,33 +206,33 @@ try {
     };
     const t0 = Date.now();
     await pipeline.preload(projectOf(width, height));
-    const first = await until(`${tag}:全部分段满密度`, dense, 900_000, 500);
-    if (!first) throw new Error(`${tag}:第一轮生产没做完:${JSON.stringify(producer.status().log.slice(-8))}`);
+    const first = await until(`${tag}: all segments at full density`, dense, 900_000, 500);
+    if (!first) throw new Error(`${tag}: the first production round did not finish: ${JSON.stringify(producer.status().log.slice(-8))}`);
     size.autoProduceMs = Date.now() - t0;
     out.encoder = first.encoder;
     const rowOf = (status, clipId) => status.streams.find((s) => s.clipIds.length === 1 && s.clipIds[0] === clipId);
     const stateOf = (clipId) => [...producer.streams.values()].find((s) => s.spec.clipIds.length === 1 && s.spec.clipIds[0] === clipId);
     for (const clipId of [...REAL, 'clip-outside']) {
       const row = rowOf(first, clipId);
-      if (!check(!!row, `${tag} ${clipId}:有流`)) continue;
+      if (!check(!!row, `${tag} ${clipId}: has a stream`)) continue;
       size.auto[clipId] = { direct: row.direct, capture: row.capture, bound: row.bound, tight: row.tight, segments: row.lastSegment - row.firstSegment + 1 };
       if (REAL.includes(clipId)) {
-        check(!!row.direct && row.direct.failed === null, `${tag} ${clipId}(always):没有判成不能直取`, row.direct);
-        check(row.direct?.checks >= 1 && (row.direct.segments + row.direct.slowSegments) >= 1, `${tag} ${clipId}(always):做过实测,而且过了`, row.direct);
+        check(!!row.direct && row.direct.failed === null, `${tag} ${clipId}(always): not judged unable to capture directly`, row.direct);
+        check(row.direct?.checks >= 1 && (row.direct.segments + row.direct.slowSegments) >= 1, `${tag} ${clipId}(always): measured, and passed`, row.direct);
       } else {
-        check(row.direct?.failed === 'differs', `${tag} ${clipId}(always):画布外面有别的元素,退回截图`, row.direct);
-        check(row.direct?.segments === 0 && row.direct?.frames === 0, `${tag} ${clipId}(always):一帧都没有走直取`, row.direct);
+        check(row.direct?.failed === 'differs', `${tag} ${clipId}(always): other elements outside the canvas, falls back to screenshots`, row.direct);
+        check(row.direct?.segments === 0 && row.direct?.frames === 0, `${tag} ${clipId}(always): not a single frame took the direct path`, row.direct);
       }
     }
-    check(first.log.some((l) => /画布直取没过\(differs/.test(l.message)), `${tag}:诊断里有「画布直取没过」那一条`, first.log.map((l) => l.message).slice(-6));
+    check(first.log.some((l) => /canvas direct capture did not pass\(differs/.test(l.message)), `${tag}: the diagnostics contain the "canvas direct capture did not pass" entry`, first.log.map((l) => l.message).slice(-6));
     say('auto', { size: tag, ms: size.autoProduceMs, direct: Object.fromEntries(Object.entries(size.auto).map(([k, v]) => [k, v.direct && { failed: v.direct.failed, segments: v.direct.segments, slow: v.direct.slowSegments, last: v.direct.last }])) });
 
-    // ---------- 2. 后台别的活收尾以后,自己一条一条地产:off 对 always
+    // ---------- 2. After other background work wraps up, produce one by one: off vs always
     for (let quiet = 0; quiet < 3;) { const before = pipeline.background; await before.catch(() => {}); await sleep(700); quiet = pipeline.background === before ? quiet + 1 : 0; }
-    producer.enabled = false; // 不让自动生产接手下面换上去的流状态
+    producer.enabled = false; // Prevent automatic production from taking over the stream state swapped in below
     await producer.drain();
     const bakery = await pipeline.leaseStreamBakery();
-    /** 把这条流从头产一遍(稀疏一趟、满密度一趟),回耗时、分段字节、直取记录 */
+    /** Produce this stream from scratch once (sparse pass, full-density pass), return duration, segment bytes, direct capture record */
     const produce = async (orig, mode) => {
       const { spec } = orig;
       producer.direct = mode;
@@ -228,12 +246,12 @@ try {
         const jobs = [];
         for (let n = spec.firstSegment; n <= spec.lastSegment; n++) {
           const task = { state, segment: n, stride };
-          if (!(await producer.runSegment(bakery, task))) throw new Error(`${spec.topClipId}#${n} 没产出来`);
+          if (!(await producer.runSegment(bakery, task))) throw new Error(`${spec.topClipId}#${n} was not produced`);
           jobs.push(task.job);
         }
         await Promise.all(jobs);
         const wallMs = performance.now() - started;
-        for (let n = spec.firstSegment; n <= spec.lastSegment; n++) if (state.manifest.segments[n]?.stride !== stride) throw new Error(`${spec.topClipId}#${n} 没落盘:${JSON.stringify(producer.status().log.slice(-4))}`);
+        for (let n = spec.firstSegment; n <= spec.lastSegment; n++) if (state.manifest.segments[n]?.stride !== stride) throw new Error(`${spec.topClipId}#${n} was not written to disk: ${JSON.stringify(producer.status().log.slice(-4))}`);
         return { wallMs, ...state.capture };
       };
       const sparse = await pass(SPARSE_STRIDE);
@@ -265,42 +283,42 @@ try {
 
       if (clipId === 'clip-outside') {
         size.outside = { direct: b.direct, sameBytesAsOff: sameBytes, rect };
-        check(b.direct?.failed === 'differs', `${tag} clip-outside(always):画布外面有别的元素,退回截图`, b.direct);
-        check(b.direct?.segments === 0 && b.direct?.frames === 0, `${tag} clip-outside(always):一帧都没有走直取`, b.direct);
-        check((b.direct?.last?.bad ?? 0) > (b.direct?.last?.badLimit ?? Infinity), `${tag} clip-outside:实测比出明显不同的像素`, b.direct?.last);
-        check(sameBytes, `${tag} clip-outside:退回截图以后产出的分段和 off 逐字节相同`);
-        check(b.log.some((m) => /画布直取没过\(differs/.test(m)), `${tag} clip-outside(always):有诊断`);
+        check(b.direct?.failed === 'differs', `${tag} clip-outside(always): other elements outside the canvas, falls back to screenshots`, b.direct);
+        check(b.direct?.segments === 0 && b.direct?.frames === 0, `${tag} clip-outside(always): not a single frame took the direct path`, b.direct);
+        check((b.direct?.last?.bad ?? 0) > (b.direct?.last?.badLimit ?? Infinity), `${tag} clip-outside: the measurement found clearly different pixels`, b.direct?.last);
+        check(sameBytes, `${tag} clip-outside: after falling back to screenshots, the produced segments are byte-identical to off`);
+        check(b.log.some((m) => /canvas direct capture did not pass\(differs/.test(m)), `${tag} clip-outside(always): has a diagnostic`);
         continue;
       }
 
-      // 走了直取没有
-      // 直取记录是稀疏、满密度两趟合起来的:分段数翻倍,帧数 = 稀疏那一趟取的 + 满密度那一趟取的
+      // Whether direct capture was used
+      // Direct capture record combines sparse and full-density passes: segment count doubles, frames = fetched in sparse pass + fetched in full-density pass
       check(b.sparseDirect?.failed === null && b.sparseDirect.segments === a.segs.length && b.sparseDirect.frames === b.sparse.frames,
-        `${tag} ${clipId}(always):稀疏那一趟每个分段、每一帧都走了直取`, b.sparseDirect);
+        `${tag} ${clipId}(always): in the sparse pass, every segment and every frame took the direct path`, b.sparseDirect);
       check(b.direct?.failed === null && b.direct.segments === 2 * a.segs.length && b.direct.frames === b.sparse.frames + frames && b.direct.misses === 0,
-        `${tag} ${clipId}(always):满密度那一趟每个分段、每一帧也都走了直取`, b.direct);
-      check(JSON.stringify(a.tight) === JSON.stringify(b.tight), `${tag} ${clipId}:两条路量出的收紧矩形相同`, [a.tight, b.tight]);
+        `${tag} ${clipId}(always): in the full-density pass, every segment and every frame also took the direct path`, b.direct);
+      check(JSON.stringify(a.tight) === JSON.stringify(b.tight), `${tag} ${clipId}: both paths measure the same tight rectangle`, [a.tight, b.tight]);
 
-      // 解出来逐帧比 + 对照
+      // Decode and compare frame-by-frame + control
       const cmp = { clipId, rect, frames, sameBytes, color: [], alpha: [], bad: [], otherColor: [], otherAlpha: [], otherBad: [], ink: [] };
       for (let i = 0; i < a.segs.length; i++) {
         const sa = a.segs[i], sb = b.segs[i];
         const ia = a.inits[sa.init], ib = b.inits[sb.init];
         const W = ia.meta.width, Hc = ia.meta.height;
-        if (!check(ib.meta.width === W && ib.meta.height === Hc, `${tag} ${clipId}#${sa.n}:两条路的编码画面一样大`, [ia.meta, ib.meta])) continue;
+        if (!check(ib.meta.width === W && ib.meta.height === Hc, `${tag} ${clipId}#${sa.n}: the encoded pictures of both paths are the same size`, [ia.meta, ib.meta])) continue;
         const da = await decodeSegment(ia.bytes, sa.bytes, cmpDir, `off-${clipId}-${sa.n}`);
         const db = await decodeSegment(ib.bytes, sb.bytes, cmpDir, `always-${clipId}-${sb.n}`);
         const frameBytes = W * Hc * 3;
-        if (!check(da.length === sa.samples * frameBytes && db.length === da.length, `${tag} ${clipId}#${sa.n}:两边都解出 ${sa.samples} 帧`, [da.length / frameBytes, db.length / frameBytes])) continue;
+        if (!check(da.length === sa.samples * frameBytes && db.length === da.length, `${tag} ${clipId}#${sa.n}: both sides decoded ${sa.samples} frames`, [da.length / frameBytes, db.length / frameBytes])) continue;
         for (let k = 0; k < sa.samples; k++) {
           const fa = da.subarray(k * frameBytes, (k + 1) * frameBytes), fb = db.subarray(k * frameBytes, (k + 1) * frameBytes);
           const same = frameDiff(fb, fa, W, Hc);
           cmp.color.push(same.color); cmp.alpha.push(same.alpha); cmp.bad.push(same.bad);
-          // 对照:同一分段里隔 7 帧的那一帧(另一条路的)
+          // Control: the frame 7 frames apart in the same segment (from the other path)
           const o = (k + 7) % sa.samples;
           const other = frameDiff(fb, da.subarray(o * frameBytes, (o + 1) * frameBytes), W, Hc);
           cmp.otherColor.push(other.color); cmp.otherAlpha.push(other.alpha); cmp.otherBad.push(other.bad);
-          // 画面不是空的:不透明度半区有东西
+          // Image is not empty: opacity half has content
           if (k === 0) { let ink = 0; const h = Hc / 2 - 8; for (let p = (h + 8) * W * 3; p < (2 * h + 8) * W * 3; p += 3) if (fb[p] > 32) ink++; cmp.ink.push(ink); }
         }
       }
@@ -309,14 +327,14 @@ try {
         otherColorMin: round2(min(cmp.otherColor)), otherColorMedian: round2(median(cmp.otherColor)), otherAlphaMin: round2(min(cmp.otherAlpha)), otherBadMin: min(cmp.otherBad), inkMin: min(cmp.ink) };
       size.compare.push(summary);
       say('compare', { size: tag, ...summary });
-      check(cmp.color.length === frames, `${tag} ${clipId}:${frames} 帧都比过了`, cmp.color.length);
-      check(max(cmp.color) < 1, `${tag} ${clipId}:新旧两条路的流逐帧比,颜色平均差不到 1`, max(cmp.color));
-      check(max(cmp.alpha) < 0.5, `${tag} ${clipId}:新旧两条路的流逐帧比,不透明度平均差不到 0.5`, max(cmp.alpha));
-      check(min(cmp.ink) > 0, `${tag} ${clipId}:画面不是空的`, cmp.ink);
-      // 对照:别的时刻的帧明显更大 —— 明显不同的像素成百上千个,同一帧的几乎没有
-      check(min(cmp.otherBad) >= 50 && min(cmp.otherBad) > 20 * (max(cmp.bad) + 1), `${tag} ${clipId}:对照(别的时刻的帧)明显更大`, { otherBadMin: min(cmp.otherBad), badMax: max(cmp.bad), otherColorMin: min(cmp.otherColor), colorMax: max(cmp.color) });
+      check(cmp.color.length === frames, `${tag} ${clipId}: all ${frames} frames were compared`, cmp.color.length);
+      check(max(cmp.color) < 1, `${tag} ${clipId}: comparing the streams of the old and new paths frame by frame, the mean color difference is under 1`, max(cmp.color));
+      check(max(cmp.alpha) < 0.5, `${tag} ${clipId}: comparing the streams of the old and new paths frame by frame, the mean opacity difference is under 0.5`, max(cmp.alpha));
+      check(min(cmp.ink) > 0, `${tag} ${clipId}: the picture is not empty`, cmp.ink);
+      // Control: frames at other timestamps differ significantly more: hundreds or thousands of visibly different pixels, almost none for the same frame
+      check(min(cmp.otherBad) >= 50 && min(cmp.otherBad) > 20 * (max(cmp.bad) + 1), `${tag} ${clipId}: the control (frames from another time) is clearly larger`, { otherBadMin: min(cmp.otherBad), badMax: max(cmp.bad), otherColorMin: min(cmp.otherColor), colorMax: max(cmp.color) });
 
-      // 每帧耗时(几轮取中位数)
+      // Per-frame duration (median across multiple rounds)
       const per = (list, pick) => round2(median(list.map(pick)));
       const stage = (mode) => {
         const rs = runs[mode];
@@ -328,21 +346,21 @@ try {
           dense: { wallMs: per(rs, (r) => r.dense.wallMs), frames: denseFrames, wallPerFrame: per(rs, (r) => r.dense.wallMs / r.dense.frames),
             capturePerFrame: per(rs, (r) => r.dense.captureMs / r.dense.frames), stepPerFrame: per(rs, (r) => r.dense.stepMs / r.dense.frames) },
           ...(mode === 'always' ? { direct: {
-            // 直取记录是稀疏、满密度两趟合起来的
+            // Direct capture record combines sparse and full-density passes
             readPerFrame: round2(median(d.map((x) => x.readMs / x.frames))), movePerFrame: round2(median(d.map((x) => x.moveMs / x.frames))),
             checkPerSegment: round2(median(d.map((x) => x.checkMs / x.checks))), lastCheck: d[0].last } } : {}),
         };
       };
       size.timing[clipId] = { rect, off: stage('off'), always: stage('always') };
 
-      // 编码那一段单量:同一批 15 帧,PNG 输入对原始像素输入(先取在内存里,不和取图重叠)
+      // Measure encoding section separately: same batch of 15 frames, PNG input vs raw pixel input (captured in memory first, does not overlap with image capture)
       const spec = orig.spec;
       const clip = { x: rect.x + spec.offset.x, y: rect.y + spec.offset.y, w: rect.w, h: rect.h };
       await bakery.reset(orig.isolated, pipeline.emptyUrl(orig.isolated), { deferCards: true });
       bakery.streamLease = null;
       const pngs = [], raws = [];
       await bakeStream(bakery, { streamSignature: `bench:${spec.streamKey}`, fromFrame: 30, toFrame: 44, stride: 1, fps: spec.fps, mountFrame: spec.mountFrame, clip, hasMedia: false,
-        capture: async (_f, shoot) => { const g = await grabCanvas(bakery, clipId, clip); if (!g.ok) throw new Error(`取不到:${g.reason}`); raws.push(g.rgba); return shoot(); },
+        capture: async (_f, shoot) => { const g = await grabCanvas(bakery, clipId, clip); if (!g.ok) throw new Error(`cannot grab: ${g.reason}`); raws.push(g.rgba); return shoot(); },
         onFrame: async (_f, png) => { pngs.push(png); } });
       bakery.streamLease = null;
       const bench = async (frames15, raw) => {
@@ -353,13 +371,13 @@ try {
           for (const f of frames15) await enc.write(f);
           await enc.finish();
           if (r > 0) times.push((performance.now() - started) / frames15.length);
-          await sleep(60); // 让预先拉起的下一个编码进程起好
+          await sleep(60); // Let the pre-spawned next encoding process finish starting up
         }
         return round2(median(times));
       };
       size.timing[clipId].encodePerFrame = { png: await bench(pngs, false), raw: await bench(raws, true), pngKB: round2(median(pngs.map((p) => p.length / 1024))), rawKB: round2(clip.w * clip.h * 4 / 1024) };
       say('timing', { size: tag, clipId, ...size.timing[clipId] });
-      // 把这条流的状态还回去
+      // Restore this stream's state
       producer.streams.set(spec.streamKey, orig);
     }
     producer.direct = 'always';
@@ -369,16 +387,16 @@ try {
     dropStreamEncoderSpares();
   }
 
-  // ---------- 5. 登记为画布卡的内置卡逐张实测
+  // ---------- 5. Verify built-in cards registered as canvas cards card by card
   if (ALL_CARDS) {
     const table = JSON.parse(await fs.readFile(path.join(ROOT, 'src', 'cards', 'capabilities.json'), 'utf8'));
     const registered = Object.entries(table).filter(([, v]) => v && ['canvas2d', 'webgl'].includes(v.surface)).map(([k]) => k).sort();
     out.registered = registered;
-    check(JSON.stringify(registered) === JSON.stringify(['particles', 'particles-*', 'r6-canvas', 'scene-3d']), '审阅表里登记为画布卡的正好是 particles、particles-*、r6-canvas、scene-3d', registered);
-    check(Object.values(table).every((v) => !v || !Object.hasOwn(v, 'canvasHeavy')), '审阅表里不再写 canvasHeavy(由 surface 推出)', registered.map((id) => table[id].surface));
+    check(JSON.stringify(registered) === JSON.stringify(['particles', 'particles-*', 'r6-canvas', 'scene-3d']), 'the cards registered as canvas cards in the review table are exactly particles, particles-*, r6-canvas, scene-3d', registered);
+    check(Object.values(table).every((v) => !v || !Object.hasOwn(v, 'canvasHeavy')), 'the review table no longer writes canvasHeavy (derived from surface)', registered.map((id) => table[id].surface));
     const catalog = JSON.parse(await fs.readFile(path.join(ROOT, 'server', 'catalog', 'particles', 'index.json'), 'utf8'));
     const ids = ['particles', ...catalog.items.map((a) => `particles-${a.name}`), 'scene-3d', 'r6-canvas'];
-    check(ids.length === 56, '画布卡一共 56 张', ids.length);
+    check(ids.length === 56, '56 canvas cards in total', ids.length);
     const [width, height] = [960, 540];
     const emptyUrl = `${origin}/?export=1&timeline=${encodeURIComponent(`data:application/json,${encodeURIComponent(JSON.stringify({ width, height, fps: 30, duration: 1, tracks: [], media: [] }))}`)}`;
     const bakery = await openBakery({ url: emptyUrl });
@@ -402,7 +420,7 @@ try {
           row.compositing = caps?.compositing ?? null;
           const record = newDirectRecord();
           const checks = [];
-          // 4 个分段(第 0、15、30、45 帧各实测一次),每个分段一个新的 capture,和生产者一样
+          // 4 segments (verified once each at frames 0, 15, 30, 45), a new capture for each segment, same as producer
           for (let n = 0; n < 4; n++) {
             await bakeStream(bakery, { streamSignature: `all:${cardId}`, fromFrame: n * SEGMENT_FRAMES, toFrame: n * SEGMENT_FRAMES + SEGMENT_FRAMES - 1, stride: 1, fps: 30, mountFrame: 0, clip: rect, hasMedia: false,
               capture: directSegmentCapture(bakery, { clipId: 'clip-a', rect, record, always: true }), onFrame: async () => {} });
@@ -423,20 +441,20 @@ try {
         } catch (error) { row.error = String(error?.message || error).split('\n')[0]; }
         out.cards.push(row);
         say('card', row);
-        check(row.canvasHeavy === true, `${cardId}:页面给出的能力对象里是 canvasHeavy`, row);
+        check(row.canvasHeavy === true, `${cardId}: it is canvasHeavy in the capability object the page returns`, row);
       }
     } finally { await bakery.close().catch(() => {}); }
     out.cardsSummary = { total: out.cards.length, pass: out.cards.filter((c) => c.pass).length, failed: out.cards.filter((c) => !c.pass).map((c) => [c.cardId, c.failed ?? c.error ?? 'miss']) };
-    check(out.cards.every((c) => !c.error), '逐张实测都跑出来了', out.cards.filter((c) => c.error));
+    check(out.cards.every((c) => !c.error), 'per-card measurements all completed', out.cards.filter((c) => c.error));
   }
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   for (const pipeline of pipelines) { try { await pipeline.close(); } catch { /* ignore */ } }
   dropStreamEncoderSpares();
   if (child && child.exitCode === null) {
-    // 只结束自己起的进程树
+    // Only terminate the process tree it spawned
     if (process.platform === 'win32') {
       await new Promise((resolve) => { const k = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); k.on('close', resolve); k.on('error', resolve); });
     } else child.kill('SIGKILL');

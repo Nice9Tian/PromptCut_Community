@@ -1,65 +1,94 @@
 /**
- * R5「播放与追帧」的验收探针（K3 / K4 / K5 / K6），外加「停顿声音」一例（音频看门狗的正向验收，见下）。
+ * Acceptance probe for R5 "Playback and frame catch-up" (K3 / K4 / K5 / K6), plus a "stalled audio"
+ * case (positive acceptance check of audio watchdog, see below).
  *
  *   node scripts/probes/playback-probe.mjs [--port 5281] [--seconds 10] [--keep]
  *                                          [--origin http://127.0.0.1:5281]
- *                                          [--json out/playback.json] [--only 节拍,跳转,...] [--trace]
+ *                                          [--json out/playback.json] [--only tick,seek,...] [--trace]
  *
- * 用例名（`--only` 认的）：节拍、停顿声音、到头、追帧、跳转、时间轴、降级。`--trace` 只对「停顿声音」有用：
- * 把每次停顿前后每 5 ms 的采样行（播放头、mediaStalled、声音元素的暂停/位置/能量）和 frame 到达时刻写进结果，排查用。
+ * Case names (recognized by `--only`): tick, stalled audio, end, frame catch-up, seek, timeline,
+ * downgrade. `--trace` is only useful for "stalled audio": writes sample rows every 5 ms before
+ * and after each stall (playhead, mediaStalled, sound element paused/position/energy) and frame
+ * arrival timestamps into results for troubleshooting.
  *
- * 不带 `--origin` 时自己起一台 dev server（缺省 5281，舞台端口随之 5282 / 5283），
- * `PROMPTCUT_DATA_DIR` 指到临时目录，免得把仓库 `out/card-costs.json` 冲掉。
+ * When running without `--origin`, starts its own dev server (default 5281, stage ports follow
+ * at 5282 / 5283), pointing `PROMPTCUT_DATA_DIR` to a temporary directory to avoid overwriting
+ * repository `out/card-costs.json`.
  *
- * # 怎么把「这张卡判轻还是判重」摆成想要的样子
+ * # How to configure "classify this card as light or heavy" into the desired state
  *
- * K2 的分派完全由 `costs` 决定，而 `costs` 是 K1 探针实测出来的 —— 在探针里等它测完
- * 再祈祷数值落在想要的一档，验收就变成了掷骰子。所以这里**自己写 `costs`**：
- * 项目建好之后按 `clipIdentityOf` 算出每个片段的 `identityKey`，PUT 一批合成记录，
- * 再调 `planDispatch.setPlanCosts` 让页面这端立刻重算并 `setPlan` 下发。
- * 合成记录里的 `stepMs` / `catchUpMs` / `vtOk` / `seekOk` 就是 K3 / K5 的分路开关。
+ * Dispatch in K2 is entirely determined by `costs`, while `costs` is measured by the K1 probe:
+ * waiting for it to finish in the probe and praying values fall into the desired tier turns
+ * acceptance check into rolling dice. So here we **write `costs` ourselves**: after creating
+ * the project, compute `identityKey` for each clip via `clipIdentityOf`, PUT a batch of synthetic
+ * records, then call `planDispatch.setPlanCosts` so the page side recalculates immediately and
+ * dispatches via `setPlan`. `stepMs` / `catchUpMs` / `vtOk` / `seekOk` in synthetic records serve
+ * as branching switches for K3 / K5.
  *
- * # 这台机器上的量法限制（照 R2 报告）
+ * # Measurement limitations on this machine (per R2 report)
  *
- * 无头 Chrome 不带 `--disable-gpu-vsync --disable-frame-rate-limit` 时 rAF 会退到 10 Hz，
- * 节拍循环的 `await __pcRealRaf()` 就等不到、拍长全错。所以两个开关必须带。
- * **代价**：带了之后 rAF 不再被垂直同步量化成 16.6 ms 的格子，于是
- * 「24 / 25 fps 自然是 2 / 3 帧交替」「30 fps 下没有 16.6 ms 的短拍」这两条在这里
- * **观察不到那个现象本身**（rAF 想什么时候来就什么时候来）。能量准、也是这一条真正要保的，
- * 是**到达间隔的均值 = 1000 / fps** 和**连续两条 `frame` 的 `sec` 差恒为 1/fps**。
- * 真机（有垂直同步的会话）上的 2/3 交替要靠 `oac-probe` 那种带显示节拍的跑法验，这里记一笔。
+ * Without `--disable-gpu-vsync --disable-frame-rate-limit`, headless Chrome rAF throttles down
+ * to 10 Hz, so `await __pcRealRaf()` in the tick loop never arrives, and tick lengths are all
+ * wrong. Both flags must be included.
+ * **Cost**: with them included, rAF is no longer quantized by VSync into 16.6 ms slots, so the two
+ * behaviors "24 / 25 fps naturally alternates 2 / 3 frames" and "no 16.6 ms short ticks at 30 fps"
+ * **cannot observe the phenomenon itself** here (rAF fires whenever it wants). What can be
+ * measured accurately, and what this check actually needs to guarantee, is **mean arrival interval
+ * = 1000 / fps** and **difference in `sec` between consecutive `frame` events is strictly 1/fps**.
+ * The 2/3 alternation on a real machine (session with VSync) needs to be verified using display
+ * tick runs like `oac-probe`; noted here.
  *
- * # 「停顿声音」：播放停顿时声音当场停（`e289b886`，`Preview.tsx` 的 `armStallWatch`）
+ * # "Stalled audio": audio stops immediately on playback stall (`e289b886`, `armStallWatch` in `Preview.tsx`)
  *
- * 「节拍」一例只验**不误触发**（正常播放 `mediaStallCount === 0`）。这一例验**它真的管用**：
- * 上一拍之后过了「名义拍长 + 40 ms（`MEDIA_STALL_MS`）」还没有下一拍，看门狗**不等那迟到的一拍**，当场把 `mediaStalled` 置真、
- * 让主文档的音频层 `playing` 变假，声音元素 `pause()`。
+ * The "tick" case only tests **no false triggers** (normal playback `mediaStallCount === 0`).
+ * This case tests that **it actually works**: if no next tick arrives after "nominal tick duration
+ * + 40 ms (`MEDIA_STALL_MS`)" since the previous tick, the watchdog **does not wait for the late
+ * tick**, sets `mediaStalled` to true immediately, turns `playing` in main doc audio layer false,
+ * and calls `pause()` on sound elements.
  *
- * 造停顿的办法（不改 src/、不调 `setMediaStalled`）：时间轴上放一段真的在出声的音频（页面里合成的 440 Hz WAV，blob 地址），
- * 正常播放起来、声音在出之后，在 **front 舞台的 iframe 里**同步空转 700 ms（第二次 400 ms）——它的主线程被占住，节拍循环一拍也发不出，
- * 父页收不到 `frame`。这就是「下一拍迟到」本身。空转用舞台页的真时钟 `window.__pcRealNow`（舞台把 `performance.now` 换成了虚拟时钟，
- * 拿它空转会转到死）。父页是另一个事件循环，采样器和看门狗的定时器照常跑；按住期间父页若也被拖住（舞台和父页同进程），
- * 「父页没被一起拖住」那条会拦下来，测量不作数。只在这一例里按住舞台，别的用例不受影响。
+ * How to create a stall (without modifying src/ or calling `setMediaStalled`): place actual
+ * audible audio on the timeline (synthesized 440 Hz WAV in page, blob URL); once playing normally
+ * and producing sound, synchronously spin for 700 ms (400 ms second time) in the **front stage
+ * iframe**: its main thread is blocked, tick loop cannot emit any ticks, and parent page receives
+ * no `frame`. This is the "late next tick" itself. Spinning uses real clock `window.__pcRealNow` on
+ * stage page (stage replaced `performance.now` with virtual clock; spinning on it hangs forever).
+ * Parent page is in another event loop, so sampler and watchdog timers run as usual; if parent page
+ * is also dragged down during hold (stage and parent page in same process), the check "parent page
+ * not dragged down together" will catch it, invalidating measurement. Only holds stage in this case;
+ * other cases unaffected.
  *
- * 采样器每 5 ms 一行：播放头、`__pcPreviewDiag().mediaStalled / mediaStallCount`、每个主文档 <audio> 的 paused / currentTime / readyState /
- * 元素重新加载次数 / 实时能量（元素 captureStream → AnalyserNode，只量不出声）。时刻都用 `performance.timeOrigin + performance.now()`
- * （父页）与舞台页的真时钟换算成同一把尺。无头 Chrome 带 `--mute-audio` 与 `--autoplay-policy=no-user-gesture-required`，不靠人听。
+ * Sampler outputs one row every 5 ms: playhead, `__pcPreviewDiag().mediaStalled / mediaStallCount`,
+ * each main doc <audio>'s paused / currentTime / readyState / element reload count / real-time energy
+ * (element captureStream → AnalyserNode, measurement only without output). Timestamps are converted
+ * to the same scale using `performance.timeOrigin + performance.now()` (parent page) and stage
+ * page's real clock. Headless Chrome runs with `--mute-audio` and `--autoplay-policy=no-user-gesture-required`,
+ * not relying on human hearing.
  *
- * 断言（每次停顿各一组）：
- *   1. 舞台真的停了（相邻两拍的间隔 ≥ 按住时长的 80%），父页没被拖住；停顿前 `mediaStalled` 为假、声音在放、量到能量；
- *   2. **`mediaStalled` 在迟到那一拍到达之前就为真**，`mediaStallCount` 随之 +1（这是整个功能的要点：当场，不是事后）；
- *   3. **声音当场停**：迟到那一拍到达之前，所有声音元素已 paused，且到那一拍到达之前没有被重新 play；迟到那一拍到达前的最后 100 ms，
- *      实时能量在阈值以下；
- *   4. **恢复**：拍子回来后 `mediaStalled` 回假、声音重新放出来；声音位置跟着当前播放头（与 t − 片段起点 差 ≤ 0.25 s），
- *      不低于停下时的位置、不在开头（没有从头重播），恢复后头 400 ms 里位置连续（相邻采样差 < 0.2 s）；
- *   整段采样：声音位置从不倒退，声音元素从不重新加载，`mediaStallCount` ≥ 停顿次数。
+ * Assertions (one set for each stall):
+ *   1. Stage truly stopped (interval between adjacent ticks ≥ 80% of hold duration), parent page
+ *      not dragged down; before stall `mediaStalled` is false, audio playing, energy detected;
+ *   2. **`mediaStalled` is true before the late tick arrives**, `mediaStallCount` increments by 1
+ *      (key point of entire feature: immediate, not after the fact);
+ *   3. **Sound stops immediately**: before the late tick arrives, all sound elements are paused
+ *      and not played again before that tick arrives; in last 100 ms before late tick arrives,
+ *      real-time energy is below threshold;
+ *   4. **Recovery**: after ticks resume, `mediaStalled` reverts to false, sound resumes playing;
+ *      audio position tracks current playhead (difference from t - clip start ≤ 0.25 s),
+ *      not lower than position when stopped, not at start (not replayed from beginning),
+ *      position continuous during first 400 ms after recovery (adjacent sample diff < 0.2 s);
+ *   Whole sample run: audio position never rewinds, sound element never reloads,
+ *   `mediaStallCount` ≥ stall count.
  *
- * 只记录、不当通过条件的时间（verification.md「耗时只记录，不当闸门」）：跳闸距停顿前最后一拍多久（名义 ≈ 73 ms）、
- * 比迟到那一拍早多少、元素 paused 距跳闸多久、能量排空用了多久（captureStream 那条路 paused 之后还要排空 50～90 ms 的缓冲）。
- * 断言里的先后（跳闸/停声在迟到那一拍**之前**）是顺序条件，不是耗时门槛：按住时长（700 / 400 ms）远大于跳闸所需（≈ 73 ms），
- * 机器慢一点也不会颠倒；等待时限（60 s / 30 s）只为防卡死。
+ * Timing only recorded, not used as pass condition (verification.md "record duration only, not
+ * as gate"): how long trip took from last tick before stall (nominal ~73 ms), how much earlier
+ * than the late tick, how long element paused took from trip, how long energy drain took
+ * (captureStream path still needs to drain 50-90 ms buffer after paused).
+ * Ordering in assertions (tripping/audio stopping **before** the late tick) is a sequence
+ * condition, not a timing gate: hold duration (700 / 400 ms) is far greater than trip time
+ * (~73 ms), so a slower machine will not invert the order; wait limits (60 s / 30 s) are solely
+ * to prevent hangs.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -70,7 +99,7 @@ import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
 
 import { stagePortsOf } from '../../server/stage-ports.mjs';
 
-/* ------------------------------------------------------------------ 参数 */
+/* ------------------------------------------------------------------ Parameters */
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback = null) => { const i = argv.indexOf(name); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : fallback; };
@@ -86,19 +115,19 @@ const origin = (originArg || `http://127.0.0.1:${port}`).replace(/\/+$/, '');
 const wants = (name) => !only.length || only.includes(name);
 
 const EDITOR_URL = '/?editor&headless=1&preview=stage';
-/** 页面视口宽(时间轴那一节按它裁看得见的 x,见 xAt) */
+/** Page viewport width (the timeline section clips visible x by it, see xAt) */
 const VIEWPORT_W = 1600;
 
 const fails = [];
 const out = { origin, editorUrl: EDITOR_URL, stagePorts: stagePortsOf(port), seconds, cases: {} };
 const check = (cond, label, extra) => {
   if (!cond) fails.push(label + (extra !== undefined ? ' :: ' + JSON.stringify(extra) : ''));
-  // 逐条打在 stderr 上(stdout 留给 JSON):通过项也留证据
+  // Print each item to stderr (keep stdout for JSON): keep evidence for passed items too
   process.stderr.write((cond ? 'PASS ' : 'FAIL ') + label + '\n');
   return cond;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-/** 进度打在 stderr 上:一趟要跑几分钟,卡在哪一步得看得见(stdout 留给 JSON) */
+/** Progress to stderr: a pass takes minutes, stuck step must be visible (stdout reserved for JSON) */
 const step = (msg) => process.stderr.write(`[${new Date().toISOString().slice(11, 19)}] ${msg}\n`);
 
 /* ------------------------------------------------------------------ dev server */
@@ -120,11 +149,11 @@ async function startServer() {
     try {
       const res = await fetch(origin + '/@vite/client');
       if (res.ok) return proc;
-    } catch { /* 还没起来 */ }
+    } catch { /* Not up yet */ }
     await sleep(500);
   }
   proc.kill();
-  throw new Error(`dev server 240 秒没起来:\n${log.join('')}`);
+  throw new Error(`dev server did not start within 240 seconds:\n${log.join('')}`);
 }
 
 async function stopServer() {
@@ -136,13 +165,13 @@ async function stopServer() {
   server = null;
 }
 
-/* ------------------------------------------------------------------ 页面侧的几段脚本 */
+/* ------------------------------------------------------------------ Page-side scripts */
 
 /**
- * 主文档里装两个记录器:
- *   - `__pcFrames`:每一条 `frame` / `ended` / `settled` 事件和它的**真实**到达时刻;
- *   - `__pcLongTasks`:主文档的长任务(> 50 ms),「零卡顿」那一条的量法。
- * 订阅走 `stageBridge.onStageEvent`(角色过滤已经在那里做完了)。
+ * Install two recorders in the main document:
+ *   - `__pcFrames`: every `frame` / `ended` / `settled` event and its **real** arrival timestamp;
+ *   - `__pcLongTasks`: long tasks (> 50 ms) in main document, measurement for "zero jank".
+ * Subscription goes through `stageBridge.onStageEvent` (role filtering already done there).
  */
 const INSTALL_RECORDERS = async () => {
   const bridge = await import('/src/editor/stageBridge.ts');
@@ -167,7 +196,7 @@ const INSTALL_RECORDERS = async () => {
   return true;
 };
 
-/** 建一个项目:一条轨道一张卡,参数由调用方给 */
+/** Create a project: one track per card, parameters provided by caller */
 const BUILD = async ({ fps, duration, cards }) => {
   await import('/src/cards/index.ts');
   const { actions, getState } = await import('/src/store/project.ts');
@@ -177,7 +206,7 @@ const BUILD = async ({ fps, duration, cards }) => {
     actions.addCardClip(card.id, card.start ?? 0, { duration: card.duration ?? duration });
   }
   const project = getState().project;
-  // 片段按加入顺序落在各自的轨道上;回一张 cardId → clipId 的表
+  // Clips land on their respective tracks in insertion order; returns a cardId → clipId map
   const byCard = {};
   for (const tr of project.tracks) for (const c of tr.clips) if (c.cardId) (byCard[c.cardId] ||= []).push(c.id);
   if (cards.some((c) => c.params)) {
@@ -191,9 +220,9 @@ const BUILD = async ({ fps, duration, cards }) => {
 };
 
 /**
- * 按 `clipIdentityOf` 算出每个片段的 `identityKey`,PUT 一批合成成本记录,
- * 再调 `setPlanCosts` 让页面立刻重算并 `setPlan` 下发给舞台。
- * `specs` 是 `{ [cardId]: { stepMs, catchUpMs, vtOk, seekOk, seekMs, kind } }`。
+ * Compute `identityKey` for each clip using `clipIdentityOf`, PUT a batch of synthetic cost
+ * records, then call `setPlanCosts` to let the page recalculate immediately and dispatch `setPlan`
+ * to the stage. `specs` is `{ [cardId]: { stepMs, catchUpMs, vtOk, seekOk, seekMs, kind } }`.
  */
 const SET_COSTS = async ({ specs }) => {
   const { getState } = await import('/src/store/project.ts');
@@ -202,11 +231,12 @@ const SET_COSTS = async ({ specs }) => {
   const project = getState().project;
   const { identityKeys } = clipIdentityOf(project);
   /*
-   * **必须沿用 K1 常驻探针写下的那个 `device` 串**：`costs` 按 `(identityKey, device)` 去重，
-   * 换一个 device 只会多一条记录，真实测出来的那条还在，`planPipelines` 索引时后写的赢，
-   * 于是「人为摆成轻卡」这件事根本不生效（`probe-slow` 实测 60 ms > B，会被判 `capped`）。
-   * 写回同一个 device 就是覆盖，而且 `probeRunner` 的「已有记录且 demoted !== true 就跳过」
-   * 会让它之后不再重测。
+   * **Must reuse the `device` string written by K1 resident probe**: `costs` deduplicates by
+   * `(identityKey, device)`; changing device only adds another record while the real measured
+   * record remains, and `planPipelines` indexing lets later writes win, so "manually configuring as
+   * light card" has no effect at all (`probe-slow` measured 60 ms > B, classified as `capped`).
+   * Writing back to the same device overwrites it, and `probeRunner`'s "skip if record exists and
+   * demoted !== true" prevents it from re-measuring later.
    */
   const existing = (await (await fetch('/api/data/costs')).json())?.costs ?? [];
   const device = existing[0]?.device ?? 'playback-probe';
@@ -230,7 +260,7 @@ const SET_COSTS = async ({ specs }) => {
   await fetch('/api/data/costs', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ records }) });
   const tuning = (await (await fetch('/api/data/costs')).json())?.tuning ?? null;
   setPlanCosts(records, tuning);
-  // 攒一拍才算(planDispatch 用 microtask 合批)
+  // Only counts once a tick accumulates (planDispatch batches with microtask)
   await Promise.resolve();
   await new Promise((r) => setTimeout(r, 50));
   const plan = currentPlan();
@@ -244,11 +274,13 @@ const SET_COSTS = async ({ specs }) => {
 const RESET_RECORDERS = () => { window.__pcFrames = []; window.__pcEvents = []; window.__pcLongTasks = []; };
 const READ_RECORDERS = () => ({ frames: window.__pcFrames, events: window.__pcEvents, longTasks: window.__pcLongTasks });
 
-/* ------------------------------------------------------------------ 「停顿声音」用例的页面侧脚本 */
+/* ------------------------------------------------------------------ Page-side script for "stalled audio" case */
 
 /**
- * 项目里放一段真的在出声的声音:页面里合成一段 16 kHz 单声道 WAV(440 Hz 正弦,带 3 Hz 的幅度起伏,整段有能量),
- * 做成 blob 地址挂到一条音频素材上,再放上时间轴。不依赖 ffmpeg、不依赖素材服务,也不走声音生成的按钮流程。
+ * Place actual audible sound into project: synthesize a 16 kHz mono WAV in page (440 Hz sine,
+ * with 3 Hz amplitude variation, energy throughout), convert to a blob URL, attach to an audio
+ * asset, and place onto timeline. Does not depend on ffmpeg or asset service, and does not go
+ * through the voice generation button flow.
  */
 const ADD_TONE = async ({ sec }) => {
   const { actions } = await import('/src/store/project.ts');
@@ -270,11 +302,15 @@ const ADD_TONE = async ({ sec }) => {
 };
 
 /**
- * 页面侧采样器:每 `everyMs` 毫秒一行 { w(墙钟毫秒), t(播放头), playing, stalled(`mediaStalled`), count(`mediaStallCount`),
- * els: 主文档每个 <audio> 的 { clip, paused, ct, ready, loads, rms } }。
- * rms = 元素 captureStream → AnalyserNode 的实时能量(只量不出声,不接 destination)。
- * 元素重新加载后原来那条采集音轨不再出数据、状态却仍是 live,所以握着流、每次 addtrack 重接(照 sound-preview-probe)。
- * `w` 用 `performance.timeOrigin + performance.now()`:和舞台页里同一算法取的时刻在同一把尺上(同一台机器的同一块表)。
+ * Page-side sampler: one row every `everyMs` ms { w (wall-clock ms), t (playhead), playing,
+ * stalled (`mediaStalled`), count (`mediaStallCount`), els: each main doc <audio>'s { clip,
+ * paused, ct, ready, loads, rms } }.
+ * rms = real-time energy from element captureStream → AnalyserNode (measures only without output,
+ * not connected to destination).
+ * After element reload, original captured audio track no longer outputs data but status remains
+ * live, so hold the stream and reconnect on each addtrack (per sound-preview-probe).
+ * `w` uses `performance.timeOrigin + performance.now()`: on the same scale as timestamps sampled
+ * by the same algorithm in stage page (same clock on same machine).
  */
 const INSTALL_SAMPLER = async ({ everyMs }) => {
   const { getState } = await import('/src/store/project.ts');
@@ -284,7 +320,7 @@ const INSTALL_SAMPLER = async ({ everyMs }) => {
   const attach = (h) => {
     const track = h.stream.getAudioTracks().filter((x) => x.readyState === 'live').at(-1);
     if (!track || track === h.track) return;
-    try { h.src?.disconnect(); } catch { /* 已断 */ }
+    try { h.src?.disconnect(); } catch { /* Broken */ }
     h.track = track;
     h.src = S.ctx.createMediaStreamSource(new MediaStream([track]));
     h.an = S.ctx.createAnalyser();
@@ -299,9 +335,9 @@ const INSTALL_SAMPLER = async ({ everyMs }) => {
       S.hooks.set(el, h);
     }
     if (!h.stream && el.readyState >= 1 && el.captureStream) {
-      try { h.stream = el.captureStream(); h.stream.addEventListener('addtrack', () => attach(h)); } catch { /* 下一拍再试 */ }
+      try { h.stream = el.captureStream(); h.stream.addEventListener('addtrack', () => attach(h)); } catch { /* Retry on next tick */ }
     }
-    if (h.stream) { try { attach(h); } catch { /* 下一拍再试 */ } }
+    if (h.stream) { try { attach(h); } catch { /* Retry on next tick */ } }
     return h;
   };
   const tick = () => {
@@ -330,25 +366,26 @@ const INSTALL_SAMPLER = async ({ everyMs }) => {
 };
 const READ_SAMPLER = () => ({ rows: window.__stallSampler.rows, maxTickMs: window.__stallSampler.maxTickMs });
 const STOP_SAMPLER = () => { const S = window.__stallSampler; if (S) { clearInterval(S.timer); S.timer = null; } return true; };
-/** 舞台页(front)里按住主线程 `ms` 毫秒:这段时间它的节拍循环一拍都发不出来。回起止时刻(墙钟毫秒) */
+/** Hold main thread in stage page (front) for `ms` ms: tick loop emits no ticks. Returns start and end wall-clock ms */
 const HOLD_STAGE = (ms) => {
-  // 舞台把 performance.now 换成了虚拟时钟(同步空转会转到死),真时钟在 __pcRealNow(src/kernel/clock.ts)
+  // Stage replaced performance.now with virtual clock (sync spin loops forever); real clock is in __pcRealNow (src/kernel/clock.ts)
   const now = () => performance.timeOrigin + (typeof window.__pcRealNow === 'function' ? window.__pcRealNow() : performance.now());
   const start = now();
   while (now() < start + ms);
   return { start, end: now(), virtualClock: typeof window.__pcRealNow === 'function' };
 };
-/** 记录器里的 frame 另存一份墙钟时刻(INSTALL_RECORDERS 的 `at` 是 performance.now(),这里换成同一把尺) */
+/** Save wall-clock timestamp for frame in recorder (`at` in INSTALL_RECORDERS is performance.now(), converted to same scale here) */
 const WALL_FRAMES = () => window.__pcFrames.map((f) => ({ sec: f.sec, w: performance.timeOrigin + f.at }));
 
-/* ------------------------------------------------------------------ 小工具 */
+/* ------------------------------------------------------------------ Utilities */
 
 /**
- * 时间轴标尺上按比例取一个**看得见**的 x。
+ * Proportionally sample a **visible** x on the timeline ruler.
  *
- * 标尺元素比视口宽得多（30 秒 × pxPerSec 轻松几千像素，横向靠 `.pc-tl-scroll` 滚动），
- * 按 `box.width` 取比例会算出一个在视口外的坐标 —— `page.mouse` 点过去什么都不会发生。
- * 这里只在「标尺左边缘 ~ 视口右边缘」这一段里取。
+ * Ruler element is much wider than viewport (30 seconds × pxPerSec easily reaches thousands of
+ * pixels, scrolling horizontally via `.pc-tl-scroll`), and taking a ratio against `box.width`
+ * calculates coordinates outside viewport: clicking there with `page.mouse` does nothing.
+ * Here we only sample within "ruler left edge to viewport right edge".
  */
 const xAt = (box, frac) => {
   const left = box.x + 24;
@@ -364,10 +401,11 @@ const stats = (xs) => {
 };
 
 /**
- * 等 K1 的常驻探针把这一轮测完(`ProbeGate` 的遮罩摘掉)。
+ * Wait for K1 resident probe to finish this round (remove `ProbeGate` overlay).
  *
- * **每次换项目之后都要等**:探针会按真实成绩写 `costs`,而这个探针接着要把同一批
- * `identityKey` 覆盖成人为摆好的值。不等的话两边会互相盖。
+ * **Must wait after every project switch**: the probe writes `costs` based on real results,
+ * whereas this probe next overwrites the same set of `identityKey` entries with manually
+ * prepared values. Without waiting, both sides will overwrite each other.
  */
 async function waitProbeIdle(page, timeoutMs = 300000) {
   await page.waitForFunction(async () => {
@@ -376,7 +414,7 @@ async function waitProbeIdle(page, timeoutMs = 300000) {
   }, { timeout: timeoutMs, polling: 300 }).catch(() => {});
 }
 
-/** 舞台侧的内部状态(跨源摸不到 document,只能问 `__pcStageDiag`) */
+/** Internal state on stage side (cannot touch document cross-origin, can only query `__pcStageDiag`) */
 async function stageDiag(page, id) {
   const frame = page.frames().find((f) => f.url().includes('stage=1') && f.url().includes(`id=${id}`));
   if (!frame) return null;
@@ -388,17 +426,17 @@ async function frontDiag(page) {
   return { preview: which, stage: await stageDiag(page, which.frontId) };
 }
 
-/* ------------------------------------------------------------------ 主流程 */
+/* ------------------------------------------------------------------ Main flow */
 
 const browser = await puppeteer.launch({
   headless: true,
-  // 一次 evaluate 里可能要等舞台跑完一整趟补跑,缺省 180 秒不够
+  // A single evaluate may need to wait for the stage to finish a full catch-up run; default 180s is not enough
   protocolTimeout: 240000,
   args: [...PROBE_CHROME_ARGS, '--window-position=-32000,-32000', '--no-first-run', '--hide-scrollbars', '--force-device-scale-factor=1',
     '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding',
-    // R2 报告:不带这两个,这台机器上无头 Chrome 的 rAF 退到 10 Hz,节拍循环根本等不到帧
+    // R2 report: without these two, headless Chrome rAF drops to 10 Hz here, and the tick loop never gets frames
     '--disable-gpu-vsync', '--disable-frame-rate-limit',
-    // 「停顿声音」用例要让主文档的 <audio> 真的起播(无手势也放)、又不让扬声器出声:不靠人听,靠元素状态与 captureStream 的能量
+    // "Stalled audio" case plays main doc <audio> without gestures or speaker sound: checks element state and captureStream energy
     '--autoplay-policy=no-user-gesture-required', '--mute-audio'],
 });
 let exitCode = 0;
@@ -422,8 +460,8 @@ try {
   await page.evaluate(INSTALL_RECORDERS);
   step('recorders installed');
 
-  /* ============================================================ 1. K4 节拍 */
-  if (wants('节拍')) {
+  /* ============================================================ 1. K4 Tick */
+  if (wants('ticks')) {
     const cadence = {};
     for (const fps of [24, 25, 30, 60]) {
       step(`cadence ${fps}: build`);
@@ -445,7 +483,7 @@ try {
       await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.pause(); });
       await sleep(400);
       const rec = await page.evaluate(READ_RECORDERS);
-      // pinned 架构 10:正常播放一次都不该判卡顿(24 / 25 fps 是 R5-6 说的误触发档)
+      // pinned architecture 10: normal playback must never be classified as jank (24 / 25 fps is false-trigger tier in R5-6)
       const stallDiag = await page.evaluate(() => (typeof window.__pcPreviewDiag === 'function' ? window.__pcPreviewDiag() : null));
       const gaps = [];
       const secDiffs = [];
@@ -456,35 +494,39 @@ try {
       const want = 1000 / fps;
       const g = stats(gaps);
       const wrongSec = secDiffs.filter((d) => Math.abs(d - 1 / fps) > 1e-6).length;
-      // 「短拍」= 到达间隔不到一拍的一半:真跳了一拍才算,rAF 的抖动不算
+      // "Short tick" = arrival interval < half a tick: only counts if a tick was actually skipped, not rAF jitter
       const shortBeats = gaps.filter((x) => x < want * 0.5).length;
       cadence[fps] = { beats: rec.frames.length, want: +want.toFixed(3), gap: g, secDiffWrong: wrongSec, shortBeats, longTasks: rec.longTasks.length,
         mediaStallCount: stallDiag?.mediaStallCount ?? null, mediaGapMaxMs: stallDiag ? +Number(stallDiag.mediaGapMaxMs).toFixed(3) : null };
       check(stallDiag && stallDiag.mediaStallCount === 0,
-        `${fps} fps:播 ${seconds} 秒 mediaStalled 触发 0 次(pinned 架构 10)`,
+        `${fps} fps: played ${seconds} seconds, mediaStalled fired 0 times (pinned architecture 10)`,
         { count: stallDiag?.mediaStallCount, overBeatMaxMs: stallDiag?.mediaGapMaxMs });
-      check(g && Math.abs(g.mean - want) <= 1, `${fps} fps:frame 到达间隔的均值 = ${want.toFixed(2)} ± 1 ms`, g);
-      check(wrongSec === 0, `${fps} fps:连续两条 frame 的 sec 差恒为 1/fps`, { wrongSec, n: secDiffs.length });
+      check(g && Math.abs(g.mean - want) <= 1, `${fps} fps: mean frame arrival interval = ${want.toFixed(2)} ± 1 ms`, g);
+      check(wrongSec === 0, `${fps} fps: the sec difference between two consecutive frames is always 1/fps`, { wrongSec, n: secDiffs.length });
       /*
-       * 「短拍」这一条任务书只对 **30 fps** 提(「30 fps 下没有 16.6 ms 的短拍」)。
-       * 别的帧率只记数不判:60 fps 上量到的短间隔是**父页收 postMessage 的抖动**
-       * —— 两条 `frame` 挨着到达,而舞台那边的拍是准的(`sec` 差恒为 1/fps、
-       * 10 秒恰好 600 拍)。真跳了一拍的话 `secDiffWrong` 会非零。
+       * The task brief only specifies "short tick" for **30 fps** ("no 16.6 ms short ticks at 30 fps").
+       * Other frame rates are counted without judging: short intervals measured at 60 fps are **jitter
+       * from parent page receiving postMessage**: two `frame` events arrive consecutively while ticks
+       * on the stage side are accurate (`sec` difference is strictly 1/fps, exactly 600 ticks in 10 s).
+       * If a tick was truly skipped, `secDiffWrong` will be non-zero.
        */
-      if (fps === 30) check(shortBeats === 0, `${fps} fps:没有 16.6 ms 的短拍`, { shortBeats });
-      // 「主文档零卡顿」:播放中主文档的长任务为 0
-      check(rec.longTasks.length === 0, `${fps} fps:播放中主文档长任务为 0`, rec.longTasks.slice(0, 3));
+      if (fps === 30) check(shortBeats === 0, `${fps} fps: no short 16.6 ms ticks`, { shortBeats });
+      // "Zero jank in main document": main document long tasks = 0 during playback
+      check(rec.longTasks.length === 0, `${fps} fps: 0 long tasks in the main document during playback`, rec.longTasks.slice(0, 3));
     }
-    out.cases['节拍'] = cadence;
+    out.cases['ticks'] = cadence;
   }
 
-  /* ============================================================ 1b. 停顿时声音当场停(音频看门狗的正向验收) */
-  if (wants('停顿声音')) {
+  /* ============================================================ 1b. Sound stops on stall (positive acceptance check of audio watchdog) */
+  if (wants('stall-sound')) {
     /*
-     * 造停顿:在**舞台页**(front 那个 iframe)里按住主线程 HOLD_MS 毫秒 —— 它的节拍循环在这段时间里一拍也发不出,
-     * 父页收不到 `frame`。这就是「下一拍迟到」本身,不改 src/、不碰 `setMediaStalled`,验的是 Preview 自己的看门狗。
-     * 父页是另一个文档(另一个事件循环),所以它的 setTimeout / 采样器照常跑;按住期间父页若也被拖住(长任务),
-     * 说明舞台和父页在这台 Chrome 里同进程,测量不可信,下面「父页没被拖住」那条会拦下来。
+     * Creating stall: hold the main thread for HOLD_MS ms in the **stage page** (the front iframe):
+     * its tick loop cannot emit a single tick during this time, and the parent page receives no `frame`.
+     * This is the "late next tick" itself; without modifying src/ or touching `setMediaStalled`,
+     * it tests Preview's own watchdog. Parent page is another document (another event loop), so its
+     * setTimeout / sampler runs as usual; if parent page is also dragged down during the hold (long
+     * task), it indicates stage and parent page share a process in this Chrome, making measurements
+     * untrustworthy, which "parent page not dragged down" below will catch.
      */
     const TONE_SEC = 40, FPS = 30, THR = 0.003;
     const HOLDS_MS = [700, 400];
@@ -494,7 +536,7 @@ try {
     step('stall: add tone');
     const tone = await page.evaluate(ADD_TONE, { sec: TONE_SEC });
     step('stall: tone added');
-    check(!!tone.clipId, '停顿声音:声音片段放上了时间轴', tone);
+    check(!!tone.clipId, 'Stall sound: the sound clip was placed on the timeline', tone);
     await waitProbeIdle(page);
     await page.evaluate(SET_COSTS, { specs: { 'probe-css': { stepMs: 1, catchUpMs: 10, vtOk: true, seekOk: true, seekMs: 1 } } });
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(0); });
@@ -509,26 +551,27 @@ try {
       const rows = window.__stallSampler.rows; const r = rows.at(-1);
       return !!r && !r.stalled && r.els.length > 0 && r.els.every((e) => !e.paused && e.ready >= 3 && e.ct > 0.2) && rows.length > 20 && (r.els[0].rms ?? 0) > 0.003;
     }, { timeout: 60000, polling: 50 }).then(() => true, () => false);
-    check(await waitT(1.0), '停顿声音:播放头走到了 1 秒(舞台在逐拍推进)');
-    check(await waitSounding(), '停顿声音:停顿之前声音在出声(没暂停、数据就绪、captureStream 量到能量)');
+    check(await waitT(1.0), 'Stall sound: the playhead reached 1 second (the stage is advancing tick by tick)');
+    check(await waitSounding(), 'Stall sound: the sound is audible before the stall (not paused, data ready, captureStream measured energy)');
     const front = await frontDiag(page);
     const frontFrame = page.frames().find((f) => f.url().includes('stage=1') && f.url().includes(`id=${front.preview.frontId}`));
-    check(!!frontFrame, '停顿声音:找到了 front 舞台的 iframe', front.preview?.frontId);
+    check(!!frontFrame, 'Stall sound: found the iframe of the front stage', front.preview?.frontId);
     const holds = [];
     for (const [i, holdMs] of HOLDS_MS.entries()) {
-      // 两次停顿之间等恢复、声音重新出声、播放头往前走一截,再来下一次(看看门狗恢复之后还会不会再次起效)
-      if (i > 0) { check(await waitSounding(), `停顿声音 #${i + 1}:上一次停顿之后声音恢复出声`); await sleep(500); }
+      // Between stalls, wait for audio recovery and playhead progress before running next (checks watchdog triggers again after recovery)
+      if (i > 0) { check(await waitSounding(), `Stall sound #${i + 1}: the sound is audible again after the previous stall`); await sleep(500); }
       step(`stall: hold #${i + 1} ${holdMs} ms`);
       const p = frontFrame.evaluate(HOLD_STAGE, holdMs);
       const win = await p;
       holds.push({ holdMs, ...win });
-      // 等恢复:mediaStalled 回到假、声音回来、播放头走过按住之前的位置
+      // Wait for recovery: mediaStalled returns to false, audio returns,
+      // playhead advances past pre-hold position
       const recovered = await page.waitForFunction(() => {
         const r = window.__stallSampler.rows.at(-1);
         return !!r && r.playing && r.stalled === false && r.els.every((e) => !e.paused);
       }, { timeout: 30000, polling: 25 }).then(() => true, () => false);
-      check(recovered, `停顿声音 #${i + 1}:停顿结束后 mediaStalled 回到假、声音重新放出来`);
-      await sleep(700);   // 恢复之后再看一小段,够判「接着放」
+      check(recovered, `Stall sound #${i + 1}: after the stall ends, mediaStalled returns to false and the sound plays again`);
+      await sleep(700);   // After recovery, watch another short segment, enough to determine "resumed playback"
     }
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.pause(); });
     await sleep(300);
@@ -537,59 +580,64 @@ try {
     const finalDiag = await page.evaluate(() => window.__pcPreviewDiag());
     await page.evaluate(STOP_SAMPLER);
 
-    /* ---- 分析 ---- */
+    /* ---- Analysis ---- */
     const clipStart = tone.start ?? 0;
     const analyses = [];
     for (const [i, h] of holds.entries()) {
       const n = i + 1;
-      const tag = (s) => `停顿声音 #${n}(按住 ${h.holdMs} ms):${s}`;
-      // 停顿前最后一拍、迟到的那一拍:按住区间 [start,end] 内最长的那个相邻 frame 间隔
+      const tag = (s) => `Stall sound #${n} (hold ${h.holdMs} ms): ${s}`;
+      // Last tick before stall, late tick: longest adjacent frame interval within hold interval [start,end]
       let best = null;
       for (let k = 0; k + 1 < frames.length; k++) {
         const a = frames[k], b = frames[k + 1];
         if (a.w < h.end && b.w > h.start && (!best || b.w - a.w > best.b.w - best.a.w)) best = { a, b };
       }
       const A = { holdMs: h.holdMs, holdStart: h.start, holdEnd: h.end, holdActualMs: +(h.end - h.start).toFixed(1) };
-      check(!!best, tag('找到了停顿前最后一拍和迟到的那一拍'), A);
+      check(!!best, tag('found the last tick before the stall and the late tick'), A);
       if (!best) continue;
       const lastBefore = best.a.w, late = best.b.w;
       A.beatGapMs = +(late - lastBefore).toFixed(1);
       A.lateFrameSec = best.b.sec;
-      check(late - lastBefore >= 0.8 * h.holdMs, tag('舞台真的停了:相邻两拍的间隔不短于按住时长的 80%'), { gap: A.beatGapMs });
+      check(late - lastBefore >= 0.8 * h.holdMs, tag('The stage really stopped: the gap between two adjacent ticks is no shorter than 80% of the hold duration'), { gap: A.beatGapMs });
       const win = rows.filter((r) => r.w >= lastBefore - 200 && r.w <= late + 200);
-      // 父页没被拖住:这一段里采样器相邻两行的间隔最大值(< 按住时长的一半,否则父页也被按住了,测量不可信)
+      // Parent page not stalled: max interval between adjacent sampler rows in this segment
+      // (< half the hold duration, otherwise parent page was also stalled, measurement untrustworthy)
       let maxRowGap = 0;
       for (let k = 1; k < win.length; k++) maxRowGap = Math.max(maxRowGap, win[k].w - win[k - 1].w);
       A.parentMaxSampleGapMs = +maxRowGap.toFixed(1);
-      check(maxRowGap < h.holdMs / 2, tag('父页没被一起拖住(采样器照常出行)'), { maxRowGap, holdMs: h.holdMs });
+      check(maxRowGap < h.holdMs / 2, tag('The parent page was not held up too (the sampler keeps going as usual)'), { maxRowGap, holdMs: h.holdMs });
 
       const before = rows.filter((r) => r.w <= lastBefore).at(-1);
       A.before = before && { t: before.t, stalled: before.stalled, count: before.count, ct: before.els.map((e) => +e.ct.toFixed(3)), paused: before.els.map((e) => e.paused) };
-      check(before && before.stalled === false && before.els.length > 0 && before.els.every((e) => !e.paused), tag('停顿开始前 mediaStalled 为假、声音在放'), A.before);
+      check(before && before.stalled === false && before.els.length > 0 && before.els.every((e) => !e.paused), tag('Before the stall starts, mediaStalled is false and the sound is playing'), A.before);
       const countBefore = before?.count ?? 0;
 
-      // ② 看门狗在迟到那一拍到达**之前**跳闸
+      // ② Watchdog trips **before** the late tick arrives
       const trip = rows.find((r) => r.w > lastBefore && r.stalled === true);
-      A.tripAt = trip ? +(trip.w - lastBefore).toFixed(1) : null;               // 距停顿前最后一拍(名义 = 拍长 + 40 ms ≈ 73 ms,只记录)
-      A.tripMarginMs = trip ? +(late - trip.w).toFixed(1) : null;               // 比迟到那一拍早多少
+      A.tripAt = trip ? +(trip.w - lastBefore).toFixed(1) : null;               // Time from last tick before stall (nominal = tick length + 40 ms ≈ 73 ms, record only)
+      A.tripMarginMs = trip ? +(late - trip.w).toFixed(1) : null;               // How much earlier than the late tick
       A.expectedTripMs = +(BEAT_MS + MEDIA_STALL_MS).toFixed(1);
-      check(!!trip && trip.w < late, tag('mediaStalled 在迟到那一拍到达之前就为真(当场跳闸,不是事后)'), { tripAfterLastBeatMs: A.tripAt, marginMs: A.tripMarginMs });
-      check(!!trip && trip.count === countBefore + 1, tag('mediaStallCount 随之 +1'), { before: countBefore, atTrip: trip?.count });
+      check(!!trip && trip.w < late, tag('mediaStalled is already true before the late tick arrives (tripped on the spot, not after the fact)'), { tripAfterLastBeatMs: A.tripAt, marginMs: A.tripMarginMs });
+      check(!!trip && trip.count === countBefore + 1, tag('mediaStallCount goes up by 1 accordingly'), { before: countBefore, atTrip: trip?.count });
 
-      // ③ 声音当场停:跳闸之后、迟到那一拍到达之前,每个声音元素都已 paused,并且一直停着
+      // ③ Audio stops immediately: after trip and before late tick arrives, every audio element is paused
+      // and remains stopped
       const paused = trip && rows.find((r) => r.w >= trip.w && r.els.length > 0 && r.els.every((e) => e.paused));
-      A.pausedAfterTripMs = paused ? +(paused.w - trip.w).toFixed(1) : null;   // 只记录
+      A.pausedAfterTripMs = paused ? +(paused.w - trip.w).toFixed(1) : null;   // Record only
       A.pausedAfterLastBeatMs = paused ? +(paused.w - lastBefore).toFixed(1) : null;
-      check(!!paused && paused.w < late, tag('声音元素在迟到那一拍到达之前就全部 paused'), { pausedAfterTripMs: A.pausedAfterTripMs, pausedAfterLastBeatMs: A.pausedAfterLastBeatMs });
+      check(!!paused && paused.w < late, tag('All sound elements are already paused before the late tick arrives'), { pausedAfterTripMs: A.pausedAfterTripMs, pausedAfterLastBeatMs: A.pausedAfterLastBeatMs });
       if (paused) {
         const during = rows.filter((r) => r.w >= paused.w && r.w < late);
         const resurrected = during.filter((r) => r.els.some((e) => !e.paused));
-        check(resurrected.length === 0, tag('停下之后到迟到那一拍之间没有元素被重新 play 起来'), resurrected.slice(0, 2));
+        check(resurrected.length === 0, tag('No element was played again between the stop and the late tick'), resurrected.slice(0, 2));
         /*
-         * 能量:元素 paused 之后,captureStream → AnalyserNode 这条路还要排空一小截缓冲才读到静音(实测 50～90 ms,
-         * 读数在这截里还会随声音的 3 Hz 起伏上下),所以不拿「paused 之后 N 毫秒」当界,
-         * 看**迟到那一拍到达之前的最后 100 ms** 里读数都在阈值以下;排空用了多久只记录。
-         * 停顿前量到过能量,说明这条采集路是活的、读到 0 不是因为它没接上。
+         * Energy: after an element is paused, the captureStream → AnalyserNode path still needs to drain a
+         * short buffer before reading silence (measured 50-90 ms, readings in this span still fluctuate
+         * with the 3 Hz audio swing), so instead of using "N ms after paused" as the boundary, check that
+         * readings are below threshold during the **last 100 ms before the late tick arrives**; how long
+         * the drain took is record only.
+         * Energy was measured before stall, showing this capture path is alive and reading 0 is not because
+         * it was disconnected.
          */
         const quiet = rows.filter((r) => r.w >= late - 100 && r.w < late);
         const loud = rows.filter((r) => r.w >= paused.w && r.w < late && r.els.some((e) => (e.rms ?? 0) >= THR)).at(-1);
@@ -597,47 +645,47 @@ try {
         const prePeak = Math.max(0, ...rows.filter((r) => r.w <= lastBefore).flatMap((r) => r.els.map((e) => e.rms ?? 0)));
         const quietPeak = Math.max(0, ...quiet.flatMap((r) => r.els.map((e) => e.rms ?? 0)));
         A.energy = { prePeak: +prePeak.toFixed(4), quietPeak: +quietPeak.toFixed(5), samplesQuiet: quiet.length };
-        check(prePeak >= THR, tag('停顿前量到过能量(采集路是活的)'), A.energy);
-        check(quiet.length >= 3 && quietPeak < THR, tag('迟到那一拍到达之前的最后 100 ms,实时能量在阈值以下(声音确实停了)'), A.energy);
+        check(prePeak >= THR, tag('Energy was measured before the stall (the capture path is alive)'), A.energy);
+        check(quiet.length >= 3 && quietPeak < THR, tag('In the last 100 ms before the late tick arrives, the real-time energy is below the threshold (the sound really stopped)'), A.energy);
         A.ctAtPause = paused.els.map((e) => +e.ct.toFixed(3));
         A.tAtPause = +paused.t.toFixed(3);
       }
 
-      // ④ 恢复:拍子回来后 mediaStalled 回假、声音接着当前播放头继续
+      // ④ Recovery: after ticks return, mediaStalled returns to false, audio resumes from current playhead
       const rec = rows.find((r) => r.w > late && r.stalled === false);
       A.recoveredAfterLateFrameMs = rec ? +(rec.w - late).toFixed(1) : null;
-      check(!!rec, tag('拍子回来之后 mediaStalled 回到假'), A.recoveredAfterLateFrameMs);
+      check(!!rec, tag('After ticks resume, mediaStalled returns to false'), A.recoveredAfterLateFrameMs);
       const resume = rec && rows.find((r) => r.w >= rec.w && r.els.length > 0 && r.els.every((e) => !e.paused && e.ready >= 3));
-      check(!!resume, tag('声音重新放出来'));
+      check(!!resume, tag('the sound plays again'));
       if (resume) {
         const settled = rows.find((r) => r.w >= resume.w + 400 && r.els.every((e) => !e.paused));
         const probeRow = settled ?? resume;
         const el = probeRow.els[0];
         const expected = probeRow.t - clipStart;
         A.afterResume = { t: +probeRow.t.toFixed(3), ct: +el.ct.toFixed(3), expectedCt: +expected.toFixed(3), diff: +(el.ct - expected).toFixed(3) };
-        check(Math.abs(el.ct - expected) <= 0.25, tag('声音位置跟着当前播放头(偏差 ≤ 0.25 s,即硬 seek 门槛的一半)'), A.afterResume);
-        if (paused) check(el.ct >= paused.els[0].ct - 0.02 && el.ct > 0.5, tag('没有从头重播、没有倒退(恢复后位置 ≥ 停下时位置,且不在开头)'), { ctAtPause: paused.els[0].ct, ctAfter: el.ct });
+        check(Math.abs(el.ct - expected) <= 0.25, tag('The sound position follows the current playhead (deviation ≤ 0.25 s, half of the hard-seek threshold)'), A.afterResume);
+        if (paused) check(el.ct >= paused.els[0].ct - 0.02 && el.ct > 0.5, tag('Did not replay from the start or go backward (position after resuming ≥ position at the stop, and not at the beginning)'), { ctAtPause: paused.els[0].ct, ctAfter: el.ct });
         const jump = rows.filter((r) => r.w >= resume.w).slice(0, 80).map((r, k, arr) => (k ? Math.abs(r.els[0].ct - arr[k - 1].els[0].ct) : 0));
-        check(Math.max(0, ...jump) < 0.2, tag('恢复后的头 400 ms 里位置连续(相邻两次采样的位置差 < 0.2 s,没有跳)'), { maxStep: +Math.max(0, ...jump).toFixed(3) });
+        check(Math.max(0, ...jump) < 0.2, tag('Position is continuous in the first 400 ms after resuming (position difference between adjacent samples < 0.2 s, no jumps)'), { maxStep: +Math.max(0, ...jump).toFixed(3) });
       }
       if (has('--trace')) A.frameTrace = frames.filter((f) => f.w >= lastBefore - 100 && f.w <= late + 150).map((f) => ({ dt: +(f.w - lastBefore).toFixed(1), sec: f.sec }));
       if (has('--trace')) A.trace = rows.filter((r) => r.w >= lastBefore - 30 && r.w <= late + 120).map((r) => ({ dt: +(r.w - lastBefore).toFixed(1), t: +r.t.toFixed(3), st: r.stalled, n: r.count, el: r.els.map((e) => [e.paused ? 'P' : 'p', +e.ct.toFixed(3), e.ready, e.rms === null ? null : +e.rms.toFixed(3)]) }));
       analyses.push(A);
     }
-    // 整条采样:位置不倒退、元素没有重新加载、最后一刻没有卡在停顿里
+    // Entire sample: position does not regress, elements not reloaded, final moment not stuck in stall
     let backward = 0; const loads = new Set();
     for (let k = 1; k < rows.length; k++) {
       if (rows[k].els[0] && rows[k - 1].els[0] && rows[k].els[0].ct < rows[k - 1].els[0].ct - 0.05) backward++;
       for (const e of rows[k].els) loads.add(e.loads);
     }
-    check(backward === 0, '停顿声音:整段采样里声音位置从不倒退(没有从头重来)', { backward });
-    check(loads.size === 1, '停顿声音:整段采样里声音元素没有重新加载', [...loads]);
-    check(finalDiag.mediaStallCount >= holds.length, `停顿声音:这一轮播放 mediaStallCount ≥ ${holds.length}`, finalDiag.mediaStallCount);
-    out.cases['停顿声音'] = { toneClip: tone, holds: analyses, samples: rows.length, maxSamplerTickMs: +maxTickMs.toFixed(2), mediaStallCount: finalDiag.mediaStallCount, mediaGapMaxMs: +Number(finalDiag.mediaGapMaxMs).toFixed(1), built: built.fps };
+    check(backward === 0, 'Stall sound: the sound position never goes backward across the whole sampling (no restart from the beginning)', { backward });
+    check(loads.size === 1, 'Stall sound: the sound element was not reloaded across the whole sampling', [...loads]);
+    check(finalDiag.mediaStallCount >= holds.length, `Stall sound: mediaStallCount ≥ ${holds.length} in this round of playback`, finalDiag.mediaStallCount);
+    out.cases['stall-sound'] = { toneClip: tone, holds: analyses, samples: rows.length, maxSamplerTickMs: +maxTickMs.toFixed(2), mediaStallCount: finalDiag.mediaStallCount, mediaGapMaxMs: +Number(finalDiag.mediaGapMaxMs).toFixed(1), built: built.fps };
   }
 
-  /* ============================================================ 2. 播放到头的收尾 */
-  if (wants('到头')) {
+  /* ============================================================ 2. Wrap-up when playing to the end */
+  if (wants('reach-end')) {
     await page.evaluate(BUILD, { fps: 30, duration: 2, cards: [{ id: 'probe-css' }] });
     await waitProbeIdle(page);
     await page.evaluate(SET_COSTS, { specs: { 'probe-css': { stepMs: 1, catchUpMs: 10, vtOk: true, seekOk: true, seekMs: 1 } } });
@@ -658,16 +706,17 @@ try {
     });
     const diag = await frontDiag(page);
     const ended = rec.events.find((e) => e.type === 'ended');
-    out.cases['到头'] = { ended, state, stage: diag.stage, settled: rec.events.filter((e) => e.type === 'settled') };
-    check(!!ended, '播放到头 post 了 ended');
-    check(state.playing === false, 'ended 之后 store.playing 是 false', state);
-    check(Math.abs(state.t - state.duration) < 1e-6, 'ended 之后 store.t = duration', state);
-    check(diag.stage && diag.stage.beatRunning === false, 'ended 之后节拍循环停了', diag.stage);
-    check(diag.stage && diag.stage.suppressed.length === 0, '最后一帧不停在抑制态(suppressed 空)', diag.stage?.suppressed);
+    out.cases['reach-end'] = { ended, state, stage: diag.stage, settled: rec.events.filter((e) => e.type === 'settled') };
+    check(!!ended, 'Playback reached the end and posted ended');
+    check(state.playing === false, 'After ended, store.playing is false', state);
+    check(Math.abs(state.t - state.duration) < 1e-6, 'After ended, store.t = duration', state);
+    check(diag.stage && diag.stage.beatRunning === false, 'After ended, the tick loop stopped', diag.stage);
+    check(diag.stage && diag.stage.suppressed.length === 0, 'The last frame does not stay in the suppression state (suppressed is empty)', diag.stage?.suppressed);
 
     /*
-     * R7-11 的回归:播放头停在末尾时**再按播放要从最早那张卡重播**,不是立刻 ended。
-     * legacy 的墙钟循环一直是这么做的(`Preview.tsx:155-158`),翻开关之后漏了。
+     * R7-11 regression: when playhead stops at the end, **pressing play again must replay from earliest
+     * card**, not ended immediately.
+     * Legacy wall-clock loop always did this (`Preview.tsx:155-158`), missed after flipping the switch.
      */
     await page.evaluate(RESET_RECORDERS);
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.play(); });
@@ -681,22 +730,22 @@ try {
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.pause(); });
     await sleep(300);
     const firstSec = replay.frames[0]?.sec ?? null;
-    out.cases['到头重播'] = { frames: replay.frames.length, firstSec, lastSec: replay.frames.at(-1)?.sec ?? null,
+    out.cases['replay-after-end'] = { frames: replay.frames.length, firstSec, lastSec: replay.frames.at(-1)?.sec ?? null,
       endedAgain: replay.events.filter((e) => e.type === 'ended').length, state: replayState };
-    check(replay.frames.length > 5, '播到头再按播放:真的开始播了(收到多条 frame)', out.cases['到头重播']);
-    check(firstSec !== null && firstSec < 0.5, '播到头再按播放:从最早那张卡(0 秒)起,不是从 duration 起', out.cases['到头重播']);
-    check(out.cases['到头重播'].endedAgain === 0, '播到头再按播放:不再立刻 ended', out.cases['到头重播']);
+    check(replay.frames.length > 5, 'Pressing play again after reaching the end: it really starts playing (multiple frames received)', out.cases['replay-after-end']);
+    check(firstSec !== null && firstSec < 0.5, 'Pressing play again after reaching the end: starts from the earliest card (0 seconds), not from duration', out.cases['replay-after-end']);
+    check(out.cases['replay-after-end'].endedAgain === 0, 'Pressing play again after reaching the end: does not immediately end again', out.cases['replay-after-end']);
   }
 
-  /* ============================================================ 3. 暂停后重卡追到活渲(第一路 / 第二路) */
-  if (wants('追帧')) {
-    /* ---- 第一路:vtOk 的重卡在可见舞台里自己追,post settled 带 clipId ---- */
+  /* ============================================================ 3. Heavy cards catch up to live render after pause (path 1 / path 2) */
+  if (wants('frame-catch-up')) {
+    /* ---- Path 1: heavy cards with vtOk catch up on their own in visible stage, post settled with clipId ---- */
     const built = await page.evaluate(BUILD, {
       fps: 30, duration: 30,
       cards: [{ id: 'probe-css', duration: 30 }, { id: 'probe-motion-js', duration: 30 }],
     });
     await waitProbeIdle(page);
-    // probe-css 判重(capped)且 vtOk → 第一路;probe-motion-js 判轻(便宜)
+    // probe-css classified as heavy (capped) and vtOk → path 1; probe-motion-js classified as light (cheap)
     await page.evaluate(SET_COSTS, {
       specs: {
         'probe-css': { stepMs: 1, catchUpMs: 10, vtOk: true, seekOk: false, seekMs: null, capped: true },
@@ -711,12 +760,12 @@ try {
     let diag = await frontDiag(page);
     const cssClip = built.byCard['probe-css']?.[0];
     const firstPath = rec.events.filter((e) => e.type === 'settled' && (e.clipIds ?? []).includes(cssClip));
-    out.cases['追帧第一路'] = { clipId: cssClip, settled: firstPath, stage: diag.stage, preview: diag.preview };
-    check(firstPath.length > 0, '第一路:settled 带上了那张卡的 clipId', rec.events);
-    check(diag.stage && !diag.stage.settling.includes(cssClip), '第一路:追完之后 .pc-settling 摘掉了', diag.stage?.settling);
-    check(diag.stage && !diag.stage.snapshots.includes(cssClip), '第一路:追完之后它不在 snapshots 里', diag.stage?.snapshots);
+    out.cases['frame-catch-up-path-1'] = { clipId: cssClip, settled: firstPath, stage: diag.stage, preview: diag.preview };
+    check(firstPath.length > 0, 'Path 1: settled carries that card\'s clipId', rec.events);
+    check(diag.stage && !diag.stage.settling.includes(cssClip), 'Path 1: after the catch-up finishes, .pc-settling is removed', diag.stage?.settling);
+    check(diag.stage && !diag.stage.snapshots.includes(cssClip), 'Path 1: after the catch-up finishes, it is not in snapshots', diag.stage?.snapshots);
 
-    /* ---- 第二路:vtOk = false 的重卡 → 整场景补跑后互换 ---- */
+    /* ---- Path 2: heavy cards with vtOk = false → swap after whole scene catch-up run ---- */
     await page.evaluate(SET_COSTS, {
       specs: {
         'probe-css': { stepMs: 1, catchUpMs: 5, vtOk: true, seekOk: true, seekMs: 1 },
@@ -734,14 +783,14 @@ try {
     diag = await frontDiag(page);
     const jsClip = built.byCard['probe-motion-js']?.[0];
     const swapped = rec.events.filter((e) => e.type === 'settled' && (e.clipIds ?? []).length === 0);
-    out.cases['追帧第二路'] = { clipId: jsClip, beforeFront, afterFront: diag.preview?.frontId, settled: swapped, stage: diag.stage };
-    check(swapped.length > 0, '第二路:互换之后新 front post 了 settled(clipIds 为空)', rec.events);
-    check(diag.preview && diag.preview.frontId !== beforeFront, '第二路:两个 iframe 换了身份', { beforeFront, after: diag.preview?.frontId });
-    check(diag.stage && diag.stage.snapshots.length === 0, '第二路:互换后快照平面全摘了', diag.stage?.snapshots);
+    out.cases['frame-catch-up-path-2'] = { clipId: jsClip, beforeFront, afterFront: diag.preview?.frontId, settled: swapped, stage: diag.stage };
+    check(swapped.length > 0, 'Path 2: after the swap the new front posted settled (clipIds empty)', rec.events);
+    check(diag.preview && diag.preview.frontId !== beforeFront, 'Path 2: the two iframes swapped identities', { beforeFront, after: diag.preview?.frontId });
+    check(diag.stage && diag.stage.snapshots.length === 0, 'Path 2: all snapshot planes were removed after the swap', diag.stage?.snapshots);
     check(diag.stage && diag.stage.suppressed.length === 0 && diag.stage.settling.length === 0,
-      '第二路:组件不在任何集合里', { suppressed: diag.stage?.suppressed, settling: diag.stage?.settling });
+      'Path 2: the component is not in any set', { suppressed: diag.stage?.suppressed, settling: diag.stage?.settling });
 
-    /* ---- 连点时间轴 10 次:不触发任何重发,最后一次正常互换 ---- */
+    /* ---- Click timeline 10 times in a row: no resends triggered, last one swaps normally ---- */
     await page.evaluate(RESET_RECORDERS);
     const front0 = (await page.evaluate(() => window.__pcPreviewDiag()))?.frontId;
     await page.evaluate(async () => {
@@ -754,35 +803,35 @@ try {
     rec = await page.evaluate(READ_RECORDERS);
     diag = await frontDiag(page);
     const swaps = rec.events.filter((e) => e.type === 'settled' && (e.clipIds ?? []).length === 0);
-    out.cases['连点十次'] = { swaps: swaps.length, front0, front1: diag.preview?.frontId, errors: errors.length };
-    check(swaps.length === 1, '连点时间轴 10 次只互换一次(前九次都被中止、没有重发)', swaps.length);
-    check(diag.preview && diag.preview.frontId !== front0, '最后一次正常互换', { front0, front1: diag.preview?.frontId });
+    out.cases['ten rapid clicks'] = { swaps: swaps.length, front0, front1: diag.preview?.frontId, errors: errors.length };
+    check(swaps.length === 1, 'Clicking the timeline 10 times in a row swaps only once (the first nine were aborted, none resent)', swaps.length);
+    check(diag.preview && diag.preview.frontId !== front0, 'The last swap goes through normally', { front0, front1: diag.preview?.frontId });
   }
 
-  /* ============================================================ 4. K3(a′) seekOk 的直接定位 */
-  if (wants('跳转')) {
+  /* ============================================================ 4. K3(a′) direct seek for seekOk */
+  if (wants('jump')) {
     const built = await page.evaluate(BUILD, { fps: 30, duration: 60, cards: [{ id: 'probe-css', duration: 60 }] });
     await waitProbeIdle(page);
     const clipId = built.byCard['probe-css'][0];
-    // seekOk 且 seekMs ≤ B(30 fps 时 B = 23.3 ms)→ (a′) 直接定位,不进预渲染集合
+    // seekOk and seekMs ≤ B (at 30 fps, B = 23.3 ms) → (a′) direct seek, does not enter prerender set
     const plan = await page.evaluate(SET_COSTS, {
       specs: { 'probe-css': { stepMs: 2, catchUpMs: 3000, vtOk: true, seekOk: true, seekMs: 3 } },
     });
-    check((plan.prerenderSet ?? []).length === 0, '(a′) 的卡不出现在 prerenderSet 里', plan.prerenderSet);
+    check((plan.prerenderSet ?? []).length === 0, 'The (a′) card does not appear in prerenderSet', plan.prerenderSet);
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(1); });
     await sleep(500);
     const before = await frontDiag(page);
     const genOf = (d, id) => (d?.stage?.remountGen ?? []).find((e) => e[0] === id)?.[1] ?? 0;
     const gen0 = genOf(before, clipId);
-    // 向前跳到第 50 秒:一步到位,**不重挂载**
+    // Jump forward to second 50: reached in one step, **no remount**
     const t0 = Date.now();
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(50); });
     await sleep(500);
     const mid = await frontDiag(page);
     const forwardMs = Date.now() - t0;
-    check(genOf(mid, clipId) === gen0, '(a′) 向前跳不重挂载', { gen0, gen1: genOf(mid, clipId) });
-    check(Math.abs((mid.stage?.t ?? 0) - 50) < 1e-6, '(a′) 向前跳一步到位', mid.stage?.t);
-    // 从第 55 秒拖回第 20 秒:**重挂载一次**之后一步到位
+    check(genOf(mid, clipId) === gen0, '(a′) a forward jump does not remount', { gen0, gen1: genOf(mid, clipId) });
+    check(Math.abs((mid.stage?.t ?? 0) - 50) < 1e-6, '(a′) a forward jump lands in one step', mid.stage?.t);
+    // Scrub back from second 55 to second 20: reached in one step after **remounting once**
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(55); });
     await sleep(400);
     const at55 = await frontDiag(page);
@@ -790,22 +839,24 @@ try {
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(20); });
     await sleep(500);
     const back = await frontDiag(page);
-    out.cases['跳转'] = { clipId, gen0, gen50: genOf(mid, clipId), gen55, gen20: genOf(back, clipId), forwardMs, prerenderSet: plan.prerenderSet };
-    check(genOf(back, clipId) === gen55 + 1, '(a′) 向后跳恰好重挂载一次', { gen55, gen20: genOf(back, clipId) });
-    check(Math.abs((back.stage?.t ?? 0) - 20) < 1e-6, '(a′) 向后跳之后一步到位', back.stage?.t);
-    check((back.stage?.settling ?? []).length === 0, '(a′) 不留在追帧态', back.stage?.settling);
+    out.cases['jump'] = { clipId, gen0, gen50: genOf(mid, clipId), gen55, gen20: genOf(back, clipId), forwardMs, prerenderSet: plan.prerenderSet };
+    check(genOf(back, clipId) === gen55 + 1, '(a′) a backward jump remounts exactly once', { gen55, gen20: genOf(back, clipId) });
+    check(Math.abs((back.stage?.t ?? 0) - 20) < 1e-6, '(a′) lands in one step after a backward jump', back.stage?.t);
+    check((back.stage?.settling ?? []).length === 0, '(a′) does not stay in the frame catch-up state', back.stage?.settling);
   }
 
-  /* ====================================== 4b. 时间轴点击 / 拖动松开后精确活渲(pinned 架构 9) */
-  if (wants('时间轴')) {
+  /* ====================================== 4b. Precise live render after timeline click / scrub release (pinned architecture 9) */
+  if (wants('timeline')) {
     /*
-     * 这一条量的是**真的鼠标**,不是 `actions.seek()` —— R5-16 的缺口正在这里:
-     * 松手坐标通常等于最后一次 flush 的位置(`t` 没变),在标尺上点一下时
-     * `seek` 和 `beginScrub` 又在同一个 React 事件里批成一次渲染(那一刻
-     * `scrubbing` 已经是 true)。两种情况下如果 `scrubbing` 不进 `setTime` 的去重键,
-     * 那条 `settle: true` 就永远补不上,判重卡停在快照上。
+     * This measures a **real mouse**, not `actions.seek()`. This is precisely the gap in R5-16:
+     * the release coordinate usually equals the last flush position (`t` unchanged); clicking
+     * on the ruler batches `seek` and `beginScrub` into a single render within the same React
+     * event (at that moment `scrubbing` is already true). In both cases, if `scrubbing` is not
+     * in the dedup key of `setTime`, that `settle: true` will never be sent, and cards classified
+     * as heavy stay stuck on snapshots.
      *
-     * 判据用 K5 第一路的 `settled`:只有收到 `setTime(t, { settle: true })` 才会起跑。
+     * The criterion uses `settled` from K5 path 1: it only starts upon receiving
+     * `setTime(t, { settle: true })`.
      */
     const built = await page.evaluate(BUILD, { fps: 30, duration: 30, cards: [{ id: 'probe-css', duration: 30 }] });
     await waitProbeIdle(page);
@@ -816,9 +867,10 @@ try {
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(1); });
     await sleep(800);
     /*
-     * 这台机器上没装 Claude Code / agy / codex 时,AI 面板会自动弹出设置对话框,
-     * 它的 `.ais-backdrop` 盖住整页 —— 不关掉的话鼠标一个字都落不到时间轴上
-     * (`elementFromPoint` 命中的是遮罩)。按 Esc 关,最多三次。
+     * When Claude Code / agy / codex is not installed on this machine, the AI panel automatically
+     * pops up a settings dialog whose `.ais-backdrop` covers the entire page: if not closed, mouse
+     * clicks cannot reach the timeline at all (`elementFromPoint` hits the overlay).
+     * Press Esc to close, at most three times.
      */
     for (let i = 0; i < 3; i++) {
       if (!(await page.evaluate(() => !!document.querySelector('.ais-backdrop, .pc-dialog-mask')))) break;
@@ -827,15 +879,16 @@ try {
     }
     const ruler = await page.$('[data-pc="ruler"]');
     const box = ruler ? await ruler.boundingBox() : null;
-    check(!!box, '时间轴标尺在页面上', box);
+    check(!!box, 'The timeline ruler is on the page', box);
     if (box) {
-      // 点击点真的落在标尺上(而不是某个遮罩上)——不验这一条的话下面两条会以「没发 settle」的面目失败
+      // Click point actually lands on the ruler (not on an overlay): without checking this,
+      // the next two will fail as "settle not sent"
       const hit = await page.evaluate(([px, py]) => {
         const el = document.elementFromPoint(px, py);
         return { tag: el ? `${el.tagName}.${el.className}`.slice(0, 80) : null, onRuler: !!el?.closest('[data-pc="ruler"]') };
       }, [xAt(box, 0.25), box.y + box.height / 2]);
-      out.cases['时间轴点击命中'] = hit;
-      check(hit.onRuler, '点击点落在时间轴标尺上(没有遮罩挡着)', hit);
+      out.cases['timeline click hit'] = hit;
+      check(hit.onRuler, 'The click point lands on the timeline ruler (no overlay in the way)', hit);
     }
     const waitSettled = (id) => page.waitForFunction(
       (clip) => (window.__pcEvents ?? []).some((e) => e.type === 'settled' && (e.clipIds ?? []).includes(clip)),
@@ -843,7 +896,7 @@ try {
     if (box) {
       const y = box.y + box.height / 2;
 
-      /* ---- ① 在标尺上点一下 ---- */
+      /* ---- ① Click once on the ruler ---- */
       await page.evaluate(RESET_RECORDERS);
       const beforeClick = await page.evaluate(async () => (await import('/src/store/project.ts')).getState().t);
       await page.mouse.move(xAt(box, 0.25), y);
@@ -852,7 +905,7 @@ try {
       const clickSettled = await waitSettled(cssClip);
       const afterClick = await page.evaluate(async () => (await import('/src/store/project.ts')).getState().t);
 
-      /* ---- ② 按住拖一段再松手 ---- */
+      /* ---- ② Hold, scrub for a bit, then release ---- */
       await page.evaluate(RESET_RECORDERS);
       await page.mouse.move(xAt(box, 0.45), y);
       await page.mouse.down();
@@ -860,30 +913,31 @@ try {
         await page.mouse.move(xAt(box, f), y);
         await sleep(60);
       }
-      await sleep(200);           // 让最后一次 flush 把 t 交出去:松手坐标因此和 store.t 相同
+      await sleep(200);           // Let the last flush hand over t: release coordinate is therefore identical to store.t
       await page.mouse.up();
       const dragSettled = await waitSettled(cssClip);
       const afterDrag = await page.evaluate(async () => (await import('/src/store/project.ts')).getState().t);
       const diag = await frontDiag(page);
 
-      out.cases['时间轴'] = { clipId: cssClip, beforeClick, afterClick, afterDrag, clickSettled, dragSettled, stage: diag.stage };
-      check(Math.abs(afterClick - beforeClick) > 1e-6, '点标尺把播放头挪走了', { beforeClick, afterClick });
-      check(clickSettled, '点时间轴之后 settled 到达(判重卡追成精确活渲)', out.cases['时间轴']);
-      check(dragSettled, '拖动松开之后 settled 到达', out.cases['时间轴']);
-      check(diag.stage && !diag.stage.settling.includes(cssClip), '松手之后 .pc-settling 摘掉了', diag.stage?.settling);
-      check(diag.stage && !diag.stage.snapshots.includes(cssClip), '松手之后它不在 snapshots 里', diag.stage?.snapshots);
+      out.cases['timeline'] = { clipId: cssClip, beforeClick, afterClick, afterDrag, clickSettled, dragSettled, stage: diag.stage };
+      check(Math.abs(afterClick - beforeClick) > 1e-6, 'Clicking the ruler moved the playhead', { beforeClick, afterClick });
+      check(clickSettled, 'settled arrives after clicking the timeline (cards judged heavy catch up to exact live render)', out.cases['timeline']);
+      check(dragSettled, 'settled arrives after the drag is released', out.cases['timeline']);
+      check(diag.stage && !diag.stage.settling.includes(cssClip), 'After release, .pc-settling was removed', diag.stage?.settling);
+      check(diag.stage && !diag.stage.snapshots.includes(cssClip), 'After release, it is not in snapshots', diag.stage?.snapshots);
     }
   }
 
-  /* ============================================================ 5. K6 降级 */
-  if (wants('降级')) {
+  /* ============================================================ 5. K6 downgrade */
+  if (wants('downgrade')) {
     const built = await page.evaluate(BUILD, {
       fps: 30, duration: 20,
       cards: [{ id: 'probe-slow', duration: 20, params: { burnMs: 60, label: 'K6' } }, { id: 'probe-css', duration: 20 }],
     });
     await waitProbeIdle(page);
     const slowClip = built.byCard['probe-slow'][0];
-    // 两张都判轻:probe-slow 的**探针成绩**写得很便宜,实测却要 60 ms —— K6 要抓的正是这种
+    // Both classified as light: probe-slow **probe score** is written as very cheap, but actually
+    // takes 60 ms: this is exactly what K6 is meant to catch
     await page.evaluate(SET_COSTS, {
       specs: {
         'probe-slow': { stepMs: 1, catchUpMs: 0, kind: 'random', vtOk: true, seekOk: true, seekMs: 1 },
@@ -902,7 +956,8 @@ try {
     const demote = rec.events.filter((e) => e.type === 'demote');
     const gaps = [];
     for (let i = 1; i < rec.frames.length; i++) gaps.push(rec.frames[i].at - rec.frames[i - 1].at);
-    // 只看**这一份项目**的那几条:同一台 dev server 上跑过别的用例时 costs 里还留着旧记录
+    // Look only at entries for **this project**: when other test cases ran on the same dev server,
+    // old records remain in costs
     const keysNow = await page.evaluate(async () => {
       const { getState } = await import('/src/store/project.ts');
       const { clipIdentityOf } = await import('/src/editor/costIdentity.ts');
@@ -911,39 +966,40 @@ try {
     const costs = await page.evaluate(async () => (await (await fetch('/api/data/costs')).json()));
     const demotedRecords = (costs?.costs ?? []).filter((r) => r.demoted === true && keysNow.includes(r.identityKey));
     const diag = await frontDiag(page);
-    out.cases['降级'] = {
+    out.cases['downgrade'] = {
       slowClip, demote, beatGap: stats(gaps), demotedRecords: demotedRecords.map((r) => ({ identityKey: r.identityKey, capped: r.capped, demoted: r.demoted, stepMs: r.stepMs })),
       preview: diag.preview, stagePendingDemote: diag.stage?.pendingDemote,
       secDiffWrong: rec.frames.slice(1).filter((f, i) => Math.abs(f.sec - rec.frames[i].sec - 1 / 30) > 1e-6).length,
     };
-    check(demote.length > 0, 'K6:人为把一张卡的成本拉到 60 ms 之后触发了 demote', demote);
-    check(demote[0]?.clipId === slowClip, 'K6:降的是最贵的那张(probe-slow)', { got: demote[0]?.clipId, want: slowClip });
-    check(demotedRecords.length === 1, 'K6:costs 里恰好一条 demoted: true', demotedRecords.length);
+    check(demote.length > 0, 'K6: demote fired after the cost of one card was artificially raised to 60 ms', demote);
+    check(demote[0]?.clipId === slowClip, 'K6: the card demoted is the most expensive one (probe-slow)', { got: demote[0]?.clipId, want: slowClip });
+    check(demotedRecords.length === 1, 'K6: exactly one entry in costs has demoted: true', demotedRecords.length);
     check(demotedRecords[0]?.capped === true && demotedRecords[0]?.demoted === true,
-      'K6:整条 PUT —— capped 和 demoted 都写上了,各测量值还在', demotedRecords[0]);
-    check(out.cases['降级'].secDiffWrong === 0, 'K6:慢帧不跳帧(sec 差恒为 1/fps)', out.cases['降级'].secDiffWrong);
+      'K6: whole-record PUT, with both capped and demoted written and the measured values still present', demotedRecords[0]);
+    check(out.cases['downgrade'].secDiffWrong === 0, 'K6: a slow frame does not skip frames (sec difference is always 1/fps)', out.cases['downgrade'].secDiffWrong);
     check((diag.preview?.pendingDemote ?? []).includes(slowClip),
-      'K6:死素材没就绪之前它留在 pendingDemote、照常活渲', diag.preview?.pendingDemote);
-    // 落盘的那一份
+      'K6: until the static asset is ready it stays in pendingDemote and keeps live rendering as usual', diag.preview?.pendingDemote);
+    // The copy written to disk
     if (!originArg && fs.existsSync(costsFile)) {
       const onDisk = JSON.parse(fs.readFileSync(costsFile, 'utf8'));
       const list = Array.isArray(onDisk) ? onDisk : (onDisk.records ?? onDisk.costs ?? []);
-      out.cases['降级'].onDisk = list.filter((r) => r.demoted === true && keysNow.includes(r.identityKey)).length;
-      check(out.cases['降级'].onDisk === 1, 'K6:out/card-costs.json 里那条 demoted: true 落盘了', out.cases['降级'].onDisk);
+      out.cases['downgrade'].onDisk = list.filter((r) => r.demoted === true && keysNow.includes(r.identityKey)).length;
+      check(out.cases['downgrade'].onDisk === 1, 'K6: the entry with demoted: true in out/card-costs.json was written to disk', out.cases['downgrade'].onDisk);
     }
   }
 
   /*
-   * 没有预渲染进程时 `/api/frames/*`(就绪索引的 SSE、快照字节)一律 503 —— 那是**设计好的**
-   * 退路(F5 / 总规则:预渲染进程不可用时舞台照常,重卡层透明),不算页面报错。
-   * 真的 JS 异常不带 "Failed to load resource"。
+   * When there is no prerender process, `/api/frames/*` (ready index SSE, snapshot bytes) always
+   * returns 503: that is a **by-design** fallback (F5 / general rule: when prerender process is
+   * unavailable, stage continues as normal, heavy card layer transparent), not a page error.
+   * Real JS exceptions do not contain "Failed to load resource".
    */
   const benign = (m) => /Failed to load resource/.test(m);
   out.errors = errors.filter((m) => !benign(m)).slice(0, 20);
   out.resourceErrors = errors.filter(benign).length;
-  check(out.errors.length === 0, '页面没有 JS 报错', out.errors.slice(0, 5));
+  check(out.errors.length === 0, 'The page has no JS errors', out.errors.slice(0, 5));
 } catch (err) {
-  fails.push('探针自己抛了:' + (err?.stack || String(err)));
+  fails.push('The probe itself threw:' + (err?.stack || String(err)));
   exitCode = 1;
 } finally {
   out.fails = fails;
@@ -953,9 +1009,9 @@ try {
     fs.writeFileSync(path.resolve(outJson), JSON.stringify(out, null, 2));
   }
   console.log(JSON.stringify(out, null, 2));
-  try { await browser.close(); } catch { /* 已经关了 */ }
+  try { await browser.close(); } catch { /* Already closed */ }
   await stopServer();
-  if (!keep) { try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* 删不掉就留着 */ } }
-  else console.log('临时数据目录留着:' + dataDir);
+  if (!keep) { try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* Keep if cannot be deleted */ } }
+  else console.log('Temporary data directory kept:' + dataDir);
 }
 process.exit(fails.length ? 1 : exitCode);

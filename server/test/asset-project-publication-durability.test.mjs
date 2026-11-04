@@ -12,7 +12,7 @@ async function fixture(t) {
   await fs.writeFile(temp, 'new'); return { dir, target, temp, marker: publicationMarker(target) };
 }
 
-test('发布耐久顺序：真实file sync/rename配合目录seam，意图先耐久、目标再耐久、最后清意图', async t => {
+test('publication durability order: real file sync/rename with the directory seam; the intent becomes durable first, then the target, and the intent is cleared last', async t => {
   const f = await fixture(t), events = [];
   const io = { ...fs, open: async (file, flags) => {
     const handle = await fs.open(file, flags), sync = handle.sync.bind(handle);
@@ -27,7 +27,7 @@ test('发布耐久顺序：真实file sync/rename配合目录seam，意图先耐
   assert.equal(events[unlink + 1], 'dir-sync'); assert.equal(await fs.readFile(f.target, 'utf8'), 'new');
 });
 
-test('intent目录sync故障发生在rename前：拒发布、回退完成，旧内容保留', async t => {
+test('intent directory sync failure occurring before rename: publication rejected, rollback completed, old content kept', async t => {
   const f = await fixture(t); await fs.writeFile(f.target, 'old'); let renamed = false, faulted = false;
   const io = { ...fs, rename: async (...args) => { renamed = true; return fs.rename(...args); } };
   const syncDirectory = async () => { if (!faulted && !await projectFileAccepted(f.target)) { faulted = true; throw new Error('intent-dirsync-failed'); } };
@@ -35,7 +35,7 @@ test('intent目录sync故障发生在rename前：拒发布、回退完成，旧�
   assert.equal(renamed, false); assert.equal(await fs.readFile(f.target, 'utf8'), 'old'); assert.equal(await projectFileAccepted(f.target), true);
 });
 
-test('开放读口后的目录sync故障：保留接受目标并failClose，不允许完成ACK', async t => {
+test('directory sync failure after the read endpoint is opened: keep the accepted target and failClose, do not allow the completion ACK', async t => {
   const f = await fixture(t); let renameDone = false, failed;
   const io = { ...fs, rename: async (...args) => { await fs.rename(...args); renameDone = true; } };
   const lease = { run: task => task(), failClose: error => { failed = error; } };
@@ -44,20 +44,20 @@ test('开放读口后的目录sync故障：保留接受目标并failClose，不�
   assert.match(failed.message, /accepted-dirsync-failed/); assert.equal(await fs.readFile(f.target, 'utf8'), 'new');
 });
 
-test('恢复缺backup准确failclosed：保留marker，不能把未接受目标开放', async t => {
+test('recovery with a missing backup fails closed exactly: keep the marker, and do not open an unaccepted target', async t => {
   const f = await fixture(t); await fs.writeFile(f.target, 'unaccepted');
   await fs.writeFile(f.marker, JSON.stringify({ v: 1, target: f.target, temp: f.temp, backup: path.join(f.dir, '.missing-backup') }));
   assert.throws(() => recoverProjectPublications(f.dir), { code: 'ENOENT' }); assert.equal(await projectFileAccepted(f.target), false);
 });
 
-test('本平台目录sync能力与正常恢复真实syscall；不等价于物理掉电测试', async t => {
+test('this platform\'s directory sync capability and normal recovery use real syscalls; not equivalent to a physical power-loss test', async t => {
   const f = await fixture(t);
   assert.equal(await syncProjectDirectory(f.dir), projectDirectoryDurability === 'fsync');
   await fs.writeFile(f.target, 'unaccepted'); await fs.writeFile(f.marker, JSON.stringify({ v: 1, target: f.target, temp: f.temp, backup: null }));
   recoverProjectPublications(f.dir); await assert.rejects(fs.stat(f.target), { code: 'ENOENT' }); assert.equal(await projectFileAccepted(f.target), true);
 });
 
-test('恢复遍历遇symlink明确拒绝，不跟随到其它目录', { skip: process.platform === 'win32' ? 'Windows本轮不请求symlink权限，Linux包装运行实际验证' : false }, async t => {
+test('recovery traversal explicitly rejects a symlink and does not follow it into other directories', { skip: process.platform === 'win32' ? 'Windows does not request symlink permission this round; the Linux wrapper run verifies it' : false }, async t => {
   const f = await fixture(t), other = path.join(f.dir, 'other'); await fs.mkdir(other); await fs.writeFile(path.join(other, 'keep'), 'owned');
   await fs.symlink(other, path.join(f.dir, 'link'), 'dir');
   assert.throws(() => recoverProjectPublications(f.dir), /project-publication-symlink/); assert.equal(await fs.readFile(path.join(other, 'keep'), 'utf8'), 'owned');

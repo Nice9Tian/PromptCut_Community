@@ -1,9 +1,9 @@
-/* 保证父级面板具备定位上下文 */
+/* Make sure the parent panel has a positioning context */
 .ai-panel {
   position: relative;
 }
 
-/* 抽屉容器：绝对定位盖在 AI 面板上，支持平滑滑入 */
+/* Drawer container: absolutely positioned over the AI panel, supporting a smooth slide-in */
 .chat-history-drawer {
   position: absolute;
   top: 0;
@@ -32,7 +32,7 @@
   }
 }
 
-/* 顶部标题行与关闭按钮 */
+/* Top title row and close button */
 .chat-drawer-header {
   flex: 0 0 auto;
   display: flex;
@@ -55,7 +55,7 @@
   gap: 6px;
 }
 
-/* 「新对话」:抽屉里最常点的一项,用强调色小按钮 */
+/* "New chat": the most frequently clicked item in the drawer, an accent-color small button */
 .chat-drawer-new-btn {
   height: 28px;
   padding: 0 12px;
@@ -100,7 +100,7 @@
   color: var(--ink);
 }
 
-/* 搜索栏 */
+/* Search bar */
 .chat-drawer-search-wrap {
   flex: 0 0 auto;
   padding: 8px 12px;
@@ -125,7 +125,7 @@
   border-color: var(--accent);
 }
 
-/* 会话列表区域 */
+/* Session list area */
 .chat-drawer-list {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -135,7 +135,7 @@
   gap: 4px;
 }
 
-/* 空状态与加载中文本 */
+/* Empty state and loading text */
 .chat-drawer-empty {
   padding: 24px 12px;
   text-align: center;
@@ -143,7 +143,7 @@
   color: var(--ink-muted);
 }
 
-/* 单个会话项 */
+/* A single session item */
 .chat-drawer-item {
   display: flex;
   align-items: center;
@@ -161,7 +161,7 @@
   background: var(--fill-hover);
 }
 
-/* 当前选中的会话项高亮 */
+/* Highlight for the currently selected session item */
 .chat-drawer-item.is-current {
   background: var(--fill-subtle);
   border-color: var(--accent);
@@ -175,7 +175,7 @@
   gap: 3px;
 }
 
-/* 标题一行截断 */
+/* Title truncated to one line */
 .chat-drawer-item-title {
   font-size: 13px;
   font-weight: 500;
@@ -185,13 +185,13 @@
   text-overflow: ellipsis;
 }
 
-/* 时间与消息数字段 */
+/* Time and message count fields */
 .chat-drawer-item-meta {
   font-size: 11px;
   color: var(--ink-muted);
 }
 
-/* 删除按钮 */
+/* Delete button */
 .chat-drawer-delete-btn {
   flex: 0 0 auto;
   width: 22px;
@@ -213,7 +213,7 @@
   color: var(--danger);
 }
 
-/* 「云端」一组(契约 7.4):本机对话之后另起一组,在跑的对话带「进行中」 */
+/* The "Cloud" group (contract 7.4): a separate group after the local chats, and running chats carry "In progress" */
 .chat-drawer-group { margin-top: 6px; border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08)); }
 .chat-drawer-group-title { padding: 8px 12px 4px; font-size: 11px; letter-spacing: 0.04em; color: var(--ink-muted); }
 .chat-drawer-item[data-state="running"] .chat-drawer-item-meta { color: var(--accent, #5aa9ff); }
@@ -221,7 +221,7 @@
 .chat-drawer-item[data-state="failed"] .chat-drawer-item-meta,
 .chat-drawer-item[data-state="revoked"] .chat-drawer-item-meta { color: var(--danger, #e5534b); }
 
-/* 云端一组：满额提示 */
+/* Cloud group: limit-reached notice */
 .chat-drawer-limit {
   padding: 6px 10px;
   margin-bottom: 4px;

@@ -1,18 +1,26 @@
 /**
- * 视频取帧节奏探针的压力版:一边让机器满载,一边把 `video-source-cadence-probe.mjs` 连跑若干遍,数挂了几遍。
- * 用来复现「素材效果卡的视频输入源偶发取到上一帧」(机器忙时 `seeked` 之后读到的还是 seek 前那一帧)。
+ * Stress version of video frame-fetching cadence probe: runs `video-source-cadence-probe.mjs`
+ * repeatedly while fully loading the machine, counting how many runs fail. Used to reproduce
+ * "video input source of media effect cards occasionally fetches the previous frame" (reading the
+ * pre-seek frame after `seeked` when the machine is busy).
  *
  *   node scripts/probes/video-source-cadence-stress.mjs [--port 6210] [--runs 20] [--hogs 16] [--parallel 1] [--logdir DIR]
  *
- *   --parallel P  同时跑 P 个探针(端口 port、port+3、port+6…,每个占三个连号),共 runs 遍。多个 Chrome 同时导出
- *                 比纯 CPU 负载更像「认领闸探针起一堆 Chrome」那种忙法。
- *   --logdir DIR  挂了的那一遍把探针的完整输出存成 DIR/run-<n>.log(含页面日志),便于事后对照。
+ *   --parallel P  Run P probes concurrently (ports: port, port+3, port+6..., each occupying three
+ *                 consecutive numbers), for runs times in total. Multiple Chrome instances
+ *                 exporting concurrently resembles the workload of "claim gate probe launching a
+ *                 bunch of Chromes" better than pure CPU load.
+ *   --logdir DIR  For failed runs, saves full probe output to DIR/run-<n>.log (including page logs)
+ *                 for post-mortem analysis.
  *
- *   --hogs N   另起 N 个占满一个核的 node 子进程(纯 JS 死循环,不读写文件);默认 = CPU 核数。0 = 不加负载。
- *   --runs K   探针一共跑 K 遍(--parallel 1 时串行、同一个端口)。
+ *   --hogs N   Spawn N additional node child processes that fully saturate one core (pure JS
+ *              infinite loop, no file I/O); default = CPU core count. 0 = no added load.
+ *   --runs K   Run the probe K times in total (serial on the same port when `--parallel 1`).
  *
- * 负载进程由本脚本起、本脚本结束(正常退出、异常、Ctrl+C 都收)。
- * 输出最后一行 JSON:`{ ok, runs, failed, exportMs: [...], fails: [[...], ...] }`;退出码 0 当且仅当每一遍都过。
+ * Load processes are started and terminated by this script (cleaned up on normal exit, errors,
+ * and Ctrl+C).
+ * Outputs JSON on the last line: `{ ok, runs, failed, exportMs: [...], fails: [[...], ...] }`;
+ * exit code 0 if and only if every run passes.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,13 +40,13 @@ const PROBE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'video-sou
 const log = (msg) => console.log(`[cadence-stress] ${msg}`);
 
 const hogs = [];
-const stopHogs = () => { for (const h of hogs.splice(0)) { try { h.kill(); } catch { /* 已退出 */ } } };
+const stopHogs = () => { for (const h of hogs.splice(0)) { try { h.kill(); } catch { /* Exited */ } } };
 process.on('exit', stopHogs);
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopHogs(); process.exit(130); });
 for (let i = 0; i < HOGS; i++) {
   hogs.push(spawn(process.execPath, ['-e', 'for(;;){}'], { stdio: 'ignore', windowsHide: true }));
 }
-log(`负载进程 ${HOGS} 个,探针 ${RUNS} 遍,并行 ${PARALLEL},端口 ${PORT} 起`);
+log(`${HOGS} load processes, ${RUNS} probe runs, ${PARALLEL} in parallel, ports starting at ${PORT}`);
 
 const runOnce = (port) => new Promise((resolve) => {
   const child = spawn(process.execPath, [PROBE, '--port', String(port)], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: process.env });
@@ -48,7 +56,7 @@ const runOnce = (port) => new Promise((resolve) => {
   child.on('close', (code) => {
     const last = text.trim().split(/\r?\n/).reverse().find((l) => l.startsWith('{'));
     let json = null;
-    try { json = JSON.parse(last); } catch { /* 没有结果行 */ }
+    try { json = JSON.parse(last); } catch { /* No result line */ }
     resolve({ code, json, text, tail: text.slice(-800) });
   });
 });
@@ -60,13 +68,13 @@ try {
     while (next < RUNS) {
       const r = next++;
       const { code, json, text, tail } = await runOnce(port);
-      const fails = json?.fails ?? [`没有结果行,退出码 ${code}:${tail}`];
+      const fails = json?.fails ?? [`No result line, exit code ${code}: ${tail}`];
       result.exportMs[r] = json?.exportMs ?? null;
       if (code !== 0 || fails.length) {
         result.failed++; result.fails.push({ run: r + 1, fails });
         if (LOGDIR) fs.writeFileSync(path.join(LOGDIR, `run-${r + 1}.log`), text);
       }
-      log(`第 ${r + 1} 遍(端口 ${port}):${code === 0 ? '过' : '挂'} exportMs=${json?.exportMs}${fails.length ? ' ' + JSON.stringify(fails).slice(0, 400) : ''}`);
+      log(`Run ${r + 1} (port ${port}): ${code === 0 ? 'pass' : 'fail'} exportMs=${json?.exportMs}${fails.length ? ' ' + JSON.stringify(fails).slice(0, 400) : ''}`);
     }
   };
   await Promise.all(Array.from({ length: PARALLEL }, (_, i) => lane(PORT + 3 * i)));

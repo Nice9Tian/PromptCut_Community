@@ -1,7 +1,7 @@
 /**
- * Chrome 内混音。
+ * Audio mixing in Chrome.
  *
- * 从 scripts/export-frames.mjs 拆出来(纯重构,逐字搬运)。
+ * Split out from scripts/export-frames.mjs (pure refactor, verbatim move).
  */
 
 import puppeteer from 'puppeteer';
@@ -17,18 +17,23 @@ export function audioClipInput(entry) {
 }
 
 /**
- * 声音在 Chrome 里混:每段先用 ffmpeg 裁出时间轴用到的那一截(48 kHz 立体声 float wav,几 MB),
- * 写一份 plan.json,开混音页(?audioMix=1,src/AudioMixView.tsx)在 OfflineAudioContext 里按位置、音量、
- * 淡入淡出、音频效果渲成整条 mix.wav 交回服务端(POST /api/export/<id>/audio-mix)。
- * 页面和预览用同一份效果链(src/audio/fxChain.ts),所以编辑台听到的就是导出的。
- * 需要页面地址里有 /@export/<id>/project.json —— 裁好的 wav 就靠这个 id 从 dev server 取。
+ * Audio is mixed in Chrome: each segment is first trimmed with ffmpeg to the section used on the
+ * timeline (48 kHz stereo float wav, a few MB), writes a plan.json, opens the audio mix page
+ * (?audioMix=1, src/AudioMixView.tsx) to render into a full mix.wav in OfflineAudioContext based
+ * on position, volume, fade in/out, and audio effects, and sends it back to the server
+ * (POST /api/export/<id>/audio-mix).
+ * The page and preview share the same effects chain (src/audio/fxChain.ts), so what is heard in the
+ * editor is what gets exported.
+ * Requires /@export/<id>/project.json in the page URL: the trimmed wav relies on this id to be
+ * fetched from the dev server.
  */
 export async function mixAudioInChrome({ ffmpegCmd, outDir, plan, project, pageUrl, durationSec }) {
   const u = new URL(pageUrl);
   const m = /^\/@export\/([^/]+)\/project\.json$/.exec(u.searchParams.get('timeline') || '');
-  if (!m) throw new Error('页面地址里没有 /@export/<id>/project.json,混音页取不到裁好的 wav');
+  if (!m) throw new Error('The page URL has no /@export/<id>/project.json, so the mix page cannot get the trimmed wav');
   const id = m[1];
-  // 时间轴时长之后才开始的段不出声,不用裁(项目 duration 比内容短时 plan 里会有这种段)
+  // Segments starting after timeline duration produce no sound and need no trimming (such segments
+  // can appear in the plan when project duration is shorter than content)
   plan = plan.filter((e) => e.start < durationSec);
   const audioDir = path.join(outDir, 'audio');
   await fs.mkdir(audioDir, { recursive: true });
@@ -36,10 +41,10 @@ export async function mixAudioInChrome({ ffmpegCmd, outDir, plan, project, pageU
     const p = spawn(ffmpegCmd, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
     let err = '';
     p.stderr.on('data', (d) => { err += d; });
-    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error('ffmpeg 退出码 ' + code + ':' + err.trim().slice(-400)))));
+    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error('ffmpeg exit code ' + code + ':' + err.trim().slice(-400)))));
     p.on('error', reject);
   });
-  // 裁段:4 个并行,每段只解用到的那几秒
+  // Trim segments: 4 in parallel, decoding only the few seconds used for each segment
   const clips = new Array(plan.length);
   let next = 0;
   let aborted = false;
@@ -60,7 +65,7 @@ export async function mixAudioInChrome({ ffmpegCmd, outDir, plan, project, pageU
         ...(e.env ? { env: e.env } : null) };
     }
   };
-  // 一个裁段失败就让其余 worker 停下来,别让孤儿 ffmpeg 继续往 audio/ 里写
+  // If any segment trim fails, stop the remaining workers so orphaned ffmpeg won't keep writing to audio/
   await Promise.all(Array.from({ length: Math.min(4, plan.length) }, worker)).catch((e) => { aborted = true; throw e; });
   const mixPlan = { sampleRate: 48000, duration: Number(durationSec), clips };
   await fs.writeFile(path.join(audioDir, 'plan.json'), JSON.stringify(mixPlan));
@@ -78,21 +83,22 @@ export async function mixAudioInChrome({ ffmpegCmd, outDir, plan, project, pageU
     page.on('console', (msg) => { if (msg.type() === 'error' || msg.type() === 'warn') console.log('MIX LOG:', msg.text()); });
     const mixUrl = u.origin + '/?audioMix=1&plan=' + encodeURIComponent('/@export/' + id + '/audio/plan.json') + '&out=' + encodeURIComponent('/api/export/audio-mix/' + id);
     const resp = await page.goto(mixUrl, { waitUntil: 'load', timeout: 60000 });
-    // 拿到的不是混音页(403 说明页、404)就当场失败,别等到超时才退回 ffmpeg
-    if (resp && !resp.ok()) throw new Error('混音页打不开:HTTP ' + resp.status());
+    // If response is not the mix page (403 info page, 404), fail immediately rather than waiting for
+    // timeout to fall back to ffmpeg
+    if (resp && !resp.ok()) throw new Error('Mix page failed to open: HTTP ' + resp.status());
     const handle = await page.waitForFunction(() => window.__pcAudioMix, { timeout: 90000, polling: 200 }).catch(async (e) => {
       const title = await page.title().catch(() => '');
-      throw new Error('混音页 90 秒没有结果(页面标题「' + title + '」):' + e.message);
+      throw new Error('Mix page produced no result in 90 s (page title "' + title + '"): ' + e.message);
     });
     result = await handle.jsonValue();
   } finally {
     await browser.close().catch(() => {});
   }
-  if (!result?.ok) throw new Error(result?.error || '混音页没有返回结果');
-  for (const n of result.notes || []) console.warn('混音:', n);
+  if (!result?.ok) throw new Error(result?.error || 'Mix page returned no result');
+  for (const n of result.notes || []) console.warn('Mix: ', n);
   const mixWav = path.join(audioDir, 'mix.wav');
-  if (!fsSync.existsSync(mixWav)) throw new Error('mix.wav 没交回来');
+  if (!fsSync.existsSync(mixWav)) throw new Error('mix.wav was not returned');
   const peakDb = 20 * Math.log10(Math.max(result.peak || 0, 1e-9));
-  console.log('Chrome mix done in ' + ((result.renderMs || 0) / 1000).toFixed(2) + ' s, peak ' + peakDb.toFixed(1) + ' dBFS' + (peakDb > 0 ? '(削波!挂个 limiter 或压低音量)' : ''));
+  console.log('Chrome mix done in ' + ((result.renderMs || 0) / 1000).toFixed(2) + ' s, peak ' + peakDb.toFixed(1) + ' dBFS' + (peakDb > 0 ? '(clipping! add a limiter or lower the volume)' : ''));
   return { mixWav, clips: clips.length };
 }

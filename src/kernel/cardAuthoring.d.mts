@@ -3,8 +3,10 @@ export function applyCardDefinition(project: Project, args: any, getCard?: (id: 
 export function cloneCardClipInstance(project: Project, oldClipId: string, newClipId: string, nodeId?: string, timeOffset?: number): { project: Project; nodeId?: string };
 
 /**
- * 把片段上那张素材效果卡摘掉:这一个节点从链上取下来,下游接到它的上游。
- * 没有 `source` 那一路的卡(转场的 A/B、无输入的卡)摘不了,抛出写明原因的错。
+ * Detach the media effect card on the clip: remove this node from the chain and connect downstream
+ * to its upstream.
+ * Cards without a `source` path (A/B of transitions, cards without inputs) cannot be detached;
+ * throws an error stating the reason.
  */
 export function detachCardNode(
   project: Project,

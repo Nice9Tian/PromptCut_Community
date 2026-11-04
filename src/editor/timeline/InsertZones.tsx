@@ -6,8 +6,9 @@ import { useDropTarget } from "./useDropTarget";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 序列之间的插入缝:拖着卡片 / 素材经过两条序列中间时出现一条蓝线,松手就在那个位置插一条新序列。
- * 只在拖动过程中存在,平时不挡片段的点击和拖动。
+ * Insert gaps between tracks: when dragging a card / media between two tracks, a blue line appears, and
+ * releasing inserts a new track at that position.
+ * It exists only during a drag, and normally does not block clicks and drags on clips.
  */
 export function InsertZones() {
   const tracks = useStore((s) => s.project.tracks);
@@ -40,7 +41,7 @@ function InsertZone({ index }: { index: number }) {
           <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 rounded-full pointer-events-none bg-[var(--ui-accent)]" />
           <div
             className="absolute top-1/2 z-50 flex h-5 -translate-y-1/2 items-center whitespace-nowrap rounded px-1.5 text-[10px] text-white pointer-events-none bg-[var(--ui-accent)]"
-            // 最上面那条缝贴着片段层顶边:标签往上半挪会有 5px 钻到吸顶的绿条下面(片段层在它下面一层),改成从顶边往下放
+            // The topmost gap sits against the top edge of the clip layer: if the label moved up by half, 5px would slip under the sticky green bar (the clip layer is one layer below it), so place it going down from the top edge instead
             style={index === 0
               ? { left: `${xOfTime(plan.start, pxPerSec)}px`, top: 0, transform: "none", translate: "none" }
               : { left: `${xOfTime(plan.start, pxPerSec)}px` }}

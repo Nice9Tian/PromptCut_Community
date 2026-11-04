@@ -7,13 +7,13 @@ export interface AudioPlanEntry {
   start: number;
   dur: number;
   offset: number;
-  /** 变速的声音段才有:随倍率变速变调(kernel/clipTime.mjs 的 ffmpegVarispeed / resampleVarispeed) */
+  /** Only present for speed-changed audio clips: varispeed and pitch-shift with rate (ffmpegVarispeed / resampleVarispeed in kernel/clipTime.mjs) */
   speed?: number;
   volume: number;
   fadeIn: number;
   fadeOut: number;
   fx: { def: AudioFxDef; params?: Record<string, number> } | null;
-  /** 剪辑段展开出来的片段才有:外层各段的包络(时间轴绝对时间) */
+  /** Only present for clips expanded from cut segments: envelopes of outer segments (absolute timeline time) */
   env?: import("./cutAudio.d.mts").CutEnvelope[];
 }
 

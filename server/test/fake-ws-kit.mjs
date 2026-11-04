@@ -1,18 +1,25 @@
 /**
- * 仅供测试与探针，生产代码不得引用。
+ * For testing and probes only; must not be referenced by production code.
  *
- * M5a 网络层测试（契约 `docs/plan/render-queue-contract.md` G.9）与探针（G.8）共用的小工具：
+ * Shared utilities for M5a network layer tests (contract `docs/plan/render-queue-contract.md` G.9)
+ * and probes (G.8):
  *
- *   wsClient(url, protocols?)        Node 内置 WebSocket 客户端，收到的消息排队，按条件等
- *   rawHandshake(port, { protocols, path })   原始 TCP 握手，拿到状态码和响应头（测 401 / 子协议回显）
- *   createTcpProxy({ target })       可控的 TCP 代理：cutAll() 强行断开、mode = 'pass' | 'reject'、retarget()
- *   createSleepExecutor({ taskMs })  用真实计时器睡眠的执行器（契约 D.1 的 executor 形状）
- *   refusingPort()                   测试自己占着、连上就 RST 的端口（「连不上」的地址），用完 close
- *   waitFor(pred, ms)                轮询等条件成立
- *   randomToken()                    32 字节随机 base64url（G.5 的令牌格式），测试里现生成，不写死
- *   snapshotTaskInput(...)           造一个合法的 snapshot 细任务（契约 A.4）
+ *   wsClient(url, protocols?)        Node built-in WebSocket client; queues received messages,
+ *                                    waits on conditions
+ *   rawHandshake(port, { protocols, path })   Raw TCP handshake, gets status code and response
+ *                                             headers (tests 401 / subprotocol echo)
+ *   createTcpProxy({ target })       Controllable TCP proxy: cutAll() forcibly disconnects,
+ *                                    mode = 'pass' | 'reject', retarget()
+ *   createSleepExecutor({ taskMs })  Executor that sleeps using real timers (executor shape
+ *                                    from contract D.1)
+ *   refusingPort()                   Port held by the test itself that RSTs on connect
+ *                                    ("unreachable" address); close when done
+ *   waitFor(pred, ms)                Polls until condition is met
+ *   randomToken()                    32-byte random base64url (token format in G.5), generated on
+ *                                    the fly in tests, not hardcoded
+ *   snapshotTaskInput(...)           Creates a valid snapshot fine-grained task (contract A.4)
  *
- * 只引 Node 内置模块。
+ * Imports only Node built-in modules.
  */
 import { connect as netConnect, createServer as netCreateServer } from 'node:net';
 import { randomBytes, createHash } from 'node:crypto';
@@ -21,18 +28,18 @@ export const randomToken = () => randomBytes(32).toString('base64url');
 
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-/** 轮询等 pred() 返回真值；超时抛错（带 what 说明）。 */
-export async function waitFor(pred, ms = 3000, what = '条件') {
+/** Polls until pred() returns truthy; throws on timeout (with what description). */
+export async function waitFor(pred, ms = 3000, what = 'condition') {
   const until = Date.now() + ms;
   for (;;) {
     const v = await pred();
     if (v) return v;
-    if (Date.now() > until) throw new Error(`等${what}超时（${ms} ms）`);
+    if (Date.now() > until) throw new Error(`timed out waiting for ${what} (${ms} ms)`);
     await sleep(5);
   }
 }
 
-/** 用 Node 内置 WebSocket 连上，收到的消息排进队列，按条件等。 */
+/** Connects using Node built-in WebSocket; queues received messages and waits on conditions. */
 export function wsClient(url, protocols) {
   const ws = protocols === undefined ? new WebSocket(url) : new WebSocket(url, protocols);
   const inbox = [];
@@ -48,15 +55,15 @@ export function wsClient(url, protocols) {
   });
   const opened = new Promise((resolve, reject) => {
     ws.addEventListener('open', resolve, { once: true });
-    ws.addEventListener('error', () => reject(new Error('连接失败')), { once: true });
+    ws.addEventListener('error', () => reject(new Error('Connection failed')), { once: true });
   });
   opened.catch(() => {});
   const closed = new Promise((resolve) => ws.addEventListener('close', (e) => resolve(e), { once: true }));
   return {
     ws, opened, closed,
-    /** 收到过的全部消息（含已被 next 取走的） */
+    /** All received messages (including those already consumed by next). */
     all,
-    /** 还没被 next 取走的消息 */
+    /** Messages not yet consumed by next. */
     inbox,
     send: (msg) => ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg)),
     next(match = () => true, ms = 2000) {
@@ -67,17 +74,17 @@ export function wsClient(url, protocols) {
         waiters.push(w);
         setTimeout(() => {
           const k = waiters.indexOf(w);
-          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`等消息超时；已收到：${JSON.stringify(all).slice(0, 800)}`)); }
+          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`timed out waiting for a message; received so far: ${JSON.stringify(all).slice(0, 800)}`)); }
         }, ms);
       });
     },
-    /** 等 ms 毫秒，返回这段时间里新进 inbox 且匹配的消息（用来断言「收不到」） */
+    /** Waits ms milliseconds; returns matching messages arriving in inbox (used to assert "not received"). */
     async quiet(match = () => true, ms = 150) {
       const before = all.length;
       await sleep(ms);
       return all.slice(before).filter(match);
     },
-    close() { try { ws.close(); } catch { /* 已关 */ } },
+    close() { try { ws.close(); } catch { /* Closed */ } },
   };
 }
 
@@ -85,8 +92,10 @@ export const byType = (type) => (m) => m?.type === type;
 export const byReq = (reqId) => (m) => m?.reqId === reqId;
 
 /**
- * 原始 TCP 握手：发 Upgrade 请求（可带 Sec-WebSocket-Protocol），读到响应头为止。
- * → { status, headers: { 小写名: 值 }, rawHead, sock }。调用方负责 sock.destroy()。
+ * Raw TCP handshake: sends Upgrade request (optionally with Sec-WebSocket-Protocol), reads
+ * until response headers.
+ * → { status, headers: { lowercaseName: value }, rawHead, sock }. Caller is responsible
+ * for sock.destroy().
  */
 export async function rawHandshake(port, { protocols, path = '/', host = '127.0.0.1' } = {}) {
   const sock = netConnect(port, host);
@@ -101,7 +110,7 @@ export async function rawHandshake(port, { protocols, path = '/', host = '127.0.
   if (protocols !== undefined) lines.push(`Sec-WebSocket-Protocol: ${[].concat(protocols).join(', ')}`);
   sock.write(`${lines.join('\r\n')}\r\n\r\n`);
   const head = await new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('等握手响应超时')), 3000);
+    const t = setTimeout(() => reject(new Error('timed out waiting for the handshake response')), 3000);
     const onData = (d) => {
       buf = Buffer.concat([buf, d]);
       const end = buf.indexOf('\r\n\r\n');
@@ -124,12 +133,13 @@ export async function rawHandshake(port, { protocols, path = '/', host = '127.0.
 }
 
 /**
- * 可控的 TCP 代理（测试用，不解析 WebSocket）：
- *   mode = 'pass'    正常转发
- *   mode = 'reject'  新连接一接上就断（模拟连不上）
- *   cutAll()         把现有连接两头都断掉（模拟服务端强行断开 / 网络断）
- *   retarget(port)   之后的新连接转到另一个端口
- *   accepted         累计接受过的连接数（含被 reject 的）
+ * Controllable TCP proxy (for testing, does not parse WebSocket):
+ *   mode = 'pass'    Normal forwarding
+ *   mode = 'reject'  Disconnects new connections immediately upon connect (simulates unreachable)
+ *   cutAll()         Sever both ends of existing connections (simulates server forced disconnect /
+ *                    network drop)
+ *   retarget(port)   Redirects subsequent new connections to another port
+ *   accepted         Cumulative accepted connection count (including rejected ones)
  */
 export async function createTcpProxy({ target, host = '127.0.0.1' }) {
   let targetPort = target;
@@ -168,11 +178,11 @@ export async function createTcpProxy({ target, host = '127.0.0.1' }) {
   return proxy;
 }
 
-/** 起一个只回固定 /healthz 的 HTTP 服务（T6 用）。body 为 null 时永不回应（测超时）。 */
+/** Starts HTTP server responding only with fixed /healthz (for T6). Never responds when body is null (tests timeout). */
 export async function healthServer(body) {
   const { createServer } = await import('node:http');
   const server = createServer((req, res) => {
-    if (body === null) return; // 挂住
+    if (body === null) return; // Hang
     if (req.url?.startsWith('/healthz')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(body));
@@ -189,11 +199,15 @@ export async function healthServer(body) {
 }
 
 /**
- * 一个「连不上」的端口：由测试自己占着，连上就立刻 RST（`{ port, close }`，用完 close）。
+ * An "unreachable" port: held by the test itself, immediately RSTs on connect (`{ port, close }`,
+ * close when done).
  *
- * 不用「先占一个空闲端口再关掉、假定它没人监听」：全量测试几十个进程并行，关掉的端口随时可能被别的进程
- * 拿去（Windows 顺序发号，绕一圈就回来；别的系统随机发号），「应当连不上」就连上了别人的服务。
- * 占着不放就不会；对调用方来说效果和被拒一样（fetch / http.request / WebSocket 都立刻报错）。
+ * Avoids "claim an idle port then close it and assume nobody listens": full test runs execute
+ * dozens of parallel processes, so a closed port can be seized by another process at any moment
+ * (Windows assigns sequentially and wraps around; other OSes assign randomly), turning what
+ * "should be unreachable" into connecting to someone else's service.
+ * Holding it prevents this; to callers the effect is identical to rejection (fetch / http.request /
+ * WebSocket all error immediately).
  */
 export async function refusingPort() {
   const server = netCreateServer((socket) => {
@@ -207,20 +221,22 @@ export async function refusingPort() {
 }
 
 /**
- * 用真实计时器睡眠的执行器（契约 D.1）。render 睡 taskMs（按 50 ms 一步报进度），可被 signal 中止。
- * plan 不支持（这些测试和探针只发细任务）。calls 记下每次 render 的任务 id。
+ * Executor that sleeps using real timers (contract D.1). render sleeps for taskMs (reporting
+ * progress every 50 ms), abortable by signal.
+ * plan is unsupported (these tests and probes only send fine-grained tasks). calls records task id
+ * of each render.
  */
 export function createSleepExecutor({ taskMs = 50 } = {}) {
   const calls = [];
   return {
     calls,
-    plan: async () => { throw Object.assign(new Error('sleep-executor 不算计划'), { retryable: false }); },
+    plan: async () => { throw Object.assign(new Error('sleep-executor does not count as a plan'), { retryable: false }); },
     render(task, { signal, progress }) {
       calls.push(task.id);
       return new Promise((resolve, reject) => {
         let done = 0;
         const step = Math.min(50, taskMs);
-        const iv = setInterval(() => { done += 1; try { progress?.(done); } catch { /* 忽略 */ } }, step);
+        const iv = setInterval(() => { done += 1; try { progress?.(done); } catch { /* Ignore */ } }, step);
         const t = setTimeout(() => { clearInterval(iv); resolve({ frames: task.range ? task.range.to - task.range.from + 1 : 0 }); }, taskMs);
         signal?.addEventListener('abort', () => {
           clearTimeout(t);
@@ -232,7 +248,7 @@ export function createSleepExecutor({ taskMs = 50 } = {}) {
   };
 }
 
-/** 造一个合法的 snapshot 细任务（契约 A.4：id = `snapshot:${resultKey}:${from}-${to}`）。 */
+/** Creates a valid snapshot fine-grained task (contract A.4: id = `snapshot:${resultKey}:${from}-${to}`). */
 export function snapshotTaskInput({ resultKey, from = 0, to = 29, projectId = 'probe-project', projectRev = 1, weight = 'light' }) {
   return {
     id: `snapshot:${resultKey}:${from}-${to}`,

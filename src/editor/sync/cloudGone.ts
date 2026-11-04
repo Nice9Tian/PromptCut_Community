@@ -2,18 +2,22 @@ import { newProjectId, type Project } from "../../kernel/project";
 import type { CollaborationDescriptor, ConvertedFrom } from "./recoveryAssociation";
 import { tr } from "../../i18n/index.ts";
 
-/** 文档服务签发、客户端核对过的「这个项目已不存在」的证明（`server/recovery/gone-proof.mjs` 的 `verifyGoneProof`） */
+/** Proof that "this project no longer exists", issued by the document service and checked by the client (`verifyGoneProof` in `server/recovery/gone-proof.mjs`) */
 export interface GoneProof {
   v: 1; authorityId: string; projectId: string; state: "gone"; tombstoneRevision: number; issuedAt: number; kid: string; signature: string;
 }
 
 /**
- * 过期的云端项目 → 独立的本地项目（纯函数，不碰 store、不发请求）。
+ * Expired cloud project → standalone local project (pure function, does not touch the store, sends no requests).
  *
- * - 只在证明的项目号与文件里记的房间号逐字相同时才转，否则抛错（调用方不该走到这里）；
- * - 内容原样保留：序列、片段、参数、素材表（哈希、路径、名字）、卡片节点、剪辑都不动；
- * - 换一个新的本地项目号：转出来的项目与原云端项目不再是同一个，不借旧云端身份；
- * - 不返回任何协作关联：调用方把关联清掉，多用户协作缺省关。
+ * - Converts only when the project id in the proof is identical, character for character, to the room id
+ *   recorded in the file; otherwise it throws (the caller should never get here);
+ * - Content is kept as is: tracks, clips, parameters, the asset table (hashes, paths, names), card nodes
+ *   and cuts are all untouched;
+ * - A new local project id is assigned: the converted project is no longer the same as the original cloud
+ *   project and does not borrow the old cloud identity;
+ * - Returns no collaboration association: the caller clears the association, and multi-user collaboration
+ *   is off by default.
  */
 export function convertGoneProject(
   project: Project,
@@ -33,13 +37,18 @@ export function convertGoneProject(
 }
 
 /**
- * 转换之前，把这台设备上没发出去的离线修改并进手上这份内容。
+ * Before converting, merges the offline changes on this device that were not sent out into the content in hand.
  *
- * 离线修改记在本机的恢复数据里，正常重入时是找到身份之后才恢复的；而项目已被清掉时一上来就拿到了证明，走不到那一步。
- * 不先并进来，转出来的本地项目就只有文件里的内容，随后本机身份一注销，这些修改再也取不回。
- * - 已经恢复过（`restored`）就不再读；
- * - 读不出来（本机恢复数据暂时读不了）抛 `offline-edits-unreadable`：调用方不转、不注销，稍后再试；
- * - 读出来了但并不进去（记录损坏）抛 `offline-edits-damaged`：调用方不转、不注销，原样保留并提示。
+ * Offline changes are recorded in this machine's recovery data. On a normal re-entry they are restored only
+ * after the identity is found; but when the project has already been purged, the proof is obtained right
+ * away and that step is never reached. If they are not merged in first, the converted local project holds
+ * only the content in the file, and once the local identity is then deregistered these changes can never be
+ * retrieved.
+ * - If already restored (`restored`), it does not read again;
+ * - If it cannot be read (the local recovery data is temporarily unreadable), it throws
+ *   `offline-edits-unreadable`: the caller neither converts nor deregisters, and retries later;
+ * - If it was read but cannot be merged in (a corrupted record), it throws `offline-edits-damaged`: the
+ *   caller neither converts nor deregisters, keeps it as is and shows a notice.
  */
 export async function restoreOfflineEdits(o: {
   restored: boolean;

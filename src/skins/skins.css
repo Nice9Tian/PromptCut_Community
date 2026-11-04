@@ -1,8 +1,8 @@
 @import "./motion.css";
 @import "./studio.css";
 
-/* 1. 变量:各皮肤的 --ui-* 由 useSkin 在运行时写到 <html>(数据在 skins.ts / palettes.ts)。
-   这里只把 AI 面板与设置对话框样式里用的无前缀变量接到 --ui-* 上。 */
+/* 1. Variables: each skin's --ui-* are written onto <html> by useSkin at runtime (the data is in skins.ts / palettes.ts).
+   Here we only wire the unprefixed variables used in the AI panel and settings dialog styles to --ui-*. */
 [data-skin] {
   --bg-canvas: var(--ui-bg);
   --bg-panel: var(--ui-panel);
@@ -20,28 +20,28 @@
   --font-mono: var(--ui-font-mono);
 }
 
-/* 切换动画（200ms） */
+/* Switching animation (200ms) */
 html.skin-swapping * {
   transition: background-color 200ms, border-color 200ms, color 200ms, box-shadow 200ms;
 }
 
-/* 基础 body 覆盖 */
+/* Base body override */
 [data-skin] body {
   background-color: var(--ui-bg);
   color: var(--ui-fg);
   font-family: var(--ui-font);
 }
 
-/* aurora 特殊背景增强 */
+/* Special background enhancement for aurora */
 [data-skin="aurora"] body {
   background-image: radial-gradient(circle at top right, rgba(20, 184, 166, 0.05), transparent 40%),
                     radial-gradient(circle at bottom left, rgba(139, 92, 246, 0.05), transparent 40%);
 }
 
 
-/* 2. 工具类映射：覆盖各种 Tailwind 灰阶类 */
+/* 2. Utility class mapping: overrides the various Tailwind gray-scale classes */
 
-/* 边框色 */
+/* Border colors */
 [data-skin] .border-neutral-800, [data-skin] .border-gray-800 { border-color: var(--ui-border); }
 [data-skin] .border-neutral-700, [data-skin] .border-gray-700 { border-color: var(--ui-border-strong); }
 [data-skin] .border-neutral-600, [data-skin] .border-gray-600 { border-color: var(--ui-border-strong); }
@@ -52,7 +52,7 @@ html.skin-swapping * {
 [data-skin] .border-black\/20 { border-color: var(--ui-border); }
 [data-skin] .hover\:border-neutral-600:hover { border-color: var(--ui-accent); }
 
-/* 背景色 */
+/* Background colors */
 [data-skin] .bg-neutral-950, [data-skin] .bg-gray-950 { background-color: var(--ui-bg); }
 [data-skin] .bg-neutral-900, [data-skin] .bg-gray-900 { background-color: var(--ui-panel); }
 [data-skin] .bg-neutral-800, [data-skin] .bg-gray-800 { background-color: var(--ui-panel-2); }
@@ -70,7 +70,7 @@ html.skin-swapping * {
 [data-skin] .hover\:bg-neutral-600:hover { background-color: var(--ui-border-strong); }
 [data-skin] .hover\:bg-white\/30:hover { background-color: var(--ui-accent-soft); }
 
-/* 文字色 */
+/* Text colors */
 [data-skin] .text-neutral-900, [data-skin] .text-gray-900 { color: var(--ui-bg); }
 [data-skin] .text-neutral-700, [data-skin] .text-gray-700 { color: var(--ui-fg-faint); }
 [data-skin] .text-neutral-600, [data-skin] .text-gray-600 { color: var(--ui-fg-faint); }
@@ -82,7 +82,7 @@ html.skin-swapping * {
 [data-skin] .bg-neutral-950.text-white { color: var(--ui-fg); }
 [data-skin] .hover\:text-white:hover { color: var(--ui-fg); }
 
-/* 3. AI面板/对话框覆盖 */
+/* 3. AI panel / dialog overrides */
 [data-skin] .ais-backdrop {
   background-color: var(--ui-backdrop);
 }
@@ -93,13 +93,13 @@ html.skin-swapping * {
   box-shadow: var(--ui-shadow);
   color: var(--ui-fg);
 }
-/* 右栏整块是 L2(见 editor/shell.css),头部不再单独压到 L1 */
+/* The whole right rail is L2 (see editor/shell.css); the header is no longer pushed separately down to L1 */
 [data-skin] .ai-panel-header {
   background-color: var(--ui-panel);
   border-bottom-color: var(--ui-border);
 }
 
-/* 4. 滚动条覆盖 */
+/* 4. Scrollbar overrides */
 [data-skin] ::-webkit-scrollbar {
   width: 12px;
   height: 12px;
@@ -120,22 +120,22 @@ html.skin-swapping * {
 }
 
 /* ============================================================
- * 4. 打磨层:让主色真正出现在界面里,给面板和控件加层次
+ * 4. Polish layer: make the primary color actually show up in the UI, and give panels and controls depth
  * ============================================================ */
 
-/* 应用底色:深色皮肤带一点朝向主色的径向光,浅色皮肤保持干净;流光(studio)系列是扁平风格,不要光晕。
- * 只铺在编辑器根节点上。原来选的是所有 .bg-neutral-950,时间轴里那些 20px 高的
- * 小条(范围条、「序列」表头、标尺、底部滚动条)也各自铺了一份 1200×600 的光,
- * 在那么矮的条里整条都落在 14% 强调色那一段,看上去就是一道横穿序列栏的强调色带。
- * 深浅直接写进选择器,不再靠后面补一条浅色的 background-image:none 去压:
- * 带 :not() 的这条特异性更高,那样浅色皮肤反而会被刷上光晕。 */
+/* App background: dark skins get a bit of radial light toward the primary color, light skins stay clean; the Flow (studio) series has a flat style and gets no halo.
+ * Applied only on the editor root node. It used to select every .bg-neutral-950, so the timeline's 20px-high
+ * small bars (range bar, "Track" header, ruler, bottom scrollbar) each got their own 1200×600 glow too,
+ * In such a short bar the whole bar falls within the 14% accent-color stop, so it looked like an accent-color band running across the track column.
+ * Dark/light is now written directly into the selector, instead of adding a light-mode background-image:none afterwards to override it:
+ * the rule with :not() has higher specificity, so light skins would end up getting the halo painted on instead. */
 [data-skin-mode="dark"]:not([data-skin^="studio-"]) [data-pc="editor"] {
   background-image:
     radial-gradient(1200px 600px at 20% -10%, color-mix(in oklab, var(--ui-accent) 14%, transparent), transparent 60%),
     radial-gradient(900px 500px at 100% 110%, color-mix(in oklab, var(--ui-accent) 8%, transparent), transparent 60%);
 }
 
-/* 通用按钮:双层表面 + 细边 + 悬停时主色描边 */
+/* Generic buttons: two-layer surface + thin border + primary-color outline on hover */
 [data-skin] button.bg-neutral-800,
 [data-skin] button.bg-neutral-700 {
   background: linear-gradient(180deg, var(--ui-panel-2), var(--ui-panel));
@@ -151,7 +151,7 @@ html.skin-swapping * {
   box-shadow: inset 0 1px 0 color-mix(in oklab, var(--ui-fg) 10%, transparent), var(--ui-glow);
 }
 
-/* 下拉框和输入框 */
+/* Dropdowns and input boxes */
 [data-skin] select.bg-neutral-800,
 [data-skin] input.bg-neutral-800,
 [data-skin] input.bg-neutral-900,
@@ -161,7 +161,7 @@ html.skin-swapping * {
   color: var(--ui-fg);
 }
 
-/* 时间轴片段:动效轨用主色渐变,视频轨用偏绿的第二色;带内高光和描边 */
+/* Timeline clips: the motion graphics track uses a primary-color gradient, the video track a greenish secondary color; with inner highlight and outline */
 [data-skin] .bg-blue-600 {
   background: linear-gradient(180deg, color-mix(in oklab, var(--ui-accent) 88%, white), color-mix(in oklab, var(--ui-accent) 80%, black));
   border: 1px solid color-mix(in oklab, var(--ui-accent) 60%, black);
@@ -182,7 +182,7 @@ html.skin-swapping * {
 }
 [data-skin] .diagonal-stripes { opacity: 0.7; }
 
-/* 卡片库格子:悬停时主色描边、轻微抬升、左侧一道主色 */
+/* Card library cells: primary-color outline on hover, a slight lift, and a primary-color stripe on the left */
 [data-skin] .cursor-grab.bg-neutral-900 {
   background: linear-gradient(160deg, var(--ui-panel), var(--ui-bg-2));
   border-color: var(--ui-border);
@@ -193,47 +193,47 @@ html.skin-swapping * {
   box-shadow: inset 3px 0 0 var(--ui-accent), var(--ui-glow), 0 6px 14px rgba(0, 0, 0, 0.35);
 }
 
-/* 时间轴刻度区与轨道头 */
+/* Timeline ruler area and track headers */
 [data-skin] footer .bg-neutral-900 { background: var(--ui-bg-2); }
 [data-skin] footer .bg-neutral-800 { background: var(--ui-panel); }
 
 /* ============================================================
- * 5. 设计稿色卡:语义色 / 轨道色 / 悬浮层 / 强调色状态
- *    先给所有皮肤一组默认值,再定义「暗室」「亮室」两套完整取值
+ * 5. Design mockup color swatches: semantic colors / track colors / floating layer / accent color states
+ *    First give all skins a default set of values, then define two complete sets of values, "Dark room" and "Bright room"
  * ============================================================ */
 
-/* 浅色模式:不加底部径向光,面板靠阴影分层(设计稿:L4 = 白 + 阴影) */
+/* Light mode: no bottom radial glow, panels are layered by shadows (design mockup: L4 = white + shadow) */
 
-/* 悬浮层 L4:菜单、弹窗、悬浮态 */
+/* Floating layer L4: menus, popups, hover states */
 [data-skin] .ais-dialog { background: var(--ui-float); box-shadow: var(--ui-shadow); }
 [data-skin] .hover\:bg-neutral-800:hover { background-color: var(--ui-float); }
 
-/* 语义色:状态反馈,不进入常态界面 */
+/* Semantic colors: status feedback, not used in the regular UI */
 [data-skin] .text-red-500, [data-skin] .text-red-400 { color: var(--ui-danger); }
 [data-skin] .bg-red-500, [data-skin] .bg-red-600 { background-color: var(--ui-danger); }
 [data-skin] .text-amber-400, [data-skin] .text-yellow-400 { color: var(--ui-warn); }
 [data-skin] .text-emerald-400, [data-skin] .text-green-400 { color: var(--ui-success); }
 [data-skin] .text-sky-400, [data-skin] .text-blue-400 { color: var(--ui-info); }
 
-/* 强调色状态:悬浮 / 按下(主操作按钮与选中) */
+/* Accent color states: hover / pressed (primary action buttons and selection) */
 [data-skin] .bg-sky-600, [data-skin] .bg-blue-500.rounded, [data-skin] button.bg-blue-600 {
   background: var(--ui-accent-grad); color: var(--ui-accent-fg); border-color: var(--ui-accent-press);
 }
 [data-skin] button.bg-blue-600:hover { background: var(--ui-accent-grad-hover); }
 [data-skin] button.bg-blue-600:active { background: var(--ui-accent-grad-press); }
 
-/* 轨道色:片段按素材类型取色(配色规范 03 条)。
-   之前卡片段全是一个色,颜色占满了却不传递信息;现在 data-track-kind 决定用哪一档,
-   文字 / 视频 / 转场 / 特效 一眼读得出。片段上的字用同色的深色版,保证 4.5:1。 */
+/* Track colors: clips take their color by media type (color guidelines, item 03).
+   Before, all card clips had one color, which filled the space without conveying information; now data-track-kind decides which tier to use,
+   so text / video / transition / effects can be read at a glance. Text on a clip uses a darker version of the same color, guaranteeing 4.5:1. */
 .pc-clip {
   --clip: var(--ui-track-text);
   --clip-ink: var(--ui-track-ink-text);
   border-radius: var(--ui-radius, 6px);
   background: linear-gradient(180deg, color-mix(in oklab, var(--clip) 92%, white), color-mix(in oklab, var(--clip) 88%, black));
-  /* 描边画在内侧:1px 半透明亮线,不占盒子宽度 */
+  /* Outline drawn on the inside: a 1px semi-transparent light line that takes up no box width */
   border: none;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
-  /* 字色按轨道色亮度挑黑或白(见 skins.ts 的 trackInk),深浅皮肤都过 4.5:1 */
+  /* Text color is black or white depending on the track color's brightness (see trackInk in skins.ts), passing 4.5:1 on both dark and light skins */
   color: var(--clip-ink);
 }
 .pc-clip[data-track-kind="video"] { --clip: var(--ui-track-video); --clip-ink: var(--ui-track-ink-video); }
@@ -247,14 +247,14 @@ html.skin-swapping * {
   background: linear-gradient(180deg, color-mix(in oklab, var(--clip) 84%, white), var(--clip));
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3), 0 0 10px color-mix(in oklab, var(--clip) 50%, transparent);
 }
-/* 选中:片段外面描一圈 2px 主文字色轮廓(outline 不占盒子、不压住片段里的内容),不动填充 */
+/* Selected: a 2px outline in the primary text color around the outside of the clip (outline takes up no box space and does not cover the clip's content), the fill is left untouched */
 .pc-clip.is-selected {
   outline: 2px solid var(--ui-fg);
   outline-offset: 0;
 }
-/* 跨轨拖到放不下的位置(ClipView 的 dragState.forbidden):半透明红底 + 红色虚线框。
-   上面 .pc-clip 把 Tailwind 的 border 和底色都盖掉了,「放不下」的提示要在这里补回来;
-   拖动时鼠标正压在片段上,也不能被 :hover 的渐变冲掉 */
+/* Dragged across tracks to a position where it does not fit (dragState.forbidden in ClipView): semi-transparent red background + red dashed frame.
+   The .pc-clip above covers both Tailwind's border and background color, so the "does not fit" indication has to be added back here;
+   while dragging, the mouse is right on the clip, and it must not be washed out by the :hover gradient either */
 .pc-clip.is-forbidden,
 .pc-clip.is-forbidden:hover {
   background: color-mix(in oklab, var(--ui-danger) 50%, transparent);
@@ -262,8 +262,8 @@ html.skin-swapping * {
   box-shadow: none;
 }
 
-/* 转场:片段两端的淡化区间画一层往边缘变暗的渐变,宽度就是淡入淡出的秒数。
-   有转场的那一端一眼看得出来,不用点开属性面板去查 */
+/* Transition: the fade zones at both ends of a clip get a layer of gradient that darkens toward the edge, with a width equal to the fade-in/fade-out duration in seconds.
+   so the end that has a transition can be spotted at a glance, without opening the properties panel to check */
 .pc-clip-fade {
   position: absolute;
   top: 0;
@@ -279,7 +279,7 @@ html.skin-swapping * {
   right: 0;
   background: linear-gradient(270deg, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
 }
-/* 被转场绑成一组:右上角挂个链条角标,提醒这段的时间关系被锁住了 */
+/* Bound into a group by a transition: a chain badge at the top right reminds that this clip's timing relation is locked */
 .pc-clip-link {
   position: absolute;
   top: 2px;
@@ -296,9 +296,9 @@ html.skin-swapping * {
   pointer-events: auto;
 }
 
-/* 字幕卡内部的一条条字幕(timeline/CaptionLines.tsx)。
-   字幕存在卡片的 lines 参数里,时间轴上本来只剩一个大色块;这里把每条画成一小格,
-   能点、能拖、能改字。用同色的更深一档,和外面的色块区分但不抢色。 */
+/* The individual captions inside a caption card (timeline/CaptionLines.tsx).
+   Captions are stored in the card's lines parameter, and on the timeline only one big color block would be left; here each one is drawn as a small cell,
+   which can be clicked, dragged and have their text edited. They use a darker tier of the same color, distinguishing them from the outer block without clashing in color. */
 .pc-cap-line {
   top: 3px;
   bottom: 3px;
@@ -328,7 +328,7 @@ html.skin-swapping * {
   white-space: nowrap;
   pointer-events: none;
 }
-/* 两端的把手:拽它改这条字幕的起止,和片段本身的修边手感一致 */
+/* Handles at both ends: drag them to change this caption's start and end, matching the trimming feel of the clip itself */
 .pc-cap-grip {
   flex: none;
   width: 4px;
@@ -352,11 +352,11 @@ html.skin-swapping * {
 }
 [data-skin] .ring-2, [data-skin] .ring-white, [data-skin] .outline-white { --tw-ring-color: var(--ui-accent); outline-color: var(--ui-accent); }
 
-/* 播放头:竖线和圆形把手(都是 playhead 的直接子 div)统一用主文字色,
-   深色皮肤下近白、浅色皮肤下仍看得见;扁平,不加辉光。时间标签的胶囊样式在 timeline.css */
+/* Playhead: the vertical line and the round handle (both direct child divs of the playhead) all use the primary text color,
+   near-white on dark skins, still visible on light skins; flat, no glow. The pill style of the time label is in timeline.css */
 [data-skin] [data-pc="playhead"] > div { background-color: var(--ui-fg); box-shadow: none; }
 
-/* 在线浏览器模式里置灰的导入入口(C10 契约第 10 节):看得出点不了 */
+/* Import entry grayed out in online browser mode (C10 contract, section 10): visibly not clickable */
 [data-pc-add][disabled] {
   opacity: 0.45;
   cursor: not-allowed;

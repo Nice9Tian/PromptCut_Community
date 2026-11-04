@@ -1,14 +1,15 @@
 /**
- * 父页对舞台消息的校验(契约 `docs/plan/online-card-exec-contract.md` 第 3.2 节「协议面」):跨源舞台里会执行用户卡与素材效果卡,
- * 它发来的一切当不可信输入 —— 来源、形状、白名单、数字的范围。
- * 跑:node --test src/online/stageMessageGuard.test.mjs
+ * Parent page validation of stage messages (contract `docs/plan/online-card-exec-contract.md`
+ * Section 3.2 "Protocol surface"): cross-origin stages execute user cards and media effect cards;
+ * treat everything it sends as untrusted input: origin, shape, allowlist, and number ranges.
+ * Run: node --test src/online/stageMessageGuard.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { STAGE_MESSAGE_LIMITS as L, sanitizeStageEvent, sanitizeRpcResult, sanitizeRpcError, sanitizeHostCapabilities } from "./stageMessageGuard.ts";
 
 const HASH = "a".repeat(64);
-/** 每种舞台事件一份合法的样本(新增事件类型时这里与 `sanitizeStageEvent` 都要补) */
+/** A valid sample for each stage event type (when adding new event types, update both here and `sanitizeStageEvent`) */
 const SAMPLES = {
   mediaReady: { type: "mediaReady", sec: 1.5 },
   frame: { type: "frame", sec: 2 },
@@ -69,7 +70,7 @@ test("OCS-M-02 Shape: returns a new object containing only the recognized fields
   assert.notEqual(clean, dirty);
   assert.equal({}.polluted, undefined);
   assert.deepEqual(Object.keys(sanitizeStageEvent({ ...SAMPLES.probe, extra: "x", ticket: "v1.a.b" })).includes("ticket"), false);
-  // 选填的字段类型不对:整条丢弃(不猜)
+  // Optional field with invalid type: discard the entire item (no guessing)
   assert.equal(sanitizeStageEvent({ ...SAMPLES.probe, seekMs: "4" }), null);
   assert.equal(sanitizeStageEvent({ ...SAMPLES["probe-frame"], htmlGz: "not a buffer" }), null);
   assert.equal(sanitizeStageEvent({ ...SAMPLES["bake-frame"], small: { hash: "zz", bytes: 1, webp: new ArrayBuffer(1) } }), null);
@@ -79,13 +80,14 @@ test("OCS-M-02 Shape: returns a new object containing only the recognized fields
 test("OCS-M-03 Numbers are clamped to a sane range: time is not negative and not over one day; duration is not negative and capped at ten minutes; a non-finite number drops the whole event", () => {
   assert.equal(sanitizeStageEvent({ type: "frame", sec: 1e99 }).sec, L.maxSec);
   assert.equal(sanitizeStageEvent({ type: "frame", sec: -5 }).sec, 0);
-  // 给了项目时长:舞台报的时刻带不出时间轴(播放头最多到末尾)
+  // Project duration provided: timestamps reported by stage cannot exceed timeline
+  // (playhead reaches at most the end)
   for (const type of ["frame", "ended", "mediaReady"]) assert.equal(sanitizeStageEvent({ type, sec: 1e99 }, { maxSec: 6 }).sec, 6, type);
   assert.equal(sanitizeStageEvent({ type: "settled", sec: 1e99, clipIds: [] }, { maxSec: 6 }).sec, 6);
   assert.equal(sanitizeStageEvent({ type: "frame", sec: 3 }, { maxSec: 6 }).sec, 3);
   for (const maxSec of [NaN, -1, Infinity, undefined]) assert.equal(sanitizeStageEvent({ type: "frame", sec: 1e99 }, { maxSec }).sec, L.maxSec, String(maxSec));
   for (const sec of [NaN, Infinity, -Infinity, "1", null, undefined, {}, { valueOf: () => 1 }]) assert.equal(sanitizeStageEvent({ type: "frame", sec }), null, String(sec));
-  // 进成本记录的那几个数
+  // Numbers that go into the cost record
   const huge = sanitizeStageEvent({ ...SAMPLES.probe, stepMs: 7.77e98, inlineMs: -7.77e98, rasterMs: 1e12, serializeMs: L.maxMs + 1, catchUpMs: -1, fps: 1e9, seekMs: 7.77e98 });
   assert.deepEqual({ stepMs: huge.stepMs, inlineMs: huge.inlineMs, rasterMs: huge.rasterMs, serializeMs: huge.serializeMs, catchUpMs: huge.catchUpMs, fps: huge.fps, seekMs: huge.seekMs },
     { stepMs: L.maxMs, inlineMs: 0, rasterMs: L.maxMs, serializeMs: L.maxMs, catchUpMs: 0, fps: 240, seekMs: L.maxMs });
@@ -93,7 +95,7 @@ test("OCS-M-03 Numbers are clamped to a sane range: time is not negative and not
     for (const v of [NaN, Infinity, "1", null, {}]) assert.equal(sanitizeStageEvent({ ...SAMPLES.probe, [k]: v }), null, `${k}=${String(v)}`);
   }
   assert.equal(sanitizeStageEvent({ ...SAMPLES.probe, kind: "evil" }), null);
-  // 帧号取整并钳住
+  // Frame number rounded and clamped
   assert.equal(sanitizeStageEvent({ ...SAMPLES["probe-frame"], localFrame: 3.9 }).localFrame, 3);
   assert.equal(sanitizeStageEvent({ ...SAMPLES["bake-frame"], localFrame: 1e99 }).localFrame, L.maxFrame);
   assert.equal(sanitizeStageEvent({ ...SAMPLES["bake-frame"], bytes: 7.77e98 }).bytes, L.maxBufferBytes);
@@ -109,7 +111,8 @@ test("OCS-M-04 Length limits: clip id, cost identity, clip count, snapshot HTML 
   assert.equal(sanitizeStageEvent({ ...SAMPLES.probe, identityKey: "x".repeat(L.maxIdentityLength + 1) }), null);
   assert.equal(sanitizeStageEvent({ ...SAMPLES["probe-frame"], html: "x".repeat(L.maxHtmlLength + 1) }), null);
   for (const hash of ["zz", HASH.toUpperCase(), HASH.slice(1), `${HASH}0`, 1, null]) assert.equal(sanitizeStageEvent({ ...SAMPLES["bake-frame"], hash }), null, String(hash));
-  // 带脚本的 HTML 只是一段字符串:校验不执行它、也不改它(父页不把它放进活文档,由安全探针断言)
+  // HTML with scripts is just a string: validation neither executes nor modifies it (parent page
+  // does not insert it into live document, asserted by security probe)
   const xss = '<img src=x onerror="alert(1)"><script>alert(1)</script>';
   assert.equal(sanitizeStageEvent({ ...SAMPLES["probe-frame"], html: xss }).html, xss);
 });
@@ -117,12 +120,12 @@ test("OCS-M-04 Length limits: clip id, cost identity, clip count, snapshot HTML 
 test("OCS-M-05 RPC reply: only plain objects, arrays, strings, booleans, null, finite numbers and byte chunks are allowed; duration-type numbers are clamped to [0, ten minutes]", () => {
   const r = sanitizeRpcResult("render", { elapsedMs: -1e99, steps: [1e99, NaN, Infinity, 5], snapshot: { inlineMs: 7.77e98, rasterMs: -1, serializeMs: 3 }, glGpuMs: { cardA: 1e99, cardB: -3 }, html: "<div/>", ok: true, n: 1e99, nested: { ms: -1 } });
   assert.deepEqual(r, { elapsedMs: 0, steps: [L.maxMs, 0, 0, 5], snapshot: { inlineMs: L.maxMs, rasterMs: 0, serializeMs: 3 }, glGpuMs: { cardA: L.maxMs, cardB: 0 }, html: "<div/>", ok: true, n: L.maxAbs, nested: { ms: 0 } });
-  // 不是计时的方法:数字只钳绝对值,不动符号
+  // Not a timing method: numbers only clamp absolute values, leaving signs untouched
   assert.deepEqual(sanitizeRpcResult("measure", { elapsedMs: -5, x: -1e99, y: NaN }), { elapsedMs: -5, x: -L.maxAbs, y: 0 });
   for (const v of [null, undefined, true, "ok", 3]) assert.equal(sanitizeRpcResult("play", v), v);
   const buf = new ArrayBuffer(16);
   assert.equal(sanitizeRpcResult("bakeFrame", { htmlGz: buf }).htmlGz, buf);
-  // 不认得的东西:抛(调用方把这次调用按失败回绝)
+  // Unrecognized items: throw (caller rejects this call as failed)
   class Evil { constructor() { this.x = 1; } }
   for (const bad of [{ f: () => 1 }, { s: Symbol("x") }, { d: new Date() }, { m: new Map() }, { e: new Evil() }, { big: 10n }]) assert.throws(() => sanitizeRpcResult("render", bad), /stage rpc/, Object.keys(bad)[0]);
   assert.throws(() => sanitizeRpcResult("render", { s: "x".repeat(L.maxHtmlLength + 1) }), /too long/);
@@ -131,7 +134,7 @@ test("OCS-M-05 RPC reply: only plain objects, arrays, strings, booleans, null, f
   for (let i = 0; i < L.maxDepth + 2; i++) deep = { deep };
   assert.throws(() => sanitizeRpcResult("render", deep), /too deep/);
   assert.throws(() => sanitizeRpcResult("render", new Array(L.maxNodes + 1).fill(0)), /too large/);
-  // 出错信息只留一段不长的字符串
+  // Error message keeps only a short string
   assert.equal(sanitizeRpcError("boom"), "boom");
   assert.equal(sanitizeRpcError("x".repeat(5000)).length, 2001);
   for (const bad of [null, undefined, 42, { message: "x" }]) assert.equal(sanitizeRpcError(bad), undefined);
@@ -145,7 +148,7 @@ test("OCS-M-06 Host capability table in the handshake: only six entries are reco
   for (const bad of [null, undefined, "caps", 42, [], "x".repeat(1024 * 1024)]) assert.equal(sanitizeHostCapabilities(bad), null);
 });
 
-/* ------------------------------------------------------------------ RPC 客户端的不可信模式 */
+/* ------------------------------------------------------------------ Untrusted mode for RPC client */
 function fakeWindow() {
   const listeners = new Set();
   return {
@@ -178,7 +181,8 @@ test("OCS-M-07 RPC client for the cross-origin stage: only accepts messages whos
     assert.equal(origin, STAGE, "Requests are sent only to that stage origin");
     let settled = null;
     void call.then((v) => { settled = { ok: v }; }, (e) => { settled = { err: e.message }; });
-    // 来源不对:别的窗口、对的窗口但别的源(舞台被带到别处去了)—— 都不认
+    // Invalid origin: different window, or correct window but different origin (stage navigated
+    // elsewhere): neither is accepted
     win.deliver({ other: true }, { type: "pc-rpc-reply", id: msg.id, ok: true, result: { hijack: 1 } }, STAGE);
     win.deliver(target, { type: "pc-rpc-reply", id: msg.id, ok: true, result: { hijack: 2 } }, "https://evil.io");
     win.deliver(target, { type: "pc-rpc-reply", id: msg.id, ok: true, result: { hijack: 3 } }, "null");
@@ -186,7 +190,8 @@ test("OCS-M-07 RPC client for the cross-origin stage: only accepts messages whos
     await new Promise((r) => setImmediate(r));
     assert.equal(settled, null, "A reply from the wrong source does not settle this call");
     assert.deepEqual(events, []);
-    // 来源对:事件按形状收(超范围的钳住、认不出的丢掉),回包照常
+    // Origin valid: events accepted by shape (out-of-range clamped, unrecognized discarded),
+    // responses as normal
     win.deliver(target, { type: "frame", sec: 1e99, ticket: "v1.a.b" }, STAGE);
     win.deliver(target, { type: "pc-give-me-the-ticket" }, STAGE);
     win.deliver(target, { type: "probe", identityKey: "k", fps: 30, stepMs: Infinity, inlineMs: 1, rasterMs: 1, serializeMs: 1, catchUpMs: 0, kind: "stepped" }, STAGE);
@@ -214,7 +219,7 @@ test("OCS-M-08 RPC reply from the cross-origin stage: a malformed shape is rejec
     await assert.rejects(p3, /stage rpc play failed/);
     c.dispose();
 
-    // 不给 untrusted:一个字节不变(桌面运行环境、同源单舞台)
+    // Without untrusted: not a single byte changed (desktop runtime environment, same-origin single stage)
     const t2 = { closed: false, sent: [], postMessage(msg) { this.sent.push(msg); } };
     const plain = createStageRpc(t2, "http://stage");
     const raw = { elapsedMs: -5, when: new Date(0) };

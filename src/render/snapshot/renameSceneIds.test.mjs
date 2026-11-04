@@ -1,17 +1,20 @@
 /**
- * 生成快照整场景 id 改名的单测:新写法(`renameSceneIds`,线性)与原写法逐字节对拍,外加一条代价用例。
- * 跑:node --test src/render/snapshot/renameSceneIds.test.mjs
+ * Unit test for whole-scene id renaming in snapshot generation: compares new implementation
+ * (`renameSceneIds`, linear) byte-for-byte against legacy implementation, plus a cost test case.
+ * Run: node --test src/render/snapshot/renameSceneIds.test.mjs
  *
- * 对照 `legacySerializeRename` 是改动前 `src/render/createSnapshot.ts` 的 `serializeScene` 里那一段,
- * 原样拷过来(只把 `html` / `ids` 改成参数),**不要改它**:它就是「输出不变」的定义。
- * 生产代码里退回用的 `renameSceneIdsSequential` 也和它对拍一遍,免得两份拷贝悄悄走样。
+ * Reference `legacySerializeRename` is that section from `serializeScene` in
+ * `src/render/createSnapshot.ts` before changes, copied as-is (only turning `html` / `ids`
+ * into parameters). **Do not modify it**: it is the definition of "invariant output".
+ * Production fallback `renameSceneIdsSequential` is also compared against it to prevent
+ * the two copies from silently diverging.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { renameSceneIds, renameSceneIdsSequential } from "./renameSceneIds.ts";
 
-/* ── 对照:改动前的原写法(main b7635ad 的 createSnapshot.ts 第 151～162 行) ────────── */
+/* ── Reference: legacy implementation before changes (lines 151~162 of createSnapshot.ts in main b7635ad) ────────── */
 
 function legacySerializeRename(outerHTML, ids) {
   let html = outerHTML;
@@ -26,10 +29,10 @@ function legacySerializeRename(outerHTML, ids) {
   return html;
 }
 
-/** 和 createSnapshot 一样收集 id:文档序去重,根的 id 排最后 */
+/** Collect ids just like createSnapshot: deduplicated in document order, root id placed last */
 const collect = (idsInDocOrder, rootId = "") => new Set(idsInDocOrder.concat(rootId ? [rootId] : []));
 
-/** 从一段 html 里按文档序扫出 id 属性(夹具用;真实调用方是 querySelectorAll("[id]")) */
+/** Scan id attributes in document order from an HTML snippet (for fixtures; real caller is querySelectorAll("[id]")) */
 const scanIds = (html) => [...html.matchAll(/<[a-zA-Z][^>]*?\sid="([^"]*)"/g)].map((m) => m[1]);
 
 function same(html, ids, label) {
@@ -38,15 +41,15 @@ function same(html, ids, label) {
   if (got !== want) {
     let i = 0;
     while (i < got.length && got[i] === want[i]) i++;
-    assert.fail(`${label}:第 ${i} 个字符起不同\n  原写法 …${JSON.stringify(want.slice(Math.max(0, i - 60), i + 60))}\n  新写法 …${JSON.stringify(got.slice(Math.max(0, i - 60), i + 60))}`);
+    assert.fail(`${label}: differs from character ${i}\n  old way …${JSON.stringify(want.slice(Math.max(0, i - 60), i + 60))}\n  new way …${JSON.stringify(got.slice(Math.max(0, i - 60), i + 60))}`);
   }
-  assert.equal(renameSceneIdsSequential(html, ids), want, `${label}:退回路径与原写法不同`);
+  assert.equal(renameSceneIdsSequential(html, ids), want, `${label}: fallback path differs from the old way`);
   return want;
 }
 
-/* ── 夹具:照 Chrome 序列化快照的真实形状写 ─────────────────────────────── */
+/* ── Fixtures: written matching the actual shape of Chrome serialized snapshots ─────────── */
 
-/** snapshotRename.test.mjs 的 CONTROL_HTML(growth-curve 的渐变 + 计算样式内联出来的 &quot; 形式),包一层场景根 */
+/** CONTROL_HTML of snapshotRename.test.mjs (growth-curve gradient + computed styles inlined as &quot; form), wrapped in a scene root */
 const GROWTH = (
   '<div data-pc-scene="" id="scene" style="position:absolute">' +
   '<div data-pc-clip="c1" data-pc-local-frame="3" style="position:absolute">' +
@@ -61,10 +64,10 @@ const GROWTH = (
   "</svg></div></div></div>"
 );
 
-/** SVG 渐变、滤镜、遮罩、标记、pattern,React 19 useId 的 `_r_0_` 与旧版的 `:r1:`、`«r0»` */
+/** SVG gradients, filters, masks, markers, patterns, React 19 useId's `_r_0_`, and legacy `:r1:`, `«r0»` */
 const SVG_DEFS = (
   '<div data-pc-scene="" style="position:absolute;inset:0px">' +
-  '<svg viewBox="0 0 100 100" aria-labelledby="t1 _r_0_" role="img"><title id="t1">标题</title>' +
+  '<svg viewBox="0 0 100 100" aria-labelledby="t1 _r_0_" role="img"><title id="t1">Title</title>' +
   '<defs>' +
   '<radialGradient id="_r_0_" cx="50%"><stop offset="0" stop-color="#fff"></stop></radialGradient>' +
   '<linearGradient id="«r0»" gradientTransform="rotate(90)" href="#_r_0_"></linearGradient>' +
@@ -77,27 +80,27 @@ const SVG_DEFS = (
   '</defs>' +
   '<circle r="40" fill="url(#_r_0_)" filter="url(#glow-1)" mask="url(#m.1)" style="fill: url(&quot;#_r_0_&quot;); filter: drop-shadow(rgba(0, 0, 0, 0.5) 0px 2px 4px) url(&quot;#glow-1&quot;); mask: url(&quot;#m.1&quot;);"></circle>' +
   '<path d="M0,0 L10,10" marker-end="url(#arrow)" style="marker-end: url(&quot;#arrow&quot;); stroke: url(\'#pat\');"></path>' +
-  '<text><textPath href="#curve" xlink:href="#curve">沿路径</textPath></text>' +
+  '<text><textPath href="#curve" xlink:href="#curve">Along path</textPath></text>' +
   '<rect style="fill: url(&quot;#missing&quot;); clip-path: url(#_r_0_) , url(#glow-1);" width="1"></rect>' +
   '<rect style="fill: url(&quot;http://127.0.0.1:5208/?export=1&amp;timeline=x#_r_0_&quot;);" width="2"></rect>' +
   '<rect style="fill: url(&quot;/a/b.svg#_r_0_&quot;);" width="3"></rect>' +
   '</svg>' +
-  '<label for="curve" aria-describedby="arrow">aria 与 for 不改名</label>' +
+  '<label for="curve" aria-describedby="arrow">aria and for are not renamed</label>' +
   "</div>"
 );
 
-/** 文本、<style> 原始文本里长得像引用的东西;相邻文本节点之间的空注释(keepTextBoundaries) */
+/** Text, things resembling references in <style> raw text; empty comments between adjacent text nodes (keepTextBoundaries) */
 const TEXTY = (
   '<div data-pc-scene="" id="root-x">' +
   '<style>#glow-1{filter:url(#glow-1)} .a{fill:url("#g")} .b{mask:url(\'#g\')}</style>' +
-  '<p id="g">正文 id="g" 与 href="#g" 与 url(#g)、 id="g" 、x id="g"、<!---->75<!---->%</p>' +
+  '<p id="g">Body id="g" and href="#g" and url(#g), id="g" , x id="g", <!---->75<!---->%</p>' +
   '<p> id=" id="g"  href="#href="#g" url(url(#g) url(#x#g) url(#g#x) url(#g" url("#g) url(&quot;#g")</p>' +
-  '<a href="#g">锚点</a><a href="#root-x">回到根</a>' +
-  '<span id="">空 id</span><a href="#">空锚点</a><i style="fill:url(#)"></i>' +
+  '<a href="#g">Anchor</a><a href="#root-x">Back to root</a>' +
+  '<span id="">Empty id</span><a href="#">Empty anchor</a><i style="fill:url(#)"></i>' +
   "</div>"
 );
 
-/** 连环改名:集合里同时有 a 与 a__r(两种先后)、以及三级链 */
+/** Chained renaming: set contains both a and a__r (both orderings), as well as a three-level chain */
 const CHAIN = (
   '<div data-pc-scene="">' +
   '<i id="a"></i><i id="a__r"></i><i id="a__r__r"></i><i id="b__r"></i><i id="b"></i>' +
@@ -106,7 +109,7 @@ const CHAIN = (
   "</div>"
 );
 
-/** 非普通 id(引号、括号、&、#、$、=、空白):整趟退回原写法 */
+/** Non-standard ids (quotes, parentheses, &, #, $, =, whitespace): whole pass falls back to legacy implementation */
 const WEIRD_IDS = ['x y', 'q"q', "s'q", "p(1)", "a&b", "h#1", "d$&", "d$1", "d$'", "e=f", "tab\tid", "nb sp", " "];
 const WEIRD = (
   '<div data-pc-scene="">' +
@@ -115,7 +118,7 @@ const WEIRD = (
   "</div>"
 );
 
-test("夹具:growth-curve、SVG 渐变/滤镜/遮罩/标记/pattern/textPath、文本与 <style>、空 id、连环改名、非普通 id,新旧逐字节相同", () => {
+test("Fixture: growth-curve, SVG gradient/filter/mask/marker/pattern/textPath, text and <style>, empty id, chained renames, non-plain ids, old and new byte-identical", () => {
   const cases = [
     ["growth-curve", GROWTH, collect(scanIds(GROWTH).filter((id) => id !== "scene"), "scene")],
     ["svg-defs", SVG_DEFS, collect(scanIds(SVG_DEFS))],
@@ -124,26 +127,28 @@ test("夹具:growth-curve、SVG 渐变/滤镜/遮罩/标记/pattern/textPath、�
     ["chain-reversed", CHAIN, collect(scanIds(CHAIN).reverse())],
     ["weird", WEIRD, collect(scanIds(WEIRD).concat(WEIRD_IDS))],
     ["weird-only-extra", GROWTH, collect(scanIds(GROWTH).concat(["x y"]))],
-    // 两个反例:这类 id 改名后会毁掉别的 id 的命中位置,原写法的结果取决于先后,所以只能整趟退回原写法。
-    // g 在前时原写法先改了 g,再改 `url(` / `href=`;若按三趟查表,第一趟先改 `url(` 就把 `url("#g)` 拆了。
+    // Two counterexamples: renaming such ids destroys match positions of other ids; result of legacy
+    // implementation depends on order, so the whole pass must fall back to legacy implementation.
+    // When g comes first, legacy implementation renamed g first, then `url(` / `href=`; if using
+    // three-pass table lookup, pass 1 renaming `url(` first breaks `url("#g)`.
     ["weird-order-paren", "<p> id=\"url(\"#g)</p>", new Set(["g", "url("])],
     ["weird-order-equals", "<p> id=\"href=\"#g\"</p>", new Set(["g", "href="])],
     ["no-ids", GROWTH, new Set()],
     ["ids-not-in-html", GROWTH, new Set(["nope", "grad"])],
   ];
   for (const [label, html, ids] of cases) same(html, ids, label);
-  // 抽查几处结果,免得两边一起错:
+  // Spot-check several results to avoid both sides being wrong together:
   assert.match(renameSceneIds(GROWTH, collect(scanIds(GROWTH))), /fill: url\(&quot;#grad-x__r&quot;\);clip-path:url\(#:r1:__r\)/);
   const chain = renameSceneIds(CHAIN, collect(scanIds(CHAIN)));
   assert.match(chain, /<i id="a__r__r__r"><\/i><i id="a__r__r__r"><\/i><i id="a__r__r__r"><\/i><i id="b__r__r"><\/i><i id="b__r"><\/i>/);
   const texty = renameSceneIds(TEXTY, collect(scanIds(TEXTY)));
-  assert.match(texty, /<span id="__r">空 id<\/span><a href="#__r">空锚点<\/a><i style="fill:url\(#__r\)">/);
+  assert.match(texty, /<span id="__r">Empty id<\/span><a href="#__r">Empty anchor<\/a><i style="fill:url\(#__r\)"><\/i>/);
   assert.match(texty, / id=" id="g__r"/);
 });
 
-/* ── 随机对拍 ─────────────────────────────────────────────────────────── */
+/* ── Random differential testing ─────────────────────────────────────────── */
 
-/** 固定种子的 PRNG(mulberry32),失败时报种子就能复现 */
+/** Fixed-seed PRNG (mulberry32); report the seed on failure to reproduce */
 function prng(seed) {
   let a = seed >>> 0;
   return () => {
@@ -157,7 +162,7 @@ function prng(seed) {
 
 const PLAIN_POOL = ["a", "b", "g", "a__r", "a__r__r", "b__r", "_r_0_", "_r_1_", ":r1:", "«r0»", "grad-x", "m.1", "x", "__r", "", "a_", "r", "__", "p1", "p10"];
 const WEIRD_POOL = WEIRD_IDS.concat(["url(", "id=", "href=", "#", ")", "&quot;"]);
-/** 让结构尽量撞在一起的碎片:前缀、引号、括号、#、空白、& 实体、以及 id 本身 */
+/** Fragments designed to collide structures: prefixes, quotes, parentheses, #, whitespace, & entities, and the id itself */
 const PIECES = [' id="', 'id="', ' id=\'', 'href="#', 'xlink:href="#', 'href="', "url(", "url(#", 'url("#', "url('#", "url(&quot;#",
   "&quot;", "&amp;", '"', "'", ")", "(", "#", " ", "\t", "\n", "=", "<i ", "></i>", "<!---->", "$", "$&", "__r", "fill:", "; ", "x", "é"];
 
@@ -183,23 +188,24 @@ function randomCase(rnd) {
   return { html, ids: new Set(ids) };
 }
 
-test("随机对拍:20000 组随机拼出来的串(含前缀交叠、引号错配、连环改名、非普通 id),新旧逐字节相同", () => {
+test("Randomized cross-check: 20000 randomly assembled strings (including prefix overlaps, mismatched quotes, chained renames, non-plain ids), old and new byte-identical", () => {
   const SEED = 20260927;
   const rnd = prng(SEED);
   let changed = 0;
   let fast = 0;
   for (let i = 0; i < 20000; i++) {
     const { html, ids } = randomCase(rnd);
-    const want = same(html, ids, `种子 ${SEED} 第 ${i} 组`);
+    const want = same(html, ids, `seed ${SEED} group ${i}`);
     if (want !== html) changed++;
     if (![...ids].some((id) => /[\s"'()&#$=]/.test(id))) fast++;
   }
-  // 对拍要有牙齿:大部分组确实改了东西,而且大部分组走的是新写法(不是退回原写法)。
-  assert.ok(changed > 10000, `只有 ${changed} 组有改动`);
-  assert.ok(fast > 14000, `只有 ${fast} 组走新写法`);
+  // Differential tests must have teeth: most groups actually change something, and most groups use
+  // the new implementation (not falling back to the original implementation).
+  assert.ok(changed > 10000, `only ${changed} groups changed`);
+  assert.ok(fast > 14000, `only ${fast} groups took the new way`);
 });
 
-/** 照 C10 探针粒子场景的样子拼一段整场景 html:n 个带 id 的元素,每个内联样式约 4 KB,一部分互相引用 */
+/** Assemble whole-scene HTML matching C10 probe particle scene: n elements with ids, ~4 KB inline styles each, some referencing each other */
 function particleScene(n) {
   const style = "position: absolute; left: 0px; top: 0px; width: 22px; height: 22px; border-radius: 50%; " +
     "background: radial-gradient(circle at 30% 30%, rgb(255, 255, 255), rgb(51, 153, 255) 60%, rgb(0, 51, 102)); ".repeat(30);
@@ -212,22 +218,26 @@ function particleScene(n) {
   return html + "</div></div>";
 }
 
-test("随机对拍:三组粒子场景(200 / 600 个带 id、互相引用的元素),新旧逐字节相同", () => {
+test("Randomized cross-check: three particle scenes (200 / 600 elements with ids referencing each other), old and new byte-identical", () => {
   for (const n of [200, 600]) {
     const html = particleScene(n);
-    same(html, collect(scanIds(html).filter((id) => id !== "scene"), "scene"), `粒子 ${n}`);
+    same(html, collect(scanIds(html).filter((id) => id !== "scene"), "scene"), `particles ${n}`);
   }
   const html = particleScene(300).replace(/id="p(\d)"/g, 'id="p$1__r"');
-  same(html, collect(scanIds(html)), "粒子 300,混入 __r 结尾的 id");
+  same(html, collect(scanIds(html)), "particles 300, mixed in ids ending in __r");
 });
 
-/* ── 代价 ─────────────────────────────────────────────────────────────── */
+/* ── Cost ─────────────────────────────────────────────────────────────── */
 
 /*
- * 1400 个带 id 的元素(约 5 MB 整场景 html):原写法在浏览器里约 6.5 s(C10 探针),在这里也是秒级;
- * 新写法应在几十毫秒。判据给得很宽(中位数 ≤ 400 ms),分批重试的做法照 src/kernel/diffProject.test.mjs 的 timeIt:
- * 每批量几次取中位数,最多 MAX_BATCHES 批、批间让出 100 ms,有一批达标就停 —— 全量测试是几十个进程并行跑的,
- * 机器上别的会话也在吃 CPU,单批撞上一阵慢不算失败;真退回平方级时每一批都是秒级,照样拦得住。
+ * 1400 elements with ids (~5 MB whole-scene HTML): the original implementation took ~6.5 s in
+ * the browser (C10 probe) and also takes seconds here; the new implementation should take tens of
+ * milliseconds. The criterion is generous (median ≤ 400 ms), with batched retries following
+ * timeIt in src/kernel/diffProject.test.mjs: measure several times per batch and take the median,
+ * up to MAX_BATCHES batches with 100 ms yielded between batches, stopping as soon as one batch
+ * qualifies: full test suites run in dozens of parallel processes and other sessions on the
+ * machine also consume CPU, so a transient slowdown in a single batch is not a failure; if it
+ * genuinely regresses to quadratic time, every batch takes seconds and will still be caught.
  */
 const MAX_BATCHES = 8;
 
@@ -251,11 +261,11 @@ async function timeIt(fn, limitMs, runs = 5) {
   return { ...best, batches };
 }
 
-test("代价:1400 个带 id 的元素,整场景改名中位数 ≤ 400 ms(原写法秒级)", async () => {
+test("Cost: 1400 elements with ids, whole-scene rename median ≤ 400 ms (old way takes seconds)", async () => {
   const html = particleScene(1400);
   const ids = collect(scanIds(html).filter((id) => id !== "scene"), "scene");
-  assert.equal(ids.size, 1402); // 1400 个粒子 + 片段包裹层 + 场景根
+  assert.equal(ids.size, 1402); // 1400 particles + clip wrapper layer + scene root
   const t = await timeIt(() => renameSceneIds(html, ids), 400);
-  console.log(`renameSceneIds 1400 个 id、${(html.length / 1e6).toFixed(1)} MB:median ${t.median.toFixed(1)} ms,max ${t.max.toFixed(1)} ms(量了 ${t.batches} 批)`);
-  assert.ok(t.median <= 400, `量了 ${t.batches} 批,最好的一批中位数也有 ${t.median.toFixed(1)} ms,超过 400 ms`);
+  console.log(`renameSceneIds 1400 ids, ${(html.length / 1e6).toFixed(1)} MB: median ${t.median.toFixed(1)} ms, max ${t.max.toFixed(1)} ms (${t.batches} batches measured)`);
+  assert.ok(t.median <= 400, `Measured ${t.batches} batches; even the best batch's median is ${t.median.toFixed(1)} ms, over 400 ms`);
 });

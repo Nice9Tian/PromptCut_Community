@@ -1,8 +1,11 @@
 /**
- * 手机版片段上的叠加卡角标(`overlayBadge.ts`,语义 `workflow/editing.md`「手机版界面」)。
+ * Overlay card badge on mobile app clips (`overlayBadge.ts`, semantics "Mobile app interface"
+ * in `workflow/editing.md`).
  *
- * 要守住的是最后那一档:名字都挤没了的时候角标不吃点击 —— 它几乎就是整个片段,
- * 用户多半是想选中这一段,手指一歪却进了叠加卡。那一档的入口是子导航里的「叠加层」。
+ * What must be guarded is that last tier: when even the name is squeezed out, the badge does not
+ * consume clicks: it is almost the entire clip, and the user mostly wants to select this clip,
+ * but a slip of the finger enters the overlay card. The entry point for that tier is "Overlay layer"
+ * in the sub-navigation.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -24,7 +27,8 @@ test("narrower writes only the number, still tappable", () => {
 
 test("the narrowest tier does not take taps, the whole hot area belongs to the clip", () => {
   assert.deepEqual(planOverlayBadge(OVM_TAP_PX - 1, 1), { text: "1", tappable: false });
-  // 线上片段最窄 18px(FullTimeline 的 Math.max(..., 18)),那一档一定落在这里
+  // Narrowest clip on timeline is 18px (FullTimeline's Math.max(..., 18)); that tier definitely
+  // falls here
   assert.equal(planOverlayBadge(18, 1).tappable, false);
 });
 

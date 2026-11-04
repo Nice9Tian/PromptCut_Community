@@ -1,25 +1,38 @@
 /**
- * 查询渲染调度的端到端探针(`docs/semantics/product/rendering.md`「Agent 优先只是插队」「AI 栏的操作预览可以插队」,
- * `docs/semantics/mechanism/rendering.md`「查询渲染与预渲染进程」;报告 `docs/archive/agent-reports/AGENT-query-render.md`)。
- * 起编辑器进程 + 预渲染进程(真 Chrome),读预渲染进程 `GET /api/frames/diagnostics` 的 `scheduler`
- * (`FramePipeline.noteSched`:每类活在哪个实例上开工的计数)逐条核对:
+ * End-to-end probe for query render scheduling (`docs/semantics/product/rendering.md` "Agent Priority
+ * Is Just Queue Jumping", "Operation Preview in AI Panel Can Jump the Queue",
+ * `docs/semantics/mechanism/rendering.md` "Query Render and Prerender Process"; report
+ * `docs/archive/agent-reports/AGENT-query-render.md`).
+ * Start editor process + prerender process (real Chrome), read `scheduler` from prerender process
+ * `GET /api/frames/diagnostics` (`FramePipeline.noteSched`: count of which instance each task type
+ * starts on) to verify item by item:
  *
- *   ① 用户在 AI 栏点开的动图(`GET /api/ai/visual/gif/<key>.gif`)在 `'queue'` lane 的预渲染间上渲(`preview@queue` +1),
- *      Agent 专用实例一次没动(`agent@agent` 不变);回的是一张 GIF;
- *   ② 模型的 `see_frames`(`POST /api/vision/snapshot`)照常走 Agent 专用实例(`agent@agent` 增加),不碰 `preview`;
- *   ③ 模型的 `get_gif`(`POST /api/ai/visual` 写规格 + `POST /api/ai/visual/render`)照常走 Agent 专用实例;
- *   ④ 后台预渲染进行中(Agent 专用实例刚用过、开着、空闲):专用实例接了后台那一趟的卡批(`card-batch@agent` ≥ 1);
- *   ⑤ 后台预渲染进行中用户点开另一张动图:它不等后台那一趟(完成时那一趟还没做完),照样在 `'queue'` lane 上;
- *   ⑥ 后台预渲染进行中模型再看一帧:照常返回(Agent 专用实例手里那一批做完就轮到它;`agentWaitMs` 记每个 Agent 任务等了多久);
- *   ⑦ 那一趟最后做完(`status: 'ready'`,没有 error)。
+ *   ① Animated GIF opened by user in AI panel (`GET /api/ai/visual/gif/<key>.gif`) renders on
+ *      prerender room in `'queue'` lane (`preview@queue` +1), Agent dedicated instance is untouched
+ *      (`agent@agent` unchanged); returns a GIF;
+ *   ② Model's `see_frames` (`POST /api/vision/snapshot`) goes through Agent dedicated instance as
+ *      usual (`agent@agent` increases), without touching `preview`;
+ *   ③ Model's `get_gif` (`POST /api/ai/visual` writes spec + `POST /api/ai/visual/render`) goes
+ *      through Agent dedicated instance as usual;
+ *   ④ Background prerender in progress (Agent dedicated instance was just used, running, idle):
+ *      dedicated instance picks up card batch of background pass (`card-batch@agent` ≥ 1);
+ *   ⑤ User opens another animated GIF while background prerender is in progress: does not wait for
+ *      background pass (that pass is not finished when this completes), stays on `'queue'` lane;
+ *   ⑥ Model views another frame while background prerender is in progress: returns as usual (its
+ *      turn comes once dedicated instance finishes current card batch; `agentWaitMs` records how
+ *      long each Agent task waited);
+ *   ⑦ That pass completes at last (`status: 'ready'`, no errors).
  *
  *   node scripts/probes/query-render-probe.mjs [--port 5756] [--keep]
  *
- * 端口:编辑器 `--port`(舞台另占 +1、+2);预渲染进程的端口由编辑器进程自己挑空闲端口(`vite-plugin-prerender.ts` 的 `freePort`)。
- * 产物落在新建的临时目录(`PROMPTCUT_EXPORT_DIR` / `PROMPTCUT_DATA_DIR`),跑完删掉;`--keep` 不关、不删。
- * 用的卡是 `src/cards/_probe/r6.tsx` 的 `r6-stateful` / `r6-canvas`(同 `ready-index-probe.mjs`)。
+ * Port: editor `--port` (stage occupies +1, +2 additionally); prerender process port is picked from
+ * free ports by editor process itself (`freePort` in `vite-plugin-prerender.ts`).
+ * Artifacts land in newly created temp directory (`PROMPTCUT_EXPORT_DIR` / `PROMPTCUT_DATA_DIR`),
+ * deleted after run; `--keep` neither closes nor deletes.
+ * Cards used are `r6-stateful` / `r6-canvas` from `src/cards/_probe/r6.tsx` (same as
+ * `ready-index-probe.mjs`).
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -45,9 +58,9 @@ const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra ===
 const SESSION = `qr-${Date.now().toString(36)}`;
 const FPS = 30;
 const clip = (id, cardId, start, end, params = {}) => ({ id, kind: 'card', cardId, start, end, params });
-/** 6 秒:后台那一趟要够长,④⑤⑥ 才落在它进行中 */
+/** 6 seconds: background pass must be long enough so ④⑤⑥ fall while it is in progress */
 const PROJECT = {
-  id: `qr-probe-${SESSION}`, name: '查询渲染调度探针', width: 1920, height: 1080, fps: FPS, duration: 6,
+  id: `qr-probe-${SESSION}`, name: 'Query render scheduling probe', width: 1920, height: 1080, fps: FPS, duration: 6,
   themeId: 'dark', camera3dFov: 50, media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-1', name: 'tr-1', hidden: false, clips: [clip('clip-stateful', 'r6-stateful', 0, 6)] },
@@ -68,7 +81,7 @@ async function until(label, fn, timeoutMs = 120000, everyMs = 300) {
     let value;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await delay(everyMs);
   }
 }
@@ -90,7 +103,7 @@ async function startEditor() {
   const keep = c => { editorLog.push(c.toString()); if (editorLog.length > 400) editorLog.shift(); };
   editor.stdout.on('data', keep);
   editor.stderr.on('data', keep);
-  return until('编辑器进程起来', async () => (await fetch(EDITOR + '/api/prerender/info').then(r => r.ok, () => false)) || null, 120000);
+  return until('editor process is up', async () => (await fetch(EDITOR + '/api/prerender/info').then(r => r.ok, () => false)) || null, 120000);
 }
 function stopEditor() {
   if (!editor || editor.exitCode !== null || !editor.pid) return;
@@ -104,65 +117,65 @@ const prerenderUrl = async () => {
 
 try {
   await startEditor();
-  const base = await until('预渲染进程就绪', prerenderUrl, 180000);
+  const base = await until('prerender process ready', prerenderUrl, 180000);
   out.prerender = base;
-  if (!base) throw new Error('预渲染进程没起来');
+  if (!base) throw new Error('The prerender process did not start');
   const sched = async () => (await json(`${base}/api/frames/diagnostics`)).body?.scheduler ?? null;
   const count = (s, key) => s?.counts?.[key] ?? 0;
   const s0 = await sched();
-  check(!!s0, '诊断里有 scheduler', s0);
+  check(!!s0, 'Diagnostics include scheduler', s0);
 
-  /* ---- ① 用户点开的动图 ---- */
+  /* ---- ① User-opened animated GIF ---- */
   const spec1 = await postJson(`${base}/api/ai/visual`, { tool: 'get_gif', clipId: 'clip-stateful', after: PROJECT });
-  check(spec1.ok && spec1.body?.gifUrl, '写下动图规格', spec1.body);
+  check(spec1.ok && spec1.body?.gifUrl, 'Animated-image spec written', spec1.body);
   let t0 = Date.now();
   const gif1 = await fetch(`${base}${spec1.body.gifUrl}`);
   const gif1Bytes = Buffer.from(await gif1.arrayBuffer());
   out.userGif = { status: gif1.status, type: gif1.headers.get('content-type'), bytes: gif1Bytes.length, ms: Date.now() - t0, magic: gif1Bytes.subarray(0, 6).toString('latin1') };
   const s1 = await sched();
   out.afterUserGif = s1?.counts;
-  check(gif1.ok && out.userGif.magic.startsWith('GIF8'), '① 用户点开的动图回的是一张 GIF', out.userGif);
-  check(count(s1, 'preview@queue') === count(s0, 'preview@queue') + 1, '① 用户点开的动图在 queue lane 上渲(preview@queue +1)', s1?.counts);
-  check(count(s1, 'agent@agent') === count(s0, 'agent@agent'), '① Agent 专用实例一次没动(agent@agent 不变)', s1?.counts);
-  check(count(s1, 'preview@agent') === 0, '① 预览没进 Agent 专用实例', s1?.counts);
+  check(gif1.ok && out.userGif.magic.startsWith('GIF8'), '① the animated image the user opens returns a GIF', out.userGif);
+  check(count(s1, 'preview@queue') === count(s0, 'preview@queue') + 1, '① the animated image the user opens renders on the queue lane (preview@queue +1)', s1?.counts);
+  check(count(s1, 'agent@agent') === count(s0, 'agent@agent'), '① dedicated Agent instance not used at all (agent@agent unchanged)', s1?.counts);
+  check(count(s1, 'preview@agent') === 0, '① preview did not enter the dedicated Agent instance', s1?.counts);
 
-  /* ---- ② 模型的 see_frames ---- */
+  /* ---- ② Model's see_frames ---- */
   t0 = Date.now();
   const see = await postJson(`${base}/api/vision/snapshot`, { project: PROJECT, t: 1 });
   out.modelSee = { status: see.status, ms: Date.now() - t0, ok: see.body?.ok };
   const s2 = await sched();
   out.afterModelSee = s2?.counts;
-  check(see.ok && see.body?.ok !== false, '② 模型的 see_frames 返回了', out.modelSee);
-  check(count(s2, 'agent@agent') > count(s1, 'agent@agent'), '② 模型的 see_frames 走 Agent 专用实例(agent@agent 增加)', s2?.counts);
-  check(count(s2, 'preview@queue') === count(s1, 'preview@queue'), '② 模型的 see_frames 不走 preview', s2?.counts);
+  check(see.ok && see.body?.ok !== false, '② the model\'s see_frames returned', out.modelSee);
+  check(count(s2, 'agent@agent') > count(s1, 'agent@agent'), '② the model\'s see_frames goes through the dedicated Agent instance (agent@agent increased)', s2?.counts);
+  check(count(s2, 'preview@queue') === count(s1, 'preview@queue'), '② the model\'s see_frames does not go through preview', s2?.counts);
 
-  /* ---- ③ 模型的 get_gif ---- */
+  /* ---- ③ Model's get_gif ---- */
   const spec2 = await postJson(`${base}/api/ai/visual`, { tool: 'get_gif', clipId: 'clip-canvas', after: PROJECT });
   const rendered = await postJson(`${base}/api/ai/visual/render`, { key: spec2.body?.gifKey });
   const s3 = await sched();
   out.afterModelGif = s3?.counts;
-  check(rendered.ok && typeof rendered.body?.grid === 'string' && rendered.body.grid.length > 0, '③ 模型的 get_gif 回了拼图', { status: rendered.status, error: rendered.body?.error });
-  check(count(s3, 'agent@agent') === count(s2, 'agent@agent') + 1, '③ 模型的 get_gif 走 Agent 专用实例(agent@agent +1)', s3?.counts);
-  check(count(s3, 'preview@queue') === count(s2, 'preview@queue'), '③ 模型的 get_gif 不走 preview', s3?.counts);
-  check(s3?.agentOpen === true, '③ 之后 Agent 专用实例的预渲染间开着(空闲、未到关闭)', s3);
+  check(rendered.ok && typeof rendered.body?.grid === 'string' && rendered.body.grid.length > 0, '③ the model\'s get_gif returned a frame grid', { status: rendered.status, error: rendered.body?.error });
+  check(count(s3, 'agent@agent') === count(s2, 'agent@agent') + 1, '③ the model\'s get_gif goes through the dedicated Agent instance (agent@agent +1)', s3?.counts);
+  check(count(s3, 'preview@queue') === count(s2, 'preview@queue'), '③ the model\'s get_gif does not go through preview', s3?.counts);
+  check(s3?.agentOpen === true, '③ afterwards the dedicated Agent instance\'s prerender room stays open (idle, not yet closed)', s3);
 
-  /* ---- 后台预渲染开跑 ---- */
+  /* ---- Background prerender starts running ---- */
   const pushed = await postJson(EDITOR + '/api/data/project', { session: SESSION, localRev: 1, project: PROJECT });
-  check(pushed.ok, '项目推进镜像', pushed.body);
-  await until('预渲染进程手里有这一版项目', async () => (await json(`${base}/api/data/project?session=${SESSION}&localRev=1`)).ok || null, 30000);
+  check(pushed.ok, 'Project pushed to the mirror', pushed.body);
+  await until('Prerender process holds this version of the project', async () => (await json(`${base}/api/data/project?session=${SESSION}&localRev=1`)).ok || null, 30000);
   const preload = await postJson(`${base}/api/frames/preload`, { session: SESSION, localRev: 1 });
-  check(preload.ok, '预渲染开跑', preload.body);
+  check(preload.ok, 'Prerender started', preload.body);
   const status = async () => (await postJson(`${base}/api/frames/status`, { session: SESSION, localRev: 1 })).body;
 
-  /* ---- ④ 专用实例接后台那一趟的卡批 ---- */
-  const stole = await until('Agent 专用实例接了后台的卡批', async () => {
+  /* ---- ④ Dedicated instance picks up card batch from background pass ---- */
+  const stole = await until('Dedicated Agent instance took a background card batch', async () => {
     const s = await sched();
     return count(s, 'card-batch@agent') >= 1 ? s : null;
   }, 300000, 200);
   out.cardBatches = stole?.counts?.['card-batch@agent'] ?? 0;
-  check(!!stole, '④ 后台预渲染进行中,空闲的 Agent 专用实例接了卡批(card-batch@agent ≥ 1)', stole?.counts);
+  check(!!stole, '④ while background prerender is running, the idle dedicated Agent instance took a card batch (card-batch@agent ≥ 1)', stole?.counts);
 
-  /* ---- ⑤ 后台进行中用户点开另一张动图 ---- */
+  /* ---- ⑤ User opens another animated GIF while background is in progress ---- */
   const PROJECT_B = { ...PROJECT, tracks: PROJECT.tracks.map(t => ({ ...t, clips: t.clips.map(c => c.id === 'clip-stateful' ? { ...c, params: { variant: 'b' } } : c) })) };
   const spec3 = await postJson(`${base}/api/ai/visual`, { tool: 'get_gif', clipId: 'clip-stateful', after: PROJECT_B });
   const s4 = await sched();
@@ -173,26 +186,26 @@ try {
   const s5 = await sched();
   out.userGifDuringPrerender = { status: gif3.status, ms: Date.now() - t0, bytes: gif3Bytes.length, prerenderStatus: st5?.status,
     waitMs: (s5?.recent ?? []).filter(r => r.kind === 'preview' && r.at >= t0).map(r => r.waitMs) };
-  check(gif3.ok && gif3Bytes.subarray(0, 4).toString('latin1') === 'GIF8', '⑤ 后台进行中用户点开的动图照样回 GIF', out.userGifDuringPrerender);
-  check(count(s5, 'preview@queue') === count(s4, 'preview@queue') + 1, '⑤ 在 queue lane 上(preview@queue +1)', s5?.counts);
-  check(st5?.status && st5.status !== 'ready', '⑤ 动图回来时后台那一趟还没做完(没排在它后面)', st5);
+  check(gif3.ok && gif3Bytes.subarray(0, 4).toString('latin1') === 'GIF8', '⑤ while the background run is in progress, the animated image the user opens still returns a GIF', out.userGifDuringPrerender);
+  check(count(s5, 'preview@queue') === count(s4, 'preview@queue') + 1, '⑤ on the queue lane (preview@queue +1)', s5?.counts);
+  check(st5?.status && st5.status !== 'ready', '⑤ the background run was not finished when the animated image came back (it was not queued behind it)', st5);
 
-  /* ---- ⑥ 后台进行中模型再看一帧 ---- */
+  /* ---- ⑥ Model views another frame while background is in progress ---- */
   t0 = Date.now();
   const see2 = await postJson(`${base}/api/vision/snapshot`, { project: PROJECT, t: 2.5 });
   const s6 = await sched();
   out.modelSeeDuringPrerender = { status: see2.status, ms: Date.now() - t0, prerenderStatus: (await status())?.status,
-    // 这次查询里每个 Agent 任务(see_frames 的一批、量实体框)从排进来到开工等了多久:等的是专用实例手里那一批卡批
+    // How long each Agent task (a batch of see_frames, measuring entity box) waited from being queued to starting in this query: waiting for card batch held by dedicated instance
     agentWaitMs: (s6?.recent ?? []).filter(r => r.kind === 'agent' && r.at >= t0).map(r => r.waitMs) };
-  check(see2.ok && see2.body?.ok !== false, '⑥ 后台进行中模型的 see_frames 照常返回', out.modelSeeDuringPrerender);
+  check(see2.ok && see2.body?.ok !== false, '⑥ while the background run is in progress, the model\'s see_frames returns as usual', out.modelSeeDuringPrerender);
 
-  /* ---- ⑦ 那一趟做完 ---- */
-  const done = await until('后台那一趟做完', async () => {
+  /* ---- ⑦ That pass completes ---- */
+  const done = await until('Background run finishes', async () => {
     const s = await status();
     return s && ['ready', 'error', 'cancelled'].includes(s.status) ? s : null;
   }, 600000, 1000);
   out.final = { status: done?.status, error: done?.error ?? null, scheduler: (await sched())?.counts };
-  check(done?.status === 'ready' && !done?.error, '⑦ 后台那一趟做完、没有 error', out.final);
+  check(done?.status === 'ready' && !done?.error, '⑦ the background run finished with no error', out.final);
 } catch (error) {
   fails.push('exception: ' + (error?.stack || error));
 } finally {

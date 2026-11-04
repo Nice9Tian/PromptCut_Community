@@ -1,11 +1,14 @@
 /**
- * 运动追踪的前端胶水：起作业、轮询、拿轨迹。
+ * Frontend glue for motion tracking: start the job, poll, and get the trajectory.
  *
- * 两档都跑在服务端：装了拓展走 BootsTAPIR，没装走 numpy 的模板匹配兜底。
- * 这边只负责起作业、等结果、存结果。
- * 和镜头识别不同，轨迹**不写进项目文档**：查询点是用户每次现指的，同一段素材
- * 可以追很多组点，塞进 project 只会让工程文件无限膨胀。所以结果留在内存里，
- * 由 right/index.tsx 的 Map 持有，够 get_track 取一次就行。
+ * Both tiers run on the server: with the extension installed it uses BootsTAPIR, and without it
+ * it falls back to numpy template matching.
+ * This side is only responsible for starting the job, waiting for the result, and storing it.
+ * Unlike shot detection, the trajectory is **not written into the project document**: the query
+ * points are pointed out fresh by the user each time, and the same media can be tracked with many
+ * sets of points, so putting them into project would only make the project file grow without
+ * bound. So the result stays in memory, held by the Map in right/index.tsx, which is enough for
+ * get_track to fetch it once.
  */
 
 import { readSseStream } from "../editor/io/stt";
@@ -13,22 +16,29 @@ import type { PerceptionMediaRef } from "./perceptionMedia";
 import { tr } from "../i18n/index.ts";
 
 export interface TrackPoint {
-  /** 用户指定的查询点 [帧号, x, y]，原始像素 */
+  /** The query points specified by the user [frame number, x, y], in original pixels */
   query: [number, number, number];
-  /** 逐帧坐标，原始像素 */
+  /** Per-frame coordinates, in original pixels */
   xy: [number, number][];
-  /** 逐帧是否可见。被遮挡或移出画面为 false，此时 xy 是模型的猜测 */
+  /**
+   * Whether it is visible in each frame. False when occluded or moved out of frame, in which case xy
+   * is the model's guess
+   */
   visible: boolean[];
   /**
-   * 这个点压根没追成，兜底档才会给（纹理不够、贴太靠边）。
-   * 给了 note 就说明整条 xy 都是占位，visible 也全是 false——别拿去绑卡片。
+   * This point was not tracked at all; only the fallback tier gives this (not enough texture, too close
+   * to the edge). If note is given, the whole xy is a placeholder and visible is all false: do not use
+   * it to bind a card.
    */
   note?: string;
 }
 
 export interface TrackJobState {
   status: "running" | "done" | "error";
-  /** 作业跑完前是 undefined —— 哪一档由 Python 侧选，结果回来才知道 */
+  /**
+   * undefined until the job finishes: which tier is used is chosen on the Python side and only known
+   * when the result comes back
+   */
   engine?: "bootstapir" | "template";
   percent: number;
   message?: string;
@@ -48,11 +58,12 @@ export interface TrackResult {
 }
 
 /**
- * 能追到哪一档。
+ * Which tier tracking can reach.
  *
- * ready 只说神经网络那档。**ready 为 false 不等于追不了**：没装拓展时还有
- * numpy 的模板匹配（engine = "template"），精度和鲁棒性差不少但能跑。
- * engine 为 null 才是真的两档都用不了（连 Python 都没有）。
+ * ready speaks only for the neural network tier. **ready being false does not mean tracking is
+ * impossible**: without the extension there is still numpy template matching (engine = "template"),
+ * which is considerably worse in accuracy and robustness but works.
+ * Only engine being null means neither tier can be used (not even Python is present).
  */
 export async function trackStatus(): Promise<{
   ready: boolean;
@@ -65,7 +76,10 @@ export async function trackStatus(): Promise<{
   return r.json();
 }
 
-/** 只发素材标识,服务端经素材服务取字节(见 perceptionMedia.ts) */
+/**
+ * Send only the asset identifier; the server fetches the bytes through the asset service (see
+ * perceptionMedia.ts)
+ */
 export async function startTracking(
   media: PerceptionMediaRef,
   points: number[][],
@@ -88,8 +102,9 @@ export async function pollTrackJob(jobId: string): Promise<TrackJobState> {
 }
 
 /**
- * 等一个作业跑完。轮询间隔 1 秒 —— 神经网络档 250 帧约 26 秒，
- * 兜底档同样帧数 1 秒出头，两档共用这一个节奏就够。
+ * Wait for a job to finish. The polling interval is 1 second: the neural network tier takes about
+ * 26 seconds for 250 frames and the fallback tier a little over 1 second for the same number of
+ * frames, so one shared cadence for both tiers is enough.
  */
 export async function waitForTrack(
   jobId: string,
@@ -101,9 +116,10 @@ export async function waitForTrack(
     if (job.status === "error") throw new Error(job.message || tr("Motion tracking failed"));
     if (job.status === "done") {
       return {
-        // 作业跑完却没报 engine，只可能是 Python 侧的 result 事件缺字段。
-        // 认成 template 是**保守**的那一侧：调用方会据此提醒「这是降级结果，
-        // 别太当真」，反过来误标成 bootstapir 会让人拿粗结果当准数据。
+        // A job that finished without reporting engine can only mean the result event on the Python side is
+        // missing a field. Treating it as template is the **conservative** side: the caller will thereby
+        // warn "this is a downgraded result, do not take it too seriously", while mislabeling it as
+        // bootstapir the other way round would make people take a rough result for accurate data.
         engine: job.engine ?? "template",
         createdAt: new Date().toISOString(),
         width: job.width ?? 0,
@@ -117,10 +133,11 @@ export async function waitForTrack(
 }
 
 /**
- * 装运动追踪拓展（torch + BootsTAPIR 权重，接近 400 MB）。
+ * Installs the motion tracking extension (torch + BootsTAPIR weights, close to 400 MB).
  *
- * 流式读 pip 日志而不是等它跑完再回：这一步要好几分钟，中间一声不吭的话
- * 谁也说不清是在装还是卡死了。
+ * It reads the pip log as a stream instead of waiting for it to finish before replying: this step
+ * takes several minutes, and if nothing is shown in between, nobody can tell whether it is
+ * installing or hung.
  */
 export async function installTrack(
   onLog?: (line: string) => void,
@@ -140,16 +157,20 @@ export async function installTrack(
       log.push(line);
       onLog?.(line);
     } else if (ev.event === "installed") {
-      // 依赖装完了,但BootsTAPIR的权重不在 requirements 里,只随拓展库包发。
-      // 这不是失败,是「还差一步」,得和真正的安装失败分开报。
+      // The dependencies are installed, but the BootsTAPIR weights are not in requirements and ship only
+      // with the extension library package.
+      // This is not a failure but "one step short", and must be reported separately from a real install
+      // failure.
       needsModel = !!ev.needsModel;
-      // SttEvent 里的 model 是听写的模型名(string),和这里的对象同名不同型,
-      // 就地窄化一下,不去动那个共用的事件类型
+      // The model in SttEvent is the speech-to-text model name (string), with the same name but a
+      // different type from the object here, so narrow it in place instead of touching that shared event
+      // type
       modelPath = (ev as unknown as { model?: { path?: string } }).model?.path;
     } else if (ev.event === "error") {
       ok = false;
-      // stderr 里才是有用的那句(pip 的真实报错、缺什么文件),message 往往只是
-      // 「进程退出码 N」。只取 message 的话,用户看到的永远是一句没法照着做的话。
+      // The useful line is in stderr (pip's actual error, which file is missing), while message is often
+      // just "process exit code N". If only message were used, the user would always see a sentence they
+      // cannot act on.
       const msg = ev.message ?? tr("Install failed");
       const detail = typeof ev.stderr === "string" ? ev.stderr.trim() : "";
       const full = detail ? `${msg}

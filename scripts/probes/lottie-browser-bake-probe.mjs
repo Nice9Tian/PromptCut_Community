@@ -1,28 +1,43 @@
 /**
- * 探针:浏览器节点为拿像素而当场生成一张卡的快照并画成位图,这一步对 Lottie 卡要多少体积和时间,和别的内置卡比在什么量级。
- * 出处:`docs/plan/render-refactor-task.md`「癸」的「浏览器节点现在按卡片 id 把 Lottie 排除在外……要不要放开,由执行方评估后写进报告」。
+ * Probe: how much size and time generating a snapshot of a card on the fly and rendering it to a
+ * bitmap takes for browser nodes to retrieve pixels on Lottie cards, and what order of magnitude
+ * it is compared to other built-in cards.
+ * Source: "Gui" in `docs/plan/render-refactor-task.md`: "Browser nodes currently exclude Lottie by
+ * card id... whether to relax this is to be evaluated by the executor and documented in the report".
  *
  *   node scripts/probes/lottie-browser-bake-probe.mjs [--dist dist-online] [--port-base 27270] [--size 1920x1080] [--frames 40] [--jumps 20]
  *        [--lottie demo,adrock,bodymovin,gatin,happy2016,navidad] [--others punch-pill,odometer,checklist,focus-card,growth-curve,chapter-bar,entity-chips,mu-number-ticker]
- *        [--fidelity] [--json <文件>]
+ *        [--fidelity] [--json <file>]
  *
- * 要先有在线构建:`npx vite build --mode online`(产出 `dist-online/`,含 `catalog/`)。
+ * Requires an online build first: `npx vite build --mode online` (outputs `dist-online/`, including `catalog/`).
  *
- * 做法照 `stateful-seek-cost-probe.mjs`:起静态服务(父页一个源、舞台另一个源),父页照 stageRpc 协议把后台舞台切到「生成快照」的活,灌进一个只有一张卡的
- * 工程,然后调产品自己的 `bakeFrame`——就是在线页面的浏览器节点产单卡轨道流时,每一帧向舞台要像素用的那个调用
- * (`src/online/pageStreams.ts` 的 `bakeStream`):舞台在这一帧上 `createSnapshot`(把这张卡此刻的 DOM 连同算好的样式整个写成 HTML),
- * 再按 `bound` 把 HTML 画成位图(`renderSnapshotBitmap`:包进 SVG foreignObject、解码、画到画布,位图随事件转移给父页),HTML 字节本身丢掉(`html: false`)。
- * 每一帧回包里的:
- *   ms        舞台一侧这一帧的总耗时(拨时间、等就绪、生成快照、画位图);
- *   pixelsMs  其中把 HTML 画成位图那一步;
- *   bytes     这张卡这一帧的快照 HTML 有多大(原始字节)——旧理由里的「超过 300 KB 的体积上限」就是拿它比的;
- *   wall      父页从发出请求到收到回复的时间。
- * `--fidelity`:另核「当场生成快照再画成位图」画出来的 Lottie 和真的导出页画出来的是不是同一个画面(逐像素)。参照是一台隔离的开发服务器上的导出页
- * (`FramePipeline.bakery` + `bakeFrames`,1920×1080 透明底的 PNG),对照的是同一帧、同一个矩形(整个画框)的位图;每张 Lottie 卡取 3 帧。
- * 每张卡两组:顺推(第 0、1、2…… 帧连着要;direct 的卡每帧直接拨,有状态的卡接着上一帧推一步)和直接跳(仅 Lottie 卡:每次先 `bakeCancel`,
- * 再要全长里随机抽的帧)。只记录,不判过不过;任何一次 `bakeFrame` 失败退出码 1。
+ * Follows `stateful-seek-cost-probe.mjs`: start static servers (one origin for the parent page,
+ * another for the stage); the parent page switches the background stage to the "generate snapshots"
+ * job per the stageRpc protocol, feeds in a project with only a single card, and then calls the
+ * product's own `bakeFrame`: the same call used by browser nodes on online pages to request pixels
+ * from the stage for each frame when generating single-card track streams (`bakeStream` in
+ * `src/online/pageStreams.ts`). On this frame, the stage runs `createSnapshot` (serializing the card's
+ * current DOM along with computed styles into HTML), and then renders the HTML to a bitmap
+ * according to `bound` (`renderSnapshotBitmap`: wrap into SVG foreignObject, decode, paint to canvas,
+ * transfer bitmap to parent page via event), discarding the HTML bytes themselves (`html: false`).
+ * In each frame's response:
+ *   ms        Total time for this frame on the stage side (scrub time, wait for ready, generate snapshots, render bitmap);
+ *   pixelsMs  The step of rendering HTML to a bitmap;
+ *   bytes     Snapshot HTML size for this card at this frame (raw bytes): compared against the
+ *             "size limit exceeding 300 KB" in the old rationale;
+ *   wall      Time from the parent page sending the request to receiving the response.
+ * `--fidelity`: additionally verifies whether Lottie rendered via "generate snapshot on the fly
+ * then render to bitmap" produces the exact same image as the real export page (pixel by pixel).
+ * The reference is the export page on an isolated dev server (`FramePipeline.bakery` + `bakeFrames`,
+ * 1920×1080 PNG with transparent background), compared against the bitmap of the same frame and same
+ * rectangle (entire frame); 3 frames are sampled per Lottie card.
+ * Two runs per card: sequential advance (requesting frames 0, 1, 2... consecutively; direct cards
+ * seek directly each frame, stateful cards advance one step from the previous frame) and direct
+ * jump (Lottie cards only: run `bakeCancel` first each time, then request randomly sampled frames
+ * across the full length). Records only, without pass/fail judgment; any `bakeFrame` failure exits
+ * with code 1.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的导出目录 / 数据目录(--fidelity 会起一台隔离的开发服务器)
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external export directory / data directory (--fidelity starts an isolated dev server)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -57,10 +72,10 @@ const CARDS = [
   ...LOTTIE.filter((c) => lottieWant.includes(c.name)).map((c) => ({ ...c, kind: 'lottie' })),
   ...othersWant.map((id) => ({ name: id, kind: 'other', cardId: id, seconds: Math.max(2, FRAMES / FPS + 1), params: {} })),
 ];
-if (!fs.existsSync(path.join(DIST, 'stage.html'))) { console.error(`没有在线构建:${DIST}(先跑 npx vite build --mode online)`); process.exit(2); }
+if (!fs.existsSync(path.join(DIST, 'stage.html'))) { console.error(`No online build: ${DIST} (run npx vite build --mode online first)`); process.exit(2); }
 
 const projectOf = (card) => ({
-  id: `bake-${card.name}`, name: '浏览器节点生成快照探针', width: W, height: H, fps: FPS, duration: card.seconds,
+  id: `bake-${card.name}`, name: 'Browser node generate snapshots probe', width: W, height: H, fps: FPS, duration: card.seconds,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [{ id: 'tr', name: card.name, hidden: false, clips: [{ id: 'clip', kind: 'card', cardId: card.cardId, start: 0, end: card.seconds, params: card.params }] }],
 });
@@ -81,7 +96,7 @@ addEventListener('message', (e) => {
 window.__rpc = (method, ...args) => new Promise((res, rej) => { const id = ++seq; waiting.set(id, { res, rej }); stageWin.postMessage({ type: 'pc-rpc', id, method, args }, stageOrigin); });
 window.__timed = async (method, ...args) => { const t0 = performance.now(); const r = await window.__rpc(method, ...args); return { wall: performance.now() - t0, r }; };
 window.__setup = async (src) => { ready = null; const f = document.getElementById('bg'); f.src = src; stageWin = f.contentWindow; stageOrigin = new URL(src).origin;
-  const t0 = performance.now(); while (!ready) { if (performance.now() - t0 > 60000) throw new Error('舞台 60 秒没就绪'); await new Promise((r) => setTimeout(r, 50)); } stageWin = f.contentWindow; return ready; };
+  const t0 = performance.now(); while (!ready) { if (performance.now() - t0 > 60000) throw new Error('Stage not ready after 60 s'); await new Promise((r) => setTimeout(r, 50)); } stageWin = f.contentWindow; return ready; };
 </script>`;
 
 const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.png': 'image/png', '.webp': 'image/webp' };
@@ -90,7 +105,8 @@ const handler = (req, res) => {
   res.setHeader('Origin-Agent-Cluster', '?1');
   res.setHeader('Cache-Control', 'no-store');
   if (u.pathname === '/probe-parent') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); return res.end(PARENT_HTML); }
-  // 在线构建把 Lottie 素材放在根下的 /catalog/ (随 editor/ 一起部署,舞台源下也提供)
+  // The online build places Lottie assets under /catalog/ at root (deployed alongside editor/, also
+  // served under the stage origin)
   let rel = u.pathname.startsWith('/editor/') ? u.pathname.slice('/editor/'.length) : u.pathname.startsWith('/catalog/') ? u.pathname.slice(1) : null;
   if (rel === null) { res.statusCode = 404; return res.end(); }
   if (!rel) rel = 'index.html';
@@ -116,14 +132,14 @@ try {
   report.chrome = await browser.version();
   const page = await browser.newPage();
   await page.setViewport({ width: 1000, height: 640 });
-  page.on('pageerror', (e) => report.failures.push(`页面报错:${String(e.message || e).slice(0, 160)}`));
+  page.on('pageerror', (e) => report.failures.push(`Page error: ${String(e.message || e).slice(0, 160)}`));
   await page.goto(`http://127.0.0.1:${BASE}/probe-parent`, { waitUntil: 'load' });
   await page.evaluate((src) => window.__setup(src), `http://127.0.0.1:${BASE + 2}/editor/stage.html?stage=1&id=B&preview=stage&dual=1&lm=0`);
   await sleep(1000);
   const rect = { x: 0, y: 0, w: W - (W % 2), h: H - (H % 2) };
   const bake = async (card, localFrame) => {
     const { wall, r } = await page.evaluate((req) => window.__timed('bakeFrame', req), { session: 'bake', clipId: 'clip', localFrame, mode: 'seq', small: false, html: false, pixels: { rect } });
-    if (!r?.ok) { report.failures.push(`${card.name} 第 ${localFrame} 帧:${r?.reason}${r?.detail ? ` ${String(r.detail).slice(0, 100)}` : ''}`); return null; }
+    if (!r?.ok) { report.failures.push(`${card.name} frame ${localFrame}: ${r?.reason}${r?.detail ? ` ${String(r.detail).slice(0, 100)}` : ''}`); return null; }
     return { wall, ms: r.ms, pixelsMs: r.pixelsMs ?? 0, readyMs: r.readyMs, bytes: r.bytes, remounted: r.remounted };
   };
   for (const card of CARDS) {
@@ -146,7 +162,7 @@ try {
         htmlKB: { med: r2((q(jumps.map((x) => x.bytes), 0.5) ?? 0) / 1024), max: r2((q(jumps.map((x) => x.bytes), 1) ?? 0) / 1024) } };
     }
     report.cards.push(row);
-    process.stderr.write(`   顺推 ${JSON.stringify(row.seq)}\n` + (row.jump ? `   直接跳 ${JSON.stringify(row.jump)}\n` : ''));
+    process.stderr.write(`   forward ${JSON.stringify(row.seq)}\n` + (row.jump ? `   direct jump ${JSON.stringify(row.jump)}\n` : ''));
   }
   if (FIDELITY) {
     const { startIsolatedEditor } = await import('./preview-stop-lib.mjs');
@@ -160,8 +176,8 @@ try {
       for (const card of CARDS.filter((c) => c.kind === 'lottie' && c.name !== 'empty-lottie')) {
         const total = Math.floor(card.seconds * FPS);
         const frames = [Math.floor(total * 0.2), Math.floor(total * 0.5), Math.floor(total * 0.8)];
-        process.stderr.write('── 保真 ' + card.name + ' ' + frames.join(',') + '\n');
-        // 在线构建的后台舞台:当场生成快照、画成位图
+        process.stderr.write('── Fidelity ' + card.name + ' ' + frames.join(',') + '\n');
+        // Background stage of the online build: generate snapshots on the fly, render to bitmap
         await page.evaluate(() => window.__rpc('setRole', 'back', { job: 'bake' }));
         await page.evaluate((pr) => window.__rpc('setProject', pr, { reset: true }), projectOf(card));
         await page.evaluate(() => { window.__keepBitmaps = true; window.__bitmaps.clear(); });
@@ -173,7 +189,7 @@ try {
           bakedPng[n] = await page.evaluate((k) => window.__bitmapPng(k), n);
         }
         await page.evaluate(() => { window.__keepBitmaps = false; });
-        // 导出页:同一帧
+        // Export page: same frame
         const svc = new FramePipeline({ root: path.join(work, 'lib-' + card.name), origin: () => devOrigin, dataRoot: work });
         let bakery = null;
         const exportDir = path.join(work, 'exp-' + card.name);
@@ -184,10 +200,10 @@ try {
         for (const n of frames) {
           const row = { card: card.name, frame: n };
           const exp = path.join(exportDir, 'frames', String(n).padStart(6, '0') + '.png');
-          if (!bakedPng[n] || !fs.existsSync(exp)) { row.error = !bakedPng[n] ? '没取到位图' : '没有导出的 PNG'; report.fidelity.push(row); continue; }
+          if (!bakedPng[n] || !fs.existsSync(exp)) { row.error = !bakedPng[n] ? 'No bitmap captured' : 'No exported PNG'; report.fidelity.push(row); continue; }
           const a = PNG.sync.read(Buffer.from(bakedPng[n], 'base64')), e = PNG.sync.read(fs.readFileSync(exp));
           row.size = [a.width, a.height]; row.exportSize = [e.width, e.height];
-          if (a.width !== e.width || a.height !== e.height) { row.error = '尺寸不同'; report.fidelity.push(row); continue; }
+          if (a.width !== e.width || a.height !== e.height) { row.error = 'Size mismatch'; report.fidelity.push(row); continue; }
           let differ = 0, ink = 0, maxDiff = 0, over8 = 0, alphaOnly = 0;
           for (let i = 0; i < a.data.length; i += 4) {
             const aa = a.data[i + 3], ea = e.data[i + 3];
@@ -206,7 +222,7 @@ try {
           process.stderr.write('   ' + JSON.stringify(row) + '\n');
         }
       }
-    } finally { try { await dev.stop(); } catch { /* 已停 */ } try { fs.rmSync(work, { recursive: true, force: true }); } catch { /* 留着 */ } }
+    } finally { try { await dev.stop(); } catch { /* Stopped */ } try { fs.rmSync(work, { recursive: true, force: true }); } catch { /* Keep */ } }
   }
 } finally {
   if (browser) await browser.close().catch(() => {});

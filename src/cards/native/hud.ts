@@ -8,16 +8,16 @@ export interface HudParams {
 export const hudControls: Control[] = [
   {
     key: "position",
-    label: "位置",
+    label: "Position",
     type: "select",
     options: [
-      { value: "center", label: "居中" },
-      { value: "bottom", label: "底部" },
-      { value: "left", label: "靠左" },
-      { value: "right", label: "靠右" },
+      { value: "center", label: "Center" },
+      { value: "bottom", label: "Bottom" },
+      { value: "left", label: "Align left" },
+      { value: "right", label: "Align right" },
     ],
   },
-  { key: "accent", label: "主色(留空用主题色)", type: "color" },
+  { key: "accent", label: "Main color (leave empty to use theme color)", type: "color" },
 ];
 
 export const hudDefaults: HudParams = {
@@ -50,8 +50,8 @@ export interface HudOffsetParams {
   offsetY: number;
 }
 export const hudOffsetControls: Control[] = [
-  { key: "offsetX", label: "X 偏移", type: "number" },
-  { key: "offsetY", label: "Y 偏移", type: "number" },
+  { key: "offsetX", label: "X offset", type: "number" },
+  { key: "offsetY", label: "Y offset", type: "number" },
 ];
 export const hudOffsetDefaults: HudOffsetParams = {
   offsetX: 0,

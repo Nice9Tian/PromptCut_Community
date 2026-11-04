@@ -1,90 +1,103 @@
-// 显式 .ts 后缀:单测在 node 里直接 import 这两个模块(见 stageJobs.test.mjs)
+// Explicit .ts suffix: unit tests import these two modules directly in node (see stageJobs.test.mjs)
 import { backRole, backStage, whenStageReady } from "./stageBridge.ts";
 import type { BackJob, RenderAborted, StageRpcClient } from "../render/stageRpc.ts";
 
 /**
- * 后台舞台的**单飞队列**(D4 / E0)。
+ * The background stage's **single-flight queue** (D4 / E0).
  *
- * 后台舞台的项目有三种占用者,而它只有一台:
- *   - **补跑**(`catchup`):K5 第二路的整场景补跑、K3(b) 的重试路。用户已经停下来在等画面,
- *     最急;
- *   - **页面侧测量**(`measure`):D4 的 `measureContentBoxes` —— Agent 或右栏的定位工具
- *     在等一个实体框,是一次交互;
- *   - **探针**(`probe`):K1 的实测。它是背景工作,随时可以从这张卡的头重排。
- * 优先级就是这个顺序:**补跑 > 页面侧测量 > 探针**。同一优先级按先来后到。
+ * The background stage's project has three kinds of occupants, and there is only one stage:
+ *   - **Catch-up run** (`catchup`): K5's second-path whole-scene catch-up run, and K3(b)'s retry path.
+ *     The user has stopped and is waiting for the picture, so it is the most urgent;
+ *   - **Page-side measurement** (`measure`): D4's `measureContentBoxes` -- the Agent or the right
+ *     rail's positioning tool is waiting for a solid box, which is an interaction;
+ *   - **Probe** (`probe`): K1's real measurement. It is background work and can be re-queued from
+ *     the head of this card at any time.
+ * The priority is exactly this order: **catch-up run > page-side measurement > probe**. Within the
+ * same priority, first come, first served.
  *
- * M7(契约第 4.3 节)加第四种、最不急的:**生成快照**(`bake`)—— 在线双舞台的后台舞台兼做纯浏览器节点,
- * 为认领到的快照任务逐帧生成快照(工作项就是 J4 早留的 `'bake'`)。它排在探针之后;更急的活排进来时照样收到 abort 通知,
- * 由纯浏览器节点在当前帧做完后放回任务(D8)。
+ * M7 (contract section 4.3) adds a fourth, the least urgent: **generate snapshots** (`bake`) -- the
+ * background stage of the online dual stage doubles as a browser-only node, generating snapshots
+ * frame by frame for the snapshot tasks it has claimed (the job is the `'bake'` that J4 reserved
+ * early). It queues behind the probe; when more urgent work arrives it still receives an abort
+ * notification, and the browser-only node puts the task back after finishing the current frame (D8).
  *
- * 每个活开工前先发 `setRole('back', { job })` 把后台舞台切到这个工作项上 ——
- * **E0 的「掐断后不重发」例外按工作项判、不按 `settling` 标志判**:`job: 'catchup'` 期间
- * 收到的 `{ aborted: true, reason: 'project' }` 一律丢弃(那份 `setProject` 正是这个活
- * 自己灌的),`job: 'probe'` 期间收到的才按当前目标重发。判据见 `renderAbortAction`。
- * 队列空下来就把工作项交还成 `'probe'`(E0:「`settled` 或补跑中止后发
- * `setRole('back', { job: 'probe' })`,探针从当前这张卡的头重排」)。
+ * Before each job starts, it first sends `setRole('back', { job })` to switch the background stage to
+ * this job --
+ * **E0's "no resend after cut off" exception is decided by job, not by the `settling` flag**: while
+ * `job: 'catchup'`, any received `{ aborted: true, reason: 'project' }` is discarded (that
+ * `setProject` was loaded by this very job), and only one received during `job: 'probe'` is resent
+ * toward the current target. See `renderAbortAction` for the criteria.
+ * When the queue empties, the job is handed back as `'probe'` (E0: "after `settled` or a catch-up run
+ * abort, send `setRole('back', { job: 'probe' })`, and the probe re-queues from the head of the
+ * current card").
  *
- * **R2 只放队列本身**:排进来的只有 D4 的页面侧测量。R4 的探针和 R5 的补跑以后往里排活,
- * 不用再动这个模块。
+ * **R2 only puts in the queue itself**: the only thing queued is D4's page-side measurement. R4's
+ * probe and R5's catch-up run will queue work into it later, without touching this module again.
  *
- * legacy 的单舞台没有真正的 `back`(`backRole()` 回 `'front'`),那时**不发 `setRole`** ——
- * 把可见舞台切成 `back` 会清掉它的快照 / 抑制集合、停它的节拍循环,用户眼前的画面就没了。
- * 队列本身照常串行化,行为和今天「直接对唯一那个舞台量一次」一样。
+ * The legacy single stage has no real `back` (`backRole()` returns `'front'`), and then **`setRole` is
+ * not sent** -- switching the visible stage to `back` would clear its snapshots / suppression set and
+ * stop its beat loop, and the picture in front of the user would be gone.
+ * The queue itself still serializes as usual, with the same behavior as today's "measure once on the
+ * only stage directly".
  */
 
-/** 队列里的活分三种,数字越小越急 */
+/** Work in the queue comes in three kinds; the smaller the number, the more urgent */
 export type BackJobKind = "catchup" | "measure" | "probe" | "bake";
 
 const PRIORITY: Record<BackJobKind, number> = { catchup: 0, measure: 1, probe: 2, bake: 3 };
 
 /**
- * 队列里的三种活映射到 RPC 的工作项枚举(J4:`'probe' | 'catchup' | 'bake'`)。
+ * The three kinds of work in the queue map onto the RPC's job enum (J4: `'probe' | 'catchup' | 'bake'`).
  *
- * **页面侧测量映射到 `'catchup'` 而不是另开一个枚举值**:D4 明写「测量进场先
- * `setRole('back', { job: 'catchup' })`」,E0 的例外那条也把「D4 的页面侧测量」和补跑
- * 并列在 `job: 'catchup'` 名下。测量要的正是补跑那一套语义(探针挂起、自己灌的项目
- * 掐出来的 `'project'` 不重发),没必要给舞台加第四个它分辨不出差别的枚举值。
- * 队列这一侧仍然分三档,因为**优先级**要分(补跑 > 测量)。
+ * **Page-side measurement maps to `'catchup'` rather than opening a new enum value**: D4 states
+ * explicitly "when a measurement starts, first `setRole('back', { job: 'catchup' })`", and E0's
+ * exception also lists "D4's page-side measurement" alongside the catch-up run under `job: 'catchup'`.
+ * A measurement wants exactly the catch-up run's semantics (the probe is suspended, and a
+ * `'project'` cut off by its own loaded project is not resent), so there is no need to give the stage
+ * a fourth enum value whose difference it cannot tell apart.
+ * The queue side still has three tiers, because the **priority** must differ (catch-up run >
+ * measurement).
  */
 const RPC_JOB: Record<BackJobKind, BackJob> = { catchup: "catchup", measure: "catchup", probe: "probe", bake: "bake" };
 
-/** `'project'` 掐断之后按当前目标重发的上限(E0:超过就报错、该片段按声明兜底分派) */
+/** Upper limit of resends toward the current target after a `'project'` cut-off (E0: beyond it, report an error, and the clip falls back to dispatch by declaration) */
 export const MAX_PROJECT_RESENDS = 3;
 
-/** 父页收到一个 `render` 的中止回包该怎么办(E0 把五种 reason 的规矩逐条写死了) */
+/** What the parent page should do when it receives an abort reply for a `render` (E0 fixed the rules for the five reasons one by one) */
 export type RenderAbortAction =
-  /** 丢弃,不重发 —— 重发只会再掐掉新的那次,或者掐掉自己 */
+  /** Discard, do not resend -- resending would only cut off the new one again, or cut off itself */
   | "drop"
-  /** 按当前目标重发(最多 MAX_PROJECT_RESENDS 次) */
+  /** Resend toward the current target (at most MAX_PROJECT_RESENDS times) */
   | "resend"
-  /** 丢弃回包,按**新**客户端重发当前目标(iframe 换了) */
+  /** Discard the reply, and resend the current target to the **new** client (the iframe was replaced) */
   | "rebind"
-  /** 既不重发也不当错误:K1 探针的封顶,父页按已推帧外推 catchUpMs */
+  /** Neither resend nor treat as an error: K1 probe's cap, the parent page extrapolates catchUpMs from the frames already pushed */
   | "ignore"
-  /** 当错误,不重发 */
+  /** Treat as an error, do not resend */
   | "error";
 
 /**
  * @param reason `RenderAborted.reason`
- * @param job    后台舞台此刻的工作项(`currentBackJob()`);没有活在跑就是 null
+ * @param job    the background stage's current job (`currentBackJob()`); null when nothing is running
  */
 export function renderAbortAction(reason: RenderAborted["reason"], job: BackJob | null): RenderAbortAction {
   switch (reason) {
     case "superseded":
-      // 父页自己的新 render 掐的,重发会再掐掉新的那次
+      // Cut off by the parent page's own new render; resending would cut off the new one again
       return "drop";
     case "project":
       /*
-       * 唯一按工作项分岔的一条。`job: 'catchup'` 期间那份 `setProject` 是这个活自己灌的
-       * (补跑的全量项目 / 测量的全量项目),重发探针会把它掐成 'superseded',而
-       * 'superseded' 又不许重发 —— 三条规则成环,`settled` 永远发不出去。
+       * The only one that forks by job. While `job: 'catchup'`, that `setProject` was loaded by this job
+       * itself (the catch-up run's full project / the measurement's full project); resending the probe
+       * would cut it off as 'superseded', and 'superseded' is not allowed to resend -- the three rules form
+       * a cycle, and `settled` can never be sent.
        */
       return job === "catchup" ? "drop" : "resend";
     case "timeout":
-      // 截断 ≠ capped:capped 只由 stepMs > B 决定
+      // Truncated ≠ capped: capped is decided only by stepMs > B
       return "ignore";
     case "role":
-      // 重发也还是同一个角色
+      // The resend still uses the same role
       return "error";
     case "detached":
       return "rebind";
@@ -92,12 +105,12 @@ export function renderAbortAction(reason: RenderAborted["reason"], job: BackJob 
 }
 
 export interface BackJobContext {
-  /** 这次该对谁说话。legacy 单舞台时它就是可见舞台 */
+  /** Who to talk to this time. With the legacy single stage, it is the visible stage */
   stage: StageRpcClient;
-  /** 更急的活进来了:正在跑的这个自己收摊(不强杀,让它把状态收干净) */
+  /** More urgent work has arrived: the one running wraps up on its own (not killed by force, so it can clean up its state) */
   signal: AbortSignal;
   kind: BackJobKind;
-  /** 这次发给舞台的工作项;legacy 单舞台下没发过 setRole,这里也就没意义 */
+  /** The job sent to the stage this time; with the legacy single stage, setRole was never sent, so this is meaningless */
   job: BackJob;
 }
 
@@ -114,19 +127,21 @@ const queue: QueueItem[] = [];
 let running: { item: QueueItem; abort: AbortController } | null = null;
 let pumping = false;
 
-/** 后台舞台此刻在做哪个工作项;没有活在跑就是 null */
+/** Which job the background stage is doing right now; null when nothing is running */
 export function currentBackJob(): BackJob | null {
   return running ? RPC_JOB[running.item.kind] : null;
 }
 
-/** 排在前面的活有几个(含正在跑的那个);验收和调试看 */
+/** How many jobs are queued ahead (including the running one); for acceptance checks and debugging */
 export function backJobQueueLength(): number {
   return queue.length + (running ? 1 : 0);
 }
 
 /**
- * 比生成快照更急的活有几个(排着的加正在跑的,不算 `bake` 自己)。纯浏览器节点「闲」的判据之一(M7 契约第 2 节):
- * 单飞队列里有补跑、测量、探针时不认领新任务。
+ * How many jobs are more urgent than generate snapshots (queued plus running, not counting `bake`
+ * itself). One of the criteria for a browser-only node being "idle" (M7 contract section 2):
+ * when the single-flight queue holds a catch-up run, measurement, or probe, it does not claim new
+ * tasks.
  */
 export function urgentBackJobs(): number {
   let n = queue.filter((item) => item.kind !== "bake").length;
@@ -134,7 +149,7 @@ export function urgentBackJobs(): number {
   return n;
 }
 
-/** 取下一个该跑的:优先级最高的那一档里最早排进来的 */
+/** Take the next one to run: the earliest queued in the highest priority tier */
 function takeNext(): QueueItem | null {
   if (!queue.length) return null;
   let best = 0;
@@ -150,23 +165,27 @@ async function resolveStage(): Promise<StageRpcClient> {
   const now = backStage();
   if (now) return now;
   /*
-   * 还没有任何舞台。两个位置都等着:E1 之后来的是 `back`,legacy 的单舞台只会有 `front`,
-   * 而 `backStage()` 对 legacy 正是退回 `front`。谁先就绪就用谁。
+   * No stage yet. Wait on both positions: after E1 the one that comes is `back`, the legacy single stage
+   * only ever has `front`, and `backStage()` falls back to `front` for legacy. Use whichever is ready
+   * first.
    */
   return await Promise.race([whenStageReady("back"), whenStageReady("front")]);
 }
 
 /**
- * 把工作项发给后台舞台。**同一个客户端上的同一个工作项不重发** —— `setRole('back')`
- * 每次都会清空快照 / 抑制 / 流平面并中止追帧(E0),白发一次等于白清一次。
- * legacy 的单舞台不发(见文件头)。
+ * Send the job to the background stage. **The same job on the same client is not resent** --
+ * `setRole('back')` clears the snapshots / suppression / stream plane every time and aborts frame
+ * catch-up (E0), so a redundant send is a redundant clear.
+ * The legacy single stage is not sent to (see the file header).
  *
- * **记的是「哪个客户端 + 哪个工作项」,不只是工作项**(R7):`back` 这个位置上的客户端会换人 ——
- * K5 的互换让另一个 iframe 接任 `back`,iframe 重载也会换一个新客户端。只记工作项的话,
- * 新客户端从没收到过 `setRole`(它的缺省角色是 `front`),而这里却因为「工作项没变」跳过发送,
- * 于是新 `back` 一直留在 `front` 角色上:它不认 `render`(回 `reason: 'role'`)、
- * 也不按 `back` 的规矩走,探针和补跑就此停摆。带上客户端身份之后,换人必然不等于上一条记录,
- * 一定会重发一次。
+ * **What is recorded is "which client + which job", not just the job** (R7): the client at the `back`
+ * position can change -- K5's swap lets the other iframe take over `back`, and an iframe reload also
+ * brings a new client. If only the job were recorded, the new client has never received `setRole`
+ * (its default role is `front`), yet here the send would be skipped because "the job hasn't changed",
+ * so the new `back` would stay in the `front` role: it doesn't accept `render` (replies with
+ * `reason: 'role'`) and doesn't follow `back`'s rules either, and the probe and catch-up run stall.
+ * Once the client identity is included, a change of client is necessarily unequal to the previous
+ * record, so it is always resent once.
  */
 let lastSent: { client: StageRpcClient; job: BackJob } | null = null;
 async function sendJob(stage: StageRpcClient | null, job: BackJob): Promise<void> {
@@ -177,7 +196,7 @@ async function sendJob(stage: StageRpcClient | null, job: BackJob): Promise<void
     await stage.setRole("back", { job });
     if (backRole() === "back") lastSent = { client: stage, job };
   } catch {
-    // iframe 正在换:下一个活开工时会重发
+    // The iframe is being replaced: it will be resent when the next job starts
     lastSent = null;
   }
 }
@@ -190,9 +209,12 @@ async function pump(): Promise<void> {
       const item = takeNext();
       if (!item) {
         /*
-         * 队列空了,把工作项交还成 'probe'(E0):探针从当前这张卡的头重排。
-         * R4 之前没有探针在排队,这一句只是把状态放回缺省档,不会真的启动什么。
-         * 这一下是个 await,期间还可能再排进活来 —— 所以要再看一眼队列才能收工。
+         * The queue is empty, hand the job back as 'probe' (E0): the probe re-queues from the head of the
+         * current card.
+         * Before R4 no probe was queued, so this line only puts the state back to the default tier and does
+         * not actually start anything.
+         * This step is an await, during which more work may be queued -- so the queue must be checked once
+         * more before wrapping up.
          */
         await sendJob(backStage(), "probe");
         if (queue.length) continue;
@@ -217,11 +239,13 @@ async function pump(): Promise<void> {
 }
 
 /**
- * 往队列里排一个活。返回 `run` 的返回值;`run` 抛什么这里就抛什么。
+ * Queue a job. Returns the return value of `run`; whatever `run` throws is thrown here.
  *
- * 更急的活排进来时,正在跑的那个会收到 `ctx.signal` 的 abort —— **只是通知,不强杀**:
- * `run` 自己决定什么时候收摊(探针会在下一次 `render` 的 `abort` 回调里退出),
- * 没理会 signal 的活照样跑完,只是让后面的多等一会儿。
+ * When more urgent work is queued, the running one receives an abort on `ctx.signal` -- **a
+ * notification only, not a forced kill**:
+ * `run` decides for itself when to wrap up (the probe exits in the `abort` callback of the next
+ * `render`), and a job that ignores the signal still runs to completion, only making the ones behind
+ * it wait a little longer.
  */
 export function runBackJob<T>(kind: BackJobKind, run: (ctx: BackJobContext) => Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -231,7 +255,7 @@ export function runBackJob<T>(kind: BackJobKind, run: (ctx: BackJobContext) => P
   });
 }
 
-/** 测试用:清空队列(正在跑的那个收到 abort,但它的 Promise 照常按 run 的结果落定) */
+/** For tests: clear the queue (the running one receives abort, but its Promise settles as usual according to the result of run) */
 export function resetStageJobs(): void {
   queue.length = 0;
   running?.abort.abort();

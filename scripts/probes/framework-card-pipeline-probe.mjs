@@ -1,67 +1,130 @@
 /**
- * 用 remotion 式框架写的用户卡，经真的预渲染管线和导出管线跑一遍
- * （任务书 `docs/plan/render-refactor-task.md`「乙」框架、「丙」建卡指南；丙的报告 `docs/archive/agent-reports/AGENT-rr-guide.md`
- * 只验到：指南例子过建卡检查、在线页面的卡片运行时、托管渲染的隔离工作进程。本探针补验：这种卡经**桌面的预渲染进程**产轨道流、
- * 经**导出页**导出、再和**编辑器预览**对上）。
+ * Runs user cards written with a remotion-style framework through the real prerender pipeline
+ * and export pipeline (task brief `docs/plan/render-refactor-task.md` "Yi" framework, "Bing"
+ * card creation guide; Bing's report `docs/archive/agent-reports/AGENT-rr-guide.md` only verified:
+ * guide examples pass card creation checks, card runtime on the online page, and isolated worker
+ * processes for hosted rendering. This probe additionally verifies: such cards produce track
+ * streams via the **desktop app prerender process**, export via the **export page**, and match
+ * the **editor preview**).
  *
- *   node scripts/probes/framework-card-pipeline-probe.mjs [--port 27780] [--out <目录>] [--json <文件>] [--keep]
+ *   node scripts/probes/framework-card-pipeline-probe.mjs [--port 27780] [--out <dir>] [--json <file>] [--keep]
  *        [--only create,export,prerender,preview] [--origin http://127.0.0.1:27780] [--default-review]
  *
- * 端口：编辑器用 --port，另占 +1、+2 当舞台端口，三个连号都要空着（缺省 27780～27782）。自己起一台隔离的编辑器
- * （`scripts/lib/dev-server.mjs` 的 `startDevServer`；`no-user-dirs.mjs` 已设 `PROMPTCUT_NO_PORT_FILE=1`；数据目录、导出目录、
- * 卡片改动层都在临时目录里，检出目录里一个文件都不多），做完连子进程一起收掉。`--origin` 接一台已经起好的（只给调试用；
- * 建的卡带本次运行的随机后缀，不会和已有的撞）。`--only` 只跑其中几步（调试用；缺省全跑，验收口径是全跑）。
- * `--default-review`：第 4 步只做 4a（不在探针进程里改计划能力），等默认就有的三条流（两张用户卡各一条依赖下层的流、punch-pill 一条单卡流）
- * 产完就收，记下用了多久（只记录）。
+ * Ports: the editor uses --port, and additionally occupies +1 and +2 as stage ports; all three
+ * consecutive numbers must be free (default 27780-27782). Starts an isolated editor itself
+ * (`startDevServer` in `scripts/lib/dev-server.mjs`; `no-user-dirs.mjs` has set
+ * `PROMPTCUT_NO_PORT_FILE=1`; data directory, export directory, and card overlay layer are all in
+ * temporary directories, leaving no extra files in the checkout), and cleans it up together with
+ * child processes once done. `--origin` connects to an already started one (for debugging only;
+ * created cards include a random suffix for this run, so they will not collide with existing ones).
+ * `--only` runs only some of the steps (for debugging; runs all by default, acceptance criteria are
+ * to run all).
+ * `--default-review`: step 4 only runs 4a (does not modify plan capabilities in probe process),
+ * cleans up once the three streams that exist by default (one below-dependent stream for each of
+ * the two user cards, and one single-card stream for punch-pill) finish producing, and records how
+ * long it took (record only).
  *
- * 做什么（每步的判据写在后面；耗时只记录，不当通过条件）：
+ * What it does (criteria for each step are written below; elapsed time is recorded only and is not
+ * treated as a pass condition):
  *
- *   1. create     经真的 `POST /api/cards/create` 建三张用户卡，都声明 `frameMode: "direct"`（remotion 式）、都引用框架：
- *                   fw-title    DOM 卡：用 interpolate、Easing、spring、stagger、random、tween；
- *                   fw-colors   DOM 卡：用 interpolateColors、noise、loop、pingPong、randomRange、tween；
- *                   fw-bad      对照：remotion 式里用了 useState，必须被拒（HTTP 400），报错带行号，说的是记状态的 hook，
- *                               且没有落进改动层（证明走的是真的检查）。
- *                 前两张必须回 200、源码落进改动层、检出目录不多文件。
- *   2. 项目       1280×720、30 fps、9 秒。fw-title 0.7～4.9 秒，fw-colors 3.3～7.6 秒（起点都不在整秒上，各 4 秒以上），
- *                 内置 motion 式卡 punch-pill（`frameMode: "stateful"`）6.0～9.0 秒作对照。
- *   3. export     同一个项目（数据 URL 放进导出页地址，同 `export-baseline-compare.mjs`）：
- *                   a. 单路（--workers 1）全长导一遍，再导一遍；
- *                   b. 分 4 路（--workers 4）导一遍，再导一遍；切口取自导出输出的「分片导出」一行，**每张用户卡的片段里至少要落一个切口**
- *                      （片段中间；motion 式的 punch-pill 不许被切）；
- *                   c. 只导抽出来的若干帧（--target-frames；含切口前一帧、切口、切口后一帧、各卡首帧）。
- *                 判据：单路两遍、4 路两遍、单路对 4 路、单路对抽帧——每一帧字节相同；字节不同时再比像素，像素也不同才算不过。
- *                 不空洞：用户卡的片段里每一帧都有内容（不透明度大于 0 的像素），且不同时刻的画面不同；总帧数是 270。
- *   4. prerender  进程内起一个 `FramePipeline`（同预渲染进程的代码，`interactive: true`，库根放临时目录），把三张卡钉成重卡
- *                 （`streamPicked` 钉成全选；remotion 式的卡声明上是轻卡，不钉就没有流）。分两小步：
- *                 4a 默认行为：用户卡不在审阅表（`src/cards/capabilities.json`）里，计划里 `compositing` 是 unknown，按下层依赖卡处理，
- *                    **不进单卡流**（`docs/semantics/mechanism/cards.md`「分类以审阅表为准」）——照默认，两张用户卡判重时各有一条
- *                    **依赖下层的流**（连同下面的层一起渲，流里只存这张卡改动的那一层，按舞台坐标贴回去）。探针用没改过的计划算一遍
- *                    `planStreams`，核对这个事实（用户卡有依赖下层的流、没有单卡流；punch-pill 有单卡流）。贴得对不对由
- *                    `stream-below-stage-probe.mjs` 的场景丙（也是一张用框架写的用户卡）用像素核对；
- *                 4b 在**探针进程的内存里**把两张用户卡在计划里的 `compositing` 改成 independent（等于「审阅表登记了它们」；产品代码一个字不动），
- *                    验这种卡的流产出来以后不回放、与回放着产逐帧相同。预渲染完：
- *                   - 三张卡各有一条轨道流；两张用户卡的流 `replay` 是 false，`replayedFrames` 是 0；punch-pill 的流 `replay` 是 true；
- *                   - 把每条流中间的两个分段作废再产（每段都断租约），两张用户卡的流 `replayedFrames` 仍是 0，punch-pill 的 > 0；
- *                   - 每条用户卡的流取三个分段，A 路「不回放直接产」对 B 路「从挂载帧回放着产」逐帧比像素，必须一张不差；
- *                     punch-pill 的流是对照：两路必须比出差别（证明这套比法测得出「该回放而没回放」）；
- *                   - 流库里不回放产出的那一段，和 B 路的 PNG 用同一个编码器编出来的逐字节相同（不同再解码逐像素比）。
- *   5. preview    编辑器页（双舞台，`?editor&nosetup=1&preview=stage`）载入同一个项目，暂停着在时间轴上点十个时刻（前进、往回、
- *                 同一帧到达两次），每次等它回到精确活渲（父页发的 setTime 带 settle、可见舞台的 t 对上、卡没有在落定 / 抑制 /
- *                 等快照 / 追帧）、画面连着三次采样不变，取可见舞台里这张卡的**DOM**（包裹层的 innerHTML）。导出一侧：
- *                 同一个项目在导出页走导出的 `bakeFrames`（targetFrames、fullFrame，和第 3 步 c 同一条路），每一帧截完后取同一张卡的 DOM。
- *                 判据（DOM 逐字符相同，不设容差——卡是 t 和参数的纯函数，两边同一个 t 就该渲出同一份 DOM）：
- *                   - 预览里每个到达的时刻，每张在场的用户卡的 DOM 与导出同一帧的 DOM 相同；
- *                   - 往回点（80、45 第二次到达）与第一次往前到达的同一帧 DOM 相同；
- *                   - 对照：两个不同的帧（45 与 80）的 DOM 不同，且在场的卡 DOM 都不空。
- *                 不比截图像素的原因：预览里舞台是按编辑台的缩放显示的（缩放后重新光栅化，且叠在主题底上），导出是 1:1 的透明层，
- *                 两者的像素本来就不可比；DOM 逐字符相同加上第 3 步「导出帧在各路之间字节相同」，已经把「画面由 t 决定」两头都钉住。
- *                 预览与导出各存几张图在 `--out/shots/` 里供人看。
- *   6. 输出一份 JSON（`ok`、`fails`、每一步的关键数）：过程写 stderr，stdout 最后一行是 JSON，也写进 `--out/result.json`（和 `--json`）。
+ *   1. create     Create three user cards via real `POST /api/cards/create`, all declaring
+ *                 `frameMode: "direct"` (remotion-style) and referencing the framework:
+ *                   fw-title    DOM card: uses interpolate, Easing, spring, stagger, random, tween;
+ *                   fw-colors   DOM card: uses interpolateColors, noise, loop, pingPong,
+ *                               randomRange, tween;
+ *                   fw-bad      Control: useState used in remotion-style, must be rejected (HTTP
+ *                               400); error includes line number, mentions stateful hook, and did
+ *                               not land in overlay layer (proving real checks are run).
+ *                 The first two must return 200, source code lands in overlay layer, and no extra
+ *                 files in checkout.
+ *   2. Project    1280×720, 30 fps, 9 seconds. fw-title 0.7-4.9 seconds, fw-colors 3.3-7.6 seconds
+ *                 (neither start is on a whole second, each 4+ seconds), built-in motion-style card
+ *                 punch-pill (`frameMode: "stateful"`) 6.0-9.0 seconds as control.
+ *   3. export     The same project (data URL placed into export page address, same as
+ *                 `export-baseline-compare.mjs`):
+ *                   a. Single-worker (--workers 1) full-length export once, then export again;
+ *                   b. Split into 4 workers (--workers 4) export once, then export again; cut
+ *                      points are taken from the "chunked export" line of the export output,
+ *                      **at least one cut point must fall within each user card's clip** (in the
+ *                      middle of the clip; motion-style punch-pill must not be cut);
+ *                   c. Export only extracted target frames (--target-frames; including frame before
+ *                      cut point, cut point, frame after cut point, first frame of each card).
+ *                 Criteria: single-worker twice, 4-worker twice, single-worker vs. 4-worker,
+ *                 single-worker vs. target frames: every frame has identical bytes; if bytes
+ *                 differ, compare pixels, and only fail if pixels also differ.
+ *                 Non-empty: every frame in user card clips has content (pixels with opacity > 0),
+ *                 and frames at different times are different; total frame count is 270.
+ *   4. prerender  Start a `FramePipeline` in-process (same code as prerender process,
+ *                 `interactive: true`, store root in temporary directory), pin all three cards as
+ *                 heavy cards (`streamPicked` pinned to select all; remotion-style cards are
+ *                 declared as light cards, and will have no streams without pinning). Divided into
+ *                 two sub-steps:
+ *                 4a Default behavior: user cards are not in the review table
+ *                    (`src/cards/capabilities.json`), `compositing` in the plan is unknown, treated
+ *                    as below-dependent cards, **do not enter single-card streams**
+ *                    (`docs/semantics/mechanism/cards.md` "Classification is subject to review
+ *                    table"): by default, when classified as heavy, each of the two user cards has
+ *                    a **below-dependent stream** (rendered together with layers below, with the
+ *                    stream storing only the layer modified by this card, pasted back in stage
+ *                    coordinates). The probe calculates `planStreams` once with the unmodified plan
+ *                    to verify this fact (user cards have below-dependent streams and no single-card
+ *                    streams; punch-pill has a single-card stream). Whether the pasting is correct
+ *                    is verified by pixels in scenario Bing (also a user card written with the
+ *                    framework) of `stream-below-stage-probe.mjs`;
+ *                 4b In the **probe process memory**, change `compositing` for both user cards in the
+ *                    plan to independent (equivalent to "registered them in review table"; product
+ *                    code is completely untouched), verifying that once streams for such cards are
+ *                    produced, they do not replay and are frame-by-frame identical to producing with
+ *                    replay. After prerendering:
+ *                   - All three cards each have a track stream; `replay` for the two user card
+ *                     streams is false and `replayedFrames` is 0; `replay` for punch-pill stream is
+ *                     true;
+ *                   - Invalidate and re-produce the two middle segments of each stream (each
+ *                     segment breaks its lease); `replayedFrames` for the two user card streams
+ *                     remains 0, while punch-pill is > 0;
+ *                   - For each user card stream, take three segments, comparing pixels
+ *                     frame-by-frame between path A "produce directly without replay" and path B
+ *                     "produce with replay from mount frame", which must match completely without
+ *                     missing a single frame; punch-pill stream serves as a control: the two paths
+ *                     must show differences (proving this comparison method can detect "should
+ *                     replay but did not");
+ *                   - The segment produced without replay in the stream store is byte-for-byte
+ *                     identical to the one encoded from path B PNG using the same encoder (if
+ *                     different, decode and compare pixel-by-pixel).
+ *   5. preview    The editor page (dual stage, `?editor&nosetup=1&preview=stage`) loads the same
+ *                 project, paused and clicking ten time points on the timeline (forward, backward,
+ *                 reaching the same frame twice), each time waiting for it to return to exact live
+ *                 render (setTime sent by parent page carries settle, t of visible stage matches,
+ *                 card is not in settling / suppression / waiting for snapshots / frame
+ *                 catch-up), with frame samples remaining unchanged three times in a row,
+ *                 retrieving the **DOM** (innerHTML of wrapper layer) of this card in the visible
+ *                 stage. On the export side: the same project runs export `bakeFrames`
+ *                 (targetFrames, fullFrame, same path as step 3 c) on the export page; after
+ *                 capturing each frame, retrieves the DOM of the same card.
+ *                 Criteria (character-by-character identical DOM without tolerance: cards are pure
+ *                 functions of t and parameters, so the same t on both sides should render the
+ *                 exact same DOM):
+ *                   - At each reached time in preview, the DOM of every present user card is
+ *                     identical to the DOM of the same frame in export;
+ *                   - Seeking backward (second arrival at 80, 45) produces identical DOM to
+ *                     reaching the same frame moving forward the first time;
+ *                   - Control: DOM differs between two different frames (45 vs. 80), and DOM of
+ *                     present cards is never empty.
+ *                 Reason for not comparing screenshot pixels: in preview, the stage is displayed
+ *                 according to the editor's scaling (re-rasterized after scaling, and overlaid on
+ *                 top of the theme background), whereas export is a 1:1 transparent layer, so
+ *                 their pixels are inherently incomparable; character-by-character identical DOM
+ *                 plus step 3 "export frames have identical bytes across all paths" pins down "image
+ *                 determined by t" on both ends. Preview and export each save several images in
+ *                 `--out/shots/` for human inspection.
+ *   6. Output a JSON (`ok`, `fails`, key numbers for each step): process written to stderr, last
+ *      line of stdout is JSON, also written to `--out/result.json` (and `--json`).
  *
- * 通过标准：fails 为空，退出码 0；有不过的退出码 1；用法不对或起不来退出码 2（输出里 fails 写原因）。
- * 不改任何产品代码（src/、server/）。
+ * Pass criteria: fails is empty, exit code 0; exit code 1 if any check fails; exit code 2 if usage
+ * is incorrect or fails to start (fails in output describes the reason).
+ * Does not modify any product code (src/, server/).
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import：不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR，并设 PROMPTCUT_NO_PORT_FILE=1
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR, and set PROMPTCUT_NO_PORT_FILE=1
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
@@ -88,7 +151,7 @@ const args = process.argv.slice(2);
 const PORT = Number(flagArg('port', '27780', args)) || 27780;
 const GIVEN_ORIGIN = flagArg('origin', null, args);
 const KEEP = args.includes('--keep');
-/** 只看默认行为（不在探针进程里改计划能力）：第 4 步只做 4a，等 punch-pill 的流出来就收，记下用了多久 */
+/** Observe default behavior only (do not modify plan capabilities in probe process): step 4 only runs 4a, cleans up once punch-pill stream comes out, and records how long it took */
 const DEFAULT_REVIEW = args.includes('--default-review');
 const JSON_OUT = flagArg('json', null, args);
 const OUT = path.resolve(flagArg('out', null, args) || path.join(ROOT, 'out', 'framework-card-pipeline-probe'));
@@ -113,9 +176,9 @@ const done = (code, out) => {
   process.stdout.write(`${text}\n`);
   process.exit(code);
 };
-if (!GIVEN_ORIGIN && [5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2)) done(2, { ok: false, fails: ['这一段端口是用户常驻的开发服务器的，换一个'] });
+if (!GIVEN_ORIGIN && [5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2)) done(2, { ok: false, fails: ['This port range belongs to the user\'s always-on dev server, pick another'] });
 
-/* ------------------------------------------------------------------ 卡片源码 */
+/* ------------------------------------------------------------------ Card source */
 
 const ID = { title: `fw-title-${RUN}`, colors: `fw-colors-${RUN}`, bad: `fw-bad-${RUN}` };
 
@@ -220,23 +283,23 @@ function FwColors({ params, t = 0 }: CardProps<Params>) {
 
 export const fwColors: CardDef<Params> = {
   id: "${ID.colors}",
-  name: "框架探针：变色柱子",
-  description: "探针用的 remotion 式 DOM 卡：一排柱子颜色随时间循环变化、高度带噪声起伏，左上角一个来回脉动的圆环",
+  name: "Framework probe: color-changing bars",
+  description: "Probe remotion-style DOM card: a row of bars whose colors cycle over time and whose heights fluctuate with noise, plus a ring in the top-left corner that pulses back and forth",
   source: "user",
-  useWhen: "探针用，不用于真实项目。",
-  tags: ["探针"],
+  useWhen: "For probes only, not for real projects.",
+  tags: ["probe"],
   frameMode: "direct",
   defaults: { count: 12, seed: 3 },
   controls: [
-    { key: "count", label: "柱子个数", type: "number", min: 1, max: 24, step: 1 },
-    { key: "seed", label: "随机种子", type: "number", min: 0, max: 9999, step: 1 },
+    { key: "count", label: "Bar count", type: "number", min: 1, max: 24, step: 1 },
+    { key: "seed", label: "Random seed", type: "number", min: 0, max: 9999, step: 1 },
   ],
   Component: FwColors,
   lifecycle: { settleMs: 1500, after: "evolve", exit: ["fade"] },
 };
 `;
 
-/** 对照：remotion 式里用了 useState（记状态的 hook）。第 11 行起 */
+/** Control: useState used in remotion-style (stateful hook). Starts from line 11 */
 const BAD_SOURCE = `import { useEffect, useState } from "react";
 import type { CardDef, CardProps } from "../../kernel/types";
 import { tween } from "../../kernel/remotionStyle";
@@ -251,20 +314,20 @@ function FwBad({ params, t = 0 }: CardProps<Params>) {
 
 export const fwBad: CardDef<Params> = {
   id: "${ID.bad}",
-  name: "框架探针：违规对照",
-  description: "探针用的违规对照：remotion 式里用了记状态的 hook，必须被建卡检查拒绝",
+  name: "Framework probe: violation control",
+  description: "Violation control for the probe: a stateful hook is used in a remotion-style card, which the card creation check must reject",
   source: "user",
   frameMode: "direct",
   defaults: { text: "x" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: FwBad,
 };
 `;
 
-/* ------------------------------------------------------------------ 项目 */
+/* ------------------------------------------------------------------ Project */
 
 const PROJECT = {
-  id: `fw-pipeline-${RUN}`, name: '框架卡进真管线', width: WIDTH, height: HEIGHT, fps: FPS, duration: SECONDS,
+  id: `fw-pipeline-${RUN}`, name: 'Framework card in the real pipeline', width: WIDTH, height: HEIGHT, fps: FPS, duration: SECONDS,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-title', name: 'title', hidden: false, clips: [
@@ -280,14 +343,14 @@ const PROJECT = {
 };
 const USER_CLIPS = ['clip-title', 'clip-colors'];
 const clipOf = (id) => PROJECT.tracks.flatMap((t) => t.clips).find((c) => c.id === id);
-/** 片段在场的帧 [first, last]（挂载提前量按「起点所在帧」算，只用来挑检查的帧；切口判据用导出自己的计划） */
+/** Frames [first, last] where clip is present (mount lead time calculated from "frame at start point", only used to pick frames to inspect; cut point criteria use export's own plan) */
 const spanOf = (id) => { const c = clipOf(id); return [Math.ceil(c.start * FPS - 1e-9), Math.ceil(c.end * FPS - 1e-9) - 1]; };
 
-/* ------------------------------------------------------------------ 工具 */
+/* ------------------------------------------------------------------ Tools */
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
-/** 两张 PNG 有多少个像素不同（RGBA 任一分量不等）；尺寸不同回 -1 */
+/** Number of differing pixels between two PNGs (any RGBA component unequal); returns -1 if dimensions differ */
 function diffPixels(a, b) {
   const pa = PNG.sync.read(a), pb = PNG.sync.read(b);
   if (pa.width !== pb.width || pa.height !== pb.height) return -1;
@@ -297,7 +360,7 @@ function diffPixels(a, b) {
   }
   return n;
 }
-/** 有多少个不透明度大于 0 的像素（画面是不是空的） */
+/** Number of pixels with opacity > 0 (whether the frame is empty) */
 function inkPixels(png) {
   const p = PNG.sync.read(png);
   let n = 0;
@@ -322,7 +385,7 @@ let pipeline = null;
 let editorPage = null;
 let bakery = null;
 
-/** 导出：起 `scripts/export-frames.mjs`（和桌面的导出同一个入口），回帧目录与「分片导出」那一行解出的切口 */
+/** Export: start `scripts/export-frames.mjs` (same entry point as desktop app export), returns frame directory and cut points parsed from the "chunked export" line */
 async function runExport(tag, { workers = 1, targetFrames = null } = {}) {
   const dir = path.join(WORK, `export-${tag}`);
   await fs.rm(dir, { recursive: true, force: true });
@@ -336,14 +399,14 @@ async function runExport(tag, { workers = 1, targetFrames = null } = {}) {
   child.stdout.on('data', keep);
   child.stderr.on('data', keep);
   const code = await new Promise((resolve) => {
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* 已经退了 */ } }, 30 * 60_000); // 只为防卡死
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* Already exited */ } }, 30 * 60_000); // Only to prevent hangs
     child.on('close', (c) => { clearTimeout(timer); resolve(c); });
     child.on('error', () => { clearTimeout(timer); resolve(-1); });
   });
   const text = log.join('');
   const frames = path.join(dir, 'frames');
   const names = fsSync.existsSync(frames) ? (await fs.readdir(frames)).filter((f) => f.endsWith('.png')).sort() : [];
-  const planLine = /分片导出:(\d+) 段 ([^\n]*)/.exec(text);
+  const planLine = /sharded export:(\d+) segments ([^\n]*)/.exec(text);
   const ranges = planLine ? planLine[2].trim().split(/\s+/).map((r) => r.split('-').map(Number)) : null;
   const info = { tag, workers, code, frames: names.length, ms: Date.now() - t0, ranges };
   say('export', info);
@@ -351,7 +414,7 @@ async function runExport(tag, { workers = 1, targetFrames = null } = {}) {
   return { ...info, dir: frames, names, tail: code !== 0 ? text.slice(-1200) : undefined };
 }
 
-/** 两个导出的逐帧比：先字节，字节不同再比像素。`names` 缺省取两边都有的 */
+/** Frame-by-frame comparison of two exports: bytes first, then pixels if bytes differ. `names` defaults to those present on both sides */
 async function compareExports(a, b, names = null) {
   const shared = names ?? a.names.filter((n) => b.names.includes(n));
   const diffs = [];
@@ -366,7 +429,7 @@ async function compareExports(a, b, names = null) {
 }
 
 try {
-  /* ---------- 0. 编辑器（隔离） */
+  /* ---------- 0. Editor (isolated) */
   if (GIVEN_ORIGIN) {
     origin = GIVEN_ORIGIN.replace(/\/+$/, '');
   } else {
@@ -388,7 +451,7 @@ try {
         });
       } catch (e) {
         lastError = e;
-        if (!/没有全空着/.test(String(e?.message))) throw e; // 端口被占是暂时性故障：重试加退避；别的错照原样抛
+        if (!/not all free/.test(String(e?.message))) throw e; // Port occupied is a transient failure: retry with backoff; rethrow other errors as is
         say('port-busy', { attempt, message: String(e.message) });
         await sleep(attempt * 3000);
       }
@@ -399,12 +462,13 @@ try {
   out.origin = origin;
   say('editor', { origin, own: !!editor });
 
-  /* ---------- 1. 建卡（真的 /api/cards/create） */
+  /* ---------- 1. Create cards (real /api/cards/create) */
   const post = async (url, body) => {
     const r = await fetch(origin + url, { method: 'POST', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) });
     return { status: r.status, body: await r.json().catch(() => null) };
   };
-  // 需要卡的几步（export / prerender / preview）都得先建卡；只要用 --only 点名别的步，建卡照做
+  // Steps requiring cards (export / prerender / preview) must create cards first; if other steps
+  // are specified with --only, card creation still runs
   {
     const create = { cards: [] };
     for (const [label, id, source] of [['title', ID.title, TITLE_SOURCE], ['colors', ID.colors, COLORS_SOURCE]]) {
@@ -413,62 +477,64 @@ try {
       const inOverlay = fsSync.existsSync(stored) && fsSync.readFileSync(stored, 'utf8') === (r.body?.source ?? source);
       const row = { label, id, status: r.status, ok: r.body?.ok, inOverlay, errors: r.status === 200 ? undefined : (r.body?.errors ?? [r.body?.error]).slice?.(0, 8) };
       create.cards.push(row);
-      check(r.status === 200 && r.body?.ok === true, `建卡 ${label}：必须回 200`, row);
-      check(inOverlay, `建卡 ${label}：源码落进了改动层`, row);
+      check(r.status === 200 && r.body?.ok === true, `Create card ${label}: must return 200`, row);
+      check(inOverlay, `Create card ${label}: source landed in the overlay layer`, row);
     }
-    // 对照：违规的必须被拒，带行号，说的是记状态的 hook，没有落盘
+    // Control: violations must be rejected, with line numbers, mentioning stateful hooks, without writing to disk
     const bad = await post('/api/cards/create', { id: ID.bad, source: BAD_SOURCE, projectId: PROJECT.id });
     const badText = JSON.stringify(bad.body ?? {});
     const badFile = path.join(OVERLAY, 'src', 'cards', 'user', `${ID.bad}.tsx`);
-    const badRow = { status: bad.status, ok: bad.body?.ok, mentionsLine: /第\s*\d+\s*行/.test(badText), mentionsHook: /useState|记状态/.test(badText), onDisk: fsSync.existsSync(badFile), sample: badText.slice(0, 400) };
+    const badRow = { status: bad.status, ok: bad.body?.ok, mentionsLine: /line\s*\d+/.test(badText), mentionsHook: /useState|stateful/.test(badText), onDisk: fsSync.existsSync(badFile), sample: badText.slice(0, 400) };
     create.violation = badRow;
-    check(bad.status === 400 && bad.body?.ok === false, '违规对照：remotion 式里用 useState 必须被拒（HTTP 400）', badRow);
-    check(badRow.mentionsLine, '违规对照：报错带行号（第 N 行）', badRow);
-    check(badRow.mentionsHook, '违规对照：报错说的是记状态的 hook（useState）', badRow);
-    check(!badRow.onDisk, '违规对照：被拒的卡没有落进改动层', badRow);
-    check(JSON.stringify(userDirList()) === JSON.stringify(userDirBefore), '建卡：检出目录里一个文件都没多', userDirList().filter((n) => !userDirBefore.includes(n)));
+    check(bad.status === 400 && bad.body?.ok === false, 'Violation control: using useState in a remotion-style card must be rejected (HTTP 400)', badRow);
+    check(badRow.mentionsLine, 'Violation control: the error includes a line number (line N)', badRow);
+    check(badRow.mentionsHook, 'Violation control: the error names the stateful hook (useState)', badRow);
+    check(!badRow.onDisk, 'Violation control: the rejected card did not land in the overlay layer', badRow);
+    check(JSON.stringify(userDirList()) === JSON.stringify(userDirBefore), 'Create card: not a single extra file in the checkout directory', userDirList().filter((n) => !userDirBefore.includes(n)));
     out.steps.create = create;
     say('create', create);
   }
 
-  /* ---------- 3. 导出 */
+  /* ---------- 3. Export */
   if (want('export')) {
     const ex = { runs: {}, compares: {} };
     out.steps.export = ex;
     const brief = (r) => ({ code: r.code, frames: r.frames, ms: r.ms, ranges: r.ranges });
     const single1 = await runExport('single-1', { workers: 1 });
     ex.runs.single1 = brief(single1);
-    check(single1.code === 0 && single1.frames === TOTAL_FRAMES, `单路第一遍：退出码 0、共 ${TOTAL_FRAMES} 帧`, brief(single1));
+    check(single1.code === 0 && single1.frames === TOTAL_FRAMES, `Single-lane first pass: exit code 0, ${TOTAL_FRAMES} frames in total`, brief(single1));
     if (single1.tail) ex.runs.single1.tail = single1.tail;
 
     const four1 = await runExport('four-1', { workers: 4 });
     ex.runs.four1 = brief(four1);
-    check(four1.code === 0 && four1.frames === TOTAL_FRAMES, `4 路第一遍：退出码 0、共 ${TOTAL_FRAMES} 帧`, brief(four1));
+    check(four1.code === 0 && four1.frames === TOTAL_FRAMES, `4-lane first pass: exit code 0, ${TOTAL_FRAMES} frames in total`, brief(four1));
     if (four1.tail) ex.runs.four1.tail = four1.tail;
 
-    // 切口：每个分片的起点（除第 0 个）。要求 4 路 4 段，且每张用户卡的片段中间至少落一个切口，punch-pill（motion 式）不被切
+    // Cut points: start of each slice (except the 0th). Requires 4 workers 4 segments, and at least
+    // one cut point falling in the middle of each user card clip; punch-pill (motion-style) must not be cut
     const ranges = four1.ranges ?? [];
     const cuts = ranges.slice(1).map((r) => r[0]);
     ex.cuts = cuts;
     ex.plan = ranges;
-    check(ranges.length === 4, '4 路：分片计划是 4 段', ranges);
+    check(ranges.length === 4, '4-lane: the shard plan has 4 segments', ranges);
     const pillSpan = spanOf('clip-pill');
     for (const id of USER_CLIPS) {
       const [first, last] = spanOf(id);
       const inside = cuts.filter((c) => c > first && c <= last);
       ex[`cutsIn_${id}`] = inside;
-      check(inside.length >= 1, `4 路：切口落在 ${id} 的片段中间（片段 ${first}～${last}）`, { cuts, span: [first, last] });
+      check(inside.length >= 1, `4-lane: a split point falls in the middle of ${id}'s clip (clip ${first}-${last})`, { cuts, span: [first, last] });
     }
-    check(cuts.every((c) => !(c > pillSpan[0] + 1 && c <= pillSpan[1])), '4 路：motion 式的 punch-pill 片段中间没有切口', { cuts, span: pillSpan });
+    check(cuts.every((c) => !(c > pillSpan[0] + 1 && c <= pillSpan[1])), '4-lane: no split point inside the motion-style punch-pill clip', { cuts, span: pillSpan });
 
     if (single1.code === 0 && four1.code === 0) {
       ex.compares.single1VsFour1 = await compareExports(single1, four1);
       const c = ex.compares.single1VsFour1;
-      check(c.compared === TOTAL_FRAMES && c.pixelsDiffer === 0, '单路对 4 路：每一帧像素相同', c);
-      if (c.bytesOnly) say('note', { note: '单路对 4 路有帧字节不同但像素相同', bytesOnly: c.bytesOnly });
+      check(c.compared === TOTAL_FRAMES && c.pixelsDiffer === 0, 'Single-lane vs 4-lane: every frame is pixel-identical', c);
+      if (c.bytesOnly) say('note', { note: 'Single-lane vs 4-lane: some frames differ in bytes but are pixel-identical', bytesOnly: c.bytesOnly });
     }
 
-    // 抽帧：各卡首帧、切口前一帧 / 切口 / 切口后一帧、两张卡片段里的几帧、末帧
+    // Target frames: first frame of each card, frame before cut point / cut point / frame after cut
+    // point, several frames in clips of both cards, last frame
     const picks = new Set([0, 269]);
     for (const id of [...USER_CLIPS, 'clip-pill']) { const [f, l] = spanOf(id); picks.add(f); picks.add(f + 20); picks.add(Math.floor((f + l) / 2)); picks.add(l); }
     for (const c of cuts) { picks.add(c - 1); picks.add(c); picks.add(c + 1); }
@@ -476,35 +542,35 @@ try {
     ex.targets = targets;
     const target1 = await runExport('target-1', { workers: 1, targetFrames: targets });
     ex.runs.target1 = brief(target1);
-    check(target1.code === 0 && target1.frames === targets.length, `抽帧：退出码 0、共 ${targets.length} 帧`, brief(target1));
+    check(target1.code === 0 && target1.frames === targets.length, `Sampled frames: exit code 0, ${targets.length} frames in total`, brief(target1));
     if (target1.tail) ex.runs.target1.tail = target1.tail;
     const targetNames = targets.map((n) => `${String(n).padStart(6, '0')}.png`);
     if (single1.code === 0 && target1.code === 0) {
       ex.compares.single1VsTarget = await compareExports(single1, target1, targetNames.filter((n) => target1.names.includes(n)));
       const c = ex.compares.single1VsTarget;
-      check(c.compared === targets.length && c.pixelsDiffer === 0, '单路对抽帧：抽出来的每一帧像素相同', c);
+      check(c.compared === targets.length && c.pixelsDiffer === 0, 'Single-lane vs sampled frames: every sampled frame is pixel-identical', c);
     }
 
-    // 同一路连导两遍
+    // Export twice in succession on the same path
     const single2 = await runExport('single-2', { workers: 1 });
     ex.runs.single2 = brief(single2);
-    check(single2.code === 0 && single2.frames === TOTAL_FRAMES, '单路第二遍：退出码 0、帧数对', brief(single2));
+    check(single2.code === 0 && single2.frames === TOTAL_FRAMES, 'Single-lane second pass: exit code 0, frame count correct', brief(single2));
     if (single1.code === 0 && single2.code === 0) {
       ex.compares.single1VsSingle2 = await compareExports(single1, single2);
       const c = ex.compares.single1VsSingle2;
-      check(c.compared === TOTAL_FRAMES && c.pixelsDiffer === 0, '单路连导两遍：每一帧像素相同', c);
+      check(c.compared === TOTAL_FRAMES && c.pixelsDiffer === 0, 'Single-lane exported twice in a row: every frame is pixel-identical', c);
     }
     const four2 = await runExport('four-2', { workers: 4 });
     ex.runs.four2 = brief(four2);
-    check(four2.code === 0 && four2.frames === TOTAL_FRAMES, '4 路第二遍：退出码 0、帧数对', brief(four2));
-    check(JSON.stringify(four2.ranges) === JSON.stringify(four1.ranges), '4 路两遍的分片计划相同', [four1.ranges, four2.ranges]);
+    check(four2.code === 0 && four2.frames === TOTAL_FRAMES, '4-lane second pass: exit code 0, frame count correct', brief(four2));
+    check(JSON.stringify(four2.ranges) === JSON.stringify(four1.ranges), 'The shard plans of the two 4-lane passes are identical', [four1.ranges, four2.ranges]);
     if (four1.code === 0 && four2.code === 0) {
       ex.compares.four1VsFour2 = await compareExports(four1, four2);
       const c = ex.compares.four1VsFour2;
-      check(c.compared === TOTAL_FRAMES && c.pixelsDiffer === 0, '4 路连导两遍：每一帧像素相同', c);
+      check(c.compared === TOTAL_FRAMES && c.pixelsDiffer === 0, '4-lane exported twice in a row: every frame is pixel-identical', c);
     }
 
-    // 不空洞：用户卡片段里每一帧都有内容，不同时刻的画面不同
+    // Non-empty: every frame in user card clips has content, frames at different times are different
     if (single1.code === 0) {
       ex.content = {};
       for (const id of USER_CLIPS) {
@@ -519,35 +585,36 @@ try {
         let moving = 0;
         for (let i = 1; i < sample.length; i++) moving = Math.max(moving, diffPixels(sample[i - 1].buf, sample[i].buf));
         ex.content[id] = { framesChecked: inks.length, inkMin: Math.min(...inks), inkMax: Math.max(...inks), maxStepDiff: moving };
-        check(inks.length >= 4 && Math.min(...inks) > 0, `${id}：片段里抽查的每一帧都有内容（不透明像素 > 0）`, ex.content[id]);
-        check(moving > 300, `${id}：相邻抽查帧的画面不同（动起来了）`, ex.content[id]);
+        check(inks.length >= 4 && Math.min(...inks) > 0, `${id}: every sampled frame in the clip has content (opaque pixels > 0)`, ex.content[id]);
+        check(moving > 300, `${id}: adjacent sampled frames differ (it is moving)`, ex.content[id]);
         const mid = Math.floor((first + last) / 2);
         await fs.copyFile(path.join(single1.dir, `${String(mid).padStart(6, '0')}.png`), path.join(SHOTS, `export-${id}-f${mid}.png`));
       }
-      // 空白处：第 0 帧（谁都不在场）没有内容——证明上面的「有内容」不是整张都是脏的
+      // Blank areas: frame 0 (nobody is present) has no content: proves that "has content" above is
+      // not due to the entire image being dirty
       const blank = await fs.readFile(path.join(single1.dir, '000000.png'));
       ex.content.frame0Ink = inkPixels(blank);
-      check(ex.content.frame0Ink === 0, '第 0 帧（没有卡在场）是透明的', ex.content.frame0Ink);
-      // 对照卡也出画面
+      check(ex.content.frame0Ink === 0, 'Frame 0 (no card on stage) is transparent', ex.content.frame0Ink);
+      // Control card also renders an image
       const [pf, pl] = spanOf('clip-pill');
       const pillBuf = await fs.readFile(path.join(single1.dir, `${String(Math.floor((pf + pl) / 2)).padStart(6, '0')}.png`));
       ex.content.pillInk = inkPixels(pillBuf);
-      check(ex.content.pillInk > 0, 'punch-pill（对照）片段里有内容', ex.content.pillInk);
+      check(ex.content.pillInk > 0, 'The punch-pill (control) clip has content', ex.content.pillInk);
     }
-    // 留下单路的几帧给人看
+    // Keep several single-worker frames for inspection
     if (single1.code === 0) for (const n of [60, 120, 200]) await fs.copyFile(path.join(single1.dir, `${String(n).padStart(6, '0')}.png`), path.join(SHOTS, `export-single-f${n}.png`)).catch(() => {});
     out.exportDir = KEEP ? WORK : undefined;
     say('export-done', { compares: ex.compares });
   }
 
-  /* ---------- 4. 预渲染 */
+  /* ---------- 4. Prerender */
   if (want('prerender')) {
     const pr = { streams: {}, regen: {}, compare: [] };
     out.steps.prerender = pr;
     const PIPE_ROOT = path.join(WORK, 'pipeline');
     await fs.mkdir(PIPE_ROOT, { recursive: true });
     pipeline = new FramePipeline({ root: PIPE_ROOT, origin: () => origin, interactive: true, playhead: () => null });
-    pipeline.streamPicked = () => true; // 钉成重卡：remotion 式的卡声明上是轻卡，不钉就没有流
+    pipeline.streamPicked = () => true; // Pin as heavy cards: remotion-style cards are declared as light cards; without pinning they have no streams
     const producer = pipeline.streamProducer();
     producer.attachRoute();
     const dense = () => {
@@ -562,16 +629,22 @@ try {
         let v = null;
         try { v = await fn(); } catch { v = null; }
         if (v) return v;
-        if (Date.now() > deadline) { check(false, `超时：${label}`); return null; }
+        if (Date.now() > deadline) { check(false, `Timed out: ${label}`); return null; }
         await sleep(everyMs);
       }
     };
     /*
-     * 审阅表（`src/cards/capabilities.json`）里没有登记的卡，`compositing` 一律是 unknown，按下层依赖卡处理、不进单卡流
-     * （`docs/semantics/mechanism/cards.md`「分类以审阅表为准」第 44 行）；用户卡永远不在审阅表里。所以**照默认**，两张用户卡判重时各有一条
-     * 依赖下层的流（`kind: below`，按舞台坐标），没有单卡流。
-     * 第 4a 步记下这个事实（用没改过的计划算一遍 `planStreams`）；第 4b 步在**本进程里**把这两张卡的计划能力改成 independent
-     * （等于「审阅表登记了它们」），验这种卡的流产出来以后不回放、与回放着产逐帧相同。改的只是探针进程里的内存，产品代码一个字不动。
+     * Cards not registered in the review table (`src/cards/capabilities.json`) always have unknown
+     * `compositing`, are treated as below-dependent cards, and do not enter single-card streams
+     * (`docs/semantics/mechanism/cards.md` "Classification is subject to review table", line 44); user
+     * cards are never in the review table. Therefore **by default**, when classified as heavy, each of
+     * the two user cards has a below-dependent stream (`kind: below`, in stage coordinates) and no
+     * single-card stream.
+     * Step 4a records this fact (calculating `planStreams` once with the unmodified plan); step 4b
+     * changes the plan capabilities of these two cards to independent **in this process** (equivalent
+     * to "registered them in review table"), verifying that once streams for such cards are produced,
+     * they do not replay and are frame-by-frame identical to producing with replay. Only memory in the
+     * probe process is modified; product code is completely untouched.
      */
     let unpatched = null;
     const originalPlan = pipeline.browserCardPlan.bind(pipeline);
@@ -586,9 +659,9 @@ try {
     const ALL = [...USER_CLIPS, 'clip-pill'];
     const t0 = Date.now();
     const entry = await pipeline.preload(PROJECT);
-    const ready = await until('生产者起来、三条流到位', () => (pipeline._streams?.streams.size >= 3 ? pipeline._streams : null), 1_800_000);
-    if (!ready) throw new Error('生产者没起来');
-    // 4a：默认行为——没改过的计划
+    const ready = await until('producer is up and the three streams are in place', () => (pipeline._streams?.streams.size >= 3 ? pipeline._streams : null), 1_800_000);
+    if (!ready) throw new Error('The producer did not start');
+    // 4a: default behavior: unmodified plan
     {
       const controls = entry.cardCache.plan(unpatched);
       const compOf = (id) => controls.find((c) => c.clipId === id)?.compositing ?? null;
@@ -597,26 +670,30 @@ try {
         compositing: Object.fromEntries(ALL.map((id) => [id, compOf(id)])),
         streamClips: specs.map((s) => s.clipIds.join('+')),
         streams: specs.map((s) => ({ clip: s.clipIds.join('+'), kind: s.kind, plane: s.plane, replay: s.replay, belowClipIds: s.belowClipIds ?? null })),
-        note: '审阅表没登记的卡 compositing 为 unknown，按下层依赖卡处理：不进单卡流，判重时走依赖下层的流（mechanism/cards.md「分类以审阅表为准」）；用户卡永远不在审阅表里',
+        note: 'Cards not registered in the review table have compositing unknown and are treated as cards that depend on the layer below: they do not get a single-card stream, and when classified as heavy they use the stream that depends on the layer below (mechanism/cards.md "Classification follows the review table"); user cards are never in the review table',
       };
       const kindOf = (id) => specs.filter((s) => s.clipIds.includes(id)).map((s) => `${s.kind}/${s.plane}`);
-      check(compOf('clip-title') === 'unknown' && compOf('clip-colors') === 'unknown', '默认行为：用框架写的用户卡在计划里 compositing 是 unknown（审阅表没登记）', pr.defaultBehavior.compositing);
-      check(compOf('clip-pill') === 'independent', '默认行为：内置的 punch-pill 是 independent', pr.defaultBehavior.compositing);
+      check(compOf('clip-title') === 'unknown' && compOf('clip-colors') === 'unknown', 'Default behavior: user cards written with the framework have compositing unknown in the plan (not registered in the review table)', pr.defaultBehavior.compositing);
+      check(compOf('clip-pill') === 'independent', 'Default behavior: the built-in punch-pill is independent', pr.defaultBehavior.compositing);
       check(USER_CLIPS.every((id) => kindOf(id).length === 1 && kindOf(id)[0] === 'below/stage'),
-        '默认行为：用户卡判重时各有一条依赖下层的流（按舞台坐标），没有单卡流', pr.defaultBehavior.streams);
-      check(kindOf('clip-pill').length === 1 && kindOf('clip-pill')[0] === 'card/local', '默认行为：punch-pill 有单卡流', pr.defaultBehavior.streams);
-      // remotion 式的目标卡自己不用回放；要不要回放看它和它下面的卡里有没有 motion 式的：
-      // fw-title 下面只有 fw-colors（remotion 式）→ 不回放；fw-colors 下面是 punch-pill（motion 式，时间上有重叠）→ 要回放
+        'Default behavior: when classified as heavy, each user card has one stream that depends on the layer below (by stage coordinates) and no single-card stream', pr.defaultBehavior.streams);
+      check(kindOf('clip-pill').length === 1 && kindOf('clip-pill')[0] === 'card/local', 'Default behavior: punch-pill has a single-card stream', pr.defaultBehavior.streams);
+      // The remotion-style target card itself does not need replay; whether to replay depends on
+      // whether it or cards below it include motion-style ones:
+      // below fw-title there is only fw-colors (remotion-style) → no replay; below fw-colors is
+      // punch-pill (motion-style, overlapping in time) → requires replay
       const specOf = (id) => specs.find((s) => s.clipIds.includes(id));
       check(specOf('clip-title')?.replay === false && JSON.stringify(specOf('clip-title')?.belowClipIds) === JSON.stringify(['clip-colors']),
-        '默认行为：fw-title 的流不回放（它和它的下层 fw-colors 都是 remotion 式）', pr.defaultBehavior.streams);
+        'Default behavior: the fw-title stream does not replay (it and its lower layer fw-colors are both remotion-style)', pr.defaultBehavior.streams);
       check(specOf('clip-colors')?.replay === true && JSON.stringify(specOf('clip-colors')?.belowClipIds) === JSON.stringify(['clip-pill']),
-        '默认行为：fw-colors 的流要回放（它下面压着 motion 式的 punch-pill）', pr.defaultBehavior.streams);
+        'Default behavior: the fw-colors stream must replay (a motion-style punch-pill sits underneath it)', pr.defaultBehavior.streams);
     }
     if (DEFAULT_REVIEW) {
       pr.defaultOnly = true;
       pr.msToFirstStream = Date.now() - t0;
-      // 等到每条流要么全部满密度,要么被差分取层的自检判死(`below.failed`:这条流不再产,这张卡照没有流时那样兜底)
+      // Wait until each stream either reaches full density or is declared dead by differential layer
+      // extraction self-checks (`below.failed`: this stream stops producing, and this card falls back
+      // as if there were no stream)
       const settledAll = () => {
         const status = producer.status();
         if (status.streams.length < 3 || producer.workers.size || producer.encoding.size) return null;
@@ -626,48 +703,53 @@ try {
         }
         return status;
       };
-      const all = await until('默认就有的三条流产完(或被自检判死)', settledAll, 420_000, 1000);
+      const all = await until('the three default streams finish producing (or are declared dead by the self-check)', settledAll, 420_000, 1000);
       if (!all) {
-        // 没产完:留下每条流此刻的样子(哪几段还没满密度、差分取层有没有判死、生产者最近的日志),好查原因
+        // Not finished producing: preserve the state of each stream at this moment (which segments are
+        // not yet full density, whether differential layer extraction failed, producer's recent logs)
+        // for troubleshooting
         const st = producer.status();
         pr.defaultStuck = { streams: st.streams.map((s) => ({ clipIds: s.clipIds, kind: s.kind, strides: Array.from({ length: s.lastSegment + 1 }, (_, n) => s.segments[n]?.stride ?? 0), below: s.below ?? null })), log: (st.log ?? []).slice(-12) };
         say('default-stuck', pr.defaultStuck);
       }
       pr.msToPillDense = Date.now() - t0;
-      check(!!all, '默认行为：三条流产完');
+      check(!!all, 'Default behavior: the three streams finish producing');
       if (all) {
         pr.defaultStreams = all.streams.map((s) => ({ clipIds: s.clipIds, kind: s.kind, replay: s.replay, replayedFrames: s.replayedFrames, below: s.below ? { failed: s.below.failed ?? null, frames: s.below.frames, checks: s.below.checks } : null }));
         const rowOfClip = (id) => all.streams.find((s) => s.kind === 'below' && s.clipIds[0] === id);
         check(all.streams.length === 3 && !!rowOfClip('clip-title') && !rowOfClip('clip-title').below?.failed,
-          '默认行为：fw-title 的依赖下层的流真的产出来了（差分取层没有判死）', pr.defaultStreams);
-        // fw-colors 下面的 punch-pill 是中途进场的 motion 式卡:这种排法查出过「推过去不画的那几拍下层的动画不往前走、流被自检判死」
-        // (`frame-stream.mjs` 的 `BELOW_DISCARD_SHOT`,复现与逐帧核对在 `below-late-lower-probe.mjs`);修了以后它必须产得出来
-        check(!!rowOfClip('clip-colors') && !rowOfClip('clip-colors').below?.failed, '默认行为：fw-colors 的依赖下层的流真的产出来了（差分取层没有判死）', pr.defaultStreams);
-        pr.colorsStream = rowOfClip('clip-colors')?.below?.failed ? `被差分取层的自检判死:${rowOfClip('clip-colors').below.failed}` : '产出来了';
-        check(all.streams.find((s) => s.clipIds[0] === 'clip-title')?.replayedFrames === 0, '默认行为：fw-title 的流回放 0 帧', pr.defaultStreams);
+          'Default behavior: the fw-title stream that depends on the layer below was actually produced (differential layer extraction was not declared dead)', pr.defaultStreams);
+        // punch-pill below fw-colors is a motion-style card entering mid-way: this arrangement once
+        // uncovered a bug where "during ticks pushed past without drawing, lower-layer animations
+        // did not advance, and the stream was declared dead by self-checks"
+        // (`BELOW_DISCARD_SHOT` in `frame-stream.mjs`, reproduced and verified frame-by-frame in
+        // `below-late-lower-probe.mjs`); after the fix, it must be produced successfully
+        check(!!rowOfClip('clip-colors') && !rowOfClip('clip-colors').below?.failed, 'Default behavior: the fw-colors stream that depends on the layer below was actually produced (differential layer extraction was not declared dead)', pr.defaultStreams);
+        pr.colorsStream = rowOfClip('clip-colors')?.below?.failed ? `declared dead by the self-check of differential layer extraction: ${rowOfClip('clip-colors').below.failed}` : 'produced';
+        check(all.streams.find((s) => s.clipIds[0] === 'clip-title')?.replayedFrames === 0, 'Default behavior: the fw-title stream replays 0 frames', pr.defaultStreams);
       }
       out.steps.prerender = pr;
       throw Object.assign(new Error('default-review-done'), { done: true });
     }
-    const first = await until('全部分段满密度', dense, 1_800_000, 1000);
-    if (!first) throw new Error('第一轮生产没做完');
+    const first = await until('all segments at full density', dense, 1_800_000, 1000);
+    if (!first) throw new Error('The first production round did not finish');
     pr.produceMs = Date.now() - t0;
     pr.encoder = first.encoder;
     const stateOf = (clipId) => [...producer.streams.values()].find((s) => s.spec.clipIds.length === 1 && s.spec.clipIds[0] === clipId);
     const rowOf = (status, clipId) => status.streams.find((s) => s.clipIds.length === 1 && s.clipIds[0] === clipId);
-    check(producer.streams.size === 3, '预渲染：三条流（两张用户卡一张对照卡各一条）', producer.streams.size);
+    check(producer.streams.size === 3, 'Prerender: three streams (one each for the two user cards and the control card)', producer.streams.size);
     for (const clipId of ALL) {
       const row = rowOf(first, clipId);
       const wantReplay = clipId === 'clip-pill';
-      check(!!row, `${clipId}：有轨道流`);
+      check(!!row, `${clipId}: has a track stream`);
       if (!row) continue;
       pr.streams[clipId] = { replay: row.replay, replayedFrames: row.replayedFrames, resets: row.resets, firstSegment: row.firstSegment, lastSegment: row.lastSegment, segments: row.lastSegment - row.firstSegment + 1 };
-      check(row.replay === wantReplay, `${clipId}：流的 replay 应当是 ${wantReplay}`, row.replay);
-      if (!wantReplay) check(row.replayedFrames === 0, `${clipId}：第一轮产完 replayedFrames 为 0`, row.replayedFrames);
+      check(row.replay === wantReplay, `${clipId}: the stream's replay should be ${wantReplay}`, row.replay);
+      if (!wantReplay) check(row.replayedFrames === 0, `${clipId}: replayedFrames is 0 after the first round finishes`, row.replayedFrames);
     }
     say('first-round', pr.streams);
 
-    // 中间两个分段作废再产：每段都断租约
+    // Invalidate and re-produce the two middle segments: break lease for each segment
     const regenOf = (row) => {
       const s = row.firstSegment, e = row.lastSegment;
       const picks = [e - 1, s + 1];
@@ -682,23 +764,23 @@ try {
       for (const n of regenPlan[clipId]) delete stateOf(clipId).manifest.segments[n];
     }
     producer.kick();
-    const second = await until('作废的分段重新产完', () => {
+    const second = await until('the invalidated segments are produced again', () => {
       const status = dense();
       return status && ALL.every((id) => regenPlan[id].every((n) => rowOf(status, id).segments[n]?.stride === 1)) ? status : null;
     }, 900_000, 1000);
-    if (!second) throw new Error('第二轮生产没做完');
+    if (!second) throw new Error('The second production round did not finish');
     for (const clipId of ALL) {
       const row = rowOf(second, clipId);
       const delta = row.replayedFrames - before[clipId].replayedFrames;
       const resetsDelta = (row.resets?.sparse ?? 0) + (row.resets?.dense ?? 0) - before[clipId].resets;
       pr.regen[clipId] = { segments: regenPlan[clipId], replayedFramesDelta: delta, resetsDelta };
-      check(resetsDelta >= regenPlan[clipId].length, `${clipId}：作废的 ${regenPlan[clipId].length} 段都断了租约`, resetsDelta);
-      if (clipId === 'clip-pill') check(delta > 0, `${clipId}（motion 式）：断租约重产照旧从挂载帧回放`, delta);
-      else check(delta === 0 && row.replayedFrames === 0, `${clipId}（remotion 式）：断租约重产以后 replayedFrames 仍是 0`, { delta, total: row.replayedFrames });
+      check(resetsDelta >= regenPlan[clipId].length, `${clipId}: all ${regenPlan[clipId].length} invalidated segments had their leases broken`, resetsDelta);
+      if (clipId === 'clip-pill') check(delta > 0, `${clipId} (motion-style): re-production after a broken lease still replays from the mount frame`, delta);
+      else check(delta === 0 && row.replayedFrames === 0, `${clipId} (remotion-style): replayedFrames is still 0 after re-production following a broken lease`, { delta, total: row.replayedFrames });
     }
     say('regen', pr.regen);
 
-    // 逐帧比：A 路（不回放）对 B 路（从挂载帧回放着产）
+    // Frame-by-frame comparison: path A (without replay) vs. path B (produced with replay from mount frame)
     const lease = await pipeline.leaseStreamBakery();
     const cmpDir = path.join(WORK, 'cmp');
     await fs.mkdir(cmpDir, { recursive: true });
@@ -717,10 +799,12 @@ try {
         const rect = manifest.tight ?? manifest.bound;
         const clip = { x: rect.x + spec.offset.x, y: rect.y + spec.offset.y, w: rect.w, h: rect.h };
         const s = pr.streams[clipId].firstSegment, e = pr.streams[clipId].lastSegment;
-        // 开头（动画在跑）、开头之后第三段（接近落定）、中间、倒数第二段（落定以后）；每条流五段以内
+        // Start (animation running), third segment after start (near settling), middle, second-to-last
+        // segment (after settling); within five segments per stream
         const segs = [...new Set([s, s + 1, s + 3, Math.floor((s + e) / 2), e - 1])].filter((n) => n >= s && n <= e);
         const shoot = async (segment, replay) => {
-          // 分段从这条流自己的第一帧起数(`streamSegments.mjs`),不是项目帧号 × 15
+          // Segments count from the first frame of this stream itself (`streamSegments.mjs`), not project
+          // frame number × 15
           const fromFrame = streamSegmentFirstFrame(segment, spec.originFrame), toFrame = streamSegmentLastFrame(segment, spec.originFrame, spec.lastFrame);
           await lease.reset(state.isolated, pipeline.emptyUrl(state.isolated), { deferCards: true });
           lease.streamLease = null;
@@ -734,25 +818,27 @@ try {
           return { pngs, stats };
         };
         for (const segment of segs) {
-          const direct = await shoot(segment, false); // A 路
-          const replay = await shoot(segment, true); // B 路
-          check(direct.stats.replayed === 0, `${clipId}#${segment}：A 路 bakeStream 的 replayed 为 0`, direct.stats.replayed);
-          check(direct.pngs.length === replay.pngs.length && direct.pngs.length > 0, `${clipId}#${segment}：两路帧数相同`, [direct.pngs.length, replay.pngs.length]);
+          const direct = await shoot(segment, false); // Path A
+          const replay = await shoot(segment, true); // Path B
+          check(direct.stats.replayed === 0, `${clipId}#${segment}: route A bakeStream replayed is 0`, direct.stats.replayed);
+          check(direct.pngs.length === replay.pngs.length && direct.pngs.length > 0, `${clipId}#${segment}: both routes have the same frame count`, [direct.pngs.length, replay.pngs.length]);
           const diffs = direct.pngs.map((png, i) => diffPixels(png, replay.pngs[i]));
           const ink = replay.pngs.map(inkPixels);
-          const rec = { clipId, segment, mode: clipId === 'clip-pill' ? 'motion 式(对照)' : 'remotion 式', frames: direct.pngs.length, replayedB: replay.stats.replayed,
+          const rec = { clipId, segment, mode: clipId === 'clip-pill' ? 'motion-style (control)' : 'remotion-style', frames: direct.pngs.length, replayedB: replay.stats.replayed,
             diffPixelsMax: Math.max(...diffs), diffPixelsSum: diffs.reduce((a, b) => a + Math.max(0, b), 0), inkMin: Math.min(...ink), inkMax: Math.max(...ink) };
           pr.compare.push(rec);
           say('compare', rec);
           if (clipId !== 'clip-pill') {
-            check(rec.diffPixelsMax === 0, `${clipId}#${segment}：不回放直接产和回放着产逐帧相同（像素）`, diffs);
-            check(rec.inkMax > 0, `${clipId}#${segment}：画面不是空的`, ink);
-            // 分段起点不在挂载帧之后（挂载帧就在这一段里）时，回放着产也没有可回放的帧
-            if (spec.mountFrame < streamSegmentFirstFrame(segment, spec.originFrame)) check(replay.stats.replayed > 0, `${clipId}#${segment}：B 路确实回放了（replayed > 0；挂载帧 ${spec.mountFrame}）`, replay.stats.replayed);
-            else check(replay.stats.replayed === 0, `${clipId}#${segment}：挂载帧 ${spec.mountFrame} 就在这一段里，B 路没有可回放的帧`, replay.stats.replayed);
+            check(rec.diffPixelsMax === 0, `${clipId}#${segment}: producing directly without replay and producing with replay are identical frame by frame (pixels)`, diffs);
+            check(rec.inkMax > 0, `${clipId}#${segment}: the picture is not empty`, ink);
+            // When segment start is not after mount frame (mount frame is inside this segment), producing
+            // with replay has no frames to replay either
+            if (spec.mountFrame < streamSegmentFirstFrame(segment, spec.originFrame)) check(replay.stats.replayed > 0, `${clipId}#${segment}: route B did replay (replayed > 0; mount frame ${spec.mountFrame})`, replay.stats.replayed);
+            else check(replay.stats.replayed === 0, `${clipId}#${segment}: mount frame ${spec.mountFrame} is within this segment, so route B has no frames to replay`, replay.stats.replayed);
             await fs.writeFile(path.join(SHOTS, `stream-${clipId}-seg${segment}-A-direct.png`), direct.pngs[Math.min(7, direct.pngs.length - 1)]);
             await fs.writeFile(path.join(SHOTS, `stream-${clipId}-seg${segment}-B-replay.png`), replay.pngs[Math.min(7, replay.pngs.length - 1)]);
-            // 流库里 runSegment（不回放）产出的这一段，对 B 路 PNG 用同一个编码器编出来的
+            // The segment produced by runSegment (without replay) in stream store, compared against the one
+            // encoded from path B PNG using the same encoder
             const seg = manifest.segments[segment];
             const stored = await fs.readFile(path.join(producer.store.dir(spec.streamKey), seg.file));
             const storedInit = await fs.readFile(producer.store.initFile(spec.streamKey, seg.init));
@@ -769,31 +855,31 @@ try {
             }
             const row = { clipId, segment, kind: 'stream-vs-replay-encode', storedBytes: stored.length, refBytes: refSegs[0].length, sameBytes, sameDecoded, storedStride: seg.stride };
             pr.compare.push(row);
-            check(seg.stride === 1, `${clipId}#${segment}：流库里这一段是满密度`, seg.stride);
-            check(sameBytes || sameDecoded === true, `${clipId}#${segment}：流库里不回放产出的分段和回放着产的编码结果相同（字节或解码像素）`, row);
+            check(seg.stride === 1, `${clipId}#${segment}: this segment is at full density in the stream store`, seg.stride);
+            check(sameBytes || sameDecoded === true, `${clipId}#${segment}: in the stream store, the segment produced without replay and the one produced with replay have identical encoded results (bytes or decoded pixels)`, row);
           } else {
             pillDiffSum += rec.diffPixelsSum;
           }
         }
       }
-      check(pillDiffSum > 0, '对照：punch-pill（motion 式）不回放必须比出差别（这套比法测得出「该回放而没回放」）', pillDiffSum);
+      check(pillDiffSum > 0, 'Control: punch-pill (motion-style) without replay must show a difference (this comparison can detect "should have replayed but did not")', pillDiffSum);
     } finally { pipeline.returnStreamBakery(lease); }
     const fin = producer.status();
     pr.final = fin.streams.map((s) => ({ clipIds: s.clipIds, replay: s.replay, replayedFrames: s.replayedFrames, resets: s.resets }));
-    check(USER_CLIPS.every((id) => rowOf(fin, id).replayedFrames === 0), '两张用户卡的流 replayedFrames 恒为 0（收尾再看一次）');
+    check(USER_CLIPS.every((id) => rowOf(fin, id).replayedFrames === 0), 'The streams of the two user cards always have replayedFrames 0 (checked once more at the end)');
     out.steps.prerender = pr;
   }
 
-  /* ---------- 5. 预览对导出 */
+  /* ---------- 5. Preview vs. export */
   if (want('preview')) {
     const pv = { points: [], compare: [] };
     out.steps.preview = pv;
-    const SEQUENCE = [45, 80, 110, 135, 80, 45, 200, 160, 120, 140]; // 前进、往回、同一帧到达两次
+    const SEQUENCE = [45, 80, 110, 135, 80, 45, 200, 160, 120, 140]; // Forward, backward, reaching the same frame twice
     const ed = await openEditorPage(origin, { viewport: { width: 2560, height: 1600 } });
     editorPage = ed;
     const { page, store, frontFrame, parentDiag } = ed;
     const loaded = await store(`actions.loadProject(args[0]); actions.select([]); actions.pause(); actions.seek(0); return getState().project.tracks.map(t => t.clips.map(c => c.id))`, PROJECT);
-    check(JSON.stringify(loaded) === JSON.stringify(PROJECT.tracks.map((t) => t.clips.map((c) => c.id))), '预览：项目载进了编辑器', loaded);
+    check(JSON.stringify(loaded) === JSON.stringify(PROJECT.tracks.map((t) => t.clips.map((c) => c.id))), 'Preview: the project loaded into the editor', loaded);
     await sleep(1500);
 
     const stateAndDom = async (frame, ids) => {
@@ -816,7 +902,7 @@ try {
       }, ids).catch(() => null);
     };
     const ALL_IDS = ['clip-title', 'clip-colors', 'clip-pill'];
-    /** 点到第 frame 帧，等回到精确活渲、画面连着三次采样相同；回这一刻各张卡的 DOM */
+    /** Seek to frame, wait for exact live render and 3 consecutive identical samples; returns each card's DOM at this moment */
     const arrive = async (frame, label) => {
       const sec = frame / FPS;
       const started = Date.now();
@@ -846,7 +932,7 @@ try {
         const z = await settled();
         const same = (x, y) => JSON.stringify(Object.values(x?.clips ?? {}).map((k) => k?.html ?? null)) === JSON.stringify(Object.values(y?.clips ?? {}).map((k) => k?.html ?? null));
         if (!z || z.frontId !== a.frontId || !same(a.s, b) || !same(b, c)) continue;
-        // 可见舞台截图留一张看（缩放过的，叠在主题底上）
+        // Keep one visible stage screenshot for inspection (scaled, overlaid on theme background)
         const shot = async () => {
           const handle = await page.$(`iframe[src*="stage=1"][src*="id=${z.frontId}"]`);
           return handle ? Buffer.from(await handle.screenshot({ type: 'png' })) : null;
@@ -854,7 +940,7 @@ try {
         const png = await shot().catch(() => null);
         return { frame, label, ms: Date.now() - started, frontId: z.frontId, dom: Object.fromEntries(Object.entries(z.s.clips).map(([id, k]) => [id, k ? k.html : null])), local: Object.fromEntries(Object.entries(z.s.clips).map(([id, k]) => [id, k ? k.local : null])), shot: png };
       }
-      check(false, `预览：第 ${frame} 帧（${label}）没有回到精确活渲、画面稳不下来`, { states: await stateAndDom(frame, ALL_IDS).then((s) => s && { t: s.t, clips: Object.fromEntries(Object.entries(s.clips).map(([k, v]) => [k, v && { cls: v.cls }])) }) });
+      check(false, `Preview: frame ${frame} (${label}) did not return to exact live render and the picture did not settle`, { states: await stateAndDom(frame, ALL_IDS).then((s) => s && { t: s.t, clips: Object.fromEntries(Object.entries(s.clips).map(([k, v]) => [k, v && { cls: v.cls }])) }) });
       return null;
     };
     const arrived = [];
@@ -866,9 +952,10 @@ try {
       if (r.shot) await fs.writeFile(path.join(SHOTS, `preview-f${String(frame).padStart(3, '0')}-${r.label}.png`), r.shot);
     }
     say('preview-arrived', pv.points);
-    check(arrived.length === SEQUENCE.length, `预览：十个时刻都回到了精确活渲`, arrived.length);
+    check(arrived.length === SEQUENCE.length, `Preview: all ten moments returned to exact live render`, arrived.length);
 
-    // 导出一侧：同一个项目走导出的 bakeFrames，每一帧截完后取同一批卡的 DOM
+    // Export side: same project runs export bakeFrames; after capturing each frame, retrieves DOM
+    // for the same batch of cards
     const frames = [...new Set(SEQUENCE)].sort((a, b) => a - b);
     bakery = await openBakery({ url: exportUrlOf(origin, PROJECT) });
     const exportDom = new Map();
@@ -887,9 +974,10 @@ try {
       },
     });
     pv.exportFrames = [...exportDom.keys()];
-    check(exportDom.size === frames.length, `导出一侧：${frames.length} 个时刻都取到了 DOM`, [...exportDom.keys()]);
-    // 导出页这一趟截出来的帧，和第 3 步整片导出的同一帧也比一下（证明这条取 DOM 的路走的就是导出的路）
-    // （第 3 步没跑时跳过）
+    check(exportDom.size === frames.length, `Export side: the DOM was captured at all ${frames.length} moments`, [...exportDom.keys()]);
+    // Also compare frames captured in this pass of the export page with the same frame from the
+    // whole-video export in step 3 (to prove that this DOM extraction path follows the export path)
+    // (Skip if step 3 was not run)
 
     const spanIn = (id, n) => { const [f, l] = spanOf(id); return n >= f && n <= l; };
     for (const r of arrived) {
@@ -901,16 +989,16 @@ try {
         if (!present) { pv.compare.push({ frame: r.frame, label: r.label, clipId: id, present: false, preview: pre === null, export: post === null }); continue; }
         const same = pre !== null && post !== null && pre === post;
         pv.compare.push({ frame: r.frame, label: r.label, clipId: id, present: true, previewLen: pre?.length ?? null, exportLen: post?.length ?? null, same });
-        check(pre !== null && pre.length > 0, `预览 ${r.label}（第 ${r.frame} 帧）：${id} 在场且 DOM 不空`, { previewLen: pre?.length ?? null });
-        check(post !== null && post.length > 0, `导出 第 ${r.frame} 帧：${id} 在场且 DOM 不空`, { exportLen: post?.length ?? null });
+        check(pre !== null && pre.length > 0, `Preview ${r.label} (frame ${r.frame}): ${id} is present and its DOM is not empty`, { previewLen: pre?.length ?? null });
+        check(post !== null && post.length > 0, `Export frame ${r.frame}: ${id} is present and its DOM is not empty`, { exportLen: post?.length ?? null });
         if (!same && pre && post) {
           let k = 0;
           while (k < pre.length && k < post.length && pre[k] === post[k]) k++;
-          check(false, `预览 ${r.label}（第 ${r.frame} 帧）与导出同一帧：${id} 的 DOM 逐字符相同`, { firstDiffAt: k, preview: pre.slice(Math.max(0, k - 80), k + 120), export: post.slice(Math.max(0, k - 80), k + 120) });
+          check(false, `Preview ${r.label} (frame ${r.frame}) vs the same export frame: the DOM of ${id} is identical character by character`, { firstDiffAt: k, preview: pre.slice(Math.max(0, k - 80), k + 120), export: post.slice(Math.max(0, k - 80), k + 120) });
         }
       }
     }
-    // 往回点 / 同一帧两次到达
+    // Click back / reach the same frame twice
     const byFrame = new Map();
     for (const r of arrived) { if (!byFrame.has(r.frame)) byFrame.set(r.frame, []); byFrame.get(r.frame).push(r); }
     for (const [frame, list] of byFrame) {
@@ -919,41 +1007,41 @@ try {
         if (!spanIn(id, frame)) continue;
         const same = list.every((r) => r.dom[id] === list[0].dom[id]);
         pv.compare.push({ frame, clipId: id, reached: list.map((r) => r.label), sameAcrossArrivals: same });
-        check(same, `预览：第 ${frame} 帧两次到达（${list.map((r) => r.label).join('、')}，含往回点）${id} 的 DOM 相同`, list.map((r) => r.dom[id]?.length));
+        check(same, `Preview: frame ${frame} reached twice (${list.map((r) => r.label).join(', ')}, including a backward click), the DOM of ${id} is identical`, list.map((r) => r.dom[id]?.length));
       }
     }
-    // 对照：不同的帧 DOM 不同
+    // Control: different frames have different DOM
     const a45 = arrived.find((r) => r.frame === 45), a80 = arrived.find((r) => r.frame === 80);
     if (a45 && a80) {
       pv.control = { title45vs80: a45.dom['clip-title'] !== a80.dom['clip-title'], len45: a45.dom['clip-title']?.length, len80: a80.dom['clip-title']?.length };
-      check(pv.control.title45vs80, '对照：第 45 帧与第 80 帧 fw-title 的 DOM 不同（这把尺子量得出变化）', pv.control);
+      check(pv.control.title45vs80, 'Control: the fw-title DOM differs between frame 45 and frame 80 (this yardstick can measure change)', pv.control);
     }
     const a120 = arrived.find((r) => r.frame === 120), a140 = arrived.find((r) => r.frame === 140);
     if (a120 && a140) {
       const ctl = a120.dom['clip-colors'] !== a140.dom['clip-colors'];
       pv.control2 = { colors120vs140: ctl };
-      check(ctl, '对照：第 120 帧与第 140 帧 fw-colors 的 DOM 不同', pv.control2);
+      check(ctl, 'Control: the fw-colors DOM differs between frame 120 and frame 140', pv.control2);
     }
-    // 留两张导出页这一趟的图
+    // Keep two images from this pass of the export page
     for (const n of [80, 160]) if (exportPng.get(n)) await fs.writeFile(path.join(SHOTS, `export-bakery-f${n}.png`), exportPng.get(n));
   }
 } catch (error) {
-  if (error?.done) say('default-review-done', {}); // --default-review：做完 4a 主动收尾，不是异常
+  if (error?.done) say('default-review-done', {}); // --default-review: actively finalize after finishing 4a, not an error
   else {
-    check(false, `异常：${String(error?.stack || error).slice(0, 1500)}`);
+    check(false, `Exception: ${String(error?.stack || error).slice(0, 1500)}`);
     say('ERROR', { error: String(error?.stack || error) });
   }
 } finally {
-  try { await bakery?.close(); } catch { /* 已经关了 */ }
-  try { await editorPage?.browser?.close(); } catch { /* 已经关了 */ }
+  try { await bakery?.close(); } catch { /* Already closed */ }
+  try { await editorPage?.browser?.close(); } catch { /* Already closed */ }
   try { await pipeline?.close(); } catch { /* ignore */ }
   try { editor?.stop(); } catch { /* ignore */ }
   await sleep(800);
   if (KEEP) say('kept', { work: WORK });
-  else { try { fsSync.rmSync(WORK, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* 留给系统清 */ } }
+  else { try { fsSync.rmSync(WORK, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Left for the system to clean */ } }
 }
 const userDirNow = userDirList();
-if (JSON.stringify(userDirNow) !== JSON.stringify(userDirBefore)) { fails.push('检出目录 src/cards/user 多了文件：' + userDirNow.filter((n) => !userDirBefore.includes(n)).join(',')); }
+if (JSON.stringify(userDirNow) !== JSON.stringify(userDirBefore)) { fails.push('Extra files in checkout directory src/cards/user:' + userDirNow.filter((n) => !userDirBefore.includes(n)).join(',')); }
 out.fails = fails;
 out.ok = fails.length === 0;
 try { await fs.writeFile(path.join(OUT, 'result.json'), JSON.stringify(out, null, 2)); } catch { /* ignore */ }

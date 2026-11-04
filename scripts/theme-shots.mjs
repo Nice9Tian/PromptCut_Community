@@ -113,7 +113,7 @@ if (!fs.existsSync(outDir)) {
         
         // dismiss modal if present
         document.querySelectorAll('button').forEach(b => {
-          if(b.textContent.includes('以后再说')) b.click();
+          if(b.textContent.includes('Maybe later')) b.click();
         });
       }, t);
       

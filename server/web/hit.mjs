@@ -1,42 +1,47 @@
 /**
- * 命中检测:把模型看图报的坐标翻译成 uid。
+ * Hit testing: translates coordinates reported from image inspection by the model into a uid.
  *
- * ## 为什么要有这一层
+ * ## Why this layer is needed
  *
- * 模型是看着图说话的,「点右上角那个登录」在它脑子里是一个位置,不是一个 id。让它先在
- * clickable 清单里找 uid 再点,等于逼它做一次人不会做的查表。但真正的点击又必须走 uid ——
- * 坐标点击(CDP 的 Input.dispatchMouseEvent)不等可点击性、不滚动、不处理被遮挡,而
- * puppeteer 的 Locator 这些都替你做了。所以这层的职责就是:**收坐标,交 uid**。
+ * The model reasons from images: "click login at top right" is a position in its mind, not an id.
+ * Asking it to look up a uid in the clickable manifest first is forcing it to do a table lookup
+ * humans never do. But actual clicks must use uid: coordinate clicks (CDP's Input.dispatchMouseEvent)
+ * do not wait for clickability, do not scroll, and do not handle obstruction, whereas puppeteer's
+ * Locator handles all of this for you. So this layer's responsibility is: **receive coordinates, return uid**.
  *
- * ## 真正的风险不是「点空」,是「静默点错邻居」
+ * ## The real risk is not "clicking empty space", but "silently misclicking a neighbor"
  *
- * 实测 MDN 顶部导航,相邻项的包围盒是**零间隙**的:
+ * Verified in testing on MDN top navigation: bounding boxes of adjacent items have **zero gap**:
  *     e6 «HTML» b=[128,79,183,107]   e7 «CSS» b=[183,79,229,107]
- * 从 HTML 中心往右偏 30 图像素就落进 CSS,而且是**精确命中** —— 没有任何一层会报错,
- * 页面跳走了模型下一轮才发现不对。半径搜索反倒是安全的:真空白处 R=0/6/20 都正确落空。
+ * Drifting 30 image pixels right from HTML center lands on CSS with an **exact hit**: no layer errors out,
+ * the page navigates away, and the model only notices in the next round. Radius search is actually
+ * safe: true blank areas correctly miss at R=0/6/20.
  *
- * 所以这里的设计是两条:
- *   1. `expect`:模型把「我要点的是什么」一起交上来,命中的名字对不上就**不点**,返候选。
- *      实测偏 30px 落在 CSS 上、带 expect:"HTML" 时能正确救回 e6。
- *   2. 边界骑跨、z 轴堆叠、名字对不上 —— 一律返候选让模型选,而不是替它赌一把。
+ * Therefore, the design here has two rules:
+ *   1. `expect`: the model passes along "what I intend to click"; if the hit name mismatches, **do not click**,
+ *      and return candidates instead. Verified: drifting 30px onto CSS with expect:"HTML" correctly recovers e6.
+ *   2. Boundary straddling, z-axis stacking, or name mismatch: always return candidates for the model
+ *      to choose from, rather than gambling on its behalf.
  *
- * 候选里带 uid,模型下一轮直接 web_click({u}) 就行。**不要做成「回复 1/2/3」** —— 那是
- * 一个只在那条响应里有效的临时编号空间,得存状态、跨轮对齐,而 uid 本来就是现成的。
- * 序号只是给人和模型读着顺眼,可调用的永远是 u。
+ * Candidates include uid; the model can directly call web_click({u}) in the next round. **Do not make it
+ * "reply 1/2/3"**: that is a temporary numbering space valid only in that response, requiring state storage
+ * and cross-round reconciliation, whereas uid is already readily available. Sequence numbers are only for
+ * readability by humans and models; what is callable is always u.
  */
 
 import { scaleOf, liveViewport } from './view.mjs';
 
-/** 半径搜索的上限,单位是**图**的像素。14 约等于页面上 22px,一个小图标的量级 */
+/** Upper bound for radius search, in **image** pixels. 14 is ~22px on the page, the size of a small icon */
 const DEFAULT_RADIUS = 14;
 
-/** 最多返几个候选。密集页面一个点周围能扒出十几个,全返回等于把问题原样丢回去 */
+/** Max candidates to return. A dense page can yield a dozen around one point; returning all dumps the problem back */
 const MAX_CANDIDATES = 5;
 
-/* c8 ignore start — 函数体序列化后送进页面执行,不在 node 里跑 */
+/* c8 ignore start - Function body is serialized and executed in the page, not run in node */
 function probeAt(ix, iy, expect, radius, maxCands, scale) {
-  // 图坐标 → 页面坐标。view.mjs 是长边等比缩的,所以两个轴共用一个 scale,
-  // 而且这个 scale 是 node 侧算好传进来的 —— 不在页面里重算,免得两处常量走散
+  // Image coordinates → page coordinates. view.mjs scales proportionally along the longer edge, so
+  // both axes share a single scale, which is precalculated on the node side and passed in: not
+  // recalculated in the page to prevent constants in two places from drifting apart
   const px = ix / scale;
   const py = iy / scale;
 
@@ -46,7 +51,7 @@ function probeAt(ix, iy, expect, radius, maxCands, scale) {
   const seen = new Map();
   const climb = (el) => {
     let n = el;
-    // 往上找 6 层:清单里登记的是 <a>/<button>,但点到的往往是里面的 <span>/<svg>
+    // Look up 6 levels: the manifest registers <a>/<button>, but clicks often hit inner <span>/<svg>
     for (let d = 0; n && d < 6; d++, n = n.parentElement) {
       if (n.getAttribute && n.getAttribute('data-pcuid')) return n;
     }
@@ -68,12 +73,13 @@ function probeAt(ix, iy, expect, radius, maxCands, scale) {
     });
   };
 
-  // 1) 点正下方的整条 z 轴。elementsFromPoint 会把被遮挡的层也返回来,所以能识别
-  //    「这个按钮压在 cookie 横幅底下」—— 那种候选要标出来,直接点多半会被拦截
+  // 1) Entire z-axis directly below the point. elementsFromPoint also returns occluded layers, so it
+  //    can identify "this button is under the cookie banner": such candidates must be flagged, as
+  //    clicking directly will likely be intercepted
   const stack = document.elementsFromPoint(px, py);
   stack.forEach((el, idx) => { const h = climb(el); if (h) add(h, 0, idx > 0); });
 
-  // 2) 半径内的邻居。只在正下方什么都没有、或者要给候选时有用
+  // 2) Neighbors within radius. Only useful when nothing is directly below, or when offering candidates
   for (let r = 2; r <= radius; r += 2) {
     for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]]) {
       const h = climb(document.elementFromPoint(px + dx / scale, py + dy / scale));
@@ -95,46 +101,48 @@ function probeAt(ix, iy, expect, radius, maxCands, scale) {
   if (expect) {
     const e = norm(expect);
     const hit = cands.filter((c) => norm(c.n) && (norm(c.n).includes(e) || e.includes(norm(c.n))));
-    // 名字对上且只有一个 → 就是它,哪怕坐标偏到邻居身上了
+    // Name matches and unique → this is it, even if coordinates drifted onto a neighbor
     if (hit.length === 1) return { ok: true, mode: 'expect', pick: hit[0] };
-    // 对上多个,或者一个都没对上 —— 都不该替模型赌
+    // Multiple matches or zero matches: should not gamble on the model's behalf
     return { ok: false, reason: hit.length ? 'ambiguous' : 'expect_mismatch',
              expect, cands: cands.slice(0, maxCands) };
   }
 
-  // 没给 expect:只有唯一一个、且没被别的层盖着,才敢直接点
+  // No expect provided: only click directly if unique and not covered by other layers
   if (cands.length === 1 && !cands[0].stacked) return { ok: true, mode: 'unique', pick: cands[0] };
   return { ok: false, reason: 'ambiguous', cands: cands.slice(0, maxCands) };
 }
 /* c8 ignore stop */
 
 /**
- * 图坐标 → uid。
+ * Image coordinates → uid.
  *
- * 返回要么 `{ ok:true, pick }`(可以点了),要么 `{ ok:false, reason, cands? }`。
- * **不在这里点** —— 点击归 session.mjs,这里只负责把坐标变成一个可靠的 uid 或者一句
- * 说得清的拒绝。分开是为了让这一层能单独测:给定坐标和页面,判定是确定的。
+ * Returns either `{ ok:true, pick }` (ready to click) or `{ ok:false, reason, cands? }`.
+ * **Do not click here**: clicking belongs to session.mjs; this layer only turns coordinates into
+ * a reliable uid or a clear rejection. Separated so this layer can be tested independently:
+ * given coordinates and a page, the determination is deterministic.
  */
 export async function resolveAt(page, ix, iy, { expect = null, radius = DEFAULT_RADIUS } = {}) {
-  // 必须和 captureView 用同一个尺寸来源,否则图上的坐标反算回页面会整体偏
+  // Must use the same dimension source as captureView, otherwise coordinates mapped back from image
+  // to page will drift globally
   const scale = scaleOf(await liveViewport(page));
   return await page.evaluate(probeAt, ix, iy, expect, radius, MAX_CANDIDATES, scale);
 }
 
-/** 把判定结果写成给模型看的一段话。候选带序号只为好读,可调用的是 u */
+/** Format resolution result into text for the model. Candidate numbering is only for readability; callable target is u */
 export function explain(res) {
   if (res.ok) return null;
   if (res.reason === 'no_snapshot') {
-    return '这一页还没有截过屏,坐标没有参照。先调 web_view 拿到图和 clickable 清单,再按图上的坐标点。';
+    return 'No screenshot has been taken of this page yet, so the coordinates have no reference. Call web_view first to get the image and the clickable manifest, then click using the coordinates in the image.';
   }
   if (res.reason === 'empty') {
-    return `那个位置没有可点的东西${res.saw ? `(看到的是文字「${res.saw}」)` : ''}。对照图重新定位,或者用 u 直接指定清单里的元素。`;
+    return `Nothing clickable at that position${res.saw ? ` (saw the text "${res.saw}")` : ''}. Re-locate it using the image, or use u to specify an element from the manifest directly.`;
   }
   const lines = res.cands.map((c, i) =>
-    `  ${i + 1}. u="${c.u}" «${c.n || '(无文字)'}» <${c.t}> b=[${c.b.join(',')}] 距${c.d}px`
-    + (c.stacked ? ' ⚠被上层盖住,可能要先关掉上面那层' : ''));
+    `  ${i + 1}. u="${c.u}" «${c.n || '(no text)'}» <${c.t}> b=[${c.b.join(',')}] ${c.d}px away`
+    + (c.stacked ? ' ⚠ covered by a layer above, you may need to close that layer first' : ''));
   const head = res.reason === 'expect_mismatch'
-    ? `那个位置附近没有叫「${res.expect}」的元素。可能是你看错了位置,也可能这一页变了。附近有:`
-    : '那个位置附近有多个可点元素,没法确定你要哪个。请用 web_click({u:"..."}) 指定:';
+    ? `No element named "${res.expect}" near that position. You may have misjudged the position, or the page has changed. Nearby:`
+    : 'Multiple clickable elements near that position, cannot tell which one you want. Specify one with web_click({u:"..."}):';
   return `${head}\n${lines.join('\n')}`;
 }

@@ -1,18 +1,21 @@
 /**
- * 离线生成卡片 / 部件的预览包围盒静态表 → src/cards/preview-boxes.json
+ * Generates offline static table of preview bounding boxes for cards / parts → src/cards/preview-boxes.json
  *
- *   node scripts/preview-boxes.mjs                # 自己起一份 vite(端口 5198)再量
- *   node scripts/preview-boxes.mjs --url http://127.0.0.1:5190   # 用现成的开发服务器
+ *   node scripts/preview-boxes.mjs                # Spin up its own vite (port 5198) before measuring
+ *   node scripts/preview-boxes.mjs --url http://127.0.0.1:5190   # Use an existing dev server
  *   node scripts/preview-boxes.mjs --out src/cards/preview-boxes.json --timeout 900
  *
- * 做的事:开一个看不见的编辑器页面,让页面里的后台补量(src/editor/left/prewarmBoxes.tsx)
- * 把每张卡、每个部件在屏幕外渲染一遍、按动效整段量出最大包围盒,量完把结果导出来写成 JSON。
- * 量法和悬停时那条路**是同一份代码**,所以静态表和现场量的结论一致,只是不用用户等。
+ * What it does: opens an invisible editor page and lets background prewarming in the page
+ * (src/editor/left/prewarmBoxes.tsx) render each card and part offscreen, measuring the maximum
+ * bounding box across the entire motion graphics sequence, then exports the results to JSON.
+ * The measurement method **shares the exact same code** as the hover path, so conclusions from
+ * the static table match on-the-fly measurements, without making the user wait.
  *
- * 表随包发出去,用户第一次悬停就一步到位;表里没有的(用户 / AI 现场建的卡)照旧现场量。
- * 卡片改了默认参数、改了动画,重跑一次这个脚本即可。
+ * The table is shipped with the package so the user's first hover is instant; items not in the table
+ * (cards created on the fly by user / AI) are measured on the fly as usual. If card default
+ * parameters or animations change, simply rerun this script.
  */
-import './lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import './lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,11 +44,11 @@ async function waitHttp(target, ms) {
       const res = await fetch(target);
       if (res.ok) return true;
     } catch {
-      // 还没起来
+      // Not up yet
     }
     await wait(300);
   }
-  throw new Error(`等不到 ${target}`);
+  throw new Error(`timed out waiting for ${target}`);
 }
 
 let vite = null;
@@ -58,7 +61,7 @@ async function startVite() {
   });
   const target = `http://127.0.0.1:${PORT}/`;
   await waitHttp(target, 90000);
-  log(`vite 就绪 ${target}`);
+  log(`vite ready ${target}`);
   return target;
 }
 
@@ -68,20 +71,20 @@ function stopVite() {
     if (process.platform === "win32") spawn("taskkill", ["/PID", String(vite.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
     else vite.kill("SIGTERM");
   } catch {
-    // 进程自己没了最好
+    // Best if the process exited on its own
   }
   vite = null;
 }
 
-/** 进编辑器(开始页就点「开始创作」),等预览那套模块加载出来 */
+/** Enters the editor (clicks "Start creating" on start page), and waits for preview modules to load */
 async function enterEditor(page) {
   await page.waitForFunction(
-    () => !!document.querySelector('[data-pc="editor"]') || [...document.querySelectorAll("*")].some((e) => e.childElementCount === 0 && e.textContent.trim() === "开始创作"),
+    () => !!document.querySelector('[data-pc="editor"]') || [...document.querySelectorAll("*")].some((e) => e.childElementCount === 0 && e.textContent.trim() === "Start creating"),
     { timeout: 60000 },
   );
   await page.evaluate(() => {
     if (document.querySelector('[data-pc="editor"]')) return;
-    const el = [...document.querySelectorAll("*")].find((e) => e.childElementCount === 0 && e.textContent.trim() === "开始创作");
+    const el = [...document.querySelectorAll("*")].find((e) => e.childElementCount === 0 && e.textContent.trim() === "Start creating");
     let n = el;
     for (let i = 0; i < 4 && n; i++) {
       if (n.tagName === "BUTTON" || n.getAttribute("role") === "button" || n.onclick) break;
@@ -92,7 +95,7 @@ async function enterEditor(page) {
   await page.waitForFunction(() => !!window.__pcPreviewBoxes, { timeout: 60000 });
 }
 
-/** 催一遍:force = 静态表里已有的也重量(否则重跑这个脚本会把表越量越空);已经量到的仍跳过 */
+/** Triggers a pass: force = re-measure entries already in static table (otherwise rerunning empties table); measured items still skipped */
 async function arm(page) {
   await enterEditor(page);
   return page.evaluate(() => {
@@ -101,7 +104,7 @@ async function arm(page) {
   });
 }
 
-/** 还剩几张;页面正在重载 / 模块还没加载就返回 -1 */
+/** How many cards remain; returns -1 if the page is reloading or modules have not loaded yet */
 async function peek(page) {
   try {
     return await page.evaluate(() => (window.__pcPreviewBoxes ? window.__pcPreviewBoxes.pending : -1));
@@ -120,13 +123,13 @@ async function main() {
   });
   try {
     const page = await browser.newPage();
-    // 舞台按 1920×1080 量,视口给够,免得布局被挤变形
+    // Measure stage at 1920×1080 with ample viewport so layout is not distorted
     await page.setViewport({ width: 1600, height: 1000 });
-    page.on("pageerror", (e) => log("页面报错:", String(e).slice(0, 200)));
+    page.on("pageerror", (e) => log("Page error:", String(e).slice(0, 200)));
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
 
     const total = await arm(page);
-    log(`开始量 ${total} 张`);
+    log(`Start measuring ${total} cards`);
 
     const deadline = Date.now() + TIMEOUT_S * 1000;
     let last = -1;
@@ -134,32 +137,33 @@ async function main() {
     while (Date.now() < deadline) {
       pending = await peek(page);
       if (pending < 0) {
-        // 页面重载了(共享工作区里别的会话一改文件,vite 就把页面刷了)。
-        // 量到的都在 localStorage 里,重新进编辑器接着量即可。
-        log("页面重载了,接着量");
+        // The page reloaded (another session in the shared workspace modified a file, so vite refreshed the page).
+        // Measured data is in localStorage; re-enter the editor and resume measuring.
+        log("Page reloaded, resuming measurement");
         await wait(1000);
         pending = await arm(page);
         continue;
       }
       if (pending !== last) {
         last = pending;
-        if (pending % 10 === 0) log(`还剩 ${pending}`);
+        if (pending % 10 === 0) log(`${pending} left`);
       }
       if (pending === 0) break;
       await wait(500);
     }
-    if (pending > 0) log(`超时,还剩 ${pending} 张没量完,先把量到的写出去`);
+    if (pending > 0) log(`Timed out, ${pending} cards not measured yet, writing out what was measured`);
 
     const data = await page.evaluate(() => window.__pcPreviewBoxes.dump());
     const keys = Object.keys(data.boxes ?? {});
-    if (keys.length === 0) throw new Error("一张都没量到,不覆盖原来的表");
+    if (keys.length === 0) throw new Error("No cards were measured, not overwriting the existing table");
     keys.sort();
-    // rev:这一版表的印记,页面上的本机缓存靠它作废旧结论(previewBoxes.ts)
+    // rev: stamp for this table version; local cache on the page relies on it to invalidate old
+    // results (previewBoxes.ts)
     const sorted = { rev: Date.now(), stage: data.stage, boxes: {} };
     for (const k of keys) sorted.boxes[k] = data.boxes[k];
     fs.writeFileSync(OUT, JSON.stringify(sorted, null, 2) + "\n", "utf8");
     const tight = keys.filter((k) => sorted.boxes[k]).length;
-    log(`写入 ${path.relative(ROOT, OUT)}:${keys.length} 张,其中 ${tight} 张能推近,${keys.length - tight} 张本来就铺满整幅`);
+    log(`Wrote ${path.relative(ROOT, OUT)}: ${keys.length} cards, ${tight} can zoom in, ${keys.length - tight} already fill the whole frame`);
   } finally {
     await browser.close().catch(() => {});
     stopVite();
@@ -167,7 +171,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error("[preview-boxes] 失败:", e);
+  console.error("[preview-boxes] failed:", e);
   stopVite();
   process.exit(1);
 });

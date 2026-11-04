@@ -1,14 +1,14 @@
-"""哔哩哔哩预设。
+"""Bilibili preset.
 
-实测（2026-09-08，yt-dlp 2026.08.19）：
-  - 不带浏览器 User-Agent 直接请求，B 站回 412 Precondition Failed；带上 Chrome 的
-    UA 和 Referer 就正常。同一台机器连着请求偶尔仍会 412，隔一两秒重试就过——
-    所以 412 在这里算「值得重试」，不是「链接坏了」。
-  - 未登录能拿到 1080p（30080）、720p、480p、360p，视频流和音频流分开，
-    要 ffmpeg 合并；编码有 avc1 / hvc1 / av01 三种，编辑台里浏览器播 avc1 最稳。
-  - 1080p60、4K、杜比这些只有登录（且大会员）才给，要的话得传 cookies。
-  - 多 P 稿件：链接带 ?p=N 就只下那一 P；不带 p 时 yt-dlp 会当播放列表，
-    默认只取第一 P（noplaylist），--all-parts 才全下。
+Tested in practice (2026-09-08, yt-dlp 2026.08.19):
+  - A direct request without a browser User-Agent gets 412 Precondition Failed from Bilibili; with Chrome's
+    UA and Referer it works fine. Back-to-back requests from the same machine still occasionally get 412, and retrying after a second or two succeeds,
+    so 412 counts as "worth retrying" here, not "link broken".
+  - Without logging in you get 1080p (30080), 720p, 480p and 360p, with video and audio streams separate,
+    so ffmpeg is needed to merge them; the codecs are avc1 / hvc1 / av01, and in the editor browsers play avc1 most reliably.
+  - 1080p60, 4K and Dolby are only given when logged in (and with a premium membership); to get them, pass cookies.
+  - Multi-part uploads: a link with ?p=N downloads only that part; without p, yt-dlp treats it as a playlist,
+    and by default only the first part is taken (noplaylist); only --all-parts downloads them all.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ from urllib.parse import parse_qs, urlparse
 NAME = "bilibili"
 
 notes = (
-    "哔哩哔哩。支持 BV 号 / av 号 / b23.tv 短链 / 移动端链接；未登录最高 1080p，"
-    "1080p60 与 4K 要登录（传 --cookies）。多 P 稿件默认只取链接指定的那一 P。"
+    "Bilibili. Supports BV id / av id / b23.tv short links / mobile links; up to 1080p without login, "
+    "1080p60 and 4K require login (pass --cookies). For multi-part uploads, by default only the part named in the link is fetched."
 )
 
 USER_AGENT = (
@@ -43,9 +43,9 @@ def match(url: str) -> bool:
 
 
 def normalize(url: str) -> str:
-    """把各种写法归成 https://www.bilibili.com/video/<id>[?p=N]。
+    """Normalize the various forms into https://www.bilibili.com/video/<id>[?p=N].
 
-    b23.tv 短链不在这里展开——那要发网络请求，交给 yt-dlp 跟随重定向。
+    b23.tv short links are not expanded here: that needs a network request, so it is left to yt-dlp to follow the redirect.
     """
     u = url.strip()
     if _BV.fullmatch(u):
@@ -75,7 +75,7 @@ def ydl_opts(url: str, quality: int) -> Dict[str, Any]:
             "User-Agent": USER_AGENT,
             "Referer": "https://www.bilibili.com/",
         },
-        # 带 p= 的链接 yt-dlp 只取那一 P；不带的默认也只取第一 P，全下要显式开
+        # For a link with p=, yt-dlp takes only that part; without it, only the first part is taken by default too; downloading them all must be turned on explicitly
         "noplaylist": True,
     }
 

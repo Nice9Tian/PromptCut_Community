@@ -1,31 +1,36 @@
 /**
- * 后端会话 id 在 localStorage 里的那几个键,以及「换项目时全清掉」。
+ * The keys for backend session ids in localStorage, and "clear all when switching projects".
  *
- * # 为什么单独一个文件
+ * # Why a separate file
  *
- * 这段逻辑本身不依赖任何别的模块,而它必须能被单测 —— 它管的是一个**看不见的**状态:
- * 界面上对话是空的,后端却可能正接着上一段历史说。这种脱节没有任何界面症状,
- * 只能靠测试守住。
+ * This logic itself does not depend on any other module, and it must be unit-testable: it
+ * manages an **invisible** state:
+ * on the UI the chat is empty, but the backend may be continuing from the previous history.
+ * This disconnect has no UI symptoms, and can only be guarded by tests.
  *
- * # 它管的是什么
+ * # What it manages
  *
- * 会话 id 按驱动存在 `aiSession:<provider>`(多 Agent 分页再带 `:<tabId>` 后缀)。
- * 服务端拿它去 `%TEMP%/promptcut/harness-sessions/<id>.json` 读回整段历史
- * (server/runners/api.mjs),CLI 那三条路则是 `--conversation <id>` / `--resume`。
+ * Session ids are stored per driver in `aiSession:<provider>` (multi-Agent tabs carry the
+ * `:<tabId>` suffix).
+ * The server uses it to read back full history from `%TEMP%/promptcut/harness-sessions/<id>.json`
+ * (server/runners/api.mjs), while the three CLI paths use `--conversation <id>` / `--resume`.
  *
- * 用户的诊断报告里:全新项目、界面对话是空的、素材库也是空的,而**第一轮请求就发出去
- * 19 条消息**(trace 里 `stage: "request", messages: 19`),模型张口就说出上一个项目里
- * 那条视频的名字 —— 它一次 list_media 都没调,那个名字是从上一段历史里读到的。
+ * In user diagnostic reports: brand new project, UI chat is empty, media library is also empty,
+ * but **the first round of requests sends out 19 messages** (`stage: "request", messages: 19` in
+ * trace), and the model immediately speaks the name of the video from the previous project:
+ * it did not call list_media even once, and that name was read from the previous history.
  */
 
-/** 会话 id 键的前缀。`aiSession:<provider>` 或 `aiSession:<provider>:<tabId>` */
+/** Prefix for session id keys. `aiSession:<provider>` or `aiSession:<provider>:<tabId>` */
 export const AI_SESSION_PREFIX = "aiSession:";
 
 /**
- * 把所有驱动、所有分页的会话 id 清掉。换项目 / 新建项目时调。
+ * Clears session ids for all drivers and all tabs. Called when switching / creating projects.
  *
- * 扫前缀而不是按驱动逐个删:分页的键带动态 tabId,这里不可能知道有哪些。
- * 只删这个前缀的 —— `aiProvider`、`aiShowThinking` 这些是长期偏好,不该被换项目牵连。
+ * Scans by prefix instead of deleting per driver: tab keys have dynamic tabIds, which cannot
+ * be known here.
+ * Only deletes this prefix: `aiProvider`, `aiShowThinking`, etc., are long-term preferences and
+ * should not be affected by switching projects.
  */
 export function resetAiSessionIds(storage: Storage | undefined = safeStorage()): void {
   if (!storage) return;
@@ -37,7 +42,7 @@ export function resetAiSessionIds(storage: Storage | undefined = safeStorage()):
     }
     for (const k of doomed) storage.removeItem(k);
   } catch {
-    // 读不到 storage(无痕模式、站点数据被禁)也不该把「打开项目」这件事搞挂
+    // Inability to read storage (incognito mode, site data blocked) should not break "open project"
   }
 }
 

@@ -1,10 +1,10 @@
-// node --test server/test/think-tags.test.mjs —— 内联 <think> 的流式拆分
+// node --test server/test/think-tags.test.mjs: streaming split of inline <think>
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { createThinkSplitter, splitThinkTags } = await import('../harness/think-tags.mjs');
 
-/** 把整段按 size 切碎喂进去,模拟流式;返回拼好的两条通道 */
+/** Slice the whole text by size and feed it in to simulate streaming; return both assembled channels */
 function feed(text, size) {
   const sp = createThinkSplitter();
   const events = [];
@@ -19,55 +19,55 @@ function feed(text, size) {
   return { text: out, think };
 }
 
-// 用户诊断报告里的真实形状(对话诊断-20260908-114215)
-const REAL = '<think>**Clarifying article link and scope**\n\n</think>\n\n我先确认素材收集环境；目前消息里没有看到微信文章链接。';
+// Real shape from a user diagnostic report (chat-diagnostic-20260908-114215)
+const REAL = '<think>**Clarifying article link and scope**\n\n</think>\n\nFirst I will check the media collection environment; there is no WeChat article link in the messages so far.';
 
-test('真实样本:think 走思考通道,正文里一个标签都不剩', () => {
+test('Real sample: think goes to the thinking channel, and not a single tag remains in the body', () => {
   const { text, think } = splitThinkTags(REAL);
   assert.equal(think, '**Clarifying article link and scope**\n\n');
-  assert.equal(text, '\n\n我先确认素材收集环境；目前消息里没有看到微信文章链接。');
-  assert.ok(!text.includes('<think'), '正文里不能有 <think');
-  assert.ok(!text.includes('</think'), '正文里不能有 </think —— 这正是漏到气泡里的那一串');
+  assert.equal(text, '\n\nFirst I will check the media collection environment; there is no WeChat article link in the messages so far.');
+  assert.ok(!text.includes('<think'), 'The body must not contain <think');
+  assert.ok(!text.includes('</think'), 'The body must not contain </think, which is exactly the string that leaked into the bubble');
 });
 
-test('无论按多大的块切,结果都一样 —— 标签被切成两半是常态', () => {
+test('The result is the same however large the chunks are: a tag being split in half is the norm', () => {
   const expect = splitThinkTags(REAL);
   for (const size of [1, 2, 3, 5, 7, 13, 64, 1000]) {
-    assert.deepEqual(feed(REAL, size), expect, `按 ${size} 字节切时结果不一致`);
+    assert.deepEqual(feed(REAL, size), expect, `Results differ when chunked by ${size} bytes`);
   }
 });
 
-test('一条消息里多段 think:全部拆走,正文按顺序接起来', () => {
+test('Multiple think blocks in one message: all are split out, and the body is joined back in order', () => {
   const s = 'A<think>t1</think>B<think>t2</think>C';
   assert.deepEqual(splitThinkTags(s), { text: 'ABC', think: 't1t2' });
   assert.deepEqual(feed(s, 1), { text: 'ABC', think: 't1t2' });
 });
 
-test('<thinking> 这种写法也认', () => {
+test('<thinking> is recognized as well', () => {
   assert.deepEqual(splitThinkTags('x<thinking>y</thinking>z'), { text: 'xz', think: 'y' });
 });
 
-test('没有标签的普通文本原样通过,一个字符都不能少', () => {
-  const s = '这是一段普通回复,里面有 < 和 > 还有 1 < 2 这种比较。';
+test('Plain text without tags passes through unchanged, without losing a single character', () => {
+  const s = 'This is a plain reply containing < and >, and also comparisons like 1 < 2.';
   assert.deepEqual(splitThinkTags(s), { text: s, think: '' });
   assert.deepEqual(feed(s, 1), { text: s, think: '' });
 });
 
-test('流没结束就断了:扣住的半个标签要吐回正文,不能把用户的字吞掉', () => {
+test('The stream breaks off before it ends: a held-back partial tag must be released back into the body and must not swallow the user\'s text', () => {
   const sp = createThinkSplitter();
-  const seen = [...sp.push('结尾正好是 <thi'), ...sp.flush()];
-  assert.equal(seen.map((e) => e.text).join(''), '结尾正好是 <thi');
+  const seen = [...sp.push('The ending is exactly <thi'), ...sp.flush()];
+  assert.equal(seen.map((e) => e.text).join(''), 'The ending is exactly <thi');
   assert.ok(seen.every((e) => e.kind === 'text'));
 });
 
-test('think 没等到闭合就断流:当思考交出去,而不是丢掉', () => {
+test('The stream breaks off before think is closed: hand it out as thinking instead of dropping it', () => {
   const sp = createThinkSplitter();
-  const seen = [...sp.push('a<think>没写完'), ...sp.flush()];
+  const seen = [...sp.push('a<think>not finished'), ...sp.flush()];
   assert.equal(seen.filter((e) => e.kind === 'text').map((e) => e.text).join(''), 'a');
-  assert.equal(seen.filter((e) => e.kind === 'think').map((e) => e.text).join(''), '没写完');
+  assert.equal(seen.filter((e) => e.kind === 'think').map((e) => e.text).join(''), 'not finished');
 });
 
-test('inThink 反映当前状态', () => {
+test('inThink reflects the current state', () => {
   const sp = createThinkSplitter();
   assert.equal(sp.inThink, false);
   sp.push('x<think>y');
@@ -76,14 +76,14 @@ test('inThink 反映当前状态', () => {
   assert.equal(sp.inThink, false);
 });
 
-test('开标签跨块、闭标签也跨块 —— 逐字符喂最容易露馅', () => {
+test('The opening tag spans chunks and so does the closing tag: feeding one character at a time exposes problems most easily', () => {
   const s = 'before<think>mid</think>after';
   assert.deepEqual(feed(s, 1), { text: 'beforeafter', think: 'mid' });
 });
 
-test('空输入和空片段不产出事件', () => {
+test('Empty input and empty fragments produce no events', () => {
   const sp = createThinkSplitter();
   assert.deepEqual(sp.push(''), []);
-  assert.deepEqual(sp.push('<think>'), [], '只有开标签时不该产出空的 text');
-  assert.deepEqual(sp.push('</think>'), [], '紧接着闭合也不该产出空的 think');
+  assert.deepEqual(sp.push('<think>'), [], 'With only the opening tag, no empty text should be produced');
+  assert.deepEqual(sp.push('</think>'), [], 'Closing right away should not produce an empty think either');
 });

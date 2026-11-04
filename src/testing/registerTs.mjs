@@ -1,12 +1,13 @@
 /**
- * 单测里第一行 `import "../testing/registerTs.mjs"`:装上 `resolveTs.mjs` 的解析钩子,
- * 之后 `await import()` 的 `.ts` 模块里没写扩展名的相对 import 也解析得到。
+ * First line in unit tests `import "../testing/registerTs.mjs"`: installs the resolve hook from
+ * `resolveTs.mjs`, so that relative imports without extensions in subsequent `await import()`
+ * `.ts` modules can also be resolved.
  *
- * 另外给一个 `src/` 下文件的 URL 拼法,`mock.module` 要的是解析后的地址。
+ * Also provides a URL builder for files under `src/`, since `mock.module` expects resolved URLs.
  */
 import { register } from "node:module";
 
 register(new URL("./resolveTs.mjs", import.meta.url));
 
-/** `srcUrl("store/project.ts")` → `src/store/project.ts` 的 file URL */
+/** `srcUrl("store/project.ts")` → file URL of `src/store/project.ts` */
 export const srcUrl = (relative) => new URL(`../${relative}`, import.meta.url).href;

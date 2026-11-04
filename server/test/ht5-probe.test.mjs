@@ -1,14 +1,21 @@
 /**
- * HT5：本机托管组合 + 同形 nginx 路由，`shared-project-probe` 的 member 在「自动」与「强制 ws」下全部通过
- * （契约 `docs/plan/http-transport-contract.md` 第 11 节 HT5；HT-a 只跑这两种，强制 http 归 HT-b）。
- * 跑：node --test server/test/ht5-probe.test.mjs
+ * HT5: Local hosted bundle + isomorphic nginx routing; `shared-project-probe` member passes
+ * completely under "auto" and "force ws" (contract `docs/plan/http-transport-contract.md`
+ * section 11 HT5; HT-a runs only these two, forced http belongs to HT-b).
+ * Run: node --test server/test/ht5-probe.test.mjs
  *
- * - 托管组合：`server/hosted/main.mjs` 子进程，只绑 127.0.0.1、端口 0，`PROMPTCUT_TRUST_LOOPBACK=0` 加集群令牌（同阿里云）；
- * - 同形路由：测试里起一个小反向代理，`/hosted/*` → 文档服务 `/*`、`/media/*` → 素材服务 `/*`（HTTP 与 WebSocket 升级都转），
- *   素材服务公网地址登记成 `<代理>/media/api/asset`，与阿里云的 nginx 同形；
- * - 协调口在本进程里起（`probe-coord.mjs` 的 `startCoordServer`，端口 0）；creator、member 各起一个探针子进程。
- * 强制 ws：member 带 `PROMPTCUT_TRANSPORT=ws` 与 `--transport ws`（假设 H14），输出里不许出现 `session.fallback`。
- * 客户端、服务端会话层与本机信任开关都到位才跑。只照契约写，没看实现。
+ * - Hosted bundle: `server/hosted/main.mjs` child process, binding only to 127.0.0.1, port 0, with
+ *   `PROMPTCUT_TRUST_LOOPBACK=0` plus cluster token (same as Alibaba Cloud);
+ * - Isomorphic routing: start a small reverse proxy in the test, `/hosted/*` → document service
+ *   `/*`, `/media/*` → asset service `/*` (forwarding both HTTP and WebSocket upgrades),
+ *   registering the asset service public address as `<proxy>/media/api/asset`, isomorphic to
+ *   Alibaba Cloud's nginx;
+ * - Coordination port is started in this process (`startCoordServer` in `probe-coord.mjs`, port 0);
+ *   creator and member each start a probe child process.
+ * Force ws: member with `PROMPTCUT_TRANSPORT=ws` and `--transport ws` (assumption H14);
+ * `session.fallback` must not appear in the output. Runs only when client and server session layers
+ * and the local trust switch are all in place. Written strictly to the contract without looking at
+ * the implementation.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +33,7 @@ const SKIP = SKIP_BOTH || SKIP_TRUST;
 const MAIN = path.join(ROOT, 'cloud', 'server', 'hosted', 'main.mjs');
 const PROBE = path.join(ROOT, 'scripts', 'probes', 'shared-project-probe.mjs');
 
-/** 同形路由：前缀 → 目标端口（前缀去掉后转发）；HTTP 与升级都转 */
+/** Isomorphic routing: prefix → target port (forwarded after stripping prefix); forwards both HTTP and upgrades */
 async function prefixProxy() {
   const routes = new Map();
   const route = (url) => {
@@ -81,10 +88,10 @@ function cleanEnv(extra = {}) {
 
 function startMain(t, env) {
   const child = spawn(process.execPath, [MAIN], { env: cleanEnv(env), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  t.after(() => { try { child.kill(); } catch { /* 已退 */ } });
+  t.after(() => { try { child.kill(); } catch { /* Already exited */ } });
   let out = '';
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`main.mjs 没起来：${out.slice(-1500)}`)), 20_000);
+    const timer = setTimeout(() => reject(new Error(`main.mjs did not start: ${out.slice(-1500)}`)), 20_000);
     child.stderr.on('data', (d) => { out += d; });
     child.stdout.on('data', (d) => {
       out += d;
@@ -95,10 +102,10 @@ function startMain(t, env) {
           clearTimeout(timer);
           resolve({ doc: j.docservice.port, asset: j.asset.port });
           return;
-        } catch { /* 半行 */ }
+        } catch { /* Half line */ }
       }
     });
-    child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`main.mjs 退出 ${code}：${out.slice(-1500)}`)); });
+    child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`main.mjs exited ${code}: ${out.slice(-1500)}`)); });
   });
 }
 
@@ -134,7 +141,7 @@ async function hostedWithRoute(t) {
   proxy.routes.set('/hosted', ports.doc);
   proxy.routes.set('/media', ports.asset);
   const res = await fetch(`http://127.0.0.1:${proxy.port}/hosted/healthz`);
-  assert.equal(res.status, 200, '同形路由 /hosted/healthz 通');
+  assert.equal(res.status, 200, 'the same-shape route /hosted/healthz works');
   return { base: `http://127.0.0.1:${proxy.port}/hosted` };
 }
 
@@ -154,15 +161,15 @@ for (const [label, memberEnv, memberArgs] of [
   ['auto', {}, []],
   ['ws', { PROMPTCUT_TRANSPORT: 'ws' }, ['--transport', 'ws']],
 ]) {
-  test(`HT5-${label} 本机托管组合 + 同形 nginx 路由（信任开关 0）：shared-project-probe 的 member 在${label === 'auto' ? '自动' : '强制 ws'}下全部通过`, { skip: SKIP, timeout: 150_000 }, async (t) => {
+  test(`HT5-${label} local hosted setup + same-shape nginx routes (trust switch 0): the member of shared-project-probe passes everything in ${label === 'auto' ? 'auto' : 'forced ws'} mode`, { skip: SKIP, timeout: 150_000 }, async (t) => {
     const hosted = await hostedWithRoute(t);
     const { creator, member } = await creatorAndMember(t, hosted, memberEnv, memberArgs);
-    assert.equal(member.code, 0, `member 退出码 0：${member.out.slice(-3000)}`);
-    assert.equal(member.result?.ok, true, `member ok：${JSON.stringify(member.result)?.slice(0, 2000)}`);
-    assert.ok(member.result.taskDone >= 1, `member 完成了任务：${JSON.stringify(member.result)}`);
-    assert.equal(member.result.media?.loopbackTrusted, false, '信任开关为 0：回环不带票据读素材被拒');
-    assert.equal(creator.code, 0, `creator 退出码 0：${creator.out.slice(-3000)}`);
+    assert.equal(member.code, 0, `member exit code 0: ${member.out.slice(-3000)}`);
+    assert.equal(member.result?.ok, true, `member ok: ${JSON.stringify(member.result)?.slice(0, 2000)}`);
+    assert.ok(member.result.taskDone >= 1, `member completed a task: ${JSON.stringify(member.result)}`);
+    assert.equal(member.result.media?.loopbackTrusted, false, 'trust switch is 0: reading an asset over loopback without a ticket is rejected');
+    assert.equal(creator.code, 0, `creator exit code 0: ${creator.out.slice(-3000)}`);
     assert.equal(creator.result?.ok, true);
-    if (label === 'ws') assert.ok(!member.out.includes('session.fallback'), '强制 ws：没有降级');
+    if (label === 'ws') assert.ok(!member.out.includes('session.fallback'), 'forced ws: no downgrade');
   });
 }

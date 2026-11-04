@@ -1,8 +1,10 @@
-// 「合并流」评估探针的共用件（docs/archive/agent-reports/AGENT-rr-merged-eval.md）。
-// 合并流：一条视频里拼多格、每张重卡一格（格内上半颜色、下半不透明度），一个解码器解出来再按格分给各层。
+// Shared utilities for "merged stream" evaluation probe (docs/archive/agent-reports/AGENT-rr-merged-eval.md).
+// Merged stream: tiles multiple grids in one video, one grid per heavy card (inside each grid, top half
+// is color, bottom half opacity); one decoder decodes it, then distributes to each layer by grid.
 //
-// 这里只有探针用的东西：用产品里的编码参数造测试流、切 fMP4、取 Annex-B 码流、起无头浏览器、起本机静态服务。
-// 产品代码一行不改；大文件都放系统临时目录下 pc-merged-eval/，不进仓库。
+// Here are probe-only utilities: create test streams using production encoding parameters, segment fMP4,
+// extract Annex-B bitstreams, launch headless browser, start local static server. Does not change a line
+// of production code; large files go to system temp directory pc-merged-eval/, not into the repository.
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
@@ -29,14 +31,15 @@ export function arg(name, fallback = null, argv = process.argv.slice(2)) {
   return next && !next.startsWith('--') ? next : true;
 }
 
-/** 产品现在编轨道流用的参数（`server/bakery/ffmpeg.mjs` 的 `STREAM_ENCODERS.libx264`），原样取来。 */
+/** Encoding parameters currently used by the product for track streams (`STREAM_ENCODERS.libx264` in `server/bakery/ffmpeg.mjs`), taken as is. */
 export const PRODUCT_X264 = STREAM_ENCODERS.libx264.args;
 export const COLOR_TAGS = ['-color_range', 'tv', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709'];
 export const FMP4_FLAGS = ['-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-an', '-f', 'mp4'];
 
 /**
- * 跑一次 ffmpeg，回 { code, ms, cpuMs, stdout(Buffer), stderr } 。静默（windowsHide）。
- * `ms` 是墙钟（含起进程）；`cpuMs` 是 ffmpeg 自己报的用户态 + 内核态处理器时间（`-benchmark`），机器忙的时候它比墙钟稳得多。
+ * Runs ffmpeg once, returning { code, ms, cpuMs, stdout(Buffer), stderr }. Silent (windowsHide).
+ * `ms` is wall clock (including process launch); `cpuMs` is user + kernel processor time reported
+ * by ffmpeg itself (`-benchmark`), which is much more stable than wall clock when the machine is busy.
  */
 export function runFfmpeg(args, { input = null, ffmpeg = findFfmpeg(), collect = true, bench = false } = {}) {
   return new Promise((resolve, reject) => {
@@ -57,8 +60,10 @@ export function runFfmpeg(args, { input = null, ffmpeg = findFfmpeg(), collect =
 }
 
 /**
- * 造一条测试流：lavfi 的 testsrc2（有运动、有细节）直接编成 W×H 的 H.264（产品参数），fMP4 输出。
- * 这里的 W×H 就是**编码尺寸**（已经是「上下两半拼好」之后的尺寸）。回 { init, segments[], codec, ms, bytes, stderr }。
+ * Creates a test stream: lavfi's testsrc2 (with motion and detail) is directly encoded into W×H
+ * H.264 (product parameters), output as fMP4. Here W×H is the **encoded dimensions** (already the
+ * size after "stitching top and bottom halves together"). Returns { init, segments[], codec, ms,
+ * bytes, stderr }.
  */
 export async function makeStream({ width, height, frames = 30, fps = 30, source = 'testsrc2', extra = [], encoder = PRODUCT_X264 }) {
   const res = await runFfmpeg(['-f', 'lavfi', '-i', `${source}=s=${width}x${height}:r=${fps}`, '-frames:v', String(frames),
@@ -70,7 +75,7 @@ export async function makeStream({ width, height, frames = 30, fps = 30, source 
   return { ok: true, init: split.init, segments: split.segments, codec: info.codec ?? codecStringFromAvcC(findBox(split.init, 'avcC').payload), ms: res.ms, bytes: res.stdout.length, stderr: res.stderr };
 }
 
-/** H.264 级别表（ITU-T H.264 表 A-1）：MaxFS（宏块数）、MaxMBPS（宏块 / 秒）、MaxDpbMbs。查资料得来，不是量的。 */
+/** H.264 level table (ITU-T H.264 Table A-1): MaxFS (macroblocks), MaxMBPS (macroblocks / s), MaxDpbMbs. Sourced from documentation, not measured. */
 export const H264_LEVELS = [
   { level: '3.1', idc: 31, maxFS: 3600, maxMBPS: 108000 },
   { level: '4.0', idc: 40, maxFS: 8192, maxMBPS: 245760 },
@@ -89,7 +94,7 @@ export function levelFor(width, height, fps) {
   return H264_LEVELS.find((l) => mbs <= l.maxFS && mbs * fps <= l.maxMBPS && width <= maxDim(l) && height <= maxDim(l)) ?? null;
 }
 
-/** 本机静态服务：只绑 127.0.0.1。routes: { '/路径': Buffer | string | () => Buffer } */
+/** Local static server: binds to 127.0.0.1 only. routes: { '/path': Buffer | string | () => Buffer } */
 export function serveLocal(port, routes) {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
@@ -109,7 +114,7 @@ export function serveLocal(port, routes) {
 }
 export const closeServer = (s) => new Promise((r) => { s.close(r); s.closeAllConnections?.(); });
 
-/** 这台机器上几种 Chromium 的可执行文件（存在才列）。都用临时用户目录、无头起，不碰用户自己的浏览器数据。 */
+/** Chromium executables on this machine (listed only if present). All launched headless with temporary user directories, without touching user browser data. */
 export function browserChoices() {
   const out = { puppeteer: null };
   const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
@@ -122,8 +127,9 @@ export function browserChoices() {
 }
 
 /**
- * 起一个**无头**浏览器（新无头模式：和有头是同一个可执行文件、同一条 GPU 进程路径，只是不建窗口）。
- * `which`：'puppeteer'（自带的 Chrome for Testing）| 'chrome' | 'edge' | 可执行文件路径。
+ * Launch a **headless** browser (new headless mode: same executable and same GPU process path as
+ * headed, just without creating a window).
+ * `which`: 'puppeteer' (bundled Chrome for Testing) | 'chrome' | 'edge' | executable path.
  */
 export async function launchHeadless(which = 'puppeteer', extraArgs = []) {
   const choices = browserChoices();
@@ -134,7 +140,7 @@ export async function launchHeadless(which = 'puppeteer', extraArgs = []) {
   return { browser, userDataDir, async close() { await browser.close().catch(() => {}); fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } };
 }
 
-/** 浏览器自己报的 GPU 与硬件视频解码能力（CDP `SystemInfo.getInfo`）。 */
+/** GPU and hardware video decoding capabilities reported by the browser itself (CDP `SystemInfo.getInfo`). */
 export async function gpuInfo(browser) {
   const cdp = await browser.target().createCDPSession();
   try {
@@ -151,7 +157,7 @@ export async function gpuInfo(browser) {
   } finally { await cdp.detach().catch(() => {}); }
 }
 
-/** 机器此刻忙不忙：采两次 os.cpus()，回这段时间里的总占用百分比。量耗时的探针前后各记一次。 */
+/** Whether the machine is busy right now: samples os.cpus() twice, returning total usage percentage over this period. Time-measuring probes record once before and once after. */
 export async function cpuBusy(ms = 500) {
   const snap = () => os.cpus().map((c) => c.times);
   const a = snap();

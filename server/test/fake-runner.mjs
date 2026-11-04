@@ -12,7 +12,7 @@ export function startRun(opts) {
   let onEvent = opts.onEvent;
   
   let abortResolve = null;
-  // eslint-disable-next-line no-async-promise-executor -- 假 runner 用 await 排事件顺序,测试用
+  // eslint-disable-next-line no-async-promise-executor -- fake runner uses await to order events, for testing
   const donePromise = new Promise(async (resolve) => {
     abortResolve = resolve;
     
@@ -21,12 +21,12 @@ export function startRun(opts) {
        onEvent({ type: "session", sessionId: "fake-protocol-session" });
        await new Promise(r => setTimeout(r, 10));
        
-       if (opts.prompt.includes("【第 8 轮】")) {
+       if (opts.prompt.includes("[Round 8]")) {
           // This should never happen if 8 limit works, but just in case
-          onEvent({ type: "text", delta: "结束了\n" });
+          onEvent({ type: "text", delta: "Finished\n" });
        } else {
           // Output blocks
-          const txt = "我要调两个工具\n```promptcut-tool\n{\"name\":\"stt_status\"}\n```\n并且还有一个错的工具\n```promptcut-tool\n{\"name\":\"bad_tool\"}\n```\n并且还有一个坏的JSON\n```promptcut-tool\n{\"name\"\n```\n";
+          const txt = "I will call two tools\n```promptcut-tool\n{\"name\":\"stt_status\"}\n```\nand there is also a wrong tool\n```promptcut-tool\n{\"name\":\"bad_tool\"}\n```\nand there is also a broken JSON\n```promptcut-tool\n{\"name\"\n```\n";
           onEvent({ type: "text", delta: txt });
        }
        onEvent({ type: "done", sessionId: "fake-protocol-session" });
@@ -39,12 +39,12 @@ export function startRun(opts) {
     
     await new Promise(r => setTimeout(r, 100));
     if (isAborted) { isFinished = true; return resolve(); }
-    onEvent({ type: "text", delta: "正在为你执行操作...\n" });
+    onEvent({ type: "text", delta: "Carrying out the operation for you...\n" });
     
     await new Promise(r => setTimeout(r, 100));
     if (isAborted) { isFinished = true; return resolve(); }
     onEvent({ type: "tool_call", name: "get_editor_state", input: {} });
-    onEvent({ type: "tool_result", name: "get_editor_state", ok: true, summary: "获取成功" });
+    onEvent({ type: "tool_result", name: "get_editor_state", ok: true, summary: "Fetched successfully" });
     
     await new Promise(r => setTimeout(r, 100));
     if (isAborted) { isFinished = true; return resolve(); }

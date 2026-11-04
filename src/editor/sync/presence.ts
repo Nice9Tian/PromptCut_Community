@@ -1,16 +1,18 @@
 /**
- * 页面一侧的在场状态(计划 docs/plan/agent-workflow-plan.md A3 第二阶段;文档服务一侧 server/docservice/modules/presence.mjs)。
+ * Page-side presence (plan docs/plan/agent-workflow-plan.md A3 phase 2; document service side: server/docservice/modules/presence.mjs).
  *
- * - **发**:这个页面「正在编辑」的片段(A2 的汇总,src/editor/userEditing.ts)经它自己的文档服务连接 `presence.set`,
- *   同一项目的别的成员(他们的编辑器进程、他们的 Agent)就知道「用户 <成员>正在编辑」。在线页面(浏览器模式,没有本机
- *   编辑器进程)也走这条。不进项目历史,带过期时间(15 秒,页面非空时每 5 秒续一次)。
- * - **收**:别的成员那边的 Agent 声明的范围(`kind: 'agent'`),AI 栏上列出来(RemoteAgentsStrip)。
- * - **收**:云端 Agent 此刻有没有一轮在跑(`key: 'cloud-run'`,见下「云端 Agent 此刻在不在跑」),成员列表的计数与「离线,Agent 在跑」标记用。
+ * - **Send**: the clips this page is "editing" (the A2 summary, src/editor/userEditing.ts) go out through its own
+ *   document service connection as `presence.set`, so other members of the same project (their editor processes,
+ *   their Agents) know "User <member> is editing". Online pages (browser mode, with no local
+ *   editor process) take this path too. Not written to project history; it has an expiry (15 seconds,
+ *   renewed every 5 seconds while the page is non-empty).
+ * - **Receive**: the scope declared by other members' Agents (`kind: 'agent'`), listed in the AI panel (RemoteAgentsStrip).
+ * - **Receive**: whether a Cloud Agent round is running right now (`key: 'cloud-run'`, see "Whether the Cloud Agent is running right now" below), used for the member list count and the "Offline, Agent running" marker.
  *
- * **兼容**:旧版文档服务不认识 `presence.*`,回 `error { reason: 'unsupported' }`:记下这条连接不支持,之后不再发,
- * 不报错、不断线(`markUnsupported`)。
+ * **Compatibility**: an old document service does not know `presence.*` and replies `error { reason: 'unsupported' }`: record that this connection does not support it and stop sending,
+ * with no error and no disconnect (`markUnsupported`).
  *
- * 不认识 store 以外的界面;连接由 syncManager 交进来(`setPresenceLink`),免得两边互相引用。
+ * It knows no UI other than the store; the connection is handed in by syncManager (`setPresenceLink`), so the two sides do not reference each other.
  */
 import { useSyncExternalStore } from "react";
 import { republishSelection, setSelectionLink } from "./selectionPresence.ts";
@@ -25,29 +27,29 @@ export interface EditingEntityWire {
   remainingMs?: number;
 }
 
-/** 云端 Agent 服务在在场状态里挂的那一项:有一轮在跑时 `presence.set { key: 'cloud-run', ttlMs: 90000, data: { v: 1, kind: 'cloud-run', runs } }`,每 30 秒续一次,最后一轮结束时清掉 */
+/** The presence entry that the Cloud Agent service publishes: while a round is running, `presence.set { key: 'cloud-run', ttlMs: 90000, data: { v: 1, kind: 'cloud-run', runs } }`, renewed every 30 seconds and cleared when the last round ends */
 export const CLOUD_RUN_KEY = "cloud-run";
 
 export interface RemoteAgent {
   id: string;
   member: string;
   vendor: string | null;
-  /** 这是那位成员的云端 Agent(来源身份带 `service: 'agent'`) */
+  /** This is that member's Cloud Agent (the source identity carries `service: 'agent'`) */
   cloud?: boolean;
   scope: string;
   expiresAt: number;
 }
 
-/** 页面「正在编辑」的过期时间:与 A2 服务端看板的续期口径一致(页面每 5 秒心跳一次) */
+/** Expiry of the page's "editing" state: matches the renewal interval of the A2 server-side board (the page heartbeats every 5 seconds) */
 export const EDITING_TTL_MS = 15_000;
 
 let current: { link: LinkLike; projectId: string; me: string } | null = null;
 const unsupported = new WeakSet<LinkLike>();
 let lastEditing: { session: string; entities: EditingEntityWire[] } | null = null;
-/** 这条连接上有没有发布过(撤销只在发布过时发) */
+/** Whether anything has been published on this connection (a withdrawal is sent only if something was published) */
 const published = new WeakSet<LinkLike>();
 
-/** 共享项目 userId 是「用户名@设备」,只取用户名;本机空间是 null */
+/** In a shared project userId is "username@device"; take only the username; a local space gives null */
 export function memberOf(userId: unknown): string | null {
   if (typeof userId !== "string" || !userId || userId === "local" || userId === "anonymous") return null;
   const at = userId.indexOf("@");
@@ -58,7 +60,7 @@ function markReply(link: LinkLike, reply: Record<string, unknown> | null) {
   if (reply && reply.type === "error" && reply.reason === "unsupported") unsupported.add(link);
 }
 
-/** syncManager 换了连接(或断开:null)时交进来。`me` 是本页面的 userId(别人的 Agent 与自己的区分开) */
+/** Handed in when syncManager switches connection (or disconnects: null). `me` is this page's userId (to tell other people's Agents from your own) */
 export function setPresenceLink(link: LinkLike | null, projectId: string | null, me: string, accountSelections = false): void {
   setSelectionLink(accountSelections ? link : null, accountSelections ? projectId : null);
   current = link && projectId ? { link, projectId, me } : null;
@@ -73,9 +75,9 @@ export function setPresenceLink(link: LinkLike | null, projectId: string | null,
 }
 
 /**
- * 同一条 `SyncLink` 底下换了一条连接(断线重连、账号项目到期前换会话):跟着连接走的在场状态在新连接上重建 ——
- * 选区重发;「正在编辑」重发(文档服务按连接记是谁发的,旧连接关掉时只撤它自己发的那条,新连接续上的不受影响);
- * 别的成员那边的 Agent 重新取一次(断着的那一会儿可能漏了变化)。
+ * The connection under the same `SyncLink` was replaced (reconnect after a drop, or a session switch before an account project expires): presence that follows the connection is rebuilt on the new connection ——
+ * the selection is resent; "editing" is resent (the document service records the sender per connection, so closing the old connection only withdraws the entry it sent itself, and the new connection's entry is unaffected);
+ * other members' Agents are fetched again (changes may have been missed while disconnected).
  */
 export function resyncPresenceLink(): void {
   const c = current;
@@ -85,7 +87,7 @@ export function resyncPresenceLink(): void {
   if (lastEditing && lastEditing.entities.length) publishEditing(lastEditing.session, lastEditing.entities);
 }
 
-/** 页面「正在编辑」的片段(A2 的汇总每次变化、每次心跳调一次);空数组 = 撤掉 */
+/** The clips the page is "editing" (called once on every change of the A2 summary and on every heartbeat); empty array = withdraw */
 export function publishEditing(session: string, entities: EditingEntityWire[]): void {
   lastEditing = { session, entities };
   const c = current;
@@ -103,7 +105,7 @@ export function publishEditing(session: string, entities: EditingEntityWire[]): 
     .then((r) => markReply(link, r), () => {});
 }
 
-/* ---------------- 收:别的成员那边的 Agent ---------------- */
+/* ---------------- Receive: Agents of other members ---------------- */
 
 const remote = new Map<string, RemoteAgent>();
 const listeners = new Set<() => void>();
@@ -126,7 +128,7 @@ function ingest(e: Record<string, unknown>) {
     remote.delete(id);
     return;
   }
-  // 自己这台机器上的 Agent 不算「别的成员」(本机空间里 userId 都是 local)
+  // Agents on this very machine do not count as "other members" (in a local space every userId is local)
   if (current && (from.userId === current.me || memberOf(from.userId) === null)) return;
   remote.set(id, {
     id,
@@ -138,7 +140,7 @@ function ingest(e: Record<string, unknown>) {
   });
 }
 
-/** syncManager 的旁路消息里 `presence.*` 交到这里 */
+/** `presence.*` from syncManager's side-channel messages is delivered here */
 export function receivePresence(msg: Record<string, unknown>): void {
   if (!current || (msg.projectId !== undefined && msg.projectId !== current.projectId)) return;
   if (msg.type === "presence.update") {
@@ -152,23 +154,23 @@ export function receivePresence(msg: Record<string, unknown>): void {
   }
 }
 
-/* ---------------- 云端 Agent 此刻在不在跑 ----------------
+/* ---------------- Whether the Cloud Agent is running right now ----------------
  *
- * 云端 Agent 的连接在一轮结束后还会连着(闲置 10 分钟才回收),所以「这位成员名下有没有云端 Agent 的连接」说不清它在不在干活。
- * Agent 服务在有一轮在跑的时候经它自己的连接挂一项 `cloud-run`(带过期时间,每 30 秒续),最后一轮结束时撤掉,连接断了文档服务也会撤销;
- * 页面据此维护一张「哪些成员(`from.userId`,即 `用户名@设备号`,与成员行的 `${row.username}@${row.deviceId}` 同一写法)的云端 Agent 此刻有一轮在跑」的表。
+ * A Cloud Agent's connection stays connected after a round ends (reclaimed after 10 minutes idle), so "does this member have a Cloud Agent connection" cannot tell whether it is working.
+ * While a round is running, the Agent service publishes an entry `cloud-run` through its own connection (with an expiry, renewed every 30 seconds), withdraws it when the last round ends, and the document service also withdraws it when the connection drops;
+ * from this the page maintains a table of "which members' (`from.userId`, i.e. `username@deviceId`, the same form as `${row.username}@${row.deviceId}` in the member row) Cloud Agent has a round running right now":
  *
- * - 只认来源身份带 `service: 'agent'` 的条目(来源由文档服务按连接的身份写,页面发来的伪造不了);
- * - **自己的那一行也算**:不套 `agent:` 条目那条「自己的不算」的过滤(那条是为了不在 AI 栏上列自己的本机 Agent);
- * - 同一位成员可以有几条(几个对话、几条连接),只要有一条没过期且 `runs` > 0 就算在跑;
- * - 过期自动不算:读的时候按当前时间滤,并在最近一条到期时通知订阅者重画;换项目、断开时清空。
+ * - Only entries whose source identity carries `service: 'agent'` count (the source is written by the document service from the connection's identity; the page cannot forge it);
+ * - **Your own row counts too**: the "your own does not count" filter of `agent:` entries is not applied (that one exists so the AI panel does not list your own local Agent);
+ * - One member can have several entries (several chats, several connections); it counts as running as long as one is unexpired and `runs` > 0;
+ * - Expired entries stop counting automatically: filtered by current time on read, and subscribers are notified to redraw when the nearest one expires; cleared on project switch and disconnect.
  */
 
 const cloudRuns = new Map<string, { userId: string; runs: number; expiresAt: number }>();
 const cloudListeners = new Set<() => void>();
 const EMPTY_RUNNING: ReadonlySet<string> = new Set();
 let cloudSnapshot: ReadonlySet<string> = EMPTY_RUNNING;
-/** 快照里最早到期的那一条的时间;到了就要重算 */
+/** Time of the earliest expiring entry in the snapshot; recompute when it is reached */
 let cloudSnapshotUntil = Infinity;
 let cloudTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -192,7 +194,7 @@ function emitCloudRuns() {
   recomputeCloudRuns();
   if (cloudTimer !== null) { clearTimeout(cloudTimer); cloudTimer = null; }
   if (Number.isFinite(cloudSnapshotUntil)) {
-    // 最近一条到期时再算一次、通知订阅者(没有订阅者时也只是空转一次)
+    // Recompute and notify subscribers when the nearest entry expires (with no subscribers it just idles once)
     cloudTimer = setTimeout(() => { cloudTimer = null; emitCloudRuns(); }, Math.max(0, cloudSnapshotUntil - Date.now()) + 20);
     (cloudTimer as { unref?: () => void }).unref?.();
   }
@@ -213,7 +215,7 @@ function ingestCloudRun(e: Record<string, unknown>) {
   cloudRuns.set(id, { userId, runs, expiresAt: typeof e.expiresAt === "number" && e.expiresAt > 0 ? e.expiresAt : Date.now() + 90_000 });
 }
 
-/** 取一次现有的在场状态;连接还没就绪就隔 2 秒再试(最多 15 次),换了连接就停 */
+/** Fetch the existing presence once; if the connection is not ready yet, retry after 2 seconds (at most 15 times); stop if the connection was replaced */
 async function refresh() {
   const c = current;
   for (let i = 0; i < 15; i += 1) {
@@ -229,7 +231,7 @@ async function refresh() {
   }
 }
 
-/** 此刻云端 Agent 有一轮在跑的成员(`用户名@设备号`)。同一次变化之间返回同一个对象 */
+/** Members whose Cloud Agent has a round running right now (`username@deviceId`). Returns the same object between changes */
 export function cloudRunning(): ReadonlySet<string> {
   if (cloudSnapshotUntil <= Date.now()) recomputeCloudRuns();
   return cloudSnapshot;
@@ -257,7 +259,7 @@ export function useRemoteAgents(): RemoteAgent[] {
   return useSyncExternalStore(subscribeRemoteAgents, remoteAgents, remoteAgents);
 }
 
-/** 测试与诊断 */
+/** Tests and diagnostics */
 export function presenceStatus(): { linked: boolean; unsupported: boolean; remote: number; cloudRunning: number } {
   return { linked: !!current, unsupported: !!current && unsupported.has(current.link), remote: snapshot.length, cloudRunning: cloudRunning().size };
 }

@@ -1,17 +1,27 @@
 /**
- * 舞台闸门(语义 `product/platforms.md`「在线浏览器」的「舞台闸门」;做法 `mechanism/platforms.md`「三道闸门」的「舞台闸门的步骤」)
- * 与三道闸门共用的崩溃记录接线。
+ * Stage gate (semantics in `product/platforms.md` "Online browser" -> "Stage gate"; mechanism
+ * in `mechanism/platforms.md` "Three gates" -> "Stage gate steps") and crash record wiring shared
+ * across the three gates.
  *
- * 三级,从低到高:1 一个舞台;2 两个舞台共用一套 canvas 渲染器;3 两个舞台各用一套。每次全新打开页面时从低往高试,哪一级把页面撑崩了,
- * 重新载入后就停在它的下一级,这次使用期间不再往上试。崩一次就算。崩过之后有一段护栏:护栏内重新打开直接停在上次到达的那一级;
- * 护栏从 30 分钟起每崩一次翻一倍(用户定),往上试成功一次或软件升级时清零。安卓上的 Chromium 系报到 8 GB 内存才往上试。
+ * Three tiers, from low to high: 1 one stage; 2 two stages share one canvas renderer; 3 two stages
+ * each use their own. On every clean page open, test from low to high; whichever tier crashes the
+ * page, after reload stay at the tier below it, and do not test higher during this session.
+ * A single crash counts. After crashing, a guard is active: reopening within the guard directly
+ * stops at the tier reached last time; guard starts at 30 minutes and doubles with each crash
+ * (user decision), reset to zero upon one successful upward test or software upgrade.
+ * Chromium-based browsers on Android only test higher if reporting at least 8 GB memory.
  *
- * 本文件分两半:
- * - `decideStageGate`:纯的判法(给上次的记录、这次的判崩结果与环境,回这次怎么走、设备记录怎么改),Node 单测直接用;
- * - `beginStageGate`:页面一侧的接线(读写崩溃记录、问别的标签页、定时更新「还活着」、记正常离开与在后台、各闸门留记录),
- *   在 `boot.ts` 里页面载入时调一次,结果交给 `onlineTier.ts`。
+ * This file is split into two halves:
+ * - `decideStageGate`: pure decision logic (given previous record, current crash-test result, and
+ *   environment, returns how to proceed this time and how to update device record), used directly
+ *   by Node unit tests;
+ * - `beginStageGate`: page-side wiring (reads/writes crash records, queries other tabs,
+ *   periodically updates "still alive", records normal exit and backgrounding, retains records
+ *   for each gate), called once on page load in `boot.ts`, passing result to `onlineTier.ts`.
  *
- * 握手容错(握不上、握上又断就退回单舞台)不经这里:只管当次、不留崩溃记录(`Preview` 调 `settleAt(1)`)。
+ * Handshake fault tolerance (falls back to single stage if handshake fails or drops) does not go
+ * through here: handles current session only, without leaving crash records (`Preview` calls
+ * `settleAt(1)`).
  */
 import {
   CRASH_TAB_KEY, HEARTBEAT_MS, addHeavyCard, emptyDevice, freshTab, judgeLoad, newTabId, pruneTabs, readCrashLog, tabsToPing, writeCrashLog,
@@ -20,16 +30,16 @@ import {
 import { judgeDeviceKind, resolveIpad, type DeviceKind, type DeviceKindResult } from "./deviceKind.ts";
 import { initTier, markLowest, markReached, setIdentity, settleAt, tierState, type TierName } from "./onlineTier.ts";
 
-/** 护栏的起点:第 1 次崩后等 30 分钟(用户定),之后每崩一次翻一倍 */
+/** Guard start point: wait 30 minutes after 1st crash (user decision), then double with each crash */
 export const GUARD_BASE_MS = 30 * 60_000;
-/** 安卓上的 Chromium 系报到这么多内存(GiB,`navigator.deviceMemory` 最高报 8)才往上试(用户定) */
+/** Chromium-based browsers on Android only test higher if reporting at least this memory (GiB, `navigator.deviceMemory` reports up to 8) (user decision) */
 export const ANDROID_TRY_MEMORY_GIB = 8;
-/** 新开的标签页问别的标签页还在不在,等回音的时限〔裁〕 */
+/** Timeout waiting for response when a newly opened tab queries whether other tabs are still alive [ruling] */
 export const TAB_PING_MS = 200;
-/** 基准卡在测崩的卡表里的键 */
+/** Key for baseline card in table of crashed cards */
 export const BENCHMARK_KEY = "@benchmark";
 
-/** 第 n 次崩后的护栏时长:30 分钟 × 2^(n−1) */
+/** Guard duration after n-th crash: 30 minutes × 2^(n−1) */
 export function guardMsOf(crashes: number): number {
   const n = Math.max(1, Math.floor(crashes));
   return GUARD_BASE_MS * 2 ** Math.min(n - 1, 30);
@@ -37,38 +47,38 @@ export function guardMsOf(crashes: number): number {
 
 export interface GateEnv {
   now: number;
-  /** 软件版本(在线构建的代码版本;开发构建为 `dev`) */
+  /** Software version (code version of online build; `dev` for development builds) */
   version: string;
-  /** Chromium 系报的系统(`navigator.userAgentData.platform`);不报为 null */
+  /** Platform reported by Chromium-based browsers (`navigator.userAgentData.platform`); null if not reported */
   platform: string | null;
-  /** `navigator.deviceMemory`(GiB);不报为 null */
+  /** `navigator.deviceMemory` (GiB); null if not reported */
   deviceMemory: number | null;
-  /** 身份(电脑 / 手机,`ipadLike` 待舞台闸门改判) */
+  /** Identity (desktop / mobile, `ipadLike` pending reclassification by stage gate) */
   identity: DeviceKindResult;
-  /** 只给开发和验收用的强制档位(`?tier=top|standard|lite|low`);不给为 null */
+  /** Forced tier for development and acceptance check only (`?tier=top|standard|lite|low`); null if omitted */
   forced?: TierName | null;
 }
 
 export type GateReason = "trial" | "crash" | "guard" | "android-memory" | "forced";
 
 export interface GateDecision {
-  /** 这次要试到哪一级(固定的就是停的那一级) */
+  /** Which tier to test up to this time (if fixed, this is the tier it stays at) */
   target: StageLevel;
-  /** 起手到达的级别(试的话从 1 起) */
+  /** Initial tier reached (starts from 1 if testing) */
   reached: StageLevel;
-  /** 不往上试 */
+  /** Do not test higher */
   fixed: boolean;
   lowest: null | "stage" | "benchmark";
   reason: GateReason;
-  /** 这次的身份(iPad 已按能到的级别预判:停在第一级的算手机,要试的先按电脑) */
+  /** Identity for this run (iPad is pre-judged by reachable tier: staying at tier 1 counts as mobile, testing higher starts as desktop) */
   identity: DeviceKind;
-  /** 改过的设备记录(写回崩溃记录) */
+  /** Modified device record (written back to crash record) */
   device: DeviceRecord;
-  /** 给查看口的一句话 */
+  /** One-line summary for inspector */
   note: string;
 }
 
-/** 崩在舞台这一步,这次停在哪一级(`lowest` 为真 = 一个舞台都撑不住) */
+/** Crashed at stage step, which tier to stop at this time (`lowest` is true = cannot even support one stage) */
 export function levelAfterCrash(step: CrashStep | null): { level: StageLevel; lowest: boolean } | null {
   if (!step) return { level: 1, lowest: true };
   if (step.kind === "stage") {
@@ -92,9 +102,12 @@ const FORCED: Record<TierName, { level: StageLevel; lowest: boolean }> = {
 };
 
 /**
- * 这次舞台闸门怎么走(`mechanism/platforms.md`「舞台闸门的步骤」第 1～3 条)。
- * 崩在测某张卡(即时渲染闸门)的,那张卡记进测崩的卡;崩在载入原尺寸(素材闸门)的,解码上限调低一级;这两种不算舞台崩,
- * 但这次也不算「往上试成功一次」。
+ * How to proceed through stage gate this time (`mechanism/platforms.md` "Stage gate steps"
+ * items 1-3).
+ * If crashed while testing a specific card (on-demand render gate), record that card in crashed
+ * cards; if crashed while loading original size (asset gate), lower decoding limit by one tier;
+ * neither counts as a stage crash, but this run also does not count as "one successful upward
+ * test".
  */
 export function decideStageGate(log: CrashLog, judged: LoadJudgement, env: GateEnv): GateDecision {
   let device: DeviceRecord = log.device.version === env.version ? log.device : emptyDevice(env.version);
@@ -125,7 +138,7 @@ export function decideStageGate(log: CrashLog, judged: LoadJudgement, env: GateE
       note: `Last crash at ${stepText(judged.step)}, this time stopped at ${lowest ? "Lowest tier" : `level ${stageCrash.level}`}; crash #${crashes}, guard ${Math.round(guardMsOf(crashes) / 60_000)} min`,
     }, device);
   }
-  // 往上试成功一次(上次试了、这次载入没判崩):崩的次数清零,护栏撤掉
+  // One successful upward test (tested last time, not judged crashed on load this time): crash count reset to zero, guard removed
   if (device.stage.tried && !judged.crashed) device = { ...device, stage: { ...device.stage, crashes: 0, guardUntil: null, tried: false } };
   else device = { ...device, stage: { ...device.stage, tried: false } };
   const g = device.stage.guardUntil;
@@ -156,17 +169,17 @@ export function stepText(step: CrashStep | null): string {
   }
 }
 
-/* ------------------------------------------------------------------ 页面一侧 */
+/* ------------------------------------------------------------------ Page side */
 
 export interface GateDeps {
   local?: KV | null;
   session?: KV | null;
   now?: () => number;
   version: string;
-  /** 问别的标签页还在不在(`BroadcastChannel`);回此刻还活着的那几个 id */
+  /** Queries other tabs whether they are still alive (`BroadcastChannel`); returns ids currently alive */
   ping?: (ids: string[]) => Promise<Set<string>>;
   env?: Partial<Pick<GateEnv, "platform" | "deviceMemory" | "identity" | "forced">>;
-  /** 后台与离开(缺省接 `document` / `window` 的事件);单测不接 */
+  /** Backgrounding and exit (defaults to listening to `document` / `window` events); not hooked in unit tests */
   listen?: boolean;
   hidden?: () => boolean;
 }
@@ -175,27 +188,27 @@ export interface StageGateSession {
   readonly tab: string;
   readonly decision: GateDecision;
   readonly judged: LoadJudgement;
-  /** 舞台闸门的一步(动手之前留) */
+  /** Stage gate step (recorded before taking action) */
   stage(what: Extract<CrashStep, { kind: "stage" }>["what"]): void;
-  /** 舞台闸门往上走到了一级 */
+  /** Stage gate advanced upward by one tier */
   reached(level: StageLevel): void;
-  /** 握手容错退回单舞台:只管当次,不留崩溃记录 */
+  /** Handshake fault tolerance falling back to single stage: applies only to current run, leaves no crash record */
   fallback(level: StageLevel): void;
-  /** 舞台闸门走完(之后定时更新「还活着」,崩了按这一级算) */
+  /** Stage gate completed (periodically updates "still alive" afterward; counts as this tier if crashed) */
   done(): void;
-  /** 即时渲染闸门:测这张卡之前 / 之后 */
+  /** On-demand render gate: before / after testing this card */
   measureStart(key: string, cardId: string | null): void;
   measureEnd(): void;
-  /** 基准卡跑不动:这次进最低一档(只管这一次;测崩了的由崩溃记录管) */
+  /** Baseline card cannot run: enters lowest tier this time (applies to this run only; crash-tested ones managed by crash records) */
   benchmarkSlow(): void;
-  /** 素材闸门:要载入原尺寸之前(解码上限第几级) / 载入告一段落 */
+  /** Asset gate: before loading original size (which tier of decoding limit) / loading concluded */
   mediaStart(capLevel: number): void;
   mediaEnd(): void;
-  /** 测崩过的卡(identityKey) */
+  /** Cards that crashed during testing (identityKey) */
   heavyCards(): ReadonlySet<string>;
-  /** 载入原尺寸撑崩过几次(解码上限调低几级) */
+  /** Number of crashes from loading original size (decoding limit lowered by how many tiers) */
   mediaLowered(): number;
-  /** 查看口:当前各闸门的结果与崩溃记录(不含凭证) */
+  /** Inspector: current results and crash records across gates (excluding credentials) */
   snapshot(): GateSnapshot;
   dispose(): void;
 }
@@ -209,7 +222,7 @@ export interface GateSnapshot {
   step: CrashStep | null;
 }
 
-/** 读浏览器的环境(Chromium 系才有 `userAgentData`、`deviceMemory`) */
+/** Reads browser environment (only Chromium-based browsers have `userAgentData`, `deviceMemory`) */
 export function readGateEnv(): Pick<GateEnv, "platform" | "deviceMemory" | "identity"> {
   const nav = (typeof navigator !== "undefined" ? navigator : null) as (Navigator & { userAgentData?: { platform?: string; mobile?: boolean }; deviceMemory?: number }) | null;
   const platform = typeof nav?.userAgentData?.platform === "string" ? nav.userAgentData.platform : null;
@@ -218,7 +231,7 @@ export function readGateEnv(): Pick<GateEnv, "platform" | "deviceMemory" | "iden
   return { platform, deviceMemory, identity };
 }
 
-/** 地址里的强制档位(只给开发和验收用,`?tier=top|standard|lite|low`) */
+/** Forced tier in URL (for development and acceptance check only, `?tier=top|standard|lite|low`) */
 export function forcedTierOf(search: string): TierName | null {
   try {
     const v = new URLSearchParams(search).get("tier");
@@ -231,8 +244,9 @@ export function forcedTierOf(search: string): TierName | null {
 const safe = (pick: () => KV | undefined): KV | null => { try { return pick() ?? null; } catch { return null; } };
 
 /**
- * 经 `BroadcastChannel` 问别的标签页还在不在:发 `ping`(带要问的 id),还开着的标签页回 `pong`。等 `TAB_PING_MS`。
- * 没有 `BroadcastChannel` 的浏览器回空(那几段照像崩了算)。
+ * Queries other tabs via `BroadcastChannel` to check if they are still alive: sends `ping` (with
+ * the query id), and open tabs reply with `pong`. Waits for `TAB_PING_MS`.
+ * Browsers without `BroadcastChannel` return empty (treating those segments as crashed anyway).
  */
 export const CRASH_CHANNEL = "pc-online-crashlog";
 export function pingTabs(ids: string[], waitMs = TAB_PING_MS): Promise<Set<string>> {
@@ -246,13 +260,15 @@ export function pingTabs(ids: string[], waitMs = TAB_PING_MS): Promise<Set<strin
       ch.onmessage = (e) => { const d = e.data as { type?: string; id?: string }; if (d?.type === "pong" && typeof d.id === "string" && ids.includes(d.id)) alive.add(d.id); };
       ch.postMessage({ type: "ping", ids });
     } catch { resolve(alive); return; }
-    setTimeout(() => { try { ch?.close(); } catch { /* 已关 */ } resolve(alive); }, waitMs);
+    setTimeout(() => { try { ch?.close(); } catch { /* Closed */ } resolve(alive); }, waitMs);
   });
 }
 
 /**
- * 页面载入时开舞台闸门:读崩溃记录、判上次崩没崩(新开的标签页先问别的标签页)、定这次怎么走、写回记录、交给 `onlineTier.ts`。
- * 之后的每一步由调用方(`Preview`、测量、素材)经回的会话留记录。
+ * Opens the stage gate on page load: reads crash records, determines whether it crashed last
+ * time (a newly opened tab asks other tabs first), decides how to proceed this time, writes back
+ * records, and hands off to `onlineTier.ts`.
+ * Subsequent steps are logged by callers (`Preview`, measurement, assets) via the returned session.
  */
 export async function beginStageGate(deps: GateDeps): Promise<StageGateSession> {
   const local = deps.local !== undefined ? deps.local : safe(() => (globalThis as { localStorage?: KV }).localStorage);
@@ -264,7 +280,7 @@ export async function beginStageGate(deps: GateDeps): Promise<StageGateSession> 
   const fresh = !tab;
   if (!tab) {
     tab = newTabId();
-    try { session?.setItem(CRASH_TAB_KEY, tab); } catch { /* 存不了:只这一次 */ }
+    try { session?.setItem(CRASH_TAB_KEY, tab); } catch { /* Cannot persist: this time only */ }
   }
   const myTab = tab;
   let log = readCrashLog(local, deps.version);
@@ -277,7 +293,8 @@ export async function beginStageGate(deps: GateDeps): Promise<StageGateSession> 
   const firstStep: CrashStep = decision.fixed && decision.lowest ? { kind: "running", level: 1, lowest: true } : { kind: "stage", what: "open-visible" };
   log = pruneTabs({ ...log, device: decision.device }, t0, myTab);
   log.tabs = { ...log.tabs, [myTab]: freshTab(t0, deps.version, hidden(), firstStep) };
-  // 判崩的那一段(别的标签页留下的)已经算过了:标成离开,免得下一个新开的标签页再算一遍
+  // The segment judged as crashed (left by another tab) has already been counted: mark as left
+  // to avoid the next newly opened tab counting it again
   if (judged.crashed && judged.fromTab && judged.fromTab !== myTab && log.tabs[judged.fromTab]) log.tabs[judged.fromTab] = { ...log.tabs[judged.fromTab], left: true };
   log.history = [...log.history, { at: t0, tab: myTab, crashed: judged.crashed, step: judged.step, note: decision.note }].slice(-12);
   writeCrashLog(local, log);
@@ -306,7 +323,7 @@ export async function beginStageGate(deps: GateDeps): Promise<StageGateSession> 
   const onVisibility = () => update(() => ({ background: hidden(), alive: now() }));
   const onChannel = (e: MessageEvent) => {
     const d = e.data as { type?: string; ids?: unknown };
-    if (d?.type === "ping" && Array.isArray(d.ids) && d.ids.includes(myTab)) { try { channel?.postMessage({ type: "pong", id: myTab }); } catch { /* 关了 */ } }
+    if (d?.type === "ping" && Array.isArray(d.ids) && d.ids.includes(myTab)) { try { channel?.postMessage({ type: "pong", id: myTab }); } catch { /* Closed */ } }
   };
   let channel: BroadcastChannel | null = null;
   const timer = setInterval(() => update((t) => ({ alive: now(), background: hidden(), left: t.left && !hidden() ? false : t.left })), HEARTBEAT_MS);
@@ -331,7 +348,8 @@ export async function beginStageGate(deps: GateDeps): Promise<StageGateSession> 
     },
     fallback(level) {
       settleAt(level);
-      // 只管当次:不改设备记录的级别、不留崩溃记录;往上试的那一次不算(不清零)
+      // Only for the current run: does not change tier in device records, leaves no crash record;
+      // the upward trial attempt does not count (does not clear)
       update(() => null, (d) => ({ ...d, stage: { ...d.stage, tried: false } }));
       doneLevel = level;
       if (decision.identity !== resolveIpad(env.identity, level)) setIdentity(resolveIpad(env.identity, level));
@@ -342,13 +360,15 @@ export async function beginStageGate(deps: GateDeps): Promise<StageGateSession> 
       const t = tierState();
       doneLevel = t.reached;
       if (t.gate !== "done") settleAt(t.reached);
-      // iPad:到了第二级或第三级算电脑,停在第一级算手机(2026-10-21 用户定)
+      // iPad: reaching tier 2 or tier 3 counts as desktop, staying at tier 1 counts as mobile
+      // (user decision, 2026-10-21)
       if (decision.identity !== resolveIpad(env.identity, t.reached)) setIdentity(resolveIpad(env.identity, t.reached));
       if (!forced) update(() => null, (d) => ({ ...d, stage: { ...d.stage, reached: t.reached, lowest: t.lowest !== null } }));
       setStep(runningStep());
     },
     measureStart(key, cardId) { beforeMeasure = step?.kind === "measure" ? beforeMeasure : step; setStep({ kind: "measure", key, cardId }); },
-    // 回到测之前那一步;闸门在测的这段时间里走完了(那一步是舞台闸门的某一步,已经过时),回「第几级运行中」
+    // Return to the step before measurement; if the gate finished during measurement (that step
+    // was a stage gate step and is now obsolete), return "tier X running"
     measureEnd() { const back = beforeMeasure ?? runningStep(); beforeMeasure = null; setStep(back.kind === "measure" || (back.kind === "stage" && doneLevel !== null) ? runningStep() : back); },
     benchmarkSlow() {
       if (benchmarkSlow) return;
@@ -371,15 +391,18 @@ export async function beginStageGate(deps: GateDeps): Promise<StageGateSession> 
         window.removeEventListener("pageshow", onPageshow);
         document.removeEventListener("visibilitychange", onVisibility);
       }
-      try { channel?.close(); } catch { /* 已关 */ }
+      try { channel?.close(); } catch { /* Closed */ }
     },
   };
   return s;
 }
 
 /**
- * 同步预判这次的身份(选界面用:`Shell.tsx` 在页面载入时就要定手机版还是桌面版界面,等不及问别的标签页)。
- * 只看自己这个标签页上次的那一段,不写记录。iPad:护栏内、崩过停在第一级的算手机;要往上试的先按电脑(试的途中退回单舞台的,这次界面不再换)。
+ * Synchronously predicts identity for this run (used to select UI: `Shell.tsx` must decide between
+ * mobile app and desktop app UI at page load and cannot wait to ask other tabs).
+ * Only checks this tab's own previous segment, writing no records. iPad: within the guard, those
+ * that crashed and stayed at tier 1 count as mobile; those attempting an upward trial start as
+ * desktop (if falling back to single stage mid-trial, UI is not switched again this time).
  */
 export function predictIdentity(version: string, search = typeof location !== "undefined" ? location.search : ""): DeviceKind {
   const local = safe(() => (globalThis as { localStorage?: KV }).localStorage);
@@ -392,18 +415,18 @@ export function predictIdentity(version: string, search = typeof location !== "u
   return decideStageGate(log, judged, { now, version, ...readGateEnv(), forced: forcedTierOf(search) }).identity;
 }
 
-/* ------------------------------------------------------------------ 本页的那一个会话 */
+/* ------------------------------------------------------------------ The session for this page */
 
 let pageGate: StageGateSession | null = null;
 let pageGateWait: Promise<StageGateSession> | null = null;
 const gateListeners = new Set<(g: StageGateSession) => void>();
 
-/** 本页的舞台闸门会话(`boot.ts` 开;还没开完时为 null) */
+/** Stage gate session for this page (opened by `boot.ts`; null before opening completes) */
 export function stageGate(): StageGateSession | null {
   return pageGate;
 }
 
-/** 等本页的舞台闸门会话开好 */
+/** Wait for this page's stage gate session to finish opening */
 export function whenStageGate(): Promise<StageGateSession> | null {
   return pageGateWait;
 }
@@ -414,17 +437,17 @@ export function onStageGate(cb: (g: StageGateSession) => void): () => void {
   return () => { gateListeners.delete(cb); };
 }
 
-/** `boot.ts` 调:开本页的舞台闸门 */
+/** Called by `boot.ts`: opens the stage gate for this page */
 export function bootStageGate(deps: GateDeps): Promise<StageGateSession> {
   pageGateWait ??= beginStageGate(deps).then((g) => {
     pageGate = g;
-    for (const l of [...gateListeners]) { try { l(g); } catch { /* 订阅方坏了 */ } }
+    for (const l of [...gateListeners]) { try { l(g); } catch { /* The subscriber is broken */ } }
     return g;
   });
   return pageGateWait;
 }
 
-/** 测试用 */
+/** For tests */
 export function resetStageGateForTest(): void {
   pageGate?.dispose();
   pageGate = null;

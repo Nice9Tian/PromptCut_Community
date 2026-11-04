@@ -1,28 +1,44 @@
 /**
- * 在线浏览器导出时,哪张卡的哪一帧从哪取画面(语义 `docs/semantics/product/platforms.md`「在线浏览器」的「导出」,用户 2026-10-13 定)。纯算,不取数。
+ * Where each card frame gets its visuals during online browser export (semantics
+ * `docs/semantics/product/platforms.md` "Online browser" "Export", user decision, 2026-10-13). Pure
+ * calculation, no data fetching.
  *
- * 导出页(与编辑页面同源的 `?export=1` 文档)逐帧推时间、每帧生成整场景的快照再栅格化。一张卡这一帧的画面有三个来处:
+ * The export page (`?export=1` document sharing origin with editor page) advances time frame by
+ * frame, generating a whole scene snapshot and rasterizing it for each frame. Visuals for a card
+ * at this frame come from three sources:
  *
- *   1. **本页逐帧渲**:导出页里的活组件。本页能运行的卡(构建时就在包里的)在「完整导出」里一律走这条;
- *   2. **轨道流**:只在「快速导出」里用,而且**只取满密度的分段**(只有稀疏版的那一段每 15 帧才换一张,成片里会一卡一卡的)。
- *      取到的那一帧贴在这张卡的包裹层里(单卡流),或贴在舞台坐标、层序取这张卡那一层(依赖下层的流),规矩同预览一侧;
- *   3. **渲染节点逐帧渲的位图**(`exportFrames.ts`;只给这一次导出用):本页不执行的卡(同步来的用户卡与素材效果卡 —— 导出页不执行它们的代码)
- *      没被满密度流盖住的帧。
+ *   1. **Frame-by-frame render on this page**: live components in export page. Cards runnable on
+ *      this page (bundled at build time) always take this route in "Full export";
+ *   2. **Track stream**: used only in "Fast export", and **only takes full density segments**
+ *      (sections with only a sparse version update only once every 15 frames, causing stuttering
+ *      in final video). The fetched frame is pasted into this card's wrapper layer (single-card
+ *      stream), or pasted in stage coordinates taking this card's layer order (below-dependent
+ *      stream), matching preview-side rules;
+ *   3. **Bitmaps rendered frame by frame by render nodes** (`exportFrames.ts`; used only for this
+ *      export): frames not covered by a full density stream for cards not executed on this page
+ *      (synced user cards and media effect cards: export page does not execute their code).
  *
- * 一张卡的包裹层在导出页里总是挂着(位置、缩放、旋转、不透明度、层序都在包裹层上);整段都不走第 1 条的卡,导出页只挂包裹层、
- * 不挂组件(`wrapperOnly`),省掉活渲这张卡的时间 —— 快速导出快就快在这里。
+ * A card's wrapper layer is always mounted in export page (position, scale, rotation, opacity, and
+ * layer order all reside on wrapper layer); for cards that do not take item 1 across their entire
+ * duration, export page mounts only wrapper layer without components (`wrapperOnly`), saving the
+ * time to live render this card: this is why fast export is fast.
  *
- * 组流(一条流盖住相邻几张卡)这一版不取:它的成员在快速导出里照没有流办(本页逐帧渲,或渲染节点逐帧渲),画面不受影响。
+ * Group streams (one stream covering several adjacent cards) are not fetched in this version:
+ * their members are treated as having no stream in fast export (rendered frame by frame on this
+ * page, or rendered frame by frame by render nodes), leaving visuals unaffected.
  */
 import { streamSegmentOf, streamSegmentFirstFrame } from "../render/streamSegments.mjs";
 import { getCard, isUserCardId, cardRunState } from "../kernel/registry";
 import type { Project } from "../kernel/project";
 
 /**
- * 这张卡在此刻是否能在浏览器中运行：
- *   - 构建时在包里的卡（内置卡、内置素材效果卡、仓库卡）：`getCard` 有定义，直接可运行；
- *   - 同步来的用户卡：未同步或非用户卡不可运行；运行状态只有 `ready` 视为可运行；
- *     其它错误状态（`missing-module`, `unsupported-syntax`, `gpu`, `load-error`, `runtime-error`, `not-isolated`, `media`, `disabled`, `loading`）均不可运行。
+ * Whether this card can run in the browser at this moment:
+ *   - Cards bundled at build time (built-in cards, built-in media effect cards, repository cards):
+ *     `getCard` is defined, directly runnable;
+ *   - Synced user cards: unsynced or non-user cards are not runnable; only run state `ready` is
+ *     considered runnable;
+ *     other error states (`missing-module`, `unsupported-syntax`, `gpu`, `load-error`,
+ *     `runtime-error`, `not-isolated`, `media`, `disabled`, `loading`) are all not runnable.
  */
 export function isCardRunnable(cardId: string): boolean {
   if (getCard(cardId)) return true;
@@ -32,11 +48,14 @@ export function isCardRunnable(cardId: string): boolean {
 }
 
 /**
- * 本页不执行的卡片段:
- * 在线导出在跨源隔离舞台里整帧活渲（user-decisions-2026-10-14 §2.2）：
- * 同步来的用户卡只要在浏览器中就绪（`ready`），就在隔离舞台活渲；
- * 只有真正无法在浏览器执行的卡（语法不支持、缺模块、GPU能力不够、加载/运行时出错、未隔离、媒体格式等，或未就绪/未知卡）
- * 才进入 `nonRunnableClips` 等待渲染节点为导出逐帧渲染位图兜底。
+ * Card clips not executed on this page:
+ * Online export performs whole-frame live render in cross-origin isolated stage
+ * (user-decisions-2026-10-14 §2.2):
+ * synced user cards live render in the isolated stage as long as they are ready (`ready`) in
+ * browser; only cards genuinely unable to execute in browser (unsupported syntax, missing module,
+ * insufficient GPU capability, load/runtime error, not isolated, media formats, etc., or
+ * unready/unknown cards) enter `nonRunnableClips` waiting for render node frame-by-frame rendered
+ * bitmap fallback for export.
  */
 export function nonRunnableClips(p: Project): string[] {
   return p.tracks.flatMap((tr) => tr.clips).filter((c) => !!c.cardId && !isCardRunnable(c.cardId)).map((c) => c.id);
@@ -46,31 +65,31 @@ export type ExportMode = "fast" | "full";
 
 export interface LayerRect { x: number; y: number; w: number; h: number }
 
-/** 一条可取的流(层表的一行,选定了候选、取齐了清单之后) */
+/** A fetchable stream (a row in layer table, after selecting candidates and collecting all manifests) */
 export interface StreamCoverage {
   clipId: string;
-  /** `local`:包裹层自己的坐标系;`stage`:舞台坐标(依赖下层的流) */
+  /** `local`: wrapper layer's own coordinate system; `stage`: stage coordinates (below-dependent stream) */
   plane: "local" | "stage";
   resultKey: string;
-  /** 这条流自己的第一帧(项目帧号) */
+  /** First frame of this stream itself (project frame number) */
   originFrame: number;
-  /** 满密度的分段号 → 这一段的样本数 */
+  /** Full density segment number → sample count for this segment */
   dense: ReadonlyMap<number, number>;
 }
 
-/** 渲染节点逐帧渲好的位图(导出索引里的一条,清单取齐之后) */
+/** Bitmaps rendered frame by frame by render nodes (an entry in export index, after manifests collected) */
 export interface FrameCoverage {
   clipId: string;
   plane: "local" | "stage";
-  /** 每张图盖住的矩形(平面坐标) */
+  /** Rectangle covered by each image (plane coordinates) */
   rect: LayerRect;
-  /** 有位图的项目帧 */
+  /** Project frames with bitmaps */
   frames: ReadonlySet<number>;
 }
 
 export interface ClipSpan { id: string; start: number; end: number; cardId?: string }
 
-/** 片段盖住的项目帧 `[first, last]`(与预渲染的采样窗口、`streamInputSig.mjs` 的 `windowOf` 同一个算式;被项目时长截断) */
+/** Project frames covered by clip `[first, last]` (same formula as prerender sample window and `windowOf` in `streamInputSig.mjs`; truncated by project duration) */
 export function clipFrameWindow(clip: { start: number; end: number }, fps: number, total: number): { first: number; last: number } {
   const start = Number(clip.start) || 0, end = Number(clip.end) || 0;
   const first = Math.max(0, Math.ceil(start * fps - 1e-9));
@@ -79,7 +98,7 @@ export function clipFrameWindow(clip: { start: number; end: number }, fps: numbe
   return { first, last: Math.min(total - 1, first + count - 1) };
 }
 
-/** 这条流在第 `frame` 帧有没有满密度的画面 */
+/** Whether this stream has full density visuals at frame `frame` */
 export function streamCovers(stream: Pick<StreamCoverage, "originFrame" | "dense">, frame: number): boolean {
   if (frame < stream.originFrame) return false;
   const seg = streamSegmentOf(frame, stream.originFrame);
@@ -89,21 +108,22 @@ export function streamCovers(stream: Pick<StreamCoverage, "originFrame" | "dense
 
 export interface LayerPlan {
   mode: ExportMode;
-  /** 快速导出里取流的片段 → 它的流 */
+  /** Clip fetching stream in fast export → its stream */
   streamOf: Map<string, StreamCoverage>;
-  /** 导出页只挂包裹层、不挂组件的片段(整段都不由导出页活渲) */
+  /** Clips where export page mounts only wrapper layer without components (not live rendered by export page throughout) */
   wrapperOnly: string[];
-  /** 要渲染节点逐帧渲的片段(本页不执行、又没被满密度流盖满) */
+  /** Clips requiring render node frame-by-frame rendering (not executed on this page, not fully covered by full density stream) */
   needFrames: string[];
-  /** 统计:取流的帧数、要渲染节点位图的帧数(按片段累加) */
+  /** Stats: frame count fetching stream, frame count requiring render node bitmaps (accumulated per clip) */
   streamFrames: number;
   nodeFrames: number;
 }
 
 /**
- * 定每张卡怎么出。
- *   - `nonRunnable`:本页不执行的卡片段(导出页里没有它们的代码);
- *   - `streams`:可取的流(只在快速导出里看;一个片段有几条时取满密度分段最多的那一条)。
+ * Determine how each card is output.
+ *   - `nonRunnable`: card clips not executed on this page (their code is absent from export page);
+ *   - `streams`: fetchable streams (checked only in fast export; if a clip has several, take the
+ *     one with the most full density segments).
  */
 export function planCardLayers({ clips, fps, total, mode, nonRunnable, streams }: {
   clips: readonly ClipSpan[]; fps: number; total: number; mode: ExportMode;
@@ -139,8 +159,10 @@ export function planCardLayers({ clips, fps, total, mode, nonRunnable, streams }
 export type LayerChoice = { from: "stream"; stream: StreamCoverage } | { from: "frames"; frames: FrameCoverage } | { from: "live" } | { from: "missing" };
 
 /**
- * 这张卡这一帧取哪一样。`missing`:本页不执行的卡这一帧既没有满密度流、也没有渲染节点的位图(导出前的核对应当已经拦下;
- * 走到这里说明清单和核对时不一样了,调用方按错误处理,不出半截的画面)。
+ * Which source this card takes for this frame. `missing`: cards not executed on this page have
+ * neither full density streams nor render node bitmaps for this frame (pre-export check should
+ * have caught this; reaching here indicates manifests changed since check, caller treats as error
+ * and avoids outputting half-finished visuals).
  */
 export function layerChoiceAt(plan: LayerPlan, clipId: string, frame: number, frames: ReadonlyMap<string, FrameCoverage>, nonRunnable: ReadonlySet<string>): LayerChoice {
   const stream = plan.streamOf.get(clipId);

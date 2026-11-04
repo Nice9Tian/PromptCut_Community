@@ -1,14 +1,17 @@
 /**
- * 「片段 → `cardCostKey` / 声明的帧模式 / 审阅表能力」这一段（K1 / K2）。
+ * The "clip → `cardCostKey` / declared frame mode / review-table capabilities" section (K1 / K2).
  *
- * 两个调用方要的是**同一份**：
- *   - `probeRunner.ts` 用 `identityKeys` 判「这张卡测过没有」；
- *   - `planDispatch.ts` 用同一份喂 `planPipelines`（R4a 报告 §8 第 2 条把它从
- *     `planPipelines` 里拆出来，就是因为它要卡片注册表和源码版本，两样都不是项目数据）。
- * 两处各算一遍的话，探针写进去的记录和分派表查的键会在「源码版本怎么算」这种地方走偏。
+ * Two callers need **the same one**:
+ *   - `probeRunner.ts` uses `identityKeys` to decide "whether this card has been measured";
+ *   - `planDispatch.ts` feeds the same one to `planPipelines` (R4a report section 8 item 2 split it out of
+ *     `planPipelines` precisely because it needs the card registry and the source version, neither of which is project data).
+ * If each computed it separately, the record the probe writes and the key the dispatch table looks up would
+ * drift apart on things like "how the source version is computed".
  *
- * 按 `project` 的**对象引用**记忆化：store 是不可变更新，引用没变就什么都没变，
- * 而 `cardSourceVersion` 要把每张卡的源码过一遍，不缓存的话每次项目变动都白算一次。
+ * Memoized on the **object reference** of `project`: the store is updated immutably, so an unchanged reference
+ * means nothing changed,
+ * and `cardSourceVersion` has to go through every card's source; without caching, each project change would
+ * waste one computation.
  */
 import type { Project } from "../kernel/project";
 import { projectCardGraph } from "../kernel/cardGraph.mjs";
@@ -22,23 +25,26 @@ import { clipCostIndex, clipCostNodes } from "../render/pipelinePlan.mjs";
 export interface ClipIdentity {
   /** clipId → `cardCostKey(node, sourceVersion, fps, durationFrames)` */
   identityKeys: Record<string, string>;
-  /** clipId → 声明的帧模式（`direct` / `stateful`）。没有成本记录时的兜底分派用 */
+  /** clipId → declared frame mode (`direct` / `stateful`). Used for fallback dispatch when there is no cost record */
   frameModes: Record<string, string>;
-  /** clipId → 这个节点的能力表（`canvasHeavy` / `compositing` / `frameMode`） */
+  /** clipId → this node's capability table (`canvasHeavy` / `compositing` / `frameMode`) */
   capabilities: Map<string, Record<string, unknown>>;
 }
 
 const EMPTY: ClipIdentity = { identityKeys: {}, frameModes: {}, capabilities: new Map() };
 
 /*
- * 源码版本表本身也记忆化(C6.6 集成,T4):它只取决于注册表里的卡、定制卡源码、卡片源码表,和项目无关。
- * 以前每次项目变动(挪片段、改参数)都整张重算 —— 每张内置卡都要拿正则扫一遍全部源码文件找入口,
- * 一次 40 ms 上下,加上别的就成了 > 50 ms 的长任务。三样任何一样换了(注册表重装、定制卡源码换了、
- * 源码表热更新)就重算。
+ * The source version table itself is also memoized (C6.6 integration, T4): it depends only on the cards in the
+ * registry, custom card source, and the card source table, and is independent of the project.
+ * Previously every project change (moving a clip, editing a parameter) recomputed the whole table: every
+ * built-in card had to scan all source files with a regex to find its entry,
+ * about 40 ms each time, which together with other work became a > 50 ms long task. Recompute when any of the
+ * three changes (registry reinstalled, custom card source replaced,
+ * source table hot-updated).
  */
 let versionsMemo: { reg: number; files: number; user: unknown; out: Record<string, string> } | null = null;
 
-/** 源码版本，照 `ExportView.tsx` 的 `__pcCardPlan` 那份算法（user 卡带 dependencies） */
+/** Source version, computed with the same algorithm as `__pcCardPlan` in `ExportView.tsx` (user cards carry dependencies) */
 export function sourceVersionsOf(): Record<string, string> {
   const user = userCardSources();
   const reg = cardsRegistryGen();
@@ -57,23 +63,28 @@ export function sourceVersionsOf(): Record<string, string> {
 
 let cachedProject: Project | null = null;
 let cached: ClipIdentity = EMPTY;
-/** 记忆化的另外两个键:在线浏览器模式开没开、同步用户卡表的代数(决定哪些片段本机跑不了) */
+/** The other two memoization keys: whether online browser mode is on, and the generation of the synced user card table (decides which clips cannot run on this machine) */
 let cachedLocalKey = "";
 
 /**
- * 在线浏览器模式下本页运行不了的片段(素材效果卡、运行不了的用户卡;C10 契约第 9 节,`placeholderHost.needsLocalPc`)不给身份 ——
- * 本页能运行的用户卡(构建时就在包里的、同步来且载入成功的)照内置卡给身份、照测(`online-card-exec-contract.md` 第 6 节):页面不测它们(`probeRunner` 按身份挑卡)、
- * 分派表查不到成本记录也查不到声明的帧模式,一律按重卡(`clipWeight` 的 `declared-heavy`)—— 旧的 L2 里哪怕留着
- * 以前在后台舞台上测过的记录也不认;舞台拿不到它们的身份,停下也就不追;不把它们的记录转写进文档服务。
- * 桌面(模式关着)照旧。
+ * Clips this page cannot run in online browser mode (media effect cards, user cards that cannot run; C10
+ * contract section 9, `placeholderHost.needsLocalPc`) get no identity:
+ * user cards this page can run (those in the bundle at build time, and those synced and loaded successfully)
+ * get an identity like built-in cards and are measured as such (`online-card-exec-contract.md` section 6): the page does not measure them (`probeRunner` picks cards by identity),
+ * when the dispatch table finds neither a cost record nor a declared frame mode, it treats them all as heavy
+ * cards (`declared-heavy` in `clipWeight`): even records measured earlier on the background stage in the old L2 are not honored;
+ * the stage cannot get their identity, so it stops and does not catch up; their records are not transcribed into the document service.
+ * Desktop (mode off) is unchanged.
  */
 function dropLocalOnly(project: Project, id: ClipIdentity): ClipIdentity {
   return dropClips(id, localOnlyClipIds(project.tracks.flatMap((tr) => tr.clips)));
 }
 
 /**
- * 两边都没有定义的卡片段(未知卡片,`registry.unknownCardClipIds`;桌面与在线一致)也不给身份:舞台不画它们,测量不该挑它们
- * (以前会在后台舞台上测一张空卡、记一条成本记录)。分派表那一侧另由 `planDispatch` 把它们整个去掉(不当重卡、不进预渲染集合)。
+ * Card clips defined on neither side (unknown cards, `registry.unknownCardClipIds`; same on desktop and
+ * online) also get no identity: the stage does not draw them, and measurement should not pick them
+ * (previously it would measure an empty card on the background stage and record a cost record). On the
+ * dispatch table side, `planDispatch` removes them entirely (not treated as heavy cards, not put in the prerender set).
  */
 function dropUnknown(project: Project, id: ClipIdentity): ClipIdentity {
   return dropClips(id, unknownCardClipIds(project.tracks.flatMap((tr) => tr.clips)));
@@ -91,12 +102,18 @@ function dropClips(id: ClipIdentity, local: ReadonlySet<string>): ClipIdentity {
 }
 
 /**
- * 有声动效卡(画面是组件、另写了 `audio()`)片段自己的素材效果卡节点算它的成本身份节点(`pipelinePlan.mjs` 的 `clipCostNodes`):
- * 它的画面就是一张普通的 DOM 卡,和别的卡一样第一次要用时就测、测完按结果判轻重。2026-10-06 之前它没有身份
- * (素材效果卡那一支合成的节点不带 `clipId`),从不测量,画面在桌面与在线都永远按重卡。
+ * The media effect card node of a sound-bearing motion card clip (its picture is a component and it
+ * has a separate `audio()`) counts as a cost identity node (`clipCostNodes` in `pipelinePlan.mjs`):
+ * its picture is just an ordinary DOM card, so like any other card it is measured the first time it
+ * is needed, and classed light or heavy from the result. Before 2026-10-06 it had no identity (the
+ * node synthesized by the media effect card branch carried no `clipId`), was never measured, and its
+ * picture was always treated as a heavy card on both desktop and online.
  *
- * 画面由 `card()` 出的素材效果卡、只有 `audio()` 的音频素材效果卡不算,照旧没有身份:测量用的是只留这一个片段的缩水项目
- * (`probeRunner.ts` 的 `shrinkProject`,不带素材与卡片图节点),素材效果卡的输入在那里取不到;音频素材效果卡没有画面。
+ * A media effect card whose picture comes from `card()`, and an audio media effect card with only
+ * `audio()`, still do not count and have no identity: measurement uses a shrunk project that keeps
+ * only this one clip (`shrinkProject` in `probeRunner.ts`, without media or card graph nodes), and
+ * the input of a media effect card cannot be fetched there; an audio media effect card has no
+ * picture.
  */
 function ownsVisual(node: { cardId?: unknown }): boolean {
   const def = typeof node.cardId === "string" ? getCard(node.cardId) : undefined;
@@ -104,10 +121,14 @@ function ownsVisual(node: { cardId?: unknown }): boolean {
 }
 
 /**
- * 摊成图。卡片图里有悬空输入时 `projectCardGraph` 会抛(删片段不清 `cardNodes`):以前这一轮整个项目都没有身份,
- * 全部卡不测、按声明兜底(没声明 `direct` 的一律按重)。现在退一步只按片段自己的卡再摊一遍(不带卡片图节点、
- * 不看片段的 `nodeId`):普通卡与有声动效卡的节点内容与完整的图里相同,身份照给、照测;坏掉的素材效果卡链路本来就没有身份。
- * 这一遍也抛才当作没有身份。
+ * Flatten into a graph. When the card graph has dangling inputs, `projectCardGraph` throws (deleting
+ * a clip does not clean up `cardNodes`). Previously the whole project had no identity for that round,
+ * no card was measured, and all fell back to their declarations (any card without a declared `direct`
+ * was treated as heavy). Now it steps back and flattens again using only the clips' own cards (no
+ * card graph nodes, ignoring the clip's `nodeId`): the node content of ordinary cards and sound-bearing
+ * motion cards is the same as in the full graph, so identities are still given and measured; a broken
+ * media effect card chain never had an identity anyway. Only if this pass throws too is the project
+ * treated as having no identity.
  */
 function costGraph(project: Project, cardOf: (id: string) => ReturnType<typeof getCard> = getCard): ReturnType<typeof projectCardGraph> {
   try {
@@ -121,21 +142,26 @@ function costGraph(project: Project, cardOf: (id: string) => ReturnType<typeof g
 export function clipIdentityOf(raw: Project | null): ClipIdentity {
   if (!raw) return EMPTY;
   const project = raw;
-  // 注册表与同步表的代数也进键:卡片定义到了(热更新、同步到了),未知卡片变成认得的卡,身份跟着给
+  // The generation of the registry and the sync table also goes into the key: when a card definition arrives (hot update, synced), an unknown card becomes a known card, and its identity follows
   const localKey = `${onlineBrowserMode() ? "on" : "off"}:${syncedUserCardsGen()}:${cardsRegistryGen()}:${cardRunStatesGen()}`;
   if (project === cachedProject && localKey === cachedLocalKey) return cached;
   let out = EMPTY;
   try {
-    // 一张坏卡不该让探针和分派表整个停摆:图摊不出来时退一步只按片段自己的卡摊(`costGraph`);那也不成才当作「没有身份」
+    // One broken card must not stall the probe and the dispatch table: when the graph cannot be flattened, step back and flatten using only the clips' own cards (`costGraph`); only if that fails too is it treated as "no identity"
     /*
-     * 同步来的、本页能运行的用户卡(`docs/plan/online-card-exec-contract.md` 第 5、6 节):编辑页面没有它的定义(只在舞台里执行),
-     * 图里这张卡的节点按静态解析出来的缺省参数合成;源码版本用这一代的短签名(运行状态里带着:运行时版本加闭包的哈希),
-     * 前缀 `user:online:`,与桌面的 `user:<闭包原文>` 不相撞 —— 两边的成本记录各记各的。
+     * A synced user card that can run on this page (`docs/plan/online-card-exec-contract.md`, sections 5
+     * and 6): the editor page has no definition for it (it only executes inside the stage), so the node
+     * of this card in the graph is synthesized from the statically parsed default parameters. The source
+     * version uses this generation's short signature (carried in the run state: runtime version plus
+     * the hash of the closure), with the prefix `user:online:`, which does not collide with the desktop's
+     * `user:<closure source>`: the cost records of the two sides are kept separately.
      */
     const cardOf = (id: string) => getCard(id) ?? (cardRunState(id)?.state === "ready" && syncedCardView(id) ? ({ id, defaults: syncedCardView(id)!.defaults } as unknown as ReturnType<typeof getCard>) : undefined);
     /*
-     * 剪辑段换成它里面的卡(`kernel/cutFlatten.mjs` 的摊平视图;用户 2026-10-21 定):剪辑段里的每张卡和父时间轴上的卡一样
-     * 有自己的身份(片段 id 是 `<段 id>~<卡的片段 id>`),照测、照分派。和导出页的卡片计划同一份
+     * Replace a cut segment with the cards inside it (the flattened view of `kernel/cutFlatten.mjs`; user
+     * decision, 2026-10-21): every card in a cut segment has its own identity, just like a card on the
+     * parent timeline (the clip id is `<segment id>~<card's clip id>`), and is measured and dispatched
+     * the same way. Same source as the card plan of the export page.
      */
     const flat = flatPlanProject(project);
     const graph = withFlatNodes(flat, costGraph(flat, cardOf));
@@ -157,7 +183,7 @@ export function clipIdentityOf(raw: Project | null): ClipIdentity {
   return out;
 }
 
-/** 测试用 */
+/** For tests */
 export function resetClipIdentityCache(): void {
   cachedProject = null;
   cachedLocalKey = "";

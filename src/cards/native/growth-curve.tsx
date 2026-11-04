@@ -15,9 +15,12 @@ interface Params extends HudParams {
 
 function NumberTicker({ value, duration }: { value: number; duration: number }) {
   const v = useMotionValue(0);
-  // 数字直接同步写进 DOM,不走 React state:导出时每帧截图前 React 的异步提交会和截图抢跑,
-  // 实测 10~15% 的帧数字停在上一帧的值,导两遍不一样。同步写就落在 Motion 的同一次 rAF 里。
-  // 写法照 magicui/vendor/number-ticker.tsx;初值写死在 JSX 里,免得重挂载后首帧空一下。
+  // The number is written into the DOM synchronously, not through React state: during export React's
+  // asynchronous commit races with the screenshot before each frame, and in testing 10~15% of frames
+  // had the number stuck at the previous frame's value, so two exports differed. Writing synchronously
+  // lands it in the same rAF as Motion's.
+  // The approach follows magicui/vendor/number-ticker.tsx; the initial value is hardcoded in the JSX,
+  // so the first frame after a remount is not blank for a moment.
   const ref = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -173,12 +176,13 @@ function GrowthCurveCard({ params }: CardProps<Params>) {
 
 export const growthCurve: CardDef<Params> = {
   id: "growth-curve",
-  name: "增长曲线",
-  description: "带有动画的平滑折线图",
-  useWhen: "有一串随时间变化的数值要画成走势时用折线。底板固定横屏宽度;**只有最高点会标出数值**,其余点只显示标签名。只有单个数字用 odometer 或 stat-proof,多项比大小用 rank-bars。",
-  tags: ["折线","走势","增长","图表"],
+  name: "Growth curve",
+  description: "Smooth animated line chart",
+  useWhen: "Use a line chart when you have a series of values over time to draw as a trend. The base is fixed at landscape width; **only the highest point is labeled with its value**, the other points show only their label names. For a single number use odometer or stat-proof; to compare several items by size use rank-bars.",
+  tags: ["line chart","trend","growth","chart"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -191,18 +195,18 @@ export const growthCurve: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "kicker", label: "英文小字", type: "text" },
-    { key: "kickerZh", label: "中文小字", type: "text" },
-    { key: "points", label: "数据点(标签 数值|...)", type: "text" },
-    { key: "unit", label: "单位", type: "text" },
-    { key: "drawMs", label: "绘制时长(ms)", type: "number", min: 500, max: 2000, step: 100 },
-    { key: "caption", label: "右下角小注", type: "text" },
+    { key: "kicker", label: "Small English text", type: "text" },
+    { key: "kickerZh", label: "Small Chinese text", type: "text" },
+    { key: "points", label: "Data points (label value|...)", type: "text" },
+    { key: "unit", label: "Unit", type: "text" },
+    { key: "drawMs", label: "Draw duration (ms)", type: "number", min: 500, max: 2000, step: 100 },
+    { key: "caption", label: "Bottom-right note", type: "text" },
   ],
   parts: [
-    { id: "title", label: "标题", role: "group", params: ["kicker", "kickerZh"], enterMs: 0, settleMs: 0 },
-    { id: "curve", label: "曲线", role: "media", params: ["points", "drawMs"], enterMs: 0, settleMs: 1000 },
-    { id: "value", label: "最高值", role: "text", params: ["unit"], enterMs: 850, settleMs: 1250 },
-    { id: "caption", label: "小注", role: "text", params: ["caption"], enterMs: 0, settleMs: 0 },
+    { id: "title", label: "Title", role: "group", params: ["kicker", "kickerZh"], enterMs: 0, settleMs: 0 },
+    { id: "curve", label: "Curve", role: "media", params: ["points", "drawMs"], enterMs: 0, settleMs: 1000 },
+    { id: "value", label: "Peak value", role: "text", params: ["unit"], enterMs: 850, settleMs: 1250 },
+    { id: "caption", label: "Note", role: "text", params: ["caption"], enterMs: 0, settleMs: 0 },
   ],
   lifecycle: { settleMs: 1250, after: "hold", exit: ["fade"] },
   timing: (p) => {

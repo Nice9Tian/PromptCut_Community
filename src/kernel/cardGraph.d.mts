@@ -11,11 +11,14 @@ export interface UnifiedCardDefinition {
 export interface CardInput { nodeId: string; offset?: number; rate?: number }
 export interface CardNode {
   id: string; adapter: 'card' | 'chrome' | 'media' | 'filter' | 'audio' | 'emphasis' | 'transition';
-  /** 素材效果卡节点指向 src/cards/user/<id>.tsx 的那张卡 */
+  /** Media effect card node pointing to that card in src/cards/user/<id>.tsx */
   cardId?: string;
-  /** 定义里的 kind 抄进节点:Node 侧脚本读不到 TSX 定义,只能看节点 */
+  /**
+   * Copy kind from definition into node: Node-side scripts cannot read TSX definitions and can only
+   * inspect nodes
+   */
   kind?: string;
-  /** validateCardGraph 丢掉的悬空 `@clip/` 输入名(片段被删了) */
+  /** Dangling `@clip/` input names dropped by validateCardGraph (clip was deleted) */
   missingInputs?: string[];
   definitionId?: string; params?: Record<string, unknown>; inputs?: Record<string, CardInput | string>;
   [key: string]: unknown;

@@ -1,8 +1,10 @@
 /**
- * 账号模式节点工具集的公开侧转接入口。
+ * Public forwarding entrypoint for the account mode node toolset.
  *
- * 云端实现已迁至 `cloud/agent/account-tools.mjs`，通过 `./extensions.mjs` 在调用时惰性挂载；
- * 模块求值阶段不触发任何云端扩展加载，避免循环依赖。社区版（无 `cloud/` 目录）不加载任何 `server/account/` 或 `cloud/` 模块。
+ * Cloud implementation has moved to `cloud/agent/account-tools.mjs`, lazily mounted on call via
+ * `./extensions.mjs`; module evaluation phase does not trigger any cloud extension loading,
+ * avoiding circular dependencies. Community edition (without `cloud/` directory) does not load any
+ * `server/account/` or `cloud/` modules.
  */
 import { findAgentExtension } from './extensions.mjs';
 
@@ -38,10 +40,10 @@ export const ACCOUNT_TOOL_DEFAULTS = Object.freeze({
 });
 
 export const LOGIN_WITHOUT_DELEGATE_TEXT =
-  '当前这一轮未关联在线页面，无法打开远程登录窗口。请回到发起对话的浏览器页面重试，或直接使用免登录公开素材。';
+  'This turn is not linked to an online page, so the remote login window cannot be opened. Go back to the browser page that started the chat and retry, or use public media that needs no login directly.';
 
 export const TOOL_JOBS_BROKEN_TEXT =
-  '云端节点的后台任务记录文件已损坏，拒绝继续启动或查询后台任务；请联系管理员修复或清理该对话的节点工作区。';
+  'The background task record file of the cloud node is corrupted, so starting or querying background tasks is refused; contact an administrator to repair it or clean up the node workspace of this chat.';
 
 export const ACCOUNT_TOOL_SETTING_KEYS = Object.freeze([
   'PROMPTCUT_FFMPEG',

@@ -1,12 +1,15 @@
 /**
- * 素材在卡片里该怎么引用。
+ * How a media file should be referenced inside a card.
  *
- * 模型以前只拿得到两样:blob: 开头的 url(编辑器页面私有,渲染和导出打不开)和磁盘 path
- * (它没有工具能读)。/@media/<文件名> 这条路由一直在(server/vite-plugin-media.ts),却从来
- * 没告诉过它 —— 一次真实对话里 Opus 想把卡片上配错的网图换成素材库里的 jpg,只好去
- * Read 磁盘路径、curl 猜 /media/…,全被拒,最后停下来找用户要权限。
+ * The model used to be able to get only two things: a url starting with blob: (private to the
+ * editor page, which rendering and export cannot open) and the path on disk (which it has no tool
+ * to read). The /@media/<file name> route had always been there (server/vite-plugin-media.ts), but
+ * it was never told about it. In one real chat Opus wanted to replace a wrongly chosen web image on
+ * a card with a jpg in the media library, and could only Read the disk path and curl-guess
+ * /media/…; all of it was refused, and it finally stopped to ask the user for permission.
  *
- * 换算规则和 vision 的 resolveMediaUrls、项目载入时(editor/io)的是同一套:按 path 的文件名走 /@media。
+ * The conversion rule is the same one used by vision's resolveMediaUrls and by project loading
+ * (editor/io): go through /@media by the file name of the path.
  */
 export function mediaCardUrl(m: { url?: string; path?: string }): string {
   const url = m.url || "";
@@ -18,10 +21,11 @@ export function mediaCardUrl(m: { url?: string; path?: string }): string {
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|avif|tiff?|svg|heic|heif)$/i;
 
 /**
- * 是不是一张图片。
+ * Whether it is an image.
  *
- * 不能只看 kind:import_media 以前不分青红皂白都登记成 video,老项目里还躺着 kind 为 video、
- * 时长 5 秒的 jpg —— 对它们跑镜头识别只会得到一个 0.04 秒的「镜头」和一张什么都不是的拼图。
+ * Kind alone is not enough: import_media used to register everything indiscriminately as video, and
+ * old projects still contain jpgs whose kind is video and whose duration is 5 seconds. Running shot
+ * detection on them yields only a 0.04-second "shot" and a montage that is nothing at all.
  */
 export function isImageMedia(m: { kind: string; name?: string; path?: string }): boolean {
   return m.kind === "image" || IMAGE_EXT.test(m.name || "") || IMAGE_EXT.test(m.path || "");

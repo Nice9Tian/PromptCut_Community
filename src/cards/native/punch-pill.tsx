@@ -40,12 +40,13 @@ function PunchPillCard({ params }: CardProps<Params>) {
 
 export const punchPill: CardDef<Params> = {
   id: "punch-pill",
-  name: "金句药丸",
-  description: "强调核心信息的胶囊设计",
-  useWhen: "极短的重点词、卖点标签或口号(2 到 8 字,不要求感叹号)做成发光胶囊弹入。字号很大且单行不折行,太长会撑破圆角。完整的强调句用 blur-text,引述原话用 quote-lockup。",
-  tags: ["金句","标语","短句","感叹"],
+  name: "Punchline pill",
+  description: "Capsule design that emphasizes key messages",
+  useWhen: "Very short key words, selling-point tags or slogans (2 to 8 characters, exclamation mark not required) shown as a glowing capsule that pops in. The font is very large and stays on a single line without wrapping, so text that is too long will overflow the rounded corners. For a full emphasis sentence use blur-text; for quoting exact words use quote-lockup.",
+  tags: ["quotable line","Slogan","short phrase","exclamation"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -54,10 +55,10 @@ export const punchPill: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "text", label: "短句", type: "text" },
+    { key: "text", label: "short phrase", type: "text" },
   ],
   parts: [
-    { id: "text", label: "短句", role: "text", params: ["text"], enterMs: 0, settleMs: 1200 },
+    { id: "text", label: "short phrase", role: "text", params: ["text"], enterMs: 0, settleMs: 1200 },
   ],
   lifecycle: { settleMs: 1200, after: "hold", exit: ["fade"] },
   Component: PunchPillCard,

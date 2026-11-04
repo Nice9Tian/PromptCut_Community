@@ -1,26 +1,26 @@
-﻿; PromptCut 拓展库包的自解压外壳。
+﻿; Self-extracting shell of the PromptCut extension pack.
 ;
-; 和补丁那个壳同一套路：解到 $PLUGINSDIR（NSIS 退出时自动清掉，不会在 %TEMP%
-; 留下几百 MB 的 wheel），然后跑 apply-extension.ps1。
+; Same approach as the patch shell: extract to $PLUGINSDIR (NSIS cleans it up automatically on exit, so it will not leave
+; hundreds of MB of wheels in %TEMP%), then run apply-extension.ps1.
 ;
-; 装的是可选能力，落点是用户自己的 %LOCALAPPDATA% 和 %APPDATA%，不需要管理员；
-; 提权反而会让这两个路径指向管理员账户，装了也白装。
+; What gets installed is an optional capability whose destination is the user's own %LOCALAPPDATA% and %APPDATA%, so administrator rights are not needed;
+; elevating would instead make these two paths point to the administrator account, and the install would be for nothing.
 ;
-; 由 make-extension.mjs 调用：
-;   makensis -DVERSION=1.0.0 -DLABEL=镜头识别 -DSRCDIR=<目录> -DOUTFILE=<exe> -DICON=<ico>
+; Invoked by make-extension.mjs:
+;   makensis -DVERSION=1.0.0 -DLABEL="Shot detection" -DSRCDIR=<dir> -DOUTFILE=<exe> -DICON=<ico>
 
 Unicode true
-Name "PromptCut ${LABEL} 拓展 ${VERSION}"
+Name "PromptCut ${LABEL} extension ${VERSION}"
 OutFile "${OUTFILE}"
 Icon "${ICON}"
 RequestExecutionLevel user
 
-; 没有向导页：界面就是 apply-extension.ps1 的控制台窗口
+; No wizard pages: the UI is the console window of apply-extension.ps1
 SilentInstall silent
 
 VIProductVersion "${VERSION}.0"
-VIAddVersionKey "ProductName" "PromptCut ${LABEL} 拓展"
-VIAddVersionKey "FileDescription" "PromptCut ${LABEL} 拓展库 ${VERSION}"
+VIAddVersionKey "ProductName" "PromptCut ${LABEL} extension"
+VIAddVersionKey "FileDescription" "PromptCut ${LABEL} extension library ${VERSION}"
 VIAddVersionKey "FileVersion" "${VERSION}.0"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "LegalCopyright" "PromptCut"
@@ -32,8 +32,8 @@ Section
   SetOutPath "$PLUGINSDIR\ext"
   File /r "${SRCDIR}\*.*"
 
-  ; exe 的命令行原样转给脚本：装在非默认位置的用户可以 -InstallDir，
-  ; 想先看看会做什么可以 -WhatIf。
+  ; The exe's command line is passed to the script as is: users who installed in a non-default location can use -InstallDir,
+  ; and those who want to see first what it would do can use -WhatIf.
   ${GetParameters} $R0
 
   ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\ext\apply-extension.ps1" $R0' $0

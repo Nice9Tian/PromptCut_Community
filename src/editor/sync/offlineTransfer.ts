@@ -1,12 +1,16 @@
 /**
- * 重连后把离线批次转进待合并表(纯逻辑,Node 单测可载入)。
+ * After reconnecting, move the offline batch into the pending merge items (pure logic, loadable in Node unit tests).
  *
- * 断网期间项目被别人改过时,DocSync 的离线批次第一条被拒、停下(`paused`)。这时手里有三份:
- *   - 我这边:DocSync 的本地副本(基准 + 我的离线修改);
- *   - 基准:断网时最后确认的那一版 = 本地副本按待确认队列的逆操作倒着退回去;
- *   - 云端现在:DocSync 的已确认副本(显示与合并时现取)。
- * 基准 → 我这边逐项比出待合并的东西(`mergeItems.ts`),交给待合并表;之后 DocSync 回到云端现状、照常同步,
- * 离线修改只留在待合并表里,由用户在「冲突合并」窗口里逐项合并或删除(`product/document-service.md`「冲突」「离线」)。
+ * If the project was changed by someone else while offline, the first entry of DocSync's offline batch
+ * is rejected and it stops (`paused`). At that point there are three copies at hand:
+ *   - Mine: DocSync's local copy (baseline + my offline changes);
+ *   - Baseline: the last version confirmed before going offline = the local copy rolled back by the
+ *     inverse operations of the unconfirmed queue;
+ *   - Cloud now: DocSync's confirmed copy (fetched fresh for display and merging).
+ * Comparing baseline → mine item by item yields the pending merge items (`mergeItems.ts`), which are handed
+ * to the pending merge table; after that DocSync returns to the current cloud state and syncs as usual,
+ * and the offline changes remain only in the pending merge table, where the user merges or deletes them
+ * item by item in the "Conflict merge" window (`product/document-service.md`, "Conflicts" and "Offline").
  */
 import { applyOps, type PathOp } from "../../kernel/diffProject";
 import type { Project } from "../../kernel/project";
@@ -19,13 +23,13 @@ export interface JournalLike {
   pending: { opId: string; ops: PathOp[]; inverse: PathOp[] }[];
 }
 
-/** 本地副本按待确认队列的逆操作倒着退回去,得到断网前最后确认的那一版;退不回去回 null */
+/** Roll the local copy back through the inverse operations of the unconfirmed queue to get the last version confirmed before going offline; return null if it cannot be rolled back */
 export function offlineBase(journal: JournalLike): Project | null {
   let p: Project = journal.project;
   for (let i = journal.pending.length - 1; i >= 0; i--) {
     const inv = journal.pending[i].inverse;
     if (!inv.length) {
-      // 根替换建项目的那条没有逆操作:基准就是没有项目,离线批次不该停在这里
+      // The root replacement that created the project has no inverse: the baseline is "no project", so the offline batch should not stop here
       return null;
     }
     const r = applyOps(p, inv);
@@ -35,7 +39,7 @@ export function offlineBase(journal: JournalLike): Project | null {
   return p;
 }
 
-/** 离线批次 → 待合并的东西;算不出基准回 null(调用方退回整份处理) */
+/** Offline batch → pending merge items; return null if no baseline can be computed (the caller falls back to handling the whole copy) */
 export function offlineThings(journal: JournalLike, meta: { batch: string; at: number }): MergeThing[] | null {
   const base = offlineBase(journal);
   if (!base) return null;

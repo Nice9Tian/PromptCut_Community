@@ -6,20 +6,23 @@ import "./SttInstallProgress.css";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 安装进度控件。启动时的缺依赖提示和聊天窗口里的 stt_install 都用它,
- * 所以两个入口看到的是同一套状态和同一个样子。
+ * Install progress control. Both the missing-dependency prompt at startup and stt_install in the
+ * chat window use it, so the two entry points see the same state and the same look.
  *
- * 进度条只在真的知道分母时才是确定态(下载单个文件),其余阶段走不确定态动画。
- * 装多少个包在 pip 解完依赖前无从得知,所以这里不编整体百分比。
+ * The progress bar is determinate only when the denominator is really known (downloading a single
+ * file); other phases use an indeterminate animation. How many packages will be installed is not
+ * known until pip has resolved the dependencies, so no overall percentage is made up here.
  */
 export function SttInstallProgress(props: { job: InstallJob; compact?: boolean }) {
   const { job, compact } = props;
   const [now, setNow] = useState(Date.now());
   const [logOpen, setLogOpen] = useState(false);
-  // 系统开了「减少动态效果」就不要来回扫,CSS 那边会把它显示成一条静态的浅色条
+  // If the system has "reduce motion" on, don't sweep back and forth; the CSS shows it as a static
+  // light bar
   const reduceMotion = useReducedMotion();
 
-  // 秒表要自己走:安装过程可能几分钟不出新日志,没有心跳的话界面看着像卡死
+  // The stopwatch has to tick on its own: the install may go minutes without new logs, and without a
+  // heartbeat the UI looks frozen
   useEffect(() => {
     if (job.phase === "done" || job.phase === "failed") return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -46,7 +49,8 @@ export function SttInstallProgress(props: { job: InstallJob; compact?: boolean }
 
       <div className="stt-install-bar" aria-hidden>
         {fraction === null ? (
-          // 不确定态:一条来回扫的高亮,明确表示「在动但不知道还剩多少」
+          // Indeterminate state: a highlight sweeping back and forth, clearly meaning "moving, but unknown
+          // how much remains"
           <motion.div
             className="stt-install-fill is-indeterminate"
             animate={reduceMotion ? undefined : { x: ["-60%", "160%"] }}
@@ -65,7 +69,7 @@ export function SttInstallProgress(props: { job: InstallJob; compact?: boolean }
       <div className="stt-install-status">
         <span>{describe(job)}</span>
         {job.phase === "downloading" && job.totalMB !== undefined && job.gotMB !== undefined && (
-          // 标清楚这个百分比是「当前这个文件」的,不是整体进度
+          // Make clear this percentage is for "the current file", not the overall progress
           <span className="stt-install-sub">
             {tr("This file {0}/{1} MB{2}", job.gotMB.toFixed(1), job.totalMB.toFixed(1), job.downloaded > 1 ? tr(" · {0} packages downloaded", job.downloaded) : "")}
           </span>

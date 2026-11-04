@@ -1,19 +1,25 @@
 /**
- * 显式 `--media=ffmpeg` 导出遇到剪辑段里的视频 / 图片:改走缺省的完整整帧路线,成片里画得出它们
- * (剪辑段首版局限补齐第 4 项,`docs/archive/agent-reports/AGENT-cut-segment-followups.md`;`server/bakery/export.mjs` 的 `cutSegmentsHaveVisualMedia`)。
+ * Explicit `--media=ffmpeg` export encounters video/image inside a cut segment: falls back to
+ * default full whole-frame route, so they can be rendered in final video (cut segment initial
+ * version limitations follow-up item 4, `docs/archive/agent-reports/AGENT-cut-segment-followups.md`;
+ * `cutSegmentsHaveVisualMedia` in `server/bakery/export.mjs`).
  *
- *   node scripts/probes/cut-segment-ffmpeg-media-probe.mjs [--port 5376] [--out <目录>]
+ *   node scripts/probes/cut-segment-ffmpeg-media-probe.mjs [--port 5376] [--out <dir>]
  *
- * 做法:在 <目录>/export/media 下用 ffmpeg 生成一段 4 秒纯红视频 `red.mp4`,起一台本树 dev server(PROMPTCUT_EXPORT_DIR 指到
- * <目录>/export,端口 --port 与 +1、+2 要空着,不碰 5190～5192),导出这个项目:
- *   剪辑2:一条序列,red.mp4 0～4 秒;
- *   剪辑1(激活,5 秒):一张文字卡 0～5 秒;一个剪辑段 1～4 秒引用剪辑2,框缩放 0.5、左上角(画面左上四分之一)。
- * 两遍:`--media ffmpeg` 与缺省。断言:
- *   F1 `--media ffmpeg` 那一遍日志里写明改走完整整帧路线;
- *   F2 两遍成片 2 秒处左上四分之一中心是红色(剪辑段里的视频画出来了),右下四分之一中心不是红色;
- *   F3 两遍成片 0.5 秒处(剪辑段之前)左上四分之一中心不是红色。
+ * Procedure: use ffmpeg under <dir>/export/media to generate a 4-second pure red video `red.mp4`,
+ * start a dev server in this checkout (PROMPTCUT_EXPORT_DIR pointing to <dir>/export,
+ * ports --port, +1, and +2 must be free, avoiding 5190-5192), and export this project:
+ *   Cut 2: one track, red.mp4 0-4s;
+ *   Cut 1 (active, 5s): one text card 0-5s; one cut segment 1-4s referencing Cut 2,
+ *   frame scale 0.5, top-left corner (top-left quadrant of video).
+ * Two passes: `--media ffmpeg` and default. Assertions:
+ *   F1 The `--media ffmpeg` pass explicitly logs switching to the full whole-frame route;
+ *   F2 In both passes, the center of top-left quadrant at 2s in final video is red
+ *      (video in cut segment was rendered), and center of bottom-right quadrant is not red;
+ *   F3 In both passes, the center of top-left quadrant at 0.5s in final video
+ *      (before cut segment) is not red.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -28,24 +34,24 @@ const exportDir = path.join(OUT, 'export');
 fs.mkdirSync(path.join(exportDir, 'media'), { recursive: true });
 const red = path.join(exportDir, 'media', 'red.mp4');
 const ff = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=320x180:r=30:d=4', '-pix_fmt', 'yuv420p', red], { windowsHide: true });
-if (ff.status !== 0) throw new Error('ffmpeg 生成红色视频失败:' + ff.stderr);
+if (ff.status !== 0) throw new Error('ffmpeg failed to generate the red video:' + ff.stderr);
 
 const W = 640, H = 360;
 const project = {
   version: 1, id: 'p-cut-ffmpeg-media', name: 'cut-ffmpeg-media', width: W, height: H, fps: 30, duration: 5, themeId: 'midnight',
   media: [{ id: 'm-red', kind: 'video', name: 'red.mp4', url: '/@media/red.mp4', duration: 4, width: 320, height: 180 }],
   tracks: [
-    { id: 't1', name: '序列 1', clips: [{ id: 's1', cardId: '', cutId: 'cut-2', start: 1, end: 4, frame: { x: 0, y: 0, scale: 0.5 }, params: {} }] },
-    { id: 't0', name: '序列 2', clips: [{ id: 'k1', cardId: 'punch-pill', start: 0, end: 5, params: { text: '底下的卡' } }] },
+    { id: 't1', name: 'Track 1', clips: [{ id: 's1', cardId: '', cutId: 'cut-2', start: 1, end: 4, frame: { x: 0, y: 0, scale: 0.5 }, params: {} }] },
+    { id: 't0', name: 'Track 2', clips: [{ id: 'k1', cardId: 'punch-pill', start: 0, end: 5, params: { text: '底下的卡' } }] },
   ],
   cuts: [
-    { id: 'cut-1', name: '剪辑1' },
-    { id: 'cut-2', name: '剪辑2', tracks: [{ id: 't2', name: '序列 1', clips: [{ id: 'v1', cardId: '', mediaId: 'm-red', mediaOffset: 0, start: 0, end: 4, params: {} }] }], duration: 4, transitions: [] },
+    { id: 'cut-1', name: 'Cut 1' },
+    { id: 'cut-2', name: 'Cut 2', tracks: [{ id: 't2', name: 'Track 1', clips: [{ id: 'v1', cardId: '', mediaId: 'm-red', mediaOffset: 0, start: 0, end: 4, params: {} }] }], duration: 4, transitions: [] },
   ],
   activeCutId: 'cut-1',
 };
 
-/** 成片 t 秒那一帧,(x, y) 处的 RGB */
+/** RGB at (x, y) of the frame at t seconds in the final video */
 function pixelAt(file, t, x, y) {
   const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-ss', String(t), '-i', file, '-frames:v', '1', '-vf', `format=rgb24,crop=1:1:${x}:${y}`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { windowsHide: true });
   const b = r.stdout;
@@ -77,12 +83,12 @@ try {
     });
     fs.writeFileSync(path.join(OUT, `${mode}.log`), log);
     const file = path.join(out, 'preview.mp4');
-    check(`${mode}-export`, code === 0 && fs.existsSync(file), `${mode} 导出成功(退出码 ${code})`);
+    check(`${mode}-export`, code === 0 && fs.existsSync(file), `${mode} export succeeded (exit code ${code})`);
     if (!fs.existsSync(file)) continue;
-    if (mode === 'ffmpeg') check('F1', /剪辑段里有视频或图片/.test(log), '--media ffmpeg:日志写明改走完整整帧路线');
+    if (mode === 'ffmpeg') check('F1', /cut segment contains video or images/.test(log), '--media ffmpeg: the log states that it switches to the full whole-frame route');
     const inSeg = pixelAt(file, 2, W / 4, H / 4), outside = pixelAt(file, 2, (3 * W) / 4, (3 * H) / 4), before = pixelAt(file, 0.5, W / 4, H / 4);
-    check(`F2-${mode}`, isRed(inSeg) && !isRed(outside), `${mode}:2 秒处左上四分之一是剪辑段里的红色视频,右下不是`, { inSeg, outside });
-    check(`F3-${mode}`, !!before && !isRed(before), `${mode}:0.5 秒(剪辑段之前)左上不是红色`, { before });
+    check(`F2-${mode}`, isRed(inSeg) && !isRed(outside), `${mode}: at 2 seconds the top-left quarter is the red video in the cut segment, the bottom-right is not`, { inSeg, outside });
+    check(`F3-${mode}`, !!before && !isRed(before), `${mode}: at 0.5 seconds (before the cut segment) the top-left is not red`, { before });
     spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-ss', '2', '-i', file, '-frames:v', '1', path.join(OUT, `${mode}-2s.png`)], { windowsHide: true });
   }
 } finally {

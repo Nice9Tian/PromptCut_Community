@@ -4,11 +4,12 @@ import { captureFrame } from './capture-frame.mjs';
 /**
  * A, B->C and export all rasterize the same frozen HTML in the same document.
  *
- * `options`(D4(b) `/api/cards/layout`):
- *   - `afterFonts(page)`:**位置写死在 `document.fonts.ready` 之后、`prepareFrameMedia` 之前** ——
- *     早了量到的是回退字体的文字框,晚了素材已经装回来、`<video>` 会把布局顶掉。
- *   - `screenshot: false`:只跑钩子、**完全跳过 `captureFrame`**(layout 请求不白付一张 1080p PNG),
- *     这时返回的是钩子的结果,不是 PNG。
+ * `options` (D4(b) `/api/cards/layout`):
+ *   - `afterFonts(page)`: **position hardcoded after `document.fonts.ready` and before `prepareFrameMedia`**:
+ *     too early measures text boxes with fallback fonts; too late and assets are already reloaded,
+ *     where `<video>` would push the layout out of place.
+ *   - `screenshot: false`: runs only hooks, **completely skips `captureFrame`** (layout requests do
+ *     not pay for an unnecessary 1080p PNG); returns the hook result instead of PNG.
  */
 export async function captureSnapshot(bakery, html, screenshot = { format: 'png', optimizeForSpeed: true }, options = {}) {
   await bakery.page.evaluate(h => {
@@ -41,10 +42,11 @@ export async function captureSnapshot(bakery, html, screenshot = { format: 'png'
     });
     const hooked = options.afterFonts ? await options.afterFonts(bakery.page) : undefined;
     /*
-     * 不截图就不装素材。素材只为画面存在:layout 这一趟既不栅格化,素材段的 contentBox
-     * 又一律按项目数据算(D4(b)),装回来纯属白付一次解码 —— 而且素材文件缺了会直接
-     * 把整次查询打挂("Video decode failed"),而那正是必须照样回框的场景。
-     * 钩子的位置不受影响:它本来就在 prepareFrameMedia 之前。
+     * Do not load assets if not capturing screenshots. Assets exist only for visuals: this layout pass
+     * neither rasterizes, and contentBox for media clips is calculated from project data (D4(b)) anyway,
+     * so reloading them is purely a wasted decode: moreover, missing asset files would crash the entire
+     * query ("Video decode failed"), which is precisely a scenario where boxes must still be returned.
+     * The hook position is unaffected: it was already before prepareFrameMedia in the first place.
      */
     if (options.screenshot === false) return hooked;
     await prepareFrameMedia(bakery);

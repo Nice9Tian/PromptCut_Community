@@ -1,21 +1,21 @@
 ﻿<#
-    PromptCut 拓展库包安装器。随拓展包发给用户，不在构建机运行。
+    PromptCut extension pack installer. Shipped to users along with the extension pack, not run on the build machine.
 
-    把预先下好的 wheel 和模型装进已安装的 PromptCut：
-      wheel  → <安装目录>\runtime\pylibs      （pip install --no-index，全程离线）
-      模型   → %APPDATA%\com.promptcut.desktop\models
-               （文件和目录都行：Grounding DINO 那种 HF snapshot 是一整个目录）
-      许可证 → %APPDATA%\com.promptcut.desktop\models\THIRD-PARTY-LICENSES-<包名>.txt（各档各一份，互不覆盖）
-               （MIT/Apache-2.0/BSD-3-Clause 都要求随分发附带全文，所以它必须跟着
-                 模型一起落到用户机器上，而不是只留在 exe 里）
+    Installs the pre-downloaded wheels and models into an installed PromptCut:
+      wheel  → <install-dir>\runtime\pylibs      (pip install --no-index, fully offline)
+      models → %APPDATA%\com.promptcut.desktop\models
+               (files and directories both work: an HF snapshot like Grounding DINO is a whole directory)
+      license → %APPDATA%\com.promptcut.desktop\models\THIRD-PARTY-LICENSES-<pack-name>.txt (one per tier, never overwriting each other)
+               (MIT/Apache-2.0/BSD-3-Clause all require the full text to ship with distributions, so it must travel with
+                 the models to the user's machine, not just stay inside the exe)
 
-    离线是重点：这个包存在的理由就是用户那边 pip 装不上（断网、内网、镜像不通）。
-    所以安装过程绝不联网，--no-index 明确禁掉 PyPI。
+    Offline is the point: this pack exists because pip cannot install on the user's side (no network, intranet, mirror unreachable).
+    So installation never touches the network; --no-index explicitly disables PyPI.
 
-    用法：
-      .\apply-extension.ps1                     # 装到默认位置
-      .\apply-extension.ps1 -InstallDir <路径>  # 装到指定位置
-      .\apply-extension.ps1 -WhatIf             # 只检查不写入
+    Usage:
+      .\apply-extension.ps1                     # install to the default location
+      .\apply-extension.ps1 -InstallDir <path>  # install to a specific location
+      .\apply-extension.ps1 -WhatIf             # check only, write nothing
 #>
 [CmdletBinding()]
 param(
@@ -32,43 +32,43 @@ function Ok   { param([string] $T) Write-Host "  $T" -ForegroundColor Green }
 function Fail {
     param([string] $T)
     Write-Host ""
-    Write-Host "  安装未完成：$T" -ForegroundColor Red
-    Write-Host "  软件本身不受影响，该功能会继续用不需要拓展的那条路。" -ForegroundColor Red
+    Write-Host "  Installation not completed: $T" -ForegroundColor Red
+    Write-Host "  The app itself is unaffected; the feature keeps using the path that does not need the extension." -ForegroundColor Red
     Write-Host ""
-    if (-not $env:PROMPTCUT_EXT_NONINTERACTIVE) { Read-Host "按回车关闭" }
+    if (-not $env:PROMPTCUT_EXT_NONINTERACTIVE) { Read-Host "Press Enter to close" }
     exit 1
 }
 
 Write-Host ""
-Write-Host "PromptCut 拓展库" -ForegroundColor Cyan
+Write-Host "PromptCut extension library" -ForegroundColor Cyan
 Write-Host ""
 
 $manifestPath = Join-Path $PackRoot 'extension.json'
-if (-not (Test-Path $manifestPath)) { Fail "包不完整，缺 extension.json。请重新下载。" }
+if (-not (Test-Path $manifestPath)) { Fail "Incomplete pack: extension.json is missing. Please download it again." }
 $m = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath | ConvertFrom-Json
-if ($m.format -ne 'promptcut-extension/1') { Fail "包格式不认识（$($m.format)）。" }
+if ($m.format -ne 'promptcut-extension/1') { Fail "Unrecognized pack format ($($m.format))." }
 
-Step "拓展：$($m.label) $($m.version)"
-# tier 是给用户看的档位（light / full），provides 是这个包让哪几个 promptcut_* 模块能跑起来。
-# 老包（shots / track / stt）没有这两个字段，就按「名字即模块名」处理。
-if ($m.tier) { Step "档位：$($m.tier)" }
+Step "Extension: $($m.label) $($m.version)"
+# tier is the tier shown to users (light / full), and provides lists which promptcut_* modules this pack makes runnable.
+# Old packs (shots / track / stt) do not have these two fields, so they are handled as "the name is the module name".
+if ($m.tier) { Step "Tier: $($m.tier)" }
 $modules = if ($m.provides) { @($m.provides) } else { @($m.name) }
-Step "包含能力：$($modules -join ', ')"
+Step "Capabilities: $($modules -join ', ')"
 
 if (-not $InstallDir) { $InstallDir = Join-Path $env:LOCALAPPDATA 'PromptCut' }
 $python  = Join-Path $InstallDir 'runtime\python\python.exe'
 $pylibs  = Join-Path $InstallDir 'runtime\pylibs'
-# 模型和用户下载的语音模型放一起，卸载软件时不会被删掉
+# Models are kept together with the speech models the user downloads, and are not deleted when the app is uninstalled
 $models  = Join-Path $env:APPDATA 'com.promptcut.desktop\models'
 
 if (-not (Test-Path $python)) {
-    Fail "在 $InstallDir 找不到 PromptCut 自带的 Python。装在别处就用 -InstallDir 指定。"
+    Fail "Cannot find the Python bundled with PromptCut in $InstallDir. If it is installed elsewhere, specify it with -InstallDir."
 }
-Step "安装位置：$InstallDir"
+Step "Install location: $InstallDir"
 
-# 拓展只带依赖和模型，用到它们的那半边代码在应用里。版本太旧就没有那半边，
-# 这时候必须在动手之前拦住 —— 装完了才自检失败，用户已经白等了一分钟，
-# 而且盘上多了一堆没人用的 wheel。
+# An extension carries only dependencies and models; the half of the code that uses them lives in the app. A version that is too old lacks that half,
+# so it must be stopped before any work starts: if the self-check fails only after installing, the user has already waited a minute for nothing,
+# and the disk is left with a pile of wheels nobody uses.
 function Compare-Version {
     param([string] $Left, [string] $Right)
     $l = @($Left  -split '[.\-+]' | ForEach-Object { [int]($_ -replace '\D', '0') })
@@ -85,93 +85,93 @@ $versionsPath = Join-Path $InstallDir 'runtime\VERSIONS.json'
 if ($m.requiresApp -and (Test-Path $versionsPath)) {
     $appVersion = (Get-Content -Raw -Encoding UTF8 -LiteralPath $versionsPath | ConvertFrom-Json).app
     if ($appVersion -and (Compare-Version $appVersion $m.requiresApp) -lt 0) {
-        Fail ("你的 PromptCut 是 $appVersion，这个拓展需要 $($m.requiresApp) 或更新。" +
-              "先用更新补丁（或完整安装包）升级，再装这个拓展。")
+        Fail ("Your PromptCut is $appVersion; this extension requires $($m.requiresApp) or newer. " +
+              "First upgrade with an update patch (or the full installer), then install this extension.")
     }
-    Step "应用版本：$appVersion"
+    Step "App version: $appVersion"
 }
 
 $wheelDir = Join-Path $PackRoot 'wheels'
 $wheels = @(Get-ChildItem -LiteralPath $wheelDir -File -ErrorAction SilentlyContinue)
-if ($wheels.Count -eq 0) { Fail "包里没有 wheel。请重新下载。" }
-Step "离线依赖：$($wheels.Count) 个"
+if ($wheels.Count -eq 0) { Fail "The pack contains no wheels. Please download it again." }
+Step "Offline dependencies: $($wheels.Count)"
 
-# 模型条目可以是文件（transnetv2.onnx）也可以是目录（grounding-dino-tiny 那种 HF
-# snapshot：config + safetensors + tokenizer 一整套，拆开没有意义）。所以这里不加
-# -File，目录也要收进来，下面递归拷。
+# A model entry can be a file (transnetv2.onnx) or a directory (an HF snapshot like grounding-dino-tiny:
+# config + safetensors + tokenizer is one complete set, and splitting it up makes no sense). So we do not add
+# -File here; directories must be included too, and are copied recursively below.
 $modelSrc = Join-Path $PackRoot 'models'
 $modelItems = @(Get-ChildItem -LiteralPath $modelSrc -ErrorAction SilentlyContinue)
 if ($modelItems.Count -gt 0) {
     $names = $modelItems | ForEach-Object { if ($_.PSIsContainer) { "$($_.Name)\" } else { $_.Name } }
-    Step "模型：$($names -join ', ')"
+    Step "Models: $($names -join ', ')"
 }
 
-# 许可证全文（make-extension.mjs 生成，末尾附了 MIT / Apache-2.0 / BSD-3-Clause 三份正文）。
-# 带模型的包一定有这个文件；没有就是包被人拆过或者用老脚本打的，宁可拦下也不要发一份
-# 没有许可证的权重出去 —— 这正是 2026-09-07 之前的老包踩的坑。
+# The full license text (generated by make-extension.mjs, with the three license texts MIT / Apache-2.0 / BSD-3-Clause appended at the end).
+# A pack with models always has this file; if it is missing, the pack was taken apart or built with an old script, and blocking it is better than sending out
+# weights without a license: that is exactly the pitfall old packs before 2026-09-07 fell into.
 $licenseSrc = Join-Path $PackRoot 'THIRD-PARTY-LICENSES.txt'
 $hasLicense = Test-Path -LiteralPath $licenseSrc
 if ($modelItems.Count -gt 0 -and -not $hasLicense) {
-    Fail "包里带了模型却没有 THIRD-PARTY-LICENSES.txt，包不完整。请重新下载。"
+    Fail "The pack contains models but no THIRD-PARTY-LICENSES.txt, so it is incomplete. Please download it again."
 }
-if ($hasLicense) { Step "许可证全文：THIRD-PARTY-LICENSES.txt（$([int]((Get-Item -LiteralPath $licenseSrc).Length / 1024)) KB）" }
+if ($hasLicense) { Step "Full license text: THIRD-PARTY-LICENSES.txt ($([int]((Get-Item -LiteralPath $licenseSrc).Length / 1024)) KB)" }
 
 if ($WhatIf) {
     Write-Host ""
-    Ok "检查通过。加了 -WhatIf，没有写入任何文件。"
+    Ok "Checks passed. -WhatIf was given, so no files were written."
     Write-Host ""
     exit 0
 }
 
-# ── 装依赖 ────────────────────────────────────────────────────────────
-Step "正在安装依赖（离线，不联网）…"
+# ── Install dependencies ────────────────────────────────────────────────────────────
+Step "Installing dependencies (offline, no network)…"
 $null = New-Item -ItemType Directory -Force -Path $pylibs
-# --no-index + --find-links：只认包里这些 wheel，绝不去 PyPI
+# --no-index + --find-links: only the wheels in the pack are accepted, never PyPI
 & $python -m pip install --no-index --find-links $wheelDir --target $pylibs --upgrade `
     @($wheels | ForEach-Object { $_.FullName })
-if ($LASTEXITCODE -ne 0) { Fail "pip 离线安装失败（退出码 $LASTEXITCODE）。" }
-Ok "依赖装好了"
+if ($LASTEXITCODE -ne 0) { Fail "pip offline install failed (exit code $LASTEXITCODE)." }
+Ok "Dependencies installed"
 
-# ── 放模型 ────────────────────────────────────────────────────────────
+# ── Place the models ────────────────────────────────────────────────────────────
 if ($modelItems.Count -gt 0) {
     $null = New-Item -ItemType Directory -Force -Path $models
     foreach ($it in $modelItems) {
         $dest = Join-Path $models $it.Name
         if ($it.PSIsContainer) {
-            # 先删再拷：Copy-Item -Recurse 往一个已存在的同名目录里拷会拷成
-            # models\grounding-dino-tiny\grounding-dino-tiny\…，而且升级时旧文件不会被清掉
+            # Delete first, then copy: copying with Copy-Item -Recurse into an existing directory of the same name ends up as
+            # models\grounding-dino-tiny\grounding-dino-tiny\…, and on upgrade the old files are not cleared out
             if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
             Copy-Item -LiteralPath $it.FullName -Destination $dest -Recurse -Force
         } else {
             Copy-Item -LiteralPath $it.FullName -Destination $dest -Force
         }
     }
-    Ok "模型已放到 $models"
+    Ok "Models placed in $models"
 }
 
-# ── 放许可证 ──────────────────────────────────────────────────────────
-# 和模型放在同一个目录：用户要找「这些权重是什么授权」时，看的就是权重旁边。
-# 卸载软件不会删 %APPDATA%，所以它和模型同生共死，不会出现「模型还在、许可证没了」。
+# ── Place the license ──────────────────────────────────────────────────────────
+# Put it in the same directory as the models: when users look for "what license these weights are under", they look right next to the weights.
+# Uninstalling the app does not delete %APPDATA%, so it lives and dies with the models, and we never end up with "models still there, license gone".
 if ($hasLicense) {
     $null = New-Item -ItemType Directory -Force -Path $models
-    # 按包名落地,别用一个共用文件名:装 light 会把 full 留下的那份整个盖掉,
-    # 而 bootstapir / grounding-dino 还躺在 models 里,就没有许可证记录了(复查实测)。
+    # Write it under the pack name, not one shared file name: installing light would overwrite the one full left behind,
+    # leaving bootstapir / grounding-dino, which still sit in models, with no license record (confirmed by testing in the re-review).
     $licenseDst = Join-Path $models "THIRD-PARTY-LICENSES-$($m.name).txt"
     Copy-Item -LiteralPath $licenseSrc -Destination $licenseDst -Force
-    Ok "许可证全文已放到 $licenseDst"
+    Ok "Full license text placed at $licenseDst"
 }
 
-# ── 验收 ──────────────────────────────────────────────────────────────
-# 光是文件到位不算成功，得让程序自己说一句就绪。一个包可能提供好几个能力
-# （light 档 = 镜头识别 + 主体检测），逐个问。
-Step "正在验证…"
+# ── Acceptance check ──────────────────────────────────────────────────────────────
+# Having the files in place does not count as success: the program itself has to report ready. One pack may provide several capabilities
+# (light tier = shot detection + subject detection), so ask them one by one.
+Step "Verifying…"
 $env:PROMPTCUT_PYLIBS = $pylibs
 $env:PROMPTCUT_MODELS = $models
 
-# 每个模块的 status 形状不一样，就绪的判据也不一样：
-#   shots / track  顶层 "ready": true
-#   subject        分 light / full 两档，engine 不为 null 就算能跑
-#   stt            没有 ready 字段，看引擎 installed
+# The status of each module has a different shape, so the readiness criterion differs too:
+#   shots / track  top-level "ready": true
+#   subject        two tiers, light / full; runnable as long as engine is not null
+#   stt            no ready field; check whether the engine is installed
 function Test-ModuleReady {
     param([string] $Mod, [string] $Text)
     switch ($Mod) {
@@ -184,19 +184,19 @@ function Test-ModuleReady {
 foreach ($mod in $modules) {
     $probe = & $python -m "promptcut_$mod" status 2>&1 | Out-String
     if (Test-ModuleReady -Mod $mod -Text $probe) {
-        Ok "验证通过：promptcut_$mod 已就绪"
+        Ok "Verified: promptcut_$mod is ready"
     } elseif ($probe -match 'No module named') {
-        # 版本号看着够、但代码确实不在，多半是装了个手改过的目录
-        Fail ("这个 PromptCut 里没有 promptcut_$mod 的程序代码，" +
-              "拓展只提供依赖和模型。请先把软件升级到 $($m.requiresApp) 或更新。")
+        # The version number looks sufficient but the code really is not there; most likely a hand-modified directory was installed
+        Fail ("This PromptCut does not contain the program code for promptcut_$mod; " +
+              "the extension only provides dependencies and models. Please upgrade the app to $($m.requiresApp) or newer first.")
     } else {
-        Write-Host "  验证没通过，promptcut_$mod 仍报告未就绪：" -ForegroundColor Yellow
+        Write-Host "  Verification failed; promptcut_$mod still reports not ready:" -ForegroundColor Yellow
         Write-Host "  $($probe.Trim())" -ForegroundColor Yellow
-        Fail "文件已就位但自检未通过，请把上面这段反馈给开发者。"
+        Fail "The files are in place but the self-check failed. Please send the output above to the developers."
     }
 }
 
 Write-Host ""
 Ok $m.note
 Write-Host ""
-if (-not $env:PROMPTCUT_EXT_NONINTERACTIVE) { Read-Host "按回车关闭" }
+if (-not $env:PROMPTCUT_EXT_NONINTERACTIVE) { Read-Host "Press Enter to close" }

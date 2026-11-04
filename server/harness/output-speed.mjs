@@ -1,66 +1,102 @@
 /**
- * 按实测输出速度给单次输出设上限,让一次请求在网关掐断之前写完(2026-10-22 用户定:
- * 「现在修:中途被网关掐断按截断处理(保住半截参数、走代码块续写),按实测速度给单次输出设上限」)。
+ * Cap single-output limits based on measured output speed so a single request finishes writing
+ * before gateway cutoff (user decision, 2026-10-22: "Fix now: treat mid-flight gateway cutoff as
+ * truncation (preserve partial arguments, continue via code block), cap single output based on
+ * measured speed").
  *
- * # 起因
+ * # Cause
  *
- * 2026-10-22 实测 openlux 网关 + gemini-3.8-flash:网关对单次请求大约 300 秒就掐断,流式也一样 ——
- * 一次流式请求在 300.7 秒收到 SSE 里的 error 事件(HTTP 仍是 200,原文
- * 「The upstream stream ended before the response was complete.」),当时流还在正常出数据(1001 块、4 万字)。
- * 同一天实测 Gemini 的输出速度是 50～190 token/s,波动约 3 倍;Claude 没测。
- * 单次输出上限按模型取到 65536 / 128000 之后(A07),一次写满要 6～40 分钟,远超 300 秒。
+ * Tested on 2026-10-22 with openlux gateway + gemini-3.8-flash: gateway cuts off single requests
+ * after about 300s, even for streaming:
+ * a streaming request received an SSE error event at 300.7s (HTTP was still 200, original text
+ * "The upstream stream ended before the response was complete."), while the stream was still actively
+ * yielding data (1001 chunks, 40,000 characters).
+ * Tested on the same day, Gemini's output speed was 50-190 token/s, fluctuating by about 3x; Claude
+ * was not tested.
+ * Once single-output limits are set to 65536 / 128000 per model (A07), filling it out in one request
+ * takes 6-40 minutes, far exceeding 300s.
  *
- * # 做法〔裁:stream-cut 2026-10-22〕
+ * # Approach [ruling:stream-cut 2026-10-22]
  *
- * - 每次请求结束记一个样本:这次的输出 token 数 ÷ 这次请求从发出到结束的用时(用量里报的数;思考 token 也算进输出)。
- *   用「从发出到结束」而不是「从第一个字到结束」:网关的钟从请求发出就开始走,首字前的等待也算在 300 秒里;
- *   而且有的上游不把思考流出来,只从第一个字算会把速度算高。这样算出的速度偏低,就是偏保守。
- * - 输出不到 MIN_SAMPLE_OUTPUT_TOKENS 的不记:短回复的用时几乎全是首字前的等待,说明不了写长东西有多快。
- * - 被网关中途掐断的那次(用量通常没回来)按收到的字数 ÷ 4 估 token 数记一个样本;中文一个字常常就是一个 token,
- *   按 4 字一个算只会把速度估低,还是偏保守。
- * - 每个模型留最近 KEEP_SAMPLES 个样本、不超过 SAMPLE_MAX_AGE_MS;取「从慢到快排、四分之一处」那个(不到 5 个取最慢的)。
- * - 单次上限 = min(模型上限, 配置上限, 速度 × OUTPUT_TIME_BUDGET_S),速度那一项不低于 MIN_SPEED_CAP。
- * - 还没有样本时按 DEFAULT_TOKENS_PER_SECOND 算。
+ * - Record one sample upon completing each request: output token count this time ÷ duration from
+ *   sending to completion (number reported in usage; thinking tokens count toward output).
+ *   Use "from sent to completion" rather than "from first character to completion": the gateway's
+ *   clock starts ticking when the request is sent, and waiting before the first character counts
+ *   toward the 300s; furthermore, some upstreams do not stream thinking tokens, so calculating only
+ *   from the first character would overestimate speed. Speeds calculated this way are lower, which is
+ *   conservative.
+ * - Do not record requests with output below MIN_SAMPLE_OUTPUT_TOKENS: elapsed time for short
+ *   responses is almost entirely waiting before the first character, which says nothing about how fast
+ *   long content can be written.
+ * - For requests cut off mid-flight by the gateway (where usage usually was not returned), estimate
+ *   token count as received characters ÷ 4 and record a sample; in Chinese one character is often one
+ *   token, so calculating at 4 characters per token will only underestimate speed, remaining
+ *   conservative.
+ * - Retain the most recent KEEP_SAMPLES samples per model, not exceeding SAMPLE_MAX_AGE_MS; take the
+ *   sample at the 25th percentile sorted from slowest to fastest (or the slowest if fewer than 5).
+ * - Single-request cap = min(model limit, config limit, speed × OUTPUT_TIME_BUDGET_S), where the
+ *   speed-based term is not lower than MIN_SPEED_CAP.
+ * - When no samples are available yet, calculate using DEFAULT_TOKENS_PER_SECOND.
  *
- * # 存在哪〔裁〕
+ * # Where stored [ruling]
  *
- * 一个 JSON 文件(宿主给路径,`runners/api.mjs` 的 `outputSpeedFile`):
- * - 本机:`ai.json` 同目录的 `output-speed.json`(和审查环路的教训放在一起,不进系统临时目录,那里会被清);
- * - 云端账号模式:共用数据目录 `usage/model-speed.json` —— 任务进程每轮新开一代,进程内存留不住;
- *   `usage/` 本来就是任务进程写、主服务读的目录(`usage.mjs`),各代任务进程都写得进去;
- * - 云端旧托管档:`<数据目录>/usage/model-speed.json`。
- * 同一进程里按文件路径共用一份内存(读不到、写不进文件时也照常工作,只是下一代进程拿不到)。
- * 几个进程同时写不加锁,后写的为准,最多丢一两个样本。
+ * A JSON file (path provided by host, `outputSpeedFile` in `runners/api.mjs`):
+ * - Local: `output-speed.json` in the same directory as `ai.json` (kept together with review loop
+ *   lessons, not placed in system temp directory where it could be purged);
+ * - Cloud account mode: shared data directory `usage/model-speed.json`: task processes spawn a new
+ *   generation each round, so process memory cannot persist; `usage/` is already the directory
+ *   written by task processes and read by the main service (`usage.mjs`), writable across
+ *   generations of task processes;
+ * - Cloud legacy hosted tier: `<data-dir>/usage/model-speed.json`.
+ * Shares a single in-memory copy per file path within the same process (still works normally when the
+ * file cannot be read or written, but subsequent process generations will not receive it).
+ * Multiple processes write concurrently without locks; last write wins, at most dropping one or two
+ * samples.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 
-/** 网关对单次请求的时长上限(秒):2026-10-22 实测 openlux,流式请求在 300.7 秒被掐断 */
+/**
+ * Gateway duration limit for a single request (seconds): tested on 2026-10-22 with openlux,
+ * streaming request was cut off at 300.7s
+ */
 export const GATEWAY_REQUEST_LIMIT_S = 300;
 /**
- * 一次请求打算在多少秒内写完(秒)。比网关上限留 50 秒:速度波动约 3 倍(实测 50～190 token/s),
- * 取的又是偏慢的那个样本,再留一段给首字前的等待和网络。
+ * Target completion duration for a single request (seconds). Leaves a 50s buffer below gateway
+ * limit: speed fluctuates by about 3x (measured 50-190 token/s), the slower sample is selected,
+ * and extra margin is reserved for pre-first-token latency and network.
  */
 export const OUTPUT_TIME_BUDGET_S = 250;
 /**
- * 没有样本时的速度(token/s)。实测 Gemini 最慢 50,往下再留两成;Claude 没测,
- * 大模型(Opus 一类)常见每秒几十个 token,40 不至于高估。× 250 秒 = 10000 token,够写一张中等的卡。
+ * Speed when no samples exist (token/s). In tests Gemini was slowest at 50, with another 20% margin
+ * below; Claude was not tested, and large models (such as Opus) typically output tens of tokens
+ * per second, so 40 is not an overestimate. × 250 seconds = 10000 tokens, enough to write a
+ * medium card.
  */
 export const DEFAULT_TOKENS_PER_SECOND = 40;
-/** 输出少于这么多 token 的请求不记样本(首字前的等待占了大头,算出的速度没有参考价值) */
+/**
+ * Requests outputting fewer than this many tokens do not record samples (pre-first-token wait
+ * accounts for most of the duration, making the calculated speed uninformative)
+ */
 export const MIN_SAMPLE_OUTPUT_TOKENS = 2000;
-/** 每个模型留几个样本 */
+/** Number of samples to retain per model */
 export const KEEP_SAMPLES = 10;
-/** 样本最多留多久(毫秒):网关和上游会变,太旧的不算 */
+/** Maximum sample retention duration (ms): gateway and upstream change, so stale samples are discarded */
 export const SAMPLE_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
-/** 按速度算出的上限不低于这么多 token(太小了连一个普通工具调用都装不下) */
+/** Speed-based limit will not fall below this many tokens (if too small, cannot even fit an ordinary tool call) */
 export const MIN_SPEED_CAP = 4096;
-/** 被掐断、用量没回来时,按几个字一个 token 估(估少不估多) */
+/**
+ * When cut off and usage is not returned, estimate tokens at this many characters per token
+ * (underestimate rather than overestimate)
+ */
 export const CHARS_PER_TOKEN_ESTIMATE = 4;
 
 const books = new Map();
 
-/** 记样本用的键:模型名(小写、去掉首尾空白)。同一个模型走不同网关的速度差别这次不分〔裁〕 */
+/**
+ * Key used to record samples: model name (lowercase, trimmed). Speed differences for the same
+ * model across different gateways are not separated this time [ruling]
+ */
 export const speedKey = (model) => String(model || '').trim().toLowerCase();
 
 function readFileSafe(file) {
@@ -77,7 +113,10 @@ function cleanSamples(list, now) {
     .slice(-KEEP_SAMPLES);
 }
 
-/** 从样本里取偏保守的速度:从慢到快排、四分之一处;不到 5 个取最慢 */
+/**
+ * Pick a conservative speed from samples: 25th percentile sorted from slowest to fastest;
+ * slowest if fewer than 5
+ */
 export function conservativeSpeed(samples) {
   const v = (samples || []).map((s) => s.tps).filter((x) => Number.isFinite(x) && x > 0).sort((a, b) => a - b);
   if (!v.length) return null;
@@ -89,13 +128,14 @@ export function conservativeSpeed(samples) {
  */
 export function createOutputSpeedBook({ file = null, now = () => Date.now(), log = () => {} } = {}) {
   const models = Object.create(null);
-  // 先读文件:任务进程每轮新开一代,之前各代记下的都在文件里
+  // Read file first: task process spawns a new generation each round, so previous generations'
+  // recordings are in the file
   for (const [k, list] of Object.entries(readFileSafe(file))) models[k] = cleanSamples(list, now());
 
   const save = () => {
     if (!file) return;
     try {
-      // 读一次再合并:别的进程这期间可能也记了
+      // Read once then merge: other processes may also have recorded during this time
       const disk = readFileSafe(file);
       const merged = {};
       for (const k of new Set([...Object.keys(disk), ...Object.keys(models)])) {
@@ -109,14 +149,15 @@ export function createOutputSpeedBook({ file = null, now = () => Date.now(), log
       const tmp = `${file}.${process.pid}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify({ v: 1, models: merged }, null, 1), { encoding: 'utf8', mode: 0o660 });
       fs.renameSync(tmp, file);
-    } catch (e) { log(`[harness.output-speed] 速度记录没写成: ${e?.message || e}`); }
+    } catch (e) { log(`[harness.output-speed] failed to write speed record: ${e?.message || e}`); }
   };
 
   return {
     file,
     /**
-     * 记一次请求。output 是输出 token 数(含思考),ms 是从发出到结束的用时;estimated 表示 token 数是按字数估的。
-     * 不够长的不记。回记下的样本(没记回 null)。
+     * Records a request. output is output token count (including thinking), ms is duration from sent
+     * to completion; estimated indicates token count is estimated from character count.
+     * Too-short requests are not recorded. Returns the recorded sample (or null if not recorded).
      */
     record(model, { output, ms, estimated = false }) {
       const key = speedKey(model);
@@ -127,20 +168,26 @@ export function createOutputSpeedBook({ file = null, now = () => Date.now(), log
       save();
       return sample;
     },
-    /** 这个模型的速度(token/s)与样本数;没有样本时 tps 是缺省值、samples 为 0 */
+    /** Speed (token/s) and sample count for this model; when no samples exist, tps is default and samples is 0 */
     speedOf(model) {
       const list = cleanSamples(models[speedKey(model)], now());
       const tps = conservativeSpeed(list);
       return tps ? { tps, samples: list.length } : { tps: DEFAULT_TOKENS_PER_SECOND, samples: 0 };
     },
-    /** 按速度算的单次上限(还要和模型上限、配置上限取小,见 model-limits.mjs 的 resolveMaxOutput) */
+    /**
+     * Speed-based single limit (further capped by min with model limit and config limit; see
+     * resolveMaxOutput in model-limits.mjs)
+     */
     capFor(model) {
       return Math.max(MIN_SPEED_CAP, Math.floor(this.speedOf(model).tps * OUTPUT_TIME_BUDGET_S));
     },
   };
 }
 
-/** 同一进程里按文件共用一份;没给文件就每次新建(只在内存里) */
+/**
+ * Shared per file within the same process; creates a new instance each time if no file is provided
+ * (in-memory only)
+ */
 export function outputSpeedBookFor(file, opts = {}) {
   if (!file) return createOutputSpeedBook(opts);
   const abs = path.resolve(file);
@@ -149,15 +196,21 @@ export function outputSpeedBookFor(file, opts = {}) {
   return book;
 }
 
-/** 测试用:清掉进程内共用的那几份 */
+/** For testing: clear in-process shared instances */
 export function _resetOutputSpeedBooks() { books.clear(); }
 
 /**
- * 包一层 provider:上限变了就在这次 stream 前报一条 notice(按什么速度、上限多少),结束后按用量记样本。
- * 用时从 provider 报的 `response_open.sentAt`(最后一次真正发出请求的时刻,重试与 400 重发之后)算起;没报就从开始调 stream 算。
+ * Wraps a provider: reports a notice before this stream if the limit changes (which speed, what
+ * limit), and records a sample based on usage upon completion.
+ * Duration is measured from `response_open.sentAt` reported by the provider (the moment the request
+ * was actually sent for the last time, after retries and 400 resends); if not reported, measured
+ * from when stream was invoked.
  */
 export function withOutputSpeed(provider, book, model) {
-  /** 上次报过的上限:没变就不再报(账号模式下每条事件都要写进文档服务,别每次请求都多一条) */
+  /**
+   * Last reported limit: do not report again if unchanged (in account mode, every event must be
+   * written to document service, avoiding an extra entry on every request)
+   */
   let lastCap = null;
   return {
     ...provider,
@@ -174,13 +227,13 @@ export function withOutputSpeed(provider, book, model) {
         if (ev?.type === 'response_open') { if (Number.isFinite(ev.sentAt)) startedAt = ev.sentAt; continue; }
         if (ev?.type === 'usage') output += (Number(ev.output) || 0) + (Number(ev.thoughts) || 0);
         else if (ev?.type === 'text_delta' || ev?.type === 'thinking_delta') chars += String(ev.text || '').length;
-        else if (ev?.type === 'tool_use') { try { chars += JSON.stringify(ev.input ?? {}).length; } catch { /* 量不出就不算 */ } }
+        else if (ev?.type === 'tool_use') { try { chars += JSON.stringify(ev.input ?? {}).length; } catch { /* Discard if unmeasurable */ } }
         else if (ev?.type === 'tool_use_partial') chars += String(ev.args || '').length;
         else if (ev?.type === 'stop') stop = ev.reason;
         yield ev;
       }
       const ms = Date.now() - startedAt;
-      // 被网关掐断、用量没回来:按字数估
+      // Cut off by gateway and usage was not returned: estimate from character count
       if (!output && stop === 'stream_cut') book.record(model, { output: Math.floor(chars / CHARS_PER_TOKEN_ESTIMATE), ms, estimated: true });
       else if (stop) book.record(model, { output, ms });
     },

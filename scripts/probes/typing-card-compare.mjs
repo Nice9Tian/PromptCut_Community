@@ -1,37 +1,62 @@
 /**
- * 打字动画卡(mu-typing)与打字机部件(text-typing)的改前改后逐帧比对。
+ * Frame-by-frame comparison before and after changes for typing animation card (mu-typing) and
+ * typewriter part (text-typing).
  *
- * 背景:0.5 期声音把 `src/cards/magicui/typing-animation.card.tsx`、`vendor/typing-animation.tsx` 重写成「按字素事件表、
- * 舞台传 t 时按 t 取字」。像素基线的演示项目里没有这张卡,全量比对测不到它,所以单独比。
+ * Background: phase 0.5 audio rewrote `src/cards/magicui/typing-animation.card.tsx` and
+ * `vendor/typing-animation.tsx` to "sample characters by t when stage passes t, based on grapheme
+ * event table". The pixel baseline demo project does not have this card, and full comparison
+ * cannot test it, so it is compared separately.
  *
- *   node scripts/probes/typing-card-compare.mjs --main <main 的 worktree> [--out <目录>] [--port 5714] [--passes 2] [--reuse]
+ *   node scripts/probes/typing-card-compare.mjs --main <main worktree> [--out <dir>] [--port 5714] [--passes 2] [--reuse]
  *
- * 做法:同一份项目 JSON(下面的用例各占一段时间轴),分别用「改前」和「改后」两棵代码树的 `scripts/export-e2e.mjs`
- * 走真实导出路径(自起 dev server、逐帧截图,只有卡片层、透明底),把两边的 PNG 逐帧比像素。
- *   - 改前 = --main 给的目录(main 的提交 3da0aa0e,建议 `git worktree add --detach` 出来用完删)
- *   - 改后 = 本脚本所在的代码树
- * 每边导 --passes 趟,比对只拿最后一趟(第一趟含字体预热,见 docs/guides/compare-pitfalls.md);也报两趟之间自己和自己的差,当噪声底。
- * 一边占 3 个连号端口(编辑器 + 两个舞台):改前 --port、改后 --port+3。
+ * Method: using the same project JSON (each test case below occupies a portion of the timeline),
+ * run real export paths using `scripts/export-e2e.mjs` from both the "before" and "after" code trees
+ * (launching dev servers, frame-by-frame screenshots, card layer only, transparent background),
+ * then compare the PNG pixels frame by frame.
+ *   - Before = directory given by --main (main commit 3da0aa0e, recommended to `git worktree add --detach`
+ *     and delete after use)
+ *   - After = code tree containing this script
+ * Each side exports --passes passes; comparison uses only the last pass (the first pass includes
+ * font warm-up, see docs/guides/compare-pitfalls.md); also reports the difference between its own
+ * two passes as noise floor. Each side occupies 3 consecutive ports (editor + two stages): --port
+ * for before, --port+3 for after.
  *
- * 验收标准(退出码 0 当且仅当全部成立):
- *   1. 「默认参数、普通文字」的用例(标 expect=same):改前改后逐帧逐像素相同,差异帧数 0。
- *      含:空文本、拉丁文、中文、含换行、不同的每字毫秒(含整帧边界上的 100 ms)、打字机部件(text-typing,经组合卡)。
- *   2. 「应当不同」的用例(标 expect=differs)只做报告,不判对错,由人看图解释:
- *      emoji / 组合字符 / 国旗(改前按 UTF-16 码元计时,改后按字素计时,这是用户认可的修正);
- *      带停顿等新参数(改前没有这些参数,忽略它们);片段从中间裁切(改前每次挂载从头打,改后接着打)。
- *      脚本另按文字模型逐帧推「改前该显示的字」与「改后该显示的字」,要求「文字不同的帧集合」恰好等于「像素不同的帧集合」(否则退出码 1);
- *      并为每个这样的用例列出首个差异帧,并拼「改前 | 改后 | 差异×8」三联图(只裁有差异的区域)到 <out>/sheets/。
- *   3. 两边都导出成功、帧数一致。
- *   4. **两种项目格式各跑一遍**(2026-10-07 补):上面的用例是 Project 格式(有 `tracks`,导出页经 FrameScene,卡片在片段起点才挂)。
- *      另有一组 Timeline 格式的用例(平铺 `clips`、没有 `tracks`,名字以 `tl-` 开头):导出页直接渲 Stage,卡片提前
- *      CARD_MOUNT_LEAD(30 fps 下一帧)挂载,旧打字卡从挂载那一帧起计时。默认演示项目(导出像素基线)走的就是这条路径,
- *      只测 Project 格式时漏掉过「每个字晚一帧」。含:演示项目里那一个 mu-4(6～8 秒、参数为空)、起点为 0(没有提前量)、
- *      拉丁文、中文、整帧边界、打字机部件;应当不同的有 emoji 与带源偏移的片段(Timeline 的 `sourceOffset`)。
- *      `export-e2e.mjs` 只收 Project 格式,所以这一组自己起 dev server、直接跑各棵树的 `scripts/export-frames.mjs`。
+ * Acceptance criteria (exit code 0 if and only if all pass):
+ *   1. "Default parameters, plain text" test cases (marked expect=same): identical frame by frame
+ *      and pixel by pixel before and after, 0 diff frames.
+ *      Includes: empty text, Latin, Chinese, line breaks, different ms per character (including
+ *      100 ms on exact frame boundaries), typewriter part (text-typing, via composite card).
+ *   2. "Expected to differ" cases (marked expect=differs) are reported only without pass/fail
+ *      judgment, to be explained visually:
+ *      emoji / combining characters / flags (before timed by UTF-16 code units, after timed by
+ *      graphemes; this is a user-approved fix);
+ *      new parameters such as pauses (before lacked these parameters, ignores them); clips trimmed
+ *      in the middle (before typed from start on every mount, after continues typing).
+ *      The script also infers "characters that should display before" vs "characters that should
+ *      display after" frame by frame from a text model, requiring the set of frames with differing
+ *      text to exactly match the set of frames with differing pixels (otherwise exit code 1);
+ *      and for each such case lists the first diff frame and stitches a "before | after | diff×8"
+ *      triptych (cropped only to diff areas) into <out>/sheets/.
+ *   3. Both sides export successfully with matching frame counts.
+ *   4. **Run each of the two project formats once** (added 2026-10-07): test cases above are in
+ *      Project format (has `tracks`, export page goes through FrameScene, card mounted only at clip
+ *      start).
+ *      Another set of test cases is in Timeline format (flattened `clips`, no `tracks`, names start
+ *      with `tl-`): export page renders Stage directly, and card is mounted CARD_MOUNT_LEAD (one
+ *      frame at 30 fps) early; old typing card timed from the mount frame. Default demo project
+ *      (export pixel baseline) follows this path, and testing only Project format once missed "every
+ *      character one frame late". Includes: mu-4 from the demo project (6~8 seconds, empty
+ *      parameters), start at 0 (no lead time), Latin, Chinese, exact frame boundaries, typewriter
+ *      part; expected to differ include emoji and clips with source offset (Timeline's `sourceOffset`).
+ *      `export-e2e.mjs` accepts only Project format, so this set launches its own dev server and
+ *      directly runs `scripts/export-frames.mjs` on each tree.
  *
- * 比对陷阱:见 docs/guides/compare-pitfalls.md。程序报不同先看图——所以脚本会把每个有差异的用例出图。
- * 不碰用户在跑的东西:端口自选(默认 5714、5717),导出目录临时;不继承 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR。
- * 输出:过程写 stdout;最后一行 JSON `{ ok, cases: [...] }`;完整结果写 <out>/result.json。
+ * Comparison pitfalls: see docs/guides/compare-pitfalls.md. If program reports differences,
+ * inspect images first: the script outputs images for every differing test case.
+ * Does not touch anything running for the user: custom ports (default 5714, 5717), temporary export
+ * directory; does not inherit PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR.
+ * Output: progress to stdout; last line is JSON `{ ok, cases: [...] }`; complete results to
+ * <out>/result.json.
  */
 import '../lib/no-user-dirs.mjs';
 import '../../src/testing/registerTs.mjs';
@@ -48,7 +73,11 @@ const arg = (name, fallback) => (argv.includes(`--${name}`) ? argv[argv.indexOf(
 const BEFORE = path.resolve(arg('main', path.join(AFTER, '..', 'sound-verify-main')));
 const OUT = path.resolve(arg('out', path.join(AFTER, '..', '..', 'work', 'four-stage', 'sound', 'typing-compare')));
 const PORT = Number(arg('port', 5714));
-/** 基准树已经带着打字卡的改动(发版验收对的是上一版):这时每个用例都该逐帧相同,原来的 differs 用例也按 same 判 */
+/**
+ * The baseline tree already includes typing card changes (release acceptance checks compare
+ * against the previous version): every case should be identical frame by frame, and original
+ * differs cases are also judged as same
+ */
 const NO_CHANGE = argv.includes('--no-change');
 const PASSES = Number(arg('passes', 2));
 const REUSE = argv.includes('--reuse');
@@ -56,7 +85,7 @@ const FPS = 30, W = 1280, H = 720;
 const require = createRequire(path.join(AFTER, 'package.json'));
 const { PNG } = require('pngjs');
 
-/** 用例:name、expect(same / differs)、clip 的卡与参数 */
+/** Test case: name, expect (same / differs), clip card and parameters */
 const CASES = [
   { name: 'empty', expect: 'same', dur: 1.5, params: { text: '' } },
   { name: 'latin-default', expect: 'same', dur: 3.6, params: { text: 'Hello, PromptCut typing!' } },
@@ -75,8 +104,9 @@ const CASES = [
 ];
 
 /**
- * Timeline 格式的用例(平铺 clips):at 给了就钉在那个起点(演示项目的 mu-4 必须在 6～8 秒),否则接在上一个后面。
- * sourceOffset 是 Timeline 上的源偏移(Project 的 mediaOffset 经 flattenOverlay 变成它)。
+ * Timeline format test case (flattened clips): if at is given, pin to that start point (mu-4 in demo
+ * project must be at 6~8 seconds); otherwise append after previous one.
+ * sourceOffset is the source offset on Timeline (Project's mediaOffset becomes this via flattenOverlay).
  */
 const TIMELINE_CASES = [
   { name: 'tl-start-at-zero', expect: 'same', at: 0, dur: 2.2, params: {} },
@@ -96,7 +126,7 @@ async function buildTimeline() {
   let at = 0;
   TIMELINE_CASES.forEach((c, i) => {
     const from = c.at ?? at;
-    if (from < at - 1e-9) throw new Error(`Timeline 用例 ${c.name} 的起点 ${from} 压到上一个用例了`);
+    if (from < at - 1e-9) throw new Error(`Timeline case ${c.name}: start ${from} overlaps the previous case`);
     const start = Math.round(from * FPS) / FPS, end = Math.round((from + c.dur) * FPS) / FPS;
     const common = { id: c.id ?? `tl-${i}`, start, end };
     if (c.part) {
@@ -104,7 +134,8 @@ async function buildTimeline() {
     } else {
       clips.push({ ...common, cardId: 'mu-typing', params: { ...c.params }, ...(c.sourceOffset ? { sourceOffset: c.sourceOffset } : {}) });
     }
-    // 这条路径上卡片提前挂载,挂上那一帧就在画面里:用例的帧段从挂载帧算起(留白帧的比对不含它)
+    // On this path the card is mounted early, and the frame it mounts on is already in view: test
+    // case frame range is counted from the mount frame (blank frame comparison excludes it)
     const mountFrame = mountFrameOf({ start, end }, FPS);
     windows.push({ ...c, timeline: true, clipStartFrame: Math.round(start * FPS), mountFrame, startFrame: mountFrame, endFrame: Math.round(end * FPS) });
     at = end + 0.2;
@@ -113,11 +144,15 @@ async function buildTimeline() {
   return { project: { width: W, height: H, fps: FPS, duration, clips }, windows, frames: Math.round(duration * FPS) };
 }
 
-/** Timeline 格式:在 tree 这棵树上自起 dev server(用它自己的 scripts/lib/dev-server.mjs),跑它自己的 export-frames.mjs。帧落在 <work>/export-e2e/frames,与 export-e2e 同一个布局。 */
+/**
+ * Timeline format: launch dev server on tree (using its own scripts/lib/dev-server.mjs), run its own
+ * export-frames.mjs. Frames land in <work>/export-e2e/frames, same layout as export-e2e.
+ */
 async function runTimelineExport(label, tree, port, timeline, work) {
   fs.mkdirSync(work, { recursive: true });
   const { startDevServer, tripleFree, sleep } = await import(pathToFileURL(path.join(tree, 'scripts', 'lib', 'dev-server.mjs')).href);
-  // 上一趟的 dev server 是整棵进程树被结束的,三个连号端口要等一会儿才放出来
+  // The dev server from the previous pass had its entire process tree terminated; wait a moment
+  // for the three consecutive ports to be released
   const portsFree = async () => { for (let i = 0; i < 60 && !(await tripleFree(port)); i++) await sleep(500); };
   await portsFree();
   const env = { PROMPTCUT_EXPORT_DIR: work };
@@ -133,10 +168,10 @@ async function runTimelineExport(label, tree, port, timeline, work) {
       child.stderr.pipe(log, { end: false });
       child.on('exit', (c) => { log.end(); resolve(c ?? 1); });
     });
-    console.log(`[${label}] 退出码 ${code}`);
+    console.log(`[${label}] exit code ${code}`);
     return code;
   } catch (e) {
-    console.log(`[${label}] 失败:${e.message}`);
+    console.log(`[${label}] failed: ${e.message}`);
     return 1;
   } finally {
     server?.stop();
@@ -160,7 +195,7 @@ function buildProject() {
     at = end + 0.2;
   });
   const duration = Math.ceil(at * FPS) / FPS;
-  return { project: { version: 1, id: 'typing-compare', name: 'typing compare', width: W, height: H, fps: FPS, duration, themeId: 'midnight', media: [], tracks: [{ id: 't-1', name: '序列 1', clips }] }, windows, frames: Math.round(duration * FPS) };
+  return { project: { version: 1, id: 'typing-compare', name: 'typing compare', width: W, height: H, fps: FPS, duration, themeId: 'midnight', media: [], tracks: [{ id: 't-1', name: 'Track 1', clips }] }, windows, frames: Math.round(duration * FPS) };
 }
 
 function runExport(label, tree, port, projectFile, work) {
@@ -171,7 +206,7 @@ function runExport(label, tree, port, projectFile, work) {
       { cwd: tree, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     child.stdout.pipe(log, { end: false });
     child.stderr.pipe(log, { end: false });
-    child.on('exit', (code) => { log.end(); console.log(`[${label}] 退出码 ${code}`); resolve(code ?? 1); });
+    child.on('exit', (code) => { log.end(); console.log(`[${label}] exit code ${code}`); resolve(code ?? 1); });
   });
 }
 
@@ -206,14 +241,17 @@ function compareDirs(wa, wb, from, to) {
     const ba = fs.readFileSync(pa), bb = fs.readFileSync(pb);
     if (ba.equals(bb)) continue;
     const d = diffPng(PNG.sync.read(ba), PNG.sync.read(bb));
-    if (!d.differing) continue; // 文件字节不同、像素全同(压缩差异)
+    if (!d.differing) continue; // File bytes differ, pixels identical (compression difference)
     out.diffFrames++; out.first ??= f; out.maxChannel = Math.max(out.maxChannel, d.max); out.maxPixels = Math.max(out.maxPixels, d.differing);
     if (out.list.length < 400) out.list.push({ frame: f, pixels: d.differing, max: d.max, box: d.box });
   }
   return out;
 }
 
-/** 三联图:改前 | 改后 | 差异×8,只裁差异外框(外扩 24px),放大到 2x 以内。写成 PNG。 */
+/**
+ * Triptych: before | after | diff×8, cropped only to diff bounding box (expanded by 24px), scaled
+ * up to within 2x. Written as PNG.
+ */
 function sheet(wa, wb, f, box, file) {
   const a = readPng(framePath(wa, f)), b = readPng(framePath(wb, f));
   const pad = 24;
@@ -229,7 +267,7 @@ function sheet(wa, wb, f, box, file) {
         for (let k = 0; k < 3; k++) out.data[di + k] = Math.min(255, Math.abs(a.data[ai + k] - b.data[bi + k]) * 8);
         out.data[di + 3] = 255;
       } else {
-        // 透明底铺深灰棋盘,文字才看得见
+        // Lay dark gray checkerboard under transparent background so text is visible
         const al = src.data[si + 3] / 255, bg = ((x >> 4) + (y >> 4)) & 1 ? 40 : 56;
         for (let k = 0; k < 3; k++) out.data[di + k] = Math.round(src.data[si + k] * al + bg * (1 - al));
         out.data[di + 3] = 255;
@@ -242,15 +280,20 @@ function sheet(wa, wb, f, box, file) {
 }
 
 /**
- * 解释差异:不靠人眼,逐帧推「改前该显示什么字」与「改后该显示什么字」,
- * 看「文字不同的帧集合」是否恰好等于「像素不同的帧集合」。
- *   改前:text.substring(0, floor(经过毫秒 / 每字毫秒)),按 UTF-16 码元,忽略一切新参数、忽略 mediaOffset(每次挂载从头打)
- *   改后:字素事件表(typingTextAt),经过毫秒 = 局部时间 + mediaOffset
- * 两边都只在「默认参数的普通文字」用例里已被像素证明与实际一致(expect=same 全 0 差异),这里把同一个模型外推到 differs 用例。
+ * Explaining differences: without relying on human eyes, infer frame by frame "what characters
+ * should display before" vs "what characters should display after", checking whether "the set of
+ * frames with differing text" equals exactly "the set of frames with differing pixels".
+ *   Before: text.substring(0, floor(elapsedMs / msPerChar)), by UTF-16 code units, ignoring all
+ *   new parameters, ignoring mediaOffset (typed from start on every mount)
+ *   After: grapheme event table (typingTextAt), elapsedMs = localTime + mediaOffset
+ * Both sides have been proven by pixels to match reality only in "default parameters, plain text"
+ * test cases (expect=same all 0 diff); here the same model is extrapolated to differs cases.
  *
- * Timeline 格式(w.timeline):卡片在 w.mountFrame 挂上(比片段起点早),两边都从挂载那一帧起计时 ——
- *   改前:同上,只是起算帧换成挂载帧,忽略 sourceOffset;
- *   改后:同一个经过毫秒(挂载钟,不加边界容差)加 sourceOffset,按字素事件表取字。
+ * Timeline format (w.timeline): card mounts at w.mountFrame (earlier than clip start), both sides
+ * time from the mount frame:
+ *   Before: same as above, except start frame is changed to mount frame, ignoring sourceOffset;
+ *   After: same elapsedMs (mount clock, without boundary tolerance) plus sourceOffset, sampling
+ *   characters by grapheme event table.
  */
 async function analyticTextDiff(w) {
   const { createTypingSchedule, typingTextAt, typingScheduleOptionsFromParams } = await import('../../src/kernel/typingEvents.ts');
@@ -270,11 +313,14 @@ async function analyticTextDiff(w) {
       continue;
     }
     const local = ((f - w.startFrame) / FPS) * 1000;
-    // 旧实现读的是被钉住的页面时钟(帧毫秒,浮点),elapsed = 当前帧毫秒 - 挂载那一帧的毫秒,整帧边界上带着自己的浮点误差,这里照样减
+    // The old implementation reads the pinned page clock (frame ms, float), elapsed = current frame
+    // ms - mount frame ms, carrying its own float error on exact frame boundaries; subtract the same
+    // way here
     const oldElapsed = (f * 1000) / FPS - (w.startFrame * 1000) / FPS;
     const oldText = duration === 0 ? text : text.substring(0, Math.floor(oldElapsed / duration));
     const newText = typingTextAt(schedule, local + (w.mediaOffset ?? 0) * 1000);
-    // 排版会折叠空白、末尾空白不占位,所以「肉眼可见的文字」先按空白折叠并去掉尾部空白再比
+    // Typesetting collapses whitespace and trailing whitespace takes no space, so compare "visually
+    // perceptible text" after collapsing whitespace and stripping trailing whitespace
     const seen = (x) => x.replace(/s+/g, ' ').trimEnd();
     if (seen(oldText) !== seen(newText)) frames.push(f);
   }
@@ -282,19 +328,19 @@ async function analyticTextDiff(w) {
 }
 
 async function main() {
-  if (!fs.existsSync(path.join(BEFORE, 'scripts', 'export-e2e.mjs'))) throw new Error(`--main 不是一棵代码树:${BEFORE}`);
+  if (!fs.existsSync(path.join(BEFORE, 'scripts', 'export-e2e.mjs'))) throw new Error(`--main is not a code tree: ${BEFORE}`);
   fs.mkdirSync(OUT, { recursive: true });
   const suites = [];
   {
     const built = buildProject();
     const projectFile = path.join(OUT, 'project.json');
     fs.writeFileSync(projectFile, JSON.stringify(built.project));
-    suites.push({ label: 'Project 格式', prefix: '', ...built, run: (tag, tree, port, work) => runExport(tag, tree, port, projectFile, work) });
+    suites.push({ label: 'Project format', prefix: '', ...built, run: (tag, tree, port, work) => runExport(tag, tree, port, projectFile, work) });
   }
   {
     const built = await buildTimeline();
     fs.writeFileSync(path.join(OUT, 'timeline.json'), JSON.stringify(built.project));
-    suites.push({ label: 'Timeline 格式', prefix: 'tl-', ...built, run: (tag, tree, port, work) => runTimelineExport(tag, tree, port, built.project, work) });
+    suites.push({ label: 'Timeline format', prefix: 'tl-', ...built, run: (tag, tree, port, work) => runTimelineExport(tag, tree, port, built.project, work) });
   }
   const summary = { ok: true, suites: [], cases: [] };
   for (const suite of suites) {
@@ -309,7 +355,7 @@ async function main() {
 }
 
 async function compareSuite({ label, prefix, windows, frames, run }) {
-  console.log(`—— ${label}:${frames} 帧,${windows.length} 个用例;改前 ${BEFORE};改后 ${AFTER}`);
+  console.log(`-- ${label}: ${frames} frames, ${windows.length} cases; before ${BEFORE}; after ${AFTER}`);
   const works = { before: [], after: [] };
   for (let p = 1; p <= PASSES; p++) {
     for (const side of ['before', 'after']) works[side].push(path.join(OUT, `${prefix}${side}-pass${p}`));
@@ -321,19 +367,19 @@ async function compareSuite({ label, prefix, windows, frames, run }) {
         run(`${prefix}before#${p + 1}`, BEFORE, PORT, works.before[p]),
         run(`${prefix}after#${p + 1}`, AFTER, PORT + 3, works.after[p]),
       ]);
-      if (codes.some((c) => c !== 0)) throw new Error(`${label} 第 ${p + 1} 趟导出失败:退出码 ${codes.join('/')}`);
+      if (codes.some((c) => c !== 0)) throw new Error(`${label} export run ${p + 1} failed: exit code ${codes.join('/')}`);
     }
   }
   const last = PASSES - 1;
   const nb = frameFiles(works.before[last]).length, na = frameFiles(works.after[last]).length;
-  console.log(`帧数:改前 ${nb} 改后 ${na}(应为 ${frames})`);
+  console.log(`Frame count: before ${nb}, after ${na} (should be ${frames})`);
   const result = { frames, frameCountBefore: nb, frameCountAfter: na, noise: {}, cases: [] };
   if (PASSES > 1) {
     result.noise.beforeSelf = compareDirs(works.before[0], works.before[last], 0, frames).diffFrames;
     result.noise.afterSelf = compareDirs(works.after[0], works.after[last], 0, frames).diffFrames;
-    console.log(`两趟自己和自己:改前差 ${result.noise.beforeSelf} 帧,改后差 ${result.noise.afterSelf} 帧(含冷启动那一趟)`);
+    console.log(`Two runs compared with themselves: before differs by ${result.noise.beforeSelf} frames, after differs by ${result.noise.afterSelf} frames (including the cold-start run)`);
   }
-  // 留白段(用例之间的 0.2 秒与片尾)也算:两边都应当是空画面
+  // Blank segments (0.2 s between cases and end of video) also count: both sides should be empty frames
   const gaps = [];
   let prev = 0;
   for (const w of windows) { if (w.startFrame > prev) gaps.push([prev, w.startFrame]); prev = w.endFrame; }
@@ -350,7 +396,7 @@ async function compareSuite({ label, prefix, windows, frames, run }) {
         const file = path.join(OUT, 'sheets', `${w.name}-frame${pick.frame}.png`);
         sheet(works.before[last], works.after[last], pick.frame, pick.box, file);
         row.sheet = file;
-        // 差异最大的一帧也出图
+        // Output image for the frame with the largest difference as well
         const big = c.list.filter((x) => x.box).sort((a, b) => b.pixels - a.pixels)[0];
         if (big && big.frame !== pick.frame) { const f2 = path.join(OUT, 'sheets', `${w.name}-frame${big.frame}-max.png`); sheet(works.before[last], works.after[last], big.frame, big.box, f2); row.sheetMax = f2; }
       }
@@ -364,11 +410,11 @@ async function compareSuite({ label, prefix, windows, frames, run }) {
       if (!row.analyticMatchesPixels) ok = false;
     }
     result.cases.push(row);
-    console.log(`${w.expect === 'same' ? (c.diffFrames ? 'FAIL' : 'PASS') : 'INFO'} ${w.name} [${w.expect}] 帧 ${w.startFrame}-${w.endFrame - 1}:${c.frames} 帧,差异 ${c.diffFrames} 帧${c.first !== null ? `,首个差异帧 ${c.first},最大通道差 ${c.maxChannel}` : ''}${row.analyticMatchesPixels !== undefined ? `;按文字模型推的差异帧 ${row.analyticTextDiffFrames} 个,${row.analyticMatchesPixels ? '与像素差异的帧集合完全一致' : '与像素差异的帧集合不一致'}` : ''}`);
+    console.log(`${w.expect === 'same' ? (c.diffFrames ? 'FAIL' : 'PASS') : 'INFO'} ${w.name} [${w.expect}] frames ${w.startFrame}-${w.endFrame - 1}: ${c.frames} frames, ${c.diffFrames} frames differ${c.first !== null ? `, first differing frame ${c.first}, max channel difference ${c.maxChannel}` : ''}${row.analyticMatchesPixels !== undefined ? `; ${row.analyticTextDiffFrames} differing frames inferred from the text model, ${row.analyticMatchesPixels ? 'exactly matches the set of pixel-differing frames' : 'does not match the set of pixel-differing frames'}` : ''}`);
   }
   const gap = gaps.map(([a, b]) => compareDirs(works.before[last], works.after[last], a, b));
   result.gapDiffFrames = gap.reduce((s, g) => s + g.diffFrames, 0);
-  console.log(`${result.gapDiffFrames ? 'FAIL' : 'PASS'} 用例之间的留白帧 ${gaps.reduce((s, [a, b]) => s + b - a, 0)} 帧,差异 ${result.gapDiffFrames} 帧`);
+  console.log(`${result.gapDiffFrames ? 'FAIL' : 'PASS'} gap frames between cases: ${gaps.reduce((s, [a, b]) => s + b - a, 0)} frames, ${result.gapDiffFrames} frames differ`);
   if (result.gapDiffFrames) ok = false;
   result.ok = ok;
   return result;

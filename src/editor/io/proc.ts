@@ -17,9 +17,9 @@ import { tr } from "../../i18n/index.ts";
 export { writeToHandle } from "./safeWrite";
 
 /**
- * 存盘时给项目盖一个「这是 SKILL 模式下的产物」的戳。不在 SKILL 模式就不写这一段。
+ * On save, stamp the project with a mark saying "this is a product of SKILL mode". Outside SKILL mode this section is not written.
  */
-/** 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」):在线页面没有 SKILL 模式,不盖戳 */
+/** Compile-time constant of the online build (for how to write it and why, see "Online build pruning" in `src/online/pageFlag.ts`): online pages have no SKILL mode, so no stamp */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
 function skillStamp(): { active: boolean; at?: string } | undefined {
@@ -30,23 +30,27 @@ function skillStamp(): { active: boolean; at?: string } | undefined {
 }
 
 /**
- * `.proc` —— PromptCut 自己的项目文件。
+ * `.proc`: PromptCut's own project file.
  *
- * 里面就是一层薄壳加一份编排:壳记住格式和版本,方便以后改结构时认得出老文件。
- * 兼容读入旧的 `.promptcut.json`(那时候是裸的 Project),所以 `parseProc` 两种都吃。
+ * It is just a thin shell plus an arrangement: the shell records the format and version, so old files
+ * can still be recognized when the structure changes later. It reads the old `.promptcut.json` for
+ * compatibility (back then it was a bare Project), so `parseProc` accepts both.
  *
- * 素材本身不进 .proc,只记素材键和服务端 path —— 一份编排几十 KB,塞进视频就没法发给别人了。
- * 素材键是文件内容的 sha256(`media[i].hash`,A1),读回来时 parseProc 按它把地址换回
- * /@media/<hash>;没有 hash 的老文件才退回按 path 的文件名找(见 mediaUrls.ts)。
- * 要把素材一起带走的是 .procp(zip:首条目就是这份 project.proc,其余 media/<hash>.<ext>,
- * 见 procp.ts),顶栏「打包保存…」走那条路。
+ * Media itself does not go into .proc; only the asset key and the server-side path are recorded: an
+ * arrangement is a few dozen KB, and stuffing videos into it would make it impossible to send to others.
+ * The asset key is the sha256 of the file content (`media[i].hash`, A1); on read-back, parseProc uses it
+ * to turn the address back into /@media/<hash>; only old files without a hash fall back to looking up
+ * by the file name of the path (see mediaUrls.ts).
+ * To take the media along, use .procp (zip: the first entry is this project.proc, the rest are
+ * media/<hash>.<ext>, see procp.ts); the top bar's "Pack and save..." takes that route.
  *
- * 一条不变量:**读回来的 clip.params 必须原样保留,这里绝不补默认值。**
- * clip.params 现在是写入时物化的(store 的 addCardClip / setClipCard 会把 defaults
- * 展开成全量存进 clip),所以文件里存的就是全套真值;这里再合一次 defaults 只会
- * 把用户改过的值悄悄盖回去。Stage 里那层 {...defaults, ...params} 只是给
- * 「卡片后来新增了参数、老 clip 缺这个键」兜底,不是这里的职责。
- * 已验证:内存往返和过磁盘往返,params 都逐字节相同。
+ * One invariant: **clip.params read back must be preserved as is; defaults are never filled in here.**
+ * clip.params is now materialized at write time (the store's addCardClip / setClipCard expands the
+ * defaults in full and stores them into the clip), so what the file holds is the complete set of true
+ * values; merging defaults once more here would only silently overwrite values the user changed.
+ * The {...defaults, ...params} layer in Stage is only a fallback for "the card later gained a new
+ * parameter and an old clip lacks that key"; it is not this code's job.
+ * Verified: both the in-memory round trip and the through-disk round trip give byte-identical params.
  */
 
 export const PROC_EXT = ".proc";
@@ -57,49 +61,56 @@ export interface ProcFile {
   format: typeof PROC_FORMAT;
   version: number;
   savedAt: string;
-  /** 列表里的封面,留给以后填;现在一律 null */
+  /** Cover shown in lists, left to be filled in later; always null for now */
   thumbnail: string | null;
   project: Project;
   /**
-   * 剧本和这段 AI 对话。和 project 平级而不是塞进 project 里 ——
-   * project 会被 get_project 原样返回给模型,把对话记录放进去等于每次调用
-   * 都让它把自己说过的话再读一遍。旧文件没有这一段,读的时候按空处理。
+   * The script and this AI chat. A sibling of project rather than stuffed inside project:
+   * project is returned as is to the model by get_project, and putting the chat log in it would make
+   * the model re-read everything it said before on every call. Old files do not have this section;
+   * it is treated as empty on read.
    */
   ai?: ProjectAi;
   /**
-   * 这份编排是不是在 SKILL 模式下存的。`jobId` 是旧版(无头实例的任务号,已归档)写的,读得进来,不再写。
+   * Whether this arrangement was saved under SKILL mode. `jobId` was written by an old version (the task
+   * number of a headless instance, archived); it can be read in but is no longer written.
    *
-   * 只是**留在项目文件里的痕迹**,不是运行时开关 —— 真正决定"现在能不能操作"的是
-   * server/skill-gate.mjs 那个状态文件。理由:Rust 壳和编辑器是两个进程,
-   * 而 .proc 随时可能被另存到别处、被拷走;拿一份会跑的文件当共享状态,
-   * 迟早出现两边看到的模式不一样。这里记下来是为了事后看得出"这段是谁改的"。
+   * It is only a **trace left in the project file**, not a runtime switch: what really decides "whether
+   * operations are allowed right now" is the state file in server/skill-gate.mjs. Reason: the Rust shell
+   * and the editor are two processes, and a .proc can be saved elsewhere or copied away at any time;
+   * using a file that can run as shared state would sooner or later leave the two sides seeing
+   * different modes. It is recorded here so that afterwards you can tell "who changed this part".
    */
   skill?: { active: boolean; jobId?: string | null; at?: string };
   /**
-   * 这个项目用到的定制卡(Agent 用 create_card 写的那种)的源码。
+   * Source code of the custom cards this project uses (the kind the Agent writes with create_card).
    *
-   * 素材不进 .proc,卡片代码却要进:素材是用户自己的文件,还在原处;定制卡活在这台机器的
-   * src/cards/user/ 全局目录里,拷走 .proc、换台机器、被别的项目同名卡覆盖,片子里就只剩一个
-   * 找不到的 cardId。打开时装回本机,规矩见 procCards.ts。没有定制卡就不写这一段。
+   * Media does not go into .proc, but card code must: media is the user's own files and still sits where
+   * it was; custom cards live in this machine's global directory src/cards/user/, so if the .proc is
+   * copied away, moved to another machine, or a same-named card from another project overwrites it, the
+   * video is left with a cardId it cannot find. On open they are reinstalled onto this machine; see
+   * procCards.ts for the rules. If there are no custom cards, this section is not written.
    */
   cards?: BundledCard[];
   /** Disposable frame deltas, encoded as one gzip/base64 block. */
   snapshots?: string;
   /** Stable room association only. Authentication stays on each device. */
   collaboration?: CollaborationDescriptor;
-  /** 这个本地项目是从哪个已不存在的云端项目转来的（只供提示与追溯，不是协作关联；见 `recoveryAssociation.ts`） */
+  /** Which cloud project, which no longer exists, this local project was converted from (only for hints and traceability, not a collaboration link; see `recoveryAssociation.ts`) */
   convertedFrom?: ConvertedFrom;
-  /** 账号云端项目另存为文件时的云端关联记号（10-14 第 3.4 节） */
+  /** Cloud association marker used when an account's cloud project is saved as a file (10-14 section 3.4) */
   cloudAssociation?: CloudProjectAssociation;
 }
 
-/** 当前项目 → .proc 文本 */
+/** Current project → .proc text */
 export function serializeProc(thumbnail: string | null = null): string {
   const project = JSON.parse(exportProjectJson()) as Project;
   const cards = collectProjectCards(project);
   const currentAssoc = currentCloudAssociation();
-  // 固定非本机快照(`sync/cloudSnapshot.ts`):连着这个云端项目时记下当下确认过的那一版(基准内容 + 哈希 + 序号 + 时间);
-  // 没连着(以本地副本打开、断网)时沿用文件里原来的基准与序号。不再取「当前连接的序号」:以本地副本打开时那是本机空间的序号
+  // Pinned non-local snapshot (`sync/cloudSnapshot.ts`): when connected to this cloud project, record the version
+  // confirmed at this moment (baseline content + hash + sequence number + time); when not connected (opened as a
+  // local copy, offline), keep the baseline and sequence number already in the file. Do not take "the current
+  // connection's sequence number" anymore: when opened as a local copy, that is the sequence number of the local space
   const cloudAssoc: CloudProjectAssociation | undefined = currentAssoc
     ? { ...currentAssoc, ...snapshotForSave(currentAssoc, currentCloudSnapshot(currentAssoc.projectId)) }
     : undefined;
@@ -120,13 +131,16 @@ export function serializeProc(thumbnail: string | null = null): string {
   return JSON.stringify(doc, null, 2);
 }
 
-/** 收预渲染快照的时限(毫秒) */
+/** Time limit for collecting prerender snapshots (milliseconds) */
 export const FRAME_ARCHIVE_TIMEOUT_MS = 2500;
 
 /**
- * 把渲染这边已经做完的预渲染快照收进 `.proc` 文本(保存前等本机的「渲染」写完,`docs/semantics/mechanism/document-service.md`
- * 「保存基准与修改状态检查」)。快照是可以丢的缓存:没有、坏了都不能挡住保存,所以收不到就照原文存;
- * 但**等到时限还没收到**(`timedOut`)要告诉用户这次文件里没带快照,不静默放过。
+ * Collect the prerender snapshots the render side has already finished into the `.proc` text (before saving,
+ * wait for this machine's "render" to finish writing, `docs/semantics/mechanism/document-service.md`
+ * "Save baseline and modification state check"). Snapshots are a disposable cache: if missing or broken
+ * they must not block saving, so when none can be collected, save the original text as is;
+ * but if the **time limit is reached without collecting them** (`timedOut`), tell the user that this
+ * file carries no snapshots, rather than letting it pass silently.
  */
 export async function collectFrameSnapshots(text: string): Promise<{ text: string; timedOut: boolean }> {
   let doc: ProcFile;
@@ -134,7 +148,7 @@ export async function collectFrameSnapshots(text: string): Promise<{ text: strin
     doc = JSON.parse(text) as ProcFile;
   } catch { return { text, timedOut: false }; }
   if (doc?.format !== PROC_FORMAT) return { text, timedOut: false };
-  // 时限看信号本身:frameRequest 会把出错包一层(名字没了),请求之前对齐数据镜像那一步也不吃信号,所以再和时限赛跑一次
+  // Judge the time limit from the signal itself: frameRequest wraps errors in another layer (the name is lost), and the step before the request that aligns the data mirror does not honor the signal either, so race against the time limit once more
   const signal = AbortSignal.timeout(FRAME_ARCHIVE_TIMEOUT_MS);
   const timeUp = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
   try {
@@ -153,16 +167,17 @@ export async function withFrameSnapshots(text: string): Promise<string> {
 
 export interface ParseProcOptions {
   /**
-   * 老文件没有 project.id 时顶上的身份。从草稿打开时传草稿 id —— 归属表里的老条目
-   * 记的就是草稿 id,这样它名下的定制卡照样认得出来。
+   * Identity used when an old file has no project.id. When opened from a draft, pass the draft id: the
+   * old entries in the ownership table recorded the draft id, so the custom cards under its name can
+   * still be recognized.
    */
   legacyId?: string;
 }
 
-/** .proc 文本 → Project。旧的裸 Project JSON 也认 */
+/** .proc text → Project. Old bare Project JSON is also accepted */
 export function parseProc(text: string, opts: ParseProcOptions = {}): Project {
   const doc = JSON.parse(text);
-  // 更新的格式版本不硬读：读得进来也可能悄悄丢掉这一版不认识的字段，再保存就把它们抹了。报错，原文件不动。
+  // Do not force-read a newer format version: even if it reads in, it may silently drop fields this version does not recognize, and saving again would erase them. Report an error; the original file is untouched.
   if (doc?.format === PROC_FORMAT && !(Number.isSafeInteger(doc.version) && doc.version >= 1 && doc.version <= PROC_VERSION)) {
     throw new Error(UNSUPPORTED_PROC_TEXT(doc.version));
   }
@@ -171,11 +186,11 @@ export function parseProc(text: string, opts: ParseProcOptions = {}): Project {
     throw new Error(tr("This is not a PromptCut project file"));
   }
   const id = typeof project.id === "string" && project.id ? project.id : opts.legacyId || newProjectId();
-  // Python 卡已归档,**转成 Project 之前**就把定义和节点丢掉(见 pythonDrop.ts)。
-  // 排在下面那一行 spread 前面:晚一步,原始 JSON 里的 cardDefinitions 就已经铺进去了。
+  // Python cards are archived; drop the definitions and nodes **before converting to a Project** (see pythonDrop.ts).
+  // Placed before the spread on the next line: any later and the cardDefinitions of the raw JSON would already be spread in.
   publishPythonDrop(dropPythonNodes(project));
   const full: Project = { ...createEmptyProject(), ...project, id };
-  // 存下来的素材地址是死的 blob: 或裸文件名,按 path 换回能播的 /@media 地址(见 mediaUrls.ts)
+  // The stored asset addresses are dead blob: URLs or bare file names; swap them back by path into playable /@media addresses (see mediaUrls.ts)
   // A .proc can have been created by the desktop build, where the media file
   // lives in the shared Videos/PromptCut/media folder rather than this source
   // checkout's out/media.  Keep the absolute path behind the server's guarded
@@ -186,11 +201,12 @@ export function parseProc(text: string, opts: ParseProcOptions = {}): Project {
 }
 
 /**
- * .proc 文本 → Project,**并把里面的剧本和对话灌回去**。
+ * .proc text → Project, **and pour the script and chat inside back in**.
  *
- * 打开项目走这个,不要直接用 parseProc:后者只解析文档本身,AI 那一段会被漏掉,
- * 于是新打开的项目里还留着上一个项目的对话。旧的 .proc 没有 ai 段,按空处理 ——
- * 也就是会清掉当前对话,这正是「每个项目一份对话」该有的样子。
+ * Opening a project goes through this; do not use parseProc directly: it only parses the document
+ * itself and the AI section would be missed, so the newly opened project would still hold the previous
+ * project's chat. An old .proc has no ai section and is treated as empty:
+ * that is, it clears the current chat, which is exactly how "one chat per project" should behave.
  */
 export function loadProc(text: string, opts: ParseProcOptions = {}): Project {
   const project = parseProc(text, opts);
@@ -199,46 +215,48 @@ export function loadProc(text: string, opts: ParseProcOptions = {}): Project {
     const parsed = JSON.parse(text);
     if (parsed?.format === PROC_FORMAT) doc = parsed;
   } catch {
-    /* parseProc 已经验过一遍,走到这儿说明是裸 Project,没有 ai 段 */
+    /* parseProc has already validated it once; getting here means it is a bare Project with no ai section */
   }
-  // 先把会抛错的校验都做完,再动任何东西:协作关联写坏了的文件要报错,不能先把当前项目的剧本和对话换掉再报
+  // Do all the validations that can throw first, then touch anything: a file with a corrupted collaboration link must report an error, and must not first replace the current project's script and chat and then report
   checkAssociation(doc?.collaboration);
   applyProjectAi(doc?.ai ?? null);
   noteLoadedAssociation(project, doc?.collaboration);
   noteConvertedFrom(project, doc?.convertedFrom);
   noteLoadedCloudAssociation(project, doc?.cloudAssociation);
   restoreSnapshots(project, doc?.snapshots);
-  // 项目里带的定制卡装回本机。不等它:装完 vite 热更新,卡自己出现在舞台和卡库里
+  // Reinstall the custom cards carried by the project onto this machine. Do not wait for it: after install, vite hot-updates and the cards show up in the stage and the card library on their own
   if (doc) void restoreProjectCards(bundledCardsOf(doc), project.id ?? null);
   return project;
 }
 
-/** 当前项目名,拿来当默认文件名 */
+/** Current project name, used as the default file name */
 export function currentProjectName(): string {
   return getState().project.name || tr("Untitled");
 }
 
-/** 新建一个空项目并载入(顶栏「新建项目」和开始页「开始创作」都走这里) */
+/** Create an empty project and load it (the top bar's "New project" and the start page's "Start creating" both go through here) */
 export function newProject(name = tr("Untitled")): Project {
-  // 新项目还没有落点,别让它覆盖上一个项目的文件
+  // The new project has no target yet; do not let it overwrite the previous project's file
   forgetSaveTarget();
-  // 新项目从空白开始,剧本和对话都不该跟过来
+  // The new project starts blank; neither the script nor the chat should carry over
   resetProjectAi();
   const project = createEmptyProject(name);
   actions.loadProject(project, `${name}${PROC_EXT}`);
   return project;
 }
 
-/* ── 存到哪儿 ────────────────────────────────────────────────────
- * 以前是造一个 <a download> 点一下,浏览器不问直接丢进「下载」——用户根本
- * 没机会选目录,也不知道文件去哪了。改成用文件系统访问 API 弹真正的「另存为」。
+/* ── Where to save ────────────────────────────────────────────────
+ * It used to create an <a download> and click it, and the browser dropped the file into "Downloads"
+ * without asking, so the user had no chance to pick a directory and did not know where the file went.
+ * Changed to use the File System Access API to pop up a real "Save as".
  *
- * 句柄记住一份:第一次保存问一次路径,之后同一个项目的保存直接覆盖那个文件,
- * 不再每次都弹窗(和正经编辑器一致)。**换项目时必须清掉**,否则会把新项目
- * 覆盖到上一个项目的文件上 —— newProject / openDraft 都会调 forgetSaveTarget。
+ * One handle is remembered: the first save asks for a path once, and later saves of the same project
+ * overwrite that file directly, without a dialog every time (consistent with proper editors).
+ * **It must be cleared when switching projects**, otherwise the new project would overwrite the
+ * previous project's file: newProject / openDraft both call forgetSaveTarget.
  */
 
-/** lib.dom 里还没有 showSaveFilePicker,只声明我们用到的这一点 */
+/** showSaveFilePicker is not yet in lib.dom; declare only the little we use */
 interface SaveFilePickerOptions {
   suggestedName?: string;
   types?: { description: string; accept: Record<string, string[]> }[];
@@ -251,10 +269,10 @@ function pickerFn(): SaveFilePicker | null {
 }
 
 /**
- * 通用的「另存为」:让用户挑一个落点,拿不到 API 就返回 null 由调用方兜底。
+ * Generic "Save as": let the user pick a target; if the API is unavailable, return null for the caller to handle.
  *
- * 和 writeProcToDisk 共用同一个能力探测,免得项目里出现两套判断。
- * 一样要在用户手势里**第一个** await 它。用户点取消会抛 AbortError。
+ * It shares the same capability probe with writeProcToDisk, so the project does not end up with two sets of checks.
+ * Likewise it must be the **first** await in the user gesture. If the user clicks cancel, it throws AbortError.
  */
 export async function pickSaveTarget(
   suggestedName: string,
@@ -268,40 +286,40 @@ export async function pickSaveTarget(
 
 let saveTarget: FileSystemFileHandle | null = null;
 
-/** 这个项目这一次打开期间存过磁盘文件(记着落点,再存不用问) */
+/** This project has been saved to a disk file during this open session (the target is remembered, so saving again does not ask) */
 export function hasSaveTarget(): boolean {
   return saveTarget !== null;
 }
 
-/** 换项目、换草稿时调用:下次保存重新问路径 */
+/** Called when switching projects or drafts: the next save asks for the path again */
 export function forgetSaveTarget(): void {
   saveTarget = null;
 }
-// 过期的云端项目转成本地项目之后,原文件保留:下次保存重新问落点,不覆盖它
+// After an expired cloud project is converted to a local project, the original file is kept: the next save asks for the target again and does not overwrite it
 onGoneConversion(() => forgetSaveTarget());
 
 export type SaveOutcome =
-  /** `snapshotsSkipped`:等预渲染快照到了时限,这次文件里没带快照(项目内容是完整的) */
+  /** `snapshotsSkipped`: the prerender snapshots hit the time limit, so this file carries no snapshots (the project content is complete) */
   | { kind: "saved"; where: string; snapshotsSkipped?: boolean }
-  /** 用户在「另存为」对话框里点了取消 */
+  /** The user clicked cancel in the "Save as" dialog */
   | { kind: "cancelled" }
-  /** 这个 WebView 没有文件系统访问 API,只能退回浏览器下载 */
+  /** This WebView has no File System Access API and can only fall back to a browser download */
   | { kind: "downloaded"; where: string };
 
 /**
- * 把 .proc 写到磁盘。
+ * Write the .proc to disk.
  *
- * `askAlways` 为真时强制弹对话框(「另存为」用),否则沿用上次选的位置。
- * 注意调用时机:showSaveFilePicker 需要用户手势,所以点击处理函数里要**先**
- * 调它,别先 await 别的东西,不然手势过期会抛 SecurityError。
+ * When `askAlways` is true, a dialog is forced (used by "Save as"); otherwise the position chosen last time is reused.
+ * Mind the timing of the call: showSaveFilePicker needs a user gesture, so the click handler must call
+ * it **first**, without awaiting anything else before it, or the gesture expires and a SecurityError is thrown.
  */
 export async function writeProcToDisk(
   content: string | (() => Promise<string>),
   defaultName: string,
   { askAlways = false }: { askAlways?: boolean } = {},
 ): Promise<SaveOutcome> {
-  // 给函数时在挑好落点之后才取内容:连着文档服务时要先等所有本地修改拿到确认(c65-design.md 第 4 节),
-  // 而「另存为」必须是手势里的第一个 await
+  // The content-supplying function is called only after the target is picked: when connected to the document service, first wait for all local changes to be confirmed (c65-design.md section 4),
+  // and "Save as" must be the first await in the gesture
   const produce = () => (typeof content === "function" ? content() : Promise.resolve(content));
   const picker = pickerFn();
   if (!picker) {
@@ -323,13 +341,13 @@ export async function writeProcToDisk(
         types: [{ description: tr("PromptCut project"), accept: { "application/json": [PROC_EXT] } }],
       });
     } catch (e) {
-      // 用户点取消是正常操作,不是错误,不要弹报错框
+      // The user clicking cancel is a normal action, not an error; do not show an error box
       if ((e as Error)?.name === "AbortError") return { kind: "cancelled" };
       throw e;
     }
   }
 
-  // 内容(含预渲染快照)全备齐了才打开写入流;写临时副本、close 才替换原文件,任一步出错 abort,原文件不变(`safeWrite.ts`)
+  // Open the write stream only once the content (including prerender snapshots) is fully ready; write a temporary copy and replace the original file only on close; if any step fails, abort and the original file is unchanged (`safeWrite.ts`)
   const { text, timedOut } = await collectFrameSnapshots(await produce());
   await writeToHandle(saveTarget, text);
   return { kind: "saved", where: saveTarget.name, ...(timedOut ? { snapshotsSkipped: true } : {}) };

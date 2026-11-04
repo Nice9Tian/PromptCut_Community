@@ -1,13 +1,16 @@
 /**
- * 仅供测试:最小的内存版 IndexedDB(只实现 `src/online/l2.ts` 用到的那一些)。
+ * For testing only: minimal in-memory IndexedDB (implements only those used by `src/online/l2.ts`).
  *
- * - `open(name, version)`:第一次(或版本升高)先 `onupgradeneeded` 再 `onsuccess`;
- * - `db.transaction(stores, mode).objectStore(name)`:`put` / `get` / `delete` / `getAll` / `openCursor`;
- * - 请求异步落定(微任务),事务在最后一个请求落定之后的下一个宏任务 `complete`;
- * - `tx.abort()`:回滚这个事务里做过的改动,触发 `onabort`;
- * - 注入配额错误:`factory.failPuts = n` —— 接下来 n 次 `put` 以 `QuotaExceededError` 失败(请求 `onerror` →
- *   冒到事务 `onerror` → 事务 `onabort`),与浏览器的顺序一致;`factory.failAll = true` 一直失败;
- * - `factory.log`:每个事务的 `{ mode, stores, ops: [{ store, op, key }], outcome }`,单测据此核对「一个删除事务」「另开写事务」。
+ * - `open(name, version)`: on first time (or version bump), `onupgradeneeded` first, then `onsuccess`;
+ * - `db.transaction(stores, mode).objectStore(name)`: `put` / `get` / `delete` / `getAll` / `openCursor`;
+ * - Requests settle asynchronously (microtasks); transaction fires `complete` in next macrotask
+ *   after last request settles;
+ * - `tx.abort()`: rollback changes made in this transaction, trigger `onabort`;
+ * - Inject quota error: `factory.failPuts = n`: next n `put` calls fail with `QuotaExceededError`
+ *   (request `onerror` → bubbles to transaction `onerror` → transaction `onabort`), matching
+ *   browser order; `factory.failAll = true` fails continuously;
+ * - `factory.log`: `{ mode, stores, ops: [{ store, op, key }], outcome }` for each transaction;
+ *   unit tests verify "one delete transaction" and "open another write transaction" against this.
  */
 
 const clone = (v) => (v instanceof Uint8Array ? new Uint8Array(v) : v && typeof v === "object" ? structuredClone(v) : v);
@@ -88,7 +91,7 @@ class FakeTx {
     this.oncomplete = null; this.onerror = null; this.onabort = null; this.error = null;
     this.entry = { mode, stores: [...stores], ops: this.ops, outcome: "pending" };
     db.factory.log.push(this.entry);
-    // 一个请求都没发的事务也要落定
+    // Transactions that did not send any requests must also settle
     setTimeout(() => this._maybeComplete(), 0);
   }
   objectStore(name) {
@@ -160,7 +163,7 @@ export function createFakeIndexedDB() {
       }, 0);
       return r;
     },
-    /** 测试看:某个库某张表里的全部记录 */
+    /** For test inspection: all records in a specific table of a specific database */
     dump(name, store) { return [...(dbs.get(name)?.stores.get(store)?.data.values() ?? [])]; },
   };
   return factory;

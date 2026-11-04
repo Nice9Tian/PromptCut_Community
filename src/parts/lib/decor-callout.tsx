@@ -4,9 +4,9 @@ import { easeExpoOut, accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 界面标注。
- * 从 ui-callout 拆出的装饰部件。包含一个发光的圈和引出来的标签。
- * 进场: 圈子放大出现，接着引线划出，最后标签滑入。
+ * UI callout.
+ * Decorative part extracted from ui-callout. Contains a glowing circle and an extended label.
+ * Entrance: circle scales up to appear, followed by leader line drawing out, and finally label slides in.
  */
 interface Params {
   label: string;
@@ -86,10 +86,10 @@ function DecorCalloutPart({ params, width, height }: PartProps<Params>) {
 
 export const decorCallout: PartDef<Params> = {
   id: "decor-callout",
-  name: "界面标注",
-  description: "圈出屏幕区域并引出标签",
-  useWhen: "底层是录屏画面、要圈出界面上某块区域并引出标签时用;圈的范围就是这个部件自己的框,直接把框拖到要圈的位置和大小即可,再用 side 选引线朝左还是朝右。",
-  tags: ["界面","标注","圈选","教程"],
+  name: "UI callout",
+  description: "Circle a screen region and draw out a label",
+  useWhen: "Use when the underlying layer is a screen recording and you want to circle an area of the interface and lead out a label. The circled area is the part's own box: just drag the box to the position and size you want to circle, then use side to choose whether the leader line goes left or right.",
+  tags: ["interface","callout","circle","tutorial"],
   role: "decor",
   from: "ui-callout",
   defaults: {
@@ -99,18 +99,18 @@ export const decorCallout: PartDef<Params> = {
     size: 0,
   },
   controls: [
-    { key: "label", label: "标签文字", type: "text" },
+    { key: "label", label: "Label text", type: "text" },
     {
       key: "side",
-      label: "引线方向",
+      label: "Leader line direction",
       type: "select",
       options: [
-        { value: "left", label: "向左" },
-        { value: "right", label: "向右" },
+        { value: "left", label: "Left" },
+        { value: "right", label: "Right" },
       ],
     },
-    { key: "accent", label: "主题色", type: "color" },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 120, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
+    { key: "accent", label: "Theme color", type: "color" },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 120, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
   ],
   defaultFrame: { x: 960, y: 540, w: 240, h: 120, anchor: [0.5, 0.5] },
   settleMs: () => 1300,

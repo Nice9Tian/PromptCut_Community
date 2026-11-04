@@ -61,12 +61,13 @@ function OdometerCard({ params }: CardProps<Params>) {
 
 export const odometer: CardDef<Params> = {
   id: "odometer",
-  name: "翻牌计数器",
-  description: "大数字翻牌效果",
-  useWhen: "大整数累计量(播放量、用户数、粉丝数)做成机械滚轮翻牌主视觉,配小字 kicker 和一行说明。只支持非负整数,小数会被截断,也没有涨跌符号。要打出带正负号的涨跌幅(+80%、-30%)或需要中英注脚背书,用 stat-proof;百分比进度用 ring-metric。",
-  tags: ["数字","增长","翻牌","变化"],
+  name: "Flip counter",
+  description: "Big-number flip effect",
+  useWhen: "Large cumulative integer counts (views, users, followers) as a mechanical rolling-wheel hero visual, with a small kicker and a one-line caption. Only non-negative integers are supported, decimals are truncated, and there is no up/down sign. For signed changes (+80%, -30%) or Chinese/English footnote endorsements, use stat-proof; for percentage progress, use ring-metric.",
+  tags: ["number","growth","flip","change"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -77,15 +78,15 @@ export const odometer: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "value", label: "数值", type: "number" },
-    { key: "unit", label: "单位", type: "text" },
-    { key: "label", label: "说明", type: "text" },
-    { key: "kicker", label: "小字", type: "text" },
+    { key: "value", label: "Value", type: "number" },
+    { key: "unit", label: "Unit", type: "text" },
+    { key: "label", label: "notes", type: "text" },
+    { key: "kicker", label: "Small text", type: "text" },
   ],
   parts: [
-    { id: "kicker", label: "小字", role: "text", params: ["kicker"], enterMs: 0, settleMs: 0 },
-    { id: "value", label: "数值", role: "text", params: ["value", "unit"], enterMs: 0, settleMs: 1280 },
-    { id: "label", label: "说明", role: "text", params: ["label"], enterMs: 0, settleMs: 0 },
+    { id: "kicker", label: "Small text", role: "text", params: ["kicker"], enterMs: 0, settleMs: 0 },
+    { id: "value", label: "Value", role: "text", params: ["value", "unit"], enterMs: 0, settleMs: 1280 },
+    { id: "label", label: "notes", role: "text", params: ["label"], enterMs: 0, settleMs: 0 },
   ],
   lifecycle: { settleMs: 1280, after: "hold", exit: ["fade"] },
   timing: (p) => {

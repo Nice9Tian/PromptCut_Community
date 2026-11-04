@@ -1,18 +1,21 @@
 /**
- * 测试脚本共用的两样东西,不单独运行:
+ * Two things shared by test scripts, not run standalone:
  *
- *   1. 在一段空闲端口上起一台**自己的** dev server,用完连同子进程一起收掉
- *      (`scripts/export-e2e.mjs`、`scripts/review-loop-run.mjs` 用);
- *   2. media 素材目录:硬链接镜像(`mirrorMediaLibrary`,`export-e2e.mjs` 用);旧的 junction 只剩
- *      清理上次被强杀留下的链接这一件事还在用(建链接、只拆链接的函数留给守门测试)。
+ *   1. Start its **own** dev server on a range of free ports, tearing it down together with child
+ *      processes when finished (used by `scripts/export-e2e.mjs` and `scripts/review-loop-run.mjs`);
+ *   2. media asset catalog: hard link mirror (`mirrorMediaLibrary`, used by `export-e2e.mjs`);
+ *      the legacy junction is only used for cleaning up links left behind after being force-killed
+ *      last time (functions that create links or only unlink are kept for gatekeeper tests).
  *
- * 本模块和它起的 dev server 都不继承外部的 `PROMPTCUT_EXPORT_DIR` / `PROMPTCUT_DATA_DIR`
- * (`no-user-dirs.mjs`);调用方显式给的目录指向用户的 `Videos\PromptCut` 时直接抛。
+ * Neither this module nor the dev server it starts inherits external `PROMPTCUT_EXPORT_DIR` /
+ * `PROMPTCUT_DATA_DIR` (`no-user-dirs.mjs`); it throws directly if a caller explicitly passes a
+ * directory pointing to the user's `Videos\PromptCut`.
  *
- * 端口:每台 dev server 另占「端口 +1」「端口 +2」当舞台端口,三个连号都要空着;
- * 被占了页面会退回同源单舞台,测出来的就不是正常形态。5190~5192 是用户常驻的那台,不碰。
+ * Ports: each dev server takes "port + 1" and "port + 2" as stage ports; all three consecutive ports
+ * must be free; if occupied, the page falls back to same-origin single stage, which is not the normal
+ * form to test. 5190-5192 is the resident instance for the user, do not touch.
  */
-import './no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import './no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs';
 import { assertNoUserExportDir } from './user-dirs.mjs';
 import net from 'node:net';
@@ -23,12 +26,15 @@ import { fileURLToPath } from 'node:url';
 
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-/** 用户常驻的 dev server(`npm run dev`)和它的两个舞台端口 */
+/** Resident dev server for the user (`npm run dev`) and its two stage ports */
 const RESERVED = new Set([5190, 5191, 5192]);
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** worktree 没有自己的 node_modules(依赖往上解析到主仓库);vite 的 exports 不放行 bin,解析主入口再回到包根 */
+/**
+ * A worktree has no node_modules of its own (dependencies resolve upward to the main repo);
+ * vite's exports does not allow bin, so resolve the main entry and navigate back to package root
+ */
 export function viteBin() {
   const local = path.join(REPO, 'node_modules', 'vite', 'bin', 'vite.js');
   if (fs.existsSync(local)) return local;
@@ -46,7 +52,7 @@ export function portFree(port) {
   });
 }
 
-/** 编辑器端口和它的两个舞台端口 */
+/** Editor port and its two stage ports */
 export const portTriple = (port) => [port, port + 1, port + 2];
 
 export async function tripleFree(port) {
@@ -55,15 +61,16 @@ export async function tripleFree(port) {
 }
 
 /**
- * 挑一个三连号都空着的编辑器端口。从 20000 以上随机挑:Node 的 fetch 和 Chrome 都拒绝
- * 「坏端口」黑名单(最大的是 10080),按构造绕开(从 20000 以上挑)。
+ * Pick an editor port where all three consecutive numbers are free. Pick randomly above 20000:
+ * both Node's fetch and Chrome reject a "bad port" blocklist (the highest is 10080), which is
+ * bypassed by design (by picking above 20000).
  */
 export async function pickPort(tries = 50) {
   for (let i = 0; i < tries; i++) {
     const port = 20000 + Math.floor(Math.random() * 40000);
     if (await tripleFree(port)) return port;
   }
-  throw new Error('找不到三个连号都空着的端口');
+  throw new Error('Could not find three consecutive free ports');
 }
 
 export async function waitHttp(url, pred, timeoutMs, label) {
@@ -78,10 +85,13 @@ export async function waitHttp(url, pred, timeoutMs, label) {
     } catch {}
     await sleep(400);
   }
-  throw new Error(`${label} 超时(${Math.round(timeoutMs / 1000)}s)`);
+  throw new Error(`${label} timed out (${Math.round(timeoutMs / 1000)}s)`);
 }
 
-/** 连子进程一起杀(vite 下面还挂着预渲染进程和 Chrome)。同步执行,退出钩子里也能用 */
+/**
+ * Kill together with child processes (vite also has prerender processes and Chrome attached).
+ * Executes synchronously, usable in exit hooks as well
+ */
 export function killTree(pid) {
   if (!pid) return;
   if (process.platform === 'win32') {
@@ -92,16 +102,19 @@ export function killTree(pid) {
 }
 
 /**
- * 起一台 dev server。
+ * Start a dev server.
  *
  * @param {object} o
- * @param {Record<string,string>} [o.env]  追加的环境变量(导出目录、数据目录之类)
- * @param {boolean} [o.online]             起成**在线浏览器模式**那一台(等于 `VITE_PC_ONLINE=1`):
- *   页面走在线那一支(`src/online/mode.ts` 的 `ONLINE`、`StartPage.tsx` 的 `OnlineStartPage`)。
- *   给成开关而不是让调用方自己写那个环境变量:名字只认一处,写错了不会悄悄起成桌面版那台。
- *   `env` 里显式写的同名变量仍然压过它。
- * @param {string} o.logFile               vite 的输出写到这里
- * @param {number} [o.port]                指定编辑器端口;不给就随机挑,舞台端口没起全会换一段重来
+ * @param {Record<string,string>} [o.env]  Additional environment variables (export directory, data directory, etc.)
+ * @param {boolean} [o.online]             Start as the **online browser mode** instance
+ *   (equivalent to `VITE_PC_ONLINE=1`):
+ *   The page takes the online branch (`ONLINE` in `src/online/mode.ts`, `OnlineStartPage` in `StartPage.tsx`).
+ *   Provided as a flag rather than letting callers write the env var themselves: the name is only
+ *   recognized in one place, so typos won't silently start the desktop app instance.
+ *   Variables of the same name explicitly set in `env` still override it.
+ * @param {string} o.logFile               vite output is written here
+ * @param {number} [o.port]                Specify editor port; randomly picked if omitted;
+ *   retries with another range if stage ports fail to start completely
  * @param {(msg: string) => void} [o.log]
  * @returns {Promise<{ port: number, origin: string, stagePorts: number[], pid: number, restarts: () => number, exited: () => boolean, stop: () => void }>}
  */
@@ -109,18 +122,18 @@ export async function startDevServer({ env = {}, online = false, logFile, port, 
   const startEnv = online ? { VITE_PC_ONLINE: '1', ...env } : env;
   if (port) {
     const clash = portTriple(port).filter((p) => RESERVED.has(p));
-    if (clash.length) throw new Error(`端口 ${clash.join('、')} 是用户常驻 dev server 的,换一个`);
+    if (clash.length) throw new Error(`Port ${clash.join(', ')} belongs to the user's long-running dev server, pick another`);
   }
   const attempts = port ? 1 : 3;
   let lastError = null;
   for (let i = 0; i < attempts; i++) {
     const p = port || (await pickPort());
-    if (port && !(await tripleFree(p))) throw new Error(`端口 ${portTriple(p).join(' / ')} 没有全空着`);
+    if (port && !(await tripleFree(p))) throw new Error(`Ports ${portTriple(p).join(' / ')} are not all free`);
     try {
       return await startOnce(p, startEnv, logFile, log);
     } catch (e) {
       lastError = e;
-      log(`端口 ${p} 没起成:${e.message}`);
+      log(`Port ${p} failed to start: ${e.message}`);
     }
   }
   throw lastError;
@@ -140,10 +153,11 @@ async function startOnce(port, env, logFile, log) {
   let restarts = 0;
   const onData = (chunk) => {
     logStream.write(chunk);
-    // 测量期间有人改了 server/*.ts 或 vite.config.ts,vite 会整台重启:页面断线、跑到一半的对话被掐断
+    // If server/*.ts or vite.config.ts is modified during measurement, vite restarts entirely:
+    // the page disconnects, and chats in progress are cut off
     const text = chunk.toString();
     const n = (text.match(/server restarted/gi) || []).length;
-    if (n) { restarts += n; log(`⚠ dev server 重启了(累计 ${restarts} 次)—— 多半是有人改了 server/ 或 vite.config.ts`); }
+    if (n) { restarts += n; log(`⚠ dev server restarted (${restarts} times in total): most likely someone changed server/ or vite.config.ts`); }
   };
   child.stdout.on('data', onData);
   child.stderr.on('data', onData);
@@ -154,13 +168,13 @@ async function startOnce(port, env, logFile, log) {
   };
   try {
     await Promise.race([
-      waitHttp(`${origin}/api/mcp/status`, (d) => d && typeof d.port === 'number', 120000, '等 dev server 起来'),
-      new Promise((_, reject) => child.once('exit', (code) => reject(new Error(`vite 提前退出(code ${code}),看 ${logFile}`)))),
+      waitHttp(`${origin}/api/mcp/status`, (d) => d && typeof d.port === 'number', 120000, 'waiting for dev server to start'),
+      new Promise((_, reject) => child.once('exit', (code) => reject(new Error(`vite exited early (code ${code}), see ${logFile}`)))),
     ]);
     const stage = await fetch(`${origin}/api/stage/ports`).then((r) => r.json());
     const stagePorts = Array.isArray(stage?.ports) ? stage.ports : [];
     if (stagePorts.length < (stage?.count ?? 2)) {
-      throw new Error(`舞台端口只起来 ${stagePorts.length} 个(${portTriple(port).slice(1).join(' / ')} 有被占的),页面会退回同源单舞台`);
+      throw new Error(`Only ${stagePorts.length} stage ports came up (${portTriple(port).slice(1).join(' / ')} has some in use), the page will fall back to a single same-origin stage`);
     }
     return { port, origin, stagePorts, pid: child.pid, restarts: () => restarts, exited: () => exited, stop };
   } catch (e) {
@@ -172,9 +186,11 @@ async function startOnce(port, env, logFile, log) {
 /* ------------------------------------------------------------------ *
  * media junction
  *
- * 导出目录里的 media 指向用户的素材目录。危险在「删」:顺着 junction 递归删,删掉的是
- * 用户的素材本身。这里只提供两种动作 —— 建链接、只拆链接 —— 并且拆之前核对它确实是
- * 我们建的那条链接,拆之后核对它确实没了、目标还在。确认失败就抛,调用方不得再删任何东西。
+ * media in the export directory points to the user's asset catalog. The danger lies in "delete":
+ * deleting recursively along the junction deletes the user's assets themselves. Here only two
+ * actions are provided: creating links and unlinking only, and before unlinking, verify that it
+ * is indeed the link we created; after unlinking, verify that it is truly gone and the target
+ * still exists. If verification fails, throw directly; the caller must not delete anything else.
  * ------------------------------------------------------------------ */
 
 const MARKER = '.media-junction.json';
@@ -185,39 +201,43 @@ function lstatOrNull(p) {
 
 const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 
-/** 在 link 处建一条指向 target 的 junction,并在同目录写标记(记下链接、目标、pid,供强杀后清理) */
+/**
+ * Create a junction at link pointing to target, and write a marker in the same directory
+ * (recording link, target, and pid for cleanup after a force kill)
+ */
 export function createJunction(link, target) {
   const abs = path.resolve(target);
   const st = lstatOrNull(abs);
-  if (!st || !st.isDirectory()) throw new Error(`素材目录不存在:${abs}`);
-  if (lstatOrNull(link)) throw new Error(`${link} 已经存在,不在它上面建 junction`);
+  if (!st || !st.isDirectory()) throw new Error(`Asset directory does not exist: ${abs}`);
+  if (lstatOrNull(link)) throw new Error(`${link} already exists, not creating a junction over it`);
   fs.symlinkSync(abs, link, 'junction');
   fs.writeFileSync(path.join(path.dirname(link), MARKER), JSON.stringify({ link: path.resolve(link), target: abs, pid: process.pid, createdAt: new Date().toISOString() }, null, 2));
 }
 
 /**
- * 只拆链接,不碰目标。
+ * Only unlinks, does not touch the target.
  *
- * fs.unlinkSync 对 junction 删的是链接本身;对一个真目录,libuv 直接拒绝(EPERM),
- * 所以这一步按构造不会递归。和 PowerShell 里 [System.IO.Directory]::Delete(<junction>) 是同一件事。
+ * fs.unlinkSync on a junction deletes the link itself; for a real directory, libuv rejects directly
+ * (EPERM), so this step is non-recursive by design. It is the same as
+ * [System.IO.Directory]::Delete(<junction>) in PowerShell.
  *
  * @param {string} link
- * @param {string} [expectTarget] 给了就核对链接确实指向它,不是就不拆
- * @returns {boolean} 拆了返回 true;本来就没有返回 false
+ * @param {string} [expectTarget] If provided, verify the link indeed points to it; do not unlink otherwise
+ * @returns {boolean} Returns true if unlinked; false if it did not exist in the first place
  */
 export function removeJunction(link, expectTarget) {
   const st = lstatOrNull(link);
   if (!st) return false;
-  if (!st.isSymbolicLink()) throw new Error(`${link} 不是链接,不动它`);
+  if (!st.isSymbolicLink()) throw new Error(`${link} is not a link, leaving it alone`);
   const target = fs.readlinkSync(link);
-  if (expectTarget && !samePath(target, expectTarget)) throw new Error(`${link} 指向 ${target},不是 ${expectTarget},不动它`);
+  if (expectTarget && !samePath(target, expectTarget)) throw new Error(`${link} points to ${target}, not ${expectTarget}, leaving it alone`);
   fs.unlinkSync(link);
-  if (lstatOrNull(link)) throw new Error(`${link} 拆完还在`);
-  if (!lstatOrNull(target)) throw new Error(`拆完链接后目标 ${target} 不见了`);
+  if (lstatOrNull(link)) throw new Error(`${link} still exists after teardown`);
+  if (!lstatOrNull(target)) throw new Error(`Target ${target} is gone after removing the link`);
   return true;
 }
 
-/** 按标记拆链接,拆成了再删标记 */
+/** Unlink according to the marker; delete the marker only after unlinking succeeds */
 export function removeMarkedJunction(dir) {
   const marker = path.join(dir, MARKER);
   let info;
@@ -232,9 +252,10 @@ function alive(pid) {
 }
 
 /**
- * 清理上次被强杀(任务管理器结束、taskkill /F)时没来得及拆的链接。
- * 只看 root 下一层目录里的标记;建它的进程还活着就不动。
- * @returns {string[]} 拆掉的链接
+ * Clean up links that were not unlinked in time when force-killed last time (Task Manager end task,
+ * taskkill /F). Only inspects markers in the directory one level below root; leaves it untouched
+ * if the process that created it is still alive.
+ * @returns {string[]} Unlinked paths
  */
 export function sweepStaleJunctions(root) {
   const removed = [];
@@ -253,33 +274,40 @@ export function sweepStaleJunctions(root) {
 }
 
 /* ------------------------------------------------------------------ *
- * media 硬链接镜像
+ * media hard link mirror
  *
- * junction 的另一个问题在「写」:导出目录里的 media 就是编辑器的本地内容库(`<PROMPTCUT_EXPORT_DIR>/media`),
- * 按需拉取、导入、Agent 预渲染的 bake 图、索引 `index.json` 都往里落文件,经 junction 全写进了
- * 用户的素材目录(缺省 `%USERPROFILE%\Videos\PromptCut\media`)。镜像改成一个真目录:素材文件逐个建硬链接
- * (不占空间、读到的是同一份字节),`index.json` 和点开头的元数据文件复制一份。之后编辑器新写的文件只落在
- * 镜像里;删镜像只删链接,素材本身不动(硬链接删一个名字不影响另一个)。
+ * Another problem with junction lies in "writes": media in the export directory is the editor's
+ * local content store (`<PROMPTCUT_EXPORT_DIR>/media`); on-demand fetches, imports, baked images
+ * from Agent prerenders, and index `index.json` all write files into it, which through junction
+ * were all written into the user's asset catalog (default `%USERPROFILE%\Videos\PromptCut\media`).
+ * The mirror is changed to a real directory: asset files are hard-linked one by one (takes no extra
+ * space, reads the exact same bytes), while `index.json` and dot-prefixed metadata files are copied.
+ * Files newly written by the editor afterwards only land in the mirror; deleting the mirror only
+ * removes links without touching the assets themselves (deleting one hard link does not affect
+ * the other).
  *
- * 限制:硬链接要求两边在同一个盘;不在同一个盘就抛,让调用方把导出目录换到素材所在的盘上,不退回 junction。
- * 素材按内容哈希命名、写一次不再原地改,所以共享的那份字节不会被镜像这边改掉。
+ * Limitation: hard links require both sides to be on the same drive; if not on the same drive, throw
+ * directly so the caller moves export directory to the drive hosting assets, without falling back
+ * to junction. Assets are named by content hash and written once without in-place modification,
+ * so the shared bytes won't be mutated by the mirror side.
  * ------------------------------------------------------------------ */
 
-/** 复制而不是硬链接的文件:会被编辑器原地改写的元数据 */
+/** Files copied rather than hard-linked: metadata that will be modified in place by the editor */
 const COPY_NOT_LINK = (name) => name === 'index.json' || name.startsWith('.');
 
 /**
- * 在 dest 建一个真目录,把 src 里的文件逐个硬链接进来(子目录照样递归),元数据文件复制。
- * src 里的链接(junction、符号链接)跳过不跟。
- * @param {string} src  素材目录(只读用)
- * @param {string} dest 镜像目录,不能已经存在
+ * Create a real directory at dest, hard-linking files from src one by one (recursing into
+ * subdirectories), and copying metadata files. Links in src (junctions, symbolic links) are
+ * skipped without following.
+ * @param {string} src  Asset catalog (read-only)
+ * @param {string} dest Mirror directory, must not already exist
  * @returns {{ linked: number, copied: number, skipped: number }}
  */
 export function mirrorMediaLibrary(src, dest) {
   const from = path.resolve(src);
   const st = lstatOrNull(from);
-  if (!st || !st.isDirectory()) throw new Error(`素材目录不存在:${from}`);
-  if (lstatOrNull(dest)) throw new Error(`${dest} 已经存在,不在它上面建镜像`);
+  if (!st || !st.isDirectory()) throw new Error(`Asset directory does not exist: ${from}`);
+  if (lstatOrNull(dest)) throw new Error(`${dest} already exists, not creating a mirror over it`);
   const counts = { linked: 0, copied: 0, skipped: 0 };
   const walk = (a, b) => {
     fs.mkdirSync(b, { recursive: true });
@@ -294,7 +322,7 @@ export function mirrorMediaLibrary(src, dest) {
         fs.linkSync(s, d);
         counts.linked++;
       } catch (err) {
-        if (err.code === 'EXDEV') throw new Error(`硬链接要求导出目录和素材目录在同一个盘:${from} → ${dest}。用 --work 把导出目录指到素材所在的盘上`);
+        if (err.code === 'EXDEV') throw new Error(`Hard links require the export directory and asset directory to be on the same drive: ${from} → ${dest}. Use --work to point the export directory at the drive holding the assets`);
         throw err;
       }
     }
@@ -303,7 +331,7 @@ export function mirrorMediaLibrary(src, dest) {
   return counts;
 }
 
-/** 2026-09-23T15:30:12 → 20260923-153012,给默认目录名用 */
+/** 2026-09-23T15:30:12 → 20260923-153012, used for default directory names */
 export function stamp(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;

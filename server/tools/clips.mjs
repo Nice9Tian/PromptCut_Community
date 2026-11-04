@@ -1,10 +1,13 @@
-/** update_clip 的 params 说明：工具定义里的静态版本与按 cardId 注入的真实 schema（server/card-params-schema.mjs）共用这一句 */
-export const PARAMS_PATCH_DESC = "增量补丁：只写这次要改的参数键，没写的键保持当前值（不会被重置）；不要凭记忆把旧的整份参数带回来，那会把用户刚改过或撤销过的值写回去。要知道现在的值先 get_clip。";
+/**
+ * Parameter description for update_clip: shared between the static version in the tool definition
+ * and the real schema injected by cardId (server/card-params-schema.mjs).
+ */
+export const PARAMS_PATCH_DESC = "Incremental patch: write only the parameter keys to change this time; keys not written keep their current values (they are not reset); do not bring back the whole old set of parameters from memory, as that would write back values the user just changed or undid. To know the current values, call get_clip first.";
 
 export const clipsTools = [
   {
     name: "add_clip",
-    description: "在时间轴上添加一张新卡片。需要提供 cardId 和 start 时间。params 会和卡片 defaults 合并，只写你要改的项即可；但键名必须是该卡真有的参数、标了必填的参数不能为空，否则直接报错——先用 list_cards({cardId}) 看清 schema 再建。字幕卡不要手写 lines，用 fill_captions。返回新建的 clip，外加 `look`（为这张卡准备好的 see_frames 调用，涉及位置和遮挡的决定请照着调去看真实画面）和 `timeline`（当前全部轨道与 clip 的 id、起止一览，之后引用 clipId 以它为准；里面的 `duration` 是整条片子多长、`contentEnd` 是内容实际结束在哪，两个数对不上就用 set_project_meta 把 duration 设成 contentEnd）。",
+    description: "Add a new card to the timeline. cardId and a start time are required. params are merged with the card's defaults, so write only the items you want to change; but key names must be parameters the card really has, and parameters marked required cannot be empty, otherwise it errors out directly: first use list_cards({cardId}) to check the schema, then create. For captions cards, do not hand-write lines, use fill_captions. Returns the new clip, plus `look` (a prepared see_frames call for this card; for decisions involving position and occlusion, follow it to inspect the real picture) and `timeline` (an overview of all current tracks and clip ids, starts and ends; refer to it for clipId afterwards; its `duration` is how long the whole video is and `contentEnd` is where the content actually ends; if the two numbers do not match, use set_project_meta to set duration to contentEnd).",
     inputSchema: {
       type: "object",
       properties: {
@@ -20,7 +23,7 @@ export const clipsTools = [
   },
   {
     name: "update_clip",
-    description: "更新某张卡片,可修改参数、时段、更换卡片类型(cardId),以及不透明度 / 淡入淡出 / 标签 / 所在序列。**已经在时间轴上的卡要改就用它**，不要 remove_clip 再 add_clip 重建。**params 是增量补丁，不是整份替换**：只传你这次要改的键（只改颜色就只传 {color:\"…\"}），没传的键保持它现在的值，不会被重置；**不要凭记忆把以前读到的整份参数带回来**——那些值可能已经被用户或别的操作改过（比如用户刚点了「撤销这步」），整份带回会把它们悄悄写回去。要知道现在的值先 get_clip。**片段在别的（没激活的）剪辑里也直接改，不用 user_interface_switch_cut**（clipId 用 list_cuts({cutId}) 里的；trackId 要用那条剪辑自己的序列 id，回包里标了 `cut`）。返回里的 `changedParams` 列出这次真正变了的键（from → to），`params` 是改完后的参数（太大时只给键名）。opacity 0~1(遮到人又挪不开时降它);fadeIn/fadeOut 是秒;trackId 换序列——**时间轴上靠上的序列盖住靠下的**(get_project 里 tracks[0] 就是最上面那条、也是最上层),要让一张卡压在另一张上面就把它挪到更靠上的序列。位置、尺寸、缩放不在这里改,用 set_rect / set_position / align / nudge;声音音量也不在这里,用 set_clip_volume(传 volume 会被拒)。**挂着转场的片段**(list_transitions 看得到)相对时间关系是锁住的:只给 start 的整组平移可以(同组一起走),改时长 / 换序列 / 手改转场那一侧的 fadeIn·fadeOut 会被拒,要改先 remove_transition。返回 `look`（去看这张卡真实画面的 see_frames 调用）和 `timeline`（当前全部 clip 的 id、起止一览，外加 `duration` / `contentEnd` —— 对不上就用 set_project_meta 修）。",
+    description: "Update a card: you can change its params, time range, card type (cardId), plus opacity / fade in-out / label / track. **Use this to edit a card that is already on the timeline**; do not remove_clip and then add_clip to rebuild it. **params is an incremental patch, not a full replacement**: pass only the keys you are changing this time (to change only the color, pass only {color:\"…\"}); keys you omit keep their current values and are not reset; **do not bring back a whole params object from memory of an earlier read**: those values may already have been changed by the user or another operation (for example the user just clicked \"Undo this step\"), and bringing the whole object back would silently write them back. Call get_clip first to learn the current values. **A clip in another (inactive) cut can be edited directly, no need for user_interface_switch_cut** (use the clipId from list_cuts({cutId}); trackId must be that cut's own track id, marked `cut` in the response). `changedParams` in the return lists the keys that actually changed (from → to), and `params` is the params after the edit (only key names if too large). opacity 0~1 (lower it when it covers a person and cannot be moved away); fadeIn/fadeOut are in seconds; trackId moves it to another track: **on the timeline, upper tracks cover lower ones** (in get_project, tracks[0] is the topmost track and also the top layer); to put a card over another one, move it to a higher track. Position, size and scale are not changed here; use set_rect / set_position / align / nudge; sound volume is not changed here either, use set_clip_volume (passing volume is rejected). **Clips with a transition attached** (visible in list_transitions) have a locked relative timing: shifting the whole group by passing only start is allowed (the group moves together), but changing duration / switching track / hand-editing the fadeIn·fadeOut on the transition side is rejected; run remove_transition first. Returns `look` (the see_frames call to view the card's real picture) and `timeline` (overview of all current clip ids and their start/end, plus `duration` / `contentEnd`; if they do not match, fix them with set_project_meta).",
     inputSchema: {
       type: "object",
       properties: {
@@ -29,11 +32,11 @@ export const clipsTools = [
         end: { type: "number" },
         cardId: { type: "string" },
         params: { type: "object", description: PARAMS_PATCH_DESC },
-        opacity: { type: "number", description: "0~1,默认 1" },
-        fadeIn: { type: "number", description: "淡入秒数" },
-        fadeOut: { type: "number", description: "淡出秒数" },
-        label: { type: "string", description: "时间轴上显示的名字" },
-        trackId: { type: "string", description: "挪到哪条序列;时间轴上靠上的序列在上层(tracks[0] 最上层)" }
+        opacity: { type: "number", description: "0~1, default 1" },
+        fadeIn: { type: "number", description: "Fade-in seconds" },
+        fadeOut: { type: "number", description: "Fade-out seconds" },
+        label: { type: "string", description: "Name shown on the timeline" },
+        trackId: { type: "string", description: "Which track to move it to; upper tracks on the timeline are on the upper layer (tracks[0] is the top layer)" }
       },
       required: ["clipId"]
     },
@@ -41,13 +44,13 @@ export const clipsTools = [
   },
   {
     name: "remove_clip",
-    description: "删除某张卡片(根据 clipId)。有门槛：你自己刚用 add_clip 建的卡、或者一口气连删超过 5 张，会被拒——要改卡用 update_clip；确实要删就传 force:true 并在 reason 里写明理由（用户会看到这句话）。返回 `timeline`（删完后全部 clip 的 id、起止一览，之后引用 clipId 以它为准。**删完尤其要看 `duration` 和 `contentEnd`**：时长不会自己缩短，片尾很容易挂着一段黑，用 set_project_meta 修掉）。",
+    description: "Delete a card (by clipId). Gated: deleting a card you just created yourself with add_clip, or deleting more than 5 in a row, is rejected; use update_clip to edit a card; if you really must delete, pass force:true and state the reason in reason (the user will see this sentence). Returns `timeline` (overview of all clip ids and their start/end after deletion; use it as the reference for clipId afterwards. **After deleting, check `duration` and `contentEnd` in particular**: the duration does not shrink by itself, so a stretch of black easily hangs at the end; fix it with set_project_meta).",
     inputSchema: {
       type: "object",
       properties: {
         clipId: { type: "string" },
-        force: { type: "boolean", description: "越过门槛（删自己刚建的卡 / 连删超过 5 张）。必须同时给 reason。" },
-        reason: { type: "string", description: "为什么要删这张卡。force 为 true 时必填，原样回显给用户。" }
+        force: { type: "boolean", description: "Bypass the gate (deleting a card you just created / deleting more than 5 in a row). reason must be given as well." },
+        reason: { type: "string", description: "Why this card is being deleted. Required when force is true; echoed to the user verbatim." }
       },
       required: ["clipId"]
     },
@@ -55,7 +58,7 @@ export const clipsTools = [
   },
   {
     name: "duplicate_clip",
-    description: "在原卡片后复制一张一模一样的卡片。",
+    description: "Duplicate a card right after the original card, identical to it.",
     inputSchema: {
       type: "object",
       properties: { clipId: { type: "string" } },
@@ -65,7 +68,7 @@ export const clipsTools = [
   },
   {
     name: "split_clip",
-    description: "在指定时间点(t)将卡片切分为两段。挂着转场的片段切不开(转场两头会对不上),先 remove_transition。",
+    description: "Split a card into two segments at the given time point (t). A clip with a transition attached cannot be split (the two ends of the transition would no longer match); run remove_transition first.",
     inputSchema: {
       type: "object",
       properties: { 
@@ -78,7 +81,7 @@ export const clipsTools = [
   },
   {
     name: "get_clip",
-    description: "读一张卡的**约定封装**:card(哪张卡 + lifecycle:进场多久落定 settleMs、之后 hold 停住 / loop 循环 / evolve 持续变化、支持的退场 exit)、time(start / end / duration)、frame(local 存下来的框,null 即铺满;world 算出来的画面绝对位置,只读)、blend(opacity / fadeIn / fadeOut)、motion(是否绑了轨迹)、parts(部件树:每个部件带自己的参数值和进场时序)、params(全量参数)。要判断「动画早就播完了后面都是静止」看 lifecycle.settleMs 和 time.duration;要知道哪个参数管哪一块看 parts。改它用 set_clip,或者 update_clip / set_rect 等单项工具 —— 它们改的是同一份数据。",
+    description: "Read a card's **card contract**: card (which card + lifecycle: how long the entrance takes to settle (settleMs), then hold = stay still / loop = repeat / evolve = keep changing, supported exit), time (start / end / duration), frame (local = the stored box, null means fill the stage; world = the computed absolute position on screen, read-only), blend (opacity / fadeIn / fadeOut), motion (whether a trajectory is bound), parts (parts tree: each part carries its own param values and entrance timing), params (all params). To judge \"the animation finished long ago and everything after is static\", look at lifecycle.settleMs and time.duration; to know which param controls which area, look at parts. To edit it use set_clip, or single-purpose tools such as update_clip / set_rect: they change the same data.",
     inputSchema: {
       type: "object",
       properties: { clipId: { type: "string" } },
@@ -88,12 +91,12 @@ export const clipsTools = [
   },
   {
     name: "set_clip",
-    description: "按约定封装改一张卡:把 get_clip 拿到的对象改好后整份传回来(也可以只传要改的段)。可写:card.id(换卡)、params(**全量**——这一段是整份替换,没写进去的键回到卡片默认值,和 update_clip 的增量补丁不同;只想改个别参数就用 update_clip,或先 get_clip 拿到现在的整份再改)或 parts 里各部件的 params、time.start / time.end、frame.local(x / y / w / h / anchor / scale / rotate,以及三维的 rotateX / rotateY / translateZ —— 三维要先 set_camera3d 打开才有透视,而且只对卡片段生效,素材段会被拒;或 null 铺满)、blend.opacity / fadeIn / fadeOut(声音音量不在 blend 里,用 set_clip_volume)。只写有差异的段,任一处不合法整份不写;frame.world、motion、card.lifecycle 是只读的,传了会被忽略。返回改了哪些段、新的封装和 look。",
+    description: "Edit a card via the card contract: modify the object returned by get_clip and pass the whole thing back (you may also pass only the sections to change). Writable: card.id (switch card), params (**full**: this section is a whole replacement, keys not written revert to the card defaults, unlike the incremental patch of update_clip; to change only a few params use update_clip, or first get_clip to get the current whole object and then edit it) or the params of each part in parts, time.start / time.end, frame.local (x / y / w / h / anchor / scale / rotate, and the 3D rotateX / rotateY / translateZ: 3D only has perspective after set_camera3d turns it on, and only works on card clips, media clips are rejected; or null to fill the stage), blend.opacity / fadeIn / fadeOut (sound volume is not in blend, use set_clip_volume). Write only the sections that differ; if any part is invalid, nothing is written; frame.world, motion and card.lifecycle are read-only and are ignored if passed. Returns which sections changed, the new contract and look.",
     inputSchema: {
       type: "object",
       properties: {
         clipId: { type: "string" },
-        envelope: { type: "object", description: "get_clip 返回的那个对象(改过的),或只含要改的段" }
+        envelope: { type: "object", description: "The object returned by get_clip (modified), or only the sections to change" }
       },
       required: ["clipId", "envelope"]
     },
@@ -101,17 +104,17 @@ export const clipsTools = [
   },
   {
     name: "set_emphasis",
-    description: "给一段加「强调」:kind 为 shadow(阴影)或 outline(描边),none 是去掉。**两种都沿着画面里不透明部分的边缘走**(CSS drop-shadow 按 alpha 通道算),所以描的是文字、图形、抠好的人物的边,不是那个方框 —— 透明底的卡片效果最明显,整块不透明的画面(视频、满幅图片)只会在方框外圈看到一条边。参数:color CSS 颜色(阴影默认黑、描边默认白),size 舞台像素(阴影是模糊半径、描边是线宽,0~80),opacity 0~1,dx/dy 阴影偏移(描边用不到)。字幕、标题压在花哨背景上看不清时优先用它,比降低背景不透明度更不伤画面。",
+    description: "Add \"emphasis\" to a clip: kind is shadow or outline, none removes it. **Both follow the edge of the opaque parts of the picture** (CSS drop-shadow works on the alpha channel), so what gets drawn is the edge of text, shapes and cut-out people, not the bounding box. It is most visible on cards with a transparent background; for a fully opaque picture (video, full-frame image) you only see a border outside the box. Params: color CSS color (shadow defaults to black, outline defaults to white), size in stage pixels (blur radius for shadow, line width for outline, 0~80), opacity 0~1, dx/dy shadow offset (not used by outline). When captions or titles are hard to read over a busy background, prefer this; it hurts the picture less than lowering the background opacity.",
     inputSchema: {
       type: "object",
       properties: {
         clipId: { type: "string" },
         kind: { type: "string", description: "shadow / outline / none" },
-        color: { type: "string", description: "CSS 颜色,如 #000000" },
-        size: { type: "number", description: "舞台像素:阴影=模糊半径,描边=线宽" },
+        color: { type: "string", description: "CSS color, e.g. #000000" },
+        size: { type: "number", description: "Stage pixels: shadow = blur radius, outline = line width" },
         opacity: { type: "number", description: "0~1" },
-        dx: { type: "number", description: "阴影横向偏移(舞台像素)" },
-        dy: { type: "number", description: "阴影纵向偏移(舞台像素)" }
+        dx: { type: "number", description: "Shadow horizontal offset (stage pixels)" },
+        dy: { type: "number", description: "Shadow vertical offset (stage pixels)" }
       },
       required: ["clipId", "kind"]
     },

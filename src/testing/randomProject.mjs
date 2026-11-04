@@ -1,11 +1,13 @@
 /**
- * 仅供测试:可复现的随机项目与随机修改。diffProject / docsync 的性质测试共用。
+ * For testing only: reproducible random projects and random modifications. Shared by property
+ * tests for diffProject / docsync.
  *
- * 形状照 Project 的大致样子(序列、片段、部件、素材、效果库、剪辑),外加一些专门刁难
- * 路径编码的键名(含 `/`、`~`、`@` 开头)和不带 id 的数组。
+ * Shaped roughly like a Project (tracks, clips, parts, assets, effects library, cuts), plus some
+ * key names specifically challenging path encoding (containing `/`, `~`, or starting with `@`)
+ * and arrays without id.
  */
 
-/** mulberry32:种子一样,序列一样 */
+/** mulberry32: same seed, same sequence */
 export function rng(seed) {
   let a = seed >>> 0;
   const next = () => {
@@ -21,13 +23,13 @@ export function rng(seed) {
   return { next, int, pick, chance };
 }
 
-const WEIRD_KEYS = ["a/b", "~k", "@k", "~1", "x~0y", "空格 键", "0", "12"];
+const WEIRD_KEYS = ["a/b", "~k", "@k", "~1", "x~0y", "空格 键", "0", "12"]; // i18n-allow: a CJK key with a space, on purpose
 const PLAIN_KEYS = ["x", "y", "w", "h", "color", "text", "size", "speed", "mode", "label", "on", "gain"];
 
 let idSeq = 0;
 function freshId(r, prefix) {
   idSeq++;
-  // 偶尔带上需要转义的字符
+  // Occasionally include characters that need escaping
   const odd = r.chance(0.05) ? r.pick(["/", "~", "@", "~1"]) : "";
   return `${prefix}${idSeq.toString(36)}${odd}`;
 }
@@ -77,7 +79,7 @@ export function randClip(r) {
 }
 
 export function randTrack(r, maxClips = 6) {
-  return { id: freshId(r, "t"), name: `序列 ${r.int(9)}`, ...(r.chance(0.2) ? { hidden: true } : {}), clips: Array.from({ length: r.int(maxClips) }, () => randClip(r)) };
+  return { id: freshId(r, "t"), name: `Track ${r.int(9)}`, ...(r.chance(0.2) ? { hidden: true } : {}), clips: Array.from({ length: r.int(maxClips) }, () => randClip(r)) };
 }
 
 export function randProject(r, opts = {}) {
@@ -85,7 +87,7 @@ export function randProject(r, opts = {}) {
   const p = {
     version: 1,
     id: freshId(r, "p-"),
-    name: r.pick(["未命名", "demo", "a/b"]),
+    name: r.pick(["Untitled", "demo", "a/b"]),
     width: 1920,
     height: 1080,
     fps: r.pick([24, 30, 60]),
@@ -95,12 +97,12 @@ export function randProject(r, opts = {}) {
     tracks: Array.from({ length: 1 + r.int(maxTracks) }, () => randTrack(r)),
   };
   if (r.chance(0.4)) p.filters = Array.from({ length: r.int(3) }, () => ({ id: freshId(r, "f"), kind: "grade", strength: r.next() }));
-  if (r.chance(0.3)) p.cuts = Array.from({ length: 1 + r.int(2) }, () => ({ id: freshId(r, "k"), name: "剪辑", tracks: [randTrack(r, 3)] }));
+  if (r.chance(0.3)) p.cuts = Array.from({ length: 1 + r.int(2) }, () => ({ id: freshId(r, "k"), name: "Cut", tracks: [randTrack(r, 3)] }));
   if (r.chance(0.3)) p.style = randObject(r, 1);
   return p;
 }
 
-/** 收集所有容器节点(对象、数组),给随机修改挑落点 */
+/** Collect all container nodes (objects, arrays) to pick drop targets for random modifications */
 function containers(root) {
   const out = [];
   const walk = (v) => {
@@ -115,7 +117,7 @@ function containers(root) {
 
 const isIdArr = (a) => Array.isArray(a) && a.every((e) => e && typeof e === "object" && !Array.isArray(e) && typeof e.id === "string") && new Set(a.map((e) => e.id)).size === a.length;
 
-/** 在一个深拷贝上做 n 次随机修改(原地),返回拷贝 */
+/** Perform n random modifications on a deep copy (in place) and return the copy */
 export function mutate(r, project, n) {
   const p = structuredClone(project);
   for (let i = 0; i < n; i++) mutateOnce(r, p);
@@ -144,7 +146,7 @@ export function mutateOnce(r, p) {
         case 0: node.push(randScalar(r)); break;
         case 1: node.pop(); break;
         case 2: if (node.length) node[r.int(node.length)] = randScalar(r); break;
-        default: if (node.length && isIdArr(node)) node.push({ ...node[0] }); // 造一个重复 id,变成不带 id 的数组
+        default: if (node.length && isIdArr(node)) node.push({ ...node[0] }); // Create a duplicate id, turning it into an array without id
       }
     }
     return;
@@ -183,9 +185,9 @@ export function deepFreeze(v) {
   return v;
 }
 
-/** 把一个项目放大到 n 个片段(性能基准用) */
+/** Scale a project to n clips (for performance benchmarks) */
 export function bigProject(r, clipCount, trackCount = 10) {
-  const tracks = Array.from({ length: trackCount }, (_, ti) => ({ id: `t-${ti}`, name: `序列 ${ti}`, clips: [] }));
+  const tracks = Array.from({ length: trackCount }, (_, ti) => ({ id: `t-${ti}`, name: `Track ${ti}`, clips: [] }));
   for (let i = 0; i < clipCount; i++) {
     const t = tracks[i % trackCount];
     const start = t.clips.length * 3;
@@ -194,7 +196,7 @@ export function bigProject(r, clipCount, trackCount = 10) {
       cardId: "title",
       start,
       end: start + 2.5,
-      params: { text: `片段 ${i}`, size: 48, color: "#fff", align: "center", shadow: { x: 1, y: 2, blur: 4 }, items: ["a", "b", "c"] },
+      params: { text: `clip ${i}`, size: 48, color: "#fff", align: "center", shadow: { x: 1, y: 2, blur: 4 }, items: ["a", "b", "c"] },
       frame: { x: 100, y: 200, w: 800, h: 200, anchor: "center", scale: 1, rotation: 0 },
       fadeIn: 0.2,
       fadeOut: 0.2,
@@ -204,8 +206,10 @@ export function bigProject(r, clipCount, trackCount = 10) {
 }
 
 /**
- * 像编辑器 action 那样的一次修改(不可变更新,只换改到的路径):挪片段、改参数、加删片段、
- * 调片段顺序、改序列名、加删序列、改项目设置。返回新项目;项目里没有可改的对象时原样返回。
+ * A modification like an editor action (immutable update, only replacing modified paths): move
+ * clips, change parameters, add/remove clips, reorder clips, rename tracks, add/remove tracks,
+ * change project settings. Returns the new project; returns as is when there are no modifiable
+ * objects in the project.
  */
 export function realisticEdit(r, p) {
   const tracks = Array.isArray(p.tracks) ? p.tracks : [];
@@ -216,32 +220,32 @@ export function realisticEdit(r, p) {
   const ci = clips.length ? r.int(clips.length) : -1;
   switch (r.int(10)) {
     case 0:
-    case 1: // 拖动片段
+    case 1: // Drag clip
       if (ci < 0) break;
       return withTrack(ti, (tr) => ({ ...tr, clips: clips.map((c, i) => (i === ci ? { ...c, start: (c.start ?? 0) + 0.5, end: (c.end ?? 1) + 0.5 } : c)) }));
     case 2:
-    case 3: // 改参数
+    case 3: // Change parameters
       if (ci < 0) break;
       return withTrack(ti, (tr) => ({ ...tr, clips: clips.map((c, i) => (i === ci ? { ...c, params: { ...(c.params ?? {}), [r.pick(["text", "size", "color"])]: randScalar(r) } } : c)) }));
-    case 4: // 加片段
+    case 4: // Add clip
       if (ti < 0) break;
       return withTrack(ti, (tr) => {
         const at = r.int(clips.length + 1);
         return { ...tr, clips: [...clips.slice(0, at), randClip(r), ...clips.slice(at)] };
       });
-    case 5: // 删片段
+    case 5: // Remove clip
       if (ci < 0) break;
       return withTrack(ti, (tr) => ({ ...tr, clips: clips.filter((_, i) => i !== ci) }));
-    case 6: // 片段换顺序
+    case 6: // Reorder clips
       if (clips.length < 2) break;
       return withTrack(ti, (tr) => { const cs = [...clips]; const [el] = cs.splice(ci, 1); cs.splice(r.int(cs.length + 1), 0, el); return { ...tr, clips: cs }; });
-    case 7: // 改序列名 / 隐藏
+    case 7: // Rename track / hide
       if (ti < 0) break;
-      return withTrack(ti, (tr) => (r.chance(0.5) ? { ...tr, name: `序列 ${r.int(100)}` } : { ...tr, hidden: !tr.hidden }));
-    case 8: // 加删序列
+      return withTrack(ti, (tr) => (r.chance(0.5) ? { ...tr, name: `Track ${r.int(100)}` } : { ...tr, hidden: !tr.hidden }));
+    case 8: // Add/remove tracks
       if (r.chance(0.7) || tracks.length < 2) return { ...p, tracks: [...tracks, randTrack(r, 3)] };
       return { ...p, tracks: tracks.filter((_, i) => i !== ti) };
-    default: // 项目设置
+    default: // Project settings
       return { ...p, [r.pick(["name", "fps", "duration", "themeId"])]: randScalar(r) };
   }
   return p;

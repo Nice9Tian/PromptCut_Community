@@ -1,25 +1,33 @@
 /**
- * 本地档能力闸的判据(M6c X2,`docs/plan/m6c-contract.md`):项目里哪些素材只在发布方本机,
- * 以及哪些细任务的输入用到了它们。
+ * Criteria for the local tier capability gate (M6c X2, `docs/plan/m6c-contract.md`): which assets in
+ * the project exist only on the publisher's local machine, and which fine-grained tasks use them
+ * in their inputs.
  *
- * **没有内容哈希的素材只在本机**:按哈希寻址的素材别的节点能经素材服务取到(J.6 的回退只认
- * `/@media/<hash>`);迁移期按文件名存的 `/@media/<文件名>`、老 `.proc` 的 `path` / `/api/media/file?path=`、
- * 这一趟导出自己的 `/@export/…` 都只在发布方这台机器上,帧管线给它们打戳也是问本机素材服务
- * (`media-stamp.mjs`)。别的节点渲这种输入,要么取不到素材、要么打出的戳不同(本地档会被 `plan-mismatch`
- * 拦下,共享档拦不住)。所以切分时给这些任务写 `requires.localMedia = <发布方 nodeId>`,只让发布方的节点认领。
+ * **Assets without a content hash exist only locally**: hash-addressed assets can be retrieved by
+ * other nodes via the asset service (the J.6 fallback only recognizes `/@media/<hash>`);
+ * `/@media/<filename>` stored by filename during migration period, legacy `.proc` `path` /
+ * `/api/media/file?path=`, and this export pass's own `/@export/…` all exist only on the publisher's
+ * machine, and the frame pipeline also queries the local asset service (`media-stamp.mjs`) to stamp
+ * them. When other nodes render such inputs, either they cannot retrieve the assets or they produce
+ * different stamps (the local tier is blocked by `plan-mismatch`, but the shared tier cannot block
+ * it). Therefore, when splitting, write `requires.localMedia = <publisher nodeId>` for these tasks,
+ * so only the publisher's node can claim them.
  *
- * 哪些 control 算「用到」:
- *   - 本地档(整场景渲):项目里有任何一条这种素材就算,整场景的每一层都可能用到它;
- *   - 轨道流:同理,算;
- *   - 共享档(隔离单卡渲,只带这一个片段):这个片段的 JSON 里引用了这种素材的 id / url / path 才算;
- *     在项目里找不到这个片段时保守地算。
+ * Which controls count as "used":
+ *   - Local tier (whole scene render): counts if the project contains any such asset, as every
+ *     layer of the whole scene might use it;
+ *   - Track stream: same rationale, counts;
+ *   - Shared tier (isolated single-card render, brings only this clip): counts only if this clip's
+ *     JSON references the id / url / path of such asset; conservatively counted if this clip cannot
+ *     be found in the project.
  *
- * 纯函数,不做 I/O;`vite-plugin-frames.ts` 在 `executor.plan` 之后按这一版的 entry 调 `withLocalMedia`。
+ * Pure function, does no I/O; `vite-plugin-frames.ts` calls `withLocalMedia` based on this
+ * version's entry after `executor.plan`.
  */
 import { mediaHashOf } from './media-stamp.mjs';
 import { snapshotTier } from './snapshot-tier.mjs';
 
-/** 这条素材的字节是不是只在本机:没有内容哈希,而且是按本机地址取的那几种 */
+/** Whether this asset's bytes exist only on this machine: has no content hash, and uses one of the local-address retrieval forms */
 function onlyLocal(media) {
   if (!media || typeof media !== 'object' || mediaHashOf(media) !== null) return false;
   if (media.path) return true;
@@ -27,19 +35,19 @@ function onlyLocal(media) {
   return url.startsWith('/@media/') || url.startsWith('/api/media/file?') || url.startsWith('/@export/');
 }
 
-/** 项目里只在本机的素材(没有内容哈希),原样返回这些素材记录 */
+/** Assets in the project that exist only on this machine (no content hash); returns these asset records as is */
 export function hashlessMedia(project) {
   return (Array.isArray(project?.media) ? project.media : []).filter(onlyLocal);
 }
 
 /**
- * → `null`(项目里没有只在本机的素材,不设闸)或 `(control) => boolean`(这一项的输入用不用得到它们)。
- * `control` 是卡片计划里的一项(有 `clipId`、`tier` / `capabilities`),流任务传 `{ clipId, kind: 'stream' }`。
+ * → `null` (no assets in the project exist only on this machine, no gate set) or `(control) => boolean` (whether this item's input uses them).
+ * `control` is an item in the card plan (has `clipId`, `tier` / `capabilities`); stream tasks pass `{ clipId, kind: 'stream' }`.
  */
 export function localMediaGate(project) {
   const local = hashlessMedia(project);
   if (local.length === 0) return null;
-  // 片段 JSON 里按「带引号的字符串」找,免得一个 id 恰好是另一个字符串的一部分
+  // Look for "quoted strings" in the clip JSON, lest an id happen to be part of another string
   const needles = [...new Set(local.flatMap(m => [m.id, m.url, m.path]).filter(v => typeof v === 'string' && v !== ''))]
     .map(v => JSON.stringify(v));
   const clips = new Map();
@@ -58,13 +66,13 @@ export function localMediaGate(project) {
 }
 
 /**
- * 给 `executor.plan` 的 PlanContext 加上本地档能力闸(`local-node.mjs` 原样传给 `splitPlan`)。
- * `owner` 是素材所在那台机器的节点 id:plan 的发布方(`source.publisher.id`,PC 节点的发布方 id 就是它的 nodeId)。
- * 项目里没有只在本机的素材,或者没有 owner,原样返回。
+ * Adds the local tier capability gate to `executor.plan`'s PlanContext (`local-node.mjs` passes it as is to `splitPlan`).
+ * `owner` is the node id of the machine where the assets reside: the plan's publisher (`source.publisher.id`; a PC node's publisher id is its nodeId).
+ * Returns as is if there are no local-only assets in the project, or if there is no owner.
  */
 export function withLocalMedia(ctx, { project, owner, projectId }) {
   if (projectId && ctx?.projectId && ctx.projectId !== projectId) throw Object.assign(new Error('project-mismatch'), { code: 'project-mismatch' });
-  if (projectId) ctx = { ...ctx, projectId }; // 任务产物接收方按此可信上下文核验，非文档内自报id
+  if (projectId) ctx = { ...ctx, projectId }; // The task output recipient verifies against this trusted context, not the self-reported id in the document
   const gate = localMediaGate(project);
   if (!gate || typeof owner !== 'string' || owner === '' || !ctx || typeof ctx !== 'object') return ctx;
   return { ...ctx, localMedia: owner, usesLocalMedia: gate };

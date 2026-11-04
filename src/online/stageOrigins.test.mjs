@@ -1,6 +1,7 @@
 /**
- * 在线页面的两个舞台(C10 契约第 2 节):运行配置解析、开几个舞台、跨源舞台的素材基址、取运行配置的退回。
- * 跑:node --test src/online/stageOrigins.test.mjs
+ * Dual stages on the online page (C10 contract Section 2): runtime config parsing, how many
+ * stages to open, asset base URL for cross-origin stages, fallback for fetching runtime config.
+ * Run: node --test src/online/stageOrigins.test.mjs
  */
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";

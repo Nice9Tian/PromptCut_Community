@@ -21,16 +21,16 @@ export interface StoredChat {
   messages: ChatMessage[];
 }
 
-/** 生成符合 /^[A-Za-z0-9_-]{1,64}$/ 规范的新会话 ID */
+/** Generate a new session ID matching the /^[A-Za-z0-9_-]{1,64}$/ specification */
 export function newChatId(): string {
   const time = Date.now().toString(36);
   const rand = Math.random().toString(36).slice(2, 6).padEnd(4, "0");
   return `c-${time}-${rand}`;
 }
 
-/** 获取会话概要列表（按更新时间倒序） */
+/** Get session summary list (in descending order of update time) */
 export async function listChats(q?: string): Promise<ChatSummary[]> {
-  if (onlinePage()) return []; // 在线浏览器模式没有本机对话记录
+  if (onlinePage()) return []; // Online browser mode has no local chat history
   try {
     const url = q ? `/api/chats/list?q=${encodeURIComponent(q)}` : "/api/chats/list";
     const res = await fetch(url);
@@ -49,7 +49,7 @@ export async function listChats(q?: string): Promise<ChatSummary[]> {
   }
 }
 
-/** 根据会话 ID 读取完整会话内容 */
+/** Read full session content by session ID */
 export async function getChat(id: string): Promise<StoredChat | null> {
   try {
     const res = await fetch(`/api/chats/get?id=${encodeURIComponent(id)}`);
@@ -68,7 +68,7 @@ export async function getChat(id: string): Promise<StoredChat | null> {
   }
 }
 
-/** 保存完整会话到服务端（防抖与原子落盘） */
+/** Save full session to server (debounced and atomic flush to disk) */
 export async function saveChat(chat: StoredChat): Promise<void> {
   try {
     const res = await fetch("/api/chats/save", {
@@ -84,7 +84,7 @@ export async function saveChat(chat: StoredChat): Promise<void> {
   }
 }
 
-/** 删除指定会话及其关联工作空间目录 */
+/** Delete specified session and its associated workspace directory */
 export async function deleteChat(id: string): Promise<void> {
   try {
     const res = await fetch("/api/chats/delete", {

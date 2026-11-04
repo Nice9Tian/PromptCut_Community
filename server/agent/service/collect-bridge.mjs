@@ -1,29 +1,51 @@
 /**
- * 云端 Agent 的素材采集在「需要登录的站点」上委托发起人自己的电脑代为下载(计划 `docs/plan/cloud-agent-tools-implementation.md` 的 C1 包)。
+ * Cloud Agent media collection delegates downloads for "sites requiring login" to the initiator's
+ * own computer (package C1 of plan `docs/plan/cloud-agent-tools-implementation.md`).
  *
- * 站点的登录态只能留在用户自己的电脑上,不上云节点。所以:
+ * Site login state must remain solely on the user's own computer and is never sent to cloud nodes.
+ * Therefore:
  *
- *   - `collect_download` 缺省在云端匿名下载(`hosted-collect.mjs`)。链接属于有登录支持的站点、且发起人本人此刻在线时,
- *     先经反向通道(`page-bridge.mjs`,W2 的可信返回协议)问他的页面:页面是桌面版、本机有这个站点没过期的登录态,
- *     就由他的电脑用本机的登录态下载,下载完**直接**上传进这个项目的素材服务;
- *   - 云端只收一份回执 `{ requestId, jobId, assetRef: { projectId, hash, size }, result }`。回执是一次页面请求的答案,
- *     所以交回时的重核(交的人是发起人、对话权限版本没变、这一轮的授权仍是当前的、栅栏版本没换过、页面号与一次性随机数对得上、
- *     没过时限)全是反向通道原来那一套;对话转私有、被停止、发起人被踢出之后才到的回执在那里就被拒收;
- *   - 收到回执后本文件再做三件事才算数:按当前这一轮核一次写权限;向素材服务核「这份字节确实在这个项目的素材库里、
- *     哈希与大小对得上」(F0 的 `ProjectAssets.verifyRef`);再核一次写权限后交给宿主登记进项目(宿主带期望版本提交);
- *   - 委托不成(本人不在线、页面不是桌面版、本机没有登录态、超时、本机下载或上传失败、回执核不过)时回「没委托成」与原因,
- *     由 `hosted-collect.mjs` 接着在云端匿名下载,并在作业的说明里写明原因与画质差别;
- *   - `user_interface_collect_login`(发给页面的内部操作名仍是 `collect_login`)、`collect_login_check` 只在本人电脑上操作:经同一条通道让发起页打开本机的登录窗口、查本机的登录态,
- *     云端只拿回「开没开」「登没登」。
+ *   - `collect_download` defaults to anonymous cloud download (`hosted-collect.mjs`). When a link
+ *     belongs to a site with login support and the initiator is currently online, it first queries
+ *     their page via the reverse channel (`page-bridge.mjs`, W2 trusted return protocol): if the
+ *     page is the desktop app and the local machine has valid login state for this site, their
+ *     computer downloads using the local login state and uploads **directly** into this project's
+ *     asset service upon completion;
+ *   - The cloud only receives a receipt
+ *     `{ requestId, jobId, assetRef: { projectId, hash, size }, result }`. The receipt is the response
+ *     to a page request, so re-verification upon return (submitter is initiator, chat permission
+ *     version unchanged, authorization for this run remains current, fence revision unchanged,
+ *     page id matches nonce, not timed out) entirely follows the reverse channel's existing
+ *     mechanisms; receipts arriving after the chat becomes private, is stopped, or the initiator
+ *     is kicked are rejected there;
+ *   - After receiving the receipt, this file performs three further checks before accepting it:
+ *     checks write permission for the current run; verifies with the asset service that "these
+ *     bytes indeed exist in this project's media library and the hash and size match" (F0
+ *     `ProjectAssets.verifyRef`); checks write permission once more, then hands off to host to
+ *     register into the project (host submits with expected revision);
+ *   - When delegation fails (initiator offline, page is not desktop app, local machine has no login
+ *     state, timeout, local download or upload fails, receipt verification fails), returns
+ *     "delegation failed" and the reason; `hosted-collect.mjs` proceeds with anonymous cloud
+ *     download and notes the reason and image quality difference in the job notes;
+ *   - `user_interface_collect_login` (internal action name sent to page remains `collect_login`)
+ *     and `collect_login_check` operate solely on the user's computer: asks initiator page via the
+ *     same channel to open the local login window or check local login state, with the cloud only
+ *     receiving back "whether opened" and "whether logged in".
  *
- * 云端拿不到、也不存的:cookie、请求头、浏览器用户数据目录、本机路径、站点的用户标识。页面交回的答案先按白名单收一遍
- * (多带任何字段整份拒收,`page-bridge.mjs` 不落盘),委托记录里只有哈希、大小、状态与原因的代号,链接只存摘要。
+ * What the cloud never receives or stores: cookies, request headers, browser user data directory,
+ * local paths, and site user identifiers. Answers returned by the page are first checked against an
+ * allowlist (rejected entirely if any extra fields are present; `page-bridge.mjs` does not persist
+ * to disk); delegation records contain only hash, size, status, and reason codes, and links only
+ * store a digest.
  *
- * 一次下载可能要几分钟,而一次页面请求最多等一分钟:所以是「开始 → 隔一会儿问一次 → 取消」三种短请求,每一次都是独立的、
- * 完整重核过的页面请求。页面中途断开重连(页面号不变)不影响;超过宽限还连不上就按不在线退回匿名。
+ * A download may take several minutes, while a single page request waits at most one minute: thus
+ * three short requests are used: "start → poll periodically → cancel", each being an independent,
+ * fully re-verified page request. Reconnection after mid-session disconnection (page id unchanged)
+ * does not disrupt it; if disconnected past the grace period, it falls back to anonymous as offline.
  *
- * 本文件不挂路由、不碰工具表、不认票据,不引用 `src/`。接线(把 `collectPageTools()` 交给 `createPageBridge` 的 `extraTools`、
- * 把 `forRun(context)` 交给 `hosted-collect.mjs` 的 `delegate`)归最后的接线包。
+ * This file does not mount routes, touch tool tables, validate tickets, or import `src/`. Wiring
+ * (passing `collectPageTools()` to `extraTools` of `createPageBridge`, passing `forRun(context)` to
+ * `delegate` of `hosted-collect.mjs`) belongs to the final wiring package.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -32,25 +54,31 @@ import { DatabaseSync } from 'node:sqlite';
 import { siteNames, siteOfUrl } from '../../collect-cookies.mjs';
 import { initiatorOffline } from './cloud-tools.mjs';
 
-/** 加在反向通道上的五种请求(页面一侧的白名单是 `src/ai/cloud/collectBridge.ts` 的 `COLLECT_PAGE_REQUEST_TOOLS`,单测对账) */
+/**
+ * Five request types added to reverse channel (page-side allowlist is `COLLECT_PAGE_REQUEST_TOOLS`
+ * in `src/ai/cloud/collectBridge.ts`, reconciled in unit tests)
+ */
 export const COLLECT_PAGE_TOOLS = Object.freeze(['collect_delegate_start', 'collect_delegate_poll', 'collect_delegate_cancel', 'collect_login', 'collect_login_check']);
 
 export const COLLECT_BRIDGE_DEFAULTS = Object.freeze({
-  /** 隔多久问一次本机下载的进度 */
+  /** How often to poll local download progress */
   pollMs: 2_000,
-  /** 一次委托最多等多久(与云端匿名下载的墙钟上限同一个数) */
+  /** Maximum wait time for a delegation (same value as wall-clock limit for cloud anonymous downloads) */
   delegateMs: 15 * 60_000,
-  /** 发起页中途连不上时最多等它多久,过了就退回匿名 */
+  /** How long to wait when initiator page disconnects midway; falls back to anonymous once expired */
   offlineGraceMs: 20_000,
-  /** 一份回执最多带几个文件、合计多大(与云端匿名下载同一组数) */
+  /** Maximum file count and total size in a single receipt (same limits as cloud anonymous downloads) */
   maxItems: 20,
   maxBytes: 512 * 1024 * 1024,
-  /** 已经结束的委托记录留多久 */
+  /** How long to retain finished delegation records */
   retainMs: 7 * 24 * 3600_000,
   maxUrlChars: 2000,
 });
 
-/** 委托的状态。`asking`、`downloading`、`verifying`、`registering` 之外都是终态 */
+/**
+ * Delegation status. All states other than `asking`, `downloading`, `verifying`, and `registering`
+ * are terminal states
+ */
 export const DELEGATION_STATES = Object.freeze(['asking', 'downloading', 'verifying', 'registering', 'done', 'fallback', 'rejected', 'cancelled', 'interrupted']);
 const LIVE_STATES = Object.freeze(['asking', 'downloading', 'verifying', 'registering']);
 
@@ -69,7 +97,10 @@ const DELEGATION_ID_RE = /^cd-[0-9a-f]{24}$/;
 const JOB_ID_RE = /^[A-Za-z0-9_-]{4,64}$/;
 const CODE_RE = /^[a-z][a-z0-9-]{0,39}$/;
 const REF_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
-/** 文件名:只收一段名字,带路径分隔符、盘符冒号、控制字符的一律不收(本机路径不上云) */
+/**
+ * Filename: accepts only a single name segment; rejects anything with path separators, drive
+ * colons, or control characters (local paths are never sent to the cloud)
+ */
 const NAME_RE = /^[^\\/:\u0000-\u001f]{1,200}$/;
 const QUALITIES = new Set([2160, 1440, 1080, 720, 480, 360]);
 const PRESETS = new Set(['auto', 'bilibili', 'generic']);
@@ -89,7 +120,7 @@ function checkedRef(value) {
   return { projectId: value.projectId, hash: value.hash, size: value.size };
 }
 
-/** 页面交回的回执:只认这几样,多带任何字段整份不收 */
+/** Receipt returned by page: recognizes only these items; rejected entirely if any extra fields are included */
 function checkedReceipt(value, limits) {
   if (!exact(value, ['requestId', 'jobId', 'assetRef', 'result']) || typeof value.requestId !== 'string' || !DELEGATION_ID_RE.test(value.requestId) ||
       typeof value.jobId !== 'string' || !JOB_ID_RE.test(value.jobId)) bad();
@@ -116,8 +147,9 @@ function checkedReceipt(value, limits) {
 }
 
 /**
- * 交给 `createPageBridge({ extraTools })` 的那一份:五种请求各自「发给页面的参数怎么查」「页面交回的答案留哪几样」。
- * 页面没做成时只留代号(`code`),它写的那句话不留——里面可能带本机的路径。
+ * The portion passed to `createPageBridge({ extraTools })`: for each of five requests, "how to
+ * validate parameters sent to page" and "which items of answer returned by page to keep".
+ * When the page fails, only keep code (`code`); omit its message: it may contain local paths.
  */
 export function collectPageTools(limitOverrides = {}) {
   const limits = { ...COLLECT_BRIDGE_DEFAULTS, ...limitOverrides };
@@ -198,35 +230,36 @@ export function collectPageTools(limitOverrides = {}) {
 const siteNamesSet = () => new Set(siteNames());
 
 /**
- * 给模型看的话(不是界面文字;句式沿用现有采集工具的,见 `server/tools/collect.mjs` 与 `hosted-collect.mjs`)。
- * 措辞是草稿,集中在这里,可整体替换。
+ * Text presented to model (not UI text; syntax follows existing collection tools, see
+ * `server/tools/collect.mjs` and `hosted-collect.mjs`).
+ * Phrasing is a draft, centralized here and replaceable as a whole.
  */
 export const COLLECT_BRIDGE_TEXT = Object.freeze({
-  /** 退回匿名时写进作业 notes 的那一句:原因 + 画质差别 */
+  /** Sentence written into job notes when falling back to anonymous: reason + image quality difference */
   fallback: Object.freeze({
-    'initiator-offline': '这个站点登录后才有更高的画质,但发起人现在不在线,用不了他电脑上的登录态',
-    'page-without-local-collect': '这个站点登录后才有更高的画质,但发起人现在用的是网页版(没有本机的采集与登录态)',
-    'not-logged-in': '发起人的电脑上还没有这个站点的登录态(需要的话先 user_interface_collect_login,让他在自己的电脑上登录)',
-    'local-not-ready': '发起人电脑上的采集工具没有就绪(没有装 yt-dlp 或缺 ffmpeg)',
-    'local-busy': '发起人的电脑正在替这个对话下载另一条链接',
-    'local-download-failed': '发起人的电脑用登录态下载这条链接没有成功',
-    'upload-failed': '发起人的电脑下载好了,但没能把文件传进这个项目的素材库',
-    'timeout': '发起人的电脑没有在时限内下载并上传完',
-    'receipt-invalid': '发起人的电脑交回的回执不合规矩,没有采用',
-    'asset-unverified': '素材服务里核不到发起人电脑说已经传好的那份文件,没有采用',
-    failed: '委托发起人的电脑下载没有成功',
+    'initiator-offline': 'This site offers higher quality after login, but the initiator is offline now, so the login state on their computer can\'t be used',
+    'page-without-local-collect': 'This site offers higher quality after login, but the initiator is currently using the web version (no local collection or login state)',
+    'not-logged-in': 'The initiator\'s computer has no login state for this site yet (if needed, run user_interface_collect_login first so they can log in on their own computer)',
+    'local-not-ready': 'The collection tools on the initiator\'s computer are not ready (yt-dlp is not installed or ffmpeg is missing)',
+    'local-busy': 'The initiator\'s computer is downloading another link for this chat',
+    'local-download-failed': 'The initiator\'s computer failed to download this link using its login state',
+    'upload-failed': 'The initiator\'s computer finished downloading, but could not upload the file to this project\'s media library',
+    'timeout': 'The initiator\'s computer did not finish downloading and uploading in time',
+    'receipt-invalid': 'The receipt returned by the initiator\'s computer is invalid and was not used',
+    'asset-unverified': 'The asset service cannot find the file that the initiator\'s computer reported as uploaded, so it was not used',
+    failed: 'Delegated download on the initiator\'s computer failed',
   }),
-  fallbackTail: ';已改为云端按未登录的画质下载,画质可能低于登录后的。',
-  delegated: '这条链接由发起人自己的电脑用他本机的登录态下载,文件由他的电脑直接传进这个项目的素材库;登录信息没有离开他的电脑。',
-  revoked: '这条任务已经被停止,或者不再有往这个项目里写素材的权限;发起人电脑交回的文件没有登记进项目。',
-  registerFailed: '发起人的电脑已经把文件传进素材库,但没能登记进项目',
-  loginOpened: '登录框已经在发起人自己的电脑上弹出来了。登录只能由他本人在自己的电脑上完成,登录态只留在他的电脑上,云端拿不到。**现在停下来**,用中文告诉用户「登录框已经在你的电脑上弹出来了,扫码或切到账号密码登录,登录完回我一句」,**不要继续调工具**;用户回话之后再调 collect_login_check。',
-  loginAlready: '发起人的电脑上已经有这个站点没过期的登录态,不用再登录。之后 collect_download 这个站点的链接时,会由他的电脑带着登录态下载(他在线的时候)。',
-  loginChecked: '发起人的电脑上已经登录。登录态只留在他的电脑上;之后 collect_download 这个站点的链接时,会由他的电脑带着登录态下载(他在线的时候)。',
-  loginMissing: '发起人的电脑上还没有登录态。请他在自己电脑上弹出的登录框里完成登录后再查一次;不要连着轮询,等用户回话。',
-  loginExpired: '发起人电脑上的登录态已经过期。请重新 user_interface_collect_login,让他在自己的电脑上再登录一次。',
-  webPage: (tool) => `${tool} 只能在发起人自己的电脑上操作,而他现在用的是网页版(没有本机的登录窗口)。请告诉用户到电脑上的 PromptCut 里登录;云端照常按未登录的画质采集。`,
-  loginFailed: (tool) => `${tool} 在发起人的电脑上没有做成。请告诉用户在电脑上的 PromptCut 里自己登录一次;云端照常按未登录的画质采集。`,
+  fallbackTail: '; switched to a cloud download at logged-out quality, which may be lower than the logged-in quality.',
+  delegated: 'This link was downloaded by the initiator\'s own computer using the login state on their machine, and the file was uploaded straight from their computer to this project\'s media library; the login information never left their computer.',
+  revoked: 'This task was stopped, or no longer has permission to write media into this project; the file returned by the initiator\'s computer was not registered in the project.',
+  registerFailed: 'The initiator\'s computer uploaded the file to the media library, but it could not be registered in the project',
+  loginOpened: 'The login window has opened on the initiator\'s own computer. Login can only be completed by them on their own computer; the login state stays on their computer and the cloud cannot get it. **Stop now** and tell the user "The login window has opened on your computer. Scan the QR code or switch to account and password login, then tell me when you are done", **do not keep calling tools**; after the user replies, call collect_login_check.',
+  loginAlready: 'The initiator\'s computer already has an unexpired login state for this site, so no login is needed. Later, when collect_download is called for a link on this site, their computer will download it with the login state (while they are online).',
+  loginChecked: 'Already logged in on the initiator\'s computer. The login state stays on their computer only; later, when collect_download is called for a link on this site, their computer will download it with the login state (while they are online).',
+  loginMissing: 'The initiator\'s computer has no login state yet. Ask them to finish logging in in the login window that opened on their computer, then check again; do not poll repeatedly, wait for the user to reply.',
+  loginExpired: 'The login state on the initiator\'s computer has expired. Call user_interface_collect_login again so they can log in once more on their own computer.',
+  webPage: (tool) => `${tool} can only be used on the initiator's own computer, and they are currently using the web version (no local login window). Tell the user to log in from PromptCut on their computer; the cloud will keep collecting at logged-out quality as usual.`,
+  loginFailed: (tool) => `${tool} did not succeed on the initiator's computer. Tell the user to log in once themselves from PromptCut on their computer; the cloud will keep collecting at logged-out quality as usual.`,
 });
 
 function openLedger(databasePath, now, retainMs) {
@@ -257,7 +290,7 @@ function openLedger(databasePath, now, retainMs) {
   );`);
   db.exec('CREATE INDEX IF NOT EXISTS collect_delegations_job ON collect_delegations (project_id, conversation_id, job_id);');
   const at = Number(now());
-  // 上一个进程还在办的:等它的那一轮已经不在了,之后到的回执也不该再被登记
+  // Still in progress by previous process: run waiting for it is gone; late receipts must not be registered
   db.prepare(`UPDATE collect_delegations SET state='interrupted', reason='agent-restart', updated_at=? WHERE state IN ('asking','downloading','verifying','registering')`).run(at);
   db.prepare(`DELETE FROM collect_delegations WHERE state NOT IN ('asking','downloading','verifying','registering') AND updated_at < ?`).run(at - retainMs);
   return db;
@@ -265,15 +298,19 @@ function openLedger(databasePath, now, retainMs) {
 
 /**
  * @param {object} o
- * @param {object} o.bridge `createPageBridge({ …, extraTools: collectPageTools() })` 建出来的反向通道
- * @param {string} o.databasePath 委托记录的 SQLite 文件(私有数据目录里)
+ * @param {object} o.bridge Reverse channel created by `createPageBridge({ …, extraTools: collectPageTools() })`
+ * @param {string} o.databasePath SQLite file for delegation records (in private data directory)
  * @param {{ verifyRef(context: object, ref: {projectId: string, hash: string, size: number}): Promise<{assetRef: object}> }} o.assets
- *   F0 的 `createProjectAssets`:向素材服务核这份字节在不在这个项目的素材库里
+ *   F0 `createProjectAssets`: verifies with asset service whether these bytes exist in this
+ *   project's media library
  * @param {(context: object, action: 'read'|'write') => Promise<{allowed: true, fenceRevision: number, grantState: string}>} o.authorize
- *   运行资源登记器的 `authorize`:每次都向文档服务重核这一轮的当前授权
+ *   `authorize` of run resource registry: re-verifies current authorization for this run with
+ *   document service each time
  * @param {(context: object, entry: object) => Promise<{mediaId: string, kind?: string, clipId?: string}>} o.register
- *   把一份已经在素材库里的字节登记进项目(宿主带期望版本提交;同一个 `entry.requestId` 重复调用不登记两次)
- * @param {(url: string) => string | null} [o.loginSiteOf] 一条链接属于哪个有登录支持的站点(缺省 `collect-cookies.mjs` 的 `siteOfUrl`)
+ *   Registers bytes already in media library into project (host submits with expected revision;
+ *   duplicate calls with same `entry.requestId` are not registered twice)
+ * @param {(url: string) => string | null} [o.loginSiteOf] Which site with login support a link
+ *   belongs to (defaults to `siteOfUrl` in `collect-cookies.mjs`)
  */
 export function createCollectBridge({ bridge, databasePath, assets, authorize, register, loginSiteOf = siteOfUrl, limits: limitOverrides = {},
   now = Date.now, log = () => {}, newId = () => `cd-${randomBytes(12).toString('hex')}` } = {}) {
@@ -282,11 +319,11 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
       typeof authorize !== 'function' || typeof register !== 'function' || typeof loginSiteOf !== 'function') fail('collect-bridge-configuration', 503);
   const limits = Object.freeze({ ...COLLECT_BRIDGE_DEFAULTS, ...limitOverrides });
   const db = openLedger(databasePath, now, limits.retainMs);
-  const say = (event, fields) => { try { log(event, fields); } catch { /* 日志的事 */ } };
+  const say = (event, fields) => { try { log(event, fields); } catch { /* Logging concerns */ } };
   let closed = false;
-  /** delegation_id -> 正在核实与登记的那一次(同一份回执重复到达共用一个结果) */
+  /** delegation_id -> the attempt currently being verified and registered (duplicate receipts share one result) */
   const settling = new Map();
-  /** 正在等的委托(关闭时一起收掉) */
+  /** Delegations being waited on (cleaned up together on close) */
   const live = new Set();
 
   const rowOf = (id) => db.prepare('SELECT * FROM collect_delegations WHERE delegation_id=?').get(id) ?? null;
@@ -297,7 +334,7 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
       db.prepare(`UPDATE collect_delegations SET state=?, reason=?, receipt_digest=COALESCE(?, receipt_digest), refs=COALESCE(?, refs), media=COALESCE(?, media), updated_at=?
         WHERE delegation_id=? AND state IN ('asking','downloading','verifying','registering')`)
         .run(state, reason, more.receiptDigest ?? null, more.refs ? JSON.stringify(more.refs) : null, more.media ? JSON.stringify(more.media) : null, Number(now()), id);
-    } catch { /* 关库之后:调用方照常收尾 */ }
+    } catch { /* After closing database: caller finalizes as usual */ }
   }
 
   const pause = (ms, signal) => new Promise((resolve) => {
@@ -307,7 +344,10 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
     signal?.addEventListener('abort', done, { once: true });
   });
 
-  /** 向发起页发一次请求。这一轮的授权已经不在时抛(`PageBridgeError`,403);发起人、发起页照文档服务的授权填 */
+  /**
+   * Sends a request to initiator page. Throws (`PageBridgeError`, 403) when authorization for this
+   * run is gone; initiator and initiator page are populated from document service authorization
+   */
   async function ask(context, tool, args, requestId, signal) {
     const who = await bridge.initiator(context);
     return bridge.requestPage({ run: context, initiatorAccountId: who.initiatorAccountId, pageId: who.pageId, tool, args, requestId,
@@ -318,14 +358,19 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
   const notDelegated = (why, note = fallbackNote(why)) => Object.freeze({ delegated: false, why, note });
   const stopped = (why, message) => Object.freeze({ delegated: false, stop: true, why, message });
 
-  /** 这一轮此刻还能不能往项目里写(每次都问文档服务;问不到按不能办) */
+  /**
+   * Whether this run can still write to project at this moment (queries document service each time;
+   * treated as cannot proceed if unreachable)
+   */
   const canWrite = async (context) => {
     try { const auth = await authorize(context, 'write'); return auth?.allowed === true; } catch { return false; }
   };
 
   /**
-   * 收一份回执:核写权限 → 向素材服务核字节 → 再核写权限 → 登记。同一份回执重复到达回同一个结果,不登记两次;
-   * 已经有别的结论的委托(退回了、被拒了、被取消了、重启中断了)之后到的回执一律不登记。
+   * Receives a receipt: check write permission → verify bytes with asset service → check write
+   * permission again → register. Duplicate receipts return the same result and are not registered
+   * twice; receipts arriving after a delegation has reached another conclusion (fell back, rejected,
+   * canceled, interrupted by restart) are never registered.
    */
   function settleReceipt(context, id, receiptValue) {
     let receipt;
@@ -342,7 +387,8 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
       }
       if (!LIVE_STATES.includes(row.state)) return stopped(row.reason ?? row.state, COLLECT_BRIDGE_TEXT.revoked);
       const refs = receipt ? receipt.result.items.map((item) => ({ hash: item.assetRef.hash, size: item.assetRef.size })) : [];
-      // 回执里的请求号、作业号、项目必须就是这一次委托的:别的对话的请求号、别的项目的哈希在这里就不收
+      // Request id, job id, and project in receipt must match this delegation: request ids from other
+      // chats or hashes from other projects are rejected here
       if (!receipt || receipt.requestId !== id || receipt.jobId !== row.job_id ||
           receipt.result.items.some((item) => item.assetRef.projectId !== context.projectId)) {
         mark(id, 'rejected', 'receipt-invalid');
@@ -351,7 +397,9 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
       }
       mark(id, 'verifying', null, { refs });
       const writable = () => canWrite(context);
-      // 这一轮此刻还能往项目里写吗(被停止、转私有后被撤销、发起人被踢出或没有写权限:不登记;字节留在素材库里没有人引用)
+      // Can this run still write to project right now? (stopped, revoked after converting to private,
+      // initiator kicked, or no write permission: do not register; bytes remain unreferenced in media
+      // library)
       if (!(await writable())) {
         mark(id, 'rejected', 'run-revoked', { refs });
         say('agent.collect.delegate', { projectId: context.projectId, runId: context.runId, state: 'rejected', why: 'run-revoked' });
@@ -377,7 +425,8 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
           return stopped('run-revoked', COLLECT_BRIDGE_TEXT.revoked);
         }
         try {
-          // 种类与扩展名以素材服务核回来的为准(页面说的只在它没给时用)
+          // Kind and extension are determined by verification result from asset service (page values are
+          // only used when omitted)
           const kind = /^(video|audio|image)\//.exec(String(ref.contentType ?? ''))?.[1] ?? item.kind;
           const ext = typeof ref.ext === 'string' && /^[a-z0-9]{1,8}$/.test(ref.ext) ? ref.ext : (/\.([A-Za-z0-9]{1,8})$/.exec(item.name)?.[1] ?? '').toLowerCase();
           const out = await register(context, { requestId: `${id}:${index}`, sourceJobId: row.job_id, assetRef: item.assetRef, kind, ext, name: item.name,
@@ -392,7 +441,7 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
           const denied = error?.status === 403 || error?.status === 401 || error?.code === 'forbidden';
           mark(id, 'rejected', denied ? 'run-revoked' : 'register-failed', { refs, media });
           say('agent.collect.delegate', { projectId: context.projectId, runId: context.runId, state: 'rejected', why: denied ? 'run-revoked' : 'register-failed' });
-          return stopped(denied ? 'run-revoked' : 'register-failed', denied ? COLLECT_BRIDGE_TEXT.revoked : `${COLLECT_BRIDGE_TEXT.registerFailed}。`);
+          return stopped(denied ? 'run-revoked' : 'register-failed', denied ? COLLECT_BRIDGE_TEXT.revoked : `${COLLECT_BRIDGE_TEXT.registerFailed}.`);
         }
       }
       mark(id, 'done', null, { receiptDigest: digest, refs, media });
@@ -404,16 +453,21 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
   }
 
   /**
-   * 试着把一次下载委托给发起人的电脑。回 `{ delegated: true, items }`(已经核实并登记)、
-   * `{ delegated: false, why, note }`(没委托成:调用方接着在云端匿名下载,`note` 写进作业的说明;`note` 为 null 表示这条链接本来就不用委托)、
-   * 或 `{ delegated: false, stop: true, why, message }`(这一轮已经不能写了,或登记没成:不要再匿名下载)。
-   * `job` 是云端作业表里的那一条(只读它的 `id`、`url`、`quality`、`site`);`onProgress({ state, stage?, percent? })` 可选。
+   * Attempts to delegate a download to the initiator's computer. Returns `{ delegated: true, items }`
+   * (verified and registered), `{ delegated: false, why, note }` (delegation failed: caller proceeds
+   * with anonymous download in the cloud, `note` written into job notes; `note` being null means this
+   * link did not need delegation in the first place), or
+   * `{ delegated: false, stop: true, why, message }` (this run can no longer write, or registration
+   * failed: do not proceed with anonymous download).
+   * `job` is the entry in cloud jobs table (reads only its `id`, `url`, `quality`, `site`);
+   * `onProgress({ state, stage?, percent? })` is optional.
    */
   async function delegateDownload(context, job, args = {}, { signal = null, onProgress = () => {} } = {}) {
     if (closed) fail('collect-bridge-closed', 503);
     let site = null;
     try { site = loginSiteOf(job.url); } catch { site = null; }
-    // 不属于有登录支持的站点:就是缺省的云端匿名下载,不打扰发起人的页面
+    // Not belonging to a site with login support: defaults to cloud anonymous download without
+    // disturbing initiator page
     if (typeof site !== 'string' || !site) return notDelegated('no-login-site', null);
     let who;
     try { who = await bridge.initiator(context); } catch (error) { if (revoked(error)) return stopped('run-revoked', COLLECT_BRIDGE_TEXT.revoked); return notDelegated('initiator-offline'); }
@@ -430,14 +484,14 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
     if (signal?.aborted) entry.abort.abort();
     const local = entry.abort.signal;
     let seq = 0;
-    const progress = (value) => { try { onProgress(value); } catch { /* 调用方的事 */ } };
+    const progress = (value) => { try { onProgress(value); } catch { /* Caller concerns */ } };
     const end = (state, why, outcome) => {
       mark(id, state, why);
       say('agent.collect.delegate', { projectId: context.projectId, runId: context.runId, state, why });
       return outcome;
     };
-    /** 让本机停下(尽力而为:页面不在就算了,它那边到时限自己收) */
-    const cancelPage = async () => { try { await ask(context, 'collect_delegate_cancel', { delegationId: id }, `${id}-x`); } catch { /* 这一轮已经不在了 */ } };
+    /** Stops local machine (best effort: ignored if page is absent; it cleans up itself upon timeout) */
+    const cancelPage = async () => { try { await ask(context, 'collect_delegate_cancel', { delegationId: id }, `${id}-x`); } catch { /* This run is gone */ } };
     try {
       let out;
       try {
@@ -449,7 +503,7 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
         if (revoked(error)) return end('cancelled', 'run-revoked', stopped('run-revoked', COLLECT_BRIDGE_TEXT.revoked));
         return end('fallback', 'initiator-offline', notDelegated('initiator-offline'));
       }
-      if (local.aborted) { await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', '已取消')); }
+      if (local.aborted) { await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', 'Cancelled')); }
       if (!out.delivered) return end('fallback', 'initiator-offline', notDelegated('initiator-offline'));
       if (out.answer.ok !== true) {
         const why = out.answer.code === 'unsupported' ? 'page-without-local-collect' : 'failed';
@@ -466,8 +520,8 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
       let lastSeen = started;
       for (;;) {
         await pause(limits.pollMs, local);
-        if (closed) return stopped('host-close', '云端 Agent 服务正在关闭,这次下载中断了。');
-        if (local.aborted) { await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', '已取消')); }
+        if (closed) return stopped('host-close', 'The Cloud Agent service is shutting down, so this download was interrupted.');
+        if (local.aborted) { await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', 'Cancelled')); }
         if (Number(now()) - started > limits.delegateMs) { await cancelPage(); return end('fallback', 'timeout', notDelegated('timeout')); }
         let poll;
         try { poll = await ask(context, 'collect_delegate_poll', { delegationId: id }, `${id}-p${seq++}`, local); } catch (error) {
@@ -475,17 +529,20 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
           poll = { delivered: false, offline: true, why: 'authority-unavailable', state: 'offline' };
         }
         if (!poll.delivered) {
-          if (local.aborted || poll.state === 'cancelled') { if (local.aborted) await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', '已取消')); }
-          // 交回时被拒(对话转私有、被停止、发起人被踢出、授权换了栅栏、答案不合规矩):这一次委托到此为止,晚到的回执不登记
+          if (local.aborted || poll.state === 'cancelled') { if (local.aborted) await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', 'Cancelled')); }
+          // Rejected upon return (chat turned private, stopped, initiator kicked, authorization fence
+          // changed, invalid response): this delegation ends here; late receipts are not registered
           if (poll.state === 'rejected') {
             await cancelPage();
             const why = poll.why === 'result-invalid' ? 'receipt-invalid' : `late-${codeOf(poll.why, 'rejected')}`.slice(0, 40);
-            // 这一轮自己也不能写了(被停止、被撤销):不再退回去匿名下载;还能写(例如主人把自己的对话转私有)才接着匿名
+            // This run itself can no longer write (stopped, revoked): do not fall back to anonymous download;
+            // continue anonymous download only if still writable (e.g. owner turns own chat private)
             if (!(await canWrite(context))) return end('rejected', why, stopped('run-revoked', COLLECT_BRIDGE_TEXT.revoked));
             return end('rejected', why, notDelegated(poll.why === 'result-invalid' ? 'receipt-invalid' : 'failed'));
           }
           if (['initiator-revoked', 'no-page'].includes(poll.why)) return end('fallback', 'initiator-offline', notDelegated('initiator-offline'));
-          // 页面一时连不上(断线重连、文档服务一时答不上):宽限内接着问;整次委托的时限先到就按超时办
+          // Page temporarily unreachable (reconnecting, document service temporarily unresponsive): keep
+          // querying within grace period; treated as timed out if overall delegation deadline arrives first
           if (Number(now()) - started > limits.delegateMs) { await cancelPage(); return end('fallback', 'timeout', notDelegated('timeout')); }
           if (Number(now()) - lastSeen > limits.offlineGraceMs) return end('fallback', 'initiator-offline', notDelegated('initiator-offline'));
           continue;
@@ -510,7 +567,10 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
 
   const knownSite = (value) => (typeof value === 'string' && siteNamesSet().has(value) ? value : siteNames()[0]);
 
-  /** `collect_login`:让发起页打开本机的登录窗口。云端只拿回「开没开」「是不是已经登录」 */
+  /**
+   * `collect_login`: asks initiator page to open local login window. The cloud only receives "whether
+   * opened" and "whether already logged in"
+   */
   async function login(context, args = {}, { signal = null, requestId = `cl-${randomBytes(12).toString('hex')}` } = {}) {
     if (closed) fail('collect-bridge-closed', 503);
     const site = knownSite(args?.site);
@@ -529,7 +589,10 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
     return { ok: true, site, visible: true, onInitiatorComputer: true, hint: COLLECT_BRIDGE_TEXT.loginOpened };
   }
 
-  /** `collect_login_check`:查发起人电脑上的登录态。云端只拿回「登没登」「是不是过期了」 */
+  /**
+   * `collect_login_check`: checks login state on initiator's computer. The cloud only receives
+   * "whether logged in" and "whether expired"
+   */
   async function loginCheck(context, args = {}, { signal = null, requestId = `cl-${randomBytes(12).toString('hex')}` } = {}) {
     if (closed) fail('collect-bridge-closed', 503);
     const site = knownSite(args?.site);
@@ -546,7 +609,10 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
     return { ok: true, site, loggedIn: false, ...(r.expired ? { expired: true } : {}), onInitiatorComputer: true, hint: r.expired ? COLLECT_BRIDGE_TEXT.loginExpired : COLLECT_BRIDGE_TEXT.loginMissing };
   }
 
-  /** 一个云端作业的委托记录(重启后也查得到);没有委托过回 null。只回本项目本对话的 */
+  /**
+   * Delegation record for a cloud job (findable even after restart); returns null if never delegated.
+   * Only returns records for this project and this chat
+   */
   function delegationOf(scope, jobId) {
     if (typeof scope?.projectId !== 'string' || typeof scope?.conversationId !== 'string' || typeof jobId !== 'string') return null;
     let row = null;
@@ -554,7 +620,10 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
     return row ? viewOf(row) : null;
   }
 
-  /** 这一轮结束或被叫停:在等的委托全部收掉(宿主在收尾与控制通道里调,与 `bridge.cancelRun` 一起) */
+  /**
+   * When this run ends or is halted: clean up all pending delegations (called by host during teardown
+   * and control channel, alongside `bridge.cancelRun`)
+   */
   function cancelRun(scope) {
     let count = 0;
     for (const entry of [...live]) {
@@ -567,7 +636,7 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
     return count;
   }
 
-  /** 绑到一轮上的那一份,交给 `hosted-collect.mjs` 的 `delegate` */
+  /** The portion bound to a run, passed to `delegate` of `hosted-collect.mjs` */
   function forRun(context) {
     return Object.freeze({
       download: (job, args, options) => delegateDownload(context, job, args, options),
@@ -581,8 +650,8 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
     closed = true;
     for (const entry of [...live]) entry.abort.abort();
     await Promise.allSettled([...settling.values()].map((s) => s.promise));
-    try { db.prepare(`UPDATE collect_delegations SET state='interrupted', reason='host-close', updated_at=? WHERE state IN ('asking','downloading','verifying','registering')`).run(Number(now())); } catch { /* 已经关了 */ }
-    try { db.close(); } catch { /* 已经关了 */ }
+    try { db.prepare(`UPDATE collect_delegations SET state='interrupted', reason='host-close', updated_at=? WHERE state IN ('asking','downloading','verifying','registering')`).run(Number(now())); } catch { /* Already closed */ }
+    try { db.close(); } catch { /* Already closed */ }
     say('agent.collect.delegate.closed', { reason });
     return { childrenClosed: true, streamsClosed: true, workPending: live.size };
   }

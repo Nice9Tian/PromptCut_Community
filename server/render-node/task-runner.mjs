@@ -1,63 +1,87 @@
 /**
- * 细任务的执行编排(M7 契约 D11 (a):从 `local-node.mjs` 抽出来的同构模块,桌面与页面的纯浏览器节点共用)。
+ * Execution arrangement of fine-grained tasks (M7 contract D11 (a): isomorphic module extracted
+ * from `local-node.mjs`, shared between desktop and page pure browser nodes).
  *
- * 不引任何模块:不引 `split.mjs`、队列本体、`fingerprint.mjs`,没有 `node:` 内置模块,不开计时器、不读环境变量,
- * 所以能原样进页面构建。切分(`plan` 任务)不在这里:桌面的 `local-node.mjs` 经 `executePlan` 注入;
- * 纯浏览器不认领 plan(设计 4.3 规则 6),页面不给 `executePlan`,真收到 plan 就按不可重试失败处理。
+ * Imports no modules: does not import `split.mjs`, the queue core, or `fingerprint.mjs`, has no
+ * `node:` built-in modules, sets no timers, and reads no environment variables, so it can enter
+ * the page build as-is. Splitting (`plan` tasks) is not here: desktop `local-node.mjs` injects it
+ * via `executePlan`; pure browsers do not claim plan (Design 4.3 Rule 6), the page does not provide
+ * `executePlan`, and if a plan is actually received it is treated as a non-retryable failure.
  *
- * # 认领到一个细任务之后(与 M3 起 local-node 的做法相同,契约 D.2)
+ * # After claiming a fine-grained task (same practice as local-node since M3, contract D.2)
  *
- *   开工先同步报一次进度 0:队列的停滞规则只在 done !== null 时生效,执行器卡死又从不报进度时也回收得到。
- *   sink.has 为真就直接 complete(dedup,带 sink.resultFor 的清单);否则 executor.render → sink.put →
- *   收全才 complete(带 put 回的清单),没收全 fail(可重试)。sink 收到的 ref 带任务的 input 与 requires(契约 J.3)。
- *   出错 fail,`error.retryable === false` 才不可重试。
- *   执行器抛的错带 `superseded === true`(这份内容已被新版本取代,`render-queue-contract.md` J.15):同样发 `task.fail`,
- *   但 error 固定为 `'superseded'`、不可重试(队列按这个 error 认作废),诊断事件是 `superseded` 而不是 `failed`。
+ *   Before starting work, synchronously report progress 0 once: queue stall rules take effect only
+ *   when done !== null, allowing recovery even if the executor freezes and never reports progress.
+ *   If sink.has is true, complete directly (dedup, with manifest from sink.resultFor); otherwise
+ *   executor.render → sink.put → complete only after collecting everything (with manifest returned
+ *   from put); fail if not fully collected (retryable). The ref received by sink includes the
+ *   task's input and requires (contract J.3).
+ *   On error, fail; non-retryable only when `error.retryable === false`.
+ *   If error thrown by the executor has `superseded === true` (this content has been superseded by
+ *   a newer version, `render-queue-contract.md` J.15): still send `task.fail`, but error is fixed to
+ *   `'superseded'` and non-retryable (the queue recognizes invalidation by this error), and the
+ *   diagnostic event is `superseded` rather than `failed`.
  *
- * # 「仍持有」与迟到的结果
+ * # "Still holding" and late results
  *
- * 每个认领开一次「执行」(run),带自己的令牌和 AbortController。执行里每个 await 落定后,往队列发任何消息之前
- * 都要重新判一次仍持有:没有 stop、本次执行没被中止、在跑表里的仍是这一次执行,且 `session.held()` 里有同 id、
- * 同令牌的持有。判完到发消息之间不 await。判不过就丢弃结果、报 `discarded`,不发任何消息;已经推到产物库的产物
- * 不回收(按内容寻址,下一个认领者查 `has` 会直接完成)。
+ * Each claim starts one "run" with its own token and AbortController. In the run, after each await
+ * settles and before sending any message to the queue, recheck "still holding": not stopped, this
+ * run has not been aborted, the running table still contains this run, and `session.held()` has a
+ * holding with matching id and token. Do not await between checking and sending messages. If the
+ * check fails, discard the result and report `discarded` without sending any messages; artifacts
+ * already pushed to the sink are not reclaimed (content-addressed; the next claimer checking `has`
+ * completes directly).
  *
- * 对注入接口的每次等待都和中止信号赛跑(`untilAborted`):执行器或产物库不理会中止、一直不返回,这次执行也会在
- * 中止时落定(`settled()` 不会被卡死的执行器拖住),之后它再返回什么都被丢弃。
+ * Every wait on injected interfaces races against the abort signal (`untilAborted`): if the
+ * executor or sink ignores abort and never returns, this run also settles upon abort (`settled()`
+ * will not be blocked by a frozen executor), and anything it returns afterwards is discarded.
  *
- * # 阶段与收尾事件的诊断(`docs/archive/agent-reports/AGENT-stall-phases.md`)
+ * # Diagnostics of phases and finalization events (`docs/archive/agent-reports/AGENT-stall-phases.md`)
  *
- * 每次执行记它此刻在哪个阶段:`dedup`(`sink.has`)、`manifest`(`sink.resultFor`)、`render`(`executor.render`)、
- * `push`(`sink.put`)、`plan`(切分)。执行器与产物库可以经多给的回调报细一层的位置(执行器的第二个参数里
- * `phase(name, fields)`;产物库 `put` 的第二个参数里 `report({ stage, blocks, pushed, bytes })`),不用也照常工作。
- * `lost`、`discarded`、`failed`、`completed`、`dedup` 事件带上:阶段 `phase` 与细分 `detail`、帧数 `done`、
- * 距上次帧数变化 `sinceDoneMs`、距认领 `sinceClaimMs`、在这一阶段多久 `phaseMs`;推送阶段另带
- * `push: { blocks, pushed, bytes, ms }`。时刻由注入的 `now` 取(缺省 `Date.now`),不开计时器。
+ * Each run records which phase it is currently in: `dedup` (`sink.has`), `manifest`
+ * (`sink.resultFor`), `render` (`executor.render`), `push` (`sink.put`), `plan` (splitting). The
+ * executor and sink can report a more granular position via extra callbacks (`phase(name, fields)`
+ * in the executor's second parameter; `report({ stage, blocks, pushed, bytes })` in the sink
+ * `put`'s second parameter), working normally even if omitted. The `lost`, `discarded`, `failed`,
+ * `completed`, and `dedup` events include: phase `phase` and sub-division `detail`, frame count
+ * `done`, time elapsed since last frame change `sinceDoneMs`, time elapsed since claim
+ * `sinceClaimMs`, duration in this phase `phaseMs`; the push phase additionally includes
+ * `push: { blocks, pushed, bytes, ms }`. Timestamps are obtained from injected `now` (defaulting to
+ * `Date.now`), setting no timers.
  *
- * # 工作计数(契约 A.12〔裁〕)
+ * # Work count (contract A.12 [ruling])
  *
- * 换阶段、执行器报一步(出一批帧、换一个细分位置)、产物库每推完一块,都调一次会话的 `advance(id)`(会话没有这个方法就不调):
- * 队列按它判「还在报进度」,推产物、渲完收尾这些帧数不变的阶段不再被当成卡死。执行器或产物库真卡死时这些回调都不来,
- * 计数不动,照旧在 STALL_MS 后按停滞收回(I8)。
- * `occupying()` 列出还没走到推送的执行(`{ id, kind, phase }`):独立渲染主机据此只在预渲染间空着时认领(`host.mjs`)。
+ * When changing phases, when the executor reports a step (outputting a batch of frames, changing to
+ * a new sub-division), or each time the sink finishes pushing a chunk, invoke `advance(id)` on the
+ * session once (omitted if session lacks this method): the queue uses it to determine "still
+ * reporting progress", so phases where frame count remains unchanged (such as pushing artifacts or
+ * post-render finalization) are no longer treated as frozen. If the executor or sink truly freezes,
+ * none of these callbacks arrive, the count does not advance, and the task is reclaimed as stalled
+ * after STALL_MS as before (I8).
+ * `occupying()` lists runs that have not yet reached push (`{ id, kind, phase }`): standalone
+ * render hosts use this to claim only when the prerender room is free (`host.mjs`).
  *
  * @typedef {object} TaskRunner
- * @property {(task: object, ctx: { token: number, browserFingerprints?: string[], browserCardEnvFingerprints?: string[] }) => void} onTask  会话的 onTask
- * @property {(id: string, reason: string) => void} onLost   会话的 onLost
+ * @property {(task: object, ctx: { token: number, browserFingerprints?: string[], browserCardEnvFingerprints?: string[] }) => void} onTask  session onTask
+ * @property {(id: string, reason: string) => void} onLost   session onLost
  * @property {(run: object) => boolean} holding
  * @property {(reason: string) => void} abortAll
- * @property {(reason?: string) => void} stop       停手:此后不再往队列发任何消息
- * @property {() => void} resume                    `stop` 之后重新开始(local-node 的 start)
+ * @property {(reason?: string) => void} stop       stop: send no further messages to the queue hereafter
+ * @property {() => void} resume                    restart after `stop` (start in local-node)
  * @property {() => boolean} stopped
- * @property {(id: string) => number | null} tokenOf   跑表里这个 id 的令牌(接续判断用)
+ * @property {(id: string) => number | null} tokenOf   token for this id in running table (for resume evaluation)
  * @property {() => string[]} running
- * @property {() => { id: string, kind: string, phase: string }[]} occupying   还没走到推送的执行
+ * @property {() => { id: string, kind: string, phase: string }[]} occupying   runs that have not yet reached push
  * @property {() => Promise<void>} settled
  */
 
-/** 中止时抛出的标记:赛跑输给中止信号,不是执行器自己的错误。 */
+/** Flag thrown on abort: lost race to abort signal, not the executor's own error. */
 export const ABORTED = Symbol('aborted');
 
-/** 等 promise 落定,或者等到中止信号,先到先算。信号已经中止就立即拒绝。 */
+/**
+ * Wait for promise to settle or wait for abort signal, whichever comes first. Reject immediately
+ * if signal is already aborted.
+ */
 export function untilAborted(work, signal) {
   if (signal.aborted) return Promise.reject(ABORTED);
   let onAbort;
@@ -65,12 +89,12 @@ export function untilAborted(work, signal) {
     onAbort = () => reject(ABORTED);
     signal.addEventListener('abort', onAbort, { once: true });
   });
-  // 执行器可能同步抛出,也可能返回非 Promise 的值:统一包成 Promise
+  // The executor may throw synchronously or return a non-Promise value: wrap uniformly into a Promise
   const settled = new Promise(resolve => resolve(work()));
   return Promise.race([settled, aborted]).finally(() => signal.removeEventListener('abort', onAbort));
 }
 
-/** sink 回的清单 → 可展开进 `complete` 结果的对象;不是普通对象(null、缺省、数组)就什么都不加。 */
+/** Manifest returned by sink → object spreadable into `complete` result; add nothing if not a plain object (null, omitted, array). */
 export function resultFields(result) {
   return result != null && typeof result === 'object' && !Array.isArray(result) ? result : {};
 }
@@ -80,19 +104,20 @@ export function resultFields(result) {
  * @param {string} options.nodeId
  * @param {() => { held(): { id: string, token: number }[], progress(id: string, done: number): boolean,
  *   complete(id: string, result?: object): boolean, fail(id: string, error?: string, retryable?: boolean): boolean }} options.session
- *   会话的取值函数(会话要 onTask / onLost,所以 runner 先建、会话后建)
+ *   Getter function for session (session needs onTask / onLost, so runner is created first, session second)
  * @param {{ render: (task: object, opts: { signal: AbortSignal, progress: (done: number) => void }) => Promise<unknown> }} options.executor
  * @param {{ has: Function, put: Function, resultFor?: Function }} options.sink
- * @param {(event: object) => void} [options.emit]   诊断事件(调用方负责吞掉它自己的异常)
- * @param {() => number} [options.now]   诊断用的时钟(缺省 `Date.now`)
+ * @param {(event: object) => void} [options.emit]   Diagnostic events (caller is responsible for swallowing its own exceptions)
+ * @param {() => number} [options.now]   Diagnostic clock (defaults to `Date.now`)
  * @param {(run: object, task: object, ctx: object) => Promise<void>} [options.executePlan]
- *   plan 任务怎么做(桌面给);它抛出的错误按细任务的规矩 fail。不给时 plan 按不可重试失败处理
+ *   How to execute plan tasks (provided by desktop); errors it throws fail according to
+ *   fine-grained task rules. When omitted, plan is treated as a non-retryable failure
  * @returns {TaskRunner}
  */
 export function createTaskRunner({ nodeId, session, executor, sink, emit = () => {}, executePlan = null, now = Date.now }) {
-  /** 在跑表:id → 当前这一次执行 { id, token, kind, controller }。中止即移出 */
+  /** Running table: id → current execution { id, token, kind, controller }. Removed on abort */
   const active = new Map();
-  /** 还没落定的执行(含已中止、还在收尾的),供 `settled()` 等 */
+  /** Executions not yet settled (including aborted, still finalizing), for `settled()` to wait on */
   const pending = new Set();
   let stopped = false;
 
@@ -109,15 +134,17 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
     try { const t = now(); return Number.isFinite(t) ? t : Date.now(); } catch { return Date.now(); }
   };
 
-  /** 工作推进了一步(见文件头「工作计数」):仍持有才记 */
+  /** Work progressed by one step (see "Work count" in file header): recorded only if still held */
   function touch(run) {
     if (!holding(run)) return;
-    try { session().advance?.(run.id); } catch { /* 会话坏了:续约照样会失败,由队列按租约收回 */ }
+    try { session().advance?.(run.id); } catch { /* Session broken: renewal will also fail; reclaimed by queue according to lease */ }
   }
 
   /**
-   * 进入一个阶段(诊断);细一层的位置清空。换阶段也算工作推进了一步,并且当场报一次进度(带新的计数):
-   * 下一步若卡死,停滞计时从这一刻算起,不用等下一次续约(I8 的收回时刻不因计数推迟)。
+   * Enter a stage (diagnostic); clear fine-grained location. Changing stages also counts as one
+   * step of work progress, and immediately reports progress on the spot (with the new count):
+   * if the next step hangs, stagnation timing starts from this moment without waiting for the next
+   * renewal (I8 reclaim time is not postponed by the count).
    */
   function enter(run, phase) {
     run.phase = phase;
@@ -125,10 +152,10 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
     run.detail = null;
     touch(run);
     if (!holding(run)) return;
-    try { session().progress(run.id, run.done); } catch { /* 连接坏了:由执行里的异常处理或队列的租约收尾 */ }
+    try { session().progress(run.id, run.done); } catch { /* Connection broken: finalized by error handling in execution or by queue lease */ }
   }
 
-  /** 执行器、产物库报的细一层位置(诊断):只留名字和数字字段 */
+  /** Fine-grained location reported by executor/sink (diagnostic): keep only name and numeric fields */
   function note(run, name, fields) {
     if (typeof name !== 'string' || !name) return;
     const detail = { name: name.slice(0, 40) };
@@ -139,7 +166,7 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
     touch(run);
   }
 
-  /** 事件里带的执行诊断(见文件头) */
+  /** Execution diagnostics included in events (see file header) */
   function info(run) {
     const t = clock();
     const out = {
@@ -154,7 +181,7 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
     return out;
   }
 
-  /** 产物库 `put` 的进度回调:推送开始时给总块数,每推完一块给已推块数 */
+  /** Progress callback for sink `put`: gives total chunks when push starts, completed chunks after each */
   function pushReport(run) {
     return (update) => {
       if (!update || typeof update !== 'object' || !run.push || run.controller.signal.aborted) return;
@@ -165,7 +192,7 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
     };
   }
 
-  /** 仍持有:见文件头。同步判定,判完到发消息之间不能 await。 */
+  /** Still held: see file header. Evaluated synchronously; cannot await between check and message send. */
   function holding(run) {
     if (stopped || run.controller.signal.aborted || active.get(run.id) !== run) return false;
     return session().held().some(hold => hold.id === run.id && hold.token === run.token);
@@ -174,21 +201,22 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
   function onTask(task, ctx = {}) {
     const id = task?.id;
     if (id == null) return;
-    // 同一 id 还挂着旧的执行:它的持有已经没了(否则会话不会再调 onTask),先中止
+    // Same id still has an old execution attached: its hold is already gone (otherwise session
+    // would not call onTask again), abort first
     const previous = active.get(id);
     if (previous) abortRun(previous, 'reclaimed');
     const at = clock();
     const run = {
       id, token: ctx.token, kind: task.kind, controller: new AbortController(),
-      // 诊断(见文件头「阶段与收尾事件的诊断」)
+      // Diagnostics (see "Diagnostics for stage and finalization events" in file header)
       claimedAt: at, phase: 'start', phaseAt: at, detail: null, done: 0, doneAt: at, push: null,
     };
     active.set(id, run);
-    // 开工先报一次进度 0(契约 D.2〔裁〕)
+    // Report progress 0 first upon starting work (contract D.2 [ruling])
     try {
       session().progress(id, 0);
     } catch {
-      // 连接已坏:后面的发送同样会失败,由执行里的异常处理收尾
+      // Connection broken: subsequent sends will also fail; finalized by error handling in execution
     }
     const done = execute(run, task, ctx).then(() => {
       if (active.get(id) === run) active.delete(id);
@@ -204,7 +232,7 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
     emit({ type: 'lost', id, reason, ...diag });
   }
 
-  /** 一次执行。从不拒绝:所有异常都在这里收掉。 */
+  /** A single execution. Never rejects: all exceptions are caught here. */
   async function execute(run, task, ctx) {
     const { id } = run;
     const { signal } = run.controller;
@@ -216,20 +244,21 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
       if (task.kind === 'plan') {
         enter(run, 'plan');
         if (typeof executePlan !== 'function') {
-          throw Object.assign(new Error('这个节点不切分 plan 任务'), { retryable: false });
+          throw Object.assign(new Error('This node does not split plan tasks'), { retryable: false });
         }
         await executePlan(run, task, ctx);
         return;
       }
 
       const { resultKey, kind, range } = task;
-      // input / requires 原样带上:本地档的落盘键要用 input.entryKey、input.contentKey、
-      // requires.envFingerprint,canvasHeavy 取 input.canvasHeavy(C6.2 第 11 节第 2、3 条,J.3)
+      // Pass input / requires as is: local tier disk-commit keys require input.entryKey, input.contentKey,
+      // requires.envFingerprint, and canvasHeavy uses input.canvasHeavy (C6.2 section 11 items 2 and 3, J.3)
       const ref = { resultKey, kind, tier: task.tier ?? null, range, input: task.input, requires: task.requires };
       const ranges = [[range?.from, range?.to]];
 
       enter(run, 'dedup');
-      // 产物库查的时候可能顺手把本机已有、素材服务上缺的块补推(AGENT-sink-has):每处理完一块也算工作推进了一步
+      // When checking, sink may opportunistically push chunks present locally but missing on asset service
+      // (AGENT-sink-has): each chunk processed also counts as one step of work progress
       const dedupReport = (update) => {
         if (signal.aborted || !update || typeof update !== 'object') return;
         if (typeof update.stage === 'string') note(run, update.stage);
@@ -238,8 +267,9 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
       const have = await untilAborted(() => sink.has({ ...ref }, { signal, report: dedupReport }), signal);
       if (!holding(run)) return discard();
       if (have === true) {
-        // 去重完成也带清单,订阅方才拉得到(C6.4 第 3 节);sink 没有 resultFor 时照旧(D.2)
-        // resultFor 抛错算「没有清单」:照旧以去重方式完成,不让任务失败(契约 J.10)
+        // Deduplicated completion also includes manifest so subscribers can fetch it (C6.4 section 3);
+        // when sink has no resultFor, proceed as before (D.2). resultFor throwing counts as "no manifest":
+        // complete via deduplication as before without failing the task (contract J.10)
         let manifest = null;
         if (typeof sink.resultFor === 'function') {
           enter(run, 'manifest');
@@ -262,7 +292,7 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
         touch(run);
         if (holding(run)) session().progress(id, done);
       };
-      // 执行器报细一层的位置(诊断,可以不调)
+      // Executor reports fine-grained location (diagnostic, can be omitted)
       const phase = (name, fields) => { if (!signal.aborted) note(run, name, fields); };
       enter(run, 'render');
       const artifacts = await untilAborted(() => executor.render(task, { signal, progress, phase }), signal);
@@ -279,22 +309,24 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
       if (!holding(run)) return discard();
       if (r?.complete !== true) {
         session().fail(id, 'sink-incomplete', true);
-        // 产物库说了为什么没收全(缺帧、缺小尺寸、推送出错)就一并记下;报给队列的 error 仍是 sink-incomplete
+        // If sink specified why it was incomplete (missing frames, missing small size, push error),
+        // record together; error reported to queue remains sink-incomplete
         const why = typeof r?.reason === 'string' && r.reason ? { why: r.reason.slice(0, 300) } : {};
         emit({ type: 'failed', id, error: 'sink-incomplete', retryable: true, ...why, ...info(run) });
         return;
       }
-      // put 回的清单(C6.2 第 3 节)展开进 task.done 的 result(J.3)
+      // Manifest returned by put (C6.2 section 3) is spread into result of task.done (J.3)
       session().complete(id, { ranges, ...resultFields(r.result) });
       emit({ type: 'completed', id, ...info(run) });
     } catch (error) {
       if (error === ABORTED || !holding(run)) return discard();
-      // 这份内容已被新版本取代(执行器判的,契约 J.15):报给队列作废(error 固定为 'superseded'、不可重试),不算失败
+      // This content has been superseded by a newer version (determined by executor, contract J.15):
+      // report to queue as invalidated (error fixed to 'superseded', non-retryable), not counted as failure
       if (error?.superseded === true) {
         try {
           session().fail(id, 'superseded', false);
         } catch {
-          // 连接已坏:同下,队列会按租约或断开回收
+          // Connection broken: same as below, queue will reclaim by lease or disconnection
         }
         emit({ type: 'superseded', id, ...(typeof error.detail === 'string' && error.detail ? { why: error.detail.slice(0, 300) } : {}), ...info(run) });
         return;
@@ -304,7 +336,8 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
       try {
         session().fail(id, message, retryable);
       } catch {
-        // 连发失败都做不到(连接已坏):持有已经从会话里移除,队列会按租约或断开回收
+        // Cannot even send failure (connection broken): hold already removed from session,
+        // queue will reclaim by lease or disconnection
       }
       emit({ type: 'failed', id, error: message, retryable, ...info(run) });
     }
@@ -323,7 +356,7 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
     stopped: () => stopped,
     tokenOf: id => active.get(id)?.token ?? null,
     running: () => [...active.keys()].sort(),
-    /** 还没走到推送的执行(见文件头「工作计数」) */
+    /** Executions that have not yet reached push (see "Work count" in file header) */
     occupying: () => [...active.values()].filter(run => run.phase !== 'push').map(({ id, kind, phase }) => ({ id, kind, phase })),
     settled: async () => { await Promise.all([...pending]); },
   };

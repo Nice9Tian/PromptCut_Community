@@ -10,18 +10,19 @@ import { useReadOnly } from "../readOnly";
 import { tr as trText } from "../../i18n/index.ts";
 
 /**
- * 字幕分区的主体:一棵两级树。
- * 父节点是「转写来自哪个视频」,子节点才是段落。
- * 这样一次搜索能扫过所有素材,不必先切素材再找;点一段仍然把播放头挪到时间轴上对应位置。
+ * Main body of the captions section: a two-level tree.
+ * Parent nodes are "which video the transcript came from", child nodes are the paragraphs.
+ * This way one search scans all media without having to pick a media first; clicking a paragraph
+ * still moves the playhead to the matching position on the timeline.
  */
 
-/** 一个素材节点 + 它当前该显示的段落(搜索过后可能只剩命中的那几条) */
+/** A media node + the paragraphs it should currently show (after a search it may keep only the matching ones) */
 interface CaptionNode {
   media: MediaAsset;
-  /** 带原始下标:点击定位、调试属性都按原始下标走,不受过滤影响 */
+  /** Carries the original index: click-to-seek and debug attributes use the original index, unaffected by filtering */
   rows: { seg: TranscriptSegment; index: number }[];
   total: number;
-  /** 搜索时这个素材还该不该出现在树里 */
+  /** Whether this media should still appear in the tree during a search */
   matched: boolean;
 }
 
@@ -35,37 +36,37 @@ export function CaptionsTab({
   search: string;
   mediaId: string | null;
   onPick: (id: string | null) => void;
-  /** 空态里「前往导入」:切到素材库分区 */
+  /** "Go to import" in the empty state: switch to the media library section */
   onGoImport?: () => void;
-  /** 外部(右键「转写字幕」)请求聚焦时 +1:把 mediaId 那一项展开并滚进视野 */
+  /** Incremented when something outside (right-click "Transcribe captions") asks for focus: expands the mediaId item and scrolls it into view */
   revealToken?: number;
 }) {
   const project = useStore((s) => s.project);
   const t = useStore((s) => s.t);
-  /** 正在重转写的素材:它的段落先让位给 TranscribePanel */
+  /** Media being re-transcribed: its paragraphs give way to TranscribePanel for now */
   const [retranscribeId, setRetranscribeId] = useState<string | null>(null);
-  /** 「铺成字幕轨」的结果提示,几秒后自己消失 */
+  /** Result notice for "Lay out as captions track", which disappears on its own after a few seconds */
   const [flash, setFlash] = useState<string | null>(null);
-  /** 手动折叠/展开的记录。浏览态和搜索态各记一份,免得互相干扰 */
+  /** Record of manual collapse/expand. Browse mode and search mode keep separate copies so they don't interfere */
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
   const [searchOpenMap, setSearchOpenMap] = useState<Record<string, boolean>>({});
 
   const q = search.trim().toLowerCase();
-  // 图片没有声音,转写对它没有意义:字幕页只列视频和配乐
+  // Images have no sound, so transcribing them is meaningless: the captions page lists only videos and soundtracks
   const spoken = useMemo(() => project.media.filter((m) => m.kind !== "image"), [project.media]);
 
   useEffect(() => {
-    // 选中的素材被删了(或者是张图片)就退回第一条
+    // If the selected media was deleted (or is an image), fall back to the first one
     if (mediaId && !spoken.some((m) => m.id === mediaId)) onPick(spoken[0]?.id ?? null);
   }, [mediaId, spoken, onPick]);
 
   useEffect(() => {
-    // 换搜索词就把手动折叠清掉,否则上一轮折起来的节点会把这一轮的命中藏住
+    // Clear manual collapses when the search term changes, otherwise nodes collapsed in the previous round would hide this round's hits
     setSearchOpenMap({});
   }, [q]);
 
   useEffect(() => {
-    // 外部请求聚焦:哪怕之前手动折起来过,也要展开,并滚到那一项
+    // External focus request: expand even if it was manually collapsed before, and scroll to that item
     if (!revealToken || !mediaId) return;
     setOpenMap((prev) => ({ ...prev, [mediaId]: true }));
     setSearchOpenMap((prev) => ({ ...prev, [mediaId]: true }));
@@ -82,7 +83,7 @@ export function CaptionsTab({
     return () => clearTimeout(id);
   }, [flash]);
 
-  /** 把一份文字稿铺成时间轴上的字幕轨(建/复用字幕序列 + 一张字幕卡) */
+  /** Lay a transcript out as a captions track on the timeline (create/reuse a captions track + one captions card) */
   const build = (id: string) => {
     const r = actions.buildCaptions(id);
     setFlash(r.ok ? trText("Placed {0} captions on the \"Captions\" track", r.count) : r.reason);
@@ -94,7 +95,7 @@ export function CaptionsTab({
         const segments = media.transcript?.segments ?? [];
         const all = segments.map((seg, index) => ({ seg, index }));
         if (!q) return { media, rows: all, total: segments.length, matched: true };
-        // 素材名命中就整份留下,省得用户搜到视频名却看不见它的段落
+        // If the media name matches, keep the whole media, so a user who searches a video name doesn't see its paragraphs vanish
         const nameHit = media.name.toLowerCase().includes(q);
         const rows = nameHit ? all : all.filter(({ seg }) => seg.text.toLowerCase().includes(q));
         return { media, rows, total: segments.length, matched: nameHit || rows.length > 0 };
@@ -129,12 +130,12 @@ export function CaptionsTab({
     );
   }
 
-  // mediaId 还兼着「导入的 .srt 挂到哪」,没选过就落到第一份有转写的素材上
+  // mediaId also decides "where the imported .srt attaches"; if none was ever selected, fall back to the first media that has a transcript
   const focusId = mediaId ?? spoken.find((m) => m.transcript)?.id ?? spoken[0]?.id ?? null;
   const visible = q ? nodes.filter((n) => n.matched) : nodes;
   const nothingTranscribed = spoken.every((m) => !m.transcript);
 
-  /** 默认只展开当前聚焦的那份;搜索时改成「有命中就展开」,素材和段落再多也不会一屏全铺开 */
+  /** By default only the currently focused one is expanded; during a search it becomes "expand if there are hits", so even with lots of media and paragraphs it never fills the whole screen */
   const isOpen = (n: CaptionNode) =>
     q ? (searchOpenMap[n.media.id] ?? n.rows.length > 0) : (openMap[n.media.id] ?? n.media.id === focusId);
 
@@ -166,7 +167,7 @@ export function CaptionsTab({
               t={t}
               retranscribing={retranscribeId === node.media.id}
               onToggle={(open) => {
-                // 展开/点父节点也要认领焦点,导入 srt 才知道该挂到谁身上
+                // Expanding / clicking the parent node must also claim focus, so importing an srt knows who to attach to
                 onPick(node.media.id);
                 setOpen(node.media.id, open);
               }}
@@ -189,7 +190,7 @@ export function CaptionsTab({
   );
 }
 
-/** 一个素材父节点:头一行是视频名 + 段数,展开后是它的段落(或转写面板) */
+/** A media parent node: the first row is the video name + paragraph count, and expanding it shows its paragraphs (or the transcribe panel) */
 function MediaNode({
   node,
   open,
@@ -213,16 +214,16 @@ function MediaNode({
   retranscribing: boolean;
   onToggle: (open: boolean) => void;
   onRetranscribe: () => void;
-  /** 把这份文字稿铺成时间轴上的字幕轨 */
+  /** Lay this transcript out as a captions track on the timeline */
   onBuild: () => void;
   onCloseTranscribe: () => void;
   onPickSelf: () => void;
 }) {
   const { media, rows, total } = node;
-  // 这个项目只给了只读权限(游客):文字稿照常看、点段落照常跳,但转写、铺字幕轨、重新转写都是写
+  // This project only grants read-only access (guest): the transcript can be read and paragraphs clicked to seek as usual, but transcribing, laying out a captions track and re-transcribing are all writes
   const ro = useReadOnly();
   const transcript = media.transcript;
-  // 没转写的素材展开就直接给转写面板,原来那个入口不丢
+  // Expanding media that has no transcript goes straight to the transcribe panel, so the original entry point isn't lost
   const showPanel = !transcript || retranscribing;
 
   const count = filtering && rows.length !== total ? trText("{0}/{1} segments", rows.length, total) : trText("{0} segments", total);
@@ -270,8 +271,9 @@ function MediaNode({
                 {transcript.engine} · {transcript.model}
                 {transcript.language ? ` · ${transcript.language}` : ""}
               </span>
-              {/* 转写完了下一步就是「铺到时间轴上」。以前这一步只有 AI 会做,
-                  人在这儿看完文字稿就没路可走了 —— 现在一键建字幕卡,时间轴上就有字幕轨了 */}
+              {/* After transcription is complete, the next step is "place onto timeline". Previously only the AI
+                  could do this step, leaving humans with no way forward after reading the transcript here: now
+                  one click creates caption cards, and the timeline gets a captions track. */}
               <button
                 type="button"
                 className="ml-auto pc-left-btn is-sm"
@@ -323,12 +325,12 @@ function fmt(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/** 素材内的秒 → 时间轴上的秒(找引用它的片段,按 mediaOffset 换算);没放上时间轴就返回 null */
+/** Seconds within the media → seconds on the timeline (find the clip that references it and convert by mediaOffset); returns null if it isn't on the timeline */
 function timelineTimeOf(p: Project, mediaId: string, mediaSec: number): number | null {
   for (const tr of p.tracks) {
     for (const c of tr.clips) {
       if (c.mediaId !== mediaId) continue;
-      const tl = timelineTimeAt(c, mediaSec); // 含片段速度(kernel/clipTime.mjs)
+      const tl = timelineTimeAt(c, mediaSec); // Includes clip speed (kernel/clipTime.mjs)
       if (tl >= c.start - 1e-6 && tl < c.end) return tl;
     }
   }

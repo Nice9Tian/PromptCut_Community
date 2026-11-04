@@ -1,30 +1,35 @@
 /**
- * K1 探针记录的本机存档(`out/card-costs.json`)。
+ * Local archive of K1 probe records (`out/card-costs.json`).
  *
- * 存储本体在这里,HTTP 面在 `server/vite-plugin-costs.ts`。拆开是为了
- * `server/test/costs.test.mjs` 能直接测「按 (identityKey, device) 去重 / 旗标保留」这件事,
- * 不用起 dev server。
+ * The core storage lives here, while the HTTP surface is in `server/vite-plugin-costs.ts`.
+ * Splitting them allows `server/test/costs.test.mjs` to directly test "deduplication by
+ * (identityKey, device) / flag preservation" without starting a dev server.
  *
- * # 键
+ * # Keys
  *
- * `(identityKey, device)`。`identityKey` 已经把 fps、卡片参数、源码版本、审阅表、片段长度
- * 都吃进去了(`src/render/cardCostKey.mjs`),所以这里只补一个 `device` —— 换机器、换 GPU、
- * 换共享 WebGL 路线之后同一张卡的耗时完全不是一回事,必须重测(目标 K/K1)。
- * `device` 由页面侧算(UA + WebGL `UNMASKED_RENDERER_WEBGL` + 只有一个舞台(历史字段名,见 `src/render/costDevice.mjs`)/ `offscreenGl` / `glRoute`),
- * 服务端只当不透明字符串用,不解析。
+ * `(identityKey, device)`. `identityKey` already incorporates fps, card parameters, source version,
+ * review table, and clip length (`src/render/cardCostKey.mjs`), so only `device` is added here:
+ * after switching machines, switching GPUs, or changing shared WebGL routes, the execution time
+ * of the same card is completely different and must be re-measured (target K/K1).
+ * `device` is calculated on the page side (UA + WebGL `UNMASKED_RENDERER_WEBGL` + only one stage
+ * (legacy field name, see `src/render/costDevice.mjs`) / `offscreenGl` / `glRoute`),
+ * and the server uses it as an opaque string without parsing it.
  *
- * # 为什么 `demoted` / `pinnedHeavy` 要粘住
+ * # Why `demoted` / `pinnedHeavy` must be sticky
  *
- * 这两面旗不是探针写的:`demoted` 是 K6 的实时降级(播放中累计超时把一张轻卡打成重卡),
- * `pinnedHeavy` 是人工钉死。探针复测同一张卡时上报的记录里根本没有这两个字段,
- * 照字面覆盖就等于每次重测都把降级记录抹掉 —— K1 的「已有记录且 demoted !== true 才跳过」
- * 会因此永远命中,被降级的卡再也测不出新成绩。所以:**新记录没有显式带这个字段,就沿用旧的**;
- * 显式带了(哪怕是 `false`)就以新的为准。
+ * These two flags are not written by probes: `demoted` is K6 runtime downgrade (accumulated playback
+ * timeouts reclassify a light card as a heavy card), and `pinnedHeavy` is manually pinned. When the
+ * probe re-tests the same card, the reported record does not contain these two fields at all;
+ * overwriting literally would erase downgrade records on every re-test: K1's "skip only if record
+ * exists and demoted !== true" would therefore always hit, and downgraded cards would never get new
+ * benchmark results. Therefore: **if a new record does not explicitly carry this field, keep the old
+ * one**; if explicitly carried (even if `false`), use the new one.
  *
- * # 写法
+ * # Write strategy
  *
- * 先写同目录的临时文件再 rename —— 两个进程(编辑器 + 预渲染)各写各的副本,
- * 但同一个进程里 PUT 可能并发,半截 JSON 会让下一次 `loadCosts` 整份读空。
+ * Write to a temp file in the same directory first, then rename: the two processes (editor +
+ * prerender) each write their own replica, but PUT requests within the same process may be
+ * concurrent, and a half-written JSON would cause the next `loadCosts` to read an empty file.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,7 +39,7 @@ import { resolveTuning } from '../src/render/pipelineTuning.mjs';
 const FILE_NAME = 'card-costs.json';
 const TUNING_FILE_NAME = 'pipeline-tuning.json';
 
-/** 记录落在哪。开发期 dataDir 就是 `<root>/out`;正式包里 PROMPTCUT_DATA_DIR 指向 %LOCALAPPDATA% */
+/** Where records are saved. During development `dataDir` is `<root>/out`; in release packages PROMPTCUT_DATA_DIR points to %LOCALAPPDATA% */
 export function costsDir(root) {
   return process.env.PROMPTCUT_DATA_DIR || path.join(root, 'out');
 }
@@ -43,20 +48,24 @@ export function costsPath(root) {
 }
 
 /**
- * K2 可调系数的覆盖值(`out/pipeline-tuning.json`)。**没有这个文件 = 全用缺省。**
+ * Override values for K2 adjustable coefficients (`out/pipeline-tuning.json`).
+ * **No such file = use all defaults.**
  *
- * 为什么和成本记录同一条路回:`planPipelines` 在页面和预渲染进程各算一次,两端必须用
- * **同一份系数**,否则算不出同一张表(任务书 K2「可调系数」)。而两端本来就都要拉 `costs`,
- * 再开一个端点只会多一次「一端拿到新系数、另一端还是旧的」的窗口。
+ * Why return via the same path as cost records: `planPipelines` is computed once each in the page
+ * and prerender processes; both ends must use **the same coefficients**, otherwise they cannot
+ * compute the same table (task brief K2 "Adjustable coefficients"). Since both ends already need
+ * to fetch `costs`, opening another endpoint would only introduce an extra window where
+ * "one end gets the new coefficients while the other still has the old ones".
  *
- * 回出去的是**夹取之后**的一份,不是文件里的原话:夹取规则住在 `pipelineTuning.mjs` 里,
- * 两端各夹一次结果当然一样,但先夹好再发能少一层「某一端忘了夹」的可能。
+ * What is returned is **the clamped** version, not the verbatim text in the file: clamping rules
+ * live in `pipelineTuning.mjs`. Clamping once on each end naturally yields the same result,
+ * but clamping before sending reduces the possibility that "one end forgets to clamp".
  */
 export function tuningPath(root) {
   return path.join(costsDir(root), TUNING_FILE_NAME);
 }
 
-/** 读覆盖值并夹取。文件不存在 / 坏了 / 不是对象都当「没有覆盖」,回缺省——不该让编辑器起不来 */
+/** Read overrides and clamp. Missing / corrupted / non-object files are treated as "no overrides" and return defaults: this should not prevent the editor from starting */
 export function loadTuning(root) {
   let raw;
   try {
@@ -68,20 +77,25 @@ export function loadTuning(root) {
 }
 
 /**
- * 写覆盖值(`PUT /api/data/costs/tuning`)。R4a 只做了读 —— 改系数要人手编辑这个文件,
- * 而「不改代码就能调」少了写入口就只剩半条(K2「可调系数」)。
+ * Write overrides (`PUT /api/data/costs/tuning`). R4a only implemented reading: changing
+ * coefficients required manually editing this file, and "tuning without modifying code" is only
+ * halfway there without a write entry point (task brief K2 "Adjustable coefficients").
  *
- * **落盘的是夹取之后的一份**,不是请求里的原话:`loadTuning` 回的也是夹取后的,
- * 两边一致才不会出现「文件里写着 100、回出去的是 4」这种对不上的账。
- * 写法和成本记录一样先写临时文件再 rename(半截 JSON 会让下一次 `loadTuning` 整份读空)。
+ * **What is written to disk is the clamped version**, not the verbatim request payload:
+ * `loadTuning` also returns the clamped version. Keeping both sides consistent prevents
+ * discrepancies like "file says 100 but returns 4" from failing to reconcile. The write strategy
+ * matches cost records: write a temporary file first, then rename (a half-written JSON would
+ * cause the next `loadTuning` to read an empty file).
  *
- * 传 `null`(或不是对象)= **清掉覆盖、全用缺省**:删文件,而不是写一份缺省值进去 ——
- * 「没有这个文件 = 全用缺省」是 K2 明写的,留一份等值的文件只会让人以为有人调过。
+ * Passing `null` (or a non-object) = **clear overrides and use all defaults**: deletes the file
+ * rather than writing default values into it. "No such file = use all defaults" is explicitly
+ * stated in K2; leaving a file with equivalent values would only make people assume someone
+ * tuned it.
  */
 export function saveTuning(root, overrides) {
   const file = tuningPath(root);
   if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
-    try { fs.rmSync(file, { force: true }); } catch { /* 删不掉就算了,下一次写会覆盖 */ }
+    try { fs.rmSync(file, { force: true }); } catch { /* If deletion fails, ignore it; the next write will overwrite it */ }
     return resolveTuning(null);
   }
   const tuning = resolveTuning(overrides);
@@ -91,17 +105,17 @@ export function saveTuning(root, overrides) {
 
 const keyOf = (record) => `${record.identityKey}\u0000${record.device}`;
 
-/** 至少要有键的两半才存得住;其余字段由页面侧负责,服务端不校验数值 */
+/** Must have at least both halves of the key to be saved; remaining fields are handled by the page side, and the server does not validate values */
 export function validRecord(record) {
   return !!record && typeof record === 'object'
     && typeof record.identityKey === 'string' && record.identityKey !== ''
     && typeof record.device === 'string' && record.device !== '';
 }
 
-/** 探针不知道、只能沿用的旗标(K6 的降级 / 人工钉死) */
+/** Flags unknown to the probe that can only be preserved (K6 downgrade / manually pinned) */
 export const STICKY_FLAGS = ['demoted', 'pinnedHeavy'];
 
-/** 读全部记录。文件不存在 / 坏了都当空表 —— 探针重测一遍就有了,不该让编辑器起不来 */
+/** Read all records. Missing / corrupted files are treated as empty tables: re-measuring with the probe will restore them, and it should not prevent the editor from starting */
 export function loadCosts(root) {
   let text;
   try {
@@ -119,7 +133,7 @@ export function loadCosts(root) {
   return list.filter(validRecord);
 }
 
-/** 纯函数的 upsert:给 `existing` 打上 `incoming`,返回新表。不碰磁盘,给测试和插件共用 */
+/** Pure-function upsert: applies `incoming` onto `existing` and returns a new table. Does not touch disk, shared between tests and plugins */
 export function mergeCosts(existing, incoming) {
   const byKey = new Map();
   for (const record of existing ?? []) if (validRecord(record)) byKey.set(keyOf(record), record);
@@ -143,16 +157,17 @@ export function mergeCosts(existing, incoming) {
 }
 
 /**
- * 改名遇到这几种错误时退避重试:Windows 上目标文件正被别的进程读着(编辑器与预渲染进程都读这份成本记录),
- * `rename` 会偶发 EPERM / EBUSY / EACCES(T9 第 2 轮实测:创建方写钉死记录时 `EPERM: rename card-costs.json.*.tmp`)。
- * 其它错误不重试。
+ * Back off and retry when rename encounters these errors: on Windows, while the target file is being
+ * read by another process (both editor and prerender processes read this cost record), `rename`
+ * intermittently hits EPERM / EBUSY / EACCES (verified in T9 round 2 testing: creator writing pinned
+ * record hit `EPERM: rename card-costs.json.*.tmp`). Other errors are not retried.
  */
 export const RENAME_RETRY_CODES = ['EPERM', 'EBUSY', 'EACCES'];
-/** 重试次数上限与每次的等待(毫秒,第 n 次重试等 n × 步长;上限合计约 0.9 s) */
+/** Maximum retry count and per-retry wait (ms, retry n waits n × step; total maximum ~0.9 s) */
 export const RENAME_RETRIES = 8;
 export const RENAME_BACKOFF_MS = 25;
 
-/** 同步短等:存储接口是同步的,只在改名重试时用 */
+/** Synchronous short wait: the storage interface is synchronous, only used during rename retries */
 function pause(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -176,12 +191,12 @@ function writeAtomic(file, text) {
   try {
     renameWithRetry(tmp, file);
   } catch (err) {
-    try { fs.rmSync(tmp, { force: true }); } catch { /* 临时文件删不掉不算失败 */ }
+    try { fs.rmSync(tmp, { force: true }); } catch { /* Failing to delete the temporary file is not treated as a failure */ }
     throw err;
   }
 }
 
-/** 落盘的 upsert。返回 `{ costs, added, updated, count }` */
+/** Persisted upsert. Returns `{ costs, added, updated, count }` */
 export function upsertCosts(root, records) {
   const merged = mergeCosts(loadCosts(root), records);
   writeAtomic(costsPath(root), JSON.stringify({ version: 1, costs: merged.costs }));
@@ -189,16 +204,19 @@ export function upsertCosts(root, records) {
 }
 
 /**
- * `GET /api/data/costs?device=&mode=` 的过滤:两个条件各自可选,不给就不筛
- * (给调试和审计脚本看全表)。
+ * Filtering for `GET /api/data/costs?device=&mode=`: both conditions are individually optional;
+ * if omitted, no filtering is applied (allowing debug and audit scripts to inspect the full table).
  *
- * `mode`(`'dev' | 'build'`,R1 加的)是记录**在哪种服务端上量的**。任务书 3.1:桌面版跑的
- * 就是 vite dev server、根本不读 `dist/`,所以分派用**当前运行模式**的记录 —— dev 的应用只看
- * dev 记录,将来的在线浏览器模式(构建产物)只看 build 记录。R1 之前的记录没有这个字段,
- * 它们全是 dev 模式量的,所以**缺字段一律当 `'dev'`**。
+ * `mode` (`'dev' | 'build'`, added in R1) records **which kind of server it was measured on**.
+ * Task brief 3.1: the desktop app runs directly on the vite dev server and does not read `dist/`
+ * at all, so dispatch uses records from the **current runtime mode**: dev apps only look at
+ * dev records, while the future online browser mode (build artifacts) will only look at build records.
+ * Records before R1 do not have this field; they were all measured in dev mode, so
+ * **missing fields are always treated as `'dev'`**.
  *
- * 去重键仍然只有 `(identityKey, device)`(见文件头),而 `mode` 也被探针拼进了 `device` 串,
- * 所以两种模式的成绩各占一条、互不覆盖,两组都留得住。
+ * The deduplication key is still only `(identityKey, device)` (see file header), and `mode` is
+ * also appended into the `device` string by the probe, so results from both modes occupy separate
+ * entries without overwriting each other, retaining both sets.
  */
 export function filterCosts(costs, device, mode) {
   let list = costs ?? [];

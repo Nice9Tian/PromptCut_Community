@@ -1,12 +1,13 @@
 /**
- * 纯 JS 的 SHA-256、HMAC-SHA256、PBKDF2-HMAC-SHA256（契约 `docs/plan/auth-contract.md` 第 2 节）。
+ * Pure JS SHA-256, HMAC-SHA256, and PBKDF2-HMAC-SHA256 (contract `docs/plan/auth-contract.md` section 2).
  *
- * 给没有 `crypto.subtle` 的页面兜底：明文 http 打开的远端页面不是安全上下文（C10 才会遇到）。
- * 有 WebCrypto 或 `node:crypto` 的地方不用它。正确性以 `node:crypto` 对拍（`server/test/auth-impl-crypto.test.mjs`）。
+ * Fallback for pages without `crypto.subtle`: remote pages opened over plain http are not a secure
+ * context (only encountered in C10). Not used where WebCrypto or `node:crypto` is available.
+ * Correctness cross-checked against `node:crypto` (`server/test/auth-impl-crypto.test.mjs`).
  *
- * 不引任何模块。输入输出都是 `Uint8Array`。
- * PBKDF2 的每一轮只做两次压缩：HMAC 的内外两层在 ipad / opad 那一块之后的状态预先算好，
- * 每轮的输入恰好 32 字节，补位后正好一块。
+ * Imports no modules. Both inputs and outputs are `Uint8Array`.
+ * Each round of PBKDF2 runs only two compressions: inner and outer HMAC states after the
+ * ipad / opad block are precomputed; each round's input is exactly 32 bytes, padding to one block.
  */
 
 const K = new Int32Array([
@@ -22,7 +23,7 @@ const K = new Int32Array([
 
 const IV = new Int32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
 
-/** 一块（16 个大端字，放在 w[0..15]）压缩进 state；w 要有 64 个字的空间 */
+/** Compresses one block (16 big-endian words in w[0..15]) into state; w must have 64 words of space */
 function compress(state, w) {
   for (let i = 16; i < 64; i++) {
     const x = w[i - 15];
@@ -66,7 +67,8 @@ function stateBytes(state) {
 }
 
 /**
- * 从给定状态继续哈希 `data`，此前已处理了 `prefixBytes` 个字节（必须是 64 的倍数）。回 32 字节摘要。
+ * Continues hashing `data` from given state, with `prefixBytes` bytes already processed (must be a
+ * multiple of 64). Returns 32-byte digest.
  */
 function finish(startState, data, prefixBytes) {
   const state = new Int32Array(startState);
@@ -76,7 +78,7 @@ function finish(startState, data, prefixBytes) {
   padded.set(data);
   padded[data.length] = 0x80;
   const bits = total * 8;
-  // 长度写在最后 8 字节；安全整数范围内高位用除法取
+  // Length written in the last 8 bytes; high bits obtained via division within safe integer range
   const hi = Math.floor(bits / 0x100000000);
   const lo = bits >>> 0;
   const end = padded.length;
@@ -98,10 +100,10 @@ function toBytes(v) {
   if (v instanceof Uint8Array) return v;
   if (v instanceof ArrayBuffer) return new Uint8Array(v);
   if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
-  throw new TypeError('要 Uint8Array');
+  throw new TypeError('Uint8Array required');
 }
 
-/** HMAC 的内外两层在 ipad / opad 那一块之后的状态 */
+/** State of inner and outer HMAC layers after the ipad / opad block */
 function hmacStates(key) {
   let k = toBytes(key);
   if (k.length > 64) k = sha256(k);
@@ -125,20 +127,20 @@ export function hmacSha256(key, data) {
 }
 
 /**
- * PBKDF2-HMAC-SHA256。
+ * PBKDF2-HMAC-SHA256.
  * @param {Uint8Array} password
  * @param {Uint8Array} salt
  * @param {number} iterations
- * @param {number} length 输出字节数
+ * @param {number} length Output byte count
  */
 export function pbkdf2Sha256(password, salt, iterations, length) {
-  if (!Number.isSafeInteger(iterations) || iterations < 1) throw new RangeError('iterations 必须是正整数');
-  if (!Number.isSafeInteger(length) || length < 1) throw new RangeError('length 必须是正整数');
+  if (!Number.isSafeInteger(iterations) || iterations < 1) throw new RangeError('iterations must be a positive integer');
+  if (!Number.isSafeInteger(length) || length < 1) throw new RangeError('length must be a positive integer');
   const { inner, outer } = hmacStates(password);
   const s = toBytes(salt);
   const out = new Uint8Array(length);
   const blocks = Math.ceil(length / 32);
-  // 每轮的输入是 32 字节的上一轮输出：补位后一块，长度 (64 + 32) × 8 = 768 位
+  // Each round's input is 32-byte output of previous round: one block after padding, length (64 + 32) × 8 = 768 bits
   const w = new Int32Array(64);
   const st = new Int32Array(8);
   const u = new Int32Array(8);
@@ -153,12 +155,12 @@ export function pbkdf2Sha256(password, salt, iterations, length) {
       acc[i] = u[i];
     }
     for (let it = 1; it < iterations; it++) {
-      // 内层：inner 状态 + (u ‖ 0x80 ‖ 0… ‖ 768)
+      // Inner layer: inner state + (u ‖ 0x80 ‖ 0… ‖ 768)
       st.set(inner);
       for (let i = 0; i < 8; i++) w[i] = u[i];
       w[8] = 0x80000000; w[9] = 0; w[10] = 0; w[11] = 0; w[12] = 0; w[13] = 0; w[14] = 0; w[15] = 768;
       compress(st, w);
-      // 外层：outer 状态 + (内层摘要 ‖ 补位)
+      // Outer layer: outer state + (inner digest ‖ padding)
       for (let i = 0; i < 8; i++) w[i] = st[i];
       st.set(outer);
       w[8] = 0x80000000; w[9] = 0; w[10] = 0; w[11] = 0; w[12] = 0; w[13] = 0; w[14] = 0; w[15] = 768;

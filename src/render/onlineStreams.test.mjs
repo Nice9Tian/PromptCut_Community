@@ -1,8 +1,12 @@
 /**
- * 在线页面读轨道流(`snapshotSource.ts` 的 `OnlineSnapshotSource`;`docs/plan/browser-stream-task.md` 第六处):
- * 读层表的 `streams` 表 → 按播放头附近的分段取流清单(`render-manifest`)→ 清单里的块按哈希从素材服务取到本页 →
- * 字节到了的分段合成就绪区间,照 C3 的 `layer` 消息(`kind: 'stream'`)交给订阅方;`streamPlane` 给父页发流平面时带的清单与字节。
- * 跑:node --test src/render/onlineStreams.test.mjs
+ * Online page reads track streams (`OnlineSnapshotSource` in `snapshotSource.ts`;
+ * `docs/plan/browser-stream-task.md` item 6):
+ * Read layer table's `streams` table → fetch stream manifests (`render-manifest`) by segments
+ * near the playhead → fetch chunks in manifest by hash from asset service to this page →
+ * Segments whose bytes arrived assemble ready intervals, delivered to subscribers per C3's
+ * `layer` message (`kind: 'stream'`); manifests and bytes carried when `streamPlane` sends
+ * stream plane to parent page.
+ * Run: node --test src/render/onlineStreams.test.mjs
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +23,7 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
 const RK = (n) => n.toString(16).padStart(64, '0');
 const bytesOf = (text) => new TextEncoder().encode(text);
 
-/** 一台假内容库 + 假素材服务(带一个可以走的钟、一张可以换的票据) */
+/** A fake content store + fake asset service (with an advancing clock and a renewable ticket) */
 function world() {
   const w = {
     content: new Map(), requests: [], fetches: [], bytes: new Map(), now: 1_000_000, ticket: 'T1', accepts: () => true,
@@ -27,7 +31,7 @@ function world() {
   w.deps = {
     async request(msg) {
       w.requests.push(msg);
-      if (msg.type !== 'content.get') throw new Error('只认 content.get');
+      if (msg.type !== 'content.get') throw new Error('only content.get is recognized');
       if (!w.content.has(msg.key)) return { type: 'content.item', kind: msg.kind, key: msg.key, missing: true };
       return { type: 'content.item', kind: msg.kind, key: msg.key, body: structuredClone(w.content.get(msg.key)), hash: 'x' };
     },
@@ -47,9 +51,9 @@ function world() {
     setTimer: () => 0,
     clearTimer: () => {},
   };
-  /** 往素材服务放一块,回它的哈希 */
+  /** Put a chunk into asset service, return its hash */
   w.block = (text) => { const b = bytesOf(text); const h = sha(b); w.bytes.set(h, b); return h; };
-  /** 往内容库放一份流清单;`segs` 是这份清单里有的分段号(缺省全有) */
+  /** Put a stream manifest into content store; `segs` are segment numbers in this manifest (defaults to all) */
   w.putStream = (rk, from, to, { segs = null, stride = 1, tag = 'v1', clipIds = ['c1'], kind = 'card', upload = true } = {}) => {
     const initBytes = bytesOf(`init ${rk.slice(-4)} ${tag}`);
     const initHash = sha(initBytes);
@@ -83,20 +87,22 @@ function world() {
     src.setProject('p1');
     return { src, messages, streamMessages: () => messages.filter((m) => m.type === 'layer' && m.kind === 'stream') };
   };
-  /** 走一轮:取层表、清单、块,等落定 */
+  /** Run one round: fetch layer table, manifests, and chunks, wait to settle */
   w.settle = async (src) => { await src.tickNow(); await src.idle(); await src.tickNow(); await src.idle(); };
   return w;
 }
 
 /**
- * 层表的一行:这条流从项目的第 30 帧开始(`originFrame`),分段从它自己的第一帧起数,0～18(第 30～314 帧)。
- * 行里不写 `firstSegment`(恒为 0);清单按「从 0 起每 8 段一份」分:`0-7`、`8-15`、`16-18`。
+ * A row in layer table: this stream starts from project frame 30 (`originFrame`), segments are
+ * counted from its own first frame, 0-18 (frames 30-314).
+ * Row does not specify `firstSegment` (always 0); manifests are split by "every 8 segments from 0":
+ * `0-7`, `8-15`, `16-18`.
  */
 const row = (over = {}) => ({ topClipId: 'c1', clipIds: ['c1'], kind: 'card', plane: 'local', contentKey: 'sk-1',
   candidates: [{ envFingerprint: 'fp-a', resultKey: RK(0xa) }], originFrame: 30, lastSegment: 18, segmentsPerTask: 8, ...over });
 const last = (list) => list[list.length - 1];
 
-test('清单的切法:从 firstSegment 起每 segmentsPerTask 段一份,最后一份到 lastSegment', () => {
+test('How manifests are split: starting from firstSegment, one part per segmentsPerTask segments, the last part runs to lastSegment', () => {
   const r = { firstSegment: 2, lastSegment: 20, segmentsPerTask: 8 };
   assert.deepEqual(streamSpansInWindow(r, 0, 100), [[2, 9], [10, 17], [18, 20]]);
   assert.deepEqual(streamSpansInWindow(r, 0, 4), [[2, 9]]);
@@ -106,26 +112,27 @@ test('清单的切法:从 firstSegment 起每 segmentsPerTask 段一份,最后�
   assert.deepEqual(streamSpansInWindow(r, 0, 1), []);
 });
 
-test('解析 streams 表:形状不对的行跳过;v 2 以下的层表不读这张表', () => {
+test('Parse the streams table: rows with a wrong shape are skipped; layer maps below v 2 do not read this table', () => {
   const good = row();
-  // 改分段规则之前的节点写的行:带 `firstSegment`、没有 `originFrame`(分段按项目帧号数)。照现在的换算贴上去会错位,不认
+  // Row written by a node before segment rule change: has `firstSegment`, no `originFrame`
+  // (segments counted by project frame numbers). Pasting per current conversion will misalign, reject it
   const { originFrame: _origin, ...oldShape } = good;
   const parsed = parseLayerStreams([good, null, { ...good, clipIds: [] }, { ...good, kind: 'x' }, { ...good, candidates: [] }, { ...good, candidates: [{ envFingerprint: 'f' }] },
     { ...good, lastSegment: -1 }, { ...good, segmentsPerTask: 0 }, { ...good, contentKey: '' }, { ...good, topClipId: undefined, inputSig: 's1-abc' },
     { ...oldShape, firstSegment: 2, lastSegment: 20 }, { ...good, originFrame: -1 }, { ...good, originFrame: 1.5 }, { ...good, originFrame: '30' }]);
   assert.equal(parsed.length, 2);
-  assert.deepEqual(parsed[0], { ...good, firstSegment: 0 }, '分段号恒从 0 起');
+  assert.deepEqual(parsed[0], { ...good, firstSegment: 0 }, 'Segment numbers always start from 0');
   assert.equal(parsed[0].originFrame, 30);
-  assert.equal(parsed[1].topClipId, 'c1', '没写 topClipId 取最后一个成员');
+  assert.equal(parsed[1].topClipId, 'c1', 'When topClipId is not written, the last member is taken');
   assert.equal(parsed[1].inputSig, 's1-abc');
   assert.deepEqual(parseLayerStreams(undefined), []);
   const base = { kind: 'layer-map', projectId: 'p1', fps: 30, span: 60, layers: [], streams: [good] };
   assert.equal(parseLayerMap({ ...base, v: 3 }).streams.length, 1);
   assert.deepEqual(parseLayerMap({ ...base, v: 2 }).streams, []);
-  assert.deepEqual(parseLayerMap({ kind: 'layer-map', v: 3, layers: [] }).streams, [], '旧节点写的层表没有 streams:空表');
+  assert.deepEqual(parseLayerMap({ kind: 'layer-map', v: 3, layers: [] }).streams, [], 'A layer map written by an old node has no streams: empty table');
 });
 
-test('旧形状的层表(没有 streams):不取流清单、不发流的层,快照那一半照旧', async () => {
+test('Old-shape layer map (no streams): no stream manifests are fetched and no stream layers are sent, the snapshot half stays as before', async () => {
   const w = world();
   const layer = { clipId: 'c1', kind: 'html', key: 'k1', tier: 'shared', resultKey: 'r1', dirKey: 'r1', entryKey: null, firstFrame: 0, count: 60, contentKey: 'ck1', envFingerprint: 'fp-a',
     candidates: [{ envFingerprint: 'fp-a', resultKey: 'r1', key: 'k1', dirKey: 'r1' }] };
@@ -137,12 +144,12 @@ test('旧形状的层表(没有 streams):不取流清单、不发流的层,快�
   assert.equal(w.requests.some((r) => r.kind === 'render-manifest'), false);
   assert.deepEqual(streamMessages(), []);
   assert.equal(src.streamPlane(RK(0xa)), null);
-  assert.deepEqual(last(messages.filter((m) => m.type === 'layer')), { type: 'layer', clipId: 'c1', kind: 'html', key: 'k1', ranges: [[0, 0]] }, '快照层照旧发');
+  assert.deepEqual(last(messages.filter((m) => m.type === 'layer')), { type: 'layer', clipId: 'c1', kind: 'html', key: 'k1', ranges: [[0, 0]] }, 'Snapshot layers are sent as before');
   assert.equal(src.debug().streams.length, 0);
   src.stop();
 });
 
-test('分段号 → 就绪区间:只取播放头附近的清单与块,字节到了本页的分段才算就绪', async () => {
+test('Segment number → ready range: only manifests and chunks near the playhead are fetched; a segment counts as ready once its bytes arrive on this page', async () => {
   const w = world();
   const rk = RK(0xa);
   const a = w.putStream(rk, 0, 7);
@@ -151,41 +158,44 @@ test('分段号 → 就绪区间:只取播放头附近的清单与块,字节到�
   w.putMap([row()]);
   const { src, streamMessages } = w.source();
   await w.settle(src);
-  // 播放头在 0:窗口是项目的第 0～60 帧(往前 2 秒)。这条流从第 30 帧开始,落在窗口里的是它的第 0～2 段(第 30～74 帧),都在第一份清单里
+  // Playhead at 0: window is project frames 0-60 (2s ahead). This stream starts from frame 30;
+  // segments 0-2 (frames 30-74) fall into the window, all in the first manifest
   const asked = w.requests.filter((r) => r.kind === 'render-manifest').map((r) => r.key);
-  assert.deepEqual(asked, [`${rk}:0-7`], '只取了窗口落到的那一份清单');
-  assert.deepEqual(last(streamMessages()), { type: 'layer', clipId: 'c1', kind: 'stream', key: rk, ranges: [[0, 2]], originFrame: 30 }, '就绪消息带着这条流的第一帧');
+  assert.deepEqual(asked, [`${rk}:0-7`], 'Only the one manifest part the window falls in was fetched');
+  assert.deepEqual(last(streamMessages()), { type: 'layer', clipId: 'c1', kind: 'stream', key: rk, ranges: [[0, 2]], originFrame: 30 }, 'The ready message carries the first frame of this stream');
   const fetched = w.fetches.map((f) => f.url);
-  assert.ok(fetched.every((u) => u.startsWith('https://h.example/media/api/asset/px/')), '块从 px/ 取');
-  assert.deepEqual(new Set(fetched.map((u) => u.split('/').pop())), new Set([a.initHash, a.hashes[0], a.hashes[1], a.hashes[2]]), '开头文件 + 窗口里的三段,各取一次');
+  assert.ok(fetched.every((u) => u.startsWith('https://h.example/media/api/asset/px/')), 'Chunks are fetched from px/');
+  assert.deepEqual(new Set(fetched.map((u) => u.split('/').pop())), new Set([a.initHash, a.hashes[0], a.hashes[1], a.hashes[2]]), 'Init file + the three segments in the window, each fetched once');
   assert.equal(fetched.length, 4);
-  assert.ok(w.fetches.every((f) => f.auth === 'Bearer T1'), '带只读票据');
-  // 播放头挪到 3 秒(第 90 帧,这条流的第 4 段):窗口是它的第 3～8 段,跨到第二份清单
+  assert.ok(w.fetches.every((f) => f.auth === 'Bearer T1'), 'Carries the read-only ticket');
+  // Playhead moved to 3s (frame 90, segment 4 of this stream): window is its segments 3-8,
+  // crossing into the second manifest
   src.focus(3, 30);
   await w.settle(src);
-  assert.deepEqual(last(streamMessages()).ranges, [[0, 8]], '先前取到的 0..2 还在本页,接上新取的 3..8');
+  assert.deepEqual(last(streamMessages()).ranges, [[0, 8]], '0..2 fetched earlier is still on this page, joined with the newly fetched 3..8');
   assert.ok(w.requests.some((r) => r.kind === 'render-manifest' && r.key === `${rk}:8-15`));
-  assert.equal(w.requests.some((r) => r.key === `${rk}:16-18`), false, '窗口没到的那一份不取');
-  // 满的清单不再取
+  assert.equal(w.requests.some((r) => r.key === `${rk}:16-18`), false, 'segment the window has not reached is not fetched');
+  // Full manifests are no longer fetched
   const before = w.requests.length;
   w.now += MANIFEST_POLL_MS * 3;
   await w.settle(src);
   assert.equal(w.requests.filter((r, i) => i >= before && r.kind === 'render-manifest' && r.key === `${rk}:0-7`).length, 0);
-  // 就绪消息进了就绪索引,父页的纯算就能合成流平面(snapshotFeed 一行不改)
+  // Ready message entered ready index; pure computation on parent page can assemble stream plane
+  // (without changing a single line of snapshotFeed)
   const index = new Map();
   for (const m of streamMessages()) applyReadyMessage(index, m);
   const layers = [...index].map(([clipId, byKind]) => ({ clipId, ...byKind.get('stream') }));
   assert.deepEqual(streamPlanesFor(layers, new Set(['c1']), 90), [{ clipIds: ['c1'], key: rk, ranges: [[0, 8]], originFrame: 30 }]);
-  assert.deepEqual(streamPlanesFor(layers, new Set(['c1']), 30 + 8 * 15 + 14).length, 1, '第 8 段的最后一帧(第 164 帧)');
-  assert.deepEqual(streamPlanesFor(layers, new Set(['c1']), 30 + 9 * 15), [], '第 9 段(第 165 帧起)还没取到:这一拍没有流平面(这一层照旧换快照)');
-  assert.deepEqual(streamPlanesFor(layers, new Set(['c1']), 29), [], '第 29 帧在这条流的第一帧之前:没有分段');
+  assert.deepEqual(streamPlanesFor(layers, new Set(['c1']), 30 + 8 * 15 + 14).length, 1, 'last frame of segment 8 (frame 164)');
+  assert.deepEqual(streamPlanesFor(layers, new Set(['c1']), 30 + 9 * 15), [], 'segment 9 (from frame 165) is not fetched yet: no stream plane on this tick (this layer still swaps snapshots as before)');
+  assert.deepEqual(streamPlanesFor(layers, new Set(['c1']), 29), [], 'frame 29 is before the first frame of this stream: no segments');
   const d = src.debug();
   assert.equal(d.streams[0].ready, 9);
   assert.equal(d.streamFetches, 4 + 6);
   src.stop();
 });
 
-test('清单没满时重取:缺的分段补上之后区间跟着长;稀疏段换成满密度之后换文件', async () => {
+test('refetch when the manifest is not full: the range grows once the missing segments are filled in; the file is swapped once sparse segments become full density', async () => {
   const w = world();
   const rk = RK(0xa);
   w.putStream(rk, 0, 7, { segs: [0, 1] });
@@ -196,8 +206,8 @@ test('清单没满时重取:缺的分段补上之后区间跟着长;稀疏段换
   const count = () => w.requests.filter((r) => r.key === `${rk}:0-7`).length;
   const n0 = count();
   await w.settle(src);
-  assert.equal(count(), n0, `不到 ${MANIFEST_POLL_MS} ms 不重取`);
-  // 节点又产了第 2 段(稀疏的)
+  assert.equal(count(), n0, `no refetch before ${MANIFEST_POLL_MS} ms`);
+  // Node produced segment 2 again (sparse)
   const sparse = w.putStream(rk, 0, 7, { segs: [0, 1, 2], tag: 'v1' });
   const body = w.content.get(`${rk}:0-7`);
   const sparseBytes = bytesOf('seg sparse 2');
@@ -205,12 +215,13 @@ test('清单没满时重取:缺的分段补上之后区间跟着长;稀疏段换
   w.bytes.set(sha(sparseBytes), sparseBytes);
   w.now += MANIFEST_POLL_MS;
   await w.settle(src);
-  assert.ok(count() > n0, '到点重取');
+  assert.ok(count() > n0, 'refetch when due');
   assert.deepEqual(last(streamMessages()).ranges, [[0, 2]]);
   assert.equal(src.streamPlane(rk).manifest.segments['2'].stride, 3);
   assert.equal(src.streamPlane(rk).manifest.segments['2'].file, sha(sparseBytes));
   const revSparse = src.streamRev;
-  // 稀疏段被满密度的换掉:就绪区间一个字不变,文件换了,streamRev 跟着变(父页据此重发流平面)
+  // Sparse segment replaced by full density: ready interval does not change by a word, file changed,
+  // streamRev changes accordingly (parent page resends stream plane based on this)
   w.putStream(rk, 0, 7, { segs: [0, 1, 2] });
   w.now += MANIFEST_POLL_MS;
   await w.settle(src);
@@ -221,7 +232,7 @@ test('清单没满时重取:缺的分段补上之后区间跟着长;稀疏段换
   src.stop();
 });
 
-test('候选切换:task.done 认定活着的那一份优先;superseded 作废的那一份不用', async () => {
+test('candidate switching: the copy that task.done marks as live comes first; the copy voided by superseded is not used', async () => {
   const w = world();
   const rkA = RK(0xa), rkB = RK(0xb);
   w.putStream(rkA, 0, 7, { segs: [0] });
@@ -229,42 +240,42 @@ test('候选切换:task.done 认定活着的那一份优先;superseded 作废的
   w.putMap([row({ candidates: [{ envFingerprint: 'fp-a', resultKey: rkA }, { envFingerprint: 'fp-b', resultKey: rkB }] })]);
   const { src, streamMessages } = w.source();
   await w.settle(src);
-  assert.equal(last(streamMessages()).key, rkA, '都没认定时取第一个候选');
+  assert.equal(last(streamMessages()).key, rkA, 'take the first candidate when none is marked');
   assert.deepEqual(last(streamMessages()).ranges, [[0, 0]]);
-  // 浏览器节点那一份报完成(细任务 id:stream:<结果键>:<起>-<止>)
+  // Browser node copy reports completion (fine-grained task id: stream:<result key>:<start>-<end>)
   src.noteQueueEvent({ type: 'task.done', id: `stream:${rkB}:0-7` });
   await w.settle(src);
-  assert.equal(last(streamMessages()).key, rkB, '整条换成活着的那个候选');
+  assert.equal(last(streamMessages()).key, rkB, 'switch the whole stream to the live candidate');
   assert.deepEqual(last(streamMessages()).ranges, [[0, 2]]);
   assert.equal(src.debug().streams[0].envFingerprint, 'fp-b');
-  assert.equal(src.streamPlane(rkA), null, '没选中的候选不给舞台');
+  assert.equal(src.streamPlane(rkA), null, 'unselected candidate gets no stage');
   src.stop();
 
-  // 另一台页面:只收到「A 那一份作废了」
+  // Another page: only received "A's copy was invalidated"
   const w2 = world();
   w2.putStream(rkA, 0, 7, { segs: [0] });
   w2.putStream(rkB, 0, 7, { segs: [0, 1], tag: 'browser' });
   w2.putMap([row({ candidates: [{ envFingerprint: 'fp-a', resultKey: rkA }, { envFingerprint: 'fp-b', resultKey: rkB }] })]);
   const two = w2.source();
-  // 稀疏流任务的 id 末尾多一段 `:sparse`,同样认得出结果键
+  // Sparse stream task ID has an extra `:sparse` at the end, but still recognizes the result key
   two.src.noteQueueEvent({ type: 'task.failed', id: `stream:${rkA}:0-7:sparse`, error: 'superseded' });
   await w2.settle(two.src);
   assert.equal(last(two.streamMessages()).key, rkB);
   two.src.stop();
 });
 
-test('过期签名:行里的 inputSig 与页面按当前项目算的对不上,这条流撤掉、不再取;对回来了照发', async () => {
+test('stale signature: the row\'s inputSig does not match what the page computes for the current project; this stream is withdrawn and no longer fetched; once it matches again it is sent as before', async () => {
   const w = world();
   const rk = RK(0xa);
   const project = (text) => ({ id: 'p1', width: 1920, height: 1080, fps: 30, duration: 10, tracks: [{ id: 't', clips: [{ id: 'c1', cardId: 'punch-pill', start: 1, end: 9, params: { text } }] }] });
-  const v1 = project('one');   // 片段从第 1 秒(第 30 帧)开始,正是这一行的 originFrame
+  const v1 = project('one');   // Clip starts at 1s (frame 30), which is exactly this row's originFrame
   w.putStream(rk, 0, 7);
   w.putMap([row({ inputSig: streamInputSig(v1, { clipIds: ['c1'], kind: 'card' }) })]);
   const { src, streamMessages } = w.source();
   src.setInputs(v1);
   await w.settle(src);
   assert.deepEqual(last(streamMessages()).ranges, [[0, 2]]);
-  // 页面改了参数:旧流马上撤(发空层)
+  // Page changed parameters: old stream retracted immediately (sends empty layer)
   src.setInputs(project('two'));
   assert.deepEqual(last(streamMessages()), { type: 'layer', clipId: 'c1', kind: 'stream', key: rk, ranges: [] });
   assert.equal(src.streamPlane(rk), null);
@@ -272,16 +283,17 @@ test('过期签名:行里的 inputSig 与页面按当前项目算的对不上,�
   const asked = w.requests.length, got = w.fetches.length;
   src.focus(3, 30);
   await w.settle(src);
-  assert.equal(w.requests.filter((r, i) => i >= asked && r.kind === 'render-manifest').length, 0, '过期的流不再取清单');
-  assert.equal(w.fetches.length, got, '也不再取块');
-  // 片段整帧平移同样算过期:片段在时间轴上的位置仍在输入签名里(「挪动以后流不失效」记了待办,这次不做)
+  assert.equal(w.requests.filter((r, i) => i >= asked && r.kind === 'render-manifest').length, 0, 'stale stream no longer fetches the manifest');
+  assert.equal(w.fetches.length, got, 'nor fetches chunks');
+  // Translating clip by whole frames also counts as expired: clip position on timeline is still in
+  // input signature ("streams do not expire after moving" recorded as TODO, not done this time)
   src.setInputs({ ...v1, tracks: [{ id: 't', clips: [{ ...v1.tracks[0].clips[0], start: 2, end: 10 }] }] });
   assert.equal(src.streamPlane(rk), null);
-  // 改回原来的:照发
+  // Changed back to original: send as usual
   src.setInputs(project('one'));
   assert.equal(last(streamMessages()).key, rk);
   assert.ok(last(streamMessages()).ranges.length > 0);
-  // 没带签名的行(算不出签名的节点写的):照播
+  // Row without signature (written by node that cannot calculate signature): play as usual
   w.putMap([row()]);
   w.now += LAYER_MAP_POLL_MS;
   src.setInputs(project('three'));
@@ -290,7 +302,7 @@ test('过期签名:行里的 inputSig 与页面按当前项目算的对不上,�
   src.stop();
 });
 
-test('缺块:素材服务上没有的分段不算就绪,过一会儿再取;补上之后接上', async () => {
+test('missing chunk: a segment that the asset service does not have is not ready, fetch again after a while; connect once it is filled in', async () => {
   const w = world();
   const rk = RK(0xa);
   const a = w.putStream(rk, 0, 7);
@@ -299,13 +311,13 @@ test('缺块:素材服务上没有的分段不算就绪,过一会儿再取;补�
   w.putMap([row()]);
   const { src, streamMessages } = w.source();
   await w.settle(src);
-  assert.deepEqual(last(streamMessages()).ranges, [[0, 0], [2, 2]], '第 1 段取不到:区间断在这里');
-  assert.equal(Object.keys(src.streamPlane(rk).manifest.segments).join(), '0,2', '给舞台的清单也不列它');
+  assert.deepEqual(last(streamMessages()).ranges, [[0, 0], [2, 2]], 'segment 1 cannot be fetched: the range breaks here');
+  assert.equal(Object.keys(src.streamPlane(rk).manifest.segments).join(), '0,2', 'the manifest given to the stage does not list it either');
   assert.ok(src.debug().streamFailures >= 1);
   const tries = () => w.fetches.filter((f) => f.url.endsWith(a.hashes[1])).length;
   const n0 = tries();
   await w.settle(src);
-  assert.equal(tries(), n0, `失败之后不到 ${STREAM_RETRY_MS} ms 不重取`);
+  assert.equal(tries(), n0, `no refetch within ${STREAM_RETRY_MS} ms after a failure`);
   w.bytes.set(a.hashes[1], lost);
   w.now += STREAM_RETRY_MS;
   await w.settle(src);
@@ -314,7 +326,7 @@ test('缺块:素材服务上没有的分段不算就绪,过一会儿再取;补�
   src.stop();
 });
 
-test('开头文件取不到:用它的分段都不算就绪', async () => {
+test('head file cannot be fetched: segments that use it are not ready', async () => {
   const w = world();
   const rk = RK(0xa);
   const a = w.putStream(rk, 0, 7);
@@ -322,22 +334,22 @@ test('开头文件取不到:用它的分段都不算就绪', async () => {
   w.putMap([row()]);
   const { src, streamMessages } = w.source();
   await w.settle(src);
-  assert.deepEqual(streamMessages(), [], '一段都没就绪:不发流的层');
+  assert.deepEqual(streamMessages(), [], 'no segment is ready: layer that sends no stream');
   assert.equal(src.streamPlane(rk), null);
   src.stop();
 });
 
-test('票据过期:取块被拒之后按新票据重取', async () => {
+test('ticket expired: after the chunk fetch is rejected, refetch with the new ticket', async () => {
   const w = world();
   const rk = RK(0xa);
   w.putStream(rk, 0, 7, { segs: [0] });
   w.putMap([row()]);
-  w.accepts = (auth) => auth === 'Bearer T2';   // 素材服务只认新票据,页面手里还是旧的
+  w.accepts = (auth) => auth === 'Bearer T2';   // Asset service only accepts new ticket, page still holds the old one
   const { src, streamMessages } = w.source();
   await w.settle(src);
   assert.deepEqual(streamMessages(), []);
   assert.ok(w.fetches.length >= 2 && w.fetches.every((f) => f.auth === 'Bearer T1'));
-  w.ticket = 'T2';   // 票据续上了(页面里是 `assetAuthHeaders` 自己续)
+  w.ticket = 'T2';   // Ticket renewed (in the page, `assetAuthHeaders` renews itself)
   w.now += STREAM_RETRY_MS;
   await w.settle(src);
   assert.deepEqual(last(streamMessages()).ranges, [[0, 0]]);
@@ -345,11 +357,11 @@ test('票据过期:取块被拒之后按新票据重取', async () => {
   src.stop();
 });
 
-test('字节与哈希对不上:不收,不算就绪', async () => {
+test('bytes do not match the hash: not accepted, not ready', async () => {
   const w = world();
   const rk = RK(0xa);
   const a = w.putStream(rk, 0, 7, { segs: [0, 1] });
-  w.bytes.set(a.hashes[1], bytesOf('不是这一段的字节'));
+  w.bytes.set(a.hashes[1], bytesOf('not the bytes of this segment'));
   w.putMap([row()]);
   const { src, streamMessages } = w.source();
   await w.settle(src);
@@ -357,7 +369,7 @@ test('字节与哈希对不上:不收,不算就绪', async () => {
   src.stop();
 });
 
-test('streamPlane:给舞台的清单只列字节在本页的分段,分段的 file 是哈希,开头文件带 hash;blocks 正好是用到的块', async () => {
+test('streamPlane: the manifest given to the stage lists only segments whose bytes are on this page, the segment\'s file is a hash, the head file carries a hash; blocks are exactly the chunks in use', async () => {
   const w = world();
   const rk = RK(0xa);
   const a = w.putStream(rk, 0, 7);
@@ -371,19 +383,19 @@ test('streamPlane:给舞台的清单只列字节在本页的分段,分段的 fil
   assert.deepEqual(plane.manifest.clipIds, ['c1']);
   assert.equal(plane.manifest.fps, 30);
   assert.equal(plane.manifest.segmentFrames, SEGMENT_FRAMES);
-  assert.equal(plane.manifest.originFrame, 30, '清单里的第一帧取层表那一行的(按当前项目给的)');
+  assert.equal(plane.manifest.originFrame, 30, 'the first frame in the manifest comes from that row of the layer table (as given for the current project)');
   assert.deepEqual(plane.manifest.bound, { x: -32, y: -32, w: 704, h: 424 });
   assert.equal(plane.manifest.tight, null);
   assert.deepEqual(plane.manifest.inits, { [a.id]: { codec: 'avc1.640028', width: 704, height: 864, rect: { x: -32, y: -32, w: 704, h: 424 }, hash: a.initHash } });
   assert.deepEqual(plane.manifest.segments, Object.fromEntries([0, 1, 2].map((n) => [n, { init: a.id, file: a.hashes[n], stride: 1, samples: 15 }])));
   assert.deepEqual(new Set(plane.blocks.keys()), new Set([a.initHash, a.hashes[0], a.hashes[1], a.hashes[2]]));
-  assert.deepEqual([...plane.blocks.get(a.hashes[1])], [...w.bytes.get(a.hashes[1])], '字节原样');
-  assert.equal(src.streamPlane(rk), plane, '没变时回同一份(不每拍重建)');
+  assert.deepEqual([...plane.blocks.get(a.hashes[1])], [...w.bytes.get(a.hashes[1])], 'bytes unchanged');
+  assert.equal(src.streamPlane(rk), plane, 'returns the same instance when unchanged (not rebuilt every tick)');
   assert.equal(src.streamPlane(RK(0xdead)), null);
   src.stop();
 });
 
-test('组流:就绪消息带 groupClipIds,挂在最上面那张卡上', async () => {
+test('group stream: the ready message carries groupClipIds, attached to the topmost card', async () => {
   const w = world();
   const rk = RK(0xc);
   w.putStream(rk, 0, 7, { clipIds: ['c1', 'c2'], kind: 'group' });
@@ -393,7 +405,7 @@ test('组流:就绪消息带 groupClipIds,挂在最上面那张卡上', async ()
   assert.deepEqual(last(streamMessages()), { type: 'layer', clipId: 'c2', kind: 'stream', key: rk, ranges: [[0, 4]], originFrame: 0, groupClipIds: ['c1', 'c2'] });
   assert.equal(src.streamPlane(rk).manifest.kind, 'group');
   assert.equal(src.streamPlane(rk).manifest.plane, 'stage');
-  // 父页的纯算:两个成员都被抑制才有这条平面
+  // Pure computation on parent page: this plane exists only when both members are suppressed
   const index = new Map();
   for (const m of streamMessages()) applyReadyMessage(index, m);
   const layers = [...index].map(([clipId, byKind]) => ({ clipId, ...byKind.get('stream') }));
@@ -402,7 +414,7 @@ test('组流:就绪消息带 groupClipIds,挂在最上面那张卡上', async ()
   src.stop();
 });
 
-test('新订阅方:先 reset,再把手里已有的流的层全量发一遍;层表里撤掉的流发空层', async () => {
+test('new subscriber: reset first, then send in full the layers of all streams held; streams withdrawn from the layer table send empty layers', async () => {
   const w = world();
   const rk = RK(0xa);
   w.putStream(rk, 0, 7);
@@ -412,7 +424,7 @@ test('新订阅方:先 reset,再把手里已有的流的层全量发一遍;层�
   const late = [];
   src.subscribeReady('online', 0, (m) => late.push(m));
   assert.deepEqual(late, [{ type: 'reset', localRev: 0 }, { type: 'layer', clipId: 'c1', kind: 'stream', key: rk, ranges: [[0, 2]], originFrame: 30 }]);
-  // 渲染节点重写了层表,不再有这条流(这张卡改判轻了)
+  // Render node rewrote layer table, this stream no longer exists (this card reclassified as light)
   w.putMap([]);
   w.now += LAYER_MAP_POLL_MS;
   await w.settle(src);
@@ -421,12 +433,13 @@ test('新订阅方:先 reset,再把手里已有的流的层全量发一遍;层�
   src.stop();
 });
 
-test('最低一档、浏览器没有 VideoDecoder:不消费流 —— streams 表在,也不取流清单、不发流的层(照没有流办)', async () => {
+test('lowest tier, browser has no VideoDecoder: streams are not consumed. Even with a streams table, no stream manifest is fetched and no stream layers are sent (treated as no streams)', async () => {
   const w = world();
   const rk = RK(0xa);
   w.putStream(rk, 0, 7);
   w.putMap([row()]);
-  // Node 里没有 VideoDecoder,缺省的 `browserDecodeSupport` 回「没有」;再显式注入一次同样的
+  // Node has no VideoDecoder, default `browserDecodeSupport` returns "none"; explicitly inject
+  // the same once again
   assert.equal(browserDecodeSupport.available(), false);
   assert.equal(await browserDecodeSupport.supports({ codec: 'avc1.640028', codedWidth: 704, codedHeight: 864 }), false);
   for (const opts of [{ tier: 'small' }, { tier: 'small', decodeSupport: { available: () => false, supports: async () => true } }]) {
@@ -441,7 +454,7 @@ test('最低一档、浏览器没有 VideoDecoder:不消费流 —— streams �
   }
 });
 
-test('最低一档、浏览器解得了:照别的档的路取流(层表、清单、分段),发同样的就绪消息;流字节的内存上限用小的那一个', async () => {
+test('lowest tier, browser can decode: fetch streams the same way as other tiers (layer table, manifest, segments) and send the same ready messages; the smaller memory cap is used for stream bytes', async () => {
   const w = world();
   const rk = RK(0xa);
   const put = w.putStream(rk, 0, 7);
@@ -449,18 +462,18 @@ test('最低一档、浏览器解得了:照别的档的路取流(层表、清单
   const asked = [];
   const decodeSupport = { available: () => true, supports: async (c) => { asked.push(c); return true; } };
   const low = w.source({ tier: 'small', decodeSupport });
-  low.src.focus(1, 30);   // 播放头在第 30 帧 = 这条流的第 0 段
+  low.src.focus(1, 30);   // Playhead at frame 30 = segment 0 of this stream
   await w.settle(low.src);
   await w.settle(low.src);
   const msg = last(low.streamMessages());
   assert.equal(msg.key, rk);
   assert.equal(msg.originFrame, 30);
-  assert.ok(msg.ranges.length && msg.ranges[0][0] === 0, '播放头附近的分段就绪');
-  assert.deepEqual(asked, [{ codec: 'avc1.640028', codedWidth: 704, codedHeight: 864 }], '每个开头文件只问一次浏览器');
+  assert.ok(msg.ranges.length && msg.ranges[0][0] === 0, 'segments near the playhead are ready');
+  assert.deepEqual(asked, [{ codec: 'avc1.640028', codedWidth: 704, codedHeight: 864 }], 'ask the browser only once per head file');
   const plane = low.src.streamPlane(rk);
   assert.ok(plane && plane.blocks.has(put.initHash) && plane.blocks.has(put.hashes[0]));
-  assert.equal(plane.manifest.segments['0'].file, put.hashes[0], '分段整段取(块按哈希存取)');
-  // 和别的档取到的是同一批东西
+  assert.equal(plane.manifest.segments['0'].file, put.hashes[0], 'segments are fetched whole (chunks stored and read by hash)');
+  // Fetched the same items as other tiers
   const w2 = world();
   w2.putStream(rk, 0, 7);
   w2.putMap([row()]);
@@ -475,7 +488,7 @@ test('最低一档、浏览器解得了:照别的档的路取流(层表、清单
   normal.src.stop();
 });
 
-test('最低一档、这条流的编码配置浏览器不支持:清单照取,但分段的字节不取、不算就绪(父页照没有流办:落到占位符)', async () => {
+test('lowest tier, browser does not support this stream\'s codec configuration: the manifest is still fetched, but segment bytes are not fetched and not ready (parent page treats it as no stream: falls back to the placeholder)', async () => {
   const w = world();
   const rk = RK(0xa);
   const put = w.putStream(rk, 0, 7);
@@ -486,29 +499,29 @@ test('最低一档、这条流的编码配置浏览器不支持:清单照取,但
     src.focus(1, 30);
     await w.settle(src);
     await w.settle(src);
-    assert.deepEqual(streamMessages().filter((m) => m.ranges.length), [], '没有就绪的分段');
+    assert.deepEqual(streamMessages().filter((m) => m.ranges.length), [], 'no ready segments');
     assert.equal(src.streamPlane(rk), null);
-    assert.equal(w.fetches.slice(before).some((f) => f.url.endsWith(put.hashes[0])), false, '解不了的流不取字节');
+    assert.equal(w.fetches.slice(before).some((f) => f.url.endsWith(put.hashes[0])), false, 'undecodable stream does not fetch bytes');
     src.stop();
   }
 });
 
-test('BlockLru:按字节计,挤掉最久没用的,回被挤掉的键', () => {
+test('BlockLru: counts by bytes, evicts the least recently used, returns the evicted keys', () => {
   const lru = new BlockLru(10);
   assert.deepEqual(lru.set('a', new Uint8Array(4)), []);
   assert.deepEqual(lru.set('b', new Uint8Array(4)), []);
   lru.get('a');
-  assert.deepEqual(lru.set('c', new Uint8Array(4)), ['b'], 'a 刚用过,挤掉的是 b');
+  assert.deepEqual(lru.set('c', new Uint8Array(4)), ['b'], 'a was just used, so b is evicted');
   assert.equal(lru.total, 8);
   assert.equal(lru.has('a') && lru.has('c') && !lru.has('b'), true);
-  assert.deepEqual(lru.set('big', new Uint8Array(64)), ['a', 'c'], '单块就超上限:留它一块');
+  assert.deepEqual(lru.set('big', new Uint8Array(64)), ['a', 'c'], 'a single chunk exceeds the limit: keep that one chunk');
   assert.equal(lru.size, 1);
 });
 
-test('取哪几段按每条流自己的第一帧算:播放头还没到这条流时不取;两条流在同一个播放头下各取各的分段', async () => {
+test('which segments to fetch is computed from each stream\'s own first frame: not fetched while the playhead has not reached the stream; two streams under the same playhead each fetch their own segments', async () => {
   const w = world();
   const far = RK(0xf1), near = RK(0xf2);
-  // far 从第 400 帧开始(不是 15 的倍数),near 从第 7 帧开始
+  // far starts at frame 400 (not a multiple of 15), near starts at frame 7
   w.putStream(far, 0, 7, { clipIds: ['c1'] });
   w.putStream(near, 0, 7, { clipIds: ['c2'] });
   w.putMap([
@@ -518,11 +531,13 @@ test('取哪几段按每条流自己的第一帧算:播放头还没到这条流�
   const { src, streamMessages } = w.source();
   await w.settle(src);
   const lastOf = (key) => last(streamMessages().filter((m) => m.key === key));
-  // 播放头在第 0 帧:窗口是第 0～60 帧。near(第 7 帧起)落进它的第 0～3 段(第 7～66 帧);far 还远,一段都不取
+  // Playhead at frame 0: window is frames 0-60. near (from frame 7) falls into its segments 0-3
+  // (frames 7-66); far is still distant, do not fetch any segment
   assert.deepEqual(lastOf(near), { type: 'layer', clipId: 'c2', kind: 'stream', key: near, ranges: [[0, 3]], originFrame: 7 });
-  assert.equal(lastOf(far), undefined, '播放头往前 2 秒也够不着第 400 帧:不取、不发');
+  assert.equal(lastOf(far), undefined, 'even 2 seconds ahead of the playhead cannot reach frame 400: not fetched, not sent');
   assert.equal(w.requests.some((r) => r.key === `${far}:0-7`), false);
-  // 播放头到第 405 帧:far 的第 0 段(第 400～414 帧)第 5 个样本;窗口是它的第 0～4 段(到第 465 帧)。near 早就播完了
+  // Playhead at frame 405: 5th sample of segment 0 of far (frames 400-414); window is its
+  // segments 0-4 (up to frame 465). near finished playing long ago
   src.focus(405 / 30, 30);
   await w.settle(src);
   assert.deepEqual(lastOf(far), { type: 'layer', clipId: 'c1', kind: 'stream', key: far, ranges: [[0, 4]], originFrame: 400 });
@@ -530,23 +545,23 @@ test('取哪几段按每条流自己的第一帧算:播放头还没到这条流�
   for (const m of streamMessages()) applyReadyMessage(index, m);
   const layers = [...index].map(([clipId, byKind]) => ({ clipId, ...byKind.get('stream') }));
   assert.deepEqual(streamPlanesFor(layers, new Set(['c1', 'c2']), 405).map((p) => [p.clipIds[0], p.originFrame]), [['c1', 400]]);
-  assert.deepEqual(streamPlanesFor(layers, new Set(['c1', 'c2']), 399).map((p) => p.clipIds[0]), [], '第 399 帧:far 还没开始,near 的第 26 段不存在');
-  assert.deepEqual(streamPlanesFor(layers, new Set(['c1', 'c2']), 7 + 3 * 15 + 14).map((p) => p.clipIds[0]), ['c2'], 'near 的第 3 段的最后一帧(第 66 帧)');
+  assert.deepEqual(streamPlanesFor(layers, new Set(['c1', 'c2']), 399).map((p) => p.clipIds[0]), [], 'frame 399: far has not started, near\'s segment 26 does not exist');
+  assert.deepEqual(streamPlanesFor(layers, new Set(['c1', 'c2']), 7 + 3 * 15 + 14).map((p) => p.clipIds[0]), ['c2'], 'last frame of near\'s segment 3 (frame 66)');
   src.stop();
 });
 
-/* ---------------- 依赖下层的流(`kind: 'below'`;任务书 `render-refactor-task.md`「戊二」的「下层四」) ---------------- */
+/* ---------------- Below-dependent stream (`kind: 'below'`; task brief `render-refactor-task.md` "Wu-2" "Lower layer 4") ---------------- */
 
-/** 三条序列(第一条在最上面):标题、毛玻璃卡 `glass`(第 30 帧起)、下面一张会动的卡 */
+/** Three tracks (first on top): title, frosted-glass card `glass` (from frame 30), animated card below */
 const belowProject = (edit = (p) => p) => edit({ id: 'p1', width: 1920, height: 1080, fps: 30, duration: 20, media: [], tracks: [
-  { id: 'top', clips: [{ id: 'title', cardId: 'c', start: 0, end: 10, params: { text: '标题' } }] },
+  { id: 'top', clips: [{ id: 'title', cardId: 'c', start: 0, end: 10, params: { text: 'Title' } }] },
   { id: 'mid', clips: [{ id: 'glass', cardId: 'c', start: 1, end: 9, params: {}, frame: { x: 100, y: 100, w: 600, h: 300 } }] },
   { id: 'low', clips: [{ id: 'mover', cardId: 'c', start: 0, end: 10, params: { speed: 1 } }] },
 ] });
 const belowRow = (p, over = {}) => row({ topClipId: 'glass', clipIds: ['glass'], kind: 'below', plane: 'stage', contentKey: 'sk-below',
   ...(p ? { inputSig: streamInputSig(p, { clipIds: ['glass'], kind: 'below' }) } : {}), ...over });
 
-test('BO-parse 解析 streams 表:依赖下层的流的行认下来(一个成员、舞台坐标);形状不对的跳过', () => {
+test('BO-parse parses the streams table: rows of streams that depend on a lower layer are recognized (one member, stage coordinates); malformed ones are skipped', () => {
   const good = belowRow(null);
   const parsed = parseLayerStreams([good, { ...good, plane: 'local' }, { ...good, clipIds: ['glass', 'mover'] }, { ...good, inputSig: 's1-x' }]);
   assert.equal(parsed.length, 2);
@@ -556,7 +571,7 @@ test('BO-parse 解析 streams 表:依赖下层的流的行认下来(一个成员
   assert.equal(parsed[1].inputSig, 's1-x');
 });
 
-test('BO-ready 依赖下层的流:就绪消息带 streamKind: below 和层表那一行的签名;给舞台的清单 kind 是 below、plane 是 stage;父页合成的流平面带 plane: stage', async () => {
+test('BO-ready depends on the stream below: the ready message carries streamKind: below and the signature of that row in the layer table; the manifest kind given to the stage is below and plane is stage; the stream plane composed by the parent page carries plane: stage', async () => {
   const w = world();
   const rk = RK(0xb);
   const p = belowProject();
@@ -568,14 +583,16 @@ test('BO-ready 依赖下层的流:就绪消息带 streamKind: below 和层表那
   const { src, streamMessages } = w.source();
   src.setInputs(p);
   await w.settle(src);
-  // 和桌面预渲染进程发的那一层同一个形状(`server/frame-stream.mjs` 的 `belowLayerMark`;`src/editor/snapshotFeedBelow.test.mjs` 喂给父页的就是它)
+  // Same shape as the layer sent by desktop prerender process (`belowLayerMark` in
+  // `server/frame-stream.mjs`; fed to parent page by `src/editor/snapshotFeedBelow.test.mjs`)
   assert.deepEqual(last(streamMessages()), { type: 'layer', clipId: 'glass', kind: 'stream', key: rk, ranges: [[0, 2]], originFrame: 30, streamKind: 'below', inputSig: sig });
   const plane = src.streamPlane(rk);
   assert.equal(plane.manifest.kind, 'below');
   assert.equal(plane.manifest.plane, 'stage');
   assert.deepEqual(plane.manifest.clipIds, ['glass']);
   assert.equal(plane.manifest.originFrame, 30);
-  // 父页的纯算:就绪索引里那一层带着 streamKind,合成的流平面带 plane: stage(舞台把画布挂在舞台根下)
+  // Pure computation on parent page: that layer in ready index carries streamKind, assembled
+  // stream plane carries plane: stage (stage mounts canvas under stage root)
   const index = new Map();
   for (const m of streamMessages()) applyReadyMessage(index, m);
   const layer = index.get('glass').get('stream');
@@ -584,7 +601,7 @@ test('BO-ready 依赖下层的流:就绪消息带 streamKind: below 和层表那
   const planes = streamPlanesFor([{ clipId: 'glass', ...layer, plane: 'stage' }], new Set(['glass']), 40);
   assert.deepEqual(planes, [{ clipIds: ['glass'], key: rk, ranges: [[0, 2]], originFrame: 30, plane: 'stage' }]);
   assert.equal(src.debug().streams[0].kind, 'below');
-  // 没带签名的行:消息里不带 inputSig(父页不比,照贴)
+  // Row without signature: message does not carry inputSig (parent page does not compare, pastes as usual)
   const w2 = world();
   w2.putStream(rk, 0, 7, { clipIds: ['glass'], kind: 'below' });
   w2.putMap([belowRow(null, { candidates: [{ envFingerprint: 'fp-a', resultKey: rk }] })]);
@@ -595,7 +612,7 @@ test('BO-ready 依赖下层的流:就绪消息带 streamKind: below 和层表那
   src.stop(); two.src.stop();
 });
 
-test('BO-stale 依赖下层的流过期:下层或目标卡改了,旧流撤掉、不再取;上面的层怎么改都不算;改回来照发', async () => {
+test('BO-stale: the stream that depends on the lower layer goes stale: when the lower layer or the target card changes, the old stream is withdrawn and no longer fetched; changes to layers above never count; changing it back re-sends it', async () => {
   const w = world();
   const rk = RK(0xb);
   const p = belowProject();
@@ -606,11 +623,11 @@ test('BO-stale 依赖下层的流过期:下层或目标卡改了,旧流撤掉、
   await w.settle(src);
   assert.deepEqual(last(streamMessages()).ranges, [[0, 2]]);
   const stale = {
-    '下层改了一个参数': (q) => { q.tracks[2].clips[0].params = { speed: 2 }; return q; },
-    '下层挪了位置': (q) => { q.tracks[2].clips[0].frame = { x: 10, y: 0, w: 1920, h: 1080 }; return q; },
-    '下层多了一层': (q) => { q.tracks.push({ id: 'bg', clips: [{ id: 'bg', cardId: 'c', start: 0, end: 10, params: {} }] }); return q; },
-    '下层少了一层': (q) => { q.tracks.pop(); return q; },
-    '目标卡自己挪了位置': (q) => { q.tracks[1].clips[0].frame = { x: 300, y: 100, w: 600, h: 300 }; return q; },
+    'lower layer changed one parameter': (q) => { q.tracks[2].clips[0].params = { speed: 2 }; return q; },
+    'lower layer moved position': (q) => { q.tracks[2].clips[0].frame = { x: 10, y: 0, w: 1920, h: 1080 }; return q; },
+    'A layer was added below': (q) => { q.tracks.push({ id: 'bg', clips: [{ id: 'bg', cardId: 'c', start: 0, end: 10, params: {} }] }); return q; },
+    'A layer was removed below': (q) => { q.tracks.pop(); return q; },
+    'The target card itself was moved': (q) => { q.tracks[1].clips[0].frame = { x: 300, y: 100, w: 600, h: 300 }; return q; },
   };
   for (const [what, edit] of Object.entries(stale)) {
     src.setInputs(belowProject(edit));
@@ -618,29 +635,29 @@ test('BO-stale 依赖下层的流过期:下层或目标卡改了,旧流撤掉、
     assert.equal(src.streamPlane(rk), null, what);
     assert.deepEqual(src.debug().staleStreams, ['glass'], what);
     src.setInputs(belowProject());
-    assert.deepEqual(last(streamMessages()).ranges, [[0, 2]], `${what}:改回来照发`);
+    assert.deepEqual(last(streamMessages()).ranges, [[0, 2]], `${what}: re-sent after changing back`);
     assert.equal(last(streamMessages()).streamKind, 'below');
   }
-  // 过期的这段时间里不取清单、不取块
-  src.setInputs(belowProject(stale['下层改了一个参数']));
+  // Do not fetch manifests or chunks during this expired period
+  src.setInputs(belowProject(stale['lower layer changed one parameter']));
   const asked = w.requests.length, got = w.fetches.length;
   src.focus(3, 30);
   await w.settle(src);
   assert.equal(w.requests.filter((r, i) => i >= asked && r.kind === 'render-manifest').length, 0);
   assert.equal(w.fetches.length, got);
   src.setInputs(belowProject());
-  // 上面的层怎么改都不算过期
+  // Any changes to layers above do not count as expired
   const before = streamMessages().length;
-  src.setInputs(belowProject((q) => { q.tracks[0].clips[0].params = { text: '别的' }; q.tracks[0].clips[0].frame = { x: 5, y: 5, w: 100, h: 100 }; return q; }));
+  src.setInputs(belowProject((q) => { q.tracks[0].clips[0].params = { text: 'Other' }; q.tracks[0].clips[0].frame = { x: 5, y: 5, w: 100, h: 100 }; return q; }));
   src.setInputs(belowProject((q) => { q.tracks.shift(); return q; }));
   src.setInputs(belowProject((q) => { q.tracks.unshift({ id: 'over', clips: [{ id: 'over', cardId: 'c', start: 0, end: 10, params: {} }] }); return q; }));
   assert.ok(last(streamMessages()).ranges.length > 0);
-  assert.equal(streamMessages().slice(before).some((m) => m.ranges.length === 0), false, '没有撤过');
+  assert.equal(streamMessages().slice(before).some((m) => m.ranges.length === 0), false, 'never withdrawn');
   assert.deepEqual(src.debug().staleStreams, []);
   src.stop();
 });
 
-test('BO-lowest 最低一档:浏览器没有 VideoDecoder 时不消费依赖下层的流;解得了就照别的档同一套(带 streamKind 与输入签名)', async () => {
+test('BO-lowest lowest tier: when the browser has no VideoDecoder, the stream that depends on the lower layer is not consumed; when it can be decoded, it follows the same flow as the other tiers (with streamKind and input signature)', async () => {
   const w = world();
   const rk = RK(0xb);
   w.putStream(rk, 0, 7, { clipIds: ['glass'], kind: 'below' });
@@ -657,9 +674,9 @@ test('BO-lowest 最低一档:浏览器没有 VideoDecoder 时不消费依赖下�
   await w.settle(normal.src);
   await w.settle(normal.src);
   const a = last(low.streamMessages()), b = last(normal.streamMessages());
-  assert.ok(a && a.ranges.length, '最低一档取到了依赖下层的流');
+  assert.ok(a && a.ranges.length, 'the lowest tier fetched the stream that depends on the lower layer');
   assert.equal(a.streamKind, 'below');
-  assert.deepEqual(a, b, '和别的档发的是同一条就绪消息');
+  assert.deepEqual(a, b, 'sends the same ready message as the other tiers');
   low.src.stop();
   normal.src.stop();
 });

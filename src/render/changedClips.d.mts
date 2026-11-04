@@ -1,48 +1,49 @@
 import type { Project, Track, TrackClip } from "../kernel/project";
 
-/** 顶层按引用比的字段表(和 frameClient 的 signature 同一组) */
+/** Top-level field list compared by reference (same set as frameClient's signature) */
 export const TOP_FIELDS: readonly string[];
 
-/** 一条轨道上的一段变化;`clip: null` = 这一段被删掉了 */
+/** Change in a clip on a track; `clip: null` = this clip was deleted */
 export interface ClipPatch {
   id: string;
   clip: TrackClip | null;
 }
 
-/** 一条轨道的变化 */
+/** Changes for a track */
 export interface TrackPatch {
   id: string;
-  /** 整条轨道换新(新增的轨道)。给了它就忽略下面三项 */
+  /** Entire track replaced (newly added track). If provided, ignore the three items below */
   track?: Track;
-  /** 轨道自身属性(`clips` 以外的全部自有键),任一项变了就整组给 */
+  /** Track's own properties (all own keys other than `clips`); provided as a full group if any changes */
   props?: Record<string, unknown>;
-  /** 逐片段增量 */
+  /** Per-clip deltas */
   clips?: ClipPatch[];
-  /** 片段 id 的新顺序;顺序或集合变了才有 */
+  /** New order of clip IDs; present only when order or set has changed */
   clipOrder?: string[];
 }
 
 /**
- * 两份项目之间的补丁。将来舞台 RPC 的 `setProject(patch)` 收的就是它。
+ * Patch between two projects. This is what future stage RPC `setProject(patch)` will receive.
  *
- * - `kind: "full"` —— 整份项目。`tracks` 以外任一顶层字段变了、或者没有基线时是这个。
- * - `kind: "tracks"` —— 只有轨道变了。`order` 是轨道 id 的新顺序(为 `null` 表示
- *   轨道的集合和顺序都没变;不为 `null` 时**不在里面的轨道就是被删掉的**),
- *   `tracks` 是逐轨道的增量。
+ * - `kind: "full"`: Full project. Used when any top-level field other than `tracks` changes,
+ *   or when there is no baseline.
+ * - `kind: "tracks"`: Only tracks changed. `order` is the new order of track IDs (`null` indicates
+ *   neither track set nor order changed; when non-null, **tracks not included were deleted**),
+ *   and `tracks` contains per-track deltas.
  */
 export type ProjectPatch =
   | { kind: "full"; project: Project }
   | { kind: "tracks"; order: string[] | null; tracks: TrackPatch[] };
 
 export function hashString(s: string): string;
-/** 项目的渲染身份哈希(只覆盖 TOP_FIELDS),三级 WeakMap 缓存 */
+/** Project render identity hash (covers TOP_FIELDS only), cached with a three-level WeakMap */
 export function projectHash(project: Project): string;
-/** 重算次数快照(缓存未命中计数),测试用 */
+/** Snapshot of recalculation count (cache miss count), for testing */
 export function hashStats(): { fields: number; tracks: number; clips: number; values: number };
 export function resetHashStats(): void;
-/** 两层 diff */
+/** Two-level diff */
 export function changedClips(prev: Project | null | undefined, next: Project): ProjectPatch;
-/** 补丁里没有任何改动? */
+/** No changes in the patch? */
 export function isEmptyPatch(patch: ProjectPatch | null | undefined): boolean;
-/** 应用补丁,返回新项目;对不上就抛 */
+/** Applies the patch and returns the new project; throws on mismatch */
 export function applyProjectPatch(project: Project, patch: ProjectPatch): Project;

@@ -1,27 +1,39 @@
 /**
- * 保存与修改状态检查的真页面探针(分支 claude/save-state)。
- * 语义:`docs/semantics/mechanism/document-service.md`「保存基准与修改状态检查」——
- * 「保存暂时禁用前台编辑，等待本机写完；失败不覆盖上次有效保存，并恢复编辑」。
+ * Real-page probe for save and modification state checks (branch claude/save-state).
+ * Semantics: `docs/semantics/mechanism/document-service.md` "Save baseline and modification state
+ * checks": "Save temporarily disables foreground editing while waiting for local write to finish;
+ * failures do not overwrite the last valid save and resume editing".
  *
- * 用法(编辑器先自己起好,本探针不起服务):
+ * Usage (start the editor beforehand; this probe does not launch the service):
  *   PROMPTCUT_NO_PORT_FILE=1 npx vite --port 5960 --strictPort --host 127.0.0.1
  *   node scripts/probes/save-state-probe.mjs --origin http://127.0.0.1:5960 --out out/save-state-shots [--phases lock,timeout,fail]
  *
- * 「另存为」换成探针自己的:落点是这个页面源的私有文件系统(OPFS)里的真文件,`createWritable` 是浏览器真的那一个,
- * 只在外面包一层好控制时机(hold:等探针放行才开始写;fail:写进一半内容后抛错)。
+ * "Save as" is replaced with probe's own: drop target is a real file in this page origin's OPFS,
+ * `createWritable` is the browser's real one, wrapped only with an outer layer to control timing
+ * (hold: wait for probe release before writing; fail: throw error after writing half the content).
  *
- * 阶段:
- *   lock     保存停在「写文件」那一步时,从快捷键(Ctrl+Z)、标题栏菜单命令、鼠标点项目名、拖放文件、粘贴、滚轮、
- *            Agent 面板打字回车几条路去改,项目对象一次都没换;放行后文件写成、内容是保存那一刻的项目;之后 Ctrl+Z 又能用。
- *            截图 1-saving.png(保存中)、2-after-save.png。
- *   timeout  一个 Agent 工具调用一直没结束(本机 Agent 还在写):等满时限后不写文件、原文件逐字节不变、顶部提示说明在等什么;
- *            之后编辑恢复。截图 3-waiting.png(等待中)、4-timeout.png(超时提示)。
- *   fail     写进一半时出错:原文件逐字节不变、提示说明原文件没动、编辑恢复。截图 5-write-failed.png。
- *            另记一条「不经我们的代码、只靠浏览器」的对照:同一个句柄直接 createWritable → 写一半 → 不 close 也不 abort,
- *            原文件是不是照样不变(验证「先写临时副本、关闭时才替换」这条浏览器行为)。
- * 结果:每项一行 JSON(`{ check, ok, ... }`),最后一行 `{ summary }`;有失败退出码 1。
+ * Phases:
+ *   lock     When save pauses at "write file" step, attempts to modify via shortcuts (Ctrl+Z),
+ *            title bar menu commands, clicking project name, drag-and-dropping files, paste,
+ *            scroll wheel, and typing Enter in Agent panel never replace the project object once;
+ *            after release, file is written with content reflecting the project at the moment of
+ *            saving; afterwards Ctrl+Z works again. Screenshots: 1-saving.png (saving),
+ *            2-after-save.png.
+ *   timeout  An Agent tool call never finishes (local Agent still writing): after timeout expires,
+ *            no file is written, original file remains unchanged byte-for-byte, and top notice
+ *            explains what it is waiting for; editing resumes afterwards. Screenshots:
+ *            3-waiting.png (waiting), 4-timeout.png (timeout notice).
+ *   fail     Error occurs halfway through writing: original file remains unchanged byte-for-byte,
+ *            notice explains original file was untouched, and editing resumes. Screenshot:
+ *            5-write-failed.png.
+ *            Also records a "without our code, relying solely on browser" control: same handle
+ *            directly runs createWritable → writes half → neither close nor abort, checking whether
+ *            the original file remains untouched (validating browser behavior of "write temporary
+ *            replica first, replace only on close").
+ * Results: one JSON line per item (`{ check, ok, ... }`), last line `{ summary }`; exit code 1 on
+ * failure.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的用户目录变量
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external user directory variables
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
 import fs from 'node:fs';
@@ -47,8 +59,10 @@ const check = (name, ok, extra = {}) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * 在页面里拿到编辑器自己用的那份 `userEditing.ts` 模块(mcpExecutor 让 Agent 工具开始 / 结束用的就是它)。
- * 开发服务器改过这个文件之后,页面里的引用带 `?t=` 时间戳;直接 import 不带时间戳的地址会拿到另一份实例。
+ * Obtains the `userEditing.ts` module used by the editor itself within the page (used by
+ * mcpExecutor to start / finish Agent tools).
+ * After the dev server modifies this file, imports in the page carry a `?t=` timestamp; directly
+ * importing the URL without a timestamp yields a separate instance.
  */
 const AGENT_TOOL = (op) => `(async () => {
   const urls = performance.getEntriesByType('resource').map((e) => e.name).filter((u) => u.includes('/src/editor/userEditing.ts'));
@@ -61,16 +75,18 @@ async function waitFor(page, fn, arg, timeout = 30000) {
   return page.waitForFunction(fn, { timeout, polling: 100 }, arg);
 }
 
-/** 打开编辑器、装上探针自己的「另存为」 */
+/** Open editor and install the probe's own "Save as" */
 async function openEditor(browser) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
   page.on('dialog', (d) => { console.log(JSON.stringify({ dialog: d.message() })); void d.dismiss(); });
-  // 编辑器开发版一次载入上千个模块,缺省 250 条的资源计时记不下;找 userEditing.ts 的实际地址要靠它(见 AGENT_TOOL)
+  // Editor dev build loads thousands of modules at once; default 250 resource timing entries cannot
+  // hold them all; locating actual URL of userEditing.ts relies on it (see AGENT_TOOL)
   await page.evaluateOnNewDocument(() => performance.setResourceTimingBufferSize(20000));
   await page.goto(`${origin}/?editor`, { waitUntil: 'domcontentloaded' });
   await waitFor(page, () => !!window.__pcStore && !!document.querySelector('.pc-proj-btn'), null, 60000);
-  // 页面接上本机文档服务时会整份载入一次(清撤销栈):等它接完再开始改
+  // When page connects to local document service, loads full file once (clearing undo stack): wait
+  // until connection completes before modifying
   await sleep(3000);
   await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
@@ -85,7 +101,8 @@ async function openEditor(browser) {
         if (probe.mode === 'hold') await new Promise((r) => { probe.release = r; });
         const w = await real.createWritable(opts);
         if (probe.mode !== 'fail') {
-          // 照常写,只记一笔「关上了」:探针等它,不靠被测代码自己的界面信号判断保存结束
+          // Write as usual, only recording that it "closed": probe waits for it without relying on UI signals
+          // from tested code to determine save completion
           return {
             write: (data) => w.write(data),
             close: async () => { await w.close(); probe.log.push('closed'); },
@@ -97,7 +114,7 @@ async function openEditor(browser) {
             const text = typeof data === 'string' ? data : await new Blob([data]).text();
             await w.write(text.slice(0, Math.floor(text.length / 2)));
             probe.log.push('half-written');
-            throw new DOMException('模拟：写到一半磁盘出错', 'InvalidStateError');
+            throw new DOMException('Simulated: disk error halfway through the write', 'InvalidStateError');
           },
           close: () => { probe.log.push('close'); return w.close(); },
           abort: (reason) => { probe.log.push('abort'); return w.abort(reason); },
@@ -114,38 +131,39 @@ async function openEditor(browser) {
 }
 
 async function clickSave(page) {
-  // 点顶栏「项目」→「保存项目」。菜单偶尔一打开就被别处的关闭逻辑收回去:重试几次
+  // Click top bar "Project" → "Save project". Occasionally opening the menu gets dismissed by close
+  // logic elsewhere: retry a few times
   for (let i = 0; i < 4; i += 1) {
     await page.click('.pc-proj-btn');
-    const open = await waitFor(page, () => [...document.querySelectorAll('.pc-proj-item')].some((b) => b.textContent.includes('保存项目')), null, 2000).then(() => true, () => false);
+    const open = await waitFor(page, () => [...document.querySelectorAll('.pc-proj-item')].some((b) => b.textContent.includes('Save project')), null, 2000).then(() => true, () => false);
     if (open) {
       await page.evaluate(() => {
-        const item = [...document.querySelectorAll('.pc-proj-item')].find((b) => b.textContent.includes('保存项目'));
+        const item = [...document.querySelectorAll('.pc-proj-item')].find((b) => b.textContent.includes('Save project'));
         item.click();
       });
       return 'menu';
     }
     await sleep(300);
   }
-  // 退而走桌面版标题栏「文件 → 保存」那条命令(同一个 saveProject)
+  // Fall back to desktop app title bar "File → Save" command (same saveProject)
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('pc-titlebar-command', { detail: 'save-project' })));
   return 'titlebar';
 }
 
 const projectName = (page) => page.evaluate(() => window.__pcStore.getState().project.name);
-/** 撤销得了的那一笔用加序列:项目名的修改不进撤销栈 */
+/** Use adding a track for the undoable entry: project name modifications do not enter undo stack */
 const trackCount = (page) => page.evaluate(() => window.__pcStore.getState().project.tracks.length);
 const addTrack = (page, name) => page.evaluate((n) => { window.__pcStore.actions.addTrack(n); }, name);
 const fileName = (page) => page.evaluate(() => `${window.__pcStore.getState().project.name}.proc`);
 const clipCount = (page) => page.evaluate(() => window.__pcStore.getState().project.tracks.reduce((n, t) => n + t.clips.length, 0));
-/** 选中第一个片段(Delete 键删的就是选中的片段) */
+/** Select the first clip (the Delete key deletes the selected clip) */
 const selectFirstClip = (page) => page.evaluate(() => {
   const c = window.__pcStore.getState().project.tracks.flatMap((t) => t.clips)[0];
   if (c) window.__pcStore.actions.select([c.id]);
   return c?.id ?? null;
 });
 
-/** 从各条路去改项目;回各条路之后项目对象有没有换 */
+/** Modify the project through each path; whether the project object changed after each path */
 async function tryEditPaths(page) {
   await page.evaluate(() => { window.__p0 = window.__pcStore.getState().project; });
   const changed = {};
@@ -153,22 +171,23 @@ async function tryEditPaths(page) {
     const s = window.__pcStore.getState();
     return { same: s.project === window.__p0, name: s.project.name, tracks: s.project.tracks.length, clips: s.project.tracks.reduce((n, t) => n + t.clips.length, 0), media: s.project.media.length, renaming: !!document.querySelector('.pc-projname--editing'), canUndo: window.__pcStore.actions.canUndo() };
   });
-  // 0 快捷键:Delete 删选中的片段(焦点不在输入框)
+  // 0 Shortcut: Delete deletes the selected clip (focus not in the input box)
   await page.evaluate(() => document.activeElement?.blur?.());
   await page.keyboard.press('Delete');
   await sleep(150); changed.deleteKey = await snap();
-  // 1 快捷键:Ctrl+Z 撤销
+  // 1 Shortcut: Ctrl+Z undo
   await page.keyboard.down('Control'); await page.keyboard.press('z'); await page.keyboard.up('Control');
   await sleep(150); changed.ctrlZ = await snap();
-  // 2 标题栏菜单命令(桌面版的「编辑 → 撤销」)
+  // 2 Title bar menu command (desktop app "Edit → Undo")
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('pc-titlebar-command', { detail: 'undo' })));
   await sleep(150); changed.titlebarUndo = await snap();
-  // 3 鼠标点项目名(会进入改名)。保存中那层罩子盖在上面,用真鼠标点它的位置
+  // 3 Click project name with mouse (enters rename). The saving overlay covers it above,
+  // click its position with a real mouse
   const box = await page.evaluate(() => { const r = document.querySelector('.pc-projname--btn')?.getBoundingClientRect(); return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null; });
   if (box) await page.mouse.click(box.x, box.y);
-  await page.evaluate(() => document.querySelector('.pc-projname--btn')?.click()); // 绕过罩子直接派发到按钮上
+  await page.evaluate(() => document.querySelector('.pc-projname--btn')?.click()); // Bypass the overlay and dispatch directly to the button
   await sleep(150); changed.clickName = await snap();
-  // 4 拖放一个文件到时间轴
+  // 4 Drag and drop a file onto the timeline
   await page.evaluate(() => {
     const el = document.querySelector('[data-pc="timeline"]') || document.body;
     const dt = new DataTransfer();
@@ -176,17 +195,19 @@ async function tryEditPaths(page) {
     for (const type of ['dragenter', 'dragover', 'drop']) el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
   });
   await sleep(300); changed.drop = await snap();
-  // 5 粘贴、滚轮
+  // 5 Paste, wheel
   await page.evaluate(() => {
     const el = document.querySelector('[data-pc="timeline"]') || document.body;
-    const dt = new DataTransfer(); dt.setData('text/plain', '粘贴');
+    const dt = new DataTransfer(); dt.setData('text/plain', 'paste');
     el.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
     el.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 300, ctrlKey: true }));
   });
   await sleep(150); changed.pasteWheel = await snap();
-  // 6 Agent 面板:焦点放进输入框打字。打不进字就发不出去;不按回车 —— 没拦住的话(改之前的代码)回车会真把话发给 Agent
+  // 6 Agent panel: focus the input box and type. If typing is blocked, nothing can be sent;
+  // do not press Enter: if unblocked (code before the fix), Enter would really send the message
+  // to the Agent
   const hasComposer = await page.evaluate(() => { const t = document.querySelector('.ai-composer-input'); if (!t) return false; t.focus(); return true; });
-  if (hasComposer) await page.keyboard.type('把标题改成 X');
+  if (hasComposer) await page.keyboard.type('Change the title to X');
   await sleep(200);
   changed.agentPanel = { ...(await snap()), composer: hasComposer, typed: await page.evaluate(() => document.querySelector('.ai-composer-input')?.value ?? null) };
   await page.evaluate(() => document.activeElement?.blur?.());
@@ -197,13 +218,14 @@ async function phaseLock(browser) {
   const page = await openEditor(browser);
   await page.evaluate(() => {
     const a = window.__pcStore.actions;
-    a.setProjectMeta({ name: '保存探针改过' });
+    a.setProjectMeta({ name: 'Save probe modified' });
   });
   const tracks0 = await trackCount(page);
-  await addTrack(page, '探针序列');
+  await addTrack(page, 'Probe track');
   const selected = await selectFirstClip(page);
   const clips0 = await clipCount(page);
-  // 撤销栈里要真有这一步、有选中的片段,快捷键那两条路才测得出东西
+  // There must actually be this step in the undo stack and a selected clip for the two shortcut
+  // paths to test anything
   const undoReady = await waitFor(page, () => window.__pcStore.actions.canUndo(), null, 10000).then(() => true, () => false);
   check('lock.precondition', undoReady && !!selected, { canUndo: undoReady, selected, clips0 });
   const fname = await fileName(page);
@@ -215,18 +237,19 @@ async function phaseLock(browser) {
   await page.screenshot({ path: path.join(outDir, '1-saving.png') });
   const tried = await tryEditPaths(page);
   for (const [k, v] of Object.entries(tried)) {
-    const ok = v.same && v.name === '保存探针改过' && v.tracks === tracks0 + 1 && v.clips === clips0 && !v.renaming && (k !== 'agentPanel' || !v.composer || !v.typed);
+    const ok = v.same && v.name === 'Save probe modified' && v.tracks === tracks0 + 1 && v.clips === clips0 && !v.renaming && (k !== 'agentPanel' || !v.composer || !v.typed);
     check(`lock.blocked.${k}`, ok, v);
   }
   await page.evaluate(() => window.__saveProbe.release());
-  // 不靠被测代码的界面判断保存结束:等文件真的关上,再等脏标记清掉(最多 10 秒)
+  // Do not rely on the UI of the code under test to judge save completion: wait for the file to
+  // actually close, then wait for the dirty flag to clear (up to 10 seconds)
   await waitFor(page, () => window.__saveProbe.log.includes('closed'), null, 30000).catch(() => {});
   await waitFor(page, () => window.__pcStore.getState().dirty === false, null, 10000).catch(() => {});
   await sleep(300);
   const text = await page.evaluate((n) => window.__opfsText(n), fname);
   let savedName = null, savedTracks = null;
-  try { const doc = JSON.parse(text); savedName = doc.project.name; savedTracks = doc.project.tracks.length; } catch { /* 下面判 */ }
-  check('lock.file-written', savedName === '保存探针改过' && savedTracks === tracks0 + 1, { savedName, savedTracks, bytes: text?.length ?? 0 });
+  try { const doc = JSON.parse(text); savedName = doc.project.name; savedTracks = doc.project.tracks.length; } catch { /* Check below */ }
+  check('lock.file-written', savedName === 'Save probe modified' && savedTracks === tracks0 + 1, { savedName, savedTracks, bytes: text?.length ?? 0 });
   const dirty = await page.evaluate(() => window.__pcStore.getState().dirty);
   check('lock.marked-saved', dirty === false, { dirty });
   await page.evaluate(() => document.activeElement?.blur?.());
@@ -241,18 +264,18 @@ async function phaseLock(browser) {
 
 async function phaseTimeout(browser) {
   const page = await openEditor(browser);
-  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: '超时探针' }); });
+  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: 'Timeout probe' }); });
   const fname = await fileName(page);
-  // 先正常存一版,作为「上次有效保存」
+  // First save a version normally as "last valid save"
   await clickSave(page);
   await waitFor(page, () => window.__saveProbe.log.includes('closed') && window.__pcStore.getState().dirty === false, null, 30000);
   await sleep(300);
   const before = await page.evaluate((n) => window.__opfsText(n), fname);
-  check('timeout.baseline-saved', !!before && before.includes('超时探针'), { bytes: before?.length ?? 0 });
-  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: '超时探针改过' }); });
+  check('timeout.baseline-saved', !!before && before.includes('Timeout probe'), { bytes: before?.length ?? 0 });
+  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: 'Timeout probe modified' }); });
   const tracks0 = await trackCount(page);
-  await addTrack(page, '超时序列');
-  // 本机 Agent 有一个工具调用开始了、一直没结束(和 mcpExecutor 用的是同一个模块实例)
+  await addTrack(page, 'Timeout track');
+  // Local Agent has a tool call started and never ended (uses the same module instance as mcpExecutor)
   const moduleUrl = await page.evaluate(AGENT_TOOL('beginAgentTool'));
   check('timeout.precondition-agent-module', !!moduleUrl, { moduleUrl });
   const createBefore = await page.evaluate(() => window.__saveProbe.createCalls);
@@ -262,7 +285,7 @@ async function phaseTimeout(browser) {
   const waitingText = await page.evaluate(() => document.querySelector('[data-pc="save-lock-waiting"]')?.textContent ?? '');
   check('timeout.waiting-shown', waitingText.includes('Agent'), { waitingText });
   await page.screenshot({ path: path.join(outDir, '3-waiting.png') });
-  // 等的时候改不动
+  // Cannot modify while waiting
   await page.evaluate(() => document.activeElement?.blur?.());
   await page.keyboard.down('Control'); await page.keyboard.press('z'); await page.keyboard.up('Control');
   await sleep(150);
@@ -270,7 +293,7 @@ async function phaseTimeout(browser) {
   await waitFor(page, () => !!document.querySelector('[data-pc="save-notice"]'), null, 30000).catch(() => {});
   const elapsed = Date.now() - t0;
   const notice = await page.evaluate(() => { const el = document.querySelector('[data-pc="save-notice"]'); return { tone: el?.getAttribute('data-tone'), text: el?.textContent ?? '' }; });
-  check('timeout.notice', notice.tone === 'error' && notice.text.includes('Agent') && notice.text.includes('没有保存') && notice.text.includes('原来的文件没有改动'), { notice, elapsedMs: elapsed });
+  check('timeout.notice', notice.tone === 'error' && notice.text.includes('Agent') && notice.text.includes('not saved') && notice.text.includes('original file was not changed'), { notice, elapsedMs: elapsed });
   await page.screenshot({ path: path.join(outDir, '4-timeout.png') });
   const createAfter = await page.evaluate(() => window.__saveProbe.createCalls);
   const afterText = await page.evaluate((n) => window.__opfsText(n), fname);
@@ -286,29 +309,30 @@ async function phaseTimeout(browser) {
 
 async function phaseFail(browser) {
   const page = await openEditor(browser);
-  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: '失败探针' }); });
+  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: 'Failure probe' }); });
   const fname = await fileName(page);
   await clickSave(page);
   await waitFor(page, () => window.__saveProbe.log.includes('closed') && window.__pcStore.getState().dirty === false, null, 30000);
   await sleep(300);
   const before = await page.evaluate((n) => window.__opfsText(n), fname);
-  check('fail.baseline-saved', !!before && before.includes('失败探针'), { bytes: before?.length ?? 0 });
-  // 改得多一点,让新内容比旧的长、写一半时一定和旧内容不同
+  check('fail.baseline-saved', !!before && before.includes('Failure probe'), { bytes: before?.length ?? 0 });
+  // Modify a bit more so new content is longer than old and halfway through writing is definitely
+  // different from old content
   const tracks0 = await trackCount(page);
-  await addTrack(page, '失败序列'.repeat(20));
+  await addTrack(page, 'Failure track'.repeat(20));
   await page.evaluate(() => { window.__saveProbe.mode = 'fail'; window.__saveProbe.log = []; });
   await clickSave(page);
   await waitFor(page, () => !!document.querySelector('[data-pc="save-notice"]') || (!document.querySelector('[data-pc="save-lock"]') && window.__saveProbe.log.includes('half-written')), null, 30000);
   await sleep(300);
   const notice = await page.evaluate(() => { const el = document.querySelector('[data-pc="save-notice"]'); return el ? { tone: el.getAttribute('data-tone'), text: el.textContent } : null; });
-  check('fail.notice', !!notice && notice.tone === 'error' && notice.text.includes('原来的文件'), { notice });
+  check('fail.notice', !!notice && notice.tone === 'error' && notice.text.includes('original file'), { notice });
   await page.screenshot({ path: path.join(outDir, '5-write-failed.png') });
   const log = await page.evaluate(() => window.__saveProbe.log);
   check('fail.aborted', log.includes('abort') && !log.includes('close'), { log });
   const afterText = await page.evaluate((n) => window.__opfsText(n), fname);
   check('fail.original-byte-identical', afterText === before, { beforeBytes: before?.length ?? 0, afterBytes: afterText?.length ?? 0 });
   const names = await page.evaluate(() => window.__opfsNames());
-  check('fail.no-leftover-files', names.filter((n) => n !== fname && n.startsWith('失败探针')).length === 0, { names });
+  check('fail.no-leftover-files', names.filter((n) => n !== fname && n.startsWith('Failure probe')).length === 0, { names });
   const dirty = await page.evaluate(() => window.__pcStore.getState().dirty);
   check('fail.still-dirty', dirty === true, { dirty });
   await page.evaluate(() => document.activeElement?.blur?.());
@@ -316,16 +340,17 @@ async function phaseFail(browser) {
   await sleep(200);
   check('fail.edit-restored', (await trackCount(page)) === tracks0, { tracks: await trackCount(page), tracks0 });
 
-  // 对照:不经我们的代码,只看浏览器——写一半、既不 close 也不 abort,原文件是不是照样不变
+  // Control: without going through our code, look only at the browser: halfway through writing,
+  // neither close nor abort, whether the original file remains unchanged as expected
   const raw = await page.evaluate(async (n) => {
     const root = await navigator.storage.getDirectory();
     const h = await root.getFileHandle(n);
     const orig = await (await h.getFile()).text();
     const w = await h.createWritable();
-    await w.write('半截'.repeat(50));
+    await w.write('partial'.repeat(50));
     const midway = await (await h.getFile()).text();
-    // 不 close、不 abort,丢掉这个流
-    const w2 = await h.createWritable(); // 再开一个流也不受影响
+    // Neither close nor abort; discard this stream
+    const w2 = await h.createWritable(); // Opening another stream is also unaffected
     await w2.abort();
     const later = await (await h.getFile()).text();
     return { origBytes: orig.length, midwayUnchanged: midway === orig, laterUnchanged: later === orig, w: typeof w };

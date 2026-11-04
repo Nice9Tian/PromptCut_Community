@@ -4,8 +4,8 @@ import { accentOf, easeExpoOut } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 标题:一行大字,可选一行小字眼(kicker)在上面。从 pin-board 的「小标题 + 副标题」拆出来。
- * 进场:小字眼先淡入上浮,标题延后 100ms。
+ * Title: one line of large text, with an optional kicker line above. Extracted from "subheading + subtitle" in pin-board.
+ * Entrance: kicker first fades in and floats up, title delayed by 100ms.
  */
 interface Params {
   kicker: string;
@@ -16,7 +16,7 @@ interface Params {
 }
 
 function TitlePart({ params, width, height }: PartProps<Params>) {
-  // size 0 = 按框算:标题占大头,小字眼按标题的 0.55 倍;两行一起装进框
+  // size 0 = calculate from box: title takes the majority, kicker is 0.55x title; both lines fit into box together
   const size = fitOr(params.size, { width: width - 48, height, text: params.text, lines: params.kicker ? 1.55 : 1, max: 240 });
   const align = params.align === "center" ? "center" : params.align === "right" ? "flex-end" : "flex-start";
   const textAlign = params.align === "center" ? "center" : params.align === "right" ? "right" : "left";
@@ -46,19 +46,19 @@ function TitlePart({ params, width, height }: PartProps<Params>) {
 
 export const textTitle: PartDef<Params> = {
   id: "text-title",
-  name: "标题",
-  description: "一行大标题,上面可带一行小字眼;淡入上浮进场",
-  useWhen: "组合里需要一个醒目的标题或段落名时用;正文、说明文字用 text-body,数字用 metric 类部件。",
-  tags: ["标题", "文字", "小字眼"],
+  name: "Title",
+  description: "A single-line large title, optionally with a line of small text above it; fades in and rises into place",
+  useWhen: "Use when a composition needs a eye-catching title or section name; use text-body for body and explanatory text, and metric-type parts for numbers.",
+  tags: ["Title", "Text", "kicker"],
   role: "text",
   from: "pin-board",
   defaults: { kicker: "SUMMARY", text: "核心要点总结", size: 0, accent: "", align: "left" },
   controls: [
-    { key: "kicker", label: "小字眼", type: "text", hint: "留空不显示" },
-    { key: "text", label: "标题", type: "text", required: true },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 240, step: 2, hint: "0 表示按部件的框自动算字号,框缩放字随着变;想固定就填具体像素" },
-    { key: "accent", label: "颜色(留空用主题色)", type: "color" },
-    { key: "align", label: "对齐", type: "select", options: [{ value: "left", label: "左" }, { value: "center", label: "中" }, { value: "right", label: "右" }] },
+    { key: "kicker", label: "kicker", type: "text", hint: "Leave empty to hide" },
+    { key: "text", label: "Title", type: "text", required: true },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 240, step: 2, hint: "0 means the font size is computed automatically from the part's box, and the text scales with the box; to fix it, enter a specific pixel value" },
+    { key: "accent", label: "Color (leave empty to use theme color)", type: "color" },
+    { key: "align", label: "Align", type: "select", options: [{ value: "left", label: "Left" }, { value: "center", label: "Medium" }, { value: "right", label: "Right" }] },
   ],
   defaultFrame: { x: 120, y: 120, w: 900, h: 160 },
   settleMs: (p) => (p.kicker ? 700 : 600),

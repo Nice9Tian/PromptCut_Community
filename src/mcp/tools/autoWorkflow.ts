@@ -9,41 +9,41 @@ const autoWorkflowJobs = new Map<string, any>();
 async function pipeline(args: { mediaId: string; style?: string; maxCards?: number }, job: any) {
   const { mediaId, style, maxCards = 12 } = args;
 
-  // 1. 找素材
+  // 1. Find media
   const state = getState();
   const media = state.project.media.find(m => m.id === mediaId);
   if (!media) {
-    throw new Error("找不到该素材，可以用 list_media 查");
+    throw new Error("Media not found, you can look it up with list_media");
   }
 
-  // 2. 拿文字稿
+  // 2. Get transcript
   let transcribed = false;
   if (!media.transcript || media.transcript.segments.length === 0) {
-    job.phase = "转写中";
+    job.phase = "Transcribing";
     const status = await sttStatus();
     if (!status.engines["faster-whisper"].installed && !status.engines.whisper.installed) {
-      throw new Error("没装语音识别引擎，请先用 stt_install 装 faster-whisper");
+      throw new Error("No speech-to-text engine installed, please install faster-whisper first with stt_install");
     }
     const engine = status.engines["faster-whisper"].installed ? "faster-whisper" : "whisper";
     
     await Promise.race([
       transcribeMedia(mediaId, { engine }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("转写超过 10 分钟")), 600000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Transcription took more than 10 minutes")), 600000))
     ]);
     
     transcribed = true;
   }
   
-  job.phase = "配卡中";
+  job.phase = "Composing cards";
   
-  // 重新读取
+  // Re-read
   const newMedia = getState().project.media.find(m => m.id === mediaId);
   if (!newMedia || !newMedia.transcript || newMedia.transcript.segments.length === 0) {
-    throw new Error("文字稿是空的");
+    throw new Error("The transcript is empty");
   }
   const transcript = newMedia.transcript;
 
-  // 3. 算时间轴映射
+  // 3. Compute timeline mapping
   let clipStart = 0;
   let mediaOffset = 0;
   let clipEnd = Infinity;
@@ -60,7 +60,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
     }
   }
 
-  // 素材秒 → 时间轴秒:kernel/clipTime.mjs 的统一换算(含片段速度)
+  // Media seconds → timeline seconds: unified conversion in kernel/clipTime.mjs (including clip speed)
   const toTl = (s: number) => timelineTimeAt({ start: clipStart, mediaOffset, speed }, s);
   
   const mappedSegments: { start: number; end: number; text: string }[] = [];
@@ -76,7 +76,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
     }
   }
 
-  // 4. 分组
+  // 4. Group
   const groups: { start: number; end: number; text: string }[] = [];
   let currentGroup: typeof mappedSegments = [];
 
@@ -90,7 +90,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
       shouldBreak = true;
     } else if (groupDuration >= 5) {
       const lastChar = seg.text.trim().slice(-1);
-      const isPunctuation = /[。？！；.?!]/.test(lastChar);
+      const isPunctuation = /[。？！；.?!]/.test(lastChar); // i18n-allow
       
       const nextSeg = mappedSegments[i + 1];
       const gap = nextSeg ? (nextSeg.start - seg.end) : 0;
@@ -123,17 +123,17 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
     }
   }
 
-  // 5. 选卡
+  // 5. Select cards
   function selectCard(text: string): string | null {
-    if (/(增长|提升|上涨|翻倍|翻了|下降|降低|减少|涨)/.test(text) && (/[0-9]+(\.[0-9]+)?\s*(%|个|倍|万|亿|次|人|分|点)/.test(text) || /[一二三四五六七八九十百千万亿]+\s*(倍|次|个|人|万|亿|成)/.test(text))) return "odometer";
-    if (/[0-9]+(\.[0-9]+)?\s*(%|百分|倍|万|亿|次|个|人)/.test(text)) return "stat-proof";
-    if (/(对比|相比|比起|而不是|vs|VS|versus|不同于|区别|差别)/.test(text)) return "versus-card";
-    if (/(第一|第二|第三|首先|其次|然后|接着|最后|步骤|流程|第一步)/.test(text)) return "step-timeline";
-    if (/(要点|清单|包括|分别是|三点|几点|需要|必须)/.test(text)) return "checklist";
-    if (/[「」『』“”"]/.test(text)) return "quote-lockup";
-    if (/(记住|关键在于|本质上|一句话|核心是|重点是)/.test(text)) return "blur-text";
-    if (text.length <= 14 && /[!！]$/.test(text)) return "punch-pill";
-    if (/(所谓|叫做|叫作|定义|是指|指的是|术语|概念)/.test(text)) return "term-card";
+    if (/(增长|提升|上涨|翻倍|翻了|下降|降低|减少|涨|\b(?:growth|grew|increase[sd]?|rise|rose|doubled|decline[sd]?|decrease[sd]?|drop(?:ped)?|reduce[sd]?|fell)\b)/i.test(text) && (/[0-9]+(\.[0-9]+)?\s*(%|个|倍|万|亿|次|人|分|点|(?:percent|x|times|thousand|million|billion|people|points|items)\b)/i.test(text) || /[一二三四五六七八九十百千万亿]+\s*(倍|次|个|人|万|亿|成)|\b(one|two|three|four|five|six|seven|eight|nine|ten|hundred|thousand|million|billion)\s+(times|items|people|thousand|million|billion|percent)\b/i.test(text))) return "odometer"; // i18n-allow
+    if (/[0-9]+(\.[0-9]+)?\s*(%|百分|倍|万|亿|次|个|人|(?:percent|x|times|thousand|million|billion|people|items)\b)/i.test(text)) return "stat-proof"; // i18n-allow
+    if (/(对比|相比|比起|而不是|不同于|区别|差别|\b(?:vs|versus|compared|compare|comparison|rather than|instead of|unlike|difference)\b)/i.test(text)) return "versus-card"; // i18n-allow
+    if (/(第一|第二|第三|首先|其次|然后|接着|最后|步骤|流程|第一步|\b(?:first|second|third|firstly|secondly|then|next|finally|step|process)\b)/i.test(text)) return "step-timeline"; // i18n-allow
+    if (/(要点|清单|包括|分别是|三点|几点|需要|必须|\b(?:key points|checklist|includes|namely|three points|several points|need|must)\b)/i.test(text)) return "checklist"; // i18n-allow
+    if (/[「」『』“”"]/.test(text)) return "quote-lockup"; // i18n-allow
+    if (/(记住|关键在于|本质上|一句话|核心是|重点是|\b(?:remember|the key is|essentially|in a word|the core is|the point is)\b)/i.test(text)) return "blur-text"; // i18n-allow
+    if (text.length <= 14 && /[!！]$/.test(text)) return "punch-pill"; // i18n-allow
+    if (/(所谓|叫做|叫作|定义|是指|指的是|术语|概念|\b(?:so-called|called|defined as|refers to|means|term|concept)\b)/i.test(text)) return "term-card"; // i18n-allow
     return null;
   }
 
@@ -147,7 +147,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
 
   const cardsToPlace = selectedCards.slice(0, maxCards);
 
-  // 6. 填参数
+  // 6. Fill in parameters
   function paramsFor(cardId: string, rawText: string) {
     const text = rawText.trim();
     const short = text.slice(0, 24);
@@ -168,7 +168,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
       p.kicker = "DATA";
     } else if (cardId === "stat-proof") {
       p.value = extractNum(text);
-      const suffixMatch = text.match(/\d+(\.\d+)?([%倍万亿次])/);
+      const suffixMatch = text.match(/\d+(\.\d+)?([%倍万亿次]|(?:x|k|m|bn)\b)/i); // i18n-allow
       p.suffix = suffixMatch ? suffixMatch[2] : "";
       p.prefix = "";
       p.kickerZh = short;
@@ -186,7 +186,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
         p.bSub = snippet;
       }
     } else if (cardId === "step-timeline" || cardId === "checklist") {
-      const parts = text.split(/[，。、,]/).map(x => x.trim()).filter(Boolean);
+      const parts = text.split(/[，。、,]/).map(x => x.trim()).filter(Boolean); // i18n-allow
       const items = parts.map(x => x.slice(0, 8)).slice(0, cardId === "checklist" ? 4 : 5);
       if (cardId === "step-timeline") {
         p.steps = items.length >= 2 ? items.join("|") : snippet;
@@ -215,7 +215,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
     return filtered;
   }
 
-  // 7. 落卡
+  // 7. Place cards
   let skipped = groups.length - cardsToPlace.length;
   const clipsOut: any[] = [];
   
@@ -240,7 +240,8 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
 
   let captionClipId: string | null = null;
   if (mappedSegments.length > 0) {
-    // 字幕单独一条序列,而且建在最上层 —— 字幕得压在画面之上,追加到末尾等于埋在底下
+    // Captions get their own separate track, built on the topmost layer: captions must sit above the
+    // visuals; appending to the end means burying them underneath
     const captionTrack = actions.ensureCaptionTrack();
     
     const globalStart = Math.min(...mappedSegments.map(s => s.start));
@@ -269,7 +270,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
     actions.setProjectMeta({ duration: maxClipEnd });
   }
 
-  // 8. 返回
+  // 8. Return
   return {
     mediaId,
     style,
@@ -290,7 +291,7 @@ export async function runAutoWorkflow(args: { mediaId: string; style?: string; m
     result: null,
     error: null,
     startedAt: Date.now(),
-    phase: "转写中"
+    phase: "Transcribing"
   };
   autoWorkflowJobs.set(jobId, job);
 
@@ -299,12 +300,12 @@ export async function runAutoWorkflow(args: { mediaId: string; style?: string; m
     job.done = true;
     job.ok = true;
     job.result = res;
-    job.phase = "已完成";
+    job.phase = "Completed";
   }).catch(err => {
     job.done = true;
     job.ok = false;
     job.error = err instanceof Error ? err.message : String(err);
-    job.phase = "失败";
+    job.phase = "failed";
   });
 
   const raceResult = await Promise.race([
@@ -319,7 +320,7 @@ export async function runAutoWorkflow(args: { mediaId: string; style?: string; m
       started: true,
       mediaId: args.mediaId,
       phase: job.phase,
-      hint: "素材较长，转写和配卡已在后台继续，请用 auto_workflow_status 带上这个 jobId 轮询，done 为 true 时 result 里就是完整结果；这期间不要重复调用 auto_workflow"
+      hint: "The media is long, transcription and card matching continue in the background. Poll with auto_workflow_status using this jobId; when done is true, result holds the complete result. Do not call auto_workflow again in the meantime"
     };
   } else {
     return {
@@ -333,7 +334,7 @@ export async function runAutoWorkflow(args: { mediaId: string; style?: string; m
 export function getAutoWorkflowStatus(args: { jobId: string }) {
   const job = autoWorkflowJobs.get(args.jobId);
   if (!job) {
-    throw new Error("找不到该作业，可能是 jobId 错误或系统已重启");
+    throw new Error("Job not found, the jobId may be wrong or the system restarted");
   }
   return {
     jobId: args.jobId,

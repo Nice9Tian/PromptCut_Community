@@ -1,22 +1,27 @@
 /**
- * 内容库客户端（C6.4，契约 `docs/plan/manifest-contract.md` 第 2 节；服务端协议见
- * `docs/plan/docservice-contract.md` 第 2 节）。
+ * Content store client (C6.4, Section 2 of contract `docs/plan/manifest-contract.md`;
+ * see Section 2 of `docs/plan/docservice-contract.md` for server protocol).
  *
- * 和节点共用同一条 M5a 的 `WsEndpoint`（`createWsEndpoint` 的返回值），在它上面发
- * `content.put` / `content.get` / `content.list`，按 `reqId` 配回包：
- *   - 每个请求带本实例唯一的 `reqId`（`content#<实例号>-<序号>`，不会和 local-node 的
- *     `<publisherId>#publish-<n>` 撞上）；别的 `reqId` 的消息一律不理；
- *   - 同一 `reqId` 回 `error` 就拒绝，错误带 `reason`（`code` 与它相同）与 `detail`；
- *   - 过了 `timeoutMs` 还没回包就拒绝，`code: 'timeout'`，迟到的回包丢弃；
- *   - 发不出去（未连上）或连接断开时，在途请求立即以 `code: 'disconnected'` 失败，不重放。
+ * Shares the same M5a `WsEndpoint` (return value of `createWsEndpoint`) with the node,
+ * sending `content.put` / `content.get` / `content.list` over it and matching responses by `reqId`:
+ *   - Each request carries an instance-unique `reqId` (`content#<instanceId>-<seq>`, which will
+ *     not collide with `<publisherId>#publish-<n>` from local-node); messages with other
+ *     `reqId` values are ignored;
+ *   - Rejects if the same `reqId` returns `error`, where the error carries `reason` (same as
+ *     `code`) and `detail`;
+ *   - Rejects if no response is received after `timeoutMs`, with `code: 'timeout'`, discarding
+ *     late responses;
+ *   - If unable to send (not connected) or connection is lost, in-flight requests fail immediately
+ *     with `code: 'disconnected'` without replay.
  *
- * 只依赖 Node 内置模块（守门测试 `render-node-deps` D1）；计时器可注入，测试不必真等。
+ * Relies only on Node built-in modules (gatekeeper test `render-node-deps` D1); timers can be
+ * injected so tests do not need to wait in real time.
  */
 import { randomUUID } from 'node:crypto';
 
 export const CONTENT_CLIENT_DEFAULTS = Object.freeze({ timeoutMs: 10_000 });
 
-/** 每种请求期望的回包类型 */
+/** Expected response type for each request */
 const REPLY_TYPE = Object.freeze({
   'content.put': 'content.stored',
   'content.get': 'content.item',
@@ -39,15 +44,15 @@ function clientError(code, message, extra = {}) {
 /**
  * @typedef {object} ContentClient
  * @property {(kind: string, key: string, body: any) => Promise<{ hash: string, rev?: number }>} put
- * @property {(kind: string, key: string) => Promise<{ body: any, hash: string, rev?: number } | null>} get  没有就回 null
+ * @property {(kind: string, key: string) => Promise<{ body: any, hash: string, rev?: number } | null>} get  Returns null if not found
  * @property {(kind: string, prefix?: string) => Promise<{ items: Array<{ key: string, hash: string, rev?: number }>, truncated: boolean }>} list
- * @property {() => number} pending  在途请求数（诊断用）
+ * @property {() => number} pending  In-flight request count (for diagnostics)
  */
 
 /**
  * @param {import('./ws-transport.mjs').WsEndpoint} endpoint
  * @param {object} [options]
- * @param {number} [options.timeoutMs]  单个请求等回包的上限，缺省 10 s
+ * @param {number} [options.timeoutMs]  Maximum wait for a single request response, defaults to 10 s
  * @param {(fn: () => void, ms: number) => any} [options.setTimeout]
  * @param {(handle: any) => void} [options.clearTimeout]
  * @returns {ContentClient}
@@ -58,10 +63,10 @@ export function createContentClient(endpoint, {
   clearTimeout: clearTimer = globalThis.clearTimeout,
 } = {}) {
   if (!endpoint || typeof endpoint.send !== 'function' || typeof endpoint.onMessage !== 'function') {
-    throw new TypeError('createContentClient：endpoint 必须有 send 与 onMessage');
+    throw new TypeError('createContentClient: endpoint must have send and onMessage');
   }
   if (!(Number.isFinite(timeoutMs) && timeoutMs > 0)) {
-    throw new TypeError('createContentClient：timeoutMs 必须是正数');
+    throw new TypeError('createContentClient: timeoutMs must be a positive number');
   }
 
   const instance = randomUUID().slice(0, 8);
@@ -83,11 +88,11 @@ export function createContentClient(endpoint, {
     const entry = settle(reqId);
     if (message.type === 'error') {
       const reason = typeof message.reason === 'string' ? message.reason : 'error';
-      entry.reject(clientError(reason, `内容库 ${entry.type} 失败：${reason}`, { reason, detail: message.detail }));
+      entry.reject(clientError(reason, `Content store ${entry.type} failed: ${reason}`, { reason, detail: message.detail }));
       return;
     }
     if (message.type !== REPLY_TYPE[entry.type]) {
-      entry.reject(clientError('bad-reply', `内容库 ${entry.type} 回了意外的 ${String(message.type)}`));
+      entry.reject(clientError('bad-reply', `Content store ${entry.type} returned an unexpected ${String(message.type)}`));
       return;
     }
     entry.resolve(message);
@@ -97,7 +102,7 @@ export function createContentClient(endpoint, {
     endpoint.onClose(() => {
       for (const reqId of [...inflight.keys()]) {
         const entry = settle(reqId);
-        entry.reject(clientError('disconnected', `内容库 ${entry.type}：连接已断开`));
+        entry.reject(clientError('disconnected', `Content store ${entry.type}: connection closed`));
       }
     });
   }
@@ -109,12 +114,12 @@ export function createContentClient(endpoint, {
       try {
         JSON.stringify(message);
       } catch {
-        reject(clientError('bad-message', `内容库 ${type}：消息无法序列化`));
+        reject(clientError('bad-message', `Content store ${type}: message cannot be serialized`));
         return;
       }
       const timer = setTimer(() => {
         const entry = settle(reqId);
-        if (entry) entry.reject(clientError('timeout', `内容库 ${type}：${timeoutMs} ms 内没有回包`));
+        if (entry) entry.reject(clientError('timeout', `Content store ${type}: no reply within ${timeoutMs} ms`));
       }, timeoutMs);
       timer?.unref?.();
       inflight.set(reqId, { type, resolve, reject, timer });
@@ -124,10 +129,10 @@ export function createContentClient(endpoint, {
       } catch {
         sent = false;
       }
-      // 端点可能在 send 里同步收到回包（测试替身），这时已经 settle 过了
+      // Endpoint may receive a response synchronously inside send (test double); it has already settled by then
       if (!sent && inflight.has(reqId)) {
         settle(reqId);
-        reject(clientError('disconnected', `内容库 ${type}：连接未就绪，没有发出`));
+        reject(clientError('disconnected', `Content store ${type}: connection not ready, nothing sent`));
       }
     });
   }

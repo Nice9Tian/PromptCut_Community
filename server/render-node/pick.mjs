@@ -1,26 +1,38 @@
 /**
- * 候选挑选(设计 4.3 末段、第 7 节「公平性」,契约 B.3)。
+ * Candidate selection (design 4.3 last paragraph, section 7 "Fairness", contract B.3).
  *
- * 排序:优先级档(`normal` 先于 `backfill`,c10a 契约第 17 节)→ 计划先于细任务 → 档内名次(整数 `priority` 降序)
- * → `source.publishedAt` 升序 → `id` 升序(按码元比较,结果与区域设置无关)。
- * 只在排头那一档里挑:还有 `normal` 可认领时一张 `backfill` 都不碰(语义「预渲染重试排在后面」)。
- * 〔裁〕(2026-09-28,主会话;笔记本 M7-A4 查出)档内也只在排头那一个整数名次里挑:锚帧段(50)还有可认领的,
- * 普通段(10)一段都不碰。原来在前 K 个里随机、不分名次,锚帧段和普通段混在一起,锚帧优先几乎不起作用。
- * 〔裁〕(2026-10-01,`claude/m7-race`;M7-A10 抢卡查出)同一档里计划任务(`kind: 'plan'`)排在细任务前面,
- * 先于整数名次:细任务要等计划切分了才有,计划排在本节点积压的细任务后面时,新改的卡要等积压做完才有任务,
- * 不会切分的纯浏览器节点在这段时间里没活可接(实测 224～295 s)。切分本身一两秒。档仍排第一,预渲染重试的计划照旧在全部 normal 之后。
- * 然后在这一名次的前 K 个里随机取一个去认领:所有节点都抢第一名的话会互相撞出一串 `taken`。
- * 给了 `lastProjectId` 时,同优先级里先换一个项目(多项目共用一台渲染主机时的轮转)。
+ * Sorting: priority tier (`normal` precedes `backfill`, c10a contract section 17) → plan precedes
+ * fine-grained task → rank within tier (integer `priority` descending) → `source.publishedAt`
+ * ascending → `id` ascending (compared by code units, results are locale-independent).
+ * Only pick within the top tier: while `normal` is still claimable, do not touch any `backfill`
+ * (semantics "prerender retries are queued behind").
+ * [ruling 2026-09-28] (lead session; found in notebook M7-A4): within a tier, only pick within the top
+ * integer rank: while anchor frame segments (50) are claimable, do not touch any regular segments (10).
+ * Previously picked randomly among top K without distinguishing ranks, mixing anchor frame segments
+ * with regular segments, so anchor frame priority had almost no effect.
+ * [ruling 2026-10-01] (`claude/m7-race`; found during M7-A10 card racing): within the same tier, plan tasks
+ * (`kind: 'plan'`) precede fine-grained tasks ahead of integer rank: fine-grained tasks only exist after
+ * plan splitting; when a plan is queued behind backlog fine-grained tasks on this node, newly modified
+ * cards must wait until backlog completes before tasks appear, leaving pure browser nodes that cannot
+ * split idle during this period (measured 224-295 s). Splitting itself takes one or two seconds. Tier still
+ * ranks first, so prerender retry plans still follow all normal tasks.
+ * Then randomly pick one to claim among top K of this rank: if all nodes contest the first, they collide
+ * into a series of `taken`.
+ * When `lastProjectId` is given, switch projects first at same priority (rotation when multiple projects
+ * share a render host).
  *
- * 纯函数;随机源由调用方注入,测试可以固定。
+ * Pure function; random source injected by caller, can be fixed for tests.
  */
 
 const priorityOf = task => (Number.isFinite(task?.priority) ? task.priority : 0);
-/** 优先级档:只有 `'backfill'` 排后面;缺省、整数、`'normal'` 都是 normal(旧客户端不带这一项) */
+/**
+ * Priority tier: only `'backfill'` ranks behind; default, integer, and `'normal'` are all normal
+ * (omitted by older clients)
+ */
 const bandOf = task => (task?.priority === 'backfill' ? 1 : 0);
-/** 同一档里计划任务先于细任务(〔裁〕见文件头) */
+/** Within the same tier, plan tasks precede fine-grained tasks ([ruling] see file header) */
 const classOf = task => (task?.kind === 'plan' ? 0 : 1);
-// 没有发布时刻的(还没进过队列的 TaskInput)排在同优先级的最后
+// Those without published timestamps (TaskInput not yet entered the queue) rank last at same priority
 const publishedAtOf = task => (Number.isFinite(task?.source?.publishedAt) ? task.source.publishedAt : Infinity);
 const idOf = task => String(task?.id ?? '');
 
@@ -37,16 +49,18 @@ function compare(a, b) {
   return ia < ib ? -1 : ia > ib ? 1 : 0;
 }
 
-/** 新数组,不改入参。 */
+/** New array, does not mutate arguments. */
 export function rankCandidates(tasks) {
   return [...(tasks ?? [])].sort(compare);
 }
 
-/** → 任务或 `null`。`random()` 取值 `[0, 1)`。 */
+/** → Task or `null`. `random()` values in `[0, 1)`. */
 export function pickCandidate(tasks, { k = 4, random = Math.random, lastProjectId = null } = {}) {
   if (!tasks?.length) return null;
   const ranked = rankCandidates(tasks);
-  // 只在排头那一档、排头那一类(计划 / 细任务)、排头那一个整数名次里挑(normal 还有就不碰 backfill;锚帧段 50 还有就不碰普通段 10,〔裁〕见文件头)
+  // Only pick within the top tier, top class (plan / fine-grained task), and top integer rank
+  // (do not touch backfill while normal remains; do not touch regular segments 10 while anchor frame
+  // segments 50 remain, [ruling] see file header)
   const head = bandOf(ranked[0]);
   const headClass = classOf(ranked[0]);
   const headRank = priorityOf(ranked[0]);

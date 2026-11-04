@@ -12,28 +12,35 @@ import { confirmedMissingVisual, missingMaterialLabel } from "../audio/missingMa
 import { MissingMaterial } from "./MissingMaterial";
 
 /**
- * 一条序列的画面层(视频 / 图片)。E7 第 1 条:素材层搬进舞台,由 `FrameScene` 的 `live` 变体渲。
+ * Visual layer of a track (video / image). E7 rule 1: media layer moved into stage, rendered by
+ * `FrameScene`'s `live` variant.
  *
- * 画面层**按序列**挂,不按片段:每条序列两个常驻 `<video>`,一个放当前段,一个提前装好下一段
- * (为什么、怎么轮换见 `mediaSync.ts` 的 `planSlots`)。以前是 `key={clip.id}`,每切一段新建一个
- * 播放器再从文件中段 seek,交界处要空一两百毫秒才出画。
+ * Visual layers are mounted **per track**, not per clip: each track has two resident `<video>`
+ * elements, one for the current clip, one preloaded with the next clip (see `mediaSync.ts`
+ * `planSlots` for why and how they alternate). Previously it was `key={clip.id}`, creating a new
+ * player for every clip switch and seeking mid-file, leaving a blank for 100-200 ms at boundaries
+ * before the frame appeared.
  *
- * 每个元素自己跟播放头同步。同步该怎么做在 `mediaSync.ts`(纯函数、带单测),执行在
- * `mediaDrive.ts`;这里只负责把元素的读数递过去,再把结果照着执行。
+ * Each element syncs with the playhead independently. How sync should be done is in `mediaSync.ts`
+ * (pure functions, with unit tests), executed in `mediaDrive.ts`; this file only passes element
+ * readings and carries out the results.
  *
- * # 这里**不**做的两件事
+ * # Two things **not** done here
  *
- *  1. **不 import `src/audio/previewAudio`**:音频路由是编辑器主文档的事(`MediaLayers` 的
- *     `AudioLayer`),舞台恒 `muted`、编辑器只渲 `audioOnly`,所以这条路上一个音频节点都不接。
- *  2. **不 import `src/editor/timeline/useScrub`**:`scrubbing` 从 prop 来(父页经 `setScrubbing`
- *     下发)。两条都是为了舞台 bundle 不带编辑器模块。
+ *  1. **Do not import `src/audio/previewAudio`**: audio routing belongs to the editor main document
+ *     (`MediaLayers`'s `AudioLayer`); stage is always `muted` and editor only renders `audioOnly`,
+ *     so not a single audio node is connected along this path.
+ *  2. **Do not import `src/editor/timeline/useScrub`**: `scrubbing` comes from props (passed down
+ *     by the parent page via `setScrubbing`). Both are to keep editor modules out of the stage bundle.
  */
 
 const NO_HASHES: readonly string[] = [];
 
 /**
- * 同一页面同时预热换档的层数上限(C6.6 第 8 节查资料结论第 4 条:两路同时解码占额外解码器与帧缓存,
- * 1080p 一帧约 3.1 MB;只预热少数层,其余等名额)。按序列计,一条序列同时最多预热一个。
+ * Upper limit on layers warming up for tier switches concurrently on the same page (C6.6
+ * Section 8 research conclusion item 4: decoding two streams concurrently takes extra decoders
+ * and frame buffers, ~3.1 MB per 1080p frame; warm up only a few layers and let the rest wait for
+ * quota). Counted per track; a single track warms up at most one at a time.
  */
 export const MAX_WARMING = 2;
 const warming = new Set<object>();
@@ -44,34 +51,39 @@ export interface VideoLayer {
   opacity: number;
 }
 
-/** 一个常驻的 `<video>` 眼下装着哪一段、那一段出画了没有 */
+/** Which clip a resident `<video>` currently holds, and whether that clip has rendered a frame */
 export interface Slot {
   clip: SlotClip | null;
-  /** 装的那段的完整片段:摆框(frame)、强调要用 */
+  /** The full clip currently loaded: needed for positioning the frame (frame) and emphasis */
   full: TrackClip | null;
   ready: boolean;
-  /** 每换一次装的东西加一,旧的出画回调认出自己过期了就不算数 */
+  /** Incremented whenever the loaded content changes; stale frame callbacks recognize they are expired and no-op */
   token: number;
-  /** 最后一次显示时的不透明度:顶班的末帧照这个画 */
+  /** Opacity when last displayed: the stand-in last frame is drawn with this opacity */
   opacity: number;
 }
 const emptySlot = (): Slot => ({ clip: null, full: null, ready: false, token: 0, opacity: 1 });
 
 /**
- * 进槽位的只有视频段;图片段、没地址的段不进。
- * `url` 经换档判据(`mediaTier.ts` 的 `playbackUrl`,T1a 审查 #5):同一片段换档 = url 变了 = 新的一段,
- * `planSlots` 按「id 和 url 都相同」认槽位。集合为空时就是 `media.url`,和以前一样。
+ * Only video clips enter slots; image clips and clips without URLs do not.
+ * `url` goes through tier switch criteria (`playbackUrl` in `mediaTier.ts`, T1a review #5):
+ * switching tiers for the same clip = url changed = new clip; `planSlots` matches slots by
+ * "both id and url are identical". When the set is empty, it uses `media.url`, as before.
  */
 function slotClipOf(clip: TrackClip, media: MediaAsset, localHashes: readonly string[]): SlotClip | null {
   if (isImageMedia(media) || !media.url) return null;
-  // 只用小尺寸(最低一档、超过解码上限)而没有素材小尺寸的素材不给地址(c10a 第 8 节):不进槽位,这一层只挂「等待上传方」
+  // Media using only small size (lowest tier, exceeds decoding limit) without a small-size asset get
+  // no URL (c10a Section 8): do not enter slots; this layer only shows "waiting for uploader"
   const url = playbackUrl(media, localHashes);
   if (!url) return null;
-  // 片段速度(缺省 1 不写,和原来的对象逐字相同)
+  // Clip speed (omitted when default 1, verbatim identical to the original object)
   return { id: clip.id, url, start: clip.start, end: clip.end, offset: clip.mediaOffset ?? 0, ...(clipSpeed(clip) !== 1 ? { speed: clipSpeed(clip) } : null) };
 }
 
-/** 这个素材时刻属于这一段(前后放 0.1s:出画的帧时刻比目标早最多一帧) */
+/**
+ * This media timestamp belongs to this clip (with 0.1s margin: rendered frame timestamp is
+ * at most one frame earlier than target).
+ */
 function inClipRange(c: SlotClip, mediaTime: number) {
   return mediaTime >= c.offset - 0.1 && mediaTime <= c.offset + mediaSpanOf(c) + 0.1;
 }
@@ -91,29 +103,31 @@ export function VideoTrack({
   localHashes = NO_HASHES,
 }: {
   project: Project;
-  /** 项目的滤镜库(片段的 clip.filter 引用其中一条) */
+  /** Filter library of the project (clip.filter of a clip references one entry) */
   filters?: FilterDef[];
-  /** 这条序列此刻的画面段(videoLayersAt 里属于它的那条),没有是 null */
+  /** The visual clip of this track at this moment (the entry belonging to it in videoLayersAt), or null if none */
   cur: VideoLayer | null;
-  /** 这条序列 t 之后的第一段画面(nextVideoLayerAfter) */
+  /** The first visual clip on this track after t (nextVideoLayerAfter) */
   next: { clip: TrackClip; media: MediaAsset } | null;
   t: number;
   playing: boolean;
   scrubbing: boolean;
   muted: boolean;
-  /** 预览总音量,叠在淡入淡出之上 */
+  /** Master preview volume, multiplied on top of fade in/out */
   gain?: number;
-  /** 画面尺寸:算片段的框要用 */
+  /** Video dimensions: needed to calculate clip frames */
   stage: { width: number; height: number };
   /**
-   * 这条序列有一帧真画到屏幕上了(K5 第 (4) 步的 `mediaReady`:后台舞台补跑完、素材也出画了
-   * 才敢互换)。舞台把它接到 `postStageEvent({ type: 'mediaReady' })` 上;编辑器不传。
+   * A frame of this track has actually been drawn to screen (K5 step (4) `mediaReady`: only dare to
+   * swap after the background stage catch-up run finishes and the media has rendered a frame).
+   * The stage connects it to `postStageEvent({ type: 'mediaReady' })`; editor does not pass it.
    */
   onMediaFrame?: (mediaTime: number) => void;
   /**
-   * 当前连接的素材服务报 `complete` 的哈希(A1 的 `localHashes`),换档判据只看它。
-   * 缺省空集合 = 还没问过素材服务(有素材小尺寸挂素材小尺寸)。来源:主文档每 2 秒轮询 `GET media/<hash>/chunks`
-   * (`src/editor/media/assetTiers.ts`),经 `setLocalHashes` 下发。
+   * Hashes reported as `complete` by the currently connected asset service (A1's `localHashes`),
+   * which tier switch criteria exclusively check. Default empty set = asset service not yet queried
+   * (mounts small-size asset if available). Source: main document polls `GET media/<hash>/chunks`
+   * every 2 seconds (`src/editor/media/assetTiers.ts`), dispatched via `setLocalHashes`.
    */
   localHashes?: readonly string[];
 }) {
@@ -121,32 +135,40 @@ export function VideoTrack({
   const el1 = useRef<HTMLVideoElement>(null);
   const els = [el0, el1];
   const slots = useRef<Slot[]>([emptySlot(), emptySlot()]);
-  /** 每个槽位装的那一档到齐之后判过「要不要重载失败过的元素」没有(在用时才判;没到齐时清回 false) */
+  /**
+   * Whether each slot has evaluated "whether to reload failed elements" after its tier is fully
+   * available (evaluated only when in use; reset to false when not fully available).
+   */
   const completeSeen = useRef<boolean[]>([false, false]);
-  /** 上一次规划的预热槽位 / 播放槽位(帧回调在渲染之外到达,读这里) */
+  /** Previously planned warm-up slot / playback slot (read here when frame callbacks arrive outside render) */
   const warmRef = useRef<number | null>(null);
   const activeRef = useRef<number | null>(null);
   const shownRef = useRef<number | null>(null);
   const displayedFrames = useRef<Array<{ mediaTime: number; expectedDisplayTime: number; token: number } | null>>([null, null]);
-  // 出画回调在渲染之外到达:暂停时没有播放循环推着重渲,得自己敲一下,显示才换得过去
+  // Frame callbacks arrive outside render: when paused, there is no playback loop driving re-renders,
+  // so we must trigger one ourselves for the display to switch
   const [, bump] = useReducer((n: number) => n + 1, 0);
 
-  // 可播性探出结论(`playability.ts`)时重渲一次:暂停中也当场换档
+  // Re-render once when playability probe reaches a conclusion (`playability.ts`): switch tiers
+  // immediately even when paused
   useSyncExternalStore(subscribePlayability, playabilityVersion, playabilityVersion);
   const warmKey = useRef({}).current;
   const canWarm = warming.has(warmKey) || warming.size < MAX_WARMING;
   const missing = cur && confirmedMissingVisual(cur.media) ? cur : null;
   const curV = cur && !missing ? slotClipOf(cur.clip, cur.media, localHashes) : null;
   const nextV = next && !confirmedMissingVisual(next.media) ? slotClipOf(next.clip, next.media, localHashes) : null;
-  // 浏览器已解出可见帧、但本组件的首个回调还没到时，也要按「有上一档画面」规划换档。
+  // When the browser has decoded a visible frame but this component's first callback has not arrived
+  // yet, plan tier switch assuming "has visuals from previous tier".
   const planningSlots = slots.current.map((s, i) => i === shownRef.current && (els[i].current?.readyState ?? 0) >= 2 ? { ...s, ready: true } : s);
   if (shownRef.current !== null && curV && slots.current[shownRef.current].clip?.id === curV.id && slots.current[shownRef.current].clip?.url !== curV.url) {
     const other = 1 - shownRef.current;
-    // 另一槽位可能早在素材原尺寸尚未到齐时按普通素材出过画；只有本轮预热对齐产生的 ready 才能切换。
+    // The other slot may have rendered frames as ordinary media before original-size assets arrived;
+    // only ready produced by alignment in this warm-up round can switch.
     if (planningSlots[shownRef.current].ready && warmRef.current !== other && planningSlots[other].clip?.id === curV.id && planningSlots[other].clip?.url === curV.url) {
       planningSlots[other] = { ...planningSlots[other], ready: false };
     } else if (warmRef.current === other && planningSlots[other].ready && playing) {
-      // 帧回调到 React 提交之间前台还会继续走；提交时用两槽位最新的交帧再验一次。
+      // Foreground continues advancing between frame callback and React commit; verify again with the
+      // latest delivered frames from both slots at commit time.
       const front = displayedFrames.current[shownRef.current];
       const warm = displayedFrames.current[other];
       if (!front || !warm || front.token !== slots.current[shownRef.current].token || warm.token !== slots.current[other].token ||
@@ -156,7 +178,7 @@ export function VideoTrack({
     }
   }
   const plan = planSlots({ slots: planningSlots, shown: shownRef.current, cur: curV, next: nextV, t, playing, canWarm });
-  // 换档对齐判据要的「此刻」:帧回调在渲染之外到达,读最新的
+  // The "now" required by tier switch alignment criteria: frame callbacks arrive outside render, read the latest
   const live = useRef({ t, playing, cur, fps: project.fps || 30, shown: plan.shown as number | null });
   live.current = { t, playing, cur, fps: project.fps || 30, shown: plan.shown };
   const complete = new Set(localHashes);
@@ -168,10 +190,11 @@ export function VideoTrack({
   };
 
   /**
-   * K5 第 (4) 步的钩子:同一片段内**不换段**时下面那句 `s.clip?.id === c.id` 不会重注册 rVFC,
-   * 于是「`back` 补跑到 T′ 之后素材层出没出画」只能等满 300 ms。父页每改一次 `mediaT`
-   * 都会让 `t` 变,偏差超过 `PAUSED_SEEK_SEC` 就是真 seek 过了 —— 这时补注册一次 rVFC,
-   * 出画即报,不用等满兜底。
+   * Hook for K5 step (4): when **not switching clips** within the same clip, `s.clip?.id === c.id`
+   * below will not re-register rVFC, so "whether the media layer rendered a frame after `back` catch-up
+   * run to T'" has to wait the full 300 ms. Each time the parent page changes `mediaT`, `t` changes;
+   * a deviation exceeding `PAUSED_SEEK_SEC` indicates an actual seek: re-register rVFC here to report
+   * as soon as a frame renders, without waiting for the full fallback timeout.
    */
   const armed = useRef(false);
   const armFrame = (el: HTMLVideoElement, i: number) => {
@@ -183,8 +206,9 @@ export function VideoTrack({
     });
   };
 
-  // currentTime 是播放头的读数，不是已经交给合成器的帧。持续记录两槽位的交帧时刻，
-  // 预热回调到达时才有同一显示时刻的前台参照。
+  // currentTime is the playhead reading, not the frame already handed off to the compositor.
+  // Continuously record delivered frame timestamps for both slots so a foreground reference
+  // at the same display timestamp is available when warmup callbacks arrive.
   useLayoutEffect(() => {
     const ids: Array<{ el: HTMLVideoElement; id: number }> = [];
     for (let i = 0; i < 2; i++) {
@@ -201,9 +225,11 @@ export function VideoTrack({
   }, []);
 
   useLayoutEffect(() => {
-    // 换档预热的槽位:交出的帧要和画面上那一档对齐到一帧以内才算好(C6.6「帧误差不超过一帧」)——
-    // 播放中比显示着的那一档此刻的时刻,暂停中比目标时刻。判的时候才看它是不是预热槽位(`warmRef`):
-    // 一个槽位可能先按普通段装上(比如等待上传方时挂失败了)、后来才成了预热槽位
+    // Slot for tier switch warmup: delivered frame must align with the active tier on screen within
+    // one frame to qualify (C6.6 "frame error does not exceed one frame"): during playback compare
+    // with current timestamp of the displayed tier, during pause compare with target timestamp.
+    // Check if it is a warm-up slot (`warmRef`) only during evaluation: a slot might initially mount
+    // as an ordinary clip (e.g. failed while waiting for uploader) and only later become a warm-up slot
     const aligned = (i: number, c: SlotClip, mediaTime: number, expectedDisplayTime?: number) => {
       const now = live.current;
       if (!now.cur || now.cur.clip.id !== c.id) return false;
@@ -222,12 +248,14 @@ export function VideoTrack({
           lastSeekAt.set(warm, realNow);
         }
       }
-      // 探针的观察口(`scripts/probes/tier-switch-probe.mjs`):数组时才记,和 __pcFallbackTrace 一个做法
+      // Probe inspection port (`scripts/probes/tier-switch-probe.mjs`): recorded only when an array,
+      // same approach as __pcFallbackTrace
       const trace = (window as unknown as { __pcTierTrace?: unknown[] }).__pcTierTrace;
       if (ok && Array.isArray(trace)) trace.push({ clipId: c.id, url: c.url, mediaTime, ref, fps: now.fps, playing: now.playing, expectedDisplayTime, frontFrame });
       return ok;
     };
-    // requestVideoFrameCallback:这一段真有一帧画到屏幕上了才算好(不是 seeked,那时帧未必已经交出去)
+    // requestVideoFrameCallback: counts as ready only when this clip actually drew a frame to the
+    // screen (not seeked, at which point the frame may not have been delivered yet)
     const arm = (i: number, c: SlotClip, el: HTMLVideoElement) => {
       const s = slots.current[i];
       const tok = ++s.token;
@@ -248,29 +276,34 @@ export function VideoTrack({
     const prevWarm = warmRef.current;
     warmRef.current = plan.warm;
     activeRef.current = plan.active;
-    /** 这一轮换了装的东西(src 可能刚换上)的槽位 */
+    /** Slot whose loaded content changed this round (src may have just changed) */
     const fresh = [false, false];
     plan.load.forEach((c, i) => {
       const s = slots.current[i];
       const el = els[i].current;
       if (!el || !c) return;
       if (s.clip?.id === c.id && s.clip?.url === c.url) {
-        // 装着的东西没变、却刚成了预热槽位:之前按普通段判的「出过画」不算,按对齐重新判
+        // Loaded content unchanged but just became a warm-up slot: previous "has rendered a frame"
+        // evaluated as an ordinary clip does not count; re-evaluate based on alignment
         if (i === plan.warm && prevWarm !== i) { s.ready = false; arm(i, c, el); }
         return;
       }
-      // 同一片段换档(url 变了)也是换了一段:冷却清掉、重新等出画;播放位置由下面的 driveMedia 对齐回去
-      // 换了一段:之前的出画不算数了。src 由 React 在这之前换好(同一个文件就不换,解码器和缓冲接着用)
+      // Switching tiers for the same clip (url changed) is also a clip switch: clear cooldown, wait for
+      // frame rendering again; playback position is aligned back by driveMedia below
+      // Switched clips: previous frame rendering no longer counts. src was swapped by React beforehand
+      // (kept if same file, reusing decoder and buffers)
       s.clip = c;
       s.full = fullOf(i);
       s.ready = false;
       fresh[i] = true;
       displayedFrames.current[i] = null;
-      // 冷却是给「同一段里的纠偏」的;换了一段就是新的开始,别让上一段留下的冷却挡住这一次对齐
+      // Cooldown is for "correction within the same clip"; switching clips is a fresh start,
+      // do not let cooldown left from the previous clip block this alignment
       lastSeekAt.delete(el);
       arm(i, c, el);
       if (i === plan.preload) {
-        // 备用槽位:停在下一段的起点。src 刚换时 readyState 还是 0,这一句会记成「元数据到了就 seek 过去」
+        // Standby slot: paused at the start of the next clip. When src just changed, readyState is
+        // still 0; this records "seek over once metadata arrives"
         releaseMedia(el);
         el.currentTime = c.offset;
       }
@@ -280,10 +313,14 @@ export function VideoTrack({
       const el = els[i].current;
       if (!el) continue;
       const s = slots.current[i];
-      // 素材服务上刚到齐的那一档:之前按它挂过、失败了(404:等待上传方)的元素重新加载一次。
-      // 这一轮刚换上 src 的不算(`reloadOnComplete`):那时 networkState 本来就是 NO_SOURCE,再 load() 只会打断刚开始的加载。
-      // 闲着的槽位也不算:重载只会和可播性探测抢带宽;它没记成「判过」,轮到它播或预热时再重载。
-      // 重载放在驱动**之前**:load() 之后再下的定位才算数(之前下的,load() 之后留不留得住看浏览器)
+      // Tier that just became fully available on the asset service: reload elements that previously
+      // mounted with it and failed (404: waiting for uploader).
+      // Elements whose src just changed this round do not count (`reloadOnComplete`): networkState was
+      // NO_SOURCE to begin with, so calling load() again would only interrupt the newly started load.
+      // Idle slots do not count either: reloading would only compete for bandwidth with playability
+      // probes; they are not marked "evaluated" and will reload when their turn comes to play or warm up.
+      // Reloading comes **before** driving: seeks issued after load() are what count (whether prior seeks
+      // are preserved after load() depends on the browser).
       const h = s.clip ? hashFromUrl(s.clip.url) : null;
       const doneNow = !!h && complete.has(h);
       const inUse = i === plan.active || i === plan.warm || i === plan.preload;
@@ -292,30 +329,33 @@ export function VideoTrack({
         s.ready = false;
         lastSeekAt.delete(el);
         arm(i, s.clip, el);
-        // 备用槽位不经 driveMedia:照换段时一样停回下一段的起点
+        // Standby slots bypass driveMedia: paused back at the start of the next clip, just like when switching clips
         if (i === plan.preload) el.currentTime = s.clip.offset;
       }
       completeSeen.current[i] = doneNow && (completeSeen.current[i] || fresh[i] || inUse);
       if (i === plan.active && cur) {
-        // 画面淡下去的同时声音也跟着淡:交叉溶解时两段的声音不会重叠成双倍
-        // An 音频素材效果卡 node replaces this video's native soundtrack. The visual remains in
+        // Audio fades as video fades: audio from the two clips will not overlap to double volume during crossfades
+        // An audio media effect card node replaces this video's native soundtrack. The visual remains in
         // its usual slot while AudioLayer loads and plays the generated WAV separately.
         const target = targetTimeOf(cur.clip, t);
-        // 偏差过了「暂停时该 seek」的门槛就补注册一次 rVFC(见 armFrame)
+        // Re-register rVFC if deviation crosses the "should seek when paused" gate (see armFrame)
         if (Math.abs(el.currentTime - target) > 0.03) armFrame(el, i);
         driveMedia(el, { target, playing, volume: shouldMuteNativeAudio(project, cur.clip, muted) ? 0 : cur.opacity * gain * (cur.clip.audioVolume ?? 1), scrubbing, rate: clipSpeed(cur.clip) });
         slots.current[i].opacity = cur.opacity;
       } else if (i === plan.warm && cur) {
-        // 播放中的前台解码帧可能落后舞台时钟；预热档直接跟前台走，避免初装时 seek 到未来。
+        // Foreground decoded frames during playback may lag behind stage clock; warm-up tier follows
+        // foreground directly to avoid seeking into the future upon initial mounting.
         const front = plan.shown !== null ? els[plan.shown].current : null;
         driveMedia(el, { target: playing && front ? front.currentTime : targetTimeOf(cur.clip, t), playing, volume: 0, scrubbing, rate: clipSpeed(cur.clip) });
         if (playing && front && el.playbackRate !== front.playbackRate) el.playbackRate = front.playbackRate;
       } else {
         releaseMedia(el);
       }
-      // 兜底:同一个文件 seek 到原地这类情况不会有新帧交出来,rVFC 不回调;解码好了、时刻对得上也算好
-      // 预热槽位:暂停中停在原地、当前帧已解好(HAVE_CURRENT_DATA)且对齐,也算好(停在原地不会再交新帧,帧回调等不来);
-      // 播放中只认帧回调给的对齐
+      // Fallback: cases like seeking in place within the same file will not deliver new frames, so rVFC
+      // does not fire; counts as ready if decoding is done and timestamps align
+      // Warm-up slot: while paused in place, if current frame is decoded (HAVE_CURRENT_DATA) and aligned,
+      // it also counts as ready (staying in place will not deliver new frames, frame callbacks will never
+      // arrive); during playback only alignment reported by frame callbacks is accepted
       const settle = i === plan.warm
         ? !playing && el.paused && aligned(i, s.clip ?? ({} as SlotClip), el.currentTime)
         : !!s.clip && inClipRange(s.clip, el.currentTime);
@@ -330,7 +370,7 @@ export function VideoTrack({
     else warming.delete(warmKey);
   });
 
-  // 卸载时别留着定时器和「落定了再补」去碰已经不在的元素
+  // Do not leave timers or "catch up once settled" touching elements that no longer exist upon unmount
   useLayoutEffect(() => {
     const a = el0.current;
     const b = el1.current;
@@ -343,19 +383,25 @@ export function VideoTrack({
   }, []);
 
   /*
-   * 外面这一层是**片段的框**(clip.frame):没有框就铺满画面,和以前一样;
-   * 设过框就按框摆 —— set_rect / set_position / align / nudge、预览里拖动写的都是它。
-   * 以前素材层不认这个字段,于是给视频摆位置写进去了却一动不动,只有卡片才看得出效果。
+   * This outer layer is the **clip frame** (clip.frame): fills the screen if there is no frame,
+   * as before; if a frame is set, positions according to the frame: written to by set_rect /
+   * set_position / align / nudge, and dragging in preview.
+   * Previously the media layer did not recognize this field, so setting video positions wrote the data
+   * but nothing moved; only cards showed any effect.
    */
   const boxOf = (clip: TrackClip | null) => ({ position: "absolute" as const, overflow: "hidden" as const, ...frameCss(clip?.frame, stage) });
   const image = cur && !missing && isImageMedia(cur.media) && cur.media.url && playbackUrl(cur.media, localHashes) ? cur : null;
-  // A1:入库(上传 + 边落盘边算哈希)还没完成的素材没有地址,这一层画「上传中」占位 ——
-  // 不挂空 src(空 src 会被当成页面地址,<img> 出裂图、<video> 报解码错)。
-  // 传完 media.url 变成 /@media/<hash>,占位自动消失。
+  // A1: Assets not yet stored (uploading + computing hash while writing to disk) have no address;
+  // this layer renders an "Uploading" placeholder: do not attach an empty src (an empty src is
+  // treated as the page address, showing broken images in <img> and decode errors in <video>).
+  // Once uploaded, media.url becomes /@media/<hash>, and the placeholder disappears automatically.
   const uploading = cur && cur.media.pending && !cur.media.url ? cur : null;
-  // C6.6:轮询回过、而这一层要挂的那一档在当前素材服务上还没到齐 —— 画面透明,角上提示「等待上传方」
-  // (A1「那一层透明并提示」;rendering.md「预览里任何一层都不无提示地透明」)
-  // 认定过「确认缺失」的素材不会再到齐:这一层已经画了「找不到素材」的占位,不再叠「等待上传方」
+  // C6.6: Polling responded, but the tier this layer needs to mount has not fully arrived on the
+  // current asset service: the image is transparent, with "Waiting for uploader" shown in the corner
+  // (A1 "that layer is transparent and shows a notice"; rendering.md "no layer in the preview is
+  // transparent without notice").
+  // Assets determined as "confirmed missing" will not arrive: this layer already renders the
+  // "Asset not found" placeholder, and no longer stacks "Waiting for uploader".
   const awaiting = cur && !missing && !uploading && cur.media.url && chooseTier(cur.media, localHashes, { probe: false }).awaiting ? cur : null;
   return (
     <>
@@ -364,12 +410,15 @@ export function VideoTrack({
         const shown = i === plan.shown;
         const opacity = shown ? (i === plan.active && cur ? cur.opacity : slots.current[i].opacity) : 0;
         return (
-          // 不显示的槽位用 visibility 藏:实测 Chrome 152 对 visibility:hidden 的暂停视频照样解码、照样回调 rVFC
-          // D3 第 4 步:**显示着的那个槽位**写 data-pc-clip,素材段才进 rects() / hitTest;隐藏槽位不写
-          // (写了就有两个同 clipId 的包裹层,rects 按 clipId 去重会挑到藏着的那个)。
+          // Slots not shown are hidden with visibility: Chrome 152 was tested to still decode paused videos
+          // and still trigger rVFC callbacks even with visibility:hidden.
+          // D3 step 4: write data-pc-clip on **the visible slot** so media clips enter rects() / hitTest;
+          // do not write on hidden slots (if written, there would be two wrapper layers with the same clipId,
+          // and rects deduplicating by clipId might pick the hidden one).
           <div key={i} data-pc-clip={shown && clip && !missing ? clip.id : undefined} data-pc-media={shown && clip && !missing ? "" : undefined}
             style={{ ...boxOf(clip), visibility: shown && !missing ? "visible" : "hidden" }}>
-            {/* src 为空串时要给 undefined:`<video src="">` 会被浏览器当成「再下载一遍当前页面」,见 FrameScene 的 srcOf */}
+            {/* When src is an empty string, pass undefined: `<video src="">` is treated by the browser as
+ * "downloading the current page again", see srcOf in FrameScene */}
             <video
               ref={els[i]}
               src={plan.load[i]?.url || undefined}
@@ -395,13 +444,13 @@ export function VideoTrack({
           data-pc-media-pending="1"
           style={{ ...boxOf(uploading.clip), display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.35)", color: "rgba(255,255,255,.72)", fontSize: 14 }}
         >
-          上传中…
+          Uploading…
         </div>
       )}
       {awaiting && (
         <div key={`awaiting-${awaiting.clip.id}`} data-pc-media-awaiting="1" style={{ ...boxOf(awaiting.clip), pointerEvents: "none" }}>
           <span style={{ position: "absolute", left: 16, bottom: 16, padding: "4px 16px", borderRadius: 999, background: "rgba(0,0,0,.45)", color: "rgba(255,255,255,.8)", fontSize: 28 }}>
-            等待上传方
+            Waiting for the uploader
           </span>
         </div>
       )}

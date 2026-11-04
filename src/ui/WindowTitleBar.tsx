@@ -5,9 +5,12 @@ import "./WindowTitleBar.css";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」),值同 `mode.ts` 的 `ONLINE`。
- * 在线构建里标题栏整条不画(见下面 `WindowTitleBar`),所以菜单里「桌面才有的项置灰」(C10 契约第 10 节〔裁〕,2026-09-28)
- * 在线页面上已无处可见;下面各处 `ONLINE_BUILD &&` 的分支只是没有清掉的旧写法,在线产物里随整个菜单一起被剪掉。
+ * A compile-time constant of the online build (for the technique and purpose see "Online build pruning" in
+ * `src/online/pageFlag.ts`), with the same value as `ONLINE` in `mode.ts`.
+ * In the online build the whole title bar is not drawn (see `WindowTitleBar` below), so the menu's "items
+ * that exist only on desktop are grayed out" (C10 contract section 10 [ruling], 2026-09-28) is visible
+ * nowhere on the online page; the `ONLINE_BUILD &&` branches below are just old code that was not cleaned
+ * up, and in the online output they are cut away together with the whole menu.
  */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
@@ -30,9 +33,12 @@ type TauriGlobal = {
 type MenuId = "file" | "edit" | "view" | "help";
 
 /**
- * `desktopOnly`:在线页面做不成的项,值是悬停说明里的入口名(`onlineUnsupported(入口名)`)。
- * 依据:`product/platforms.md`「在线浏览器模式」只加入、不新建、不存草稿(新建、打开、保存);C10 契约第 10 节置灰清单
- * (配音、语音识别);其余是桌面壳的命令(打开本机目录、看运行日志、退出),在线页面没有桌面壳。
+ * `desktopOnly`: items that cannot be done on the online page; the value is the entry name in the hover
+ * explanation (`onlineUnsupported(entry name)`).
+ * Basis: `product/platforms.md` "Online browser mode" can only join, never creates, and never stores drafts
+ * (create, open, save); the gray-out list in C10 contract section 10 (voiceover, speech-to-text); the rest
+ * are commands of the desktop shell (open a local directory, view the run log, quit), and the online page
+ * has no desktop shell.
  */
 const menus: Array<{ id: MenuId; label: string; items: Array<{ label: string; command?: string; shortcut?: string; separator?: boolean; desktopOnly?: string }> }> = [
   {
@@ -54,7 +60,7 @@ const menus: Array<{ id: MenuId; label: string; items: Array<{ label: string; co
     id: "edit",
     label: tr("Edit"),
     items: [
-      { label: tr("Revoke"), command: "undo", shortcut: "Ctrl Z" },
+      { label: tr("Undo"), command: "undo", shortcut: "Ctrl Z" },
       { label: tr("Redo"), command: "redo", shortcut: "Ctrl ⇧ Z" },
     ],
   },
@@ -86,12 +92,12 @@ function tauriWindow(): WindowApi | null {
 }
 
 /**
- * 「存储…」(`workflow/project.md`「开始」):回到开始页并滚到「存储」一块。
+ * "Storage…" (`workflow/project.md` "Start"): return to the start page and scroll to the "Storage" section.
  *
- * 照「返回首页」的路走:在编辑器里时把 `go-home` 交给顶栏(`TopBar.tsx`),有没保存的改动由它问一句,
- * 确认了它发 `pc-go-home`、`Shell` 换到开始页。这里只在它**真的回去了**时留一个待办,开始页挂上时取走、滚过去;
- * 用户在确认框里点了取消就不留,免得下次回首页莫名其妙滚到底。已经在开始页时没有顶栏接 `go-home`,
- * 开始页自己听 `STORAGE_EVENT` 滚过去。
+ * Follow the "Back to home" path: when in the editor, hand `go-home` to the top bar (`TopBar.tsx`), which prompts if there are unsaved changes;
+ * once confirmed, it emits `pc-go-home`, and `Shell` switches to the start page. Here, only leave a todo when it **actually returns**, which is consumed and scrolled to when the start page mounts;
+ * if the user clicks cancel in the confirmation dialog, leave nothing, avoiding mysteriously scrolling to the bottom next time returning home. When already on the start page, there is no top bar to receive `go-home`,
+ * the start page listens to `STORAGE_EVENT` itself and scrolls there.
  */
 export const STORAGE_EVENT = "pc-open-storage";
 const STORAGE_PENDING_KEY = "__pcOpenStoragePending";
@@ -130,23 +136,23 @@ function sendCommand(command: string) {
 }
 
 /**
- * 无边框桌面窗口的标题栏。菜单和窗口按钮都在 WebView 里绘制，颜色直接读取皮肤
- * 的 --ui-* 变量，因此切换皮肤时标题栏会和编辑器同步变化。
+ * Title bar for frameless desktop windows. Menus and window buttons are both rendered in WebView, and colors directly read the skin's
+ * --ui-* variables, so switching skins keeps the title bar synchronized with the editor.
  *
- * 在线构建(浏览器)里整条不画(2026-10-22 用户定:浏览器版不需要菜单行和 − □ × 三个按钮,后者在浏览器里按了没反应)。
- * 判别用编译期常量 `ONLINE_BUILD`,在线产物里下面那份实现整个剪掉;不用运行时有没有窗口 API 来判,
- * 免得桌面版万一拿不到窗口 API 时连菜单一起没了。菜单里在线页面还能用的七项各有别的入口,见 `docs/reports/AGENT-claude-browser-titlebar.md`;
- * 其中「快捷键」「关于 PromptCut」挪进了编辑器顶栏的「⋯」菜单(`TopBar.tsx`)。
+ * Not rendered at all in online builds (browser) ((user decision, 2026-10-22): the browser edition does not need the menu row and the three buttons − □ ×, the latter having no effect when clicked in a browser).
+ * Distinguished via the compile-time constant `ONLINE_BUILD`, stripping the implementation below entirely in online artifacts; runtime window API availability is not checked,
+ * to avoid losing menus as well if the desktop app fails to obtain window APIs. The seven menu items still usable on online pages each have other entry points; see `docs/reports/AGENT-claude-browser-titlebar.md`;
+ * among them, "Shortcuts" and "About PromptCut" have been moved into the "⋯" menu in the editor top bar (`TopBar.tsx`).
  */
 export function WindowTitleBar(): JSX.Element | null {
   return ONLINE_BUILD ? null : <DesktopTitleBar />;
 }
 
 /**
- * 这个项目只给了只读权限(游客)时,菜单里会改项目的命令置灰。编辑器顶栏(`src/editor/ReadOnlyFence.tsx` 的 ReadOnlyMarker)
- * 给 `<html>` 打 `data-pc-readonly="member"`、并把置灰说明(`viewOnlyText()` 那一句)放在 `data-pc-readonly-why`,
- * 这里只认这两个标记,不去引用编辑器(标题栏在 `src/ui`,在编辑器之下),说明也不在这里另编一句。
- * 菜单展开时才渲染,读一下标记就够,不用订阅。
+ * When this project only has read-only permissions (guest), menu commands that modify the project are grayed out. The editor top bar (ReadOnlyMarker in `src/editor/ReadOnlyFence.tsx`)
+ * sets `data-pc-readonly="member"` on `<html>` and puts the grayed-out explanation (the sentence from `viewOnlyText()`) in `data-pc-readonly-why`;
+ * here we only recognize these two markers without importing the editor (the title bar is in `src/ui`, beneath the editor), and the explanation is not recomposed here.
+ * Rendered only when the menu is opened; reading the markers is sufficient without needing a subscription.
  */
 const READONLY_COMMANDS = new Set(["undo", "redo", "save-project"]);
 const readOnlyNow = (): boolean => typeof document !== "undefined" && document.documentElement.dataset.pcReadonly === "member";
@@ -173,7 +179,7 @@ function DesktopTitleBar(): JSX.Element {
     };
   }, []);
 
-  // 最大化时顶边不能拉伸,拉伸带要撤掉,让屏幕最顶上那几像素还是标题栏
+  // When maximized, the top edge cannot be resized; remove the resize strip so the topmost few pixels of the screen remain the title bar
   useEffect(() => {
     const win = canUseWindowApi ? tauriWindow() : null;
     if (!win) return;
@@ -209,8 +215,8 @@ function DesktopTitleBar(): JSX.Element {
   return (
     <header ref={rootRef} className={`pc-titlebar${canUseWindowApi ? " is-desktop" : ""}`} data-tauri-drag-region={canUseWindowApi ? "deep" : undefined}>
       {canUseWindowApi && !maximized && (
-        // 顶边拉伸带:系统给无边框窗口的顶边只留 ~4px,紧下面就是拖动区,很难按准,这里补到 8px、两头当斜角。
-        // data-tauri-drag-region="false" 挡住外层的 deep 拖动区,不然按下去先变成拖窗口
+        // Top edge resize strip: the system leaves only ~4px for the top edge of a frameless window, immediately followed by the drag region below, making it hard to hit accurately; here it is padded to 8px with both ends acting as chamfers.
+        // data-tauri-drag-region="false" blocks the outer deep drag region, otherwise pressing down first triggers window dragging
         <div className="pc-titlebar-resize" data-tauri-drag-region="false" aria-hidden="true">
           <span className="pc-titlebar-resize-nw" onMouseDown={startResize("NorthWest")} />
           <span className="pc-titlebar-resize-n" onMouseDown={startResize("North")} />

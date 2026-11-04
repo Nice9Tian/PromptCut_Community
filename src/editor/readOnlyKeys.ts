@@ -1,9 +1,13 @@
 /**
- * 只读项目里的快捷键闸（`readOnly.ts`）：Delete / Backspace 删选中的片段、Ctrl+Z / Ctrl+Y 撤销重做，都会改项目。
- * 这几个键由 `src/Editor.tsx` 在 window 的冒泡阶段接（判据：焦点不在输入框里），那个文件不归这一块管，
- * 所以在 window 的**捕获阶段**先拦：只读时这几个键到不了它。空格（播放 / 暂停）、方向键这类不改项目的键不拦。
+ * The shortcut gate for read-only projects (`readOnly.ts`): Delete / Backspace deleting the selected clip and
+ * Ctrl+Z / Ctrl+Y undo and redo all modify the project.
+ * These keys are handled by `src/Editor.tsx` in the window's bubble phase (criterion: focus is not in an input),
+ * and that file is not owned by this part,
+ * so they are intercepted first in the window's **capture phase**: when read-only, these keys never reach it. Keys
+ * that do not modify the project, such as Space (play / pause) and the arrow keys, are not intercepted.
  *
- * 跟 `saveLock.ts` 同一个做法：模块载入就挂（越早越排在同一站的其它监听前面），没锁时什么都不做。
+ * Same approach as `saveLock.ts`: it is attached as soon as the module loads (the earlier, the further ahead of
+ * other listeners on the same target), and does nothing when not locked.
  */
 import { isTypingTarget, undoRedoKey } from "./undoKeys";
 import { memberReadOnlyNow } from "./readOnlyCore";
@@ -16,7 +20,7 @@ interface KeyLike {
   target?: unknown;
 }
 
-/** 这一下按键是不是「改项目的快捷键」（只看键，不看锁） */
+/** Whether this key press is a "project-modifying shortcut" (looks only at the key, not at the lock) */
 export function isProjectEditKey(e: KeyLike): boolean {
   if (isTypingTarget(e.target)) return false;
   if (undoRedoKey(e)) return true;
@@ -31,7 +35,7 @@ function swallow(e: KeyboardEvent) {
 
 const guarded = new WeakSet<object>();
 
-/** 在 window 的捕获阶段挂上（幂等） */
+/** Attach in the window's capture phase (idempotent) */
 export function installReadOnlyKeyGuard(target: EventTarget | undefined = (globalThis as { window?: EventTarget }).window): void {
   if (!target || guarded.has(target)) return;
   guarded.add(target);

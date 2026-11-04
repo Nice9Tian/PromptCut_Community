@@ -1,10 +1,16 @@
 /**
- * 此刻连着的那个项目:把它的画幅、时长和首帧记下来,开始页那一格下次就显示真画面(规则见 `thumbCache.ts` 文件头)。
+ * The project that is currently connected: record its aspect ratio, duration and first frame, so that
+ * the next time its cell on the start page shows the real picture (rules in the header of
+ * `thumbCache.ts`).
  *
- * 首帧的取法和手机版素材格子同一套(`src/mobile/Thumb.tsx` 的 `useThumb`):经素材服务带只读票据的预览地址解码、缩成小 JPEG,
- * 素材服务还没收全就先不取、取不到隔一会儿再试几次。取哪一段:0 秒那一刻(没有就最早出现的)可见的视频 / 图片素材段,
- * 序列越靠上越优先(和舞台上的叠放一致);时间轴上还没有素材段时取素材库里第一份视频 / 图片;
- * 只有卡片、没有素材的项目取不到,开始页那一格退回色块。
+ * The first frame is taken the same way as the mobile app's media cells (`useThumb` in
+ * `src/mobile/Thumb.tsx`): decoded through a preview URL of the asset service that carries a read-only
+ * ticket and shrunk to a small JPEG; if the asset service has not received everything yet, it is not
+ * taken for now, and if it cannot be taken, it is retried a few times after a pause. Which media clip is
+ * used: the visible video / image media clip at second 0 (or, if there is none, the one that appears
+ * earliest), with higher tracks taking priority (consistent with the stacking on the stage); when the
+ * timeline has no media clip yet, the first video / image in the media library is used; a project with
+ * only cards and no media yields nothing, and its cell on the start page falls back to a color block.
  */
 import { useEffect, useMemo } from "react";
 import type { MediaAsset, Project, TrackClip } from "../kernel/project";
@@ -21,7 +27,7 @@ function firstVisual(p: Project): { media: MediaAsset; t: number } | null {
     for (const c of tr.clips) {
       const k = clipKind(p, c);
       if (k !== "video" && k !== "image") continue;
-      // 先比谁先出现(盖住 0 秒的都算 0),再比序列靠上(下标小)
+      // First compare who appears first (anything covering second 0 counts as 0), then compare which track is higher (smaller index)
       const rank = Math.max(0, c.start) * 1000 + ti;
       if (!best || rank < best.rank) best = { clip: c, rank };
     }
@@ -31,7 +37,7 @@ function firstVisual(p: Project): { media: MediaAsset; t: number } | null {
     const media = p.media.find((m) => m.id === clip.mediaId);
     if (media) return { media, t: Math.max(0, clip.mediaOffset ?? 0) };
   }
-  // 时间轴上还没有素材段(刚建的项目只把素材放进了素材库):取素材库里第一份视频 / 图片
+  // The timeline has no media clip yet (a newly created project has only put media into the media library): take the first video / image in the media library
   const lib = p.media.find((m) => m.kind === "video" || m.kind === "image");
   return lib ? { media: lib, t: 0 } : null;
 }

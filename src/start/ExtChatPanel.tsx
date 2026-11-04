@@ -1,20 +1,28 @@
 /**
- * 拓展栏里那块聊天面板(用户 2026-10-26 定,issue #4)。
+ * The chat panel in the side panel (user decision, 2026-10-26; issue #4).
  *
- * 「详细编辑」一展开，时间轴编辑区就占满整个聊天区(连输入框一起)，聊天搬到这里来 ——
- * 和「画面」「修改前 / 修改后」并排的又一张独立的卡，进场有一下动画(`.ps-ext-chat` 的 `ps-ext-chat-in`)。
- * 它吃掉拓展栏剩下的高度，上面两段照常摊开(用户 2026-10-26 在两个方案里选的「甲」)。
+ * As soon as "Detail editing" expands, the timeline editing area fills the whole chat area (input box
+ * included) and the chat moves here: yet another standalone card alongside "Picture" and
+ * "Before / after", with a short entrance animation (`ps-ext-chat-in` of `.ps-ext-chat`).
+ * It takes whatever height the side panel has left, and the two sections above spread out as usual
+ * (user decision, 2026-10-26: option "Jia" chosen out of two).
  *
- * **窄，所以旧的都收起来**(issue #4 的原话:「达到两句以后截断为"..."。只保留最新的一条 Agent 回复」):
- *   - 只有**最新那一条 Agent 回复**留全文；
- *   - 其余 Agent 回复和**全部**用户气泡都收成两行，这一轮的「Agent 操作」也折起来，标一句「还有 N 条操作」；
- *   - 真的被截到了才摆出能点开的样子 —— 一行就说完的短句不加("点开看全文"是量出来的，不是猜的，
- *     因为这条栏能拖宽窄，按字数猜会错)；
- *   - 点任一条收起来的气泡，单独展开看全文；重新进详细编辑时这块面板重挂，展开过的又收回去。
+ * **It is narrow, so older content is collapsed** (issue #4, verbatim: "once two sentences are reached,
+ * truncate to '...'. Keep only the latest Agent reply"):
+ *   - only **the latest Agent reply** keeps its full text;
+ *   - the other Agent replies and **all** user bubbles collapse to two lines, and this round's "Agent
+ *     operations" are folded as well, with a line saying "N more operations";
+ *   - the clickable look is shown only when text is really truncated: a short sentence that fits on one
+ *     line does not get it ("click to see full text" is measured, not guessed, because this panel can be
+ *     dragged wider or narrower and guessing by character count would be wrong);
+ *   - clicking any collapsed bubble expands that one alone to full text; when detail editing is entered
+ *     again this panel is remounted, and anything that was expanded collapses again.
  *
- * 气泡用自己的一套类名(`ps-x…`,x = 拓展栏里那块)，不和聊天列的 `.ps-msg` 混:那边是 760px 宽的阅读版式，
- * 这边最窄 250px(`sideWidth.ts` 的 `EXT_WIDTH.min`)，字号、内边距、头像都小一号。
- * 一轮回复怎么拆成「说的话 + 操作」，两边共用 `src/mobile/agentView.ts` 的 `roundView`，不另写一套。
+ * Bubbles use their own set of class names (`ps-x…`, x = the one in the side panel) and do not mix with
+ * `.ps-msg` of the chat column: that one is a 760px-wide reading layout, while this one is 250px at the
+ * narrowest (`EXT_WIDTH.min` in `sideWidth.ts`), with font size, padding and avatar all one size smaller.
+ * How a round of reply is split into "what was said + operations" is shared by both sides through
+ * `roundView` in `src/mobile/agentView.ts`; no second copy is written.
  */
 import { useLayoutEffect, useRef, useState } from "react";
 import type { JSX, ReactNode } from "react";
@@ -26,16 +34,17 @@ import { tr } from "../i18n/index.ts";
 const MARK: Record<string, string> = { done: "✓", run: "…", todo: "·", err: "!", ask: "!" };
 
 /**
- * 一个能收起来的气泡外框。收起来时文字由 CSS 截成两行(`[data-folded]`)，
- * 这里只负责:量一下到底截没截到、藏起来的操作有几条、以及点开。
+ * A bubble frame that can collapse. When collapsed, CSS truncates the text to two lines (`[data-folded]`);
+ * this only handles: measuring whether it was really truncated, how many hidden actions there are, and
+ * expanding on click.
  */
 function Foldable(props: {
   className: string;
   folded: boolean;
-  /** 收起来之后藏掉的操作条数 */
+  /** Number of actions hidden after collapsing */
   hiddenOps: number;
   onExpand: () => void;
-  /** 内容的指纹:变了就重新量 */
+  /** Fingerprint of the content: re-measure when it changes */
   mark: string;
   children: ReactNode;
 }): JSX.Element {
@@ -50,14 +59,14 @@ function Foldable(props: {
     }
     const check = () => setClipped(p.scrollHeight - p.clientHeight > 2);
     check();
-    // 这条栏能拖宽窄,宽度一变截不截得到就变了
+    // This panel can be dragged wider or narrower, and once the width changes, whether it truncates changes too
     if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(check);
     ro.observe(p);
     return () => ro.disconnect();
   }, [props.folded, props.mark]);
 
-  // 收起来了、而且**真的**有东西没露出来,才给能点开的样子 —— 一行说完的短句不给(CSS 看的是 `data-more`)
+  // Only when collapsed and **really** something is not shown does it look clickable --- a short sentence that fits on one line does not (CSS looks at `data-more`)
   const more = props.folded && (clipped || props.hiddenOps > 0);
   return (
     <div
@@ -123,20 +132,20 @@ function PanelAgentMessage(props: { m: ChatMessage; ordinal: number; folded: boo
 
 export function ExtChatPanel(props: {
   messages: readonly ChatMessage[];
-  /** 输入框。和聊天列底部那个是同一个 React 状态(`Composer.tsx`)，搬过来草稿不丢 */
+  /** Input box. The same React state as the one at the bottom of the chat column (`Composer.tsx`); moving it over does not lose the draft */
   composer: JSX.Element;
-  /** 「回到整页」:收起详细编辑，聊天还回中间大区 */
+  /** "Back to full page": collapse detail editing and put the chat back in the big middle area */
   onBack: () => void;
-  /** 没法发消息时的说明，没有消息时显示它 */
+  /** Explanation shown when messages can't be sent; displayed while there are no messages */
   whyNot: string | null;
 }): JSX.Element {
-  /** 用户自己点开过的那几条，按消息 id 记 */
+  /** The ones the user opened by hand, keyed by message id */
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const tail = useRef<HTMLDivElement>(null);
 
   const shown = props.messages.filter((m) => m.role === "assistant" || isUserBubble(m));
   const order = ordinals(props.messages);
-  // 「只保留最新的一条 Agent 回复」:全文的就这一条
+  // "Keep only the latest Agent reply": that one is shown in full
   let keep: string | null = null;
   for (let i = shown.length - 1; i >= 0; i--) {
     if (shown[i].role === "assistant") { keep = shown[i].id; break; }

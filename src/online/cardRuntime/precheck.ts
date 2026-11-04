@@ -1,19 +1,24 @@
 /**
- * 转译前的写法预检(`docs/plan/online-card-exec-contract.md` 第 1 节)。
+ * Syntax precheck before transpilation (`docs/plan/online-card-exec-contract.md` Section 1).
  *
- * Sucrase 有几种写法会悄悄转错(`namespace` 的内容被整个丢掉、`accessor` 字段被改成普通字段),另有几种转得出但
- * 在舞台里执行不了(装饰器、顶层 `await`、`import.meta`、动态 `import()`)。遇到就不转,报「在线页面不支持这种写法」。
+ * Sucrase silently mistranspiles several syntax patterns (`namespace` contents are dropped
+ * entirely, `accessor` fields are converted into ordinary fields), while several others transpile
+ * but cannot execute in the stage (decorators, top-level `await`, `import.meta`, dynamic
+ * `import()`). When encountered, transpilation is skipped, reporting "unsupported syntax in
+ * online pages".
  *
- * 用 Sucrase 自己的词法结果判(公开接口 `getFormattedTokens`,一行一个记号、列宽对齐),不拿正则扫源码:
- * 注释、字符串、JSX 文本里出现这些词不算。
+ * Evaluated using Sucrase's own lexical tokens (public API `getFormattedTokens`, one token per line,
+ * column-aligned), rather than scanning source code with regular expressions: occurrences of these
+ * words in comments, strings, or JSX text do not count.
  *
- * 顶层 `await` 只认得出最外层作用域里的;写在顶层的 `if`、`for` 块里的认不出,那种会在舞台载入时报语法错,
- * 加载器同样归为「不支持的写法」(`loader.ts`)。
+ * Top-level `await` is only recognized in the outermost scope; those written inside top-level `if`
+ * or `for` blocks cannot be recognized and will report a syntax error when loaded in the stage,
+ * which the loader likewise classifies as "unsupported syntax" (`loader.ts`).
  */
 import { getFormattedTokens } from "sucrase";
 
 export interface UnsupportedSyntax {
-  /** 哪一种写法(给参数面板看的词) */
+  /** Which syntax pattern (term displayed in parameters panel) */
   what: string;
   line: number;
 }
@@ -43,7 +48,9 @@ function tokensOf(source: string): Tok[] {
 }
 
 /**
- * 这份源码里在线页面不支持的写法(按出现先后;没有回空数组)。源码本身有语法错时抛错(调用方当转译失败报)。
+ * Syntax patterns in this source code unsupported in online pages (in order of appearance; returns
+ * empty array if none). Throws when source code itself has syntax errors (caller reports as
+ * transpilation failure).
  */
 export function unsupportedSyntax(source: string): UnsupportedSyntax[] {
   const toks = tokensOf(source);
@@ -64,7 +71,7 @@ export function unsupportedSyntax(source: string): UnsupportedSyntax[] {
     }
     if (t.raw === "import" && (t.label === "import" || t.label === "name") && next) {
       if (next.label === ".") { hit("import.meta", t.line); continue; }
-      // 类型位置的 `typeof import("three")` 不算(转译时整句剥掉)
+      // `typeof import("three")` in type positions does not count (stripped entirely during transpilation)
       if (next.label === "(" && !t.isType) { hit("dynamic import()", t.line); continue; }
     }
     if (t.label === "name" && t.raw === "await" && t.depth === 0 && !t.isType) hit("top-level await", t.line);

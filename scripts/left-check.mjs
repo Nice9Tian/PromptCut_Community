@@ -43,15 +43,16 @@ fs.mkdirSync('out/left', { recursive: true });
         const btns = Array.from(document.querySelectorAll('button'));
         const closeBtn = btns.find(b => {
           const t = b.textContent.trim();
-          return t === "以后再说" || t === "稍后" || t === "取消" || t === "关闭";
+          return t === "Maybe later" || t === "Later" || t === "Cancel" || t === "Close";
         });
         if (closeBtn) closeBtn.click();
       });
       await wait(500);
     }
 
-    // 探「有没有被弹窗盖住」:用左 rail 的「素材库」项当探针。
-    // rail 常驻可见(抽屉收起时也在),卡片藏在分组里、切到别的分区时 display:none,拿卡片当探针会永远判成被盖住。
+    // Probe "whether covered by a dialog": use the "Media library" item in the left rail as a probe.
+    // The rail is permanently visible (even when the drawer is collapsed); cards are hidden in groups
+    // and set to display:none when switching sections, so using a card as a probe always flags as covered.
     const clickable = await page.evaluate(() => {
       const probe = document.querySelector('[data-pc-rail="library"]') || document.querySelector('[data-pc-card]');
       if (!probe) return false;
@@ -66,7 +67,7 @@ fs.mkdirSync('out/left', { recursive: true });
     } else {
       if (currentUrl !== "http://127.0.0.1:5194/left-probe.html") {
         currentUrl = "http://127.0.0.1:5194/left-probe.html";
-        console.log('ENTRY: /left-probe.html (隔离 · 整机被别的任务的遮罩挡住)');
+        console.log('ENTRY: /left-probe.html (isolated · whole app covered by another task\'s overlay)');
         await page.goto(currentUrl, { waitUntil: 'networkidle0' });
         await wait(1000);
       }
@@ -90,24 +91,24 @@ fs.mkdirSync('out/left', { recursive: true });
       await ensureClickable();
       await fn();
     } catch(e) {
-      console.log(`  (${name} 首次抛错: ${e.message})`);
+      console.log(`  (${name} first threw: ${e.message})`);
       if (currentUrl !== "http://127.0.0.1:5194/left-probe.html") {
         currentUrl = "http://127.0.0.1:5194/left-probe.html";
-        console.log('ENTRY: /left-probe.html (隔离 · 整机被别的任务的遮罩挡住)');
+        console.log('ENTRY: /left-probe.html (isolated · whole app covered by another task\'s overlay)');
         await page.goto(currentUrl, { waitUntil: 'networkidle0' });
         await wait(1000);
         try {
           await fn();
         } catch(e2) {
-          logFail(`${name} 异常: ${e2.message}`);
+          logFail(`${name} error: ${e2.message}`);
         }
       } else {
-        logFail(`${name} 异常: ${e.message}`);
+        logFail(`${name} error: ${e.message}`);
       }
     }
   }
 
-  /** 元素在不在屏幕上(祖先 display:none 时没有 client rect) */
+  /** Whether the element is on screen (ancestor display:none has no client rect) */
   const shown = (sel) => page.evaluate((s) => {
     const el = document.querySelector(s);
     return !!el && el.getClientRects().length > 0;
@@ -120,7 +121,7 @@ fs.mkdirSync('out/left', { recursive: true });
 
     const isMainClickable = await ensureClickable();
     if (isMainClickable && currentUrl === "http://127.0.0.1:5194/?nosetup=1") {
-      console.log('ENTRY: / (整机)');
+      console.log('ENTRY: / (whole app)');
     }
 
     const content = await page.content();
@@ -130,19 +131,20 @@ fs.mkdirSync('out/left', { recursive: true });
         ['library', 'animations', 'effects', 'edit', 'captions'].every((k) => !!document.querySelector(`[data-pc-rail="${k}"]`));
     });
 
-    if (hasParts && content.includes('素材库') && content.includes('动画') && content.includes('编辑')) {
-      logPass('01-initial: 找到了 rail 五项、抽屉和五个分区,以及文字「素材库」「动画」「编辑」');
+    if (hasParts && content.includes('Media library') && content.includes('Animation') && content.includes('Edit')) {
+      logPass('01-initial: found the five rail items, the drawer and the five sections, and the text "Media library", "Animation", "Edit"');
     } else {
-      logFail('01-initial: 没找到对应的文字或结构');
+      logFail('01-initial: could not find the expected text or structure');
     }
 
-    // 五个分区头部各有一个「收起面板」钮(SectionHead)
+    // Each of the five section headers has a "Collapse panel" button (SectionHead)
     const collapseBtns = await page.evaluate(() => document.querySelectorAll('[data-pc="left-collapse"]').length);
-    if (collapseBtns === 5) logPass('01-initial: 五个分区头部各有一个 left-collapse');
-    else logFail(`01-initial: left-collapse 数量不对 -> ${collapseBtns}`);
+    if (collapseBtns === 5) logPass('01-initial: each of the five section headers has one left-collapse');
+    else logFail(`01-initial: wrong left-collapse count -> ${collapseBtns}`);
 
-    // 左栏 = rail + 抽屉。点另一项 = 切分区(收着就顺手展开);点已选中项 = 收起 / 展开。
-    // 所以先看当前状态再决定点不点,免得把要看的分区点收起来
+    // Left rail = rail + drawer. Clicking another item = switch section (expanding if collapsed);
+    // clicking the selected item = collapse / expand. Check current state first before deciding whether
+    // to click, to avoid accidentally collapsing the section we want to view
     const railState = (key) => page.evaluate((k) => {
       const item = document.querySelector(`[data-pc-rail="${k}"]`);
       const drawer = document.querySelector('[data-pc="left-drawer"]');
@@ -160,8 +162,9 @@ fs.mkdirSync('out/left', { recursive: true });
         await wait(150);
       }
     };
-    // 分区里的东西在分组里:先清搜索、回总览,再点开要的组(groupId 给 null 就停在总览)。
-    // section 同时是 rail 键和分区根节点的 data-pc:素材(videos / images / music)在 library,卡片和部件在 animations
+    // Items in a section are inside groups: first clear search and return to overview, then open the
+    // desired group (stay on overview if groupId is null). section is both the rail key and data-pc
+    // on the section root node: media (videos / images / music) in library, cards and parts in animations
     const openGroupIn = async (section, groupId) => {
       await showSection(section);
       const clear = await page.$(`[data-pc="${section}"] .pc-left-search-clear`);
@@ -176,7 +179,7 @@ fs.mkdirSync('out/left', { recursive: true });
         await page.click(`[data-pc="${section}"] [data-pc-chip="all"]`);
         await wait(150);
       } else if (await page.$(`[data-pc="${section}"] [data-pc-category="all"]`)) {
-        // 「动画」只有视觉组,总览没有分类胶囊行
+        // "Animations" only has visual groups; the overview has no category pill row
         await page.click(`[data-pc="${section}"] [data-pc-category="all"]`);
         await wait(150);
       }
@@ -192,31 +195,32 @@ fs.mkdirSync('out/left', { recursive: true });
 
     await runStep('02-hover', async () => {
       await openGroupIn('animations', 'magicui');
-      // 动画分区全是视觉组:组详情的胶囊行只有「所有 / 组名 ×」,不画分类那颗
+      // The animations section only has visual groups: the pill row in group details only has
+      // "All / group name ×", without rendering the category pill
       const chipsOk = await page.evaluate(() =>
         !!document.querySelector('[data-pc="animations"] [data-pc-chip="all"]') &&
         !document.querySelector('[data-pc="animations"] [data-pc-chip="category"]') &&
         !document.querySelector('[data-pc="animations"] [data-pc-category]'));
-      if (chipsOk) logPass('02-hover: 动画分区没有分类胶囊,详情里只剩「所有 / 组名」');
-      else logFail('02-hover: 动画分区的胶囊行不对');
+      if (chipsOk) logPass('02-hover: animations section has no category chips, details show only "All / group name"');
+      else logFail('02-hover: wrong chip row in animations section');
       await page.hover('[data-pc-card="mu-number-ticker"]');
       await wait(900);
       await page.screenshot({ path: 'out/left/02-hover.png' });
 
       const hasPreview = await page.$('[data-pc-card="mu-number-ticker"] [data-pc="preview"]');
-      if (hasPreview) logPass('02-hover: 悬停出现了 preview');
-      else logFail('02-hover: 悬停未出现 preview');
+      if (hasPreview) logPass('02-hover: preview appeared on hover');
+      else logFail('02-hover: preview did not appear on hover');
 
       await page.mouse.move(0, 0);
       await wait(400);
 
       const hasPreviewAfter = await page.$('[data-pc-card="mu-number-ticker"] [data-pc="preview"]');
-      if (!hasPreviewAfter) logPass('02-hover: 移开后 preview 卸载');
-      else logFail('02-hover: 移开后未卸载');
+      if (!hasPreviewAfter) logPass('02-hover: preview unmounted after moving away');
+      else logFail('02-hover: not unmounted after moving away');
 
       const pcExportMs = await page.evaluate(() => window.__pcExportMs);
-      if (pcExportMs === undefined) logPass('02-hover: window.__pcExportMs 未被修改');
-      else logFail('02-hover: window.__pcExportMs 被修改了!');
+      if (pcExportMs === undefined) logPass('02-hover: window.__pcExportMs was not modified');
+      else logFail('02-hover: window.__pcExportMs was modified!');
     });
 
     await runStep('03-added', async () => {
@@ -236,9 +240,9 @@ fs.mkdirSync('out/left', { recursive: true });
       });
 
       if (stateAfterAdd.clipCount === clipCountBefore + 1 && stateAfterAdd.newClip && Math.abs(stateAfterAdd.newClip.start - 24.5) < 0.2) {
-        logPass('03-added: clipCount +1, start 约等于 24.5');
+        logPass('03-added: clipCount +1, start approx. 24.5');
       } else {
-        logFail('03-added: 未如预期添加');
+        logFail('03-added: not added as expected');
       }
       await page.screenshot({ path: 'out/left/03-added.png' });
     });
@@ -258,9 +262,9 @@ fs.mkdirSync('out/left', { recursive: true });
           const sel = state.selection[0];
           return state.project.tracks.flatMap(t=>t.clips).find(c=>c.id===sel).params;
         });
-        logPass(`04-form: params 变了 -> ${JSON.stringify(newParams)}`);
+        logPass(`04-form: params changed -> ${JSON.stringify(newParams)}`);
       } else {
-        logFail('04-form: 找不到可输入的表单控件');
+        logFail('04-form: no editable form control found');
       }
     });
 
@@ -275,10 +279,10 @@ fs.mkdirSync('out/left', { recursive: true });
           const state = window.__pcStoreLeft.getState();
           return state.project.tracks.flatMap(t=>t.clips).find(c=>c.id===state.selection[0]).cardId;
         });
-        if (cardId === 'blur-text') logPass('05-switched: 换卡成功');
-        else logFail(`05-switched: 换卡失败, 当前是 ${cardId}`);
+        if (cardId === 'blur-text') logPass('05-switched: card switch succeeded');
+        else logFail(`05-switched: card switch failed, current is ${cardId}`);
       } else {
-        logFail('05-switched: 找不到换卡下拉框');
+        logFail('05-switched: card switch dropdown not found');
       }
       await page.screenshot({ path: 'out/left/05-switched.png' });
     });
@@ -305,8 +309,8 @@ fs.mkdirSync('out/left', { recursive: true });
       await wait(300);
 
       const stateAfterBad = await page.evaluate(() => JSON.stringify(window.__pcStoreLeft.getState()));
-      if (stateSnapshot === stateAfterBad) logPass('06-code-invalid: store 完全没变');
-      else logFail('06-code-invalid: store 居然变了');
+      if (stateSnapshot === stateAfterBad) logPass('06-code-invalid: store did not change at all');
+      else logFail('06-code-invalid: store changed unexpectedly');
 
       const hasRedBorder = await page.evaluate(() => {
         const el = document.querySelector('[data-pc="code-editor"]');
@@ -317,7 +321,7 @@ fs.mkdirSync('out/left', { recursive: true });
            const r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
            return r > g + 50 && r > b + 50;
         }
-        // Tailwind v4 输出的是 oklch(L C H):红色在色相 10-50 且有饱和度
+        // Tailwind v4 outputs oklch(L C H): red has hue between 10-50 with chroma
         const ok = color.match(new RegExp("oklch\\(([0-9.]+)\\s+([0-9.]+)\\s+([0-9.]+)"));
         if (ok) {
           const c = parseFloat(ok[2]), h = parseFloat(ok[3]);
@@ -325,8 +329,8 @@ fs.mkdirSync('out/left', { recursive: true });
         }
         return el.classList.contains('is-error');
       });
-      if (hasRedBorder) logPass('06-code-invalid: borderColor R 明显大于 G/B');
-      else logFail('06-code-invalid: 没有红框');
+      if (hasRedBorder) logPass('06-code-invalid: borderColor R is clearly greater than G/B');
+      else logFail('06-code-invalid: no red border');
 
       await page.screenshot({ path: 'out/left/07-code-invalid.png' });
 
@@ -345,74 +349,77 @@ fs.mkdirSync('out/left', { recursive: true });
         const state = window.__pcStoreLeft.getState();
         return state.project.tracks.flatMap(t=>t.clips).find(c=>c.id===state.selection[0]).params;
       });
-      if (paramsAfterGood && paramsAfterGood.test === 999) logPass('06-code-valid: params 更新成功');
-      else logFail('06-code-valid: params 未更新');
+      if (paramsAfterGood && paramsAfterGood.test === 999) logPass('06-code-valid: params updated successfully');
+      else logFail('06-code-valid: params not updated');
 
       await page.screenshot({ path: 'out/left/08-code-valid.png' });
     });
 
     await runStep('07-sections', async () => {
-      // 左栏改成 rail + 四个常驻分区:验分区切换、选择记忆、点已选中项收起 / 展开抽屉
+      // Left rail changed to rail + four resident sections: verify section switching, selection memory,
+      // and clicking the selected item to collapse / expand the drawer
       await showSection('library');
       const libOk = (await shown('[data-pc="search"]')) && !(await shown('[data-pc="inspector"]'));
-      if (libOk) logPass('07-sections: 素材库,编辑分区隐藏');
-      else logFail('07-sections: 素材库 状态不对');
+      if (libOk) logPass('07-sections: media library, editing section hidden');
+      else logFail('07-sections: wrong media library state');
 
       await showSection('effects');
       const fxOk = (await shown('[data-pc="effects-search"]')) && !(await shown('[data-pc="search"]'));
-      if (fxOk) logPass('07-sections: 特效,素材库隐藏');
-      else logFail('07-sections: 特效 状态不对');
+      if (fxOk) logPass('07-sections: effects, media library hidden');
+      else logFail('07-sections: wrong effects state');
 
       await showSection('captions');
       const capOk = (await shown('[data-pc="caption-search"]')) && !(await shown('[data-pc="search"]'));
-      if (capOk) logPass('07-sections: 字幕');
-      else logFail('07-sections: 字幕 状态不对');
+      if (capOk) logPass('07-sections: captions');
+      else logFail('07-sections: wrong captions state');
 
       await showEdit('form');
       const editOk = (await shown('[data-pc="inspector"]')) && !(await shown('[data-pc="library"]'));
-      if (editOk) logPass('07-sections: 编辑 → 参数,素材库隐藏');
-      else logFail('07-sections: 编辑 → 参数 状态不对');
+      if (editOk) logPass('07-sections: edit → parameters, media library hidden');
+      else logFail('07-sections: wrong edit → parameters state');
 
       const remembered = await page.evaluate(() => [
         localStorage.getItem('pc.left.section'),
         localStorage.getItem('pc.left.editTab'),
       ]);
       if (remembered[0] === 'edit' && remembered[1] === 'form') {
-        logPass('07-sections: 分区和编辑分页写进了 localStorage');
+        logPass('07-sections: section and edit tab were written to localStorage');
       } else {
-        logFail('07-sections: localStorage 没记住 ' + JSON.stringify(remembered));
+        logFail('07-sections: localStorage did not remember ' + JSON.stringify(remembered));
       }
 
       await page.click('[data-pc-rail="edit"]');
       await wait(150);
       const collapsedOk = !(await shown('[data-pc="left-drawer"]')) &&
         (await page.evaluate(() => localStorage.getItem('pc.rail.left.collapsed'))) === '1';
-      if (collapsedOk) logPass('07-sections: 点已选中的「编辑」收起了抽屉');
-      else logFail('07-sections: 点已选中项没有收起抽屉');
+      if (collapsedOk) logPass('07-sections: clicking the selected "Edit" collapsed the drawer');
+      else logFail('07-sections: clicking the selected item did not collapse the drawer');
 
       await page.click('[data-pc-rail="edit"]');
       await wait(150);
-      if (await shown('[data-pc="left-drawer"]')) logPass('07-sections: 再点一次展开抽屉');
-      else logFail('07-sections: 再点一次没有展开抽屉');
+      if (await shown('[data-pc="left-drawer"]')) logPass('07-sections: clicking again expanded the drawer');
+      else logFail('07-sections: clicking again did not expand the drawer');
 
-      // 分区头部右上角的「收起面板」钮(SectionHead)和点 rail 当前项走同一条收起路子
+      // The "Collapse panel" button (SectionHead) in the top right of the section header follows the same
+      // collapse path as clicking the current rail item
       await page.click('[data-pc="inspector"] [data-pc="left-collapse"]');
       await wait(300);
       const btnCollapsedOk = !(await shown('[data-pc="left-drawer"]')) &&
         (await page.evaluate(() => localStorage.getItem('pc.rail.left.collapsed'))) === '1';
-      if (btnCollapsedOk) logPass('07-sections: 头部「收起面板」钮收起了抽屉');
-      else logFail('07-sections: 头部「收起面板」钮没有收起抽屉');
+      if (btnCollapsedOk) logPass('07-sections: the header "Collapse panel" button collapsed the drawer');
+      else logFail('07-sections: the header "Collapse panel" button did not collapse the drawer');
       await page.click('[data-pc-rail="edit"]');
       await wait(150);
-      if (await shown('[data-pc="left-drawer"]')) logPass('07-sections: 收起后点 rail 当前项展开回来');
-      else logFail('07-sections: 收起后点 rail 当前项没有展开');
+      if (await shown('[data-pc="left-drawer"]')) logPass('07-sections: clicking the current rail item after collapsing expanded it again');
+      else logFail('07-sections: clicking the current rail item after collapsing did not expand it');
 
-      // 动画是独立分区:卡片搜索和卡片筛选在这里,素材库的搜索框藏着;打开过的卡片组记在 pc.left.group.animations
+      // Animations is a separate section: card search and card filters are here, while the media library
+      // search box is hidden; opened card groups are recorded in pc.left.group.animations
       await showSection('animations');
       const animOk = (await shown('[data-pc="animations-search"]')) && (await shown('[data-pc="scope-toggle"]')) &&
         !(await shown('[data-pc="search"]'));
-      if (animOk) logPass('07-sections: 动画,素材库隐藏,卡片筛选钮在动画头部');
-      else logFail('07-sections: 动画 状态不对');
+      if (animOk) logPass('07-sections: animations, media library hidden, card filter button in the animations header');
+      else logFail('07-sections: wrong animations state');
       const groupKeys = await page.evaluate(() => [
         localStorage.getItem('pc.left.section'),
         localStorage.getItem('pc.left.group.animations'),
@@ -420,9 +427,9 @@ fs.mkdirSync('out/left', { recursive: true });
       ]);
       const cardGroupIds = ['user-cards', 'magicui', 'native', 'parts', 'lottie', 'particles'];
       if (groupKeys[0] === 'animations' && cardGroupIds.includes(groupKeys[1]) && !cardGroupIds.includes(groupKeys[2])) {
-        logPass('07-sections: pc.left.section = animations,卡片组记在 pc.left.group.animations');
+        logPass('07-sections: pc.left.section = animations, card group stored in pc.left.group.animations');
       } else {
-        logFail('07-sections: 分组记忆不对 ' + JSON.stringify(groupKeys));
+        logFail('07-sections: wrong group memory ' + JSON.stringify(groupKeys));
       }
 
       await page.screenshot({ path: 'out/left/09-sections.png' });
@@ -430,10 +437,11 @@ fs.mkdirSync('out/left', { recursive: true });
 
     await runStep('08-media', async () => {
       await page.evaluate(() => {
-        window.__pcStoreLeft.actions.addMedia({ kind: "video", name: "测试片.mp4", url: "blob:fake", duration: 12.5 });
+        window.__pcStoreLeft.actions.addMedia({ kind: "video", name: "test-clip.mp4", url: "blob:fake", duration: 12.5 });
       });
       await wait(200);
-      // 总览组框里的视频缩略:悬停播放的那一格接指针(.is-hoverplay),<video> 本身不接,也不带 data-pc-media
+      // Video thumbnail in the overview group box: the hover-play cell receives pointer events
+      // (.is-hoverplay); <video> itself does not receive them and does not have data-pc-media
       await openGroupIn('library', null);
       const thumbOk = await page.evaluate(() => {
         const box = document.querySelector('[data-pc="library"] [data-pc-group="videos"]');
@@ -443,25 +451,25 @@ fs.mkdirSync('out/left', { recursive: true });
           getComputedStyle(tile).pointerEvents === 'auto' && getComputedStyle(video).pointerEvents === 'none' &&
           video.getAttribute('preload') === 'metadata' && video.muted && video.loop;
       });
-      if (thumbOk) logPass('08-media: 总览视频缩略能悬停播放、不带钩子');
-      else logFail('08-media: 总览视频缩略的悬停播放结构不对');
+      if (thumbOk) logPass('08-media: overview video thumbnail plays on hover, without hooks');
+      else logFail('08-media: wrong hover-play structure in overview video thumbnail');
       await openGroupIn('library', 'videos');
 
       const mediaItemText = await page.evaluate(() => {
-        // 时长角标写成 m:ss
-        const el = Array.from(document.querySelectorAll('[data-pc-media]')).find(el => el.textContent.includes('测试片.mp4') && el.textContent.includes('0:12'));
+        // Duration badge is written as m:ss
+        const el = Array.from(document.querySelectorAll('[data-pc-media]')).find(el => el.textContent.includes('test-clip.mp4') && el.textContent.includes('0:12'));
         return el ? el.textContent : null;
       });
       if (mediaItemText) {
-        logPass('08-media: 视频组里出现 测试片.mp4 和时长 0:12');
+        logPass('08-media: test-clip.mp4 and duration 0:12 appear in the video group');
       } else {
-        logFail('08-media: 未在视频组里找到测试片');
+        logFail('08-media: test clip not found in the video group');
       }
 
       const mediaElems = await page.$$('[data-pc-media]');
       for(const div of mediaElems) {
         const t = await page.evaluate(el => el.textContent, div);
-        if (t && t.includes('测试片.mp4')) {
+        if (t && t.includes('test-clip.mp4')) {
           await page.evaluate(el => el.scrollIntoView(), div);
           await wait(100);
           await div.click({ button: 'right' });
@@ -471,29 +479,30 @@ fs.mkdirSync('out/left', { recursive: true });
       await wait(200);
       await page.screenshot({ path: 'out/left/10-ctxmenu.png' });
 
-      const menuHasDelete = await page.$('[data-pc="ctxmenu"] [data-pc-item="删除素材"]');
-      if (menuHasDelete) logPass('08-media: 菜单里有「删除素材」');
-      else logFail('08-media: 菜单里没有删除素材');
+      const menuHasDelete = await page.$('[data-pc="ctxmenu"] [data-pc-item="Delete media"]');
+      if (menuHasDelete) logPass('08-media: menu has "Delete media"');
+      else logFail('08-media: menu has no Delete media');
 
       if (menuHasDelete) await menuHasDelete.click();
       await wait(200);
       await page.screenshot({ path: 'out/left/11-confirm.png' });
 
       const hasConfirm = await page.$('[data-pc="confirm"]');
-      if (hasConfirm) logPass('08-media: 确认框出现');
-      else logFail('08-media: 确认框没出现');
+      if (hasConfirm) logPass('08-media: confirm dialog appeared');
+      else logFail('08-media: confirm dialog did not appear');
 
       const btn = await page.$('[data-pc="confirm-ok"]');
       if(btn) await btn.click();
       await wait(200);
 
       const mediaCount = await page.evaluate(() => window.__pcStoreLeft.getState().project.media.length);
-      if (mediaCount === 0) logPass('08-media: 删除成功, media.length === 0');
-      else logFail(`08-media: 删除失败, length === ${mediaCount}`);
+      if (mediaCount === 0) logPass('08-media: delete succeeded, media.length === 0');
+      else logFail(`08-media: delete failed, length === ${mediaCount}`);
     });
 
     await runStep('09-captions-bus', async () => {
-      // 时间轴右键「转写字幕」走 captionsBus:收着的抽屉要被拉出来,并切到字幕分区
+      // Timeline right-click "Transcribe captions" goes through captionsBus: the collapsed drawer must
+      // be opened, and switched to the captions section
       await showSection('library');
       await page.click('[data-pc-rail="library"]');
       await wait(150);
@@ -503,8 +512,8 @@ fs.mkdirSync('out/left', { recursive: true });
       await wait(200);
       const ok = (await shown('[data-pc="caption-search"]')) &&
         (await page.evaluate(() => localStorage.getItem('pc.left.section'))) === 'captions';
-      if (ok) logPass('09-captions-bus: 展开抽屉并切到字幕分区');
-      else logFail('09-captions-bus: 没有切到字幕分区');
+      if (ok) logPass('09-captions-bus: expanded the drawer and switched to the captions section');
+      else logFail('09-captions-bus: did not switch to the captions section');
     });
 
   } catch (err) {
@@ -515,7 +524,7 @@ fs.mkdirSync('out/left', { recursive: true });
 
   console.log('\n=== SUMMARY ===');
   if (ignoredErrors > 0) {
-    console.log(`(已过滤掉 ${ignoredErrors} 条来自其它任务产生的 console 报错)`);
+    console.log(`(filtered out ${ignoredErrors} console errors from other tasks)`);
   }
   if (errors.length > 0) {
     console.log('--- Errors ---');

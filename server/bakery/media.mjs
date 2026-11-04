@@ -1,7 +1,8 @@
 /**
- * 素材来源解析:页面按地址 fetch 的那些素材,ffmpeg 该去哪儿读,以及渲帧前的素材层规划。
+ * Asset source resolution: where ffmpeg should read assets that the page fetches by URL, and asset
+ * layer planning before frame rendering.
  *
- * 从 scripts/export-frames.mjs 拆出来(纯重构,逐字搬运)。
+ * Split out from scripts/export-frames.mjs (pure refactor, moved verbatim).
  */
 
 import path from 'path';
@@ -18,14 +19,19 @@ const isInside = (file, dir) => {
 };
 
 /**
- * 素材在 ffmpeg 那边从哪儿读。页面是按 m.url 去 fetch 的,这里按同一个地址找:
- *   /@export/<id>/media/<文件> → <out>/media/<文件>(导出时浏览器上传的素材,落在这一趟导出自己的产物目录);
- *   其余一律和页面一样走 HTTP,找页面的源要(/@media/<hash>、/api/media/file?path=… 都支持 Range,ffmpeg 能 seek)。
- * 页面的源在编辑器拉起的预渲染进程里就是预渲染进程,它把 /@media/*、/api/media/* 原样转给素材服务
- * (vite.prerender.config.ts 的 mediaRoutes);单独跑的脚本从 dev server 加载页面,那里的 /@media 就是素材服务本身。
- * 所以这里**不读本地内容库的目录**,也不认 m.path(docs/semantics/product/asset-service.md「职责」:
- * 预渲染进程只经素材服务的接口读素材)。磁盘路径的白名单由素材服务那一侧守;
- * 这里 HTTP 只认页面同源的 —— project.json 是浏览器发来的,不能让它指使 ffmpeg 去读任意地址。
+ * Where ffmpeg reads assets from. The page fetches via m.url, and we look up via the same URL here:
+ *   /@export/<id>/media/<file> → <out>/media/<file> (assets uploaded by browser during export,
+ *   residing in this export pass's own output directory);
+ *   everything else goes over HTTP like the page, requesting from the page origin (/@media/<hash>
+ *   and /api/media/file?path=… both support Range, so ffmpeg can seek).
+ * In the prerender process spawned by the editor, the page origin is the prerender process itself,
+ * which forwards /@media/* and /api/media/* as-is to the asset service (mediaRoutes in
+ * vite.prerender.config.ts); standalone scripts load the page from the dev server, where /@media is
+ * the asset service itself. Therefore, we **do not read the local content store directory** here,
+ * nor do we recognize m.path (docs/semantics/product/asset-service.md "Responsibilities": the
+ * prerender process only reads assets through asset service interfaces). Whitelisting disk paths is
+ * guarded on the asset service side; HTTP here only accepts same-origin URLs from the page:
+ * project.json comes from the browser, and must not direct ffmpeg to read arbitrary addresses.
  */
 export function mediaSourceOf(m, { outDir, pageUrl }) {
   const url = String(m?.url || '');
@@ -39,13 +45,15 @@ export function mediaSourceOf(m, { outDir, pageUrl }) {
   try {
     const u = new URL(url, pageUrl);
     if (u.origin === new URL(pageUrl).origin && /^https?:$/.test(u.protocol)) return u.href;
-  } catch { /* 地址不合法 */ }
+  } catch { /* Invalid URL */ }
   return null;
 }
 
 /**
- * ffprobe 看一眼素材:有没有透明通道(决定强调算不算)、色彩空间(没标注的按 bt709 解,和 Chrome 一致)、
- * 要不要换解码器(带 alpha 的 VP8/VP9 用 ffmpeg 自带解码器会丢 alpha,得用 libvpx)。读不出来返回 null。
+ * ffprobe inspects the asset: whether there is an alpha channel (determines if emphasis applies),
+ * color space (unspecified ones are decoded as bt709, matching Chrome), and whether to switch
+ * decoders (VP8/VP9 with alpha drops alpha using ffmpeg's built-in decoder, requiring libvpx).
+ * Returns null if unreadable.
  */
 function probeVisual(ffprobeCmd, src) {
   try {
@@ -67,7 +75,10 @@ function probeVisual(ffprobeCmd, src) {
   }
 }
 
-/** 页面拿的是哪份项目,ffmpeg 就用哪份:按导出页地址里的 timeline 去取;取不到再看 <out>/project.json */
+/**
+ * ffmpeg uses whichever project the page took: fetch by timeline in the export page URL; if not
+ * found, check <out>/project.json.
+ */
 async function loadProject(url, outDir) {
   try {
     const u = new URL(url);
@@ -80,7 +91,7 @@ async function loadProject(url, outDir) {
       }
     }
   } catch (e) {
-    console.warn('取项目失败,改读产物目录里的 project.json:', e.message);
+    console.warn('Failed to fetch the project, reading project.json from the output directory instead:', e.message);
   }
   const f = path.join(outDir, 'project.json');
   if (fsSync.existsSync(f)) {
@@ -91,8 +102,10 @@ async function loadProject(url, outDir) {
 }
 
 /**
- * 渲帧之前先把素材层规划好:每段素材从哪儿读、有没有 alpha,以及哪些帧底下有素材
- * (那些帧要截毛玻璃遮罩;底下没素材的帧,玻璃背后只有灰底,模不模糊都一样)。
+ * Plan asset layers before frame rendering: where each asset clip is read from, whether it has
+ * alpha, and which frames have assets underneath (those frames need frosted-glass mask captures; for
+ * frames without assets underneath, behind the glass is just a gray background, blur makes no
+ * difference).
  */
 async function planMedia(opts, outDir, ffmpegCmd) {
   const url = opts.url || DEFAULT_URL;
@@ -115,11 +128,11 @@ async function planMedia(opts, outDir, ffmpegCmd) {
       if (!probed.has(src)) probed.set(src, probeVisual(ffprobeCmd, src));
       info = probed.get(src);
       if (!info) {
-        console.warn(`素材「${l.media.name || l.media.id}」ffprobe 读不出来(${src}),这一层没有画面`);
+        console.warn(`Media "${l.media.name || l.media.id}" cannot be read by ffprobe (${src}), this layer has no picture`);
         src = null;
       }
     } else {
-      console.warn(`素材「${l.media.name || l.media.id}」找不到文件(${l.media.url || '无地址'}),这一层没有画面`);
+      console.warn(`Media "${l.media.name || l.media.id}" file not found (${l.media.url || 'no URL'}), this layer has no picture`);
     }
     return { ...l, src, hasAlpha: !!info?.hasAlpha, colorSpace: info?.colorSpace, decoder: info?.decoder };
   });
@@ -135,7 +148,10 @@ async function planMedia(opts, outDir, ffmpegCmd) {
   return { project, layers, glassFrames };
 }
 
-/** 遮罩序列要每帧都有一张(image2 输入不能缺号):没有玻璃的帧补一张全透明的 */
+/**
+ * The mask sequence must have one image per frame (image2 input cannot skip numbers): pad a fully
+ * transparent image for frames without glass.
+ */
 async function fillGlassGaps(dir, startFrame, endFrame, width, height) {
   const { PNG } = await import('pngjs');
   const empty = PNG.sync.write(new PNG({ width, height }));

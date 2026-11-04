@@ -1,9 +1,12 @@
 /**
- * `c10-fake-idb.mjs`（C10 契约测试自写的内存 IndexedDB 桩）本身的单测：桩不对，L2 的用例就没有意义。
- * 跑：node --test server/test/c10-fake-idb.test.mjs
+ * Unit tests for `c10-fake-idb.mjs` (the custom in-memory IndexedDB stub for C10 contract tests):
+ * if the stub is incorrect, L2 test cases are meaningless.
+ * Run: node --test server/test/c10-fake-idb.test.mjs
  *
- * 钉的是 L2 用例依赖的那几条浏览器行为：升级建表、读写、游标与索引、事务自动提交、事务不活跃时发请求抛错、
- * 两种配额错误的事件顺序（请求 error → 事务 error → 事务 abort；只有 abort）、中止回滚、`forceQuota`。
+ * Pins down browser behaviors that L2 test cases rely on: creating stores on upgrade, reads/writes,
+ * cursors and indexes, transaction auto-commit, throwing errors when issuing requests on inactive
+ * transactions, event ordering for the two quota errors (request error → transaction error →
+ * transaction abort; abort only), abort rollback, and `forceQuota`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +35,7 @@ async function openDb(factory, stores = ['a']) {
   return reqP(req);
 }
 
-test('FIDB-01 升级建表、读写、getAll 按键排序、count', async () => {
+test('FIDB-01 object stores created on upgrade, read and write, getAll sorted by key, count', async () => {
   const f = new FakeIDBFactory();
   const db = await openDb(f, ['a', 'b']);
   assert.deepEqual([...db.objectStoreNames], ['a', 'b']);
@@ -50,7 +53,7 @@ test('FIDB-01 升级建表、读写、getAll 按键排序、count', async () => 
   assert.deepEqual(f.dbNames(), ['db']);
 });
 
-test('FIDB-02 索引游标按 at 升序，游标里删除；同一事务里 await 微任务之后仍可发请求', async () => {
+test('FIDB-02 index cursor in ascending order of at, deleting inside the cursor; requests can still be issued in the same transaction after awaiting a microtask', async () => {
   const f = new FakeIDBFactory();
   const db = await openDb(f);
   const tx = db.transaction('a', 'readwrite');
@@ -70,7 +73,7 @@ test('FIDB-02 索引游标按 at 升序，游标里删除；同一事务里 awai
   assert.deepEqual(seen, [1, 2, 3, 4, 5]);
   const keys = await reqP(db.transaction('a').objectStore('a').getAllKeys());
   assert.deepEqual(keys, ['k3', 'k4', 'k5']);
-  // 微任务里接着发请求：事务仍活跃（浏览器的行为，idb 这类封装靠它）
+  // Continuing to issue requests in a microtask: transaction remains active (browser behavior that wrappers like idb rely on)
   const tx3 = db.transaction('a', 'readwrite');
   const os3 = tx3.objectStore('a');
   await reqP(os3.get('k3'));
@@ -79,7 +82,7 @@ test('FIDB-02 索引游标按 at 升序，游标里删除；同一事务里 awai
   assert.deepEqual(await txDone(tx3), ['complete']);
 });
 
-test('FIDB-03 事务提交之后再发请求抛 TransactionInactiveError', async () => {
+test('FIDB-03 issuing a request after the transaction has committed throws TransactionInactiveError', async () => {
   const f = new FakeIDBFactory();
   const db = await openDb(f);
   const tx = db.transaction('a', 'readwrite');
@@ -88,7 +91,7 @@ test('FIDB-03 事务提交之后再发请求抛 TransactionInactiveError', async
   assert.throws(() => os.put({ at: 1 }, 'x'), (e) => e.name === 'TransactionInactiveError');
 });
 
-test('FIDB-04 配额 request 模式：请求 error → 事务 error → 事务 abort，写入回滚', async () => {
+test('FIDB-04 quota request mode: request error → transaction error → transaction abort, writes are rolled back', async () => {
   const f = new FakeIDBFactory({ quotaBytes: 3 * MiB, quotaMode: 'request' });
   const db = await openDb(f);
   const buf = new ArrayBuffer(4 * MiB);
@@ -103,12 +106,12 @@ test('FIDB-04 配额 request 模式：请求 error → 事务 error → 事务 a
   assert.deepEqual(await txDone(t2), ['error', 'abort']);
   assert.deepEqual(reqEvents, ['QuotaExceededError']);
   assert.equal(t2.error.name, 'QuotaExceededError');
-  // 同一事务里先成功的那条也回滚了
+  // The earlier successful request in the same transaction is also rolled back
   assert.deepEqual(await reqP(db.transaction('a').objectStore('a').getAllKeys()), ['one']);
   assert.equal(f.log.at(-2).outcome, 'abort');
 });
 
-test('FIDB-05 配额 abort 模式：只有事务 abort（tx.error 是 QuotaExceededError），没有 error 事件', async () => {
+test('FIDB-05 quota abort mode: only the transaction abort fires (tx.error is QuotaExceededError), with no error event', async () => {
   const f = new FakeIDBFactory({ quotaBytes: 3 * MiB, quotaMode: 'abort' });
   const db = await openDb(f);
   const buf = new ArrayBuffer(4 * MiB);
@@ -122,7 +125,7 @@ test('FIDB-05 配额 abort 模式：只有事务 abort（tx.error 是 QuotaExcee
   assert.equal(f.usage(), 0);
 });
 
-test('FIDB-06 forceQuota：含写入的事务失败，只删除的事务照常提交', async () => {
+test('FIDB-06 forceQuota: transactions containing writes fail, delete-only transactions commit as usual', async () => {
   for (const quotaMode of ['request', 'abort']) {
     const f = new FakeIDBFactory({ quotaMode });
     const db = await openDb(f);
@@ -140,7 +143,7 @@ test('FIDB-06 forceQuota：含写入的事务失败，只删除的事务照常�
   }
 });
 
-test('FIDB-07 键范围与只读事务不能写', async () => {
+test('FIDB-07 key ranges and read-only transactions cannot write', async () => {
   const f = new FakeIDBFactory();
   const db = await openDb(f);
   const t = db.transaction('a', 'readwrite');

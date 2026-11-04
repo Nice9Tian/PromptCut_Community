@@ -1,37 +1,50 @@
 /**
- * 在线双舞台的两个舞台(C10 契约 `docs/plan/c10-contract.md` 第 2 节;语义 `mechanism/rendering.md`「舞台」:舞台有两个)。
+ * The two stages of the online dual stage (C10 contract `docs/plan/c10-contract.md` section 2;
+ * semantics `mechanism/rendering.md` "Stage": there are two stages).
  *
- * - **舞台源**:两个舞台 A、B 各用一个源,与编辑器页同站跨源,三方的响应都带 `Origin-Agent-Cluster: ?1`(nginx 或本机代理加)。
- *   页面从运行配置 `/editor/runtime-config.json` 取舞台源(`cloud/scripts/remote/docservice.mjs deploy-hosted --stage-origins` 写进去):
+ * - **Stage origins**: The two stages A and B each use one origin, same-site cross-origin with the
+ *   editor page, and responses from all three parties carry `Origin-Agent-Cluster: ?1` (added by
+ *   nginx or the local proxy).
+ *   The page fetches stage origins from the runtime config `/editor/runtime-config.json` (written
+ *   by `cloud/scripts/remote/docservice.mjs deploy-hosted --stage-origins`):
  *
- *       { "v": 1, "stageOrigins": ["https://s1.<主机>", "https://s2.<主机>"] }
+ *       { "v": 1, "stageOrigins": ["https://s1.<host>", "https://s2.<host>"] }
  *
- *   同一份配置里另有托管方的总开关 `"onlineCardExec": false`(契约 `online-card-exec-contract.md`;缺省开):关掉就不在线执行用户卡与素材效果卡,
- *   整体退回原来的做法(`parseCardExecSwitch`)。
+ *   The same config also contains the host's master switch `"onlineCardExec": false` (contract
+ *   `online-card-exec-contract.md`; enabled by default): turning it off disables online execution
+ *   of user cards and media effect cards, falling back completely to the original approach
+ *   (`parseCardExecSwitch`).
  *
- * - **跨源隔离**:所有舞台一律跨源隔离，撤掉退回同源单舞台的路（2026-10-14 用户定）。读不到配置、配置不对时不挂载舞台；
- *   握手失败退回跨源单舞台 A（只管当次，不留崩溃记录）。
- * - **舞台闸门停在第一级**（精简模式、低配模式，`onlineTier.ts`）:只开单舞台 A,不开后台舞台 B,单舞台 A 同样必须是跨源隔离舞台。
+ * - **Cross-origin isolation**: All stages are strictly cross-origin isolated, removing the path to
+ *   fall back to a same-origin single stage (user decision, 2026-10-14). When config cannot be read
+ *   or is invalid, stages are not mounted; on handshake failure, fall back to cross-origin single
+ *   stage A (applies only to the current run, leaving no crash records).
+ * - **Stage gate stopped at the first tier** (lite mode, low-spec mode, `onlineTier.ts`): only open
+ *   single stage A, not background stage B; single stage A must likewise be a cross-origin isolated
+ *   stage.
  *
- * 本模块属于 render 这一层(`src/online/`):不引 editor;不读 `import.meta.env`(调用方把 `base` 传进来)。
+ * This module belongs to the render layer (`src/online/`): does not import editor; does not read
+ * `import.meta.env` (caller passes `base` in).
  */
 
 export type StageLetter = "A" | "B";
 export type StageOrigins = Record<StageLetter, string>;
 /**
- * 首次握手的进度。`interim` 过渡期已撤销（所有舞台一律跨源隔离，不再退回同源单舞台；2026-10-14 用户定）。
+ * Progress of the initial handshake. The `interim` transition period has been revoked (all stages
+ * are strictly cross-origin isolated, no longer falling back to a same-origin single stage; user
+ * decision, 2026-10-14).
  */
 export type Handshake = "pending" | "interim" | "ok" | "failed";
 export type StageLayout = "dual" | "single";
 
-/** 运行配置的文件名(相对在线构建的 base,即 `/editor/`) */
+/** Filename of the runtime config (relative to the base of the online build, i.e., `/editor/`) */
 export const RUNTIME_CONFIG_FILE = "runtime-config.json";
-/** 取运行配置的时限 */
+/** Time limit for fetching the runtime config */
 export const RUNTIME_CONFIG_TIMEOUT_MS = 5000;
-/** 每个舞台从自己 iframe 的 `load` 起等握手的时限;过了算握手失败,退回跨源单舞台 A(计时与总上限见 `stageHandshake.ts`) */
+/** Time limit for each stage waiting for handshake starting from its iframe's `load`; exceeding it counts as handshake failure, falling back to cross-origin single stage A (see `stageHandshake.ts` for timing and total upper bound) */
 export const STAGE_HANDSHAKE_TIMEOUT_MS = 20_000;
 
-/** 一个源:`http(s)://host[:port]`,不带路径、查询与片段 */
+/** An origin: `http(s)://host[:port]`, without path, query, or fragment */
 function originOf(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const text = v.trim().replace(/\/+$/, "");
@@ -47,8 +60,9 @@ function originOf(v: unknown): string | null {
 }
 
 /**
- * 运行配置 → 两个舞台源。收解析后的对象或 JSON 文本;`stageOrigins` 要是两个不同的合法源(数组,或 `{ A, B }`)。
- * 读不到或不合法回 null,不抛。
+ * Runtime config → two stage origins. Accepts a parsed object or JSON text; `stageOrigins` must be
+ * two different valid origins (an array, or `{ A, B }`).
+ * Returns null without throwing if unreadable or invalid.
  */
 export function parseStageOrigins(config: unknown): StageOrigins | null {
   let c: unknown = config;
@@ -73,8 +87,11 @@ export function parseStageOrigins(config: unknown): StageOrigins | null {
 }
 
 /**
- * 运行配置里的总开关「在线执行用户卡与素材效果卡」(托管方可关):只有明写 `"onlineCardExec": false` 才是关,没写、写别的值、
- * 配置不是对象都按缺省(开)。读不到配置时没有舞台源,本来就是同源单舞台、不执行,所以「读不到」不用另判。
+ * Master switch "Online execution of user cards and media effect cards" in the runtime config (can
+ * be turned off by host): only explicitly writing `"onlineCardExec": false` counts as off; omitting
+ * it, writing other values, or config not being an object are all treated as default (on).
+ * When config cannot be read, there are no stage origins; it is inherently a same-origin single
+ * stage and does not execute, so "cannot be read" needs no separate check.
  */
 export function parseCardExecSwitch(config: unknown): boolean {
   let c: unknown = config;
@@ -86,9 +103,14 @@ export function parseCardExecSwitch(config: unknown): boolean {
 }
 
 /**
- * 开几个舞台:舞台闸门停在第一级(`single`)只开跨源 A,不开后台 B;握手失败退回跨源 A;没有舞台源(读不到配置)或与编辑器页同源
- * 也回 single(调用方据 `origins` 判出不挂载,不挂同源单舞台);其余双舞台(握手进行中也按双舞台挂 iframe)。
- * `pageOrigin` 给了时,舞台源不能与编辑器页同源(那就不是跨源隔离,按读不到处理)。
+ * How many stages to open: if the stage gate stops at the first tier (`single`), only open
+ * cross-origin A and do not open background B; on handshake failure, fall back to cross-origin A;
+ * if there are no stage origins (config cannot be read) or same-origin with the editor page,
+ * also return single (caller determines not to mount based on `origins`, never mounting a
+ * same-origin single stage); otherwise dual stage (mounts iframes as dual stage while handshake is
+ * in progress).
+ * When `pageOrigin` is provided, stage origins cannot be same-origin with the editor page (that
+ * would not be cross-origin isolation, treated as unreadable).
  */
 export function stageLayout({ single, origins, handshake, pageOrigin }: { single: boolean; origins: StageOrigins | null; handshake?: Handshake; pageOrigin?: string }): StageLayout {
   if (single) return "single";
@@ -99,8 +121,11 @@ export function stageLayout({ single, origins, handshake, pageOrigin }: { single
 }
 
 /**
- * 素材服务的基址交给跨源舞台时换成相对地址:舞台一律读**自己源上**反代的 `/media`(C10 契约第 2 节「舞台读素材」:
- * 同源读、不靠 CORS,媒体画进 canvas 不污染)。基址与编辑器页同源时回路径部分;不同源(素材服务在别的主机上)原样。
+ * Converts the asset service base URL to a relative URL when passing it to a cross-origin stage:
+ * stages strictly read reverse-proxied `/media` **on their own origin** (C10 contract section 2
+ * "Stage reads media": same-origin read without relying on CORS, media drawn into canvas does not
+ * taint). Returns the path portion when the base URL is same-origin with the editor page; keeps it
+ * as is when cross-origin (asset service is on another host).
  */
 export function stageAssetBase(base: string, pageOrigin: string): string {
   try {
@@ -112,18 +137,18 @@ export function stageAssetBase(base: string, pageOrigin: string): string {
   }
 }
 
-/* ------------------------------------------------------------------ 本页的状态 */
+/* ------------------------------------------------------------------ Page state */
 
 interface State {
-  /** 运行配置:还没取 / 在取 / 取完(可能没有舞台源) */
+  /** Runtime config: not fetched yet / fetching / fetched (may have no stage origins) */
   config: "idle" | "loading" | "done";
   origins: StageOrigins | null;
   handshake: Handshake;
-  /** 握手失败时的原因(诊断) */
+  /** Reason for handshake failure (diagnostics) */
   reason: string | null;
-  /** 托管方的总开关:在线执行用户卡与素材效果卡(缺省开;运行配置里 `onlineCardExec: false` 才关) */
+  /** Host master switch: online execution of user cards and media effect cards (enabled by default; turned off only with `onlineCardExec: false` in runtime config) */
   cardExec: boolean;
-  /** 什么时候进的 `interim`(`Date.now()`);没进过为 null。换回双舞台之后仍留着(Preview 据此做换回那一下的画面衔接) */
+  /** When `interim` was entered (`Date.now()`); null if never entered. Retained even after switching back to dual stage (Preview uses this for visual continuity during the switch-back) */
   interimAt: number | null;
 }
 
@@ -133,7 +158,7 @@ let loading: Promise<StageOrigins | null> | null = null;
 
 function set(patch: Partial<State>) {
   state = { ...state, ...patch };
-  for (const l of [...listeners]) { try { l(); } catch { /* 订阅方坏了 */ } }
+  for (const l of [...listeners]) { try { l(); } catch { /* The subscriber is broken */ } }
 }
 
 export function onlineStageState(): Readonly<State> {
@@ -146,7 +171,9 @@ export function subscribeOnlineStages(cb: () => void): () => void {
 }
 
 /**
- * 取运行配置(页面载入时调一次;`base` 是在线构建的 base,缺省 `/editor/`)。取不到、超时、不合法都当没有舞台源。
+ * Fetches runtime config (called once when page loads; `base` is the online build base, default
+ * `/editor/`). Failure to fetch, timeout, or invalid format are all treated as having no stage
+ * origins.
  */
 export function loadStageConfig({ base = "/editor/", fetchImpl, timeoutMs = RUNTIME_CONFIG_TIMEOUT_MS }: { base?: string; fetchImpl?: typeof fetch; timeoutMs?: number } = {}): Promise<StageOrigins | null> {
   if (loading) return loading;
@@ -177,8 +204,10 @@ export function loadStageConfig({ base = "/editor/", fetchImpl, timeoutMs = RUNT
 }
 
 /**
- * 舞台握手的结果(Preview 报):失败本页会话内不再试,不退回同源单舞台。
- * `interim` 只能从 `pending` 进(换回双舞台之后再出问题不回 `interim`,照看守走 `failed`,不来回切)。
+ * Result of stage handshake (reported by Preview): does not retry within this page session on
+ * failure, and does not fall back to same-origin single stage.
+ * `interim` can only be entered from `pending` (if issues arise after switching back to dual stage,
+ * do not return to `interim`, proceed to `failed` per watchdog, avoiding flipping back and forth).
  */
 export function markStageHandshake(result: Exclude<Handshake, "pending">, reason: string | null = null): void {
   if (state.handshake === result) return;
@@ -191,7 +220,7 @@ export function markStageHandshake(result: Exclude<Handshake, "pending">, reason
   set({ handshake: result, reason: result === "ok" ? null : reason });
 }
 
-/** 测试用 */
+/** For tests */
 export function resetOnlineStagesForTest(next: Partial<State> = {}): void {
   loading = null;
   state = { config: "idle", origins: null, handshake: "pending", reason: null, cardExec: true, interimAt: null, ...next };

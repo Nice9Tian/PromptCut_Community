@@ -7,7 +7,7 @@ import {
 } from "../ai/voice";
 import { tr } from "../i18n/index.ts";
 
-/** 界面上改着的那部分;API Key 单独放,保存时才带上 */
+/** The part currently being edited in the UI; the API key is kept separate and only included when saving */
 type Draft = Pick<VoiceConfig, "baseUrl" | "provider" | "minimax" | "kling" | "vidu">;
 
 const pick = (c: VoiceConfig): Draft => ({
@@ -22,10 +22,10 @@ const KIND_LABEL: Record<CustomVoice["kind"], string> = { clone: tr("Clone"), de
 const FEE_NOTE = tr("The first time each new voice is used for synthesis, MiniMax charges an extra ¥9.9; a voice not used within 7 days of creation is deleted.");
 
 /**
- * 开始页的「配音」:agent 的 voice_generate 默认用这里的服务、音色和参数。
+ * "Voiceover" on the start page: the agent voice_generate uses the service, voice, and parameters here by default.
  *
- * 改完要点「保存」才生效(试听会先替你保存)。新建音色会花钱,每一步都先确认。
- * 住在「配音设置」子窗口里(bare:去掉自己的边框和标题,由窗口给)。
+ * Click "Save" after editing to take effect (audition saves for you first). Creating a new voice costs money, so confirm every step first.
+ * Lives inside the "Voiceover settings" subwindow (bare: removes its own border and title, provided by the window).
  */
 export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: boolean) => void }): JSX.Element {
   const { bare, onDirtyChange } = props;
@@ -45,7 +45,7 @@ export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: b
       .catch((e) => setMsg({ tone: "err", text: tr("Can't read voiceover settings: {0}", errText(e)) }));
   }, []);
 
-  // 新的试听一到就放
+  // Play as soon as a new audition arrives
   useEffect(() => { if (audioUrl) void audioRef.current?.play().catch(() => {}); }, [audioUrl]);
 
   const dirty = !!cfg && !!draft && (JSON.stringify(pick(cfg)) !== JSON.stringify(draft) || !!keyInput.trim());
@@ -79,7 +79,7 @@ export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: b
     if (dirty) await persist();
     const r = await generateVoice({ text: previewText }, { preview: true });
     setAudioUrl(`${r.url}?t=${Date.now()}`);
-    setMsg({ tone: "ok", text: tr("{0} · {1} · {2} chars · generated in {3} s", presets.labels[r.provider], r.voiceId, r.chars, (r.ms / 1000).toFixed(1)) });
+    setMsg({ tone: "ok", text: tr("{0} · {1} · {2} chars · generated in {3} s", tr(presets.labels[r.provider]), r.voiceId, r.chars, (r.ms / 1000).toFixed(1)) });
   });
 
   const clearKey = () => {
@@ -97,7 +97,7 @@ export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: b
           </optgroup>
         )}
         <optgroup label={tr("System voices")}>
-          {presets.systemVoices[p].map((v) => <option key={v.voiceId} value={v.voiceId}>{v.name} · {v.voiceId}</option>)}
+          {presets.systemVoices[p].map((v) => <option key={v.voiceId} value={v.voiceId}>{tr(v.name)} · {v.voiceId}</option>)}
         </optgroup>
       </>
     );
@@ -105,7 +105,7 @@ export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: b
 
   const emotionSelect = (value: string, onChange: (v: string) => void) => (
     <select className="vs-input" value={value} onChange={(e) => onChange(e.target.value)}>
-      {presets.emotions.map((e) => <option key={e} value={e}>{presets.emotionLabels[e] ?? e}</option>)}
+      {presets.emotions.map((e) => <option key={e} value={e}>{tr(presets.emotionLabels[e] ?? e)}</option>)}
     </select>
   );
 
@@ -129,7 +129,7 @@ export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: b
         <div className="vs-seg" role="group" aria-label={tr("Default service")}>
           {presets.providers.map((p) => (
             <button key={p} className="vs-seg-btn" aria-pressed={P === p} onClick={() => setDraft({ ...draft, provider: p })}>
-              {presets.labels[p]}
+              {tr(presets.labels[p])}
             </button>
           ))}
         </div>
@@ -296,7 +296,7 @@ function AddVoiceForm(props: { presets: VoicePresets; busy: boolean; onAdd: (e: 
   return (
     <div className="vs-row vs-add">
       <select className="vs-input" value={provider} onChange={(e) => setProvider(e.target.value as Provider)} aria-label={tr("Service")}>
-        {presets.providers.map((p) => <option key={p} value={p}>{presets.labels[p]}</option>)}
+        {presets.providers.map((p) => <option key={p} value={p}>{tr(presets.labels[p])}</option>)}
       </select>
       <input className="vs-input vs-grow" placeholder={tr("Voice id, e.g. pcVideoMale1789119355225")} value={voiceId} onChange={(e) => setVoiceId(e.target.value)} />
       <input className="vs-input" placeholder={tr("Name")} value={name} onChange={(e) => setName(e.target.value)} />

@@ -1,12 +1,13 @@
-// 对应 claude-quickstarts/agents/providers/openai.py
-// 本家 API 要点: Chat Completions 接口，tool 变成 role=tool 的独立消息，工具定义为 function，增量流在 choices[0].delta 拼装。
+// Corresponds to claude-quickstarts/agents/providers/openai.py
+// Vendor API key points: Chat Completions endpoint, tool becomes a separate message with role=tool,
+// tools are defined as function, delta stream is assembled at choices[0].delta.
 import { readSse, assertOk, STREAM_CUT, isCutReadError, streamCutNotice } from './base.mjs';
 import { toolToVendor } from '../schema.mjs';
 import { createThinkSplitter } from '../think-tags.mjs';
 import { resolveMaxOutput, usesMaxCompletionTokens, lowerOutputAfter400, swapOutputParamAfter400 } from '../model-limits.mjs';
 import { noteOutputFallback, asRead } from './output-fallback.mjs';
 
-/** 这条 400 是不是「工具 + reasoning_effort 不兼容」那一种 */
+/** Whether this 400 is the "tools + reasoning_effort incompatible" type */
 function isEffortWithToolsRejection(text) {
   if (!text) return false;
   const s = String(text);
@@ -43,7 +44,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
           
           let hasToolResult = false;
           let textBuffer = '';
-          // 图片只能挂在 role:"user" 上——role:"tool" 的 content 只收字符串
+          // Images can only be attached to role:"user": content of role:"tool" only accepts strings
           const parts = [];
 
           for (const block of msg.content) {
@@ -58,13 +59,14 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
           }
 
           if (!hasToolResult) {
-             // 没有图片时仍旧发纯字符串:多模态数组的形式不是每个兼容端点都吃
+             // When there are no images, still send plain strings: not all compatible endpoints support the
+             // multimodal array format
              const hasImage = parts.some(p => p.type === 'image_url');
              openaiMessages.push({ role: 'user', content: hasImage ? parts : textBuffer });
           } else {
-             // 同一条消息里既有工具结果又有图片时：工具结果各自变成 role:"tool"，
-             // 图片只能另起一条 role:"user" 跟在后面——role:"tool" 装不下图片块。
-             // 顺序仍是 assistant(tool_calls) → tool(...) → user(图)，合法。
+             // When the same message contains both tool results and images: tool results each become role:"tool",
+             // images can only follow in a separate role:"user" message: role:"tool" cannot hold image blocks.
+             // The order remains assistant(tool_calls) → tool(...) → user(image), which is valid.
              for (const block of msg.content) {
                if (block.type === 'tool_result') {
                  openaiMessages.push({
@@ -74,8 +76,9 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
                  });
                }
              }
-             // 工具结果全部发完之后，图片和随行文字合成一条 user 消息。
-             // 图片必须和它的说明文字在一起，所以文字也一并挪到这里，而不是各发一条。
+             // After all tool results are sent, images and accompanying text are merged into a single user message.
+             // Images must stay with their descriptive text, so the text is moved here together rather than
+             // sending each separately.
              if (parts.length) {
                const hasImage = parts.some(p => p.type === 'image_url');
                openaiMessages.push({ role: 'user', content: hasImage ? parts : textBuffer });
@@ -111,8 +114,10 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
       }
 
       /*
-       * 单次输出上限按模型取(model-limits.mjs,A07 2026-10-22)。o 系、GPT-5 及以后的推理模型发 `max_completion_tokens`
-       * (openlux 文档:推理模型主要认它,没设时才可能沿用 `max_tokens`;思考也算进输出),其余发 `max_tokens`;两个不同时带。
+       * Per-request output limit is fetched by model (model-limits.mjs, A07 2026-10-22). The o-series,
+       * GPT-5, and subsequent reasoning models send `max_completion_tokens` (openlux docs: reasoning
+       * models primarily recognize this, falling back to `max_tokens` only when unset; thinking also
+       * counts toward output), while the rest send `max_tokens`; do not pass both at the same time.
        */
       let outputParam = usesMaxCompletionTokens(cfg.model) ? 'max_completion_tokens' : 'max_tokens';
       let maxOutput = resolveMaxOutput(cfg);
@@ -130,30 +135,34 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
       }
 
       /*
-       * 思考强度。空字符串 = 用模型默认,这时**一个字段都不发** ——
-       * 有些上游对不认识的参数是直接 400,而不是忽略。
+       * Thinking effort. Empty string = use model default; in this case **do not send any field at all**:
+       * some upstreams return 400 directly on unrecognized parameters instead of ignoring them.
        *
-       * `reasoning_effort` 是 OpenAI 兼容口径里的标准字段(o 系列、GPT-5 系列),
-       * 中转站也照这个收:openlux 的文档写「Inference model strength (such as low /
-       * medium / high). It can also be automatically injected by the gateway through
-       * the model name suffix.」—— 也就是说填 `xxx-thinking` 这类带后缀的模型名时,
-       * 网关会自己注入,那种情况下用户不选档位也是对的,别硬塞一个覆盖掉它。
+       * `reasoning_effort` is the standard field in OpenAI compatibility specs (o-series, GPT-5 series),
+       * and relay services accept it as well: openlux documentation states "Inference model strength
+       * (such as low / medium / high). It can also be automatically injected by the gateway through
+       * the model name suffix." That is, when filling in model names with suffixes such as `xxx-thinking`,
+       * the gateway injects it automatically; in that case, the user not selecting a tier is also valid,
+       * so do not force one in to overwrite it.
        *
-       * 但有些模型**不接受 reasoning_effort 和 function tools 同时出现**,直接 400:
+       * But some models **do not accept reasoning_effort and function tools appearing together**,
+       * directly returning 400:
        *
        *   Function tools with reasoning_effort are not supported for gpt-5.6-terra in
        *   /v1/chat/completions. To use function tools, use /v1/responses or set
        *   reasoning_effort to 'none'.
        *
-       * 而这个应用**每一次请求都带着三十来个工具**,所以只要落到不吃这个组合的上游,
-       * 就是一发就 400 —— 表现像断线,其实是参数和路由撞上了。
+       * And this app **sends around thirty tools with every request**, so whenever it hits an upstream
+       * that does not accept this combination, it returns 400 on the first send: it looks like
+       * a disconnection, but in fact parameters conflicted with the routing.
        *
-       * 通用重试层不管 400(那层是对的:参数错重发一百次也一样),但**这一个 400 是例外**,
-       * 因为它取决于路由到哪个上游,不取决于请求内容。下面单独处理。
+       * The general retry layer ignores 400 (that layer is right: if parameters are wrong, resending
+       * a hundred times yields the same), but **this 400 is an exception**, because it depends on
+       * which upstream it gets routed to, not on the request content. It is handled separately below.
        */
       if (cfg.effort) body.reasoning_effort = cfg.effort;
 
-      /** 最后一次真正发出请求的时刻(按速度设上限时算用时用,见 harness/output-speed.mjs) */
+      /** Timestamp of the last actual request (used for elapsed time when capping by speed, see harness/output-speed.mjs) */
       let sentAt = Date.now();
       const post = (b) => { sentAt = Date.now(); return fetchImpl(url, {
         method: 'POST',
@@ -161,33 +170,37 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
         body: JSON.stringify(b),
         signal
       }); };
-      /** 最后一次发出去的请求体(思考档被去掉、输出字段换过之后,下一次重发以它为准) */
+      /** Last sent request body (next retry uses this after stripping thinking tier and swapping output field) */
       let sentBody = body;
       let response = await post(body);
 
       if (response.status === 400 && cfg.effort && openaiTools.length > 0) {
-        // 正文只能读一次:读出来判一判,不是这个原因的话包回去交给 assertOk 正常报错
+        // The body can only be read once: read to check; if not for this reason,
+        // wrap back and pass to assertOk to report the error normally
         let text = '';
-        try { text = await response.text(); } catch { /* 读不到就当不是 */ }
+        try { text = await response.text(); } catch { /* If it cannot be read, assume it is not */ }
         if (!isEffortWithToolsRejection(text)) {
           response = asRead(response, text);
         } else {
           /*
-           * **这是路由问题,不是模型能力问题** —— 中转站的账单页说得很清楚:
+           * **This is a routing issue, not a model capability issue**: the relay service billing page
+           * makes it clear:
            *
-           *   01:00:04  分组 Openai-Gpt-2  gpt-5.6-terra  错误  0 tokens  $0.000000
-           *   01:00:43  分组 Codex-Gpt-1   gpt-5.6-terra  成功  18s       $0.001894
+           *   01:00:04  Group Openai-Gpt-2  gpt-5.6-terra  Error    0 tokens  $0.000000
+           *   01:00:43  Group Codex-Gpt-1   gpt-5.6-terra  Success  18s       $0.001894
            *
-           * 同一个模型名,两个不同的上游分组,一个不吃 function tools + reasoning_effort、
-           * 另一个吃。落到哪一个是中转站路由决定的,和我们发什么无关。
+           * The same model name, two different upstream groups: one does not take function tools + reasoning_effort,
+           * while the other takes them. Which one it lands on is determined by the relay service routing,
+           * independent of what we send.
            *
-           * 所以正确做法是**原样重发去碰另一条路由**,而不是改请求。特别地:
-           * 别去记「这个模型不支持」—— 那等于凭一次坏运气把思考档永久关掉,
-           * 而它在对的上游上明明是好的。
+           * Therefore the correct approach is **resend as-is to hit another route**, rather than modifying
+           * the request. In particular: do not record "this model is not supported": that amounts to
+           * permanently turning off the thinking tier based on a single piece of bad luck, even though it
+           * works fine on the right upstream.
            *
-           * 重发很便宜:被拒那次账单是 0 tokens、$0.000000、1 秒返回,
-           * 所以多试几次是划算的。都不成再退而求其次去掉参数 ——
-           * 少一个思考档,总好过把整条对话红在那儿。
+           * Resending is cheap: the rejected attempt was billed at 0 tokens, $0.000000, and returned in 1 second,
+           * so trying a few more times is worth it. If none succeed, fall back as a second best to stripping
+           * the parameter: missing a thinking tier is always better than leaving the entire chat red with an error.
            */
           const ROUTE_RETRIES = 3;
           for (let i = 0; i < ROUTE_RETRIES && isEffortWithToolsRejection(text); i++) {
@@ -196,7 +209,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
             try { text = await response.text(); } catch { text = ''; }
             if (!isEffortWithToolsRejection(text)) { response = asRead(response, text); break; }
           }
-          // 几条路由都撞上不支持的上游:最后退一步,去掉思考档再发一次
+          // Several routes all hit unsupported upstreams: as a final fallback, strip the thinking tier and retry once
           if (response.status === 400 && isEffortWithToolsRejection(text)) {
             const retryBody = { ...body };
             delete retryBody.reasoning_effort;
@@ -207,12 +220,13 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
       }
 
       /*
-       * 输出上限引起的 400(A07):字段名不对就换另一个字段重发一次;数太大就降一档重发一次。各至多一次,记日志。
-       * 别的 400 原样交给 assertOk 报。
+       * 400 caused by output limit (A07): if the field name is wrong, swap to the other field and retry once;
+       * if the number is too large, drop down one tier and retry once. At most once for each, write a log.
+       * Other 400 errors are passed as-is to assertOk to report.
        */
       if (response.status === 400) {
         let text = '';
-        try { text = await response.text(); } catch { /* 读不到就当不是 */ }
+        try { text = await response.text(); } catch { /* If it cannot be read, assume it is not */ }
         response = asRead(response, text);
         const swapTo = swapOutputParamAfter400(text, outputParam);
         if (swapTo) {
@@ -239,31 +253,37 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
       let partialToolCalls = {}; // index -> {id, name, args}
       let stopReason = null;
       /*
-       * 有的中转站不把推理放进单独字段,而是**内联在 content 里**发 `<think>…</think>`。
-       * 那样它会整段走 text_delta 进聊天气泡,用户看到一个赤裸的 `</think>` 卡在正文中间。
-       * 这里在流的层面把它拆到思考那条通道 —— 下游(UI、历史)一行都不用改。
-       * 拆分器要跨 chunk 记状态,所以建在循环外面。
+       * Some relay services do not put reasoning into a separate field, but instead send `<think>…</think>`
+       * **inlined in content**. In that case, the entire block goes through text_delta into the chat bubble,
+       * and the user sees a bare `</think>` stuck in the middle of the text.
+       * Here at the stream level it is split into the thinking channel: downstream (UI, history) does not
+       * need a single line of changes.
+       * The splitter needs to track state across chunks, so it is created outside the loop.
        */
       const think = createThinkSplitter();
       let promptTokens = 0;
       let completionTokens = 0;
       let cacheRead = 0;
-      /** 流已经出过数据(文字、思考、工具调用):之后再断就按截断收尾,不当错误(STREAM_CUT) */
+      /** Stream has yielded data (text, thinking, tool calls): break afterwards finalizes as cut, not error (STREAM_CUT) */
       let started = false;
-      /** 流在收尾之前断了:{ how, detail }(how 是 error-event / connection / no-finish) */
+      /** Stream broke before finalizing: { how, detail } (how is error-event / connection / no-finish) */
       let cut = null;
 
       /**
-       * 把攒着的工具调用交出去。finishReason 是 `length`(写到上限)或 cutNow 为真(中途被掐断)时,参数 JSON 解不开的那一个
-       * 交成 tool_use_partial(A07 / stream-cut);别的情况坏 JSON 照旧按参数错误报回模型。
+       * Deliver accumulated tool calls. When finishReason is `length` (hit output limit) or cutNow is true
+       * (interrupted mid-stream), the one whose argument JSON cannot be parsed is delivered as
+       * tool_use_partial (A07 / stream-cut); in other cases, malformed JSON is reported back to the model
+       * as parameter error as usual.
        */
       function* emitToolCalls(finishReason, cutNow) {
         const sorted = Object.keys(partialToolCalls).map(Number).sort((a, b) => a - b);
         /*
-         * 网关偶尔把一次调用拆成两条(不同 id):前一条有名字、参数是空的,后一条有参数、名字是空的。
-         * 实跑见过 set_position 就这样拆开:前一条报「缺少 clipId」,后一条空名进了历史,
-         * 下一次请求整个 400。条件卡得很窄 —— 只在「无名有参」紧跟「有名无参」时合并,
-         * 正常的并行调用各自都有名字,碰不到这里。
+         * The gateway occasionally splits one call into two (different ids): the earlier one has a name
+         * and empty arguments, while the later one has arguments and an empty name.
+         * In actual runs, set_position was seen split like this: the earlier one reported "missing clipId",
+         * and the later one with an empty name entered history, causing the entire next request to 400.
+         * The condition is guarded very strictly: merge only when "nameless with arguments" immediately follows
+         * "named with empty arguments"; normal parallel calls each have their own names and will never hit this.
          */
         for (let k = 1; k < sorted.length; k++) {
           const cur = partialToolCalls[sorted[k]], prev = partialToolCalls[sorted[k - 1]];
@@ -275,7 +295,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
         const indices = sorted.filter((i) => partialToolCalls[i]);
         for (const idx of indices) {
           const pt = partialToolCalls[idx];
-          // 被掐断时参数还一个字没来的那一个:没写完,不能当 `{}` 执行
+          // The one whose arguments had not arrived at all when cut off: incomplete, cannot be executed as `{}`
           if (cutNow && !String(pt.args || '').trim()) {
             yield { type: 'tool_use_partial', id: pt.id, name: pt.name, args: '' };
             continue;
@@ -285,15 +305,16 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
             input = JSON.parse(pt.args || '{}');
           } catch (error) {
             /*
-             * 写到输出上限(`length`)或中途被掐断时没写完的那一个:不执行,把已经收到的参数原文交给 agent.mjs,
-             * 由它从半截 JSON 里取出写了一半的字段存进代码块,让模型接着写(A07,2026-10-22 用户定)。
-             * 不是截断引起的坏 JSON 照旧按参数错误报回模型。
+             * The one not finished when hitting the output limit (`length`) or interrupted mid-stream: do not execute;
+             * pass the raw arguments already received to agent.mjs, which extracts half-written fields from the truncated
+             * JSON and stores them in a code block so the model can continue writing (A07, user decision, 2026-10-22).
+             * Malformed JSON not caused by truncation is reported back to the model as a parameter error as usual.
              */
             if (finishReason === 'length' || cutNow) {
               yield { type: 'tool_use_partial', id: pt.id, name: pt.name, args: pt.args || '' };
               continue;
             }
-            yield { type: 'tool_use', id: pt.id, name: pt.name, input: {}, inputError: `工具参数 JSON 不完整：${error.message}。请缩小批量或提高输出长度后重试。` };
+            yield { type: 'tool_use', id: pt.id, name: pt.name, input: {}, inputError: `Tool arguments JSON incomplete: ${error.message}. Reduce the batch size or raise the output length and retry.` };
             continue;
           }
           yield { type: 'tool_use', id: pt.id, name: pt.name, input };
@@ -318,21 +339,22 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
             promptTokens = parsed.usage.prompt_tokens || 0;
             completionTokens = parsed.usage.completion_tokens || 0;
             /*
-             * 网关自动做的提示词缓存,命中量在这里。prompt_tokens 本身已经**含着**它
-             * (实测 openlux:prompt_tokens 34057、cached_tokens 27877),所以 input 不用再加,
-             * 这个数只拿来看命中率。不报这个字段的兼容接口就是 0。
+             * Gateway-automated prompt cache hit count is here. prompt_tokens itself already **includes** it
+             * (measured on openlux: prompt_tokens 34057, cached_tokens 27877), so input does not need to add it again;
+             * this count is only used to observe the hit rate. Compatible endpoints that do not report this field are 0.
              */
             cacheRead = Number(parsed.usage.prompt_tokens_details?.cached_tokens) || 0;
           }
 
           if (parsed.error) {
-            const message = typeof parsed.error === 'string' ? parsed.error : (parsed.error.message || 'API 流返回错误');
+            const message = typeof parsed.error === 'string' ? parsed.error : (parsed.error.message || 'API stream returned an error');
             /*
-             * 流已经出过数据之后来的 error(2026-10-22 实测 openlux:约 300 秒时来一条
-             * 「The upstream stream ended before the response was complete.」,HTTP 仍是 200,没有 finish_reason):
-             * 按截断收尾,不把已经写出的东西扔掉。还没出过数据的照旧抛错。
+             * Error arriving after the stream has already yielded data (measured on openlux, 2026-10-22: at around 300s,
+             * an error arrives: "The upstream stream ended before the response was complete.", HTTP is still 200,
+             * no finish_reason): finalize as truncation instead of discarding what has already been written.
+             * If data has not been yielded yet, throw the error as usual.
              */
-            if (stopReason) break; // 已经正常收尾,后面来的错不影响这次回复
+            if (stopReason) break; // Already finalized normally; subsequent errors do not affect this reply
             if (!started) throw new Error(message);
             cut = { how: 'error-event', detail: message };
             break;
@@ -348,7 +370,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
               }
             }
 
-            // 各家兼容接口给推理过程起的名字不一样,常见这三个,取到哪个算哪个
+            // Compatible endpoints name the reasoning process differently; these three are common, take whichever is found
             const reasoning =
               choice.delta?.reasoning_content ?? choice.delta?.reasoning ?? choice.delta?.thinking;
             if (typeof reasoning === 'string' && reasoning) {
@@ -376,14 +398,15 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
           }
         }
       } catch (err) {
-        // 连接在流中途被断(网关掐断、对端关了连接):出过数据、还没收尾的按截断收尾;别的照旧抛
+        // Connection interrupted mid-stream (gateway cut off, remote closed connection): if data was yielded
+        // and not yet finalized, finalize as truncation; otherwise throw as usual
         if (!isCutReadError(err, signal) || (!started && !stopReason)) throw err;
         if (!stopReason) cut = { how: 'connection', detail: err?.message || String(err) };
       }
 
       if (!stopReason && !cut && started && !signal?.aborted) {
-        // 流读完了却没有 finish_reason:同样是没写完
-        cut = { how: 'no-finish', detail: '流在 finish_reason 之前结束' };
+        // Stream finished reading but has no finish_reason: likewise incomplete
+        cut = { how: 'no-finish', detail: 'Stream ended before finish_reason' };
       }
       if (cut) {
         yield streamCutNotice('openai', cut.how, cut.detail, { pendingToolCalls: Object.keys(partialToolCalls).length });
@@ -391,11 +414,13 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
         stopReason = STREAM_CUT;
       }
 
-      if (!stopReason) throw new Error('API 响应流提前结束或未返回 SSE 数据，请检查接口协议。');
-      // 写到长度上限时没写完的工具调用已在上面 finish_reason 那一支交成 tool_use_partial;照常报 `length` 收尾,
-      // 由 `agent.mjs` 存代码块、让模型接着写,连续截断超限再明说没做成。中途被掐断的以 `stream_cut` 收尾,做法相同。
+      if (!stopReason) throw new Error('The API response stream ended early or returned no SSE data. Check the API protocol.');
+      // Tool calls left incomplete when hitting length limit were already delivered as tool_use_partial in
+      // the finish_reason branch above; finalize by reporting `length` as usual, letting `agent.mjs` save the
+      // code block so the model can continue writing; if consecutive truncations exceed the limit, report failure
+      // explicitly. Those interrupted mid-stream finalize with `stream_cut`, following the same approach.
       yield { type: 'usage', input: promptTokens, output: completionTokens, cacheRead };
-      // 收尾:扣住的尾巴要放出来(可能是半个标签,也可能就是正常正文)
+      // Finalize: release the held-back tail (could be half a tag, or just normal body text)
       for (const ev of think.flush()) {
         yield ev.kind === 'think'
           ? { type: 'thinking_delta', text: ev.text }

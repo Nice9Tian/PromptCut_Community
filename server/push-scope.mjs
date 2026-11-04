@@ -1,25 +1,35 @@
 /**
- * 推送队列只推绑定项目的产物(交接文件 `HANDOFF-2026-09-29.md` 第 4 节第三条;报告 `docs/archive/agent-reports/AGENT-push-scope.md`)。
+ * The push queue only pushes artifacts of the bound project (handoff document `HANDOFF-2026-09-29.md`
+ * Section 4, item 3; report `docs/archive/agent-reports/AGENT-push-scope.md`).
  *
- * 预渲染进程的帧库是本机所有项目共用的:同时开着的别的本机项目写进帧库的帧,也会经推送钩子进推送队列。
- * 推送队列连的是共享项目的素材服务(云端、局域网主机),别的项目的帧不该到那里 —— 素材服务的票据「只在这个项目内有效」
- * (`product/asset-service.md`「凭票据读写」),纯浏览器节点那条「不让别人的项目内容进用户的浏览器」同理。
- * 这里按「这一段属于哪个项目文档」判断进不进队:
+ * The prerender process frame store is shared across all local projects on this machine: frames
+ * written into the frame store by other concurrently open local projects also enter the push queue
+ * via push hooks. The push queue connects to the asset service of the shared project (cloud, LAN
+ * host), where frames from other projects should not go: asset service tickets are "only valid within
+ * this project" (`product/asset-service.md` "Read and write with tickets"); the pure browser node
+ * rule "do not allow other projects' content into the user's browser" applies similarly.
+ * Here, enqueuing is decided based on "which project document this segment belongs to":
  *
- *   - 快照本地档:`entryKey` 那一版 entry 的 `project.id`;
- *   - 快照共享档:键是内容寻址的,几个项目可能共用同一份;只要**绑定项目**里有一版 entry 的 card plan 用到这个快照键就算
- *     (内容相同,推上去也就是绑定项目自己的内容);
- *   - 轨道流:生产者手里这条流的 state 记着它属于哪一版 entry(`entryKey`);对不上时再看流的成员卡的内容键
- *     是否出现在绑定项目的 card plan 里(同上,内容寻址)。
- *   - 层表(`layers:<项目 id>`):按项目 id 直接判。
+ *   - Snapshot local tier: `project.id` of the entry version for `entryKey`;
+ *   - Snapshot shared tier: keys are content-addressed, and several projects may share the same one;
+ *     counted as matching as long as a card plan of an entry version in the **bound project** uses
+ *     this snapshot key (content is identical, so pushing it is pushing the bound project's own content);
+ *   - Track stream: state of this stream held by the producer records which entry version it belongs
+ *     to (`entryKey`); if it does not match, check whether content keys of the stream's member cards
+ *     appear in the bound project's card plan (same as above, content-addressed).
+ *   - Layer table (`layers:<project id>`): judged directly by project id.
  *
- * 找不到 entry(已经被换掉、进程刚起还没有)按「不属于」算:别的项目的内容宁可留在本机,也不推错地方。
- * 已经在推送队列文件里的段不重新判(队列文件按项目分目录,里面只有这个项目的段)。
+ * If an entry cannot be found (already replaced, or not yet present right after process startup),
+ * treat it as "not belonging": content from other projects is better kept on this machine than
+ * pushed to the wrong place. Segments already in push queue files are not re-evaluated (queue files
+ * are organized into directories by project, containing only segments for that project).
  *
- * `contentIds()` 回:
- *   - `ALL`:不限(没有共享项目的边界:本机身份连本机或自己集群的文档服务;或老路径的配置里没写项目文档 id);
- *   - `null`:还不知道(页面还没交项目文档 id)—— 判不了,回 null,由推送队列先扣着,知道了再判;
- *   - 字符串数组:只认这几个项目文档 id。
+ * `contentIds()` returns:
+ *   - `ALL`: unrestricted (no shared project boundary: local identity connects to local or own
+ *     cluster's document service; or legacy path config did not specify a project document id);
+ *   - `null`: unknown yet (page has not submitted project document id): cannot judge, returns null,
+ *     held by the push queue until known;
+ *   - Array of strings: recognizes only these project document ids.
  */
 export const ALL = 'all';
 
@@ -27,12 +37,12 @@ const controlKeyOf = (control) => control?.contentKey ?? control?.snapshotKey ??
 
 /**
  * @param {object} options
- * @param {any} options.pipeline  `FramePipeline`(读 `entries`、`streamProducer()`)
+ * @param {any} options.pipeline  `FramePipeline` (reads `entries`, `streamProducer()`)
  * @param {() => (typeof ALL | string[] | null)} options.contentIds
  */
 export function createPushScope({ pipeline, contentIds }) {
-  if (!pipeline) throw new TypeError('createPushScope 要 pipeline');
-  if (typeof contentIds !== 'function') throw new TypeError('createPushScope 要 contentIds()');
+  if (!pipeline) throw new TypeError('createPushScope requires pipeline');
+  if (typeof contentIds !== 'function') throw new TypeError('createPushScope requires contentIds()');
   const ids = () => {
     let v;
     try { v = contentIds(); } catch { v = null; }
@@ -44,7 +54,7 @@ export function createPushScope({ pipeline, contentIds }) {
   const entries = () => { try { return [...(pipeline.entries?.values?.() ?? [])]; } catch { return []; } };
   const inScope = (list, entry) => !!entry && typeof entry.project?.id === 'string' && list.includes(entry.project.id);
 
-  /** 项目文档 id 在不在范围里:true / false / null(还不知道) */
+  /** Whether the project document id is in scope: true / false / null (unknown yet) */
   function acceptsProject(projectId) {
     const list = ids();
     if (list === ALL) return true;
@@ -52,7 +62,7 @@ export function createPushScope({ pipeline, contentIds }) {
     return typeof projectId === 'string' && list.includes(projectId);
   }
 
-  /** 推送队列的一段(`artifact-push.mjs` 的 `normalizeUnit` 之后)在不在范围里:true / false / null(还不知道) */
+  /** Whether a push queue segment (after `normalizeUnit` in `artifact-push.mjs`) is in scope: true / false / null (unknown yet) */
   function accepts(unit) {
     const list = ids();
     if (list === ALL) return true;

@@ -1,17 +1,27 @@
 /**
- * `--assert-no-lan <PC 局域网地址>`（`docs/plan/m8-plan.md` 第 2.3 节「异地接入托管」）：证明这一端全程没走局域网。
+ * `--assert-no-lan <PC LAN address>` (`docs/plan/m8-plan.md` Section 2.3 "Remote hosted connection"):
+ * proves that this end never traversed the LAN throughout.
  *
- * 只读、不改任何设置（约束「不动宿主机的网络」）：
- *   - **基线排除**：`startNoLanWatch` 一开始先跑一次 `netstat -an`，记下那时已有的、对端是这个地址的 (本端, 对端) 对
- *     （上一项留下的 `TIME_WAIT`、`CLOSE_WAIT` 等都在这里），只记进 `baseline` 供排查、不算；
- *   - 之后每 `everyMs`（缺省 2 s）采样一次，`stop()` 时再采一次：出现的、对端是这个地址、**不在基线里**的 TCP 连接，
- *     **不论状态**（`ESTABLISHED`、`TIME_WAIT`、`SYN_SENT`、`CLOSE_WAIT`…）都算，记最大值 `maxTcp` 与出现过的行 `seen`（至多 5 条）。
- *     两次采样之间建立又关掉的短连接（例如一次很快的 HTTP 请求），下一次采样时只剩 `TIME_WAIT`，照样抓得到；
- *     只数 `ESTABLISHED` 会漏掉它，这正是「全程没走局域网」要抓的；
- *   - `stop()` 时再做一次一次性的局域网发现（`server/lan/discovery.mjs` 的 `discoverLan`，缺省 3 s），记发现到的主机数。
- * 两项都是 0 才算没走局域网；分成 `tcpOk`、`discoveryOk` 两项交给调用方各自判（局域网里别的程序在广播时，发现结果不为 0
- * 不等于这一端连了局域网，两项分开才说得清）。结果只有计数与地址，没有凭证。
- * 判法的纯函数是 `countNewTcpTo`、`judgeNoLanTcp`（单测 `m8-no-lan.test.mjs`）。
+ * Read-only, modifies no settings (constraint "Leave host network untouched"):
+ *   - **Baseline exclusion**: `startNoLanWatch` runs `netstat -an` once at the beginning, recording
+ *     existing (local, foreign) pairs whose foreign address is this address (leftover `TIME_WAIT`,
+ *     `CLOSE_WAIT`, etc. from previous runs are here), recorded only in `baseline` for troubleshooting
+ *     and not counted;
+ *   - Sampled every `everyMs` (default 2 s) thereafter, and sampled once more at `stop()`: TCP
+ *     connections that appear with this address as foreign peer and are **not in the baseline**,
+ *     **regardless of state** (`ESTABLISHED`, `TIME_WAIT`, `SYN_SENT`, `CLOSE_WAIT`...), are all
+ *     counted, recording the maximum `maxTcp` and seen lines `seen` (at most 5 lines). Short-lived
+ *     connections established and closed between two samples (e.g. a fast HTTP request), where only
+ *     `TIME_WAIT` remains at the next sample, are still caught; counting only `ESTABLISHED` would
+ *     miss them, which is exactly what "never traversed the LAN throughout" needs to catch;
+ *   - At `stop()`, run a one-time LAN discovery once more (`discoverLan` in `server/lan/discovery.mjs`,
+ *     default 3 s), recording the number of discovered hosts.
+ * Only when both are 0 is it considered not using the LAN; split into `tcpOk` and `discoveryOk` for
+ * callers to judge independently (when other programs on the LAN are broadcasting, a non-zero discovery
+ * result does not mean this end connected to the LAN; keeping them separate clarifies this). Results
+ * contain only counts and addresses, no credentials.
+ * The pure functions for evaluation are `countNewTcpTo` and `judgeNoLanTcp` (unit test
+ * `m8-no-lan.test.mjs`).
  */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -20,8 +30,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 /**
- * `netstat -an` 的一行 → `{ proto, local, foreign, state }`；不是 TCP 行回 null。Windows 与 Linux 的列序不同，
- * 按「像地址的列」取前两个；`state` 取对端之后的那一列（全大写字母与下划线），没有就是 null
+ * A line of `netstat -an` → `{ proto, local, foreign, state }`; returns null if not a TCP line.
+ * Column orders differ between Windows and Linux, so take the first two "address-like columns";
+ * `state` takes the column after foreign (all uppercase letters and underscores), or null if none
  */
 export function parseNetstatLine(line) {
   const cols = String(line).trim().split(/\s+/);
@@ -33,27 +44,28 @@ export function parseNetstatLine(line) {
   return { proto: cols[0], local: addrs[0], foreign: addrs[1], state };
 }
 
-/** 对端地址是不是这个 IPv4（`a.b.c.d:port`，也认 IPv4 映射的 `[::ffff:a.b.c.d]:port`） */
+/** Whether the foreign address is this IPv4 (`a.b.c.d:port`, also recognizes IPv4-mapped `[::ffff:a.b.c.d]:port`) */
 export function foreignIs(foreign, ip) {
   const f = String(foreign);
   return f.startsWith(`${ip}:`) || f.startsWith(`[::ffff:${ip}]:`);
 }
 
-/** 一条连接的 (本端, 对端) 键 */
+/** Key for a connection's (local, foreign) pair */
 export const pairKey = (l) => `${l.local}>${l.foreign}`;
 
-/** 数 `netstat -an` 输出里对端是 `ip` 的 TCP 行（任何状态） */
+/** Counts TCP lines in `netstat -an` output where foreign is `ip` (any state) */
 export function countTcpTo(text, ip) {
   const lines = String(text).split(/\r?\n/).map(parseNetstatLine).filter(Boolean).filter((x) => foreignIs(x.foreign, ip));
   return { count: lines.length, lines };
 }
 
 /**
- * 基线排除：对端是 `ip`、(本端, 对端) 不在 `baseline` 里的 TCP 行，不论状态都算（`count` / `lines`）；
- * 在基线里的进 `baselineLines`（只供排查）
- * @param {string} text  `netstat -an` 的输出
+ * Baseline exclusion: TCP lines where foreign is `ip` and (local, foreign) is not in `baseline`,
+ * counted regardless of state (`count` / `lines`); those in baseline go into `baselineLines`
+ * (for troubleshooting only)
+ * @param {string} text  Output of `netstat -an`
  * @param {string} ip
- * @param {Set<string>} baseline  开始时已有的 `pairKey`
+ * @param {Set<string>} baseline  `pairKey` set existing at startup
  */
 export function countNewTcpTo(text, ip, baseline = new Set()) {
   const { lines: all } = countTcpTo(text, ip);
@@ -61,7 +73,7 @@ export function countNewTcpTo(text, ip, baseline = new Set()) {
   return { count: lines.length, lines, baselineLines: all.filter((x) => baseline.has(pairKey(x))) };
 }
 
-/** 判法：基线取到了、基线之后至少采样过一次、且全程没见到基线之外到这个地址的连接（不论状态） */
+/** Evaluation logic: baseline was obtained, sampled at least once after baseline, and no connections outside baseline to this address were seen throughout (regardless of state) */
 export function judgeNoLanTcp({ baselineOk = true, samples, maxTcp }) {
   return baselineOk === true && samples > 0 && maxTcp === 0;
 }
@@ -72,12 +84,12 @@ function netstat() {
 }
 
 /**
- * @param {string} ip  PC 的局域网地址
+ * @param {string} ip  PC LAN address
  * @param {{ everyMs?: number, discoverMs?: number, log?: (event: string, fields: object) => void, netstat?: () => { ok: boolean, text: string }, discover?: boolean }} [o]
- *   `netstat`、`discover: false` 只给单测注入（单测不做真的局域网发现）
+ *   `netstat` and `discover: false` are injected for unit tests only (unit tests do not perform real LAN discovery)
  */
 export function startNoLanWatch(ip, { everyMs = 2000, discoverMs = 3000, log = () => {}, netstat: run = netstat, discover = true } = {}) {
-  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(String(ip ?? ''))) throw new TypeError(`--assert-no-lan 要给 IPv4 地址，收到 ${ip}`);
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(String(ip ?? ''))) throw new TypeError(`--assert-no-lan needs an IPv4 address, got ${ip}`);
   const state = { ip, baselineOk: false, baseline: [], samples: 0, failedSamples: 0, maxTcp: 0, seen: [] };
   const baselineKeys = new Set();
   const describe = (l) => `${pairKey(l)}${l.state ? ` ${l.state}` : ''}`;
@@ -85,7 +97,7 @@ export function startNoLanWatch(ip, { everyMs = 2000, discoverMs = 3000, log = (
     const n = run();
     if (!n.ok) { state.failedSamples += 1; return; }
     if (!state.baselineOk) {
-      // 第一次取到的 netstat 是基线：那时已有的连接都是开始之前的
+      // The first retrieved netstat is the baseline: connections existing at that time are all prior to start
       for (const l of countTcpTo(n.text, ip).lines) {
         baselineKeys.add(pairKey(l));
         if (state.baseline.length < 20) state.baseline.push(describe(l));
@@ -106,7 +118,7 @@ export function startNoLanWatch(ip, { everyMs = 2000, discoverMs = 3000, log = (
   const timer = setInterval(sample, everyMs);
   timer.unref?.();
   return {
-    /** 立刻采一次（单测用；探针靠定时器） */
+    /** Sample once immediately (used by unit tests; probe relies on timers) */
     sample,
     async stop() {
       clearInterval(timer);

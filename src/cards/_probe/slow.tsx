@@ -3,24 +3,30 @@ import { useRef } from "react";
 import { isExportMode } from "../../kernel/clock";
 
 /**
- * K6 的判例卡：**每一次 React 渲染都烧掉 `burnMs` 毫秒**。
+ * The test-case card for K6: **every React render burns `burnMs` milliseconds**.
  *
- * K6 的验收要「人为把一张卡的成本拉到 50 ms，播放不跳帧、`frame` 间隔变成约 50 ms、
- * 每拍都超过 40 ms……一秒内 K6 触发降级」。卡库里没有一张卡能**稳定**地这么慢：
- * 真正贵的那些（粒子、三维）贵在 rAF 回调和 GPU 上，而且机器一换数就变，
- * 验收里的「50 ms」就成了一个量不准的数。所以这里放一张成本由参数直接定的卡。
+ * The K6 acceptance check wants "artificially raise a card's cost to 50 ms, playback does not drop
+ * frames, the `frame` interval becomes about 50 ms, every tick exceeds 40 ms... within one second K6
+ * triggers a downgrade". No card in the card library is **steadily** that slow: the ones that are
+ * truly expensive (particles, 3D) are expensive in rAF callbacks and on the GPU, and the numbers
+ * change as soon as the machine changes, so the "50 ms" in the acceptance check became a number that
+ * cannot be measured accurately. So a card whose cost is set directly by a parameter is placed here.
  *
- * 为什么把时间烧在 render 里而不是 rAF 回调里：K6 挑「最贵的那张轻卡」靠的是
- * `FrameScene` 的 live 路给每个片段套的 `<Profiler>`（`onRender` 的 `actualDuration`），
- * 它量的是这个片段子树的渲染 / 提交。rAF 回调跑在 `clock.tick` 里，
- * 回调和片段之间没有可靠的归属关系（见报告里的更正建议）。
+ * Why the time is burned in render rather than in the rAF callback: K6 picks "the most expensive
+ * light card" by the `<Profiler>` that the live route of `FrameScene` wraps around each clip
+ * (`actualDuration` from `onRender`), which measures the render / commit of that clip's subtree.
+ * The rAF callback runs inside `clock.tick`, and there is no reliable ownership relation between
+ * the callback and the clip (see the correction suggestion in the report).
  *
- * 计时用 `__pcRealNow`（舞台把 `performance.now` 换成了虚拟时钟，用它会空转到死）。
+ * Timing uses `__pcRealNow` (the stage replaced `performance.now` with a virtual clock, and using it
+ * would spin idle forever).
  */
 /**
- * `padNodes`:在橙块里多画这么多个小点(每个一个绝对定位的 `<span>`),只为把这一层的快照做大 —— 在线按拍换快照的
- * 换帧成本按快照大小估(`src/render/beatSwap.mjs` 的 `swapCostOfSize`),`c10-browser-probe` 要一层「真的换不过来」的重层。
- * 缺省 0:一个节点都不多,画面与快照和以前逐字相同。
+ * `padNodes`: draws this many extra dots in the orange block (each an absolutely positioned
+ * `<span>`), only to make this layer's snapshot larger. The frame-swap cost of swapping snapshots per
+ * tick online is estimated by snapshot size (`swapCostOfSize` in `src/render/beatSwap.mjs`), and
+ * `c10-browser-probe` needs a heavy layer that "really cannot be swapped in time".
+ * Default 0: not a single extra node, and the picture and snapshot are byte-identical to before.
  */
 function PadDots({ n }: { n: number }) {
   const dots = [];
@@ -37,8 +43,8 @@ function ProbeSlowCard({ params, t }: CardProps<{ burnMs: number; label: string;
   if (burn > 0) {
     const now = (window as unknown as { __pcRealNow?: () => number }).__pcRealNow ?? (() => Date.now());
     const until = now() + burn;
-    // 忙等:要的就是「这一拍的 React 渲染真的花了这么久」
-    while (now() < until) { /* 烧时间 */ }
+    // Busy-wait: what is wanted is exactly "this tick's React render really took this long"
+    while (now() < until) { /* Burn time */ }
   }
   return (
     <div style={{ position: "absolute", inset: 0 }}>
@@ -47,7 +53,7 @@ function ProbeSlowCard({ params, t }: CardProps<{ burnMs: number; label: string;
         style={{
           position: "absolute", left: 480, top: 420, width: 320, height: 240, borderRadius: 24,
           background: "#f97316", color: "#fff", fontSize: 40, display: "grid", placeItems: "center",
-          // 让它每帧都有变化,免得 React 把这一支 memo 掉
+          // Make it change every frame, so React does not memoize this branch away
           transform: `translateX(${((t ?? 0) * 10).toFixed(2)}px)`,
         }}
       >
@@ -60,30 +66,40 @@ function ProbeSlowCard({ params, t }: CardProps<{ burnMs: number; label: string;
 
 export const probeSlowCard: CardDef<{ burnMs: number; label: string; padNodes?: number }> = {
   id: "probe-slow",
-  name: "探针卡 · 可调成本",
-  description: "K6 的判例:每次渲染烧掉 burnMs 毫秒(用 __pcRealNow 忙等),用来人为把一张卡的每拍成本拉高",
+  name: "Probe card · tunable cost",
+  description: "K6 precedent: each render burns burnMs milliseconds (busy-wait with __pcRealNow), used to artificially raise the per-tick cost of a card",
   source: "native",
-  // direct:按 t 直接求值,没有动画历史 —— K6 要的是「一张**轻**卡被降级」,
-  // 走推帧那条路的话它会先被 K2 的追帧上界判重,根本进不了轻管线
+  // direct: evaluated directly by t with no animation history. What K6 wants is "a **light** card
+  // being downgraded"; on the frame-push route it would first be classified as heavy by K2's
+  // frame catch-up upper bound and never reach the light pipeline
   frameMode: "direct",
   defaults: { burnMs: 0, label: "slow" },
   controls: [
-    { key: "burnMs", type: "number", label: "每帧烧掉(ms)" },
-    { key: "label", type: "text", label: "文字" },
+    { key: "burnMs", type: "number", label: "Burn per frame (ms)" },
+    { key: "label", type: "text", label: "Text" },
   ],
   Component: ProbeSlowCard,
 };
 
 /**
- * 同一张卡的推帧版(C10 本机验收,`scripts/probes/c10-browser-probe.mjs`):`direct` 卡在预渲染管线里不产快照,
- * 渲染节点预渲染不了;在线双舞台要验「重层贴节点预渲染好的原尺寸快照」,得有一张在哪台机器上都稳定判重、
- * 又由渲染节点产快照的卡。画法与 `probe-slow` 相同(只画自己那一块,审阅表里 `independent`)。
+ * The frame-push version of the same card (C10 local acceptance check,
+ * `scripts/probes/c10-browser-probe.mjs`): a `direct` card produces no snapshots in the prerender
+ * pipeline, so render nodes cannot prerender it; the online dual stage needs to verify "a heavy
+ * layer attaches to the original-size snapshot prerendered by a node", which requires a card that
+ * is stably classified as heavy on any machine and also has its snapshots produced by render nodes.
+ * It is drawn the same way as `probe-slow` (it draws only its own block, `independent` in the review
+ * table).
  *
- * **只在舞台里、每个新时刻烧一次时间**(导出页 / 预渲染间里不烧;被抑制、t 冻住时的重渲染不烧):成本是给「舞台上活渲装不下」用的;预渲染间推一帧要渲好几次、
- * 推帧卡还要从入点推到目标帧,在那里也烧就会把预渲染拖到协议超时。画面与烧不烧无关。
+ * **It burns time only on the stage, once per new moment** (no burning on the export page / in the
+ * prerender room; no burning on re-renders while suppressed or with t frozen): the cost exists for
+ * "the live render on the stage cannot keep up"; advancing one frame in the prerender room renders
+ * several times, and a frame-push card must also be pushed from the in point to the target frame, so
+ * burning there would drag the prerender out to the protocol timeout. The picture has nothing to do
+ * with whether it burns.
  */
 function ProbeSlowSteppedCard(props: CardProps<{ burnMs: number; label: string; padNodes?: number }>) {
-  // 每个新的时刻只烧一次:被抑制(t 冻住)时的重渲染不算这张卡在活渲
+  // Burn only once per new moment: a re-render while suppressed (t frozen) does not count as this card
+  // being live-rendered
   const last = useRef<number | null>(null);
   const fresh = last.current !== (props.t ?? 0);
   last.current = props.t ?? 0;
@@ -94,8 +110,8 @@ function ProbeSlowSteppedCard(props: CardProps<{ burnMs: number; label: string; 
 export const probeSlowSteppedCard: CardDef<{ burnMs: number; label: string; padNodes?: number }> = {
   ...probeSlowCard,
   id: "probe-slow-stepped",
-  name: "探针卡 · 可调成本(推帧)",
-  description: "probe-slow 的推帧版:舞台里每次渲染烧掉 burnMs 毫秒(预渲染间里不烧);渲染节点能为它产快照",
+  name: "Probe card · tunable cost (frame-push)",
+  description: "Frame-push version of probe-slow: each render in the stage burns burnMs milliseconds (not burned in the prerender pass); the render node can produce snapshots for it",
   frameMode: "stateful",
   Component: ProbeSlowSteppedCard,
 };

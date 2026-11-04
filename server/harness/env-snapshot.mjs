@@ -3,33 +3,35 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
- * 排查用的「机器现在是什么状态」。
+ * "What state the machine is currently in" for troubleshooting.
  *
- * # 为什么诊断报告里必须有这一段
+ * # Why the diagnostic report must include this section
  *
- * 之前那份对话诊断只有对话本身。用户报「Agent 看得见别的项目的素材」时,报告里
- * 看得到模型说了什么、调了哪些工具,却看不到**它凭什么这么说** —— 素材库当时是空的吗?
- * 项目存在哪?后端那个会话文件柜里躺着几段历史?这些都没有,于是「是产品的 bug」和
- * 「是这台机器的环境问题」两种可能一条都排除不掉,只能靠猜。
+ * Previously, the chat diagnostics only had the chat itself. When a user reports "Agent can see assets
+ * from other projects", the report showed what the model said and which tools it called, but not
+ * **what justification it had for saying so**: was the media library empty at the time? Where was the
+ * project stored? How many history records were lying in the backend session filing cabinet? None of
+ * these were available, so neither possibility: "it is a product bug" or "it is an environment issue on
+ * this machine": could be ruled out, leaving only guesswork.
  *
- * 这里补的就是那些「当时的现场」。
+ * What is added here is that "original scene at the time".
  */
 
-/** 单个会话历史文件解析的体积上限:超过就只报大小,不打开 */
+/** Maximum size limit for parsing a single session history file: only report size without opening if exceeded */
 const PARSE_LIMIT = 8 * 1024 * 1024;
-/** 最多细看几个文件(按新到旧) —— 剩下的只计数 */
+/** Maximum number of files to inspect in detail (newest to oldest): only count the rest */
 const PARSE_COUNT = 20;
 
-/** 会话历史默认存放处,和 runners/api.mjs 里那份必须一致 */
+/** Default storage location for session history, must match the one in runners/api.mjs */
 export function sessionStoreDir(tmp = os.tmpdir()) {
   return path.join(tmp, 'promptcut', 'harness-sessions');
 }
 
 /**
- * 后端的会话文件柜里有什么。
+ * What is inside the backend session filing cabinet.
  *
- * 报的是「有几段、多大、多新、各几条消息」,**不含任何对话内容** ——
- * 判断「界面空着而后端接着旧历史」只需要条数,不需要读那些话。
+ * Reports "how many records, how large, how recent, how many messages each", **without any chat content**:
+ * judging "UI is empty while backend resumes old history" only requires counts, not reading those words.
  */
 export function inspectSessionStore(dir = sessionStoreDir(), io = fs) {
   const out = { dir, exists: false, files: 0, totalBytes: 0, recent: [], note: '' };
@@ -37,7 +39,7 @@ export function inspectSessionStore(dir = sessionStoreDir(), io = fs) {
   try {
     names = io.readdirSync(dir).filter((n) => n.endsWith('.json'));
   } catch {
-    out.note = '目录不存在或读不了 —— 说明这台机器上还没有任何 API 直连的会话落过盘';
+    out.note = 'Directory does not exist or cannot be read: no direct API session has been saved to disk on this machine yet';
     return out;
   }
   out.exists = true;
@@ -50,7 +52,7 @@ export function inspectSessionStore(dir = sessionStoreDir(), io = fs) {
       const st = io.statSync(full);
       out.totalBytes += st.size;
       stated.push({ name, full, bytes: st.size, modifiedAt: new Date(st.mtimeMs).toISOString(), mtimeMs: st.mtimeMs });
-    } catch { /* 正被写 / 已被删,跳过 */ }
+    } catch { /* Currently being written / already deleted, skip */ }
   }
   stated.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
@@ -65,17 +67,17 @@ export function inspectSessionStore(dir = sessionStoreDir(), io = fs) {
           for (const m of arr) { const r = String(m?.role || '?'); tally[r] = (tally[r] || 0) + 1; }
           row.roles = tally;
         }
-      } catch { row.messages = '(读不出来)'; }
+      } catch { row.messages = '(unreadable)'; }
     } else {
-      row.messages = '(文件过大,没有打开)';
+      row.messages = '(file too large, not opened)';
     }
     out.recent.push(row);
   }
-  if (stated.length > PARSE_COUNT) out.note = `只细看了最新的 ${PARSE_COUNT} 个,共 ${stated.length} 个`;
+  if (stated.length > PARSE_COUNT) out.note = `Only examined the latest ${PARSE_COUNT} in detail, ${stated.length} in total`;
   return out;
 }
 
-/** 本地服务这个 Node 进程现在什么样 */
+/** Current state of this Node process for the local service */
 export function nodeStatus(proc = process, o = os) {
   const mem = proc.memoryUsage ? proc.memoryUsage() : {};
   const mb = (n) => (typeof n === 'number' ? Math.round(n / 1048576) : null);
@@ -83,18 +85,18 @@ export function nodeStatus(proc = process, o = os) {
     version: proc.version,
     v8: proc.versions?.v8,
     pid: proc.pid,
-    // 服务是不是刚重启过 —— 「重启就好了」类问题第一眼要看的就是它
+    // Whether the service was just restarted: this is the first thing to check for "fixed after restart" issues
     uptimeSeconds: Math.round(proc.uptime ? proc.uptime() : 0),
     startedAt: proc.uptime ? new Date(Date.now() - proc.uptime() * 1000).toISOString() : null,
     execPath: proc.execPath,
     cwd: typeof proc.cwd === 'function' ? proc.cwd() : null,
     memoryMB: { rss: mb(mem.rss), heapUsed: mb(mem.heapUsed), heapTotal: mb(mem.heapTotal), external: mb(mem.external) },
     tmpdir: o.tmpdir(),
-    // 内存快用光时表现得像「模型变笨了」,得看得见
+    // When memory is nearly exhausted it behaves like "the model got dumber", which needs to be visible
     osMemoryMB: { total: mb(o.totalmem()), free: mb(o.freemem()) },
     cpus: o.cpus ? o.cpus().length : null,
     osRelease: o.release ? o.release() : null,
-    // 打包版和源码跑的行为不一样(路径、runtime 位置),先分清是哪一种
+    // Packaged builds and running from source behave differently (paths, runtime location), clarify which one first
     packaged: !!proc.env?.PROMPTCUT_RUNTIME_ROOT || proc.env?.NODE_ENV === 'production',
   };
 }

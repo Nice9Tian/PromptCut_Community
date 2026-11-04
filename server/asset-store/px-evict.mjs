@@ -1,23 +1,38 @@
 /**
- * 本机素材服务 `px` 命名空间的容量淘汰(claude/bake-asset;报告 `docs/reports/AGENT-bake-asset.md`「px 的容量淘汰」)。
+ * Capacity eviction for the local asset service `px` namespace (claude/bake-asset; report
+ * `docs/reports/AGENT-bake-asset.md` "Capacity eviction of px").
  *
- * `px` 里全是可再生的像素产物(卡片快照、轨道流的分段、PNG 缓存帧):没了可以重渲。卡片快照改走素材服务之后,
- * 3D 视图与空闲预渲染会不断往这里写新快照,所以它要有上限。素材原件(`media`)与 HTML 快照(`snap`)**不归这里管**:
- * 本模块只拿到 `px` 那一个数据层,碰不到别的命名空间。
+ * `px` contains entirely regenerable pixel outputs (card snapshots, track stream segments, PNG
+ * cache frames): they can be rerendered if lost. After card snapshots switched to the asset
+ * service, 3D view and idle prerendering continuously write new snapshots here, so it needs a cap.
+ * Original assets (`media`) and HTML snapshots (`snap`) **are not managed here**: this module
+ * only accesses that single data layer `px` and cannot touch other namespaces.
  *
- * 规则照 `docs/semantics/mechanism/platforms.md`「帧库」的思路〔裁〕(数字是三级,集中在 `PX_EVICT_DEFAULTS`):
- *   - **上限**:缺省 10 GiB;所在磁盘总容量小于 500 GiB 时取总容量的 2%;环境变量 `PROMPTCUT_PX_CAP_BYTES` 可改(测试、排查用);
- *   - **最近使用**:素材服务每答一次这一块(取回、对账、收尾)就记一次使用时刻,记在 `<px 目录>/.usage.json`
- *     (攒 30 秒写一次,淘汰前也写);没记过的取文件的修改时刻。卡片快照的索引每次命中、页面每轮盘点都会问对账,
- *     所以「还在被索引用着」的快照自然一直是新的;
- *   - **淘汰**:总量超过上限时,按最近使用时刻从旧到新删,删到上限的 90%;30 分钟内用过的不删;
- *     删不掉的(文件被占用)跳过,下一轮再试;
- *   - **时机**:启动后等 2 分钟判第一次;之后每次 `px` 有新块入库时判,最多每 5 分钟一次;
- *   - **多进程**:同一个 `px` 目录可能被几个进程的素材服务同时管(编辑器、无头实例):判淘汰前先拿 `<px 目录>/.evict-lock`
- *     (独占创建),拿不到就跳过这一轮;锁文件超过 3 分钟没更新算死锁,删掉再拿。
- * 淘汰掉的块再被要时:卡片快照的索引问对账得到「没有」,删索引条目、重渲(`bake-store.mjs`);流与帧的拉取方照旧当没有。
+ * Rules follow the approach in `docs/semantics/mechanism/platforms.md` "Frame store" [ruling]
+ * (numbers are tertiary, centralized in `PX_EVICT_DEFAULTS`):
+ *   - **Cap**: default 10 GiB; 2% of total capacity when disk capacity is under 500 GiB;
+ *     configurable via environment variable `PROMPTCUT_PX_CAP_BYTES` (for testing, troubleshooting);
+ *   - **Most recently used**: each time asset service responds for this chunk (retrieve, reconcile,
+ *     finalize), records a usage timestamp in `<px directory>/.usage.json` (batched every 30
+ *     seconds, also written before eviction); unrecorded chunks take the file's modification time.
+ *     Every card snapshot index hit and page inventory round queries reconcile, so snapshots
+ *     "still in use by indices" naturally remain fresh;
+ *   - **Eviction**: when total exceeds cap, delete from oldest to newest by last used down to 90%
+ *     of cap; chunks used within 30 minutes are not deleted; unremovable chunks (file in use) are
+ *     skipped and retried next round;
+ *   - **Timing**: evaluate for the first time 2 minutes after startup; thereafter evaluate when a
+ *     new chunk is stored in `px`, at most once every 5 minutes;
+ *   - **Multi-process**: the same `px` directory may be managed by asset services in multiple
+ *     processes (editor, headless instance): acquire `<px directory>/.evict-lock` (exclusive
+ *     creation) before evaluating eviction; skip this round if unavailable; lock files not updated
+ *     for over 3 minutes are considered deadlocks and deleted before reacquiring.
+ * When an evicted chunk is requested again: card snapshot index queries reconcile and receives
+ * "missing", deletes the index entry, and rerenders (`bake-store.mjs`); stream and frame pullers
+ * treat it as missing as before.
  *
- * 只经数据层的 `list` / `stat` / `remove` 动字节(fs 实现的 `list` 是它独有的);目录里只另读写 `.usage.json` 与 `.evict-lock`。
+ * Only modifies bytes via the data layer's `list` / `stat` / `remove` (the fs implementation's
+ * `list` is unique to it); only reads and writes `.usage.json` and `.evict-lock` additionally in
+ * the directory.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -39,7 +54,8 @@ export const PX_LOCK_FILE = '.evict-lock';
 const HASH = /^[0-9a-f]{64}$/;
 
 /**
- * `px` 的上限(字节):环境变量优先;否则磁盘小于 500 GiB 取 2%,不然 10 GiB。
+ * Cap for `px` (bytes): environment variable takes precedence; otherwise 2% if disk is under
+ * 500 GiB, else 10 GiB.
  * @param {{ env?: NodeJS.ProcessEnv, diskTotal?: number | null }} [o]
  */
 export function pxCapBytes({ env = process.env, diskTotal = null } = {}) {
@@ -50,13 +66,14 @@ export function pxCapBytes({ env = process.env, diskTotal = null } = {}) {
   return d.capBytes;
 }
 
-/** 所在磁盘的总容量;取不到给 null */
+/** Total capacity of containing disk; null if unavailable */
 export async function diskTotalOf(dir) {
   try { const s = await fs.statfs(dir); return Number(s.blocks) * Number(s.bsize); } catch { return null; }
 }
 
 /**
- * 纯函数:按最近使用从旧到新挑要删的,删到上限的 `targetRatio`;`protectMs` 内用过的不挑。
+ * Pure function: picks items to delete from oldest to newest by last used, down to `targetRatio`
+ * of the cap; items used within `protectMs` are not picked.
  * @param {{ hash: string, size: number, lastUsed: number }[]} blobs
  * @returns {{ victims: typeof blobs, total: number, target: number }}
  */
@@ -77,9 +94,9 @@ export function planPxEviction(blobs, { capBytes, now, protectMs = PX_EVICT_DEFA
 
 /**
  * @param {object} p
- * @param {string} p.dir  `px` 的目录(fs 实现的根)
+ * @param {string} p.dir  Directory for `px` (root for fs implementation)
  * @param {{ list(): Promise<{hash:string,size:number}[]>, stat(h:string): Promise<any>, remove(h:string): Promise<boolean> }} p.store
- * @param {number | (() => Promise<number> | number)} [p.capBytes]  缺省按 `pxCapBytes` 与磁盘容量算
+ * @param {number | (() => Promise<number> | number)} [p.capBytes]  Default calculated from `pxCapBytes` and disk capacity
  * @param {() => number} [p.now]
  * @param {(event: string, fields?: object) => void} [p.log]
  * @param {Partial<typeof PX_EVICT_DEFAULTS>} [p.options]
@@ -87,10 +104,10 @@ export function planPxEviction(blobs, { capBytes, now, protectMs = PX_EVICT_DEFA
 export function createPxEvictor({ dir, store, capBytes, now = Date.now, log = () => {}, options = {} }) {
   if (store?.projectId && (store.namespace !== 'px' || path.resolve(dir) !== path.resolve(store.projectDir))) throw new TypeError('project px eviction directory mismatch');
   const o = { ...PX_EVICT_DEFAULTS, ...options };
-  if (typeof store?.list !== 'function') throw new TypeError('createPxEvictor:数据层没有 list(只有 fs 实现能做淘汰)');
+  if (typeof store?.list !== 'function') throw new TypeError('createPxEvictor: the data layer has no list (only the fs implementation can evict)');
   const usageFile = path.join(dir, PX_USAGE_FILE);
   const lockFile = path.join(dir, PX_LOCK_FILE);
-  /** 内存里攒着的使用时刻:hash → ms */
+  /** Accumulated usage timestamps in memory: hash → ms */
   const touched = new Map();
   let flushTimer = null;
   let firstTimer = null;
@@ -111,7 +128,10 @@ export function createPxEvictor({ dir, store, capBytes, now = Date.now, log = ()
     } catch { return {}; }
   }
 
-  /** 攒着的使用时刻并进 `.usage.json`(读—合并—原子改名写;并发写只会丢几条使用时刻,不会坏文件) */
+  /**
+   * Merge accumulated usage timestamps into `.usage.json` (read-merge-atomic rename write;
+   * concurrent writes only lose a few timestamps, won't corrupt the file)
+   */
   async function flush(keep) {
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
     const pending = [...touched];
@@ -141,12 +161,15 @@ export function createPxEvictor({ dir, store, capBytes, now = Date.now, log = ()
       try {
         const st = await fs.stat(lockFile);
         if (now() - st.mtimeMs > o.lockStaleMs) { await fs.rm(lockFile, { force: true }); return takeLock(); }
-      } catch { /* 刚被放掉 */ }
+      } catch { /* Just released */ }
       return false;
     }
   }
 
-  /** 判一次淘汰。回 `{ ran, removed, freed, total, cap }`;拿不到锁回 `ran: false` */
+  /**
+   * Run one eviction evaluation. Returns `{ ran, removed, freed, total, cap }`; returns `ran: false`
+   * if lock cannot be acquired
+   */
   async function evictOnce() {
     const cap = await capOf();
     if (!(await takeLock())) { log('px.evict-skip', { reason: 'locked' }); return { ran: false, removed: [], freed: 0, total: null, cap }; }
@@ -156,7 +179,7 @@ export function createPxEvictor({ dir, store, capBytes, now = Date.now, log = ()
       const blobs = [];
       for (const b of listed) {
         let mtime = 0;
-        try { mtime = Number((await store.stat(b.hash))?.mtimeMs) || 0; } catch { /* 刚被删 */ }
+        try { mtime = Number((await store.stat(b.hash))?.mtimeMs) || 0; } catch { /* Just deleted */ }
         blobs.push({ hash: b.hash, size: b.size, lastUsed: Math.max(Number(used[b.hash]) || 0, mtime) });
       }
       const t = now();
@@ -165,7 +188,7 @@ export function createPxEvictor({ dir, store, capBytes, now = Date.now, log = ()
       let freed = 0;
       for (const v of victims) {
         let ok = false;
-        try { ok = await store.remove(v.hash); } catch { ok = false; } // 被占用:跳过,下一轮再试
+        try { ok = await store.remove(v.hash); } catch { ok = false; } // In use: skip and retry next round
         if (ok) { removed.push(v.hash); freed += v.size; }
       }
       if (removed.length || total > cap) log('px.evicted', { total, cap, target, removed: removed.length, freed, skipped: victims.length - removed.length });
@@ -177,7 +200,7 @@ export function createPxEvictor({ dir, store, capBytes, now = Date.now, log = ()
   }
 
   const api = {
-    /** 素材服务答了这一块(取回、对账、收尾):记一次使用 */
+    /** Asset service responded for this chunk (retrieve, reconcile, finalize): record one usage */
     touch(hash) {
       const h = String(hash || '').toLowerCase();
       if (!HASH.test(h) || stopped) return;
@@ -187,17 +210,17 @@ export function createPxEvictor({ dir, store, capBytes, now = Date.now, log = ()
         flushTimer.unref?.();
       }
     },
-    /** 现在就判一次(单测、排查用;同一时刻只跑一趟) */
+    /** Evaluate once now (for unit tests, troubleshooting; only runs one pass at a time) */
     evictNow() {
       running ??= evictOnce().finally(() => { running = null; });
       return running;
     },
-    /** 有新块入库:距上次判超过最小间隔就判一次 */
+    /** New chunk stored: evaluate once if interval since last evaluation exceeds minimum interval */
     onStored() {
       if (stopped || running || now() - lastRun < o.minIntervalMs || firstTimer) return null;
       return api.evictNow().catch((e) => { log('px.evict-failed', { message: String(e?.message || e) }); });
     },
-    /** 启动:等 `firstDelayMs` 判第一次 */
+    /** Startup: wait `firstDelayMs` before evaluating for the first time */
     start() {
       if (firstTimer || stopped) return;
       firstTimer = setTimeout(() => { firstTimer = null; void api.evictNow().catch((e) => log('px.evict-failed', { message: String(e?.message || e) })); }, o.firstDelayMs);

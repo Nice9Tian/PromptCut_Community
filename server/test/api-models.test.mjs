@@ -1,17 +1,19 @@
 /**
  * node --test server/test/api-models.test.mjs
  *
- * 从 OpenAI 兼容接口拉模型清单。两处容易出错,都钉住:
- *   - baseUrl 拼接:用户填的地址有的带 /v1 有的不带,拼错就是 404;
- *   - 响应形状:中转站的实现参差,认不出来要**返回空清单**而不是抛异常 ——
- *     这是个锦上添花的按钮,不该因为对方回了个怪东西就报错。
+ * Pull the model manifest from OpenAI-compatible APIs. Pin down two error-prone places:
+ *   - baseUrl concatenation: user-entered addresses sometimes have /v1 and sometimes not;
+ *     concatenating incorrectly gives 404;
+ *   - Response shape: relay service implementations vary; if unrecognized, **return an empty
+ *     manifest** instead of throwing an exception: this is a nice-to-have button and should not
+ *     error out just because the other side returned something strange.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { modelsUrl, parseModels, listApiModels } = await import('../runners/api-models.mjs');
 
-test('modelsUrl:带不带 /v1、带不带尾斜杠,都拼成同一个地址', () => {
+test('modelsUrl: with or without /v1, with or without a trailing slash, all produce the same URL', () => {
   assert.equal(modelsUrl('https://api.openlux.ai'), 'https://api.openlux.ai/v1/models');
   assert.equal(modelsUrl('https://api.openlux.ai/'), 'https://api.openlux.ai/v1/models');
   assert.equal(modelsUrl('https://api.openlux.ai/v1'), 'https://api.openlux.ai/v1/models');
@@ -21,30 +23,30 @@ test('modelsUrl:带不带 /v1、带不带尾斜杠,都拼成同一个地址', ()
   assert.equal(modelsUrl(undefined), '');
 });
 
-test('parseModels:标准 OpenAI 形状', () => {
+test('parseModels: standard OpenAI shape', () => {
   const out = parseModels({ object: 'list', data: [{ id: 'gpt-4o' }, { id: 'claude-opus-4-6' }] });
-  assert.deepEqual(out, ['claude-opus-4-6', 'gpt-4o'], '排过序,界面上好找');
+  assert.deepEqual(out, ['claude-opus-4-6', 'gpt-4o'], 'Sorted, so they are easy to find in the interface');
 });
 
-test('parseModels:中转站的几种歪形状也认', () => {
-  assert.deepEqual(parseModels(['a-1', 'b-2']), ['a-1', 'b-2'], '直接回数组');
+test('parseModels: also accepts the several odd shapes returned by relay services', () => {
+  assert.deepEqual(parseModels(['a-1', 'b-2']), ['a-1', 'b-2'], 'The response is a bare array');
   assert.deepEqual(parseModels({ models: [{ name: 'x-1' }] }), ['x-1'], 'models + name');
-  assert.deepEqual(parseModels({ data: ['deepseek/v3:free'] }), ['deepseek/v3:free'], '带 / 和 : 的名字要留住');
+  assert.deepEqual(parseModels({ data: ['deepseek/v3:free'] }), ['deepseek/v3:free'], 'Names containing / and : must be kept');
 });
 
-test('parseModels:认不出来就给空清单,不抛', () => {
+test('parseModels: if nothing is recognized, return an empty list and do not throw', () => {
   assert.deepEqual(parseModels(null), []);
   assert.deepEqual(parseModels({}), []);
   assert.deepEqual(parseModels({ data: 'nope' }), []);
   assert.deepEqual(parseModels({ data: [{ nope: 1 }, 42, null] }), []);
-  assert.deepEqual(parseModels({ data: [{ id: 'ok-1' }, { id: '带空格 的' }] }), ['ok-1'], '不合法的名字滤掉,合法的照留');
+  assert.deepEqual(parseModels({ data: [{ id: 'ok-1' }, { id: 'has space' }] }), ['ok-1'], 'Invalid names are filtered out, valid ones are kept');
 });
 
-test('parseModels:重复的只留一个', () => {
+test('parseModels: duplicates keep only one', () => {
   assert.deepEqual(parseModels({ data: [{ id: 'a' }, { id: 'a' }, { id: 'b' }] }), ['a', 'b']);
 });
 
-test('listApiModels:带上 Bearer,打对地址', async () => {
+test('listApiModels: sends Bearer auth and hits the right URL', async () => {
   let seen = {};
   const fetchImpl = async (url, opts) => {
     seen = { url, auth: opts.headers.Authorization };
@@ -56,23 +58,23 @@ test('listApiModels:带上 Bearer,打对地址', async () => {
   assert.deepEqual(out, ['m-1']);
 });
 
-test('listApiModels:401 说人话,而且不把响应体贴出来(可能回显 Key)', async () => {
+test('listApiModels: 401 gives a plain-language message and does not paste the response body (it may echo the key)', async () => {
   const fetchImpl = async () => ({ ok: false, status: 401, json: async () => ({ error: 'bad key sk-secret' }) });
   await assert.rejects(
     () => listApiModels({ baseUrl: 'https://relay.dev', apiKey: 'sk-secret' }, { fetchImpl }),
     (e) => {
-      assert.match(e.message, /拒绝了这个 Key/);
-      assert.ok(!e.message.includes('sk-secret'), '错误信息里不能带 Key');
+      assert.match(e.message, /rejected this key/);
+      assert.ok(!e.message.includes('sk-secret'), 'The error message must not contain the key');
       return true;
     },
   );
 });
 
-test('listApiModels:地址是空的就直接说,别去打一个拼不出来的 URL', async () => {
-  await assert.rejects(() => listApiModels({ baseUrl: '', apiKey: 'k' }), /接口地址是空的/);
+test('listApiModels: if the address is empty, say so directly instead of hitting a URL that cannot be built', async () => {
+  await assert.rejects(() => listApiModels({ baseUrl: '', apiKey: 'k' }), /The endpoint URL is empty/);
 });
 
-test('listApiModels:回来的不是 JSON', async () => {
+test('listApiModels: the response is not JSON', async () => {
   const fetchImpl = async () => ({ ok: true, status: 200, json: async () => { throw new Error('boom'); } });
-  await assert.rejects(() => listApiModels({ baseUrl: 'https://x/v1', apiKey: 'k' }, { fetchImpl }), /不是 JSON/);
+  await assert.rejects(() => listApiModels({ baseUrl: 'https://x/v1', apiKey: 'k' }, { fetchImpl }), /not JSON/);
 });

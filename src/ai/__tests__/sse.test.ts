@@ -1,5 +1,5 @@
-// 运行: npx tsx --tsconfig tsconfig.app.json src/ai/__tests__/sse.test.ts
-// 必须带 --tsconfig tsconfig.app.json,否则 tsx 读不到 jsx 的 react-jsx 设置,会报 React is not defined
+// Run: npx tsx --tsconfig tsconfig.app.json src/ai/__tests__/sse.test.ts
+// Must include --tsconfig tsconfig.app.json, otherwise tsx cannot read react-jsx setting for jsx and reports React is not defined
 // @ts-ignore
 import assert from "node:assert";
 import { parseSseChunks } from "../sse";

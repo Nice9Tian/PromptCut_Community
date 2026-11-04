@@ -1,11 +1,16 @@
 /**
- * 声音线程的起法(只在浏览器里用):**从 blob 地址引导**,真正的线程脚本由线程自己从舞台源取。
+ * How to spawn the sound thread (browser only): **bootstrapped from blob URL**, real thread script
+ * fetched by the thread itself from stage origin.
  *
- * 舞台的内容安全策略只许从 blob 地址起后台线程(`worker-src blob:`,`docs/plan/online-card-exec-contract.md` 3.3:
- * blob 线程继承舞台文档的策略,同源地址起的不继承)。舞台加固收走了全局的 `Worker`(不让卡片代码自己起后台线程),
- * 这里经 `spawnRuntimeWorker` 用守卫安装前留在模块闭包里的原生构造函数起(写法同 `src/render/gl/spawnWorker.ts`)。
+ * Stage Content Security Policy only allows spawning background threads from blob URLs
+ * (`worker-src blob:`, `docs/plan/online-card-exec-contract.md` 3.3: blob threads inherit stage
+ * document policy, while those spawned from same-origin URLs do not). Stage hardening removed
+ * global `Worker` (preventing card code from spawning background threads itself); here we spawn via
+ * `spawnRuntimeWorker` using native constructor retained in module closure before guard installation
+ * (approach matches `src/render/gl/spawnWorker.ts`).
  *
- * 开发态 vite 把线程当 ES 模块服务 → 引导脚本用 `import`;构建产物里线程打成一个 iife 文件 → `importScripts`。
+ * In dev mode Vite serves the thread as ES module → bootstrap script uses `import`; in build output
+ * the thread is bundled into an IIFE file → `importScripts`.
  */
 import workerUrl from "./soundWorker.ts?worker&url";
 import { trustedTypesPrelude } from "../../render/gl/spawnWorker.ts";

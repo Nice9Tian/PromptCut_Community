@@ -39,7 +39,7 @@ async function main() {
     const { done } = startRun({
       provider: 'api',
       apiConfig: { vendor: 'mock', model: 'mock-1' },
-      prompt: '时间轴上有什么',
+      prompt: 'What is on the timeline',
       systemPrompt: '测试',
       cwd: cwdMock,
       callTool: async (name, _args) => {
@@ -88,20 +88,20 @@ async function main() {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-te-'));
     const tool = createTextEditorTool(cwd);
     
-    // 1. create 新文件 → 再 view 能看到带行号的内容
+    // 1. create new file → view shows content with line numbers
     await tool.execute({ command: 'create', path: 'test.txt', file_text: 'hello\nworld' });
     const view = await tool.execute({ command: 'view', path: 'test.txt' });
     if (!view.includes('     1\thello')) throw new Error('view output incorrect');
     
-    // 2. create 同名文件 → 抛错(文件已存在)
+    // 2. create file with same name → throw error (file already exists)
     try {
       await tool.execute({ command: 'create', path: 'test.txt', file_text: 'fail' });
       throw new Error('should fail on existing file');
     } catch (e) {
-      if (!e.message.includes('文件已存在')) throw e;
+      if (!e.message.includes('File already exists')) throw e;
     }
     
-    // 3. str_replace 唯一命中 → 内容变了; 命中 0 次 / 多次抛错
+    // 3. str_replace unique match → content changed; 0 matches / multiple matches throw error
     await tool.execute({ command: 'str_replace', path: 'test.txt', old_str: 'hello', new_str: 'hi' });
     const view2 = await tool.execute({ command: 'view', path: 'test.txt' });
     if (!view2.includes('hi')) throw new Error('str_replace failed');
@@ -109,15 +109,15 @@ async function main() {
       await tool.execute({ command: 'str_replace', path: 'test.txt', old_str: 'foo', new_str: 'bar' });
       throw new Error('should fail on 0 matches');
     } catch (e) {
-      if (!e.message.includes('没有找到要替换的内容')) throw e;
+      if (!e.message.includes('No content to replace was found')) throw e;
     }
     
-    // 4. insert 在第 1 行后插入 → 行数加一且位置正确
+    // 4. insert after line 1 → line count increases by one and position is correct
     await tool.execute({ command: 'insert', path: 'test.txt', insert_line: 1, new_str: 'inserted' });
     const view3 = await tool.execute({ command: 'view', path: 'test.txt' });
     if (!view3.includes('     2\tinserted')) throw new Error('insert failed');
     
-    // 5. undo_edit → 恢复到 insert 之前的内容
+    // 5. undo_edit → restore content before insert
     await tool.execute({ command: 'undo_edit', path: 'test.txt' });
     const view4 = await tool.execute({ command: 'view', path: 'test.txt' });
     if (view4.includes('inserted')) throw new Error('undo_edit failed to revert insert');
@@ -133,21 +133,21 @@ async function main() {
       await tool.execute({ command: 'undo_edit', path: 'test.txt' });
       throw new Error('should fail on empty stack');
     } catch (e) {
-      if (!e.message.includes('没有可撤销的编辑')) throw e;
+      if (!e.message.includes('No edit to undo')) throw e;
     }
     
-    // 6. 越界路径全部被拒
+    // 6. Out-of-bounds paths are all rejected
     const evilPaths = ['..\\..\\evil.txt', 'C:\\Windows\\System32\\drivers\\etc\\hosts', '../evil.txt'];
     for (const ep of evilPaths) {
       try {
         await tool.execute({ command: 'view', path: ep });
         throw new Error(`should block evil path: ${ep}`);
       } catch (e) {
-        if (!e.message.includes('路径越界')) throw new Error(`Wrong error message for evil path ${ep}: ${e.message}`);
+        if (!e.message.includes('Path out of bounds')) throw new Error(`Wrong error message for evil path ${ep}: ${e.message}`);
       }
     }
     
-    // 7. view 一个目录
+    // 7. view a directory
     await tool.execute({ command: 'create', path: 'dirtest.txt', file_text: 'hello' });
     await tool.execute({ command: 'create', path: 'sub/deep.txt', file_text: 'deep' });
     const dirView = await tool.execute({ command: 'view', path: '.' });
@@ -279,7 +279,7 @@ async function main() {
     if (doneEvent.usage.input !== 10 || (vendor !== 'openai' ? doneEvent.usage.output !== 20 : doneEvent.usage.output !== 20)) throw new Error('Usage parsing failed');
 
     if (callCount !== 2) throw new Error(`Expected exactly 2 fetch calls, got ${callCount}`);
-    if (events.some(e => e.type === 'status' && e.text && e.text.includes('已达工具调用上限'))) throw new Error('Hit max iterations limit incorrectly');
+    if (events.some(e => e.type === 'status' && e.text && e.text.includes('Tool call limit reached'))) throw new Error('Hit max iterations limit incorrectly');
 
     fs.unlinkSync(historyFile);
     fs.rmSync(cwd, { recursive: true, force: true });

@@ -4,8 +4,8 @@ import { accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 模糊浮现文字:从 mu-blur-fade 拆出。
- * 复用 Magic UI 的 BlurFade，支持自定义文字和主题色，在部件框内居中。
+ * Blur-fade text: extracted from mu-blur-fade.
+ * Reuses Magic UI's BlurFade, supports custom text and theme color, centered within part box.
  */
 interface Params {
   text: string;
@@ -46,10 +46,10 @@ function BlurFadePart({ params, width, height }: PartProps<Params>) {
 
 export const textBlurfade: PartDef<Params> = {
   id: "text-blurfade",
-  name: "模糊浮现(整体)",
-  description: "文字整体从模糊中浮现",
-  useWhen: "Magic UI 的整块模糊浮现，适合展示较短的标题或单句；要词块逐个浮现的节奏感请用 text-blur。",
-  tags: ["浮现", "模糊", "文字"],
+  name: "Blur fade-in (whole)",
+  description: "Text emerges from a blur as a whole",
+  useWhen: "Magic UI's whole-block blur reveal, suited to a short title or a single sentence; for a rhythm where word chunks emerge one by one, use text-blur.",
+  tags: ["fade-in", "blur", "Text"],
   role: "text",
   from: "mu-blur-fade",
   defaults: {
@@ -58,9 +58,9 @@ export const textBlurfade: PartDef<Params> = {
     accent: "",
   },
   controls: [
-    { key: "text", label: "文本", type: "text", required: true },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 240, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
-    { key: "accent", label: "主色(留空用主题色)", type: "color" },
+    { key: "text", label: "Text", type: "text", required: true },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 240, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
+    { key: "accent", label: "Main color (leave empty to use theme color)", type: "color" },
   ],
   defaultFrame: { x: 360, y: 440, w: 1200, h: 200 },
   settleMs: () => 400,

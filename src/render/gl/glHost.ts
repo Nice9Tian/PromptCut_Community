@@ -1,27 +1,39 @@
 /**
- * `glHost`:舞台 / 导出页这一侧的共享 WebGL 渲染器入口(R9 M2 / M3)。
+ * `glHost`: shared WebGL renderer entry on the stage / export page side (R9 M2 / M3).
  *
- * **`StageView` 和 `ExportView` 挂载时都建一个**:预渲染进程加载的是导出页,不建就没有 Worker、
- * gl 平面永远是空的。它做四件事:
+ * **`StageView` and `ExportView` each create one upon mounting**: the prerender process loads
+ * the export page, and without creating one there is no Worker and gl planes remain permanently
+ * empty. It performs four tasks:
  *
- *   1. **按路线接上画的那一半**(M2)。
- *      - 路线 1 `perDocument`(桌面默认;导出页永远走这条):自己 `new Worker`(模块 Worker);
- *      - 路线 2 `shared`(在线页面舞台闸门第一、二级):等父页经 `{ type: 'gl-port', stageId, port }` 交来的端口,
- *        在端口上收发同一套 `beat` / `done` / `layout` / `release`;收到之前 `beat` 排队、不呈现 canvas 卡;
- *      - **能力退路**:Worker 里拿不到 `OffscreenCanvas` 的 `webgl2`(或 `?glOffscreen=0` 强制)就在主线程
- *        建一个上下文顶替 Worker,import 同一张 `programs.ts`,协议不变;
- *      - 只有一个舞台(`compact`)+ 路线 1 + 角色 `back`:不开 Worker,走主线程退路。
- *      Worker **懒建**:第一次真有 canvas 卡要画才建,纯 DOM 的项目一个 Worker 都不开。
- *   2. **`beat`**(M3):读 `glPlanes` 里刚提交的那一帧,活跃集合变了先发 `layout`,再发
- *      `{ type: 'beat', t, cards: [{ clipId, t, params?, reset? }] }`。每发一次领一张 `beginFrameWork('gl')`
- *      的票、收到 `done` 再还 —— 导出页的 `__pcFrameReady` / 预渲染的 `waitFrameReady` 天然把 `done` 等进来。
- *   3. **贴位图**:`done` 到了把每张位图 `transferFromImageBitmap` 到它的平面,写 `data-pc-gl-frame`。
- *   4. **`release`**:`setRole('back')` 时放掉这个 `stageId` 在 Worker 里的那份图集。
+ *   1. **Connect the rendering half according to the route** (M2).
+ *      - Route 1 `perDocument` (desktop default; export page always uses this): `new Worker` by
+ *        itself (module Worker);
+ *      - Route 2 `shared` (online page stage gate tiers 1 and 2): wait for port passed from
+ *        parent page via `{ type: 'gl-port', stageId, port }`, send and receive the same set of
+ *        `beat` / `done` / `layout` / `release` over the port; before receiving it, `beat` queues
+ *        and canvas cards are not presented;
+ *      - **Capability fallback**: if `webgl2` on `OffscreenCanvas` is unavailable in Worker (or
+ *        forced via `?glOffscreen=0`), create a context on the main thread to replace the Worker,
+ *        import the same `programs.ts`, with protocol unchanged;
+ *      - Only one stage (`compact`) + Route 1 + role `back`: do not start Worker; take the main
+ *        thread fallback.
+ *      Worker is **lazily created**: created only when canvas cards actually need rendering for
+ *      the first time; pure DOM projects start no Worker at all.
+ *   2. **`beat`** (M3): read the frame just committed in `glPlanes`; if the active set changed,
+ *      send `layout` first, then send `{ type: 'beat', t, cards: [{ clipId, t, params?, reset? }] }`.
+ *      Claim a `beginFrameWork('gl')` ticket on each send, and return it upon receiving `done`:
+ *      the export page's `__pcFrameReady` / prerender's `waitFrameReady` naturally wait for `done`.
+ *   3. **Paste bitmaps**: when `done` arrives, `transferFromImageBitmap` each bitmap to its plane
+ *      and write `data-pc-gl-frame`.
+ *   4. **`release`**: release this `stageId`'s atlas in the Worker on `setRole('back')`.
  *
- * **`done` 晚到不冻播放头**:实测 `beat → done` 偶有 30～84 ms 的尖峰(耗在 Worker 的画 / blit 段,
- * 主线程不堵)。K4 本来就是「慢帧就等」:节拍循环 `await` 这一拍,时间轴整体后移,不跳帧;
- * 但 Worker 真卡死了也不能让循环永远挂着 —— 活渲的拍 1 秒没回就当这一拍没画(平面留上一张),
- * 严格的拍(导出、探针、生成快照)15 秒没回就把票判失败,让导出明确报错。晚到的 `done` 直接丢掉。
+ * **Late `done` does not freeze playhead**: tests show occasional 30-84 ms spikes in `beat → done`
+ * (spent in Worker's draw / blit stages, main thread not blocked). K4 is inherently "wait on slow
+ * frames": tick loop `await`s this tick, shifting timeline overall without dropping frames; but
+ * if Worker truly hangs, the loop cannot hang forever: if a live render tick gets no response
+ * within 1 s, treat it as unrendered (plane retains the previous frame), and if a strict tick
+ * (export, probe, generate snapshots) gets no response within 15 s, fail the ticket and report an
+ * explicit export error. Late `done` is dropped directly.
  */
 
 import { beginFrameWork } from "../../kernel/frameReady";
@@ -33,17 +45,17 @@ import { spawnGlWorker } from "./spawnWorker";
 export type GlRoute = "perDocument" | "shared";
 
 export interface GlBeatOptions {
-  /** 等编译 / 纹理就绪再画(导出、探针、生成快照、补跑落定);缺省 = 没好的卡这一拍留空 */
+  /** Wait for compilation / textures to be ready before rendering (export, probe, generate snapshots, catch-up run settle); default = leave unready cards blank for this tick */
   strict?: boolean;
-  /** 顺带量每张卡的 GPU 时间(M4) */
+  /** Also measure GPU time for each card (M4) */
   measure?: boolean;
-  /** 这一拍的全局时刻(秒,只进消息给诊断看;每张卡的 `t` 一律是本地秒) */
+  /** Global time of this tick (seconds, only included in messages for diagnostics; each card's `t` is always local seconds) */
   t?: number;
 }
 
 export interface GlBeatResult {
   seq: number;
-  /** `beat → done` 往返(真墙钟毫秒) */
+  /** `beat → done` round trip (actual wall-clock milliseconds) */
   roundTripMs: number;
   cards: number;
   gpuMs?: Record<string, number>;
@@ -63,7 +75,7 @@ export interface GlHostDiag {
   timeouts: number;
   lastRoundTripMs: number;
   maxRoundTripMs: number;
-  /** 最近 120 拍的往返,探针算分位数用 */
+  /** Round trips of the last 120 ticks, used by probe to compute quantiles */
   roundTrips: number[];
   lastSkipped: Record<string, string> | null;
   lastGpuMs: Record<string, number> | null;
@@ -73,18 +85,18 @@ export interface GlHostDiag {
 }
 
 export interface GlHost {
-  /** 发一拍。**这一刻没有 canvas 卡要画就回 `null`**(调用方不用 await,纯 DOM 的项目不多让一次微任务) */
+  /** Send a tick. **Returns `null` if no canvas cards need rendering at this moment** (caller does not await, pure DOM projects yield no extra microtask) */
   beat(opts?: GlBeatOptions): Promise<GlBeatResult> | null;
-  /** 此刻有没有挂着的 gl 平面(要不要为它等 `done`) */
+  /** Whether there are attached gl planes at this moment (whether to wait for `done` for them) */
   hasPlanes(): boolean;
-  /** 放掉这个 `stageId` 在 Worker 里的那份图集(`setRole('back')`) */
+  /** Release this `stageId`'s atlas in the Worker (`setRole('back')`) */
   release(): void;
   setRoute(route: GlRoute): void;
   setRole(role: "front" | "back"): void;
-  /** 路线 2:父页交来的端口(`null` = 父页那边开不了共享 Worker,自己开) */
+  /** Route 2: port handed over from parent page (`null` = parent page cannot start shared Worker, start self) */
   acceptPort(port: MessagePort | null): void;
   diag(): GlHostDiag;
-  /** 探针用:问画的那一半要诊断(上下文数、纹理上传次数、图集尺寸) */
+  /** For probe: query rendering half for diagnostics (context count, texture upload count, atlas size) */
   workerDiag(): Promise<GlWorkerDiag | null>;
   dispose(): void;
 }
@@ -95,19 +107,19 @@ interface Transport {
   kind: TransportKind;
   send(msg: GlToWorker, transfer?: Transferable[]): void;
   close(): void;
-  /** `init` 的回包:能不能画 */
+  /** `init` response: whether it can render */
   ready: Promise<boolean>;
 }
 
-/** 活渲的拍最多等这么久(真墙钟);过了当这一拍没画,平面留上一张 */
+/** Live render ticks wait at most this long (actual wall-clock); once exceeded, treat this tick as unrendered, plane retaining the previous frame */
 const LIVE_TIMEOUT_MS = 1000;
-/** 严格的拍(导出、探针)最多等这么久;过了把票判失败 */
+/** Strict ticks (export, probe) wait at most this long; once exceeded, mark the ticket as failed */
 const STRICT_TIMEOUT_MS = 15000;
-/** Worker 的 `init` 回包最多等这么久;过了按能力不足走主线程退路 */
+/** Worker's `init` response waits at most this long; once exceeded, take main thread fallback due to insufficient capability */
 const INIT_TIMEOUT_MS = 8000;
-/** 路线 2 等父页端口最多这么久;过了自己开 Worker(父页也许根本没开共享 Worker) */
+/** Route 2 waits for parent page port at most this long; once exceeded, start Worker self (parent page might not have started shared Worker at all) */
 const PORT_WAIT_MS = 2000;
-/** 活渲的拍里有卡还没准备好时,隔这么久补一拍 */
+/** When cards in a live render tick are not ready yet, send a catch-up tick after this interval */
 const PREPARE_RETRY_MS = 40;
 
 const realNow = (): number => (typeof window !== "undefined" && window.__pcRealNow ? window.__pcRealNow() : performance.now());
@@ -115,7 +127,7 @@ const realSetTimeout = (cb: () => void, ms: number): number =>
   (typeof window !== "undefined" && window.__pcRealSetTimeout ? window.__pcRealSetTimeout : setTimeout)(cb, ms) as unknown as number;
 const realClearTimeout = (id: number) => clearTimeout(id);
 
-/** `?glOffscreen=0`:把 `offscreenGl` 探测强制为 `false`(验收:canvas 卡在主线程画、协议不变) */
+/** `?glOffscreen=0`: force `offscreenGl` probe to `false` (acceptance check: canvas cards render on main thread, protocol unchanged) */
 export function glOffscreenForcedOff(): boolean {
   try {
     return new URLSearchParams(location.search).get("glOffscreen") === "0";
@@ -126,23 +138,23 @@ export function glOffscreenForcedOff(): boolean {
 
 export function createGlHost(opts: {
   stageId: string;
-  /** 只有一个舞台(在线页面舞台闸门停在第一级、最低一档):图集按小的上限开,后台角色走路线 1 时不开 Worker */
+  /** Only one stage (online page stage gate stopped at tier 1, lowest tier): atlas is allocated with a smaller limit, background role starts no Worker on Route 1 */
   compact: boolean;
   route: GlRoute;
-  /** 不开 Worker,一律走主线程那条(导出页现在用它,见 `ExportView.tsx` 的说明) */
+  /** Do not start Worker; always take the main thread route (export page currently uses this, see description in `ExportView.tsx`) */
   mainThread?: boolean;
 }): GlHost {
   const stageId = opts.stageId;
   let route: GlRoute = opts.route;
   let role: "front" | "back" = "front";
-  /** 父页交来的端口;`undefined` = 还没交,`null` = 父页说开不了 */
+  /** Port handed over from parent page; `undefined` = not handed over yet, `null` = parent page says it cannot start */
   let offeredPort: MessagePort | null | undefined;
   let portWaitStarted = 0;
   let portWaitTimedOut = false;
   let workerFailed: string | null = null;
   let transport: Transport | null = null;
   let disposed = false;
-  /** `release` 的代数:补拍(见 PREPARE_RETRY_MS)只补释放之前那一拍的,释放之后不许它把图集又建回来 */
+  /** Generation of `release`: catch-up ticks (see PREPARE_RETRY_MS) only catch up ticks prior to release; not allowed to rebuild the atlas back after release */
   let releaseGen = 0;
 
   let seq = 0;
@@ -160,14 +172,14 @@ export function createGlHost(opts: {
     portWaitTimeouts: 0,
   };
 
-  /* ---------------------------------------------------------------- 接哪条路 */
+  /* ---------------------------------------------------------------- Which route to connect */
 
   const desired = (): TransportKind | "waiting-port" => {
     if (opts.mainThread || workerFailed || glOffscreenForcedOff()) return "main";
     if (route === "shared" && !portWaitTimedOut) {
       if (offeredPort) return "port";
       if (offeredPort === undefined) return "waiting-port";
-      // 父页明说开不了共享 Worker:退回自己开
+      // Parent page explicitly states shared Worker cannot be started: fall back to starting self
     }
     if (route === "perDocument" && opts.compact && role === "back") return "main";
     return "worker";
@@ -177,7 +189,7 @@ export function createGlHost(opts: {
     if (msg.type === "done") {
       const p = pending.get(msg.seq);
       if (!p) {
-        // 超时之后才到的:丢掉,位图放掉
+        // Arrived after timeout: discard, release bitmaps
         for (const bm of msg.bitmaps.values()) bm.close();
         return;
       }
@@ -197,7 +209,7 @@ export function createGlHost(opts: {
         if (m.type === "ready" && !settled) {
           settled = true;
           realClearTimeout(timer);
-          if (!m.ok) workerFailed = m.error || "Worker 里拿不到 webgl2";
+          if (!m.ok) workerFailed = m.error || "webgl2 is not available in the Worker";
           resolve(m.ok);
           return;
         }
@@ -216,12 +228,12 @@ export function createGlHost(opts: {
     }
     const send: Transport["send"] = (m, t) => worker.postMessage(m, t ?? []);
     worker.addEventListener("error", (e) => {
-      // 模块加载失败 / Worker 崩了:下一拍改走主线程退路
-      workerFailed = workerFailed ?? (e.message || "GL Worker 出错");
+      // Module load failed / Worker crashed: switch to main thread fallback for next tick
+      workerFailed = workerFailed ?? (e.message || "GL Worker error");
       if (transport?.kind === "worker") dropTransport();
     });
     const ready = withInit(send, (h) => { worker.onmessage = (e) => h(e.data as GlFromWorker); });
-    return { kind: "worker", send, ready, close: () => { try { worker.postMessage({ type: "release", stageId }); } catch { /* 已经没了 */ } worker.terminate(); } };
+    return { kind: "worker", send, ready, close: () => { try { worker.postMessage({ type: "release", stageId }); } catch { /* Already gone */ } worker.terminate(); } };
   };
 
   const openPort = (port: MessagePort): Transport => {
@@ -229,11 +241,11 @@ export function createGlHost(opts: {
     const ready = withInit(send, (h) => { port.onmessage = (e) => h(e.data as GlFromWorker); port.start(); });
     return {
       kind: "port", send, ready,
-      close: () => { try { port.postMessage({ type: "release", stageId }); } catch { /* 端口已关 */ } port.onmessage = null; port.close(); },
+      close: () => { try { port.postMessage({ type: "release", stageId }); } catch { /* Port closed */ } port.onmessage = null; port.close(); },
     };
   };
 
-  /** 主线程退路:同一份渲染器代码、同一张 `programs.ts`,消息在本地派发 */
+  /** Main thread fallback: same renderer code, same `programs.ts`, messages dispatched locally */
   const openMain = (): Transport => {
     let renderer: GlRenderer | null = null;
     const loading = Promise.all([import("./renderer"), import("./programs")]).then(([r, p]) => {
@@ -256,7 +268,7 @@ export function createGlHost(opts: {
   function dropTransport() {
     const t = transport;
     transport = null;
-    // 端口关了就不能再用:等父页交新的(等不到就自己开)
+    // Port cannot be reused once closed: wait for parent page to hand over a new one (start self if timeout)
     if (t?.kind === "port") { offeredPort = undefined; portWaitStarted = 0; }
     lastLayoutKey = "";
     lastRows.clear();
@@ -265,7 +277,7 @@ export function createGlHost(opts: {
     t?.close();
   }
 
-  /** 接上该接的那条路;`waiting-port` 时回 null */
+  /** Connect to the appropriate route; returns null when `waiting-port` */
   const connect = (): Transport | null => {
     const want = desired();
     if (want === "waiting-port") {
@@ -286,7 +298,7 @@ export function createGlHost(opts: {
     return transport;
   };
 
-  /* ---------------------------------------------------------------- 一拍 */
+  /* ---------------------------------------------------------------- One tick */
 
   const planes = (): GlPlaneEntry[] => [...glPlanes.values()].filter((e) => e.canvas.isConnected);
 
@@ -297,7 +309,8 @@ export function createGlHost(opts: {
     try {
       let t = connect();
       if (!t) {
-        // 路线 2 端口还没到:活渲的拍不等(不呈现 canvas 卡);严格的拍等端口,等不到就自己开
+        // Route 2 port has not arrived yet: live render ticks do not wait (canvas cards not presented);
+        // strict ticks wait for port, and start self if not received
         if (!o.strict) { ticket.ready(); return { ...empty, skipped: { "*": "waiting-port" } }; }
         const until = realNow() + PORT_WAIT_MS + 50;
         while (!t && realNow() < until) {
@@ -309,20 +322,20 @@ export function createGlHost(opts: {
       }
       const ok = await t.ready;
       if (!ok) {
-        // 能力不足:丢掉这条路,换主线程退路再来一次
+        // Insufficient capability: discard this route and retry with main thread fallback
         if (t.kind !== "main") {
-          workerFailed = workerFailed ?? "GL Worker 初始化失败";
+          workerFailed = workerFailed ?? "GL Worker initialization failed";
           dropTransport();
           t = connect();
-          if (!t || !(await t.ready)) { ticket.ready(); return { ...empty, error: "没有可用的 WebGL2" }; }
+          if (!t || !(await t.ready)) { ticket.ready(); return { ...empty, error: "No WebGL2 available" }; }
         } else {
           ticket.ready();
-          return { ...empty, error: "主线程也拿不到 WebGL2" };
+          return { ...empty, error: "WebGL2 is not available on the main thread either" };
         }
       }
       if (transport !== t) { ticket.ready(); return empty; }
 
-      /* layout:活跃集合(含被抑制 / 贴快照的卡,它们只是这一拍不画)变了才发 */
+      /* layout: sent only when active set changes (includes suppressed / snapshot-pasted cards; they just do not render for this tick) */
       const all = planes();
       const rows: GlLayoutCard[] = all.map((e) => ({ clipId: e.clipId, programId: e.programId, kind: e.kind, w: e.w, h: e.h, textures: e.textures, stage: e.stage }));
       const layoutKey = all.map((e) => `${e.clipId}:${rowKey(e)}`).sort().join("\n");
@@ -336,7 +349,7 @@ export function createGlHost(opts: {
         stats.layouts++;
       }
 
-      /* beat:只剔「在 suppressed 里」和「在 snapshots 里且不在 settling 里」的卡(skip) */
+      /* beat: only omit cards that are "in suppressed" and "in snapshots and not in settling" (skip) */
       const draw = all.filter((e) => !e.skip);
       if (!draw.length) { ticket.ready(); return empty; }
       const cards: GlBeatCard[] = draw.map((e) => {
@@ -370,12 +383,12 @@ export function createGlHost(opts: {
       if (stats.roundTrips.length > 120) stats.roundTrips.shift();
       if (done === "timeout") {
         stats.timeouts++;
-        if (o.strict) ticket.fail(new Error(`GL Worker ${STRICT_TIMEOUT_MS} ms 没回 done`));
+        if (o.strict) ticket.fail(new Error(`GL Worker did not reply done within ${STRICT_TIMEOUT_MS} ms`));
         else ticket.ready();
         return { seq: mySeq, roundTripMs, cards: cards.length, timedOut: true };
       }
       if (!done) { ticket.ready(); return { seq: mySeq, roundTripMs, cards: cards.length, error: "transport-closed" }; }
-      /* 贴位图:晚于已贴那一拍的才贴 */
+      /* Paste bitmaps: paste only if later than the already pasted tick */
       if (mySeq >= appliedSeq) {
         appliedSeq = mySeq;
         for (const [clipId, bm] of done.bitmaps) {
@@ -384,7 +397,7 @@ export function createGlHost(opts: {
           const ctx = e.canvas.getContext("bitmaprenderer");
           if (!ctx) { bm.close(); continue; }
           ctx.transferFromImageBitmap(bm);
-          // 生成快照按它核对:和包裹层的 `data-pc-local-frame` 同一个算式(M4)
+          // Generate snapshots verifies against it: same formula as `data-pc-local-frame` on the wrapper layer (M4)
           e.canvas.setAttribute("data-pc-gl-frame", String(frames.get(clipId)));
         }
       } else {
@@ -393,8 +406,10 @@ export function createGlHost(opts: {
       stats.lastSkipped = done.skipped ?? null;
       stats.lastGpuMs = done.gpuMs ?? null;
       /*
-       * 活渲的拍里有卡还在编译 / 解码纹理(这一拍留空、那一层透明):暂停着的舞台不会再来下一拍,
-       * 所以这里自己隔一会儿补一拍,直到都画出来。播放中下一拍本来就会来,补的这一拍被合并掉。
+       * When cards in a live render tick are still compiling / decoding textures (this tick is left
+       * blank, that layer transparent): a paused stage will not receive another tick, so it issues
+       * a catch-up tick after an interval until all are rendered. During playback, the next tick
+       * arrives anyway, so this catch-up tick gets merged.
        */
       if (!o.strict && Object.values(done.skipped ?? {}).includes("preparing")) {
         const gen = releaseGen;
@@ -403,7 +418,7 @@ export function createGlHost(opts: {
       if (done.error === "context-lost") dropTransport();
       const hardErrors = Object.entries(done.skipped ?? {}).filter(([, why]) => why !== "preparing");
       if (o.strict && (done.error || hardErrors.length)) {
-        ticket.fail(new Error(`canvas 卡没画出来:${done.error ?? hardErrors.map(([id, why]) => `${id}: ${why}`).join("; ")}`));
+        ticket.fail(new Error(`canvas card failed to render: ${done.error ?? hardErrors.map(([id, why]) => `${id}: ${why}`).join("; ")}`));
       } else {
         ticket.ready();
       }
@@ -414,7 +429,7 @@ export function createGlHost(opts: {
     }
   };
 
-  /* 一次只有一拍在飞;飞着的时候再来的合并成「飞完之后再发一拍」,读那时候的 glPlanes */
+  /* Only one tick in flight at a time; those arriving while in flight are merged into "send another tick after flight completes", reading glPlanes at that time */
   let inflight: Promise<GlBeatResult> | null = null;
   let queued: { opts: GlBeatOptions; promise: Promise<GlBeatResult>; ticket: ReturnType<typeof beginFrameWork> } | null = null;
 
@@ -428,7 +443,7 @@ export function createGlHost(opts: {
     if (disposed) return null;
     const any = planes().length > 0;
     if (!any) {
-      // 活跃集合空了:告诉画的那一半(放掉图集、场景),但不算一拍
+      // Active set is empty: notify the rendering half (release atlas, scene), but does not count as a tick
       if (lastLayoutKey && transport) {
         lastLayoutKey = "";
         lastRows.clear();
@@ -485,7 +500,7 @@ export function createGlHost(opts: {
       offeredPort = port;
       portWaitTimedOut = false;
       portWaitStarted = 0;
-      // 已经在用自己的 Worker(等端口超时了):换回共享的那一个
+      // Already using its own Worker (waiting for port timed out): switch back to the shared one
       if (route === "shared" && transport && port) dropTransport();
     },
     diag() {

@@ -1,6 +1,7 @@
 /**
- * `global-setup.mjs` 的自检：坏端口名单与本机 Node 的 fetch 一致；`npm test` 下这些端口都被占着（不论谁占）。
- * 跑：npm test（单独跑本文件时没有全局准备，第二条跳过）
+ * Self-test for `global-setup.mjs`: bad port list matches local Node fetch; under `npm test`, these
+ * ports are all occupied (regardless of who occupies them).
+ * Run: npm test (when running this file alone, there is no global setup; skip the second check)
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,9 +17,9 @@ const causeOf = async (port) => {
   }
 };
 
-test('名单里的每个端口，本机 fetch 都报 bad port；名单之外的邻号不报', async () => {
-  for (const port of FETCH_BAD_PORTS) assert.equal(await causeOf(port), 'bad port', `端口 ${port}`);
-  for (const port of [1718, 6001, 6670, 10081]) assert.notEqual(await causeOf(port), 'bad port', `端口 ${port}`);
+test('For every port on the list, fetch on this machine reports bad port; neighboring ports outside the list do not', async () => {
+  for (const port of FETCH_BAD_PORTS) assert.equal(await causeOf(port), 'bad port', `Port ${port}`);
+  for (const port of [1718, 6001, 6670, 10081]) assert.notEqual(await causeOf(port), 'bad port', `Port ${port}`);
 });
 
 const listenCode = (port, host) => new Promise((resolve) => {
@@ -27,9 +28,11 @@ const listenCode = (port, host) => new Promise((resolve) => {
   server.listen(port, host, () => server.close(() => resolve('listening')));
 });
 
-// 不变式：名单里每个坏端口，测试期间都 listen 不到——本次全局准备占着，或并行的另一份 npm test、别的程序占着都算。
-// 并行跑时后起的那份启动时可能一个都没占到，所以不核对「本次自己占到了多少」。
-test('npm test 下名单里每个坏端口在 127.0.0.1 上都被占着，listen 拿不到', async (t) => {
-  if (process.env.PROMPTCUT_TEST_BAD_PORTS_HELD === undefined) { t.skip('没有经 npm test 的全局准备（单独跑本文件）'); return; }
-  for (const port of FETCH_BAD_PORTS) assert.equal(await listenCode(port, '127.0.0.1'), 'EADDRINUSE', `端口 ${port}`);
+// Invariant: every bad port in the list cannot be listened on during tests: occupied by this
+// global setup, or occupied by another parallel npm test or another program all count.
+// When running in parallel, the later instance may occupy none of them at startup, so we do not
+// check "how many we occupied this time".
+test('Under npm test, every bad port on the list is held on 127.0.0.1, so listen cannot get it', async (t) => {
+  if (process.env.PROMPTCUT_TEST_BAD_PORTS_HELD === undefined) { t.skip('Did not go through the global setup of npm test (running this file on its own)'); return; }
+  for (const port of FETCH_BAD_PORTS) assert.equal(await listenCode(port, '127.0.0.1'), 'EADDRINUSE', `Port ${port}`);
 });

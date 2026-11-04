@@ -1,17 +1,20 @@
 /*
- * `server/vision/**` 的结构守门测试。
+ * Structural gatekeeper test for `server/vision/**`.
  *
- * `server/vite-plugin-vision.ts` 曾经是 2011 行的单文件:ffmpeg 抽帧、渲染并发队列、
- * Chrome worker 池、单卡预渲染、HTTP 路由全挤在一起。拆成 `server/vision/` 之后,
- * 有两件事必须被钉住,否则拆分的收益会悄悄退回去:
+ * `server/vite-plugin-vision.ts` was once a single 2011-line file: ffmpeg frame extraction, render
+ * concurrency queue, Chrome worker pool, single-card prerender, and HTTP routes were all crammed
+ * together. After splitting into `server/vision/`, two things must be pinned down, otherwise the
+ * benefits of the split will quietly regress:
  *
- *   1. **模块之间不许有运行时 import 环。** 队列(render-queue)和 worker 池(worker-pool)
- *      互相要用对方的东西 —— 现在的方向是 worker-pool → render-queue 单向,
- *      ui-renderer 要写 worker 池的 lastRenderOrigin 也是走一个单向的 setter。
- *      一旦有人反手加一条回边,模块初始化顺序就会变成运行期的定时炸弹(拿到 undefined 而不报错)。
- *   2. **插件外壳不许再长回去。** 外壳只该做三件事:接线、按 isPrerender 分流、关服务时收 worker。
+ *   1. **No runtime import cycles between modules.** The queue (render-queue) and worker pool
+ *      (worker-pool) need each other: the current direction is unidirectional from worker-pool to
+ *      render-queue; ui-renderer writing lastRenderOrigin to the worker pool also goes through a
+ *      unidirectional setter. If someone carelessly adds a back-edge, module initialization order
+ *      becomes a runtime time bomb (getting undefined without throwing errors).
+ *   2. **Plugin shell must not grow back.** The shell should only do three things: wiring,
+ *      dispatching by isPrerender, and reaping workers when shutting down the service.
  *
- * 跑法:`node --test server/test/vision-modules.test.mjs`
+ * Run: `node --test server/test/vision-modules.test.mjs`
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,11 +27,12 @@ const VISION = path.join(ROOT, 'server', 'vision');
 const SHELL = path.join(ROOT, 'server', 'vite-plugin-vision.ts');
 
 /**
- * 外壳的行数上限。
+ * Upper line-count limit for the shell.
  *
- * 拆分完成时是 56 行。留到 400 是「防回涨」的红线,不是目标:外壳里再写第二个路由、
- * 或者把某个调度逻辑顺手塞回来,都会先撞上这条线。任务要求的目标值是 300,
- * 这里取更宽的 400 当硬红线 —— 目标由代码评审把,红线由测试把。
+ * It was 56 lines when the split completed. Setting it to 400 is a "prevent regrowth" red line,
+ * not a target: writing a second route in the shell or casually stuffing scheduling logic back in
+ * will hit this line first. The target required by the task is 300; 400 is chosen here as a looser
+ * hard red line: targets are guarded by code review, red lines are guarded by tests.
  */
 const SHELL_MAX_LINES = 400;
 
@@ -45,7 +49,7 @@ function walk(dir, out = []) {
 
 const rel = (file) => path.relative(ROOT, file).replaceAll('\\', '/');
 
-/** 一个文件里所有的模块说明符:静态 import / export ... from,以及 import("…") */
+/** All module specifiers in a file: static import / export ... from, and import("…") */
 function specifiersOf(file) {
   const text = fs.readFileSync(file, 'utf8');
   const found = [];
@@ -56,9 +60,9 @@ function specifiersOf(file) {
 }
 
 /**
- * 把一个说明符解析成仓库里的真实文件。`server/*.ts` 之间互相 import 是不带扩展名的
- * (见仓库里其它 server/*.ts 的写法),所以这里要按扩展名候选补一遍;补不上的
- * (第三方包、node: 内置)返回 null,不进图。
+ * Resolve a specifier to a real file in the repository. Imports among `server/*.ts` omit extensions
+ * (see how other server/*.ts in the repo are written), so extension candidates must be tried here;
+ * unresolvable ones (third-party packages, node: built-ins) return null and do not enter the graph.
  */
 function resolveSpec(fromFile, spec) {
   if (!spec.startsWith('.')) return null;
@@ -69,21 +73,22 @@ function resolveSpec(fromFile, spec) {
   return null;
 }
 
-test('server/vision/** 内部的 import 图无环', () => {
-  /** 文件 → 它 import 的同目录(或子目录)模块 */
+test('The import graph inside server/vision/** has no cycles', () => {
+  /** File → modules in the same directory (or subdirectory) that it imports */
   const graph = new Map();
   for (const file of walk(VISION)) {
     const edges = [];
     for (const spec of specifiersOf(file)) {
       const target = resolveSpec(file, spec);
-      // 只看 server/vision 内部的边:出圈的那些(../png-post.mjs 之类)由 bakery-deps 那支测试管
+      // Only check edges inside server/vision: external ones (such as ../png-post.mjs) are managed by
+      // the bakery-deps test
       if (target && target.startsWith(VISION)) edges.push(rel(target));
     }
     graph.set(rel(file), edges);
   }
-  assert.ok(graph.size >= 8, `server/vision 里应当有拆出来的那几个模块,现在只找到 ${graph.size} 个`);
+  assert.ok(graph.size >= 8, `server/vision should contain the modules that were split out, but only ${graph.size} were found`);
 
-  const state = new Map(); // 未访问 / 1 在栈上 / 2 已完成
+  const state = new Map(); // Unvisited / 1 on stack / 2 completed
   const cycles = [];
   const visit = (node, stack) => {
     if (state.get(node) === 2) return;
@@ -98,21 +103,22 @@ test('server/vision/** 内部的 import 图无环', () => {
     state.set(node, 2);
   };
   for (const node of graph.keys()) visit(node, []);
-  assert.deepEqual(cycles, [], 'server/vision 内部不允许有运行时 import 环');
+  assert.deepEqual(cycles, [], 'No runtime import cycles are allowed inside server/vision');
 });
 
-test('插件外壳 server/vite-plugin-vision.ts 不许再长回去', () => {
+test('The plugin shell server/vite-plugin-vision.ts must not grow back', () => {
   const lines = fs.readFileSync(SHELL, 'utf8').split(/\r?\n/).length;
   assert.ok(
     lines < SHELL_MAX_LINES,
-    `外壳现在 ${lines} 行,超过了 ${SHELL_MAX_LINES} 行的红线。新逻辑该落在 server/vision/ 的某个模块里,不是外壳里。`,
+    `The shell is now ${lines} lines, over the ${SHELL_MAX_LINES}-line limit. New logic belongs in a module under server/vision/, not in the shell.`,
   );
 });
 
-test('外壳仍然导出 visionPlugin / bakeTarget / default(对外接口不能变)', async () => {
+test('The shell still exports visionPlugin / bakeTarget / default (the public interface must not change)', async () => {
   const text = fs.readFileSync(SHELL, 'utf8');
-  // vite.config.ts / vite.prerender.config.ts 按名字 import visionPlugin;bakeTarget 是历史上就 export 出去的
-  assert.match(text, /export function visionPlugin\(\): Plugin \{/, '外壳要直接定义并导出 visionPlugin');
-  assert.match(text, /export \{ bakeTarget \} from "\.\/vision\/bake";/, 'bakeTarget 要继续从外壳导出');
-  assert.match(text, /export default visionPlugin;/, 'default export 不能丢');
+  // vite.config.ts / vite.prerender.config.ts import visionPlugin by name; bakeTarget was exported
+  // historically
+  assert.match(text, /export function visionPlugin\(\): Plugin \{/, 'The shell must define and export visionPlugin directly');
+  assert.match(text, /export \{ bakeTarget \} from "\.\/vision\/bake";/, 'bakeTarget must keep being exported from the shell');
+  assert.match(text, /export default visionPlugin;/, 'The default export must not be lost');
 });

@@ -1,16 +1,23 @@
 /**
- * 图集打包(R9 M2「图集打包」):活跃 canvas 卡的像素尺寸 → 每张卡在图集里的区域。
+ * Atlas packing (R9 M2 "Atlas packing"): Pixel dimensions of active canvas cards → region of each
+ * card in the atlas.
  *
- * **按当前活跃集合打包,不固定 4096²**(一张 4096² RGBA 就是 64 MB):集合变了就重打包,
- * 页面尺寸就是用到的那一块。上限 4096²、只有一个舞台(`compact`,在线页面舞台闸门第一级与最低一档)2048²,一页放不下就开下一页(「超了分多张」)。
+ * **Pack by current active set, not fixed to 4096²** (one 4096² RGBA is 64 MB): repack when the set
+ * changes, and page size is exactly the used region. Upper limit is 4096², or 2048² when there is
+ * only one stage (`compact`, level 1 and lowest tier of the online page stage gate); open the next
+ * page if one page cannot fit everything ("split across multiple pages if exceeded").
  *
- * 做法是最朴素的 shelf:按高度降序排好,一行一行往右摆,摆不下换行,行摞不下换页。
- * 排序全用确定的键(高、宽、id),同一个集合永远算出同一张表 —— 区域坐标进不了画面,
- * 但确定性让探针和排错可复现。
+ * Approach is the simplest shelf algorithm: sort descending by height, arrange to the right row
+ * by row, wrap to a new row when space runs out, and move to a new page when rows cannot stack
+ * further. Sorting uses entirely deterministic keys (height, width, id), so the same set always
+ * produces the exact same table: region coordinates do not enter the picture, but determinism
+ * makes probes and troubleshooting reproducible.
  *
- * 坐标是**图集图像坐标**(左上角原点、y 向下),`createImageBitmap(atlas, x, y, w, h)` 直接用;
- * 渲染器换算成 GL 的左下角原点(`y_gl = page.h − y − h`)。
- * 比上限还大的卡夹到上限(`clamped`),画面按夹过的尺寸画、贴回平面时由 CSS 拉伸 —— 这种卡本来就不该有。
+ * Coordinates are **atlas image coordinates** (top-left origin, y pointing down), used directly
+ * by `createImageBitmap(atlas, x, y, w, h)`; renderer converts them to GL's bottom-left origin
+ * (`y_gl = page.h − y − h`). Cards larger than the limit are clamped (`clamped`), rendered at
+ * the clamped size, and stretched by CSS when pasted back onto the plane: such cards should not exist
+ * in the first place.
  */
 
 export const ATLAS_MAX = 4096;
@@ -44,13 +51,13 @@ export function packAtlas(cards, maxSize = ATLAS_MAX) {
   for (const it of items) {
     if (!page) open();
     if (cursorX + it.w > max) {
-      // 换行
+      // New line
       shelfY += shelfH;
       shelfH = 0;
       cursorX = 0;
     }
     if (shelfY + it.h > max) {
-      // 换页
+      // New page
       open();
     }
     page.items.push({ id: it.id, x: cursorX, y: shelfY, w: it.w, h: it.h, clamped: it.clamped });
@@ -62,7 +69,7 @@ export function packAtlas(cards, maxSize = ATLAS_MAX) {
   return { pages };
 }
 
-/** 一份活跃集合的身份:同一串 = 不用重打包 */
+/** Identity of an active set: Same string = no need to repack */
 export function layoutKeyOf(cards) {
   return cards.map((c) => `${c.id}:${Math.max(1, Math.round(c.w))}x${Math.max(1, Math.round(c.h))}`).sort().join("|");
 }

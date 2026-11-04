@@ -1,6 +1,6 @@
-"""openai-whisper 引擎（PyTorch 后端）。
+"""openai-whisper engine (PyTorch backend).
 
-备选引擎。要装 torch，体积大很多；好处是有官方 large 系列权重和更多解码选项。
+Alternative engine. It requires installing torch, which is much bigger; the upside is the official large-series weights and more decoding options.
 """
 
 from __future__ import annotations
@@ -18,21 +18,21 @@ _DIST = "openai-whisper"
 
 
 def probe() -> Dict[str, Any]:
-    """探测安装状态。任何异常都要吞掉——status 子命令必须永远能成功返回。"""
+    """Probe the installation status. Swallow any exception: the status subcommand must always be able to return successfully."""
     result: Dict[str, Any] = {"installed": False, "version": None, "error": None}
     try:
         if importlib.util.find_spec(_MODULE) is None:
-            result["error"] = f"未找到模块 {_MODULE}"
+            result["error"] = f"Module {_MODULE} not found"
             return result
     except Exception as exc:
-        result["error"] = f"探测 {_MODULE} 失败：{exc}"
+        result["error"] = f"Probing {_MODULE} failed: {exc}"
         return result
 
     try:
         module = __import__(_MODULE)
-        # 同名模块很多（whisper 这个名字并不独占），没有 load_model 就不是我们要的那个。
+        # Many modules share the name (the name whisper is not exclusive), and one without load_model is not the one we want.
         if not hasattr(module, "load_model"):
-            result["error"] = "找到了名为 whisper 的模块，但它不是 openai-whisper"
+            result["error"] = "Found a module named whisper, but it is not openai-whisper"
             return result
         result["installed"] = True
         version = getattr(module, "__version__", None)
@@ -45,12 +45,12 @@ def probe() -> Dict[str, Any]:
                 version = None
         result["version"] = version
     except Exception as exc:
-        result["error"] = f"导入 {_MODULE} 失败：{exc}"
+        result["error"] = f"Importing {_MODULE} failed: {exc}"
     return result
 
 
 def _resolve_device(device: Optional[str]) -> str:
-    """whisper 只认 cpu / cuda，没有 compute_type 的概念。"""
+    """whisper only recognizes cpu / cuda and has no concept of compute_type."""
     choice = (device or "auto").lower()
     if choice in ("cpu", "cuda"):
         return choice
@@ -58,7 +58,7 @@ def _resolve_device(device: Optional[str]) -> str:
 
 
 def local_models(models_dir: Optional[str], catalog: List[str]) -> List[str]:
-    """模型目录里已经有 <名字>.pt 的模型（只认 catalog 里的名字）。绝不抛异常。"""
+    """Models for which <name>.pt already exists in the model directory (only names in the catalog are recognized). Never raises an exception."""
     found: List[str] = []
     if not models_dir or not os.path.isdir(models_dir):
         return found
@@ -78,8 +78,8 @@ def _load():
         return whisper
     except ImportError as exc:
         raise EngineNotInstalled(
-            "whisper 未安装。请先运行 install --engine whisper"
-            "（或在界面上点「下载引擎」）。"
+            "whisper is not installed. Please run install --engine whisper first "
+            "(or click \"Download engine\" in the UI)."
         ) from exc
 
 
@@ -99,8 +99,8 @@ def transcribe(
 
     if offline and model not in local_models(models_dir, catalog or []):
         raise ModelNotInstalled(
-            f"这台机器上没有 whisper 的 {model} 模型权重，离线模式不会联网下载。"
-            "请联系部署者把权重放进模型目录。"
+            f"There are no whisper {model} model weights on this machine, and offline mode does not download over the network. "
+            "Please ask the deployer to put the weights into the model directory."
         )
 
     whisper_model = whisper.load_model(model, device=dev, download_root=models_dir)
@@ -108,7 +108,7 @@ def transcribe(
         wav_path,
         language=language or None,
         verbose=False,
-        fp16=(dev == "cuda"),  # CPU 上跑 fp16 会 warn 并退回 fp32
+        fp16=(dev == "cuda"),  # running fp16 on CPU warns and falls back to fp32
     )
 
     raw_segments = result.get("segments") or []
@@ -117,8 +117,8 @@ def transcribe(
         total = float(raw_segments[-1].get("end") or 0.0) or None
 
     collected: List[Dict[str, Any]] = []
-    # whisper 一次性把整段解码完才返回，所以这里的进度是「回放」而不是实时。
-    # 契约要求逐段输出 segment/progress，格式保持一致即可。
+    # whisper decodes the whole thing in one go before returning, so the progress here is a "replay" rather than real time.
+    # The contract requires emitting segment/progress per segment; it is enough to keep the format consistent.
     for item in raw_segments:
         seg = {
             "start": float(item.get("start") or 0.0),

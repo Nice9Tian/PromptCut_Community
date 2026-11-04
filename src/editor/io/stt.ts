@@ -5,8 +5,11 @@ import { onlineUnsupported } from "../../online/onlineUnsupported";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」)。在线浏览器模式没有本机语音识别
- * (那要编辑器进程与内置 Python;入口都已置灰),三个入口一进来就报「暂不支持」,在线构建里后面的 /api/stt 调用整段剪掉(M8 遗留 L24)。
+ * Compile-time constant of the online build (for how it is written and why, see "online build pruning" in
+ * `src/online/pageFlag.ts`). The online browser mode has no local speech recognition (that needs the
+ * editor process and the built-in Python; the entry points are all greyed out), so all three entry points
+ * report "not supported yet" as soon as they are entered, and in the online build the /api/stt calls after
+ * that are pruned away entirely (M8 leftover L24).
  */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
@@ -15,24 +18,24 @@ export interface SttEngineStatus {
   version?: string;
 }
 
-/** Python 侧一行一个 JSON 的事件形状(字段按 event 类型出现) */
+/** Shape of the events from the Python side, one JSON per line (fields appear depending on the event type) */
 export interface SttEvent {
   event?: string;
-  /** log 事件 */
+  /** log event */
   line?: string;
   data?: string;
   stream?: string;
-  /** error 事件 */
+  /** error event */
   message?: string;
   stderr?: string;
-  /** progress 事件 */
+  /** progress event */
   done?: number;
   total?: number;
-  /** segment 事件 */
+  /** segment event */
   start?: number;
   end?: number;
   text?: string;
-  /** done 事件 */
+  /** done event */
   engine?: string;
   model?: string;
   language?: string;
@@ -51,9 +54,9 @@ export interface SttStatus {
   error?: string;
 }
 
-/** 查询 STT 服务状态(Python 版本、引擎是否安装、可用模型等) */
+/** Query the STT service status (Python version, whether the engine is installed, available models, etc.) */
 export async function sttStatus(): Promise<SttStatus> {
-  // 在线浏览器模式没有本机语音识别(那要编辑器进程与内置 Python)
+  // The online browser mode has no local speech recognition (that needs the editor process and the built-in Python)
   if (ONLINE_BUILD) throw new Error(onlineUnsupported(tr("Speech recognition")));
   const res = await fetch("/api/stt/status");
   if (res.status === 503) {
@@ -66,7 +69,7 @@ export async function sttStatus(): Promise<SttStatus> {
   return res.json();
 }
 
-/** 安装指定引擎(流式读取 pip 日志) */
+/** Install the given engine (reads the pip log as a stream) */
 export async function sttInstall(
   engine: string,
   onLog?: (line: string) => void
@@ -103,7 +106,7 @@ export async function sttInstall(
   return { ok, log };
 }
 
-/** 转写媒体文件 */
+/** Transcribe a media file */
 export async function transcribeMedia(
   mediaId: string,
   opts?: { engine?: string; model?: string; language?: string },
@@ -121,10 +124,10 @@ export async function transcribeMedia(
   const model = opts?.model ?? "small";
   const language = opts?.language;
 
-  // 生成 jobId(时间戳 + 随机)
+  // Generate a jobId (timestamp + random)
   const jobId = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
 
-  // 上传文件
+  // Upload the file
   const uploadRes = await fetch(
     `/api/stt/upload/${jobId}/${encodeURIComponent(file.name)}`,
     { method: "POST", body: file }
@@ -133,7 +136,7 @@ export async function transcribeMedia(
     throw new Error(tr("File upload failed: {0} {1}", uploadRes.status, await uploadRes.text()));
   }
 
-  // 启动转写(SSE 流)
+  // Start transcription (SSE stream)
   const transcribeRes = await fetch("/api/stt/transcribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -175,12 +178,12 @@ export async function transcribeMedia(
     throw new Error(tr("Transcription did not receive a done event"));
   }
 
-  // 写入 store
+  // Write to the store
   actions.setMediaTranscript(mediaId, finalTranscript);
   return finalTranscript;
 }
 
-/** 解析 SSE 流,逐事件调用 callback(可能 throw) */
+/** Parse the SSE stream and call callback for each event (may throw) */
 export async function readSseStream(
   body: ReadableStream<Uint8Array>,
   onEvent: (ev: SttEvent) => void
@@ -199,7 +202,7 @@ export async function readSseStream(
     try {
       const ev = JSON.parse(jsonStr) as SttEvent;
       onEvent(ev);
-    } catch { /* 忽略非 JSON */ }
+    } catch { /* Ignore non-JSON */ }
   };
 
   try {
@@ -207,18 +210,19 @@ export async function readSseStream(
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-      // SSE 事件以 \n\n 分隔
+      // SSE events are separated by \n\n
       const events = buf.split("\n\n");
       buf = events.pop() ?? "";
       for (const block of events) emit(block);
     }
     /*
-     * 流结束时缓冲区里剩下的那一段也要发。
+     * What is left in the buffer when the stream ends must be sent too.
      *
-     * 上面按 \n\n 切,最后一段(还没等到分隔符的部分)留在 buf 里等下一次读取。可服务端
-     * 把最后一个事件写完就直接关流的话,那个 \n\n 永远不会来 —— 已经完整收到的 done 事件
-     * 就这么烂在 buf 里被丢掉,调用方报「转写未收到 done 事件」,而数据其实是到齐了的。
-     * decode() 不带 stream 是让 TextDecoder 把它自己的尾巴也吐出来。
+     * Above, we split on \n\n, and the last piece (the part that has not yet seen its separator) stays in
+     * buf waiting for the next read. But if the server closes the stream right after writing the last
+     * event, that \n\n never comes: a done event that was fully received just rots in buf and gets dropped,
+     * and the caller reports "transcription did not receive a done event", although the data had all
+     * arrived. decode() without stream makes the TextDecoder flush its own tail as well.
      */
     buf += decoder.decode();
     if (buf.trim()) emit(buf);

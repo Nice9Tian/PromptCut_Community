@@ -9,7 +9,7 @@ const RENDERER = 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4090 Direct3D11 vs_5_0 ps_5_
 
 const parts = (over = {}) => ({ ua: UA, renderer: RENDERER, compact: false, offscreenGl: true, mode: 'dev', ...over });
 
-test('device 串就是 K1 / J4 那八段,顺序和写法钉死', () => {
+test('the device string is exactly the eight segments of K1 / J4, order and format pinned down', () => {
   assert.equal(
     costDeviceString(parts()),
     [UA, RENDERER, 'lowMemory=false', 'offscreenGl=true', 'glRoute=perDocument', 'mode=dev', 'stepP=0.9', 'stepN=16'].join(' | '),
@@ -17,11 +17,12 @@ test('device 串就是 K1 / J4 那八段,顺序和写法钉死', () => {
   assert.equal(COST_DEVICE_SEPARATOR, ' | ');
 });
 
-test('两条路(离线探针 / 常驻探针)拼出来逐字节相同', () => {
+test('the two paths (offline probe / resident probe) produce byte-identical strings', () => {
   /*
-   * 这一条钉的就是 R4a 报告 §8 第 10 条要的东西:同一份输入,谁调都一样。
-   * 一边先 resolveTuning 过、另一边直接把 GET /api/data/costs 回来的裸覆盖值丢进来,
-   * 结果仍然必须逐字节相同(resolveTuning 幂等)。
+   * This nails down what R4a report §8 item 10 asks for: same input yields the same result no
+   * matter who calls it. One side calls resolveTuning first, the other directly passes raw override
+   * values returned from GET /api/data/costs; results must still be byte-for-byte identical
+   * (resolveTuning is idempotent).
    */
   const offline = costDeviceString(parts({ tuning: resolveTuning({ STEP_PERCENTILE: 0.95 }) }));
   const inEditor = costDeviceString(parts({ tuning: { STEP_PERCENTILE: 0.95 } }));
@@ -30,35 +31,36 @@ test('两条路(离线探针 / 常驻探针)拼出来逐字节相同', () => {
   assert.match(offline, /stepP=0\.95 \| stepN=16$/);
 });
 
-test('量法的两个系数进串,COST_SCALE 不进', () => {
+test('the two measurement coefficients go into the string, COST_SCALE does not', () => {
   const base = costDeviceString(parts());
-  // COST_SCALE 只影响怎么用这些数,不影响量出来的数本身 —— 改了它旧成绩照样能用
+  // COST_SCALE only affects how these numbers are used, not the measured numbers themselves:
+  // changing it still allows old scores to be used
   assert.equal(costDeviceString(parts({ tuning: { COST_SCALE: 4 } })), base);
-  // 量法变了旧记录必须不命中
+  // When measurement method changes, old records must not hit
   assert.notEqual(costDeviceString(parts({ tuning: { STEP_PERCENTILE: 1 } })), base);
   assert.notEqual(costDeviceString(parts({ tuning: { STEP_MIN_SAMPLES: 32 } })), base);
 });
 
-test('dev 和 build 各占一条记录', () => {
+test('dev and build each take one record', () => {
   assert.match(costDeviceString(parts({ mode: 'build' })), /\| mode=build \|/);
   assert.notEqual(costDeviceString(parts({ mode: 'build' })), costDeviceString(parts({ mode: 'dev' })));
-  // 认不出来的值一律当 dev(R1 之前的记录全是 dev 量的)
+  // Unrecognized values are treated as dev (records prior to R1 were all measured in dev)
   assert.equal(costDeviceString(parts({ mode: undefined })), costDeviceString(parts({ mode: 'dev' })));
   assert.equal(costDeviceString(parts({ mode: 'preview' })), costDeviceString(parts({ mode: 'dev' })));
 });
 
-test('glRoute 缺省路线 1(或调用方给的缺省),显式值优先;只有一个舞台写在历史字段名下,键与旧记录逐字节相同', () => {
+test('glRoute defaults to route 1 (or the caller\'s default), an explicit value takes priority; with only one stage it is written under the legacy field name, and the key is byte-identical to old records', () => {
   assert.equal(resolveGlRoute(null), 'perDocument');
-  assert.equal(resolveGlRoute(null, 'shared'), 'shared', '在线页面把舞台闸门定的路线当缺省传');
+  assert.equal(resolveGlRoute(null, 'shared'), 'shared', 'the online page passes the route decided by the stage gate as the default');
   assert.equal(resolveGlRoute('perDocument', 'shared'), 'perDocument');
   assert.equal(resolveGlRoute('shared'), 'shared');
   assert.equal(resolveGlRoute('nonsense'), 'perDocument');
-  assert.equal(COST_DEVICE_COMPACT_FIELD, 'lowMemory', '历史字段名不改:改了每台桌面版升级后都要把卡重测一遍');
+  assert.equal(COST_DEVICE_COMPACT_FIELD, 'lowMemory', 'do not change the legacy field name: changing it would force every desktop app to retest its cards after upgrading');
   assert.match(costDeviceString(parts({ compact: true, glRoute: 'shared' })), /lowMemory=true \| offscreenGl=true \| glRoute=shared \|/);
-  assert.match(costDeviceString(parts({ compact: true })), /glRoute=perDocument \|/, '不给路线就是路线 1(不再按只有一个舞台推)');
+  assert.match(costDeviceString(parts({ compact: true })), /glRoute=perDocument \|/, 'no route given means route 1 (no longer inferred from having only one stage)');
 });
 
-test('缺字段不抛:空 UA、unknown 显卡、全 false', () => {
+test('missing fields do not throw: empty UA, unknown GPU, all false', () => {
   assert.equal(costDeviceString(undefined), costDeviceString({}));
   assert.equal(
     costDeviceString({}),
@@ -67,14 +69,14 @@ test('缺字段不抛:空 UA、unknown 显卡、全 false', () => {
   );
 });
 
-test('readGpuRenderer 在没有 document 的 Node 里回 unknown,不抛', () => {
+test('readGpuRenderer returns unknown in Node without a document, does not throw', () => {
   assert.equal(readGpuRenderer(null), 'unknown');
   assert.equal(readGpuRenderer({ createElement() { throw new Error('no dom'); } }), 'unknown');
-  // 拿不到上下文(软件渲染 / --disable-gpu)也是 unknown
+  // If context cannot be obtained (software rendering / --disable-gpu), it is also unknown
   assert.equal(readGpuRenderer({ createElement: () => ({ getContext: () => null }) }), 'unknown');
 });
 
-test('readGpuRenderer 读 UNMASKED_RENDERER_WEBGL,读完把上下文还回去', () => {
+test('readGpuRenderer reads UNMASKED_RENDERER_WEBGL, then returns the context when done', () => {
   let lost = 0;
   const gl = {
     getExtension: (name) => (name === 'WEBGL_debug_renderer_info' ? { UNMASKED_RENDERER_WEBGL: 37446 }

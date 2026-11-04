@@ -12,8 +12,9 @@ const project = {
     { id: 'bottom', clips: [{ id: 'b', mediaId: 'b', start: 0, end: 2 }] },
   ],
 };
-// 审阅表是静态的:同一个 cardId 只有一种 compositing,两条路各注入一份查表函数,
-// 不往生产审阅表 (src/cards/capabilities.json) 里塞 fixture 卡。
+// The review table is static: the same cardId has only one compositing; each of the two paths
+// injects a lookup function, without stuffing fixture cards into the production review table
+// (src/cards/capabilities.json).
 const independent = () => ({ compositing: 'independent' });
 const unreviewed = () => undefined;
 
@@ -29,7 +30,8 @@ test('clip-only vision retains same-track and cross-track graph inputs in a lega
   assert.deepEqual(project, original);
 });
 test('context-dependent vision retains the lower scene while hiding upper outputs', () => {
-  // 审阅表里没有这张卡 = unknown,按最保守的一条走:下层场景一起渲。
+  // Card not in the review table = unknown, follow the most conservative path:
+  // render lower-layer scenes together.
   const input = structuredClone(project);
   input.tracks.unshift({ id: 'above', clips: [{ id: 'cover', start: 0, end: 2 }] });
   const isolated = isolateClip(input, 'target', { preserveContext: true, capabilities: unreviewed });
@@ -38,8 +40,9 @@ test('context-dependent vision retains the lower scene while hiding upper output
   assert.equal(isolateClip(input, 'missing'), null);
 });
 
-// ── 真的审阅表(不注入查表函数):登记的记号怎么影响「单看这一段」 ──
-// 有节点的片段才查表(没有节点的普通卡片段一律带下层,和表无关)。
+// ── Real review table (no injected lookup function): how registered marks affect "viewing this segment alone" ──
+// Only clips with nodes check the table (plain card clips without nodes always include lower layers,
+// regardless of the table).
 const withNode = (cardId) => ({
   width: 64, height: 64, fps: 30, duration: 2, media: [],
   cardNodes: [{ id: 'n', adapter: 'card', cardId, kind: 'animation', params: {}, inputs: {} }],
@@ -48,14 +51,14 @@ const withNode = (cardId) => ({
     { id: 'bottom', clips: [{ id: 'below', cardId: 'odometer', start: 0, end: 2 }] },
   ],
 });
-test('审阅表里登记成独立卡的(含渲染重构「丁」补登记的四张)单看时不带下层', () => {
+test('Cards registered as standalone cards in the review table (including the four registered afterwards in render refactor "Ding") do not include the lower layers when viewed alone', () => {
   for (const cardId of ['av-pulse', 'sound-notification', 'sound-keyboard', 'probe-slow', 'caption-track', 'particles-snow']) {
     const isolated = isolateClip(withNode(cardId), 'target', { preserveContext: true });
     assert.equal(isolated.context, false, cardId);
     assert.deepEqual(isolated.project.tracks.filter(track => !track.hidden).flatMap(track => track.clips.map(clip => clip.id)), ['target'], cardId);
   }
 });
-test('登记成下层依赖、故意不审(unknown)、由部件推导(fromParts)的,以及表里没有的,单看时照旧带下层', () => {
+test('Those registered as lower-layer dependencies, deliberately not reviewed (unknown), derived from parts (fromParts), and those not in the table still include the lower layers when viewed alone', () => {
   for (const cardId of ['blur-text', 'r6-unknown', 'probe-css', 'probe-motion-js', 'composite', 'not-in-table']) {
     const isolated = isolateClip(withNode(cardId), 'target', { preserveContext: true });
     assert.equal(isolated.context, true, cardId);

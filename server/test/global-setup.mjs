@@ -1,39 +1,58 @@
 /**
- * 仅供测试。`npm test` 的全局准备（`node --test --test-global-setup=server/test/global-setup.mjs`），
- * 在测试运行器的主进程里跑一次，早于所有测试文件的子进程。
+ * For testing only. Global setup for `npm test`
+ * (`node --test --test-global-setup=server/test/global-setup.mjs`), running once in the test
+ * runner's main process, ahead of child processes of all test files.
  *
- * 做两件事：
+ * Does two things:
  *
- * 1. **不继承外部的 `PROMPTCUT_EXPORT_DIR` / `PROMPTCUT_DATA_DIR`**（`scripts/lib/user-dirs.mjs`）：桌面版把它们设成
- *    `%USERPROFILE%\Videos\PromptCut` 与应用数据目录；从桌面版的环境里（例如桌面版里的 Agent）跑 `npm test`，
- *    测试起的编辑器、预渲染进程、`FramePipeline` 会把帧库和成本记录写进用户目录。这里在主进程里摘掉，
- *    各测试文件的子进程都继承摘过的环境，产物落在仓库 `out/` 或各测试自己设的临时目录。守门见 `no-user-dirs.test.mjs`。
- * 2. **在整个测试期间占住 fetch 规范里的「坏端口」**，让各测试文件 `listen(0)` 拿不到它们。下面说的都是这一件。
+ * 1. **Do not inherit external `PROMPTCUT_EXPORT_DIR` / `PROMPTCUT_DATA_DIR`**
+ *    (`scripts/lib/user-dirs.mjs`): desktop app sets them to `%USERPROFILE%\Videos\PromptCut` and
+ *    the application data directory; running `npm test` from the desktop app environment (e.g.
+ *    Agent in the desktop app), the editor, prerender process, and `FramePipeline` spawned by
+ *    tests will write frame store and cost records into the user directory. Here they are
+ *    stripped in the main process, so child processes of each test file inherit the cleaned
+ *    environment, with outputs falling into repo `out/` or temporary directories set by tests
+ *    themselves. Gatekeeper check: see `no-user-dirs.test.mjs`.
+ * 2. **Hold "bad ports" from the fetch spec throughout the test run**, preventing `listen(0)` in
+ *    test files from acquiring them. The discussion below focuses on this.
  *
- * 为什么：Node 的 `fetch` 和内置 `WebSocket`（都是 undici）按 WHATWG fetch 规范拒绝连这些端口，
- * 报 `TypeError: fetch failed`（cause `bad port`）或 WebSocket 直接 error / 1006，连都不连。
- * 测试里的服务几乎都是 `listen(0)` 让系统给端口；系统的临时端口段缺省是 49152～65535，碰不到这份名单，
- * 但 Windows 的临时端口段可以被改到低段（有的机器就是），而且 Windows 是**全机一个计数器顺序发号**，
- * 并行跑的几十个测试进程一起往前走：走过 1719、4190、6000、6665～6669、10080 这些号时，恰好拿到它的服务
- * 就连不上。表现是全量测试偶发失败、单独跑必过，而且常常几个文件同时挂在 30 ms 左右（6665～6669 连着 5 个）。
+ * Why: Node's `fetch` and built-in `WebSocket` (both undici) refuse to connect to these ports per
+ * the WHATWG fetch spec, throwing `TypeError: fetch failed` (cause `bad port`) or WebSocket errors
+ * directly with 1006 without even connecting. Services in tests almost always use `listen(0)` to
+ * let the system assign ports; the system ephemeral port range defaults to 49152-65535, never
+ * touching this list, but the Windows ephemeral port range can be reconfigured to a lower range
+ * (as is true on some machines), and Windows **issues port numbers sequentially from a single
+ * machine-wide counter**, with dozens of test processes advancing together in parallel: when
+ * passing 1719, 4190, 6000, 6665-6669, 10080, any service that happens to receive one cannot
+ * connect. The symptom is sporadic failures in full test runs while passing reliably in
+ * isolation, often with several files failing simultaneously around 30 ms (five consecutive
+ * ports from 6665 to 6669).
  *
- * 占法：每个端口在 127.0.0.1 和 ::1 上各绑一个不接连接的监听（只绑回环，不开防火墙口子）。
- * 实测 Windows 给 `listen(0)` 发号时会跳过这些已占用的号，不论调用方绑的是 127.0.0.1、::1、0.0.0.0、:: 还是缺省。
- * 绑不上（端口已经被别的程序占着）就跳过：别人占着，系统同样不会把它发给测试。
+ * How it holds them: bind a listener on both 127.0.0.1 and ::1 for each port that does not accept
+ * connections (binds only to loopback, opening no firewall holes). Empirically, when Windows
+ * issues numbers for `listen(0)`, it skips these occupied numbers regardless of whether the caller
+ * binds to 127.0.0.1, ::1, 0.0.0.0, ::, or default. If binding fails (port already held by
+ * another program), skip it: since another program holds it, the system will not assign it to
+ * tests either.
  *
- * 并行跑多份 `npm test`（几个 worktree 同时跑）时，先起的那份占住了，后起的那份占不到；先起的那份收尾放掉之后，
- * 后起的那份的测试文件就可能拿到这些号。所以运行期间每秒重试一次还没占到的（端口, 地址）对：谁先放手，
- * 仍在跑的那份就接着占。定时器 `unref`，不拖住进程；`globalTeardown` 里停掉定时器、关掉全部监听。
+ * When running multiple `npm test` runs in parallel (several worktrees running concurrently),
+ * the first one holds them while subsequent ones cannot; once the first finishes and releases
+ * them, test files from subsequent runs might acquire these numbers. Therefore, unheld (port,
+ * address) pairs are retried every second during runtime: whichever process releases first, the
+ * still-running instance takes over holding them. The timer is `unref`'d so it does not keep the
+ * process alive; `globalTeardown` stops the timer and closes all listeners.
  *
- * 子进程从环境变量 `PROMPTCUT_TEST_BAD_PORTS_HELD` 知道启动时本次占住了哪些（只作参考）。
- * `bad-ports.test.mjs` 核对的是「名单里每个端口都 listen 不到」，不论谁占着。
+ * Child processes learn from the environment variable `PROMPTCUT_TEST_BAD_PORTS_HELD` which ports
+ * were held at startup (for reference only). `bad-ports.test.mjs` verifies that "no port on the
+ * list can be listened on", regardless of who holds it.
  */
 import net from 'node:net';
 import { scrubUserDirEnv, markNoPortFile } from '../../scripts/lib/user-dirs.mjs';
 
 /**
- * WHATWG fetch 规范「bad port」名单里 ≥ 1024 的部分（低于 1024 的系统不会当临时端口发）。
- * 最大的是 10080；自动挑端口的脚本因此从 20000 以上挑。
+ * Ports >= 1024 from the WHATWG fetch spec "bad port" list (systems will not assign ports below
+ * 1024 as ephemeral ports).
+ * The largest is 10080; the auto-port-selection script therefore picks from 20000 and above.
  */
 export const FETCH_BAD_PORTS = Object.freeze([
   1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566,
@@ -43,7 +62,7 @@ export const FETCH_BAD_PORTS = Object.freeze([
 const HOSTS = ['127.0.0.1', '::1'];
 const TOTAL = FETCH_BAD_PORTS.length * HOSTS.length;
 const RETRY_MS = 1000;
-/** `${port}@${host}` → 占着它的监听 */
+/** `${port}@${host}` → listener holding it */
 const held = new Map();
 let retryTimer = null;
 let retrying = null;
@@ -62,7 +81,7 @@ function hold(port, host) {
   });
 }
 
-/** 把还没占到的（端口, 地址）对都试一遍；返回至少一个地址占着的端口。 */
+/** Try all (port, address) pairs not yet bound; return a port bound by at least one address. */
 async function holdAll() {
   const got = [];
   for (const port of FETCH_BAD_PORTS) {
@@ -80,9 +99,10 @@ function stopRetry() {
 
 export async function globalSetup() {
   for (const { key, value } of scrubUserDirEnv(process.env)) {
-    console.error(`[global-setup] 不继承外部的 ${key}=${value}（测试不写用户目录，见 scripts/lib/user-dirs.mjs）`);
+    console.error(`[global-setup] not inheriting external ${key}=${value} (tests do not write to the user directory, see scripts/lib/user-dirs.mjs)`);
   }
-  // 测试起的编辑器不写公共的 %TEMP%\promptcut\port.json（scripts/lib/user-dirs.mjs 的 markNoPortFile；守门 port-file.test.mjs）
+  // Editors started by tests do not write to shared %TEMP%\promptcut\port.json
+  // (markNoPortFile in scripts/lib/user-dirs.mjs; gatekeeper test port-file.test.mjs)
   markNoPortFile(process.env);
   const got = await holdAll();
   process.env.PROMPTCUT_TEST_BAD_PORTS_HELD = got.join(',');

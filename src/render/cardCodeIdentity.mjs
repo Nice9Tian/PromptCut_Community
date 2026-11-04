@@ -1,28 +1,34 @@
 /**
- * 卡片代码身份的算法(桌面与在线页面共用;用法见 `server/card-code.mjs` 文件头,在线一侧见
- * `docs/plan/online-card-exec-contract.md` 第 5 节)。
+ * Card code identity algorithm (shared by desktop and online page; see header of
+ * `server/card-code.mjs` for usage, and Section 5 of `docs/plan/online-card-exec-contract.md`
+ * for the online side).
  *
- * 一张卡的身份 = 定义文件加它一路相对导入到的卡片 / 部件文件(闭包),每个文件记「仓库相对路径 + 内容哈希」,
- * 整体取 sha256 的前 32 位。内容哈希与内容库同一算法(`server/card-sync.mjs` 的 `sourceHash`:
- * `sha256(JSON.stringify(换行统一成 LF 的源码))`)。
+ * A card's identity = definition file plus card / part files it imports relatively along the way
+ * (closure), with each file recorded as "repository-relative path + content hash", taking the first
+ * 32 hex characters of the overall sha256. Content hash uses the same algorithm as the content store
+ * (`sourceHash` in `server/card-sync.mjs`: `sha256(JSON.stringify(source code with line endings normalized to LF))`).
  *
- * 本模块只管「跟哪些文件」「拿什么去取摘要」这两件纯文本的事,不读文件、不取摘要:
- *   - 桌面(`server/vite-plugin-cards.ts`)注入「改动层优先」的读文件与 Node 的 sha256;
- *   - 在线页面(`src/online/cardRuntime/codeIdentity.ts`)注入内容库同步来的源码、页面自带的内置源码与 WebCrypto。
- * 两边算出同一个值,任务的 `requires.cardSources` 与节点报的 `cardSourceVersions` 才对得上。
+ * This module only handles the two plain-text concerns of "which files to track" and "what to use
+ * to compute digest", without reading files or computing digests:
+ *   - Desktop (`server/vite-plugin-cards.ts`) injects "overlay layer first" file reading and
+ *     Node's sha256;
+ *   - Online page (`src/online/cardRuntime/codeIdentity.ts`) injects source code synced from the
+ *     content store, built-in source bundled with the page, and WebCrypto.
+ * Only when both sides compute the same value can the task's `requires.cardSources` match
+ * `cardSourceVersions` reported by the node.
  *
- * 不依赖 Node 内置模块,也不依赖浏览器接口。
+ * Does not depend on Node built-in modules or browser APIs.
  */
 
-/** 进闭包的范围:卡片目录与部件目录 */
+/** Scope for inclusion in closure: card directory and part directory */
 export const CARD_CODE_ROOTS = Object.freeze(["src/cards/", "src/parts/"]);
 const CARD_CODE_EXT = /\.(tsx|ts|css)$/;
-/** 闭包最多跟多少个文件 */
+/** Maximum number of files tracked in closure */
 export const CARD_CODE_CLOSURE_LIMIT = 60;
-/** 身份取摘要的前多少位十六进制 */
+/** Number of leading hex digits taken for identity digest */
 export const CARD_CODE_ID_HEX = 32;
 
-/** 这个仓库相对路径在不在闭包的范围里:卡片 / 部件目录下、是源码或样式文件、不是测试 */
+/** Whether repository-relative path is within closure scope: under card / part directory, source/style file, not a test */
 export function isCardCodePath(rel) {
   if (typeof rel !== "string" || !rel || rel.includes("..") || rel.startsWith("/") || /^[A-Za-z]:/.test(rel)) return false;
   if (/\.test\.(ts|tsx|mjs)$/.test(rel)) return false;
@@ -31,7 +37,7 @@ export function isCardCodePath(rel) {
 
 const IMPORT_RE = /(?:import|export)\s+(?:[^'"]*?\sfrom\s+)?["'](\.{1,2}\/[^"']+)["']|import\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g;
 
-/** `fromRel` 所在目录下的相对说明符 → 仓库相对路径;爬出仓库根回 null */
+/** Relative specifier under directory of `fromRel` → repository-relative path; returns null when escaping repository root */
 function resolveRel(fromRel, spec) {
   const parts = fromRel.split("/").slice(0, -1);
   for (const p of spec.split("/")) {
@@ -43,8 +49,9 @@ function resolveRel(fromRel, spec) {
 }
 
 /**
- * 一份源码里每个相对导入的候选路径(按源码里的先后;每个说明符一组,组内按试的先后):
- * 原样、`.tsx`、`.ts`、`/index.tsx`、`/index.ts`。爬出仓库根的说明符不出组。
+ * Candidate paths for each relative import in source code (in order of appearance in source;
+ * grouped per specifier, ordered by trial sequence within group):
+ * as-is, `.tsx`, `.ts`, `/index.tsx`, `/index.ts`. Specifiers escaping repository root produce no group.
  */
 export function localImportCandidates(rel, source) {
   const out = [];
@@ -57,7 +64,8 @@ export function localImportCandidates(rel, source) {
 }
 
 /**
- * 一个文件直接用到的本地文件:每个相对导入取第一个存在的候选,落在闭包范围里的才要;去重、保持先后。
+ * Local files directly used by a file: takes the first existing candidate for each relative import,
+ * keeping only those falling within closure scope; deduplicated, preserving order.
  * @param {string} rel
  * @param {{ read: (rel: string) => string | null, isFile: (rel: string) => boolean }} io
  */
@@ -74,7 +82,7 @@ export function localImportsOf(rel, io) {
   return out;
 }
 
-/** 一张卡的全部本地源码:定义文件 + 它一路用到的卡片 / 部件文件(第一个是定义文件) */
+/** All local source of a card: definition file + card / part files it uses throughout (first is definition file) */
 export function importClosureOf(entry, io, limit = CARD_CODE_CLOSURE_LIMIT) {
   const seen = [entry];
   for (let i = 0; i < seen.length && seen.length < limit; i++) {
@@ -84,9 +92,10 @@ export function importClosureOf(entry, io, limit = CARD_CODE_CLOSURE_LIMIT) {
 }
 
 /**
- * 取摘要之前的那段文本:每个文件一行「路径」一行「内容哈希」(读不到的写 `missing`)。
- * @param {readonly string[]} files  闭包(`importClosureOf` 的结果)
- * @param {(rel: string) => string | null} hashOf  这个文件的内容哈希;读不到回 null
+ * Text before computing digest: one line of "path" and one line of "content hash" for each file
+ * (writes `missing` if unreadable).
+ * @param {readonly string[]} files  Closure (result of `importClosureOf`)
+ * @param {(rel: string) => string | null} hashOf  Content hash for this file; returns null if unreadable
  */
 export function cardCodePreimage(files, hashOf) {
   let text = "";

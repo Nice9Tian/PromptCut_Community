@@ -61,12 +61,13 @@ function PinBoardCard({ params }: CardProps<Params>) {
 
 export const pinBoard: CardDef<Params> = {
   id: "pin-board",
-  name: "要点钉板",
-  description: "逐条打出的要点板",
-  useWhen: "带中英主副标题的小看板,罗列 3 到 5 条并列要点逐条钉上板子 —— 适合给一段内容做小结,不是零散列表。position 填 left 会摆到左下角。",
-  tags: ["要点","钉板","罗列"],
+  name: "Key points pin board",
+  description: "Key points board that appears one by one",
+  useWhen: "A small board with a title and subtitle (Chinese and English) that lists 3 to 5 parallel key points, pinning them to the board one by one. Good for summarizing a section of content, not for a scattered list. Setting position to left places it at the bottom left.",
+  tags: ["Key points","pin board","list"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -78,15 +79,15 @@ export const pinBoard: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "title", label: "小标题", type: "text" },
-    { key: "subtitle", label: "副标题", type: "text" },
-    { key: "items", label: "要点(用|分隔)", type: "text" },
-    { key: "stepMs", label: "间隔(ms)", type: "number" },
+    { key: "title", label: "Heading", type: "text" },
+    { key: "subtitle", label: "Subtitle", type: "text" },
+    { key: "items", label: "Key points (separated by |)", type: "text" },
+    { key: "stepMs", label: "Interval (ms)", type: "number" },
   ],
   parts: [
-    { id: "title", label: "小标题", role: "text", params: ["title"], enterMs: 0, settleMs: 600 },
-    { id: "subtitle", label: "副标题", role: "text", params: ["subtitle", "accent"], enterMs: 100, settleMs: 700 },
-    { id: "items", label: "要点", role: "list", params: ["items", "stepMs"], enterMs: 300, settleMs: 300 + 2 * 200 + 400 },
+    { id: "title", label: "Heading", role: "text", params: ["title"], enterMs: 0, settleMs: 600 },
+    { id: "subtitle", label: "Subtitle", role: "text", params: ["subtitle", "accent"], enterMs: 100, settleMs: 700 },
+    { id: "items", label: "Key points", role: "list", params: ["items", "stepMs"], enterMs: 300, settleMs: 300 + 2 * 200 + 400 },
   ],
   lifecycle: { settleMs: 1100, after: "hold", exit: ["fade"] },
   timing: (p) => {

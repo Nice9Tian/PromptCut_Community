@@ -1,8 +1,10 @@
 /**
- * A07(2026-10-22 用户定:回复被截断时的处理):单次输出上限调大、400 降档、截断后把写了一半的参数存进代码块接着写、
- * 代码块空间的工具与 `@code_cache:` 引用。验收见 `docs/reports/AGENT-output-cache.md`。
+ * A07 (user decision, 2026-10-22: handling truncated replies): increase single-output cap, 400
+ * tier downgrade, store half-written parameters into code blocks upon truncation to continue
+ * writing, code block space tools and `@code_cache:` references. See acceptance check in
+ * `docs/reports/AGENT-output-cache.md`.
  *
- * 全部用假模型(脚本化的 provider / 假 fetch),不调真模型。
+ * All use fake models (scripted provider / fake fetch), without calling real models.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,11 +24,11 @@ import * as anthropic from '../harness/providers/anthropic.mjs';
 import * as gemini from '../harness/providers/gemini.mjs';
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), `pc-oc-${p}-`));
-const rm = (d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 清理 */ } };
+const rm = (d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* Cleanup */ } };
 
-// ───────────── 输出上限 ─────────────
+// ───────────── Output limit ─────────────
 
-test('各模型的单次输出上限:Claude 当前各型号 128K、GPT-5 系 128000、o 系 100000、Gemini 2.5 及以后 65536,认不出给保守值', () => {
+test('per-model single-response output limits: all current Claude models 128K, GPT-5 family 128000, o family 100000, Gemini 2.5 and later 65536, and a conservative value for unrecognized models', () => {
   assert.equal(modelOutputLimit('claude-opus-5-5'), 128000);
   assert.equal(modelOutputLimit('claude-sonnet-4-6'), 128000);
   assert.equal(modelOutputLimit('claude-haiku-4-5-20251001'), 64000);
@@ -49,33 +51,33 @@ test('各模型的单次输出上限:Claude 当前各型号 128K、GPT-5 系 128
   assert.equal(resolveMaxOutput({ model: 'some-other-model' }), UNKNOWN_OUTPUT_TOKENS);
 });
 
-test('配置里的 maxTokens 是上限的上限;没配或等于旧缺省 4096 时按模型', () => {
+test('maxTokens in the config is the cap on the cap; when unset or equal to the old default 4096, the model\'s limit applies', () => {
   assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash' }), 65536);
-  assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash', maxTokens: 4096 }), 65536, '旧缺省当没配');
+  assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash', maxTokens: 4096 }), 65536, 'the old default counts as unset');
   assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash', maxTokens: 0 }), 65536);
-  assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash', maxTokens: 32000 }), 32000, '配得比模型小就用配的');
-  assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash', maxTokens: 128000 }), 65536, '配得比模型大就用模型的');
+  assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash', maxTokens: 32000 }), 32000, 'if configured lower than the model\'s limit, the configured value is used');
+  assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash', maxTokens: 128000 }), 65536, 'if configured higher than the model\'s limit, the model\'s limit is used');
   assert.equal(resolveMaxOutput({ model: 'claude-opus-5-5', maxTokens: 128000 }), 128000);
   assert.equal(resolveMaxOutput({ model: 'unknown-x', maxTokens: 50000 }), 50000);
-  assert.equal(resolveMaxOutput({ model: 'unknown-x', maxTokens: 2000 }), 2000, '特意压小的照用');
+  assert.equal(resolveMaxOutput({ model: 'unknown-x', maxTokens: 2000 }), 2000, 'a deliberately lowered value is used as is');
 });
 
-test('推理模型用 max_completion_tokens;400 的话能认出「数太大」和「字段名不对」', () => {
+test('reasoning models use max_completion_tokens; on a 400 it can tell "number too large" from "wrong field name"', () => {
   for (const m of ['gpt-5', 'gpt-5.6-terra', 'gpt-6-astra', 'o3', 'o4-mini', 'openai/o1']) assert.equal(usesMaxCompletionTokens(m), true, m);
   for (const m of ['gpt-4o', 'gpt-4.1', 'gemini-3.8-flash', 'claude-sonnet-5-5']) assert.equal(usesMaxCompletionTokens(m), false, m);
   assert.equal(lowerOutputAfter400('max_tokens: 128000 > 64000, which is the maximum allowed number of output tokens for claude-x', 128000), 64000);
   assert.equal(lowerOutputAfter400("Invalid 'max_tokens': integer above maximum value. Expected a value <= 16384, but got 128000 instead.", 128000), 16384);
-  assert.equal(lowerOutputAfter400('max_tokens is too large', 128000), 100000, '没写上限就取下一档');
+  assert.equal(lowerOutputAfter400('max_tokens is too large', 128000), 100000, 'if no limit is stated, take the next lower tier');
   assert.equal(lowerOutputAfter400('Invalid API key', 128000), null);
   assert.equal(swapOutputParamAfter400("Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.", 'max_tokens'), 'max_completion_tokens');
   assert.equal(swapOutputParamAfter400('Unrecognized request argument supplied: max_completion_tokens', 'max_completion_tokens'), 'max_tokens');
   assert.equal(swapOutputParamAfter400('max_tokens is too large', 'max_tokens'), null);
 });
 
-// 假 SSE
+// Fake SSE
 const sse = (chunks) => ({ ok: true, status: 200, headers: { get: () => 'text/event-stream' }, body: (async function* () { for (const c of chunks) yield c; })() });
 const errRes = (status, message) => ({ ok: false, status, headers: { get: () => null }, text: async () => JSON.stringify({ error: { message } }) });
-const openaiDone = (text = '好') => sse([
+const openaiDone = (text = 'OK') => sse([
   `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`,
   `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } })}\n\n`,
   'data: [DONE]\n\n',
@@ -92,7 +94,7 @@ function recorder(responses) {
   return { sent, fetchImpl };
 }
 
-test('OpenAI 兼容口:普通模型发 max_tokens = 模型上限;推理模型只发 max_completion_tokens', async () => {
+test('OpenAI-compatible endpoint: normal models send max_tokens = the model\'s limit; reasoning models send only max_completion_tokens', async () => {
   let r = recorder([openaiDone()]);
   await drain(openai.createProvider({ apiKey: 'k', model: 'gemini-3.8-flash', baseUrl: 'https://x/v1', maxTokens: 4096 }, { fetchImpl: r.fetchImpl }));
   assert.equal(r.sent[0].max_tokens, 65536);
@@ -100,24 +102,24 @@ test('OpenAI 兼容口:普通模型发 max_tokens = 模型上限;推理模型只
   r = recorder([openaiDone()]);
   await drain(openai.createProvider({ apiKey: 'k', model: 'gpt-5', baseUrl: 'https://x/v1' }, { fetchImpl: r.fetchImpl }));
   assert.equal(r.sent[0].max_completion_tokens, 128000);
-  assert.equal('max_tokens' in r.sent[0], false, '两个字段不同时带');
+  assert.equal('max_tokens' in r.sent[0], false, 'the two fields are never sent together');
 });
 
-test('OpenAI 兼容口:数太大回 400 → 降一档重发一次、交一条日志事件;再 400 就照常报错,不再重发', async () => {
-  let r = recorder([errRes(400, 'max_tokens is too large: 65536. This model supports at most 32768 completion tokens.'), openaiDone('成')]);
+test('OpenAI-compatible endpoint: a 400 for a number that is too large → drop one tier and resend once, emit one log event; a second 400 is reported as usual, with no more resends', async () => {
+  let r = recorder([errRes(400, 'max_tokens is too large: 65536. This model supports at most 32768 completion tokens.'), openaiDone('Done')]);
   const evs = await drain(openai.createProvider({ apiKey: 'k', model: 'gemini-3.8-flash', baseUrl: 'https://x/v1' }, { fetchImpl: r.fetchImpl }));
   assert.equal(r.sent.length, 2);
   assert.equal(r.sent[1].max_tokens, 32768);
   const notice = evs.find((e) => e.type === 'notice');
   assert.deepEqual({ action: notice.data.action, from: notice.data.from, to: notice.data.to }, { action: 'lower', from: 65536, to: 32768 });
-  assert.ok(evs.some((e) => e.type === 'text_delta' && e.text === '成'));
+  assert.ok(evs.some((e) => e.type === 'text_delta' && e.text === 'Done'));
 
   r = recorder([errRes(400, 'max_tokens is too large'), errRes(400, 'max_tokens is too large')]);
   await assert.rejects(drain(openai.createProvider({ apiKey: 'k', model: 'gemini-3.8-flash', baseUrl: 'https://x/v1' }, { fetchImpl: r.fetchImpl })), /HTTP 400/);
-  assert.equal(r.sent.length, 2, '只降一次');
+  assert.equal(r.sent.length, 2, 'downgrade only once');
 });
 
-test('OpenAI 兼容口:上游说字段名不对就换另一个字段重发一次', async () => {
+test('OpenAI-compatible endpoint: if the upstream says the field name is wrong, switch to the other field and resend once', async () => {
   const r = recorder([errRes(400, "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead."), openaiDone()]);
   await drain(openai.createProvider({ apiKey: 'k', model: 'gpt-4o', baseUrl: 'https://x/v1' }, { fetchImpl: r.fetchImpl }));
   assert.equal(r.sent.length, 2);
@@ -125,7 +127,7 @@ test('OpenAI 兼容口:上游说字段名不对就换另一个字段重发一次
   assert.equal('max_tokens' in r.sent[1], false);
 });
 
-test('OpenAI 兼容口:写到上限(length)时没写完的工具调用交成 tool_use_partial,带收到的参数原文;写完的照常交', async () => {
+test('OpenAI-compatible endpoint: when output hits the limit (length), an unfinished tool call is delivered as tool_use_partial carrying the raw arguments received; finished ones are delivered as usual', async () => {
   const args = '{"id":"demo","source":"export default {\\n  name: \\"x\\",';
   const r = recorder([sse([
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'a', function: { name: 'add_clip', arguments: '{"cardId":"t"}' } }] } }] })}\n\n`,
@@ -144,8 +146,8 @@ test('OpenAI 兼容口:写到上限(length)时没写完的工具调用交成 too
 
 const anthropicStream = (events) => sse(events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
 
-test('Anthropic:max_tokens 按模型(Opus 5.5 是 128000);数太大回 400 按报错里的上限降一次', async () => {
-  const done = () => anthropicStream([['message_start', { message: { usage: { input_tokens: 1 } } }], ['content_block_delta', { index: 0, delta: { type: 'text_delta', text: '好' } }], ['message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } }], ['message_stop', {}]]);
+test('Anthropic: max_tokens follows the model (Opus 5.5 is 128000); a 400 for a number that is too large drops it once to the limit stated in the error', async () => {
+  const done = () => anthropicStream([['message_start', { message: { usage: { input_tokens: 1 } } }], ['content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'OK' } }], ['message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } }], ['message_stop', {}]]);
   let r = recorder([done()]);
   await drain(anthropic.createProvider({ apiKey: 'k', model: 'claude-opus-5-5' }, { fetchImpl: r.fetchImpl }));
   assert.equal(r.sent[0].max_tokens, 128000);
@@ -155,7 +157,7 @@ test('Anthropic:max_tokens 按模型(Opus 5.5 是 128000);数太大回 400 按�
   assert.ok(evs.some((e) => e.type === 'notice' && e.data.to === 64000));
 });
 
-test('Anthropic:max_tokens 截断时没写完的 tool_use 交成 tool_use_partial;不是截断的坏 JSON 照旧报参数错误', async () => {
+test('Anthropic: when max_tokens truncates, an unfinished tool_use is delivered as tool_use_partial; bad JSON that is not from truncation still reports an argument error', async () => {
   const mk = (stop) => anthropicStream([
     ['message_start', { message: { usage: { input_tokens: 1 } } }],
     ['content_block_start', { index: 0, content_block: { type: 'tool_use', id: 't1', name: 'create_card' } }],
@@ -172,8 +174,8 @@ test('Anthropic:max_tokens 截断时没写完的 tool_use 交成 tool_use_partia
   assert.equal(evs.some((e) => e.type === 'tool_use_partial'), false);
 });
 
-test('Gemini:maxOutputTokens 按模型;400 数太大降一档重发一次', async () => {
-  const done = () => sse([`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: '好' }] }, finishReason: 'STOP' }] })}\n\n`]);
+test('Gemini: maxOutputTokens follows the model; on a 400 for a number that is too large, drop one tier and resend once', async () => {
+  const done = () => sse([`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'OK' }] }, finishReason: 'STOP' }] })}\n\n`]);
   let r = recorder([done()]);
   await drain(gemini.createProvider({ apiKey: 'k', model: 'gemini-3.8-flash' }, { fetchImpl: r.fetchImpl }));
   assert.equal(r.sent[0].generationConfig.maxOutputTokens, 65536);
@@ -183,29 +185,29 @@ test('Gemini:maxOutputTokens 按模型;400 数太大降一档重发一次', asyn
   assert.equal(r.sent[1].generationConfig.maxOutputTokens, 32768);
 });
 
-// ───────────── 半截 JSON ─────────────
+// ───────────── Partial JSON ─────────────
 
-test('从半截 JSON 里取出写了一半的长字符串字段和已经写完的短字段', () => {
+test('extracts the half-written long string field and the already completed short fields from a partial JSON', () => {
   const s = salvageToolCall('{"id":"price-tag","overwrite":true,"source":"const a = \\"x\\";\\nconst b = 1;\\nexport default {\\n  na');
   assert.equal(s.key, 'source');
   assert.equal(s.text, 'const a = "x";\nconst b = 1;\nexport default {\n  na');
   assert.equal(s.complete, false);
   assert.deepEqual(s.rest, { id: 'price-tag', overwrite: true });
-  // 转义写到一半的那一截丢掉
+  // Discard the half-written escape sequence
   assert.equal(salvageToolCall('{"source":"ab\\').text, 'ab');
   assert.equal(salvageToolCall('{"source":"ab\\u00').text, 'ab');
   assert.equal(salvageToolCall('{"source":"\\u4e2d\\u6587').text, '中文');
   assert.deepEqual(parsePartialObject('{"a":{"b":[1,2]},"c":"d"').fields.map((f) => f.key), ['a', 'c']);
   assert.equal(salvageToolCall('').key, null);
-  assert.equal(salvageToolCall('{"id":"x"').text, 'x', '只有短字段时取它(没写完的工具多半也就这样)');
+  assert.equal(salvageToolCall('{"id":"x"').text, 'x', 'when there is only a short field, take it (an unfinished tool mostly looks like this)');
   const s2 = salvageToolCall('{"id":"a-very-long-card-identifier","source":"imp');
-  assert.equal(s2.key, 'source', '写到一半的那个字段优先,哪怕它比前面的短');
+  assert.equal(s2.key, 'source', 'the field that was cut off mid-write takes priority, even if it is shorter than the earlier ones');
   assert.equal(s2.text, 'imp');
 });
 
-// ───────────── 代码块空间 ─────────────
+// ───────────── Code block space ─────────────
 
-test('代码块工具:写入、追加、按行/按字符读、替换、列出、删除;名字不合法和超上限都明说', async () => {
+test('code block tools: write, append, read by line / by character, replace, list, delete; invalid names and exceeding the limit are both stated explicitly', async () => {
   const dir = tmp('cc');
   try {
     const store = createCodeCacheStore({ dir, writer: 'conv-1' });
@@ -219,18 +221,18 @@ test('代码块工具:写入、追加、按行/按字符读、替换、列出、
     assert.equal((await t.code_cache_read.execute({ name: 'card', start: 6, end: 11 })).text, 'line2');
     const rep = await t.code_cache_replace.execute({ name: 'card', old: 'line3', new: 'LINE-3' });
     assert.equal(rep.replaced, 1);
-    await assert.rejects(t.code_cache_replace.execute({ name: 'card', old: 'line', new: 'x' }), /出现了 3 次/);
+    await assert.rejects(t.code_cache_replace.execute({ name: 'card', old: 'line', new: 'x' }), /occurs 3 times/);
     assert.equal((await t.code_cache_replace.execute({ name: 'card', old: 'line', new: 'L', all: true })).replaced, 3);
-    await assert.rejects(t.code_cache_replace.execute({ name: 'card', old: 'nope', new: 'x' }), /没有找到/);
+    await assert.rejects(t.code_cache_replace.execute({ name: 'card', old: 'nope', new: 'x' }), /Could not find the original text old/);
     const list = await t.code_cache_list.execute({});
     assert.equal(list.blocks.length, 1); assert.equal(list.blocks[0].name, 'card'); assert.equal(list.blocks[0].by, 'conv-1');
-    await assert.rejects(t.code_cache_write.execute({ name: '../x', text: 'a' }), /名字不合法/);
-    await assert.rejects(t.code_cache_read.execute({ name: 'missing' }), /不存在/);
+    await assert.rejects(t.code_cache_write.execute({ name: '../x', text: 'a' }), /Invalid code block name/);
+    await assert.rejects(t.code_cache_read.execute({ name: 'missing' }), /does not exist/);
     const small = createCodeCacheStore({ dir, limits: { blockBytes: 10 } });
-    assert.throws(() => small.write('big', 'x'.repeat(11)), /超过一块的上限/);
+    assert.throws(() => small.write('big', 'x'.repeat(11)), /over the per-block limit/);
     await t.code_cache_delete.execute({ name: 'card' });
     assert.equal((await t.code_cache_list.execute({})).blocks.length, 0);
-    // 读的时候一次最多交回 readChars 字,告诉下一段从哪开始
+    // When reading, return at most readChars characters at a time, indicating where the next section starts
     const tiny = createCodeCacheStore({ dir, limits: { readChars: 4 } });
     tiny.write('long', 'abcdefghij');
     const rd = await codeCacheTools(tiny).find((x) => x.name === 'code_cache_read').execute({ name: 'long' });
@@ -238,7 +240,7 @@ test('代码块工具:写入、追加、按行/按字符读、替换、列出、
   } finally { rm(dir); }
 });
 
-test('@code_cache:名字 只在整个字符串就是这个写法时换成内容;不存在就报错', () => {
+test('@code_cache:name is replaced with its content only when the whole string is exactly this form; a missing one is an error', () => {
   const dir = tmp('ref');
   try {
     const store = createCodeCacheStore({ dir });
@@ -248,13 +250,13 @@ test('@code_cache:名字 只在整个字符串就是这个写法时换成内容;
     assert.equal(out.source, 'FULL SOURCE');
     assert.equal(out.nested.list[0], 'FULL SOURCE');
     assert.equal(out.nested.list[1], 'keep @code_cache:src inline');
-    assert.equal(input.source, '@code_cache:src', '不改原来的对象');
+    assert.equal(input.source, '@code_cache:src', 'the original object is not modified');
     assert.equal(resolveCodeCacheRefs({ a: 1 }, store).a, 1);
-    assert.throws(() => resolveCodeCacheRefs({ s: '@code_cache:nope' }, store), /不存在/);
+    assert.throws(() => resolveCodeCacheRefs({ s: '@code_cache:nope' }, store), /does not exist/);
   } finally { rm(dir); }
 });
 
-test('Agent 在调用工具之前把引用换成内容;历史与事件里留的是引用', async () => {
+test('the Agent replaces the reference with its content before calling the tool; the history and events keep the reference', async () => {
   const dir = tmp('agent-ref');
   try {
     const store = createCodeCacheStore({ dir });
@@ -262,10 +264,10 @@ test('Agent 在调用工具之前把引用换成内容;历史与事件里留的�
     let got = null;
     const tool = { name: 'create_card', description: 'x', inputSchema: { type: 'object', properties: { id: { type: 'string' }, source: { type: 'string' } }, required: ['id', 'source'] }, async execute(input) { got = input; return { ok: true }; } };
     let n = 0;
-    const provider = { name: 'f', async *stream() { n += 1; if (n === 1) { yield { type: 'tool_use', id: 'c1', name: 'create_card', input: { id: 'a', source: '@code_cache:src' } }; yield { type: 'stop', reason: 'tool_use' }; } else { yield { type: 'text_delta', text: '好了' }; yield { type: 'stop', reason: 'end_turn' }; } } };
+    const provider = { name: 'f', async *stream() { n += 1; if (n === 1) { yield { type: 'tool_use', id: 'c1', name: 'create_card', input: { id: 'a', source: '@code_cache:src' } }; yield { type: 'stop', reason: 'tool_use' }; } else { yield { type: 'text_delta', text: 'Done' }; yield { type: 'stop', reason: 'end_turn' }; } } };
     const events = [];
     const agent = new Agent({ provider, system: 's', tools: [tool], codeCache: store, onEvent: (e) => events.push(e) });
-    await agent.run('建卡');
+    await agent.run('Create a card');
     assert.equal(got.source.length, 5000);
     assert.equal(events.find((e) => e.type === 'tool_call').input.source, '@code_cache:src');
     assert.ok(JSON.stringify(agent.history.get()).includes('@code_cache:src'));
@@ -273,7 +275,7 @@ test('Agent 在调用工具之前把引用换成内容;历史与事件里留的�
   } finally { rm(dir); }
 });
 
-test('截断时写了一半的参数存进代码块;本来就在追加代码块的,写出的那一截直接接上', () => {
+test('on truncation the half-written arguments are saved into a code block; if a code block was already being appended to, the portion just written is appended directly', () => {
   const dir = tmp('salv');
   try {
     const store = createCodeCacheStore({ dir });
@@ -282,7 +284,7 @@ test('截断时写了一半的参数存进代码块;本来就在追加代码块�
     assert.equal(s.saved[0].block, 'cut_create_card_1');
     assert.equal(store.read('cut_create_card_1'), 'line1\nline2\nli');
     assert.match(s.note, /code_cache_append/); assert.match(s.note, /@code_cache:cut_create_card_1/); assert.match(s.note, /"id":"demo"/);
-    assert.match(s.status, /已存进代码块 cut_create_card_1/);
+    assert.match(s.status, /saved into code block cut_create_card_1/);
     const d = salvageTruncation([{ name: 'code_cache_append', args: '{"name":"cut_create_card_1","text":"ne3\\nline4' }], store);
     assert.equal(d.saved[0].direct, true);
     assert.equal(store.read('cut_create_card_1'), 'line1\nline2\nline3\nline4');
@@ -293,17 +295,17 @@ test('截断时写了一半的参数存进代码块;本来就在追加代码块�
   } finally { rm(dir); }
 });
 
-test('工具清单:本机与云端(托管档开放清单)都有代码块的六个工具', async () => {
+test('tool list: both local and cloud (the hosted tier\'s open list) have the six code block tools', async () => {
   const dir = tmp('list');
   try {
     const codeCache = createCodeCacheStore({ dir });
     const cloud = (await buildTools({ callTool: async () => [], workspaceDir: null, only: CLOUD_OPEN_TOOLS, localTools: false, codeCache })).map((t) => t.name);
     const local = (await buildTools({ callTool: async () => [], workspaceDir: dir, codeCache })).map((t) => t.name);
-    for (const n of CODE_CACHE_TOOL_NAMES) { assert.ok(cloud.includes(n), `云端缺 ${n}`); assert.ok(local.includes(n), `本机缺 ${n}`); }
+    for (const n of CODE_CACHE_TOOL_NAMES) { assert.ok(cloud.includes(n), `cloud is missing ${n}`); assert.ok(local.includes(n), `local is missing ${n}`); }
   } finally { rm(dir); }
 });
 
-// ───────────── 端到端:假模型,第一轮在 create_card 的源码中途被截断 ─────────────
+// ───────────── End-to-end: fake model, truncated midway through create_card source in round 1 ─────────────
 
 const { startRun } = await import('../runners/api.mjs');
 const FULL_SOURCE = [
@@ -320,7 +322,7 @@ function runMock(script, { codeCacheDir, sessionId }) {
   const calls = [];
   return new Promise((resolve) => {
     startRun({
-      prompt: `做一张长卡\n\`\`\`mock-script\n${JSON.stringify(script)}\n\`\`\``, systemPrompt: 's', sessionId,
+      prompt: `Make a long card\n\`\`\`mock-script\n${JSON.stringify(script)}\n\`\`\``, systemPrompt: 's', sessionId,
       apiConfig: { vendor: 'mock', model: 'mock' }, codeCacheDir, localTools: false,
       callTool: async (name, args) => { calls.push({ name, args }); return name === 'list_cards' || name === 'list_parts' ? [] : { ok: true, id: args?.id }; },
       onEvent: (ev) => { events.push(ev); if (ev.type === 'done' || ev.type === 'error') setTimeout(() => resolve({ events, calls }), 10); },
@@ -329,49 +331,50 @@ function runMock(script, { codeCacheDir, sessionId }) {
 }
 const historyOf = (sid) => path.join(os.tmpdir(), 'promptcut', 'harness-sessions', `${sid}.json`);
 
-test('端到端:create_card 源码写到一半被截断 → 存进代码块 → 模型追加剩下的 → 引用交给 create_card,卡片源码完整', async () => {
+test('end to end: create_card source is truncated halfway → saved into a code block → the model appends the rest → the reference is handed to create_card, and the card source is complete', async () => {
   const dir = tmp('e2e');
   const sid = `oc-e2e-${Math.random().toString(36).slice(2, 8)}`;
   try {
     const half = JSON.stringify({ id: 'demo-long', source: FULL_SOURCE }).slice(0, JSON.stringify({ id: 'demo-long', source: '' }).length - 2 + CUT);
     const written = salvageToolCall(half).text;
-    assert.ok(written.length > 10 && written.length < FULL_SOURCE.length, '脚本里的截断点在源码中间');
+    assert.ok(written.length > 10 && written.length < FULL_SOURCE.length, 'the truncation point in the script is in the middle of the source');
     const script = [
       { truncate: { tool: 'create_card', args: half } },
       { tool: 'code_cache_append', input: { name: 'cut_create_card_1', text: FULL_SOURCE.slice(written.length) } },
       { tool: 'create_card', input: { id: 'demo-long', source: '@code_cache:cut_create_card_1' } },
-      { say: '卡片建好了。' },
+      { say: 'The card has been created.' },
     ];
     const { events, calls } = await runMock(script, { codeCacheDir: dir, sessionId: sid });
     const err = events.find((e) => e.type === 'error');
     assert.equal(err, undefined, err?.message);
     const created = calls.filter((c) => c.name === 'create_card');
-    assert.equal(created.length, 1, '截断的那次没有执行,只有最后一次');
-    assert.equal(created[0].args.source, FULL_SOURCE, '交给 create_card 的源码完整');
-    assert.ok(events.some((e) => e.type === 'status' && /已存进代码块 cut_create_card_1/.test(e.text)));
+    assert.equal(created.length, 1, 'the truncated attempt was not executed, only the last one');
+    assert.equal(created[0].args.source, FULL_SOURCE, 'the source handed to create_card is complete');
+    assert.ok(events.some((e) => e.type === 'status' && /saved into code block cut_create_card_1/.test(e.text)));
     assert.ok(events.some((e) => e.type === 'diagnostic' && e.stage === 'truncated'));
     assert.equal(events.find((e) => e.type === 'done')?.outcome, 'completed');
-    // 代码块按宿主给的目录放(本机按项目、云端按项目)
+    // Code blocks are placed in the host-provided directory (by project locally, by project in cloud)
     assert.ok(fs.existsSync(path.join(dir, 'cut_create_card_1.txt')));
-  } finally { rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* 清理 */ } }
+  } finally { rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* Cleanup */ } }
 });
 
-test('端到端:截断次数超限照样明说没做成,并说已写出的部分存在哪个代码块', async () => {
+test('end to end: when the truncation count exceeds the limit it still says plainly that it did not succeed, and says which code block holds the part already written', async () => {
   const dir = tmp('e2e-limit');
   const sid = `oc-lim-${Math.random().toString(36).slice(2, 8)}`;
   try {
-    // 每次都在 create_card 源码中途截断、每次都留下内容:有进展的截断一轮最多 6 次,第 7 次明说没做成
+    // Truncated midway through create_card source code each time, leaving content each time: at most
+    // 6 progressive truncations per round, explicitly reports failure on the 7th
     const step = { truncate: { tool: 'create_card', args: '{"id":"x","source":"abc' } };
     const { events, calls } = await runMock(Array(10).fill(step), { codeCacheDir: dir, sessionId: sid });
     const err = events.find((e) => e.type === 'error');
-    assert.ok(err, '要以错误结束');
-    assert.match(err.message, /超过单次输出上限被截断，这一轮没能完成/);
-    assert.match(err.message, /已经写出的部分存在代码块 cut_create_card_1/);
+    assert.ok(err, 'it must end with an error');
+    assert.match(err.message, /exceeded the single-output limit and was truncated 7 times in a row, so this round could not finish/);
+    assert.match(err.message, /The part already written is stored in code block cut_create_card_1/);
     assert.equal(calls.filter((c) => c.name === 'create_card').length, 0);
-    // 一次都没留下内容的截断:连续 3 次就停
+    // Truncation that leaves no content: stops after 3 consecutive occurrences
     const sid2 = `${sid}-b`;
-    const r2 = await runMock(Array(10).fill({ truncate: { say: '草稿……' } }), { codeCacheDir: dir, sessionId: sid2 });
-    assert.match(r2.events.find((e) => e.type === 'error')?.message ?? '', /连续 3 次超过单次输出上限被截断/);
-    try { fs.unlinkSync(historyOf(sid2)); } catch { /* 清理 */ }
-  } finally { rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* 清理 */ } }
+    const r2 = await runMock(Array(10).fill({ truncate: { say: 'Draft…' } }), { codeCacheDir: dir, sessionId: sid2 });
+    assert.match(r2.events.find((e) => e.type === 'error')?.message ?? '', /exceeded the single-output limit and was truncated 3 times in a row/);
+    try { fs.unlinkSync(historyOf(sid2)); } catch { /* Cleanup */ }
+  } finally { rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* Cleanup */ } }
 });

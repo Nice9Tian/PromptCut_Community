@@ -1,8 +1,10 @@
-// 素材收集插件:接口形状、作业表、错误路径。用 fake-collect.cmd 冒充 Python,
-// 不联网、不装 yt-dlp。跑法:node --test server/test/collect-plugin.test.mjs
+// Media collection plugin: interface shape, job table, error paths. Uses fake-collect.cmd to mock
+// Python, without networking or installing yt-dlp. Run command:
+// node --test server/test/collect-plugin.test.mjs
 //
-// 插件是 .ts,这里用 typescript 转译到临时目录再 import(和 cards.test 一个路数),
-// 它依赖的 vite-plugin-stt / vite-plugin-media 也一起转,import 路径改成转译产物。
+// The plugin is .ts, transpiled here with typescript to a temp directory before import (same pattern
+// as cards.test); its dependencies vite-plugin-stt / vite-plugin-media are also transpiled together,
+// and import paths are updated to the transpiled output.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +25,8 @@ const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-collect-test-'));
 function compile(srcRel, outName, rewrites = []) {
   let src = fs.readFileSync(path.join(ROOT, srcRel), 'utf8');
   for (const [from, to] of rewrites) src = src.split(from).join(to);
+  // server/i18n.mjs is not copied into the scratch folder: point the import back at the real file
+  src = src.replace(/from (['"])(?:\.\.?\/)+i18n\.mjs\1/g, (_m, q) => `from ${q}${pathToFileURL(path.join(ROOT, 'server', 'i18n.mjs')).href}${q}`);
   const js = ts.transpileModule(src, {
     compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
   }).outputText;
@@ -50,30 +54,33 @@ const collectUrl = compile('server/vite-plugin-collect.ts', 'collect.mjs', [
   ['from "./collect-cookies.mjs"', `from "${cookiesUrl}"`],
   ['from "./collect-qr-login.mjs"', `from "${qrLoginUrl}"`],
   ['from "./http-guard.mjs"', `from "${guardUrl}"`],
-  // 登录那几条路动态 import 浏览器模块;转译产物在临时目录,相对路径找不到,改成绝对的
+  // Login paths dynamically import browser modules; transpiled output is in a temp directory where
+  // relative paths cannot find them, so change to absolute paths
   ['import("./web/browser.mjs")', `import("${pathToFileURL(path.join(ROOT, 'server', 'web', 'browser.mjs')).href}")`],
   ['import("./web/session.mjs")', `import("${pathToFileURL(path.join(ROOT, 'server', 'web', 'session.mjs')).href}")`],
 ]);
 const { saveCookies } = await import(cookiesUrl);
 
-// 假 Python:插件按 -m promptcut_collect <子命令> 调它,它按子命令回放固定 JSONL
+// Mock Python: the plugin invokes it as -m promptcut_collect <subcommand>, and it replays fixed
+// JSONL based on the subcommand
 process.env.PROMPTCUT_PYTHON = path.join(ROOT, 'server', 'test', 'fake-collect.cmd');
-// 项目根用临时目录:buildEnv 会在 <root>/out 下建 pylibs / models
+// Project root uses a temp directory: buildEnv creates pylibs / models under <root>/out
 const FAKE_ROOT = path.join(OUT, 'root');
 fs.mkdirSync(FAKE_ROOT, { recursive: true });
 
-// 下载结果经素材服务的入库接口进内容库(server/media-ingest.mjs):起一台真的素材服务(fs 内容库 + 媒体中间件),
-// 编辑器进程的素材服务地址指向它(asset-client.ts 的 assetServiceOrigin 先看 PROMPTCUT_EDITOR_URL)
+// Download results enter content store via the asset service store API (server/media-ingest.mjs):
+// start a real asset service (fs content store + media middleware); the editor process asset service
+// URL points to it (assetServiceOrigin in asset-client.ts first checks PROMPTCUT_EDITOR_URL)
 const harness = createAssetHarness();
 const assetSvc = await harness.serve({ stores: 'default' });
 process.env.PROMPTCUT_EDITOR_URL = assetSvc.origin;
 after(async () => { await harness.cleanup(); delete process.env.PROMPTCUT_EDITOR_URL; });
-/** fake-collect.cmd 写进 --out-dir 的那份内容(echo 带 CRLF) */
+/** Content written into --out-dir by fake-collect.cmd (echo includes CRLF) */
 const FAKE_BYTES = Buffer.from('fake video bytes\r\n');
 
 const { collectPlugin } = await import(collectUrl);
 
-/** 把插件的中间件拿出来 */
+/** Extract the plugin's middleware */
 function handlerOf() {
   const plugin = collectPlugin();
   let fn;
@@ -81,11 +88,11 @@ function handlerOf() {
     config: { root: FAKE_ROOT },
     middlewares: { use(f) { fn = f; } },
   });
-  assert.ok(fn, '插件没有注册中间件');
+  assert.ok(fn, 'The plugin did not register middleware');
   return fn;
 }
 
-/** 发一个请求,拿回 { status, json } */
+/** Send a request and get back { status, json } */
 function call(fn, method, url, body) {
   const req = Readable.from(body == null ? [] : [Buffer.from(JSON.stringify(body))]);
   req.url = url;
@@ -105,7 +112,7 @@ function call(fn, method, url, body) {
       },
       on() {},
     };
-    fn(req, res, () => reject(new Error('落到了 next(),插件没接这个路径:' + url)));
+    fn(req, res, () => reject(new Error('Fell through to next(), the plugin did not handle this path:' + url)));
   });
 }
 
@@ -115,12 +122,12 @@ async function waitJob(fn, jobId, timeoutMs = 10000) {
     const r = await call(fn, 'GET', `/api/collect/job/${jobId}`);
     assert.equal(r.status, 200);
     if (r.json.job.status !== 'running') return r.json.job;
-    assert.ok(Date.now() - t0 < timeoutMs, '作业迟迟不结束');
+    assert.ok(Date.now() - t0 < timeoutMs, 'The job takes too long to finish');
     await new Promise((r) => setTimeout(r, 100));
   }
 }
 
-test('status:转发 Python 的 status 事件,并带 python: true', async () => {
+test('status: forwards Python\'s status events and includes python: true', async () => {
   const fn = handlerOf();
   const r = await call(fn, 'GET', '/api/collect/status');
   assert.equal(r.status, 200);
@@ -131,7 +138,7 @@ test('status:转发 Python 的 status 事件,并带 python: true', async () => {
   assert.deepEqual(r.json.presets.map((p) => p.name), ['bilibili', 'generic']);
 });
 
-test('probe:缺 url 是 400;正常返回 done 的字段并把 412 重试记进 notes', async () => {
+test('probe: a missing url gives 400; a normal run returns the fields of done and records 412 retries in notes', async () => {
   const fn = handlerOf();
   const bad = await call(fn, 'POST', '/api/collect/probe', {});
   assert.equal(bad.status, 400);
@@ -140,16 +147,17 @@ test('probe:缺 url 是 400;正常返回 done 的字段并把 412 重试记进 n
   const r = await call(fn, 'POST', '/api/collect/probe', { url: 'BV1FAKE00000', site: 'bilibili', quality: 720 });
   assert.equal(r.status, 200);
   assert.equal(r.json.ok, true);
-  assert.equal(r.json.title, 'Fake Video 测试', '中文标题要原样过来,不能变成 \\uXXXX');
+  assert.equal(r.json.title, 'Fake Video 测试', 'Chinese titles must come through unchanged, not turn into \\uXXXX');
   assert.equal(r.json.duration, 12.5);
   assert.deepEqual(r.json.heights, [1080, 720]);
   assert.equal(r.json.parts, null);
-  // notes 里除了 retry 还有一条「未登录」的说明(B 站链接会看登录态),所以不断言条数
-  assert.ok(r.json.notes.some((n) => /412/.test(n)), 'retry 事件要记进 notes:' + JSON.stringify(r.json.notes));
+  // In addition to retry, notes contains a "Not logged in" explanation (Bilibili links check login
+  // state), so do not assert on the item count
+  assert.ok(r.json.notes.some((n) => /412/.test(n)), 'The retry event must be recorded in notes:' + JSON.stringify(r.json.notes));
   assert.equal(r.json.cookiesUsed, false);
 });
 
-test('probe 失败:ok:false 且 error 是 Python 报的那句', async () => {
+test('probe failure: ok:false and error is the sentence Python reported', async () => {
   const fn = handlerOf();
   process.env.PROMPTCUT_FAKE_FAIL = '1';
   try {
@@ -163,13 +171,13 @@ test('probe 失败:ok:false 且 error 是 Python 报的那句', async () => {
   }
 });
 
-test('MI-5 download:立刻回 jobId;轮到 done 时 items 带入库后的 /@media/<hash>、percent 100、notes 有重试记录;素材目录里没有绕过入库的文件', async () => {
+test('MI-5 download: returns a jobId immediately; when polling reaches done, items carry the post-ingest /@media/<hash>, percent 100, and notes have the retry record; the asset catalog has no file that bypassed ingest', async () => {
   const fn = handlerOf();
   const started = await call(fn, 'POST', '/api/collect/download', { url: 'BV1FAKE00000', quality: 720 });
   assert.equal(started.status, 200);
   assert.equal(started.json.ok, true);
   assert.match(started.json.jobId, /^[\w-]{8}$/);
-  assert.equal(started.json.outDir, undefined, '不再回素材目录:下载先落临时目录,再经素材服务入库');
+  assert.equal(started.json.outDir, undefined, 'No longer returns the asset catalog: downloads land in a temp directory first, then are ingested through the asset service');
 
   const job = await waitJob(fn, started.json.jobId);
   assert.equal(job.status, 'done', JSON.stringify(job));
@@ -181,24 +189,24 @@ test('MI-5 download:立刻回 jobId;轮到 done 时 items 带入库后的 /@medi
   const item = job.items[0];
   assert.equal(item.filename, 'Fake Video [BV1FAKE00000].mp4');
   const hash = crypto.createHash('sha256').update(FAKE_BYTES).digest('hex');
-  assert.equal(item.hash, hash, '内容哈希是素材服务入库时算的');
+  assert.equal(item.hash, hash, 'The content hash is computed by the asset service at ingest');
   assert.equal(item.url, `/@media/${hash}`);
-  assert.equal(item.media?.hash, hash, '入库回包原样带给页面');
-  assert.equal(item.path, undefined, '不再给临时文件的磁盘路径');
-  // 字节确实在素材服务的内容库里,经它的接口取得到
+  assert.equal(item.media?.hash, hash, 'The ingest response is passed to the page unchanged');
+  assert.equal(item.path, undefined, 'No longer gives the disk path of the temp file');
+  // Bytes are indeed in the asset service content store, accessible through its API
   const got = await fetch(`${assetSvc.origin}/@media/${hash}`);
   assert.equal(got.status, 200);
   assert.deepEqual(Buffer.from(await got.arrayBuffer()), FAKE_BYTES);
-  // 编辑器自己的素材目录里没有绕过入库落下的文件
+  // No files dropped by bypassing storage into the library exist in the editor's own asset catalog
   const own = path.join(FAKE_ROOT, 'out', 'media');
-  assert.deepEqual(fs.existsSync(own) ? fs.readdirSync(own) : [], [], '素材目录里不该出现下载直接落下的文件');
+  assert.deepEqual(fs.existsSync(own) ? fs.readdirSync(own) : [], [], 'The asset catalog must not contain files written directly by the download');
   assert.equal(item.vcodec, 'h264');
   assert.equal(item.width, 1920);
-  assert.ok(job.notes.some((n) => /412/.test(n)), '412 重试要记进 notes:' + JSON.stringify(job.notes));
+  assert.ok(job.notes.some((n) => /412/.test(n)), 'The 412 retry must be recorded in notes:' + JSON.stringify(job.notes));
   assert.ok(job.finishedAt >= job.startedAt);
 });
 
-test('download:done 事件之后进程还没退,轮询看到的仍是 running;报 done 时一定带 finishedAt', async () => {
+test('download: if the process has not yet exited after the done event, polling still sees running; when done is reported, finishedAt is always included', async () => {
   const fn = handlerOf();
   process.env.PROMPTCUT_FAKE_LINGER = '1';
   try {
@@ -212,7 +220,7 @@ test('download:done 事件之后进程还没退,轮询看到的仍是 running;�
   }
 });
 
-test('MI-6 download:素材服务不可达时作业报错(写明素材服务地址),素材目录与临时目录都不留文件', async () => {
+test('MI-6 download: when the asset service is unreachable the job reports an error (stating the asset service address), and neither the asset catalog nor the temp directory keeps any file', async () => {
   const fn = handlerOf();
   const gone = await new Promise((resolve) => {
     const srv = http.createServer(() => {});
@@ -225,7 +233,7 @@ test('MI-6 download:素材服务不可达时作业报错(写明素材服务地�
     const r = await call(fn, 'POST', '/api/collect/download', { url: 'BV1FAKE00030' });
     const job = await waitJob(fn, r.json.jobId);
     assert.equal(job.status, 'error', JSON.stringify(job));
-    assert.ok(job.message.includes(`素材服务不可达(${gone})`), job.message);
+    assert.ok(job.message.includes(`Asset service unreachable (${gone})`), job.message);
     assert.equal(job.items.length, 0);
   } finally {
     Object.assign(process.env, { PROMPTCUT_EDITOR_URL: saved.url, TEMP: saved.TEMP, TMP: saved.TMP });
@@ -233,10 +241,10 @@ test('MI-6 download:素材服务不可达时作业报错(写明素材服务地�
   const own = path.join(FAKE_ROOT, 'out', 'media');
   assert.deepEqual(fs.existsSync(own) ? fs.readdirSync(own) : [], []);
   for (let i = 0; i < 50 && fs.readdirSync(privateTmp).some((n) => n.startsWith('pc-collect-')); i++) await new Promise((r) => setTimeout(r, 40));
-  assert.deepEqual(fs.readdirSync(privateTmp).filter((n) => n.startsWith('pc-collect-')), [], '作业的临时目录要删掉');
+  assert.deepEqual(fs.readdirSync(privateTmp).filter((n) => n.startsWith('pc-collect-')), [], 'The job\'s temp directory must be deleted');
 });
 
-test('download:清晰度不在白名单里就退回 1080;site 不认识退回 auto', async () => {
+test('download: a resolution not on the whitelist falls back to 1080; an unknown site falls back to auto', async () => {
   const fn = handlerOf();
   const r = await call(fn, 'POST', '/api/collect/download', { url: 'BV1FAKE00001', quality: 999, site: 'evil' });
   const job = await waitJob(fn, r.json.jobId);
@@ -244,7 +252,7 @@ test('download:清晰度不在白名单里就退回 1080;site 不认识退回 au
   assert.equal(job.site, 'auto');
 });
 
-test('download 失败:status error,message 是 Python 的 error 事件', async () => {
+test('download failure: status error, message comes from Python\'s error event', async () => {
   const fn = handlerOf();
   process.env.PROMPTCUT_FAKE_FAIL = '1';
   try {
@@ -258,7 +266,7 @@ test('download 失败:status error,message 是 Python 的 error 事件', async (
   }
 });
 
-test('作业表:不存在的 jobId 是 404;jobs 列表新的在前;DELETE 已完成的作业不改状态', async () => {
+test('Job table: a nonexistent jobId gives 404; the jobs list has the newest first; DELETE on a finished job does not change its status', async () => {
   const fn = handlerOf();
   const miss = await call(fn, 'GET', '/api/collect/job/nope0000');
   assert.equal(miss.status, 404);
@@ -271,10 +279,10 @@ test('作业表:不存在的 jobId 是 404;jobs 列表新的在前;DELETE 已完
 
   const del = await call(fn, 'DELETE', `/api/collect/job/${a.json.jobId}`);
   assert.equal(del.status, 200);
-  assert.equal(del.json.job.status, 'done', '已经跑完的作业取消不该变成 error');
+  assert.equal(del.json.job.status, 'done', 'Cancelling a finished job must not turn it into error');
 });
 
-test('缺 url / 坏 JSON / 未知路径 各有明确的错误', async () => {
+test('Missing url / bad JSON / unknown path each give a clear error', async () => {
   const fn = handlerOf();
   const noUrl = await call(fn, 'POST', '/api/collect/download', {});
   assert.equal(noUrl.status, 400);
@@ -291,25 +299,25 @@ test('缺 url / 坏 JSON / 未知路径 各有明确的错误', async () => {
   assert.equal(unknown.status, 404);
 });
 
-test('登录态:status 里带各站 cookies;没存盘时下载不带 cookie 并在 notes 里说明', async () => {
+test('Login state: status carries cookies for each site; when nothing is saved, the download carries no cookie and says so in notes', async () => {
   const fn = handlerOf();
   const st = await call(fn, 'GET', '/api/collect/status');
   assert.equal(st.json.cookies.bilibili.loggedIn, false);
-  assert.equal(st.json.cookies.bilibili.name, '哔哩哔哩');
+  assert.equal(st.json.cookies.bilibili.name, 'Bilibili');
 
   const r = await call(fn, 'POST', '/api/collect/download', { url: 'BV1FAKE00010' });
   const job = await waitJob(fn, r.json.jobId);
   assert.equal(job.cookiesUsed, false);
-  assert.ok(job.notes.some((n) => /未登录/.test(n)), JSON.stringify(job.notes));
+  assert.ok(job.notes.some((n) => /Not logged in/.test(n)), JSON.stringify(job.notes));
 
-  // 不是有登录支持的站:一个字都不提
+  // Not a site with login support: do not mention a word
   const y = await call(fn, 'POST', '/api/collect/download', { url: 'https://www.youtube.com/watch?v=x' });
   const yj = await waitJob(fn, y.json.jobId);
   assert.equal(yj.cookiesUsed, false);
-  assert.ok(!yj.notes.some((n) => /登录/.test(n)));
+  assert.ok(!yj.notes.some((n) => /login|logged in/.test(n)));
 });
 
-test('登录态:存盘之后 B 站链接自动带 cookie,cookies 接口能查能删', async () => {
+test('Login state: after saving, Bilibili links automatically carry the cookie, the cookies endpoint can query and delete', async () => {
   const fn = handlerOf();
   const soon = Math.floor(Date.now() / 1000) + 86400;
   const mk = (name, value) => ({ name, value, domain: '.bilibili.com', path: '/', expires: soon, secure: false });
@@ -327,7 +335,7 @@ test('登录态:存盘之后 B 站链接自动带 cookie,cookies 接口能查能
     const probe = await call(fn, 'POST', '/api/collect/probe', { url: 'BV1FAKE00011' });
     assert.equal(probe.json.cookiesUsed, true);
 
-    // 已登录时 login 不弹窗
+    // When already logged in, login does not pop up a window
     const login = await call(fn, 'POST', '/api/collect/login', { site: 'bilibili' });
     assert.equal(login.json.alreadyLoggedIn, true);
     assert.equal(login.json.userId, '42');
@@ -342,7 +350,7 @@ test('登录态:存盘之后 B 站链接自动带 cookie,cookies 接口能查能
   }
 });
 
-test('扫码登录路由:start 给 key 和 svgUrl,svg 是图,poll 转发状态;登录成功后 login/check 直接从存盘读', async () => {
+test('QR login route: start gives key and svgUrl, svg is an image, poll forwards the status; after a successful login, login/check reads directly from disk', async () => {
   const fn = handlerOf();
   const KEY = 'aa6b16028dda91ae6543bed069a249ea';
   const soon = new Date(Date.now() + 30 * 86400 * 1000).toUTCString();
@@ -358,7 +366,7 @@ test('扫码登录路由:start 给 key 和 svgUrl,svg 是图,poll 转发状态;�
     if (polls >= 2) {
       for (const l of [`SESSDATA=s; Domain=bilibili.com; Path=/; Expires=${soon}`, `bili_jct=j; Domain=bilibili.com; Path=/; Expires=${soon}`, `DedeUserID=7; Domain=bilibili.com; Path=/; Expires=${soon}`]) headers.append('set-cookie', l);
     }
-    return { ok: true, status: 200, headers, json: async () => ({ code: 0, data: { code: polls >= 2 ? 0 : 86101, message: polls >= 2 ? '' : '未扫码', url: '' } }) };
+    return { ok: true, status: 200, headers, json: async () => ({ code: 0, data: { code: polls >= 2 ? 0 : 86101, message: polls >= 2 ? '' : 'Not scanned', url: '' } }) };
   };
   try {
     const s = await call(fn, 'POST', '/api/collect/qr/start', { site: 'bilibili' });
@@ -380,12 +388,12 @@ test('扫码登录路由:start 给 key 和 svgUrl,svg 是图,poll 转发状态;�
     assert.equal(p2.json.userId, '7');
     assert.ok(fs.existsSync(p2.json.path));
 
-    // 登录态已经在盘上:check 不碰浏览器,直接回 saved
+    // Login state is already on disk: check returns saved directly without touching the browser
     const chk = await call(fn, 'POST', '/api/collect/login/check', { site: 'bilibili' });
     assert.equal(chk.json.loggedIn, true);
     assert.equal(chk.json.source, 'saved');
     assert.equal(chk.json.userId, '7');
-    // status 里也看得到
+    // Also visible in status
     const st = await call(fn, 'GET', '/api/collect/status');
     assert.equal(st.json.cookies.bilibili.loggedIn, true);
     assert.equal((await call(fn, 'GET', '/api/collect/qr/poll')).status, 400);
@@ -395,7 +403,7 @@ test('扫码登录路由:start 给 key 和 svgUrl,svg 是图,poll 转发状态;�
   }
 });
 
-test('login/check:没存盘也没开浏览器时,回未登录且不拉起浏览器', async () => {
+test('login/check: with nothing saved and no browser open, returns not logged in and does not launch a browser', async () => {
   const fn = handlerOf();
   const r = await call(fn, 'POST', '/api/collect/login/check', { site: 'bilibili' });
   assert.equal(r.json.ok, true);
@@ -404,12 +412,12 @@ test('login/check:没存盘也没开浏览器时,回未登录且不拉起浏览�
   assert.match(r.json.hint, /collect_login/);
 });
 
-test('search:缺 query 是 400;正常回 results,单条失败的带 error 不拖累整批;limit 夹到 1~10', async () => {
+test('search: a missing query gives 400; normally returns results, a single failing item carries error without dragging down the batch; limit is clamped to 1~10', async () => {
   const fn = handlerOf();
   const bad = await call(fn, 'POST', '/api/collect/search', {});
   assert.equal(bad.status, 400);
 
-  const r = await call(fn, 'POST', '/api/collect/search', { query: '视频剪辑教程', limit: 99 });
+  const r = await call(fn, 'POST', '/api/collect/search', { query: 'video editing tutorial', limit: 99 });
   assert.equal(r.status, 200);
   assert.equal(r.json.ok, true);
   assert.equal(r.json.site, 'bilibili');
@@ -417,13 +425,13 @@ test('search:缺 query 是 400;正常回 results,单条失败的带 error 不拖
   assert.equal(r.json.results[0].title, 'Fake Search Hit');
   assert.equal(r.json.results[0].url, 'https://www.bilibili.com/video/BV1FAKE00000');
   assert.equal(r.json.results[0].view_count, 1234);
-  assert.match(r.json.results[1].error, /404/, '单条探测失败只标 error');
+  assert.match(r.json.results[1].error, /404/, 'A single probe failure is marked as error only');
   assert.equal(r.json.cookiesUsed, false);
 });
 
-test('cookies 参数只认 <dataDir>/cookies/ 下的文件:别处的路径被忽略,不会把任意本地文件发给外站', async () => {
+test('The cookies parameter only accepts files under <dataDir>/cookies/: paths elsewhere are ignored, so no arbitrary local file is sent to an external site', async () => {
   const fn = handlerOf();
-  // 造一个在范围外的真实文件,和一个在范围内的
+  // Create a real file outside the scope and one inside the scope
   const outside = path.join(OUT, 'secret.txt');
   fs.writeFileSync(outside, 'not a cookie');
   const insideDir = path.join(FAKE_ROOT, 'out', 'cookies');
@@ -433,13 +441,13 @@ test('cookies 参数只认 <dataDir>/cookies/ 下的文件:别处的路径被忽
   try {
     const a = await call(fn, 'POST', '/api/collect/download', { url: 'BV1FAKE00020', cookies: outside });
     const ja = await waitJob(fn, a.json.jobId);
-    assert.equal(ja.cookiesUsed, false, '范围外的路径必须被忽略');
-    assert.ok(!ja.notes.some((n) => n.includes('secret.txt')), '连路径都不该出现在 notes 里');
+    assert.equal(ja.cookiesUsed, false, 'Paths outside the allowed scope must be ignored');
+    assert.ok(!ja.notes.some((n) => n.includes('secret.txt')), 'Not even the path should appear in notes');
 
     const b = await call(fn, 'POST', '/api/collect/download', { url: 'BV1FAKE00021', cookies: inside });
     const jb = await waitJob(fn, b.json.jobId);
-    assert.equal(jb.cookiesUsed, true, '范围内的显式路径照用');
-    // 目录穿越也不行
+    assert.equal(jb.cookiesUsed, true, 'An explicit path within the allowed scope is used as is');
+    // Directory traversal is not allowed either
     const c = await call(fn, 'POST', '/api/collect/download', { url: 'BV1FAKE00022', cookies: path.join(insideDir, '..', '..', 'x.txt') });
     const jc = await waitJob(fn, c.json.jobId);
     assert.equal(jc.cookiesUsed, false);
@@ -449,7 +457,7 @@ test('cookies 参数只认 <dataDir>/cookies/ 下的文件:别处的路径被忽
   }
 });
 
-test('不是 /api/collect 的路径原样放行给 next()', async () => {
+test('Paths other than /api/collect are passed through to next() unchanged', async () => {
   const fn = handlerOf();
   let passed = false;
   await fn({ url: '/api/shots/status', method: 'GET', headers: {} }, {}, () => { passed = true; });

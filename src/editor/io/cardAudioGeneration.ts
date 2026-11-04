@@ -10,7 +10,7 @@ import { isViewOnly } from "./viewOnly";
 import { decideClipSound } from "./onlineSoundJudge";
 import { tr } from "../../i18n/index.ts";
 
-/** 与独立音效一样限制总任务数；任意用户卡仍只在一个小块里求值，不同时攒多份 PCM。 */
+/** Limit the total number of tasks just like standalone sound effects; any user card is still evaluated in a single small chunk, never holding several PCM copies at once. */
 export const CARD_AUDIO_JOB_LIMIT = 4;
 const pending = new Map<string, AbortController>();
 let active = false;
@@ -35,9 +35,9 @@ export function cancelCardAudioGeneration(clipId: string): boolean {
 }
 
 /**
- * Agent 等待实际入库和提交完成；取消/换项目/新请求不会留下半个片段或覆盖新内容。
- * `cutId`:片段住在哪条剪辑里(缺省激活的那条)。导出前生成被剪辑段引用的剪辑里的有声卡时给(`exportSounds.ts`):
- * 身份、合成都按那条剪辑的序列算(`cutViewProject`),和用户切过去再生成是同一个结果,结果写回那条剪辑。
+ * The Agent waits for the actual store and commit to finish; cancel / switching project / a new request never leaves half a clip or overwrites new content.
+ * `cutId`: which cut the clip lives in (defaults to the active one). Given when generating, before export, the audible cards in a cut referenced by a cut segment (`exportSounds.ts`):
+ * identity and synthesis are both computed over that cut's tracks (`cutViewProject`), giving the same result as the user switching over and generating, and the result is written back to that cut.
  */
 export async function generateCardAudio(clipId: string, options: { signal?: AbortSignal; force?: boolean; cutId?: string; onProgress?: (done: number, total: number) => void } = {}) {
   if (isViewOnly()) throw new Error(tr("Read-only pages cannot generate card audio"));
@@ -65,13 +65,13 @@ export async function generateCardAudio(clipId: string, options: { signal?: Abor
   try {
     if (!options.force) {
       let reusable;
-      try { reusable = resolveCardAudioRendition(p, hit.clip, hooks); } catch { /* 缺失或过期时重新生成 */ }
+      try { reusable = resolveCardAudioRendition(p, hit.clip, hooks); } catch { /* Regenerate when missing or stale */ }
       if (reusable && await hasGeneratedAudio(reusable.media.hash!, controller.signal)) {
         check();
         return { ok: true as const, clipId, mediaId: reusable.media.id, reused: true };
       }
     }
-    // 在线页面:这台设备跑得了、又判轻的才在浏览器里合成(`onlineSoundJudge.ts`;桌面运行环境恒合成)
+    // Online page: only synthesize in the browser when this device can run it and it is judged light (`onlineSoundJudge.ts`; the desktop app always synthesizes)
     const decision = await decideClipSound(frozen, clip, controller.signal);
     check();
     if (!decision.synth) throw new Error(decision.message);

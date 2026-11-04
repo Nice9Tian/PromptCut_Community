@@ -1,7 +1,11 @@
-/** 镜头缩略图读口纯移动；识别/Python/渲染依赖不进入素材角色。 */
+/**
+ * Shot thumbnail read endpoint is a pure move; detection/Python/render dependencies do not enter
+ * the asset role.
+ */
 import fs from 'node:fs/promises';
 import path from 'node:path';
-// 原dataDir(root)唯一行为，保留旧LAN本地目录兼容。
+import { tr } from '../i18n.mjs';
+// Sole behavior of original dataDir(root), preserving compatibility with legacy LAN local directories.
 const dataDir = root => process.env.PROMPTCUT_DATA_DIR ?? path.join(root, 'out');
 const sendJson = (res, code, data) => { if (res.headersSent) return; res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(data)); };
 
@@ -11,7 +15,10 @@ export function shotsDir(root        )         {
   return path.join(dataDir(root), "shots");
 }
 
-/** 云端缩略图读口只按已核principal选项目目录；perception owner生成thumb必须使用同一scoped root。 */
+/**
+ * Cloud thumbnail read endpoint selects project directory only by verified principal; perception
+ * owner generating thumb must use the same scoped root.
+ */
 export function shotsThumbMiddleware(root        , { projectStores, projectAccess }                                               = {}) {
   if (!!projectStores !== !!projectAccess) throw new TypeError("projectStores and projectAccess required together");
   return async (req                         , res                , next            ) => {
@@ -40,7 +47,7 @@ export function shotsThumbMiddleware(root        , { projectStores, projectAcces
       res.once("finish", () => lease?.release());
       stream.once("error", () => res.destroy());
       stream.pipe(res);
-    } catch (error     ) { if (!res.destroyed) sendJson(res, error?.status ?? 404, { ok: false, error: error?.code ?? "缩略图不存在" }); }
+    } catch (error     ) { if (!res.destroyed) sendJson(res, error?.status ?? 404, { ok: false, error: error?.code ?? tr("Thumbnail not found") }); }
     finally { await handle?.close().catch(() => {}); finish?.(); if (res.writableFinished || !res.headersSent) lease?.release(); }
   };
 }

@@ -1,11 +1,14 @@
 /**
- * 占位符的动画豁免(`pinAnimations.ts`)。跑:node --test src/render/pinAnimationsPlaceholder.test.mjs
+ * Animation exemption for placeholders (`pinAnimations.ts`).
+ * Run: node --test src/render/pinAnimationsPlaceholder.test.mjs
  *
- * 占位组件的 CSS 动画(名字以 `pc-ph-` 开头,contract 的 `PLACEHOLDER_ANIMATION_PREFIX`)负责
- * 「来不及满 120 ms 才显示」和沙漏转动,它们按真实时间走;舞台的钉时间(整页 `sync`、子树 `syncIn`)
- * 要是把它们也钉住,暂停态虚拟时钟不动,占位符就永远停在不可见的第 0 毫秒。
+ * CSS animations of placeholder components (names starting with `pc-ph-`, contract's
+ * `PLACEHOLDER_ANIMATION_PREFIX`) handle "display only after 120 ms delay" and hourglass rotation,
+ * which run in real time; if stage time pinning (full-page `sync`, subtree `syncIn`) also pins them,
+ * the virtual clock does not advance in paused state, and placeholders stay at invisible 0 ms forever.
  *
- * 对照:名字只是**像**(不以前缀开头)的卡片动画照样被钉 —— 豁免只认 `isPlaceholderAnimation`。
+ * Contrast: card animations whose names merely **look similar** (not starting with the prefix)
+ * are still pinned: exemption only recognizes `isPlaceholderAnimation`.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -25,19 +28,19 @@ function anim(props) {
   };
 }
 
-test("整页 sync 与子树 syncIn 都放过占位符自己的 CSS 动画", () => {
+test("both whole-page sync and subtree syncIn leave the placeholder's own CSS animations alone", () => {
   const ph = anim({ animationName: `${PLACEHOLDER_ANIMATION_PREFIX}appear` });
   const phWaapi = anim({ id: `${PLACEHOLDER_ANIMATION_PREFIX}spin` });
   const p = createAnimationPinner({ getAnimations: () => [ph, phWaapi] });
   p.sync(500);
   p.syncIn({ getAnimations: () => [ph, phWaapi] }, 700);
   for (const a of [ph, phWaapi]) {
-    assert.equal(a.playState, "running", "按真实时间走,不被暂停");
-    assert.equal(a.currentTime, null, "不被拨时间");
+    assert.equal(a.playState, "running", "runs on real time, not paused");
+    assert.equal(a.currentTime, null, "time is not seeked");
   }
 });
 
-test("对照:名字不以前缀开头的卡片动画(哪怕含 ph)照样被钉", () => {
+test("control: card animations whose name does not start with the prefix (even if it contains ph) are still pinned", () => {
   const card = [anim({ animationName: "ph-appear" }), anim({ animationName: "card-pc-ph-x" }), anim({ id: "fade" }), anim({})];
   const p = createAnimationPinner({ getAnimations: () => card });
   p.sync(500);

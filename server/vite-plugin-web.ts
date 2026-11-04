@@ -1,23 +1,26 @@
 /**
- * Agent 的网页操作:`/api/web/*`。
+ * Agent web operations: `/api/web/*`.
  *
- * 真正干活的在 server/web/ 四个模块里（browser 起实例、view 出图和清单、hit 把坐标
- * 翻成 uid、session 是动作层），这里只做三件事：把 HTTP 请求分发过去、保证同一时刻
- * 只有一个动作在跑、把浏览器的懒启动收在一个地方。
+ * The real work is done in four modules under server/web/ (browser spawns instances, view generates
+ * images and manifests, hit translates coordinates into uids, session is action layer); this only does
+ * three things: dispatch HTTP requests there, ensure only one action runs at a time, and consolidate
+ * lazy browser launching in one place.
  *
- * ## 为什么浏览器是懒启动的
+ * ## Why the browser is lazily launched
  *
- * 起一个有头 Chrome 要几百毫秒还占一份内存，而大多数会话根本不上网。所以第一次
- * web_open 才起，`closeBrowser()` 之后又回到没有的状态。用户手动关掉窗口也不会留下
- * 一个死实例——getBrowser 每次会看 `browser.connected`。
+ * Launching a headed Chrome takes several hundred milliseconds and consumes memory, while most
+ * sessions never access web. Therefore it is only launched on first web_open, and returns to
+ * unlaunched state after `closeBrowser()`. Users manually closing window also will not leave a dead
+ * instance: getBrowser checks `browser.connected` every time.
  *
- * ## executablePath 为什么必须显式给
+ * ## Why executablePath must be explicitly provided
  *
- * `PUPPETEER_CACHE_DIR` 只有 Tauri 正式包里才设（desktop/src-tauri/src/lib.rs:338）。
- * dev 下 puppeteer 会去用开发机自己的 `~/.cache/puppeteer` —— 实测确实如此，两边版本
- * 碰巧都是 152.0.7977.75 所以一直没出事。一旦不一样，就是「跑起来的不是随包那份」
- * 这种极难查的问题，所以这里按 VERSIONS.json 里的版本号算出确切路径传进去，
- * 算不出来才退回让 puppeteer 自己找。
+ * `PUPPETEER_CACHE_DIR` is only set in release Tauri packages (desktop/src-tauri/src/lib.rs:338).
+ * Under dev, puppeteer uses `~/.cache/puppeteer` on development machine itself: confirmed in testing,
+ * both versions happened to be 152.0.7977.75 so no issues arose. Once they differ, extremely elusive
+ * issues like "the running copy is not the bundled one" occur, so exact path is calculated from version
+ * number in VERSIONS.json and passed in here, falling back to letting puppeteer locate it only when
+ * calculation fails.
  */
 import type { Plugin, ViteDevServer } from "vite";
 import type { ServerResponse } from "http";
@@ -34,15 +37,16 @@ function sendJson(res: ServerResponse, code: number, data: unknown): void {
 }
 
 /**
- * 找随包那份 Chrome。找不到返回 undefined —— 那时候 puppeteer 会用它自己的缓存，
- * dev 下这是对的，正式包里则说明 runtime/chrome 没组装好，让它自己报错更清楚。
+ * Find bundled Chrome copy. Returns undefined if not found: at that point puppeteer uses its own
+ * cache, which is correct under dev, while in release packages it indicates runtime/chrome was not
+ * assembled properly, letting it throw its own clearer error.
  */
 export function findBundledChrome(root: string): string | undefined {
   const cacheDir = process.env.PUPPETEER_CACHE_DIR
     ?? path.join(root, "desktop", "src-tauri", "runtime", "chrome");
   const chromeRoot = path.join(cacheDir, "chrome");
   if (!existsSync(chromeRoot)) return undefined;
-  // 目录名形如 win64-152.0.7977.75，正常只有一个；有多个就取字典序最大的那个
+  // Directory name is formatted like win64-152.0.7977.75, normally only one; if multiple exist, pick the lexicographically largest one
   const builds = readdirSync(chromeRoot).filter((d) => d.startsWith("win")).sort();
   const build = builds[builds.length - 1];
   if (!build) return undefined;
@@ -56,13 +60,13 @@ export function webPlugin(): Plugin {
     configureServer(server: ViteDevServer) {
       const root = server.config.root;
 
-      // 动态 import：这几个模块拉起 puppeteer，不上网的会话不该为它们付启动成本
+      // Dynamic import: these modules launch puppeteer; sessions that do not access web should not pay their startup cost
       const mods = async () => ({
         browser: await import("./web/browser.mjs"),
         session: await import("./web/session.mjs"),
       });
 
-      /** 拿到浏览器实例。没起过就起 */
+      /** Get browser instance. Launch if not already launched */
       async function inst() {
         const { browser } = await mods();
         return browser.getBrowser({
@@ -74,19 +78,19 @@ export function webPlugin(): Plugin {
       server.middlewares.use(async (req: Connect.IncomingMessage, res, next) => {
         if (!req.url?.startsWith("/api/web")) return next();
         const url = req.url.split("?")[0];
-        if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "只支持 POST" });
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "Only POST is supported" });
 
         let body: Record<string, unknown> = {};
         try {
           const raw = await readBody(req);
           if (raw.length) body = JSON.parse(raw.toString("utf-8"));
         } catch {
-          return sendJson(res, 400, { ok: false, error: "请求体不是合法 JSON" });
+          return sendJson(res, 400, { ok: false, error: "Request body is not valid JSON" });
         }
 
         const { session } = await mods();
-        // 所有动作串行：共用一个页，并发点击没有意义，而且这台机器上并发浏览器
-        // 实例多了会 0xC0000142（见 vite-plugin-vision.ts 那条注释）
+        // All actions are serialized: sharing a single page, concurrent clicks make no sense, and too many
+        // concurrent browser instances on this machine will cause 0xC0000142 (see comment in vite-plugin-vision.ts)
         return session.enqueue(async () => {
           try {
             if (url === "/api/web/close") {
@@ -98,7 +102,7 @@ export function webPlugin(): Plugin {
             const it = await inst();
 
             if (url === "/api/web/open") {
-              if (!body.url) return sendJson(res, 400, { ok: false, error: "要给 url" });
+              if (!body.url) return sendJson(res, 400, { ok: false, error: "url is required" });
               return sendJson(res, 200, await session.open(it.page, String(body.url)));
             }
             if (url === "/api/web/view")   return sendJson(res, 200, await session.view(it.page));
@@ -108,7 +112,7 @@ export function webPlugin(): Plugin {
             if (url === "/api/web/read")   return sendJson(res, 200, await session.read(it.page, body));
             if (url === "/api/web/handoff") return sendJson(res, 200, await session.handoff(it, body));
 
-            return sendJson(res, 404, { ok: false, error: `没有这个接口:${url}` });
+            return sendJson(res, 404, { ok: false, error: `No such endpoint: ${url}` });
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             return sendJson(res, 200, { ok: false, error: msg });

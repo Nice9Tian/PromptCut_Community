@@ -1,16 +1,22 @@
 /**
- * 桌面 APP 会话在 AI 栏里的分组(计划 `docs/plan/agent-workflow-plan.md` A4;语义 `user-workflow.md`「Agent 接入方式」
- * 「进度可见」):打开编辑界面时,每个桌面 APP 会话单独显示,标明厂商和正在进行的操作;它用 `report_progress` 交的
- * 进度条目和 AI 栏里 Agent 的进度条目显示方式相同。
+ * Desktop app session grouping in the AI panel (plan `docs/plan/agent-workflow-plan.md` A4; semantics
+ * `user-workflow.md` "Agent connection type" "Progress visibility"): when the editor is opened, each
+ * desktop app session is displayed individually, indicating the vendor and ongoing operation; progress
+ * entries submitted by it via `report_progress` are displayed in the same manner as Agent progress
+ * entries in the AI panel.
  *
- * 桌面 APP 的文字输出本软件拿不到,这里只记工具调用:谁(会话身份、厂商)、在跑什么、跑过什么、交了哪些进度报告。
- * 编辑器进程(`server/vite-plugin-ai.ts`)在每次桌面会话的工具调用前后调 `begin` / `end`,变了就把整份快照经
- * SSE(`agent.desktop`)推给页面;页面刚连上时 `GET /api/agent/desktop` 取一次。
+ * Text output from desktop apps cannot be obtained by this software; only tool calls are recorded
+ * here: who (session identity, vendor), what is running, what has run, and which progress reports
+ * were submitted. The editor process (`server/vite-plugin-ai.ts`) calls `begin` / `end` before and
+ * after each tool call in a desktop session, and pushes the entire snapshot to the page via SSE
+ * (`agent.desktop`) on changes; the page fetches once via `GET /api/agent/desktop` upon connecting.
  *
- * 数字〔裁〕:每个会话留最近 20 次调用、最近 30 份进度报告;最多记 16 个会话,超了丢最久没动的;
- * 2 小时没动静的会话不再显示。只在内存里,编辑器重启就清空(桌面会话下次调用时重新出现)。
+ * Numbers [ruling]: each session retains the latest 20 calls and latest 30 progress reports; up to 16
+ * sessions are tracked, discarding the least recently active when exceeded; sessions inactive for
+ * 2 hours are no longer displayed. In-memory only, cleared when editor restarts (desktop sessions
+ * reappear upon their next call).
  *
- * 不依赖 vite;测试直接调。
+ * Does not depend on vite; tests call directly.
  */
 import { validateProgressReport } from '../progress-report.mjs';
 
@@ -23,10 +29,10 @@ export const DESKTOP_ACTIVITY_LIMITS = Object.freeze({
 
 const REPORT_TOOL = 'report_progress';
 
-/** 调用结果里的一句话错误(拒绝、失败) */
+/** One-line error in call results (rejection, failure) */
 function errorText(out) {
   if (!out || typeof out !== 'object') return null;
-  if (out.ok === false) return String(out.error || out.message || '失败').slice(0, 300);
+  if (out.ok === false) return String(out.error || out.message || 'failed').slice(0, 300);
   return null;
 }
 
@@ -35,7 +41,7 @@ function errorText(out) {
  */
 export function createDesktopActivity({ now = () => Date.now(), onChange = () => {}, limits: limitsIn = {} } = {}) {
   const L = { ...DESKTOP_ACTIVITY_LIMITS, ...limitsIn };
-  /** 会话 key → 记录 */
+  /** Session key → record */
   const sessions = new Map();
   let seq = 0;
 
@@ -50,7 +56,7 @@ export function createDesktopActivity({ now = () => Date.now(), onChange = () =>
         firstSeen: now(),
         lastSeen: now(),
         calls: 0,
-        /** 正在跑的调用:callSeq → { tool, since } */
+        /** Running calls: callSeq → { tool, since } */
         running: new Map(),
         recent: [],
         reports: [],
@@ -60,7 +66,7 @@ export function createDesktopActivity({ now = () => Date.now(), onChange = () =>
     if (typeof info.label === 'string' && info.label) e.label = info.label.slice(0, 64);
     if (info.client && typeof info.client === 'object') e.client = { name: String(info.client.name || '').slice(0, 64), version: String(info.client.version || '').slice(0, 32) };
     e.lastSeen = now();
-    // 挪到最后:Map 的顺序就是「最近动过」的顺序,超了从头丢
+    // Move to the end: Map order is the "most recently active" order, dropping from head when exceeded
     sessions.delete(key);
     sessions.set(key, e);
     while (sessions.size > L.sessions) sessions.delete(sessions.keys().next().value);
@@ -69,8 +75,8 @@ export function createDesktopActivity({ now = () => Date.now(), onChange = () =>
 
   return {
     /**
-     * 一次调用开始。回一个句柄交给 `end`。
-     * @param {string} key 会话身份(`desk-…`)
+     * A call begins. Returns a handle to pass to `end`.
+     * @param {string} key Session identity (`desk-…`)
      * @param {{ vendor?: string, label?: string, client?: object }} info
      * @param {string} tool
      * @param {unknown} args
@@ -80,7 +86,7 @@ export function createDesktopActivity({ now = () => Date.now(), onChange = () =>
       const id = ++seq;
       e.calls += 1;
       e.running.set(id, { tool: String(tool).slice(0, 64), since: now() });
-      // 进度报告不等结果:参数校验过就算交上来了(和 AI 栏一样读调用参数;服务端拒收的这里也不认)
+      // Progress reports do not wait: counted as submitted once validated (reads call args like AI panel; rejected by server is not accepted here)
       if (tool === REPORT_TOOL) {
         const checked = validateProgressReport(args);
         if (checked.ok) {
@@ -92,7 +98,7 @@ export function createDesktopActivity({ now = () => Date.now(), onChange = () =>
       return { key, id };
     },
 
-    /** 一次调用结束。`out` 是工具结果(`{ ok:false, error }` 算失败),`err` 是抛出来的异常 */
+    /** A call ends. `out` is the tool result (`{ ok:false, error }` counts as failure), `err` is the thrown exception */
     end(handle, out, err) {
       const e = handle ? sessions.get(handle.key) : null;
       if (!e) return;
@@ -105,7 +111,7 @@ export function createDesktopActivity({ now = () => Date.now(), onChange = () =>
       onChange();
     },
 
-    /** 给页面的整份快照:最近动过的在前;太久没动静的不给 */
+    /** Full snapshot for the page: most recently active first; omitted if inactive for too long */
     snapshot() {
       const t = now();
       return [...sessions.values()]

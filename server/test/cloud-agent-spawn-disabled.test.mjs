@@ -11,10 +11,10 @@ const hold = () => script([{ sleepMs: 20_000 }, { say: 'done' }]);
 test('hosted spawn_agent is hidden and consistently rejected without page or run side effects', async (t) => {
   assert.equal(CLOUD_OPEN_TOOLS.has('spawn_agent'), false);
   assert.deepEqual(checkCloudTool('spawn_agent'), {
-    ok: false, cloudUnavailable: true, error: '云端暂不支持开子 Agent',
+    ok: false, cloudUnavailable: true, error: 'The cloud does not support spawning sub-Agents yet',
   });
   assert.equal(CLOUD_TOOL_PLAN.spawn_agent.disabled, true);
-  assert.ok(CLOUD_SYSTEM_NOTE.includes('云端暂不支持开子 Agent'));
+  assert.ok(CLOUD_SYSTEM_NOTE.includes('The cloud does not support spawning sub-Agents yet'));
   const offered = await buildTools({ callTool: async () => [], workspaceDir: null, only: CLOUD_OPEN_TOOLS, localTools: false });
   assert.equal(offered.some(({ name }) => name === 'spawn_agent'), false);
 
@@ -31,7 +31,7 @@ test('hosted spawn_agent is hidden and consistently rejected without page or run
       : null;
     const instance = kit.service._instance(alice);
     assert.deepEqual(await instance.callTool('spawn_agent', { role: 'editor', task: 'x' }, `c-${conversationId}`), {
-      ok: false, cloudUnavailable: true, error: '云端暂不支持开子 Agent',
+      ok: false, cloudUnavailable: true, error: 'The cloud does not support spawning sub-Agents yet',
     });
     assert.deepEqual(kit.service.conversations(alice).map(({ id }) => id), conversationsBefore, 'rejection creates no hosted conversation');
     assert.equal(events.some((event) => event.type === 'page.request'), false);

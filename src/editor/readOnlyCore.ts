@@ -1,20 +1,22 @@
 /**
- * 只读（`readOnly.ts`）里不依赖 React、不依赖同步管理的那一半：只看 `io/viewOnly.ts`。
- * 处理函数、快捷键闸、拖放、导入这类不在组件里的地方从这里取，不把整个同步管理拖进来（单测也好 mock）。
+ * The half of read-only (`readOnly.ts`) that depends on neither React nor the sync manager: it looks only at
+ * `io/viewOnly.ts`.
+ * Places outside components, such as handlers, shortcut gates, drag-and-drop and import, take it from here, without
+ * dragging in the whole sync manager (also easy to mock in unit tests).
  */
 import { viewOnlyReason, viewOnlyText } from "./io/viewOnly";
 
-/** 此刻这个项目是不是只给了只读权限（不含 `?observe`） */
+/** Whether this project is, right now, granted read-only access only (excluding `?observe`) */
 export function memberReadOnlyNow(): boolean {
   return viewOnlyReason() === "read-only-member";
 }
 
 export interface ReadOnlyState {
-  /** 这个项目只给了只读权限：会改项目的控件该置灰 */
+  /** This project is granted read-only access only: controls that modify the project should be greyed out */
   locked: boolean;
-  /** 置灰时说的那一句（`viewOnlyText()`）；没锁时是空串 */
+  /** The sentence shown when greyed out (`viewOnlyText()`); an empty string when not locked */
   why: string;
-  /** 悬停说明：锁着就是 `why`，没锁就是控件自己原有的（可能没有） */
+  /** Hover explanation: when locked it is `why`; when not locked it is the control's own original one (there may be none) */
   title(own?: string): string | undefined;
 }
 
@@ -24,8 +26,9 @@ export function readOnlyState(locked: boolean): ReadOnlyState {
 }
 
 /**
- * 处理函数里的闸：锁着就回 true，调用方直接 return。
- * 界面上控件已经置灰，走到这里说明有一条没盖到的路（拖放、快捷键、别处派发的事件），在这里再拦一道。
+ * Gate in handlers: returns true when locked, and the caller just returns.
+ * The controls in the UI are already greyed out, so reaching here means a path was not covered (drag-and-drop,
+ * shortcuts, events dispatched elsewhere); block it once more here.
  */
 export function blockedByReadOnly(): boolean {
   return memberReadOnlyNow();

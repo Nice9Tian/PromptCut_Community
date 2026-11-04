@@ -1,42 +1,46 @@
 /**
- * 给 agent 用的浏览器实例。**和渲帧那个是两个东西,不要合并。**
+ * Browser instance for the agent. **Two different things from frame rendering, do not merge.**
  *
- * 差别不是洁癖,是三条硬冲突:
+ * The difference is not purism, but three hard conflicts:
  *
- * 1. **启动参数相反**。server/bakery/chrome.mjs 那个挂着一整套为字节级可复现调出来的
- *    参数(--disable-gpu-rasterization / --disable-partial-raster / --disable-threaded-animation),
- *    那是为了同一份时间轴导出两次要逐字节一致。网页浏览要的恰恰是正常渲染 —— 站点的
- *    懒加载、动画、GPU 合成都得照常跑,不然看到的画面和用户在自己浏览器里看到的不是一回事。
- * 2. **profile 必须隔离**。浏览要存 cookie 和登录态(B 站扫码登录之后那份 cookie 就是
- *    素材收集要用的),导出要一张白纸。共用 user-data-dir 迟早互相污染。
- * 3. **生命周期不同**。导出和看图是用完就关,浏览是长驻 —— agent 上一轮打开的页面,
- *    下一轮还要接着点。
+ * 1. **Opposite launch arguments**. server/bakery/chrome.mjs carries a full suite of flags tuned
+ *    for byte-level reproducibility (--disable-gpu-rasterization / --disable-partial-raster /
+ *    --disable-threaded-animation) so exporting the same timeline twice matches byte-for-byte. Web
+ *    browsing requires normal rendering: site lazy loading, animations, and GPU compositing must
+ *    run normally, otherwise what is seen differs from what users see in their own browser.
+ * 2. **Profile must be isolated**. Browsing needs to store cookies and login state (the cookie
+ *    after Bilibili QR code login is what media collection uses), while export needs a blank slate.
+ *    Sharing user-data-dir will corrupt each other sooner or later.
+ * 3. **Different lifecycles**. Export and image viewing close after use, whereas browsing is
+ *    long-lived: pages opened by the agent in the previous turn must be clicked in the next.
  *
- * ## 为什么是「有头 + 离屏」而不是 headless
+ * ## Why "headed + offscreen" instead of headless
  *
- * 网页操作必然撞上登录、验证码、cookie 同意、付费墙。这些**不该也不能由 agent 代劳**
- * (验证码尤其:那必须是人来点)。headless 没有窗口,撞上了就是死路;有头 + 摆到
- * -32000,-32000 平时看不见,需要人接手时用 CDP 的 Browser.setWindowBounds 把它挪回
- * 屏幕上,处理完再藏回去。实测两个方向都通,见 showWindow / hideWindow。
+ * Web operations inevitably hit logins, CAPTCHAs, cookie consent, and paywalls. These **should not
+ * and cannot be delegated to the agent** (especially CAPTCHAs: humans must click them). Headless
+ * has no window and is a dead end when encountered; headed + placed at -32000,-32000 is invisible
+ * normally, and when human takeover is needed, CDP Browser.setWindowBounds moves it back onto the
+ * screen, then hides it back after handling. Verified in both directions; see showWindow /
+ * hideWindow.
  *
- * 顺带:headless 更容易被站点当机器人挡掉,渲染也和有头有差异。
+ * By the way: headless is more easily blocked by sites as a bot, and rendering differs from headed.
  */
 import path from 'node:path';
 import fs from 'node:fs';
 
-/** 视口固定成这个尺寸。固定是为了图坐标换算是个常数,见 view.mjs 的 scaleOf */
+/** Viewport is fixed to this size so image coordinate scaling is constant; see scaleOf in view.mjs */
 export const VIEWPORT = { width: 1280, height: 800 };
 
-/** 回给模型的图,**长边**缩到这个数,短边等比。等比是关键:拉伸过的图上模型报的坐标没法还原 */
+/** Model image scales **long edge** to this, short proportional; stretched image coordinates cannot be restored */
 export const IMAGE_LONG_EDGE = 800;
 
-/** 藏窗口的位置。Chrome 允许负坐标,-32000 在任何多屏布局下都在所有屏幕之外 */
+/** Position to hide window. Chrome allows negative coords; -32000 is off-screen in any multi-display setup */
 const OFFSCREEN = { left: -32000, top: -32000 };
 
 let instance = null;      // { browser, page, cdp, windowId, shared }
-let launching = null;     // 并发调用共用同一次启动,别起出两个浏览器来
+let launching = null;     // Concurrent calls share the same launch; avoid starting two browsers
 
-/** 记谁起的这个浏览器。用来分辨「热重启遗留的孤儿」和「另一个实例正在用」 */
+/** Record who started this browser. Used to distinguish "hot-restart orphans" from "in use by another instance" */
 const OWNER_FILE = 'promptcut-owner.json';
 
 function ownerPath(userDataDir) {
@@ -46,28 +50,31 @@ function ownerPath(userDataDir) {
 function writeOwner(userDataDir) {
   try {
     fs.writeFileSync(ownerPath(userDataDir), JSON.stringify({ pid: process.pid, at: Date.now() }));
-  } catch { /* 记不上不影响用,只是下次分辨不出孤儿 */ }
+  } catch { /* Failure to record does not affect usage, only prevents distinguishing orphans next time */ }
 }
 
 /**
- * 记录里那个进程还活着吗。活着且不是自己 = 另一个实例正在用。
+ * Is the recorded process still alive? Alive and not self = another instance is currently using it.
  *
- * `process.kill(pid, 0)` 只探活不发信号。它抛 EPERM 的意思是**进程在、但没权限动它**
- * (比如换了用户跑),那也算活着 —— 判成死的会让我们把别人的浏览器关掉。
- * 只有 ESRCH(查无此进程)才是真的没了。
+ * `process.kill(pid, 0)` only probes liveness without sending a signal. Throwing EPERM means **the
+ * process exists, but there is no permission to touch it** (e.g. running under another user), which
+ * still counts as alive: judging it dead would make us close someone else's browser. Only ESRCH
+ * (no such process) means it is truly gone.
  *
- * pid 会被系统回收,所以这个判断不是百分百准。**但它错的方向是安全的**:
- * 回收后的 pid 恰好被别人占用时,我们会把孤儿误判成 shared —— 后果只是 web_close
- * 没杀掉那个浏览器,下一次 getBrowser 会重新接管它,自愈。反过来(把别人正在用的
- * 判成孤儿)才会真的伤人,而那需要对方进程恰好死了,那时它本来就该被接管。
- * 所以这里不再为 pid 回收加复杂度。
+ * PIDs are recycled by the system, so this check is not 100% accurate. **However, it fails in a
+ * safe direction**: if a recycled PID happens to be taken by someone else, we misidentify the
+ * orphan as shared: the only consequence is web_close does not kill that browser, and the next
+ * getBrowser re-takes it over, self-healing. The inverse (classifying what someone else is using as
+ * an orphan) is what would cause real harm, and that requires their process to happen to be dead,
+ * in which case it was supposed to be taken over anyway. So no extra complexity is added here for
+ * PID recycling.
  */
 function ownerAlive(userDataDir) {
   let pid;
   try {
     ({ pid } = JSON.parse(fs.readFileSync(ownerPath(userDataDir), 'utf8')));
   } catch {
-    return false;           // 文件没有或者坏了 —— 当没人认领
+    return false;           // File missing or corrupted: treat as unclaimed
   }
   if (!pid || pid === process.pid) return false;
   try {
@@ -79,11 +86,11 @@ function ownerAlive(userDataDir) {
 }
 
 /**
- * profile 里那个还活着的 Chrome 的调试端点。没有就返回 null。
+ * Debug endpoint of the still-living Chrome in profile. Returns null if none.
  *
- * Chrome 起来时会把 `<port>\n<ws 路径>` 写进 profile 目录的 DevToolsActivePort。
- * 干净退出会删掉它,被杀掉则会留下一个过期的文件 —— 所以拿到了也不能当真,
- * 连不上就当没有。
+ * When Chrome starts, it writes `<port>\n<ws path>` into DevToolsActivePort in the profile
+ * directory. A clean exit deletes it, while being killed leaves a stale file: so even if found,
+ * it cannot be taken as truth; treat as absent if connection fails.
  */
 function debugEndpoint(userDataDir) {
   try {
@@ -97,11 +104,14 @@ function debugEndpoint(userDataDir) {
 }
 
 /**
- * 连壳(Tauri 主窗口)里的 agent 子 webview。连不上或找不到那块就返回 null。
+ * Connect to the agent child webview inside the shell (Tauri main window). Returns null if unable
+ * to connect or cannot find that area.
  *
- * 一个 WebView2 环境下所有 webview 共用一个调试端点,列出来的 target 里既有编辑台的
- * 主页面也有 agent 这块,靠**初始地址**认:壳建它时用的是 about:blank#promptcut-agent,
- * agent 导航过之后地址会变,所以第一次认出来就记住那个 page 对象,之后不再按地址找。
+ * Under one WebView2 environment, all webviews share a single debugging endpoint. The listed
+ * targets include both the editor main page and the agent area, identified by **initial URL**:
+ * the shell uses about:blank#promptcut-agent when creating it; after the agent navigates, the URL
+ * changes, so once identified for the first time, remember that page object and no longer search
+ * by URL.
  */
 async function connectShell(pptr, port, initialUrl) {
   let browser;
@@ -112,16 +122,17 @@ async function connectShell(pptr, port, initialUrl) {
   }
   try {
     let page = null;
-    // 壳建 webview 和 sidecar 起来是并行的,给它几秒。
-    // 认哪一块:壳给 agent 那块每次导航都注入 window.__PROMPTCUT_AGENT__,先按它认
-    // (热重启后重连时 agent 早就不在初始地址上了);评估不了的页(崩了、跨域拦着)
-    // 再退回按初始地址认。
+    // Shell creating the webview and sidecar startup run in parallel; give it a few seconds.
+    // Which part to identify: the shell injects window.__PROMPTCUT_AGENT__ into the agent area on
+    // every navigation, so identify by that first (reconnecting after a hot restart, the agent is
+    // long gone from the initial URL); for pages that cannot be evaluated (crashed, cross-origin
+    // blocked), fall back to identifying by initial URL.
     for (let i = 0; i < 20 && !page; i++) {
       const pages = await browser.pages();
       for (const p of pages) {
         try {
           if (await p.evaluate(() => window.__PROMPTCUT_AGENT__ === true)) { page = p; break; }
-        } catch { /* 这一页评估不了,看下一页 */ }
+        } catch { /* Cannot evaluate this page, inspect the next */ }
       }
       if (!page) page = pages.find((p) => p.url() === initialUrl) || null;
       if (!page) await new Promise((r) => setTimeout(r, 250));
@@ -132,20 +143,21 @@ async function connectShell(pptr, port, initialUrl) {
     }
     await page.setViewport(VIEWPORT);
     const cdp = await page.createCDPSession();
-    // shared: 这个浏览器是壳的,关的时候只断开自己;shell: 显示 / 隐藏要走壳的命令
+    // shared: this browser belongs to shell, disconnect self only; shell: show/hide uses shell commands
     return { browser, page, cdp, windowId: null, shared: true, shell: true, userDataDir: undefined };
   } catch {
-    try { await browser.disconnect(); } catch { /* 忽略 */ }
+    try { await browser.disconnect(); } catch { /* Ignore */ }
     return null;
   }
 }
 
 /**
- * 关掉浏览器。**不在这里做**:进程退出时的兜底 —— 那是 Tauri 侧 kill 整棵进程树的活儿
- * (见 desktop/src-tauri/src/lib.rs 的 sidecar pid),这里只管主动关。
+ * Close the browser. **Not done here**: process exit fallback, which is Tauri's job killing the
+ * whole process tree (see sidecar pid in desktop/src-tauri/src/lib.rs); here we only handle active
+ * closes.
  *
- * `shared` 的实例是接管来的、而且原主还活着 —— 那种只断开自己这一头,不能替别人
- * 把浏览器关了。
+ * `shared` instances are taken over while the original owner is still alive: only disconnect our
+ * own side, do not close the browser on someone else's behalf.
  */
 export async function closeBrowser() {
   const cur = instance;
@@ -155,39 +167,43 @@ export async function closeBrowser() {
   try {
     if (cur.shared) await cur.browser.disconnect();
     else await cur.browser.close();
-  } catch { /* 已经死了就算了 */ }
+  } catch { /* Already dead, ignore */ }
 
-  // 实测:干净关掉之后 DevToolsActivePort **不会**被 Chrome 删掉(至少 Windows 上如此)。
-  // 留着不会出错 —— 下次 getBrowser 连不上会退回 launch —— 但那是每次会话开头都白花
-  // 一个连接往返。自己删掉,让常见路径干净。shared 的不删:那个端点是别人的,还在用。
+  // Verified: DevToolsActivePort is **not** deleted by Chrome after clean shutdown (at least on
+  // Windows). Leaving it causes no errors: next getBrowser falls back to launch if connection fails,
+  // but that wastes a connection round-trip at the start of every session. Delete it ourselves to
+  // keep the happy path clean. Do not delete shared: that endpoint belongs to others and is in use.
   if (!cur.shared && cur.userDataDir) {
-    try { fs.rmSync(path.join(cur.userDataDir, 'DevToolsActivePort'), { force: true }); } catch { /* 删不掉也无所谓 */ }
+    try { fs.rmSync(path.join(cur.userDataDir, 'DevToolsActivePort'), { force: true }); } catch { /* Doesn't matter if deletion fails */ }
   }
 }
 
 /**
- * 拿到浏览器和当前页。没起过就起一个。
+ * Get the browser and current page. Start one if not yet running.
  *
- * `dataDir` 用来放 profile。传 null 表示用临时目录(测试用),那样登录态不会留下来。
+ * `dataDir` holds the profile. Passing null uses a temporary directory (for tests), so login
+ * state is not persisted.
  *
- * ## 为什么要先试着「接管」而不是直接 launch
+ * ## Why try to "take over" first instead of launching directly
  *
- * 同一个 user-data-dir 不能被两个 Chrome 同时占。而 dev 下 Vite 一热重启就会把这个
- * 模块换掉一份新的 —— 模块级的 `instance` 归零,**但上一份起的 Chrome 进程还活着、
- * 还握着 profile**。于是之后所有 web_* 全部报「被另一个实例占着」,直到手动去杀那个
- * Chrome。改一次 server/ 下的文件就撞一次,开发期几乎必然遇到。
+ * The same user-data-dir cannot be occupied by two Chrome instances at once. In dev, Vite hot
+ * reload replaces this module with a fresh copy: module-level `instance` resets to zero, **but the
+ * Chrome process launched by the previous copy is still alive and holds the profile**. Then all
+ * subsequent web_* calls report "occupied by another instance" until manually killing Chrome.
+ * Editing files under server/ hits this every time, almost guaranteed during development.
  *
- * 所以先看 profile 里的 DevToolsActivePort:连得上就直接接管那个浏览器,连不上
- * (文件是上次被杀留下的死记录)再 launch。
+ * Therefore, inspect DevToolsActivePort in profile first: if connectable, take over that browser
+ * directly; if connection fails (a dead record left from last kill), launch instead.
  *
- * 接管之后还要分辨两种情况,靠 profile 里的 owner 记录:
- *   - 原主进程已经不在 → **孤儿**,完全接管,web_close 该真的把它关掉;
- *   - 原主还活着 → 另一个 PromptCut 实例正开着,标 `shared`,web_close 只断开
- *     自己这一头,不替别人关浏览器。
+ * After takeover, two cases must be distinguished using the owner record in profile:
+ *   - Original owner process is gone → **orphan**, take over fully, web_close should actually
+ *     shut it down;
+ *   - Original owner is still alive → another PromptCut instance is running, mark `shared`,
+ *     web_close only disconnects our side without closing the browser for others.
  */
 export async function getBrowser({ dataDir, puppeteer, executablePath } = {}) {
   if (instance) {
-    // 用户可能自己把窗口关了。连不上就重起,不要把死掉的实例交出去
+    // User might have closed the window. Restart if unreachable, don't hand out a dead instance
     if (instance.browser.connected !== false) return instance;
     instance = null;
   }
@@ -196,22 +212,26 @@ export async function getBrowser({ dataDir, puppeteer, executablePath } = {}) {
   launching = (async () => {
     const pptr = puppeteer || (await import('puppeteer')).default;
 
-    // ── 壳模式:agent 的浏览器是 Tauri 主窗口里的子 webview ──
-    // 桌面壳启动时给 WebView2 开了 --remote-debugging-port,端口通过环境变量交过来。
-    // 那个端点上列出来的 target 里,初始地址是 PROMPTCUT_AGENT_URL 的那一块就是 agent 的。
-    // 显示 / 隐藏由前端 invoke 壳的命令完成(见 showWindow / hideWindow),这里只管连。
+    // ── Shell mode: agent browser is a child webview in the Tauri main window ──
+    // When the desktop shell starts, it enables --remote-debugging-port for WebView2, passing the port
+    // via an environment variable.
+    // Among targets listed on that endpoint, the one whose initial URL is PROMPTCUT_AGENT_URL
+    // belongs to the agent.
+    // Showing / hiding is handled by frontend invoking shell commands (see showWindow / hideWindow);
+    // this only handles connecting.
     const shellPort = Number(process.env.PROMPTCUT_AGENT_CDP || 0);
     if (shellPort > 0) {
       const inst = await connectShell(pptr, shellPort, process.env.PROMPTCUT_AGENT_URL || 'about:blank#promptcut-agent');
       if (inst) { instance = inst; return inst; }
-      // 连不上就照常起 Chrome:壳没把 webview 建起来时至少还有旧路可走
-      process.stderr.write(`[web] 连不上壳里的 agent webview(端口 ${shellPort}),退回 Chrome\n`);
+      // If connection fails, launch Chrome as usual: if the shell did not create the webview, at least
+      // there is still the fallback path
+      process.stderr.write(`[web] cannot connect to the agent webview in the shell (port ${shellPort}), falling back to Chrome\n`);
     }
 
     const userDataDir = dataDir ? path.join(dataDir, 'web-profile') : undefined;
     if (userDataDir) fs.mkdirSync(userDataDir, { recursive: true });
 
-    // ── 先试接管 ──
+    // ── Try takeover first ──
     const endpoint = userDataDir ? debugEndpoint(userDataDir) : null;
     if (endpoint) {
       try {
@@ -222,26 +242,27 @@ export async function getBrowser({ dataDir, puppeteer, executablePath } = {}) {
         await page.setViewport(VIEWPORT);
         const cdp = await page.createCDPSession();
         const { windowId } = await cdp.send('Browser.getWindowForTarget');
-        // 孤儿就把 owner 改成自己,免得下一次热重启又把它当成「别人的」
+        // If orphaned, change owner to itself so the next hot restart will not treat it as "someone else's"
         if (!shared) writeOwner(userDataDir);
         instance = { browser, page, cdp, windowId, shared, userDataDir };
         return instance;
       } catch {
-        // 连不上 = DevToolsActivePort 是上次被杀留下的死文件,照常往下 launch
+        // Cannot connect = DevToolsActivePort is a dead file left from the previous kill; proceed with
+        // launch as usual
       }
     }
 
     /*
-     * 同一个 user-data-dir 不能被两个 Chrome 同时占。这在正常使用里也会撞上:
-     * 用户开了两个 PromptCut(或者一边跑着 scripts/web-check.mjs),两边的 agent
-     * 都想上网。puppeteer 原样抛出来的是一句英文天书,用户看不懂也不知道该干什么,
-     * 所以在这里翻译成一句能照着做的话。
+     * The same user-data-dir cannot be occupied by two Chrome instances at once. This also happens in
+     * normal usage: the user opens two PromptCut instances (or runs scripts/web-check.mjs on the side),
+     * and agents on both sides want internet access. What puppeteer throws as-is is cryptic English
+     * that users cannot understand or act upon, so we translate it here into actionable instructions.
      */
     const launch = (opts) => pptr.launch(opts).catch((e) => {
       if (/already running for/i.test(String(e.message))) {
         throw new Error(
-          '浏览器已经被另一个 PromptCut 实例占着了(它们共用同一份登录态,不能同时开)。'
-          + '关掉另一个窗口,或者在那边先调 web_close 再试。',
+          'The browser is already in use by another PromptCut instance (they share the same login state and cannot be open at the same time).'
+          + ' Close the other window, or call web_close there first and try again.',
         );
       }
       throw e;
@@ -249,9 +270,10 @@ export async function getBrowser({ dataDir, puppeteer, executablePath } = {}) {
 
     const browser = await launch({
       headless: false,
-      // 显式给路径,不靠 PUPPETEER_CACHE_DIR 继承。原因:这个变量只有 Tauri 正式包里才设
-      // (lib.rs:338),dev 下 puppeteer 会去用开发机自己的 ~/.cache/puppeteer —— 两边
-      // 版本碰巧一样时不出事,一旦不一样就是「跑起来的不是随包那份」这种极难查的问题。
+      // Specify the path explicitly instead of relying on PUPPETEER_CACHE_DIR inheritance. Reason: this
+      // variable is only set in official Tauri packages (lib.rs:338). Under dev, puppeteer uses the dev
+      // machine's ~/.cache/puppeteer: if both versions happen to match, nothing breaks; once they differ,
+      // it causes extremely elusive bugs like "the running binary is not the bundled one".
       ...(executablePath ? { executablePath } : {}),
       userDataDir,
       args: [
@@ -259,19 +281,20 @@ export async function getBrowser({ dataDir, puppeteer, executablePath } = {}) {
         `--window-size=${VIEWPORT.width},${VIEWPORT.height}`,
         '--no-first-run',
         '--no-default-browser-check',
-        // 用户第一眼看到的不该是 Chrome 自己的东西:新 profile 的「登录 Chromium」欢迎页、
-        // 上次被强杀后的「要恢复页面吗」气泡,都压掉。不认识的 feature 名 Chrome 会忽略,
-        // 多列几个候选不会出错。
+        // What users first see should not be Chrome's own UI: suppress both the "Sign in to Chromium"
+        // welcome page on a new profile and the "Restore pages?" bubble after an ungraceful kill.
+        // Chrome ignores unrecognized feature names, so listing a few extra candidates is harmless.
         '--hide-crash-restore-bubble',
         '--disable-session-crashed-bubble',
-        // agent 打开的页面会自动播视频,用户没在看却在响。Chrome 这条路没法运行时切换,
-        // 干脆全程静音;壳模式(WebView2)才有交给用户时放开的开关。
+        // Pages opened by the agent autoplay videos, making sound while the user is not watching. The Chrome
+        // path cannot toggle this at runtime, so mute completely throughout; only shell mode (WebView2)
+        // has a switch to unmute when handing over to the user.
         '--mute-audio',
         '--disable-sync',
         '--disable-features=Translate,MediaRouter,ForYouFre,SigninPromo,ChromeWhatsNewUI',
-        // 这里**不加**导出那套 determinism 参数,理由见文件头
+        // Do **not** add the export determinism parameters here; see file header for rationale
       ],
-      defaultViewport: null,   // 让页面视口跟随窗口,别让 puppeteer 再套一层
+      defaultViewport: null,   // Let the page viewport follow the window, rather than having puppeteer wrap another layer
     });
 
     const pages = await browser.pages();
@@ -293,47 +316,53 @@ export async function getBrowser({ dataDir, puppeteer, executablePath } = {}) {
   }
 }
 
-/** 现在有没有活着的实例。只看不起:查登录态这类事不该为了「看一眼」拉起一个 Chrome */
+/** Whether an instance is currently alive. Inspect only, do not launch: checking login state should not start Chrome just to "take a look" */
 export function peekBrowser() {
   if (instance && instance.browser.connected !== false) return instance;
   return null;
 }
 
 /**
- * profile 里有没有一个**可能**还活着的浏览器可接管(DevToolsActivePort 在)。
- * 给「只想读一下、不想 launch」的调用方用:有就放心调 getBrowser(它会接管而不是新起),
- * 没有就别调 —— 那会真起一个 Chrome。文件可能是死的,所以只是「可能」。
+ * Whether there is a browser in the profile that might **possibly** still be alive to take over
+ * (DevToolsActivePort exists). For callers that "only want to read, not launch": if so, feel free to
+ * call getBrowser (it will take over instead of starting a new one); if not, do not call it, as
+ * that will actually start Chrome. The file may be dead, hence only "possibly".
  */
 export function existingEndpoint(dataDir) {
   if (!dataDir) return null;
   return debugEndpoint(path.join(dataDir, 'web-profile'));
 }
 
-/** 把窗口挪到屏幕上,交给用户。登录、验证码、cookie 同意都走这条 */
+/** Move window onto the screen and hand over to user. Login, CAPTCHA, and cookie consent all use this */
 export async function showWindow(inst, { left = 120, top = 80 } = {}) {
-  // 壳模式:webview 在主窗口里,摆到哪由前端 invoke 壳的命令决定,这里只解除视口仿真。
-  // 必须走 page.setViewport(null):裸调 Emulation.clearDeviceMetricsOverride 只管当下,
-  // puppeteer 记着 1280×800,下一次导航又给套回去 —— 实测页面右边和底部就是这么对不上的。
+  // Shell mode: webview is inside the main window, and its position is determined by frontend
+  // invoking shell commands; this only clears viewport emulation.
+  // Must use page.setViewport(null): calling Emulation.clearDeviceMetricsOverride directly only works
+  // for the moment; puppeteer remembers 1280×800 and reapplies it on the next navigation: tested and
+  // verified, this is exactly why the right and bottom of the page became misaligned.
   if (inst.shell) {
-    try { await inst.page.setViewport(null); } catch { /* 老版本不认 null,退回裸调 */ }
-    try { await inst.cdp.send('Emulation.clearDeviceMetricsOverride'); } catch { /* 忽略 */ }
+    try { await inst.page.setViewport(null); } catch { /* Older versions do not recognize null; fall back to raw call */ }
+    try { await inst.cdp.send('Emulation.clearDeviceMetricsOverride'); } catch { /* Ignore */ }
     return { shell: true };
   }
   /*
-   * 实测(2026-09-08,Windows 11):以 -32000,-32000 起的窗口,光用 setWindowBounds 把它挪回
-   * 屏幕内是**不够的** —— 位置改对了,但 IsWindowVisible 一直是假,用户屏幕上什么都没有,
-   * 而 CDP 那边 bounds 看起来一切正常。先切成 minimized 再还原成 normal,Windows 会把这次
-   * 还原当成用户动作:窗口变可见,而且拿到前台。EnumWindows 逐步核对过。
+   * Verified in testing (2026-09-08, Windows 11): for a window launched at -32000,-32000, simply moving
+   * it back onto the screen using setWindowBounds is **not enough**: the position changes correctly,
+   * but IsWindowVisible remains false, nothing appears on the user's screen, while bounds look completely
+   * normal on the CDP side. Switching to minimized first and then restoring to normal causes Windows to
+   * treat this restore as a user action: the window becomes visible and is brought to the foreground.
+   * Verified step by step with EnumWindows.
    */
   /*
-   * **状态和位置必须分两次发。** CDP 的 setWindowBounds 在同一次调用里同时收到
-   * windowState 和 left/top 时,会**只认状态、把位置整个丢掉**。实测(同上,逐步打过 bounds):
+   * **State and position must be sent in two separate calls.** When CDP's setWindowBounds receives
+   * both windowState and left/top in the same call, it **only recognizes state and drops position
+   * entirely**. Verified in testing (same as above, logged bounds step by step):
    *
-   *   minimized 之后           {"left":-32000,...,"windowState":"minimized"}
-   *   normal + left:120 一次发  {"left":-32000,...,"windowState":"normal"}   ← 位置没生效
-   *   还原之后再单独发 bounds   {"left":120,"top":80,...}                     ← 这才对
+   *   After minimized                          {"left":-32000,...,"windowState":"minimized"}
+   *   Sending normal + left:120 together       {"left":-32000,...,"windowState":"normal"}   ← position did not take effect
+   *   Sending bounds separately after restore  {"left":120,"top":80,...}                     ← this is correct
    *
-   * 所以顺序是:minimized → normal(只给状态)→ 再单独给位置。
+   * Therefore the order is: minimized → normal (state only) → send position separately.
    */
   await inst.cdp.send('Browser.setWindowBounds', { windowId: inst.windowId, bounds: { windowState: 'minimized' } });
   await new Promise((r) => setTimeout(r, 150));
@@ -343,21 +372,24 @@ export async function showWindow(inst, { left = 120, top = 80 } = {}) {
     windowId: inst.windowId,
     bounds: { left, top, width: VIEWPORT.width, height: VIEWPORT.height },
   });
-  // 还原之后再点一下前台,双保险;抢不到也不影响窗口已经可见
-  try { await inst.page.bringToFront(); } catch { /* 忽略 */ }
-  // 交给人的时候解除视口仿真:不然用户把窗口拉大,页面还是只画在左上角 1280×800 那一块
-  try { await inst.cdp.send('Emulation.clearDeviceMetricsOverride'); } catch { /* 忽略 */ }
+  // Bring to foreground after restore as an extra safeguard; failing to take focus does not affect
+  // window visibility
+  try { await inst.page.bringToFront(); } catch { /* Ignore */ }
+  // Clear viewport emulation when handing over to the user: otherwise if the user enlarges the window,
+  // the page remains drawn only in that 1280×800 area in the top-left corner
+  try { await inst.cdp.send('Emulation.clearDeviceMetricsOverride'); } catch { /* Ignore */ }
 }
 
-/** 藏回屏幕外。收回来就把固定视口恢复上:看图算坐标靠它是个常数 */
+/** Hide offscreen. Restores fixed viewport on hide: calculating coordinates from images relies on it being constant */
 export async function hideWindow(inst) {
-  try { await inst.page.setViewport(VIEWPORT); } catch { /* 忽略 */ }
+  try { await inst.page.setViewport(VIEWPORT); } catch { /* Ignore */ }
   if (inst.shell) return { shell: true };
   /*
-   * 和 showWindow 同一条坑:状态和位置一次发,位置会被丢掉(实测见上面那段)。
-   * 这里以前一直没暴露,是因为窗口通常已经是 normal,同值的状态不算变更、位置能过去。
-   * 但用户在接管期间把窗口最大化过的话,这次就是一次真的状态变更 —— 位置被丢掉,
-   * 窗口留在屏幕上,而 agent 以为已经藏好了。所以照样拆两步。
+   * Same pitfall as showWindow: sending state and position together drops the position (see testing notes
+   * above). This remained hidden before because the window was usually already normal; identical state
+   * was not considered a change, so position went through. But if the user maximized the window during
+   * takeover, this becomes a real state change: position is discarded, window stays on screen, while
+   * agent assumes it is hidden. Therefore, split into two steps as well.
    */
   await inst.cdp.send('Browser.setWindowBounds', { windowId: inst.windowId, bounds: { windowState: 'normal' } });
   await inst.cdp.send('Browser.setWindowBounds', {
@@ -366,7 +398,7 @@ export async function hideWindow(inst) {
   });
 }
 
-/** 窗口现在是不是在屏幕上(left >= 0 就算) */
+/** Whether the window is currently on-screen (left >= 0 counts) */
 export async function isWindowVisible(inst) {
   const { bounds } = await inst.cdp.send('Browser.getWindowForTarget', { targetId: undefined });
   return bounds.left >= 0;

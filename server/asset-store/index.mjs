@@ -1,17 +1,22 @@
 /**
- * 素材服务的数据层出口（契约 `docs/plan/asset-store-contract.md` 第 2 节）。
+ * Data layer egress for the asset service (contract `docs/plan/asset-store-contract.md` section 2).
  *
- * - `kind: 'fs'`     → 本地内容库（`fs-store.mjs`）；`shard: true` 是托管组合用的分目录布局，布局标记见 `ensureLayoutSync`
- * - `kind: 'memory'` → 内存（`memory-store.mjs`，测试用）
- * - `kind: 'oss'`    → 插槽：抛 Error，`code === 'not-implemented'`，不装任何 SDK
- * - 其它             → TypeError
+ * - `kind: 'fs'`     → Local content store (`fs-store.mjs`); `shard: true` is the subdirectory
+ *   layout used for hosted composites; see `ensureLayoutSync` for layout markers
+ * - `kind: 'memory'` → Memory (`memory-store.mjs`, for testing)
+ * - `kind: 'oss'`    → Slot: throws Error, `code === 'not-implemented'`, does not install any SDK
+ * - Other            → TypeError
  *
- * 接口写在 `blob-store.mjs` 的 JSDoc 里。本目录只引 Node 内置模块；例外是 `guest-quota.mjs`，它引 `../account/guest.mjs`
- * 取游客限额的数和判断（那边只引 `node:crypto` 与同目录的 `client.mjs`）。`asset-service.ts` 经这里拿它，
- * 好几个单测把 `asset-service.ts` 单独转译、只替换已有的几条静态 import，所以不在那边另加一条。
+ * Interfaces are documented in JSDoc of `blob-store.mjs`. This directory only imports Node built-in
+ * modules; the exception is `guest-quota.mjs`, which imports `../account/guest.mjs` to get guest
+ * quota counts and checks (that side only imports `node:crypto` and `client.mjs` in the same
+ * directory). `asset-service.ts` gets it through here; several unit tests transpile
+ * `asset-service.ts` in isolation, only replacing existing static imports, so no additional import
+ * is added there.
  *
- * 另外转出素材服务的 HTTP 客户端 `createAssetClient`（`client.mjs`，契约 `docs/plan/artifact-transfer-contract.md` 第 2 节），
- * 以及 fs 实现按候选文件名找文件的钩子 `candidateFileResolver`（同一契约第 10 节第 6 条）。
+ * Also re-exports the asset service HTTP client `createAssetClient` (`client.mjs`, contract
+ * `docs/plan/artifact-transfer-contract.md` section 2), and the fs implementation hook
+ * `candidateFileResolver` that finds files by candidate file names (same contract, section 10, item 6).
  */
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -37,24 +42,26 @@ export function createBlobStore(options) {
   if (kind === 'fs') return createFsStore(options);
   if (kind === 'memory') return createMemoryStore(options);
   if (kind === 'oss') {
-    const err = new Error('createBlobStore：oss 实现还没有（只留插槽）');
+    const err = new Error('createBlobStore: the oss implementation does not exist yet (slot only)');
     /** @type {any} */ (err).code = 'not-implemented';
     throw err;
   }
-  throw new TypeError(`createBlobStore：不认识的 kind ${JSON.stringify(kind)}`);
+  throw new TypeError(`createBlobStore: unknown kind ${JSON.stringify(kind)}`);
 }
 
 /**
- * fs 实现的 `hooks.resolveFile`：不扫目录，依次直接查 `<dir>/<hash>.<ext>`（按 `exts` 的顺序），最后查没有扩展名的 `<dir>/<hash>`。
- * 给素材服务的 `snap` / `px` 命名空间用（契约 `docs/plan/artifact-transfer-contract.md` 第 10 节第 6 条）；
- * `asset-service.ts` 不碰文件系统，所以「文件在不在」放在数据层这里判。
+ * The `hooks.resolveFile` for the fs implementation: does not scan directories, directly checks
+ * `<dir>/<hash>.<ext>` in order (by `exts` sequence), and finally checks `<dir>/<hash>` without an
+ * extension. Used for the `snap` / `px` namespaces of the asset service (contract
+ * `docs/plan/artifact-transfer-contract.md` section 10, item 6); `asset-service.ts` does not touch
+ * the file system, so checking whether the file exists is handled here in the data layer.
  *
  * @param {string} dir
- * @param {readonly string[]} exts  候选扩展名，不带点
+ * @param {readonly string[]} exts  Candidate extensions, without leading dot
  * @returns {(hash: string) => Promise<string | null>}
  */
 export function candidateFileResolver(dir, exts) {
-  if (typeof dir !== 'string' || dir === '') throw new TypeError('candidateFileResolver：dir 必须是非空字符串');
+  if (typeof dir !== 'string' || dir === '') throw new TypeError('candidateFileResolver: dir must be a non-empty string');
   const base = path.resolve(dir);
   const suffixes = [...exts.map((e) => '.' + String(e).toLowerCase().replace(/^\./, '')), ''];
   return async function resolveFile(hash) {
@@ -62,7 +69,7 @@ export function candidateFileResolver(dir, exts) {
     if (!/^[0-9a-f]{64}$/.test(key)) return null;
     for (const suffix of suffixes) {
       const file = path.join(base, key + suffix);
-      try { if ((await fs.stat(file)).isFile()) return file; } catch { /* 没有这个候选 */ }
+      try { if ((await fs.stat(file)).isFile()) return file; } catch { /* No such candidate */ }
     }
     return null;
   };

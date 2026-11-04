@@ -1,6 +1,6 @@
 import type { Control } from "./types";
 
-/** 被跳过的控件:认得出的 key / label / type 与原因(参数面板说明是哪一条) */
+/** Skipped controls: recognized key / label / type and reason (parameters panel explains which item) */
 export interface SkippedControl {
   key?: string;
   label?: string;
@@ -8,7 +8,10 @@ export interface SkippedControl {
   reason: string;
 }
 
-/** 源码里认出的一张卡(`defaults` / `controls` / `description` 只认字面量,见 `cardSourceParse.mjs` 文件头) */
+/**
+ * A card recognized in source code (`defaults` / `controls` / `description` only recognize
+ * literals, see `cardSourceParse.mjs` file header)
+ */
 export interface ParsedCardSource {
   embeddedAudio?: boolean;
   id: string;
@@ -16,36 +19,42 @@ export interface ParsedCardSource {
   description?: string;
   defaults: Record<string, unknown>;
   controls: Control[];
-  /** 有控件没认出来(或整个 `controls` 不是字面量) */
+  /** Some controls were not recognized (or the entire `controls` is not a literal) */
   controlsIncomplete: boolean;
-  /** 被跳过的控件,逐条 */
+  /** Skipped controls, item by item */
   skippedControls: SkippedControl[];
 }
 
 export interface ParseCardSourceOptions {
-  /** 这份源码的仓库相对路径(`src/cards/user/x.tsx`),相对导入按它解析 */
+  /**
+   * Repository-relative path of this source code (`src/cards/user/x.tsx`), relative imports resolve
+   * against it
+   */
   key?: string;
-  /** 别的文件的源码(内容库里同步来的 `card-source`);没有回 null / undefined */
+  /**
+   * Source code of other files (`card-source` synced from content store); returns null / undefined if
+   * none
+   */
   files?: (key: string) => string | null | undefined;
-  /** 页面自己带着的内置模块的导出(纯数据,或 `pureCall` 登记的纯函数);没有回 null / undefined */
+  /** Exports of a built-in module the page ships with (plain data, or a pure function registered via `pureCall`); returns null / undefined if there is none */
   builtins?: (key: string) => Record<string, unknown> | null | undefined;
 }
 
-/** 一份卡片源码里定义的卡(不执行源码);认不出回空数组 */
+/** The cards defined in one card source (the source is not executed); returns an empty array if none are recognized */
 export function parseCardSource(source: string, opts?: ParseCardSourceOptions): ParsedCardSource[];
-/** 一个已求值的控件对象 → `Control`;画不出来的回 null */
+/** An evaluated control object → `Control`; returns null if it cannot be drawn */
 export function controlOf(v: unknown): Control | null;
-/** 一个已求值的控件对象 → `{ control }`,或画不出来的原因 `{ reason }`(能推断的补上) */
+/** An evaluated control object → `{ control }`, or the reason it cannot be drawn `{ reason }` (filled in where it can be inferred) */
 export function controlFix(v: unknown, opts?: { dropped?: string[]; defaultValue?: unknown }): { control?: Control; reason?: string };
-/** 内容库里的卡片源码键是不是一张用户卡的入口文件(`src/cards/user/<名>.tsx`) */
+/** Whether a card source key in the content store is the entry file of a user card (`src/cards/user/<name>.tsx`) */
 export function isUserCardEntryKey(key: unknown): boolean;
-/** 相对导入 → 候选的仓库相对路径;不是相对路径回 null */
+/** Relative import → candidate repo-relative paths; returns null if it is not a relative path */
 export function resolveSpecifier(fromKey: string, spec: string): string[] | null;
-/** 源码里 `import … from` / `export … from` 的说明符 */
+/** The specifiers of `import … from` / `export … from` in the source */
 export function importSpecifiers(source: string): string[];
-/** 源码经相对导入可能引到的仓库相对路径(全部候选) */
+/** Repo-relative paths the source may reach through relative imports (all candidates) */
 export function cardSourceImports(source: string, key: string): string[];
-/** 纯函数标记 */
+/** Pure function marker */
 export const PURE_CALL: unique symbol;
-/** 把页面自己的纯函数登记进内置模块表(以字面量为参数调用时求值) */
+/** Registers a pure function of the page itself into the built-in module table (evaluated when called with literal arguments) */
 export function pureCall<A extends unknown[], R>(fn: (...args: A) => R): Readonly<Record<symbol, (...args: A) => R>>;

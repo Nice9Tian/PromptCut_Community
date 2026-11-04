@@ -1,12 +1,19 @@
 /**
- * 托管档的模型配置(契约 `docs/plan/cloud-agent-contract.md` 第 8 节)。
+ * Model configuration for hosted tier (contract `docs/plan/cloud-agent-contract.md`, Section 8).
  *
- *   <数据目录>/config/ai.json           厂商、接口地址、模型清单(`a|b|c`)、maxTokens(单次输出上限的上限;0 或不写 = 按模型),0600
- *   <数据目录>/config/keys/custom.key   模型 Key 的密文(`server/runners/config-crypt.mjs` 的 PCENC1 封装),0600
+ *   <data directory>/config/ai.json           vendor, API URL, model manifest (`a|b|c`), maxTokens
+ *                                             (cap of per-output limit; 0 or omitted = by model),
+ *                                             0600
+ *   <data directory>/config/keys/custom.key   ciphertext of model Key (PCENC1 wrapper from
+ *                                             `server/runners/config-crypt.mjs`), 0600
  *
- * 路径只由数据目录定,不读 `PROMPTCUT_AI_CONFIG`、不读这台机器上用户自己的 `ai.json`——同一台机器上装着桌面版时两边互不相干。
- * Key 的明文只在调用方的内存里;本文件不打印它、不把它写进任何别的文件。每一轮开始时现读,所以录入或换 Key 之后不用重启服务。
- * 本文件不引用 `src/`。
+ * Paths are determined solely by the data directory; does not read `PROMPTCUT_AI_CONFIG` and does
+ * not read the user's own `ai.json` on this machine: when the desktop app is installed on the same
+ * machine, the two sides remain completely independent.
+ * Plaintext of Key exists only in caller memory; this file never prints it or writes it to any
+ * other file. Read fresh at the start of each round, so no service restart is needed after entering
+ * or changing Key.
+ * This file does not reference `src/`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -51,12 +58,13 @@ function writePrivate(file, text) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, text, { encoding: 'utf8', mode: 0o600 });
-  try { fs.chmodSync(tmp, 0o600); } catch { /* Windows 上基本是空操作 */ }
+  try { fs.chmodSync(tmp, 0o600); } catch { /* Basically a no-op on Windows */ }
   fs.renameSync(tmp, file);
 }
 
 /**
- * 读出这一轮用的模型配置。没有配置文件回 `{}`;Key 文件没有或解不开时 `apiKey` 是空串。
+ * Read the model configuration used for this round. Returns `{}` if there is no config file;
+ * `apiKey` is an empty string when the Key file is missing or cannot be decrypted.
  * @returns {{ vendor?: string, baseUrl?: string, model?: string, maxTokens?: number, apiKey?: string }}
  */
 export function readModelConfig(dataDir) {
@@ -74,57 +82,60 @@ export function readModelConfig(dataDir) {
     try {
       const sealed = fs.readFileSync(keyFile, 'utf8').trim();
       if (sealedKind(sealed) === 'custom') apiKey = openKey(sealed, 'custom') || '';
-    } catch { /* 还没录入 */ }
+    } catch { /* Not yet entered */ }
   }
   return {
     vendor: api.vendor,
     baseUrl: typeof api.baseUrl === 'string' ? api.baseUrl : '',
     model: typeof api.model === 'string' ? api.model : '',
-    // 0 = 没配,单次输出上限按模型定(harness/model-limits.mjs,A07 2026-10-22);配了就是上限的上限
+    // 0 = not configured; per-output limit is determined by the model (harness/model-limits.mjs, A07 2026-10-22); if configured, it is the cap of the cap
     maxTokens: Number.isSafeInteger(api.maxTokens) && api.maxTokens > 0 ? api.maxTokens : 0,
     apiKey,
   };
 }
 
-/** 写配置;`key` 给了(非空字符串)就封装后写进 Key 文件,`null` 表示不动 Key 文件 */
+/** Write configuration; if `key` is provided (non-empty string), wrap and write it to the Key file; `null` means do not touch the Key file */
 export function writeModelConfig(dataDir, { vendor, baseUrl = '', model = '', maxTokens = 0 }, key = null) {
-  if (!MODEL_VENDORS.includes(vendor)) throw new Error(`厂商只能是 ${MODEL_VENDORS.join(' / ')}`);
+  if (!MODEL_VENDORS.includes(vendor)) throw new Error(`Vendor must be one of ${MODEL_VENDORS.join(' / ')}`);
   const { file, keyFile } = modelConfigPaths(dataDir);
   if (typeof key === 'string' && key) writePrivate(keyFile, `${sealKey(key, 'custom')}\n`);
   writePrivate(file, `${JSON.stringify({ v: 1, api: { vendor, baseUrl: String(baseUrl || ''), model: String(model || ''), maxTokens } }, null, 2)}\n`);
 }
 
-/** 删掉 Key 文件(配置留着) */
+/** Delete the Key file (keep the configuration) */
 export function clearModelKey(dataDir) {
-  try { fs.rmSync(modelConfigPaths(dataDir).keyFile, { force: true }); } catch { /* 本来就没有 */ }
+  try { fs.rmSync(modelConfigPaths(dataDir).keyFile, { force: true }); } catch { /* Did not exist in the first place */ }
 }
 
-/** 模型清单(`a|b|c` 拆开) */
+/** Model manifest (`a|b|c` split) */
 export function modelListOf(cfg) {
   return String(cfg?.model || '').split('|').map((s) => s.trim()).filter(Boolean);
 }
 
-/** 这一轮实际会用哪个模型(与 `server/runners/api.mjs` 的挑法相同:请求点名且在清单里就用它,否则清单第一个) */
+/** Which model will actually be used for this round (same selection policy as `server/runners/api.mjs`: use it if requested and in manifest, otherwise the first in manifest) */
 export function pickModel(cfg, asked) {
   const list = modelListOf(cfg);
   return typeof asked === 'string' && list.includes(asked) ? asked : (list[0] || '');
 }
 
-/** 能不能起一轮:模拟提供方不要 Key,别的要 */
+/** Whether a round can be started: mock provider does not require Key, others do */
 export function modelReady(cfg) {
   if (!cfg || !MODEL_VENDORS.includes(cfg.vendor)) return false;
   return cfg.vendor === 'mock' || !!cfg.apiKey;
 }
 
-/** 给页面看的那一部分(`GET /v1/info`):不含地址与 Key。`efforts` 是页面可点的思考强度(不含「默认」) */
+/** The portion exposed to the page (`GET /v1/info`): excludes URL and Key. `efforts` is clickable thinking effort on the page (excluding "default") */
 export function publicModelInfo(cfg, configured = modelReady(cfg)) {
   const models = modelListOf(cfg);
   return { models, defaultModel: models[0] ?? null, configured, efforts: [...RUN_EFFORTS], ...(cfg?.vendor === 'mock' ? { mock: true } : {}) };
 }
 
 /**
- * 同 `publicModelInfo(readModelConfig(dir))`,但不解 Key:账号模式的主服务报 `GET /v1/info` 用。
- * Key 只看文件在不在,不打开(主服务不需要 Key 的明文;解不解得开由任务进程起一轮时报 `no-model-key`)。
+ * Same as `publicModelInfo(readModelConfig(dir))`, but does not decrypt Key: used by the main
+ * service in account mode when reporting `GET /v1/info`.
+ * For Key, only checks whether the file exists without opening it (main service does not need
+ * plaintext of Key; whether it can be decrypted is reported as `no-model-key` by the task process
+ * when starting a round).
  */
 export function readPublicModelInfo(dataDir) {
   const { file, keyFile } = modelConfigPaths(dataDir);
@@ -132,7 +143,7 @@ export function readPublicModelInfo(dataDir) {
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
     api = parsed && typeof parsed === 'object' && parsed.api && typeof parsed.api === 'object' ? parsed.api : null;
-  } catch { /* 还没配 */ }
+  } catch { /* Not yet configured */ }
   if (!api || !MODEL_VENDORS.includes(api.vendor)) return publicModelInfo({}, false);
   const cfg = { vendor: api.vendor, model: typeof api.model === 'string' ? api.model : '' };
   return publicModelInfo(cfg, api.vendor === 'mock' || fs.existsSync(keyFile));

@@ -1,27 +1,29 @@
 /**
- * PromptCut — 扫拓展包里各个 wheel 的许可证。
+ * PromptCut: scan licenses of each wheel in extension packages.
  *
- * 为什么要有它：拓展包把几十个 wheel 发给用户（full 档实测 34 个），其中绝大多数是
- * pip 自己拉进来的传递依赖，没人一个个看过。混进一个 GPL/AGPL/SSPL 或者
- * CC-BY-NC 的包，就是我们在无证分发 —— 而且是发在一个双击就装的 exe 里。
- * THIRD-PARTY-LICENSES.md 的分发前检查清单有「核实拓展包内各 wheel 的许可证」
- * 这一条，这个脚本就是那条清单的执行方式，不必再靠人肉翻 34 个 METADATA。
+ * Why it is needed: extension packages ship dozens of wheels to users (measured at 34 in the "full" tier),
+ * most of which are transitive dependencies pulled in by pip that no one has reviewed individually.
+ * If a GPL/AGPL/SSPL or CC-BY-NC package slips in, we are distributing without a license: and doing so
+ * in an exe that installs on double-click. The pre-distribution checklist in THIRD-PARTY-LICENSES.md
+ * includes "Verify licenses of wheels in extension packages"; this script executes that checklist item,
+ * eliminating the need to manually inspect 34 METADATA files.
  *
- * 数据从哪来：读 release/extensions/ 下打包时落的 manifest（ext-<名字>-<版本>.json）
- * 的 wheels 字段拿到「包名==版本」，再逐个查 PyPI 的 JSON API 取
- * license_expression / license / classifiers。查的是**发布元数据**，不是 wheel 内的
- * LICENSE 正文 —— 元数据够用来发现「这里有个 GPL」，但拿不准的那几个仍要打开 wheel
- * 看 METADATA，脚本会把可疑的行标出来让人去看。
+ * Where data comes from: reads the wheels field from manifests (ext-<name>-<version>.json) dropped under
+ * release/extensions/ during packaging to obtain "package_name==version", then queries PyPI's JSON API
+ * individually for license_expression / license / classifiers. It inspects **release metadata**,
+ * not the LICENSE text inside the wheel: metadata is enough to spot "there is a GPL here", but questionable
+ * ones still require opening the wheel to check METADATA; the script flags suspicious lines for manual inspection.
  *
- * 跑法（不带参数就扫 release/extensions 下所有 manifest）：
+ * Usage (scans all manifests under release/extensions without arguments):
  *   node desktop/scripts/scan-wheel-licenses.mjs
  *   node desktop/scripts/scan-wheel-licenses.mjs <manifest.json> [<manifest.json> …]
- *   node desktop/scripts/scan-wheel-licenses.mjs --json      # 机器可读，给 CI 用
+ *   node desktop/scripts/scan-wheel-licenses.mjs --json      # Machine-readable, for CI
  *
- * 退出码：0 = 没有可疑的；1 = 有可疑的或者有查不到的（要人来看）。
- * 需要联网（api 走 pypi.org）。
+ * Exit codes: 0 = nothing suspicious; 1 = suspicious entries or lookup failures (requires human review).
+ * Requires network access (API via pypi.org).
  *
- * 前身是 2026-09-07 那轮许可证校验用的一次性脚本，固化到这里免得下次又从头写。
+ * Originally a one-off script from the 2026-09-07 license verification round, solidified here to avoid
+ * rewriting from scratch next time.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -32,25 +34,29 @@ const DESKTOP_DIR = path.resolve(__dirname, "..");
 const EXT_DIR = path.join(DESKTOP_DIR, "release", "extensions");
 
 /**
- * 不能随包发的许可证。命中就是红灯，要么换依赖，要么这个包不能发。
- * 注意 LGPL 也在里面：静态/打包分发时它的义务不比 GPL 轻多少，宁可拿出来单独看。
- * MPL-2.0 **不在**这里 —— 它是文件级 copyleft，随包发是允许的，只要告知源码获取途径
- * （certifi / tqdm 就属于这一类，见 THIRD-PARTY-LICENSES.md 第 9 节）。
+ * Licenses that cannot be shipped with packages. A hit is a red flag: either swap dependencies,
+ * or this package cannot be shipped.
+ * Note that LGPL is also included: under static/bundled distribution, its obligations are not much
+ * lighter than GPL, so it is better singled out for manual review.
+ * MPL-2.0 is **not** here: it is a file-level copyleft, so shipping with packages is permitted as long
+ * as source acquisition methods are provided (certifi / tqdm belong to this class, see
+ * THIRD-PARTY-LICENSES.md Section 9).
  */
 const BAD = /\b(GPL|GPLv2|GPLv3|AGPL|LGPL|non-?commercial|NonCommercial|CC[- ]BY[- ]NC|SSPL|proprietary|EUPL)\b/i;
 
-/** wheel 文件名 → { name, version }。PEP 427：<名字>-<版本>-<python 标签>-… */
+/** wheel filename → { name, version }. PEP 427: <name>-<version>-<python tag>-… */
 export function parseWheelName(file) {
   const parts = path.basename(file, ".whl").split("-");
   if (parts.length < 2) return null;
-  // 包名里的下划线在 PyPI 上是连字符（typing_extensions → typing-extensions）
+  // Underscores in package names are hyphens on PyPI (typing_extensions → typing-extensions)
   return { name: parts[0].replace(/_/g, "-").toLowerCase(), version: parts[1] };
 }
 
 /**
- * 把若干份 manifest 合并成「包名==版本 → { name, version, tiers }」。
- * 键里带版本：同一个包在不同拓展里可能是不同版本（实测 tokenizers 在 stt 是 0.23.2、
- * 在 full 是 0.22.2），许可证也可能随版本变，按版本分开查才不会张冠李戴。
+ * Merges multiple manifests into "package==version → { name, version, tiers }".
+ * Keys include the version: the same package may be at different versions in different extensions
+ * (in testing, tokenizers is 0.23.2 in stt and 0.22.2 in full), and licenses may also vary with
+ * the version; checking separately by version prevents mix-ups.
  */
 export function collectWheels(manifests) {
   const out = new Map();
@@ -70,28 +76,29 @@ export function collectWheels(manifests) {
   return out;
 }
 
-/** 一行的判定：许可证表达式或分类器里出现 BAD 就算可疑 */
+/** Line check: flagged as suspicious if BAD appears in license expression or classifiers */
 export function isSuspicious(row) {
-  return row.license === "(查不到)" || BAD.test(row.license) || BAD.test(row.classifiers);
+  return row.license === "(not found)" || BAD.test(row.license) || BAD.test(row.classifiers);
 }
 
 async function fetchLicense(name, version) {
   const url = `https://pypi.org/pypi/${encodeURIComponent(name)}/${encodeURIComponent(version)}/json`;
   try {
     const res = await fetch(url);
-    if (!res.ok) return { license: "(查不到)", classifiers: `HTTP ${res.status}` };
+    if (!res.ok) return { license: "(not found)", classifiers: `HTTP ${res.status}` };
     const info = (await res.json()).info || {};
-    // license_expression 是 PEP 639 的新字段，比自由文本的 license 可靠；都没有就看分类器
+    // license_expression is a new field in PEP 639, more reliable than free-text license; check
+    // classifiers if neither is present
     let license = info.license_expression || info.license || "";
     if (license.length > 120) license = `${license.slice(0, 120).replace(/\s+/g, " ")}…`;
     const classifiers = (info.classifiers || []).filter((c) => c.startsWith("License")).join(" | ");
-    return { license: license.replace(/\s+/g, " ").trim() || "(空)", classifiers };
+    return { license: license.replace(/\s+/g, " ").trim() || "(empty)", classifiers };
   } catch (e) {
-    return { license: "(查不到)", classifiers: String(e.message || e) };
+    return { license: "(not found)", classifiers: String(e.message || e) };
   }
 }
 
-/** 找 release/extensions 下所有 manifest（两档在 _light/_full 子目录里，单项包平铺） */
+/** Finds all manifests under release/extensions (two tiers in _light/_full, standalone packages flat) */
 function findManifests(dir) {
   if (!fs.existsSync(dir)) return [];
   const out = [];
@@ -110,8 +117,8 @@ async function main() {
   const files = given.length ? given : findManifests(EXT_DIR);
 
   if (!files.length) {
-    console.error(`[FAIL] 没找到 manifest。先打一次拓展包（node desktop/scripts/make-extension.mjs light …），`
-      + `或者把 ext-*.json 的路径当参数传进来。找过的位置：${EXT_DIR}`);
+    console.error(`[FAIL] No manifest found. Build an extension package first (node desktop/scripts/make-extension.mjs light …),`
+      + `or pass the path of an ext-*.json as an argument. Locations searched: ${EXT_DIR}`);
     process.exit(1);
   }
 
@@ -120,7 +127,7 @@ async function main() {
     return { label: m.tier || m.name, wheels: m.wheels, file: f };
   });
   if (!asJson) {
-    for (const m of manifests) console.log(`manifest：${m.file}（${m.label}，${(m.wheels || []).length} 个 wheel）`);
+    for (const m of manifests) console.log(`manifest: ${m.file} (${m.label}, ${(m.wheels || []).length} wheels)`);
     console.log("");
   }
 
@@ -142,17 +149,17 @@ async function main() {
       console.log(`     license: ${r.license}`);
       if (r.classifiers) console.log(`     classifiers: ${r.classifiers}`);
     }
-    console.log(`\n共 ${rows.length} 个包，可疑 ${flagged.length} 个。`);
+    console.log(`\n${rows.length} packages in total, ${flagged.length} suspicious.`);
     if (flagged.length) {
-      console.log("可疑的逐个打开 wheel 看 METADATA / LICENSE 再定；确认能发的话，"
-        + "在 desktop/THIRD-PARTY-LICENSES.md 第 9 节写明理由。");
+      console.log("Open each suspicious wheel and check METADATA / LICENSE before deciding; if it is confirmed OK to ship,"
+        + "state the reason in section 9 of desktop/THIRD-PARTY-LICENSES.md.");
     } else {
-      console.log("没有 GPL / AGPL / LGPL / SSPL / 非商用 授权的包。"
-        + "MPL-2.0（certifi、tqdm）不算可疑，但要按 MPL §3.2 告知源码获取途径，已写在包内的 THIRD-PARTY-LICENSES.txt。");
+      console.log("No packages with GPL / AGPL / LGPL / SSPL / non-commercial licenses."
+        + " MPL-2.0 (certifi, tqdm) is not suspicious, but MPL §3.2 requires telling users how to get the source; this is already written in THIRD-PARTY-LICENSES.txt inside the package.");
     }
   }
   process.exit(flagged.length ? 1 : 0);
 }
 
-// 被 import 时（测试）不跑主流程
+// Do not run main flow when imported (tests)
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

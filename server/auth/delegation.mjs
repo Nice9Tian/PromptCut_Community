@@ -1,20 +1,28 @@
 /**
- * 云端 Agent 的两种成员身份证明（契约 `docs/plan/cloud-agent-contract.md` 第 4.2、4.6、7.2 节；`docs/plan/auth-contract.md` 第 17 节）。
+ * Two kinds of member credentials for Cloud Agent (contract `docs/plan/cloud-agent-contract.md`
+ * Sections 4.2, 4.6, 7.2; `docs/plan/auth-contract.md` Section 17).
  *
- * | | 委托票据 | 对话委托 |
+ * | | Delegation ticket | Chat delegation |
  * |---|---|---|
- * | 用途 | 页面打 Agent 服务的每个请求时出示：「我是谁」 | 一轮开始时交给 Agent 服务：「在这个对话里代我行事，我离线了也算数」 |
- * | 负载 | `{ kid, k: 'dlg', p, u, dn, cr?, aud, acc, g, ug, exp, iat }` | 同左，另加 `cid: <对话 id>`、`run: true` |
- * | 有效期 | 2 分钟 | 60 分钟 |
+ * | Purpose | Presented on every request from page to Agent service: "who I am" | Given to Agent service at start of round: "act for me in this chat, counts even if I go offline" |
+ * | Payload | `{ kid, k: 'dlg', p, u, dn, cr?, aud, acc, g, ug, exp, iat }` | Same as left, with additional `cid: <chat id>`, `run: true` |
+ * | Validity | 2 minutes | 60 minutes |
  *
- * 形状、签名密钥、核对顺序与连接票据相同（`tickets.mjs`）：`v1.<base64url(JSON)>.<base64url(HMAC-SHA256(ticketKey, "v1." + 负载段))>`，
- * 由项目的文档服务签，也只有它验；先验签名再采信字段；允许 30 s 时钟偏差。`k: 'dlg'` 与连接票据、素材票据的类别不同，
- * 所以它当不了握手票据，也当不了素材票据（`verifyTicket` 只认 `asset` / `conn`）。
+ * Shape, signing key, and verification order are identical to connection tickets (`tickets.mjs`):
+ * `v1.<base64url(JSON)>.<base64url(HMAC-SHA256(ticketKey, "v1." + payloadSegment))>`, signed by
+ * the project's document service, and only verified by it; verifies signature before trusting fields;
+ * allows 30 s clock skew. `k: 'dlg'` differs from the categories of connection tickets and asset
+ * tickets, so it cannot serve as a handshake ticket or asset ticket (`verifyTicket` only recognizes
+ * `asset` / `conn`).
  *
- * 委托本身是无状态的票据，撤销不靠查「已发委托」的表，靠文档服务手里的四样：项目代数与成员代数（改口令、改名单、踢人）、
- * 名单与禁入表、项目对这个服务的开关、服务登记表。`checkDelegation` 每次都把这四样重新看一遍，**不看成员在不在线**。
+ * Delegations themselves are stateless tickets; revocation does not rely on checking an "issued
+ * delegations" table, but on four items held by the document service: project generation and member
+ * generation (changing passphrases, changing lists, kicking members), list and ban list, project
+ * toggle for this service, and the service registry. `checkDelegation` re-examines all four every
+ * time, **without checking whether the member is online**.
  *
- * 只用 Node 内置模块。委托的原文不进任何日志与错误信息（要记就记 `delegationDigest`）。
+ * Uses only Node built-in modules. Raw delegation strings never enter any logs or error messages
+ * (record `delegationDigest` if logging is needed).
  */
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { roomUnavailableReason } from '../recovery/relocation.mjs';
@@ -31,12 +39,14 @@ export const DELEGATION_KIND = 'dlg';
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const sign = (key, data) => createHmac('sha256', Buffer.from(key, 'base64url')).update(data, 'utf8').digest();
 
-/** 日志里代替原文的摘要：SHA-256 的前 8 个十六进制字符 */
+/** Digest replacing raw text in logs: first 8 hexadecimal characters of SHA-256 */
 export const delegationDigest = (ticket) => createHash('sha256').update(String(ticket), 'utf8').digest('hex').slice(0, 8);
 
 /**
- * 这位成员在这个项目里的权限（契约第 4.6 节）：项目记录的可选字段 `readonly: [用户名]` 里有他就是只读，否则读写；
- * 以创建者身份进入的恒为读写。这一版没有设置 `readonly` 的界面与创建者操作，没有这个字段时人人读写。
+ * Permissions of this member in this project (contract Section 4.6): read-only if present in the
+ * project record's optional field `readonly: [username]`, otherwise read-write; entering with
+ * creator identity is always read-write. This version lacks a UI and creator operations to set
+ * `readonly`; when this field is absent, everyone has read-write access.
  * @returns {'r' | 'rw'}
  */
 export function memberAccess(record, username, creator = false) {
@@ -45,15 +55,18 @@ export function memberAccess(record, username, creator = false) {
   return list.includes(username) ? 'r' : 'rw';
 }
 
-/** 两个权限里取小的 */
+/** Takes the lesser of the two permissions */
 export const narrowAccess = (a, b) => (a === 'rw' && b === 'rw' ? 'rw' : 'r');
 
 /**
- * 云端对话的归属键（契约第 7.2 节，待用户审的裁定 U1）。由文档服务算好交给 Agent 服务，Agent 服务不自己推断：
- * - 以创建者身份进入的 → `creator`（换设备能找回）；
- * - 限定进入的名单成员（各有自己的口令）→ `user:<用户名>`（换设备能找回）；
- * - 自由进入的成员（用户名是自报的）→ `device:<userId>`（只能在原设备找回）。
- * 键里不含项目：Agent 服务按「项目 / 归属键」分目录。
+ * Ownership key for cloud chats (contract Section 7.2, ruling U1 pending user review). Computed by
+ * the document service and provided to the Agent service; the Agent service does not infer it:
+ * - Entering with creator identity → `creator` (recoverable when switching devices);
+ * - List members in restricted entry (each has their own passphrase) → `user:<username>`
+ *   (recoverable when switching devices);
+ * - Members in open entry (self-reported usernames) → `device:<userId>` (only recoverable on the
+ *   original device).
+ * The key excludes the project: the Agent service splits directories by "project / ownership key".
  */
 export function ownerKeyOf(record, { username, userId, creator }) {
   if (creator === true) return 'creator';
@@ -61,19 +74,20 @@ export function ownerKeyOf(record, { username, userId, creator }) {
 }
 
 /**
- * 签一张委托票据或对话委托。
- * @param {object} rec 项目记录
- * @param {object} fields `{ u, dn?, cr?, aud, acc, cid? }`；给了 `cid` 就是对话委托（带 `run: true`、60 分钟）
- * @param {number} at 签发时刻
+ * Signs a delegation ticket or chat delegation.
+ * @param {object} rec Project record
+ * @param {object} fields `{ u, dn?, cr?, aud, acc, cid? }`; providing `cid` makes it a chat
+ *   delegation (with `run: true`, 60 minutes)
+ * @param {number} at Issuance timestamp
  * @returns {{ ticket: string, exp: number, grant: boolean }}
  */
 export function signDelegation(rec, fields, at) {
   const unavailable = roomUnavailableReason(rec);
   if (unavailable) throw Object.assign(new Error('Room unavailable'), { reason: unavailable });
-  if (!DELEGATION_AUDIENCES.includes(fields.aud)) throw new TypeError('signDelegation: 不认识的受众');
-  if (!isAccess(fields.acc)) throw new TypeError("signDelegation: acc 只能是 'r' 或 'rw'");
+  if (!DELEGATION_AUDIENCES.includes(fields.aud)) throw new TypeError('signDelegation: unknown audience');
+  if (!isAccess(fields.acc)) throw new TypeError("signDelegation: acc must be 'r' or 'rw'");
   const grant = fields.cid !== undefined && fields.cid !== null;
-  if (grant && !isConversationId(fields.cid)) throw new TypeError('signDelegation: 对话 id 不合格');
+  if (grant && !isConversationId(fields.cid)) throw new TypeError('signDelegation: invalid chat id');
   const payload = {
     kid: kidOf(rec.ticketKey),
     k: DELEGATION_KIND,
@@ -98,14 +112,16 @@ export function signDelegation(rec, fields, at) {
 }
 
 /**
- * 核对一张委托（只看票据自己：形状、签名、有效期、代数、受众）。
+ * Verifies a delegation (inspects only the ticket itself: shape, signature, validity, generation,
+ * audience).
  * @param {string} ticket
  * @param {object} options
- * @param {(projectId: string) => object | null} options.lookup 取项目记录（只读）
+ * @param {(projectId: string) => object | null} options.lookup Gets project record (read-only)
  * @param {number} options.now
- * @param {string} [options.audience] 必须是给这个服务的
+ * @param {string} [options.audience] Must be intended for this service
  * @returns {{ ok: true, payload: object, record: object, grant: boolean } | { ok: false, reason: string }}
- *   `reason`：`format`、`no-project`、`relocating` / `relocated`、`signature`、`expired`、`generation`、`audience`
+ *   `reason`: `format`, `no-project`, `relocating` / `relocated`, `signature`, `expired`,
+ *   `generation`, `audience`
  */
 export function verifyDelegation(ticket, { lookup, now, audience } = {}) {
   const bad = (reason) => ({ ok: false, reason });
@@ -116,7 +132,7 @@ export function verifyDelegation(ticket, { lookup, now, audience } = {}) {
   const raw = b64urlDecode(seg);
   const sig = b64urlDecode(sigText);
   if (!raw || !sig || sig.length !== 32) return bad('format');
-  // 只为找密钥解析一次；采信字段要等签名验过
+  // Parsed once only to locate the key; trusting fields must wait until signature is verified
   const text = utf8Text(raw);
   let hint;
   try {
@@ -156,7 +172,7 @@ export function verifyDelegation(ticket, { lookup, now, audience } = {}) {
   return { ok: true, payload: p, record: rec, grant };
 }
 
-/** 这个身份现在还能不能在这个项目里（与 `handshake.mjs` 的 `admissionOf` 同一条规则；这里重写一份免得两个模块互相引用） */
+/** Whether this identity can still remain in this project (same rule as `admissionOf` in `handshake.mjs`; duplicated here to avoid circular imports between the two modules) */
 function memberAdmission(rec, { username, deviceId, creator }) {
   if ((rec.bans ?? []).some((b) => b.username === username && b.deviceId === deviceId)) return 'banned';
   if (rec.mode === 'restricted' && !creator && rec.creator.username !== username && !(rec.list ?? []).some((e) => e.username === username)) {
@@ -166,17 +182,20 @@ function memberAdmission(rec, { username, deviceId, creator }) {
 }
 
 /**
- * 完整核对一张委托：票据自己（`verifyDelegation`），再加登记表、项目的开关、名单与禁入表。**不看成员在不在线。**
- * 目录模块的 `hosted.delegate.verify` 与 `hosted.ticket` 的委托分支都问它。
+ * Fully verifies a delegation: the ticket itself (`verifyDelegation`), plus registry, project
+ * switches, list, and ban table. **Does not check whether members are online.**
+ * Both `hosted.delegate.verify` in the directory module and the delegation branch of
+ * `hosted.ticket` consult it.
  * @param {object} options
  * @param {string} options.ticket
  * @param {(projectId: string) => object | null} options.lookup
- * @param {object | null} options.registry 服务登记表
- * @param {string} options.service 来核对的那个服务（委托的 `aud` 必须是它）
- * @param {string} [options.kid] 服务此刻所用的公钥编号（给了就核对它还在登记表里）
+ * @param {object | null} options.registry Service registry
+ * @param {string} options.service The service to verify (must match the delegation's `aud`)
+ * @param {string} [options.kid] Key ID currently used by the service (if provided, verifies it is
+ *   still in the registry)
  * @param {number} options.now
  * @returns {{ ok: true, payload, record, grant, username, deviceId, creator, access, ownerKey } | { ok: false, reason: string }}
- *   `reason` 另有 `service-revoked`、`service-disabled`、`banned`、`not-listed`
+ *   `reason` also includes `service-revoked`, `service-disabled`, `banned`, `not-listed`
  */
 export function checkDelegation({ ticket, lookup, registry, service, kid, now }) {
   const entry = registry ? registry.get(service) : null;
@@ -191,7 +210,8 @@ export function checkDelegation({ ticket, lookup, registry, service, kid, now })
   return {
     ok: true, payload: v.payload, record: v.record, grant: v.grant,
     username: who.username, deviceId: who.deviceId, creator,
-    // 权限取「签发时的」与「此刻的」里小的那个：签发后被改成只读，下一次核对就按只读
+    // Permissions take the lesser of "at issuance" and "current": if changed to read-only after
+    // issuance, the next verification treats it as read-only
     access: narrowAccess(v.payload.acc, memberAccess(v.record, who.username, creator)),
     ownerKey: ownerKeyOf(v.record, { username: who.username, userId: v.payload.u, creator }),
   };

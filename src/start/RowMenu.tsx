@@ -1,20 +1,30 @@
 /**
- * 侧栏行的右键菜单:重命名 / 置顶 / 归档 / 删除。
+ * The context menu of a sidebar row: rename / pin / archive / delete.
  *
- * 三种行(分组、项目、Agent 对话)共用这一个。按 Esc、点别处、滚动都关掉;上下键在项里走,
- * 回车选中 —— 右键菜单只能用鼠标开,但开出来之后得能用键盘走完,不然用读屏的人卡在这儿。
+ * All three kinds of rows (group, project, Agent chat) share this one. Esc, clicking elsewhere and
+ * scrolling all close it; the up and down keys move through the items and Enter selects. The context
+ * menu can only be opened with the mouse, but once opened it must be completable by keyboard, otherwise
+ * screen-reader users get stuck here.
  *
- * 位置按鼠标点,贴着视口边时往回收,免得菜单被切掉一半。
+ * The position follows the mouse click and is pulled back when it is next to the viewport edge, so the
+ * menu is not half cut off.
  *
- * 2026-10-23 接业务层后各样落在哪(`OnlineStart.tsx` 的 `ops`):
- *   - 置顶、归档、手排顺序、分组都只记在这台浏览器里(`vibeOrg.ts`);归档的东西在侧栏最下面「已归档」那张卡里,
- *     在那儿右键是「取消归档」;
- *   - 分组可以改名、删除(删分组只是把里面的项目放回「项目」,项目本身不动);项目多一组「移到分组」;
- *   - 云端项目、云端对话这一版不能在这里改名(对话没有改名入口,`workflow/production.md`「云端对话」;项目改名要文档服务的
- *     接口,还没有),那一项置灰并悬停说明;删除对话要先确认、不能撤销(`product/agent.md`「对话的上限与删除」);
- *     删除云端项目这一版不在这里做,置灰并说明。
- *   - 侧栏里**展开着但没打开**的项目(issue #15,`browseChats.ts`):它底下那些对话只能看、只能点进去,
- *     四项全部置灰并说明「先打开这个项目」—— 删对话走的是当前连着那个项目的服务,置顶归档也记在当前项目名下。
+ * Where everything landed after the business layer was wired in on 2026-10-23 (`ops` in `OnlineStart.tsx`):
+ *   - Pin, archive, manual order and groups are all recorded only in this browser (`vibeOrg.ts`);
+ *     archived items are in the "Archived" card at the bottom of the sidebar, where right-click offers
+ *     "Unarchive";
+ *   - Groups can be renamed and deleted (deleting a group just puts its projects back under "Projects"
+ *     and leaves the projects themselves alone); projects get an extra "Move to group" entry;
+ *   - Cloud projects and cloud chats cannot be renamed here in this version (chats have no rename entry,
+ *     `workflow/production.md` "Cloud chats"; renaming a project needs an interface of the document
+ *     service, which does not exist yet), so that item is grayed out with an explanation on hover;
+ *     deleting a chat needs a confirmation first and cannot be undone (`product/agent.md` "Chat limits
+ *     and deletion"); deleting a cloud project is not done here in this version, grayed out with an
+ *     explanation.
+ *   - Projects in the sidebar that are **expanded but not opened** (issue #15, `browseChats.ts`): the
+ *     chats under them can only be viewed and clicked into, and all four items are grayed out with the
+ *     explanation "Open this project first": deleting a chat goes through the service currently connected
+ *     to that project, and pin and archive are also recorded under the currently open project.
  */
 import { useEffect, useRef } from "react";
 import type { JSX } from "react";
@@ -27,19 +37,19 @@ export interface MenuAt {
   kind: TreeKind;
   name: string;
   pinned: boolean;
-  /** 鼠标点的位置(视口坐标) */
+  /** Mouse click position (viewport coordinates) */
   x: number;
   y: number;
 }
 
-/** 菜单大概多大,用来判断要不要往回收。宽度和 `.ps-menu` 的 min-width 对齐 */
+/** Roughly how big the menu is, used to decide whether to pull it back. The width is aligned with the min-width of `.ps-menu` */
 const MENU = { w: 168, h: 148, pad: 8 };
-/** 「移到分组」每多一项,菜单高这么多 */
+/** Menu height added by each additional "Move to group" item */
 const ITEM_H = 30;
 
 const KIND_WORD: Record<TreeKind, string> = { group: tr("Group"), project: tr("Project"), chat: tr("chat") };
 
-/** 一项做不了时的说明;给了就置灰并挂在悬停上 */
+/** Explanation for when an item cannot be done; when given, the item is grayed out and the text is attached to hover */
 export type MenuBlock = string | null | undefined;
 
 export function RowMenu(props: {
@@ -49,17 +59,21 @@ export function RowMenu(props: {
   onPin: () => void;
   onArchive: () => void;
   onDelete: () => void;
-  /** 这一行已经归档了:「归档」那一项换成「取消归档」 */
+  /** This row is already archived: the "Archive" item becomes "Unarchive" */
   archived?: boolean;
   renameBlocked?: MenuBlock;
   deleteBlocked?: MenuBlock;
   /**
-   * 置顶、归档做不了时的说明(issue #15):浏览态列出来的对话属于**别的**项目,
-   * 而置顶归档记的是「当前打开的项目」名下,在这里做会落到别人头上。先打开那个项目再整理
+   * Explanation for when pin and archive cannot be done (issue #15): chats listed in browse state belong
+   * to **another** project, while pin and archive are recorded under "the currently open project", so
+   * doing it here would land on the wrong project. Open that project first, then organize
    */
   pinBlocked?: MenuBlock;
   archiveBlocked?: MenuBlock;
-  /** 项目才有:移到哪个分组(`null` 是移出分组)。`blocked` 有值是放不进去(本地项目对云端分组等):置顶灰并说明 */
+  /**
+   * Projects only: which group to move to (`null` means move out of the group). A `blocked` value means
+   * it cannot be put in (a local project into a cloud group, etc.): grayed out with an explanation
+   */
   moveTargets?: MoveTarget[];
   onMove?: (groupId: string | null) => void;
 }): JSX.Element {
@@ -85,7 +99,7 @@ export function RowMenu(props: {
       const next = e.key === "ArrowDown" ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
       items[next]?.focus();
     };
-    // 点别处、滚动都关:用 capture,免得被行自己的 handler 吃掉
+    // Clicking elsewhere or scrolling closes it: use capture so the row's own handler does not swallow the event
     const onDown = (e: PointerEvent) => {
       if (!box.current?.contains(e.target as Node)) props.onClose();
     };
@@ -101,7 +115,7 @@ export function RowMenu(props: {
     };
   }, [props]);
 
-  // 贴着右边或下边时往回收
+  // Pull back when next to the right or bottom edge
   const vw = typeof window === "undefined" ? 1280 : window.innerWidth;
   const vh = typeof window === "undefined" ? 800 : window.innerHeight;
   const left = Math.min(props.at.x, vw - MENU.w - MENU.pad);

@@ -1,9 +1,11 @@
 /**
- * 兜底顺序在舞台一侧(`streamPlayer.ts`)的单测:解码器预算的纯函数、组流清空、
- * 稀疏段换满帧段时的清单刷新(疑点 G)。跑:node --test src/render/streamFallback.test.mjs
+ * Unit tests for fallback order on the stage side (`streamPlayer.ts`): pure functions for decoder
+ * budget, group stream clearing, manifest refresh when switching from sparse segments to
+ * full-frame segments (point of doubt G). Run: node --test src/render/streamFallback.test.mjs
  *
- * 解码与合成要浏览器;这里用假的 root / canvas / 字节源,只钉「哪条流建轨道」「清单什么时候再问」
- * 「流清空时画面清空」这几件纯逻辑。
+ * Decoding and compositing require a browser; mock root / canvas / byte sources are used here to
+ * pin down only pure logic: "which stream creates a track", "when to re-query the manifest",
+ * and "clearing display when stream clears".
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +17,7 @@ Date.now = () => now;
 
 const fakeCanvas = () => ({ getContext: () => null, style: { getPropertyValue: () => '', setProperty() {} }, width: 0, height: 0, parentElement: null });
 
-/** 只认 streamPlayer 用到的选择器 */
+/** Only recognizes selectors used by streamPlayer */
 function fakeRoot({ canvases = {} } = {}) {
   return {
     querySelector(sel) {
@@ -42,30 +44,33 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => { now = 1_000_000; });
 
-test('planesWithinBudget:小的流(像素远没到预算)只受条数上限管,留前 DECODER_BUDGET 条有流键的平面', () => {
+test('planesWithinBudget: small streams (pixels far below the budget) are limited only by the count cap, keeping the first DECODER_BUDGET planes that have a stream key', () => {
   const planes = Array.from({ length: DECODER_BUDGET + 2 }, (_, i) => ({ clipIds: [`c${i}`], key: `K${i}`, ranges: [[0, 9]], originFrame: 0 }));
   const withHole = [{ clipIds: ['nokey'] }, ...planes];
-  // 预算的口径是数像素(`streamBudget.mjs`,那边的单测在 server/test/stream-budget.test.mjs);这里每条给 64×144 的小画幅,只剩条数上限起作用
+  // Budget basis counts pixels (`streamBudget.mjs`, unit tests there are in
+  // server/test/stream-budget.test.mjs); here each is given a small aspect ratio of 64×144, leaving
+  // only the count limit in effect
   const small = () => 64 * 144;
   const kept = planesWithinBudget(withHole, 30, small);
   assert.equal(kept.length, DECODER_BUDGET);
-  assert.deepEqual(kept.map((p) => p.clipIds[0]), planes.slice(0, DECODER_BUDGET).map((p) => p.clipIds[0]), '没有流键的只占位、不占解码器');
-  // 没带这条流第一帧的平面(没法把帧号换成分段号)同样不占解码器
+  assert.deepEqual(kept.map((p) => p.clipIds[0]), planes.slice(0, DECODER_BUDGET).map((p) => p.clipIds[0]), 'planes without a stream key only hold a place and use no decoder');
+  // Planes without the first frame of this stream (cannot convert frame number to segment number)
+  // likewise do not occupy decoders
   const { originFrame: _dropped, ...noOrigin } = planes[0];
   assert.deepEqual(planesWithinBudget([noOrigin, { ...planes[1], originFrame: -1 }, planes[2]], 30, small).map((p) => p.clipIds[0]), ['c2']);
 });
 
-test('舞台 sync() 守住条数的硬上限:画布晚到的平面照样占着它的位置,不让超出的那一条顶上', () => {
+test('stage sync() enforces the hard count cap: a plane whose canvas arrives late still keeps its place, so the excess one does not take over', () => {
   const planes = Array.from({ length: DECODER_BUDGET + 1 }, (_, i) => ({ clipIds: [`c${i}`], key: `K${i}`, ranges: [[0, 9]], originFrame: 0 }));
-  const canvases = Object.fromEntries(planes.slice(1).map((p) => [p.clipIds[0], fakeCanvas()]));   // c0 的画布还没挂上
+  const canvases = Object.fromEntries(planes.slice(1).map((p) => [p.clipIds[0], fakeCanvas()]));   // Canvas for c0 is not yet mounted
   const player = new StreamPlayer({ root: () => fakeRoot({ canvases }), source: fakeSource([manifestWith(1)]) });
   player.setPlanes(planes, 30);
   player.present(0);
   const ids = player.diag().tracks.map((t) => t.id.split('#')[0]).sort();
-  assert.deepEqual(ids, planes.slice(1, DECODER_BUDGET).map((p) => p.clipIds[0]).sort(), '超出条数上限的那一条不建解码器(像素那一半由父页判:超出的平面带 over,见 streamOver.test.mjs)');
+  assert.deepEqual(ids, planes.slice(1, DECODER_BUDGET).map((p) => p.clipIds[0]).sort(), 'the plane over the count cap gets no decoder (the pixel half is judged by the parent page: over-limit planes carry over, see streamOver.test.mjs)');
 });
 
-test('疑点 G:当前段是稀疏段时,每 MANIFEST_REFRESH_MS 再问一次清单;换成满帧段后不再问', async () => {
+test('Suspect G: while the current segment is a sparse segment, ask for the manifest again every MANIFEST_REFRESH_MS; stop asking after switching to a full-frame segment', async () => {
   const source = fakeSource([manifestWith(3), manifestWith(1)]);
   const player = new StreamPlayer({ root: () => fakeRoot({ canvases: { a: fakeCanvas() } }), source });
   player.setPlanes([{ clipIds: ['a'], key: 'K', ranges: [[0, 0]], originFrame: 0 }], 30);
@@ -74,18 +79,18 @@ test('疑点 G:当前段是稀疏段时,每 MANIFEST_REFRESH_MS 再问一次清�
   assert.equal(source.calls, 1);
   player.present(1 / 30);
   await flush();
-  assert.equal(source.calls, 1, '节流:刚问过不再问');
+  assert.equal(source.calls, 1, 'throttle: just asked, do not ask again');
   now += MANIFEST_REFRESH_MS + 1;
   player.present(2 / 30);
   await flush();
-  assert.equal(source.calls, 2, '稀疏段:过了刷新间隔再问一次,满帧段到了就能换上');
+  assert.equal(source.calls, 2, 'sparse segment: ask again after the refresh interval, so the full-frame segment can be swapped in once it arrives');
   now += MANIFEST_REFRESH_MS + 1;
   player.present(3 / 30);
   await flush();
-  assert.equal(source.calls, 2, '已经是满帧段:不再问');
+  assert.equal(source.calls, 2, 'already a full-frame segment: do not ask again');
 });
 
-test('疑点 G:同一个流键的就绪区间变了(新分段发布),允许再问清单', async () => {
+test('Suspect G: when the ready range of the same stream key changes (a new segment is published), asking for the manifest again is allowed', async () => {
   const source = fakeSource([manifestWith(1)]);
   const player = new StreamPlayer({ root: () => fakeRoot({ canvases: { a: fakeCanvas() } }), source });
   player.setPlanes([{ clipIds: ['a'], key: 'K', ranges: [[0, 0]], originFrame: 0 }], 30);
@@ -99,9 +104,9 @@ test('疑点 G:同一个流键的就绪区间变了(新分段发布),允许再�
   assert.equal(source.calls, 2);
 });
 
-test('组流清空(这一段没料)时,流画面清空;撤快照后不操作快照平面,由流平面与占位接管', () => {
+test('when the group stream is cleared (no data for this segment), the stream picture is cleared; after the snapshot is withdrawn, the snapshot plane is left alone and the stream plane and placeholder take over', () => {
   const player = new StreamPlayer({ root: () => fakeRoot({ canvases: { 'a,b': fakeCanvas() } }), source: fakeSource([manifestWith(1)]) });
   player.setPlanes([{ clipIds: ['a', 'b'], key: 'G', ranges: [[5, 9]], originFrame: 0 }], 30);
-  player.present(0);   // 第 0 段不在就绪区间里 → blank
-  assert.deepEqual([...player.showingClips()], [], '这一拍没有流画面');
+  player.present(0);   // Segment 0 is not in ready range → blank
+  assert.deepEqual([...player.showingClips()], [], 'no stream picture on this tick');
 });

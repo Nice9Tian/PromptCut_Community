@@ -1,14 +1,20 @@
 /**
- * 探针用的本机文档服务 + 素材服务,只用公开代码拼成,数据全在 `dataDir` 下。
- * 手机版探针(`mobile-env.mjs`)和 `hosted-proxy.mjs` 的直接运行都接它,所以社区版也跑得了。
+ * Local document service + asset service used by probes, assembled entirely from public code,
+ * with all data under `dataDir`.
+ * Both mobile app probes (`mobile-env.mjs`) and direct execution of `hosted-proxy.mjs` connect to
+ * it, so the community edition can also run it.
  *
  *   const s = await startProbeServices({ dataDir, docPort, assetPort, docPublicUrl, assetPublicUrl });
  *   s.service / s.stores / s.credentialStore / await s.close()
  *
- * 要另起进程的探针直接运行它,配置走环境变量:`PROMPTCUT_DATA_DIR`、`PROMPTCUT_DOCSERVICE_PORT`、`PROMPTCUT_ASSET_PORT`。
+ * Probes that need to launch a separate process run it directly, configured via environment
+ * variables: `PROMPTCUT_DATA_DIR`, `PROMPTCUT_DOCSERVICE_PORT`, `PROMPTCUT_ASSET_PORT`.
  *
- * 文档服务的 `mode: 'hosted'` 和素材服务的三个命名空间都是公开的。这里只起这两样,只绑本机;`trustLoopback` 给 false 时要带集群令牌。
- * 素材服务的中间件是按 vite 写法写的 `.ts`,相对引用不带扩展名,所以先补一个解析钩子。
+ * `mode: 'hosted'` in document service and the three namespaces in asset service are all public.
+ * Only these two are started here, bound only to the local machine; when `trustLoopback` is false,
+ * a cluster token is required.
+ * Asset service middleware consists of `.ts` written in Vite style with extensionless relative
+ * imports, so a resolution hook is registered first.
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -42,7 +48,7 @@ function registerTsResolve() {
   });
 }
 
-/** 产物的内容类型:`.m4s` 和 HTML 快照,其余同素材 */
+/** Content type of artifacts: `.m4s` and HTML snapshots, rest same as assets. */
 const artifactContentType = (base) => (ext) => {
   const e = String(ext || '').toLowerCase().replace(/^\./, '');
   if (e === 'html' || e === 'htm') return 'text/html; charset=utf-8';
@@ -55,7 +61,7 @@ export async function startProbeServices({ dataDir, docPort, assetPort, host = '
   const assetDir = path.join(dataDir, 'assets');
   fs.mkdirSync(docDir, { recursive: true });
   const layout = ensureLayoutSync(assetDir, LAYOUTS.shard);
-  if (!layout.ok) throw new Error(`素材目录的布局对不上:${layout.found}`);
+  if (!layout.ok) throw new Error(`Asset catalog layout mismatch: ${layout.found}`);
 
   registerTsResolve();
   const [assetService, media] = await Promise.all([
@@ -105,7 +111,7 @@ export async function startProbeServices({ dataDir, docPort, assetPort, host = '
     async close() {
       if (closed) return;
       closed = true;
-      try { announcer.stop(); } catch { /* 已停 */ }
+      try { announcer.stop(); } catch { /* Stopped */ }
       await new Promise((resolve) => { assetServer.close(() => resolve()); assetServer.closeAllConnections?.(); });
       await service.close();
     },

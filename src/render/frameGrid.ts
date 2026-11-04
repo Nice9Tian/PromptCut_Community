@@ -1,26 +1,32 @@
 /**
- * 把一个时刻对齐到**导出会真正渲到的那一批帧**上。
+ * Align a timestamp to **the batch of frames that export will actually render**.
  *
- * 导出是一帧一帧推的:第 i 帧的时刻就是 i/fps,中间的时刻根本不存在。所以「一张卡什么时候
- * 挂载」在导出里只能是某个 i/fps,而不是 `start - LEAD` 这种连续值。预览如果按连续值挂载,
- * 卡片的时间原点就和成片差不到一帧 —— 对「挂载即播」的卡(绝大多数)来说,这一小段偏差
- * 落在进场动画最陡的那一段上,画面上是看得见的。
+ * Export is advanced frame by frame: the timestamp of frame i is simply i/fps, and intermediate
+ * timestamps do not exist at all. Therefore, "when a card mounts" can only be some i/fps during
+ * export, rather than a continuous value like `start - LEAD`. If preview mounts using a continuous
+ * value, the card's time origin differs from the final video by less than a frame: for "play upon
+ * mount" cards (the vast majority), this small discrepancy falls on the steepest section of the
+ * entrance animation, making it visible on screen.
  *
- * 实测(mu-circular-progress,1.2s easeOut cubic,入点 1.0s,30fps,同一个 t=1.0):
- * 导出 6%,对齐前的预览 9%,对齐后 6% —— 之后逐帧相同。
+ * Actual test (mu-circular-progress, 1.2s easeOut cubic, in point 1.0s, 30fps, same t=1.0):
+ * export 6%, preview before alignment 9%, after alignment 6%: identical frame by frame thereafter.
  */
 
 /**
- * sec 落在**第几帧**上,返回那一帧的时刻。
+ * Returns the timestamp of **which frame** sec falls on.
  *
- * 「什么时候挂载」由 frameWindow.mjs 的 mountFrameOf 回答(第一个不早于它的帧),
- * 这个回答「这一刻画面上是哪一帧」—— 成片里第 i 帧覆盖 [i/fps, (i+1)/fps),所以往下取整。
+ * "When to mount" is answered by mountFrameOf in frameWindow.mjs (the first frame not earlier than
+ * it); this answers "which frame is on screen at this moment": in the final video, frame i covers
+ * [i/fps, (i+1)/fps), so it floors.
  *
- * 播放头用它:成片是 fps 帧的,预览却按显示器刷新率推连续时间,于是预览停在了成片里
- * **根本不存在的时刻**上。差的不到一帧,但 3D 那边显示的是预渲染好的整帧,两个视图一对比就露馅。
+ * Used by the playhead: the final video is fps frames, whereas preview advances continuous time at
+ * the monitor refresh rate, causing preview to stop at a timestamp that **does not exist at all**
+ * in the final video. The difference is less than one frame, but the 3D side displays prerendered
+ * full frames, revealing the discrepancy when comparing the two views.
  *
- * ⚠ 容差的方向:`29/30 * 30` 在浮点里是 28.999999999999996,
- * 直接 floor 会退回第 28 帧 —— 帧格上的时刻反而被判到上一帧去。
+ * ⚠ Direction of tolerance: `29/30 * 30` is 28.999999999999996 in floating point; directly flooring
+ * falls back to frame 28, inadvertently classifying a timestamp on the frame grid into the previous
+ * frame.
  */
 export function atFrameGrid(sec: number, fps: number): number {
   const f = Math.max(1, fps);

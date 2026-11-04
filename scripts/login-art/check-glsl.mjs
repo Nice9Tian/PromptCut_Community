@@ -1,11 +1,12 @@
 /**
- * 把 `src/start/BrandCanvas.tsx` 里那两段 GLSL 丢进**软件 WebGL**（导出用的就是它）编译一遍，
- * 编不过就把 Chrome 给的 info log 原样打出来。
+ * Compiles the two GLSL blocks from `src/start/BrandCanvas.tsx` with **software WebGL** (which is
+ * what export uses); if compilation fails, prints Chrome's info log as-is.
  *
  *   node scripts/login-art/check-glsl.mjs
  *
- * 为什么单拎出来：卡片里编不过时，React 只会说「<LoginArt> 组件出错了」，不给着色器的报错正文；
- * 隔着卡片猜 GLSL 很费时间，不如直接编。
+ * Why extracted separately: when compilation fails inside a card, React only says "<LoginArt>
+ * component error" without providing the shader error body; guessing GLSL through a card wastes
+ * time, so compiling it directly is much better.
  */
 import puppeteer from 'puppeteer';
 import fs from 'node:fs';
@@ -16,7 +17,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const text = fs.readFileSync(path.join(ROOT, 'src/start/BrandCanvas.tsx'), 'utf8').replace(/\r\n/g, '\n');
 const grab = (name) => {
   const m = new RegExp('export const ' + name + ' = `(.*?)`;', 's').exec(text);
-  if (!m) throw new Error('没找到 ' + name);
+  if (!m) throw new Error('Not found: ' + name);
   return m[1];
 };
 const VERT = grab('VERT');
@@ -46,7 +47,7 @@ const result = await page.evaluate(([v, f]) => {
   const prog = gl.createProgram();
   gl.attachShader(prog, vs.sh); gl.attachShader(prog, fs2.sh); gl.linkProgram(prog);
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return { webgl2: true, stage: 'link', log: gl.getProgramInfoLog(prog) };
-  // 编得过还不够:真画一帧,看是不是全透明
+  // Compiling is not enough: actually render a frame to check if it is fully transparent
   gl.useProgram(prog);
   gl.viewport(0, 0, 64, 64);
   gl.uniform2f(gl.getUniformLocation(prog, 'uRes'), 64, 64);

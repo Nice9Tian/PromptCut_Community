@@ -1,7 +1,7 @@
 /**
- * 成员与 Agent 的数目和名单,给预览右上角的成员按钮和成员面板用。数据和桌面的成员按钮同源:
- * 账号项目取 `accountProjectMembers()`(展开时每 3 秒、收着时每 15 秒,页签在后台不取,同 `AccountMembersPanel`);
- * 凭口令的共享项目取同步状态里的成员行(`MembersPanel` 的同一套过滤)。
+ * The count and list of members and Agents, for the member button at the top right of the preview and the member panel. The data has the same source as the desktop app's member button:
+ * for an account project, take `accountProjectMembers()` (every 3 seconds when expanded, every 15 seconds when collapsed, not fetched while the tab is in the background, same as `AccountMembersPanel`);
+ * for a shared project joined by passphrase, take the member rows in the sync state (the same filtering as `MembersPanel`).
  */
 import { useCallback, useEffect, useState } from "react";
 import { MEMBERS_POLL_CLOSED_MS, MEMBERS_POLL_OPEN_MS, getMemberSource, type AccountJoinRequestRow, type AccountMembersSnapshot } from "../editor/sync/accountExtensions";
@@ -21,14 +21,14 @@ export interface MemberLine {
 }
 
 export interface MembersInfo {
-  /** 读不到名单(账号项目的成员服务暂时不可用) */
+  /** The list cannot be read (the member service of the account project is temporarily unavailable) */
   unavailable: boolean;
   people: number;
   agents: number;
   lines: MemberLine[];
-  /** 挂着的申请加入(只有创建者看得到;别人和凭口令的共享项目都是空的)。成员按钮上的数字角标就是它的条数 */
+  /** Pending join requests (only the creator can see them; for others and for passphrase-based shared projects it is empty). The number badge on the member button is its count */
   requests: AccountJoinRequestRow[];
-  /** 马上重取一次(创建者通过、拒绝之后) */
+  /** Refetch immediately (after the creator approves or rejects) */
   refresh: () => void;
 }
 
@@ -53,7 +53,7 @@ export function useMembers(open: boolean): MembersInfo {
   if (!shared) return { unavailable: true, people: 0, agents: 0, lines: [], requests: [], refresh };
   if (account) {
     if (!snap) return { unavailable: true, people: 0, agents: 0, lines: [], requests: [], refresh };
-    // 口径同桌面版 `AccountMembersPanel`(`accountMemberState`;语义 `product/agent.md`「成员列表怎么数」)
+    // Same counting as the desktop app's `AccountMembersPanel` (`accountMemberState`; semantics `product/agent.md`, "How to count the member list")
     const lines: MemberLine[] = [];
     for (const m of snap.members) {
       const s = accountMemberState(m.accountId, snap.devices);

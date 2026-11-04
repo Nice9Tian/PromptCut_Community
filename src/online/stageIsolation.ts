@@ -1,59 +1,83 @@
 /**
- * 编辑器页这一侧的**舞台隔离会话**(契约 `docs/plan/online-card-exec-contract.md` 第 3.1、3.2、4.1 节)。
+ * Editor-side **stage isolation session** (contract `docs/plan/online-card-exec-contract.md`
+ * Sections 3.1, 3.2, 4.1).
  *
- * 管三件事:
- *   1. 收两个跨源舞台的自检结果(`pc-stage-isolation`),按形状校验;
- *   2. 每个舞台取素材走哪条路:自检通过、票据交接成功 → **cookie**(舞台用 `/media-s/<sid>/media/<哈希>`,票据不进舞台的脚本);
- *      否则 → **旧办法**(票据经 RPC 下发、拼在地址的 `?t=` 里;这样的舞台文档不执行用户卡);
- *   3. 本页此刻能不能执行用户卡与素材效果卡(`onlineCardExec()`):总开关开着、是双舞台、两个舞台都走 cookie、没出过加固拦下的事。
+ * Manages three things:
+ *   1. Receives self-check results (`pc-stage-isolation`) from the two cross-origin stages,
+ *      validating by shape;
+ *   2. Which path each stage takes to fetch assets: self-check passed and ticket handoff
+ *      succeeded -> **cookie** (stage uses `/media-s/<sid>/media/<hash>`, ticket never enters
+ *      stage scripts); otherwise -> **legacy approach** (ticket dispatched via RPC, appended to
+ *      `?t=` in URL; such stage documents do not execute user cards);
+ *   3. Whether this page can execute user cards and media effect cards at this moment
+ *      (`onlineCardExec()`): master switch is on, is dual stage, both stages use cookies, and no
+ *      hardening breach has occurred.
  *
- * 两条单向的规矩(「要执行就不放秘密」):
- *   - 本页会话里只要点过一次头(`cardExec: true` 发给过舞台),此后**任何舞台都不再收到票据**:哪一台后来自检不过或交接失败,
- *     它拿到的是不带票据的 cookie 基址(取不到素材就取不到),不退回旧办法;
- *   - 出过加固拦下的事(`breach`),本页会话不再点头。
+ * Two one-way rules ("no secrets if executing"):
+ *   - Once approval has been given in this page session (`cardExec: true` was sent to a stage),
+ *     thereafter **no stage will ever receive tickets again**: if any stage subsequently fails
+ *     self-check or handoff fails, it receives a ticketless cookie base URL (if it cannot fetch
+ *     assets, so be it) without falling back to the legacy approach;
+ *   - If an incident intercepted by hardening (`breach`) has occurred, this page session no
+ *     longer approves execution.
  *
- * 总开关(托管方可关):运行配置 `editor/runtime-config.json` 里 `"onlineCardExec": false` 就整体退回原来的做法
- * (不执行、票据照旧走 `?t=`);缺省开。读不到运行配置时没有舞台源,本来就是同源单舞台、不执行。
+ * Master switch (host can disable): setting `"onlineCardExec": false` in runtime config
+ * `editor/runtime-config.json` falls back entirely to the original approach (no execution, tickets
+ * routed through `?t=` as before); enabled by default. If runtime config cannot be read, there is
+ * no stage origin, which defaults to same-origin single stage with no execution.
  *
- * 本模块属于 render 这一层(`src/online/`):不引 editor;交接请求、时钟都可注入(单测用)。
+ * This module belongs to the render layer (`src/online/`): does not import editor; handoff
+ * requests and clocks are injectable (for unit tests).
  */
 import { isSid, mediaGrantUrl, mediaSBase } from "./stagePolicy.mjs";
 import type { StageLetter } from "./stageOrigins.ts";
 import type { IsolationFailure, IsolationReport } from "./isolation/isolationCheck.ts";
 import type { BreachKind } from "./isolation/harden.ts";
 
-/** 跨源舞台 iframe 的 `sandbox`(契约第 3.3 节):只开脚本与保有自己的源;不给弹窗、带走顶层、表单、模态框、下载 */
+/**
+ * Cross-origin stage iframe `sandbox` (contract Section 3.3): only enables scripts and retains its
+ * own origin; disallows popups, top-level navigation, forms, modals, downloads.
+ */
 export const STAGE_SANDBOX = "allow-scripts allow-same-origin";
-/** 握手之后等这一台的自检结果多久;过了按没隔离算(这一台走旧办法) */
+/**
+ * How long to wait for this stage's self-check results after handshake; if exceeded, treated as
+ * not isolated (this stage uses the legacy approach).
+ */
 export const ISOLATION_REPORT_WAIT_MS = 4000;
-/** 交接请求的时限 */
+/** Timeout for handoff requests */
 export const MEDIA_GRANT_TIMEOUT_MS = 8000;
 
 export type StageMediaMode = "cookie" | "legacy";
 
-/** 本页不执行用户卡、素材效果卡的原因(给参数面板的说明与诊断;`ok` = 能执行) */
+/**
+ * Reason why this page does not execute user cards or media effect cards (for parameters panel
+ * explanation and diagnostics; `ok` = executable).
+ */
 export type CardExecReason =
   | "ok"
-  | "switch-off"     // 托管方关了总开关
-  | "no-stage"       // 还没有挂着的跨源舞台(读不到舞台源、页面卸载)
-  | "pending"        // 还在等舞台自检或票据交接
-  | "not-isolated"   // 某一台舞台自检没过
-  | "grant-failed"   // 票据交接没成
-  | "breach";        // 加固拦下过试图造子框架的代码
+  | "switch-off"     // Host disabled the master switch
+  | "no-stage"       // No cross-origin stage mounted yet (unable to read stage origin, page unloading)
+  | "pending"        // Still waiting for stage self-check or ticket handoff
+  | "not-isolated"   // A stage failed self-check
+  | "grant-failed"   // Ticket handoff failed
+  | "breach";        // Hardening has intercepted code attempting to create subframes
 
 export interface CardExecState {
   enabled: boolean;
   reason: CardExecReason;
-  /** 各舞台自检没过的原因(诊断) */
+  /** Reasons why stages failed self-check (diagnostics) */
   detail: Partial<Record<StageLetter, IsolationFailure[]>>;
-  /** 兼容诊断字段：当前策略执行时为 `none`，不执行时为 null */
+  /** Compatibility diagnostic field: `none` when current policy executes, null when it does not */
   egress: "none" | null;
 }
 
 const FAILURES: readonly IsolationFailure[] = ["same-origin", "no-policy", "meta-only", "not-hardened", "check-error"];
 const BREACHES: readonly BreachKind[] = ["html", "create", "insert", "observed", "define"];
 
-/** 舞台发来的自检结果按形状校验(舞台的消息一律当不可信输入);不对给 null */
+/**
+ * Validates self-check results sent by stage by shape (all stage messages treated as untrusted
+ * input); returns null if invalid.
+ */
 export function sanitizeIsolationReport(d: unknown): IsolationReport | null {
   if (!d || typeof d !== "object") return null;
   const r = d as Record<string, unknown>;
@@ -62,7 +86,7 @@ export function sanitizeIsolationReport(d: unknown): IsolationReport | null {
   const tt = r.trustedTypes === "enforced" || r.trustedTypes === "created" || r.trustedTypes === "unsupported" || r.trustedTypes === "failed" ? r.trustedTypes : null;
   if (!csp || !egress || !tt || typeof r.ok !== "boolean" || typeof r.crossOrigin !== "boolean" || typeof r.hardened !== "boolean" || !Array.isArray(r.reasons)) return null;
   const reasons = r.reasons.filter((x): x is IsolationFailure => FAILURES.includes(x as IsolationFailure)).slice(0, FAILURES.length);
-  // 不信舞台自己下的结论:按各项事实重算一遍(少一项就不算通过)
+  // Do not trust stage's own conclusions: recompute from individual facts (fails if any is missing)
   const ok = r.ok === true && reasons.length === 0 && r.crossOrigin === true && csp === "header" && r.hardened === true;
   return { ok, crossOrigin: r.crossOrigin, csp, egress, hardened: r.hardened, trustedTypes: tt, reasons };
 }
@@ -71,7 +95,10 @@ export function sanitizeBreach(d: unknown): BreachKind | null {
   return BREACHES.includes(d as BreachKind) ? (d as BreachKind) : null;
 }
 
-/** 生成 32 位十六进制的舞台素材路径号(按账号加项目隔离,对其它项目的舞台保密,把 cookie 与缓存圈在一段路径上) */
+/**
+ * Generates a 32-digit hexadecimal stage asset path id (isolated by account plus project, kept
+ * secret from stages of other projects, scoping cookie and cache to a single path segment).
+ */
 export function newSid(random: (bytes: Uint8Array) => void = (b) => { crypto.getRandomValues(b); }): string {
   const bytes = new Uint8Array(16);
   random(bytes);
@@ -80,16 +107,25 @@ export function newSid(random: (bytes: Uint8Array) => void = (b) => { crypto.get
   return out;
 }
 
-/** 交给舞台的取档策略里与隔离有关的那一半 */
+/** The isolation-related portion of the tier selection policy handed to the stage */
 export interface StageMediaPlan {
   mode: StageMediaMode;
-  /** 舞台取素材的基址:cookie 走 `/media-s/<sid>`;旧办法是调用方原来的基址(这里给 null,调用方自己填) */
+  /**
+   * Base URL for stage asset fetching: cookie uses `/media-s/<sid>`; legacy approach uses caller's
+   * original base URL (null here, caller fills it in).
+   */
   base: string | null;
-  /** 旧办法才带票据;cookie 恒为 null */
+  /** Only legacy approach carries tickets; always null for cookie */
   ticket: string | null;
-  /** 这一台能不能执行用户卡(舞台自己还要核自检与「没见过票据」) */
+  /**
+   * Whether this stage can execute user cards (stage itself must also verify self-check and
+   * "never seen tickets").
+   */
   cardExec: boolean;
-  /** 舞台文档已经拿过另一个项目的路径号,调用方须整页重载这台舞台、不发策略 */
+  /**
+   * Stage document has already received another project's path id; caller must reload this stage
+   * completely and not send policy.
+   */
   reload?: boolean;
 }
 
@@ -99,11 +135,17 @@ const STAGE_SID_RE = /^[0-9a-f]{32}$/;
 
 export interface StageSidScope {
   accountId: string | null;
-  /** 舞台读的是哪个项目的素材(路径号跟它走;编辑器页按素材连接的项目给) */
+  /**
+   * Which project's assets the stage is reading (path id follows it; editor page provides it based
+   * on the project connected to assets).
+   */
   projectId: string | null;
   /**
-   * 舞台此刻要执行的是哪个项目的卡片代码(编辑器页按当前打开的项目给)。与 `projectId` 都给了又不同时
-   * (页面原地换项目、素材连接还没换过来的那一段),本页不点头执行:新项目的卡片不进拿着上一个项目路径号的舞台文档
+   * Which project's card code the stage is executing right now (editor page provides it based on
+   * currently open project). When both are provided but differ from `projectId` (the interval where
+   * the page switches projects in place while asset connections have not yet switched over), this
+   * page does not approve execution: new project cards must not enter a stage document holding the
+   * previous project's path id.
    */
   codeProjectId?: string | null;
 }
@@ -135,9 +177,11 @@ function scopeKeyOf(scope: StageSidScope): { persistent: boolean; key: string } 
 }
 
 /**
- * 按「账号 + 项目」分配与复用舞台素材路径号(`mechanism/platforms.md`「路径号按账号加项目固定」):
- * 两个标识都非空时在编辑页面自己的 `localStorage` 里按 `pc.stageSid.v1:<accountId>:<projectId>` 持久化;
- * 任一标识缺失或存储不可用时退回本页会话内存,不同作用域绝不共用同一个路径号。
+ * Allocates and reuses stage asset path id by "account + project" (`mechanism/platforms.md`
+ * "Path id fixed by account plus project"): persists in the editor page's own `localStorage` under
+ * `pc.stageSid.v1:<accountId>:<projectId>` when both identifiers are non-empty; falls back to
+ * this page session's memory if either identifier is missing or storage is unavailable; different
+ * scopes never share the same path id.
  */
 export function createStageSidStore(opts: {
   storage?: StageSidStorage | null | (() => StageSidStorage | null);
@@ -197,7 +241,7 @@ export function createStageSidStore(opts: {
           try {
             st.setItem(key, sid);
           } catch {
-            // 写入失败仍保留本页会话内存里的路径号
+            // If write fails, still retain the path id in this page session's memory
           }
         }
       }
@@ -208,9 +252,12 @@ export function createStageSidStore(opts: {
 }
 
 export interface StageIsolationDeps {
-  /** 总开关(运行配置) */
+  /** Master switch (runtime config) */
   enabled(): boolean;
-  /** 向舞台源交接票据;成了回 true。缺省用 `fetch`(带凭据的跨源 POST) */
+  /**
+   * Hands off ticket to stage origin; returns true on success. Defaults to `fetch` (cross-origin
+   * POST with credentials).
+   */
   grant?(stageOrigin: string, sid: string, ticket: string): Promise<boolean>;
   sid?: string;
   sidStore?: StageSidStore;
@@ -221,46 +268,67 @@ export interface StageIsolationDeps {
 }
 
 interface Slot {
-  /** 这一台(当前文档)的自检结果;握手时清掉 */
+  /** Self-check results for this stage (current document); cleared on handshake */
   report: IsolationReport | null;
-  /** 握手之后在等结果的人 */
+  /** Awaiters waiting for results after handshake */
   waiters: Array<(r: IsolationReport | null) => void>;
   mode: StageMediaMode | null;
-  /** 这一台当前文档已经拿过的路径号;握手(新文档)时清掉,一个舞台文档终生只拿一个路径号 */
+  /**
+   * Path id already received by this stage's current document; cleared on handshake (new document),
+   * a stage document only ever receives one path id in its lifetime.
+   */
   docSid: string | null;
-  /** 上一次交接成功时用的票据、路径号与舞台源(同一组不重复交接) */
+  /**
+   * Ticket, path id, and stage origin used during last successful handoff (same set is not handed
+   * off repeatedly).
+   */
   granted: { ticket: string; sid: string; origin: string } | null;
-  /** 正在路上的交接(同一张票据、同一个路径号、同一个舞台源只发一次请求;取档策略短时间里会连着算几遍) */
+  /**
+   * In-flight handoff (only one request is sent for the same ticket, path id, and stage origin; tier
+   * selection policy is calculated several times in rapid succession).
+   */
   granting: { key: string; done: Promise<boolean> } | null;
-  /** 握手的代数:结果晚到时对不上代就丢 */
+  /** Handshake generation: discarded if late results do not match the generation */
   gen: number;
 }
 
 export interface StageIsolationSession {
   readonly sid: string;
-  /** 切换当前账号与项目作用域;路径号变化时重算状态并通知订阅方 */
+  /**
+   * Switches current account and project scope; recalculates state and notifies subscribers when
+   * path id changes.
+   */
   setScope(scope: StageSidScope): void;
-  /** 这一台握手了(新文档):清掉旧的自检结果与取档方式 */
+  /** This stage shook hands (new document): clear old self-check results and tier selection method */
   handshake(id: StageLetter): void;
-  /** 这一台发来自检结果 */
+  /** This stage sent self-check results */
   report(id: StageLetter, report: IsolationReport | null): void;
-  /** 这一台(或任何一台)报加固拦下了事 */
+  /** This stage (or any stage) reported an incident intercepted by hardening */
   breach(kind: BreachKind): void;
   /**
-   * 算这一台此刻的取档方式(会等自检结果、发交接请求)。`active` 为假(这一台不在此刻的布局里)直接回旧办法。
-   * `ticket` 为 null(还没连上素材服务)时不交接,回旧办法的空票据。
+   * Computes tier selection method for this stage right now (waits for self-check results, sends
+   * handoff requests). If `active` is false (this stage is not in current layout), returns legacy
+   * approach directly.
+   * If `ticket` is null (not yet connected to asset service), skips handoff and returns legacy
+   * approach's empty ticket.
    */
   plan(id: StageLetter, ctx: { active: boolean; stageOrigin: string | null; ticket: string | null }): Promise<StageMediaPlan>;
   /**
-   * 此刻挂着哪几台舞台(双舞台 `["A", "B"]`;只有一个舞台 `["A"]`:舞台闸门第一级、最低一档、握手失败退回;都不挂 `[]`):
-   * 重算能不能执行。所有舞台一律跨源隔离(2026-10-14 用户定),单舞台同样能执行用户卡与素材效果卡,只看挂着的那几台。
+   * Which stages are currently mounted (dual stage `["A", "B"]`; only one stage `["A"]`: stage gate
+   * tier 1, lowest tier, fallback on handshake failure; none mounted `[]`): recomputes whether
+   * execution is allowed. All stages are cross-origin isolated without exception (user decision,
+   * 2026-10-14); a single stage can likewise execute user cards and media effect cards, depending
+   * solely on mounted stages.
    */
   setStages(ids: readonly StageLetter[]): void;
   state(): CardExecState;
   subscribe(cb: () => void): () => void;
 }
 
-/** 缺省的交接:带凭据的跨源 POST,票据放在 `Authorization` 头里;204 才算成 */
+/**
+ * Default handoff: cross-origin POST with credentials, ticket placed in `Authorization` header;
+ * only 204 counts as success.
+ */
 export async function grantMediaCookie(stageOrigin: string, sid: string, ticket: string, fetchImpl: typeof fetch = fetch, timeoutMs = MEDIA_GRANT_TIMEOUT_MS): Promise<boolean> {
   if (!isSid(sid)) return false;
   const ctrl = typeof AbortController === "function" ? new AbortController() : null;
@@ -281,7 +349,7 @@ export function createStageIsolation(deps: StageIsolationDeps): StageIsolationSe
   const sidStore = deps.sidStore ?? createStageSidStore("storage" in deps ? { storage: deps.storage } : {});
   let currentSid = deps.sid ?? newSid();
   let currentScopeKey: string | null = null;
-  /** 素材的项目与卡片代码的项目对不上(见 `StageSidScope.codeProjectId`) */
+  /** Asset project does not match card code project (see `StageSidScope.codeProjectId`) */
   let scopeMismatch = false;
   const grant = deps.grant ?? ((origin, s, ticket) => grantMediaCookie(origin, s, ticket));
   const setTimer = deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
@@ -293,7 +361,7 @@ export function createStageIsolation(deps: StageIsolationDeps): StageIsolationSe
   };
   let IDS: StageLetter[] = [];
   let breached = false;
-  /** 点过头没有(点过之后任何舞台都不再收到票据) */
+  /** Whether approval was given (after approval, no stage receives tickets anymore) */
   let everAllowed = false;
   let grantFailed = false;
   const listeners = new Set<() => void>();
@@ -317,7 +385,7 @@ export function createStageIsolation(deps: StageIsolationDeps): StageIsolationSe
     if (next.enabled) everAllowed = true;
     if (next.enabled === cached.enabled && next.reason === cached.reason && next.egress === cached.egress && JSON.stringify(next.detail) === JSON.stringify(cached.detail)) return;
     cached = next;
-    for (const l of [...listeners]) { try { l(); } catch { /* 订阅方坏了 */ } }
+    for (const l of [...listeners]) { try { l(); } catch { /* The subscriber is broken */ } }
   };
 
   const waitReport = (id: StageLetter): Promise<IsolationReport | null> => {
@@ -404,13 +472,15 @@ export function createStageIsolation(deps: StageIsolationDeps): StageIsolationSe
       if (!ctx.active || !deps.enabled()) return safeFallback();
       const gen = slot.gen;
       const report = await waitReport(id);
-      if (gen !== slot.gen) return safeFallback(); // 等的时候这一台又握手了:这一次作废,新的握手会再来
+      if (gen !== slot.gen) return safeFallback(); // This stage shook hands again while waiting: this attempt is invalidated, a new handshake will follow
       if (needReload()) return reloadPlan();
-      // 等不到结果(旧版舞台页不发、或舞台卡住):按自检出错记
+      // Did not receive results (legacy stage page does not send it, or stage is stuck): record as
+      // self-check error
       if (!report) slot.report = { ok: false, crossOrigin: false, csp: "none", egress: "none", hardened: false, trustedTypes: "unsupported", reasons: ["check-error"] };
       if (!report?.ok) return safeFallback();
       if (!ctx.ticket) {
-        // 还没有票据(素材服务没连上):不交接,也不退回旧办法 —— 这一台已经判为隔离,等有票据再来
+        // No ticket yet (asset service not connected): do not hand off, do not fall back to legacy
+        // approach: this stage is already classified as isolated, wait for ticket before retrying
         return withSidBase(false);
       }
       const planSid = currentSid;
@@ -423,7 +493,8 @@ export function createStageIsolation(deps: StageIsolationDeps): StageIsolationSe
         if (gen !== slot.gen) return safeFallback();
         if (currentSid !== planSid || needReload()) return reloadPlan();
         if (!ok) {
-          // 续票时交接失败:留在 cookie 上(旧 cookie 还能用到过期),不退回旧办法
+          // Handoff failed during ticket renewal: stay on cookies (old cookie usable until expiration),
+          // do not fall back to legacy approach
           if (slot.mode === "cookie" && slot.granted?.sid === currentSid) return withSidBase(cached.enabled);
           grantFailed = true;
           return safeFallback();
@@ -444,26 +515,29 @@ export function createStageIsolation(deps: StageIsolationDeps): StageIsolationSe
   };
 }
 
-/* ------------------------------------------------------------------ 本页的那一份(编辑器页模块级) */
+/* ------------------------------------------------------------------ Page instance (editor page module level) */
 
 let pageSession: StageIsolationSession | null = null;
 let pageEnabled: () => boolean = () => true;
 const pageListeners = new Set<() => void>();
 const OFF: CardExecState = Object.freeze({ enabled: false, reason: "no-stage", detail: {}, egress: null }) as CardExecState;
 
-/** 本页的隔离会话(懒建;`enabled` 读运行配置里的总开关) */
+/** Isolation session for this page (lazy creation; `enabled` reads master switch in runtime config) */
 export function pageStageIsolation(enabled?: () => boolean): StageIsolationSession {
   if (enabled) pageEnabled = enabled;
   if (!pageSession) {
     pageSession = createStageIsolation({ enabled: () => pageEnabled() });
-    pageSession.subscribe(() => { for (const l of [...pageListeners]) { try { l(); } catch { /* 订阅方坏了 */ } } });
+    pageSession.subscribe(() => { for (const l of [...pageListeners]) { try { l(); } catch { /* The subscriber is broken */ } } });
   }
   return pageSession;
 }
 
 /**
- * 本页此刻能不能执行用户卡与素材效果卡,不能的话为什么(块 T、L 据此决定「这张卡在本页能不能运行」与参数面板的说明)。
- * 还没建会话(桌面运行环境、还没挂舞台)回「单舞台、不执行」。
+ * Whether this page can execute user cards and media effect cards right now, and if not, why
+ * (chunks T and L use this to determine "Can this card run on this page" and the description in
+ * the parameters panel).
+ * If no session has been created yet (desktop runtime environment, stage not yet mounted), returns
+ * "single stage, do not execute".
  */
 export function onlineCardExec(): CardExecState {
   return pageSession ? pageSession.state() : OFF;
@@ -474,7 +548,7 @@ export function subscribeOnlineCardExec(cb: () => void): () => void {
   return () => { pageListeners.delete(cb); };
 }
 
-/** 单测用 */
+/** For unit tests */
 export function resetPageStageIsolationForTest(): void {
   pageSession = null;
   pageEnabled = () => true;

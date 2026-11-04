@@ -16,8 +16,11 @@ import { playbackHandlers } from "./handlers/playback";
 import { systemHandlers } from "./handlers/system";
 
 /*
- * 标成纯调用:展开写法(`{ ...a }`)在摇树时算有副作用,没人用也会整份留下。在线构建里唯一的使用方
- * (`editor/right/index.tsx` 连工具执行器)被剪掉,标了纯调用这份表连同各 handler 背后的 /api 调用才一起剪掉(M8 遗留 L24)。
+ * Marked as pure calls: spread syntax (`{ ...a }`) is treated as having side effects during
+ * tree shaking, so the entire copy would be retained even if unused. When the only consumer
+ * in the online build (`editor/right/index.tsx` connecting to the tool runner) is pruned out,
+ * marking as pure calls allows this table, along with the /api calls behind each handler,
+ * to be pruned together (M8 legacy L24).
  */
 export const editorApi: EditorApi = /* @__PURE__ */ Object.assign(
   {},

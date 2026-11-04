@@ -1,6 +1,8 @@
 /**
- * 配音的前端胶水:读写设置、合成、管理「我的音色」、音色设计 / 复刻。
- * 服务端在 server/vite-plugin-voice.ts,API Key 只在服务端,这边只看得到后四位。
+ * Frontend glue for voiceover: read and write settings, synthesize, manage "My voices", voice design
+ * / cloning.
+ * The server is in server/vite-plugin-voice.ts; the API Key exists only on the server, and this side
+ * sees only its last four characters.
  */
 import type { UploadedMedia } from "../editor/io/mediaUpload";
 import { tr } from "../i18n/index.ts";
@@ -17,9 +19,12 @@ export interface CustomVoice extends VoiceEntry {
 }
 
 export interface VoiceConfig {
-  /** 自己填的 API 地址;空串 = 跟随 API 设置 */
+  /** The API address filled in by oneself; empty string = follow the API settings */
   baseUrl: string;
-  /** 实际要打的地址(自己填的,或 API 设置里自定义那一路的协议 + 主机) */
+  /**
+   * The address actually called (the one filled in by oneself, or the protocol + host of the custom
+   * source in the API settings)
+   */
   effectiveBaseUrl: string;
   provider: Provider;
   minimax: { model: string; voiceId: string; speed: number; vol: number; pitch: number; emotion: string };
@@ -41,13 +46,19 @@ export interface VoicePresets {
 
 export interface VoiceResult {
   name: string;
-  /** 只有试听(preview)才有:固定文件名的那份。正式合成经素材服务入库,不回磁盘路径 */
+  /**
+   * Present only for auditioning (preview): the copy with a fixed file name. A real synthesis is
+   * stored through the asset service and does not return a disk path
+   */
   path?: string;
-  /** 正式合成:/@media/<hash>(入库后的地址);试听:/@media/<文件名> */
+  /** Real synthesis: /@media/<hash> (the address after storing); audition: /@media/<file name> */
   url: string;
-  /** 正式合成:内容哈希 */
+  /** Real synthesis: content hash */
   hash?: string;
-  /** 正式合成:素材服务入库接口的回包(和用户导入拿到的是同一种),页面据它登记素材 */
+  /**
+   * Real synthesis: the response of the asset service's store interface (the same kind that a user
+   * import gets), from which the page registers the asset
+   */
   media?: UploadedMedia;
   bytes: number;
   provider: Provider;
@@ -88,8 +99,10 @@ export async function clearVoiceKey(): Promise<VoiceConfig> {
 }
 
 /**
- * 合成一段。MCP 桥的调用上限是 60 秒,这里 55 秒就放弃,好让报错是真正的原因而不是「超时」。
- * preview 为真时服务端写固定的试听文件,不进素材库。
+ * Synthesize one passage. The MCP bridge's call limit is 60 seconds, so give up at 55 seconds here,
+ * so that the error reports the real cause rather than a "timeout".
+ * When preview is true the server writes a fixed audition file, which does not go into the media
+ * library.
  */
 export async function generateVoice(
   args: { text: string; provider?: string; voiceId?: string; speed?: number; emotion?: string; name?: string },
@@ -111,8 +124,11 @@ export async function designVoice(args: { prompt: string; previewText: string; n
 }
 
 /**
- * 复刻:先把源文件原样入库,再只递素材标识(哈希、地址、名字),服务端经素材服务取字节、转音频、上传、建音色。
- * 不递本地路径:服务端不再按路径读内容库(字节一律经素材服务取)。
+ * Cloning: first store the source file as is, then pass only the asset identifier (hash, address,
+ * name); the server fetches the bytes through the asset service, converts to audio, uploads, and
+ * creates the voice.
+ * No local path is passed: the server no longer reads the content store by path (bytes are always
+ * fetched through the asset service).
  */
 export async function cloneVoiceFromFile(
   file: File,

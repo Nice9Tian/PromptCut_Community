@@ -3,56 +3,70 @@ import type { MediaAsset, Project } from "../kernel/project";
 import { playableOnThisHost, probePlayable, shouldProbe } from "./playability.ts";
 
 /**
- * 「这一刻该拿哪个地址去播」—— 素材的换档判据(`docs/semantics/product/asset-service.md`「两档素材」「拉取」;
- * `docs/plan/c66-design.md` 第 4 节)。
+ * "Which URL to play at this moment": asset tier switch criterion
+ * (`docs/semantics/product/asset-service.md` "Two tiers of assets", "Pull";
+ * `docs/plan/c66-design.md` section 4).
  *
- * 放在 src/render/ 而不是 src/editor/ 是因为舞台 bundle(预览 / 预渲染 / 导出页)
- * 也要 import 它 —— 舞台够不着编辑器那一侧的任何模块。
+ * Placed in src/render/ rather than src/editor/ because stage bundles (preview / prerender / export
+ * page) must also import it: the stage cannot reach any module on the editor side.
  *
- * # 谁用它(T1a 审查 #5)
+ * # Who uses it (T1a review #5)
  *
- * 只有**实时播放**的几条路:舞台里的 `VideoTrack`(视频槽位和图片层)、`FrameScene` live 路的像素映射
- * 素材(`PixelMappedMedia`)、编辑器主文档的声音层(`MediaLayers` 的 `AudioLayer`)。
- * 导出、预渲染、`see_frames`、`FrameScene` 的 placeholder 路**一律用 `media.url`(素材原尺寸)**,不经这里 ——
- * 导出和像素级检查只用素材原尺寸。
+ * Only a few paths for **real-time playback**: `VideoTrack` in stage (video slots and image
+ * layers), `PixelMappedMedia` in `FrameScene` live path, and sound layers in editor main document
+ * (`AudioLayer` in `MediaLayers`). Export, prerender, `see_frames`, and placeholder path in
+ * `FrameScene` **always use `media.url` (original-size asset)** without passing through here:
+ * export and pixel-level inspection only use original-size assets.
  *
- * # 规则
+ * # Rules
  *
- * `localHashes`(标识符沿用)= **当前连接的素材服务报 `complete` 的哈希集合**,判据只看它
- * (mechanism/asset-service.md「同步状态只问素材服务」);本机缓存落没落盘、项目文档里写了什么都不算数。
- * 集合由主文档每 2 秒轮询 `GET media/<hash>/chunks` 得到(`src/editor/media/assetTiers.ts`),
- * 轮询回过一次之后集合里一定带一个**标记**(`TIERS_KNOWN_LOCAL` / `TIERS_KNOWN_REMOTE`),
- * 所以「问过了、一个都没到齐」和「还没问过」分得开。
+ * `localHashes` (identifier retained) = **set of hashes reported as `complete` by the currently
+ * connected asset service**; the criterion only checks this (`mechanism/asset-service.md`
+ * "Ask only the asset service for sync status"); whether local cache hit disk or what is written
+ * in project document does not count. The set is obtained by main document polling
+ * `GET media/<hash>/chunks` every 2 seconds (`src/editor/media/assetTiers.ts`); once polled, the
+ * set always contains a **marker** (`TIERS_KNOWN_LOCAL` / `TIERS_KNOWN_REMOTE`), distinguishing
+ * "polled, none complete" from "not yet polled".
  *
- *   0. 集合为空(还没问过)→ 有素材小尺寸给素材小尺寸,没有给素材原尺寸:打开项目的第一帧不直接拉素材原尺寸(A1「先小后大」)。
- *   1. 素材原尺寸在集合里 → 素材原尺寸;但**这台设备放不了素材原尺寸**(本机缓存 `playability.ts`)且素材小尺寸也在集合里时 → 素材小尺寸。
- *   2. 素材原尺寸不在、素材小尺寸在 → 素材小尺寸(先小后大)。
- *   3. 两档都不在 → 素材原尺寸(「还没有素材小尺寸时直接拉素材原尺寸」;哪一档都没传完时也只能给素材原尺寸,那一层等待上传方)。
+ *   0. Set is empty (not yet polled) → provide small-size asset if available, otherwise original-size
+ *      asset: the first frame on opening a project does not pull original-size asset directly
+ *      (A1 "small first, then original").
+ *   1. Original-size asset in set → original-size asset; but when **this device cannot play the
+ *      original-size asset** (local cache `playability.ts`) and small-size asset is also in set →
+ *      small-size asset.
+ *   2. Original-size asset not in set, small-size asset in set → small-size asset (small first, then original).
+ *   3. Neither tier in set → original-size asset ("pull original-size asset directly when no small-size
+ *      asset exists yet"; when neither tier has finished uploading, it can only give original-size
+ *      asset, and that layer waits for uploader).
  *
- * 素材原尺寸和素材小尺寸都在、可播性还不知道时:先给素材小尺寸,顺手在后台探一次;探出来能放,下一次渲染就换回素材原尺寸
- * (「先拉素材小尺寸显示,再拉素材原尺寸替换它」)。只有真有两档可选时才探 —— 不白白去拉素材原尺寸的首帧。
+ * When both original-size and small-size assets are present but playability is still unknown: provide
+ * small-size asset first and probe in background; if probed playable, switch back to original-size
+ * asset on next render ("pull small-size asset first for display, then pull original-size asset to
+ * replace it"). Only probe when both tiers are truly available: do not fetch the first frame of
+ * original-size asset in vain.
  *
- * 地址里不带扩展名 —— 哈希就是身份,Content-Type 由服务端按入库时记下的扩展名给
- * (server/vite-plugin-media.ts 的 resolveHashFile / contentTypeForExt)。
+ * URLs do not include extensions: hash is identity, Content-Type is provided by server based on
+ * extension recorded when stored (resolveHashFile / contentTypeForExt in server/vite-plugin-media.ts).
  *
- * `opts.cloudBase`:给了就把 `/@media/...` 换成绝对地址(在线浏览器模式直接打远程素材服务)。
- * `opts.playable`:可播性从哪读,缺省读本机缓存(单测注入)。
+ * `opts.cloudBase`: if provided, replaces `/@media/...` with an absolute URL (online browser mode
+ * calls remote asset service directly).
+ * `opts.playable`: where to read playability from, defaults to local cache (unit test injection).
  */
 
-/** 轮询回过、当前连的是本地素材服务 */
+/** Polled once, currently connected to local asset service. */
 export const TIERS_KNOWN_LOCAL = "@known:local";
-/** 轮询回过、当前连的是远程素材服务(可播性探测按远端超时) */
+/** Polled once, currently connected to remote asset service (playability probe uses remote timeout). */
 export const TIERS_KNOWN_REMOTE = "@known:remote";
 
 type TierMedia = Pick<MediaAsset, "url" | "hash" | "tiers"> & Partial<Pick<MediaAsset, "ext" | "kind" | "width" | "height">>;
 type HashList = ReadonlySet<string> | readonly string[];
 
 export interface TierChoice {
-  /** 该挂的地址 */
+  /** URL to mount. */
   url: string;
-  /** 挂的是哪一档 */
+  /** Which tier is mounted. */
   tier: "small" | "original" | "none";
-  /** 轮询回过、而挂的这一档在当前素材服务上还没到齐:这一层在等上传方 */
+  /** Polled once, but mounted tier is not yet complete on current asset service: this layer is waiting for uploader. */
   awaiting: boolean;
 }
 
@@ -61,33 +75,44 @@ function asSet(list: HashList): ReadonlySet<string> {
 }
 
 /* ------------------------------------------------------------------ *
- * 在线浏览器模式与素材闸门(`docs/plan/c10a-contract.md` 第 8 节;语义 `product/platforms.md`「在线浏览器」的「素材闸门」与「最低一档」)
+ * Online browser mode and media gate (`docs/plan/c10a-contract.md` section 8; semantics
+ * `product/platforms.md` "Online browser": "Media gate" and "Lowest tier")
  * ------------------------------------------------------------------ */
 
 /**
- * 这一侧(主文档或舞台,各自一份)的取档策略。缺省 = 桌面运行环境,和 C6.6 一字不差。
+ * Tier selection policy on this side (main document or stage, one copy each). Defaults to desktop
+ * runtime environment, identical to C6.6.
  *
- * - `smallOnly`:最低一档。**视频素材只拉小尺寸**:有小尺寸就恒给小尺寸(轮询回过、它还没到齐时这一层等待上传方,
- *   不去拉);没有小尺寸的视频这一层显示「等待上传方」角标与占位,**不拉原尺寸**(导出除外,导出不经这里)。
- * - `decodeMaxPixels`:素材闸门的解码上限(打开时测一次,这次使用期间不变;`src/online/mediaGate.ts`)。宽 × 高超过它的视频素材
- *   照 `smallOnly` 办(按素材判,不是整台设备一刀切);没超过的照常。null = 不限(桌面、还没测完)。
- * - `smallFirst`:素材闸门的网速(看素材实际下载的快慢,随时调整)。慢:两档都在时先给小尺寸显示,在后台探原尺寸(拉它的首帧),
- *   探出来能放再换原尺寸;快:两档都在时只拉原尺寸(不先挂小尺寸)。只在在线页面给。
- * - `remote`:在线浏览器模式下没有本机编辑器进程代理 `/@media/*`,按哈希寻址的地址换成远程素材服务的
- *   `GET <base>/media/<hash>?t=<只读票据>`(`server/asset-service.ts`「凭票据读写」:查询串只认 `r` 票据)。
- *   `<video>` / `<img>` 带不了 `Authorization` 头,所以票据走查询串。
+ * - `smallOnly`: lowest tier. **Video assets only pull small size**: always provides small size if
+ *   available (when polled once and not yet complete, this layer waits for uploader without
+ *   pulling); video without small size displays a "Waiting for uploader" badge and placeholder on
+ *   this layer, **does not pull original size** (except export, which does not pass through here).
+ * - `decodeMaxPixels`: media gate decoding limit (measured once on open, remains unchanged during
+ *   this session; `src/online/mediaGate.ts`). Video assets whose width × height exceeds it are
+ *   treated like `smallOnly` (evaluated per asset, not an all-or-nothing cutoff for the entire
+ *   device); those not exceeding it proceed normally. null = unlimited (desktop, not yet measured).
+ * - `smallFirst`: media gate network speed (monitors actual asset download speed, adjusted
+ *   dynamically). Slow: when both tiers exist, display small size first and probe original size in
+ *   background (fetch its first frame), switching to original size once confirmed playable; Fast:
+ *   when both tiers exist, pull only original size (do not mount small size first). Provided only
+ *   on online pages.
+ * - `remote`: in online browser mode there is no local editor process proxying `/@media/*`, so
+ *   hash-addressed URLs are replaced with remote asset service's
+ *   `GET <base>/media/<hash>?t=<read-only ticket>` (`server/asset-service.ts` "Read/write with ticket":
+ *   query string only accepts `r` tickets). `<video>` / `<img>` cannot carry `Authorization`
+ *   headers, so tickets go through query strings.
  *
- * 舞台是另一个文档,它那一份由父页经 RPC `setMediaPolicy` 下发(`stageRpc.ts`)。
+ * The stage is a separate document; its copy is pushed by parent page via RPC `setMediaPolicy` (`stageRpc.ts`).
  */
 export interface MediaTierPolicy {
   smallOnly: boolean;
   decodeMaxPixels: number | null;
   smallFirst: boolean;
-  /** 在线页面在远程地址就绪前不得请求本机的 /@media 路由 */
+  /** Online pages must not request the local /@media route before the remote URL is ready. */
   online: boolean;
   remote: { base: string; ticket: string | null } | null;
 }
-// Vite 的在线构建按完整属性名替换常量；Node 单测里 import.meta.env 不存在。
+// Vite online build replaces constants by full property name; import.meta.env does not exist in Node unit tests.
 let policy: MediaTierPolicy = { smallOnly: false, decodeMaxPixels: null, smallFirst: true, online: typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1", remote: null };
 
 export function setMediaTierPolicy(next: Partial<MediaTierPolicy>): void {
@@ -99,14 +124,14 @@ export function setMediaTierPolicy(next: Partial<MediaTierPolicy>): void {
   policy = { smallOnly: next.smallOnly ?? policy.smallOnly, decodeMaxPixels: decode, smallFirst: next.smallFirst ?? policy.smallFirst, online: next.online ?? policy.online, remote };
   if (prev.smallOnly === policy.smallOnly && prev.decodeMaxPixels === policy.decodeMaxPixels && prev.smallFirst === policy.smallFirst && prev.online === policy.online
     && prev.remote?.base === policy.remote?.base && prev.remote?.ticket === policy.remote?.ticket) {
-    policy = prev; // 没变:不换对象、不通知(订阅方按对象身份判断)
+    policy = prev; // Unchanged: do not replace object, do not notify (subscribers check by object identity)
     return;
   }
-  for (const l of [...policyListeners]) { try { l(); } catch { /* 一个订阅者坏了不影响别人 */ } }
+  for (const l of [...policyListeners]) { try { l(); } catch { /* A broken subscriber does not affect the others */ } }
 }
 
 const policyListeners = new Set<() => void>();
-/** 取档策略变了(在线页面的远程素材服务就绪、换票据、素材闸门的结果变了)时通知;回退订。编辑界面里的素材预览靠它重画 */
+/** Notifies when tier selection policy changes (online page remote asset service ready, ticket changed, media gate result changed); returns unsubscribe. Media preview in editor relies on this to redraw. */
 export function subscribeMediaTierPolicy(cb: () => void): () => void {
   policyListeners.add(cb);
   return () => { policyListeners.delete(cb); };
@@ -117,7 +142,7 @@ export function mediaTierPolicy(): MediaTierPolicy {
 }
 
 const IMAGE_EXT = /^(png|jpe?g|gif|webp|avif|bmp|svg|tiff?|heic)$/i;
-/** 按 C6.6 设计本来就没有素材小尺寸这一档的素材:图片、音频 */
+/** Assets that by C6.6 design never have a small-size asset tier: image, audio. */
 function noSmallTierByDesign(media: TierMedia): boolean {
   if (media.kind === "audio" || media.kind === "image") return true;
   const ext = String(media.ext || "").replace(/^\./, "");
@@ -125,8 +150,9 @@ function noSmallTierByDesign(media: TierMedia): boolean {
 }
 
 /**
- * 这份素材是不是只用小尺寸:最低一档(`smallOnly`),或宽 × 高超过素材闸门的解码上限(`decodeMaxPixels`;没记下宽高的不按它判)。
- * 图片、音频不在这里管(它们按设计没有小尺寸,见 `chooseTier`)。
+ * Whether this asset only uses small size: lowest tier (`smallOnly`), or width × height exceeds
+ * media gate decoding limit (`decodeMaxPixels`; assets without recorded dimensions are not judged
+ * by it). Images and audio are not handled here (they have no small size by design, see `chooseTier`).
  */
 export function smallOnlyFor(media: Pick<TierMedia, "width" | "height">, p: Pick<MediaTierPolicy, "smallOnly" | "decodeMaxPixels"> = policy): boolean {
   if (p.smallOnly) return true;
@@ -137,7 +163,7 @@ export function smallOnlyFor(media: Pick<TierMedia, "width" | "height">, p: Pick
   return w * h > limit;
 }
 
-/** 按哈希寻址的地址(`/@media/<hash>`)换成远程素材服务的取回地址;别的地址原样 */
+/** Converts hash-addressed URL (`/@media/<hash>`) to remote asset service retrieval URL; leaves other URLs as is. */
 export function remoteMediaUrl(url: string, remote: MediaTierPolicy["remote"] = policy.remote): string {
   if (!remote || !url) return url;
   const hash = hashFromUrl(url);
@@ -149,8 +175,11 @@ export function remoteMediaUrl(url: string, remote: MediaTierPolicy["remote"] = 
 const resolvedParamsCache = new WeakMap<object, WeakMap<MediaTierPolicy, Record<string, unknown>>>();
 
 /**
- * 舞台给卡片传参数时，把形如 `/@media/<哈希>[.扩展名]` 的字符串换成远程素材服务地址（如 `/media-s/<sid>/media/<哈希>`）。
- * 桌面运行环境（`!p.online && !p.remote`）原样返回；在线页面在远程地址就绪前（`p.online && !p.remote`）换成空串，不请求不存在的 `/@media/…`。
+ * When the stage passes parameters to cards, replace strings of the form `/@media/<hash>[.extension]`
+ * with the remote asset service address (e.g. `/media-s/<sid>/media/<hash>`).
+ * In the desktop runtime environment (`!p.online && !p.remote`), return as-is; on online pages
+ * before the remote address is ready (`p.online && !p.remote`), replace with an empty string
+ * to avoid requesting non-existent `/@media/…`.
  */
 export function resolveCardParams<T extends Record<string, unknown>>(params: T, p: MediaTierPolicy = policy): T {
   if (!params || typeof params !== "object" || (!p.online && !p.remote)) return params;
@@ -192,23 +221,27 @@ export function chooseTier(
     return { url: remoteMediaUrl(withBase(url, opts.cloudBase), remote), tier: url ? tier : "none", awaiting: awaiting && !!url && !!originalHash };
   };
   /*
-   * 只用小尺寸(最低一档,或超过素材闸门的解码上限;c10a 第 8 节的做法)。按哈希寻址、而没有小尺寸这一档的视频一律不给地址、等待上传方;
-   * 有小尺寸:还没问过素材服务就先给它(先小后大的「小」),问过了而它没到齐就等,不回退到原尺寸。
-   * 迁移期没有哈希的老素材不经素材服务,原样给(它们本来就只有一份)。
+   * Small-only (lowest tier, or exceeds media gate decoding limit; c10a section 8 approach). Video
+   * addressed by hash without a small tier is given no URL and waits for uploader; with small tier:
+   * provide it before asking asset service (the "small" in "small first, then original"); if asked
+   * and not yet complete, wait without falling back to original size. Legacy assets without hashes
+   * during migration bypass asset service and are provided as is (only one copy exists anyway).
    */
   const smallOnly = smallOnlyFor(media, { smallOnly: opts.smallOnly ?? policy.smallOnly, decodeMaxPixels: opts.decodeMaxPixels !== undefined ? opts.decodeMaxPixels : policy.decodeMaxPixels });
   if (smallOnly) {
     if (!originalHash) return pick("original", false);
     /*
-     * 图片、音频按 C6.6 设计不生成素材小尺寸(`c66-design.md`「只对视频做」)。照字面「没有小尺寸就等待上传方」
-     * 它们会永远等下去,所以只对视频执行「只拉小尺寸」,图片、音频照常给原尺寸〔偏离,见报告〕。
+     * By C6.6 design, image and audio do not generate small-size assets (`c66-design.md` "Only for
+     * video"). Under the literal "wait for uploader if no small size", they would wait forever, so
+     * "pull small size only" is enforced only for video; images and audio receive original size as
+     * usual [deviation, see report].
      */
     if (!smallTier && noSmallTierByDesign(media)) return pick("original", false);
     if (!small) return { url: "", tier: "none", awaiting: true };
     if (!complete.size || complete.has(smallHash)) return pick("small", false);
     return { url: "", tier: "none", awaiting: true };
   }
-  // 0. 还没问过素材服务:先小后大
+  // 0. Asset service not yet queried: small first, then original
   if (!complete.size) return pick(small ? "small" : "original", false);
   const hasOriginal = !!originalHash && complete.has(originalHash);
   const hasSmall = smallTier && complete.has(smallHash);
@@ -223,7 +256,9 @@ export function chooseTier(
       void probePlayable(originalHash, remoteMediaUrl(withBase(original, opts.cloudBase), remote), media.ext, media.kind === "audio" ? "audio" : "video",
         { remote: !!opts.cloudBase || !!remote || complete.has(TIERS_KNOWN_REMOTE) });
     }
-    // 素材闸门的网速够快(在线页面的舞台看出来的,`netSpeed.ts`):只拉原尺寸,不先挂小尺寸;可播性照样在后台探,探出来放不了就回小尺寸
+    // Media gate network speed is fast enough (detected by stage on online page, `netSpeed.ts`):
+    // pull original size only, do not mount small size first; playability is still probed in
+    // background, falling back to small size if unplayable
     if (playable === undefined && (opts.smallFirst ?? policy.smallFirst) === false) return pick("original", false);
     return pick("small", false);
   }
@@ -240,14 +275,20 @@ export function playbackUrl(
 }
 
 /**
- * 编辑界面里**给人看的素材预览**(素材库的缩略、时间轴与素材库的波形、转场卡的静帧)该拿哪个地址。
+ * Which URL to use for **human-facing media preview** in editor (thumbnails in media library,
+ * waveforms in timeline and media library, still frames of transition cards).
  *
- * - 桌面运行环境(`policy.online` 为假):原样 `media.url`,和以前一字不差。
- * - 在线浏览器模式:没有本机编辑器进程,`/@media/*` 这条路由不存在(c10a 2026-09-27 阿里云演示里手机的两次
- *   `404 /@media/<原尺寸哈希>` 就是素材库缩略的 `<video src>` 与时间轴波形的 `fetch` 拿 `media.url` 发的)。
- *   这里按取档判据换成远程素材服务的地址:只用小尺寸的视频(最低一档、超过解码上限)只给素材小尺寸(没有就给 "",不拉原尺寸);其余是
- *   「先小后大」里的小;远程地址还没就绪时给 ""。调用方拿到 "" 就不挂 src、不发请求。
- *   不探可播性(`probe: false`):预览只是缩略,不值得为它去拉原尺寸的首帧。
+ * - Desktop runtime environment (`policy.online` is false): `media.url` as is, identical to before.
+ * - Online browser mode: no local editor process exists, so the `/@media/*` route does not exist
+ *   (the two `404 /@media/<original-size hash>` errors on mobile during c10a 2026-09-27 Alibaba Cloud
+ *   demo were sent using `media.url` by media library thumbnail `<video src>` and timeline waveform
+ *   `fetch`). Here, URLs are replaced with remote asset service URLs according to tier selection
+ *   criteria: video using small-only (lowest tier, exceeding decoding limit) receives only small-size
+ *   asset (or "" if missing, without pulling original size); others receive the small tier in
+ *   "small first, then original"; returns "" when remote URL is not yet ready. The caller mounts
+ *   no src and sends no request upon receiving "".
+ *   Does not probe playability (`probe: false`): previews are just thumbnails, not worth fetching
+ *   the first frame of original size.
  */
 export function previewMediaUrl(media: TierMedia, p: MediaTierPolicy = policy): string {
   if (!p.online) return media.url;
@@ -255,10 +296,13 @@ export function previewMediaUrl(media: TierMedia, p: MediaTierPolicy = policy): 
 }
 
 /**
- * 要**原尺寸**的地方(量素材尺寸、打包保存、卡片画进画布)该拿哪个地址(C10 第 10 节 / 交接文件第 4 节末条)。
- * - 桌面运行环境:原样 `media.url`,和以前一字不差。
- * - 在线浏览器模式:远程素材服务上的原尺寸(带只读票据);远程地址还没就绪给 ""(调用方不发请求)。
- *   只用小尺寸的素材(最低一档、超过解码上限)平时不拉原尺寸,调用方自己决定要不要用它(`smallOnlyFor`)。
+ * Which URL to use where **original size** is required (measuring asset dimensions, packaging
+ * and saving, rendering cards into canvas; C10 section 10 / final item of handoff doc section 4).
+ * - Desktop runtime environment: `media.url` as is, identical to before.
+ * - Online browser mode: original size on remote asset service (with read-only ticket); returns ""
+ *   when remote URL is not yet ready (caller sends no request). Assets that use small-only (lowest
+ *   tier, exceeding decoding limit) normally do not pull original size; caller decides whether to
+ *   use it (`smallOnlyFor`).
  */
 export function originalMediaUrl(media: Pick<MediaAsset, "url" | "hash">, p: MediaTierPolicy = policy): string {
   if (!p.online) return media.url;
@@ -268,7 +312,7 @@ export function originalMediaUrl(media: Pick<MediaAsset, "url" | "hash">, p: Med
   return remoteMediaUrl(url, p.remote);
 }
 
-/** 素材原尺寸的地址:`media.url` 就是身份(`/@media/<original 哈希>`);没有 url 但有哈希的才拼一个 */
+/** URL of original-size asset: `media.url` is identity (`/@media/<original hash>`); construct one only if no URL but has hash */
 function originalUrl(media: Pick<MediaAsset, "url" | "hash">): string {
   if (media.url) return media.url;
   return media.hash ? `/@media/${media.hash}` : "";
@@ -279,29 +323,29 @@ function withBase(url: string, base?: string): string {
   return base.replace(/\/+$/, "") + url;
 }
 
-/** 地址里的素材哈希(/@media/<hash> 或 /@media/<hash>.<ext>),不是哈希地址就给 null */
+/** Asset hash in URL (/@media/<hash> or /@media/<hash>.<ext>); returns null if not a hash URL */
 export function hashFromUrl(url: string): string | null {
   const m = /^\/@media\/([0-9a-f]{64})(?:\.[A-Za-z0-9]+)?$/i.exec(String(url || "").split(/[?#]/, 1)[0]);
   return m ? m[1].toLowerCase() : null;
 }
 
-/** 素材的原尺寸哈希(按哈希寻址的才有;迁移期按文件名存的给 null) */
+/** Original-size hash of asset (only for hash-addressed; returns null if stored by filename during migration) */
 export function originalHashOf(media: Pick<MediaAsset, "url" | "hash" | "tiers">): string | null {
   const h = (media.tiers?.original || media.hash || hashFromUrl(media.url) || "").toLowerCase();
   return /^[0-9a-f]{64}$/.test(h) ? h : null;
 }
 
-/** 素材的小尺寸哈希(没有素材小尺寸、或素材小尺寸就是素材原尺寸时给 null) */
+/** Small-size hash of asset (null if no small-size asset or small-size asset is original-size asset) */
 export function smallHashOf(media: Pick<MediaAsset, "url" | "hash" | "tiers">): string | null {
   const s = (media.tiers?.small || "").toLowerCase();
   return /^[0-9a-f]{64}$/.test(s) && s !== originalHashOf(media) ? s : null;
 }
 
 /* ------------------------------------------------------------------ *
- * 预取顺序与导出拦截(C6.6 第 4 节)
+ * Prefetch order and export interception (C6.6 Section 4)
  * ------------------------------------------------------------------ */
 
-/** 按片段在时间轴上的先后排素材 id;时间轴上没用到的素材排在最后(按素材表的顺序) */
+/** Sort asset IDs by clip order on timeline; assets unused on timeline are placed last (in asset table order) */
 function mediaInTimelineOrder(project: Pick<Project, "tracks" | "media">): MediaAsset[] {
   const firstUse = new Map<string, number>();
   for (const tr of project.tracks ?? []) {
@@ -329,8 +373,9 @@ export interface PrefetchItem {
 }
 
 /**
- * 打开项目后的预取队列(A1「预取队列」):项目引用到的每个哈希,**先全部素材小尺寸、再全部素材原尺寸**,
- * 每一档内按片段在时间轴上的先后。同一个哈希只出现一次。只收按哈希寻址的素材。
+ * Prefetch queue after opening a project (A1 "prefetch queue"): for each hash referenced by the
+ * project, **all small-size assets first, then all original-size assets**, within each tier ordered
+ * by clip order on the timeline. Each hash appears only once. Only includes hash-addressed assets.
  */
 export function prefetchOrder(project: Pick<Project, "tracks" | "media">): PrefetchItem[] {
   const ordered = mediaInTimelineOrder(project);
@@ -353,13 +398,15 @@ export interface MissingOriginal {
 }
 
 /**
- * 导出前的拦截(A1「导出只用素材原尺寸」):时间轴上用到的、按哈希寻址的素材里,素材原尺寸在当前素材服务上
- * 还没 `complete` 的那些。`complete` 是当前素材服务报齐了的哈希集合。
- * 空数组 = 可以导出。迁移期没有哈希的素材不在这里拦(它们不经素材服务)。
+ * Interception before export (A1 "export uses original-size assets only"): among hash-addressed
+ * assets used on the timeline, those whose original-size asset is not yet `complete` on the current
+ * asset service. `complete` is the set of hashes reported as complete by the current asset service.
+ * Empty array = can export. Assets without hashes during migration are not intercepted here (they
+ * do not go through the asset service).
  */
 export function missingOriginals(project: Pick<Project, "tracks" | "media">, complete: HashList): MissingOriginal[] {
   const have = asSet(complete);
-  // 剪辑段引用的剪辑里用到的素材也算(kernel/cutIdentity.mjs):导出要画它们
+  // Assets used in cuts referenced by cut segments also count (kernel/cutIdentity.mjs): export needs to render them
   const used = reachableMediaIds(project);
   const out: MissingOriginal[] = [];
   const seen = new Set<string>();
@@ -375,33 +422,37 @@ export function missingOriginals(project: Pick<Project, "tracks" | "media">, com
 
 export interface ExportGateResult {
   ok: boolean;
-  /** 拦下时是 `awaiting-uploader` */
+  /** When intercepted, it is `awaiting-uploader` */
   code?: "awaiting-uploader";
   message?: string;
   missing: MissingOriginal[];
 }
 
 /**
- * 导出前的拦截,按「问一个哈希」的形状:`has(hash)` 回这份素材原尺寸在**当前素材服务**上 `complete` 没有
- * (问不到按没有算)。只问被片段引用、带哈希的素材的原尺寸,不问小尺寸。
- * 页面(`src/editor/media/assetTiers.ts`)与预渲染进程的 `/api/export`(`server/export-originals.ts`)共用这一条判据。
+ * Interception before export, in the shape of "query one hash": `has(hash)` returns whether this
+ * original-size asset is `complete` on the **current asset service** (treated as absent if
+ * unqueryable). Only queries original sizes of hash-bearing assets referenced by clips, not small
+ * sizes.
+ * The page (`src/editor/media/assetTiers.ts`) and the prerender process's `/api/export`
+ * (`server/export-originals.ts`) share this criterion.
  */
 export async function checkExportOriginals(
   { project, has }: { project: Pick<Project, "tracks" | "media">; has: (hash: string) => boolean | Promise<boolean> },
 ): Promise<ExportGateResult> {
   const complete: string[] = [];
   for (const m of missingOriginals(project, [])) {
-    try { if (await has(m.hash)) complete.push(m.hash); } catch { /* 问不到按没到齐算 */ }
+    try { if (await has(m.hash)) complete.push(m.hash); } catch { /* If unqueryable, treat as incomplete */ }
   }
   const missing = missingOriginals(project, complete);
   if (!missing.length) return { ok: true, missing: [] };
   return { ok: false, code: "awaiting-uploader", message: awaitingUploaderMessage(missing), missing };
 }
 
-/** 「等待上传方」的提示文字(导出被拦时给用户看) */
+/** Notice text for "Waiting for uploader" (shown to the user when export is intercepted) */
 export function awaitingUploaderMessage(missing: readonly MissingOriginal[]): string {
   const names = missing.map((m) => m.name);
-  const shown = names.slice(0, 5).join("、") + (names.length > 5 ? ` 等 ${names.length} 个` : "");
-  // 用词照 glossary.md「素材原尺寸、素材小尺寸」(取代旧词「原片」「小版」),界面上的字与代码注释都用新词
-  return `等待上传方:这些素材的原尺寸还没传完,导出只用素材原尺寸,传完后再导出 —— ${shown}`;
+  const shown = names.slice(0, 5).join(", ") + (names.length > 5 ? ` and ${names.length} more` : "");
+  // Follow glossary.md "original-size asset, small-size asset" (replacing old terms "original video"
+  // and "small version"); UI text and code comments both use the new terms
+  return `Waiting for uploader: the original sizes of these media have not finished uploading. Export uses only original media sizes, so export again once the upload is done: ${shown}`;
 }

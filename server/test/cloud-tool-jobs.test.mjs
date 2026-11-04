@@ -185,8 +185,9 @@ test('cancelForFence needs the trusted exact fence and cancels only matching act
   assert.equal((await jobs.get(context({ runId: 'run-2', runGrantId: 'grant-2' }), otherFence.jobId)).state, 'queued');
 });
 
-// 0.7.18 工具表接线起:排着的作业在重开时也标成被中断(上一个进程里排着的,这个进程里没有任何东西会去做它)。
-// 原来这条断言的是「排着的原样留着」。
+// Starting from 0.7.18 tool table wiring: queued jobs are also marked as interrupted upon restart
+// (queued in previous process, nothing in this process will execute it).
+// Previously, this asserted "queued jobs remain as is".
 test('reopening preserves terminal rows and marks queued and running work interrupted', async (t) => {
   const f = fixture(t);
   let jobs = f.open();

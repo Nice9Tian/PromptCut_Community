@@ -1,8 +1,10 @@
 /**
- * 云端 Agent 服务的接口形状(契约 2.3、2.4 节);以 `server/agent-service/http.mjs` 的实际回包为准,只多不少地容错
+ * Interface shape of Cloud Agent service (contract sections 2.3 and 2.4); based on actual
+ * responses from `server/agent-service/http.mjs`, accepting extra fields for fault tolerance
  *
- * （原在 `src/ai/cloud/types.ts`、`src/ai/cloud/events.ts`、`src/ai/cloud/endpoint.ts`、`src/ai/cloud/useCloud.ts`，
- * 通用类型与纯判定函数上移至公开侧 `src/ai/chatTypes.ts`）
+ * (formerly in `src/ai/cloud/types.ts`, `src/ai/cloud/events.ts`, `src/ai/cloud/endpoint.ts`,
+ * `src/ai/cloud/useCloud.ts`, common types and pure predicate functions moved up to public side
+ * `src/ai/chatTypes.ts`)
  */
 import type { ChatMessage } from "./types.ts";
 
@@ -29,12 +31,12 @@ export interface CloudInfo {
   accountMode?: boolean;
   executorMounted?: boolean;
   enabled: boolean;
-  /** 托管方配置的模型;一个或没有时界面不给选 */
+  /** Model configured by host; not selectable in UI when there is only one or none */
   models: CloudModelChoice[];
   defaultModel: string | null;
-  /** 云端认的思考强度档位(不含「默认」);没有时界面不给选 */
+  /** Thinking effort tiers recognized by cloud (excluding "default"); not selectable in UI when none */
   efforts?: string[];
-  /** 这位成员在这个项目里还在跑的对话 id */
+  /** ID of chat still running for this member in this project */
   running: string[];
   limits: { rounds?: number; runMs?: number };
   usage?: { tokens?: number; limitTokens?: number | null };
@@ -48,15 +50,15 @@ export interface CloudChatItem {
   visibility?: 'shared' | 'private';
   creatorReadOnly?: boolean;
   queueRevision?: number;
-  /** 账号模式：对话里此刻有任务在跑(文档服务给的 currentRunId)；删除前的确认据此提醒 */
+  /** Account mode: a task is currently running in chat (currentRunId provided by document service); pre-deletion confirmation warns based on this */
   running?: boolean;
-  /** 账号模式：删除办到一半(任务还没停稳)，对话停在「正在删除」，只有删它的人能继续 */
+  /** Account mode: deletion is halfway done (task has not fully stopped yet), chat stays at "Deleting", only the person deleting it can continue */
   deleting?: boolean;
-  /** 正在删它的那个账号(删到一半、任务还没停稳时);就是它自己的页面在重新打开后接着办 */
+  /** The account currently deleting it (when partially deleted and task has not fully stopped); its own page resumes processing after reopening */
   deletingBy?: string;
   id: string;
   title: string;
-  /** 毫秒;服务端没给时是 0 */
+  /** Milliseconds; 0 if not provided by server */
   updatedAt: number;
   state: CloudChatState;
   lastSeq: number;
@@ -64,7 +66,7 @@ export interface CloudChatItem {
   reason?: string | null;
 }
 
-/** 事件流里的一个事件(契约 2.4 节);字段按类型取 */
+/** An event in the event stream (contract section 2.4); fields retrieved by type */
 export interface CloudEvent {
   type: string;
   seq?: number;
@@ -72,7 +74,7 @@ export interface CloudEvent {
   [k: string]: unknown;
 }
 
-/** 页面状态:发消息时带上的播放头与选区(契约 9.4) */
+/** Page state: playhead and selection included when sending message (contract 9.4) */
 export interface CloudPageState {
   t: number;
   selection: string[];
@@ -88,9 +90,9 @@ export interface CloudSendBody {
   script?: string;
   library?: unknown[];
   pageState?: CloudPageState;
-  /** 已经传到这个对话工作目录里的附件(`POST …/attachments` 回包里的 `url`);服务端只认工作目录里真有的 */
+  /** Attachments already uploaded to this chat working directory (`url` in `POST …/attachments` response); server only recognizes those actually in working directory */
   attachments?: { url: string }[];
-  /** 发这条消息的那张页面的页面号(契约第 28 节):带了,这一轮里云端 Agent 才能经反向通道让这张页面执行播放头等操作 */
+  /** Page id of the page that sent this message (contract section 28): when present, Cloud Agent can instruct this page to perform playhead and other operations via reverse channel in this round */
   pageId?: string;
 }
 
@@ -102,7 +104,7 @@ export interface CloudQueueItem {
   messageId: string; arrivalSeq: number;
   state: 'queued' | 'preparing' | 'running' | 'cancelled' | 'done';
   position: number | null; runId: string | null;
-  /** 文档服务签的终态(结清以后才有;旧服务端不带) */
+  /** Final state signed by document service (only present after settlement; older servers do not include it) */
   outcome?: { status: string; reason: string | null } | null;
 }
 export interface CloudQueueSnapshot {
@@ -111,52 +113,56 @@ export interface CloudQueueSnapshot {
 }
 export interface CloudSender { accountId: string; name: string }
 
-/** 别人删了和你有关的对话以后，文档服务留给你的通知（打开项目时取、弹完回执） */
+/** Notice left for you by document service after someone deleted a chat related to you (fetched when opening project, acknowledged after popup) */
 export interface CloudNotice {
   noticeId: string;
   conversationId: string;
   title: string;
   deletedByAccountId: string;
   deletedByName: string;
-  /** 删的人是开这个对话的人(owner)，还是项目创建者(creator) */
+  /** Whether the person deleting is the person who opened this chat (owner) or project creator (creator) */
   deletedByRole: "owner" | "creator";
-  /** 你是开这个对话的人(owner)，还是在共有对话里发过消息的成员(participant) */
+  /** Whether you are the person who opened this chat (owner) or a member who sent messages in a shared chat (participant) */
   recipientRole: "owner" | "participant";
   createdAt: number;
 }
 
-/* ---------------- 消息 id 与队列空闲排头纯函数（原在 `src/ai/cloud/events.ts`） ---------------- */
+/* ---------------- Pure functions for message id and queue idle head (formerly in `src/ai/cloud/events.ts`) ---------------- */
 
 export const userMessageId = (runId: string) => `cu-${runId}`;
 export const accountMessageId = (messageId: string) => `cq-${messageId}`;
 export const assistantMessageId = (runId: string) => `ca-${runId}`;
 
 /**
- * 对话空闲(没有在跑的一轮)时排在第一位的那条消息马上就要开始,不算「排队」:界面不把它列进队列,
- * 只在它自己的气泡下写一行「已发出，等待云端开始处理…」(`sendState: "accepted"`);开始跑了、或前面有别人的一轮在跑时去掉这行。
- * 前面有一轮在跑时照旧显示排在第几(2026-10-08 用户定「界面显示排在第几」)。同一份快照折几次结果相同。
+ * When chat is idle (no round running), the first message in line is about to start and does not
+ * count as "queuing": UI does not list it in queue, only writes a line "Sent, waiting for cloud
+ * to process…" (`sendState: "accepted"`) under its own bubble; removes this line once it starts
+ * running or someone else's round is running ahead. 
+ * When a round is running ahead, shows position in line as usual (user decision, 2026-10-08:
+ * "UI shows position in queue"). Folding the same snapshot multiple times produces identical
+ * results.
  */
 export function isIdleHead(queue: CloudQueueSnapshot | null | undefined, item: CloudQueueItem): boolean {
   return Boolean(queue && !queue.currentRunId && item.state === "queued" && item.position === 1);
 }
 
-/* ---------------- 端点可用性与状态形状（原在 `src/ai/cloud/endpoint.ts`、`src/ai/cloud/useCloud.ts`） ---------------- */
+/* ---------------- Endpoint availability and state shape (formerly in `src/ai/cloud/endpoint.ts`, `src/ai/cloud/useCloud.ts`) ---------------- */
 
 export interface CloudAgentEndpoint {
-  /** 这个项目背后有云端 Agent 服务(「云端」一项该不该出现) */
+  /** Whether this project is backed by Cloud Agent service (whether the "Cloud" item should appear) */
   available: boolean;
-  /** 创建者没关开关(关着时「云端」一项在、置灰、写原因) */
+  /** Creator did not turn off toggle (when off, "Cloud" item is present, grayed out, with reason) */
   enabled: boolean;
-  /** Agent 服务的 `/v1` 根地址,不带末尾斜杠 */
+  /** Root address `/v1` of Agent service, without trailing slash */
   url: string | null;
 }
 
 export const CLOUD_OFF: CloudAgentEndpoint = Object.freeze({ available: false, enabled: false, url: null });
 
 export interface CloudAgentState extends CloudAgentEndpoint {
-  /** 此刻连着的共享项目号;没连共享项目是 null */
+  /** Currently connected shared project id; null if not connected to a shared project */
   projectId: string | null;
-  /** 身份接口位被(重新)注入的次数:身份晚于「云端可用」才就绪时,据此重新取一次 */
+  /** Number of times identity interface slot was (re)injected: re-fetched based on this if identity becomes ready later than "cloud available" */
   identityVersion: number;
   accountMode: boolean;
   accountId: string | null;

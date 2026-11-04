@@ -4,8 +4,8 @@ import { accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 数字滚动:从 mu-number-ticker 拆出。
- * 数字翻牌滚动动画，自带单位和底部说明。
+ * Number ticker: extracted from mu-number-ticker.
+ * Number rolling animation, with built-in units and bottom description.
  */
 interface Params {
   value: number;
@@ -74,10 +74,10 @@ function MetricTickerPart({ params, width, height }: PartProps<Params>) {
 
 export const metricTicker: PartDef<Params> = {
   id: "metric-ticker",
-  name: "数字滚动",
-  description: "数字从0滚动到目标值",
-  useWhen: "展示单个核心数据指标时使用，包含弹簧滚动的大数字、单位及下方说明文字，数字自带千分位逗号。",
-  tags: ["数字", "滚动", "指标", "数据"],
+  name: "Number ticker",
+  description: "Number counts up from 0 to the target value",
+  useWhen: "Use to show a single key data metric, including a large spring-rolling number, a unit and a caption below; the number comes with thousands-separator commas.",
+  tags: ["number", "scroll", "metric", "data"],
   role: "text",
   from: "mu-number-ticker",
   defaults: {
@@ -88,11 +88,11 @@ export const metricTicker: PartDef<Params> = {
     size: 0,
   },
   controls: [
-    { key: "value", label: "目标值", type: "number" },
-    { key: "label", label: "说明文字", type: "text" },
-    { key: "unit", label: "单位", type: "text" },
-    { key: "accent", label: "主色(留空用主题色)", type: "color" },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 400, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
+    { key: "value", label: "Target value", type: "number" },
+    { key: "label", label: "Caption", type: "text" },
+    { key: "unit", label: "Unit", type: "text" },
+    { key: "accent", label: "Main color (leave empty to use theme color)", type: "color" },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 400, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
   ],
   defaultFrame: { x: 460, y: 300, w: 1000, h: 480 },
   settleMs: () => 1600,

@@ -1,18 +1,23 @@
 /**
- * `.proc` 写盘那一步(`proc.ts` 的 `writeProcToDisk`):收预渲染快照、写临时副本、出错不碰原文件。
- * 跑:node --experimental-test-module-mocks --test src/editor/io/procWrite.test.mjs
+ * The `.proc` disk-write step (`writeProcToDisk` in `proc.ts`): collects prerender snapshots,
+ * writes temporary replica, and does not touch original file on error.
+ * Run: node --experimental-test-module-mocks --test src/editor/io/procWrite.test.mjs
  *
- * 钉死:
- *   - 渲染(预渲染快照)等到时限还没收到:项目照存(快照是可丢的缓存),但结果里标出这次没带快照、保存流程告诉用户 —— 不静默放过;
+ * Enforce:
+ *   - Rendering (prerender snapshot) not received by timeout: project is saved anyway (snapshots
+ *     are disposable cache), but result flags that no snapshot was included, and the save flow
+ *     notifies the user: do not silently pass;
  *
- * 文件句柄是假的:`createWritable` 回的流照浏览器的规矩办(写进临时副本,`close` 才替换原文件,`abort` 丢掉临时副本)。
- * 真浏览器里这条规矩成不成立由探针 `scripts/probes/save-state-probe.mjs --phases fail` 验。
+ * Fake file handle: the stream returned by `createWritable` follows browser rules (writes to a
+ * temporary replica, replaces original file only on `close`, discards temporary replica on `abort`).
+ * Whether this rule holds in real browsers is verified by probe
+ * `scripts/probes/save-state-probe.mjs --phases fail`.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 
-/** 预渲染快照这次怎么回:ok 立刻回;hang 一直不回(等到时限) */
+/** How prerender snapshot responds this time: ok returns immediately; hang never returns (waits until timeout) */
 let archiveMode = "ok";
 mock.module(srcUrl("render/frameClient.ts"), {
   namedExports: {
@@ -25,7 +30,7 @@ mock.module(srcUrl("render/frameClient.ts"), {
   },
 });
 
-/** 照浏览器规矩办的假文件:内容在 `bytes`,流写进临时副本 */
+/** Fake file following browser rules: content in `bytes`, stream writes into temporary replica */
 function fakeFile(name, initial = "") {
   const file = { name, kind: "file", bytes: initial, swaps: 0, log: [] };
   file.createWritable = async () => {
@@ -34,11 +39,11 @@ function fakeFile(name, initial = "") {
     file.swaps += 1;
     return {
       write: async (data) => {
-        if (!open) throw new Error("流已关闭");
+        if (!open) throw new Error("Stream closed");
         swap += typeof data === "string" ? data : await data.text();
         if (file.failAfterHalf) { file.log.push("write-failed"); throw new Error(file.failAfterHalf); }
       },
-      close: async () => { if (!open) throw new Error("流已关闭"); open = false; file.bytes = swap; file.swaps -= 1; file.log.push("close"); },
+      close: async () => { if (!open) throw new Error("Stream closed"); open = false; file.bytes = swap; file.swaps -= 1; file.log.push("close"); },
       abort: async () => { open = false; file.swaps -= 1; file.log.push("abort"); },
     };
   };
@@ -67,118 +72,118 @@ function saveDeps(notes) {
   };
 }
 
-test("预渲染快照收到了:随文件存进去,不另行提示", async () => {
+test("The prerender snapshots were received: saved into the file with no extra notice", async () => {
   archiveMode = "ok";
   proc.forgetSaveTarget();
-  target = fakeFile("快照.proc");
-  actions.newProject("快照");
+  target = fakeFile("snapshot.proc");
+  actions.newProject("snapshot");
   const notes = [];
-  assert.equal(await saveProcFile("快照.proc", saveDeps(notes)), "saved");
+  assert.equal(await saveProcFile("snapshot.proc", saveDeps(notes)), "saved");
   assert.equal(JSON.parse(target.bytes).snapshots, "SNAP");
   assert.deepEqual(notes, []);
 });
 
-test("预渲染快照等到时限没收到:项目照存(不带快照),结果里标出来,并告诉用户", async () => {
+test("The prerender snapshots were not received by the time limit: the project is still saved (without snapshots), the result flags it, and the user is told", async () => {
   archiveMode = "hang";
   proc.forgetSaveTarget();
-  target = fakeFile("快照超时.proc");
-  actions.newProject("快照超时");
-  const outcome = await proc.writeProcToDisk(async () => proc.serializeProc(), "快照超时.proc");
+  target = fakeFile("snapshot-timeout.proc");
+  actions.newProject("Snapshot timeout");
+  const outcome = await proc.writeProcToDisk(async () => proc.serializeProc(), "snapshot-timeout.proc");
   assert.equal(outcome.kind, "saved");
-  assert.equal(outcome.snapshotsSkipped, true, "结果里标出这次没带快照");
+  assert.equal(outcome.snapshotsSkipped, true, "The result flags that this save has no snapshots");
   const doc = JSON.parse(target.bytes);
-  assert.equal(doc.project.name, "快照超时", "项目内容照存");
+  assert.equal(doc.project.name, "Snapshot timeout", "The project content is still saved");
   assert.equal(doc.snapshots, undefined);
 
   proc.forgetSaveTarget();
-  target = fakeFile("快照超时2.proc");
+  target = fakeFile("snapshot-timeout2.proc");
   const notes = [];
-  assert.equal(await saveProcFile("快照超时2.proc", saveDeps(notes)), "saved");
+  assert.equal(await saveProcFile("snapshot-timeout2.proc", saveDeps(notes)), "saved");
   assert.equal(notes.length, 1);
   assert.equal(notes[0].tone, "info");
   assert.match(notes[0].m, /prerender snapshots/);
-  assert.equal(getState().dirty, false, "项目内容完整,算保存了");
+  assert.equal(getState().dirty, false, "The project content is complete, so it counts as saved");
   archiveMode = "ok";
 });
 
-/* ── 写到一半失败:旧保存不能被覆盖 ── */
+/* ── Failed halfway through write: old save must not be overwritten ── */
 
-test("写到一半出错:原文件逐字节不变,临时副本丢掉(abort),没有 close", async () => {
+test("Error halfway through writing: the original file is byte-for-byte unchanged, the temporary copy is discarded (abort), and there is no close", async () => {
   archiveMode = "ok";
   proc.forgetSaveTarget();
-  target = fakeFile("半截.proc", "上一次有效保存的内容");
-  target.failAfterHalf = "磁盘满了";
-  actions.newProject("半截");
-  await assert.rejects(() => proc.writeProcToDisk(async () => proc.serializeProc(), "半截.proc"), (e) => {
-    assert.match(e.message, /磁盘满了/);
+  target = fakeFile("half-written.proc", "Content of the last valid save");
+  target.failAfterHalf = "Disk full";
+  actions.newProject("partial");
+  await assert.rejects(() => proc.writeProcToDisk(async () => proc.serializeProc(), "half-written.proc"), (e) => {
+    assert.match(e.message, /Disk full/);
     assert.match(e.message, /The original file was not changed/);
     return true;
   });
-  assert.equal(target.bytes, "上一次有效保存的内容", "原文件逐字节不变");
-  assert.deepEqual(target.log, ["write-failed", "abort"], "临时副本 abort 掉了,没有 close(close 才会替换原文件)");
-  assert.equal(target.swaps, 0, "没有留下没收尾的临时副本");
+  assert.equal(target.bytes, "Content of the last valid save", "The original file is byte-for-byte unchanged");
+  assert.deepEqual(target.log, ["write-failed", "abort"], "The temporary copy was aborted and not closed (only close replaces the original file)");
+  assert.equal(target.swaps, 0, "No unfinalized temporary copy is left behind");
 });
 
-test("关闭(替换原文件)那一步出错:也 abort,原文件不变", async () => {
+test("Error in the close step (which replaces the original file): abort as well, and the original file is unchanged", async () => {
   proc.forgetSaveTarget();
-  const file = fakeFile("关不上.proc", "旧内容");
+  const file = fakeFile("close-fails.proc", "Old content");
   const create = file.createWritable;
   file.createWritable = async () => {
     const w = await create();
-    return { ...w, close: async () => { file.log.push("close-failed"); throw new Error("替换文件时出错"); } };
+    return { ...w, close: async () => { file.log.push("close-failed"); throw new Error("Error while replacing the file"); } };
   };
   target = file;
-  actions.newProject("关不上");
-  await assert.rejects(() => proc.writeProcToDisk(async () => proc.serializeProc(), "关不上.proc"), /The original file was not changed/);
-  assert.equal(file.bytes, "旧内容");
+  actions.newProject("Cannot close");
+  await assert.rejects(() => proc.writeProcToDisk(async () => proc.serializeProc(), "close-fails.proc"), /The original file was not changed/);
+  assert.equal(file.bytes, "Old content");
   assert.deepEqual(file.log, ["close-failed", "abort"]);
 });
 
-test("保存流程里写到一半出错:提示说清原文件没动、不标已保存、不更新草稿、恢复编辑", async () => {
+test("Error halfway through writing in the save flow: the notice states the original file is untouched, it is not marked saved, the draft is not updated, and editing is restored", async () => {
   proc.forgetSaveTarget();
-  target = fakeFile("流程.proc", "旧的");
-  target.failAfterHalf = "设备没有空间";
+  target = fakeFile("flow.proc", "The old one");
+  target.failAfterHalf = "No space left on device";
   actions.newProject("process");
-  actions.setProjectMeta({ name: "流程改过" });
+  actions.setProjectMeta({ name: "Flow edited" });
   const notes = [];
   let drafts = 0;
   const d = { ...saveDeps(notes), saveDraft: async () => { drafts += 1; } };
-  assert.equal(await saveProcFile("流程.proc", d), "failed");
-  assert.equal(target.bytes, "旧的");
+  assert.equal(await saveProcFile("flow.proc", d), "failed");
+  assert.equal(target.bytes, "The old one");
   assert.equal(notes.length, 1);
   assert.equal(notes[0].tone, "error");
-  assert.match(notes[0].m, /设备没有空间/);
+  assert.match(notes[0].m, /No space left on device/);
   assert.match(notes[0].m, /The original file was not changed/);
-  assert.equal(getState().dirty, true, "不标已保存");
-  assert.equal(drafts, 0, "草稿不动");
+  assert.equal(getState().dirty, true, "Not marked as saved");
+  assert.equal(drafts, 0, "The draft is untouched");
   const { isSaveLocked } = await import(srcUrl("editor/saveLock.ts"));
-  assert.equal(isSaveLocked(), false, "恢复编辑");
+  assert.equal(isSaveLocked(), false, "Editing is restored");
 });
 
-test("出错之后再存一次(这回写得进去):照常存成,原文件换成新内容", async () => {
+test("Save again after the error (this time the write succeeds): it saves as usual and the original file gets the new content", async () => {
   target.failAfterHalf = null;
   const notes = [];
-  assert.equal(await saveProcFile("流程.proc", saveDeps(notes)), "saved");
-  assert.equal(JSON.parse(target.bytes).project.name, "流程改过");
+  assert.equal(await saveProcFile("flow.proc", saveDeps(notes)), "saved");
+  assert.equal(JSON.parse(target.bytes).project.name, "Flow edited");
   assert.equal(getState().dirty, false);
 });
 
-test("打包保存写到一半出错:包文件不变、abort、提示原文件没动", async () => {
+test("Error halfway through writing a package save: the package file is unchanged, abort, and the notice says the original file is untouched", async () => {
   const { savePackedFile } = await import(srcUrl("editor/io/saveFlow.ts"));
-  const pkg = fakeFile("包.procp", "旧包");
-  pkg.failAfterHalf = "写包出错";
+  const pkg = fakeFile("package.procp", "Old package");
+  pkg.failAfterHalf = "Package write error";
   const notes = [];
-  const result = await savePackedFile("包.procp", {
+  const result = await savePackedFile("package.procp", {
     pick: async () => pkg,
     settle: async () => {},
-    pack: async () => ({ blob: new Blob(["新包的字节"]), missing: [] }),
+    pack: async () => ({ blob: new Blob(["Bytes of the new package"]), missing: [] }),
     download: () => {},
     missingMessage: () => "",
     notify: (m, tone = "error") => notes.push({ m, tone }),
     waitTimeoutMs: 2000,
   });
   assert.equal(result, "failed");
-  assert.equal(pkg.bytes, "旧包");
+  assert.equal(pkg.bytes, "Old package");
   assert.deepEqual(pkg.log, ["write-failed", "abort"]);
   assert.match(notes[0].m, /The original file was not changed/);
 });

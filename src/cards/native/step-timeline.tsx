@@ -78,12 +78,13 @@ function StepTimelineCard({ params }: CardProps<Params>) {
 
 export const stepTimeline: CardDef<Params> = {
   id: "step-timeline",
-  name: "步骤时间线",
-  description: "横向时间线依次点亮",
-  useWhen: "口播在讲有先后顺序的步骤或流程(「第一」「首先」「然后」「最后」「步骤」)时,用横向时间线依次点亮。底板固定横屏宽度,**最多 5 步、每步步名不超过 4 字**,超了会横向叠字。这是挂载即播的入场动画,不跟时间轴走,做不了贯穿全片的进度条(那个用 chapter-bar)。没有先后关系的并列要点用 checklist。",
-  tags: ["步骤","流程","时间线","顺序"],
+  name: "Step timeline",
+  description: "Horizontal timeline that lights up step by step",
+  useWhen: "When the narration describes ordered steps or a process (\"first\", \"to begin with\", \"then\", \"finally\", \"steps\"), use a horizontal timeline that lights up step by step. The base has a fixed landscape width, **at most 5 steps, each step name no longer than 4 characters**, otherwise the characters stack horizontally. This is an entrance animation that plays on mount and does not follow the timeline, so it cannot make a progress bar spanning the whole video (use chapter-bar for that). For parallel points with no order, use checklist.",
+  tags: ["steps","process","timeline","sequence"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -92,11 +93,11 @@ export const stepTimeline: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "steps", label: "步骤(竖线分隔)", type: "text" },
-    { key: "stepMs", label: "步进时间(ms)", type: "number" },
+    { key: "steps", label: "Steps (separated by |)", type: "text" },
+    { key: "stepMs", label: "Step interval (ms)", type: "number" },
   ],
   parts: [
-    { id: "steps", label: "步骤", role: "list", params: ["steps", "stepMs"], enterMs: 0, settleMs: 4 * 250 + 400 },
+    { id: "steps", label: "steps", role: "list", params: ["steps", "stepMs"], enterMs: 0, settleMs: 4 * 250 + 400 },
   ],
   lifecycle: { settleMs: 1400, after: "evolve", exit: ["fade"] },
   timing: (p) => {

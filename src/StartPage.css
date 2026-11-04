@@ -1,4 +1,4 @@
-/* 开始页面。用的是皮肤里那套变量,跟编辑器同一套配色 */
+/* Start page. Uses the variables from the skin, the same color scheme as the editor */
 .sp {
   height: 100%;
   min-height: 0;
@@ -34,7 +34,7 @@
   box-sizing: border-box;
 }
 
-/* ── 开始创作 ─────────────────────────────────────── */
+/* ── Start creating ─────────────────────────────────────── */
 .sp-hero {
   display: flex;
   flex-direction: column;
@@ -49,7 +49,7 @@
   cursor: pointer;
   font-family: inherit;
   color: var(--on-accent);
-  /* 品牌渐变,定义在 skins.ts 的 --ui-accent-grad;换皮肤会跟着变 */
+  /* Brand gradient, defined as --ui-accent-grad in skins.ts; changes along with the skin */
   background: var(--ui-accent-grad, linear-gradient(100deg, var(--accent), color-mix(in srgb, var(--accent) 10%, #7b5cff)));
 }
 .sp-hero:hover { filter: brightness(1.06); }
@@ -58,7 +58,7 @@
 .sp-hero-text { font-size: 17px; font-weight: 600; }
 .sp-hero-sub { font-size: 12px; opacity: 0.85; }
 
-/* ── 分区 ─────────────────────────────────────────── */
+/* ── Sections ─────────────────────────────────────────── */
 .sp-section { display: flex; flex-direction: column; gap: 10px; }
 .sp-section-head {
   display: flex;
@@ -103,7 +103,7 @@
   border-radius: 8px;
 }
 
-/* ── 拓展功能 ─────────────────────────────────────── */
+/* ── Extension features ─────────────────────────────────────── */
 .sp-ext-row {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -133,7 +133,7 @@
 .sp-ext-desc { font-size: 12px; color: var(--ink-muted); margin-top: 2px; }
 .sp-ext-state { font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
 
-/* ── 本地草稿 ─────────────────────────────────────── */
+/* ── Local drafts ─────────────────────────────────────── */
 .sp-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -171,7 +171,7 @@
 .sp-draft-name {
   font-size: 12px;
   font-weight: 600;
-  /* 名字长就截断,不要把格子撑歪 */
+  /* Truncate long names so they don't stretch the cell out of shape */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -180,7 +180,7 @@
 .sp-draft.is-broken .sp-draft-thumb { border-color: var(--danger); }
 .sp-draft.is-broken .sp-draft-placeholder { color: var(--danger); }
 
-/* 删除按钮平时藏着,鼠标进格子或键盘聚焦才出现 */
+/* The delete button stays hidden normally and only appears when the mouse enters the cell or the keyboard focuses it */
 .sp-draft-del {
   position: absolute;
   top: 6px;
@@ -200,11 +200,11 @@
 .sp-draft-del:focus-visible { opacity: 1; }
 .sp-draft-del:hover { background: var(--danger); }
 
-/* 听写扩展卡里的安装进度和报错 */
+/* Install progress and errors inside the speech-to-text extension card */
 .sp-ext-progress { margin-top: 8px; }
 .sp-ext-error { margin-top: 6px; font-size: 12px; color: var(--danger, #ef4444); overflow-wrap: anywhere; }
 
-/* ── 存储 ─────────────────────────────────────────── */
+/* ── Storage ─────────────────────────────────────────── */
 .sp-storage-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

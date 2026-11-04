@@ -10,14 +10,17 @@ import { tr } from "../i18n/index.ts";
 const DISMISS_KEY = "pc.deps.sttDismissed";
 
 /**
- * 启动时的缺依赖提示。
+ * Missing-dependency prompt at startup.
  *
- * 语音转文字的引擎是按需安装的(几百 MB,不适合塞进安装包),但用户在真的
- * 点「字幕」之前不会知道少了东西 —— 那时才提示就晚了,他已经在等结果了。
- * 所以启动时检查一次,缺了就告诉他缺什么、能不能一键装上。
+ * The speech-to-text engine is installed on demand (hundreds of MB, not suitable for bundling into
+ * the installer), but the user will not know something is missing until they actually click
+ * "Captions": prompting then is too late, since they are already waiting for the result. So the
+ * check runs once at startup, and if something is missing it tells them what, and whether it can be
+ * installed with one click.
  *
- * 不是模态框:它挡不住任何操作,用户不想理会就点忽略,记进 localStorage 之后
- * 不再打扰。装引擎不是用完这个软件的前提,不该拿一个非关不可的弹窗堵住入口。
+ * It is not a modal: it blocks no operation, and if the user does not want to deal with it they click
+ * ignore, which is recorded in localStorage so it does not bother them again. Installing the engine
+ * is not a prerequisite for using this software, and a must-close dialog should not block the entrance.
  */
 export function DependencyPrompt() {
   const [missing, setMissing] = useState<string[] | null>(null);
@@ -37,17 +40,18 @@ export function DependencyPrompt() {
         const absent = Object.entries(s.engines)
           .filter(([, v]) => !v.installed)
           .map(([name]) => name);
-        // 两个引擎装了任意一个就够用,不必两个都装
+        // Having either one of the two engines installed is enough; there is no need to install both
         setMissing(absent.length === Object.keys(s.engines).length ? absent : []);
       })
-      // 内置 Python 都没就绪的话,这个提示上的「安装」按钮同样无能为力,
-      // 与其给一个点了会失败的按钮,不如不提示 —— 那是打包环节的问题。
+      // If even the built-in Python is not ready, the "Install" button on this prompt is equally helpless.
+      // Rather than give a button that fails when clicked, it is better not to prompt: that is a
+      // packaging problem.
       .catch(() => { if (alive) setMissing([]); });
     return () => { alive = false; };
   }, [dismissed]);
 
   const dismiss = () => {
-    try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* 无痕模式下记不住,忽略 */ }
+    try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* Cannot be remembered in incognito mode, ignore */ }
     setDismissed(true);
   };
 
@@ -57,7 +61,7 @@ export function DependencyPrompt() {
     catch (e) { setStartError(e instanceof Error ? e.message : String(e)); }
   };
 
-  // 装完就自动收起,不用用户再点一次
+  // Collapse automatically once installed, so the user does not have to click again
   useEffect(() => {
     if (job?.phase !== "done") return;
     const timer = window.setTimeout(() => setDismissed(true), 2600);

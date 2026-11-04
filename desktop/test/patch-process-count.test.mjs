@@ -1,12 +1,13 @@
-// 在 Windows PowerShell 5.1 中执行真实补丁的关闭段；进程与时钟由假对象隔离。
-// PSCustomObject 的标量 .Count 是 $null，不能因此跳过唯一残留进程。
+// Execute the shutdown block of real patches in Windows PowerShell 5.1; processes and clocks are
+// isolated with fake objects.
+// Scalar .Count on PSCustomObject is $null, which must not cause skipping the sole remaining process.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const source = fs.readFileSync(new URL('../scripts/apply-patch.ps1', import.meta.url), 'utf8');
-const closeBlock = source.slice(source.indexOf('$running ='), source.indexOf('# ── 5. 备份'));
+const closeBlock = source.slice(source.indexOf('$running ='), source.indexOf('# ── 5. Backup'));
 assert.ok(closeBlock.includes('Start-Process') && closeBlock.includes('Stop-Process'));
 
 function exercise(count, survives = false) {
@@ -51,14 +52,14 @@ ${closeBlock}
   return JSON.parse(result.stdout.trim());
 }
 
-test('没有进程时无需关闭', { skip: process.platform !== 'win32' }, () => {
+test('no need to close when there are no processes', { skip: process.platform !== 'win32' }, () => {
   assert.deepEqual(exercise(0), { quit: 0, stops: 0, waits: 0, failed: false, remaining: 0 });
 });
 for (const count of [1, 2]) {
-  test(`${count} 个进程都先发 --quit 并等待干净退出`, { skip: process.platform !== 'win32' }, () => {
+  test(`${count} processes all get --quit first and are awaited for a clean exit`, { skip: process.platform !== 'win32' }, () => {
     assert.deepEqual(exercise(count), { quit: 1, stops: 0, waits: 1, failed: false, remaining: 0 });
   });
 }
-test('强杀后只剩一个进程仍必须阻止覆盖文件', { skip: process.platform !== 'win32' }, () => {
+test('after a force kill, a single remaining process must still block overwriting files', { skip: process.platform !== 'win32' }, () => {
   assert.deepEqual(exercise(1, true), { quit: 1, stops: 1, waits: 1, failed: true, remaining: 1 });
 });

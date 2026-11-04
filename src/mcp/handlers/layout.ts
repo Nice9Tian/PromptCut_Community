@@ -13,8 +13,9 @@ export const layoutHandlers = {
     reject3dOnMedia(args.clipId, args);
     const r = withFrame(args.clipId, (prev, stage) => {
       if (args.clear) return undefined;
-      // 只改传了的字段,其余保留;world→local 的换算在 framePatchFromArgs 里(卡片级恒等)。
-      // 第一次设且没给 x/y 时补 0,免得存下一个没有位置的框。
+      // Only modify passed fields and retain the rest; world→local conversion is in framePatchFromArgs
+      // (per-card identity). When set for the first time and x/y is not provided, fill with 0 to avoid
+      // saving a box without position.
       const next = { x: 0, y: 0, ...prev, ...framePatchFromArgs(args, stage) };
       return args.clamp ? clampToStage(next, stage, getState().project.camera3dFov) : next;
     });
@@ -36,7 +37,7 @@ export const layoutHandlers = {
     });
     clipGuard.noteMutation();
     return invisible
-      ? { ...r, note: "这张卡的画布铺满舞台、也没缩小,对齐看不出效果。先 set_rect(放进一个矩形)或 nudge({ scaleBy: 0.6 })缩小,再对齐。" }
+      ? { ...r, note: "This card's canvas fills the stage and is not scaled down, so alignment would show no effect. First shrink it with set_rect (place it into a rectangle) or nudge({ scaleBy: 0.6 }), then align." }
       : r;
   }),
   nudge: /* @__PURE__ */ inClipCut((args: Args<"nudge">) => {
@@ -53,7 +54,7 @@ export const layoutHandlers = {
       if (!findClip(p, args.clipId)) throw clipMissingError(args.clipId);
       return (await contentLayoutOf([args.clipId]))[args.clipId];
     }
-    // 全部卡片和素材段,一次往返(素材段的 contentBox = 它的 frameCss 框)
+    // All cards and media clips, in a single round trip (contentBox of a media clip = its frameCss box)
     const ids = p.tracks.flatMap((tr) => tr.clips.map((c) => c.id));
     return { stage: stageSize(), clips: await contentLayoutOf(ids) };
   },

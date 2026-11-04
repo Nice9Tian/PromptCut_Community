@@ -3,11 +3,11 @@
 @source "../server";
 @source "../index.html";
 
-/* Tailwind 自动扫描项目文件找类名。开发服务里，扫到的非模块文件（.md、.py、.json 等）一改，
-   @tailwindcss/vite 会不打日志地让所有打开的页面整页重载：会话写文档、提交报告时，用户常驻的
-   编辑器和正在跑的探针页面都会被重载（查证见 docs/reports 或其归档里的 AGENT-tailwind-scan.md）。
-   这里把不含界面类名的范围排除出扫描，路径相对于本文件。界面类名在 src/ 的组件、index.html
-   和 server/ 下的卡片源码（例如 server/catalog/magicui），这三处不能排除。 */
+/* Tailwind automatically scans the project files to find class names. In the dev server, as soon as a scanned non-module file (.md, .py, .json, etc.) changes,
+   @tailwindcss/vite silently reloads every open page in full: when a session is writing docs or submitting reports, the user's always-open
+   editor and the running probe pages all get reloaded (see AGENT-tailwind-scan.md in docs/reports or its archive for the verification).
+   Here the ranges that contain no UI class names are excluded from scanning, with paths relative to this file. UI class names are in the components in src/, in index.html
+   and in the card source under server/ (e.g. server/catalog/magicui); these three places cannot be excluded. */
 @source not "../docs";
 @source not "../archive";
 @source not "../python";
@@ -31,8 +31,8 @@
 
 html, body, #root { height: 100%; margin: 0; background: #111; color: #eee; font-family: system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
 
-/* 触屏设备上输入框字号不小于 16px:手机浏览器(iOS Safari 等)遇到更小的字号会在聚焦时自动放大页面,
-   失焦后不缩回。兜底见 ui/focusZoomReset.ts。!important 盖过各界面里 `font: inherit` 之类的写法。 */
+/* On touch devices the input font size is no smaller than 16px: mobile browsers (iOS Safari, etc.) automatically zoom the page in on focus when they meet a smaller font size,
+   and do not zoom back out after blur. For the fallback see ui/focusZoomReset.ts. !important overrides things like `font: inherit` written in the various screens. */
 @media (pointer: coarse) {
   input:not([type="checkbox"], [type="radio"], [type="range"], [type="button"], [type="submit"], [type="color"], [type="file"]),
   textarea,
@@ -41,7 +41,7 @@ html, body, #root { height: 100%; margin: 0; background: #111; color: #eee; font
   }
 }
 
-/* 拖面板时别让预览的 iframe 抢走鼠标(见 editor/ResizeHandle.tsx) */
+/* While dragging a panel, don't let the preview iframe steal the mouse (see editor/ResizeHandle.tsx) */
 body[data-pc-resizing] iframe {
   pointer-events: none;
 }

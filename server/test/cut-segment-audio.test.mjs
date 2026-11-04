@@ -1,6 +1,8 @@
 /**
- * 剪辑段的声音进导出混音(ffmpeg 那条路):展开后的片段带着剪辑段的包络,每层的淡入淡出各一条 afade。
- * 规则见 src/kernel/cutAudio.mjs;展开本身的单测在 src/kernel/cutSegments.test.mjs。
+ * Audio of cut segments enters export mix (the ffmpeg path): expanded clips carry the cut segment's
+ * envelope, with one afade for fade-in and fade-out on each layer.
+ * See src/kernel/cutAudio.mjs for rules; unit tests for expansion itself are in
+ * src/kernel/cutSegments.test.mjs.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +19,7 @@ const project = {
   activeCutId: 'A',
 };
 
-test('剪辑段里的声音:平移到段上,包络变成 afade', () => {
+test('Audio inside a cut segment: shifted onto the segment, with the envelope becoming afade', () => {
   const plan = buildAudioPlan(project, 'out', () => true, () => 'm.wav');
   assert.equal(plan.length, 1);
   const p = plan[0];
@@ -25,11 +27,11 @@ test('剪辑段里的声音:平移到段上,包络变成 afade', () => {
   assert.deepEqual([p.start, p.dur, p.offset], [10, 4, 1]);
   const args = buildFfmpegArgs('v.mp4', plan, 'out.mp4', 20);
   const graph = args[args.indexOf('-filter_complex') + 1];
-  assert.match(graph, /afade=t=in:st=10\.000:d=2/, '段的淡入');
-  assert.match(graph, /afade=t=out:st=13\.000:d=1/, '子片段自己按原起止的淡出');
+  assert.match(graph, /afade=t=in:st=10\.000:d=2/, 'Fade-in of the segment');
+  assert.match(graph, /afade=t=out:st=13\.000:d=1/, 'Fade-out of the sub-clip itself at its original start and end');
 });
 
-test('被引用剪辑静音那一段:不出声', () => {
+test('The part where the referenced cut is muted: produces no sound', () => {
   const muted = structuredClone(project);
   muted.tracks[0].clips[0].audioMuted = true;
   assert.equal(buildAudioPlan(muted, 'out', () => true, () => 'm.wav').length, 0);

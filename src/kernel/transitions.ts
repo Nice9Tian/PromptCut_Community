@@ -1,35 +1,44 @@
 import type { Project, Track, TrackClip } from "./project.ts";
 
 /**
- * 转场 = 一条记录 + 它管着的那几段的淡化,并且**把这几段绑成一组**。
+ * A transition = a record + the fades of the segments it manages, and it **binds those segments into
+ * a group**.
  *
- * 以前转场不是对象:两段重叠 + 各自淡化就算交叉溶解,谁都能随手把其中一段挪走,
- * 溶解就悄悄散了(fadeIn / fadeOut 还留在那儿,画面莫名其妙淡一下)。现在:
+ * Transitions used to not be objects: two overlapping segments each with a fade counted as a
+ * crossfade, and anyone could casually move one of the segments away, and the dissolve would quietly
+ * fall apart (fadeIn / fadeOut still remained there, and the picture would fade for no apparent
+ * reason). Now:
  *
- *   - 加转场 = 往 `project.transitions` 里放一条记录,并写好两端的 fadeIn / fadeOut;
- *   - 有记录的片段**相对时间关系被锁住**:不能单独挪、不能改长度、不能切开。整组
- *     一起平移是允许的(那不改相对关系);
- *   - 想单独调,先删转场 —— 删的时候把淡化清掉,并尽量把后一段挪回原位。
+ *   - Adding a transition = putting a record into `project.transitions` and writing the fadeIn /
+ *     fadeOut at both ends;
+ *   - Clips with a record have their **relative timing locked**: they cannot be moved individually,
+ *     resized or split. Translating the whole group together is allowed (that does not change the
+ *     relative relationship);
+ *   - To adjust one on its own, delete the transition first. On deletion the fades are cleared, and
+ *     the later segment is moved back to its original position as far as possible.
  *
- * 一段可以同时有淡入、淡出和跟前后段的交叉溶解;交叉溶解会把两段串成一组,
- * A—B—C 连着两处溶解就是一组三段(groupOf 走连通分量)。
+ * A segment can have a fade-in, a fade-out and crossfades with the segments before and after at the
+ * same time; a crossfade strings two segments into a group, so A-B-C joined by two dissolves is one
+ * group of three segments (groupOf walks the connected components).
  *
- * 这个文件是纯函数:只读 Project、返回结论,不碰 store,也不改任何东西。
+ * This file is pure functions: it only reads Project and returns conclusions, and does not touch the
+ * store or modify anything.
  */
 export type TransitionKind = "crossfade" | "fadeIn" | "fadeOut";
 
 export interface Transition {
   id: string;
   kind: TransitionKind;
-  /** 交叉溶解:前一段;淡入 / 淡出:那一段 */
+  /** Crossfade: the earlier segment; fade-in / fade-out: that segment */
   aId: string;
-  /** 只有交叉溶解有:后一段 */
+  /** Only crossfades have it: the later segment */
   bId?: string;
-  /** 秒 */
+  /** Seconds */
   dur: number;
   /**
-   * 交叉溶解为了造出重叠,会把后一段往前拉、必要时挪到另一条序列。
-   * 这里记下它原来在哪,删转场时好放回去。
+   * To create the overlap, a crossfade pulls the later segment forward and, when necessary, moves it to
+   * another track.
+   * This records where it was originally, so that it can be put back when the transition is deleted.
    */
   prevB?: { start: number; trackId: string };
 }
@@ -41,12 +50,15 @@ export function transitionsOf(p: Project): Transition[] {
   return Array.isArray(p.transitions) ? p.transitions : [];
 }
 
-/** 引用到这个片段的全部转场 */
+/** All transitions that reference this clip */
 export function transitionsOfClip(p: Project, clipId: string): Transition[] {
   return transitionsOf(p).filter((tr) => tr.aId === clipId || tr.bId === clipId);
 }
 
-/** 这个片段身上某一侧的淡化是不是某条转场管着的(是的话不许手改) */
+/**
+ * Whether the fade on one side of this clip is managed by some transition (if so, it must not be
+ * edited by hand)
+ */
 export function fadeOwner(p: Project, clipId: string, side: "fadeIn" | "fadeOut"): Transition | null {
   for (const tr of transitionsOf(p)) {
     if (tr.kind === "fadeIn" && side === "fadeIn" && tr.aId === clipId) return tr;
@@ -60,8 +72,9 @@ export function fadeOwner(p: Project, clipId: string, side: "fadeIn" | "fadeOut"
 }
 
 /**
- * 这个片段所在的组:靠交叉溶解一路串下去的所有片段(连通分量)。
- * 淡入 / 淡出不串别人,只锁自己那一段。片段不存在或没被任何转场引用时返回它自己一个。
+ * The group this clip belongs to: all clips chained together by crossfades (a connected component).
+ * Fade-in / fade-out do not chain others and lock only their own segment. When the clip does not exist
+ * or is not referenced by any transition, it returns just itself.
  */
 export function groupOf(p: Project, clipId: string): { members: string[]; transitions: Transition[] } {
   const all = transitionsOf(p);
@@ -83,7 +96,7 @@ export function groupOf(p: Project, clipId: string): { members: string[]; transi
       if (!hitB) { members.add(tr.bId); grew = true; }
     }
   }
-  // 淡入淡出也算这一组的转场(它们锁的是同一批片段)
+  // Fade-ins and fade-outs also count as transitions of this group (they lock the same clips)
   for (const tr of all) {
     if (tr.kind !== "crossfade" && members.has(tr.aId)) used.add(tr);
   }
@@ -102,30 +115,32 @@ function clipName(p: Project, clipId: string): string {
   return clipId;
 }
 
-const KIND_LABEL: Record<TransitionKind, string> = { crossfade: "交叉溶解", fadeIn: "淡入", fadeOut: "淡出" };
+const KIND_LABEL: Record<TransitionKind, string> = { crossfade: "Crossfade", fadeIn: "Fade in", fadeOut: "Fade out" };
 
 /**
- * 这个片段的时间关系被转场锁住了吗?锁住了就返回一句能直接回给 Agent 的说明。
+ * Is the timing of this clip locked by a transition? If locked, returns a message that can be sent
+ * straight back to the Agent.
  *
- * 「锁住」指的是**相对关系**:单独挪一段、改长度、切开都不行。整组一起平移不受影响
- * (store 的 moveClip 会把整组一起挪)。
+ * "Locked" refers to the **relative relationship**: moving one segment individually, resizing or
+ * splitting is not allowed. Translating the whole group together is unaffected (the store's moveClip
+ * moves the whole group together).
  */
 export function timingLock(p: Project, clipId: string): { transitions: Transition[]; members: string[]; message: string } | null {
   const hits = transitionsOfClip(p, clipId);
   if (hits.length === 0) return null;
   const { members } = groupOf(p, clipId);
   const parts = hits.map((tr) => {
-    const who = tr.kind === "crossfade" ? `和「${clipName(p, tr.aId === clipId ? tr.bId! : tr.aId)}」` : "";
+    const who = tr.kind === "crossfade" ? `and "${clipName(p, tr.aId === clipId ? tr.bId! : tr.aId)}"` : "";
     return `${KIND_LABEL[tr.kind]}${who}(transitionId ${tr.id})`;
   });
   const others = members.filter((id) => id !== clipId);
-  const groupNote = others.length ? `这一组还有:${others.map((id) => `${clipName(p, id)}(${id})`).join("、")}。` : "";
+  const groupNote = others.length ? `Others in this group: ${others.map((id) => `${clipName(p, id)}(${id})`).join(", ")}.` : "";
   return {
     transitions: hits,
     members,
     message:
-      `这段挂着转场:${parts.join(";")},转场把它和相关片段绑成了一组,单独改时间会把转场弄坏。${groupNote}` +
-      `要改就先 remove_transition({transitionId})。整组一起平移不受限制 —— 用 update_clip 挪其中任意一段,同组的会跟着一起走。`,
+      `This clip has transitions attached: ${parts.join(";")}. The transitions bind it with related clips into one group, so changing its time alone would break them. ${groupNote}` +
+      `To change it, first call remove_transition({transitionId}). Shifting the whole group together is not restricted: move any one clip with update_clip and the rest of the group follows.`,
   };
 }
 
@@ -142,40 +157,45 @@ export function clampDur(dur: unknown, fallback = 0.5): number {
   return Math.min(MAX_TRANSITION_DUR, Math.max(MIN_TRANSITION_DUR, v));
 }
 
-/** 加交叉溶解之前的体检。返回排好序的两段(a 在前),或者一句拒绝的理由 */
+/**
+ * Validation before adding a crossfade. Returns the two segments in sorted order (a first), or a
+ * sentence giving the reason for refusal
+ */
 export function checkCrossfade(
   p: Project,
   aId: string,
   bId: string,
   dur: number,
 ): { ok: true; a: TrackClip; b: TrackClip; dur: number } | { ok: false; error: string } {
-  if (aId === bId) return { ok: false, error: "交叉溶解要两段不同的片段" };
+  if (aId === bId) return { ok: false, error: "A crossfade needs two different clips" };
   const A = findClipIn(p, aId);
   const B = findClipIn(p, bId);
-  if (!A) return { ok: false, error: `找不到片段 ${aId}` };
-  if (!B) return { ok: false, error: `找不到片段 ${bId}` };
-  // 谁在前谁就是 a:参数顺序写反是常事,这里自己排,不劳 Agent 重来一次
+  if (!A) return { ok: false, error: `Clip ${aId} not found` };
+  if (!B) return { ok: false, error: `Clip ${bId} not found` };
+  // Whichever comes first is a: getting the argument order backwards is common, so sort it here
+  // instead of making the Agent retry
   const [first, second] = A.clip.start <= B.clip.start ? [A, B] : [B, A];
   for (const hit of [first, second]) {
     const lock = transitionsOfClip(p, hit.clip.id).find((tr) => tr.kind === "crossfade");
     if (lock) {
-      return { ok: false, error: `「${clipName(p, hit.clip.id)}」已经有交叉溶解了(transitionId ${lock.id});一段最多参与一处交叉溶解,先删掉那条` };
+      return { ok: false, error: `"${clipName(p, hit.clip.id)}" already has a crossfade (transitionId ${lock.id}); a clip can take part in at most one crossfade, so delete that one first` };
     }
   }
   const d = clampDur(dur);
   const shortest = Math.min(first.clip.end - first.clip.start, second.clip.end - second.clip.start);
   if (d >= shortest) {
-    return { ok: false, error: `转场 ${d} 秒比其中一段还长(最短的一段 ${shortest.toFixed(1)} 秒),换个更短的时长` };
+    return { ok: false, error: `Transition of ${d}s is longer than one of the clips (shortest clip is ${shortest.toFixed(1)}s), use a shorter duration` };
   }
-  // 必须首尾相接(或已经重叠):中间空着一大段的两个片段接不成转场
+  // They must meet end to end (or already overlap): two clips with a big gap between them cannot
+  // be joined by a transition
   const gap = second.clip.start - first.clip.end;
   if (gap > 0.001) {
-    return { ok: false, error: `两段中间还空着 ${gap.toFixed(1)} 秒,交叉溶解只能接在首尾相接的两段之间。先把后一段挪到前一段的末尾` };
+    return { ok: false, error: `There is a ${gap.toFixed(1)}s gap between the two clips, and a crossfade can only join two clips that touch end to start. First move the later clip to the end of the earlier one` };
   }
   return { ok: true, a: first.clip, b: second.clip, dur: d };
 }
 
-/** 加淡入 / 淡出之前的体检 */
+/** Validation before adding a fade-in / fade-out */
 export function checkFade(
   p: Project,
   clipId: string,
@@ -183,27 +203,31 @@ export function checkFade(
   dur: number,
 ): { ok: true; clip: TrackClip; dur: number } | { ok: false; error: string } {
   const hit = findClipIn(p, clipId);
-  if (!hit) return { ok: false, error: `找不到片段 ${clipId}` };
+  if (!hit) return { ok: false, error: `Clip ${clipId} not found` };
   const already = transitionsOfClip(p, clipId).find((tr) => tr.kind === kind && tr.aId === clipId);
-  if (already) return { ok: false, error: `这段已经有${KIND_LABEL[kind]}了(transitionId ${already.id})` };
-  // 淡入只能加在开头、淡出只能加在结尾 —— 这是它们的定义,不是可选项。
-  // 已经参与交叉溶解的那一端不能再叠一个淡化:同一端两套淡化会互相打架。
+  if (already) return { ok: false, error: `This clip already has a ${KIND_LABEL[kind].toLowerCase()} (transitionId ${already.id})` };
+  // A fade-in can only be added at the start and a fade-out only at the end: that is their definition,
+  // not an option.
+  // An end that already takes part in a crossfade cannot take another fade on top: two sets of fades on
+  // the same end would fight each other.
   const owner = fadeOwner(p, clipId, kind);
   if (owner) {
-    return { ok: false, error: `这段的${kind === "fadeIn" ? "开头" : "结尾"}已经被交叉溶解占着了(transitionId ${owner.id}),不能再加${KIND_LABEL[kind]}` };
+    return { ok: false, error: `The ${kind === "fadeIn" ? "start" : "end"} of this clip is already taken by a crossfade (transitionId ${owner.id}), so a ${KIND_LABEL[kind].toLowerCase()} cannot be added` };
   }
   const d = clampDur(dur);
   const len = hit.clip.end - hit.clip.start;
-  if (d >= len) return { ok: false, error: `${KIND_LABEL[kind]} ${d} 秒比这段本身还长(${len.toFixed(1)} 秒)` };
+  if (d >= len) return { ok: false, error: `${KIND_LABEL[kind]} of ${d}s is longer than the clip itself (${len.toFixed(1)}s)` };
   return { ok: true, clip: hit.clip, dur: d };
 }
 
 /**
- * 时间轴上把转场拖到某个位置,该加哪一种?
+ * When a transition is dragged to some position on the timeline, which kind should be added?
  *
- *   - 落在两段首尾相接的地方(接缝前后各 EDGE 秒内)→ 交叉溶解;
- *   - 落在一段的**开头** → 淡入;落在**结尾** → 淡出;
- *   - 落在中间 → 什么都不加(返回 null),界面据此显示「拖到片段两端或两段接缝处」。
+ *   - dropped where two segments meet end to end (within EDGE seconds either side of the seam) →
+ *     crossfade;
+ *   - dropped at the **start** of a segment → fade-in; dropped at the **end** → fade-out;
+ *   - dropped in the middle → add nothing (returns null), and the UI uses this to show "Drag to the
+ *     ends of a clip or to the seam between two clips".
  */
 export function planTransitionDrop(
   p: Project,
@@ -214,7 +238,7 @@ export function planTransitionDrop(
   const track = p.tracks.find((t) => t.id === trackId);
   if (!track) return null;
   const clips = [...track.clips].sort((x, y) => x.start - y.start);
-  // 先看接缝:相接的两段,落点离接缝够近
+  // Check seams first: two segments that meet, with the drop target close enough to the seam
   for (let i = 0; i < clips.length - 1; i++) {
     const a = clips[i];
     const b = clips[i + 1];
@@ -231,10 +255,10 @@ export function planTransitionDrop(
   return null;
 }
 
-/** 给界面看的一行说明 */
+/** A one-line description for the UI */
 export function describeTransition(p: Project, tr: Transition): string {
-  if (tr.kind === "crossfade") return `${clipName(p, tr.aId)} → ${clipName(p, tr.bId ?? "")} 交叉溶解 ${tr.dur.toFixed(1)}s`;
-  return `${clipName(p, tr.aId)} ${KIND_LABEL[tr.kind]} ${tr.dur.toFixed(1)}s`;
+  if (tr.kind === "crossfade") return `${clipName(p, tr.aId)} → ${clipName(p, tr.bId ?? "")} crossfade ${tr.dur.toFixed(1)}s`;
+  return `${clipName(p, tr.aId)} ${KIND_LABEL[tr.kind].toLowerCase()} ${tr.dur.toFixed(1)}s`;
 }
 
 export { KIND_LABEL as TRANSITION_LABEL };

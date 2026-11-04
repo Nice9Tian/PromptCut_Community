@@ -1,8 +1,10 @@
 /**
- * `BlobStore` 的 memory 实现（契约 `docs/plan/asset-store-contract.md` 第 2 节）。
+ * The memory implementation of `BlobStore` (contract `docs/plan/asset-store-contract.md` section 2).
  *
- * 全部放在内存里，给测试用：`chunkSize` 可以调小。行为规则与 fs 实现相同（见 `blob-store.mjs` 文件头）；
- * `mtimeMs` 取入库时刻，`contentType` 按一张最小的扩展名表给；`size` 超过 256 MiB 回 `size-mismatch`。只引 Node 内置模块。
+ * Kept entirely in memory, for testing: `chunkSize` can be dialed down. Behavioral rules are
+ * identical to the fs implementation (see header of `blob-store.mjs`); `mtimeMs` takes the stored
+ * timestamp, `contentType` is provided from a minimal extension table; returns `size-mismatch` when
+ * `size` exceeds 256 MiB. Only imports Node built-in modules.
  */
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
@@ -11,10 +13,10 @@ import {
   createKeyedLock, drainSource, countSource, toBuffer, minimalContentType, normalizeTier,
 } from './blob-store.mjs';
 
-/** 单件上限：memory 实现只供测试，size 超过它回 `size-mismatch`（契约第 8 节第 7 条） */
+/** Single-file cap: memory implementation is for testing only, returns `size-mismatch` when size exceeds it (contract section 8, item 7) */
 export const MEMORY_MAX_SIZE = 256 * 1024 * 1024;
 
-/** 一段字节 → 非对象模式的可读流 */
+/** Byte slice → readable stream in non-object mode */
 function streamOf(buf) {
   let sent = false;
   return new Readable({
@@ -27,12 +29,12 @@ function streamOf(buf) {
 
 /**
  * @param {object} [options]
- * @param {number} [options.chunkSize]  缺省 8 MiB
- * @param {() => number} [options.now]  入库时刻，缺省 `Date.now`
+ * @param {number} [options.chunkSize]  Default 8 MiB
+ * @param {() => number} [options.now]  Timestamp when stored, defaults to `Date.now`
  * @returns {import('./blob-store.mjs').BlobStore}
  */
 export function createMemoryStore({ chunkSize = BLOB_CHUNK_SIZE, now = Date.now } = {}) {
-  if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) throw new TypeError('createMemoryStore：chunkSize 必须是正整数');
+  if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) throw new TypeError('createMemoryStore: chunkSize must be a positive integer');
   const withLock = createKeyedLock();
   /** @type {Map<string, { data: Buffer, ext: string, tier: 'small' | 'original', mtimeMs: number }>} */
   const blobs = new Map();
@@ -82,17 +84,17 @@ export function createMemoryStore({ chunkSize = BLOB_CHUNK_SIZE, now = Date.now 
         if (blobs.has(key)) return 'complete';
         let st = staging.get(key);
         if (st && st.size !== size) return { conflict: st.size };
-        // 只供测试：报一个天文数字的 size 不许把进程拖垮（契约第 8 节第 7 条）
+        // For testing only: reporting an astronomical size must not crash the process (contract section 8, item 7)
         if (size > MEMORY_MAX_SIZE) return { conflict: st ? st.size : MEMORY_MAX_SIZE };
         if (!st) {
           st = { size, ext: wantExt, tier: wantTier, parts: new Map(), received: new Set() };
           staging.set(key, st);
         } else {
           if (!st.ext && wantExt) st.ext = wantExt;
-          // 档位只往 original 退（见 blob-store.mjs「档位」）
+          // Tiers only fall back to original (see blob-store.mjs "Tiers")
           if (wantTier !== 'small') st.tier = 'original';
         }
-        // 已收到的片再传：不重写、不撤标记（见 blob-store.mjs 文件头）
+        // Retransmitting already received chunks: do not rewrite, do not clear markers (see blob-store.mjs header)
         if (st.received.has(n)) return { have: st };
         return st;
       });
@@ -115,7 +117,7 @@ export function createMemoryStore({ chunkSize = BLOB_CHUNK_SIZE, now = Date.now 
         bytes += part.length;
       }
       if (bytes !== expected) return { status: 'length', expected, got: bytes };
-      // 写的途中另一路先收尾入库了：这一片的字节已在全件里，回 complete
+      // Another path finalized and stored mid-write: bytes for this chunk are already in the whole file, return complete
       if (staging.get(key) !== st) return blobs.has(key) ? { status: 'complete' } : { status: 'discarded' };
       st.parts.set(n, buf);
       st.received.add(n);

@@ -66,10 +66,11 @@ function ProbeCard({ playToken }: CardProps<Record<string, never>>) {
 
 export const probeCard: CardDef<Record<string, never>> = {
   id: "probe",
-  name: "探针卡",
-  description: "测试渲染管线稳定性",
+  name: "Probe card",
+  description: "Tests render pipeline stability",
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {},
   controls: [],

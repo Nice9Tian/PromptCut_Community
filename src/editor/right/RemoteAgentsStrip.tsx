@@ -2,8 +2,10 @@ import { useRemoteAgents } from "../sync/presence";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 共享项目里别的成员那边的 Agent 声明的范围(计划 agent-workflow-plan.md A3 第二阶段):经文档服务的在场状态收来
- * (src/editor/sync/presence.ts),在 AI 栏顶上列一行,好让这边的人和 Agent 知道别人在改哪儿。没有就不画。
+ * The scope declared by the Agent on other members' side in a shared project (plan
+ * agent-workflow-plan.md A3 phase 2): received through the document service's presence state
+ * (src/editor/sync/presence.ts) and listed as one row at the top of the AI panel, so that people
+ * and Agents on this side know where others are editing. Not drawn if there is none.
  */
 export function RemoteAgentsStrip() {
   const agents = useRemoteAgents();

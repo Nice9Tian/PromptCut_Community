@@ -5,7 +5,7 @@ import { xOfTime } from "./utils";
 import { RenderBar } from "./RenderBar";
 import { tr } from "../../i18n/index.ts";
 
-/** 主刻度标签:mm:ss(00:05、01:30)。步长 0.5 秒时主刻度会落在 2.5 秒这种位置,补一位小数(00:02.5) */
+/** Major tick label: mm:ss (00:05, 01:30). With a 0.5 second step a major tick can land on something like 2.5 seconds, so add one decimal digit (00:02.5) */
 function mss(t: number): string {
   const m = Math.floor(t / 60);
   const s = Math.round((t - m * 60) * 1000) / 1000;
@@ -13,13 +13,13 @@ function mss(t: number): string {
   return Number.isInteger(s) ? `${mm}:${String(s).padStart(2, "0")}` : `${mm}:${s.toFixed(1).padStart(4, "0")}`;
 }
 
-/** 标尺高度(px)。序列栏的表头(index.tsx)和播放头把手的位置都按它排 */
+/** Ruler height (px). The header of the track column (index.tsx) and the position of the playhead handle are both laid out by it */
 export const RULER_H = 22;
 
 /**
- * 时间标尺:时间轴顶上唯一的一条(不再有开始—结束范围条)。
- * 主刻度(每 5 格)一道竖线、右边跟 mm:ss 时间;次刻度是短竖线。都用弱色,不抢片段的眼。
- * 底边那条线就是预渲染进度(RenderBar),不另占一行。
+ * Time ruler: the only one at the top of the timeline (there is no longer a start-end range bar).
+ * A major tick (every 5 cells) is a vertical line followed by an mm:ss time on its right; minor ticks are short vertical lines. All use a muted color so they do not compete with clips for attention.
+ * The bottom edge line is the prerender progress (RenderBar), which takes no row of its own.
  */
 export function Ruler() {
   const { pxPerSec } = useTimelineContext();
@@ -33,7 +33,7 @@ export function Ruler() {
   else if (pxPerSec <= 400) step = 0.5;
   else step = 0.1;
 
-  // 防止 duration 被内容撑得极大(几万秒)生成数万个刻度节点卡死页面:超 1200 个就往上一档跳
+  // Prevent duration being stretched huge by content (tens of thousands of seconds) and generating tens of thousands of tick nodes that freeze the page: above 1200, jump up one tier
   while (duration / step > 1200) {
     if (step === 1) step = 2;
     else if (step === 2) step = 5;

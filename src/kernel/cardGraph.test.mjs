@@ -2,16 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeCardDefinition, selectedCardStyle, validateCardGraph, projectCardGraph } from './cardGraph.mjs';
 
-/** 素材效果卡 = 注册表里写了 `card` / `audio` 的普通 CardDef。测试里直接写成对象,
- * 用一个 getCard 桩喂给 projectCardGraph —— 仓库里没有「注册」函数,真卡是文件。 */
+/** Media effect card = regular CardDef with `card` / `audio` in registry. In tests, directly
+ * written as object and fed to projectCardGraph via a getCard stub: there is no "register"
+ * function in repository, real cards are files. */
 const invert = {
-  id: 'invert', name: '反色', description: '把输入整幅反色', source: 'user',
+  id: 'invert', name: 'Invert colors', description: 'Inverts the whole input image', source: 'user',
   kind: 'filter', frameMode: 'direct', defaults: { amount: .5 }, controls: [],
   card: (sources, t, params) => ({ type: 'glsl', fragment: 'void main(){outColor=texture(u_input0,v_uv);}',
     inputs: [sources.source.at()], uniforms: { amount: params.amount } }),
 };
 const tone = {
-  id: 'tone', name: '增益', description: '按增益缩放输入采样', source: 'user',
+  id: 'tone', name: 'Gain', description: 'Scales the input samples by the gain', source: 'user',
   kind: 'audio', frameMode: 'direct', defaults: { gain: 1 }, controls: [],
   audio: async (sources, range, params) => (await sources.source.block(range.start, range.count)).map(v => v * params.gain),
 };
@@ -25,7 +26,7 @@ test('definitions only accept the two live languages and style use remains optio
   assert.deepEqual(selectedCardStyle(def, style), style);
   assert.deepEqual(selectedCardStyle({ ...def, styleKeys: [] }, style), {});
   assert.deepEqual(selectedCardStyle({ ...def, styleKeys: ['color'] }, style), { color: '#fff' });
-  // Python 归档之后 language 只剩 tsx / builtin
+  // After archiving Python, language only has tsx / builtin left
   assert.throws(() => normalizeCardDefinition({ id: 'tint', language: 'ruby', kind: 'filter' }), /invalid language/);
   assert.throws(() => normalizeCardDefinition({ id: 'tint', language: 'tsx', kind: 'nope' }), /invalid kind/);
 });
@@ -51,7 +52,8 @@ test('a deleted clip drops its edge into missingInputs instead of killing the wh
   const node = graph.nodes.find(n => n.id === 'filter');
   assert.deepEqual(node.missingInputs, ['source']);
   assert.deepEqual(Object.keys(node.inputs), ['extra']);
-  // 丢边发生在算 dependencies 之前,所以它照常进 level、不会被当成环
+  // Edge dropping occurs before calculating dependencies, so it enters level as usual and is not
+  // treated as a cycle
   assert.deepEqual(graph.levels, [['kept'], ['filter']]);
 });
 
@@ -70,11 +72,11 @@ test('old effects and graph cards appear in one graph with ordered outputs', () 
   assert.ok(graph.nodes.some(n => n.adapter === 'emphasis'));
   assert.ok(graph.nodes.some(n => n.adapter === 'card'));
   assert.equal(graph.nodes.find(n => n.id === 'gc').inputs.source.nodeId, '@clip/media/source');
-  // 素材效果卡片段不再合成 chrome 基节点:它的输出就是它自己那个节点
+  // Media effect card clips no longer synthesize chrome base node: its output is its own node
   assert.equal(graph.nodes.find(n => n.id === '@clip/custom/source'), undefined);
-  // 片段指向的那个节点以 clip.params 为准(右栏改参数动的就是它)
+  // The node pointed to by clip follows clip.params (changing parameters in right rail modifies this)
   assert.deepEqual(graph.nodes.find(n => n.id === 'gc').params, { amount: .9 });
-  // 定义带着 frameMode: 'direct',所以能力不是兜底的 stateful
+  // Definition carries frameMode: 'direct', so capability is not fallback stateful
   assert.equal(graph.nodes.find(n => n.id === 'gc').capabilities.frameMode, 'direct');
   assert.equal(graph.abi, 1);
   assert.equal(graph.definitions, undefined);
@@ -90,7 +92,7 @@ test('a panel-dropped graph clip renders through a synthesized node and a delete
   assert.equal(synthesized.adapter, 'card');
   assert.equal(synthesized.kind, 'filter');
   assert.deepEqual(synthesized.params, { amount: .75 });
-  // 用户卡文件被删:能力留 unknown,整份图照样算得出来
+  // User card file deleted: capability remains unknown, entire graph can still be computed
   const orphan = graph.nodes.find(n => n.id === 'gone-node');
   assert.equal(orphan.capabilities.compositing, 'unknown');
   assert.equal(orphan.capabilities.need_prerendering, true);
@@ -102,6 +104,6 @@ test('audio graph card nodes carry their kind so node-only consumers can see it'
   ] }], cardNodes: [{ id: 'an', adapter: 'card', cardId: 'tone', kind: 'audio', params: { gain: 2 }, inputs: { source: '@clip/clip/source' } }] };
   const graph = projectCardGraph(project, getCard);
   assert.equal(graph.nodes.find(n => n.id === 'an').kind, 'audio');
-  // 素材段照常有自己的 source 节点(音频卡挂在它上面)
+  // Media clips have their own source nodes as usual (audio cards are attached to them)
   assert.ok(graph.nodes.some(n => n.id === '@clip/clip/source' && n.adapter === 'media'));
 });

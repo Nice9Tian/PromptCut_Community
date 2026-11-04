@@ -1,38 +1,44 @@
 /**
- * 父页对舞台消息的校验(契约 `docs/plan/online-card-exec-contract.md` 第 3.2 节「协议面」)。
+ * Parent page validation of stage messages (contract `docs/plan/online-card-exec-contract.md`
+ * section 3.2 "Protocol plane").
  *
- * 跨源舞台里会执行用户卡与素材效果卡的代码,**舞台发来的一切当不可信输入**:只认 `event.source` 是自己挂的那个舞台、`event.origin`
- * 是运行配置里那个舞台源的消息(来源在 `stageRpc.ts` 的客户端与 `Preview.tsx` 里核);内容在这里按形状校验,数字钳到合理范围,
- * 认不出的类型、形状不对的一律丢弃。父页从不经 RPC 回传凭证或票据,也不把舞台交来的 HTML 放进自己的活文档。
+ * Cross-origin stages execute code from user cards and media effect cards; **treat everything sent
+ * by the stage as untrusted input**: only accept messages where `event.source` is the stage mounted
+ * by itself and `event.origin` is the stage origin in the runtime config (origins are verified in
+ * the `stageRpc.ts` client and `Preview.tsx`); content is validated by shape here, numbers are
+ * clamped to reasonable ranges, and unrecognized types or incorrect shapes are discarded without
+ * exception. The parent page never passes credentials or tickets back over RPC, nor does it insert
+ * HTML handed over by the stage into its live document.
  *
- * 只在在线的跨源舞台上启用(`createStageRpc(…, { untrusted: true })`);桌面运行环境与同源单舞台照旧,一个字节不变。
- * 纯函数,没有依赖,单测逐条核。
+ * Enabled only on online cross-origin stages (`createStageRpc(…, { untrusted: true })`); desktop
+ * runtime environments and same-origin single stages remain as before, not a single byte changed.
+ * Pure functions, no dependencies, verified line by line by unit tests.
  */
 
-/** 各种上限。都是「正常用到的量再宽一个数量级」,只为挡坏数据,不是业务规则 */
+/** Various upper bounds. All are "an order of magnitude wider than normal usage", only to block bad data, not business rules */
 export const STAGE_MESSAGE_LIMITS = Object.freeze({
-  /** 时间(秒):项目最长也到不了一天 */
+  /** Time (seconds): even the longest project will not reach a day */
   maxSec: 86_400,
-  /** 耗时类的数(毫秒):十分钟封顶 */
+  /** Elapsed time values (milliseconds): capped at ten minutes */
   maxMs: 600_000,
-  /** 帧号 */
+  /** Frame number */
   maxFrame: 10_000_000,
-  /** 片段 id、会话号这类短串 */
+  /** Short strings such as clip IDs and session IDs */
   maxIdLength: 512,
-  /** 成本身份(节点的稳定 JSON) */
+  /** Cost identity (stable JSON of the node) */
   maxIdentityLength: 262_144,
-  /** 一次事件里的片段数 */
+  /** Number of clips in a single event */
   maxClipIds: 5_000,
-  /** 一帧快照的 HTML(字符) */
+  /** HTML of a single-frame snapshot (characters) */
   maxHtmlLength: 16 * 1024 * 1024,
-  /** 随消息转移的字节块 */
+  /** Byte chunk transferred with the message */
   maxBufferBytes: 64 * 1024 * 1024,
-  /** 随消息转移的位图(生成快照时要的像素)一边最长多少、矩形坐标的绝对值上限 */
+  /** Maximum length of a side of a bitmap transferred with the message (pixels needed when generating snapshots), and upper bound for absolute values of rectangle coordinates */
   maxPixelSide: 8192,
-  /** RPC 回包的嵌套深度与节点总数 */
+  /** Nesting depth and total node count of RPC responses */
   maxDepth: 12,
   maxNodes: 400_000,
-  /** RPC 回包里普通数字的绝对值 */
+  /** Absolute value of ordinary numbers in RPC responses */
   maxAbs: 1e12,
 });
 
@@ -40,7 +46,7 @@ const L = STAGE_MESSAGE_LIMITS;
 const HASH = /^[0-9a-f]{64}$/;
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
-/** 有限数钳到 [min, max];不是有限数回 null */
+/** Clamps finite numbers to [min, max]; returns null if not a finite number */
 function num(v: unknown, min: number, max: number): number | null {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
   return v < min ? min : v > max ? max : v;
@@ -57,8 +63,11 @@ function buf(v: unknown, max: number = L.maxBufferBytes): ArrayBuffer | null {
 }
 
 /**
- * `bake-frame` 的像素(浏览器节点产轨道流用):`{ rect: { x, y, w, h }, bitmap }`。矩形要是整数、宽高为偶数且不超过上限;
- * 位图要真是 `ImageBitmap`、大小与矩形一致。位图只是一张图,父页拿它送编码器、不放进活文档。不合形状回 null。
+ * Pixels for `bake-frame` (used by browser nodes to produce track streams): `{ rect: { x, y, w, h }, bitmap }`.
+ * The rectangle values must be integers, with even width and height not exceeding the upper limit;
+ * the bitmap must actually be an `ImageBitmap`, with size matching the rectangle. The bitmap is just
+ * an image; the parent page sends it to the encoder and does not put it into the live document.
+ * Returns null if the shape does not match.
  */
 function pixelsOf(v: unknown): { rect: { x: number; y: number; w: number; h: number }; bitmap: unknown } | null {
   if (!isObj(v) || !isObj(v.rect)) return null;
@@ -75,13 +84,17 @@ function pixelsOf(v: unknown): { rect: { x: number; y: number; w: number; h: num
 type Clean = Record<string, unknown> & { type: string };
 
 /**
- * 舞台事件(`StageEvent`)按形状校验;回一份只含认得的字段的新对象,不合形状回 null。
- * 回值的静态类型留给调用方断言(本文件不引 render 层的类型,免得成环)。
- * `opts.maxSec`:时间类字段(`sec`)的上限,一般给项目时长。
+ * Validates stage events (`StageEvent`) by shape; returns a new object containing only recognized
+ * fields, or returns null if shape does not match.
+ * The static type of the return value is left for caller to assert (this file does not import
+ * render-layer types to avoid cycles).
+ * `opts.maxSec`: upper bound for time fields (`sec`), typically given as project duration.
  */
 export function sanitizeStageEvent(d: unknown, opts: { maxSec?: number } = {}): Clean | null {
   if (!isObj(d) || typeof d.type !== "string") return null;
-  // 时间的上限:调用方给了项目时长就用它(播放头不许被舞台报的时刻带出时间轴),没给用通用上限
+  // Upper bound for time: use project duration if provided by the caller (the playhead must not be
+  // carried outside the timeline by timestamps reported by the stage), or use general upper bound
+  // if not provided
   const maxSec = typeof opts.maxSec === "number" && Number.isFinite(opts.maxSec) && opts.maxSec >= 0 ? Math.min(opts.maxSec, L.maxSec) : L.maxSec;
   switch (d.type) {
     case "mediaReady": case "frame": case "ended": {
@@ -151,7 +164,9 @@ export function sanitizeStageEvent(d: unknown, opts: { maxSec?: number } = {}): 
       return out;
     }
     case "card-states": {
-      // 在线执行用户卡与素材效果卡:每张卡的运行状态。状态名只认契约第 8 节那十种,文字截短;图形能力只认名单上的几种
+      // Online execution of user cards and media effect cards: execution status of each card.
+      // Status names recognize only the ten kinds in contract section 8, text is truncated;
+      // graphics capabilities recognize only the few on the list
       const states = runStatePairs(d.states);
       if (!states) return null;
       const graph = typeof d.graph === "string" && GRAPH_CAPS.has(d.graph) ? d.graph : null;
@@ -172,10 +187,10 @@ export function sanitizeStageEvent(d: unknown, opts: { maxSec?: number } = {}): 
 
 const RUN_STATES = new Set(["ready", "loading", "unsupported-syntax", "missing-module", "load-error", "gpu", "media", "runtime-error", "not-isolated"]);
 const GRAPH_CAPS = new Set(["unknown", "ok", "no-webgl2", "software", "texture", "context-lost"]);
-/** 同步卡的张数上限(与同步表、清单计划的上限同量级) */
+/** Upper bound on the number of synced cards (same order of magnitude as sync tables and manifest plans) */
 const MAX_CARDS = 500;
 
-/** `[卡片 id, 运行状态][]`:逐条按形状收;形状不对回 null */
+/** `[card id, execution status][]`: collected item by item by shape; returns null if shape does not match */
 function runStatePairs(v: unknown): [string, Record<string, string>][] | null {
   if (!Array.isArray(v) || v.length > MAX_CARDS) return null;
   const out: [string, Record<string, string>][] = [];
@@ -194,7 +209,7 @@ function runStatePairs(v: unknown): [string, Record<string, string>][] | null {
   return out;
 }
 
-/** `{ 卡片 id: 短文字 }`:只留字符串值,截短;不是对象回 null */
+/** `{ card id: short text }`: retains only string values and truncates them; returns null if not an object */
 function textMap(v: unknown, max: number): Record<string, string> | null {
   if (!isObj(v)) return null;
   const out: Record<string, string> = {};
@@ -208,13 +223,16 @@ function textMap(v: unknown, max: number): Record<string, string> | null {
   return out;
 }
 
-/** 进成本记录的那几个数所在的方法:里面的耗时一律钳到 [0, maxMs] */
+/** Methods containing numbers that go into cost records: elapsed times inside are all clamped to [0, maxMs] */
 const TIMING_METHODS = new Set(["render", "setTime", "bakeFrame", "settleLayers"]);
 const TIMING_KEYS = new Set(["elapsedMs", "stepMs", "inlineMs", "rasterMs", "serializeMs", "seekMs", "ms", "pausedMs", "smallMs", "readyMs", "catchUpMs"]);
 
 /**
- * RPC 回包的结果按形状收一遍:只许普通对象、数组、字符串、布尔、null、有限数与字节块;深度、节点数、字符串长度有上限;
- * 数字钳到合理范围(耗时类的不许为负、十分钟封顶)。不合形状就抛(调用方把这次调用按失败回绝)。原地改、回同一个值。
+ * Sanitizes RPC response results by shape: allows only plain objects, arrays, strings, booleans,
+ * null, finite numbers, and byte chunks; with upper bounds on depth, node count, and string length;
+ * clamps numbers to reasonable ranges (elapsed times cannot be negative and are capped at ten
+ * minutes). Throws if shape does not match (the caller rejects this call as failed).
+ * Mutates in place and returns the same value.
  */
 export function sanitizeRpcResult(method: string, result: unknown): unknown {
   let nodes = 0;
@@ -236,7 +254,8 @@ export function sanitizeRpcResult(method: string, result: unknown): unknown {
     if (ArrayBuffer.isView(v)) { if (v.byteLength > L.maxBufferBytes) throw new Error("stage rpc: byte buffer in response too large"); return v; }
     if (depth >= L.maxDepth) throw new Error("stage rpc: response nested too deeply");
     if (Array.isArray(v)) {
-      // `steps`(每帧活渲耗时)是一串数:整串按耗时钳
+      // `steps` (live render duration per frame) is a sequence of numbers: clamp the entire sequence
+      // as elapsed times
       const t = inTiming || (timing && (key === "steps"));
       for (let i = 0; i < v.length; i++) v[i] = walk(v[i], depth + 1, null, t);
       return v;
@@ -244,7 +263,8 @@ export function sanitizeRpcResult(method: string, result: unknown): unknown {
     const proto = Object.getPrototypeOf(v);
     if (proto !== Object.prototype && proto !== null) throw new Error("stage rpc: response contains an unrecognized object");
     const o = v as Record<string, unknown>;
-    // `snapshot` / `snapshotSteps[]` 里的三段耗时本身的键就在 TIMING_KEYS 里;`glGpuMs` 是「卡 → 毫秒」的表,整张按耗时钳
+    // Keys for the three elapsed times in `snapshot` / `snapshotSteps[]` are themselves in TIMING_KEYS;
+    // `glGpuMs` is a "card → ms" map, clamped across the entire map as elapsed times
     const t = inTiming || (timing && key === "glGpuMs");
     for (const k of Object.keys(o)) o[k] = walk(o[k], depth + 1, k, t);
     return o;
@@ -252,13 +272,13 @@ export function sanitizeRpcResult(method: string, result: unknown): unknown {
   return walk(result, 0, null, false);
 }
 
-/** RPC 回包的外壳(`pc-rpc-reply`):`error` 只留一段不长的字符串 */
+/** Shell of RPC responses (`pc-rpc-reply`): `error` retains only a short string */
 export function sanitizeRpcError(error: unknown): string | undefined {
   if (typeof error !== "string") return undefined;
   return error.length > 2000 ? `${error.slice(0, 2000)}…` : error;
 }
 
-/** 握手里的宿主能力表:只认这几项、各按类型收;不是对象回 null */
+/** Host capabilities table in the handshake: recognizes only these items, accepted by type; returns null if not an object */
 export function sanitizeHostCapabilities(d: unknown): { prerender: boolean; offscreenGl: boolean; compact: boolean; glRoute: "perDocument" | "shared" | null; lowest: boolean; measure: boolean; catchUp: boolean; stageId: string } | null {
   if (!isObj(d)) return null;
   return {

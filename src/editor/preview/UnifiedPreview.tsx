@@ -17,7 +17,7 @@ export function UnifiedPreview({ project, t, playing }: { project: Project; t: n
   const requestFrame = useRef<() => void>(() => {});
   const wakePlayback = useRef<() => void>(() => {});
 
-  // 预渲染触发走公共 hook(双舞台预览用同一份);legacy 这里沿用以前的行为:不看播放状态,采样帧到了就归档
+  // Prerender triggering goes through the shared hook (the dual-stage preview uses the same one); legacy keeps its old behavior here: it ignores playback state and archives as soon as the sampled frame arrives
   const archived = useRef({ project, count: 0 });
   usePrerenderPreload(project, {
     enabled: true,
@@ -44,9 +44,10 @@ export function UnifiedPreview({ project, t, playing }: { project: Project; t: n
         const requested = latest.current.t;
         controller = new AbortController();
         try {
-          // 整帧打预渲染进程(D5):编辑器进程是 `interactive: false`,user lane 一律回 503 `USE_PRERENDER`
-          // (`FramePipeline.laneRefused`)。回包里的 `url` 由 `frameRequest` 按预渲染的源补成绝对地址。
-          // X7 起由 `server/test/legacy-preview-target.test.mjs` 守着,别改回 `"user"`。
+          // Send the whole frame to the prerender process (D5): the editor process is `interactive: false`,
+          // and the user lane always returns 503 `USE_PRERENDER` (`FramePipeline.laneRefused`). The `url` in
+          // the response is completed into an absolute address by `frameRequest` according to the prerender source.
+          // Since X7 it is guarded by `server/test/legacy-preview-target.test.mjs`; do not change it back to `"user"`.
           const result = await see_frames(project, [requested], controller.signal, { target: "prerender", lane: "user" });
           // A stale result can populate the common cache, but never the view.
           if (active && !latest.current.playing && Math.round(requested * fps) === Math.round(latest.current.t * fps)) {
@@ -88,7 +89,7 @@ export function UnifiedPreview({ project, t, playing }: { project: Project; t: n
       clearTimeout(timer); running = true; pending = false;
       const clock = { ...latest.current };
       try {
-        // 播放走预渲染进程那条独立的泳道(A7):它挂得久,留在编辑器那个源上会占满浏览器的 6 条连接
+        // Playback goes through the independent lane of the prerender process (A7): it stays open for a long time, and leaving it on the editor's origin would use up all 6 browser connections
         const status = await frameRequest("playback", project, { owner, sequence: ++sequence, ...clock, rate: 1, sentAt: Date.now(),
           deliveryMs: Math.min(5000, player.deliveryMs + 150) }, controller.signal, { target: "prerender", lane: "playback" });
         if (active && !status.closed && clock.playing === latest.current.playing) {
@@ -111,7 +112,7 @@ export function UnifiedPreview({ project, t, playing }: { project: Project; t: n
     void pulse(); // Create the full-duration transparent MOV when opening a project.
     return () => {
       active = false; controller.abort(); clearTimeout(timer); cancelAnimationFrame(raf); player.close();
-      // 关这一路也得发到同一个进程上,不然预渲染那边的这一路永远不收摊
+      // Closing this stream must also be sent to the same process, otherwise the stream on the prerender side is never shut down
       void frameRequest("playback", project, { owner, sequence: ++sequence, t: latest.current.t, playing: false, close: true },
         undefined, { target: "prerender", lane: "playback" }).catch(() => {});
     };

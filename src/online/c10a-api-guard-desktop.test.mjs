@@ -1,8 +1,9 @@
 /**
- * C10a `/api` 守卫在桌面运行环境不拦（`docs/plan/c10a-contract.md` 第 2 节：桌面构建与开发服务照旧）。
- * 跑：node --experimental-test-module-mocks --test src/online/c10a-api-guard-desktop.test.mjs
+ * C10a `/api` guard does not block in desktop runtime environment (`docs/plan/c10a-contract.md`
+ * section 2: desktop build and dev server as usual).
+ * Run: node --experimental-test-module-mocks --test src/online/c10a-api-guard-desktop.test.mjs
  *
- * `src/online/mode.ts` 换成 `{ ONLINE: false }`。约定同 `c10a-api-guard.test.mjs`（K6）。
+ * `src/online/mode.ts` replaced with `{ ONLINE: false }`. Contract same as `c10a-api-guard.test.mjs` (K6).
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock } from "node:test";

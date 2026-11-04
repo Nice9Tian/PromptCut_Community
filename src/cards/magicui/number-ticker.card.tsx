@@ -28,23 +28,24 @@ function NumberTickerCard({ params }: CardProps<Params>) {
 
 export const numberTickerCard: CardDef<Params> = {
   id: "mu-number-ticker",
-  name: "数字滚动",
-  description: "数字从0滚动到目标值",
-  useWhen: "全屏居中的单个大数字弹簧滚动,自带单位和一行说明,数字带千位逗号(12,480)。要机械翻牌滚轮手感用 odometer;要中英引导字加数据来源注脚的实证版式用 stat-proof。",
-  tags: ["数字","滚动"],
+  name: "Number ticker",
+  description: "Number counts up from 0 to the target value",
+  useWhen: "A single large full-screen centered number that scrolls with spring motion, with its own unit and a one-line caption, and thousands separators (12,480). For a mechanical flip-wheel feel use odometer; for the evidence-style layout with bilingual lead text and a data-source footnote use stat-proof.",
+  tags: ["number","scroll"],
   source: "magicui",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: { value: 100, label: "已完成目标", unit: "%", accent: "" },
   controls: [
-    { key: "value", label: "目标值", type: "number" },
-    { key: "label", label: "说明文字", type: "text" },
-    { key: "unit", label: "单位", type: "text" },
-    { key: "accent", label: "主色(留空用主题色)", type: "color" },
+    { key: "value", label: "Target value", type: "number" },
+    { key: "label", label: "Caption", type: "text" },
+    { key: "unit", label: "Unit", type: "text" },
+    { key: "accent", label: "Main color (leave empty to use theme color)", type: "color" },
   ],
   parts: [
-    { id: "number", label: "数值", role: "text", params: ["value", "unit", "accent"], enterMs: 0, settleMs: 1600 },
-    { id: "label", label: "说明", role: "text", params: ["label"], enterMs: 0, settleMs: 0 },
+    { id: "number", label: "Value", role: "text", params: ["value", "unit", "accent"], enterMs: 0, settleMs: 1600 },
+    { id: "label", label: "notes", role: "text", params: ["label"], enterMs: 0, settleMs: 0 },
   ],
   lifecycle: { settleMs: 1600, after: "hold", exit: ["fade"] },
   Component: NumberTickerCard,

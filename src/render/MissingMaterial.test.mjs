@@ -12,7 +12,7 @@ test("shared missing-material visual shows the original display name as the text
     const M = await server.ssrLoadModule("/src/render/MissingMaterial.tsx");
     const html = renderToStaticMarkup(createElement(M.MissingMaterial, { name: "素材.mp4" }));
     assert.match(html, /data-pc-missing-material="1"/);
-    assert.match(html, /找不到素材素材\.mp4/);
+    assert.match(html, /Media not found: 素材\.mp4/);
     assert.match(html, /role="img"/);
   } finally { await server.close(); }
 });
@@ -28,7 +28,7 @@ test("FrameScene uses the same text proxy for export frames while retaining the 
     const project = { width: 320, height: 180, fps: 30, duration: 2, media: [media], tracks: [{ id: "video", clips: [clip] }] };
     const html = renderToStaticMarkup(createElement(M.FrameScene, { project, t: .1, playToken: 0 }));
     assert.match(html, /data-pc-confirmed-missing="1"/);
-    assert.match(html, /找不到素材original\.mp4/);
+    assert.match(html, /Media not found: original\.mp4/);
     assert.match(html, /data-pc-clip="clip"/);
     assert.doesNotMatch(html, /data-pc-media-src="\/\@media\/original"/);
     assert.match(html, /opacity:0\.4/);
@@ -64,7 +64,7 @@ test("VideoTrack previews the confirmed-missing visual without loading its origi
     const html = renderToStaticMarkup(createElement(M.VideoTrack, { project: { width: 320, height: 180, fps: 30 }, cur: { clip, media, opacity: .7, trackId: "t" }, next: null,
       t: .5, playing: false, scrubbing: false, muted: true, stage: { width: 320, height: 180 } }));
     assert.match(html, /data-pc-confirmed-missing="1"/);
-    assert.match(html, /找不到素材still\.png/);
+    assert.match(html, /Media not found: still\.png/);
     assert.doesNotMatch(html, /src="\/\@media\/original"/);
   } finally { await server.close(); }
 });

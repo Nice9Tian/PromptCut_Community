@@ -1,9 +1,10 @@
 /**
- * StoreHold(store/core.ts):停靠栏里看不见的分区页不跟 store 的更新,露出来时按当时的 store 重读。
- * 跑:node --test src/store/storeHold.test.mjs
+ * StoreHold(store/core.ts): hidden section tabs in the dock do not follow store updates, and
+ * re-read from the current store when revealed. Run: node --test src/store/storeHold.test.mjs
  *
- * 来历:tiers-probe T4(docs/archive/agent-reports/AGENT-perf-t4.md)—— 以前每次编辑都把看不见的特效库、
- * 节点图整棵重渲,挤在编辑那个同步任务里。
+ * Origin: tiers-probe T4 (docs/archive/agent-reports/AGENT-perf-t4.md): previously every edit
+ * re-rendered the entire tree of the hidden effects library and node graph, crammed into that
+ * synchronous edit task.
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
@@ -52,18 +53,18 @@ test("Invisible (StoreHold true) subtree: does not re-render when the store chan
 });
 
 test("Invisible as soon as it is mounted: the first read gets the current value as usual, and it does not follow afterwards", async () => {
-  actions.newProject("起点");
+  actions.newProject("Starting point");
   const { log, App } = harness();
   const root = mount(h(App, { hidden: true }));
   await flush();
-  assert.deepEqual(log.held, ["起点"]);
-  actions.setProjectMeta({ name: "改过" });
+  assert.deepEqual(log.held, ["Starting point"]);
+  actions.setProjectMeta({ name: "Changed" });
   await flush();
-  assert.deepEqual(log.held, ["起点"]);
-  assert.equal(log.live.at(-1), "改过");
+  assert.deepEqual(log.held, ["Starting point"]);
+  assert.equal(log.live.at(-1), "Changed");
   root.render(h(App, { hidden: false }));
   await flush();
-  assert.equal(log.held.at(-1), "改过");
+  assert.equal(log.held.at(-1), "Changed");
   root.unmount();
 });
 

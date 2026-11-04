@@ -1,14 +1,21 @@
+import { tr } from "../../i18n.mjs";
 /**
- * 服务地址登记模块（契约 `docs/plan/render-queue-contract.md` G.6）。
+ * Service address registration module (contract `docs/plan/render-queue-contract.md` G.6).
  *
- * 素材服务等所在的一方把自己的地址上报（`service.announce`），需要它的渲染节点、客户端订阅
- * （`service.watch`）后收到全量列表（`service.endpoints`）；上报方撤回（`service.withdraw`）或断开超过宽限期后，
- * 地址随之撤回（语义 `docs/semantics/mechanism/document-service.md`「连接发现」）。
+ * The party hosting the asset service or similar announces its address (`service.announce`),
+ * and render nodes or clients that need it subscribe (`service.watch`) to receive the full list
+ * (`service.endpoints`); when the announcer withdraws (`service.withdraw`) or disconnects beyond
+ * the grace period, the address is withdrawn accordingly (semantics
+ * `docs/semantics/mechanism/document-service.md` "Connection Discovery").
  *
- * 只交换地址：本模块不访问登记的 URL，不转发任何字节。推送一律是按订阅者 `kinds` 过滤后的全量，列表很小，不做增量。
- * 权限（`docs/plan/auth-contract.md` 第 10 节）：`service.announce` / `service.withdraw` 只给管理身份与 `local` 身份，
- * 成员（`scope: 'member'`）回 `forbidden`；`service.watch` 与下发的 `service.endpoints` 对所有身份开放（只读）。
- * 不带 `scope` 的旧式身份（测试注入的 `authenticate`）不受限，与 M5 相同。
+ * Exchanges addresses only: this module does not access registered URLs or forward any bytes.
+ * Pushes are always full lists filtered by subscriber `kinds`; the list is small, so no deltas
+ * are used.
+ * Permissions (`docs/plan/auth-contract.md` Section 10): `service.announce` / `service.withdraw`
+ * are only granted to admin identity and `local` identity; members (`scope: 'member'`) receive
+ * `forbidden`; `service.watch` and delivered `service.endpoints` are open to all identities
+ * (read-only).
+ * Legacy identities without `scope` (test-injected `authenticate`) are unrestricted, same as M5.
  */
 
 export const ENDPOINT_DEFAULTS = Object.freeze({
@@ -32,41 +39,41 @@ class BadMessage extends Error {}
 function bad(detail) { throw new BadMessage(detail); }
 
 function checkAnnouncer(v) {
-  if (typeof v !== 'string' || !ANNOUNCER_RE.test(v)) bad('announcerId 不合法');
+  if (typeof v !== 'string' || !ANNOUNCER_RE.test(v)) bad('announcerId is invalid');
   return v;
 }
 
 function checkKind(v) {
-  if (typeof v !== 'string' || !KIND_RE.test(v)) bad('kind 不合法');
+  if (typeof v !== 'string' || !KIND_RE.test(v)) bad('kind is invalid');
   return v;
 }
 
 function checkUrls(v, maxUrls) {
-  if (!Array.isArray(v) || v.length < 1 || v.length > maxUrls) bad(`urls 要有 1～${maxUrls} 个`);
+  if (!Array.isArray(v) || v.length < 1 || v.length > maxUrls) bad(`urls must have 1-${maxUrls} entries`);
   return v.map((u) => {
-    if (typeof u !== 'string' || u.length > MAX_URL_LENGTH) bad('地址必须是不超过 2048 字符的字符串');
+    if (typeof u !== 'string' || u.length > MAX_URL_LENGTH) bad('The URL must be a string of at most 2048 characters');
     let parsed;
     try {
       parsed = new URL(u);
     } catch {
-      bad('地址解析不了');
+      bad('The URL cannot be parsed');
     }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') bad('地址只能是 http 或 https');
-    if (parsed.username !== '' || parsed.password !== '') bad('地址不能带用户名或密码');
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') bad('The URL must be http or https');
+    if (parsed.username !== '' || parsed.password !== '') bad('The URL cannot contain a username or password');
     return u;
   });
 }
 
 function checkMeta(v, maxBytes) {
   if (v === undefined || v === null) return null;
-  if (!isObj(v)) bad('meta 必须是对象');
+  if (!isObj(v)) bad('meta must be an object');
   let text;
   try {
     text = JSON.stringify(v);
   } catch {
-    bad('meta 不能序列化');
+    bad('meta cannot be serialized');
   }
-  if (Buffer.byteLength(text, 'utf8') > maxBytes) bad(`meta 序列化后超过 ${maxBytes} 字节`);
+  if (Buffer.byteLength(text, 'utf8') > maxBytes) bad(`meta exceeds ${maxBytes} bytes when serialized`);
   return JSON.parse(text);
 }
 
@@ -74,7 +81,7 @@ const sameUrls = (a, b) => a.length === b.length && a.every((u, i) => u === b[i]
 const sameMeta = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
- * @param {object} [options] 覆盖 `ENDPOINT_DEFAULTS` 的上限（测试用）
+ * @param {object} [options] Overrides `ENDPOINT_DEFAULTS` limits (for testing)
  * @param {number} [options.graceMs]
  * @param {number} [options.maxAnnouncers]
  * @param {number} [options.maxUrls]
@@ -94,7 +101,7 @@ export function endpointsModule(options = {}) {
   const entries = new Map();
   /** connId → Set<kind> | 'all' */
   const watchers = new Map();
-  /** connId → principal.scope（`member` 不能登记与撤回；不带 scope 的旧式身份不受限） */
+  /** connId → principal.scope (`member` cannot register or withdraw; legacy identities unrestricted) */
   const scopes = new Map();
 
   const keyOf = (announcerId, kind) => `${kind}\u0000${announcerId}`;
@@ -107,7 +114,7 @@ export function endpointsModule(options = {}) {
     return [...entries.values()].filter((e) => sees(filter, e.kind)).map(view);
   }
 
-  /** 登记变了：给订阅了这些 kind 的连接各推一条全量 */
+  /** Registrations changed: push a full list to each connection subscribed to these kinds */
   function push(ctx, kinds) {
     for (const [connId, filter] of watchers) {
       if ([...kinds].some((k) => sees(filter, k))) {
@@ -129,11 +136,12 @@ export function endpointsModule(options = {}) {
     const key = keyOf(announcerId, kind);
     const existing = entries.get(key);
     if (!existing && entries.size >= maxAnnouncers) {
-      return reply(ctx, connId, { type: 'error', reason: 'limit', detail: `登记数已到上限 ${maxAnnouncers}` }, reqId);
+      return reply(ctx, connId, { type: 'error', reason: 'limit', detail: tr("Registration count has reached the limit of {0}", maxAnnouncers) }, reqId);
     }
     let changed = true;
     if (existing && existing.offlineAt !== null && sameUrls(existing.urls, urls) && sameMeta(existing.meta, meta)) {
-      // 宽限期内从新连接以相同内容再登记：只改绑连接，订阅方看到的没变，不推送
+      // Re-registered with identical content from a new connection within grace period:
+      // only rebinds connection; unchanged from subscriber perspective, no push
       existing.connId = connId;
       existing.offlineAt = null;
       changed = false;
@@ -162,7 +170,7 @@ export function endpointsModule(options = {}) {
     } else if (Array.isArray(msg.kinds)) {
       filter = new Set(msg.kinds.map(checkKind));
     } else {
-      bad("kinds 必须是字符串数组或 'all'");
+      bad("kinds must be an array of strings or 'all'");
     }
     watchers.set(connId, filter);
     reply(ctx, connId, { type: 'service.endpoints', endpoints: visibleTo(filter) }, reqId);
@@ -183,7 +191,7 @@ export function endpointsModule(options = {}) {
       scopes.delete(connId);
       watchers.delete(connId);
       const at = ctx.now();
-      // 登记标为离线但仍然可见，过了宽限期由 tick 删掉
+      // Registration marked offline but remains visible; removed by tick after grace period expires
       for (const e of entries.values()) {
         if (e.connId === connId && e.offlineAt === null) e.offlineAt = at;
       }
@@ -192,10 +200,11 @@ export function endpointsModule(options = {}) {
     handle(ctx, connId, msg) {
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '服务地址登记不支持这种消息' }, reqId);
-      // 登记与撤回只给管理身份与本机身份；成员只能订阅（auth-contract 第 10 节）
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'Service address registration does not support this message' }, reqId);
+      // Register and withdraw are only for admin and local identities;
+      // members can only subscribe (auth-contract Section 10)
       if (fn !== watch && scopes.get(connId) === 'member') {
-        return reply(ctx, connId, { type: 'error', reason: 'forbidden', detail: '成员不能登记或撤回服务地址' }, reqId);
+        return reply(ctx, connId, { type: 'error', reason: 'forbidden', detail: tr("Members cannot register or withdraw service addresses") }, reqId);
       }
       try {
         fn(ctx, connId, msg, reqId);
@@ -230,6 +239,6 @@ export function endpointsModule(options = {}) {
   };
 }
 
-/** 别名：与其它工厂的命名习惯对齐 */
+/** Alias: aligned with naming conventions of other factories */
 export const createEndpointsModule = endpointsModule;
 export default endpointsModule;

@@ -6,20 +6,22 @@ import { decryptConfig, looksLikeShareBlob, type SharedApiConfig } from "../../a
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 接收分发来的 API 配置。
+ * Receives a distributed API configuration.
  *
- * 流程:把「本机识别码」发给分发方 → 分发方用它当口令加密 → 你把密文粘进来,
- * 本机自动解开并写进配置。密文只有这台机器解得开,转发给别人没用。
+ * Flow: send the "machine ID" to the distributor → the distributor encrypts with it as the
+ * passphrase → you paste the ciphertext in, and this machine decrypts it automatically and writes it
+ * into the configuration. Only this machine can decrypt the ciphertext, so forwarding it to anyone
+ * else is useless.
  *
- * 制作密文那一端不在这里——那是分发方自己的事,用仓库里的
- * tools/make-api-share.py 生成。软件里只保留接收侧,免得把「谁能分发密钥」
- * 这件事也做成人人可点的按钮。
+ * The end that produces the ciphertext is not here: that is the distributor's own business, done
+ * with tools/make-api-share.py in the repository. The software keeps only the receiving side, so
+ * that "who may distribute keys" does not become a button anyone can click.
  */
 export function ApiSharePanel(props: {
   onSaveConfig: (patch: AiConfigPatch) => Promise<void>;
-  /** Router 那一路存没存 Key(脱敏) */
+  /** Whether a Key is stored for the Router route (masked) */
   saved?: KeyState | null;
-  /** 当前生效的就是 Router 这一路 */
+  /** The Router route is the one currently in effect */
   active?: boolean;
   clearing?: boolean;
   onClear?: () => void;
@@ -65,14 +67,14 @@ export function ApiSharePanel(props: {
     } catch (e) {
       const message = e instanceof Error ? e.message : tr("Cannot decrypt");
       setError(message);
-      // 口令不对多半是分发方用了约定口令而不是识别码,把输入框放出来
+      // A wrong passphrase usually means the distributor used the agreed passphrase instead of the machine ID, so reveal the input box
       if (message.startsWith(tr("Cannot decrypt"))) setNeedPassphrase(true);
     } finally {
       setBusy(false);
     }
   };
 
-  // 粘进来就自动用本机识别码试一次,不用再点一下
+  // On paste, try the local machine ID automatically, no extra click needed
   const onBlobChange = (text: string) => {
     setBlob(text);
     setDone(false);
@@ -88,11 +90,11 @@ export function ApiSharePanel(props: {
     try {
       await onSaveConfig({
         api: {
-          // 连接配置显式写进 Router 那一路(profiles.router),不碰自定义页填的那份
+          // Write the connection config explicitly into the Router route (profiles.router), leaving the one filled in on the custom tab alone
           profiles: { router: { vendor: parsed.vendor, baseUrl: parsed.baseUrl, model: parsed.model } },
           ...(parsed.maxTokens ? { maxTokens: parsed.maxTokens } : {}),
           apiKey: parsed.apiKey,
-          // 写进 Router 那一路(keys/router.key,PCRTR1. 封装),和自定义 API 的 Key 分开放
+          // Write it into the Router route (keys/router.key, PCRTR1. wrapped), stored separately from the custom API's Key
           source: "router",
         },
         defaultProvider: "api",

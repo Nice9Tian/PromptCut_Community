@@ -1,15 +1,18 @@
 /**
- * C10 离线备份（`docs/plan/c10-contract.md` 第 10 节「本地备份」；语义 `product/platforms.md`「在线浏览器模式」：
- * 浏览器本地只放能重新拉回的缓存）。
- * 跑：node --test server/test/c10-backup.test.mjs
+ * C10 offline backup (`docs/plan/c10-contract.md` section 10 "Local backup"; semantics
+ * `product/platforms.md` "Online browser mode": browser locally only stores caches that can be
+ * refetched).
+ * Run: node --test server/test/c10-backup.test.mjs
  *
- *   C10-BK-01 在线页面收到备份（被丢弃的离线批次、被覆盖的实体）时不写浏览器存储：localStorage、sessionStorage、
- *             IndexedDB 一样都不碰，也不向编辑器进程 `POST /api/project-backups`；
- *   C10-BK-02 备份留在本页内存里，按收到的顺序列得出来；
- *   C10-BK-03 「丢弃」后给下载：下载的是 `.json` 文件，内容是那一份备份（kind、projectId、离线批次都在）；
- *   C10-BK-04 备份模块的源码里不出现 localStorage、sessionStorage、indexedDB。
+ *   C10-BK-01 Online page does not write to browser storage when receiving backups (discarded
+ *             offline batches, overwritten entities): does not touch localStorage, sessionStorage,
+ *             or IndexedDB at all, nor `POST /api/project-backups` to editor process;
+ *   C10-BK-02 Backups remain in memory on this page, listable in order received;
+ *   C10-BK-03 Offered for download after "discard": downloads a `.json` file containing that backup
+ *             (kind, projectId, offline batches all present);
+ *   C10-BK-04 Backup module source code contains no localStorage, sessionStorage, or indexedDB.
  *
- * 假设见 `c10-kit.mjs` 的 K10。实现不在时整组 skip。
+ * See K10 in `c10-kit.mjs` for assumptions. Skip the entire suite when implementation is missing.
  */
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,7 +38,7 @@ function spyStorage(name, writes) {
   };
 }
 
-/** 装上存储、fetch、DOM 下载的桩；回观测 */
+/** Install stubs for storage, fetch, and DOM download; return observations */
 function installSpies() {
   const writes = [];
   const fetches = [];
@@ -79,20 +82,20 @@ async function makeSink(spies) {
   const m = {};
   for (const [k, names] of Object.entries(BACKUP_METHODS)) m[k] = pickMethod(sink, names);
   const save = m.save ? (b) => sink[m.save](b) : (typeof sink === 'function' ? sink : null);
-  assert.ok(save, `假设 K10：备份对象上找不到 save（候选 ${BACKUP_METHODS.save.join(' / ')}）`);
-  assert.ok(m.list, `假设 K10：备份对象上找不到 list（候选 ${BACKUP_METHODS.list.join(' / ')}）`);
-  assert.ok(m.download, `假设 K10：备份对象上找不到 download（候选 ${BACKUP_METHODS.download.join(' / ')}）`);
+  assert.ok(save, `Assumption K10: no save found on the backup object (candidates ${BACKUP_METHODS.save.join(' / ')})`);
+  assert.ok(m.list, `Assumption K10: no list found on the backup object (candidates ${BACKUP_METHODS.list.join(' / ')})`);
+  assert.ok(m.download, `Assumption K10: no download found on the backup object (candidates ${BACKUP_METHODS.download.join(' / ')})`);
   const list = () => {
     const v = typeof sink[m.list] === 'function' ? sink[m.list]() : sink[m.list];
     return [...v];
   };
-  /** 下载第 i 份，回 `{ filename, text }`（回调或 DOM 两条路都认） */
+  /** Download the i-th copy, returning `{ filename, text }` (accepts both callback and DOM paths) */
   const download = async (i) => {
     const before = optionDownloads.length + spies.downloads.length;
     await sink[m.download](i);
     await new Promise((r) => setImmediate(r));
     if (optionDownloads.length + spies.downloads.length === before) {
-      // 也许按备份本身而不是下标
+      // Perhaps by backup itself rather than index
       await sink[m.download](list()[i]);
       await new Promise((r) => setImmediate(r));
     }
@@ -100,24 +103,24 @@ async function makeSink(spies) {
     const viaDom = spies.downloads.at(-1);
     if (viaOpt) return { filename: viaOpt.filename, text: typeof viaOpt.text === 'string' ? viaOpt.text : await new Response(viaOpt.text).text() };
     if (viaDom) return { filename: viaDom.filename, text: viaDom.blob ? await viaDom.blob.text() : '' };
-    throw new Error('假设 K10：download 既没调 download 回调，也没经 <a download> 点下去');
+    throw new Error('Assumption K10: download neither called the download callback nor clicked through an <a download>');
   };
   return { save, list, download };
 }
 
-it('C10-BK-01 收到备份时不写浏览器存储、不请求编辑器进程', async () => {
+it('C10-BK-01 receiving a backup does not write browser storage and does not request the editor process', async () => {
   const spies = installSpies();
   const sink = await makeSink(spies);
   await sink.save(discard);
   await sink.save(overwritten);
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(spies.writes, [], `写了浏览器存储：${spies.writes.join(', ')}`);
-  assert.deepEqual(spies.factory.opened, [], `打开了 IndexedDB：${spies.factory.opened.join(', ')}`);
-  assert.deepEqual(spies.fetches, [], `发了请求：${JSON.stringify(spies.fetches)}`);
-  assert.equal(spies.downloads.length, 0, '收到备份时不自动下载（「丢弃」后给下载，由用户点）');
+  assert.deepEqual(spies.writes, [], `Wrote browser storage: ${spies.writes.join(', ')}`);
+  assert.deepEqual(spies.factory.opened, [], `Opened IndexedDB: ${spies.factory.opened.join(', ')}`);
+  assert.deepEqual(spies.fetches, [], `Sent requests: ${JSON.stringify(spies.fetches)}`);
+  assert.equal(spies.downloads.length, 0, 'A received backup is not downloaded automatically (a download is offered after "Discard", and the user clicks it)');
 });
 
-it('C10-BK-02 备份留在本页内存里，按收到的顺序列得出来', async () => {
+it('C10-BK-02 backups stay in this page\'s memory and can be listed in the order received', async () => {
   const spies = installSpies();
   const sink = await makeSink(spies);
   await sink.save(discard);
@@ -128,21 +131,21 @@ it('C10-BK-02 备份留在本页内存里，按收到的顺序列得出来', asy
   assert.equal(items[1].kind, 'overwritten');
 });
 
-it('C10-BK-03 「丢弃」后给下载：.json 文件，内容是那一份备份', async () => {
+it('C10-BK-03 after "Discard" a download is offered: a .json file whose content is that backup', async () => {
   const spies = installSpies();
   const sink = await makeSink(spies);
   await sink.save(discard);
   const { filename, text } = await sink.download(0);
-  assert.match(filename, /\.json$/i, `下载的文件名：${filename}`);
+  assert.match(filename, /\.json$/i, `Downloaded file name: ${filename}`);
   const body = JSON.parse(text);
   const got = body?.backup ?? body;
   assert.equal(got.kind, 'offline-discard');
   assert.equal(got.projectId, 'proj-c10');
   assert.deepEqual(got.batch, discard.batch);
-  assert.deepEqual(spies.writes, [], '下载也不写浏览器存储');
+  assert.deepEqual(spies.writes, [], 'Downloading does not write browser storage either');
 });
 
-it('C10-BK-04 备份模块的源码里不出现 localStorage、sessionStorage、indexedDB', () => {
+it('C10-BK-04 localStorage, sessionStorage and indexedDB do not appear in the source of the backup module', () => {
   const src = fs.readFileSync(repoPath(gate.file), 'utf8');
-  for (const word of ['localStorage', 'sessionStorage', 'indexedDB']) assert.equal(src.includes(word), false, `${gate.file} 里出现了 ${word}`);
+  for (const word of ['localStorage', 'sessionStorage', 'indexedDB']) assert.equal(src.includes(word), false, `${word} appears in ${gate.file}`);
 });

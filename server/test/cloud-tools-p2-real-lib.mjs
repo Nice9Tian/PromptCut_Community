@@ -1,6 +1,9 @@
-// P2(云端语音转写)真实验证的公共部分(放在 server/test/ 是因为 server/ 下的测试不许 import scripts/;探针脚本反过来引用这里):找依赖、造素材。素材放 out/p2-stt/(被 .gitignore 忽略,不入库)。
-// 依赖(Python、faster-whisper、权重)不入库也不下载:从主工作区已装好的一份复制到 out/p2-stt/(只读主工作区),
-// 复制只在 out/p2-stt/ 里没有时做一次。
+// Common part for P2 (cloud speech-to-text) real verification (placed in server/test/ because tests
+// under server/ cannot import scripts/; probe scripts reference here in reverse): locate
+// dependencies and generate assets. Assets go into out/p2-stt/ (ignored by .gitignore, not stored).
+// Dependencies (Python, faster-whisper, weights) are neither stored nor downloaded: copied to
+// out/p2-stt/ from an installed copy in main checkout (main checkout is read-only);
+// copy is performed once only when absent in out/p2-stt/.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,8 +22,9 @@ export const PATHS = {
 const MODEL_DIR = 'models--Systran--faster-whisper-small';
 
 /**
- * 主工作区目录。在 .worktrees/<名> 里和在 main 自己里都对:用 git 的公共目录(`--git-common-dir`)的上一级求,不靠目录层数猜。
- * `P2_MAIN_ROOT` 可以覆盖(测试用)。求不出来回 null。
+ * Main checkout directory. Works in .worktrees/<name> and inside main itself: computed from
+ * parent of git's common directory (`--git-common-dir`), without guessing directory depth.
+ * `P2_MAIN_ROOT` can override (for testing). Returns null if it cannot be determined.
  */
 export function mainRootOf(root = ROOT) {
   if (process.env.P2_MAIN_ROOT) return path.resolve(process.env.P2_MAIN_ROOT);
@@ -29,7 +33,10 @@ export function mainRootOf(root = ROOT) {
   return path.dirname(path.resolve(r.stdout.trim()));
 }
 
-/** 依赖的来源,按顺序找:本树的 out/…,再主工作区的 out/…(同一个目录只列一次);只读 */
+/**
+ * Dependency sources, searched in order: this tree's out/…, then main checkout's out/…
+ * (each directory listed only once); read-only
+ */
 export function depSources(root = ROOT, mainRoot = mainRootOf(root)) {
   const roots = [...new Set([root, mainRoot].filter(Boolean).map((r) => path.resolve(r)))];
   return { roots, pylibs: roots.map((r) => path.join(r, 'out', 'pylibs')), models: roots.map((r) => path.join(r, 'out', 'models', MODEL_DIR)) };
@@ -47,18 +54,20 @@ function run(command, args, options = {}) {
 
 export const ffmpegBin = () => (run('ffmpeg', ['-version']).status === 0 ? 'ffmpeg' : null);
 
-/** 缺什么就说缺什么;齐了回 null */
+/** Reports whatever is missing; returns null when all are present */
 export function realDepsMissing() {
-  if (!findPython()) return '没有找到内置 Python(PROMPTCUT_PYTHON 或主工作区 desktop/src-tauri/runtime/python)';
-  if (!fs.existsSync(path.join(PATHS.pylibs, 'faster_whisper'))) return 'out/p2-stt/pylibs 里没有 faster_whisper(先跑 node cloud/scripts/probes/cloud-tools-p2-stt-probe.mjs --setup)';
-  if (!fs.existsSync(path.join(PATHS.models, MODEL_DIR))) return 'out/p2-stt/models 里没有 faster-whisper small 的权重(先跑 --setup)';
-  if (!ffmpegBin()) return 'PATH 上没有 ffmpeg';
+  if (!findPython()) return 'Built-in Python not found (PROMPTCUT_PYTHON or the main checkout\'s desktop/src-tauri/runtime/python)';
+  if (!fs.existsSync(path.join(PATHS.pylibs, 'faster_whisper'))) return 'faster_whisper is missing from out/p2-stt/pylibs (run node cloud/scripts/probes/cloud-tools-p2-stt-probe.mjs --setup first)';
+  if (!fs.existsSync(path.join(PATHS.models, MODEL_DIR))) return 'The faster-whisper small weights are missing from out/p2-stt/models (run --setup first)';
+  if (!ffmpegBin()) return 'ffmpeg is not on PATH';
   return null;
 }
 
 /**
- * 把已装好的 pylibs 和 small 权重复制进 `<root>/out/p2-stt/`(来源按 `depSources` 的顺序找,只读;目标里已有就不动)。
- * 在 .worktrees/<名> 里:本树没有就取主工作区的;在 main 里:本树就是主工作区,取自己的 out/pylibs、out/models。
+ * Copies installed pylibs and small weights into `<root>/out/p2-stt/` (sources searched in order of
+ * `depSources`, read-only; leaves untouched if already present in target).
+ * Inside .worktrees/<name>: takes from main checkout if absent in this tree; inside main: this tree
+ * is the main checkout, takes its own out/pylibs and out/models.
  */
 export function copyDeps({ root = ROOT, mainRoot = mainRootOf(root) } = {}) {
   const out = path.join(root, 'out', 'p2-stt');
@@ -68,27 +77,31 @@ export function copyDeps({ root = ROOT, mainRoot = mainRootOf(root) } = {}) {
   for (const [candidates, to] of todo) {
     if (fs.existsSync(to)) continue;
     const from = candidates.find((c) => fs.existsSync(c));
-    if (!from) throw new Error(`找不到可复制的来源,找过:${candidates.join('、')}`);
+    if (!from) throw new Error(`No copyable source found, searched: ${candidates.join(', ')}`);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.cpSync(from, to, { recursive: true, filter: (src) => !src.includes('__pycache__') });
   }
 }
 
-/** 造真实的短素材:Windows 系统自带的合成语音念一段已知的英文;再用 ffmpeg 拼成带视频、无音轨、长音频几种 */
+/**
+ * Creates realistic short media: reads a known English passage using Windows built-in speech
+ * synthesis; then uses ffmpeg to assemble variants: with video, without audio track,
+ * and long audio
+ */
 export function ensureMedia() {
   fs.mkdirSync(PATHS.media, { recursive: true });
   const m = (name) => path.join(PATHS.media, name);
   const need = (file) => !fs.existsSync(file) || fs.statSync(file).size === 0;
   const ff = (args) => {
     const r = run('ffmpeg', ['-v', 'error', '-y', ...args]);
-    if (r.status !== 0) throw new Error(`ffmpeg 失败:${r.stderr}`);
+    if (r.status !== 0) throw new Error(`ffmpeg failed: ${r.stderr}`);
   };
   const english = m('en-speech.wav');
   if (need(english)) {
-    if (process.platform !== 'win32') throw new Error('en-speech.wav 要用 Windows 自带合成语音生成;其它系统请自己放一份念「quick brown fox」的 wav 到 out/p2-stt/media/');
+    if (process.platform !== 'win32') throw new Error('en-speech.wav must be generated with Windows built-in speech synthesis; on other systems, put a wav that reads "quick brown fox" into out/p2-stt/media/ yourself');
     const script = `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.SelectVoice('Microsoft Zira Desktop'); $s.SetOutputToWaveFile('${english.replace(/'/g, "''")}'); $s.Speak('Hello. This is a short test of cloud speech recognition. The quick brown fox jumps over the lazy dog.'); $s.Dispose()`;
     const r = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', script]);
-    if (r.status !== 0 || need(english)) throw new Error(`合成语音失败:${r.stderr}`);
+    if (r.status !== 0 || need(english)) throw new Error(`Speech synthesis failed: ${r.stderr}`);
   }
   const chinese = m('zh-speech.wav');
   if (need(chinese)) fs.copyFileSync(path.join(ROOT, 'src', 'audio', 'assets', 'missing-material.wav'), chinese);

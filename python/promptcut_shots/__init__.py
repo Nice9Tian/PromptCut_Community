@@ -1,17 +1,17 @@
-"""镜头切换检测。
+"""Shot change detection.
 
-主力是 TransNetV2（ONNX，走 onnxruntime）；没装拓展包时由 node 侧回退到
-ffmpeg 的 scdet 滤镜——那条路只认硬切，认不出溶解。
+The main engine is TransNetV2 (ONNX, running on onnxruntime); when the extension package is not installed, the node side falls back to
+ffmpeg's scdet filter: that path only recognizes hard cuts and cannot detect dissolves.
 """
 
 __version__ = "1.0.0"
 
-# 视频参数可以是素材服务上的 http(s) 地址:Node 侧经素材服务的接口取字节,不再递本机路径
-# (docs/semantics/product/agent.md「素材与产物」)。解码全在 ffmpeg / ffprobe 子进程里,它们自己按 Range 取。
-# Node 侧按 ACCEPTS_URL 判断这份包认不认地址;老包没有这个标记时,Node 先把字节流到临时文件再递路径。
+# The video argument may be an http(s) address on the asset service: the Node side fetches the bytes through the asset service's API instead of passing a local path
+# (docs/semantics/product/agent.md, "Media and outputs"). All decoding happens inside the ffmpeg / ffprobe subprocesses, which fetch by Range themselves.
+# The Node side checks ACCEPTS_URL to see whether this package accepts addresses; when an old package lacks this marker, Node first streams the bytes into a temporary file and then passes the path.
 ACCEPTS_URL = True
 
 
 def is_media_url(value: str) -> bool:
-    """素材服务上的地址(http / https)。只认这两种协议,别的一律当本机路径看。"""
+    """An address on the asset service (http / https). Only these two protocols are recognized; anything else is treated as a local path."""
     return isinstance(value, str) and value.lower().startswith(("http://", "https://"))

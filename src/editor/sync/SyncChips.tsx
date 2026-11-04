@@ -1,11 +1,16 @@
 /**
- * 顶栏上的同步小部件:
- * - 「冲突合并」:待合并表里还有待处理的项时一直显示,点它打开冲突合并窗口(`ConflictMerge.tsx`;2026-10-18 用户定);
- * - 「同步已暂停」:离线批次逐项转表算不出基准、退回整份处理时才会出现(c65-design.md 第 8 节),点它重新打开离线对话框;
- * - 「离线」:连不上文档服务时的提示(修改照常,先攒在本机);
- * - 在线页面(C10 契约第 10 节):「离线」换成表 A 的五条状态措辞(`onlineStatus.ts`),另有「备份」小部件列出
- *   本页内存里的备份、可逐个下载(同步面板);
- * - 共享项目:成员按钮(MembersPanel)。
+ * Sync widgets on the top bar:
+ * - "Conflict merge": always shown while the pending merge items list still has items to handle; click it
+ *   to open the conflict merge window (`ConflictMerge.tsx`; user decision, 2026-10-18);
+ * - "Sync paused": appears only when the offline batch cannot work out a baseline item by item in the
+ *   transform table and falls back to handling the whole copy (c65-design.md section 8); click it to
+ *   reopen the offline dialog;
+ * - "Offline": the prompt when the document service cannot be reached (edits continue as usual and pile
+ *   up on this machine);
+ * - Online page (C10 contract section 10): "Offline" is replaced by the five status wordings of table A
+ *   (`onlineStatus.ts`), and there is also a "Backups" widget that lists the backups in this page's
+ *   memory, downloadable one by one (sync panel);
+ * - Shared project: the member button (MembersPanel).
  */
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { setOfflineOpen, useSync } from "./syncManager";
@@ -26,7 +31,7 @@ function subscribeNavigator(cb: () => void): () => void {
   return () => { window.removeEventListener("online", cb); window.removeEventListener("offline", cb); };
 }
 
-/** 在线页面顶栏的状态措辞;离线类的要持续 `OFFLINE_SHOW_DELAY_MS` 才出(HT-a 会话接续、马上重建会话时不闪) */
+/** Status wordings on the online page's top bar; offline ones must persist for `OFFLINE_SHOW_DELAY_MS` before showing (so HT-a session resumption and an immediate session rebuild do not flicker) */
 function useOnlineStatus(): OnlineStatusKind | null {
   const status = useSync((v) => v.status);
   const recovery = useSync((v) => v.recovery);
@@ -40,7 +45,7 @@ function useOnlineStatus(): OnlineStatusKind | null {
     const t = setTimeout(() => setShown(want), OFFLINE_SHOW_DELAY_MS);
     return () => clearTimeout(t);
   }, [want, offlineKind]);
-  // 离线类:等延迟过了才换上(延迟内又好了就根本不出);非离线类(恢复中 / 恢复完成 / 没事)当场换
+  // Offline kinds: switch only after the delay has passed (if it recovers within the delay, never shown at all); non-offline kinds (recovering / recovered / fine) switch immediately
   return shown;
 }
 
@@ -57,7 +62,7 @@ function OnlineStatusChip() {
   );
 }
 
-/** 同步面板里的「备份」:本页内存里有备份才出现,点开列出、逐个下载 */
+/** "Backups" in the sync panel: appears only when this page's memory has backups; click to list them and download one by one */
 function OnlineBackupsChip() {
   const n = useSync((v) => v.onlineBackups);
   const [open, setOpen] = useState(false);
@@ -77,7 +82,7 @@ export function SyncChips() {
   const status = useSync((v) => v.status);
   const active = useSync((v) => v.active);
   const blocked = useSync((v) => v.blocked);
-  // 导航栏顶端的「冲突合并」:只要还有待处理的项就显示(断网、恢复中也显示,窗口里能删、连上后再合并)
+  // "Conflict merge" at the top of the navigation bar: shown whenever items are still pending (also when offline or recovering; items can be deleted in the window and merged after reconnecting)
   const merge = <ConflictMergeButton />;
   if (reopenState && reopenState !== "connected") {
     const text: Record<string, string> = {

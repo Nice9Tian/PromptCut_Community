@@ -1,7 +1,10 @@
 /**
- * 在线页面两个舞台握手之后的看守(C10 契约第 2 节「握手之后又断」〔裁〕):心跳断 → 重载那一台 → 握回来恢复双舞台;
- * 重载也握不回来 → 走首次握不上手的同一条退回路径(`markStageHandshake("failed")` → `stageLayout` 单舞台);退回后不再重载。
- * 跑:node --test src/online/stageWatch.test.mjs
+ * Watcher after handshake between dual stages on online page (C10 contract Section 2 "Broken
+ * after handshake" [ruling]): heartbeat breaks -> reload that stage -> handshake back to restore
+ * dual stage; if reload also fails to handshake back -> follow same fallback path as initial
+ * handshake failure (`markStageHandshake("failed")` -> `stageLayout` single stage); no more
+ * reloads after falling back.
+ * Run: node --test src/online/stageWatch.test.mjs
  */
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -13,7 +16,7 @@ import { markStageHandshake, onlineStageState, resetOnlineStagesForTest, stageLa
 const origins = { A: "https://s1.x.io", B: "https://s2.x.io" };
 const layout = () => stageLayout({ single: false, origins, handshake: onlineStageState().handshake });
 
-/** 假时钟:定时器按到点顺序跑;advance 之后让出微任务,心跳的 Promise 回调跟着落地 */
+/** Fake clock: timers run in expiration order; yields microtasks after advance, heartbeat Promise callback settles accordingly */
 function fakeClock() {
   let t = 0;
   let seq = 0;
@@ -37,12 +40,12 @@ function fakeClock() {
       for (let i = 0; i < 5; i++) await Promise.resolve();
     },
     pending: () => timers.size,
-    /** 父页主线程卡住:时间跳过去,定时器不跑 */
+    /** Parent page main thread blocked: time jumps forward, timers do not run */
     jump(ms) { t += ms; },
   };
 }
 
-/** 一组舞台替身:alive[id] 为假时心跳不回包(永远 pending,像崩了的跨源 iframe) */
+/** A set of stage doubles: when alive[id] is false, heartbeat does not respond (permanently pending, like a crashed cross-origin iframe) */
 function harness({ hidden = () => false } = {}) {
   const clock = fakeClock();
   const alive = { A: true, B: true };
@@ -55,7 +58,7 @@ function harness({ hidden = () => false } = {}) {
     hidden,
     now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
   });
-  // 首次握手:两台都 ready,页面报 ok
+  // Initial handshake: both stages ready, page reports ok
   watch.ready("A"); watch.ready("B"); markStageHandshake("ok");
   return { clock, alive, calls, watch };
 }
@@ -82,7 +85,7 @@ test("C10-SW-01 heartbeat replies as usual: both stages are pinged on every beat
 test("C10-SW-02 after handshake B disconnects → reload B → handshake returns within the time limit, dual stage is restored with no fallback; watching continues as usual afterwards", async () => {
   const { clock, alive, calls, watch } = harness();
   await clock.advance(10_000);
-  alive.B = false; // B 的渲染进程崩了:心跳不再回包
+  alive.B = false; // B's render process crashed: heartbeat no longer responds
   await clock.advance(STAGE_LOST_AFTER_MS + STAGE_PING_INTERVAL_MS);
   assert.equal(calls.reload.length, 1);
   assert.equal(calls.reload[0].id, "B");
@@ -90,7 +93,7 @@ test("C10-SW-02 after handshake B disconnects → reload B → handshake returns
   assert.equal(watch.status("B"), "reloading");
   assert.equal(watch.status("A"), "alive");
   assert.equal(layout(), "dual", "iframes stay mounted as dual stage during the reload");
-  // 新文档起来,发了 pc-stage-ready
+  // New document started, sent pc-stage-ready
   await clock.advance(3000);
   alive.B = true;
   watch.ready("B");
@@ -105,7 +108,7 @@ test("C10-SW-02 after handshake B disconnects → reload B → handshake returns
 
 test("C10-SW-03 reload also fails to get a handshake: 20 seconds after the reload it calls markStageHandshake('failed') and falls back to single stage", async () => {
   const { clock, alive, calls, watch } = harness();
-  alive.A = false; // 可见舞台那一台卡死
+  alive.A = false; // Visible stage freezes
   await clock.advance(STAGE_LOST_AFTER_MS + STAGE_PING_INTERVAL_MS);
   assert.deepEqual(calls.reload.map((r) => r.id), ["A"]);
   await clock.advance(STAGE_RECONNECT_TIMEOUT_MS - 1000);
@@ -133,7 +136,7 @@ test("C10-SW-04 no repeated reloads after fallback: all timers stop, and no matt
   assert.equal(calls.reload.length, 2);
   assert.equal(calls.fallback.length, 1);
   assert.deepEqual(calls.ping, pings, "no more heartbeats after fallback");
-  markStageHandshake("ok"); // 迟到的 pc-stage-ready 也翻不回双舞台
+  markStageHandshake("ok"); // Late pc-stage-ready cannot revert back to dual stage
   assert.equal(layout(), "single");
 });
 
@@ -159,22 +162,22 @@ test("C10-SW-05 repeated disconnects: reload succeeds then disconnects again; at
 test("C10-SW-06 no judgment while the page is hidden or the parent page main thread is stuck: the count restarts on the beat after returning to the foreground / recovering, and a live stage is not reloaded", async () => {
   let hid = false;
   const { clock, alive, calls, watch } = harness({ hidden: () => hid });
-  // 隐藏:舞台被节流,心跳不回包也不判
+  // Hidden: stage is throttled, does not flag even if heartbeat sends no response
   hid = true; alive.A = false;
   await clock.advance(5 * 60_000);
   assert.equal(calls.reload.length, 0);
   hid = false; alive.A = true;
   await clock.advance(60_000);
   assert.equal(calls.reload.length, 0);
-  // 父页卡了 40 秒(定时器没跑),回来那一拍不判
+  // Parent page stuck for 40 seconds (timers did not run); do not flag on the tick it returns
   clock.jump(40_000);
   await clock.advance(STAGE_PING_INTERVAL_MS);
   assert.equal(calls.reload.length, 0);
-  // 回到前台后真断了,照样判出来
+  // Truly disconnected after returning to foreground, flagged as usual
   alive.A = false;
   await clock.advance(STAGE_LOST_AFTER_MS + STAGE_PING_INTERVAL_MS);
   assert.deepEqual(calls.reload.map((r) => r.id), ["A"]);
-  // 重载期间页面隐藏:时限顺延,不在后台退回
+  // Page hidden during reload: deadline extended, do not fall back in the background
   hid = true;
   await clock.advance(STAGE_RECONNECT_TIMEOUT_MS * 5);
   assert.equal(calls.fallback.length, 0);

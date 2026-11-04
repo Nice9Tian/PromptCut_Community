@@ -1,56 +1,78 @@
 /**
- * PNG 快照(`bake_card`、3D 视图与空闲预渲染的贴图)经素材服务存取。
- * 这里说的「PNG 快照」是一张 **PNG 位图**(单张卡片某一刻的画面,当场渲出来,见 `vision/card-bitmap.ts`),不是 HTML:
- * 本模块只收发 PNG,任何地方都不存这张卡的 HTML(`docs/semantics/glossary.md`「PNG 快照」、`mechanism/asset-service.md`
- * 「不经任务队列的单张卡片画面」)。注释与报错文字统一为「PNG 快照」(2026-10-14 用户定)。
+ * PNG snapshots (`bake_card`, 3D views, and textures from idle prerender) are accessed via the asset
+ * service. The "PNG snapshot" referred to here is a **PNG bitmap** (the visual frame of a single card
+ * at a given moment, rendered on the spot, see `vision/card-bitmap.ts`), not HTML: this module only
+ * sends and receives PNGs, and never stores HTML for this card anywhere
+ * (`docs/semantics/glossary.md` "PNG snapshot", `mechanism/asset-service.md` "Single-card frames
+ * bypassing task queue"). Comments and error messages are standardized as "PNG snapshot"
+ * (user decision, 2026-10-14).
  *
- * 语义:`docs/semantics/product/asset-service.md`「预渲染的产物」(渲染生成的所有预渲染产物生成后都无条件推送到素材服务,
- * 素材服务就在本机时也一样)、「职责」第三条与 `product/agent.md`「素材与产物」(Agent 进程和预渲染进程经素材服务的接口
- * 读写产物,哪怕同机也绝不直接读它的存储目录)、`mechanism/asset-service.md`「同步状态只问素材服务」。
+ * Semantics: `docs/semantics/product/asset-service.md` "Prerender artifacts" (all prerender artifacts
+ * produced by rendering are pushed unconditionally to the asset service once generated, even when
+ * the asset service is on this machine), item 3 of "Responsibilities" and `product/agent.md`
+ * "Assets and artifacts" (Agent processes and prerender processes read and write artifacts via the
+ * asset service interface, never reading its storage directory directly even on the same machine),
+ * `mechanism/asset-service.md` "Sync status queries asset service only".
  *
- * 原来 `server/vision/bake.ts` 把 PNG 原子写进素材目录 `out/media/bake-<clipId>-<输入哈希>.png`,
- * `bake-cache.ts` 直接列、删这个目录。现在:
+ * Previously, `server/vision/bake.ts` wrote PNGs atomically into the asset directory
+ * `out/media/bake-<clipId>-<input-hash>.png`, and `bake-cache.ts` listed and deleted this directory
+ * directly. Now:
  *
- * - **字节**进素材服务的 `px` 命名空间(`PUT/POST <源>/api/asset/px/<sha256>…`,客户端 `asset-store/client.mjs`),
- *   地址 `/api/asset/px/<sha256>`。按内容寻址,同样的图只存一份。
- * - **缓存键**仍是输入哈希(`bakeTarget` 算的 12 位),它不等于内容哈希,所以另记一张小索引:
- *   `<outRoot>/bake-index/<键>.json` = `{ key, hash, bytes, width, height, clipId, name, at, pushed? }`。
- *   索引只是本机的缓存记录,不放字节、不在素材服务的存储目录里;编辑器进程(热备渲染器那条 `ui-render/bake-batch`)
- *   和预渲染进程共用它,一个键一个文件、原子改名写,两边同时写同一个键也只会是完整的一份。
- * - **命中**要问素材服务:索引里有、且 `GET px/<hash>/chunks` 报 `complete` 才算(索引不作判决依据)。
- *   素材服务里已经没有的,索引条目当场删掉,当作没渲过。
- * - **老地址**:老项目的参数里存着 `/@media/bake-….png`。素材目录里的旧文件一个不删、一个不动,
- *   素材服务的老读路由 `/@media/<文件名>` 照旧答它,所以老地址照常能取。同一个键再被要时先经这条老路由
- *   (素材服务的接口,不是读目录)取一次旧文件,取到就推进 `px`、记进索引(读时迁移),不用重渲。
- * - **淘汰**只删索引条目:素材服务没有删除接口(按内容寻址、写入后不可变),字节留在素材服务里,
- *   回收交给素材服务那一侧(见 `docs/reports/AGENT-bake-asset.md`「需要主会话决定的事」)。
- * - **共享项目**:本进程登记了连着的远程素材服务客户端时(`setBakeRemote`),写进本机素材服务之后再推一份到远程,
- *   成功就在索引里记 `pushed: <基址>`;没推成的,下次命中时再推。其它成员的本机素材服务在本机没有这一块时,
- *   按 `/api/asset/px/<hash>` 向远程拉(`asset-service.ts` 的产物按需拉取)。
+ * - **Bytes** enter the asset service's `px` namespace (`PUT/POST <origin>/api/asset/px/<sha256>…`,
+ *   client `asset-store/client.mjs`), path `/api/asset/px/<sha256>`. Content-addressed; identical
+ *   images are stored only once.
+ * - **Cache key** remains the input hash (12 characters computed by `bakeTarget`), which does not
+ *   equal the content hash, so a small index is recorded separately:
+ *   `<outRoot>/bake-index/<key>.json` = `{ key, hash, bytes, width, height, clipId, name, at, pushed? }`.
+ *   The index is merely a local cache record, storing no bytes and not located in the asset service's
+ *   storage directory; the editor process (warm-standby renderer path `ui-render/bake-batch`) and
+ *   prerender process share it, one file per key, written via atomic rename, so even if both sides
+ *   write the same key concurrently, it remains a single complete copy.
+ * - **Hits** must query the asset service: counts only if present in the index and
+ *   `GET px/<hash>/chunks` reports `complete` (the index does not serve as ground truth).
+ *   If no longer in the asset service, the index entry is deleted immediately, treated as never
+ *   rendered.
+ * - **Legacy URLs**: parameters in legacy projects store `/@media/bake-….png`. Old files in the asset
+ *   catalog are neither deleted nor moved; the asset service's legacy read route
+ *   `/@media/<filename>` continues to serve them, so legacy URLs remain accessible as usual. When the
+ *   same key is requested again, the old file is first fetched via this legacy route (an asset
+ *   service interface, not direct directory reading); once retrieved, it is pushed into `px` and
+ *   recorded in the index (migration on read), avoiding re-rendering.
+ * - **Eviction** only deletes index entries: the asset service has no delete API (content-addressed,
+ *   immutable after write), so bytes remain in the asset service, leaving reclamation to the asset
+ *   service side (see `docs/reports/AGENT-bake-asset.md` "Decisions required from lead session").
+ * - **Shared projects**: when this process has registered a connected remote asset service client
+ *   (`setBakeRemote`), after writing to the local asset service, an additional copy is pushed to
+ *   remote; on success, `pushed: <base-url>` is recorded in the index; if pushing fails, it will be
+ *   pushed again on the next hit. When other members' local asset services lack this chunk locally,
+ *   they pull from remote via `/api/asset/px/<hash>` (on-demand artifact pull in `asset-service.ts`).
  *
- * 素材服务不可达(取不到地址、连不上、超时)或拒绝(4xx / 5xx)时抛 `BakeStoreError`,消息写明素材服务地址与原因,
- * 调用方原样回给 Agent / 页面。
+ * When the asset service is unreachable (cannot get URL, connection failed, timeout) or rejects
+ * (4xx / 5xx), throw `BakeStoreError` with a message stating the asset service URL and reason,
+ * which the caller forwards as-is to the Agent / page.
  *
- * 本文件不 import vite、不认素材目录,`server/test/bake-store.test.mjs` 直接测它。
+ * This file does not import vite, does not recognize the asset catalog, and
+ * `server/test/bake-store.test.mjs` tests it directly.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createAssetClient } from './asset-store/client.mjs';
+import { tr } from './i18n.mjs';
 
 export const BAKE_INDEX_DIR = 'bake-index';
 export const BAKE_NS = 'px';
-/** 老读路由取旧文件的时限;本机回环上的一张 PNG */
+/** Timeout for fetching legacy files via legacy read route; a single PNG over local loopback */
 export const LEGACY_FETCH_TIMEOUT_MS = 15_000;
-/** 素材服务一个请求的时限(写一张快照、问一次对账) */
+/** Timeout for an asset service request (writing a snapshot, querying reconciliation) */
 export const BAKE_ASSET_TIMEOUT_MS = 30_000;
-/** 盘点时同时问素材服务的请求数 */
+/** Number of concurrent requests querying the asset service during inventory */
 const STATUS_CONCURRENCY = 8;
-/** 旧文件最大多少(和贴图上限 2048² 的 RGBA PNG 同量级,留足余量) */
+/** Maximum size of legacy files (same order of magnitude as 2048² texture limit for RGBA PNG, leaving ample margin) */
 const LEGACY_MAX_BYTES = 64 * 1024 * 1024;
 
 const KEY_RE = /^[0-9a-f]{12}$/;
-/** 老格式的键(文件名当键)不会进索引;索引只收当前格式 */
+/** Legacy format keys (filenames as keys) do not enter the index; index accepts current format only */
 const HASH_RE = /^[0-9a-f]{64}$/;
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -63,26 +85,28 @@ export class BakeStoreError extends Error {
   }
 }
 
-/** px 命名空间里一块的地址(页面、卡片参数里存的就是它) */
+/** URL of a chunk in the px namespace (this is what is stored in page and card parameters) */
 export const bakeUrlOf = (hash) => `/api/asset/${BAKE_NS}/${hash}`;
 
 /* ------------------------------------------------------------------ *
- * 连着的远程素材服务(共享项目)
+ * Connected remote asset service (shared project)
  * ------------------------------------------------------------------ */
 
 const REMOTE_KEY = Symbol.for('promptcut.bake-store.remote');
 
 /**
- * 登记本进程连着的远程素材服务客户端(`createAssetClient` 的实例,带写票据),null 清掉。
- * 预渲染进程由推送队列登记(`vite-plugin-frames.ts`),编辑器进程由上传队列的目标登记(`vite-plugin-media.ts`)。
- * 放在 globalThis 上:配置被打包过一次、模块可能有两份实例。
+ * Register the remote asset service client connected to this process (an instance of `createAssetClient`
+ * with a write ticket); null clears it.
+ * Prerender process is registered by the push queue (`vite-plugin-frames.ts`), and editor process
+ * is registered by the upload queue destination (`vite-plugin-media.ts`).
+ * Placed on globalThis: configuration has been bundled once, module may have two instances.
  * @param {null | (() => any)} getClient
  */
 export function setBakeRemote(getClient) {
   /** @type {any} */ (globalThis)[REMOTE_KEY] = typeof getClient === 'function' ? getClient : null;
 }
 
-/** 当前登记的远程素材服务客户端;没有给 null */
+/** Currently registered remote asset service client; null if none */
 export function bakeRemote() {
   const fn = /** @type {any} */ (globalThis)[REMOTE_KEY];
   try { return typeof fn === 'function' ? fn() ?? null : null; } catch { return null; }
@@ -92,15 +116,15 @@ export function bakeRemote() {
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
-/** 素材服务客户端抛的错 → 写明地址与原因的 BakeStoreError */
+/** Error thrown by asset service client -> BakeStoreError stating URL and reason */
 function wrap(err, base, what) {
   if (err instanceof BakeStoreError) return err;
   const status = err && typeof err === 'object' ? err.status : undefined;
   const msg = String(err?.message || err);
   if (typeof status === 'number') {
-    return new BakeStoreError(`素材服务拒绝了${what}(${base},HTTP ${status}):${msg}`, { status });
+    return new BakeStoreError(tr("Asset service rejected the {0} ({1}, HTTP {2}): {3}", what, base, status, msg), { status });
   }
-  return new BakeStoreError(`素材服务不可达(${base}),PNG 快照没能${what}:${msg}`);
+  return new BakeStoreError(tr("Asset service unreachable ({0}), PNG snapshot failed to {1}: {2}", base, what, msg));
 }
 
 async function writeAtomic(file, text) {
@@ -114,7 +138,7 @@ async function writeAtomic(file, text) {
   }
 }
 
-/** 限并发地映射 */
+/** Map with concurrency limit */
 async function mapLimit(list, limit, fn) {
   const out = new Array(list.length);
   let next = 0;
@@ -131,23 +155,23 @@ async function mapLimit(list, limit, fn) {
 
 /**
  * @param {object} p
- * @param {string} p.indexDir  索引目录(`<outRoot>/bake-index`)
- * @param {() => (string | null)} p.origin  素材服务的源(不带尾斜杠);每次用时现取;null = 不可达
+ * @param {string} p.indexDir  Index directory (`<outRoot>/bake-index`)
+ * @param {() => (string | null)} p.origin  Asset service origin (no trailing slash); fetched on demand; null = unreachable
  * @param {typeof fetch} [p.fetchImpl]
- * @param {() => any} [p.remote]  连着的远程素材服务客户端;缺省读 `setBakeRemote` 登记的
+ * @param {() => any} [p.remote]  Connected remote asset service client; defaults to registered via `setBakeRemote`
  * @param {(event: string, fields?: object) => void} [p.log]
  * @param {number} [p.timeoutMs]
- * @param {number} [p.retries]  素材服务客户端的重试次数(缺省 2)
+ * @param {number} [p.retries]  Retry count for asset service client (defaults to 2)
  */
 export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch, remote = bakeRemote, log = () => {}, timeoutMs = BAKE_ASSET_TIMEOUT_MS, retries = 2 }) {
-  if (typeof indexDir !== 'string' || !indexDir) throw new TypeError('createBakeStore:indexDir 必填');
-  if (typeof origin !== 'function') throw new TypeError('createBakeStore:origin 必须是函数');
+  if (typeof indexDir !== 'string' || !indexDir) throw new TypeError('createBakeStore: indexDir is required');
+  if (typeof origin !== 'function') throw new TypeError('createBakeStore: origin must be a function');
   let cached = null; // { base, client }
 
-  /** 当前素材服务的客户端;取不到地址抛 */
+  /** Client for the current asset service; throws if URL cannot be resolved */
   function current(what) {
     const src = String(origin() || '').trim().replace(/\/+$/, '');
-    if (!src) throw new BakeStoreError(`素材服务不可达:取不到素材服务的地址,PNG 快照没能${what}`);
+    if (!src) throw new BakeStoreError(tr("Asset service unreachable: cannot get the asset service address, PNG snapshot failed to {0}", what));
     const base = `${src}/api/asset`;
     if (cached?.base !== base) cached = { src, base, client: createAssetClient({ base, fetch: fetchImpl, timeoutMs, retries }) };
     return cached;
@@ -178,8 +202,10 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
   const withUrl = (e) => ({ ...e, url: bakeUrlOf(e.hash) });
 
   /**
-   * 推一份到连着的远程素材服务(共享项目)。后台跑,不挡调用方;成功在索引里记 `pushed`。
-   * 远程就是本机素材服务时(推送队列还没等到登记,`asset-select.mjs` 回本机)不推。
+   * Push a copy to the connected remote asset service (shared project). Runs in background without
+   * blocking caller; records `pushed` in index on success.
+   * Does not push if remote is the local asset service (push queue has not received registration yet,
+   * `asset-select.mjs` falls back to local).
    */
   function pushRemote(entry, bytes) {
     let client;
@@ -187,11 +213,12 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
     if (!client || typeof client.put !== 'function') return null;
     const base = String(client.base || '').replace(/\/+$/, '');
     if (base && entry.pushed === base) return null;
-    // 选定的就是本机素材服务(推送队列还没等到别的登记时会回落本机):已经写在那儿了,不推
-    try { if (base && base === current('读取').base) return null; } catch { /* 取不到本机地址就照推 */ }
+    // Selected target is the local asset service (falls back to local when push queue has not received
+    // other registrations yet): already written there, do not push
+    try { if (base && base === current(tr("read")).base) return null; } catch { /* Push anyway if local URL cannot be resolved */ }
     return (async () => {
       try {
-        const buf = bytes ?? await current('读取').client.get(BAKE_NS, entry.hash);
+        const buf = bytes ?? await current(tr("read")).client.get(BAKE_NS, entry.hash);
         if (!buf) return;
         await client.put(BAKE_NS, buf, { ext: 'png' });
         const now = await readEntry(entry.key);
@@ -207,17 +234,18 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
     indexDir,
 
     /**
-     * 这个键渲过没有:索引里有、且素材服务上这一块 `complete`。没有回 null;素材服务不可达抛 `BakeStoreError`。
+     * Whether this key has been rendered: present in index, and this chunk is `complete` on the asset service.
+     * Returns null if not found; throws `BakeStoreError` if asset service is unreachable.
      * @param {string} key
      */
     async lookup(key) {
       const e = await readEntry(key);
       if (!e) return null;
-      const { base, client } = current('读取');
+      const { base, client } = current(tr("read"));
       let complete;
-      try { complete = await client.has(BAKE_NS, e.hash); } catch (err) { throw wrap(err, base, '读取'); }
+      try { complete = await client.has(BAKE_NS, e.hash); } catch (err) { throw wrap(err, base, tr("read")); }
       if (!complete) {
-        // 素材服务里已经没有这一块:索引不作判决依据,条目删掉,当作没渲过
+        // Chunk no longer in asset service: index does not serve as ground truth, delete entry, treat as never rendered
         await dropEntry(key);
         log('bake.stale', { key, hash: e.hash });
         return null;
@@ -227,16 +255,17 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
     },
 
     /**
-     * 渲好的 PNG 经素材服务写进 `px`,记进索引。回索引条目加 `url`。
+     * Writes the rendered PNG into `px` via the asset service and records it in the index.
+     * Returns the index entry with `url`.
      * @param {string} key
      * @param {Buffer} buf
      * @param {{ width?: number, height?: number, clipId?: string, name?: string }} [meta]
      */
     async put(key, buf, meta = {}) {
-      if (!KEY_RE.test(String(key))) throw new TypeError(`PNG 快照的键不合法:${key}`);
-      const { base, client } = current('写入');
+      if (!KEY_RE.test(String(key))) throw new TypeError(tr("Invalid PNG snapshot key: {0}", key));
+      const { base, client } = current(tr("write"));
       let r;
-      try { r = await client.put(BAKE_NS, buf, { ext: 'png' }); } catch (err) { throw wrap(err, base, '写入'); }
+      try { r = await client.put(BAKE_NS, buf, { ext: 'png' }); } catch (err) { throw wrap(err, base, tr("write")); }
       const entry = {
         key, hash: r.hash, bytes: r.size,
         width: Number(meta.width) || null, height: Number(meta.height) || null,
@@ -250,36 +279,39 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
     },
 
     /**
-     * 读时迁移:这个键在老格式下的文件(`/@media/<name>`)经素材服务的老读路由取一次,取到就推进 `px`、记进索引。
-     * 没有(404)回 null;素材服务不可达抛 `BakeStoreError`。旧文件不动。
+     * Migration on read: fetches the file for this key in the legacy format (`/@media/<name>`) once via
+     * the legacy read route of the asset service; if found, pushes it into `px` and records it in the
+     * index. Returns null if missing (404); throws `BakeStoreError` if the asset service is
+     * unreachable. The old file is left untouched.
      * @param {string} key
-     * @param {string} name  老文件名 `bake-<clipId>-<键>.png`
+     * @param {string} name  Legacy file name `bake-<clipId>-<key>.png`
      * @param {{ width?: number, height?: number, clipId?: string }} [meta]
      */
     async migrateLegacy(key, name, meta = {}) {
       if (!KEY_RE.test(String(key)) || !/^bake-[\w.-]*\.png$/.test(String(name))) return null;
-      const { src, base } = current('读取');
+      const { src, base } = current(tr("read"));
       const url = `${src}/@media/${encodeURIComponent(name)}`;
       let res;
       try {
         res = await fetchImpl(url, { signal: AbortSignal.timeout(LEGACY_FETCH_TIMEOUT_MS) });
       } catch (err) {
-        throw new BakeStoreError(`素材服务不可达(${base}),PNG 快照没能读取:${err?.cause?.code || err?.message || err}`);
+        throw new BakeStoreError(tr("Asset service unreachable ({0}), failed to read PNG snapshot: {1}", base, err?.cause?.code || err?.message || err));
       }
       if (res.status === 404) { await res.arrayBuffer().catch(() => {}); return null; }
       if (!res.ok) {
         await res.arrayBuffer().catch(() => {});
-        throw new BakeStoreError(`素材服务拒绝了读取(${base},HTTP ${res.status}):/@media/${name}`, { status: res.status });
+        throw new BakeStoreError(tr("Asset service refused the read ({0}, HTTP {1}): /@media/{2}", base, res.status, name), { status: res.status });
       }
       const buf = Buffer.from(await res.arrayBuffer());
-      // 不是 PNG(比如迁移期同名的别的东西、或空文件)就当没有,重渲
+      // If it is not a PNG (such as another file with the same name during migration, or an empty file),
+      // treat as missing and re-render
       if (buf.length < PNG_MAGIC.length || buf.length > LEGACY_MAX_BYTES || !buf.subarray(0, 8).equals(PNG_MAGIC)) return null;
       const e = await api.put(key, buf, { ...meta, name });
       log('bake.migrated', { key, name, hash: e.hash });
       return { ...e, migrated: true };
     },
 
-    /** 索引里全部条目(不问素材服务) */
+    /** All entries in the index (without querying the asset service) */
     async list() {
       let names;
       try { names = await fs.readdir(indexDir); } catch { return []; }
@@ -294,8 +326,9 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
     },
 
     /**
-     * 盘点:这些键哪些渲好了(索引里有、素材服务上 `complete`)。回 `Map<键, 条目>`,只含渲好的。
-     * 素材服务不可达抛 `BakeStoreError`。
+     * Inventory: which of these keys are rendered (present in the index, `complete` on the asset
+     * service). Returns `Map<key, entry>`, containing only rendered ones. Throws `BakeStoreError` if
+     * the asset service is unreachable.
      * @param {string[]} keys
      */
     async status(keys) {
@@ -303,9 +336,9 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
       const entries = (await Promise.all(uniq.map(readEntry))).filter(Boolean);
       const found = new Map();
       if (!entries.length) return found;
-      const { base, client } = current('读取');
+      const { base, client } = current(tr("read"));
       const done = await mapLimit(entries, STATUS_CONCURRENCY, async (e) => {
-        try { return await client.has(BAKE_NS, e.hash); } catch (err) { throw wrap(err, base, '读取'); }
+        try { return await client.has(BAKE_NS, e.hash); } catch (err) { throw wrap(err, base, tr("read")); }
       });
       for (let i = 0; i < entries.length; i++) {
         if (done[i]) found.set(entries[i].key, withUrl(entries[i]));
@@ -315,8 +348,10 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
     },
 
     /**
-     * 淘汰:删掉这些键的索引条目。**只认键**:和自己列出来的索引逐个比对,对得上的才删,碰不到索引以外的文件。
-     * 字节留在素材服务里(没有删除接口);`freedBytes` 是这些条目记的字节数(页面按它算占用)。
+     * Eviction: deletes index entries for these keys. **Keys only**: compares one by one against its
+     * own listed index and deletes only matches, never touching files outside the index.
+     * Bytes remain in the asset service (no delete endpoint); `freedBytes` is the byte count recorded
+     * by these entries (used by the page to calculate usage).
      * @param {unknown} keys
      */
     async evict(keys) {
@@ -331,11 +366,11 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
       return { deleted, freedBytes };
     },
 
-    /** 单测用:当前素材服务的 API 基址 */
-    baseForTest() { return current('读取').base; },
+    /** For unit tests: current asset service API base URL */
+    baseForTest() { return current(tr("read")).base; },
   };
   return api;
 }
 
-/** 字节的 sha256(单测、探针对账用) */
+/** SHA-256 of bytes (for unit tests and probe reconciliation) */
 export const bakeHashOf = sha256;

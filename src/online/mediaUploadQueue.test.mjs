@@ -19,7 +19,7 @@ test("mediaUploadQueue: basic validation and invalid item handling", async () =>
     target: () => ({ base: "http://127.0.0.1:20035/api/asset" }),
   });
 
-  // 缺少 original 档位
+  // Missing original tier
   const r1 = await q.enqueue({
     id: "item1",
     tiers: [{ tier: "small", hash: dummyHash("s1"), blob: new Blob([new Uint8Array(10)]) }],
@@ -27,7 +27,7 @@ test("mediaUploadQueue: basic validation and invalid item handling", async () =>
   assert.equal(r1.queued, false);
   assert.equal(r1.reason, "bad-item");
 
-  // original 档位哈希非法
+  // Invalid original tier hash
   const r2 = await q.enqueue({
     id: "item2",
     tiers: [{ tier: "original", hash: "not-a-valid-hex-64", blob: new Blob([new Uint8Array(10)]) }],
@@ -35,7 +35,7 @@ test("mediaUploadQueue: basic validation and invalid item handling", async () =>
   assert.equal(r2.queued, false);
   assert.equal(r2.reason, "bad-item");
 
-  // 合法入队与重复入队合并
+  // Valid enqueue and duplicate enqueue merge
   const origHash = dummyHash("orig1");
   const smallHash = dummyHash("small1");
   const r3 = await q.enqueue({
@@ -45,7 +45,7 @@ test("mediaUploadQueue: basic validation and invalid item handling", async () =>
   assert.equal(r3.queued, true);
   assert.equal(q.stats().enqueued, 1);
 
-  // 再次入队相同 id（补上 small 档）
+  // Re-enqueue same id (adding small tier)
   const r4 = await q.enqueue({
     id: "item3",
     tiers: [
@@ -133,7 +133,7 @@ test("mediaUploadQueue: dispatch order rule: all small sizes upload first, then 
   q.start();
   await q.drain();
 
-  // 派发顺序必须是：A 小 -> B 小 -> A 原 -> B 原 -> C 原
+  // Dispatch order must be: A small -> B small -> A original -> B original -> C original
   const expected = [
     { id: "item-A", tier: "small", hash: hA_small },
     { id: "item-B", tier: "small", hash: hB_small },
@@ -216,10 +216,10 @@ test("mediaUploadQueue: new media joins the queue and jumps ahead during origina
 
   q.start();
 
-  // 等待 item-A 的 original 档位开始派发
+  // Wait for item-A original tier to start dispatching
   await itemAOriginalPromise;
 
-  // 在 A 的 original 档位上传中，突然新入队一个带 small 档位的 item-C
+  // While A's original tier is uploading, a new item-C with small tier is suddenly enqueued
   await q.enqueue({
     id: "item-C",
     tiers: [
@@ -230,10 +230,10 @@ test("mediaUploadQueue: new media joins the queue and jumps ahead during origina
 
   await q.drain();
 
-  // 派发顺序应为：
+  // Dispatch order should be:
   // 1. A.small
-  // 2. A.original（此时 C 进队）
-  // 3. C.small（插队！必须先于剩下的原尺寸 B.original 和 C.original）
+  // 2. A.original (C enters queue at this point)
+  // 3. C.small (cut in line! Must precede remaining original sizes B.original and C.original)
   // 4. B.original
   // 5. C.original
   const expected = [
@@ -265,7 +265,7 @@ test("mediaUploadQueue: backoff mechanism (while small sizes are in backoff, no 
     const sub = m?.[2];
 
     if (hash === hA_small && init.method === "PUT" && smallAAttempts < 1) {
-      // 模拟第 1 次小尺寸上传失败报 500
+      // Simulate 1st small-size upload failing with 500
       smallAAttempts++;
       return new Response(JSON.stringify({ error: "server error" }), { status: 500 });
     }
@@ -319,29 +319,29 @@ test("mediaUploadQueue: backoff mechanism (while small sizes are in backoff, no 
 
   q.start();
 
-  // 等待第 1 次 pump 失败
+  // Wait for 1st pump to fail
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(q.stats().failures, 1);
   assert.deepEqual(dispatched, [{ id: "item-A", tier: "small" }]);
 
-  // 在退避期内（virtualTime 仅前进 1000ms < 5000ms），触发 poke() 尝试调度
+  // During backoff (virtualTime advances only 1000ms < 5000ms), trigger poke() to attempt scheduling
   virtualTime += 1000;
   q.poke();
   await new Promise((r) => setTimeout(r, 20));
 
-  // 关键断言：小尺寸在退避时，后面的任何原尺寸都绝不提前传！
+  // Key assertion: while small size is in backoff, no subsequent original size may upload early!
   assert.deepEqual(dispatched, [{ id: "item-A", tier: "small" }], "No original size may be uploaded sneakily during backoff");
 
-  // 快进走过退避时间（+5000ms）
+  // Fast-forward past backoff time (+5000ms)
   virtualTime += 5000;
   q.poke();
 
   await q.drain();
 
-  // 重试成功后，完成剩余全部上传
+  // After retry succeeds, complete all remaining uploads
   const expected = [
-    { id: "item-A", tier: "small" }, // 失败那次
-    { id: "item-A", tier: "small" }, // 重试成功
+    { id: "item-A", tier: "small" }, // The failed attempt
+    { id: "item-A", tier: "small" }, // Successful retry
     { id: "item-A", tier: "original" },
     { id: "item-B", tier: "original" },
   ];
@@ -395,10 +395,10 @@ test("mediaUploadQueue: holdOriginals() suspends original-size dispatch, resumes
   const hB_small = dummyHash("hold_B_s");
   const hB_orig = dummyHash("hold_B_o");
 
-  // 1. 模拟批量导入前开启 hold
+  // 1. Simulate enabling hold before batch import
   const release = q.holdOriginals();
 
-  // 2. 素材 A 进队，启动队列
+  // 2. Asset A enters queue, start queue
   await q.enqueue({
     id: "item-A",
     tiers: [
@@ -408,16 +408,16 @@ test("mediaUploadQueue: holdOriginals() suspends original-size dispatch, resumes
   });
   q.start();
 
-  // 3. 等待 A.small 完成
+  // 3. Wait for A.small to complete
   await new Promise((r) => setTimeout(r, 30));
   assert.deepEqual(dispatched, [{ id: "item-A", tier: "small" }]);
 
-  // 此时没有剩余 small，但 hold 激活，原尺寸不应该派发
+  // No remaining small at this point, but hold is active, original size should not dispatch
   q.poke();
   await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(dispatched, [{ id: "item-A", tier: "small" }], "Original sizes must never be dispatched during hold");
 
-  // 4. 随后同一批次中的素材 B 进队 (带 small)
+  // 4. Asset B in the same batch subsequently enters queue (with small)
   await q.enqueue({
     id: "item-B",
     tiers: [
@@ -427,18 +427,18 @@ test("mediaUploadQueue: holdOriginals() suspends original-size dispatch, resumes
   });
   await new Promise((r) => setTimeout(r, 30));
 
-  // B.small 应该顺利派发并完成
+  // B.small should dispatch smoothly and complete
   assert.deepEqual(dispatched, [
     { id: "item-A", tier: "small" },
     { id: "item-B", tier: "small" },
   ]);
 
-  // 5. 批次导入完成，释放 hold
+  // 5. Batch import complete, release hold
   release();
 
   await q.drain();
 
-  // 原尺寸随后按顺序派发
+  // Original sizes are subsequently dispatched in order
   assert.deepEqual(dispatched, [
     { id: "item-A", tier: "small" },
     { id: "item-B", tier: "small" },
@@ -478,7 +478,7 @@ test("mediaUploadQueue: 401 ticket expiry automatically swaps the ticket and ret
 
   const q = createMediaUploadQueue({
     target: () => {
-      // 模拟重新获取票据
+      // Simulate re-acquiring ticket
       return { base: "http://fake-asset.local/api/asset", ticket };
     },
     fetch: fakeFetch,
@@ -501,8 +501,8 @@ test("mediaUploadQueue: 401 ticket expiry automatically swaps the ticket and ret
 });
 
 test("mediaUploadQueue [Integration]: real HTTP asset service (port 20035) full-pipeline acceptance check", async () => {
-  const PORT = 20035; // 严格在分配的 20030-20039 范围内
-  const CHUNK = 16 * 1024; // 16 KiB 分片
+  const PORT = 20035; // Strictly within the allocated 20030-20039 range
+  const CHUNK = 16 * 1024; // 16 KiB chunks
 
   const harness = createAssetHarness();
   const a = await harness.asset();
@@ -530,20 +530,20 @@ test("mediaUploadQueue [Integration]: real HTTP asset service (port 20035) full-
       chunkSize: CHUNK,
     });
 
-    // 构造真实二进制数据
-    // A: 视频（small: 15 KiB [1 片], original: 60 KiB [4 片]）
+    // Construct real binary data
+    // A: Video (small: 15 KiB [1 chunk], original: 60 KiB [4 chunks])
     const bytesA_small = crypto.randomBytes(15 * 1024);
     const hashA_small = sha256Buf(bytesA_small);
     const bytesA_orig = crypto.randomBytes(60 * 1024);
     const hashA_orig = sha256Buf(bytesA_orig);
 
-    // B: 视频（small: 10 KiB [1 片], original: 40 KiB [3 片]）
+    // B: Video (small: 10 KiB [1 chunk], original: 40 KiB [3 chunks])
     const bytesB_small = crypto.randomBytes(10 * 1024);
     const hashB_small = sha256Buf(bytesB_small);
     const bytesB_orig = crypto.randomBytes(40 * 1024);
     const hashB_orig = sha256Buf(bytesB_orig);
 
-    // C: 图片（只有 original: 25 KiB [2 片]）
+    // C: Image (only original: 25 KiB [2 chunks])
     const bytesC_orig = crypto.randomBytes(25 * 1024);
     const hashC_orig = sha256Buf(bytesC_orig);
 
@@ -576,15 +576,15 @@ test("mediaUploadQueue [Integration]: real HTTP asset service (port 20035) full-
     q.start();
     await q.drain();
 
-    // 1. 验证队列统计
+    // 1. Verify queue statistics
     const st = q.stats();
     assert.equal(st.enqueued, 3);
     assert.equal(st.done, 3);
     assert.equal(st.failures, 0);
     assert.deepEqual(st.items, []);
 
-    // 2. 验证写入段序（writeRuns）
-    // 只看 PUT 分片与 POST complete 请求
+    // 2. Verify write runs (writeRuns)
+    // Only inspect PUT chunks and POST complete requests
     const runs = [];
     for (const e of rec.log) {
       if (e.ns !== "media" || (e.action !== "put" && e.action !== "complete")) continue;
@@ -604,12 +604,12 @@ test("mediaUploadQueue [Integration]: real HTTP asset service (port 20035) full-
       `Real HTTP write requests must appear in the order "all video small sizes -> then each video and image original size", actual segment order: ${runs.map((r) => r.hash.slice(0, 6)).join(" -> ")}`
     );
 
-    // 验证每一段均包含完整分片且以 complete 结尾
+    // Verify each run contains complete chunks and ends with complete
     for (const r of runs) {
       assert.equal(r.completed, true, `${r.hash.slice(0, 6)} must end with complete`);
     }
 
-    // 3. 验证素材服务上各哈希的状态均已 complete: true
+    // 3. Verify status of each hash on the asset service is complete: true
     for (const hash of expectedOrder) {
       const cRes = await fetch(`http://127.0.0.1:${PORT}/api/asset/media/${hash}/chunks`);
       assert.equal(cRes.status, 200);
@@ -617,7 +617,7 @@ test("mediaUploadQueue [Integration]: real HTTP asset service (port 20035) full-
       assert.equal(cData.complete, true, `${hash.slice(0, 6)} must already be complete on the asset service`);
     }
 
-    // 4. 验证素材服务上存储的内容与原始 Blob 逐字节一致
+    // 4. Verify content stored on asset service matches original Blob byte-for-byte
     const verifyContent = async (hash, expectedBuf) => {
       const res = await fetch(`http://127.0.0.1:${PORT}/api/asset/media/${hash}`);
       assert.equal(res.status, 200);

@@ -1,7 +1,8 @@
 /**
- * 镜头切换识别的前端胶水：起作业、轮询、把结果写进 store。
+ * Frontend glue for shot-change detection: start the job, poll, and write the result into the store.
  *
- * 检测跑在服务端（TransNetV2 或 scdet 兜底），这边只负责等和存。
+ * Detection runs on the server (TransNetV2, with scdet as the fallback); this side only waits and
+ * stores.
  */
 import { readSseStream } from "../editor/io/stt";
 import type { PerceptionMediaRef } from "./perceptionMedia";
@@ -17,14 +18,20 @@ export interface ShotsJobState {
   shots?: Shots["shots"];
 }
 
-/** 拓展装没装。没装也能用，只是退回 scdet、认不出溶解。 */
+/**
+ * Whether the extension is installed. It works without it too, only falling back to scdet and
+ * unable to recognize dissolves.
+ */
 export async function shotsStatus(): Promise<{ ready: boolean; engine: string; detail?: unknown }> {
   const r = await fetch("/api/shots/status");
   if (!r.ok) throw new Error(tr("Cannot find the status of the shot detection extension"));
   return r.json();
 }
 
-/** 只发素材标识,服务端经素材服务取字节(见 perceptionMedia.ts) */
+/**
+ * Send only the asset identifier; the server fetches the bytes through the asset service (see
+ * perceptionMedia.ts)
+ */
 export async function startShotDetection(media: PerceptionMediaRef): Promise<string> {
   const r = await fetch("/api/shots/detect", {
     method: "POST",
@@ -43,7 +50,10 @@ export async function pollShotJob(jobId: string): Promise<ShotsJobState> {
   return data.job as ShotsJobState;
 }
 
-/** 等一个作业跑完。检测 5 分钟素材约 36 秒，所以轮询间隔给 1 秒。 */
+/**
+ * Wait for a job to finish. Detecting 5 minutes of media takes about 36 seconds, so the polling
+ * interval is 1 second.
+ */
 export async function waitForShots(jobId: string, onProgress?: (pct: number, engine: string) => void): Promise<Shots> {
   for (;;) {
     const job = await pollShotJob(jobId);
@@ -62,11 +72,12 @@ export async function waitForShots(jobId: string, onProgress?: (pct: number, eng
 }
 
 /**
- * 装镜头识别拓展（onnxruntime + TransNetV2 权重）。
+ * Installs the shot detection extension (onnxruntime + TransNetV2 weights).
  *
- * 服务端的 `/api/shots/install` 一直都在，缺的只是这个客户端函数 —— 于是
- * 开始页那张卡只能干看着状态、没有安装入口。和 installTrack 一样流式读
- * pip 日志：这一步要等好几十秒，中间不出声的话分不清是在装还是卡死了。
+ * The server's `/api/shots/install` has always been there; only this client function was missing,
+ * so the card on the start page could only look at the status, with no entry to install. Like
+ * installTrack, it reads the pip log as a stream: this step takes tens of seconds, and if nothing
+ * is shown in between, there is no telling whether it is installing or hung.
  */
 export async function installShots(
   onLog?: (line: string) => void,
@@ -86,16 +97,20 @@ export async function installShots(
       log.push(line);
       onLog?.(line);
     } else if (ev.event === "installed") {
-      // 依赖装完了,但TransNetV2的权重不在 requirements 里,只随拓展库包发。
-      // 这不是失败,是「还差一步」,得和真正的安装失败分开报。
+      // The dependencies are installed, but the TransNetV2 weights are not in requirements and ship only
+      // with the extension library package.
+      // This is not a failure but "one step short", and must be reported separately from a real install
+      // failure.
       needsModel = !!ev.needsModel;
-      // SttEvent 里的 model 是听写的模型名(string),和这里的对象同名不同型,
-      // 就地窄化一下,不去动那个共用的事件类型
+      // The model in SttEvent is the speech-to-text model name (string), with the same name but a
+      // different type from the object here, so narrow it in place instead of touching that shared event
+      // type
       modelPath = (ev as unknown as { model?: { path?: string } }).model?.path;
     } else if (ev.event === "error") {
       ok = false;
-      // stderr 里才是有用的那句(pip 的真实报错、缺什么文件),message 往往只是
-      // 「进程退出码 N」。只取 message 的话,用户看到的永远是一句没法照着做的话。
+      // The useful line is in stderr (pip's actual error, which file is missing), while message is often
+      // just "process exit code N". If only message were used, the user would always see a sentence they
+      // cannot act on.
       const msg = ev.message ?? tr("Install failed");
       const detail = typeof ev.stderr === "string" ? ev.stderr.trim() : "";
       const full = detail ? `${msg}

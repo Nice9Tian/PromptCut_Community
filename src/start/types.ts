@@ -1,22 +1,31 @@
 /**
- * Vibe 模式开始页里三种东西的形状:分组、项目、项目 Agent(云端对话)。
+ * The shapes of the three kinds of things on the start page of Vibe mode: groups, projects, and project
+ * Agents (cloud chats).
  *
- * 数据来源(2026-10-23 接业务层,`docs/reports/AGENT-claude-vibe-wire.md`):
- * - **项目**:云端文档服务的项目列表(`src/account/useAccountProjects.ts` 的 `lists`:我创建的 / 我加入的);
- *   游客没有这张表,他自己那一个项目记在本机(`src/account/guest.ts`)。名字、归属以服务端为准;
- *   画幅、时长、缩略图是这台浏览器打开过这个项目时记下的(`thumbCache.ts`),没打开过就没有,界面退回色块。
- * - **项目 Agent**:此刻连着的那个项目里、当前账号看得到的云端 Agent 对话(`src/ai/cloud/useCloud.ts` 的历史列表,
- *   服务端按 `product/agent.md` 的共有 / 私有规则过滤,页面再按同一条规则复核一遍,见 `vibeOrg.ts` 的 `viewableChats`)。
- * - **分组**(用户 2026-10-23 定:分本地分组和云端分组,互相放不进):本地分组装本机草稿项目、存本机;
- *   云端分组装云端项目、存云端。两套各管各的项目,这里用 `OrgRealm` 标出一个东西属于哪一套(`vibeOrg.ts`)。
+ * Data sources (business layer wired in on 2026-10-23, `docs/reports/AGENT-claude-vibe-wire.md`):
+ * - **Projects**: the project list of the cloud document service (`lists` in
+ *   `src/account/useAccountProjects.ts`: created by me / joined by me); guests have no such table, and
+ *   their one project is recorded locally (`src/account/guest.ts`). Names and ownership follow the
+ *   server; the aspect ratio, duration and thumbnail were recorded when this browser opened the project
+ *   (`thumbCache.ts`), and are absent if it was never opened, in which case the UI falls back to a
+ *   color block.
+ * - **Project Agents**: the cloud Agent chats in the currently connected project that the current
+ *   account can see (the history list in `src/ai/cloud/useCloud.ts`; the server filters by the shared /
+ *   private rules of `product/agent.md`, and the page re-checks with the same rule, see `viewableChats`
+ *   in `vibeOrg.ts`).
+ * - **Groups** (user decision, 2026-10-23: split into local groups and cloud groups that cannot hold
+ *   each other's projects): a local group holds local draft projects and is stored locally; a cloud
+ *   group holds cloud projects and is stored in the cloud. The two realms each manage their own
+ *   projects, and `OrgRealm` is used here to mark which realm a thing belongs to (`vibeOrg.ts`).
  *
- * 置顶、归档、手排的顺序跟着分组走:本地项目记在本机,云端项目记在云端那一份。
+ * Pin, archive and manual order follow the group: local projects are recorded locally, and cloud
+ * projects are recorded in the cloud copy.
  */
 
-/** 分组、项目属于哪一套:本地(桌面版,本机草稿项目)或云端(云端文档服务的项目)。两套互不混放 */
+/** Which realm a group or project belongs to: local (desktop app, local draft projects) or cloud (projects of the cloud document service). The two realms are never mixed */
 export type OrgRealm = "local" | "cloud";
 
-/** 三种东西都能右键、能拖着排序,所以都带这两个标记(规则在 `treeState.ts`:只在自己同级里生效) */
+/** All three kinds of things can be right-clicked and dragged to reorder, so they all carry these two markers (the rule is in `treeState.ts`: it only applies among one's own siblings) */
 export interface TreeFlags {
   pinned?: boolean;
   archived?: boolean;
@@ -25,7 +34,7 @@ export interface TreeFlags {
 export interface VibeGroup extends TreeFlags {
   id: string;
   name: string;
-  /** 这个分组属于哪一套;只能装同一套的项目 */
+  /** Which realm this group belongs to; it can only hold projects of the same realm */
   realm: OrgRealm;
 }
 
@@ -34,31 +43,31 @@ export type Ratio = "16:9" | "9:16" | "1:1";
 export interface VibeProject extends TreeFlags {
   id: string;
   name: string;
-  /** 项目属于哪一套:本机草稿是 local,云端项目是 cloud。只能放进同一套的分组 */
+  /** Which realm a project belongs to: a local draft is local, a cloud project is cloud. It can only be put in a group of the same realm */
   realm: OrgRealm;
-  /** 所属分组(同一套里的分组);null 是没放进分组的 */
+  /** The group it belongs to (a group in the same realm); null means not in any group */
   groupId: string | null;
-  /** 我创建的 / 我加入的 / 游客自己的那一个 */
+  /** Created by me / joined by me / the guest's own single project */
   role: "owned" | "joined" | "guest";
-  /** 这台浏览器上次打开它时记下的;没打开过是 null */
+  /** Recorded the last time this browser opened it; null if it was never opened */
   ratio: Ratio | null;
   duration: number | null;
-  /** 缩略图(data URL,小 JPEG);取不到是 null,界面退回色块 */
+  /** Thumbnail (data URL, small JPEG); null if it cannot be obtained, and the UI falls back to a color block */
   thumb: string | null;
-  /** 上次在这台浏览器里打开的时刻(ISO);没打开过是 null */
+  /** Time of the last open in this browser (ISO); null if it was never opened */
   seenAt: string | null;
 }
 
-/** 项目 Agent:一个云端 Agent 对话。只挂在项目上(「分组 Agent」语义里没有,这一版不做) */
+/** Project Agent: one cloud Agent chat. Attached only to projects (the semantics has no "group Agent", and this version does not build it) */
 export interface VibeChat extends TreeFlags {
   id: string;
   name: string;
   projectId: string;
-  /** 进行中 / 已中断 / 出错 / 已失效 / 空闲 */
+  /** In progress / interrupted / error / invalid / idle */
   state: "idle" | "running" | "interrupted" | "failed" | "revoked";
   visibility: "shared" | "private";
-  /** 项目创建者在看别人的私有对话:只读 */
+  /** The project creator viewing someone else's private chat: read-only */
   readOnly: boolean;
-  /** 还没发过消息的新对话(只在本页上有,服务端还没有这一条) */
+  /** A new chat that has not sent any message yet (exists only on this page; the server does not have this one yet) */
   fresh?: boolean;
 }

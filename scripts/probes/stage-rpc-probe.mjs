@@ -1,39 +1,51 @@
 /**
- * E0 / E1 验收探针:一张「测试页」挂**两个**舞台 iframe(`?stage=1&id=A` / `id=B`),
- * 只经 postMessage RPC 驱动它们。默认打跨源的两个舞台端口,`--legacy` 打同源。
+ * E0 / E1 acceptance check probe: mounts **two** stage iframes (`?stage=1&id=A` / `id=B`) on a
+ * "test page", driving them only via postMessage RPC. Targets two cross-origin stage ports by
+ * default, while `--legacy` targets the same origin.
  *
  *   node scripts/probes/stage-rpc-probe.mjs [--origin http://127.0.0.1:5211] [--legacy]
  *
- * 不带 `--origin` 就看 `PC_STAGE_TEST_URL`,再没有就打 `.claude/launch.json` 的 `dev-test`。
+ * Without `--origin`, check `PC_STAGE_TEST_URL`; if still missing, target `dev-test` in
+ * `.claude/launch.json`.
  *
- * 跨源模式下两个 iframe 的地址从编辑器进程的 `/api/stage/ports` 拿(起不来就报错退出);
- * `--legacy` 把两个 iframe 都指回编辑器自己这个源,验「legacy 下照旧过」。
+ * In cross-origin mode, URLs of the two iframes are obtained from `/api/stage/ports` of the
+ * editor process (fails with an error and exits if it cannot start); `--legacy` points both
+ * iframes back to the editor's own origin, verifying that "it passes as usual under legacy".
  *
- * 验的是任务书 E0 / E1 那几条:
- *   - RPC 全部正常、所有时间参数是秒;两个 iframe 的握手各带自己的 hostCapabilities(J4),
- *     `stageId` 是 `A` / `B` —— **它只是实例名,和角色无关**;
- *   - **角色闸门(E1)**:默认角色是 `front`,对它发 `render` 或 `setTime({ probe: true })`
- *     一律回 `{ aborted: true, reason: 'role' }`;`setRole('back')` 之后同一个实例就能收了;
- *   - 暂停时拖播放头 60 次(含往回拖和跳 60 秒):playToken 不变(包裹层 DOM 元素同一个)、
- *     每次 setTime 舞台主线程 ≤ 5 ms(不 advanceTo);
- *   - render 只验方法本身:Promise 在推帧完成后才 resolve、回包带 remounted / caughtUpAtSec /
- *     elapsedMs;两次连发第一次回 `superseded`;setProject 掐掉在飞的 render 回 `project`;
- *     render({ probe: true }) 每帧 post 一条 probe-frame,frames 与事件数一致;
- *   - hitTest / rectsWithBounds 照常工作,17 轨 × 10 卡下 rectsWithBounds({ pixels: 'selected' }) ≤ 5 ms;
- *   - 舞台页挂了 __pcCreateSnapshot,快照的 controls 是包裹层 innerHTML(不含 data-pc-clip);
- *   - play / pause 回的是统一后的 PlayReply(`ok` 不可选)。
+ * Verifies the items from task brief E0 / E1:
+ *   - All RPCs work normally, and all time parameters are in seconds; handshakes of the two
+ *     iframes each carry their own hostCapabilities (J4), and `stageId` is `A` / `B`: **it is
+ *     merely an instance name, unrelated to role**;
+ *   - **Role gate (E1)**: default role is `front`; sending `render` or `setTime({ probe: true })`
+ *     to it always returns `{ aborted: true, reason: 'role' }`; after `setRole('back')`, the same
+ *     instance can receive them;
+ *   - Scrub the playhead 60 times during pause (including scrubbing backward and jumping 60
+ *     seconds): playToken is unchanged (wrapper layer DOM element is the same), and each setTime
+ *     stage main thread ≤ 5 ms (without advanceTo);
+ *   - render only verifies the method itself: Promise resolves only after frame push completes;
+ *     response includes remounted / caughtUpAtSec / elapsedMs; calling twice back-to-back returns
+ *     `superseded` on the first; setProject cuts off in-flight render and returns `project`;
+ *     render({ probe: true }) posts one probe-frame per frame, and frames matches the event count;
+ *   - hitTest / rectsWithBounds work as usual; under 17 tracks × 10 cards,
+ *     rectsWithBounds({ pixels: 'selected' }) ≤ 5 ms;
+ *   - Stage page exposes __pcCreateSnapshot; snapshot controls is wrapper layer innerHTML
+ *     (excluding data-pc-clip);
+ *   - play / pause return the unified PlayReply (`ok` is non-optional).
  *
- * **跨源之后父页碰不到 iframe 里的 window**,所以舞台侧的计时和 DOM 检查一律走
- * puppeteer 的 frame 句柄(`page.frames()` 对跨源 iframe 照样给得出),不再是
- * `document.getElementById('f').contentWindow`。
+ * **After cross-origin, the parent page cannot access window in the iframe**, so timing and DOM
+ * checks on the stage side always use puppeteer frame handles (`page.frames()` still provides
+ * them for cross-origin iframes), rather than `document.getElementById('f').contentWindow`.
  *
- * 测试页由本进程临时起的一个 http 服务(随机空端口)提供,仓库里不留静态页。
- * **不能再用 puppeteer 的请求拦截来发这张页**:`Fetch.fulfillRequest` 造出来的响应没有远端 IP,
- * Chrome 把这个文档的 address space 判成非本地,于是它去 127.0.0.1 的两个舞台端口取 iframe 时
- * 被 Local Network Access 拦掉(实测 `net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`)。
- * 同源那一版碰不到这条是因为 iframe 和文档同源、走的是另一条判定。
+ * The test page is served by a temporary HTTP service (random available port) started by this
+ * process, leaving no static page in the repository.
+ * **Puppeteer request interception can no longer be used to serve this page**: responses created
+ * by `Fetch.fulfillRequest` have no remote IP, and Chrome classifies this document's address space
+ * as non-local, so when it accesses the two stage ports at 127.0.0.1 for the iframes, it gets
+ * blocked by Local Network Access (observed `net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`).
+ * The same-origin version does not hit this because the iframe and document are same-origin and
+ * follow a different check.
  *
- * 输出 JSON 结论到 stdout;任何一条不过就以非零退出。
+ * Output JSON conclusions to stdout; exit with non-zero if any check fails.
  */
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
@@ -44,12 +56,12 @@ const origin = devOrigin(args);
 const legacy = args.includes('--legacy');
 const HOST_PATH = '/__stage-rpc-probe-host';
 
-/** 两个舞台的源。legacy 下都是编辑器自己这个源(同源单舞台那条路) */
+/** Origins of the two stages. Under legacy, both are the editor's own origin (the same-origin single-stage path) */
 async function stageOrigins() {
   if (legacy) return [origin, origin];
   const r = await fetch(origin + '/api/stage/ports');
   const j = await r.json();
-  if (!j.ok || !Array.isArray(j.ports) || j.ports.length < 2) throw new Error(`舞台端口没起来:${JSON.stringify(j)}`);
+  if (!j.ok || !Array.isArray(j.ports) || j.ports.length < 2) throw new Error(`Stage ports did not come up: ${JSON.stringify(j)}`);
   const u = new URL(origin);
   return j.ports.slice(0, 2).map((p) => `${u.protocol}//${u.hostname}:${p}`);
 }
@@ -59,7 +71,7 @@ const hostHtml = (oa, ob) => `<!doctype html><html><head><meta charset="utf-8"><
 <iframe id="a" src="${oa}/?stage=1&id=A&prerender=1" style="width:1920px;height:1080px;border:0;display:block"></iframe>
 <iframe id="b" src="${ob}/?stage=1&id=B&prerender=1" style="width:1920px;height:1080px;border:0;display:block;opacity:0;pointer-events:none"></iframe>
 <script type="module">
-// 一个最小的 RPC 客户端(和 src/render/stageRpc.ts 同一协议),内联在这里是为了同一份探针也能打 vite preview 的产物包(那里没有 /src/*.ts)
+// A minimal RPC client (same protocol as src/render/stageRpc.ts), inlined here so the same probe can also hit the vite preview build output (there is no /src/*.ts there)
 function createStageRpc(target, targetOrigin) {
   let nextId = 1; const pending = new Map(); const listeners = new Set();
   window.addEventListener('message', (e) => {
@@ -111,8 +123,9 @@ try {
   await page.evaluate(() => Promise.race([window.__ready, new Promise((_, rej) => setTimeout(() => rej(new Error('stage ready timeout')), 120000))]));
 
   /*
-   * 跨源之后父页碰不到 iframe 里的 window —— 舞台侧的计时和 DOM 一律走 frame 句柄。
-   * frame 的 url 里带着 id=A / id=B,拿它认人。
+   * After cross-origin, parent page cannot access window in the iframe: timing and DOM on stage side
+   * always go through frame handles.
+   * The frame url carries id=A / id=B, used for identification.
    */
   const frameOf = (id) => page.frames().find((f) => f.url().includes(`id=${id}`));
   const fa = frameOf('A');
@@ -121,10 +134,11 @@ try {
   out.caps = await page.evaluate(() => window.__caps);
   out.capsB = await page.evaluate(() => window.__capsB);
   check(out.caps && typeof out.caps.prerender === 'boolean' && typeof out.caps.compact === 'boolean' && typeof out.caps.offscreenGl === 'boolean', 'handshake carries hostCapabilities', out.caps);
-  // stageId 只是实例名:两个实例各报自己的 id,而它们此刻的角色都还是缺省的 front
+  // stageId is merely an instance name: both instances report their own id, while their roles at this
+  // moment are still the default front
   check(out.caps.stageId === 'A' && out.capsB.stageId === 'B', 'stageId is the instance name (A / B), not a role', { a: out.caps.stageId, b: out.capsB.stageId });
 
-  // ---- 角色闸门(E1):默认角色是 front,render 和 setTime({probe}) 都该被挡回来
+  // ---- Role gate (E1): default role is front; render and setTime({probe}) should both be blocked
   const gate = await page.evaluate(async () => ({
     render: await window.__rpcB.render(1.0, { jump: true, maxCatchUp: Infinity }),
     probeTime: await window.__rpcB.setTime(1.0, { probe: true }),
@@ -134,7 +148,7 @@ try {
   check(gate.render?.aborted === true && gate.render.reason === 'role', 'render on a front-role stage is refused with reason role', gate.render);
   check(gate.probeTime?.aborted === true && gate.probeTime.reason === 'role', 'setTime({probe}) on a front-role stage is refused with reason role', gate.probeTime);
   check(!gate.plainTime?.aborted && typeof gate.plainTime?.path === 'string', 'plain setTime is NOT gated (front drags, back measures)', gate.plainTime);
-  // 同一个实例换成 back 就能收了 —— 闸门判的是角色,不是实例名
+  // Switching the same instance to back allows it to receive: the gate checks role, not instance name
   const gate2 = await page.evaluate(async () => {
     await window.__rpcB.setRole('back', { job: 'probe' });
     const r = await window.__rpcB.render(0.2, { jump: true, maxCatchUp: Infinity });
@@ -146,9 +160,10 @@ try {
   check(gate2.r?.aborted === true && gate2.r.reason === 'project', 'the same instance in back role gets past the gate (no project yet → reason project)', gate2.r);
   check(!gate2.p?.aborted, 'setTime({probe}) in back role gets past the gate', gate2.p);
 
-  // ---- 项目:3 条轨道的小项目 + 17 轨 × 10 卡的大项目
+  // ---- Project: small project with 3 tracks + large project with 17 tracks × 10 cards
   const mkProject = await page.evaluate(async () => {
-    // 空项目的形状照 src/kernel/project.ts 的 createEmptyProject(这里不 import,好让探针也能打产物包)
+    // Empty project shape follows createEmptyProject in src/kernel/project.ts (not imported here so the
+    // probe can also target build bundles)
     window.__mk = (tracks, extra = {}) => ({ version: 1, id: 'probe', name: 'probe', width: 1920, height: 1080, fps: 30, duration: 60, themeId: 'midnight', media: [], tracks, ...extra });
     return true;
   });
@@ -168,16 +183,20 @@ try {
     { id: 'tr-b', clips: [{ id: 'c-odo', cardId: 'odometer', start: 0, end: 60, params: {} }] },
   ]));
 
-  // ---- setProject full + reset。60 次拖动的 ≤ 5 ms 在「两张 DOM 卡」的项目上量:setTime 自己的机器开销 ≈ 0.3 ms(空项目),
-  // 其余全是卡片自己那一次 React 渲染(实测 odometer ≈ 2.4 ms、chapter-bar ≈ 1.7 ms、punch-pill ≈ 0.9 ms,dev 版 React),
-  // 三维卡每次 t 变还要 three.js 出一帧 —— 那些是卡的代价,K1 探针会把慢的判重;这里只守 setTime 不做补跑(不 advanceTo)。
+  // ---- setProject full + reset. The ≤ 5 ms for 60 scrubs is measured on a project with "two DOM
+  // cards": machine overhead of setTime itself is ≈ 0.3 ms (empty project), and the rest is entirely
+  // the card's own single React render (measured odometer ≈ 2.4 ms, chapter-bar ≈ 1.7 ms, punch-pill
+  // ≈ 0.9 ms, dev React); for 3D cards, three.js must also render a frame whenever t changes: those
+  // are card costs, and the K1 probe will classify slow ones as heavy; here we only guard setTime
+  // without catch-up runs (no advanceTo).
   const sp = await page.evaluate(async (p) => await window.__rpc.setProject(p, { reset: true }), domOnly);
   check(sp && sp.ok === true, 'setProject(full, reset) ok', sp);
   const st0 = await page.evaluate(async () => await window.__rpc.setTime(0.5));
   check(st0 && (st0.path === 'set' || st0.path === 'continuous'), 'setTime replies with path', st0);
   await new Promise((r) => setTimeout(r, 300));
 
-  // 在舞台文档里包一层计时:量的是舞台主线程(真墙钟 __pcRealNow),不是 RPC 往返
+  // Wrap timing in the stage document: measures the stage main thread (real wall clock __pcRealNow),
+  // not RPC round trip
   await fa.evaluate(() => {
     window.__times = { setTime: [], rects: [] };
     const api = window.__pcStage;
@@ -188,7 +207,7 @@ try {
     for (const el of document.querySelectorAll('[data-pc-clip]')) el.__probeMark = 1;
   });
 
-  // ---- 60 次拖动:往前、往回、跳 60 秒
+  // ---- 60 scrubs: forward, backward, jump 60 seconds
   const seq = [];
   for (let i = 0; i < 60; i++) {
     const r = i % 6;
@@ -201,7 +220,8 @@ try {
   }, seq);
   const drag = await fa.evaluate((n) => {
     const wrappers = [...document.querySelectorAll('[data-pc-clip]')];
-    // 只看整段都活跃的片段(c-odo 是 0~60s):c-pill 在 55s 时本来就该卸载、拖回 0.2s 再挂上
+    // Only inspect clips active across the entire range (c-odo is 0~60s): c-pill is expected to
+    // unmount at 55s, and remount when scrubbed back to 0.2s
     const always = ['c-odo'];
     const kept = wrappers.filter((el) => always.includes(el.getAttribute('data-pc-clip'))).every((el) => el.__probeMark === 1) && always.every((id) => wrappers.some((el) => el.getAttribute('data-pc-clip') === id));
     const times = window.__times.setTime.slice(-n);
@@ -210,9 +230,10 @@ try {
   out.drag = { ...drag, setPaths: paths.filter((p) => p === 'set').length };
   check(drag.kept, 'wrappers (playToken) unchanged across 60 setTime', out.drag);
   check(out.drag.setPaths > 0 && paths.every((p) => p === 'set' || p === 'continuous'), 'setTime paths', paths.slice(0, 8));
-  check(typeof drag.p90 === 'number', 'setTime 的舞台主线程耗时量到了 p90(只记录;原先要求 ≤ 5 ms —— 耗时只记录,不当闸门(verification.md,2026-10-07 用户改定);2026-10-23 探针总审第二遍扫描补改)', { p90: drag.p90, max: drag.max });
+  check(typeof drag.p90 === 'number', 'the stage main-thread time of setTime yielded a p90 (record only; previously required ≤ 5 ms: timings are only recorded, not used as a gate (verification.md, user decision 2026-10-07); amended during the second scan of the 2026-10-23 overall probe audit)', { p90: drag.p90, max: drag.max });
 
-  // 同一组拖动在含三维卡的项目上再量一遍,只报数不判(卡自己的渲染代价)
+  // Measure the same set of scrubs again on a project with 3D cards, reporting numbers without
+  // judging (the card's own rendering cost)
   await page.evaluate(async (p) => { await window.__rpc.setProject(p, { reset: true }); await window.__rpc.setTime(0.5); }, small);
   await new Promise((r) => setTimeout(r, 300));
   await fa.evaluate(() => { window.__times.setTime = []; });
@@ -241,22 +262,25 @@ try {
   check(geo.hit && geo.hit.clipId === 'c-odo', 'hitTest at the odometer content centre hits it', geo.hit);
   check(geo.c3 && geo.c3.bounds && geo.c3.bounds.width < 1920 * 0.95, 'scene-3d bounds (pixels: all) is not the whole canvas', geo.c3);
 
-  // ---- 快照面(先拨到三维卡已经画出东西的时刻;0.7s 时它还是空画布,画布像素扫不到就不写实体框)
+  // ---- Snapshot surface (first seek to the time when the 3D card has drawn content; at 0.7s it is
+  // still an empty canvas, and if no canvas pixels are scanned, no entity box is written)
   await page.evaluate(async () => { await window.__rpc.setTime(2); await new Promise((r) => setTimeout(r, 800)); });
   const frozen = await fa.evaluate(() => {
     const f = window.__pcCreateSnapshot();
     const c3 = f.controls.find((c) => c.id === 'c-3d');
-    // 不用 <img[^>]* 正则:内联样式几十万字节,回溯太慢;直接找属性
+    // Avoid <img[^>]* regex: inline styles are hundreds of thousands of bytes, backtracking is too
+    // slow; look up attributes directly
     const pi = c3 ? c3.html.indexOf('data-pc-painted-box="') : -1;
     const painted = pi >= 0 ? /^(\d+),(\d+),(\d+),(\d+)/.exec(c3.html.slice(pi + 21, pi + 60)) : null;
     return { controls: f.controls.length, first: f.controls[0] ? { id: f.controls[0].id, hasClipAttr: /data-pc-clip=/.test(f.controls[0].html), hasProxyPlane: /data-pc-proxy-plane/.test(f.controls[0].html), len: f.controls[0].html.length } : null, sceneAttr: /data-pc-scene/.test(f.html), painted: painted ? painted.slice(1).map(Number) : null, canvasLeft: c3 ? /<canvas/.test(c3.html) : null };
   });
   out.frozen = frozen;
   check(frozen.controls > 0 && frozen.first && !frozen.first.hasClipAttr && !frozen.first.hasProxyPlane, 'stage __pcCreateSnapshot controls are wrapper innerHTML without data-pc-clip', frozen);
-  // A2(4):三维卡的 canvas 换成了带 data-pc-painted-box 的 <img>,坐标是画布像素坐标(小于整块画布)
+  // A2(4): Canvas of the 3D card is replaced with <img> with data-pc-painted-box; coordinates are
+  // canvas pixel coordinates (smaller than the whole canvas)
   check(frozen.painted && frozen.canvasLeft === false && frozen.painted[2] > 0 && frozen.painted[2] < 1920, 'frozen scene-3d canvas became <img data-pc-painted-box> in canvas pixel coords', frozen);
 
-  // ---- 大项目:17 轨 × 10 卡的心跳耗时
+  // ---- Large project: heartbeat elapsed time for 17 tracks × 10 cards
   await page.evaluate(async (p) => { await window.__rpc.setProject(p, { reset: true }); await window.__rpc.setTime(1); }, big);
   await new Promise((r) => setTimeout(r, 800));
   await fa.evaluate(() => { window.__times.rects = []; });
@@ -269,7 +293,8 @@ try {
   check(active === 17, '17 active clips on the big project', out.beat);
   check(out.beat.p50 <= 5, "rectsWithBounds({pixels:'selected'}) p50 ≤ 5 ms on 17×10", out.beat);
 
-  // ---- render:先把 A 换成后台舞台(角色闸门管的是角色,不是哪个实例)
+  // ---- render: first switch A to background stage (the role gate regulates roles, not which
+  // instance)
   await page.evaluate(async (p) => { await window.__rpc.setProject(p, { reset: true }); }, small);
   const role = await page.evaluate(async () => ({ back: await window.__rpc.setRole('back', { job: 'probe' }), bake: await window.__rpc.setRole('back', { job: 'bake' }) }));
   check(role.back.ok === true && role.bake.ok === false && role.bake.reason === 'unsupported', 'setRole back ok / bake unsupported', role);
@@ -296,7 +321,7 @@ try {
   }, small);
   out.proj = proj;
   check(proj && proj.aborted === true && proj.reason === 'project', 'setProject during render aborts it with reason project', proj);
-  // 续推:不重挂载;倒退直接 superseded
+  // Resume push: no remount; going backward directly returns superseded
   const cont = await page.evaluate(async () => {
     await window.__rpc.render(1.0, { jump: true, maxCatchUp: Infinity });
     const fwd = await window.__rpc.render(1.2, { maxCatchUp: Infinity });
@@ -306,7 +331,7 @@ try {
   out.cont = cont;
   check(cont.fwd && cont.fwd.remounted === false && Math.abs(cont.fwd.caughtUpAtSec - 1.2) < 1e-6, 'continue-mode render does not remount', cont.fwd);
   check(cont.back && cont.back.aborted === true && cont.back.reason === 'superseded', 'continue-mode render backwards is superseded', cont.back);
-  // probe:每帧一条 probe-frame
+  // probe: one probe-frame per frame
   const probe = await page.evaluate(async () => {
     window.__events.length = 0;
     const r = await window.__rpc.render(0.5, { jump: true, probe: true, maxCatchUp: Infinity, maxFrames: 6 });
@@ -319,11 +344,12 @@ try {
   check(!probe.r.aborted || probe.r.reason === 'timeout', 'probe render ends normally or by timeout', probe.r);
   const stp = await page.evaluate(async () => await window.__rpc.setTime(0.7, { probe: true }));
   check(stp && stp.path === 'set' && typeof stp.elapsedMs === 'number' && stp.elapsedMs > 0, 'setTime(probe) replies elapsedMs on the set path', stp);
-  // B 那个实例一条 probe-frame 都不该收到:事件只从发起它的那个 iframe 出来
+  // Instance B should not receive any probe-frame: events only come from the iframe that initiated
+  // them
   out.eventsB = await page.evaluate(() => window.__eventsB.filter((e) => e.type === 'probe-frame').length);
   check(out.eventsB === 0, 'probe-frame events come only from the iframe that produced them', out.eventsB);
 
-  // ---- 其余方法回包形状
+  // ---- Response shapes of other methods
   const misc = await page.evaluate(async () => ({
     play: await window.__rpc.play(0), pause: await window.__rpc.pause(),
     snaps: await window.__rpc.setSnapshots({ 'c-odo': '<div>x</div>', 'c-pill': null }, { reset: true }),
@@ -332,11 +358,13 @@ try {
   }));
   out.misc = misc;
   /*
-   * PlayReply:`ok` 不可选。**R5 之后两个都有真实现了**(K4 的节拍循环),
-   * 这里的舞台此刻还是 `back`(上面把 A 换成了后台舞台),所以:
-   *   - `play` 撞角色闸门,回 `{ ok: false, reason: 'role' }` —— 只有 `front` 跑节拍;
-   *   - `pause` 在「循环本来就停着」时立即回 `{ ok: true, stoppedAt: 最后一拍的 sec }`,
-   *     这里一拍都没走过,`stoppedAt` 是 0。
+   * PlayReply: `ok` is non-optional. **Both have real implementations after R5** (the tick loop of
+   * K4), and the stage here is still `back` at this moment (A was switched to background stage
+   * above), so:
+   *   - `play` hits the role gate and returns `{ ok: false, reason: 'role' }`: only `front` runs
+   *     ticks;
+   *   - `pause` immediately returns `{ ok: true, stoppedAt: sec of the last tick }` when "the loop
+   *     was already stopped"; not a single tick has run here, so `stoppedAt` is 0.
    */
   check(misc.play.ok === false && misc.play.reason === 'role', 'play on a back stage hits the role gate', misc.play);
   check(misc.pause.ok === true && misc.pause.stoppedAt === 0, 'pause on a stopped loop replies immediately with the last beat', misc.pause);

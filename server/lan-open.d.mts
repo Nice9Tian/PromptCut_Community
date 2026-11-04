@@ -1,5 +1,6 @@
 /**
- * `server/lan-open.mjs` 的类型（页面一侧直接 import 它判邀请链接落不落在本机网卡上：`src/editor/LanOpenDialog.tsx`）。
+ * Types for `server/lan-open.mjs` (imported directly by the page side to check whether the invite
+ * link falls on a local network interface: `src/editor/LanOpenDialog.tsx`).
  */
 
 export const LAN_OPEN_PATH: string;
@@ -12,15 +13,15 @@ export interface LanAddress {
 }
 
 export interface LanOpenInfo {
-  /** 编辑器现在绑在局域网上没有（按实际监听地址判） */
+  /** Whether the editor is currently bound to the LAN (determined by actual listening address) */
   lanHost: boolean;
   port: number | null;
-  /** 没绑局域网时告诉用户怎么起 */
+  /** Tells the user how to start when not bound to the LAN */
   command: string;
   addresses: LanAddress[];
 }
 
-/** 这个监听地址对局域网可达吗；判不出来按不可达算 */
+/** Whether this listening address is reachable from the LAN; treated as unreachable if undetermined */
 export function boundToLan(address: unknown): boolean;
 
 export function lanOpenInfo(o?: {
@@ -29,5 +30,5 @@ export function lanOpenInfo(o?: {
   nics?: readonly { name?: string; address?: string }[];
 }): LanOpenInfo;
 
-/** 一条链接（或只给主机名）落在这几块网卡上吗 */
+/** Whether a link (or just a hostname) falls on these network interfaces */
 export function linkOnLan(link: unknown, addresses?: readonly { address?: string }[]): boolean;

@@ -4,7 +4,7 @@ import { CollapsePanelButton } from "./CollapsePanelButton";
 import "./chat.css";
 import { tr } from "../../../i18n/index.ts";
 
-/** 「显示思考」按钮上的思考气泡。图标库里没有合适的,就地画一个,规格照 ui/icons:24 画幅、1.5 描边、currentColor */
+/** The thinking bubble on the "Show thinking" button. The icon library has no suitable one, so draw one on the spot, with specs per ui/icons: 24 canvas, 1.5 stroke, currentColor */
 function IconThought({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
@@ -16,26 +16,30 @@ function IconThought({ size = 16 }: { size?: number }) {
 }
 
 export interface ChatHeaderProps {
-  /** 分页标题(agentTabs 里这一页的 title;Agent 声明范围后会跟着改名) */
+  /** Tab title (the title of this tab in agentTabs; it is renamed along when the Agent declares a scope) */
   title: string;
   mcpConnected: boolean;
   showThinking: boolean;
   onChangeShowThinking: (next: boolean) => void;
   onOpenHistory: () => void;
   onOpenSetup: () => void;
-  /** 「云端」接入方式:没有本机的 AI 设置可开,给了这句话按钮就置灰、悬停显示它(契约 9.5) */
+  /** For the "Cloud" connection type: there are no local AI settings to open, so when this line is given the button is greyed out and shows it on hover (contract 9.5) */
   settingsDisabled?: string;
-  /** 连接状态点的说明;不给就按 mcpConnected 的「已连接 / 未连接」 */
+  /** Description of the connection status dot; if not given, use mcpConnected's "Connected / Not connected" */
   statusLabel?: string;
 }
 
 /**
- * 助手分页的顶栏:「收起面板」+ 标题 + 连接状态点,右边只有三个图标钮(显示思考 / 历史 / 设置)。
- * 「收起面板」跟着这一页所在的一侧走(dock/):在右侧放最左边,在左侧放最右边(三个图标钮之后)。
+ * Top bar of the assistant tab: "Collapse panel" + title + connection status dot, with only three
+ * icon buttons on the right (Show thinking / History / Settings).
+ * "Collapse panel" follows the side this tab is on (dock/): on the right it goes leftmost, on the
+ * left it goes rightmost (after the three icon buttons).
  *
- * 原来挤在这里的一整排控件都搬走了:简洁 / 详细进了 AI 设置的「显示」小节,
- * 驱动方式和模型去了输入区底部工具条,分工模式、一键配特效、诊断、新对话收进工具条上的「✦」菜单,
- * 剧本变成 rail 上的一页。顶栏只留每一轮都可能要点的东西。
+ * The whole row of controls that used to be crammed in here has moved away: Concise / Detailed went
+ * into the "Display" section of the AI settings, the driver and model went to the toolbar at the
+ * bottom of the input area, and work-split mode, one-click effects, diagnostics and new chat are
+ * tucked into the "✦" menu on the toolbar, and the script became a tab on the rail. The top bar keeps
+ * only what may need a click in every round.
  */
 export function ChatHeader(props: ChatHeaderProps) {
   const { title, mcpConnected, showThinking, onChangeShowThinking, onOpenHistory, onOpenSetup, settingsDisabled, statusLabel } = props;
@@ -46,7 +50,7 @@ export function ChatHeader(props: ChatHeaderProps) {
       <CollapsePanelButton placement="start" />
       <div className="ai-panel-title">
         <span className="ai-chat-title" title={title}>{title}</span>
-        {/* 连的是编辑台 MCP:断开时 AI 调不了任何编辑工具,只剩聊天 */}
+        {/* What it connects to is the editor MCP: when disconnected the AI cannot call any editing tool, leaving only chat */}
         <span className={`ai-status-dot${mcpConnected ? " is-connected" : ""}`} role="img" aria-label={conn} title={conn} />
       </div>
       <div className="ai-chat-actions">

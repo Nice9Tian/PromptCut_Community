@@ -1,11 +1,11 @@
 /**
- * 手机版界面共用的小件:提示气泡、确认框、底部面板(三档拖动)、子导航栏。
+ * Small shared pieces of the mobile app UI: hint bubble, confirm dialog, bottom sheet (three drag tiers), sub-navigation bar.
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./icons";
 import { tr } from "../i18n/index.ts";
 
-/* ---------------- 提示气泡 ---------------- */
+/* ---------------- Hint bubble ---------------- */
 
 const ToastCtx = createContext<(text: string) => void>(() => {});
 export const useToast = () => useContext(ToastCtx);
@@ -29,7 +29,7 @@ export function ToastHost({ children }: { children: ReactNode }) {
   );
 }
 
-/* ---------------- 确认框 ---------------- */
+/* ---------------- Confirm dialog ---------------- */
 
 export interface ConfirmAsk { text: string; ok: string; danger?: boolean; run: () => void }
 const ConfirmCtx = createContext<(ask: ConfirmAsk) => void>(() => {});
@@ -55,11 +55,11 @@ export function ConfirmHost({ children }: { children: ReactNode }) {
   );
 }
 
-/* ---------------- 底部面板 ---------------- */
+/* ---------------- Bottom sheet ---------------- */
 
 /**
- * 从底部弹出的面板。标题和分类标签固定在上面,内容区上下滑动(滚到头不带动后面的页面)。
- * 按住顶部横杠或面板头部拖:往下拖过一定距离 = 关闭,往上拖 = 展开到接近全屏,松手回弹到最近的一档(关闭 / 正常 / 展开)。
+ * A panel that pops up from the bottom. The title and category tabs stay fixed on top, and the content area scrolls vertically (scrolling to the end does not drag the page behind).
+ * Press and drag the top handle or the panel header: dragging down past a certain distance = close, dragging up = expand to nearly full screen, and on release it snaps back to the nearest tier (closed / normal / expanded).
  */
 export function Sheet(props: {
   id: string;
@@ -128,13 +128,13 @@ export function Sheet(props: {
   );
 }
 
-/* ---------------- 叠在舞台上的按钮 ---------------- */
+/* ---------------- Buttons overlaid on the stage ---------------- */
 
 /**
- * 叠在预览画面上的按钮(成员按钮)。画面下面是跨源的舞台 iframe,Chrome 有时把触屏的点按手势交给 iframe,
- * 按钮收得到 pointerdown / pointerup 却收不到合成的 click(2026-10-21 探针实测);有时又照常补发 click。
- * 所以触屏抬手后等一小会儿:click 来了就由 click 触发,没来才由抬手触发,只触发一次。
- * 不在抬手当时就触发:那样面板一打开,随后补发的 click 正好落在新出现的遮罩上,又把面板关了(同日账号项目实测)。
+ * The button overlaid on the preview image (the member button). Below the image is the cross-origin stage iframe, and Chrome sometimes hands the touch tap gesture to the iframe,
+ * so the button receives pointerdown / pointerup but not the synthesized click (measured by probe on 2026-10-21); at other times it still sends the click as usual.
+ * So on touch, wait a short moment after the finger lifts: if the click arrives, the click triggers; if not, the lift triggers, and it fires only once.
+ * It does not fire at the moment of lifting: then, once the panel opens, the click sent afterward lands right on the newly appeared mask and closes the panel again (measured the same day in an account project).
  */
 const CLICK_GRACE_MS = 350;
 export function StageButton(props: { className?: string; pcm?: string; title?: string; onTap: () => void; children: ReactNode }) {
@@ -162,11 +162,11 @@ export function StageButton(props: { className?: string; pcm?: string; title?: s
   );
 }
 
-/* ---------------- 子导航栏 ---------------- */
+/* ---------------- Sub-navigation bar ---------------- */
 
-export interface SubItem { icon: IconName; label: string; run: () => void; ref?: boolean; disabled?: boolean; pcm?: string; /** 置灰时的悬停说明 */ title?: string }
+export interface SubItem { icon: IconName; label: string; run: () => void; ref?: boolean; disabled?: boolean; pcm?: string; /** Hover hint when grayed out */ title?: string }
 
-/** 子导航栏:缩略预览和时间轴共用同一个组件;内容随选中对象变,换内容时滚回最左 */
+/** Sub-navigation bar: the thumbnail preview and the timeline share the same component; the content changes with the selected object, and scrolls back to the far left when the content changes */
 export function SubNav({ items, pcm }: { items: SubItem[]; pcm: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const key = items.map((i) => i.label).join("|");
@@ -182,14 +182,14 @@ export function SubNav({ items, pcm }: { items: SubItem[]; pcm: string }) {
   );
 }
 
-/** 缩略卡、素材格子、卡片格子的底色:按 id 算一个固定的色相(只为相邻的分得开,不代表内容) */
+/** Base color of thumbnail cards, media cells, and card cells: a fixed hue computed from the id (only so neighbors can be told apart, it does not represent the content) */
 export function tint(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
   return `hsl(${h} 42% 34%)`;
 }
 
-/** 时长:00:06 / 00:06.5 */
+/** Duration: 00:06 / 00:06.5 */
 export function fmtDur(d: number): string {
   d = Math.round(d * 10) / 10;
   const m = Math.floor(d / 60), s = d - m * 60;
@@ -197,7 +197,7 @@ export function fmtDur(d: number): string {
   return `${String(m).padStart(2, "0")}:${ss}`;
 }
 
-/** 时间码:00:00.0 */
+/** Timecode: 00:00.0 */
 export function fmtTc(t: number): string {
   const m = Math.floor(t / 60), s = t - m * 60;
   return `${String(m).padStart(2, "0")}:${s.toFixed(1).padStart(4, "0")}`;

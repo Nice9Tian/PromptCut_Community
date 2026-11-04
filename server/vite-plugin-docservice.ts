@@ -9,37 +9,54 @@ import { mediaDir } from "./vite-plugin-media";
 import { artifactStoreDir } from "./asset-service";
 
 /**
- * 本地文档服务(契约 `docs/plan/docservice-contract.md` 第 5 节、第 10 节)。
+ * Local document service (contract `docs/plan/docservice-contract.md` Section 5, Section 10).
  *
- * 同一份文档服务代码(`server/docservice/`)以**挂载模式**挂进 vite 的 http 服务器:
- * - WebSocket:`ws://<编辑器地址>/docservice`(子协议 `promptcut.v1`)。只接这一条路径的升级,
- *   vite 的 HMR 也走 `upgrade`,文档服务一概不碰别的路径;
- * - `GET /api/docservice/healthz`:与远程文档服务的 `/healthz` 相同的对象。受 `/api/**` 的同源守卫管
- *   (`vite-plugin-api-guard.ts`),只给本机和同源用。
+ * The same document service code (`server/docservice/`) is attached into vite's http server in
+ * **attached mode**:
+ * - WebSocket: `ws://<editor address>/docservice` (subprotocol `promptcut.v1`). Only accepts upgrades
+ *   for this single path; vite's HMR also uses `upgrade`, and document service never touches other
+ *   paths;
+ * - `GET /api/docservice/healthz`: same object as `/healthz` from remote document service. Governed
+ *   by same-origin guard for `/api/**` (`vite-plugin-api-guard.ts`), only for local machine and same
+ *   origin.
  *
- * 组装经 `docservice/shared-service.mjs`(`mode: 'lan'`,局域网主机;契约 `docs/plan/auth-contract.md`):
- * 渲染任务队列、项目版本、内容库按空间各起一份,另挂服务地址登记与共享项目模块。
- * 本机(`local`)空间的日志落在 `<root>/out/docservice`,共享项目的空间在 `<root>/out/docservice/tenants/<projectId>/`,
- * 凭证存储在 `<root>/out/docservice/auth/`(`vite.config.ts` 的 `fsDeny` 挡住了整个目录,不经静态服务暴露)。
- * 凭证存储按目录取进程内单例(`auth/store.mjs` 的 `credentialStoreFor`),素材服务(`vite-plugin-media.ts`)
- * 用同一份核对票据的代数与签名密钥。
+ * Assembled via `docservice/shared-service.mjs` (`mode: 'lan'`, LAN host; contract
+ * `docs/plan/auth-contract.md`):
+ * Render queue, project versions, and content store are each instantiated per space, additionally
+ * mounting service address registry and shared project modules.
+ * Logs for the local (`local`) space land in `<root>/out/docservice`, shared project spaces in
+ * `<root>/out/docservice/tenants/<projectId>/`, credentials stored in `<root>/out/docservice/auth/`
+ * (`fsDeny` in `vite.config.ts` blocks the entire directory, not exposed via static service).
+ * Credential stores are retrieved as in-process singletons per directory (`credentialStoreFor` in
+ * `auth/store.mjs`), and asset service (`vite-plugin-media.ts`) uses the same copy to verify ticket
+ * generation and signing key.
  *
- * 共享端点:`/docservice/shared/{create,lookup,challenge}`(HTTP,跨源 `*`),只有本机回环能建项目。
+ * Shared endpoints: `/docservice/shared/{create,lookup,challenge}` (HTTP, cross-origin `*`), only
+ * local loopback can create projects.
  *
- * 鉴权(按 `http-guard.mjs` 的 `clientAddressOf` 判真实对端,舞台端口的反向代理转来的也按它写进的真实对端算):
- * - 本机回环来的连接什么都不带:本机身份 `{ userId: 'local', tenantId: 'local', scope: 'local', role: 'page' }`;
- *   带 `promptcut.tenant.<projectId>` 的是本机声明(创建者自己的页面、预渲染进程加入本机托管的共享项目);
- * - 局域网来的连接只能凭证明或连接票据进入;
- * - 集群令牌在挂载模式下一律不认(局域网主机的管理接口只绑回环、不要令牌,契约第 10 节)。
- * 凭证存储加载不了时只打 `config.error { reason: 'auth-store' }`:本机身份照常,局域网来的一律 401;
- * 以局域网主机身份运行(`PROMPTCUT_LAN_HOST=1`)时则拒绝启动(SP 契约第 5 节)。
+ * Authentication (judging real peer via `clientAddressOf` in `http-guard.mjs`, requests forwarded
+ * from stage port reverse proxy are also evaluated by real peer written into it):
+ * - Connections from local loopback carry nothing: local identity
+ *   `{ userId: 'local', tenantId: 'local', scope: 'local', role: 'page' }`; those carrying
+ *   `promptcut.tenant.<projectId>` are local claims (creator's own page, prerender process
+ *   joining local hosted shared project);
+ * - Connections from LAN can only enter with proof or connection tickets;
+ * - Cluster tokens are never recognized in attached mode (the management interface of a LAN host
+ *   only binds loopback and requires no token, contract Section 10).
+ * When credential store fails to load, it only logs `config.error { reason: 'auth-store' }`: local
+ * identity proceeds as usual, while LAN requests all receive 401; when running as a LAN host
+ * (`PROMPTCUT_LAN_HOST=1`), startup is refused (SP contract Section 5).
  *
- * **局域网主机**(契约 `docs/plan/shared-project-contract.md` 第 4、5 节):`PROMPTCUT_LAN_HOST=1` 时 `vite.config.ts` 让编辑器绑
- * `0.0.0.0`,文档服务与素材服务挂在同一个 http 服务器上,随之对局域网可达。编辑器绑了非回环地址、且有共享项目时,
- * 按 `lan/discovery.mjs` 在本网段广播与应答(`createLanHosting`);项目删光或编辑器退出时停。管理接口只认回环(上面第三条)。
+ * **LAN host** (contract `docs/plan/shared-project-contract.md` Sections 4 and 5): when
+ * `PROMPTCUT_LAN_HOST=1`, `vite.config.ts` has editor bind `0.0.0.0`, with document service and
+ * asset service mounted on the same http server, thereby becoming reachable over LAN. When editor
+ * binds a non-loopback address and has shared projects, it broadcasts and responds on local subnet
+ * via `lan/discovery.mjs` (`createLanHosting`); it stops when all projects are deleted or editor
+ * exits. Management interface only recognizes loopback (item 3 above).
  *
- * 文档服务只在编辑器进程里一份,预渲染进程(`vite.prerender.config.ts`)不挂。
- * 任何一步出错都只打日志,不影响编辑器启动。
+ * Document service has only one instance in editor process, not mounted in prerender process
+ * (`vite.prerender.config.ts`).
+ * Any error at any step only logs, without affecting editor startup.
  */
 
 const WS_PATH = "/docservice";
@@ -50,7 +67,10 @@ const DISCOVER_PATH = "/api/docservice/lan-discover";
 
 type Log = (event: string, fields: object) => void;
 
-/** 连接开合、握手被拒这些事件照常打;别的也打,都带 `[docservice]` 前缀,一行一条 */
+/**
+ * Connection open/close, handshake rejection, etc. are logged as usual; others are also logged,
+ * all with `[docservice]` prefix, one line each
+ */
 const log: Log = (event, fields) => {
   try {
     console.info("[docservice]", event, JSON.stringify(fields));
@@ -77,16 +97,21 @@ function sendJson(res: ServerResponse, status: number, body: object, head: boole
 }
 
 /**
- * 给 http 服务器上**每一个**升级请求的 socket 挂一个空的 `error` 监听(契约第 10 节第 14 条)。
+ * Attach an empty `error` listener to the socket of **every** upgrade request on the http server
+ * (contract Section 10, item 14).
  *
- * Node 把 `upgrade` 交给监听者之后就不再兜底 socket 的错误。vite 的 HMR 监听遇到不是自己的路径直接 return,
- * 既不回包也不挂 `error` 监听;这样的握手挂着时对端一重置(`ECONNRESET`),就是未处理的 `error` 事件,
- * 整个 dev server 退出(实测:正常模式任意非 HMR 路径、无头实例的 `/docservice` 都能打崩)。
+ * Once Node hands `upgrade` over to listeners, it no longer provides a fallback for socket errors.
+ * When vite's HMR listener encounters a path not belonging to it, it returns directly without sending
+ * a response or attaching an `error` listener; when such a pending handshake has its peer reset
+ * (`ECONNRESET`), an unhandled `error` event occurs, causing the entire dev server to exit (verified
+ * by test: any non-HMR path in normal mode or `/docservice` of a headless instance can crash it).
  *
- * 这个监听只挂错误监听:不回包、不关 socket、不读数据,所以不影响 HMR 和别的处理器,
- * 挂在 vite 的 HMR 监听之前或之后都一样安全——`error` 只会在 `upgrade` 事件同步分发完之后才发生,
- * 那时所有监听者都已经跑过。这里用 `prependListener` 放到最前,只是为了让它先于任何可能同步抛错的处理器挂上。
- * 同一个 socket 只挂一次(WeakSet 去重)。
+ * This listener only attaches an error listener: it does not respond, close the socket, or read data,
+ * so it does not affect HMR or other handlers; attaching it before or after vite's HMR listener is
+ * equally safe: `error` will only occur after the `upgrade` event has finished synchronous dispatch,
+ * by which time all listeners have already run. Using `prependListener` to put it at the very front
+ * here is solely to attach it prior to any handler that might synchronously throw.
+ * Attach only once per socket (deduplicated via WeakSet).
  */
 function guardUpgradeSockets(httpServer: NonNullable<import("vite").ViteDevServer["httpServer"]>) {
   const guarded = new WeakSet<Duplex>();
@@ -99,11 +124,11 @@ function guardUpgradeSockets(httpServer: NonNullable<import("vite").ViteDevServe
   httpServer.once("close", () => httpServer.off("upgrade", onUpgrade));
 }
 
-/** 停用模式:不建文档服务,两条路由明确回 503 */
-/** 编辑器以局域网主机身份运行(`PROMPTCUT_LAN_HOST=1`,`vite.config.ts` 据此绑 `0.0.0.0`) */
+/** Disabled mode: does not create document service, both routes explicitly return 503 */
+/** Editor runs as LAN host (`PROMPTCUT_LAN_HOST=1`, `vite.config.ts` binds `0.0.0.0` accordingly) */
 export const lanHostRequested = () => process.env.PROMPTCUT_LAN_HOST === "1";
 
-/** 监听地址是不是只在回环上(`127.x`、`::1`、`localhost`);`0.0.0.0`、`::`、局域网地址都不是 */
+/** Whether listen address is loopback-only (`127.x`, `::1`, `localhost`); `0.0.0.0`, `::`, LAN are not */
 export function isLoopbackListen(address: string | null | undefined): boolean {
   const a = String(address ?? "").toLowerCase();
   return a === "localhost" || isLoopbackAddress(a);
@@ -113,15 +138,20 @@ type LanStore = { list(): Array<{ projectId: string; name: string; mode: string 
 type LanHost = { start(): Promise<void>; stop(): Promise<void>; refresh(): Promise<void>; running(): boolean };
 
 /**
- * 局域网发现的主机端(契约 `docs/plan/shared-project-contract.md` 第 4 节,`lan/discovery.mjs`):
- * - 编辑器绑了非回环地址(`PROMPTCUT_LAN_HOST=1`,或 `npm run dev` 的 `--host 0.0.0.0`)、且凭证存储里有共享项目时,
- *   开始广播与应答;挂载模式的凭证存储里只有局域网模式的项目(托管模式的项目在托管端);
- * - 项目建成(`shared/create`)、删掉(创建者操作 `delete`)时重新核对:还有项目就立即通告一次,一个都不剩就停;
- * - 编辑器只绑回环时不广播:通告出去的地址别人连不上;
- * - 编辑器退出(http 服务器关闭)时停。
- * UDP 端口打不开等错误只打日志(`[docservice] lan.error`),不影响编辑器。
+ * Host side of LAN discovery (contract `docs/plan/shared-project-contract.md` Section 4,
+ * `lan/discovery.mjs`):
+ * - When editor binds a non-loopback address (`PROMPTCUT_LAN_HOST=1`, or `--host 0.0.0.0` in
+ *   `npm run dev`) and there are shared projects in credential store, start broadcasting and
+ *   responding; credential store in attached mode only holds LAN mode projects (hosted mode projects
+ *   are on the hosted side);
+ * - When a project is created (`shared/create`) or deleted (creator action `delete`), reconcile
+ *   again: if projects remain, announce immediately once; stop if none are left;
+ * - When editor only binds loopback, do not broadcast: others cannot connect to the announced address;
+ * - Stop when editor exits (http server closes).
+ * Errors such as failing to open the UDP port only log (`[docservice] lan.error`), without affecting
+ * the editor.
  *
- * `createHost` 只给测试注入(缺省 `lan/discovery.mjs` 的 `createLanHost`)。
+ * `createHost` is only for test injection (defaults to `createLanHost` in `lan/discovery.mjs`).
  */
 type HttpServerLike = Pick<import("node:http").Server, "address" | "once" | "listening">;
 type LanHostOptions = { projects: () => Array<{ projectId: string; name: string; mode: string }>; hostDeviceName: string; servicePort: number; log: Log };
@@ -192,7 +222,7 @@ export function createLanHosting(
   });
 
   return {
-    /** 凭证存储与本机设备名就绪;若 http 服务器已经在听,立即核对一次 */
+    /** Credential store and local device name ready; if http server is already listening, reconcile immediately once */
     attach(options: { store: LanStore | null; hostDeviceName: string }) {
       store = options.store;
       hostDeviceName = options.hostDeviceName;
@@ -212,13 +242,14 @@ export function docservicePlugin(): Plugin {
         log("docservice.skip", { reason: "no-http-server" });
         return;
       }
-      // 防止没人接的升级被对端重置时把 dev server 带崩
+      // Prevent unhandled upgrades from crashing the dev server when reset by the peer
       guardUpgradeSockets(httpServer);
 
       let service: { health(): object; close(): Promise<void> } | null = null;
       let handleShared: ((req: IncomingMessage, res: ServerResponse) => boolean) | null = null;
       let storeMissing = false;
-      // 局域网发现的主机端(契约 `docs/plan/shared-project-contract.md` 第 4 节):项目建成、删掉时由共享端点回调
+      // Host side of LAN discovery (contract `docs/plan/shared-project-contract.md` Section 4):
+      // called back by shared endpoints when projects are created or deleted
       const lan = createLanHosting(httpServer);
       try {
         const [{ createSharedDocService }, { credentialStoreFor }, { localDeviceInfo }, { recoveryHttp }] = await Promise.all([
@@ -228,7 +259,7 @@ export function docservicePlugin(): Plugin {
           import("./recovery/http.mjs"),
         ]);
         const dataDir = prepareLocalDocumentDir(server.config.root);
-        // 凭证存储:进程内单例,素材服务按同一个目录取到同一份
+        // Credential store: in-process singleton, asset service retrieves the same copy by directory
         let store: object | null = null;
         try {
           store = credentialStoreFor(path.join(dataDir, "auth"), { log });
@@ -238,7 +269,8 @@ export function docservicePlugin(): Plugin {
         }
         const isLoopback = (req: IncomingMessage) => {
           const address = clientAddressOf(req);
-          // 真正的发起方是本机:对端回环且转发头里每一跳都是回环(`auth/origin.mjs`,契约第 10 节)
+          // True initiator is local: peer is loopback and every hop in forwarding headers is loopback
+          // (`auth/origin.mjs`, contract Section 10)
           return address !== null && isLocalOrigin(req, address);
         };
         const built = createSharedDocService({
@@ -258,7 +290,8 @@ export function docservicePlugin(): Plugin {
         service = built.service;
         handleShared = built.handleHttp;
         const recDir = recoveryDir(server.config.root);
-        // 局域网项目的开启、刷新、重开都走它;闭源版的表在此之上多托管登记与搬迁
+        // Enabling, refreshing, and reopening LAN projects all go through it; the commercial edition
+        // table adds hosted registration and moves on top of this
         const createRecovery = typeof buildExtensions.recoveryHttp?.createMiddleware === "function" ? buildExtensions.recoveryHttp.createMiddleware : recoveryHttp;
         server.middlewares.use(createRecovery({
           dir: recDir, dataDir, store, device: localDeviceInfo(),
@@ -273,13 +306,15 @@ export function docservicePlugin(): Plugin {
         return;
       }
 
-      // 局域网主机(PROMPTCUT_LAN_HOST=1)绑非回环而凭证存储没加载:拒绝启动(SP 契约第 5 节、M6a 失败即关)
+      // LAN host (PROMPTCUT_LAN_HOST=1) binds non-loopback but credential store is not loaded:
+      // refuse startup (SP contract Section 5, M6a fail-closed)
       if (lanHostRequested() && storeMissing) {
         log("config.error", { reason: "auth-store", lanHost: true });
-        throw new Error("局域网主机(PROMPTCUT_LAN_HOST=1)要求凭证存储可用:<root>/out/docservice/auth 读不了,拒绝启动");
+        throw new Error("LAN host (PROMPTCUT_LAN_HOST=1) requires a usable credential store: <root>/out/docservice/auth is unreadable, refusing to start");
       }
 
-      // 共享端点的预检要抢在 vite 自带的 cors 中间件前面答(它不认局域网的源,理由同 asset-service.ts 的 assetPreflightMiddleware)
+      // Preflight for shared endpoints must answer before vite's built-in cors middleware (which does
+      // not accept LAN origins, for the same reason as assetPreflightMiddleware in asset-service.ts)
       server.middlewares.stack.unshift({
         route: "",
         handle: ((req: IncomingMessage, res: ServerResponse, next: () => void) => {
@@ -292,10 +327,12 @@ export function docservicePlugin(): Plugin {
         if (!handleShared!(req, res)) next();
       });
 
-      // 页面的「新建 / 打开共享项目」要的两条(C6.5 D11,`src/editor/sync/`):
-      // - `GET /api/docservice/device`:本机设备信息,以及编辑器是否绑在局域网上(局域网模式要以 PROMPTCUT_LAN_HOST=1 重启编辑器);
-      // - `GET /api/docservice/lan-discover?name=`:浏览器发不了 UDP,由编辑器进程替它在本网段查找(`lan/discovery.mjs`,限时 3 s)。
-      // 两条都在 `/api/**` 的同源守卫后面,只给本机和同源用。
+      // Two routes needed by page "Create / open shared project" (C6.5 D11, `src/editor/sync/`):
+      // - `GET /api/docservice/device`: local device info, and whether editor is bound to LAN (LAN mode
+      //   requires restarting editor with PROMPTCUT_LAN_HOST=1);
+      // - `GET /api/docservice/lan-discover?name=`: browser cannot send UDP, so editor process searches
+      //   on local subnet on its behalf (`lan/discovery.mjs`, 3 s timeout).
+      // Both are behind the same-origin guard for `/api/**`, only for local machine and same origin.
       server.middlewares.use(async (req, res, next) => {
         const p = apiPath(req.url);
         if (p !== DEVICE_PATH && p !== DISCOVER_PATH) return next();

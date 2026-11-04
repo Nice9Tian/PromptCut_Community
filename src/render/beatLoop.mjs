@@ -1,21 +1,23 @@
 /**
- * K4 节拍循环和 K6 一秒窗口里的纯算那一半。循环本身（等真帧、推时钟、post 事件）
- * 留在 `StageView.tsx` 的闭包里；拆到这里是为了能 `node --test` —— `StageView.tsx`
- * 带 JSX 和卡片注册表，进不了 node。
+ * K4 tick loop and the pure-computation half of the K6 one-second window. The loop itself
+ * (waiting for real frames, advancing the clock, posting events) remains in the closure of
+ * `StageView.tsx`; split here to allow `node --test`: `StageView.tsx` includes JSX and the card
+ * registry, so it cannot enter node.
  */
 import { pipelineAt } from './pipelinePlan.mjs';
 
-/** K6 的窗口长度(ms) */
+/** K6 window length (ms) */
 export const K6_WINDOW_MS = 1000;
 
 /**
- * 第 `n` 拍（从 1 数）落在哪一秒。拍序号按帧格算，`sec` 一律是 `帧号 / fps` ——
- * 连续累加浮点会飘。走到或越过片尾就是最后一拍，`sec` 钳在 `duration` 上。
+ * Which second tick `n` (1-indexed) lands on. Tick sequence numbers are calculated by frame grid;
+ * `sec` is always `frame / fps`: continuous floating-point accumulation drifts. Reaching or
+ * passing the end of the video marks the final tick, with `sec` clamped to `duration`.
  *
- * @param {number} fromFrame 起播那一帧（`Math.round(fromSec × fps)`）
- * @param {number} n 拍序号，从 1 起
+ * @param {number} fromFrame Frame where playback starts (`Math.round(fromSec × fps)`)
+ * @param {number} n Tick sequence number, 1-indexed
  * @param {number} fps
- * @param {number} duration 项目总时长（秒）
+ * @param {number} duration Total project duration (seconds)
  * @returns {{ sec: number, frame: number, ended: boolean }}
  */
 export function beatAt(fromFrame, n, fps, duration) {
@@ -26,14 +28,16 @@ export function beatAt(fromFrame, n, fps, duration) {
 }
 
 /**
- * 一拍的活干完之后，下一拍的绝对时刻。**慢帧就等**：只有这一拍的活本身超过了
- * `nextDue` 才把时间轴整体后移（`playStart += 超出量`），不补、不跳帧、不往前冲；
- * 没超就原样返回，由调用方等到 `nextDue`。
+ * The absolute timestamp of the next tick after finishing the work of one tick. **Wait for slow
+ * frames**: the timeline is shifted backward overall (`playStart += excess`) only if the work of
+ * this tick itself exceeds `nextDue`; no catch-up, no frame skipping, and no rushing ahead;
+ * if not exceeded, returns as is, and the caller waits until `nextDue`.
  *
- * @param {number} playStart 起播的真墙钟（可能已被前面的慢拍后移过）
- * @param {number} n 刚做完的拍序号
- * @param {number} period 一拍的毫秒数（`1000 / fps`）
- * @param {number} workEnd 这一拍的活干完的真墙钟
+ * @param {number} playStart Actual wall-clock time when playback started (may have been shifted
+ *   backward by earlier slow ticks)
+ * @param {number} n Sequence number of the tick just completed
+ * @param {number} period Duration of one tick in milliseconds (`1000 / fps`)
+ * @param {number} workEnd Actual wall-clock time when this tick's work finished
  * @returns {{ playStart: number, nextDue: number, late: boolean }}
  */
 export function scheduleNextBeat(playStart, n, period, workEnd) {
@@ -53,17 +57,22 @@ export function createK6State() {
 }
 
 /**
- * 记一拍的账（K6），并判这一刻要不要降级。**只降不升**。
+ * Account for one tick (K6) and determine whether to downgrade at this moment. **Downgrade only,
+ * never upgrade**.
  *
- * - **超时**只算每拍耗时超出 1/fps 的那一部分；窗口只留最近 `K6_WINDOW_MS` 毫秒。
- * - **`pending`（已降级、死素材还没就绪）的卡这一拍的耗时不计入超时**，也不当候选：
- *   它照常活渲、照常把这一拍拖慢，要是还算进去，窗口每秒都爆、每秒再降一张，
- *   直到轻管线为空。
- * - 窗口里至少两拍、累计超时 > 1/fps，就把本窗口**实测**累计耗时最大的那张**轻卡**
- *   降级（重卡本来就在贴死素材，降它没有意义）；同分按 clipId 定序。
- * - 降了一张就清空窗口：下一张要重新攒够超时才降，不然一秒之内会连降好几张。
+ * - **Overtime** only counts the portion of each tick's duration that exceeds 1/fps; the window
+ *   keeps only the most recent `K6_WINDOW_MS` milliseconds.
+ * - **The duration of `pending` cards (downgraded, dead asset not yet ready) in this tick is not
+ *   counted toward overtime**, nor considered as candidates: it live renders as usual and slows
+ *   down this tick as usual; if counted in, the window would blow up every second, downgrading
+ *   another card every second until the light pipeline is empty.
+ * - If there are at least two ticks in the window and accumulated overtime > 1/fps, downgrade the
+ *   **light card** with the largest **measured** cumulative duration in this window (heavy cards
+ *   are already pasting dead assets, downgrading them is meaningless); ties are ordered by clipId.
+ * - Clear the window after downgrading one: the next one must accumulate enough overtime again
+ *   before downgrading, otherwise multiple cards would be downgraded within a single second.
  *
- * 直接改 `state`。回要降的那张 clipId，没有就 `null`。
+ * Mutates `state` directly. Returns the clipId of the card to downgrade, or `null` if none.
  *
  * @param {K6State} state
  * @param {{ at: number, beatCost: number, byClip: Map<string, number>, fps: number, sec: number, plan: any }} beat

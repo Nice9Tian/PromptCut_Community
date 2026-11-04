@@ -52,7 +52,7 @@
           "proc"
         ],
         "name": "PromptCut Project",
-        "description": "PromptCut 项目文件",
+        "description": "PromptCut project file",
         "mimeType": "application/json",
         "role": "Editor"
       }

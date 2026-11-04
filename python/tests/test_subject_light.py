@@ -1,7 +1,7 @@
-"""light 档：抽帧/缩放这些纯 numpy 的部分逐个验；真推理的部分在引擎缺失时跳过。
+"""light tier: the pure-numpy parts such as frame grabbing/scaling are verified one by one; the parts running real inference are skipped when the engine is missing.
 
-内置解释器只有 numpy，所以这里默认只跑得到「几何」那几组；装了 onnxruntime
-并且 PROMPTCUT_MODELS 指到真权重时，才会连 YuNet / RT-DETR 一起验。
+The built-in interpreter has only numpy, so by default only the "geometry" groups run here; when onnxruntime is installed
+and PROMPTCUT_MODELS points at the real weights, YuNet / RT-DETR are verified too.
 """
 
 import os
@@ -23,17 +23,17 @@ def models_dir():
 
 
 def require_light():
-    """没装 onnxruntime 或没有权重就跳过，不算失败。"""
+    """Skip if onnxruntime is not installed or there are no weights; this does not count as a failure."""
     try:
         import onnxruntime  # noqa: F401
     except Exception as exc:
-        raise unittest.SkipTest(f"没装 onnxruntime：{exc}")
+        raise unittest.SkipTest(f"onnxruntime is not installed: {exc}")
     md = models_dir()
     if not md:
-        raise unittest.SkipTest("没设 PROMPTCUT_MODELS，找不到权重")
+        raise unittest.SkipTest("PROMPTCUT_MODELS is not set, cannot find the weights")
     for name in (YUNET_FILE, RTDETR_FILE):
         if not os.path.isfile(os.path.join(md, name)):
-            raise unittest.SkipTest(f"缺权重 {name}")
+            raise unittest.SkipTest(f"Missing weights {name}")
     return md
 
 
@@ -41,7 +41,7 @@ class TestGeometry(unittest.TestCase):
     def test_target_size_only_shrinks(self):
         self.assertEqual(F.target_size(1920, 1080, 640), (640, 360))
         self.assertEqual(F.target_size(1080, 1920, 640), (360, 640))
-        self.assertEqual(F.target_size(320, 240, 640), (320, 240))  # 小的不放大
+        self.assertEqual(F.target_size(320, 240, 640), (320, 240))  # small ones are not upscaled
 
     def test_resize_keeps_constant_image(self):
         img = np.full((30, 40, 3), 137, dtype=np.uint8)
@@ -55,7 +55,7 @@ class TestGeometry(unittest.TestCase):
         self.assertTrue(np.array_equal(out, img.astype(np.float32)))
 
     def test_resize_gradient_stays_monotonic(self):
-        """横向渐变缩放后仍然是单调递增的 —— 采样点算错会出现来回抖。"""
+        """A horizontal gradient is still monotonically increasing after resizing; miscomputed sample points would make it jitter back and forth."""
         row = np.linspace(0, 255, 64, dtype=np.float32)
         img = np.repeat(row[None, :, None], 4, axis=0).repeat(3, axis=2).astype(np.uint8)
         out = F.resize_bilinear(img, 21, 4)[0, :, 0]
@@ -66,7 +66,7 @@ class TestGeometry(unittest.TestCase):
         canvas, scale = F.letterbox(img, 640)
         self.assertEqual(canvas.shape, (640, 640, 3))
         self.assertAlmostEqual(scale, 3.2, places=2)
-        # 右下补的黑边确实是 0，上半部分是原图的值
+        # The black padding at the bottom right is indeed 0, and the upper part holds the values of the original image
         self.assertTrue(np.all(canvas[400:, :] == 0))
         self.assertTrue(np.allclose(canvas[10, 10], 200.0))
 
@@ -93,14 +93,14 @@ class TestArgs(unittest.TestCase):
     def test_parse_times(self):
         self.assertEqual(parse_times("1.2,5.4, 8.8"), [1.2, 5.4, 8.8])
         self.assertEqual(parse_times(""), [])
-        self.assertEqual(parse_times("-3,0"), [0.0, 0.0])  # 负数夹到 0
+        self.assertEqual(parse_times("-3,0"), [0.0, 0.0])  # negatives are clamped to 0
 
     def test_parse_times_strict_collects_bad_chunks(self):
-        """看不懂的片段要被单独收走，好让 detect 报「参数写错了」而不是「内部故障」。"""
+        """Fragments that cannot be parsed must be collected separately, so that detect reports "bad argument" rather than "internal failure"."""
         self.assertEqual(parse_times_strict("1.2,abc,5.4"), ([1.2, 5.4], ["abc"]))
-        self.assertEqual(parse_times_strict("abc,第二秒")[1], ["abc", "第二秒"])
+        self.assertEqual(parse_times_strict("abc,second-two")[1], ["abc", "second-two"])
         self.assertEqual(parse_times_strict("1.2,5.4"), ([1.2, 5.4], []))
-        # nan / inf 是 float() 认的，但不是秒数
+        # nan / inf are accepted by float(), but they are not seconds
         self.assertEqual(parse_times_strict("nan,inf,-inf,1")[0], [1.0])
         self.assertEqual(parse_times_strict("nan,inf,-inf,1")[1], ["nan", "inf", "-inf"])
 
@@ -108,22 +108,22 @@ class TestArgs(unittest.TestCase):
         both = {"light": {"ready": True}, "full": {"ready": True}}
         only_light = {"light": {"ready": True}, "full": {"ready": False}}
         neither = {"light": {"ready": False}, "full": {"ready": False}}
-        # 默认走 light（CPU 上快一个数量级）
+        # By default use light (an order of magnitude faster on CPU)
         self.assertEqual(pick_engine(both, None, None), "light")
-        # 给了提示词且 full 在，才升到 full
+        # Only step up to full when a prompt is given and full is present
         self.assertEqual(pick_engine(both, None, "dog ."), "full")
-        # full 没装时提示词也只能走 light
+        # When full is not installed, even a prompt can only go through light
         self.assertEqual(pick_engine(only_light, None, "dog ."), "light")
-        # 显式指定优先
+        # An explicit choice takes priority
         self.assertEqual(pick_engine(both, "full", None), "full")
         self.assertIsNone(pick_engine(neither, None, None))
 
 
 class TestEngines(unittest.TestCase):
-    """真推理：需要 onnxruntime + 权重，缺了就跳过。"""
+    """Real inference: needs onnxruntime + weights, skipped if either is missing."""
 
     def _person_frame(self):
-        """合成一帧：灰底 + 右侧一个竖长方形。只验管线通不通，不验精度。"""
+        """Synthesize one frame: gray background + a vertical rectangle on the right. It only checks whether the pipeline works, not accuracy."""
         img = np.full((360, 640, 3), 90, dtype=np.uint8)
         img[80:330, 380:520] = 200
         return img
@@ -149,7 +149,7 @@ class TestEngines(unittest.TestCase):
         for b in out[0]:
             self.assertEqual(b["label"], "person")
             self.assertGreaterEqual(b["conf"], rtdetr.DEFAULT_THRESHOLD)
-            # 框必须落在传入帧的像素坐标系里（宽 640 高 360），不是归一化值
+            # The box must be in the pixel coordinate system of the frame passed in (640 wide, 360 high), not normalized values
             self.assertLessEqual(b["x"] + b["w"], 640 * 1.05)
             self.assertLessEqual(b["y"] + b["h"], 360 * 1.05)
 

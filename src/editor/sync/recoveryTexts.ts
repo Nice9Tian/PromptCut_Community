@@ -1,20 +1,20 @@
 import { tr } from "../../i18n/index.ts";
 /**
- * 打开旧云端项目文件、缺失素材这两件事里给用户看的字，集中在这一处。
+ * The text shown to users for two cases, opening an old cloud project file and missing media, is gathered in this one place.
  *
- * 这些都是界面文字（一级语义），任务书 `docs/plan/account-binding-task.md` 里没有逐字的原文，
- * 现在的写法是草稿，等用户定稿后只改这一个文件（草稿与出处列在 `docs/reports/AGENT-v18-missing.md`「要用户定的事」）。
- * 画面占位上的「找不到素材xxx」是任务书原文，在 `src/render/MissingMaterial.tsx`，不在这里。
+ * These are all UI texts (first-level semantics); the task brief `docs/plan/account-binding-task.md` has no verbatim wording,
+ * so the current wording is a draft, and once the user finalizes it only this one file needs changing (drafts and sources are listed in `docs/reports/AGENT-v18-missing.md` "Things the user must decide").
+ * The "Cannot find media xxx" on the canvas placeholder is the task brief's original wording, in `src/render/MissingMaterial.tsx`, not here.
  */
 export const CLOUD_GONE_TEXT = {
-  /** 转成本地项目后提示一次的窗口 */
+  /** Window for the one-time notice after converting to a local project */
   title: tr("Cloud project no longer exists"),
   body: tr("The cloud project for this file has been deleted from the cloud. The content saved in the file was converted into a local project and multi-user collaboration is turned off; you can turn it back on in project settings if needed."),
   keep: tr("The original file is unchanged; saving will save it as a new file."),
   ok: tr("Got it"),
-  /** 协作状态条：服务明确答了没有这个项目，但拿不到「已删除」的证明 */
+  /** Collaboration status bar: the service explicitly answered that this project does not exist, but no "deleted" proof could be obtained */
   missingUnconfirmed: tr("The cloud could not find this project and cannot confirm it was deleted; local content has been kept and was not converted to a local project."),
-  /** 协作状态条：回来的「已删除」证明核对不过 */
+  /** Collaboration status bar: the returned "deleted" proof failed verification */
   proofRejected: tr("The deletion proof returned by the cloud failed verification, possibly because it connected to a different service; local content has been kept and was not converted to a local project."),
 } as const;
 

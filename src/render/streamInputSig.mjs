@@ -1,36 +1,61 @@
 /**
- * 层表 `streams` 表每一行的「输入签名」(`inputSig`):生成这条轨道流的那一版项目输入的摘要。在线页面按当前项目算同一个签名,
- * 对不上就是旧输入的流,不播(`mechanism/rendering.md`「兜底顺序」的「旧输入的层不贴」,这里用在流上)。
+ * The "input signature" (`inputSig`) for each row of the layer table `streams` table: digest of
+ * that revision of project inputs that generated this track stream. The online page calculates the
+ * same signature against the current project; if it mismatches, it is a stream from stale inputs
+ * and will not be played (`mechanism/rendering.md` "Fallback order" rule "layers from stale inputs
+ * are not pasted", applied here to streams).
  *
- * 为什么不直接用快照层的 `clipInputSig`(`layerInputSig.mjs`):流和快照装的东西不一样。
- *   - 快照按片段的**本地帧**取,位置、缩放、淡入淡出都不在快照里,所以片段整帧平移、挪位置都照贴;
- *   - 流按**全局帧号**分段(`streamPlayer.ts`),片段在时间轴上挪了,旧流的每一帧就都对不上时刻;
- *   - 组流画在舞台坐标里,成员的摆放(位置、缩放、旋转、不透明度、淡入淡出、motion)和成员之间的上下顺序都画进了流。
+ * Why not directly use the snapshot layer's `clipInputSig` (`layerInputSig.mjs`): streams and
+ * snapshots contain different things.
+ *   - Snapshots are sampled by a clip's **local frames**, with position, scale, and fade not
+ *     included in the snapshot, so the clip can still be pasted even when shifted by whole frames
+ *     or moved;
+ *   - Streams are segmented by **global frame numbers** (`streamPlayer.ts`), so if a clip moves on
+ *     the timeline, every frame of the stale stream will no longer match the time;
+ *   - Group streams are drawn in stage coordinates; member placement (position, scale, rotation,
+ *     opacity, fade, motion) and stacking order between members are all drawn into the stream.
  *
- * 进签名:
- *   - 每个成员的 `clipInputSig`(片段自己的输入,口径见 `layerInputSig.mjs`);
- *   - 每个成员在时间轴上的采样窗口:第一帧的全局帧号、帧数(同预渲染的 `cardSampling`)、被项目时长截到哪一帧;
- *   - 组流另加:每个成员的框、不透明度、淡入淡出、motion;成员按画家顺序排的 id 序列;夹在成员之间、时间上重叠的别的画面层
- *     (写层表时一定是空的;页面上不空,说明有人往组中间插了一层,这条组流的上下关系已经不对)。
- *   - 依赖下层的流(`kind: 'below'`,`docs/plan/prerender-products-contract.md` 第 5.2 节)另加:目标卡的框、不透明度、淡入淡出、motion
- *     (这种流按舞台坐标产,外观画进流里);画家顺序排在目标卡下面、时间上和它有重叠的每一个画面层(`belowLayersOf`)各自的
- *     片段签名、采样窗口、框、不透明度、淡入淡出、motion,按画家顺序排成一列。下层任一层改了参数、位置、时间、上下顺序,
- *     或者下层多了少了一层,签名就变;排在目标卡上面的层怎么改都不进签名。
- * 不进签名:卡片源码、字体、环境(页面拿不到同口径的值),这几样变了靠渲染节点换键重写层表。
+ * Included in signature:
+ *   - `clipInputSig` of each member (the clip's own input; see `layerInputSig.mjs` for criteria);
+ *   - Sampling window of each member on the timeline: global frame number of the first frame, frame
+ *     count (same as `cardSampling` in prerender), and which frame it is truncated to by the
+ *     project duration;
+ *   - Group streams additionally include: bounding box, opacity, fade, and motion of each member;
+ *     id sequence of members sorted in painter's order; other frame layers sandwiched between
+ *     members that overlap in time (must be empty when writing the layer table; if not empty on the
+ *     page, someone inserted a layer into the middle of the group, and this group stream's
+ *     stacking order is already invalid).
+ *   - Below-dependent streams (`kind: 'below'`, Section 5.2 of
+ *     `docs/plan/prerender-products-contract.md`) additionally include: target card's bounding box,
+ *     opacity, fade, and motion (such streams are produced in stage coordinates, with appearance
+ *     drawn into the stream); the clip signature, sampling window, bounding box, opacity, fade,
+ *     and motion for each frame layer sorted below the target card in painter's order and
+ *     overlapping it in time (`belowLayersOf`), listed in painter's order. If any lower layer
+ *     changes its parameters, position, time, or stacking order, or if lower layers are added or
+ *     removed, the signature changes; changes to layers above the target card are never included in
+ *     the signature.
+ * Excluded from signature: card source code, fonts, and environment (the page cannot obtain values
+ * by the same criteria); when these change, render nodes rewrite the layer table with new keys.
  *
- * 签名带算法版本前缀(`s1-`),比法同 `inputSigStale`:两边都有、同一版本、而且不同才算过期。
- * 纯函数;服务端(`server/artifact-transfer.mjs` 的 `layerMapOf`)与页面(`snapshotSource.ts`)共用这一份。
+ * Signatures carry an algorithm version prefix (`s1-`), compared using the same logic as
+ * `inputSigStale`: considered stale only when present on both sides, sharing the same version, and
+ * differing.
+ * Pure function; shared between the server (`layerMapOf` in `server/artifact-transfer.mjs`) and
+ * the page (`snapshotSource.ts`).
  */
 import { cardJson } from "../kernel/cardGraph.mjs";
 import { hashString } from "./changedClips.mjs";
 import { clipInputSig } from "./layerInputSig.mjs";
 import { flatPlanProject } from "../kernel/cutFlatten.mjs";
 
-/** 签名算法的版本;改了进签名的内容就加一 */
+/** Version of signature algorithm; increment by one when signature inputs change */
 export const STREAM_INPUT_SIG_VERSION = 1;
 const PREFIX = `s${STREAM_INPUT_SIG_VERSION}-`;
 
-/** 片段的采样窗口(与 `snapshotFeed.ts` 的 `samplingOf`、预渲染的 `cardSampling` 同一个算式),再按项目时长截断 */
+/**
+ * Clip sampling window (same formula as `samplingOf` in `snapshotFeed.ts` and `cardSampling` in
+ * prerender), then truncated by project duration
+ */
 function windowOf(clip, fps, total) {
   const start = Number(clip.start) || 0;
   const end = Number(clip.end) || 0;
@@ -41,28 +66,39 @@ function windowOf(clip, fps, total) {
 }
 
 /**
- * 「时间上有没有重叠」放宽的量(秒):卡片在入点前这么久就挂上(同 `frameWindow.mjs` 的 `CARD_MOUNT_LEAD`)。
- * 只用来判哪些下层算数,宁可多算一层(多作废),不可漏算。
+ * Relaxation margin (seconds) for "whether there is time overlap": cards are mounted this far
+ * ahead of their in point (same as `CARD_MOUNT_LEAD` in `frameWindow.mjs`). Only used to determine
+ * which lower layers count: better to count an extra layer (more invalidations) than to miss one.
  */
 const BELOW_OVERLAP_LEAD = 0.05;
 
 /**
- * 画家顺序里排在这个片段**下面**、时间上和它有重叠的画面层,下面的在前。回 `{ clip, order, below: [{ id, clip, order }] }`;
- * 片段不在项目里、或它自己不出画(所在序列隐藏)时回 null。
+ * Visual layers **below** this clip in painter's order that overlap with it in time, lower ones
+ * first. Returns `{ clip, order, below: [{ id, clip, order }] }`; returns null when the clip is
+ * not in the project, or does not produce visuals itself (its track is hidden).
  *
- * 「依赖下层的流」的身份全靠这一份:服务端算流键(`server/frame-stream.mjs` 的 `planStreams`)、建隔离工程
- * (`isolatedBelowProject`)和页面算输入签名(下面的 `streamInputs`)用的是同一个函数,所以三处对「哪些层算下层、谁在谁下面」
- * 的认定不会各说各话。口径:
- *   - 画面层 = 所在序列没隐藏、时长为正,而且是卡片段(`cardId`)、挂着节点的素材效果卡片段(`nodeId`)或画面素材段(素材不是纯音频);
- *     剪辑段先摊平(`kernel/cutFlatten.mjs` 的 `flatPlanProject`:换成它里面的卡与素材),所以签名、下层认定看的是里面的那些层;
- *     只出声音的素材效果卡片段也会被算进来(这里分不出它出不出画),只是多作废;
- *   - 画家顺序同 `FrameScene`:`project.tracks` 里靠前的序列在上面,同一条序列里靠后的片段在上面;
- *   - 时间重叠按秒算,两头都放宽一个挂载提前量。没有再按「会不会碰到这块区域」筛(契约第 5.2 节:第一版宁可多作废)。
+ * The identity of a "below-dependent stream" relies entirely on this: calculating stream keys on
+ * the server (`planStreams` in `server/frame-stream.mjs`), building isolated projects
+ * (`isolatedBelowProject`), and calculating input signatures on the page (`streamInputs` below) use
+ * the exact same function, so all three places stay consistent on "which layers count as lower
+ * layers, and who is below whom". Criteria:
+ *   - Visual layer = its track is not hidden, duration is positive, and it is a card clip
+ *     (`cardId`), a media effect card clip with an attached node (`nodeId`), or a visual media clip
+ *     (asset is not audio-only); cut segments are flattened first (`flatPlanProject` in
+ *     `kernel/cutFlatten.mjs`: replaced with the cards and assets inside them), so signatures and
+ *     lower-layer determinations look at those inner layers; media effect card clips that only
+ *     output audio are also included (cannot distinguish here whether it produces visuals), which
+ *     only causes extra invalidations;
+ *   - Painter's order matches `FrameScene`: earlier tracks in `project.tracks` are on top, and later
+ *     clips in the same track are on top;
+ *   - Time overlap is computed in seconds, relaxing both ends by a mount lead time. No further
+ *     filtering by "whether it touches this area" (Section 5.2 of the contract: the first version
+ *     prefers over-invalidation).
  * @param {any} project
  * @param {string} clipId
  */
 export function belowLayersOf(raw, clipId) {
-  // 剪辑段换成它里面的层(没有剪辑段时原样);页面、服务端从这里取同一份认定
+  // Replace cut segments with their inner layers (as-is if none); page and server take the same determination from here
   const project = flatPlanProject(raw);
   const tracks = Array.isArray(project?.tracks) ? project.tracks : [];
   const media = new Map((Array.isArray(project?.media) ? project.media : []).filter((m) => m && typeof m.id === "string").map((m) => [m.id, m]));
@@ -90,7 +126,7 @@ export function belowLayersOf(raw, clipId) {
   return { clip: at.clip, order: at.order, below };
 }
 
-/** 依赖下层的流的签名输入:目标卡和每个下层各一项(片段签名、采样窗口、外观),下层按画家顺序。算不出回 null */
+/** Signature inputs for below-dependent streams: entry each for target card and lower layers (clip signature, sampling window, appearance) in painter's order. Returns null if uncomputable */
 function belowInputs(project, clipId, fps, total) {
   const found = belowLayersOf(project, clipId);
   if (!found) return null;
@@ -111,7 +147,9 @@ function belowInputs(project, clipId, fps, total) {
 }
 
 /**
- * 这条流的签名输入(还没哈希的那份对象);有成员不在项目里、或成员的片段签名算不出时回 null。导出给单测看口径。
+ * Signature input for this stream (the unhashed object); returns null if a member is not in the
+ * project or if a member's clip signature cannot be computed. Exported for unit tests to inspect
+ * criteria.
  * @param {any} project
  * @param {{ clipIds: readonly string[], kind?: string }} stream
  */
@@ -119,7 +157,7 @@ export function streamInputs(raw, stream) {
   const project = flatPlanProject(raw);
   const ids = Array.isArray(stream?.clipIds) ? stream.clipIds.filter((id) => typeof id === "string" && id) : [];
   if (!ids.length) return null;
-  // 依赖下层的流:成员只有目标卡一张,下层由项目自己定(不由层表那一行列出来 —— 下层多了一层也要认得出)
+  // Below-dependent streams: only target card as member; lower layers are project-defined (not listed in layer table row: must recognize added lower layers)
   if (stream?.kind === "below") {
     if (ids.length !== 1) return null;
     const rate = Math.max(1, Number(project?.fps) || 30);
@@ -129,7 +167,7 @@ export function streamInputs(raw, stream) {
   const total = Math.max(1, Math.floor((Number(project?.duration) || 0) * fps));
   const tracks = Array.isArray(project?.tracks) ? project.tracks : [];
   const media = new Map((Array.isArray(project?.media) ? project.media : []).filter((m) => m && typeof m.id === "string").map((m) => [m.id, m]));
-  /** 片段 id → { clip, order, visual };`order` 是画家顺序(第一条序列在最上面,同一条序列里后面的盖前面的) */
+  /** Clip id → { clip, order, visual }; `order` is painter's order (first track on top, later clips cover earlier ones in same track) */
   const where = new Map();
   tracks.forEach((track, ti) => {
     (Array.isArray(track?.clips) ? track.clips : []).forEach((clip, ci) => {
@@ -171,7 +209,8 @@ export function streamInputs(raw, stream) {
 }
 
 /**
- * 这条流的输入签名(`s1-<16 位十六进制>`);算不出回 null(不比)。
+ * Input signature of this stream (`s1-<16-digit hex>`); returns null if cannot be computed
+ * (no comparison).
  * @param {any} project
  * @param {{ clipIds: readonly string[], kind?: string }} stream
  * @returns {string | null}
@@ -186,7 +225,7 @@ export function streamInputSig(project, stream) {
   }
 }
 
-/** 层表那一行的签名与页面算的签名:两边都有、同一算法版本、而且不同 → 这条流已过期。别的情况不判过期(向后兼容) */
+/** Signatures from layer table row vs page: both exist, same algorithm version, and differ → stream is expired. Otherwise not expired (backward compatibility) */
 export function streamSigStale(rowSig, pageSig) {
   if (typeof rowSig !== "string" || typeof pageSig !== "string") return false;
   if (!rowSig.startsWith(PREFIX) || !pageSig.startsWith(PREFIX)) return false;

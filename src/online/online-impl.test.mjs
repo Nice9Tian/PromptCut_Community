@@ -1,9 +1,11 @@
 /**
- * 在线浏览器模式的几块纯逻辑（C10a 契约 `docs/plan/c10a-contract.md` 第 2、4 节；`c10a-web` 自测，编号 `ONL-…`）：
- * 纯浏览器设备身份、邀请链接的读取与解析（`/api` 守卫的判定归闭源，那一条在 `cloud/src/online/online-impl-api-guard.test.mjs`）。
- * 契约测试（`C10A-…`）由 `c10a-tests` 分支独立写。
+ * Pure logic pieces for online browser mode (C10a contract `docs/plan/c10a-contract.md` sections 2 and 4;
+ * `c10a-web` self-test, numbered `ONL-…`):
+ * Pure browser device identity, reading and parsing invite links (the `/api` guard decision belongs
+ * to closed source; that case is in `cloud/src/online/online-impl-api-guard.test.mjs`).
+ * Contract tests (`C10A-…`) are written independently in the `c10a-tests` branch.
  *
- * 跑：node --test src/online/online-impl.test.mjs
+ * Run: node --test src/online/online-impl.test.mjs
  */
 import "../testing/registerTs.mjs";
 import test from "node:test";
@@ -12,7 +14,7 @@ import assert from "node:assert/strict";
 const D = await import("./device.ts");
 const I = await import("./invite.ts");
 
-const CODE = "A".repeat(20) + "b_-" + "9".repeat(20); // 43 个 base64url 字符
+const CODE = "A".repeat(20) + "b_-" + "9".repeat(20); // 43 base64url characters
 
 test("ONL-2 device identity: 128-bit random id, browser name + OS name + random 4 digits, stored locally in the page, same machine next time", () => {
   const store = new Map();
@@ -65,16 +67,16 @@ test("ONL-4 read #invite=: a valid one goes into memory and the fragment is clea
 });
 
 test("ONL-4b doc= in the link: the document service path is read as given, the page does not guess (user decision, 2026-10-26, old links are not compatible)", () => {
-  // 局域网主机的文档服务在 /docservice，托管端在 /hosted/ —— 两种不一样，所以写进链接
+  // LAN host document service is at /docservice, hosted side is at /hosted/; they differ, so write into the link
   assert.deepEqual(I.inviteFromHash(`#invite=${CODE}&doc=%2Fdocservice`), { code: CODE, doc: "/docservice" });
   assert.deepEqual(I.inviteFromHash(`#invite=${CODE}&doc=%2Fhosted%2F`), { code: CODE, doc: "/hosted/" });
   assert.deepEqual(I.inviteFromHash(`#doc=%2Fdocservice&invite=${CODE}`), { code: CODE, doc: "/docservice" }, "any order");
-  // 旧链接没带：doc 为 null，由调用方当失效（JoinForm 的 oldLink）
+  // Legacy link omitted: doc is null, treated as expired by caller (JoinForm's oldLink)
   assert.deepEqual(I.inviteFromHash(`#invite=${CODE}`), { code: CODE, doc: null }, "old link");
-  // 不以 / 开头的、转义坏了的都不认，免得拼出一条跑偏的地址
+  // Reject anything not starting with / or with broken escaping, to avoid building a malformed address
   assert.deepEqual(I.inviteFromHash(`#invite=${CODE}&doc=docservice`), { code: CODE, doc: null }, "rejected if it does not start with /");
   assert.deepEqual(I.inviteFromHash(`#invite=${CODE}&doc=%E0%A4%A`), { code: CODE, doc: null }, "rejected if the escaping is broken");
-  // 源 + 路径 → 文档服务基址
+  // Origin + path → document service base URL
   assert.equal(I.docBaseOf("http://192.168.1.23:5190", "/docservice"), "http://192.168.1.23:5190/docservice");
   assert.equal(I.docBaseOf("https://h.example/", "/hosted/"), "https://h.example/hosted/", "trailing slash kept as in the path");
   assert.equal(I.docBaseOf("https://h.example", "docservice"), "https://h.example/docservice", "add / if the path lacks it");
@@ -91,12 +93,12 @@ test("ONL-5 pasted invite link: take the origin, invite code and document servic
   assert.equal(I.parseInviteLink(`https://h.example/editor?invite=${CODE}`), null, "rejected in the query string (the invite code only goes in the fragment)");
   assert.equal(I.parseInviteLink(`ftp://h.example/editor#invite=${CODE}`), null);
   assert.equal(I.parseInviteLink("some random text"), null);
-  // 签发：路径一并写进链接
+  // Issue: write path into the link as well
   assert.equal(I.inviteLinkOf("https://h.example/", CODE, "/hosted/"), `https://h.example/editor#invite=${CODE}&doc=%2Fhosted%2F`, "hosted side: the page is at /editor");
   assert.equal(I.inviteLinkOf("http://192.168.1.23:5190", CODE, "/docservice"), `http://192.168.1.23:5190/#invite=${CODE}&doc=%2Fdocservice`, "LAN host: the page is under the root, no /editor");
   assert.equal(I.editorPathFor("/hosted/"), "/editor");
   assert.equal(I.editorPathFor("/docservice"), "/");
-  // 拼了再解，回到原样
+  // Assemble then parse, returning to original form
   const link = I.inviteLinkOf("http://192.168.1.23:5190", CODE, "/docservice");
   assert.equal(link, `http://192.168.1.23:5190/#invite=${CODE}&doc=%2Fdocservice`);
   assert.deepEqual(I.parseInviteLink(link), { origin: "http://192.168.1.23:5190", code: CODE, doc: "/docservice" });

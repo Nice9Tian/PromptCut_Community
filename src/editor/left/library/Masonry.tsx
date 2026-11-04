@@ -7,9 +7,12 @@ export interface MasonryProps {
 }
 
 /**
- * 瀑布流容器:量自己的宽 → 算单位数和列数 → 每项按 tileHeight 给高 → masonry() 分到最矮的列。
- * 渲染成 N 个纵向 flex 列,不用绝对定位算 top。项目本身按 fill 铺满给它的格子。
- * 所在分区被隐藏(display:none)时量到的宽是 0,这时沿用上一次的宽,不重排。
+ * Masonry container: measures its own width → computes unit and column counts → gives each item a height
+ * by tileHeight → masonry() assigns it to the shortest column.
+ * Rendered as N vertical flex columns, without computing top by absolute positioning. Items fill the
+ * cell they are given according to fill.
+ * When the section is hidden (display:none) the measured width is 0; in that case the previous width
+ * is kept and nothing is re-laid out.
  */
 export function Masonry({ layout, items }: MasonryProps) {
   const ref = useRef<HTMLDivElement>(null);

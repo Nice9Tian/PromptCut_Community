@@ -14,7 +14,7 @@ const processFail = (exitCode, signal = null) => event('test:fail', {
 const summary = (...events) => summarizeTestEvents(events, cwd)[0];
 const root = (failed, cancelled = 0) => ({ type: 'test:summary', data: { counts: { failed, cancelled } } });
 
-test('Windows 原生异常和信号只对文件级失败重跑', () => {
+test('Windows native exceptions and signals are rerun only for file-level failures', () => {
   for (const code of [0xC0000005, 0xC0000142, 0xC0000409, 0xC000001D]) {
     const state = summary(event('test:pass', { name: 'case A' }), processFail(code));
     assert.equal(state.testCases, 1);
@@ -25,13 +25,13 @@ test('Windows 原生异常和信号只对文件级失败重跑', () => {
   assert.equal(retryReason(summary(processFail(null, 'SIGTERM'))), 'signal');
 });
 
-test('零用例、零 stderr 的非零退出最多可作为静默退出候选', () => {
+test('A non-zero exit with zero test cases and zero stderr can at most be a silent-exit candidate', () => {
   assert.equal(retryReason(summary(processFail(7))), 'silent-exit');
   assert.equal(retryReason(summary(event('test:pass', { name: 'case A' }), processFail(7))), null);
   assert.equal(retryReason(summary(event('test:stderr', { message: 'warn\n' }), processFail(7))), null);
 });
 
-test('真实断言失败和加载错误保留失败', () => {
+test('Real assertion failures and load errors stay failures', () => {
   const assertion = event('test:fail', { name: 'bad assertion', details: { error: { code: 'ERR_TEST_FAILURE', cause: {} } } });
   const state = summary(assertion, processFail(0xC0000005));
   assert.equal(state.assertionFailures, 1);
@@ -42,7 +42,7 @@ test('真实断言失败和加载错误保留失败', () => {
   assert.equal(retryReason(summary(event('test:stderr', { message: 'SyntaxError: bad syntax\n' }), processFail(0xC0000005))), null);
 });
 
-test('不同文件的用例和 stderr 分别计数', () => {
+test('Test cases and stderr of different files are counted separately', () => {
   const other = 'server/test/other.test.mjs';
   const states = summarizeTestEvents([
     event('test:pass', { name: 'one' }),
@@ -58,7 +58,7 @@ test('不同文件的用例和 stderr 分别计数', () => {
   assert.equal(summary(event('test:stderr', { message: 'partial\nlast line' })).stderrLines, 2);
 });
 
-test('根汇总必须恰好覆盖可重跑文件，不能有额外失败或取消', () => {
+test('The root summary must cover exactly the rerunnable files, with no extra failures or cancellations', () => {
   const files = [summary(processFail(0xC0000005))];
   assert.equal(canRecoverInitialRun([root(1)], files), true);
   assert.equal(canRecoverInitialRun([root(2)], files), false);
@@ -69,7 +69,7 @@ test('根汇总必须恰好覆盖可重跑文件，不能有额外失败或取�
   assert.equal(canRecoverInitialRun([root(1)], [...files, assertion]), false);
 });
 
-test('报告器只序列化原始类型字段，循环引用和异常 getter 不打断后续事件', async () => {
+test('The reporter serializes only primitive-type fields, and circular references and throwing getters do not interrupt later events', async () => {
   const cyclic = { value: 1 };
   cyclic.self = cyclic;
   async function* source() {

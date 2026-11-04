@@ -74,12 +74,13 @@ function VersusCard({ params }: CardProps<Params>) {
 
 export const versusCard: CardDef<Params> = {
   id: "versus-card",
-  name: "对比卡",
-  description: "左右对比面板，可高亮胜出者",
-  useWhen: "口播在做对比(「相比」「而不是」「区别在于」「vs」)时,用左右两栏对照,可以高亮胜出的一方。",
-  tags: ["对比","versus","左右","对照"],
+  name: "Versus card",
+  description: "Side-by-side comparison panel, can highlight the winner",
+  useWhen: "When the narration makes a comparison (\"compared to\", \"rather than\", \"the difference is\", \"vs\"), use two side-by-side columns and optionally highlight the winning side.",
+  tags: ["comparison","versus","side by side","contrast"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -94,28 +95,28 @@ export const versusCard: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "aKicker", label: "A侧小字", type: "text" },
-    { key: "aTitle", label: "A侧大字", type: "text" },
-    { key: "aSub", label: "A侧说明", type: "text" },
-    { key: "aAccent", label: "A侧独立主色", type: "color" },
-    { key: "bKicker", label: "B侧小字", type: "text" },
-    { key: "bTitle", label: "B侧大字", type: "text" },
-    { key: "bSub", label: "B侧说明", type: "text" },
+    { key: "aKicker", label: "Side A kicker", type: "text" },
+    { key: "aTitle", label: "Side A title", type: "text" },
+    { key: "aSub", label: "Side A description", type: "text" },
+    { key: "aAccent", label: "Side A accent color", type: "color" },
+    { key: "bKicker", label: "Side B kicker", type: "text" },
+    { key: "bTitle", label: "Side B title", type: "text" },
+    { key: "bSub", label: "Side B description", type: "text" },
     {
       key: "winner",
-      label: "胜出方",
+      label: "Winner",
       type: "select",
       options: [
-        { value: "none", label: "无" },
-        { value: "a", label: "A胜出" },
-        { value: "b", label: "B胜出" },
+        { value: "none", label: "none" },
+        { value: "a", label: "A wins" },
+        { value: "b", label: "B wins" },
       ],
     },
   ],
   parts: [
-    { id: "cardA", label: "A侧", role: "group", params: ["aKicker", "aTitle", "aSub", "aAccent"], enterMs: 0, settleMs: 500 },
-    { id: "cardB", label: "B侧", role: "group", params: ["bKicker", "bTitle", "bSub"], enterMs: 0, settleMs: 500 },
-    { id: "badge", label: "VS标识", role: "decor", params: ["winner"], enterMs: 300, settleMs: 900 },
+    { id: "cardA", label: "Side A", role: "group", params: ["aKicker", "aTitle", "aSub", "aAccent"], enterMs: 0, settleMs: 500 },
+    { id: "cardB", label: "Side B", role: "group", params: ["bKicker", "bTitle", "bSub"], enterMs: 0, settleMs: 500 },
+    { id: "badge", label: "VS badge", role: "decor", params: ["winner"], enterMs: 300, settleMs: 900 },
   ],
   lifecycle: { settleMs: 900, after: "hold", exit: ["fade"] },
   Component: VersusCard,

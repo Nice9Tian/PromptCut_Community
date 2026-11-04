@@ -6,9 +6,9 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 数据证明。
- * 从 stat-proof 拆出来的文字部件，包含巨型滚动数字及中英注脚。
- * 进场: 引导字淡入下移，数值滚动，注脚稍后淡入。
+ * Stat proof.
+ * Text part extracted from stat-proof, containing giant rolling numbers and Chinese/English footnotes.
+ * Entrance: lead-in text fades in and shifts down, numbers roll, footnotes fade in shortly after.
  */
 interface Params {
   kicker: string;
@@ -84,10 +84,10 @@ function MetricStatPart({ params, width, height }: PartProps<Params>) {
 
 export const metricStat: PartDef<Params> = {
   id: "metric-stat",
-  name: "数字实证",
-  description: "巨型数字滚动及中英注脚",
-  useWhen: "要当证据用的核心数字(+80%、3 倍、2 万),带前后缀、中英引导字和中英来源注脚;数值取整显示;只要机械翻牌滚轮手感的大整数用 metric-odometer,百分比进度环用 metric-ring。",
-  tags: ["数字","实证","数据","注脚"],
+  name: "Stat proof",
+  description: "Giant number roll-up with bilingual footnotes",
+  useWhen: "Use for a key number that serves as evidence (+80%, 3x, 20,000), with prefix and suffix, Chinese and English lead-in words and Chinese and English source footnotes; values are shown rounded. For a large integer with a mechanical odometer feel use metric-odometer, and for a percentage progress ring use metric-ring.",
+  tags: ["number","evidence","data","footnote"],
   role: "text",
   from: "stat-proof",
   defaults: {
@@ -103,16 +103,16 @@ export const metricStat: PartDef<Params> = {
     size: 0,
   },
   controls: [
-    { key: "kicker", label: "英文引导字", type: "text" },
-    { key: "kickerZh", label: "中文引导字", type: "text" },
-    { key: "value", label: "目标数值", type: "number" },
-    { key: "prefix", label: "前缀", type: "text" },
-    { key: "suffix", label: "后缀", type: "text" },
-    { key: "footEn", label: "英文注脚", type: "text" },
-    { key: "footZh", label: "中文注脚", type: "text" },
-    { key: "countMs", label: "动画时长(ms)", type: "number", min: 100, max: 1800, step: 100 },
-    { key: "accent", label: "主题色", type: "color" },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 400, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
+    { key: "kicker", label: "English lead-in text", type: "text" },
+    { key: "kickerZh", label: "Chinese lead-in text", type: "text" },
+    { key: "value", label: "Target value", type: "number" },
+    { key: "prefix", label: "Prefix", type: "text" },
+    { key: "suffix", label: "Suffix", type: "text" },
+    { key: "footEn", label: "English footnote", type: "text" },
+    { key: "footZh", label: "Chinese footnote", type: "text" },
+    { key: "countMs", label: "Animation duration (ms)", type: "number", min: 100, max: 1800, step: 100 },
+    { key: "accent", label: "Theme color", type: "color" },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 400, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
   ],
   defaultFrame: { x: 960, y: 540, w: 600, h: 460, anchor: [0.5, 0.5] },
   settleMs: (p: Params) => (p.countMs > 0 ? p.countMs : 1400),

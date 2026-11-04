@@ -1,31 +1,35 @@
 import { applyProjectPatch, projectHash } from "../src/render/changedClips.mjs";
 
 /**
- * 镜像的存储本体(A7)。纯逻辑、没有 vite / http 依赖 —— `server/vite-plugin-mirror.ts`
- * 只是把它接到中间件上,两个进程(编辑器 / 预渲染)各挂一份。
+ * Core mirror store (A7). Pure logic, no vite / http dependencies: `server/vite-plugin-mirror.ts`
+ * only hooks it up to middleware, mounted once in each of the two processes (editor / prerender).
  *
- * # 键是 `{session, localRev}`,不是「最新的那份」
+ * # The key is `{session, localRev}`, not "the latest copy"
  *
- * 帧请求的 body 里只有这个键(`frameClient.ts`)。留最近 8 版是因为请求和推送会交错:
- * 页面推到第 12 版时,一个 2 秒前发出的取帧请求还在路上,它要的是第 9 版 ——
- * 只留最新一份的话那个请求就得整份重来。8 版够覆盖一次拖动里在飞的全部请求。
+ * The frame request body contains only this key (`frameClient.ts`). Keeping the last 8 versions
+ * accounts for interleaving requests and pushes: when the page pushes version 12, a frame-fetch
+ * request sent 2 seconds ago is still in flight, requesting version 9: if only the latest copy were
+ * kept, that request would have to restart from scratch. Eight versions suffice to cover all
+ * in-flight requests during a scrub.
  *
- * # 两种拒收
+ * # Two types of rejection
  *
- * - **stale**:同一个 session 里 `localRev` 不大于已存的最大号。页面那边一次只推一个,
- *   这里再兜一道:两次推送乱序到达时旧的盖不掉新的。回 200 + `stale: true`,不是错。
- * - **resync**(409):补丁的基线滑出了 8 版窗口,或者应用完哈希和页面算的对不上。
- *   页面收到就整份重推。哈希这一道是**唯一**能发现「两层 diff 自己写错了」的地方,
- *   没有它,镜像会带着一个悄悄错掉的项目一直服务下去。
+ * - **stale**: In the same session, `localRev` is not greater than the largest stored number.
+ *   The page pushes one at a time, and here provides an extra guard: when two pushes arrive
+ *   out of order, the older cannot overwrite the newer. Returns 200 + `stale: true`, not an error.
+ * - **resync** (409): The patch baseline slid out of the 8-version window, or after applying,
+ *   the hash does not match what the page computed. Upon receiving this, the page repushes the full
+ *   copy. This hash check is the **only** place capable of catching "bugs in the two-layer diff
+ *   itself"; without it, the mirror would continue serving with a project that went silently wrong.
  */
 
-/** 每个 session 留几版 */
+/** Number of versions to keep per session */
 export const MAX_VERSIONS = 8;
-/** 一次播放头推送里最多带几条 `wanted`(C4) */
+/** Maximum number of `wanted` entries in a single playhead push (C4) */
 export const MAX_WANTED = 8;
 
 export function createMirrorStore() {
-  /** session -> { versions: Version[](按 localRev 升序), maxRev } */
+  /** session -> { versions: Version[](ascending by localRev), maxRev } */
   const sessions = new Map();
   /** session -> { t, playing, at } */
   const playheads = new Map();
@@ -49,10 +53,10 @@ export function createMirrorStore() {
     return version;
   }
 
-  /** 整份推送 */
+  /** Full push */
   function pushFull({ session, localRev, project }) {
-    if (!session) throw new Error("缺少 session");
-    if (!project || !Array.isArray(project.tracks)) throw new Error("缺少 project");
+    if (!session) throw new Error("Missing session");
+    if (!project || !Array.isArray(project.tracks)) throw new Error("Missing project");
     const rev = Number(localRev) || 0;
     const s = sessions.get(session);
     if (s && s.versions.length && rev <= s.maxRev) return { status: "stale", localRev: s.maxRev, hash: s.versions[s.versions.length - 1].hash };
@@ -61,17 +65,18 @@ export function createMirrorStore() {
   }
 
   /**
-   * 两层 diff。`hash` 是页面算的 `projectHash`;给了就校验,对不上回 resync。
+   * Two-layer diff. `hash` is the `projectHash` computed by the page; if provided, it is verified,
+   * returning resync on mismatch.
    */
   function pushDiff({ session, fromLocalRev, toLocalRev, hash, patch }) {
-    if (!session) throw new Error("缺少 session");
+    if (!session) throw new Error("Missing session");
     const to = Number(toLocalRev) || 0;
     const from = Number(fromLocalRev) || 0;
     const s = sessions.get(session);
     if (!s || !s.versions.length) return { status: "resync", reason: "session", localRev: null };
     if (to <= s.maxRev) return { status: "stale", localRev: s.maxRev, hash: s.versions[s.versions.length - 1].hash };
     const base = s.versions.find((v) => v.localRev === from);
-    // 基线滑出了 8 版窗口:补不回来,只能整份重推
+    // Baseline slid out of the 8-version window: cannot be recovered, must repush full copy
     if (!base) return { status: "resync", reason: "window", localRev: s.maxRev };
     let project;
     try { project = applyProjectPatch(base.project, patch); }
@@ -83,19 +88,20 @@ export function createMirrorStore() {
   }
 
   /**
-   * 补一版进来,**不走 `stale` 那道闸**。只给「回拉」用(预渲染进程手里缺哪一版就去
-   * 编辑器要哪一版):它要的那一版按定义是旧的,走 `pushFull` 会被当成乱序推送挡掉,
-   * 于是转发丢一次就再也补不回来 —— 帧请求只能一路 409 下去。
-   * 已经有这一版就原样返回,不重复存。
+   * Backfills a version, **bypassing the `stale` gate**. Used only for "pull-back" (when the prerender
+   * process is missing a version, it requests that version from the editor): the version it requests is
+   * old by definition; going through `pushFull` would block it as an out-of-order push, so a single
+   * dropped forward would be unrecoverable: frame requests would keep hitting 409 all the way.
+   * If this version already exists, returns as is without storing duplicate.
    */
   function insert({ session, localRev, project }) {
-    if (!session) throw new Error("缺少 session");
-    if (!project || !Array.isArray(project.tracks)) throw new Error("缺少 project");
+    if (!session) throw new Error("Missing session");
+    if (!project || !Array.isArray(project.tracks)) throw new Error("Missing project");
     const rev = Number(localRev) || 0;
     const have = getMirror(session, rev);
     if (have) return { status: "ok", localRev: have.localRev, hash: have.hash };
     const s = sessionOf(session);
-    // 比窗口里最旧的还旧:存进去也会当场被挤掉,不如直说没接住
+    // Older than the oldest in the window: storing it would evict it immediately anyway, better to report it was missed directly
     if (s.versions.length >= MAX_VERSIONS && rev < s.versions[0].localRev) {
       return { status: "resync", reason: "window", localRev: s.maxRev };
     }
@@ -103,7 +109,7 @@ export function createMirrorStore() {
     return { status: "ok", localRev: v.localRev, hash: v.hash };
   }
 
-  /** 按键取。不给 `localRev` 就是这个 session 的最新一版 */
+  /** Fetches by key. If `localRev` is omitted, returns the latest version for this session */
   function getMirror(session, localRev) {
     const s = sessions.get(session);
     if (!s || !s.versions.length) return null;
@@ -112,14 +118,14 @@ export function createMirrorStore() {
     return s.versions.find((v) => v.localRev === rev) || null;
   }
 
-  /** 当前编辑页 session 的最新一版(Agent 取的就是它) */
+  /** Latest version of current editor page session (this is what Agent retrieves) */
   function latestMirror() {
     if (latestSession === null) return null;
     const s = sessions.get(latestSession);
     return s && s.versions.length ? s.versions[s.versions.length - 1] : null;
   }
 
-  /** 每个 session 的最新一版,给「预渲染重启后补推」用 */
+  /** Latest version of each session, used for "catch-up push after prerender restart" */
   function allLatest() {
     const out = [];
     for (const s of sessions.values()) if (s.versions.length) out.push(s.versions[s.versions.length - 1]);
@@ -127,12 +133,13 @@ export function createMirrorStore() {
   }
 
   /**
-   * C4 的 `wanted`:页面每帧把「播放头附近现在缺哪些层」报上来,预渲染进程在
-   * 4 帧批次的边界读它、把含这些帧的批提到前面。
+   * C4 `wanted`: each frame, the page reports "which layers are currently missing near the playhead";
+   * the prerender process reads it at 4-frame batch boundaries and moves batches containing these frames
+   * to the front.
    *
-   * **最多 8 条**(C4 原文),多的截掉:它是一份提示,不是队列 —— 报得再多也只
-   * 影响下一批往哪儿跳,而每 100 ms 就会来一份新的。坏条目直接丢,不让一个
-   * NaN 把整份提示作废。
+   * **At most 8 entries** (C4 original text), excess is truncated: it is a hint, not a queue: no matter
+   * how much is reported, it only affects where the next batch jumps, and a new one arrives every 100 ms.
+   * Bad entries are discarded directly so a single NaN does not invalidate the entire hint.
    */
   function normalizeWanted(value) {
     if (!Array.isArray(value)) return undefined;
@@ -148,20 +155,20 @@ export function createMirrorStore() {
   }
 
   function setPlayhead(session, t, playing, wanted) {
-    if (!session) throw new Error("缺少 session");
+    if (!session) throw new Error("Missing session");
     const list = normalizeWanted(wanted);
     const previous = playheads.get(session);
     const entry = { session, t: Number.isFinite(Number(t)) ? Number(t) : 0, playing: !!playing, at: Date.now(),
-      // 只带 `wanted` 的那一趟(C4 的 100 ms 节流路)不该把上一次报的 t / playing 冲掉,
-      // 但 `wanted` 本身每次都以最新的为准;这一趟没带就沿用上一次的,免得拖动中
-      // 两条路交替把提示抹掉。
+      // A pass carrying only `wanted` (the C4 100 ms throttled path) should not overwrite t / playing
+      // reported last time, but `wanted` itself always uses the latest; if omitted in this pass, reuse the
+      // previous one to avoid alternating paths wiping out hints during scrubbing.
       wanted: list ?? previous?.wanted };
     playheads.set(session, entry);
     latestPlayheadSession = session;
     return entry;
   }
 
-  /** 当前编辑页 session 的播放头;它还没报过就退回最近报过的那个 */
+  /** Playhead for the current editor page session; if not yet reported, falls back to the most recently reported one */
   function latestPlayhead() {
     if (latestSession !== null && playheads.has(latestSession)) return playheads.get(latestSession);
     return latestPlayheadSession !== null ? playheads.get(latestPlayheadSession) || null : null;
@@ -169,7 +176,7 @@ export function createMirrorStore() {
 
   return {
     pushFull, pushDiff, insert, getMirror, latestMirror, allLatest, setPlayhead, latestPlayhead,
-    /** 测试用:看一个 session 里现在留着哪些版本号 */
+    /** For testing: inspect which version numbers are currently retained in a session */
     revsOf: (session) => (sessions.get(session)?.versions || []).map((v) => v.localRev),
     clear: () => { sessions.clear(); playheads.clear(); latestSession = null; latestPlayheadSession = null; },
   };

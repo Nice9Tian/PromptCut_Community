@@ -1,87 +1,107 @@
 /**
- * 预渲染的排队算法:**空闲时先把贴图渲好**,而不是等播放头走到了才现场渲染。
+ * The prerender queueing algorithm: **render textures ahead of time when idle**, instead of
+ * rendering on demand once the playhead arrives.
  *
- * 现场渲染的问题很直接:每渲一张要起一个 Chrome、四五秒,而这四五秒正好发生在用户
- * 刚拖到那一段、最想看清楚的时候。预渲染把这笔开销挪到没人等的时候付。
+ * The problem with on-demand rendering is plain: each render launches a Chrome and takes four or
+ * five seconds, and those seconds happen exactly when the user has just scrubbed to that span and
+ * most wants to see it clearly. The prerender moves that cost to a time when nobody is waiting.
  *
- * # 排的是「时刻」,不是「卡」
+ * # What is queued is "moments", not "cards"
  *
- * 一张卡在它那几秒里是会动的,所以要预渲染的不是一张图,而是**若干个时刻**
- * (哪几个时刻由 `bakeTime.ts` 的 `sampleTimesFor` 定,键由它的 `texKeyOf` 给)。
- * 这里只管两件事:**先渲哪个**、**留多少**。
+ * A card moves during its few seconds, so what needs prerendering is not one image but **several
+ * moments** (which moments is decided by `sampleTimesFor` in `bakeTime.ts`, and the keys are given
+ * by its `texKeyOf`). This module only handles two things: **which to render first** and **how
+ * much to keep**.
  *
- * 键由调用方带进来,这里不自己算 —— 两处各算一套键,迟早会出现
- * 「明明预渲染过却当成没渲」或者「把正在用的删了」,而且都不报错,只是莫名其妙地慢。
+ * Keys are brought in by the caller and not computed here: if two places each compute their own
+ * keys, sooner or later there will be "clearly prerendered but treated as not rendered" or
+ * "deleted what is in use", and neither reports an error; things are just inexplicably slow.
  *
- * # 顺序:先眼前,再两侧,最后从头
+ * # Order: what is in front first, then both sides, finally from the start
  *
- *   1. **此刻画面上那几张卡各自最贴近当前时间的那个时刻** —— 用户正在看的就是它们,一格都不能等。
- *   2. **按「离播放头多远」向两侧展开**。往前往后都要:用户既会往后拖,也会往回看。
- *      一样远时优先往后(播放方向)。
- *   3. **从 0 开始**把剩下的补齐。跳回片头重看是最常见的动作之一,
- *      而且整条片子早晚都要有,不如按时间顺序稳稳铺过去。
+ *   1. **For each card on screen right now, the moment closest to the current time**: those are
+ *      what the user is looking at, and not a single frame can wait.
+ *   2. **Expand to both sides by "how far from the playhead"**. Both forward and backward: the
+ *      user scrubs forward as well as looking back. At equal distance, prefer forward (the
+ *      playback direction).
+ *   3. **From 0**, fill in the rest. Jumping back to the start to rewatch is one of the most
+ *      common actions, and the whole video needs them sooner or later, so it is better to lay
+ *      them down steadily in time order.
  *
- * # 预算管的是**磁盘上那些 PNG**,而且只按真实字节算
+ * # The budget governs **the PNGs on disk**, and counts only real bytes
  *
- * 预渲染攒下来的东西是一张张 PNG(以前落在 `out/media` 的 `bake-*.png`;现在经素材服务存进 `px`,
- * 本机记着「哪个键对应哪一块」,见 server/bake-store.mjs —— 下文说的「磁盘上的文件」「删」照这个读:
- * 占用是本机记着的那些快照的字节,删是忘掉这条记录)。实测 80 个文件 4.04MB,
- * 单个从 2.4KB 到 95KB —— 差几十倍(满底的卡压不动,几乎空白的卡压得只剩两千多字节)。
- * 所以**不能按张数算**,得按每个文件真实多大算,这也是这套东西唯一诚实的口径。
+ * What the prerender accumulates is PNGs, one by one (formerly landed as `bake-*.png` in
+ * `out/media`; now stored into `px` through the asset service, with this machine recording
+ * "which key maps to which chunk", see server/bake-store.mjs. Read "files on disk" and "delete"
+ * below accordingly: usage is the bytes of the snapshots this machine has recorded, and delete
+ * means forgetting the record). Measured: 80 files at 4.04MB, individual ones from 2.4KB to
+ * 95KB, a difference of dozens of times (a card with a full background cannot be compressed, while
+ * an almost blank card compresses to just over two thousand bytes). So **it cannot be counted by
+ * number of images**; it must be counted by how big each file really is, and this is also the only
+ * honest measure for this whole setup.
  *
- * 这里**没有任何估算**:没预渲染过的文件在磁盘上根本不存在,一个字节都不占,
- * 所以只把**已经渲出来的**计入占用。要渲的按优先级一张张发,
- * 每张回来带着自己的真实大小,占用是加出来的实测值。满了就不再往下发 ——
- * 最多超出一个文件的大小(几十 KB),换来的是全程不用猜。
+ * There is **no estimation at all** here: a file that was never prerendered does not exist on
+ * disk and takes not a single byte, so only **what is already rendered** counts toward usage.
+ * Those to render are sent one by one by priority, each coming back with its own real size, and
+ * usage is the measured sum. Once full, nothing more is sent: at most it overshoots by one file's
+ * size (a few dozen KB), in exchange for never having to guess.
  *
- * # 「这个项目用不到的文件」排在最后,但**不是一看到就删**
+ * # "Files this project does not use" go last, but **are not deleted on sight**
  *
- * 缓存键是卡片内容和时刻的哈希,所以改一次参数就多一批文件,旧的再也不会被命中;
- * 一个会话下来能攒出几十个(实测这一天里从 45 个涨到 105 个,而项目只有十来张卡)。
- * 这些文件对当前项目确实是死的,但 `out/media` 是**所有项目共用**的 ——
- * 「不属于当前项目」和「没用了」是两回事:照着前者删,用户切个项目回来,
- * 上一个项目的缓存就全没了,而且没有任何提示,只表现为「怎么又要等五秒」。
+ * The cache key is a hash of the card content and the moment, so each parameter change adds a
+ * batch of files and the old ones are never hit again; one session can accumulate dozens
+ * (measured: grew from 45 to 105 within one day, while the project had only a dozen cards).
+ * These files are indeed dead for the current project, but `out/media` is **shared by all
+ * projects**: "does not belong to the current project" and "is useless" are two different things.
+ * Deleting by the former means that when the user switches to another project and comes back, the
+ * cache of the previous project is entirely gone, with no notice whatsoever, showing up only as
+ * "why is it a five second wait again".
  *
- * 所以它们只是**排在最后**:空间够就都留着(缓存本来就该这样),
- * 空间不够时它们最先被挤出去。删不删由预算说了算,不由「是不是这个项目的」说了算。
+ * So they are only **put last**: if there is enough space they are all kept (that is how a cache
+ * should behave), and if there is not enough, they are the first to be squeezed out. Whether to
+ * delete is decided by the budget, not by "is it this project's".
  *
- * # 显存不归这里管
+ * # GPU memory is not handled here
  *
- * 顺带记一笔实测,免得以后有人拿这套预算去套显存:同样这批贴图,磁盘上 2.22MB,
- * **解码成贴图进显存是 135MB**,61 倍,而且压缩比 25×~114× 不等,推不出来。
- * 但那笔账不由预渲染决定 —— Scene3DView 只给**当前这一刻**的卡建材质,
- * 场景一重建就全部 dispose。预渲染出来的文件在被用到之前一点显存都不占。
+ * A measured note for the record, so nobody later applies this budget to GPU memory: the same
+ * batch of textures is 2.22MB on disk, but **decoded into textures in GPU memory it is 135MB**,
+ * 61 times, and the compression ratio varies from 25× to 114×, so it cannot be derived. But that
+ * account is not decided by the prerender: Scene3DView builds materials only for the cards at
+ * **the current moment**, and disposes of all of them when the scene is rebuilt. A prerendered file
+ * takes no GPU memory at all before it is used.
  */
 
 /**
- * 两档预渲染。
+ * The two prerender tiers.
  *
- * coarse —— **低帧率**那一档(0.25 秒一格)。先把整条片子铺满它:成本只有原始帧率的
- *   零头,而且拖到任何地方都立刻有画面,只是最多差 0.25 秒。
- * full   —— **原始帧率**那一档(项目 fps)。coarse 全部铺完之后才开始,
- *   预渲染好之后那一段就是逐帧精确的。
+ * coarse: the **low frame rate** tier (one cell per 0.25 seconds). Fill the whole video with it
+ *   first: the cost is only a fraction of the original frame rate, and anywhere scrubbed to has an
+ *   immediate picture, just off by at most 0.25 seconds.
+ * full: the **original frame rate** tier (project fps). It starts only after coarse is all
+ *   laid down, and once prerendered, that span is frame-accurate.
  *
- * 顺序写死成「coarse 全部完成 → 才开始 full」,不是按距离混着排:
- * 先让整条片子都能看(哪怕差 0.25 秒),比让开头那几秒精确、后面全是空白有用得多。
+ * The order is hard-wired as "coarse all done → only then start full", not mixed by distance:
+ * letting the whole video be viewable first (even if off by 0.25 seconds) is far more useful than
+ * making the first few seconds exact and leaving everything after blank.
  */
 export type BakeTier = "coarse" | "full";
 
-/** 要预渲染的一个时刻。`key` 由调用方给(见 bakeTime.ts 的 texKeyOf),这里不自己算 */
+/** A moment to prerender. `key` is given by the caller (see texKeyOf in bakeTime.ts); not computed here */
 export interface BakeMoment {
   clipId: string;
-  /** 属于哪一档。不写按 coarse 算 */
+  /** Which tier it belongs to. If omitted, it counts as coarse */
   tier?: BakeTier;
-  /** 是否落在原始帧率的格子上。排队不看它,画进度条要看(见 bakeCoverage) */
+  /** Whether it falls on a cell of the original frame rate. Queueing ignores it; drawing the progress bar needs it (see bakeCoverage) */
   fine?: boolean;
-  /** 预渲染哪一刻(时间轴绝对秒) */
+  /** Which moment to prerender (absolute timeline seconds) */
   t: number;
-  /** 这张卡在时间轴上的区间 —— 用来判断「现在是不是正播到它」 */
+  /** The range of this card on the timeline, used to decide "is playback right at it now" */
   start: number;
   end: number;
   key: string;
 }
 
-/** spare = 当前项目对不上号的文件(旧版本 / 别的项目 / 老格式),排在所有时刻之后 */
+/** spare = files that do not match the current project (old version / other project / old format), placed after all moments */
 export type BakePhase = "current" | "near" | "rest" | "spare";
 
 export interface BakeJob {
@@ -95,64 +115,74 @@ export interface BakeJob {
 export interface KeptFile {
   key: string;
   clipId: string;
-  /** 这个文件在磁盘上真实多大(实测,不是估的) */
+  /** How big this file really is on disk (measured, not estimated) */
   bytes: number;
   phase: BakePhase;
 }
 
 export interface PlanInput {
-  /** 整条片子要预渲染的所有时刻 */
+  /** All the moments of the whole video that need prerendering */
   moments: BakeMoment[];
-  /** 当前播放头(秒) */
+  /** Current playhead (seconds) */
   t: number;
-  /** 磁盘预算(字节) */
+  /** Disk budget (bytes) */
   budgetBytes: number;
-  /** 已经预渲染好的:键 → 文件真实字节数 */
+  /** Already prerendered: key → real byte size of the file */
   known: Map<string, number>;
-  /** 「身边」窗口有多宽(秒)。超出这个范围的走第三阶段(从 0 开始铺) */
+  /** How wide the "nearby" window is (seconds). Beyond this range goes to phase three (laid down from 0) */
   nearWindowSec?: number;
 }
 
 export interface BakePlan {
-  /** 还没预渲染的,已按优先级排好。调度器从头往下发,`footprintBytes` 到预算就停 */
+  /** Not yet prerendered, already sorted by priority. The scheduler sends from the top down and stops when `footprintBytes` reaches the budget */
   jobs: BakeJob[];
-  /** 预算之内、该留着的文件(含不属于当前项目的那些) */
+  /** Files within the budget that should be kept (including those that do not belong to the current project) */
   keep: KeptFile[];
-  /** 该删的键 —— **只有被预算挤出去的**。空间够的时候这里永远是空的 */
+  /** Keys to delete: **only those squeezed out by the budget**. When there is enough space this is always empty */
   evict: string[];
-  /** keep 加起来占多少磁盘(全是实测值) */
+  /** How much disk keep takes in total (all measured values) */
   footprintBytes: number;
-  /** 被挤出去的文件数 */
+  /** Number of files squeezed out */
   dropped: number;
 }
 
 /**
- * 把一个时刻**归到帧号上**:`start + i / fps`,i 是整数帧号。
+ * Snap a moment **to a frame number**: `start + i / fps`, where i is an integer frame number.
  *
- * # 它现在解决的是「两档格子对不齐」
+ * # What it solves now: "the two grids do not line up"
  *
- * 预渲染分两档:低帧率(0.25 秒一格)和原始帧率(1/fps 一格)。这两套格子**本来对不上** ——
- * 30fps 下 0.25 秒 = 7.5 帧,所以 0.25 / 0.75 / 1.25 / 1.75 这些点根本不落在帧格子上
- * (实测 8 个低帧率点里有 4 个落空)。对不上的后果有两个,都不报错:
+ * Prerender has two tiers: low frame rate (one cell per 0.25 s) and original frame rate (one cell
+ * per 1/fps). These two grids **never lined up in the first place**: at 30fps, 0.25 s = 7.5
+ * frames, so points like 0.25 / 0.75 / 1.25 / 1.75 do not land on the frame grid at all
+ * (measured: 4 of 8 low-frame-rate points miss). The mismatch has two consequences, neither of
+ * which raises an error:
  *
- *   - 同一个瞬间被当成两个不同的键,**渲两遍**;
- *   - 低帧率那张渲好了,却不算进「原始帧率」的覆盖,绿条每隔半秒缺一块。
+ *   - The same instant is treated as two different keys and **rendered twice**;
+ *   - A low-frame-rate image is rendered but does not count toward the "original frame rate"
+ *     coverage, so the green bar is missing a piece every half second.
  *
- * 归一之后低帧率成为原始帧率的**子集**,两个问题一起消失。
+ * After snapping, the low frame rate becomes a **subset** of the original frame rate, and both
+ * problems go away together.
  *
- * # 顺带兜住的历史问题(根因已由 bakeTime.ts 修掉)
+ * # A historical problem it also covers (root cause already fixed in bakeTime.ts)
  *
- * 曾经 `sampleTimesFor` 是**累加** step、`pickBakeT` 是 **floor 再乘**,两者在 1/30 这种
- * 非二进制精确的步长上差 2.8e-17(30fps 下 60 个采样有 39 个对不上),而缓存键是对这个
- * 浮点数做哈希的 —— 于是逐帧那一档预渲染出来的图显示端一张都问不到。现在 `bakeTime.ts` 的
- * `gridAt` 统一成「按序号乘」,根因没了;这里仍然按帧号归一,等于多一道防线:
- * 时刻要是从别处来、或者用了别的步长,照样能被归回同一个值。
+ * `sampleTimesFor` used to **accumulate** the step while `pickBakeT` did **floor, then multiply**.
+ * On a step like 1/30, which is not exactly representable in binary, the two differ by 2.8e-17
+ * (at 30fps, 39 of 60 samples did not match), and the cache key is a hash of that float. So the
+ * images prerendered for the per-frame tier were never found by the display side. Now `gridAt` in
+ * `bakeTime.ts` is unified as "multiply by index" and the root cause is gone. Snapping by frame
+ * number here is still an extra line of defense: if a moment comes from elsewhere, or uses a
+ * different step, it can still be mapped back to the same value.
  *
- * **别改成按固定小数位量化。** 试过,更糟:1/30 被截成 0.033333,比帧边界小一点,
- * `floor` 直接退回一整帧(60 个错 20 个)。非有限小数的步长上那条路根本不成立。
+ * **Do not change this to quantizing to a fixed number of decimals.** Tried it, and it is worse:
+ * 1/30 gets truncated to 0.033333, slightly below the frame boundary, and `floor` falls straight
+ * back a whole frame (20 wrong out of 60). That approach does not hold for steps with a
+ * non-terminating decimal expansion.
  *
- * 用 round 而不是 floor:传进来的值本来就该落在某一帧上,只是带表示误差,round 把它还原成
- * 本来的帧号;而「不显示还没播到的那一帧」在调用 `pickBakeT` 时已经用 floor 保证过了。
+ * It uses round rather than floor: the incoming value should already sit on some frame and only
+ * carries representation error, and round restores the original frame number. "Do not show a
+ * frame that has not been reached yet" is already guaranteed by the floor in `pickBakeT` when it
+ * is called.
  */
 export function canonFrameT(t: number, start: number, fps: number): number {
   const f = Math.max(1, fps);
@@ -161,29 +191,31 @@ export function canonFrameT(t: number, start: number, fps: number): number {
 
 const DEFAULT_NEAR_WINDOW_SEC = 20;
 
-/** 播放头是不是正落在这张卡上 */
+/** Whether the playhead is currently on this card */
 export function isLive(m: { start: number; end: number }, t: number): boolean {
   return t >= m.start && t < m.end;
 }
 
 /**
- * 这个时刻离播放头多远。**按时刻自己的时间算**,不是按整张卡算 ——
- * 一张卡有好几个时刻,正在播的那张里也有「马上要看到的」和「还早」的分别。
+ * How far this moment is from the playhead. **Computed from the moment's own time**, not per
+ * card: a card has several moments, and even the card that is playing has "about to be seen"
+ * moments and "still far off" ones.
  */
 export function distanceFrom(m: { t: number }, t: number): number {
   return Math.abs(m.t - t);
 }
 
-/** 一档之内怎么排:眼前 → 两侧 → 从 0 铺 */
+/** How to order within a tier: in front of the playhead → both sides → laid out from 0 */
 function orderWithinTier(
   moments: BakeMoment[],
   t: number,
   nearWindowSec: number,
 ): { m: BakeMoment; phase: BakePhase }[] {
   /*
-   * 「此刻正在播的每张卡,离当前时间最近的那个时刻」—— 这些就是屏幕上正显示的东西。
-   * 按 clip 取最近的一个,而不是把正在播的卡的所有时刻都算成 current:
-   * 那张卡后面几秒的样子固然也要预渲染,但没道理和「现在这一帧」抢同一个优先级。
+   * "For each card playing right now, the moment closest to the current time": these are what is
+   * on screen right now. Take the single closest one per clip, rather than counting every moment
+   * of the playing card as current: the look of that card a few seconds later also needs to be
+   * prerendered, but it has no business competing with "this very frame" for the same priority.
    */
   const liveBest = new Map<string, BakeMoment>();
   for (const m of moments) {
@@ -196,13 +228,14 @@ function orderWithinTier(
   const current = [...liveBest.values()].sort((a, b) => distanceFrom(a, t) - distanceFrom(b, t));
   const others = moments.filter((m) => !currentKeys.has(m.key));
   /*
-   * 「身边」只按距离排 —— 前后自然交替,不用手写「一前一后」的交错逻辑。
-   * 一样远时优先往后:用户往后拖的次数远多于往回拖。
+   * "Nearby" is ordered by distance only: before and after alternate naturally, with no need for
+   * hand-written "one before, one after" interleaving logic. On a tie, prefer later: users drag
+   * forward far more often than backward.
    */
   const near = others
     .filter((m) => distanceFrom(m, t) <= nearWindowSec)
     .sort((a, b) => distanceFrom(a, t) - distanceFrom(b, t) || (a.t >= t ? -1 : 1) - (b.t >= t ? -1 : 1) || a.t - b.t);
-  // 剩下的从 0 开始按时间顺序铺
+  // The rest are laid out in time order starting from 0
   const rest = others.filter((m) => distanceFrom(m, t) > nearWindowSec).sort((a, b) => a.t - b.t);
 
   return [
@@ -216,11 +249,14 @@ export function planBakes(input: PlanInput): BakePlan {
   const { moments, t, budgetBytes, known, nearWindowSec = DEFAULT_NEAR_WINDOW_SEC } = input;
 
   /*
-   * **先把低帧率那一档整条铺完,再开始原始帧率那一档。**
+   * **Finish laying out the whole low-frame-rate tier first, then start the original-frame-rate
+   * tier.**
    *
-   * 不混着排:混排的结果是播放头附近变成逐帧精确、而片子后半段还一片空白 ——
-   * 而"拖到哪儿都有画面(哪怕差 0.25 秒)"比"开头几秒特别准"有用得多。
-   * 两档各自再按「眼前 → 两侧 → 从 0 铺」排,所以低帧率那一档也是先照顾眼前。
+   * Do not interleave them: interleaving ends up with frame-exact images near the playhead while
+   * the second half of the video is still blank. And "there is an image wherever you drag (even if
+   * it is off by 0.25 s)" is much more useful than "the first few seconds are especially exact".
+   * Each of the two tiers is then ordered by "in front of the playhead → both sides → laid out
+   * from 0", so even the low-frame-rate tier looks after what is in front of the playhead first.
    */
   const coarse = moments.filter((m) => (m.tier ?? "coarse") === "coarse");
   const full = moments.filter((m) => m.tier === "full");
@@ -237,19 +273,20 @@ export function planBakes(input: PlanInput): BakePlan {
   let dropped = 0;
 
   for (const { m, phase } of ordered) {
-    // 同一个键出现两次(同样的卡、同样的时刻)只对应一个文件
+    // A key that appears twice (same card, same moment) maps to only one file
     if (seen.has(m.key)) continue;
     seen.add(m.key);
 
     const bytes = known.get(m.key);
     if (bytes === undefined) {
-      // 还没渲 —— 磁盘上不存在,不占任何空间,所以不参与预算,只排进待渲队列
+      // Not rendered yet: it does not exist on disk and takes no space, so it does not count toward the budget and is only queued for rendering
       jobs.push({ clipId: m.clipId, t: m.t, key: m.key, phase, tier: m.tier ?? "coarse" });
       continue;
     }
     /*
-     * 当前这一刻的**不受预算限制**:预算再小也不能把用户正在看的这一张删掉 ——
-     * 删了下一秒就得现场渲,等于这套东西白做。
+     * The current moment is **not limited by the budget**: however small the budget, the image the
+     * user is looking at must not be deleted. If it were deleted, it would have to be rendered on
+     * the spot the next second, and all this machinery would have been for nothing.
      */
     if (phase !== "current" && footprintBytes + bytes > budgetBytes) {
       dropped++;
@@ -261,9 +298,11 @@ export function planBakes(input: PlanInput): BakePlan {
   }
 
   /*
-   * 剩下的都是**当前项目对不上号**的文件:改过参数的旧版本、别的项目渲的、老格式留下的。
-   * 它们排在所有时刻之后,但同样是「装得下就留着」——
-   * 缓存的价值就在于留着,而 out/media 是所有项目共用的,按「不是这个项目的」去删会误伤。
+   * Everything left is a file that **does not match the current project**: old versions with
+   * changed parameters, files rendered by other projects, leftovers from an old format. They are
+   * ranked after all moments, but are still "keep if it fits": the value of a cache is in keeping
+   * things, and out/media is shared by all projects, so deleting by "not from this project" would
+   * hit innocent files.
    */
   for (const [key, bytes] of known) {
     if (seen.has(key)) continue;
@@ -281,17 +320,20 @@ export function planBakes(input: PlanInput): BakePlan {
 }
 
 /**
- * 预算多大。按机器内存分,而不是拍一个固定值 —— 8GB 的本子和 64GB 的工作站
- * 能拿出来的空间差一个数量级。
+ * How big the budget is. It is split by machine memory instead of picking a fixed value: the
+ * space an 8GB laptop and a 64GB workstation can spare differ by an order of magnitude.
  *
- * `navigator.deviceMemory` 只有 Chromium 有,而且是**粗粒度**的(0.25/0.5/1/2/4/8,
- * 8GB 封顶,不是真实内存)。所以它只是个档位参考,不是精确值,拿不到就按 4GB 算。
+ * `navigator.deviceMemory` exists only in Chromium, and it is **coarse-grained**
+ * (0.25/0.5/1/2/4/8, capped at 8GB, not the real memory). So it is only a tier reference, not an
+ * exact value, and if unavailable we assume 4GB.
  *
- * 取 1.5%:8GB 的机器约 120MB。按实测平均 55KB 一个文件,是两千多个。
- * 一张卡要预渲染十来个时刻,所以「两千多个文件」大约是**一两百张卡**的量 —— 正常项目够用。
- * 但它**确实是唯一的回收口**:除了被这条线挤出去,没有任何东西会被删。
- * 所以这个数既不能小到误删还在用的,也不能大到让 out/media 无限长。
- * 真要调,先量目录实际涨到了多少再改。
+ * We take 1.5%: about 120MB on an 8GB machine. At a measured average of 55KB per file, that is
+ * over two thousand files. A card needs a dozen or so moments prerendered, so "over two thousand
+ * files" is roughly **one to two hundred cards**, which is enough for a normal project.
+ * But it **really is the only way things get reclaimed**: nothing is deleted except by being
+ * squeezed out past this line. So this number must be neither so small that it deletes things
+ * still in use, nor so large that out/media grows without bound.
+ * To really tune it, first measure how large the directory actually gets, then change it.
  */
 export function defaultBudgetBytes(deviceMemoryGB?: number): number {
   const gb = Number.isFinite(deviceMemoryGB) && (deviceMemoryGB as number) > 0 ? (deviceMemoryGB as number) : 4;

@@ -3,8 +3,9 @@ import type { PartDef, PartProps } from "../../kernel/partTypes";
 import { fitOr } from "../fit";
 
 /**
- * 钉板要点:一列黑底圆角条,逐条「钉」上来(缩小弹入)。从 pin-board 的要点列表拆出来。
- * 每条的进场间隔由 stepMs 决定,所以落定时刻随条数变。
+ * Pin board key points: a column of black rounded bars, "pinned" on one by one (scale-down spring-in).
+ * Extracted from pin-board's key points list.
+ * Entrance interval for each item is determined by stepMs, so settling time varies with the number of items.
  */
 interface Params {
   items: string;
@@ -14,7 +15,7 @@ interface Params {
 
 function PinsPart({ params, width, height }: PartProps<Params>) {
   const items = params.items.split("|").filter(Boolean);
-  // size 0 = 按框算:每条一行,行高算上内边距(12px×2)和条间距(16px)
+  // size 0 = calculate from box: one line per item, line height includes padding (12px × 2) and bar spacing (16px)
   const size = fitOr(params.size, { width: width - 32 - 56, height: height - 16 * Math.max(0, items.length - 1), text: params.items, splitter: "|", lineHeight: 1.25 + 24 / 36, max: 120 });
   return (
     <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", gap: 16, alignItems: "flex-start", justifyContent: "center", padding: "0 16px" }}>
@@ -35,17 +36,17 @@ function PinsPart({ params, width, height }: PartProps<Params>) {
 
 export const listPins: PartDef<Params> = {
   id: "list-pins",
-  name: "钉板要点",
-  description: "一列黑底圆角条,逐条弹入钉上",
-  useWhen: "3 到 5 条并列要点、总结、清单时用;有勾选感的用 list-check,带数值的用 metric 类。",
-  tags: ["要点", "列表", "钉板"],
+  name: "Pinboard key points",
+  description: "A column of black rounded bars that pop in and pin one by one",
+  useWhen: "Use for 3 to 5 parallel key points, summaries or lists. Use list-check for a checked-off feel and the metric family for items with values.",
+  tags: ["Key points", "List", "pin board"],
   role: "list",
   from: "pin-board",
   defaults: { items: "第一点核心优势|第二点不可替代|第三点极速交付", stepMs: 200, size: 0 },
   controls: [
-    { key: "items", label: "要点(用|分隔)", type: "text", required: true },
-    { key: "stepMs", label: "间隔(ms)", type: "number", min: 0, max: 2000, step: 20 },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 120, step: 2, hint: "0 表示按框和条数自动算字号;想固定就填具体像素" },
+    { key: "items", label: "Key points (separated by |)", type: "text", required: true },
+    { key: "stepMs", label: "Interval (ms)", type: "number", min: 0, max: 2000, step: 20 },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 120, step: 2, hint: "0 means the font size is computed automatically from the box and the number of items; enter a specific pixel value to fix it" },
   ],
   defaultFrame: { x: 120, y: 320, w: 900, h: 420 },
   settleMs: (p) => (Math.max(1, p.items.split("|").filter(Boolean).length) - 1) * p.stepMs + 400,

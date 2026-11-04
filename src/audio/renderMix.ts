@@ -1,13 +1,18 @@
 /**
- * 导出的混音:在 OfflineAudioContext 里把整条时间轴的声音渲成一段 PCM。
+ * The exported mix: renders the sound of the whole timeline into one piece of PCM in an
+ * OfflineAudioContext.
  *
- * 输入是 server/bakery/audio-mix.mjs 写好的 plan.json:每段一个 ffmpeg 已经裁好的 wav(只含时间轴用到的那一截,
- * 48 kHz 立体声 float),加上它在时间轴的位置、音量、淡入淡出、挂的效果。这里做的事和 ffmpeg 那条老路
- * (server/bakery/mux-audio.mjs)一一对应:adelay = start(source.start(at)),afade = 增益自动化(线性,和 afade 默认的 tri 一样),
- * volume = 增益,amix normalize=0 = 直接相加 —— 多出来的只有效果链(src/audio/fxChain.ts,和预览同一份)。
+ * The input is the plan.json written by server/bakery/audio-mix.mjs: one wav per segment that ffmpeg
+ * has already trimmed (containing only the stretch the timeline uses, 48 kHz stereo float), plus its
+ * position on the timeline, volume, fades, and attached effects. What is done here corresponds
+ * one-to-one with the old ffmpeg route (server/bakery/mux-audio.mjs): adelay = start
+ * (source.start(at)), afade = gain automation (linear, the same as afade's default tri),
+ * volume = gain, amix normalize=0 = plain summation; the only addition is the effect chain
+ * (src/audio/fxChain.ts, the same one as the preview).
  *
- * 为什么不把整个素材文件塞给 decodeAudioData:一段 10 分钟的 4K 视频文件就是 1 GB,浏览器要整份读进内存再解;
- * ffmpeg 先裁成用到的那几秒是几 MB。
+ * Why the whole media file is not handed to decodeAudioData: a 10-minute 4K video file is 1 GB, and
+ * the browser would have to read all of it into memory before decoding; after ffmpeg trims it to the
+ * few seconds actually used, it is a few MB.
  */
 
 import { isAudioFxAnimated, type AudioFxDef } from "../kernel/audioFx.mjs";
@@ -18,7 +23,7 @@ import { decodeCardAudioClip, type CardAudioClip } from "./cardAudio";
 
 export interface MixPlanClip {
   clipId: string;
-  /** 裁好的 wav 地址(同源) */
+  /** Address of the trimmed wav (same origin) */
   url: string;
   start: number;
   dur: number;
@@ -26,9 +31,12 @@ export interface MixPlanClip {
   fadeIn: number;
   fadeOut: number;
   fx: { def: AudioFxDef; params?: Record<string, number> } | null;
-  /** 音频素材效果卡产的声音。有它就完全取代 url,而且一定要拿到。 */
+  /** The sound produced by an audio media effect card. If present it completely replaces url, and it must be obtained. */
   cardAudio?: CardAudioClip;
-  /** 剪辑段展开出来的片段:外层各段的包络(时间轴绝对时间,kernel/audioPlan.mjs 的 gainCurve 乘上去) */
+  /**
+   * Clips expanded from a cut segment: the envelopes of the outer segments (absolute timeline time,
+   * multiplied in by gainCurve of kernel/audioPlan.mjs)
+   */
   env?: CutEnvelope[];
 }
 
@@ -38,14 +46,20 @@ export interface MixPlan {
   clips: MixPlanClip[];
 }
 
-/** 随时间变的效果按这个步长排自动化(50 Hz:比拉链噪声的门槛细,又不至于排几万条) */
+/**
+ * Effects that vary over time are automated at this step (50 Hz: finer than the zipper-noise
+ * threshold, yet not tens of thousands of entries)
+ */
 const AUTOMATION_STEP = 0.02;
 
 export interface MixResult {
   buffer: AudioBuffer;
-  /** 渲染耗时(毫秒) */
+  /** Render time (milliseconds) */
   ms: number;
-  /** 各段解码 / 接线时的提醒。失败会拒绝整个导出，不能静默漏一轨。 */
+  /**
+   * Notes from decoding / wiring each segment. A failure rejects the whole export; a track must not
+   * be dropped silently.
+   */
   notes: string[];
 }
 
@@ -56,8 +70,9 @@ export async function renderMix(plan: MixPlan, fetchImpl: typeof fetch = fetch):
   const notes: string[] = [];
   const t0 = performance.now();
 
-  // 先把所有输入解好(并行),再接线。一个素材效果卡块短了、求值失败或普通 wav
-  // 读不到都必须让导出失败；以前这里返回 null 会产出一条悄悄漏轨的成片。
+  // Decode all inputs first (in parallel), then wire. A media effect card chunk that comes up short,
+  // a failed evaluation, or an ordinary wav that cannot be read must all make the export fail; this
+  // used to return null, which would produce a final video that silently dropped a track.
   const buffers = await Promise.all(
     plan.clips.map(async (c) => {
       try {
@@ -78,8 +93,10 @@ export async function renderMix(plan: MixPlan, fetchImpl: typeof fetch = fetch):
     const src = ctx.createBufferSource();
     src.buffer = buf;
     const g = ctx.createGain();
-    // 淡入淡出 × 音量:一条曲线铺进去(kernel/audioPlan.mjs 的 fadeEnvelope,和 ffmpeg 两条 afade 相乘一致)。
-    // 不用两段自动化拼:淡入淡出重叠时事件按时间排序,setValueAtTime 会插到淡入的 ramp 前面,把淡入整个吃掉
+    // Fades × volume: lay in one curve (fadeEnvelope in kernel/audioPlan.mjs, consistent with ffmpeg's
+    // two afades multiplied together).
+    // Do not stitch two stretches of automation: when the fades overlap, events are sorted by time, and
+    // setValueAtTime would be inserted before the fade-in's ramp, swallowing the whole fade-in
     if (needsGainCurve(c)) {
       g.gain.setValueCurveAtTime(gainCurve(c, Math.ceil(c.dur * 200) + 1), c.start, c.dur);
     } else {
@@ -93,8 +110,9 @@ export async function renderMix(plan: MixPlan, fetchImpl: typeof fetch = fetch):
       tail.connect(chain.input);
       tail = chain.output;
       if (animated) {
-        // 第一点 setValueAtTime 定住起点,之后逐点 linearRamp —— 和预览的 setTargetAtTime 一样是连续的,
-        // 不然 a-rate 参数(增益 / 频率 / 声像)每 20 ms 一跳会有台阶声
+        // The first point pins the start with setValueAtTime, then linearRamp point by point: continuous
+        // like the preview's setTargetAtTime; otherwise an a-rate parameter (gain / frequency / pan) jumping
+        // every 20 ms would produce a stair-step sound
         chain.setTime(0, c.dur, c.start, false);
         for (let t = AUTOMATION_STEP; t <= c.dur + 1e-9; t += AUTOMATION_STEP) chain.setTime(t, c.dur, c.start + t, true);
       } else {
@@ -109,7 +127,7 @@ export async function renderMix(plan: MixPlan, fetchImpl: typeof fetch = fetch):
   return { buffer, ms: performance.now() - t0, notes };
 }
 
-/** AudioBuffer → 32 位浮点 WAV(ffmpeg 直接读,不再量化一次) */
+/** AudioBuffer → 32-bit float WAV (read directly by ffmpeg, without quantizing again) */
 export function encodeWavFloat32(buffer: AudioBuffer): ArrayBuffer {
   const ch = buffer.numberOfChannels;
   const n = buffer.length;
@@ -128,7 +146,7 @@ export function encodeWavFloat32(buffer: AudioBuffer): ArrayBuffer {
   return out;
 }
 
-/** 峰值(绝对值最大),给导出日志和 measure 用 */
+/** Peak (largest absolute value), for the export log and measure */
 export function peakOf(buffer: AudioBuffer): number {
   let peak = 0;
   for (let c = 0; c < buffer.numberOfChannels; c++) {

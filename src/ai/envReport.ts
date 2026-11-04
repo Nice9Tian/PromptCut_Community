@@ -1,25 +1,30 @@
-// 带 .ts 后缀:tsconfig 开了 allowImportingTsExtensions,而单测是用 node --test 直接跑
-// .ts 的,无后缀的传递 import 它解析不了(projectAi.test.mjs 当初就栽在这上面)。
+// With the .ts suffix: tsconfig enables allowImportingTsExtensions, and the unit tests run .ts
+// files directly with node --test, which cannot resolve a transitive import without a suffix
+// (projectAi.test.mjs tripped over exactly this back then).
 import { AI_SESSION_PREFIX } from "./aiSessionKeys.ts";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 诊断报告里的「当时这台机器是什么状态」。
+ * The "state of this machine at that moment" in a diagnostic report.
  *
- * # 为什么要有它
+ * # Why it exists
  *
- * 原来那份对话诊断只有对话本身:模型说了什么、调了哪些工具。用户报
- * 「Agent 看得见别的项目的素材」时,报告里看得到它张口说出一个不存在的文件名,
- * 却看不到**当时素材库到底有没有东西**、项目存在哪、界面处在哪个模式。
- * 于是「产品的 bug」和「这台机器的环境问题」一条都排除不掉,只能来回问用户。
+ * The old chat diagnostic had only the chat itself: what the model said and which tools it called.
+ * When a user reported "the Agent can see media from other projects", the report showed it blurting
+ * out a file name that does not exist, but not **whether the media library actually had anything at
+ * the time**, where the project is stored, or which mode the UI was in. So "a bug in the product"
+ * and "an environment problem on this machine" could not be ruled out, and all that was left was
+ * to ask the user back and forth.
  *
- * 这里补的就是那些现场:模式、项目和素材、可见对话条数、以及后端会话 id。
- * 服务端那半(Node 进程状态、会话文件柜)在 server/harness/env-snapshot.mjs。
+ * What this adds is that context: the mode, the project and its media, the number of visible chat
+ * messages, and the backend session id.
+ * The server half (Node process state, session file cabinet) is in server/harness/env-snapshot.mjs.
  *
- * # 为什么是个纯函数
+ * # Why it is a pure function
  *
- * 它读的东西散在四五个 store 里,取值本身不难,难的是「漏了哪一项」——
- * 而漏一项的代价就是又一轮来回问。所以取值和拼装分开:拼装在这里,能单测。
+ * What it reads is scattered across four or five stores. Collecting the values is not hard; the
+ * hard part is "which item got left out", and the cost of missing one is another round of asking
+ * back and forth. So collection and assembly are kept apart: assembly is here, and unit-testable.
  */
 
 export interface EnvMediaItem {
@@ -34,13 +39,16 @@ export interface EnvMediaItem {
 }
 
 export interface EnvInput {
-  /** 旧字段:原来记布局(传统式 / 对话式);对话式布局已去掉,不再传,旧报告里可能还有 */
+  /**
+   * Legacy field: used to record the layout (Classic mode / chat-style). The chat-style layout has
+   * been removed and is no longer sent, but old reports may still contain it
+   */
   layout?: string;
-  /** SKILL 模式;没开就传 null 或 { active:false } */
+  /** SKILL mode; pass null or { active:false } when it is off */
   skill?: { active: boolean; since?: string | null } | null;
-  /** AI 栏开着几个 Agent 页签(多 Agent;含 spawn_agent 拉起的子 Agent) */
+  /** Number of Agent tabs open in the AI panel (multi-Agent; includes subagents started by spawn_agent) */
   agentTabs?: number;
-  /** 当前项目;没有就传 null */
+  /** The current project; pass null if there is none */
   project?: {
     name?: string;
     filePath?: string | null;
@@ -52,41 +60,47 @@ export interface EnvInput {
     media?: EnvMediaItem[];
     tracks?: Array<{ id: string; name?: string; clips?: unknown[] }>;
   } | null;
-  /** 界面上看得见的对话条数 */
+  /** Number of chat messages visible in the UI */
   visibleMessages?: number;
-  /** localStorage;传 undefined 表示读不到 */
+  /** localStorage; pass undefined to mean it could not be read */
   storage?: Pick<Storage, 'length' | 'key' | 'getItem'> | null;
-  /** 浏览器/WebView 信息 */
+  /** Browser/WebView info */
   agent?: { userAgent?: string; language?: string; platform?: string } | null;
-  /** 视口,排查布局类问题用 */
+  /** Viewport, used when investigating layout problems */
   viewport?: { width: number; height: number; dpr?: number } | null;
 }
 
-/** 值太长就截断:localStorage 里存过整段草稿,一条能把报告顶上撑爆 */
+/**
+ * Truncate values that are too long: localStorage has held whole drafts, and a single entry
+ * can blow up the report
+ */
 const VALUE_LIMIT = 200;
 
 /**
- * 能把**原值**带进报告的键。是白名单,不是前缀通配。
+ * Keys whose **original value** may go into the report. It is an allowlist, not a prefix wildcard.
  *
- * 原来写的是「`ai` 或 `pc.` 开头就收」,于是 `pc.ai.script`(用户手写的剧本正文,
- * 见 ai/script.ts)静默进了报告 —— 而这份报告是**要上传的**(ai/reportSubmit.ts)。
- * 更糟的是通配意味着将来任何新加的 `ai*` / `pc.*` 键都会自动跟着外发,
- * 加键的人不会想到这一层。
+ * It used to say "accept anything starting with `ai` or `pc.`", so `pc.ai.script` (the script body
+ * the user wrote by hand, see ai/script.ts) silently went into the report, and this report is
+ * **uploaded** (ai/reportSubmit.ts). Worse, a wildcard means any `ai*` / `pc.*` key added in the
+ * future is automatically sent out too, and whoever adds the key will not think of that layer.
  *
- * 所以反过来:只有明确列进来的纯设置项才带值,别的只报「有这么个键、多长」。
- * 排查时「哪些设置存在、各多长」本身就够用,原文并不需要。
+ * So it is reversed: only the pure settings explicitly listed carry their value; for the rest the
+ * report only says "such a key exists, and how long it is". For troubleshooting, "which settings
+ * exist and how long each is" is enough in itself; the original text is not needed.
  */
 const VALUE_SAFE = new Set([
   "aiProvider", "aiShowThinking", "aiViewMode", "aiSetupFace", "aiSetupDone",
   "pc.volume", "pc.muted", "pc.deps.sttDismissed", "pc.agentTabs.active",
 ]);
 /**
- * 这些前缀下存的都是枚举 / 开关 / 数字(驱动名、模型名、思考档、布局标签页、面板宽度),
- * 带值安全,而且正是排查时要看的东西。
+ * Everything stored under these prefixes is an enum / switch / number (driver name, model name,
+ * thinking tier, layout tab, panel width), so it is safe to include the value, and it is exactly
+ * what you want to see when troubleshooting.
  *
- * 「pc.ai.」整个前缀**不能**放行 —— 用户手写的剧本就在 pc.ai.script 底下。
- * 所以逐个列出 pc.ai. 下面那几种设置。宁可少列几个:少列只是少一行信息,
- * 多列就是把用户的原创内容发出去。
+ * The whole "pc.ai." prefix must **not** be let through: the script the user wrote by hand lives
+ * under pc.ai.script. So the settings under pc.ai. are listed one by one. Better to list too few:
+ * listing too few only loses one line of information, while listing too many sends out the user's
+ * original content.
  */
 const VALUE_SAFE_PREFIX = [
   "pc.ai.model.", "pc.ai.effort.", "pc.ai.fast.", "pc.ai.deepAuto.",
@@ -98,32 +112,37 @@ function safeToShow(key: string): boolean {
   return VALUE_SAFE.has(key) || VALUE_SAFE_PREFIX.some((p) => key.startsWith(p));
 }
 
-/** 一句人话说清「现在是哪个模式」,省得从三个布尔值里推 */
+/** One plain sentence saying "which mode it is now", so nobody has to infer it from three booleans */
 export function describeMode(input: EnvInput): string {
-  // 两种工作方式(user-workflow.md「工作方式」):传统式 / SKILL(桌面 APP 的 Agent 经 MCP 接入同一个项目,AI 栏照常可用)
+  // Two working modes (user-workflow.md "Working mode"): Classic mode / SKILL (the desktop app's
+  // Agent connects to the same project via MCP, and the AI panel stays available as usual)
   const bits = [input.skill?.active ? tr("SKILL mode (the desktop app's Agent edits this project via MCP, the AI panel still works as usual)") : tr("Classic mode")];
   if ((input.agentTabs ?? 1) > 1) bits.push(tr("Multi-Agent ({0} tabs)", input.agentTabs));
   return bits.join(' + ');
 }
 
 /**
- * 素材都在哪些目录下。
+ * Which directories the media is under.
  *
- * 单列这一项是因为「新建项目落在临时目录」这类问题只在目录上看得出来:
- * 素材名字看着正常,路径却在 %TEMP% 下、或者压根还指着上一个项目的文件夹。
+ * This item is listed separately because a problem like "a new project landing in a temp directory"
+ * can only be seen from the directories: the media names look normal, but the path is under %TEMP%,
+ * or still points at the previous project's folder altogether.
  */
 export function mediaDirs(media: EnvMediaItem[]): string[] {
   const seen = new Set<string>();
   for (const m of media) {
     if (!m.path) continue;
     const cut = Math.max(m.path.lastIndexOf('\\'), m.path.lastIndexOf('/'));
-    // cut === 0 是 posix 根下的文件(/a.mp4),目录就是根,不是「没有目录」
+    // cut === 0 is a file at the posix root (/a.mp4): the directory is the root, not "no directory"
     seen.add(cut > 0 ? m.path.slice(0, cut) : cut === 0 ? '/' : tr("(no directory)"));
   }
   return [...seen];
 }
 
-/** localStorage 里和 AI / 编辑器有关的那些键。密钥不存这儿(在服务端 ai.json) */
+/**
+ * The localStorage keys related to the AI / editor. Secret keys are not stored here (they are in
+ * the server's ai.json)
+ */
 function localKeys(storage: EnvInput['storage']): { sessionIds: Record<string, string>; settings: Record<string, string>; note?: string } {
   if (!storage) return { sessionIds: {}, settings: {}, note: tr("Can't read localStorage") };
   const sessionIds: Record<string, string> = {};
@@ -137,7 +156,8 @@ function localKeys(storage: EnvInput['storage']): { sessionIds: Record<string, s
       const short = v.length > VALUE_LIMIT ? tr("{0}… ({1} characters in total)", v.slice(0, VALUE_LIMIT), v.length) : v;
       if (k.startsWith(AI_SESSION_PREFIX)) sessionIds[k] = short;
       else if (!/^(ai|pc\.)/.test(k)) continue;
-      // 白名单外的只报「有这么个键、多长」:排查要的是「哪些设置存在」,不是原文 —— 见 VALUE_SAFE
+      // Keys outside the allowlist only report "such a key exists, and how long it is": troubleshooting
+      // needs "which settings exist", not the original text. See VALUE_SAFE
       else settings[k] = safeToShow(k) ? short : tr("(has a value, {0} characters in total; not in the allowlist, original text omitted)", v.length);
     }
   } catch {
@@ -165,8 +185,9 @@ export function buildEnvReport(input: EnvInput): Record<string, unknown> {
     project: input.project
       ? {
           name: input.project.name,
-          // null 就是「还没存过盘」。新建项目一直没保存时素材落在临时目录,
-          // 用户看到的一堆怪事都是从这儿来的,所以这一项要显式说出来
+          // null means "never saved to disk". While a new project has not been saved, its media lands in a
+          // temp directory, and a pile of odd things the user sees all come from there, so this item must
+          // be stated explicitly
           filePath: input.project.filePath ?? null,
           saved: !!input.project.filePath,
           savedNote: input.project.filePath ? undefined : tr("This project has not been saved yet, its media and working directory are under the temp directory"),
@@ -178,7 +199,8 @@ export function buildEnvReport(input: EnvInput): Record<string, unknown> {
       : null,
     media: {
       count: media.length,
-      // 用户说「素材库里什么也没有」而模型偏偏说得出文件名 —— 这一行就是对质用的
+      // The user says "the media library is empty" while the model still manages to name a file;
+      // this line is there to cross-check the two
       note: media.length === 0 ? tr("The media library is empty: if the model can name any media, that was not read from this project") : tr("The media library has {0} files", media.length),
       dirs: mediaDirs(media),
       items: media.map((m) => ({
@@ -192,9 +214,10 @@ export function buildEnvReport(input: EnvInput): Record<string, unknown> {
       visibleMessages: input.visibleMessages ?? null,
       backendSessionIds: keys.sessionIds,
       /*
-       * 界面上是空的、后端却接着上一段历史,这种脱节没有任何界面症状。
-       * 把两个数摆在一起,报告一眼就能看出来:可见 0 条 + 会话 id 还在
-       * = 服务端会去 harness-sessions 里把旧历史整段读回来(见 aiSessionKeys.ts)。
+       * The UI is empty but the backend continues from the previous history, and this mismatch shows
+       * no symptom in the UI at all. Putting the two numbers side by side lets the report reveal it at a
+       * glance: 0 visible messages + the session id still present
+       * = the server will read the old history back in full from harness-sessions (see aiSessionKeys.ts).
        */
       note: sessionCount === 0
         ? tr("No leftover backend session ids: this round starts from scratch")

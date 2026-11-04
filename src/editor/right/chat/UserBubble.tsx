@@ -8,24 +8,26 @@ import "./queue.css";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * 「回退到这里」要用的几样。AiPanel 里经 ref 中转,引用永远不变 —— MessageRow 是 memo 的,
- * 条数、是否在跑这些会变的东西不能当 props 往下传,否则每个流式片段都会把所有用户气泡重渲一遍。
- * 所以都做成函数,点开确认层那一刻现取。
+ * The few things "Rewind to here" needs. In AiPanel they are relayed through a ref, so the reference
+ * never changes: MessageRow is memoized, and things that change, such as the message count or whether
+ * a run is in progress, cannot be passed down as props, otherwise every streamed chunk would re-render
+ * all user bubbles.
+ * So they are all functions, read at the moment the confirmation layer is opened.
  */
 export interface RewindHandlers {
-  /** 回退到这条会移除几条消息(含它自己) */
+  /** How many messages rewinding to this one removes (including itself) */
   countFrom: (userMessageId: string) => number;
-  /** 这一页此刻是否在跑:在跑的话确认层多一句「会先停止当前运行」 */
+  /** Whether this tab is running right now: if so, the confirmation layer adds "The current run will be stopped first" */
   isRunning: () => boolean;
-  /** 输入框里此刻有没有内容:有的话提醒会被替换 */
+  /** Whether the input box has content right now: if so, warn that it will be replaced */
   hasDraft: () => boolean;
   onRewind: (userMessageId: string) => void;
 }
 
-/** 「重新发送」发的窗口事件(定义在 outbox.ts,手机页共用) */
+/** The window event sent by "Resend" (defined in outbox.ts, shared with the mobile page) */
 export const CLOUD_RESEND_EVENT = OUTBOX_RESEND_EVENT;
 
-/** 逆时针的回退箭头 */
+/** Counterclockwise rewind arrow */
 function IconRewind() {
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -36,20 +38,22 @@ function IconRewind() {
 }
 
 /**
- * 一条用户消息:靠右的强调色气泡,不带头像。
+ * One user message: a right-aligned accent-color bubble, with no avatar.
  *
- * 附件排在正文上面,每个一枚文件小胶囊 —— 发出去的是哪几个文件,
- * 一眼对得上刚才输入区里那几张卡,不用去读一串「[附件: a, b, c]」。
+ * Attachments sit above the body, each as a small file capsule: which files were sent can be matched
+ * at a glance with the cards in the input area a moment ago, without reading a string like
+ * "[Attachments: a, b, c]".
  *
- * 悬停时气泡左边出现一个小工具条,里面是「回退到这里」;点了在气泡下面摊开确认层。
+ * On hover a small toolbar appears to the left of the bubble, containing "Rewind to here"; clicking
+ * it expands the confirmation layer below the bubble.
  */
 export function UserBubble(props: { m: ChatMessage; rewind?: RewindHandlers }) {
   const { m, rewind } = props;
-  /** 确认层打开那一刻的快照:会移除几条、是否在跑、输入框里有没有草稿 */
+  /** Snapshot at the moment the confirmation layer opens: how many messages will be removed, whether a run is in progress, whether the input box has a draft */
   const [confirm, setConfirm] = useState<{ count: number; running: boolean; draft: boolean } | null>(null);
   const confirmRef = useRef<HTMLDivElement>(null);
 
-  // 打开后焦点先落在「取消」上:误点之后顺手按回车也不会真的回退
+  // After opening, focus lands on "Cancel" first: pressing Enter after a mis-click won't actually rewind
   useEffect(() => {
     if (!confirm) return;
     confirmRef.current?.querySelector<HTMLButtonElement>("[data-pc='ai-rewind-cancel']")?.focus();
@@ -89,7 +93,7 @@ export function UserBubble(props: { m: ChatMessage; rewind?: RewindHandlers }) {
               ))}
             </div>
           )}
-          {/* 只发了附件时正文是空的,别留一个空段落把气泡撑高 */}
+          {/* When only attachments were sent the body is empty; don't leave an empty paragraph that makes the bubble taller */}
           {m.text ? (
             <div className="ai-message-text">
               <LiveMarkdown text={m.text} live={!!m.pending} />

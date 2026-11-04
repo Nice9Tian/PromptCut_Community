@@ -2,26 +2,36 @@ import { useEffect, useState } from "react";
 import type { CardDef, CardProps } from "../../kernel/types";
 
 /**
- * E4b 的两张验收卡:**`setInterval` 和 `Date.now()` 在舞台里必须跟着虚拟时间走。**
+ * The two acceptance cards for E4b: **`setInterval` and `Date.now()` must follow virtual time on the
+ * stage.**
  *
- * 它们不是给用户用的(所以放在 `_probe/`,和 `probe.tsx` 一起),只由
- * `scripts/probes/stage-content-probe.mjs` 挂进一个临时项目里验两条:
+ * They are not meant for users (so they live in `_probe/`, together with `probe.tsx`), and are
+ * mounted into a temporary project only by `scripts/probes/stage-content-probe.mjs` to verify two
+ * things:
  *
- *   - 打字机卡:每 100 ms 推一格,后台舞台补跑到第 3 秒时**恰好 30 格**;
- *   - 倒计时卡:`advanceToAsync` 推 10 秒之后剩余时间**恰好少 10 秒**。
+ *   - Typewriter card: advances one step every 100 ms, and when the background stage catches up to
+ *     second 3 there are **exactly 30 steps**;
+ *   - Countdown card: after `advanceToAsync` advances 10 seconds, the remaining time is **exactly
+ *     10 seconds less**.
  *
- * 两条都靠 `render/stageClock.ts` 的 fake timers 和 `kernel/pinEntropy.ts` 钉住的 `Date.now`。
- * 舞台不接管这两样的话:打字机在虚拟时间下一格都不动(墙钟走完 3 秒才 30 格,而补跑是
- * 同步推的、几十毫秒就完了),倒计时按墙钟乱跑、两次探针的读数都不一样。
+ * Both rely on the fake timers of `render/stageClock.ts` and the `Date.now` pinned by
+ * `kernel/pinEntropy.ts`. If the stage did not take over these two: the typewriter would not advance
+ * a single step under virtual time (it takes the wall clock a full 3 seconds to reach 30, while the
+ * catch-up run is pushed synchronously and finishes in tens of milliseconds), and the countdown
+ * would run wild by the wall clock, with different readings from the two probe runs.
  */
 
-/** 每格 100 毫秒。和 E4b 验收里写的那个数一致,改了验收就对不上了 */
+/**
+ * 100 milliseconds per step. Consistent with the number written in the E4b acceptance check; if it
+ * is changed, the acceptance check will no longer match
+ */
 const CELL_MS = 100;
 
 function ProbeTypewriter({ playToken }: CardProps<Record<string, never>>) {
   const [cells, setCells] = useState(0);
   useEffect(() => {
-    // 重挂载(playToken / remountGen 变)就从头数:补跑总是从挂载帧起推
+    // On remount (when playToken / remountGen changes) count from the start: a catch-up run always
+    // advances from the mount frame
     setCells(0);
     const id = setInterval(() => setCells((n) => n + 1), CELL_MS);
     return () => clearInterval(id);
@@ -40,10 +50,11 @@ function ProbeTypewriter({ playToken }: CardProps<Record<string, never>>) {
 function ProbeCountdown({ t, playToken }: CardProps<Record<string, never>>) {
   const [deadline, setDeadline] = useState<number | null>(null);
   useEffect(() => {
-    // 挂载那一刻读一次表,之后每帧算「还剩多久」—— 读的是被钉住的 Date.now(虚拟时间)
+    // Read the clock once at the moment of mounting, then compute "how much time is left" every frame;
+    // what is read is the pinned Date.now (virtual time)
     setDeadline(Date.now() + 60_000);
   }, [playToken]);
-  // `t` 只是「每帧重渲一次」的触发:真正的读数来自 Date.now()
+  // `t` is only the trigger for "re-render once per frame": the real reading comes from Date.now()
   void t;
   const remaining = deadline === null ? 60_000 : deadline - Date.now();
   return (
@@ -60,8 +71,8 @@ function ProbeCountdown({ t, playToken }: CardProps<Record<string, never>>) {
 export const probeTimerCards: CardDef<Record<string, never>>[] = [
   {
     id: "probe-typewriter",
-    name: "探针卡:打字机(setInterval)",
-    description: "E4b 验收用:每 100 ms 推一格",
+    name: "Probe card: typewriter (setInterval)",
+    description: "For E4b acceptance check: advance one step every 100 ms",
     source: "native",
     frameMode: "stateful",
     defaults: {},
@@ -70,8 +81,8 @@ export const probeTimerCards: CardDef<Record<string, never>>[] = [
   },
   {
     id: "probe-countdown",
-    name: "探针卡:倒计时(Date.now)",
-    description: "E4b 验收用:按 Date.now() 倒数",
+    name: "Probe card: countdown (Date.now)",
+    description: "For E4b acceptance check: count down by Date.now()",
     source: "native",
     frameMode: "stateful",
     defaults: {},

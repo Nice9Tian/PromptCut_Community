@@ -1,16 +1,24 @@
 /**
- * 进入共享项目时 WebSocket 没建成,判是哪一种失败(`claude/join-error`)。
+ * When the WebSocket was not established while entering a shared project, decide which kind of
+ * failure it is (`claude/join-error`).
  *
- * 浏览器里握手被服务端 401 拒,与证书不对、代理挡了升级、网络不通看起来一样:都是「打开前就断、关闭码 1006」。
- * 以前一律判成 auth,页面于是说「用户名或密码不对」,把连不上的人引去改密码。现在进不去时拿一份新证明
- * 问一次 `shared/verify`〔裁〕(与握手同一个鉴权):
- * - 服务端明确说不认(401)→ auth(被踢过的仍报 kicked);
- * - 服务端认这份证明 → 账号密码没问题,是连接没建成 → unreachable;
- * - 取新证明或问的时候限速 → rate-limited;项目没了 → no-project;问不到(网络错误、5xx)→ unreachable;
- * - 服务端没有这个端点(404,还没升级的旧服务)→ 照旧判 auth / kicked,不比以前差。
- * 超时(15 s 没连上也没断)照旧是 unreachable;打开前就收到 4004 是项目没了。
+ * In a browser, a handshake rejected by the server with 401 looks the same as a wrong certificate, a
+ * proxy blocking the upgrade, or an unreachable network: all are "dropped before opening, close code
+ * 1006". It used to always be judged as auth, so the page said "wrong username or password" and sent
+ * people who could not connect off to change their password. Now, when entry fails, we get a fresh
+ * proof and ask `shared/verify` once [ruling] (the same authentication as the handshake):
+ * - The server clearly says it does not recognize it (401) → auth (a kicked user is still reported as
+ *   kicked);
+ * - The server recognizes the proof → the account and password are fine, the connection simply was not
+ *   established → unreachable;
+ * - Rate-limited while getting a new proof or asking → rate-limited; project gone → no-project; no
+ *   answer (network error, 5xx) → unreachable;
+ * - The server has no such endpoint (404, an old service not yet upgraded) → judged auth / kicked as
+ *   before, no worse than before.
+ * A timeout (15 s without connecting or disconnecting) is unreachable as before; receiving 4004
+ * before opening means the project is gone.
  *
- * 纯逻辑,不认识 store 与界面,单测见 `enterFailure.test.mjs`。
+ * Pure logic, knows nothing about the store or the UI; unit tests are in `enterFailure.test.mjs`.
  */
 import type { CloseInfo } from "./link";
 
@@ -19,11 +27,11 @@ export type EnterFailure =
   | { error: "rate-limited"; retryAfter: number | null };
 
 export interface EnterFailureDeps {
-  /** 再取一份新证明(子协议列表);失败抛共享端点的错误(带 status) */
+  /** Fetch a fresh proof (subprotocol list); on failure throw the shared endpoint's error (with status) */
   fresh: () => Promise<string[]>;
-  /** 问服务端认不认这份证明:认回 true,401 回 false,别的抛(带 status;网络错误不带) */
+  /** Ask the server whether it accepts this proof: true if accepted, false on 401, anything else throws (with status; network errors have none) */
   verify: (protocols: string[]) => Promise<boolean>;
-  /** 这个用户名在这个项目上被踢过(本机记的) */
+  /** This username was kicked from this project (recorded locally) */
   wasKicked: () => boolean;
 }
 
@@ -35,7 +43,7 @@ function statusOf(e: unknown): { status: number | null; retryAfter: number | nul
   };
 }
 
-/** 可信挑战/发现接口已明确拒绝，不能把它当普通网络断线无限重连。 */
+/** The trusted challenge/discovery endpoint explicitly refused; do not treat it as an ordinary network drop and reconnect forever. */
 export function classifyProtocolError(e: unknown): "auth" | "kicked" | "no-project" | null {
   const { status } = statusOf(e);
   const reason = (e as { reason?: unknown })?.reason;

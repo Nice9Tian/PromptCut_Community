@@ -1,28 +1,40 @@
 /**
- * 「展开但没打开」的云端项目底下列什么(issue #15)。
+ * What to list under a cloud project that is "expanded but not opened" (issue #15).
  *
- * 氛围式侧栏原来只有**此刻连着的**那个项目列得出对话:对话要凭这个项目的身份向它的云端 Agent 服务要,
- * 而全局只连得了一个项目,于是点第二个项目,第一个就塌回去。这里给没连着的项目开一条**只读**的路:
+ * The Vibe mode sidebar used to be able to list chats only for the project **currently connected**: chats
+ * are requested from that project's Cloud Agent service using that project's identity, and globally only
+ * one project can be connected, so clicking a second project made the first collapse back. Here we open a
+ * **read-only** path for projects that are not connected:
  *
- *   1. 向这个项目的文档服务现取一次会话(`client.session`,就是进项目时用的那条 `/hosted/shared/account/session`),
- *      拿它的云端 Agent 委托票据和地址 —— **不开文档连接、不动编辑器里打开的那个项目**;
- *   2. 凭那张票据 `GET /conversations`,再按共有 / 私有复核一遍(`vibeOrg.ts` 的 `viewableChats`),别人的私有对话不列。
+ *   1. Fetch a session once from this project's document service (`client.session`, the same
+ *      `/hosted/shared/account/session` used when entering a project), and take its Cloud Agent
+ *      delegation ticket and address: **no document connection is opened and the project open in the
+ *      editor is untouched**;
+ *   2. With that ticket, `GET /conversations`, then re-check by shared / private (`viewableChats` in
+ *      `vibeOrg.ts`); other people's private chats are not listed.
  *
- * 节奏上刻意保守:只在用户点开那一支时取,取到的东西 `BROWSE_TTL_MS` 内不再取;页面回到前台、刷新都不自动重取。
- * 票据只活五分钟,而每取一次会话服务端要签三张票,展开着十个项目的人一刷新就是十次签票 —— 不值得。
+ * The pacing is deliberately conservative: fetch only when the user opens that branch, and what was
+ * fetched is not fetched again within `BROWSE_TTL_MS`; returning the page to the foreground or a refresh
+ * does not refetch automatically. A ticket lives only five minutes, and each session fetch makes the
+ * server sign three tickets, so someone with ten projects expanded would trigger ten signings on every
+ * refresh: not worth it.
  *
- * 浏览态是**只读**的:列出来的对话只能点进去(那会连上那个项目),改名、置顶、归档、删除都不在这里做 ——
- * 删对话走的是当前连着那个项目的 Agent 服务,置顶归档写的是「当前打开的项目」名下,在浏览态里做会落到别的项目上。
- * 哪几项置灰、怎么说,在 `OnlineStart.tsx` 的 `ops.blocked`。
+ * The browse state is **read-only**: the listed chats can only be clicked into (which connects that
+ * project); rename, pin, archive and delete are not done here:
+ * deleting a chat goes through the Agent service of the project currently connected, and pin and archive
+ * are written under the "currently open project", so doing them in the browse state would land on a
+ * different project.
+ * Which items are greyed out and what they say is in `ops.blocked` of `OnlineStart.tsx`.
  *
- * 本文件不引 React(React 那一层在 `OnlineStart.tsx`,用 `useSyncExternalStore` 订阅),Node 单测直接用。
+ * This file does not import React (the React layer is in `OnlineStart.tsx`, subscribing with
+ * `useSyncExternalStore`), so Node unit tests can use it directly.
  */
 import { CloudError, ONLINE_AGENT_PATH, getAiCloudProvider } from "../ai/extensions.ts";
 import { viewableChats } from "./vibeOrg.ts";
 import type { VibeChat } from "./types.ts";
 import { tr } from "../i18n/index.ts";
 
-/** 会话回包里列对话用得到的几项（结构类型，不直接依赖 `src/account/client.ts`） */
+/** The few fields of the session reply needed to list chats (structural type, no direct dependency on `src/account/client.ts`) */
 export interface BrowseSession {
   agentDelegationTicket: string;
   creator: boolean;
@@ -40,28 +52,28 @@ function isAccountFailure(error: unknown): error is Error & { status: number; co
   );
 }
 
-/** 取回来的对话列表多久之内不再取(毫秒)。票据本身活五分钟,这个数要比它小 */
+/** How long the fetched chat list is not refetched (milliseconds). The ticket itself lives five minutes; this number must be smaller than that */
 export const BROWSE_TTL_MS = 180_000;
 
-/** 侧栏里一个「展开但没打开」的项目此刻是什么样 */
+/** What one "expanded but not opened" project in the sidebar looks like right now */
 export interface BrowseEntry {
   state: "loading" | "ready" | "error";
-  /** 已经按共有 / 私有复核过的对话;还没取到时是空的 */
+  /** Chats already re-checked by shared / private; empty until fetched */
   chats: VibeChat[];
-  /** 这一支底下写的那一行话(正在取、取不到、这个项目没有云端 Agent、要二级密码…);没有就不写 */
+  /** The line of text written under this branch (fetching, cannot fetch, this project has no Cloud Agent, needs a secondary password…); not written if none */
   note?: string;
-  /** 那一行后面给不给「重试」 */
+  /** Whether to show "Retry" after that line */
   retry?: boolean;
-  /** 这一份是什么时候取到的(`now()`);没取到过是 0 */
+  /** When this copy was fetched (`now()`); 0 if never fetched */
   at: number;
 }
 
 export interface BrowseDeps {
-  /** 现取一次这个项目的会话(`useAccountProjects` 的 `peekSession`) */
+  /** Fetch this project's session once (`peekSession` of `useAccountProjects`) */
   session: (projectId: string) => Promise<BrowseSession>;
-  /** 此刻是谁在看(账号或游客的编号);复核私有对话要用 */
+  /** Who is viewing right now (the id of the account or guest); needed to re-check private chats */
   viewer: () => { accountId: string | null };
-  /** 在线页面的同源地址;文档服务没报 Agent 地址时按它拼(与 `resolveCloudAgent` 同一条规矩) */
+  /** Same-origin address of the online page; used to build the Agent address when the document service does not report one (same rule as `resolveCloudAgent`) */
   origin?: () => string;
   now?: () => number;
   fetchImpl?: typeof fetch;
@@ -70,8 +82,9 @@ export interface BrowseDeps {
 export type BrowseState = Readonly<Record<string, BrowseEntry>>;
 
 /**
- * 这个项目的云端 Agent 在哪。与 `endpoint.ts` 的 `resolveCloudAgent`(在线那一支)同一条规矩:
- * 文档服务说没有就是没有;说有、但没给地址的,按页面同源拼
+ * Where this project's Cloud Agent is. Same rule as `resolveCloudAgent` in `endpoint.ts` (the online
+ * branch): if the document service says there is none, there is none; if it says there is one but gives
+ * no address, build it from the page's same origin
  */
 export function agentBaseOf(hosted: BrowseSession["hosted"], origin: string): { url: string | null; note?: string } {
   const agent = hosted?.agent;
@@ -81,10 +94,10 @@ export function agentBaseOf(hosted: BrowseSession["hosted"], origin: string): { 
   return { url };
 }
 
-/** 取不到时底下写哪一句、给不给「重试」。能自己重试的才给(网络、服务一时不可用),要用户去做别的事的不给 */
+/** Which line to write underneath when the fetch fails, and whether to give "Retry". Only give it for what can retry by itself (network, service temporarily unavailable), not where the user has to do something else */
 export function browseNoteOf(error: unknown): { note: string; retry: boolean } {
   if (isAccountFailure(error)) {
-    // 要输这个项目的二级密码、已不在名单、被禁入、项目没了:重试多少次都一样,告诉他去做什么
+    // Needs this project's secondary password, no longer on the list, on the ban list, project gone: retrying any number of times is the same, so tell them what to do
     if (error.code === "secondary-password-required") return { note: tr("This project requires the project secondary password first: click the project name to open it and follow the prompt."), retry: false };
     if (["not-listed", "banned", "no-project", "project-gone"].includes(error.code)) return { note: error.message, retry: false };
     if (error.status === 401) return { note: error.message, retry: false };
@@ -99,8 +112,9 @@ export function browseNoteOf(error: unknown): { note: string; retry: boolean } {
 }
 
 /**
- * 取一个项目的对话列表。`note` 有值表示列不出来(没有 Agent 服务、创建者关了);这两种不算失败,
- * 不必重试,所以照常记成 `ready`
+ * Fetch a project's chat list. A `note` with a value means nothing can be listed (no Agent service, the
+ * creator turned it off); these two cases do not count as failures,
+ * no retry is needed, so they are recorded as `ready` as usual
  */
 export async function fetchBrowsedChats(projectId: string, deps: BrowseDeps): Promise<{ chats: VibeChat[]; note?: string }> {
   const session = await deps.session(projectId);
@@ -120,11 +134,12 @@ export interface BrowseChats {
   subscribe: (listener: () => void) => () => void;
   snapshot: () => BrowseState;
   /**
-   * 该去取这个项目的对话了(用户点开了那一支)。`force` 是用户自己点「重试」:不管 TTL 都取一次。
-   * 正在取的、TTL 之内取过的都不会再发请求
+   * Time to fetch this project's chats (the user opened that branch). `force` means the user clicked
+   * "Retry" themselves: fetch once regardless of the TTL.
+   * Ones being fetched, and ones fetched within the TTL, send no request again
    */
   load: (projectId: string, options?: { force?: boolean }) => void;
-  /** 换账号、退出登录:整桶丢掉(不然会串出上一个账号的对话) */
+  /** Switching account or logging out: drop the whole bucket (otherwise the previous account's chats would leak through) */
   forget: () => void;
 }
 
@@ -144,7 +159,7 @@ export function createBrowseChats(deps: BrowseDeps): BrowseChats {
       const had = state[projectId];
       if (!options?.force && had && had.state === "ready" && now() - had.at < BROWSE_TTL_MS) return;
       inFlight.add(projectId);
-      // 取的时候把上一次的结果留在原处:只在那一行写「正在取」,底下已经列着的对话不闪掉
+      // While fetching, leave the previous result in place: only write "fetching" on that line, so the chats already listed below do not flicker away
       put(projectId, { state: "loading", chats: had?.chats ?? [], note: tr("Reading this project's chats…"), at: had?.at ?? 0 });
       void fetchBrowsedChats(projectId, deps).then(
         (out) => { inFlight.delete(projectId); put(projectId, { state: "ready", chats: out.chats, ...(out.note ? { note: out.note } : {}), at: now() }); },

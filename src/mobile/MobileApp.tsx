@@ -1,6 +1,6 @@
 /**
- * 手机版界面的入口(语义 `product/platforms.md`「身份」:身份为手机的在线浏览器用手机版界面)。
- * `Shell` 判定一次界面后按需载入本模块:桌面界面不下载手机版的代码和样式。
+ * Entry of the mobile app UI (semantics `product/platforms.md` "Identity": an online browser whose identity is mobile uses the mobile app UI).
+ * `Shell` decides the UI once and then loads this module on demand: the desktop UI does not download the mobile app's code and styles.
  */
 import "./mobile.css";
 import { MobileEditor } from "./MobileEditor";

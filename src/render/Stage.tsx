@@ -17,7 +17,10 @@ import { clipFrameMode } from "../kernel/frameMode.mjs";
 import { guardCompositing, shouldGuard } from "./capabilityGuard";
 import { ensurePlaneStyle } from "./planeStyle";
 import { GlPlane } from "./gl/GlPlane";
-/* 占位组件(product/rendering.md「兜底顺序」尽头;接口见 `placeholder/contract.ts`) */
+/*
+ * Placeholder component (end of product/rendering.md "Fallback order"; see
+ * `placeholder/contract.ts` for interface).
+ */
 import { PlaceholderPlane, PLACEHOLDER_CSS, maxAnimated } from "./placeholder";
 import { ensurePlaceholderStyle, exportSyncedMountFor, geometryFor, isCatchingUpClip, onlineBrowserMode, PLACEHOLDER_SLOT_ATTR, placeholderFitFor, placeholdersEnabled, setMaxAnimated, unsupportedHere } from "./placeholderHost";
 import { resolveCardParams } from "./mediaTier";
@@ -32,112 +35,156 @@ setMaxAnimated(maxAnimated);
 // Their CSS/DOM stays in the same stacking tree (including paper/glass styles),
 // but their component is not run for each stateful history frame.
 const DirectCard = memo(function DirectCard({ def, params, ...props }: CardProps<any> & { def: CardDef<any> }) {
-  // 素材效果卡没有 Component,但它在下面的分支顺序里排在这一支**前面**,走到这里必有组件。
-  // 这里**不能**改成 `if (!C) return null` —— 分支顺序万一写错,那就是一张静默的空白卡。
+  // Media effect cards have no Component, but appear **ahead** of this branch in the branch order
+  // below, so reaching here guarantees a component exists.
+  // This **must not** be changed to `if (!C) return null`: if the branch order were ever wrong, it
+  // would silently produce a blank card.
   const C = def.Component!;
   return <C {...props} params={resolveCardParams({ ...def.defaults, ...params })} />;
 });
 
 /**
- * 实体模式:浏览时把每张卡换成一个色块。给一个「这张卡该画成什么样」的查询函数,
- * Stage 只负责摆位置 —— 颜色怎么来的、什么时候采样,是 render/solidMode.ts 的事。
+ * Solid mode: replaces each card with a color block during browsing. Provides a query function for
+ * "how this card should be drawn", and Stage is only responsible for positioning: where colors come
+ * from and when sampling occurs is handled by render/solidMode.ts.
  *
- * 不传 = 真渲,DOM 和以前**一个字都不差**(导出走的就是这条路)。
+ * Omitted = real render, DOM is **verbatim identical** to before (export follows this exact path).
  */
 export type ProxyRender = (clipId: string) => { color: string; box: { left: number; top: number; width: number; height: number } | null };
 
 /**
- * G1 的一条流分组:长度 1 = 单卡流(或依赖下层的流,看 `plane`),> 1 = 组流(按画家顺序,最后一个是组里最上面那张)。
- * `key` / `ranges` 是 `streamPlayer` 要的(就绪索引里那一层的流键和就绪分段号),`Stage` 只看 `clipIds` 和 `plane`。
+ * A stream group in G1: length 1 = single-card stream (or below-dependent stream, depending on
+ * `plane`), > 1 = group stream (in painter's order, the last being the topmost card in the group).
+ * `key` / `ranges` are needed by `streamPlayer` (stream key and ready segment numbers at that layer
+ * in the ready index); `Stage` only looks at `clipIds` and `plane`.
  */
 export interface StreamPlaneGroup {
   clipIds: string[];
   /**
-   * `"stage"`:只有一张卡、但按舞台坐标产的流(依赖下层的流,`docs/plan/prerender-products-contract.md` 第 5.4 节)。
-   * 画布不挂进包裹层,挂在舞台根下(和组流同一种平面),层序取这张卡那一层。
+   * `"stage"`: a stream produced for only one card but in stage coordinates (below-dependent stream,
+   * `docs/plan/prerender-products-contract.md` section 5.4). Canvas is mounted under the stage root
+   * rather than in a wrapper layer (the same kind of plane as group streams), with layer order taken
+   * from that card's layer.
    */
   plane?: "stage";
   key?: string;
   ranges?: Array<[number, number]>;
-  /** 这条流自己的第一帧(项目帧号);`streamPlayer` 按它把帧号换成分段号,`Stage` 不看 */
+  /**
+   * The first frame of this stream itself (project frame number); `streamPlayer` uses it to convert
+   * frame numbers to segment numbers, while `Stage` ignores it.
+   */
   originFrame?: number;
   /**
-   * 组流平面挂在哪张卡的那一层(组里**此刻活跃的最上面那张**)。由 `StageView` 按当前时刻算好填进来 ——
-   * live 路每个片段一个单片段 `Stage`,单个 `Stage` 不知道别的片段此刻在不在场。不填就取组里最上面那张。
+   * Which card's layer the group stream plane mounts at (the **topmost currently active card** in
+   * the group). Computed and populated by `StageView` for the current time: the live path has one
+   * single-clip `Stage` per clip, and an individual `Stage` does not know whether other clips are
+   * currently present. If omitted, defaults to the topmost card in the group.
    */
   host?: string;
 }
 
 /**
- * 舞台的六个可选 prop(E7)。**一个都不传 = 今天的行为一个字不差**(导出页、legacy 走的就是这条)。
- * 机制统一照 `solidMode.ts` 的实体模式:组件永远挂着,包裹层加一个类、样式表藏掉子树,
- * 要显示的东西是包裹层里的兄弟平面 —— 不改 key、不换子节点类型。
+ * The six optional props for Stage (E7). **Passing none = behavior is verbatim identical to today**
+ * (the export page and legacy follow this path). The mechanism uniformly follows solid mode from
+ * `solidMode.ts`: components remain mounted forever, wrapper layers add a class, stylesheets hide
+ * subtrees, and what needs to be displayed is a sibling plane inside the wrapper layer: without
+ * changing keys or swapping child node types.
  */
 export interface StagePlaneProps {
-  /** C3 / C4 的 HTML 快照,按 clipId。挂上 = 包裹层加 `.pc-snapshot` + 一个兄弟快照平面 */
+  /**
+   * HTML snapshots for C3 / C4, keyed by clipId. Mounting = wrapper layer adds `.pc-snapshot` +
+   * a sibling snapshot plane.
+   */
   snapshots?: ReadonlyMap<string, string>;
-  /** 播放中的重卡(E7 第 5 条):藏子树、传给组件的 `t` 冻在抑制开始那一刻 */
+  /**
+   * Heavy cards during playback (E7 item 5): hides subtrees, and freezes `t` passed to the component
+   * at the moment suppression begins.
+   */
   suppressed?: ReadonlySet<string>;
-  /** G1 的流平面分组(R8 之前恒空,渲染位置和 prop 先就位) */
+  /**
+   * Stream plane groups for G1 (always empty before R8, render positions and props in place first).
+   */
   streamPlanes?: readonly StreamPlaneGroup[];
-  /** K3:按片段重挂载的代数。key 和传给组件的 `playToken` 用的是「整舞台 playToken + 它」,**不传时就是整舞台 playToken** */
+  /**
+   * K3: per-clip remount generation. The key and `playToken` passed to the component use "whole-stage
+   * playToken + this", **and default to whole-stage playToken when omitted**.
+   */
   remountGen?: ReadonlyMap<string, number>;
-  /** K5 第一路:正在用子树虚拟时间追帧的片段 → 它此刻的**全局舞台毫秒** */
+  /**
+   * K5 path 1: clips currently catching up frames using subtree virtual time → their current **global
+   * stage milliseconds**.
+   */
   settling?: ReadonlyMap<string, number>;
-  /** E0 的 `setTime({ awaiting })`:这一帧的快照还没到,先藏着等 */
+  /** E0 `setTime({ awaiting })`: snapshot for this frame has not arrived yet, keep hidden and wait */
   awaiting?: ReadonlySet<string>;
 }
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
 
 /**
- * 运行时载入的卡(在线浏览器里执行的同步来的用户卡与素材效果卡)包一层错误边界:渲染时抛错只撤这一张,不带垮舞台。
- * 构建时就有的卡原样返回 —— 桌面、导出、预渲染的 React 树与以前逐字相同。
+ * Cards loaded at runtime (synced user cards and media effect cards executed in an online browser)
+ * are wrapped in an error boundary: errors thrown during rendering tear down only this card without
+ * crashing the stage. Cards present at build time are returned as-is: React trees for desktop,
+ * export, and prerender remain verbatim identical to before.
  */
 function guardRuntimeCard(cardId: string | undefined, body: ReactNode): ReactNode {
   return cardId && isRuntimeCard(cardId) ? <RuntimeCardBoundary cardId={cardId}>{body}</RuntimeCardBoundary> : body;
 }
 
 /**
- * 舞台:按当前时刻挑出活跃 clip 并挂载。卡片以 clip.id + playToken 作 key,
- * 进入区间即重新挂载、从头播放(和导出时的行为一致)。
+ * Stage: picks out active clips at the current time and mounts them. Cards use
+ * `clip.id + playToken` as key; entering the interval remounts them to play from the beginning
+ * (consistent with behavior during export).
  */
 export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, snapshots, suppressed, streamPlanes, remountGen, settling, awaiting, mountClock = false, nested = false, flatPrefix }: {
   timeline: Timeline; t: number; directT?: number; playToken: number; speed?: number; proxy?: ProxyRender;
   /**
-   * 剪辑段里的嵌套舞台(`CutSegmentScene`):包裹层挂 `data-pc-nested-clip` 而不是 `data-pc-clip`,
-   * 命中测试、钉动画、量框这些按舞台顶层片段工作的地方只看得到剪辑段那一层。顶层一律 false,DOM 一个字不变。
+   * Nested stage inside a cut segment (`CutSegmentScene`): wrapper layers attach
+   * `data-pc-nested-clip` instead of `data-pc-clip`, so operations working on top-level stage clips
+   * like hit testing, pinned animations, and measuring boxes only see the cut segment layer.
+   * Top level is always false, keeping the DOM verbatim unchanged.
    */
   nested?: boolean;
   /**
-   * 剪辑段里的嵌套舞台(`CutSegmentScene`):这一层片段在计划一侧的 id 前缀(`<段 id>~`,多层一路接下去;`kernel/cutFlatten.mjs`)。
-   * 六个平面 prop 都按「前缀 + 片段 id」查(父页按摊平视图里的虚拟片段发),包裹层另挂 `data-pc-flat-clip`(流平面、占位槽位按它找)。
-   * 顶层不传,一律按片段 id 查,DOM 一个字不变。
+   * Nested stage inside a cut segment (`CutSegmentScene`): the plan-side id prefix for clips at this
+   * layer (`<segment id>~`, chained across multiple layers; `kernel/cutFlatten.mjs`). All six plane
+   * props are looked up by "prefix + clip id" (dispatched by parent pages based on virtual clips in
+   * the flattened view), and wrapper layers also attach `data-pc-flat-clip` (used by stream planes
+   * and placeholder slots to find them). Omitted at the top level, always looked up by clip id,
+   * keeping the DOM verbatim unchanged.
    */
   flatPrefix?: string;
   /**
-   * 给「按挂载时刻计时」的卡传挂载钟(`CardProps.mountClockMs`)。**只有平铺时间轴的导出页传 true**:
-   * 那条路径上卡片提前 `CARD_MOUNT_LEAD` 挂载,旧的打字卡从挂载那一帧起计时,导出像素基线(演示项目)就是那样渲出来的。
-   * 预览与 Project 导出不传:前者提前多少取决于哪一拍落进提前窗口,后者在起点才挂,都按 `t`。
+   * Passes the mount clock (`CardProps.mountClockMs`) to cards that "time against mount moment".
+   * **Passed as true only on export pages with flattened timelines**: on that path cards mount
+   * `CARD_MOUNT_LEAD` in advance, and legacy typing cards time from the mounted frame; export pixel
+   * baselines (demo project) were rendered that way. Omitted for preview and Project exports: how
+   * much the former leads depends on which tick falls into the lead window, while the latter mounts
+   * only at the start point, both following `t`.
    */
   mountClock?: boolean;
 } & StagePlaneProps) {
   const timeOf = (c: Timeline['clips'][number]) => clipFrameMode(c, getCard(c.cardId)) === 'direct' ? directT : t;
-  /** 平面 prop 按哪个 id 查:顶层就是片段 id;嵌套场景里是计划一侧的虚拟片段 id(`flatPrefix`) */
+  /**
+   * Which id to look up plane props by: at the top level it is the clip id; in nested scenes it is
+   * the plan-side virtual clip id (`flatPrefix`).
+   */
   const pidOf = (c: { id: string }) => (flatPrefix ? flatPrefix + c.id : c.id);
   const active = timeline.clips.filter((c) => cardMountedAt(c, timeOf(c)));
 
   /*
-   * 四种平面的样式表(E7)。只有真的用上这几个 prop 的宿主才注入 ——
-   * 导出页和 legacy 一个 prop 都不传,这张表不会出现在它们的文档里。
+   * Stylesheet for the four kinds of planes (E7). Injected only for hosts that actually use these
+   * props: export pages and legacy pass none of these props, so this sheet will not appear in their
+   * documents.
    */
   const usesPlanes = !!(snapshots || suppressed || streamPlanes || settling || awaiting);
   useEffect(() => {
     if (usesPlanes) ensurePlaneStyle();
   }, [usesPlanes]);
   /*
-   * 占位平面(兜底顺序尽头):只有人看的预览(舞台页、`front` 角色)挂 —— `placeholderHost` 的开关
-   * 只由 `StageView` 打开;导出页、预渲染、Agent 的查询渲染、后台舞台一个节点都不渲、样式表不注入。
+   * Placeholder plane (end of fallback order): mounted only for human-viewed previews (stage page,
+   * `front` role): the `placeholderHost` toggle is enabled only by `StageView`; export pages,
+   * prerender, Agent query renders, and background stages render zero nodes and inject no stylesheet.
    */
   const placeholders = usesPlanes && placeholdersEnabled();
   useEffect(() => {
@@ -145,20 +192,25 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
   }, [placeholders]);
 
   /*
-   * 被抑制的卡传给组件的那个 `t` 要**冻在抑制开始那一刻**(E7 第 5 条)。
-   * 「进入抑制那一刻」用 ref 存上一次 render 的 suppressed 集合、在本次 render 里对比:
-   * 从不在到在 → 记当前 `cardT − clip.start`;从在到不在 → 删条目。
+   * For suppressed cards, the `t` passed to the component must be **frozen at the moment suppression
+   * begins** (E7 item 5). "The moment suppression begins" uses a ref to store the suppressed set from
+   * the previous render and compares during the current render: from absent to present → record
+   * current `cardT − clip.start`; from present to absent → delete entry.
    *
-   * 只冻**传给组件的那一支**。`cardT` 的其余用途(活跃判据、轨迹、不透明度、
-   * `data-pc-local-frame`)照常用实时值 —— 否则被抑制的卡永不下场,包裹层的轨迹停住
-   * 而流的 `<canvas>` 跟着错位。
+   * Freezes only **the branch passed to the component**. Other uses of `cardT` (active criteria,
+   * trajectory, opacity, `data-pc-local-frame`) continue using real-time values as usual: otherwise
+   * suppressed cards would never leave the stage, the wrapper layer trajectory would stop, and stream
+   * `<canvas>` would become misaligned.
    *
-   * 放 Map 而不是单个值:live 路径下每个 clip 一个单片段 Stage、Map 里只有一条,
-   * 但同一份代码也服务导出 / legacy 的多片段 Stage。
+   * Stored in a Map rather than a single value: on the live path each clip has a single-clip Stage
+   * with only one entry in the Map, but the same code also serves multi-clip Stages
+   * for export / legacy.
    */
   /*
-   * 挂载钟(记账在 `mountClock.ts`):每张卡这一次挂载(`片段 id:代数`,和包裹层的 key 同一个)第一次渲染时的舞台时刻。
-   * 只在 `mountClock` 打开时记;渲染体里按 key 取,这一次渲染没挂的在提交后清掉。
+   * Mount clock (tracked in `mountClock.ts`): stage time at first render for each card's
+   * current mount (`clip id:generation`, matching the wrapper layer key). Recorded only
+   * when `mountClock` is enabled; retrieved by key in the render body, and cards not mounted
+   * in this render are cleared after commit.
    */
   const mountedAt = useRef(new Map<string, number>());
   const mountKeys = new Set<string>();
@@ -181,11 +233,13 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
   prevSuppressed.current = supNow;
 
   /**
-   * 传给组件的那个本地时间。三档,按优先级:
-   *   1. 正在追帧(`settling`)—— 读它自己的虚拟时间(值是全局舞台毫秒,这里现算本地);
-   *   2. 被抑制 —— 冻在抑制开始那一刻;
-   *   3. 平时 —— 实时值。
-   * 四支(组合卡 / 素材效果卡 / DirectCard / 普通卡)口径一致,都走这里。
+   * Local time passed to the component. Three tiers, in priority order:
+   *   1. Catching up frames (`settling`): reads its own virtual time (value is global stage
+   *      milliseconds, computed locally on the fly here);
+   *   2. Suppressed: frozen at the moment suppression begins;
+   *   3. Normal: real-time value.
+   * All four branches (composite card / media effect card / DirectCard / regular card) align on this
+   * and go through here.
    */
   const localTOf = (clip: Timeline["clips"][number], base: number): number => {
     const ms = settling?.get(pidOf(clip));
@@ -194,17 +248,21 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
     if (frozen !== undefined) return frozen;
     return Math.max(0, base - clip.start);
   };
-  /** 占位符为什么显示(诊断用;显隐本身不看它,由 `StageView` 切) */
+  /** Why the placeholder is shown (for diagnostics; visibility itself does not check it, switched by `StageView`) */
   const placeholderReasonOf = (id: string): PlaceholderReason =>
     awaiting?.has(id) ? "awaiting" : settling?.has(id) || isCatchingUpClip(id) ? "catching-up" : "no-data";
-  // 自带三维场景的卡(scene-3d)要用和 A 层同一台相机,所以把画幅和 fov 一起递下去。
-  // 对象整体透传,别的卡收到了也不看。
+  // Cards with their own 3D scenes (scene-3d) must use the same camera as layer A, so pass down
+  // the aspect ratio and fov together.
+  // Pass the entire object through; other cards ignore it even if received.
   const stageInfo = useMemo(() => ({ width: timeline.width, height: timeline.height, camera3dFov: timeline.camera3dFov }), [timeline.width, timeline.height, timeline.camera3dFov]);
   /*
-   * 审阅表（src/cards/capabilities.json）说 independent、画面上却量到 backdrop-filter 的卡，
-   * 挂上之后报一次警并降级成 belowDependent（render/capabilityGuard.ts）。
-   * 每张卡一辈子只量一次，且只在开发态的交互舞台上跑 —— 导出 / 预渲染那条路 shouldGuard() 直接 false，
-   * 一个 getComputedStyle 都不会执行，逐像素基线不受影响。DOM 一个字不改（只加了个 ref）。
+   * For cards where the review table (src/cards/capabilities.json) says independent, but
+   * backdrop-filter is measured on screen, report a warning once after mounting and downgrade
+   * to belowDependent (render/capabilityGuard.ts).
+   * Each card is measured only once in its lifetime, and only on the interactive stage in development:
+   * on the export / prerender path, shouldGuard() returns false directly, so not even a single
+   * getComputedStyle executes, leaving the pixel-by-pixel baseline unaffected. The DOM does not change
+   * by a single character (only a ref was added).
    */
   const stageRef = useRef<HTMLDivElement>(null);
   const guardKey = active.map((c) => c.cardId).join("|");
@@ -224,34 +282,40 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
       style={{ position: "relative", width: timeline.width, height: timeline.height, overflow: "hidden", background: "transparent" }}
     >
       {/*
-        三维的透视挂在这一层,不是挂在舞台那一格 —— 因为 CSS 的 `perspective`
-        **只作用于直接子元素**,而卡片 div 的直接父元素就是 AnimClock 这一层。
-        往外挪一格就会静悄悄失效(实测:卡片高度一点不变,rotateY 只剩仿射拉伸),
-        而且外面那格还有 overflow:hidden,它会把 transform-style 强制打回 flat。
+        3D perspective is attached to this layer, not the stage cell: CSS `perspective`
+        **only applies to direct child elements**, and the card div's direct parent is this AnimClock layer.
+        Moving it one level outward silently fails (tested: card height does not change at all, rotateY is
+        reduced to affine stretching), and the outer cell has overflow:hidden, which forces transform-style
+        back to flat.
 
-        放在 Stage 里而不是各个视图里,是为了让预览和导出走同一条路:
-        StageView / ExportView 拿到的都只是 Timeline,任何一方漏写就是
-        「预览有透视、导出没有」,而那种分叉不报错。
+        Placing it in Stage rather than individual views ensures preview and export follow the same path:
+        StageView / ExportView both only receive Timeline; omitting it in either results in "perspective
+        in preview, none in export", and that divergence throws no errors.
 
-        perspective 的值就是相机到 z=0 平面的距离,和 three.js 那边同一个数、
-        同一个单位(见 kernel/space3d.ts)—— A 层和 B 层不用标定就能对齐,靠的就是这个。
-        不开三维时一个属性都不加:老项目的导出有逐像素基线。
+        The perspective value is the distance from the camera to the z=0 plane, identical to the number
+        and unit in three.js (see kernel/space3d.ts): layer A and layer B align without calibration thanks
+        to this. When 3D is disabled, no properties are added: exports of legacy projects have a
+        pixel-by-pixel baseline.
 
-        **这里没有 transform-style: preserve-3d,是故意的。** 直觉上「开三维就该加上它」,
-        实测下来它做的完全是另一件事(perspective 618、一张 translateZ(-300) 的卡):
+        **transform-style: preserve-3d is intentionally omitted here.** Intuition suggests "adding it when
+        enabling 3D", but empirical tests show it does something completely different (perspective 618, a
+        card with translateZ(-300)):
 
-          无 perspective            卡片投影宽 300.00   画面上在前的是 DOM 靠后那张
-          perspective + preserve-3d 卡片投影宽 201.96   画面上在前的变成 z 更近那张
-          只有 perspective          卡片投影宽 201.96   画面上在前的仍是 DOM 靠后那张
+          Without perspective       Card projected width 300.00   In front on screen is the later DOM node
+          perspective + preserve-3d Card projected width 201.96   In front on screen becomes the closer z card
+          perspective only          Card projected width 201.96   In front on screen is still the later DOM node
 
-        投影宽两行一模一样 —— 它**对透视一点贡献都没有**;它唯一的作用是把兄弟卡片
-        从「按 DOM 顺序叠」改成「按 z 深度排序」。那正好推翻这套设计写死的两条约定:
-        谁盖住谁只看序列(trackId),以及卡片之间不做穿插。加上它的话,Agent 把最上层的卡
-        往里推一点(translateZ 负值),它会立刻被下面所有卡盖住 —— 和工具描述承诺的相反。
+        The projected widths in the two rows are identical: it **contributes nothing to perspective**;
+        its sole effect is changing sibling cards from "stacking by DOM order" to "sorting by z-depth".
+        That directly overturns two hardcoded conventions in this design: stacking order depends solely
+        on track (trackId), and cards do not interpenetrate. If added, when an Agent pushes the topmost
+        card inward (negative translateZ), it would immediately be covered by all cards beneath: contrary
+        to what the tool description promises.
 
-        它还会顺手改掉**没碰过三维的卡**的像素:一张只有 scale+rotate 的卡,截图 sha256
-        在「不开三维」和「只有 perspective」下相同,加了 preserve-3d 就变了。
-        也就是说一旦有人调 set_camera3d,画面里另外那些卡全部换了光栅路径。
+        It also alters pixels of **cards untouched by 3D**: for a card with only scale+rotate, screenshot
+        sha256 is identical between "3D disabled" and "perspective only", but changes once preserve-3d is
+        added. In other words, as soon as set_camera3d is called, all other cards on screen switch
+        rasterization paths.
       */}
       <AnimClock
         speed={speed}
@@ -267,54 +331,74 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
         {active.map((clip, i) => {
           const def = getCard(clip.cardId);
           /*
-           * 这台设备跑不了这张卡(在线浏览器模式下的用户卡、素材效果卡;同步来的用户卡本机连定义都没有):卡片代码不跑,
-           * 包裹层照内置重卡的路子挂快照平面、流平面,兜底顺序什么都贴不上时占位符显示 `unsupported`(C10 契约第 9 节)。
-           * 模式关着(桌面、导出、预渲染、Agent 看到的画面)恒为 false,下面每一支和以前逐字相同。
+           * This device cannot run this card (user cards and media effect cards in online browser mode;
+           * this machine does not even have definitions for synced user cards): card code does not run,
+           * the wrapper layer mounts snapshot planes and stream planes following built-in heavy cards,
+           * and the placeholder displays `unsupported` when nothing can be pasted in the fallback order
+           * (section 9 of the C10 contract). When the mode is off (desktop, export, prerender, video seen
+           * by Agent), it is always false, and every branch below is verbatim identical to before.
            */
-          // 剪辑段(kernel/cutSegments.ts):不是注册表里的卡,包裹层里挂被引用剪辑的嵌套场景
+          // Cut segment (kernel/cutSegments.ts): not a card in the registry; mounts the nested scene of the
+          // referenced cut in the wrapper layer
           const seg = cutOf(clip);
           const localOnly = !seg && ((onlineBrowserMode() && unsupportedHere(clip.cardId, def)) || exportSyncedMountFor(clip.cardId, def));
           /*
-           * 三道都在取 def 这一格剔掉,不放到分支里:
-           *  - 定义没了(用户卡文件被删)——素材效果卡的 def 在注册表里必然取得到,挡不住下面两种;
-           *  - 既没有 card 也没有 Component:音频素材效果卡万一带着 cardId 进来也不炸;
-           *  - 素材效果卡但没有图(projectCardGraph 抛了):没有图解不出输入,画不出东西。
-           * 这台设备跑不了的卡不看这三道:它不挂组件,只贴预渲染结果。
+           * All three checks are filtered out at the def lookup step, not placed into branches:
+           *  - Definition missing (user card file deleted): def for media effect cards can always be
+           *    fetched from the registry, but cannot guard against the two cases below;
+           *  - Neither card nor Component: audio media effect cards won't crash even if carrying a cardId;
+           *  - Media effect card but no graph (projectCardGraph threw): without a graph, inputs cannot be
+           *    resolved and nothing can be drawn.
+           * Cards this device cannot run skip these three checks: they mount no components, only pasting
+           * prerender output.
            */
           if (!seg && !localOnly && (!def || (!def.card && !def.Component) || (def.card && !timeline.graph))) return null;
           const C = def?.Component!;
-          // 声画卡的 DOM/图形由视觉出口选择，audio() 不改变视觉分派。
+          // DOM/graphics of audio-visual cards are selected by the visual outlet;
+          // audio() does not alter visual dispatch.
           const embeddedOffset = def?.audio ? (clip.sourceOffset ?? 0) : 0;
           const cardT = timeOf(clip);
           const unsupported = localOnly;
 
-          // 绑了轨迹的 clip 整层跟着目标平移。平移放在**外层**而不是交给卡片：
-          // 卡片不知道自己被绑了，也不该知道——换一张卡，跟随照样生效。
+          // Clips bound to a trajectory translate their entire layer with the target. Translation is placed
+          // on the **outer layer** instead of delegated to the card:
+          // The card does not know it is bound, nor should it: swap in another card, and following still takes effect.
           const m = clip.motion ? motionAt(clip.motion, Math.max(0, cardT - clip.start)) : null;
           if (m && clip.motion!.whenHidden === "hide" && !m.visible) return null;
 
-          // 卡片的框(位置/尺寸/锚点/缩放/旋转)和轨迹平移一样放在外层:卡片不知道自己被摆到了哪儿。
-          // 没有 frame 时 frameCss 输出的就是以前那套 inset:0,老项目逐字节不变。
-          // 不透明度 / 淡入淡出同理放外层,而且只在设了的时候才写 opacity —— 没设的卡 DOM 一个字不变。
-          // 剪辑段的淡入淡出从它真正露出来的起点(`seg.from`)算,预卷那一截不露
+          // The card's box (position/size/anchor/scale/rotation) is placed on the outer layer like trajectory
+          // translation: the card does not know where it was placed.
+          // When there is no frame, frameCss outputs the old inset:0, keeping legacy projects byte-for-byte unchanged.
+          // Opacity / fade in/out is likewise placed on the outer layer, and opacity is written only when
+          // set: cards without it keep the DOM unchanged by a single character.
+          // Fade in/out for cut segments is calculated from where it is actually exposed (`seg.from`);
+          // the preroll portion is not exposed
           const op = seg
             ? envelopeAt({ start: seg.from, end: clip.end, fadeIn: clip.fadeIn, fadeOut: clip.fadeOut, opacity: clip.opacity }, cardT)
             : hasOpacityControls(clip) ? cardOpacityAt(clip, cardT) : 1;
           const prerolling = !!seg && cardT < seg.from;
-          // 强调(阴影 / 描边)沿 alpha 边缘走,所以挂在卡片外层这一格上;没设就一个字不写
+          // Emphasis (shadow / stroke) follows alpha edges, so it is attached to this card outer layer slot;
+          // if unset, not a single character is written
           const filter = emphasisFilter(clip.emphasis);
           /*
-           * K3:重挂载的粒度是片段。key 和**传给组件的 `playToken`** 都换成 `remountGen`,
-           * 不传时退回整舞台 `playToken`(导出页、legacy 行为不变)。两处必须一起换:
-           * `layoutId` 靠它换新、三维 / 终端卡靠它重播,只换 key 的话 Motion 会把重播当共享布局过渡。
+           * K3: Remount granularity is clips. Both key and the **`playToken` passed to the component**
+           * are switched to `remountGen`, falling back to the whole-stage `playToken` when omitted (export
+           * page, legacy behavior unchanged). Both places must be changed together: `layoutId` relies on
+           * it to refresh, and 3D / terminal cards rely on it to replay; swapping only the key makes Motion
+           * treat the replay as a shared layout transition.
            *
-           * **两个代数相加,不是二选一。** 以前写的是 `remountGen ?? playToken`,有两处漏挂(`seek-back-exact-probe.mjs` 在
-           * 包裹层节点上留记号量出来的):
-           *   - 舞台的 `playToken` 从 1 起,按片段重挂载的代数第一次也是 1 —— 新开的可见舞台上每张卡的第一次按片段重挂载
-           *     (向后跳的定位配方、追帧的起步)key 没变,等于没挂;
-           *   - 一张卡按片段重挂载过之后,它的 key 就只认 `remountGen`,整舞台的 `playToken` 再涨也不动它 —— 这个舞台转到后台
-           *     做整场景补跑(`render(jump)`)、探针复位、生成快照时,这张卡不再跟着整台重挂载。
-           * 两个代数都只增不减,和每次重挂载都严格变大;没有按片段的代数时就是 `playToken`(导出页、legacy 一个字不变)。
+           * **The two generations are added together, not an either-or choice.** Previously written as
+           * `remountGen ?? playToken`, missing mounts in two places (measured by `seek-back-exact-probe.mjs`
+           * leaving marks on wrapper layer nodes):
+           *   - The stage's `playToken` starts from 1, and the first per-clip remount generation is also 1:
+           *     on a newly opened visible stage, each card's first per-clip remount (the seek-back
+           *     positioning recipe, starting frame catch-up) had an unchanged key, equivalent to not mounting;
+           *   - After a card had a per-clip remount, its key only recognized `remountGen`, and increases in
+           *     the whole stage's `playToken` no longer touched it: when this stage moved to the background
+           *     for whole-scene catch-up runs (`render(jump)`), probe reset, or generating snapshots, this
+           *     card no longer remounted with the entire stage.
+           * Both generations only increase, and their sum strictly grows with each remount; without a
+           * per-clip generation, it is `playToken` (export page, legacy unchanged by a single character).
            */
           const pid = pidOf(clip);
           const gen = playToken + (remountGen?.get(pid) ?? 0);
@@ -326,29 +410,40 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
             awaiting?.has(pid) ? "pc-awaiting" : "",
             isSettling ? "pc-settling" : "",
           ].filter(Boolean).join(" ");
-          // 这张卡该不该挂流平面(G1:单卡流挂在包裹层里;组流和依赖下层的流挂舞台根下的 [data-pc-group-plane])
+          // Whether this card should mount a stream plane (G1: single-card stream mounts in wrapper layer;
+          // group stream and below-dependent stream mount under [data-pc-group-plane] at stage root)
           const ownStream = streamPlanes?.some((g) => g.clipIds.length === 1 && g.plane !== "stage" && g.clipIds[0] === pid) ?? false;
           /*
-           * 流平面露不露:这张卡被抑制着、或正在不可见地追帧时才露。别的时候它也可能挂着 —— 暂停着把播放头下这一帧先解好、
-           * 等流画出第一帧再藏活子树 —— 那时活子树还露着,流平面要藏起来(`display: none`:不占框,`solid.ts` 的实体框不算它),
-           * 不然两份画面叠在一起。和 `.pc-suppressed` 在同一次提交里翻,画面从活子树换成流中间不空一拍。
+           * Whether the stream plane is shown: shown only when this card is suppressed, or is invisibly
+           * catching up frames. At other times it may also remain mounted: paused to decode this frame under
+           * the playhead first, waiting for the stream to draw the first frame before hiding the live subtree:
+           * at that time the live subtree is still shown, so the stream plane must be hidden (`display: none`:
+           * takes up no box, not counted in `solid.ts` entity box), otherwise the two visuals stack together.
+           * Flipped in the same commit as `.pc-suppressed`, so switching visuals from live subtree to stream
+           * does not miss a tick in between.
            */
           const streamShown = isSettling || supNow.has(pid);
           /*
-           * 包裹层的本地帧号。平时按 `cardT` 算;**正在追帧(`settling`)的片段按它自己的虚拟时间算**(R9 M4 的配套):
-           * 子树虚拟时间下包裹层的帧号不跟着走的话,gl 平面的 `data-pc-gl-frame` 和它永远对不上,
-           * 每张 canvas 卡在 K1 两趟布尔探针 / K5 第一路里都被 `rasterizeCanvas` 误判 `lossy`。
-           * `settling` 只在舞台上传,导出页和 legacy 一个字不变。
+           * Local frame number of the wrapper layer. Usually calculated from `cardT`; **clips undergoing
+           * frame catch-up (`settling`) are calculated from their own virtual time** (companion to R9 M4):
+           * if the wrapper layer frame number does not follow under subtree virtual time, `data-pc-gl-frame`
+           * on the gl plane will never match it, causing every canvas card to be misclassified as `lossy` by
+           * `rasterizeCanvas` in K1 two boolean probe passes / K5 path 1.
+           * `settling` is only passed on stage; export page and legacy remain unchanged by a single character.
            */
           const settlingMs = settling?.get(pid);
           const localFrame = Math.round(((settlingMs !== undefined ? settlingMs / 1000 : cardT) - clip.start) * timeline.fps);
           /*
-           * canvas 卡(R9 M1):带 `canvas` 契约(`dom2d` 除外)的片段在包裹层里多渲一个 gl 平面,画面由共享渲染器画。
-           * 这一拍画不画(M3):「在 `suppressed` 里」的不画（在贴流或占位，没在追）。尺寸 = 片段实体框。
+           * Canvas card (R9 M1): clips with a `canvas` contract (except `dom2d`) render an extra gl plane
+           * in the wrapper layer, drawn by the shared renderer.
+           * Whether to draw on this tick (M3): those "in `suppressed`" do not draw (pasting stream or
+           * placeholder, not catching up). Size = clip entity box.
            */
           const glContract = !unsupported && def?.canvas && def.canvas.kind !== "dom2d" ? def.canvas : null;
           const glBox = glContract ? frameBox(clip.frame, timeline) : null;
-          // 组流的成员、依赖下层的流的目标卡:包裹层里没有流平面,`hitTest` / `bounds` 对它们退回包裹层框(G1「组流平面的命中与实体框」)
+          // Group stream members, target cards of below-dependent streams: no stream plane in wrapper layer;
+          // `hitTest` / `bounds` fall back to wrapper layer box for them
+          // (G1 "Hit testing and entity boxes for group stream planes")
           const groupMember = streamPlanes?.some((g) => (g.clipIds.length > 1 || g.plane === "stage") && g.clipIds.includes(pid)) ?? false;
           return (
             <div
@@ -364,48 +459,56 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
                 ...(op < 1 ? { opacity: op } : null),
                 ...(filter ? { filter } : null),
                 /*
-                 * 层序写死在这里,不靠 DOM 顺序。
+                 * Layer order is hard-coded here, not relying on DOM order.
                  *
-                 * `active` 已经是画家顺序(flattenOverlay 倒着遍历 tracks,所以最后一个 =
-                 * 时间轴最上面那条序列 = 最上层),但光有 DOM 顺序不够:卡片内部只要有人写了
-                 * z-index,而外层又不是层叠上下文,那个 z-index 就会跑到舞台这一级去比,
-                 * 越过后面的兄弟。实测 focus-card 内部有 `zIndex: 100`(focus-card.tsx:40),
-                 * 于是把三维卡放到最上面那条序列,画面中心仍然是 focus-card ——
-                 * Agent 按「靠上的序列盖住靠下的」去排层,结果和承诺相反。
+                 * `active` is already in painter's order (flattenOverlay traverses tracks in reverse, so the last
+                 * one = topmost track on the timeline = top layer), but DOM order alone is not enough: if anyone
+                 * inside a card writes a z-index, and the outer layer is not a stacking context, that z-index
+                 * escapes to the stage level for comparison, jumping over subsequent siblings. Testing showed
+                 * that focus-card has `zIndex: 100` inside (focus-card.tsx:40), so putting a 3D card on the
+                 * topmost track still leaves focus-card at the center of the video: the Agent arranged layers
+                 * assuming "upper tracks cover lower ones", producing the opposite of what was promised.
                  *
-                 * 所以两件事一起做:显式 z-index 定序,`isolation: isolate` 造一个层叠上下文
-                 * 把卡片内部的 z-index 关在里面。这就是设计文档里「每个 A/B 对象带一个遮蔽标识、
-                 * 0 在最前面」那条 —— 遮蔽标识就是序列顺序,这里把它翻译成 CSS 的方向
-                 * (CSS 是数字越大越靠前,和「0 最前」正好相反,所以只能写死在一处)。
+                 * So do two things together: explicit z-index ordering, and `isolation: isolate` to create a
+                 * stacking context that confines the card's internal z-index inside. This is the design doc
+                 * rule: "each A/B object has an occlusion indicator, with 0 in front": the occlusion indicator
+                 * is track order, translated here into CSS direction (in CSS, larger numbers are in front, exactly
+                 * opposite to "0 in front", so it can only be hard-coded in one place).
                  */
                 zIndex: i + 1,
                 isolation: "isolate",
-                // 剪辑段:被引用剪辑的整帧只在段的框里露出来;预卷那一截整层藏着(也不让点中)
+                // Cut segment: the full frame of the referenced cut is only exposed within the segment's box;
+                // the entire layer of the preroll portion is hidden (and not clickable)
                 ...(seg ? { overflow: "hidden" } : null),
                 ...(prerolling ? { pointerEvents: "none" as const } : null),
               }}
             >
               {/*
-                clip.params 在写入时就是全量的(见 store 的 addCardClip),
-                这里铺一层 defaults 只是兜底:卡片以后新增参数时,先前存下的 clip
-                里没有那个键,没有这层就会把 undefined 传进组件。
-                正常情况下它一项都不会补 —— 补上了就说明 clip 缺参数。
+                clip.params is already complete when written (see addCardClip in store); spreading a layer of
+                defaults here is merely a fallback: when cards add parameters in the future, previously saved
+                clips lack that key, and without this layer undefined would be passed into the component. Under
+                normal conditions it fills in nothing: if anything is filled in, the clip was missing parameters.
               */}
               {seg ? (
                 <CutSegmentScene seg={seg} start={clip.start} localT={localTOf(clip, t)}
                   localDirectT={settling?.has(pid) || frozenT.current.has(pid) ? localTOf(clip, t) : Math.max(0, directT - clip.start)}
                   playToken={gen} size={frameBox(clip.frame, timeline)}
-                  /* 里面的卡各自按「段 id~卡的片段 id」查抑制、流平面、占位(`kernel/cutFlatten.mjs`);导出页、预渲染页不传平面,一个字不变 */
+                  /* The cards inside each look up suppression, stream plane, and placeholder by
+                   * "segment id~card clip id" (`kernel/cutFlatten.mjs`); export page and prerender page
+                   * pass no planes, unchanged by a single character */
                   flatPrefix={pid + FLAT_SEP}
                   planes={usesPlanes ? { snapshots, suppressed, streamPlanes, remountGen, settling, awaiting } : undefined} />
               ) : guardRuntimeCard(clip.cardId, unsupported ? (
-                /* 这台设备跑不了的卡:卡片代码不跑,不挂组件(快照 / 流平面与占位槽位照常挂在下面) */
+                /* Cards this device cannot run: card code does not run, no components mounted
+                 * (snapshots / stream planes and placeholder slots are mounted below as usual) */
                 null
               ) : clip.cardId === "composite" && clip.parts?.length ? (
-                // 组合卡:部件实例树逐级渲染,画布尺寸就是这张卡的框(没有框 = 整个舞台)
+                // Composite card: part instance tree renders level by level; canvas size is this card's box
+                // (no box = entire stage)
                 <PartTree parts={clip.parts} size={frameBox(clip.frame, timeline)} t={localTOf(clip, t)} playToken={gen} />
               ) : def!.card ? (
-                // 素材效果卡:经 Stage、有包裹层,hitTest / rects / 快照 / 抑制全部照常
+                // Media effect card: passes through Stage, has wrapper layer;
+                // hitTest / rects / snapshots / suppression all as usual
                 <GraphCard def={def!} clip={clip} graph={timeline.graph} fps={timeline.fps}
                   t={localTOf(clip, cardT)} params={resolveCardParams({ ...def!.defaults, ...clip.params })} stage={stageInfo} />
               ) : clipFrameMode(clip, def) === 'direct' ? (
@@ -414,9 +517,10 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
                 <C params={resolveCardParams({ ...def!.defaults, ...clip.params })} playToken={gen} t={localTOf(clip, cardT) + embeddedOffset} sourceOffset={clip.sourceOffset} mountClockMs={mountClockMs} duration={clip.end - clip.start} stage={stageInfo} />
               ))}
               {/*
-                gl 平面(R9,E7 的第五种兄弟平面)。它是**活渲的一部分**,不进四条平面选择器的放过名单 ——
-                藏子树时它和子树一起被藏。**不加 `data-pc-clip`**(`isSolid` 会把它当包裹层跳过)。
-                位图由 `glHost` 在 `done` 时贴上,这里只登记这一拍要画什么。
+                gl plane (R9, the fifth sibling plane of E7). It is **part of live render** and is not in the
+                allowlist of the four plane selectors: when hiding subtrees, it is hidden along with the subtree.
+                **Do not add `data-pc-clip`** (`isSolid` would skip it treating it as a wrapper layer). Bitmaps
+                are attached by `glHost` on `done`; here we only register what to draw for this tick.
               */}
               {glContract && glBox ? (
                 <GlPlane clipId={pid} cardId={clip.cardId} contract={glContract}
@@ -425,12 +529,12 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
                   skip={supNow.has(pid)} stage={stageInfo} />
               ) : null}
               {/*
-                代理色块是卡片的**兄弟**,不是把卡片包起来 —— 真卡由 .pc-proxy 那条
-                CSS 规则藏掉(见 render/solidMode.ts)。包一层 div 的话,切换实体模式那一刻
-                React 会重挂载卡片,而重挂载会丢掉 pinAnimations 的锚点:
-                用户看到的是「每次暂停,字都重新飞进来一次」。
-                box 是「这张卡真正画了东西的那一块」,坐标相对卡片自己的框;
-                量不到(或者内容本来就铺满这张卡)就 inset:0。
+                The proxy block is a **sibling** of the card, not a wrapper around the card: the real card is
+                hidden by the .pc-proxy CSS rule (see render/solidMode.ts). Wrapping it in a div causes React to
+                remount the card when switching to solid mode, and remounting loses pinAnimations anchor points:
+                users would see "every time it pauses, the text flies in again". box is "the area where this card
+                actually drew content", coordinates relative to the card's own box; if unmeasurable (or if
+                content natively fills the card), inset:0 is used.
               */}
               {proxy ? (() => {
                 const px = proxy(clip.id);
@@ -447,27 +551,35 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
                 );
               })() : null}
               {/*
-                流平面(E7 第 5 条,R8)。`streamPlayer` 只往这个**已经存在的** `<canvas>` 上画,
-                不做外部 `insertBefore` —— 否则会和代理平面、快照平面抢兄弟位置。
-                层序、overflow、zIndex、包裹层的框 / 轨迹 / 不透明度 / 强调自动跟着包裹层走:
-                单卡流画在包裹层自己的坐标系里(和快照平面一样),所以这块画布是包裹层的普通子元素。
-                位置和尺寸由 `streamPlayer` 按流的清单设(流的矩形上界,可能比框大一圈、也可能在框外一点);
-                清单到之前先铺满包裹层(背板 0×0、透明)—— 被抑制的卡子树藏着,这一小段时间里点它也要点得中。
+                Stream plane (E7 item 5, R8). `streamPlayer` draws only onto this **existing** `<canvas>`, 
+                without doing external `insertBefore`: otherwise it competes with the proxy plane and snapshot
+                plane for sibling positioning. Layer ordering, overflow, zIndex, wrapper layer's box / track /
+                opacity / emphasis automatically follow the wrapper layer: single-card stream is drawn in the
+                wrapper layer's own coordinate system (same as the snapshot plane), so this canvas is a regular
+                child element of the wrapper layer. Position and size are set by `streamPlayer` according to the
+                stream's manifest (the stream's rectangular upper bound, which may be slightly larger than the
+                box or extend outside it); before the manifest arrives, fill the wrapper layer first (0×0
+                backplate, transparent): the suppressed card subtree is hidden, but clicks during this short
+                window must still register.
               */}
               {ownStream ? (
                 <canvas data-pc-stream-plane="" width={0} height={0}
                   style={{ position: "absolute", left: 0, top: 0, width: "100%", height: "100%", ...(streamShown ? null : { display: "none" }) }} />
               ) : null}
               {/*
-                占位平面(product/rendering.md「兜底顺序」;和快照 / 流平面同级,坐标、旋转、缩放、层级从包裹层继承)。
-                槽位默认 `hidden`,`StageView` 每拍只切它的 `hidden`(contract 的 `setPlaceholderShown`),
-                不经 React 提交 —— `hidden` 这个 prop 恒为 true,React 不会把手动切过的值冲掉。
-                放在最后:同一包裹层里它盖在快照 / 流平面上面(显示它的时候那两样本来就没画面)。
+                Placeholder plane (product/rendering.md "Fallback order"; peer to snapshot / stream plane,
+                inheriting coordinates, rotation, scaling, and z-index from wrapper layer). The slot defaults to
+                `hidden`; `StageView` toggles its `hidden` each tick (`setPlaceholderShown` in contract) without
+                going through React commit: the `hidden` prop is always true, so React will not overwrite the
+                manually toggled value. Placed last: within the same wrapper layer it sits on top of snapshot /
+                stream planes (when it is displayed, those two have no visual content anyway).
               */}
               {placeholders ? (() => {
                 /*
-                 * 在屏幕上多大(`placeholderFit.ts`):沙漏只抵消预览缩放,不超出这一层的框。预览缩放由父页经 `setViewScale`
-                 * 发来(桌面与在线都发)。这台设备跑不了的卡同样是沙漏(结果由渲染节点出)。
+                 * Size on screen (`placeholderFit.ts`): the hourglass only cancels preview scaling and does not
+                 * exceed this layer's box. Preview scaling is sent from the parent page via `setViewScale` (sent on
+                 * both desktop and online). Cards this device cannot run also show an hourglass (results produced
+                 * by render nodes).
                  */
                 const size = frameBox(clip.frame, timeline);
                 const geometry = geometryFor(pid, size);
@@ -484,23 +596,31 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
         })}
       </AnimClock>
       {/*
-        组流平面(G1:一条流盖住相邻的好几张重卡)。它跨片段,挂不进任何一个包裹层,
-        所以落在舞台根下、和卡包裹层所在的那一层同级;组流里包裹层的外观已经画进流里,所以不受任何
-        包裹层的 `frameCss` / `opacity` / `filter` / `motion` / `isolation` 影响。
-        **只渲在组里此刻活跃的最上面那张卡(`host`)所在的那个 `Stage` 里**:live 路每个片段一个
-        单片段 `Stage`,每个都渲一块的话同一条组流会叠好几层;z 序取那张卡的那一层。
-        `pointer-events: none`:点击落到背后组内被抑制的卡的包裹层上(`solid.ts` 的 `hitTest`)。
+        Group stream plane (G1: a single stream covers multiple adjacent heavy cards). It spans clips and
+        cannot be mounted into any wrapper layer, so it resides at the stage root, peer to the layer
+        containing card wrapper layers; wrapper layer appearances in a group stream are already baked into
+        the stream, so it is unaffected by any wrapper layer's `frameCss` / `opacity` / `filter` /
+        `motion` / `isolation`. **Rendered only in the `Stage` of the topmost currently active card
+        (`host`) in the group**: the live path has one single-clip `Stage` per clip, and rendering in each
+        would stack the same group stream multiple times; z-order takes that card's layer.
+        `pointer-events: none`: clicks fall through to wrapper layers of suppressed cards in the background
+        group (`hitTest` in `solid.ts`).
 
-        **依赖下层的流**(`plane: "stage"`,只有目标卡一张)也是这种平面:流里是目标卡改动过的那一层(预乘色加不透明度),
-        包裹层的位置、不透明度、淡入淡出、轨迹、强调都已经画在里面,所以同样不能挂进包裹层。它和目标卡的包裹层在同一个
-        层叠上下文里、层序相同,于是照普通的叠加盖在下面那些活着的层(活渲的卡、别的流、视频)上面,上面的层照常画在它上面:
-        毛玻璃后面看到的是舞台上此刻真实的下层。目标卡的子树照抑制的规矩藏着,不会再滤一遍下层。
+        **Below-dependent streams** (`plane: "stage"`, only one target card) are also this kind of plane:
+        the stream contains the target card's modified layer (premultiplied color plus opacity); wrapper
+        layer position, opacity, fade-in/out, track, and emphasis are already drawn inside, so it likewise
+        cannot be mounted inside the wrapper layer. It shares the same stacking context and layer order
+        with the target card's wrapper layer, so it overlays live layers below (live-rendered cards, other
+        streams, videos) like normal stacking, while layers above render on top as usual: behind frosted
+        glass is the true live lower layer on stage. The target card's subtree is hidden per suppression
+        rules and will not filter the lower layer a second time.
       */}
       {streamPlanes?.filter((g) => g.clipIds.length > 1 || g.plane === "stage").map((g) => {
         const hostId = g.host ?? g.clipIds[g.clipIds.length - 1];
         const at = active.findIndex((c) => pidOf(c) === hostId);
         if (at < 0) return null;
-        // 组里有成员被抑制着 / 在不可见地追帧才露(同单卡流的 `streamShown`:暂停着先解好这一帧时组流平面藏着)
+        // Shown only when group members are suppressed / invisibly catching up frames (same as single-card
+        // stream's `streamShown`: group stream plane is hidden while paused to decode this frame first)
         const shown = g.clipIds.some((id) => supNow.has(id) || (settling?.has(id) ?? false));
         return <canvas key={g.clipIds.join(",")} data-pc-group-plane="" data-pc-stream-group={g.clipIds.join(",")}
           width={0} height={0}

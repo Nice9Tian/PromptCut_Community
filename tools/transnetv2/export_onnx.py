@@ -1,15 +1,15 @@
-"""把 TransNetV2 官方权重导成 PromptCut 用的 ONNX。
+"""Export the official TransNetV2 weights to the ONNX used by PromptCut.
 
-只在构建机上跑一次，产物 transnetv2.onnx 随「拓展库包」发给用户；
-运行时只需要 onnxruntime，不需要 torch，也不需要 tensorflow。
+Run only once on the build machine; the output transnetv2.onnx ships to users with the "extension library package";
+at runtime only onnxruntime is needed, neither torch nor tensorflow.
 
-用法见同目录 README.md。
+For usage see README.md in the same directory.
 
-模型 forward 返回 (one_hot, {"many_hot": ...})，第二项是 dict，ONNX 导不了，
-所以这里包一层，把两个都变成张量输出：
-  - cut_prob (one_hot)：转场中心在哪
-  - many_hot：属于转场的每一帧，溶解的真实跨度靠它
-两个输出都要，缺了 many_hot 就只知道「这里有个溶解」而不知道它多长。
+The model's forward returns (one_hot, {"many_hot": ...}); the second item is a dict, which ONNX cannot export,
+so a wrapper layer is added here to turn both into tensor outputs:
+  - cut_prob (one_hot): where the center of the transition is
+  - many_hot: every frame that belongs to the transition; the true span of a dissolve depends on it
+Both outputs are needed: without many_hot you only know "there is a dissolve here" but not how long it is.
 """
 
 import argparse
@@ -43,7 +43,7 @@ def main() -> None:
     model.eval()
     wrapped = Wrap(model).eval()
 
-    # 官方推理固定 100 帧一个窗口，只让 batch 维动态
+    # Official inference uses a fixed window of 100 frames; only the batch dimension is made dynamic
     dummy = torch.zeros((1, 100, 27, 48, 3), dtype=torch.uint8)
     with torch.no_grad():
         a, b = wrapped(dummy)

@@ -1,8 +1,10 @@
 /**
- * C6.6 两档素材在页面这一侧(`mediaUpload.ts`):项目里只记 `tiers` 两个哈希,不记同步状态(验收 T1 / T2 的项目那一半)。
- * 跑:node --test src/editor/io/mediaTiers.test.mjs
+ * Two-tier assets of C6.6 on the page side (`mediaUpload.ts`): only record the two hashes of
+ * `tiers` in the project, not sync status (the project half of acceptance check T1 / T2). Run:
+ *   node --test src/editor/io/mediaTiers.test.mjs
  *
- * 服务端(导入、素材小尺寸、上传队列)在 server/test/media-tiers.test.mjs;这里只钉页面把回包写进项目的方式,以及 `.proc` 里的样子。
+ * Server side (import, small-size asset, upload queue) is in server/test/media-tiers.test.mjs; here
+ * only pins down how the page writes responses into the project, and how it looks in `.proc`.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -16,12 +18,12 @@ const ORIG = "a".repeat(64);
 const SMALL = "b".repeat(64);
 const SYNC_WORDS = /upload|sync|complete|received|progress|queued|pending/i;
 
-/** 素材记录里不许有任何同步状态字段(`pending` 是会话内的入库占位,入库后清掉,也一并查) */
+/** Asset records must not contain any sync status fields (`pending` is an in-session store placeholder, cleared after storing, checked as well) */
 function assertNoSyncFields(obj, where) {
   const walk = (value, trail) => {
     if (!value || typeof value !== "object") return;
     for (const [k, v] of Object.entries(value)) {
-      if (v === undefined) continue; // 已清掉的会话内占位(pending = undefined),不进 JSON
+      if (v === undefined) continue; // Cleared in-session placeholder (pending = undefined), does not enter JSON
       assert.doesNotMatch(k, SYNC_WORDS, `${where}: ${trail}${k}`);
       walk(v, `${trail}${k}.`);
     }
@@ -29,8 +31,8 @@ function assertNoSyncFields(obj, where) {
   walk(obj, "");
 }
 
-test("T2-page 导入回包写进项目:tiers 只有 original / small 两个哈希;素材小尺寸后到时补上 small;项目与 .proc 里没有同步字段", async () => {
-  actions.newProject("两档");
+test("T2-page The import response is written into the project: tiers has only two hashes, original / small; when the small-size asset arrives later, small is filled in; the project and .proc contain no sync fields", async () => {
+  actions.newProject("Two tiers");
   const m = actions.addMedia({ kind: "video", name: "clip.mp4", url: "", pending: true });
   const realFetch = globalThis.fetch;
   let asked = 0;
@@ -49,7 +51,7 @@ test("T2-page 导入回包写进项目:tiers 只有 original / small 两个哈�
     assert.deepEqual(media.tiers, { original: ORIG });
     assert.equal(media.hash, ORIG);
     assert.equal(media.pending, undefined);
-    // 每 2 s 问一次:第一次 pending,第二次 ready
+    // Polls every 2 s: pending the first time, ready the second time
     const t0 = Date.now();
     while (!getState().project.media.find((x) => x.id === m.id)?.tiers?.small && Date.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 50));
     media = getState().project.media.find((x) => x.id === m.id);
@@ -65,11 +67,11 @@ test("T2-page 导入回包写进项目:tiers 只有 original / small 两个哈�
   }
 });
 
-test("T1-page 不是视频(回包没有 tiers)就不写 tiers、不去问素材小尺寸", () => {
+test("T1-page Not a video (the response has no tiers): do not write tiers, do not ask about the small-size asset", () => {
   actions.newProject("Images");
   const m = actions.addMedia({ kind: "image", name: "a.png", url: "", pending: true });
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => { throw new Error("不该问素材小尺寸"); };
+  globalThis.fetch = async () => { throw new Error("Should not have asked about the small-size asset"); };
   try {
     applyUploadedMedia(m.id, { hash: SMALL, ext: "png", name: "a.png", url: `/@media/${SMALL}`, bytes: 10 });
     const media = getState().project.media.find((x) => x.id === m.id);

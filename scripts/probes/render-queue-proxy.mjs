@@ -1,53 +1,83 @@
 /**
- * TCP 层代理探针：在节点与文档服务之间插一层，模拟延迟、队头阻塞、半开和断线。不解析 WebSocket。
- * 依据：`docs/plan/render-queue-contract.md` G.8。
+ * TCP-layer proxy probe: inserts a layer between the node and document service to simulate delay,
+ * head-of-line blocking, half-open connections, and disconnection. Does not parse WebSocket.
+ * Basis: `docs/plan/render-queue-contract.md` G.8.
  *
- * 跑：
+ * Run:
  *   node scripts/probes/render-queue-proxy.mjs --listen 127.0.0.1:8795 --target <host:port>
  *     [--delay-ms 200] [--stall-prob 0.05] [--stall-ms 200..1000] [--close-prob 0.001]
  *     [--stall-after-ms N] [--cut-after-ms N] [--cut-once] [--stdin-control]
  *
- * **这不是 IP 丢包。** TCP 交给应用的是有序字节流：真丢包会被 TCP 重传补上，应用看到的是延迟、抖动或最后超时；
- * 用户态代理若真丢掉收到的字节，会打乱 WebSocket 帧边界，测的就成了数据损坏而不是网络差（RFC 9293、RFC 6455）。
- * 所以本代理所有字节最终都原样按序转发，「受扰」只有两种：按概率把一块扣住一段时间（其后的块排队，队头阻塞），
- * 以及按概率直接关掉这条连接（断线）。报告与判据里说「10% 的块受扰」，不说「10% 丢包」。
+ * **This is not IP packet loss.** TCP delivers an ordered byte stream to the application: real
+ * packet loss is recovered by TCP retransmission, and what the application sees is delay, jitter,
+ * or eventually a timeout; if a user-space proxy truly dropped received bytes, it would scramble
+ * WebSocket frame boundaries, testing data corruption rather than poor network conditions
+ * (RFC 9293, RFC 6455). Therefore, this proxy ultimately forwards all bytes in order as-is;
+ * there are only two kinds of "disruption": holding a chunk for a period of time with some
+ * probability (subsequent chunks queue behind it, head-of-line blocking), and directly closing
+ * this connection with some probability (disconnection). Reports and criteria say "10% of chunks
+ * disrupted", not "10% packet loss".
  *
- * - --delay-ms：每个数据块晚这么久再转发（两个方向各自计）。
- * - --stall-prob p（旧名 --loss，同义）：每个数据块以概率 p 被扣住一段随机时长（--stall-ms，旧名 --loss-hold-ms，
- *   区间写成 200..1000 或单个数，缺省 200..1000）再发；其后的块排在它后面、保持顺序，模拟 TCP 重传带来的队头阻塞。
- * - --close-prob q：每个数据块以概率 q 让这条连接两头直接断开（模拟断线；断开前已放行的字节照发，没放行的丢弃 ——
- *   与真断线一样，丢的是整条连接，不是连接中间的字节）。打 `conn.cut { id, by: 'close-prob' }`。缺省 0。
- * - --stall-after-ms N：连接建立 N 毫秒后两个方向都停止转发（收到的字节只攒着），但不关连接，模拟半开。
- * - --cut-after-ms N：连接建立 N 毫秒后两头直接断开。
- * - --cut-once：整个代理进程只切一次。和 --cut-after-ms 连用时，第一条「到点时还开着」的连接被切，之后的连接
- *   （例如客户端接续会话时新开的那条）原样转发；到点前自己关掉的连接（如取挑战的短 HTTP 请求）不算那一次。
- *   不给时行为同旧：每条连接到点都切（HT-a 的 W-HT-a 探针 `ht-w-probe.mjs` 用它，接续那一次不会再被切）。
- *   --close-prob 不受它约束（按概率断线是另一回事）。
- * - --stdin-control：从标准输入按行读命令。标准输入关掉不影响转发。
- *   - `cut`：立刻切断此刻开着的全部连接（算一次切断，受 --cut-once 约束：已经切过就只回一行 conn.cut-skip）。
- *     给按需切断用：探针等主机「已认领、还在做」时才切，连接建立的时刻对不上认领的时刻，固定的 --cut-after-ms 定不准。
- *   - `stall`：按需半开（M8 的 E2、C1 第 3 种做法，`docs/plan/m8-plan.md` 第 2.1、2.6 节）：此刻开着的连接两个方向都停止转发
- *     （收到的字节只攒着，不关连接）；之后新来的连接照样接下、连上游，但同样只攒不转 —— 相当于这台机器到对端的路断了，
- *     客户端重连也接续不上。打 `control.stall { open, newlyStalled }`，每条被扣住的连接另打 `conn.stall { id, by: 'stdin' }`。
- *   - `resume`：撤销 `stall`：全部连接恢复转发，攒下的字节按原顺序补发（相当于断网恢复后 TCP 重传补上）；
- *     打 `control.resume { open, resumed, stalledMs }`，每条恢复的连接另打 `conn.resume { id, pendingUp, pendingDown }`。
- *     `--stall-after-ms` 按时刻扣住的连接也一并恢复。已经被对端关掉的连接不受影响。
- *   - `status`：打一行 `control.status { open, stalled, stallActive, cutSpent }`。
- *   - `quit`：关掉全部连接、打汇总行、退出 0（Windows 上父进程发不了真信号，探针要汇总行就写它）。
- *   不认识的命令打 `control.unknown`。
+ * - --delay-ms: Forward each data chunk this much later (calculated independently for each
+ *   direction).
+ * - --stall-prob p (formerly --loss, synonymous): Each data chunk is held with probability p for a
+ *   random duration (--stall-ms, formerly --loss-hold-ms, written as an interval 200..1000 or a
+ *   single number, default 200..1000) before sending; subsequent chunks queue behind it,
+ *   maintaining order to simulate head-of-line blocking caused by TCP retransmission.
+ * - --close-prob q: With probability q for each data chunk, directly disconnect both ends of this
+ *   connection (simulating disconnection; bytes already released before disconnecting are sent as
+ *   usual, unreleased bytes are discarded: just like a real disconnection, what is dropped is the
+ *   entire connection, not bytes in the middle of a connection). Logs
+ *   `conn.cut { id, by: 'close-prob' }`. Default 0.
+ * - --stall-after-ms N: Stop forwarding in both directions N ms after connection establishment
+ *   (accumulating received bytes only) without closing the connection, simulating half-open.
+ * - --cut-after-ms N: Directly disconnect both ends N ms after connection establishment.
+ * - --cut-once: The entire proxy process cuts only once. When used with --cut-after-ms, the first
+ *   connection "still open when the timer expires" is cut, and subsequent connections (such as
+ *   the new one opened when the client resumes the session) are forwarded as-is; connections
+ *   closed by themselves before the timer expires (such as short HTTP requests fetching
+ *   challenges) do not count as that cut. When omitted, behavior matches legacy: cut every
+ *   connection when its timer expires (used by the HT-a W-HT-a probe `ht-w-probe.mjs`; the
+ *   resumed connection will not be cut again). --close-prob is not constrained by it
+ *   (probabilistic disconnection is a separate matter).
+ * - --stdin-control: Read commands line by line from standard input. Closing standard input does
+ *   not affect forwarding.
+ *   - `cut`: Immediately cut all currently open connections (counts as one cut, constrained by
+ *     --cut-once: if already cut, only emit a single conn.cut-skip line).
+ *     Used for on-demand cuts: the probe waits until the host is "claimed, still in progress"
+ *     before cutting; connection establishment timing does not match claim timing, so a fixed
+ *     --cut-after-ms cannot be timed accurately.
+ *   - `stall`: On-demand half-open (the third approach of M8 E2 and C1, `docs/plan/m8-plan.md`
+ *     Sections 2.1 and 2.6): stop forwarding in both directions on currently open connections
+ *     (accumulating received bytes only, without closing connections); subsequent new incoming
+ *     connections are accepted and connected upstream as usual, but likewise only accumulate
+ *     without forwarding: equivalent to the path from this machine to the peer being broken, so
+ *     client reconnects cannot resume either. Logs `control.stall { open, newlyStalled }`; each
+ *     held connection additionally logs `conn.stall { id, by: 'stdin' }`.
+ *   - `resume`: Undo `stall`: all connections resume forwarding, and accumulated bytes are resent
+ *     in their original order (equivalent to TCP retransmission catching up after network
+ *     recovery); logs `control.resume { open, resumed, stalledMs }`; each resumed connection
+ *     additionally logs `conn.resume { id, pendingUp, pendingDown }`. Connections held by
+ *     timing via `--stall-after-ms` are also resumed together. Connections already closed by the
+ *     peer are unaffected.
+ *   - `status`: Logs a line `control.status { open, stalled, stallActive, cutSpent }`.
+ *   - `quit`: Close all connections, log the summary line, and exit with 0 (on Windows, the parent
+ *     process cannot send real signals; write this when the probe needs a summary line).
+ *   Unrecognized commands log `control.unknown`.
  *
- * 每条连接关闭时往标准输出打一行 JSON 统计（event: conn.close）；Ctrl+C 或 `quit` 结束时打一行汇总（event: summary，
- * 带 `meaning` 字段写明受扰的含义）。
- * 本机测试用 8790～8799 的端口，不要用 5190～5192。
- * 退出码：参数不对 2；监听失败 1；正常结束 0。
+ * When each connection closes, log a JSON statistics line to standard output (event: conn.close);
+ * upon termination via Ctrl+C or `quit`, log a summary line (event: summary, with a `meaning`
+ * field explaining the meaning of disruption).
+ * For local testing, use ports 8790-8799; do not use 5190-5192.
+ * Exit codes: invalid arguments 2; listen failure 1; normal termination 0.
  */
 import { createServer, connect } from 'node:net';
 
-const USAGE = `用法：node scripts/probes/render-queue-proxy.mjs --listen 127.0.0.1:8795 --target <host:port>
+const USAGE = `Usage: node scripts/probes/render-queue-proxy.mjs --listen 127.0.0.1:8795 --target <host:port>
   [--delay-ms 200] [--stall-prob 0.05] [--stall-ms 200..1000] [--close-prob 0.001]
   [--stall-after-ms N] [--cut-after-ms N] [--cut-once] [--stdin-control]
-  --stall-prob / --stall-ms 旧名 --loss / --loss-hold-ms。不是 IP 丢包：字节从不丢，只按概率扣住一块（队头阻塞）或按概率断开连接。
-  --stdin-control 的命令：cut、stall、resume、status。`;
+  --stall-prob / --stall-ms (old names: --loss / --loss-hold-ms). This is not IP packet loss: bytes are never dropped; with a given probability a chunk is held back (head-of-line blocking) or the connection is closed.
+  Commands for --stdin-control: cut, stall, resume, status.`;
 
 function usage(msg) {
   if (msg) console.error(msg);
@@ -57,33 +87,33 @@ function usage(msg) {
 
 const VALUED = new Set(['--listen', '--target', '--delay-ms', '--loss', '--loss-hold-ms', '--stall-prob', '--stall-ms', '--close-prob', '--stall-after-ms', '--cut-after-ms']);
 const FLAGS = new Set(['--cut-once', '--stdin-control']);
-/** 新名 → 旧名（内部仍按旧名存；两个都给算参数不对） */
+/** New name → legacy name (stored internally under legacy name; providing both counts as invalid arguments) */
 const ALIAS = { 'stall-prob': 'loss', 'stall-ms': 'loss-hold-ms' };
 const args = {};
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (FLAGS.has(a)) { args[a.slice(2)] = true; continue; }
-  if (!VALUED.has(a)) usage(`不认识的参数：${a}`);
+  if (!VALUED.has(a)) usage(`Unknown argument: ${a}`);
   const v = argv[++i];
-  if (v === undefined) usage(`${a} 缺值`);
+  if (v === undefined) usage(`${a} is missing a value`);
   const name = ALIAS[a.slice(2)] ?? a.slice(2);
-  if (args[name] !== undefined) usage(`${a} 与它的旧名 / 新名重复给了`);
+  if (args[name] !== undefined) usage(`${a} was given together with its old / new name`);
   args[name] = v;
 }
-if (!args.listen || !args.target) usage(argv.length ? '缺 --listen 或 --target' : undefined);
+if (!args.listen || !args.target) usage(argv.length ? 'Missing --listen or --target' : undefined);
 
 function hostPort(s, what) {
   const i = s.lastIndexOf(':');
   const host = i > 0 ? s.slice(0, i).replace(/^\[|\]$/g, '') : '127.0.0.1';
   const port = Number(i >= 0 ? s.slice(i + 1) : s);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) usage(`${what} 的端口不对：${s}`);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) usage(`Invalid port for ${what}: ${s}`);
   return { host, port };
 }
 const num = (name, dflt, { min = 0, max = Infinity } = {}) => {
   if (args[name] === undefined) return dflt;
   const n = Number(args[name]);
-  if (!Number.isFinite(n) || n < min || n > max) usage(`--${name} 要是 ${min}～${max} 之间的数`);
+  if (!Number.isFinite(n) || n < min || n > max) usage(`--${name} must be a number between ${min} and ${max}`);
   return n;
 };
 
@@ -95,31 +125,33 @@ let holdMin = 200;
 let holdMax = 1000;
 if (args['loss-hold-ms'] !== undefined) {
   const m = /^(\d+)(?:\.\.(\d+))?$/.exec(args['loss-hold-ms']);
-  if (!m) usage('--stall-ms（--loss-hold-ms）写成 200..1000 或单个数');
+  if (!m) usage('--stall-ms (--loss-hold-ms) must be written as 200..1000 or a single number');
   holdMin = Number(m[1]);
   holdMax = m[2] === undefined ? holdMin : Number(m[2]);
-  if (holdMax < holdMin) usage('--stall-ms（--loss-hold-ms）的上界小于下界');
+  if (holdMax < holdMin) usage('The upper bound of --stall-ms (--loss-hold-ms) is below the lower bound');
 }
 const closeProb = num('close-prob', 0, { max: 1 });
-/** 写进 listen / summary 行，免得有人把 loss 读成 IP 丢包率 */
-const DISTURB_MEANING = '每块按概率 stallProb 扣住 stallMs 再按序转发、按概率 closeProb 断开整条连接；字节从不丢，不是 IP 丢包率';
+/** Written into listen / summary lines to prevent interpreting loss as IP packet loss rate */
+const DISTURB_MEANING = 'Each chunk is held back for stallMs with probability stallProb and then forwarded in order, and the whole connection is closed with probability closeProb; bytes are never dropped, so this is not an IP packet loss rate';
 const stallAfterMs = args['stall-after-ms'] === undefined ? null : num('stall-after-ms', 0);
 const cutAfterMs = args['cut-after-ms'] === undefined ? null : num('cut-after-ms', 0);
 const cutOnce = args['cut-once'] === true;
 const stdinControl = args['stdin-control'] === true;
-/** --cut-once：已经切过一次（之后到点的连接不再切） */
+/** --cut-once: Already cut once (connections reaching the time afterwards are no longer cut) */
 let cutSpent = false;
 
 const out = (event, fields) => process.stdout.write(`${JSON.stringify({ t: new Date().toISOString(), event, ...fields })}\n`);
 const totals = { conns: 0, bytesUp: 0, bytesDown: 0, chunks: 0, held: 0, stalledConns: 0, cutConns: 0, cutSkipped: 0, randomCloses: 0, stallCommands: 0, resumeCommands: 0 };
-/** `stall` 命令生效中（新连接也一进来就扣住）：生效的时刻；没生效为 null */
+/** `stall` command active (new connections held on arrival): activation timestamp; null if not active */
 let stalledSince = null;
 const live = new Set();
 let seq = 0;
 
 /**
- * 单向转发：每块算一个放行时刻 = max(上一块的放行时刻, 现在 + 延迟 + 扣住时长)，按时刻依次写出，
- * 所以顺序永远不变，被扣住的块会把后面的块一起挡住（队头阻塞）。停转后只攒不写。
+ * Unidirectional forwarding: each chunk calculates a release time = max(previous chunk's release
+ * time, now + delay + hold duration) and writes out sequentially by time, so order never changes;
+ * held chunks block subsequent chunks (head-of-line blocking). After stall, only accumulates
+ * without writing.
  */
 function pipeWithFaults(from, to, conn, dir) {
   const queue = [];
@@ -139,7 +171,7 @@ function pipeWithFaults(from, to, conn, dir) {
     conn[dir === 'up' ? 'bytesUp' : 'bytesDown'] += chunk.length;
     conn.chunks += 1;
     if (closeProb > 0 && Math.random() < closeProb) {
-      // 按概率断线：整条连接两头关掉（不是丢这一块）
+      // Probabilistic disconnect: close both ends of the entire connection (not dropping this chunk)
       conn.cut = true;
       totals.cutConns += 1;
       totals.randomCloses += 1;
@@ -160,7 +192,7 @@ function pipeWithFaults(from, to, conn, dir) {
   return {
     pending: () => queue.length,
     stop: () => { clearTimeout(timer); timer = null; },
-    /** 撤销停转：攒下的块按放行时刻补发（已过时刻的立刻发） */
+    /** Undo stall: accumulated chunks are sent according to release times (expired times sent immediately) */
     resume: () => {
       if (timer === null && queue.length && !to.destroyed) timer = setTimeout(flush, Math.max(0, queue[0].at - Date.now()));
     },
@@ -247,7 +279,7 @@ server.listen(listen.port, listen.host, () => {
   out('listen', {
     host: a.address, port: a.port, target: `${target.host}:${target.port}`, delayMs,
     stallProb: loss, stallMs: [holdMin, holdMax], closeProb, meaning: DISTURB_MEANING,
-    loss, lossHoldMs: [holdMin, holdMax], // 旧字段名，读旧日志的脚本还在用
+    loss, lossHoldMs: [holdMin, holdMax], // Legacy field name, still used by scripts reading older logs
     stallAfterMs, cutAfterMs, cutOnce, stdinControl,
   });
 });
@@ -287,7 +319,7 @@ if (stdinControl) {
         continue;
       }
       if (cmd === 'quit') {
-        // Windows 上父进程发不了真信号：探针要汇总行就写 quit
+        // On Windows, parent process cannot send real signals: probe writes quit when it needs summary line
         for (const conn of [...live]) conn.close('quit');
         summary();
         server.close();

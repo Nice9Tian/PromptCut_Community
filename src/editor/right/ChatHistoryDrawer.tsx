@@ -5,23 +5,23 @@ import { CLOUD_CHAT_TEXT } from "../../ai/chatTexts";
 import "./ChatHistoryDrawer.css";
 import { tr } from "../../i18n/index.ts";
 
-/** 历史列表里「云端」一组(契约 7.4):这位成员在这个项目里的云端对话,在跑的带「进行中」 */
+/** The "Cloud" group in the history list (contract 7.4): this member's cloud chats in this project, with running ones marked "In progress" */
 export interface CloudHistoryGroup {
   items: CloudChatItem[];
   loading: boolean;
-  /** 当前打开的云端对话 */
+  /** The cloud chat currently open */
   currentId?: string | null;
   onPick(id: string): void;
-  /** 这一条这个账号能不能删（开对话的人删自己的；项目创建者删任何人的）；不给就整组没有删除按钮 */
+  /** Whether this account can delete this entry (the person who opened the chat deletes their own; the project creator deletes anyone's); if not given, the whole group has no delete button */
   canDelete?(item: CloudChatItem): boolean;
   onDelete?(item: CloudChatItem): void;
-  /** 这位账号在这个项目里的对话已满上限：顶上给一行提示 */
+  /** This account's chats in this project have reached the limit: show a hint line at the top */
   limitReached?: boolean;
-  /** 这位账号在这个项目里自己开的对话数(实时)：显示在「云端」标题后面 */
+  /** Number of chats this account has opened itself in this project (live): shown after the "Cloud" title */
   ownedCount?: number;
-  /** 这个账号在一个项目里最多能开几个（账号 50，游客 1）；不给按 50 */
+  /** Maximum number this account can open in one project (account 50, guest 1); defaults to 50 if not given */
   limit?: number;
-  /** 满额时顶上那一行用什么话；不给用账号那一句（「已满，先删几个」）。游客用「每个项目只能开一个对话」那一句 */
+  /** The wording of the top line when the limit is reached; if not given, use the account one ("Full, delete some first"). Guests use the "Only one chat per project" one */
   limitText?: string;
 }
 
@@ -35,19 +35,19 @@ export interface ChatHistoryDrawerProps {
   currentId: string;
   onPick(id: string): void;
   onDelete(id: string): void;
-  /** 头部的「新对话」:清掉当前分页的消息、另起一段会话归档(「✦」菜单里也有同一项) */
+  /** The "New chat" in the header: clears the messages of the current tab and starts a new session archive (the same item is also in the "✦" menu) */
   onNewChat?(): void;
-  /** 新对话开不了（游客每个项目只能开一个对话）时的说明：给了就把头部的「新对话」置灰、悬停写这一句 */
+  /** Explanation for when a new chat cannot be opened (a guest can only open one chat per project): if given, the header's "New chat" is grayed out and this line is shown on hover */
   newChatDisabledReason?: string;
-  /** 「云端」一组;不给就没有这一组(放本机的项目、没开协作的项目) */
+  /** The "Cloud" group; if not given there is no such group (projects kept on this machine, projects without collaboration enabled) */
   cloud?: CloudHistoryGroup;
-  /** 在线页面没有本机对话记录:只列云端一组 */
+  /** The online page has no local chat records: only the Cloud group is listed */
   hideLocal?: boolean;
 }
 
 const CLOUD_STATE_TEXT: Record<string, string> = { running: tr("In progress"), interrupted: tr("Interrupted"), failed: tr("Error"), revoked: tr("Expired") };
 
-/** 格式化会话更新时间：今天的显示 HH:MM，今年的显示 M月D日，更早显示 YYYY-M-D */
+/** Format a session's update time: today shows HH:MM, this year shows M/D, earlier shows YYYY-M-D */
 function formatChatTime(timestamp: number): string {
   const d = new Date(timestamp);
   if (isNaN(d.getTime())) return "";
@@ -91,7 +91,7 @@ export function ChatHistoryDrawer(props: ChatHistoryDrawerProps) {
 
   return (
     <div className="chat-history-drawer" role="dialog" aria-label={tr("Chat history")}>
-      {/* 头部:标题、新对话、关闭 */}
+      {/* Header: title, new chat, close */}
       <div className="chat-drawer-header">
         <span className="chat-drawer-title">{tr("Chat history")}</span>
         <div className="chat-drawer-head-actions">
@@ -112,7 +112,7 @@ export function ChatHistoryDrawer(props: ChatHistoryDrawerProps) {
         </div>
       </div>
 
-      {/* 搜索框 */}
+      {/* Search box */}
       <div className="chat-drawer-search-wrap">
         <input
           type="text"
@@ -123,7 +123,7 @@ export function ChatHistoryDrawer(props: ChatHistoryDrawerProps) {
         />
       </div>
 
-      {/* 会话列表 */}
+      {/* Session list */}
       <div className="chat-drawer-list">
         {hideLocal ? null : loading ? (
           <div className="chat-drawer-empty">{tr("Loading…")}</div>

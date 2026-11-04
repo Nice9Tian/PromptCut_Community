@@ -1,15 +1,21 @@
 /**
- * 量素材效果卡整屏快照的体积(块 N,`docs/plan/online-card-exec-contract.md` 第 7 节「素材效果卡任务的一个风险」)。
- * 素材效果卡的画面是一块画布;快照里它被 `rasterizeCanvas` 换成 `<img src="data:image/png;base64,…">`(`src/render/snapshot/rasterizeCanvas.ts`)。
- * 这里在真 Chrome 里画几种典型内容(1920×1080,舞台缺省画幅),取 `toDataURL('image/png')`,按快照里的写法量字节:
- *   - 纯色底加几块纯色矩形与文字(下界);
- *   - 矢量感画面(渐变 + 色块 + 圆):素材效果卡里「合成、调色、叠图形」那一类;
- *   - 渐变加大面积细节(模拟滤镜加在较平的素材上);
- *   - 照片感画面(多层噪声叠加,模拟视频帧):素材效果卡接视频输入源时的样子。
- * 与 M7 的上限比:DOM 卡 300 KB、画布位图 1 MB(`server/snapshot-store.mjs` 的 `DOM_SNAPSHOT_LIMIT` / `CANVAS_SNAPSHOT_LIMIT`)。
+ * Measure full-screen snapshot size for media effect cards (chunk N, Section 7 "A Risk of Media
+ * Effect Card Tasks" in `docs/plan/online-card-exec-contract.md`).
+ * A media effect card's visual is a canvas; in snapshots it is replaced by `rasterizeCanvas` with
+ * `<img src="data:image/png;base64,…">` (`src/render/snapshot/rasterizeCanvas.ts`).
+ * Here, render several typical contents in real Chrome (1920×1080, stage default aspect ratio),
+ * take `toDataURL('image/png')`, and measure bytes as formatted in snapshots:
+ *   - Solid background with a few solid rectangles and text (lower bound);
+ *   - Vector-style visuals (gradients + color blocks + circles): the "composite, color grade, shape
+ *     overlay" category of media effect cards;
+ *   - Gradient plus large-area detail (simulating filters applied over flatter media);
+ *   - Photographic visuals (multi-layer noise overlay, simulating video frames): appearance when
+ *     media effect cards receive a video input source.
+ * Compare against M7 limits: DOM card 300 KB, canvas bitmap 1 MB (`DOM_SNAPSHOT_LIMIT` /
+ * `CANVAS_SNAPSHOT_LIMIT` in `server/snapshot-store.mjs`).
  *
  *   node scripts/probes/lib-graph-snapshot-size.mjs [--width 1920] [--height 1080]
- * 输出一行 JSON。
+ * Outputs a single JSON line.
  */
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
@@ -29,12 +35,13 @@ try {
     const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
     const measure = (c) => {
       const url = c.toDataURL('image/png');
-      // 快照里 <img> 的大小:data 地址本身加一小段标签与样式(几百字节)
+      // Size of <img> in snapshots: data URL itself plus short tag and style snippet (a few hundred bytes)
       return { dataUrlBytes: url.length, snapshotBytes: url.length + 400 };
     };
     const out = {};
     {
-      // 下界:纯色底 + 几块纯色矩形与文字(没有渐变、没有抗锯齿的大面积过渡)
+      // Lower bound: solid background + several solid rectangles and text (no gradients, no antialiased
+      // large-area transitions)
       const c = make(); const g = c.getContext('2d');
       g.fillStyle = '#101820'; g.fillRect(0, 0, W, H);
       g.fillStyle = '#ffcc33'; g.fillRect(W * 0.1, H * 0.7, W * 0.3, H * 0.15);
@@ -57,7 +64,7 @@ try {
       out.gradientDetail = measure(c);
     }
     {
-      // 照片感:多层低频噪声(双线性放大)叠加 + 一层细颗粒
+      // Photographic look: multi-layer low-frequency noise (bilinear upscaling) overlay + one layer of fine grain
       const c = make(); const g = c.getContext('2d');
       const img = g.createImageData(W, H);
       const layers = [[8, 0.5], [32, 0.25], [128, 0.12], [512, 0.06]].map(([n, amp]) => {

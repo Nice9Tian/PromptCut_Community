@@ -10,13 +10,16 @@ export const projectMeta = {
   editCardProject(edit: (project: Project) => Project) {
     setProject(edit(state.project));
   },
-  /** 记住关三维之前用的视角(不落盘,换项目自动清)。见 EditorState.lastCamera3dFov */
+  /**
+   * Remembers the camera FOV before closing 3D (not persisted to disk, auto-cleared on project
+   * switch). See EditorState.lastCamera3dFov
+   */
   rememberCamera3dFov(fov: number | null) {
     set({ lastCamera3dFov: fov });
   },
   /**
-   * 手动设总时长。比内容末尾短就是截断,记下手动值;等于或更长就回到跟内容走。
-   * 规则见 kernel/duration.ts。
+   * Manually sets total duration. Shorter than the end of content means truncation, recording
+   * the manual value; equal to or longer reverts to following content. Rules in kernel/duration.ts.
    */
   setDurationManual(sec: number) {
     const val = Math.max(1, sec);

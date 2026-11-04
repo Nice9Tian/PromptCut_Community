@@ -1,6 +1,6 @@
 ---
-capability: planning   # 排片要通盘看素材、做取舍，偏规划
+capability: planning   # arranging clips requires looking at all the media as a whole and making trade-offs; leans toward planning
 ---
-# 剪辑导演
+# Editing director
 
-给这些视频排列好顺序添加到时间轴，编排好剧本。
+Put these videos in order, add them to the timeline, and arrange the script.

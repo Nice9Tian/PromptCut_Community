@@ -1,32 +1,32 @@
-//! Agent 用的浏览器:主窗口里的一块子 webview,而不是一个独立的 Chrome 窗口。
+//! The browser the Agent uses: a child webview inside the main window, not a standalone Chrome window.
 //!
-//! # 为什么
+//! # Why
 //!
-//! 以前 agent 上网用的是离屏的 Chrome for Testing:平时挪到屏幕外,撞上登录 / 验证码
-//! 再挪回来交给用户。实测毛病一堆 —— Chrome 自己的欢迎页、「要恢复页面吗」气泡、
-//! 窗口挪回来却不可见、用户顺手关掉窗口 agent 的会话就没了、防火墙对 chrome.exe 弹窗。
+//! Previously the agent browsed with an off-screen Chrome for Testing: normally parked off-screen, and when it hit a login / CAPTCHA
+//! it was moved back and handed to the user. Testing turned up a pile of problems: Chrome's own welcome page, the "Restore pages?" bubble,
+//! the window being invisible after being moved back, the agent's session vanishing when the user casually closed the window, and the firewall prompting for chrome.exe.
 //!
-//! 这里改成:壳(WebView2)本身就是浏览器,给 agent 单独开一块子 webview 挂在主窗口里。
-//! WebView2 支持 `--remote-debugging-port`,打开之后暴露的调试协议和 Chrome 一模一样,
-//! Node 那边的 puppeteer 代码(看图、点击、打字)原样连上来就能用。需要人接手时,
-//! 前端把这块 webview 摆到主窗口里该显示的位置;用完再挪回客户区外面。没有第二个窗口,
-//! 也就没有「关掉了」这回事。
+//! This is changed here: the shell (WebView2) is itself a browser, so the agent gets its own child webview attached inside the main window.
+//! WebView2 supports `--remote-debugging-port`; once it is on, the debugging protocol it exposes is identical to Chrome's,
+//! so the puppeteer code on the Node side (screenshots, clicking, typing) can connect as is and just work. When a human needs to take over,
+//! the frontend places this webview where it should appear in the main window, and moves it back outside the client area when done. There is no second window,
+//! so there is no such thing as "it got closed".
 //!
-//! # 端口
+//! # Port
 //!
-//! 启动时随便挑一个空闲端口,写进 `--remote-debugging-port`,通过环境变量
-//! `PROMPTCUT_AGENT_CDP` 交给 sidecar。只绑 127.0.0.1。本机任何进程都能连上这个端口
-//! 操控 webview —— 本机进程本来就以当前用户身份运行,这不是新的越权面,但要写进文档。
+//! At startup an arbitrary free port is picked and written into `--remote-debugging-port`, and handed to the sidecar through the environment variable
+//! `PROMPTCUT_AGENT_CDP`. It binds to 127.0.0.1 only. Any process on this machine can connect to this port and
+//! control the webview: local processes already run as the current user, so this is not a new privilege-escalation surface, but it must be written into the docs.
 //!
-//! # 「隐藏」为什么是挪走而不是 hide()
+//! # Why "hiding" means moving away instead of hide()
 //!
-//! WebView2 被 hide() 之后会停止渲染,agent 靠调试协议截图就全是空白。挪到客户区外面
-//! (x = -4000)时它照样在合成,截图正常 —— 和以前 Chrome 放在 -32000 是一个道理。
+//! After WebView2 is hidden with hide() it stops rendering, so the screenshots the agent takes over the debugging protocol are all blank. When it is moved outside the client area
+//! (x = -4000) it keeps compositing and screenshots work fine, for the same reason Chrome used to be placed at -32000.
 //!
-//! # 声音
+//! # Sound
 //!
-//! agent 打开的页面会自动播放视频,用户没在看却在响。所以这块 webview **默认静音**
-//! (WebView2 的 IsMuted),只有交给用户、用户自己点了浮层上的喇叭才放开;收回时再静掉。
+//! Pages the agent opens autoplay video, making noise while the user is not even looking. So this webview is **muted by default**
+//! (WebView2's IsMuted), and is unmuted only after it is handed to the user and the user clicks the speaker on the popover themselves; it is muted again when taken back.
 
 use std::net::TcpListener;
 use std::sync::Mutex;
@@ -34,17 +34,17 @@ use std::sync::Mutex;
 use tauri::webview::WebviewBuilder;
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Runtime, WebviewUrl};
 
-/// 子 webview 的标签。
+/// Label of the child webview.
 pub const LABEL: &str = "agent";
-/// 初始地址。带一个别人不会用的片段,Node 那边找不到注入标记时靠它兜底。
+/// Initial URL. It carries a fragment nobody else would use, as a fallback for when the Node side cannot find the injected marker.
 pub const INITIAL_URL: &str = "about:blank#promptcut-agent";
-/// 默认视口。和 server/web/browser.mjs 的 VIEWPORT 保持一致:看图算坐标靠它是个常数。
+/// Default viewport. Keep it identical to VIEWPORT in server/web/browser.mjs: computing coordinates from screenshots relies on it being a constant.
 pub const WIDTH: f64 = 1280.0;
 pub const HEIGHT: f64 = 800.0;
-/// 藏起来时的横坐标:远在客户区左边,任何窗口尺寸下都看不见。
+/// The x coordinate when hidden: far to the left of the client area, invisible at any window size.
 const PARKED_X: f64 = -4000.0;
 
-/// 进程级状态:调试端口、现在显不显示、静没静音。
+/// Process-level state: the debugging port, whether it is currently shown, and whether it is muted.
 pub struct AgentBrowser {
     pub port: u16,
     pub visible: Mutex<bool>,
@@ -57,11 +57,11 @@ impl AgentBrowser {
     }
 }
 
-/// 挑一个空闲端口。绑一下再放掉 —— 极小概率被别人抢走,那样 WebView2 起不来调试端口,
-/// `agent_webview_info` 会报 `ready: false`,前端退回 Chrome 方案。
+/// Pick a free port. Bind it and then release it: there is a tiny chance someone else grabs it, in which case WebView2 cannot bring up the debugging port,
+/// `agent_webview_info` reports `ready: false` and the frontend falls back to the Chrome approach.
 pub fn pick_port() -> u16 {
-    // 开发期:壳不起 sidecar、直接连仓库里跑着的 dev server 时,那个 server 拿不到壳随机挑的
-    // 端口。两边都设同一个 PROMPTCUT_AGENT_CDP 就能对上。正式包里没有这个变量。
+    // During development, when the shell does not start the sidecar and connects directly to a dev server running in the repo, that server cannot get the random
+    // port the shell picked. Setting the same PROMPTCUT_AGENT_CDP on both sides makes them match. Release builds do not have this variable.
     if let Ok(v) = std::env::var("PROMPTCUT_AGENT_CDP") {
         if let Ok(p) = v.trim().parse::<u16>() {
             if p != 0 {
@@ -75,14 +75,14 @@ pub fn pick_port() -> u16 {
         .unwrap_or(0)
 }
 
-/// 给 WebView2 的启动参数。**主窗口和子 webview 必须传一模一样的一串**:同一个用户数据
-/// 目录下,第二个 webview 的参数和第一个不一样,WebView2 会直接拒绝创建。
-/// 前面三个 feature 是 wry 默认关掉的(Edge 自己的 UI 小玩意),自己给了参数就得自己带上。
+/// Launch arguments for WebView2. **The main window and the child webview must pass exactly the same string**: under the same user data
+/// directory, if the second webview's arguments differ from the first's, WebView2 simply refuses to create it.
+/// The first three features are ones wry turns off by default (Edge's own little UI gimmicks); once you supply the arguments yourself you have to include them yourself.
 ///
-/// 后面几项是给后台运行(background.rs)的:编辑界面收起时主窗挪在屏幕外,Chromium 自己的
-/// 遮挡判断(CalculateNativeWinOcclusion)会把它当成被挡住、把页面标成隐藏,计时器降频、
-/// 不再出帧,页面侧的 Agent 工具和悬浮窗预览就跟着停了。关掉遮挡判断和后台降频,页面照常跑。
-/// 悬浮窗(skill_shell.rs)也用这一串,三处必须一致。
+/// The later items are for background mode (background.rs): when the editor is collapsed the main window sits off-screen, and Chromium's own
+/// occlusion detection (CalculateNativeWinOcclusion) treats it as covered and marks the page hidden, throttles timers and
+/// stops producing frames, so the page-side Agent tools and the floating window preview stop with it. Turning off occlusion detection and background throttling keeps the page running as usual.
+/// The floating window (skill_shell.rs) uses this same string too, so all three places must match.
 pub fn browser_args(port: u16) -> String {
     let mut s = String::from(concat!(
         "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion",
@@ -96,8 +96,8 @@ pub fn browser_args(port: u16) -> String {
     s
 }
 
-/// 静音 / 放开。WebView2 的 ICoreWebView2_8::IsMuted,Tauri 没包,自己下去调。
-/// 闭包在主线程上跑,这里不等结果:静音失败顶多是有声音,不该让调用方卡住。
+/// Mute / unmute. WebView2's ICoreWebView2_8::IsMuted is not wrapped by Tauri, so we call down to it ourselves.
+/// The closure runs on the main thread and we do not wait for its result here: a failed mute at worst means some sound, and should not block the caller.
 #[cfg(windows)]
 fn apply_muted<R: Runtime>(wv: &tauri::Webview<R>, muted: bool) -> Result<(), String> {
     wv.with_webview(move |pw| {
@@ -119,25 +119,25 @@ fn apply_muted<R: Runtime>(_wv: &tauri::Webview<R>, _muted: bool) -> Result<(), 
     Ok(())
 }
 
-/// 拿到子 webview;没有就在主窗口里建一块(藏在客户区外面,静音)。
+/// Get the child webview; if there is none, create one inside the main window (hidden outside the client area, muted).
 pub fn ensure<R: Runtime>(app: &AppHandle<R>) -> Result<tauri::Webview<R>, String> {
     if let Some(w) = app.get_webview(LABEL) {
         return Ok(w);
     }
     let main = app
         .get_webview_window("main")
-        .ok_or_else(|| "主窗口还没建好".to_string())?;
+        .ok_or_else(|| "main window not created yet".to_string())?;
     let window = main.as_ref().window();
     let port = app.state::<AgentBrowser>().port;
     let builder = WebviewBuilder::new(
         LABEL,
-        WebviewUrl::External(INITIAL_URL.parse().map_err(|e| format!("初始地址不合法: {e}"))?),
+        WebviewUrl::External(INITIAL_URL.parse().map_err(|e| format!("invalid initial URL: {e}"))?),
     )
     .additional_browser_args(&browser_args(port))
-    // 每次导航都打上标记:Node 那边(热重启后)重连时靠它认出这一块。按地址认不行 ——
-    // agent 导航过之后地址早就不是初始的那个了。
+    // Mark every navigation: the Node side (after a hot restart) uses this to recognize this webview when it reconnects. Recognizing it by URL does not work:
+    // once the agent has navigated, the URL is long since not the initial one.
     .initialization_script("window.__PROMPTCUT_AGENT__ = true;")
-    // 这块是给 agent 上网用的,什么站都得能进;新窗口一律在本块里打开,别蹦出第二个窗口
+    // This webview is for the agent to browse the web, so every site must be reachable; new windows always open inside this webview, so no second window pops up
     .on_navigation(|_url| true)
     .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Deny);
     let webview = window
@@ -146,14 +146,14 @@ pub fn ensure<R: Runtime>(app: &AppHandle<R>) -> Result<tauri::Webview<R>, Strin
             LogicalPosition::new(PARKED_X, 0.0),
             LogicalSize::new(WIDTH, HEIGHT),
         )
-        .map_err(|e| format!("建不出 agent webview: {e}"))?;
+        .map_err(|e| format!("cannot create the agent webview: {e}"))?;
     let _ = apply_muted(&webview, true);
     *app.state::<AgentBrowser>().muted.lock().unwrap() = true;
     Ok(webview)
 }
 
-/// 把子 webview 摆到主窗口里的某个矩形(逻辑像素,和前端的 CSS 像素一致)。保持静音,
-/// 放不放开由用户在浮层上决定。
+/// Place the child webview at a rectangle inside the main window (logical pixels, the same as the frontend's CSS pixels). It stays muted;
+/// whether to unmute is up to the user on the popover.
 #[tauri::command]
 pub fn agent_webview_show<R: Runtime>(
     app: AppHandle<R>,
@@ -172,7 +172,7 @@ pub fn agent_webview_show<R: Runtime>(
     Ok(())
 }
 
-/// 挪回客户区外面,尺寸恢复成默认视口(agent 截图要的就是这个尺寸),并重新静音。
+/// Move it back outside the client area, restore its size to the default viewport (the size the agent's screenshots need), and mute it again.
 #[tauri::command]
 pub fn agent_webview_hide<R: Runtime>(
     app: AppHandle<R>,
@@ -188,7 +188,7 @@ pub fn agent_webview_hide<R: Runtime>(
     Ok(())
 }
 
-/// 静音开关。只有用户在浮层上点喇叭才会调 muted: false。
+/// Mute switch. muted: false is only called when the user clicks the speaker on the popover.
 #[tauri::command]
 pub fn agent_webview_mute<R: Runtime>(
     app: AppHandle<R>,
@@ -211,7 +211,7 @@ pub struct AgentInfo {
     pub muted: bool,
 }
 
-/// 前端问:壳里有没有 agent webview、调试端口是多少。`ready` 为 false 时前端退回 Chrome。
+/// The frontend asks: is there an agent webview in the shell, and what is the debugging port. When `ready` is false the frontend falls back to Chrome.
 #[tauri::command]
 pub fn agent_webview_info<R: Runtime>(
     app: AppHandle<R>,
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn browser_args_keep_background_pages_running() {
         let a = browser_args(0);
-        assert!(!a.contains("  "), "参数之间只留一个空格: {a}");
+        assert!(!a.contains("  "), "keep only one space between arguments: {a}");
         for flag in [
             "CalculateNativeWinOcclusion",
             "--disable-background-timer-throttling",

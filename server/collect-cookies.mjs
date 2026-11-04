@@ -1,28 +1,30 @@
 /**
- * 素材收集的登录态:站点定义、cookie 判定、Netscape cookies.txt 读写。
+ * Login state for media collection: site definitions, cookie evaluation, Netscape cookies.txt read/write.
  *
- * 纯逻辑,不碰浏览器也不碰网络,所以能单测。浏览器那半边(打开登录页、
- * 从 CDP 取 cookie、挪窗口)在 vite-plugin-collect.ts 里调 server/web/ 的模块。
+ * Pure logic, touches neither browser nor network, so unit testable. The browser side (opening login page,
+ * getting cookies from CDP, moving window) calls server/web/ modules in vite-plugin-collect.ts.
  *
- * 为什么存成 cookies.txt 而不是直接用浏览器 profile:
- * 下载是 yt-dlp(Python 进程)干的,它读不了 Chrome 的 cookie 库(Windows 上
- * 有应用绑定加密,实测 Edge / Chrome 都是 Could not copy cookie database),
- * 但认 Netscape 格式的文本文件 —— 所以登录一次、导出一次,之后每次下载自动带上。
+ * Why save as cookies.txt instead of using the browser profile directly:
+ * Downloading is done by yt-dlp (Python process), which cannot read Chrome's cookie store (on Windows
+ * there is application-bound encryption; verified Edge / Chrome both give Could not copy cookie database),
+ * but accepts Netscape-format text files: log in once, export once, and automatically include it with
+ * every subsequent download.
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { tr } from './i18n.mjs';
 
 /**
- * 站点定义。加站点就加一项:
- *   loginUrl   让用户登录的页面
- *   domains    哪些 cookie 域归这个站(正则)
- *   required   这几个 cookie 都在才算登录
- *   userCookie 哪个 cookie 的值能当用户标识回显
- *   match      一条链接 / 视频号归不归它管
+ * Site definitions. Adding a site adds an item:
+ *   loginUrl   page where users log in
+ *   domains    cookie domains belonging to this site (regex)
+ *   required   all these cookies must be present to be considered logged in
+ *   userCookie which cookie's value can echo back as user identifier
+ *   match      whether a link / video ID is handled by this site
  */
 export const SITES = {
   bilibili: {
-    name: '哔哩哔哩',
+    name: 'Bilibili',
     loginUrl: 'https://passport.bilibili.com/login',
     domains: /(^|\.)(bilibili\.com|bilibili\.tv|biliapi\.net|bigfun\.cn)$/i,
     required: ['SESSDATA', 'bili_jct', 'DedeUserID'],
@@ -39,7 +41,7 @@ export function siteNames() {
   return Object.keys(SITES);
 }
 
-/** 一条链接属于哪个有登录支持的站点;都不是就 null */
+/** Which site with login support a link belongs to; null if none */
 export function siteOfUrl(url) {
   for (const [id, site] of Object.entries(SITES)) {
     if (site.match(url)) return id;
@@ -47,18 +49,18 @@ export function siteOfUrl(url) {
   return null;
 }
 
-/** cookies.txt 落在哪。dataDir 是 PROMPTCUT_DATA_DIR(默认 out/),这里面不进 git */
+/** Where cookies.txt is stored. dataDir is PROMPTCUT_DATA_DIR (default out/), which is not tracked in git */
 export function cookieFilePath(dataDir, siteId) {
   return path.join(dataDir, 'cookies', `${siteId}.txt`);
 }
 
 /**
- * CDP Network.getAllCookies 的条目 → Netscape 一行。
- * 7 列 tab 分隔:domain / includeSubdomains / path / secure / expires / name / value。
- * 会话 cookie(expires 为 -1)写 0,yt-dlp 会当成会话 cookie 照发。
+ * CDP Network.getAllCookies entry → Netscape single line.
+ * 7 tab-separated columns: domain / includeSubdomains / path / secure / expires / name / value.
+ * Session cookies (expires is -1) are written as 0, which yt-dlp sends as session cookies as-is.
  */
 export function toNetscape(cookies) {
-  const lines = ['# Netscape HTTP Cookie File', '# 由 PromptCut 素材收集在登录后导出;删掉这个文件就等于退出登录。', ''];
+  const lines = ['# Netscape HTTP Cookie File', '# Exported by PromptCut media collection after login; deleting this file is the same as logging out.', ''];
   for (const c of cookies) {
     const domain = String(c.domain || '');
     const expires = typeof c.expires === 'number' && c.expires > 0 ? Math.floor(c.expires) : 0;
@@ -75,11 +77,11 @@ export function toNetscape(cookies) {
   return lines.join('\n') + '\n';
 }
 
-/** Netscape 文本 → cookie 条目(只解析,不校验) */
+/** Netscape text → cookie entries (parses only, does not validate) */
 export function parseNetscape(text) {
   const out = [];
   for (const raw of String(text || '').split(/\r?\n/)) {
-    // yt-dlp 自己导出的文件会给 httpOnly 的行加 #HttpOnly_ 前缀,别当注释丢掉
+    // Files exported by yt-dlp prefix httpOnly lines with #HttpOnly_; do not discard as comments
     const line = raw.startsWith('#HttpOnly_') ? raw.slice('#HttpOnly_'.length) : raw;
     if (!line.trim() || line.startsWith('#')) continue;
     const cols = line.split('\t');
@@ -95,16 +97,16 @@ export function parseNetscape(text) {
 }
 
 /**
- * 这一堆 cookie 对某个站点算不算登录了。
- * 返回 { loggedIn, missing, userId, expiresAt(ms 或 null), expired, cookies(只留该站的) }。
+ * Whether these cookies count as logged in for a site.
+ * Returns { loggedIn, missing, userId, expiresAt (ms or null), expired, cookies (site-only) }.
  */
 export function assessLogin(siteId, cookies, now = Date.now()) {
   const site = SITES[siteId];
-  if (!site) throw new Error(`没有叫 ${siteId} 的站点,可选:${siteNames().join(', ')}`);
+  if (!site) throw new Error(tr("No site named {0}, available: {1}", siteId, siteNames().join(', ')));
   const mine = (cookies || []).filter((c) => site.domains.test(String(c.domain || '').replace(/^\./, '')));
   const byName = new Map(mine.map((c) => [c.name, c]));
   const missing = site.required.filter((n) => !byName.get(n)?.value);
-  // 过期时间取关键 cookie 里最早的那个;会话 cookie(-1 / 0)不参与
+  // Expiration time takes earliest among key cookies; session cookies (-1 / 0) do not participate
   let expiresAt = null;
   for (const n of site.required) {
     const c = byName.get(n);
@@ -126,29 +128,29 @@ export function assessLogin(siteId, cookies, now = Date.now()) {
   };
 }
 
-/** 存盘那份登录态现在什么情况。文件不存在也返回一个能读的对象,不抛 */
+/** Current status of persisted login state on disk. Returns readable object even if file does not exist, does not throw */
 export function savedCookieStatus(dataDir, siteId, now = Date.now()) {
   const file = cookieFilePath(dataDir, siteId);
   if (!fs.existsSync(file)) {
     return { site: siteId, path: file, exists: false, loggedIn: false, expired: false, userId: null, expiresAt: null, missing: SITES[siteId]?.required ?? [] };
   }
   let text = '';
-  try { text = fs.readFileSync(file, 'utf8'); } catch { /* 读不了按没有算 */ }
+  try { text = fs.readFileSync(file, 'utf8'); } catch { /* Unreadable counts as missing */ }
   const a = assessLogin(siteId, parseNetscape(text), now);
   return { site: siteId, path: file, exists: true, loggedIn: a.loggedIn, expired: a.expired, userId: a.userId, expiresAt: a.expiresAt, missing: a.missing };
 }
 
-/** 把登录态写盘。返回文件路径 */
+/** Persist login state to disk. Returns file path */
 export function saveCookies(dataDir, siteId, cookies) {
   const file = cookieFilePath(dataDir, siteId);
-  // 0700 / 0600:这个文件里是 SESSDATA,拿到就等于拿到账号,不该是同机器上人人可读的
-  // (Windows 上 mode 基本不起作用,真正挡住网页那一路的是 vite.config.ts 里的 fs.deny)
+  // 0700 / 0600: this file contains SESSDATA, which grants full account access; should not be readable by everyone on the same machine
+  // (mode is largely ineffective on Windows; what actually blocks the web path is fs.deny in vite.config.ts)
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, toNetscape(cookies), { encoding: 'utf8', mode: 0o600 });
   return file;
 }
 
-/** 删掉存盘的登录态(等于退出登录)。返回是否真删了东西 */
+/** Delete persisted login state on disk (equivalent to logout). Returns whether anything was actually deleted */
 export function forgetCookies(dataDir, siteId) {
   const file = cookieFilePath(dataDir, siteId);
   if (!fs.existsSync(file)) return false;
@@ -157,20 +159,21 @@ export function forgetCookies(dataDir, siteId) {
 }
 
 /**
- * 下载 / 探测前决定带不带 cookie。
- * 显式传了路径就用它;没传就看这条链接归哪个站、那个站有没有没过期的存盘登录态。
- * 返回 { path, site, reason } —— path 为 null 时 reason 说明为什么没带(给作业 notes 用)。
+ * Decide whether to include cookies before download / probe.
+ * Use path if passed explicitly; if not, check which site this link belongs to and whether that site
+ * has unexpired persisted login state.
+ * Returns { path, site, reason }: when path is null, reason explains why it was not included (for job notes).
  */
 export function pickCookies(dataDir, url, explicitPath) {
   if (explicitPath) {
     return fs.existsSync(explicitPath)
-      ? { path: explicitPath, site: siteOfUrl(url), reason: '用调用方给的 cookies 文件' }
-      : { path: null, site: siteOfUrl(url), reason: `调用方给的 cookies 文件不存在:${explicitPath},按未登录处理` };
+      ? { path: explicitPath, site: siteOfUrl(url), reason: 'Using the cookies file given by the caller' }
+      : { path: null, site: siteOfUrl(url), reason: `The cookies file given by the caller does not exist: ${explicitPath}, treated as not logged in` };
   }
   const site = siteOfUrl(url);
   if (!site) return { path: null, site: null, reason: null };
   const st = savedCookieStatus(dataDir, site);
-  if (!st.exists) return { path: null, site, reason: `${SITES[site].name}未登录,按未登录画质下载;要登录才有的画质先 user_interface_collect_login` };
-  if (st.expired) return { path: null, site, reason: `${SITES[site].name}的登录态已过期,按未登录画质下载;重新 user_interface_collect_login 可续上` };
-  return { path: st.path, site, reason: `带上${SITES[site].name}的登录态(用户 ${st.userId ?? '?'})` };
+  if (!st.exists) return { path: null, site, reason: `Not logged in to ${SITES[site].name}, downloading at logged-out quality; to get quality that needs login, run user_interface_collect_login first` };
+  if (st.expired) return { path: null, site, reason: `The login state for ${SITES[site].name} has expired, downloading at logged-out quality; run user_interface_collect_login again to resume it` };
+  return { path: st.path, site, reason: `Using the login state for ${SITES[site].name} (user ${st.userId ?? '?'})` };
 }

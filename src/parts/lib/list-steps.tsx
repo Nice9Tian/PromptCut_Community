@@ -4,9 +4,10 @@ import { easeExpoOut, accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 步骤时间线:横向伸展的时间线和逐个点亮的步骤圈。
- * 从 step-timeline 拆出,不含外壳玻璃板。
- * 进场:线条展开的同时按顺序点亮圆圈,最后一个圆圈会有循环呼吸动画。
+ * Step timeline: a horizontally stretching timeline and sequentially illuminated step circles.
+ * Extracted from step-timeline, without shell glass board.
+ * Entrance: while lines expand, circles light up in sequence, and the last circle has a looping
+ * breathing animation.
  */
 interface Params {
   steps: string;
@@ -89,10 +90,10 @@ function ListStepsPart({ params, width, height }: PartProps<Params>) {
 
 export const listSteps: PartDef<Params> = {
   id: "list-steps",
-  name: "步骤时间线",
-  description: "横向时间线依次点亮",
-  useWhen: "有先后顺序的步骤或流程时使用。最多 5 步、每步步名不超过 4 字,超了会叠字;这是挂载即播的进场动画、不跟时间轴走,贯穿全片的章节进度用 list-chapters;没有先后关系的并列要点用 list-pins。",
-  tags: ["步骤", "流程", "时间线", "顺序"],
+  name: "Step timeline",
+  description: "Horizontal timeline that lights up step by step",
+  useWhen: "Use for steps or processes with a sequence. At most 5 steps, and each step name at most 4 characters, otherwise text overlaps. This is an entrance animation that plays on mount and does not follow the timeline; use list-chapters for chapter progress across the whole video, and list-pins for parallel key points with no order.",
+  tags: ["steps", "process", "timeline", "sequence"],
   role: "list",
   from: "step-timeline",
   defaults: {
@@ -102,10 +103,10 @@ export const listSteps: PartDef<Params> = {
     size: 0,
   },
   controls: [
-    { key: "steps", label: "步骤(竖线分隔)", type: "text" },
-    { key: "stepMs", label: "步进时间(ms)", type: "number", min: 100, max: 2000, step: 50 },
-    { key: "accent", label: "颜色", type: "color" },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 120, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
+    { key: "steps", label: "Steps (separated by |)", type: "text" },
+    { key: "stepMs", label: "Step interval (ms)", type: "number", min: 100, max: 2000, step: 50 },
+    { key: "accent", label: "Color", type: "color" },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 120, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
   ],
   defaultFrame: { x: 960, y: 540, w: 1500, h: 300, anchor: [0.5, 0.5] },
   settleMs: (p) => (Math.max(1, p.steps.split("|").filter(Boolean).length) - 1) * p.stepMs + 400,

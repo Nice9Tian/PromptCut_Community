@@ -1,53 +1,63 @@
 /**
- * 登记在虚拟时钟上的 `setTimeout` / `setInterval`(E4b)。
+ * `setTimeout` / `setInterval` registered on the virtual clock (E4b).
  *
- * 舞台把四种计时方式全部接管:`performance.now` / `requestAnimationFrame` 在
- * `stageClock.ts`,`Date.now()` / 无参 `new Date()` 在 `kernel/pinEntropy.ts`,
- * 这一份管剩下的两样。卡片用 `setInterval` 每 100 ms 推一格的打字机、用 `setTimeout`
- * 排下一步的动画,在虚拟时间下必须跟着舞台的拍子走 —— 不然探针量到的是一张按墙钟乱跑的卡,
- * 补跑出来的状态和导出对不上。
+ * The stage takes over all four timing mechanisms: `performance.now` / `requestAnimationFrame` are
+ * in `stageClock.ts`, `Date.now()` / parameterless `new Date()` are in `kernel/pinEntropy.ts`, and
+ * this manages the remaining two. Cards using `setInterval` for a typewriter advancing every 100 ms
+ * or `setTimeout` to schedule the next animation step must follow the stage's tick under virtual
+ * time: otherwise the probe measures a card running wildly against the wall clock, and catch-up
+ * run state will not match export.
  *
- * 这里不碰 `window`,只做记账:**什么时候结算由时钟说了算**(`stageClock` 的 `tick` 每拍调
- * 一次 `settle(now)`),所以它可以脱离浏览器单测。
+ * This does not touch `window` and only does bookkeeping: **when to settle is decided by the clock**
+ * (`stageClock`'s `tick` calls `settle(now)` once per tick), so it can be unit-tested outside the
+ * browser.
  *
- * # 两条规矩
+ * # Two rules
  *
- *  1. **跳转不结算**(`clock.set` 的拨钟、`maxCatchUp` 削起点):调 `shift(delta)` 把每个挂起
- *     定时器的到期时刻整体平移,剩余时间保持 —— 相当于跳过的那段时间里时钟停了。不这么做的话
- *     `setTime` 远跳一次会一口气跑几百个 `setInterval` 回调。
- *  2. **id 空间和真定时器分开**:虚拟 id 从 `VIRTUAL_TIMER_BASE` 起。舞台自身的墙钟定时器
- *     (RPC 超时、`.pc-awaiting` 的 500 ms 兜底、素材层)走 `__pcRealSetTimeout`,拿到的是真 id,
- *     清理时调的却是被接管后的 `clearTimeout` —— 靠这条边界把两边分得开。
+ *  1. **No settling on jumps** (`clock.set` clock adjustments, `maxCatchUp` trimming start point):
+ *     call `shift(delta)` to shift the due time of each pending timer as a whole, preserving
+ *     remaining time: equivalent to the clock stopping during that skipped duration. Otherwise,
+ *     a large jump by `setTime` would run hundreds of `setInterval` callbacks all at once.
+ *  2. **Separate ID space from real timers**: virtual IDs start at `VIRTUAL_TIMER_BASE`. The stage's
+ *     own wall-clock timers (RPC timeouts, `.pc-awaiting` 500 ms fallback, media layer) go through
+ *     `__pcRealSetTimeout` and receive real IDs, while clearing calls the intercepted
+ *     `clearTimeout`: this boundary keeps the two separated.
  */
 
-/** 虚拟定时器 id 的起点。小于它的一律是真定时器的 id */
+/** Starting point of virtual timer IDs. Anything smaller is always a real timer ID */
 export const VIRTUAL_TIMER_BASE = 1_000_000_000;
 
-/** 一次结算里最多触发多少个回调。防的是「回调里又登记一个 0 毫秒定时器」这种自喂循环 */
+/**
+ * Maximum callbacks triggered in a single settle. Prevents self-feeding loops like "registering
+ * another 0 ms timer inside a callback"
+ */
 export const MAX_FIRES_PER_SETTLE = 10_000;
 
 interface VirtualTimer {
   id: number;
   cb: (...args: unknown[]) => void;
   args: unknown[];
-  /** 到期的虚拟毫秒 */
+  /** Due virtual milliseconds */
   due: number;
-  /** null = 一次性;否则是重复周期 */
+  /** null = one-shot; otherwise repeat interval */
   interval: number | null;
-  /** 登记序号:同一 `due` 下按它排先后 */
+  /** Registration sequence number: orders timers with the same `due` */
   seq: number;
 }
 
 export interface VirtualTimers {
-  /** 登记一个。`repeat` = `setInterval`。handler 不是函数(字符串 eval 那一套)时回 0、不登记 */
+  /**
+   * Register one. `repeat` = `setInterval`. Returns 0 and does not register if handler is not a
+   * function (string eval flavor)
+   */
   set(handler: unknown, ms: unknown, args: unknown[], repeat: boolean, now: number): number;
-  /** 摘掉。回 `false` 表示这不是虚拟 id —— 调用方该把它转交给真的那份 */
+  /** Remove. Returns `false` if this is not a virtual ID: caller should forward it to the real one */
   clear(id: unknown): boolean;
-  /** 结算到 `now` 为止到期的定时器,返回触发了几次 */
+  /** Settle timers due up to `now`, returning how many times they triggered */
   settle(now: number): number;
-  /** 跳转:每个挂起定时器的到期时刻整体平移 `delta`,剩余时间保持 */
+  /** Jump: shifts due time of each pending timer by `delta`, preserving remaining time */
   shift(delta: number): void;
-  /** 眼下还挂着几个 */
+  /** How many are currently pending */
   size(): number;
 }
 
@@ -78,9 +88,10 @@ export function createVirtualTimers(): VirtualTimers {
     },
     settle(now) {
       /*
-       * 本次结算**开始之后**新登记的一次性定时器一律推到下一拍(`seq >= limit`),哪怕它已经到期 ——
-       * 不然 `setTimeout(loop, 0)` 这种自喂循环会在一拍里无限跑。`setInterval` 重排时沿用原 `seq`,
-       * 所以它照样能在同一拍里追齐(一拍跨过好几个周期时)。
+       * One-shot timers newly registered **after** this settle starts are pushed to the next tick
+       * (`seq >= limit`), even if already due: otherwise self-feeding loops like `setTimeout(loop, 0)`
+       * would run infinitely in a single tick. `setInterval` re-queuing reuses its original `seq`,
+       * so it can still catch up in the same tick (when a tick spans multiple periods).
        */
       const limit = seq;
       let fired = 0;
@@ -92,16 +103,16 @@ export function createVirtualTimers(): VirtualTimers {
         }
         if (!best) return fired;
         if (best.interval === null) timers.delete(best.id);
-        // 周期 0 会让「追齐」变成死循环,按浏览器的老规矩当 1 毫秒
+        // An interval of 0 makes "catch-up" an infinite loop; treat as 1 ms per browser convention
         else best.due += Math.max(1, best.interval);
         fired++;
         try {
           best.cb(...best.args);
         } catch (err) {
-          console.error("[stageClock] 定时器回调抛错", err);
+          console.error("[stageClock] timer callback threw an error", err);
         }
       }
-      console.warn("[stageClock] 一拍内定时器触发次数到顶,剩下的推到下一拍");
+      console.warn("[stageClock] timer fire count hit the limit within one tick, the rest is pushed to the next tick");
       return fired;
     },
     shift(delta) {

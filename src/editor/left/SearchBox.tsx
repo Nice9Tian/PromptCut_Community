@@ -2,7 +2,7 @@ import type { RefObject } from "react";
 import { IconClose, IconSearch } from "../../ui/icons";
 import { tr } from "../../i18n/index.ts";
 
-/** 分区头部的搜索框:放大镜 + 输入框 + 有字时出现的清空钮。Esc 也能清空 */
+/** Search box in a section head: magnifier + input + a clear button that appears when there is text. Esc also clears */
 export function SearchBox({
   value,
   onChange,
@@ -13,7 +13,7 @@ export function SearchBox({
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
-  /** 自动化钩子,沿用改版前的名字(search / effects-search / caption-search) */
+  /** Automation hook, keeping the names from before the redesign (search / effects-search / caption-search) */
   dataPc: string;
   inputRef?: RefObject<HTMLInputElement | null>;
 }) {

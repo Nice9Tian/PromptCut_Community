@@ -1,7 +1,7 @@
-"""status 子命令：两档都没装时也必须成功返回一行合契约的 JSON。
+"""status subcommand: even when neither tier is installed it must still return one line of contract-conformant JSON.
 
-参数缺失、路径不存在这些情况也在这里验：这个进程是被 node 侧按行解析的，
-任何一次「往 stdout 糊 traceback」都会让界面看到一堆解析失败。
+Cases such as missing arguments and non-existent paths are verified here too: this process is parsed line by line on the node side,
+so any single case of "smearing a traceback onto stdout" makes the UI see a pile of parse failures.
 """
 
 import json
@@ -13,8 +13,8 @@ import unittest
 
 PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# -I 隔离模式同时打开 -E，会连 PYTHONPATH 一起忽略；源码树里跑测试时得自己把
-# 源码目录塞进 sys.path，用 runpy 起模块，既保住隔离又能定位到源码。
+# -I isolated mode also turns on -E, which ignores PYTHONPATH as well; when running tests in the source tree you have to put the
+# source directory on sys.path yourself and launch the module via runpy, which keeps the isolation and still locates the source.
 BOOTSTRAP = (
     "import sys, runpy; sys.path.insert(0, r'{root}'); "
     "runpy.run_module('promptcut_subject', run_name='__main__', alter_sys=True)"
@@ -46,14 +46,14 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
 
         lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
-        self.assertEqual(len(lines), 1, msg=f"stdout 不是恰好一行：{proc.stdout!r}")
+        self.assertEqual(len(lines), 1, msg=f"stdout is not exactly one line: {proc.stdout!r}")
         data = json.loads(lines[0])
 
         self.assertEqual(data["event"], "status")
         for key in ("version", "engine", "light", "full", "ffmpeg"):
             self.assertIn(key, data)
 
-        # 空目录下两档都不可能就绪，engine 必须是 null
+        # In an empty directory neither tier can be ready, so engine must be null
         self.assertIsNone(data["engine"])
 
         for tier, names in (("light", ("yunet", "rtdetr")), ("full", ("dino",))):
@@ -70,7 +70,7 @@ class TestStatus(unittest.TestCase):
                 self.assertEqual(os.path.dirname(entry["path"].rstrip("\\/")), models)
 
     def test_status_without_any_env(self):
-        """一个环境变量都没设也不能崩，models 落到 ~/.promptcut/models。"""
+        """It must not crash when not a single environment variable is set; models falls back to ~/.promptcut/models."""
         proc = run_subcommand(["status"])
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
         data = json.loads(proc.stdout.splitlines()[0])
@@ -92,10 +92,10 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         data = json.loads(proc.stdout.splitlines()[0])
         self.assertEqual(data["event"], "error")
-        self.assertIn("找不到视频文件", data["message"])
+        self.assertIn("video file not found", data["message"])
 
     def test_detect_without_engine_reports_not_ready(self):
-        """引擎没装时 detect 要给退出码 3 + 一条带 detail 的 error，不能是 traceback。"""
+        """When the engine is not installed, detect must give exit code 3 + an error carrying detail, not a traceback."""
         with tempfile.TemporaryDirectory() as tmp:
             video = os.path.join(tmp, "fake.mp4")
             with open(video, "wb") as fh:

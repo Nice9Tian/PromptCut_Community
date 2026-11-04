@@ -1,99 +1,115 @@
 /**
- * 常驻渲染 worker 池(每个 worker 背后守着一个 Chrome)。从 server/vite-plugin-vision.ts 逐字搬来。
+ * Resident render worker pool (each worker guards a Chrome instance behind it). Ported verbatim
+ * from server/vite-plugin-vision.ts.
  *
- * **这份模块状态只有这里能写**:`renderWorkers`(池子)、`renderJobSeq`(请求号)、
- * `lastRenderOrigin`(预热要的回连地址,ui-renderer 通过 `setLastRenderOrigin` 写)。
+ * **This module state can only be written here**: `renderWorkers` (pool), `renderJobSeq` (request id),
+ * `lastRenderOrigin` (callback origin for warm-up, written by ui-renderer via `setLastRenderOrigin`).
  *
- * 依赖方向:worker-pool → render-queue(只取 `cancelError`),单向。队列管「有没有位子」,
- * 这里管「位子上那个 Chrome 是不是热的」—— 将来做 Agent 专用 Chrome 优先通道,改的是
- * `pickWorker` / `spawnWorker` 这两处,不用动队列。
+ * Dependency direction: worker-pool → render-queue (takes only `cancelError`), unidirectional.
+ * The queue manages "whether there is a slot", while this manages "whether the Chrome on that slot
+ * is hot": when building the priority channel for Agent-dedicated Chrome in the future, changes
+ * will be in `pickWorker` / `spawnWorker`, without touching the queue.
  */
 import { fork, spawn } from "node:child_process";
 import path from "node:path";
 import { cancelError } from "./render-queue";
 
-/** 单次渲染的墙钟上限:起 Chrome + 预热 + 一帧,超了就是卡住了 */
+/** Wall-clock limit for a single render: launch Chrome + warm-up + 1 frame; exceeding means stuck */
 export const RENDER_TIMEOUT_MS = 120000;
 /**
- * 叫 worker 取消之后等它回话的上限。它停在两帧之间(一帧约 20~30 ms)或者开完页就停,
- * 正常几十毫秒;冷启动 Chrome 最慢约 6 秒。超过这个数就当它卡死了,整台杀掉。
+ * Limit to wait for a worker response after requesting cancellation. It stops between two frames
+ * (approx. 20~30 ms per frame) or right after opening a page, normally tens of milliseconds;
+ * cold-starting Chrome takes ~6 s at slowest. If exceeded, consider it hung and kill the instance.
  */
 export const CANCEL_GRACE_MS = 15000;
 
-/** 一趟预渲染要告诉渲染进程的全部东西。字段名和 server/bakery 的 opts 一致 */
+/** Everything passed to render process for a prerender pass. Field names match opts in server/bakery */
 export interface RenderJobOpts {
   url: string;
   out: string;
   frames: string;
   fps: number;
-  /** 只截这几帧(离散取样)。不给就是 frames 那个连续区间 */
+  /** Capture only these frames (discrete sampling). If omitted, defaults to interval in frames */
   targetFrames?: number[];
 }
 
 /**
- * # 常驻渲染 worker 池
+ * # Resident render worker pool
  *
- * 以前每渲一次就 spawn 一个 node、起一个 Chrome、渲完整个进程退掉。**这笔固定开销比预渲染本身
- * 大一个数量级**,实测(1920×1080,只要第 0 帧,vite 和 Chrome 都已经热着):
+ * Previously, every render spawned a node process, launched a Chrome instance, and exited the
+ * entire process once rendered. **This fixed overhead is an order of magnitude larger than
+ * prerendering itself**, measured in testing (1920×1080, only frame 0 requested, with vite and
+ * Chrome already warm):
  *
  * ```
- *   162ms  Launching Puppeteer...        ← 进程启动 + import puppeteer 只要 155ms
+ *   162ms  Launching Puppeteer...        ← process startup + import puppeteer takes only 155ms
  *   643ms  Warm-up 3 frames...
- *  1109ms  Export finished in 0.4s.      ← 活儿到这里就干完了
- *  4030ms  进程退出                       ← 剩下的 2.9 秒全是 browser.close() 在等 Chrome 收摊
+ *  1109ms  Export finished in 0.4s.      ← work is done here
+ *  4030ms  Process exit                  ← remaining 2.9s is entirely browser.close() waiting for Chrome teardown
  * ```
  *
- * 也就是说四秒里只有一秒在干活,**将近三秒是在等一个 Chrome 关机** —— 而且这三秒结结实实
- * 压在用户身上:runExport 是 `child.on("close")` 才 resolve 的。
+ * In other words, only one second out of four is spent doing work, and **nearly three seconds are
+ * spent waiting for Chrome to shut down**: and these three seconds fall squarely on the user:
+ * runExport only resolves on `child.on("close")`.
  *
- * 换成常驻之后,同一份活实测 **4030ms → 810ms**(首趟 1261ms,含起 Chrome)。省下的既不是
- * 起进程也不是加载页面,就是那个「开机 + 关机」。
+ * After switching to resident workers, the same job measured **4030ms → 810ms** (first pass
+ * 1261ms, including launching Chrome). The savings come neither from starting processes nor
+ * loading pages, but precisely from that "startup + shutdown".
  *
- * ## 复用的确定性靠什么保证
+ * ## How determinism of reuse is guaranteed
  *
- * 不是这里保证的,是 server/bakery/chrome.mjs 里 `bakery.reset()` 保证的:每趟开一个**全新的 page**
- * (全新 renderer,从没被启用过虚拟时间,和全新起一个浏览器等价),旧 page 立刻关掉。
- * 那边有逐字节比对过的实测数据(复用渲的 vs 全新起浏览器渲的,四趟两两 6/6 全 0 帧)。
- * 这里只负责**别把一个可疑的 worker 继续用下去**:超时、崩了、报过错的一律杀掉重开
- * (worker 自己那边还有一层,见 render-worker.mjs 的「三条自保规矩」)。
+ * It is not guaranteed here; it is guaranteed by `bakery.reset()` in server/bakery/chrome.mjs:
+ * each pass opens a **brand new page** (a clean renderer, virtual time never enabled on it,
+ * equivalent to launching a brand new browser), and the old page is immediately closed.
+ * There are byte-for-byte benchmarked data over there (reused render vs. fresh browser render,
+ * four passes pairwise 6/6 all 0 frames). Here we only ensure **a suspicious worker is not kept
+ * in service**: timeouts, crashes, or anything that reported errors are killed and restarted
+ * (the worker has another layer on its side, see the "three self-preservation rules" in
+ * render-worker.mjs).
  *
- * ## 为什么 worker 数不用另算一遍
+ * ## Why worker count does not need to be recalculated
  *
- * 并发上限由 `enqueue` 那个池子把着(见 maxConcurrentRenders),走到这里的活本来就不会超过它。
- * 所以这里只要「有空闲的就用,没有就再开一个」,不必再算一次 —— 两处各算各的,迟早会
- * 出现「池子说能跑 7 个,worker 只有 3 个」这种对不上账的事。多出来的 worker 由它自己的
- * 闲置超时收掉。
+ * Concurrency limits are guarded by the `enqueue` pool (see maxConcurrentRenders), and jobs
+ * arriving here will not exceed it anyway. So here we just need to "use an idle one if available,
+ * launch a new one if not", without calculating again: if the two places compute independently,
+ * sooner or later reconciliation mismatches will occur like "pool says 7 can run, but there are
+ * only 3 workers". Surplus workers are reaped by their own idle timeouts.
  */
 export interface RenderWorker {
   child: import("node:child_process").ChildProcess;
   busy: boolean;
-  /** 这个 worker 上还没回来的活:请求 id → 结果回调。`started` 是它有没有真的开跑 */
+  /** Pending jobs on this worker: request id → result callback; `started` indicates if actually running */
   pending: Map<number, { ok: (result?: any) => void; fail: (e: Error) => void; timer: NodeJS.Timeout | null; started: boolean }>;
   /**
-   * 手上有一张备好的空页(worker 回过 hot):下一趟来活只需把项目灌进去,约 3~4 ms 就能开渲。
-   * 界面那对热备渲染器按它挑「谁是热的」(docs/archive/topics/decoupling-plan.md 第 3.2 节)。
+   * Holds a prepared blank page (worker replied with hot): when the next pass arrives, just inject
+   * the project and rendering starts in ~3~4 ms. The hot-standby renderer pair in the UI selects
+   * "who is hot" based on this (docs/archive/topics/decoupling-plan.md Section 3.2).
    */
   hot: boolean;
-  /** 忙着的时候收到的 hot:收尾放掉 busy 时再算热(hot 常和 done 同一轮到达,见 spawnWorker) */
+  /**
+   * Hot received while busy: counted as hot when releasing busy at teardown (hot often arrives
+   * with done, see spawnWorker).
+   */
   hotPending?: boolean;
-  /** 收到过几次 hot、最近一次什么时候(热备状态的明细,排查用) */
+  /** How many times hot was received and when latest occurred (hot-standby details, for debugging) */
   hotMsgs?: number;
   lastHotAt?: number;
-  /** 最近一次被热备巡检催着预热是什么时候(同一台 5 秒内不重复催) */
+  /** When last prompted for warm-up by hot-standby inspection (same instance not prompted within 5s) */
   warmingAt?: number;
-  /** 变热时的回调(热备调度用来派待办) */
+  /** Callback when turning hot (used by hot-standby scheduler to dispatch pending tasks) */
   onHot?: () => void;
-  /** stdout/stderr 的最后几行,出错时当错误信息用 */
+  /** Last few lines of stdout/stderr, used as error messages on failure */
   tail: string[];
-  /** 已经不能再派活了(超时杀掉 / 自己退了) */
+  /** Can no longer accept jobs (killed due to timeout / exited on its own) */
   dead: boolean;
   /**
-   * 前台专用。**后台的活一律不许碰它。**
+   * Reserved for foreground. **Background jobs must not touch it under any circumstances.**
    *
-   * 池子按并发上限分配槽位本来就给前台留了一格,但那只解决「有没有位子」,解决不了
-   * 「位子上那个 Chrome 是不是热的」:后台预渲染会把所有已有的 worker 占满,于是用户
-   * 松手要图时只能现开一个 —— 又是一次开机。留一个专属的、预热好的、永不闲置退出的,
-   * 用户拖到哪儿松手都有人立刻接住。
+   * Allocating slots by concurrency limit in the pool already leaves one slot for the foreground,
+   * but that only solves "whether there is a slot", not "whether the Chrome on that slot is hot":
+   * background prerendering will occupy all existing workers, so when the user releases to request
+   * an image, a new one must be spun up on the fly: another startup. Keeping a dedicated, pre-warmed,
+   * never-idle-exiting one ensures someone immediately picks up wherever the user scrubs and releases.
    */
   reserved: boolean;
 }
@@ -101,12 +117,13 @@ export interface RenderWorker {
 export const renderWorkers: RenderWorker[] = [];
 let renderJobSeq = 0;
 /**
- * 最近一次渲染用的源地址。预热要一个能打开的导出页地址,而预热发生在「还没有活」的时候,
- * 手上没有任何 opts.url 可用 —— 记一个下来就够,反正整个开发服务器只有一个源。
+ * Origin URL used in the most recent render. Warm-up requires an openable export page URL, but
+ * warm-up happens when "there are no jobs yet" and no opts.url is available: recording one is
+ * enough, since the entire development server has only one origin anyway.
  */
 let lastRenderOrigin: string | null = null;
 
-/** 从池子里摘掉一个 worker 并杀掉它;它身上没回来的活全部判失败 */
+/** Remove a worker from the pool and kill it; mark all pending jobs on it as failed */
 export function killWorker(w: RenderWorker, why: Error) {
   if (w.dead) return;
   w.dead = true;
@@ -114,7 +131,7 @@ export function killWorker(w: RenderWorker, why: Error) {
   if (at >= 0) renderWorkers.splice(at, 1);
   for (const p of w.pending.values()) { clearTimeout(p.timer); p.fail(why); }
   w.pending.clear();
-  // 渲染进程自己还拉着一个 Chrome,只杀它会留孤儿
+  // The render process also spawns a Chrome instance; killing only the process leaves orphans
   if (process.platform === "win32" && w.child.pid) spawn("taskkill", ["/PID", String(w.child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
   else w.child.kill("SIGKILL");
 }
@@ -122,11 +139,13 @@ export function killWorker(w: RenderWorker, why: Error) {
 export function spawnWorker(root: string, reserved = false): RenderWorker {
   const child = fork(path.resolve(root, "scripts/render-worker.mjs"), [], {
     cwd: root,
-    // stdout/stderr 留着当错误信息;协议走第四条 ipc 通道,不和日志混在一起
+    // Keep stdout/stderr as error messages; protocol uses the 4th IPC channel, not mixed with logs
     stdio: ["ignore", "pipe", "pipe", "ipc"],
-    // 父进程没有控制台时（例如被 vite 脱离控制台起的渲染主机），不加这个会在 Windows 上新开一个可见的控制台窗口
+    // When the parent process has no console (e.g. render host spawned by vite detached from console),
+    // omitting this opens a visible console window on Windows
     windowsHide: true,
-    // 前台那个常驻不许闲置退出(0 = 永不),否则用户去改会儿参数回来又要等一次开机
+    // Foreground resident instance must not exit on idle (0 = never), otherwise the user will wait for
+    // another launch after tweaking parameters for a while
     env: reserved ? { ...process.env, PROMPTCUT_WORKER_IDLE_MS: "0" } : process.env,
   });
   const w: RenderWorker = { child, busy: false, pending: new Map(), tail: [], dead: false, reserved, hot: false };
@@ -138,9 +157,10 @@ export function spawnWorker(root: string, reserved = false): RenderWorker {
       w.hotMsgs = (w.hotMsgs ?? 0) + 1;
       w.lastHotAt = Date.now();
       /*
-       * worker 只在手上没活时才报 hot。但它往往紧跟着「done」一起到:两条消息同一轮连着派发,
-       * 这时 runOnWorker 还没来得及把 busy 放掉。忙着的时候先记下来,收尾放掉 busy 时再算热
-       * (见 runOnWorker)—— 直接丢掉的话,「热」就一直停在 0。
+       * Workers report hot only when idle with no jobs. But it often arrives immediately following "done":
+       * both messages are dispatched in the same tick, when runOnWorker has not had time to release busy
+       * yet. Record it while busy, and count as hot when releasing busy during teardown (see runOnWorker):
+       * dropping it directly would keep "hot" permanently at 0.
        */
       if (w.busy) {
         w.hotPending = true;
@@ -156,42 +176,48 @@ export function spawnWorker(root: string, reserved = false): RenderWorker {
     if (msg.type !== "done" && msg.type !== "error") return;
     w.pending.delete(msg.id);
     if (p.timer) clearTimeout(p.timer);
-    // busy 由派活的那一方在整趟(渲染 + 后处理)结束后放掉,见 runOnWorker
+    // busy is released by the dispatcher after the entire pass (render + post-processing) ends,
+    // see runOnWorker
     if (msg.type === "done") p.ok(msg.result);
     else {
       /*
-       * worker 报错时它自己已经把那个 bakery 丢掉了(见 render-worker 的第 1 条规矩),
-       * 进程本身还是干净的,所以**不杀**,下一趟它会重新开一个浏览器。
-       * 被取消的(cancelled)连 bakery 都没丢,只是换一张页。
+       * When a worker throws an error, it has already discarded that bakery on its own (see rule 1 of
+       * render-worker), and the process itself remains clean, so **do not kill**: on the next pass it
+       * will reopen a browser. Cancelled ones did not even discard the bakery, only switching pages.
        */
-      p.fail(Object.assign(new Error(String(msg.message || "渲染失败")), { cancelled: !!msg.cancelled }));
+      p.fail(Object.assign(new Error(String(msg.message || "Render failed")), { cancelled: !!msg.cancelled }));
     }
   });
   const bury = (code: number | null) => {
     if (w.dead) return;
     const msg = w.tail.join("").trim().slice(-600);
     killWorker(w, new Error(code === 3221225794
-      ? "渲染进程启动失败(0xC0000142)。同时开着的浏览器实例太多,等导出跑完再看图。"
-      : `渲染进程异常退出(代码 ${code})${msg ? `:${msg}` : ""}`));
+      ? "Render process failed to start (0xC0000142). Too many browser instances are open at once; wait for the export to finish before viewing frames."
+      : `Render process exited abnormally (code ${code})${msg ? `:${msg}` : ""}`));
   };
   child.on("error", (e) => { if (!w.dead) killWorker(w, e instanceof Error ? e : new Error(String(e))); });
   child.on("exit", bury);
   renderWorkers.push(w);
-  // 前台那个一生下来就把 Chrome 开起来 —— 等用户松手才开机,他就要多等约 1.3 秒
+  // Launch Chrome as soon as foreground instance is spawned: waiting until user releases to launch
+  // makes them wait ~1.3s longer
   if (reserved && lastRenderOrigin) child.send({ type: "prewarm", url: `${lastRenderOrigin}/?export=1` });
   return w;
 }
 
 /**
- * 挑一个 worker 干活。**前台和后台走两条路。**
+ * Pick a worker for a job. **Foreground and background take two separate paths.**
  *
- *   前台(用户松手正等着看的那一张)—— 只用 reserved 那个:它是热的、专属的、永不闲置退出,
- *     后台再忙也占不到它。派走之后**立刻再备一个热的**,免得用户连着拖两次时第二次没人接。
- *   后台(空闲预渲染)—— 只用非 reserved 的,没有空闲的就再开一个。
- *     **绝不碰 reserved**:预渲染一个活五六秒,占住它这套东西就白做了。
+ *   Foreground (the image the user released and is waiting to view): uses only the reserved one:
+ *     it is hot, dedicated, and never exits on idle, unreachable no matter how busy the background
+ *     is. After dispatching, **immediately prepare another hot one** to prevent nobody picking up
+ *     if the user scrubs twice in a row.
+ *   Background (idle prerendering): uses only non-reserved ones, launching a new one if none are idle.
+ *     **Never touch reserved**: a prerender job takes 5~6 seconds; occupying it renders this entire
+ *     mechanism useless.
  *
- * 池子的并发上限(见 pumpRenderQueue)管的是「有没有位子」,这里管的是
- * 「位子上那个 Chrome 是不是热的」—— 两件事,缺一个用户都得干等一次开机。
+ * The concurrency limit of the pool (see pumpRenderQueue) manages "whether there is a slot", while
+ * this manages "whether the Chrome on that slot is hot": two distinct concerns, missing either
+ * forces the user to wait for a launch.
  */
 function pickWorker(root: string, priority: number): RenderWorker {
   if (priority > 0) {
@@ -205,19 +231,23 @@ function pickWorker(root: string, priority: number): RenderWorker {
   return w;
 }
 
-/** 手上没有空闲的前台 worker 了就再开一个并预热 —— 「开渲之后立刻备一个」的落点 */
+/**
+ * Spawn another and warm up when no idle foreground worker is available: landing site for
+ * "prepare another immediately after rendering starts".
+ */
 function ensureSpareWorker(root: string) {
   if (renderWorkers.some((x) => x.reserved && !x.busy && !x.dead)) return;
   spawnWorker(root, true);
 }
 
 /**
- * 跑一趟预渲染。单张和批量共用同一套超时 / 报错处理。
+ * Run a prerender pass. Single frame and batch share the same timeout / error handling.
  *
- * 超时的处理和以前一样是**杀进程**,但杀的是整个 worker(连它守着的 Chrome)——
- * 卡住的页面留着比重开一个贵:下一趟在它上面渲出来的东西不可信,而且不报错。
+ * Timeout handling kills processes as before, but kills the entire worker (along with the Chrome
+ * it guards): keeping a stuck page is more expensive than reopening one: output rendered on it on
+ * the next pass cannot be trusted, and it produces no error.
  */
-/** 一帧交出去之前的像素活,由渲染 worker 做(server/png-post.mjs 的 postFrame) */
+/** Pixel work before handing off frame, handled by render worker (postFrame in server/png-post.mjs) */
 export interface PostItem {
   cards: string;
   layers?: string[];
@@ -228,23 +258,27 @@ export interface PostItem {
 }
 
 /**
- * 一趟渲染活:先渲帧(opts),再可选地做后处理(post 在渲帧结束后才调,那时素材层也抽好了)。
- * post 返回 null = 什么都不用做,调用方直接读帧文件。
+ * A render pass: renders frames first (opts), then optionally performs post-processing (post is
+ * called only after frame rendering finishes, when asset layers are also extracted).
+ * post returning null = nothing to do, caller reads frame files directly.
  */
 export interface RenderJob2 {
   opts: RenderJobOpts;
   post?: () => Promise<PostItem[] | null>;
 }
 
-/** 谁来跑一趟活:渲染池(runExport)或界面那对热备渲染器(uiRenderer.run) */
+/** Who runs a job pass: render pool (runExport) or the UI hot-standby renderer pair (uiRenderer.run) */
 export type Runner = (job: RenderJob2, signal?: AbortSignal) => Promise<any[] | null>;
 
 /**
- * 给一个 worker 发一条消息,等它回话。超时就连 worker 带 Chrome 一起杀掉
- * (卡住的页面留着比重开一个贵:下一趟在它上面渲出来的东西不可信,而且不报错)。
+ * Send a message to a worker and wait for it to reply. On timeout, kill both the worker and Chrome
+ * (keeping a stuck page is costlier than reopening one: anything rendered on it in the next pass
+ * is untrusted, and no error is reported).
  *
- * `signal` 拨了就不等了:渲帧那一种顺手叫 worker 停下(它在两帧之间停,只换页不换浏览器),
- * 这边立刻返回「已取消」。worker 那边随后回来的那条 error 找不到等它的人,直接丢掉。
+ * Once `signal` is aborted, stop waiting: for frame rendering, tell the worker to stop in passing
+ * (it stops between two frames, only changing pages without replacing the browser), and return
+ * "cancelled" immediately here. The error that returns later from the worker finds no waiter and
+ * is dropped directly.
  */
 function callWorker(
   w: RenderWorker,
@@ -260,21 +294,25 @@ function callWorker(
     entry.fail = reject;
     entry.timer = setTimeout(() => {
       w.pending.delete(id);
-      killWorker(w, new Error(`渲染超时(${timeoutMs / 1000} 秒)。`));
-      reject(new Error(`渲染超时(${timeoutMs / 1000} 秒)。`));
+      killWorker(w, new Error(`Render timed out (${timeoutMs / 1000} s).`));
+      reject(new Error(`Render timed out (${timeoutMs / 1000} s).`));
     }, timeoutMs);
     w.pending.set(id, entry);
     if (signal?.aborted) {
-      // 还没发出去就不要了:干脆不发,也不发 cancel(发了 worker 那边会记一个永远用不上的 id)
+      // Abandoned before being sent: don't send at all, nor send cancel (worker would record an unused id)
       w.pending.delete(id);
       if (entry.timer) clearTimeout(entry.timer);
       return reject(cancelError());
     }
     /*
-     * 取消:叫 worker 停下,但**不在这里放手** —— 要等它回话(它停在两帧之间,或者开完页一看已取消),
-     * 这台 worker 才真的空出来。以前这里立刻 reject,busy 马上变 false:渲染池的在跑计数偏小、Chrome 超发,
-     * 下一趟活派到同一台上还得排在旧活后面,热备的「打断」也腾不出真正空闲的那台。
-     * 后处理(post)很快,不取消,让它做完。worker 迟迟不回话就当它卡死了,整台杀掉。
+     * Cancel: tell the worker to stop, but **do not release here**: wait for its reply (it stops
+     * between two frames, or finds it was cancelled after opening the page) before this worker is truly
+     * freed up. Previously this rejected immediately and busy became false right away: the render
+     * pool's running count was undercounted, Chrome was over-dispatched, the next job pass dispatched
+     * to the same machine still had to queue behind the old job, and the hot-standby "interrupt" could
+     * not free up a truly idle machine. Post-processing (post) is very fast, do not cancel it; let it
+     * finish. If the worker delays replying for too long, consider it frozen and kill the entire
+     * instance.
      */
     const onAbort = () => {
       if (!w.pending.has(id) || msg.type !== "bake") return;
@@ -283,7 +321,7 @@ function callWorker(
       entry.timer = setTimeout(() => {
         if (!w.pending.has(id)) return;
         w.pending.delete(id);
-        killWorker(w, new Error(`取消之后 ${CANCEL_GRACE_MS / 1000} 秒 worker 还没停下`));
+        killWorker(w, new Error(`Worker still had not stopped ${CANCEL_GRACE_MS / 1000} s after cancellation`));
         reject(cancelError());
       }, CANCEL_GRACE_MS);
     };
@@ -299,9 +337,10 @@ function callWorker(
 }
 
 /**
- * 在这个 worker 上跑完一整趟:渲帧,然后(需要的话)后处理。**同一个 worker 做两步**:
- * 帧文件就在它刚写的目录里,而且整趟算一个槽位,调度那边不用拆开记账。
- * 结束时放掉 busy —— 不管成功、失败还是取消。
+ * Run a complete pass on this worker: render frames, then (if needed) post-process. **The same
+ * worker does both steps**: frame files are right in the directory it just wrote, and the whole
+ * pass counts as one slot, so the scheduler does not need split accounting.
+ * Release busy on finish: whether success, failure, or cancellation.
  */
 export async function runOnWorker(w: RenderWorker, job: RenderJob2, signal?: AbortSignal): Promise<any[] | null> {
   w.hot = false;
@@ -314,14 +353,14 @@ export async function runOnWorker(w: RenderWorker, job: RenderJob2, signal?: Abo
       throw Object.assign(e instanceof Error ? e : new Error(String(e)), { notStarted: !entry.started });
     }
     if (!job.post) return null;
-    // 渲完帧才发现调用方已经不要了:后处理就不做了
+    // Only found that caller no longer wants it after rendering frames: skip post-processing
     if (signal?.aborted) throw cancelError();
     const items = await job.post();
     if (!items || !items.length) return null;
     return await callWorker(w, { type: "post", id: ++renderJobSeq, items }, RENDER_TIMEOUT_MS, signal);
   } finally {
     w.busy = false;
-    // 忙着的时候 worker 已经报过 hot(备用页好了、手上没活):现在放手了,补上
+    // Worker already reported hot while busy (standby page ready, idle): now released, catch up
     if (w.hotPending && !w.dead) {
       w.hotPending = false;
       w.hot = true;
@@ -331,21 +370,24 @@ export async function runOnWorker(w: RenderWorker, job: RenderJob2, signal?: Abo
 }
 
 /**
- * 在渲染池里跑一趟。单张和批量共用同一套超时 / 报错处理。
+ * Run a pass in the render pool. Single-frame and batch share the same timeout / error handling.
  */
 export async function runExport(root: string, job: RenderJob2, priority = 0, signal?: AbortSignal, retry = true): Promise<any[] | null> {
-  try { lastRenderOrigin = new URL(job.opts.url).origin; } catch { /* 地址不合法就不记,预热那一步自然跳过 */ }
+  try { lastRenderOrigin = new URL(job.opts.url).origin; } catch { /* Do not record if the address is invalid; prewarming is naturally skipped */ }
   const w = pickWorker(root, priority);
   try {
     return await runOnWorker(w, job, signal);
   } catch (e: any) {
     /*
-     * **没开跑的活重发一次。** 只有一种成因:派活的那一刻这个 worker 正好闲置超时自己退了
-     * (IPC 是异步的,谁也拦不住这个瞬间)。不重试的话,用户每隔一阵子就会随机撞上一次
-     * 「渲染进程异常退出」,而下一次点又好了 —— 最难查的那种偶发。
+     * **Resend jobs that have not started running.** There is only one cause: at the moment of
+     * dispatching the job, this worker happened to time out from being idle and exited on its own
+     * (IPC is asynchronous, and no one can prevent this timing). Without retrying, users would
+     * randomly hit "Render process exited unexpectedly" once in a while, yet clicking again next time
+     * works fine: the hardest kind of intermittent issue to investigate.
      *
-     * 开跑之后失败的**不**重发:那时候可能已经落了一半的盘,而 worker 那边已经把出过错的
-     * bakery 丢掉了,下一趟本来就是干净的。被取消的当然也不重发。
+     * Jobs that fail after starting are **not** resent: by then half the output may have already been
+     * written to disk, and the worker has already discarded the errored bakery, so the next pass is
+     * clean by default. Cancelled jobs are naturally not resent either.
      */
     if (retry && e?.notStarted && !e?.cancelled) return await runExport(root, job, priority, signal, false);
     throw e;
@@ -354,18 +396,19 @@ export async function runExport(root: string, job: RenderJob2, priority = 0, sig
 
 
 /**
- * `lastRenderOrigin` 的极薄 setter。原来 createUiRenderer 直接给这个模块级变量赋值,
- * 拆出去之后 ESM 的导入绑定是只读的 —— 状态仍然只有这一份,只是写它要走这里。
+ * Ultra-thin setter for `lastRenderOrigin`. Originally createUiRenderer assigned directly to this
+ * module-level variable; after splitting out, ESM import bindings are read-only: there is still
+ * only this single copy of state, but writing to it must go through here.
  */
 export function setLastRenderOrigin(origin: string) {
   lastRenderOrigin = origin;
 }
 
-/** 卡片源码一变,告诉本进程所有渲染 worker 扔掉备用页(里面是旧模块) */
+/** On card source change, tell all render workers in process to drop standby pages (old modules) */
 export function invalidateWorkers() {
   for (const w of renderWorkers) {
     if (w.dead) continue;
     w.hot = false;
-    try { w.child.send({ type: "invalidate" }, () => {}); } catch { /* 送不到的 worker 下一趟本来就会重开 */ }
+    try { w.child.send({ type: "invalidate" }, () => {}); } catch { /* Unreachable workers will restart on the next pass anyway */ }
   }
 }

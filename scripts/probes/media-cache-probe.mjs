@@ -1,41 +1,51 @@
 /**
- * 舞台素材长期缓存与跨项目路径号隔离的真实无头 Chrome 探针。
+ * Real headless Chrome probe for stage asset long-term caching and cross-project path id isolation.
  *
- * 用途：
- *   在真实无头 Chrome 中证明：
- *   1. 舞台通过 `/media-s/<sid>/media/<hash>` 读取的素材字节带长期缓存头
- *      `Cache-Control: private, max-age=31536000, immutable` 与 `Vary: Authorization`；
- *   2. 同一浏览器配置目录（userDataDir）重启后的第二次会话中，编辑器页从 `localStorage`
- *      取出同一个 `<sid>`，舞台再次请求 `/media-s/<sid>/media/<hash>` 时直接命中浏览器缓存，
- *      素材服务收到 0 次无 `t` 的 `GET /api/asset/media/<hash>` 请求；
- *   3. 编辑器页通过旧路由 `/media/api/asset/media/<hash>?t=<ticket>` 发起的每次请求均带
- *      `Cache-Control: no-store`，且每次都回源到达素材服务（两次会话共 4 次，每会话精确 +2）；
- *   4. 同一账号下的另一项目 B 拿到不同的 `<sid>`，通过 B 的 `<sid>` 请求项目 A 的素材哈希时
- *      不会命中项目 A 的浏览器缓存，而是回源到素材服务并得到 404。
- *   5. 舞台源上的持久存储（审查补，2026-10-23）：舞台文档装上真实的加固（`installStageHardening`）后，
- *      「卡片」写进 localStorage / sessionStorage 的带路径号的素材地址只留在本文档内存；IndexedDB、Cache Storage
- *      不可用，源私有文件系统与存储桶拒绝；同一标签页里舞台整页重载后、重启浏览器后，真实存储里都没有它，
- *      对照键（不装加固时写的）都在；取档结论 `pc.playable.<主版本>:<哈希>` 照常留存。
+ * Usage:
+ *   Prove in real headless Chrome:
+ *   1. Stage asset bytes read via `/media-s/<sid>/media/<hash>` carry long-term cache headers
+ *      `Cache-Control: private, max-age=31536000, immutable` and `Vary: Authorization`;
+ *   2. In the second session after restarting with the same browser profile directory (userDataDir),
+ *      the editor page retrieves the same `<sid>` from `localStorage`; when the stage requests
+ *      `/media-s/<sid>/media/<hash>` again, it hits browser cache directly, and the asset service
+ *      receives 0 `GET /api/asset/media/<hash>` requests without `t`;
+ *   3. Every request initiated by the editor page via the legacy route
+ *      `/media/api/asset/media/<hash>?t=<ticket>` carries `Cache-Control: no-store`, and reaches
+ *      the origin asset service each time (4 times total across two sessions, exactly +2 per session);
+ *   4. Another project B under the same account receives a different `<sid>`; requesting project A's
+ *      asset hash via B's `<sid>` does not hit project A's browser cache, but goes back to the origin
+ *      asset service and returns 404.
+ *   5. Persistent storage on the stage origin (added in review, 2026-10-23): after the stage document
+ *      installs real hardening (`installStageHardening`), asset URLs with path ids written by "cards"
+ *      into localStorage / sessionStorage remain only in this document's memory; IndexedDB and Cache
+ *      Storage are unavailable, and origin private file system and storage buckets reject; after a full
+ *      stage page reload in the same tab, and after restarting the browser, none of them exist in real
+ *      storage, while control keys (written without hardening installed) are still present; tier
+ *      selection result `pc.playable.<major version>:<hash>` is retained as usual.
  *
- * 运行方式：
+ * How to run:
  *   node scripts/probes/media-cache-probe.mjs [--keep]
  *
- * 端口（仅使用 6420–6429 端口段，仅绑定 127.0.0.1；若端口被占用则打印并退出 1，绝不杀进程）：
- *   - 6420：素材服务（项目授权模式 projectAccess）
- *   - 6421：编辑器页源反代（http://pc.localhost:6421）
- *   - 6422：舞台源反代（http://s1.pc.localhost:6422）
+ * Ports (uses port range 6420-6429 only, binds to 127.0.0.1 only; if port is occupied, prints and
+ * exits 1, never kills processes):
+ *   - 6420: Asset service (project authorization mode projectAccess)
+ *   - 6421: Editor page origin reverse proxy (http://pc.localhost:6421)
+ *   - 6422: Stage origin reverse proxy (http://s1.pc.localhost:6422)
  *
- * 验收判据（每项输出一行 PASS 或 FAIL，全部通过时末行输出 `media-cache-probe: PASS`，任一失败退出码为 1）：
- *   - 会话 1：票据交接 `_grant` 成功；舞台拉取状态码 200、SHA-256 一致、
- *     `Cache-Control` 精确为 `'private, max-age=31536000, immutable'`、`Vary` 为 `'Authorization'`；
- *     素材服务收到至少 1 次不带 `t` 的 `GET /api/asset/media/<hash>`。
- *   - 会话 2：`sid` 与会话 1 的 `sid` 相同（由编辑器页 `localStorage` 持久化）；
- *     舞台拉取状态码 200、SHA-256 一致；会话 2 期间素材服务收到 0 次不带 `t` 的
- *     `GET /api/asset/media/<hash>`；打印 ResourceTiming `transferSize`（若有条目则校验为 0）。
- *   - `?t=` 路由：两轮会话各发起 2 次（共 4 次）带 `?t=` 的同源拉取，每次均到达素材服务
- *     （每轮会话带 `t` 的 `GET` 计数精确增加 2）且响应 `Cache-Control` 为 `'no-store'`。
- *   - 项目 B：项目 B 的 `sid` 与项目 A 不同；舞台经项目 B 的 `sid` 拉取项目 A 的素材哈希返回 404，
- *     且请求到达素材服务（跨项目不命中缓存）。
+ * Acceptance criteria (outputs one PASS or FAIL line per item; outputs `media-cache-probe: PASS` on
+ * the last line when all pass; exit code is 1 on any failure):
+ *   - Session 1: Ticket handoff `_grant` succeeds; stage fetch status code 200, SHA-256 matches,
+ *     `Cache-Control` is exactly `'private, max-age=31536000, immutable'`, `Vary` is `'Authorization'`;
+ *     asset service receives at least 1 `GET /api/asset/media/<hash>` without `t`.
+ *   - Session 2: `sid` is identical to session 1's `sid` (persisted by editor page `localStorage`);
+ *     stage fetch status code 200, SHA-256 matches; asset service receives 0 `GET /api/asset/media/<hash>`
+ *     without `t` during session 2; prints ResourceTiming `transferSize` (verified as 0 if entries exist).
+ *   - `?t=` route: Each of the two sessions initiates 2 same-origin fetches with `?t=` (4 times total),
+ *     each reaching the asset service (the count of `GET` with `t` increases by exactly 2 each session),
+ *     and response `Cache-Control` is `'no-store'`.
+ *   - Project B: Project B's `sid` differs from project A's; fetching project A's asset hash via
+ *     project B's `sid` on the stage returns 404, and the request reaches the asset service
+ *     (cache miss across projects).
  */
 import '../lib/no-user-dirs.mjs';
 import crypto from 'node:crypto';
@@ -70,7 +80,7 @@ const EXPECTED_LONG_CACHE = 'private, max-age=31536000, immutable';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** 检查 127.0.0.1 上指定端口是否空闲（不杀任何进程） */
+/** Check whether the specified port on 127.0.0.1 is free (never kills any process) */
 function checkPortFree(port) {
   return new Promise((resolve) => {
     const srv = net.createServer();
@@ -81,7 +91,7 @@ function checkPortFree(port) {
   });
 }
 
-/** 启动绑定在 127.0.0.1 上的 HTTP 服务 */
+/** Start HTTP service bound to 127.0.0.1 */
 function listenLocal(server, port) {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -89,7 +99,7 @@ function listenLocal(server, port) {
   });
 }
 
-/** 关闭 HTTP 服务并断开空闲连接 */
+/** Close HTTP service and disconnect idle connections */
 function closeServer(server) {
   if (!server) return Promise.resolve();
   return new Promise((resolve) => {
@@ -98,7 +108,7 @@ function closeServer(server) {
   });
 }
 
-/** 用 rolldown 将真实的 src/online/stageIsolation.ts 打包为浏览器 IIFE（全局名 PCStageIso） */
+/** Bundle real src/online/stageIsolation.ts into a browser IIFE using rolldown (global name PCStageIso) */
 async function buildStageIsoBundle(outDir) {
   const file = path.join(outDir, 'stage-iso.js');
   const { build } = await import('rolldown');
@@ -282,7 +292,7 @@ parent.postMessage({ kind: 'stage-ready' }, EDITOR_ORIGIN);
 </body>
 `;
 
-/** 用 rolldown 将真实的 src/online/isolation/harden.ts 打包为浏览器 IIFE（全局名 PCHarden） */
+/** Bundle real src/online/isolation/harden.ts into a browser IIFE using rolldown (global name PCHarden) */
 async function buildHardenBundle(outDir) {
   const file = path.join(outDir, 'harden.js');
   const { build } = await import('rolldown');
@@ -297,11 +307,14 @@ async function buildHardenBundle(outDir) {
 }
 
 /*
- * 舞台源上的持久存储（审查补的第 5 项）：舞台文档装上真实的加固（installStageHardening）之后，
- * 「卡片」把带路径号的素材地址写进 localStorage / sessionStorage / IndexedDB / Cache Storage / 源私有文件系统 / 存储桶，
- * 同一标签页里舞台整页重载后、以及重启浏览器后，用不装加固的同源页面直接看真实存储：一样都不在。
- * 对照：不装加固的页面先写一个对照键，重载与重启后都在（证明这份浏览器配置确实会留存储，「不在」才有意义）。
- * 取档用的 pc.playable.<主版本>:<哈希> = "1" 照常写进真实存储。
+ * Persistent storage on the stage origin (item 5 added in review): after the stage document installs
+ * real hardening (installStageHardening), when "cards" write asset URLs with path ids into
+ * localStorage / sessionStorage / IndexedDB / Cache Storage / origin private file system / storage
+ * buckets, after a full stage page reload in the same tab and after restarting the browser, inspect
+ * real storage directly with a same-origin page without hardening installed: none of them are present.
+ * Control: the page without hardening first writes a control key, which remains after reload and
+ * restart (proving that this browser profile does retain storage, making "not present" meaningful).
+ * pc.playable.<major version>:<hash> = "1" used for tier selection is written to real storage as usual.
  */
 const STORAGE_LEAK = '/media-s/0123456789abcdef0123456789abcdef/media/' + 'a'.repeat(64);
 const PLAYABLE_OK_KEY = 'pc.playable.999:' + 'b'.repeat(64);
@@ -323,13 +336,13 @@ const STAGE_STORAGE_HTML = `<!doctype html>
     const report = PCHarden.installStageHardening({});
     out.storageDenied = report.storageDenied || [];
     out.hardenErrors = report.errors;
-    // 以下是「卡片代码」
+    // Below is the "card code"
     await attempt('local', () => { localStorage.setItem('pc-probe-leak', LEAK); return localStorage.getItem('pc-probe-leak'); });
     await attempt('session', () => { sessionStorage.setItem('pc-probe-leak', LEAK); return sessionStorage.getItem('pc-probe-leak'); });
     await attempt('playable', () => { localStorage.setItem(${JSON.stringify(PLAYABLE_OK_KEY)}, '1'); localStorage.setItem(${JSON.stringify(PLAYABLE_BAD_KEY)}, LEAK); return localStorage.getItem(${JSON.stringify(PLAYABLE_OK_KEY)}); });
     await attempt('idb', () => typeof indexedDB);
     await attempt('caches', () => typeof caches);
-    // 万一还在(加固没装上):真去写一份,好让读的那一步看得见
+    // In case it is still there (hardening not installed): really write one, so the read step can see it
     if (typeof indexedDB !== 'undefined') await attempt('idbWrite', () => new Promise((resolve, reject) => { const r = indexedDB.open('pc-probe-leak', 1); r.onupgradeneeded = () => r.result.createObjectStore('s'); r.onerror = () => reject(r.error); r.onsuccess = () => { const tx = r.result.transaction('s', 'readwrite'); tx.objectStore('s').put(LEAK, 'k'); tx.oncomplete = () => { r.result.close(); resolve('written'); }; }; }));
     if (typeof caches !== 'undefined') await attempt('cacheWrite', async () => { const c = await caches.open('pc-probe-leak'); await c.put('/pc-probe-leak', new Response(LEAK)); return 'written'; });
     await attempt('opfs', async () => { const root = await navigator.storage.getDirectory(); const fh = await root.getFileHandle('pc-probe-leak', { create: true }); const w = await fh.createWritable(); await w.write(LEAK); await w.close(); return 'written'; });
@@ -355,7 +368,7 @@ const STAGE_STORAGE_HTML = `<!doctype html>
 </body>
 `;
 
-/** 编辑器页：在同一个 iframe 里按顺序载入几步舞台页（同一标签页，sessionStorage 跨重载保留） */
+/** Editor page: sequentially load stage page steps in the same iframe (same tab, sessionStorage persists across reloads) */
 const EDITOR_STORAGE_HTML = `<!doctype html>
 <meta charset="utf-8">
 <title>editor-storage-probe</title>
@@ -395,7 +408,7 @@ async function runStorageFlow(browser, steps) {
   }
 }
 
-/** 真实存储里不得有卡片写下的东西；对照键必须在 */
+/** Real storage must not contain anything written by cards; control keys must be present */
 function checkNoLeak(check, label, read, { sessionControl }) {
   const idbNames = read?.idb?.ok ? read.idb.value : null;
   const cacheNames = read?.caches?.ok ? read.caches.value : null;
@@ -448,7 +461,7 @@ async function main() {
   for (const port of [PORT_ASSET, PORT_EDITOR, PORT_STAGE]) {
     const free = await checkPortFree(port);
     if (!free) {
-      console.error(`PORT_BUSY: 127.0.0.1:${port} 已被占用`);
+      console.error(`PORT_BUSY: 127.0.0.1:${port} is already in use`);
       process.exit(1);
     }
   }
@@ -472,7 +485,7 @@ async function main() {
     dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'pc-media-cache-probe-data-'));
     profileDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'pc-media-cache-probe-profile-'));
 
-    // 1. 启动项目授权模式的素材服务（端口 6420）
+    // 1. Start asset service in project authorization mode (port 6420)
     const { asset, media } = await compileAssetModules(dataDir);
     const ticketA = crypto.randomBytes(32).toString('base64url');
     const ticketB = crypto.randomBytes(32).toString('base64url');
@@ -508,7 +521,8 @@ async function main() {
       pxEvict: null,
     });
 
-    // 统计到达素材服务的请求（按 method + pathname + 是否带 t 查询参数计数，绝不打印票据）
+    // Count requests reaching asset service (by method + pathname + whether query parameter t
+    // is present, never prints tickets)
     const assetCounts = new Map();
     const countKey = (method, pathname, hasT) => `${String(method || 'GET').toUpperCase()} ${pathname} ${hasT ? 't=1' : 't=0'}`;
     const getCount = (method, pathname, hasT) => assetCounts.get(countKey(method, pathname, hasT)) ?? 0;
@@ -524,7 +538,7 @@ async function main() {
     });
     await listenLocal(assetServer, PORT_ASSET);
 
-    // 上传一份 256 KiB 随机字节的媒体素材到项目 A（ext: bin）
+    // Upload a 256 KiB random-byte media asset to project A (ext: bin)
     const mediaBytes = crypto.randomBytes(256 * 1024);
     const mediaHash = crypto.createHash('sha256').update(mediaBytes).digest('hex');
     const mediaApiPath = `/api/asset/media/${mediaHash}`;
@@ -544,10 +558,10 @@ async function main() {
       headers: { Authorization: `Bearer ${ticketA}` },
     });
     if (putRes.status !== 200 || completeRes.status !== 200) {
-      throw new Error(`上传测试素材失败: put=${putRes.status}, complete=${completeRes.status}`);
+      throw new Error(`Failed to upload the test asset: put=${putRes.status}, complete=${completeRes.status}`);
     }
 
-    // 2. 打包真实的 src/online/stageIsolation.ts 并启动本地反代（6421 编辑器源、6422 舞台源）
+    // 2. Bundle real src/online/stageIsolation.ts and start local reverse proxy (6421 editor origin, 6422 stage origin)
     const stageIsoBundle = await buildStageIsoBundle(dataDir);
     const hardenBundle = await buildHardenBundle(dataDir);
 
@@ -626,7 +640,7 @@ async function main() {
     });
     await listenLocal(stageServer, PORT_STAGE);
 
-    // 3. 会话 1：启动无头 Chrome，打开账号 acct-1 / 项目 A 的编辑器页
+    // 3. Session 1: Launch headless Chrome, open editor page for account acct-1 / project A
     const s1BeforeNoT = getCount('GET', mediaApiPath, false);
     const s1BeforeWithT = getCount('GET', mediaApiPath, true);
 
@@ -638,7 +652,8 @@ async function main() {
       hash: mediaHash,
       doQuery: true,
     });
-    // 舞台源上的持久存储：同一标签页里先写对照键、再装加固当卡片写、再整页重载读真实存储
+    // Persistent storage on stage origin: in same tab, write control key first, install hardening
+    // to write as cards, then reload full page to read real storage
     const storage1 = await runStorageFlow(browser, ['raw-control', 'hardened-write', 'raw-read']);
     await sleep(1500);
     await browser.close();
@@ -683,7 +698,7 @@ async function main() {
     check('stage storage: window.localStorage is locked (no getter left, not configurable)', hw?.restore?.value?.configurable === false && hw?.restore?.value?.hasGetter === false, JSON.stringify(hw?.restore));
     checkNoLeak(check, 'stage storage, same tab after stage reload', storage1?.[2], { sessionControl: true });
 
-    // 4. 会话 2：使用同一个 userDataDir 再次启动 Chrome，先跑项目 A，再跑项目 B
+    // 4. Session 2: Launch Chrome again using the same userDataDir, run project A first, then project B
     const s2BeforeNoT = getCount('GET', mediaApiPath, false);
     const s2BeforeWithT = getCount('GET', mediaApiPath, true);
 
@@ -725,7 +740,8 @@ async function main() {
       );
     }
 
-    // 5. 核查 ?t= 路由：每轮会话 2 次（共 4 次）均到达素材服务且返回 Cache-Control: no-store
+    // 5. Verify ?t= route: 2 times per session (4 times total), each reaching asset service
+    // and returning Cache-Control: no-store
     const allQueryFetches = [...(s1?.queryFetches ?? []), ...(s2A?.queryFetches ?? [])];
     const queryNoStoreOk =
       allQueryFetches.length === 4 &&
@@ -741,9 +757,11 @@ async function main() {
       `fetches=${JSON.stringify(allQueryFetches.map((f) => ({ status: f.status, cc: f.cacheControl })))}`,
     );
 
-    // 6. 会话 2 内打开同账号下的项目 B：sid 不同，且经 B 的 sid 拉取 A 的素材哈希回源返回 404
+    // 6. Open project B under the same account in session 2: sid is different, and fetching A's
+    // asset hash via B's sid goes to origin and returns 404
     const bBeforeNoT = getCount('GET', mediaApiPath, false);
-    // 重启浏览器之后：真实存储里仍然没有卡片在会话 1 写下的东西，对照键还在
+    // After restarting browser: real storage still does not contain what cards wrote in
+    // session 1; control key is still present
     const storage2 = await runStorageFlow(browser, ['raw-read']);
     checkNoLeak(check, 'stage storage, after browser restart', storage2?.[0], { sessionControl: false });
 

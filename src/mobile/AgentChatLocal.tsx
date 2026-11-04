@@ -1,16 +1,23 @@
 /**
- * 手机版 Agent 分页里一个会话的对话页 —— **本机 Agent 那一份**（语义 `workflow/editing.md`「局域网里的第二块屏」）。
+ * Chat page for one session in the mobile app's Agent tab: **the local Agent's copy** (semantics
+ * `workflow/editing.md`, section "A second screen on the LAN").
  *
- * 和云端那一份（`AgentChat.tsx`）画的是同一页（都交给 `AgentChatView`），换的只是底下接谁：
- * 这里接 `useVibeLocal`，也就是编辑界面 AI 栏那一套（`src/ai/useAiChat.ts` 发请求、`src/ai/agentTabs.ts` 管分页）。
- * 手机上说的话由**电脑上那个 Agent** 执行，改的是同一个项目，所以改动两边都看得见。
+ * It draws the same page as the cloud copy (`AgentChat.tsx`, both hand off to `AgentChatView`);
+ * only what sits underneath differs: this one is wired to `useVibeLocal`, which is the AI panel
+ * setup of the editor (`src/ai/useAiChat.ts` sends requests, `src/ai/agentTabs.ts` manages tabs).
+ * What you say on the phone is executed by **the Agent on the computer** and edits the same
+ * project, so both sides see the changes.
  *
- * **但两边不是同一段对话**：手机和电脑是两个浏览器，分页清单（`agentTabs.ts`）和消息（`liveChat.ts` 每页一份）
- * 都在各自那张页面里，没有跨页通道。这一版也不归档（归档是电脑 AI 栏 `AiPanel.tsx` 用 `useChatHistory` 做的事），
- * 所以手机上关掉一个会话，这段话就没了 —— 关之前由 `AgentPage` 问一声。
+ * **But the two sides are not the same conversation**: the phone and the computer are two
+ * browsers, and the tab manifest (`agentTabs.ts`) and the messages (`liveChat.ts`, one per tab)
+ * live in each page on its own, with no cross-page channel. This version does not archive either
+ * (archiving is done by the desktop AI panel `AiPanel.tsx` through `useChatHistory`), so once a
+ * session is closed on the phone, that conversation is gone: `AgentPage` asks before closing.
  *
- * 本机没有的东西一概不画：没有账号就没有「谁发的」、没有共有 / 私有、没有告知确认、没有断网待发
- * （本机 Agent 就在这台机器上跑，连的是回环，没有「等网络恢复」这回事）。
+ * Anything the local side lacks is not drawn: with no account there is no "who sent it", no
+ * shared / private chat, no disclosure confirmation, and no pending-send when offline (the local
+ * Agent runs on this very machine over loopback, so there is no "waiting for the network to
+ * recover").
  */
 import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
 import "katex/dist/katex.min.css";
@@ -26,15 +33,15 @@ import { addQuote, withQuotes, type QuoteRef } from "./agentView";
 
 export function AgentChatLocal(props: {
   tabId: string;
-  /** 这一页此刻是不是用户看着的那一页（分页开着、会话标签选中） */
+  /** Whether this page is the one the user is looking at right now (tab open, session tab selected) */
   shown: boolean;
   projectId: string | null;
-  /** 各会话此刻有几条消息（关会话前判断要不要确认） */
+  /** How many messages each session has right now (to decide whether to confirm before closing a session) */
   counts: MutableRefObject<Map<string, number>>;
 }) {
   const { tabId, shown, projectId, counts } = props;
   const toast = useToast();
-  // 每个会话各挂一份（切标签不卸载，后台那一轮照跑）：所以把页号传进去，不跟着「当前页」走
+  // One is mounted per session (switching tabs does not unmount, the background turn keeps running): so pass the tab id in rather than following the "current tab"
   const vibe = useVibeLocal({ projectId, tabId });
   const { tabs } = useAgentTabs();
   const tab = tabs.find((t) => t.id === tabId);
@@ -43,14 +50,14 @@ export function AgentChatLocal(props: {
   const messages = vibe.chat.messages;
   const hasMessages = messages.length > 0;
 
-  /* ---------- 输入框、引用标记条、开始页 ---------- */
+  /* ---------- Input box, quote bar, start page ---------- */
   const [inputText, setInputText] = useState("");
   const [quotes, setQuotes] = useState<QuoteRef[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const focusInput = () => requestAnimationFrame(() => taRef.current?.focus());
   const start = useStartPage(tabId, inputText, setInputText, focusInput, hasMessages);
 
-  // 输入框随内容长高（最多约五行），同云端那一份
+  // The input box grows with its content (up to about five lines), same as the cloud version
   useLayoutEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
@@ -58,7 +65,7 @@ export function AgentChatLocal(props: {
     ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`;
   }, [inputText, shown]);
 
-  // 选中一项后点「引用」（或预览右键「引用到 AI」）：放进标记条，不往输入框里插字
+  // After selecting an item, click "Quote" (or right-click in preview "Quote to AI"): it goes into the bar, no text is inserted into the input box
   useEffect(() => {
     if (!shown) return;
     const onQuote = (ev: Event) => {
@@ -71,13 +78,13 @@ export function AgentChatLocal(props: {
     return () => window.removeEventListener("pc-quote-clip", onQuote as EventListener);
   }, [shown]);
 
-  /* ---------- 会话状态 ---------- */
+  /* ---------- Session state ---------- */
   useEffect(() => { setTabBusy(tabId, vibe.streaming); }, [tabId, vibe.streaming]);
   useEffect(() => () => setTabBusy(tabId, false), [tabId]);
   useEffect(() => { counts.current.set(tabId, messages.length); }, [counts, tabId, messages.length]);
   useEffect(() => () => { counts.current.delete(tabId); }, [counts, tabId]);
 
-  /** 探针与排障的只读口子，形状同云端那一份 */
+  /** Read-only hook for probes and troubleshooting, same shape as the cloud version */
   const lastSend = useRef<{ text: string; quotes: QuoteRef[] } | null>(null);
   useEffect(() => {
     const w = window as unknown as { __pcMobileAgent?: Record<string, unknown> };
@@ -85,18 +92,18 @@ export function AgentChatLocal(props: {
     return () => { if (w.__pcMobileAgent) delete w.__pcMobileAgent[tabId]; };
   }, [tabId, quotes]);
 
-  /* ---------- 发送与停止 ---------- */
+  /* ---------- Send and stop ---------- */
   const handleSend = async () => {
     const body = inputText.trim();
     if (!body) { taRef.current?.focus(); return; }
     if (!vibe.canSend) { if (vibe.whyNot) toast(vibe.whyNot); return; }
-    // 开始页上点发送：这时才建第一个会话，这条消息在里面发出去
+    // Click send on the start page: only now is the first session created, and this message is sent inside it
     start.commit();
     const text = withQuotes(body, quotes);
     const sentInput = inputText;
     const sentQuotes = quotes;
     lastSend.current = { text, quotes: sentQuotes };
-    // 这一页在跑就排队、空闲就直发，由 `useVibeLocal` 判（同 AI 栏的「发送」）
+    // If this page is running, queue; if idle, send directly; decided by `useVibeLocal` (same as the AI panel's "Send")
     const ok = await vibe.send(text);
     if (!ok) return;
     setInputText((prev) => (prev === sentInput ? "" : prev));
@@ -109,7 +116,7 @@ export function AgentChatLocal(props: {
     <>
       {vibe.whyNot && <div className="note" data-pcm="agent-note">{vibe.whyNot}</div>}
       {vibe.banner && <div className="note warn" data-pcm="agent-notice" role="alert" onClick={vibe.clearBanner}>{vibe.banner}</div>}
-      {/* 本机 Agent 跑在电脑上，关掉软件这一轮就停了 —— 只在还没说过话时提一句，免得每页都压着一条 */}
+      {/* The local Agent runs on the computer, and closing the app stops this turn —— mention it only before anything has been said, so it does not sit on every page */}
       {!hasMessages && <div className="note" data-pcm="agent-local-hint">{vibe.hint}</div>}
     </>
   );
@@ -124,7 +131,7 @@ export function AgentChatLocal(props: {
       level={level}
       levelDisabled={vibe.streaming}
       onLevel={(lv) => setTabCreativity(tabId, lv)}
-      /* 本机对话没有共有 / 私有 */
+      /* Local chat has no shared / private */
       visLabel=""
       canToggleVisibility={false}
       onToggleVisibility={() => {}}

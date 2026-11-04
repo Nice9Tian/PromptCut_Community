@@ -1,16 +1,21 @@
-// 守门：产品代码、脚本、探针和桌面构建脚本里起子进程，必须带 windowsHide: true。
-// 跑法：node --test server/test/windows-hide-silent-spawn.test.mjs
+// Gatekeeper: spawning child processes in product code, scripts, probes, and desktop build
+// scripts must include windowsHide: true.
+// How to run: node --test server/test/windows-hide-silent-spawn.test.mjs
 //
-// 规则：docs/semantics/guide_files/verification.md「Windows 验证静默运行」。
-// 为什么要守：父进程没有控制台时（vite 被脱离控制台起，它再起的渲染工作进程就是这样），
-// 不带 windowsHide 的子进程会在 Windows 上新开一个可见的控制台窗口；父进程有控制台时看不出，
-// 所以每新增一处起进程的调用都可能在某条脱离控制台的链上弹窗。
+// Rule: docs/semantics/guide_files/verification.md "Windows verification silent run".
+// Why guard: when the parent process has no console (e.g. vite spawned detached from a console,
+// and the render worker processes it spawns in turn), child processes without windowsHide
+// will open a new visible console window on Windows; this is unnoticeable when the parent has
+// a console, so each newly added process-spawning call could pop up a window on some detached chain.
 //
-// 扫的范围：server/（不含 server/test/）、scripts/ 整个目录树（含 lib、acceptance、probes、archive、remote）、desktop/scripts/，
-// 以及闭源侧对应的 cloud/server/（不含 cloud/server/test/）与 cloud/scripts/（A3 把托管、账号、云端 Agent 那几摊搬过去了，
-// 不扫就等于整块不守；公开仓库里没有 cloud/，这两项是空集）。
-// 其余不在其内：server/test/ 里的测试自己起的子进程。
-// 认法见 silent-spawn-scan.mjs 文件头；认不出的会被报出来，改成显式写出 windowsHide，或加进下面的例外名单并写理由。
+// Scan scope: server/ (excluding server/test/), the entire scripts/ directory tree (including lib,
+// acceptance, probes, archive, remote), desktop/scripts/, as well as the corresponding closed-source
+// cloud/server/ (excluding cloud/server/test/) and cloud/scripts/ (A3 moved hosted services, accounts,
+// and Cloud Agent over there; not scanning them means leaving that entire area unguarded; the public
+// repository has no cloud/, so those two items are empty sets).
+// Excluded: child processes spawned by tests themselves in server/test/.
+// Recognition rules: see silent-spawn-scan.mjs header; unrecognized ones will be reported, so change
+// them to write windowsHide explicitly, or add them to the exception list below with a reason.
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -21,19 +26,21 @@ import { scanSource, listSources } from './silent-spawn-scan.mjs';
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 
 /**
- * 例外名单。每条：文件、命中的调用文本要匹配的正则、理由。
- * 名单里的条目如果在扫描里一处也没命中（代码改了而名单没跟），测试也会红，免得名单烂掉。
+ * Exception list. Each entry: file, regex to match the hit call text, reason.
+ * If an entry in the list does not match anywhere in the scan (code changed but list was not
+ * updated), the test will also turn red to prevent the list from rotting.
  */
 const EXEMPT = [
-  { file: 'server/vite-plugin-ai.ts', match: /\bopener\b/, why: '「打开所在文件夹」起资源管理器（explorer.exe）：本来就要让用户看到这个窗口，windowsHide 会把它藏起来' },
-  { file: 'server/vite-plugin-export.ts', match: /\bopener\b/, why: '「打开所在文件夹」起资源管理器：本来就要让用户看到这个窗口' },
-  { file: 'server/vite-plugin-exports-list.ts', match: /\bopener\b/, why: '「打开所在文件夹」起资源管理器：本来就要让用户看到这个窗口' },
-  { file: 'cloud/server/hosted-render/deploy.mjs', match: /node:child_process/, why: '拼进 deploy 脚本文本、在远端 Linux 上执行的 node -e，不在本机跑' },
-  // node-pty（server/runners/agy-login.mjs 的 pty.spawn）本来就不是 node:child_process，扫描不认，所以不需要条目：
-  // 它起的是伪终端，没有 Windows 控制台窗口可藏。
+  { file: 'server/vite-plugin-ai.ts', match: /\bopener\b/, why: '"Open containing folder" starts File Explorer (explorer.exe): the user is meant to see this window, and windowsHide would hide it' },
+  { file: 'server/vite-plugin-export.ts', match: /\bopener\b/, why: '"Open containing folder" starts File Explorer: the user is meant to see this window' },
+  { file: 'server/vite-plugin-exports-list.ts', match: /\bopener\b/, why: '"Open containing folder" starts File Explorer: the user is meant to see this window' },
+  { file: 'cloud/server/hosted-render/deploy.mjs', match: /node:child_process/, why: 'node -e spliced into the deploy script text and executed on the remote Linux host, not run on this machine' },
+  // node-pty (pty.spawn in server/runners/agy-login.mjs) was never node:child_process to begin with,
+  // and the scan does not recognize it, so no entry is needed:
+  // it spawns a pseudoterminal with no Windows console window to hide.
 ];
 
-/** 扫的文件：相对 ROOT 的正斜杠路径 */
+/** Scanned files: forward-slash paths relative to ROOT */
 function targetFiles() {
   return [
     ...listSources(ROOT, 'server', { skip: (r) => r === 'server/test' || r.startsWith('server/test/') }),
@@ -62,23 +69,25 @@ function scanRepo() {
   return { files, violations, stale };
 }
 
-test('产品代码、脚本、探针与桌面构建脚本起子进程都带 windowsHide（或在例外名单里并写了理由）', () => {
+test('Product code, scripts, probes and desktop build scripts all spawn child processes with windowsHide (or are on the exemption list with a reason given)', () => {
   const { files, violations } = scanRepo();
-  assert.ok(files.length > 100, `扫到的文件太少（${files.length}），目录没找对？`);
-  assert.deepEqual(violations, [], `下面这些起进程的调用没带 windowsHide: true，Windows 上父进程没有控制台时会弹窗口：\n${violations.join('\n')}`);
+  assert.ok(files.length > 100, `Too few files scanned (${files.length}), wrong directory?`);
+  assert.deepEqual(violations, [], `These process-spawning calls lack windowsHide: true, so on Windows a window pops up when the parent process has no console:\n${violations.join('\n')}`);
 });
 
-test('例外名单里没有过期条目，且都写了理由', () => {
-  // cloud/ 下的条目只在有 cloud/ 时才查得到命中；社区版没有这个目录，那几条不算过期
+test('The exemption list has no stale entries, and every entry gives a reason', () => {
+  // Entries under cloud/ only find hits when cloud/ exists; the community edition does not have this
+  // directory, so those entries are not considered expired
   const hasCloud = fs.existsSync(path.join(ROOT, 'cloud'));
   const stale = scanRepo().stale.filter((s) => hasCloud || !s.startsWith('cloud/'));
-  assert.deepEqual(stale, [], `例外名单里这些条目在扫描里已无命中，请删掉：\n${stale.join('\n')}`);
-  for (const e of EXEMPT) assert.ok(e.why && e.why.length > 8, `${e.file} 的例外没写理由`);
+  assert.deepEqual(stale, [], `These exemption list entries no longer match anything in the scan, please remove them:\n${stale.join('\n')}`);
+  for (const e of EXEMPT) assert.ok(e.why && e.why.length > 8, `The exemption for ${e.file} has no reason`);
 });
 
-// ---- 扫描器自己：故意写没带的夹具，证明测试会红；也证明几种带了的写法不误报 ----
+// ---- The scanner itself: intentionally wrote fixtures without it to prove the test turns red;
+// also proves several ways of writing it with it do not false-positive ----
 
-test('夹具：没带 windowsHide 的各种写法都被报出', () => {
+test('Fixture: every form that lacks windowsHide is reported', () => {
   const red = [
     ["import { spawn } from 'node:child_process';\nspawn('a', ['b']);", 1],
     ["import { spawn } from 'node:child_process';\nspawn('a', ['b'], { stdio: 'ignore' });", 1],
@@ -87,18 +96,18 @@ test('夹具：没带 windowsHide 的各种写法都被报出', () => {
     ["const { execSync } = require('node:child_process');\nexecSync('dir');", 1],
     ["const { spawnSync } = await import('node:child_process');\nspawnSync('a');", 1],
     ["import { execFile } from 'node:child_process';\nimport { promisify } from 'node:util';\nconst run = promisify(execFile);\nawait run('a', ['b']);", 1],
-    ["import { spawn as sp } from 'node:child_process';\nfunction go(opts) { return sp('a', [], opts); }", 1], // 选项来自参数：认不出，报
-    ["import { spawn } from 'node:child_process';\nconst base = { stdio: 'ignore' };\nspawn('a', [], { ...base });", 1], // 展开的变量里没有
+    ["import { spawn as sp } from 'node:child_process';\nfunction go(opts) { return sp('a', [], opts); }", 1], // Options come from parameters: unrecognized, report
+    ["import { spawn } from 'node:child_process';\nconst base = { stdio: 'ignore' };\nspawn('a', [], { ...base });", 1], // Not in the spread variable
     ["import { spawn } from 'node:child_process';\nspawn('a', [], { windowsHide: false });", 1],
-    ["const s = 'x=require(\"node:child_process\")';", 1], // 引号里拼的脚本文本：宁可报
+    ["const s = 'x=require(\"node:child_process\")';", 1], // Script text concatenated in quotes: prefer to report
   ];
-  for (const [src, n] of red) assert.equal(scanSource(src, 'fixture.mjs').length, n, `应报 ${n} 处：\n${src}`);
+  for (const [src, n] of red) assert.equal(scanSource(src, 'fixture.mjs').length, n, `Should report ${n} place(s):\n${src}`);
   assert.equal(scanSource("import { spawn } from 'node:child_process';\nspawn('a', ['b']);", 'fixture.ts').length, 1);
-  // 报出的行号对得上
+  // Reported line numbers match
   assert.equal(scanSource("import { spawn } from 'node:child_process';\n\n\nspawn('a');", 'f.mjs')[0].line, 4);
 });
 
-test('夹具：带了 windowsHide 的写法不误报（含选项写在后几行、经变量或展开传入）', () => {
+test('Fixture: forms that carry windowsHide are not falsely reported (including options written on later lines, or passed via a variable or spread)', () => {
   const green = [
     "import { spawn } from 'node:child_process';\nspawn('a', ['b'], { windowsHide: true });",
     "import { spawn } from 'node:child_process';\nspawn('a', ['b'], {\n  cwd: 'x',\n  stdio: ['ignore', 'pipe'],\n  windowsHide: true,\n});",
@@ -107,10 +116,10 @@ test('夹具：带了 windowsHide 的写法不误报（含选项写在后几行�
     "import { spawn } from 'node:child_process';\nspawn('a', [], { windowsHide: true, ...extra });",
     "import { execFile } from 'node:child_process';\nimport { promisify } from 'node:util';\nconst run = promisify(execFile);\nawait run('a', [], { windowsHide: true });",
     "import cp from 'node:child_process';\ncp.spawnSync('a', [], { windowsHide: true });",
-    "import pty from 'node-pty';\npty.spawn('a', []);", // 伪终端不是 child_process
+    "import pty from 'node-pty';\npty.spawn('a', []);", // Pseudoterminal is not child_process
     "import type { ChildProcess } from 'node:child_process';\nlet c: ChildProcess;",
-    "const x = spawn('a');", // 没导入 child_process 的同名函数不管
-    "// 说明里提到 child_process 不算\nconst a = 1;",
+    "const x = spawn('a');", // Ignore same-named functions if child_process is not imported
+    "// Mentioning child_process in a comment does not count\nconst a = 1;",
   ];
-  for (const src of green) assert.deepEqual(scanSource(src, 'fixture.ts'), [], `不应报：\n${src}`);
+  for (const src of green) assert.deepEqual(scanSource(src, 'fixture.ts'), [], `Should not report:\n${src}`);
 });

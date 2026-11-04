@@ -1,12 +1,15 @@
 /**
- * 在线浏览器模式:没有有效声音产物时,判轻的内置声音在浏览器里合成成预览的播放源
- * (`docs/semantics/product/platforms.md`「卡片声音的平台边界」;轻重见 `onlineSoundJudge.ts`)。
+ * Online browser mode: when there is no valid sound output, built-in sounds judged light are synthesized
+ * in the browser into a playback source for the preview
+ * (`docs/semantics/product/platforms.md` "Platform boundaries of card sounds"; for light vs. heavy see `onlineSoundJudge.ts`).
  *
- * 合成出来的是页面里的一份临时 WAV(blob 地址),只给本页预览听,不入库、不改项目;
- * 持久的声音产物仍由「生成声音」或导出开始时那一步产出。有了有效产物,预览就改用产物,不会两份同时出声
- * (`product/rendering.md`「有声动效卡」)。
+ * What gets synthesized is a temporary WAV inside the page (a blob URL), heard only by this page's preview;
+ * it is not stored in the library and does not change the project. The persistent sound output is still
+ * produced by "Generate sound" or by the step at the start of export. Once a valid output exists, the
+ * preview switches to it, so the two never play at the same time
+ * (`product/rendering.md` "Motion graphics cards with sound").
  *
- * 桌面运行环境不走这里(预览里未生成的声音照旧提示)。
+ * The desktop runtime does not go through here (ungenerated sounds in the preview are reported as before).
  */
 import type { Project, TrackClip } from "../../kernel/project";
 import { acquireCardAudioClipUrl, type CardAudioLease } from "../../audio/cardAudio";
@@ -15,15 +18,15 @@ import { onlinePage } from "../../online/pageFlag";
 import { decideClipSound, requestSoundBackfill } from "./onlineSoundJudge";
 
 /**
- * 卡片声音(内置有声卡、内置音频卡)的在线播放源。
- * 回 null = 不归这里管(桌面运行环境,或这台设备跑不了它的代码),调用方照原来的办法提示;
- * 判重抛出说明原因的错误。
+ * Online playback source for card sounds (built-in sound cards, built-in audio cards).
+ * Returns null = not handled here (desktop runtime, or this device cannot run its code); the caller
+ * reports it the original way. A duplicate check throws an error that states the reason.
  */
 export async function onlineLiveCardAudio(project: Project, clip: TrackClip, nodeId: string, frames: number): Promise<CardAudioLease | null> {
   if (!onlinePage()) return null;
   const decision = await decideClipSound(project, clip);
   if (decision.synth) return acquireCardAudioClipUrl({ project, nodeId, frames });
-  // 这台设备不合成:交给渲染节点(第一段没有接收方,见 `onlineSoundJudge.ts` 的 `setSoundBackfillHandler`)
+  // This device does not synthesize: hand it to the render node (the first stage has no receiver, see `setSoundBackfillHandler` in `onlineSoundJudge.ts`)
   void requestSoundBackfill({ project, clip, reason: decision.reason });
   if (decision.reason === "not-runnable") return null;
   throw new Error(decision.message);
@@ -33,8 +36,9 @@ interface CachedEffect { promise: Promise<string>; url?: string; refs: number }
 const effects = new Map<string, CachedEffect>();
 
 /**
- * 独立音效(提示音、键盘声)的在线播放源:素材服务里取不到它的 WAV 时,按片段里存着的配方在浏览器里合成同一份声音。
- * 回 null = 不归这里管或这台设备不合成(调用方保持原样:这一段没有声音)。
+ * Online playback source for standalone sound effects (notification sounds, keyboard sounds): when its WAV
+ * cannot be fetched from the asset service, synthesize the same sound in the browser from the recipe stored in the clip.
+ * Returns null = not handled here, or this device does not synthesize (the caller keeps things as they are: this segment has no sound).
  */
 export async function onlineLiveEffectAudio(project: Project, clip: TrackClip): Promise<CardAudioLease | null> {
   const link = clip.soundEffect;

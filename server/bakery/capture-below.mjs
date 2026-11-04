@@ -1,58 +1,84 @@
 /**
- * 依赖下层的流(`kind: 'below'`)的每一帧怎么取:**差分取层**(渲染重构「戊二」的「下层二」,
- * `docs/plan/prerender-products-contract.md` 第 5.3 节)—— Node 一侧。
+ * How to capture each frame for below-dependent streams (`kind: 'below'`): **differential layer
+ * extraction** (render refactor "Wu-2", "Below-2", `docs/plan/prerender-products-contract.md`
+ * section 5.3): on the Node side.
  *
- * 这种流的隔离工程里留着目标卡和它下面的全部层(`server/frame-stream.mjs` 的 `isolatedBelowProject`)。每一帧截两张:
+ * An isolated project for such streams keeps the target card and all layers below it
+ * (`isolatedBelowProject` in `server/frame-stream.mjs`). Capture two images per frame:
  *
- *   - 上张 R:带目标卡(就是 `bakeStream` 原来那一次截图);
- *   - 下张 L:**同一个页面、同一个时刻**把目标卡那一层藏起来再截一张。
+ *   - Upper capture R: with the target card (the original single screenshot of `bakeStream`);
+ *   - Lower capture L: on the **same page, at the exact same moment**, hide the target card layer
+ *     and capture another.
  *
- * 再算出一层 S,使「S 按普通的叠加盖在 L 上」等于 R(`diffLayer`),交给编码器的是 S。目标卡没有改动的地方 S 全透明,
- * 所以稀疏那一趟照旧能量出实体框、第二趟收紧,流里只有目标卡改动的那一块。
+ * Then calculate a layer S such that "S overlaid on L with standard blending" equals R
+ * (`diffLayer`), and pass S to the encoder. Where the target card makes no changes, S is fully
+ * transparent, so the sparse pass can measure the entity box as usual and tighten on the second
+ * pass, leaving only the area modified by the target card in the stream.
  *
- * # 两张的下层为什么是同一帧的状态
+ * # Why the lower layers of both captures are in the same frame state
  *
- * 藏目标卡不重灌页面、不推时间、不动 React:只往 `<head>` 里加一条带 `!important` 的样式,把目标卡那一层的不透明度压成 0,
- * 截完原样撤掉(照 `./chrome.mjs` 里毛玻璃遮罩那一套的做法:只压过渡的时长、不碰 `transition-property`,撤的时候分两步,
- * 不惊动任何正在跑的动画)。两张之间下层的 DOM、动画、素材、画布一样都没动;页面时钟钉在这一帧(`src/kernel/exportClock.ts`),
- * 多出来的这一拍对读时间的循环是同一个数、对按间隔走的循环间隔为 0。
+ * Hiding the target card does not reload the page, does not advance time, and does not touch React:
+ * it only injects a style rule with `!important` into `<head>` to force the target card layer's
+ * opacity to 0, and removes it as-is after capturing (following the frosted-glass overlay approach
+ * in `./chrome.mjs`: only override transition durations without touching `transition-property`,
+ * and remove in two steps without disturbing any running animations). Between the two captures,
+ * none of the lower layer's DOM, animations, assets, or canvases change; the page clock is pinned
+ * at this frame (`src/kernel/exportClock.ts`), and this extra tick yields the same value for
+ * time-reading loops and an interval of 0 for interval-based loops.
  *
- * 光靠「按理不会变」不够,每个分段的第一帧实测两件事(`verify`,缺省开):
+ * Relying solely on "in theory it should not change" is not enough; the first frame of each segment
+ * verifies two things (`verify`, enabled by default):
  *
- *   - 藏着的时候再截一张,和下张逐字节相同(截到的不是合成器里上一拍的旧画面);
- *   - 撤掉以后再截一张,和上张逐字节相同(藏和撤没有改动页面;页面在多出来的几拍里自己也没有变)。
+ *   - Take another capture while hidden; it must be byte-for-byte identical to the lower capture
+ *     (ensuring it is not a stale frame from the compositor's previous tick);
+ *   - Take another capture after removal; it must be byte-for-byte identical to the upper capture
+ *     (ensuring hiding and removal did not mutate the page, and the page itself did not change
+ *     during the extra ticks).
  *
- * 哪一条不成立,这个分段就失败(不交出可能算错的帧);第一条不成立时,这条流以后每张下张都先丢一张再截。
+ * If either condition fails, this segment fails (avoiding emitting potentially incorrect frames);
+ * if the first condition fails, this stream will discard a frame before every subsequent lower
+ * capture.
  *
- * # 截图矩形和交出去的矩形
+ * # Screenshot rectangle and delivered rectangle
  *
- * 两张都按 `view` 截(这种流是整个画面),算完再裁到 `rect`(稀疏那一趟是上界矩形,第二趟是收紧后的矩形)。
- * 不把截图矩形收紧:毛玻璃要采样自己四周的下层,画面被裁小以后靠近边上的模糊会变(实测数字在 `docs/reports/AGENT-rr-below-diff.md`)。
+ * Both captures are taken according to `view` (the entire scene for this kind of stream), and cropped
+ * to `rect` after computation (the upper-bound rectangle in the sparse pass, and the tightened
+ * rectangle in the second pass). The screenshot rectangle is not tightened: frosted glass needs to
+ * sample the lower layer around itself, and cropping the screen smaller alters the blur near the edges
+ * (measured numbers in `docs/reports/AGENT-rr-below-diff.md`).
  *
- * 只有 `bakeStream` 的调用方(`server/frame-stream.mjs`)用它;导出和快照那几条路不经过这里。
+ * Only callers of `bakeStream` (`server/frame-stream.mjs`) use this; the export and snapshot
+ * pipelines do not pass through here.
  */
 import { captureFrame } from './capture-frame.mjs';
 import { decodePngRgba } from './capture-canvas.mjs';
 
-/** 和 `./bake.mjs` 里轨道流的截图参数同一种:带透明的 PNG */
+/** Same screenshot parameters as the track stream in `./bake.mjs`: PNG with transparency */
 const SHOT = { format: 'png', optimizeForSpeed: true };
 
 /* ======================================================================== *
- * 算那一层(纯函数)
+ * Calculate that layer (pure function)
  * ======================================================================== */
 
 /**
- * 颜色的下限放宽多少(预乘色,满分 1;1/255 就是 8 位里的一级)。两张截图各自四舍五入到 8 位,它们的差本来就有一级左右的噪声;
- * 下限是拿这个差去除以 `L色`(或 `1 − L色`)得到的,除数很小的时候噪声被放大成整张不透明(实测纯色的视频底上阴影那一圈
- * 的不透明度在「该有的值」和 1 之间乱跳)。所以每条下限按自己的除数放宽:除数接近 1 的几乎不放,除数接近 0 的等于不看。
- * 代价是盖回去的颜色最多差这么一级。
+ * How much to relax the color lower bound (premultiplied color, full scale 1; 1/255 is one step in
+ * 8-bit). Both screenshots are individually rounded to 8-bit, so their difference inherently has
+ * about one step of noise; the lower bound is obtained by dividing this difference by `color_L` (or
+ * `1 − color_L`), and when the divisor is very small, noise is amplified into full opacity
+ * (measured: the opacity around shadows on solid video backgrounds jumps erratically between the
+ * "expected value" and 1). Therefore, each lower bound is relaxed according to its own divisor:
+ * when the divisor is close to 1 it is barely relaxed, and when the divisor is close to 0 it is
+ * effectively ignored. The cost is that the composited color differs by at most this one step.
  */
 export const DIFF_TOLERANCE = 1 / 255;
 
 /**
- * 把毛玻璃的外框(圆角矩形)画成掩码。`glass`:`[{ x, y, w, h, radii }]`,坐标是场景像素(可以带小数);
- * `radii` 是左上、右上、右下、左下四个角的 `[横半径, 纵半径]`,可以不给。`area`:掩码对应的矩形 `{ x, y, w, h }`(场景坐标,整数)。
- * 像素中心落在圆角矩形里的记 1。回 `Uint8Array(area.w × area.h)`。
+ * Renders the frosted-glass outer frame (rounded rectangle) into a mask.
+ * `glass`: `[{ x, y, w, h, radii }]`, coordinates are scene pixels (decimals allowed);
+ * `radii` is `[horizontal_radius, vertical_radius]` for the four corners (top-left, top-right,
+ * bottom-right, bottom-left), optional. `area`: rectangle corresponding to the mask
+ * `{ x, y, w, h }` (scene coordinates, integers). Pixels whose centers fall within the rounded
+ * rectangle are marked 1. Returns `Uint8Array(area.w × area.h)`.
  */
 export function glassMask(glass, area, mask = new Uint8Array(area.w * area.h)) {
   const { w, h } = area;
@@ -61,11 +87,13 @@ export function glassMask(glass, area, mask = new Uint8Array(area.w * area.h)) {
     const x0 = g.x - area.x, y0 = g.y - area.y, x1 = x0 + g.w, y1 = y0 + g.h;
     const corner = n => { const c = g.radii?.[n]; return [Math.max(0, Number(c?.[0]) || 0), Math.max(0, Number(c?.[1]) || 0)]; };
     const tl = corner(0), tr = corner(1), br = corner(2), bl = corner(3);
-    // CSS 的规矩:相邻两个角的半径加起来超过边长时,四个角按同一个比例缩小
+    // CSS rule: when the sum of radii of two adjacent corners exceeds the side length, all four
+    // corners are scaled down by the same ratio.
     const fit = (len, a, b) => (a + b > len ? len / (a + b) : 1);
     const f = Math.min(1, fit(g.w, tl[0], tr[0]), fit(g.w, bl[0], br[0]), fit(g.h, tl[1], bl[1]), fit(g.h, tr[1], br[1]));
     for (const c of [tl, tr, br, bl]) { c[0] *= f; c[1] *= f; }
-    // 这一行上圆角吃掉多宽:角的半径是 (rx, ry),这一行离圆心的纵向距离是 dy
+    // How much width the corner radius consumes on this row: the corner radius is (rx, ry), and dy is
+    // the vertical distance from this row to the center.
     const eaten = (rx, ry, dy) => (rx > 0 && ry > 0 && dy > 0 ? rx * (1 - Math.sqrt(Math.max(0, 1 - (dy / ry) * (dy / ry)))) : 0);
     const rowFrom = Math.max(0, Math.ceil(y0 - 0.5)), rowTo = Math.min(h, Math.ceil(y1 - 0.5));
     for (let py = rowFrom; py < rowTo; py++) {
@@ -80,38 +108,55 @@ export function glassMask(glass, area, mask = new Uint8Array(area.w * area.h)) {
 }
 
 /**
- * 差分取层:由带目标卡的画面 `upper`(R)和不带目标卡的画面 `lower`(L)算出一层 S,使 S 按普通的叠加盖在 L 上等于 R。
- * 三张都是 straight RGBA(PNG 的口径,进编码器的也是这一种);`upper`、`lower` 是 `width × height` 的整张,
- * `crop`(整数,缺省整张)是要交出去的那一块。回 `{ rgba, width, height, changed }`:S 的像素(`crop` 那么大)、不透明度大于 0 的像素数。
+ * Differential layer extraction: compute a layer S from the image with the target card `upper` (R)
+ * and the image without the target card `lower` (L), such that S overlaid on L with standard
+ * blending equals R. All three are straight RGBA (PNG format, and also the format fed to the
+ * encoder); `upper` and `lower` are full images of `width × height`, and `crop` (integers, defaults
+ * to the full image) is the patch to deliver. Returns `{ rgba, width, height, changed }`: pixels of
+ * S (sized to `crop`) and the count of pixels with opacity greater than 0.
  *
- * 按预乘色,每个像素要满足的是:
+ * In terms of premultiplied color, each pixel must satisfy:
  *
- *     R色 = S色 + L色 × (1 − a)        R的不透明度 = a + L的不透明度 × (1 − a)        0 ≤ S色 ≤ a ≤ 1
+ *     color_R = color_S + color_L × (1 − a)    opacity_R = a + opacity_L × (1 − a)    0 ≤ color_S ≤ a ≤ 1
  *
- * a 定了,S色 就是 `R色 − L色 × (1 − a)`,所以只要定 a:
+ * Once a is determined, color_S is `color_R − color_L × (1 − a)`, so we only need to determine a:
  *
- *   - R 和 L 相同:全透明(a = 0)。
- *   - L 全透明:S 就是 R。
- *   - L 完全不透明:不透明度那条式子对 a 没有要求,a 取能让 S色 落在 [0, a] 里的最小值,即各颜色通道的两条下限
- *     `1 − R色 / L色` 与 `(R色 − L色) / (1 − L色)` 里最大的那个(契约第 5.3 节的算式)。阴影、压暗、提亮这一类算出来正是它本来的那一层。
- *     两条下限各按 `DIFF_TOLERANCE` 放宽:前一条减 `容差 × (1 − L色) / L色`,后一条减 `容差 × L色 / (1 − L色)`。
- *   - L 半透明:不透明度那条式子给出 `aα = (R的不透明度 − L的不透明度) / (1 − L的不透明度)`。颜色要的下限 b 不比它大就取 aα,两条都严格成立;
- *     颜色要的下限更大时(8 位量化的噪声,在 L 很暗或很亮的像素上会被放大),两头各让一点:取使「不透明度的误差」和「颜色的误差」
- *     相等的那个 a,`(aα × (1 − L的不透明度) + b × m) / ((1 − L的不透明度) + m)`,m 是那条颜色下限对 a 的斜率(`L色` 或 `1 − L色`)。
- *     L 完全不透明时它就是上一条;只取 b(契约原来的写法)在这种像素上会把不透明度抬高十几级。
- *   - **毛玻璃的外框里、L 又完全不透明的像素:a 取 1,S 就是 R。**(`glass`:页面量到的毛玻璃外框,见 `pageHideTarget`。)
- *     这些像素上 a 从最小值到 1 随便取哪个,盖回同一张 L 都等于 R;取 1 是因为这块本来就是「滤过的下层」整块盖上去的:
- *     取最小值的话 S 的不透明度是一张跟着下层细节起伏的图,贴回舞台时下层只要和产流时差一点(视频差一帧、活渲的卡差半帧),
- *     下层的清晰细节就会从本该模糊的玻璃里透出来,编码误差也更大。
+ *   - R and L are identical: fully transparent (a = 0).
+ *   - L is fully transparent: S is R.
+ *   - L is fully opaque: the opacity formula imposes no constraint on a; a takes the minimum value
+ *     that keeps color_S within [0, a], which is the maximum of the two lower bounds across color
+ *     channels: `1 − color_R / color_L` and `(color_R − color_L) / (1 − color_L)` (formulas in
+ *     contract section 5.3). Shadows, darkening, and brightening computed this way yield their
+ *     exact original layer. Each of the two lower bounds is relaxed by `DIFF_TOLERANCE`: the former
+ *     subtracts `tolerance × (1 − color_L) / color_L`, and the latter subtracts
+ *     `tolerance × color_L / (1 − color_L)`.
+ *   - L is translucent: the opacity formula gives
+ *     `aα = (opacity_R − opacity_L) / (1 − opacity_L)`. If the lower bound b required by color is
+ *     not greater than aα, take aα, and both hold strictly; when the lower bound required by color
+ *     is greater (due to 8-bit quantization noise amplified on very dark or very bright L pixels),
+ *     compromise on both sides: choose the a that equalizes "opacity error" and "color error",
+ *     `(aα × (1 − opacity_L) + b × m) / ((1 − opacity_L) + m)`, where m is the slope of that color
+ *     lower bound with respect to a (`color_L` or `1 − color_L`). When L is fully opaque, this
+ *     reduces to the previous case; taking only b (the contract's original formulation) inflates
+ *     opacity by a dozen levels on such pixels.
+ *   - **Pixels inside the frosted-glass outer frame where L is also fully opaque: a takes 1, and
+ *     S is R.** (`glass`: frosted-glass outer frame measured from the page, see `pageHideTarget`.)
+ *     For these pixels, choosing any a from the minimum value to 1 reproduces R when overlaid on
+ *     the same L; 1 is chosen because this area is originally the "filtered lower layer" overlaid
+ *     as a whole block: if the minimum value were taken, S's opacity would be an image fluctuating
+ *     with lower-layer details; when pasted back onto the stage, any slight discrepancy from stream
+ *     generation (video off by a frame, live-rendered cards off by half a frame) would leak sharp
+ *     lower-layer details through what should be blurred glass, and encoding error would also increase.
  *
- * a 四舍五入到 8 位以后再算一遍 S色(夹在 [0, a] 里),交出去的是 straight 色(`S色 / a`)。
+ * After rounding a to 8 bits, color_S is recalculated (clamped to [0, a]), and straight color
+ * (`color_S / a`) is delivered.
  */
 export function diffLayer(upper, lower, width, height, { crop = null, glass = null, mask = null, tolerance = DIFF_TOLERANCE } = {}) {
   const c = crop ?? { x: 0, y: 0, w: width, h: height };
   if (!(Number.isInteger(c.x) && Number.isInteger(c.y) && Number.isInteger(c.w) && Number.isInteger(c.h)) || c.x < 0 || c.y < 0 || c.w <= 0 || c.h <= 0 || c.x + c.w > width || c.y + c.h > height) {
-    throw new Error(`diffLayer:要交出去的矩形不在画面里:${JSON.stringify(c)}(画面 ${width}×${height})`);
+    throw new Error(`diffLayer: the rectangle to hand off is outside the frame: ${JSON.stringify(c)} (frame ${width}×${height})`);
   }
-  if (upper.length < width * height * 4 || lower.length < width * height * 4) throw new Error('diffLayer:数据比画面小');
+  if (upper.length < width * height * 4 || lower.length < width * height * 4) throw new Error('diffLayer: data is smaller than the frame');
   const out = Buffer.alloc(c.w * c.h * 4);
   const m = mask ?? (glass?.length ? glassMask(glass, c) : null);
   let changed = 0;
@@ -125,7 +170,8 @@ export function diffLayer(upper, lower, width, height, { crop = null, glass = nu
       const l0 = lower[i], l1 = lower[i + 1], l2 = lower[i + 2];
       const solid = la8 === 255 && m !== null && m[q] === 1;
       if (ra8 === la8 && r0 === l0 && r1 === l1 && r2 === l2) {
-        // 相同:全透明。毛玻璃外框里的不留洞(零星的透明像素编码以后会洇开)
+        // Identical: fully transparent. Do not leave holes inside the frosted-glass outer frame
+        // (scattered transparent pixels will bleed after encoding).
         if (solid) { out[o] = r0; out[o + 1] = r1; out[o + 2] = r2; out[o + 3] = 255; changed++; }
         continue;
       }
@@ -163,9 +209,12 @@ export function diffLayer(upper, lower, width, height, { crop = null, glass = nu
 }
 
 /**
- * `crop` 外面两张有没有不同的像素(逐字节比,很快)。有就回它们的包围盒(整张的像素坐标),没有回 null。
- * 满密度那一趟只交出收紧矩形里的那一块;目标卡要是改到了矩形外面(稀疏那一趟每隔几帧才量一次,中间的帧可能超出),
- * 先用它粗筛,再由 `layerOutside` 细看。
+ * Checks whether the two captures have different pixels outside `crop` (byte-by-byte comparison,
+ * very fast). Returns their bounding box (in full-image pixel coordinates) if any, or null if none.
+ * The full-density pass delivers only the patch inside the tight rectangle; if the target card
+ * modifies outside the rectangle (the sparse pass only measures every few frames, so intermediate
+ * frames might exceed it), use this for coarse screening first, then inspect closely with
+ * `layerOutside`.
  */
 export function changedOutside(upper, lower, width, height, crop) {
   let x0 = width, y0 = -1, x1 = -1, y1 = -1;
@@ -188,9 +237,13 @@ export function changedOutside(upper, lower, width, height, crop) {
 }
 
 /**
- * `crop` 外面,算出来的那一层有没有不透明的像素。有就回它们的包围盒(整张的像素坐标),没有回 null。
- * 和稀疏那一趟量实体框是同一个口径(那一层的不透明度大于 0):两张逐字节不同、算出来却仍是全透明的像素不算
- * (下层几乎全透明的地方两张的颜色常常对不上,预乘以后其实没有差别),不然这些像素每一帧都会被当成「改到了矩形外面」。
+ * Checks whether the computed layer has opaque pixels outside `crop`. Returns their bounding box
+ * (in full-image pixel coordinates) if any, or null if none. Uses the same criterion as measuring
+ * the entity box in the sparse pass (layer opacity greater than 0): pixels that differ byte-for-byte
+ * between the two captures but still calculate to fully transparent do not count (where the lower
+ * layer is nearly transparent, colors between the two captures often disagree, but after
+ * premultiplication there is actually no difference), otherwise these pixels would be treated as
+ * "modified outside the rectangle" on every frame.
  */
 export function layerOutside(upper, lower, width, height, crop, { glass = null, origin = { x: 0, y: 0 } } = {}) {
   const exact = changedOutside(upper, lower, width, height, crop);
@@ -214,23 +267,32 @@ export function layerOutside(upper, lower, width, height, crop, { glass = null, 
 }
 
 /* ======================================================================== *
- * 页面里:把目标卡那一层藏起来 / 撤掉
+ * In-page: hide / remove the target card layer
  * ======================================================================== */
 
 /**
- * 在页面里跑(`page.evaluate`,函数体不引用外面的东西)。把片段 `clipId` 那一层的不透明度压成 0,回
- * `{ ok, absent, reason, glass }`:
+ * Runs in the page (`page.evaluate`, function body references nothing outside). Suppresses the
+ * opacity of clip `clipId`'s layer to 0, returning `{ ok, absent, reason, glass }`:
  *
- *   - `absent`:这一帧页面上没有这张卡(还没到入点、已经出点),什么都没改,上张和下张本来就是同一张;
- *   - `ok: false`:压不住(`reason: 'not-hidden'`,算出来的不透明度不是 0);
- *   - `glass`:目标卡里这一刻真的在滤下层的毛玻璃的外框(场景坐标)和四个角的半径,给 `diffLayer` 当掩码。只收「看得见、
- *     自己和各级祖先都没有让它另起一层(不透明度不是 1、滤镜、混合模式、裁切、遮罩)、没有旋转和三维」的:另起一层的毛玻璃采样不到下层,
- *     旋转过的外框不是它的形状 —— 这些不进掩码,照最小不透明度算(仍然盖回去等于原画面)。
+ *   - `absent`: this card is not on the page at this frame (not yet reached in point, already past
+ *     out point); nothing was changed, and upper and lower captures are naturally identical;
+ *   - `ok: false`: cannot suppress (`reason: 'not-hidden'`, computed opacity is not 0);
+ *   - `glass`: outer frames (scene coordinates) and four corner radii of frosted glass in the target
+ *     card that actually filter the lower layer at this moment, passed to `diffLayer` as masks.
+ *     Only includes those that are visible, whose self and ancestors do not cause it to form a
+ *     separate layer (opacity not 1, filters, blend modes, clipping, masks), and have no rotation
+ *     or 3D: frosted glass on a separate layer cannot sample the lower layer, and a rotated outer
+ *     frame does not match its shape: these are excluded from masks and computed using minimum
+ *     opacity (which still reconstructs the original picture when overlaid).
  *
- * 藏的是导出页给每张卡包的那一层 `[data-pc-native-layer]`,没有这一层(旧形状的时间轴)就藏包裹层 `[data-pc-clip]`。
- * 剪辑段里的卡(摊平出来的虚拟片段,〔裁〕R01)藏它在嵌套场景里的包裹层 `[data-pc-flat-clip]`;虚拟片段的 id 带 `~`,和顶层的 id 撞不上。
- * 找毛玻璃外框时往上查祖先查到嵌套场景(`[data-pc-cut-scene]`)为止:嵌套场景是毛玻璃的采样边界(`CutSegmentScene` 的 `clip-path`),
- * 玻璃这一块在场景里是整块盖上去的;场景自己的 `clip-path` 不算「另起一层」。
+ * What is hidden is the `[data-pc-native-layer]` wrapped around each card on the export page; if
+ * this layer is absent (old-shaped timeline), it hides the wrapper layer `[data-pc-clip]`. Cards
+ * inside cut segments (flattened virtual clips, [ruling] R01) hide their wrapper layer
+ * `[data-pc-flat-clip]` inside the nested scene; virtual clip ids contain `~` and do not collide
+ * with top-level ids. When looking for frosted-glass outer frames, ancestor inspection stops at the
+ * nested scene (`[data-pc-cut-scene]`): the nested scene is the sampling boundary for frosted glass
+ * (`CutSegmentScene`'s `clip-path`), and the glass area is overlaid as a whole block inside the
+ * scene; the scene's own `clip-path` is not counted as "forming a separate layer".
  */
 export function pageHideTarget(clipId) {
   const ID = '__pc_below_hide';
@@ -256,7 +318,7 @@ export function pageHideTarget(clipId) {
     const cs = getComputedStyle(el);
     const filter = cs.backdropFilter || cs.webkitBackdropFilter;
     if (plain(filter) || cs.visibility !== 'visible' || cs.display === 'none') continue;
-    // 自己半透明、带滤镜之类的:玻璃这一块不是整块盖上去的
+    // If it is translucent itself, has filters, etc.: this glass area is not overlaid as a whole block.
     if (ownLayer(cs) || !axisAligned(cs)) continue;
     let direct = true;
     for (let p = el.parentElement; p && direct; p = p.parentElement) {
@@ -287,7 +349,11 @@ export function pageHideTarget(clipId) {
   return { ok: hidden, absent: false, reason: hidden ? null : 'not-hidden', glass };
 }
 
-/** 在页面里跑:把 `pageHideTarget` 加的那条样式撤掉。分两步:先只留「过渡时长为 0」算一次样式(值变回去也不起过渡),再整个删掉 */
+/**
+ * Runs in the page: removes the style rule added by `pageHideTarget`. In two steps: first keep
+ * only "transition duration 0" to compute styles once (so reverting values triggers no
+ * transitions), then delete entirely.
+ */
 export function pageShowTarget() {
   const style = document.getElementById('__pc_below_hide');
   if (!style) return false;
@@ -299,21 +365,37 @@ export function pageShowTarget() {
 }
 
 /* ======================================================================== *
- * 给 `bakeStream` 的取帧钩子
+ * Frame-capture hook for `bakeStream`
  * ======================================================================== */
 
-/** 一条流的差分取层记录(挂在 `StreamProducer` 的流状态上,`status()` 原样给出去) */
+/**
+ * Differential layer extraction record for a stream (attached to `StreamProducer` stream state,
+ * passed through as-is by `status()`).
+ */
 export function newBelowRecord() {
   return {
-    /** 实测没过的原因(`upper-changed`:藏和撤以后上张变了);有值以后这条流的分段不再产 */
+    /**
+     * Reason why verification failed (`upper-changed`: upper capture changed after hide and remove);
+     * once set, segments for this stream are no longer produced.
+     */
     failed: null,
-    /** 下张要不要先丢一张再截(某一次实测发现藏着的时候连截两张不相同以后打开) */
+    /**
+     * Whether to discard a frame before taking lower captures (turned on after verification finds two
+     * consecutive captures while hidden are not identical).
+     */
     primeLower: false,
-    /** 取了几帧;其中目标卡不在页面上的、上下两张完全相同的、掩码里有毛玻璃的各几帧;做过几次实测;目标卡改到交出去的矩形外面几次 */
+    /**
+     * How many frames captured; how many of those where the target card is absent from the page, where
+     * upper and lower captures are byte-identical, and where the mask contains frosted glass; how many
+     * verifications run; how many times the target card modified outside the delivered rectangle.
+     */
     frames: 0, absent: 0, same: 0, glassFrames: 0, checks: 0, overflows: 0,
-    /** 累计耗时(毫秒):上张那一次截图、藏起来截下张再撤掉、实测多截的那两张、解两张 PNG、算那一层 */
+    /**
+     * Cumulative elapsed time (ms): single screenshot for upper capture, hide and capture lower
+     * capture then remove, two extra captures for verification, decoding two PNGs, computing that layer.
+     */
     upperMs: 0, lowerMs: 0, verifyMs: 0, decodeMs: 0, diffMs: 0,
-    /** 最近一次实测 `{ frame, lowerStable, upperStable }` */
+    /** Most recent verification `{ frame, lowerStable, upperStable }` */
     last: null,
   };
 }
@@ -325,30 +407,37 @@ const samePixels = (a, b) => {
 };
 
 /**
- * 给 `bakeStream` 的 `capture` 用:一个分段一个。`capture(frame, shoot)` 回这一帧交给 `onFrame` 的 `{ rgba, width, height }`
- * (差分取层算出来的 S,`rect` 那么大的 straight RGBA)。
+ * Used for `bakeStream`'s `capture`: one per segment. `capture(frame, shoot)` returns
+ * `{ rgba, width, height }` passed to `onFrame` for this frame (S calculated by differential layer
+ * extraction, straight RGBA sized to `rect`).
  *
- * `clipId`:目标卡的片段;`view`:两张截图的矩形(场景坐标,`bakeStream` 的 `clip` 必须就是它);`rect`:交出去的矩形(场景坐标,在 `view` 里);
- * `record`:这条流的记录(`newBelowRecord`);`verify`:每个分段第一帧做不做那两条实测;`note(message)`:记一条诊断;
- * `tap({ frame, upperPng, lowerPng, glass, absent })`:探针用,把这一帧截到的两张原样交出去看(产品里不给)。
+ * `clipId`: target card's clip; `view`: rectangle for both screenshots (scene coordinates,
+ * `bakeStream`'s `clip` must match it); `rect`: delivered rectangle (scene coordinates, inside `view`);
+ * `record`: record for this stream (`newBelowRecord`); `verify`: whether to run the two
+ * verifications on the first frame of each segment; `note(message)`: log a diagnostic;
+ * `tap({ frame, upperPng, lowerPng, glass, absent })`: used by probe to expose the two raw captures
+ * taken at this frame (omitted in production).
  *
- * 顺序固定为:上张(`shoot()`)→ 藏 → 下张 →(实测时再截一张)→ 撤 →(实测时再截一张)。中间不推时间、不重挂载;
- * 藏了以后无论截图成没成都撤(`finally`)。
+ * Fixed order: upper capture (`shoot()`) → hide → lower capture → (capture another during verification)
+ * → remove → (capture another during verification). Does not advance time or remount in between;
+ * once hidden, removal always occurs whether capturing succeeds or not (`finally`).
  *
- * `rect` 比 `view` 小时,那一层在 `rect` 外面还有不透明的像素(目标卡改到了交出去的矩形外面)就抛 `code: 'below-overflow'` 的错,
- * `box` 是那些像素的包围盒(场景坐标);调用方把矩形放大以后重来。
+ * When `rect` is smaller than `view`, if that layer still has opaque pixels outside `rect` (the target
+ * card modified outside the delivered rectangle), an error with `code: 'below-overflow'` is thrown,
+ * where `box` is the bounding box of those pixels (scene coordinates); the caller expands the
+ * rectangle and retries.
  */
 export function belowSegmentCapture(bakery, { clipId, view, rect, record = newBelowRecord(), signal = null, verify = true, note = () => {}, tap = null }) {
   const crop = { x: rect.x - view.x, y: rect.y - view.y, w: rect.w, h: rect.h };
   if (crop.x < 0 || crop.y < 0 || crop.x + crop.w > view.w || crop.y + crop.h > view.h) {
-    throw new Error(`差分取层:交出去的矩形 ${JSON.stringify(rect)} 不在截图矩形 ${JSON.stringify(view)} 里`);
+    throw new Error(`Layer diff: the rectangle to hand off ${JSON.stringify(rect)} is not inside the screenshot rectangle ${JSON.stringify(view)}`);
   }
-  const fail = (code, message) => Object.assign(new Error(`差分取层:${message}`), { code });
+  const fail = (code, message) => Object.assign(new Error(`Layer diff: ${message}`), { code });
   const shot = () => captureFrame(bakery, SHOT, signal, { prime: false, clip: view });
   let checked = !verify;
   let mask = null, maskKey = '';
   return async (frame, shoot) => {
-    if (record.failed) throw fail(record.failed, `这条流上一次实测没过(${record.failed}),不再产`);
+    if (record.failed) throw fail(record.failed, `the last measurement of this stream failed (${record.failed}), no longer producing it`);
     let at = performance.now();
     const upperPng = await shoot();
     record.upperMs += performance.now() - at;
@@ -357,7 +446,7 @@ export function belowSegmentCapture(bakery, { clipId, view, rect, record = newBe
     const hid = await bakery.page.evaluate(pageHideTarget, clipId);
     let lowerPng = null, lowerAgain = null;
     try {
-      if (!hid?.ok) throw fail('not-hidden', `片段 ${clipId} 那一层藏不住(${hid?.reason ?? '页面没有回话'})`);
+      if (!hid?.ok) throw fail('not-hidden', `the layer of clip ${clipId} cannot be hidden (${hid?.reason ?? 'the page did not respond'})`);
       if (!hid.absent) {
         if (record.primeLower) await shot();
         lowerPng = await shot();
@@ -381,13 +470,13 @@ export function belowSegmentCapture(bakery, { clipId, view, rect, record = newBe
       record.last = { frame, lowerStable, upperStable };
       if (!upperStable) {
         record.failed = 'upper-changed';
-        note(`差分取层没过:第 ${frame} 帧把片段 ${clipId} 藏起来再撤掉以后,带目标卡的画面变了;这条流不再产`);
-        throw fail('upper-changed', `第 ${frame} 帧藏和撤以后带目标卡的画面变了`);
+        note(`Layer diff failed: after hiding and restoring clip ${clipId} at frame ${frame}, the frame containing the target card changed; this stream is no longer produced`);
+        throw fail('upper-changed', `at frame ${frame}, the frame containing the target card changed after hiding and restoring`);
       }
       if (!lowerStable) {
         record.primeLower = true;
-        note(`差分取层:第 ${frame} 帧藏着片段 ${clipId} 连截两张不相同,这条流以后每张下张先丢一张再截`);
-        throw fail('lower-unstable', `第 ${frame} 帧藏着目标卡连截两张不相同`);
+        note(`Layer diff: at frame ${frame} with clip ${clipId} hidden, two consecutive captures differ; from now on this stream discards one capture before each capture below`);
+        throw fail('lower-unstable', `at frame ${frame} with the target card hidden, two consecutive captures differ`);
       }
       checked = true;
     } else record.lowerMs += performance.now() - at;
@@ -399,7 +488,7 @@ export function belowSegmentCapture(bakery, { clipId, view, rect, record = newBe
     at = performance.now();
     const upper = decodePngRgba(upperPng), lower = decodePngRgba(lowerPng);
     if (!upper || !lower || upper.width !== view.w || upper.height !== view.h || lower.width !== view.w || lower.height !== view.h) {
-      throw fail('png', `第 ${frame} 帧的截图解不开,或者不是 ${view.w}×${view.h}`);
+      throw fail('png', `the screenshot at frame ${frame} cannot be decoded, or is not ${view.w}×${view.h}`);
     }
     record.decodeMs += performance.now() - at;
     at = performance.now();
@@ -407,7 +496,7 @@ export function belowSegmentCapture(bakery, { clipId, view, rect, record = newBe
       const outside = layerOutside(upper.data, lower.data, view.w, view.h, crop, { glass, origin: view });
       if (outside) {
         record.overflows++;
-        throw Object.assign(fail('below-overflow', `第 ${frame} 帧目标卡改到了交出去的矩形外面`), { box: { x: outside.x + view.x, y: outside.y + view.y, w: outside.w, h: outside.h } });
+        throw Object.assign(fail('below-overflow', `at frame ${frame} the target card changed outside the rectangle handed off`), { box: { x: outside.x + view.x, y: outside.y + view.y, w: outside.w, h: outside.h } });
       }
     }
     if (glass) {

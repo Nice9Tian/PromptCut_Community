@@ -30,25 +30,26 @@ function TypingAnimationCard({ params, t, sourceOffset = 0, mountClockMs }: Card
 
 export const typingAnimationCard: CardDef<Params> = {
   id: "mu-typing",
-  name: "打字机",
-  description: "逐字打印动画",
-  useWhen: "逐字打印一行普通文字。**默认播放时长等于可见字素数乘以每字毫秒数**(默认 120ms,20 字就要 2.4 秒)，可选延迟、停顿与固定种子节奏变化，clip 给短了会打不完。需覆盖整段本地时间。此卡不发声；需要键盘声时显式生成独立音频段。要终端/代码风格用 terminal-3d。",
-  tags: ["打字机","逐字","文字"],
+  name: "Typewriter",
+  description: "Character-by-character typing animation",
+  useWhen: "Types out a line of plain text character by character. **The default playback duration equals the number of visible graphemes times milliseconds per character** (default 120ms, so 20 characters take 2.4 seconds), with optional delay, pauses and seeded rhythm variation; if the clip is too short the typing will not finish. It must cover the whole local time range. This card makes no sound; when keyboard sound is needed, explicitly generate a separate audio clip. For terminal/code style use terminal-3d.",
+  tags: ["Typewriter","character by character","Text"],
   source: "magicui",
-  // 保留原有 stateful 能力审阅；有舞台 t 时按共享事件随机访问，无 t 的独立预览沿 rAF 时钟。
+  // Keep the original stateful capability review; with a stage t, random access goes by the shared
+  // events, and a standalone preview without t follows the rAF clock.
   frameMode: "stateful",
   defaults: { text: "这是一段打字机测试文字", duration: 120 },
   controls: [
-    { key: "text", label: "文本", type: "text" },
-    { key: "duration", label: "每字毫秒", type: "number", min: 0, max: 60000 },
-    { key: "delayMs", label: "开始延迟毫秒", type: "number", min: 0, max: 60000 },
-    { key: "punctuationPauseMs", label: "标点后停顿毫秒", type: "number", min: 0, max: 60000 },
-    { key: "newlinePauseMs", label: "换行后停顿毫秒", type: "number", min: 0, max: 60000 },
-    { key: "jitterMs", label: "节奏抖动毫秒", type: "number", min: 0, max: 60000, hint: "不能超过每字毫秒；相同种子保持相同节奏。" },
-    { key: "seed", label: "固定种子", type: "number", min: 0, max: 4294967295, step: 1 },
+    { key: "text", label: "Text", type: "text" },
+    { key: "duration", label: "Milliseconds per character", type: "number", min: 0, max: 60000 },
+    { key: "delayMs", label: "Start delay (ms)", type: "number", min: 0, max: 60000 },
+    { key: "punctuationPauseMs", label: "Pause after punctuation (ms)", type: "number", min: 0, max: 60000 },
+    { key: "newlinePauseMs", label: "Pause after line break (ms)", type: "number", min: 0, max: 60000 },
+    { key: "jitterMs", label: "Rhythm jitter (ms)", type: "number", min: 0, max: 60000, hint: "Must not exceed milliseconds per character; the same seed keeps the same rhythm." },
+    { key: "seed", label: "Fixed seed", type: "number", min: 0, max: 4294967295, step: 1 },
   ],
   parts: [
-    { id: "text", label: "文字", role: "text", params: ["text", "duration", "delayMs", "punctuationPauseMs", "newlinePauseMs", "jitterMs", "seed"], enterMs: 0, settleMs: 1320 },
+    { id: "text", label: "Text", role: "text", params: ["text", "duration", "delayMs", "punctuationPauseMs", "newlinePauseMs", "jitterMs", "seed"], enterMs: 0, settleMs: 1320 },
   ],
   lifecycle: { settleMs: 1320, after: "hold", exit: ["fade"] },
   timing: (p) => {

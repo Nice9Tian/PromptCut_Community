@@ -1,33 +1,56 @@
 /**
- * 本页产流(任务书 `docs/plan/render-refactor-task.md`「甲二」)的**计划**:同一条单卡轨道流,页面一侧算出的结果键、
- * 流任务的形状、层表里的那一行,与切分方(桌面应用、渲染主机)算出的逐字段相同。
+ * **Plan** for stream generation on this page (task brief `docs/plan/render-refactor-task.md`
+ * "Jia-2"): for the same single-card track stream, the result key, stream task shape, and row in the
+ * layer table computed on the page side are field-by-field identical to those computed by the splitter
+ * (desktop app, render host).
  *
- * 流的计划本来在服务端算(`server/card-cache.mjs` 的 `CardFrameCache.plan` → `server/frame-stream.mjs` 的 `planStreams` →
- * `server/render-node/split.mjs` 给浏览器出的那一份流任务 → `server/artifact-transfer.mjs` 的 `layerStreamsOf`),页面的构建不带
- * 服务端模块。这里把这条链上的**纯计算**照抄一份(先例:`planPublisher.ts` 对 `server/render-queue/messages.mjs`),由
- * `server/test/page-stream-plan.test.mjs` 拿同一份输入与服务端那几个函数逐字段对拍。服务端那一侧改了,这里要跟着改,对拍会红。
+ * Stream planning was originally computed on the server side (`CardFrameCache.plan` in
+ * `server/card-cache.mjs` -> `planStreams` in `server/frame-stream.mjs` -> stream tasks emitted for the
+ * browser by `server/render-node/split.mjs` -> `layerStreamsOf` in `server/artifact-transfer.mjs`), but
+ * the page build does not include server modules. Here, the **pure computation** along this chain is
+ * duplicated (precedent: `planPublisher.ts` vs `server/render-queue/messages.mjs`), and
+ * `server/test/page-stream-plan.test.mjs` takes the same input to cross-check field-by-field against
+ * those server functions. If the server side changes, this must follow; otherwise the cross-check will
+ * fail red.
  *
- * # 键里和实现有关的两处,各只有一个地方
+ * # Two implementation-related parts of keys, each occurring only once
  *
- *   - **成员键** `streamMemberKey`:单卡流里代表「这张卡的内容」的那一项。与服务端 `CardFrameCache.plan` 的 `streamMemberKey` 相同
- *     (`cardSnapshotIdentity` 的那一份身份,不带生成快照的代码指纹:流的像素是截图来的,和快照 HTML 怎么生成无关)。
- *     别处不要自己再拼这个键;服务端的算法再换,只改这一个函数;
- *   - **流的代码版本** `streamCodeVersion`:`<STREAM_CODE_VERSION>:<截图代码的指纹>`。版本号 `PAGE_STREAM_CODE_VERSION` 与
- *     `server/frame-stream.mjs` 的 `STREAM_CODE_VERSION` 同值(对拍),截图代码的指纹由在线构建嵌进页面(`pageStreamCodes`)。
+ *   - **Member key** `streamMemberKey`: the item in a single-card stream representing "this card's
+ *     content". Identical to `streamMemberKey` in server-side `CardFrameCache.plan` (the identity from
+ *     `cardSnapshotIdentity`, without the code fingerprint for snapshot generation: stream pixels come
+ *     from screenshots and are independent of how snapshot HTML is generated). Do not assemble this
+ *     key elsewhere; if the server algorithm changes again, only modify this single function;
+ *   - **Stream code version** `streamCodeVersion`: `<STREAM_CODE_VERSION>:<screenshot code fingerprint>`.
+ *     The version number `PAGE_STREAM_CODE_VERSION` has the same value as `STREAM_CODE_VERSION` in
+ *     `server/frame-stream.mjs` (cross-checked), and the screenshot code fingerprint is embedded into
+ *     the page by the online build (`pageStreamCodes`).
  *
- * # 页面只算哪些流
+ * # Which streams the page computes
  *
- * 只算单卡流,而且只算切分方会给浏览器出一份的那些(`browser-stream-task.md` 第一处):共享档(有状态的卡)、独立卡、
- * 不是画布卡、框不带三维、序列没有隐藏。剪辑段里摊出来的独立卡(切分方单独成流的 `'flat'`)里外框平面的那些也算(〔裁〕R02:
- * 在线浏览器也替剪辑段里的重卡产流;切分方给浏览器出这一份,见 `render-node/split.mjs` 的 `browserStreamInputOf`):它们不并组流,
- * 照切分方的算法只算进预算、各出一条单卡流。清单里的卡超过解码器预算时照切分方同一个办法合并(`groupStreams`;切分方另出、页面不产的
- * 两种流——单独成流的两类卡、依赖下层的流——照同一份判据 `render/streamPlanRules.mjs` 算进预算),
- * 并进组流的卡页面不产(组流浏览器画不了)。另有两条比切分方更紧的(〔裁〕,见 `browser-stream-task.md`「本页产流」):
- * 只算页面自带的内置卡片(源码版本以 `builtin:` 开头;同步来的用户卡的源码版本页面一侧算不准,算错了改卡以后键不变),
- * 只算输出节点就是这张卡自己的片段(片段上另挂了滤镜、强调时输出节点是外面那一层,键里没有卡的参数)。
+ * Only computes single-card streams, and only those that the splitter emits for the browser (first
+ * location in `browser-stream-task.md`): shared tier (stateful cards), standalone cards, not canvas
+ * cards, bounding box has no 3D, and track is not hidden. Standalone cards flattened from cut segments
+ * (the `'flat'` emitted as individual streams by the splitter) whose outer boxes are planar also count
+ * ([ruling] R02: online browser also produces streams for heavy cards in cut segments; splitter emits
+ * this part for the browser, see `browserStreamInputOf` in `render-node/split.mjs`): they are not
+ * merged into group streams, but are only counted toward the budget according to the splitter's
+ * algorithm, each producing a single-card stream. When cards in the manifest exceed the decoder budget,
+ * they are merged using the splitter's same method (`groupStreams`; the two types of streams emitted by
+ * the splitter but not produced on the page: two categories of cards streaming individually and
+ * below-dependent streams: are counted toward the budget using the same criterion
+ * `render/streamPlanRules.mjs`), while cards merged into group streams are not produced by the page
+ * (browsers cannot render group streams). Two additional constraints are stricter than the splitter's
+ * ([ruling], see "Stream generation on this page" in `browser-stream-task.md`): only built-in cards
+ * bundled with the page are computed (source versions starting with `builtin:`; source versions of
+ * synced user cards cannot be reliably computed on the page side, and miscalculations cause keys to
+ * remain unchanged after card edits), and only clips whose output node is the card itself are computed
+ * (when clips have attached filters or emphasis, the output node is the outer layer, and the key lacks
+ * card parameters).
  *
- * 哈希用浏览器自带的 `crypto.subtle`(异步);Node 单测里同名的全局对象也有。本模块属于 render 这一层(`src/online/`):
- * 不引 editor,不碰注册表(卡片图与源码版本由调用方算好给进来),不碰舞台、网络。
+ * Hashing uses the browser's built-in `crypto.subtle` (async); Node unit tests also provide the global
+ * object of the same name. This module belongs to the render layer (`src/online/`): it does not import
+ * editor, does not touch the registry (card graph and source versions are precomputed and passed in by
+ * callers), and does not touch the stage or network.
  */
 import { CARD_RUNTIME_ABI, selectedCardStyle } from "../kernel/cardGraph.mjs";
 import { resolveFrameSize } from "../kernel/frameSize.mjs";
@@ -41,31 +64,48 @@ import { flatPlanProject } from "../kernel/cutFlatten.mjs";
 import type { NodeTask, StreamTaskInput } from "./browserNode.ts";
 
 /**
- * 与 `server/frame-stream.mjs` 的 `STREAM_CODE_VERSION` 同值(对拍)。2:「己一」起单卡流的成员键不带生成快照的代码指纹;
- * 3:分段从这条流自己的第一帧起每 15 帧一段(`render/streamSegments.mjs`),旧流全部重产;
- * 4:稀疏版每个分段只截第一帧、清单里每个分段带位置矩形 `box`。
+ * Same value as `STREAM_CODE_VERSION` in `server/frame-stream.mjs` (cross-checked). 2: starting from
+ * "Ji-1", member keys of single-card streams exclude code fingerprints for snapshot generation;
+ * 3: segmentation runs every 15 frames starting from this stream's own first frame
+ * (`render/streamSegments.mjs`), and legacy streams are all re-produced;
+ * 4: in the sparse version, each segment captures only the first frame, and each segment in the
+ * manifest includes a position rectangle `box`.
  */
 export const PAGE_STREAM_CODE_VERSION = 4;
-/** 同屏流的条数上限:与 `server/frame-stream.mjs` 的 `STREAM_DECODER_BUDGET` 是同一个数(`render/streamBudget.mjs`);预算的口径(数像素)也在那里 */
+/**
+ * Upper limit on concurrent on-screen streams: same value as `STREAM_DECODER_BUDGET` in
+ * `server/frame-stream.mjs` (`render/streamBudget.mjs`); budget criteria (pixel count) are also there
+ */
 export const PAGE_STREAM_DECODER_BUDGET = STREAM_COUNT_BUDGET;
-/** 与 `server/frame-stream.mjs` 的 `LOCAL_OVERFLOW_PX` 同值 */
+/** Same value as `LOCAL_OVERFLOW_PX` in `server/frame-stream.mjs` */
 export const PAGE_LOCAL_OVERFLOW_PX = 32;
-/** 一个流任务几个分段(与 `server/render-queue/constants.mjs` 的 `QUEUE_DEFAULTS.STREAM_SEGMENTS` 同值):流清单按它分份 */
+/**
+ * Number of segments per stream task (same value as `QUEUE_DEFAULTS.STREAM_SEGMENTS` in
+ * `server/render-queue/constants.mjs`): stream manifests are split by it
+ */
 export const PAGE_STREAM_SEGMENTS_PER_TASK = 8;
-/** 层表的版本、快照段长(与 `server/artifact-transfer.mjs` 的 `LAYER_MAP_VERSION`、`QUEUE_DEFAULTS.SNAPSHOT_SPAN` 同值) */
+/**
+ * Layer table version and snapshot span length (same value as `LAYER_MAP_VERSION` and
+ * `QUEUE_DEFAULTS.SNAPSHOT_SPAN` in `server/artifact-transfer.mjs`)
+ */
 export const PAGE_LAYER_MAP_VERSION = 3;
 export const PAGE_SNAPSHOT_SPAN = 60;
 
-/* ------------------------------------------------------------------ 在线构建嵌进页面的代码指纹 */
+/* ------------------------------------------------------------------ Code fingerprint embedded into the page by the online build */
 
-/** 流的键里和代码有关的那一项:截图代码的指纹(`server/frame-code.mjs` 的 `captureCode`,流的 `codeVersion` 里的后半) */
+/**
+ * Code-related item in the stream key: fingerprint of the screenshot code (`captureCode` in
+ * `server/frame-code.mjs`, second half of the stream's `codeVersion`)
+ */
 export interface StreamCodes { capture: string }
 
 declare const __PC_STREAM_CODES__: { capture?: unknown } | undefined;
 
 /**
- * 在线构建时由 `vite.config.ts` 用服务端同一套算法算出、以 `__PC_STREAM_CODES__` 嵌进页面的代码指纹;
- * 桌面构建、Node 单测里没有,回 null(本页不产流:算不出与切分方相同的键)。
+ * Code fingerprint calculated by `vite.config.ts` during online build using the same server-side
+ * algorithm and embedded into the page as `__PC_STREAM_CODES__`; absent in desktop builds and Node
+ * unit tests, returning null (no stream generation on this page: cannot compute keys identical to the
+ * splitter).
  */
 export function pageStreamCodes(): StreamCodes | null {
   const raw = typeof __PC_STREAM_CODES__ === "object" && __PC_STREAM_CODES__ ? __PC_STREAM_CODES__ : null;
@@ -73,9 +113,9 @@ export function pageStreamCodes(): StreamCodes | null {
   return { capture: raw.capture };
 }
 
-/* ------------------------------------------------------------------ 哈希(同 `server/frame-identity.mjs`) */
+/* ------------------------------------------------------------------ Hashing (same as `server/frame-identity.mjs`) */
 
-/** 与 `server/frame-identity.mjs` 的 `stableJson` 同一个式子:键排序、去掉 undefined */
+/** Same formula as `stableJson` in `server/frame-identity.mjs`: sorts keys and removes undefined */
 export function stableJson(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(stableJson).join(",") + "]";
   if (value && typeof value === "object") {
@@ -92,13 +132,16 @@ async function sha256Text(text: string): Promise<string> {
   return out;
 }
 
-/** 与 `server/frame-identity.mjs` 的 `digest` 同值 */
+/** Same value as `digest` in `server/frame-identity.mjs` */
 export const digest = (value: unknown): Promise<string> => sha256Text(stableJson(value));
 
-/** 结果键 = 内容键 × 环境指纹(与 `server/render-node/fingerprint.mjs` 的 `resultKeyOf` 同值) */
+/**
+ * Result key = content key × environment fingerprint (same value as `resultKeyOf` in
+ * `server/render-node/fingerprint.mjs`)
+ */
 export const resultKeyOf = (contentKey: string, envFingerprint: string): Promise<string> => sha256Text(`${contentKey ?? ""}\n${envFingerprint ?? ""}`);
 
-/* ------------------------------------------------------------------ 采样(同 `server/card-identity.mjs`) */
+/* ------------------------------------------------------------------ Sampling (same as `server/card-identity.mjs`) */
 
 interface Ratio { numerator: string; denominator: string }
 export interface CardSampling { firstFrame: number; fps: Ratio; phase: Ratio }
@@ -121,7 +164,11 @@ const ratio = (value: unknown): Ratio | undefined => {
   return pair(decimal(Number(value)));
 };
 
-/** 与 `server/card-identity.mjs` 的 `cardSampling` 同值:入点落在帧与帧之间时,第一帧取入点之后的第一个采样点,相位记下差多少 */
+/**
+ * Same value as `cardSampling` in `server/card-identity.mjs`: when the in point falls between frames,
+ * the first frame takes the first sample point after the in point, and the phase records the
+ * difference
+ */
 export function cardSampling(start: number, fps: number): CardSampling {
   if (!(fps > 0)) throw new Error("Invalid card frame rate");
   const s = decimal(start), rate = decimal(fps);
@@ -131,18 +178,24 @@ export function cardSampling(start: number, fps: number): CardSampling {
   return { firstFrame: Number(first), fps: pair(rate), phase: pair(phase) };
 }
 
-/* ------------------------------------------------------------------ 键 */
+/* ------------------------------------------------------------------ Keys */
 
 export interface StageSize { width: number; height: number; camera3dFov?: unknown }
 
 /**
- * 单卡流的**成员键**(这张卡的内容身份;流的内容键拿它再加上时间上的摆放、画幅、帧率、流的代码版本)。
+ * **Member key** of a single-card stream (content identity of this card; stream content key takes it
+ * and adds temporal placement, aspect ratio, frame rate, and stream code version).
  *
- * 与服务端 `CardFrameCache.plan` 的 `streamMemberKey` 相同(`planStreams` 取它当成员键):`cardSnapshotIdentity` 的那一份身份,
- * 生成快照的代码指纹那一项是空串。片段身份(节点 id、输入、定义 id、片段 id)剥掉,参数、源码版本、片段时长、采样相位、帧率、框宽高、
- * 画幅、主题、字体指纹都在里面;位置、缩放、旋转、不透明度、淡入淡出、motion、强调不在(由包裹层加)。
+ * Identical to `streamMemberKey` in server-side `CardFrameCache.plan` (`planStreams` uses it as the
+ * member key): the identity from `cardSnapshotIdentity`, where the code fingerprint for snapshot
+ * generation is an empty string. Clip identity (node id, inputs, definition id, clip id) is stripped
+ * away, while parameters, source version, clip duration, sampling phase, frame rate, box width/height,
+ * aspect ratio, theme, and font fingerprints are included; position, scale, rotation, opacity,
+ * fade-in/fade-out, motion, and emphasis are excluded (added by the wrapper layer).
  *
- * **整个页面一侧只有这一处拼成员键。** 服务端的算法再换,改这里,再把 `PAGE_STREAM_CODE_VERSION` 跟上,对拍单测就又对得上。
+ * **This is the only place on the entire page side that constructs the member key.** If the
+ * server-side algorithm changes again, modify here, keep `PAGE_STREAM_CODE_VERSION` in sync, and
+ * cross-check unit tests will pass again.
  */
 export function streamMemberKey(o: {
   node: Record<string, unknown>;
@@ -175,10 +228,16 @@ export function streamMemberKey(o: {
   });
 }
 
-/** 流的代码版本(键里的 `codeVersion`):与 `frame-pipeline.mjs` 各处传给 `planStreams` 的那个串同形 */
+/**
+ * Stream code version (`codeVersion` in the key): same shape as the string passed to `planStreams`
+ * across `frame-pipeline.mjs`
+ */
 export const streamCodeVersion = (codes: StreamCodes): string => `${PAGE_STREAM_CODE_VERSION}:${codes.capture || ""}`;
 
-/** 单卡流的内容键(与 `server/card-identity.mjs` 的 `cardStreamIdentity({ kind: 'card', … })` 同值) */
+/**
+ * Content key of a single-card stream (same value as `cardStreamIdentity({ kind: 'card', … })` in
+ * `server/card-identity.mjs`)
+ */
 export function cardStreamContentKey(o: { memberKey: string; sampling: CardSampling; count: number; fps: number; stage: StageSize; codeVersion: string }): Promise<string> {
   return digest({
     stream: 1, kind: "card", fps: ratio(o.fps), codeVersion: o.codeVersion,
@@ -187,14 +246,17 @@ export function cardStreamContentKey(o: { memberKey: string; sampling: CardSampl
   });
 }
 
-/* ------------------------------------------------------------------ 矩形与摆放(同 `server/frame-stream.mjs`) */
+/* ------------------------------------------------------------------ Rectangles and placement (same as `server/frame-stream.mjs`) */
 
 export interface Rect { x: number; y: number; w: number; h: number }
 const rectOf = (x0: number, y0: number, x1: number, y1: number): Rect => ({ x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) });
 const intersectRect = (a: Rect, b: Rect) => rectOf(Math.max(a.x, b.x), Math.max(a.y, b.y), Math.min(a.x + a.w, b.x + b.w), Math.min(a.y + a.h, b.y + b.h));
 const padRect = (r: Rect, pad: number) => rectOf(r.x - pad, r.y - pad, r.x + r.w + pad, r.y + r.h + pad);
 
-/** 整数化并外扩到偶数宽、偶数高,不出 `limit`(与服务端 `evenRect` 同一个式子) */
+/**
+ * Round to integers and expand outwards to even width and even height without exceeding `limit`
+ * (same formula as server-side `evenRect`)
+ */
 export function evenRect(r: Rect, limit: Rect): Rect {
   let x0 = Math.floor(r.x), y0 = Math.floor(r.y), x1 = Math.ceil(r.x + r.w), y1 = Math.ceil(r.y + r.h);
   const lx0 = limit.x, ly0 = limit.y, lx1 = limit.x + limit.w, ly1 = limit.y + limit.h;
@@ -206,7 +268,10 @@ export function evenRect(r: Rect, limit: Rect): Rect {
   return rectOf(x0, y0, x1, y1);
 }
 
-/** 这张卡的框在隔离工程里摆到哪儿、流的矩形上界(与服务端 `localPlacement` 同一个式子) */
+/**
+ * Where this card's bounding box is placed in the isolated project, and upper bound of the stream's
+ * rectangle (same formula as server-side `localPlacement`)
+ */
 export function localPlacement(clip: { frame?: { w?: number; h?: number } }, stage: StageSize): { offset: { x: number; y: number }; bound: Rect } {
   const size = resolveFrameSize(clip.frame as never, stage);
   const w = Math.max(2, Math.ceil(size.w)), h = Math.max(2, Math.ceil(size.h));
@@ -217,7 +282,7 @@ export function localPlacement(clip: { frame?: { w?: number; h?: number } }, sta
   return { offset: { x: ox, y: oy }, bound };
 }
 
-/* ------------------------------------------------------------------ 画家顺序与组流(同 `server/frame-stream.mjs`) */
+/* ------------------------------------------------------------------ Painter's order and group streams (same as `server/frame-stream.mjs`) */
 
 interface AnyClip { id: string; start: number; end: number; cardId?: string; mediaId?: string; frame?: any; [k: string]: any }
 type AnyTrack = { id?: string; hidden?: boolean; sourceOnly?: boolean; clips?: AnyClip[] };
@@ -241,12 +306,18 @@ function paintLayers(project: { tracks?: AnyTrack[]; media?: { id: string; kind?
   return out.sort((a, b) => a.order - b.order);
 }
 
-/** 组流的合并在 `render/streamBudget.mjs`(`groupStreams`),与切分方用的是同一个函数 */
+/**
+ * Group stream merging is in `render/streamBudget.mjs` (`groupStreams`), using the exact same
+ * function as the splitter
+ */
 type Single = StreamGroupItem;
 
-/* ------------------------------------------------------------------ 这一版的卡(同 `CardFrameCache.plan`) */
+/* ------------------------------------------------------------------ Cards in this version (same as `CardFrameCache.plan`) */
 
-/** 页面一侧的「卡片计划」原料:与导出页 `window.__pcCardPlan()` 同形(`{ graph, sourceVersions, environment }`),由调用方算好 */
+/**
+ * Page-side raw inputs for "card plan": same shape as `window.__pcCardPlan()` on export page
+ * (`{ graph, sourceVersions, environment }`), precomputed by caller
+ */
 export interface PageCardPlanValue {
   graph: { nodes: Record<string, any>[]; outputs: Record<string, any>[]; definitions?: Record<string, any>[] };
   sourceVersions: Readonly<Record<string, string>>;
@@ -254,17 +325,17 @@ export interface PageCardPlanValue {
   unknownClipIds?: readonly string[];
 }
 
-/** 与 `server/snapshot-tier.mjs` 的 `snapshotTier` 同一个式子 */
+/** Same formula as `snapshotTier` in `server/snapshot-tier.mjs` */
 function snapshotTier(_caps: Record<string, any>): "none" | "shared" | "local" {
   return "none";
 }
 
-/** 这一版里一张卡的计划(`CardFrameCache.plan` 的 control 里页面要用到的那几项) */
+/** Plan for a card in this version (items used by the page in control of `CardFrameCache.plan`) */
 export interface PageControl {
   clipId: string;
   cardId: string | null;
   nodeId: string;
-  /** 输出节点(整形过的图节点) */
+  /** Output node (reshaped graph node) */
   node: Record<string, any>;
   definition?: Record<string, any>;
   capabilities: Record<string, any>;
@@ -279,7 +350,10 @@ export interface PageControl {
   frame: { w?: number; h?: number } | undefined;
 }
 
-/** 卡片图的每个输出 → 这张卡的采样窗口与能力(与 `CardFrameCache.plan` 同一个式子;键另算,见 `planPageStreams`) */
+/**
+ * Each output of card graph → sampling window and capabilities of this card (same formula as
+ * `CardFrameCache.plan`; keys computed separately, see `planPageStreams`)
+ */
 export function pageControls(project: { fps?: number }, value: PageCardPlanValue): PageControl[] {
   const graph = value?.graph;
   if (!graph?.nodes || !graph?.outputs) return [];
@@ -307,9 +381,12 @@ export function pageControls(project: { fps?: number }, value: PageCardPlanValue
   return out;
 }
 
-/* ------------------------------------------------------------------ 流的计划 */
+/* ------------------------------------------------------------------ Stream plan */
 
-/** 页面算出的一条单卡流(`planStreams` 的一项里页面要用到的字段,字段名相同) */
+/**
+ * Single-card stream computed by the page (fields used by the page from an item in `planStreams`,
+ * with identical field names)
+ */
 export interface PageStreamSpec {
   kind: "card";
   plane: "local";
@@ -317,7 +394,7 @@ export interface PageStreamSpec {
   topClipId: string;
   cardId: string | null;
   contentKey: string;
-  /** 结果键 = 内容键 × 本页的环境指纹 */
+  /** Result key = content key × environment fingerprint of this page */
   streamKey: string;
   envFingerprint: string;
   fps: number;
@@ -325,20 +402,26 @@ export interface PageStreamSpec {
   total: number;
   firstFrame: number;
   lastFrame: number;
-  /** 这条流自己的第一帧(项目帧号):分段从它起每 15 帧一段(`render/streamSegments.mjs`),所以 `firstSegment` 恒为 0 */
+  /**
+   * First frame of this stream itself (project frame number): segments run every 15 frames starting
+   * from it (`render/streamSegments.mjs`), so `firstSegment` is always 0
+   */
   originFrame: number;
   firstSegment: number;
   lastSegment: number;
   offset: { x: number; y: number };
   bound: Rect;
   compositing: string;
-  /** 隔离单卡工程要的参数(切分方写在浏览器那一份任务的 `input.bake` 里的) */
+  /**
+   * Parameters required by the isolated single-card project (written by the splitter in `input.bake`
+   * of the browser task)
+   */
   bake: { start: number; end: number; count: number; sampling: CardSampling };
   writing?: "motion" | "remotion";
   frameMode?: "stateful" | "direct";
 }
 
-/** 判断卡或流是否为 motion 式卡（相对应为 remotion 式） */
+/** Determines whether a card or stream is a motion-style card (as opposed to remotion-style) */
 export function isMotionCard(controlOrSpec: { writing?: string; frameMode?: string; cardId?: string | null; capabilities?: { writing?: string; frameMode?: string } } | null | undefined): boolean {
   if (!controlOrSpec) return true;
   const writing = controlOrSpec.writing ?? controlOrSpec.capabilities?.writing;
@@ -360,21 +443,23 @@ export function isMotionCard(controlOrSpec: { writing?: string; frameMode?: stri
 }
 
 
-/** 为什么这张卡页面不产流(诊断用);能产回 null */
+/** Why this card produces no stream on the page (for diagnostics); returns null if it can produce */
 export function pageStreamBlock(control: PageControl, at: { clip: AnyClip; track: AnyTrack } | undefined, sourceVersions: Readonly<Record<string, string>>): string | null {
   if (!at) return "no-clip";
   if (at.track.hidden || at.track.sourceOnly) return "hidden-track";
   if (!at.clip.cardId) return "not-card";
-  // 进不进流(`streamEligible`):独立卡、框不带三维、有帧
+  // Stream eligibility (`streamEligible`): standalone card, bounding box has no 3D, has frames
   if (control.compositing !== "independent") return "not-independent";
   if (frame3d(at.clip.frame)) return "frame-3d";
   if (!Number.isInteger(control.count) || control.count <= 0) return "no-frames";
-  // 浏览器做不做得了(`split.mjs` 的 `browserEligible`):有状态/need_prerendering(轻卡不产流)、不是画布卡
+  // Whether the browser can do it (`browserEligible` in `split.mjs`): stateful/need_prerendering
+  // (light cards do not produce streams), not a canvas card
   const caps = control.capabilities ?? {};
   const isStateful = control.tier === "shared" || control.frameMode === "stateful" || caps.frameMode === "stateful" || (control as any).needPrerendering === true || caps.need_prerendering === true || caps.needPrerendering === true;
   if (!isStateful) return "not-shared-tier";
   if (caps.canvasHeavy === true) return "canvas";
-  // 〔裁〕比切分方更紧的两条:只算页面自带的内置卡片;只算输出节点就是这张卡自己的片段
+  // [ruling] Two rules tighter than the splitter: only count built-in cards included with the page;
+  // only count clips whose output node is this card itself
   if (control.node.adapter !== "chrome" || control.node.clipId !== control.clipId) return "wrapped-node";
   if (!control.cardId || !String(sourceVersions[control.cardId] ?? "").startsWith("builtin:")) return "not-builtin";
   return null;
@@ -382,14 +467,21 @@ export function pageStreamBlock(control: PageControl, at: { clip: AnyClip; track
 
 export interface PageStreamPlan {
   specs: PageStreamSpec[];
-  /** 清单里没出流的片段 → 原因(`pageStreamBlock` 的原因,或 `grouped`:超过解码器预算并进了组流) */
+  /**
+   * Clips in the manifest that did not produce a stream → reason (reason in `pageStreamBlock`, or
+   * `grouped`: exceeded decoder budget and entered group stream)
+   */
   skipped: Record<string, string>;
 }
 
 /**
- * 这一版项目里,清单 `clips`(页面自己判重的片段)各自的单卡流。与切分方对清单计划算的(`planListStreams` 之后 `splitPlan`
- * 给浏览器出的那一份)是同一批流、同样的键:同一份 `value` 两边算,`contentKey`、`streamKey`、分段范围、矩形逐字段相同。
- * 没有指纹、没有代码指纹、算不出卡片图时回空。
+ * In this project version, single-card streams for each of the manifest `clips` (clips classified
+ * as heavy by the page itself). These are the same batch of streams and same keys as those computed
+ * by the splitter for the manifest plan (the copy emitted for the browser by `splitPlan` after
+ * `planListStreams`): computed on both sides from the same `value`, `contentKey`, `streamKey`,
+ * segment ranges, and rectangles are identical field-by-field.
+ * Returns empty when there is no fingerprint, no code fingerprint, or the card graph cannot be
+ * computed.
  */
 export async function planPageStreams(o: {
   project: Record<string, any>;
@@ -400,11 +492,14 @@ export async function planPageStreams(o: {
   budget?: StreamBudget;
 }): Promise<PageStreamPlan> {
   const { codes, envFingerprint } = o;
-  // 剪辑段换成它里面的卡(`kernel/cutFlatten.mjs`),与切分方的 `planStreams` 同一份视图(没有剪辑段时原样)
+  // Cut segments replaced with the cards inside them (`kernel/cutFlatten.mjs`), same view as
+  // the splitter's `planStreams` (kept as-is when there are no cut segments)
   const project = o.project ? flatPlanProject(o.project) : o.project;
   const empty: PageStreamPlan = { specs: [], skipped: {} };
   if (!project || !codes || typeof envFingerprint !== "string" || !envFingerprint) return empty;
-  // 桌面那一侧的图是经调试协议从导出页取回来的(JSON 往返过一次):这里照样往返一次,函数、undefined 这类取不过去的值两边都没有
+  // The graph on the desktop side is retrieved from the export page via the debug protocol
+  // (round-tripped through JSON once): round-tripped once here as well, so values that cannot be
+  // transferred such as functions and undefined are absent on both sides
   const value = JSON.parse(JSON.stringify(o.value ?? null)) as PageCardPlanValue | null;
   if (!value?.graph) return empty;
   const listed = new Set(o.clips);
@@ -416,13 +511,19 @@ export async function planPageStreams(o: {
   const layers = paintLayers(project, fps);
   const orderOf = new Map(layers.map((l) => [l.clipId, l.order]));
   const skipped: Record<string, string> = {};
-  // 进不进流照切分方的判据(`streamEligible`);合并也照它:预算按「清单里全部进流的卡」算,不只按页面能产的那几张
+  // Whether to enter the stream follows the splitter's criteria (`streamEligible`); merging also
+  // follows it: budget is calculated based on "all cards in the manifest that enter the stream",
+  // not just the cards that the page can produce
   const singles: (Single & { control: PageControl; clip: AnyClip })[] = [];
-  // 切分方另出的两种流页面不产,只照切分方同一份判据(`render/streamPlanRules.mjs`)算进解码器预算:
-  // 单独成流的两类卡(`soloStreamKind`,按它的单卡流矩形算开销)、依赖下层的流(`belowTargets`,按整幅画面算开销)
+  // The page does not produce the other two streams emitted by the splitter, only counting them into
+  // the decoder budget following the splitter's same criteria (`render/streamPlanRules.mjs`):
+  // two types of cards that stream solo (`soloStreamKind`, cost computed from its single-card stream
+  // rectangle), and below-dependent streams (`belowTargets`, cost computed from the entire frame)
   const fixed: { from: number; to: number; cost: number }[] = [];
   const soloSeen = new Set<string>();
-  // 剪辑段里外框平面的独立卡(切分方的 `'flat'`,〔裁〕R02):不并组流,照切分方只算进预算;页面也给它们各出一条单卡流
+  // Standalone cards on the frame plane inside cut segments (splitter's `'flat'`, [ruling] R02): not
+  // merged into group streams, only counted into budget following the splitter; the page also emits
+  // a single-card stream for each of them
   const flats: { control: PageControl; clip: AnyClip; to: number }[] = [];
   const controls = pageControls(project, value);
   for (const control of controls) {
@@ -434,7 +535,8 @@ export async function planPageStreams(o: {
       if (at && solo) {
         const first = control.sampling.firstFrame;
         const last = Math.min(total - 1, first + control.count - 1);
-        // 回放起点同切分方:剪辑段里的卡从嵌套场景最早挂上的那一帧算(`mountClipOf`;别的卡就是它自己)
+        // Playback origin is the same as the splitter: cards inside cut segments are counted from the
+        // earliest frame mounted in the nested scene (`mountClipOf`; for other cards it is the card itself)
         if (last >= first) { soloSeen.add(control.clipId); fixed.push({ from: Math.min(mountFrameOf(mountClipOf(at.clip), fps), first), to: last, cost: streamCost(localStreamPixels(at.clip.frame, stage), fps) }); }
         if (last >= first && solo === "flat" && block === "not-eligible") { flats.push({ control, clip: at.clip, to: last }); continue; }
       }
@@ -451,13 +553,17 @@ export async function planPageStreams(o: {
   singles.sort((a, b) => a.order - b.order);
   const byClip = new Map(singles.map((s) => [s.clipIds[0], s]));
   const stageCost = streamCost(stageStreamPixels(stage), fps);
-  // 依赖下层的流:切分方缺省出(`belowStreamsEnabled`,环境变量只在预渲染进程那一侧能关),页面照缺省算
+  // Below-dependent streams: emitted by default by the splitter (`belowStreamsEnabled`, env var can
+  // only be disabled on the prerender process side), and the page computes following the default
   for (const b of belowTargets(controls, { picked: (id) => listed.has(id), where, fps, total, orderOf, taken: soloSeen })) fixed.push({ from: b.from, to: b.to, cost: stageCost });
   const grouped = groupStreams(singles, layers, o.budget, fixed, stageCost);
   const codeVersion = streamCodeVersion(codes);
   const environment = (value.environment ?? {}) as Record<string, unknown>;
   const specs: PageStreamSpec[] = [];
-  /** 一张卡的单卡流(包裹层自己的坐标系;外观不在流里),与切分方 `planStreams` 的 `cardSpec` 同一个式子 */
+  /**
+   * Single-card stream of a card (wrapper layer's own coordinate system; appearance is not in
+   * the stream), same formula as `cardSpec` in splitter's `planStreams`
+   */
   const emit = async (control: PageControl, clip: AnyClip, to: number) => {
     const memberKey = await streamMemberKey({
       node: control.node, definition: control.definition, style: project.style || {}, environment, sourceVersions: value.sourceVersions ?? {},
@@ -487,19 +593,30 @@ export async function planPageStreams(o: {
     if (block) { skipped[m.control.clipId] = block; continue; }
     await emit(m.control, m.clip, m.to);
   }
-  // 剪辑段里外框平面的独立卡(上面已按 `pageStreamBlock` 筛过:它只因为「不进组流」才没过)
+  // Standalone cards on the frame plane inside cut segments (already filtered above by
+  // `pageStreamBlock`: failed only because it "does not enter group streams")
   for (const f of flats) await emit(f.control, f.clip, f.to);
   return { specs, skipped };
 }
 
-/* ------------------------------------------------------------------ 流任务与层表的那一行 */
+/* ------------------------------------------------------------------ Stream tasks and layer table row */
 
-/** 稀疏流任务的名次(与 `server/render-node/split.mjs` 的 `SPARSE_STREAM_PRIORITY` 同一个数;单测对拍) */
+/**
+ * Priority rank of sparse stream tasks (same number as `SPARSE_STREAM_PRIORITY` in
+ * `server/render-node/split.mjs`; verified against unit tests)
+ */
 export const PAGE_SPARSE_STREAM_PRIORITY = 30;
-/** 稀疏流任务的密度记号(`input.density` 的值、id 的结尾;与 `server/render-queue/messages.mjs` 的 `STREAM_DENSITY_SPARSE` 同一个字) */
+/**
+ * Density tag of sparse stream tasks (value of `input.density`, suffix of id; same string as
+ * `STREAM_DENSITY_SPARSE` in `server/render-queue/messages.mjs`)
+ */
 const STREAM_DENSITY_SPARSE = "sparse";
 
-/** `[from, to]` 闭区间:first .. last 每 span 一段(与 `split.mjs` 的 `spans` 同一个式子)。若指定了 minSpan 且尾段不足 minSpan 则并入前一段 */
+/**
+ * `[from, to]` closed interval: first .. last, one segment per span (same formula as `spans`
+ * in `split.mjs`). If minSpan is specified and the tail segment is shorter than minSpan, it is
+ * merged into the previous segment
+ */
 export function spansOf(first: number, last: number, span: number, minSpan = 1): [number, number][] {
   const out: [number, number][] = [];
   const step = Math.max(1, Math.floor(Number(span) || 0));
@@ -516,13 +633,19 @@ export function spansOf(first: number, last: number, span: number, minSpan = 1):
 }
 
 /**
- * 这条流的流任务,每 `PAGE_STREAM_SEGMENTS_PER_TASK` 个分段一个:id、结果键、范围、`input` 与切分方给浏览器出的那一份逐字段相同
- * (`split.mjs`;`input.dual` 是切分方两份都出时才带的,页面这里没有另一份,不带)。本页不经队列自己做这些任务;之后有切分方接了活、
- * 把同一个任务发进队列时 id 相同,本页已经推完的分段按任务 id 留着,认领之后只补缺的。
+ * Stream tasks for this stream, one per `PAGE_STREAM_SEGMENTS_PER_TASK` segments: id, result key,
+ * range, and `input` are identical field-by-field to the copy emitted by the splitter for the
+ * browser (`split.mjs`; `input.dual` is included only when the splitter emits both copies; here
+ * on the page there is no other copy, so it is omitted). This page executes these tasks itself
+ * without going through the queue; later if a splitter takes on the work and posts the same task to
+ * the queue, the id will be identical, segments already pushed by this page are retained by task id,
+ * and after claiming, only missing ones are backfilled.
  *
- * `o.density: 'sparse'`:出这条流的**稀疏流任务**(每个分段只截第一帧),形状同切分方出的稀疏流任务:范围与满密度任务逐个相同
- * (内容库里的清单键相同)、id 末尾多 `:sparse`、`input.density: 'sparse'`、`priority` 30(`split.mjs` 的 `SPARSE_STREAM_PRIORITY`)。
- * 不给是满密度任务,与原来逐字相同。
+ * `o.density: 'sparse'`: emits **sparse stream tasks** for this stream (capturing only the first frame
+ * of each segment), shaped identically to the sparse stream tasks emitted by the splitter: ranges
+ * match full density tasks one by one (identical manifest keys in the content store), id ends with
+ * `:sparse`, `input.density: 'sparse'`, `priority` 30 (`SPARSE_STREAM_PRIORITY` in `split.mjs`).
+ * Omitted means full density tasks, verbatim identical to before.
  */
 export function pageStreamTasks(spec: PageStreamSpec, o: { projectId: string; projectRev: number; codeVersion?: string | null; derivedFrom?: string | null; density?: "sparse" | null }): NodeTask[] {
   const sparse = o.density === STREAM_DENSITY_SPARSE;
@@ -539,7 +662,8 @@ export function pageStreamTasks(spec: PageStreamSpec, o: { projectId: string; pr
     firstFrame: spec.firstFrame, count: spec.bake.count, total: spec.total, originFrame: spec.originFrame, lastFrame: spec.lastFrame };
   return spansOf(spec.firstSegment, spec.lastSegment, span, minSpan).map(([from, to]) => {
     const range = { unit: "segment", from, to };
-    // 这一段任务的帧数:每个分段按它实际的帧数(流的末段可以不满 15 帧),与切分方算的同一个数
+    // Frame count for this segment task: each segment uses its actual frame count (the tail segment of
+    // a stream can have fewer than 15 frames), same number as computed by the splitter
     let frames = 0;
     for (let n = from; n <= to; n++) frames += streamSegmentFrameCount(n, spec.originFrame, spec.lastFrame);
     return {
@@ -556,7 +680,10 @@ export function pageStreamTasks(spec: PageStreamSpec, o: { projectId: string; pr
   });
 }
 
-/** 层表 `streams` 表的一行(与 `server/artifact-transfer.mjs` 的 `layerStreamsOf` 写出来的同形) */
+/**
+ * A row in the layer table `streams` table (same shape as written by `layerStreamsOf` in
+ * `server/artifact-transfer.mjs`)
+ */
 export interface PageStreamRow {
   topClipId: string;
   clipIds: string[];
@@ -564,14 +691,20 @@ export interface PageStreamRow {
   plane: "local";
   contentKey: string;
   candidates: { envFingerprint: string; resultKey: string }[];
-  /** 这条流自己的第一帧(项目帧号)。行里不写 `firstSegment`(恒为 0;理由见 `layerStreamsOf`) */
+  /**
+   * First frame of this stream itself (project frame number). `firstSegment` is omitted from the row
+   * (always 0; see `layerStreamsOf` for rationale)
+   */
   originFrame: number;
   lastSegment: number;
   segmentsPerTask: number;
   inputSig?: string;
 }
 
-/** 这条流在层表里的那一行;候选只有本页这一份(合进现有层表时再与别人的候选并,见 `mergeLayerStreams`) */
+/**
+ * That row for this stream in the layer table; candidates contain only this page's copy (merged
+ * with others' candidates when merging into the existing layer table, see `mergeLayerStreams`)
+ */
 export function pageStreamRow(project: unknown, spec: PageStreamSpec): PageStreamRow {
   const inputSig = streamInputSig(project, { clipIds: spec.clipIds, kind: spec.kind });
   return { topClipId: spec.topClipId, clipIds: [...spec.clipIds], kind: "card", plane: "local", contentKey: spec.contentKey,
@@ -582,14 +715,22 @@ export function pageStreamRow(project: unknown, spec: PageStreamSpec): PageStrea
 const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /**
- * 把本页的几行并进内容库里现有的层表(没有切分方时层表没人写,由本页写它的 `streams` 那一部分)。回要写回去的整张表;
- * 现有的表已经含这几行(本页的候选都在、排在最前)时回 null,不用写。
+ * Merges this page's rows into the existing layer table in the content store (when there is no
+ * splitter, nobody writes the layer table, so this page writes its `streams` portion). Returns the
+ * whole table to write back; returns null with no write needed if the existing table already
+ * contains these rows (this page's candidates are all present and ranked first).
  *
- *   - 现有的表不是认得的层表(没有、版本不认识、别的项目的):新写一张,`layers` 是空的(本页不写快照层);
- *   - 别的字段、`layers`、别的卡的流一个字不动,先后也不动(两个页面各写各的卡时不来回倒);
- *   - 同一张卡、同一个内容键的行:本页的候选提到最前(这一份是实际产出来的;之后才进来的页面取第一个候选),别人的候选留在后面;
- *   - 同一张卡、别的内容键的行:输入签名过期的(旧参数的流)去掉;没过期的(别的环境按它自己的键产的同一条流)留着,排在本页那一行后面
- *     (同一张卡列两行时页面只认第一行)。
+ *   - Existing table is not a recognized layer table (missing, unknown version, from another
+ *     project): writes a new one with empty `layers` (this page does not write snapshot layers);
+ *   - Other fields, `layers`, and streams of other cards are kept untouched in content and order
+ *     (two pages writing their own cards will not flip them back and forth);
+ *   - Rows for the same card and same content key: this page's candidate is moved to the front (this
+ *     copy is actually produced; pages joining later take the first candidate), others' candidates
+ *     remain behind;
+ *   - Rows for the same card with other content keys: those with expired input signatures (streams
+ *     from old parameters) are removed; unexpired ones (the same stream produced by another
+ *     environment under its own key) are kept and placed after this page's row (when the same card
+ *     has two rows, the page only recognizes the first row).
  */
 export function mergeLayerStreams(existing: unknown, o: { project: Record<string, any>; rows: readonly PageStreamRow[]; now: number }): Record<string, unknown> | null {
   const { project, rows } = o;
@@ -603,7 +744,10 @@ export function mergeLayerStreams(existing: unknown, o: { project: Record<string
   };
   const old: Record<string, any>[] = usable && Array.isArray((existing as Record<string, unknown>).streams) ? ((existing as Record<string, unknown>).streams as Record<string, any>[]).filter(isObj) : [];
   const mine = new Map(rows.map((r) => [r.topClipId, r]));
-  /** 本页这一行,候选并上现有同内容键那几行里别人的候选(本页的在前) */
+  /**
+   * This page's row, with candidates merged with others' candidates from existing rows with the same
+   * content key (this page's candidate comes first)
+   */
   const mergedRow = (next: PageStreamRow): Record<string, any> => {
     const others = old.filter((row) => row.topClipId === next.topClipId && row.contentKey === next.contentKey)
       .flatMap((row) => (Array.isArray(row.candidates) ? row.candidates : []))
@@ -615,7 +759,7 @@ export function mergeLayerStreams(existing: unknown, o: { project: Record<string
   for (const row of old) {
     const next = typeof row.topClipId === "string" ? mine.get(row.topClipId) : undefined;
     if (!next) { merged.push(row); continue; }
-    // 这张卡的第一行所在的位置放本页的那一行
+    // Place this page's row at the position of this card's first row
     if (!placed.has(next.topClipId)) { merged.push(mergedRow(next)); placed.add(next.topClipId); }
     if (row.contentKey === next.contentKey) continue;
     if (streamSigStale(row.inputSig, next.inputSig)) continue;
@@ -627,14 +771,22 @@ export function mergeLayerStreams(existing: unknown, o: { project: Record<string
   return { ...base, at: o.now, streams };
 }
 
-/** 层表里这张卡的一条现成的流的一个候选,连同那一行的分段范围(它的清单按这个范围分份) */
+/**
+ * A candidate of an existing stream for this card in the layer table, along with that row's segment
+ * range (its manifest is chunked by this range)
+ */
 export interface LayerStreamCandidate { envFingerprint: string; resultKey: string; firstSegment: number; lastSegment: number; segmentsPerTask: number }
 
 /**
- * 现有的层表里,这张卡此刻**能播的**单卡流有哪些候选(「先查」用:哪种环境产的都算)。能播的判据与在线来源播放时的相同
- * (`snapshotSource.ts` 的 `streamStale`):同一个内容键,或者输入签名没有过期(那一行没带签名也算)。别的环境算出的内容键可能与本页的不同
- * (代码版本不同、加载的字体不同),但它的输入签名对得上、页面本来就会播它 —— 有了就不必再产。
- * 没带 `originFrame` 的行不算(改分段规则之前的节点写的,在线来源不播它,`parseLayerStreams`);分段号从 0 起。
+ * In the existing layer table, which candidates of single-card streams are currently **playable**
+ * for this card (used by "check first": produced by any environment counts). The criteria for
+ * playable are the same as when playing from an online source (`streamStale` in `snapshotSource.ts`):
+ * same content key, or unexpired input signature (counts even if that row has no signature).
+ * Content keys computed by other environments may differ from this page's (different code version,
+ * different loaded fonts), but if its input signature matches, the page would play it anyway: if
+ * present, no need to produce it again.
+ * Rows without `originFrame` do not count (written by nodes prior to segmenting rule changes, not
+ * played by online source, `parseLayerStreams`); segment numbers start from 0.
  */
 export function layerStreamCandidates(existing: unknown, row: { topClipId: string; contentKey: string; inputSig?: string | null }): LayerStreamCandidate[] {
   if (!isObj(existing) || existing.kind !== "layer-map" || !Array.isArray(existing.streams)) return [];
@@ -653,7 +805,10 @@ export function layerStreamCandidates(existing: unknown, row: { topClipId: strin
   return out;
 }
 
-/** 这个候选的清单里,盖住分段 `[from, to]` 的那几份的范围;候选的分段范围没把它盖全回 null */
+/**
+ * In this candidate's manifest, the range of chunks covering segments `[from, to]`; returns null
+ * if candidate's segment range does not fully cover it
+ */
 export function candidateSpans(cand: LayerStreamCandidate, from: number, to: number): [number, number][] | null {
   if (cand.firstSegment > from || cand.lastSegment < to) return null;
   return spansOf(cand.firstSegment, cand.lastSegment, cand.segmentsPerTask).filter(([a, b]) => a <= to && b >= from);

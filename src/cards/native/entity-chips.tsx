@@ -64,12 +64,13 @@ function EntityChipsCard({ params }: CardProps<Params>) {
 
 export const entityChips: CardDef<Params> = {
   id: "entity-chips",
-  name: "实体名牌",
-  description: "展示人物或机构的名牌",
-  useWhen: "介绍团队成员、嘉宾或合作机构时,把 2 到 5 个实体做成**竖排**胶囊名牌逐条滑入。chips 用换行分条(不是竖线),每条格式为 `dark 或 light|姓名|头衔`;右侧可另加 note 分类旁注。单人出镜讲解用 focus-card。",
-  tags: ["人物","机构","名牌","实体"],
+  name: "Entity name tags",
+  description: "Name tags showing people or organizations",
+  useWhen: "When introducing team members, guests or partner organizations, turn 2 to 5 entities into **vertical** pill-shaped name tags that slide in one by one. chips splits entries by newline (not vertical bar), each in the format `dark or light|name|title`; a note can be added on the right as a category side note. Use focus-card for a single person presenting on camera.",
+  tags: ["person","organization","name tag","entity"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -80,13 +81,13 @@ export const entityChips: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "chips", label: "名牌(牌面|名|身份,换行)", type: "text" },
-    { key: "note", label: "旁注(上行|下行)", type: "text" },
-    { key: "stepMs", label: "间隔(ms)", type: "number" },
+    { key: "chips", label: "Name tags (style|name|title, newline-separated)", type: "text" },
+    { key: "note", label: "Side note (top line|bottom line)", type: "text" },
+    { key: "stepMs", label: "Interval (ms)", type: "number" },
   ],
   parts: [
-    { id: "chips", label: "名牌", role: "list", params: ["chips", "stepMs"], enterMs: 0, settleMs: 1 * 150 + 600 },
-    { id: "note", label: "旁注", role: "text", params: ["note"], enterMs: 2 * 150 + 200, settleMs: 2 * 150 + 200 + 600 },
+    { id: "chips", label: "name tag", role: "list", params: ["chips", "stepMs"], enterMs: 0, settleMs: 1 * 150 + 600 },
+    { id: "note", label: "Side note", role: "text", params: ["note"], enterMs: 2 * 150 + 200, settleMs: 2 * 150 + 200 + 600 },
   ],
   lifecycle: { settleMs: 1100, after: "hold", exit: ["fade"] },
   timing: (p) => {

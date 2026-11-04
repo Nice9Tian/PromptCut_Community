@@ -1,9 +1,12 @@
 /**
- * 「项目」菜单「本地备份…」(c65-design.md 第 8 节裁定):按时间和实体列出草稿目录 `backups/` 里的备份,
- * 点「恢复」把那个实体以一次新写入写回去(照样进撤销栈、照样通知别人,不破坏「最后写的赢」)。
+ * Project menu > "Local backups..." (ruling in c65-design.md, section 8): lists the backups in the draft
+ * directory `backups/` by time and entity. Clicking "Restore" writes that entity back as a new write
+ * (it still goes on the undo stack and still notifies others, so "last write wins" is not broken).
  *
- * 备份有两种(`docsync.ts` 的 `LocalBackup`):被别人覆盖之前自己那一版的实体;离线时选「丢弃」前的那批修改
- * (按它改到的实体各列一行,值取丢弃前那一份项目)。只有当前项目的备份能恢复。
+ * There are two kinds of backup (`LocalBackup` in `docsync.ts`): the entity as this page had it before
+ * someone else overwrote it; and the batch of changes made offline before "Discard" was chosen
+ * (one row per entity it touched, the value taken from the project as it was before the discard).
+ * Only backups of the current project can be restored.
  */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -27,7 +30,7 @@ interface Summary {
   rev: number | null;
   at: number;
   broken: boolean;
-  /** 存这份备份的页面会话 */
+  /** The page session that stored this backup */
   pageSession?: string | null;
 }
 
@@ -42,7 +45,7 @@ function fmtTime(ms: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-/** 把一个实体的值写回项目:原处还在就替换;原处没了(被别人删了)就插回去;备份里没有它就删掉 */
+/** Writes an entity's value back into the project: replace it if it is still there; insert it back if it is gone (deleted by someone else); delete it if the backup does not have it */
 export function restoreInto(project: Project, entity: string, value: unknown): { ok: true; next: Project } | { ok: false; detail: string } {
   const path = entityValuePath(entity);
   if (path === "") return value && typeof value === "object" ? { ok: true, next: value as Project } : { ok: false, detail: tr("The backup has no project content") };
@@ -55,7 +58,7 @@ export function restoreInto(project: Project, entity: string, value: unknown): {
     const parent = path.slice(0, path.lastIndexOf("/"));
     const arr = getAt(project, parent);
     if (Array.isArray(arr)) {
-      // 片段按开始时间排着:插在第一个开始得比它晚的前面
+      // Clips are sorted by start time: insert before the first one that starts later than this one
       const start = (value as { start?: number }).start;
       let index = arr.length;
       if (typeof start === "number") {
@@ -78,7 +81,7 @@ function DesktopBackupsDialog({ open, onClose }: { open: boolean; onClose: () =>
     if (!open) return;
     setItems(null);
     setErr("");
-    if (ONLINE) return setItems([]); // 在线页面没有本地备份(入口已置灰,C10a)
+    if (ONLINE) return setItems([]); // Online pages have no local backups (the entry is greyed out, C10a)
     fetch("/api/project-backups", { cache: "no-store" })
       .then((r) => r.json())
       .then((j) => setItems(Array.isArray(j.backups) ? j.backups : []))
@@ -122,7 +125,7 @@ function DesktopBackupsDialog({ open, onClose }: { open: boolean; onClose: () =>
             {rows.map((row, i) => {
               const b = row.backup;
               const mine = b.projectId === current;
-              // 「谁覆盖的」按备份的主人(被覆盖的那个页面)说:同一台机器上几个页面的备份都在这一个目录里
+              // "Who overwrote it" is judged by the backup's owner (the page that was overwritten): backups from several pages on the same machine all live in this one directory
               const owner = { ...me(), session: b.pageSession ?? me().session };
               const who = b.kind === "overwritten" ? tr("Overwritten by {0}", writerLabel(b.by as never, owner, displayNames())) : tr("Discarded while offline");
               return (
@@ -152,12 +155,14 @@ function DesktopBackupsDialog({ open, onClose }: { open: boolean; onClose: () =>
 }
 
 /**
- * 在线页面的「本地备份」(C10 契约第 10 节、第 18 节第 4 条):本页内存里的全部备份(`onlineBackups.ts`),
- * 逐个「下载备份」(JSON 文件)。不写浏览器存储、不能「恢复」(没有本机草稿目录可读),关页面即丢。
- * 同步面板里的「备份」小部件与「项目」菜单「本地备份…」打开的都是它。
+ * "Local backups" for an online page (C10 contract, section 10 and section 18 item 4): all backups held in
+ * this page's memory (`onlineBackups.ts`), each with a "Download backup" button (a JSON file). It does not
+ * write to browser storage and cannot "Restore" (there is no local draft directory to read), and the
+ * backups are lost when the page closes. The "Backups" widget in the sync panel and the "Local backups..."
+ * item in the Project menu both open this.
  */
 function OnlineBackupsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  useSync((v) => v.onlineBackups); // 份数变了就重画
+  useSync((v) => v.onlineBackups); // Redraw when the number of backups changes
   if (!open) return null;
   const store = onlineBackups();
   const items = store.list();

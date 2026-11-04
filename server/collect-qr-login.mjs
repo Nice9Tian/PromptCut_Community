@@ -1,22 +1,26 @@
 /**
- * 哔哩哔哩扫码登录(接口版,不开浏览器)。
+ * Bilibili QR code login (API version, without opening a browser).
  *
- * B 站网页端的扫码登录是两个公开接口:
+ * QR code login on Bilibili web uses two public endpoints:
  *   GET https://passport.bilibili.com/x/passport-login/web/qrcode/generate
- *       → { code: 0, data: { url, qrcode_key } }   url 就是二维码里的内容
+ *       → { code: 0, data: { url, qrcode_key } }   url is the content of the QR code
  *   GET https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=…
  *       → { code: 0, data: { code: 0 | 86101 | 86090 | 86038, message, url, refresh_token } }
- *       86101 未扫码 / 86090 已扫码未确认 / 86038 二维码过期(约 3 分钟) / 0 登录成功。
- *       成功那次响应的 Set-Cookie 里带 SESSDATA、bili_jct、DedeUserID 等,直接存成 cookies.txt。
+ *       86101 not scanned / 86090 scanned but unconfirmed / 86038 QR code expired (~3 minutes) /
+ *       0 login success.
+ *       The Set-Cookie on that successful response carries SESSDATA, bili_jct, DedeUserID, etc.,
+ *       saved directly as cookies.txt.
  *
- * 实测(2026-09-08):带 Chrome UA + Referer 才不会 412;不带 UA 也能过,但和下载那边
- * 保持一致省得哪天被拦。二维码由 qr.mjs 现画,前端只拿 SVG 显示。
+ * Verified in testing (2026-09-08): sending Chrome UA + Referer is required to avoid 412; omitting
+ * UA also works, but keeping it consistent with downloads prevents getting blocked later.
+ * The QR code is generated on the fly by qr.mjs, and the frontend only receives the SVG for display.
  *
- * 会话只在内存里:key → { site, url, createdAt, state }。二维码 3 分钟过期,过期了前端
- * 重新 start 一张就是。
+ * Sessions exist only in memory: key → { site, url, createdAt, state }. The QR code expires in
+ * 3 minutes; once expired, the frontend simply restarts one.
  */
 import { assessLogin, saveCookies } from './collect-cookies.mjs';
 import { qrSvg } from './qr.mjs';
+import { tr } from './i18n.mjs';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
 
@@ -25,14 +29,14 @@ const ENDPOINTS = {
     generate: 'https://passport.bilibili.com/x/passport-login/web/qrcode/generate',
     poll: 'https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=',
     headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/' },
-    /** 二维码有效期(秒),B 站是 180 */
+    /** QR code validity period (seconds); 180 for Bilibili */
     ttl: 180,
-    /** poll 返回的 data.code → 我们的状态 */
+    /** data.code returned by poll → our state */
     states: { 0: 'ok', 86101: 'waiting', 86090: 'scanned', 86038: 'expired' },
   },
 };
 
-/** 一行 Set-Cookie → CDP 那种形状的 cookie 对象(和 collect-cookies.mjs 的 toNetscape 对得上) */
+/** Single Set-Cookie line → CDP-shaped cookie object (matches toNetscape in collect-cookies.mjs) */
 export function parseSetCookie(line, defaultDomain = '.bilibili.com') {
   const parts = String(line).split(';').map((s) => s.trim()).filter(Boolean);
   if (!parts.length) return null;
@@ -65,9 +69,10 @@ export function parseSetCookie(line, defaultDomain = '.bilibili.com') {
 }
 
 /**
- * 成功响应的 data.url 形如
+ * data.url on a successful response has the shape:
  *   https://passport.biligame.com/x/passport-login/web/crossDomain?DedeUserID=…&SESSDATA=…&bili_jct=…&Expires=1234
- * 有些环境 Set-Cookie 头拿不全(fetch 的 redirect / 代理),从这里补。
+ * In some environments Set-Cookie headers are incomplete (fetch redirects / proxies);
+ * supplement from here.
  */
 export function cookiesFromCrossDomainUrl(url) {
   const out = [];
@@ -83,7 +88,7 @@ export function cookiesFromCrossDomainUrl(url) {
 }
 
 /**
- * 把 Set-Cookie 头和 crossDomain 链接里的 cookie 合并:同名以 Set-Cookie 为准。
+ * Merge cookies from Set-Cookie headers and crossDomain links: Set-Cookie takes precedence on name collision.
  */
 export function mergeCookies(fromHeaders, fromUrl) {
   const byName = new Map();
@@ -92,7 +97,7 @@ export function mergeCookies(fromHeaders, fromUrl) {
   return [...byName.values()];
 }
 
-/** 读 Set-Cookie 头:Node 19.7+ 有 getSetCookie;老的退回单头 */
+/** Read Set-Cookie header: Node 19.7+ has getSetCookie; older versions fall back to a single header */
 function setCookieLines(headers) {
   if (typeof headers.getSetCookie === 'function') return headers.getSetCookie();
   const one = headers.get('set-cookie');
@@ -102,7 +107,7 @@ function setCookieLines(headers) {
 export function createQrLogin({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
   const sessions = new Map();
 
-  /** 老会话别越攒越多:过期超过 10 分钟的顺手清掉 */
+  /** Prevent old sessions from piling up: clean up those expired for more than 10 minutes */
   function sweep() {
     const cutoff = now() - 10 * 60 * 1000;
     for (const [k, s] of sessions) if (s.createdAt < cutoff) sessions.delete(k);
@@ -110,13 +115,13 @@ export function createQrLogin({ fetchImpl = globalThis.fetch, now = () => Date.n
 
   async function start(site = 'bilibili') {
     const ep = ENDPOINTS[site];
-    if (!ep) throw new Error(`站点 ${site} 没有扫码登录`);
+    if (!ep) throw new Error(tr("Site {0} has no QR code login", site));
     sweep();
     const r = await fetchImpl(ep.generate, { headers: ep.headers });
-    if (!r.ok) throw new Error(`拿二维码失败:HTTP ${r.status}`);
+    if (!r.ok) throw new Error(tr("Failed to get QR code: HTTP {0}", r.status));
     const body = await r.json();
     if (body?.code !== 0 || !body?.data?.url || !body?.data?.qrcode_key) {
-      throw new Error(`拿二维码失败:${body?.message ?? '返回格式不对'}`);
+      throw new Error(tr("Failed to get QR code: {0}", body?.message ?? tr("unexpected response format")));
     }
     const key = String(body.data.qrcode_key);
     const session = { key, site, url: String(body.data.url), createdAt: now(), state: 'waiting', ttl: ep.ttl };
@@ -131,20 +136,21 @@ export function createQrLogin({ fetchImpl = globalThis.fetch, now = () => Date.n
   }
 
   /**
-   * 轮询一次。返回 { state: waiting | scanned | expired | ok, message, ...登录成功时的字段 }。
-   * 成功时把 cookie 交给 onLogin(cookies) 存盘,这里不直接写文件,方便测试。
+   * Poll once. Returns { state: waiting | scanned | expired | ok, message, ...fields on login success }.
+   * On success, passes cookies to onLogin(cookies) to persist to disk; does not write files directly
+   * here to simplify testing.
    */
   async function poll(key, { dataDir } = {}) {
     const s = sessions.get(key);
-    if (!s) return { state: 'expired', message: '这张二维码不存在或服务已重启,重新生成一张' };
+    if (!s) return { state: 'expired', message: tr("This QR code does not exist or the service was restarted. Generate a new one") };
     if (s.state === 'ok') return { state: 'ok', ...s.result };
     const ep = ENDPOINTS[s.site];
     if (now() - s.createdAt > ep.ttl * 1000) {
       s.state = 'expired';
-      return { state: 'expired', message: '二维码已过期,重新生成一张' };
+      return { state: 'expired', message: tr("QR code expired. Generate a new one") };
     }
     const r = await fetchImpl(ep.poll + encodeURIComponent(key), { headers: ep.headers, redirect: 'manual' });
-    if (!r.ok) return { state: s.state, message: `查询失败:HTTP ${r.status}`, transient: true };
+    if (!r.ok) return { state: s.state, message: tr("Query failed: HTTP {0}", r.status), transient: true };
     const body = await r.json();
     const code = body?.data?.code;
     const state = ep.states[code] ?? (body?.code === 0 ? 'waiting' : 'expired');
@@ -159,7 +165,7 @@ export function createQrLogin({ fetchImpl = globalThis.fetch, now = () => Date.n
     const a = assessLogin(s.site, cookies, now());
     if (!a.loggedIn) {
       s.state = 'expired';
-      return { state: 'expired', message: `登录响应里缺 ${a.missing.join(' / ')},重新扫一次` };
+      return { state: 'expired', message: tr("Login response is missing {0}, scan again", a.missing.join(' / ')) };
     }
     const file = dataDir ? saveCookies(dataDir, s.site, a.cookies) : null;
     s.state = 'ok';
@@ -174,7 +180,7 @@ export function createQrLogin({ fetchImpl = globalThis.fetch, now = () => Date.n
   return { start, poll, svg, sessions };
 }
 
-/** 进程级单例:路由用它;测试自己 createQrLogin 注入假 fetch */
+/** Process-level singleton: used by routes; tests call createQrLogin themselves to inject a mock fetch */
 let shared = null;
 export function qrLogin() {
   if (!shared) shared = createQrLogin();

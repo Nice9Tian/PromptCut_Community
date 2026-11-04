@@ -3,18 +3,23 @@ import { agentColorFor } from "./agentColor";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 自定义配色:压在预设皮肤之上的一层覆盖。
+ * Custom color scheme: an override layer on top of preset skins.
  *
- * 预设负责给一整套协调的 --ui-*,这里只记用户手动改过的那几项。分成两层而不是
- * 让用户克隆一整套,是因为换预设时这层还留着——用户改过的强调色不会因为换了
- * 底色就丢掉;不想要了点「恢复默认」清空即可。
+ * Presets provide a coordinated set of --ui-*, while this only records the few items manually
+ * modified by the user. It is split into two layers instead of having the user clone an entire
+ * set so that this layer stays when switching presets: the accent color modified by the user is
+ * not lost just because the base color changed; clicking "Reset to defaults" clears it when no
+ * longer wanted.
  */
 
 const STORAGE_KEY = "pc.skin.vars";
 
-/** 能在界面上单独调的槽位。没列进来的(派生色、轨道墨色等)由下面的联动补齐 */
+/**
+ * Slots that can be adjusted individually in UI. Those not listed (derived colors, track ink,
+ * etc.) are filled in by linkages below
+ */
 export interface SkinSlot {
-  /** --ui-* 里去掉 -- 的名字 */
+  /** Name in --ui-* with -- stripped */
   key: string;
   label: string;
   group: string;
@@ -48,7 +53,8 @@ function read(): SkinOverrides {
     const raw = localStorage.getItem(STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    // 只收我们认识的槽位,别让手改过的 localStorage 往 <html> 上写任意属性
+    // Accept only recognized slots; prevent tampered localStorage from writing arbitrary attributes
+    // to <html>
     const known = new Set(SKIN_SLOTS.map((s) => s.key));
     return Object.fromEntries(
       Object.entries(parsed).filter(([k, v]) => known.has(k) && typeof v === "string"),
@@ -63,7 +69,7 @@ function write(next: SkinOverrides): void {
     if (Object.keys(next).length === 0) localStorage.removeItem(STORAGE_KEY);
     else localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch {
-    /* 无痕模式记不住就算了,本次会话内仍然生效 */
+    /* If incognito mode cannot remember it, so be it; it still takes effect within this session */
   }
 }
 
@@ -80,8 +86,10 @@ export function subscribeOverrides(fn: () => void): () => void {
 }
 
 /**
- * 改了强调色,派生的那几个也得跟着走,否则悬停态、按下态还是旧颜色,看着像坏了。
- * 比例照抄 skins.ts 里 sideToVars 的算法,只是把基色换成用户选的。
+ * When the accent color changes, its derived variants must follow along, otherwise hover and pressed
+ * states retain old colors, looking broken.
+ * Ratios directly copy the algorithm of sideToVars in skins.ts, only replacing the base color with
+ * the one chosen by the user.
  */
 function derive(key: string, value: string, mode: SkinMode): SkinOverrides {
   if (key !== "ui-accent") return {};
@@ -93,17 +101,18 @@ function derive(key: string, value: string, mode: SkinMode): SkinOverrides {
     "ui-accent-soft": mix(dark ? "#000000" : "#ffffff", dark ? 24 : 14),
     "ui-info": value,
     "ui-glow": `0 0 10px ${mix("transparent", 45)}`,
-    // Agent 头像色跟着新强调色重算(同明度同纯度的黄,强调色本身黄橙时换紫);取色器给的一定是 #rrggbb
+    // Agent avatar color recalculates with the new accent color (yellow with same lightness and chroma;
+    // switches to purple if accent color itself is yellow-orange); color picker always gives #rrggbb
     "ui-agent": agentColorFor(value),
   };
 }
 
-/** 派生出来的键:清空某个槽位时要一并撤掉 */
+/** Derived keys: cleared together when a slot is reset */
 export function derivedKeys(key: string): string[] {
   return Object.keys(derive(key, "#000000", "dark"));
 }
 
-/** 把一个槽位连同它的派生项算出来,交给 useSkin 去写 */
+/** Computes a slot along with its derived entries, passing them to useSkin to write */
 export function expandOverrides(mode: SkinMode): SkinOverrides {
   const out: SkinOverrides = {};
   for (const [k, v] of Object.entries(overrides)) {

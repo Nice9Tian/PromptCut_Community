@@ -1,19 +1,27 @@
 /**
- * 「播放范围跟着可见内容走」的同步点:内容末尾变了(挪、拉长、删掉最后一段),把总时长对上
- * (`effectiveDuration`,手动截断的上限照旧)。时间轴挂着的时候才做,和以前时间轴里那个 effect 一样。
+ * The sync point for "the playback range follows the visible content": when the content end changes (moved,
+ * lengthened, last clip deleted), align the total duration
+ * (`effectiveDuration`; the upper limit of a manual truncation stays as before). It only runs while the
+ * timeline is mounted, same as the effect that used to live in the timeline.
  *
- * # 为什么不再只靠渲染后的 effect(tiers-probe T4,docs/archive/agent-reports/AGENT-perf-t4.md)
+ * # Why we no longer rely only on the post-render effect (tiers-probe T4, docs/archive/agent-reports/AGENT-perf-t4.md)
  *
- * 以前是 `TimelineInner` 渲染完在 effect 里 `syncDuration`:挪最后一段 → 整个编辑器按新片段渲一遍 →
- * effect 发现时长不对 → 再改一次项目 → **整个编辑器在同一个任务里又渲一遍**。一次编辑两遍全量重渲,
- * 在笔记本上后台转码、上传一抢 CPU,这个任务就过了 50 ms。
+ * Before, `TimelineInner` called `syncDuration` in an effect after rendering: move the last clip → the whole
+ * editor renders once with the new clips → the effect finds the duration is wrong → edits the project
+ * again → **the whole editor renders again in the same task**. One edit caused two full re-renders, and on
+ * a laptop, with background transcoding and uploading competing for CPU, this task went past 50 ms.
  *
- * 现在在 store 上挂一个监听:项目一变就排一个微任务去对时长。监听在模块加载时就挂上,排在所有 React
- * 组件的订阅前面,所以这个微任务排在 React 刷新渲染的那个微任务前面 —— 对完时长才渲,一次编辑只渲一遍。
- * 放在微任务里而不是监听里当场改:别人的改动经 docsync 写进 store 时监听就在它的调用栈里,
- * 当场再提交一次等于在 docsync 自己的回调里重入;挪到微任务里就和以前的 effect 一样在栈外。
- * 顺序不成立时(同一任务里别处先排了渲染)退回以前的效果:先渲一遍,对完时长再渲一遍,不会更差。
- * `TimelineInner` 里那个 effect 留着兜底,渲完还不对就照以前那样补。
+ * Now a listener is attached to the store: as soon as the project changes, a microtask is queued to align
+ * the duration. The listener is attached at module load, ahead of the subscriptions of all React
+ * components, so this microtask is queued before the microtask where React flushes rendering: the duration
+ * is aligned first and then rendered, so one edit renders only once.
+ * It is done in a microtask rather than changed on the spot in the listener: when someone else's change is
+ * written into the store via docsync, the listener is inside its call stack, and committing again on the
+ * spot would re-enter docsync's own callback; moving it to a microtask puts it outside the stack, like the
+ * old effect.
+ * When the order does not hold (something else queued a render first in the same task), it falls back to the
+ * old behavior: render once, align the duration, render again, which is no worse.
+ * The effect in `TimelineInner` stays as a fallback: if it is still wrong after rendering, patch it as before.
  */
 import { useEffect } from "react";
 import { actions, getState, subscribe } from "../../store/project";
@@ -24,13 +32,13 @@ import { memberReadOnlyNow } from "../readOnlyCore";
 
 let mounted = 0;
 let queued = false;
-/** 上一次对过的三样:都没换对象就不用再对 */
+/** The three things aligned last time: if none of the objects changed, no need to align again */
 let seen: { tracks: Track[]; duration: number; manual: number | null } | null = null;
 
-/** 这一刻内容末尾对应的总时长和项目里记的不一样,就改过来(不进撤销栈,和以前一样) */
+/** If the total duration for the current content end differs from the one recorded in the project, fix it (not pushed onto the undo stack, same as before) */
 export function syncDurationNow(): void {
   queued = false;
-  // 只读项目(游客):总时长是项目里的字段,这一下是个写,服务端要拒;看别人的项目时也别自己去改它
+  // Read-only project (guest): the total duration is a project field, so this would be a write and the server would reject it; also do not edit it yourself when viewing someone else's project
   if (mounted === 0 || isRecoveringAssociation() || memberReadOnlyNow()) return;
   const s = getState();
   const tracks = s.project.tracks;
@@ -48,7 +56,7 @@ subscribe(() => {
   queueMicrotask(syncDurationNow);
 });
 
-/** 开始跟(可以叠加);返回停止的函数 */
+/** Start following (can be stacked); returns the function that stops it */
 export function mountDurationSync(): () => void {
   mounted++;
   seen = null;
@@ -61,12 +69,12 @@ export function mountDurationSync(): () => void {
   };
 }
 
-/** 时间轴挂着期间让总时长跟着内容走 */
+/** Make the total duration follow the content while the timeline is mounted */
 export function useDurationFollowsContent(): void {
   useEffect(() => mountDurationSync(), []);
 }
 
-/** 测试用 */
+/** For tests */
 export function resetDurationSync(): void {
   mounted = 0;
   queued = false;

@@ -1,38 +1,45 @@
 /**
- * 素材服务的客户端一侧:Agent 进程和预渲染进程**只经素材服务的 HTTP API** 取素材
- * (`docs/semantics/product/asset-service.md`「职责」第三条),不读本地内容库的目录。
- * 契约在 `asset-service.ts` 文件头。
+ * Client side of asset service: Agent process and prerender process fetch assets **only via asset
+ * service HTTP API** (item 3 of "Responsibilities" in `docs/semantics/product/asset-service.md`),
+ * without reading local content store directory. Contract is at the top of `asset-service.ts`.
  *
- * 这个模块**不 import vite-plugin-media / asset-service**:用它的一方只认地址,不认目录。
+ * This module **does not import vite-plugin-media / asset-service**: consumers only know
+ * addresses, not directories.
  *
- * # 素材服务的基址怎么定
+ * # How asset service base URL is determined
  *
- * 按顺序取第一个有的:
+ * Take the first available in order:
  *
- * 1. `PROMPTCUT_EDITOR_URL` —— 预渲染进程由编辑器那一端的 dev server 拉起时给的
- *    (`vite-plugin-prerender.ts`)。本地素材服务第一版就挂在编辑器进程里,所以它就是素材服务的源。
- *    没有新加环境变量:现有这一个够用。
- * 2. 本进程自己的监听地址 —— 媒体插件起来时记下的(`rememberLocalAssetOrigin`)。这是**单进程形态**:
- *    Agent 跑在编辑器进程里(没有单独的预渲染进程,或者就是编辑器进程自己在处理请求),
- *    素材服务就在本进程,照样走回环地址的 HTTP,不直接读目录。
- * 3. 都没有(纯脚本、单测)→ null,调用方如实说「素材服务不可达」。
+ * 1. `PROMPTCUT_EDITOR_URL`: provided when prerender process is launched by the dev server on
+ *    editor side (`vite-plugin-prerender.ts`). First version of local asset service is hosted inside
+ *    editor process, so it is the asset service origin. No new environment variables added: the
+ *    existing one is sufficient.
+ * 2. This process's own listening address: recorded when media plugin starts up
+ *    (`rememberLocalAssetOrigin`). This is **single-process mode**: Agent runs inside editor
+ *    process (no separate prerender process, or editor process itself is handling requests), asset
+ *    service is in this process, still using loopback HTTP without directly reading directory.
+ * 3. Neither available (plain scripts, unit tests) → null, caller accurately reports "asset
+ *    service unreachable".
  *
- * 将来连远程素材服务(F4 切换所连接的服务)时,基址换成远程那一个即可,路径不变。
+ * When connecting to remote asset service in the future (F4 switch connected service), simply
+ * replace base URL with remote one; paths remain unchanged.
  */
 import type { Plugin } from "vite";
 import type { AddressInfo } from "net";
 import http from "http";
 import https from "https";
+import { tr } from "./i18n.mjs";
 
 const ORIGIN_KEY = Symbol.for("promptcut.asset-service.local-origin");
 type Holder = { [ORIGIN_KEY]?: string | null };
 
-/** vite 的 httpServer 可能是 http / https / http2 的 Server,这里只用到它们共有的这几样 */
+/** Vite httpServer may be http / https / http2 Server; only these shared properties are used here */
 type Listening = { listening: boolean; address(): AddressInfo | string | null; once(event: "listening", fn: () => void): unknown };
 
 /**
- * 记下本进程素材服务的地址。配置被打包过一次、模块可能有两份实例,所以放在 globalThis 上。
- * 监听在 0.0.0.0 / :: 上时用回环地址访问自己。
+ * Record the address of the asset service in this process. Config was bundled once and module may
+ * have two instances, so store on globalThis. When listening on 0.0.0.0 / ::, use loopback address
+ * to access itself.
  */
 export function rememberLocalAssetOrigin(server: Listening | null | undefined): void {
   if (!server) return;
@@ -48,7 +55,7 @@ export function rememberLocalAssetOrigin(server: Listening | null | undefined): 
   else server.once("listening", record);
 }
 
-/** 素材服务的源(不带尾斜杠);取不到返回 null */
+/** Asset service origin (without trailing slash); returns null if unavailable */
 export function assetServiceOrigin(): string | null {
   const editor = String(process.env.PROMPTCUT_EDITOR_URL || "").trim().replace(/\/+$/, "");
   if (editor) return editor;
@@ -58,13 +65,17 @@ export function assetServiceOrigin(): string | null {
 const HASH = /^[0-9a-f]{64}$/;
 
 /**
- * 项目里一条素材记录 → 素材服务上取它的 HTTP 地址(给 ffmpeg 当输入,ffmpeg 自己会用 Range 定位)。
+ * An asset record in a project → fetch its HTTP URL on the asset service (used as ffmpeg input;
+ * ffmpeg seeks using Range on its own).
  *
- * - 有内容哈希(`m.hash`,或 `url` 是 `/@media/<hash>[.ext]`)→ `/@media/<hash>`;
- * - 迁移期按文件名存的(`/@media/<文件名>`,或只剩一个落在素材目录里的 `path`)→ `/@media/<文件名>`。
+ * - Has content hash (`m.hash`, or `url` is `/@media/<hash>[.ext]`) → `/@media/<hash>`;
+ * - Stored by filename during migration (`/@media/<filename>`, or only a `path` inside the asset
+ *   catalog remains) → `/@media/<filename>`.
  *
- * **只取最后一段文件名**,不接受任何目录:素材服务那一侧只在本地内容库里找,外面递进来的
- * `path` 再怎么写也指不到库外的文件(原来 `mediaFileOf` 的白名单边界,现在由素材服务守)。
+ * **Take only the last filename segment**, do not accept any directory: the asset service side
+ * only looks in the local content store; no matter how an incoming `path` from outside is written,
+ * it cannot point to files outside the store (the whitelist boundary previously in `mediaFileOf`
+ * is now guarded by the asset service).
  */
 export function mediaHttpUrl(m: any, origin: string | null = assetServiceOrigin()): string | null {
   if (!origin) return null;
@@ -73,25 +84,29 @@ export function mediaHttpUrl(m: any, origin: string | null = assetServiceOrigin(
   const raw = String(m?.url || m?.path || "");
   if (!raw || /^(blob|data):/i.test(raw)) return null;
   let base = raw.split("?")[0].split(/[/\\]/).pop() || "";
-  // 解码之后再切一次:`a%2F..%2Fx` 按斜杠切不开,解码完才露出斜杠
-  try { base = decodeURIComponent(base); } catch { /* 原样 */ }
+  // Split again after decoding: `a%2F..%2Fx` cannot be split by slash; the slash only appears after decoding
+  try { base = decodeURIComponent(base); } catch { /* As is */ }
   base = (base.split(/[/\\]/).pop() || "").replace(/\.\./g, "");
   if (!base) return null;
   return `${origin}/@media/${encodeURIComponent(base)}`;
 }
 
 /* ------------------------------------------------------------------ *
- * 远端节点的素材回退(契约 `docs/plan/render-queue-contract.md` J.6,设计附件第 4 节)
+ * Asset fallback for remote nodes (contract `docs/plan/render-queue-contract.md` J.6,
+ * design appendix section 4)
  * ------------------------------------------------------------------ */
 
 const FALLBACK_KEY = Symbol.for("promptcut.asset-service.fallback-bases");
 type FallbackHolder = { [FALLBACK_KEY]?: string[] };
 
 /**
- * 按哈希寻址的素材在主源(`PROMPTCUT_EDITOR_URL`)上 404 时,依次改试的素材服务 API 基址
- * (形如 `http://<ip>:<port>/api/asset`,即服务地址登记里 `kind: 'asset'` 的 `urls`)。
- * 由队列模式的节点从 `service.endpoints` 里取、排除自己之后填进来(`vite-plugin-frames.ts`)。
- * 放在 `globalThis` 上:配置被打包过一次、模块可能有两份实例。空列表 = 不回退(缺省)。
+ * Asset service API base URLs tried in sequence when hash-addressed assets 404 on the primary
+ * source (`PROMPTCUT_EDITOR_URL`) (formatted like `http://<ip>:<port>/api/asset`, i.e. `urls` with
+ * `kind: 'asset'` in the service endpoint registry).
+ * Populated here by queue-mode nodes from `service.endpoints` after excluding itself
+ * (`vite-plugin-frames.ts`).
+ * Stored on `globalThis`: config is bundled once, and the module may have two instances.
+ * Empty list = no fallback (default).
  */
 export function setMediaFallbackBases(list: unknown): string[] {
   const bases: string[] = [];
@@ -100,44 +115,59 @@ export function setMediaFallbackBases(list: unknown): string[] {
     try {
       const url = new URL(base);
       if ((url.protocol === "http:" || url.protocol === "https:") && !bases.includes(base)) bases.push(base);
-    } catch { /* 不是地址:跳过 */ }
+    } catch { /* Not an address: skip */ }
   }
   (globalThis as FallbackHolder)[FALLBACK_KEY] = bases;
   return [...bases];
 }
 
 const FALLBACK_TICKET_KEY = Symbol.for("promptcut.asset-service.fallback-ticket");
-/** 取回退请求的票据:参数是这次要试的回退基址(与 `setMediaFallbackBases` 规整后的写法相同) */
+/**
+ * Get ticket for fallback requests: parameter is the fallback base URL to try this time
+ * (same format as normalized in `setMediaFallbackBases`)
+ */
 export type FallbackTicketFn = (base: string) => Promise<string | null> | string | null;
 type TicketHolder = { [FALLBACK_TICKET_KEY]?: FallbackTicketFn | null };
 
 /**
- * 回退请求带的素材票据(M6a,`docs/plan/auth-contract.md` 第 8 节):回退基址是别的机器的素材服务,
- * 非回环来源读要票据。凭共享项目进入的节点把经文档服务取票据的函数填进来;null = 不带(缺省)。
- * 每试一个回退基址调一次,参数是那个基址:票据只在签发它的素材服务上有效,独立渲染主机加入的项目分属
- * 不同素材服务时要按基址挑(M6b 集成)。只加入一个项目的节点可以不看参数。
+ * Asset ticket carried by fallback requests (M6a, `docs/plan/auth-contract.md` section 8):
+ * the fallback base URL is an asset service on another machine, and reading from non-loopback
+ * sources requires a ticket. Nodes entering via a shared project populate a function here that
+ * fetches tickets via the document service; null = do not include (default).
+ * Called once for each fallback base URL attempted, with that base URL as the argument: tickets
+ * are only valid on the asset service that issued them; when projects joined by a standalone render
+ * host belong to different asset services, select by base URL (M6b integration). Nodes joining
+ * only one project can ignore the argument.
  */
 export function setMediaFallbackTicket(fn: FallbackTicketFn | null): void {
   (globalThis as TicketHolder)[FALLBACK_TICKET_KEY] = typeof fn === "function" ? fn : null;
 }
 
-/** 现在的回退基址(拷贝) */
+/** Current fallback base URLs (copy) */
 export function mediaFallbackBases(): string[] {
   return [...((globalThis as FallbackHolder)[FALLBACK_KEY] ?? [])];
 }
 
-/** `/@media/<64 位十六进制>`(可带扩展名、查询串)→ 小写哈希;别的路径回 null。只有这种素材走回退 */
+/**
+ * `/@media/<64-digit hex>` (optional extension, query string) → lowercase hash; other paths
+ * return null. Only this kind of asset uses fallback
+ */
 function hashedMediaPath(url: string | undefined): string | null {
   const m = /^\/@media\/([0-9a-fA-F]{64})(?:\.[A-Za-z0-9]{1,8})?(?:\?.*)?$/.exec(String(url || ""));
   return m ? m[1].toLowerCase() : null;
 }
 
-/** 回退请求只带这几个头(Range 透传);回退地址是另一台机器,不转发本机的 Cookie 之类 */
+/**
+ * Fallback requests only carry these headers (Range passed through); fallback address is another
+ * machine, do not forward local Cookies, etc.
+ */
 const FALLBACK_HEADERS = ["range", "if-range", "accept", "accept-encoding", "user-agent"];
 
 /**
- * J.6:主源答不了(404,或连不上)时依次试回退基址上的 `<base>/media/<hash>`。第一个不是 404 的答复原样转给页面
- * (状态码、响应头、字节都不改);全都不行就回主源那个答复(`primary`)。每个基址只试一次,超时 10 秒。
+ * J.6: When the primary source cannot answer (404, or cannot connect), try `<base>/media/<hash>`
+ * on fallback base URLs in sequence. Forward the first response that is not 404 to the page as-is
+ * (status code, response headers, and bytes all untouched); if none succeed, return the primary
+ * source's response (`primary`). Each base URL is tried only once, with a 10-second timeout.
  */
 function serveFromFallbacks(req: http.IncomingMessage, res: http.ServerResponse, hash: string, bases: string[],
   primary: { status: number; headers: http.IncomingHttpHeaders; body?: string }) {
@@ -155,7 +185,8 @@ function serveFromFallbacks(req: http.IncomingMessage, res: http.ServerResponse,
     if (i >= bases.length) {
       settled = true;
       if (res.headersSent) return void res.destroy();
-      // 主源答复的正文已经丢掉了:长度、分块、压缩这几个头不能照搬
+      // The primary source response body was discarded: length, chunking, and compression headers
+      // cannot be copied directly
       const out = { ...primary.headers };
       delete out["content-length"]; delete out["transfer-encoding"]; delete out["content-encoding"];
       res.writeHead(primary.status, out);
@@ -165,7 +196,8 @@ function serveFromFallbacks(req: http.IncomingMessage, res: http.ServerResponse,
     let url: URL;
     try { url = new URL(`${bases[i]}/media/${hash}`); } catch { return attempt(i + 1); }
     if (typeof ticketOf !== "function") return request(i, url, headers);
-    // 票据只进 Authorization 头,不进地址与日志;按这个基址取,取不到就不带
+    // Tickets only go into the Authorization header, not into URLs or logs; fetch for this base URL,
+    // omit if unavailable
     const base = bases[i];
     Promise.resolve().then(() => ticketOf(base)).then((t) => {
       const withTicket = { ...headers };
@@ -197,24 +229,32 @@ function serveFromFallbacks(req: http.IncomingMessage, res: http.ServerResponse,
 }
 
 /* ------------------------------------------------------------------ *
- * 预渲染进程:素材路由转发到素材服务
+ * Prerender process: forward asset routes to asset service
  * ------------------------------------------------------------------ */
 
-/** 这些路径在预渲染进程里原来由它自己挂的 mediaPlugin 直接读目录答;现在一律转发 */
+/**
+ * In the prerender process, these paths were previously served by its own mounted mediaPlugin
+ * reading directories directly; now they are all forwarded
+ */
 function isMediaRoute(url: string | undefined): boolean {
   const u = String(url || "").toLowerCase();
   return u.startsWith("/@media/") || u.startsWith("/api/asset/") || u.startsWith("/api/media/");
 }
 
 /**
- * 预渲染进程的素材路由:原样转发给素材服务(`origin`),本进程不碰本地内容库。
+ * Asset routes in the prerender process: forward as-is to the asset service (`origin`); this
+ * process does not touch the local content store.
  *
- * 渲染用的 Chrome 从预渲染进程的源加载导出页,页面里的 `/@media/<hash>` 是相对地址,
- * 所以这个源上还得答这些路由 —— 答法换成转发:方法、请求头(含 Range)、请求体、状态码、
- * 响应头(含 Content-Range / Accept-Ranges)全部透传,字节一个不改。
+ * The Chrome instance used for rendering loads the export page from the prerender process origin.
+ * `/@media/<hash>` in the page is a relative URL, so this origin still must answer these routes:
+ * the mechanism is changed to forwarding: method, request headers (including Range), request body,
+ * status code, and response headers (including Content-Range / Accept-Ranges) are all passed
+ * through, without altering a single byte.
  *
- * J.6:设了回退基址(`setMediaFallbackBases`)时,GET / HEAD 按哈希寻址的素材(`/@media/<64 位十六进制>`)
- * 在主源 404 或连不上的情况下改走回退(`serveFromFallbacks`)。没有回退基址、或别的请求,和原来逐字节一样。
+ * J.6: When fallback base URLs are configured (`setMediaFallbackBases`), GET / HEAD for
+ * hash-addressed assets (`/@media/<64-digit hex>`) fall back (`serveFromFallbacks`) if the primary
+ * source returns 404 or cannot connect. With no fallback base URLs, or for other requests, it is
+ * byte-for-byte identical to before.
  */
 export function assetProxyPlugin(origin: string): Plugin {
   const target = new URL(origin);
@@ -229,7 +269,8 @@ export function assetProxyPlugin(origin: string): Plugin {
         const hash = method === "GET" || method === "HEAD" ? hashedMediaPath(req.url) : null;
         const bases = hash ? mediaFallbackBases() : [];
         if (hash && bases.length) {
-          // 有回退基址:主源的 404 先不转给页面,改试回退;其余答复照旧原样转
+          // Fallback base URLs present: do not forward the primary source's 404 to the page yet, try fallback
+          // instead; other responses are forwarded as-is as before
           let handed = false;
           const fallback = (primary: { status: number; headers: http.IncomingHttpHeaders; body?: string }) => {
             if (handed) return;
@@ -247,7 +288,7 @@ export function assetProxyPlugin(origin: string): Plugin {
           });
           upstream.on("error", (err) => {
             if (res.headersSent) return void res.destroy();
-            fallback({ status: 502, headers: { "content-type": "text/plain; charset=utf-8" }, body: `素材服务不可达(${origin}):${err.message}` });
+            fallback({ status: 502, headers: { "content-type": "text/plain; charset=utf-8" }, body: tr("Asset service unreachable ({0}): {1}", origin, err.message) });
           });
           res.on("close", () => { if (!res.writableFinished) upstream.destroy(); });
           req.pipe(upstream);
@@ -264,10 +305,11 @@ export function assetProxyPlugin(origin: string): Plugin {
           if (!res.headersSent) {
             res.statusCode = 502;
             res.setHeader("Content-Type", "text/plain; charset=utf-8");
-            res.end(`素材服务不可达(${origin}):${err.message}`);
+            res.end(tr("Asset service unreachable ({0}): {1}", origin, err.message));
           } else res.destroy();
         });
-        // 页面那边中途不要了(拖动进度条换 Range 是常事),上游那一条也立刻收掉
+        // If the page cancels midway (scrubbing the progress bar to change Range is common),
+        // tear down upstream immediately too
         res.on("close", () => { if (!res.writableFinished) upstream.destroy(); });
         req.pipe(upstream);
       });

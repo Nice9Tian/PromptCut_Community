@@ -1,77 +1,109 @@
 /**
- * 托管方服务身份的权限：白名单（契约 `docs/plan/hosted-render-contract.md` 第 1.3、1.5 节）。
+ * Permissions for host service identities: whitelist (contract
+ * `docs/plan/hosted-render-contract.md` sections 1.3, 1.5).
  *
- * 带 `service` 字段的连接按「缺省拒绝」接入：不在表里的消息类型一律 `forbidden`，表里没有这个服务就全拒。按 `service` 字段判、
- * 不按 `scope`：代成员进项目的服务（云端 Agent，`scope: 'member'` 加 `service: 'agent'`）同样走白名单。现有模块里按 `scope === 'member'` 拒绝的判断
- * （如服务地址登记）对新 scope 会变成放行，所以不靠逐个模块补判断，统一在组装层的 `gate(principal, type, msg)` 这一处把关。
+ * Connections with a `service` field are admitted via "default deny": message types not in the
+ * table are always `forbidden`, and if the service is not in the table, all are rejected.
+ * Evaluated by `service` field, not by `scope`: services entering projects on behalf of members
+ * (Cloud Agent, `scope: 'member'` plus `service: 'agent'`) also go through the whitelist.
+ * Rejection checks in existing modules based on `scope === 'member'` (such as service address
+ * registration) would allow new scopes, so instead of patching checks module by module, the
+ * assembly layer's `gate(principal, type, msg)` guards this in a single place.
  *
- * - **控制连接**（`scope: 'service'`、没有 `tenantId`，握手凭服务私钥得到）：只能发目录模块的 `hosted.watch`、`hosted.ticket`、
- *   `hosted.demand`、`hosted.delegate.verify`（最后一个只对云端 Agent 服务开，目录模块里判）；
- * - **数据连接**（凭目录模块签的票据进某个项目）：按服务名查 `SERVICE_ALLOW`：渲染服务一行；云端 Agent 代成员开的连接一行
- *   （`docs/plan/cloud-agent-contract.md` 第 4.4 节，只读成员的另拒改项目的两种）。云端 Agent 服务只用来发布预渲染重试计划的连接
- *   （principal 带 `purpose: 'publish'`）查另一张表 `SERVICE_PUBLISH_ALLOW`，`task.publish` 只许带片段清单的计划任务。
- *   三种消息另看内容：`content.put` 只许写预渲染清单，`auth.ticket` 只许要素材票据（要连接票据等于给自己换角色），
- *   `task.publish` 不许发布计划任务（渲染服务只发布自己切分出来的细任务）；云端 Agent 代成员的连接：`content.*` 只许
- *   `card-source` 一类（建卡改卡），`auth.ticket` 只许素材票据、读写的要成员本人有读写权限（导入素材，不超过成员本人）；
- * - 不是服务身份的连接发 `hosted.*` 一律 `forbidden`。
+ * - **Control connection** (`scope: 'service'`, no `tenantId`, obtained during handshake via
+ *   service private key): can only send catalog module's `hosted.watch`, `hosted.ticket`,
+ *   `hosted.demand`, and `hosted.delegate.verify` (the last is only open to Cloud Agent service,
+ *   checked in catalog module);
+ * - **Data connection** (enters a project via a ticket signed by catalog module): looks up
+ *   `SERVICE_ALLOW` by service name: one row for render service; one row for connections opened by
+ *   Cloud Agent on behalf of members (`docs/plan/cloud-agent-contract.md` section 4.4, with two
+ *   types that modify projects separately rejected for read-only members). Connections opened by
+ *   Cloud Agent service solely to publish prerender retry plans (principal carries
+ *   `purpose: 'publish'`) look up another table `SERVICE_PUBLISH_ALLOW`, where `task.publish` only
+ *   permits plan tasks with clip manifests.
+ *   Three message types also inspect content: `content.put` only allows writing prerender
+ *   manifests, `auth.ticket` only allows requesting asset tickets (requesting connection tickets
+ *   equals changing roles for oneself), `task.publish` does not allow publishing plan tasks
+ *   (render service only publishes fine-grained tasks split by itself); connections on behalf of
+ *   members by Cloud Agent: `content.*` only allows `card-source` kind (create/edit cards),
+ *   `auth.ticket` only allows asset tickets, and read-write ones require the member themselves to
+ *   have read-write permission (import media, not exceeding member's own permissions);
+ * - Connections without a service identity sending `hosted.*` are always `forbidden`.
  *
- * 纯函数，不引任何模块。
+ * Pure function, imports no modules.
  */
 
-/** 控制连接能发的消息 */
+/** Messages that control connections can send */
 export const SERVICE_CONTROL_TYPES = Object.freeze(['hosted.watch', 'hosted.ticket', 'hosted.demand', 'hosted.delegate.verify']);
 
-/** 渲染服务能往内容库写的类别（预渲染清单） */
+/** Kinds that render service can write to content store (prerender manifests) */
 export const RENDER_CONTENT_KINDS = Object.freeze(['snapshot-manifest', 'render-manifest']);
 
-/** 服务名 → 数据连接能发的消息类型 */
+/** Service name → message types that data connections can send */
 export const SERVICE_ALLOW = Object.freeze({
   render: Object.freeze([
-    // 报到、认领、交付
+    // Check in, claim, deliver
     'node.hello', 'node.active', 'queue.watch', 'publisher.hello', 'task.publish',
     'task.claim', 'task.progress', 'task.complete', 'task.fail', 'task.release',
-    // 读项目
+    // Read project
     'project.open', 'project.close', 'project.snapshot.get',
-    // 读内容库；写只许预渲染清单（下面按 kind 再判）
+    // Read content store; write only permits prerender manifests (checked below by kind)
     'content.get', 'content.list', 'content.watch', 'content.put',
-    // 素材服务的地址与票据（票据只许 asset，下面再判）
+    // Asset service address and tickets (tickets only permit asset, checked below)
     'service.watch', 'auth.ticket',
   ]),
-  // 云端 Agent 代成员开的连接（`docs/plan/cloud-agent-contract.md` 第 4.4 节）：身份是成员的，能做的不超过这位成员，
-  // 而且只有下面这几种。只读成员（`access: 'r'`）的连接另拒 `AGENT_WRITE_TYPES`
+  // Connections opened by Cloud Agent on behalf of members (`docs/plan/cloud-agent-contract.md`
+  // section 4.4): identity is member, permissions cannot exceed this member, and only the following
+  // types are allowed. Connections for read-only members (`access: 'r'`) separately reject
+  // `AGENT_WRITE_TYPES`
   agent: Object.freeze([
-    // 读项目、收别人的改动
+    // Read project, receive others' changes
     'project.open', 'project.close',
-    // 改项目（只读的拒）
+    // Modify project (rejected for read-only)
     'project.op', 'project.upload',
-    // 工具调用事件（事件模块借内容库写 event-detail，不经这条连接直接写内容库）
+    // Tool invocation events (events module writes event-detail via content store without writing
+    // directly to content store over this connection)
     'events.create', 'events.complete', 'events.text',
-    // 在场状态：别的成员「正在编辑」的片段、Agent 自己的范围、「这一轮在不在跑」
+    // Presence: clips other members are "editing", Agent's own scope, "whether running this round"
     'presence.set', 'presence.clear', 'presence.list',
-    // 卡片源码（建卡改卡，`docs/plan/cloud-agent-contract.md` 第 9.4 节）：内容库里只许碰 `card-source` 这一类（下面按 kind 再判），写要读写权限
+    // Card source (create/edit cards, `docs/plan/cloud-agent-contract.md` section 9.4): only allowed to
+    // touch the `card-source` kind in content store (checked below by kind); write requires read-write
+    // permission
     'content.get', 'content.list', 'content.put',
-    // 素材票据（导入素材、配音等产物入库）：只许 asset，要读写票据得成员本人有读写权限（下面再判）
+    // Asset tickets (storing imported media, voiceovers, and other outputs into the library): only
+    // permits asset; requesting read-write tickets requires member's own read-write permissions
+    // (checked below)
     'auth.ticket',
-    // 读本项目的共享成本记录（只读、只有耗时）：发布预渲染之前判轻重，只发重卡（`server/agent/service/render-clips.mjs`「只发重卡」）
+    // Read shared cost records for this project (read-only, duration only): classify as light/heavy
+    // before publishing prerender, only publishing heavy cards (`server/agent/service/render-clips.mjs`
+    // "Only publish heavy cards")
     'cost.list',
   ]),
 });
 
-/** 云端 Agent 代成员的连接能碰的内容库类别 */
+/** Content store kinds that Cloud Agent connections on behalf of members can touch */
 export const AGENT_CONTENT_KINDS = Object.freeze(['card-source']);
 
 /**
- * 以服务自己的身份开、只用来发布预渲染重试计划的连接（principal 的 `purpose: 'publish'`，同上第 16 节 R2）：服务名 → 能发的消息。
- * `task.publish` 只许发带片段清单的计划任务（下面再判）；不能报到成节点、不能认领、不能读写项目与内容库、不能取任何票据。
+ * Connections opened under the service's own identity solely to publish prerender retry plans
+ * (principal's `purpose: 'publish'`, section 16 R2 as above): service name → messages allowed to be
+ * sent.
+ * `task.publish` only permits publishing plan tasks with clip manifests (checked below); cannot
+ * check in as node, cannot claim, cannot read/write projects or content store, and cannot obtain
+ * any tickets.
  */
 export const SERVICE_PUBLISH_ALLOW = Object.freeze({
   agent: Object.freeze(['publisher.hello', 'task.publish', 'task.unsubscribe']),
 });
 
-/** 只读成员的云端 Agent 连接不能发的（改项目的） */
+/** Messages that Cloud Agent connections for read-only members cannot send (modifying projects) */
 export const AGENT_WRITE_TYPES = Object.freeze(['project.op', 'project.upload', 'content.put']);
 
-/** 带片段清单的计划任务的结果键标记（与 `../render-queue/messages.mjs` 的 `CLIPS_KEY_MARK`、`BACKFILL_KEY_MARK` 相同；本文件不引模块，照抄，单测对拍） */
+/**
+ * Result key marks for plan tasks with clip manifests (identical to `CLIPS_KEY_MARK` and
+ * `BACKFILL_KEY_MARK` in `../render-queue/messages.mjs`; this file imports no modules, copied
+ * verbatim, cross-checked in unit tests)
+ */
 export const CLIP_LIST_KEY_MARKS = Object.freeze(['#clips:', '#backfill:']);
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -79,8 +111,8 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 /**
  * @param {object} principal
  * @param {string} type
- * @param {object} [msg] 整条消息（三种消息要看内容）
- * @returns {string | null} 不放行的原因；放行回 null
+ * @param {object} [msg] Entire message (content inspected for three message types)
+ * @returns {string | null} Reason for rejection; returns null if allowed
  */
 export function serviceGate(principal, type, msg) {
   const isService = typeof principal?.service === 'string' || principal?.scope === 'service';
@@ -88,12 +120,14 @@ export function serviceGate(principal, type, msg) {
   const inSpace = typeof principal.tenantId === 'string' && principal.tenantId !== '';
   if (!inSpace) return principal.scope === 'service' && SERVICE_CONTROL_TYPES.includes(type) ? null : 'forbidden';
   if (principal.purpose !== undefined) {
-    // 只用来发布的连接：另一张表，且必须是服务自己的身份
+    // Connections used solely for publishing: separate table, and must be under the service's own identity
     if (principal.purpose !== 'publish' || principal.scope !== 'service') return 'forbidden';
     const publish = Object.hasOwn(SERVICE_PUBLISH_ALLOW, principal.service) ? SERVICE_PUBLISH_ALLOW[principal.service] : null;
     if (!publish || !publish.includes(type)) return 'forbidden';
     if (type === 'task.publish') {
-      // 只许带片段清单的计划任务：种类是 plan、结果键带片段清单的标记、input.clips 是非空数组。别的（细任务、整项目的计划）一律拒
+      // Only permits plan tasks with clip manifests: kind is plan, result key carries clip manifest
+      // marks, input.clips is non-empty array. Others (fine-grained tasks, whole-project plans) are all
+      // rejected
       const tasks = Array.isArray(msg?.tasks) ? msg.tasks : null;
       if (!tasks || tasks.length === 0) return 'forbidden';
       const clipPlan = (t) => isObj(t) && t.kind === 'plan' && typeof t.resultKey === 'string' && CLIP_LIST_KEY_MARKS.some((m) => t.resultKey.includes(m))
@@ -106,14 +140,17 @@ export function serviceGate(principal, type, msg) {
   const accountAgent = principal.realm === 'account' && principal.identityVersion === 2 && principal.service === 'agent';
   if (!allow || (!allow.includes(type) && !(accountAgent && type === 'selection.query'))) return 'forbidden';
   if (principal.service === 'agent') {
-    // 代成员的连接必须是成员身份；只读的不能改项目
+    // Connections on behalf of members must have member identity; read-only cannot modify projects
     if (principal.scope !== 'member') return 'forbidden';
     // v2 writes must pass the live run provider in the assembly gate. A cached
     // page access field cannot revoke a retained run or authorize a new one.
     if (!accountAgent && principal.access !== 'rw' && AGENT_WRITE_TYPES.includes(type)) return 'forbidden';
-    // 内容库只许卡片源码这一类（预渲染清单、事件详情、别的类别都碰不到）
+    // Content store only permits card-source kind (prerender manifests, event details, and other
+    // kinds cannot be touched)
     if (type.startsWith('content.') && !AGENT_CONTENT_KINDS.includes(msg?.kind)) return 'forbidden';
-    // 票据只许素材票据（连接票据、委托都要不到：Agent 不能给自己换角色、续命）；读写票据要成员本人有读写权限
+    // Tickets only permit asset tickets (connection tickets and delegations cannot be requested: Agent
+    // cannot change roles or extend lease for itself); read-write tickets require member's own
+    // read-write permissions
     if (type === 'auth.ticket') {
       if (msg?.kind !== 'asset') return 'forbidden';
       if ((msg.access ?? 'r') !== 'r' && principal.access !== 'rw') return 'forbidden';
@@ -123,7 +160,7 @@ export function serviceGate(principal, type, msg) {
     if (type === 'content.put' && !RENDER_CONTENT_KINDS.includes(msg?.kind)) return 'forbidden';
     if (type === 'auth.ticket' && msg?.kind !== 'asset') return 'forbidden';
     if (type === 'task.publish') {
-      // 形状不对的交给队列回 bad-message；这里只挡计划任务
+      // Malformed messages are left to the queue to return bad-message; here only plan tasks are blocked
       const tasks = Array.isArray(msg?.tasks) ? msg.tasks : [];
       if (tasks.some((t) => isObj(t) && t.kind === 'plan')) return 'forbidden';
     }

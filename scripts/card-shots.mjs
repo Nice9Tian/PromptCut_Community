@@ -1,21 +1,26 @@
 /**
- * 给时间轴上的每一个 clip 各预渲染一张定格图 → out/card-shots/NN-<cardId>.png,再拼一张总览图。
+ * Prerenders a freeze frame for each clip on the timeline → out/card-shots/NN-<cardId>.png,
+ * then stitches an overview image.
  *
- *   node scripts/card-shots.mjs                       # 自己起一份 vite(端口 5245,不写全局 port.json)
- *   node scripts/card-shots.mjs --url http://127.0.0.1:5190   # 用现成的开发服务器
+ *   node scripts/card-shots.mjs                       # starts its own vite (port 5245, no global port.json)
+ *   node scripts/card-shots.mjs --url http://127.0.0.1:5190   # uses an existing dev server
  *   node scripts/card-shots.mjs --at 0.75 --bg "#0b0e14"
  *
- * 和 server/bakery/ 的区别:那边要逐帧确定性,这边只要「看一眼每张卡长什么样」,
- * 所以不上虚拟时间,而是用页面自己的导出钟(__pcSetT + __pcSyncAnims)按固定步长走到目标时刻。
+ * Difference from server/bakery/: that side requires frame-by-frame determinism, while here we
+ * only need to "see what each card looks like", so instead of using virtual time, it uses the
+ * page's own export clock (__pcSetT + __pcSyncAnims) to walk to the target time in fixed steps.
  *
- * 为什么要"走"而不是一步跳过去:__pcSyncAnims 把每条 Web Animation 的 currentTime 钉到
- * 「当前导出毫秒 − 它首次出现那一帧的导出毫秒」。直接跳到卡片中段的话,动画在那一帧才第一次
- * 被看见,锚点就是当刻,target 恒为 0 —— 截出来永远是入场第一帧。所以从 clip.start 挂载,
- * 再按步长推到目标时刻,入场动画才走得完。
+ * Why "walk" instead of jumping in one step: __pcSyncAnims pins each Web Animation currentTime to
+ * "current export ms - export ms of the frame where it first appeared". Jumping straight to the
+ * middle of a card means the animation is first seen on that frame, making that moment the anchor
+ * and target constantly 0: the captured image would always be the first frame of the entrance.
+ * So mounting from clip.start and stepping forward to the target time allows entrance animations
+ * to complete.
  *
- * 导出页把背景设成透明(合成用),定格图直接看会是一张透明底,所以截图前给根元素铺一层 --bg。
+ * The export page sets a transparent background (for compositing); viewing freeze frames directly
+ * would show a transparent backdrop, so a --bg layer is applied to the root element before capture.
  */
-import './lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import './lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import puppeteer from "puppeteer";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -31,14 +36,15 @@ const arg = (name, fallback) => {
 };
 
 const OUT = path.resolve(ROOT, arg("out", path.join("out", "card-shots")));
-// 5199 以前分给过别的会话的 dev server;挑一个没人用的
+// 5199 was previously assigned to dev servers of other sessions; pick an unused one
 const PORT = Number(arg("port", "5245"));
-/** 取 clip 内的相对位置(0~1);入场动画一般 1 秒内走完,0.75 处基本都是稳态 */
+/** Relative position in clip (0~1); entrance animations usually finish in 1s, 0.75 is steady state */
 const AT = Number(arg("at", "0.75"));
-/** 走到目标时刻的步长(秒)。步子太大 Motion 的 JS 动画会跳,太小纯粹是慢 */
+/** Step size to target time (seconds). Too large and Motion JS animations skip, too small is just slow */
 const STEP = Number(arg("step", String(1 / 15)));
 const BG = arg("bg", "#0b0e14");
-// 不指定就用 puppeteer 自带的 Chrome(原来写死的是云端 Linux 沙箱的路径,本机上起不来)
+// If unspecified, use puppeteer's bundled Chrome (previously hardcoded to the cloud Linux sandbox
+// path, which fails to launch locally)
 const CHROME = process.env.PC_CHROME_PATH || undefined;
 
 const log = (...a) => console.log("[card-shots]", ...a);
@@ -50,9 +56,9 @@ async function waitHttp(target, ms) {
     try {
       if ((await fetch(target)).ok) return;
     } catch {
-      // 还没起来
+      // Not up yet
     }
-    if (Date.now() > deadline) throw new Error(`等不到 ${target}`);
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${target}`);
     await wait(300);
   }
 }
@@ -61,9 +67,10 @@ let vite = null;
 async function startVite() {
   const bin = path.join(ROOT, "node_modules", "vite", "bin", "vite.js");
   /*
-   * TEMP / TMP 指到一个单独的目录再起:dev server 一起来就把自己的端口写进 %TEMP%\promptcut\port.json,
-   * 没指定端口的 MCP 客户端照它去连 —— 不隔开的话,跑一次截图就把用户正在用的编辑台的 AI 连接指歪了
-   * (见 docs/guides/compare-pitfalls.md 第 8 条)。
+   * Point TEMP / TMP to a separate directory before launching: as soon as the dev server starts, it
+   * writes its port to %TEMP%\promptcut\port.json, and MCP clients without an explicit port connect
+   * to it: without isolation, taking screenshots once would misdirect the AI connection of the
+   * editor the user is actively using (see item 8 of docs/guides/compare-pitfalls.md).
    */
   const tmp = path.join(os.tmpdir(), "promptcut-card-shots");
   await fs.mkdir(tmp, { recursive: true });
@@ -75,7 +82,7 @@ async function startVite() {
   });
   const target = `http://127.0.0.1:${PORT}/`;
   await waitHttp(target, 90000);
-  log(`vite 就绪 ${target}`);
+  log(`vite ready ${target}`);
   return target;
 }
 
@@ -95,7 +102,8 @@ async function main() {
       "--hide-scrollbars",
       "--force-device-scale-factor=1",
       "--font-render-hinting=none",
-      // WebGL 走软件光栅(terminal-3d 那类 three.js 卡片没它会渲成空画布,而且不报错)
+      // WebGL uses software rasterization (three.js cards like terminal-3d render an empty canvas
+      // without it, with no errors raised)
       "--enable-unsafe-swiftshader",
     ],
   });
@@ -112,14 +120,14 @@ async function main() {
   await page.waitForFunction(() => window.__pcReady === true, { timeout: 60000, polling: 100 });
 
   const timeline = await page.evaluate(() => window.__pcTimeline);
-  log(`时间轴 ${timeline.width}x${timeline.height} ${timeline.duration}s,共 ${timeline.clips.length} 个 clip`);
+  log(`timeline ${timeline.width}x${timeline.height} ${timeline.duration}s, ${timeline.clips.length} clips`);
 
   const shots = [];
   for (const [i, clip] of timeline.clips.entries()) {
     const target = clip.start + (clip.end - clip.start) * AT;
     const before = errors.length;
 
-    // 从 clip 起点重新挂载,再一步步推到目标时刻(理由见文件头)
+    // Remount from the clip start, then step forward to target time (see file header for rationale)
     await page.evaluate(
       async (start, end, step, bg) => {
         document.documentElement.style.background = bg;
@@ -146,11 +154,11 @@ async function main() {
     const size = (await fs.stat(file)).size;
     shots.push({ name, file, clip, target, size });
     const bad = errors.slice(before);
-    log(`${name}  t=${target.toFixed(2)}s  ${(size / 1024).toFixed(0)}KB${bad.length ? `  ⚠ ${bad.length} 个报错` : ""}`);
+    log(`${name}  t=${target.toFixed(2)}s  ${(size / 1024).toFixed(0)}KB${bad.length ? `  ⚠ ${bad.length} errors` : ""}`);
     for (const e of bad) log(`    ${e.slice(0, 160)}`);
   }
 
-  // 总览图:把 26 张塞进一个网格再截一次
+  // Overview image: fit all 26 images into a grid and screenshot once more
   const rows = await Promise.all(
     shots.map(async (s) => ({
       title: `${s.clip.cardId}  ·  ${s.clip.start}–${s.clip.end}s`,
@@ -175,11 +183,11 @@ async function main() {
   await sheet.evaluate(() => Promise.all(Array.from(document.images).map((i) => i.decode())));
   const sheetFile = path.join(OUT, "_contact-sheet.png");
   await sheet.screenshot({ path: sheetFile, fullPage: true });
-  log(`总览图 ${sheetFile}`);
+  log(`contact sheet ${sheetFile}`);
 
   await browser.close();
   vite?.kill();
-  log(`完成:${shots.length} 张,共 ${errors.length} 条页面报错`);
+  log(`done: ${shots.length} shots, ${errors.length} page errors in total`);
 }
 
 main().catch(async (e) => {

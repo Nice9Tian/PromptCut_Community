@@ -1,9 +1,12 @@
 /**
  * Shared sound/AV WAV ingest. Bytes go through the ordinary asset-service media protocol.
  *
- * 写票据从哪来:旧共享项目在页面的文档连接上签(`auth.ticket { kind: 'asset', access: 'rw' }`);
- * 账号云端项目里那条消息被拒,用账号会话签发的素材票据(进项目时已经接好,`assetTiers.ts` 的 `remoteAssetTicketInfo`,
- * 读写同一张,只读成员拿它写会被素材服务拒)。账号项目的请求不带网站的登录 Cookie(素材服务见到 Cookie 就拒)。
+ * Where the write ticket comes from: an old shared project signs it on the page's document connection
+ * (`auth.ticket { kind: 'asset', access: 'rw' }`); in an account cloud project that message is rejected, so use the
+ * asset ticket issued by the account session (already set up when entering the project, `remoteAssetTicketInfo` in
+ * `assetTiers.ts`, one ticket for both read and write; a read-only member writing with it is rejected by the asset
+ * service). Requests of an account project do not carry the website's login cookie (the asset service rejects
+ * a request as soon as it sees the cookie).
  */
 import { getState } from "../../store/project";
 import { createSnapUploader, sha256Hex } from "../../online/snapUploader";
@@ -43,7 +46,7 @@ function generatedAudioService(signal: AbortSignal) {
   return { uploader, stillCurrent };
 }
 
-/** 缓存复用也必须核对当前素材服务字节，不只相信项目内的旧引用。 */
+/** A cache hit must also check the bytes in the current asset service, not just trust the old reference in the project. */
 export async function hasGeneratedAudio(hash: string, signal: AbortSignal): Promise<boolean> {
   const { uploader, stillCurrent } = generatedAudioService(signal);
   const exists = await uploader.has("media", hash);

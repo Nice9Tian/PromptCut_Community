@@ -1,23 +1,23 @@
 /*
- * 「流光」主按钮：官网首页那颗「打开网页版 / Open on Web」的样子，存成一份固定的样式。
+ * The "Flow" primary button: the look of the "Open web version / Open on Web" button on the official website home page, saved as one fixed style.
  *
- * 出处：VisuHive 仓库 `site/assets/home.css` 的 `.btn` / `.btn-brand`
- *（用户 2026-10-23：「把官网这个按钮保存成固定样式，替换手机版和桌面版登录界面的那个『登录』按钮。」）
+ * Source: `.btn` / `.btn-brand` in `site/assets/home.css` of the VisuHive repository
+ * (user, 2026-10-23: "Save this button of the official website as a fixed style, and replace the 'Log in' button on the login screens of the mobile app and the desktop app.")
  *
- * 三件事合起来才是那颗按钮：
- *   1. 品牌渐变在按钮里**缓缓流动** —— 渐变首尾同色、横向铺两倍宽，挪一整幅正好接得上，7 秒一轮；
- *   2. 每隔几秒有一道**高光斜着扫过**，光带垫在文字下面（按钮自成层叠上下文，光带 z-index −1）；
- *   3. 顶上一条很淡的**内描边**，让它看着是凸的。
+ * Three things together make up that button:
+ *   1. The brand gradient **flows slowly** inside the button: the gradient has the same color at both ends and is laid out at double width horizontally, so shifting by one full span joins up seamlessly, one cycle every 7 seconds;
+ *   2. Every few seconds a **highlight sweeps across diagonally**, with the light band placed under the text (the button forms its own stacking context, and the band has z-index −1);
+ *   3. A very faint **inner outline** along the top, which makes it look raised.
  *
- * **颜色是写死的**，不跟皮肤走 —— 用户要的就是「固定样式」。取的是官网深色那组：
- * `--accent` #00dbdb、`--accent-2` #6f69fb、`--accent-fg` #111016。
- * 代价：换皮肤（`src/skins/` 十套）时这颗键不跟着变，仍是青→紫。要它跟着变，
- * 把下面的 #00dbdb / #6f69fb / #111016 换回 `var(--ui-accent)` 一类即可。
+ * **The colors are hardcoded** and do not follow the skin: the user wanted exactly a "fixed style". They are taken from the official website's dark set:
+ * `--accent` #00dbdb, `--accent-2` #6f69fb, `--accent-fg` #111016.
+ * Cost: when the skin is switched (`src/skins/`, ten sets) this button does not change with it and stays cyan→purple. To make it follow,
+ * just change #00dbdb / #6f69fb / #111016 below back to something like `var(--ui-accent)`.
  *
- * **几何尺寸不照搬官网那颗**（46px 高、8px 圆角、15.5px 字）：登录表单里的按钮要和输入框那一套
- * 对齐（9px 圆角、13px 字、10px 14px 内边距），所以这里只换「长相」，大小仍由各自的登录样式定。
+ * **The geometry is not copied from the website's button** (46px high, 8px radius, 15.5px font): the button in the login form has to match the set used by the input boxes
+ * (9px radius, 13px font, 10px 14px padding), so only the "look" is swapped here, and the size is still decided by each login style.
  *
- * 用法：给元素加 `.ps-brand-btn`；两个登录页的那颗键已经在下面的选择器里点名了，不用改标记。
+ * Usage: add `.ps-brand-btn` to the element; the buttons of the two login pages are already named in the selectors below, so no markup change is needed.
  */
 
 .ps-brand-btn,
@@ -33,7 +33,7 @@
   transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.18s, filter 0.18s;
 }
 
-/* 斜着扫过去的那道高光 */
+/* The highlight that sweeps across diagonally */
 .ps-brand-btn::after,
 .ps-login .ps-login-form .ps-primary-btn::after,
 .pcm .ps-m-login-form .btn.primary::after {
@@ -59,13 +59,13 @@
 }
 
 /*
- * 按不动的时候：停掉流动和扫光（那是「可以点」的信号，灰着还在动会让人以为在加载），
- * 并且**换成平的一块**，不是把渐变调半透明。
+ * When it cannot be pressed: stop the flow and the sweep (those signal "clickable", and moving while gray would make people think it is loading),
+ * and **switch to a flat block**, instead of making the gradient semi-transparent.
  *
- * 原来沿用的是各自登录样式里的 `:disabled { opacity: .5 }`。那一条配纯色按钮没问题，
- * 配这个渐变就成了一块「颜色还在、整体发虚」的东西，看着像没加载好、或者像透明度被调错了
- * （用户 2026-10-23 看到的就是这个：「感觉透明度只有 60% 的样子」）。
- * 改成不透明的灰底 + 淡字：一眼就是「还不能点」，填完账号密码再亮起来。
+ * Previously it reused the `:disabled { opacity: .5 }` from each login style. That works fine with a solid-color button,
+ * but with this gradient it became something "with the color still there but faded overall", which looks like it has not finished loading or like the opacity was set wrong
+ * (this is what the user saw on 2026-10-23: "feels like the opacity is only about 60%").
+ * Changed to an opaque gray background + faint text: it reads at a glance as "not clickable yet", and lights up once the account and password are filled in.
  */
 .ps-brand-btn:disabled,
 .ps-login .ps-login-form .ps-primary-btn:disabled,
@@ -92,7 +92,7 @@
   100% { transform: translateX(340%) skewX(-20deg); }
 }
 
-/* 要求减少动效时停在静止的渐变上（左半幅正好是青→紫，就是官网那颗静止时的样子） */
+/* When reduced motion is requested, rest on a static gradient (the left half of the gradient is exactly cyan→purple, which is how the website's button looks at rest) */
 @media (prefers-reduced-motion: reduce) {
   .ps-brand-btn,
   .ps-brand-btn::after,

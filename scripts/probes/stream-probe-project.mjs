@@ -1,31 +1,44 @@
 /**
- * R8 轨道流两支探针(`stream-produce-probe.mjs` / `stream-play-probe.mjs`)共用的项目和生产步骤。
+ * Shared project and production steps for the two R8 track stream probes (`stream-produce-probe.mjs` /
+ * `stream-play-probe.mjs`).
  *
- * 三张重卡(都是审阅表里 `independent` 的 stateful 卡,没有成本记录时按声明进预渲染集合):
- *   - 粒子背景铺满全屏(最底层),0～5 秒 —— 10 个分段,「连续生产 10 个分段只付一次换页」那一条靠它;
- *   - 金句药丸,框 640×360 摆在画面中间,和粒子重叠 —— 隔离那一条靠它(药丸是主题蓝的实心胶囊,
- *     绿色粒子流里不该有蓝色);它的框比画面小,收紧矩形那一条也靠它;
- *   - 实体名牌(`entity-chips`,框 800×450),0.5～2 秒 —— 入点不在分段边界上;
- *     (原来放的是通用 Lottie 卡;Lottie 改成 remotion 式〔`frameMode: "direct"`〕以后按声明是轻卡,没有成本记录时不进预渲染集合,
- *     所以换成现在仍声明 `stateful`、审阅表里 `independent` 的 `entity-chips`)
- *   - 里程表(毛玻璃 HUD,`belowDependent`)压在粒子背景左下角,0～5 秒 —— 「毛玻璃卡叠在流
- *     `<canvas>` 上时模糊正确」那一条靠它:播放时它照常活渲,模糊的是下面那块流画布。
- *     **这两支探针里它不进流**:依赖下层的卡判重时现在有自己的流(`kind: below`),而这里要的正是「它活渲着、压在别的卡的流上」
- *     (产品里它判轻时就是这样),所以下面把这种流关掉(`PROMPTCUT_TEST_BELOW_STREAMS=0`,只影响引入本文件的探针进程)。
- *     这种流自己的产与贴在 `stream-below-probe.mjs`、`stream-below-stage-probe.mjs` 里验。
+ * Three heavy cards (all are stateful cards marked `independent` in review table; enter prerender set
+ * by declaration when there are no cost records):
+ *   - Particle background filling full screen (bottommost layer), 0-5 seconds: 10 segments, relied on
+ *     for "continuous production of 10 segments pays only one page turn";
+ *   - Punchline pill, 640×360 box centered in frame, overlapping with particles: relied on for isolation
+ *     (pill is a solid pill in theme blue, blue should not appear in green particle stream); its box is
+ *     smaller than the frame, also relied on for tight rectangle;
+ *   - Entity chips (`entity-chips`, 800×450 box), 0.5-2 seconds: in point not on segment boundary;
+ *     (originally used generic Lottie card; after Lottie was changed to remotion-style
+ *     [`frameMode: "direct"`] it is declared as light card and does not enter prerender set without
+ *     cost records, so replaced with `entity-chips` which still declares `stateful` and is
+ *     `independent` in review table);
+ *   - Odometer (frosted-glass HUD, `belowDependent`) pressed on bottom-left of particle background,
+ *     0-5 seconds: relied on for "frosted-glass card overlaid on stream `<canvas>` blurs correctly":
+ *     it live renders as usual during playback, blurring the stream canvas below.
+ *     **It does not enter streams in these two probes**: below-dependent cards have their own stream
+ *     (`kind: below`) when classified as heavy, whereas what is needed here is precisely "it live renders,
+ *     pressed over another card's stream" (as in production when classified as light), so disable such
+ *     streams below (`PROMPTCUT_TEST_BELOW_STREAMS=0`, affects only probe processes importing this file).
+ *     Producing and pasting this kind of stream is verified in `stream-below-probe.mjs` and
+ *     `stream-below-stage-probe.mjs`.
  *
- * **没有用两张粒子卡**:同一时刻挂两张粒子卡时,后挂的那张 `tsParticles.load` 会把先挂的那张的容器
- * 当成同一个 id 销毁掉(容器 id 取自引擎的共享随机数;实测后挂那张一挂上,前一张的 `<canvas>` 就被
- * `CanvasManager.destroy` 摘掉)—— 这是 `particles.tsx` 既有的问题,导出里也一样,和轨道流无关,见报告。
+ * **Did not use two particle cards**: when two particle cards are mounted at the same time, the one
+ * mounted later will have `tsParticles.load` destroy the container of the earlier one as the same id
+ * (container id comes from engine's shared random number; testing showed as soon as the later one mounts,
+ * `<canvas>` of the earlier one is detached by `CanvasManager.destroy`): this is an existing issue in
+ * `particles.tsx`, same in export, unrelated to track streams, see report.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import { FramePipeline } from '../../server/frame-pipeline.mjs';
 
-// 见文件头:这两支探针里毛玻璃卡不进流(活渲着压在流上)
+// See file header: frosted-glass card does not enter streams in these two probes (live renders
+// pressed on streams)
 process.env.PROMPTCUT_TEST_BELOW_STREAMS = '0';
 
 export const PROJECT = {
-  id: 'r8-stream-probe', name: 'R8 轨道流探针', width: 1920, height: 1080, fps: 30, duration: 5,
+  id: 'r8-stream-probe', name: 'R8 track stream probe', width: 1920, height: 1080, fps: 30, duration: 5,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-glass', name: 'glass', hidden: false, clips: [
@@ -49,26 +62,29 @@ export async function until(fails, label, fn, timeoutMs, everyMs = 500) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await new Promise(r => setTimeout(r, everyMs));
   }
 }
 
 /**
- * 在本进程里起一个 `FramePipeline`(和预渲染进程同一份代码),灌项目,等全部流满密度。
- * 回 `{ pipeline, producer, layers, produceMs }`;`layers` 是就绪索引发出来的 `kind: 'stream'` 层。
+ * Spins up a `FramePipeline` in this process (same code as prerender process), feeds project, and
+ * waits for all streams to reach full density.
+ * Returns `{ pipeline, producer, layers, produceMs }`; `layers` are `kind: 'stream'` layers emitted
+ * by ready index.
  */
 export async function produceStreams({ origin, root, project = PROJECT, fails }) {
   const pipeline = new FramePipeline({ root, origin: () => origin, interactive: true, playhead: () => null });
-  // 分段字节由探针自己的 http 服务发(`handleStreamRequest`),等于读口已经接上
+  // Segment bytes are served by probe's own HTTP server (`handleStreamRequest`), meaning read endpoint
+  // is connected
   pipeline.streamProducer().attachRoute();
   const layers = [];
   pipeline.readyIndex.subscribe(message => { if (message.type === 'layer' && message.kind === 'stream') layers.push(message); });
   const started = Date.now();
   await pipeline.preload(project);
-  const producer = await until(fails, '生产者起来', () => pipeline._streams?.streams.size ? pipeline._streams : null, 120000);
+  const producer = await until(fails, 'producer is up', () => pipeline._streams?.streams.size ? pipeline._streams : null, 120000);
   if (!producer) return { pipeline, producer: null, layers, produceMs: Date.now() - started };
-  const done = await until(fails, '全部分段满密度', () => {
+  const done = await until(fails, 'all segments at full density', () => {
     const status = producer.status();
     if (!status.streams.length) return null;
     for (const s of status.streams) {
@@ -79,7 +95,7 @@ export async function produceStreams({ origin, root, project = PROJECT, fails })
   return { pipeline, producer: done ? producer : null, layers, produceMs: Date.now() - started };
 }
 
-/** 就绪索引里每个 clipId 最后一条 `stream` 层 */
+/** Last `stream` layer for each clipId in ready index */
 export function latestLayers(layers) {
   const byClip = new Map();
   for (const m of layers) byClip.set(m.clipId, m);

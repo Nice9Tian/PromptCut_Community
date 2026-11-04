@@ -1,28 +1,28 @@
-"""YuNet 人脸检测（ONNX / onnxruntime）。
+"""YuNet face detection (ONNX / onnxruntime).
 
-权重是 OpenCV Zoo 的 face_detection_yunet_2023mar.onnx，**MIT**（opencv_zoo 根仓库
-是 Apache-2.0，但 models/face_detection_yunet/ 目录自带一份 MIT LICENSE，
-Copyright (c) 2020 Shiqi Yu <shiqi.yu@gmail.com>，以目录内的为准；权重的训练上游
-ShiqiYu/libfacedetection.train 是 BSD-3-Clause）。取法见 tools/subject/README.md。
+The weights are OpenCV Zoo's face_detection_yunet_2023mar.onnx, **MIT** (the opencv_zoo root repo
+is Apache-2.0, but the models/face_detection_yunet/ directory ships its own MIT LICENSE,
+Copyright (c) 2020 Shiqi Yu <shiqi.yu@gmail.com>, the one inside the directory prevails; the training upstream of the weights
+ShiqiYu/libfacedetection.train is BSD-3-Clause). See tools/subject/README.md for how to obtain them.
 
-许可证声明（本文件是第三方代码的移植，不是原创）：
-    本模块的前后处理移植自 OpenCV 的 FaceDetectorYN
-    （https://github.com/opencv/opencv ，modules/objdetect/src/face_detect.cpp），
-    Apache License 2.0。全文见同目录的 LICENSE-opencv，登记见
-    desktop/THIRD-PARTY-LICENSES.md 第 7.2 节。
-    改动（Apache-2.0 §4(b) 要求注明）：用 numpy 重写，**不依赖 cv2**；letterbox 自己实现；
-    分数阈值由 OpenCV 默认的 0.9 改为 0.6（NMS 阈值 0.3 与上游相同）；输出改成
-    Python dict 而不是 OpenCV 那套 Mat。上游没有可保留的版权行（仓库根 LICENSE 就是 Apache-2.0
-    全文本身、无版权行，face_detect.cpp 文件头也只指向 LICENSE，仓库没有 NOTICE 文件）。
+License notice (this file is a port of third-party code, not an original work):
+    The pre- and post-processing of this module is ported from OpenCV's FaceDetectorYN
+    (https://github.com/opencv/opencv , modules/objdetect/src/face_detect.cpp),
+    Apache License 2.0. See LICENSE-opencv in the same directory for the full text, registered in
+    desktop/THIRD-PARTY-LICENSES.md section 7.2.
+    Changes (required to be stated by Apache-2.0 §4(b)): rewritten with numpy, **no cv2 dependency**; letterbox implemented in-house;
+    the score threshold changed from OpenCV's default 0.9 to 0.6 (the NMS threshold 0.3 is the same as upstream); output changed to
+    Python dicts instead of OpenCV's Mat. Upstream has no copyright line to retain (the repo root LICENSE is the Apache-2.0
+    full text itself with no copyright line, the face_detect.cpp file header only points to LICENSE, and the repo has no NOTICE file).
 
-之所以不用 cv2：用户机器上没有 opencv，也不值得为了一个 resize 往拓展包里塞 40 MB。
-移植要点：
+The reason cv2 is not used: the user's machine has no opencv, and it is not worth stuffing 40 MB into the extension pack just for one resize.
+Porting notes:
 
-  - 输入是 BGR、NCHW、float32，**不归一化**（就是 0~255 的原值）；
-  - 这份 ONNX 的输入维度写死 1×3×640×640，所以要 letterbox 到 640；
-  - 输出是 stride 8/16/32 三组 cls/obj/bbox/kps，按 (r * cols + c) 展平；
-  - 解码 cx=(c+dx)*s, cy=(r+dy)*s, w=exp(dw)*s, h=exp(dh)*s；
-  - 分数是 sqrt(cls*obj)，不是两者之一。
+  - Input is BGR, NCHW, float32, **not normalized** (the raw 0~255 values);
+  - This ONNX has its input dimensions hard-coded to 1×3×640×640, so letterbox to 640 is needed;
+  - Output is three groups of cls/obj/bbox/kps for strides 8/16/32, flattened by (r * cols + c);
+  - Decode cx=(c+dx)*s, cy=(r+dy)*s, w=exp(dw)*s, h=exp(dh)*s;
+  - The score is sqrt(cls*obj), not either one of the two.
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ MODEL_FILENAME = "yunet.onnx"
 INPUT_SIZE = 640
 STRIDES = (8, 16, 32)
 
-# 阈值来自契约：0.6 比 OpenCV 默认的 0.9 松，因为这里要的是「大致知道脸在哪」，
-# 漏一张侧脸比多一个误检更伤 —— 卡片压到脸上是用户当场就能看见的错。
+# The threshold comes from the contract: 0.6 is looser than OpenCV's default 0.9, because all we need here is "roughly knowing where the face is",
+# and missing a profile face hurts more than one extra false detection: a card landing on a face is a mistake the user sees on the spot.
 DEFAULT_SCORE = 0.6
 DEFAULT_NMS = 0.3
 
@@ -47,7 +47,7 @@ _SESSIONS: Dict[str, Any] = {}
 
 
 def load_session(model_path: str):
-    """会话按路径缓存：每个样本调一次 detect，重开会话的话光初始化就占满耗时。"""
+    """Sessions are cached by path: detect is called once per sample, and reopening a session each time would let initialization alone eat up all the time."""
     sess = _SESSIONS.get(model_path)
     if sess is None:
         import onnxruntime as ort
@@ -60,7 +60,7 @@ def load_session(model_path: str):
 
 
 def _priors(size: int, stride: int):
-    """某个 stride 上每个格子的 (列, 行)，展平顺序和模型输出一致（行优先）。"""
+    """The (column, row) of every cell at a given stride, flattened in the same order as the model output (row-major)."""
     cols = size // stride
     rows = size // stride
     c = np.tile(np.arange(cols, dtype=np.float32), rows)
@@ -69,7 +69,7 @@ def _priors(size: int, stride: int):
 
 
 def nms(boxes: np.ndarray, scores: np.ndarray, thresh: float) -> List[int]:
-    """标准 IoU NMS。boxes 是 [N,4] 的 xywh。"""
+    """Standard IoU NMS. boxes is an [N,4] array of xywh."""
     if len(boxes) == 0:
         return []
     x1 = boxes[:, 0]
@@ -97,7 +97,7 @@ def nms(boxes: np.ndarray, scores: np.ndarray, thresh: float) -> List[int]:
 
 
 def _decode(outputs: Dict[str, np.ndarray], score_threshold: float):
-    """三个 stride 的原始输出 → (boxes[N,4] xywh, scores[N])，坐标在 640 画布上。"""
+    """Raw outputs of the three strides → (boxes[N,4] xywh, scores[N]), with coordinates on the 640 canvas."""
     all_boxes: List[np.ndarray] = []
     all_scores: List[np.ndarray] = []
     for stride in STRIDES:
@@ -128,15 +128,15 @@ def detect(frames: List[np.ndarray], model_path: str,
            score_threshold: float = DEFAULT_SCORE,
            nms_threshold: float = DEFAULT_NMS,
            **_kw: Any) -> List[List[Dict[str, Any]]]:
-    """每帧一个框列表；坐标是**传入帧**的像素，label 恒为 "face"。"""
+    """One box list per frame; coordinates are in pixels of the **passed-in frame**, and label is always "face"."""
     session = load_session(model_path)
     names = [o.name for o in session.get_outputs()]
     results: List[List[Dict[str, Any]]] = []
 
     for frame in frames:
         canvas, scale = letterbox(frame, INPUT_SIZE)
-        # BGR NCHW，不归一化。transpose 出来是个视图，得 ascontiguousarray 一下：
-        # onnxruntime 收到非连续数组时的行为不写在文档里，不赌。
+        # BGR NCHW, not normalized. The result of transpose is a view, so run it through ascontiguousarray:
+        # The behavior of onnxruntime on non-contiguous arrays is not documented, so we do not gamble on it.
         blob = np.ascontiguousarray(np.transpose(canvas, (2, 0, 1))[None], dtype=np.float32)
         raw = session.run(names, {session.get_inputs()[0].name: blob})
         outputs = dict(zip(names, raw))
@@ -144,7 +144,7 @@ def detect(frames: List[np.ndarray], model_path: str,
         keep = nms(boxes, scores, nms_threshold)
         out: List[Dict[str, Any]] = []
         for i in keep:
-            x, y, w, h = boxes[i] / max(scale, 1e-9)  # 从 640 画布换回传入帧的像素
+            x, y, w, h = boxes[i] / max(scale, 1e-9)  # convert from the 640 canvas back to pixels of the passed-in frame
             out.append({
                 "label": "face",
                 "x": float(x), "y": float(y), "w": float(w), "h": float(h),

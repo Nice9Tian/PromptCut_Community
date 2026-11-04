@@ -1,49 +1,74 @@
 /**
- * 节点按能力过滤可认领的任务(设计 4.3,契约 B.2)。
+ * Nodes filter claimable tasks by capability (Design 4.3, Contract B.2).
  *
- * 文档服务把可见的 `open` 任务摘要推给节点,节点**自己**判断接不接:文档服务只记账,
- * 不测算算力、不分配。按规则号顺序检查,第一条不过就返回:
+ * The document service pushes summaries of visible `open` tasks to nodes, and nodes decide for
+ * **themselves** whether to accept: the document service only keeps records, without estimating
+ * compute or assigning tasks. Checked in rule number order, returns on the first failure:
  *
- *   0  纯浏览器只接本人的任务(服务端已按凭证把关,这里再挡一次)
- *   1  环境指纹、代码版本、卡片源码版本对得上(`plan` 任务只查代码版本:谁认领谁的指纹就是这一版的指纹;
- *      带 `requires.preferNode` 的 `plan` 另查指纹,M6c X4;纯浏览器节点接用户卡、素材效果卡的任务时比的是
- *      `node.cardEnvFingerprint`——环境三项再加在线卡片运行时版本,块 N);`requires.localMedia` 给了就要等于本节点的
- *      `nodeId`(M6c X2 本地档能力闸,`node.nodeId` 由会话补上)
- *   2  要求 `capabilities.streams` 的任务(M6c X1 起的流任务)需要节点报 `streams: true`(没报这一项的旧形状
- *      按 `transcode` 算);
- *      任务自己写了 `requires.transcode: true` 的需要转码能力。只看任务写的这一项,不再按「是流任务」一律要求转码
- *      (`docs/plan/browser-stream-task.md` 第二处):切分方自己的流任务本来就写 `transcode: true`,行为不变;
- *      给浏览器的单卡流那一份写 `transcode: false`(浏览器用自带的编码器压),只凭 `capabilities.streams` 认领
- *   3  用户卡、素材效果卡需要对应能力
- *   4  重度策略(见 `DEFAULT_WEIGHT_POLICY`)
- *   5  内存要求不超过本机可用内存
- *   6  `plan` 任务要 Chrome 和服务端的 card-cache,纯浏览器不接;独立渲染主机(`host`)不接不带片段清单的 `plan` ——
- *      桌面 `plan` 留给发布方自己的节点(M6b,`docs/plan/render-host-contract.md` 第 3、4 节);带片段清单的 `plan`
- *      (在线页面的清单计划、旧页面的预渲染重试计划)`host` 接,用自己的指纹切分(C10 契约第 18 节第 9 条,对 M6c X4 的修改)
- *   7  纯浏览器的快照任务只收共享档(`tier: 'shared'`)的独立卡(`input.compositing === 'independent'`,切分方在浏览器那一份
- *      里写):M7 契约第 3.2 节与 D4(桌面只把独立卡的页面测量帧当预渲染结果;本地档要整场景渲)。不只靠切分方把本地档记 heavy。
- *      画布卡(`input.canvasHeavy`)也不收:浏览器逐帧顺推生成快照,画布卡与桌面 4 帧一批的结果不等价(M7 探针 P2,主会话裁定)
- *      用户卡、素材效果卡的任务(块 N)另要 `requires.cardSources` 非空:用户卡一定有代码身份,空了说明切分方没给身份可对
- *      纯浏览器的流任务同理,只收切分方按浏览器的形状出的单卡流:`input.stream` 是 `{ kind: 'card', plane: 'local' }`、带 `input.bake`、
- *      独立卡、不是画布卡(组流要连摆放一起画,浏览器这条路画不了);不只靠规则 2 挡。
- *      依赖下层的流(`requires.belowDependent: true` 的流任务,`docs/plan/prerender-products-contract.md` 第 5.1 节)要整场景的
- *      下层和素材,纯浏览器一律不收(`below-dependent`);桌面应用和渲染主机照规则 1～5 收
- *   8  仅供测试(M7 契约 D15):节点描述带 `planOnly: true` 时只认领 `plan`、不认领细任务 —— 验收时切分方只切分,
- *      不和纯浏览器抢同一批卡。只在测试环境变量 `PROMPTCUT_TEST_PLAN_ONLY=1` 时由调用方设(`testPlanOnly`),生产不设
+ *   0  Browser-only only claims tasks from its own user (the server already checks credentials;
+ *      blocked again here)
+ *   1  Environment fingerprint, code version, and card source version match (`plan` tasks only check
+ *      code version: whichever node claims it sets the fingerprint for this version; `plan` with
+ *      `requires.preferNode` additionally checks fingerprint, M6c X4; when a browser-only node claims
+ *      tasks for user cards or media effect cards, it compares `node.cardEnvFingerprint`: the three
+ *      environment items plus online card runtime version, Block N); if `requires.localMedia` is
+ *      provided, it must equal this node's `nodeId` (M6c X2 local-tier capability gate, `node.nodeId`
+ *      filled in by session)
+ *   2  Tasks requiring `capabilities.streams` (stream tasks from M6c X1 onward) require the node to
+ *      report `streams: true` (legacy shapes omitting this field are evaluated by `transcode`);
+ *      tasks explicitly specifying `requires.transcode: true` require transcoding capability. Only
+ *      this field on the task is checked, no longer uniformly requiring transcoding because it
+ *      "is a stream task" (`docs/plan/browser-stream-task.md` second place): the splitter's own stream
+ *      tasks already specify `transcode: true`, behavior unchanged; the copy of single-card streams
+ *      sent to browsers specifies `transcode: false` (browser compresses using its built-in encoder),
+ *      claimed solely via `capabilities.streams`
+ *   3  User cards and media effect cards require corresponding capabilities
+ *   4  Weight policy (see `DEFAULT_WEIGHT_POLICY`)
+ *   5  Memory requirement does not exceed available memory on this machine
+ *   6  `plan` tasks require Chrome and server-side card-cache; browser-only does not accept them;
+ *      standalone render hosts (`host`) do not accept `plan` without a clip manifest: desktop `plan`
+ *      is left to the publisher's own node (M6b, `docs/plan/render-host-contract.md` sections 3 and 4);
+ *      `plan` with a clip manifest (manifest plans for online pages, prerender retry plans for old
+ *      pages) is accepted by `host` and split using its own fingerprint (C10 Contract section 18,
+ *      item 9, modifying M6c X4)
+ *   7  Browser-only snapshot tasks only accept standalone cards (`input.compositing === 'independent'`,
+ *      written by the splitter in the browser copy) for the shared tier (`tier: 'shared'`): M7 Contract
+ *      section 3.2 and D4 (desktop only treats page measurement frames of standalone cards as prerender
+ *      output; local tier requires rendering the whole scene). Does not rely solely on the splitter
+ *      marking local tier as heavy.
+ *      Canvas cards (`input.canvasHeavy`) are also not accepted: the browser generates snapshots by
+ *      sequential frame-by-frame forward pass, and results for canvas cards are not equivalent to
+ *      desktop batches of 4 frames (M7 probe P2, lead session ruling).
+ *      Tasks for user cards and media effect cards (Block N) additionally require non-empty
+ *      `requires.cardSources`: user cards always have a code identity; if empty, the splitter provided
+ *      no identity to verify.
+ *      Likewise, browser-only stream tasks only accept single-card streams emitted by the splitter in
+ *      browser shape: `input.stream` is `{ kind: 'card', plane: 'local' }`, has `input.bake`, is a
+ *      standalone card, and is not a canvas card (group streams must be drawn together with layout,
+ *      which this browser path cannot render); not blocked solely by Rule 2.
+ *      Below-dependent streams (stream tasks with `requires.belowDependent: true`,
+ *      `docs/plan/prerender-products-contract.md` section 5.1) require lower layers and assets for the
+ *      whole scene; browser-only never accepts them (`below-dependent`); desktop apps and render hosts
+ *      accept them per Rules 1-5
+ *   8  Test only (M7 Contract D15): When node description includes `planOnly: true`, only claims
+ *      `plan` and does not claim fine-grained tasks: during acceptance checks, the splitter only
+ *      splits and does not compete with browser-only nodes for the same batch of cards. Set by caller
+ *      (`testPlanOnly`) only when test environment variable `PROMPTCUT_TEST_PLAN_ONLY=1`, not set in
+ *      production
  *
- * 纯函数,不改入参。
+ * Pure function, does not mutate arguments.
  */
 import { isListPlan } from '../render-queue/messages.mjs';
 
 /**
- * 各类节点的重度策略表。每一项的取值:
+ * Weight policy table for each node type. Allowed values for each entry:
  *
- *   'all'                        全收
- *   ['light', 'medium', …]       只收列出的重度
- *   'own-or-light'               自己的项目(`ownProjectIds`)全收,别人的只收 `light`
- *   { editing, idle }            按 `node.editing === true` 取其一,再按上面三种解释
+ *   'all'                        Accept all
+ *   ['light', 'medium', …]       Only accept listed weights
+ *   'own-or-light'               Accept all for own projects (`ownProjectIds`), only `light` for others
+ *   { editing, idle }            Pick one by `node.editing === true`, interpret per the three above
  *
- * 节点给了 `weightPolicy` 时,缺的那一类按本表补。
+ * When a node provides `weightPolicy`, any missing category is filled from this table.
  */
 export const DEFAULT_WEIGHT_POLICY = Object.freeze({
   browser: Object.freeze(['light', 'medium']),
@@ -63,11 +88,11 @@ function weightAllowed(rule, weightClass, task, node) {
   if (rule && typeof rule === 'object') {
     return weightAllowed(node.editing === true ? rule.editing : rule.idle, weightClass, task, node);
   }
-  // 认不出的策略:保守,不收
+  // Unrecognized policy: conservative, do not accept
   return false;
 }
 
-/** → `{ ok: true }` | `{ ok: false, rule: 0..8, reason }`。 */
+/** → `{ ok: true }` | `{ ok: false, rule: 0..8, reason }`. */
 export function checkClaimable(task, node) {
   const requires = task?.requires ?? {};
   const capabilities = node?.capabilities ?? {};
@@ -79,17 +104,22 @@ export function checkClaimable(task, node) {
   if (browser && task?.source?.userId !== node.userId) return reject(0, 'other-user');
 
   // 1
-  // 带 preferNode 的 plan(M6c X4)窗口过后给「指纹符合的 pc」,所以也查指纹;没带的旧形状照旧不查
+  // A plan with preferNode (M6c X4) is given to "pc with matching fingerprint" after the window, so
+  // check the fingerprint too; legacy shapes without it still skip the check as before
   const checksFingerprint = !plan || requires.preferNode != null;
-  // 块 N:纯浏览器节点执行用户卡、素材效果卡的任务,指纹按「环境三项 + 在线卡片运行时版本」比;内置卡与别的节点照旧比 envFingerprint。
-  // 浏览器没有 cardEnvFingerprint(没报运行时版本)时拿 envFingerprint 比,与这种任务的指纹自然对不上
+  // Block N: When a browser-only node executes tasks for user cards and media effect cards,
+  // fingerprints are compared by "three environment items + online card runtime version"; built-in
+  // cards and other nodes still compare envFingerprint as before.
+  // When a browser lacks cardEnvFingerprint (did not report runtime version), it compares
+  // envFingerprint, which naturally will not match the fingerprint for such tasks
   const runsCardCode = requires.userCards === true || requires.graphCards === true;
   const nodeFingerprint = browser && runsCardCode && typeof node?.cardEnvFingerprint === 'string' && node.cardEnvFingerprint !== ''
     ? node.cardEnvFingerprint : node?.envFingerprint;
   if (checksFingerprint && requires.envFingerprint != null && requires.envFingerprint !== nodeFingerprint) {
     return reject(1, 'env-fingerprint');
   }
-  // 本地档能力闸(M6c X2):输入里有只在发布方本机的素材(没有内容哈希),只有那个节点接
+  // Local tier capability gate (M6c X2): input contains assets that exist only on publisher's local
+  // machine (no content hash); only that node accepts them
   if (requires.localMedia != null && requires.localMedia !== node?.nodeId) return reject(1, 'local-media');
   if (requires.codeVersion != null && !(node?.codeVersions ?? []).includes(requires.codeVersion)) {
     return reject(1, 'code-version');
@@ -100,10 +130,12 @@ export function checkClaimable(task, node) {
     }
   }
 
-  // 2(M6c X1:任务要求 `capabilities.streams` 时,节点要报 `streams: true`,即本机探到了编码器;
-  //   没报 `streams` 这一项的节点(M6c 之前的形状)按它的转码能力算,报了 `false` 的一律不收)
+  // 2(M6c X1: When a task requires `capabilities.streams`, node must report `streams: true`,
+  //   meaning an encoder was probed on this machine; nodes that did not report `streams`
+  //   (pre-M6c shape) are evaluated by transcoding capability; those reporting `false` are never accepted)
   if (requires.capabilities?.streams === true && (capabilities.streams ?? capabilities.transcode) !== true) return reject(2, 'streams');
-  // 转码只看任务自己写的 `requires.transcode`(browser-stream-task.md 第二处):浏览器的单卡流那一份写的是 false
+  // Transcoding only checks the task's own `requires.transcode` (second place in
+  // `browser-stream-task.md`): the browser copy of a single-card stream sets it to false
   if (requires.transcode === true && !capabilities.transcode) return reject(2, 'transcode');
 
   // 3
@@ -125,18 +157,24 @@ export function checkClaimable(task, node) {
   if (plan && browser) return reject(6, 'plan-on-browser');
   if (plan && host && !isListPlan(task)) return reject(6, 'plan-on-host');
 
-  // 7(M7 D4):纯浏览器只做共享档的独立卡;画布卡(canvasHeavy)逐帧顺推与桌面不等价(探针 P2),重度本来就挡,这里再挡一次
+  // 7(M7 D4): Browser-only only handles shared tier standalone cards; canvas card (`canvasHeavy`)
+  // sequential frame-by-frame forward pass is not equivalent to desktop (probe P2); weight already
+  // blocks it, blocked again here
   if (browser && task?.kind === 'snapshot') {
     if (task.tier !== 'shared') return reject(7, 'tier');
     if (task.input?.compositing !== 'independent') return reject(7, 'not-independent');
     if (task.input?.canvasHeavy === true) return reject(7, 'canvas-heavy');
-    // 块 N:用户卡、素材效果卡一定有代码身份;没有(`cardSources` 为空)说明切分方没给身份可对,浏览器不接
+    // Block N: User cards and media effect cards always have a code identity; having none
+    // (`cardSources` is empty) means the splitter provided no identity to match against; browser
+    // does not accept them
     if (runsCardCode && Object.keys(requires.cardSources ?? {}).length === 0) return reject(7, 'card-source-missing');
   }
 
-  // 7(续):纯浏览器的流任务只收浏览器形状的单卡流(切分方在浏览器那一份里写 `input.stream`、`input.bake`、`input.compositing`)
+  // 7 (cont.): Browser-only stream tasks only accept browser-shaped single-card streams (splitter
+  // writes `input.stream`, `input.bake`, and `input.compositing` in the browser copy)
   if (browser && task?.kind === 'stream') {
-    // 依赖下层的流:要整场景的下层和素材,浏览器节点不产(不看它带没带浏览器形状的输入)
+    // Below-dependent streams: requires lower layers and assets for the whole scene; browser nodes
+    // do not produce them (regardless of whether they carry browser-shaped inputs)
     if (requires.belowDependent === true) return reject(7, 'below-dependent');
     if (task.input?.stream?.kind !== 'card' || task.input.stream.plane !== 'local') return reject(7, 'not-card-stream');
     if (!task.input.bake || typeof task.input.bake !== 'object') return reject(7, 'no-bake-input');
@@ -145,21 +183,23 @@ export function checkClaimable(task, node) {
     if (runsCardCode && Object.keys(requires.cardSources ?? {}).length === 0) return reject(7, 'card-source-missing');
   }
 
-  // 8(M7 D15,仅供测试):只切分、不认领细任务
+  // 8(M7 D15, test only): Only split, do not claim fine-grained tasks
   if (node?.planOnly === true && !plan) return reject(8, 'plan-only');
 
   return pass;
 }
 
 /**
- * 仅供测试(M7 契约 D15):测试环境变量 `PROMPTCUT_TEST_PLAN_ONLY` 为 `1` 时回 true,调用方据此给节点描述带 `planOnly: true`
- * (规则 8)。照 `PROMPTCUT_TEST_ENV_FINGERPRINT` 的写法:只在这个变量存在时生效,生产环境不设。纯函数,环境变量由调用方传。
+ * Test only (M7 Contract D15): Returns true when test environment variable
+ * `PROMPTCUT_TEST_PLAN_ONLY` is `1`; caller uses this to add `planOnly: true` to node description
+ * (Rule 8). Follows `PROMPTCUT_TEST_ENV_FINGERPRINT` pattern: only takes effect when this variable
+ * exists, unset in production. Pure function; environment variable passed by caller.
  */
 export function testPlanOnly(env) {
   return String(env?.PROMPTCUT_TEST_PLAN_ONLY ?? '') === '1';
 }
 
-/** 过滤出本节点能认领的任务,保持原顺序。 */
+/** Filters tasks that this node can claim, preserving the original order. */
 export function filterClaimable(tasks, node) {
   return (tasks ?? []).filter(task => checkClaimable(task, node).ok);
 }

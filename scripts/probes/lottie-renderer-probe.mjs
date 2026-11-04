@@ -1,26 +1,41 @@
 /**
- * 实验:Lottie 用画布来画行不行、和现在用 SVG 来画差多少。
- * 出处:`docs/plan/render-standard.md`「Lottie 动效」(2026-10-10 用户说「你帮我试试能不能用 canvas 办了,同时比较一下 svg 和 canvas 之间的性能差距」)。
+ * Experiment: whether rendering Lottie with canvas works, and how much it differs from current SVG
+ * rendering.
+ * Source: `docs/plan/render-standard.md` "Lottie motion graphics" (2026-10-10 user: "Help me test
+ * whether we can do this with canvas, and compare performance between svg and canvas at the same
+ * time").
  *
  *   node scripts/probes/lottie-renderer-probe.mjs [--assets adrock,bodymovin,gatin,happy2016,navidad] [--frames 90]
- *        [--out <目录>]      存每个素材几帧的对比图(SVG 画的、画布画的各一张)
- *        [--throttle 4] [--cores 2] [--software] [--json <文件>]
+ *        [--out <dir>]       Save comparison images of several frames per asset (one SVG, one canvas)
+ *        [--throttle 4] [--cores 2] [--software] [--json <file>]
  *
- * 做法:真 Chrome 里用项目自带的播放库(`lottie-web`)把同一个素材各建一份——一份画在 SVG 上(现在的做法)、一份画在画布上,
- * 都放进 1920×1080 的框、完整显示(和卡片的缺省一样)。和卡片一样不让它自己播,每一帧调「跳到第几帧并渲染」。
+ * Method: In real Chrome, use the project's built-in player library (`lottie-web`) to create one
+ * instance of the same asset for each renderer: one rendered on SVG (current approach) and one on
+ * canvas, both placed in a 1920×1080 frame and displayed in full (matching the card default).
+ * Like cards, do not let it play automatically; call "jump to frame and render" for every frame.
  *
- * 量四个数(每个素材、两种画法各量):
- *   算一帧       只算「跳到这一帧」这一句的同步耗时。SVG 的画法这时只改了节点,真正画出来在之后;画布的画法这一句里已经画完。
- *   出一帧画面   每个动画帧跳一帧,连续做完的总时间 ÷ 帧数,把浏览器画和合成的时间也算进去(启动参数关了垂直同步与帧率上限)。
- *                这是「当场算、直接显示」的代价。
- *   拿到像素     跳到这一帧并把画面变成一张能送进编码器的位图要多久。这是「压进轨道流」的代价。
- *                画布:画面已经在画布里,直接取。SVG:要先把节点序列化、当成图片解码、再画到画布上。
- *   建好要多久   从拿到 JSON 到能出第一帧。
+ * Measure four metrics (measured for each asset and each rendering method):
+ *   Compute frame    Only count synchronous duration of the "jump to this frame" statement. The
+ *                    SVG method only modifies nodes at this point, with actual drawing happening
+ *                    later; the canvas method finishes drawing within this statement.
+ *   Render frame     Advance one frame per animation frame; total time to complete consecutively ÷
+ *                    frame count, including browser drawing and compositing time (startup flags
+ *                    disable VSync and frame rate caps). This is the cost of "on-demand compute,
+ *                    direct display".
+ *   Acquire pixels   How long it takes to jump to this frame and turn the frame into a bitmap ready
+ *                    for the encoder. This is the cost of "pushing into the track stream".
+ *                    Canvas: frame is already in canvas, read directly. SVG: must serialize nodes,
+ *                    decode as image, and draw onto canvas.
+ *   Setup duration   From receiving JSON to producing the first frame.
  *
- * 再比画面:取 5 帧(头、四分之一、中间、四分之三、尾),两种画法各拿到像素,逐像素比:平均差、差超过 16 的像素占比、透明度的平均差。
- * 两种画法各核对「跳着做和顺着做一样不一样」:先顺着做到这一帧,再从第 0 帧直接跳到这一帧,比两次的像素(随机访问)。
+ * Compare frames next: Sample 5 frames (start, first quarter, middle, third quarter, end), acquire
+ * pixels from both rendering methods, and compare pixel by pixel: mean difference, ratio of pixels
+ * with difference > 16, and mean difference in opacity.
+ * Both rendering methods verify "whether jumping matches sequential execution": first advance
+ * sequentially to this frame, then jump directly from frame 0 to this frame, comparing pixels
+ * between the two runs (random access).
  *
- * 只记录,不判过不过;素材加载失败或画不出来退出码 1。
+ * Record only, do not judge pass/fail; exit code 1 if asset fails to load or cannot be rendered.
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -90,7 +105,8 @@ async function inPage({ name, frames, wantImages }) {
     return { box, anim, buildMs: performance.now() - t0 };
   };
 
-  // 拿到像素:画布直接取;SVG 序列化 → 当图片解码 → 画上画布。两边都落到同一张 1920×1080 的目标画布上
+  // Acquire pixels: canvas reads directly; SVG serializes → decodes as image → draws to canvas.
+  // Both land on the same 1920×1080 target canvas
   const target = new OffscreenCanvas(W, H); const tctx = target.getContext('2d', { willReadFrequently: true });
   const pixelsOf = async (renderer, box) => {
     tctx.clearRect(0, 0, W, H);
@@ -107,13 +123,13 @@ async function inPage({ name, frames, wantImages }) {
   for (const renderer of ['svg', 'canvas']) {
     const m = await build(renderer); made[renderer] = m;
     const { anim, box } = m;
-    // 算一帧(同步)
+    // Compute one frame (synchronous)
     const syncRuns = [];
     for (let r = 0; r < 3; r++) { anim.goToAndStop(0, true); const t0 = performance.now(); for (let f = 0; f < count; f++) anim.goToAndStop(f, true); syncRuns.push((performance.now() - t0) / count); }
-    // 出一帧画面(含画与合成)
+    // Render one frame (including draw and composite)
     const frameRuns = [];
     for (let r = 0; r < 3; r++) { anim.goToAndStop(0, true); await nextFrame(); await nextFrame(); const t0 = performance.now(); for (let f = 0; f < count; f++) { anim.goToAndStop(f, true); await nextFrame(); } frameRuns.push((performance.now() - t0) / count); }
-    // 拿到像素
+    // Acquire pixels
     const px = Math.min(count, 30); const pxRuns = [];
     for (let r = 0; r < 2; r++) { const t0 = performance.now(); for (let f = 0; f < px; f++) { anim.goToAndStop(f, true); await pixelsOf(renderer, box); } pxRuns.push((performance.now() - t0) / px); }
     out[renderer] = { buildMs: +m.buildMs.toFixed(1), syncMs: +med(syncRuns).toFixed(3), frameMs: +med(frameRuns).toFixed(3), pixelsMs: +med(pxRuns).toFixed(2),
@@ -121,7 +137,7 @@ async function inPage({ name, frames, wantImages }) {
     box.style.display = 'none';
   }
 
-  // 比画面
+  // Compare frames
   const picks = [...new Set([0, Math.floor((total - 1) / 4), Math.floor((total - 1) / 2), Math.floor((total - 1) * 3 / 4), total - 1])];
   out.diff = []; out.images = [];
   const pngOf = async () => { const blob = await target.convertToBlob({ type: 'image/png' }); const buf = new Uint8Array(await blob.arrayBuffer()); let s = ''; for (let i = 0; i < buf.length; i += 32768) s += String.fromCharCode(...buf.subarray(i, i + 32768)); return btoa(s); };
@@ -134,11 +150,11 @@ async function inPage({ name, frames, wantImages }) {
     const a = tctx.getImageData(0, 0, W, H).data.slice();
     const aPng = wantImages ? await pngOf() : null;
     made.canvas.box.style.display = '';
-    // 顺着做到这一帧
+    // Advance sequentially to this frame
     made.canvas.anim.goToAndStop(0, true); for (let k = 0; k <= f; k++) made.canvas.anim.goToAndStop(k, true);
     await pixelsOf('canvas', made.canvas.box);
     const seq = tctx.getImageData(0, 0, W, H).data.slice();
-    // 从第 0 帧直接跳到这一帧
+    // Jump directly from frame 0 to this frame
     made.canvas.anim.goToAndStop(0, true); made.canvas.anim.goToAndStop(f, true);
     await pixelsOf('canvas', made.canvas.box);
     const b = tctx.getImageData(0, 0, W, H).data;
@@ -170,7 +186,7 @@ try {
   report.chrome = await browser.version();
   const page = await browser.newPage();
   await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
-  page.on('pageerror', (e) => report.failures.push(`页面报错:${String(e.message || e).slice(0, 160)}`));
+  page.on('pageerror', (e) => report.failures.push(`Page error: ${String(e.message || e).slice(0, 160)}`));
   await page.goto(base + '/');
   if (CORES > 0) report.affinity = limitCores(browser.process().pid, CORES);
   if (THROTTLE > 1) { const cdp = await page.createCDPSession(); await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE }); }
@@ -188,18 +204,18 @@ try {
 }
 
 if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(report, null, 2));
-console.log(`机器:${report.host.cpu},${report.host.logicalCores} 个逻辑核;${report.chrome};lottie-web ${report.lottieWeb}`);
-console.log(`条件:${SOFTWARE ? '关显卡' : '缺省'}${CORES ? `,限 ${CORES} 核(进程 ${report.affinity})` : ''}${THROTTLE > 1 ? `,主线程放慢 ${THROTTLE} 倍` : ''};每个素材量前 ${FRAMES} 帧;画进 1920×1080 的框`);
-const x = (a, b) => (b > 0 ? `${(a / b).toFixed(1)} 倍` : '—');
+console.log(`Machine: ${report.host.cpu}, ${report.host.logicalCores} logical cores; ${report.chrome}; lottie-web ${report.lottieWeb}`);
+console.log(`Conditions: ${SOFTWARE ? 'GPU off' : 'default'}${CORES ? `, limited to ${CORES} cores (process ${report.affinity})` : ''}${THROTTLE > 1 ? `, main thread slowed ${THROTTLE}x` : ''}; measure the first ${FRAMES} frames of each asset; drawn into a 1920×1080 box`);
+const x = (a, b) => (b > 0 ? `${(a / b).toFixed(1)}x` : '—');
 for (const r of report.results) {
-  console.log(`素材 ${r.name}(${r.w}×${r.h},${r.total} 帧,${r.layers} 层;SVG 画法 ${r.svg.nodes} 个节点、序列化 ${r.svg.svgKB} KB)`);
-  console.log(`   算一帧(同步)      SVG ${r.svg.syncMs} 毫秒   画布 ${r.canvas.syncMs} 毫秒`);
-  console.log(`   出一帧画面        SVG ${r.svg.frameMs} 毫秒   画布 ${r.canvas.frameMs} 毫秒   SVG 是画布的 ${x(r.svg.frameMs, r.canvas.frameMs)}`);
-  console.log(`   拿到像素          SVG ${r.svg.pixelsMs} 毫秒   画布 ${r.canvas.pixelsMs} 毫秒   SVG 是画布的 ${x(r.svg.pixelsMs, r.canvas.pixelsMs)}`);
-  console.log(`   建好              SVG ${r.svg.buildMs} 毫秒   画布 ${r.canvas.buildMs} 毫秒`);
-  console.log(`   画面差(帧号:平均差/差超过16的像素占比/透明度平均差)  ${r.diff.map((d) => `${d.frame}:${d.mean}/${d.bigPct}%/${d.alphaMean}`).join('  ')}`);
-  const ra = (maxKey, pctKey) => { const m = Math.max(...r.diff.map((d) => d[maxKey])), p = Math.max(...r.diff.map((d) => d[pctKey])); return m === 0 ? '逐字节相同' : `最多差 ${m}(满分 255),不同的像素最多占 ${p}%`; };
-  console.log(`   跳着做和顺着做比(5 帧里最差的)  画布:${ra('raMax', 'raPct')}   SVG:${ra('svgRaMax', 'svgRaPct')}`);
+  console.log(`Asset ${r.name} (${r.w}×${r.h}, ${r.total} frames, ${r.layers} layers; SVG rendering ${r.svg.nodes} nodes, serialized ${r.svg.svgKB} KB)`);
+  console.log(`   Compute one frame (sync)  SVG ${r.svg.syncMs} ms   canvas ${r.canvas.syncMs} ms`);
+  console.log(`   Render one frame          SVG ${r.svg.frameMs} ms   canvas ${r.canvas.frameMs} ms   SVG is ${x(r.svg.frameMs, r.canvas.frameMs)} canvas`);
+  console.log(`   Get pixels                SVG ${r.svg.pixelsMs} ms   canvas ${r.canvas.pixelsMs} ms   SVG is ${x(r.svg.pixelsMs, r.canvas.pixelsMs)} canvas`);
+  console.log(`   Built                     SVG ${r.svg.buildMs} ms   canvas ${r.canvas.buildMs} ms`);
+  console.log(`   Image diff (frame: mean diff/share of pixels differing by more than 16/mean opacity diff)  ${r.diff.map((d) => `${d.frame}:${d.mean}/${d.bigPct}%/${d.alphaMean}`).join('  ')}`);
+  const ra = (maxKey, pctKey) => { const m = Math.max(...r.diff.map((d) => d[maxKey])), p = Math.max(...r.diff.map((d) => d[pctKey])); return m === 0 ? 'byte-for-byte identical' : `max diff ${m} (out of 255), differing pixels up to ${p}%`; };
+  console.log(`   Random access vs sequential (worst of 5 frames)  canvas: ${ra('raMax', 'raPct')}   SVG: ${ra('svgRaMax', 'svgRaPct')}`);
 }
-if (report.failures.length) { console.log(`失败:\n  ${report.failures.join('\n  ')}`); process.exit(1); }
-console.log('全部跑完(只记录)');
+if (report.failures.length) { console.log(`Failed:\n  ${report.failures.join('\n  ')}`); process.exit(1); }
+console.log('All runs finished (record only)');

@@ -1,14 +1,20 @@
 /**
- * 在线上传队列 × 游客视频条数（2026-10-23 用户定「总视频素材不能大于三条」）：真的队列（`mediaUploadQueue.ts`）
- * 对着真的素材服务（`server/asset-service.ts` + 项目数据层 fs，合成的文档服务权威，主体是游客）。
+ * Online upload queue × guest video count ((user decision, 2026-10-23) "total video media cannot
+ * exceed three items"): real queue (`mediaUploadQueue.ts`) against real asset service
+ * (`server/asset-service.ts` + project data layer fs, composite document service authority,
+ * subject is guest).
  *
- * 覆盖：
- * - 云端账号项目的每一片带 `X-Media-Tier`（小档 `small`、原尺寸 `original`）；不是账号项目的不带
- *   （本地项目经托管中继，预检放行的头里没有它，带上浏览器会把整个 PUT 拦了）；
- * - 游客经队列传 3 个视频（6 个文件）全部入库；第 4 个视频在小档就被拒（小档也数，claude/guest-fix），
- *   这一项**整项出队、记成被拒、不再重试**，排在它后面的图片照常传上去，并通知订阅的人（界面据此出那句话）。
- *   原先这一项永久退避重试、把后面的全堵住（审查 D，PROBE-3：图片传不上去）—— 这条测试守的就是这个。
- *   再早的那一版（按文件数 3 条）在第 2 个视频的原尺寸就拒了，这条也守着。
+ * Covers:
+ * - Each chunk of a cloud account project carries `X-Media-Tier` (small tier `small`, original size
+ *   `original`); non-account projects do not carry it (for local projects via hosted relay, it is
+ *   not in the preflight allowed headers; including it causes the browser to block the entire PUT);
+ * - A guest uploads 3 videos (6 files) via the queue, all stored; the 4th video is rejected at the
+ *   small tier (small tier also counts, claude/guest-fix), this item **is entirely dequeued, marked as
+ *   rejected, and not retried**, images queued behind it upload normally, and subscribers are notified
+ *   (the UI shows that message accordingly). Previously this item retried with permanent backoff,
+ *   blocking everything behind it (Review D, PROBE-3: images cannot be uploaded): this test guards
+ *   against exactly that. An even earlier version (counting 3 by file count) rejected at the original
+ *   size of the 2nd video; this is also guarded.
  */
 import "../testing/registerTs.mjs";
 import test, { after } from "node:test";
@@ -37,7 +43,7 @@ const out = await fsp.mkdtemp(path.join(os.tmpdir(), "pc-queue-guest-"));
 after(() => fsp.rm(out, { recursive: true, force: true }));
 const { asset, media } = await compileAssetModules(out);
 
-/** 票据就是项目编号；主体一律是那个游客 */
+/** Ticket is the project id; subject is always that guest */
 const principalOf = (token) => (/^[A-Za-z0-9-]+$/.test(String(token ?? ""))
   ? { projectId: token, access: "rw", accountId: GUEST, loginId: `l-${GUEST}`, credentialId: `c-${GUEST}`, authorizationId: `auth-${token}` }
   : null);
@@ -53,7 +59,7 @@ await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 after(() => { server.closeAllConnections?.(); server.close(); });
 const base = `http://127.0.0.1:${server.address().port}/api/asset`;
 
-/** 记下每一次 PUT 带的档位头 */
+/** Record the tier header carried by each PUT */
 function recording() {
   const puts = [];
   const f = async (url, init = {}) => {
@@ -70,7 +76,8 @@ async function runQueue(items, target) {
   const q = createMediaUploadQueue({ target: () => target, fetch: rec.fetch, backoff: [60_000], log: (event, fields) => events.push({ event, ...fields }), onRejected: (r) => rejected.push(r) });
   for (const it of items) assert.equal((await q.enqueue(it)).queued, true);
   q.start();
-  // 等到每一项要么出队、要么失败过一次（失败的进退避，60 秒内不会再试）
+  // Wait until each item either dequeues or has failed once (failed items enter backoff, won't retry
+  // within 60 seconds)
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     const s = q.stats();
@@ -101,7 +108,7 @@ test("A guest uploads 3 videos (6 files) through the online upload queue and all
   assert.deepEqual(rejected.map((r) => [r.id, r.code]), [["v-four", "guest-video-limit"]]);
   assert.equal(events.filter((e) => e.event === "upload.retry").length, 0, "Rejected items do not enter backoff retry");
   assert.equal(uploadRejectedText(rejected[0]), "\"four.mp4\" was not uploaded to the cloud: Guests can upload at most 3 videos. To upload more, please sign up for an account.");
-  // 每一片都带了档位头，和这一档对得上
+  // Every chunk carries the tier header, matching this tier
   const tierByHash = new Map(items.flatMap((it) => it.tiers.map((t) => [t.hash, t.tier])));
   assert.ok(puts.length >= 7);
   for (const p of puts) assert.equal(p.tier, tierByHash.get(p.hash), `X-Media-Tier of PUT ${p.hash.slice(0, 8)}`);
@@ -124,7 +131,7 @@ test("Other 403s (not quota) still get backoff retry; only the quota kinds count
     assert.equal(rejected.length, permanent ? 1 : 0, code);
     assert.equal(events.some((e) => e.event === "upload.retry"), !permanent, code);
   }
-  // 全局订阅：退订之后收不到
+  // Global subscription: receives nothing after unsubscribing
   const got = [];
   const off = subscribeMediaUploadRejected((r) => got.push(r.code));
   off();

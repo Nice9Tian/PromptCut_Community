@@ -1,9 +1,13 @@
 /**
- * 共享项目里导入的素材要传到文档服务(C6.6 T9 暴露的缺陷)。跑:node --test src/editor/io/mediaSharedSync.test.mjs
+ * Assets imported in shared projects must be transmitted to document service (defect exposed by
+ * C6.6 T9). Run: node --test src/editor/io/mediaSharedSync.test.mjs
  *
- * 钉的是:store 接在 docsync 上时,入库回包写回素材表(hash / url / ext / size / tiers、清掉 pending)
- * 以及素材小尺寸后到时补写 tiers.small,都要变成 project.op 传到文档服务,另一个页面会话(观察端)看得到;
- * 并且不许原地改 store 里的旧对象(docsync 的本地副本与 store 是同一份,原地改了 diffProject 就看不出变化)。
+ * Pins down that: when store is connected to docsync, store responses written back to asset table
+ * (hash / url / ext / size / tiers, clearing pending) and backfilling tiers.small when small-size
+ * asset arrives later must all become project.op sent to document service, visible to another page
+ * session (observer side); and mutating existing objects in store in-place is not allowed
+ * (docsync's local replica and store are the same instance; mutating in-place prevents diffProject
+ * from detecting changes).
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -20,7 +24,7 @@ const SMALL = "d".repeat(64);
 const ORIG2 = "e".repeat(64);
 const SMALL2 = "f".repeat(64);
 
-/** 创建方 A 接 store,观察方 B 只是另一个 DocSync;回 { svc, A, B, unbind } */
+/** Creator A connects to store, observer B is just another DocSync; returns { svc, A, B, unbind } */
 function share(name) {
   actions.newProject(name);
   const p0 = getState().project;
@@ -45,8 +49,8 @@ async function waitFor(pred, ms = 8000) {
   while (!pred() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 50));
 }
 
-test("共享项目:入库回包与后到的素材小尺寸都传到文档服务,观察端看得到;store 里的旧对象不被原地改", async () => {
-  const { svc, B, unbind } = share("共享导入");
+test("Shared project: both the store response and a later-arriving small-size asset are sent to the document service and visible to the observer; the old object in the store is not modified in place", async () => {
+  const { svc, B, unbind } = share("Shared import");
   const realFetch = globalThis.fetch;
   let asked = 0;
   globalThis.fetch = async (url) => {
@@ -66,14 +70,14 @@ test("共享项目:入库回包与后到的素材小尺寸都传到文档服务,
       hash: ORIG, ext: "mp4", name: "clip.mp4", path: "C:/lib/clip.mp4", url: `/@media/${ORIG}`, bytes: 123,
       tiers: { original: ORIG, small: null }, smallState: "pending",
     });
-    // 旧对象、旧数组原样不动
+    // Existing objects and existing arrays left untouched as-is
     assert.equal(before.pending, true);
     assert.equal(before.hash, undefined);
     assert.equal(before.tiers, undefined);
     assert.equal(listBefore.find((x) => x.id === m.id), before);
 
     svc.drain();
-    for (const [where, project] of [["文档服务", svc.project], ["观察端", B.project]]) {
+    for (const [where, project] of [["Document service", svc.project], ["Observer", B.project]]) {
       const got = mediaOf(project, m.id);
       assert.equal(got.hash, ORIG, `${where} hash`);
       assert.equal(got.url, `/@media/${ORIG}`, `${where} url`);
@@ -84,10 +88,10 @@ test("共享项目:入库回包与后到的素材小尺寸都传到文档服务,
       assert.equal(got.pending, undefined, `${where} pending`);
     }
 
-    // 素材小尺寸后到(watchSmallTier 每 2 s 问一次)
+    // Small-size asset arrives later (watchSmallTier polls every 2 s)
     const beforeSmall = mediaOf(getState().project, m.id);
     await waitFor(() => !!mediaOf(getState().project, m.id)?.tiers?.small);
-    assert.deepEqual(beforeSmall.tiers, { original: ORIG }, "素材小尺寸补写不原地改旧对象");
+    assert.deepEqual(beforeSmall.tiers, { original: ORIG }, "Backfilling the small-size asset does not modify the old object in place");
     svc.drain();
     assert.deepEqual(mediaOf(svc.project, m.id).tiers, { original: ORIG, small: SMALL });
     assert.deepEqual(mediaOf(B.project, m.id).tiers, { original: ORIG, small: SMALL });
@@ -98,8 +102,8 @@ test("共享项目:入库回包与后到的素材小尺寸都传到文档服务,
   }
 });
 
-test("共享项目:入库失败时 pending 清掉也传到文档服务", () => {
-  const { svc, B, unbind } = share("共享失败");
+test("Shared project: when the store fails, clearing pending is also sent to the document service", () => {
+  const { svc, B, unbind } = share("Shared failure");
   try {
     const m = actions.addMedia({ kind: "video", name: "bad.mp4", url: "", pending: true });
     svc.drain();
@@ -112,8 +116,8 @@ test("共享项目:入库失败时 pending 清掉也传到文档服务", () => {
   }
 });
 
-test("共享项目:打开项目时补转的素材小尺寸(backfill 回 ready)也传到文档服务", async () => {
-  const { svc, B, unbind } = share("共享补转");
+test("Shared project: the small-size asset backfill-transcoded when the project opens (backfill returns ready) is also sent to the document service", async () => {
+  const { svc, B, unbind } = share("Shared backfill transcode");
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
     assert.equal(String(url), "/api/media/tiers/backfill");
@@ -126,7 +130,7 @@ test("共享项目:打开项目时补转的素材小尺寸(backfill 回 ready)�
     svc.drain();
     const before = mediaOf(getState().project, m.id);
     assert.equal(await backfillSmallTiers(), 1);
-    assert.deepEqual(before.tiers, { original: ORIG2 }, "不原地改旧对象");
+    assert.deepEqual(before.tiers, { original: ORIG2 }, "The old object is not modified in place");
     svc.drain();
     assert.deepEqual(mediaOf(svc.project, m.id).tiers, { original: ORIG2, small: SMALL2 });
     assert.deepEqual(mediaOf(B.project, m.id).tiers, { original: ORIG2, small: SMALL2 });

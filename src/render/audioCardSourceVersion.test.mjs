@@ -1,24 +1,31 @@
 /**
- * 守门测试:钉住三张内置有声卡(av-pulse、sound-notification、sound-keyboard)的源码版本,
- * 和它们的源码导入闭包里的文件清单。跑:node --test src/render/audioCardSourceVersion.test.mjs
+ * Gatekeeper test: pin source versions of three built-in audio cards (av-pulse, sound-notification,
+ * sound-keyboard) and the file manifests of their source import closures.
+ * Run: node --test src/render/audioCardSourceVersion.test.mjs
  *
- * 为什么要钉:源码版本(`src/render/cardSourceVersion.mjs` 的 `cardSourceVersion`:卡片源文件加上它一路相对导入
- * 到的文件的全文)进卡片声音的身份(`src/kernel/cardAudioRendition.mjs` 的 `cardAudioIdentity`)。
- * 闭包里任何一个文件改一个字(哪怕只加注释),已生成的卡片声音就被判「已过期,请重新生成」
- * (`resolveCardAudioRendition`)。用户没有同意过这件事。
- * 出处:docs/plan/prerender-products-contract.md 第 9.2 节。
+ * Why pin: the source version (`cardSourceVersion` in `src/render/cardSourceVersion.mjs`: the card's
+ * source file plus the full text of files imported relatively all the way) enters the card audio
+ * identity (`cardAudioIdentity` in `src/kernel/cardAudioRendition.mjs`). If any file in the closure
+ * changes by even one character (even just adding a comment), previously generated card audio is
+ * flagged as "Expired, please regenerate" (`resolveCardAudioRendition`). The user never consented to this.
+ * Source: docs/plan/prerender-products-contract.md Section 9.2.
  *
- * 钉三样:
- *   1. 每张卡的源码版本(取的是产品里的同一个函数、同一张源码表,见 `src/render/cardSourceFiles.mjs`);
- *   2. 每张卡闭包里的文件清单(不许变长、不许换成员:新文件进了有声卡的闭包也红);
- *   3. 闭包里每个文件的全文哈希(只用来在 1 红的时候说清是哪个文件变了)。
+ * Pin three things:
+ *   1. Source version of each card (uses the same function and source table in product code,
+ *      see `src/render/cardSourceFiles.mjs`);
+ *   2. File manifest of each card's closure (cannot grow, cannot swap members: a new file
+ *      entering the audio card closure also fails);
+ *   3. Full-text hash of each file in closure (only used to clarify which file changed when 1 fails).
  *
- * 红了怎么办:这不是普通的测试失败。先停,问过用户,再改下面的钉住值。
+ * What to do when it turns red: this is not an ordinary test failure. Stop first, ask the user,
+ * then update the pinned values below.
  *
- * 钉住值改过的记录:
- *   2026-10-13「干净版那一次合入」(分支 claude/rr-clean):用户同意卡片声音过期一次
- *   (`docs/plan/user-decisions-2026-10-13.md` 第 1 节第 14～16 条)。变的只有 `src/kernel/frameMode.mjs` 一个文件
- *   (写法只取声明;画布卡由审阅表的 surface 推出),三张卡的源码版本跟着变;闭包的文件清单没有变。
+ * Record of pinned value modifications:
+ *   2026-10-13 "clean edition merge" (branch claude/rr-clean): user consented to expire card
+ *   audio once (`docs/plan/user-decisions-2026-10-13.md` Section 1 items 14-16). Only a single file
+ *   changed: `src/kernel/frameMode.mjs` (implementation only extracts declarations; canvas cards
+ *   are derived from review table surface), source versions of the three cards changed accordingly;
+ *   closure file manifest did not change.
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,10 +36,10 @@ import { loadBuiltinCards } from '../testing/loadBuiltinCards.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-const WHY = '这个值进卡片声音的身份(cardAudioIdentity)。变了会让用户已生成的卡片声音被判「已过期,请重新生成」,用户没有同意过。'
-  + '要改这个值或改动闭包里的文件,先问过用户(出处 docs/plan/prerender-products-contract.md 第 9.2 节)。';
+const WHY = 'This value is part of the card audio identity (cardAudioIdentity). Changing it would make users\' already generated card audio be judged "expired, please regenerate", which the user has not agreed to.'
+  + 'Ask the user before changing this value or the files in the closure (source: docs/plan/prerender-products-contract.md, section 9.2).';
 
-/** 三张卡的钉住值。两张音效卡共用 sound-effects.ts 当入口,所以版本相同 */
+/** Pinned values for the three cards. Two sound effect cards share sound-effects.ts as entry point, so versions are identical */
 const AUDIO_CARDS = {
   'av-pulse': {
     entry: '/src/cards/native/av-pulse.tsx',
@@ -63,7 +70,7 @@ const AUDIO_CARDS = {
   },
 };
 
-/** 闭包里每个文件的全文哈希(换行统一成 LF 以后的 sha256),只用来指出是哪个文件变了 */
+/** Full-text hash for each file in closure (sha256 after normalizing newlines to LF), only used to indicate which file changed */
 const FILE_HASHES = {
   '/src/cards/native/av-pulse.tsx': '4cd748f37edcfa2740e31d11d5c62c760bd75757e9fc93c6e83f63424ac2de71',
   '/src/cards/native/sound-effects.ts': 'd94e49a53de2f3ecd80e80e78b58b5bee836b06c714c8ab3d8f741c7b41a1dcf',
@@ -84,12 +91,13 @@ let kit, cardSourceVersion, normalizeEol, files;
 before(async () => {
   kit = await loadBuiltinCards(ROOT);
   ({ cardSourceVersion, normalizeEol } = await kit.load('/src/render/cardSourceVersion.mjs'));
-  // 产品里算源码版本用的那张源码表(`src/cards/index.ts` 里 `cardSourceVersion(card, builtinCardSourceFiles)`)
+  // The source table used in product code to compute source version
+  // (`cardSourceVersion(card, builtinCardSourceFiles)` in `src/cards/index.ts`)
   ({ builtinCardSourceFiles: files } = await kit.load('/src/render/cardSourceFiles.mjs'));
 });
 after(async () => { await kit?.close(); });
 
-/** 从入口走一遍闭包,记下读过哪些文件(`cardSourceVersion` 每访问一个文件读一次 `files[file]`;给了入口路径就不会扫全表) */
+/** Traverse closure from entry point, recording files read (`cardSourceVersion` reads `files[file]` once per file visited; given an entry path it will not scan the whole table) */
 function closureOf(card, entry) {
   const visited = [];
   const spy = new Proxy(files, { get(target, key) { if (typeof key === 'string' && key.startsWith('/src/')) visited.push(key); return target[key]; } });
@@ -100,27 +108,29 @@ function closureOf(card, entry) {
 for (const [id, pinned] of Object.entries(AUDIO_CARDS)) {
   test(`${id}: source closure has the same files (none added, none swapped)`, () => {
     const card = kit.cards.find((c) => c.id === id);
-    assert.ok(card, `内置卡里找不到 ${id}`);
+    assert.ok(card, `${id} not found among built-in cards`);
     const { closure } = closureOf(card, pinned.entry);
     const added = closure.filter((f) => !pinned.closure.includes(f));
     const removed = pinned.closure.filter((f) => !closure.includes(f));
     assert.deepEqual({ added, removed }, { added: [], removed: [] },
-      `${id} 的源码导入闭包变了(新增 ${JSON.stringify(added)},少了 ${JSON.stringify(removed)})。${WHY}`);
-    assert.equal(closure.length, pinned.closure.length, `${id} 的闭包文件数变了。${WHY}`);
+      `The source import closure of ${id} changed (${JSON.stringify(added)} added, ${JSON.stringify(removed)} removed). ${WHY}`);
+    assert.equal(closure.length, pinned.closure.length, `The closure file count of ${id} changed. ${WHY}`);
   });
 
   test(`${id}: source version is pinned`, () => {
     const card = kit.cards.find((c) => c.id === id);
-    // 产品里的取法:不给入口,用卡的 id 在源码表里找声明它的文件。先确认找到的就是钉住的入口、并且只有这一个文件声明了这个 id
+    // Production approach: without providing an entry point, find the file declaring it in the source
+    // table using the card id. First verify that what was found is the pinned entry point, and that
+    // only this single file declares this id
     const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const declaring = Object.keys(files).filter((file) => new RegExp(`\\bid\\s*:\\s*['"]${escaped}['"]`).test(files[file]));
-    assert.deepEqual(declaring, [pinned.entry], `源码表里声明 ${id} 的文件不止钉住的这一个,或不是它。${WHY}`);
+    assert.deepEqual(declaring, [pinned.entry], `The files declaring ${id} in the source table are not just the pinned one, or not it. ${WHY}`);
     const version = cardSourceVersion(card, files);
-    assert.ok(version.startsWith(`${pinned.entry}\n`), `${id} 的源码版本不是从 ${pinned.entry} 起头。${WHY}`);
+    assert.ok(version.startsWith(`${pinned.entry}\n`), `The source version of ${id} does not start with ${pinned.entry}. ${WHY}`);
     const actual = sha256(version);
     if (actual !== pinned.version) {
       const changed = pinned.closure.filter((f) => Object.hasOwn(files, f) && sha256(normalizeEol(files[f])) !== FILE_HASHES[f]);
-      assert.fail(`${id} 的源码版本变了(钉住 ${pinned.version.slice(0, 16)},现在 ${actual.slice(0, 16)});内容变了的闭包文件:${changed.length ? changed.join('、') : '(没有找到,可能是闭包成员变了)'}。${WHY}`);
+      assert.fail(`The source version of ${id} changed (pinned ${pinned.version.slice(0, 16)}, now ${actual.slice(0, 16)}); closure files whose content changed: ${changed.length ? changed.join(', ') : '(none found, a closure member may have changed)'}. ${WHY}`);
     }
   });
 }

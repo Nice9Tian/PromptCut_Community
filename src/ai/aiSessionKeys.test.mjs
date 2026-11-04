@@ -1,22 +1,24 @@
 /**
  * node --test src/ai/aiSessionKeys.test.mjs
  *
- * 换项目 / 新建项目时,**后端的会话 id 也必须清掉**。
+ * When switching projects / creating a new project, **the backend session id must also be cleared**.
  *
- * 来自一份用户诊断报告:全新项目、界面上对话空的、素材库也空的,而第一轮请求就发出去
- * 19 条消息(trace 里 stage:"request", messages:19),模型张口就说出上一个项目里
- * 那条视频的名字 —— 它一次 list_media 都没调,那个名字是从上一段历史里读到的。
+ * From a user diagnostic report: in a brand-new project, the chat in the UI was empty and the
+ * media library was also empty, yet the first-round request sent 19 messages (stage:"request",
+ * messages:19 in trace), and the model immediately spoke the name of the video from the previous
+ * project: it did not call list_media once, and that name was read from the previous history.
  *
- * 原因:清的只是看得见的那段对话,而决定模型看到什么的是 localStorage 里的
- * aiSession:<provider>,服务端拿它去读回整段历史。界面和后端对「这是哪段对话」
- * 的认知是脱节的 —— 而这种脱节没有任何界面症状,只能靠测试守住。
+ * Reason: what was cleared was only the visible chat, whereas what determines what the model sees
+ * is aiSession:<provider> in localStorage, which the server uses to read back the entire history.
+ * The UI and backend are disconnected in their understanding of "which chat this is": and this
+ * disconnect has no UI symptoms, so it can only be guarded by tests.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const { resetAiSessionIds, AI_SESSION_PREFIX } = await import("./aiSessionKeys.ts");
 
-/** 一份够用的 localStorage 替身 */
+/** A sufficient localStorage stand-in */
 function store(initial = {}) {
   const map = new Map(Object.entries(initial));
   return {
@@ -29,7 +31,7 @@ function store(initial = {}) {
   };
 }
 
-test("aiSession:* 全部清掉,别的偏好一个都不许动", () => {
+test("Clear all aiSession:*, and do not touch any other preference", () => {
   const s = store({
     "aiSession:api": "api-9433c3ac",
     "aiSession:claude": "c-123",
@@ -41,19 +43,19 @@ test("aiSession:* 全部清掉,别的偏好一个都不许动", () => {
   assert.deepEqual(s.keys().sort(), ["aiProvider", "aiShowThinking", "aiViewMode"]);
 });
 
-test("多 Agent 分页的键带 tabId 后缀,也要一起清", () => {
+test("Keys of multi-Agent tabs carry a tabId suffix and must be cleared too", () => {
   const s = store({ "aiSession:api": "a", "aiSession:api:t-2": "b", "aiSession:codex:t-9": "c" });
   resetAiSessionIds(s);
-  assert.deepEqual(s.keys(), [], "带后缀的一个都不能留");
+  assert.deepEqual(s.keys(), [], "None of the suffixed ones may remain");
 });
 
-test("本来就没有会话 id 时什么也不做", () => {
+test("Does nothing when there is no session id to begin with", () => {
   const s = store({ aiProvider: "api" });
   resetAiSessionIds(s);
   assert.deepEqual(s.keys(), ["aiProvider"]);
 });
 
-test("storage 用不了的时候不许把「打开项目」搞挂", () => {
+test("When storage is unavailable, \"Open project\" must not break", () => {
   const boom = {
     get length() { throw new Error("storage disabled"); },
     key: () => { throw new Error("storage disabled"); },
@@ -65,6 +67,6 @@ test("storage 用不了的时候不许把「打开项目」搞挂", () => {
   assert.doesNotThrow(() => resetAiSessionIds(undefined));
 });
 
-test("前缀是对外公开的常量 —— 别处要判断这类键时用同一个", () => {
+test("The prefix is a publicly exported constant: other places that need to identify such keys should use the same one", () => {
   assert.equal(AI_SESSION_PREFIX, "aiSession:");
 });

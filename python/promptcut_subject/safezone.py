@@ -1,18 +1,18 @@
-"""从检测框算「哪一侧是空的」。
+"""Compute "which side is empty" from detection boxes.
 
-纯 numpy，不依赖任何推理引擎 —— 所以它能在内置解释器里单测，也能被 node 侧
-以外的地方复用。
+Pure numpy, independent of any inference engine, so it can be unit-tested in the bundled interpreter and can be reused in places
+other than the node side.
 
-四个区域按卡片实际会摆的位置划：
-  - left  : 左半屏  x ∈ [0, w/2)
-  - right : 右半屏  x ∈ [w/2, w)
-  - top   : 上三分之一带  y ∈ [0, h/3)
-  - bottom: 下三分之一带  y ∈ [2h/3, h)
+The four regions are drawn according to where cards are actually placed:
+  - left  : left half of the screen  x ∈ [0, w/2)
+  - right : right half of the screen  x ∈ [w/2, w)
+  - top   : top-third band  y ∈ [0, h/3)
+  - bottom: bottom-third band  y ∈ [2h/3, h)
 
-左右是「半屏」而上下是「三分之一带」不是笔误：卡片横向要么靠左要么靠右，
-二选一各占半屏；纵向则是贴着上边或下边的一条带子，中间那三分之一是人脸最
-常在的位置，不该算进任何一侧。四个区域故意互相重叠（左上角同时属于 left 和
-top），occupancy 是四个独立的比例，不是一个和为 1 的分布。
+Left/right being a "half screen" while top/bottom are a "third band" is not a typo: horizontally a card sits either at the left or at the right,
+one of the two, each taking half the screen; vertically it is a band hugging the top or bottom edge, and the middle third is where faces most
+often are, so it should not count toward either side. The four regions deliberately overlap (the top-left corner belongs to both left and
+top), and occupancy is four independent ratios, not a distribution that sums to 1.
 """
 
 from __future__ import annotations
@@ -21,18 +21,18 @@ from typing import Any, Dict, List, Sequence
 
 import numpy as np
 
-# 掩膜格子数上限。1080p 的整张掩膜是 200 万格，bool 也就 2 MB、算一次不到 1 ms，
-# 但 4K 就 800 万格了；超过这个数按面积等比降采样，量化误差在千分位以下，而
-# occupancy 本来就只报到千分位。
+# Upper limit of mask cells. A full 1080p mask is 2 million cells, only 2 MB as bool and under 1 ms to compute once,
+# but 4K is already 8 million cells; above this number it is downsampled proportionally by area, and the quantization error is below the thousandths place, while
+# occupancy is only reported to the thousandths place anyway.
 GRID_MAX = 1_000_000
 
-# 并列时的优先顺序。视频里人多半站中间偏左（采访机位习惯），右边更常是空的，
-# 所以完全平手时先挑 right；上下带子比半屏窄，能放的东西少，排在最后。
+# Priority order for ties. People in videos mostly stand slightly left of center (interview camera habits), so the right side is more often empty,
+# so in a complete tie pick right first; the top/bottom bands are narrower than the half screens and hold less, so they come last.
 SIDE_PRIORITY = ("right", "left", "bottom", "top")
 
 
 def coverage_mask(width: int, height: int, boxes: Sequence[Dict[str, Any]]) -> np.ndarray:
-    """把一组框糊成一张 bool 掩膜（并集，重叠的地方不重复计面积）。"""
+    """Paint a group of boxes into one bool mask (union; overlapping areas are not counted twice)."""
     if width <= 0 or height <= 0:
         return np.zeros((1, 1), dtype=bool)
 
@@ -58,7 +58,7 @@ def coverage_mask(width: int, height: int, boxes: Sequence[Dict[str, Any]]) -> n
         x1 = max(0, min(gw, x1))
         y0 = max(0, min(gh, y0))
         y1 = max(0, min(gh, y1))
-        # 框小到不足一格时也别丢：至少占一格，否则「有个小脸」会被算成完全没人
+        # Do not drop a box that is smaller than one cell: make it occupy at least one cell, otherwise "there is a small face" would be counted as nobody being there at all
         if x1 <= x0:
             x1 = min(gw, x0 + 1)
             x0 = max(0, x1 - 1)
@@ -70,7 +70,7 @@ def coverage_mask(width: int, height: int, boxes: Sequence[Dict[str, Any]]) -> n
 
 
 def occupancy(width: int, height: int, boxes: Sequence[Dict[str, Any]]) -> Dict[str, float]:
-    """四个区域各被框覆盖了多少（0~1，报到千分位）。"""
+    """How much of each of the four regions is covered by boxes (0~1, reported to the thousandths place)."""
     mask = coverage_mask(width, height, boxes)
     gh, gw = mask.shape
 
@@ -91,10 +91,10 @@ def occupancy(width: int, height: int, boxes: Sequence[Dict[str, Any]]) -> Dict[
 
 
 def safe_side(occ: Dict[str, float]) -> str:
-    """被遮得最少的那一侧。并列时按 SIDE_PRIORITY 挑。
+    """The side that is covered the least. Ties are broken by SIDE_PRIORITY.
 
-    比的是**已经四舍五入到千分位**的值，和输出给上层的数字是同一批 —— 否则
-    会出现「报出来两边都是 0.120，却挑了看不出区别的那个」这种没法解释的结果。
+    The comparison uses values **already rounded to the thousandths place**, the same numbers that are output to the upper layer; otherwise
+    you would get unexplainable results like "both sides are reported as 0.120, yet the one that looks no different was picked".
     """
     best = min(occ.get(side, 0.0) for side in SIDE_PRIORITY)
     for side in SIDE_PRIORITY:
@@ -104,13 +104,13 @@ def safe_side(occ: Dict[str, float]) -> str:
 
 
 def analyze(width: int, height: int, boxes: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    """一步到位：{"occupancy": {...}, "safeSide": "right"}。"""
+    """All in one step: {"occupancy": {...}, "safeSide": "right"}."""
     occ = occupancy(width, height, boxes)
     return {"occupancy": occ, "safeSide": safe_side(occ)}
 
 
 def merge_occupancy(items: Sequence[Dict[str, float]]) -> Dict[str, float]:
-    """多个样本的 occupancy 取平均（node 侧 subjectForRange 的同款算法）。"""
+    """Average the occupancy of multiple samples (the same algorithm as subjectForRange on the node side)."""
     keys = ("left", "right", "top", "bottom")
     if not items:
         return {k: 0.0 for k in keys}

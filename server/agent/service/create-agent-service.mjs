@@ -1,26 +1,36 @@
 /**
- * 托管档的 Agent 服务:实例登记表与一轮的生命周期(契约 `docs/plan/cloud-agent-contract.md` 第 3、6、7、16 节)。
+ * Hosted-tier Agent service: instance registry and round lifecycle (contract
+ * `docs/plan/cloud-agent-contract.md` sections 3, 6, 7, 16).
  *
- * 一个进程里按「项目 × 成员(`userId`)」各建一个运行实例(`instance.mjs`),实例之间不共用任何以页面自报 id 为键的状态:
- * 一切查找先由 `identity`(来自鉴权,不来自请求体)定范围,再在范围里按对话 id 找。
+ * Within a process, a running instance (`instance.mjs`) is created for each
+ * "project x member (`userId`)", and instances do not share any state keyed by page
+ * self-reported ids: all lookups are first scoped by `identity` (from authentication, not from the
+ * request body), then searched by chat id within that scope.
  *
- * 运行实例与对话的**归属**是两回事(契约第 3.1、7.2 节):
- *   - 对话(事件记录、状态、模型历史、预渲染重试清单)按「项目 × 主人键」存在数据目录里(`conversations.mjs`),不随实例回收而消失,
- *     不依赖任何连接;主人换一台设备能找回;
- *   - 每一轮在发起它的那台设备的实例里跑。同一个对话先后两轮可以在两个实例里跑,同一时刻只有一轮。
+ * The **ownership** of running instances and chats are two different things (contract sections 3.1, 7.2):
+ *   - Chats (event log, status, model history, prerender retry manifest) are stored in the data
+ *     directory (`conversations.mjs`) by "project x owner key", do not disappear when instances
+ *     are recycled, and do not depend on any connection; the owner can recover them on another device;
+ *   - Each round runs in the instance of the device that initiated it. Two consecutive rounds of the
+ *     same chat can run in two instances, with only one round at any given moment.
  *
- * 一轮只属于服务端:发消息回了就与那条连接无关。只有这几样能让它结束,每样都在事件记录里留一条给人看的原因与一条 `end`,
- * `meta.json` 的状态与原因同步改(契约第 7.3 节):
- *   说完(idle)、主人停掉(idle / stopped)、模型调用失败(failed / model)、额度用尽(failed / quota-exceeded)、
- *   到轮数或时间上限(failed / limit)、撤销——开关关了、被移出、被踢、项目删除、授权失效(revoked / 原因)、
- *   服务进程退出或被杀(interrupted)。
- * 每次工具写入是文档服务的一次原子提交,所以一轮在任何时刻被停,项目都停在最后一次成功提交之后。
+ * A round belongs only to the server side: once the message is responded to, it is decoupled from that
+ * connection. Only these few things can end it, each leaving a human-readable reason and an `end` in
+ * the event log, with the status and reason in `meta.json` updated in sync (contract section 7.3):
+ *   finished speaking (idle), stopped by owner (idle / stopped), model call failed (failed / model),
+ *   quota exceeded (failed / quota-exceeded), round limit or time limit reached (failed / limit),
+ *   revocation: switch turned off, removed, kicked, project deleted, authorization expired
+ *   (revoked / reason), service process exited or killed (interrupted).
+ * Each tool write is an atomic commit to the document service, so if a round is stopped at any
+ * moment, the project always stops after the last successful commit.
  *
- * 进程级的东西:
- *   - `execSerial`:服务端 store 是进程里的单例(`src/store/core.ts`),所有实例的工具实现经同一把锁串行执行、进锁清场;
- *   - 闸与用量记录(`gate.mjs`、`usage.mjs`);
- *   - 对话存储(`conversations.mjs`)与预渲染重试发布(`render-request.mjs`)。
- * 本文件不引用 `src/`。
+ * Process-level items:
+ *   - `execSerial`: server-side store is a singleton in the process (`src/store/core.ts`); tool
+ *     implementations across all instances execute serially through the same lock, clearing on
+ *     acquiring the lock;
+ *   - Gate and usage records (`gate.mjs`, `usage.mjs`);
+ *   - Chat storage (`conversations.mjs`) and prerender retry publishing (`render-request.mjs`).
+ * This file does not import `src/`.
  */
 import { createHeavyRenderGate, createRenderClipPicker, FLAT_KERNEL_MODULE, loadHeavyJudge } from './render-clips.mjs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -38,37 +48,48 @@ import { createAccountConversationService } from './conversation-policy.mjs';
 import { findAgentExtension } from './extensions.mjs';
 
 export const CONVERSATION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-/** 满额提示(一级文字，2026-10-13 用户确认用这一句)。页面一侧的同一句集中在 `src/ai/cloud/chatTexts.ts`，要同步 */
-export const CONVERSATION_LIMIT_MESSAGE = '你在这个项目里的云端对话已满 50 个。请先删除不用的对话，再新建。';
+/** Quota notice (primary text, user confirmed this phrasing on 2026-10-13). The same phrasing on
+ * the page side is centralized in `src/ai/cloud/chatTexts.ts` and must be kept in sync */
+export const CONVERSATION_LIMIT_MESSAGE = 'You already have 50 cloud chats in this project. Delete unused chats first, then create a new one.';
 
 export const HOSTED_DEFAULTS = Object.freeze({
-  /** 没有进行中的一轮、这么久没有请求的实例被回收 */
+  /** Instances with no active round and no requests for this long are recycled */
   idleMs: 10 * 60_000,
-  /** 一轮的墙钟上限(2026-10-24 跟着轮次上限一起放宽:24 轮用掉 22 分钟就撞 30 分钟的墙,
-   * 48 轮必须配更长的墙钟,否则放宽轮次白放) */
+  /** Wall-clock limit for a round (relaxed along with the round limit on 2026-10-24: using 22 minutes
+   * for 24 rounds hits the 30-minute wall; 48 rounds must be paired with a longer wall clock,
+   * otherwise relaxing the round limit is wasted) */
   runMs: 60 * 60_000,
-  /** 一轮最多多少次模型往返(驱动里的常规上限;这里只用来告诉页面和写收尾那句话) */
+  /** Maximum model round-trips per round (normal limit in the driver; used here only to inform
+   * the page and write the finalization message) */
   rounds: 48,
-  /** 单个项目副本(JSON)超过这么大不服务 */
+  /** A single project replica (JSON) exceeding this size will not be served */
   maxProjectBytes: 16 * 1024 * 1024,
-  /** 单次工具调用最多等多久(契约第 11 节) */
+  /** Maximum wait time for a single tool call (contract section 11) */
   toolMs: 60_000,
-  /** 看画面的工具最多等多久:带用户卡的项目要等隔离工作进程起来(十来秒)、别的项目在渲时还要排队(契约第 9.8 节) */
+  /** Maximum wait time for the look tool: projects with user cards must wait for the isolated worker
+   * process to start up (around ten seconds), and also queue when other projects are rendering
+   * (contract section 9.8) */
   lookToolMs: 180_000,
-  /** 一个对话的模型历史(`history.json`)超过这么大就按现有的历史截断(契约第 7.2 节) */
+  /** If a chat's model history (`history.json`) exceeds this size, truncate it according to existing
+   * history (contract section 7.2) */
   maxHistoryBytes: 8 * 1024 * 1024,
-  /** 反向通道(契约第 28 节):向发起人的页面发出一次请求后最多等多久;到时回「发起方不在线」 */
+  /** Reverse channel (contract section 28): maximum wait time after sending a request to the
+   * initiator's page; returns "initiator offline" on timeout */
   pageMs: 15_000,
-  /** 反向通道:发起人的页面刚发完消息、事件流还没接上(或刚断、正在重连)时,最多等它这么久;离开得更久就立刻回「发起方不在线」 */
+  /** Reverse channel: when the initiator's page has just sent a message and the event stream has
+   * not yet connected (or just disconnected and is reconnecting), wait for it at most this long;
+   * if it has been away longer, immediately return "initiator offline" */
   pageAttachMs: 3_000,
 });
 
-/** 页面号:页面自己起的随机串,发消息与开事件流时各报一次(契约第 28 节) */
+/** Page id: a random string generated by the page itself, reported once when sending a message
+ * and once when opening an event stream (contract section 28) */
 export const PAGE_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
-/** 反向通道上页面交回的结果(JSON)最多这么大 */
+/** Maximum size of the result (JSON) returned by the page over the reverse channel */
 const MAX_PAGE_RESULT_BYTES = 64 * 1024;
 
-/** 闸的替身:永远放行、不记用量(只给不关心闸的测试用;服务缺省用 `gate.mjs` 的真闸) */
+/** Gate test double: always passes and does not record usage (only for tests unconcerned with
+ * gates; the service defaults to the real gate from `gate.mjs`) */
 export const ALLOW_ALL_GATE = Object.freeze({
   admitRun: () => ({ ok: true }),
   admitModelCall: () => ({ ok: true }),
@@ -87,10 +108,13 @@ export class AgentServiceError extends Error {
 const sha = (text) => createHash('sha256').update(String(text), 'utf8').digest('hex').slice(0, 32);
 
 /**
- * 对话归谁(契约第 7.2 节,主会话 2026-10-06 裁定,待用户审)。文档服务核验委托票据后直接回主人键
- * (`creator` / `user:<用户名>` / `device:<userId>`,键里不含项目),有就用它;没有(测试替身)按同一条规则从字段推:
- * 创建者与限定进入的名单成员按用户名,换设备能找回;自由进入的成员按「用户名 + 设备」,只能在原设备找回。
- * 回的是当目录名用的摘要(项目也折进去)。
+ * Who owns the chat (contract section 7.2, lead session ruling 2026-10-06, pending user review).
+ * After the document service verifies the delegation ticket, it directly returns the owner key
+ * (`creator` / `user:<username>` / `device:<userId>`, key does not include project); use it if
+ * present; if absent (test double), infer from fields following the same rule:
+ * Creators and restricted entry list members use username, and can recover on another device;
+ * open entry members use "username + device", and can only recover on the original device.
+ * Returns a digest used as a directory name (project folded in).
  * @param {{ projectId: string, userId: string, username?: string, creator?: boolean, mode?: string, ownerKey?: string }} identity
  */
 export function ownerKeyOf(identity) {
@@ -102,26 +126,28 @@ export function ownerKeyOf(identity) {
   return sha(`${identity.projectId}\n${name}`);
 }
 
-/** 撤销与授权失效时写进对话记录的那句话 */
+/** Message written into chat records upon revocation and authorization invalidation */
 const REVOKE_TEXT = Object.freeze({
-  disabled: '项目创建者已关闭云端 Agent,这一轮已停下。已经落地的改动保留在项目里。',
-  removed: '你已被移出这个项目,云端 Agent 的这一轮已停下。已经落地的改动保留在项目里。',
-  kicked: '你已被请出这个项目,云端 Agent 的这一轮已停下。已经落地的改动保留在项目里。',
-  deleted: '项目已删除,云端 Agent 的这一轮已停下。',
-  expired: '这一轮的授权已过期,已停下。已经落地的改动保留在项目里;再发一条消息即可继续。',
-  generation: '项目的成员名单或口令改过,这一轮的授权已失效,已停下。已经落地的改动保留在项目里;再发一条消息即可继续。',
-  'bad-grant': '这一轮的授权没有被文档服务接受,已停下。已经落地的改动保留在项目里;再发一条消息即可继续。',
+  disabled: 'The project creator has turned off the Cloud Agent, so this turn was stopped. Changes already applied are kept in the project.',
+  removed: 'You were removed from this project, so the Cloud Agent\'s turn was stopped. Changes already applied are kept in the project.',
+  kicked: 'You were kicked from this project, so the Cloud Agent\'s turn was stopped. Changes already applied are kept in the project.',
+  deleted: 'The project was deleted, so the Cloud Agent\'s turn was stopped.',
+  expired: 'The authorization for this turn has expired, so it was stopped. Changes already applied are kept in the project; send another message to continue.',
+  generation: 'The project\'s member list or password was changed, so the authorization for this turn is no longer valid and it was stopped. Changes already applied are kept in the project; send another message to continue.',
+  'bad-grant': 'The authorization for this turn was not accepted by the document service, so it was stopped. Changes already applied are kept in the project; send another message to continue.',
 });
-const revokeText = (reason) => REVOKE_TEXT[reason] ?? `云端 Agent 的这段对话已失效(${reason}),这一轮已停下。已经落地的改动保留在项目里。`;
+const revokeText = (reason) => REVOKE_TEXT[reason] ?? `This Cloud Agent chat is no longer valid (${reason}), so this turn was stopped. Changes already applied are kept in the project.`;
 
-/** 文档服务不给票据时的 `reason` → 对话记录里的收尾原因;不在表里的(连不上、超时)是暂时性故障,不收尾 */
+/** `reason` when document service refuses a ticket → finalization reason in chat records; those
+ * not in the table (unreachable, timeout) are transient failures and do not finalize */
 const CREDENTIAL_REASON = Object.freeze({
   'service-disabled': 'disabled', 'service-revoked': 'disabled', banned: 'kicked', 'not-listed': 'removed', 'no-project': 'deleted',
   expired: 'expired', generation: 'generation',
   signature: 'bad-grant', format: 'bad-grant', audience: 'bad-grant', 'not-grant': 'bad-grant', project: 'bad-grant', conversation: 'bad-grant', forbidden: 'bad-grant',
 });
 
-/** 数据连接被文档服务关掉时的关闭码与原因 → 收尾原因(契约第 4.5 节) */
+/** Close code and reason when data connection is closed by document service → finalization
+ * reason (contract section 4.5) */
 export function revokeReasonOfClose({ code, reason } = {}) {
   if (code === 4004) return 'deleted';
   if (reason === 'service-disabled') return 'disabled';
@@ -129,31 +155,50 @@ export function revokeReasonOfClose({ code, reason } = {}) {
   return typeof reason === 'string' && reason ? reason.slice(0, 40) : 'removed';
 }
 
-/** 模型接口给的错误原文里去掉地址(地址是托管方的配置;Key 已由驱动替换掉) */
-const scrub = (text) => String(text ?? '').replace(/https?:\/\/[^\s"'<>)]+/g, '[地址]').slice(0, 500);
+/** Strip URLs from raw errors returned by model API (URLs are host configuration; Key has
+ * already been replaced by driver) */
+const scrub = (text) => String(text ?? '').replace(/https?:\/\/[^\s"'<>)]+/g, '[URL]').slice(0, 500);
 
 /**
  * @param {object} o
- * @param {string} o.root 仓库根目录(系统提示词等相对它找)
- * @param {(id: string) => Promise<any>} o.loadModule 前端代码的唯一入口(vite 的 `ssrLoadModule`),只交给 `ssr-host.mjs`
- * @param {string} o.docUrl 文档服务的 ws(s) 地址
- * @param {object} o.credentials 连文档服务的凭证(接口位;真的由乙块的 `server/auth/service-client.mjs` 给):
- *   `protocolsFor(identity, 对话号, { conversationId, grant })` → 这个对话的连接用的子协议。文档服务明确不给时抛带 `reason` 的错
- *   (`expired`、`generation`、`service-disabled`、`banned`、`not-listed`、`no-project` 等),这一轮据此收尾;
- *   `admitGrant?(identity, conversationId, grant)` → 发消息时先核一遍对话委托,不对就抛(回 `bad-grant`)。
- * @param {() => Promise<object> | object} o.modelConfig 这一轮用的模型配置 `{ vendor, model, apiKey?, baseUrl?, maxTokens? }`
- * @param {string | null} [o.dataDir] 数据目录;不给时对话只在内存里、不记用量流水(只给测试)
- * @param {object} [o.gate] 闸;不给就用 `gate.mjs` 的(读 `<数据目录>/config/limits.json`)
- * @param {object | null} [o.publisher] 预渲染重试的发布通道(接口位,形状见 `render-request.mjs`);不给就不发预渲染重试
+ * @param {string} o.root Repository root directory (system prompts and others are resolved
+ *   relative to it)
+ * @param {(id: string) => Promise<any>} o.loadModule Sole entry point for frontend code (Vite's
+ *   `ssrLoadModule`), passed only to `ssr-host.mjs`
+ * @param {string} o.docUrl ws(s) address of the document service
+ * @param {object} o.credentials Credentials for connecting to document service (interface slot;
+ *   the real one is provided by Block Yi's `server/auth/service-client.mjs`):
+ *   `protocolsFor(identity, chat number, { conversationId, grant })` → subprotocol used for this
+ *   chat's connection. When document service explicitly refuses, throws error with `reason`
+ *   (`expired`, `generation`, `service-disabled`, `banned`, `not-listed`, `no-project`, etc.),
+ *   and this round finalizes accordingly;
+ *   `admitGrant?(identity, conversationId, grant)` → verify chat delegation before sending a message;
+ *   throw if invalid (returns `bad-grant`).
+ * @param {() => Promise<object> | object} o.modelConfig Model configuration used for this round
+ *   `{ vendor, model, apiKey?, baseUrl?, maxTokens? }`
+ * @param {string | null} [o.dataDir] Data directory; if omitted, chats remain in memory only and
+ *   do not log usage streams (testing only)
+ * @param {object} [o.gate] Gate; if omitted, uses the one from `gate.mjs` (reads
+ *   `<data-dir>/config/limits.json`)
+ * @param {object | null} [o.publisher] Publishing channel for prerender retry (interface slot,
+ *   see `render-request.mjs` for shape); if omitted, does not publish prerender retries
  * @param {{ agentEnabled?(projectId): boolean, renderEnabled?(projectId): boolean }} [o.projectState]
- *   各项目的开关(接口位;真的由文档服务的推送喂)。不给时都算开
- * @param {string | null} [o.assetBase] 同机素材服务的地址(`http://127.0.0.1:<端口>`);不给时导入素材、配音入库做不了(工具回明确的原因)
- * @param {{ forProject(projectId: string, o?: object): Function, describe?(): object } | null} [o.look] 看画面的客户端(`server/agent-service/look-client.mjs`):
- *   向同机的渲染服务要一帧。不给时看画面的工具不交给模型(契约第 9.8 节)
- * @param {object} [o.egress] 出网闸的选项(`egress.mjs` 的 `createEgressGate`;`testAllow` 只给测试与探针)
- * @param {() => Promise<object | null>} [o.voiceConfig] 托管方的配音配置;不给就读数据目录里的 `config/voice.json` 与 `config/keys/voice.key`
- * @param {object} [o.workspaceLimits] 工作区的总量上限(`workspace.mjs`)
- * @param {object | null} [o.collect] 节点上的采集工具(`hosted-collect.mjs` 的 `readCollectConfig`);不给时采集的工具回「这台云节点没有装采集工具」
+ *   Switches for each project (interface slot; the real ones are fed by document service pushes).
+ *   When omitted, all are considered enabled
+ * @param {string | null} [o.assetBase] Address of the asset service on the same machine
+ *   (`http://127.0.0.1:<port>`); if omitted, media import and voiceover storage cannot be
+ *   performed (tools return an explicit reason)
+ * @param {{ forProject(projectId: string, o?: object): Function, describe?(): object } | null} [o.look]
+ *   Look client (`server/agent-service/look-client.mjs`): requests a frame from the render service
+ *   on the same machine. When omitted, look tools are not exposed to the model (contract section 9.8)
+ * @param {object} [o.egress] Options for the egress gate (`createEgressGate` in `egress.mjs`;
+ *   `testAllow` is only for tests and probes)
+ * @param {() => Promise<object | null>} [o.voiceConfig] Voiceover configuration from the host;
+ *   if omitted, reads `config/voice.json` and `config/keys/voice.key` in the data directory
+ * @param {object} [o.workspaceLimits] Total workspace limits (`workspace.mjs`)
+ * @param {object | null} [o.collect] Collection tool on the node (`readCollectConfig` in
+ *   `hosted-collect.mjs`); if omitted, collection tools return "This cloud node does not have
+ *   collection tools installed"
  */
 export function createHostedAgentService({
   root,
@@ -204,12 +249,12 @@ export function createHostedAgentService({
       connectionsClosed, childrenClosed, task, assignmentReady, onTaskDrained, runEventsSink, log, now }); }
     return createAccountConversationService({ conversationClient, now });
   }
-  if (typeof loadModule !== 'function') throw new TypeError('createHostedAgentService: 要 loadModule');
-  if (typeof docUrl !== 'string' || !/^wss?:\/\//.test(docUrl)) throw new TypeError('createHostedAgentService: docUrl 要是 ws(s):// 地址');
-  if (!credentials || typeof credentials.protocolsFor !== 'function') throw new TypeError('createHostedAgentService: 要 credentials.protocolsFor');
-  if (typeof modelConfig !== 'function') throw new TypeError('createHostedAgentService: 要 modelConfig');
+  if (typeof loadModule !== 'function') throw new TypeError('createHostedAgentService: loadModule is required');
+  if (typeof docUrl !== 'string' || !/^wss?:\/\//.test(docUrl)) throw new TypeError('createHostedAgentService: docUrl must be a ws(s):// URL');
+  if (!credentials || typeof credentials.protocolsFor !== 'function') throw new TypeError('createHostedAgentService: credentials.protocolsFor is required');
+  if (typeof modelConfig !== 'function') throw new TypeError('createHostedAgentService: modelConfig is required');
   const limits = { ...HOSTED_DEFAULTS, ...limitsIn };
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响服务 */ } };
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failures do not affect the service */ } };
 
   const agentEnabled = (projectId) => { try { return projectState.agentEnabled ? projectState.agentEnabled(projectId) !== false : true; } catch { return true; } };
   const renderEnabled = (projectId) => { try { return projectState.renderEnabled ? projectState.renderEnabled(projectId) !== false : true; } catch { return true; } };
@@ -218,13 +263,19 @@ export function createHostedAgentService({
   const gate = gateIn ?? createGate({ limitsFile: dataDir ? limitsFileOf(dataDir) : null, usage, isEnabled: agentEnabled, now, log: say });
   const store = createConversationStore({ dataDir, now, limits: storeLimits, log: say });
   const render = createRenderRequests({ publisher, store, now, limits: renderLimits, log: say });
-  // 工具在节点上读写的一切按「项目 × 对话」隔离;按模型给的地址出网只经出网闸(任务书 J,契约第 9.5、9.6 节)
+  // Everything read and written by tools on the node is isolated by "project x chat"; egress to
+  // addresses provided by the model only goes through the egress gate (task brief J, contract
+  // sections 9.5, 9.6)
   const workspaces = createWorkspaces({ dataDir, limits: workspaceLimits, log: say });
   const egress = createEgressGate({ ...egressOptions, log: say });
-  // 剪辑段的摊平视图(发布预渲染时收剪辑段里的卡,`render-clips.mjs`):经载入缝取内核函数,载好之前只按片段 id 挑
+  // Flattened view of cut segments (collects cards in cut segments when publishing prerenders,
+  // `render-clips.mjs`): fetches kernel functions via the loading seam; before loaded, picks only
+  // by clip id
   let flatKernel = null;
   Promise.resolve().then(() => loadModule(FLAT_KERNEL_MODULE)).then((m) => { flatKernel = m; }, () => {});
-  // 发布预渲染之前判轻重(只发重卡,`render-clips.mjs`「只发重卡」):判定函数经同一条载入缝取;载不了就照原来全发
+  // Classify light and heavy before publishing prerenders (publish heavy cards only,
+  // `render-clips.mjs` "publish heavy cards only"): classification function is fetched via the same
+  // loading seam; if it cannot load, publish all as before
   let heavyJudge = null;
   if (render.enabled) {
     Promise.resolve().then(() => loadHeavyJudge(loadModule)).then((fn) => { heavyJudge = fn; },
@@ -237,20 +288,23 @@ export function createHostedAgentService({
     egress,
     assetBase,
     voiceConfig: voiceConfig ?? (() => readHostedVoiceConfig(dataDir)),
-    // 花钱的外部调用(配音)与模型请求记进同一份用量流水
+    // Paid external calls (voiceover) and model requests are recorded into the same usage log
     recordService: (row) => { try { gate.record(row); } catch (err) { say('agent.usage.service-failed', { message: String(err?.message ?? err).slice(0, 120) }); } },
     limits: toolLimits,
-    // 网页采集:节点上装没装由部署决定(`hosted-collect.mjs`);没有时工具回明确的原因
+    // Web collection: whether installed on the node depends on deployment (`hosted-collect.mjs`);
+    // if absent, tools return an explicit reason
     collect,
     ...(toolFetch ? { fetchImpl: toolFetch } : {}),
     log: say,
   });
 
-  // 上一个进程没收尾就没了的对话:标中断,不自动续跑(契约第 7.5 节)。没渲完的预渲染重试清单重新发布(只用服务身份)
+  // Chats where the previous process exited before finalizing: mark as interrupted, do not
+  // automatically resume (contract section 7.5). Prerender retry manifests not yet finished
+  // rendering are republished (using service identity only)
   store.recover();
   const restored = Promise.resolve().then(() => render.restore()).catch((err) => { say('agent.render.restore-failed', { message: String(err?.message ?? err).slice(0, 160) }); return 0; });
 
-  /** 进程级的串行锁:所有实例的工具实现共用服务端那一份 store */
+  /** Process-level serial lock: tool implementations in all instances share the server-side store */
   let lock = Promise.resolve();
   const execSerial = (fn) => {
     const run = lock.then(fn, fn);
@@ -258,12 +312,14 @@ export function createHostedAgentService({
     return run;
   };
 
-  /** 实例键 → { key, identity, ownerKey, inst, ready, runs: Map(对话 id → 对话), lastUsed, closed } */
+  /** Instance key → { key, identity, ownerKey, inst, ready, runs: Map(chat id → chat), lastUsed, closed } */
   const instances = new Map();
-  /** 「实例键\n对话 id」→ 这一轮的对话委托。只放内存,不落盘、不进日志(契约第 4.2 节) */
+  /** "instance key\nchat id" → chat delegation for this round. In-memory only, not persisted to
+   * disk, not written to logs (contract section 4.2) */
   const grants = new Map();
   let closed = false;
-  /** 撤销发生时要知道的各方(HTTP 层据此关掉事件流,鉴权层据此清核验缓存) */
+  /** Parties to be notified upon revocation (HTTP layer closes event streams accordingly, auth
+   * layer clears verification cache accordingly) */
   const revokeListeners = new Set();
 
   const keyOf = (identity) => `${identity.projectId}\n${identity.userId}\n${ownerKeyOf(identity)}`;
@@ -271,22 +327,23 @@ export function createHostedAgentService({
 
   function checkIdentity(identity) {
     if (!identity || typeof identity.projectId !== 'string' || !identity.projectId || typeof identity.userId !== 'string' || !identity.userId) {
-      throw new AgentServiceError('unauthorized', '没有身份', 401);
+      throw new AgentServiceError('unauthorized', 'No identity', 401);
     }
   }
 
   function checkConversationId(id) {
-    if (typeof id !== 'string' || !CONVERSATION_ID_RE.test(id)) throw new AgentServiceError('bad-request', '对话 id 不合法');
+    if (typeof id !== 'string' || !CONVERSATION_ID_RE.test(id)) throw new AgentServiceError('bad-request', 'Invalid chat id');
   }
 
   function closeEntry(entry, reason) {
     if (entry.closed) return;
     entry.closed = true;
     instances.delete(entry.key);
-    // 还在跑的一轮由调用方先按各自的原因停掉;走到这里还有的(不该有)按中断收尾,不让它悬着
+    // Rounds still running are first stopped by callers for their respective reasons; any still
+    // remaining here (should not happen) are finalized as interrupted, avoiding hanging
     for (const conv of [...entry.runs.values()]) conv.run?.stop('interrupted');
     for (const rg of entry.renderGates?.values() ?? []) rg.close();
-    try { entry.inst.close(reason); } catch { /* 已经关了 */ }
+    try { entry.inst.close(reason); } catch { /* Already closed */ }
     say('agent.instance.close', { projectId: entry.identity.projectId, user: sha(entry.identity.userId).slice(0, 8), reason });
   }
 
@@ -299,7 +356,8 @@ export function createHostedAgentService({
   const sweep = setInterval(reclaim, Math.min(60_000, limits.idleMs));
   sweep.unref?.();
 
-  /** 「发起方在线」:此刻有一条来自发起这一轮的那个 `userId` 的事件流连着这个对话(契约第 9.4 节) */
+  /** "Initiator online": an event stream from the `userId` that initiated this round is currently
+   * connected to this chat (contract section 9.4) */
   function initiatorOnline(entry, conversationId) {
     const conv = entry.runs.get(conversationId);
     if (!conv?.run) return false;
@@ -308,16 +366,26 @@ export function createHostedAgentService({
   }
 
   /*
-   * ---------------- 反向通道(契约第 28 节) ----------------
+   * ---------------- Reverse channel (contract section 28) ----------------
    *
-   * 一轮里要发起人的页面做事(播放头、播放与暂停、读当下的选区)时:向**发起这一轮的那张页面**的事件流发一条
-   * `page.request { id, runId, tool, args, timeoutMs }`,页面用它本机同一套工具实现执行,经 `POST …/page-results` 交回。
-   *   - 只认那一张页面:发消息时页面报了页面号(`pageId`),开事件流时也报;两者相同、且是同一个 `userId` 的那条流才算。
-   *     同一位成员的别的设备、别的页签看得到对话,但收不到请求。发消息没报页面号的(旧页面)没有反向通道。
-   *   - `page.request` 只发给那一条流,**不进事件记录、不带 `seq`**:它是此刻的一次请求,补看的人不该再执行一遍。
-   *   - `id` 是服务端起的 128 位随机数,只有那张页面拿得到;交回时按「这个对话的主人、发起这一轮的 `userId`、
-   *     这一轮的页面号、还在等的 `id`」核对,一次有效。
-   *   - 等结果有时限(`pageMs`);到时、等的中途那条流断了、这一轮结束了,都回「发起方不在线」,Agent 据此继续。
+   * When a round needs the initiator's page to perform actions (playhead, play and pause, read
+   * current selection): send a `page.request { id, runId, tool, args, timeoutMs }` to the event
+   * stream of **the page that initiated this round**, which the page executes using the same tool
+   * implementation on its local machine, and returns via `POST …/page-results`.
+   *   - Recognizes only that single page: the page reports its page id (`pageId`) when sending a
+   *     message and also when opening an event stream; only the stream where both match and share the
+   *     same `userId` counts. Other devices and tabs of the same member can see the chat, but will
+   *     not receive the request. Pages that do not report a page id when sending a message (legacy
+   *     pages) have no reverse channel.
+   *   - `page.request` is sent only to that stream, **does not enter the event log, and carries no
+   *     `seq`**: it is a one-time request at this moment, and anyone viewing later should not execute
+   *     it again.
+   *   - `id` is a 128-bit random number generated by the server, obtainable only by that page; upon
+   *     submission, it is verified against "owner of this chat, `userId` that initiated this round,
+   *     page id of this round, pending `id`", valid only once.
+   *   - Waiting for results has a time limit (`pageMs`); on timeout, if the stream disconnects
+   *     midway, or if this round ends, all return "initiator offline", and the Agent proceeds
+   *     accordingly.
    */
   const pageListenerOf = (conv) => {
     const run = conv?.run;
@@ -326,7 +394,7 @@ export function createHostedAgentService({
     return null;
   };
 
-  /** 结束一个在等的请求(只会成功一次) */
+  /** End a pending request (succeeds only once) */
   function settlePage(run, id, out) {
     const p = run?.pageRequests?.get(id);
     if (!p) return false;
@@ -336,7 +404,9 @@ export function createHostedAgentService({
     return true;
   }
 
-  /** 这一轮在等的请求按「发起方不在线」收掉(`listener` 给了就只收发给那条流的;不给是全部,连同在等页面接上的) */
+  /** Pending requests for this round are closed as "initiator offline" (if `listener` is provided,
+   * close only those sent to that stream; if omitted, close all, including those waiting for the
+   * page to connect) */
   function failPageRequests(run, why, listener = null) {
     if (!run?.pageRequests) return;
     for (const [id, p] of [...run.pageRequests]) {
@@ -347,8 +417,9 @@ export function createHostedAgentService({
   }
 
   /**
-   * 让发起人的页面执行一次。回 `{ ok: true, result }`(页面执行了,`result` 是它交回的 `{ ok, result?, error? }`)
-   * 或 `{ offline: true, why }`(没有反向通道 / 页面不在 / 超时 / 中途断了 / 这一轮结束了)。
+   * Executes once on the initiator's page. Returns `{ ok: true, result }` (page executed, `result`
+   * is the `{ ok, result?, error? }` it returned) or `{ offline: true, why }` (no reverse channel /
+   * page absent / timeout / disconnected midway / round ended).
    */
   async function pageCall(entry, conversationId, tool, args) {
     const conv = entry.runs.get(conversationId);
@@ -356,7 +427,8 @@ export function createHostedAgentService({
     if (!run?.pageId) return { offline: true, why: 'no-page' };
     let listener = pageListenerOf(conv);
     if (!listener) {
-      // 刚发完消息流还没接上、或刚断正在重连:等一小会儿;已经离开得久了就立刻回
+      // Stream not yet connected right after sending a message, or just disconnected and reconnecting:
+      // wait briefly; return immediately if already away for a while
       const left = run.pageSeenAt + limits.pageAttachMs - now();
       if (left <= 0) return { offline: true, why: 'detached' };
       await new Promise((resolve) => {
@@ -384,19 +456,23 @@ export function createHostedAgentService({
     });
   }
 
-  /** 这个实例里的一次写入落地了:挑出要预渲染的片段,交给预渲染重试(契约第 16 节) */
+  /** A write landed in this instance: pick clips requiring prerender and hand them to prerender
+   * retry (contract section 16) */
   function onWrite(entry, conversationId, write) {
     if (!render.enabled) return;
     const conv = entry.runs.get(conversationId);
     if (!conv?.run) return;
-    // 剪辑段里的卡按摊平视图里的虚拟片段 id 发(`render-clips.mjs`;一个实例一份上一次的签名表)
+    // Cards in cut segments are sent by virtual clip id in the flattened view (`render-clips.mjs`;
+    // one copy of previous signature table per instance)
     entry.renderPicker ??= createRenderClipPicker(() => flatKernel);
     renderGateOf(entry, conversationId, conv).note(write?.clipIds ?? [], write?.before ?? null);
   }
 
   /**
-   * 这个对话的「攒一会儿、判轻重、只发重卡」(`render-clips.mjs` 的 `createHeavyRenderGate`)。攒的时长与预渲染重试的防抖同一个数;
-   * 判重的交给预渲染重试(`render.noteWrite`),记在写入它们的那一轮名下。
+   * This chat's "batch briefly, classify light and heavy, publish heavy cards only"
+   * (`createHeavyRenderGate` in `render-clips.mjs`). Batching duration shares the same number as the
+   * prerender retry debounce; those classified as heavy are handed to prerender retry
+   * (`render.noteWrite`), recorded under the round that wrote them.
    */
   function renderGateOf(entry, conversationId, conv) {
     entry.renderGates ??= new Map();
@@ -421,10 +497,15 @@ export function createHostedAgentService({
   }
 
   /**
-   * 实例的第 n 条连接连文档服务用的凭证。对话委托绑死一个对话(契约第 4.2 节),所以连同对话 id 与这一轮的委托一起交给凭证一侧。
-   * 实例自己的那条连接(副本的订阅、在场状态;执行器里没有对话 id 的那一个)没有自己的委托:借这个实例里此刻有委托的一个对话的。
-   * 文档服务明确不给(委托过期、代数变了、开关关了、被踢、被移出、项目没了)时,被用到的那个对话的一轮按原因收尾;
-   * 连不上、超时这类暂时性的不在此列,照常由连接层退避重试。
+   * Credentials used by the instance's n-th connection to the document service. Chat delegations are
+   * strictly bound to a single chat (contract section 4.2), so both chat id and this round's
+   * delegation are passed to the credentials side. The instance's own connection (replica
+   * subscription, presence; the one in the executor without a chat id) has no delegation of its own:
+   * it borrows from a chat in this instance that currently has a delegation. When the document
+   * service explicitly refuses (delegation expired, generation changed, switch turned off, kicked,
+   * removed, project gone), the round of the used chat is finalized according to the reason;
+   * transient issues such as connection failure or timeout are excluded and retried with backoff by
+   * the connection layer as usual.
    */
   async function connectionCredentials(entry, n, conversationId) {
     let id = conversationId;
@@ -445,15 +526,16 @@ export function createHostedAgentService({
     }
   }
 
-  /** 找到或建出这位成员在这个项目里的实例;同一个键并发到达的共用同一次建立 */
+  /** Find or create this member's instance in this project; concurrent arrivals with the same key
+   * share the same creation */
   async function instanceFor(identity) {
-    if (closed) throw new AgentServiceError('unavailable', '服务正在关闭', 503);
+    if (closed) throw new AgentServiceError('unavailable', 'Service is shutting down', 503);
     const key = keyOf(identity);
     let entry = instances.get(key);
     if (!entry) {
       if (instances.size >= maxInstances()) {
         const idle = [...instances.values()].filter((e) => e.runs.size === 0).sort((a, b) => a.lastUsed - b.lastUsed)[0];
-        if (!idle) throw new AgentServiceError('busy', '云端 Agent 正忙,请稍后再试。', 503);
+        if (!idle) throw new AgentServiceError('busy', 'The Cloud Agent is busy. Please try again later.', 503);
         closeEntry(idle, 'evicted');
       }
       entry = { key, identity: { ...identity }, ownerKey: ownerKeyOf(identity), inst: null, runs: new Map(), lastUsed: now(), closed: false, ready: null };
@@ -464,10 +546,12 @@ export function createHostedAgentService({
           httpServer: null,
           ssrLoadModule: loadModule,
           config: { root },
-          // 托管档没有 /api/*:实例登记的桌面路由一条都不挂
+          // Hosted tier has no /api/*: none of the desktop routes registered by instances are mounted
           middlewares: { use() {} },
         },
-        // 看画面:向同机的渲染服务要一帧。项目是这个实例的项目(来自鉴权),工具参数改不了;卡片源码的版本由实例现报
+        // Look: request a frame from the render service on the same machine. Project is this instance's
+        // project (from auth), tool parameters cannot modify it; card source version is reported on the fly
+        // by the instance
         prerenderPost: look ? look.forProject(identity.projectId, { cards: () => own.inst?.cardRevs?.() ?? {} }) : null,
         latestMirror: () => null,
         latestPlayhead: () => null,
@@ -481,7 +565,8 @@ export function createHostedAgentService({
         initiatorOnline: (conversationId) => initiatorOnline(own, conversationId),
         pageCall: (conversationId, tool, args) => pageCall(own, conversationId, tool, args),
         onWrite: (conversationId, write) => onWrite(own, conversationId, write),
-        // 文档服务以 4003 / 4004 关掉了数据连接:撤销,立刻停这个实例里的每一轮并关实例,不重连
+        // Document service closed the data connection with 4003 / 4004: revoked, immediately stop every
+        // round in this instance and close the instance, no reconnection
         onFinalClose: (info) => {
           const reason = revokeReasonOfClose(info);
           queueMicrotask(() => api.revoke({ projectId: own.identity.projectId, userId: own.identity.userId, reason }));
@@ -490,7 +575,7 @@ export function createHostedAgentService({
       });
       entry.ready = entry.inst.bindAgent({ projectId: identity.projectId, mode: 'hosted' }).then(() => own, (err) => {
         closeEntry(own, 'bind-failed');
-        throw new AgentServiceError('unavailable', `连不上文档服务:${err?.message ?? err}`, 503);
+        throw new AgentServiceError('unavailable', `Cannot reach the document service: ${err?.message ?? err}`, 503);
       });
       instances.set(key, entry);
       say('agent.instance.open', { projectId: identity.projectId, user: sha(identity.userId).slice(0, 8), instances: instances.size });
@@ -499,14 +584,15 @@ export function createHostedAgentService({
     return entry.ready;
   }
 
-  /** 这位成员(按主人键)在这个项目里的一个对话;没有回 null */
+  /** A chat for this member (by owner key) in this project; returns null if none exists */
   function conversationOf(identity, conversationId, create = false) {
     checkIdentity(identity);
     if (typeof conversationId !== 'string' || !CONVERSATION_ID_RE.test(conversationId)) return null;
     try {
       return store.get(identity.projectId, ownerKeyOf(identity), conversationId, { create, startedOn: identity.deviceName ?? null });
     } catch (err) {
-      // 满额不自动删历史(2026-10-08 用户定)：新建被拒，要用户自己先删旧的
+      // Do not automatically delete history when quota is reached (user decision, 2026-10-08): creation
+      // is rejected, requiring the user to delete old ones first
       if (err?.code === 'conversation-limit') throw new AgentServiceError('conversation-limit', CONVERSATION_LIMIT_MESSAGE, 409);
       throw err;
     }
@@ -516,23 +602,25 @@ export function createHostedAgentService({
 
   const api = {
     limits,
-    /** 起来时的预渲染重试重发做完了没有(测试等它) */
+    /** Whether prerender retry republishing on startup has finished (tests wait for it) */
     restored,
 
     /**
-     * 发一条消息、起一轮。这一轮从此与调用方的连接无关:事件进这个对话的事件记录,谁连着谁看。
-     * @returns {Promise<{ runId: string, seq: number }>} `seq` 是这一轮第一条事件(用户消息)的序号
+     * Send a message and start a round. From this point on, this round is independent of the caller's
+     * connection: events enter this chat's event log, and whoever is connected can view them.
+     * @returns {Promise<{ runId: string, seq: number }>} `seq` is the sequence number of the first
+     *   event (user message) in this round
      */
     async send(identity, conversationId, body = {}) {
       checkIdentity(identity);
-      if (closed) throw new AgentServiceError('unavailable', '服务正在关闭', 503);
-      if (typeof body.prompt !== 'string' || !body.prompt.trim()) throw new AgentServiceError('bad-request', '消息是空的');
+      if (closed) throw new AgentServiceError('unavailable', 'Service is shutting down', 503);
+      if (typeof body.prompt !== 'string' || !body.prompt.trim()) throw new AgentServiceError('bad-request', 'The message is empty');
       checkConversationId(conversationId);
       const before = conversationOf(identity, conversationId, false);
-      if (before?.run) throw new AgentServiceError('busy-conversation', '这个对话还有一轮在进行。', 409);
-      if (before && store.full(before)) throw new AgentServiceError('too-large', '这个对话的记录已经太长,请新开一个对话。', 413);
+      if (before?.run) throw new AgentServiceError('busy-conversation', 'This chat still has a turn in progress.', 409);
+      if (before && store.full(before)) throw new AgentServiceError('too-large', 'The history of this chat is too long. Please start a new chat.', 413);
       const cfg = (await modelConfig()) ?? {};
-      if (!modelReady(cfg)) throw new AgentServiceError('no-model-key', '托管方还没有为云端 Agent 配置模型。', 503);
+      if (!modelReady(cfg)) throw new AgentServiceError('no-model-key', 'The host has not configured a model for the Cloud Agent yet.', 503);
       const grant = typeof body.grant === 'string' && body.grant ? body.grant : null;
       if (typeof credentials.admitGrant === 'function') {
         try {
@@ -540,19 +628,20 @@ export function createHostedAgentService({
         } catch (err) {
           if (err instanceof AgentServiceError) throw err;
           const why = CREDENTIAL_REASON[err?.reason];
-          if (why === 'disabled') throw new AgentServiceError('disabled', '项目创建者已关闭云端 Agent。', 403);
-          if (err?.reason === 'unavailable' || err?.reason === 'timeout') throw new AgentServiceError('unavailable', '文档服务暂时连不上,请稍后再试。', 503);
-          throw new AgentServiceError('bad-grant', '这条消息带的授权不对或已过期,请重试。', 403);
+          if (why === 'disabled') throw new AgentServiceError('disabled', 'The project creator has turned off the Cloud Agent.', 403);
+          if (err?.reason === 'unavailable' || err?.reason === 'timeout') throw new AgentServiceError('unavailable', 'The document service is temporarily unreachable. Please try again later.', 503);
+          throw new AgentServiceError('bad-grant', 'The grant attached to this message is invalid or has expired. Please retry.', 403);
         }
       }
-      // 闸:一轮开始前(契约第 6.2 节)。放行即占名额,之后恰好还一次
+      // Gate: before a round starts (contract Section 6.2). Admitting takes a slot, returned exactly once afterward
       const admitted = await gate.admitRun({ projectId: identity.projectId, userId: identity.userId });
       if (!admitted?.ok) {
         const code = admitted?.code ?? 'busy';
-        throw new AgentServiceError(code, admitted?.message ?? '云端 Agent 正忙,请稍后再试。', code === 'disabled' ? 403 : 429);
+        throw new AgentServiceError(code, admitted?.message ?? 'The Cloud Agent is busy. Please try again later.', code === 'disabled' ? 403 : 429);
       }
       const slot = { projectId: identity.projectId, userId: identity.userId };
-      // 委托先放好:实例一建起来就要连文档服务,那时就得有凭证
+      // Set up delegation first: as soon as the instance is created it must connect to the document
+      // service, so credentials must be ready by then
       const grantKey = `${keyOf(identity)}\n${conversationId}`;
       const hadGrant = grants.get(grantKey);
       if (grant) grants.set(grantKey, grant);
@@ -561,15 +650,17 @@ export function createHostedAgentService({
       try {
         entry = await instanceFor(identity);
         conv = conversationOf(identity, conversationId, true);
-        if (!conv) throw new AgentServiceError('bad-request', '对话 id 不合法');
-        if (conv.run) throw new AgentServiceError('busy-conversation', '这个对话还有一轮在进行。', 409);
+        if (!conv) throw new AgentServiceError('bad-request', 'Invalid chat id');
+        if (conv.run) throw new AgentServiceError('busy-conversation', 'This chat still has a turn in progress.', 409);
       } catch (err) {
         gate.release(slot);
-        // 这条消息没起成一轮:它带来的委托不留(同一个对话正在跑的那一轮的委托放回去)
+        // This message did not start a round: do not keep the delegation it brought (put back the
+        // delegation for the round currently running in the same chat)
         if (grant) { if (hadGrant) grants.set(grantKey, hadGrant); else grants.delete(grantKey); }
         throw err;
       }
-      // 从这里到 `conv.run = …` 没有等待:同一个对话并发到达的两条消息只有一条过得去
+      // No awaiting from here to `conv.run = …`: of two concurrent messages arriving for the same chat,
+      // only one gets through
 
       const runId = randomUUID();
       if (!grant) grants.delete(grantKey);
@@ -585,7 +676,7 @@ export function createHostedAgentService({
         if (finished) return;
         finished = true;
         clearTimeout(timer);
-        // 还在等页面的请求:这一轮没了,不再等
+        // Requests still waiting for the page: this round is gone, stop waiting
         failPageRequests(conv.run, 'ended');
         conv.run = null;
         conv.pinned = false;
@@ -597,19 +688,20 @@ export function createHostedAgentService({
         store.setState(conv, { state, reason, message, endedAt: now() });
         store.compact(conv);
         say('agent.run.end', { projectId: identity.projectId, runId, state, ...(reason ? { reason } : {}) });
-        // 一轮结束:攒着的先判完轻重,再把预渲染重试马上发,保证最后的版本有计划
+        // Round ended: finish classifying accumulated items as light or heavy first, then immediately
+        // dispatch prerender retries to ensure the final version has a plan
         void Promise.resolve(entry.renderGates?.get(conversationId)?.flush()).then(() => render.flush(conv));
       };
 
       const stop = (kind, detail = {}) => {
         if (finished) return;
         stopped = true;
-        try { inner?.abort(); } catch { /* 已经结束 */ }
+        try { inner?.abort(); } catch { /* Already ended */ }
         if (kind === 'stopped') {
-          store.emit(conv, { type: 'status', runId, text: '已停止' });
+          store.emit(conv, { type: 'status', runId, text: 'Stopped' });
           finish('idle', 'stopped');
         } else if (kind === 'limit') {
-          const message = `这一轮超过了 ${Math.round(limits.runMs / 60_000)} 分钟的上限,已停下。已经落地的改动保留在项目里。`;
+          const message = `This turn exceeded the limit of ${Math.round(limits.runMs / 60_000)} minutes and was stopped. Changes already applied are kept in the project.`;
           store.emit(conv, { type: 'error', code: 'limit', runId, message });
           finish('failed', 'limit', message);
         } else if (kind === 'revoked') {
@@ -625,7 +717,8 @@ export function createHostedAgentService({
 
       conv.run = {
         runId, userId: identity.userId, stop,
-        // 反向通道(契约第 28 节):发起这一轮的那张页面的页面号;没报(旧页面)就没有反向通道
+        // Reverse channel (contract Section 28): page id of the page that initiated this round;
+        // if not reported (legacy page), there is no reverse channel
         pageId: typeof body.pageId === 'string' && PAGE_ID_RE.test(body.pageId) ? body.pageId : null,
         pageRequests: new Map(),
         pageWaiters: new Set(),
@@ -633,7 +726,9 @@ export function createHostedAgentService({
       };
       conv.pinned = true;
       entry.runs.set(conversationId, conv);
-      // 这条消息带的附件(只认这个对话工作目录里真有的):名字、地址、大小记进用户消息的事件里,换设备或重开对话时气泡里看得到
+      // Attachments included with this message (only recognize those actually in this chat's working
+      // directory): record name, address, and size into the user message event, visible in bubbles when
+      // switching devices or reopening the chat
       const attached = [];
       if (Array.isArray(body.attachments) && workspaces.available) {
         try {
@@ -645,7 +740,7 @@ export function createHostedAgentService({
             try { st = ws.stat(url.slice(5)); } catch { st = null; }
             if (st) attached.push({ name: url.slice('work:attachments/'.length), url, size: st.size });
           }
-        } catch { /* 没有工作区:当作没带附件 */ }
+        } catch { /* No workspace: treat as having no attachments */ }
       }
       const first = store.emit(conv, { type: 'user', runId, prompt: body.prompt, from: identity.deviceName ?? null, at: now(), ...(attached.length ? { attachments: attached } : {}) });
       store.setState(conv, {
@@ -668,11 +763,14 @@ export function createHostedAgentService({
         pageState: body.pageState && typeof body.pageState === 'object' ? body.pageState : null,
         apiConfig: cfg,
         historyFile: dataDir ? path.join(store.dirOf(identity.projectId, ownerKeyOf(identity), conversationId), 'history.json') : null,
-        // 代码块空间按项目放(A07,2026-10-22),放在这个项目的 tenants 目录下:删项目时随它一起清(conversations.mjs 的删项目);没有数据目录时由 api 运行器放在历史文件旁边
+        // Code block space is stored per project (A07, 2026-10-22), placed under this project's tenants
+        // directory: cleared along with it when deleting the project (delete project in conversations.mjs);
+        // when there is no data directory, placed beside history files by the api runner
         ...(dataDir ? { codeCacheDir: path.join(dataDir, 'tenants', identity.projectId, 'code-cache') } : {}),
-        // 输出速度记录(按实测速度设单次输出上限,2026-10-22):和用量流水同目录
+        // Output speed records (set single-output limit by measured speed, 2026-10-22): in the same
+        // directory as usage logs
         ...(dataDir ? { outputSpeedFile: path.join(dataDir, 'usage', 'model-speed.json') } : {}),
-        // 托管方放的技能(issue 46):和模型配置同在 config/ 下
+        // Skills provided by the host (issue 46): located under config/ alongside model configuration
         ...(dataDir ? { skillsDir: path.join(dataDir, 'config', 'skills') } : {}),
         sessionKey: `cloud-${ownerKeyOf(identity).slice(0, 16)}-${conversationId}`,
         maxProjectBytes: limits.maxProjectBytes,
@@ -680,11 +778,11 @@ export function createHostedAgentService({
         lookTimeoutMs: limits.lookToolMs,
         historyMaxBytes: limits.maxHistoryBytes,
         fetchImpl: body.__fetchImpl,
-        // 闸:每次模型请求前(契约第 6.2 节);之后记一行用量(第 6.3 节)
+        // Gate: before each model request (contract Section 6.2); record a line of usage afterward (Section 6.3)
         onModelCall: async (phase, info) => {
           if (phase === 'before') {
             const ok = await gate.admitModelCall({ projectId: identity.projectId, userId: identity.userId, model });
-            if (!ok?.ok) throw Object.assign(new Error(ok?.message ?? '云端 Agent 现在不能调用模型。'), { runErrorCode: ok?.code ?? 'busy' });
+            if (!ok?.ok) throw Object.assign(new Error(ok?.message ?? 'The Cloud Agent cannot call the model right now.'), { runErrorCode: ok?.code ?? 'busy' });
             return;
           }
           gate.record({
@@ -697,10 +795,12 @@ export function createHostedAgentService({
           if (finished) return;
           let out = ev;
           if (ev.type === 'diagnostic') {
-            // 托管档只发配置与请求、回应的计数,不带模型接口的地址(契约第 2.4 节);技能清单只有名字和错误代号,放了不生效时要看得到
+            // Hosted tier sends only configurations and request/response counts, without model endpoint
+            // addresses (contract Section 2.4); skill manifest has only names and error codes, visible when
+            // deployed but inactive
             if (ev.stage !== 'configuration' && ev.stage !== 'request' && ev.stage !== 'response' && ev.stage !== 'skills') return;
           } else if (ev.type === 'error') {
-            out = typeof ev.code === 'string' ? ev : { ...ev, code: 'model', message: `模型调用失败:${scrub(ev.message)}` };
+            out = typeof ev.code === 'string' ? ev : { ...ev, code: 'model', message: `Model call failed: ${scrub(ev.message)}` };
             sawError = out;
           } else if (ev.type === 'done' && ev.outcome === 'round_limit') {
             limitHit = true;
@@ -710,14 +810,14 @@ export function createHostedAgentService({
       });
       timer = setTimeout(() => stop('limit'), limits.runMs);
       timer.unref?.();
-      if (stopped) { try { inner.abort(); } catch { /* 已经结束 */ } }
+      if (stopped) { try { inner.abort(); } catch { /* Already ended */ } }
 
       inner.done.then(
         () => {
           if (finished || stopped) return;
           if (sawError) return finish('failed', sawError.code ?? 'model', sawError.message ?? null);
           if (limitHit) {
-            const message = `这一轮到了 ${limits.rounds} 次模型往返的上限,已停下。已经落地的改动保留在项目里,可以接着说。`;
+            const message = `This turn reached the limit of ${limits.rounds} model round trips and was stopped. Changes already applied are kept in the project, and you can continue.`;
             store.emit(conv, { type: 'error', code: 'limit', runId, message });
             return finish('failed', 'limit', message);
           }
@@ -725,7 +825,7 @@ export function createHostedAgentService({
         },
         (err) => {
           if (finished || stopped) return;
-          const message = `模型调用失败:${scrub(err?.message ?? err)}`;
+          const message = `Model call failed: ${scrub(err?.message ?? err)}`;
           store.emit(conv, { type: 'error', code: 'model', runId, message });
           finish('failed', 'model', message);
         },
@@ -734,8 +834,10 @@ export function createHostedAgentService({
     },
 
     /**
-     * 看一个对话的事件:先把 `seq` 大于 `after` 的补发,再接实时的。回退订函数。
-     * 对话不存在(或不是这位成员在这个项目里的)时回 null,不泄露存在与否之外的任何东西。
+     * Watch events for a chat: replay events with `seq` greater than `after` first, then connect to
+     * real-time ones. Returns unsubscribe function.
+     * Returns null if the chat does not exist (or does not belong to this member in this project),
+     * leaking nothing beyond existence.
      */
     subscribe(identity, conversationId, after, onEvent, { pageId = null } = {}) {
       const conv = conversationOf(identity, conversationId, false);
@@ -746,64 +848,72 @@ export function createHostedAgentService({
       const off = store.subscribe(conv, after, onEvent, { userId: identity.userId, pageId: page });
       const mine = off.listener;
       const isInitiator = (run) => !!run && !!page && run.pageId === page && run.userId === identity.userId;
-      // 发起这一轮的那张页面接上了:叫醒在等它的调用
+      // The page that initiated this round has connected: wake up calls waiting for it
       if (isInitiator(conv.run)) for (const w of [...conv.run.pageWaiters]) w();
       return () => {
         off();
         const run = conv.run;
         if (!run) return;
-        // 记下它离开的时刻(短暂重连的宽限从这里算);发给这条流的请求不再等
+        // Record the moment it disconnected (grace period for brief reconnection is counted from here);
+        // stop waiting for requests sent to this stream
         if (isInitiator(run)) run.pageSeenAt = now();
         failPageRequests(run, 'detached', mine);
       };
     },
 
     /**
-     * 发起人的页面交回一次反向通道请求的结果(契约第 28 节)。核对:这个对话是这位成员的(主人键)、有一轮在跑、
-     * 交的人就是发起这一轮的那个 `userId`、页面号是这一轮的、`id` 还在等。后四条任何一条不对都回同一个 `page-request-gone`,
-     * 不说是哪条;对话不是他的(或不存在)回 null(HTTP 层答 404,与别的接口一样)。
-     * 一次有效:收下即从在等的表里去掉,同一个 `id` 再交被拒。
+     * Initiator's page returns the result of a reverse channel request (contract Section 28). Verify:
+     * this chat belongs to this member (owner key), a round is running, the submitter is the `userId`
+     * that initiated this round, the page id belongs to this round, and `id` is still waiting. If any
+     * of the latter four is incorrect, return the same `page-request-gone` without specifying which;
+     * if the chat does not belong to them (or does not exist), return null (HTTP layer responds 404,
+     * matching other endpoints).
+     * Valid once: removed from waiting table upon receipt; submitting the same `id` again is rejected.
      */
     pageResult(identity, conversationId, body = {}) {
       const conv = conversationOf(identity, conversationId, false);
       if (!conv) return null;
-      const gone = () => new AgentServiceError('page-request-gone', '这次请求已经不在等了。', 410);
+      const gone = () => new AgentServiceError('page-request-gone', 'This request is no longer being waited on.', 410);
       const run = conv.run;
       const id = typeof body.id === 'string' ? body.id : '';
       if (!run || !run.pageId || run.userId !== identity.userId || body.pageId !== run.pageId || !run.pageRequests.has(id)) throw gone();
       const out = body.ok === true
         ? { ok: true, result: body.result ?? null }
-        : { ok: false, error: String(typeof body.error === 'string' && body.error ? body.error : '页面没有做成这一步').slice(0, 500) };
+        : { ok: false, error: String(typeof body.error === 'string' && body.error ? body.error : 'The page did not complete this step').slice(0, 500) };
       if (Buffer.byteLength(JSON.stringify(out)) > MAX_PAGE_RESULT_BYTES) {
-        // 太大的不收,但这次请求算答过了(不让 Agent 干等到超时)
-        settlePage(run, id, { ok: true, result: { ok: false, error: '页面交回的结果太大,没有收下。' } });
-        throw new AgentServiceError('too-large', '页面交回的结果太大', 413);
+        // Do not accept payloads that are too large, but treat this request as answered (prevent Agent
+        // from waiting idle until timeout)
+        settlePage(run, id, { ok: true, result: { ok: false, error: 'The result returned by the page is too large and was not accepted.' } });
+        throw new AgentServiceError('too-large', 'The result returned by the page is too large', 413);
       }
       if (!settlePage(run, id, { ok: true, result: out })) throw gone();
       return { ok: true };
     },
 
-    /** 停这个对话进行中的一轮。主人从任何设备都能停;别人的、不存在的都当作没有 */
+    /**
+     * Stop the in-progress round in this chat. The owner can stop it from any device; others' or
+     * nonexistent chats are treated as not found
+     */
     abort(identity, conversationId) {
       const conv = conversationOf(identity, conversationId, false);
       conv?.run?.stop('stopped');
       return { ok: true };
     },
 
-    /** 这位成员(按主人键)在这个项目里的对话,最近动过的在前 */
+    /** Chats of this member (by owner key) in this project, most recently active first */
     conversations(identity) {
       checkIdentity(identity);
       return store.list(identity.projectId, ownerKeyOf(identity)).map(listItem);
     },
 
-    /** 一个对话的状态;没有回 null */
+    /** Status of a chat; returns null if nonexistent */
     conversation(identity, conversationId) {
       const conv = conversationOf(identity, conversationId, false);
       if (!conv) return null;
       return { ...listItem({ ...conv.meta, lastSeq: conv.seq }), message: conv.meta.message ?? null, runId: conv.meta.runId ?? null };
     },
 
-    /** 改标题;没有这个对话回 false */
+    /** Change title; returns false if this chat does not exist */
     rename(identity, conversationId, title) {
       const conv = conversationOf(identity, conversationId, false);
       if (!conv) return false;
@@ -811,7 +921,11 @@ export function createHostedAgentService({
       return true;
     },
 
-    /** 删对话:进行中的先停;连模型历史、预渲染重试清单、工作目录(附件、下载的文件)一起删。没有这个对话回 false */
+    /**
+     * Delete chat: stop in-progress round first; delete together with model history, prerender retry
+     * manifest, and working directory (attachments, downloaded files). Returns false if this chat does
+     * not exist
+     */
     remove(identity, conversationId) {
       const conv = conversationOf(identity, conversationId, false);
       if (!conv) return false;
@@ -821,22 +935,25 @@ export function createHostedAgentService({
       owner?.renderGates?.delete(conversationId);
       render.forget(conv);
       store.remove(conv);
-      try { workspaces.open({ projectId: identity.projectId, ownerKey: ownerKeyOf(identity), conversationId }).destroy(); } catch { /* 没有工作区 */ }
+      try { workspaces.open({ projectId: identity.projectId, ownerKey: ownerKeyOf(identity), conversationId }).destroy(); } catch { /* No workspace */ }
       return true;
     },
 
     /**
-     * 存一个附件到这个对话的工作目录(契约第 9.5 节)。对话还没有也可以先传(发第一条消息之前选的附件);
-     * 回 `{ name, url, size, kind, text? }`,`url` 是 `work:attachments/<文件名>`,随下一条消息的 `attachments` 带回来。
-     * 只读成员也能传(附件只在他自己的对话里,进不进素材库由 `import_media` 时的权限定)。
+     * Save an attachment to this chat's working directory (contract Section 9.5). Can be uploaded even
+     * before the chat exists (attachments selected before sending the first message);
+     * returns `{ name, url, size, kind, text? }`, where `url` is `work:attachments/<filename>`,
+     * brought back with the next message's `attachments`.
+     * Read-only members can also upload (attachments remain only in their own chat; whether they enter
+     * the media library is determined by permissions during `import_media`).
      * @param {AsyncIterable<Buffer>} stream
      */
     async attach(identity, conversationId, name, stream) {
       checkIdentity(identity);
       checkConversationId(conversationId);
-      if (closed) throw new AgentServiceError('unavailable', '服务正在关闭', 503);
-      if (!agentEnabled(identity.projectId)) throw new AgentServiceError('disabled', '项目创建者已关闭云端 Agent。', 403);
-      if (!workspaces.available) throw new AgentServiceError('unavailable', '这个云端 Agent 服务没有工作目录,不能收附件。', 503);
+      if (closed) throw new AgentServiceError('unavailable', 'Service is shutting down', 503);
+      if (!agentEnabled(identity.projectId)) throw new AgentServiceError('disabled', 'The project creator has turned off the Cloud Agent.', 403);
+      if (!workspaces.available) throw new AgentServiceError('unavailable', 'This Cloud Agent service has no working directory and cannot accept attachments.', 503);
       const ws = workspaces.open({ projectId: identity.projectId, ownerKey: ownerKeyOf(identity), conversationId });
       try {
         return await saveAttachment(ws, name, stream);
@@ -848,7 +965,7 @@ export function createHostedAgentService({
       }
     },
 
-    /** 本项目的用量:总量与各成员的量(项目内任何成员可查) */
+    /** Usage for this project: total and per-member amounts (queryable by any member in the project) */
     usage(identity, since = null) {
       checkIdentity(identity);
       if (!usage) return { project: { tokens: 0, calls: 0 }, members: [], services: [] };
@@ -860,7 +977,8 @@ export function createHostedAgentService({
         cur.tokens += m.tokens; cur.calls += m.calls;
         byName.set(name, cur);
       }
-      // 外部服务(配音等)的调用单列:按服务与服务商,各成员按用户名归并
+      // External service calls (voiceover, etc.) are listed separately: grouped by service and provider,
+      // and aggregated by username for each member
       const services = (s.services ?? []).map((sv) => {
         const people = new Map();
         for (const m of sv.members ?? []) {
@@ -874,7 +992,7 @@ export function createHostedAgentService({
       return { project: s.project, members: [...byName.values()], services };
     },
 
-    /** `GET /v1/info` 的内容(契约第 2.3 节) */
+    /** Content of `GET /v1/info` (contract Section 2.3) */
     async info(identity) {
       checkIdentity(identity);
       let cfg = {};
@@ -891,9 +1009,11 @@ export function createHostedAgentService({
     },
 
     /**
-     * 撤销(契约第 4.5 节):受影响实例里进行中的一轮各记原因后立刻停下,实例关掉。`userId` 不给表示整个项目。
-     * `reason`:`disabled`(开关关了)、`removed`、`kicked`、`deleted`。开关关了与项目删除时撤回并清掉预渲染重试清单;
-     * 项目删除时删掉这个项目的对话记录与模型历史(用量记录留着,它是托管方的账)。
+     * Revocation (contract Section 4.5): in affected instances, stop each in-progress round immediately
+     * after recording reasons, and shut down instances. Omitted `userId` represents the entire project.
+     * `reason`: `disabled` (switch disabled), `removed`, `kicked`, `deleted`. On switch disabled and project
+     * deletion, revoke and clear the prerender retry manifest; on project deletion, delete chat records
+     * and model history for this project (keep usage records, which are the host's ledger).
      */
     revoke({ projectId, userId = null, reason }) {
       for (const entry of [...instances.values()]) {
@@ -904,16 +1024,19 @@ export function createHostedAgentService({
       }
       if (reason === 'disabled' || reason === 'deleted') void render.cancelProject(projectId);
       if (reason === 'deleted') { store.removeProject(projectId); workspaces.removeProject(projectId); }
-      for (const fn of [...revokeListeners]) { try { fn({ projectId, userId, reason }); } catch { /* 监听方的事 */ } }
+      for (const fn of [...revokeListeners]) { try { fn({ projectId, userId, reason }); } catch { /* Listener's concern */ } }
     },
 
-    /** 撤销发生时调 `fn({ projectId, userId, reason })`(`userId` 为 null 表示整个项目);回取消函数 */
+    /**
+     * Call `fn({ projectId, userId, reason })` when revocation occurs (`userId` as null represents entire
+     * project); returns cancel function
+     */
     onRevoke(fn) {
       revokeListeners.add(fn);
       return () => revokeListeners.delete(fn);
     },
 
-    /** 诊断:不含任何正文 */
+    /** Diagnostics: contains no body text */
     describe() {
       return {
         instances: [...instances.values()].map((e) => ({
@@ -929,24 +1052,26 @@ export function createHostedAgentService({
       };
     },
 
-    /** 测试与诊断:某位成员的实例(没有回 null) */
+    /** Testing and diagnostics: instance of a member (returns null if absent) */
     _instance(identity) {
       return instances.get(keyOf(identity))?.inst ?? null;
     },
     _render: render,
     _store: store,
     _workspaces: workspaces,
-    /** 这个进程配没配看画面的口子(状态口报它) */
+    /** Whether this process is configured with an endpoint to view frames (reported by status endpoint) */
     look: !!look,
-    /** 这台节点装没装采集工具;用的是不是测试替身(生产必须是 false) */
+    /** Whether this node has collection tools installed; whether it uses a test double (must be false in production) */
     collect: hostedTools.collectInstalled === true,
     collectTestRunner: collect?.testRunner === true,
-    /** 出网闸的测试例外开没开(状态口报它;生产必须是 false) */
+    /** Whether egress gate test exceptions are enabled (reported by status endpoint; must be false in production) */
     egressTestAllow: egress.testAllowActive,
 
     /**
-     * 收尾(SIGTERM,契约第 3.4 节):不再接新请求 → 进行中的每一轮记「中断」并停下 → 状态落盘 → 关连接。
-     * 没渲完的预渲染重试清单留在盘上,下次起来重发。
+     * Finalize (SIGTERM, contract Section 3.4): no longer accept new requests → record "interrupted" for
+     * each in-progress round and stop → persist state to disk → close connections.
+     * Prerender retry manifests that have not finished rendering remain on disk to be redispatched upon
+     * next startup.
      */
     async close() {
       if (closed) return;

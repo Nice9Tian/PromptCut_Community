@@ -1,42 +1,51 @@
 /**
- * 多 Agent 的服务端一侧(计划 `docs/plan/agent-workflow-plan.md` A3;语义 `user-workflow.md`「多 Agent」「保护」):
+ * Server side of multi-agent (plan `docs/plan/agent-workflow-plan.md` A3; semantics `user-workflow.md`
+ * "Multi-Agent", "Protection"):
  *
- *   - `spawn_agent`:主 Agent 拉起子 Agent 并分派任务 —— 新的对话 ID(= 新身份,登记进 `agent-sessions.mjs`:
- *     厂商 / 驱动沿用父对话,`role` 是预设角色,记下父对话),经页面开一个新页签,任务作为第一条消息投进它的信箱
- *     (页签一开、空闲就由页面发出,与 `send_message` 同一条投递路)。
- *     上限(计划第 4 节第 2 条〔裁〕):子 Agent 不能再拉起(深度 1);同一个主 Agent 同时开着的子 Agent 至多 4 个
- *     (〔裁〕「同时在跑」= 页签还开着:子 Agent 跑完一轮仍可能被消息唤起继续跑,用户关掉页签才腾出名额)。
- *     子 Agent 的创造力等级取父对话此刻生效的等级、之后也不高于父对话(〔裁〕,见 `agent-sessions.mjs`)。
- *     调用方没有页签可开(桌面 APP 的会话、编辑台没打开)时回清楚的错误。
- *   - 公告板的四个工具(`declare_scope` / `list_agents` / `send_message` / `check_messages`)交给按项目的公告板
- *     (`agent-board.mjs`)。
- *   - `wrap`:包住每一次工具调用 —— 记下这是谁在跑什么工具(提交流的记录带工具名),调用完把公告板要告诉它的
- *     (消息、别人动了它声明的范围、它写的被覆盖了、它写进了别人声明的范围)放进结果。
- *   - `attachLink`:把文档服务的提交流(`doc-link.mjs` 的 `onCommit`)和发给各对话连接的 `project.overwritten`
- *     接到公告板上。
+ *   - `spawn_agent`: lead Agent spawns subagents and dispatches tasks: new chat ID (= new
+ *     identity, registered in `agent-sessions.mjs`: vendor / driver inherited from parent chat,
+ *     `role` is preset role, records parent chat); opens a new tab via page, and task is dropped
+ *     into its inbox as first message (sent by page once tab opens and is idle, same delivery
+ *     route as `send_message`).
+ *     Limits (plan section 4 item 2 [ruling]): subagents cannot spawn further (depth 1); at most
+ *     4 subagents open concurrently for the same lead Agent ([ruling] "running concurrently" = tab
+ *     remains open: after subagent finishes a round, it may still be awakened by messages to
+ *     continue running; quota is freed only when user closes the tab).
+ *     Subagent creativity level takes currently effective level of parent chat, and cannot exceed
+ *     parent chat afterwards ([ruling], see `agent-sessions.mjs`).
+ *     Returns a clear error when caller has no tab to open (desktop app session, editor not open).
+ *   - Four bulletin board tools (`declare_scope` / `list_agents` / `send_message` /
+ *     `check_messages`) delegated to per-project bulletin board (`agent-board.mjs`).
+ *   - `wrap`: wraps each tool call: records who is running what tool (commit stream records carry
+ *     tool name); after call finishes, puts what bulletin board needs to tell it (messages, others
+ *     modified its declared scope, its writes were overwritten, it wrote into others' declared
+ *     scope) into the result.
+ *   - `attachLink`: connects document service commit stream (`onCommit` in `doc-link.mjs`) and
+ *     `project.overwritten` sent to each chat connection to the bulletin board.
  *
- * 不依赖 vite:页签经 `openTab` 开(生产上是编辑器页面的 SSE 通道),由调用方注入,测试用假的。
+ * Does not depend on vite: tabs are opened via `openTab` (in production, the editor page's SSE
+ * channel), injected by caller; tests use mocks.
  */
 import { randomBytes } from 'node:crypto';
 import { SPAWN_ROLE_IDS, loadRole } from './agent-roles.mjs';
 import { annotateBoard, byOfActor } from './agent-board.mjs';
 
 export const SPAWN_LIMITS = Object.freeze({
-  /** 拉起的深度:主 Agent 拉起的子 Agent 不能再拉起 */
+  /** Spawn depth: subagents spawned by lead Agent cannot spawn further */
   maxDepth: 1,
-  /** 同一个主 Agent 同时开着的子 Agent 数 */
+  /** Number of concurrent subagents open for the same lead Agent */
   maxChildren: 4,
-  /** 任务正文的上限(字符) */
+  /** Task body limit (characters) */
   taskMax: 8000,
 });
 
-/** 在服务端答的多 Agent 工具 */
+/** Multi-agent tools answered on the server side */
 export const MULTI_AGENT_TOOLS = Object.freeze(['spawn_agent', 'declare_scope', 'list_agents', 'send_message', 'check_messages']);
 const COORD = new Set(MULTI_AGENT_TOOLS);
 
 const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
 
-/** 子 Agent 的对话 ID:`sub-` + 12 位随机(页签的会话 id 与服务端对话 ID 共用 `[A-Za-z0-9_-]{1,64}`) */
+/** Subagent chat ID: `sub-` + 12 random characters (tab session id and server chat ID share `[A-Za-z0-9_-]{1,64}`) */
 export function newChildId() {
   return `sub-${randomBytes(9).toString('base64url')}`;
 }
@@ -44,17 +53,18 @@ export function newChildId() {
 /**
  * @param {object} o
  * @param {ReturnType<import('./agent-sessions.mjs').createAgentSessions>} o.sessions
- * @param {() => ReturnType<import('./agent-board.mjs').createAgentBoard>} o.board 当前项目的公告板
+ * @param {() => ReturnType<import('./agent-board.mjs').createAgentBoard>} o.board Bulletin board
+ *   for the current project
  * @param {(spec: { conversationId: string, role: string, roleName: string, parent: string, provider: string | null, creativity: string, task: string }) => Promise<void>} o.openTab
- *   开页签;开不出来就抛(没有编辑台、页面没回)
- * @param {() => string} [o.projectCreativity] 项目此刻的默认等级
+ *   Opens tab; throws if unable to open (no editor, page did not respond)
+ * @param {() => string} [o.projectCreativity] Current default level for the project
  * @param {() => string} [o.newId]
  */
 export function createMultiAgent({ sessions, board, openTab, projectCreativity = () => 'high', newId = newChildId, limits: limitsIn = {} } = {}) {
-  if (!sessions || typeof board !== 'function' || typeof openTab !== 'function') throw new TypeError('createMultiAgent: 要 sessions、board、openTab');
+  if (!sessions || typeof board !== 'function' || typeof openTab !== 'function') throw new TypeError('createMultiAgent: requires sessions, board, openTab');
   const L = { ...SPAWN_LIMITS, ...limitsIn };
 
-  /** 这个主 Agent 此刻开着的子 Agent(页签没关过的) */
+  /** Subagents currently open for this lead Agent (tabs not yet closed) */
   function liveChildren(parent) {
     const b = board();
     return sessions.childrenOf(parent).filter((c) => !b.tabClosed(c.id));
@@ -63,23 +73,23 @@ export function createMultiAgent({ sessions, board, openTab, projectCreativity =
   async function spawn(parentKey, args) {
     const role = typeof args?.role === 'string' ? args.role.trim() : '';
     const task = typeof args?.task === 'string' ? args.task.trim() : '';
-    if (!SPAWN_ROLE_IDS.includes(role)) return fail(`role 只能是 ${SPAWN_ROLE_IDS.join(' / ')}`, { code: 'bad-role' });
-    if (!task) return fail('task 必填:交给子 Agent 的任务', { code: 'bad-task' });
-    if (task.length > L.taskMax) return fail(`task 太长(${task.length} 字符,上限 ${L.taskMax}),写要点,细节让它自己读项目`, { code: 'bad-task' });
-    if (!parentKey) return fail('这条调用没带 Agent 对话 ID(可能是外部命令行调的),拉不起子 Agent:子 Agent 要挂在一个对话下面', { code: 'no-parent' });
+    if (!SPAWN_ROLE_IDS.includes(role)) return fail(`role must be one of ${SPAWN_ROLE_IDS.join(' / ')}`, { code: 'bad-role' });
+    if (!task) return fail('task is required: the task to hand to the sub-Agent', { code: 'bad-task' });
+    if (task.length > L.taskMax) return fail(`task is too long (${task.length} characters, limit ${L.taskMax}); write the key points and let it read the project for details`, { code: 'bad-task' });
+    if (!parentKey) return fail('This call carries no Agent chat ID (it may have come from an external command line), so a sub-Agent cannot be spawned: a sub-Agent must hang under a chat', { code: 'no-parent' });
     const parent = sessions.get(parentKey);
     if (parent.type === 'desktop') {
-      return fail('你是桌面 APP 的会话(或没在 AI 栏登记过的对话),没有页签可开,不能拉起子 Agent。需要分工时请用户在编辑界面的 AI 栏开新页签。', { code: 'no-tab' });
+      return fail('You are a desktop app session (or a chat not registered in the AI panel), so there is no tab to open and you cannot spawn a sub-Agent. When work needs to be split, ask the user to open a new tab in the AI panel of the editor.', { code: 'no-tab' });
     }
     if (parent.parent) {
-      return fail(`你是子 Agent(由 ${parent.parent} 拉起),不能再拉起别的 Agent(深度上限 ${L.maxDepth})。需要帮手就用 send_message 告诉拉起你的 Agent。`, { code: 'depth' });
+      return fail(`You are a sub-Agent (spawned by ${parent.parent}) and cannot spawn other Agents (depth limit ${L.maxDepth}). If you need help, use send_message to tell the Agent that spawned you.`, { code: 'depth' });
     }
     const live = liveChildren(parentKey);
     if (live.length >= L.maxChildren) {
-      return fail(`你同时开着的子 Agent 已经有 ${live.length} 个(上限 ${L.maxChildren}):${live.map((c) => c.id).join('、')}。用 send_message 把活派给它们,或等用户关掉用不着的页签。`, { code: 'too-many', children: live.map((c) => c.id) });
+      return fail(`You already have ${live.length} sub-Agents open at once (limit ${L.maxChildren}): ${live.map((c) => c.id).join(', ')}. Use send_message to hand work to them, or wait for the user to close unneeded tabs.`, { code: 'too-many', children: live.map((c) => c.id) });
     }
     const def = loadRole(role);
-    if (!def) return fail(`角色 ${role} 的提示词读不到(src/ai/roles/${role}.md)`, { code: 'bad-role' });
+    if (!def) return fail(`Cannot read the prompt for role ${role} (src/ai/roles/${role}.md)`, { code: 'bad-role' });
     const level = sessions.creativityOf(parentKey, projectCreativity()).level;
     const id = newId();
     const provider = parent.type === 'api' ? 'api' : parent.vendor;
@@ -87,14 +97,14 @@ export function createMultiAgent({ sessions, board, openTab, projectCreativity =
     const b = board();
     b.markSeen(id);
     b.touch(id);
-    // 任务作为第一条消息进它的信箱:页签一开、空闲就由页面发出(与 send_message 同一条投递路)
+    // Task enters its inbox as first message: sent by page once tab is open and idle (same delivery route as send_message)
     b.deliver({ from: parentKey, to: id, text: task, hops: 1 });
     try {
       await openTab({ conversationId: id, role, roleName: def.name, parent: parentKey, provider, creativity: level, task });
     } catch (err) {
       sessions.unregister(id);
       b.takeInbox(id, false);
-      return fail(`开不出子 Agent 的页签:${err?.message ?? err}`, { code: 'no-tab' });
+      return fail(`Cannot open a tab for the sub-Agent: ${err?.message ?? err}`, { code: 'no-tab' });
     }
     return {
       ok: true,
@@ -104,7 +114,7 @@ export function createMultiAgent({ sessions, board, openTab, projectCreativity =
       parent: parentKey,
       provider,
       creativity: level,
-      note: `已开新页签「${def.name}」,任务作为它的第一条消息发出。它的对话 ID 是 ${id}:用 send_message 和它协调,用 list_agents 看它忙不忙;它写的内容以它自己的身份提交。`,
+      note: `Opened new tab "${def.name}"; the task was sent as its first message. Its chat ID is ${id}: use send_message to coordinate with it and list_agents to see whether it is busy; what it writes is submitted under its own identity.`,
     };
   }
 
@@ -115,7 +125,7 @@ export function createMultiAgent({ sessions, board, openTab, projectCreativity =
       return COORD.has(tool);
     },
 
-    /** 在服务端答一个多 Agent 工具;`agent` 是发起调用的对话 ID('' = 没带) */
+    /** Answer a multi-agent tool on the server side; `agent` is calling chat ID ('' = omitted) */
     async handle(tool, args, agent = '') {
       const key = typeof agent === 'string' ? agent : '';
       const b = board();
@@ -131,8 +141,10 @@ export function createMultiAgent({ sessions, board, openTab, projectCreativity =
     },
 
     /**
-     * 包住一次工具调用:调用期间登记「谁在跑什么工具」,调用完把公告板要告诉它的放进结果(`notice` 在最前)。
-     * 多 Agent 工具本身不带(`check_messages` 自己就列着消息)。抛错时不取走待告知的,留给下一次。
+     * Wraps a tool call: registers "who is running what tool" during execution, and puts what the
+     * bulletin board needs to tell it into the result once completed (`notice` at the front).
+     * Multi-agent tools themselves do not carry this (`check_messages` lists messages on its own).
+     * On error, does not consume pending notices, leaving them for the next call.
      */
     async wrap(agent, tool, run) {
       const key = typeof agent === 'string' ? agent : '';
@@ -155,16 +167,17 @@ export function createMultiAgent({ sessions, board, openTab, projectCreativity =
 }
 
 /**
- * 把一条到文档服务的连接(`doc-link.mjs` 的 `createAgentLink`)接到公告板上:
- *   - 提交流 → 改动记录(带写入身份);
- *   - 发给各对话连接的 `project.overwritten` → 被覆盖的那个 Agent 下一次工具结果里得知。
- * 回解绑函数。
+ * Connects a document service connection (`createAgentLink` in `doc-link.mjs`) to the bulletin
+ * board:
+ *   - Commit stream → change records (with write identity);
+ *   - `project.overwritten` sent to chat connections → overwritten Agent learns in next tool result.
+ * Returns unbind function.
  * @param {ReturnType<import('./doc-link.mjs').createAgentLink>} link
  * @param {() => ReturnType<import('./agent-board.mjs').createAgentBoard>} board
  */
 export function attachLink(link, board) {
   const offCommit = link.onCommit((c) => {
-    try { board().noteCommit(c); } catch { /* 公告板是附带的 */ }
+    try { board().noteCommit(c); } catch { /* Bulletin board is incidental */ }
   });
   const offMessage = link.onMessage((msg) => {
     if (msg?.type !== 'project.overwritten') return;

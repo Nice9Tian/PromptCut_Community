@@ -1,9 +1,11 @@
 /**
- * 口令错误限速（契约 `docs/plan/auth-contract.md` 第 9 节）。
+ * Rate limiting on incorrect passphrase (contract `docs/plan/auth-contract.md` section 9).
  *
- * 按来源地址计数：1 分钟内失败 5 次，这个来源进入 60 s 冷却。冷却期内挑战回 429、握手一律 401、创建者操作回
- * `rate-limited`。冷却结束后计数清零。回环来源不计数（由调用方判断，不调 `fail`）。
- * 只在内存里；来源太多时丢最久没动的。
+ * Counted by origin address: 5 failures within 1 minute puts this origin into a 60 s cooldown.
+ * During cooldown, challenges return 429, handshakes always return 401, and creator operations
+ * return `rate-limited`. Count resets to zero after cooldown ends. Loopback origins are not
+ * counted (judged by caller, `fail` is not called).
+ * In-memory only; evicts least recently active when there are too many origins.
  */
 
 export const RATE_DEFAULTS = Object.freeze({ WINDOW_MS: 60_000, MAX_FAILURES: 5, COOLDOWN_MS: 60_000, MAX_SOURCES: 50_000 });
@@ -22,7 +24,7 @@ export function createRateLimiter({
   cooldownMs = RATE_DEFAULTS.COOLDOWN_MS,
   maxSources = RATE_DEFAULTS.MAX_SOURCES,
 } = {}) {
-  /** 来源 → { failures: number[], until: number }；Map 按最后一次改动的顺序 */
+  /** Origin → { failures: number[], until: number }; Map ordered by last modification */
   const sources = new Map();
 
   const keyOf = (remote) => String(remote ?? '');
@@ -34,17 +36,17 @@ export function createRateLimiter({
   }
 
   return {
-    /** 这个来源正在冷却 */
+    /** This origin is in cooldown */
     blocked(remote) {
       const entry = sources.get(keyOf(remote));
       if (!entry) return false;
       const at = now();
       if (entry.until > at) return true;
-      if (entry.until !== 0) sources.delete(keyOf(remote)); // 冷却过了：清零
+      if (entry.until !== 0) sources.delete(keyOf(remote)); // Cooldown expired: reset to zero
       return false;
     },
 
-    /** 记一次失败；这一次让它进入冷却时回 true */
+    /** Records one failure; returns true if this failure puts it into cooldown */
     fail(remote) {
       const key = keyOf(remote);
       const at = now();
@@ -68,8 +70,9 @@ export function createRateLimiter({
     },
 
     /**
-     * 冷却还剩多少毫秒（不在冷却回 0）。C10a 补：邀请码端点与挑战的 429 回包带上秒数，界面照表 A 写
-     * 「请 {秒数} 秒后再试」（`docs/plan/c10a-contract.md` 第 14 节）。只读，不改计数。
+     * Cooldown remaining in milliseconds (returns 0 if not in cooldown). Added in C10a: invite code
+     * endpoint and challenge 429 responses include seconds, UI writes "Please try again in {seconds}
+     * seconds" per Table A (`docs/plan/c10a-contract.md` section 14). Read-only, does not modify count.
      */
     retryAfterMs(remote) {
       const entry = sources.get(keyOf(remote));

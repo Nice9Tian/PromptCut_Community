@@ -1,29 +1,53 @@
 /**
- * 游客进别人的项目（只读权限）时编辑界面的只读呈现探针（2026-10-23 用户定：游客一律只读，界面要一眼看出改不了）。
- * 真 Chrome（puppeteer），编辑台 `?editor&aimock=1&nosetup=1`。「只读权限」用 `io/viewOnly.ts` 的 `setProjectAccess('r')` 拨，
- * 再借同步管理的一次状态通知让界面重渲（真实路径是 syncManager 进项目时拨，见 `src/editor/readOnly.ts`）。
+ * Read-only presentation probe for the editor when a guest enters someone else's project
+ * (read-only permissions) ((user decision, 2026-10-23): guests are always read-only, and the UI
+ * must make it immediately obvious that changes cannot be made).
+ * Real Chrome (puppeteer), editor `?editor&aimock=1&nosetup=1`. "Read-only permissions" are toggled
+ * with `setProjectAccess('r')` from `io/viewOnly.ts`, then triggers UI re-render via a state
+ * notification from sync management (the real path toggles via syncManager when entering a project;
+ * see `src/editor/readOnly.ts`).
  *
- * 用法：
+ * Usage:
  *   node scripts/probes/guest-readonly-ui-probe.mjs [--port 5243] [--out out/guest-readonly-ui-probe] [--origin http://127.0.0.1:N] [--keep]
- * 端口分到 5240～5249；缺省自己起一台编辑器（舞台占 +1、+2），跑完收掉。`--origin` 改用外面现成的。
+ * Ports allocated from 5240 to 5249; by default starts an editor instance (stages occupy +1, +2),
+ * torn down after running. `--origin` uses an existing external instance instead.
  *
- * 验收（每项一行 JSON，最后一行 summary，有失败退出码 1）：
- *   R0 读写（没进共享项目）：撤销可点、「序列」可点、素材导入可点、时间轴片段有拖把手、行头按钮可点、预览三个工具都可点、
- *      输入区能发（编辑框与发送可用）、参数面板（选中片段后）控件可点——一切照旧，没有只读标记。
- *   R1 切成只读：<html> 带 data-pc-readonly=member，顶栏徽标「只能查看」且悬停是 viewOnlyText()。
- *   R2 时间轴：行头静音 / 隐藏 / 锁定、「+ 序列」、「新建剪辑」置灰且悬停是那一句；片段没有拖把手；实际拖一个片段、按 Delete、
- *      点右键：项目内容不变（右键只有一行灰字说明）；点一下仍能选中。
- *   R3 参数面板：选中片段后「编辑」分区里开始 / 结束、换卡下拉、参数控件全部禁用；代码页文本框只读、能选中。
- *   R4 素材库与动画：导入按钮置灰；卡片格不可拖（draggable=false）、点一下不会往时间轴加片段、悬停是那一句。
- *   R5 预览：移动、文字工具置灰（选择可用）；播放 / 暂停照常；导出照常可点。
- *   R6 右栏 Agent：编辑框、发送、预设按钮禁用，占位文字是那一句；没有引导动画。
- *   R7 顶栏：撤销 / 重做置灰；改名点不开；「项目」菜单里保存、打包保存置灰、「项目设置…」能打开但设置项禁用、「确定」置灰。
- *   R8 ?observe=1 那条老路没变：徽标仍是「只读查看」，保存置灰，而新加的这些锁都没有（「+ 序列」、输入区、参数控件照常可用）。
- *   R9 切回读写：上面各项恢复可点，<html> 标记撤掉。
- *   M1～M3 手机版（`--mobile`：另起一台在线模式的开发服务，`?layout=mobile`）：顶栏下有一条说明（手机上没有悬停）、子导航栏整排置灰、撤销置灰、播放与导出照常；
- *      Agent 输入区换成说明；时间轴分页里点选后拖动卡片段不动（读写下会动，作对照）、对齐按钮置灰。
- * 截图写进 --out：ro-full.png、ro-timeline.png、ro-params.png、ro-agent.png、ro-library.png、ro-project-menu.png、ro-settings.png、
- *   rw-full.png、observe-full.png、ro-mobile.png、ro-mobile-agent.png。
+ * Acceptance check (one JSON line per item, last line is summary, exits with code 1 on failure):
+ *   R0 Read/write (not entered shared project): Undo clickable, "Track" clickable, media import
+ *      clickable, timeline clips have drag handles, row header buttons clickable, all three preview
+ *      tools clickable, input area can send (edit box and Send available), parameters panel
+ *      (after selecting a clip) controls clickable: everything as usual, no read-only markers.
+ *   R1 Switch to read-only: <html> has data-pc-readonly=member, top bar badge is "View only" and
+ *      hover shows viewOnlyText().
+ *   R2 Timeline: row header mute / hide / lock, "+ Track", "New cut" grayed out and hover shows
+ *      that message; clips have no drag handles; actually dragging a clip, pressing Delete, or
+ *      right-clicking leaves project contents unchanged (right-click only shows a single line of
+ *      gray explanation); clicking once can still select.
+ *   R3 Parameters panel: after selecting a clip, Start / End in "Edit" section, card switch
+ *      dropdown, and parameter controls are all disabled; code tab text box is read-only and
+ *      selectable.
+ *   R4 Media library and animations: import button grayed out; card cells not draggable
+ *      (draggable=false), clicking once does not add clips to the timeline, hover shows that message.
+ *   R5 Preview: Move and Text tools grayed out (Select available); Play / Pause as normal;
+ *      Export clickable as normal.
+ *   R6 Right rail Agent: edit box, Send, preset buttons disabled, placeholder text is that message;
+ *      no guide animation.
+ *   R7 Top bar: Undo / Redo grayed out; rename cannot be opened; in "Project" menu, Save and Save
+ *      archive are grayed out, "Project settings…" opens but settings items are disabled, "OK"
+ *      grayed out.
+ *   R8 The old ?observe=1 path remains unchanged: badge is still "Read-only view", Save is grayed
+ *      out, while none of the newly added locks are present ("+ Track", input area, parameter
+ *      controls available as usual).
+ *   R9 Switch back to read/write: the above items are restored to clickable, and the <html> marker
+ *      is removed.
+ *   M1-M3 Mobile app (`--mobile`: start another online-mode dev server, `?layout=mobile`): an
+ *      explanation note appears below top bar (no hover on mobile), entire sub-navigation bar row
+ *      is grayed out, Undo grayed out, Playback and Export as normal; Agent input area replaced
+ *      with explanation; in timeline tab, dragging a card clip after clicking to select does not
+ *      move (moves under read/write as a control), and align button is grayed out.
+ * Screenshots written to --out: ro-full.png, ro-timeline.png, ro-params.png, ro-agent.png,
+ *   ro-library.png, ro-project-menu.png, ro-settings.png, rw-full.png, observe-full.png,
+ *   ro-mobile.png, ro-mobile-agent.png.
  */
 import '../lib/no-user-dirs.mjs';
 import fs from 'node:fs';
@@ -36,9 +60,9 @@ import { flagArg } from './probe-connect.mjs';
 import { startDevServer, viteBin, waitHttp, killTree, REPO } from '../lib/dev-server.mjs';
 
 const PORT = Number(flagArg('port', 5243));
-if (PORT < 5240 || PORT > 5249) throw new Error(`端口 ${PORT} 不在分给本探针的 5240～5249 里`);
+if (PORT < 5240 || PORT > 5249) throw new Error(`Port ${PORT} is not within 5240-5249, the range assigned to this probe`);
 const MOBILE_PORT = Number(flagArg('mobile-port', 5246));
-if (MOBILE_PORT < 5240 || MOBILE_PORT > 5247) throw new Error(`端口 ${MOBILE_PORT} 不在分给本探针的 5240～5249 里（要占连号三个）`);
+if (MOBILE_PORT < 5240 || MOBILE_PORT > 5247) throw new Error(`Port ${MOBILE_PORT} is not within 5240-5249, the range assigned to this probe (needs three consecutive ports)`);
 const OUT = path.resolve(REPO, flagArg('out', 'out/guest-readonly-ui-probe'));
 const KEEP = process.argv.includes('--keep');
 const WITH_MOBILE = process.argv.includes('--mobile');
@@ -59,7 +83,7 @@ async function waitFor(fn, ms, what) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what}`);
     await sleep(150);
   }
 }
@@ -97,11 +121,13 @@ try {
     await page.setViewport(size);
     await page.goto(`${base}/${query}`, { waitUntil: 'domcontentloaded' });
     await waitFor(() => page.evaluate(() => !!window.__pcStore), 120_000, 'window.__pcStore');
-    // 整页「正在测量卡片」遮罩在载入后约 2 秒才出现、约 3 秒后撤掉,撤掉之后每一刻重卡片还有沙漏:连续 7 秒没有遮罩才算稳(遮罩盖着时点击都落在遮罩上)
+    // The whole-page "Measuring cards" overlay appears about 2 s after load and is dismissed about
+    // 3 s later; after dismissal, heavy cards still show an hourglass at each moment: 7 consecutive
+    // seconds without an overlay is considered stable (while covered, clicks fall onto the overlay)
     let calm = 0;
     const t0 = Date.now();
     while (calm < 7000 && Date.now() - t0 < 120_000) {
-      const measuring = await page.evaluate(() => document.body.innerText.includes('正在测量卡片')).catch(() => true);
+      const measuring = await page.evaluate(() => document.body.innerText.includes('Measuring card')).catch(() => true);
       calm = measuring ? 0 : calm + 500;
       await sleep(500);
     }
@@ -109,7 +135,7 @@ try {
   };
   const shot = (page, name) => page.screenshot({ path: path.join(OUT, name) });
 
-  /** 在页面里查一个元素的状态（取第一个看得见的） */
+  /** Check the status of an element on the page (takes the first visible one) */
   const stateOf = (page, sel) => page.evaluate((sel) => {
     const el = [...document.querySelectorAll(sel)].find((n) => n.getClientRects().length > 0) ?? document.querySelector(sel);
     if (!el) return { found: false };
@@ -137,21 +163,23 @@ try {
       el.click();
       return true;
     }, sel);
-    if (!ok) throw new Error(`点不到 ${sel}`);
+    if (!ok) throw new Error(`Cannot click ${sel}`);
   };
-  // prefix:在线模式的开发服务把页面放在 /editor/ 下(vite.config.ts 的 base),模块路径跟着带上
+  // prefix: online-mode dev server places the page under /editor/ (base in vite.config.ts),
+  // module paths include it accordingly
   const setAccess = async (page, access, prefix = '') => {
     await page.evaluate(async (access, prefix) => {
       const vo = await import(`${prefix}/src/editor/io/viewOnly.ts`);
       vo.setProjectAccess(access);
-      // 借同步管理的一次状态通知让界面重渲(真实路径是 syncManager 进 / 退项目时拨)
+      // Trigger UI re-render via a state notification from sync management (the real path toggles when
+      // syncManager enters / leaves a project)
       const sm = await import(`${prefix}/src/editor/sync/syncManager.ts`);
       sm.pushToast('probe', 'info', 1);
     }, access, prefix);
     await sleep(500);
   };
   const WHY = (page, prefix = '') => page.evaluate(async (prefix) => (await import(`${prefix}/src/editor/io/viewOnly.ts`)).viewOnlyText(), prefix);
-  /** 往时间轴第一条序列上扔一张卡(合成的 HTML5 拖放事件;真拖放 puppeteer 做不到):回「落点接了没有」和「多了几个片段」 */
+  /** Drop a card onto the timeline's first track (synthetic HTML5 drag-and-drop events; puppeteer cannot do real drag-and-drop): returns "whether drop target accepted" and "how many clips were added" */
   const tryDrop = (page) => page.evaluate(() => {
     const st = window.__pcStore.getState();
     const cardId = st.project.tracks.flatMap((t) => t.clips).find((c) => c.cardId)?.cardId;
@@ -168,11 +196,11 @@ try {
     return { cardId, accepted: over.defaultPrevented, added: count() - before, newTrackZone: document.querySelectorAll('[data-pc="new-track-zone"]').length };
   });
 
-  /* ── R0 读写 ── */
+  /* ── R0 Read/write ── */
   const page = await openEditor(origin, '?editor&aimock=1&nosetup=1');
   const ids = await clipIds(page);
   check('R0.has-clips', ids.length >= 3, { n: ids.length });
-  // 做一笔编辑,撤销才有得点
+  // Make an edit so undo has something to click
   await page.evaluate((id) => window.__pcStore.actions.setClipParams(id, { probe: 1 }, { merge: true }), ids[0]);
   await sleep(300);
   const rw = {
@@ -196,15 +224,15 @@ try {
   check('R0.params-enabled', rwParams.start.found && !rwParams.start.off && rwParams.sw.found && !rwParams.sw.off, { rwParams });
   await shot(page, 'rw-full.png');
 
-  /* ── R1 切成只读 ── */
+  /* ── R1 Switch to read-only ── */
   await setAccess(page, 'r');
   const why = await WHY(page);
-  await waitFor(() => page.evaluate(() => document.documentElement.dataset.pcReadonly === 'member'), 5000, 'html 只读标记');
+  await waitFor(() => page.evaluate(() => document.documentElement.dataset.pcReadonly === 'member'), 5000, 'html read-only flag');
   const badge = await stateOf(page, '[data-pc="viewonly-badge"]');
   check('R1.html-marker', (await page.evaluate(() => document.documentElement.dataset.pcReadonlyWhy)) === why && why.length > 5, { why });
-  check('R1.badge', badge.found && badge.text === '只能查看' && badge.title === why, { badge });
+  check('R1.badge', badge.found && badge.text === 'View only' && badge.title === why, { badge });
 
-  /* ── R2 时间轴 ── */
+  /* ── R2 Timeline ── */
   const before = await projectJson(page);
   const hdr = await page.evaluate(() => [...document.querySelectorAll('[data-pc-track-header] .pc-tl-row-acts button')].map((b) => ({ d: b.disabled, t: b.title })));
   const addTrack = await stateOf(page, '[data-pc="add-track"]');
@@ -213,7 +241,7 @@ try {
   check('R2.row-buttons-off', hdr.length >= 6 && hdr.every((b) => b.d && b.t === why), { hdr: hdr.slice(0, 3) });
   check('R2.add-track-and-cut-off', addTrack.off && addTrack.title === why && cutAdd.off && cutAdd.title === why, { addTrack, cutAdd });
   check('R2.no-trim-handles', trimRo === 0, { trimRo });
-  // 实际拖一个片段 / 按 Delete / 右键
+  // Actually drag a clip / press Delete / right-click
   const box = await page.evaluate((id) => {
     const r = document.querySelector(`[data-clip-id="${id}"]`).getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
@@ -232,21 +260,22 @@ try {
   await page.mouse.click(box.x, box.y, { button: 'right' });
   await sleep(300);
   const menu = await page.evaluate(() => [...document.querySelectorAll('[data-pc="tl-ctxmenu"] .pc-tl-ctxmenu-item')].map((n) => ({ text: n.textContent.trim(), off: n.getAttribute('aria-disabled') === 'true' })));
-  check('R2.context-menu-only-explains', menu.length >= 1 && menu.every((m) => m.off || m.text.startsWith('查看字幕') || m.text === '引用到输入框') && menu.some((m) => m.text === why), { menu });
+  check('R2.context-menu-only-explains', menu.length >= 1 && menu.every((m) => m.off || m.text.startsWith('View captions') || m.text === 'Quote into input box') && menu.some((m) => m.text === why), { menu });
   await shot(page, 'ro-timeline.png');
   await page.keyboard.press('Escape');
   await page.mouse.click(5, 5);
-  // 往时间轴扔一张卡:落点不接、不加片段;「新建序列」落区也不画
+  // Drop a card onto the timeline: drop target does not accept, no clips added;
+  // "New track" drop zone is not rendered either
   const dropRo = await tryDrop(page);
   check('R2.drop-refused', dropRo.cardId && dropRo.accepted === false && dropRo.added === 0 && dropRo.newTrackZone === 0, { dropRo });
-  // 导入素材的函数本身也拦(拖放文件之类没盖到的路)
+  // The asset import function itself also blocks (paths not covered such as file drag-and-drop)
   const importErr = await page.evaluate(async () => {
     const { importMediaFiles } = await import('/src/editor/left/importAssets.ts');
     try { await importMediaFiles([new File(['x'], 'a.mp4', { type: 'video/mp4' })]); return null; } catch (e) { return String(e.message); }
   });
   check('R2.import-function-refuses', importErr === why, { importErr });
 
-  /* ── R3 参数面板 ── */
+  /* ── R3 Parameters panel ── */
   await page.evaluate((id) => window.__pcStore.actions.select([id]), ids[0]);
   await sleep(500);
   const p = {
@@ -268,7 +297,7 @@ try {
   check('R3.code-readonly-but-selectable', code.found && code.readOnly && !code.disabled, { code });
   await page.evaluate(() => document.querySelector('[data-pc-tab="form"]').click());
 
-  /* ── R4 素材库与动画 ── */
+  /* ── R4 Media library and animations ── */
   await clickVisible(page, '[data-pc-rail="library"]');
   await sleep(500);
   const media = await stateOf(page, '[data-pc-add="media"]');
@@ -276,7 +305,7 @@ try {
   await shot(page, 'ro-library.png');
   await clickVisible(page, '[data-pc-rail="animations"]');
   await sleep(800);
-  // 卡片格在组里,打开第一个有卡片的组
+  // Card cells are inside groups; open the first group that has cards
   let cell = { found: false };
   for (let i = 0; i < 6 && !cell.found; i++) {
     await page.evaluate((i) => { const els = [...document.querySelectorAll('[data-pc-group]')]; els[i]?.click(); }, i);
@@ -288,7 +317,7 @@ try {
   await sleep(300);
   check('R4.card-cell-inert', cell.found && cell.aria === 'true' && !cell.draggable && cell.title.endsWith(why) && (await clipIds(page)).length === clipsBefore, { cell, clipsBefore });
 
-  /* ── R5 预览 ── */
+  /* ── R5 Preview ── */
   const tools = await page.evaluate(() => [...document.querySelectorAll('.pc-pv-tool')].map((b) => ({ d: b.disabled, t: b.title })));
   check('R5.tools', tools.length === 3 && !tools[0].d && tools[1].d && tools[2].d && tools[1].t.endsWith(why) && tools[2].t.endsWith(why), { tools });
   await page.evaluate(() => window.__pcStore.actions.togglePlay());
@@ -296,10 +325,10 @@ try {
   const playing = await page.evaluate(() => window.__pcStore.getState().playing);
   await page.evaluate(() => window.__pcStore.actions.pause());
   check('R5.playback-still-works', playing === true);
-  const exportBtn = await page.evaluate(() => { const b = [...document.querySelectorAll('.pc-btn--primary')].find((x) => x.textContent.includes('导出视频')); return b ? { off: b.disabled } : null; });
+  const exportBtn = await page.evaluate(() => { const b = [...document.querySelectorAll('.pc-btn--primary')].find((x) => x.textContent.includes('Export video')); return b ? { off: b.disabled } : null; });
   check('R5.export-still-enabled', exportBtn && exportBtn.off === false, { exportBtn });
 
-  /* ── R6 右栏 Agent ── */
+  /* ── R6 Right rail Agent ── */
   const ai = {
     input: await stateOf(page, '[data-pc="ai-input"]'),
     send: await stateOf(page, '[data-pc="ai-send"]'),
@@ -311,7 +340,7 @@ try {
   check('R6.start-page-no-invite', ai.preset.disabled && ai.preset.title === why && ai.animated === '0' && ai.guide === null, { ai });
   await shot(page, 'ro-agent.png');
 
-  /* ── R7 顶栏 ── */
+  /* ── R7 Top bar ── */
   const undo = await stateOf(page, '[data-pc="undo-btn"] button');
   const undoTip = await page.evaluate(() => document.querySelector('[data-pc="undo-btn"]').title);
   const rename = await stateOf(page, '.pc-projname--btn');
@@ -324,10 +353,10 @@ try {
   await sleep(300);
   const menuItems = await page.evaluate(() => [...document.querySelectorAll('.pc-proj-item')].map((b) => ({ t: b.querySelector('b')?.textContent, d: b.disabled, title: b.title })));
   const byName = (n) => menuItems.find((m) => m.t === n);
-  check('R7.save-items-off', byName('保存项目')?.d && byName('保存项目').title === why && byName('打包保存…')?.d && byName('打包保存…').title === why, { menuItems });
-  check('R7.settings-openable', byName('项目设置…') && !byName('项目设置…').d, { menuItems });
+  check('R7.save-items-off', byName('Save project')?.d && byName('Save project').title === why && byName('Save as package…')?.d && byName('Save as package…').title === why, { menuItems });
+  check('R7.settings-openable', byName('Project settings…') && !byName('Project settings…').d, { menuItems });
   await shot(page, 'ro-project-menu.png');
-  await page.evaluate(() => [...document.querySelectorAll('.pc-proj-item')].find((b) => b.querySelector('b')?.textContent === '项目设置…').click());
+  await page.evaluate(() => [...document.querySelectorAll('.pc-proj-item')].find((b) => b.querySelector('b')?.textContent === 'Project settings…').click());
   await sleep(500);
   const dlg = await page.evaluate(() => {
     const d = document.querySelector('.pc-dialog');
@@ -335,13 +364,14 @@ try {
     const confirmBtn = d.querySelector('.pc-btn--primary');
     return { note: d.querySelector('[data-pc="settings-readonly-note"]')?.textContent ?? null, fields: fields.length, off: fields.filter((e) => e.disabled || e.closest('fieldset:disabled')).length, confirmDisabled: confirmBtn.disabled, confirmTitle: confirmBtn.title, cancel: [...d.querySelectorAll('.pc-dialog-foot .pc-btn')][0].textContent };
   });
-  check('R7.settings-dialog-readonly', dlg.note === why && dlg.fields >= 5 && dlg.off === dlg.fields && dlg.confirmDisabled && dlg.confirmTitle === why && dlg.cancel === '关闭', { dlg });
+  check('R7.settings-dialog-readonly', dlg.note === why && dlg.fields >= 5 && dlg.off === dlg.fields && dlg.confirmDisabled && dlg.confirmTitle === why && dlg.cancel === 'Close', { dlg });
   await shot(page, 'ro-settings.png');
   await page.keyboard.press('Escape');
   await sleep(300);
-  // 桌面版标题栏菜单(这个构建里也画出来):编辑 → 撤销 / 重做、文件 → 保存项目 置灰,说明是那一句
+  // Desktop app title bar menu (also rendered in this build): Edit → Undo / Redo,
+  // File → Save project are grayed out, explanation is that message
   const titlebar = {};
-  for (const [menu, cmds] of [['编辑', ['undo', 'redo']], ['文件', ['save-project', 'export-video']]]) {
+  for (const [menu, cmds] of [['Edit', ['undo', 'redo']], ['File', ['save-project', 'export-video']]]) {
     await page.evaluate((menu) => [...document.querySelectorAll('.pc-titlebar-menu-button')].find((b) => b.textContent.trim() === menu).click(), menu);
     await sleep(250);
     for (const c of cmds) titlebar[c] = await page.evaluate((c) => { const b = document.querySelector(`[data-pc="titlebar-${c}"]`); return b ? { d: b.getAttribute('aria-disabled') === 'true', t: b.title } : null; }, c);
@@ -351,7 +381,7 @@ try {
   check('R7.titlebar-menu', titlebar.undo?.d && titlebar.undo.t === why && titlebar.redo?.d && titlebar['save-project']?.d && titlebar['save-project'].t === why && titlebar['export-video'] && !titlebar['export-video'].d, { titlebar });
   await shot(page, 'ro-full.png');
 
-  /* ── R9 切回读写 ── */
+  /* ── R9 Switch back to read/write ── */
   await setAccess(page, 'rw');
   await sleep(300);
   const back = {
@@ -368,7 +398,7 @@ try {
   check('R9.back-to-readwrite', back.marker === null && !back.addTrack.off && !back.composer.off && back.trim > 0 && back.tools.every((d) => !d) && back.badge === 0 && back.fences === 0, { back });
   await page.close();
 
-  /* ── R8 ?observe=1 老路 ── */
+  /* ── R8 ?observe=1 old path ── */
   const ob = await openEditor(origin, '?editor&aimock=1&nosetup=1&observe=1');
   const obState = {
     badge: await stateOf(ob, '[data-pc="viewonly-badge"]'),
@@ -383,22 +413,22 @@ try {
   await ob.evaluate(() => document.querySelector('.pc-proj-btn').click());
   await sleep(300);
   const obMenu = await ob.evaluate(() => [...document.querySelectorAll('.pc-proj-item')].map((b) => ({ t: b.querySelector('b')?.textContent, d: b.disabled })));
-  check('R8.observe-badge-unchanged', obState.badge.found && obState.badge.text === '只读查看' && obState.badge.title.includes('?observe=1'), { badge: obState.badge });
-  check('R8.observe-save-off', obMenu.find((m) => m.t === '保存项目')?.d === true, { obMenu });
+  check('R8.observe-badge-unchanged', obState.badge.found && obState.badge.text === 'Read-only view' && obState.badge.title.includes('?observe=1'), { badge: obState.badge });
+  check('R8.observe-save-off', obMenu.find((m) => m.t === 'Save project')?.d === true, { obMenu });
   check('R8.observe-has-no-new-locks', obState.marker === null && !obState.addTrack.off && !obState.composer.off && !obState.media.off && obState.tools.every((d) => !d) && obState.fences === 0 && obState.trim > 0, obState);
   await shot(ob, 'observe-full.png');
   await ob.close();
 
-  /* ── 手机版:只在在线构建里出现,这里另起一台在线模式的开发服务 ── */
+  /* ── Mobile app: only appears in online builds; start another online-mode dev server here ── */
   if (WITH_MOBILE) {
     const logFile = path.join(tmp, 'vite-online.log');
     const child = spawn(process.execPath, [viteBin(), '--mode', 'online', '--port', String(MOBILE_PORT), '--strictPort', '--host', '127.0.0.1'], {
       cwd: REPO, env: { ...process.env, BROWSER: 'none', ...serverEnv() }, stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')], windowsHide: true,
     });
     mobileServer = { stop: () => killTree(child.pid) };
-    await waitHttp(`http://127.0.0.1:${MOBILE_PORT}/`, () => true, 120_000, '在线模式开发服务').catch(() => {});
+    await waitHttp(`http://127.0.0.1:${MOBILE_PORT}/`, () => true, 120_000, 'online-mode dev server').catch(() => {});
     const mob = await openEditor(`http://127.0.0.1:${MOBILE_PORT}/editor`, '?editor&layout=mobile', { width: 390, height: 844 });
-    await waitFor(() => mob.evaluate(() => !!document.querySelector('[data-pcm="editor"]')), 60_000, '手机版编辑页');
+    await waitFor(() => mob.evaluate(() => !!document.querySelector('[data-pcm="editor"]')), 60_000, 'mobile app editor page');
     await setAccess(mob, 'r', '/editor');
     const mWhy = await WHY(mob, '/editor');
     const m = await mob.evaluate(() => ({
@@ -421,11 +451,12 @@ try {
     }));
     check('M2.mobile-agent-composer-explains', a.composer === '1' && a.note === mWhy && !a.input, { a });
     await shot(mob, 'ro-mobile-agent.png');
-    // 时间轴分页:卡片段点选后拖动平移——只读不动,读写会动
+    // Timeline tab: dragging to translate card clip after click-select: does not move in read-only,
+    // moves in read/write
     const mobProject = () => mob.evaluate(() => JSON.stringify(window.__pcStore.getState().project));
     const dragClip = async () => {
       const box = await mob.evaluate(() => { const r = document.querySelector('[data-pcm="clip"]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
-      await mob.mouse.click(box.x, box.y); // 先点选
+      await mob.mouse.click(box.x, box.y); // Click to select first
       await sleep(300);
       await mob.mouse.move(box.x, box.y);
       await mob.mouse.down();

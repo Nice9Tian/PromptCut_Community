@@ -1,13 +1,18 @@
 /**
- * 云端分组的三方合并(`src/start/orgMerge.ts`,裁定 V22-08)。跑:npm test -- src/start/orgMerge.test.mjs
+ * Three-way merge for cloud groups (`src/start/orgMerge.ts`, ruling V22-08).
+ * Run: npm test -- src/start/orgMerge.test.mjs
  *
- *   ORGM-01 两边各加一个分组:都留着
- *   ORGM-02 两边改同一个项目的归属:我这边的赢;改的是不同字段:两边都留
- *   ORGM-03 一边删一边改:改过的留下;没改过的才算删;删分组连带项目回到没放进分组
- *   ORGM-04 顺序:我动过用我的,没动过用对方的;另一边新增的插在原来前一个邻居后面
- *   ORGM-05 没有 base(第一次、缓存丢了):两边内容取并集
- *   ORGM-06 对话条目按「项目 + 对话」对齐,置顶归档照合
- *   ORGM-07 回包丢了、原样重传:云端那份就是我刚写的,合出来不变(幂等);输入不被原地改
+ *   ORGM-01 Both sides each add a group: keep both
+ *   ORGM-02 Both sides modify the same project's ownership: my side wins; modified different
+ *     fields: keep both
+ *   ORGM-03 One side deletes while other modifies: keep modified; unmodified counts as deleted;
+ *     deleting a group moves projects back to ungrouped
+ *   ORGM-04 Order: use mine if I modified it, use other's if not; additions from the other side
+ *     are inserted after their previous neighbor
+ *   ORGM-05 No base (first time, cache lost): take union of both sides
+ *   ORGM-06 Chat entries align by "project + chat", merging pin and archive as usual
+ *   ORGM-07 Response lost, retransmitted as is: cloud copy is what I just wrote, merge result
+ *     unchanged (idempotent); inputs not mutated in place
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +31,7 @@ test('ORGM-01 each side adds a group: both are kept, the original is still there
   assert.deepEqual(ids(out.groups).sort(), ['g1', 'gM', 'gT']);
   assert.equal(ids(out.groups)[0], 'g1');
   assert.equal(out.realm, 'cloud');
-  // 两边各自新增了同一个编号:整条听我的
+  // Both sides each added the same id: the whole entry follows mine
   const clash = mergeOrg(base, org({ groups: [{ id: 'g1', name: 'Original' }, { id: 'gX', name: 'My name' }] }), org({ groups: [{ id: 'g1', name: 'Original' }, { id: 'gX', name: 'Their name' }] }));
   assert.equal(byId(clash.groups, 'gX').name, 'My name');
 });
@@ -39,35 +44,38 @@ test('ORGM-02 both sides change the same project\'s assignment: mine wins; chang
   const out = mergeOrg(base, mine, theirs);
   assert.equal(byId(out.projects, 'p1').groupId, 'gA', 'Same field changed on both sides: mine wins');
   assert.deepEqual(byId(out.projects, 'p2'), { id: 'p2', groupId: null, pinned: true, archived: true }, 'Different fields: both kept');
-  // 只对方改了归属、我没动:听对方的
+  // Only the other side changed ownership, I did not: follow the other side
   const only = mergeOrg(base, base, org({ groups, projects: [{ id: 'p1', groupId: 'gB' }, { id: 'p2', groupId: null }] }));
   assert.equal(byId(only.projects, 'p1').groupId, 'gB');
   assert.deepEqual(byId(only.projects, 'p2'), { id: 'p2', groupId: null });
-  // 我取消了置顶、对方没动:取消生效,且不留 pinned: false
+  // I unpinned, the other side did not: unpin takes effect, leaving no pinned: false
   const unpin = mergeOrg(org({ projects: [{ id: 'p', groupId: null, pinned: true }] }), org({ projects: [{ id: 'p', groupId: null }] }), org({ projects: [{ id: 'p', groupId: null, pinned: true }] }));
   assert.deepEqual(unpin.projects, [{ id: 'p', groupId: null }]);
 });
 
 test('ORGM-03 one side deletes, the other edits: the edited one stays; only unedited ones count as deleted; deleting a group puts its projects back to ungrouped', () => {
   const base = org({ groups: [{ id: 'g1', name: 'Old name' }, { id: 'g2', name: 'Another one' }, { id: 'g3', name: 'Third one' }], projects: [{ id: 'p1', groupId: 'g1' }, { id: 'p2', groupId: 'g2' }] });
-  // 我删了 g1,对方在这之后改了它的名字 → 留下,带着对方的新名字
+  // I deleted g1, the other side renamed it afterwards → keep it, with the other side's new name
   let out = mergeOrg(base, org({ groups: base.groups.filter((g) => g.id !== 'g1'), projects: base.projects }), org({ groups: [{ id: 'g1', name: 'Name changed by them' }, base.groups[1], base.groups[2]], projects: base.projects }));
   assert.equal(byId(out.groups, 'g1').name, 'Name changed by them');
   assert.equal(byId(out.projects, 'p1').groupId, 'g1');
-  // 我删了 g2,对方没改 → 真删;里面的项目回到没放进分组
+  // I deleted g2, the other side did not change it → truly deleted; projects inside return to
+  // ungrouped
   out = mergeOrg(base, org({ groups: base.groups.filter((g) => g.id !== 'g2'), projects: base.projects }), base);
   assert.deepEqual(ids(out.groups), ['g1', 'g3']);
   assert.equal(byId(out.projects, 'p2').groupId, null);
-  // 对方删了 g3,我在这之后给它置顶 → 留下,带着我的置顶
+  // The other side deleted g3, I pinned it afterwards → keep it, with my pin
   out = mergeOrg(base, org({ groups: [base.groups[0], base.groups[1], { id: 'g3', name: 'Third one', pinned: true }], projects: base.projects }), org({ groups: base.groups.slice(0, 2), projects: base.projects }));
   assert.deepEqual(byId(out.groups, 'g3'), { id: 'g3', name: 'Third one', pinned: true });
-  // 对方删了项目、我没改 → 真删;我改了(归档)的留下
+  // The other side deleted the project, I did not modify → truly deleted; what I modified
+  // (archived) is kept
   const withP = org({ projects: [{ id: 'a', groupId: null }, { id: 'b', groupId: null }] });
   out = mergeOrg(withP, org({ projects: [{ id: 'a', groupId: null }, { id: 'b', groupId: null, archived: true }] }), org({ projects: [] }));
   assert.deepEqual(out.projects, [{ id: 'b', groupId: null, archived: true }]);
-  // 两边都删了:没了
+  // Both sides deleted: gone
   assert.deepEqual(mergeOrg(withP, org(), org()).projects, []);
-  // 对方删了分组、我这边正好把项目放进了它(分组本身我没改):分组真删,项目回到没放进分组
+  // The other side deleted the group, my side happened to put a project into it (I did not modify
+  // the group itself): group is truly deleted, project returns to ungrouped
   out = mergeOrg(base, org({ groups: base.groups, projects: [{ id: 'p1', groupId: 'g3' }, base.projects[1]] }), org({ groups: base.groups.slice(0, 2), projects: base.projects }));
   assert.equal(byId(out.projects, 'p1').groupId, null);
 });
@@ -75,15 +83,17 @@ test('ORGM-03 one side deletes, the other edits: the edited one stays; only uned
 test('ORGM-04 order: if I moved it, use mine; if I did not, use theirs; items added on the other side are inserted after their original previous neighbor', () => {
   const a = { id: 'a' }, b = { id: 'b' }, c = { id: 'c' }, d = { id: 'd' };
   const spec = { key: (x) => x.id, fields: [] };
-  // 我把 c 挪到最前;对方新加了 d(在 b 后面)
+  // I moved c to the front; the other side added d (after b)
   assert.deepEqual(ids(mergeList([a, b, c], [c, a, b], [a, b, d, c], spec)), ['c', 'a', 'b', 'd']);
-  // 我没动顺序;对方挪了 c 到最前:听对方的
+  // I did not change order; the other side moved c to the front: follow the other side
   assert.deepEqual(ids(mergeList([a, b, c], [a, b, c], [c, a, b], spec)), ['c', 'a', 'b']);
-  // 我没动顺序,但新加了 d(末尾);对方挪了顺序:用对方的,我的 d 插在 c 后面(我这边它在 c 后面)
+  // I did not change order, but added d (at the end); the other side changed order: use the other
+  // side's, my d is inserted after c (on my side it was after c)
   assert.deepEqual(ids(mergeList([a, b, c], [a, b, c, d], [c, b, a], spec)), ['c', 'd', 'b', 'a']);
-  // 新增排最前的约定(项目)保持:我这边新项目在最前,对方没动顺序 → 仍在最前
+  // Convention of placing newly added items at the front (projects) preserved: new project on my side
+  // is at the front, the other side did not change order → still at the front
   assert.deepEqual(ids(mergeList([a, b], [d, a, b], [a, b], spec)), ['d', 'a', 'b']);
-  // 分组「新建在最后」的约定保持
+  // Group convention of "newly created at the end" preserved
   assert.deepEqual(ids(mergeList([a, b], [a, b, d], [a, b], spec)), ['a', 'b', 'd']);
 });
 
@@ -108,11 +118,11 @@ test('ORGM-06 chat entries are matched by "project + chat": the same chat id in 
 
 test('ORGM-07 reply lost, resent as is: the cloud copy is exactly what I just wrote, so the merge result is unchanged; the input is not modified in place', () => {
   const base = org({ groups: [{ id: 'g1', name: 'Original' }] });
-  const mine = org({ groups: [{ id: 'g1', name: '改了' }, { id: 'g2', name: 'New one' }], projects: [{ id: 'p', groupId: 'g2', pinned: true }], chats: [{ id: 'c', projectId: 'p', archived: true }] });
+  const mine = org({ groups: [{ id: 'g1', name: 'changed' }, { id: 'g2', name: 'New one' }], projects: [{ id: 'p', groupId: 'g2', pinned: true }], chats: [{ id: 'c', projectId: 'p', archived: true }] });
   deepFreeze(base); deepFreeze(mine);
   const out = mergeOrg(base, mine, mine);
   assert.deepEqual(out, mine);
-  // 没有任何改动:合出来就是对方的
-  const theirs = deepFreeze(org({ groups: [{ id: 'g9', name: '别人的' }] }));
+  // No changes at all: merged result is identical to the other side's
+  const theirs = deepFreeze(org({ groups: [{ id: 'g9', name: 'Someone else\'s' }] }));
   assert.deepEqual(mergeOrg(theirs, theirs, theirs), theirs);
 });

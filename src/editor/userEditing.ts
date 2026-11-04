@@ -1,12 +1,17 @@
 /**
- * 「用户正在编辑」的接线(计划 docs/plan/agent-workflow-plan.md A2):把编辑界面各处的编辑状态汇总
- * (汇总与节流的逻辑在 ./userEditingCore.ts),推给编辑器进程的 POST /api/agent/editing;
- * Agent 读或写到这些片段时,服务端在工具结果里标出「用户正在编辑」(server/agent/user-editing.mjs)。
+ * Wiring for "user is editing" (plan docs/plan/agent-workflow-plan.md A2): collects the editing
+ * state from all over the editor (the aggregation and throttling logic is in
+ * ./userEditingCore.ts) and pushes it to the editor process's POST /api/agent/editing;
+ * when the Agent reads or writes these clips, the server marks "user is editing" in the tool
+ * result (server/agent/user-editing.mjs).
  *
- * 各处怎么报:
- *   - 拖动、文字编辑:组件里调 useUserEditing(slot, clipId | null, kind),拖动 / 编辑开始时给片段 id、结束时给 null;
- *   - 「选中后动过」:这里旁听 store 的选区和本页面自己的修改(onLocalCommit),选中的片段被改了就记一笔;
- *     Agent 让页面执行的工具(src/ai/mcpExecutor.ts)执行期间的修改不算用户动过(beginAgentTool / endAgentTool)。
+ * How each place reports:
+ *   - Dragging, text editing: the component calls useUserEditing(slot, clipId | null, kind),
+ *     passing the clip id when the drag / edit starts and null when it ends;
+ *   - "Touched after selecting": this listens to the store's selection and this page's own
+ *     changes (onLocalCommit); if a selected clip is modified, a note is made.
+ *     Changes made while a tool that the Agent had the page run (src/ai/mcpExecutor.ts) is
+ *     executing do not count as the user touching it (beginAgentTool / endAgentTool).
  */
 import { useEffect } from "react";
 import { getState, subscribe, onLocalCommit } from "../store/project";
@@ -14,15 +19,17 @@ import type { Project } from "../kernel/project";
 import { createEditingTracker, type EditingEntity } from "./userEditingCore";
 import { publishEditing } from "./sync/presence";
 
-/** 这个页面的会话号(服务端按它整份替换这个页面报的状态) */
+/** Session id of this page (the server replaces the state reported by this page wholesale by it) */
 const session = `ue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-/** 在线构建的编译期常量,写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」 */
+/** Compile-time constant of the online build; for how it is written and why, see "Online build pruning" in `src/online/pageFlag.ts` */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
 /**
- * 在线页面没有编辑器进程(C10a 契约第 2 节),也就没有本机 Agent 可提示:不发,在线构建里连同这条 /api 路径一起剪掉。
- * 桌面 / 本机:不等回包、不读 body —— 它是一份提示,晚一拍到也只是少提示一次。
+ * The online page has no editor process (C10a contract section 2), hence no local Agent to hint
+ * to: do not send, and in the online build this /api path is pruned together with it.
+ * Desktop / local: do not wait for the response, do not read the body: it is only a hint, and
+ * if it arrives a beat late, the hint is merely missed once.
  */
 const sendLocal: (entities: EditingEntity[]) => void = ONLINE_BUILD ? () => {} : (entities) => {
   try {
@@ -32,28 +39,33 @@ const sendLocal: (entities: EditingEntity[]) => void = ONLINE_BUILD ? () => {} :
       body: JSON.stringify({ session, entities }),
       keepalive: true,
     }).catch(() => {});
-  } catch { /* 发不出去就等下一次 */ }
+  } catch { /* If it cannot be sent, wait for the next time */ }
 };
 
 /**
- * 另外经这个页面的文档服务连接发布一份(A3 第二阶段,src/editor/sync/presence.ts):共享项目里别的成员的编辑器进程
- * 据此提示他们的 Agent「用户 <成员>正在编辑」。在线页面也走这条(它没有编辑器进程,只有文档服务连接)。
+ * Also publish a copy through this page's document service connection (A3 phase two,
+ * src/editor/sync/presence.ts): based on it, the editor processes of other members of a shared
+ * project hint their Agents "User <member> is editing". The online page takes this path too (it
+ * has no editor process, only a document service connection).
  */
 const send = (entities: EditingEntity[]) => {
   sendLocal(entities);
-  try { publishEditing(session, entities); } catch { /* 在场状态是附带的 */ }
+  try { publishEditing(session, entities); } catch { /* Presence state is incidental */ }
 };
 
 const tracker = createEditingTracker({ send });
 
-/** Agent 让页面执行的工具正在跑(可能嵌套):这期间本页面的修改不算用户动过 */
+/** A tool that the Agent had the page run is executing (may be nested): during this time this
+ *  page's changes do not count as the user touching it */
 let agentToolDepth = 0;
 export function beginAgentTool() { agentToolDepth += 1; }
 export function endAgentTool() { agentToolDepth = Math.max(0, agentToolDepth - 1); }
-/** 现在有没有 Agent 让页面执行的工具正在跑(保存要等它写完,`io/localWrites.ts`) */
+/** Whether any tool that the Agent had the page run is currently executing (saving has to wait
+ *  for it to finish writing, `io/localWrites.ts`) */
 export function agentToolRunning(): boolean { return agentToolDepth > 0; }
 
-/** 两份项目之间,这几个片段里哪些换了对象(不可变更新:改过的片段一定是新对象) */
+/** Between two projects, which of these clips changed objects (immutable updates: a modified
+ *  clip is always a new object) */
 function changedClips(prev: Project, next: Project, ids: readonly string[]): string[] {
   if (!ids.length) return [];
   const find = (p: Project, id: string) => {
@@ -70,7 +82,8 @@ function changedClips(prev: Project, next: Project, ids: readonly string[]): str
 let started = 0;
 let offs: Array<() => void> = [];
 
-/** 编辑台挂上时开始推(src/editor/right/index.tsx 与 Agent 的工具通道同一时机);回停止函数 */
+/** Start pushing when the editor mounts (src/editor/right/index.tsx, at the same moment as the
+ *  Agent's tool channel); returns a stop function */
 export function startUserEditing(): () => void {
   started += 1;
   if (started === 1) {
@@ -99,8 +112,9 @@ export function startUserEditing(): () => void {
 }
 
 /**
- * 组件报「这个位置正在拖动 / 文字编辑哪个片段」。slot 在整个页面里唯一(同一个组件多个实例时带上片段 id)。
- * clipId 为 null 或组件卸载时撤掉。
+ * A component reports "which clip is being dragged / text-edited at this position". slot is
+ * unique across the whole page (include the clip id when the same component has several
+ * instances). Removed when clipId is null or the component unmounts.
  */
 export function useUserEditing(slot: string, clipId: string | null | undefined, kind: "drag" | "text") {
   useEffect(() => {
@@ -109,7 +123,7 @@ export function useUserEditing(slot: string, clipId: string | null | undefined, 
   }, [slot, clipId, kind]);
 }
 
-/** 测试与诊断:此刻会报出去的状态 */
+/** For tests and diagnostics: the state that would be reported right now */
 export function userEditingSnapshot(): EditingEntity[] {
   return tracker.snapshot();
 }

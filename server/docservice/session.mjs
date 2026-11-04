@@ -1,68 +1,87 @@
 /**
- * 文档服务的会话层（组装层的一部分，契约 `docs/plan/http-transport-contract.md` 第 3、4、5、7、8 节与第 16 节）。
+ * Document service session layer (part of assembly layer, contract
+ * `docs/plan/http-transport-contract.md` sections 3, 4, 5, 7, 8 and section 16).
  *
- * 语义见 `docs/semantics/product/document-service.md` 与 `docs/semantics/mechanism/document-service.md` 的「会话与传输」：
- * 文档服务与每一方之间是一个会话，会话内的消息双向有序、带序号，接收方确认；传输（WebSocket、HTTP 长轮询）只是搬运方式，
- * 单次传输中断不结束会话，超过保留时限才算断线。
+ * See semantics under "Sessions and transports" in `docs/semantics/product/document-service.md` and
+ * `docs/semantics/mechanism/document-service.md`: a session exists between document service and each
+ * party; messages within session are bidirectionally ordered and sequence-numbered, acknowledged by
+ * receiver; transports (WebSocket, HTTP long polling) are merely carrier methods, interruption of a
+ * single transport does not end session, and it is only considered disconnected once retention time
+ * limit is exceeded.
  *
- * 核心（`router.mjs`）只看见一条连接（`connId`）：会话建立时 `router.connect`，会话结束时 `router.disconnect`；
- * 传输的断开与接续都不经过核心，模块感觉不到。核心的四个钩子接到这里（第 7 节）：
- * - `write(connId, text)`：补上 `seq`、`ack`，放进未确认缓冲；挂着传输就写出去，脱开时只留着；
- * - `buffered(connId)`：未确认的字节数（已交给套接字的也算），所以客户端不确认时积压一直涨，涨过上限核心以 1013 结束会话；
- * - `close(connId, code, reason)`：结束会话（不保留），关掉当前传输；`router.disconnect` 与 `conn.close` 推迟到下一轮事件循环；
- * - `router.drained(connId)`：对方的 `ack` 推进、未确认字节下降后调一次。
+ * Core (`router.mjs`) only sees a connection (`connId`): `router.connect` when session is
+ * established, and `router.disconnect` when session ends; disconnecting and resuming transports do
+ * not pass through core, and modules are unaware of them. Four core hooks connect here (section 7):
+ * - `write(connId, text)`: attaches `seq` and `ack`, puts into unacknowledged buffer; writes out if
+ *   transport is attached, or retains while detached;
+ * - `buffered(connId)`: unacknowledged byte count (including those already handed to socket), so
+ *   when client does not acknowledge, backlog keeps growing; once it exceeds limit, core ends
+ *   session with 1013;
+ * - `close(connId, code, reason)`: ends session (not retained), closes current transport; defers
+ *   `router.disconnect` and `conn.close` to next event loop iteration;
+ * - `router.drained(connId)`: called once after peer's `ack` advances and unacknowledged bytes
+ *   decrease.
  *
- * 旧客户端（握手里不带会话项，第 3.6 节）也登记在这里，标 `legacy`：消息不加 `seq` / `ack`、原样交给核心，
- * 积压按套接字算，传输一断会话就结束（保留时限相当于 0），与会话层出现之前的行为相同。
+ * Legacy clients (handshake without session items, section 3.6) are also registered here, marked
+ * `legacy`: messages do not have `seq` / `ack` added, handed to core as-is, backlog is calculated
+ * from sockets, session ends as soon as transport disconnects (retention time limit is equivalent to
+ * 0), matching behavior prior to session layer.
  *
- * 传输对象由组装层（WebSocket，`service.mjs`）或长轮询（`http-transport.mjs`，HT-b 接线）建，形状：
- * `{ kind: 'ws' | 'http', send(wireText), control(obj), close(code, reason), bufferedAmount? }`。
- * - `send`：一条带 `seq` 的业务消息（WebSocket 立即写；长轮询只叫醒挂着的 GET，帧由 `pull` 取）；
- * - `control`：会话控制消息（`session.welcome`、`session.ack`）。长轮询不用它：欢迎信息在 `POST /lp/open` 的回包里，
- *   确认在 `POST /lp/send` 的回包里。
+ * Transport objects are created by assembly layer (WebSocket, `service.mjs`) or long polling
+ * (`http-transport.mjs`, HT-b wiring), with shape:
+ * `{ kind: 'ws' | 'http', send(wireText), control(obj), close(code, reason), bufferedAmount? }`.
+ * - `send`: a business message with `seq` (WebSocket writes immediately; long polling only wakes
+ *   pending GET, frames are fetched by `pull`);
+ * - `control`: session control messages (`session.welcome`, `session.ack`). Not used by long
+ *   polling: welcome info is in response to `POST /lp/open`, and acknowledgment is in response to
+ *   `POST /lp/send`.
  *
- * 会话号 `sid` 是 32 字节 CSPRNG 的 base64url，是会话的 bearer 凭证：只在握手请求头与 `session.welcome` 里出现，
- * 不进日志、`describe()`、`/healthz`。只引 Node 内置模块。
+ * Session id `sid` is 32-byte CSPRNG base64url, serving as bearer credential for session: appears
+ * only in handshake request headers and `session.welcome`, never in logs, `describe()`, or
+ * `/healthz`. Only imports Node built-in modules.
  */
 import { randomBytes } from 'node:crypto';
 
 export const SESSION_DEFAULTS = Object.freeze({
-  /** 传输断开后会话保留多久（第 4.2 节） */
+  /** How long session is retained after transport disconnects (section 4.2) */
   RETAIN_MS: 60_000,
-  /** 结束的会话留墓碑多久：这段时间里拿它接续得 4410（第 4.2 节、第 16 节） */
+  /** How long ended sessions keep tombstones: resuming with it during this time gets 4410 (section 4.2, section 16) */
   TOMBSTONE_MS: 120_000,
-  /** 收到的消息里还没确认的满这么多条就单发 `session.ack`（第 3.3 节） */
+  /** Sends a standalone `session.ack` once unacknowledged received messages reach this count (section 3.3) */
   ACK_EVERY: 32,
-  /** 收到消息后这么久没有顺带确认的机会就单发 `session.ack`（第 3.3 节） */
+  /** Sends a standalone `session.ack` if there is no piggyback acknowledgment opportunity this long after receiving a message (section 3.3) */
   ACK_DELAY_MS: 1000,
   /**
-   * 收到的、还没确认的字节满这么多也单发（本实现的补充〔裁〕）：对方的未确认缓冲有上限（1 MiB），
-   * 大消息连发时只按条数与 1 s 确认，对方可能在 1 s 内就涨过上限而结束会话
+   * Also sends standalone once received unacknowledged bytes reach this amount (supplement in this
+   * implementation [ruling]): peer's unacknowledged buffer has an upper limit (1 MiB), and if
+   * back-to-back large messages are acknowledged only by message count and 1 s, the peer might exceed
+   * the limit within 1 s and end session
    */
   ACK_BYTES: 64 * 1024,
 });
 
-/** 会话项（第 4.1 节） */
+/** Session items (section 4.1) */
 export const SESSION_ITEM_NEW = 'promptcut.session.new';
 export const SESSION_ITEM_PREFIX = 'promptcut.session.';
-/** 会话控制消息的类型前缀：核心保留，模块不得认领（第 3.2 节） */
+/** Type prefix for session control messages: reserved by core, modules must not claim (section 3.2) */
 export const SESSION_TYPE_PREFIX = 'session.';
 
-/** 会话层用到的关闭码 */
+/** Close codes used by session layer */
 export const SESSION_CLOSE = Object.freeze({
-  /** 跳号、越界的 ack（第 3.5 节） */
+  /** Out-of-order or out-of-bounds ack (section 3.5) */
   BAD_SEQ: 1002,
-  /** 同一会话的新传输接上，旧的关掉（第 3.1 节） */
+  /** New transport connects for the same session, old one is closed (section 3.1) */
   SUPERSEDED: 4009,
-  /** WebSocket 上接续：会话不存在（第 16 节，对应 HTTP 的 404 `no-session`） */
+  /** Resume over WebSocket: session does not exist (section 16, corresponds to HTTP 404 `no-session`) */
   NO_SESSION: 4404,
-  /** WebSocket 上接续：会话已结束（第 16 节，对应 HTTP 的 410 `session-closed`） */
+  /** Resume over WebSocket: session already ended (section 16, corresponds to HTTP 410 `session-closed`) */
   SESSION_CLOSED: 4410,
 });
 
 /**
- * 传输关闭时带这些码的，结束会话而不是脱开：是这条传输上出了协议错误（`ws.mjs` 的协议错、二进制帧、坏 UTF-8、超长），
- * 接续后重发同一条只会再错一次。
+ * Transports closing with these codes end the session rather than detaching: protocol error
+ * occurred on this transport (`ws.mjs` protocol error, binary frame, malformed UTF-8, too long),
+ * and retransmitting the same message after resuming will only fail again.
  */
 const END_ON_TRANSPORT_CODES = new Set([1002, 1003, 1007, 1009]);
 
@@ -72,7 +91,7 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const byteLen = (text) => Buffer.byteLength(text, 'utf8');
 const positive = (v, fallback) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback);
 
-/** 关闭原因截到 123 字节以内（WebSocket 关闭帧的上限） */
+/** Close reason truncated to within 123 bytes (upper limit of WebSocket close frame) */
 export function clipReason(v) {
   if (typeof v !== 'string') return '';
   let s = v;
@@ -80,17 +99,19 @@ export function clipReason(v) {
   return s;
 }
 
-/** 客户端给的关闭码：只认 1000 与 3000～4999（应用可用的范围），别的记 1000 */
+/** Client-provided close code: recognizes only 1000 and 3000-4999 (application-usable range), records others as 1000 */
 export function clientCloseCode(v) {
   return Number.isInteger(v) && (v === 1000 || (v >= 3000 && v <= 4999)) ? v : 1000;
 }
 
 /**
- * 从握手的子协议列表里认会话项（第 4.1 节）：
- * - `{ kind: 'legacy' }`：没有会话项，旧客户端（第 3.6 节）；
- * - `{ kind: 'new' }`：`promptcut.session.new`，与鉴权项一起给；
- * - `{ kind: 'resume', sid, ack }`：`promptcut.session.<sid>.<ack>`；列表里只能有 `promptcut.v1` 与它（接续项与鉴权项互斥）；
- * - `{ kind: 'bad' }`：会话项不止一个、写法不对、接续项旁边还有别的项、没有 `promptcut.v1`。握手回 400。
+ * Identifies session item from handshake subprotocol list (section 4.1):
+ * - `{ kind: 'legacy' }`: no session item, legacy client (section 3.6);
+ * - `{ kind: 'new' }`: `promptcut.session.new`, provided together with authentication item;
+ * - `{ kind: 'resume', sid, ack }`: `promptcut.session.<sid>.<ack>`; list can only contain
+ *   `promptcut.v1` and it (resume item and authentication item are mutually exclusive);
+ * - `{ kind: 'bad' }`: more than one session item, invalid format, other items alongside resume
+ *   item, or missing `promptcut.v1`. Handshake returns 400.
  */
 export function parseSessionItem(offered, protocol = 'promptcut.v1') {
   const list = Array.isArray(offered) ? offered : [];
@@ -107,8 +128,10 @@ export function parseSessionItem(offered, protocol = 'promptcut.v1') {
 }
 
 /**
- * 把一条核心写出的消息文本补上 `seq`、`ack`：追加在对象末尾（同名字段以后出现的为准，模块自己写的 `seq` / `ack` 被盖掉）。
- * 核心写出的一律是 `JSON.stringify(对象)`；不是对象文本的原样返回（带不了序号，只可能是调用方的错）。
+ * Appends `seq` and `ack` to message text written by core: appended at end of object (fields with
+ * same name appearing later take precedence, overriding any `seq` / `ack` written by module itself).
+ * Core always writes `JSON.stringify(object)`; non-object texts are returned as-is (cannot carry
+ * sequence numbers, can only be caller error).
  */
 function withSeq(text, seq, ack) {
   if (text.length < 2 || text[0] !== '{' || text[text.length - 1] !== '}') return text;
@@ -118,13 +141,13 @@ function withSeq(text, seq, ack) {
 
 /**
  * @param {object} options
- * @param {object} options.router 核心（`createRouter` 的返回值）；用它的 `connect`、`disconnect`、`dispatch`、`drained`
- * @param {() => string} options.nextConnId 与别的连接同一个编号序列
+ * @param {object} options.router Core (return value of `createRouter`); uses its `connect`, `disconnect`, `dispatch`, `drained`
+ * @param {() => string} options.nextConnId Same ID sequence as other connections
  * @param {() => number} [options.now]
  * @param {(event: string, fields: object) => void} [options.log]
- * @param {number} [options.retainMs] 缺省 60 000
- * @param {number} [options.tombstoneMs] 缺省 120 000
- * @param {(principal: object) => string | null} [options.resumeGate] 接续前重新核对持久权限状态
+ * @param {number} [options.retainMs] Default 60 000
+ * @param {number} [options.tombstoneMs] Default 120 000
+ * @param {(principal: object) => string | null} [options.resumeGate] Re-checks persistent permission status before resume
  */
 export function createSessionLayer({
   router,
@@ -135,17 +158,17 @@ export function createSessionLayer({
   tombstoneMs,
   resumeGate,
 } = /** @type {any} */ ({})) {
-  if (!router || typeof router.connect !== 'function') throw new TypeError('createSessionLayer: 要给 router');
-  if (typeof nextConnId !== 'function') throw new TypeError('createSessionLayer: 要给 nextConnId');
+  if (!router || typeof router.connect !== 'function') throw new TypeError('createSessionLayer: router is required');
+  if (typeof nextConnId !== 'function') throw new TypeError('createSessionLayer: nextConnId is required');
   const retain = positive(retainMs, SESSION_DEFAULTS.RETAIN_MS);
   const tombTtl = positive(tombstoneMs, SESSION_DEFAULTS.TOMBSTONE_MS);
-  const say = (event, fields) => { try { log(event, fields); } catch { /* 日志出错不影响会话 */ } };
+  const say = (event, fields) => { try { log(event, fields); } catch { /* Log errors do not affect the session */ } };
 
-  /** connId → 会话（含旧客户端） */
+  /** connId → session (including legacy clients) */
   const byConn = new Map();
-  /** sid → 会话（只有讲会话的） */
+  /** sid → session (session-aware only) */
   const bySid = new Map();
-  /** sid → { code, reason, until }：结束的会话 */
+  /** sid → { code, reason, until }: ended sessions */
   const tombs = new Map();
   const counters = { opened: 0, resumed: 0, expired: 0, fallbacks: 0 };
 
@@ -168,18 +191,18 @@ export function createSessionLayer({
       ended: false,
       gone: null,
       resolveGone: null,
-      // 出站：已编号的消息，`frames[head..]` 是还没被确认的；`acked` 是对方确认到的最大 seq
+      // Outbound: numbered messages, `frames[head..]` are not yet acknowledged; `acked` is highest seq acknowledged by peer
       outSeq: 0,
       acked: 0,
       frames: [],
       head: 0,
       unackedBytes: 0,
-      // 入站：按序收全的最大 seq；`ackSent` 是已经告诉对方的；`inBytes` 是这之后收到的字节数
+      // Inbound: maximum seq fully received in order; `ackSent` has been told to peer; `inBytes` is bytes received since then
       inSeq: 0,
       ackSent: 0,
       inBytes: 0,
       ackTimer: null,
-      // 脱开
+      // Detach
       detachedAt: 0,
       retainTimer: null,
       resumes: 0,
@@ -200,31 +223,31 @@ export function createSessionLayer({
     say('session.fallback', { connId: s.connId, reason: fallback });
   }
 
-  // ---------- 确认 ----------
+  // ---------- Acknowledgments ----------
 
   function clearAckTimer(s) {
     if (s.ackTimer) clearTimeout(s.ackTimer);
     s.ackTimer = null;
   }
 
-  /** 已经把 `inSeq` 告诉对方了（顺带或单发） */
+  /** Already communicated `inSeq` to peer (piggybacked or standalone) */
   function markAcked(s) {
     s.ackSent = s.inSeq;
     s.inBytes = 0;
     clearAckTimer(s);
   }
 
-  /** 单发 `session.ack`。脱开时不发：接续时 welcome 里带着 */
+  /** Sends standalone `session.ack`. Not sent when detached: included in welcome upon resume */
   function sendAck(s) {
     clearAckTimer(s);
     if (s.ended || !s.transport || s.inSeq <= s.ackSent) return;
     try {
       s.transport.control({ type: 'session.ack', ack: s.inSeq });
-    } catch { /* 传输坏了，等它报关闭 */ }
+    } catch { /* Transport broken, waiting for it to report close */ }
     markAcked(s);
   }
 
-  /** 收下一条业务消息之后：满条数或字节立刻确认，否则 1 s 内没有顺带的机会再单发 */
+  /** After receiving next application message: ack immediately if count or bytes reached, else send standalone if no piggyback within 1 s */
   function noteReceived(s, bytes) {
     if (s.ended) return;
     s.inBytes += bytes;
@@ -239,7 +262,7 @@ export function createSessionLayer({
     }
   }
 
-  /** 丢掉对方已确认的帧；有下降就让核心接着写积压的消息。`ack` 越界回 false（会话已以 1002 结束） */
+  /** Drops frames acknowledged by peer; if buffer drops, lets core continue writing backlogged messages. `ack` out of bounds returns false (session already ended with 1002) */
   function applyAck(s, ack) {
     if (!Number.isSafeInteger(ack) || ack < 0 || ack > s.outSeq) {
       badSeq(s);
@@ -254,7 +277,7 @@ export function createSessionLayer({
     return !s.ended;
   }
 
-  /** 丢掉 seq ≤ ack 的帧；回有没有丢（不叫核心） */
+  /** Drops frames with seq ≤ ack; returns whether any were dropped (does not call core) */
   function release(s, ack) {
     if (ack <= s.acked) return false;
     s.acked = ack;
@@ -277,11 +300,12 @@ export function createSessionLayer({
     endSession(s, SESSION_CLOSE.BAD_SEQ, 'bad-seq');
   }
 
-  // ---------- 生命周期 ----------
+  // ---------- Lifecycle ----------
 
   /**
-   * 结束会话：不保留。立墓碑（讲会话的）、关掉当前传输；下一轮事件循环再 `router.disconnect` 与打 `conn.close`
-   * （模块的 `ctx.close` 可能正处在它自己的处理函数里）。回注销完成的 Promise。
+   * Ends session: do not retain. Erects tombstone (for session-aware ones), closes current transport;
+   * calls `router.disconnect` and logs `conn.close` in next event loop tick (module's `ctx.close`
+   * may currently be inside its own handler). Returns a Promise for completed unregistration.
    */
   function endSession(s, code, reason, { closeTransport = true, discard = false } = {}) {
     if (s.ended) return s.gone;
@@ -295,13 +319,14 @@ export function createSessionLayer({
     }
     const t = s.transport;
     s.transport = null;
-    // 还没被确认的帧交给要关的传输：长轮询在带 `closed` 之前先回完它们（第 6.3 节）；WebSocket 早已写出，不用
+    // Hands unacknowledged frames to transport being closed: long polling returns all of them before
+    // sending `closed` (Section 6.3); WebSocket has already written them out, not needed
     const rest = !discard && t && closeTransport && t.kind !== 'ws' ? s.frames.slice(s.head).map((f) => withSeq(f.text, f.seq, s.inSeq)) : [];
     s.frames = [];
     s.head = 0;
     s.unackedBytes = 0;
     if (t && closeTransport) {
-      try { t.close(code, reason, rest); } catch { /* 已关 */ }
+      try { t.close(code, reason, rest); } catch { /* Closed */ }
     }
     s.gone = new Promise((resolve) => {
       setImmediate(() => {
@@ -319,7 +344,7 @@ export function createSessionLayer({
     return s.gone;
   }
 
-  /** 传输断开：会话脱开，保留 `retainMs`，期满结束（第 4.2 节） */
+  /** Transport disconnected: session detaches, retained for `retainMs`, ends upon expiration (Section 4.2) */
   function detach(s, info = {}) {
     const t = s.transport;
     s.transport = null;
@@ -340,7 +365,7 @@ export function createSessionLayer({
   function sendFrame(s, f) {
     try {
       s.transport.send(withSeq(f.text, f.seq, s.inSeq));
-    } catch { /* 传输坏了，等它报关闭 */ }
+    } catch { /* Transport broken, waiting for it to report close */ }
     markAcked(s);
   }
 
@@ -358,8 +383,8 @@ export function createSessionLayer({
 
   return {
     /**
-     * 旧客户端（不带会话项）：一条传输就是一个会话。登记进核心，回 connId。
-     * `principal` 已规整；`transport.close` 之后组装层要调 `transportClosed`。
+     * Legacy clients (without session items): one transport is one session. Registers into core, returns connId.
+     * `principal` is normalized; assembly layer must call `transportClosed` after `transport.close`.
      */
     openLegacy({ principal, remote, transport }) {
       const connId = nextConnId();
@@ -372,8 +397,9 @@ export function createSessionLayer({
     },
 
     /**
-     * 建新会话：先经这条传输发 `session.welcome`（第一条出站消息），再登记进核心（模块的 `connect` 可能立刻发消息）。
-     * 回 `{ connId, sid, welcome }`；长轮询把 `welcome` 的字段放进 `POST /lp/open` 的回包。
+     * Creates new session: first sends `session.welcome` (first outbound message) via this transport,
+     * then registers into core (module `connect` may send messages immediately).
+     * Returns `{ connId, sid, welcome }`; long polling puts fields of `welcome` into `POST /lp/open` response.
      */
     openSession({ principal, remote, transport, fallback }) {
       const connId = nextConnId();
@@ -383,19 +409,21 @@ export function createSessionLayer({
       counters.opened += 1;
       noteFallback(s, fallback);
       const welcome = welcomeOf(s, false);
-      try { transport.control(welcome); } catch { /* 传输坏了，等它报关闭 */ }
+      try { transport.control(welcome); } catch { /* Transport broken, waiting for it to report close */ }
       say('conn.open', { connId, remote, userId: principal.userId, ...(principal.role ? { role: principal.role } : {}), transport: transport.kind });
       router.connect(connId, principal, { remote, connectedAt: now() });
       return { connId, sid: s.sid, welcome };
     },
 
     /**
-     * 接续（第 4.1 节）：会话号即凭证，不再鉴权。成功回 `{ ok: true, connId, welcome }`：旧传输（半开的）以 4009 关掉，
-     * 发 welcome（带服务端已收全的客户端最大 seq），再按原 seq 补发对方还没确认的消息。
-     * 失败回 `{ ok: false, code, reason, status }`：
-     * - 会话不存在 4404 `no-session`（HTTP 404）；
-     * - 已结束（墓碑还在）4410，`reason` 是 `session-closed <原关闭码>[ <原原因>]`（HTTP 410）；
-     * - `ack` 大于服务端发出过的最大 seq：会话以 1002 `bad-seq` 结束，回同样的码（HTTP 410）。
+     * Resume (Section 4.1): session id is the credential, no re-authentication. On success, returns
+     * `{ ok: true, connId, welcome }`: closes old transport (half-open) with 4009, sends welcome
+     * (with highest client seq fully received by server), then retransmits messages unacknowledged by peer
+     * using original seq.
+     * On failure, returns `{ ok: false, code, reason, status }`:
+     * - Session does not exist: 4404 `no-session` (HTTP 404);
+     * - Ended (tombstone exists): 4410, `reason` is `session-closed <original close code>[ <original reason>]` (HTTP 410);
+     * - `ack` greater than maximum seq sent by server: session ends with 1002 `bad-seq`, returns same code (HTTP 410).
      */
     resume({ sid, ack, transport, fallback }) {
       const s = bySid.get(sid);
@@ -424,7 +452,7 @@ export function createSessionLayer({
       const old = s.transport;
       if (old) {
         s.transport = null;
-        try { old.close(SESSION_CLOSE.SUPERSEDED, 'superseded'); } catch { /* 已关 */ }
+        try { old.close(SESSION_CLOSE.SUPERSEDED, 'superseded'); } catch { /* Closed */ }
       }
       if (s.retainTimer) clearTimeout(s.retainTimer);
       s.retainTimer = null;
@@ -436,11 +464,13 @@ export function createSessionLayer({
       counters.resumed += 1;
       noteFallback(s, fallback);
       const welcome = welcomeOf(s, true);
-      try { transport.control(welcome); } catch { /* 传输坏了，等它报关闭 */ }
+      try { transport.control(welcome); } catch { /* Transport broken, waiting for it to report close */ }
       markAcked(s);
       say('session.resume', { connId: s.connId, transport: transport.kind, gapMs });
-      // 先按接续项里的 ack 释放，补发剩下的（原 seq、按序），最后才让核心接着写积压的消息：
-      // 反过来的话新消息会先于补发的旧消息写出，对方看到的就是跳号
+      // First release according to ack in resume item, retransmit remaining messages (original seq, in order),
+      // and only then let core continue writing backlogged messages:
+      // Otherwise new messages would be written before retransmitted old messages, and peer would see
+      // skipped sequence numbers
       const released = release(s, ack);
       if (s.transport === transport) {
         for (let i = s.head; i < s.frames.length && s.transport === transport; i++) sendFrame(s, s.frames[i]);
@@ -461,7 +491,7 @@ export function createSessionLayer({
       } catch { return resumeAllowed('forbidden'); }
     },
 
-    /** 传输收到一条文本（第 3.3 节）。旧客户端原样交给核心 */
+    /** Transport received text message (Section 3.3). Legacy clients handed to core as is */
     receive(connId, text) {
       const s = byConn.get(connId);
       if (!s || s.ended) return;
@@ -474,14 +504,14 @@ export function createSessionLayer({
       } catch {
         msg = undefined;
       }
-      // 不是带 type 的对象：交给核心回 bad-message（核心的回包照样编号）
+      // Not an object with type: hand to core to return bad-message (core responses are numbered as usual)
       if (!isObj(msg) || typeof msg.type !== 'string') {
         return router.dispatch(connId, text);
       }
       if (msg.type.startsWith(SESSION_TYPE_PREFIX)) {
         if (msg.type === 'session.ack') applyAck(s, msg.ack);
         else if (msg.type === 'session.close') endSession(s, clientCloseCode(msg.code), clipReason(msg.reason));
-        // 别的控制消息（客户端不该发）忽略
+        // Ignore other control messages (client should not send them)
         return;
       }
       if (Object.hasOwn(msg, 'ack') && !applyAck(s, msg.ack)) return;
@@ -490,7 +520,7 @@ export function createSessionLayer({
         badSeq(s);
         return;
       }
-      if (seq <= s.inSeq) return; // 重发，丢弃
+      if (seq <= s.inSeq) return; // Duplicate, discard
       s.inSeq = seq;
       const body = { ...msg };
       delete body.seq;
@@ -501,9 +531,12 @@ export function createSessionLayer({
     },
 
     /**
-     * 传输关了（WebSocket 的 close 事件；长轮询判定传输断开）。不是这个会话当前的传输（已被替换）就不管。
-     * 旧客户端：会话随之结束，立刻 `router.disconnect`（与会话层出现之前一样同步）。
-     * 讲会话的：脱开，保留 `retainMs`；传输上出了协议错误的（1002、1003、1007、1009）直接结束。
+     * Transport closed (WebSocket close event; long polling determines transport disconnected).
+     * Ignore if not current transport for this session (already replaced).
+     * Legacy clients: session ends immediately, calls `router.disconnect` right away (synchronous, just
+     * like before session layer existed).
+     * Session-aware clients: detach, retain for `retainMs`; end immediately if protocol error occurred on
+     * transport (1002, 1003, 1007, 1009).
      */
     transportClosed(connId, transport, { code, reason, why } = {}) {
       const s = byConn.get(connId);
@@ -524,7 +557,7 @@ export function createSessionLayer({
       detach(s, { code, why });
     },
 
-    // ---------- 核心的钩子 ----------
+    // ---------- Core hooks ----------
 
     write(connId, text) {
       const s = byConn.get(connId);
@@ -546,12 +579,12 @@ export function createSessionLayer({
       return s.unackedBytes;
     },
 
-    /** 核心的 `close` 与组装层的 `closeConn`：服务端主动关，会话立刻结束、不保留（第 4.2 节）。会话不在回 false */
+    /** Core `close` and assembly layer `closeConn`: server actively closes, session ends immediately without retention (Section 4.2). Returns false if session does not exist */
     close(connId, code, reason) {
       const s = byConn.get(connId);
       if (!s || s.ended) return false;
       if (s.legacy) {
-        try { s.transport?.close(code, reason); } catch { /* 已关 */ }
+        try { s.transport?.close(code, reason); } catch { /* Closed */ }
         return true;
       }
       endSession(s, code, reason);
@@ -571,28 +604,28 @@ export function createSessionLayer({
       return { sid, gone: gone ?? Promise.resolve(), existed: true };
     },
 
-    // ---------- 长轮询用（HT-b 接线） ----------
+    // ---------- For long polling (HT-b wiring) ----------
 
-    /** 按会话号找开着的会话的 connId；不在回 null */
+    /** Finds connId of an open session by session id; returns null if not found */
     connIdOf(sid) {
       const s = bySid.get(sid);
       return s && !s.ended ? s.connId : null;
     },
 
-    /** 结束的会话的墓碑 `{ code, reason }`；没有回 null */
+    /** Tombstone `{ code, reason }` of ended session; returns null if none */
     tombOf(sid) {
       const tomb = tombOf(sid);
       return tomb ? { code: tomb.code, reason: tomb.reason } : null;
     },
 
-    /** 对方经长轮询报的确认；越界回 false（会话已以 1002 结束） */
+    /** Acknowledgment reported by peer via long polling; returns false if out of bounds (session already ended with 1002) */
     ack(connId, ack) {
       const s = byConn.get(connId);
       if (!s || s.ended || s.legacy) return false;
       return applyAck(s, ack);
     },
 
-    /** 服务端已按序收全的对方最大 seq，同时算作已告诉对方（长轮询在 `POST /lp/send` 的回包里带它） */
+    /** Highest seq from peer fully received in order by server, also counted as told to peer (long polling includes it in `POST /lp/send` response) */
     takeAck(connId) {
       const s = byConn.get(connId);
       if (!s || s.legacy) return 0;
@@ -600,7 +633,7 @@ export function createSessionLayer({
       return s.inSeq;
     },
 
-    /** 客户端主动结束（长轮询的 `POST /lp/close`，同 `session.close`，第 4.2 节）；会话不在回 false */
+    /** Client-initiated termination (long polling `POST /lp/close`, same as `session.close`, Section 4.2); returns false if session does not exist */
     end(connId, code, reason) {
       const s = byConn.get(connId);
       if (!s || s.ended || s.legacy) return false;
@@ -608,14 +641,16 @@ export function createSessionLayer({
       return true;
     },
 
-    /** 服务端发出过的最大 seq */
+    /** Maximum seq sent by server */
     lastSeq(connId) {
       return byConn.get(connId)?.outSeq ?? 0;
     },
 
     /**
-     * 长轮询的 GET 取帧：还没被确认的业务消息（带 seq 与当前 ack 的文本），从最早的起，总字节不超过 `maxBytes`（至少一帧）。
-     * 帧留在缓冲里，直到对方确认；同一帧可能在两次 GET 里各出现一次，对方按 seq 去重。
+     * Long polling GET frame fetch: unacknowledged application messages (text with seq and current ack),
+     * from the earliest, total bytes not exceeding `maxBytes` (at least one frame).
+     * Frames stay in buffer until peer acknowledges; same frame may appear in two GET requests,
+     * peer deduplicates by seq.
      */
     pull(connId, maxBytes) {
       const s = byConn.get(connId);
@@ -632,26 +667,26 @@ export function createSessionLayer({
       return out;
     },
 
-    /** 有没有还没被确认的业务消息（长轮询判断 GET 要不要挂着） */
+    /** Whether there are unacknowledged application messages (long polling checks whether GET should hang) */
     hasPending(connId) {
       const s = byConn.get(connId);
       return !!s && !s.ended && !s.legacy && s.head < s.frames.length;
     },
 
-    /** 这个会话当前挂着的是不是这条传输 */
+    /** Whether this transport is the one currently attached to this session */
     isCurrent(connId, transport) {
       const s = byConn.get(connId);
       return !!s && !s.ended && s.transport === transport;
     },
 
-    // ---------- 组装层 ----------
+    // ---------- Assembly layer ----------
 
     has(connId) {
       const s = byConn.get(connId);
       return !!s && !s.ended;
     },
 
-    /** 开着的会话数（含脱开的与旧客户端），计入 `maxConnections` */
+    /** Number of open sessions (including detached ones and legacy clients), counts toward `maxConnections` */
     size() {
       return live().length;
     },
@@ -660,14 +695,14 @@ export function createSessionLayer({
       return live().map((s) => s.connId);
     },
 
-    /** `describe().conns[i]` 的组装层字段（第 8 节） */
+    /** Assembly layer fields of `describe().conns[i]` (Section 8) */
     describeConn(connId) {
       const s = byConn.get(connId);
       if (!s) return null;
       return { transport: s.transport?.kind ?? null, fallback: s.fallback, detached: !s.legacy && !s.ended && !s.transport, resumes: s.resumes };
     },
 
-    /** `/healthz` 的 `sessions`（第 8 节）：不含身份、地址与会话号 */
+    /** `sessions` in `/healthz` (Section 8): excludes identity, address, and session id */
     stats() {
       const list = live().map((s) => ({
         connId: s.connId,
@@ -690,7 +725,7 @@ export function createSessionLayer({
       };
     },
 
-    /** 删掉过期的墓碑（组装层的心跳每轮调） */
+    /** Deletes expired tombstones (called every round by assembly layer heartbeat) */
     sweep() {
       const t = now();
       for (const [sid, tomb] of tombs) {
@@ -699,7 +734,8 @@ export function createSessionLayer({
     },
 
     /**
-     * 关停：所有会话以 `code` 结束（脱开的也结束），旧客户端关掉它的传输。回全部注销完成的 Promise。
+     * Shutdown: all sessions end with `code` (detached ones also end), legacy clients close their
+     * transports. Returns a Promise for all unregistrations completed.
      */
     closeSpace(space, code, reason) {
       for (const s of [...byConn.values()]) if (s.principal?.tenantId === space) endSession(s, code, reason);
@@ -713,7 +749,7 @@ export function createSessionLayer({
         }
         if (s.legacy) {
           waits.push(s.gone);
-          try { s.transport?.close(code, reason); } catch { /* 已关 */ }
+          try { s.transport?.close(code, reason); } catch { /* Closed */ }
           continue;
         }
         waits.push(endSession(s, code, reason));

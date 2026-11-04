@@ -1,13 +1,16 @@
 /**
- * `spawn_agent` 的预设角色(计划 `docs/plan/agent-workflow-plan.md` A3;`user-workflow.md`「多 Agent」:
- * 主 Agent 拉起其它 Agent 时可以给它们附加预设的角色)。
+ * `spawn_agent` preset roles (plan `docs/plan/agent-workflow-plan.md` A3; `user-workflow.md`
+ * "Multi-Agent": lead Agent can attach preset roles when spawning other Agents).
  *
- * 角色提示词就是 `src/ai/roles/` 下的那几份 .md(页面的「一键配特效」也读它们,`src/ai/roles/index.ts`),
- * 这里在服务端按同样的规则读:一级标题是中文名,标题以下是提示词,开头的 frontmatter 去掉。
- * 分工模式归档后,只做拆解调度的「制片主管」(manager.md)一并删了;能被拉起的是下面 `SPAWN_ROLE_IDS` 列的几个。
+ * Role prompts are the .md files under `src/ai/roles/` (page "One-click effects" also reads them,
+ * `src/ai/roles/index.ts`), read on server using identical rules: H1 heading is Chinese name, text
+ * below heading is prompt, leading frontmatter is stripped. After split-work mode was archived,
+ * "Production Manager" (manager.md), which only handled breakdown and scheduling, was deleted along
+ * with it; spawnable roles are listed below in `SPAWN_ROLE_IDS`.
  *
- * 子 Agent 每一轮的系统提示词里都拼上它的角色提示词(`vite-plugin-ai.ts` 的 `/api/ai/chat`),不只第一条消息:
- * 多轮跑下来最容易忘掉自己是谁。
+ * Subagent role prompt is concatenated into its system prompt on every round (`/api/ai/chat` in
+ * `vite-plugin-ai.ts`), not just first message: running multiple rounds makes it most prone to
+ * forgetting who it is.
  */
 import fs from 'node:fs';
 
@@ -21,7 +24,7 @@ function splitFrontmatter(raw) {
   return m ? raw.slice(m[0].length) : raw;
 }
 
-/** 读一份角色;文件不在回 null */
+/** Reads a role; returns null if file is missing */
 export function loadRole(id) {
   if (!SPAWN_ROLE_IDS.includes(id)) return null;
   let raw;
@@ -37,7 +40,7 @@ export function loadRole(id) {
   return prompt ? { id, name, prompt } : null;
 }
 
-/** 角色 id → 中文名(页签名、提示里用);不认识的原样回 */
+/** Role id → Chinese name (used in tab names, prompts); returns unrecognized as-is */
 export function roleName(id) {
   return loadRole(id)?.name ?? (typeof id === 'string' ? id : '');
 }

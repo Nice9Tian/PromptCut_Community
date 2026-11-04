@@ -1,16 +1,22 @@
 /**
- * 0.7.18 云端 Agent 看画面的出图四级先后（契约 user-decisions-2026-10-16.md 第 3.1 节，RS18-local）。
+ * 0.7.18 Four-tier frame rendering priority for Cloud Agent viewing frames (contract
+ * user-decisions-2026-10-16.md Section 3.1, RS18-local).
  *
- * 优先级：
- *   1. 成员的桌面版 (desktop)
- *   2. 身份为电脑的在线浏览器 (browser-pc)
- *   3. 托管方的渲染服务 (hosted-render)
- *   4. 身份为手机的在线浏览器 (browser-mobile)
+ * Priority:
+ *   1. Member desktop app (desktop)
+ *   2. Online browser identified as PC (browser-pc)
+ *   3. Host render service (hosted-render)
+ *   4. Online browser identified as mobile (browser-mobile)
  *
- * 当项目里有合格在线的成员设备辅助节点（满足：已授权/在项目内、在线、代码版本与项目版本匹配、
- * 具备即时出图能力，且取帧不改变用户界面上的播放头）时，按 桌面版 > 电脑浏览器 优先从成员设备取帧；
- * 若本地节点不满足资格、离线、执行中掉线或超时，自动退回托管方的渲染服务（若托管渲染也不可用再看是否有手机浏览器兜底）；
- * 本轮被停止时本地与云端在途请求一并撤回；项目版本切换后迟到的旧版本结果隔离丢弃。
+ * When eligible online member device auxiliary nodes are available in the project (satisfying:
+ * authorized / in project, online, code version matching project version, possessing on-demand
+ * frame rendering capability, and fetching frames does not move the playhead on the user
+ * interface), prioritize fetching frames from member devices in order of desktop app > PC browser;
+ * if local nodes do not qualify, are offline, disconnect during execution, or time out,
+ * automatically fall back to the host render service (if hosted rendering is also unavailable,
+ * check if a mobile browser is available as fallback);
+ * when this round is stopped, local and cloud in-flight requests are revoked together; after a
+ * project version switch, late results from old versions are isolated and discarded.
  */
 
 export const FRAME_SOURCE_LEVELS = Object.freeze({
@@ -21,28 +27,28 @@ export const FRAME_SOURCE_LEVELS = Object.freeze({
 });
 
 /**
- * 判断一个成员设备节点是否具备即时出图资格
+ * Determines whether a member device node qualifies for on-demand frame rendering
  * @param {object} node
  * @param {string | null} expectedCodeVersion
  * @returns {boolean}
  */
 export function isQualifiedMemberNode(node, expectedCodeVersion = null) {
   if (!node || typeof node !== 'object') return false;
-  // 必须在线且已授权（同时认 online 与 live）
+  // Must be online and authorized (accepts both online and live)
   const isOnline = node.online === true || node.live === true;
   if (!isOnline || node.authorized === false) return false;
-  // 代码版本必须匹配
+  // Code version must match
   if (expectedCodeVersion && node.codeVersion && node.codeVersion !== expectedCodeVersion) return false;
-  // 必须具备即时出图能力
+  // Must have on-demand frame rendering capability
   if (node.capabilities && node.capabilities.canSnapshot === false) return false;
   if (node.canRenderFrames === false) return false;
-  // 必须保证取帧不移动播放头
+  // Must ensure fetching frames does not move the playhead
   if (node.keepPlayhead === false) return false;
   return true;
 }
 
 /**
- * 对候选节点按出图优先级分级
+ * Classifies candidate nodes by frame rendering priority
  * @param {object} node
  * @returns {'desktop' | 'browser-pc' | 'browser-mobile' | 'unknown'}
  */
@@ -54,12 +60,12 @@ export function classifyNode(node) {
   if (kind === 'desktop' || kind === 'pc' || platform === 'desktop') return FRAME_SOURCE_LEVELS.DESKTOP;
   if (isMobile) return FRAME_SOURCE_LEVELS.BROWSER_MOBILE;
   if (kind === 'browser' || platform === 'browser' || kind === 'web') return FRAME_SOURCE_LEVELS.BROWSER_PC;
-  // 缺省若在线页未标 mobile 则按 browser 电脑浏览器处理
+  // By default, if the online page does not specify mobile, treat as browser PC browser
   return FRAME_SOURCE_LEVELS.BROWSER_PC;
 }
 
 /**
- * 筛选并排序候选成员设备节点：桌面版 > 电脑浏览器 > 手机浏览器
+ * Filters and sorts candidate member device nodes: desktop app > PC browser > mobile browser
  * @param {object[]} nodes
  * @param {{ projectCodeVersion?: string | null }} options
  */
@@ -80,16 +86,16 @@ export function selectEligibleLocalNodes(nodes = [], { projectCodeVersion = null
 }
 
 /**
- * 执行四级优先级的看画面出图调度
+ * Executes four-tier priority frame rendering dispatch for viewing frames
  *
  * @param {object} o
- * @param {object[]} [o.memberNodes] 项目内当前在线的成员节点
- * @param {string | null} [o.projectCodeVersion] 项目代码版本
- * @param {() => Promise<object>} o.cloudLook 托管渲染服务出图的函数
- * @param {(node: object, request: object, signal?: AbortSignal) => Promise<object>} [o.callLocal] 向成员设备要帧的函数
- * @param {() => number | null} [o.getProjectRev] 获取当前项目版本号（用于迟到检测）
- * @param {object} o.request 出图请求参数（例如 { path, body, timeoutMs }）
- * @param {AbortSignal} [o.signal] 取消信号
+ * @param {object[]} [o.memberNodes] Member nodes currently online in the project
+ * @param {string | null} [o.projectCodeVersion] Project code version
+ * @param {() => Promise<object>} o.cloudLook Function to render frames via hosted render service
+ * @param {(node: object, request: object, signal?: AbortSignal) => Promise<object>} [o.callLocal] Function to request frames from a member device
+ * @param {() => number | null} [o.getProjectRev] Gets current project revision (for late detection)
+ * @param {object} o.request Frame rendering request parameters (e.g. { path, body, timeoutMs })
+ * @param {AbortSignal} [o.signal] Cancellation signal
  * @param {(event: string, fields?: object) => void} [o.log]
  */
 export async function dispatchFrameSnapshot({
@@ -109,7 +115,7 @@ export async function dispatchFrameSnapshot({
 
   const { desktopNodes, browserPcNodes, browserMobileNodes } = selectEligibleLocalNodes(memberNodes, { projectCodeVersion });
 
-  // 1. 成员的桌面版
+  // 1. Member desktop app
   if (desktopNodes.length > 0 && typeof callLocal === 'function') {
     for (const node of desktopNodes) {
       if (signal?.aborted) break;
@@ -120,7 +126,8 @@ export async function dispatchFrameSnapshot({
         const res = await callLocal(node, request, localSignal);
         if (res && res.ok !== false) {
           const revAfter = getProjectRev();
-          // 版本切换/迟到结果：项目改了版本后，旧版本的本地结果迟到要被隔离丢弃
+          // Version switch/late result: after the project version changes, late local results from old
+          // versions are isolated and discarded
           if (revBefore !== null && revAfter !== null && revBefore !== revAfter) {
             log('frame.stale-discarded', { source: FRAME_SOURCE_LEVELS.DESKTOP, revBefore, revAfter });
             continue;
@@ -135,7 +142,7 @@ export async function dispatchFrameSnapshot({
     }
   }
 
-  // 2. 身份为电脑的在线浏览器
+  // 2. Online browser identified as PC
   if (browserPcNodes.length > 0 && typeof callLocal === 'function') {
     for (const node of browserPcNodes) {
       if (signal?.aborted) break;
@@ -160,9 +167,12 @@ export async function dispatchFrameSnapshot({
     }
   }
 
-  // 3. 托管方的渲染服务（进它的队列排着；0.7.19 起多项目模式：各项目轮流，不让哪个项目占着）
-  // 托管渲染没出图时记下它的回话：手机浏览器也兜不住时原样交回，模型看到真正的原因
-  // （项目没开渲染节点、渲染超时及其调试信息、片段不存在……），而不是笼统的「没有可用的出图节点」
+  // 3. Host render service (waits in its queue; multi-project mode from 0.7.19: projects take turns,
+  // not letting any project monopolize it)
+  // Record its response when hosted render produces no frame: return as-is when mobile browser
+  // cannot cover it either, so the model sees the real reason
+  // (project has no render node enabled, render timeout and its debug info, clip does not exist...),
+  // rather than a generic "No available frame rendering node"
   let cloudOutcome = null;
   if (typeof cloudLook === 'function') {
     try {
@@ -178,11 +188,11 @@ export async function dispatchFrameSnapshot({
       if (signal?.aborted) throw err;
       log('frame.cloud-failed', { source: FRAME_SOURCE_LEVELS.HOSTED_RENDER, look: err?.look ?? null, message: String(err?.message ?? err) });
       cloudOutcome = { error: err };
-      // 若云端抛出不可用的错误且有手机浏览器，尝试手机浏览器兜底
+      // If the cloud throws an unavailable error and a mobile browser exists, try mobile browser fallback
     }
   }
 
-  // 4. 身份为手机的在线浏览器（兜底）
+  // 4. Online browser identified as mobile (fallback)
   if (browserMobileNodes.length > 0 && typeof callLocal === 'function') {
     for (const node of browserMobileNodes) {
       if (signal?.aborted) break;
@@ -212,5 +222,5 @@ export async function dispatchFrameSnapshot({
   }
   if (cloudOutcome?.error) throw cloudOutcome.error;
   if (cloudOutcome?.result) return cloudOutcome.result;
-  throw new Error('这次没看成：没有可用的出图节点（成员设备离线或不合格，云端渲染服务不可用）。');
+  throw new Error('Could not view this time: no render node is available (member devices are offline or ineligible, or the cloud render service is unavailable).');
 }

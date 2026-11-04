@@ -1,24 +1,32 @@
 /**
- * 闸(契约 `docs/plan/cloud-agent-contract.md` 第 6 节):所有对话与模型调用都经过的那一处额度与并发检查。
+ * Gate (contract `docs/plan/cloud-agent-contract.md` Section 6): the single quota and concurrency
+ * check through which all chats and model calls pass.
  *
- * 两个入口,所有路径都走它:
- *   admitRun({ projectId, userId })               一轮开始前;放行时占一个并发名额,结束时由 `release` 还
- *   admitModelCall({ projectId, userId, model })  每次向模型发请求前
+ * Two entry points, taken by all paths:
+ *   admitRun({ projectId, userId })               Before a round starts; occupies a concurrency
+ *                                                 slot when admitted, returned by `release` on end
+ *   admitModelCall({ projectId, userId, model })  Before each request to the model
  *     → { ok: true } | { ok: false, code: 'disabled' | 'busy' | 'quota-exceeded', message }
- *   record({ … })                                  每次模型请求之后记一行用量(`usage.mjs`)
+ *   record({ … })                                  Records a row of usage after each model request
+ *                                                 (`usage.mjs`)
  *
- * 判定顺序:开关(`disabled`)→ 节点并发、项目并发、成员并发(`busy`)→ 额度(`quota-exceeded`)。
+ * Evaluation order: switch (`disabled`) → node concurrency, project concurrency, member concurrency
+ * (`busy`) → quota (`quota-exceeded`).
  *
- * **现在永远放行的含义**:`limits.json` 不存在、或 `defaults.limitTokens` 为 null 且 `projects` 为空时,额度那一步对任何项目
- * 都放行。节点级的三个并发数是保护同机服务的资源上限,有数字,不属于「额度」。
+ * **Meaning of always admitting right now**: when `limits.json` does not exist, or
+ * `defaults.limitTokens` is null and `projects` is empty, the quota step admits any project.
+ * The three node-level concurrency counts are resource limits protecting co-located services;
+ * they have numbers and do not count as "quota".
  *
- * `limits.json`(`<数据目录>/config/limits.json`):
+ * `limits.json`(`<data directory>/config/limits.json`):
  *   { "v": 1,
  *     "node": { "maxRuns": 6, "maxRunsPerProject": 3, "maxRunsPerMember": 2, "maxInstances": 24 },
  *     "defaults": { "limitTokens": null, "window": "total", "maxRuns": null },
  *     "projects": { "<projectId>": { "limitTokens": 2000000, "window": "month", "maxRuns": 2 } } }
- * 每次过闸前看文件的修改时间与大小,变了就重读;格式不对保留上一份并记日志。发上限只改这个文件,不改代码、不重启。
- * 本文件不引用 `src/`。
+ * Before passing through the gate each time, check file mtime and size, and reread if changed; if
+ * format is invalid, keep the previous one and log it. Publishing limit changes only modifies this
+ * file, without code changes or restarts.
+ * This file does not reference `src/`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,33 +42,33 @@ export function limitsFileOf(dataDir) {
 const posInt = (v) => Number.isSafeInteger(v) && v > 0;
 const nullOr = (v, ok) => v === null || v === undefined || ok(v);
 
-/** 核对并补齐一份 `limits.json` 的内容;不对就抛错(说明哪里不对) */
+/** Verifies and fills in `limits.json` contents; throws if invalid (explaining what is wrong) */
 export function normalizeLimits(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('不是对象');
-  if (raw.v !== undefined && raw.v !== 1) throw new Error(`不认识的版本 v=${raw.v}`);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Not an object');
+  if (raw.v !== undefined && raw.v !== 1) throw new Error(`Unknown version v=${raw.v}`);
   const node = { ...NODE_LIMIT_DEFAULTS };
   if (raw.node !== undefined) {
-    if (!raw.node || typeof raw.node !== 'object' || Array.isArray(raw.node)) throw new Error('node 不是对象');
+    if (!raw.node || typeof raw.node !== 'object' || Array.isArray(raw.node)) throw new Error('node is not an object');
     for (const k of Object.keys(NODE_LIMIT_DEFAULTS)) {
       if (raw.node[k] === undefined) continue;
-      if (!posInt(raw.node[k])) throw new Error(`node.${k} 要是正整数`);
+      if (!posInt(raw.node[k])) throw new Error(`node.${k} must be a positive integer`);
       node[k] = raw.node[k];
     }
   }
   const one = (v, at) => {
-    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`${at} 不是对象`);
-    if (!nullOr(v.limitTokens, (x) => Number.isSafeInteger(x) && x >= 0)) throw new Error(`${at}.limitTokens 要是非负整数或 null`);
-    if (v.window !== undefined && !QUOTA_WINDOWS.includes(v.window)) throw new Error(`${at}.window 只能是 ${QUOTA_WINDOWS.join(' / ')}`);
-    if (!nullOr(v.maxRuns, posInt)) throw new Error(`${at}.maxRuns 要是正整数或 null`);
+    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`${at} is not an object`);
+    if (!nullOr(v.limitTokens, (x) => Number.isSafeInteger(x) && x >= 0)) throw new Error(`${at}.limitTokens must be a non-negative integer or null`);
+    if (v.window !== undefined && !QUOTA_WINDOWS.includes(v.window)) throw new Error(`${at}.window must be one of ${QUOTA_WINDOWS.join(' / ')}`);
+    if (!nullOr(v.maxRuns, posInt)) throw new Error(`${at}.maxRuns must be a positive integer or null`);
     return { limitTokens: v.limitTokens ?? null, window: v.window ?? 'total', maxRuns: v.maxRuns ?? null };
   };
   const defaults = raw.defaults === undefined ? { limitTokens: null, window: 'total', maxRuns: null } : one(raw.defaults, 'defaults');
   const projects = {};
   if (raw.projects !== undefined) {
-    if (!raw.projects || typeof raw.projects !== 'object' || Array.isArray(raw.projects)) throw new Error('projects 不是对象');
+    if (!raw.projects || typeof raw.projects !== 'object' || Array.isArray(raw.projects)) throw new Error('projects is not an object');
     for (const [id, v] of Object.entries(raw.projects)) {
-      if (!PROJECT_ID_RE.test(id)) throw new Error(`projects 里的项目号不合法:${id.slice(0, 40)}`);
-      // 项目这一行没写的字段跟着 defaults
+      if (!PROJECT_ID_RE.test(id)) throw new Error(`Invalid project ID in projects: ${id.slice(0, 40)}`);
+      // Fields not specified in this project entry follow defaults
       const p = one(v, `projects.${id}`);
       projects[id] = {
         limitTokens: v.limitTokens === undefined ? defaults.limitTokens : p.limitTokens,
@@ -74,7 +82,7 @@ export function normalizeLimits(raw) {
 
 export const EMPTY_LIMITS = Object.freeze(normalizeLimits({}));
 
-/** 读文件(给管理命令用):没有文件回空的那一份;格式不对抛错 */
+/** Reads the file (for management commands): returns the empty copy if missing; throws if invalid */
 export function readLimitsFile(file) {
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch (err) { if (err?.code === 'ENOENT') return { v: 1 }; throw err; }
@@ -83,7 +91,7 @@ export function readLimitsFile(file) {
   return raw;
 }
 
-/** 写文件(临时文件加改名,0600) */
+/** Writes the file (temp file plus rename, 0600) */
 export function writeLimitsFile(file, raw) {
   normalizeLimits(raw);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -94,16 +102,16 @@ export function writeLimitsFile(file, raw) {
 
 /**
  * @param {object} o
- * @param {string | null} [o.limitsFile] 不给就没有额度配置(永远放行,并发用缺省数字)
+ * @param {string | null} [o.limitsFile] If omitted, there is no quota configuration (always admitted, concurrency uses default numbers)
  * @param {ReturnType<import('./usage.mjs').createUsageLog>} o.usage
- * @param {(projectId: string) => boolean} [o.isEnabled] 这个项目的「云端 Agent」开关(乙块接上文档服务的推送之前恒为开)
- * @param {object} [o.node] 覆盖节点级并发数(测试)
+ * @param {(projectId: string) => boolean} [o.isEnabled] "Cloud Agent" toggle for this project (always on before block Yi connects to document service push)
+ * @param {object} [o.node] Overrides node-level concurrency counts (for testing)
  */
 export function createGate({ limitsFile = null, usage, isEnabled = () => true, node: nodeOverride = null, now = () => Date.now(), log = () => {} } = {}) {
-  if (!usage || typeof usage.append !== 'function') throw new TypeError('createGate: 要 usage');
+  if (!usage || typeof usage.append !== 'function') throw new TypeError('createGate: usage is required');
   let limits = EMPTY_LIMITS;
   let stamp = '';
-  /** 进行中的一轮:全节点、按项目、按成员 */
+  /** Active round: whole node, by project, by member */
   let running = 0;
   const byProject = new Map();
   const byMember = new Map();
@@ -122,7 +130,7 @@ export function createGate({ limitsFile = null, usage, isEnabled = () => true, n
       limits = normalizeLimits(JSON.parse(fs.readFileSync(limitsFile, 'utf8')));
       log('agent.limits.loaded', { projects: Object.keys(limits.projects).length });
     } catch (err) {
-      // 写坏了:保留上一份,不崩、不放开也不收紧
+      // Malformed: keep the previous copy, do not crash, neither loosen nor tighten
       log('agent.limits.invalid', { message: String(err?.message ?? err).slice(0, 160) });
     }
   }
@@ -140,24 +148,24 @@ export function createGate({ limitsFile = null, usage, isEnabled = () => true, n
     if (pl.limitTokens === null) return { ok: true };
     const used = usage.used(projectId, pl.window, now());
     if (used < pl.limitTokens) return { ok: true };
-    return { ok: false, code: 'quota-exceeded', message: `这个项目的云端 Agent 额度已用完(已用 ${used} / 上限 ${pl.limitTokens})。请联系托管方。`, used, limit: pl.limitTokens };
+    return { ok: false, code: 'quota-exceeded', message: `This project's Cloud Agent quota is used up (used ${used} / limit ${pl.limitTokens}). Contact the host.`, used, limit: pl.limitTokens };
   }
 
   function enabled(projectId) {
     let on = true;
     try { on = isEnabled(projectId) !== false; } catch { on = true; }
-    return on ? { ok: true } : { ok: false, code: 'disabled', message: '项目创建者已关闭云端 Agent。' };
+    return on ? { ok: true } : { ok: false, code: 'disabled', message: 'The project creator has turned off the Cloud Agent.' };
   }
 
   return {
-    /** 一轮开始前。放行时占名额;之后必须恰好调一次 `release` */
+    /** Before a round starts. Occupies a slot when admitted; `release` must be called once afterwards */
     admitRun({ projectId, userId }) {
       reload();
       const e = enabled(projectId);
       if (!e.ok) return e;
       const n = nodeLimits();
       const pl = projectLimits(projectId);
-      const busy = { ok: false, code: 'busy', message: '云端 Agent 正忙,请稍后再试。' };
+      const busy = { ok: false, code: 'busy', message: 'The Cloud Agent is busy. Please try again later.' };
       if (running >= n.maxRuns) return busy;
       if ((byProject.get(projectId) ?? 0) >= Math.min(n.maxRunsPerProject, pl.maxRuns ?? Infinity)) return busy;
       if ((byMember.get(memberKey(projectId, userId)) ?? 0) >= n.maxRunsPerMember) return busy;
@@ -169,14 +177,14 @@ export function createGate({ limitsFile = null, usage, isEnabled = () => true, n
       return { ok: true };
     },
 
-    /** 还名额(一轮结束,不论怎么结束的) */
+    /** Returns the slot (when a round ends, regardless of how it ended) */
     release({ projectId, userId }) {
       if (running > 0) running -= 1;
       bump(byProject, projectId, -1);
       bump(byMember, memberKey(projectId, userId), -1);
     },
 
-    /** 每次向模型发请求前 */
+    /** Before each request to the model */
     admitModelCall({ projectId }) {
       reload();
       const e = enabled(projectId);
@@ -184,12 +192,12 @@ export function createGate({ limitsFile = null, usage, isEnabled = () => true, n
       return quota(projectId);
     },
 
-    /** 记一次模型请求的用量 */
+    /** Records the usage of a model request */
     record(row) {
       return usage.append(row);
     },
 
-    /** 这个项目的额度与已用量(给 `GET /v1/info`) */
+    /** Quota and used amount for this project (for `GET /v1/info`) */
     quotaOf(projectId) {
       reload();
       const pl = projectLimits(projectId);
@@ -201,7 +209,7 @@ export function createGate({ limitsFile = null, usage, isEnabled = () => true, n
       return nodeLimits();
     },
 
-    /** 诊断:此刻占着的名额 */
+    /** Diagnostics: currently occupied slots */
     describe() {
       return { running, projects: Object.fromEntries(byProject), members: byMember.size };
     },

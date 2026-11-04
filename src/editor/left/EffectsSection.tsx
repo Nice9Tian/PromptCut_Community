@@ -13,8 +13,8 @@ import { useAudioFxGroup, useAudioPresetsGroup } from "./library/audioFxGroups";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 「特效」分区:搜索 → 分类胶囊(所有 / 视觉 / 音频)→ 转场、滤镜、强调、全局风格、音频效果、音频预设。
- * 视觉和音频不再分两页,靠分类胶囊筛。各组操作的结果提示统一走分区底部的提示条。
+ * The "Effects" section: search → category pills (All / Visual / Audio) → transitions, filters, emphasis, global style, audio effects, audio presets.
+ * Visual and audio are no longer split into two tabs; the category pills do the filtering. Result notices for each group's actions all go through the notice bar at the bottom of the section.
  */
 export function EffectsSection() {
   const [search, setSearch] = useState("");

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/capability/2",
   "identifier": "remote-sidecar",
-  "description": "编辑台页面由 sidecar 在 127.0.0.1:5210 上提供,对 Tauri 来说是「远程」来源;default.json 只覆盖本地来源(tauri:// / localhost 开发地址),这里把同一套权限放给 sidecar 的地址,不然前端 invoke 任何应用命令都会被拦。",
+  "description": "The editor page is served by the sidecar at 127.0.0.1:5210, which is a 'remote' origin as far as Tauri is concerned; default.json only covers local origins (tauri:// / localhost dev address), so the same set of permissions is granted here to the sidecar's address, otherwise any app command the frontend invokes would be blocked.",
   "remote": {
     "urls": [
       "http://127.0.0.1:5210/*",

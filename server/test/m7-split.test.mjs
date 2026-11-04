@@ -1,8 +1,10 @@
 /**
- * M7-T：切分侧的 D1（浏览器可做的卡按两种指纹各出一份）与 D2（锁闲置超 30 s 才接手的判定）。
- * 依据：`docs/plan/m7-contract.md` 第 3.3、3.4 节，第 13 节裁定 D1、D2、D4；`render-queue-contract.md` B.1、B.4、F.2。
- * 假设见 `m7-kit.mjs` 的 K6、K8；实现不在时 skip。
- * 跑：node --experimental-test-module-mocks --test server/test/m7-split.test.mjs
+ * M7-T: D1 on splitter side (issues one copy for each of two fingerprints for cards browser can do)
+ * and D2 (decision on taking over when lock is idle for over 30 s).
+ * Basis: `docs/plan/m7-contract.md` Sections 3.3 and 3.4, Section 13 rulings D1, D2, and D4;
+ * `render-queue-contract.md` B.1, B.4, and F.2. Assumptions see K6 and K8 in `m7-kit.mjs`; skip when
+ * implementation is absent.
+ * Run: node --experimental-test-module-mocks --test server/test/m7-split.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +18,7 @@ const OWN = '1111111111111111';
 const BR = '2222222222222222';
 const THIRD = '3333333333333333';
 
-/** 一张卡（card plan 的一项）。缺省是浏览器可做的：共享档、独立、非 canvasHeavy、内置卡 */
+/** A card (one item in card plan). Default is browser-capable: shared tier, standalone, non-canvasHeavy, built-in card */
 function control(clipId, extra = {}) {
   return {
     clipId, cardId: `card-${clipId}`, snapshotKey: rk(`ck-${clipId}`, OWN), contentKey: `ck-${clipId}`, tier: 'shared',
@@ -24,7 +26,10 @@ function control(clipId, extra = {}) {
     ...extra,
   };
 }
-/** 切分方的 weightOf：照 `frame-pipeline.mjs` 的 queueWeightClass——本地档、canvasHeavy、belowDependent、unknown 记 heavy，其余 medium */
+/**
+ * Splitter's weightOf: follows queueWeightClass in `frame-pipeline.mjs`: local tier, canvasHeavy,
+ * belowDependent, unknown classified as heavy, remainder medium
+ */
 function weightOf(c) {
   const comp = c.compositing ?? c.capabilities?.compositing;
   if (c.tier === 'local' || c.capabilities?.canvasHeavy === true || comp === 'belowDependent' || comp === 'unknown') return { class: 'heavy', estMs: null };
@@ -43,34 +48,34 @@ function split({ cardPlan, browser = BROWSER, cardLocks = {}, cardSourceVersions
 }
 const byClip = (tasks, clipId) => tasks.filter((t) => t.input.clipId === clipId);
 
-test('D1 浏览器可做的卡：每段两份（切分方指纹、浏览器指纹），键按 B.1 各自算，都 dual、都不带 takeover；浏览器那份带 bake 与 compositing', gateOpts(splitDualGate()), () => {
+test('D1 a card the browser can render: two copies per segment (splitter fingerprint, browser fingerprint), keys computed separately per B.1, both dual and neither with takeover; the browser copy carries bake and compositing', gateOpts(splitDualGate()), () => {
   const tasks = split({ cardPlan: [control('m1')] });
   const mine = byClip(tasks, 'm1');
-  assert.equal(mine.length, 4, `120 帧两段 × 两份：${JSON.stringify(mine.map((t) => t.id))}`);
+  assert.equal(mine.length, 4, `120 frames, two segments × two copies: ${JSON.stringify(mine.map((t) => t.id))}`);
   const own = mine.filter((t) => t.requires.envFingerprint === OWN);
   const br = mine.filter((t) => t.requires.envFingerprint === BR);
   assert.equal(own.length, 2);
   assert.equal(br.length, 2);
   for (const t of own) assert.equal(t.resultKey, rk('ck-m1', OWN));
   for (const t of br) assert.equal(t.resultKey, rk('ck-m1', BR));
-  assert.equal(new Set(mine.map((t) => t.id)).size, 4, '四个任务 id 互不相同');
+  assert.equal(new Set(mine.map((t) => t.id)).size, 4, 'The four task ids are all distinct');
   for (const t of mine) {
-    assert.equal(t.input.dual, true, `${t.id} 应带 input.dual`);
-    assert.equal('takeover' in t, false, `${t.id} 不带 takeover`);
-    assert.equal(t.input.contentKey, 'ck-m1', '两份同一个内容键（同一把锁）');
+    assert.equal(t.input.dual, true, `${t.id} should carry input.dual`);
+    assert.equal('takeover' in t, false, `${t.id} does not carry takeover`);
+    assert.equal(t.input.contentKey, 'ck-m1', 'Both copies share the same content key (the same lock)');
   }
   for (const t of br) {
     assert.equal(t.input.compositing, 'independent');
-    assert.ok(t.input.bake && typeof t.input.bake === 'object', `浏览器那份要 input.bake：${JSON.stringify(t.input)}`);
-    assert.ok('count' in t.input.bake && 'sampling' in t.input.bake, `input.bake 要带 count 与 sampling：${JSON.stringify(t.input.bake)}`);
+    assert.ok(t.input.bake && typeof t.input.bake === 'object', `The browser copy needs input.bake: ${JSON.stringify(t.input)}`);
+    assert.ok('count' in t.input.bake && 'sampling' in t.input.bake, `input.bake must carry count and sampling: ${JSON.stringify(t.input.bake)}`);
   }
-  // 两份的段与优先级一一对应（锚帧段 50、其余 10）
+  // Segments and priorities in both copies correspond one-to-one (anchor frame segments 50, rest 10)
   const seg = (list) => list.map((t) => [t.range.from, t.range.to, t.priority]).sort((a, b) => a[0] - b[0]);
   assert.deepEqual(seg(br), seg(own));
   assert.deepEqual(seg(own).map((s) => s[2]), [50, 10]);
 });
 
-test('D1 浏览器做不了的卡只出切分方一份、不带 dual：heavy、本地档、非独立、用户卡、素材效果卡、改过源码、锁在第三种环境上', gateOpts(splitDualGate()), () => {
+test('D1 a card the browser cannot render gets only the splitter copy, without dual: heavy, local tier, non-standalone, user card, media effect card, modified source, lock on a third environment', gateOpts(splitDualGate()), () => {
   const cardPlan = [
     control('heavy', { capabilities: { compositing: 'independent', canvasHeavy: true } }),
     control('srcdep', { compositing: 'sourceDependent', capabilities: { compositing: 'sourceDependent' } }),
@@ -90,27 +95,27 @@ test('D1 浏览器做不了的卡只出切分方一份、不带 dual：heavy、�
   });
   for (const c of cardPlan) {
     const list = byClip(tasks, c.clipId);
-    assert.ok(list.length > 0, `${c.clipId} 应有任务`);
+    assert.ok(list.length > 0, `${c.clipId} should have tasks`);
     if (c.clipId === 'ok') {
-      assert.ok(list.some((t) => t.requires.envFingerprint === BR), '对照：ok 有浏览器那份');
+      assert.ok(list.some((t) => t.requires.envFingerprint === BR), 'For comparison: ok has the browser copy');
       continue;
     }
-    assert.equal(list.some((t) => t.requires.envFingerprint === BR), false, `${c.clipId} 不该出浏览器那份`);
-    assert.equal(list.some((t) => t.input.dual === true), false, `${c.clipId} 不该带 dual`);
-    if (c.clipId === 'locked3') assert.ok(list.every((t) => t.requires.envFingerprint === THIRD), '锁在第三种环境上的照锁出键（F.2）');
+    assert.equal(list.some((t) => t.requires.envFingerprint === BR), false, `${c.clipId} should not emit the browser copy`);
+    assert.equal(list.some((t) => t.input.dual === true), false, `${c.clipId} should not carry dual`);
+    if (c.clipId === 'locked3') assert.ok(list.every((t) => t.requires.envFingerprint === THIRD), 'A lock on a third environment emits keys per the lock (F.2)');
   }
-  // 本地档：只要有 entryKey，照旧出一份切分方指纹的
+  // Local tier: as long as entryKey exists, issues one copy with splitter's fingerprint as usual
   const local = split({ cardPlan: [control('loc', { tier: 'local' })] });
-  assert.equal(local.some((t) => t.requires.envFingerprint === BR || t.input.dual === true), false, '本地档不出浏览器那份');
+  assert.equal(local.some((t) => t.requires.envFingerprint === BR || t.input.dual === true), false, 'Local tier does not emit the browser copy');
 });
 
-test('D1 清单计划不带浏览器意向时，切分结果与今天相同：没有浏览器那份、没有 dual', gateOpts(splitDualGate()), () => {
+test('D1 when a manifest plan carries no browser intent, the split result is the same as today: no browser copy, no dual', gateOpts(splitDualGate()), () => {
   const tasks = split({ cardPlan: [control('m1'), control('m2')], browser: null });
   assert.equal(tasks.length, 4);
   assert.ok(tasks.every((t) => t.requires.envFingerprint === OWN && t.input.dual !== true));
 });
 
-test('D1 端到端：切分出的两份经切分节点发布，页面的纯浏览器（本人）看得见浏览器那份并先认领得卡，切分方那份作废', gateOpts(splitDualGate()), () => {
+test('D1 end to end: the two copies produced by the split are published through the splitting node; the pure browser on the page (same user) can see the browser copy and claims the card first, and the splitter copy is voided', gateOpts(splitDualGate()), () => {
   const h = createQueueHarness(createRenderQueue);
   const USER = 'zoe@devA';
   h.publisher('page', 'pub-page', { userId: USER });
@@ -127,8 +132,8 @@ test('D1 端到端：切分出的两份经切分节点发布，页面的纯浏�
   });
   const res = h.publish('pc', tasks).one('pc', 'task.published').results;
   for (const r of res) assert.equal(r.error, undefined, JSON.stringify(r));
-  // 浏览器看得见的只有浏览器那份（身份继承自页面的 plan，前置过滤只给同指纹）
-  const seen = h.bus.of('br', 'task.opened').map((m) => m.task).filter((t) => t.kind === 'snapshot');   // 页面自己的清单计划它也看得见（本人任务），只看细任务
+  // Browser can only see browser's copy (identity inherited from page's plan; pre-filtering only yields same fingerprint)
+  const seen = h.bus.of('br', 'task.opened').map((m) => m.task).filter((t) => t.kind === 'snapshot');   // Page can also see its own manifest plan (own tasks); only checks fine-grained tasks
   assert.ok(seen.length === 2 && seen.every((t) => t.requires.envFingerprint === BR), JSON.stringify(seen.map((t) => t.id)));
   const brTask = seen.find((t) => t.range.from === 0);
   const c = h.claim('br', brTask.id, brTask.version).last('br', ['task.claimed', 'task.claim-rejected']);
@@ -136,21 +141,21 @@ test('D1 端到端：切分出的两份经切分节点发布，页面的纯浏�
   const d = h.describe();
   for (const t of tasks.filter((x) => x.requires.envFingerprint === OWN)) {
     const s = d.tasks.find((x) => x.id === t.id);
-    assert.deepEqual([s.state, s.lastError], ['failed', 'superseded'], `${t.id}：${JSON.stringify(s)}`);
+    assert.deepEqual([s.state, s.lastError], ['failed', 'superseded'], `${t.id}: ${JSON.stringify(s)}`);
   }
 });
 
-/* ================================================================== D2 判定（K8） */
+/* ================================================================== D2 decision (K8) */
 
-test('D2 切分方的接手判定：锁闲置严格超过 30 s（CARD_LOCK_IDLE_MS）才接手，没有 lockIdleMs 不接手', gateOpts(idleTakeoverGate()), async () => {
-  assert.equal(CARD_LOCK_IDLE_MS, 30_000, '与本机锁库同一个数');
+test('D2 takeover decision of the splitter: it takes over only if the lock has been idle for strictly more than 30 s (CARD_LOCK_IDLE_MS), and does not take over without lockIdleMs', gateOpts(idleTakeoverGate()), async () => {
+  assert.equal(CARD_LOCK_IDLE_MS, 30_000, 'Same number as in the local lock store');
   const gate = idleTakeoverGate();
   const fn = (await importRepo(gate.file))[gate.name];
   const key = 'snapshot:ck-1';
-  assert.equal(fn(key, BR, { lockIdleMs: 30_000, lockedByProfile: 'browser' }), false, '恰好 30 s 不接手（严格大于）');
+  assert.equal(fn(key, BR, { lockIdleMs: 30_000, lockedByProfile: 'browser' }), false, 'Exactly 30 s does not take over (strictly greater than)');
   assert.equal(fn(key, BR, { lockIdleMs: 30_001, lockedByProfile: 'browser' }), true);
   assert.equal(fn(key, BR, { lockIdleMs: 5_000, lockedByProfile: 'browser' }), false);
-  assert.equal(fn(key, BR, { lockIdleMs: 120_000, lockedByProfile: 'pc' }), true, '闲置的 pc 锁同样接手（语义不分 profile）');
-  assert.equal(fn(key, BR, {}), false, '回包里没有 lockIdleMs（旧队列）不接手');
+  assert.equal(fn(key, BR, { lockIdleMs: 120_000, lockedByProfile: 'pc' }), true, 'An idle pc lock is taken over as well (the semantics make no distinction by profile)');
+  assert.equal(fn(key, BR, {}), false, 'No takeover when the response has no lockIdleMs (legacy queue)');
   assert.equal(fn(key, BR), false);
 });

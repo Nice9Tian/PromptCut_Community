@@ -1,27 +1,39 @@
 /**
- * 纯浏览器节点生成快照一段细任务要的纯函数(M7 契约第 4.3、4.5 节):
+ * Pure functions required for a fine-grained task to generate snapshots on a pure browser node
+ * (M7 contract sections 4.3 and 4.5):
  *
- *   - `bakeInputOf`:任务 → 隔离单卡工程(`isolatedCardProject`)要的参数。它要的 `start`、`end`、`count`、`sampling` 由切分方写在浏览器那一份的 `input.bake` 里,
- *     页面不算 `cardSampling`;片段 id 取 `input.clipId`。
- *   - `snapshotManifest`:全段齐后组的清单,形状同桌面 `server/artifact-transfer.mjs` 的 `collectSnapshotResult`
- *     (`v: 1`、`kind: 'snapshot'`、`tier: 'shared'`、`resultKey`、`dirKey = resultKey`、`entryKey: null`、`range`、`canvasHeavy`、
- *     `frames: [[本地帧, 哈希, 字节数]]`,有小尺寸就带 `small`);单测过桌面的 `manifestMatches`。
- *   - `manifestKey`:清单在内容库里的键 `<resultKey>:<from>-<to>`(同 `manifestKeyOf`)。
+ *   - `bakeInputOf`: Task → parameters required for the isolated single-card project
+ *     (`isolatedCardProject`). The required `start`, `end`, `count`, and `sampling` are written by the
+ *     splitter into `input.bake` on the browser side; the page does not compute `cardSampling`; clip
+ *     id is taken from `input.clipId`.
+ *   - `snapshotManifest`: Manifest assembled after the full segment is complete, shaped
+ *     identically to `collectSnapshotResult` in desktop `server/artifact-transfer.mjs` (`v: 1`,
+ *     `kind: 'snapshot'`, `tier: 'shared'`, `resultKey`, `dirKey = resultKey`, `entryKey: null`,
+ *     `range`, `canvasHeavy`, `frames: [[local frame, hash, byte count]]`, includes `small` if small
+ *     size exists); unit-tested against desktop `manifestMatches`.
+ *   - `manifestKey`: Manifest key in the content store `<resultKey>:<from>-<to>` (same as
+ *     `manifestKeyOf`).
  *
- * `isolatedCardProject` 已挪进页面与服务端共用的纯模块 `src/kernel/isolatedCard.mjs`,桌面 `FramePipeline#isolatedCardProject` 改引它(契约第 4.3 节)。
- * 剪辑段里摊出来的卡(虚拟片段,〔裁〕R02:在线浏览器也替剪辑段里的重卡产流)走 `isolatedBakeProject` 的另一支:隔离工程带着剪辑段链
- * (`kernel/cutFlatten.mjs` 的 `isolatedFlatProject`,和切分方产 `'flat'` 流同一份),时间不平移;后台舞台按「任务的本地帧 + 卡的第一帧」
- * 推到项目帧、在嵌套场景里取这张卡的包裹层(`StageView.tsx` 的 `bakeFrame`,请求带 `frameBase`)。
+ * `isolatedCardProject` has been moved to the pure module `src/kernel/isolatedCard.mjs` shared
+ * between page and server; desktop `FramePipeline#isolatedCardProject` was updated to reference it
+ * (contract section 4.3). Cards flattened out of cut segments (virtual clips, [ruling] R02: online
+ * browser also produces streams for heavy cards in cut segments) take the other branch of
+ * `isolatedBakeProject`: the isolated project carries the cut segment chain (`isolatedFlatProject`
+ * in `kernel/cutFlatten.mjs`, same instance used when the splitter produces `'flat'` streams),
+ * without time shifting; the background stage calculates the project frame based on "task local
+ * frame + card first frame", advances to the project frame, and retrieves this card's wrapper layer
+ * in the nested scene (`bakeFrame` in `StageView.tsx`, request includes `frameBase`).
  *
- * 本模块属于 render 这一层(`src/online/`):不引 editor,不引 `mode.ts`。
+ * This module belongs to the render layer (`src/online/`): does not import editor, does not import
+ * `mode.ts`.
  */
 
 import { isolatedCardProject } from "../kernel/isolatedCard.mjs";
 import { isFlatClipId, isolatedFlatProject } from "../kernel/cutFlatten.mjs";
 
-/** 清单的版本(同 `artifact-transfer.mjs` 的 `RESULT_VERSION`) */
+/** Manifest version (same as `RESULT_VERSION` in `artifact-transfer.mjs`) */
 export const RESULT_VERSION = 1;
-/** 清单 JSON 的体积上限(同 `RESULT_MAX_BYTES`) */
+/** Size upper limit for manifest JSON (same as `RESULT_MAX_BYTES`) */
 export const RESULT_MAX_BYTES = 256 * 1024;
 
 export interface BakeInput {
@@ -32,7 +44,7 @@ export interface BakeInput {
   sampling: { phase: { numerator: number | string; denominator: number | string }; [k: string]: unknown };
 }
 
-/** 任务 → 隔离单卡工程要的参数;缺东西回 null(不猜) */
+/** Task → parameters needed for isolated single-card project; returns null if missing (no guessing) */
 export function bakeInputOf(task: { input?: Record<string, unknown> } | null | undefined): BakeInput | null {
   const input = task?.input ?? {};
   const bake = input.bake as Record<string, unknown> | undefined;
@@ -46,10 +58,10 @@ export function bakeInputOf(task: { input?: Record<string, unknown> } | null | u
   return { clipId, start, end, count, sampling };
 }
 
-/** 隔离单卡工程:桌面预渲染与本页共用的唯一一份(`src/kernel/isolatedCard.mjs`) */
+/** Isolated single-card project: single instance shared between desktop prerender and this page (`src/kernel/isolatedCard.mjs`) */
 export { isolatedCardProject };
 
-/** 剪辑段里的卡在隔离工程里拿掉自己的外观(由舞台上它外面的包裹层加,不在流里;同切分方 `localClip` 去掉的那几项);框原样(快照取包裹层里面) */
+/** Cards in cut segments strip their appearance in the isolated project (added by their outer wrapper layer on the stage, not in the stream; same items stripped by the splitter's `localClip`); box kept as is (snapshots capture inside the wrapper layer) */
 function bareCardClip(clip: Record<string, unknown>): Record<string, unknown> {
   const out = structuredClone(clip);
   delete out.motion; delete out.opacity; delete out.fadeIn; delete out.fadeOut; delete out.emphasis;
@@ -57,9 +69,11 @@ function bareCardClip(clip: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * 这一段任务的隔离工程:顶层的卡是隔离单卡工程(目标平移到 `-phase` 起,本地帧 n 就是全局帧 n);剪辑段里摊出来的卡
- * (片段 id 带 `~`)带着剪辑段链、时间不平移(`isolatedFlatProject`),本地帧 n 是项目帧 `input.sampling.firstFrame + n`。
- * 找不到片段抛错(不可重试)。
+ * Isolated project for this segment of the task: top-level cards use isolated single-card projects
+ * (target shifted to start from `-phase`, local frame n is global frame n); cards flattened out of
+ * cut segments (clip id contains `~`) carry the cut segment chain without time shifting
+ * (`isolatedFlatProject`), where local frame n is project frame `input.sampling.firstFrame + n`.
+ * Throws error if clip is not found (non-retryable).
  */
 export function isolatedBakeProject<P extends object>(project: P, input: BakeInput): P {
   if (!isFlatClipId(input.clipId)) return isolatedCardProject(project, input);
@@ -68,14 +82,14 @@ export function isolatedBakeProject<P extends object>(project: P, input: BakeInp
   return isolated as P;
 }
 
-/** 剪辑段里的卡:任务的本地帧 0 是项目的第几帧(`input.sampling.firstFrame`);顶层的卡回 null(本地帧就是隔离工程的全局帧) */
+/** Cards in cut segments: project frame for task local frame 0 (`input.sampling.firstFrame`); top-level cards return null (local frame is global frame of isolated project) */
 export function bakeFrameBase(input: BakeInput): number | null {
   if (!isFlatClipId(input.clipId)) return null;
   const first = Number((input.sampling as { firstFrame?: unknown }).firstFrame);
   return Number.isSafeInteger(first) && first >= 0 ? first : null;
 }
 
-/** 清单在内容库里的键:`<resultKey>:<from>-<to>`;缺东西回 null */
+/** Manifest key in content store: `<resultKey>:<from>-<to>`; returns null if missing */
 export function manifestKey(ref: { resultKey?: unknown; range?: { from?: unknown; to?: unknown } | null } | null | undefined): string | null {
   const key = ref?.resultKey;
   const from = ref?.range?.from, to = ref?.range?.to;
@@ -98,14 +112,16 @@ export interface SnapshotManifest {
   small?: [number, string, number][];
 }
 
-/** 清单 JSON 的 UTF-8 字节数 */
+/** UTF-8 byte count of manifest JSON */
 export function manifestBytes(m: unknown): number {
   return new TextEncoder().encode(JSON.stringify(m)).length;
 }
 
 /**
- * 全段齐后组的清单(形状同 `collectSnapshotResult`)。超过 256 KiB 抛 `code: 'result-too-large'`(不可重试,同 `assertResultSize`)。
- * 超体积的帧(DOM 300 KB、画布位图 1 MB)照桌面列进清单,由拉取方判。
+ * Manifest assembled after the full segment is complete (shaped identically to
+ * `collectSnapshotResult`). If exceeding 256 KiB, throws `code: 'result-too-large'` (non-retryable,
+ * same as `assertResultSize`). Oversized frames (DOM 300 KB, canvas bitmap 1 MB) are listed in the
+ * manifest as on desktop, judged by the puller.
  */
 export function snapshotManifest(task: { resultKey: string; range: { from: number; to: number } | null; input?: Record<string, unknown> }, frames: readonly ManifestFrame[]): SnapshotManifest {
   if (!task.range) throw Object.assign(new Error("Task has no range"), { retryable: false });
@@ -126,7 +142,7 @@ export function snapshotManifest(task: { resultKey: string; range: { from: numbe
   return out;
 }
 
-/** 内容库里取回的清单能不能直接当这一段的结果用(去重,第 4.1 节):形状对、覆盖整段、每帧都有小尺寸 */
+/** Whether the manifest fetched from the content store can be used directly as the result for this segment (deduplication, section 4.1): correct shape, covers the entire segment, and every frame has small size */
 export function manifestCovers(body: unknown, task: { resultKey: string; range: { from: number; to: number } | null }): body is SnapshotManifest {
   const b = body as SnapshotManifest | null;
   if (!b || typeof b !== "object" || b.v !== RESULT_VERSION || b.kind !== "snapshot" || b.resultKey !== task.resultKey || !task.range) return false;
@@ -142,12 +158,12 @@ export function manifestCovers(body: unknown, task: { resultKey: string; range: 
     if (!Array.isArray(item) || !Number.isInteger(item[0]) || !HEX.test(String(item[1]))) return false;
     smallHave.add(item[0]);
   }
-  // 两档都齐才算这一段完成(c10a 第 9 节)
+  // Both tiers must be present for this segment to be considered complete (c10a section 9)
   for (let f = task.range.from; f <= task.range.to; f++) if (!have.has(f) || !smallHave.has(f)) return false;
   return true;
 }
 
-/** 清单里要在素材服务上的块:`[{ ns, hash }]`(原尺寸 `snap`,小尺寸 `px`) */
+/** Chunks from manifest required on asset service: `[{ ns, hash }]` (original size `snap`, small size `px`) */
 export function manifestBlocks(m: SnapshotManifest): { ns: "snap" | "px"; hash: string }[] {
   const out = new Map<string, { ns: "snap" | "px"; hash: string }>();
   for (const [, hash] of m.frames) out.set(`snap/${hash}`, { ns: "snap", hash });

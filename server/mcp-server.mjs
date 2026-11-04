@@ -1,35 +1,41 @@
 /**
- * PromptCut 的 stdio MCP 服务。两类调用方共用这一份:
+ * PromptCut's stdio MCP server. Shared by two types of callers:
  *
- *   - **AI 栏的命令行工具**(claude / codex / agy。编辑器起它们时在 MCP 的环境变量里塞 `PROMPTCUT_CALLER=cli`、
- *     `PROMPTCUT_PORT`、`PROMPTCUT_AGENT`):调用带上这一页的对话 ID,和以前一样;
- *   - **桌面 APP 的会话**(计划 `docs/plan/agent-workflow-plan.md` A4。用户在 PromptCut 里点「登记到 Claude Code / Codex」
- *     之后,那边每个会话起一份本进程):按 `%TEMP%\promptcut\port.json` 找用户正在用的实例;每个会话一个身份
- *     (Claude Code 一个进程一个会话,Codex 按 `_meta.threadId` 分线程,见 `server/agent/desktop-mcp.mjs`),
- *     厂商从 `initialize` 的 `clientInfo` 认;`instructions` 与本地工具 `get_skill_guide` 是 SKILL 提示词。
+ *   - **AI panel CLI tools** (claude / codex / agy. When the editor starts them, it puts
+ *     `PROMPTCUT_CALLER=cli`, `PROMPTCUT_PORT`, and `PROMPTCUT_AGENT` into the MCP environment
+ *     variables): calls include this page's chat ID, same as before;
+ *   - **Desktop app sessions** (plan `docs/plan/agent-workflow-plan.md` A4. After the user clicks
+ *     "Register to Claude Code / Codex" in PromptCut, each session over there spawns an instance of
+ *     this process): finds the instance the user is currently using via `%TEMP%\promptcut\port.json`;
+ *     one identity per session (Claude Code uses one process per session, while Codex divides threads
+ *     by `_meta.threadId`, see `server/agent/desktop-mcp.mjs`), recognizing the vendor from
+ *     `initialize`'s `clientInfo`; `instructions` and the local tool `get_skill_guide` are SKILL
+ *     prompts.
  *
- * 两类都把调用 POST 给编辑器的 `/api/mcp/call`,工具、权限、创造力等级、SKILL 闸、写入身份都在编辑器那边判。
+ * Both types POST calls to the editor's `/api/mcp/call`; tools, permissions, creativity level,
+ * the SKILL gate, and write identity are all checked on the editor side.
  */
 import * as readline from 'node:readline';
 import { tools } from './mcp-tools.mjs';
 import { injectCardParams, injectPartParams } from './card-params-schema.mjs';
 import { GUIDE_TOOL, SKILL_INSTRUCTIONS, desktopSessionKey, discoverEditor, newProcessSession, skillGuide, threadOf, vendorOf } from './agent/desktop-mcp.mjs';
+import { tr } from './i18n.mjs';
 
-/** 这个进程是 AI 栏的命令行工具起的(否则就是桌面 APP 的会话) */
+/** Whether this process was launched by an AI panel CLI tool (otherwise a desktop app session) */
 const CLI_CALLER = process.env.PROMPTCUT_CALLER === 'cli' || !!process.env.PROMPTCUT_AGENT;
-/** 这个进程自己的会话号(Claude Code 一个会话一个进程) */
+/** This process's own session id (Claude Code uses one process per session) */
 const PROCESS_SESSION = newProcessSession();
-/** initialize 时认出来的客户端;没发 initialize 就是未知 */
+/** Client recognized during initialize; unknown if initialize was not sent */
 let client = vendorOf(null);
 
-/** 这次调用打到哪个编辑器:每次调用重新找一遍(用户可能重开过 PromptCut,端口变了) */
+/** Which editor this call targets: rediscovered on each call (user may have reopened PromptCut, changing the port) */
 function getTargets() {
   const found = discoverEditor();
   if (!found.ok) throw Object.assign(new Error(found.message), { noEditor: true });
   return found;
 }
 
-/** 桌面会话这次调用的身份(编辑器据此登记) */
+/** Desktop session identity for this call (used by editor to register) */
 function desktopCaller(meta) {
   const thread = threadOf(meta);
   return {
@@ -68,14 +74,18 @@ function isFetchFailure(err) {
 }
 
 /*
- * 每一次调用都有上限:这个工具自己声明的 timeoutMs(没有就 60 秒,和桥那边的默认一样)再加 30 秒。
+ * Every call has an upper limit: the timeoutMs declared by the tool itself (or 60 seconds if none,
+ * matching the bridge's default) plus 30 seconds.
  *
- * 原来 fetch 不设超时。端口连不上(ECONNREFUSED)是秒回的,问题出在端口「连得上但没人回话」——
- * 登记里写死的端口被别的程序占了、或者那个 PromptCut 卡死了 —— 这时 agy 那边的工具调用就一直挂着,
- * 整轮对话跟着停住,没有任何报错。多出来的 30 秒是留给桥自己的超时先到、把真正的报错传回来。
+ * Originally fetch had no timeout set. Failing to connect to the port (ECONNREFUSED) returns
+ * instantly; the problem arises when the port "connects but nobody responds": the hardcoded port in
+ * the registry is occupied by another program, or that PromptCut instance is frozen. In this case,
+ * the tool call on the agy side hangs indefinitely, stalling the entire chat round without any
+ * error. The extra 30 seconds allows the bridge's own timeout to trigger first and return the real
+ * error.
  */
 function bridgeTimeoutMs(tool) {
-  // 测试用:不然一条「端口没人回话」的用例要真等 90 秒
+  // For testing: otherwise a "port connects but nobody responds" test case would have to wait a full 90s
   const override = Number(process.env.PROMPTCUT_BRIDGE_TIMEOUT_MS);
   if (override > 0) return override;
   const def = tools.find((t) => t.name === tool);
@@ -83,15 +93,19 @@ function bridgeTimeoutMs(tool) {
 }
 
 /**
- * callId:模型那一侧这次工具调用的 id。Claude Code 在 tools/call 的 `_meta["claudecode/toolUseId"]` 里带
- * (c65-integ2 查过本机 claude.exe 里的这段);编辑器把它放进工具调用事件,页面 AI 栏按它对上聊天记录。
- * pair:codex、agy 不带可用的 id,只带配对线索(见 pairingOf),编辑器拿它和 runner 报到的调用配对
- * (server/agent/call-pairing.mjs)。
+ * callId: id of this tool call on the model's side. Claude Code carries it in `_meta["claudecode/toolUseId"]`
+ * of tools/call (c65-integ2 inspected this section in local claude.exe); the editor puts it into the
+ * tool call event, and the page AI panel matches it against chat history.
+ * pair: codex and agy do not carry a usable id, only pairing clues (see pairingOf); the editor uses
+ * it to pair with calls checked in by the runner (server/agent/call-pairing.mjs).
  */
 async function callBridge(tool, args, callId, pair, meta, { schemaOnly = false } = {}) {
   const { port, hosts } = getTargets();
-  // AI 栏的命令行工具:带这一页的对话 ID(vite-plugin-ai 起 CLI 时塞的环境变量);桌面 APP 的会话:带会话身份与厂商。
-  // 列工具时顺手取卡片 / 部件清单拼 schema(schemaOnly):那不是会话自己的操作,不报身份 —— 不进 AI 栏的分组、不受 SKILL 闸管
+  // AI panel CLI tools: carry this page's chat ID (environment variable injected when vite-plugin-ai
+  // launches CLI); desktop app sessions: carry session identity and vendor.
+  // When listing tools, card / part manifests are fetched along the way to build schema (schemaOnly):
+  // that is not an operation of the session itself and does not report identity: does not enter AI
+  // panel groups and is not governed by the SKILL gate.
   const who = CLI_CALLER
     ? { agent: process.env.PROMPTCUT_AGENT || undefined }
     : schemaOnly ? {} : { caller: desktopCaller(meta) };
@@ -113,13 +127,13 @@ async function callBridge(tool, args, callId, pair, meta, { schemaOnly = false }
         continue;
       }
       if (err?.name === 'TimeoutError') {
-        throw new Error(`PromptCut 在 ${host}:${port} 上 ${Math.round(bridgeTimeoutMs(tool) / 1000)} 秒没有回应(${tool})。`
-          + '可能是这个端口被别的程序占着、或者编辑台卡住了;这次调用没有执行完,可以稍后重试。');
+        throw new Error(`PromptCut did not respond on ${host}:${port} within ${Math.round(bridgeTimeoutMs(tool) / 1000)} seconds (${tool}).`
+          + ' The port may be in use by another program, or the editor may be stuck; this call did not finish, and you can retry later.');
       }
       if (isFetchFailure(err)) {
         const detail = err.cause?.code || err.cause?.message || err.message;
-        throw Object.assign(new Error(`PromptCut 连接预览服务失败：调用 ${tool} 时连接被关闭（${detail}）。`
-          + '可能是预渲染进程或 Chrome 正在重启，请稍后重试。'), { code: 'BRIDGE_UNAVAILABLE', retryable: true, cause: err });
+        throw Object.assign(new Error(`PromptCut failed to connect to the preview service: the connection was closed while calling ${tool} (${detail}).`
+          + ' The prerender process or Chrome may be restarting, please retry later.'), { code: 'BRIDGE_UNAVAILABLE', retryable: true, cause: err });
       }
       throw err;
     }
@@ -131,12 +145,16 @@ async function callBridge(tool, args, callId, pair, meta, { schemaOnly = false }
 }
 
 /**
- * codex、agy 在 tools/call 的 `_meta` 里带的配对线索(实测原文见 docs/archive/agent-reports/AGENT-runner-callid.md):
- *   - codex:`threadId` 等于它输出流 thread.started 的 thread_id。它的 `_meta.callId`("exec-<uuid>")
- *     输出流里没有,用不上;配对只能按(thread、工具名、参数);
- *   - agy:`antigravity.google/conversation_id` 等于输出流的 conversation_id,`progressToken` 是
- *     "<uuid>:<步号>",步号等于输出流 step_update 的 step_index —— 拼成和 agy runner 一样的 callId 当提示。
- * 两者都不是就回 undefined(不配对)。scope、hint 的写法要和 runners/codex.mjs、runners/agy.mjs 一致。
+ * Pairing clues carried in `_meta` of tools/call by codex and agy (for actual test verbatim, see
+ * docs/archive/agent-reports/AGENT-runner-callid.md):
+ *   - codex: `threadId` equals thread_id from its output stream thread.started. Its `_meta.callId`
+ *     ("exec-<uuid>") is not in the output stream and cannot be used; pairing can only be done by
+ *     (thread, tool name, params);
+ *   - agy: `antigravity.google/conversation_id` equals conversation_id from the output stream;
+ *     `progressToken` is "<uuid>:<step_number>", where step number equals step_index from the
+ *     output stream step_update: assembled into the same callId as the agy runner as a hint.
+ * If neither, returns undefined (no pairing). The formatting of scope and hint must match
+ * runners/codex.mjs and runners/agy.mjs.
  */
 function pairingOf(meta) {
   if (!meta || typeof meta !== 'object') return undefined;
@@ -175,7 +193,8 @@ async function handleMessage(line) {
     if (clientProtocolVersion !== "2025-03-26") {
       clientProtocolVersion = "2025-03-26";
     }
-    // 桌面 APP 的会话:认厂商(Claude Code 报 claude-code,Codex 报 codex-mcp-client),回 SKILL 提示词的短版
+    // Desktop app sessions: recognize vendor (Claude Code reports claude-code, Codex reports
+    // codex-mcp-client), return short version of SKILL prompt
     client = vendorOf(req.params?.clientInfo);
     sendResponse(req.id, {
       protocolVersion: clientProtocolVersion,
@@ -197,20 +216,20 @@ async function handleMessage(line) {
       description: t.description,
       inputSchema: t.inputSchema
     }));
-    // 桌面会话多一个本地工具:完整的 SKILL 做法(编辑器没开也能读)
+    // Desktop sessions get one additional local tool: full SKILL instructions (readable even if editor is not running)
     if (!CLI_CALLER) pubTools.unshift({ ...GUIDE_TOOL });
 
     // Fetch cards to dynamically update the schema for add_clip and update_clip
     try {
-      // 这里要按 controls 生成 params 的 anyOf schema,所以必须要完整版;
-      // list_cards 不带参数返回的是摘要(没有 controls)。
+      // Needs full version here to generate anyOf schema for params based on controls;
+      // list_cards without arguments returns a summary (without controls).
       const res = await callBridge('list_cards', { detail: 'full' }, undefined, undefined, undefined, { schemaOnly: true });
       if (res.ok) {
         const out = await res.json();
         if (out.ok && out.result) {
-          // 和 API 直连共用同一份构造(server/card-params-schema.mjs),
-          // 免得两条路给模型看的 schema 不一样 —— 以前就是这么分叉的:
-          // 这里注入了真实字段,而 API 直连那边一直是个空壳自由对象。
+          // Shares the same construction with direct API (server/card-params-schema.mjs),
+          // to prevent the two paths from presenting different schemas to the model: this was how they diverged
+          // before: real fields were injected here, while direct API was always an empty free-form object shell.
           injectCardParams(pubTools, out.result);
         }
       }
@@ -218,7 +237,8 @@ async function handleMessage(line) {
       // Ignore if bridge is not available, we just return the generic schema
     }
 
-    // 部件同理:add_part / set_part 的 params、add_composite 的 parts 换成按 partId 分支的真实 schema
+    // Same for parts: params of add_part / set_part and parts of add_composite are replaced with real
+    // schemas branching on partId
     try {
       const res = await callBridge('list_parts', { detail: 'full' }, undefined, undefined, undefined, { schemaOnly: true });
       if (res.ok) {
@@ -226,7 +246,7 @@ async function handleMessage(line) {
         if (out.ok && out.result) injectPartParams(pubTools, out.result);
       }
     } catch (e) {
-      // 拿不到就退回自由对象
+      // Falls back to a free-form object if unavailable
     }
 
     sendResponse(req.id, { tools: pubTools });
@@ -250,7 +270,7 @@ async function handleMessage(line) {
     } catch (e) {
       if (e.allRefused || isConnRefused(e)) {
         sendResponse(req.id, {
-          content: [{ type: "text", text: `PromptCut 没在运行(端口 ${e.port} 没有服务)。请先打开 PromptCut,再回来重试;不要反复重试。` }],
+          content: [{ type: "text", text: tr("PromptCut is not running (no service on port {0}). Open PromptCut first, then come back and retry; do not retry repeatedly.", e.port) }],
           isError: true
         });
       } else {
@@ -273,20 +293,22 @@ async function handleMessage(line) {
     
     const out = await res.json();
     if (out.ok) {
-      // 带画面的工具(see_frames)把 base64 放在 __image 里。MCP 的 content 数组
-      // 本来就支持 image 块，直接作为一个块发出去即可；但 base64 绝不能留在 text
-      // 块里——那是几十万字符的乱码，模型看不见画面，上下文还被白白撑爆。
-      // (API 直连那条路做的是同一件事，见 harness/agent.mjs 里的 __image 处理。)
+      // Tools with visuals (see_frames) place base64 in __image. MCP's content array
+      // natively supports image blocks, so sending it directly as a block is sufficient; but base64
+      // must never be left in text blocks: that is hundreds of thousands of characters of gibberish,
+      // the model cannot see the visual, and the context window gets needlessly blown up.
+      // (The direct API path does the same thing, see __image handling in harness/agent.mjs.)
       const payload = out.result || out;
       const image = payload && typeof payload === "object" ? payload.__image : null;
-      // see_frames 素材模式(source: "media")一次带一页拼图:__images 是数组,每张各一个 image 块,顺序和 scenes 一致
+      // see_frames media mode (source: "media") carries one page collage at a time: __images is an array,
+      // each with its own image block, in the same order as scenes
       const images = payload && typeof payload === "object" && Array.isArray(payload.__images) ? payload.__images : [];
       const rest = image || images.length ? (({ __image, __images, ...r }) => r)(payload) : payload;
       const content = [{ type: "text", text: JSON.stringify(rest, null, 2) }];
       if (image?.base64) content.push({ type: "image", data: image.base64, mimeType: image.mime || "image/png" });
       for (const im of images) {
         if (!im?.base64) continue;
-        content.push({ type: "text", text: `${im.label ?? `镜头 ${im.sceneIndex ?? "?"}`}:` });
+        content.push({ type: "text", text: `${im.label ?? `Shot ${im.sceneIndex ?? "?"}`}:` });
         content.push({ type: "image", data: im.base64, mimeType: im.mime || "image/jpeg" });
       }
       sendResponse(req.id, { content });

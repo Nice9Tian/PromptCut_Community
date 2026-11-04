@@ -1,9 +1,11 @@
 /**
- * K6 父页那一半(`demote.ts`)的单测。跑:
+ * Unit test for the parent page half of K6 (`demote.ts`). Run:
  *   node --experimental-test-module-mocks --test src/editor/demote.test.mjs
  *
- * 钉三件事:整条 PUT 带 `capped` + `demoted`、各测量值保留旧值;先并进手里的 costs、
- * 记进 pendingDemote(就绪前照常活渲);同一张卡本次会话只降一次,查不到身份或记录不 PUT。
+ * Lock down three things: entire PUT includes `capped` + `demoted`, keeping old values for each
+ * measurement; merged into local costs first, recorded into pendingDemote (live render proceeds as
+ * usual before ready); the same card is downgraded only once in this session; do not PUT if identity
+ * or record cannot be found.
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock, beforeEach } from "node:test";
@@ -41,7 +43,7 @@ beforeEach(() => {
   fetchReply = { ok: true, status: 200 };
 });
 
-test("整条 PUT:旧记录原样带上,只加 capped 和 demoted", async () => {
+test("Whole-record PUT: the old record is carried over as is, only capped and demoted are added", async () => {
   const r = await onStageDemote("c1");
   assert.deepEqual(r, { ok: true, clipId: "c1", identityKey: "k1" });
   assert.equal(calls.fetches.length, 1);
@@ -49,24 +51,24 @@ test("整条 PUT:旧记录原样带上,只加 capped 和 demoted", async () => {
   assert.equal(url, "/api/data/costs");
   assert.equal(method, "PUT");
   assert.deepEqual(body, { records: [{ ...OLD, capped: true, demoted: true }] });
-  assert.equal("pinnedHeavy" in body.records[0], false, "只用 demoted 这一面旗");
+  assert.equal("pinnedHeavy" in body.records[0], false, "Only the demoted flag is used");
 });
 
-test("先并进手里那份 costs,并记进 pendingDemote", async () => {
+test("First merge into the costs copy in hand and record it in pendingDemote", async () => {
   await onStageDemote("c1");
   assert.deepEqual(calls.pending, ["c1"]);
   assert.deepEqual(calls.merged, [[{ ...OLD, capped: true, demoted: true }]]);
   assert.ok(demotedClips().has("c1"));
 });
 
-test("同一张卡本次会话只降一次", async () => {
+test("The same card is demoted only once per session", async () => {
   await onStageDemote("c1");
   const again = await onStageDemote("c1");
   assert.deepEqual(again, { ok: true, clipId: "c1", reason: "already" });
   assert.equal(calls.fetches.length, 1);
 });
 
-test("查不到身份或记录:不 PUT、不记 pending,之后还能再试", async () => {
+test("When the identity or record cannot be found: no PUT, no pending record, and it can be tried again later", async () => {
   identityKeys = {};
   assert.equal((await onStageDemote("c1")).reason, "no-identity");
   identityKeys = { c1: "k1" };
@@ -77,7 +79,7 @@ test("查不到身份或记录:不 PUT、不记 pending,之后还能再试", asy
   assert.equal(demotedClips().has("c1"), false);
 });
 
-test("PUT 失败照实回报,不抛", async () => {
+test("A failed PUT is reported as is, without throwing", async () => {
   fetchReply = { ok: false, status: 400 };
   assert.deepEqual(await onStageDemote("c1"), { ok: false, clipId: "c1", identityKey: "k1", reason: "http 400" });
   resetDemote();

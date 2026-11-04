@@ -1,8 +1,10 @@
 /**
- * 页面侧轨道流的纯函数单测。跑:node --test src/render/streamPlayer.test.mjs
+ * Pure function unit tests for page-side track streams.
+ * Run: node --test src/render/streamPlayer.test.mjs
  *
- * 解码、合成要浏览器(`VideoDecoder` / WebGL),端到端在 `scripts/probes/stream-play-probe.mjs`;
- * 这里钉住解封装、时间戳、平面合成和帧预算这几件纯算的事。
+ * Decoding and compositing require a browser (`VideoDecoder` / WebGL), end-to-end in
+ * `scripts/probes/stream-play-probe.mjs`; here we pin down pure computational aspects: demuxing,
+ * timestamps, plane compositing, and frame budget.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,7 +43,7 @@ test('parseInit builds the codec string from avcC (never hard-coded) and reads t
   assert.equal(out.codec, 'avc1.640032');
   assert.equal(out.width, 704);
   assert.equal(out.height, 864);
-  assert.equal(out.description[0], 1, 'description = avcC 原样');
+  assert.equal(out.description[0], 1, 'description = avcC as is');
   assert.throws(() => parseInit(ab(box('ftyp', u32(0)))), /avcC/);
 });
 
@@ -51,7 +53,7 @@ test('parseSegment: sample offsets are relative to moof (default-base-is-moof), 
   assert.equal(samples.length, 3);
   assert.deepEqual(samples.map((s) => s.isSync), [true, false, false]);
   assert.deepEqual(samples.map((s) => s.size), [7, 3, 5]);
-  // 样本数据确实落在 mdat 里、按顺序排
+  // Sample data indeed lands in mdat, arranged in order
   for (let i = 0; i < samples.length; i++) assert.equal(buf[samples[i].offset], i + 1);
 });
 
@@ -59,7 +61,7 @@ test('timestamps are the global frame number × 1e6 / fps and round-trip at 24 /
   for (const fps of [24, 25, 30, 60]) {
     for (const frame of [0, 1, 14, 15, 29, 1234, 17999]) assert.equal(frameOfTimestamp(chunkTimestamp(frame, fps), fps), frame, `${fps}@${frame}`);
   }
-  // G5:(分段号 × 15 + 样本序号)× 1e6 / fps
+  // G5: (segment index × 15 + sample index) × 1e6 / fps
   assert.equal(chunkTimestamp(3 * SEGMENT_FRAMES + 4, 30), Math.round(49 * 1e6 / 30));
 });
 
@@ -73,15 +75,15 @@ test('streamPlanesFor: only suppressed cards whose current segment is ready; a g
   assert.deepEqual(planes, [
     { clipIds: ['a'], key: 'KA', ranges: [[0, 3]], originFrame: 0 },
     { clipIds: ['b', 'c'], key: 'KG', ranges: [[0, 9]], originFrame: 0 },
-  ], 'd 的第 1 段还没就绪:不挂平面(父页给它投最近快照)');
-  assert.deepEqual(streamPlanesFor(layers, new Set(['a', 'c']), 20).map((p) => p.clipIds), [['a']], '组里有一张没被抑制就不贴组流');
+  ], 'Segment 1 of d is not ready yet: do not mount the plane (the parent page projects the latest snapshot for it)');
+  assert.deepEqual(streamPlanesFor(layers, new Set(['a', 'c']), 20).map((p) => p.clipIds), [['a']], 'If any card in the group is not suppressed, do not attach the group stream');
   assert.equal(rangesHave([[0, 3], [7, 7]], 7), true);
   assert.equal(rangesHave([[0, 3]], 4), false);
   assert.equal(rangesHave(undefined, 0), false);
 });
 
-test('streamPlanesFor / streamLayerHas: 每一层按它自己的第一帧把项目帧号换成分段号;没带第一帧的层不出流平面', () => {
-  // a 从第 100 帧开始、d 从第 7 帧开始,两条流都只有第 1 段就绪
+test('streamPlanesFor / streamLayerHas: each layer converts the project frame number to a segment number by its own first frame; a layer without a first frame produces no stream plane', () => {
+  // a starts at frame 100, d starts at frame 7, both streams have only segment 1 ready
   const layers = [
     { clipId: 'a', key: 'KA', ranges: [[1, 1]], originFrame: 100 },
     { clipId: 'd', key: 'KD', ranges: [[1, 1]], originFrame: 7 },
@@ -89,31 +91,32 @@ test('streamPlanesFor / streamLayerHas: 每一层按它自己的第一帧把项�
   ];
   const all = new Set(['a', 'd', 'old']);
   const at = (frame) => streamPlanesFor(layers, all, frame).map((p) => p.clipIds[0]);
-  assert.deepEqual(at(21), [], 'd 的第 1 段是第 22～36 帧');
+  assert.deepEqual(at(21), [], 'segment 1 of d is frames 22-36');
   assert.deepEqual(at(22), ['d']);
   assert.deepEqual(at(36), ['d']);
   assert.deepEqual(at(37), []);
-  assert.deepEqual(at(114), [], 'a 的第 1 段是第 115～129 帧');
+  assert.deepEqual(at(114), [], 'segment 1 of a is frames 115-129');
   assert.deepEqual(at(115), ['a']);
   assert.deepEqual(at(129), ['a']);
   assert.deepEqual(at(130), []);
-  assert.equal(streamPlanesFor(layers, all, 115)[0].originFrame, 100, '流平面带着第一帧交给舞台');
-  assert.equal(streamLayerHas(layers[0], 99), false, '早于第一帧:没有分段');
+  assert.equal(streamPlanesFor(layers, all, 115)[0].originFrame, 100, 'The stream plane hands the first frame to the stage');
+  assert.equal(streamLayerHas(layers[0], 99), false, 'Before the first frame: no segment');
   assert.equal(streamLayerHas({ ranges: [[0, 0]], originFrame: 100 }, 99), false);
   assert.equal(streamLayerHas({ ranges: [[0, 0]], originFrame: 100 }, 100), true);
-  assert.equal(streamLayerHas(layers[2], 0), false, '没带第一帧的层一律算没有');
+  assert.equal(streamLayerHas(layers[2], 0), false, 'A layer without a first frame always counts as having none');
 });
 
 test('capFor: bytes budget shared between streams, clamped to [3, 8] frames per decoder', () => {
   const player = new StreamPlayer({ root: () => null, source: { manifest: async () => { throw new Error('x'); }, init: async () => new ArrayBuffer(0), segment: async () => new ArrayBuffer(0) } });
   const full1080 = { bytesPerFrame: 1920 * 2176 * 1.5 };
-  // 一条:80 MB 够 12 帧,但单解码器硬上限 8
+  // One stream: 80 MB is enough for 12 frames, but single decoder hard limit is 8
   player.tracks = new Map([['a', full1080]]);
   assert.equal(player.capFor(full1080), MAX_FRAMES_PER_DECODER);
-  // 六条 1080p 全幅:每条 80/6 MB ≈ 2 帧,保底 3
+  // Six 1080p full-frame streams: each 80/6 MB ≈ 2 frames, minimum floor of 3
   player.tracks = new Map(Array.from({ length: 6 }, (_, i) => [String(i), full1080]));
   assert.equal(player.capFor(full1080), MIN_FRAMES_PER_STREAM);
-  // 裁剪很小的流:字节远没到预算也照样不超过 8(G0-b (4):卡死的是帧数,不是字节)
+  // Heavily cropped stream: does not exceed 8 even if bytes are far below budget (G0-b (4): what is
+  // strictly capped is frame count, not bytes)
   assert.equal(player.capFor({ bytesPerFrame: 612 * 916 * 1.5 }), MAX_FRAMES_PER_DECODER);
   assert.equal(DECODED_BYTES_BUDGET, 80 * 1024 * 1024);
 });
@@ -121,7 +124,7 @@ test('capFor: bytes budget shared between streams, clamped to [3, 8] frames per 
 test('a stopped player ignores present(); planes without a key are placeholders only', () => {
   const player = new StreamPlayer({ root: () => null });
   player.setPlanes([{ clipIds: ['a'] }, { clipIds: ['b'], key: 'K', originFrame: 0 }, { clipIds: ['c'], key: 'L' }], 30);
-  assert.equal(player.diag().planes, 1, '没有流键、没带第一帧的平面都只占位');
+  assert.equal(player.diag().planes, 1, 'Planes with no stream key or no first frame are placeholder only');
   player.stop();
   player.present(1);
   assert.equal(player.diag().stopped, true);

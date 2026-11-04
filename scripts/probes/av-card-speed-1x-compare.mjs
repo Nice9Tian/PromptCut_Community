@@ -1,16 +1,22 @@
 /**
- * 声画一体卡挂在变速素材段上照常出声(2026-10-23 用户定「出声。」)的改前改后键比对:1 倍时逐字不变。
+ * Pre- and post-change key comparison for integrated audio-visual cards attached to speed-changed
+ * media clips playing audio as usual (user decision, 2026-10-23: "Play sound."): verbatim identical at 1x.
  *
- *   node scripts/probes/av-card-speed-1x-compare.mjs [--base <提交>]   缺省 --base main
+ *   node scripts/probes/av-card-speed-1x-compare.mjs [--base <commit>]   defaults to --base main
  *
- * 同一份样例项目(三段挂声画一体卡的素材段:有裁剪起点的、节点自带 timeOffset 的、没写 mediaOffset 的;两段声画一体卡片段;
- * 每段都带一份已生成的声音)在基准提交和当前工作区各算一遍,两种情形:整份项目不变速;同一项目另有一段 2 倍的普通视频
- * (让 withMediaRates 不走「没有变速段原样返回」那条捷径)。比的是:卡片图(projectCardGraph + withMediaRates)、
- * 舞台的卡片表(flattenOverlay,含 sourceOffset)、1 倍片段的源时钟(cardAudioSourceOffset)、卡片声音身份、
- * 已生成声音的播放偏移、导出混音清单(audioPlanOf)与 mux-audio 的 buildAudioPlan。
+ * The same sample project (three media clips with attached integrated audio-visual cards: one with trim
+ * start, one whose node has its own timeOffset, and one with no mediaOffset specified; two integrated
+ * audio-visual card clips; each clip with generated audio) is evaluated on the baseline commit and in
+ * current workspace, across two scenarios: whole project has no speed change; same project has an
+ * additional 2x normal video (preventing withMediaRates from taking shortcut of "returning as is when
+ * there are no speed-changed clips"). Compared are: card graph (projectCardGraph + withMediaRates),
+ * stage card table (flattenOverlay, including sourceOffset), source clock of 1x clips
+ * (cardAudioSourceOffset), card audio identity, playback offset of generated audio, export mix manifest
+ * (audioPlanOf), and mux-audio's buildAudioPlan.
  *
- * 基准的 src/、server/ 用 `git archive` 解到 out/clip-speed-keys/<提交>/(和 clip-speed-key-compare.mjs 同一个目录,out/ 不入库)。
- * 退出码:0 = 全部逐字相同;1 = 有不同。
+ * Baseline src/ and server/ are extracted with `git archive` into out/clip-speed-keys/<commit>/
+ * (same directory as clip-speed-key-compare.mjs; out/ is not stored in repository).
+ * Exit code: 0 = all verbatim identical; 1 = differences found.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -34,7 +40,7 @@ function checkoutBase(ref) {
   return dir;
 }
 const cur = HERE, base = checkoutBase(BASE_REF);
-console.log(`基准 ${BASE_REF} → ${base}`);
+console.log(`Baseline ${BASE_REF} → ${base}`);
 await import(pathToFileURL(path.join(cur, 'src/testing/registerTs.mjs')).href);
 const load = async (root) => {
   const u = (f) => pathToFileURL(path.join(root, f)).href;
@@ -79,7 +85,7 @@ const dump = (M, p0) => {
   return {
     graph: JSON.stringify(M.time.withMediaRates(p, M.graph.projectCardGraph(p, getCard))),
     flat: JSON.stringify(M.proj.flattenOverlay(p).clips),
-    sourceOffsets: JSON.stringify(clips.filter((c) => !c.speed).map((c) => M.rend.cardAudioSourceOffset(p, c))), // 只比 1 倍的片段(2 倍那段的源时钟本来就该变)
+    sourceOffsets: JSON.stringify(clips.filter((c) => !c.speed).map((c) => M.rend.cardAudioSourceOffset(p, c))), // Only compare 1x clips (source clock of 2x clip is expected to change)
     identities: JSON.stringify(clips.filter((c) => c.embeddedAudio).map((c) => M.rend.cardAudioIdentity(p, c, hooks))),
     renditions: JSON.stringify(clips.filter((c) => c.embeddedAudio).map((c) => { const r = M.rend.resolveCardAudioRendition(p, c, hooks); return [r.offset, r.media.id]; })),
     audioPlan: JSON.stringify(M.plan.audioPlanOf(p)),
@@ -93,8 +99,8 @@ for (const sped of [false, true]) {
     n++;
     const same = a[k] === b[k];
     if (!same) bad++;
-    console.log(`${same ? '✔' : '✖'} ${sped ? '同项目另有一段 2 倍普通视频' : '整份项目不变速'}:${k} ${same ? '逐字相同' : '不同'}${same ? '' : `\n   基准 ${a[k].slice(0, 300)}\n   当前 ${b[k].slice(0, 300)}`}`);
+    console.log(`${same ? '✔' : '✖'} ${sped ? 'Same project also has a 2x normal video clip' : 'Whole project has no speed change'}:${k} ${same ? 'identical' : 'different'}${same ? '' : `\\n   Baseline ${a[k].slice(0, 300)}\\n   Current ${b[k].slice(0, 300)}`}`);
   }
 }
-console.log(bad ? `✖ ${bad}/${n} 项不同` : `✔ ${n}/${n} 项逐字相同`);
+console.log(bad ? `✖ ${bad}/${n} items differ` : `✔ ${n}/${n} items identical`);
 process.exit(bad ? 1 : 0);

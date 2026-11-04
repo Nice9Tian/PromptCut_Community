@@ -1,21 +1,33 @@
 /**
- * 队列细任务「一段一趟顺推」与原来「每 4 帧一批、每批换页从挂载帧回放」产出的快照是否等价
- * (`server/frame-pipeline.mjs` 的 `queueSinglePass`;`docs/archive/agent-reports/AGENT-uc-latency.md`)。
+ * Whether snapshots produced by queue fine-grained tasks via "single pass per segment" are
+ * equivalent to the original "batches of 4 frames, each batch navigating and replaying from mount frame"
+ * (`queueSinglePass` in `server/frame-pipeline.mjs`; `docs/archive/agent-reports/AGENT-uc-latency.md`).
  *
- *   先起开发服务器(它另占 +1、+2 两个舞台端口):npx vite --port 5740 --strictPort --host 127.0.0.1
- *   node scripts/probes/queue-single-pass-probe.mjs --origin http://127.0.0.1:5740 [--out <目录>] [--cards a,b,c] [--seconds 4]
+ *   First start the dev server (it occupies +1 and +2 as two stage ports): npx vite --port 5740 --strictPort --host 127.0.0.1
+ *   node scripts/probes/queue-single-pass-probe.mjs --origin http://127.0.0.1:5740 [--out <dir>] [--cards a,b,c] [--seconds 4]
  *
- * 做法:本进程起两个 `FramePipeline`(各自一个临时帧库),同一个项目(每张卡一条轨道、从 0 秒起、缺省参数)。
- * 两边都走队列执行器那条路 —— `planForQueue` 取计划,每张共享档卡按 60 帧一段调 `renderCardSnapshotRange`;
- * A 边关掉顺推(`queueSinglePassOff = true`,即原来的逐批),B 边照新行为。之后逐帧比:
- *   - HTML 快照逐字节相同几帧;不同的再去掉 `will-change`(Motion 动画进行中才挂的提示,M7 探针 P2 记过)比一次;
- *   - 仍不同的帧,两边 HTML 按预渲染重放的挂法(`captureSnapshot`,同一个预渲染间)各截一张,比像素(解码后逐像素)。
- *   - 像素也不同的帧,再以这张卡的顺序活渲为准(单独一条轨道、从第 0 帧逐帧推、逐帧截整幅图,同导出的推法),看两边谁与它一致。
- * 判据:每张卡每帧「字节相同」或「只差 will-change」或「像素相同」,或者像素不同但顺推没有退步(没有「逐批与活渲一致、顺推不一致」的帧);
- * 另报两边各段的用时。(第一次跑:`mu-word-rotate` 逐批从第 32 帧起就与活渲不一致 —— 逐批每批从头回放时不截图,
- * Motion 的 JS 帧循环推不动,AnimatePresence 换词的相位落后;顺推第一段与活渲逐像素相同,第二段开头几帧同样落后、之后对上。)
+ * Approach: this process starts two `FramePipeline` instances (each with a temporary frame store)
+ * for the same project (one track per card, starting at 0s, default parameters). Both sides follow
+ * the queue executor path: fetch plan with `planForQueue`, and call `renderCardSnapshotRange` for each
+ * shared-tier card in 60-frame segments; side A disables single pass (`queueSinglePassOff = true`,
+ * i.e. the original batch-by-batch mode), while side B follows the new behavior. Then compare frame by frame:
+ *   - How many frames have byte-identical HTML snapshots; for differing ones, compare again after
+ *     removing `will-change` (hint attached only during active Motion animations, recorded in M7 probe P2);
+ *   - For still differing frames, capture one screenshot per side via prerender replay
+ *     (`captureSnapshot`, same prerender room) and compare pixels (pixel-by-pixel after decoding);
+ *   - For frames where pixels still differ, use sequential live render of this card as reference
+ *     (a single track, pushed frame-by-frame from frame 0, full frame captured each frame, matching
+ *     export push method) to see which side matches it.
+ * Criteria: for each card, each frame is "byte-identical", "differs only in will-change", or
+ * "pixel-identical", or has differing pixels but single pass showed no regression (no frames where
+ * "batch-by-batch matches live render while single pass does not"); report timings for each segment
+ * on both sides as well. (First run: `mu-word-rotate` in batch-by-batch diverged from live render
+ * starting at frame 32: when batch-by-batch replayed each batch from the beginning without capturing
+ * frames, Motion's JS frame loop could not be driven forward and AnimatePresence word transition
+ * phase lagged behind; single pass was pixel-identical to live render in the first segment, lagged in
+ * the first few frames of the second segment, then aligned.)
  *
- * 输出:过程写 stderr;stdout 最后一行一行 JSON `{ ok, fails, cards: { <cardId>: {…} }, timing }`。
+ * Output: progress goes to stderr; the last line of stdout is a single JSON line `{ ok, fails, cards: { <cardId>: {…} }, timing }`.
  */
 import '../lib/no-user-dirs.mjs';
 import fs from 'node:fs';
@@ -42,7 +54,7 @@ const sha = (s) => createHash('sha256').update(s).digest('hex');
 const stripWillChange = (h) => h.replace(/will-change:[^;"]*;?/g, '');
 
 const PROJECT = {
-  id: 'qsp-probe', name: '顺推对照', width: 1920, height: 1080, fps: FPS, duration: SECONDS,
+  id: 'qsp-probe', name: 'Single-pass comparison', width: 1920, height: 1080, fps: FPS, duration: SECONDS,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: CARDS.map((cardId, i) => ({ id: `tr-${i}`, name: cardId, hidden: false, clips: [{ id: `clip-${cardId}`, kind: 'card', cardId, start: 0, end: SECONDS, params: {} }] })),
 };
@@ -77,7 +89,7 @@ async function runSide(name, singlePassOff) {
       await fsp.mkdir(dst, { recursive: true });
       for (const n of await fsp.readdir(dir)) if (/^\d+\.html$/.test(n)) await fsp.copyFile(path.join(dir, n), path.join(dst, n));
       side.cards[cardId] = { count: control.count, segs, capabilities: control.capabilities ?? null };
-      log(`${name} ${cardId}: ${segs.map((s) => `${s.range} ${s.ms} ms${s.singlePass ? ' 顺推' : ''}`).join(', ')}`);
+      log(`${name} ${cardId}: ${segs.map((s) => `${s.range} ${s.ms} ms${s.singlePass ? ' single-pass' : ''}`).join(', ')}`);
     }
   } finally {
     side.ms = Date.now() - t0;
@@ -88,7 +100,7 @@ async function runSide(name, singlePassOff) {
 
 function decode(buf) { const p = PNG.sync.read(buf); return p; }
 
-/** 这张卡单独一条轨道、从第 0 帧顺序推到末帧、逐帧截活渲整幅图(同导出的推法);回 帧号 → PNG */
+/** This card on a single track, pushed sequentially from frame 0 to the last frame, capturing full live render images frame-by-frame (matching export push method); returns frame number → PNG */
 async function sequentialLive(bakery, cardId, count) {
   const { bakeFrames } = await import('../../server/bakery/bake.mjs');
   const one = { ...PROJECT, tracks: [{ id: 'tr-0', name: cardId, hidden: false, clips: [{ id: `clip-${cardId}`, kind: 'card', cardId, start: 0, end: SECONDS, params: {} }] }] };
@@ -98,7 +110,7 @@ async function sequentialLive(bakery, cardId, count) {
   const frames = new Map();
   await bakeFrames(bakery, { out: path.join(OUT, 'live-tmp'), frames: `0-${count - 1}`, fullFrame: true, writeFrames: false, quiet: true,
     onFrame: async (n, png) => { frames.set(n, png); } });
-  // 之后的快照重放要回到空页上
+  // Subsequent snapshot replays must return to an empty page
   await bakery.reset(empty, `${ORIGIN}/?export=1&timeline=${encodeURIComponent(`data:application/json,${encodeURIComponent(JSON.stringify(empty))}`)}`);
   await bakery.page.setViewport({ width: PROJECT.width, height: PROJECT.height, deviceScaleFactor: 1 });
   await bakery.client.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
@@ -155,10 +167,12 @@ try {
         }
       }
       out.cards[cardId] = row;
-      if (row.missing) fails.push(`${cardId}:缺帧 ${row.missing}`);
+      if (row.missing) fails.push(`${cardId}: missing frames ${row.missing}`);
       if (row.pixelDiffer) {
-        // 两边不同:以这张卡的顺序活渲(从第 0 帧起逐帧推、逐帧截图,同导出)为准,看哪边与它一致。
-        // 顺推不许在逐批对得上的帧上对不上(那才是退步);逐批本来就对不上、顺推对上了的,是顺推更准
+        // Sides differ: use sequential live render of this card (pushed frame-by-frame from frame 0,
+        // capturing screenshots frame-by-frame, same as export) as reference to see which side matches it.
+        // Single pass must not fail to match on frames where batch-by-batch matched (that would be a regression);
+        // where batch-by-batch already mismatched and single pass matched, single pass is more accurate.
         const truth = await sequentialLive(bakery, cardId, ca.count);
         const judge = { batch4Match: 0, singleMatch: 0, regressions: [] };
         for (const n of row.differFrames) {
@@ -170,20 +184,21 @@ try {
           if (okA && !okB) judge.regressions.push(n);
         }
         row.versusLive = judge;
-        // 逐批自己在这些帧里大半都与活渲对不上(预渲染间里本来就不确定的卡,如按 setInterval 走的 E4b 探针卡 `probe-typewriter`):
-        // 拿它当参照没有意义,只记不判
+        // Batch-by-batch itself mismatches live render for most of these frames (cards inherently non-deterministic
+        // in prerender room, such as E4b probe card `probe-typewriter` driven by setInterval):
+        // using it as reference is meaningless; recorded only, not judged.
         judge.referenceUnstable = judge.batch4Match * 2 < row.differFrames.length;
-        if (judge.referenceUnstable) notes.push(`${cardId}:逐批在不同的 ${row.differFrames.length} 帧里只有 ${judge.batch4Match} 帧与活渲一致:逐批当不了参照(要么逐批本身就错,如 mu-word-rotate;要么这张卡在预渲染间里本来就不确定,如按 setInterval 走的探针卡),只记不判`);
-        else if (judge.regressions.length) fails.push(`${cardId}:顺推在逐批与活渲一致的帧上对不上 ${judge.regressions.length} 帧(${judge.regressions.slice(0, 8).join(',')})`);
+        if (judge.referenceUnstable) notes.push(`${cardId}: per-batch matches the live render in only ${judge.batch4Match} of the ${row.differFrames.length} differing frames, so per-batch cannot serve as the reference (either per-batch itself is wrong, as with mu-word-rotate, or this card is inherently nondeterministic in the prerender room, as with a probe card driven by setInterval); recorded only, not judged`);
+        else if (judge.regressions.length) fails.push(`${cardId}: single-pass mismatches on ${judge.regressions.length} frames where per-batch matches the live render (${judge.regressions.slice(0, 8).join(',')})`);
       }
-      if (!row.singlePass && !(ca.capabilities?.canvasHeavy)) fails.push(`${cardId}:新行为没有走顺推`);
-      log(`${cardId.padEnd(24)} 字节同 ${row.bytesSame} 只差will-change ${row.sameIgnoringWillChange} 像素同 ${row.pixelSame} 像素不同 ${row.pixelDiffer} 缺 ${row.missing}${row.versusLive ? `(不同的帧里与顺序活渲一致:逐批 ${row.versusLive.batch4Match}、顺推 ${row.versusLive.singleMatch}、顺推退步 ${row.versusLive.regressions.length})` : ''}  batch4 ${row.batch4.join('/')} ms  顺推 ${row.single.join('/')} ms`);
+      if (!row.singlePass && !(ca.capabilities?.canvasHeavy)) fails.push(`${cardId}: the new behavior did not take the single-pass path`);
+      log(`${cardId.padEnd(24)} bytes same ${row.bytesSame} same ignoring will-change ${row.sameIgnoringWillChange} pixels same ${row.pixelSame} pixels differ ${row.pixelDiffer} missing ${row.missing}${row.versusLive ? `(among the differing frames, matching the sequential live render: per-batch ${row.versusLive.batch4Match}, single-pass ${row.versusLive.singleMatch}, single-pass regressions ${row.versusLive.regressions.length})` : ''}  batch4 ${row.batch4.join('/')} ms  single-pass ${row.single.join('/')} ms`);
     }
   } finally {
     await bakery.close().catch(() => {});
   }
 } catch (e) {
-  fails.push(`探针异常:${String(e?.stack ?? e).slice(0, 1200)}`);
+  fails.push(`Probe error: ${String(e?.stack ?? e).slice(0, 1200)}`);
 }
 out.fails = fails;
 out.notes = notes;

@@ -1,13 +1,17 @@
 /**
- * 服务地址登记模块（契约 `docs/plan/render-queue-contract.md` G.6，用例 E1～E8）。
- * 跑：node --test server/test/docservice-endpoints.test.mjs
+ * Service address registration module (contract `docs/plan/render-queue-contract.md` G.6,
+ * test cases E1-E8).
+ * Run: node --test server/test/docservice-endpoints.test.mjs
  *
- * 只照契约写，不看实现。时钟用 `now` 注入加 `autoTick: false`、手动 `service.tick()`（G.4）。
+ * Written strictly against the contract, ignoring implementation. Clock uses `now` injection plus
+ * `autoTick: false`, manual `service.tick()` (G.4).
  *
- * 工厂照契约 G.12：`endpointsModule(options?)`，选项平铺（`graceMs`、`maxAnnouncers`、`maxUrls`、
- * `maxMetaBytes`、`tickMs`），缺省取 `ENDPOINT_DEFAULTS`。没带 `meta` 的登记，`meta` 为 `null`；
- * 宽限期内从新连接再登记，`urls` 与 `meta` 都没变才不推送（G.12 第 6 条）。
- * 回包是否带 `reqId` 契约没写，测试不依赖它，按消息类型等。
+ * Factory follows contract G.12: `endpointsModule(options?)`, flattened options (`graceMs`,
+ * `maxAnnouncers`, `maxUrls`, `maxMetaBytes`, `tickMs`), defaulting to `ENDPOINT_DEFAULTS`.
+ * Registrations without `meta` have `meta` as `null`; re-registering from a new connection within
+ * grace period does not push only if both `urls` and `meta` are unchanged (G.12 item 6).
+ * Whether responses include `reqId` is not specified in the contract; tests do not depend on it,
+ * waiting by message type.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,17 +23,17 @@ const T0 = 1_000_000;
 async function loadEndpoints(options) {
   const mod = await import('../docservice/modules/endpoints.mjs');
   const isModule = (v) => v && typeof v === 'object' && Array.isArray(v.types) && typeof v.handle === 'function';
-  assert.equal(typeof mod.endpointsModule, 'function', `modules/endpoints.mjs 要导出 endpointsModule；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.endpointsModule, 'function', `modules/endpoints.mjs must export endpointsModule; exports: ${Object.keys(mod).join(', ')}`);
   const make = (o) => (o === undefined ? mod.endpointsModule() : mod.endpointsModule(o));
   const defaults = mod.ENDPOINT_DEFAULTS;
-  assert.ok(defaults, 'modules/endpoints.mjs 要导出 ENDPOINT_DEFAULTS');
+  assert.ok(defaults, 'modules/endpoints.mjs must export ENDPOINT_DEFAULTS');
   assert.deepEqual(
     { GRACE_MS: defaults.GRACE_MS, MAX_ANNOUNCERS: defaults.MAX_ANNOUNCERS, MAX_URLS: defaults.MAX_URLS, MAX_META_BYTES: defaults.MAX_META_BYTES, TICK_MS: defaults.TICK_MS },
     { GRACE_MS: 10_000, MAX_ANNOUNCERS: 64, MAX_URLS: 8, MAX_META_BYTES: 4096, TICK_MS: 1000 },
   );
   const module = make(options);
-  assert.ok(isModule(module), '工厂要返回模块对象');
-  assert.equal(module.tickMs, options?.tickMs ?? defaults.TICK_MS, 'tickMs 取选项或 TICK_MS');
+  assert.ok(isModule(module), 'the factory must return a module object');
+  assert.equal(module.tickMs, options?.tickMs ?? defaults.TICK_MS, 'tickMs takes the option or TICK_MS');
   assert.deepEqual(module.types, ['service.']);
   return { module, defaults };
 }
@@ -52,14 +56,14 @@ async function startService(options) {
   return { service, clock, url, connect, health, cleanup, defaults, module };
 }
 
-/** 订阅并取回包（全量） */
+/** Subscribe and get response (full) */
 async function watch(c, kinds) {
   c.send({ type: 'service.watch', kinds });
   const m = await c.next(byType('service.endpoints'));
   return m.endpoints;
 }
 
-/** 登记，等 service.announced 或 error */
+/** Register, wait for service.announced or error */
 async function announce(c, fields) {
   c.send({ type: 'service.announce', ...fields });
   return c.next((m) => m.type === 'service.announced' || m.type === 'error');
@@ -72,19 +76,19 @@ async function withdraw(c, fields) {
 
 const pushes = (c) => c.quiet(byType('service.endpoints'), 150);
 
-/** 断开一条连接，等服务端记下 */
+/** Disconnect a connection, wait for server to record */
 async function drop(env, c) {
   const before = env.service.describe().connections;
   c.close();
   await c.closed;
-  await waitFor(() => env.service.describe().connections === before - 1, 2000, '服务端记下断开');
+  await waitFor(() => env.service.describe().connections === before - 1, 2000, 'the server records the disconnect');
 }
 
 const pick = (list) => list.map(({ announcerId, kind, urls }) => ({ announcerId, kind, urls })).sort((a, b) => (a.announcerId + a.kind).localeCompare(b.announcerId + b.kind));
 
 // ------------------------------------------------------------------ E1
 
-test('E1 登记后，订阅了该 kind 的连接收到一条全量 service.endpoints，没订阅的收不到', async (t) => {
+test('E1 after registration, connections subscribed to that kind receive one full service.endpoints message, and unsubscribed ones receive nothing', async (t) => {
   const env = await startService();
   t.after(env.cleanup);
   const a = await env.connect();
@@ -101,15 +105,15 @@ test('E1 登记后，订阅了该 kind 的连接收到一条全量 service.endpo
   const push = await w.next(byType('service.endpoints'));
   assert.equal(push.endpoints.length, 1);
   assert.deepEqual(push.endpoints[0], { announcerId: 'pc-1', kind: 'asset', urls: ['http://10.0.0.2:8790/'], meta: { v: 1 }, since: T0 + 42 });
-  assert.deepEqual(await pushes(w), [], '只推一条');
-  assert.deepEqual(await pushes(other), [], '没订阅 asset 的收不到');
-  assert.deepEqual(a.inbox.filter(byType('service.endpoints')), [], '登记方没订阅也收不到');
+  assert.deepEqual(await pushes(w), [], 'only one message is pushed');
+  assert.deepEqual(await pushes(other), [], 'a connection not subscribed to asset receives nothing');
+  assert.deepEqual(a.inbox.filter(byType('service.endpoints')), [], 'the registrant receives nothing either when not subscribed');
   assert.equal((await env.health()).endpoints, 1);
 });
 
 // ------------------------------------------------------------------ E2
 
-test('E2 service.watch 的回包是当前可见的全量；kinds 过滤正确，all 看到全部', async (t) => {
+test('E2 the service.watch reply is the full list currently visible; kinds filtering is correct, all sees everything', async (t) => {
   const env = await startService();
   t.after(env.cleanup);
   const a = await env.connect();
@@ -131,22 +135,22 @@ test('E2 service.watch 的回包是当前可见的全量；kinds 过滤正确，
   const w5 = await env.connect();
   const renderOnly = await watch(w5, ['render']);
   assert.deepEqual(pick(renderOnly), [{ announcerId: 'pc-1', kind: 'render', urls: ['https://pc-1.lan/'] }]);
-  assert.equal(renderOnly[0].meta, null, '没带 meta 的登记，meta 为 null（G.12）');
+  assert.equal(renderOnly[0].meta, null, 'a registration without meta has meta null (G.12)');
   assert.equal(renderOnly[0].since, T0);
 
-  // 此后的推送也按各自的 kinds 过滤、并且是全量
+  // Subsequent pushes are also filtered by their respective kinds, and are full
   await announce(a, { announcerId: 'host-1', kind: 'render', urls: ['http://host-1.lan:9001/'] });
   const p5 = await w5.next(byType('service.endpoints'));
   assert.deepEqual(pick(p5.endpoints).map((e) => e.announcerId), ['host-1', 'pc-1']);
   const p2 = await w2.next(byType('service.endpoints'));
   assert.equal(p2.endpoints.length, 4);
-  assert.deepEqual(await pushes(w1), [], '只订阅 asset 的不因 render 变化收到推送');
+  assert.deepEqual(await pushes(w1), [], 'a connection subscribed only to asset gets no push for render changes');
   assert.deepEqual(await pushes(w4), []);
 });
 
 // ------------------------------------------------------------------ E3
 
-test('E3 同一 (announcerId, kind) 再登记：替换，不新增', async (t) => {
+test('E3 registering the same (announcerId, kind) again: replaces, does not add', async (t) => {
   const env = await startService();
   t.after(env.cleanup);
   const a = await env.connect();
@@ -163,7 +167,7 @@ test('E3 同一 (announcerId, kind) 再登记：替换，不新增', async (t) =
   assert.deepEqual(push.endpoints[0].meta, { n: 2 });
   assert.equal((await env.health()).endpoints, 1);
 
-  // 同一 announcerId、不同 kind 是另一条
+  // Same announcerId with different kind is a separate entry
   await announce(a, { announcerId: 'pc-1', kind: 'render', urls: ['http://10.0.0.3:8791/'] });
   assert.equal((await w.next(byType('service.endpoints'))).endpoints.length, 2);
   assert.equal((await env.health()).endpoints, 2);
@@ -171,7 +175,7 @@ test('E3 同一 (announcerId, kind) 再登记：替换，不新增', async (t) =
 
 // ------------------------------------------------------------------ E4
 
-test('E4 service.withdraw：登记所在的连接能撤回，别的连接撤回回 removed: false', async (t) => {
+test('E4 service.withdraw: the connection holding the registration can withdraw it, while withdrawing from another connection replies removed: false', async (t) => {
   const env = await startService();
   t.after(env.cleanup);
   const a = await env.connect();
@@ -184,7 +188,7 @@ test('E4 service.withdraw：登记所在的连接能撤回，别的连接撤回�
   const r1 = await withdraw(b, { announcerId: 'pc-1', kind: 'asset' });
   assert.deepEqual({ type: r1.type, announcerId: r1.announcerId, kind: r1.kind, removed: r1.removed },
     { type: 'service.withdrawn', announcerId: 'pc-1', kind: 'asset', removed: false });
-  assert.deepEqual(await pushes(w), [], '没删就不推送');
+  assert.deepEqual(await pushes(w), [], 'no push when nothing was removed');
   assert.equal((await env.health()).endpoints, 1);
 
   const r2 = await withdraw(a, { announcerId: 'pc-1', kind: 'asset' });
@@ -194,12 +198,12 @@ test('E4 service.withdraw：登记所在的连接能撤回，别的连接撤回�
   assert.equal((await env.health()).endpoints, 0);
 
   const r3 = await withdraw(a, { announcerId: 'pc-1', kind: 'asset' });
-  assert.deepEqual([r3.type, r3.removed], ['service.withdrawn', false], '已经没有了');
+  assert.deepEqual([r3.type, r3.removed], ['service.withdrawn', false], 'already gone');
 });
 
 // ------------------------------------------------------------------ E5
 
-test('E5 登记所在的连接断开：宽限期内仍可见；正好等于 GRACE_MS 时不删；之后的 tick 删除并推送', async (t) => {
+test('E5 the connection holding a registration disconnects: still visible within the grace period; not removed at exactly GRACE_MS; removed and pushed on the tick after that', async (t) => {
   const env = await startService();
   t.after(env.cleanup);
   const GRACE = env.defaults.GRACE_MS;
@@ -212,16 +216,16 @@ test('E5 登记所在的连接断开：宽限期内仍可见；正好等于 GRAC
   const tDown = T0 + 500;
   env.clock.t = tDown;
   await drop(env, a);
-  assert.deepEqual(await pushes(w), [], '断开本身不推送');
+  assert.deepEqual(await pushes(w), [], 'the disconnect itself pushes nothing');
 
   env.clock.t = tDown + GRACE / 2;
   env.service.tick();
   const x = await env.connect();
-  assert.equal((await watch(x, 'all')).length, 1, '宽限期内仍可见');
+  assert.equal((await watch(x, 'all')).length, 1, 'still visible within the grace period');
 
   env.clock.t = tDown + GRACE;
   env.service.tick();
-  assert.deepEqual(await pushes(w), [], '正好等于 GRACE_MS 不删');
+  assert.deepEqual(await pushes(w), [], 'not removed at exactly GRACE_MS');
   assert.equal((await env.health()).endpoints, 1);
 
   env.clock.t = tDown + GRACE + 1;
@@ -235,7 +239,7 @@ test('E5 登记所在的连接断开：宽限期内仍可见；正好等于 GRAC
 
 // ------------------------------------------------------------------ E6
 
-test('E6 宽限期内从新连接以相同 urls 再登记：不推送撤回，也不推送；过了宽限也不删', async (t) => {
+test('E6 re-registering with the same urls from a new connection within the grace period: no withdrawal is pushed and nothing else is pushed either; it is not removed after the grace period either', async (t) => {
   const env = await startService();
   t.after(env.cleanup);
   const GRACE = env.defaults.GRACE_MS;
@@ -252,19 +256,19 @@ test('E6 宽限期内从新连接以相同 urls 再登记：不推送撤回，�
   const a2 = await env.connect();
   const ack = await announce(a2, { announcerId: 'pc-1', kind: 'asset', urls: ['http://10.0.0.2:8790/'] });
   assert.equal(ack.type, 'service.announced');
-  assert.deepEqual(await pushes(w), [], 'urls 没变：不推送');
+  assert.deepEqual(await pushes(w), [], 'urls unchanged: no push');
 
   env.clock.t = tDown + GRACE * 3;
   env.service.tick();
-  assert.deepEqual(await pushes(w), [], '已改绑到新连接，过了原宽限也不删');
+  assert.deepEqual(await pushes(w), [], 'rebound to the new connection, so it is not removed even after the original grace period');
   assert.equal((await env.health()).endpoints, 1);
 
-  // 改绑后只有新连接能撤回
+  // After rebinding, only the new connection can revoke
   const r = await withdraw(a2, { announcerId: 'pc-1', kind: 'asset' });
   assert.equal(r.removed, true);
 });
 
-test('E6 宽限期内从新连接以不同 urls 再登记：推送一次（新地址），不推送撤回', async (t) => {
+test('E6 re-registering with different urls from a new connection within the grace period: one push (the new addresses), no withdrawal push', async (t) => {
   const env = await startService();
   t.after(env.cleanup);
   const GRACE = env.defaults.GRACE_MS;
@@ -282,14 +286,14 @@ test('E6 宽限期内从新连接以不同 urls 再登记：推送一次（新�
   await announce(b2, { announcerId: 'host-1', kind: 'asset', urls: ['http://10.0.0.10:8790/'] });
   const push = await w.next(byType('service.endpoints'));
   assert.deepEqual(pick(push.endpoints), [{ announcerId: 'host-1', kind: 'asset', urls: ['http://10.0.0.10:8790/'] }]);
-  assert.deepEqual(await pushes(w), [], '只推一次');
+  assert.deepEqual(await pushes(w), [], 'pushed only once');
 
   env.clock.t = tDown + GRACE + 1;
   env.service.tick();
-  assert.deepEqual(await pushes(w), [], '改绑后不再按旧连接的宽限删除');
+  assert.deepEqual(await pushes(w), [], 'after rebinding, it is no longer removed by the grace period of the old connection');
 });
 
-test('E6 宽限期内从新连接以相同 urls、不同 meta 再登记：推送一次（G.12：urls 与 meta 都没变才不推送）', async (t) => {
+test('E6 re-registering with the same urls but different meta from a new connection within the grace period: one push (G.12: no push only when both urls and meta are unchanged)', async (t) => {
   const env = await startService();
   t.after(env.cleanup);
   const w = await env.connect();
@@ -304,10 +308,10 @@ test('E6 宽限期内从新连接以相同 urls、不同 meta 再登记：推送
   await announce(a2, { announcerId: 'pc-1', kind: 'asset', urls: ['http://10.0.0.2:8790/'], meta: { gen: 2 } });
   const push = await w.next(byType('service.endpoints'));
   assert.deepEqual(push.endpoints.map((e) => e.meta), [{ gen: 2 }]);
-  assert.deepEqual(await pushes(w), [], '只推一次');
+  assert.deepEqual(await pushes(w), [], 'pushed only once');
 });
 
-test('E5 选项平铺：endpointsModule({ graceMs }) 改宽限（G.12）', async (t) => {
+test('E5 flat options: endpointsModule({ graceMs }) changes the grace period (G.12)', async (t) => {
   const env = await startService({ graceMs: 100 });
   t.after(env.cleanup);
   const a = await env.connect();
@@ -319,7 +323,7 @@ test('E5 选项平铺：endpointsModule({ graceMs }) 改宽限（G.12）', async
   await drop(env, a);
   env.clock.t = T0 + 1100;
   env.service.tick();
-  assert.deepEqual(await pushes(w), [], '正好等于 graceMs 不删');
+  assert.deepEqual(await pushes(w), [], 'not removed at exactly graceMs');
   env.clock.t = T0 + 1101;
   env.service.tick();
   assert.deepEqual((await w.next(byType('service.endpoints'))).endpoints, []);
@@ -327,7 +331,7 @@ test('E5 选项平铺：endpointsModule({ graceMs }) 改宽限（G.12）', async
 
 // ------------------------------------------------------------------ E7
 
-test('E7 校验：ftp:、带用户名密码、超过 8 个地址、kind 不合法、meta 过大等 → bad-message，状态不变', async (t) => {
+test('E7 validation: ftp:, with username and password, more than 8 addresses, invalid kind, oversized meta, etc. → bad-message, state unchanged', async (t) => {
   const env = await startService();
   t.after(env.cleanup);
   const a = await env.connect();
@@ -339,41 +343,41 @@ test('E7 校验：ftp:、带用户名密码、超过 8 个地址、kind 不合�
 
   const urlN = (n) => Array.from({ length: n }, (_, i) => `http://10.0.0.${i + 1}:8790/`);
   const bad = [
-    ['ftp: 地址', { ...good, urls: ['ftp://10.0.0.2/'] }],
-    ['ws: 地址', { ...good, urls: ['ws://10.0.0.2/'] }],
-    ['带用户名密码', { ...good, urls: ['http://user:pass@10.0.0.2:8790/'] }],
-    ['只带用户名', { ...good, urls: ['http://user@10.0.0.2:8790/'] }],
-    ['超过 8 个地址', { ...good, urls: urlN(9) }],
-    ['0 个地址', { ...good, urls: [] }],
-    ['urls 不是数组', { ...good, urls: 'http://10.0.0.2/' }],
-    ['解析不了的地址', { ...good, urls: ['not a url'] }],
-    ['地址过长', { ...good, urls: [`http://10.0.0.2/${'a'.repeat(2100)}`] }],
-    ['kind 大写', { ...good, kind: 'Asset' }],
-    ['kind 数字开头', { ...good, kind: '1asset' }],
-    ['kind 过长', { ...good, kind: `a${'b'.repeat(32)}` }],
-    ['kind 空', { ...good, kind: '' }],
-    ['announcerId 带空格', { ...good, announcerId: 'pc 1' }],
-    ['announcerId 过长', { ...good, announcerId: 'a'.repeat(129) }],
-    ['announcerId 缺', { kind: good.kind, urls: good.urls }],
-    ['meta 过大', { ...good, meta: { blob: 'x'.repeat(5000) } }],
-    ['同键替换成非法地址', { ...good, urls: ['ftp://10.0.0.2/'] }],
+    ['ftp: address', { ...good, urls: ['ftp://10.0.0.2/'] }],
+    ['ws: address', { ...good, urls: ['ws://10.0.0.2/'] }],
+    ['with username and password', { ...good, urls: ['http://user:pass@10.0.0.2:8790/'] }],
+    ['with username only', { ...good, urls: ['http://user@10.0.0.2:8790/'] }],
+    ['more than 8 addresses', { ...good, urls: urlN(9) }],
+    ['0 addresses', { ...good, urls: [] }],
+    ['urls is not an array', { ...good, urls: 'http://10.0.0.2/' }],
+    ['unparseable address', { ...good, urls: ['not a url'] }],
+    ['address too long', { ...good, urls: [`http://10.0.0.2/${'a'.repeat(2100)}`] }],
+    ['uppercase kind', { ...good, kind: 'Asset' }],
+    ['kind starting with a digit', { ...good, kind: '1asset' }],
+    ['kind too long', { ...good, kind: `a${'b'.repeat(32)}` }],
+    ['empty kind', { ...good, kind: '' }],
+    ['announcerId with a space', { ...good, announcerId: 'pc 1' }],
+    ['announcerId too long', { ...good, announcerId: 'a'.repeat(129) }],
+    ['announcerId missing', { kind: good.kind, urls: good.urls }],
+    ['meta too large', { ...good, meta: { blob: 'x'.repeat(5000) } }],
+    ['replacing the same key with an invalid address', { ...good, urls: ['ftp://10.0.0.2/'] }],
   ];
   for (const [what, fields] of bad) {
     const r = await announce(a, fields);
     assert.deepEqual([r.type, r.reason], ['error', 'bad-message'], what);
   }
   const bw = await withdraw(a, { announcerId: 'pc 1', kind: 'asset' });
-  assert.deepEqual([bw.type, bw.reason], ['error', 'bad-message'], 'withdraw 的字段同样校验');
+  assert.deepEqual([bw.type, bw.reason], ['error', 'bad-message'], 'the fields of withdraw are validated the same way');
   const x = await env.connect();
   x.send({ type: 'service.watch', kinds: 42 });
   const bx = await x.next((m) => m.type === 'error' || m.type === 'service.endpoints');
-  assert.deepEqual([bx.type, bx.reason], ['error', 'bad-message'], 'watch 的 kinds 不是数组也不是 all');
+  assert.deepEqual([bx.type, bx.reason], ['error', 'bad-message'], 'watch kinds is neither an array nor all');
 
-  assert.deepEqual(await pushes(w), [], '非法登记不推送');
+  assert.deepEqual(await pushes(w), [], 'an invalid registration pushes nothing');
   const y = await env.connect();
-  assert.deepEqual(pick(await watch(y, 'all')), [{ announcerId: 'pc-1', kind: 'asset', urls: ['http://10.0.0.2:8790/'] }], '状态不变');
+  assert.deepEqual(pick(await watch(y, 'all')), [{ announcerId: 'pc-1', kind: 'asset', urls: ['http://10.0.0.2:8790/'] }], 'state unchanged');
 
-  // 边界上的合法值
+  // Valid value on the boundary
   const edge = [
     { announcerId: 'a'.repeat(128), kind: `a${'b'.repeat(31)}`, urls: urlN(8) },
     { announcerId: 'x.y_z:w-1', kind: 'k-9', urls: ['https://example.lan/'], meta: { blob: 'x'.repeat(3000) } },
@@ -383,14 +387,14 @@ test('E7 校验：ftp:、带用户名密码、超过 8 个地址、kind 不合�
 
 // ------------------------------------------------------------------ E8
 
-test('E8 第 65 个登记回 limit；到上限后替换已有的照常', async (t) => {
+test('E8 the 65th registration replies limit; once the limit is reached, replacing an existing one still works as usual', async (t) => {
   const env = await startService();
   t.after(env.cleanup);
   const MAX = env.defaults.MAX_ANNOUNCERS;
   const a = await env.connect();
   for (let i = 0; i < MAX; i++) {
     const r = await announce(a, { announcerId: `n-${i}`, kind: 'asset', urls: [`http://10.0.1.${i % 250}:8790/`] });
-    assert.equal(r.type, 'service.announced', `第 ${i + 1} 个`);
+    assert.equal(r.type, 'service.announced', `Item ${i + 1}`);
   }
   const over = await announce(a, { announcerId: `n-${MAX}`, kind: 'asset', urls: ['http://10.0.2.1:8790/'] });
   assert.deepEqual([over.type, over.reason], ['error', 'limit']);
@@ -399,11 +403,11 @@ test('E8 第 65 个登记回 limit；到上限后替换已有的照常', async (
   assert.equal((await watch(w, 'all')).length, MAX);
 
   const replace = await announce(a, { announcerId: 'n-0', kind: 'asset', urls: ['http://10.0.3.1:8790/'] });
-  assert.equal(replace.type, 'service.announced', '替换不增加总数');
+  assert.equal(replace.type, 'service.announced', 'replacing does not increase the total');
   assert.equal((await env.health()).endpoints, MAX);
 });
 
-test('E8 选项平铺：maxAnnouncers、maxUrls、maxMetaBytes 可改（G.12）', async (t) => {
+test('E8 flat options: maxAnnouncers, maxUrls, maxMetaBytes are configurable (G.12)', async (t) => {
   const env = await startService({ maxAnnouncers: 3, maxUrls: 2, maxMetaBytes: 64 });
   t.after(env.cleanup);
   const a = await env.connect();

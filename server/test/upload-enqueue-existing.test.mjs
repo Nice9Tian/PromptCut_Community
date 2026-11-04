@@ -1,9 +1,13 @@
 /**
- * 按哈希把本地内容库里已有的素材交给上传队列(C10a 集成返工:开启「放云端」时,开启前就在项目里的素材也要上云)。
- * 跑:node --test server/test/upload-enqueue-existing.test.mjs
+ * Hand over assets already in the local content store to the upload queue by hash (C10a integration
+ * rework: when "move to the cloud" is enabled, assets in the project before enabling must also move
+ * to the cloud).
+ * Run: node --test server/test/upload-enqueue-existing.test.mjs
  *
- * `enqueueLocalMedia`(`server/upload-queue.mjs`)接 `POST /api/media/upload-queue/enqueue` 的请求体;队列用真的
- * `createUploadQueue`(只在内存,目标是一个记录用的假素材服务客户端),看进队的档位、先小后大、只收本地有的、缺的回报。
+ * `enqueueLocalMedia` (`server/upload-queue.mjs`) accepts the request body of
+ * `POST /api/media/upload-queue/enqueue`; the queue uses real `createUploadQueue` (in-memory only,
+ * targeting a mock asset service client for logging) to check queued tiers, small before large,
+ * only accepting locally existing items, and reporting missing items.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,7 +27,7 @@ function queueWith({ remote = true } = {}) {
   return createUploadQueue({ file: null, target: () => (remote ? { client, base: 'http://h/api/asset' } : null), resolveFile });
 }
 
-test('UQE-1 视频两档按先小后大进队,图片只有素材原尺寸一档;扩展名取本地文件的', async () => {
+test('UQE-1 a video\'s two tiers are queued small first, then large; an image has only one tier, the asset original size; the extension comes from the local file', async () => {
   const q = queueWith();
   const r = await enqueueLocalMedia(q, { items: [{ name: 'v.mp4', original: V_ORIG, small: V_SMALL }, { name: 'i.png', original: IMG }] }, resolveFile);
   assert.deepEqual(r, { queued: [V_ORIG, IMG], missing: [], bad: 0, local: false });
@@ -31,7 +35,7 @@ test('UQE-1 视频两档按先小后大进队,图片只有素材原尺寸一档;
   assert.deepEqual(s.items.map((i) => [i.id, i.tiers]), [[V_ORIG, ['small', 'original']], [IMG, ['original']]]);
 });
 
-test('UQE-2 只收本地有的:素材原尺寸没有 → 整个素材不进队、回报缺失;素材小尺寸没有 → 只传素材原尺寸、回报素材小尺寸缺失', async () => {
+test('UQE-2 accepts only what exists locally: asset original size missing → the whole asset is not queued and the absence is reported; asset small size missing → only the asset original size is uploaded and the missing asset small size is reported', async () => {
   const q = queueWith();
   const r = await enqueueLocalMedia(q, { items: [{ original: GONE, small: V_SMALL }, { original: V_ORIG, small: GONE_SMALL }] }, resolveFile);
   assert.deepEqual(r.queued, [V_ORIG]);
@@ -39,17 +43,17 @@ test('UQE-2 只收本地有的:素材原尺寸没有 → 整个素材不进队�
   assert.deepEqual(q.stats().items.map((i) => [i.id, i.tiers]), [[V_ORIG, ['original']]]);
 });
 
-test('UQE-3 也收 { hashes }(每个当素材原尺寸一档);形状不对的计 bad;同一素材原尺寸再进队只合并档位', async () => {
+test('UQE-3 also accepts { hashes } (each treated as an asset original size tier); items with the wrong shape are counted as bad; re-queuing the same asset original size only merges tiers', async () => {
   const q = queueWith();
   const r = await enqueueLocalMedia(q, { hashes: [V_ORIG, 'not-a-hash', IMG] }, resolveFile);
   assert.deepEqual(r, { queued: [V_ORIG, IMG], missing: [], bad: 1, local: false });
   await enqueueLocalMedia(q, { items: [{ original: V_ORIG, small: V_SMALL }] }, resolveFile);
   const s = q.stats();
   assert.equal(s.merged, 1);
-  assert.deepEqual(s.items[0].tiers, ['small', 'original'], '合并后仍先小后大');
+  assert.deepEqual(s.items[0].tiers, ['small', 'original'], 'Still small first, then large, after merging');
 });
 
-test('UQE-4 当前连的是本机素材服务(队列空操作):回 local,什么都不进', async () => {
+test('UQE-4 currently connected to the local asset service (queue is a no-op): returns local, nothing is queued', async () => {
   const q = queueWith({ remote: false });
   const r = await enqueueLocalMedia(q, { items: [{ original: V_ORIG }, { original: IMG }] }, resolveFile);
   assert.equal(r.local, true);
@@ -57,20 +61,20 @@ test('UQE-4 当前连的是本机素材服务(队列空操作):回 local,什么�
   assert.equal(q.stats().items.length, 0);
 });
 
-test('UQE-5 小尺寸转码中补交原尺寸:等待持久两档管理器,不提前上传;生成后页面尚未写回也先小后大', async () => {
+test('UQE-5 submitting the original size while the small size is still transcoding: waits for the persistent two-tier manager and does not upload early; even if the page has not written back yet after generation, small still goes before large', async () => {
   const q = queueWith();
   let known = { state: 'pending' };
   const options = { getTiers: () => known };
   const body = { items: [{ original: V_ORIG }] };
   const pending = await enqueueLocalMedia(q, body, resolveFile, options);
   assert.deepEqual(pending, { queued: [], deferred: [V_ORIG], missing: [], bad: 0, local: false });
-  assert.equal(q.stats().items.length, 0, '补交不能抢在两档管理器之前上传原尺寸');
+  assert.equal(q.stats().items.length, 0, 'A supplementary submission must not jump ahead of the two-tier manager to upload the original size');
   known = { state: 'ready', small: V_SMALL };
   await enqueueLocalMedia(q, body, resolveFile, options);
   assert.deepEqual(q.stats().items.map(i => i.tiers), [['small', 'original']]);
 });
 
-test('UQE-6 转码失败或没有两档登记的素材仍上传原尺寸,不无限等待', async () => {
+test('UQE-6 an asset whose transcode failed or that has no two-tier registration still uploads the original size, without waiting forever', async () => {
   for (const state of ['failed', 'none', 'unknown']) {
     const q = queueWith();
     const r = await enqueueLocalMedia(q, { hashes: [V_ORIG] }, resolveFile, { getTiers: () => ({ state }) });
@@ -79,7 +83,7 @@ test('UQE-6 转码失败或没有两档登记的素材仍上传原尺寸,不无�
   }
 });
 
-test('UQE-7 先报告原尺寸明确缺失;本机目标不记远程转码待办', async () => {
+test('UQE-7 first report that the original size is explicitly missing; a local target does not record a remote transcode to-do', async () => {
   const q = queueWith({ remote: false });
   const options = { isLocal: () => true, getTiers: () => ({ state: 'pending' }) };
   const r = await enqueueLocalMedia(q, { hashes: [GONE, V_ORIG] }, resolveFile, options);
@@ -87,7 +91,7 @@ test('UQE-7 先报告原尺寸明确缺失;本机目标不记远程转码待办'
   assert.equal(q.stats().items.length, 0);
 });
 
-test('UQE-8 cancel: 撤回正在上传与排队中的素材，从队列移除；中止在途分片', async () => {
+test('UQE-8 cancel: withdraws assets that are uploading or queued and removes them from the queue; aborts in-flight chunks', async () => {
   let putAborted = false;
   let putStarted = false;
   const client = {
@@ -112,19 +116,19 @@ test('UQE-8 cancel: 撤回正在上传与排队中的素材，从队列移除；
   assert.equal(q.stats().items.length, 2);
   q.start();
   while (!putStarted) await new Promise((r) => setTimeout(r, 10));
-  // 撤回正在上传的 V_ORIG
+  // Cancel V_ORIG currently uploading
   const cancelRes = await q.cancel([V_ORIG]);
   assert.deepEqual(cancelRes, { ok: true, cancelled: [V_ORIG] });
   assert.equal(putAborted, true);
   assert.deepEqual(q.stats().items.map((i) => i.id), [IMG]);
-  // 撤回排队中的 IMG
+  // Cancel queued IMG
   const cancelAllRes = await q.cancel();
   assert.deepEqual(cancelAllRes, { ok: true, cancelled: [IMG] });
   assert.equal(q.stats().items.length, 0);
   await q.stop();
 });
 
-test('UQE-9 /api/media/upload-queue/cancel 接口: 撤回在途与队列文件并清理本地未登记文件，已传完出队的文件不删', async (t) => {
+test('UQE-9 /api/media/upload-queue/cancel endpoint: withdraws in-flight and queued files and cleans up local files not yet registered; files that have finished uploading and left the queue are not deleted', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-uqe-media-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const mediaDir = path.join(dir, 'out', 'media');
@@ -147,21 +151,21 @@ test('UQE-9 /api/media/upload-queue/cancel 接口: 撤回在途与队列文件�
   t.after(() => { server.closeAllConnections?.(); server.close(); });
   const base = `http://127.0.0.1:${server.address().port}`;
 
-  // 先设远端目标（连本机素材服务时队列是空操作，不进队）
+  // Set remote target first (queue is a no-op when connecting to local asset service; does not enqueue)
   const setTarget = await fetch(`${base}/api/media/upload-queue/target`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ base: 'http://remote.asset.service/api' }),
   });
   assert.equal(setTarget.status, 200);
 
-  // 把两项进队
+  // Enqueue both items
   const enq = await fetch(`${base}/api/media/upload-queue/enqueue`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ hashes: [V_ORIG, IMG] }),
   });
   assert.equal(enq.status, 200);
 
-  // 1. POST /api/media/upload-queue/cancel 撤回 V_ORIG
+  // 1. POST /api/media/upload-queue/cancel: cancel V_ORIG
   const c1 = await fetch(`${base}/api/media/upload-queue/cancel`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ hashes: [V_ORIG] }),
@@ -169,16 +173,16 @@ test('UQE-9 /api/media/upload-queue/cancel 接口: 撤回在途与队列文件�
   const j1 = await c1.json();
   assert.deepEqual(j1.cancelled, [V_ORIG]);
   assert.deepEqual(j1.cleaned, [V_ORIG]);
-  assert.equal(fs.existsSync(file1), false, '在途/队列里的文件被删除');
+  assert.equal(fs.existsSync(file1), false, 'In-flight/queued files are deleted');
 
-  // 2. DELETE /api/media/upload-queue/<hash> 撤回 IMG
+  // 2. DELETE /api/media/upload-queue/<hash>: cancel IMG
   const c2 = await fetch(`${base}/api/media/upload-queue/${IMG}`, { method: 'DELETE' });
   const j2 = await c2.json();
   assert.deepEqual(j2.cancelled, [IMG]);
   assert.deepEqual(j2.cleaned, [IMG]);
-  assert.equal(fs.existsSync(file2), false, '被撤回的文件被删除');
+  assert.equal(fs.existsSync(file2), false, 'Withdrawn files are deleted');
 
-  // 3. 不在队列里（已完整传完出队）的文件：cancel 不会删除它
+  // 3. Files not in the queue (already fully uploaded and dequeued): cancel will not delete them
   const doneFile = path.join(mediaDir, `${V_SMALL}.mp4`);
   fs.writeFileSync(doneFile, 'finished-data');
   fs.writeFileSync(path.join(mediaDir, 'index.json'), JSON.stringify({
@@ -189,7 +193,7 @@ test('UQE-9 /api/media/upload-queue/cancel 接口: 撤回在途与队列文件�
     body: JSON.stringify({ hashes: [V_SMALL] }),
   });
   const j3 = await c3.json();
-  assert.deepEqual(j3.cancelled, [], '已不在队列里');
-  assert.deepEqual(j3.cleaned, [], '未撤回任何项');
-  assert.equal(fs.existsSync(doneFile), true, '已传完的文件不被误删');
+  assert.deepEqual(j3.cancelled, [], 'No longer in the queue');
+  assert.deepEqual(j3.cleaned, [], 'Nothing was withdrawn');
+  assert.equal(fs.existsSync(doneFile), true, 'Files that finished uploading are not deleted by mistake');
 });

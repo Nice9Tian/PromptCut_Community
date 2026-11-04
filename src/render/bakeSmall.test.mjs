@@ -1,14 +1,16 @@
 /**
- * 纯浏览器节点的预渲染小尺寸(M7 契约第 4.4 节):尺寸换算与桌面 `server/bakery/small-bitmap.mjs` 逐个相同;质量 80。
- * 栅格化本身要浏览器(`foreignObject` → 画布 → WebP),由在线构建的端到端与探针 P3 看。
- * 跑:node --test src/render/bakeSmall.test.mjs
+ * Prerender small size on browser-only nodes (M7 contract Section 4.4): size conversion is
+ * identical one by one to desktop `server/bakery/small-bitmap.mjs`; quality 80.
+ * Rasterization itself requires a browser (`foreignObject` → canvas → WebP), inspected by online
+ * build end-to-end tests and probe P3.
+ * Run: node --test src/render/bakeSmall.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { smallScale, smallSize, SMALL_MAX_WIDTH, SMALL_MAX_HEIGHT, SMALL_WEBP_QUALITY } from "./bakeSmall.ts";
 import * as desk from "../../server/bakery/small-bitmap.mjs";
 
-test("M7-SM-01 小尺寸的缩放比与像素尺寸与桌面同一套;WebP 质量 80", () => {
+test("M7-SM-01 small-size scale ratio and pixel size are the same as desktop; WebP quality 80", () => {
   assert.equal(SMALL_MAX_WIDTH, desk.SMALL_MAX_WIDTH);
   assert.equal(SMALL_MAX_HEIGHT, desk.SMALL_MAX_HEIGHT);
   assert.equal(Math.round(SMALL_WEBP_QUALITY * 100), desk.SMALL_WEBP_QUALITY);

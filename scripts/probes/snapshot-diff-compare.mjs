@@ -1,37 +1,48 @@
 /**
- * 差异样式内联的画面正确性验收（底稿 A2(8) 验收 (ii) 后半句）：
- * **差异样式内联前后的 `captureSnapshot` 位图逐像素比对**。
+ * Visual correctness acceptance check for differential style inlining (draft A2(8) acceptance
+ * check (ii) second half):
+ * **Pixel-by-pixel bitmap comparison of `captureSnapshot` before and after differential style
+ * inlining**.
  *
  *   node scripts/probes/snapshot-diff-compare.mjs [--origin <dev server>]
  *        [--cards lottie-bodymovin,growth-curve,odometer,scene-3d] [--frames 12,45]
  *        [--out out/snapshot-diff] [--dump-html]
  *
- * # 怎么做到「前后」
+ * # How "before and after" is achieved
  *
- * 不开第二棵树、不起第二台服务器 —— **同一个页面、同一个时刻**出两份 HTML：
- *   - 「后」= 现在的 `window.__pcCreateSnapshot()`（`src/render/createSnapshot.ts` +
- *     `snapshot/inlineStyles.ts` 的差异内联）；
- *   - 「前」= 下面 `installLegacyPass` 里复刻的 b5c65dc 版算法（逐元素把 `getComputedStyle`
- *     整份内联）。复刻版只少一样：`data-pc-painted-box`（A2(4) 的实体框）——
- *     它是给消费方换算用的**元数据**，不参与栅格化，漏了不影响这一次比对的像素。
+ * No second tree, no second server: produce two copies of HTML from **the same page at the exact
+ * same moment**:
+ *   - "After" = current `window.__pcCreateSnapshot()` (`src/render/createSnapshot.ts` +
+ *     differential inlining from `snapshot/inlineStyles.ts`);
+ *   - "Before" = the b5c65dc algorithm cloned in `installLegacyPass` below (inlines the full
+ *     `getComputedStyle` element by element). The clone is missing only one thing:
+ *     `data-pc-painted-box` (entity box from A2(4)): it is **metadata** used by consumers for
+ *     coordinate conversion and does not participate in rasterization; omitting it does not affect
+ *     pixels in this comparison.
  *
- * 两份 HTML 各走一次 `captureSnapshot`（和导出、`see_frames`、`rasterPrefix` 同一条栅格化路），
- * 逐通道比。判据：**逐字节相同**；不同就报最大通道差和不同像素数
- * （口径参考 `scripts/replay-frames.mjs:19-21` 记的重放残差：重放与重放之间是确定的，
- *  所以这里两份都走重放路，应当逐字节相同；有差就是差异内联真的改了画面）。
+ * Both HTML copies go through `captureSnapshot` once (the same rasterization path as export,
+ * `see_frames`, and `rasterPrefix`), compared per channel. Criterion: **byte-for-byte identical**;
+ * report max channel difference and differing pixel count on mismatch (criteria reference the
+ * replay residuals recorded in `scripts/replay-frames.mjs:19-21`: replays are deterministic across
+ * runs, so both copies taking the replay path should be byte-for-byte identical; any difference
+ * means differential inlining actually altered the visual output).
  *
- * # 为什么不能「跑两趟再比」
+ * # Why "run two passes then compare" does not work
  *
- * 实测不可比 —— 同一页第二趟里 `growth-curve` 的 `opacity` 停在 0、`stroke-dasharray` 停在
- * `0px,1px`（动画根本没推），第一趟是 0.4 / `0.033px,1px`。那是
- * `docs/guides/compare-pitfalls.md` 第一条「预热错帧」，不是差异内联造成的。套一层就绕开了整件事。
+ * In practice they are not comparable: in the second pass on the same page, `growth-curve`'s
+ * `opacity` stays at 0 and `stroke-dasharray` stays at `0px,1px` (the animation did not advance at
+ * all), whereas the first pass was 0.4 / `0.033px,1px`. That is item 1 "warmup frame mismatch" in
+ * `docs/guides/compare-pitfalls.md`, not caused by differential inlining. Wrapping a layer bypasses
+ * the whole issue.
  *
- * 顺序也要紧：**旧算法先跑** —— 新的 `inlineDOMStyles` 量基线时会往场景根临时挂一个探针容器
- * （量完就摘），旧算法在那之前读完，两边看到的是同一棵干净的树。
+ * Order also matters: **the legacy algorithm runs first**: when the new `inlineDOMStyles` measures
+ * the baseline, it temporarily attaches a probe container to the scene root (detached after
+ * measuring); reading with the legacy algorithm before that ensures both see the same clean tree.
  *
- * 需要一台 dev server（不带 `--origin` 就看 `PC_STAGE_TEST_URL`，再没有就打 `.claude/launch.json` 的 `dev-test`）：`FramePipeline` 的 bakery 打的是它的导出页。
+ * Requires a dev server (checks `PC_STAGE_TEST_URL` if `--origin` is omitted, and if still missing,
+ * hits `dev-test` in `.claude/launch.json`): `FramePipeline`'s bakery hits its export page.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PNG } from 'pngjs';
@@ -51,8 +62,9 @@ const fps = 30;
 const lenSec = 4;
 
 /**
- * 在 `window.__pcCreateSnapshot` 外面套一层:**同一次调用、同一个时刻**先用 b5c65dc 的算法
- * 生成一份(记进 `window.__pcLegacySnapshots`),再原样调现在这份返回给 `bakeFrames`。
+ * Wrap around `window.__pcCreateSnapshot`: in the **same call and at the exact same moment**, first
+ * generate one copy using the b5c65dc algorithm (stored into `window.__pcLegacySnapshots`), then
+ * call the current implementation as-is and return it to `bakeFrames`.
  */
 async function installLegacyPass(page, wantFrames, framesPerSec) {
   await page.evaluate(({ wanted, fps }) => {
@@ -109,8 +121,8 @@ async function installLegacyPass(page, wantFrames, framesPerSec) {
       return { html, lossy, controls };
     };
     window.__pcCreateSnapshot = () => {
-      // 只留要比的那几帧:odometer 一帧的旧快照 2.2 MB,34 帧全攒下来再一次性
-      // 序列化回 Node 会把 Runtime.callFunctionOn 拖到超时(实测)。
+      // Keep only the frames to compare: a legacy snapshot for one odometer frame is 2.2 MB; hoarding all
+      // 34 frames to serialize back to Node at once times out Runtime.callFunctionOn (verified).
       const frame = Math.round((window.__pcExportMs / 1000) * fps);
       if (keep.has(frame)) {
         const old = legacy();
@@ -159,15 +171,15 @@ for (const cardId of cards) {
   try {
     bakery = await service.bakery(project);
     await installLegacyPass(bakery.page, frames, fps);
-    const after = await snapshotsOf(bakery, frames, root);       // 现在的 createSnapshot
-    // 同一趟里旧算法留下的那一份,按 __pcExportMs 折回帧号
+    const after = await snapshotsOf(bakery, frames, root);       // Current createSnapshot
+    // The copy left by the legacy algorithm in the same pass, converted back to a frame number by __pcExportMs
     const legacyList = await bakery.page.evaluate(() => window.__pcLegacySnapshots);
     const before = new Map();
     for (const item of legacyList) before.set(Math.round((item.ms / 1000) * fps), { html: item.html, controls: [{ html: item.controlHtml }] });
 
     for (const n of frames) {
       const a = before.get(n), b = after.get(n);
-      if (!a || !b) { rows.push({ cardId, frame: n, note: `没拿到快照(旧 ${before.has(n)} / 新 ${after.has(n)})` }); bad++; continue; }
+      if (!a || !b) { rows.push({ cardId, frame: n, note: `No snapshot obtained (old ${before.has(n)} / new ${after.has(n)})` }); bad++; continue; }
       const pngBefore = await captureSnapshot(bakery, a.html);
       const pngAfter = await captureSnapshot(bakery, b.html);
       await fs.writeFile(path.join(outDir, `${cardId}-${n}-before.png`), pngBefore);
@@ -182,8 +194,8 @@ for (const cardId of cards) {
         controlBeforeKB: kb(a.controls?.[0]?.html), controlAfterKB: kb(b.controls?.[0]?.html) };
       rows.push(row);
       if (!cmp.equal) bad++;
-      console.log(`${cardId} f${n}: ${cmp.equal ? '逐字节相同' : `不同 ${cmp.pixels}/${cmp.total} 像素,最大通道差 ${cmp.maxDelta}`}`
-        + `  场景 ${row.sceneBeforeKB} → ${row.sceneAfterKB} KB,control ${row.controlBeforeKB} → ${row.controlAfterKB} KB`);
+      console.log(`${cardId} f${n}: ${cmp.equal ? 'byte-for-byte identical' : `${cmp.pixels}/${cmp.total} pixels differ, max channel difference ${cmp.maxDelta}`}`
+        + `  scene ${row.sceneBeforeKB} → ${row.sceneAfterKB} KB, control ${row.controlBeforeKB} → ${row.controlAfterKB} KB`);
     }
   } catch (err) {
     console.error(`${cardId}: ${err && err.stack || err}`);
@@ -196,6 +208,6 @@ for (const cardId of cards) {
 }
 
 await fs.writeFile(path.join(outDir, 'snapshot-diff-compare.json'), JSON.stringify({ origin, cards, frames, rows }, null, 2), 'utf8');
-console.log(`\n结果写到 ${path.join(outDir, 'snapshot-diff-compare.json')}`);
-console.log(bad ? `\n有 ${bad} 项不通过。` : '\n全部逐字节相同。');
+console.log(`\nResult written to ${path.join(outDir, 'snapshot-diff-compare.json')}`);
+console.log(bad ? `\n${bad} items failed.` : '\nAll byte-identical.');
 process.exit(bad ? 1 : 0);

@@ -1,23 +1,26 @@
 /**
- * 摘掉片段上那张素材效果卡(`cardAuthoring.mjs` 的 `detachCardNode`,issue #35 第 3 项)。
+ * Detach the media effect card on the clip (`detachCardNode` in `cardAuthoring.mjs`,
+ * issue #35 item 3).
  *
- * 它和另外三样挂载不一样:那三样是片段上的一个字段,置空就完了;这个是节点图里的一个节点,
- * 连着输入和输出。所以这里守的是**链接回去**这件事:
- * 摘中间一张,上下游要接上;摘最后一张,片段回到普通素材段;接不回去的要抛出说得清的话。
+ * It differs from the other three attachments: those three are fields on the clip, clearing them
+ * is enough; this is a node in the node graph, connected to inputs and outputs. So what is guarded
+ * here is **re-linking**:
+ * detach a middle card, upstream and downstream must connect; detach the last card, the clip
+ * reverts to an ordinary media clip; if re-linking is impossible, throw a clear error message.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { detachCardNode } from "./cardAuthoring.mjs";
 
-/** 注册表:只要能查到 defaults 就够,画面不进这支测试 */
+/** Registry: only needs to look up defaults, visuals do not enter this test */
 const getCard = (id) => ({
-  invert: { id: "invert", name: "反色", card: () => {}, defaults: { amount: 1 } },
-  blur: { id: "blur", name: "模糊", card: () => {}, defaults: { sigma: 4 } },
-  xfade: { id: "xfade", name: "交叉溶解", kind: "transition", card: () => {}, defaults: {} },
-  intro: { id: "intro", name: "片头", card: () => {}, defaults: {} },
+  invert: { id: "invert", name: "Invert colors", card: () => {}, defaults: { amount: 1 } },
+  blur: { id: "blur", name: "blur", card: () => {}, defaults: { sigma: 4 } },
+  xfade: { id: "xfade", name: "crossfade", kind: "transition", card: () => {}, defaults: {} },
+  intro: { id: "intro", name: "Intro", card: () => {}, defaults: {} },
 }[id]);
 
-/** 素材 → 反色 → 模糊,片段的终端是模糊 */
+/** Asset → invert → blur, the clip's terminal node is blur */
 function chain() {
   return {
     id: "p", width: 1920, height: 1080, fps: 30, duration: 5, media: [{ id: "m1", kind: "video" }],
@@ -29,28 +32,28 @@ function chain() {
   };
 }
 
-test("摘掉链尾那一张:片段接到上一张,它自己从库里删掉", () => {
+test("Detaching the last card in the chain: the clip is attached to the previous card, and the card itself is deleted from the library", () => {
   const r = detachCardNode(chain(), "c1", getCard);
   const clip = r.project.tracks[0].clips[0];
-  assert.equal(clip.nodeId, "n-inv", "下游要接到上游,不然反色也跟着没了");
+  assert.equal(clip.nodeId, "n-inv", "Downstream must be connected to upstream, otherwise the invert is lost too");
   assert.equal(clip.cardId, "invert");
   assert.deepEqual(clip.params, { amount: 1 });
   assert.deepEqual(r.project.cardNodes.map((n) => n.id), ["n-inv"]);
   assert.equal(r.removed, true);
 });
 
-test("再摘一张:片段回到普通素材段,cardId 和参数都回到没挂过的样子", () => {
+test("Detaching one more: the clip returns to a plain media clip, and cardId and params go back to how they were before anything was attached", () => {
   const once = detachCardNode(chain(), "c1", getCard);
   const twice = detachCardNode(once.project, "c1", getCard);
   const clip = twice.project.tracks[0].clips[0];
   assert.equal(clip.nodeId, undefined);
   assert.equal(clip.cardId, undefined);
   assert.deepEqual(clip.params, {});
-  assert.equal(clip.mediaId, "m1", "素材不能跟着没了");
+  assert.equal(clip.mediaId, "m1", "The media must not disappear with it");
   assert.deepEqual(twice.project.cardNodes, []);
 });
 
-test("卡片段的底座是真节点,摘掉上面那张之后片段还是那张卡", () => {
+test("The base of a card clip is a real node; after detaching the card on top, the clip is still that card", () => {
   const p = {
     id: "p", width: 1920, height: 1080, fps: 30, duration: 5, media: [],
     tracks: [{ id: "t1", clips: [{ id: "c1", start: 0, end: 5, cardId: "blur", nodeId: "n-blur", params: { sigma: 4 } }] }],
@@ -61,42 +64,42 @@ test("卡片段的底座是真节点,摘掉上面那张之后片段还是那张�
   };
   const clip = detachCardNode(p, "c1", getCard).project.tracks[0].clips[0];
   assert.equal(clip.nodeId, "n-intro");
-  assert.equal(clip.cardId, "intro", "回到它自己那张卡,不是变成空片段");
+  assert.equal(clip.cardId, "intro", "It returns to its own card, not an empty clip");
 });
 
-test("别人还引用着它就不从库里删,只是这一段不再用它", () => {
+test("If others still reference it, it is not deleted from the library; this clip just stops using it", () => {
   const p = chain();
   p.tracks[0].clips.push({ id: "c2", mediaId: "m1", start: 5, end: 8, cardId: "invert", nodeId: "n-other", params: {} });
   p.cardNodes.push({ id: "n-other", adapter: "card", cardId: "invert", kind: "filter", params: {}, inputs: { source: { nodeId: "n-blur" } } });
   const r = detachCardNode(p, "c1", getCard);
   assert.equal(r.removed, false);
-  assert.equal(r.project.cardNodes.some((n) => n.id === "n-blur"), true, "它还在喂 c2,删了那一段就瞎了");
+  assert.equal(r.project.cardNodes.some((n) => n.id === "n-blur"), true, "It still feeds c2; deleting it would leave c2 blind");
   assert.equal(r.project.tracks[0].clips[0].nodeId, "n-inv");
 });
 
-test("转场那种两路输入的摘不了,话里写明为什么", () => {
+test("A card with two inputs, like a transition, cannot be detached; the message says why", () => {
   const p = chain();
   p.cardNodes[1] = { id: "n-blur", adapter: "card", cardId: "xfade", kind: "transition", params: {}, inputs: { A: { nodeId: "n-inv" }, B: { nodeId: "@clip/c1/source" } } };
   p.tracks[0].clips[0].cardId = "xfade";
-  assert.throws(() => detachCardNode(p, "c1", getCard), /不止一路输入.*A、B/s);
+  assert.throws(() => detachCardNode(p, "c1", getCard), /more than one input.*A, B/s);
 });
 
-test("无输入的卡摘不了:它本身就是这一段的内容", () => {
+test("A card with no input cannot be detached: it is the content of this clip itself", () => {
   const p = {
     id: "p", width: 1920, height: 1080, fps: 30, duration: 5, media: [],
     tracks: [{ id: "t1", clips: [{ id: "c1", start: 0, end: 5, cardId: "intro", nodeId: "n-intro", params: {} }] }],
     cardNodes: [{ id: "n-intro", adapter: "card", cardId: "intro", kind: "animation", params: {}, inputs: {} }],
   };
-  assert.throws(() => detachCardNode(p, "c1", getCard), /本身就是这一段的内容/);
+  assert.throws(() => detachCardNode(p, "c1", getCard), /is the content of this segment itself/);
 });
 
-test("这一段根本没挂时说清楚,不是默默什么都不做", () => {
+test("When nothing is attached to this clip at all, say so clearly instead of silently doing nothing", () => {
   const p = chain();
   delete p.tracks[0].clips[0].nodeId;
-  assert.throws(() => detachCardNode(p, "c1", getCard), /没有挂素材效果卡/);
+  assert.throws(() => detachCardNode(p, "c1", getCard), /no media effect card attached/);
 });
 
-test("指针悬空(节点被别处删了):擦掉指针,不拦着用户", () => {
+test("Dangling pointer (the node was deleted elsewhere): erase the pointer, do not block the user", () => {
   const p = chain();
   p.cardNodes = [];
   const r = detachCardNode(p, "c1", getCard);
@@ -104,9 +107,9 @@ test("指针悬空(节点被别处删了):擦掉指针,不拦着用户", () => {
   assert.equal(r.removed, false);
 });
 
-test("不原地改传进来的项目", () => {
+test("Does not modify the passed-in project in place", () => {
   const p = chain();
   const before = JSON.stringify(p);
   detachCardNode(p, "c1", getCard);
-  assert.equal(JSON.stringify(p), before, "store 靠对象身份判断改动,原地改会让同步看不见");
+  assert.equal(JSON.stringify(p), before, "The store detects changes by object identity, so in-place edits would be invisible to sync");
 });

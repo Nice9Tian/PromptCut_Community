@@ -1,18 +1,21 @@
 /**
- * 技能的本机端到端探针(issue 46,语义见 docs/semantics/product/agent.md「技能」)。
- * 起一台真的编辑器进程,走真的 `/api/ai/chat`,模型用仓库里的模拟模型(不调真模型、不花额度),不开浏览器。
- * 云端两条路的端到端在测试里:cloud-agent-service.test.mjs 的 CA-SKILL-01、account-runner-process.test.mjs。
+ * Local end-to-end probe for skills (issue 46, semantics in docs/semantics/product/agent.md "Skills").
+ * Starts a real editor process, uses real `/api/ai/chat`, uses the mock model in the repository
+ * (does not call real models, consumes no quota), and does not open a browser.
+ * End-to-end tests for the two cloud paths are in: CA-SKILL-01 in cloud-agent-service.test.mjs,
+ * account-runner-process.test.mjs.
  *
- * 用法:node scripts/probes/agent-skills-probe.mjs [--port 5990]
+ * Usage: node scripts/probes/agent-skills-probe.mjs [--port 5990]
  *
- * 验收(每项一行 JSON,最后一行 { summary },有失败退出码 1):
- *   K1 用户放在 ai.json 同目录 skills/ 的技能,模型能读到全文,脚本明说不运行
- *   K2 内置技能能读
- *   K3 同名时用户的盖过内置的
- *   K4 附带文档能读;跳出文件夹的路径被拒
- *   K5 格式不对的跳过,诊断里写明;这一轮照常跑完
- *   K6 跑着的服务不用重启:新放进去的技能下一轮就能读
- *   K7 打包规则不会漏掉内置技能的文件
+ * Acceptance check (one JSON line per item, last line { summary }, exit code 1 on failure):
+ *   K1 Skills placed by user in skills/ in the same directory as ai.json: model can read full
+ *      text, scripts explicitly state they are not run
+ *   K2 Built-in skills can be read
+ *   K3 On name collision, user skills override built-in ones
+ *   K4 Accompanying docs can be read; paths escaping the folder are rejected
+ *   K5 Malformed ones are skipped and noted in diagnostics; this round completes normally
+ *   K6 Running services do not need to restart: newly added skills can be read in the next round
+ *   K7 Bundling rules do not omit built-in skill files
  */
 import '../lib/no-user-dirs.mjs';
 import fs from 'node:fs';
@@ -23,7 +26,7 @@ import { startDevServer, REPO } from '../lib/dev-server.mjs';
 import { shouldCopyApp } from '../../desktop/scripts/prepare-runtime.mjs';
 
 const PORT = Number(flagArg('port', 5990));
-if (PORT < 5990 || PORT > 5999) throw new Error(`端口 ${PORT} 不在分给本探针的 5990～5999 里`);
+if (PORT < 5990 || PORT > 5999) throw new Error(`Port ${PORT} is not in the 5990-5999 range assigned to this probe`);
 
 const results = [];
 const check = (name, ok, extra = {}) => {
@@ -38,9 +41,9 @@ const put = (root, rel, text) => {
   fs.writeFileSync(file, text);
 };
 
-/** 发一轮,回这一轮的事件 */
+/** Sends one round, returns events for this round */
 async function chat(origin, steps, sessionId) {
-  const prompt = `按脚本做。\n\`\`\`mock-script\n${JSON.stringify(steps)}\n\`\`\``;
+  const prompt = `Follow the script.\n\`\`\`mock-script\n${JSON.stringify(steps)}\n\`\`\``;
   const res = await fetch(`${origin}/api/ai/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin },
@@ -49,7 +52,7 @@ async function chat(origin, steps, sessionId) {
   const text = await res.text();
   return text.split('\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)));
 }
-// 发给页面的 tool_result 不带 output,只带 summary(工具结果 JSON 的前 1000 字)
+// tool_result sent to the page does not include output, only summary (first 1000 characters of tool result JSON)
 const resultOf = (events, name = 'load_skill') => events.filter((e) => e.type === 'tool_result' && e.name === name);
 
 let server = null;
@@ -57,13 +60,14 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-agent-skills-'));
 try {
   const skills = path.join(tmp, 'skills');
   fs.writeFileSync(path.join(tmp, 'ai.json'), JSON.stringify({ api: { vendor: 'mock', model: 'mock', source: 'custom' } }));
-  put(skills, 'user-rule/SKILL.md', skillMd('user-rule', '用户自己的技能', '用户技能的正文'));
-  put(skills, 'user-rule/references/style.md', '附带文档的内容');
+  put(skills, 'user-rule/SKILL.md', skillMd('user-rule', 'User\'s own skill', 'User skill body'));
+  put(skills, 'user-rule/references/style.md', 'Bundled doc content');
   put(skills, 'user-rule/scripts/run.py', 'print(1)');
-  put(skills, 'broken-one/SKILL.md', '只有正文,没有开头字段');
-  // SKILL.md 是个文件夹:读它时文件系统的报错原文带磁盘路径,诊断里不能出现
+  put(skills, 'broken-one/SKILL.md', 'Body only, no header fields');
+  // SKILL.md is a folder: raw filesystem errors when reading it contain disk paths, which must not
+  // appear in diagnostics
   fs.mkdirSync(path.join(skills, 'fs-error', 'SKILL.md'), { recursive: true });
-  put(tmp, 'outside.md', '文件夹外面的内容');
+  put(tmp, 'outside.md', 'Content outside the folder');
 
   server = await startDevServer({
     port: PORT,
@@ -84,36 +88,36 @@ try {
     { tool: 'load_skill', input: { name: 'product-intro-video' } },
     { tool: 'load_skill', input: { name: 'user-rule', file: 'references/style.md' } },
     { tool: 'load_skill', input: { name: 'user-rule', file: '../../outside.md' } },
-    { say: '完' },
+    { say: 'Done' },
   ], 'skills-probe-1');
   const [user, builtin, bundled, escaped] = resultOf(first);
-  check('K1 用户放的技能能读,脚本明说不运行', user?.ok === true && /用户技能的正文/.test(user.summary) && /不能运行/.test(user.summary), { summary: user?.summary });
-  check('K2 内置技能能读', builtin?.ok === true && /产品介绍片/.test(builtin.summary));
-  check('K4 附带文档能读;跳出文件夹的路径被拒', bundled?.ok === true && /附带文档的内容/.test(bundled.summary) && escaped?.ok === false && !/文件夹外面的内容/.test(JSON.stringify(escaped)), { escaped: escaped?.summary });
+  check('K1 user-provided skill is readable, script states it will not run', user?.ok === true && /User skill body/.test(user.summary) && /cannot run/.test(user.summary), { summary: user?.summary });
+  check('K2 built-in skill is readable', builtin?.ok === true && /product intro video/.test(builtin.summary));
+  check('K4 bundled doc is readable; paths escaping the folder are rejected', bundled?.ok === true && /Bundled doc content/.test(bundled.summary) && escaped?.ok === false && !/Content outside the folder/.test(JSON.stringify(escaped)), { escaped: escaped?.summary });
   const diag = first.find((e) => e.type === 'diagnostic' && e.stage === 'skills');
-  check('K5 格式不对的跳过,诊断写明,这一轮照常跑完', diag?.data?.skipped?.some((s) => s.folder === 'broken-one' && s.reason) && !diag.data.skills.includes('broken-one') && first.some((e) => e.type === 'done'), { skipped: diag?.data?.skipped });
+  check('K5 malformed ones are skipped, diagnostics say why, this round still finishes as usual', diag?.data?.skipped?.some((s) => s.folder === 'broken-one' && s.reason) && !diag.data.skills.includes('broken-one') && first.some((e) => e.type === 'done'), { skipped: diag?.data?.skipped });
   const diagText = JSON.stringify(diag?.data ?? {});
-  check('K5b 文件系统报错的诊断不带磁盘路径', diag?.data?.skipped?.some((s) => s.folder === 'fs-error' && s.reason === '读不了(EISDIR)') && !diagText.includes(path.basename(tmp)), { skipped: diag?.data?.skipped });
+  check('K5b diagnostics for filesystem errors carry no disk path', diag?.data?.skipped?.some((s) => s.folder === 'fs-error' && s.reason === 'cannot read (EISDIR)') && !diagText.includes(path.basename(tmp)), { skipped: diag?.data?.skipped });
 
-  put(skills, 'product-intro-video/SKILL.md', skillMd('product-intro-video', '用户改过的介绍片技能', '用户版本的正文'));
-  put(skills, 'added-later/SKILL.md', skillMd('added-later', '后来放进去的技能', '后来放进去的正文'));
+  put(skills, 'product-intro-video/SKILL.md', skillMd('product-intro-video', 'Intro video skill edited by user', 'User version body'));
+  put(skills, 'added-later/SKILL.md', skillMd('added-later', 'Skill added later', 'Body added later'));
   const second = await chat(origin, [
     { tool: 'load_skill', input: { name: 'product-intro-video' } },
     { tool: 'load_skill', input: { name: 'added-later' } },
-    { say: '完' },
+    { say: 'Done' },
   ], 'skills-probe-2');
   const [overridden, later] = resultOf(second);
-  check('K3 同名时用户的盖过内置的', overridden?.ok === true && /用户版本的正文/.test(overridden.summary));
-  check('K6 新放进去的技能下一轮就能读', later?.ok === true && /后来放进去的正文/.test(later.summary));
+  check('K3 user skill overrides built-in one with the same name', overridden?.ok === true && /User version body/.test(overridden.summary));
+  check('K6 newly added skill is readable on the next turn', later?.ok === true && /Body added later/.test(later.summary));
 
   const builtinRoot = path.join(REPO, 'server', 'agent-skills');
   const files = fs.readdirSync(builtinRoot, { recursive: true }).map((rel) => path.join(builtinRoot, String(rel))).filter((f) => fs.statSync(f).isFile());
-  check('K7 打包规则不漏内置技能', files.length > 0 && files.every((f) => shouldCopyApp(path.basename(f), f, false)) && shouldCopyApp('agent-skills', builtinRoot, true), { files: files.length });
+  check('K7 packaging rules do not miss built-in skills', files.length > 0 && files.every((f) => shouldCopyApp(path.basename(f), f, false)) && shouldCopyApp('agent-skills', builtinRoot, true), { files: files.length });
 } catch (e) {
-  check('探针跑完', false, { error: String(e?.stack ?? e) });
+  check('probe finished', false, { error: String(e?.stack ?? e) });
 } finally {
   server?.stop();
-  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 清理 */ }
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* Cleanup */ }
 }
 const failed = results.filter((r) => !r.ok).length;
 console.log(JSON.stringify({ summary: { total: results.length, failed } }));

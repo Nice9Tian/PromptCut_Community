@@ -1,9 +1,12 @@
 /**
- * 推送队列遇到被淘汰的键(存储占用计划 `docs/plan/storage-plan.md`;`server/artifact-push.mjs`):
- * 段的键目录被帧库淘汰或「清理缓存」删掉(或推到一半文件读不到)时,丢掉这一段、记 `push.evicted`,
- * 不无限重试、不挡队列里别的段。键目录还在时的失败照旧退避重试。
+ * Push queue encounters evicted key (storage plan `docs/plan/storage-plan.md`; `server/artifact-push.mjs`):
+ * when a segment's key directory is evicted by frame store or deleted by "clear cache" (or file
+ * cannot be read midway through pushing), drop this segment and record `push.evicted`,
+ * do not retry indefinitely, and do not block other segments in the queue. Failures when key
+ * directory still exists back off and retry as usual.
  *
- * 管线是假的(只有帧库根、`snapshots()` 与空的 `entries`),素材服务是内存里的假客户端,不起服务。
+ * Pipeline is mock (only frame store root, `snapshots()`, and empty `entries`), asset service is
+ * an in-memory mock client, does not start a service.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +27,7 @@ async function rig(t) {
   return { root, pipeline };
 }
 
-/** 在共享档写 `count` 帧快照,回这一段的 unit */
+/** Write `count` frame snapshots to shared tier, returns unit for this segment */
 async function seedShared(pipeline, seed, count = 3) {
   const key = hex(seed);
   const dir = pipeline.snapshots().dir({ tier: 'shared', key });
@@ -55,19 +58,19 @@ function queueOf(t, pipeline, client, options = {}) {
   return { queue, logs };
 }
 
-const withTimeout = (promise, ms, what) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what}:${ms} ms 还没完`)), ms).unref())]);
+const withTimeout = (promise, ms, what) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what}: still not done after ${ms} ms`)), ms).unref())]);
 
-test('unitDirOf:共享档、本地档、流各指向帧库里自己的键目录', async t => {
+test('unitDirOf: the shared tier, the local tier and the stream each point to their own key directory in the frame store', async t => {
   const { root, pipeline } = await rig(t);
   const k = hex('a'), e = hex('e');
   assert.equal(unitDirOf(pipeline, { kind: 'snapshot', tier: 'shared', dirKey: k }), path.join(root, 'controls-html', k));
   assert.equal(unitDirOf(pipeline, { kind: 'snapshot', tier: 'local', entryKey: e, dirKey: k }), path.join(root, 'controls-local', e, k));
   assert.equal(unitDirOf(pipeline, { kind: 'stream', resultKey: k }), path.join(root, 'streams', k));
   assert.equal(await unitEvicted(pipeline, { kind: 'stream', resultKey: k }), true);
-  assert.equal(await unitEvicted({ root: null, snapshots: () => { throw new Error('x'); } }, { kind: 'snapshot', dirKey: k }), false, '算不出目录的不判');
+  assert.equal(await unitEvicted({ root: null, snapshots: () => { throw new Error('x'); } }, { kind: 'snapshot', dirKey: k }), false, 'not judged evicted when the directory cannot be computed');
 });
 
-test('键目录在进队后被淘汰:这一段丢掉、记 push.evicted,不重试,也不挡队里别的段', async t => {
+test('key directory evicted after being queued: this segment is dropped and logged as push.evicted, not retried, and does not block other segments in the queue', async t => {
   const { pipeline } = await rig(t);
   const gone = await seedShared(pipeline, 'gone');
   const kept = await seedShared(pipeline, 'kept');
@@ -75,42 +78,43 @@ test('键目录在进队后被淘汰:这一段丢掉、记 push.evicted,不重�
   const { queue, logs } = queueOf(t, pipeline, client);
   await queue.enqueue(gone.unit);
   await queue.enqueue(kept.unit);
-  // 淘汰:整个键目录没了(帧库淘汰是先改名进垃圾目录、再删,对这里来说就是目录不在了)
+  // Eviction: entire key directory is gone (frame store eviction first renames into trash directory,
+  // then deletes; to this caller, the directory is simply gone)
   await fs.rm(gone.dir, { recursive: true, force: true });
   queue.start();
-  await withTimeout(queue.drain(), 10_000, '队列没排空');
+  await withTimeout(queue.drain(), 10_000, 'queue not drained');
   const stats = queue.stats();
   assert.equal(stats.evicted, 1);
-  assert.equal(stats.failures, 0, '不算失败、不退避');
-  assert.equal(stats.pushed, 1, '别的段照推');
-  assert.equal(client.puts.length, 3, '只推了留下那一段的 3 帧');
+  assert.equal(stats.failures, 0, 'not counted as a failure, no backoff');
+  assert.equal(stats.pushed, 1, 'other segments are still pushed');
+  assert.equal(client.puts.length, 3, 'only the 3 frames of the remaining segment were pushed');
   const line = logs.find(([event]) => event === 'push.evicted');
-  assert.ok(line, `记一行 push.evicted:${JSON.stringify(logs.map(l => l[0]))}`);
+  assert.ok(line, `log one push.evicted line: ${JSON.stringify(logs.map(l => l[0]))}`);
   assert.match(line[1].id, new RegExp(gone.unit.resultKey));
   assert.equal(logs.some(([event]) => event === 'push.retry'), false);
 });
 
-test('流的键目录被淘汰(没有 stream.json):丢掉,不按 no-stream-manifest 无限重试', async t => {
+test('key directory of a stream evicted (no stream.json): dropped, not retried forever as no-stream-manifest', async t => {
   const { pipeline } = await rig(t);
   const client = fakeClient();
   const { queue, logs } = queueOf(t, pipeline, client, { backoff: [60_000] });
   await queue.enqueue({ kind: 'stream', resultKey: hex('stream'), range: { from: 0, to: 3 } });
   queue.start();
-  await withTimeout(queue.drain(), 10_000, '队列没排空');
+  await withTimeout(queue.drain(), 10_000, 'queue not drained');
   assert.equal(queue.stats().evicted, 1);
   assert.equal(queue.stats().failures, 0);
   assert.deepEqual(logs.map(([event]) => event).filter(e => e.startsWith('push.')), ['push.evicted']);
 });
 
-test('推到一半键目录被淘汰(块读不到):丢掉这一段,不重试', async t => {
+test('key directory evicted midway through a push (chunks cannot be read): this segment is dropped, no retry', async t => {
   const { pipeline } = await rig(t);
   const seg = await seedShared(pipeline, 'mid', 12);
-  // 推第一块时把键目录删掉:之后的块读不到
+  // Delete key directory when pushing first chunk: subsequent chunks cannot be read
   const client = fakeClient({ onPut: async index => { if (index === 0) await fs.rm(seg.dir, { recursive: true, force: true }); } });
   const { queue, logs } = queueOf(t, pipeline, client, { backoff: [60_000] });
   await queue.enqueue(seg.unit);
   queue.start();
-  await withTimeout(queue.drain(), 10_000, '队列没排空');
+  await withTimeout(queue.drain(), 10_000, 'queue not drained');
   const stats = queue.stats();
   assert.equal(stats.evicted, 1);
   assert.equal(stats.failures, 0);
@@ -119,10 +123,10 @@ test('推到一半键目录被淘汰(块读不到):丢掉这一段,不重试', a
   assert.equal(logs.some(([event]) => event === 'push.retry'), false);
 });
 
-test('键目录还在时的失败照旧退避重试(不当成淘汰)', async t => {
+test('failures while the key directory still exists are still retried with backoff (not treated as eviction)', async t => {
   const { pipeline } = await rig(t);
   const seg = await seedShared(pipeline, 'flaky');
-  const client = fakeClient({ onPut: async () => { throw Object.assign(new Error('素材服务不在'), { code: 'ECONNREFUSED' }); } });
+  const client = fakeClient({ onPut: async () => { throw Object.assign(new Error('asset service unavailable'), { code: 'ECONNREFUSED' }); } });
   const { queue, logs } = queueOf(t, pipeline, client, { backoff: [60_000] });
   await queue.enqueue(seg.unit);
   queue.start();
@@ -130,17 +134,17 @@ test('键目录还在时的失败照旧退避重试(不当成淘汰)', async t =
   const stats = queue.stats();
   assert.equal(stats.failures, 1);
   assert.equal(stats.evicted, 0);
-  assert.equal(stats.backingOff, 1, '还在队里、退避中');
+  assert.equal(stats.backingOff, 1, 'still in the queue, backing off');
   assert.ok(logs.some(([event]) => event === 'push.retry'));
 });
 
-test('一次淘汰带走很多段:push.evicted 只记前几条和之后每 100 条一条', async t => {
+test('one eviction takes many segments: push.evicted logs only the first few entries and then one in every 100', async t => {
   const { pipeline } = await rig(t);
   const client = fakeClient();
   const { queue, logs } = queueOf(t, pipeline, client);
   for (let i = 0; i < 205; i++) await queue.enqueue({ kind: 'stream', resultKey: hex(`s${i}`), range: { from: 0, to: 0 } });
   queue.start();
-  await withTimeout(queue.drain(), 20_000, '队列没排空');
+  await withTimeout(queue.drain(), 20_000, 'queue not drained');
   assert.equal(queue.stats().evicted, 205);
   const lines = logs.filter(([event]) => event === 'push.evicted');
   assert.deepEqual(lines.map(([, f]) => f.count), [1, 2, 3, 100, 200]);

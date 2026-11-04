@@ -1,4 +1,4 @@
-/* 皮肤对话框。壳沿用 .pc-dialog,这里只加内部布局 */
+/* Skin dialog. The shell reuses .pc-dialog; only the internal layout is added here */
 .pc-skin-dialog {
   width: min(560px, calc(100vw - 48px));
 }
@@ -6,7 +6,7 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
-  /* 预设加上十几个槽位会很长,让内容自己滚,别把对话框顶出屏幕 */
+  /* Presets plus a dozen or so slots get long; let the content scroll by itself so the dialog is not pushed off screen */
   max-height: min(62vh, 560px);
   overflow-y: auto;
   padding: 4px 2px;
@@ -38,7 +38,7 @@
   margin-bottom: 6px;
 }
 
-/* ── 预设 ─────────────────────────────────────────── */
+/* ── Presets ─────────────────────────────────────────── */
 .pc-skin-presets {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -71,7 +71,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 用皮肤自己的变量画的迷你预览:底色 + 面板 / 强调 / 次文字三条 */
+/* A mini preview drawn with the skin's own variables: background + three bars for panel / emphasis / secondary text */
 .pc-skin-chip {
   flex: 0 0 auto;
   display: flex;
@@ -89,7 +89,7 @@
   border-radius: 2px;
 }
 
-/* ── 自定义槽位 ───────────────────────────────────── */
+/* ── Custom slots ───────────────────────────────────── */
 .pc-skin-slot {
   display: flex;
   align-items: center;
@@ -110,7 +110,7 @@
   color: var(--ui-fg-faint);
   line-height: 1.5;
 }
-/* 原生取色器各家长得都不一样,统一成一个方块 */
+/* Native color pickers look different in every browser; unify them into one square */
 .pc-skin-color {
   flex: 0 0 auto;
   width: 40px;

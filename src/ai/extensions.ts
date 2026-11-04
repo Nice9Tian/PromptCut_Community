@@ -1,10 +1,14 @@
 /**
- * AI 提供方与云端扩展接缝（登记式替换型，参照 `docs/plan/community-seams.md`）。
+ * AI provider and cloud extension seam (registration-based replacement type, see
+ * `docs/plan/community-seams.md`).
  *
- * 公开侧默认提供完整可工作的本机 Agent 回退（`CLOUD_OFF_STATE`、空历史摘要、无云端告知轮询，
- * 使 `AiPanel`、`OnlineAgentPage`、`AgentPage`、`useVibeLocal` 在社区版未登记云端提供方时直接走本机 Agent）；
- * 私有侧由扩展入口调用 `registerAiCloudProvider()` 登记云端 AI 提供方实现。
- * Node 单测下的目录探测加载器见同目录的 `extensionsLoad.mjs`。
+ * The public side provides a complete, working local Agent fallback by default (`CLOUD_OFF_STATE`,
+ * an empty history summary, no cloud notice polling, so that `AiPanel`, `OnlineAgentPage`,
+ * `AgentPage` and `useVibeLocal` go straight to the local Agent when the community edition has not
+ * registered a cloud provider); the private side has the extension entry call
+ * `registerAiCloudProvider()` to register the cloud AI provider implementation.
+ * For the directory-probing loader used in Node unit tests, see `extensionsLoad.mjs` in the same
+ * directory.
  */
 import type { ChatAttachment, ChatMessage } from "./types.ts";
 import type { CloudAttachmentInfo } from "./cloudAttach.ts";
@@ -34,11 +38,13 @@ export {
 };
 
 /**
- * 在线页面里云端 Agent 服务的路径（与页面同源）。
+ * Path of the Cloud Agent service in the online page (same origin as the page).
  *
- * 原来定义在 `src/ai/cloud/endpoint.ts`（归闭源），而 `src/start/browseChats.ts` 这个公开文件要用它。
- * 它只是一个路径常量，没有任何云端实现在里面，所以提到公开侧单处定义，`endpoint.ts` 从这里取，
- * 免得两边各写一份之后漂掉（活 C 的 C2 就是这么漂的）。
+ * It used to be defined in `src/ai/cloud/endpoint.ts` (closed source), but the public file
+ * `src/start/browseChats.ts` needs it. It is only a path constant with no cloud implementation in
+ * it, so it was moved up to be defined in one place on the public side, and `endpoint.ts` takes it
+ * from here, to avoid the two sides each keeping a copy that later drifts apart (that is exactly how
+ * C2 of task C drifted).
  */
 export const ONLINE_AGENT_PATH = "/agent/v1";
 
@@ -50,7 +56,7 @@ export const CLOUD_OFF_STATE: CloudAgentState = Object.freeze({
   accountId: null,
 });
 
-/* ---------------- 纯错误与会话控制辅助（原在 `src/ai/cloud/cloudApi.ts`、`src/ai/cloud/consent.ts`） ---------------- */
+/* ---------------- Pure error and session-control helpers (originally in `src/ai/cloud/cloudApi.ts` and `src/ai/cloud/consent.ts`) ---------------- */
 
 export class CloudError extends Error {
   readonly code: string;
@@ -113,7 +119,10 @@ export function requireAccountAbortControl(runId?: string, requestId?: string): 
   return { runId, requestId };
 }
 
-/** 契约 2.3 节的错误码 → 给用户看的话。服务端自己带了说明(额度、原因)的用服务端的 */
+/**
+ * Error codes in section 2.3 of the contract → text shown to the user. If the server supplies its
+ * own explanation (quota, reason), the server's is used
+ */
 export function cloudErrorText(code: string, serverMessage?: string): string {
   switch (code) {
     case "unauthorized":
@@ -140,7 +149,9 @@ export function cloudErrorText(code: string, serverMessage?: string): string {
       return serverMessage || tr("Cloud Agent can't reach the document service right now. Try again later.");
     case "network":
       return tr("Can't reach the Cloud Agent service. Check your network.");
-    // 50 个上限与删除（文字集中在 chatTexts.ts，用户 2026-10-13 确认）；purge-failed 与 creator-required 两句是 2026-10-13 新起草的，列在报告的文字表里
+    // The limit of 50 chats and deletion (texts are collected in chatTexts.ts, confirmed by the user,
+    // 2026-10-13); the purge-failed and creator-required messages were newly drafted on 2026-10-13 and
+    // are listed in the report's text table
     case "conversation-limit":
       return CLOUD_CHAT_TEXT.limitReached;
     case "guest-chat-limit":
@@ -158,7 +169,8 @@ export function cloudErrorText(code: string, serverMessage?: string): string {
       return CLOUD_CHAT_TEXT.purgeFailed;
     case "creator-required":
       return CLOUD_CHAT_TEXT.creatorRequired;
-    // 服务端收消息时核告知没通过（页面那次读取之后、发出之前告知状态变了）：页面同时弹出告知框
+    // The server's notice check failed on receiving the message (the notice state changed between the
+    // page's read and the send): the page also pops up the notice dialog at the same time
     case "consent-required":
       return tr("Read and confirm the notice before using Cloud Agent.");
     default:
@@ -206,7 +218,7 @@ export function cloudConversationControlPolicy(input: {
   };
 }
 
-/* ---------------- 接缝接口定义 ---------------- */
+/* ---------------- Seam interface definitions ---------------- */
 
 export interface CloudConsentState {
   accountId: string | null;
@@ -222,7 +234,8 @@ export interface CloudConsentBinding {
 }
 
 /**
- * 一次读取核过之后发给当次发送的许可。外头拿它当不透明对象传，真伪由 `consent.ts` 的 `WeakMap` 认。
+ * The permit issued for the current send after one verified read. Outside code passes it around as
+ * an opaque object; its authenticity is decided by the `WeakMap` in `consent.ts`.
  */
 export interface CloudConsentPermit {
   readonly binding: CloudConsentBinding;
@@ -237,10 +250,13 @@ export interface CloudDigest {
 
 export interface CloudSessionView {
   conversationId: string | null;
-  /** 对话里有没有没收尾的一轮(服务端还在跑,不论此刻流连没连着) */
+  /**
+   * Whether the chat has a round that has not finished (the server is still running, regardless of
+   * whether the stream is connected at the moment)
+   */
   streaming: boolean;
   connection: "idle" | "connecting" | "live" | "reconnecting";
-  /** 连不上、身份不对这类要给用户看的原因;连上了就清掉 */
+  /** Reasons to show the user, such as cannot connect or wrong identity; cleared once connected */
   problem: string | null;
   lastSeq: number;
   queue?: CloudQueueSnapshot | null;
@@ -260,15 +276,23 @@ export interface CloudChat {
   messages: ChatMessage[];
   view: CloudSessionView;
   info: CloudInfo | null;
-  /** 页面上要给用户看一下的(发送失败、身份没就绪、项目关了开关),用户关掉或下一次操作时清掉 */
+  /**
+   * What the page should show the user (send failed, identity not ready, the project turned the
+   * switch off); cleared when the user dismisses it or on the next action
+   */
   notice: string | null;
   clearNotice: () => void;
-  /** 给用户看一句话(「某些附件没带上」之类页面自己的提示) */
+  /** Show the user one line (the page's own hints such as "some attachments were not included") */
   notify: (text: string) => void;
   conversationId: string;
-  /** `files`:已经传好的附件(`attach` 回来的那些);其 `url` 随消息带给服务端,名字显示在本页的气泡里。
-   *  `staged`:先用 `stage` 放进对话的那条本地气泡;发不出去时它标成「没发出去」 */
-  /** `consentPermit`：同一次发送开头 `grantCloudConsent` 发的一次性许可；有效就不再向账号服务读第二次告知。 */
+  /** `files`: the attachments already uploaded (those returned by `attach`); their `url` goes to the
+   *  server with the message, and the name is shown in this page's bubble.
+   *  `staged`: the local bubble first put into the chat with `stage`; when it cannot be sent it is
+   *  marked "not sent" */
+  /**
+   * `consentPermit`: the one-time permit issued by `grantCloudConsent` at the start of the same send;
+   * if it is valid, the notice is not read from the account service a second time.
+   */
   send: (
     text: string,
     files?: ChatAttachment[],
@@ -276,15 +300,24 @@ export interface CloudChat {
     consentPermit?: CloudConsentPermit | null,
     opts?: { queueOnNetwork?: boolean },
   ) => Promise<boolean>;
-  /** 账号模式:点发送的那一刻先在对话里放一条本地气泡(乐观显示),回它的号;没有会话时回 null */
+  /**
+   * Account mode: the moment send is clicked, first puts a local bubble into the chat (optimistic
+   * display) and returns its number; returns null when there is no session
+   */
   stage: (text: string, files?: ChatAttachment[]) => string | null;
-  /** 本地气泡在发出之前就被挡下了(没确认告知、对话已切走等):标成没发出去 */
+  /**
+   * The local bubble was blocked before being sent (notice not confirmed, chat already switched
+   * away, etc.): mark it as not sent
+   */
   failStaged: (id: string, reason: string) => void;
   /**
-   * 断网待发(outbox.ts,只在 `useCloudChat({ outbox: true })` 时有):
-   * `offline()` 浏览器此刻断着网;`mustQueue()` 这个对话里已经有排着的(新发的要排在它后面,顺序不乱);
-   * `enqueue` 把点发送时放的那个本地气泡排进去(网络恢复后自动发出);`resend` 不发了的那条按当前状态重新走一遍;
-   * `transient(err)` 这个错是不是断网一类(发不出去、但等网络恢复能发)。
+   * Offline outbox (outbox.ts, present only with `useCloudChat({ outbox: true })`):
+   * `offline()` the browser is offline right now; `mustQueue()` this chat already has queued items
+   * (a newly sent message must queue behind them so the order stays intact);
+   * `enqueue` queues the local bubble placed when send was clicked (it is sent automatically once the
+   * network is back); `resend` runs a message that was not sent through the flow again by the current
+   * state; `transient(err)` whether this error is the offline kind (cannot be sent now, but can be once
+   * the network is back).
    */
   outbox: {
     items: readonly OutboxItem[];
@@ -295,35 +328,51 @@ export interface CloudChat {
     transient: (err: unknown) => boolean;
   };
   dropStaged: (id: string) => void;
-  /** 传一个文件到这个对话的工作目录(对话还没发过消息也行);出错抛 `CloudError` */
+  /**
+   * Upload a file to this chat's working directory (works even if the chat has not sent a message
+   * yet); throws `CloudError` on error
+   */
   attach: (file: File, signal?: AbortSignal) => Promise<CloudAttachmentInfo>;
   abort: (runId?: string, requestId?: string) => Promise<void>;
   switchVisibility: (visibility: "shared" | "private", requestId: string) => Promise<CloudChatItem>;
   newChat: () => void;
   openChat: (id: string) => void;
   /**
-   * 删除一个云端对话（账号模式）。requestId 一次删除用同一个：任务还没停稳（agent-fence-pending）时抛错，
-   * 界面用同一个请求号重试。成功时如果删的是当前打开的，自动退到一个新对话。
+   * Delete a cloud chat (account mode). Use the same requestId for one deletion: when the task has
+   * not stopped cleanly yet (agent-fence-pending) it throws, and the UI retries with the same request
+   * id. On success, if the deleted chat is the one currently open, it falls back to a new chat
+   * automatically.
    */
   removeChat: (id: string, requestId: string) => Promise<{ already: boolean }>;
   history: {
     items: CloudChatItem[];
     loading: boolean;
     refresh: (silent?: boolean, maxAgeMs?: number) => Promise<boolean>;
-    /** 这个项目的对话列表读到过（几个分页共用一份，进入项目就开始读；打开分页时通常已经有了） */
+    /**
+     * This project's chat list has been loaded (shared by several tabs; reading starts on entering the
+     * project, so it is usually already there when a tab is opened)
+     */
     loaded: boolean;
-    /** 这位账号在这个项目里自己开的对话数（共有对话算在开它的人名下）；满 `limit` 个就不让新建（账号 50 个，游客 1 个） */
+    /**
+     * Number of chats this account has opened itself in this project (shared chats count under the
+     * person who opened them); creating new ones is blocked once it reaches `limit` (50 for an account,
+     * 1 for a guest)
+     */
     ownedCount: number;
     atLimit: boolean;
-    /** 这个上限是几个：账号 50，游客 1（`chatLimitOf`） */
+    /** What this limit is: 50 for an account, 1 for a guest (`chatLimitOf`) */
     limit: number;
-    /** 当前身份是游客：满额时界面不是「删几个再建」，而是「游客每个项目只能开一个对话，注册账号才能多开」，新建入口置灰 */
+    /**
+     * The current identity is a guest: when the quota is full, the UI does not say "delete a few, then
+     * create" but "a guest can open only one chat per project; register an account to open more", and
+     * the new-chat entry is grayed out
+     */
     guest: boolean;
   };
   revoked?: boolean;
   model: string;
   setModel: (m: string) => void;
-  /** 思考强度;空串 = 默认(不带这个参数,随模型自己的默认) */
+  /** Thinking effort; empty string = default (parameter not sent, the model's own default applies) */
   effort: string;
   setEffort: (e: string) => void;
 }
@@ -334,9 +383,15 @@ export interface UseCloudChatOptions {
   enabled: boolean;
   autoAttach: boolean;
   initialConversation?: string | null;
-  /** 开断网待发(只在账号模式下起作用):断网时发的消息排着,网络恢复后自动发出 */
+  /**
+   * Enable the offline outbox (effective only in account mode): messages sent while offline are
+   * queued and sent automatically once the network is back
+   */
   outbox?: boolean;
-  /** 待发的那条真发出去之前对附件做的准备(图片、视频、音频放进素材库,同点发送时那一步) */
+  /**
+   * Preparation done on attachments before a queued message is actually sent (images, video and
+   * audio are put into the media library, the same step as when send is clicked)
+   */
   prepareFiles?: (files: ChatAttachment[]) => Promise<ChatAttachment[]>;
 }
 
@@ -353,12 +408,14 @@ export interface AiCloudProvider {
   onCloudConsentRequired: (listener: (binding: CloudConsentBinding, origin: string) => void) => () => void;
   cloudTicket: () => Promise<string>;
   /**
-   * 列一个云端项目里的对话。**不是 React hook** —— `src/start/browseChats.ts` 和它的 Node 单测
-   * 直接调，所以单独开一个槽，不能塞进上面那组 hook 里。
-   * 社区版缺省返回空列表：没有云端项目，也就没有云端对话。
+   * List the chats in a cloud project. **Not a React hook**: `src/start/browseChats.ts` and its Node
+   * unit tests call it directly, so it gets a slot of its own and cannot be put into the group of
+   * hooks above.
+   * The community edition returns an empty list by default: no cloud projects, hence no cloud chats.
    */
-  // 入参的形状照 `src/ai/cloud/cloudApi.ts` 的 `CloudApiDeps` 写（取它的子集）——
-  // 这里是公开侧对外声明的那份接口，形状对不上云端实现的话编译期就该报，不该留到运行期
+  // The shape of the parameters follows `CloudApiDeps` in `src/ai/cloud/cloudApi.ts` (a subset of it).
+  // This is the interface the public side declares to the outside; if its shape does not match the
+  // cloud implementation, the compiler should report it, not leave it until runtime
   listCloudChats: (deps: {
     baseUrl: () => string | null;
     projectId?: () => string | null;
@@ -373,7 +430,7 @@ export interface AiExtensionEntry {
   readonly create?: (deps?: Record<string, unknown>) => unknown;
 }
 
-/* ---------------- 社区版默认回退实现（未登记云端提供方时生效） ---------------- */
+/* ---------------- Community edition default fallback implementation (in effect when no cloud provider is registered) ---------------- */
 
 const IDLE_CONSENT: CloudConsentState = Object.freeze({
   accountId: null,
@@ -504,7 +561,7 @@ export function getAiCloudProvider(): AiCloudProvider {
   return currentProvider;
 }
 
-/* ---------------- 对外转调入口（供公开层 UI 直接调用） ---------------- */
+/* ---------------- Outward forwarding entry points (for the public-layer UI to call directly) ---------------- */
 
 export function useCloudAgent(): CloudAgentState {
   return currentProvider.useCloudAgent();
@@ -552,7 +609,7 @@ export function cloudTicket(): Promise<string> {
   return currentProvider.cloudTicket();
 }
 
-/* ---------------- 扩展表归一化辅助（供登记方或 `extensionsLoad.mjs` 使用） ---------------- */
+/* ---------------- Extension table normalization helpers (for the registering side or `extensionsLoad.mjs`) ---------------- */
 
 const FROZEN_EMPTY: readonly AiExtensionEntry[] = Object.freeze([]);
 

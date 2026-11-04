@@ -1,27 +1,47 @@
 /**
- * 素材上传队列(C6.6,`docs/plan/c66-design.md` 第 3 节;语义 `docs/semantics/product/asset-service.md`「上传」)。
+ * Asset upload queue (C6.6, Section 3 of `docs/plan/c66-design.md`; semantics
+ * `docs/semantics/product/asset-service.md` "Upload").
  *
- * 编辑器进程里一个持久队列,把本机导入的素材(两档:素材小尺寸、素材原尺寸)传到**当前连接的素材服务**:
- *   - **小尺寸全部先传**(用户 2026-10-13:「强制先上传小尺寸,然后上传大尺寸」):队里只要还有哪个素材的素材小尺寸没传完,
- *     就先传它(按进队先后);队里所有素材小尺寸都在素材服务上 `complete` 了,才按进队先后传素材原尺寸。传素材原尺寸期间
- *     新进队的素材(或后补上的素材小尺寸)排在剩下的素材原尺寸前面,正在传的那一档传完才让。
- *     没有素材小尺寸(不是视频、素材小尺寸没生成出来)的素材只有素材原尺寸一档,排在所有素材小尺寸之后。
- *   - **严格按序**:轮到的那一档在退避时,后面的都等着(素材小尺寸在退避,任何素材原尺寸都不传)。
- *   - 哪一档已经传过只记在内存里,不落盘:重启后从素材小尺寸重新问起,已传完的那一档 `putFile` 问一次 `chunks` 就过。
- *   - **分片、断点续传**:每一档走素材服务客户端的 `putFile`(先问 `chunks`,只补 `received` 里缺的片,最后 `complete`
- *     由服务端按 sha256 校验)。断了按退避重试(5 s、30 s、120 s,之后每 10 min),不放弃。
- *   - **两档都 complete 才出队**:传完再各问一次 `chunks`,两档都报 `complete: true` 才算。同步状态只问素材服务,
- *     不写进项目、不写进 `.proc`(语义「同步状态只问素材服务」);本文件只记「还要传什么」。
- *   - **带素材票据**:由 `target()` 给出的素材服务客户端带(`createAssetClient({ base, ticket })`),本模块不碰票据。
- *   - **低优先级**:每一片发出前取带宽闸(`bandwidth-gate.mjs` 的 `acquireMedia`),预渲染产物的推送优先。
- *   - **连本地素材服务时是空操作**:`target()` 回 null 表示当前连的就是本机素材服务 —— 导入那一步已经是本地写入,
- *     不进队。队里已有的(连远程时进的)在 `target()` 回 null 期间暂停,换回远程再接着传。
- *   - **落盘**:`upload-queue.json`,每次进队、出队、失败都原子写回;重启时读回接着传。
+ * A persistent queue in the editor process that transfers locally imported assets (two tiers:
+ * small-size asset, original-size asset) to the **currently connected asset service**:
+ *   - **Upload all small sizes first** (user decision, 2026-10-13: "Force uploading small size
+ *     first, then uploading large size"): as long as any asset in the queue has an unfinished
+ *     small-size asset, transfer it first (by enqueue order); only after all small-size assets
+ *     in the queue are `complete` on the asset service are original-size assets transferred by
+ *     enqueue order. During original-size asset transfers, newly enqueued assets (or late-arriving
+ *     small-size assets) are queued ahead of remaining original-size assets, yielding only after
+ *     the currently transferring tier finishes.
+ *     Assets without a small-size asset (not video, or small-size asset not generated) have only
+ *     the original-size asset tier, queued behind all small-size assets.
+ *   - **Strictly sequential**: when the current tier is backing off, subsequent items wait
+ *     (if a small-size asset is backing off, no original-size asset is transferred).
+ *   - Which tier has already transferred is recorded only in memory and not persisted to disk:
+ *     after restart, it re-queries starting from small-size assets; already transferred tiers pass
+ *     as soon as `putFile` queries `chunks` once.
+ *   - **Chunked, resumable transfers**: each tier uses the asset service client's `putFile`
+ *     (queries `chunks` first, only uploads chunks missing from `received`, and finally `complete`
+ *     is verified by server via sha256). On interruption, retries with backoff (5 s, 30 s, 120 s,
+ *     then every 10 min), never giving up.
+ *   - **Dequeue only when both tiers are complete**: after transfer, queries `chunks` once for each
+ *     tier; considered done only when both tiers report `complete: true`. Sync status only queries
+ *     the asset service, not written to the project or `.proc` (semantics "query sync status only
+ *     from asset service"); this file only tracks "what remains to transfer".
+ *   - **Includes asset ticket**: carried by asset service client from `target()`
+ *     (`createAssetClient({ base, ticket })`); this module does not touch tickets.
+ *   - **Low priority**: acquires bandwidth gate (`acquireMedia` in `bandwidth-gate.mjs`) before
+ *     sending each chunk; pushing prerender outputs takes priority.
+ *   - **No-op when connected to local asset service**: `target()` returning null means currently
+ *     connected to the local asset service: the import step is already a local write, so it does
+ *     not enter the queue. Existing queue items (entered while connected remotely) pause while
+ *     `target()` returns null, resuming when switched back to remote.
+ *   - **Persisted to disk**: `upload-queue.json`, atomically written back on every enqueue,
+ *     dequeue, and failure; re-read on restart to resume transfer.
  *
- * 日志事件(T3 按它核对顺序):`upload.enqueued`、`upload.tier-start`、`upload.tier-done`、`upload.item-done`、
- * `upload.retry`、`upload.skip-local`、`upload.missing`。
+ * Log events (T3 checks order against them): `upload.enqueued`, `upload.tier-start`,
+ * `upload.tier-done`, `upload.item-done`, `upload.retry`, `upload.skip-local`, `upload.missing`.
  *
- * 只用 Node 内置模块;素材服务客户端、带宽闸、找文件的函数都由调用方传进来。
+ * Uses only Node built-in modules; asset service client, bandwidth gate, and file lookup functions
+ * are all passed in by the caller.
  */
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
@@ -35,7 +55,7 @@ const HASH = /^[0-9a-f]{64}$/;
 const EXT = /^[a-z0-9]{1,8}$/;
 const TIER_ORDER = ['small', 'original'];
 
-/** 一个素材的两档整理成「先小后大」;不合格回 null */
+/** Organizes an asset's two tiers into "small first, large second"; returns null if invalid */
 export function normalizeUploadItem(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const tiers = [];
@@ -54,20 +74,30 @@ export function normalizeUploadItem(raw) {
   return { id: projectId ? `${projectId}:${original.hash}` : original.hash, name: typeof raw.name === 'string' ? raw.name.slice(0, 200) : '', tiers, ...(projectId ? { projectId } : {}) };
 }
 
-/** 一次按哈希入队最多收多少个素材 */
+/** Maximum number of assets accepted per enqueue-by-hash */
 export const ENQUEUE_MAX_ITEMS = 2000;
 
 /**
- * 按哈希把**本地内容库里已有**的素材交给上传队列(C10a 集成返工:开启多用户协作「放云端」时,开启前就在项目里的
- * 素材也要上云;`POST /api/media/upload-queue/enqueue` 调它)。
+ * Hands over assets **already in local content store** to the upload queue by hash (C10a
+ * integration rework: when enabling multi-user collaboration "move to the cloud", assets already
+ * in the project before enabling must also move to the cloud; called by
+ * `POST /api/media/upload-queue/enqueue`).
  *
- * - `items`:`[{ name?, original, small? }]`,一个素材一项(视频两档:`small` 是 `tiers.small`、`original` 是 `tiers.original`;
- *   图片、音频只有一档,只给 `original`)。也收 `hashes: string[]`(每个当作只有素材原尺寸一档)。
- * - 只收本地有的:素材原尺寸本地没有 → 整个素材不进队,素材原尺寸哈希记进 `missing`;素材小尺寸本地没有 → 只传素材原尺寸,素材小尺寸哈希记进 `missing`。
- * - 进队照队列本来的规则:所有素材小尺寸先传、再传素材原尺寸,两档都 complete 才出队;同一素材原尺寸已在队里就合并档位。
- * - 已登记的小尺寸仍在转码时,交给持久的两档管理器完成后入队,回 deferred,不提前传原尺寸。
- *   小尺寸已经生成、页面还没写回哈希时,从本机两档登记补上,仍按先小后大入队。
- * - 当前连的是本机素材服务(队列是空操作)时回 `local: true`,什么都不进。
+ * - `items`: `[{ name?, original, small? }]`, one item per asset (two tiers for video: `small` is
+ *   `tiers.small`, `original` is `tiers.original`; only one tier for images and audio, providing
+ *   only `original`). Also accepts `hashes: string[]` (each treated as original-size asset tier only).
+ * - Only accepts locally available assets: original-size asset missing locally → whole asset does
+ *   not enter queue, original-size asset hash recorded in `missing`; small-size asset missing
+ *   locally → transfers only original-size asset, small-size asset hash recorded in `missing`.
+ * - Enqueues following standard queue rules: all small-size assets transferred first, then
+ *   original-size assets, dequeued only when both tiers are complete; merges tiers if the same
+ *   original-size asset is already in queue.
+ * - When a registered small size is still transcoding, hands it off to persistent two-tier manager
+ *   to enqueue upon completion, returning deferred without transferring original size early.
+ *   When small size has already been generated but page has not written back the hash, fills in
+ *   from local two-tier registry, still enqueuing small first, large second.
+ * - When currently connected to local asset service (queue is a no-op), returns `local: true`
+ *   and enqueues nothing.
  *
  * @param {{ enqueue(raw: object): Promise<{ queued: boolean, reason?: string }> }} queue
  * @param {{ items?: unknown, hashes?: unknown }} body
@@ -118,10 +148,13 @@ async function atomicWrite(file, text) {
 
 /**
  * @param {object} options
- * @param {string | null} options.file  队列文件(`<本机数据目录>/upload-queue.json`);null 只在内存里
- * @param {() => ({ client: any, base?: string } | null)} options.target  当前连接的素材服务;null = 本机素材服务(空操作)
- * @param {(hash: string) => (string | null | Promise<string | null>)} options.resolveFile  哈希 → 本地内容库里的文件
- * @param {any} [options.gate]  带宽闸;不给就不让路
+ * @param {string | null} options.file  Queue file (`<local-data-dir>/upload-queue.json`);
+ *   null = in-memory only
+ * @param {() => ({ client: any, base?: string } | null)} options.target  Currently connected
+ *   asset service; null = local asset service (no-op)
+ * @param {(hash: string) => (string | null | Promise<string | null>)} options.resolveFile
+ *   Hash → file in local content store
+ * @param {any} [options.gate]  Bandwidth gate; does not yield if not granted
  * @param {(event: string, fields: object) => void} [options.log]
  * @param {number[]} [options.backoff]
  * @param {() => number} [options.now]
@@ -132,9 +165,9 @@ export function createUploadQueue({
   if (typeof target !== 'function') throw new TypeError('createUploadQueue needs target()');
   if (typeof resolveFile !== 'function') throw new TypeError('createUploadQueue needs resolveFile()');
   const delays = Array.isArray(backoff) && backoff.length ? backoff.map((ms) => Math.max(0, Number(ms) || 0)) : [...UPLOAD_BACKOFF_MS];
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志出错不影响上传 */ } };
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging errors do not affect upload */ } };
 
-  /** id(素材原尺寸哈希)→ { id, name, tiers, attempts, nextAt, seq } */
+  /** id(original-size asset hash) → { id, name, tiers, attempts, nextAt, seq } */
   const items = new Map();
   let seq = 0;
   let running = false;
@@ -146,7 +179,7 @@ export function createUploadQueue({
   let lastError = null;
   let current = null;
 
-  /* ---------- 落盘 ---------- */
+  /* ---------- Persistence ---------- */
   let chain = Promise.resolve();
   let pending = null;
   const snapshot = () => JSON.stringify({
@@ -180,8 +213,11 @@ export function createUploadQueue({
     }
   })();
 
-  /* ---------- 调度 ---------- */
-  /** 下一档活:还有素材小尺寸没传的,取其中最早进队的;都传了,取最早进队的素材传它的素材原尺寸 */
+  /* ---------- Scheduling ---------- */
+  /**
+   * Next tier of work: if any small-size asset is not yet transferred, pick the earliest enqueued;
+   * if all transferred, pick the earliest enqueued asset to transfer its original-size asset.
+   */
   const nextJob = () => {
     let small = null;
     let first = null;
@@ -210,7 +246,8 @@ export function createUploadQueue({
     if (wait > 0) return schedule(wait);
     const where = target();
     if (!where || !where.client) {
-      // 当前连的是本机素材服务:暂停,换回远程再接着传(每 5 s 看一次)
+      // Currently connected to local asset service: pause, resume when switched back to remote
+      // (checks every 5 s)
       return schedule(5_000);
     }
     working = true;
@@ -224,10 +261,11 @@ export function createUploadQueue({
       await ownership?.assert();
       item.attempts = 0;
       if (job.tier === 'original') {
-        // 两档都在素材服务上 complete 才出队(同步状态只问素材服务)
+        // Dequeue only when both tiers are complete on the asset service (sync status queries asset
+        // service only)
         for (const t of item.uploaded) {
           const st = await where.client.chunks('media', t.hash);
-          if (!st.complete) throw Object.assign(new Error(`素材服务上 ${t.tier} ${t.hash} 还没 complete`), { code: 'not-complete' });
+          if (!st.complete) throw Object.assign(new Error(`${t.tier} ${t.hash} on the asset service is not complete yet`), { code: 'not-complete' });
         }
         items.delete(item.id);
         counters.done++;
@@ -237,9 +275,9 @@ export function createUploadQueue({
       }
     } catch (error) {
       if (!items.has(item.id)) {
-        // 该项已被撤回移出队列，不重试也不计失败
+        // This item has been cancelled and removed from the queue; do not retry or count as failure
       } else if (!running && (error?.name === 'AbortError')) {
-        // 停下了:留在队里,下次接着传
+        // Stopped: keep in queue, resume transfer next time
       } else {
         counters.failures++;
         item.attempts++;
@@ -257,7 +295,10 @@ export function createUploadQueue({
     if (running) schedule(0);
   }
 
-  /** 传一个素材的一档;传完向素材服务问到 complete 才记「传过」。本地没有这一档的文件就记一笔跳过 */
+  /**
+   * Transfers one tier of an asset; only records "transferred" after asset service confirms complete.
+   * If local file for this tier is missing, records a skip.
+   */
   async function uploadTier(item, tier, client, signal) {
     const t = item.tiers.find((x) => x.tier === tier);
     if (!t || item.sent.has(tier)) return;
@@ -265,7 +306,8 @@ export function createUploadQueue({
     if (ownership && target()?.projectId !== item.projectId) throw Object.assign(new Error('project-mismatch'), { code: 'project-mismatch' });
     const filePath = await resolveFile(t.hash);
     if (!filePath) {
-      // 本地内容库里没有这一档(被删了):传不了,记一笔跳过这一档;素材原尺寸也没有就整个丢掉
+      // Missing this tier in local content store (deleted): cannot transfer, record a skip for this tier;
+      // drop the entire asset if original-size asset is also missing
       counters.missing++;
       say('upload.missing', { id: item.id, tier: t.tier, hash: t.hash });
       item.sent.add(tier);
@@ -287,19 +329,22 @@ export function createUploadQueue({
     });
     say('upload.tier-done', { id: item.id, tier: t.tier, hash: t.hash, uploaded: r.uploaded, sent: r.sent });
     if (tier === 'small') {
-      // 素材小尺寸在素材服务上 complete 了才算传过:没 complete 就重试它,不往下传素材原尺寸
+      // Small-size asset counts as transferred only when complete on asset service: if not complete,
+      // retry it and do not proceed to original-size asset
       const st = await client.chunks('media', t.hash);
-      if (!st.complete) throw Object.assign(new Error(`素材服务上 ${t.tier} ${t.hash} 还没 complete`), { code: 'not-complete' });
+      if (!st.complete) throw Object.assign(new Error(`${t.tier} ${t.hash} on the asset service is not complete yet`), { code: 'not-complete' });
     }
     item.sent.add(tier);
     if (!item.uploaded.some((x) => x.tier === tier)) item.uploaded.push(t);
   }
 
-  /* ---------- 对外 ---------- */
+  /* ---------- Public API ---------- */
   return {
     /**
-     * 进队一个素材的两档。当前连的是本机素材服务时是空操作(回 `{ queued: false, reason: 'local' }`)。
-     * 同一素材原尺寸已在队里就合并档位(例如素材小尺寸后到),不改它的位置。回的 promise 在队列文件写回后兑现。
+     * Enqueues an asset's two tiers. No-op when connected to local asset service (returns
+     * `{ queued: false, reason: 'local' }`). If the same original-size asset is already in queue,
+     * merges tiers (for example, small-size asset arriving later) without changing its position.
+     * Returned promise resolves after queue file is written back.
      * @param {{ name?: string, tiers: { tier: 'small' | 'original', hash: string, ext?: string }[] }} raw
      */
     async enqueue(raw) {
@@ -332,7 +377,10 @@ export function createUploadQueue({
       running = true;
       schedule(0);
     },
-    /** 停止:不再派新活,正在传的那一片发完就停(这一素材留在队里);等队列文件写完 */
+    /**
+     * Stops: dispatches no new work; stops once the currently transferring chunk is sent (this asset
+     * remains in queue); waits until queue file finishes writing.
+     */
     async stop() {
       running = false;
       clearTimer();
@@ -341,9 +389,10 @@ export function createUploadQueue({
       for (const resolve of waiters.splice(0)) resolve();
     },
     /**
-     * 撤回在途或排队中的素材。
-     * 若正在上传该素材，中止在途分片并移出队列；若在排队中，直接移出队列。
-     * @param {string[] | string} [targets] 要撤回的哈希列表；若未指定则撤回全部
+     * Cancels assets in flight or queued.
+     * If currently uploading the asset, aborts in-flight chunks and removes from queue; if queued,
+     * removes directly from queue.
+     * @param {string[] | string} [targets] Hash list to cancel; if unspecified, cancels all
      * @returns {Promise<{ ok: boolean, cancelled: string[] }>}
      */
     async cancel(targets) {
@@ -377,12 +426,12 @@ export function createUploadQueue({
       settle();
       return { ok: true, cancelled: cancelledIds };
     },
-    /** 立即重排(测试拨时钟后用;也会跳过队头的退避) */
+    /** Reschedules immediately (used in tests after advancing the clock; also skips head-of-line backoff) */
     poke({ skipBackoff = false } = {}) {
       if (skipBackoff) for (const item of items.values()) item.nextAt = 0;
       if (running && !working) schedule(0);
     },
-    /** 等队列空;已停止的立即返回 */
+    /** Waits for queue to empty; returns immediately if already stopped */
     drain() {
       if (!items.size || !running) return Promise.resolve();
       return new Promise((resolve) => waiters.push(resolve));

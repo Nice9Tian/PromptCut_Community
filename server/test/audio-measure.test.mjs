@@ -95,14 +95,17 @@ test("timelineMeasureArgs filter chain matches mux-audio", () => {
   for (let i = 0; i < entries.length; i++) {
     expectedMxAmix = expectedMxAmix.replace("[a" + (i+1) + "]", "[a" + i + "]");
   }
-  // 测响度在混音之后多一步 asetpts=N/SR/TB(amix 偶发 NOPTS 时逐秒曲线缺点,见 audio-measure.mjs),混音本身与导出相同
+  // Loudness measurement adds an extra asetpts=N/SR/TB step after mixing (when amix occasionally has
+  // NOPTS, the per-second curve misses points, see audio-measure.mjs); mixing itself is identical to export
   expectedMxAmix = expectedMxAmix.replace("[aout]", ",asetpts=N/SR/TB,ebur128=peak=true[aout]");
   assert.equal(mAmix, expectedMxAmix);
 });
 
-// 进度行是 \r 分隔的、会和 ebur128 的逐帧行挤在同一行里;以前按 \n 切,一行里好几个 t: 只匹配到第一个,
-// 逐秒曲线会缺点(实测 36 秒只剩 20 个点)。现在按 \r 也切,并按 floor(t) 取每整秒的第一帧。
-test("parseEbur128:\r 分隔的进度行混进来也不丢整秒的点;timeline 带 duration 就截断", () => {
+// Progress lines are \r-separated and get squeezed into the same line with ebur128 frame-by-frame
+// lines; previously split by \n, when a line had multiple t:, only the first was matched, and the
+// per-second curve would miss points (in actual testing, only 20 points remained out of 36 seconds).
+// Now also split by \r, and take the first frame of each whole second by floor(t).
+test("parseEbur128:\r-delimited progress lines mixed in do not drop whole-second points; a timeline with duration is truncated", () => {
   const frame = (t, s) => `[Parsed_ebur128_0 @ 0] t: ${t.toFixed(1)}  TARGET:-23 LUFS  M: -20.0 S: ${s}  I: -19.0 LUFS  LRA: 2.0 LU`;
   const lines = [];
   for (let i = 0; i <= 25; i++) {

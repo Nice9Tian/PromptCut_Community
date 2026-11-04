@@ -1,7 +1,10 @@
 /**
- * 页面触发预渲染的调度(`prerenderPreload.ts`)。跑:node --test src/editor/preview/prerenderPreload.test.mjs
+ * Scheduling for page-triggered prerendering (`prerenderPreload.ts`).
+ * Run: node --test src/editor/preview/prerenderPreload.test.mjs
  *
- * 钉的是:编辑后防抖、只在空闲时发、没就绪隔 2 秒再问、播放中停、空闲后复查一次、失败隔 4 秒重试、请求在飞时又编辑会再发一次。
+ * Pins down: debounce after edits, send only when idle, re-query after 2s if not ready, pause
+ * during playback, recheck once after idle, retry after 4s on failure, resend if edited while
+ * request in flight.
  */
 import "../../testing/registerTs.mjs";
 import { test } from "node:test";
@@ -9,7 +12,7 @@ import assert from "node:assert/strict";
 
 const { createPreloadScheduler, PRELOAD_DEBOUNCE_MS, PRELOAD_POLL_MS, PRELOAD_RETRY_MS, PRELOAD_REQUEST_TIMEOUT_MS } = await import("./prerenderPreload.ts");
 
-/** 假计时器:手动推进虚拟时间 */
+/** Fake timer: manually advance virtual time */
 function fakeClock() {
   let now = 0;
   let seq = 0;
@@ -25,7 +28,7 @@ function fakeClock() {
         timers.delete(next[0]);
         now = next[1].at;
         next[1].fn();
-        // 让 request 的 Promise 落定
+        // Let the request Promise settle
         for (let i = 0; i < 5; i++) await Promise.resolve();
       }
       now = until;
@@ -51,21 +54,21 @@ function setup(statuses) {
   return { clock, calls, scheduler };
 }
 
-test("不空闲不发;空闲后按防抖发一次,就绪就停", async () => {
+test("Does not send when not idle; sends once after the debounce when idle; stops once ready", async () => {
   const { clock, calls, scheduler } = setup([{ status: "ready" }]);
   scheduler.edited();
   await clock.advance(5000);
-  assert.equal(calls.length, 0, "播放 / 拖动中不发");
+  assert.equal(calls.length, 0, "Does not send during playback / scrubbing");
   scheduler.setIdle(true);
   await clock.advance(PRELOAD_DEBOUNCE_MS - 1);
-  assert.equal(calls.length, 0, "防抖期内不发");
+  assert.equal(calls.length, 0, "Does not send during the debounce period");
   await clock.advance(1);
   assert.equal(calls.length, 1);
   await clock.advance(20000);
-  assert.equal(calls.length, 1, "就绪之后不再问");
+  assert.equal(calls.length, 1, "Does not ask again once ready");
 });
 
-test("连续编辑只发最后那一次(防抖)", async () => {
+test("Consecutive edits send only the last one (debounce)", async () => {
   const { clock, calls, scheduler } = setup([{ status: "ready" }]);
   scheduler.setIdle(true);
   for (let i = 0; i < 5; i++) { scheduler.edited(); await clock.advance(PRELOAD_DEBOUNCE_MS / 2); }
@@ -74,7 +77,7 @@ test("连续编辑只发最后那一次(防抖)", async () => {
   assert.equal(calls.length, 1);
 });
 
-test("没就绪隔 2 秒再问,直到就绪", async () => {
+test("If not ready, ask again after 2 seconds, until ready", async () => {
   const { clock, calls, scheduler } = setup([{ status: "html" }, { status: "html" }, { status: "ready" }]);
   scheduler.setIdle(true);
   await clock.advance(PRELOAD_DEBOUNCE_MS);
@@ -87,20 +90,20 @@ test("没就绪隔 2 秒再问,直到就绪", async () => {
   assert.equal(calls.length, 3);
 });
 
-test("播放中停下;空闲之后没就绪的那一版复查一次", async () => {
+test("Stops during playback; after idle, re-checks once the version that was not ready", async () => {
   const { clock, calls, scheduler } = setup([{ status: "html" }, { status: "ready" }]);
   scheduler.setIdle(true);
   await clock.advance(PRELOAD_DEBOUNCE_MS);
   assert.equal(calls.length, 1);
   scheduler.setIdle(false);
   await clock.advance(60000);
-  assert.equal(calls.length, 1, "播放中不问");
+  assert.equal(calls.length, 1, "Does not ask during playback");
   scheduler.setIdle(true);
   await clock.advance(PRELOAD_DEBOUNCE_MS);
-  assert.equal(calls.length, 2, "空闲之后复查");
+  assert.equal(calls.length, 2, "Re-checks after idle");
 });
 
-test("已经就绪的,播放完不复查;再编辑才发", async () => {
+test("A version that is already ready is not re-checked after playback; it is sent only after a further edit", async () => {
   const { clock, calls, scheduler } = setup([{ status: "ready" }, { status: "ready" }]);
   scheduler.setIdle(true);
   await clock.advance(PRELOAD_DEBOUNCE_MS);
@@ -113,7 +116,7 @@ test("已经就绪的,播放完不复查;再编辑才发", async () => {
   assert.equal(calls.length, 2);
 });
 
-test("请求失败隔 4 秒重试", async () => {
+test("A failed request is retried after 4 seconds", async () => {
   const { clock, calls, scheduler } = setup([new Error("prerender restarting"), { status: "ready" }]);
   scheduler.setIdle(true);
   await clock.advance(PRELOAD_DEBOUNCE_MS);
@@ -124,7 +127,7 @@ test("请求失败隔 4 秒重试", async () => {
   assert.equal(calls.length, 2);
 });
 
-test("dispose 之后什么都不发", async () => {
+test("Nothing is sent after dispose", async () => {
   const { clock, calls, scheduler } = setup([]);
   scheduler.setIdle(true);
   scheduler.dispose();
@@ -134,7 +137,7 @@ test("dispose 之后什么都不发", async () => {
   assert.equal(clock.pending(), 0);
 });
 
-test("一次 preload 永久悬挂后会取消并重试，迟到回包不能覆盖新状态", async () => {
+test("After a preload hangs forever it is canceled and retried; a late response must not overwrite the new state", async () => {
   const clock = fakeClock();
   const calls = [];
   let finishOld;

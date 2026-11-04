@@ -1,36 +1,36 @@
 /*
- * 手机版界面的样式,照演示稿 `prototypes/mobile-ui-demo/index.html`(第四～十三轮)与 README「设计规则」。
- * 颜色都是 `.pcm` 上的变量,别处不写硬编码颜色(素材缩略图的底色除外);只在 `.pcm` 里生效,不碰桌面界面。
+ * Styles of the mobile app UI, following the demo `prototypes/mobile-ui-demo/index.html` (rounds 4 to 13) and the README "Design rules".
+ * All colors are variables on `.pcm`; do not hardcode colors anywhere else (except the background color of media thumbnails); it only takes effect inside `.pcm` and does not touch the desktop UI.
  */
 .pcm {
-  /* 底色与文字 */
+  /* Background and text colors */
   --bg: #12151b; --bg-page: #07090c;
   --panel: #1a1f28; --panel2: #222834; --line: #2d3442;
   --text: #e6eaf2; --dim: #8b95a8; --white: #fff;
-  /* 青蓝:唯一的交互强调色 */
+  /* Cyan-blue: the only interactive emphasis color */
   --accent: #26c6e6; --accent-dim: #12404c; --on-accent: #04222a; --accent-soft: #d5f6ff;
   --accent-deep: color-mix(in srgb, var(--accent) 30%, var(--bg));
   --accent-deeper: color-mix(in srgb, var(--accent) 12%, var(--bg));
   --accent-edge: color-mix(in srgb, var(--accent) 50%, var(--bg));
-  /* 酱紫:只标「这是 Agent / 卡片类内容」的身份 */
+  /* Plum: only marks the identity "this is Agent / card content" */
   --plum: #8a5a9e; --plum-dim: #3a2a45; --plum-text: #d3a8e6;
-  /* 警示 / 危险 / 成功 */
+  /* Warning / danger / success */
   --warn: #e8b04a; --warn-text: #d9c08a;
   --warn-bg: color-mix(in srgb, var(--warn) 8%, transparent);
   --warn-bg-2: color-mix(in srgb, var(--warn) 15%, transparent);
   --warn-bg-3: color-mix(in srgb, var(--warn) 27%, transparent);
   --warn-chip: color-mix(in srgb, var(--warn) 18%, var(--bg));
   --danger: #e5604f; --ok: #4cc38a;
-  /* 时间轴片段底色 */
+  /* Timeline clip background colors */
   --clip-v: #1b5f78; --clip-a: #2b6b4f; --clip-cap: #5b5530;
-  /* 滤镜样片:一块固定的彩色样片套上滤镜,一眼看出冷暖、黑白(同桌面滤镜组的样片) */
+  /* Filter sample: a fixed color sample with the filter applied, so warm/cool tones and black-and-white are obvious at a glance (same as the samples of the desktop filter group) */
   --fx-sample: linear-gradient(135deg, #e8553a 0%, #f2c14e 35%, #3fa9f5 70%, #2d6a4f 100%);
-  /* 遮罩与描边 */
+  /* Overlays and outlines */
   --scrim: #0009; --scrim-light: #0004;
   --shade-weak: #0006; --shade: #000a; --shade-strong: #000d; --shade-art: #0008;
   --hair: #ffffff08; --edge: #ffffff22; --haze: #ffffff33; --haze-strong: #ffffff55;
   --sb-thumb: var(--haze); --sb-thumb-hover: var(--haze-strong);
-  /* 圆角四档、字号五档 */
+  /* Four corner radius tiers, five font size tiers */
   --r-s: 6px; --r-m: 10px; --r-l: 18px; --r-pill: 999px;
   --fs-xs: 10px; --fs-s: 11px; --fs-m: 12px; --fs-l: 14px; --fs-xl: 16px;
 
@@ -40,7 +40,7 @@
   -webkit-text-size-adjust: 100%; overscroll-behavior: none;
 }
 .pcm * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-/* 深色细滚动条:标准写法只给不支持 ::-webkit-scrollbar 的浏览器(Firefox);Chromium 121 起设了标准属性会整套忽略 ::-webkit-scrollbar */
+/* Thin dark scrollbar: the standard syntax is given only to browsers that do not support ::-webkit-scrollbar (Firefox); since Chromium 121, setting the standard property makes the whole ::-webkit-scrollbar set be ignored */
 @supports not selector(::-webkit-scrollbar) { .pcm * { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; } }
 .pcm ::-webkit-scrollbar { width: 5px; height: 5px; background: transparent; }
 .pcm ::-webkit-scrollbar-track { background: transparent; }
@@ -52,7 +52,7 @@
 .pcm input, .pcm textarea { font: inherit; color: inherit; }
 .pcm svg.ic { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
-/* 通用 */
+/* Common */
 .pcm .topbar { flex: none; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 12px; padding-top: env(safe-area-inset-top); box-sizing: content-box; }
 .pcm .topbar h1 { font-size: var(--fs-xl); margin: 0; flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pcm .icon-btn { width: 34px; height: 34px; flex: none; border-radius: var(--r-m); display: grid; place-items: center; color: var(--dim); }
@@ -73,7 +73,7 @@
 .pcm .hint { color: var(--dim); font-size: var(--fs-m); margin: 4px 0 10px; }
 .pcm .err { color: var(--danger); font-size: var(--fs-m); margin: 4px 0 10px; }
 
-/* ===== 开始页(项目列表) ===== */
+/* ===== Start page (project list) ===== */
 .pcm .home-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 16px 16px; }
 .pcm .logo { font-size: var(--fs-xl); font-weight: 700; letter-spacing: .5px; flex: 1; }
 .pcm .logo b { color: var(--accent); }
@@ -99,7 +99,7 @@
 .pcm .check-row { display: flex; align-items: center; gap: 8px; font-size: var(--fs-m); color: var(--dim); margin-bottom: 12px; }
 .pcm .check-row input { accent-color: var(--accent); width: 16px; height: 16px; }
 
-/* ===== 编辑主界面 ===== */
+/* ===== Main editor screen ===== */
 .pcm .editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .pcm .preview-area { flex: 1; min-height: 0; display: flex; align-items: center; }
 .pcm .editor.is-timeline .preview-area { flex: none; }
@@ -112,7 +112,7 @@
 .pcm .stage-btns { position: absolute; right: 6px; top: 6px; display: flex; gap: 4px; z-index: 20; }
 .pcm .sbtn { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); line-height: 1.4; padding: 2px 8px; border-radius: var(--r-pill); background: var(--shade-strong); color: var(--white); border: 1px solid var(--edge); white-space: nowrap; backdrop-filter: blur(2px); }
 .pcm .sbtn svg { width: 12px; height: 12px; }
-/* 成员按钮上的数字角标(申请加入):外观照下面页签上的 .badge-n,只是跟在文字后面、不悬空 */
+/* Number badge on the member button (join requests): looks like .badge-n on the tabs below, except that it follows the text instead of hanging free */
 .pcm .sbtn .badge-n { min-width: 16px; height: 16px; border-radius: var(--r-pill); background: var(--danger); color: var(--white); font-size: var(--fs-xs); display: inline-grid; place-items: center; padding: 0 4px; font-weight: 700; }
 .pcm .agent-flag { position: absolute; right: 6px; top: 28px; z-index: 20; font-size: var(--fs-xs); background: var(--plum-dim); color: var(--plum-text); padding: 1px 7px; border-radius: var(--r-pill); animation: pcm-pulse 1.2s infinite; }
 @keyframes pcm-pulse { 50% { opacity: .5; } }
@@ -122,7 +122,7 @@
 .pcm .cfbar .txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pcm .cfbar button { flex: none; height: 24px; padding: 0 14px; border-radius: var(--r-pill); background: var(--warn-bg-2); color: var(--warn); font-size: var(--fs-m); font-weight: 600; }
 .pcm .cfbar button:active { background: var(--warn-bg-3); }
-/* 只读项目(游客)的说明条:手机上没有悬停说明,置灰的按钮得有一句话讲清为什么 */
+/* Explanation bar for a read-only project (guest): there is no hover tooltip on a phone, so grayed-out buttons need one sentence explaining why */
 .pcm .robar { flex: none; margin: 2px 12px 4px; padding: 6px 10px; border-radius: var(--r-m); border-left: 3px solid var(--accent); background: var(--accent-deeper); color: var(--dim); font-size: var(--fs-m); }
 
 .pcm .transport { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 12px 4px; }
@@ -132,48 +132,48 @@
 .pcm .play svg { width: 20px; height: 20px; }
 .pcm .transport .icon-btn svg { width: 22px; height: 22px; }
 
-/* 缩略时间轴 */
+/* Mini timeline */
 .pcm .pane-default { flex: none; display: flex; flex-direction: column; }
 .pcm .mainhead { flex: none; display: flex; align-items: baseline; justify-content: space-between; padding: 8px 14px 0; }
 .pcm .mainhead b { font-size: var(--fs-l); }
 .pcm .mainhead span { font-size: var(--fs-m); color: var(--text); font-variant-numeric: tabular-nums; }
 .pcm .mainstrip { flex: none; position: relative; }
 /*
- * touch-action 从 none 改成 pan-x(2026-10-24 用户报「手机版传统式缩略时间轴用触屏没法滑动查看」)。
+ * touch-action changed from none to pan-x (user report, 2026-10-24: "the mobile app's Classic mode mini timeline can't be scrolled with the touchscreen").
  *
- * 原来写 none,等于把浏览器的原生横向滑动整个关掉,滚动全靠 ThumbStrip 的 onPointerDown 手动改
- * scrollLeft —— 鼠标上没问题,手指上这条路不稳,而且就算推得动也没有惯性滑动,和手机上别的横向列表不是一个手感。
- * pan-x 之后横向交给浏览器自己滑(带惯性),竖向手势照样能滚页面;滚动位置换算成当前时间那一段本来就挂在
- * scroll 事件上,原生滑动照样驱动它,不用改。
+ * It used to be none, which turned off the browser's native horizontal swiping entirely, leaving scrolling to ThumbStrip's onPointerDown manually changing
+ * scrollLeft: fine with a mouse, but unreliable with a finger, and even when it moves there is no inertial scrolling, which feels unlike the other horizontal lists on the phone.
+ * With pan-x, horizontal scrolling is left to the browser (with inertia) and vertical gestures can still scroll the page; the part that converts the scroll position into the current time was already hooked onto
+ * the scroll event, and native swiping drives it just the same, so no change is needed.
  *
- * `overscroll-behavior-x: contain` 是给 iPhone 的:横滑到头之后别把手势接力给 Safari 的「侧滑返回」,
- * 不然划到最后一段再往左划就退出项目了。
- * 换顺序那一下另说:它要求先选中、再长按拖,所以只给**选中的那一张卡**关掉原生滑动(下一条规则),
- * 免得长按拖动时浏览器把它当成滑动抢走。
+ * `overscroll-behavior-x: contain` is for iPhone: after a horizontal swipe reaches the end, do not hand the gesture over to Safari's "swipe back",
+ * otherwise swiping left past the last segment would exit the project.
+ * Reordering is a separate matter: it requires selecting first and then long-press dragging, so native swiping is turned off only for **the selected card** (next rule),
+ * so the browser does not treat a long-press drag as a swipe and take it over.
  */
 /*
- * 左右那两段「让首尾也能走到正中」的留白，2026-10-25 从占位 div 改成容器自己的 padding。
+ * The blank spaces on the left and right that "let the first and last items also reach the exact center" were changed on 2026-10-25 from placeholder divs to the container's own padding.
  *
- * 为什么非改不可：WebKit **根本不把那两个占位 div 算进 scrollWidth**。它们是零高度的空盒
- * （容器 align-items: center，占位没写 height，实测 141.5×0 / 187.5×0），WebKit 算滚动溢出时
- * 当它们不存在，于是 scrollWidth === clientWidth、整条根本没有滚动区 ——
- * 手指划不动、程序设 scrollLeft 也不动，连播放时当前帧那条白线都永远停在 0。
- * Blink 算，所以桌面 Chrome 和无头仿真里一切正常，这个差异藏了很久。
+ * Why this had to change: WebKit **does not count those two placeholder divs into scrollWidth at all**. They are empty boxes with zero height
+ * (the container has align-items: center and the placeholders have no height; measured 141.5×0 / 187.5×0), and when WebKit computes scroll overflow it
+ * treats them as nonexistent, so scrollWidth === clientWidth and the whole strip has no scrollable area at all:
+ * a finger cannot swipe it, setting scrollLeft from code does not move it either, and even the white line for the current frame stays at 0 forever during playback.
+ * Blink does count them, so everything works on desktop Chrome and in headless emulation, and this difference stayed hidden for a long time.
  *
- * 用户 2026-10-25 在 iPhone（iOS 18.1.1）上拿五种写法逐一实测，只有这一种能滚：
- *   占位 div 百分比 → 可滚 0；占位 div 固定 px → 0；内层包 max-content → 0；内层包 inline-flex → 0；
- *   容器 padding → 可滚 126 px、JS 设得动、手指划得动。
- * 读数留在 docs/archive/agent-reports/AGENT-claude-strip-snapback.md。
+ * The user tested five approaches one by one on an iPhone (iOS 18.1.1) on 2026-10-25, and only this one can scroll:
+ *   placeholder div with percentage → scrollable 0; placeholder div with fixed px → 0; inner wrapper max-content → 0; inner wrapper inline-flex → 0;
+ *   container padding → scrollable 126 px, JS can set it, a finger can swipe it.
+ * The readings are kept in docs/archive/agent-reports/AGENT-claude-strip-snapback.md.
  *
- * 左边是 calc(50% - 46px) 而不是 50%：前面还有一颗 40px 宽、右外边距 6px 的「＋」，
- * 减掉它首卡的左缘才正对正中那条线（和改之前的几何完全一致，offsetLeft 不变，
- * 所以 ThumbStrip 里按 offsetLeft 算位置的那几处不用动）。
+ * The left side is calc(50% - 46px) rather than 50%: in front of it there is also a "+" button 40px wide with a 6px right margin,
+ * and only after subtracting it does the left edge of the first card line up exactly with the center line (identical to the geometry before the change, offsetLeft unchanged,
+ * so the places in ThumbStrip that compute positions from offsetLeft need no change).
  */
 .pcm .strip-scroll { display: flex; align-items: center; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; padding: 6px 50% 10px calc(50% - 46px); min-height: 80px; touch-action: pan-x; overscroll-behavior-x: contain; user-select: none; -webkit-user-select: none; }
-/* 选中的卡要能长按拖动换顺序:这一张上不许浏览器接管手势,拖动由 ThumbStrip 自己算 */
+/* The selected card must support long-press dragging to reorder: the browser must not take over gestures on this one, and the drag is computed by ThumbStrip itself */
 .pcm .strip-scroll .mblock.sel { touch-action: none; }
 .pcm .strip-scroll::-webkit-scrollbar { display: none; }
-/* .sp-l / .sp-r 已删：改用上面那条容器 padding，WebKit 不认空占位 div */
+/* .sp-l / .sp-r removed: the container padding above is used instead, because WebKit does not recognize empty placeholder divs */
 .pcm .cf-line { position: absolute; left: 50%; top: 2px; bottom: 6px; width: 2px; margin-left: -1px; background: var(--white); border-radius: var(--r-s); box-shadow: 0 0 0 1px var(--shade-weak); z-index: 6; pointer-events: none; }
 .pcm .madd { flex: none; width: 40px; height: 64px; border-radius: var(--r-m); background: var(--panel2); display: grid; place-items: center; margin-right: 6px; color: var(--text); }
 .pcm .madd svg { width: 22px; height: 22px; }
@@ -189,7 +189,7 @@
 .pcm .mark.has { background: var(--plum); color: var(--white); }
 .pcm .mark.has.sel { box-shadow: 0 0 0 2px var(--accent); }
 
-/* 子导航栏(缩略预览和时间轴共用) */
+/* Sub-navigation bar (shared by the thumbnail preview and the timeline) */
 .pcm .subnav { flex: none; display: flex; align-items: stretch; gap: 2px; height: 66px; padding: 6px 8px; background: var(--bg); border-top: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
 .pcm .subnav::-webkit-scrollbar { display: none; }
 .pcm .subnav button { flex: 1 0 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-radius: var(--r-m); color: var(--dim); font-size: var(--fs-s); position: relative; }
@@ -198,7 +198,7 @@
 .pcm .subnav button:disabled { opacity: .35; }
 .pcm .subnav .refbtn { color: var(--accent); }
 
-/* 底部导航栏 */
+/* Bottom navigation bar */
 .pcm .pager { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 10px 12px; padding-bottom: max(12px, env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--line); }
 .pcm .pager button { position: relative; flex: 1; height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: var(--fs-s); color: var(--dim); }
 .pcm .pager button svg { width: 22px; height: 22px; }
@@ -209,7 +209,7 @@
 .pcm .pager button.on .disc { box-shadow: 0 0 0 1.5px var(--bg), 0 0 0 3.3px var(--accent); }
 .pcm .pager .badge-n { position: absolute; top: -1px; left: calc(50% + 6px); z-index: 2; min-width: 16px; height: 16px; border-radius: var(--r-pill); background: var(--danger); color: var(--white); font-size: var(--fs-xs); display: grid; place-items: center; padding: 0 4px; font-weight: 700; }
 
-/* 完整时间轴 */
+/* Full timeline */
 .pcm .pane-edit { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .pcm .edit-head { justify-content: space-between; }
 .pcm .edit-head h1 { text-align: center; }
@@ -230,8 +230,8 @@
 .pcm .clip.k-audio { background: var(--clip-a); }
 .pcm .clip.k-caption { background: var(--clip-cap); }
 .pcm .clip.sel { border-color: var(--accent); }
-/* 叠加卡的计数角标:和「已静音」同一个位置、同一个尺寸(overlayBadge.ts 定什么时候画、画成什么)。
-   最窄那一档加 is-flat —— 只是个记号,不吃点击,整块热区还给片段,入口在子导航的「叠加层」 */
+/* Count badge of overlay cards: same position and same size as "Muted" (overlayBadge.ts decides when to draw it and what to draw).
+   The narrowest tier adds is-flat: it is only a mark and does not take clicks, the whole hit area goes back to the clip, and the entry point is "Overlay layer" in the sub-navigation */
 .pcm .clip .ovm { margin-left: auto; flex: none; display: inline-flex; align-items: center; background: var(--shade); border-radius: var(--r-s); padding: 0 5px; min-height: 16px; font-size: var(--fs-xs); color: var(--accent-soft); }
 .pcm .clip .ovm.is-flat { pointer-events: none; }
 .pcm .clip .mute { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; background: var(--shade); border-radius: var(--r-s); padding: 0 4px; font-size: var(--fs-xs); color: var(--warn); }
@@ -249,7 +249,7 @@
 .pcm .tl-tools button:active { color: var(--accent); }
 .pcm .tl-tools button:disabled { opacity: .35; pointer-events: none; }
 
-/* ===== Agent 分页(演示稿「3. Agent 对话」;语义 workflow/editing.md「手机版界面」) ===== */
+/* ===== Agent tab (demo "3. Agent chat"; semantics workflow/editing.md "Mobile app UI") ===== */
 .pcm .pane-agent { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .pcm .agent-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .pcm .achat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -336,7 +336,7 @@
 .pcm .send svg { width: 20px; height: 20px; }
 .pcm .send.is-stop { background: var(--panel2); color: var(--text); }
 
-/* 开始页(没有会话时):预设 + 输入框;刚进项目时带引导动画(光点、指向输入框的箭头、输入框 / 发送按钮的描边脉动) */
+/* Start page (when there is no session): presets + input box; right after entering a project it plays a guide animation (light dots, an arrow pointing at the input box, outline pulsing on the input box / send button) */
 .pcm .start { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; text-align: center; gap: 10px; padding: 24px 20px; min-height: 100%; }
 .pcm .start > :first-child { margin-top: auto; }
 .pcm .start > :last-child { margin-bottom: auto; }
@@ -363,7 +363,7 @@
   .pcm .composer[data-guide="send"] .send { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
 }
 
-/* ===== 底部面板 ===== */
+/* ===== Bottom sheet ===== */
 .pcm .scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 40; }
 .pcm .scrim.light { background: var(--scrim-light); }
 .pcm .sheet { position: absolute; left: 0; right: 0; bottom: 0; background: var(--panel); border-radius: var(--r-l) var(--r-l) 0 0; z-index: 41; display: flex; flex-direction: column; max-height: 82%; animation: pcm-up .25s ease; padding-bottom: env(safe-area-inset-bottom); }
@@ -431,7 +431,7 @@
 .pcm .confirm .acts .btn { flex: 1; }
 .pcm .confirm .btn.danger { background: var(--danger); color: var(--white); }
 
-/* 滤镜(卡片库「滤镜」分类、调整面板的滤镜一栏) */
+/* Filters (the "Filters" category of the card library, the filter row of the adjustment panel) */
 .pcm .tile.fx { position: relative; }
 .pcm .tile.fx .fx-pick { display: block; width: 100%; text-align: left; padding: 0; background: none; border: 0; color: inherit; }
 .pcm .tile.fx .fx-pick:disabled { opacity: .55; }
@@ -439,14 +439,14 @@
 .pcm .tile.fx .fx-del { position: absolute; right: 3px; top: 3px; width: 22px; height: 22px; border-radius: var(--r-pill); background: var(--shade); color: var(--text); font-size: var(--fs-l); line-height: 22px; text-align: center; padding: 0; border: 0; }
 .pcm .hint.err { color: var(--danger); }
 
-/* 素材格子、缩略卡的真画面:盖在取色底色上,取到才显示;取不到就还是底色 */
+/* The real picture of media cells and thumbnail cards: laid over the sampled base color, shown only once it is obtained; if it cannot be obtained the base color remains */
 .pcm .thumb-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .pcm .tile .pic[data-thumb="ready"] > svg { display: none; }
-/* 断网待发里不发了的那条:气泡里一个「重新发送」(按当前状态重新走一遍,同桌面) */
+/* The entry in the offline send queue that will not be sent after all: a "Resend" in the bubble (re-runs the flow from the current state, same as on desktop) */
 .pcm .msg.me .resend { margin-top: 6px; padding: 4px 12px; font: inherit; font-size: var(--fs-s); color: inherit;
   background: rgb(255 255 255 / 0.16); border: 1px solid rgb(255 255 255 / 0.45); border-radius: 999px; }
 
-/* 「调整」表单里停用的那一行:压暗 + 名字划掉。挂载和参数都留着,只是这一段上不生效 */
+/* The disabled row in the "Adjust" form: dimmed + name struck through. The attachment and parameters are kept, they just take no effect on this segment */
 .pcm .row.is-off .t { opacity: .55; }
 .pcm .row.is-off .t b { text-decoration: line-through; }
 .pcm .row .icon-btn.ref { color: var(--accent); }

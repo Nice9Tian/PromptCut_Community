@@ -1,9 +1,11 @@
 /**
- * 素材服务客户端：`complete` 回 400 `incomplete` 时重问 `chunks`、补传缺的片再收尾（claude/push-incomplete，
- * 报告 `docs/reports/AGENT-push-incomplete.md`）。老的素材服务在两路同时推同一内容时会撤掉另一路已答过「收到」的片，
- * 这一步是客户端的兜底。
+ * Asset service client: when `complete` returns 400 `incomplete`, re-query `chunks`, upload
+ * missing chunks, then finalize (claude/push-incomplete, report
+ * `docs/reports/AGENT-push-incomplete.md`). When two paths push the same content concurrently,
+ * the legacy asset service drops chunks the other path had acknowledged as "received";
+ * this step is the client fallback.
  *
- * 跑：node --test server/test/asset-client-resync.test.mjs
+ * Run: node --test server/test/asset-client-resync.test.mjs
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,8 +21,10 @@ const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const CS = 8;
 
 /**
- * 假素材服务：`dropOnComplete` 次 `complete` 前把第 0 片撤掉（模拟另一路的重传撤了标记），回 400 incomplete。
- * `completeAfterChunks`：重问 chunks 时直接当作别人已收尾入库。
+ * Fake asset service: drops chunk 0 before `complete` for `dropOnComplete` times (simulating
+ * retransmission on the other path revoking the mark), returns 400 incomplete.
+ * `completeAfterChunks`: when re-querying chunks, treat directly as already finalized and stored
+ * by others.
  */
 function fakeService({ dropOnComplete = 1, completeAfterChunks = false } = {}) {
   const parts = new Map();
@@ -55,7 +59,7 @@ function fakeService({ dropOnComplete = 1, completeAfterChunks = false } = {}) {
   return { fetch, log };
 }
 
-test('put：complete 回 incomplete 后补传缺的片、再收尾成功', async () => {
+test('put: after complete returns incomplete, re-upload the missing chunks, then finalize successfully', async () => {
   const svc = fakeService({ dropOnComplete: 1 });
   const client = createAssetClient({ base: 'http://x/api/asset', fetch: svc.fetch, retries: 0 });
   const buf = crypto.randomBytes(CS * 2 + 3);
@@ -64,7 +68,7 @@ test('put：complete 回 incomplete 后补传缺的片、再收尾成功', async
   assert.deepEqual(svc.log, ['GET chunks', 'PUT 0', 'PUT 1', 'PUT 2', 'POST complete', 'GET chunks', 'PUT 0', 'POST complete']);
 });
 
-test('putFile：同上，并把补传的片记进 sent', async () => {
+test('putFile: same as above, and records the re-uploaded chunks in sent', async () => {
   const svc = fakeService({ dropOnComplete: 1 });
   const client = createAssetClient({ base: 'http://x/api/asset', fetch: svc.fetch, retries: 0 });
   const buf = crypto.randomBytes(CS + 1);
@@ -74,7 +78,7 @@ test('putFile：同上，并把补传的片记进 sent', async () => {
   assert.deepEqual(out.sent, [0, 1, 0]);
 });
 
-test('重问 chunks 时已被别人收尾入库：直接算成', async () => {
+test('when chunks is queried again it has already been finalized and stored by someone else: counts as success right away', async () => {
   const svc = fakeService({ dropOnComplete: 1, completeAfterChunks: true });
   const client = createAssetClient({ base: 'http://x/api/asset', fetch: svc.fetch, retries: 0 });
   const out = await client.put('px', crypto.randomBytes(5));
@@ -82,7 +86,7 @@ test('重问 chunks 时已被别人收尾入库：直接算成', async () => {
   assert.deepEqual(svc.log, ['GET chunks', 'PUT 0', 'POST complete', 'GET chunks']);
 });
 
-test(`补 ${INCOMPLETE_RESYNC_ROUNDS} 轮仍不齐：照 400 抛`, async () => {
+test(`still incomplete after ${INCOMPLETE_RESYNC_ROUNDS} resync rounds: throws as 400`, async () => {
   const svc = fakeService({ dropOnComplete: 99 });
   const client = createAssetClient({ base: 'http://x/api/asset', fetch: svc.fetch, retries: 0 });
   await assert.rejects(client.put('px', crypto.randomBytes(5)), (err) => err.status === 400 && err.body?.error === 'incomplete');

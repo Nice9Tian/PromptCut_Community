@@ -3,15 +3,18 @@ import { useCloudAgent, useCloudNotices } from "../../ai/extensions";
 import { CloudAiPanel } from "./CloudAiPanel";
 
 /**
- * 在线浏览器模式的 Agent 页(契约 `docs/plan/cloud-agent-contract.md` 9.5):挂「云端」接入方式的 AI 栏,对话与工具由云节点上的
- * Agent 服务执行,页面只打同源的 `/agent/v1/*`。不分身份、不分档(`product/platforms.md`「AI 栏」;原来按档换成占位的做法 2026-10-07 撤销)。
- * `placeholder` 留着给旧调用方,不再用。
+ * Agent page for online browser mode (contract `docs/plan/cloud-agent-contract.md` 9.5): an AI panel
+ * with the "Cloud" connection type, where chat and tools are run by the Agent service on a cloud
+ * node, and the page only calls the same-origin `/agent/v1/*`. No distinction by identity or tier
+ * (`product/platforms.md` "AI panel"; the old approach of swapping in a placeholder per tier was
+ * withdrawn 2026-10-07).
+ * `placeholder` is kept for old callers and is no longer used.
  */
 export function OnlineAgentPage(props: { tabId: string; active: boolean; placeholder?: ReactNode }) {
   return <OnlineCloudPanel tabId={props.tabId} active={props.active} />;
 }
 
-/** 云端 Agent 的对话页本体。手机版界面(`src/mobile/`)直接挂它:AI 栏接入云端、不分身份(`product/platforms.md`「AI 栏」) */
+/** The chat page of the Cloud Agent itself. The mobile app UI (`src/mobile/`) mounts it directly: the AI panel connects to the cloud, with no distinction by identity (`product/platforms.md` "AI panel") */
 export function OnlineCloudPanel(props: { tabId: string; active: boolean }) {
   const cloud = useCloudAgent();
   useCloudNotices(cloud, cloud.available);

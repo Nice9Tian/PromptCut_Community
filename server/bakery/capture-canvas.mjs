@@ -1,47 +1,77 @@
 /**
- * 画布直取(渲染重构「己一」,`docs/plan/prerender-products-contract.md` 第 6.1、6.2 节)—— Node 一侧。
+ * Direct canvas grab (render refactor "Ji-1", `docs/plan/prerender-products-contract.md` sections
+ * 6.1 and 6.2): Node side.
  *
- * 画布与 WebGL 的卡产轨道流时,这一帧的像素不经过截图和 PNG:问页面要画布的 RGBA
- * (`src/render/gl/canvasGrab.ts`,导出页挂成 `window.__pcGrabCanvas`),原样交给 ffmpeg 的 `rawvideo` 输入
- * (`./ffmpeg.mjs` 的 `openStreamSegmentEncoder({ raw })`)。只有 `bakeStream` 的调用方(`server/frame-stream.mjs`)用它,
- * 导出和快照那几条路不经过这里。
+ * When canvas and WebGL cards produce track streams, pixel data for this frame bypasses
+ * screenshots and PNG: requests canvas RGBA from the page (`src/render/gl/canvasGrab.ts`, mounted
+ * on the export page as `window.__pcGrabCanvas`) and delivers it directly to ffmpeg's `rawvideo`
+ * input (`openStreamSegmentEncoder({ raw })` in `./ffmpeg.mjs`). Only callers of `bakeStream`
+ * (`server/frame-stream.mjs`) use this; the export and snapshot pipelines do not pass through here.
  *
- * # 什么时候走直取(契约第 6.1 节的第二道:产流时实测)
+ * # When to use direct grab (the second check in contract section 6.1: stream generation verification)
  *
- * 每个分段的第一帧(挂好以后的第一帧也是某个分段的第一帧)两样都取:先取画布的像素,再照旧截一张图,
- * 把两张按预乘色和不透明度逐像素比。平均差都不超过 `DIRECT_MEAN_LIMIT`、明显不同的像素也没有超过
- * `directBadLimit` 才算过,这个分段余下的帧只取画布;不过的,这条流从此照旧走截图,记一条诊断。
- * **先取画布、后截图**这个顺序不能换:截图那一拍会让合成器真画一帧,画布要靠这一拍才更新的卡
- * (平时直取的帧没有这一拍)在这里会被比出来,不会混过去。
+ * The first frame of each segment (the first frame after mounting is also the first frame of some
+ * segment) fetches both: first grabs the canvas pixels, then takes a screenshot as usual, and
+ * compares the two pixel-by-pixel by premultiplied color and opacity. Only when mean differences do
+ * not exceed `DIRECT_MEAN_LIMIT` and noticeably different pixels do not exceed `directBadLimit` is
+ * it considered passed, and remaining frames in this segment fetch only the canvas; if not passed,
+ * this stream falls back to screenshots from then on and logs a diagnostic. The order **canvas first,
+ * screenshot second** cannot be swapped: the screenshot tick makes the compositor actually draw a
+ * frame, so cards that rely on this tick to update canvas (normally direct-grabbed frames lack this
+ * tick) will be detected here rather than slipping through.
  *
- * 过了实测也不一定走直取:像素是经 CDP 搬的,画面里不透明的像素一多,搬比截图还慢(实测数字在
- * `docs/reports/AGENT-rr-canvas-direct.md`)。所以同一帧上两条路各花了多少毫秒也量着,直取省下的抵不过实测多花的,这个分段照旧截图,
- * 并且接下来 `DIRECT_COOLDOWN_SEGMENTS` 个分段不再试;压掉全透明像素以后仍超过原始大小 `DIRECT_MAX_FILL` 的,连搬都不搬。
- * 走哪条路不改画面(过了实测才有得选),只改快慢。
+ * Passing verification does not guarantee using direct grab: pixels are transferred over CDP, and
+ * when the picture has many opaque pixels, transferring is even slower than screenshotting
+ * (measured numbers in `docs/reports/AGENT-rr-canvas-direct.md`). Therefore, elapsed milliseconds
+ * for both paths on the same frame are also measured; if savings from direct grab do not offset extra
+ * verification costs, this segment uses screenshots as usual, and the next `DIRECT_COOLDOWN_SEGMENTS`
+ * segments will not try it; if pixel data after compressing fully transparent pixels still exceeds
+ * `DIRECT_MAX_FILL` of the original size, it is not transferred at all. Which path is chosen does not
+ * alter visuals (there is only a choice after passing verification), only speed.
  *
- * # 取不到的那一帧
+ * # When a frame cannot be grabbed
  *
- * 分段中途某一帧取不到(共享 WebGL 渲染器的平面帧号对不上等):这一帧改截图,解成 RGBA 再喂,
- * 不交出空图,也不换编码器的输入格式。截图也解不开就让这个分段失败重产。
+ * If a frame cannot be grabbed mid-segment (shared WebGL renderer plane frame number mismatch,
+ * etc.): fall back to screenshot for this frame, decode into RGBA and feed it, never delivering
+ * empty frames or changing the encoder input format. If screenshot decoding also fails, mark this
+ * segment failed to re-produce.
  */
 import zlib from 'node:zlib';
 
-/** 契约第 6.1 节:预乘色、不透明度的平均差上限(满分 255) */
+/**
+ * Contract section 6.1: upper limit for mean difference in premultiplied color and opacity
+ * (out of 255).
+ */
 export const DIRECT_MEAN_LIMIT = 1;
-/** 「明显不同」的像素:预乘色任一分量或不透明度差超过这个数 */
+/**
+ * "Noticeably different" pixels: difference in any premultiplied color component or opacity
+ * exceeds this value.
+ */
 export const DIRECT_BAD_DIFF = 48;
-/** 明显不同的像素最多占矩形面积的这个比例(另有一个不随面积变的底数,见 `directBadLimit`) */
+/**
+ * Maximum ratio of noticeably different pixels to rectangle area (plus an area-independent base
+ * count, see `directBadLimit`).
+ */
 export const DIRECT_BAD_RATIO = 1 / 20000;
-/** 压掉全透明像素以后,搬运量超过原始 RGBA 的这个比例就不搬来试了(经 CDP 搬这么多一定比截图慢) */
+/**
+ * After compressing fully transparent pixels, if transfer size exceeds this ratio of original RGBA,
+ * do not attempt transfer (transferring this much over CDP is definitely slower than screenshots).
+ */
 export const DIRECT_MAX_FILL = 0.25;
-/** 一个分段因为「直取不比截图快」照旧截图以后,接下来这么多个分段不再试(试一次要多取一遍、多比一遍) */
+/**
+ * After a segment falls back to screenshots because "direct grab is not faster than screenshots",
+ * skip trying for this many subsequent segments (trying once requires an extra fetch and compare).
+ */
 export const DIRECT_COOLDOWN_SEGMENTS = 8;
 
 /**
- * 画布直取的三种档(`PROMPTCUT_STREAM_DIRECT`):
- *   - `always`(缺省):过了实测就走,不管快慢(推翻旧 auto,2026-10-14 决定 2.5);
- *   - `auto`:过了实测、而且这个分段量出来比截图快才走(旧的缺省);
- *   - `off`(写 `0` 也行):不走,和改之前一样每帧截图(探针拿它产对照)。
+ * Three tiers of direct canvas grab (`PROMPTCUT_STREAM_DIRECT`):
+ *   - `always` (default): use whenever verification passes, regardless of speed (replaces legacy
+ *     auto, 2026-10-14 decision 2.5);
+ *   - `auto`: use when verification passes and this segment measures faster than screenshots
+ *     (legacy default);
+ *   - `off` (also accepts `0`): do not use; screenshot every frame as before (probes use it to
+ *     produce comparisons).
  */
 export function directCaptureMode(env = process.env) {
   const want = String(env.PROMPTCUT_STREAM_DIRECT ?? '').trim().toLowerCase();
@@ -50,14 +80,16 @@ export function directCaptureMode(env = process.env) {
   return 'always';
 }
 
-/** 一个矩形里允许多少个明显不同的像素 */
+/** How many noticeably different pixels are allowed in a rectangle */
 export function directBadLimit(width, height) {
   return Math.max(4, Math.floor(width * height * DIRECT_BAD_RATIO));
 }
 
 /**
- * 解 PNG 成 straight RGBA。只认截图会给的那两种:8 位、不隔行的 RGBA(颜色类型 6)和 RGB(颜色类型 2,不透明度补 255)。
- * 认不了、数据不完整回 null。回 `{ width, height, data }`(`data` 是 `width × height × 4` 字节的 Buffer)。
+ * Decodes PNG into straight RGBA. Only recognizes the two types given by screenshots: 8-bit,
+ * non-interlaced RGBA (color type 6) and RGB (color type 2, opacity padded with 255). Returns null
+ * if unrecognized or data is incomplete. Returns `{ width, height, data }` (`data` is a Buffer of
+ * `width × height × 4` bytes).
  */
 export function decodePngRgba(buf) {
   if (!Buffer.isBuffer(buf) || buf.length < 33 || buf.readUInt32BE(0) !== 0x89504e47 || buf.readUInt32BE(4) !== 0x0d0a1a0a) return null;
@@ -79,7 +111,8 @@ export function decodePngRgba(buf) {
   try { raw = zlib.inflateSync(idat.length === 1 ? idat[0] : Buffer.concat(idat)); } catch { return null; }
   const stride = width * bpp;
   if (raw.length < (stride + 1) * height) return null;
-  // 就地还原滤波:每行的结果写回 `raw` 自己(行首那个滤波字节之后),上一行已经是还原好的
+  // In-place unfiltering: each row's result is written back into `raw` itself (after the filter byte
+  // at row start); the previous row is already reconstructed.
   for (let y = 0; y < height; y++) {
     const base = y * (stride + 1) + 1;
     const up = base - (stride + 1);
@@ -115,20 +148,21 @@ export function decodePngRgba(buf) {
 }
 
 /**
- * 把页面压过的像素还原成整张 straight RGBA(`width × height × 4` 字节)。
- * 压法见 `src/render/gl/canvasGrab.ts` 的 `packTransparentRuns`:一串 `[跳过几个像素, 接着几个像素, 像素…]`,小端 32 位。
- * 数据越界或不完整就抛。
+ * Decompresses pixels compressed by the page into full straight RGBA (`width × height × 4` bytes).
+ * Compression scheme is in `packTransparentRuns` of `src/render/gl/canvasGrab.ts`: a series of
+ * `[skip_count, run_count, pixels...]`, little-endian 32-bit. Throws if data is out of bounds or
+ * incomplete.
  */
 export function unpackCanvasPixels(bytes, width, height) {
   const total = width * height;
   const out = Buffer.alloc(total * 4);
   let i = 0, o = 0;
   while (i < bytes.length) {
-    if (i + 8 > bytes.length) throw new Error('画布像素的游程数据不完整');
+    if (i + 8 > bytes.length) throw new Error('canvas pixel run-length data is incomplete');
     const skip = bytes.readUInt32LE(i), count = bytes.readUInt32LE(i + 4);
     i += 8;
     o += skip;
-    if (o + count > total || i + count * 4 > bytes.length) throw new Error('画布像素的游程数据越界');
+    if (o + count > total || i + count * 4 > bytes.length) throw new Error('canvas pixel run-length data is out of bounds');
     bytes.copy(out, o * 4, i, i + count * 4);
     i += count * 4;
     o += count;
@@ -137,12 +171,14 @@ export function unpackCanvasPixels(bytes, width, height) {
 }
 
 /**
- * 两张 straight RGBA 的差。颜色按预乘色比(进流的就是预乘色;全透明处 RGB 不算数)。
- * 回 `{ color, alpha, bad, pixels }`:预乘色平均差(三个分量一起平均)、不透明度平均差、明显不同的像素数、像素总数。
+ * Difference between two straight RGBA images. Colors are compared as premultiplied color
+ * (what enters the stream is premultiplied color; RGB does not count where fully transparent).
+ * Returns `{ color, alpha, bad, pixels }`: average difference in premultiplied color (averaged
+ * across all three components), average opacity difference, visibly different pixels, total pixels.
  */
 export function compareRgba(a, b, width, height) {
   const pixels = width * height;
-  if (a.length < pixels * 4 || b.length < pixels * 4) throw new Error('compareRgba:数据比矩形小');
+  if (a.length < pixels * 4 || b.length < pixels * 4) throw new Error('compareRgba: data is smaller than the rectangle');
   let color = 0, alpha = 0, bad = 0;
   for (let i = 0, end = pixels * 4; i < end; i += 4) {
     const aa = a[i + 3], ba = b[i + 3];
@@ -158,7 +194,10 @@ export function compareRgba(a, b, width, height) {
   return { color: color / (pixels * 3), alpha: alpha / pixels, bad, pixels };
 }
 
-/** straight RGBA 里不透明度大于 `threshold` 的像素的包围盒(图片像素坐标);一个都没有回 null */
+/**
+ * Bounding box of pixels with opacity greater than `threshold` in straight RGBA
+ * (image pixel coordinates); returns null if there are none
+ */
 export function rgbaAlphaBox(data, width, height, threshold = 0) {
   let minX = width, minY = -1, maxX = -1, maxY = -1;
   for (let y = 0; y < height; y++) {
@@ -175,9 +214,12 @@ export function rgbaAlphaBox(data, width, height, threshold = 0) {
 }
 
 /**
- * 问页面要片段 `clipId` 的画布在截图矩形 `rect`(场景坐标,整数)里的像素。
- * 回 `{ ok: true, rgba, width, height, bytes, readMs, moveMs }`(`readMs`:页面里读像素;`moveMs`:压、搬到 Node、还原),
- * 或 `{ ok: false, reason, bytes?, readMs?, moveMs? }`(原因见 `canvasGrab.ts`;另有 `no-hook`、`bad-size`、`bad-data`)。
+ * Asks the page for pixels of clip `clipId`'s canvas within screenshot rectangle `rect`
+ * (scene coordinates, integers).
+ * Returns `{ ok: true, rgba, width, height, bytes, readMs, moveMs }` (`readMs`: read pixels in page;
+ * `moveMs`: compress, move to Node, restore),
+ * or `{ ok: false, reason, bytes?, readMs?, moveMs? }` (see `canvasGrab.ts` for reasons;
+ * also `no-hook`, `bad-size`, `bad-data`).
  */
 export async function grabCanvas(bakery, clipId, rect, { maxBytes } = {}) {
   const started = performance.now();
@@ -196,38 +238,62 @@ export async function grabCanvas(bakery, clipId, rect, { maxBytes } = {}) {
   return { ok: true, rgba, width: r.w, height: r.h, bytes: r.bytes, readMs, moveMs: Math.max(0, performance.now() - started - readMs) };
 }
 
-/** 实测没过时,哪些原因算「这张卡不能直取」(其余的只是这一帧碰巧取不到) */
+/**
+ * When the test run fails, which reasons count as "this card cannot use direct capture"
+ * (the rest are just this frame happening to be uncapturable)
+ */
 const PERMANENT_REASONS = /^(differs|canvas-count:\d+|unreadable|no-hook|png)$/;
 
-/** 一条流的直取记录(挂在 `StreamProducer` 的流状态上,`status()` 原样给出去) */
+/**
+ * Direct capture record for a stream (attached to `StreamProducer`'s stream state, returned as-is
+ * by `status()`)
+ */
 export function newDirectRecord() {
   return {
-    /** 实测没过的原因;有值以后这条流不再试直取 */
+    /** Reason why the test run failed; once set, this stream will no longer attempt direct capture */
     failed: null,
-    /** 还有几个分段不试直取(上一次试出来不比截图快) */
+    /**
+     * Number of remaining segments that will not attempt direct capture (the last test showed
+     * it was not faster than screenshots)
+     */
     cooldown: 0,
-    /** 走直取的分段数 / 帧数;试过以后因为不比截图快(或画面太满)照旧截图的分段数;做过几次实测;碰巧取不到、改截图的帧数 */
+    /**
+     * Segments / frames using direct capture; segments keeping screenshots after testing because
+     * direct capture was not faster than screenshots (or frame too full); number of test runs;
+     * frames falling back to screenshots when capture happened to fail
+     */
     segments: 0, frames: 0, slowSegments: 0, checks: 0, misses: 0,
-    /** 累计耗时(毫秒):页面里读像素、压和搬到 Node、实测(那一张截图加解码加比对) */
+    /**
+     * Cumulative time spent (ms): reading pixels in page, compressing and transferring to Node,
+     * and test run (that single screenshot plus decode plus comparison)
+     */
     readMs: 0, moveMs: 0, checkMs: 0,
-    /** 最近一次实测的结果 `{ frame, pass, reason, color, alpha, bad, badLimit, bytes, grabMs, shotMs }`(`bytes`:搬了多少字节) */
+    /**
+     * Result of the latest test run `{ frame, pass, reason, color, alpha, bad, badLimit, bytes, grabMs, shotMs }`
+     * (`bytes`: how many bytes were transferred)
+     */
     last: null,
   };
 }
 
 /**
- * 给 `bakeStream` 的 `capture` 用:一个分段一个。`capture(frame, shoot, { primed })` 回这一帧交给 `onFrame` 的东西 ——
- * 直取的是 `{ rgba, width, height }`,照旧截图的是 PNG 的 Buffer(`shoot()` 就是原来那次截图)。
- * 一个分段里要么全是前一种、要么全是后一种(由这个分段第一帧定),编码器的输入格式不会半路变。
+ * Used by `bakeStream`'s `capture`: one per segment. `capture(frame, shoot, { primed })` returns
+ * what to pass to `onFrame` for this frame:
+ * direct capture returns `{ rgba, width, height }`, while screenshot as before returns a PNG
+ * Buffer (`shoot()` is that original screenshot).
+ * Within a segment, it is either all the former or all the latter (determined by the first frame
+ * of this segment); the encoder's input format will not change midway.
  *
- * `record`:这条流的直取记录(`newDirectRecord`);`stride`:这个分段每隔几帧取一张;`captures`:这个分段一共取几张;
- * `always`:过了实测就走直取,不看快慢(`directCaptureMode` 的 `always` 档);`note(message)`:记一条诊断。
+ * `record`: direct capture record for this stream (`newDirectRecord`); `stride`: capture every
+ * N frames in this segment; `captures`: total captures in this segment;
+ * `always`: use direct capture once it passes the test run, regardless of speed (`always` tier
+ * of `directCaptureMode`); `note(message)`: record a diagnostic note.
  */
 export function directSegmentCapture(bakery, { clipId, rect, record, stride = 1, captures = 15, always = directCaptureMode() === 'always', note = () => {} }) {
   let mode = null;
   const shotAsRgba = async (shoot, why) => {
     const decoded = decodePngRgba(await shoot());
-    if (!decoded || decoded.width !== rect.w || decoded.height !== rect.h) throw new Error(`画布直取:这一帧取不到(${why}),截图也解不开`);
+    if (!decoded || decoded.width !== rect.w || decoded.height !== rect.h) throw new Error(`Direct canvas capture: this frame cannot be read (${why}), and the screenshot cannot be decoded either`);
     record.misses++;
     return { rgba: decoded.data, width: rect.w, height: rect.h };
   };
@@ -241,7 +307,8 @@ export function directSegmentCapture(bakery, { clipId, rect, record, stride = 1,
       record.frames++;
       return { rgba: got.rgba, width: got.width, height: got.height };
     }
-    // 这个分段的第一帧:先取画布,再截图,比过了、而且不比截图慢才走直取
+    // First frame of this segment: grab the canvas first, then take a screenshot; use direct capture
+    // only if comparison passes and it is not slower than screenshots
     const got = await grabCanvas(bakery, clipId, rect, always ? {} : { maxBytes: Math.floor(rect.w * rect.h * 4 * DIRECT_MAX_FILL) });
     if (!got.ok && got.reason === 'dense') {
       mode = 'shot';
@@ -272,17 +339,22 @@ export function directSegmentCapture(bakery, { clipId, rect, record, stride = 1,
     record.last = { frame, ...verdict, bytes: got.bytes };
     if (!verdict.pass) {
       mode = 'shot';
-      // 这一帧碰巧取不到(平面的帧号对不上、卡还没挂上)只让这个分段走截图;比出差别、画布认不出来的,这条流从此走截图
+      // If capture happens to fail for this frame (plane frame mismatch, card not mounted yet), only
+      // this segment falls back to screenshots; if differences are found or canvas is unrecognized,
+      // this stream uses screenshots from now on
       if (PERMANENT_REASONS.test(verdict.reason)) {
         record.failed = verdict.reason;
-        note(`画布直取没过(${verdict.reason}${verdict.color === undefined ? '' : `:颜色差 ${verdict.color}、不透明度差 ${verdict.alpha}、明显不同的像素 ${verdict.bad} 个`}),这条流照旧走截图`);
+        note(`Direct canvas capture failed (${verdict.reason}${verdict.color === undefined ? '' : `: color difference ${verdict.color}, opacity difference ${verdict.alpha}, clearly different pixels ${verdict.bad}`}), this stream falls back to screenshots as before`);
       } else record.misses++;
       return png;
     }
     /*
-     * 划不划算:截图那条路稳定下来每帧花多少 —— 满密度的分段相邻两帧都截,不用先丢一张(`primed` 为真时这一次多截了一张,减半);
-     * 稀疏的分段每一帧前面都要先丢一张(翻倍)。直取每帧省下的,乘上这个分段余下的帧数,要抵得过这一次实测多花的
-     * (那张截图加解码加比对);抵不过,这个分段就照旧截图。
+     * Cost-effectiveness: how much screenshot costs per frame once settled: full-density segments
+     * capture both adjacent frames without dropping one first (when `primed` is true, one extra frame
+     * was captured this time, halved); sparse segments must drop a frame before every frame (doubled).
+     * Time saved per frame by direct capture, multiplied by remaining frames in this segment, must
+     * outweigh the extra time spent on this test run (that screenshot plus decode plus comparison);
+     * if not, this segment falls back to screenshots as before.
      */
     const grabMs = got.readMs + got.moveMs;
     const perShot = (primed ? shotMs / 2 : shotMs) * (stride > 1 ? 2 : 1);

@@ -3,8 +3,9 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { setupRoot } from './cli-runtime.mjs';
+import { tr } from '../i18n.mjs';
 
-export const AUTH_RECOVERY = 'Codex 登录已失效，请重新登录。登录成功后请自行重新发送或继续原指令。';
+export const authRecovery = () => tr("Codex login has expired, please log in again. After logging in, resend or continue the original instruction yourself.");
 const reasons = new Set(['token_revoked', 'refresh_token_invalid', 'openai_unauthorized']);
 const externalToolError = /\bmcp\b|mcp[_ :.-]|tools\/call|external tool/i;
 
@@ -68,7 +69,7 @@ export function createCodexAuthState(root, { io = fs } = {}) {
       io.renameSync(temp, file);
       persistenceWarning = undefined;
     } catch {
-      persistenceWarning = '认证状态暂时无法保存，后端重启后需要重新确认。';
+      persistenceWarning = tr("Authentication state cannot be saved for now. It will need to be confirmed again after the backend restarts.");
       try { io.unlinkSync(temp); } catch {}
     }
   };
@@ -77,8 +78,8 @@ export function createCodexAuthState(root, { io = fs } = {}) {
     snapshot: () => ({ ...state, ...(persistenceWarning ? { persistenceWarning } : {}) }),
     effective(raw = { loggedIn: null }) {
       const extra = { authGeneration: state.revision, ...(persistenceWarning ? { persistenceWarning } : {}) };
-      if (state.state === 'invalid') return { ...raw, ...extra, loggedIn: false, status: 'invalid', reason: state.reason, detail: AUTH_RECOVERY, fixHint: AUTH_RECOVERY };
-      if (state.state === 'unknown') return { ...raw, ...extra, loggedIn: null, status: 'unknown', fixHint: 'Codex 登录状态记录无法确认，请重新登录。' };
+      if (state.state === 'invalid') return { ...raw, ...extra, loggedIn: false, status: 'invalid', reason: state.reason, detail: authRecovery(), fixHint: authRecovery() };
+      if (state.state === 'unknown') return { ...raw, ...extra, loggedIn: null, status: 'unknown', fixHint: tr("The Codex login state record cannot be confirmed, please log in again.") };
       return { ...raw, ...extra };
     },
     invalidate(generation, reason) {
@@ -108,6 +109,6 @@ export function codexAuthState() {
 }
 
 export function authFailureEvent(reason, changed = true) {
-  return { type: 'error', message: AUTH_RECOVERY, retryable: false,
+  return { type: 'error', message: authRecovery(), retryable: false,
     ...(changed ? { authProvider: 'codex', authReason: reason, authGeneration: codexAuthState().snapshot().revision } : {}) };
 }

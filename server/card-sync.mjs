@@ -1,76 +1,104 @@
 /**
- * 卡片源码同步（C6.6 设计稿 `docs/plan/c66-design.md` 第 5 节；`docs/plan/cloud-task.md` A6、B2）。
+ * Card source code sync (C6.6 design doc `docs/plan/c66-design.md` section 5;
+ * `docs/plan/cloud-task.md` A6, B2).
  *
- * 编辑器进程（不是页面）经一条自己的 WebSocket 连接，把卡片源码写进**当前项目空间**的内容库
- * （`content.put({ kind: 'card-source', key: <仓库相对路径>, body: <源码> })`），并按内容库的变化把别人的版本装到本机。
+ * The editor process (not the page) uses its own WebSocket connection to write card source code
+ * into the content store of the **current project space**
+ * (`content.put({ kind: 'card-source', key: <repo-relative path>, body: <source code> })`),
+ * and installs others' versions locally according to changes in the content store.
  *
- * # 写
- * - 卡片文件每次保存（`edit_card`、`create_card`、安装）后调 `saved(rel)`：记成「待上传」、马上 `content.put`，
- *   回包里的 `rev` 就是新的 `cardRev`。本机记下这个文件上次同步到的 `{ rev, hash, mine }`（`hash` 与内容库同一算法，
- *   `sha256(JSON.stringify(源码))`，源码先把 CRLF 统一成 LF）。没连上时留在「待上传」里，连上后补传。
- * - 打开共享项目时（`bind` 带 `keys`），项目用到的用户卡与改过的内置卡里服务上还没有的，也传上去。
+ * # Write
+ * - Every time a card file is saved (`edit_card`, `create_card`, install), call `saved(rel)`:
+ *   mark as "pending upload", call `content.put` immediately; `rev` in the response becomes the
+ *   new `cardRev`. The local machine records `{ rev, hash, mine }` from this file's last sync
+ *   (`hash` uses the same algorithm as content store, `sha256(JSON.stringify(source))`, where
+ *   source normalizes CRLF to LF first). When disconnected, keep in "pending upload" and
+ *   upload catch-up upon connecting.
+ * - When opening a shared project (`bind` with `keys`), upload user cards and modified built-in
+ *   cards used by the project that are not yet on the server.
  *
- * # 读（只在共享项目里；本机项目的 `local` 空间这一半是空操作，`cardRev` 照常自增）
- * - 连上后 `content.watch(['card-source'])`，再 `content.list('card-source')`，逐条按下面的规则处理；
- * - 之后每条 `content.changed` 同样处理（别人改了卡当场同步）。
- * - 规则（`rec` 是本机记录，`cur` 是本机此刻的内容）：
- *   - 服务上的版本不比 `rec.rev` 新：什么都不装；本机在那之后又改过就上传（本地改了则上传，A6）；
- *   - 服务上更新了：
- *     - 本机没有这个文件，或者内容已经相同 → 装上 / 只记账；
- *     - 本机没改过（`cur` 与 `rec.hash` 相同）→ 装上；
- *     - 本机改过、服务上也改过 → 最后写的赢：先把本机那份备份，再装服务上的，并给覆盖提示；
- *     - 本机那份就是自己上次写上去的（`rec.mine`），现在被别人覆盖 → 同样先备份再装，并提示（B2、B3：被覆盖方要知道）。
- *     - **断网期间的改动**（连上后对账时才看到：同步过的卡本机在那之后改过、服务上也更新了）→ 不按「最后写的赢」：先备份本机那份、装上服务上的，
- *       发一条 `conflict`（带我这边与云端两份源码），页面把它放进「冲突合并」窗口（一张卡一条），由用户选「合并」（照我这边，`takeMine`）
- *       或「删除选中」（保留云端现状）。语义 `workflow/editing.md`「撤销、重做」，`product/document-service.md`「冲突」（2026-10-22 用户定）。
- * - 自己写的那一次在频道里回来时（`actor.session` 是本实例的），`previousActor` 是别人的就提示「你覆盖了 X」（覆盖方要知道）。
- * - 同一个键有上传在途时，这个键的变化等上传回包之后再处理：先回包的那一版号就是自己的，旧的变化直接丢掉，
- *   免得把别人更早的一版错当成「服务上更新了」。
+ * # Read (shared projects only; this half is a no-op for local project `local` space, `cardRev`
+ *   increments as usual)
+ * - After connecting, call `content.watch(['card-source'])`, then `content.list('card-source')`,
+ *   and process each item according to the rules below;
+ * - Process each subsequent `content.changed` the same way (sync on the fly when others modify cards).
+ * - Rules (`rec` is local record, `cur` is local content right now):
+ *   - Server version is not newer than `rec.rev`: install nothing; if modified locally after that,
+ *     upload (upload if modified locally, A6);
+ *   - Server updated:
+ *     - Local machine does not have this file, or content is already identical → install / record only;
+ *     - Local machine has not modified it (`cur` matches `rec.hash`) → install;
+ *     - Both local and server modified → last write wins: back up local copy first, install
+ *       server version, and show overwrite notice;
+ *     - Local copy was written by this client last time (`rec.mine`) and is now overwritten by
+ *       someone else → likewise back up first then install, and notify (B2, B3: overwritten party
+ *       must know).
+ *     - **Changes during offline periods** (detected during reconciliation upon reconnecting:
+ *       synced card was modified locally afterwards and updated on server as well) → do not use
+ *       "last write wins": back up local copy first, install server version, and emit `conflict`
+ *       (with both local and cloud source code); page places it in "conflict merge" window (one
+ *       per card), where user chooses "Merge" (keep local, `takeMine`) or "Delete selected"
+ *       (keep cloud state). Semantics: `workflow/editing.md` "Undo, redo",
+ *       `product/document-service.md` "Conflicts" (user decision, 2026-10-22).
+ * - When our own write returns in the channel (`actor.session` is this instance's), if
+ *   `previousActor` belongs to someone else, notify "You overwrote X" (overwriting party must know).
+ * - When an upload for the same key is in flight, changes for this key wait until upload response
+ *   arrives before processing: version number from earlier response is ours, and older changes
+ *   are discarded directly to avoid mistaking someone else's earlier version for "server updated".
  *
- * # 范围
- * 只同步 `src/cards/`、`src/parts/` 下的 `.tsx` / `.ts` / `.css`（测试文件除外），且只同步用户卡与改过的内置卡；
- * 未改的内置卡两端都有，不同步（第 5 节〔裁〕）。「改过」由调用方的 `files.changed(rel)` 判定。
+ * # Scope
+ * Only sync `.tsx` / `.ts` / `.css` under `src/cards/` and `src/parts/` (excluding test files),
+ * and only sync user cards and modified built-in cards; unmodified built-in cards exist on both sides
+ * and are not synced (section 5 [ruling]). "Modified" is determined by caller's `files.changed(rel)`.
  *
- * 文件怎么读、怎么装（审查、写进改动层、热更新、重测）、怎么备份都由调用方注入（`server/vite-plugin-cards.ts`），
- * 本模块只管规则、记账与连接；只依赖 Node 内置模块，WebSocket 端点可注入（测试不必起编辑器）。
+ * How files are read, installed (review, write to overlay layer, hot reload, re-test), and backed up
+ * are all injected by caller (`server/vite-plugin-cards.ts`). This module only manages rules,
+ * bookkeeping, and connections; depends only on Node built-in modules, and WebSocket endpoints
+ * can be injected (tests do not need to start the editor).
  *
- * # 连接
- * 缺省的连接是一个**会话**（`server/render-node/session-link.mjs` 的 `createDocEndpoint`，HT-a 契约
- * `docs/plan/http-transport-contract.md` 第 9 节；语义 `docs/semantics/product/document-service.md`「会话与传输」）：
- * 传输断开只让会话脱开，保留期内接续，期间发出的请求与服务端发来的 `content.changed` 都不丢不重，
- * 所以接续（`onResume`）时不重订阅、不重对账；只有会话结束（`onClose`）才算断线，之后建新会话时（`onOpen`）
- * 重新 `content.watch` 与对账。建新会话时才调 `protocols()`（共享项目要向页面要一张票据），接续不调。
- * 对没有会话层的旧服务端，端点退化为「一条传输一个会话」，行为与原来的 `createWsEndpoint` 相同。
+ * # Connection
+ * The default connection is a **session** (`createDocEndpoint` in
+ * `server/render-node/session-link.mjs`, HT-a contract `docs/plan/http-transport-contract.md`
+ * section 9; semantics `docs/semantics/product/document-service.md` "Sessions and transports"):
+ * Transport disconnect only detaches the session; resuming within retention period ensures
+ * requests sent and server-sent `content.changed` during that time are neither lost nor duplicated,
+ * so resume (`onResume`) does not re-subscribe or re-reconcile; only when session ends (`onClose`)
+ * is it considered disconnected, after which creating a new session (`onOpen`) re-runs
+ * `content.watch` and reconciliation. `protocols()` is called only when creating a new session
+ * (shared projects must request a ticket from the page), not on resume. For legacy servers without
+ * a session layer, the endpoint degrades to "one transport per session", behaving the same as the
+ * original `createWsEndpoint`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createDocEndpoint } from './render-node/session-link.mjs';
+import { tr } from './i18n.mjs';
 
 export const CARD_SOURCE = 'card-source';
 
 export const CARD_SYNC_DEFAULTS = Object.freeze({
-  /** 一次内容库请求等回包的上限 */
+  /** Maximum wait time for a content store request response */
   requestTimeoutMs: 10_000,
-  /** 上传失败（非断线）后隔多久再试 */
+  /** Retry delay after upload failure (not a disconnect) */
   retryMs: 3_000,
-  /** 最近的通知留多少条（诊断接口看） */
+  /** How many recent notifications to keep (inspected via diagnostic endpoint) */
   noticesKeep: 50,
 });
 
 const SYNC_EXT = /\.(tsx|ts|css)$/;
 
-/** 统一换行：本机文件可能是 CRLF，两端比内容时不该因为换行不同就当成改过 */
+/** Normalize line endings: local files may be CRLF; comparing content between both sides should not treat line ending differences as modifications */
 export function normalizeSource(source) {
   return String(source).replace(/\r\n/g, '\n');
 }
 
-/** 与内容库同一算法（`docservice-contract.md` 第 2 节：`sha256(JSON.stringify(body))`），body 就是源码字符串 */
+/** Same algorithm as content store (`docservice-contract.md` section 2: `sha256(JSON.stringify(body))`); body is the source code string */
 export function sourceHash(source) {
   return createHash('sha256').update(JSON.stringify(normalizeSource(source)), 'utf8').digest('hex');
 }
 
-/** 这个仓库相对路径在不在同步范围里（只看形状，「改没改过」另判） */
+/** Whether this repo-relative path is within sync scope (checks shape only; "whether modified" judged separately) */
 export function isSyncablePath(rel) {
   if (typeof rel !== 'string' || rel.length === 0 || rel.length > 512) return false;
   if (rel.includes('\\') || rel.includes('\0') || path.isAbsolute(rel) || /^[a-zA-Z]:/.test(rel)) return false;
@@ -81,13 +109,13 @@ export function isSyncablePath(rel) {
   return SYNC_EXT.test(rel);
 }
 
-/** 空间的记账文件名：本机项目一个（`local`），每个共享项目一个 */
+/** Record filename for space: one for local projects (`local`), one for each shared project */
 export function spaceIdOf({ local, projectId }) {
   if (local) return 'local';
   return `shared-${createHash('sha256').update(`shared\n${projectId}`, 'utf8').digest('hex').slice(0, 16)}`;
 }
 
-/** 记账的读写：`<stateDir>/<spaceId>.json`，`{ records: { [rel]: { rev, hash, mine } }, pending: string[] }` */
+/** Read and write sync records: `<stateDir>/<spaceId>.json`, `{ records: { [rel]: { rev, hash, mine } }, pending: string[] }` */
 function createLedger(stateDir, spaceId) {
   const file = stateDir ? path.join(stateDir, `${spaceId}.json`) : null;
   let records = {};
@@ -97,7 +125,7 @@ function createLedger(stateDir, spaceId) {
       const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
       if (raw && typeof raw.records === 'object' && raw.records) records = raw.records;
       if (Array.isArray(raw?.pending)) pending = new Set(raw.pending.filter(isSyncablePath));
-    } catch { /* 没有或坏了：当空账，下一次同步重新记 */ }
+    } catch { /* Missing or corrupted: treat as empty, re-record on next sync */ }
   }
   const save = () => {
     if (!file) return;
@@ -106,7 +134,7 @@ function createLedger(stateDir, spaceId) {
       const tmp = `${file}.${process.pid}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify({ records, pending: [...pending].sort() }, null, 2), 'utf8');
       fs.renameSync(tmp, file);
-    } catch { /* 记不下来只影响下次启动时的判断，不影响这次同步 */ }
+    } catch { /* Failure to persist only affects decisions on next startup, not this sync */ }
   };
   return {
     get: (rel) => records[rel] ?? null,
@@ -119,7 +147,7 @@ function createLedger(stateDir, spaceId) {
   };
 }
 
-/** 诊断里的会话状态（端点有 `stats()` 才有）：实际用的传输（脱开时为 null）、是否脱开、接续与脱开次数、是否对着旧服务端退化 */
+/** Session state in diagnostics (available only when endpoint has `stats()`): transport actually used (null when detached), whether detached, resume and detach counts, whether degraded against a legacy server */
 function linkDiag(endpoint) {
   let st = null;
   try { st = typeof endpoint?.stats === 'function' ? endpoint.stats() : null; } catch { st = null; }
@@ -131,19 +159,19 @@ const sameActor =(a, b) => !!a && !!b && a.userId === b.userId && (a.deviceId ??
 
 /**
  * @param {object} o
- * @param {string | null} o.stateDir 本机记账目录（`<root>/.pc-work/card-sync`）；null = 只记在内存（测试）
- * @param {object} o.files 文件操作（全部同步或返回 Promise 都行）：
- *   - `read(rel) → string | null`：本机此刻生效的内容（改动层优先），没有回 null；
- *   - `changed(rel) → boolean`：这个文件算不算「用户卡或改过的内置卡」（没记账的本机文件据此判断是不是自己改过的）；
- *   - `install(rel, source, { rev }) → { ok: boolean, error?: string }`：装上服务上的版本（审查、写改动层、热更新、重测），`rev` 是这一版的 cardRev；
- *   - `backup(rel, content) → string`：覆盖前把本机那份存起来，回备份的相对路径。
+ * @param {string | null} o.stateDir Local record directory (`<root>/.pc-work/card-sync`); null = memory only (tests)
+ * @param {object} o.files File operations (all synchronous or returning Promise are fine):
+ *   - `read(rel) → string | null`: Content active on this machine right now (overlay layer takes precedence); returns null if none;
+ *   - `changed(rel) → boolean`: Whether this file counts as a "user card or modified built-in card" (untracked local files use this to determine if modified locally);
+ *   - `install(rel, source, { rev }) → { ok: boolean, error?: string }`: Install server version (review, write overlay layer, hot reload, re-test), where `rev` is this version's cardRev;
+ *   - `backup(rel, content) → string`: Save local copy before overwriting; returns relative path of backup.
  * @param {(o: { url: string, protocols: () => Promise<string[]> | string[] }) => object} [o.connect]
- *   建一个端点（`server/render-node/session-link.mjs` 的 `createDocEndpoint` 形状：send、onMessage、onOpen、onClose、close，
- *   可选 onResume）；缺省就用 `createDocEndpoint`（会话：传输断开在保留期内接续；会话结束后指数退避建新会话，建前现取子协议）
- * @param {(event: object) => void} [o.notify] 覆盖提示、装上、被拒等事件（插件经 HMR 转给页面）
+ *   Create an endpoint (`createDocEndpoint` shape in `server/render-node/session-link.mjs`: send, onMessage, onOpen, onClose, close,
+ *   optional onResume); default uses `createDocEndpoint` (session: resumes within retention period on transport disconnect; exponential backoff to create new session after session ends, fetching subprotocols on demand beforehand)
+ * @param {(event: object) => void} [o.notify] Overwrite notices, installed, rejected, and other events (plugin forwards to page via HMR)
  * @param {(event: string, fields?: object) => void} [o.log]
- * @param {boolean} [o.readOnly]  只读(独立渲染主机用,c66-host-cards):只装服务上的版本,从不上传、不记待上传 ——
- *   主机不改卡,本机那份和服务上不同只可能是别的项目装进来的,不能反过来写进这个项目
+ * @param {boolean} [o.readOnly]  Read-only (used by standalone render hosts, c66-host-cards): only installs server versions, never uploads, does not track pending uploads:
+ *   host does not modify cards; differences between local and server copies can only come from other projects installed here, and cannot be written back into this project
  */
 export function createCardSync({
   stateDir = null,
@@ -158,10 +186,10 @@ export function createCardSync({
   readOnly = false,
 } = {}) {
   if (!files || typeof files.read !== 'function' || typeof files.install !== 'function' || typeof files.backup !== 'function') {
-    throw new TypeError('createCardSync: files 要有 read、install、backup');
+    throw new TypeError('createCardSync: files must have read, install, backup');
   }
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响同步 */ } };
-  if (connect !== null && typeof connect !== 'function') throw new TypeError('createCardSync: connect 要是函数');
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failures do not affect sync */ } };
+  if (connect !== null && typeof connect !== 'function') throw new TypeError('createCardSync: connect must be a function');
   const connectTo = connect ?? (({ url, protocols }) => createDocEndpoint({ url, protocols, log: (event, fields) => say(`doc.${event}`, fields) }));
   const changedOf = typeof files.changed === 'function' ? files.changed : () => true;
   const notices = [];
@@ -169,10 +197,10 @@ export function createCardSync({
     const e = { at: Date.now(), ...event };
     notices.push(e);
     if (notices.length > noticesKeep) notices.splice(0, notices.length - noticesKeep);
-    try { notify(e); } catch { /* 页面收不到提示不影响同步 */ }
+    try { notify(e); } catch { /* Page failing to receive notices does not affect sync */ }
   };
 
-  /** 当前绑定；null = 没绑（还没挂上任何空间） */
+  /** Current binding; null = unbound (not yet attached to any space) */
   let b = null;
   let reqSeq = 0;
 
@@ -184,13 +212,13 @@ export function createCardSync({
       spaceId, projectId, url, local, endpoint, ledger,
       keys: new Set((keys ?? []).filter(isSyncablePath)),
       waiting: new Map(),
-      /** rel → 在途上传的 Promise */
+      /** rel → in-flight upload Promise */
       inflight: new Map(),
-      /** 串行处理：列表对账、频道变化、上传排同一条队，同一时刻只处理一件 */
+      /** Serial processing: list reconciliation, channel changes, and uploads share one queue; only one item is processed at a time */
       chain: Promise.resolve(),
       connected: false,
       opens: 0,
-      /** 传输断开后接续上的次数（会话没断：不重订阅、不重对账） */
+      /** Number of successful resumes after transport disconnect (session intact: no re-subscribe, no re-reconciliation) */
       resumes: 0,
       retryTimer: null,
       closed: false,
@@ -203,7 +231,7 @@ export function createCardSync({
       if (!local) binding.endpoint.send({ type: 'content.watch', kinds: [CARD_SOURCE], reqId: `cards#watch-${++reqSeq}` });
       enqueue(binding, () => reconcile(binding));
     });
-    // 接续：还是那个会话，订阅还在，脱开期间的回包与变化由会话层按序补齐、去重，这里只记数
+    // Resume: same session, subscriptions intact; responses and changes during detach are backfilled and deduplicated in order by session layer; only counts here
     if (typeof endpoint.onResume === 'function') {
       endpoint.onResume(() => {
         binding.resumes += 1;
@@ -214,7 +242,7 @@ export function createCardSync({
       binding.connected = false;
       for (const [, w] of binding.waiting) {
         clearTimeout(w.timer);
-        w.reject(Object.assign(new Error('连接断了'), { code: 'disconnected' }));
+        w.reject(Object.assign(new Error('Connection lost'), { code: 'disconnected' }));
       }
       binding.waiting.clear();
       say('cards.sync.close', { spaceId, code: info?.code ?? null });
@@ -232,11 +260,11 @@ export function createCardSync({
 
   function request(binding, type, fields) {
     return new Promise((resolve, reject) => {
-      if (!binding.connected) return reject(Object.assign(new Error('没连上文档服务'), { code: 'disconnected' }));
+      if (!binding.connected) return reject(Object.assign(new Error('Not connected to the document service'), { code: 'disconnected' }));
       const reqId = `cards#${++reqSeq}`;
       const timer = setTimeout(() => {
         binding.waiting.delete(reqId);
-        reject(Object.assign(new Error(`${type} 超时`), { code: 'timeout' }));
+        reject(Object.assign(new Error(`${type} timed out`), { code: 'timeout' }));
       }, requestTimeoutMs);
       timer.unref?.();
       binding.waiting.set(reqId, { resolve, reject, timer, type });
@@ -245,7 +273,7 @@ export function createCardSync({
       if (!sent && binding.waiting.has(reqId)) {
         binding.waiting.delete(reqId);
         clearTimeout(timer);
-        reject(Object.assign(new Error('没发出去'), { code: 'disconnected' }));
+        reject(Object.assign(new Error('Not sent'), { code: 'disconnected' }));
       }
     });
   }
@@ -256,14 +284,14 @@ export function createCardSync({
       const w = binding.waiting.get(msg.reqId);
       binding.waiting.delete(msg.reqId);
       clearTimeout(w.timer);
-      if (msg.type === 'error') w.reject(Object.assign(new Error(`${w.type}：${msg.reason ?? 'error'}`), { code: msg.reason ?? 'error', detail: msg.detail }));
+      if (msg.type === 'error') w.reject(Object.assign(new Error(`${w.type}: ${msg.reason ?? 'error'}`), { code: msg.reason ?? 'error', detail: msg.detail }));
       else w.resolve(msg);
       return;
     }
     if (msg.type === 'content.changed' && msg.kind === CARD_SOURCE && !binding.local) {
       const change = { key: msg.key, hash: msg.hash, rev: msg.rev, actor: msg.actor ?? null, previousActor: msg.previousActor ?? null };
       if (!isSyncablePath(change.key) || !Number.isSafeInteger(change.rev)) return;
-      // 同一个键的上传在途：等它回包再处理（回包先记下自己的版本号，旧的变化就会被丢掉）
+      // Upload in flight for the same key: wait for response before processing (response records our version number first, older changes are discarded)
       const pending = binding.inflight.get(change.key);
       const run = () => enqueue(binding, () => onChanged(binding, change));
       if (pending) pending.finally(run);
@@ -271,7 +299,7 @@ export function createCardSync({
     }
   }
 
-  /* ---------------- 读：对账与变化 ---------------- */
+  /* ---------------- Read: reconciliation and changes ---------------- */
 
   async function hashOfLocal(rel) {
     const cur = await files.read(rel);
@@ -290,7 +318,7 @@ export function createCardSync({
         await handleRemote(binding, item, { actor: null, previousActor: null, fromList: true });
       }
     }
-    // 待上传的，以及项目用到、服务上还没有的：传上去（只读的不传）
+    // Pending upload, plus files used by project not yet on server: upload (read-only does not upload)
     if (readOnly) return;
     const want = new Set(binding.ledger.pending());
     if (!binding.local) for (const k of binding.keys) if (!seen.has(k)) want.add(k);
@@ -304,7 +332,7 @@ export function createCardSync({
     const rec = binding.ledger.get(change.key);
     const own = change.actor && change.actor.session === session;
     if (own) {
-      // 自己写的那一次回来了。覆盖了别人（不是本设备自己）的就告诉覆盖方
+      // Our own write has returned. If it overwrote someone else (not this device itself), notify the overwriting party
       const prev = change.previousActor;
       if (prev && prev.session !== session && !sameActor(prev, change.actor)) {
         emit({ type: 'overwrote', key: change.key, rev: change.rev, previousActor: prev });
@@ -320,7 +348,7 @@ export function createCardSync({
     const rec = binding.ledger.get(rel);
     const { cur, curHash } = await hashOfLocal(rel);
     if (rec && rec.rev >= item.rev) {
-      // 服务上不比本机记下的新：本机在那之后改过（且没在上传）就传上去
+      // Server is not newer than local record: upload if modified locally afterwards (and not currently uploading)
       if (!readOnly && fromList && cur !== null && curHash !== rec.hash && !binding.ledger.isPending(rel)) {
         binding.ledger.mark(rel);
       }
@@ -343,7 +371,7 @@ export function createCardSync({
       binding.ledger.unmark(rel);
       return;
     }
-    // 本机那份是不是「自己的」：没同步上去的改动，或者上次就是自己写上去的
+    // Whether local copy is "ours": unsynced modifications, or written by ourselves last time
     let localChanged = false;
     if (cur !== null) {
       if (rec) localChanged = curHash !== rec.hash || binding.ledger.isPending(rel);
@@ -351,17 +379,20 @@ export function createCardSync({
     }
     const mineOverwritten = !!(cur !== null && rec?.mine && curHash === rec.hash);
     const overwritten = localChanged || mineOverwritten;
-    // 断网(或没开着)期间的改动:连上后对账时看到本机在上次同步之后改过、服务上也更新了 → 进「冲突合并」,不按最后写的赢悄悄换掉。
-    // 只认同步过的卡(`rec` 在):第一次打开项目时本机碰巧有同名的卡,照旧按覆盖办
+    // Changes while offline (or closed): detected during reconciliation upon reconnecting that local
+    // was modified after last sync and server also updated → enter "conflict merge", do not silently
+    // replace via last write wins.
+    // Only applies to previously synced cards (`rec` exists): if local happens to have a same-named card
+    // when opening project for first time, still treat as overwrite
     const conflict = !readOnly && fromList && !!rec && localChanged && cur !== null;
     let backup = null;
     if (overwritten) {
       try {
         backup = await files.backup(rel, cur);
       } catch (err) {
-        // 备份不下来就不覆盖：宁可两边暂时不一致，也不能把本机那份弄丢
+        // Do not overwrite if backup fails: rather be temporarily inconsistent than lose the local copy
         say('cards.sync.backup-failed', { key: rel, message: String(err?.message ?? err) });
-        emit({ type: 'rejected', key: rel, rev, error: `本机那份备份失败,没有覆盖:${err?.message ?? err}` });
+        emit({ type: 'rejected', key: rel, rev, error: tr("Local backup failed, not overwritten: {0}", err?.message ?? err) });
         return;
       }
     }
@@ -372,10 +403,10 @@ export function createCardSync({
       res = { ok: false, error: String(err?.message ?? err) };
     }
     if (!res?.ok) {
-      // 装不上（审查不过等）：记下这一版，免得每次变化都重试；本机内容照旧
+      // Failed to install (failed review, etc.): record this version to avoid retrying on every change; keep local content as-is
       binding.ledger.set(rel, { rev, hash: curHash, mine: false, rejected: true });
       say('cards.sync.rejected', { key: rel, rev, error: res?.error ?? null });
-      emit({ type: 'rejected', key: rel, rev, error: res?.error ?? '装不上', actor });
+      emit({ type: 'rejected', key: rel, rev, error: res?.error ?? tr("Could not install"), actor });
       return;
     }
     binding.ledger.set(rel, { rev, hash: serverHash, mine: false });
@@ -386,7 +417,7 @@ export function createCardSync({
     else if (overwritten) emit({ type: 'overwritten', key: rel, rev, actor, previousActor, backup });
   }
 
-  /* ---------------- 写：上传 ---------------- */
+  /* ---------------- Write: upload ---------------- */
 
   function upload(binding, rel, { reason }) {
     const run = (async () => {
@@ -401,9 +432,9 @@ export function createCardSync({
         const rev = Number.isSafeInteger(stored.rev) ? stored.rev : null;
         const hash = sourceHash(body);
         const prev = binding.ledger.get(rel);
-        // 在途期间先到了更新的一版（别人的）：那一版已经处理过就不倒退
+        // A newer version (someone else's) arrived while in flight: if that version was already processed, do not roll back
         if (!(prev && rev !== null && prev.rev > rev)) binding.ledger.set(rel, { rev, hash, mine: true });
-        // 上传期间本机又改了：还留在待上传里
+        // Modified locally again during upload: remains in pending upload
         const after = await files.read(rel);
         if (after != null && sourceHash(after) === hash) binding.ledger.unmark(rel);
         say('cards.sync.put', { key: rel, rev, reason });
@@ -412,7 +443,7 @@ export function createCardSync({
         say('cards.sync.put-failed', { key: rel, reason, code: err?.code ?? null, message: String(err?.message ?? err) });
         if (err?.code === 'too-large' || err?.code === 'bad-message') {
           binding.ledger.unmark(rel);
-          emit({ type: 'rejected', key: rel, error: `文档服务不收这个文件(${err.code})` });
+          emit({ type: 'rejected', key: rel, error: tr("The document service does not accept this file ({0})", err.code) });
         } else if (err?.code !== 'disconnected' && !binding.retryTimer && !binding.closed) {
           binding.retryTimer = setTimeout(() => {
             binding.retryTimer = null;
@@ -442,7 +473,7 @@ export function createCardSync({
     return true;
   }
 
-  /* ---------------- 对外 ---------------- */
+  /* ---------------- External ---------------- */
 
   function unbindCurrent(reason) {
     const cur = b;
@@ -450,9 +481,9 @@ export function createCardSync({
     b = null;
     cur.closed = true;
     clearTimeout(cur.retryTimer);
-    for (const [, w] of cur.waiting) { clearTimeout(w.timer); w.reject(Object.assign(new Error('已解绑'), { code: 'disconnected' })); }
+    for (const [, w] of cur.waiting) { clearTimeout(w.timer); w.reject(Object.assign(new Error('Unbound'), { code: 'disconnected' })); }
     cur.waiting.clear();
-    try { cur.endpoint.close(); } catch { /* 已经关了 */ }
+    try { cur.endpoint.close(); } catch { /* Already closed */ }
     say('cards.sync.unbind', { spaceId: cur.spaceId, reason });
   }
 
@@ -460,12 +491,14 @@ export function createCardSync({
     session,
 
     /**
-     * 挂到一个空间：本机项目（`local: true`，只上传）或共享项目（读写都做）。同样的绑定再调只更新 `keys`。
-     * `keys`：这个项目要带上的文件（用户卡与改过的内置卡），服务上没有的会传上去。
+     * Attach to a space: local project (`local: true`, upload only) or shared project (both read and write).
+     * Calling with the same binding again only updates `keys`.
+     * `keys`: files to include for this project (user cards and modified built-in cards); those not yet on
+     * the server will be uploaded.
      */
     bind({ projectId = null, url, protocols, local = false, keys = [] } = {}) {
-      if (typeof url !== 'string' || !/^wss?:\/\//.test(url)) throw new TypeError('bind: url 要 ws(s):// 地址');
-      if (!local && (typeof projectId !== 'string' || !projectId)) throw new TypeError('bind: 共享项目要 projectId');
+      if (typeof url !== 'string' || !/^wss?:\/\//.test(url)) throw new TypeError('bind: url must be a ws(s):// address');
+      if (!local && (typeof projectId !== 'string' || !projectId)) throw new TypeError('bind: a shared project needs projectId');
       if (b && b.url === url && b.local === local && (local || b.projectId === projectId)) {
         this.setKeys(keys);
         return { spaceId: b.spaceId, rebound: false };
@@ -476,7 +509,7 @@ export function createCardSync({
       return { spaceId: b.spaceId, rebound: true };
     },
 
-    /** 项目要带上的文件变了（时间轴上添了卡）：新增的、服务上还没有的传上去 */
+    /** Files to include for the project changed (cards added to timeline): upload new files not yet on the server */
     setKeys(keys = []) {
       if (!b) return;
       const binding = b;
@@ -486,7 +519,7 @@ export function createCardSync({
       if (readOnly || !added.length || binding.local || !binding.connected) return;
       enqueue(binding, async () => {
         for (const rel of added.sort()) {
-          if (binding.ledger.get(rel)) continue; // 同步过（服务上有）的由对账与变化处理
+          if (binding.ledger.get(rel)) continue; // Previously synced (present on server) files are handled by reconciliation and changes
           await upload(binding, rel, { reason: 'project' });
         }
       });
@@ -497,30 +530,31 @@ export function createCardSync({
     },
 
     /**
-     * 本机保存了一个卡片文件（edit_card、create_card、安装）：记成待上传、马上传。
-     * 不在同步范围里的路径忽略；没绑时只记不传（下次绑上同一个空间时补传）。
+     * A card file was saved locally (edit_card, create_card, install): mark as pending upload and upload immediately.
+     * Paths outside sync scope are ignored; when unbound, record only without uploading (catch-up upload when attached to the same space next time).
      */
     saved(rel) {
       return saved(rel);
     },
 
     /**
-     * 「冲突合并」里对一张卡点了「合并」：照我这边的源码装回本机（同一套审查、写文件、热更新），再当一次本机保存传上去。
-     * 回 `{ ok, error? }`。装不上（审查不过）不传。
+     * Clicked "Merge" for a card in "conflict merge": reinstall local source code onto this machine
+     * (same review, file writing, hot reload flow), then treat as a local save and upload.
+     * Returns `{ ok, error? }`. Do not upload if installation fails (failed review).
      */
     async takeMine(rel, source) {
-      if (readOnly) return { ok: false, error: '只读的同步实例不改卡' };
-      if (!isSyncablePath(rel) || typeof source !== 'string') return { ok: false, error: '不是可同步的卡片文件' };
+      if (readOnly) return { ok: false, error: 'A read-only sync instance does not modify cards' };
+      if (!isSyncablePath(rel) || typeof source !== 'string') return { ok: false, error: 'Not a syncable card file' };
       let res;
       try { res = await files.install(rel, normalizeSource(source), { rev: null }); }
       catch (err) { res = { ok: false, error: String(err?.message ?? err) }; }
-      if (!res?.ok) return { ok: false, error: res?.error ?? '装不上' };
+      if (!res?.ok) return { ok: false, error: res?.error ?? tr("Could not install") };
       saved(rel);
       say('cards.sync.take-mine', { key: rel });
       return { ok: true };
     },
 
-    /** 等手上的活（对账、上传、装卡）都做完；测试与诊断用 */
+    /** Wait until ongoing work (reconciliation, upload, card installation) is finished; for testing and diagnostics */
     async idle() {
       for (;;) {
         const binding = b;

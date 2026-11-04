@@ -1,5 +1,6 @@
 /**
- * 手机版缩略图的队列与缓存(`thumbs.ts`):按需、限流、缓存、撤销、失败不记、票据轮换不重取。
+ * Queue and cache for mobile app thumbnails (`thumbs.ts`): on-demand, rate limiting, caching,
+ * cancellation, failures not recorded, no refetching on ticket rotation.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +8,7 @@ import { createThumbLoader, thumbKey, seekTarget, fitSize, urlHash, fetchableNow
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-/** 假的解码:每次调用记下来,由测试决定什么时候成功 / 失败 */
+/** Mock decoding: records each call; the test determines when it succeeds / fails */
 function fakeGrab() {
   const calls = [];
   const grab = (url, kind, t) => new Promise((resolve, reject) => calls.push({ url, kind, t, resolve, reject }));
@@ -108,7 +109,7 @@ test('TH9 cache beyond the limit evicts by least recent use', async () => {
   for (const k of ['a', 'b']) L.request(`/m/${k}`, 'image', 0, () => {});
   g.calls[0].resolve('data:a'); g.calls[1].resolve('data:b');
   await tick(); await tick();
-  assert.equal(L.peek('/m/a'), 'data:a'); // a 变成最近用过
+  assert.equal(L.peek('/m/a'), 'data:a'); // a becomes most recently used
   L.request('/m/c', 'image', 0, () => {});
   g.calls[2].resolve('data:c');
   await tick(); await tick();

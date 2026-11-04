@@ -1,89 +1,138 @@
 /**
- * 独立渲染主机的节点编排(M6b,契约 `docs/plan/render-host-contract.md` 第 2、3 节)。
+ * Node arrangement for standalone render hosts (M6b, contract `docs/plan/render-host-contract.md`
+ * sections 2 and 3).
  *
- * 独立渲染主机就是只开 `render` 连接的设备:配置里每个共享项目一条连接、一个节点(`profile: 'host'`),
- * 所有节点共用同一个预渲染执行器,并发总数不超过 `maxConcurrent`(缺省 1,上限 4)。
+ * A standalone render host is a device that only opens `render` connections: one connection and
+ * one node (`profile: 'host'`) per shared project in configuration, with all nodes sharing the same
+ * prerender executor and total concurrency capped at `maxConcurrent` (defaults to 1, cap is 4).
  *
- *   parseHostConfig(raw)  规整配置(M6a 的形状:一项或数组),另取 `maxConcurrent`(不合格抛 bad-host-config)
- *   loadHostConfig(env)   读 `PROMPTCUT_SHARED_CONFIG` 指的文件,再经 parseHostConfig
- *   createRenderHost(…)   按配置每项调一次 `connect(entry)` 拿 { endpoint, executor, sink },
- *                         每条连接上起一个 `createLocalNode`(`profile: 'host'`),由调用方按节拍调 `tick()`
+ *   parseHostConfig(raw)  Normalizes config (M6a shape: single entry or array), extracts
+ *                         `maxConcurrent` (throws bad-host-config if invalid)
+ *   loadHostConfig(env)   Reads file pointed to by `PROMPTCUT_SHARED_CONFIG`, then passes through
+ *                         parseHostConfig
+ *   createRenderHost(…)   Calls `connect(entry)` once per config entry to get { endpoint, executor,
+ *                         sink }, spawns `createLocalNode` (`profile: 'host'`) on each connection,
+ *                         driven by caller calling `tick()` on each tick
  *
- * # 并发总数
+ * # Total concurrency
  *
- * 每个节点的会话各自只看自己的持有数,所以另加一道全局闸:每个节点的 `isIdle()` 回
- * 「全部节点的持有数 + 在飞的认领数 < maxConcurrent」。在飞的认领在包过的 `send` 里记(发 `task.claim` 时记上,
- * 收到同 id 的 `task.claimed` / `task.claim-rejected`、不带 reqId 的 `error`、重新报到或断线时清掉),
- * 与 `session.mjs` 的在飞规则一致。`tick()` 按顺序逐个节点推进,`send` 是同步的,前一个节点刚发的认领
- * 在后一个节点判闲时已经算进去,所以任何时刻持有 + 在飞都不超过上限。
+ * Each node's session only tracks its own held count, so an extra global gate is added: each node's
+ * `isIdle()` returns "held count across all nodes + in-flight claims < maxConcurrent". In-flight
+ * claims are tracked in wrapped `send` (recorded when sending `task.claim`, cleared when receiving
+ * `task.claimed` / `task.claim-rejected` with matching id, `error` without reqId, re-checking in, or
+ * disconnecting), matching in-flight rules in `session.mjs`. `tick()` advances nodes sequentially
+ * in order, `send` is synchronous, and claims just issued by the previous node are already counted
+ * during the next node's idle check, so held + in-flight never exceeds the cap at any moment.
  *
- * # 闲时认领(契约 `render-queue-contract.md` A.12〔裁〕)
+ * # Idle claims (contract `render-queue-contract.md` A.12 [ruling])
  *
- * 所有节点共用的预渲染管线里,快照与 `plan` 走同一条串行 lane(一次只做一件)。并发上限 2 时若一次认领两段快照,
- * 第二段只能在 lane 里排队:帧数不动、工作计数也不动,排过 STALL_MS 就被队列当成卡死收回(M8 C1)。所以执行器给了
- * `laneOf` 时再加一道:要用串行 lane 的任务,只在这条 lane 空着(执行器报 `laneBusy() === 0`)、全部节点手里也没有
- * 还没走到推送的同 lane 任务(`local.occupying()`)、也没有在飞的同 lane 认领时才认领。推产物不占 lane:前一段推送时
- * 下一段照样认领、渲染。执行器没给 `laneOf`(测试替身)时不加这道闸,行为同前。
+ * In the prerender pipeline shared by all nodes, snapshots and `plan` use the same serial lane (doing
+ * only one thing at a time). When concurrency cap is 2, claiming two snapshot clips at once forces
+ * the second clip to queue in the lane: frame count does not advance and work count does not advance
+ * either; queuing longer than STALL_MS causes the queue to treat it as frozen and reclaim it
+ * (M8 C1). Therefore, when the executor provides `laneOf`, an extra gate is added: tasks needing a
+ * serial lane are claimed only when that lane is idle (executor reports `laneBusy() === 0`), no node
+ * holds a task on the same lane that has not yet reached push (`local.occupying()`), and there are no
+ * in-flight claims on the same lane. Pushing artifacts does not occupy the lane: while the previous
+ * clip is pushing, the next clip can still be claimed and rendered. If the executor does not provide
+ * `laneOf` (test double), this gate is omitted and behavior remains as before.
  *
- * # 只认领带片段清单的 `plan`
+ * # Only claim `plan` with clip manifests
  *
- * 节点侧过滤 `filter.mjs` 规则 6:`profile: 'host'` 的节点见到不带片段清单的 `plan`(桌面发布方的)直接跳过,
- * 不发认领(契约第 3、4 节),那种 `plan` 留给发布方自己的节点。带片段清单的 `plan`(在线页面的清单计划、旧页面的
- * 预渲染重试计划)主机照常认领,用自己的指纹切分、发布细任务(C10 契约第 18 节第 9 条,对 M6c X4 的修改)。
- * 主机自己不发布 `plan`。
+ * Node-side filtering in `filter.mjs` rule 6: nodes with `profile: 'host'` skip `plan` without clip
+ * manifests (from desktop publishers) directly without issuing claims (contract sections 3 and 4);
+ * such `plan` is left to the publisher's own nodes. The host claims `plan` with clip manifests as
+ * usual (manifest plans from online pages, prerender retry plans from legacy pages), splitting and
+ * publishing fine-grained tasks using its own fingerprint (C10 contract section 18 item 9,
+ * modifying M6c X4). The host itself does not publish `plan`.
  *
- * # 看得见哪些任务(M6c X3)
+ * # Which tasks are visible (M6c X3)
  *
- * 队列对 host 的 `watch: 'all'` 只回项目摘要 `queue.summary`,不发单任务增量。节点会话(`session.mjs` 的
- * `followSummary`)接到摘要就改 watch 摘要里有活的项目,随即收到它们的快照与增量、照常认领;新项目有活
- * 最迟一个扫描周期后出现在摘要里。诊断 `nodes()` 的 `watching` 是会话此刻 watch 着的项目。
+ * The queue only returns project summary `queue.summary` in response to `watch: 'all'` for host,
+ * without sending single-task deltas. Upon receiving the summary, the node session (`followSummary`
+ * in `session.mjs`) switches to watching projects with active work in the summary, then receives
+ * their snapshots and deltas, claiming as usual; active work in new projects appears in the summary
+ * after at most one scan cycle. In diagnostics, `nodes()`'s `watching` is the projects currently being
+ * watched by sessions.
  *
- * # 闲时门槛
+ * # Idle gate
  *
- * 主机没有页面、没有播放:只要全局闸有空位就认领(契约第 3 节「闲时门槛」),不看执行器的 `isIdle`。
+ * The host has no pages and no playback: claims as long as the global gate has an open slot
+ * (contract section 3 "Idle gate"), ignoring the executor's `isIdle`.
  *
- * # 退出
+ * # Shutdown
  *
- * `shutdown(reason)`:每个节点 `yieldAll(reason)`(持有的一律 `task.release`,在飞的认领回来即放回)
- * 再 `stop()`;调用方随后关连接。队列收到 `task.release` 立即把任务放回 `open`,不必等断线的宽限期。
+ * `shutdown(reason)`: each node calls `yieldAll(reason)` (all held tasks issue `task.release`, and
+ * in-flight claims are released upon arrival), then `stop()`; caller then closes connections. When
+ * receiving `task.release`, the queue immediately returns tasks to `open` without waiting for the
+ * disconnect grace period.
  *
- * # 运行中增删项目(托管方的渲染节点,`docs/plan/hosted-render-contract.md` 第 2、4、7.1 节)
+ * # Adding and removing projects at runtime (host's render node, `docs/plan/hosted-render-contract.md` sections 2, 4, 7.1)
  *
- * `dynamic: true` 时 `entries` 可以是空的,之后由调用方 `add(entry)` / `remove(projectId, { drain })`:
- *   - `add`:照构造时的同一条路接线(`connect`)、起节点;同一个 `projectId` 已经在就只更新它的 `members`;
- *   - `remove(projectId)`:让掉这个项目手里的认领(`task.release`)、停节点、调接线时给的 `close()`;
- *   - `remove(projectId, { drain: true })`:不再认领新的,手里的做完(持有与在飞都清空)才停、才关;
- *   - `setPaused(true)`:全部节点不再认领新任务,手里的照做(背压);
- *   - **产物到了容量上限**:某个任务以 `service-quota` 失败(素材服务回 507,`artifact-transfer.mjs`)时,全部节点暂停认领
- *     `QUOTA_PAUSE_MS`(10 分钟),发一条 `quota-paused` 事件;`quotaPausedUntil` 可查。那个任务是不可重试的失败;
- *   - **各项目轮流**(0.7.19 多项目模式,语义 `product/rendering.md`「渲染服务的两种模式」;`./multi-queue.mjs`):每一拍按
- *     「最久没轮到的项目先」推进,全局闸的空位先给它;一个项目发出一个认领就排到最后。原来的「有成员在线的项目优先」与多项目模式的
- *     「同一类里各项目轮流」冲突,取消;`members` / `setMembers` 照旧记着(诊断里看得到),不再影响先后。
- * 不带 `dynamic` 时这些方法照样在,行为与原来一致(成员表就是构造时那几项)。
+ * When `dynamic: true`, `entries` may be empty, and caller later uses `add(entry)` /
+ * `remove(projectId, { drain })`:
+ *   - `add`: connects (`connect`) and starts nodes along the same path as construction; if the same
+ *     `projectId` already exists, only its `members` are updated;
+ *   - `remove(projectId)`: yields held claims for this project (`task.release`), stops the node,
+ *     and calls `close()` provided during connection;
+ *   - `remove(projectId, { drain: true })`: stops claiming new tasks, stopping and closing only after
+ *     finishing held ones (both held and in-flight are cleared);
+ *   - `setPaused(true)`: all nodes stop claiming new tasks, continuing with held ones (backpressure);
+ *   - **Artifact capacity limit reached**: when a task fails with `service-quota` (asset service returns
+ *     507, `artifact-transfer.mjs`), all nodes pause claiming for `QUOTA_PAUSE_MS` (10 minutes) and
+ *     emit a `quota-paused` event; `quotaPausedUntil` is queryable. That task is a non-retryable
+ *     failure;
+ *   - **Round-robin across projects** (0.7.19 multi-project mode, semantics in `product/rendering.md`
+ *     "Two modes of render service"; `./multi-queue.mjs`): on each tick, advances according to
+ *     "longest since last turn first", giving global gate slots to it first; once a project issues a
+ *     claim, it moves to the end of the line. The former "projects with online members first"
+ *     conflicted with multi-project mode's "round-robin across projects within the same category"
+ *     and has been removed; `members` / `setMembers` are still recorded (visible in diagnostics)
+ *     without affecting priority.
+ * When `dynamic` is omitted, these methods are still present and behave identically to before
+ * (members table is just those entries from construction).
  *
- * # 按项目「搁着不认领」(托管方渲染服务的用户卡隔离,`docs/plan/hosted-render-contract.md` 第 7.5 节)
+ * # Per-project "hold without claiming" (user card isolation for host render service, `docs/plan/hosted-render-contract.md` section 7.5)
  *
- * 接线时(`connect` 的返回值)可以多给两项:
- *   - `hold()`:回 true 时这个项目**一个任务也不认领**(连接、报到、看队列照常)。常驻工作进程对内容库里有 `card-source` 的项目
- *     这样搁着——它不执行任何项目带来的代码,这种项目整个交给隔离工作进程;隔离工作进程在卡片同步对完账之前也这样搁着;
- *   - `cards()`:回 `{ state: 'unknown' | 'none' | 'some', count }`,原样进诊断。
- * 给了 `hold` 的项目,诊断里另有 `pending`(此刻看得见、换一个带着卡片代码的工作进程就能认领的任务数——环境指纹、代码版本、
- * 能力都按本节点算,只是不看卡片代码身份、并当作有 `userCards`)与 `pendingKey`(这批任务 id 的摘要,变了说明来了新任务)。
- * `setLimit(n)`:运行中把并发压到 n(0～`maxConcurrent`;隔离工作进程在跑时管理进程把常驻的压低,两者合起来不超过上限)。
- * 都不给时行为与原来逐项相同。
+ * Connecting (return value of `connect`) can optionally provide two additional items:
+ *   - `hold()`: when returning true, this project **claims no tasks at all** (connections, checking
+ *     in, and watching the queue proceed as usual). Resident worker processes hold projects with
+ *     `card-source` in the content store like this: they execute no code brought by projects,
+ *     delegating such projects entirely to isolated worker processes; isolated worker processes
+ *     also hold like this before card sync reconciliation finishes;
+ *   - `cards()`: returns `{ state: 'unknown' | 'none' | 'some', count }`, passed into diagnostics as is.
+ * For projects with `hold`, diagnostics also has `pending` (number of tasks visible right now that
+ * could be claimed if switched to a worker process carrying card code: environment fingerprint,
+ * code version, and capabilities are evaluated using this node, except card code identity is ignored
+ * and `userCards` is treated as true) and `pendingKey` (digest of this batch of task ids; changing
+ * indicates new tasks arrived).
+ * `setLimit(n)`: caps concurrency to n at runtime (0 to `maxConcurrent`; while isolated worker
+ * processes run, the management process throttles resident workers down so their combined total does
+ * not exceed the cap).
+ * When neither is provided, behavior is identical to before across the board.
  *
- * # 按项目「产不产轨道流」(托管方渲染服务的「生成轨道流」,`docs/plan/hosted-render-contract.md` 第 3.1 节;任务书「甲三」)
+ * # Per-project "whether to produce track streams" ("generate track streams" in host render service, `docs/plan/hosted-render-contract.md` section 3.1; task brief "Jia-3")
  *
- * 配置项(`add(entry)` 的 `entry`)带布尔的 `streams` 时,这个项目按它管:
- *   - `streams: false`:**不认领这个项目的任何轨道流任务**(既不认稀疏流也不认满密度流;快照任务、计划任务照常;连接照旧,手里已经认领的流任务照做完、不放回);
- *     诊断里的 `pending` / `claimable` 也不数流任务(不然管理进程会为没人做的流任务起隔离工作进程);
- *   - `streams: true`:照常认领。
- * 按的是**这条连接所属的项目**,不看任务里写的 `source.projectId`。`setStreams(projectId, bool)` 在运行中改(`reconcileHostProjects`
- * 每次对账照清单更新);接线时 `connect(entry, index, live)` 的第三个参数给 `live.streams()`(现读),调用方把它交给这个项目的执行器
- * (切分清单计划时出不出自己的那一份流)。配置项不带 `streams`(普通的独立渲染主机)时不按项目管,`live.streams()` 回 null,行为与原来逐项相同。
+ * When a config entry (`entry` in `add(entry)`) carries a boolean `streams`, this project is managed by it:
+ *   - `streams: false`: **does not claim any track stream tasks for this project** (neither sparse
+ *     streams nor full-density streams; snapshot tasks and plan tasks proceed as usual; connection
+ *     stays intact, and stream tasks already claimed in hand are finished rather than released);
+ *     `pending` / `claimable` in diagnostics also do not count stream tasks (otherwise the
+ *     management process would spawn isolated worker processes for stream tasks that nobody would
+ *     execute);
+ *   - `streams: true`: claims as usual.
+ * This is keyed by **the project this connection belongs to**, without checking `source.projectId`
+ * written in tasks. `setStreams(projectId, bool)` modifies this at runtime (`reconcileHostProjects`
+ * updates it according to the manifest on each reconciliation); the third argument to
+ * `connect(entry, index, live)` passes `live.streams()` (read on demand), which caller passes to this
+ * project's executor (determining whether to output its own share of streams when splitting manifest
+ * plans). When a config entry lacks `streams` (ordinary standalone render host), it is not managed per
+ * project, `live.streams()` returns null, and behavior is identical to before across the board.
  *
- * 除 `loadHostConfig` 读一次配置文件外(经 `../auth/shared-config.mjs`),本模块不开计时器、不碰网络:
- * 端点、执行器、产物库都由调用方注入(预渲染进程里是 `vite-plugin-frames.ts` 的 `startHostNode`)。
+ * Except for `loadHostConfig` reading the configuration file once (via `../auth/shared-config.mjs`),
+ * this module starts no timers and does not touch the network:
+ * endpoints, executors, and artifact stores are all injected by the caller (in the prerender
+ * process, this is `startHostNode` in `vite-plugin-frames.ts`).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -95,77 +144,96 @@ import { isExportFramesTask } from './export-plan.mjs';
 import { normalizeEntry, SHARED_CONFIG_ENV } from '../auth/shared-config.mjs';
 import { localDeviceInfo } from '../auth/device.mjs';
 
-/** 主机并发总数的上限(契约第 2 节) */
+/** Upper limit on total host concurrency (contract section 2) */
 export const HOST_MAX_CONCURRENT = 4;
-/** 环境变量覆盖配置里的并发数(`cloud/scripts/render-host.mjs --max-concurrent`) */
+/** Environment variable overriding concurrency in configuration (`cloud/scripts/render-host.mjs --max-concurrent`) */
 export const HOST_CONCURRENCY_ENV = 'PROMPTCUT_HOST_MAX_CONCURRENT';
-/** 与 PC 节点相同的能力(契约第 3 节 `node.hello`) */
+/** Same capabilities as PC nodes (contract section 3 `node.hello`) */
 export const HOST_CAPABILITIES = Object.freeze({ userCards: true, graphCards: false });
-/** 产物到了容量上限(任务以 `service-quota` 失败)后暂停认领多久(`docs/plan/hosted-render-contract.md` 第 6 节) */
+/**
+ * How long to pause claiming after artifact capacity limit is reached
+ * (task fails with `service-quota`) (`docs/plan/hosted-render-contract.md` section 6)
+ */
 export const QUOTA_PAUSE_MS = 10 * 60_000;
 
 /**
- * 托管方渲染服务的工作进程报的能力位(`docs/plan/hosted-render-contract.md` 第 5、7.5 节),集中在这一处:
- *   - `userCards`:只有开着卡片同步的工作进程才报 true。常驻工作进程绝不同步任何项目的卡(它不执行项目带来的代码),报 false,
- *     要用户卡的任务它不认领;按项目隔离的工作进程(方案 A)开着同步,报 true;
- *   - `graphCards`:false。第二段(在线执行用户卡与素材效果卡)合流后由主会话对这一位;
- *   - 其余能力位(`streams`、`transcode`)按预渲染管线的实测值,不在这里改。
- * @param {object} base 预渲染管线实测出的能力(`nodeCapabilities`)
- * @param {{ cardSync: boolean }} o 这个工作进程开没开卡片同步
+ * Capability bits reported by host render service worker processes
+ * (`docs/plan/hosted-render-contract.md` sections 5 and 7.5), centralized in this one place:
+ *   - `userCards`: Only worker processes with card sync enabled report true. Resident workers
+ *     never sync cards for any project (they do not execute code brought by projects) and report
+ *     false, not claiming tasks requiring user cards; worker processes isolated per project
+ *     (Approach A) have sync enabled and report true;
+ *   - `graphCards`: false. After Stage 2 (online execution of user cards and media effect cards)
+ *     merges, the lead session will align this bit;
+ *   - Remaining capability bits (`streams`, `transcode`) follow measured values from the
+ *     prerender pipeline, not modified here.
+ * @param {object} base Measured capabilities from the prerender pipeline (`nodeCapabilities`)
+ * @param {{ cardSync: boolean }} o Whether card sync is enabled for this worker process
  *
- * 素材效果卡如实写:托管方的渲染节点**现在不渲素材效果卡**。预渲染管线里 PC 节点与独立渲染主机报的都是 `graphCards: false`
- * (`vite-plugin-frames.ts` 的 `nodeCapabilities`),切分时写了 `requires.graphCards: true` 的任务谁都不认领——
- * 这是现有规则,不是托管方这一侧的限制;隔离工作进程照此报 false。哪天独立渲染主机能渲素材效果卡了,这里跟着改一处即可。
+ * Media effect cards are written as they are: host render nodes **do not render media effect
+ * cards right now**. In the prerender pipeline, PC nodes and standalone render hosts both
+ * report `graphCards: false` (`nodeCapabilities` in `vite-plugin-frames.ts`), and tasks with
+ * `requires.graphCards: true` written during splitting are claimed by nobody: this is an existing
+ * rule, not a restriction on the host side; isolated worker processes report false accordingly.
+ * If standalone render hosts can render media effect cards someday, just update this single place.
  */
 export function hostedRenderCapabilities(base, { cardSync }) {
   return { ...base, userCards: cardSync === true, graphCards: false };
 }
 
 function badHost(detail) {
-  const err = new Error(`独立渲染主机配置:${detail}`);
+  const err = new Error(`Standalone render host config: ${detail}`);
   err.code = 'bad-host-config';
   return err;
 }
 
 /**
- * 校验并发数(契约第 2 节;集成裁定 2026-09-26,契约第 6 节):不给(undefined / null)是 1;1～4 的整数照收;
- * 其余一律是配置错误 `code: 'bad-host-config'` —— 超过 4 报错、不截断;0、负数、小数、字符串都报错。
+ * Validates concurrency (contract section 2; integration ruling 2026-09-26, contract section 6):
+ * omitted (undefined / null) defaults to 1; integers 1 to 4 are accepted as is; everything else
+ * is a configuration error `code: 'bad-host-config'`: values exceeding 4 throw an error without
+ * truncation; 0, negative numbers, decimals, and strings all throw errors.
  */
 export function hostMaxConcurrent(value) {
   if (value === undefined || value === null) return 1;
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) throw badHost('maxConcurrent 要是 1～4 的整数');
-  if (value > HOST_MAX_CONCURRENT) throw badHost(`maxConcurrent 上限 ${HOST_MAX_CONCURRENT}(给了 ${value})`);
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) throw badHost('maxConcurrent must be an integer from 1 to 4');
+  if (value > HOST_MAX_CONCURRENT) throw badHost(`maxConcurrent limit is ${HOST_MAX_CONCURRENT} (got ${value})`);
   return value;
 }
 
 /**
- * 解析主机配置(文件内容 JSON.parse 之后):一项或数组(M6a 契约第 11 节),每项规整见 `normalizeEntry`
- * (缺字段、格式不对、空数组抛 `code: 'bad-shared-config'`,错误信息里没有口令与 K)。
- * 主机只开 `render` 连接:某项给了 `role` 且不是 `render` 抛 `bad-host-config`。
- * `maxConcurrent` 可写在任意一项上,取各项最大值,缺省 1;任一项的值不合格(含超过 4)抛 `bad-host-config`。
+ * Parses host config (after JSON.parse of file content): single entry or array (M6a contract
+ * section 11); for normalization of each entry see `normalizeEntry` (missing fields, invalid format,
+ * or empty array throws `code: 'bad-shared-config'`, error message excludes passphrase and K).
+ * Hosts only open `render` connections: if an entry specifies `role` other than `render`,
+ * throws `bad-host-config`.
+ * `maxConcurrent` may be written on any entry; takes the maximum across entries, defaulting to 1;
+ * an invalid value on any entry (including exceeding 4) throws `bad-host-config`.
  * @param {unknown} raw
- * @param {{ device?: { deviceId: string, deviceName: string } }} [options] 缺省设备信息(同 `normalizeEntry` 第二个参数)
+ * @param {{ device?: { deviceId: string, deviceName: string } }} [options] Default device info
+ *   (same as second param of `normalizeEntry`)
  * @returns {{ entries: object[], maxConcurrent: number }}
  */
 export function parseHostConfig(raw, { device } = {}) {
   const list = Array.isArray(raw) ? raw : [raw];
   if (list.length === 0) {
-    const err = new Error(`${SHARED_CONFIG_ENV}:配置是空数组`);
+    const err = new Error(`${SHARED_CONFIG_ENV}: config is an empty array`);
     err.code = 'bad-shared-config';
     throw err;
   }
   const entries = list.map((item) => (device ? normalizeEntry(item, device) : normalizeEntry(item)));
   for (const [i, item] of list.entries()) {
-    if (item.role !== undefined && item.role !== 'render') throw badHost(`第 ${i} 项的 role 要是 'render'(主机只开 render 连接)`);
+    if (item.role !== undefined && item.role !== 'render') throw badHost(`Item ${i}: role must be 'render' (the host only opens render connections)`);
   }
   const given = list.filter((item) => item.maxConcurrent !== undefined && item.maxConcurrent !== null).map((item) => hostMaxConcurrent(item.maxConcurrent));
   return { entries, maxConcurrent: given.length ? Math.max(...given) : 1 };
 }
 
 /**
- * 读主机配置:`PROMPTCUT_SHARED_CONFIG` 指的文件,内容见 `parseHostConfig`;读不了、不是 JSON 抛 `bad-shared-config`。
- * `PROMPTCUT_HOST_MAX_CONCURRENT`(`render-host --max-concurrent`)设了就优先,同样要 1～4 的整数,否则 `bad-host-config`。
- * 没设环境变量回 null。
+ * Reads host config: file pointed to by `PROMPTCUT_SHARED_CONFIG`, content described in `parseHostConfig`;
+ * unreadable or non-JSON throws `bad-shared-config`.
+ * `PROMPTCUT_HOST_MAX_CONCURRENT` (`render-host --max-concurrent`) takes precedence if set, likewise
+ * requiring an integer from 1 to 4, otherwise `bad-host-config`.
+ * Returns null if environment variable is not set.
  * @returns {null | { entries: object[], maxConcurrent: number }}
  */
 export function loadHostConfig(env = process.env) {
@@ -175,45 +243,57 @@ export function loadHostConfig(env = process.env) {
   try {
     raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (err) {
-    const e = new Error(`${SHARED_CONFIG_ENV}:读不了配置文件(${err?.code ?? 'bad-json'})`);
+    const e = new Error(`${SHARED_CONFIG_ENV}: cannot read config file (${err?.code ?? 'bad-json'})`);
     e.code = 'bad-shared-config';
     throw e;
   }
   const parsed = parseHostConfig(raw, { device: localDeviceInfo(env) });
   const override = env[HOST_CONCURRENCY_ENV];
   if (override !== undefined && override !== '') {
-    if (!/^\d+$/.test(String(override))) throw badHost(`${HOST_CONCURRENCY_ENV} 要是 1～4 的整数`);
+    if (!/^\d+$/.test(String(override))) throw badHost(`${HOST_CONCURRENCY_ENV} must be an integer from 1 to 4`);
     parsed.maxConcurrent = hostMaxConcurrent(Number(override));
   }
   return parsed;
 }
 
-/** `superseded`:执行器判这份内容已被新版本取代、报给队列作废的任务数(`render-queue-contract.md` J.15),不计入 `failed` */
 /**
- * `completed` / `dedup` 只数**细任务**:渲完交付的、与产物库里已有而以去重方式交付的。`plans` 数做完的计划任务(切分并发布了细任务;
- * 托管方的渲染节点认领带片段清单的计划时走这里)。一个只切了计划、细任务都以去重方式交付的节点 `completed` 是 0,要看 `plans` 与 `dedup`。
+ * `superseded`: count of tasks where executor deemed content superseded by newer version
+ * and reported to queue for invalidation (`render-queue-contract.md` J.15), not counted toward `failed`
+ */
+/**
+ * `completed` / `dedup` only count **fine-grained tasks**: those delivered after rendering and
+ * those delivered via deduplication because they already exist in the artifact store. `plans` counts
+ * finished plan tasks (split and published fine-grained tasks; host render nodes take this path when
+ * claiming plans with clip manifests). For a node that only split plans while fine-grained tasks were
+ * all delivered via deduplication, `completed` is 0; inspect `plans` and `dedup`.
  */
 const emptyStats = () => ({ claimed: 0, completed: 0, dedup: 0, plans: 0, failed: 0, superseded: 0, lost: 0, discarded: 0, released: 0 });
 
 /**
  * @param {object} options
- * @param {object[]} options.entries  规整过的配置项(`loadHostConfig().entries`),每项要有 `projectId`;`dynamic` 时可以为空
- * @param {boolean} [options.dynamic]  允许空的 `entries`,项目由 `add` / `remove` 在运行中增减
+ * @param {object[]} options.entries  Normalized config entries (`loadHostConfig().entries`),
+ *   each must have `projectId`; may be empty when `dynamic`
+ * @param {boolean} [options.dynamic]  Allows empty `entries`; projects are added/removed at runtime
+ *   via `add` / `remove`
  * @param {(entry: object, index: number, live: { streams: () => boolean | null }) => { endpoint: object, executor: object, sink: object, close?: () => void }} options.connect
- *   每项调一次(第三个参数见文件头「按项目产不产轨道流」):到那个项目文档服务的 `render` 连接(`createWsEndpoint` 的形状;有 `onOpen` / `onClose` 就挂上,
- *   没有就当已连上),以及这个项目用的执行器与产物库
- * @param {(entry: object, index: number) => string} options.nodeIdOf  每个节点的 id
+ *   Called once per entry (for third parameter see "Per-project whether to produce track streams"
+ *   at file header): `render` connection to that project's document service (`createWsEndpoint`
+ *   shape; attaches `onOpen` / `onClose` if present, treats as connected otherwise), plus
+ *   executor and artifact store used by this project
+ * @param {(entry: object, index: number) => string} options.nodeIdOf  Id for each node
  * @param {string} options.envFingerprint
- * @param {string} options.codeVersion  一个主机实例只有一个代码版本(契约第 3 节〔裁〕)
- * @param {number} [options.maxConcurrent]  并发总数,缺省 1,上限 4
- * @param {object} [options.capabilities]  缺省 `HOST_CAPABILITIES`
- * @param {Record<string, string[]>} [options.cardSourceVersions]  本机此刻有的卡片代码身份(契约 B.2;c66-host-cards:
- *   任务的 `requires.cardSources` 按它过滤,本机没有这份代码就不认领)。可以是现取现算的视图(`card-code.mjs` 的 `view`),
- *   每一拍认领时读;缺省空(只认不要求卡片代码的任务)
+ * @param {string} options.codeVersion  A host instance only has one code version (contract section 3 [ruling])
+ * @param {number} [options.maxConcurrent]  Total concurrency, defaults to 1, cap is 4
+ * @param {object} [options.capabilities]  Defaults to `HOST_CAPABILITIES`
+ * @param {Record<string, string[]>} [options.cardSourceVersions]  Card code identities present on
+ *   this machine right now (contract B.2; c66-host-cards: filters task `requires.cardSources`
+ *   against it; does not claim if this machine lacks the code). Can be an on-demand view
+ *   (`view` in `card-code.mjs`), read on each tick during claiming; defaults to empty (only
+ *   claims tasks not requiring card code)
  * @param {() => number} options.now
  * @param {() => number} [options.random]
  * @param {object} [options.constants]
- * @param {(event: object) => void} [options.onEvent]  local-node 的事件,多带 `projectId`、`index`
+ * @param {(event: object) => void} [options.onEvent]  Events from local-node, with additional `projectId` and `index`
  */
 export function createRenderHost({
   entries,
@@ -230,8 +310,8 @@ export function createRenderHost({
   onEvent = () => {},
   dynamic = false,
 }) {
-  if (!Array.isArray(entries) || (entries.length === 0 && !dynamic)) throw new TypeError('createRenderHost:entries 至少一项');
-  if (typeof connect !== 'function') throw new TypeError('createRenderHost:connect 必须是函数');
+  if (!Array.isArray(entries) || (entries.length === 0 && !dynamic)) throw new TypeError('createRenderHost: entries needs at least one item');
+  if (typeof connect !== 'function') throw new TypeError('createRenderHost: connect must be a function');
   const cap = hostMaxConcurrent(maxConcurrent);
   let version = codeVersion;
   let stopped = false;
@@ -239,17 +319,20 @@ export function createRenderHost({
   let paused = false;
   let quotaUntil = 0;
   let nextIndex = 0;
-  /** 运行中的并发上限(`setLimit`),不超过 `cap` */
+  /** Concurrency cap at runtime (`setLimit`), not exceeding `cap` */
   let limit = cap;
-  /** 各项目轮流的记账(多项目模式;产流那一类):按接线时发的号记,摘掉的项目一并忘掉 */
+  /**
+   * Accounting for round-robin across projects (multi-project mode; stream-producing category):
+   * tracked by number assigned at connection time; removed projects are forgotten
+   */
   const rotation = createRotation();
 
-  const emit = (event) => { try { onEvent(event); } catch { /* 诊断回调出错不影响节点 */ } };
+  const emit = (event) => { try { onEvent(event); } catch { /* Errors in diagnostic callbacks do not affect nodes */ } };
 
-  /** 任务 id 的前缀就是 kind(`snapshot:` / `stream:` / `plan:`) */
+  /** Prefix of task id is kind (`snapshot:` / `stream:` / `plan:`) */
   const kindOfId = (id) => (typeof id === 'string' ? id.slice(0, id.indexOf(':')) : null);
 
-  /** 闲时认领(见文件头):这个任务要用的串行 lane 此刻空不空 */
+  /** Idle claims (see file header): whether serial lane needed by this task is currently free */
   function laneFree(m, task) {
     const ex = m.executor;
     if (typeof ex?.laneOf !== 'function') return true;
@@ -264,25 +347,30 @@ export function createRenderHost({
     return true;
   }
 
-  /** 配置项里的 `streams`:布尔才按项目管,别的值(没给)是 null */
+  /** `streams` in config entry: managed per project only if boolean; other values (omitted) are null */
   const streamsOf = (entry) => (typeof entry?.streams === 'boolean' ? entry.streams : null);
   /**
-   * 这个项目的这个任务过不过「生成轨道流」这一道：关着时（m.streams === false）托管方渲染节点什么轨道流都不产
-   * （既不产稀疏流也不产满密度流；只留 Agent 查帧 see_frames/get_gif/get_layout）。
-   * 开着时稀疏流与满密度流都产。
+   * Whether this task for this project passes the "generate track streams" gate: when disabled
+   * (m.streams === false), host render nodes produce no track streams at all (neither sparse streams
+   * nor full-density streams; leaving only Agent frame inspection see_frames/get_gif/get_layout).
+   * When enabled, both sparse and full-density streams are produced.
    */
-  // 导出专用的逐帧位图任务(`../export-frames.mjs`;种类也是流任务)不是轨道流,不归这一项管:这一项关着的项目照样能导出
+  // Per-frame bitmap tasks dedicated to export (`../export-frames.mjs`; also a stream task kind)
+  // are not track streams and are not governed by this setting: projects with this disabled can still export
   const streamsPass = (m, task) => task?.kind !== 'stream' || m.streams !== false || isExportFramesTask(task);
 
-  /** 这个项目此刻是不是搁着不认领(见文件头);判不出来按搁着算 */
+  /** Whether this project is currently held without claiming (see file header); treated as held if indeterminate */
   const held = (m) => {
     if (!m.hold) return false;
     try { return m.hold() !== false; } catch { return true; }
   };
 
   /**
-   * 搁着的项目里,换一个带着卡片代码的工作进程就能认领的任务:按本节点的环境指纹、代码版本、能力过滤,
-   * 只是不看卡片代码身份(`requires.cardSources`)、并当作有 `userCards`。回 `{ pending, pendingKey, claimable }`(`claimable` 是按本节点手里真有的卡片代码、此刻就能认领的数)。
+   * In held projects, tasks that could be claimed if switched to a worker process carrying card code:
+   * filtered by this node's environment fingerprint, code version, and capabilities, except card code
+   * identity (`requires.cardSources`) is ignored and `userCards` is treated as true. Returns
+   * `{ pending, pendingKey, claimable }` (`claimable` is the count claimable right now based on card
+   * code actually present on this node).
    */
   function pendingOf(m) {
     let tasks = [];
@@ -292,30 +380,38 @@ export function createRenderHost({
     const ids = [];
     let claimable = 0;
     for (const task of tasks) {
-      // 这个项目不产轨道流:它的流任务谁也不会来做,不算「等着的」(见文件头)
+      // This project produces no track streams: nobody will execute its stream tasks,
+      // so they do not count as "pending" (see file header)
       if (!streamsPass(m, task)) continue;
       const { cardSources: _ignored, ...requires } = task?.requires ?? {};
       if (checkClaimable({ ...task, requires }, node).ok) ids.push(String(task.id));
-      // 按本节点手里真有的卡片代码算:此刻就能认领的(隔离工作进程据此判「还有没有活」)
+      // Calculated from card code actually present on this node: claimable right now
+      // (isolated workers use this to determine if work remains)
       if (checkClaimable(task, mine).ok) claimable += 1;
     }
     ids.sort();
     return { pending: ids.length, pendingKey: ids.length ? createHash('sha256').update(ids.join('\n')).digest('hex').slice(0, 16) : '', claimable };
   }
 
-  /** 全部节点的持有数 + 在飞的认领数 */
+  /** Held count across all nodes + in-flight claims */
   const busy = () => members.reduce((n, m) => n + (m.local ? m.local.session.held().length : 0) + (m.inflight !== null ? 1 : 0), 0);
 
-  /** @type {any[]} 现有的项目;运行中 `add` 追加、`remove` 摘掉。`index` 是接线时发的号,摘掉后不复用 */
+  /**
+   * @type {any[]} Existing projects; appended via `add` and removed via `remove` at runtime.
+   * `index` is the number assigned at connection time and not reused after removal
+   */
   const members = [];
   function wire(entry) {
     const index = nextIndex++;
-    /** 这个项目产不产轨道流(`null` 不按项目管);先于接线建好,接线时把现读的口子交出去 */
+    /**
+     * Whether this project produces track streams (`null` means not managed per project);
+     * initialized before connection, passing on-demand reader during connection
+     */
     const live = { streams: streamsOf(entry) };
     const wired = connect(entry, index, { streams: () => live.streams });
     const endpoint = wired?.endpoint;
     if (!endpoint || typeof endpoint.send !== 'function' || typeof endpoint.onMessage !== 'function') {
-      throw new TypeError(`createRenderHost:第 ${index} 项的 endpoint 不对`);
+      throw new TypeError(`createRenderHost: endpoint of item ${index} is invalid`);
     }
     const m = {
       index,
@@ -338,7 +434,7 @@ export function createRenderHost({
       get streams() { return live.streams; },
       set streams(value) { live.streams = value; },
     };
-    // 包一层 send:记在飞的认领、放回数
+    // Wrap send: record in-flight claims and releases
     m.ep = {
       send(message) {
         if (message?.type === 'task.claim') m.inflight = message.id;
@@ -377,16 +473,16 @@ export function createRenderHost({
   }
   for (const entry of entries) wire(entry);
 
-  /** 摘掉一个项目:停节点、从成员表拿掉、调接线时给的 close */
+  /** Removes a project: stops node, removes from members list, and calls close provided during connection */
   function detach(m, reason) {
     if (m.removed) return;
     m.removed = true;
-    try { m.local?.stop(); } catch { /* 已停 */ }
+    try { m.local?.stop(); } catch { /* Stopped */ }
     m.started = false;
     const i = members.indexOf(m);
     if (i >= 0) members.splice(i, 1);
     rotation.forget(String(m.index));
-    try { m.close?.(); } catch { /* 已关 */ }
+    try { m.close?.(); } catch { /* Closed */ }
     emit({ type: 'project-removed', projectId: m.projectId, index: m.index, reason });
   }
 
@@ -405,7 +501,8 @@ export function createRenderHost({
       codeVersion: version,
       executor: m.executor,
       sink: m.sink,
-      // M7 D2:队列锁的锁定方闲置严格超 30 s、这张卡又没做完,切分时带 takeover 按本主机的指纹接手整张卡
+      // M7 D2: when queue lock holder is idle for strictly over 30 s and this card is unfinished,
+      // split with takeover to take over the whole card using this host's fingerprint
       takeoverLocked: idleLockTakeover,
       onEvent: (event) => {
         const type = event?.type;
@@ -427,7 +524,7 @@ export function createRenderHost({
     });
   }
 
-  /** (重)连上就报到,接续本实例仍持有的认领(G.7 约定写法) */
+  /** Checks in upon (re)connection, resuming claims still held by this instance (G.7 standard convention) */
   function open(m) {
     if (stopped || !m.local || m.removed) return;
     m.inflight = null;
@@ -436,7 +533,10 @@ export function createRenderHost({
   }
 
   return {
-    /** 起全部节点;已经连上的(或没有连接状态的,如进程内环回)立即报到 */
+    /**
+     * Starts all nodes; already connected ones (or those without connection state, such as in-process
+     * loopback) check in immediately
+     */
     start() {
       stopped = false;
       started = true;
@@ -446,8 +546,10 @@ export function createRenderHost({
       }
     },
     /**
-     * 一拍:逐个节点续约、认领。各项目轮流:最久没轮到的项目先推进(全局闸的空位先给它),这一拍发出认领的项目排到最后;
-     * 排空中的项目做完就摘掉
+     * One tick: renews leases and claims for each node. Round-robin across projects: advances
+     * the project longest since last turn first (granting global gate slots to it first); a project
+     * that issued claims on this tick moves to the end of the line; draining projects are removed
+     * once completed
      */
     tick() {
       if (stopped) return;
@@ -461,8 +563,9 @@ export function createRenderHost({
       }
     },
     /**
-     * 运行中加一个项目(`entry.projectId` 必须有;`entry.members` 表示此刻有成员在线)。已经在的只更新 `members`、取消排空。
-     * 回 true = 新加的。
+     * Add a project at runtime (`entry.projectId` is required; `entry.members` indicates members are
+     * currently online). If already present, only update `members` and cancel draining.
+     * Returns true = newly added.
      */
     add(entry) {
       if (stopped && started) return false;
@@ -481,8 +584,9 @@ export function createRenderHost({
       return true;
     },
     /**
-     * 运行中摘掉一个项目。缺省:让掉它手里的认领(`task.release`)后立即停、关;`drain: true`:不再认领新的,手里的做完再停、再关。
-     * 回让掉的条数(排空时是 0);没有这个项目回 -1。
+     * Remove a project at runtime. Default: release its held claims (`task.release`) and stop and close
+     * immediately; `drain: true`: stop claiming new tasks, finish held tasks before stopping and closing.
+     * Returns number of released claims (0 when draining); returns -1 if project does not exist.
      */
     remove(projectId, { drain = false, reason = 'removed' } = {}) {
       const m = members.find((x) => x.projectId === projectId);
@@ -492,59 +596,68 @@ export function createRenderHost({
         return 0;
       }
       let released = 0;
-      try { released = m.local?.yieldAll(reason) ?? 0; } catch { /* 连接坏了:队列按断线回收 */ }
+      try { released = m.local?.yieldAll(reason) ?? 0; } catch { /* Connection broken: queue reclaims on disconnect */ }
       detach(m, reason);
       return released;
     },
-    /** 这个项目此刻有没有成员在线(有的优先) */
+    /** Whether this project currently has members online (prioritized if any) */
     setMembers(projectId, online) {
       const m = members.find((x) => x.projectId === projectId);
       if (m) m.prefer = online === true;
     },
-    /** 这个项目产不产轨道流(见文件头):只认布尔;改成不产不放回手里的认领,只是不再认领新的流任务 */
+    /**
+     * Whether this project produces track streams (see file header): accepts booleans only; changing to
+     * not producing does not release held claims, but stops claiming new stream tasks
+     */
     setStreams(projectId, value) {
       const m = members.find((x) => x.projectId === projectId);
       if (m && typeof value === 'boolean') m.streams = value;
     },
-    /** 背压:暂停认领新任务,手里的照做 */
+    /** Backpressure: pause claiming new tasks, continue working on held tasks */
     setPaused(value) { paused = value === true; },
     get paused() { return paused; },
-    /** 运行中把并发压到 n(0～maxConcurrent);不是这个范围里的整数就恢复成 maxConcurrent。手里已有的照做 */
+    /**
+     * Throttle concurrency to n (0-maxConcurrent) at runtime; restore to maxConcurrent if not an
+     * integer in this range. Continue working on existing held tasks
+     */
     setLimit(n) { limit = Number.isInteger(n) && n >= 0 && n <= cap ? n : cap; },
     get limit() { return limit; },
-    /** 因产物容量上限暂停认领到什么时刻(毫秒时间戳);没在暂停回 null */
+    /**
+     * Millisecond timestamp until which claiming is paused due to output capacity limit; returns null
+     * if not paused
+     */
     get quotaPausedUntil() { return now() < quotaUntil ? quotaUntil : null; },
-    /** 现有项目的 projectId(含排空中的) */
+    /** The projectId of existing projects (including those draining) */
     projects: () => members.map((m) => m.projectId),
-    /** 代码版本变了:全部让掉、按新版本重新报到 */
+    /** Code version changed: release all claims and check in again with the new version */
     setCodeVersion(next) {
       if (next === version) return false;
       version = next;
       for (const m of members) {
-        try { m.local?.yieldAll('code-changed'); } catch { /* 连接坏了 */ }
+        try { m.local?.yieldAll('code-changed'); } catch { /* Connection broken */ }
         build(m);
         if (m.started) { m.started = false; open(m); }
       }
       return true;
     },
-    /** 退出:让掉全部认领、停节点。回让掉的条数 */
+    /** Exit: release all claims and stop node. Returns number of released claims */
     shutdown(reason = 'shutdown') {
       let released = 0;
       for (const m of members) {
-        try { released += m.local?.yieldAll(reason) ?? 0; } catch { /* 连接坏了:队列按断线回收 */ }
-        try { m.local?.stop(); } catch { /* 已停 */ }
+        try { released += m.local?.yieldAll(reason) ?? 0; } catch { /* Connection broken: queue reclaims on disconnect */ }
+        try { m.local?.stop(); } catch { /* Stopped */ }
         m.started = false;
       }
       stopped = true;
       return released;
     },
-    /** 还没落定的执行(`shutdown` 之后等它们收尾) */
+    /** Executions not yet settled (wait for them to finalize after `shutdown`) */
     async settled() { await Promise.all(members.map((m) => m.local?.settled())); },
     running: () => members.flatMap((m) => m.local?.running() ?? []),
     busy,
     get maxConcurrent() { return cap; },
     get codeVersion() { return version; },
-    /** 契约第 3 节「诊断」的 `nodes` 一项一个节点 */
+    /** Section 3 "Diagnostics" of the contract: each item in `nodes` represents one node */
     nodes() {
       return members.map((m) => ({
         projectId: m.projectId,
@@ -575,12 +688,15 @@ export function createRenderHost({
   };
 }
 
-/** `cloud/scripts/render-host.mjs` 的命令行参数(契约第 2 节);放在这里是因为 `server/**` 不许引 `scripts/`(单测要用) */
+/**
+ * CLI arguments for `cloud/scripts/render-host.mjs` (section 2 of the contract); placed here
+ * because `server/**` cannot import `scripts/` (needed for unit tests)
+ */
 export function renderHostArgs(argv) {
   const opts = { port: 5400, config: null, data: null, maxConcurrent: null, streams: false, verbose: false, cwd: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    const next = () => { const v = argv[++i]; if (v === undefined) throw new Error(`${a} 要跟一个值`); return v; };
+    const next = () => { const v = argv[++i]; if (v === undefined) throw new Error(`${a} needs a value`); return v; };
     if (a === '--port') opts.port = Number(next());
     else if (a === '--config') opts.config = next();
     else if (a === '--data') opts.data = next();
@@ -588,21 +704,25 @@ export function renderHostArgs(argv) {
     else if (a === '--streams') opts.streams = true;
     else if (a === '--verbose') opts.verbose = true;
     else if (a === '--cwd') opts.cwd = next();
-    else throw new Error(`不认识的参数 ${a}`);
+    else throw new Error(`Unknown argument ${a}`);
   }
-  if (!Number.isInteger(opts.port) || opts.port <= 0 || opts.port > 65533) throw new Error('--port 不对');
+  if (!Number.isInteger(opts.port) || opts.port <= 0 || opts.port > 65533) throw new Error('--port is invalid');
   if (opts.maxConcurrent !== null && !(Number.isInteger(opts.maxConcurrent) && opts.maxConcurrent >= 1 && opts.maxConcurrent <= 4)) {
-    throw new Error('--max-concurrent 要是 1～4 的整数');
+    throw new Error('--max-concurrent must be an integer from 1 to 4');
   }
   return opts;
 }
 
-/** `cloud/scripts/render-host.mjs` 给编辑器子进程设的环境变量(契约第 2 节) */
+/**
+ * Environment variables set by `cloud/scripts/render-host.mjs` for the editor child process
+ * (section 2 of the contract)
+ */
 export function renderHostEnv(base, { config, data, streams, maxConcurrent }) {
   const env = { ...base };
   for (const key of ['PROMPTCUT_DOCSERVICE_URL', 'PROMPTCUT_CLUSTER_TOKEN', 'PROMPTCUT_HEADLESS', 'PROMPTCUT_PUSH', 'PROMPTCUT_ROLE']) delete env[key];
   const tmp = path.join(data, 'tmp');
-  // 代理模式(托管方的渲染节点):没有配置文件,项目清单与票据向管理进程要(`PROMPTCUT_RENDER_BROKER`)
+  // Broker mode (host render node): no config file; requests project manifest and tickets from
+  // the manager process (`PROMPTCUT_RENDER_BROKER`)
   if (config) env.PROMPTCUT_SHARED_CONFIG = path.resolve(config);
   else delete env.PROMPTCUT_SHARED_CONFIG;
   Object.assign(env, {
@@ -618,14 +738,19 @@ export function renderHostEnv(base, { config, data, streams, maxConcurrent }) {
   return env;
 }
 
-/** 代理模式的两个环境变量(`docs/plan/hosted-render-contract.md` 第 7.1 节):管理进程的本机代理口与这次启动的口令 */
+/**
+ * Two environment variables for broker mode (`docs/plan/hosted-render-contract.md` section 7.1):
+ * the manager process's local broker port and the passphrase for this startup
+ */
 export const BROKER_URL_ENV = 'PROMPTCUT_RENDER_BROKER';
 export const BROKER_KEY_ENV = 'PROMPTCUT_RENDER_BROKER_KEY';
 
 /**
- * 代理模式的客户端:工作进程向管理进程要「现在该连哪些项目」与连接票据。工作进程里没有服务私钥,也没有任何项目的口令。
+ * Broker mode client: worker process asks the manager process "which projects to connect to right
+ * now" and for connection tickets. The worker process holds no service private key or project
+ * passphrases.
  *   projects() → { docUrl, paused, projects: [{ projectId, members, drain, nodeId }] }
- *   ticket(projectId) → 连接票据(字符串);要不到抛错
+ *   ticket(projectId) → connection ticket (string); throws on failure
  * @param {{ url: string, key: string, fetch?: typeof globalThis.fetch, timeoutMs?: number }} options
  */
 export function createBrokerClient({ url, key, fetch: fetchImpl = globalThis.fetch, timeoutMs = 10_000 }) {
@@ -635,7 +760,7 @@ export function createBrokerClient({ url, key, fetch: fetchImpl = globalThis.fet
     const res = await fetchImpl(`${base}${pathname}`, { ...init, headers, signal: AbortSignal.timeout(timeoutMs) });
     const body = await res.json().catch(() => null);
     if (res.status !== 200 || !body || body.ok !== true) {
-      const err = new Error(`渲染代理口 ${pathname}:${res.status} ${body?.error ?? ''}`.trim());
+      const err = new Error(`Render proxy port ${pathname}:${res.status} ${body?.error ?? ''}`.trim());
       err.code = body?.error ?? `http-${res.status}`;
       throw err;
     }
@@ -644,23 +769,29 @@ export function createBrokerClient({ url, key, fetch: fetchImpl = globalThis.fet
   return {
     projects: () => call('/projects'),
     async ticket(projectId) { return (await call('/ticket', { method: 'POST', body: JSON.stringify({ projectId }) })).ticket; },
-    /** 工作进程把自己的诊断交给管理进程(它不用反过来请求工作进程) */
+    /**
+     * Worker process reports its diagnostics to manager process (so it need not query worker process
+     * back)
+     */
     report: (body) => call('/report', { method: 'POST', body: JSON.stringify(body) }).catch(() => null),
   };
 }
 
 /**
- * 按代理口给的清单对账:该加的 `add`,不在清单里的 `remove`,清单里标了 `drain` 的排空,`members`、`streams`(这个项目产不产轨道流)与 `paused` 跟着改。
- * 纯编排,不碰网络;回 `{ added, removed, drained }`(projectId 列表)。
+ * Reconcile against manifest from broker endpoint: `add` items to add, `remove` items not in
+ * manifest, drain items marked with `drain`, updating `members`, `streams` (whether this project
+ * produces track streams), and `paused` accordingly.
+ * Pure arrangement, touches no network; returns `{ added, removed, drained }` (projectId lists).
  * @param {ReturnType<typeof createRenderHost>} host
  * @param {{ paused?: boolean, projects: { projectId: string, members?: boolean, drain?: boolean }[] }} listing
- * @param {(item: object) => object} entryOf  清单项 → `add` 用的配置项
+ * @param {(item: object) => object} entryOf  manifest item → config entry for `add`
  */
 export function reconcileHostProjects(host, listing, entryOf) {
   const want = new Map((listing?.projects ?? []).map((p) => [p.projectId, p]));
   const out = { added: [], removed: [], drained: [] };
   host.setPaused(listing?.paused === true);
-  // 清单没给 `limit`(旧的管理进程、测试替身)就是不压:恢复成 maxConcurrent
+  // If manifest omits `limit` (older manager processes, test doubles), do not throttle: restore to
+  // maxConcurrent
   host.setLimit?.(Number.isInteger(listing?.limit) ? listing.limit : null);
   for (const projectId of host.projects()) {
     if (want.has(projectId)) continue;
@@ -672,7 +803,8 @@ export function reconcileHostProjects(host, listing, entryOf) {
       if (host.remove(projectId, { drain: true }) === 0) out.drained.push(projectId);
       continue;
     }
-    // 已经在的项目:`add` 照这份配置项更新 `members` 与 `streams`(创建者开、关「生成轨道流」后清单变了,这里一拍之内跟上)
+    // Projects already present: `add` updates `members` and `streams` from this config entry (when the
+    // creator toggles "generate track streams" and the manifest changes, this catches up within one tick)
     if (host.add(entryOf(item))) out.added.push(projectId);
     else host.setMembers(projectId, item.members === true);
   }
@@ -680,11 +812,15 @@ export function reconcileHostProjects(host, listing, entryOf) {
 }
 
 /**
- * 素材回退(J.6)按基址挑票据:素材票据只在签发它的素材服务上有效,主机加入的项目分属不同素材服务时,
- * 读哪台的回退就要用那台所属项目的票据(M6b 集成修的遗留:原来只用第一个项目的票据,读第二台会 401)。
- * 交给 `asset-client.ts` 的 `setMediaFallbackTicket`,它每试一个回退基址调一次。
- * @param {Array<{ base: () => string | null, ticket: () => Promise<string | null> }>} records  每个项目一项,顺序同配置
- * @returns {(base: string) => Promise<string | null> | null}  基址不属于任何项目时回 null(不带票据)
+ * Media fallback (J.6) picks tickets by base URL: asset tickets are only valid on the asset
+ * service that issued them; when projects joined by a host belong to different asset services,
+ * reading fallback from a host requires the ticket of that host's project (legacy fix from M6b
+ * integration: previously only first project's ticket was used, causing 401 on the second).
+ * Handed to `setMediaFallbackTicket` in `asset-client.ts`, called on each fallback base URL attempt.
+ * @param {Array<{ base: () => string | null, ticket: () => Promise<string | null> }>} records
+ *   One item per project, in config order
+ * @returns {(base: string) => Promise<string | null> | null}
+ *   Returns null if base URL belongs to no project (without ticket)
  */
 export function fallbackTicketFor(records) {
   const norm = (b) => String(b ?? '').trim().replace(/\/+$/, '');

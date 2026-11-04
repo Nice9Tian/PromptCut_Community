@@ -1,24 +1,32 @@
 /**
- * 页面触发预渲染(`preload`)的调度:编辑推送成功、系统空闲时防抖发一次,没就绪就接着问。
+ * Scheduling for the page to trigger prerender (`preload`): after an edit push succeeds and the
+ * system is idle, send once with debounce, and keep asking if not ready.
  *
- * 为什么要页面来发:预渲染进程只有收到 `POST /api/frames/preload` 才为这一版项目开后台预渲染
- * (锚帧、控件快照、本地档、轨道流)。以前只有 legacy 预览(`UnifiedPreview`)发它,双舞台模式下没人发 ——
- * 重卡在真实使用里拿不到预渲染结果,兜底顺序常常一路退到占位符。
+ * Why the page has to send it: the prerender process starts a background prerender for this version
+ * of the project only on receiving `POST /api/frames/preload` (anchor frames, control snapshots,
+ * local tier, track streams). Previously only the legacy preview (`UnifiedPreview`) sent it, and in
+ * dual-stage mode nobody did:
+ * heavy cards in real use never got prerender output, and the fallback order often went all the way
+ * down to the placeholder.
  *
- * 「编辑推送成功」由 `frameRequest` 保证:它先 `alignMirror()`(把没推的改动推上去并等它落地)再带
- * `{ session, localRev }` 发请求;镜像缺键(409)时整份重推一次。「空闲」= 不在播放、不在拖动(由调用方给):
- * 后台 lane 本来就给播放让路,播放中被打断的那一版会停在 `partial`,空闲之后再发一次就接着做。
+ * "Edit push succeeded" is guaranteed by `frameRequest`: it first calls `alignMirror()` (pushes
+ * unpushed changes and waits for them to land), then sends the request with
+ * `{ session, localRev }`; when the mirror is missing a key (409), it re-pushes the whole thing
+ * once. "Idle" = not playing and not dragging (supplied by the caller):
+ * the background lane yields to playback anyway, and the version interrupted during playback stays
+ * at `partial`; sending again after idle picks up where it left off.
  *
- * 调度本身是纯逻辑(计时器可注入),单测在 `prerenderPreload.test.mjs`;React 那一层在 `usePrerenderPreload.ts`。
+ * The scheduling itself is pure logic (timers are injectable); the unit test is in
+ * `prerenderPreload.test.mjs`; the React layer is in `usePrerenderPreload.ts`.
  */
 
-/** 编辑之后等这么久没有新的改动才发(防抖) */
+/** After an edit, send only once there have been no new changes for this long (debounce) */
 export const PRELOAD_DEBOUNCE_MS = 800;
-/** 还没就绪时隔多久再问一次 */
+/** How long to wait before asking again when not ready yet */
 export const PRELOAD_POLL_MS = 2000;
-/** 请求失败(预渲染进程重启等)之后隔多久重试 */
+/** How long to wait before retrying after a request fails (prerender process restart, etc.) */
 export const PRELOAD_RETRY_MS = 4000;
-/** 一次后台请求不结算时释放单飞位；正常整段预渲染可能花数分钟 */
+/** Release the single-flight slot when a background request doesn't settle; a normal full prerender can take several minutes */
 export const PRELOAD_REQUEST_TIMEOUT_MS = 6 * 60_000;
 
 export interface PreloadStatus {
@@ -27,25 +35,25 @@ export interface PreloadStatus {
 }
 
 export interface PreloadDeps {
-  /** 发一次 preload(调用方用 `frameRequest("preload", …, { target: "prerender", lane: "background" })`) */
+  /** Send one preload (the caller uses `frameRequest("preload", …, { target: "prerender", lane: "background" })`) */
   request(signal: AbortSignal): Promise<PreloadStatus>;
-  /** 每次回包之后通知(legacy 预览拿它归档采样帧) */
+  /** Notified after every response (the legacy preview uses it to archive sampled frames) */
   onStatus?(status: PreloadStatus): void;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(timer: unknown): void;
 }
 
 export interface PreloadScheduler {
-  /** 项目改了(新的一版要推给预渲染进程) */
+  /** The project changed (a new version has to be pushed to the prerender process) */
   edited(): void;
-  /** 空闲与否(不在播放、不在拖动) */
+  /** Whether idle (not playing, not dragging) */
   setIdle(idle: boolean): void;
   dispose(): void;
 }
 
 export function createPreloadScheduler(deps: PreloadDeps): PreloadScheduler {
   let idle = false;
-  /** 有还没发出去的一版(编辑过,或空闲之后要复查一次) */
+  /** There is a version not yet sent (edited, or needs one recheck after idle) */
   let dirty = true;
   let done = false;
   let inFlight = false;
@@ -99,10 +107,10 @@ export function createPreloadScheduler(deps: PreloadDeps): PreloadScheduler {
     inFlight = false;
     activeAbort = null;
     if (disposed) return;
-    try { deps.onStatus?.(status); } catch { /* 通知方出错不影响调度 */ }
+    try { deps.onStatus?.(status); } catch { /* An error in the notifier doesn't affect scheduling */ }
     done = status?.status === "ready";
     if (!idle) return;
-    // 请求在飞的时候又编辑了:按防抖再发一次;否则没就绪就接着问
+    // Edited while a request is in flight: send again with debounce; otherwise keep asking if not ready
     if (dirty) arm(PRELOAD_DEBOUNCE_MS);
     else if (!done) arm(PRELOAD_POLL_MS);
   };
@@ -118,7 +126,7 @@ export function createPreloadScheduler(deps: PreloadDeps): PreloadScheduler {
       if (disposed || next === idle) return;
       idle = next;
       if (!idle) { clear(); return; }
-      // 空闲了:播放中后台那一版可能停在 `partial`,复查一次(同样按防抖,拖动刚松手不马上抢)
+      // Idle: the background version may have stopped at `partial` during playback, so recheck once (also debounced, so it doesn't jump in right after a drag is released)
       if (!done) dirty = true;
       if (dirty && !inFlight) arm(PRELOAD_DEBOUNCE_MS);
     },

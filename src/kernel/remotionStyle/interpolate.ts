@@ -1,42 +1,52 @@
 /**
- * remotion 式的框架：按时间插值、带缓动的过渡、循环。
+ * remotion-style framework: interpolation over time, eased transitions, loops.
  *
- * 全是「时间 t 和参数 → 值」的纯函数：不读时钟、不记上一次的结果。t 的单位是秒（卡片组件收到的那个 `t`）。
+ * All pure functions of "time t and parameters → value": they read no clock and remember no previous
+ * result. The unit of t is seconds (the `t` the card component receives).
  */
 import { Easing, type EasingFn } from "./easing.ts";
 
-/** 范围之外怎么办：`clamp` 停在端点的值上；`extend` 顺着最边上那一段的斜率接着走 */
+/**
+ * What to do outside the range: `clamp` stays at the value of the endpoint; `extend` keeps going along
+ * the slope of the outermost segment
+ */
 export type Extrapolate = "clamp" | "extend";
 
 export interface InterpolateOptions {
-  /** 每一段里用的缓动；缺省是匀速。给数组时一段一条（长度 = 区间个数） */
+  /**
+   * Easing used within each segment; the default is constant speed. When an array is given, one per
+   * segment (length = number of intervals)
+   */
   easing?: EasingFn | readonly EasingFn[];
-  /** t 比第一个时间点还早时怎么办，缺省 `clamp` */
+  /** What to do when t is earlier than the first time point, default `clamp` */
   extrapolateLeft?: Extrapolate;
-  /** t 比最后一个时间点还晚时怎么办，缺省 `clamp` */
+  /** What to do when t is later than the last time point, default `clamp` */
   extrapolateRight?: Extrapolate;
 }
 
-/** 把 x 夹在 [lo, hi] 里（缺省 0～1） */
+/** Clamp x into [lo, hi] (default 0~1) */
 export function clamp(x: number, lo = 0, hi = 1): number {
   return x < lo ? lo : x > hi ? hi : x;
 }
 
-/** 在 a、b 之间按进度 p 取值（p 不夹，0 是 a、1 是 b） */
+/** Take a value between a and b at progress p (p is not clamped; 0 is a, 1 is b) */
 export function lerp(a: number, b: number, p: number): number {
   return a + (b - a) * p;
 }
 
 function checkRanges(name: string, input: readonly number[], outputLength: number): void {
-  if (!Array.isArray(input) || input.length < 2) throw new Error(`${name} 的时间点至少要两个`);
-  if (input.length !== outputLength) throw new Error(`${name} 的时间点和取值个数要一样多（${input.length} 对 ${outputLength}）`);
+  if (!Array.isArray(input) || input.length < 2) throw new Error(`${name} needs at least two time points`);
+  if (input.length !== outputLength) throw new Error(`${name} needs the same number of time points and values (${input.length} vs ${outputLength})`);
   for (let i = 0; i < input.length; i++) {
-    if (!Number.isFinite(input[i])) throw new Error(`${name} 的时间点要是有限的数，第 ${i + 1} 个是 ${input[i]}`);
-    if (i > 0 && !(input[i] > input[i - 1])) throw new Error(`${name} 的时间点要一个比一个大，第 ${i + 1} 个（${input[i]}）不比前一个（${input[i - 1]}）大`);
+    if (!Number.isFinite(input[i])) throw new Error(`${name} time points must be finite numbers, number ${i + 1} is ${input[i]}`);
+    if (i > 0 && !(input[i] > input[i - 1])) throw new Error(`${name} time points must be strictly increasing, number ${i + 1} (${input[i]}) is not greater than the previous one (${input[i - 1]})`);
   }
 }
 
-/** t 落在哪一段（0 起），以及在这一段里走到了多少（没有缓动、没有夹） */
+/**
+ * Which segment t falls in (0-based), and how far along it is within that segment (no easing, no
+ * clamping)
+ */
 function locate(t: number, input: readonly number[]): { segment: number; raw: number } {
   let segment = 0;
   for (let i = 1; i < input.length - 1; i++) if (t >= input[i]) segment = i;
@@ -50,7 +60,10 @@ function easingOf(options: InterpolateOptions | undefined, segment: number): Eas
   return e[segment] ?? Easing.linear;
 }
 
-/** 这一段里缓动之后的进度；范围之外按选项夹住或延伸 */
+/**
+ * Progress within this segment after easing; outside the range it is clamped or extended according
+ * to the options
+ */
 function progressAt(t: number, input: readonly number[], options: InterpolateOptions | undefined): { segment: number; p: number } {
   const first = input[0], last = input[input.length - 1];
   if (t <= first) {
@@ -67,10 +80,11 @@ function progressAt(t: number, input: readonly number[], options: InterpolateOpt
 }
 
 /**
- * 按时间插值：`input` 是一串从小到大的时间点（秒），`output` 是每个时间点上的值，中间按段线性过渡（可以配缓动）。
- * 范围之外缺省停在端点的值上。
+ * Interpolate over time: `input` is a list of time points in ascending order (seconds), `output` is
+ * the value at each time point, with a linear transition per segment in between (easing optional).
+ * Outside the range it stays at the endpoint value by default.
  *
- * 例：`interpolate(t, [0, 0.4], [0, 1])` —— 0.4 秒内从 0 到 1，之后保持 1。
+ * Example: `interpolate(t, [0, 0.4], [0, 1])` goes from 0 to 1 within 0.4 seconds, then stays at 1.
  */
 export function interpolate(t: number, input: readonly number[], output: readonly number[], options?: InterpolateOptions): number {
   checkRanges("interpolate", input, output.length);
@@ -79,22 +93,24 @@ export function interpolate(t: number, input: readonly number[], output: readonl
 }
 
 export interface TweenOptions {
-  /** 起点的值，缺省 0 */
+  /** Value at the start, default 0 */
   from?: number;
-  /** 终点的值，缺省 1 */
+  /** Value at the end, default 1 */
   to?: number;
-  /** 从第几秒开始，缺省 0 */
+  /** Second at which it starts, default 0 */
   delay?: number;
-  /** 走多少秒 */
+  /** How many seconds it takes */
   duration: number;
-  /** 缓动，缺省 `Easing.easeOut` */
+  /** Easing, default `Easing.easeOut` */
   easing?: EasingFn;
 }
 
 /**
- * 带缓动的过渡：从 `from` 到 `to`，`delay` 秒后开始、走 `duration` 秒。开始之前是 `from`，走完之后是 `to`。
+ * Eased transition: from `from` to `to`, starting after `delay` seconds and taking `duration` seconds.
+ * Before it starts the value is `from`, and after it finishes it is `to`.
  *
- * 例：`tween(t, { from: 40, to: 0, delay: 0.2, duration: 0.5 })` —— 0.2 秒时起步，0.7 秒时落到 0。
+ * Example: `tween(t, { from: 40, to: 0, delay: 0.2, duration: 0.5 })` starts at 0.2 seconds and lands
+ * on 0 at 0.7 seconds.
  */
 export function tween(t: number, options: TweenOptions): number {
   const { from = 0, to = 1, delay = 0, duration, easing = Easing.easeOut } = options;
@@ -105,21 +121,24 @@ export function tween(t: number, options: TweenOptions): number {
   return lerp(from, to, easing(p));
 }
 
-/** 循环：把 t 折回 [0, period)。例：`loop(t, 2)` 每 2 秒从头走一遍 */
+/** Loop: fold t back into [0, period). Example: `loop(t, 2)` runs from the start every 2 seconds */
 export function loop(t: number, period: number): number {
   if (!(period > 0)) return 0;
   const r = t % period;
   return r < 0 ? r + period : r;
 }
 
-/** 来回走：0 → period → 0 → period……例：`pingPong(t, 1)` 一秒去、一秒回 */
+/**
+ * Back and forth: 0 → period → 0 → period ... Example: `pingPong(t, 1)` goes out for one second and
+ * back for one second
+ */
 export function pingPong(t: number, period: number): number {
   if (!(period > 0)) return 0;
   const r = loop(t, period * 2);
   return r <= period ? r : period * 2 - r;
 }
 
-/* ------------------------------------------------------------------ 颜色 */
+/* ------------------------------------------------------------------ Colors */
 
 type Rgba = readonly [number, number, number, number];
 
@@ -144,13 +163,14 @@ function parseColor(color: string): Rgba {
       if (out.every(Number.isFinite)) return out;
     }
   }
-  throw new Error(`interpolateColors 认不出这个颜色：${String(color).slice(0, 40)}（只认 #rgb、#rrggbb、#rrggbbaa、rgb()、rgba()）`);
+  throw new Error(`interpolateColors does not recognize this color: ${String(color).slice(0, 40)} (only #rgb, #rrggbb, #rrggbbaa, rgb(), rgba() are supported)`);
 }
 
 /**
- * 按时间在几个颜色之间过渡，返回 `rgba(r, g, b, a)` 字符串。颜色只认十六进制和 `rgb()` / `rgba()`。
+ * Transition over time between several colors, returning an `rgba(r, g, b, a)` string. Colors are
+ * only recognized as hexadecimal and `rgb()` / `rgba()`.
  *
- * 例：`interpolateColors(t, [0, 1], ["#ff0000", "#0000ff"])` —— 一秒内从红到蓝。
+ * Example: `interpolateColors(t, [0, 1], ["#ff0000", "#0000ff"])` goes from red to blue in one second.
  */
 export function interpolateColors(t: number, input: readonly number[], colors: readonly string[], options?: InterpolateOptions): string {
   checkRanges("interpolateColors", input, colors.length);

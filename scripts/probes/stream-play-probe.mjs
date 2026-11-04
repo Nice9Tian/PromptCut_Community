@@ -1,28 +1,41 @@
 /**
- * R8 轨道流**舞台侧**的端到端探针(任务书「验收」里解码与播放 / 舞台侧 / 组流平面那几条)。
+ * End-to-end probe for R8 track stream **stage side** (the items for decoding and playback / stage
+ * side / group stream plane in "Acceptance check" of the task brief).
  *
  *   node scripts/probes/stream-play-probe.mjs [--origin http://127.0.0.1:5230] [--group] [--out <dir>] [--json <file>]
  *
- * 1. 本进程里起一个 `FramePipeline` 把 `stream-probe-project.mjs` 的项目生产成轨道流(库根在临时目录);
- * 2. 本进程起一个 http 服务:发测试页(两个舞台 iframe,打 dev server 的两个舞台端口,带 `&preview=stage`),
- *    并用 `server/frame-stream.mjs` 的 `handleStreamRequest` 发流的字节(带 CORS)。舞台里的
- *    `streamPlayer` 经 `window.__pcStreamBase` 指到这里 —— 产品里这条路由挂在预渲染进程的
- *    `/api/frames/*` 上(见报告:那一处在 `server/vite-plugin-frames.ts`,不在本任务可改的文件里);
- * 3. 测试页**扮演父页**:只经 postMessage RPC 驱动舞台 —— `setSuppressed(H(t))` + `setStreamPlanes(...)`
- *    (平面由就绪索引里 `kind: 'stream'` 的层合成,`streamPlanesFor` 同一个口径)+ `play(0)`。
+ * 1. Spin up a `FramePipeline` in this process to produce the project in `stream-probe-project.mjs`
+ *    into track streams (store root in temp directory);
+ * 2. Start an HTTP server in this process: serve the test page (two stage iframes hitting the dev
+ *    server's two stage ports with `&preview=stage`), and serve stream bytes using
+ *    `handleStreamRequest` from `server/frame-stream.mjs` (with CORS). In the stage, `streamPlayer`
+ *    points here via `window.__pcStreamBase`: in production this route is mounted on `/api/frames/*`
+ *    of the prerender process (see report: that location is in `server/vite-plugin-frames.ts`, outside
+ *    the files modifiable in this task);
+ * 3. The test page **acts as the parent page**: drives the stage only via postMessage RPC:
+ *    `setSuppressed(H(t))` + `setStreamPlanes(...)` (planes synthesized from layers in ready index
+ *    with `kind: 'stream'`, using the same logic as `streamPlanesFor`) + `play(0)`.
  *
- * 核对:
- *   - 流平面上真的画出了帧、解码器没报错;只在 `front` 有 decoder,`back` 一条都没有;
- *   - 单个解码器同时持有的帧 ≤ 8、解码帧总字节 ≤ 80 MB;
- *   - 播放节拍:`frame` 事件的 `sec` 差恒为 1/fps(不跳帧)、间隔中位数;
- *   - 被抑制的粒子卡:自己那块 `<canvas>` 的像素哈希在抑制期间不变,包裹层的 `data-pc-local-frame` 仍随 t 变;
- *   - 点画布能点中它(`hitTest`);组流(`--group`)时点组流平面命中的是背后组内被抑制的卡;
- *   - 冷 seek 到解出目标帧的耗时(≤ 60 ms);
- *   - 暂停在某一帧:舞台截图和导出页同一帧的整帧 PNG 逐像素比(有损编码的误差,记平均值);截图存盘;
- *   - 毛玻璃卡(里程表,活渲)叠在流画布上:那一块和导出同一帧逐像素比(模糊采样到了下面的流);
- *   - 缺分段:平面的就绪区间少给几段,那几段里流平面清成透明、播放头照走(`frame` 不停、不跳);
- *   - 对照:同一台舞台不挂流平面时的节拍(流的解码合成不拖慢节拍);
- *   - `setRole('back')` 之后 `streamPlayer` 停下、全部 `VideoFrame` 关掉。
+ * Checks:
+ *   - Frames are actually drawn on stream planes, decoder reports no errors; decoders exist only in
+ *     `front`, none in `back`;
+ *   - Frames held concurrently by a single decoder ≤ 8, total decoded frame bytes ≤ 80 MB;
+ *   - Playback cadence: the `sec` delta of `frame` events is strictly 1/fps (no dropped frames),
+ *     median interval;
+ *   - Suppressed particle card: pixel hash of its own `<canvas>` remains unchanged during suppression,
+ *     while `data-pc-local-frame` on the wrapper layer still changes with t;
+ *   - Clicking canvas hits it (`hitTest`); with group stream (`--group`), clicking the group stream
+ *     plane hits the suppressed card within the group behind it;
+ *   - Cold seek to decoding target frame elapsed time (≤ 60 ms);
+ *   - Paused at a specific frame: stage screenshot vs. full-frame PNG of the same frame on export page
+ *     compared pixel-by-pixel (lossy encoding error, record average); save screenshot to disk;
+ *   - Frosted-glass card (odometer, live render) overlaid on stream canvas: pixel-by-pixel comparison
+ *     of that region against the same frame in export (blur sampled the stream below correctly);
+ *   - Missing segments: omit several segments from plane's ready interval; during those segments,
+ *     stream planes clear to transparent, playhead advances normally (`frame` does not stop or jump);
+ *   - Control: cadence when the same stage has no stream planes attached (stream decoding and
+ *     compositing does not slow down cadence);
+ *   - After `setRole('back')`, `streamPlayer` stops and all `VideoFrame` instances are closed.
  */
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -49,7 +62,7 @@ const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra ===
 async function stageOrigins() {
   const r = await fetch(origin + '/api/stage/ports');
   const j = await r.json();
-  if (!j.ok || !Array.isArray(j.ports) || j.ports.length < 2) throw new Error(`舞台端口没起来:${JSON.stringify(j)}`);
+  if (!j.ok || !Array.isArray(j.ports) || j.ports.length < 2) throw new Error(`Stage ports did not come up: ${JSON.stringify(j)}`);
   const u = new URL(origin);
   return j.ports.slice(0, 2).map((p) => `${u.protocol}//${u.hostname}:${p}`);
 }
@@ -82,7 +95,10 @@ window.__ready = Promise.all([waitReady(document.getElementById('a'), '${oa}'), 
   .then(([a, b]) => { window.__rpc = a; window.__rpcB = b; a.onEvent((ev) => { if (ev.type === 'frame') window.__frames.push({ sec: ev.sec, at: performance.now() }); }); return true; });
 </script></body></html>`;
 
-/** RGBA PNG → 与 #202020 底色合成后的 RGB(导出页的整帧是透明底,舞台截图是叠在测试页底色上的) */
+/**
+ * RGBA PNG → RGB composited with #202020 background color (export page full frame has transparent
+ * background, stage screenshot is overlaid on test page background color)
+ */
 function rgbOver(pngBuf, bg = [0x20, 0x20, 0x20]) {
   const png = PNG.sync.read(pngBuf);
   const out = new Uint8Array(png.width * png.height * 3);
@@ -107,7 +123,7 @@ function compare(a, b, region = null) {
   return { meanAbs: +(sum / n).toFixed(4), max, over8Ratio: +(over8 / n).toFixed(6) };
 }
 
-/** 一段时间里 `frame` 事件的节拍(测试页记的) */
+/** Cadence of `frame` events over a period of time (recorded by test page) */
 function beatsOf(frames, fps) {
   const steps = frames.slice(1).map((f, i) => +(f.sec - frames[i].sec).toFixed(6));
   const gaps = frames.slice(1).map((f, i) => f.at - frames[i].at).sort((a, b) => a - b);
@@ -124,13 +140,15 @@ try {
   pipeline = produced.pipeline;
   const producer = produced.producer;
   out.produceMs = produced.produceMs;
-  if (!producer) throw new Error('轨道流没生产完');
+  if (!producer) throw new Error('track stream production did not finish');
   const layers = latestLayers(produced.layers);
   out.layers = layers.map(l => ({ clipId: l.clipId, key: l.key.slice(0, 12), ranges: l.ranges, originFrame: l.originFrame ?? null, groupClipIds: l.groupClipIds ?? null }));
-  // 播放中被抑制的:有流的那几张(毛玻璃的里程表不进流,照常活渲 —— 它要模糊的正是下面的流画布)
+  // Suppressed during playback: cards that have streams (frosted-glass odometer is not in streams,
+  // live renders as usual: what it needs to blur is precisely the stream canvas below)
   const heavy = [...new Set(layers.flatMap(l => l.groupClipIds?.length ? l.groupClipIds : [l.clipId]))];
-  // 父页那一侧的合成:就绪索引里 `stream` 层 → 平面(有 groupClipIds 的一条组流)
-  // 每条平面带着这条流自己的第一帧(舞台按它把帧号换成分段号;不带的平面舞台不解码)
+  // Composition on parent page side: `stream` layer in ready index → plane (a group stream with groupClipIds)
+  // Each plane carries this stream's own first frame (stage uses it to convert frame number to segment
+  // number; stage does not decode planes without it)
   const planes = layers.map(l => ({ clipIds: l.groupClipIds?.length ? l.groupClipIds : [l.clipId], key: l.key, ranges: l.ranges, originFrame: l.originFrame }));
   out.planes = planes.map(p => ({ clipIds: p.clipIds, ranges: p.ranges }));
 
@@ -168,21 +186,21 @@ try {
   await rpcB('setProject', PROJECT, { reset: true });
   await rpc('setRole', 'front');
   await rpcB('setRole', 'back', { job: 'probe' });
-  // 对照:不挂流平面、也不抑制,同一段播放的节拍
+  // Control: cadence of the same playback run without attaching stream planes or suppressing
   await rpc('setTime', 0);
   await page.evaluate(() => { window.__frames = []; });
   await rpc('play', 0);
   await new Promise(r => setTimeout(r, 1500));
   await rpc('pause');
   out.beatsNoStreams = beatsOf(await page.evaluate(() => window.__frames), PROJECT.fps);
-  // B 是 back:就算发了平面也不能建 decoder
+  // B is back: cannot create decoders even if planes are sent
   await rpcB('setStreamPlanes', planes);
-  // 父页的 C5:播放中发 setSuppressed(H(t)) + setStreamPlanes(...)
+  // Parent page C5: send setSuppressed(H(t)) + setStreamPlanes(...) during playback
   await rpc('setTime', 0);
   await rpc('setPlaying', true);
   await rpc('setSuppressed', heavy);
   await rpc('setStreamPlanes', planes);
-  // 被抑制的粒子卡自己那块画布的像素哈希(抑制期间不该变)
+  // Pixel hash of the suppressed particle card's own canvas (should not change during suppression)
   const bgHash = () => frameA().evaluate(() => {
     const wraps = document.querySelectorAll('[data-pc-clip="clip-bg"]');
     const cv = document.querySelector('[data-pc-clip="clip-bg"] canvas:not([data-pc-stream-plane])');
@@ -202,32 +220,34 @@ try {
   out.pause = stop;
   const hash2 = await bgHash();
   out.bgCanvas = { hash0, hash1, hash2 };
-  check(!!hash1 && hash1.h === hash2?.h, '被抑制的粒子卡:自己那块画布的像素哈希在抑制期间不变', out.bgCanvas);
-  check(!!hash1 && hash1.localFrame !== hash2?.localFrame, '被抑制的粒子卡:包裹层的 data-pc-local-frame 仍随 t 变', out.bgCanvas);
-  // 节拍
+  check(!!hash1 && hash1.h === hash2?.h, 'suppressed particle card: its own canvas\'s pixel hash does not change during suppression', out.bgCanvas);
+  check(!!hash1 && hash1.localFrame !== hash2?.localFrame, 'suppressed particle card: the wrapper layer\'s data-pc-local-frame still changes with t', out.bgCanvas);
+  // Cadence
   out.beats = beatsOf(await page.evaluate(() => window.__frames), PROJECT.fps);
-  check(out.beats.noSkip, '播放中 frame 的 sec 差恒为 1/fps(不跳帧)', out.beats.secStepsUnique);
+  check(out.beats.noSkip, 'during playback the sec difference between frames is always 1/fps (no frame skipping)', out.beats.secStepsUnique);
   check(out.beats.gapMedianMs !== null && out.beatsNoStreams.gapMedianMs !== null,
-    '贴流前后都量到了 frame 间隔中位数(两者之差只记录,不当闸门;原先要求 ≤ 3 ms —— 耗时只记录,不当闸门(verification.md,2026-10-07 用户改定);2026-10-23 探针总审第二遍扫描补改)', { streams: out.beats, none: out.beatsNoStreams, deltaMs: out.beats.gapMedianMs - out.beatsNoStreams.gapMedianMs });
-  // 解码器状态
+    'the median frame interval was measured both before and after stream paste (the difference between the two is only recorded, not a gate; it used to require ≤ 3 ms: durations are only recorded, not a gate (verification.md, user decision, 2026-10-07); amended in the second-pass scan of the full probe audit, 2026-10-23)', { streams: out.beats, none: out.beatsNoStreams, deltaMs: out.beats.gapMedianMs - out.beatsNoStreams.gapMedianMs });
+  // Decoder state
   const d = await diagA();
   out.diagMid = mid.streams;
   out.diagPaused = d.streams;
   const tracks = mid.streams.tracks;
-  check(tracks.length === planes.length, 'front 上每个平面一条流', { tracks: tracks.length, planes: planes.length });
+  check(tracks.length === planes.length, 'one stream per plane on front', { tracks: tracks.length, planes: planes.length });
   for (const t of tracks) {
-    check(t.drawn > 10, `${t.id}: 播放中流平面画出了帧`, { drawn: t.drawn, errors: t.errors, lastError: t.lastError });
-    check(t.errors === 0, `${t.id}: 解码器没报错`, t.lastError);
-    check(t.maxHeld <= 8, `${t.id}: 单个解码器同时持有 ≤ 8 帧`, t.maxHeld);
+    check(t.drawn > 10, `${t.id}: the stream plane drew frames during playback`, { drawn: t.drawn, errors: t.errors, lastError: t.lastError });
+    check(t.errors === 0, `${t.id}: the decoder reported no errors`, t.lastError);
+    check(t.maxHeld <= 8, `${t.id}: a single decoder holds ≤ 8 frames at a time`, t.maxHeld);
   }
-  check(mid.streams.heldBytes <= 80 * 1024 * 1024, '解码帧总字节 ≤ 80 MB', mid.streams.heldBytes);
+  check(mid.streams.heldBytes <= 80 * 1024 * 1024, 'total bytes of decoded frames ≤ 80 MB', mid.streams.heldBytes);
   const b = await diagB();
-  check(b.streams.tracks.length === 0 && b.streamPlanes.length === 0, 'back 舞台不建 decoder、不收流平面', b.streams);
-  // 暂停在这一帧:舞台截图 vs 导出页同一帧
+  check(b.streams.tracks.length === 0 && b.streamPlanes.length === 0, 'the back stage creates no decoder and accepts no stream planes', b.streams);
+  // Paused at this frame: stage screenshot vs. same frame on export page
   const iframeBox = await (await page.$('#a')).boundingBox();
   /*
-   * 截图之前等舞台真画两帧,再截两张取后一张:实测 headless Chrome 截跨源 iframe 偶尔拿到一张没合成完的画面
-   * (一次复跑里只剩最底下那层流画布,活渲的里程表都不在;DOM 和流的状态同时是对的,再截一次就好)。
+   * Wait for stage to actually draw two frames before capturing, then take two shots and keep the
+   * second: testing shows headless Chrome capturing cross-origin iframes occasionally gets an incompletely
+   * composited frame (in one rerun, only bottom stream canvas remained, live-rendered odometer was
+   * missing; DOM and stream states were both correct at the time, taking another shot fixes it).
    */
   const settleShot = async () => {
     await frameA().evaluate(() => new Promise((r) => (window.__pcRealRaf ?? requestAnimationFrame)(() => (window.__pcRealRaf ?? requestAnimationFrame)(() => r()))));
@@ -235,7 +255,7 @@ try {
     return page.screenshot({ clip: { x: iframeBox.x, y: iframeBox.y, width: 1920, height: 1080 } });
   };
   const shot = await settleShot();
-  // 截图那一刻舞台上都挂着什么(排查用)
+  // What is attached to stage at the moment of screenshot (for troubleshooting)
   out.domAtShot = await frameA().evaluate(() => [...document.querySelectorAll('[data-pc-clip]')].map((w) => ({
     clipId: w.getAttribute('data-pc-clip'), cls: w.className, localFrame: w.getAttribute('data-pc-local-frame'),
     planes: [...w.querySelectorAll(':scope > canvas[data-pc-stream-plane], :scope > [data-pc-snapshot-plane]')].map((c) => ({ tag: c.tagName, w: c.width, style: c.getAttribute('style') })),
@@ -246,10 +266,12 @@ try {
   await fs.writeFile(shotFile, shot);
   out.stageShot = shotFile;
   /*
-   * 参照帧:导出页**从第 0 帧顺推、每帧都截**到这一帧(整片导出走的就是这条路:`bakeFrames` 的
-   * `frames: '0-N'`)。不用随机访问(`targetFrames`):回放的那些帧不截图,Motion 的 JS 帧循环推不动
-   * (`bake.mjs` 里那段注释),金句药丸的入场在目标帧上才刚开始 —— 那一张不是导出成片的样子。
-   * 也不走 `see_frames`:那一条会把卡换成本进程库根里的 control PNG,而页面去 dev server 的源上取。
+   * Reference frame: export page **advances sequentially from frame 0, capturing each frame** up to this
+   * frame (full-video export takes this exact path: `bakeFrames` with `frames: '0-N'`). Do not use
+   * random access (`targetFrames`): frames in playback are not captured, Motion's JS frame loop cannot
+   * advance (that comment in `bake.mjs`), and punchline pill entrance is only just starting at target
+   * frame: that frame is not what final video export looks like. Nor use `see_frames`: that route replaces
+   * cards with control PNGs in this process's store root, while page fetches from dev server's origin.
    */
   const refBakery = await pipeline.bakery(PROJECT, 'agent');
   let exportBuf = null;
@@ -264,18 +286,22 @@ try {
     out.exportShot = exportFile;
     const stageRgb = rgbOver(shot), exportRgb = rgbOver(exportBuf);
     out.compare = compare(stageRgb, exportRgb);
-    check(!out.compare.sizeMismatch && out.compare.meanAbs < 3, '暂停帧:舞台(贴流)与导出同一帧的平均误差 < 3/255', out.compare);
-    // 毛玻璃(里程表)那一块:它活渲,背后是流画布 —— 模糊采样对了,这一块和导出就对得上
+    check(!out.compare.sizeMismatch && out.compare.meanAbs < 3, 'paused frame: mean error between the stage (stream paste) and the same export frame < 3/255', out.compare);
+    // Frosted glass (odometer) region: it live renders, with stream canvas behind it: if blur sampling is
+    // correct, this region matches export
     const glass = PROJECT.tracks.flatMap(t => t.clips).find(c => c.id === 'clip-glass')?.frame;
     if (glass) {
       out.compareGlass = compare(stageRgb, exportRgb, { x: glass.x, y: glass.y, w: glass.w, h: Math.min(glass.h, 1080 - glass.y) });
-      check(out.compareGlass.meanAbs < 3, '毛玻璃卡叠在流画布上:那一块和导出同一帧的平均误差 < 3/255', out.compareGlass);
+      check(out.compareGlass.meanAbs < 3, 'frosted-glass card over the stream canvas: mean error of that region against the same export frame < 3/255', out.compareGlass);
     }
   }
   /*
-   * 同一个浏览器里的对照:摘掉抑制和流平面,这几张卡在舞台上活渲同一帧,再截一张。
-   * 贴流 vs 活渲(同一台舞台、同一个 Chrome)——毛玻璃那一块尤其要对得上:它采样的是下面那块流画布。
-   * (舞台 vs 导出页那一组里,毛玻璃本身在两种 Chrome 配置下的模糊就有差别,和流无关。)
+   * Control in the same browser: remove suppression and stream planes, live render the same frame on
+   * stage for these cards, and capture another screenshot.
+   * Stream paste vs. live render (same stage, same Chrome): the frosted glass region especially must
+   * match: it samples the stream canvas below.
+   * (In the stage vs. export page group, frosted glass itself has blur differences between the two
+   * Chrome configurations, unrelated to streams.)
    */
   if (!GROUP) {
     await rpc('setSuppressed', []);
@@ -290,32 +316,34 @@ try {
     out.compareLive = compare(a, b2);
     const glass = PROJECT.tracks.flatMap(t => t.clips).find(c => c.id === 'clip-glass')?.frame;
     if (glass) out.compareLiveGlass = compare(a, b2, { x: glass.x, y: glass.y, w: glass.w, h: Math.min(glass.h, 1080 - glass.y) });
-    check(out.compareLive.meanAbs < 3, '贴流 vs 同一舞台活渲同一帧:平均误差 < 3/255', out.compareLive);
-    if (out.compareLiveGlass) check(out.compareLiveGlass.meanAbs < 3, '毛玻璃叠在流画布上 vs 叠在活渲的卡上:平均误差 < 3/255', out.compareLiveGlass);
-    // 还原成贴流的状态,后面的命中测试照旧
+    check(out.compareLive.meanAbs < 3, 'stream paste vs live render of the same frame on the same stage: mean error < 3/255', out.compareLive);
+    if (out.compareLiveGlass) check(out.compareLiveGlass.meanAbs < 3, 'frosted glass over the stream canvas vs over a live-rendered card: mean error < 3/255', out.compareLiveGlass);
+    // Restore to stream paste state; subsequent hit tests proceed as usual
     await rpc('setSuppressed', heavy);
     await rpc('setStreamPlanes', planes);
     await rpc('setTime', stop.stoppedAt);
   }
-  // 命中测试:药丸的中心 → 药丸;没有药丸的地方 → 粒子背景(它的流平面铺满画面)
+  // Hit test: center of pill → pill; areas without pill → particle background (its stream plane
+  // fills the screen)
   out.hit = { pill: await rpc('hitTest', 960, 540), corner: await rpc('hitTest', 60, 1000) };
   if (!GROUP) {
-    check(out.hit.pill?.clipId === 'clip-pill', '点药丸的流画布命中药丸', out.hit.pill);
-    check(out.hit.corner?.clipId === 'clip-bg', '点粒子背景的流画布命中粒子背景', out.hit.corner);
+    check(out.hit.pill?.clipId === 'clip-pill', 'clicking the pill\'s stream canvas hits the pill', out.hit.pill);
+    check(out.hit.corner?.clipId === 'clip-bg', 'clicking the particle background\'s stream canvas hits the particle background', out.hit.corner);
   } else {
     const group = planes.find(p => p.clipIds.length > 1);
-    check(!!group, '组流模式下有一条组流平面', planes);
+    check(!!group, 'in group stream mode there is one group stream plane', planes);
     const cv = await frameA().evaluate(() => {
       const c = document.querySelector('canvas[data-pc-group-plane]');
       return c ? { pe: getComputedStyle(c).pointerEvents, w: c.width, h: c.height } : null;
     });
     out.groupPlane = cv;
-    check(cv?.pe === 'none', '组流平面带 pointer-events: none', cv);
-    check(!!out.hit.pill && group?.clipIds.includes(out.hit.pill.clipId), '点组流平面命中的是背后组内被抑制的卡', out.hit.pill);
+    check(cv?.pe === 'none', 'the group stream plane has pointer-events: none', cv);
+    check(!!out.hit.pill && group?.clipIds.includes(out.hit.pill.clipId), 'clicking the group stream plane hits the suppressed card in the group behind it', out.hit.pill);
     const rects = await rpc('rectsWithBounds', { pixels: 'none' });
-    check(rects.every(r => !String(r.clipId).includes(',')), 'rects 不把组流平面算进去', rects.map(r => r.clipId));
+    check(rects.every(r => !String(r.clipId).includes(',')), 'rects do not include the group stream plane', rects.map(r => r.clipId));
   }
-  // 冷 seek:从当前位置跳到别的分段(没缓存过),量到解出并画上目标帧
+  // Cold seek: jump from current position to another segment (uncached), measure time to decode and
+  // draw target frame
   out.seek = await frameA().evaluate(async (target, fps) => {
     const now = window.__pcRealNow ?? (() => performance.now());
     const wait = (ms) => new Promise((r) => (window.__pcRealSetTimeout ?? setTimeout)(r, ms));
@@ -329,8 +357,9 @@ try {
       await wait(1);
     }
   }, 3.9, PROJECT.fps);
-  check(out.seek.ms !== null, '冷 seek 解出了目标帧(用时只记录;原先要求 ≤ 60 ms —— 耗时只记录,不当闸门(verification.md,2026-10-07 用户改定);2026-10-23 探针总审第二遍扫描补改)', out.seek);
-  // 缺分段:粒子背景只给前两段(0～29 帧)就绪,从第 1 秒起播 —— 第 30 帧起那一层透明、播放头照走
+  check(out.seek.ms !== null, 'Cold seek decoded the target frame (duration is only recorded; previously required ≤ 60 ms: timing is only recorded, not used as a gate (verification.md, user decision revised, 2026-10-07); 2026-10-23 probe audit, second-pass scan, follow-up fix)', out.seek);
+  // Missing segments: particle background is only ready for first two segments (frames 0-29), play from
+  // second 1: from frame 30 that layer is transparent, playhead advances normally
   if (!GROUP) {
     const bgPlane = planes.find(p => p.clipIds.length === 1 && p.clipIds[0] === 'clip-bg');
     if (bgPlane) {
@@ -344,17 +373,17 @@ try {
       const beats = beatsOf(await page.evaluate(() => window.__frames), PROJECT.fps);
       const bg = missing.streams.tracks.find(t => t.id.startsWith('clip-bg#'));
       out.missing = { beats, bg };
-      check(beats.noSkip && beats.last > 1.5, '缺分段时播放头不停、不跳帧', beats);
-      check(!!bg && bg.lastDrawn === null, '缺分段的那一层清成透明(这一拍没有画任何一帧)', bg);
+      check(beats.noSkip && beats.last > 1.5, 'The playhead keeps running and does not skip frames when a segment is missing', beats);
+      check(!!bg && bg.lastDrawn === null, 'The layer with the missing segment is cleared to transparent (no frame was drawn on this tick)', bg);
       await rpc('setStreamPlanes', planes);
     }
   }
-  // 退回后台:streamPlayer 停下、帧全部关掉
+  // Return to background: streamPlayer stops, all frames closed
   await rpc('setRole', 'back', { job: 'probe' });
   const after = await diagA();
-  check(after.streams.stopped === true && after.streams.tracks.length === 0 && after.streams.heldBytes === 0, 'setRole(back) 之后 streamPlayer 停下、VideoFrame 全部关掉', after.streams);
+  check(after.streams.stopped === true && after.streams.tracks.length === 0 && after.streams.heldBytes === 0, 'After setRole(back), streamPlayer stops and all VideoFrames are closed', after.streams);
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
 } finally {
   out.fails = fails;
   await browser?.close().catch(() => {});

@@ -1,59 +1,71 @@
 /**
- * 两份控件快照 HTML 比不比得上（K1 的两趟布尔探针 `vtOk` / `seekOk`）。
+ * Whether two control snapshot HTMLs match (K1's two-pass boolean probes `vtOk` / `seekOk`).
  *
- * 判据取自 pinned「卡片划分 → 如何区分 SeekOK」和任务书 K1，**原话是**：
- * 「两份 HTML 标签、属性、文本逐字比，样式里的数值允许 1e-6 相对误差；相同就是 SeekOK」。
- * 所以这里：
+ * Criteria are taken from pinned "Card partitioning → How to distinguish SeekOK" and task brief K1;
+ * the **exact quote is**:
+ * "Compare two HTMLs character-by-character across tags, attributes, and text, allowing a 1e-6
+ * relative error for numbers in styles; identical means SeekOK."
+ * Therefore, here:
  *
- *   - **标签**（名字、开 / 闭、自闭合）逐字；
- *   - **文本**、**注释**逐字；
- *   - **属性**：名字的集合要一样，值逐字 —— **只有 `style` 这一个属性**按数值容差比。
- *     SVG 的 `d` / `stroke-dasharray` 这些写在属性里的数不放宽：任务书点名的是「内联样式里的数值」，
- *     而它们是卡片自己算出来写进 DOM 的，两条路径算的是同一个 `t`，本来就该逐字相同。
+ *   - **Tags** (name, open / close, self-closing) character-by-character;
+ *   - **Text** and **comments** character-by-character;
+ *   - **Attributes**: the set of names must match, values character-by-character: **only the
+ *     single attribute `style`** is compared with numeric tolerance. Numbers written in attributes
+ *     like SVG `d` / `stroke-dasharray` are not relaxed: the task brief explicitly called out
+ *     "numbers in inline styles", and those are computed by the card itself and written into the
+ *     DOM; both paths compute the same `t` and should be character-by-character identical anyway.
  *
- * # 为什么要容差
+ * # Why tolerance is needed
  *
- * `createSnapshot` 内联的是**全精度的计算值**（`inlineStyles.ts`），
- * 「全局时钟推 8 帧」和「子树虚拟时间一步钉到第 8 帧」走的是两条不同的浮点路径
- * （前者累加 8 次 `1000 / fps`，后者一次乘 8），末位差 1 ulp 是常态，不算不同。
+ * `createSnapshot` inlines **full-precision computed values** (`inlineStyles.ts`). "Stepping 8
+ * frames with the global clock" and "pinning the subtree virtual time to frame 8 in one step" take
+ * two different floating-point paths (the former accumulates `1000 / fps` 8 times, the latter
+ * multiplies by 8 once); a 1-ulp difference in the last digit is normal and not considered a
+ * difference.
  *
- * 容差写法：`|a − b| ≤ 1e-6 × max(|a|, |b|)`，再加一条 `|a − b| ≤ 1e-12` 的绝对地板。
- * 地板是为了 0 附近 —— 纯相对误差下 `0` 和 `5e-324`（0 的 1 个 ulp）的相对误差是 1，
- * 会被判成不同，而那正是要放过的那种差。1e-12 px 远在任何有意义的 CSS 值之下，
- * 放过它不会把真的不同当成相同。
+ * Tolerance formulation: `|a − b| ≤ 1e-6 × max(|a|, |b|)`, plus an absolute floor of
+ * `|a − b| ≤ 1e-12`. The floor is for values near 0: under pure relative error, the relative error
+ * between `0` and `5e-324` (1 ulp of 0) is 1, which would be judged different, yet that is
+ * precisely the kind of difference to forgive. 1e-12 px is far below any meaningful CSS value, so
+ * forgiving it will not treat real differences as identical.
  *
- * # 为什么自己写词法分析，不用 DOMParser
+ * # Why write a custom lexer instead of using DOMParser
  *
- * 这是**纯函数**：单测要在 Node 里直接跑（`node --test`，没有 DOM），而比对本身又必须和
- * 舞台里跑的是同一份代码 —— 判 `vtOk` 的那一次比对发生在 `StageView` 的探针分支里。
- * 两边要同一份，就只能不依赖 DOM。
+ * This is a **pure function**: unit tests run directly in Node (`node --test`, no DOM), while the
+ * comparison itself must use the exact same code that runs in the stage: the comparison that
+ * determines `vtOk` happens in the probe branch of `StageView`. To have the same code on both
+ * sides, it must not depend on the DOM.
  *
- * 输入是 `createSnapshot` 的 `controls[].html`（`Element.innerHTML` 的结果），是规范化过的
- * 序列化 HTML：标签闭合、属性带引号、没有 `<p>` 这种省略闭合的写法。所以一个直来直去的
- * 扫描器就够，不需要 HTML5 那套容错解析。`<script>` / `<style>` / `<textarea>` 三种原始文本
- * 元素单独处理（它们的内容里可以有 `<`）。
+ * The input is `controls[].html` from `createSnapshot` (the result of `Element.innerHTML`), which
+ * is normalized serialized HTML: tags are closed, attributes are quoted, and there are no unclosed
+ * tags like omitting closing `<p>`. Therefore, a straightforward scanner suffices, with no
+ * need for HTML5 error-tolerant parsing. Three raw-text elements, `<script>` / `<style>` /
+ * `<textarea>`, are handled separately (their content may contain `<`).
  *
- * # 不做
+ * # What is not done
  *
- * - **不规范化空白**：两条路径序列化的是同一棵树，空白本来就该逐字相同；规范化只会掩盖真差别。
- * - **不排序属性**：`outerHTML` 按 DOM 里的属性顺序输出，同一棵树两次序列化顺序一致。
- *   但比较用的是**名字到值的表**，所以真出现顺序不同也只会被当成相同 —— 顺序不是画面。
+ * - **Do not normalize whitespace**: both paths serialize the same tree, so whitespace should
+ *   already be character-by-character identical; normalizing would only mask real differences.
+ * - **Do not sort attributes**: `outerHTML` outputs attributes in DOM order, which is consistent
+ *   between two serializations of the same tree. However, comparison uses a **name-to-value map**,
+ *   so even if different ordering occurred, it would still be treated as identical: attribute order
+ *   does not affect rendered visuals.
  */
 
-/** 数值容差（任务书 K1 / pinned 划分轴一） */
+/** Numeric tolerance (task brief K1 / pinned partitioning axis 1) */
 export const NUMBER_RELATIVE_TOLERANCE = 1e-6;
-/** 0 附近的绝对地板，见文件头 */
+/** Absolute floor near 0, see file header */
 export const NUMBER_ABSOLUTE_FLOOR = 1e-12;
 
-/** 内容里可以有 `<` 的元素：碰到它们要一路读到闭合标签，中间不认标签 */
+/** Elements whose content can contain `<`: read until the closing tag, ignoring tags inside */
 const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title']);
 
 const isSpace = (c) => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f';
 
 /**
- * 把一份序列化 HTML 切成记号流。记号有四种：
+ * Splits serialized HTML into a token stream. There are four kinds of tokens:
  *   `{ kind: 'text', text }`
- *   `{ kind: 'comment', text }`（含 `<!doctype>` 这类 `<!…>`）
+ *   `{ kind: 'comment', text }` (including `<!…>` such as `<!doctype>`)
  *   `{ kind: 'open', name, attrs: Map<string,string>, selfClosing }`
  *   `{ kind: 'close', name }`
  */
@@ -92,7 +104,7 @@ export function tokenizeHtml(html) {
     const tag = readOpenTag(s, lt);
     out.push(tag.token);
     i = tag.next;
-    // 原始文本元素：内容原样收一个 text 记号，中间的 `<` 不当标签
+    // Raw-text elements: content is collected as-is into a text token; `<` inside is not treated as a tag
     const lower = tag.token.name.toLowerCase();
     if (!tag.token.selfClosing && RAW_TEXT_TAGS.has(lower)) {
       const closeAt = indexOfClose(s, lower, i);
@@ -103,7 +115,7 @@ export function tokenizeHtml(html) {
   return out;
 }
 
-/** 从 `<` 开始读一个开标签 */
+/** Reads an opening tag starting from `<` */
 function readOpenTag(s, lt) {
   let i = lt + 1;
   const nameStart = i;
@@ -148,7 +160,7 @@ function readOpenTag(s, lt) {
   return { token: { kind: 'open', name, attrs, selfClosing }, next: i };
 }
 
-/** 原始文本元素的闭合标签在哪（大小写不敏感） */
+/** Finds the closing tag for a raw-text element (case-insensitive) */
 function indexOfClose(s, lower, from) {
   const needle = `</${lower}`;
   const hay = s.toLowerCase();
@@ -156,7 +168,7 @@ function indexOfClose(s, lower, from) {
   return at < 0 ? -1 : at;
 }
 
-/** 一个数在容差内算不算相同（见文件头） */
+/** Whether a number matches within tolerance (see file header) */
 export function numbersClose(a, b, tolerance = NUMBER_RELATIVE_TOLERANCE) {
   if (a === b) return true;
   if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
@@ -168,9 +180,10 @@ export function numbersClose(a, b, tolerance = NUMBER_RELATIVE_TOLERANCE) {
 const NUMBER_RE = /[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/g;
 
 /**
- * 把一个属性值切成「字面段 / 数 / 字面段 / 数 / …」。
- * 正负号只有紧跟数字时才算进数里 —— `calc(10px - 2px)` 里那个减号留在字面段，
- * 所以 `10px - 2px` 和 `10px + 2px` 不会被当成相同。
+ * Splits an attribute value into "literal segment / number / literal segment / number / …".
+ * Signs are included in the number only when immediately followed by digits: the minus in
+ * `calc(10px - 2px)` stays in the literal segment, so `10px - 2px` and `10px + 2px` will not be
+ * treated as identical.
  */
 function splitNumbers(value) {
   const parts = [];
@@ -186,8 +199,9 @@ function splitNumbers(value) {
 }
 
 /**
- * 两个字符串「字面逐字、数值允许容差」地比。偶数位是字面段（逐字），奇数位是数（容差）。
- * 段数不一样就是不同（一边有数、另一边那个位置没有）。
+ * Compares two strings "character-by-character on literals, with tolerance on numbers". Even indices
+ * are literal segments (verbatim), odd indices are numbers (tolerance). Different segment counts
+ * mean a mismatch (one side has a number where the other does not).
  */
 export function valuesCloseEnough(a, b, tolerance = NUMBER_RELATIVE_TOLERANCE) {
   if (a === b) return true;
@@ -204,47 +218,47 @@ export function valuesCloseEnough(a, b, tolerance = NUMBER_RELATIVE_TOLERANCE) {
   return true;
 }
 
-/** 值按数值容差比的属性。任务书只放宽「内联样式里的数值」 */
+/** Attributes compared with numeric tolerance; task brief only relaxes "values in inline styles" */
 const TOLERANT_ATTRS = new Set(['style']);
 
 /**
- * 比两份控件快照 HTML。
+ * Compares two control snapshot HTMLs.
  *
- * @param {string} a 基线（全局时钟逐帧推出来的第 8 帧）
- * @param {string} b 待比（子树虚拟时间推 / 一步钉到第 8 帧）
+ * @param {string} a Baseline (frame 8 stepped frame-by-frame with global clock)
+ * @param {string} b Target to compare (frame 8 stepped / pinned in one step with subtree virtual time)
  * @param {{ tolerance?: number }} [opts]
  * @returns {{ same: boolean, reason?: string, at?: number, expected?: string, actual?: string }}
- *   `reason` 是给诊断和报告看的，不参与判定。
+ *   `reason` is for diagnostics and reports; does not participate in determination.
  */
 export function compareSnapshotHtml(a, b, opts = {}) {
   const tolerance = Number.isFinite(opts.tolerance) ? opts.tolerance : NUMBER_RELATIVE_TOLERANCE;
-  if (typeof a !== 'string' || typeof b !== 'string') return { same: false, reason: '不是字符串' };
+  if (typeof a !== 'string' || typeof b !== 'string') return { same: false, reason: 'not a string' };
   if (a === b) return { same: true };
   const ta = tokenizeHtml(a);
   const tb = tokenizeHtml(b);
   if (ta.length !== tb.length) {
-    return { same: false, reason: `记号数不同（${ta.length} 对 ${tb.length}）` };
+    return { same: false, reason: `Token counts differ (${ta.length} vs ${tb.length})` };
   }
   for (let i = 0; i < ta.length; i++) {
     const x = ta[i];
     const y = tb[i];
-    if (x.kind !== y.kind) return { same: false, reason: '结构不同', at: i, expected: x.kind, actual: y.kind };
+    if (x.kind !== y.kind) return { same: false, reason: 'Structure differs', at: i, expected: x.kind, actual: y.kind };
     if (x.kind === 'text' || x.kind === 'comment') {
-      if (x.text !== y.text) return { same: false, reason: '文本不同', at: i, expected: x.text, actual: y.text };
+      if (x.text !== y.text) return { same: false, reason: 'Text differs', at: i, expected: x.text, actual: y.text };
       continue;
     }
-    if (x.name !== y.name) return { same: false, reason: '标签名不同', at: i, expected: x.name, actual: y.name };
+    if (x.name !== y.name) return { same: false, reason: 'Tag name differs', at: i, expected: x.name, actual: y.name };
     if (x.kind === 'close') continue;
-    if (x.selfClosing !== y.selfClosing) return { same: false, reason: '自闭合不同', at: i, expected: x.name, actual: y.name };
+    if (x.selfClosing !== y.selfClosing) return { same: false, reason: 'Self-closing differs', at: i, expected: x.name, actual: y.name };
     if (x.attrs.size !== y.attrs.size) {
-      return { same: false, reason: `<${x.name}> 属性个数不同`, at: i,
+      return { same: false, reason: `<${x.name}> attribute count differs`, at: i,
         expected: [...x.attrs.keys()].join(','), actual: [...y.attrs.keys()].join(',') };
     }
     for (const [name, value] of x.attrs) {
-      if (!y.attrs.has(name)) return { same: false, reason: `<${x.name}> 少了属性 ${name}`, at: i };
+      if (!y.attrs.has(name)) return { same: false, reason: `<${x.name}> is missing attribute ${name}`, at: i };
       const other = y.attrs.get(name);
       const ok = TOLERANT_ATTRS.has(name.toLowerCase()) ? valuesCloseEnough(value, other, tolerance) : value === other;
-      if (!ok) return { same: false, reason: `<${x.name}> 的 ${name} 不同`, at: i, expected: value, actual: other };
+      if (!ok) return { same: false, reason: `<${x.name}> has a different ${name}`, at: i, expected: value, actual: other };
     }
   }
   return { same: true };

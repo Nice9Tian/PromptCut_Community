@@ -1,54 +1,64 @@
 /**
- * 长时间真跑审查环路:自己起一台 dev server,无头打开编辑器页面并一直连着,
- * 用 API 直连发一条开了审查环路的对话,把进度流式打出来,跑完收工。
+ * Run the review loop for real over an extended period: spin up a dev server locally, open the
+ * editor page headlessly and keep it connected, send a chat with the review loop enabled via direct
+ * API, stream progress output, and wrap up upon completion.
  *
- *   node scripts/review-loop-run.mjs --prompt "<消息>" [--attach <文件>]... [--open <.proc>]
+ *   node scripts/review-loop-run.mjs --prompt "<message>" [--attach <file>]... [--open <.proc>]
  *
- * **一趟完整运行约 20～35 分钟、约 600 万输入 token。真跑之前先和用户确认。**
- * 只想确认环境搭得起来,用 `--connect-only`,不花 token。
+ * **A full run takes about 20-35 minutes and roughly 6 million input tokens. Confirm with the user
+ * before a real run.**
+ * If you only want to verify the environment can be set up, use `--connect-only`,
+ * which costs no tokens.
  *
- * | 参数 | 说明 |
+ * | Parameter | Description |
  * |---|---|
- * | `--prompt <文本>` / `--prompt-file <文件>` | 用户这一条消息,二选一(`--connect-only` 时不用) |
- * | `--attach <文件>` | 可重复。复制进 `<work>/pc-work/<会话id>/`,作为附件发出,站内地址 `/@pcwork/<会话id>/<文件名>` |
- * | `--open <.proc>` | 编辑器先用 `?open=` 打开这份工程(服务端复制一份到草稿目录,原文件不动) |
- * | `--model <名字>` | ai.json 里 `api.model`(`|` 分隔)中的一个,默认第一个 |
- * | `--work <目录>` | 默认 `%TEMP%\promptcut-review\run-<时间>` |
- * | `--port N` | 指定编辑器端口,N、N+1、N+2 都得空;默认随机挑 |
- * | `--timeout-min N` | 超过 N 分钟就中止这一趟,默认 60 |
- * | `--ai-config <ai.json>` | 直接用这份 AI 配置(同目录下的 `keys/`),不复制用户的 |
- * | `--connect-only` | 只起服务、连上编辑器、打印状态,不发对话 |
+ * | `--prompt <text>` / `--prompt-file <file>` | This user message, choose one (not needed with `--connect-only`) |
+ * | `--attach <file>` | Repeatable. Copied into `<work>/pc-work/<session-id>/`, sent as attachment, in-site URL `/@pcwork/<session-id>/<filename>` |
+ * | `--open <.proc>` | Editor opens this project first via `?open=` (server copies a replica to drafts directory, leaving original file untouched) |
+ * | `--model <name>` | One of `api.model` (`|`-separated) in ai.json, defaults to first |
+ * | `--work <dir>` | Defaults to `%TEMP%\promptcut-review\run-<time>` |
+ * | `--port N` | Specify editor port, N, N+1, N+2 must all be free; randomly chosen by default |
+ * | `--timeout-min N` | Abort this pass if it exceeds N minutes, defaults to 60 |
+ * | `--ai-config <ai.json>` | Directly use this AI config (`keys/` under same directory), without copying user's |
+ * | `--connect-only` | Only start service, connect editor, print status, without sending chat |
  *
- * 隔离:
+ * Isolation:
  *
- * - 导出、数据、草稿、对话、附件目录全部指到 `<work>` 下面(`PROMPTCUT_EXPORT_DIR`、`_DATA_DIR`、
- *   `_PROJECTS_DIR`、`_CHATS_DIR`、`_WORK_DIR`)。
- * - AI 配置:把用户的 `ai.json`、`keys/`、`review-lessons.json` 复制到 `<work>/ai/`,
- *   `PROMPTCUT_AI_CONFIG` 指过去。审查环路会把教训写进 ai.json 同目录的 `review-lessons.json`,
- *   这样写进的是副本,不碰用户的 `%LOCALAPPDATA%\promptcut`。复制过来的 `keys/` 收工时删掉。
- * - 对话历史照旧落在 `%TEMP%\promptcut\harness-sessions\`(那是临时目录,不是用户数据)。
+ * - Export, data, drafts, chats, and attachments directories are all directed under `<work>`
+ *   (`PROMPTCUT_EXPORT_DIR`, `_DATA_DIR`, `_PROJECTS_DIR`, `_CHATS_DIR`, `_WORK_DIR`).
+ * - AI config: copy the user's `ai.json`, `keys/`, and `review-lessons.json` to `<work>/ai/`,
+ *   and point `PROMPTCUT_AI_CONFIG` there. The review loop writes lessons into `review-lessons.json`
+ *   in the same directory as ai.json, so writes go to the replica without touching the user's
+ *   `%LOCALAPPDATA%\promptcut`. The copied `keys/` is deleted upon completion.
+ * - Chat history lands in `%TEMP%\promptcut\harness-sessions\` as usual (that is a temporary
+ *   directory, not user data).
  *
- * 产物:
+ * Artifacts:
  *
- *   <work>/events.jsonl      全部 SSE 事件,一行一个
- *   <work>/reply.md          最终回复全文
- *   <work>/vite.log          dev server 的输出
- *   <work>/ai/review-lessons.json   这一趟之后的教训(有的话)
+ *   <work>/events.jsonl      All SSE events, one per line
+ *   <work>/reply.md          Full text of final reply
+ *   <work>/vite.log          dev server output
+ *   <work>/ai/review-lessons.json   Lessons after this pass (if any)
  *
- * 坑:
+ * Caveats:
  *
- * - 编辑器页面是工具的执行者,整趟都要连着 `/api/mcp/events`。脚本每 15 秒查一次
- *   `/api/mcp/status`,断线、页面重载都会打 ⚠ 和时间点。不要用 Claude 桌面版的内置浏览器面板
- *   承载编辑器:面板隐藏时页面被重载过。
- * - 跑的时候别改 `server/*.ts`、`vite.config.ts`(别的会话改也算):dev server 会整台重启,
- *   跑到一半的对话被掐断。文件监听不能关 —— 定制卡的热更新靠它。脚本看到重启会打 ⚠。
- * - worker 新写的定制卡落在仓库的 `src/cards/user/`(不在 gitignore 里)。收工时列出来,不自动删。
- * - 转写要 Python(`desktop/src-tauri/runtime/python`,不入库)和 `out/pylibs`、`out/models`。
- *   worktree 里都没有:没有 Python 时一转写就失败,有 Python 缺库和模型时会现装(几个 GB)。
- *   要用主仓库那份,先设 `PROMPTCUT_PYTHON`、`PROMPTCUT_PYLIBS`、`PROMPTCUT_MODELS`。脚本启动时会提醒。
- * - 这里自己开编辑台页面,不借别的实例。
+ * - The editor page executes tools and must stay connected to `/api/mcp/events` throughout the
+ *   run. The script checks `/api/mcp/status` every 15 seconds, printing ⚠ and timestamps on
+ *   disconnections or page reloads. Do not host the editor in Claude desktop app's built-in
+ *   browser panel: the page gets reloaded when the panel is hidden.
+ * - Do not edit `server/*.ts` or `vite.config.ts` while running (edits from other sessions count
+ *   too): the dev server will fully restart, severing in-flight chats. File watching cannot be
+ *   disabled: custom card hot-reload depends on it. The script prints ⚠ when detecting a restart.
+ * - Custom cards newly written by workers land in `src/cards/user/` in the repository (not in
+ *   gitignore). Listed upon completion, not deleted automatically.
+ * - Transcription requires Python (`desktop/src-tauri/runtime/python`, not tracked in repo),
+ *   `out/pylibs`, and `out/models`. None exist in worktrees: transcription fails immediately
+ *   without Python, and if Python is present but missing libraries and models, it installs them
+ *   on the fly (several GB). To use the copy in the main checkout, set `PROMPTCUT_PYTHON`,
+ *   `PROMPTCUT_PYLIBS`, and `PROMPTCUT_MODELS` first. The script warns at startup.
+ * - Opens its own editor page here without borrowing other instances.
  */
-import './lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import './lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -69,7 +79,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
-      if (i + 1 >= argv.length) throw new Error(`${a} 后面要跟一个值`);
+      if (i + 1 >= argv.length) throw new Error(`${a} must be followed by a value`);
       return argv[++i];
     };
     if (a === '--prompt') o.prompt = next();
@@ -82,13 +92,13 @@ function parseArgs(argv) {
     else if (a === '--timeout-min') o.timeoutMin = Number(next());
     else if (a === '--ai-config') o.aiConfig = path.resolve(next());
     else if (a === '--connect-only') o.connectOnly = true;
-    else throw new Error(`不认识的参数 ${a}`);
+    else throw new Error(`Unknown argument ${a}`);
   }
-  if (!o.connectOnly && !o.prompt?.trim()) throw new Error('要给 --prompt 或 --prompt-file(只想试环境用 --connect-only)');
-  if (!(o.timeoutMin > 0)) throw new Error('--timeout-min 要是正数');
-  if (o.port !== undefined && !(Number.isInteger(o.port) && o.port > 0 && o.port < 65534)) throw new Error('--port 要是一个端口号');
+  if (!o.connectOnly && !o.prompt?.trim()) throw new Error('Provide --prompt or --prompt-file (use --connect-only just to test the environment)');
+  if (!(o.timeoutMin > 0)) throw new Error('--timeout-min must be a positive number');
+  if (o.port !== undefined && !(Number.isInteger(o.port) && o.port > 0 && o.port < 65534)) throw new Error('--port must be a port number');
   for (const f of [...o.attach, ...(o.open ? [o.open] : []), ...(o.aiConfig ? [o.aiConfig] : [])]) {
-    if (!fs.existsSync(f)) throw new Error(`文件不存在:${f}`);
+    if (!fs.existsSync(f)) throw new Error(`File does not exist: ${f}`);
   }
   return o;
 }
@@ -97,7 +107,7 @@ let opts;
 try {
   opts = parseArgs(process.argv.slice(2));
 } catch (e) {
-  console.error(`${e.message}\n用法见 scripts/review-loop-run.mjs 文件头`);
+  console.error(`${e.message}\nSee the header of scripts/review-loop-run.mjs for usage`);
   process.exit(2);
 }
 
@@ -110,11 +120,11 @@ const dirs = {
   PROMPTCUT_WORK_DIR: path.join(work, 'pc-work'),
 };
 
-/* ---------------- 收工 ---------------- */
+/* ---------------- Teardown ---------------- */
 
 let server = null;
 let browser = null;
-let chat = null;         // AbortController:断开 SSE,服务端就中止这一趟
+let chat = null;         // AbortController: disconnecting SSE causes the server to abort this pass
 let copiedKeys = null;
 let cleaned = false;
 
@@ -123,26 +133,26 @@ function cleanup() {
   cleaned = true;
   try { chat?.abort(); } catch {}
   if (browser) killTree(browser.process()?.pid);
-  if (server) { server.stop(); log('已关 dev server'); }
+  if (server) { server.stop(); log('dev server stopped'); }
   if (copiedKeys) {
     fs.rmSync(copiedKeys, { recursive: true, force: true });
-    log('已删复制过来的 keys/');
+    log('Deleted the copied keys/');
   }
 }
 
 process.on('exit', cleanup);
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
-  process.on(sig, () => { log(`收到 ${sig},中止这一趟并收工`); cleanup(); process.exit(130); });
+  process.on(sig, () => { log(`Received ${sig}, aborting this run and wrapping up`); cleanup(); process.exit(130); });
 }
 process.on('uncaughtException', (e) => { console.error(e); cleanup(); process.exit(1); });
 
-/* ---------------- 准备 ---------------- */
+/* ---------------- Setup ---------------- */
 
-/** 用户 AI 配置的副本。返回 { configPath, keysDir, apiReady } */
+/** Replica of user AI config. Returns { configPath, keysDir, apiReady } */
 function prepareAiConfig() {
   if (opts.aiConfig) return { configPath: opts.aiConfig, keysDir: path.join(path.dirname(opts.aiConfig), 'keys'), copied: false };
   const src = process.env.PROMPTCUT_AI_CONFIG || path.join(process.env.LOCALAPPDATA || os.homedir(), 'promptcut', 'ai.json');
-  if (!fs.existsSync(src)) throw new Error(`没找到 AI 配置 ${src},用 --ai-config 指一份`);
+  if (!fs.existsSync(src)) throw new Error(`AI config ${src} not found, point to one with --ai-config`);
   const dir = path.join(work, 'ai');
   fs.mkdirSync(dir, { recursive: true });
   fs.copyFileSync(src, path.join(dir, 'ai.json'));
@@ -156,16 +166,16 @@ function prepareAiConfig() {
   return { configPath: path.join(dir, 'ai.json'), keysDir: path.join(dir, 'keys'), copied: true };
 }
 
-/** 发请求之前先看一眼 API 直连配没配好,省得等服务起来才知道 */
+/** Check whether direct API is configured before sending request, to avoid waiting until service starts to find out */
 function apiProblem({ configPath, keysDir }) {
   try {
     const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     const source = cfg?.api?.source;
-    if (!source) return 'ai.json 的 api.source 是空的,API 直连不会去读 key 文件';
-    if (!fs.existsSync(path.join(keysDir, `${source}.key`))) return `没有 keys/${source}.key`;
+    if (!source) return 'api.source in ai.json is empty, direct API will not read the key file';
+    if (!fs.existsSync(path.join(keysDir, `${source}.key`))) return `No keys/${source}.key`;
     return null;
   } catch (e) {
-    return `ai.json 读不了:${e.message}`;
+    return `Cannot read ai.json: ${e.message}`;
   }
 }
 
@@ -183,7 +193,7 @@ const kindOf = (file) => {
   return Object.keys(KINDS).find((k) => KINDS[k].includes(ext)) || 'other';
 };
 
-/** 附件复制进对话工作目录,和界面「+」上传落在同一个地方 */
+/** Copy attachments into chat working directory, landing in the same place as "+" uploads in the UI */
 function prepareAttachments(convId) {
   if (!opts.attach.length) return [];
   const dir = path.join(dirs.PROMPTCUT_WORK_DIR, convId);
@@ -196,7 +206,7 @@ function prepareAttachments(convId) {
   });
 }
 
-/** src/cards/user/ 下的改动(worker 写的定制卡落在这里) */
+/** Changes under src/cards/user/ (custom cards written by workers land here) */
 function userCardChanges() {
   const r = spawnSync('git', ['status', '--porcelain', '--untracked-files=all', '--', 'src/cards/user'], { cwd: REPO, encoding: 'utf8', windowsHide: true });
   return new Set((r.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean));
@@ -222,31 +232,31 @@ async function* sse(res) {
 
 const indent = (text) => String(text).split('\n').join('\n         ');
 
-/* ---------------- 主流程 ---------------- */
+/* ---------------- Main workflow ---------------- */
 
 async function main() {
   fs.mkdirSync(work, { recursive: true });
   for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
-  log(`工作目录 ${work}`);
+  log(`Working directory ${work}`);
 
   const ai = prepareAiConfig();
-  log(`AI 配置 ${ai.configPath}${ai.copied ? '(用户配置的副本)' : ''}`);
+  log(`AI config ${ai.configPath}${ai.copied ? ' (copy of the user\'s config)' : ''}`);
   const problem = apiProblem(ai);
-  if (problem) log(`⚠ API 直连没配好:${problem}。这一趟发出去会直接报错`);
-  // 转写找 Python 的顺序同 server/vite-plugin-stt.ts 的 findPython
+  if (problem) log(`⚠ Direct API is not configured correctly: ${problem}. Sending this run will fail immediately`);
+  // Python lookup order for transcription matches findPython in server/vite-plugin-stt.ts
   const python = [process.env.PROMPTCUT_PYTHON, path.join(REPO, 'desktop', 'src-tauri', 'runtime', 'python', 'python.exe'),
     path.join(REPO, 'python', '.venv', 'Scripts', 'python.exe')].find((p) => p && fs.existsSync(p));
   const missing = ['pylibs', 'models'].filter((d) => !process.env[`PROMPTCUT_${d.toUpperCase()}`] && !fs.existsSync(path.join(REPO, 'out', d)));
-  if (!python) log('⚠ 找不到转写用的 Python:对话里一转写就失败(/api/stt/status 回 503)。要用主仓库那份,设 PROMPTCUT_PYTHON、PROMPTCUT_PYLIBS、PROMPTCUT_MODELS');
-  else if (missing.length) log(`⚠ 这个工作副本没有 out/${missing.join('、out/')}:对话里一转写就会现装(几个 GB)。要复用主仓库那份,设 PROMPTCUT_PYLIBS / PROMPTCUT_MODELS`);
+  if (!python) log('⚠ Python for transcription not found: transcribing in chat fails immediately (/api/stt/status returns 503). To use the one from the main checkout, set PROMPTCUT_PYTHON, PROMPTCUT_PYLIBS, PROMPTCUT_MODELS');
+  else if (missing.length) log(`⚠ This working copy has no out/${missing.join(', out/')}: transcribing in a chat will install it on the fly (several GB). To reuse the one from the main checkout, set PROMPTCUT_PYLIBS / PROMPTCUT_MODELS`);
 
   const env = { ...dirs, PROMPTCUT_AI_CONFIG: ai.configPath };
   server = await startDevServer({ env, logFile: path.join(work, 'vite.log'), port: opts.port, log });
-  log(`dev server 就绪 ${server.origin}(舞台 ${server.stagePorts.join(' / ')})`);
+  log(`dev server ready ${server.origin} (stage ${server.stagePorts.join(' / ')})`);
 
-  /* ---- 编辑器页面 ---- */
+  /* ---- Editor page ---- */
   const stats = { pageErrors: 0, consoleErrors: 0, reloads: 0, disconnects: 0 };
-  // 同步追加:Ctrl+C、超时、process.exit 都不会丢掉最后几条
+  // Synchronous append: Ctrl+C, timeout, and process.exit will not lose the last few entries
   const events = fs.openSync(path.join(work, 'events.jsonl'), 'a');
   const record = (ev) => fs.writeSync(events, JSON.stringify({ at: Date.now() - t0, ...ev }) + '\n');
 
@@ -257,9 +267,9 @@ async function main() {
       '--hide-scrollbars',
       '--no-first-run',
       '--disable-gpu',
-      // 软件 WebGL:三维卡在无头里才不是空画布
+      // Software WebGL: ensures 3D cards are not empty canvases in headless mode
       '--enable-unsafe-swiftshader',
-      // 整趟半小时,页面不能被当成后台降频
+      // The pass takes half an hour; the page must not be treated as background and throttled
       '--disable-background-timer-throttling',
       '--disable-renderer-backgrounding',
       '--disable-backgrounding-occluded-windows',
@@ -268,31 +278,31 @@ async function main() {
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 960 });
-  page.on('pageerror', (e) => { stats.pageErrors++; record({ type: 'page_error', message: e.message }); log(`⚠ 页面错误:${e.message}`); });
+  page.on('pageerror', (e) => { stats.pageErrors++; record({ type: 'page_error', message: e.message }); log(`⚠ Page error: ${e.message}`); });
   page.on('console', (m) => { if (m.type() === 'error') { stats.consoleErrors++; record({ type: 'page_console_error', text: m.text() }); } });
   page.on('response', (r) => { if (r.status() >= 400) record({ type: 'page_http_error', status: r.status(), method: r.request().method(), url: r.url() }); });
   let loaded = false;
   page.on('framenavigated', (f) => {
     if (f !== page.mainFrame()) return;
-    if (loaded) { stats.reloads++; record({ type: 'page_reload', url: f.url() }); log(`⚠ 编辑器页面重载了(第 ${stats.reloads} 次)`); }
+    if (loaded) { stats.reloads++; record({ type: 'page_reload', url: f.url() }); log(`⚠ Editor page reloaded (time ${stats.reloads})`); }
     loaded = true;
   });
 
   const editorUrl = `${server.origin}/?editor&nosetup=1${opts.open ? `&open=${encodeURIComponent(opts.open)}` : ''}`;
   await page.goto(editorUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await waitHttp(`${server.origin}/api/mcp/status`, (d) => d?.editorConnected === true, 90000, '等编辑器连上 MCP 桥');
-  log(`编辑器已连上 MCP 桥(${editorUrl})`);
+  await waitHttp(`${server.origin}/api/mcp/status`, (d) => d?.editorConnected === true, 90000, 'Waiting for the editor to connect to the MCP bridge');
+  log(`Editor connected to the MCP bridge (${editorUrl})`);
 
-  /* ---- 每 15 秒看一次编辑器还连着没有 ---- */
+  /* ---- Check every 15s whether editor is still connected ---- */
   let connected = true;
   const watch = setInterval(async () => {
     try {
       const st = await fetch(`${server.origin}/api/mcp/status`).then((r) => r.json());
-      if (connected && !st.editorConnected) { stats.disconnects++; record({ type: 'editor_disconnected' }); log('⚠ 编辑器断线了'); }
-      if (!connected && st.editorConnected) { record({ type: 'editor_reconnected' }); log('编辑器重新连上了'); }
+      if (connected && !st.editorConnected) { stats.disconnects++; record({ type: 'editor_disconnected' }); log('⚠ Editor disconnected'); }
+      if (!connected && st.editorConnected) { record({ type: 'editor_reconnected' }); log('Editor reconnected'); }
       connected = !!st.editorConnected;
     } catch (e) {
-      if (connected) { stats.disconnects++; log(`⚠ 查不到 /api/mcp/status:${e.message}`); }
+      if (connected) { stats.disconnects++; log(`⚠ Cannot reach /api/mcp/status: ${e.message}`); }
       connected = false;
     }
   }, 15000);
@@ -301,25 +311,25 @@ async function main() {
     await sleep(5000);
     clearInterval(watch);
     const st = await fetch(`${server.origin}/api/mcp/status`).then((r) => r.json());
-    log(`状态:${JSON.stringify(st)}`);
-    log(st.editorConnected && !stats.pageErrors ? '✓ 环境正常(--connect-only,没发对话)' : '✖ 环境不正常');
+    log(`Status: ${JSON.stringify(st)}`);
+    log(st.editorConnected && !stats.pageErrors ? '✓ Environment OK (--connect-only, no chat sent)' : '✖ Environment not OK');
     return st.editorConnected && !stats.pageErrors ? 0 : 1;
   }
 
-  /* ---- 发对话 ---- */
+  /* ---- Send chat ---- */
   const cardsBefore = userCardChanges();
   const convId = `rl-${stamp()}`;
   const attachments = prepareAttachments(convId);
   const body = { provider: 'api', reviewLoop: true, prompt: opts.prompt, attachments, ...(opts.model ? { model: opts.model } : {}) };
-  log(`发 /api/ai/chat(provider: api,reviewLoop: true${attachments.length ? `,附件 ${attachments.length} 个` : ''}),超时 ${opts.timeoutMin} 分钟`);
+  log(`Sending /api/ai/chat (provider: api, reviewLoop: true${attachments.length ? `, ${attachments.length} attachments` : ''}), timeout ${opts.timeoutMin} minutes`);
 
   chat = new AbortController();
   let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; log(`✖ 超过 ${opts.timeoutMin} 分钟,中止`); chat.abort(); }, opts.timeoutMin * 60000);
+  const timer = setTimeout(() => { timedOut = true; log(`✖ Exceeded ${opts.timeoutMin} minutes, aborting`); chat.abort(); }, opts.timeoutMin * 60000);
   const run = { done: null, errors: [], tools: new Map(), toolErrors: 0, verdicts: [], reply: '' };
   const heartbeat = setInterval(() => {
     const calls = [...run.tools.values()].reduce((a, b) => a + b, 0);
-    log(`… 进行中:工具调用 ${calls} 次,编辑器${connected ? '连着' : '断开'}${server.restarts() ? `,dev server 重启 ${server.restarts()} 次` : ''}`);
+    log(`… In progress: ${calls} tool calls, editor ${connected ? 'connected' : 'disconnected'}${server.restarts() ? `, dev server restarted ${server.restarts()} times` : ''}`);
   }, 60000);
 
   try {
@@ -333,7 +343,7 @@ async function main() {
         case 'run': log(`runId ${ev.runId}`); break;
         case 'session': log(`sessionId ${ev.sessionId}`); break;
         case 'diagnostic':
-          if (ev.stage === 'configuration') log(`模型 ${ev.data?.vendor} / ${ev.data?.model},effort ${ev.data?.effort}`);
+          if (ev.stage === 'configuration') log(`Model ${ev.data?.vendor} / ${ev.data?.model}, effort ${ev.data?.effort}`);
           break;
         case 'status':
           if (/^judger:/.test(ev.text)) run.verdicts.push(ev.text.split('\n')[0]);
@@ -360,23 +370,23 @@ async function main() {
     clearInterval(watch);
   }
 
-  /* ---- 汇总 ---- */
+  /* ---- Summary ---- */
   fs.writeFileSync(path.join(work, 'reply.md'), run.reply);
   const cardsAfter = [...userCardChanges()].filter((l) => !cardsBefore.has(l));
   const calls = [...run.tools.entries()].sort((a, b) => b[1] - a[1]);
   const u = run.done?.usage;
   console.log('');
-  log('—— 结果 ——');
-  log(`用时 ${clock()};${run.done ? `结束(outcome ${run.done.outcome ?? '—'})` : timedOut ? '超时中止' : '没收到 done'}`);
-  if (u) log(`token:输入 ${u.input}(其中缓存命中 ${u.cacheRead}),输出 ${u.output}`);
-  log(`工具调用 ${calls.reduce((a, [, n]) => a + n, 0)} 次,失败 ${run.toolErrors} 次${calls.length ? `;最多的:${calls.slice(0, 6).map(([k, n]) => `${k}×${n}`).join('、')}` : ''}`);
-  if (run.verdicts.length) log(`judger 裁决:${run.verdicts.join(' → ')}`);
-  if (run.errors.length) log(`错误 ${run.errors.length} 条,第一条:${run.errors[0].split('\n')[0]}`);
-  log(`编辑器断线 ${stats.disconnects} 次,页面重载 ${stats.reloads} 次,页面错误 ${stats.pageErrors} 个,dev server 重启 ${server.restarts()} 次`);
-  if (cardsAfter.length) log(`⚠ src/cards/user/ 多了这些改动(没删,自己看要不要留):\n         ${cardsAfter.join('\n         ')}`);
-  log(`最终回复 ${path.join(work, 'reply.md')}(${run.reply.length} 字);事件 ${path.join(work, 'events.jsonl')}`);
+  log('-- Result --');
+  log(`Elapsed ${clock()}; ${run.done ? `finished (outcome ${run.done.outcome ?? '—'})` : timedOut ? 'aborted on timeout' : 'no done received'}`);
+  if (u) log(`token: input ${u.input} (cache hits ${u.cacheRead}), output ${u.output}`);
+  log(`${calls.reduce((a, [, n]) => a + n, 0)} tool calls, ${run.toolErrors} failed${calls.length ? `; most frequent: ${calls.slice(0, 6).map(([k, n]) => `${k}×${n}`).join(', ')}` : ''}`);
+  if (run.verdicts.length) log(`judger verdict: ${run.verdicts.join(' → ')}`);
+  if (run.errors.length) log(`${run.errors.length} errors, first: ${run.errors[0].split('\n')[0]}`);
+  log(`Editor disconnected ${stats.disconnects} times, page reloaded ${stats.reloads} times, ${stats.pageErrors} page errors, dev server restarted ${server.restarts()} times`);
+  if (cardsAfter.length) log(`⚠ src/cards/user/ has these extra changes (not deleted, decide yourself whether to keep them):\n         ${cardsAfter.join('\n         ')}`);
+  log(`Final reply ${path.join(work, 'reply.md')} (${run.reply.length} chars); events ${path.join(work, 'events.jsonl')}`);
   const lessons = path.join(path.dirname(ai.configPath), 'review-lessons.json');
-  if (fs.existsSync(lessons)) log(`教训 ${lessons}`);
+  if (fs.existsSync(lessons)) log(`Lessons ${lessons}`);
   return run.done && !run.errors.length && !timedOut ? 0 : 1;
 }
 

@@ -1,8 +1,8 @@
 /**
- * 手机版开始页：
- * - 扫码进来的局域网邀请链接（`#invite=…&doc=…`）直接进 `MobileJoin`；
- * - 云端扩展已注册（`cloud/account/ui-manifest.tsx`）时走 `MobileAccountStart`（网站账号登录、游客与云端项目列表）；
- * - 社区版移走 `cloud/` 时，提供粘贴局域网邀请链接加入共享项目的入口。
+ * Mobile app start page:
+ * - a LAN invite link reached by scanning the code (`#invite=…&doc=…`) goes straight to `MobileJoin`;
+ * - when the cloud extension is registered (`cloud/account/ui-manifest.tsx`), it goes to `MobileAccountStart` (website account login, guest and cloud project list);
+ * - when the community edition has `cloud/` moved out, it offers an entry to paste a LAN invite link and join a shared project.
  */
 import { useState, useSyncExternalStore } from "react";
 import { getAccountExtensions, subscribeAccountExtensions } from "../editor/sync/accountExtensions";
@@ -17,9 +17,9 @@ import { tr } from "../i18n/index.ts";
 
 export function MobileStart({ onEnterEditor }: { onEnterEditor: () => void }) {
   /*
-   * 扫码进来的(`#invite=…&doc=…`,`src/online/invite.ts` 启动时读走):直接进「加入项目」那一屏,不问账号 ——
-   * 局域网里的共享项目凭项目凭证加入,和网站账号没关系(`workflow/editing.md`「局域网里的第二块屏」)。
-   * 只取一次:`takeCapturedInvite` 给过就没了,所以记在 state 里。
+   * Arrived by scanning the code (`#invite=…&doc=…`, read away at startup by `src/online/invite.ts`): go straight to the "Join project" screen without asking for an account,
+   * since a shared project on the LAN is joined with the project credential and has nothing to do with the website account (`workflow/editing.md` "The second screen on the LAN").
+   * Take it only once: `takeCapturedInvite` is gone once it has been given out, so it is kept in state.
    */
   const [captured] = useState(() => {
     const got = takeCapturedInvite();

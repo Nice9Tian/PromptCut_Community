@@ -3,18 +3,22 @@ import type { ServerResponse } from "http";
 import { spawn } from "child_process";
 import { exportsRunning } from "./render-pool-state.mjs";
 import { exportsRoot, listExports, deleteExport, pruneExport, resolveExportDir } from "./exports-list.mjs";
+import { tr } from "./i18n.mjs";
 
 /**
- * 导出产物的接口(存储占用计划 `docs/plan/storage-plan.md` 第 4 节),给开始页「存储」一块用:
+ * Export deliverables API (storage plan `docs/plan/storage-plan.md` section 4), used by the "Storage"
+ * section of the start page:
  *
  *   GET  /api/exports                → { ok, items: [{ id, projectName, projectId, at, finished, running, bytes, deliverables, intermediateBytes }] }
  *   POST /api/exports/<id>/delete    → { ok, freedBytes } | { ok: false, error }
- *   POST /api/exports/<id>/prune     → { ok, freedBytes } | { ok: false, error }(只删中间文件)
- *   POST /api/exports/<id>/reveal    → { ok }(在文件管理器里打开)
+ *   POST /api/exports/<id>/prune     → { ok, freedBytes } | { ok: false, error } (only deletes intermediate files)
+ *   POST /api/exports/<id>/reveal    → { ok } (reveal in file manager)
  *
- * 文件系统那一半(列举、路径校验、不跟链接的删除)在 `exports-list.mjs`。
- * 在 `vite.config.ts` 里排在 `apiGuardPlugin` 后面,同源守卫先过;在线构建不挂任何接口插件,开始页里调这些接口的代码
- * 也按 `ONLINE_BUILD` 剪掉(`src/StartPage.tsx`)。
+ * The filesystem half (enumeration, path validation, non-symlink-following deletion) is in
+ * `exports-list.mjs`.
+ * In `vite.config.ts`, it is placed after `apiGuardPlugin`, so same-origin guard runs first;
+ * online build does not attach any API plugins, and code calling these APIs in the start page is
+ * also stripped via `ONLINE_BUILD` (`src/StartPage.tsx`).
  */
 function send(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status;
@@ -23,7 +27,7 @@ function send(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
-/** 在文件管理器里打开一个目录。同 `vite-plugin-export.ts` 的 reveal:explorer 打开目录时退出码是 1,不看退出码 */
+/** Open a directory in the file manager. Same as reveal in `vite-plugin-export.ts`: explorer exit code is 1 when opening a directory, so ignore the exit code */
 function reveal(dir: string) {
   const opener = process.platform === "win32" ? "explorer.exe" : process.platform === "darwin" ? "open" : "xdg-open";
   spawn(opener, [dir], { detached: true, stdio: "ignore" }).on("error", () => {}).unref();
@@ -41,14 +45,14 @@ export function exportsListPlugin(): Plugin {
         const opts = { exportsRunning: exportsRunning() > 0 };
         try {
           if (url === "/api/exports") {
-            if (req.method !== "GET") return send(res, 405, { ok: false, error: "只支持 GET" });
+            if (req.method !== "GET") return send(res, 405, { ok: false, error: "Only GET is supported" });
             return send(res, 200, { ok: true, items: await listExports(root, opts) });
           }
           const m = /^\/api\/exports\/([^/]+)\/(delete|prune|reveal)$/.exec(url);
-          if (!m) return send(res, 404, { ok: false, error: "没有这个接口" });
-          if (req.method !== "POST") return send(res, 405, { ok: false, error: "只支持 POST" });
+          if (!m) return send(res, 404, { ok: false, error: "API not available" });
+          if (req.method !== "POST") return send(res, 405, { ok: false, error: "Only POST is supported" });
           let id: string;
-          try { id = decodeURIComponent(m[1]); } catch { return send(res, 400, { ok: false, error: "不是导出目录的名字" }); }
+          try { id = decodeURIComponent(m[1]); } catch { return send(res, 400, { ok: false, error: tr("Not an export directory name") }); }
           const action = m[2];
           if (action === "reveal") {
             const r = await resolveExportDir(root, id);

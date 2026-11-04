@@ -1,24 +1,25 @@
 /**
- * scripts/test-suite.mjs 的纯判定逻辑：从最小报告事件识别文件级原生异常，
- * 并用 Node 根 test:summary 的总数确认没有其它失败被重跑掩盖。
+ * Pure judgment logic for scripts/test-suite.mjs: identify file-level native exceptions from
+ * minimal reporter events, and use totals from Node root test:summary to confirm no other
+ * failures were masked by reruns.
  */
 import path from 'node:path';
 
 const NTSTATUS = new Map([
-  [0xC0000005, 'STATUS_ACCESS_VIOLATION（访问违例）'],
-  [0xC0000142, 'STATUS_DLL_INIT_FAILED（DLL 初始化失败）'],
-  [0xC0000409, 'STATUS_STACK_BUFFER_OVERRUN（栈缓冲区越界）'],
-  [0xC000001D, 'STATUS_ILLEGAL_INSTRUCTION（非法指令）'],
+  [0xC0000005, 'STATUS_ACCESS_VIOLATION (access violation)'],
+  [0xC0000142, 'STATUS_DLL_INIT_FAILED (DLL initialization failed)'],
+  [0xC0000409, 'STATUS_STACK_BUFFER_OVERRUN (stack buffer overrun)'],
+  [0xC000001D, 'STATUS_ILLEGAL_INSTRUCTION (illegal instruction)'],
 ]);
 
 const keyOf = (file, cwd) => path.normalize(path.resolve(cwd, file)).toLowerCase();
 const lineCount = (message) => message ? (message.match(/\n/g)?.length ?? 0) + Number(!message.endsWith('\n')) : 0;
 
 export function exitDescription(code) {
-  if (typeof code !== 'number') return '退出码未知';
+  if (typeof code !== 'number') return 'Exit code unknown';
   const unsigned = code >>> 0;
   if (unsigned >= 0xC0000000) {
-    return `0x${unsigned.toString(16).toUpperCase().padStart(8, '0')} ${NTSTATUS.get(unsigned) ?? 'Windows 原生异常'}`;
+    return `0x${unsigned.toString(16).toUpperCase().padStart(8, '0')} ${NTSTATUS.get(unsigned) ?? 'Windows native exception'}`;
   }
   return String(code);
 }
@@ -58,7 +59,7 @@ export function retryReason(file) {
   const failure = file.processFailure;
   if (!failure || file.assertionFailures > 0) return null;
   const { exitCode, signal } = failure;
-  // 启动阶段已经打印明确的 JS/模块错误时，不把它当作进程异常掩盖。
+  // When explicit JS/module errors have already been printed during startup, do not mask them as process exceptions.
   if (file.testCases === 0 && /(?:^|\n)(?:Error(?: \[[A-Z_]+\])?|SyntaxError|TypeError|ReferenceError|RangeError):|ERR_UNKNOWN_FILE_EXTENSION|Cannot find module/.test(file.stderr)) return null;
   if (signal) return 'signal';
   if (typeof exitCode === 'number' && (exitCode >>> 0) >= 0xC0000000) return 'ntstatus';

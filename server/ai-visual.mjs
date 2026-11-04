@@ -1,8 +1,9 @@
 /**
  * ai-visual.mjs
  * 
- * 用于「AI 栏工具结果可视化」的纯 Node ESM 模块。
- * 包含随机 ID 生成、文件存取、对象比对格式化，以及使用 ffmpeg 导出 GIF / 拼图的逻辑。
+ * Pure Node ESM module for "AI panel tool result visualization".
+ * Contains logic for random ID generation, file access, object comparison formatting,
+ * and exporting GIFs / grid images using ffmpeg.
  */
 import crypto from 'node:crypto';
 import fsPromises from 'node:fs/promises';
@@ -11,42 +12,48 @@ import path from 'node:path';
 import os from 'node:os';
 import child_process from 'node:child_process';
 
-/** pngjs 只在 devDependencies 里,安装包里未必有:按需加载,加载不到就不裁(照整屏编),而不是整个模块起不来 */
+/** pngjs is only in devDependencies and may not be in package: load on demand; if missing, skip crop (encode full screen) instead of failing to start module */
 let pngLib;
 async function loadPng() {
   if (pngLib === undefined) pngLib = await import('pngjs').then((m) => m.default || m, () => null);
   return pngLib;
 }
 
-/** Windows 上对方开着目标文件时改名会 EPERM,最多重试这么多次(见 atomicWrite) */
+/** On Windows, renaming when target file is open causes EPERM; retry at most this many times (see atomicWrite) */
 const RENAME_ATTEMPTS = 40;
 
 /**
- * 存储目录由几个进程共用(T1a 审查 #13):编辑器进程、预渲染进程(拆分时的 `user` / `agent` 两个也一样)
- * 都从同一个 `PROMPTCUT_EXPORT_DIR`(缺省 `<root>/out`)下的 `ai-visual/` 读写 —— 模型的 `get_gif` 在
- * 一个进程里写的渲染规格和记录,由另一个进程读得到、在那里渲
- * (cloud-task.md 决议 12:模型的 `get_gif` 在 `'agent'` 进程里只写 Spec,用户点开的 GET 和模型要的 `/render`
- * 都由 `user` 进程渲像素)。
+ * The storage directory is shared across several processes (T1a review #13): the editor process
+ * and prerender processes (including both `user` and `agent` when split) all read and write to
+ * `ai-visual/` under the same `PROMPTCUT_EXPORT_DIR` (defaults to `<root>/out`): render specs and
+ * records written by the model's `get_gif` in one process can be read and rendered by another
+ * process (cloud-task.md resolution 12: the model's `get_gif` only writes Spec in the `'agent'`
+ * process, while user-clicked GET requests and model-requested `/render` have pixels rendered by
+ * the `user` process).
  *
- * 所以这里的每一次写都**先写临时文件再改名**:另一个进程可能正在读同一个文件,直接 `writeFile`
- * 会让它读到半截 JSON(`readJson` 回 null,GET 就成了 404)或半张 GIF。
- * Windows 上对方刚好开着文件时改名会短暂 EPERM / EBUSY / EACCES,重试(最多 `RENAME_ATTEMPTS` 次,见函数体)。
+ * Therefore, every write here **writes to a temporary file first then renames**: another process
+ * might be reading the same file concurrently, and a direct `writeFile` could cause it to read
+ * half-written JSON (`readJson` returns null, turning GET into a 404) or a half-written GIF.
+ * On Windows, renaming when the other process happens to have the file open briefly causes
+ * EPERM / EBUSY / EACCES; retry (up to `RENAME_ATTEMPTS` times, see function body).
  */
 export async function atomicWrite(file, data) {
   await fsPromises.mkdir(path.dirname(file), { recursive: true });
   const ext = path.extname(file);
-  // 临时名保留原扩展名:ffmpeg 按扩展名选输出格式(encodeGif 也走这里起临时名)
+  // Temporary name keeps original extension: ffmpeg selects format by extension (encodeGif names here too)
   const temp = `${file.slice(0, file.length - ext.length)}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp${ext}`;
   try {
-    // `data` 是函数时由它把内容写到临时名上(ffmpeg 直接输出到那里)
+    // When `data` is a function, it writes content to the temporary name (ffmpeg outputs directly there)
     if (typeof data === 'function') await data(temp);
     else await fsPromises.writeFile(temp, data);
   } catch (error) {
     await fsPromises.rm(temp, { force: true }).catch(() => {});
     throw error;
   }
-  // 对方一直在读(每次开着文件几毫秒)时,改名只能落在它两次读之间的空档里:多试几次、每次随机等 5～25 ms,
-  // 不和读者的节奏同步;最多约 1 秒。固定退避 5 次(约 0.3 秒)在连续读的另一个进程面前实测会耗尽。
+  // When the other process keeps reading (holding the file open for a few ms each time), renaming can
+  // only land in the gap between its reads: retry multiple times, waiting randomly 5-25 ms each time
+  // to desync from the reader's rhythm; up to ~1 second. A fixed 5-retry backoff (~0.3 s) was tested
+  // to exhaust when faced with another process reading continuously.
   for (let attempt = 0; ; attempt++) {
     try { await fsPromises.rename(temp, file); return; }
     catch (error) {
@@ -59,12 +66,13 @@ export async function atomicWrite(file, data) {
   }
 }
 
-/** 和拼图的 tile=4x2 对上，一张图正好 8 格；帧数少可以保证渲染快。 */
+/** Matches the grid tile=4x2, exactly 8 cells per image; fewer frames ensure fast rendering */
 export const GIF_FRAMES = 8;
 
 /** 
- * 取每段中点是因为这样能避开紧贴头尾产生的黑帧；
- * 保留 3 位小数是为了让同一片段多次采样得到完全相同的时刻，从而保证缓存 key 的稳定。
+ * Taking the midpoint of each segment avoids black frames occurring right at the start or end;
+ * keeping 3 decimal places ensures multiple samplings of the same clip produce identical timestamps,
+ * guaranteeing cache key stability.
  */
 export function sampleTimes(clip, n = GIF_FRAMES) {
   const { start, end } = clip;
@@ -78,7 +86,8 @@ export function sampleTimes(clip, n = GIF_FRAMES) {
 }
 
 /** 
- * 过滤掉 undefined 的键，数组保持原本顺序，确保内容相同但键顺序不同的对象格式化一致。
+ * Filter out undefined keys while keeping original array order, ensuring objects with identical
+ * content but different key order format consistently.
  */
 export function stableStringify(value) {
   if (value === undefined) return undefined;
@@ -94,7 +103,8 @@ export function stableStringify(value) {
 }
 
 /** 
- * 对 stableStringify 结果做哈希，是因为键顺序不同但内容相同的工程也应当命中同一份缓存动图。
+ * Hashing the stableStringify result ensures projects with identical content but different key
+ * order hit the same cached GIF.
  */
 export function specKey(project, clipId) {
   const str = stableStringify({ project, clipId });
@@ -102,21 +112,22 @@ export function specKey(project, clipId) {
 }
 
 /** 
- * 随机生成 AI 可视化标识符，加 v- 前缀便于区分。
+ * Randomly generate an AI visualization identifier with a v- prefix for easy distinction.
  */
 export function newVisualId() {
   return 'v-' + crypto.randomBytes(8).toString('hex');
 }
 
 /** 
- * 校验字符串是否为合法的 AI 可视化标识符，防注入。
+ * Validate whether a string is a valid AI visualization identifier to prevent injection.
  */
 export function isVisualId(s) {
   return typeof s === 'string' && /^v-[0-9a-z]{6,40}$/.test(s);
 }
 
 /** 
- * 确保文件名只是简单的哈希+图片扩展名，防止路径穿越攻击（如 ../）。
+ * Ensure file names are just a simple hash + image extension to prevent path traversal
+ * attacks (such as ../).
  */
 export function safeFileName(name) {
   if (typeof name !== 'string') return null;
@@ -125,10 +136,11 @@ export function safeFileName(name) {
 }
 
 /** 
- * 格式化数值用于友好展示，对过长字符串进行截断并美化小数。
+ * Format numeric values for user-friendly display, truncating overly long strings and
+ * prettifying decimals.
  */
 export function formatValue(v) {
-  if (v === undefined) return '(无)';
+  if (v === undefined) return '(none)';
   let str;
   if (typeof v === 'string') {
     str = v;
@@ -145,8 +157,9 @@ export function formatValue(v) {
 }
 
 /** 
- * 顺序固定是为了在界面上按照重要程度或固定习惯进行排布；
- * parts 只出一行是因为部件树太大，塞不下界面，所以用简短说明代替。
+ * The fixed order arranges items in the UI by importance or conventional practice;
+ * `parts` only outputs a single line because the parts tree is too large to fit the UI,
+ * so it is replaced with a brief description.
  */
 export function diffClips(before, after) {
   if (!before || !after) return [];
@@ -178,14 +191,15 @@ export function diffClips(before, after) {
   }
 
   if (stableStringify(before.parts) !== stableStringify(after.parts)) {
-    diffs.push({ key: 'parts', from: '(原部件)', to: '(改动了部件)' });
+    diffs.push({ key: 'parts', from: '(original parts)', to: '(parts changed)' });
   }
 
   return diffs;
 }
 
 /** 
- * 根据 base64 内容存为图片，用内容 sha1 命名，防重名与重复写入。
+ * Save as image from base64 content, named by content sha1 to prevent duplicate names
+ * and repeated writes.
  */
 export async function saveImage(dir, { mime, base64 }) {
   await fsPromises.mkdir(dir, { recursive: true });
@@ -207,15 +221,17 @@ export async function saveImage(dir, { mime, base64 }) {
 }
 
 /**
- * 确保存储目录存在后写入 JSON，封装通用操作。先写临时文件再改名(见 `atomicWrite`):
- * 另一个进程同时读这份规格 / 记录时,要么读到旧的完整一份,要么读到新的完整一份。
+ * Write JSON after ensuring storage directory exists, encapsulating common operations.
+ * Write to a temporary file first then rename (see `atomicWrite`): when another process reads
+ * this spec / record concurrently, it either reads the complete old copy or the complete new copy.
  */
 export async function writeJson(dir, name, data) {
   await atomicWrite(path.join(dir, name), JSON.stringify(data));
 }
 
 /** 
- * 读不到返回 null 是因为调用方把「没有记录」和「文件坏了」当同一种情况处理，不用到处 try/catch。
+ * Returning null on read failure allows callers to treat "no record" and "corrupted file" as
+ * the same case, avoiding try/catch everywhere.
  */
 export async function readJson(dir, name) {
   try {
@@ -227,7 +243,8 @@ export async function readJson(dir, name) {
 }
 
 /** 
- * spec 只给文件名不带 dir，因为它要作为参数传给 writeJson/readJson 的 name 参数。
+ * spec only provides the file name without dir, because it is passed as the name parameter
+ * to writeJson/readJson.
  */
 export function gifPaths(dir, key) {
   return { 
@@ -238,10 +255,14 @@ export function gifPaths(dir, key) {
 }
 
 /**
- * 卡片在 1920×1080 的舞台上往往只占一小块,聊天栏里前后对比那一行每张动图只有一百来像素宽,整屏缩下去字都看不清。
- * 所以动图只取这张卡 8 帧里出现过的区域(取并集:进场飞过的路也算进去),四周留边,再扩成和舞台一样的比例,
- * 免得每张动图长宽比不一。宽度不小于舞台的 1/4(= 动图输出宽 480),裁得再小也不放大,放大只会糊。
- * 帧没有透明像素(整屏不透明)、全空、或者裁完几乎就是整屏时返回 null,照整屏编。
+ * Cards often occupy only a small portion of the 1920×1080 stage; each GIF in the before/after
+ * comparison row in the chat panel is only around a hundred pixels wide, so scaling down the full
+ * screen makes text unreadable. Therefore, GIFs only capture the region where this card appears
+ * across 8 frames (taking the union: including paths traversed during entrance), adding margins,
+ * and expanding to the stage's aspect ratio to avoid differing aspect ratios across GIFs.
+ * Width is at least 1/4 of the stage (= GIF output width 480); never upscale however small the crop,
+ * as upscaling only blurs. Returns null when frames have no transparent pixels (full screen is
+ * opaque), are completely empty, or the crop covers almost the whole screen, encoding the full screen.
  */
 export async function contentCrop(frames, { pad = 0.06, alphaMin = 8 } = {}) {
   const lib = await loadPng();
@@ -281,9 +302,11 @@ export async function contentCrop(frames, { pad = 0.06, alphaMin = 8 } = {}) {
 }
 
 /**
- * 两遍 palettegen/paletteuse 是因为 GIF 只有 256 色，先生成调色板再上色才不糊；
- * 写临时目录并在 finally 里删是因为 ffmpeg 的 %02d 序列输入需要真实文件，且不同并发调用互不干扰。
- * crop 只裁给用户看的动图;交给 Agent 的拼图保持整屏,它要判断这张卡在画面里的位置和构图。
+ * Two passes of palettegen/paletteuse are used because GIFs only have 256 colors; generating the
+ * palette before applying colors prevents blurring; writing to a temporary directory and deleting
+ * in finally is because ffmpeg's %02d sequence input requires real files, and concurrent calls do
+ * not interfere with each other. crop only crops user-facing GIFs; the grid passed to the Agent
+ * remains full screen, as it needs to evaluate the card's position and composition in the frame.
  */
 export async function encodeGif({ ffmpeg, frames, outGif, outGrid, width = 480, fps = 4, crop = null }) {
   const tmp = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'encode-gif-'));
@@ -332,9 +355,9 @@ export async function encodeGif({ ffmpeg, frames, outGif, outGrid, width = 480, 
       '-vf', `scale=${width}:-2,tile=4x2:padding=4:margin=4:color=0x111318`,
       '-frames:v', '1'
     ];
-    // 先拼图、后动图,两个都经临时名改名到位(#13):别的进程按「gif 和 grid 都在」判缓存命中,
-    // gif 最后一个出现,见到它就说明两份都已经完整落盘,不会读到 ffmpeg 写了一半的文件。
-    // ffmpeg 的工作目录是临时目录,输出一律给绝对路径
+    // Grid first, then GIF; both are renamed into place via temporary names (#13): other processes
+    // determine cache hits by "both gif and grid exist". gif appears last; seeing it indicates both are
+    // fully written to disk, avoiding half-written files. ffmpeg's cwd is temp dir, outputs must be absolute.
     await atomicWrite(path.resolve(outGrid), temp => runFfmpeg([...argsGrid, temp]));
     await atomicWrite(path.resolve(outGif), temp => runFfmpeg([...argsGif, '-loop', '0', temp]));
 
@@ -345,7 +368,8 @@ export async function encodeGif({ ffmpeg, frames, outGif, outGrid, width = 480, 
 }
 
 /** 
- * 试 winget 的固定路径是因为刚用 winget 装完 ffmpeg 时，已经在运行的进程 PATH 没刷新，可能找不到 ffmpeg。
+ * Trying winget's fixed path is because right after installing ffmpeg with winget, the PATH of
+ * already running processes has not refreshed and might fail to find ffmpeg.
  */
 export function findFfmpeg() {
   const cands = [];

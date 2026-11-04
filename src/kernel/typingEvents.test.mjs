@@ -48,7 +48,9 @@ test('typing rejects resource excess and malformed timing instead of truncating'
 test('typing frame-boundary times with float error still show the character (default params match the old integer-ms clock)', () => {
   const s = createTypingSchedule({ text: 'Hello, PromptCut typing!', duration: 120 });
   const fps = 30;
-  // 整帧边界:每字 120 ms,6 帧=200 ms,所以 18、36、54、72 帧恰好落在字边界上。舞台把「帧时刻相减」的秒数乘 1000 传入。
+  // Exact frame boundary: 120 ms per character, 6 frames = 200 ms, so frames 18, 36, 54, 72 land
+  // exactly on character boundaries. The stage multiplies the seconds from "subtracting frame
+  // timestamps" by 1000 and passes it in.
   for (const startFrame of [51, 165, 237, 327, 411, 507]) {
     for (let k = 1; k <= s.events.length; k++) {
       const frames = (k * 120 * fps) / 1000;
@@ -57,18 +59,19 @@ test('typing frame-boundary times with float error still show the character (def
       assert.equal(typingTextAt(s, t * 1000), s.source.text.slice(0, k), `start ${startFrame} char ${k} t=${t}`);
     }
   }
-  // 容差只吸收浮点误差:差 0.001 ms 仍然是上一个字
+  // Tolerance only absorbs floating-point errors: a difference of 0.001 ms is still the previous character
   assert.equal(typingTextAt(s, 120 - 0.001), '');
 });
 
 test('typing boundary tolerance is opt-out: clocks that already subtract milliseconds keep their own float error', async () => {
   const { typingMountClockMs, TYPING_BOUNDARY_EPSILON_MS } = await import('./typingEvents.ts');
   const s = createTypingSchedule({ text: 'Hello, world!', duration: 120 });
-  // 30 fps:挂载在第 179 帧,第 197 帧是「整 600 ms」,两个毫秒钟点相减却得 599.9999999999991
+  // 30 fps: mounted at frame 179, frame 197 is "an exact 600 ms", but subtracting the two
+  // millisecond points gives 599.9999999999991
   const elapsed = typingMountClockMs(197 / 30, 179 / 30);
   assert.equal(elapsed, (197 / 30) * 1000 - (179 / 30) * 1000);
   assert.ok(elapsed < 600 && 600 - elapsed < TYPING_BOUNDARY_EPSILON_MS);
-  assert.equal(typingTextAt(s, elapsed, 0), 'Hell');   // 旧实现:floor(599.99…/120) = 4
-  assert.equal(typingTextAt(s, elapsed), 'Hello');     // 按 t 的那条路:容差补上
+  assert.equal(typingTextAt(s, elapsed, 0), 'Hell');   // Old implementation: floor(599.99…/120) = 4
+  assert.equal(typingTextAt(s, elapsed), 'Hello');     // The t-based path: add tolerance
   assert.equal(typingTextAt(s, 600, 0), 'Hello');
 });

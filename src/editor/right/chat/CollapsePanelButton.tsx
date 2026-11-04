@@ -5,8 +5,11 @@ import "./chat.css";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * 「收起面板」的图标:面板外框、贴着 rail 那一边一条侧栏,另一边一对朝 rail 的箭头 —— 面板往那一侧收进 rail。
- * 图标库里没有,就地画一个,规格照 ui/icons:24 画幅、1.5 描边、currentColor。
+ * Icon for "Collapse panel": the panel frame, a sidebar strip on the edge next to the rail, and a
+ * pair of arrows pointing toward the rail on the other edge: the panel collapses toward that side
+ * into the rail.
+ * The icon library has none, so draw one on the spot, with specs per ui/icons: 24 canvas, 1.5
+ * stroke, currentColor.
  */
 function IconCollapse({ side, size = 16 }: { side: Side; size?: number }) {
   return (
@@ -40,10 +43,15 @@ function IconCollapse({ side, size = 16 }: { side: Side; size?: number }) {
 }
 
 /**
- * 助手分页顶栏(ChatHeader、没装驱动时的简版顶栏)和剧本页顶栏共用的「收起面板」。
- * 跟着这一页所在的一侧走(dock/):在右侧放顶栏最左边、收右侧;在左侧放顶栏最右边、收左侧。
- * 顶栏在头尾各放一个 placement="start" / "end",对不上当前一侧的那个不渲染 —— 键盘 Tab 顺序和看到的位置一致。
- * 收起后点 rail 上当前那一项展开 —— 和「再点一次选中项」是同一个开关(sideRails)。
+ * The "Collapse panel" shared by the assistant tab top bar (ChatHeader, and the simple top bar when
+ * no driver is installed) and the script page top bar.
+ * It follows the side this tab is on (dock/): on the right it goes at the far left of the top bar
+ * and collapses the right side; on the left it goes at the far right of the top bar and collapses
+ * the left side.
+ * The top bar puts one at each end, placement="start" / "end", and the one that does not match the
+ * current side is not rendered, so the keyboard Tab order matches the visible position.
+ * After collapsing, click the current item on the rail to expand: it is the same switch as "click
+ * the selected item again" (sideRails).
  */
 export function CollapsePanelButton({ placement }: { placement?: "start" | "end" }) {
   const side = useDockSide("right");

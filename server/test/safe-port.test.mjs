@@ -1,6 +1,7 @@
 /**
- * `server/safe-port.mjs`：坏端口表与测试全局准备的名单一致；`listenSafe` 拿到坏端口会重试。
- * 跑：npm test
+ * `server/safe-port.mjs`: bad port table matches the list prepared globally for tests;
+ * `listenSafe` retries when getting a bad port.
+ * Run: npm test
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,19 +10,19 @@ import { EventEmitter } from 'node:events';
 import { UNSAFE_PORTS, isUnsafePort, listenSafe, LISTEN_SAFE_TRIES } from '../safe-port.mjs';
 import { FETCH_BAD_PORTS } from './global-setup.mjs';
 
-test('global-setup 的坏端口名单是 UNSAFE_PORTS 的子集，且正是其中 ≥ 1024 的部分', () => {
-  for (const port of FETCH_BAD_PORTS) assert.ok(isUnsafePort(port), `端口 ${port}`);
+test('The bad-port list in global-setup is a subset of UNSAFE_PORTS, and is exactly the part of it that is ≥ 1024', () => {
+  for (const port of FETCH_BAD_PORTS) assert.ok(isUnsafePort(port), `Port ${port}`);
   assert.deepEqual([...FETCH_BAD_PORTS].sort((a, b) => a - b), UNSAFE_PORTS.filter((p) => p >= 1024));
 });
 
-test('isUnsafePort：表内为真、邻号为假、字符串也认', () => {
-  for (const port of [1, 22, 6000, 6665, 6669, 10080]) assert.equal(isUnsafePort(port), true, `端口 ${port}`);
-  for (const port of [80, 443, 1024, 5190, 5520, 6001, 6670, 10081, 20000]) assert.equal(isUnsafePort(port), false, `端口 ${port}`);
+test('isUnsafePort: true for entries in the table, false for neighboring numbers, and strings are accepted too', () => {
+  for (const port of [1, 22, 6000, 6665, 6669, 10080]) assert.equal(isUnsafePort(port), true, `Port ${port}`);
+  for (const port of [80, 443, 1024, 5190, 5520, 6001, 6670, 10081, 20000]) assert.equal(isUnsafePort(port), false, `Port ${port}`);
   assert.equal(isUnsafePort('6000'), true);
-  assert.equal(new Set(UNSAFE_PORTS).size, UNSAFE_PORTS.length, '表里没有重复');
+  assert.equal(new Set(UNSAFE_PORTS).size, UNSAFE_PORTS.length, 'No duplicates in the table');
 });
 
-/** 假 server：按给定顺序发端口，记下 listen / close 的次数 */
+/** Mock server: issues ports in given order, recording count of listen / close calls */
 function fakeServer(ports) {
   const s = new EventEmitter();
   let i = 0;
@@ -39,28 +40,28 @@ function fakeServer(ports) {
   return s;
 }
 
-test('listenSafe：前几次拿到坏端口就关掉重来，最后拿到好端口并保持监听', async () => {
+test('listenSafe: closes and retries when it gets a bad port the first few times, and finally gets a good port and keeps listening', async () => {
   const s = fakeServer([6000, 6665, 10080, 5523]);
   const port = await listenSafe(s, '127.0.0.1');
   assert.equal(port, 5523);
   assert.equal(s.listens.length, 4);
   assert.ok(s.listens.every((l) => l.port === 0 && l.host === '127.0.0.1'));
-  assert.equal(s.closes, 3, '三个坏端口各关一次，好端口不关');
+  assert.equal(s.closes, 3, 'Each of the three bad ports is closed once, the good port is not closed');
 });
 
-test('listenSafe：一直拿到坏端口，试满次数后抛错', async () => {
+test('listenSafe: keeps getting bad ports and throws after using up all attempts', async () => {
   const s = fakeServer([1719]);
-  await assert.rejects(listenSafe(s, '127.0.0.1'), /坏端口/);
+  await assert.rejects(listenSafe(s, '127.0.0.1'), /bad port/);
   assert.equal(s.listens.length, LISTEN_SAFE_TRIES);
 });
 
-test('listenSafe：listen 出错时原样抛出', async () => {
+test('listenSafe: when listen fails, the error is thrown as is', async () => {
   const s = fakeServer([5523]);
   s.listen = () => { setImmediate(() => s.emit('error', Object.assign(new Error('boom'), { code: 'EACCES' }))); return s; };
   await assert.rejects(listenSafe(s, '127.0.0.1'), { code: 'EACCES' });
 });
 
-test('listenSafe：真的 net.Server 拿到的端口不是坏端口，且能连上', async () => {
+test('listenSafe: a real net.Server gets a port that is not a bad port, and it can be connected to', async () => {
   const server = net.createServer((socket) => socket.end('hi'));
   const port = await listenSafe(server, '127.0.0.1');
   try {

@@ -21,7 +21,7 @@ function provider() {
 async function fixture(t) { const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-asset-events-')); t.after(() => fs.rm(dir, { recursive: true, force: true })); return path.join(dir, 'cursor.json'); }
 const principal = { projectId: 'A', accountId: 'alice', loginId: 'old-login', authorizationId: 'RAM-only-ref' };
 
-test('asset durable cursor 分页追齐、丢通知重放，非撤销/其它项目/账号/登录不关错流', async t => {
+test('asset durable cursor paging catches up, lost notifications are replayed, and non-revocation, other-project, account and login events do not close the wrong stream', async t => {
   const raw = provider(), file = await fixture(t);
   raw.append('project-created', {}, false); raw.append('member-joined', {}, false); raw.append('project-access-changed', { reason: 'unban', projectId: 'A' }, false);
   const consumer = createAssetRevocationConsumer({ authority: raw, file }); await consumer.start(); t.after(() => consumer.close());
@@ -38,7 +38,7 @@ test('asset durable cursor 分页追齐、丢通知重放，非撤销/其它项�
   lease.release();
 });
 
-test('通知立即fence但ACK等待真实close；丢ACK重启同receipt幂等重发，不复活凭证', async t => {
+test('the notification fences immediately but the ACK waits for the real close; after a lost ACK and restart the same receipt is resent idempotently, without resurrecting credentials', async t => {
   const raw = provider(), file = await fixture(t); const consumer = createAssetRevocationConsumer({ authority: raw, file }); await consumer.start();
   let finishClose; const close = new Promise(resolve => { finishClose = resolve; });
   const lease = await openProjectStream({ authority: consumer, principal, projectId: 'A', close: () => close });
@@ -53,7 +53,7 @@ test('通知立即fence但ACK等待真实close；丢ACK重启同receipt幂等重
   await assert.rejects(authorizeAsset({ authority: restarted, principal, projectId: 'A', action: 'read' }), { status: 401 });
 });
 
-test('连续序列缺口及损坏cursor fail closed；停服务关闭现有流', async t => {
+test('a gap in the continuous sequence and a corrupted cursor fail closed; stopping the service closes existing streams', async t => {
   const raw = provider(), file = await fixture(t); raw.eventsSince = async () => ({ events: [], headSeq: 2 });
   const c = createAssetRevocationConsumer({ authority: raw, file }); await assert.rejects(c.start(), /revocation-gap/); assert.equal(c.ready, false); await c.close();
   await fs.writeFile(file, '{"v":1,"cursor":-1}'); await assert.rejects(createAssetRevocationConsumer({ authority: provider(), file }).start(), /invalid-revocation-state/);

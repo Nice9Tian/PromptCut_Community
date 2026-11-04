@@ -1,16 +1,16 @@
 /**
- * Agent 服务端的项目副本绑在哪个项目上(编辑器进程里,`server/agent/service/instance.mjs` 的 `/api/agent/bind`、`/api/agent/unbind`)。
- * 原来写在 `syncManager.ts` 里,搬出来是为了能单独测;规则没变,只多了「进账号云端项目时解绑」这一条。
+ * Which project the Agent server's project copy is bound to (in the editor process, `/api/agent/bind` and `/api/agent/unbind` of `server/agent/service/instance.mjs`).
+ * It used to live in `syncManager.ts`; it was moved out so it can be tested on its own; the rules are unchanged, with one addition: "unbind when entering an account cloud project".
  *
- * - 页面挂上文档服务之后告诉 Agent 服务端「我在编辑哪个项目、连的是哪个文档服务」(c65-integ2 接线;
- *   接口见 docs/archive/agent-reports/AGENT-c65-agent.md 第 7 节):绑上之后 side: "agent" 的工具在服务端的项目副本上执行,
- *   写入以 Agent 对话的身份直接进文档服务(D1)。本机项目用 local(回环 + 本机信任);旧共享项目用 ticket:
- *   Agent 服务端每开一条对话连接,经 SSE 向本页面要一张连接票据(`syncManager.ts` 的 `issueAgentTicket`)。同样的绑定不重发。
- * - **账号云端项目不绑**(账号连接上签不出 agent 角色的票据;正式的绑定等用户定),本机 Agent 走「页面代做」的老路。
- *   但进去的那一刻必须**解绑**:服务端的绑定是编辑器进程里的状态,不跟页面走 —— 页面整页重载之后自己不记得绑过什么,
- *   服务端却还绑着重载前那个本机项目。不解的话,账号项目里 side: "agent" 的工具会去读写那个本机项目。
- *   所以解绑不看页面记不记得,每次进账号项目都发。
- * - 绑与解排在同一条队里,先发的先到:解绑不会被一条还在路上的旧绑定盖回去。
+ * - After the page attaches to the document service it tells the Agent server "which project I am editing and which document service I am connected to" (wired in c65-integ2;
+ *   for the interface see section 7 of docs/archive/agent-reports/AGENT-c65-agent.md): once bound, tools with side: "agent" run on the server's project copy,
+ *   and writes go straight into the document service as the Agent chat's identity (D1). A local project uses local (loopback + local trust); an old shared project uses ticket:
+ *   each time the Agent server opens a chat connection, it asks this page over SSE for a connection ticket (`issueAgentTicket` in `syncManager.ts`). An identical binding is not resent.
+ * - **Account cloud projects are not bound** (an account connection cannot sign a ticket with the agent role; the proper binding awaits a user decision), and the local Agent takes the old "page does it on its behalf" route.
+ *   But at the moment of entering it must **unbind**: the server's binding is state in the editor process and does not follow the page -- after a full page reload the page does not remember what it bound,
+ *   yet the server is still bound to the local project from before the reload. If not unbound, tools with side: "agent" in the account project would read and write that local project.
+ *   So unbinding does not depend on whether the page remembers; it is sent every time an account project is entered.
+ * - Bind and unbind are queued in the same queue, first sent first arrived: an unbind cannot be overwritten by an old binding still in flight.
  */
 let boundKey: string | null = null;
 let writes: Promise<unknown> = Promise.resolve();
@@ -35,13 +35,13 @@ export function bindAgentSide(kind: "local" | "shared", docProjectId: string, ur
     });
 }
 
-/** 解掉服务端的绑定(离开文档服务、进账号云端项目)。不管本页面记不记得绑过,都发 */
+/** Remove the server's binding (leaving the document service, entering an account cloud project). Sent whether or not this page remembers binding */
 export function releaseAgentSide(): void {
   boundKey = null;
   writes = writes.catch(() => undefined).then(() => post("/api/agent/unbind", "{}")).catch(() => undefined);
 }
 
-/** 排着的绑定 / 解绑都发完(测试用) */
+/** Wait until the queued bind / unbind requests have all been sent (for tests) */
 export function agentSideSettled(): Promise<void> {
   return writes.then(() => undefined, () => undefined);
 }

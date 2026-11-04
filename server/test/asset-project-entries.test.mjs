@@ -1,7 +1,10 @@
 /**
- * 素材按项目隔离：`asset-project-http.test.mjs` 没点到的入口（设计 `docs/plan/three-versions-018-design.md`「素材协议」表）。
- * 实际的素材服务、媒体路由与镜头缩略图模块架在回环 HTTP 上，权威是注入的夹具（项目 A、B 各一张读写票据）。
- * 同一个哈希先只进 A：B 在每个入口都读不到、排不进、收不了尾；撤销 A 后 A 正在读的流被关，B 的不受影响。
+ * Assets isolated by project: entry points not covered by `asset-project-http.test.mjs`
+ * (design `docs/plan/three-versions-018-design.md` "Asset Protocol" table).
+ * Actual asset service, media routing, and shot thumbnail modules run on loopback HTTP,
+ * with authority residing in the injected fixture (projects A and B each have one rw ticket).
+ * Same hash enters only A initially: B cannot read, enqueue, or finalize at any entry point;
+ * after revoking A, stream being read by A is closed, while B is unaffected.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +24,7 @@ async function upload(f, project, ns, content = bytes, ext = 'wav') {
   assert.equal(await status(f, project, `${url}/complete`, { method: 'POST' }), 200);
   return key;
 }
-/** 读到第一块就停住：服务端那条流被背压顶住一直开着；`resume()` 之后 `closed` 兑现成 `{ complete, bytes }` */
+/** Pauses upon reading the first chunk: server stream held open by backpressure; after `resume()`, `closed` resolves to `{ complete, bytes }` */
 function stalledRead(f, project, url) {
   return new Promise((resolve, reject) => {
     const req = http.get(`${f.base}${url}`, { headers: { Authorization: `Bearer ${project}-rw` }, agent: false }, res => {
@@ -36,7 +39,7 @@ function stalledRead(f, project, url) {
   });
 }
 
-test('真实HTTP：小尺寸补转、上传队列、预取、原尺寸检查、带扩展名的旧读口都不越项目', async t => {
+test('real HTTP: small-size backfill transcode, upload queue, prefetch, original-size check and legacy read endpoints with extensions all stay within the project', async t => {
   const f = await startAssetProjectFixture(); t.after(() => f.close());
   await upload(f, 'A', 'media');
   assert.equal(await status(f, 'A', `/@media/${hash}.wav`), 200);
@@ -49,12 +52,12 @@ test('真实HTTP：小尺寸补转、上传队列、预取、原尺寸检查、�
   const queue = await request(f, 'B', '/api/media/upload-queue'); assert.equal(queue.status, 200); assert.ok(!(await queue.text()).includes(hash));
   assert.equal(await status(f, 'B', '/api/media/upload-queue/target', post({ base: `${f.base}/api/asset`, ticket: 'A-rw' })), 403);
   assert.equal((await (await request(f, 'B', '/api/media/prefetch', post({ items: [{ hash, name: 'x.wav' }] }))).json()).queued, 0);
-  assert.equal(await status(f, 'B', `/@media/${hash}`), 404, '预取之后仍读不到');
+  assert.equal(await status(f, 'B', `/@media/${hash}`), 404, 'still unreadable after prefetch');
   const originals = await (await request(f, 'B', '/api/media/originals', post({ hashes: [hash] }))).json();
   assert.equal(originals.remote, null); assert.deepEqual(originals.missing, [hash]);
 });
 
-test('真实HTTP：A 传了一片没收尾的，B 看不到也收不了尾；只读票据与查询串票据不能写', async t => {
+test('real HTTP: A uploaded one chunk without finalizing; B can neither see it nor finalize it; read-only tickets and query-string tickets cannot write', async t => {
   const f = await startAssetProjectFixture(); t.after(() => f.close());
   for (const ns of ['media', 'snap', 'px']) {
     const url = `/api/asset/${ns}/${hash}`;
@@ -64,14 +67,15 @@ test('真实HTTP：A 传了一片没收尾的，B 看不到也收不了尾；只
     assert.equal(await status(f, 'B', `${url}/complete`, { method: 'POST' }), 404);
     assert.equal(await status(f, 'A', `${url}/chunks`), 200);
     assert.equal((await fetch(`${f.base}${url}/complete`, { method: 'POST', headers: { Authorization: 'Bearer A-r' } })).status, 403);
-    // 查询串票据在这个夹具里按只读票据拒（403）；真实的独立素材服务更早一步，非 GET/HEAD 不认查询串（401，探针里验）
+    // Query string tickets are rejected as read-only (403) in this fixture; real standalone asset service
+    // acts earlier, rejecting query strings for non-GET/HEAD (401, verified in probe)
     assert.equal((await fetch(`${f.base}${url}/complete?t=A-r`, { method: 'POST' })).status, 403);
     assert.equal(await status(f, 'A', `${url}/complete`, { method: 'POST' }), 200);
     assert.equal(await status(f, 'B', url), 404);
   }
 });
 
-test('真实HTTP：撤销后 A 在 /api/asset 三命名空间与 /@media 上正在读的流都被关，B 同哈希的流读完整件', { timeout: 60000 }, async t => {
+test('real HTTP: after revocation, A\'s streams being read on the three /api/asset namespaces and on /@media are all closed, while B\'s streams of the same hash read the whole file', { timeout: 60000 }, async t => {
   const f = await startAssetProjectFixture(); t.after(() => f.close());
   const big = Buffer.alloc(20 * 1024 * 1024); for (let i = 0; i < big.length; i += 4096) big.writeUInt32LE((i * 2654435761) >>> 0, i);
   let key;
@@ -81,10 +85,10 @@ test('真实HTTP：撤销后 A 在 /api/asset 三命名空间与 /@media 上正�
   const reads = []; for (const url of routes) reads.push(await stalledRead(f, 'A', url));
   const other = await stalledRead(f, 'B', `/@media/${key}`);
   for (const read of [...reads, other]) assert.equal(read.status, 200);
-  await f.revoke('A'); // 夹具等每个订阅者的回调返回：回调要等服务端那条流真的关掉
+  await f.revoke('A'); // Fixture waits for each subscriber callback to return: callback waits for server stream to truly close
   for (const [n, read] of reads.entries()) {
     read.resume(); const end = await read.closed;
-    assert.equal(end.complete, false, `${routes[n]} 没有被关`); assert.ok(end.bytes < big.length);
+    assert.equal(end.complete, false, `${routes[n]} was not closed`); assert.ok(end.bytes < big.length);
   }
   for (const url of routes) assert.equal(await status(f, 'A', url, { headers: { Range: 'bytes=0-1' } }), 403);
   other.resume(); assert.deepEqual(await other.closed, { complete: true, bytes: big.length });

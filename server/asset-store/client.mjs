@@ -1,29 +1,46 @@
 /**
- * 素材服务的 HTTP 客户端（契约 `docs/plan/artifact-transfer-contract.md` 第 2 节）。
+ * HTTP client for asset service (contract `docs/plan/artifact-transfer-contract.md` section 2).
  *
- * 渲染节点、预渲染进程这些「像外部客户端一样」的角色经它按内容哈希推拉字节
- * （`docs/semantics/product/asset-service.md`「职责」「预渲染的产物」）。
- * 服务端的路由与规则见 `server/asset-service.ts` 文件头：`<base>/<ns>/<hash>…`，`<ns>` ∈ `media` | `snap` | `px`。
- * 只用 Node 内置模块（全局 `fetch`、`node:crypto`）。
+ * Roles like render nodes and prerender processes that act "like external clients" push and pull
+ * bytes through it by content hash (`docs/semantics/product/asset-service.md` "Responsibilities",
+ * "Prerender outputs").
+ * Server routes and rules are in `server/asset-service.ts` file header: `<base>/<ns>/<hash>…`,
+ * `<ns>` ∈ `media` | `snap` | `px`.
+ * Uses only Node built-in modules (global `fetch`, `node:crypto`).
  *
- * - `put`：算 sha256 → 问 `chunks`，已 `complete` 就不传 → 只补 `received` 里缺的片 → `complete`。
- *   分片大小以服务端 `chunks` 回的 `chunkSize` 为准（`received` 是按它编号的），服务端没给才用选项里的 `chunkSize`。
- * - `get`：404 回 null；下载后校验 sha256，不符就抛（`code: 'hash-mismatch'`）。
- * - `has`：`chunks` 的 `complete`。
- * - `putFile`（C6.6）：同 `put`，但从磁盘文件逐片读，不整件进内存；每片发出前可 `await` 一个闸（`beforeChunk`）。
- * - `chunks`：原样回 `chunks` 的对账结果。
- * - `complete` 回 400 `incomplete`（`put` / `putFile`）：等一会儿（100 ms、200 ms）重问 `chunks`，已 `complete` 就算成；
- *   否则补传 `received` 里缺的片、再 `complete`，至多补 2 轮，仍不齐照 4xx 抛。为的是两路同时推同一内容时，
- *   老的素材服务会把另一路已答过「收到」的片撤掉（claude/push-incomplete）；新的素材服务不再这样，这一步只是兜底。
- * - 超时：每个请求（含读完回包）各自计时，缺省 30 s（`timeoutMs`），到点用 AbortController 中止；
- *   超时算网络错误，照常重试，重试用完抛出的错误带 `code: 'timeout'`（契约第 10 节第 5 条）。
- * - 重试：网络错误、超时和 5xx 重试，最多 `retries` 次，间隔 200 ms、400 ms、800 ms（再往后继续翻倍）。
- *   每个请求各自计数，所以分片上传就是「按片重试」。4xx 不重试，直接抛，错误对象带 `status` 和回包 `body`。
- * - 票据（M6a，`docs/plan/auth-contract.md` 第 8、11 节）：`ticket: () => string | Promise<string>`，每个请求取一次，
- *   有就放进 `Authorization: Bearer <票据>`，回 null / 空串就不带（连本机回环时不需要票据）。
- *   收到 401 时调一次 `ticket({ refresh: true })` 换一张再重试一次；仍 401 就照 4xx 抛。
- *   集群令牌不再用于素材服务：旧选项 `token` 给了就抛 TypeError，免得调用方以为它还有用。
- * - 票据只进 `Authorization` 头；异常信息里出现票据原文的地方一律换成 `***`，不挂原始错误对象。
+ * - `put`: calculates sha256 → queries `chunks`, skips upload if already `complete` → only uploads
+ *   missing chunks in `received` → `complete`. Chunk size defaults to `chunkSize` returned by
+ *   server `chunks` (`received` is numbered by it); uses `chunkSize` from options only if
+ *   server omitted it.
+ * - `get`: returns null on 404; verifies sha256 after download, throws on mismatch
+ *   (`code: 'hash-mismatch'`).
+ * - `has`: `complete` from `chunks`.
+ * - `putFile` (C6.6): same as `put`, but reads from disk file chunk by chunk without reading the
+ *   whole file into memory; can `await` a gate (`beforeChunk`) before each chunk is sent.
+ * - `chunks`: returns the reconciliation result of `chunks` as is.
+ * - `complete` returns 400 `incomplete` (`put` / `putFile`): waits briefly (100 ms, 200 ms) and
+ *   re-queries `chunks`; succeeds if already `complete`; otherwise re-uploads missing chunks in
+ *   `received` and calls `complete` again, retrying up to 2 rounds; throws as 4xx if still
+ *   incomplete. This handles cases where two concurrent streams push the same content and the
+ *   old asset service revoked chunks that another stream had already answered "received"
+ *   (claude/push-incomplete); new asset service no longer does this, so this step is just a fallback.
+ * - Timeout: each request (including draining response) is timed individually, default 30 s
+ *   (`timeoutMs`), aborted with AbortController when expired; timeouts count as network errors
+ *   and retry as usual; throws error with `code: 'timeout'` when retries are exhausted
+ *   (contract section 10 item 5).
+ * - Retries: network errors, timeouts, and 5xx are retried up to `retries` times, with intervals
+ *   200 ms, 400 ms, 800 ms (doubling thereafter). Each request is counted individually, so chunked
+ *   upload retries on a per-chunk basis. 4xx is not retried and throws directly, with error object
+ *   containing `status` and response `body`.
+ * - Ticket (M6a, `docs/plan/auth-contract.md` sections 8 and 11):
+ *   `ticket: () => string | Promise<string>`, fetched once per request; included in
+ *   `Authorization: Bearer <ticket>` if present, omitted if returning null / empty string
+ *   (not required when connecting to local loopback). When receiving 401, calls
+ *   `ticket({ refresh: true })` to get a new one and retries once; throws as 4xx if still 401.
+ *   Cluster tokens are no longer used for asset service: passing legacy option `token` throws
+ *   TypeError to avoid callers assuming it still works.
+ * - Tickets are only placed in `Authorization` header; any raw ticket string appearing in error
+ *   messages is replaced with `***`, without attaching the original error object.
  */
 import crypto from 'node:crypto';
 
@@ -31,66 +48,66 @@ export const ASSET_CLIENT_NAMESPACES = Object.freeze(['media', 'snap', 'px']);
 
 const HASH = /^[0-9a-f]{64}$/;
 const EXT = /^[a-z0-9]{1,8}$/;
-/** setTimeout 能表示的最长时限；超过它（含 Infinity）就当不限时，否则 Node 会把它当 1 ms 立刻触发 */
+/** Maximum delay setTimeout can represent; values exceeding it (including Infinity) mean no timeout, otherwise Node treats it as 1 ms and fires immediately */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
-/** `complete` 回 400 `incomplete` 之后至多补传几轮 */
+/** Maximum number of re-upload rounds after `complete` returns 400 `incomplete` */
 export const INCOMPLETE_RESYNC_ROUNDS = 2;
 
 const sha256Hex = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function checkNs(ns) {
-  if (!ASSET_CLIENT_NAMESPACES.includes(ns)) throw new TypeError(`素材服务客户端：不认识的命名空间 ${JSON.stringify(ns)}`);
+  if (!ASSET_CLIENT_NAMESPACES.includes(ns)) throw new TypeError(`Asset service client: unknown namespace ${JSON.stringify(ns)}`);
 }
 
 function checkHash(hash) {
   const key = String(hash ?? '').toLowerCase();
-  if (!HASH.test(key)) throw new TypeError('素材服务客户端：hash 必须是 64 位十六进制 sha256');
+  if (!HASH.test(key)) throw new TypeError('Asset service client: hash must be a 64-character hex sha256');
   return key;
 }
 
-/** 回包：JSON 就解析，否则给文本；空的给 null */
+/** Response: parses if JSON, otherwise returns text; returns null if empty */
 function parseBody(buf, contentType) {
   if (!buf || buf.length === 0) return null;
   const text = buf.toString('utf8');
   if (/json/i.test(String(contentType || ''))) {
-    try { return JSON.parse(text); } catch { /* 当文本 */ }
+    try { return JSON.parse(text); } catch { /* Treat as text */ }
   }
   return text;
 }
 
 /**
  * @param {object} options
- * @param {string} options.base  素材服务的 API 基址，形如 `http://192.168.50.96:5460/api/asset`
- * @param {(opts?: { refresh?: boolean }) => (string | null | Promise<string | null>)} [options.ticket]  取素材票据
+ * @param {string} options.base  API base URL of asset service, formatted like `http://192.168.50.96:5460/api/asset`
+ * @param {(opts?: { refresh?: boolean }) => (string | null | Promise<string | null>)} [options.ticket]  Fetches asset ticket
  * @param {typeof globalThis.fetch} [options.fetch]
- * @param {number} [options.chunkSize]  服务端没回 `chunkSize` 时用，缺省 8 MiB
- * @param {number} [options.retries]  网络错误、超时与 5xx 的重试次数，缺省 3
- * @param {number} [options.timeoutMs]  单个请求（含读完回包）的时限，缺省 30000；`Infinity` 或超过 2^31-1 表示不限
+ * @param {number} [options.chunkSize]  Used when server does not return `chunkSize`, default 8 MiB
+ * @param {number} [options.retries]  Retry count for network errors, timeouts, and 5xx, default 3
+ * @param {number} [options.timeoutMs]  Timeout for a single request (including draining response), default 30000; `Infinity` or greater than 2^31-1 indicates no limit
  */
 export function createAssetClient({
   base, ticket = null, token, fetch = globalThis.fetch, chunkSize = 8 * 1024 * 1024, retries = 3, timeoutMs = 30000,
 } = /** @type {any} */ ({})) {
-  if (token !== undefined && token !== null) throw new TypeError('createAssetClient：集群令牌不再用于素材服务，改给 ticket()');
-  if (ticket !== null && typeof ticket !== 'function') throw new TypeError('createAssetClient：ticket 必须是函数');
-  if (typeof base !== 'string' || !/^https?:\/\//i.test(base)) throw new TypeError('createAssetClient：base 必须是 http(s) 地址');
-  if (typeof fetch !== 'function') throw new TypeError('createAssetClient：没有可用的 fetch');
-  if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) throw new TypeError('createAssetClient：chunkSize 必须是正整数');
-  if (!Number.isSafeInteger(retries) || retries < 0) throw new TypeError('createAssetClient：retries 必须是非负整数');
-  if (typeof timeoutMs !== 'number' || !(timeoutMs > 0)) throw new TypeError('createAssetClient：timeoutMs 必须是正数');
+  if (token !== undefined && token !== null) throw new TypeError('createAssetClient: the cluster token is no longer used for the asset service, pass ticket() instead');
+  if (ticket !== null && typeof ticket !== 'function') throw new TypeError('createAssetClient: ticket must be a function');
+  if (typeof base !== 'string' || !/^https?:\/\//i.test(base)) throw new TypeError('createAssetClient: base must be an http(s) address');
+  if (typeof fetch !== 'function') throw new TypeError('createAssetClient: no fetch available');
+  if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) throw new TypeError('createAssetClient: chunkSize must be a positive integer');
+  if (!Number.isSafeInteger(retries) || retries < 0) throw new TypeError('createAssetClient: retries must be a non-negative integer');
+  if (typeof timeoutMs !== 'number' || !(timeoutMs > 0)) throw new TypeError('createAssetClient: timeoutMs must be a positive number');
   const root = base.replace(/\/+$/, '');
-  /** 用过的票据：异常信息里出现就抹掉 */
+  /** Used tickets: redacted if appearing in error messages */
   const secrets = new Set();
 
-  /** 把票据原文从文字里抹掉 */
+  /** Redacts raw ticket text from string */
   const scrub = (text) => {
     let s = String(text ?? '');
     for (const secret of secrets) s = s.split(secret).join('***');
     return s;
   };
 
-  /** 取一张票据；没有给 null */
+  /** Fetches a ticket; returns null if absent */
   async function currentTicket(refresh) {
     if (!ticket) return null;
     const t = await ticket(refresh ? { refresh: true } : undefined);
@@ -101,7 +118,7 @@ export function createAssetClient({
 
   function httpError(what, status, body) {
     const detail = body && typeof body === 'object' && 'error' in body ? String(body.error) : (typeof body === 'string' ? body.slice(0, 200) : '');
-    const err = new Error(scrub(`素材服务 ${what} 回 ${status}${detail ? `：${detail}` : ''}`));
+    const err = new Error(scrub(`Asset service ${what} returned ${status}${detail ? `: ${detail}` : ''}`));
     /** @type {any} */ (err).status = status;
     /** @type {any} */ (err).body = body;
     return err;
@@ -111,29 +128,30 @@ export function createAssetClient({
     const name = cause && typeof cause === 'object' && 'name' in cause ? String(cause.name) : 'Error';
     const code = cause && typeof cause === 'object' ? (cause.code ?? cause.cause?.code) : undefined;
     const msg = cause instanceof Error ? cause.message : String(cause);
-    const inner = cause && typeof cause === 'object' && cause.cause instanceof Error ? `（${cause.cause.message}）` : '';
-    const err = new Error(scrub(`素材服务 ${what} 网络错误：${name}: ${msg}${inner}`));
+    const inner = cause && typeof cause === 'object' && cause.cause instanceof Error ? ` (${cause.cause.message})` : '';
+    const err = new Error(scrub(`Asset service ${what} network error: ${name}: ${msg}${inner}`));
     /** @type {any} */ (err).code = 'network';
     if (code !== undefined) /** @type {any} */ (err).cause = { name, code: scrub(code) };
     return err;
   }
 
   function timeoutError(what) {
-    const err = new Error(scrub(`素材服务 ${what} 超时（${timeoutMs} ms 没有完成）`));
+    const err = new Error(scrub(`Asset service ${what} timed out (not completed within ${timeoutMs} ms)`));
     /** @type {any} */ (err).code = 'timeout';
     return err;
   }
 
   /**
-   * 发一个请求并把回包读完；网络错误与 5xx 重试。回 `{ status, body, raw }`（4xx 原样回，由调用方决定抛不抛）。
+   * Sends a request and drains response; retries on network errors and 5xx. Returns
+   * `{ status, body, raw }` (4xx returned as is, caller decides whether to throw).
    * @param {string} method
-   * @param {string} rel  相对基址的路径
+   * @param {string} rel  Path relative to base URL
    * @param {{ headers?: Record<string, string>, body?: Buffer }} [init]
    */
   async function request(method, rel, init = {}) {
     const first = await attempt(method, rel, init, false);
     if (first.status !== 401 || !ticket) return first;
-    // 票据可能过期或已作废：换一张再试一次
+    // Ticket may have expired or been invalidated: fetch a new one and retry once
     return attempt(method, rel, init, true);
   }
 
@@ -149,7 +167,7 @@ export function createAssetClient({
       let raw;
       let timedOut = false;
       const ac = new AbortController();
-      // 到点中止；假 fetch 不认 signal 时也靠这个 promise 按时脱身
+      // Abort on timeout; also relies on this promise to escape on time when a mock fetch ignores signal
       const expired = new Promise((_, reject) => {
         ac.signal.addEventListener('abort', () => reject(new Error('timeout')), { once: true });
       });
@@ -171,7 +189,7 @@ export function createAssetClient({
     throw lastError;
   }
 
-  /** 2xx 之外一律抛（404 由调用方先挑出去） */
+  /** Throws on anything outside 2xx (404 is handled first by caller) */
   function ensureOk(what, r) {
     if (r.status < 200 || r.status >= 300) throw httpError(what, r.status, r.body);
     return r;
@@ -190,7 +208,8 @@ export function createAssetClient({
   }
 
   /**
-   * `POST <ns>/<hash>/complete`；回 400 `incomplete` 时重问 `chunks`、经 `resend(have)` 补传缺的片再收尾（见文件头）。
+   * `POST <ns>/<hash>/complete`; when returning 400 `incomplete`, re-queries `chunks`, re-uploads
+   * missing chunks via `resend(have)`, and finalizes again (see file header).
    * @param {string} ns
    * @param {string} hash
    * @param {(have: Set<number>) => Promise<void>} resend
@@ -220,14 +239,14 @@ export function createAssetClient({
      */
     async put(ns, bytes, { ext } = {}) {
       checkNs(ns);
-      if (!(bytes instanceof Uint8Array)) throw new TypeError('素材服务客户端：put 的 bytes 必须是 Buffer / Uint8Array');
+      if (!(bytes instanceof Uint8Array)) throw new TypeError('Asset service client: bytes for put must be Buffer / Uint8Array');
       const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       const size = buf.length;
-      if (size === 0) throw new RangeError('素材服务客户端：不能上传空内容（服务端要求 X-Media-Size 为正整数）');
+      if (size === 0) throw new RangeError('Asset service client: cannot upload empty content (the server requires X-Media-Size to be a positive integer)');
       let extName = '';
       if (ext !== undefined && ext !== null && ext !== '') {
         extName = String(ext).trim().toLowerCase().replace(/^\./, '');
-        if (!EXT.test(extName)) throw new TypeError(`素材服务客户端：扩展名不合法 ${JSON.stringify(ext)}`);
+        if (!EXT.test(extName)) throw new TypeError(`Asset service client: invalid extension ${JSON.stringify(ext)}`);
       }
       const hash = sha256Hex(buf);
 
@@ -252,13 +271,16 @@ export function createAssetClient({
     },
 
     /**
-     * 从磁盘上的文件分片上传(C6.6 素材上传队列用):不把整件读进内存,每次只读一片。
-     * 规则与 `put` 相同:先问 `chunks`,已 `complete` 就不传;只补 `received` 里缺的片;最后 `complete`。
-     * 分片大小以服务端 `chunks` 回的 `chunkSize` 为准。
+     * Chunked upload from file on disk (used by C6.6 asset upload queue): does not load whole file into
+     * memory, reads only one chunk at a time. Rules are identical to `put`: queries `chunks` first,
+     * skips upload if already `complete`; only uploads missing chunks in `received`; finally calls
+     * `complete`. Chunk size follows `chunkSize` returned by server's `chunks`.
      *
-     * `hash` 由调用方给(本地内容库的键就是它,4 GB 的文件不用再算一遍);服务端 `complete` 时照样按 sha256 校验全件,
-     * 不符回 409 —— 这里抛出的错误带 `status: 409`。
-     * `beforeChunk(n)` 在每一片发出前 `await`,可以回一个函数,这一片发完(成功或失败)后调它 —— 带宽闸就接在这里。
+     * `hash` is provided by caller (it is the key in local content store, avoiding recalculating 4 GB
+     * files); server verifies whole file against sha256 upon `complete` as usual, returning 409 on
+     * mismatch: errors thrown here have `status: 409`.
+     * Before sending each chunk, `await` `beforeChunk(n)`, which may return a callback invoked after
+     * the chunk finishes (success or failure): the bandwidth gate connects here.
      *
      * @param {'media' | 'snap' | 'px'} ns
      * @param {string} filePath
@@ -270,16 +292,16 @@ export function createAssetClient({
       const key = checkHash(hash);
       const { open, stat } = await import('node:fs/promises');
       const size = (await stat(filePath)).size;
-      if (size === 0) throw new RangeError('素材服务客户端：不能上传空内容（服务端要求 X-Media-Size 为正整数）');
+      if (size === 0) throw new RangeError('Asset service client: cannot upload empty content (the server requires X-Media-Size to be a positive integer)');
       let extName = '';
       if (ext !== undefined && ext !== null && ext !== '') {
         extName = String(ext).trim().toLowerCase().replace(/^\./, '');
-        if (!EXT.test(extName)) throw new TypeError(`素材服务客户端：扩展名不合法 ${JSON.stringify(ext)}`);
+        if (!EXT.test(extName)) throw new TypeError(`Asset service client: invalid extension ${JSON.stringify(ext)}`);
       }
       const st = await chunkState(ns, key);
       if (st.complete) return { hash: key, size, uploaded: false, sent: [] };
       if (st.size !== null && st.size !== size) {
-        const err = new Error(`素材服务 ${ns}/${key}：服务端登记的大小 ${st.size} 与本地文件 ${size} 不符`);
+        const err = new Error(`Asset service ${ns}/${key}: size registered on the server ${st.size} does not match local file ${size}`);
         /** @type {any} */ (err).code = 'size-mismatch';
         throw err;
       }
@@ -298,7 +320,7 @@ export function createAssetClient({
           let read = 0;
           while (read < length) {
             const r = await fh.read(part, read, length - read, start + read);
-            if (r.bytesRead === 0) throw new Error(`素材服务客户端：读 ${filePath} 第 ${n} 片时文件变短了`);
+            if (r.bytesRead === 0) throw new Error(`Asset service client: file became shorter while reading chunk ${n} of ${filePath}`);
             read += r.bytesRead;
           }
           const release = typeof beforeChunk === 'function' ? await beforeChunk(n) : null;
@@ -321,7 +343,8 @@ export function createAssetClient({
     },
 
     /**
-     * 这一档在素材服务上的分片状态(`GET <ns>/<hash>/chunks`):`{ size, chunkSize, received, complete }`。
+     * Chunk status of this tier on asset service (`GET <ns>/<hash>/chunks`):
+     * `{ size, chunkSize, received, complete }`.
      * @param {'media' | 'snap' | 'px'} ns
      * @param {string} hash
      */
@@ -344,7 +367,7 @@ export function createAssetClient({
       ensureOk(`GET ${rel}`, r);
       const actual = sha256Hex(r.raw);
       if (actual !== key) {
-        const err = new Error(`素材服务 GET ${rel}：取回的字节 sha256 不符（实际 ${actual}）`);
+        const err = new Error(`Asset service GET ${rel}: sha256 of fetched bytes does not match (actual ${actual})`);
         /** @type {any} */ (err).code = 'hash-mismatch';
         /** @type {any} */ (err).actual = actual;
         throw err;

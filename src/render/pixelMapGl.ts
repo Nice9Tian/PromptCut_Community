@@ -1,39 +1,48 @@
 /**
- * 像素映射的 WebGL2 后端。
+ * WebGL2 backend for pixel maps.
  *
- * 为什么有这个文件:像素映射原先是 `getImageData` → 逐像素解释表达式 → `putImageData`,
- * 实测 1080p 每帧 416～483 ms(docs/archive/restructure_planning/render_pipeline_restructure.md 2.1(b)),超 30 fps 的每拍
- * 预算约二十倍,任何机器都重。表达式翻译成片元着色器之后这一步整个挪到 GPU 上,主线程
- * 只剩上传纹理和提交。**逐像素的 CPU 循环已整体删除、不留运行时退路**;`mapRgba` 保留,
- * 只给单测和 GPU / CPU 对照用。
+ * Why this file exists: pixel maps originally used `getImageData` → evaluate expressions per
+ * pixel → `putImageData`, measured at 416-483 ms per frame at 1080p
+ * (docs/archive/restructure_planning/render_pipeline_restructure.md 2.1(b)), exceeding the per-tick
+ * budget for 30 fps by about twenty times, heavy on any machine. After translating expressions
+ * into fragment shaders, this step is moved entirely to the GPU, and the main thread only uploads
+ * textures and submits. **The pixel-by-pixel CPU loop has been deleted entirely, leaving no runtime
+ * fallback**; `mapRgba` is retained only for unit tests and GPU / CPU comparisons.
  *
- * 一个文档一个上下文:离屏的 `OffscreenCanvas` + WebGL2,program 按片元源码的内容哈希
- * 缓存(同一条定义挂到多少段上都只编一次)。画完用 `transferToImageBitmap` 交给素材层
- * 自己的 `<canvas>`(那张画布用 `bitmaprenderer` 上下文)。
+ * One context per document: offscreen `OffscreenCanvas` + WebGL2; programs are cached by content
+ * hash of fragment source code (compiled only once no matter how many clips the same definition is
+ * attached to). After drawing, `transferToImageBitmap` hands it over to the asset layer's own
+ * `<canvas>` (that canvas uses the `bitmaprenderer` context).
  *
- * 为什么是 `transferToImageBitmap` 而不是 `drawImage`:
- *   1. 它是**整块位图的转移**,像素逐个原样落到目标画布上;`drawImage` 走的是 2D 合成,
- *      源画布(premultipliedAlpha:false)的直通 alpha 要先预乘、再在目标画布上反预乘,
- *      低 alpha 的像素每来回一趟就掉一两级 —— 抠色正是大量产生低 alpha 像素的活。
- *   2. 离屏画布不进 DOM,也就不会多出一个要被 HTML 快照序列化的 canvas。
- *   3. 目标画布的尺寸由位图决定,不用另外同步 width / height。
- * 代价是目标画布只能有 `bitmaprenderer` 这一种上下文(一个画布只能有一种),所以素材层那张
- * 画布不能再用 2D。读实体框的 `canvasPixels` 走的是 `drawImage` 到离屏 2D 画布,不受影响。
+ * Why `transferToImageBitmap` rather than `drawImage`:
+ *   1. It is a **transfer of the entire bitmap**, where pixels land on the target canvas as-is
+ *      pixel-by-pixel; `drawImage` goes through 2D composition, where straight alpha from the
+ *      source canvas (premultipliedAlpha:false) must first be premultiplied and then
+ *      un-premultiplied on the target canvas, losing one or two levels for low-alpha pixels each
+ *      round trip: chroma keying is precisely the task that generates lots of low-alpha pixels.
+ *   2. The offscreen canvas does not enter the DOM, avoiding an extra canvas that would need to
+ *      be serialized by HTML snapshots.
+ *   3. Target canvas dimensions are determined by the bitmap, without needing separate
+ *      width / height synchronization.
+ * The trade-off is that the target canvas can only have the `bitmaprenderer` context (a canvas can
+ * only have one type), so that canvas in the asset layer can no longer use 2D. Reading
+ * `canvasPixels` of an entity box uses `drawImage` to an offscreen 2D canvas and is unaffected.
  *
- * 预览、导出页、see_frames 共用这一份:三处都渲同一棵 FrameScene。
- * 以后共享 WebGL 渲染器(R9)落地时,把这个上下文并进去即可,contract 不变。
+ * Shared across preview, export page, and see_frames: all three render the same FrameScene.
+ * When the shared WebGL renderer (R9) lands later, simply merge this context into it; the contract
+ * remains unchanged.
  */
 import { compilePixelMapGlsl, type PixelMapDef } from "../kernel/pixelMap.mjs";
 
 export interface PixelMapDrawOpts {
   def: PixelMapDef;
-  /** 源:视频 / 图片元素,或已经套过滤镜的中转画布 */
+  /** Source: video / image element, or intermediate canvas with filters already applied */
   source: TexImageSource;
-  /** to 是另一段素材时的第二张纹理;没有或还没解码好时传 null */
+  /** Second texture when to is another asset clip; pass null if none or not yet decoded */
   target?: TexImageSource | null;
   width: number;
   height: number;
-  /** 片段内秒数,着色器里的 uT */
+  /** Seconds within the clip, uT in the shader */
   t: number;
 }
 
@@ -54,7 +63,7 @@ let programs = new Map<string, Prog>();
 
 export class PixelMapGlError extends Error {}
 
-/** 上下文丢了(或还没建)就整套重来:program、纹理都随上下文一起没了 */
+/** If context is lost (or not yet created), redo everything: programs and textures are gone along with the context */
 function dropContext() {
   canvas = null;
   gl = null;
@@ -63,7 +72,7 @@ function dropContext() {
   programs = new Map();
 }
 
-/** 单测 / 换文档时手动清空 */
+/** Manually cleared during unit tests / document switching */
 export function resetPixelMapGl() {
   dropContext();
 }
@@ -71,8 +80,9 @@ export function resetPixelMapGl() {
 function newTexture(g: WebGL2RenderingContext): WebGLTexture {
   const tex = g.createTexture();
   g.bindTexture(g.TEXTURE_2D, tex);
-  // 源和画面同尺寸时 uv 正落在纹素中心,LINEAR 和最近邻取到同一个值;尺寸不同时才真的做双线性,
-  // 和原先 CPU 路线里 drawImage(s, 0, 0, w, h) 的拉伸口径一致。
+  // When source and frame have the same dimensions, uv lands right on texel centers, and LINEAR gets
+  // the same value as nearest neighbor; bilinear is only done when dimensions differ, matching the
+  // scaling behavior of drawImage(s, 0, 0, w, h) in the original CPU pipeline.
   g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, g.LINEAR);
   g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.LINEAR);
   g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
@@ -84,12 +94,12 @@ function ensure(): WebGL2RenderingContext {
   if (gl && !gl.isContextLost()) return gl;
   if (gl) dropContext();
   if (typeof OffscreenCanvas === "undefined") {
-    throw new PixelMapGlError("这个运行环境没有 OffscreenCanvas,画不了像素映射(需要 Chrome / WebView2)");
+    throw new PixelMapGlError("This runtime has no OffscreenCanvas, so pixel maps cannot be drawn (requires Chrome / WebView2)");
   }
   const c = new OffscreenCanvas(1, 1);
   const g = c.getContext("webgl2", {
     alpha: true,
-    // 直通 alpha:着色器写出去的就是 mapRgba 的那四个数,不经预乘来回
+    // Straight alpha: the shader writes out the four numbers of mapRgba directly, without round-trip premultiplication
     premultipliedAlpha: false,
     antialias: false,
     depth: false,
@@ -97,15 +107,15 @@ function ensure(): WebGL2RenderingContext {
     preserveDrawingBuffer: false,
     desynchronized: false,
   }) as WebGL2RenderingContext | null;
-  if (!g) throw new PixelMapGlError("拿不到 WebGL2 上下文,画不了像素映射");
-  // 丢上下文时别让浏览器直接放弃:preventDefault 之后才有机会重建
+  if (!g) throw new PixelMapGlError("Could not get a WebGL2 context, so pixel maps cannot be drawn");
+  // Do not let browser give up directly on context loss: rebuilding is only possible after preventDefault
   (c as unknown as EventTarget).addEventListener("webglcontextlost", (e) => { e.preventDefault(); dropContext(); });
   g.disable(g.BLEND);
   g.disable(g.DEPTH_TEST);
   g.disable(g.SCISSOR_TEST);
   g.pixelStorei(g.UNPACK_FLIP_Y_WEBGL, false);
   g.pixelStorei(g.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-  // 浏览器默认会按素材自带的色彩描述做一次转换;像素映射要的是素材原样的数值
+  // Browsers by default convert using the asset's color profile; pixel maps need raw asset values
   g.pixelStorei(g.UNPACK_COLORSPACE_CONVERSION_WEBGL, g.NONE);
   canvas = c;
   gl = g;
@@ -121,7 +131,7 @@ function compileShader(g: WebGL2RenderingContext, type: number, src: string): We
   if (!g.getShaderParameter(sh, g.COMPILE_STATUS)) {
     const log = g.getShaderInfoLog(sh);
     g.deleteShader(sh);
-    throw new PixelMapGlError(`着色器编译失败:${log}`);
+    throw new PixelMapGlError(`Shader compile failed: ${log}`);
   }
   return sh;
 }
@@ -141,7 +151,7 @@ function programOf(g: WebGL2RenderingContext, def: PixelMapDef): Prog {
   if (!g.getProgramParameter(program, g.LINK_STATUS)) {
     const log = g.getProgramInfoLog(program);
     g.deleteProgram(program);
-    throw new PixelMapGlError(`着色器链接失败:${log}`);
+    throw new PixelMapGlError(`Shader link failed: ${log}`);
   }
   const prog: Prog = {
     program,
@@ -155,7 +165,7 @@ function programOf(g: WebGL2RenderingContext, def: PixelMapDef): Prog {
   return prog;
 }
 
-/** 画一帧到离屏画布上(同步;drawArrays 之后画面还在 GPU 上,取走时才落定) */
+/** Draw a frame to offscreen canvas (synchronous; after drawArrays the image stays on GPU, settles only when fetched) */
 function render(opts: PixelMapDrawOpts): WebGL2RenderingContext {
   const g = ensure();
   const w = Math.max(1, Math.round(opts.width));
@@ -173,7 +183,8 @@ function render(opts: PixelMapDrawOpts): WebGL2RenderingContext {
   const hasTarget = !!opts.target;
   g.activeTexture(g.TEXTURE1);
   g.bindTexture(g.TEXTURE_2D, texTgt);
-  // 没有第二张素材时也要给个合法纹理:采样一张未初始化的 sampler 在部分驱动上是未定义行为
+  // Provide a valid texture even without a second asset: sampling an uninitialized sampler is
+  // undefined behavior on some drivers
   g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, g.RGBA, g.UNSIGNED_BYTE, (hasTarget ? opts.target : opts.source) as TexImageSource);
   g.uniform1i(prog.uTarget, 1);
   g.uniform1i(prog.uHasTarget, hasTarget ? 1 : 0);
@@ -183,25 +194,26 @@ function render(opts: PixelMapDrawOpts): WebGL2RenderingContext {
 
   g.clearColor(0, 0, 0, 0);
   g.clear(g.COLOR_BUFFER_BIT);
-  // 三个顶点由 gl_VertexID 算出来,不用顶点缓冲,也不用 VAO
+  // Three vertices are calculated from gl_VertexID, without vertex buffers or VAOs
   g.drawArrays(g.TRIANGLES, 0, 3);
   return g;
 }
 
 /**
- * 画一帧,并把结果整块转移到素材层自己的画布上。
- * `out` 只能有 `bitmaprenderer` 上下文(这个函数会替它取)。
+ * Draws a frame and transfers the entire result to the asset layer's own canvas.
+ * `out` can only have the `bitmaprenderer` context (this function retrieves it on its behalf).
  */
 export function drawPixelMap(out: HTMLCanvasElement, opts: PixelMapDrawOpts): void {
   render(opts);
   const ctx = out.getContext("bitmaprenderer");
-  if (!ctx) throw new PixelMapGlError("素材层的画布拿不到 bitmaprenderer 上下文(这个画布上已经有别的上下文了?)");
+  if (!ctx) throw new PixelMapGlError("Could not get a bitmaprenderer context for the media layer canvas (does this canvas already have another context?)");
   ctx.transferFromImageBitmap(canvas!.transferToImageBitmap());
 }
 
 /**
- * 画一帧并把像素读回来,**从上往下**排(和 ImageData 的行序一致),直通 alpha。
- * 只给验收对照和探针用:它绕开了画布转移,量的是着色器本身算出来的数。
+ * Draws a frame and reads pixels back, arranged **top-down** (matching ImageData row order),
+ * straight alpha. Used only for acceptance check comparisons and probes: it bypasses canvas
+ * transfers and measures values computed by the shader itself.
  */
 export function readPixelMap(opts: PixelMapDrawOpts): Uint8ClampedArray {
   const g = render(opts);
@@ -218,14 +230,14 @@ export function readPixelMap(opts: PixelMapDrawOpts): Uint8ClampedArray {
 }
 
 /**
- * 探针专用:把这个文档的 WebGL2 上下文交出去,好在 drawPixelMap 外面套一层
- * EXT_disjoint_timer_query_webgl2 量 GPU 真实耗时。渲染路径不用它。
+ * Probe only: exposes this document's WebGL2 context to wrap drawPixelMap with
+ * EXT_disjoint_timer_query_webgl2 to measure actual GPU duration. The render path does not use it.
  */
 export function pixelMapGlContext(): WebGL2RenderingContext {
   return ensure();
 }
 
-/** 真在 GPU 上跑吗:验收时把 renderer 串写进报告,免得拿软件渲染的数当 GPU 的数 */
+/** Does it really run on GPU: write renderer string into report during acceptance check to avoid mistaking software rendering for GPU */
 export function pixelMapGlInfo(): { vendor: string; renderer: string; version: string } | null {
   try {
     const g = ensure();
@@ -240,7 +252,8 @@ export function pixelMapGlInfo(): { vendor: string; renderer: string; version: s
   }
 }
 
-// 导出页和 see_frames 在自己的 Chrome 上下文里跑同一棵场景树;探针脚本靠这几个口子取数。
+// The export page and see_frames run the same scene tree in their own Chrome context; probe scripts
+// rely on these hooks to fetch data.
 if (typeof window !== "undefined") {
   (window as unknown as Record<string, unknown>).__pcPixelMapGl = { drawPixelMap, readPixelMap, pixelMapGlInfo, resetPixelMapGl };
 }

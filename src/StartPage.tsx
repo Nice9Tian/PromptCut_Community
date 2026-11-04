@@ -37,7 +37,7 @@ import { OnlineStart } from "./start/OnlineStart";
 import { DesktopStart } from "./start/DesktopStart";
 import { tr } from "./i18n/index.ts";
 
-/** 字节数写成人看的样子。导出产物、预渲染缓存动辄几十 GB,所以到 G 为止 */
+/** Write a byte count in a human-readable form. Export outputs and the prerender cache easily reach tens of GB, so it stops at G */
 function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}K`;
@@ -45,13 +45,13 @@ function humanSize(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)}G`;
 }
 
-/** 秒 → mm:ss */
+/** Seconds → mm:ss */
 function humanDuration(sec: number): string {
   const s = Math.max(0, Math.round(sec));
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** 今天的只显示时间,其余显示日期 */
+/** Today's items show only the time; the rest show the date */
 function humanDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -62,7 +62,7 @@ function humanDate(iso: string): string {
     : tr("{0}/{1}", d.getMonth() + 1, d.getDate());
 }
 
-/** humanDate 之外再带上时分:同一天导出好几次,只有日期分不出来 */
+/** In addition to humanDate, include hours and minutes: when something is exported several times on the same day, the date alone cannot tell them apart */
 function humanDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -72,15 +72,21 @@ function humanDateTime(iso: string): string {
 }
 
 /**
- * 开始页面。进软件先看到这里,选了才进编辑器。
+ * The start page. This is the first thing you see on entering the software, and the editor is entered
+ * only after you choose something.
  *
- * 五块:开始创作、加入别人的项目、拓展功能、本地草稿、存储。没有左侧栏,也没有那排圆形入口。
- * 「存储」(`workflow/project.md`「开始」)显示预渲染缓存与导出产物的占用、改缓存上限、清理缓存、逐份管理导出产物;
- * 标题栏菜单「存储…」直达这里(`WindowTitleBar.tsx` 的 `open-storage`)。
+ * Five blocks: start creating, join someone else's project, extension features, local drafts, storage.
+ * There is no left sidebar and no row of round entry points.
+ * "Storage" (`workflow/project.md` "Start") shows the space used by the prerender cache and export
+ * outputs, changes the cache limit, clears the cache, and manages export outputs one by one;
+ * the title bar menu item "Storage…" goes straight here (`open-storage` in `WindowTitleBar.tsx`).
  *
- * 在线浏览器模式(C10a 契约第 2 节「首屏」):只有「加入别人的项目」—— 在线页面里新建项目、本机草稿、拓展功能
- * 都要编辑器进程(`/api/*`),C10a 不提供(新建与草稿随 C10 其余)。在线构建里只留 `OnlineStartPage`,桌面那一页
- * 连同草稿、拓展功能背后的调用一起剪掉(M8 遗留 L24;写法见 `src/online/pageFlag.ts` 的「在线构建剪枝」)。
+ * Online browser mode (C10a contract section 2 "First screen"): only "Join someone else's project": in
+ * the online page, creating projects, local drafts and extension features all need the editor process
+ * (`/api/*`), which C10a does not provide (creation and drafts come with the rest of C10). In the online
+ * build only `OnlineStartPage` remains, and the desktop page, together with the calls behind drafts and
+ * extension features, is cut away (M8 leftover L24; for the technique see "Online build pruning" in
+ * `src/online/pageFlag.ts`).
  */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
@@ -93,7 +99,7 @@ function JoinSection(props: { onEnterEditor: () => void }): JSX.Element {
   );
 }
 
-/** 地址里点名要原来那一块账号表单(`?ui=classic`):只留给排障和还认老页面的探针,界面上没有入口 */
+/** Explicitly request the old account form in the address (`?ui=classic`): kept only for troubleshooting and for probes that still recognize the old page; there is no entry in the UI */
 function wantsClassic(): boolean {
   try {
     return new URLSearchParams(location.search).get("ui") === "classic";
@@ -103,11 +109,14 @@ function wantsClassic(): boolean {
 }
 
 /**
- * 桌面版点名要氛围式那一屏(`?ui=vibe`)。桌面版的缺省仍是这一页(传统开始页) —— 改桌面版的缺省界面是一级改动,
- * 不由会话定;在线那边缺省就是氛围式,不看这个参数。
+ * The desktop app explicitly asks for the Vibe-mode screen (`?ui=vibe`). The desktop app's default is still
+ * this page (the Classic start page): changing the desktop app's default UI is a level-1 change and is
+ * not decided by a session; online, the default is Vibe mode and this parameter is not consulted.
  *
- * 用地址带着是为了**刷新后还在原地**:氛围式里按 F5、从编辑界面回首页,落回的都该是刚才那一屏。
- * 编辑界面顶栏的「氛围式」(`src/editor/ModeSwitch.tsx`)也是改这个参数再派 `pc-go-home`。
+ * It is carried in the address so that **it stays in place after a refresh**: pressing F5 in Vibe mode, or
+ * returning home from the editor, should land on the screen you were just on.
+ * The "Vibe mode" switch in the editor's top bar (`src/editor/ModeSwitch.tsx`) also changes this parameter
+ * and then dispatches `pc-go-home`.
  */
 function wantsVibe(): boolean {
   try {
@@ -118,10 +127,12 @@ function wantsVibe(): boolean {
 }
 
 /**
- * 把 `?ui=` 写成某个值(null 是去掉)。地址改不了(少见)不影响这一次切换,只是刷新后回到缺省那一屏。
+ * Write `?ui=` as some value (null removes it). If the address cannot be changed (rare), this switch is
+ * not affected, and only after a refresh does it return to the default screen.
  *
- * 编辑界面那边(`src/editor/TopBar.tsx` 的 `goVibe`)写的是同一个参数,但它自己写,不从这里引 ——
- * 这个文件要引 `src/editor/`,反过来引会绕成一圈。
+ * The editor side (`goVibe` in `src/editor/TopBar.tsx`) writes the same parameter, but it writes it
+ * itself and does not import from here: this file imports `src/editor/`, and importing the other way
+ * round would create a cycle.
  */
 function setUiParam(value: string | null): void {
   try {
@@ -129,17 +140,24 @@ function setUiParam(value: string | null): void {
     if (value === null) url.searchParams.delete("ui");
     else url.searchParams.set("ui", value);
     history.replaceState(history.state, "", url);
-  } catch { /* 改不了地址栏不拦着切 */ }
+  } catch { /* Do not block the switch when the address bar cannot be changed */ }
 }
 
 /**
- * 在线浏览器(电脑身份)的首屏:**缺省是 Vibe 模式**(`user-workflow.md`「工作方式」:在线浏览器登录后的默认界面),
- * 整套在 `src/start/`,已接上真账号、真云端项目、真云端 Agent(`src/start/OnlineStart.tsx` 文件头逐块写了接到哪)。
+ * The first screen of the online browser (computer identity): **the default is Vibe mode**
+ * (`user-workflow.md` "Working mode": the default UI after logging in on the online browser). The whole
+ * set lives in `src/start/` and is wired to real accounts, real cloud projects and real Cloud Agents (the
+ * header of `src/start/OnlineStart.tsx` records, block by block, what it is wired to).
  *
- * 原先这里有一道门(〔裁 V21-12〕:新界面只跑界面、用假数据时,只有带 `?ui=vibe` 才进,缺省仍是老的账号表单),
- * 用户 2026-10-23 验收时指出判错了:要的是把新界面接上业务层并成为缺省。门已去掉(返工分支 `claude/vibe-wire`)。
- * `?ui=vibe` / `?ui=home` / `?ui=login` 不再有特别的意思(进的都是缺省这一页,`?ui=home` 不再跳过登录)。
- * 老的那一块账号表单(`AccountProjects`)只在 `?ui=classic` 下还能打开,界面上没有入口。
+ * There used to be a gate here ([ruling V21-12]: while the new UI ran only as UI with fake data, it was
+ * entered only with `?ui=vibe`, and the default was still the old account form). During the user's
+ * acceptance check on 2026-10-23 they pointed out that this was a wrong call: what was wanted was to wire
+ * the new UI to the business layer and make it the default. The gate has been removed (rework branch
+ * `claude/vibe-wire`).
+ * `?ui=vibe` / `?ui=home` / `?ui=login` no longer mean anything special (they all enter the default page,
+ * and `?ui=home` no longer skips login).
+ * The old account form (`AccountProjects`) can only still be opened under `?ui=classic`, and there is no
+ * entry in the UI.
  */
 function OnlineStartPage(props: { onEnterEditor: () => void }): JSX.Element {
   if (wantsClassic()) {
@@ -160,11 +178,14 @@ function OnlineStartPage(props: { onEnterEditor: () => void }): JSX.Element {
 export const StartPage: (props: { onEnterEditor: () => void }) => JSX.Element = ONLINE_BUILD ? OnlineStartPage : DesktopStartPage;
 
 /**
- * 桌面版的首屏:在传统开始页(下面那一大段)和**氛围式**那一屏(`src/start/DesktopStart.tsx`)之间二选一。
+ * The desktop app's first screen: a choice between the Classic start page (the large block below) and the
+ * **Vibe mode** screen (`src/start/DesktopStart.tsx`).
  *
- * 缺省是传统开始页;点它顶上那颗「氛围式」或编辑界面顶栏工作方式开关的第一格进氛围式,地址上记成 `?ui=vibe`
- * (所以刷新后还在氛围式)。氛围式顶栏右边的「拓展与存储」回这一页 —— 打开项目文件、加入别人的项目、拓展功能、
- * 存储这几块只有这一页有。
+ * The default is the Classic start page; clicking the "Vibe mode" button at its top, or the first segment
+ * of the working-mode switch in the editor's top bar, enters Vibe mode, recorded in the address as
+ * `?ui=vibe` (so it is still Vibe mode after a refresh). The "Extensions and storage" button on the right
+ * of the Vibe-mode top bar returns to this page: opening a project file, joining someone else's project,
+ * extension features and storage exist only on this page.
  */
 function DesktopStartPage(props: { onEnterEditor: () => void }): JSX.Element {
   const [vibe, setVibe] = useState(wantsVibe);
@@ -203,7 +224,7 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
 
   const startNew = () => {
     newProject(tr("Untitled"));
-    // 新项目还没落盘,进编辑器后由「保存项目」写成草稿
+    // The new project has not been written to disk yet; after entering the editor, "Save project" writes it as a draft
     setActiveDraftId(newDraftId());
     onEnterEditor();
   };
@@ -235,12 +256,12 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
   const openFile = async (file: File) => {
     setError("");
     try {
-      // .procp(编排 + 素材的 zip 包,A1)先拆包落库再载入;别对它 .text(),
-      // 那是把一个可能几 GB 的包整份读进页面。
+      // A .procp (a zip package of arrangement + assets, A1) is first unpacked and stored in the library, then
+      // loaded; do not call .text() on it, that would read the whole package, possibly several GB, into the page.
       const packed = await isProcpFile(file);
       const project = packed ? await loadProcpFile(file) : loadProc(await file.text());
       actions.loadProject(project, packed ? file.name.replace(/\.procp$/i, PROC_EXT) : file.name);
-      // 从文件打开的不属于任何草稿,保存时再新建一份
+      // A project opened from a file does not belong to any draft; a new one is created when saving
       setActiveDraftId(null);
       onEnterEditor();
     } catch (e) {
@@ -251,10 +272,10 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
   return (
     <div className="sp">
       <header className="sp-bar">
-        {/* Logo 自带文字标,别再补一遍 */}
+        {/* The Logo already carries its wordmark, do not add it again */}
         <Logo size={22} />
         <span className="sp-bar-spacer" />
-        {/* 氛围式(`user-workflow.md`「工作方式」第一行):不打开编辑界面,对着 Agent 说话把片子做出来 */}
+        {/* Vibe mode (`user-workflow.md` "Working mode", first row): without opening the editor, talk to the Agent and get the video made */}
         <button className="sp-ghost-btn" data-pc="start-go-vibe" title={tr("Make the video by talking to the Agent, without opening the editor")} onClick={props.onVibe}>
           {tr("Vibe mode")}
         </button>
@@ -338,22 +359,28 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
 }
 
 /*
- * ── 存储 ───────────────────────────────────────────────
- * 接口约定见 `docs/plan/storage-plan.md` 第 4 节:`/api/storage*`(帧库占用、上限、清理缓存,编辑器进程转发给预渲染进程)
- * 与 `/api/exports*`(导出产物,`server/vite-plugin-exports-list.ts`)。`/api/storage` 取不到(比如那一半还没装上、
- * 预渲染进程没起来)时这一块照常显示导出产物,缓存那一行写「暂时取不到」,不报错。
- * 只在桌面开始页里;在线构建连同这些调用一起剪掉(`StartPage` 在线构建里是 `OnlineStartPage`)。
+ * ── Storage ───────────────────────────────────────────────
+ * For the interface contract see section 4 of `docs/plan/storage-plan.md`: `/api/storage*` (frame store
+ * usage, limit, clearing the cache; the editor process forwards to the prerender process) and
+ * `/api/exports*` (export outputs, `server/vite-plugin-exports-list.ts`). When `/api/storage` cannot be
+ * reached (for example that half is not installed yet, or the prerender process did not start) this
+ * block still shows the export outputs as usual, and the cache row says "Temporarily unavailable", with
+ * no error.
+ * Only in the desktop start page; the online build cuts these calls away together with it (`StartPage`
+ * is `OnlineStartPage` in the online build).
  */
 
 /*
- * 这一块的大小与草稿列表一样按 1024 换算(`humanSize`),GB = 1024³ 字节 —— 与 Windows 资源管理器显示的「GB」一致;
- * 服务端的缓存上限、缺省 50 GB、下限 5 GB 也是这个 GB(`server/frame-library-storage.mjs` 的 `GB`)。填 20 发 20 × 1024³。
+ * Sizes in this block are converted by 1024, the same as in the draft list (`humanSize`), with GB = 1024³
+ * bytes: consistent with the "GB" shown by Windows Explorer; the server's cache limit, the default of
+ * 50 GB and the lower bound of 5 GB also use this GB (`GB` in `server/frame-library-storage.mjs`).
+ * Entering 20 sends 20 × 1024³.
  */
 const GB = 1024 ** 3;
 const storageSize = humanSize;
-/** 缓存上限的下限(`mechanism/platforms.md`「帧库」:用户可在 5 GB 到磁盘总容量之间改) */
+/** Lower bound of the cache limit (`mechanism/platforms.md` "Frame store": the user can change it between 5 GB and the total disk capacity) */
 const CAP_MIN_BYTES = 5 * GB;
-/** 服务端回 `scanning: true` 时隔多久再取、最多再取几次 */
+/** How long to wait before fetching again, and at most how many more times, when the server returns `scanning: true` */
 const STORAGE_RESCAN_MS = 3000;
 const STORAGE_RESCAN_TRIES = 10;
 
@@ -365,9 +392,9 @@ interface StorageInfo {
     diskBytes: number;
     pinnedBytes?: number;
     scannedAt?: string | number | null;
-    /** 服务端正在重扫或正在量(数字还会变) */
+    /** The server is rescanning or measuring (the numbers will still change) */
     scanning?: boolean;
-    /** `reason`:`cap` 超上限自动清的,`clear` 用户点「清理缓存」清的(`frame-library-storage.mjs` 的 `evictTo`) */
+    /** `reason`: `cap` means it was cleared automatically for exceeding the limit, `clear` means the user cleared it by clicking "Clear cache" (`evictTo` in `frame-library-storage.mjs`) */
     lastEvict?: { at: string | number; freedBytes: number; removed: number; skipped: number; reason?: "cap" | "clear" } | null;
   };
 }
@@ -387,8 +414,9 @@ interface ExportItem {
 const DELIVERABLE_LABEL: Record<string, string> = { "preview.mp4": tr("Final video"), "overlay.mov": tr("Transparent layers") };
 
 /**
- * 读一个 JSON 接口。接口不存在时开发服务器可能回首页的 HTML(200)、也可能 404,两种都当取不到;
- * `{ ok: false, error }` 把 error 抛出来给界面显示。
+ * Read a JSON endpoint. When the endpoint does not exist the dev server may return the home page's HTML
+ * (200) or a 404; both are treated as unavailable; `{ ok: false, error }` throws the error so the UI
+ * can show it.
  */
 async function storageJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { cache: "no-store", ...init });
@@ -417,7 +445,7 @@ function StorageSection(): JSX.Element {
       if (!s.frameLibrary || typeof s.frameLibrary.bytes !== "number") throw new Error(tr("Bad response"));
       setStorage(s);
       setStorageState("ok");
-      // 只在上限变了时改输入框(自动重取时不冲掉用户正在填的数)
+      // Change the input box only when the limit changed (an automatic re-fetch must not wipe out the number the user is typing)
       if (shownCap.current !== s.frameLibrary.capBytes) {
         shownCap.current = s.frameLibrary.capBytes;
         setCapGb(String(Math.round(s.frameLibrary.capBytes / GB)));
@@ -428,8 +456,9 @@ function StorageSection(): JSX.Element {
     }
   }, []);
 
-  // 服务端在量(`scanning: true`,`GET /api/storage` 发现上次检查已过时会在后台量一次):
-  // 隔几秒再取,直到量完;最多重取 STORAGE_RESCAN_TRIES 次,不无限轮询
+  // The server is measuring (`scanning: true`; `GET /api/storage` measures once in the background when
+  // it finds the last check out of date): fetch again after a few seconds until the measurement is
+  // done; at most STORAGE_RESCAN_TRIES re-fetches, no endless polling
   const scanTries = useRef(0);
   const scanning = !!storage?.frameLibrary.scanning;
   useEffect(() => {
@@ -458,8 +487,10 @@ function StorageSection(): JSX.Element {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // 标题栏「存储…」:从编辑器回来时开始页刚挂上,从开始页点时直接收到事件。
-  // 上面几块(草稿、拓展)是异步读出来的,读完会把这一块往下推,所以头一两秒里跟着再滚一次
+  // Title bar "Storage…": when coming back from the editor the start page has just mounted, and when
+  // clicked from the start page the event is received directly.
+  // The blocks above (drafts, extensions) are read asynchronously and push this block down when they
+  // finish, so within the first second or two scroll once more along with them
   useEffect(() => {
     const focus = () => {
       const el = sectionRef.current;
@@ -666,15 +697,16 @@ function StorageSection(): JSX.Element {
 }
 
 /**
- * 一个拓展在界面上的样子。
+ * How an extension looks in the UI.
  *
- * 拆出 offerInstall 而不是直接用「装没装」取反:有两种没装的情况不该给安装按钮 ——
- * 状态压根读不到、以及连 Python 都没有。这两种点了必然再失败一次,
- * 显示成普通的「未安装」等于骗用户去撞墙。
+ * `offerInstall` is split out instead of simply negating "installed or not": there are two not-installed
+ * cases that should not get an install button: the status cannot be read at all, and there is not even
+ * Python. Clicking in either case is bound to fail again, and showing a plain "Not installed" amounts
+ * to tricking the user into hitting a wall.
  */
 interface ExtStatusView {
   headline: string;
-  /** 跟在 headline 后面那句:现在实际吃的是哪一档、降级之后还能干什么 */
+  /** The sentence that follows the headline: which tier is actually in use now, and what can still be done after the downgrade */
   note: string;
   tone: "ok" | "muted" | "danger";
   offerInstall: boolean;
@@ -693,15 +725,16 @@ function failedView(reason: unknown): ExtStatusView {
   };
 }
 
-/** 把一次 settled 的查询结果翻成界面状态。映射本身也可能抛(后端少给字段),一起兜住 */
+/** Translate the result of a settled query into UI state. The mapping itself may also throw (the backend omitted a field), so it is caught together */
 function toView<T>(r: PromiseSettledResult<T>, map: (v: T) => ExtStatusView): ExtStatusView {
   if (r.status === "rejected") return failedView(r.reason);
   try { return map(r.value); } catch (e) { return failedView(e); }
 }
 
 function viewStt(s: SttStatus): ExtStatusView {
-  // 状态在 engines.<引擎>.installed 里,顶层没有 ready / installed / available 这些字段;
-  // 以前读顶层,取到的永远是 undefined,所以装好了也一直显示「未安装」。
+  // The status is in engines.<engine>.installed; the top level has no ready / installed / available fields;
+  // it used to read the top level and always got undefined, so even after installation it kept showing
+  // "Not installed".
   const engines: Record<string, SttEngineStatus> = s.engines;
   const hit = Object.entries(engines).find(([, e]) => e.installed);
   if (hit) {
@@ -747,12 +780,12 @@ function viewTrack(s: { ready: boolean; engine: "bootstapir" | "template" | null
     };
   }
   if (s.engine === "template") {
-    // ready:false 不等于用不了 —— 这一档是能跑的,写成光秃秃的「未安装」会让人
-    // 以为功能是灰的,所以把「还能用」和「什么时候会翻车」一起说清楚。
+    // ready:false does not mean unusable: this tier can run, and writing a bare "Not installed" would make
+    // people think the feature is grayed out, so spell out both "what still works" and "when it will break".
     return {
       headline: tr("Not installed"),
       note: tr("Currently using numpy template matching as a fallback, which can still track: rigid, clearly textured targets are tracked very accurately;")
-        + tr("The target is lost if it turns, zooms, or stays blocked for long. Installing the extension is much more stable, but it downloads about 400 MB"),
+        + tr(" The target is lost if it turns, zooms, or stays blocked for long. Installing the extension is much more stable, but it downloads about 400 MB"),
       tone: "muted",
       offerInstall: true,
     };
@@ -775,8 +808,8 @@ function viewSubject(s: { ready: boolean; engine: "light" | "full" | null; reaso
     };
   }
   if (s.engine === "light") {
-    // light 能用,但和 full 差一整个能力档。写成光秃秃的「已安装」会让人以为
-    // 文字提示也能用,结果每次都只回人和脸。
+    // light works, but it is a whole capability tier below full. Writing a bare "Installed" would make
+    // people think text prompts work too, when every time it returns only people and faces.
     return {
       headline: tr("Installed"),
       note: tr("Light tier: recognizes faces and bodies, enough to avoid people; finding targets from text prompts requires installing the full tier extension pack"),
@@ -785,7 +818,7 @@ function viewSubject(s: { ready: boolean; engine: "light" | "full" | null; reaso
     };
   }
   if (s.reason) {
-    // 连 Python 都没有这类环境问题,给安装按钮只会让人再撞一次墙
+    // An environment problem such as not even having Python: giving an install button would only make people hit the wall again
     return { headline: tr("Unavailable"), note: s.reason, tone: "danger", offerInstall: false };
   }
   return {
@@ -796,7 +829,7 @@ function viewSubject(s: { ready: boolean; engine: "light" | "full" | null; reaso
   };
 }
 
-/** 拓展卡的壳子。四张卡长得一样,差别只在图标、文案和右边那个按钮 */
+/** The shell of an extension card. The four cards look the same, and differ only in the icon, the copy and the button on the right */
 function ExtCard(props: {
   icon: ReactNode;
   name: string;
@@ -826,20 +859,21 @@ function ExtCard(props: {
   );
 }
 
-/** 拓展功能区:听写、镜头识别、运动追踪、主体检测四张卡 */
+/** The extension features area: four cards for speech-to-text, shot detection, motion tracking and subject detection */
 function ExtensionCards(): JSX.Element {
   const [stt, setStt] = useState<ExtStatusView | null>(null);
   const [shots, setShots] = useState<ExtStatusView | null>(null);
   const [track, setTrack] = useState<ExtStatusView | null>(null);
   const [subject, setSubject] = useState<ExtStatusView | null>(null);
   const [collect, setCollect] = useState<ExtStatusView | null>(null);
-  /** 素材收集的原始状态:登录按钮要看 ready 和各站登录态 */
+  /** The raw state of media collection: the login button looks at ready and at the login state of each site */
   const [collectRaw, setCollectRaw] = useState<CollectStatus | null>(null);
 
   const load = useCallback(async () => {
-    // 五个查询各打一个 HTTP,而且都要等 Python 那边应答。串行的话最慢的排在最后,
-    // 开始页会干等着,所以一起发。用 allSettled 不用 all:一个拓展查不到状态
-    // 不该把另外几张卡也永远钉在「检测中…」。
+    // The five queries each make one HTTP request, and each has to wait for the Python side to answer. In
+    // series the slowest would be last and the start page would just sit waiting, so they are sent together.
+    // Use allSettled rather than all: one extension whose status cannot be fetched
+    // must not nail the other cards to "Checking…" forever.
     const [a, b, c, d, e] = await Promise.allSettled([
       sttStatus(), shotsStatus(), trackStatus(), subjectStatus(), collectStatus(),
     ]);
@@ -853,7 +887,7 @@ function ExtensionCards(): JSX.Element {
 
   useEffect(() => { void load(); }, [load]);
 
-  // 登录框关掉之后刷新一次:登录 / 退出都会改这张卡上的字
+  // Refresh once after the login window closes: logging in / out both change the text on this card
   const loginOpen = useCollectLoginState().open;
   const wasOpen = useRef(false);
   useEffect(() => {
@@ -889,7 +923,7 @@ function viewCollect(s: CollectStatus): ExtStatusView {
     };
   }
   if (s.python === false || (s.ytdlp?.installed && !s.ffmpeg)) {
-    // 没有内置 Python 或没有 ffmpeg 不是在线装能解决的,给按钮只会让人再撞一次墙
+    // Having no built-in Python or no ffmpeg is not something an online install can fix; giving a button would only make people hit the wall again
     return {
       headline: tr("Unavailable"),
       note: s.reason || (s.ytdlp?.installed ? tr("ffmpeg not found, video and audio streams cannot be merged") : tr("Built-in Python not found")),
@@ -906,8 +940,9 @@ function viewCollect(s: CollectStatus): ExtStatusView {
 }
 
 /**
- * 配音:云端合成,不用装东西,卡上只显示「令牌配没配、默认用谁」。
- * 设置项多,点「设置」开子窗口(编辑台顶栏的「配音设置」开的是同一个)。
+ * Voiceover: synthesized in the cloud, nothing to install, and the card only shows "whether the token is
+ * configured, and which voice is used by default". There are many settings, so clicking "Settings" opens
+ * a sub-window (the "Voiceover settings" in the editor's top bar opens the same one).
  */
 function VoiceCard(): JSX.Element {
   const [status, setStatus] = useState<ExtStatusView | null>(null);
@@ -917,11 +952,13 @@ function VoiceCard(): JSX.Element {
       const { config, presets } = await getVoiceConfig();
       const p = config.provider;
       const id = config[p].voiceId;
+      // System voice names come from the server as English data
+      const systemName = presets.systemVoices[p].find((v) => v.voiceId === id)?.name;
       const voice = config.customVoices.find((v) => v.provider === p && v.voiceId === id)?.name
-        ?? presets.systemVoices[p].find((v) => v.voiceId === id)?.name
+        ?? (systemName === undefined ? undefined : tr(systemName))
         ?? id;
       setStatus(config.apiKey.set
-        ? { headline: tr("Configured"), note: `${presets.labels[p]} · ${voice}`, tone: "ok", offerInstall: false }
+        ? { headline: tr("Configured"), note: `${tr(presets.labels[p])} · ${voice}`, tone: "ok", offerInstall: false }
         : { headline: tr("Not configured"), note: tr("Fill in the API Key so the agent can do voiceover"), tone: "muted", offerInstall: false });
     } catch (e) {
       setStatus(failedView(e));
@@ -930,7 +967,7 @@ function VoiceCard(): JSX.Element {
 
   useEffect(() => { void load(); }, [load]);
 
-  // 设置窗口关掉之后刷新一次:令牌、默认音色都可能改了
+  // Refresh once after the settings window closes: the token and the default voice may both have changed
   const open = useVoiceSettingsState().open;
   const wasOpen = useRef(false);
   useEffect(() => {
@@ -945,7 +982,7 @@ function VoiceCard(): JSX.Element {
           <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" />
         </svg>
       }
-      name="Voiceover"
+      name={tr("Voiceover")}
       desc={tr("Turn text into speech with cloud synthesis, MiniMax by default.")}
       status={status}
       action={<button className="sp-ghost-btn" onClick={openVoiceSettings}>{tr("Settings")}</button>}
@@ -953,11 +990,11 @@ function VoiceCard(): JSX.Element {
   );
 }
 
-/** 素材收集:状态由上面统一查,安装走 installCollect 的 SSE 日志流(pip 装 yt-dlp) */
+/** Media collection: the status is queried uniformly above, and installation goes through the SSE log stream of installCollect (pip installs yt-dlp) */
 function CollectCard(props: { status: ExtStatusView | null; raw: CollectStatus | null; onReload: () => void | Promise<void> }): JSX.Element {
   const { status, raw, onReload } = props;
   const [running, setRunning] = useState(false);
-  // 装好了才谈登录:按钮文案跟着存盘登录态走,过期也算「要重新登录」
+  // Login only matters once installed: the button text follows the saved login state, and an expired one also counts as "needs to log in again"
   const canLogin = !!raw?.ready;
   const biliLoggedIn = !!raw?.cookies?.bilibili?.loggedIn;
   const [tail, setTail] = useState("");
@@ -985,7 +1022,7 @@ function CollectCard(props: { status: ExtStatusView | null; raw: CollectStatus |
           <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
         </svg>
       }
-      name="Media collection"
+      name={tr("Media collection")}
       desc={tr("Give a web link such as Bilibili and the video is grabbed into the media library.")}
       status={status}
       action={
@@ -1011,7 +1048,7 @@ function CollectCard(props: { status: ExtStatusView | null; raw: CollectStatus |
   );
 }
 
-/** 听写识别:状态由上面统一查,这张卡只管就地安装 */
+/** Speech-to-text: the status is queried uniformly above, and this card only handles in-place installation */
 function SttCard(props: { status: ExtStatusView | null; onReload: () => void | Promise<void> }): JSX.Element {
   const { status, onReload } = props;
   const [startError, setStartError] = useState<string | null>(null);
@@ -1019,15 +1056,17 @@ function SttCard(props: { status: ExtStatusView | null; onReload: () => void | P
   const job = jobs.at(-1);
   const running = !!job && job.phase !== "done" && job.phase !== "failed";
 
-  // 装完自动把状态刷新到位,不用用户自己再点一次
+  // After installation the status is refreshed automatically, so the user does not have to click again
   useEffect(() => { if (job?.phase === "done") void onReload(); }, [job?.phase, onReload]);
 
   const install = () => {
     setStartError(null);
-    // 走和编辑器里那个缺依赖提示完全相同的路径:流式读 pip 输出、解析进度、
-    // 互斥防重复。以前这里是 POST /api/stt/install 且不带 body,
-    // 服务端 JSON.parse("") 直接抛错返回 500,安装根本没启动过,
-    // 而这段代码既不看返回码也不读那条 SSE 流,所以按钮闪一下就回到「安装」。
+    // Take exactly the same path as the missing-dependency prompt in the editor: read the pip output as a
+    // stream, parse the progress, and use mutual exclusion to prevent duplicates. This used to be
+    // POST /api/stt/install with no body,
+    // the server's JSON.parse("") threw straight away and returned 500, so the installation never started,
+    // and this code looked at neither the status code nor that SSE stream, so the button flashed once and
+    // went back to "Install".
     try { runSttInstall("faster-whisper"); }
     catch (e) { setStartError(e instanceof Error ? e.message : String(e)); }
   };
@@ -1041,19 +1080,21 @@ function SttCard(props: { status: ExtStatusView | null; onReload: () => void | P
           <path d="M12 18v3M8.5 21h7" />
         </svg>
       }
-      name="Speech recognition"
+      name={tr("Speech recognition")}
       desc={tr("Turn speech in the video into captions, runs locally, no upload.")}
       status={status}
       action={
-        // 判断依据是「有没有在跑」,不是「有没有任务」—— 装完一次之后 store 里会一直留着
-        // 那条已完成的记录,拿它当条件会让卡片再也出不来按钮,变成死胡同。
+        // The criterion is "is it running", not "is there a task": after one installation finishes, the store keeps
+        // that completed record forever, and using it as the condition would make the card never show a button
+        // again, a dead end.
         status?.offerInstall && !running
           ? <button className="sp-ghost-btn" onClick={install}>{job?.phase === "failed" ? tr("Retry") : tr("Install")}</button>
           : null
       }
     >
-      {/* 装的过程要看得见:下几百 MB、跑几分钟,没有进度就和没反应一样。
-          失败的也留着显示,否则用户只看到按钮变回「安装」,不知道为什么没装上。 */}
+      {/* The installation process must be visible: downloading hundreds of MB and running for minutes,
+          having no progress feels like no response. Keep failures displayed as well, otherwise users only
+          see the button change back to "Install", not knowing why installation failed. */}
       {(running || job?.phase === "failed") && (
         <div className="sp-ext-progress"><SttInstallProgress job={job!} compact /></div>
       )}
@@ -1062,25 +1103,26 @@ function SttCard(props: { status: ExtStatusView | null; onReload: () => void | P
   );
 }
 
-/** 镜头识别:状态由上面统一查,安装走 installShots 的 SSE 日志流 */
+/** Shot detection: the status is queried uniformly above, and installation goes through the SSE log stream of installShots */
 function ShotsCard(props: { status: ExtStatusView | null; onReload: () => void | Promise<void> }): JSX.Element {
   const { status, onReload } = props;
   const [running, setRunning] = useState(false);
   const [tail, setTail] = useState("");
   const [error, setError] = useState<string | null>(null);
-  /** 依赖装好了,只差模型文件 —— 得靠拓展库包补,不是在线装能解决的 */
+  /** The dependencies are installed and only the model files are missing: they have to come from the extension library package, which an online install cannot fix */
   const [needsPack, setNeedsPack] = useState(false);
 
   const install = () => {
     setRunning(true);
     setError(null);
     setTail("");
-    // 只留最后一行,理由同运动追踪那张卡
+    // Keep only the last line, for the same reason as the motion tracking card
     void installShots((line) => setTail(line))
       .then(({ ok, needsModel, log }) => {
-        // 「依赖装好了但还缺模型」不是失败:模型是我们自己转/官方下的权重,
-        // 不在 requirements 里,只随拓展库包发。报成红字会让人以为白装了,
-        // 而真正该说的是「去跑那个 .exe」。
+        // "Dependencies installed but the model is still missing" is not a failure: the model is weights that we
+        // converted ourselves or downloaded from the official source, which are not in requirements and are only
+        // distributed with the extension library package. Reporting it in red would make people think the
+        // install was in vain, whereas what should really be said is "go run that .exe".
         if (!ok) setError(log.filter((l) => l.startsWith("[error]")).slice(-1)[0] ?? tr("Install failed"));
         else if (needsModel) setNeedsPack(true);
         return onReload();
@@ -1097,7 +1139,7 @@ function ShotsCard(props: { status: ExtStatusView | null; onReload: () => void |
           <path d="M10 5v14M14 5v14" />
         </svg>
       }
-      name="Shot detection"
+      name={tr("Shot detection")}
       desc={tr("Find shot change points in the media and split it by shot.")}
       status={status}
       action={
@@ -1123,28 +1165,29 @@ function ShotsCard(props: { status: ExtStatusView | null; onReload: () => void |
   );
 }
 
-/** 运动追踪:状态由上面统一查,安装走 installTrack 的 SSE 日志流 */
+/** Motion tracking: the status is queried uniformly above, and installation goes through the SSE log stream of installTrack */
 function TrackCard(props: { status: ExtStatusView | null; onReload: () => void | Promise<void> }): JSX.Element {
   const { status, onReload } = props;
   const [running, setRunning] = useState(false);
   const [tail, setTail] = useState("");
   const [error, setError] = useState<string | null>(null);
-  /** 依赖装好了,只差模型文件 —— 得靠拓展库包补,不是在线装能解决的 */
+  /** The dependencies are installed and only the model files are missing: they have to come from the extension library package, which an online install cannot fix */
   const [needsPack, setNeedsPack] = useState(false);
 
   const install = () => {
-    // 400 MB 走的是用户自己的网,开始之前先问一声 —— 点错了退不掉。
+    // 400 MB goes over the user's own network, so ask before starting: once clicked by mistake there is no backing out.
     if (!confirm(tr("The motion tracking extension needs to download torch and BootsTAPIR weights, about 400 MB, and takes several minutes. Install now?"))) return;
     setRunning(true);
     setError(null);
     setTail("");
-    // 只留最后一行:pip 会刷几百行,开始页没有装日志面板的地方,
-    // 有一行在动就够说明「还在跑」了。
+    // Keep only the last line: pip prints hundreds of lines, and the start page has no place for an install
+    // log panel, so one moving line is enough to show that it is "still running".
     void installTrack((line) => setTail(line))
       .then(({ ok, needsModel, log }) => {
-        // 「依赖装好了但还缺模型」不是失败:模型是我们自己转/官方下的权重,
-        // 不在 requirements 里,只随拓展库包发。报成红字会让人以为白装了,
-        // 而真正该说的是「去跑那个 .exe」。
+        // "Dependencies installed but the model is still missing" is not a failure: the model is weights that we
+        // converted ourselves or downloaded from the official source, which are not in requirements and are only
+        // distributed with the extension library package. Reporting it in red would make people think the
+        // install was in vain, whereas what should really be said is "go run that .exe".
         if (!ok) setError(log.filter((l) => l.startsWith("[error]")).slice(-1)[0] ?? tr("Install failed"));
         else if (needsModel) setNeedsPack(true);
         return onReload();
@@ -1161,7 +1204,7 @@ function TrackCard(props: { status: ExtStatusView | null; onReload: () => void |
           <path d="M12 2.5v3.2M12 18.3v3.2M2.5 12h3.2M18.3 12h3.2" />
         </svg>
       }
-      name="Motion tracking"
+      name={tr("Motion tracking")}
       desc={tr("Make text and stickers follow a target in the frame.")}
       status={status}
       action={
@@ -1187,25 +1230,26 @@ function TrackCard(props: { status: ExtStatusView | null; onReload: () => void |
   );
 }
 
-/** 主体检测:状态由上面统一查,安装走 installSubject 的 SSE 日志流(只装 light 档) */
+/** Subject detection: the status is queried uniformly above, and installation goes through the SSE log stream of installSubject (only the light tier is installed) */
 function SubjectCard(props: { status: ExtStatusView | null; onReload: () => void | Promise<void> }): JSX.Element {
   const { status, onReload } = props;
   const [running, setRunning] = useState(false);
   const [tail, setTail] = useState("");
   const [error, setError] = useState<string | null>(null);
-  /** 依赖装好了,只差模型文件 —— 得靠拓展库包补,不是在线装能解决的 */
+  /** The dependencies are installed and only the model files are missing: they have to come from the extension library package, which an online install cannot fix */
   const [needsPack, setNeedsPack] = useState(false);
 
   const install = () => {
     setRunning(true);
     setError(null);
     setTail("");
-    // 只留最后一行,理由同另外两张卡:pip 会刷几百行,这里没有装日志面板的地方
+    // Keep only the last line, for the same reason as the other two cards: pip prints hundreds of lines, and there is no place for an install log panel here
     void installSubject((line) => setTail(line))
       .then(({ ok, needsModel, log }) => {
-        // 「依赖装好了但还缺模型」不是失败:YuNet 和 RT-DETR 的权重不在
-        // requirements 里,只随拓展库包发。报成红字会让人以为白装了,
-        // 而真正该说的是「去跑那个 .exe」。
+        // "Dependencies installed but the model is still missing" is not a failure: the weights of YuNet and
+        // RT-DETR are not in requirements and are only distributed with the extension library package. Reporting
+        // it in red would make people think the install was in vain, whereas what should really be said is "go
+        // run that .exe".
         if (!ok) setError(log.filter((l) => l.startsWith("[error]")).slice(-1)[0] ?? tr("Install failed"));
         else if (needsModel) setNeedsPack(true);
         return onReload();
@@ -1217,14 +1261,14 @@ function SubjectCard(props: { status: ExtStatusView | null; onReload: () => void
   return (
     <ExtCard
       icon={
-        // 一个人形加一个取景框:这张卡干的就是「框出画面里的人」
+        // A human figure plus a viewfinder frame: what this card does is exactly "frame the people in the picture"
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
           <path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" />
           <circle cx="12" cy="10" r="2.4" />
           <path d="M8.2 17c.5-2 1.9-3 3.8-3s3.3 1 3.8 3" />
         </svg>
       }
-      name="Subject detection"
+      name={tr("Subject detection")}
       desc={tr("See which side of the frame a person is on, and cards automatically avoid their face.")}
       status={status}
       action={

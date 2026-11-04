@@ -1,9 +1,9 @@
 /*
- * 只读项目（游客进别人的项目）里的界面（src/editor/readOnly.ts）。
- * 置灰靠控件自己的 disabled / aria-disabled；这里只补围栏的排版和统一的「点不了」的样子。
+ * The UI inside a read-only project (a guest in someone else's project) (src/editor/readOnly.ts).
+ * Graying out relies on the controls' own disabled / aria-disabled; this file only adds the fence's layout and a uniform "cannot click" look.
  */
 
-/* 围栏不占布局：套在 flex / grid 的子树外面，里面的元素照旧是原来那个容器的子项 */
+/* The fence takes no layout: it wraps the subtree of a flex / grid, and the elements inside remain children of the original container as before */
 fieldset.pc-ro-fence {
   display: contents;
   border: 0;
@@ -12,30 +12,30 @@ fieldset.pc-ro-fence {
   min-width: 0;
 }
 
-/* 围栏里被禁用的控件：不再是「看起来能点」的亮度，鼠标指针也说明点不了 */
+/* Disabled controls inside the fence: no longer at a brightness that "looks clickable", and the mouse cursor also shows they cannot be clicked */
 fieldset.pc-ro-fence[data-pc-ro] :is(button, input, select, textarea):disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
 
-/* 带 aria-disabled 的非原生控件（右键菜单项、自绘的格子） */
+/* Non-native controls with aria-disabled (context menu items, custom-drawn cells) */
 [data-pc-ro-off="1"] {
   opacity: 0.55;
   cursor: not-allowed !important;
 }
 
-/* 时间轴：字幕条两头的拽边把手在只读项目里不接指针（点一下仍落到字幕条本身，跳过去看） */
+/* Timeline: the edge-drag handles at both ends of a caption bar take no pointer events in a read-only project (a click still lands on the caption bar itself and jumps there to look) */
 html[data-pc-readonly="member"] .pc-cap-grip {
   pointer-events: none;
 }
 
-/* 只读项目里禁用的按钮：统一显示「点不了」的指针，不论它原来的样式有没有处理 :disabled */
+/* Disabled buttons in a read-only project: uniformly show the "cannot click" cursor, whether or not their original style handles :disabled */
 html[data-pc-readonly="member"] button:disabled,
 html[data-pc-readonly="member"] [aria-disabled="true"] {
   cursor: not-allowed;
 }
 
-/* 只读项目里点不了的东西一眼要看得出：被禁用的按钮统一压暗；自绘的格子（卡片、音频条、剪辑格）带 aria-disabled 的同样 */
+/* Things that cannot be clicked in a read-only project must be recognizable at a glance: disabled buttons are uniformly dimmed; custom-drawn cells (cards, audio strips, cut cells) with aria-disabled are treated the same */
 html[data-pc-readonly="member"] button:disabled {
   opacity: 0.5;
 }
@@ -46,8 +46,8 @@ html[data-pc-readonly="member"] .pc-lib-strip.is-readonly {
   cursor: not-allowed;
 }
 
-/* 桌面版标题栏菜单里会改项目的命令（撤销、重做、保存项目）：不用 disabled（桌面产物里菜单项恒不置灰，有构建守门测试），
-   用 aria-disabled + 压暗；点了什么也不做（顶栏的命令接收处同样拦） */
+/* Commands in the desktop app's title bar menu that change the project (undo, redo, save project): do not use disabled (menu items in the desktop build are never grayed out, and a build gatekeeper test enforces it),
+   use aria-disabled + dimming; clicking does nothing (the top bar's command receiver blocks it too) */
 html[data-pc-readonly="member"] .pc-titlebar-menu-item[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;

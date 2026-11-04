@@ -1,68 +1,97 @@
 /**
- * 队列模式的端到端探针(契约 `docs/plan/render-queue-contract.md` J.7 末段,设计附件第 0 节第 1 条)。
+ * End-to-end probe for queue mode (contract `docs/plan/render-queue-contract.md` end of J.7, design
+ * annex section 0 item 1).
  *
- * 同一个探针项目、同一台机器,前后各起一套编辑器进程 + 预渲染进程,各用一个空帧库:
+ * Same probe project, same machine: sequentially starts an editor process + prerender process on
+ * each side, each with an empty frame store:
  *
- *   1. **普通模式**:preload,等后台那一趟跑完(`status === 'ready'`);
- *   2. **队列模式**(`PROMPTCUT_QUEUE_NODE=1`):等本机节点报到(诊断里 `queue.active`),preload,
- *      等后台那一趟跑完、`plan` 被切分、所有细任务都 `task.done`(或 `task.failed`)。
+ *   1. **Normal mode**: preload, wait for the background pass to finish (`status === 'ready'`);
+ *   2. **Queue mode** (`PROMPTCUT_QUEUE_NODE=1`): wait for local node to check in (`queue.active`
+ *      in diagnostics), preload, wait for the background pass to finish, `plan` to be split, and
+ *      all fine-grained tasks to be `task.done` (or `task.failed`).
  *
- * 然后逐个比较两边帧库里的快照文件(`controls-html/**`、`controls-local/**` 的 `<帧>.html`)与 `index.json`。
- * 普通模式下同一帧可能先后被写三遍(锚帧那一趟、`fillCardControls` / `renderLocalSnapshots`、B 趟),
- * 后写的赢;队列模式下非锚帧只由执行器写一遍。两边有差异时 **`ok` 仍为真**、`identical: false`,
- * 差异逐帧列出来,由主 Agent 判断是不是 preload 本身三写造成的(契约 J.7)。每一帧另标 `styleOrderOnly`:
- * 只差 `style` 属性里声明的先后(实测两趟普通模式之间也是这样,是进程之间的差异),`identicalIgnoringStyleOrder`
- * 是「按声明排序之后是否全同」。
+ * Then compare snapshot files (`<frame>.html` under `controls-html/**` and `controls-local/**`)
+ * and `index.json` in the frame stores on both sides one by one. In normal mode, the same frame
+ * may be written three times sequentially (the anchor frame pass, `fillCardControls` /
+ * `renderLocalSnapshots`, pass B), and the last write wins; in queue mode, non-anchor frames are
+ * written only once by the executor. When differences exist between the two sides, **`ok` is still
+ * true**, `identical: false`, and differences are listed frame by frame for the lead Agent to judge
+ * whether they are caused by the triple writes of preload itself (contract J.7). Each frame is
+ * additionally labeled `styleOrderOnly`: differing only in the declaration order within the `style`
+ * attribute (measured to be the case between two normal mode passes as well, which is an inter-process
+ * difference); `identicalIgnoringStyleOrder` indicates "whether they are identical after sorting declarations".
  *
- * **文档服务**:每一趟各起一个独立的文档服务(`server/docservice/main.mjs`,数据目录是新建的临时目录),
- * 经 `PROMPTCUT_DOCSERVICE_URL` 交给编辑器。不用编辑器里挂的那一份:它的内容库落在工作副本的
- * `out/docservice`,两趟共用 —— 后一趟的 preload 会按清单把前一趟推上去的段整段拉回来(C6.4 的换机取用),
- * 队列的细任务也会按清单去重完成,两边就「一定相同」,比较没有意义。`--docservice-url <ws://…>` 可以改用
- * 外面现成的一个(两趟共用,自己负责它是空的)。
+ * **Document service**: Each pass starts an independent document service
+ * (`server/docservice/main.mjs`, data directory is a newly created temp directory), passed to the
+ * editor via `PROMPTCUT_DOCSERVICE_URL`. Do not use the one mounted in the editor: its content store
+ * resides in `out/docservice` of the working copy, shared by both passes: preload in the second
+ * pass will pull back whole segments pushed by the first pass according to the manifest (C6.4
+ * cross-machine retrieval), and fine-grained tasks in the queue will also be deduplicated and
+ * completed according to the manifest, making both sides "guaranteed identical" and rendering the
+ * comparison meaningless. `--docservice-url <ws://…>` can use an existing external one instead
+ * (shared between both passes, caller is responsible for ensuring it is empty).
  *
- * 轨道流缺省关掉(`PROMPTCUT_STREAMS=0`):这时不发布流任务(M6c X1 的开关,行为与 M5b 相同),探针断言流任务条数为 0。
- * `--streams` 开流(`PROMPTCUT_STREAMS=1`,M6c X1):流任务经队列完成,断言
- *   - 切出了流任务,全部 `done`,由节点的执行器产出(不是去重);
- *   - 每个节点对每个流任务恰好收到一次 `task.done`(诊断 `queue.doneCounts`)。
+ * Track streams are disabled by default (`PROMPTCUT_STREAMS=0`): no stream tasks are published
+ * (M6c X1 toggle, same behavior as M5b), and the probe asserts that the stream task count is 0.
+ * `--streams` enables streams (`PROMPTCUT_STREAMS=1`, M6c X1): stream tasks complete via queue, asserting
+ *   - Stream tasks were split out and all `done`, produced by the node's executor (not deduplication);
+ *   - Each node receives `task.done` exactly once for each stream task (`queue.doneCounts` in diagnostics).
  *
- * **`--peer`(M6c X1)**:队列模式那一趟另起第二台编辑器(`--peer-port`,缺省队列端口 +3;三个连号都要空着),
- * 自己的空帧库、同一个文档服务、也是队列模式;两台同时 preload 同一个项目,两个节点抢同一批细任务。
- * 开着 `--streams` 时,等两边的流库都齐,逐段比 sha256(分段文件与它用的 init):另一节点经 `task.done` 的
- * `applyResult` → `adoptSegments` 取用的段必须与产出方逐字节相同(输出 `streamCompare`)。
+ * **`--peer` (M6c X1)**: In the queue mode pass, starts a second editor (`--peer-port`, defaults to
+ * queue port + 3; all three consecutive numbers must be free), with its own empty frame store, the
+ * same document service, and also in queue mode; both editors preload the same project concurrently,
+ * and the two nodes compete for the same fine-grained tasks. When `--streams` is enabled, wait until
+ * stream stores on both sides are complete, then compare sha256 segment by segment (the segment
+ * file and the init it uses): segments adopted by the other node via `task.done`'s
+ * `applyResult` → `adoptSegments` must be byte-for-byte identical to the producer (`streamCompare` in output).
  *
  *   node scripts/probes/queue-mode-probe.mjs [--queue-port 5516] [--normal-port 5513] [--docservice-port 5519]
  *        [--docservice-url ws://…] [--streams] [--peer] [--peer-port N] [--only queue|normal] [--timeout-min 20] [--keep]
  *        [--lan] [--hold-min N]
  *
- * **局域网模式(`--lan`,W4 跨机用)**:
- *   - 队列模式那一趟的编辑器改绑 `0.0.0.0`;探针自己的检查仍然走 `127.0.0.1`。预渲染进程照旧只绑回环(它由编辑器拉起)。
- *   - 编辑器的素材服务按 C5 自动登记局域网地址(`server/vite-plugin-media.ts`:要求 `PROMPTCUT_DOCSERVICE_URL`
- *     已设、绑的不是回环地址)。探针从编辑器输出里的 `[asset-announce] asset-announce.announced` 取登记的地址,
- *     放进输出的 `announcedAsset`(没登记上是 `null`,例如本机没有私有网段的 IPv4)。
- *   - **凭证**(M6a,`docs/plan/auth-contract.md` 第 11 节):集群令牌已退出数据面,只剩素材地址登记这一个管理用途。
- *     探针自己起文档服务(没给 `--docservice-url`)时从编辑器的环境里删掉 `PROMPTCUT_CLUSTER_TOKEN`
- *     —— 自起的那一份绑回环,编辑器与预渲染进程连它是本机身份。给了 `--docservice-url` 连远端控制面时,
- *     预渲染进程要凭共享项目进入:在跑探针的环境里设好 `PROMPTCUT_SHARED_CONFIG`(原样传给编辑器与预渲染进程);
- *     令牌原样保留,只给素材登记用。`--lan` 不改这一条。
- *   - 不给 `--docservice-url` 时自起的文档服务仍只绑回环,别的机器连不上;跨机要配合 `--docservice-url`。
- *     给了 `--docservice-url` 时,不再要求「细任务都由本机节点完成」(别的机器也在取活)。
+ * **LAN mode (`--lan`, for W4 cross-machine use)**:
+ *   - The editor in the queue mode pass rebinds to `0.0.0.0`; the probe's own checks still go
+ *     through `127.0.0.1`. The prerender process binds only to loopback as usual (spawned by the editor).
+ *   - The editor's asset service automatically registers its LAN address per C5
+ *     (`server/vite-plugin-media.ts`: requires `PROMPTCUT_DOCSERVICE_URL` to be set and bound to a
+ *     non-loopback address). The probe extracts the registered address from
+ *     `[asset-announce] asset-announce.announced` in the editor output and puts it into `announcedAsset`
+ *     in the output (`null` if not registered, e.g. this machine has no private subnet IPv4).
+ *   - **Credentials** (M6a, `docs/plan/auth-contract.md` section 11): Cluster token has retired from
+ *     the data plane, leaving asset address registration as its only administrative purpose. When the
+ *     probe starts its own document service (no `--docservice-url` provided), it deletes
+ *     `PROMPTCUT_CLUSTER_TOKEN` from the editor's environment: the self-started instance binds to
+ *     loopback, and the editor and prerender process connect to it with local identity. When
+ *     `--docservice-url` is given to connect to a remote control plane, the prerender process must
+ *     enter via a shared project: set `PROMPTCUT_SHARED_CONFIG` in the environment running the probe
+ *     (passed as-is to the editor and prerender process); the token is retained as-is, used solely
+ *     for asset registration. `--lan` does not change this rule.
+ *   - When `--docservice-url` is omitted, the self-started document service still binds only to
+ *     loopback and other machines cannot connect; cross-machine use requires `--docservice-url`.
+ *     When `--docservice-url` is provided, it is no longer required that "all fine-grained tasks are
+ *     completed by the local node" (other machines are also picking up jobs).
  *
- * **`--hold-min N`**:队列模式那一趟跑完、比较也做完之后,不马上关进程,再保持 N 分钟,让别的机器上的节点
- * 继续取活、拉取。期间每 30 秒打一行 `[hold] {…}`(`tasks`、`done`、就绪层数 `readyLayers`)。
- * 输出的 `nodes` 取自保持结束时的诊断。
+ * **`--hold-min N`**: After the queue mode pass finishes and comparisons are done, do not shut down
+ * processes immediately; hold for N more minutes so nodes on other machines can continue picking up
+ * jobs and pulling. During this period, print a `[hold] {…}` line every 30 seconds (`tasks`, `done`,
+ * ready layer count `readyLayers`). `nodes` in the output is taken from diagnostics at the end of the hold.
  *
- * 输出另带:
- *   - `nodes`:本机诊断里的节点信息(诊断 `queue.local`):`nodeId`,本机节点认领 / 完成 / 去重完成 / 失败的任务 id 列表,和 `stats`;
- *   - `announcedAsset`:本机登记的素材服务地址(列表);
- *   - `x5`(M6c X5 的证据,队列模式那一趟另打一行 `[x5] {…}`):preload 到 ready 用了多久、第一次认领 plan /
- *     细任务在 preload 开跑后多久、那一刻 preload 各代际的状态、等 ready 期间读到的认领数,
- *     `fineClaimedBeforeReady` 为真就是「preload 未 ready 时本机节点已开始认领细任务」。只记录,不判失败。
+ * Output also includes:
+ *   - `nodes`: Node information in local diagnostics (`queue.local` in diagnostics): `nodeId`, list
+ *     of task ids claimed / completed / deduplicated / failed by the local node, and `stats`;
+ *   - `announcedAsset`: Registered asset service addresses on this machine (list);
+ *   - `x5` (evidence for M6c X5, an extra `[x5] {…}` line printed during the queue mode pass): how
+ *     long preload took to reach ready, how long after preload started before the first plan /
+ *     fine-grained task was claimed, states of preload generations at that moment, number of claims
+ *     read while waiting for ready; `fineClaimedBeforeReady` being true means "local node started
+ *     claiming fine-grained tasks before preload was ready". Recorded only, not judged as failure.
  *
- * 端口:每台编辑器另占「端口 +1」「端口 +2」当舞台端口,三个连号都要空着;文档服务一个端口。
- * `--keep` 不删两边的临时帧库(调试用)。输出最后一行是一行 JSON:
- * `{ ok, tasks, done, identical, differentFrames: [...], fails }`,另带一些诊断字段;`ok` 为假时退出码 1。
+ * Ports: each editor occupies "port + 1" and "port + 2" as stage ports; all three consecutive numbers
+ * must be free; one port for document service. `--keep` does not delete temporary frame stores on
+ * either side (for debugging). The last line of output is a single JSON line:
+ * `{ ok, tasks, done, identical, differentFrames: [...], fails }`, along with additional diagnostic fields; exit code is 1 when `ok` is false.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -82,13 +111,13 @@ const NORMAL_PORT = Number(arg('--normal-port', 5513));
 const DOC_PORT = Number(arg('--docservice-port', 5519));
 const DOC_URL = arg('--docservice-url', null);
 const STREAMS = args.includes('--streams');
-/** M6c X1:`--peer` 队列模式另起第二个队列节点(第二台编辑器,自己的空帧库,同一个文档服务) */
+/** M6c X1: `--peer` in queue mode starts a second queue node (second editor, its own empty frame store, same document service) */
 const PEER = args.includes('--peer');
 const PEER_PORT = Number(arg('--peer-port', QUEUE_PORT + 3));
 const KEEP = args.includes('--keep');
 const ONLY = arg('--only', null);
 const TIMEOUT_MS = Number(arg('--timeout-min', 20)) * 60_000;
-/** `--salt <s>`:写进每张卡的 params(卡片内容键含 params),让结果键全新、不会被别处已有的清单去重掉(W4 用) */
+/** `--salt <s>`: written into params of each card (card content key includes params) so result keys are brand new and won't be deduplicated away by manifests existing elsewhere (for W4) */
 const SALT = arg('--salt', null);
 const LAN = args.includes('--lan');
 const HOLD_MS = Math.max(0, Number(arg('--hold-min', 0)) || 0) * 60_000;
@@ -102,11 +131,13 @@ const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra ===
 const FPS = 30;
 const STAMP = Date.now().toString(36);
 /**
- * 3 秒 = 90 帧:共享档的两张卡各切两段(0～59、60～89);`unknown` 卡(本地档)从 1 秒起,
- * 它的挂载帧(`mountFrameOf`,实测 29)在另两张卡中间切出一个锚帧。项目 id 固定,两趟算出同一组键(帧库是空的)。
+ * 3 seconds = 90 frames: the two shared-tier cards are each split into two segments (0-59, 60-89);
+ * the `unknown` card (local tier) starts at 1 second, and its mount frame (`mountFrameOf`, measured
+ * at 29) cuts out an anchor frame between the other two cards. Fixed project id, so both passes
+ * compute the same set of keys (frame store is empty).
  */
 const PROJECT = {
-  id: 'queue-mode-probe', name: '队列模式探针', width: 1920, height: 1080, fps: FPS, duration: 3,
+  id: 'queue-mode-probe', name: 'Queue mode probe', width: 1920, height: 1080, fps: FPS, duration: 3,
   themeId: 'dark', camera3dFov: 50, media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-1', name: 'tr-1', hidden: false, clips: [{ id: 'clip-stateful', kind: 'card', cardId: 'r6-stateful', start: 0, end: 3, params: {} }] },
@@ -130,12 +161,12 @@ async function until(label, fn, timeoutMs = 120000, everyMs = 500) {
     let value;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await delay(everyMs);
   }
 }
 
-/** 工作副本没有自己的 node_modules(往上走到主仓库那一份),所以按模块解析 vite 的 bin */
+/** The working copy has no node_modules of its own (walks up to the one in main repo), so resolve vite's bin by module */
 function viteBin() {
   const local = path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
   if (fsSync.existsSync(local)) return local;
@@ -159,7 +190,7 @@ const portFree = async port => {
   });
 };
 
-/** 队列诊断里本机节点那一份(`queue.local`) */
+/** The local node's portion in queue diagnostics (`queue.local`) */
 const nodesOf = q => q ? {
   nodeId: q.local?.nodeId ?? q.nodeId ?? null,
   claimed: q.local?.claimed ?? null, completed: q.local?.completed ?? null, dedup: q.local?.dedup ?? null, failed: q.local?.failed ?? null,
@@ -167,8 +198,10 @@ const nodesOf = q => q ? {
 } : null;
 
 /**
- * 起一台编辑器(它会拉起自己的预渲染进程),等预渲染进程就绪。`sink` 收编辑器的输出(按行扫素材登记)。
- * 回 `{ label, port, exportDir, library, EDITOR, base, diagnostics }`;预渲染进程没起来时 `base` 为 null。
+ * Starts an editor (which spawns its own prerender process) and waits for prerender process to be
+ * ready. `sink` receives editor output (scans line by line for asset registration). Returns
+ * `{ label, port, exportDir, library, EDITOR, base, diagnostics }`; `base` is null if prerender
+ * process failed to come up.
  */
 async function startEditor(run, children, { label, port, exportDir, docUrl, queue, host, sink }) {
   await fs.mkdir(path.join(exportDir, 'data'), { recursive: true });
@@ -176,7 +209,7 @@ async function startEditor(run, children, { label, port, exportDir, docUrl, queu
   delete env.PROMPTCUT_QUEUE_NODE;
   if (!DOC_URL) delete env.PROMPTCUT_CLUSTER_TOKEN;
   if (queue) env.PROMPTCUT_QUEUE_NODE = '1';
-  // M6c X1:`--streams` 显式开流(PROMPTCUT_STREAMS=1);不给时关掉,与 M5b 相同
+  // M6c X1: `--streams` explicitly enables streams (PROMPTCUT_STREAMS=1); disabled when omitted, same as M5b
   env.PROMPTCUT_STREAMS = STREAMS ? '1' : '0';
   const editor = spawn(process.execPath, [viteBin(), '--port', String(port), '--strictPort', '--host', host],
     { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env });
@@ -185,8 +218,8 @@ async function startEditor(run, children, { label, port, exportDir, docUrl, queu
   editor.stderr.on('data', sink);
   const EDITOR = `http://127.0.0.1:${port}`;
   const inst = { label, port, exportDir, library: path.join(exportDir, 'frame-library'), EDITOR, base: null, diagnostics: async () => ({}) };
-  await until(`[${label}] 编辑器进程起来`, async () => (await fetch(EDITOR + '/api/prerender/info').then(r => r.ok, () => false)) || null, 120000);
-  const base = await until(`[${label}] 预渲染进程就绪`, async () => {
+  await until(`[${label}] editor process up`, async () => (await fetch(EDITOR + '/api/prerender/info').then(r => r.ok, () => false)) || null, 120000);
+  const base = await until(`[${label}] prerender process ready`, async () => {
     const info = await json(EDITOR + '/api/prerender/info');
     return info.body?.ready && info.body.url ? info.body.url : null;
   }, 180000);
@@ -196,9 +229,9 @@ async function startEditor(run, children, { label, port, exportDir, docUrl, queu
   return inst;
 }
 
-/** 队列模式:等本机节点报到(诊断里 `queue.active`)。回 true / false */
+/** Queue mode: wait for local node to check in (`queue.active` in diagnostics). Returns true / false */
 async function waitActive(run, inst) {
-  const active = await until(`[${inst.label}] 本机节点报到(诊断里 queue.active)`, async () => (await inst.diagnostics()).queue?.active === true || null, 180000, 1000);
+  const active = await until(`[${inst.label}] local node checked in (queue.active in diagnostics)`, async () => (await inst.diagnostics()).queue?.active === true || null, 180000, 1000);
   const d = await inst.diagnostics();
   const start = d.queue ? { mode: d.queue.mode, url: d.queue.url, nodeId: d.queue.nodeId, envFingerprint: d.queue.envFingerprint } : null;
   if (inst.label === 'queue') run.queueStart = start;
@@ -206,19 +239,19 @@ async function waitActive(run, inst) {
   return !!active;
 }
 
-/** 推项目、preload、等后台那一趟跑完。回 `{ session, key, ready }` */
+/** Pushes project, preloads, and waits for the background pass to finish. Returns `{ session, key, ready }` */
 async function preloadOn(run, inst, mode) {
   const SESSION = `qmp-${inst.label}-${STAMP}`;
   const pushed = await postJson(inst.EDITOR + '/api/data/project', { session: SESSION, localRev: 1, project: PROJECT });
-  check(pushed.ok, `[${inst.label}] 项目推进镜像`, pushed.body);
-  await until(`[${inst.label}] 预渲染进程手里有这一版项目`, async () => (await json(`${inst.base}/api/data/project?session=${SESSION}&localRev=1`)).ok || null, 30000);
+  check(pushed.ok, `[${inst.label}] project pushed to the mirror`, pushed.body);
+  await until(`[${inst.label}] prerender process holds this version of the project`, async () => (await json(`${inst.base}/api/data/project?session=${SESSION}&localRev=1`)).ok || null, 30000);
   const preload = await postJson(`${inst.base}/api/frames/preload`, { session: SESSION, localRev: 1 });
-  check(preload.ok, `[${inst.label}] preload 开跑`, preload.body);
+  check(preload.ok, `[${inst.label}] preload started`, preload.body);
   const key = preload.body?.key;
-  // M6c X5 的证据:preload 还没到 ready 时,本机节点已经认领了几次(每次轮询时读诊断里的认领数)
+  // Evidence for M6c X5: how many times local node claimed before preload reached ready (claim count read from diagnostics on each poll)
   let claimedWhileNotReady = 0;
-  const ready = await until(`[${inst.label}] 后台那一趟跑完`, async () => {
-    // 页面每 2 秒重发一次 preload 保活,这里照做(同一版直接返回)
+  const ready = await until(`[${inst.label}] background run finished`, async () => {
+    // The page resends preload every 2s for keepalive; mirror that here (same revision returns immediately)
     const status = await postJson(`${inst.base}/api/frames/preload`, { session: SESSION, localRev: 1 });
     if (mode === 'queue' && status.body?.status !== 'ready') {
       const claimed = (await inst.diagnostics()).queue?.stats?.claimed;
@@ -226,13 +259,13 @@ async function preloadOn(run, inst, mode) {
     }
     return status.body?.status === 'ready' ? status.body : status.body?.status === 'error' ? status.body : null;
   }, TIMEOUT_MS, 2000);
-  check(ready?.status === 'ready', `[${inst.label}] 后台那一趟以 ready 结束`, ready);
+  check(ready?.status === 'ready', `[${inst.label}] the background run ended with ready`, ready);
   return { session: SESSION, key, ready, claimedWhileNotReady };
 }
 
-/** 队列模式:plan 切分完、所有细任务落定(按这一个节点的诊断看)。回 `{ plan, derived, states, q }` 或 null */
+/** Queue mode: plan split finished, all fine-grained tasks settled (viewed from this single node's diagnostics). Returns `{ plan, derived, states, q }` or null */
 async function settledOn(inst) {
-  return until(`[${inst.label}] plan 切分完、所有细任务落定`, async () => {
+  return until(`[${inst.label}] plan split done, all fine-grained tasks settled`, async () => {
     const q = (await inst.diagnostics()).queue;
     const plan = q?.published?.[0]?.planId;
     const derived = plan ? q.plans?.[plan] : null;
@@ -243,10 +276,14 @@ async function settledOn(inst) {
 }
 
 /**
- * 一趟:起文档服务(独立模式)和编辑器,preload 探针项目,等它产完,收帧库。
- * `hold` 为真时不关进程,返回的 run 带 `release()`(关进程)和 `diagnostics()`,由调用方保持完再关。
- * 队列模式加 `--peer` 时另起一台编辑器(第二个队列节点,自己的空帧库,连同一个文档服务),两边同时 preload 同一个项目:
- * 两个节点抢同一批细任务,各自订阅了 plan,细任务的 `task.done` 两边都收到,另一边产的段经 `applyResult` 拉进来。
+ * One pass: starts document service (standalone mode) and editor, preloads probe project, waits
+ * for it to finish producing, and collects the frame store. When `hold` is true, processes are not
+ * shut down; the returned run includes `release()` (shuts down processes) and `diagnostics()`,
+ * allowing the caller to hold before shutting down. With `--peer` in queue mode, starts a second
+ * editor (second queue node, its own empty frame store, connected to the same document service),
+ * preloading the same project on both concurrently: the two nodes compete for the same fine-grained
+ * tasks, each subscribed to the plan; `task.done` for fine-grained tasks is received by both, and
+ * segments produced by the other side are pulled in via `applyResult`.
  */
 async function runOnce(mode, { hold = false } = {}) {
   const port = mode === 'queue' ? QUEUE_PORT : NORMAL_PORT;
@@ -257,13 +294,13 @@ async function runOnce(mode, { hold = false } = {}) {
   let kept = false;
   try {
     const ports = [port, port + 1, port + 2, ...(withPeer ? [PEER_PORT, PEER_PORT + 1, PEER_PORT + 2] : []), ...(DOC_URL ? [] : [DOC_PORT])];
-    for (const p of ports) check(await portFree(p), `[${mode}] 端口 ${p} 空着`);
+    for (const p of ports) check(await portFree(p), `[${mode}] port ${p} is free`);
     if (fails.length) return run;
     await fs.mkdir(path.join(exportDir, 'data'), { recursive: true });
     let docUrl = DOC_URL;
     if (!docUrl) {
       const docData = path.join(exportDir, 'docservice');
-      // 只绑回环:编辑器、预渲染进程连它是本机身份,不带任何凭证(main.mjs 文件头)
+      // Binds to loopback only: editor and prerender process connect to it with local identity without any credentials (header of main.mjs)
       const docEnv = { ...process.env, PROMPTCUT_DOCSERVICE_PORT: String(DOC_PORT), PROMPTCUT_DOCSERVICE_HOST: '127.0.0.1', PROMPTCUT_DOCSERVICE_DATA: docData };
       delete docEnv.PROMPTCUT_CLUSTER_TOKEN;
       const doc = spawn(process.execPath, [path.join(ROOT, 'server', 'docservice', 'main.mjs')], {
@@ -272,9 +309,9 @@ async function runOnce(mode, { hold = false } = {}) {
       doc.stdout.resume(); doc.stderr.resume();
       children.push(doc);
       docUrl = `ws://127.0.0.1:${DOC_PORT}`;
-      await until(`[${mode}] 文档服务起来`, async () => (await json(`http://127.0.0.1:${DOC_PORT}/healthz`)).body?.ok === true || null, 30000);
+      await until(`[${mode}] document service up`, async () => (await json(`http://127.0.0.1:${DOC_PORT}/healthz`)).body?.ok === true || null, 30000);
     }
-    // 素材服务登记(C5):编辑器输出里 `[asset-announce] asset-announce.announced {json}` 那一行
+    // Asset service registration (C5): the `[asset-announce] asset-announce.announced {json}` line in editor output
     run.announcedAsset = null;
     let lineTail = '';
     const scanAnnounce = text => {
@@ -284,7 +321,7 @@ async function runOnce(mode, { hold = false } = {}) {
         const m = /\[asset-announce\] asset-announce\.(announced|skip|error) (\{.*\})\s*$/.exec(line);
         if (!m) continue;
         let fields = null;
-        try { fields = JSON.parse(m[2]); } catch { /* 不是整行 JSON 就不认 */ }
+        try { fields = JSON.parse(m[2]); } catch { /* Ignore if not an entire line of JSON */ }
         if (m[1] === 'announced' && Array.isArray(fields?.urls)) run.announcedAsset = fields.urls;
         else (run.announceIssues ??= []).push({ event: m[1], ...(fields ?? {}) });
       }
@@ -305,7 +342,8 @@ async function runOnce(mode, { hold = false } = {}) {
     }
 
     if (mode === 'queue') {
-      // 第一次打 /api/frames/* 才建管线、起本机节点;等它连上文档服务、报到
+      // Only build the pipeline and start the local node on the first hit to /api/frames/*; wait for it
+      // to connect to the document service and check in
       const actives = await Promise.all([main, ...(peer ? [peer] : [])].map(inst => waitActive(run, inst)));
       if (!actives.every(Boolean)) {
         run.queueLog = run.log.join('').split('\n').filter(line => line.includes('[queue-node]')).slice(-10);
@@ -313,19 +351,19 @@ async function runOnce(mode, { hold = false } = {}) {
       }
     } else {
       const d = await diagnostics();
-      check(d.queue === undefined, '[normal] 开关关着时诊断里没有 queue 键', Object.keys(d));
+      check(d.queue === undefined, '[normal] no queue key in diagnostics while the switch is off', Object.keys(d));
     }
 
     const started = Date.now();
-    // 两台同时 preload(发布方身份各自发布同一个 plan,两边都订阅上;谁先闲谁先认领)
+    // Both concurrently preload (each publishing the same plan as publisher, both subscribed; whichever becomes idle first claims first)
     const loads = await Promise.all([main, ...(peer ? [peer] : [])].map(inst => preloadOn(run, inst, mode)));
     run.entryKey = loads[0]?.key;
     if (peer) run.peer.entryKey = loads[1]?.key;
-    if (peer) check(loads[0]?.key && loads[0].key === loads[1]?.key, '[peer] 两台算出同一个 entry.key', { main: loads[0]?.key, peer: loads[1]?.key });
+    if (peer) check(loads[0]?.key && loads[0].key === loads[1]?.key, '[peer] both machines compute the same entry.key', { main: loads[0]?.key, peer: loads[1]?.key });
     const claimedWhileNotReady = loads[0]?.claimedWhileNotReady ?? 0;
     run.preloadMs = Date.now() - started;
     if (mode === 'queue') {
-      // 诊断 queue.firstClaims(vite-plugin-frames.ts):第一次认领 plan / 细任务的时刻与那一刻 preload 各代际的状态
+      // Diagnostics queue.firstClaims (vite-plugin-frames.ts): timestamp of the first plan / fine-grained task claim and preload generation states at that moment
       const q = (await diagnostics()).queue ?? {};
       const brief = c => c ? { id: c.id, afterPreloadMs: c.at - started, preload: (c.preload ?? []).map(p => p.status) } : null;
       run.x5 = {
@@ -347,21 +385,21 @@ async function runOnce(mode, { hold = false } = {}) {
         run.failedTasks = settled.derived.filter((id, i) => settled.states[i] === 'failed').map(id => ({ id, error: q.tasks[id]?.error ?? null }));
         run.queueStats = q.stats;
         run.queueEvents = q.events.filter(e => /failed|lost|discarded|mismatch|skip|offline|error/.test(e.event)).slice(-20);
-        check(run.failedTasks.length === 0, '[queue] 没有细任务失败', run.failedTasks);
+        check(run.failedTasks.length === 0, '[queue] no fine-grained task failed', run.failedTasks);
         let peerQ = null;
         if (peer) {
           const peerSettled = await settledOn(peer);
           peerQ = peerSettled?.q ?? null;
-          check(peerSettled?.plan === settled.plan, '[peer] 两台发布的是同一个 plan', { main: settled.plan, peer: peerSettled?.plan });
-          check(JSON.stringify([...(peerSettled?.derived ?? [])].sort()) === JSON.stringify([...settled.derived].sort()), '[peer] 两台看到的细任务相同',
+          check(peerSettled?.plan === settled.plan, '[peer] both machines publish the same plan', { main: settled.plan, peer: peerSettled?.plan });
+          check(JSON.stringify([...(peerSettled?.derived ?? [])].sort()) === JSON.stringify([...settled.derived].sort()), '[peer] both machines see the same fine-grained tasks',
             { main: settled.derived.length, peer: peerSettled?.derived?.length ?? null });
           run.peer.queueStats = peerQ?.stats ?? null;
           run.peer.queueEvents = (peerQ?.events ?? []).filter(e => /failed|lost|discarded|mismatch|skip|offline|error/.test(e.event)).slice(-20);
         }
-        // 单机时本机节点应当包办(有 --peer 时两台合起来);连远端控制面(别的机器也在取活)时不一定
+        // On a single machine the local node should handle all (combined when --peer is present); not necessarily when connected to remote control plane (other machines also picking up jobs)
         const byNodes = q.stats.completed + q.stats.dedup + (peerQ ? peerQ.stats.completed + peerQ.stats.dedup : 0);
-        if (!DOC_URL) check(byNodes >= run.done, '[queue] 细任务都由节点完成(completed + dedup)', { main: q.stats, peer: peerQ?.stats ?? null });
-        // M6c X1:轨道流任务
+        if (!DOC_URL) check(byNodes >= run.done, '[queue] all fine-grained tasks are completed by nodes (completed + dedup)', { main: q.stats, peer: peerQ?.stats ?? null });
+        // M6c X1: track stream tasks
         const streamIds = settled.derived.filter(id => id.startsWith('stream:'));
         run.streamTasks = streamIds.length;
         run.streamDone = streamIds.filter(id => q.tasks?.[id]?.state === 'done').length;
@@ -372,29 +410,29 @@ async function runOnce(mode, { hold = false } = {}) {
         run.streamBy = Object.fromEntries(streamIds.map(id => [id, local(q).has(id) ? 'main' : peerQ && local(peerQ).has(id) ? 'peer'
           : dedup(q).has(id) ? 'main-dedup' : peerQ && dedup(peerQ).has(id) ? 'peer-dedup' : 'other']));
         if (STREAMS) {
-          check(run.streamTasks > 0, '[streams] 切出了流任务', run.streamTasks);
-          check(run.streamDone === run.streamTasks, '[streams] 流任务全部经队列完成(done)', { tasks: run.streamTasks, done: run.streamDone });
+          check(run.streamTasks > 0, '[streams] stream tasks were split out', run.streamTasks);
+          check(run.streamDone === run.streamTasks, '[streams] all stream tasks completed through the queue (done)', { tasks: run.streamTasks, done: run.streamDone });
           for (const [who, counts] of doneCounts) {
             const bad = Object.entries(counts).filter(([, n]) => n !== 1);
-            check(bad.length === 0, `[streams] ${who} 每个流任务恰好收到一次 task.done`, bad);
+            check(bad.length === 0, `[streams] on ${who}, each stream task received task.done exactly once`, bad);
           }
           const rendered = Object.values(run.streamBy).filter(v => v === 'main' || v === 'peer').length;
-          check(rendered === run.streamTasks, '[streams] 流任务都由节点执行器产出(不是去重)', run.streamBy);
+          check(rendered === run.streamTasks, '[streams] stream tasks are all produced by node executors (not deduplicated)', run.streamBy);
         } else {
-          check(run.streamTasks === 0, '[streams] 关着(PROMPTCUT_STREAMS=0)时不发布流任务', run.streamTasks);
+          check(run.streamTasks === 0, '[streams] no stream tasks are published while off (PROMPTCUT_STREAMS=0)', run.streamTasks);
         }
       }
       run.queueMs = Date.now() - started;
-      await delay(3000);   // task.done 的 applyResult 在后台串行跑,留一点时间
+      await delay(3000);   // applyResult for task.done runs serially in the background; leave some time
       if (peer && STREAMS && run.streamTasks > 0) {
-        // 另一节点取用的段与产出方逐段一致:等两边的流库都齐,再逐段比 sha256
-        const compare = await until('[streams] 两边的流库都齐', async () => {
+        // Segments adopted by the other node match the producer segment by segment: wait for stream stores on both sides to complete, then compare sha256 segment by segment
+        const compare = await until('[streams] stream stores on both sides are complete', async () => {
           const c = await compareStreams(main.library, peer.library);
           return c.missing.length === 0 && c.segments > 0 ? c : null;
         }, 120000, 2000);
         run.streamCompare = compare ?? await compareStreams(main.library, peer.library);
-        check(!!compare, '[streams] 两边都有全部分段', { missing: run.streamCompare.missing.slice(0, 10) });
-        check(run.streamCompare.mismatched.length === 0, '[streams] 另一节点取用的段与产出方 sha256 逐段一致', run.streamCompare.mismatched.slice(0, 10));
+        check(!!compare, '[streams] both sides have all segments', { missing: run.streamCompare.missing.slice(0, 10) });
+        check(run.streamCompare.mismatched.length === 0, '[streams] segments fetched by the other node match the producer\'s sha256, segment by segment', run.streamCompare.mismatched.slice(0, 10));
       }
     }
     const d = await diagnostics();
@@ -421,8 +459,9 @@ async function runOnce(mode, { hold = false } = {}) {
 }
 
 /**
- * M6c X1:两个帧库的流库逐段对账。`streams/<流键>/stream.json` 里列的每个分段(两边的并集):两边都要有,
- * 分段文件与它用的 init 的 sha256 都相同。回 `{ streams, segments, missing: [...], mismatched: [...], perStream }`。
+ * M6c X1: Reconciles stream stores across both frame stores segment by segment. Every segment listed
+ * in `streams/<streamKey>/stream.json` (union of both sides) must exist on both sides, with matching
+ * sha256 for the segment file and the init it uses. Returns `{ streams, segments, missing: [...], mismatched: [...], perStream }`.
  */
 async function compareStreams(libA, libB) {
   const sha = buf => createHash('sha256').update(buf).digest('hex');
@@ -460,12 +499,12 @@ async function compareStreams(libA, libB) {
   return out;
 }
 
-/** 保持 `HOLD_MS`:每 30 秒打一行进度,每次刷新 `run.nodes` */
+/** Holds `HOLD_MS`: prints one progress line every 30s, refreshing `run.nodes` each time */
 async function holdOpen(run) {
   const deadline = Date.now() + HOLD_MS;
   const progress = async () => {
     let d = {};
-    try { d = await run.diagnostics(); } catch { /* 进程没了就打空的 */ }
+    try { d = await run.diagnostics(); } catch { /* Print empty if process is gone */ }
     const q = d.queue;
     const derived = run.plan ? q?.plans?.[run.plan] : null;
     const states = Array.isArray(derived) ? derived.map(id => q.tasks?.[id]?.state ?? 'pending') : [];
@@ -482,7 +521,7 @@ async function holdOpen(run) {
   }
 }
 
-/** 帧库里全部快照:`<相对路径>` → 字节。`controls-html/<键>/…`、`controls-local/<entry.key>/<键>/…` */
+/** All snapshots in frame store: `<relativePath>` → bytes. `controls-html/<key>/…`, `controls-local/<entry.key>/<key>/…` */
 async function snapshotTree(library) {
   const files = new Map();
   const walk = async (dir) => {
@@ -497,10 +536,10 @@ async function snapshotTree(library) {
   return files;
 }
 
-/** 每个 `style="…"` 里的声明排序:只用来判「是不是只差声明顺序」,比较本身仍按原字节 */
+/** Sort declarations in each `style="…"`: only used to check "whether only declaration order differs", the comparison itself still uses raw bytes */
 const sortStyles = html => html.replace(/style="([^"]*)"/g, (_, s) => 'style="' + s.split(';').map(x => x.trim()).filter(Boolean).sort().join(';') + '"');
 
-/** 键 → 片段与档位(从 card plan 反查),差异列表里好认 */
+/** Key → clip and tier (reverse-looked up from card plan), for easy recognition in diff list */
 function keyIndex(run) {
   const map = new Map();
   for (const plan of run?.plans ?? []) for (const c of plan.controls) if (c.snapshotKey) map.set(c.snapshotKey, { clipId: c.clipId, tier: c.tier });
@@ -510,7 +549,7 @@ function keyIndex(run) {
 const runs = {};
 try {
   if (ONLY !== 'queue') runs.normal = await runOnce('normal');
-  if (ONLY !== 'normal' && !fails.some(f => f.includes('端口'))) runs.queue = await runOnce('queue', { hold: HOLD_MS > 0 });
+  if (ONLY !== 'normal' && !fails.some(f => f.includes('port'))) runs.queue = await runOnce('queue', { hold: HOLD_MS > 0 });
   out.tasks = runs.queue?.tasks ?? 0;
   out.done = runs.queue?.done ?? 0;
   out.streamTasks = runs.queue?.streamTasks ?? null;
@@ -537,26 +576,26 @@ try {
     for (const rel of [...new Set([...a.keys(), ...b.keys()])].sort()) {
       const x = a.get(rel), y = b.get(rel);
       if (x && y && x.equals(y)) continue;
-      // 只差 style 属性里声明的先后(实测两趟普通模式之间也这样,见报告)的,单独标出来
+      // Mark separately those that differ only in declaration order in style attributes (measured between two normal mode passes as well; see report)
       const styleOrderOnly = !!(x && y && rel.endsWith('.html') && sortStyles(x.toString('utf8')) === sortStyles(y.toString('utf8')));
       out.differentFrames.push({ ...describe(rel), reason: !x ? 'only-in-queue' : !y ? 'only-in-normal' : 'bytes', styleOrderOnly, normalBytes: x?.length ?? null, queueBytes: y?.length ?? null });
     }
     out.identicalIgnoringStyleOrder = out.differentFrames.every(d => d.styleOrderOnly);
     out.compared = { normalFiles: a.size, queueFiles: b.size, htmlFiles: [...a.keys()].filter(k => k.endsWith('.html')).length };
     out.identical = out.differentFrames.length === 0;
-    check(out.compared.htmlFiles > 0, '普通模式的帧库里有快照', out.compared);
-    check(out.tasks > 0, '队列模式切出了细任务', out.tasks);
-    check(out.done === out.tasks, '队列模式的细任务全部 done', { tasks: out.tasks, done: out.done });
+    check(out.compared.htmlFiles > 0, 'Normal mode\'s frame store has snapshots', out.compared);
+    check(out.tasks > 0, 'Queue mode split out fine-grained tasks', out.tasks);
+    check(out.done === out.tasks, 'All fine-grained tasks in queue mode are done', { tasks: out.tasks, done: out.done });
     const summary = {};
     for (const d of out.differentFrames) {
       const k = `${d.clipId ?? '?'}/${d.tier}/${d.reason}${d.styleOrderOnly ? '(style-order)' : ''}/${d.anchor ? 'anchor' : 'non-anchor'}`;
       summary[k] = (summary[k] ?? 0) + 1;
     }
     out.differenceSummary = summary;
-  } else if (!ONLY) check(false, '两趟都要有帧库才能比较', Object.keys(runs));
+  } else if (!ONLY) check(false, 'Both runs need a frame store to compare', Object.keys(runs));
   if (runs.queue?.release) await holdOpen(runs.queue);
 } catch (error) {
-  fails.push(`探针自己出错:${error?.stack || error}`);
+  fails.push(`Probe itself failed: ${error?.stack || error}`);
 } finally {
   if (runs.queue?.release) await runs.queue.release().catch(() => {});
   out.runs = Object.fromEntries(Object.entries(runs).map(([k, r]) => [k, { ...r, log: undefined, peerLog: undefined, library: undefined, release: undefined, diagnostics: undefined }]));

@@ -1,6 +1,6 @@
-"""audio 抽取：用 ffmpeg 造一段 2 秒正弦波 mp4，抽成 16k 单声道 wav。
+"""audio extraction: use ffmpeg to build a 2-second sine-wave mp4 and extract it to a 16k mono wav.
 
-没有 ffmpeg 就跳过——这些用例验的是我们跟 ffmpeg 的接口，不是 ffmpeg 本身。
+Skipped when ffmpeg is absent: these cases verify our interface to ffmpeg, not ffmpeg itself.
 """
 
 import os
@@ -16,7 +16,7 @@ HAS_FFMPEG = shutil.which("ffmpeg") is not None
 
 
 def make_test_mp4(path):
-    """2 秒 440 Hz 正弦波 + 黑底视频。libx264 不可用时退回 mpeg4。"""
+    """2-second 440 Hz sine wave + black-background video. Falls back to mpeg4 when libx264 is unavailable."""
     base = [
         shutil.which("ffmpeg"),
         "-y",
@@ -33,17 +33,17 @@ def make_test_mp4(path):
         )
         if proc.returncode == 0 and os.path.isfile(path):
             return vcodec
-    raise RuntimeError("ffmpeg 造测试视频失败：\n" + (proc.stderr or "")[-2000:])
+    raise RuntimeError("ffmpeg failed to build the test video:\n" + (proc.stderr or "")[-2000:])
 
 
-@unittest.skipUnless(HAS_FFMPEG, "未找到 ffmpeg")
+@unittest.skipUnless(HAS_FFMPEG, "ffmpeg not found")
 class TestAudio(unittest.TestCase):
     def test_extract_16k_mono_from_mp4(self):
         with tempfile.TemporaryDirectory() as tmp:
             mp4 = os.path.join(tmp, "sample.mp4")
             make_test_mp4(mp4)
 
-            # mp4 显然不是目标 wav
+            # an mp4 is obviously not the target wav
             self.assertFalse(audio.is_wav_16k_mono(mp4))
 
             wav_path, converted = audio.ensure_wav(mp4, tmp)
@@ -64,14 +64,14 @@ class TestAudio(unittest.TestCase):
             make_test_mp4(mp4)
             wav_path, _ = audio.ensure_wav(mp4, tmp)
 
-            # 已经是 16k 单声道的 wav：原样返回，不再抽一次
+            # A wav that is already 16k mono: return it as is, without extracting again
             again, converted = audio.ensure_wav(wav_path, tmp)
             self.assertFalse(converted)
             self.assertEqual(again, wav_path)
 
     def test_probe_duration(self):
         if not shutil.which("ffprobe"):
-            self.skipTest("未找到 ffprobe")
+            self.skipTest("ffprobe not found")
         with tempfile.TemporaryDirectory() as tmp:
             mp4 = os.path.join(tmp, "sample.mp4")
             make_test_mp4(mp4)

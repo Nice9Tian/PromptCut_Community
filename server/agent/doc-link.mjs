@@ -1,32 +1,44 @@
 /**
- * Agent 服务端到文档服务的连接与项目副本（C6.5 设计稿 `docs/plan/c65-design.md` 第 5 节，`cloud-task.md` D1）。
+ * Agent server-side connection to document service and project replica (C6.5 design draft
+ * `docs/plan/c65-design.md` section 5, `cloud-task.md` D1).
  *
- * - **一个对话一条连接**：写入身份（`actor`）只取连接的 principal（`auth-contract.md` 第 6 节），对话号是握手时定的，
- *   所以要让每个对话的写入都记成「agent + 它自己的对话号」，每个对话得有自己的一条 `agent` 角色连接。
- *   凭证由调用方按对话号给（`protocolsFor(n)`）：本机 `local` 空间是 `promptcut.role.agent.<n>`，局域网主机上
- *   创建者自己的项目再加 `promptcut.tenant.<projectId>`，共享项目（托管端、局域网成员）是页面签发的连接票据。
- * - **一份副本**：所有对话读同一份项目副本（设计稿第 5 节）。第一条连上的对话连接兼做「订阅」：发 `project.open`，
- *   收 `project.state` 与别人的 `project.ops`；各对话自己的提交由执行器在拿到 `project.op.ok` 后交给副本。
- *   两路（订阅连接上的广播、各对话连接上的 ok）可能交错到达，副本按 `rev` 排队、连续才应用、重复的丢掉；
- *   缺口超过 `gapTimeoutMs` 或应用失败就重新 `project.open`。
- * - 应用操作用文档服务同一份引擎（`../docservice/json-ops.mjs`），副本与文档服务的真身逐字节相同。
+ * - **One connection per chat**: write identity (`actor`) only takes the connection principal
+ *   (`auth-contract.md` section 6), and chat number is fixed during handshake, so to record
+ *   writes from each chat as "agent + its own chat number", each chat must have its own `agent`
+ *   role connection. Credentials are provided by caller per chat number (`protocolsFor(n)`):
+ *   local `local` space uses `promptcut.role.agent.<n>`, on a LAN host the creator's own projects
+ *   append `promptcut.tenant.<projectId>`, and shared projects (hosted side, LAN members) use
+ *   connection tickets issued by the page.
+ * - **One replica**: all chats read the same project replica (design draft section 5). The first
+ *   connected chat connection doubles as "subscription": sends `project.open`, receives
+ *   `project.state` and others' `project.ops`; each chat's own commits are handed to the replica
+ *   by the executor after receiving `project.op.ok`. The two paths (broadcasts on subscription
+ *   connection, ok on each chat connection) may arrive interleaved; replica queues by `rev`,
+ *   applies only when contiguous, and discards duplicates; if gaps exceed `gapTimeoutMs` or apply
+ *   fails, reopens with `project.open`.
+ * - Applying operations uses the same engine as document service (`../docservice/json-ops.mjs`);
+ *   replica is byte-for-byte identical to document service truth.
  *
- * - 每条连接是一个**会话**（`../render-node/session-link.mjs` 的 `createDocEndpoint`，HT-a 契约 `docs/plan/http-transport-contract.md`
- *   第 9 节）：传输断了在保留时限内接续，未确认的请求与回包都不丢，这里看不见；会话结束才算断线（请求失败、订阅连接重连）。
+ * - Each connection is a **session** (`createDocEndpoint` in `../render-node/session-link.mjs`,
+ *   HT-a contract `docs/plan/http-transport-contract.md` section 9): if transport drops, it
+ *   resumes within the retention window; unacknowledged requests and responses are not lost and
+ *   remain invisible here; only session termination counts as a disconnection (request failure,
+ *   subscription connection reconnect).
  *
- * 只依赖 Node 内置能力、本仓库的 `json-ops.mjs` 与 `session-link.mjs`；WebSocket 实现可注入（缺省用全局 `WebSocket`）。
+ * Depends only on Node built-ins and this repository's `json-ops.mjs` and `session-link.mjs`;
+ * WebSocket implementation is injectable (defaults to global `WebSocket`).
  */
 import { applyOps } from '../docservice/json-ops.mjs';
 import { createDocEndpoint } from '../render-node/session-link.mjs';
 
 export const AGENT_LINK_DEFAULTS = Object.freeze({
-  /** 一次请求（提交、事件、内容库）等回包的上限 */
+  /** Upper limit for waiting for a response to a request (commit, event, content store) */
   requestTimeoutMs: 15_000,
-  /** 副本收到的版本有缺口时，最多等这么久，还不连续就重新打开 */
+  /** Max time to wait when replica versions have a gap; reopens if still not contiguous */
   gapTimeoutMs: 2_000,
-  /** 订阅连接断开后的重连间隔（逐次加长，封顶最后一个） */
+  /** Reconnect backoff intervals after subscription connection drops (capped at the last entry) */
   reconnectMs: [200, 500, 1000, 2000, 5000],
-  /** 副本记住最近多少次提交的摘要（opId、写入身份），给页面侧工具的写入归属用 */
+  /** How many recent commit summaries (opId, write identity) the replica keeps for page-side tool write attribution */
   historyKeep: 1000,
 });
 
@@ -37,8 +49,9 @@ function linkError(code, message, extra = {}) {
 }
 
 /**
- * 项目副本：按 `rev` 顺序应用操作。
- * 状态：`hasState`（收到过 `project.state`）、`hasBody`（文档服务里这个项目有真身）、`rev`、`project`。
+ * Project replica: applies operations in `rev` order.
+ * State: `hasState` (received `project.state`), `hasBody` (project has true body in document
+ * service), `rev`, `project`.
  */
 class Replica {
   constructor({ gapTimeoutMs, historyKeep, onResync, log, onApplied = null }) {
@@ -51,16 +64,16 @@ class Replica {
     this.hasBody = false;
     this.rev = 0;
     this.project = null;
-    /** rev → { ops, meta }：比当前版本新、还不连续的 */
+    /** rev → { ops, meta }: newer than current version and not yet contiguous */
     this.buffered = new Map();
-    /** 最近的提交摘要：{ rev, opId, actor, session } */
+    /** Recent commit summary: { rev, opId, actor, session } */
     this.history = [];
     this.gapTimer = null;
     this.waiters = new Set();
     this.resyncing = false;
   }
 
-  /** 整份换成 `project.state` 给的内容 */
+  /** Replace entirely with content provided by `project.state` */
   setState(rev, project) {
     this.hasState = true;
     this.resyncing = false;
@@ -72,7 +85,7 @@ class Replica {
     this.notify();
   }
 
-  /** 一次提交落地了（别人的广播，或自己的 ok）；`ops` 为 null 表示没带操作（大的根替换），要重新打开 */
+  /** A commit landed (broadcast or own ok); null `ops` means no operations (large root replacement), reopen needed */
   offer(rev, ops, meta = {}) {
     if (!Number.isSafeInteger(rev)) return;
     if (this.hasState && rev <= this.rev) return;
@@ -87,12 +100,12 @@ class Replica {
       const next = this.rev + 1;
       const { ops, meta } = this.buffered.get(next);
       this.buffered.delete(next);
-      if (!Array.isArray(ops)) return this.resync('远端的提交没带操作（大的根替换）');
+      if (!Array.isArray(ops)) return this.resync('The remote commit carried no operations (large root replace)');
       let root;
       try {
         root = applyOps(this.project, ops).root;
       } catch (err) {
-        return this.resync(`远端操作在副本上落不下去：${err?.message ?? err}`);
+        return this.resync(`Remote operation could not be applied to the replica: ${err?.message ?? err}`);
       }
       const before = this.project;
       this.project = root;
@@ -100,7 +113,7 @@ class Replica {
       this.rev = next;
       this.history.push({ rev: next, opId: meta.opId ?? null, actor: meta.actor ?? null, session: meta.session ?? meta.actor?.session ?? null });
       if (this.history.length > this.historyKeep) this.history.splice(0, this.history.length - this.historyKeep);
-      // 提交流(A3 公告板的改动记录由它喂):每一版带写入身份与前后两份项目
+      // Commit stream (feeds A3 bulletin board change records): each version includes write identity and before/after projects
       if (typeof this.onApplied === 'function') {
         try { this.onApplied({ rev: next, opId: meta.opId ?? null, actor: meta.actor ?? null, ops, before, after: root }); } catch (err) { this.log('agent.replica.commit-listener-error', { message: String(err?.message ?? err) }); }
       }
@@ -110,7 +123,7 @@ class Replica {
     if (this.buffered.size > 0) {
       this.gapTimer = setTimeout(() => {
         this.gapTimer = null;
-        if (this.buffered.size > 0) this.resync(`版本有缺口：副本在 ${this.rev}，收到了 ${[...this.buffered.keys()].sort((a, b) => a - b).join(', ')}`);
+        if (this.buffered.size > 0) this.resync(`Version gap: the replica is at ${this.rev}, received ${[...this.buffered.keys()].sort((a, b) => a - b).join(', ')}`);
       }, this.gapTimeoutMs);
       this.gapTimer.unref?.();
     }
@@ -124,7 +137,7 @@ class Replica {
     this.onResync(reason);
   }
 
-  /** 版本号到 `rev`（或以上）时 resolve；超时 resolve false */
+  /** Resolves when version reaches `rev` (or higher); resolves false on timeout */
   waitRev(rev, timeoutMs) {
     if (this.hasState && this.rev >= rev) return Promise.resolve(true);
     return new Promise((resolve) => {
@@ -150,13 +163,13 @@ class Replica {
     for (const w of [...this.waiters]) w.check();
   }
 
-  /** 这个 opId 落地的版本；副本里没有回 null */
+  /** Version where this opId landed; returns null if not in replica */
   revOfOpId(opId) {
     for (let i = this.history.length - 1; i >= 0; i -= 1) if (this.history[i].opId === opId) return this.history[i].rev;
     return null;
   }
 
-  /** (from, to] 之间每一版的摘要；缺了（太久远）回 null */
+  /** Summary of each version in (from, to]; returns null if missing (too old) */
   between(from, to) {
     const out = this.history.filter((h) => h.rev > from && h.rev <= to);
     return out.length === to - from ? out : null;
@@ -171,9 +184,11 @@ class Replica {
 
 /**
  * @param {object} options
- * @param {string | ((conversation: number) => string)} options.url 文档服务的 WebSocket 地址(或按对话号给)
+ * @param {string | ((conversation: number) => string)} options.url Document service WebSocket URL
+ *   (or provided per chat number)
  * @param {string} options.projectId
- * @param {(conversation: number) => Promise<string[]> | string[]} options.protocolsFor 这个对话的连接用的子协议（含 `promptcut.v1`）
+ * @param {(conversation: number) => Promise<string[]> | string[]} options.protocolsFor
+ *   Subprotocols used by this chat's connection (includes `promptcut.v1`)
  * @param {typeof WebSocket} [options.WebSocketImpl]
  * @param {(event: string, fields?: object) => void} [options.log]
  */
@@ -188,29 +203,32 @@ export function createAgentLink({
   reconnectMs = AGENT_LINK_DEFAULTS.reconnectMs,
   historyKeep = AGENT_LINK_DEFAULTS.historyKeep,
   /**
-   * 可选(托管档给):文档服务以「不会再让你连回来」的关闭码关掉某条连接时(4003:开关关了、被踢、被移出;4004:项目删了)
-   * 调 `onFinalClose(对话号, { code, reason })`,并且**不再自动重连**——这是撤销,不是暂时性断线(契约 cloud-agent-contract.md 第 4.5 节)。
-   * 不给时与原来相同(一律按断线退避重连)。
+   * Optional (provided in hosted tier): when document service closes a connection with a close code
+   * meaning "will not allow reconnect" (4003: toggle turned off, kicked, removed; 4004: project
+   * deleted), calls `onFinalClose(chatNumber, { code, reason })`, and **does not reconnect
+   * automatically**: this is revocation, not a transient drop (contract cloud-agent-contract.md
+   * section 4.5).
+   * If omitted, behaves as before (always reconnects with backoff on disconnection).
    */
   onFinalClose = null,
 } = {}) {
-  // url 也可以按对话号给(测试里按查询串给写入身份;生产上各对话连同一个地址)
-  if (typeof url !== 'function' && (typeof url !== 'string' || !url)) throw new TypeError('createAgentLink: url 必须是字符串或函数');
+  // url can also be provided per chat number (tests supply write identity via query string; in production all chats share address)
+  if (typeof url !== 'function' && (typeof url !== 'string' || !url)) throw new TypeError('createAgentLink: url must be a string or a function');
   const urlFor = (n) => (typeof url === 'function' ? url(n) : url);
-  if (typeof projectId !== 'string' || !projectId) throw new TypeError('createAgentLink: projectId 必须是字符串');
-  if (typeof protocolsFor !== 'function') throw new TypeError('createAgentLink: protocolsFor 必须是函数');
-  if (typeof WebSocketImpl !== 'function') throw new TypeError('createAgentLink: 没有可用的 WebSocket 实现');
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响连接 */ } };
+  if (typeof projectId !== 'string' || !projectId) throw new TypeError('createAgentLink: projectId must be a string');
+  if (typeof protocolsFor !== 'function') throw new TypeError('createAgentLink: protocolsFor must be a function');
+  if (typeof WebSocketImpl !== 'function') throw new TypeError('createAgentLink: no WebSocket implementation available');
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failures do not affect the connection */ } };
 
   let closed = false;
-  /** 对话号 → 连接 */
+  /** Chat number → connection */
   const conns = new Map();
-  /** 兼做订阅的那条连接的对话号 */
+  /** Chat number of the connection that doubles as subscription */
   let feedConv = null;
   let reqSeq = 0;
   const listeners = new Set();
   const commitListeners = new Set();
-  /** 分片接收中的 project.state */
+  /** project.state currently being received in chunks */
   let partial = null;
   let stateWaiters = [];
 
@@ -259,7 +277,7 @@ export function createAgentLink({
         partial = null;
         let project;
         try {
-          if (part.chunks.length !== part.count || part.chunks.some((c) => typeof c !== 'string')) throw new Error('分片不全');
+          if (part.chunks.length !== part.count || part.chunks.some((c) => typeof c !== 'string')) throw new Error('Incomplete chunks');
           project = JSON.parse(part.chunks.join(''));
         } catch (err) {
           say('agent.replica.state-broken', { message: String(err?.message ?? err) });
@@ -290,7 +308,7 @@ export function createAgentLink({
     const conn = {
       n,
       state: 'idle',
-      /** 这条连接当前的会话端点（`createDocEndpoint`，一个端点只跑一个会话） */
+      /** Current session endpoint for this connection (`createDocEndpoint`, one session per endpoint) */
       ep: null,
       opening: null,
       waiters: new Map(),
@@ -314,7 +332,7 @@ export function createAgentLink({
       conn.retryTimer.unref?.();
     };
     conn.open = () => {
-      if (closed) return Promise.reject(linkError('closed', '到文档服务的连接已关闭'));
+      if (closed) return Promise.reject(linkError('closed', 'The connection to the document service is closed'));
       if (conn.state === 'open') return Promise.resolve();
       if (conn.opening) return conn.opening;
       conn.state = 'connecting';
@@ -325,11 +343,13 @@ export function createAgentLink({
         } catch (err) {
           conn.state = 'idle';
           conn.opening = null;
-          throw linkError('no-credential', `对话 ${n} 拿不到连接文档服务的凭证：${err?.message ?? err}`);
+          throw linkError('no-credential', `Chat ${n} cannot get a credential to connect to the document service: ${err?.message ?? err}`);
         }
         await new Promise((resolve, reject) => {
-          // 一个会话一个端点（`renew: false`）：传输断了在会话层里接续，这里看不见；会话结束才算断线，
-          // 断线之后怎么重连（订阅连接退避重连、别的对话用到时再连）仍由本文件决定，与改用会话层之前相同
+          // One endpoint per session (`renew: false`): transport drops resume within the session layer,
+          // invisible here; only session termination counts as a disconnection.
+          // How to reconnect after disconnection (subscription connection backoff reconnect, other chats
+          // reconnect when needed) is still decided by this file, same as before using the session layer.
           let ep;
           try {
             ep = createDocEndpoint({
@@ -349,7 +369,7 @@ export function createAgentLink({
               },
             });
           } catch (err) {
-            reject(linkError('connect-failed', `连不上文档服务：${err?.message ?? err}`));
+            reject(linkError('connect-failed', `Cannot connect to the document service: ${err?.message ?? err}`));
             return;
           }
           conn.ep = ep;
@@ -380,28 +400,28 @@ export function createAgentLink({
             if (conn.ep !== ep) return;
             const finalClose = typeof onFinalClose === 'function' && (info?.code === 4003 || info?.code === 4004);
             conn.ep = null;
-            try { ep.close(); } catch { /* 已经关了 */ }
+            try { ep.close(); } catch { /* Already closed */ }
             conn.state = 'idle';
             conn.opening = null;
             for (const [reqId, w] of conn.waiters) {
               clearTimeout(w.timer);
-              w.reject(linkError('disconnected', '到文档服务的连接断了'));
+              w.reject(linkError('disconnected', 'The connection to the document service dropped'));
               conn.waiters.delete(reqId);
             }
             if (finalClose) {
               say('agent.link.final-close', { conversation: n, code: info.code, reason: String(info.reason ?? '').slice(0, 40) });
-              if (!opened) reject(linkError('revoked', `文档服务拒绝了这条连接（${info.code} ${info.reason ?? ''}）`));
-              try { onFinalClose(n, { code: info.code, reason: String(info.reason ?? '') }); } catch { /* 宿主的事 */ }
+              if (!opened) reject(linkError('revoked', `The document service rejected this connection (${info.code} ${info.reason ?? ''})`));
+              try { onFinalClose(n, { code: info.code, reason: String(info.reason ?? '') }); } catch { /* Host responsibility */ }
               return;
             }
             if (!opened) {
-              reject(linkError('connect-failed', '连不上文档服务（握手被拒或网络不通）'));
+              reject(linkError('connect-failed', 'Cannot connect to the document service (handshake rejected or network unreachable)'));
               return;
             }
             say('agent.link.close', { conversation: n });
             retryFeed();
           };
-          // 会话结束（服务端关、接续不上），或第一次就建不成（握手被拒、网络不通）
+          // Session ended (server closed, resume failed), or initial creation failed (handshake rejected, network unreachable)
           ep.onClose(down);
           ep.onConnectFail(down);
         });
@@ -414,7 +434,8 @@ export function createAgentLink({
     };
 
     /**
-     * 发一个请求，等同一 `reqId` 的回包。`accept(msg)` 判断这条是不是它的终结回包（缺省任何同 reqId 的都算）。
+     * Send a request and wait for a response with the same `reqId`. `accept(msg)` determines whether
+     * this is its terminating response (by default, any message with the same reqId qualifies).
      */
     conn.request = async (message, accept = () => true) => {
       await conn.open();
@@ -422,14 +443,14 @@ export function createAgentLink({
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           conn.waiters.delete(reqId);
-          reject(linkError('timeout', `${message.type} 在 ${requestTimeoutMs} ms 内没有回包`));
+          reject(linkError('timeout', `${message.type} got no reply within ${requestTimeoutMs} ms`));
         }, requestTimeoutMs);
         timer.unref?.();
         conn.waiters.set(reqId, { resolve, reject, timer, accept });
         if (!conn.sendRaw({ ...message, reqId })) {
           clearTimeout(timer);
           conn.waiters.delete(reqId);
-          reject(linkError('disconnected', '到文档服务的连接没就绪'));
+          reject(linkError('disconnected', 'The connection to the document service is not ready'));
         }
       });
     };
@@ -439,15 +460,15 @@ export function createAgentLink({
       const ep = conn.ep;
       conn.ep = null;
       conn.state = 'closed';
-      for (const w of conn.waiters.values()) { clearTimeout(w.timer); w.reject(linkError('closed', '连接已关闭')); }
+      for (const w of conn.waiters.values()) { clearTimeout(w.timer); w.reject(linkError('closed', 'Connection closed')); }
       conn.waiters.clear();
-      try { ep?.close(); } catch { /* 已经断了 */ }
+      try { ep?.close(); } catch { /* Already disconnected */ }
     };
     return conn;
   }
 
   function conversation(n) {
-    if (!Number.isSafeInteger(n) || n < 1) throw new TypeError('对话号必须是正整数');
+    if (!Number.isSafeInteger(n) || n < 1) throw new TypeError('The chat number must be a positive integer');
     let conn = conns.get(n);
     if (!conn) {
       conn = makeConn(n);
@@ -462,45 +483,47 @@ export function createAgentLink({
     url,
     replica,
 
-    /** 取某个对话的连接（没有就建，用到时才连） */
+    /** Get connection for a chat (created on demand, connected only when used) */
     conversation,
 
     /**
-     * 等副本就绪（收到过 `project.state`）。副本就绪之前，订阅连接要先连上。
-     * 超时抛 `code: 'not-ready'`。
+     * Wait for replica readiness (having received `project.state`). Before replica is ready,
+     * subscription connection must connect first.
+     * Throws `code: 'not-ready'` on timeout.
      */
     async ready(timeoutMs = requestTimeoutMs) {
-      if (closed) throw linkError('closed', '到文档服务的连接已关闭');
-      if (feedConv === null) throw linkError('not-ready', '还没有任何对话连接');
+      if (closed) throw linkError('closed', 'The connection to the document service is closed');
+      if (feedConv === null) throw linkError('not-ready', 'No chat connection yet');
       if (replica.hasState && !replica.resyncing) return;
       await conns.get(feedConv).open();
       if (replica.hasState && !replica.resyncing) return;
       await new Promise((resolve, reject) => {
         const w = { resolve, timer: setTimeout(() => {
           stateWaiters = stateWaiters.filter((x) => x !== w);
-          reject(linkError('not-ready', `${timeoutMs} ms 内没有拿到项目 ${projectId} 的内容`));
+          reject(linkError('not-ready', `Did not get the content of project ${projectId} within ${timeoutMs} ms`));
         }, timeoutMs) };
         w.timer.unref?.();
         stateWaiters.push(w);
       });
     },
 
-    /** 订阅各连接上收到的、不是请求回包的消息（`project.overwritten` 等）；回退订函数 */
+    /** Subscribe to non-response messages on connections (`project.overwritten`, etc.); returns unsubscribe fn */
     onMessage(cb) {
       listeners.add(cb);
       return () => listeners.delete(cb);
     },
 
     /**
-     * 订阅提交流:副本每应用一版回调一次 `{ rev, opId, actor, ops, before, after }`(别人的广播与自己的 ok 都算;
-     * 整份换内容的 `project.state` 不算)。回退订函数。
+     * Subscribe to commit stream: replica invokes callback `{ rev, opId, actor, ops, before, after }`
+     * each time a version is applied (both others' broadcasts and own ok count; `project.state` full
+     * content replacements do not count). Returns unsubscribe function.
      */
     onCommit(cb) {
       commitListeners.add(cb);
       return () => commitListeners.delete(cb);
     },
 
-    /** 诊断 */
+    /** Diagnostics */
     describe() {
       return {
         url, projectId, feedConv,
@@ -521,5 +544,5 @@ export function createAgentLink({
   };
 }
 
-/** 只给测试:单独验副本的排队与重开 */
+/** Test-only: independently verify replica queuing and reopening */
 export { Replica as AgentReplica };

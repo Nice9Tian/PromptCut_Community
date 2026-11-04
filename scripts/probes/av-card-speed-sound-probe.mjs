@@ -1,34 +1,45 @@
 /**
- * 声画一体卡挂在变速素材段上照常出声(2026-10-23 用户定「出声。」,推翻〔裁〕V21-28)的导出端到端探针:
- * 成片里那几段的主频按倍率变,且「先生成声音、再切开变速段」之后已生成的声音照旧对位、不用重新生成。
+ * Export end-to-end probe for integrated audio-visual cards attached to speed-changed media clips
+ * playing audio as usual (user decision, 2026-10-23: "Play sound.", overturning [ruling] V21-28):
+ * Dominant frequencies of those clips in final video scale with playback rate, and after "generate
+ * audio first, then split speed-changed clip", generated audio aligns as before without regeneration.
  *
- *   node scripts/probes/av-card-speed-sound-probe.mjs --port 5940 [--out <目录>]
+ *   node scripts/probes/av-card-speed-sound-probe.mjs --port 5940 [--out <dir>]
  *
- * 本探针自己起一台本树的 dev server(端口 --port 与 +1、+2 要空着,不碰 5190～5192;导出、数据、改动层都在 --out 下,
- * 不写端口文件),无头 Chrome(`--mute-audio`,不向扬声器出声)打开编辑台。
+ * This probe starts a dev server from this tree itself (ports `--port`, +1, and +2 must be free,
+ * avoiding 5190~5192; export, data, and overlay layer are all under `--out`, no port file written),
+ * opening the editor in headless Chrome (`--mute-audio`, no sound to speakers).
  *
- * 素材:20 秒的视频,带一条 440 Hz 正弦声。卡:临时写进改动层的声画一体卡 `probe-av-pass`(有画面组件、有 `audio()`,
- * 声音把输入 `source` 的采样原样交出去;和 apply_card 之后一样,片段带 cardId / mediaId / nodeId,节点输入是这段自己的素材)。
- * 项目 10 秒,一条序列:
+ * Asset: 20-second video with a 440 Hz sine tone. Card: temporary integrated audio-visual card
+ * `probe-av-pass` written into overlay layer (has visual component, has `audio()`, audio passes input
+ * `source` samples through as is; just like after apply_card, clip has cardId / mediaId / nodeId, and
+ * node input is this clip's own asset). Project 10 seconds, one track:
  *
- *     A 0～2 秒   1×    从素材第 1 秒起      期望 440 Hz
- *     B 2～4 秒   2×    从第 0.5 秒起         期望 880 Hz
- *     C 4～6 秒   0.5×  从第 3 秒起           期望 220 Hz
- *     D 6～10 秒  2×    从第 4 秒起           期望 880 Hz;**先生成声音,再在 8 秒处切开**(store 的 splitClip)
+ *     A 0~2 s    1x    From asset second 1    Expected 440 Hz
+ *     B 2~4 s    2x    From second 0.5        Expected 880 Hz
+ *     C 4~6 s    0.5x  From second 3          Expected 220 Hz
+ *     D 6~10 s   2x    From second 4          Expected 880 Hz; **generate audio first, then split at 8 s** (store's splitClip)
  *
- * 步骤与断言(每条一行 PASS/FAIL,最后一行打一行 JSON,有失败退出码 1):
- *   N0  导出前清单:四段都要生成(ungenerated);改动前的 assertProjectCardAudio 只点名 A(变速段被跳过、不出声)在这里看不到
- *   G   prepareExportSounds 生成四段的声音
- *   S   在 8 秒处切开 D:切开后清单为空(已生成的声音两半都还覆盖、不判过期);后半段的播放偏移 = 前半段 + 2 秒(时间轴秒)
- *   E   桌面导出(`window.__pcIo.exportVideo()`)成功,且没有再生成声音
- *   A/B/C/D1/D2  成片各段中间(去掉两头 0.3 秒)有声(高于 −30 dBFS),主频(过零点与 DFT 峰)在期望值 ±2% 内
- *   DX  跨切点的窗口(7.5～8.5 秒)同样 880 Hz、响度与 D1 差不到 1 dB(切开处没有断档)
- *   V   画面:卡的红条宽 = 卡片时钟 ÷ 10 秒 × 画宽。切点前一帧(第 239 帧,前半段片段内 1.967 秒)与切点那一帧(第 240 帧,后半段 0 秒)
- *       红条宽度差不到 4 像素,且都约为 0.4 × 640 = 256 像素(卡片时钟 = mediaOffset ÷ 倍率 + 片段内时间 = 4/2 + 2 = 4 秒);
- *       改前卡片时钟起点是 mediaOffset(素材秒),前一帧约 382 像素、切点那一帧跳到 512 像素。两帧存成 PNG 在 --out 下
- *   E0  页面零报错
+ * Steps and assertions (one PASS/FAIL line per item, final line prints a JSON line, exit code 1 on failure):
+ *   N0  Pre-export manifest: all four clips need generation (ungenerated); pre-change assertProjectCardAudio
+ *       only named A (speed-changed clips were skipped with no sound), not seen here
+ *   G   prepareExportSounds generates audio for four clips
+ *   S   Split D at 8 s: manifest is empty after split (generated audio still covers both halves, not judged
+ *       expired); second half's playback offset = first half + 2 s (timeline seconds)
+ *   E   Desktop export (`window.__pcIo.exportVideo()`) succeeds without generating audio again
+ *   A/B/C/D1/D2  Middle of each final video clip (excluding 0.3 s at both ends) has sound (above -30 dBFS),
+ *                dominant frequency (zero-crossings and DFT peak) within +/-2% of expected value
+ *   DX  Window spanning split point (7.5~8.5 s) is also 880 Hz, loudness differs from D1 by under 1 dB
+ *       (no discontinuity at split point)
+ *   V   Visuals: card's red bar width = card clock / 10 s * frame width. Frame before split point
+ *       (frame 239, 1.967 s into first half clip) and frame at split point (frame 240, 0 s into second half)
+ *       differ in red bar width by under 4 pixels, and both are roughly 0.4 * 640 = 256 pixels
+ *       (card clock = mediaOffset / rate + intra-clip time = 4/2 + 2 = 4 s); pre-change card clock start
+ *       was mediaOffset (asset seconds), frame before was ~382 pixels, jumping to 512 pixels at split frame.
+ *       Both frames saved as PNG under --out
+ *   E0  Zero errors on page
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -73,18 +84,18 @@ function makeVideo() {
 const CARD_SOURCE = [
   'import type { CardDef, CardProps } from "../../kernel/types";',
   '',
-  '/** 探针用(av-card-speed-sound-probe.mjs 临时写进改动层):声画一体卡,声音把输入的声音原样交出去;画面是一根红条,宽 = 卡片时钟 ÷ 10 秒 */',
+  '/** Probe only (temporarily written into the override layer by av-card-speed-sound-probe.mjs): audio-visual card whose sound passes the input sound through unchanged; the picture is a red bar, width = card clock ÷ 10 seconds */',
   'function Frame({ t = 0 }: CardProps<{ gain: number }>) {',
   '  return <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${Math.min(1, Math.max(0, t / 10)) * 100}%`, background: "#ff0000" }} />;',
   '}',
   'export const probeAvPass: CardDef<{ gain: number }> = {',
   `  id: "${PASS}",`,
-  '  name: "速度探针:声画直通",',
-  '  description: "画面画卡片时钟,声音把输入原样输出",',
+  '  name: "Speed probe: audio-visual passthrough",',
+  '  description: "The picture draws the card clock, the sound outputs the input unchanged",',
   '  source: "user",',
   '  kind: "animation",',
   '  frameMode: "direct",',
-  '  inputs: { source: { description: "输入素材" } },',
+  '  inputs: { source: { description: "Input media" } },',
   '  defaults: { gain: 1 },',
   '  controls: [],',
   '  Component: Frame,',
@@ -115,12 +126,12 @@ function projectOf(media) {
       params: { gain: 1 }, frame: full, ...(s.speed ? { speed: s.speed } : {}) });
   }
   return { version: 1, id: 'p-av-card-speed', name: 'av-card-speed-sound', width: W, height: H, fps: FPS, duration: DURATION, themeId: 'midnight',
-    media: [media], filters: [], audioFx: [], cardNodes, tracks: [{ id: 't-main', name: '序列 1', clips }] };
+    media: [media], filters: [], audioFx: [], cardNodes, tracks: [{ id: 't-main', name: 'Track 1', clips }] };
 }
 
-/** 成片第 n 帧(rgb24),量第 y 行最左边连续红色像素的个数 */
+/** Final video frame n (rgb24), measure count of leftmost consecutive red pixels on row y */
 function redBar(file, n, png) {
-  // 滤镜参数里的逗号要转义成「\,」(不经 shell,原样交给 ffmpeg)
+  // Commas in filter arguments must be escaped as "\," (passed to ffmpeg as is, not through shell)
   const vf = `select=eq(n\\,${n})`;
   const buf = execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-vf', vf, '-vframes', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
     { windowsHide: true, maxBuffer: 1 << 26 });
@@ -146,14 +157,14 @@ function loudness(pcm, a, b) {
   for (const v of x) sum += v * v;
   return 10 * Math.log10(sum / x.length + 1e-20);
 }
-/** 过零点数 / 2 / 时长(speed-audio-input-probe.mjs 同一个做法) */
+/** Zero-crossing count / 2 / duration (same approach as speed-audio-input-probe.mjs) */
 function pitch(pcm, a, b) {
   const x = win(pcm, a, b);
   let n = 0;
   for (let i = 1; i < x.length; i++) if ((x[i - 1] < 0) !== (x[i] < 0)) n++;
   return n / 2 / ((b - a) || 1);
 }
-/** 单频 DFT 找峰(100～2000 Hz,1 Hz 一档),和过零点互相印证 */
+/** Single-frequency DFT peak finding (100~2000 Hz, 1 Hz per step), cross-validated with zero-crossings */
 function peakHz(pcm, a, b) {
   const x = win(pcm, a, b);
   let best = 0, bestHz = 0;
@@ -196,7 +207,7 @@ try {
     const needs = await sound.listExportSoundNeeds(new AbortController().signal);
     return needs.map((n) => ({ clipId: n.clipId, reason: n.reason }));
   });
-  check('N0', pre.length === 4 && pre.every((n) => n.reason === 'ungenerated'), '导出前四段都要生成声音', pre);
+  check('N0', pre.length === 4 && pre.every((n) => n.reason === 'ungenerated'), 'Before export, all four segments need sound generated', pre);
 
   const gen = await page.evaluate(async () => {
     try {
@@ -206,7 +217,7 @@ try {
       return { ok: true, generated: p.tracks[0].clips.filter((c) => c.cardAudio).map((c) => c.id) };
     } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
-  check('G', gen.ok && gen.generated?.length === 4, '先生成四段的声音', gen);
+  check('G', gen.ok && gen.generated?.length === 4, 'Generate the sound for the four segments first', gen);
 
   const split = await page.evaluate(async (at) => {
     const a = window.__pcStore.actions;
@@ -221,7 +232,7 @@ try {
     return { rightId: right?.id ?? null, rightMediaOffset: r?.mediaOffset, needs: needs.map((n) => ({ clipId: n.clipId, reason: n.reason, detail: n.detail })), offsets, error };
   }, SPLIT_AT);
   check('S', split.rightId && split.needs.length === 0 && split.offsets?.sameWav && Math.abs(split.offsets.right - split.offsets.left - (SPLIT_AT - 6)) < 1e-6,
-    `切开 D 之后清单为空,两半共用同一份 WAV,后半段偏移 = 前半段 + ${SPLIT_AT - 6} 秒`, split);
+    `After splitting D the manifest is empty, both halves share the same WAV, and the second half's offset = first half + ${SPLIT_AT - 6} seconds`, split);
 
   const exp = await page.evaluate(async () => {
     const progress = [];
@@ -231,7 +242,7 @@ try {
     } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
   const file = exp.outDir ? path.join(exp.outDir, 'preview.mp4') : '';
-  check('E', exp.ok && fs.existsSync(file), '桌面导出成功', exp);
+  check('E', exp.ok && fs.existsSync(file), 'Desktop export succeeded', exp);
   if (exp.ok && fs.existsSync(file)) {
     const mp4 = path.join(OUT, 'export.mp4');
     fs.copyFileSync(file, mp4);
@@ -247,19 +258,19 @@ try {
       const db = loudness(pcm, a, b), hz = pitch(pcm, a, b), peak = peakHz(pcm, a, b);
       const ok = db > -30 && Math.abs(hz - s.hz) <= s.hz * 0.02 && Math.abs(peak - s.hz) <= s.hz * 0.02;
       report.segs[s.id] = { speed: s.speed, expectHz: s.hz, zeroCrossHz: +hz.toFixed(1), dftPeakHz: peak, dBFS: +db.toFixed(1) };
-      check(s.id, ok, `${s.id} 段 ${s.speed}× 应为 ${s.hz} Hz 有声:过零 ${hz.toFixed(1)} Hz、DFT 峰 ${peak} Hz、${db.toFixed(1)} dBFS`);
+      check(s.id, ok, `Segment ${s.id} at ${s.speed}x should be ${s.hz} Hz with sound: zero-crossing ${hz.toFixed(1)} Hz, DFT peak ${peak} Hz, ${db.toFixed(1)} dBFS`);
     }
     const dx = { hz: pitch(pcm, SPLIT_AT - 0.5, SPLIT_AT + 0.5), peak: peakHz(pcm, SPLIT_AT - 0.5, SPLIT_AT + 0.5), db: loudness(pcm, SPLIT_AT - 0.5, SPLIT_AT + 0.5) };
     report.segs.DX = { zeroCrossHz: +dx.hz.toFixed(1), dftPeakHz: dx.peak, dBFS: +dx.db.toFixed(1) };
     check('DX', Math.abs(dx.hz - 880) <= 880 * 0.02 && Math.abs(dx.peak - 880) <= 880 * 0.02 && Math.abs(dx.db - report.segs.D1.dBFS) < 1,
-      `跨切点 ${SPLIT_AT - 0.5}～${SPLIT_AT + 0.5} 秒:过零 ${dx.hz.toFixed(1)} Hz、DFT 峰 ${dx.peak} Hz、${dx.db.toFixed(1)} dBFS(D1 ${report.segs.D1.dBFS})`);
+      `Across the cut point ${SPLIT_AT - 0.5}~${SPLIT_AT + 0.5} s: zero-crossing ${dx.hz.toFixed(1)} Hz, DFT peak ${dx.peak} Hz, ${dx.db.toFixed(1)} dBFS (D1 ${report.segs.D1.dBFS})`);
     const before = redBar(mp4, SPLIT_AT * FPS - 1, path.join(OUT, `frame-${SPLIT_AT * FPS - 1}.png`)), at = redBar(mp4, SPLIT_AT * FPS, path.join(OUT, `frame-${SPLIT_AT * FPS}.png`));
     report.bar = { before, at, expect: 0.4 * W };
-    check('V', Math.abs(at - before) < 4 && Math.abs(at - 0.4 * W) < 6, `画面:切点前一帧红条 ${before} 像素、切点那一帧 ${at} 像素(应都约 ${0.4 * W})`);
+    check('V', Math.abs(at - before) < 4 && Math.abs(at - 0.4 * W) < 6, `Frame: red bar is ${before} px in the frame before the cut point and ${at} px in the cut-point frame (both should be about ${0.4 * W})`);
   }
-  check('E0', errors.length === 0, '页面零报错', errors);
+  check('E0', errors.length === 0, 'Page has zero errors', errors);
 } catch (error) {
-  check('X', false, `探针异常:${String(error?.stack || error)}`);
+  check('X', false, `Probe error: ${String(error?.stack || error)}`);
 } finally {
   await browser.close();
   server.stop();

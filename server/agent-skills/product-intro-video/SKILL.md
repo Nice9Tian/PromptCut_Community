@@ -1,30 +1,30 @@
 ---
 name: product-intro-video
-description: 做软件或产品的介绍片、功能演示片、宣传短片时用：定结构、选卡片、排时间轴、看画面核对。用户说「介绍一下这个软件」「做个功能演示」「做个宣传短片」时读。
+description: Use when making an intro video, feature demo video or promo short for software or a product: set the structure, pick cards, lay out the timeline, and check by looking at the picture. Read when the user says "introduce this software", "make a feature demo" or "make a promo short".
 ---
 
-# 产品介绍片
+# Product intro video
 
-片子一律用卡片和素材做在时间轴上。
+Always build the video on the timeline with cards and media.
 
-## 先定结构
+## Set the structure first
 
-1. 先读项目：`get_project` 看画布尺寸和帧率，`list_media` 看有没有用户给的截图、录屏和标志。
-2. 用户没说长度时做 30～60 秒。一支片子只讲一件事：这个产品替谁解决了什么问题。
-3. 按这个顺序排，每段一个重点：
-   - 开场 3～5 秒：产品名和一句话定位。
-   - 功能 2～4 段，每段 5～10 秒：一个功能配一个画面，只写一句话。
-   - 收尾 3～5 秒：产品名和用户下一步该做什么。
-4. 用户给了文案或剧本就照它来，这里的时长和段数只在用户没说时用。
+1. Read the project first: `get_project` shows the canvas size and frame rate, and `list_media` shows whether the user supplied screenshots, screen recordings and logos.
+2. If the user did not specify a length, make it 30 to 60 seconds. A video says only one thing: what problem this product solves, and for whom.
+3. Arrange in this order, with one key point per segment:
+   - Opening, 3 to 5 seconds: the product name and a one-line positioning statement.
+   - Features, 2 to 4 segments of 5 to 10 seconds each: one picture per feature, with just one sentence.
+   - Closing, 3 to 5 seconds: the product name and what the user should do next.
+4. If the user supplied copy or a script, follow it; the durations and segment counts here apply only when the user did not specify.
 
-## 做的时候
+## While making it
 
-1. 用 `list_cards` 看每张卡的 `useWhen` 选卡，选定后带 `cardId` 再调一次取参数，然后 `add_clip`。
-2. 有真实界面素材时优先用它，少用抽象图形。没有素材时不要编造界面截图，用文字卡和动效表达。
-3. 一屏一句话，字要大，留够读完的时间。全片的字体和配色保持一致。
-4. 卡片调参数做不到的画面才新建卡片，并遵守创造力等级。
+1. Use `list_cards` and pick a card by its `useWhen`; once chosen, call it again with `cardId` to get the parameters, then `add_clip`.
+2. When real UI media is available, use it first and use fewer abstract graphics. When there is none, do not fabricate UI screenshots; express it with text cards and motion graphics.
+3. One sentence per screen, large text, and leave enough time to read it. Keep the fonts and colors consistent across the whole video.
+4. Create a new card only for visuals that cannot be achieved by adjusting a card's parameters, and respect the creativity level.
 
-## 交付前
+## Before delivery
 
-1. 用 `see_frames` 看每段的关键帧，查文字有没有被遮挡或出画面。
-2. 把片子从头到尾的时长和段落对一遍，再用 `report_progress` 收尾，写清用了哪些素材、哪些地方是占位内容。
+1. Use `see_frames` to look at the key frames of each segment and check whether any text is covered or runs off the picture.
+2. Check the durations and segments of the video from start to end, then wrap up with `report_progress`, stating clearly which media were used and which places are placeholder content.

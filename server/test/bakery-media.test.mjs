@@ -5,15 +5,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { mediaSourceOf } from '../bakery/media.mjs';
 
-// 导出时 ffmpeg 读素材的规则:只认这一趟导出自己的产物目录,其余一律经页面同源的 HTTP(素材服务),
-// 不读本地内容库的目录、不认 m.path(docs/semantics/product/asset-service.md「职责」)
+// ffmpeg asset reading rules during export: only recognize this export pass's own output directory,
+// all others go via same-origin HTTP from the page (asset service); do not read local content
+// store directories, do not recognize m.path (docs/semantics/product/asset-service.md "Responsibilities")
 const pageUrl = 'http://127.0.0.1:5220/?export=1';
 const hash = 'a'.repeat(64);
 
-test('素材库里的素材走页面同源的 HTTP,不落到本地内容库的文件', () => {
+test('Media in the media library is served over HTTP from the page\'s own origin and is not read from files in the local content store', () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-bakery-media-'));
   try {
-    // 就算本地内容库里真有这个文件,也不能直接读
+    // Even if this file actually exists in the local content store, it cannot be read directly
     const lib = path.join(outDir, '..', 'media');
     assert.equal(mediaSourceOf({ url: `/@media/${hash}`, path: path.join(lib, `${hash}.mp4`) }, { outDir, pageUrl }),
       `http://127.0.0.1:5220/@media/${hash}`);
@@ -25,7 +26,7 @@ test('素材库里的素材走页面同源的 HTTP,不落到本地内容库的�
   }
 });
 
-test('只有 path 没有 url 的素材不再按磁盘路径读', () => {
+test('Media with only a path and no url is no longer read by disk path', () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-bakery-media-'));
   try {
     const f = path.join(outDir, 'real.mp4');
@@ -36,14 +37,15 @@ test('只有 path 没有 url 的素材不再按磁盘路径读', () => {
   }
 });
 
-test('导出时浏览器上传的素材仍从这一趟的产物目录读,越界的不认', () => {
+test('At export, media uploaded by the browser is still read from this run\'s output directory, and anything outside it is rejected', () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-bakery-media-'));
   try {
     fs.mkdirSync(path.join(outDir, 'media'));
     const f = path.join(outDir, 'media', 'up.mp4');
     fs.writeFileSync(f, 'x');
     assert.equal(mediaSourceOf({ url: '/@export/job-1/media/up.mp4' }, { outDir, pageUrl }), f);
-    // 越出产物目录的:退回同源 HTTP,由那一侧的路由决定给不给,不在这里读盘
+    // Anything exceeding output directory: fall back to same-origin HTTP, let routes on that side
+    // decide whether to serve it, do not read from disk here
     const esc = mediaSourceOf({ url: '/@export/job-1/media/..%2F..%2Fsecret.txt' }, { outDir, pageUrl });
     assert.ok(esc === null || /^http:\/\/127\.0\.0\.1:5220\//.test(esc), String(esc));
   } finally {
@@ -51,7 +53,7 @@ test('导出时浏览器上传的素材仍从这一趟的产物目录读,越界�
   }
 });
 
-test('不同源、blob、data 地址一律不认', () => {
+test('Cross-origin, blob and data addresses are all rejected', () => {
   const outDir = os.tmpdir();
   assert.equal(mediaSourceOf({ url: 'http://evil.example/a.mp4' }, { outDir, pageUrl }), null);
   assert.equal(mediaSourceOf({ url: 'file:///C:/Windows/win.ini' }, { outDir, pageUrl }), null);

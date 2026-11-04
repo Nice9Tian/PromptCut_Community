@@ -1,22 +1,32 @@
 /**
- * 剪辑段属性面板与素材库剪辑格子的界面探针(剪辑段首版局限补齐,`docs/archive/agent-reports/AGENT-cut-segment-followups.md` 第 1、5 项)。
- * 真的打开编辑台,在面板上点、填、拖,读 store 核对,逐步截图。
+ * UI probe for cut segment properties panel and media library cut cells (cut segment initial
+ * version limitations follow-up, items 1 and 5 of
+ * `docs/archive/agent-reports/AGENT-cut-segment-followups.md`).
+ * Actually opens editor, clicks, fills, and drags on panel, checks against store, and takes
+ * step-by-step screenshots.
  *
- *   node scripts/probes/cut-segment-panel-probe.mjs --origin http://127.0.0.1:5370 --out <截图目录>
+ *   node scripts/probes/cut-segment-panel-probe.mjs --origin http://127.0.0.1:5370 --out <screenshot-dir>
  *
- * dev server 要先起好(三个连号端口都空着;不碰 5190～5192)。
+ * dev server must be started beforehand (three consecutive ports free; avoid 5190-5192).
  *
- * 断言(每条一行 PASS/FAIL,最后一行打一行 JSON,有失败退出码 1):
- *   P1 单击时间轴上的剪辑段:编辑分区显示剪辑段面板(被引用剪辑的名字、偏移、起止、框、不透明度、淡入淡出、音量、静音、「打开被引用剪辑」)
- *   P2 改起点偏移:store 里 cutOffset 跟着变、出点截到被引用剪辑剩下的长度;撤销一次回到原值
- *   P3 引用哪条剪辑不能改(2026-10-21 用户定):面板里没有「引用」下拉框(也没有别的 select),「打开被引用剪辑」按钮还在
- *   P4 框:改 X、Y、缩放 → frame;「铺满」清掉 frame;撤销回来(数字框回车才提交,X、Y、缩放各一步,共三步)
- *   P5 不透明度、淡入、淡出 → opacity / fadeIn / fadeOut;撤销回来
- *   P6 音量、静音 → audioVolume / audioMuted;撤销回来
- *   P7 偏移超出被引用剪辑的总时长:不改项目,面板底下写明原因
- *   P8 每次改动都换了新的项目对象(不原地改)
- *   P9 「打开被引用剪辑」:激活剪辑换成被引用的那条,标签栏里有它的标签(和双击剪辑段同效)
- *   L1 素材库「剪辑」组:总览缩略和详情格子里剪辑名都完整一行(高度 ≥ 14 像素),字号不小于视频 / 图片格子的标题
+ * Assertions (one PASS/FAIL line per item, last line prints a JSON line, exits with code 1 on failure):
+ *   P1 Click cut segment on timeline: editor section displays cut segment panel (referenced cut
+ *      name, offset, start/end, frame, opacity, fade-in/fade-out, volume, mute, "Open referenced cut")
+ *   P2 Change start offset: cutOffset in store updates, out point clamped to remaining length of
+ *      referenced cut; undo once restores original value
+ *   P3 Which cut is referenced cannot be changed (user decision, 2026-10-21): no "Reference" dropdown
+ *      in panel (nor any other select), "Open referenced cut" button is still present
+ *   P4 Frame: change X, Y, scale → frame; "Fill" clears frame; undo back (number inputs only submit
+ *      on Enter, one step each for X, Y, scale, three steps in total)
+ *   P5 Opacity, fade-in, fade-out → opacity / fadeIn / fadeOut; undo back
+ *   P6 Volume, mute → audioVolume / audioMuted; undo back
+ *   P7 Offset exceeds total duration of referenced cut: project not modified, reason stated at
+ *      bottom of panel
+ *   P8 Each change replaces with a new project object (no in-place modification)
+ *   P9 "Open referenced cut": active cut switches to referenced one, tab bar shows its tab
+ *      (same effect as double-clicking cut segment)
+ *   L1 Media library "Cuts" group: cut name is a full line in both overview thumbnail and detail
+ *      cells (height ≥ 14 pixels), font size not smaller than video/image cell titles
  */
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
@@ -54,14 +64,14 @@ try {
     if (r && r.w > 0) await page.screenshot({ path: path.join(OUT, `${name}.png`), clip: { x: r.x, y: r.y, width: r.w, height: r.h } });
   };
 
-  /* 准备:剪辑2(一张卡 0～6 秒)、剪辑3(一张卡 0～4 秒),剪辑1 里 1 秒处一个引用剪辑2 的剪辑段 */
+  /* Setup: Cut 2 (one card 0-6s), Cut 3 (one card 0-4s), and in Cut 1 at 1s a cut segment referencing Cut 2 */
   const ids = await page.evaluate(() => {
     const a = window.__pcStore.actions;
-    a.newProject('剪辑段面板');
-    const c2 = a.addCut('剪辑2', { switchTo: true });
+    a.newProject('Cut segment panel');
+    const c2 = a.addCut('Cut 2', { switchTo: true });
     a.addCardClip('punch-pill', 0, { duration: 6, params: { text: '剪辑二' } });
     a.setProjectMeta({ duration: 6 });
-    const c3 = a.addCut('剪辑3', { switchTo: true });
+    const c3 = a.addCut('Cut 3', { switchTo: true });
     a.addCardClip('punch-pill', 0, { duration: 4, params: { text: '剪辑三' } });
     a.setProjectMeta({ duration: 4 });
     const root = window.__pcStore.getState().project.cuts[0].id;
@@ -83,7 +93,7 @@ try {
     await page.click(sel, { clickCount: 3 });
     await page.keyboard.press('Backspace');
     await page.type(sel, String(value));
-    await page.keyboard.press('Enter'); // 数字框敲字只改草稿,回车(失焦)才提交一步
+    await page.keyboard.press('Enter'); // Typing in number inputs only modifies draft; Enter (blur) submits one step
     await sleep(250);
   };
   const setRange = async (sel, value) => {
@@ -96,7 +106,7 @@ try {
     await sleep(250);
   };
 
-  /* P1 单击剪辑段 → 编辑分区显示剪辑段面板 */
+  /* P1 Click cut segment → editor section displays cut segment panel */
   const segEl = await page.$(`[data-pc-cut-segment="${ids.c2}"]`);
   if (segEl) await segEl.click();
   await sleep(400);
@@ -114,38 +124,41 @@ try {
     };
   });
   const sel = await page.evaluate(() => window.__pcStore.getState().selection);
-  check('P1', panel && panel.fields.length === 0 && /剪辑2/.test(panel.text) && sel[0] === ids.seg, '单击剪辑段:编辑分区显示剪辑段面板,各项都在', { panel, sel });
+  check('P1', panel && panel.fields.length === 0 && /Cut 2/.test(panel.text) && sel[0] === ids.seg, 'Clicking a cut segment: the editing section shows the cut segment panel with all items present', { panel, sel });
   await shot('01-panel-selected');
   await panelShot('01b-panel');
 
-  /* P2 起点偏移 */
+  /* P2 Start offset */
   let r0 = await projectRef();
   await typeInto('[data-pc="cut-segment-offset"]', 2);
   let s = await seg();
   const p8a = !(await sameRef(r0));
-  check('P2', s.cutOffset === 2 && s.start === 1 && Math.abs(s.end - (1 + 6 - 2)) < 1e-6, '改偏移:cutOffset = 2,出点截到被引用剪辑剩下的 4 秒', { cutOffset: s.cutOffset, start: s.start, end: s.end });
+  check('P2', s.cutOffset === 2 && s.start === 1 && Math.abs(s.end - (1 + 6 - 2)) < 1e-6, 'Change the offset: cutOffset = 2, the out point is trimmed to the 4 seconds remaining in the referenced cut', { cutOffset: s.cutOffset, start: s.start, end: s.end });
   await panelShot('02-offset');
   await undo();
   s = await seg();
-  check('P2u', (s.cutOffset ?? 0) === 0 && s.end === 7, '撤销一次:偏移与出点回到原值', { cutOffset: s.cutOffset, end: s.end });
+  check('P2u', (s.cutOffset ?? 0) === 0 && s.end === 7, 'Undo once: the offset and out point return to their original values', { cutOffset: s.cutOffset, end: s.end });
 
-  /* P3 引用哪条剪辑不能改(2026-10-21 用户定):编辑分区里没有「引用」下拉框,「打开被引用剪辑」按钮还在 */
+  /*
+   * P3 Which cut is referenced cannot be changed (user decision, 2026-10-21): no "Reference"
+   * dropdown in editor section, "Open referenced cut" button is still present
+   */
   const refUi = await page.evaluate(() => {
     const f = document.querySelector('[data-pc="cut-segment-form"]');
     return { select: !!f?.querySelector('[data-pc="cut-segment-cut"]'), anySelect: f ? f.querySelectorAll('select').length : -1,
-      open: !!f?.querySelector('[data-pc="cut-segment-open"]'), label: /引用\s/.test(f?.innerText ?? '') };
+      open: !!f?.querySelector('[data-pc="cut-segment-open"]'), label: /Reference\s/.test(f?.innerText ?? '') };
   });
-  check('P3', !refUi.select && refUi.anySelect === 0 && refUi.open, '编辑分区里没有换引用的下拉框;「打开被引用剪辑」按钮还在', refUi);
+  check('P3', !refUi.select && refUi.anySelect === 0 && refUi.open, 'The editing section has no dropdown for changing the reference; the "Open referenced cut" button is still there', refUi);
   await panelShot('03-no-ref-select');
 
-  /* P4 框 */
+  /* P4 Frame */
   r0 = await projectRef();
   await typeInto('[data-pc="cut-segment-x"]', 100);
   await typeInto('[data-pc="cut-segment-y"]', 50);
   await setRange('[data-pc="cut-segment-scale"]', 0.5);
   s = await seg();
   const p8c = !(await sameRef(r0));
-  check('P4', s.frame?.x === 100 && s.frame?.y === 50 && s.frame?.scale === 0.5, '改 X、Y、缩放写进 frame', { frame: s.frame });
+  check('P4', s.frame?.x === 100 && s.frame?.y === 50 && s.frame?.scale === 0.5, 'Changing X, Y and scale is written into frame', { frame: s.frame });
   await sleep(500);
   await shot('04-frame');
   await page.click('[data-pc="cut-segment-frame-reset"]');
@@ -154,64 +167,66 @@ try {
   const cleared = s.frame === undefined;
   await undo();
   s = await seg();
-  check('P4r', cleared && s.frame?.scale === 0.5, '「铺满」清掉 frame;撤销回到缩放 0.5', { frame: s.frame, cleared });
-  // 数字框回车才提交(2026-10-20 用户定):X 填 100 一步、Y 填 50 一步、缩放一步,共三步
+  check('P4r', cleared && s.frame?.scale === 0.5, '"Fill" clears frame; undo returns to scale 0.5', { frame: s.frame, cleared });
+  // Number inputs only submit on Enter (user decision, 2026-10-20): filling X with 100 is one
+  // step, Y with 50 is one step, scale is one step, three steps total
   let steps = 0;
   while (s.frame !== undefined && steps < 10) { await undo(); steps++; s = await seg(); }
-  check('P4u', s.frame === undefined && steps === 3, `再逐步撤销 ${steps} 次:框回到铺满`, { frame: s.frame, steps });
+  check('P4u', s.frame === undefined && steps === 3, `Undo ${steps} more times step by step: the box returns to fill`, { frame: s.frame, steps });
 
-  /* P5 不透明度、淡入淡出 */
+  /* P5 Opacity, fade-in/fade-out */
   r0 = await projectRef();
   await setRange('[data-pc="cut-segment-opacity"]', 0.6);
   await typeInto('[data-pc="cut-segment-fadein"]', 1);
   await typeInto('[data-pc="cut-segment-fadeout"]', 0.5);
   s = await seg();
   const p8d = !(await sameRef(r0));
-  check('P5', s.opacity === 0.6 && s.fadeIn === 1 && s.fadeOut === 0.5, '不透明度 0.6、淡入 1、淡出 0.5', { opacity: s.opacity, fadeIn: s.fadeIn, fadeOut: s.fadeOut });
+  check('P5', s.opacity === 0.6 && s.fadeIn === 1 && s.fadeOut === 0.5, 'Opacity 0.6, fade-in 1, fade-out 0.5', { opacity: s.opacity, fadeIn: s.fadeIn, fadeOut: s.fadeOut });
   await panelShot('05-opacity-fades');
   await undo();
   s = await seg();
-  check('P5u', s.fadeOut !== 0.5 && s.fadeIn === 1, '撤销一次:淡出回去,淡入留着', { fadeIn: s.fadeIn, fadeOut: s.fadeOut });
+  check('P5u', s.fadeOut !== 0.5 && s.fadeIn === 1, 'Undo once: the fade-out reverts, the fade-in stays', { fadeIn: s.fadeIn, fadeOut: s.fadeOut });
 
-  /* P6 音量、静音 */
+  /* P6 Volume, mute */
   r0 = await projectRef();
   await setRange('[data-pc="cut-segment-volume"]', 0.4);
   await page.click('[data-pc="cut-segment-muted"]');
   await sleep(300);
   s = await seg();
   const p8e = !(await sameRef(r0));
-  check('P6', s.audioVolume === 0.4 && s.audioMuted === true, '音量 0.4、静音', { audioVolume: s.audioVolume, audioMuted: s.audioMuted });
+  check('P6', s.audioVolume === 0.4 && s.audioMuted === true, 'Volume 0.4, muted', { audioVolume: s.audioVolume, audioMuted: s.audioMuted });
   await panelShot('06-volume-muted');
   await undo();
   s = await seg();
-  check('P6u', !s.audioMuted && s.audioVolume === 0.4, '撤销一次:静音取消,音量留着', { audioVolume: s.audioVolume, audioMuted: s.audioMuted });
+  check('P6u', !s.audioMuted && s.audioVolume === 0.4, 'Undo once: mute is canceled, the volume stays', { audioVolume: s.audioVolume, audioMuted: s.audioMuted });
 
-  /* P7 偏移超出 */
+  /* P7 Offset exceeds duration */
   r0 = await projectRef();
   await typeInto('[data-pc="cut-segment-offset"]', 9);
   const err = await page.evaluate(() => document.querySelector('[data-pc="cut-segment-error"]')?.textContent ?? null);
   s = await seg();
-  check('P7', (await sameRef(r0)) && /超出/.test(err ?? '') && (s.cutOffset ?? 0) === 0, '偏移 9 秒超出剪辑2 的 6 秒:项目不动,面板写明原因', { err, cutOffset: s.cutOffset });
+  check('P7', (await sameRef(r0)) && /exceeds/.test(err ?? '') && (s.cutOffset ?? 0) === 0, 'An offset of 9 seconds exceeds the 6 seconds of Cut 2: the project is untouched, and the panel states the reason', { err, cutOffset: s.cutOffset });
   await page.evaluate(() => document.querySelector('[data-pc="cut-segment-error"]')?.scrollIntoView({ block: 'end' }));
   await sleep(200);
   await panelShot('07-offset-error');
 
-  check('P8', p8a && p8c && p8d && p8e, '每次改动都换了新的项目对象', { p8a, p8c, p8d, p8e });
+  check('P8', p8a && p8c && p8d && p8e, 'Every change produced a new project object', { p8a, p8c, p8d, p8e });
 
-  /* P9 打开被引用剪辑 */
+  /* P9 Open referenced cut */
   await page.click('[data-pc="cut-segment-open"]');
   await sleep(800);
   const st = await page.evaluate(() => ({ active: window.__pcStore.getState().project.activeCutId, tabs: [...document.querySelectorAll('[data-pc-cut-tab]')].map((el) => ({ id: el.getAttribute('data-pc-cut-tab'), on: el.classList.contains('is-on') })) }));
-  check('P9', st.active === ids.c2 && st.tabs.some((t) => t.id === ids.c2 && t.on), '「打开被引用剪辑」:激活剪辑2,标签栏里它的标签亮着', st);
+  check('P9', st.active === ids.c2 && st.tabs.some((t) => t.id === ids.c2 && t.on), '"Open referenced cut": activates Cut 2, and its tab in the tab bar is highlighted', st);
   await shot('09-open-referenced');
   await page.evaluate((root) => window.__pcStore.actions.switchCut(root), ids.root);
   await sleep(500);
 
-  /* L1 素材库剪辑格子 */
+  /* L1 Media library cut cells */
   const libShown = await page.evaluate(() => { const el = document.querySelector('[data-pc="library"]'); return !!el && el.getBoundingClientRect().width > 0; });
   if (!libShown) await page.evaluate(() => document.querySelector('[data-pc-rail="library"]')?.click());
   await sleep(600);
-  // 一张图片素材,拿它详情格子的标题字号作对照(和视频格子同一个标题条 `.pc-lib-card-title`)
+  // One image asset, using its detail cell title font size as control (shares title bar
+  // `.pc-lib-card-title` with video cell)
   await page.evaluate(() => window.__pcStore.actions.addMedia({ kind: 'image', name: '对照图片.svg', url: '/favicon.svg', width: 64, height: 64 }));
   await sleep(600);
   await page.evaluate(() => document.querySelector('[data-pc-group="cuts"]')?.scrollIntoView());
@@ -223,7 +238,7 @@ try {
   await sleep(800);
   const videoTitle = await page.evaluate(() => { const el = document.querySelector('.pc-lib-card-title'); return el ? { t: el.textContent, fs: parseFloat(getComputedStyle(el).fontSize), h: el.getBoundingClientRect().height } : null; });
   await shot('L1-image-detail');
-  // 回总览,开剪辑组详情
+  // Return to overview, open cut group details
   await page.evaluate(() => document.querySelector('[data-pc-category="all"]')?.click());
   await sleep(400);
   await page.evaluate(() => { const c = document.querySelector('[data-pc-group="cuts"]'); if (c) c.click(); else document.querySelector('[data-pc-cat-chip="cuts"], [data-pc-group-chip="cuts"]')?.click(); });
@@ -232,9 +247,9 @@ try {
   await shot('L1-detail-cuts');
   const ref = videoTitle?.fs ?? 11.5;
   check('L1', overview.length >= 2 && overview.every((n) => n.h >= 14 && n.fs >= ref) && detail.length >= 3 && detail.every((n) => n.h >= 14 && n.fs >= ref),
-    `剪辑名在总览缩略与详情格子里都完整一行,字号不小于图片 / 视频格子的标题(${ref}px)`, { overview, detail, videoTitle });
+    `The cut name fits on one full line in both the overview thumbnail and the detail cell, with a font size no smaller than the title of image / video cells (${ref}px)`, { overview, detail, videoTitle });
 
-  check('E0', errors.length === 0, '页面零报错', errors);
+  check('E0', errors.length === 0, 'Page has zero errors', errors);
 } finally {
   await browser.close();
 }

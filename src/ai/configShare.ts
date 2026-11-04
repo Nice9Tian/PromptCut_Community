@@ -2,28 +2,30 @@ import type { ApiVendor } from "./types";
 import { tr } from "../i18n/index.ts";
 
 /**
- * LLM API 配置的加密分发。
+ * Encrypted distribution of LLM API configurations.
  *
- * 分发方在本机填好 baseUrl / key / model,用接收方的「本机识别码」当口令加密,
- * 得到一段以 PCAI1. 开头的长文本;接收方粘进来,软件在本机算出同一串识别码,
- * 自动解开并写进配置。
+ * The distributor fills in baseUrl / key / model locally, encrypts using the recipient's "local
+ * identifier" as the passphrase, producing a long text starting with PCAI1.; the recipient pastes
+ * it in, software computes the same identifier locally, automatically decrypts and writes it into
+ * the configuration.
  *
- * 能防什么:密文在邮件、聊天里传的时候是密的;转发给第三个人,他的机器码不同,
- * 解不开。
- * 不能防什么:接收方自己。他的软件必须拿到明文 key 才能调 API,所以他有心的话
- * 一定拿得到。这套东西是「绑定到指定机器 + 传输途中不裸奔」,不是对接收方保密。
+ * What it protects against: ciphertext remains encrypted while sent via email or chat; forwarded to
+ * a third party, it cannot be decrypted because their machine code differs.
+ * What it does not protect against: the recipient themselves. Their software must obtain the
+ * plaintext key to call the API, so if determined they can always retrieve it. This setup is "bound
+ * to a specified machine + encrypted in transit", not confidential from the recipient.
  */
 
-/** 密文文本的前缀,兼作版本号。换算法就换前缀,老密文照样认得出来 */
+/** Ciphertext prefix, doubling as version. Changing algorithm changes prefix; old ciphertext is still recognized */
 const PREFIX = "PCAI1.";
 
-/** 绑进 AES-GCM 的附加数据:密文被挪去别的用途时会解不开 */
+/** Additional data bound into AES-GCM: ciphertext cannot be decrypted if reused for other purposes */
 const AAD = "PromptCut-api-share-v1";
 
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
 
-/** PBKDF2 轮数。识别码只有 100 位熵,靠轮数把暴力破解的成本抬上去 */
+/** PBKDF2 rounds. The identifier has only 100 bits of entropy; rounds raise the cost of brute force */
 const DEFAULT_ITERATIONS = 600_000;
 
 export interface SharedApiConfig {
@@ -32,9 +34,9 @@ export interface SharedApiConfig {
   model: string;
   apiKey: string;
   maxTokens?: number;
-  /** 分发方留给接收方的一句话,导入时显示出来 */
+  /** Note left by distributor for recipient, displayed upon import */
   note?: string;
-  /** 可选的失效时间(毫秒时间戳),过期后拒绝导入 */
+  /** Optional expiration time (millisecond timestamp); rejected on import once expired */
   expiresAt?: number;
 }
 
@@ -53,13 +55,13 @@ function base64urlDecode(text: string): Uint8Array {
 }
 
 /**
- * 口令归一化。
+ * Passphrase normalization.
  *
- * 识别码是人从聊天窗口抄过来的,所以对 PCM- 开头的输入做纠错:去掉分隔符、
- * 统一大写,再把手抄常见的形近字纠正过来(O→0、I/L→1、U→V,这几个字母本来
- * 就不在 Crockford Base32 表里,出现了必然是抄错)。
+ * Identifiers are copied by humans from chat windows, so inputs starting with PCM- are corrected:
+ * strip separators, unify to uppercase, and fix common handwriting/transcription typos (O→0, I/L→1,
+ * U→V; these characters are not in Crockford Base32, so their presence is always a typo).
  *
- * 自定义口令(不以 PCM 开头)原样使用——里面的大小写和符号都是有意义的。
+ * Custom passphrases (not starting with PCM) are used as-is: casing and symbols are significant.
  */
 export function normalizePassword(input: string): string {
   const text = String(input ?? "").trim();
@@ -90,7 +92,7 @@ async function deriveKey(password: string, salt: Uint8Array, iterations: number)
   );
 }
 
-/** 把配置加密成一段可以直接发给对方的长文本 */
+/** Encrypt configuration into a long string that can be sent directly to the recipient */
 export async function encryptConfig(
   config: SharedApiConfig,
   password: string,
@@ -112,7 +114,7 @@ export async function encryptConfig(
     ),
   );
 
-  // 轮数写进头里:以后调大默认值,老密文仍然按自己那时的轮数解得开
+  // Write rounds into header: increasing default later still lets old ciphertext decrypt with its own rounds
   const header = new Uint8Array(4);
   new DataView(header.buffer).setUint32(0, iterations, false);
   const blob = new Uint8Array(header.length + salt.length + iv.length + cipher.length);
@@ -123,14 +125,14 @@ export async function encryptConfig(
   return PREFIX + base64urlEncode(blob);
 }
 
-/** 看一段文本像不像我们的密文(粘贴框用它决定要不要自动导入) */
+/** Check if a text resembles our ciphertext (paste box uses it to decide whether to auto-import) */
 export function looksLikeShareBlob(text: string): boolean {
   return text.replace(/\s+/g, "").startsWith(PREFIX);
 }
 
-/** 解开密文。口令不对、内容被改过、粘贴不全,都会走到同一句「解不开」 */
+/** Decrypt ciphertext. Bad passphrase, modified content, or partial paste all yield the same "cannot decrypt" */
 export async function decryptConfig(blob: string, password: string): Promise<SharedApiConfig> {
-  // 聊天软件会给长文本插换行和空格,先全去掉
+  // Chat apps insert newlines and spaces into long text; strip them all first
   const text = String(blob ?? "").replace(/\s+/g, "");
   if (!text.startsWith(PREFIX)) throw new Error(tr("This text is not a PromptCut config string (it should start with PCAI1.)"));
 
@@ -140,11 +142,11 @@ export async function decryptConfig(blob: string, password: string): Promise<Sha
   } catch {
     throw new Error(tr("The string format is wrong, it may not have been copied in full"));
   }
-  const minimum = 4 + SALT_BYTES + IV_BYTES + 16; // 16 = GCM 校验标签
+  const minimum = 4 + SALT_BYTES + IV_BYTES + 16; // 16 = GCM auth tag
   if (raw.length < minimum) throw new Error(tr("The string was truncated, ask the other side to resend the full content"));
 
   const iterations = new DataView(raw.buffer, raw.byteOffset, 4).getUint32(0, false);
-  // 别拿密文里的轮数去跑一个能把浏览器卡死的数
+  // Do not run rounds from ciphertext if it is large enough to freeze the browser
   if (iterations < 10_000 || iterations > 5_000_000) throw new Error(tr("The string header is abnormal, refusing to parse"));
 
   const salt = raw.slice(4, 4 + SALT_BYTES);

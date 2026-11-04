@@ -1,21 +1,31 @@
 /**
- * export-paths-measure.mjs 用的两个夹具项目(辛：桌面版导出两条路各量一遍)。
+ * Two fixture projects used by export-paths-measure.mjs (Xin: measure both desktop app export paths
+ * once each).
  *
- * 项目不是手写的 JSON，而是一份「配方」：探针在编辑器页面里用 store 的动作(newProject 之后 addClipOnNewTrack、setClipParams)
- * 按配方搭出来，所以卡片的缺省参数、片段字段、素材字段都是应用自己写的，不会随版本过期。
- * 搭好的项目 JSON 再同时交给桌面那条路(落成 export-<id>/project.json)和在线那条路(在页面里 loadProject)。
+ * The project is not hand-written JSON, but a "recipe": the probe builds it in the editor page
+ * according to the recipe using store actions (newProject followed by addClipOnNewTrack, setClipParams),
+ * so card default parameters, clip fields, and asset fields are all written by the app itself and do
+ * not become stale across versions. The assembled project JSON is then handed simultaneously to the
+ * desktop path (persisted as export-<id>/project.json) and the online path (loadProject in the page).
  *
- *   demo   像素基线的演示项目。配方来自 docs/archive/topics/export-baseline-compare.md 第 1 节的表
- *          (仓库里没有原来的 make-fixture.mjs，这里按表重建)：1280x720、30 fps、8 秒(240 帧)，
- *          文字层(punch-pill 0-2.5 / odometer 2.5-5 / mu-word-rotate 5-8)、常驻层 chapter-bar 0-8、
- *          图表层 growth-curve 2-6、三维层 scene-3d 1-5、粒子层 particles 0-8、素材层(320x180 testsrc2 视频，铺满)0-8。
- *   heavy  带重卡和画布卡的项目：同尺寸同时长，一层视频打底，上面叠一张画布卡(particles，数量取上限 400、带连线)、
- *          两张 WebGL 卡(scene-3d、terminal-3d)和 growth-curve、rank-bars、chapter-bar、punch-pill。
- *          粒子卡与三维卡都是 stateful(每帧要从头推的那类)，是预渲染与导出里最贵的几张。
- *          只放一张粒子卡：同一份项目里放两张粒子卡(哪怕 seed、数量不同)，桌面导出在预热帧上永远等不到「就绪」，
- *          20 秒后报「控件、字体或图片在 20 秒内未就绪」(2026-10-12 实测，见 docs/archive/agent-reports/AGENT-rr-export-measure.md)。
+ *   demo   Demo project for pixel baseline. The recipe comes from the table in Section 1 of
+ *          docs/archive/topics/export-baseline-compare.md (the repository lacks the original
+ *          make-fixture.mjs, rebuilt here from the table): 1280x720, 30 fps, 8 seconds (240 frames),
+ *          text layer (punch-pill 0-2.5 / odometer 2.5-5 / mu-word-rotate 5-8), resident layer
+ *          chapter-bar 0-8, chart layer growth-curve 2-6, 3D layer scene-3d 1-5, particle layer
+ *          particles 0-8, asset layer (320x180 testsrc2 video, fill) 0-8.
+ *   heavy  Project with heavy cards and canvas cards: same size and duration, a video layer as base,
+ *          stacked with a canvas card (particles, max count capped at 400, with connecting lines),
+ *          two WebGL cards (scene-3d, terminal-3d), and growth-curve, rank-bars, chapter-bar,
+ *          punch-pill. Particle cards and 3D cards are stateful (the kind pushed from scratch each
+ *          frame), making them the most expensive cards in prerender and export. Only one particle
+ *          card is included: putting two particle cards in the same project (even with different
+ *          seeds and counts) causes desktop export to wait indefinitely for "ready" on warmup
+ *          frames, reporting "Controls, fonts, or images not ready within 20 seconds" after 20
+ *          seconds (measured on 2026-10-12, see docs/archive/agent-reports/AGENT-rr-export-measure.md).
  *
- * 配方的 layers 从下往上叠(先写的在下)。`params` 只写要覆盖的键，其余用卡片缺省。
+ * Recipe layers are stacked bottom to top (written first is on bottom). `params` specifies only the
+ * keys to override; the rest use card defaults.
  */
 
 export const FIXTURE_VIDEO = { name: 'pc-export-paths-fixture.mp4', width: 320, height: 180, fps: 30, seconds: 8 };
@@ -25,7 +35,7 @@ const W = 1280, H = 720, FPS = 30, DURATION = 8;
 export const PROJECTS = {
   demo: {
     name: 'export-paths-demo',
-    note: '像素基线的演示项目(按 docs/archive/topics/export-baseline-compare.md 第 1 节重建)',
+    note: 'Demo project for the pixel baseline (rebuilt per section 1 of docs/archive/topics/export-baseline-compare.md)',
     width: W, height: H, fps: FPS, duration: DURATION,
     layers: [
       { media: true, start: 0, end: 8 },
@@ -40,7 +50,7 @@ export const PROJECTS = {
   },
   heavy: {
     name: 'export-paths-heavy',
-    note: '带重卡(WebGL、stateful)和画布卡(粒子)的项目',
+    note: 'Project with a heavy card (WebGL, stateful) and a canvas card (particles)',
     width: W, height: H, fps: FPS, duration: DURATION,
     layers: [
       { media: true, start: 0, end: 8 },

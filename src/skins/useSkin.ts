@@ -3,15 +3,16 @@ import { DEFAULT_SKIN, getSkin, skins } from "./skins";
 import { expandOverrides, subscribeOverrides } from "./overrides";
 
 /**
- * 皮肤状态:选中的 id 存 localStorage(pc.skin);应用时把该皮肤的 --ui-* 变量逐个写到 <html>,
- * 并挂 data-skin(皮肤 id)和 data-skin-mode(dark/light)。skins.css 只按这两个属性和变量工作,
- * 所以新增皮肤只要加数据,不用改 CSS。
+ * Skin state: selected id is stored in localStorage(pc.skin); on apply, writes the skin's --ui-*
+ * variables one by one to <html>, and attaches data-skin (skin id) and data-skin-mode (dark/light).
+ * skins.css works solely from these two attributes and variables, so adding a skin only requires
+ * adding data, with no CSS changes.
  */
 let currentSkin = DEFAULT_SKIN;
 try {
   let saved = localStorage.getItem("pc.skin");
-  // 旧默认 indigo-dark 迁到 studio-dark 只在第一次启动做一回;标记不管迁没迁都写上,
-  // 之后用户在皮肤里主动挑回 indigo-dark 不会再被改掉
+  // Migrating old default indigo-dark to studio-dark is only done once on first startup; the flag
+  // is written whether migrated or not, so users manually choosing indigo-dark later won't be overridden
   if (!localStorage.getItem("pc.skin.studioMigrated")) {
     if (saved === "indigo-dark") {
       saved = "studio-dark";
@@ -32,7 +33,8 @@ function applySkin(id: string) {
   const skin = getSkin(id);
   const root = document.documentElement;
   for (const k of appliedVars) root.style.removeProperty(`--${k}`);
-  // 预设先铺一层,用户的自定义再压上去;两层的键都记进 appliedVars,下次换皮肤好一起撤干净
+  // Presets are applied first, then user customizations overlay on top; keys from both layers are
+  // recorded in appliedVars, making it easy to revert cleanly when switching skins next time
   const custom = expandOverrides(skin.mode);
   const merged = { ...skin.vars, ...custom };
   appliedVars = Object.keys(merged);
@@ -59,7 +61,8 @@ export function setSkin(id: string) {
     // ignore
   }
   const root = document.documentElement;
-  // 只在切换那一刻开 200ms 的颜色过渡,平时关掉,免得拖时间轴时每帧都在过渡
+  // Only enable the 200ms color transition at the moment of switching; disabled normally to avoid
+  // transitioning on every frame while scrubbing the timeline
   root.classList.add("skin-swapping");
   applySkin(id);
   setTimeout(() => root.classList.remove("skin-swapping"), 200);
@@ -68,7 +71,7 @@ export function setSkin(id: string) {
 
 applySkin(currentSkin);
 
-// 用户改了自定义配色就地重刷,不用等换皮肤
+// Refresh in place when the user changes custom colors, without waiting to switch skins
 subscribeOverrides(() => {
   applySkin(currentSkin);
   listeners.forEach((l) => l());

@@ -1,37 +1,49 @@
 /**
- * 编辑器这一端常驻的那对热备渲染器(A / B)。从 server/vite-plugin-vision.ts 逐字搬来。
+ * The pair of resident hot-standby renderers (A / B) on the editor side. Ported verbatim from
+ * server/vite-plugin-vision.ts.
  *
- * 状态全在 `createUiRenderer` 的闭包里(slots / running / pending),没有模块级可变状态;
- * 唯一写到别处的是 worker 池的 `lastRenderOrigin`,走 `setLastRenderOrigin`。
- * 依赖方向:ui-renderer → worker-pool → render-queue,单向。
+ * All state resides in the closure of `createUiRenderer` (slots / running / pending), with no
+ * module-level mutable state; the only write elsewhere is the worker pool's `lastRenderOrigin`,
+ * via `setLastRenderOrigin`.
+ * Dependency direction: ui-renderer → worker-pool → render-queue, unidirectional.
  */
 import { cancelError } from "./render-queue";
 import { runOnWorker, setLastRenderOrigin, spawnWorker } from "./worker-pool";
 import type { RenderWorker, RenderJob2, Runner } from "./worker-pool";
 
 /*
- * ===================== 编辑器这一端:常驻热备渲染器(A / B) =====================
+ * ===================== Editor side: resident hot-standby renderers (A / B) =====================
  *
- * 用户的前台渲染(3D 视图当前时刻的贴图、拖动播放头时要的那一帧)**不进预渲染池**,由编辑器
- * 自己守着的两台 Chrome 专门处理(docs/archive/topics/decoupling-plan.md 第 3.2 节「交互界面」)。原话:
- * 「交互端需要留两个 chrome 渲染,永远保持一个是热状态……A 正在渲染,这时候接到了新的任务,
- * 立刻交给热状态的 B,同时清空 A,之后 B 在渲染,A 热状态待机」。
+ * User foreground rendering (textures at the current moment in the 3D view, the frame needed when
+ * scrubbing the playhead) **does not enter the prerender pool**, handled specifically by the two
+ * Chrome instances guarded by the editor itself (docs/archive/topics/decoupling-plan.md Section 3.2
+ * "Interactive interface"). Original quote:
+ * "The interaction side needs to keep two chrome renderers, always keeping one in a hot state...
+ * A is rendering, and when a new task arrives at this time, hand it over to hot-state B immediately
+ * while clearing A, after which B is rendering and A is on hot standby".
  *
- * 为什么要两台:一台 Chrome 被打断之后要换一张新页才能再用(约 310 ms,冷启动 5.6 s,
- * 往就绪的空页里灌项目只要 3~4 ms,见 hybrid-sampling-plan.md E0)。两台轮换,新请求永远落在热的
- * 那台上,换页的钱放到后台去付。两台是两个独立进程:一台崩了另一台照样顶着。
+ * Why two instances: after a Chrome instance is interrupted, it must switch to a new page before
+ * reuse (approx. 310 ms, cold start 5.6 s, injecting the project into a ready blank page takes only
+ * 3~4 ms, see hybrid-sampling-plan.md E0). Alternating between the two instances ensures new
+ * requests always land on the hot one, paying the page-switch cost in the background. The two
+ * instances are two independent processes: if one crashes, the other continues to hold up.
  *
- * 调度规则:
- *   1. 有热的(或至少空着的)那台就交给它;
- *   2. 两台都在忙:正在渲的那台如果才做了一小段(< UI_INTERRUPT_MS)就打断它,腾出来接新的;
- *      做了不少就让它渲完 —— 结果照样进缓存(bakeOne 落盘),拖回去直接命中;
- *   3. 两台都腾不出来:新请求进「待办」,只留最新一个,先来的直接回「被新请求替换」;
- *   4. 第 2 条的门槛必不可少:拖动播放头每秒几十个请求,每来一个都打断的话,两台会一直在
- *      「打断 → 换页」之间来回,一张图都出不来。
- * 请求方断开也按第 2 条判:才开始的就停,做了不少的渲完进缓存。
+ * Dispatch rules:
+ *   1. If there is a hot (or at least idle) instance, hand off to it;
+ *   2. Both instances busy: if the currently rendering one has only run for a short segment
+ *      (< UI_INTERRUPT_MS), interrupt it and free it up for the new one; if substantial work was
+ *      done, let it finish rendering: the result still enters cache (bakeOne written to disk),
+ *      hitting directly when scrubbing back;
+ *   3. Neither instance can be freed up: the new request enters "pending", keeping only the latest
+ *      one, and earlier ones return directly with "replaced by new request";
+ *   4. The threshold in rule 2 is essential: scrubbing the playhead generates dozens of requests
+ *      per second; interrupting on every arrival would cause both instances to loop endlessly
+ *      between "interrupt → new page", unable to produce a single image.
+ * Requester disconnections are also judged by rule 2: stop if just started; finish rendering and
+ * enter cache if substantial work was done.
  */
 
-/** 正在渲的那一趟做了多久以内才允许打断(毫秒,估计值,按实测再调) */
+/** Maximum elapsed time of the rendering pass to allow interruption (ms, estimated, tuned by tests) */
 const UI_INTERRUPT_MS = 150;
 
 interface UiRequest {
@@ -39,7 +51,7 @@ interface UiRequest {
   signal?: AbortSignal;
   resolve: (v: any[] | null) => void;
   reject: (e: Error) => void;
-  /** 已经换一台重试过一次(非取消的失败只重试一次) */
+  /** Already retried once on another instance (non-cancellation failures retry only once) */
   retried?: boolean;
 }
 
@@ -51,7 +63,7 @@ export function createUiRenderer(root: string, originFn: () => string) {
   const ensure = () => {
     for (let i = slots.length - 1; i >= 0; i--) if (slots[i].dead) slots.splice(i, 1);
     while (slots.length < 2) {
-      // 预热要一个能打开的导出页地址:就是编辑器自己的源
+      // Warm-up requires an openable export page URL: simply the editor's own origin
       setLastRenderOrigin(originFn());
       const w = spawnWorker(root, true);
       w.onHot = () => dispatch();
@@ -60,13 +72,16 @@ export function createUiRenderer(root: string, originFn: () => string) {
   };
 
   /*
-   * **巡检:永远保持热着**(用户原话「永远保持一个是热状态,才能随时响应」)。
+   * **Inspection: always keep hot** (user's exact words: "always keep one hot to respond at any time").
    *
-   * 「热」靠 worker 报 hot 维持,但有几种情形它不会再报:活失败后 worker 丢了浏览器(bakery 为空,
-   * 不会自己重开);卡片连着改几次,备用页被扔了又开、中途开失败。实测完整跑一遍端到端之后,
-   * 两台都停在「空闲、不热」,最后一次 hot 在 45 秒前。
-   * 每 2 秒看一眼:空闲却不热的那台发一次预热(没浏览器就开一个,有就换页、备好备用页,好了会报 hot)。
-   * 同一台 5 秒内不重复催。热着的时候什么都不做,不花钱。
+   * "Hot" is maintained by workers reporting hot, but in several cases they will not report again:
+   * after a job fails the worker loses its browser (bakery is empty, will not restart on its own);
+   * when cards are modified repeatedly, spare pages are discarded and reopened, failing midway.
+   * In testing after a full end-to-end run, both instances stopped at "idle, not hot", with the last
+   * hot 45 seconds ago.
+   * Check every 2 seconds: send a warm-up to an idle but not hot instance (launches a browser if none
+   * exists; if one exists, navigates to a new page, prepares a spare page, and reports hot once ready).
+   * The same instance is not prompted again within 5 seconds. Does nothing when hot, incurring zero cost.
    */
   const keepWarm = setInterval(() => {
     const now = Date.now();
@@ -74,18 +89,19 @@ export function createUiRenderer(root: string, originFn: () => string) {
       if (w.dead || w.busy || w.hot) continue;
       if (w.warmingAt && now - w.warmingAt < 5000) continue;
       w.warmingAt = now;
-      try { w.child.send({ type: "prewarm", url: `${originFn()}/?export=1` }, () => {}); } catch { /* 送不到的下一轮 ensure 会换掉 */ }
+      try { w.child.send({ type: "prewarm", url: `${originFn()}/?export=1` }, () => {}); } catch { /* Undeliverable ones will be replaced in the next ensure round */ }
     }
   }, 2000);
   keepWarm.unref?.();
 
-  /** 挑一台:热的优先,其次空着的(还在换页 / 刚起的也行,worker 里会等备用页就绪) */
+  /** Pick one: hot preferred, then idle (page-switch / just spawned is fine; worker waits for spare page) */
   const freeSlot = () => slots.find((w) => !w.dead && !w.busy && w.hot) ?? slots.find((w) => !w.dead && !w.busy);
 
   const start = (w: RenderWorker, req: UiRequest) => {
     const ac = new AbortController();
     const startedAt = Date.now();
-    // 请求方断开:才开始的就停;做了不少的让它渲完,结果进缓存
+    // Requester disconnected: stop if just started; let it finish rendering if substantial work was done,
+    // result enters cache
     const onOuter = () => { if (Date.now() - startedAt < UI_INTERRUPT_MS) ac.abort(); };
     req.signal?.addEventListener("abort", onOuter, { once: true });
     w.busy = true;
@@ -93,12 +109,14 @@ export function createUiRenderer(root: string, originFn: () => string) {
     runOnWorker(w, req.job, ac.signal)
       .then(req.resolve, (e: any) => {
         /*
-         * 不是被取消、也没被请求方放弃的失败,换一台再试一次。实测连着打断、换页时偶尔会撞上
-         * 「Browser target is not found」(这台背后的浏览器没了;worker 已经把它丢掉,巡检几秒内重开)。
-         * 用户正盯着这张图,别让这种一次性的失败漏到界面上。只重试一次,第二次还失败就如实报。
+         * For failures not cancelled and not abandoned by the requester, retry once on another instance.
+         * In testing, consecutive interrupts and page switches occasionally hit "Browser target is not found"
+         * (the browser behind this instance was lost; the worker discarded it, and inspection restarts
+         * within seconds). The user is looking at this image, so do not let this one-time failure leak into
+         * the UI. Retry only once; if it fails a second time, report it faithfully.
          */
         if (!e?.cancelled && !req.retried && !req.signal?.aborted) {
-          // 带着 retried 重新交进去:第二次再失败就走下面的 reject,不会一直重试下去
+          // Resubmit with retried: if it fails a second time, it takes reject below and will not retry endlessly
           submit({ ...req, retried: true });
           return;
         }
@@ -121,18 +139,21 @@ export function createUiRenderer(root: string, originFn: () => string) {
     start(w, req);
   };
 
-  /** 交一个请求进来:有空的就跑,否则按规则 2 / 3 打断或排进待办。重试也走这里(带着 retried) */
+  /**
+   * Submit a request: run if idle, otherwise interrupt or queue into pending per rules 2 / 3.
+   * Retries also go through here (with retried).
+   */
   const submit = (req: UiRequest) => {
     ensure();
     if (req.signal?.aborted) return req.reject(cancelError());
     const w = freeSlot();
     if (w) return start(w, req);
-    // 规则 2:打断一台才开始的
+    // Rule 2: interrupt an instance that just started
     for (const [, r] of running) {
       if (Date.now() - r.startedAt < UI_INTERRUPT_MS) { r.ac.abort(); break; }
     }
-    // 规则 3:只留最新的一个
-    if (pending) pending.reject(Object.assign(new Error("被更新的请求替换了"), { cancelled: true }));
+    // Rule 3: keep only the latest one
+    if (pending) pending.reject(Object.assign(new Error("Replaced by a newer request"), { cancelled: true }));
     pending = req;
     req.signal?.addEventListener("abort", () => {
       if (pending !== req) return;
@@ -146,14 +167,17 @@ export function createUiRenderer(root: string, originFn: () => string) {
   return {
     run,
     prewarm: ensure,
-    /** 服务关掉时停掉巡检(vite 在同一个进程里重启时,旧的这一份不该还在往死掉的 worker 发消息) */
+    /**
+     * Stop inspection on shutdown (when vite restarts in the same process, the old instance should not
+     * still be sending messages to dead workers).
+     */
     stop: () => clearInterval(keepWarm),
     status: () => ({
       workers: slots.filter((w) => !w.dead).length,
       hot: slots.filter((w) => !w.dead && w.hot && !w.busy).length,
       busy: slots.filter((w) => !w.dead && w.busy).length,
       pending: pending ? 1 : 0,
-      // 每台的明细:排查「热」为什么没回来时看它
+      // Details per instance: check this when troubleshooting why "hot" did not return
       detail: slots.map((w) => ({
         pid: w.child.pid, dead: w.dead, hot: w.hot, busy: w.busy, hotPending: !!w.hotPending,
         hotMsgs: w.hotMsgs ?? 0, lastHotAgoMs: w.lastHotAt ? Date.now() - w.lastHotAt : null,

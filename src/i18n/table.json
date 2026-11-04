@@ -2371,7 +2371,7 @@
   "zh": "连不上云端，没能确认{0}已删除。本机项目没有改动；稍后再点一次，已经删掉的也不会出错。",
   "ja": "クラウドに接続できなかったため、{0}が削除されたことを確認できませんでした。このマシンのプロジェクトは変更されていません。しばらくしてからもう一度クリックしてください。すでに削除済みのものがあってもエラーにはなりません。"
  },
- "Could not reach the cloud, so the cloud project was not created. {0}Click again later.": {
+ "Could not reach the cloud, so the cloud project was not created. {0} Click again later.": {
   "zh": "连不上云端，云端项目没有建成。{0}稍后再点一次。",
   "ja": "クラウドに接続できなかったため、クラウドプロジェクトは作成されませんでした。{0}しばらくしてからもう一度クリックしてください。"
  },
@@ -3712,7 +3712,7 @@
   "ja": "ファイルのアップロードに失敗しました：{0} {1}"
  },
  "Fill": {
-  "zh": "铺满",
+  "zh": "填充",
   "ja": "全体に広げる"
  },
  "Fill in the API Key so the agent can do voiceover": {
@@ -4643,7 +4643,7 @@
   "zh": "本机的修改还没保存完，没有开始搬。{0}",
   "ja": "ローカルの変更の保存が完了していないため、移行を開始しませんでした。{0}"
  },
- "Local collaboration is closed, {0}the cloud project has been created, but the last few changes are missing. Sync them again: {1}": {
+ "Local collaboration is closed. {0} The cloud project has been created, but the last few changes are missing. Sync them again: {1}": {
   "zh": "本机协作已关闭，{0}云端项目已建好，但缺最后的几处修改。再补一次：{1}",
   "ja": "ローカル共同編集は終了しました。{0}クラウドプロジェクトは作成されましたが、最後の数件の変更が反映されていません。もう一度同期してください：{1}"
  },
@@ -5083,7 +5083,7 @@
   "zh": "已搬到云端，可以将项目链接发给其他已登录成员。",
   "ja": "クラウドへ移行しました。プロジェクトリンクをログイン済みの他のメンバーに送れます。"
  },
- "Moved to the cloud{0}, but could not enter the cloud project \"{1}\" this time. {2}You can also go back to the start page and open it with the project link.": {
+ "Moved to the cloud{0}, but could not enter the cloud project \"{1}\" this time. {2} You can also go back to the start page and open it with the project link.": {
   "zh": "已搬到云端{0}，但这次没能进入云端项目「{1}」。{2}也可以回开始页用项目链接打开它。",
   "ja": "クラウドへ移行しました{0}。ただし、今回はクラウドプロジェクト「{1}」に入れませんでした。{2}スタートページに戻り、プロジェクトリンクから開くこともできます。"
  },
@@ -7584,7 +7584,7 @@
   "ja": "ほかの人"
  },
  "Sound": {
-  "zh": "声音",
+  "zh": "发声",
   "ja": "サウンド"
  },
  "Sound duration s": {
@@ -7924,7 +7924,7 @@
   "ja": "お名前を教えてください"
  },
  "Text": {
-  "zh": "文字",
+  "zh": "文本",
   "ja": "テキスト"
  },
  "Text protocol mode": {
@@ -8079,7 +8079,7 @@
   "zh": "云端已确认停止请求。正在同步对话状态。",
   "ja": "クラウドが停止リクエストを確認しました。チャットの状態を同期しています。"
  },
- "The cloud content check failed, so the move was stopped. {0}{1}": {
+ "The cloud content check failed, so the move was stopped. {0} {1}": {
   "zh": "云端内容核对没通过，已停下。{0}{1}",
   "ja": "クラウド上の内容の照合に失敗したため、移行を中止しました。{0}{1}"
  },
@@ -8103,7 +8103,7 @@
   "zh": "云端现在是 {0}",
   "ja": "クラウドは現在{0}です"
  },
- "The cloud is temporarily unavailable, so the cloud project was not created. {0}Click again later; no extra project will be created.": {
+ "The cloud is temporarily unavailable, so the cloud project was not created. {0} Click again later; no extra project will be created.": {
   "zh": "云端暂时不可用，云端项目没有建成。{0}稍后再点一次，不会多建一个。",
   "ja": "クラウドが一時的に利用できないため、クラウドプロジェクトは作成されませんでした。{0}しばらくしてからもう一度クリックしてください。余分なプロジェクトは作成されません。"
  },
@@ -8327,11 +8327,11 @@
   "zh": "最后一个标签不能关",
   "ja": "最後のタブは閉じられません"
  },
- "The latest content is already saved in this local file; ": {
+ "The latest content is already saved in this local file.": {
   "zh": "最新内容已存在本机这份文件里；",
   "ja": "最新の内容はこのローカルファイルにすでに保存されています； "
  },
- "The latest content is still in this window and could not be saved to the local file. Please save manually first; ": {
+ "The latest content is still in this window and could not be saved to the local file. Please save manually first.": {
   "zh": "最新内容还在这个窗口里、没能存到本机文件，请先手动保存；",
   "ja": "最新の内容はまだこのウィンドウ内にあり、ローカルファイルに保存できませんでした。先に手動で保存してください； "
  },
@@ -8539,7 +8539,7 @@
   "zh": "项目内容不可读，没有转换",
   "ja": "プロジェクトの内容を読み取れないため、何も変換されていません"
  },
- "The project content was not fully uploaded. {0}{1}": {
+ "The project content was not fully uploaded. {0} {1}": {
   "zh": "项目内容没有传完。{0}{1}",
   "ja": "プロジェクトの内容が最後までアップロードされませんでした。{0}{1}"
  },
@@ -8571,11 +8571,11 @@
   "zh": "项目还开着：点左边它底下的对话回去接着聊。",
   "ja": "プロジェクトはまだ開いています。左側のプロジェクト配下にあるチャットをクリックすると、続きから再開できます。"
  },
- "The project kept being modified (an Agent or tool may still be changing it), and the last changes were not caught up. Local collaboration is closed. {0}Stop it first, then move again: {1}": {
+ "The project kept being modified (an Agent or tool may still be changing it), and the last changes were not caught up. Local collaboration is closed. {0} Stop it first, then move again: {1}": {
   "zh": "项目一直在被修改（可能有 Agent 或工具还在改），最后的修改没有追上。本机协作已关闭，{0}先让它停下，再搬一次：{1}",
   "ja": "プロジェクトが変更され続けており（エージェントやツールがまだ変更している可能性があります）、最後の変更が追いつきませんでした。ローカルの共同編集は終了しています。{0}先にそれを停止してから、もう一度移行してください：{1}"
  },
- "The project kept being modified during the move (an Agent or tool may still be changing it), so the move did not complete. {0}Stop it first, then click again; {1}": {
+ "The project kept being modified during the move (an Agent or tool may still be changing it), so the move did not complete. {0} Stop it first, then click again. {1}": {
   "zh": "搬的过程中项目一直在被修改（可能有 Agent 或工具还在改），没有搬成。{0}先让它停下，再点一次；{1}",
   "ja": "移行中にプロジェクトが変更され続けた（エージェントやツールがまだ変更している可能性があります）ため、移行が完了しませんでした。{0}先にそれを停止してから、もう一度クリックしてください。{1}"
  },
@@ -9280,7 +9280,7 @@
   "ja": "時間がかかりすぎました。再試行してください"
  },
  "Total duration (seconds)": {
-  "zh": "总时长（秒）",
+  "zh": "整段时长(秒)",
   "ja": "総再生時間（秒）"
  },
  "Total {0}": {
@@ -9446,6 +9446,10 @@
  "Unavailable ({0})": {
   "zh": "不可用 ({0})",
   "ja": "利用できません（{0}）"
+ },
+ "Undo": {
+  "zh": "撤销",
+  "ja": "元に戻す"
  },
  "Undo (Ctrl+Z): only undoes your own actions on this page": {
   "zh": "撤销 (Ctrl+Z) —— 只撤你自己在这个页面做的",
@@ -10235,7 +10239,7 @@
   "zh": "例：年轻男声，影视解说腔，语速偏快，带一点悬念感",
   "ja": "例：若い男性の声、映画解説調、やや早口で、少しサスペンス感を込めて"
  },
- "e.g.\\n1. Open with the pain point in 5 seconds, using a quote card\\n2. Middle follows \"problem → data → solution\", with a trend chart in the data part\\n3. Close by echoing the opening line": {
+ "e.g.\n1. Open with the pain point in 5 seconds, using a quote card\n2. Middle follows \"problem → data → solution\", with a trend chart in the data part\n3. Close by echoing the opening line": {
   "zh": "例：\n1. 开场 5 秒讲清痛点，用金句卡\n2. 中段按「问题 → 数据 → 方案」推进，数据段配趋势图\n3. 结尾回扣开头那句话",
   "ja": "例：\n1. 冒頭の5秒で課題を伝え、名言カードを使う\n2. 中盤は「課題 → データ → 解決策」の順に進め、データのパートにはトレンドグラフを入れる\n3. 最後に冒頭の一文を受けて締める"
  },
@@ -10359,7 +10363,7 @@
   "zh": "small(默认)",
   "ja": "small（デフォルト）"
  },
- "some": {
+ "Some": {
   "zh": "一些",
   "ja": "一部"
  },
@@ -10481,11 +10485,11 @@
  },
  "{0} Agent action log": {
   "zh": "{0} Agent 操作记录",
-  "ja": "{0}のエージェント操作ログ"
+  "ja": "{0} エージェントの操作ログ"
  },
  "{0} Agent operations": {
   "zh": "{0} Agent 操作",
-  "ja": "{0}のエージェント操作"
+  "ja": "{0} エージェントの操作"
  },
  "{0} Continue?": {
   "zh": "{0}继续？",
@@ -10639,7 +10643,7 @@
   "zh": "{0} 级",
   "ja": "{0}レベル"
  },
- "{0} media items have not been pulled to this computer yet, so local collaboration was not closed. {1}Click again after the media has finished pulling.": {
+ "{0} media items have not been pulled to this computer yet, so local collaboration was not closed. {1} Click again after the media has finished pulling.": {
   "zh": "有 {0} 个素材还没拉到这台电脑，没有关闭本机协作。{1}等素材拉完再点一次。",
   "ja": "素材{0}件がまだこのコンピューターに取得されていないため、このマシンでの共同編集は終了していません。{1}取得が完了してから、もう一度クリックしてください。"
  },
@@ -12265,7 +12269,7 @@
  },
  "A crossfade needs two clips: clipId and otherClipId": {
   "zh": "交叉溶解要两段:clipId 和 otherClipId",
-  "ja": "クロスフェードには2つのクリップ（clipId と otherClipId）が必要です"
+  "ja": "クロスディゾルブには2つのクリップ（clipId と otherClipId）が必要です"
  },
  "A newer generation request exists; the old result was not applied": {
   "zh": "已有新的生成请求,旧结果未应用",
@@ -14218,5 +14222,3513 @@
  " (follows project)": {
   "zh": "(跟项目)",
   "ja": "（プロジェクトに従う）"
+ },
+ " (at most {0} s at this sample rate and channel count). Lower sampleRate, pass mono: true, or measure only one segment with start / duration.": {
+  "zh": "(这个采样率和声道数下最多 {0} 秒)。降 sampleRate、传 mono: true,或用 start / duration 只测一段。",
+  "ja": " （このサンプルレートとチャンネル数では最大{0}秒）。sampleRateを下げるか、mono: trueを渡すか、start / durationで一部の区間だけを測定してください。"
+ },
+ " Prerender state: {0}, address: {1}, restarts: {2}.": {
+  "zh": " 预渲染状态：{0}，地址：{1}，重启次数：{2}。",
+  "ja": " プリレンダリングの状態：{0}、アドレス：{1}、再起動回数：{2}。"
+ },
+ " The prerender process or Chrome may have crashed or been reclaimed. Please retry later.": {
+  "zh": " 可能是预渲染进程或 Chrome 崩溃/被回收，请稍后重试。",
+  "ja": " プリレンダリングのプロセスまたはChromeがクラッシュしたか、回収された可能性があります。しばらくしてからもう一度お試しください。"
+ },
+ " clips with no audio stream or missing file: ": {
+  "zh": " 段没有音频流或文件不存在，已跳过：",
+  "ja": " 個で、オーディオストリームがないかファイルが存在しないクリップです： "
+ },
+ "(Unnamed media)": {
+  "zh": "(未命名素材)",
+  "ja": "（名称未設定の素材）"
+ },
+ "(install it with collect_install and try again)": {
+  "zh": "(用 collect_install 装上再试)",
+  "ja": "（collect_installでインストールしてから、もう一度お試しください）"
+ },
+ "(no file name)": {
+  "zh": "(没有文件名)",
+  "ja": "（ファイル名なし）"
+ },
+ "(the file did not exist before)": {
+  "zh": "(原来没有这个文件)",
+  "ja": "（もともとこのファイルは存在しませんでした）"
+ },
+ "(unknown)": {
+  "zh": "(未知)",
+  "ja": "（不明）"
+ },
+ ", {0} window resets {1}": {
+  "zh": ",{0}窗口 {1} 重置",
+  "ja": "、{0}ウィンドウは{1}にリセットされます"
+ },
+ "A read-only connection cannot modify the project": {
+  "zh": "只读的连接不能改项目",
+  "ja": "読み取り専用の接続ではプロジェクトを変更できません"
+ },
+ "A read-only connection cannot upload the project": {
+  "zh": "只读的连接不能上传项目",
+  "ja": "読み取り専用の接続ではプロジェクトをアップロードできません"
+ },
+ "A sub-Agent is not higher than the chat {0} that launched it": {
+  "zh": "子 Agent 不高于拉起它的对话 {0}",
+  "ja": "サブエージェントは、それを起動したチャット{0}より上位にはなりません"
+ },
+ "API Key is not set, cannot fetch the model list": {
+  "zh": "还没填 API Key,拉不了模型清单",
+  "ja": "APIキーが設定されていないため、モデル一覧を取得できません"
+ },
+ "API Key mode has no subscription quota window": {
+  "zh": "API Key 模式没有订阅额度窗口",
+  "ja": "APIキーモードにはサブスクリプションの利用枠ウィンドウがありません"
+ },
+ "API did not return JSON: {0}": {
+  "zh": "API 返回的不是 JSON：{0}",
+  "ja": "APIがJSONを返しませんでした：{0}"
+ },
+ "API returned HTTP {0}: {1}": {
+  "zh": "API 返回 HTTP {0}：{1}",
+  "ja": "APIがHTTP {0}を返しました：{1}"
+ },
+ "Account projects can only connect to the account's cloud document service": {
+  "zh": "账号项目只能连账号云端的文档服务",
+  "ja": "アカウントのプロジェクトは、そのアカウントのクラウドのドキュメントサービスにしか接続できません"
+ },
+ "Analysis timed out": {
+  "zh": "分析超时",
+  "ja": "分析がタイムアウトしました"
+ },
+ "Angry": {
+  "zh": "愤怒",
+  "ja": "怒り"
+ },
+ "Antigravity blocked its own {0}: no popup can ask for consent in unattended mode. PromptCut's tools are unaffected; have it use PromptCut's tools to do the same thing instead.": {
+  "zh": "Antigravity 拦下了它自己的 {0}——无人值守模式下没法弹窗征求同意。PromptCut 的工具不受影响,让它改用 PromptCut 的工具做同一件事即可。",
+  "ja": "Antigravityが自身の{0}をブロックしました。無人実行モードでは同意を求めるポップアップを表示できないためです。PromptCutのツールは影響を受けません。代わりにPromptCutのツールで同じ操作を行わせてください。"
+ },
+ "Antigravity gave up this turn after rejecting its own built-in tools ({0}), and produced no result.": {
+  "zh": "Antigravity 拒绝了它自己的内建工具({0})之后放弃了这一轮,没有产出任何结果。",
+  "ja": "Antigravityは自身の内蔵ツール（{0}）を拒否した後、このターンを中断し、結果を出力しませんでした。"
+ },
+ "Antigravity itself rejected this tool (its built-in tool, not PromptCut's): {0}": {
+  "zh": "Antigravity 自己拒绝了这个工具(它的内建工具,不是 PromptCut 的):{0}",
+  "ja": "Antigravity自身がこのツールを拒否しました（PromptCutのツールではなく、Antigravity内蔵のツールです）：{0}"
+ },
+ "Antigravity reported an error without giving a reason": {
+  "zh": "Antigravity 报错但没说原因",
+  "ja": "Antigravityは理由を示さずにエラーを報告しました"
+ },
+ "Asset service refused the read ({0}, HTTP {1})": {
+  "zh": "素材服务拒绝了读取({0},HTTP {1})",
+  "ja": "アセットサービスが読み取りを拒否しました（{0}、HTTP {1}）"
+ },
+ "Asset service refused the read ({0}, HTTP {1}): /@media/{2}": {
+  "zh": "素材服务拒绝了读取({0},HTTP {1}):/@media/{2}",
+  "ja": "アセットサービスが読み取りを拒否しました（{0}、HTTP {1}）：/@media/{2}"
+ },
+ "Asset service rejected the ingest ({0}, HTTP {1}){2}": {
+  "zh": "素材服务拒绝了入库({0},HTTP {1}){2}",
+  "ja": "アセットサービスが取り込みを拒否しました（{0}、HTTP {1}）{2}"
+ },
+ "Asset service rejected the {0} ({1}, HTTP {2}): {3}": {
+  "zh": "素材服务拒绝了{0}({1},HTTP {2}):{3}",
+  "ja": "アセットサービスが{0}を拒否しました（{1}、HTTP {2}）：{3}"
+ },
+ "Asset service unreachable ({0}), PNG snapshot failed to {1}: {2}": {
+  "zh": "素材服务不可达({0}),PNG 快照没能{1}:{2}",
+  "ja": "アセットサービスに接続できません（{0}）。PNGスナップショットの{1}に失敗しました：{2}"
+ },
+ "Asset service unreachable ({0}), failed to read PNG snapshot: {1}": {
+  "zh": "素材服务不可达({0}),PNG 快照没能读取:{1}",
+  "ja": "アセットサービスに接続できません（{0}）。PNGスナップショットの読み取りに失敗しました：{1}"
+ },
+ "Asset service unreachable ({0}), ingest failed: {1}": {
+  "zh": "素材服务不可达({0}),没能入库:{1}",
+  "ja": "アセットサービスに接続できません（{0}）。取り込みに失敗しました：{1}"
+ },
+ "Asset service unreachable ({0}): {1}": {
+  "zh": "素材服务不可达({0}):{1}",
+  "ja": "アセットサービスに接続できません（{0}）：{1}"
+ },
+ "Asset service unreachable: cannot get the asset service address, PNG snapshot failed to {0}": {
+  "zh": "素材服务不可达:取不到素材服务的地址,PNG 快照没能{0}",
+  "ja": "アセットサービスに接続できません：アセットサービスのアドレスを取得できず、PNGスナップショットの{0}に失敗しました"
+ },
+ "Asset service unreachable: the editor process cannot get the asset service address": {
+  "zh": "素材服务不可达:编辑器进程取不到素材服务的地址",
+  "ja": "アセットサービスに接続できません：エディタのプロセスがアセットサービスのアドレスを取得できません"
+ },
+ "Asset service unreachable: the editor process could not get the asset service address, so ingest failed": {
+  "zh": "素材服务不可达:编辑器进程取不到素材服务的地址,没能入库",
+  "ja": "アセットサービスに接続できません：エディタのプロセスがアセットサービスのアドレスを取得できなかったため、取り込みに失敗しました"
+ },
+ "Audio file download failed (HTTP {0})": {
+  "zh": "音频文件下载失败（HTTP {0}）",
+  "ja": "オーディオファイルのダウンロードに失敗しました（HTTP {0}）"
+ },
+ "Audio mix exceeds 3 GB, not saved": {
+  "zh": "混音超过 3 GB,没有保存",
+  "ja": "オーディオミックスが3 GBを超えたため、保存しませんでした"
+ },
+ "Authentication state cannot be saved for now. It will need to be confirmed again after the backend restarts.": {
+  "zh": "认证状态暂时无法保存，后端重启后需要重新确认。",
+  "ja": "認証状態を一時的に保存できません。バックエンドの再起動後に、もう一度確認が必要になります。"
+ },
+ "Authorization code submitted, confirming login…": {
+  "zh": "授权码已提交，正在确认登录…",
+  "ja": "認可コードを送信しました。ログインを確認しています…"
+ },
+ "Backup does not exist": {
+  "zh": "备份不存在",
+  "ja": "バックアップが存在しません"
+ },
+ "Base URL is not set (official sources have no unified list endpoint, only relay services do)": {
+  "zh": "还没填接口地址(官方源没有统一的清单口子,中转站才有)",
+  "ja": "ベースURLが設定されていません（公式ソースには統一された一覧用のエンドポイントがなく、あるのは中継サービスだけです）"
+ },
+ "Built-in tool {0} was rejected": {
+  "zh": "内建工具 {0} 被拒绝",
+  "ja": "内蔵ツール{0}が拒否されました"
+ },
+ "Bundled Python not found. The official installer ships with it; if it is missing, the install is probably corrupted or it was deleted by antivirus software, so reinstall once; ": {
+  "zh": "找不到内置 Python。正式安装包自带它,缺了多半是安装损坏或被杀毒软件删掉,重装一次即可;",
+  "ja": "同梱のPythonが見つかりません。正式なインストーラーには含まれているため、見つからない場合はインストールが破損しているか、ウイルス対策ソフトに削除された可能性が高いので、一度再インストールしてください。 "
+ },
+ "CLI error": {
+  "zh": "CLI 报错",
+  "ja": "CLIエラー"
+ },
+ "Calm": {
+  "zh": "平静",
+  "ja": "穏やか"
+ },
+ "Canceled. You can try again.": {
+  "zh": "已取消，可以重新尝试。",
+  "ja": "キャンセルしました。もう一度お試しいただけます。"
+ },
+ "Canceling, please wait…": {
+  "zh": "正在取消，请稍候…",
+  "ja": "キャンセルしています。しばらくお待ちください…"
+ },
+ "Cannot connect to API address {0}: {1}": {
+  "zh": "连不上 API 地址 {0}：{1}",
+  "ja": "APIアドレス{0}に接続できません：{1}"
+ },
+ "Cannot read PromptCut's port file {0} ({1}). Reopen PromptCut and try again.": {
+  "zh": "PromptCut 的端口文件 {0} 读不出来({1})。请重新打开 PromptCut 再试。",
+  "ja": "PromptCutのポートファイル{0}を読み取れません（{1}）。PromptCutを開き直して、もう一度お試しください。"
+ },
+ "Cannot read lock file: {0}": {
+  "zh": "锁文件读不了:{0}",
+  "ja": "ロックファイルを読み取れません：{0}"
+ },
+ "Cannot read quota: {0} (not logged in?)": {
+  "zh": "读不到额度:{0}(没登录?)",
+  "ja": "利用枠を読み取れません：{0}（ログインしていませんか？）"
+ },
+ "Cannot reliably read or save collaboration recovery info; the original data is kept, restore from backup or re-authenticate.": {
+  "zh": "无法可靠读取或保存协作恢复信息；原数据已保留，请从备份恢复或重新认证。",
+  "ja": "共同編集の復旧情報を確実に読み取れない、または保存できません。元のデータは保持されているため、バックアップから復元するか、再認証してください。"
+ },
+ "Cannot start: {0}": {
+  "zh": "无法启动：{0}",
+  "ja": "起動できません：{0}"
+ },
+ "Card audio was not generated": {
+  "zh": "卡片声音没有生成",
+  "ja": "カードのオーディオが生成されませんでした"
+ },
+ "Card source sync is not enabled": {
+  "zh": "卡片源码同步没开",
+  "ja": "カードのソース同期が有効になっていません"
+ },
+ "Claude error": {
+  "zh": "Claude 出错",
+  "ja": "Claudeエラー"
+ },
+ "Click log in and complete authorization in the browser.": {
+  "zh": "请点击登录，在浏览器中完成授权。",
+  "ja": "ログインをクリックして、ブラウザで認可を完了してください。"
+ },
+ "Clip {0} uses a pixel map. Export with the default Chrome export (--media chrome); the ffmpeg compatibility bypass does not support pixel-level mapping": {
+  "zh": "片段 {0} 使用了像素映射,请用默认的 Chrome 导出(--media chrome);ffmpeg 兼容旁路不支持像素级映射",
+  "ja": "クリップ{0}はピクセルマップを使用しています。デフォルトのChromeによる書き出し（--media chrome）を使用してください。ffmpeg互換バイパスはピクセル単位のマッピングに対応していません"
+ },
+ "Cloned voice": {
+  "zh": "复刻的音色",
+  "ja": "クローンボイス"
+ },
+ "Cloning someone else's voice requires their consent first; tick the confirmation and submit again.": {
+  "zh": "复刻别人的声音要先得到本人同意；勾选确认后再提交。",
+  "ja": "他人の声をクローンするには、先に本人の同意が必要です。確認にチェックを入れてから、もう一度送信してください。"
+ },
+ "Close SKILL mode": {
+  "zh": "关闭 SKILL 模式",
+  "ja": "SKILL モードを閉じる"
+ },
+ "Code sandbox unavailable: {0}": {
+  "zh": "代码块空间用不了:{0}",
+  "ja": "コードサンドボックスを利用できません：{0}"
+ },
+ "Codex cannot read PromptCut's standalone config, please check the config based on the previous error.": {
+  "zh": "Codex 无法读取 PromptCut 的独立配置，请根据上一条错误检查配置。",
+  "ja": "CodexがPromptCutの独立設定を読み取れません。直前のエラーを参考に設定を確認してください。"
+ },
+ "Codex login has expired, please log in again. After logging in, resend or continue the original instruction yourself.": {
+  "zh": "Codex 登录已失效，请重新登录。登录成功后请自行重新发送或继续原指令。",
+  "ja": "Codexのログインの有効期限が切れました。もう一度ログインしてください。ログイン後は、元の指示をご自身で再送信するか、続けてください。"
+ },
+ "Codex login state needs confirmation, please log in again.": {
+  "zh": "Codex 登录状态待确认，请重新登录。",
+  "ja": "Codexのログイン状態を確認する必要があります。もう一度ログインしてください。"
+ },
+ "Codex started working": {
+  "zh": "Codex 开始处理",
+  "ja": "Codexが作業を開始しました"
+ },
+ "Collaboration recovery data corrupted; the original data is kept, restore from backup or re-authenticate": {
+  "zh": "协作恢复数据损坏；保留原数据，请从备份恢复或重新认证",
+  "ja": "共同編集の復旧データが破損しています。元のデータは保持されているため、バックアップから復元するか、再認証してください"
+ },
+ "Collaboration recovery info is temporarily unreadable or cannot be saved; the original data is kept and will be retried automatically.": {
+  "zh": "协作恢复信息暂时无法读取或保存；原数据已保留，将自动重试。",
+  "ja": "共同編集の復旧情報を一時的に読み取れない、または保存できません。元のデータは保持されており、自動的に再試行されます。"
+ },
+ "Complete the login in your browser; if it does not open automatically, click the login link below.": {
+  "zh": "请在浏览器中完成登录；若没有自动打开，可点击下方登录链接。",
+  "ja": "ブラウザでログインを完了してください。自動で開かない場合は、下のログインリンクをクリックしてください。"
+ },
+ "Config module is missing": {
+  "zh": "配置模块缺失",
+  "ja": "設定モジュールがありません"
+ },
+ "Connected, model list fetched successfully.": {
+  "zh": "已连接，模型列表获取成功。",
+  "ja": "接続しました。モデル一覧を取得できました。"
+ },
+ "Control connection failed ({0})": {
+  "zh": "控制连接没建成（{0}）",
+  "ja": "コントロール接続を確立できませんでした（{0}）"
+ },
+ "Control connection timed out": {
+  "zh": "控制连接超时",
+  "ja": "コントロール接続がタイムアウトしました"
+ },
+ "Copy process exit code {0}": {
+  "zh": "复制进程退出码 {0}",
+  "ja": "コピープロセスの終了コード{0}"
+ },
+ "Could not exchange for a connection ticket ({0})": {
+  "zh": "换不出连接票据（{0}）",
+  "ja": "接続チケットに交換できませんでした（{0}）"
+ },
+ "Could not install": {
+  "zh": "装不上",
+  "ja": "インストールできませんでした"
+ },
+ "Could not read the frame rate": {
+  "zh": "读不出帧率",
+  "ja": "フレームレートを読み取れませんでした"
+ },
+ "Creator proof is incorrect": {
+  "zh": "创建者证明不对",
+  "ja": "作成者の証明が正しくありません"
+ },
+ "Creator proof required": {
+  "zh": "要创建者证明",
+  "ja": "作成者の証明が必要です"
+ },
+ "Cross-origin request rejected (Origin: {0})": {
+  "zh": "跨源请求被拒绝(Origin: {0})",
+  "ja": "クロスオリジンのリクエストを拒否しました（Origin: {0}）"
+ },
+ "Current 5 hours": {
+  "zh": "当前 5 小时",
+  "ja": "現在の5時間"
+ },
+ "Decoded output is empty (this segment has no audio samples)": {
+  "zh": "解码出来是空的(这一段没有声音样本)",
+  "ja": "デコード結果が空です（この区間にはオーディオサンプルがありません）"
+ },
+ "Decoding timed out ({0} s)": {
+  "zh": "解码超时({0} 秒)",
+  "ja": "デコードがタイムアウトしました（{0}秒）"
+ },
+ "Designed voice": {
+  "zh": "设计的音色",
+  "ja": "デザインボイス"
+ },
+ "Desktop app sessions follow the project's default level": {
+  "zh": "桌面 APP 会话跟随项目的默认等级",
+  "ja": "デスクトップアプリのセッションはプロジェクトのデフォルトレベルに従います"
+ },
+ "Device protection key corrupted": {
+  "zh": "设备保护密钥损坏",
+  "ja": "デバイス保護キーが破損しています"
+ },
+ "Direct API does not require installing a CLI.": {
+  "zh": "API 直连无需安装 CLI。",
+  "ja": "API直接接続ではCLIのインストールは不要です。"
+ },
+ "Direct API is not ready: server/runners/api.mjs is missing or failed to load": {
+  "zh": "API 直连还没就绪:server/runners/api.mjs 缺失或加载失败",
+  "ja": "API直接接続の準備ができていません：server/runners/api.mjsがないか、読み込みに失敗しました"
+ },
+ "Direct API unavailable: API key not set yet": {
+  "zh": "API 直连不可用:还没填 API Key",
+  "ja": "API直接接続を利用できません：APIキーがまだ設定されていません"
+ },
+ "Direct API unavailable: config module is missing": {
+  "zh": "API 直连不可用:配置模块缺失",
+  "ja": "API直接接続を利用できません：設定モジュールがありません"
+ },
+ "Disgusted": {
+  "zh": "厌恶",
+  "ja": "嫌悪"
+ },
+ "Domineering young man": {
+  "zh": "霸道青年",
+  "ja": "俺様系の青年"
+ },
+ "Download finished but could not be added to the media library: {0}": {
+  "zh": "下载好了但没能送进素材库:{0}",
+  "ja": "ダウンロードは完了しましたが、素材ライブラリに追加できませんでした：{0}"
+ },
+ "Downloading and installing the official CLI…": {
+  "zh": "正在下载并安装官方 CLI…",
+  "ja": "公式CLIをダウンロードしてインストールしています…"
+ },
+ "Draft does not exist": {
+  "zh": "草稿不存在",
+  "ja": "下書きが存在しません"
+ },
+ "Dubbed-film male voice": {
+  "zh": "译制片男声",
+  "ja": "吹き替え映画の男性ボイス"
+ },
+ "Elite young man": {
+  "zh": "精英青年",
+  "ja": "エリート青年"
+ },
+ "Emphasis color \"{0}\" not recognized, composited with default color {1}": {
+  "zh": "强调颜色「{0}」认不出来,按默认色 {1} 合成",
+  "ja": "強調色「{0}」を認識できないため、デフォルトの色{1}で合成しました"
+ },
+ "Emphasis of clip {0} was not composited: the media is opaque and the shadow is entirely outside the frame and clipped, so it is also invisible in the preview": {
+  "zh": "片段 {0} 的强调没有合成:素材不透明,影子全在框外被裁掉,预览里同样看不见",
+  "ja": "クリップ{0}の強調は合成されませんでした：素材が不透明で、影がすべてフレームの外にあって切り取られるため、プレビューでも見えません"
+ },
+ "Enter a voice description, for example \"young male voice, film narration style, fairly fast pace\".": {
+  "zh": "要写一句音色描述，比如「年轻男声，影视解说腔，语速偏快」。",
+  "ja": "ボイスの説明を入力してください。たとえば「若い男性の声、映画ナレーション調、話す速さはやや速め」。"
+ },
+ "Failed to connect to the prerender service: the connection was closed while forwarding {0} ({1}). Please retry later.": {
+  "zh": "连接预渲染服务失败：转发 {0} 时连接被关闭（{1}）。请稍后重试。",
+  "ja": "プリレンダリングサービスに接続できませんでした：{0}の転送中に接続が閉じられました（{1}）。しばらくしてからもう一度お試しください。"
+ },
+ "Failed to connect to the prerender service: the connection was closed while requesting {0} ({1}).": {
+  "zh": "连接预渲染服务失败：请求 {0} 时连接被关闭（{1}）。",
+  "ja": "プリレンダリングサービスに接続できませんでした：{0}のリクエスト中に接続が閉じられました（{1}）。"
+ },
+ "Failed to connect to the prerender service: {0}": {
+  "zh": "连接预渲染服务失败：{0}",
+  "ja": "プリレンダリングサービスに接続できませんでした：{0}"
+ },
+ "Failed to convert source file to audio: {0}": {
+  "zh": "源文件转音频失败：{0}",
+  "ja": "ソースファイルをオーディオに変換できませんでした：{0}"
+ },
+ "Failed to create working directory": {
+  "zh": "创建工作目录失败",
+  "ja": "作業ディレクトリを作成できませんでした"
+ },
+ "Failed to fetch bytes from the asset service: {0}": {
+  "zh": "从素材服务取字节失败:{0}",
+  "ja": "アセットサービスからバイトデータを取得できませんでした：{0}"
+ },
+ "Failed to fetch the model list: HTTP {0}": {
+  "zh": "拉模型清单失败:HTTP {0}",
+  "ja": "モデル一覧を取得できませんでした：HTTP {0}"
+ },
+ "Failed to fetch the model list: the response was not JSON": {
+  "zh": "拉模型清单失败:回来的不是 JSON",
+  "ja": "モデル一覧を取得できませんでした：応答がJSONではありませんでした"
+ },
+ "Failed to get QR code: HTTP {0}": {
+  "zh": "拿二维码失败:HTTP {0}",
+  "ja": "QRコードを取得できませんでした：HTTP {0}"
+ },
+ "Failed to get QR code: {0}": {
+  "zh": "拿二维码失败:{0}",
+  "ja": "QRコードを取得できませんでした：{0}"
+ },
+ "Failed to get config": {
+  "zh": "获取配置失败",
+  "ja": "設定を取得できませんでした"
+ },
+ "Failed to parse Python output": {
+  "zh": "Python 输出解析失败",
+  "ja": "Pythonの出力を解析できませんでした"
+ },
+ "Failed to parse ffprobe output: {0}": {
+  "zh": "ffprobe 输出解析失败：{0}",
+  "ja": "ffprobeの出力を解析できませんでした：{0}"
+ },
+ "Failed to parse output: ": {
+  "zh": "解析输出失败: ",
+  "ja": "出力を解析できませんでした： "
+ },
+ "Failed to read config: {0}": {
+  "zh": "读取配置失败: {0}",
+  "ja": "設定を読み取れませんでした：{0}"
+ },
+ "Failed to read request body": {
+  "zh": "读取请求体失败",
+  "ja": "リクエスト本文を読み取れませんでした"
+ },
+ "Failed to read session": {
+  "zh": "读取会话失败",
+  "ja": "セッションを読み取れませんでした"
+ },
+ "Failed to start ffmpeg: ": {
+  "zh": "启动 ffmpeg 失败: ",
+  "ja": "ffmpegを起動できませんでした： "
+ },
+ "Fearful": {
+  "zh": "害怕",
+  "ja": "恐れ"
+ },
+ "Female presenter": {
+  "zh": "女性主持人",
+  "ja": "女性司会者"
+ },
+ "File exceeds the 512MB limit": {
+  "zh": "文件超出 512MB 限制",
+  "ja": "ファイルが512MBの上限を超えています"
+ },
+ "File for media \"{0}\" not found, clip {1} has no picture on this layer": {
+  "zh": "素材「{0}」找不到文件,片段 {1} 这一层没有画面",
+  "ja": "素材「{0}」のファイルが見つからないため、クリップ{1}のこのレイヤーには映像がありません"
+ },
+ "Follows the project's default level": {
+  "zh": "跟随项目的默认等级",
+  "ja": "プロジェクトのデフォルトレベルに従う"
+ },
+ "Frame render failed": {
+  "zh": "帧渲染失败",
+  "ja": "フレームのレンダリングに失敗しました"
+ },
+ "Gentle big sister": {
+  "zh": "温柔姐姐",
+  "ja": "優しいお姉さん"
+ },
+ "Happy": {
+  "zh": "高兴",
+  "ja": "喜び"
+ },
+ "Host device conflict": {
+  "zh": "主机设备冲突",
+  "ja": "ホストデバイスの競合"
+ },
+ "Identity recovery record invalid": {
+  "zh": "身份恢复记录无效",
+  "ja": "ID復旧記録が無効です"
+ },
+ "If you are developing in the repo, run npm run prepare-python to assemble it.": {
+  "zh": "在仓库里开发的话跑 npm run prepare-python 组装。",
+  "ja": "リポジトリで開発している場合は、npm run prepare-pythonを実行して組み立ててください。"
+ },
+ "Illegal path": {
+  "zh": "非法路径",
+  "ja": "不正なパス"
+ },
+ "In phase 1, only Chromium-based browsers can serve as render nodes": {
+  "zh": "一期只在 Chromium 内核的浏览器上当渲染节点",
+  "ja": "フェーズ1では、Chromiumベースのブラウザのみがレンダーノードになれます"
+ },
+ "In unattended mode it cannot pop up a window to ask for consent, so reading files, reading web pages and running commands outside the workspace are always rejected automatically.": {
+  "zh": "无人值守模式下它没法弹窗征求同意,工作区以外的读文件、读网页、跑命令一律自动拒绝。",
+  "ja": "無人実行モードでは同意を求めるウィンドウを表示できないため、ワークスペース外でのファイルの読み取り、Webページの読み取り、コマンドの実行は常に自動的に拒否されます。"
+ },
+ "Installation complete. You can log in now.": {
+  "zh": "安装完成，可以登录了。",
+  "ja": "インストールが完了しました。ログインできます。"
+ },
+ "Installer exited ({0}). {1}": {
+  "zh": "安装程序退出（{0}）。{1}",
+  "ja": "インストーラーが終了しました（{0}）。{1}"
+ },
+ "Interrupted, this call did not finish.": {
+  "zh": "已中断,这次调用没有执行完。",
+  "ja": "中断されたため、この呼び出しは完了しませんでした。"
+ },
+ "Invalid PNG snapshot key: {0}": {
+  "zh": "PNG 快照的键不合法:{0}",
+  "ja": "PNGスナップショットのキーが不正です：{0}"
+ },
+ "Invalid authorization code format: it should be the whole string shown on the login page, with no spaces or line breaks.": {
+  "zh": "授权码格式不对：应是登录网页上显示的那一整串，不含空格和换行。",
+  "ja": "認可コードの形式が正しくありません。ログインページに表示されている文字列全体を、スペースや改行を含めずに入力してください。"
+ },
+ "Invalid conversationId": {
+  "zh": "无效的 conversationId",
+  "ja": "conversationIdが無効です"
+ },
+ "Invalid parameters: missing a valid id": {
+  "zh": "参数不合法，缺少有效 id",
+  "ja": "パラメーターが無効です：有効なidがありません"
+ },
+ "Invalid parameters: missing a valid id or messages array": {
+  "zh": "参数不合法，缺少有效 id 或 messages 数组",
+  "ja": "パラメーターが無効です：有効なidまたはmessages配列がありません"
+ },
+ "Invalid request body": {
+  "zh": "请求体不对",
+  "ja": "リクエスト本文が正しくありません"
+ },
+ "Invalid scope": {
+  "zh": "无效的 scope",
+  "ja": "scopeが無効です"
+ },
+ "Invalid session id": {
+  "zh": "会话 id 不合法",
+  "ja": "セッションIDが正しくありません"
+ },
+ "JSON parse error": {
+  "zh": "JSON 解析错误",
+  "ja": "JSON解析エラー"
+ },
+ "Job not found, the service may have restarted": {
+  "zh": "作业不存在,可能服务已重启",
+  "ja": "ジョブが見つかりません。サービスが再起動した可能性があります"
+ },
+ "Key type must be one of {0}": {
+  "zh": "密钥类型只能是 {0}",
+  "ja": "キーの種類は{0}のいずれかにしてください"
+ },
+ "Kling": {
+  "zh": "可灵",
+  "ja": "Kling"
+ },
+ "Kling synthesis failed: {0}. Kling only accepts official voice ids.": {
+  "zh": "可灵合成失败：{0}。可灵只认官方音色 id。",
+  "ja": "Klingの音声合成に失敗しました：{0}。Klingは公式のボイスIDのみ受け付けます。"
+ },
+ "LAN devices can only access the asset service; to open up other endpoints, set PROMPTCUT_LAN_API=1 at startup": {
+  "zh": "局域网设备只能访问素材服务;要开放其它接口,启动时设 PROMPTCUT_LAN_API=1",
+  "ja": "LAN内のデバイスはアセットサービスにしかアクセスできません。他のエンドポイントを開放するには、起動時にPROMPTCUT_LAN_API=1を設定してください"
+ },
+ "Local backup failed, not overwritten: {0}": {
+  "zh": "本机那份备份失败,没有覆盖:{0}",
+  "ja": "このマシンのバックアップに失敗したため、上書きしませんでした：{0}"
+ },
+ "Login did not complete (exit code {0}). Please retry; if the browser callback fails, try device code login.": {
+  "zh": "登录未完成（退出码 {0}）。请重试；浏览器回调失败时可尝试设备码登录。",
+  "ja": "ログインが完了しませんでした（終了コード{0}）。もう一度お試しください。ブラウザのコールバックが失敗する場合は、デバイスコードでのログインをお試しください。"
+ },
+ "Login response is missing {0}, scan again": {
+  "zh": "登录响应里缺 {0},重新扫一次",
+  "ja": "ログインの応答に{0}がありません。もう一度スキャンしてください"
+ },
+ "Login successful.": {
+  "zh": "登录成功。",
+  "ja": "ログインしました。"
+ },
+ "Long-term window": {
+  "zh": "长期窗口",
+  "ja": "長期ウィンドウ"
+ },
+ "Male presenter": {
+  "zh": "男性主持人",
+  "ja": "男性司会者"
+ },
+ "Mature elder sister": {
+  "zh": "御姐",
+  "ja": "クールなお姉さん"
+ },
+ "Mature woman": {
+  "zh": "成熟女性",
+  "ja": "成熟した女性"
+ },
+ "Media file does not exist": {
+  "zh": "素材文件不存在",
+  "ja": "素材ファイルが存在しません"
+ },
+ "Media not found: {0}": {
+  "zh": "找不到素材{0}",
+  "ja": "素材が見つかりません：{0}"
+ },
+ "Member {0}'s Agent": {
+  "zh": "成员 {0} 的 Agent",
+  "ja": "メンバー{0}のエージェント"
+ },
+ "Members cannot register or withdraw service addresses": {
+  "zh": "成员不能登记或撤回服务地址",
+  "ja": "メンバーはサービスアドレスの登録や取り下げはできません"
+ },
+ "MiniMax returned no audio.": {
+  "zh": "MiniMax 没有返回音频。",
+  "ja": "MiniMaxからオーディオが返されませんでした。"
+ },
+ "MiniMax {0} failed: {1} ({2})": {
+  "zh": "MiniMax {0}失败：{1}（{2}）",
+  "ja": "MiniMaxの{0}に失敗しました：{1}（{2}）"
+ },
+ "Missing a valid conversationId or name parameter": {
+  "zh": "缺少有效 conversationId 或 name 参数",
+  "ja": "有効なconversationIdまたはnameパラメーターがありません"
+ },
+ "Naive young man": {
+  "zh": "青涩青年",
+  "ja": "初々しい青年"
+ },
+ "Native tool was rejected, retrying with text protocol": {
+  "zh": "原生工具被拒，改用文本协议重试",
+  "ja": "ネイティブツールが拒否されたため、テキストプロトコルで再試行します"
+ },
+ "No API address. Enter it in \"Voiceover settings\", or first set the custom API address in the API settings.": {
+  "zh": "没有 API 地址。在「配音设置」里填，或者先在 API 设置里填好自定义 API 的地址。",
+  "ja": "APIアドレスがありません。「ボイスオーバー設定」で入力するか、先にAPI設定でカスタムAPIのアドレスを設定してください。"
+ },
+ "No API key for voiceover yet. Enter it in \"Voiceover settings\" (open it from the voiceover card on the start page or the editor top bar).": {
+  "zh": "还没有配音用的 API Key。去「配音设置」里填（开始页的配音卡、编辑台顶栏都能打开）。",
+  "ja": "ボイスオーバー用のAPIキーがまだありません。「ボイスオーバー設定」で入力してください（スタートページのボイスオーバーカード、またはエディタのトップバーから開けます）。"
+ },
+ "No audio to clone was received.": {
+  "zh": "没有拿到要复刻的音频。",
+  "ja": "クローンするオーディオを受信できませんでした。"
+ },
+ "No decodable audio on the timeline": {
+  "zh": "时间轴上没有能解码的声音",
+  "ja": "タイムライン上にデコードできるオーディオがありません"
+ },
+ "No file_id was received after uploading the clone audio.": {
+  "zh": "上传复刻音频后没有拿到 file_id。",
+  "ja": "クローン用オーディオのアップロード後、file_idを受信できませんでした。"
+ },
+ "No key has been saved for {0} yet": {
+  "zh": "{0} 这一路还没有保存过 Key",
+  "ja": "{0}のキーはまだ保存されていません"
+ },
+ "No login state in the browser yet, finish logging in in the window and check again": {
+  "zh": "浏览器里还没有登录态,请在窗口里完成登录后再查一次",
+  "ja": "ブラウザにはまだログイン状態がありません。ウィンドウでログインを完了してから、もう一度確認してください"
+ },
+ "No login state yet: run user_interface_collect_login first (scan the QR code or use the browser)": {
+  "zh": "还没有登录态:先 user_interface_collect_login(扫码或浏览器)",
+  "ja": "ログイン状態がありません：先にuser_interface_collect_loginを実行してください（QRコードをスキャンするか、ブラウザを使用します）"
+ },
+ "No login task is currently waiting for an authorization code. Click \"Log in\" first.": {
+  "zh": "现在没有在等授权码的登录任务。请先点「登录」。",
+  "ja": "認可コードを待っているログインタスクはありません。先に「ログイン」をクリックしてください。"
+ },
+ "No media given: the request body must include media (the media id / url / hash); local file paths are no longer accepted, and bytes are always fetched through the asset service": {
+  "zh": "没给素材:请求体要带 media(素材的 id / url / hash);本机文件路径不再接受,字节一律经素材服务取",
+  "ja": "素材が指定されていません：リクエスト本文にmedia（素材のid / url / hash）を含めてください。ローカルのファイルパスは受け付けなくなり、バイトデータは常にアセットサービス経由で取得されます"
+ },
+ "No response after {0} s": {
+  "zh": "{0} 秒没有应答",
+  "ja": "{0}秒間応答がありません"
+ },
+ "No running PromptCut found (no port file {0}). Open PromptCut first (the desktop app, or npm run dev in the repo), then try again.": {
+  "zh": "没有找到正在运行的 PromptCut(没有端口文件 {0})。请先打开 PromptCut(桌面版,或在仓库里 npm run dev),再回来重试。",
+  "ja": "実行中のPromptCutが見つかりません（ポートファイル{0}がありません）。先にPromptCutを開いてください（デスクトップアプリ、またはリポジトリでnpm run dev）。その後、もう一度お試しください。"
+ },
+ "No site named {0}, available: {1}": {
+  "zh": "没有叫 {0} 的站点,可选:{1}",
+  "ja": "{0}という名前のサイトはありません。選べるもの：{1}"
+ },
+ "No such preview file": {
+  "zh": "没有这个试听文件",
+  "ja": "該当する試聴ファイルがありません"
+ },
+ "No usable Python": {
+  "zh": "没有可用的 Python",
+  "ja": "使用できるPythonがありません"
+ },
+ "No usable Python, cannot run the tracking extension.": {
+  "zh": "没有可用的 Python，无法运行追踪拓展。",
+  "ja": "使用できるPythonがないため、追跡拡張機能を実行できません。"
+ },
+ "No usable Python, so subject detection can be neither installed nor run": {
+  "zh": "没有可用的 Python，装不了也跑不了主体检测",
+  "ja": "使用できるPythonがないため、被写体検出をインストールすることも実行することもできません"
+ },
+ "No usage line found in the output: {0}": {
+  "zh": "没在输出里找到用量行:{0}",
+  "ja": "出力に使用量の行が見つかりません：{0}"
+ },
+ "Not a directory": {
+  "zh": "不是目录",
+  "ja": "ディレクトリではありません"
+ },
+ "Not an export directory name": {
+  "zh": "不是导出目录的名字",
+  "ja": "書き出しディレクトリの名前ではありません"
+ },
+ "Not under the export directory": {
+  "zh": "不在导出目录下",
+  "ja": "書き出しディレクトリの下にありません"
+ },
+ "Offline operation record invalid": {
+  "zh": "离线操作记录无效",
+  "ja": "オフライン操作の記録が無効です"
+ },
+ "One-click install currently supports Windows only.": {
+  "zh": "目前一键安装支持 Windows。",
+  "ja": "ワンクリックインストールは現在Windowsのみ対応しています。"
+ },
+ "Only claude / codex have a quota window": {
+  "zh": "只有 claude / codex 有额度窗口",
+  "ja": "利用枠ウィンドウがあるのはclaude / codexだけです"
+ },
+ "Only members of a shared project can do this": {
+  "zh": "只有共享项目的成员能做这件事",
+  "ja": "共有プロジェクトのメンバーだけがこの操作を行えます"
+ },
+ "Only members of this project can read or write its cost records": {
+  "zh": "只有这个项目的成员能读写它的成本记录",
+  "ja": "このプロジェクトのメンバーだけがコスト記録を読み書きできます"
+ },
+ "Only {0} seconds remain after removing silence; cloning needs at least 10 seconds of speech.": {
+  "zh": "去掉静音后只有 {0} 秒，复刻至少要 10 秒人声。",
+  "ja": "無音を除去すると{0}秒しか残りません。クローンには10秒以上の話し声が必要です。"
+ },
+ "Open SKILL mode": {
+  "zh": "打开 SKILL 模式",
+  "ja": "SKILL モードを開く"
+ },
+ "Operation timed out. Check your network or proxy and try again.": {
+  "zh": "操作超时，请检查网络或代理后重试。",
+  "ja": "操作がタイムアウトしました。ネットワークまたはプロキシを確認して、もう一度お試しください。"
+ },
+ "Output not generated yet": {
+  "zh": "产物还没生成",
+  "ja": "出力はまだ生成されていません"
+ },
+ "PROMPTCUT_PYTHON currently points to {0}.": {
+  "zh": "PROMPTCUT_PYTHON 现在指向 {0}。",
+  "ja": "PROMPTCUT_PYTHONは現在{0}を指しています。"
+ },
+ "Password cannot be empty": {
+  "zh": "口令不能为空",
+  "ja": "パスワードは空にできません"
+ },
+ "Please check config.toml in the PromptCut standalone config directory {0}.": {
+  "zh": "请检查 PromptCut 独立配置目录 {0} 中的 config.toml。",
+  "ja": "PromptCutの独立設定ディレクトリ{0}にあるconfig.tomlを確認してください。"
+ },
+ "Please install first": {
+  "zh": "请先安装",
+  "ja": "先にインストールしてください"
+ },
+ "Point it to python.exe to avoid this limitation (.exe does not go through the shell).": {
+  "zh": "把它改指到 python.exe 就没有这个限制(.exe 不经过 shell)。",
+  "ja": "この制限を避けるには、python.exeを指すようにしてください（.exeはシェルを経由しません）。"
+ },
+ "Preparing…": {
+  "zh": "正在准备…",
+  "ja": "準備しています…"
+ },
+ "Prerender request {0} got no response after {1} seconds.": {
+  "zh": "预渲染请求 {0} 超过 {1} 秒没有回应。",
+  "ja": "プリレンダリングのリクエスト{0}は{1}秒経っても応答がありませんでした。"
+ },
+ "Prerender returned non-JSON (HTTP {0})": {
+  "zh": "预渲染返回了非 JSON(HTTP {0})",
+  "ja": "プリレンダリングがJSON以外を返しました（HTTP {0}）"
+ },
+ "Probe command failed to run: {0}": {
+  "zh": "探测命令没跑起来:{0}",
+  "ja": "プローブコマンドを実行できませんでした：{0}"
+ },
+ "Probe timed out (50 s)": {
+  "zh": "探测超时(50 秒)",
+  "ja": "プローブがタイムアウトしました（50秒）"
+ },
+ "Process exit code {0}": {
+  "zh": "进程退出码 {0}",
+  "ja": "プロセスの終了コード{0}"
+ },
+ "Project asset ingest is missing an authorization ticket": {
+  "zh": "项目素材入库缺少授权票据",
+  "ja": "プロジェクトアセットの取り込みに認可チケットがありません"
+ },
+ "Project asset ingest response ownership does not match": {
+  "zh": "项目素材入库回包归属不匹配",
+  "ja": "プロジェクトアセット取り込みの応答の帰属が一致しません"
+ },
+ "Project does not exist": {
+  "zh": "项目不存在",
+  "ja": "プロジェクトが存在しません"
+ },
+ "Project file too large": {
+  "zh": "项目文件太大",
+  "ja": "プロジェクトファイルが大きすぎます"
+ },
+ "Project {0} has no registered version {1}": {
+  "zh": "项目 {0} 没有登记过版本 {1}",
+  "ja": "プロジェクト{0}にはバージョン{1}の登録がありません"
+ },
+ "PromptCut is not in SKILL mode right now. Sessions in the desktop app cannot operate on projects.": {
+  "zh": "PromptCut 现在不在 SKILL 模式,桌面 APP 的会话不能操作项目。",
+  "ja": "PromptCutは現在、SKILL モードではありません。デスクトップアプリのセッションからはプロジェクトを操作できません。"
+ },
+ "PromptCut is not running (no service on port {0}). Open PromptCut first, then come back and retry; do not retry repeatedly.": {
+  "zh": "PromptCut 没在运行(端口 {0} 没有服务)。请先打开 PromptCut,再回来重试;不要反复重试。",
+  "ja": "PromptCutが起動していません（ポート{0}にサービスがありません）。先にPromptCutを開いてから、もう一度お試しください。繰り返し再試行しないでください。"
+ },
+ "PromptCut is not running: the process {0} (port {1}) recorded in the port file has exited. Open PromptCut first, then try again.": {
+  "zh": "PromptCut 没在运行:端口文件里记的进程 {0}(端口 {1})已经退出。请先打开 PromptCut,再回来重试。",
+  "ja": "PromptCutが起動していません：ポートファイルに記録されたプロセス{0}（ポート{1}）は終了しています。先にPromptCutを開いてから、もう一度お試しください。"
+ },
+ "PromptCut's port file {0} has no valid port. Reopen PromptCut and try again.": {
+  "zh": "PromptCut 的端口文件 {0} 里没有有效的端口。请重新打开 PromptCut 再试。",
+  "ja": "PromptCutのポートファイル{0}に有効なポートがありません。PromptCutを開き直して、もう一度お試しください。"
+ },
+ "PromptCut's tools are unaffected: {0}.": {
+  "zh": "PromptCut 的工具不受影响 —— {0}。",
+  "ja": "PromptCutのツールは影響を受けません：{0}。"
+ },
+ "Provide a preview text.": {
+  "zh": "要给一句试听文本。",
+  "ja": "試聴用のテキストを入力してください。"
+ },
+ "QR code expired. Generate a new one": {
+  "zh": "二维码已过期,重新生成一张",
+  "ja": "QRコードの有効期限が切れました。新しく生成してください"
+ },
+ "Query failed: HTTP {0}": {
+  "zh": "查询失败:HTTP {0}",
+  "ja": "クエリに失敗しました：HTTP {0}"
+ },
+ "Read-back verification after writing failed (maybe {0} modified this file at the same time). The original file is backed up at {1}. Please try again later.": {
+  "zh": "写完读回核对不上(可能 {0} 同时改了这个文件)。原文件备份在 {1},请稍后重试。",
+  "ja": "書き込み後の読み戻しによる検証に失敗しました（{0}が同時にこのファイルを変更した可能性があります）。元のファイルは{1}にバックアップされています。しばらくしてからもう一度お試しください。"
+ },
+ "Reduce the number of times, or first confirm the tier with subject_status (the full tier is very slow).": {
+  "zh": "可以减少 times 的个数,或先用 subject_status 确认档位(full 档很慢)。",
+  "ja": "timesの個数を減らすか、先にsubject_statusで段階を確認してください（フル版はとても遅いです）。"
+ },
+ "Registered PromptCut as an MCP server for agy (agy mcp add promptcut)": {
+  "zh": "已把 PromptCut 注册为 agy 的 MCP 服务（agy mcp add promptcut）",
+  "ja": "PromptCutをagyのMCPサーバーとして登録しました（agy mcp add promptcut）"
+ },
+ "Registration count has reached the limit of {0}": {
+  "zh": "登记数已到上限 {0}",
+  "ja": "登録数が上限の{0}に達しました"
+ },
+ "Render process exited abnormally (code {0})": {
+  "zh": "渲染进程异常退出(代码 {0})",
+  "ja": "レンダリングプロセスが異常終了しました（コード{0}）"
+ },
+ "Render process failed to start (0xC0000142). This is usually caused by too many browser instances open at once. Close some and try again; if it keeps happening, restart the app.": {
+  "zh": "渲染进程启动失败(0xC0000142)。通常是同时开了太多浏览器实例,关掉一些再试;若持续出现请重启软件。",
+  "ja": "レンダリングプロセスを起動できませんでした（0xC0000142）。通常は、ブラウザインスタンスを同時に開きすぎたことが原因です。いくつか閉じてからもう一度お試しください。続く場合はアプリを再起動してください。"
+ },
+ "Request body exceeds the 32MB limit": {
+  "zh": "请求体体积超出 32MB 限制",
+  "ja": "リクエスト本文が32MBの上限を超えています"
+ },
+ "Request body is not valid JSON": {
+  "zh": "请求体不是合法的 JSON",
+  "ja": "リクエスト本文が有効なJSONではありません"
+ },
+ "Request body is over 200KB": {
+  "zh": "请求体超过 200KB",
+  "ja": "リクエスト本文が200KBを超えています"
+ },
+ "Request body too large": {
+  "zh": "请求体太大",
+  "ja": "リクエスト本文が大きすぎます"
+ },
+ "Room has been revoked": {
+  "zh": "房间已注销",
+  "ja": "ルームは取り消されています"
+ },
+ "Room revoked or host conflict": {
+  "zh": "房间已注销或主机冲突",
+  "ja": "ルームが取り消されたか、ホストが競合しています"
+ },
+ "Sad": {
+  "zh": "悲伤",
+  "ja": "悲しみ"
+ },
+ "Search timed out (55 seconds), lower limit and try again": {
+  "zh": "搜索超时(55 秒),把 limit 调小再试",
+  "ja": "検索がタイムアウトしました（55秒）。limitを小さくしてもう一度お試しください"
+ },
+ "Selection at the time the message was sent, not live": {
+  "zh": "发消息时的选区，非实时",
+  "ja": "メッセージ送信時点の選択範囲で、リアルタイムではありません"
+ },
+ "Session does not exist": {
+  "zh": "会话不存在",
+  "ja": "セッションが存在しません"
+ },
+ "Set for this chat only": {
+  "zh": "这个对话单独设的",
+  "ja": "このチャットのみに設定"
+ },
+ "Shared endpoint {0} returned {1}{2}": {
+  "zh": "共享端点 {0} 回 {1}{2}",
+  "ja": "共有エンドポイント{0}は{1}を返しました{2}"
+ },
+ "Short-term window": {
+  "zh": "短期窗口",
+  "ja": "短期ウィンドウ"
+ },
+ "Shot detection process exited abnormally (code {0})": {
+  "zh": "镜头识别进程异常退出（代码 {0}）",
+  "ja": "ショット検出プロセスが異常終了しました（コード{0}）"
+ },
+ "Site {0} has no QR code login": {
+  "zh": "站点 {0} 没有扫码登录",
+  "ja": "サイト{0}にはQRコードログインがありません"
+ },
+ "Skipped ": {
+  "zh": "有 ",
+  "ja": "スキップしたのは "
+ },
+ "Skipped {0} clips with no audio stream or missing file: {1}": {
+  "zh": "有 {0} 段没有音频流或文件不存在,已跳过:{1}",
+  "ja": "オーディオストリームがないかファイルが存在しないクリップを{0}個スキップしました：{1}"
+ },
+ "Some actions were rejected: {0}": {
+  "zh": "部分动作被拒绝: {0}",
+  "ja": "一部のアクションが拒否されました：{0}"
+ },
+ "Source file path does not exist or is invalid": {
+  "zh": "源文件路径不存在或不合法",
+  "ja": "ソースファイルのパスが存在しないか、無効です"
+ },
+ "Source file {0}, {1} seconds": {
+  "zh": "源文件 {0}，{1} 秒",
+  "ja": "ソースファイル{0}、{1}秒"
+ },
+ "Source has {0} channels, mixed down to stereo": {
+  "zh": "源有 {0} 个声道,混成了立体声",
+  "ja": "ソースは{0}チャンネルで、ステレオにミックスダウンしました"
+ },
+ "Stage windows cannot call this endpoint": {
+  "zh": "舞台窗口不能调这个接口",
+  "ja": "ステージウィンドウからはこのエンドポイントを呼び出せません"
+ },
+ "Started {0}": {
+  "zh": "已启动 {0}",
+  "ja": "{0}を起動しました"
+ },
+ "Subject detection process exited abnormally (code {0})": {
+  "zh": "主体检测进程异常退出（代码 {0}）",
+  "ja": "被写体検出プロセスが異常終了しました（コード{0}）"
+ },
+ "Subject detection returned no result": {
+  "zh": "主体检测没有返回结果",
+  "ja": "被写体検出は結果を返しませんでした"
+ },
+ "Subject detection timed out (over {0} seconds) and was force-stopped.": {
+  "zh": "主体检测超时(超过 {0} 秒),已强制结束。",
+  "ja": "被写体検出がタイムアウト（{0}秒超過）したため、強制終了しました。"
+ },
+ "Subject detection was cancelled": {
+  "zh": "主体检测已被取消",
+  "ja": "被写体検出はキャンセルされました"
+ },
+ "Sunny guy": {
+  "zh": "阳光男生",
+  "ja": "爽やかな男子"
+ },
+ "Sunny youth": {
+  "zh": "阳光少年",
+  "ja": "爽やかな少年"
+ },
+ "Surprised": {
+  "zh": "惊讶",
+  "ja": "驚き"
+ },
+ "Sweet woman": {
+  "zh": "甜美女性",
+  "ja": "甘い声の女性"
+ },
+ "Syntax error": {
+  "zh": "语法错误",
+  "ja": "構文エラー"
+ },
+ "System protected storage response invalid": {
+  "zh": "系统保护存储响应无效",
+  "ja": "システム保護ストレージの応答が無効です"
+ },
+ "System protected storage unavailable": {
+  "zh": "系统保护存储不可用",
+  "ja": "システム保護ストレージを利用できません"
+ },
+ "Task does not exist": {
+  "zh": "任务不存在",
+  "ja": "タスクが存在しません"
+ },
+ "Text too long ({0} chars). {1} allows at most {2} chars per request; split it into several parts and voice them separately.": {
+  "zh": "文字太长（{0} 字），{1} 单次最多 {2} 字，拆成几段分别配。",
+  "ja": "テキストが長すぎます（{0}文字）。{1}は1回のリクエストで最大{2}文字までです。いくつかに分けて、別々にボイスオーバーを作成してください。"
+ },
+ "The API key is invalid or does not have access to this model (HTTP {0}). Check the API key in \"Voiceover settings\".": {
+  "zh": "API Key 无效或没有开通这个模型（HTTP {0}）。检查「配音设置」里的 API Key。",
+  "ja": "APIキーが無効か、このモデルへのアクセス権がありません（HTTP {0}）。「ボイスオーバー設定」のAPIキーを確認してください。"
+ },
+ "The Codex login state record cannot be confirmed, please log in again.": {
+  "zh": "Codex 登录状态记录无法确认，请重新登录。",
+  "ja": "Codexのログイン状態の記録を確認できません。もう一度ログインしてください。"
+ },
+ "The [mcp_servers] table in config.toml defines {0} in another form (line {1}); to avoid corrupting it, nothing was modified. Delete that entry manually, then register again.": {
+  "zh": "config.toml 的 [mcp_servers] 表里用别的写法定义了 {0}(第 {1} 行),为了不写坏它,没有改动。请手动删掉那一条后再登记。",
+  "ja": "config.tomlの[mcp_servers]テーブルに、別の書き方で{0}が定義されています（{1}行目）。壊さないよう、何も変更していません。そのエントリを手動で削除してから、もう一度登録してください。"
+ },
+ "The address entered manually is empty": {
+  "zh": "手填地址是空的",
+  "ja": "手動で入力したアドレスが空です"
+ },
+ "The address must be http(s):// or ws(s)://": {
+  "zh": "地址必须是 http(s):// 或 ws(s)://",
+  "ja": "アドレスはhttp(s)://またはws(s)://で始まる必要があります"
+ },
+ "The arguments contain cmd metacharacters ({0}), which the batch interpreter cannot handle -- ": {
+  "zh": "参数里有 cmd 元字符({0}),批处理解释器接不住 —— ",
+  "ja": "引数にcmdのメタ文字（{0}）が含まれており、バッチインタープリターでは処理できません―― "
+ },
+ "The asset service ingest response has no content hash ({0})": {
+  "zh": "素材服务的入库回包里没有内容哈希({0})",
+  "ja": "アセットサービスの取り込み応答にコンテンツハッシュがありません（{0}）"
+ },
+ "The asset service refused the read (HTTP {0})": {
+  "zh": "素材服务拒绝了读取(HTTP {0})",
+  "ja": "アセットサービスが読み取りを拒否しました（HTTP {0}）"
+ },
+ "The audio for cloning must be smaller than 20MB.": {
+  "zh": "复刻用的音频要小于 20MB。",
+  "ja": "クローン用のオーディオは20MB未満にしてください。"
+ },
+ "The audio to measure exceeds the sample limit {0} (at most {3} s at {1} Hz, {2} channels). Lower sampleRate, pass mono: true, or measure only one segment with start / duration.": {
+  "zh": "要测的声音超过样本上限 {0}({1} Hz、{2} 声道下最多 {3} 秒)。降 sampleRate、传 mono: true,或用 start / duration 只测一段。",
+  "ja": "測定するオーディオがサンプル数の上限{0}を超えています（{1} Hz・{2}チャンネルでは最大{3}秒）。sampleRateを下げるか、mono: trueを渡すか、start / durationで一部の区間だけを測定してください。"
+ },
+ "The card audio size is wrong": {
+  "zh": "卡片声音的大小不对",
+  "ja": "カードのオーディオのサイズが正しくありません"
+ },
+ "The close request succeeded, but the server still reports SKILL mode as on. Another instance may be changing the state at the same time, try again": {
+  "zh": "关闭请求成功了,但服务端仍报告 SKILL 模式开着 —— 可能有别的实例在同时改状态,再点一次试试",
+  "ja": "SKILL モードを閉じるリクエストは成功しましたが、サーバー側ではまだSKILL モードがオンのままです。別のインスタンスが同時に状態を変更している可能性があります。もう一度お試しください"
+ },
+ "The collaboration recovery record is being saved by another instance, please retry": {
+  "zh": "协作恢复记录正在被另一个实例保存，请重试",
+  "ja": "共同編集の復旧記録は別のインスタンスが保存中です。もう一度お試しください"
+ },
+ "The content of {0} is not an object; it was not modified.": {
+  "zh": "{0} 的内容不是一个对象,没有改动它。",
+  "ja": "{0}の内容がオブジェクトではないため、変更しませんでした。"
+ },
+ "The cost records of this project are full ({0} records)": {
+  "zh": "这个项目的成本记录已满（{0} 条）",
+  "ja": "このプロジェクトのコスト記録がいっぱいです（{0}件）"
+ },
+ "The document service address must be ws(s):// or http(s)://": {
+  "zh": "文档服务地址必须是 ws(s):// 或 http(s)://",
+  "ja": "ドキュメントサービスのアドレスは、ws(s)://またはhttp(s)://で始まる必要があります"
+ },
+ "The document service does not accept this file ({0})": {
+  "zh": "文档服务不收这个文件({0})",
+  "ja": "ドキュメントサービスはこのファイルを受け付けません（{0}）"
+ },
+ "The download process reported the file \"{0}\", but it is not in the temp directory": {
+  "zh": "下载进程报了文件「{0}」,临时目录里却没有它",
+  "ja": "ダウンロードプロセスはファイル「{0}」を報告しましたが、一時ディレクトリにありません"
+ },
+ "The endpoint URL is empty": {
+  "zh": "接口地址是空的",
+  "ja": "エンドポイントのURLが空です"
+ },
+ "The endpoint rejected this key (HTTP {0})": {
+  "zh": "接口拒绝了这个 Key(HTTP {0})",
+  "ja": "エンドポイントがこのキーを拒否しました（HTTP {0}）"
+ },
+ "The file to ingest is missing: {0} ({1})": {
+  "zh": "要入库的文件不见了:{0}({1})",
+  "ja": "取り込むファイルが見つかりません：{0}（{1}）"
+ },
+ "The history file of this session has a bad format, starting from empty.": {
+  "zh": "这个会话的历史文件格式不对,已从空白开始。",
+  "ja": "このセッションの履歴ファイルの形式が正しくないため、空の状態から開始します。"
+ },
+ "The hosted address ({0}) is not a valid address": {
+  "zh": "托管地址（{0}）不是合法的地址",
+  "ja": "ホスティング先のアドレス（{0}）は有効なアドレスではありません"
+ },
+ "The hosted address ({0}) must be http(s):// or ws(s)://": {
+  "zh": "托管地址（{0}）必须是 http(s):// 或 ws(s)://",
+  "ja": "ホスティング先のアドレス（{0}）は、http(s)://またはws(s)://で始まる必要があります"
+ },
+ "The local device identity record is corrupted; the original record was kept, please restore a backup": {
+  "zh": "本机设备身份记录损坏；保留原记录，请恢复备份",
+  "ja": "このマシンのデバイスID記録が破損しています。元の記録は保持されているため、バックアップを復元してください"
+ },
+ "The lock file was repeatedly taken by others, please try again later": {
+  "zh": "锁文件反复被别人抢走,请稍后再试",
+  "ja": "ロックファイルが繰り返し他のプロセスに取得されたため、しばらくしてからもう一度お試しください"
+ },
+ "The login program has ended, but login success is not yet confirmed. Please retry.": {
+  "zh": "登录程序已结束，但尚未确认登录成功。请重试。",
+  "ja": "ログインプログラムは終了しましたが、ログインの成功はまだ確認できていません。もう一度お試しください。"
+ },
+ "The login state has changed. Please re-confirm the current login.": {
+  "zh": "登录状态已更新，请重新确认当前登录。",
+  "ja": "ログイン状態が更新されました。現在のログインをもう一度確認してください。"
+ },
+ "The login state in the browser has expired, log in again in the window": {
+  "zh": "浏览器里的登录态已过期,请在窗口里重新登录",
+  "ja": "ブラウザのログイン状態の有効期限が切れました。ウィンドウでもう一度ログインしてください"
+ },
+ "The mix is stereo, as in export: {0} mono media clips are spread across both channels, each 3 dB lower (ffmpeg's default center mix coefficient)": {
+  "zh": "混音按导出的做法是立体声:{0} 段单声道素材摊到两个声道,每路低 3 dB(ffmpeg 缺省的中置混音系数)",
+  "ja": "ミックスは書き出しと同様にステレオです：モノラル素材のクリップ{0}個が両方のチャンネルに振り分けられ、それぞれ3 dB下がります（ffmpegのデフォルトのセンターミックス係数）"
+ },
+ "The old collaboration service contains external links; the original data is kept, restore the backup explicitly": {
+  "zh": "旧协作服务含外部链接，保留原数据，请显式恢复备份",
+  "ja": "旧共同編集サービスに外部リンクが含まれています。元のデータは保持されているため、バックアップを明示的に復元してください"
+ },
+ "The prerender process was not ready within {0} seconds{1}": {
+  "zh": "预渲染进程 {0} 秒内没有就绪{1}",
+  "ja": "プリレンダリングのプロセスが{0}秒以内に準備できませんでした{1}"
+ },
+ "The render queue is not attached yet": {
+  "zh": "渲染任务队列还没有挂上",
+  "ja": "レンダリングキューがまだ接続されていません"
+ },
+ "The report is over 64MB and was not saved": {
+  "zh": "报告超过 64MB,没有保存",
+  "ja": "レポートが64MBを超えたため、保存しませんでした"
+ },
+ "The request is not valid JSON": {
+  "zh": "请求不是有效的 JSON",
+  "ja": "リクエストが有効なJSONではありません"
+ },
+ "The response has no quota window (not logged in?)": {
+  "zh": "返回里没有额度窗口(没登录?)",
+  "ja": "応答に利用枠ウィンドウがありません（ログインしていませんか？）"
+ },
+ "The saved login state has expired, log in again": {
+  "zh": "存盘的登录态已过期,重新登录一次",
+  "ja": "保存されたログイン状態の有効期限が切れました。もう一度ログインしてください"
+ },
+ "The segment to measure is {0} s, {1} Hz, {2} channels, {3} samples in total, over the limit of {4}": {
+  "zh": "要测的这段 {0} 秒、{1} Hz、{2} 声道,共 {3} 个样本,超过上限 {4}",
+  "ja": "測定する区間は{0}秒、{1} Hz、{2}チャンネルで、合計{3}サンプルとなり、上限の{4}を超えています"
+ },
+ "The source file must be uploaded to the media library first (the clone form on the start page does this automatically); include the media id in the request as media.": {
+  "zh": "源文件要先上传进素材库（开始页的复刻表单会自动做），请求里带素材标识 media。",
+  "ja": "ソースファイルを先に素材ライブラリにアップロードしてください（スタートページのクローンフォームでは自動で行われます）。リクエストには素材のIDをmediaとして含めてください。"
+ },
+ "The specified port {0} is invalid": {
+  "zh": "指定的端口 {0} 不合法",
+  "ja": "指定されたポート{0}は無効です"
+ },
+ "The text to voice is empty.": {
+  "zh": "要配音的文字是空的。",
+  "ja": "ボイスオーバーにするテキストが空です。"
+ },
+ "The {1} entry in {0} has been modified and is not the one written by PromptCut; to avoid overwriting your changes, it was not undone. Edit or delete it manually if needed.": {
+  "zh": "{0} 里的 {1} 条目已经被改过,不是 PromptCut 写的那一条;为了不覆盖你的改动,没有撤销。需要的话请手动删改。",
+  "ja": "{0}内の{1}エントリが変更されており、PromptCutが書き込んだものではありません。変更内容を上書きしないよう、元に戻しませんでした。必要であれば手動で編集または削除してください。"
+ },
+ "This QR code does not exist or the service has restarted": {
+  "zh": "这张二维码不存在或服务已重启",
+  "ja": "このQRコードは存在しないか、サービスが再起動されています"
+ },
+ "This QR code does not exist or the service was restarted. Generate a new one": {
+  "zh": "这张二维码不存在或服务已重启,重新生成一张",
+  "ja": "このQRコードは存在しないか、サービスが再起動されました。新しく生成してください"
+ },
+ "This connection cannot read or write cost records": {
+  "zh": "这条连接不能读写成本记录",
+  "ja": "この接続ではコスト記録を読み書きできません"
+ },
+ "This export is still in progress. Wait for it to finish or cancel it, then delete.": {
+  "zh": "这份导出还在进行，等它结束或取消后再删。",
+  "ja": "この書き出しはまだ進行中です。終了を待つかキャンセルしてから、削除してください。"
+ },
+ "This export no longer exists": {
+  "zh": "这份导出已经不在了",
+  "ja": "この書き出しはすでに存在しません"
+ },
+ "This file has no audio stream": {
+  "zh": "该文件没有音频流",
+  "ja": "このファイルにはオーディオストリームがありません"
+ },
+ "This file is not a PromptCut project": {
+  "zh": "这个文件不是 PromptCut 项目",
+  "ja": "このファイルはPromptCutのプロジェクトではありません"
+ },
+ "This is a link, not an export directory": {
+  "zh": "这是一个链接，不是导出目录",
+  "ja": "これはリンクで、書き出しディレクトリではありません"
+ },
+ "This media is not on the asset service: {0} (if it is still uploading, wait for the upload to finish and retry; otherwise import it again)": {
+  "zh": "素材服务上没有这份素材:{0}(还在上传就等传完再试;否则重新导入一次)",
+  "ja": "この素材はアセットサービスにありません：{0}（アップロード中であれば完了を待ってからもう一度お試しください。そうでなければ、もう一度インポートしてください）"
+ },
+ "This project does not have Cloud Agent enabled": {
+  "zh": "这个项目没有开云端 Agent",
+  "ja": "このプロジェクトではクラウドエージェントが有効になっていません"
+ },
+ "This project file is already open in another PromptCut": {
+  "zh": "这个项目文件正被另一个 PromptCut 打开",
+  "ja": "このプロジェクトファイルは別のPromptCutですでに開かれています"
+ },
+ "This project file is already open in another PromptCut (process {0}, since {1})": {
+  "zh": "这个项目文件正被另一个 PromptCut 打开(进程 {0},自 {1})",
+  "ja": "このプロジェクトファイルは別のPromptCutですでに開かれています（プロセス{0}、{1}から）"
+ },
+ "This provider has no command to list models, please enter one manually above": {
+  "zh": "这一家没有列出模型的命令,请在上面手填",
+  "ja": "このプロバイダーにはモデルを一覧表示するコマンドがありません。上の欄でモデルを手動入力してください"
+ },
+ "This service has no CLI login method.": {
+  "zh": "此服务没有 CLI 登录方式。",
+  "ja": "このサービスにはCLIでのログイン方法がありません。"
+ },
+ "This storage does not support project snapshots": {
+  "zh": "这个存储不支持项目快照",
+  "ja": "このストレージはプロジェクトのスナップショットに対応していません"
+ },
+ "This week": {
+  "zh": "本周",
+  "ja": "今週"
+ },
+ "This week (all models)": {
+  "zh": "本周(全部模型)",
+  "ja": "今週（全モデル）"
+ },
+ "This week ({0})": {
+  "zh": "本周({0})",
+  "ja": "今週（{0}）"
+ },
+ "Thumbnail not found": {
+  "zh": "缩略图不存在",
+  "ja": "サムネイルが見つかりません"
+ },
+ "Too many authorization code submissions. Cancel and log in again.": {
+  "zh": "授权码提交次数太多，请取消后重新登录。",
+  "ja": "認可コードの送信回数が多すぎます。キャンセルして、もう一度ログインしてください。"
+ },
+ "Too many requests, rate limited (HTTP 429). Wait a minute or two and try again.": {
+  "zh": "请求太频繁被限流了（HTTP 429），等一两分钟再试。",
+  "ja": "リクエストが多すぎるため、レート制限されました（HTTP 429）。1～2分待ってからもう一度お試しください。"
+ },
+ "Too many wrong passwords, try again later": {
+  "zh": "口令错误太多，稍后再试",
+  "ja": "パスワードの誤りが多すぎます。しばらくしてからもう一度お試しください"
+ },
+ "Tracking failed": {
+  "zh": "追踪失败",
+  "ja": "追跡に失敗しました"
+ },
+ "Tracking process exited abnormally (code {0})": {
+  "zh": "追踪进程异常退出（代码 {0}）",
+  "ja": "追跡プロセスが異常終了しました（コード{0}）"
+ },
+ "Tracking process exited abnormally (code {0}): {1}": {
+  "zh": "追踪进程异常退出（代码 {0}）：{1}",
+  "ja": "追跡プロセスが異常終了しました（コード{0}）：{1}"
+ },
+ "Unable to confirm the connection for now, please check your network or log in again.": {
+  "zh": "暂时无法确认连接，请检查网络或重新登录。",
+  "ja": "現在、接続を確認できません。ネットワークを確認するか、もう一度ログインしてください。"
+ },
+ "Unknown AI service.": {
+  "zh": "未知的 AI 服务。",
+  "ja": "不明なAIサービスです。"
+ },
+ "Unknown CLI operation.": {
+  "zh": "未知的 CLI 操作。",
+  "ja": "不明なCLI操作です。"
+ },
+ "Unknown clip": {
+  "zh": "未知片段",
+  "ja": "不明なクリップ"
+ },
+ "Unknown desktop app": {
+  "zh": "未知的桌面 APP",
+  "ja": "不明なデスクトップアプリ"
+ },
+ "Unknown registration target: {0}": {
+  "zh": "不认识的登记目标:{0}",
+  "ja": "不明な登録先：{0}"
+ },
+ "Unknown registration target: {0} (only {1})": {
+  "zh": "不认识的登记目标:{0}(只有 {1})",
+  "ja": "不明な登録先：{0}（指定できるのは{1}のみ）"
+ },
+ "Unknown vendor": {
+  "zh": "不认识的 vendor",
+  "ja": "不明なvendor"
+ },
+ "Unknown voiceover service: {0} (only minimax / kling / vidu)": {
+  "zh": "不认识的配音服务：{0}（只有 minimax / kling / vidu）",
+  "ja": "不明なボイスオーバーサービス：{0}（minimax / kling / viduのみ）"
+ },
+ "Unrecognized backup": {
+  "zh": "不认识的备份",
+  "ja": "認識できないバックアップ"
+ },
+ "Untitled chat": {
+  "zh": "未命名对话",
+  "ja": "名称未設定のチャット"
+ },
+ "Upstream is string[], separated by |, the component does split(\"|\")": {
+  "zh": "上游是 string[],用 | 分隔,组件里 split(\"|\")",
+  "ja": "アップストリームはstring[]で、|区切りです。コンポーネント側でsplit(\"|\")を行います"
+ },
+ "Verifying the installation…": {
+  "zh": "正在验证安装结果…",
+  "ja": "インストール結果を確認しています…"
+ },
+ "Vidu synthesis failed: {0}": {
+  "zh": "Vidu 合成失败：{0}",
+  "ja": "Viduの音声合成に失敗しました：{0}"
+ },
+ "Voice design returned no voice_id.": {
+  "zh": "音色设计没有返回 voice_id。",
+  "ja": "ボイスデザインがvoice_idを返しませんでした。"
+ },
+ "Voice id may only contain letters, digits and - _ .": {
+  "zh": "音色 id 只能含字母数字和 - _ .",
+  "ja": "ボイスIDには英字、数字、および - _ . のみ使用できます"
+ },
+ "Voice id must be 8-256 characters, start with a letter, and contain only letters, digits and - _.": {
+  "zh": "音色 id 要 8~256 位、字母开头、只含字母数字和 - _。",
+  "ja": "ボイスIDは8～256文字で、英字から始め、英字、数字、- _ のみを使用してください。"
+ },
+ "Voice id must be 8~256 characters, start with a letter, contain only letters, digits, - and _, and must not end with - or _.": {
+  "zh": "音色 id 要 8~256 位、字母开头、只含字母数字和 - _，结尾不能是 - 或 _。",
+  "ja": "ボイスIDは8～256文字で、英字から始め、英字、数字、- と _ のみを使用し、末尾を - や _ にすることはできません。"
+ },
+ "Young college student": {
+  "zh": "青年大学生",
+  "ja": "若い大学生"
+ },
+ "Young girl": {
+  "zh": "少女",
+  "ja": "少女"
+ },
+ "agy rejected the MCP tool call. Open AI settings (gear in the right rail), click \"Authorize PromptCut tools\", then retry.": {
+  "zh": "agy 拒绝了 MCP 工具调用。请打开 AI 设置（右栏齿轮），点『授权 PromptCut 工具』，然后重试。",
+  "ja": "agyがMCPツールの呼び出しを拒否しました。AI設定（右レールの歯車）を開き、「PromptCutツールを認可」をクリックしてから、もう一度お試しください。"
+ },
+ "api runner is not ready yet": {
+  "zh": "api runner 还没就绪",
+  "ja": "api runnerはまだ準備できていません"
+ },
+ "api.profiles must be an object": {
+  "zh": "api.profiles 必须是对象",
+  "ja": "api.profilesはオブジェクトである必要があります"
+ },
+ "api.source must be one of {0}": {
+  "zh": "api.source 只能是 {0}",
+  "ja": "api.sourceは{0}のいずれかにしてください"
+ },
+ "apiKey must be a string": {
+  "zh": "apiKey 必须是字符串",
+  "ja": "apiKeyは文字列である必要があります"
+ },
+ "baseUrl must be an http(s) address or empty": {
+  "zh": "baseUrl 必须是 http(s) 地址或留空",
+  "ja": "baseUrlはhttp(s)アドレスか、空にしてください"
+ },
+ "claude failed to run: {0}": {
+  "zh": "claude 没跑起来:{0}",
+  "ja": "claudeを実行できませんでした：{0}"
+ },
+ "cliModels must be an object": {
+  "zh": "cliModels 必须是对象",
+  "ja": "cliModelsはオブジェクトである必要があります"
+ },
+ "cliModels.{0} must be a string": {
+  "zh": "cliModels.{0} 必须是字符串",
+  "ja": "cliModels.{0}は文字列である必要があります"
+ },
+ "clone audio upload": {
+  "zh": "上传复刻音频",
+  "ja": "クローン用オーディオのアップロード"
+ },
+ "code is empty: write a function body that receives input (channels, sampleRate, duration, ...) and returns the result with return": {
+  "zh": "code 是空的:写一个函数体,收到 input(channels、sampleRate、duration……),用 return 返回结果",
+  "ja": "codeが空です：input（channels、sampleRate、duration、...）を受け取り、returnで結果を返す関数本体を書いてください"
+ },
+ "codex app-server did not respond within 20 seconds": {
+  "zh": "codex app-server 20 秒没回应",
+  "ja": "codex app-serverが20秒以内に応答しませんでした"
+ },
+ "codex app-server exited early": {
+  "zh": "codex app-server 提前退出",
+  "ja": "codex app-serverが早期に終了しました"
+ },
+ "codex failed to run: {0}": {
+  "zh": "codex 没跑起来:{0}",
+  "ja": "codexを実行できませんでした：{0}"
+ },
+ "config.toml defines mcp_servers.{0} at the top level with a dotted key (line {1}); to avoid corrupting it, nothing was modified. Delete that entry manually, then register again.": {
+  "zh": "config.toml 顶层用点号键定义了 mcp_servers.{0}(第 {1} 行),为了不写坏它,没有改动。请手动删掉那一条后再登记。",
+  "ja": "config.tomlの最上位でドット付きキーによりmcp_servers.{0}が定義されています（{1}行目）。壊さないよう、何も変更していません。そのエントリを手動で削除してから、もう一度登録してください。"
+ },
+ "deepAutoRounds must be an integer from 0 to 100000 (0 = unlimited rounds)": {
+  "zh": "deepAutoRounds 是 0~100000 的整数(0 = 不限轮次)",
+  "ja": "deepAutoRoundsは0～100000の整数にしてください（0 = ラウンド数の上限なし）"
+ },
+ "defaultProvider must be claude, agy, codex, api or null": {
+  "zh": "defaultProvider 必须是 claude, agy, codex, api 或 null",
+  "ja": "defaultProviderはclaude、agy、codex、api、nullのいずれかにしてください"
+ },
+ "deleted": {
+  "zh": "删掉",
+  "ja": "削除"
+ },
+ "ffmpeg decoding failed: ": {
+  "zh": "ffmpeg 解码失败: ",
+  "ja": "ffmpegのデコードに失敗しました： "
+ },
+ "ffmpeg exit code {0}": {
+  "zh": "ffmpeg 退出码 {0}",
+  "ja": "ffmpegの終了コード{0}"
+ },
+ "ffmpeg failed to run: ": {
+  "zh": "ffmpeg 运行失败: ",
+  "ja": "ffmpegを実行できませんでした： "
+ },
+ "ffmpeg not found": {
+  "zh": "找不到 ffmpeg",
+  "ja": "ffmpegが見つかりません"
+ },
+ "ffmpeg not found, cannot convert the source file to the audio needed for cloning.": {
+  "zh": "找不到 ffmpeg，没法把源文件转成复刻要的音频。",
+  "ja": "ffmpegが見つからないため、ソースファイルをクローンに必要なオーディオに変換できません。"
+ },
+ "ffmpeg produced no output": {
+  "zh": "ffmpeg 没有输出",
+  "ja": "ffmpegは何も出力しませんでした"
+ },
+ "ffprobe could not read video info from this file": {
+  "zh": "ffprobe 读不出这个文件的视频信息",
+  "ja": "ffprobeはこのファイルから動画情報を読み取れませんでした"
+ },
+ "initialize failed: {0}": {
+  "zh": "initialize 失败:{0}",
+  "ja": "initializeに失敗しました：{0}"
+ },
+ "not ready": {
+  "zh": "未就绪",
+  "ja": "準備未完了"
+ },
+ "points must be written as [[frame number, x, y], ...], with at least one point": {
+  "zh": "points 要写成 [[帧号, x, y], ...]，且至少一个点",
+  "ja": "pointsは[[フレーム番号, x, y], ...]の形式で、少なくとも1点を指定してください"
+ },
+ "prerender address unknown": {
+  "zh": "预渲染地址未知",
+  "ja": "プリレンダリングのアドレスが不明です"
+ },
+ "progress": {
+  "zh": "进度",
+  "ja": "進捗"
+ },
+ "provider must be one of {0}": {
+  "zh": "provider 只能是 {0}",
+  "ja": "providerは{0}のいずれかにしてください"
+ },
+ "quota must be an object": {
+  "zh": "quota 必须是对象",
+  "ja": "quotaはオブジェクトである必要があります"
+ },
+ "quota.checkEveryBytes must be at least 16384 (16KB)": {
+  "zh": "quota.checkEveryBytes 至少 16384(16KB)",
+  "ja": "quota.checkEveryBytesは16384（16KB）以上にしてください"
+ },
+ "quota.thresholdPercent must be a percentage from 1 to 100": {
+  "zh": "quota.thresholdPercent 是 1~100 的百分数",
+  "ja": "quota.thresholdPercentは1～100のパーセンテージにしてください"
+ },
+ "read": {
+  "zh": "读取",
+  "ja": "読み取り"
+ },
+ "start {0} s is beyond the length of this audio ({1} s)": {
+  "zh": "start {0} 秒超出了这段声音的长度({1} 秒)",
+  "ja": "startの{0}秒がこのオーディオの長さ（{1}秒）を超えています"
+ },
+ "the server gave no reason": {
+  "zh": "服务端没有说明原因",
+  "ja": "サーバーは理由を示しませんでした"
+ },
+ "unexpected response format": {
+  "zh": "返回格式不对",
+  "ja": "予期しない応答形式"
+ },
+ "upload not finished after {0} seconds": {
+  "zh": "{0} 秒没有传完",
+  "ja": "{0}秒経ってもアップロードが完了していません"
+ },
+ "vendor must be anthropic / openai / gemini": {
+  "zh": "vendor 只能是 anthropic / openai / gemini",
+  "ja": "vendorはanthropic / openai / geminiのいずれかにしてください"
+ },
+ "voice design": {
+  "zh": "音色设计",
+  "ja": "ボイスデザイン"
+ },
+ "window": {
+  "zh": "窗口",
+  "ja": "ウィンドウ"
+ },
+ "write": {
+  "zh": "写入",
+  "ja": "書き込み"
+ },
+ "{0} (current user)": {
+  "zh": "{0}（当前用户）",
+  "ja": "{0}（現在のユーザー）"
+ },
+ "{0} is not valid JSON ({1}); it was not modified. Fix the file first, then register again.": {
+  "zh": "{0} 不是合法的 JSON({1}),没有改动它。请先修好这个文件再登记。",
+  "ja": "{0}は有効なJSONではありません（{1}）。変更していません。先にファイルを修正してから、もう一度登録してください。"
+ },
+ "{0} items are in use by another program and were not {1} (for example {2}). Close the program using them and try again.": {
+  "zh": "有 {0} 项正被别的程序占用，没{1}（例如 {2}）。关掉正在用它的程序后再试。",
+  "ja": "{0}個の項目が別のプログラムに使用されているため、{1}されませんでした（例：{2}）。使用しているプログラムを閉じてから、もう一度お試しください。"
+ },
+ "{0} just edited": {
+  "zh": "{0}刚改过",
+  "ja": "{0}が先ほど編集しました"
+ },
+ "{0} links were left untouched (for example {1}). Please handle them yourself in the file manager.": {
+  "zh": "有 {0} 个链接没有动（例如 {1}），请在文件管理器里自己处理。",
+  "ja": "{0}個のリンクはそのままにしました（例：{1}）。ファイルマネージャーでご自身で対応してください。"
+ },
+ "{0} must be an object": {
+  "zh": "{0} 必须是对象",
+  "ja": "{0}はオブジェクトである必要があります"
+ },
+ "{0} quota used {1}% ({2}), over the {3}% threshold, interrupted{4}. To continue, raise the threshold or turn off the circuit breaker in AI settings.": {
+  "zh": "{0} 额度已用 {1}%({2}),超过阈值 {3}%,已中断{4}。要继续可以在 AI 设置里调高阈值或关掉熔断。",
+  "ja": "{0}の利用枠を{1}%（{2}）使用し、しきい値{3}%を超えたため、中断しました{4}。続行するには、AI設定でしきい値を上げるか、サーキットブレーカーをオフにしてください。"
+ },
+ "{0} request was not sent: {1}": {
+  "zh": "{0}请求没发出去:{1}",
+  "ja": "{0}のリクエストを送信できませんでした：{1}"
+ },
+ "{0} request was rejected (HTTP {1}): {2}": {
+  "zh": "{0}请求被拒(HTTP {1}):{2}",
+  "ja": "{0}のリクエストが拒否されました（HTTP {1}）：{2}"
+ },
+ "{0}-day window": {
+  "zh": "{0} 天窗口",
+  "ja": "{0}日ウィンドウ"
+ },
+ "{0}-hour window": {
+  "zh": "{0} 小时窗口",
+  "ja": "{0}時間ウィンドウ"
+ },
+ "{0}.baseUrl must be a string": {
+  "zh": "{0}.baseUrl 必须是字符串",
+  "ja": "{0}.baseUrlは文字列である必要があります"
+ },
+ "{0}.model must be a string": {
+  "zh": "{0}.model 必须是字符串",
+  "ja": "{0}.modelは文字列である必要があります"
+ },
+ "Classic: floating dots with connecting lines": {
+  "zh": "经典:漂浮圆点带连线",
+  "ja": "定番：ラインでつながる浮遊ドット"
+ },
+ "Many tiny red-orange particles wander over a dark background, and nearby particles weave a network of gray connecting lines.": {
+  "zh": "深色底上大量红橙色微小粒子游走，近距离粒子间交织出灰色连线网络。",
+  "ja": "暗い背景の上を無数の微小な赤橙色粒子が漂い、近接した粒子同士の間にグレーの接続ラインネットワークが織り成されます。"
+ },
+ "Suited to digital-network concepts, cutting-edge tech showcases or dynamic UI background patterns.": {
+  "zh": "适合数字网络概念、前沿科技展示或动态UI底纹。",
+  "ja": "デジタルネットワークのコンセプト、最先端テクノロジーの紹介、ダイナミックなUI背景パターンなどに適しています。"
+ },
+ "red-orange particles": {
+  "zh": "红橙粒子",
+  "ja": "赤橙色粒子"
+ },
+ "linked network": {
+  "zh": "连线网络",
+  "ja": "ラインネットワーク"
+ },
+ "tech background": {
+  "zh": "科技背景",
+  "ja": "テック系背景"
+ },
+ "Large translucent discs covering the whole frame": {
+  "zh": "大号半透明圆盘铺满",
+  "ja": "画面全体を覆う大型半透明ディスク"
+ },
+ "Large translucent blobs in red, green, blue, yellow and other colors overlap one another and drift slowly across the frame.": {
+  "zh": "红绿蓝黄等多色半透明大圆斑相互交叠，在画面中缓慢浮动位移。",
+  "ja": "赤、緑、青、黄などの色鮮やかな半透明の大きな円形ブロッブが互いに重なり合い、画面内をゆっくりと漂いながら移動します。"
+ },
+ "Suited to lively, bright short films, music rhythm or dreamy aesthetic backgrounds.": {
+  "zh": "适合活泼明快短片、音乐律动或梦幻唯美背景。",
+  "ja": "軽快で明るいショート動画、音楽のリズム演出、幻想的で美しい背景などに適しています。"
+ },
+ "colorful light spots": {
+  "zh": "多彩光斑",
+  "ja": "カラフルな光斑"
+ },
+ "large round particles": {
+  "zh": "大圆粒子",
+  "ja": "大型円形粒子"
+ },
+ "dreamy background": {
+  "zh": "梦幻背景",
+  "ja": "幻想的な背景"
+ },
+ "Large discs, blend-mode color stacking": {
+  "zh": "大圆盘,混合模式叠色",
+  "ja": "大型ディスク、ブレンドモード混色"
+ },
+ "Large translucent colored blobs overlap and blend into bright colors, slowly drifting over time and changing position and stacked colors.": {
+  "zh": "彩色半透明大圆斑重叠混合呈现亮色，随时间缓慢漂移变换位置与叠加色彩。",
+  "ja": "カラフルな半透明の大きな円形ブロッブが重なり合って明るい色を生み出し、時間の経過とともにゆっくり漂いながら位置や重なり合う色を変化させます。"
+ },
+ "Suited to dreamy light-spot backgrounds, aesthetic MVs or event opening atmospheres.": {
+  "zh": "适合梦幻光斑背景、唯美MV或活动开场氛围。",
+  "ja": "幻想的な光斑背景、情緒的なMV、イベントのオープニング演出などに適しています。"
+ },
+ "colored light spots": {
+  "zh": "彩色光斑",
+  "ja": "カラー光斑"
+ },
+ "blend overlay": {
+  "zh": "混合叠加",
+  "ja": "ブレンドオーバーレイ"
+ },
+ "Large bubbles drifting slowly": {
+  "zh": "大气泡缓缓漂浮",
+  "ja": "ゆっくり漂う大きな気泡"
+ },
+ "Faint translucent hexagonal dark patches are scattered on a dark background and slowly drift to new positions over time.": {
+  "zh": "暗底上散布微弱的半透明六边形暗斑，随时间缓慢漂移改变位置。",
+  "ja": "暗い背景の上に微かな半透明の六角形ダークスポットが散らばり、時間の経過とともにゆっくり漂いながら位置を変えます。"
+ },
+ "Suited to minimalist dark-toned intros, low-contrast dark backgrounds or background patterns.": {
+  "zh": "适合极简暗调片头、低对比度深色背景或底纹。",
+  "ja": "ミニマルなダークトーンのオープニング、低コントラストの暗い背景や背景パターンなどに適しています。"
+ },
+ "hexagon": {
+  "zh": "六边形",
+  "ja": "六角形"
+ },
+ "dark-toned light spots": {
+  "zh": "暗调光斑",
+  "ja": "ダークトーン光斑"
+ },
+ "minimalist background": {
+  "zh": "极简背景",
+  "ja": "ミニマル背景"
+ },
+ "Particles whose color cycles through changes": {
+  "zh": "颜色循环变化的粒子",
+  "ja": "色がサイクル変化する粒子"
+ },
+ "Scattered dot particles drift while their overall color gradually shifts from pure blue to magenta and pink.": {
+  "zh": "散布的圆点粒子在漂移过程中，整体颜色由纯蓝逐步渐变为紫红与粉红。",
+  "ja": "散らばったドット粒子が漂いながら、全体の色が純粋なブルーからマゼンタやピンクへと徐々にグラデーション変化します。"
+ },
+ "Suited to trendy fashion shorts, music rhythm or energetic transition backgrounds.": {
+  "zh": "适合潮流时尚短片、音乐律动或活力转场背景。",
+  "ja": "トレンドのファッションショート動画、音楽のリズム演出、エネルギッシュなトランジション背景などに適しています。"
+ },
+ "color gradient": {
+  "zh": "色彩渐变",
+  "ja": "カラーグラデーション"
+ },
+ "colored particles": {
+  "zh": "彩色粒子",
+  "ja": "カラー粒子"
+ },
+ "dynamic light dots": {
+  "zh": "动态光点",
+  "ja": "ダイナミック光点"
+ },
+ "Falling confetti": {
+  "zh": "飘落的彩纸",
+  "ja": "舞い落ちる紙吹雪"
+ },
+ "Colored round and polygonal paper-scrap particles of varying sizes keep rotating and falling across a dark frame.": {
+  "zh": "彩色圆形与多边形碎纸粒子大小不一，在深色画面中持续旋转飘落。",
+  "ja": "大小さまざまなカラフルな円形や多角形の紙吹雪粒子が、暗い画面の中で回転しながら絶え間なく舞い落ちます。"
+ },
+ "Accent for gala celebrations, game-clear victories or holiday carnival videos.": {
+  "zh": "盛典庆祝、胜利通关或节日狂欢视频点缀。",
+  "ja": "式典のお祝い、ゲームクリアの勝利演出、祝祭・カーニバル動画などのアクセントに適しています。"
+ },
+ "colored confetti": {
+  "zh": "彩色纸屑",
+  "ja": "カラー紙吹雪"
+ },
+ "falling confetti": {
+  "zh": "彩屑飘落",
+  "ja": "舞い落ちる紙吹雪"
+ },
+ "celebration effects": {
+  "zh": "庆典特效",
+  "ja": "セレモニーエフェクト"
+ },
+ "Gradient-colored particles": {
+  "zh": "渐变色粒子",
+  "ja": "グラデーション粒子"
+ },
+ "Dense pure-white round light-spot particles of varying sizes keep floating and drifting gently on a dark background.": {
+  "zh": "密集纯白色圆形光斑粒子大小错落，在深底上持续平缓悬浮漂移。",
+  "ja": "大小さまざまな純白の円形光斑粒子が密集し、暗い背景の上で穏やかに浮遊しながら漂い続けます。"
+ },
+ "Accent for aesthetic romance, a sky full of snowflakes or an ethereal dreamy atmosphere.": {
+  "zh": "唯美浪漫、雪花漫天或空灵梦幻氛围点缀。",
+  "ja": "ロマンチックな演出、舞い散る雪景色、幻想的で透明感のある雰囲気などのアクセントに適しています。"
+ },
+ "white light spots": {
+  "zh": "白色光斑",
+  "ja": "ホワイト光斑"
+ },
+ "round particles": {
+  "zh": "圆形粒子",
+  "ja": "円形粒子"
+ },
+ "sky full of light dots": {
+  "zh": "漫天光点",
+  "ja": "満天の光点"
+ },
+ "Several groups of particles in different sizes and colors": {
+  "zh": "几组不同大小颜色的粒子",
+  "ja": "サイズと色が異なる複数グループの粒子"
+ },
+ "Small translucent gray-white round particles are scattered across the whole screen and flow by translating evenly and slowly over time.": {
+  "zh": "半透明灰白圆形小粒子散布全屏，随着时间推移均匀缓慢平移流动。",
+  "ja": "半透明の灰白色の小さな円形粒子が画面全体に散らばり、時間の経過とともに均一かつゆっくりと平行移動しながら流れます。"
+ },
+ "Minimalist understated underlay, floating dust or light atmospheric backgrounds.": {
+  "zh": "极简低调衬底、微尘悬浮或轻量氛围背景。",
+  "ja": "ミニマルで控えめな下地、浮遊する微小ダスト、軽やかな雰囲気の背景などに適しています。"
+ },
+ "gray dust": {
+  "zh": "灰色微尘",
+  "ja": "グレーダスト"
+ },
+ "translucent particles": {
+  "zh": "半透明粒子",
+  "ja": "半透明粒子"
+ },
+ "understated background": {
+  "zh": "低调背景",
+  "ja": "控えめな背景"
+ },
+ "Particles with a gradient in the LCH color space": {
+  "zh": "LCH 色彩空间渐变的粒子",
+  "ja": "LCH色空間でグラデーションする粒子"
+ },
+ "Very faint tiny white nodes and triangular mesh links move and deform slowly on a dark background.": {
+  "zh": "极淡白色微小节点与三角形网格连线在暗底中缓慢移动与形变。",
+  "ja": "ごく淡い白色の微小ノードと三角形メッシュの接続ラインが、暗い背景の中でゆっくりと移動しながら変形します。"
+ },
+ "Abstract geometry, network topology or dark tech-UI intros.": {
+  "zh": "抽象几何、网络拓扑或暗色科技界面片头。",
+  "ja": "抽象的な幾何学、ネットワークトポロジー、ダーク系テックUIのオープニングなどに適しています。"
+ },
+ "mesh links": {
+  "zh": "网格连线",
+  "ja": "メッシュ接続ライン"
+ },
+ "triangle topology": {
+  "zh": "三角拓扑",
+  "ja": "三角トポロジー"
+ },
+ "glimmer tech": {
+  "zh": "微光科技",
+  "ja": "微光テクノロジー"
+ },
+ "Particles that are constantly born and die": {
+  "zh": "不断生灭的粒子",
+  "ja": "生成と消滅を繰り返す粒子"
+ },
+ "Starting from a fully black first frame, dark-red particles emerge frame by frame and link into many long light-colored lines that criss-cross.": {
+  "zh": "从首帧全黑开始，暗红粒子逐帧涌现并连出多条浅色长线交错穿行。",
+  "ja": "完全な黒の開始フレームから、暗赤色の粒子がフレームごとに現れ、交差する何本もの淡いロングラインでつながっていきます。"
+ },
+ "System boot, data-stream generation or network-building transitions.": {
+  "zh": "系统启动、数据流生成或网络构建过渡。",
+  "ja": "システム起動、データストリームの生成、ネットワーク構築トランジションなどに適しています。"
+ },
+ "particle growth": {
+  "zh": "粒子生长",
+  "ja": "粒子の生成"
+ },
+ "straight-line shuttling": {
+  "zh": "直线穿梭",
+  "ja": "直線の往来"
+ },
+ "network building": {
+  "zh": "网络构建",
+  "ja": "ネットワーク構築"
+ },
+ "Links filled in as a triangle mesh": {
+  "zh": "连线并填成三角网",
+  "ja": "ライン接続と三角メッシュ塗りつぶし"
+ },
+ "Translucent gray-white triangular facets connect red vertices, deforming and drifting on a dark background.": {
+  "zh": "半透明灰白三角形面片连接红色顶点，在暗底中形变漂移。",
+  "ja": "半透明の灰白色の三角パッチが赤い頂点同士を結び、暗い背景の中で変形しながら漂います。"
+ },
+ "Suited to tech-style mesh backgrounds, polygon animations or data visualization.": {
+  "zh": "适合科技风网格背景、多边形动画或数据可视化。",
+  "ja": "テック系メッシュ背景、ポリゴンアニメーション、データビジュアライゼーションなどに適しています。"
+ },
+ "triangle facets": {
+  "zh": "三角面片",
+  "ja": "三角パッチ"
+ },
+ "polygon mesh": {
+  "zh": "多边形网格",
+  "ja": "ポリゴンメッシュ"
+ },
+ "Starry sky of fine star dots": {
+  "zh": "细小星点的星空",
+  "ja": "微小な星屑の星空"
+ },
+ "Extremely tiny dim-white fine dots float and move slowly with slight amplitude on a deep black background.": {
+  "zh": "极微小的暗白色细点在深黑背景中微幅缓慢漂浮移动。",
+  "ja": "極小の薄白色の微小ドットが、深い黒の背景の中でわずかな揺れ幅を保ちながらゆっくりと浮遊・移動します。"
+ },
+ "Suited to deep starry skies, space exploration or immersive slow-paced backgrounds.": {
+  "zh": "适合用于深邃星空、宇宙探索或沉浸式慢节奏背景。",
+  "ja": "深遠な星空、宇宙探査、没入感のあるスローペースな背景などに適しています。"
+ },
+ "deep-space stardust": {
+  "zh": "深空星尘",
+  "ja": "深宇宙の星屑"
+ },
+ "glimmer drift": {
+  "zh": "微光漂移",
+  "ja": "微光の漂い"
+ },
+ "serene starry sky": {
+  "zh": "静谧星空",
+  "ja": "静寂の星空"
+ },
+ "Particles with orbit rings": {
+  "zh": "带轨道环的粒子",
+  "ja": "軌道リングを持つ粒子"
+ },
+ "Small colored round and square dots in yellow, blue, green and orange keep revolving along curved orbits.": {
+  "zh": "黄、蓝、绿、橙色彩色小圆点与方点沿曲线轨道持续公转。",
+  "ja": "黄、青、緑、オレンジなどのカラフルな小さな丸ドットや角ドットが、曲線軌道に沿って公転し続けます。"
+ },
+ "Suited to creative animation, tech showcases or light, dynamic video background patterns.": {
+  "zh": "适合用于创意动画、科技展示或轻快动感的视频底纹。",
+  "ja": "クリエイティブアニメーション、テクノロジー展示、軽快で躍動感のある動画背景パターンなどに適しています。"
+ },
+ "orbital motion": {
+  "zh": "轨道运动",
+  "ja": "軌道運動"
+ },
+ "lively motion graphics": {
+  "zh": "活力动效",
+  "ja": "ダイナミックモーショングラフィックス"
+ },
+ "Layered parallax feel": {
+  "zh": "分层视差感",
+  "ja": "多層パララックス効果"
+ },
+ "A linked network of gray-white particles of varying brightness and size drifts slowly in multiple parallax layers.": {
+  "zh": "明暗与大小各异的灰白粒子连线网络呈视差多层缓慢漂移。",
+  "ja": "明るさやサイズが異なる灰白色粒子の接続ネットワークが、複数の視差レイヤーとなってゆっくりと漂います。"
+ },
+ "Suited to high-end business, AI or cutting-edge tech promo videos.": {
+  "zh": "适合用于高端商业、AI人工智能或前沿科技宣传片。",
+  "ja": "ハイエンドビジネス、AI、最先端テクノロジーのプロモーション動画などに適しています。"
+ },
+ "parallax links": {
+  "zh": "视差连线",
+  "ja": "パララックス接続ライン"
+ },
+ "network topology": {
+  "zh": "网络拓扑",
+  "ja": "ネットワークトポロジー"
+ },
+ "Plasma color clusters": {
+  "zh": "等离子色团",
+  "ja": "プラズマカラークラスター"
+ },
+ "Extremely faint deep-blue thin line segments wander, wriggle and bend weakly on a dark background.": {
+  "zh": "极其幽微的深蓝色细线段在暗底上微弱游移蠕动与折变。",
+  "ja": "極めて微かな濃紺の細いラインセグメントが、暗い背景の上でかすかにうごめき、折れ曲がりながら漂います。"
+ },
+ "Suited to mysterious dark tones, plasma pulses or hidden electrical-signal displays.": {
+  "zh": "适合用于神秘暗调、等离子脉冲或隐蔽电信号展示。",
+  "ja": "神秘的なダークトーン、プラズマパルス、潜在的な電気信号の演出などに適しています。"
+ },
+ "plasma": {
+  "zh": "等离子体",
+  "ja": "プラズマ"
+ },
+ "dim blue glow": {
+  "zh": "幽蓝微光",
+  "ja": "深青の微光"
+ },
+ "dark tech": {
+  "zh": "暗黑科技",
+  "ja": "ダークテクノロジー"
+ },
+ "Evenly spread dot array": {
+  "zh": "均匀铺开的圆点阵",
+  "ja": "均等配置のドットアレイ"
+ },
+ "Evenly distributed bright white nodes and a network of thin lines roam and regroup across the frame.": {
+  "zh": "均匀分布的白色明亮节点与细线网络在画面中游动重组。",
+  "ja": "均等に配置された明るい白のノードと細いラインのネットワークが、画面内を動き回りながら再編されます。"
+ },
+ "Suited to IoT, big-data transmission, blockchain or neural-network displays.": {
+  "zh": "适合用于物联网、大数据传输、区块链或神经网络展示。",
+  "ja": "IoT、ビッグデータ伝送、ブロックチェーン、ニューラルネットワークのビジュアル表示などに適しています。"
+ },
+ "node links": {
+  "zh": "节点连线",
+  "ja": "ノード接続ライン"
+ },
+ "topology network": {
+  "zh": "拓扑网络",
+  "ja": "トポロジーネットワーク"
+ },
+ "data connections": {
+  "zh": "数据连接",
+  "ja": "データ接続"
+ },
+ "Random shapes and colors mixed": {
+  "zh": "随机形状与颜色混合",
+  "ja": "ランダムな形状とカラーのミックス"
+ },
+ "Colored round particles are densely scattered across the whole screen, each one continuously translating and floating freely in a different direction.": {
+  "zh": "彩色圆形粒子密集散布全屏，各粒子持续向不同方向自由平移浮动。",
+  "ja": "カラフルな円形粒子が画面全体に密集して散らばり、それぞれの粒子が異なる方向へ自由に平行移動しながら浮遊し続けます。"
+ },
+ "Suited as a dynamic background atmosphere for lively, cheerful or creative short videos.": {
+  "zh": "适合用作活泼欢快或创意类短视频的动态背景氛围。",
+  "ja": "軽快で明るい動画やクリエイティブなショート動画のダイナミックな背景演出に適しています。"
+ },
+ "random floating": {
+  "zh": "随机漂浮",
+  "ja": "ランダム浮遊"
+ },
+ "dynamic background": {
+  "zh": "动态背景",
+  "ja": "ダイナミック背景"
+ },
+ "The familiar linked network": {
+  "zh": "常见的连线网",
+  "ja": "定番のラインネットワーク"
+ },
+ "Many bright-red dot particles are scattered across the whole screen, with faint links between neighboring dots, and they slowly disperse and drift.": {
+  "zh": "大量鲜红色圆点粒子散布全屏，相邻点间有微弱连线并缓慢分散漂移。",
+  "ja": "鮮やかな赤のドット粒子が画面全体に多数散らばり、隣り合うドット間に微かなラインを結びながら、ゆっくりと分散・漂流します。"
+ },
+ "Suited as a background accent for tech warnings, suspense or fiery dynamic videos.": {
+  "zh": "适合用作科技警示、悬疑或热烈动感的视频背景点缀。",
+  "ja": "テック系アラート、サスペンス、情熱的で躍動感のある動画の背景アクセントに適しています。"
+ },
+ "red particles": {
+  "zh": "红色粒子",
+  "ja": "レッド粒子"
+ },
+ "Slow floating": {
+  "zh": "缓慢漂浮",
+  "ja": "緩やかな浮遊"
+ },
+ "Sparse tiny white particles are joined by thin lines into a net, drifting extremely slowly on a dark background.": {
+  "zh": "稀疏的白色微小粒子由细线相连成网，在暗底上极为缓慢地游弋漂移。",
+  "ja": "まばらな白い微小粒子が細いラインでネット状に結ばれ、暗い背景の上をきわめてゆっくりと漂います。"
+ },
+ "Suited as the underlay for tech-feel openings, academic presentations or calm narrative videos.": {
+  "zh": "适合科技感开场、学术演示或沉静叙事视频的衬底。",
+  "ja": "テック感のあるオープニング、学術プレゼンテーション、落ち着いたナラティブ動画などの下地に適しています。"
+ },
+ "minimalist lines": {
+  "zh": "极简线条",
+  "ja": "ミニマルライン"
+ },
+ "slow drift": {
+  "zh": "缓慢漂移",
+  "ja": "スロードリフト"
+ },
+ "mesh structure": {
+  "zh": "网状结构",
+  "ja": "メッシュ構造"
+ },
+ "Falling snowflakes": {
+  "zh": "雪花飘落",
+  "ja": "舞い落ちる雪"
+ },
+ "White round light dots of varying sizes keep falling slowly and vertically from the top of the frame to the bottom.": {
+  "zh": "大小不一的白色圆形光点从画面顶部持续向底部垂直缓缓飘落。",
+  "ja": "大小さまざまな白い円形光点が、画面の上部から下部に向かって垂直にゆっくりと舞い落ち続けます。"
+ },
+ "Suited as a video overlay for winter snow scenes, holiday celebrations or a romantic, soothing atmosphere.": {
+  "zh": "适合冬日雪景、节日庆典或浪漫舒缓氛围的视频叠加。",
+  "ja": "冬の雪景色、祝祭イベント、ロマンチックで心地よい雰囲気などの動画オーバーレイに適しています。"
+ },
+ "falling snowflakes": {
+  "zh": "雪花飘落",
+  "ja": "舞い落ちる雪"
+ },
+ "falling particles": {
+  "zh": "下落粒子",
+  "ja": "落下粒子"
+ },
+ "aesthetic atmosphere": {
+  "zh": "唯美氛围",
+  "ja": "幻想的な雰囲気"
+ },
+ "Self-rotating particles": {
+  "zh": "自转的粒子",
+  "ja": "自転する粒子"
+ },
+ "Orange-red dot particles gather in the middle area, slowly rotating, swirling and spreading out around the center over time.": {
+  "zh": "橙红色点状粒子聚集在中部区域，随时间沿中心缓缓旋转打转扩散。",
+  "ja": "中央エリアに集まった橙赤色のドット粒子が、時間の経過とともに中心の周囲をゆっくりと回転・旋回しながら外側へと広がります。"
+ },
+ "Suited to effects for intro spotlight spins, spark vortexes or energy-gathering scenes.": {
+  "zh": "适合片头旋转聚光、火星旋涡或能量汇聚场景的特效。",
+  "ja": "オープニングの回転スポットライト、火花の渦、エネルギーの収束シーンなどのエフェクトに適しています。"
+ },
+ "rotating particles": {
+  "zh": "旋转粒子",
+  "ja": "回転粒子"
+ },
+ "orange-red specks": {
+  "zh": "橙红微粒",
+  "ja": "橙赤微粒子"
+ },
+ "central vortex": {
+  "zh": "中心旋涡",
+  "ja": "中央の渦"
+ },
+ "Star-shaped particles": {
+  "zh": "星形粒子",
+  "ja": "星形粒子"
+ },
+ "A few bright white light dots are joined by straight lines into polygonal constellations, with each vertex slowly translating and deforming.": {
+  "zh": "数颗明亮的白色光点由直线相连成多边形星座，各顶点缓慢平移变形。",
+  "ja": "いくつかの明るい白の光点が直線で結ばれて多角形の星座を形成し、各頂点がゆっくりと平行移動しながら変形します。"
+ },
+ "Suited to astronomy explainers, stargazing night talks or video transitions in a minimalist geometric style.": {
+  "zh": "适合天文科普、星空夜话或极简几何风格的视频转场。",
+  "ja": "天文学の解説、星空トーク、ミニマルジオメトリックスタイルの動画トランジションなどに適しています。"
+ },
+ "constellation links": {
+  "zh": "星座连线",
+  "ja": "星座の接続ライン"
+ },
+ "minimalist geometry": {
+  "zh": "极简几何",
+  "ja": "ミニマルジオメトリー"
+ },
+ "polygon": {
+  "zh": "多边形",
+  "ja": "多角形"
+ },
+ "Stroke color cycling": {
+  "zh": "描边色循环",
+  "ja": "ストロークカラーサイクル"
+ },
+ "Fine mesh-like particles and links gradually shift from blue-purple to bright pink and wander slowly on a dark background.": {
+  "zh": "细网状粒子与连线由蓝紫色逐渐渐变为亮粉色，并在暗底中缓缓游动。",
+  "ja": "繊細なメッシュ状の粒子と接続ラインが、青紫から鮮やかなピンクへと徐々にグラデーション変化しながら、暗い背景の中をゆっくりと漂います。"
+ },
+ "Suited as a dynamic base color for dreamy neon, cyberpunk or fashion-show videos.": {
+  "zh": "适合梦幻霓虹、赛博朋克或时尚秀场类视频的动态底色。",
+  "ja": "幻想的なネオン、サイバーパンク、ファッションショーなどの動画のダイナミックなベースカラーに適しています。"
+ },
+ "purple-pink tones": {
+  "zh": "紫粉色调",
+  "ja": "パープルピンクトーン"
+ },
+ "mesh particles": {
+  "zh": "网状粒子",
+  "ja": "メッシュ粒子"
+ },
+ "Triangle links": {
+  "zh": "三角形连线",
+  "ja": "三角形の接続ライン"
+ },
+ "Small solid equilateral triangles in red and green are scattered across the frame, each translating and floating in a different direction.": {
+  "zh": "红绿双色的小实心正三角形散布于画面中，各自向不同方向平移漂浮。",
+  "ja": "赤と緑の小さな塗りつぶし正三角形が画面内に散らばり、それぞれが異なる方向へ平行移動しながら漂います。"
+ },
+ "Suited to stock-market and financial broadcasts, game commentary or geometric-design-style video backgrounds.": {
+  "zh": "适合股市金融播报、游戏解说或几何设计风格视频背景。",
+  "ja": "株式・金融ニュース、ゲーム実況、幾何学デザイン調の動画背景などに適しています。"
+ },
+ "triangle particles": {
+  "zh": "三角粒子",
+  "ja": "三角粒子"
+ },
+ "red-green palette": {
+  "zh": "红绿配色",
+  "ja": "赤緑配色"
+ },
+ "geometric drift": {
+  "zh": "几何漂移",
+  "ja": "幾何学ドリフト"
+ },
+ "Twinkling stars": {
+  "zh": "闪烁的星星",
+  "ja": "瞬く星々"
+ },
+ "Dark-red specks and faint links flicker in and out of view all over the frame, alternately brightening and dimming while moving slowly.": {
+  "zh": "暗红微粒与微弱连线在画面各处若隐若现，明暗交替闪烁并缓慢移动。",
+  "ja": "画面のいたるところで暗赤色の微粒子と微かな接続ラインが見え隠れし、明滅を繰り返しながらゆっくりと移動します。"
+ },
+ "Suited as an immersive background for videos with a mysterious dark mood, faint-glow night scenes or meditation and hypnosis.": {
+  "zh": "适合神秘暗黑、微光夜景或冥想催眠类视频的沉浸背景。",
+  "ja": "ミステリアスなダークムード、微光の夜景、瞑想・催眠などの動画における没入感のある背景に適しています。"
+ },
+ "dark flicker": {
+  "zh": "暗色闪烁",
+  "ja": "暗色の明滅"
+ },
+ "faint specks": {
+  "zh": "微弱微粒",
+  "ja": "かすかな微粒子"
+ },
+ "night-scene glimmer": {
+  "zh": "夜景微光",
+  "ja": "夜景の微光"
+ },
+ "Slightly jittering particles": {
+  "zh": "微微抖动的粒子",
+  "ja": "微かに揺れる粒子"
+ },
+ "A network of tiny gray-white particles jitters and trembles in place at high frequency with small amplitude, while the overall position stays basically fixed.": {
+  "zh": "灰白微小粒子网络在原地高频微幅抖动震颤，整体位置基本保持不动。",
+  "ja": "灰白色の微小粒子ネットワークがその場で高周波・微小振幅のジッターで小刻みに震え、全体の位置はほぼ一定に保たれます。"
+ },
+ "Suited to the visual atmosphere of tense suspense, electronic signal interference or neuron pulses.": {
+  "zh": "适合紧张悬疑、电子信号干扰或神经元脉冲的画面氛围。",
+  "ja": "緊迫感のあるサスペンス、電子信号の干渉、神経パルスの視覚演出などに適しています。"
+ },
+ "high-frequency jitter": {
+  "zh": "高频抖动",
+  "ja": "高周波ジッター"
+ },
+ "vibrating particles": {
+  "zh": "震动粒子",
+  "ja": "振動粒子"
+ },
+ "Sparse small dots": {
+  "zh": "稀疏小点",
+  "ja": "まばらな小ドット"
+ },
+ "Sparse faint white particles drift slowly on a dark-gray background, dynamically forming and breaking thin links according to the distance between them.": {
+  "zh": "深灰底上稀疏微弱白色粒子缓慢漂移，随间距动态生成与断开纤细连线。",
+  "ja": "ダークグレーの背景の上をまばらで淡い白色粒子がゆっくりと漂い、粒子間の距離に応じて細い接続ラインが動的に生成・切断されます。"
+ },
+ "Suited to minimalist tech backgrounds, business presentations or data-visualization background patterns.": {
+  "zh": "适合极简科技背景、商业演示或数据可视化底纹。",
+  "ja": "ミニマルなテック系背景、ビジネスプレゼンテーション、データビジュアライゼーションの背景パターンなどに適しています。"
+ },
+ "tech particles": {
+  "zh": "科技粒子",
+  "ja": "テック系粒子"
+ },
+ "dot-and-line network": {
+  "zh": "点线网络",
+  "ja": "点線ネットワーク"
+ },
+ "Large discs, blend-mode combination": {
+  "zh": "大圆盘,混合模式组合",
+  "ja": "大型ディスク、ブレンドモードの組み合わせ"
+ },
+ "Large red, green and blue discs drift and overlap, and where they intersect there is dark-toned fusion and light-dark variation.": {
+  "zh": "红绿蓝彩色大圆盘漂移重叠，相交区域发生暗色融合与明暗变化。",
+  "ja": "赤、緑、青の大きなカラーディスクが漂いながら重なり合い、交差する領域でダークトーンの融合と明暗の変化が生じます。"
+ },
+ "Suited to avant-garde art shorts, color experiments or abstract stage backgrounds.": {
+  "zh": "适合前卫艺术短片、色彩实验或抽象舞台背景。",
+  "ja": "アバンギャルドなアートショート動画、色彩実験、抽象的なステージ背景などに適しています。"
+ },
+ "abstract color blocks": {
+  "zh": "抽象色块",
+  "ja": "抽象カラーブロック"
+ },
+ "dark blending": {
+  "zh": "暗色混合",
+  "ja": "ダークブレンド"
+ },
+ "dynamic light and shadow": {
+  "zh": "动态光影",
+  "ja": "ダイナミックな光と影"
+ },
+ "Sparse floating dots": {
+  "zh": "稀疏漂浮点",
+  "ja": "まばらに漂うドット"
+ },
+ "Fine white particles and slender links drift slowly on a dark background, and the links keep regrouping and waxing and waning with distance.": {
+  "zh": "暗底上细小白色粒子与纤细连线缓慢漂移，连线随距离不断重组消长。",
+  "ja": "暗い背景の上で細かな白い粒子と繊細なラインがゆっくりと漂い、ラインは距離に応じて結合と消散を繰り返します。"
+ },
+ "Suited to tech-company promotion, data networks and science-explainer backgrounds.": {
+  "zh": "适合科技企业宣传、数据网络与知识科普背景。",
+  "ja": "IT企業のプロモーション、データネットワーク、科学解説動画の背景などに適しています。"
+ },
+ "data links": {
+  "zh": "数据连线",
+  "ja": "データ接続ライン"
+ },
+ "Collision absorption": {
+  "zh": "碰撞吸收",
+  "ja": "衝突吸収"
+ },
+ "White round particles of varying sizes drift and shuttle freely on a dark-gray background, with positions and spacing changing constantly.": {
+  "zh": "深灰底上大小不一的白色圆形粒子自由漂移穿梭，位置与间距持续变动。",
+  "ja": "ダークグレーの背景の上で大小さまざまな白い円形粒子が自由に漂い行き交い、位置や間隔が絶えず変化します。"
+ },
+ "Suited to microscopic particle simulation, simple tech base images or dot-matrix decoration.": {
+  "zh": "适合微观微粒模拟、简约科技底图或点阵装饰。",
+  "ja": "微粒子のシミュレーション、シンプルなテクノロジー系の背景、ドットマトリクス装飾などに適しています。"
+ },
+ "white specks": {
+  "zh": "白色微粒",
+  "ja": "白い微粒子"
+ },
+ "free drift": {
+  "zh": "自由漂移",
+  "ja": "フリードリフト"
+ },
+ "minimalist dot matrix": {
+  "zh": "极简点阵",
+  "ja": "ミニマルドットマトリクス"
+ },
+ "Collision bounce": {
+  "zh": "碰撞反弹",
+  "ja": "衝突バウンド"
+ },
+ "Small white dot particles of uniform size drift and roam in straight lines at constant speed in all directions on a dark-gray background.": {
+  "zh": "深灰底上均匀大小的白色小圆点粒子向各方向匀速直线漂移游走。",
+  "ja": "ダークグレーの背景の上で、均一なサイズの白い小さな丸ドット粒子があらゆる方向へ等速かつ直線的に漂い動きます。"
+ },
+ "Suited to starry-sky accents, physics particle demos or dynamic decorative backgrounds.": {
+  "zh": "适合星空点缀、物理微粒演示或动态装饰背景。",
+  "ja": "星空のアクセント、物理粒子のデモ、動的な装飾背景などに適しています。"
+ },
+ "white dots": {
+  "zh": "白色圆点",
+  "ja": "白い丸ドット"
+ },
+ "particle roaming": {
+  "zh": "粒子漫游",
+  "ja": "パーティクルローミング"
+ },
+ "starry-sky atmosphere": {
+  "zh": "星空氛围",
+  "ja": "星空の雰囲気"
+ },
+ "Delayed appearance": {
+  "zh": "延迟出现",
+  "ja": "遅延出現"
+ },
+ "Faint orange-red specks and thin lines wander slowly on a dark background, dynamically forming a scattered network topology.": {
+  "zh": "暗色背景上微弱的橙红微粒与细线缓慢游移，动态构成分散的网络拓扑。",
+  "ja": "暗い背景の上でかすかな赤橙色の微粒子と細いラインがゆっくりと漂い、分散型のネットワークトポロジーを動的に形成します。"
+ },
+ "Suited to neural-network visualization, a gloomy tech feel or data-stream backgrounds.": {
+  "zh": "适合神经网络可视化、幽暗科技感或数据流背景。",
+  "ja": "ニューラルネットワークの可視化、ダークなサイバー感の演出、データストリームの背景などに適しています。"
+ },
+ "orange-red particles": {
+  "zh": "橙红粒子",
+  "ja": "赤橙色の粒子"
+ },
+ "dim-light tech": {
+  "zh": "暗光科技",
+  "ja": "ダークテック"
+ },
+ "Delayed color change": {
+  "zh": "延迟变色",
+  "ja": "遅延変色"
+ },
+ "Red specks and mesh-like thin lines drift slowly, and some specks gradually turn from red to orange-yellow over time.": {
+  "zh": "红色微粒与网状细线缓慢漂移，部分微粒随时间逐渐由红转为橙黄色。",
+  "ja": "赤い微粒子と網状の細いラインがゆっくりと漂い、一部の微粒子は時間の経過とともに赤から橙黄色へと徐々に変化します。"
+ },
+ "Tech-feel digital network backgrounds or data-flow transitions.": {
+  "zh": "科技感数字网络背景或数据流动转场。",
+  "ja": "サイバー感のあるデジタルネットワークの背景や、データフローのトランジションに適しています。"
+ },
+ "network specks": {
+  "zh": "网络微粒",
+  "ja": "ネットワーク微粒子"
+ },
+ "Delayed fade-in": {
+  "zh": "延迟淡入",
+  "ja": "遅延フェードイン"
+ },
+ "Many white dot particles drift slowly, and the opacity of some gradually decreases and fades over time.": {
+  "zh": "大量白色点状粒子缓慢漂移，部分粒子的透明度随时间渐变降低变淡。",
+  "ja": "多数の白いドット粒子がゆっくりと漂い、一部の粒子は時間の経過とともに不透明度が下がって徐々に薄くなります。"
+ },
+ "Starry-sky glimmer accents, night-scene atmosphere or text background patterns.": {
+  "zh": "星空微光点缀、夜景氛围或文字底纹。",
+  "ja": "星空のかすかな光のアクセント、夜景のムード作り、テキストの背景パターンなどに適しています。"
+ },
+ "starry specks": {
+  "zh": "星空微粒",
+  "ja": "星空の微粒子"
+ },
+ "opacity gradient": {
+  "zh": "透明渐变",
+  "ja": "不透明度グラデーション"
+ },
+ "minimalist accent": {
+  "zh": "极简点缀",
+  "ja": "ミニマルアクセント"
+ },
+ "Delayed enlargement": {
+  "zh": "延迟变大",
+  "ja": "遅延拡大"
+ },
+ "Scattered white dot particles drift slightly, and the size of some gradually shrinks and thins over time.": {
+  "zh": "散布的白色点状粒子微幅漂移，部分粒子尺寸随时间逐渐缩小变细。",
+  "ja": "散りばめられた白いドット粒子がわずかに漂い、一部の粒子は時間の経過とともにサイズが縮小して細くなります。"
+ },
+ "Floating-dust effects, serene moods or abstract tech backgrounds.": {
+  "zh": "微尘浮游效果、静谧意境或抽象科技背景。",
+  "ja": "微粒子の浮遊エフェクト、静寂な空間演出、抽象的なテクノロジー背景などに適しています。"
+ },
+ "size scaling": {
+  "zh": "尺寸缩放",
+  "ja": "サイズスケーリング"
+ },
+ "floating dust": {
+  "zh": "微尘浮动",
+  "ja": "浮遊ダスト"
+ },
+ "Delayed stroke color change": {
+  "zh": "延迟描边变色",
+  "ja": "遅延ストローク変色"
+ },
+ "Tiny dark-red geometric wireframe particles drift, and the stroke color of some gradually turns orange-yellow over time.": {
+  "zh": "微小暗红几何线框粒子漂移，部分描边颜色随时间渐变转为橙黄色。",
+  "ja": "暗赤色の微小な幾何学ワイヤーフレーム粒子が漂い、一部のストロークの色は時間の経過とともに橙黄色へと徐々に変化します。"
+ },
+ "Sci-fi UI screens, HUD motion graphics or minimalist graphic backgrounds.": {
+  "zh": "科幻UI界面、HUD动效或极简图形背景。",
+  "ja": "SF風のUI画面、HUDモーショングラフィックス、ミニマルなグラフィック背景などに適しています。"
+ },
+ "wireframe specks": {
+  "zh": "线框微粒",
+  "ja": "ワイヤーフレーム微粒子"
+ },
+ "stroke color change": {
+  "zh": "描边变色",
+  "ja": "ストローク変色"
+ },
+ "HUD interface": {
+  "zh": "HUD界面",
+  "ja": "HUDインターフェース"
+ },
+ "Disappear at the edge": {
+  "zh": "到边消失",
+  "ja": "画面端で消失"
+ },
+ "Gray-white specks and thin polylines drift slowly, and the specks and links gradually fade away and thin out over time.": {
+  "zh": "灰白色微粒与细折线缓慢漂动，微粒与连线随时间逐渐消退减少。",
+  "ja": "灰白色の微粒子と細い折れ線がゆっくりと漂い、時間の経過とともに微粒子とラインは徐々にフェードアウトして減少します。"
+ },
+ "Data-dissipation effects, fading memories or end-of-film curtain-fall transitions.": {
+  "zh": "数据消散特效、记忆褪色或片尾落幕转场。",
+  "ja": "データの霧散エフェクト、記憶のフェードアウト、エンドロールの幕引きトランジションなどに適しています。"
+ },
+ "specks dissipating": {
+  "zh": "微粒消散",
+  "ja": "微粒子の霧散"
+ },
+ "link decay": {
+  "zh": "连线衰减",
+  "ja": "ライン減衰"
+ },
+ "fade-out ending": {
+  "zh": "淡出收尾",
+  "ja": "フェードアウトエンディング"
+ },
+ "Burst at the edge": {
+  "zh": "到边爆开",
+  "ja": "画面端でバースト"
+ },
+ "Colored dot particles are scattered and drifting, and some gradually disperse while moving, then vanish and thin out.": {
+  "zh": "彩色彩点粒子散布漂移，部分粒子在移动中逐渐分散并消隐减少。",
+  "ja": "色とりどりのドット粒子が散らばって漂い、一部の粒子は移動しながら徐々に分散して消え、数が減っていきます。"
+ },
+ "Holiday celebration confetti, cheerful beat-synced edits or party-atmosphere backgrounds.": {
+  "zh": "节日庆典彩屑、欢快卡点或派对氛围背景。",
+  "ja": "お祝いの紙吹雪、テンポの良いビート同期の編集、パーティーシーンの背景などに適しています。"
+ },
+ "scattering confetti": {
+  "zh": "彩屑飘散",
+  "ja": "紙吹雪の飛散"
+ },
+ "celebration party": {
+  "zh": "庆典派对",
+  "ja": "祝賀パーティー"
+ },
+ "Bubble effect": {
+  "zh": "气泡效果",
+  "ja": "バブルエフェクト"
+ },
+ "Dark-red and orange round and square particles float upward, brightening in color and overlapping translucently.": {
+  "zh": "暗红与橙色的圆形方块粒子向上浮动，颜色变亮呈半透明重叠状态。",
+  "ja": "暗赤色とオレンジ色の丸型および四角型の粒子が上方へと浮遊し、明るさを増しながら半透明に重なり合います。"
+ },
+ "Rising liquid bubbles, dreamy out-of-focus light spots or warm backgrounds.": {
+  "zh": "液体气泡升腾、梦幻虚焦光斑或暖意背景。",
+  "ja": "液体の気泡の上昇、幻想的なピンボケの光の玉、温かみのある背景演出などに適しています。"
+ },
+ "floating bubbles": {
+  "zh": "气泡浮动",
+  "ja": "浮遊バブル"
+ },
+ "translucent light spots": {
+  "zh": "透明光斑",
+  "ja": "半透明の光斑"
+ },
+ "rising particles": {
+  "zh": "升腾粒子",
+  "ja": "上昇パーティクル"
+ },
+ "Filter effect": {
+  "zh": "滤镜效果",
+  "ja": "フィルターエフェクト"
+ },
+ "Solid red dots float and drift upward, and the particle color gradually shifts as a whole to bright orange over time.": {
+  "zh": "红色实心圆点向上浮动漂移，粒子颜色随时间整体渐变为明亮橙色。",
+  "ja": "赤い塗りつぶしの丸ドットが上方へ浮遊しながら漂い、時間の経過とともに粒子全体の色が徐々に明るいオレンジへと変化します。"
+ },
+ "Energetic dynamic intros, energy-rise effects or fashion promo videos.": {
+  "zh": "活力动感片头、能量上升特效或时尚宣传片。",
+  "ja": "エネルギッシュでダイナミックなオープニング、エネルギーの上昇エフェクト、ファッション系プロモーション動画などに適しています。"
+ },
+ "rising dots": {
+  "zh": "圆点升腾",
+  "ja": "上昇ドット"
+ },
+ "gradual color change": {
+  "zh": "渐变变色",
+  "ja": "グラデーション変色"
+ },
+ "dynamic energy": {
+  "zh": "动感能量",
+  "ja": "ダイナミックエネルギー"
+ },
+ "Particles nested inside particles": {
+  "zh": "粒子内嵌粒子",
+  "ja": "ネストパーティクル"
+ },
+ "Yellow five-pointed-star particles rise and drift upward as a whole, gathering at the top edge of the frame at frames 5 and 6.": {
+  "zh": "黄色五角星粒子整体向上升起漂移，第5、6帧在画面顶部边缘聚集。",
+  "ja": "黄色の五芒星粒子が全体として上方へ浮遊しながら上昇し、第5〜6フレームで画面上部のエッジに集まります。"
+ },
+ "Dreams taking off, reward settlement or celebratory rising-atmosphere scenes.": {
+  "zh": "梦想升空、奖励结算或庆典升腾氛围场景。",
+  "ja": "夢の飛翔、リワード獲得演出、祝賀イベントの高揚感あふれるシーンなどに適しています。"
+ },
+ "yellow starlight": {
+  "zh": "黄色星光",
+  "ja": "イエロースターライト"
+ },
+ "floating upward": {
+  "zh": "向上漂浮",
+  "ja": "上方浮遊"
+ },
+ "gathering at the top": {
+  "zh": "顶部聚集",
+  "ja": "上部集束"
+ },
+ "Trailing transform": {
+  "zh": "拖尾变形",
+  "ja": "トレイル変形"
+ },
+ "A dot matrix of fine particles drifts while its overall color cycles gradually through red, green, cyan, blue, magenta and yellow.": {
+  "zh": "细小粒子点阵在漂移中整体颜色经历红、绿、青、蓝、品红、黄循环渐变。",
+  "ja": "微小な粒子のドットマトリクスが漂いながら、全体の色が赤、緑、シアン、青、マゼンタ、黄へと順に循環グラデーション変化します。"
+ },
+ "Dynamic beat-synced edits, dazzling-color transitions or neon-stage atmosphere backgrounds.": {
+  "zh": "动感卡点、炫彩过渡或霓虹舞台氛围背景。",
+  "ja": "ダイナミックな音ハメ編集、鮮やかなカラーのトランジション、ネオンステージの背景演出などに適しています。"
+ },
+ "color cycling": {
+  "zh": "循环变色",
+  "ja": "カラーサイクリング"
+ },
+ "tiny particles": {
+  "zh": "微小粒子",
+  "ja": "微小粒子"
+ },
+ "Sparse floating dots (random color)": {
+  "zh": "稀疏漂浮点(随机色)",
+  "ja": "まばらな浮遊ドット（ランダムカラー）"
+ },
+ "Sparse tiny dark-red particles wander slowly, and nearby particles occasionally form faint thin lines connecting them.": {
+  "zh": "稀疏暗红微小粒子缓慢游移，近邻粒子间偶尔生成微弱细线相连。",
+  "ja": "まばらな暗赤色の微小粒子がゆっくりと漂い、隣り合う粒子同士が時折かすかな細いラインで結ばれます。"
+ },
+ "Minimalist tech, deep-space star charts or microscopic biological link backgrounds.": {
+  "zh": "极简科技、深空星图或微观生物连线背景。",
+  "ja": "ミニマルテック、深宇宙の星図、微視的な生体ネットワークの背景などに適しています。"
+ },
+ "dark-red particles": {
+  "zh": "暗红粒子",
+  "ja": "暗赤色の粒子"
+ },
+ "nearby links": {
+  "zh": "邻近连线",
+  "ja": "近接ライン"
+ },
+ "sparse star dots": {
+  "zh": "稀疏星点",
+  "ja": "まばらな星点"
+ },
+ "Particles with a lighting feel": {
+  "zh": "光照感粒子",
+  "ja": "ライティング風パーティクル"
+ },
+ "Red-orange round and square particles gradually converge from all sides toward the center into a cluster.": {
+  "zh": "红橙色圆形与方形粒子从四周逐渐向中心汇聚成团。",
+  "ja": "赤橙色の丸型および四角型の粒子が周囲から中心に向かって徐々に集まり、ひと塊に集束します。"
+ },
+ "Suited to tech-feel focus effects, core energy convergence or intro transitions.": {
+  "zh": "适合科技感聚焦特效、核心能量汇聚或片头转场。",
+  "ja": "サイバー感のあるフォーカスエフェクト、コアエネルギーの集束、オープニングのトランジションなどに適しています。"
+ },
+ "particle convergence": {
+  "zh": "粒子汇聚",
+  "ja": "パーティクル集束"
+ },
+ "square and round dots": {
+  "zh": "方形圆点",
+  "ja": "四角と丸のドット"
+ },
+ "energy focus": {
+  "zh": "能量聚焦",
+  "ja": "エネルギーフォーカス"
+ },
+ "Very faint tiny dark-red dots and extremely light links are scattered on a dark background, floating and shifting slowly.": {
+  "zh": "暗底上散落极微弱的暗红细小圆点与极淡连线，缓慢漂浮移位。",
+  "ja": "暗い背景の上にごくかすかな暗赤色の小さな丸ドットと極めて淡いラインが散らばり、ゆっくりと漂いながら位置を変えます。"
+ },
+ "Suited to minimalist, understated tech intros or a dark-night starry-sky atmosphere underlay.": {
+  "zh": "适合极简低调的科技片头或暗夜星空氛围衬底。",
+  "ja": "ミニマルで落ち着いたテクノロジー系オープニングや、暗夜の星空の雰囲気作りのアンダーレイに適しています。"
+ },
+ "dark-red specks": {
+  "zh": "暗红微粒",
+  "ja": "暗赤色の微粒子"
+ },
+ "minimalist glimmer": {
+  "zh": "极简微光",
+  "ja": "ミニマルな微光"
+ },
+ "ethereal floating": {
+  "zh": "虚幻漂浮",
+  "ja": "幻想的な浮遊"
+ },
+ "Fine round dot particles in red, yellow, cyan and other colors are scattered on a dark background, translating and floating slowly.": {
+  "zh": "红、黄、青等多色细小圆点粒子散布在暗底中缓慢平移漂浮。",
+  "ja": "赤、黄、シアンなど多彩な小さな丸ドット粒子が暗い背景の中に散らばり、ゆっくりと平行移動しながら漂います。"
+ },
+ "Suited to celebration parties, relaxed lively short videos or dreamy confetti backgrounds.": {
+  "zh": "适合庆典派对、轻松活泼短视频或梦幻彩屑背景。",
+  "ja": "祝賀パーティー、軽快で活気のあるショート動画、幻想的な紙吹雪の背景などに適しています。"
+ },
+ "floating confetti": {
+  "zh": "彩屑漂浮",
+  "ja": "紙吹雪の浮遊"
+ },
+ "cheerful atmosphere": {
+  "zh": "欢快氛围",
+  "ja": "陽気なムード"
+ },
+ "Dense round dots": {
+  "zh": "密集圆点",
+  "ja": "高密度丸ドット"
+ },
+ "A dense swarm of bright orange-red round particles keeps drifting and floating toward the upper right on a black background.": {
+  "zh": "密集的亮橙红色圆形粒子群在黑底上持续向右上方漂移浮动。",
+  "ja": "高密度の明るい赤橙色の円形粒子群が、黒い背景の上で右上に向かって継続的に漂い浮遊します。"
+ },
+ "Suited to energy flow, fiery event promotion or dynamic rhythmic video backgrounds.": {
+  "zh": "适合能量流动、热烈活动宣传或动感节奏视频背景。",
+  "ja": "エネルギーの流れ、情熱的なイベントのプロモーション、リズミカルで躍動感のある動画の背景などに適しています。"
+ },
+ "dense particles": {
+  "zh": "密集粒子",
+  "ja": "高密度パーティクル"
+ },
+ "orange-red dots": {
+  "zh": "橙红圆点",
+  "ja": "赤橙色の丸ドット"
+ },
+ "particle flow direction": {
+  "zh": "粒子流向",
+  "ja": "パーティクルの流向"
+ },
+ "Medium-density round dots": {
+  "zh": "中等密度圆点",
+  "ja": "中密度丸ドット"
+ },
+ "Faint red dots are connected by extremely thin gray-white lines into a polygonal network that keeps deforming and drifting.": {
+  "zh": "微弱红点由极细灰白线条连接成多边形网络，持续形变漂移。",
+  "ja": "かすかな赤いドットが極めて細い灰白色のラインで結ばれて多角形ネットワークを形成し、絶えず変形しながら漂います。"
+ },
+ "Suited to network topology, blockchain displays or minimalist constellation tech-feel backgrounds.": {
+  "zh": "适合网络拓扑、区块链展示或极简星座科技感背景。",
+  "ja": "ネットワークトポロジーやブロックチェーンの紹介、ミニマルな星座風サイバー背景などに適しています。"
+ },
+ "topology structure": {
+  "zh": "拓扑结构",
+  "ja": "トポロジー構造"
+ },
+ "Directional drift": {
+  "zh": "定向漂移",
+  "ja": "指向性ドリフト"
+ },
+ "Extremely sparse faint red dots and occasional thin lines glide slowly at constant speed along a fixed diagonal direction.": {
+  "zh": "极稀疏的微弱红点与偶现细线沿固定斜向匀速缓慢滑行。",
+  "ja": "極めてまばらでかすかな赤いドットと時折現れる細いラインが、一定の斜め方向へ等速でゆっくりと滑るように動きます。"
+ },
+ "Suited to deep-space exploration, minimalist immersive storytelling or dark-night suspense background patterns.": {
+  "zh": "适合深空探索、极简沉浸式叙事或暗夜悬疑底纹。",
+  "ja": "深宇宙探査、ミニマルで没入感のあるストーリーテリング、サスペンス感漂う夜の背景パターンなどに適しています。"
+ },
+ "sparse specks": {
+  "zh": "稀疏微粒",
+  "ja": "まばらな微粒子"
+ },
+ "diagonal glide": {
+  "zh": "斜向滑行",
+  "ja": "斜めグライド"
+ },
+ "minimalist deep space": {
+  "zh": "极简深空",
+  "ja": "ミニマル深宇宙"
+ },
+ "Distance-limited drift": {
+  "zh": "限距漂移",
+  "ja": "距離制限ドリフト"
+ },
+ "Tiny red dots disperse and drift slowly against an extremely dark background, occasionally joined by extremely light thin lines.": {
+  "zh": "极暗背景下微小红点缓慢分散漂动，相互间偶有极淡细线相连。",
+  "ja": "極めて暗い背景の中で小さな赤いドットがゆっくりと分散して漂い、ドット同士が時折ごく淡い細いラインで結ばれます。"
+ },
+ "Suited to extremely dark sci-fi backgrounds, microscopic particle displays or low-distraction video background patterns.": {
+  "zh": "适合极暗科幻背景、微观粒子展示或低干扰视频底纹。",
+  "ja": "ダークなSF風の背景、微小粒子の展示、視覚的ノイズの少ない動画の背景パターンなどに適しています。"
+ },
+ "faint red dots": {
+  "zh": "微弱红点",
+  "ja": "かすかな赤ドット"
+ },
+ "close-range links": {
+  "zh": "微距连线",
+  "ja": "近接ライン"
+ },
+ "dark-toned background pattern": {
+  "zh": "暗调底纹",
+  "ja": "ダークトーン背景パターン"
+ },
+ "Inward drift": {
+  "zh": "向内漂移",
+  "ja": "内向きドリフト"
+ },
+ "Small red dot particles gradually gather and converge from the edges all around the frame toward the center area.": {
+  "zh": "红色小圆点粒子从画面四周边缘向中心区域逐渐聚拢汇聚。",
+  "ja": "赤い小さな丸ドット粒子が画面周囲のエッジから中央エリアに向かって徐々に集まり、集束していきます。"
+ },
+ "Suited to attention-focusing, energy-gathering or subject-entrance effects.": {
+  "zh": "适合用于注意力聚焦、能量汇集或主体出场特效。",
+  "ja": "視線の誘導、エネルギーの集束、被写体の入場エフェクトなどに適しています。"
+ },
+ "centripetal motion": {
+  "zh": "向心运动",
+  "ja": "向心運動"
+ },
+ "gathering effects": {
+  "zh": "聚集特效",
+  "ja": "集束エフェクト"
+ },
+ "Outward drift": {
+  "zh": "向外漂移",
+  "ja": "外向きドリフト"
+ },
+ "A dense swarm of red particles at the center keeps diverging, expanding and drifting outward in all directions.": {
+  "zh": "中心密集的红色粒子群向四周外围持续发散扩张漂移。",
+  "ja": "中央に密集した赤い粒子群が、周囲の外側に向かって絶えず発散・拡散しながら漂います。"
+ },
+ "Suited to energy bursts, shockwave spreading or intro-opening motion graphics.": {
+  "zh": "适合用于能量爆发、冲击波扩散或片头开场动效。",
+  "ja": "エネルギーの炸裂、衝撃波の拡散、オープニング開始のモーション演出などに適しています。"
+ },
+ "particle divergence": {
+  "zh": "粒子发散",
+  "ja": "パーティクル発散"
+ },
+ "spreading outward": {
+  "zh": "向外扩散",
+  "ja": "外側への拡散"
+ },
+ "burst motion graphics": {
+  "zh": "爆发动效",
+  "ja": "バーストモーション"
+ },
+ "Smear trails without clearing the screen": {
+  "zh": "不清屏的拖痕",
+  "ja": "画面クリアなしの軌跡トレイル"
+ },
+ "Densely packed multicolored star shapes keep overlapping and stacking, gradually filling the canvas.": {
+  "zh": "密密麻麻的五彩星形图案持续重叠叠加，逐渐填满画布。",
+  "ja": "密集した色とりどりの星型パターンが次々と重なり合い、徐々にキャンバスを埋め尽くします。"
+ },
+ "Suited to festive carnivals, children's fun or lively, cheerful scene transitions.": {
+  "zh": "适合用于庆典狂欢、儿童趣味或热烈欢快的过场转场。",
+  "ja": "フェスティバルのカーニバル、キッズ向けコンテンツ、活気あふれる陽気なシーンのトランジションなどに適しています。"
+ },
+ "colored stars": {
+  "zh": "彩色星星",
+  "ja": "カラフルスター"
+ },
+ "layer stacking": {
+  "zh": "图层叠加",
+  "ja": "レイヤーの重ね合わせ"
+ },
+ "carnival celebration": {
+  "zh": "狂欢庆典",
+  "ja": "カーニバルセレブレーション"
+ },
+ "Rock-and-roll mini character animation, portrait": {
+  "zh": "摇滚小人角色动画,竖版",
+  "ja": "ロック風ミニキャラアニメーション、縦向き"
+ },
+ "A yellow rope hangs down on a teal-green background; a little figure in a white jumpsuit slides down the rope, comes to a stop and blinks.": {
+  "zh": "青绿底上黄绳垂下，穿白色连体服的小人沿绳滑落站定并眨眼。",
+  "ja": "青緑色の背景の上で黄色いロープが垂れ下がり、白いジャンプスーツを着たミニキャラがロープを滑り降りて立ち止まり、まばたきをします。"
+ },
+ "Suited to transition entrances, character reveals or humorous notification motion graphics.": {
+  "zh": "适合作为转场入场、角色亮相或幽默提示动效。",
+  "ja": "トランジション入場、キャラクターの登場演出、ユーモアのある通知モーションなどに適しています。"
+ },
+ "cartoon character": {
+  "zh": "卡通角色",
+  "ja": "カートゥーンキャラクター"
+ },
+ "rope-slide entrance": {
+  "zh": "滑绳入场",
+  "ja": "ロープスライド入場"
+ },
+ "transition animation": {
+  "zh": "转场动画",
+  "ja": "トランジションアニメーション"
+ },
+ "Bodymovin wordmark animation, horizontal bar shape, suitable as a title": {
+  "zh": "Bodymovin 字标动画,横条状,适合当标题",
+  "ja": "Bodymovinワードマークアニメーション、横帯状、タイトル向け"
+ },
+ "Yellow English letters on a green bar break apart into colored geometric fragments and morph, then reassemble into the original word.": {
+  "zh": "绿条上的黄色英文拆解为彩色几何碎片并变形，随后重新拼回原词。",
+  "ja": "緑色のバーの上にある黄色い英文字がカラフルな幾何学破片に分解されて変形し、その後に元の単語へと再び組み直されます。"
+ },
+ "Suited to intro title displays, LOGO reveals or transitional bridges.": {
+  "zh": "适合片头标题展示、LOGO演绎或过渡衔接。",
+  "ja": "オープニングタイトルの表示、ロゴの演出、シーン間のトランジションのつなぎなどに適しています。"
+ },
+ "text motion graphics": {
+  "zh": "文字动效",
+  "ja": "テキストモーション"
+ },
+ "geometric morph": {
+  "zh": "几何变形",
+  "ja": "幾何学モーフィング"
+ },
+ "intro title": {
+  "zh": "片头标题",
+  "ja": "オープニングタイトル"
+ },
+ "Kitten character animation, square": {
+  "zh": "小猫角色动画,方形",
+  "ja": "子猫キャラクターアニメーション、正方形"
+ },
+ "A white kitten sits upright inside an orange square, alternately closing its eyes, opening its mouth and swishing its tail.": {
+  "zh": "橙色方块内白色小猫端坐，交替进行闭眼张嘴与摇摆尾巴。",
+  "ja": "オレンジ色の四角形の中で白い子猫がお行儀よく座り、目を閉じる・口を開ける動作と尻尾を振る動作を交互に行います。"
+ },
+ "Suited to pet life logs, cute-style illustrations or emotion-expression stickers.": {
+  "zh": "适合宠物生活记录、萌系插画或情绪表达贴纸。",
+  "ja": "ペットの日常記録、可愛いイラスト動画、感情表現スタンプなどに適しています。"
+ },
+ "cute kitten": {
+  "zh": "可爱小猫",
+  "ja": "可愛い子猫"
+ },
+ "cute pet animation": {
+  "zh": "萌宠动画",
+  "ja": "キュートなペットアニメーション"
+ },
+ "cartoon expression": {
+  "zh": "卡通表情",
+  "ja": "カートゥーン表情"
+ },
+ "New Year greeting-card style 2016 number animation, full screen 16:9": {
+  "zh": "新年贺卡式的 2016 数字动画,全屏 16:9",
+  "ja": "年賀状風「2016」数字アニメーション、フルスクリーン 16:9"
+ },
+ "Multicolor-striped HAPPY letters wobble and morph on a cream-yellow background, smoothly turning into the colorful number 2016.": {
+  "zh": "米黄底上彩纹HAPPY字母晃动变形，平滑演变为彩色的2016数字。",
+  "ja": "クリーム色の背景の上でカラフルなストライプ柄の「HAPPY」の文字が揺れながら変形し、カラフルな「2016」の数字へと滑らかに変化します。"
+ },
+ "Suited to New Year greetings, New Year's Eve celebrations or holiday intro countdowns.": {
+  "zh": "适合新年贺岁、跨年庆典或节日片头倒计时。",
+  "ja": "新年のご挨拶、カウントダウンイベント、ホリデー向けオープニングのカウントダウンなどに適しています。"
+ },
+ "New Year wishes": {
+  "zh": "新年祝福",
+  "ja": "新年の祝福"
+ },
+ "number morph": {
+  "zh": "数字变形",
+  "ja": "数字モーフィング"
+ },
+ "holiday celebration": {
+  "zh": "节日庆典",
+  "ja": "ホリデーセレブレーション"
+ },
+ "Christmas-themed scene animation, full screen 16:9": {
+  "zh": "圣诞主题场景动画,全屏 16:9",
+  "ja": "クリスマスをテーマにしたシーンアニメーション、フルスクリーン 16:9"
+ },
+ "A red circle on a dark background morphs in turn into a Christmas hat, Santa Claus, a Christmas tree and a colorful wreath.": {
+  "zh": "深色底上红色圆形依次变形为圣诞帽、圣诞老人、圣诞树与彩色花环。",
+  "ja": "暗い背景の赤い円が、サンタ帽、サンタクロース、クリスマスツリー、カラフルなリースへと順番に変形します。"
+ },
+ "Suited to Christmas promotions, winter party intros or greeting-card motion graphics.": {
+  "zh": "适合圣诞节日宣传、冬季派对片头或贺卡动效。",
+  "ja": "クリスマスのプロモーション、冬のパーティーのオープニング、グリーティングカードのモーショングラフィックスに適しています。"
+ },
+ "Christmas elements": {
+  "zh": "圣诞元素",
+  "ja": "クリスマスエレメント"
+ },
+ "icon morph": {
+  "zh": "图标形变",
+  "ja": "アイコンモーフィング"
+ },
+ "holiday motion graphics": {
+  "zh": "节日动效",
+  "ja": "ホリデーモーショングラフィックス"
+ },
+ "Download process exit code {0}": {
+  "zh": "下载进程退出码 {0}",
+  "ja": "ダウンロードプロセスの終了コード {0}"
+ },
+ "The API key has run out of quota (API returned 401). Top up in the API console and try again.": {
+  "zh": "API Key 的额度用完了（API 返回 401）。去 API 后台充值后再试。",
+  "ja": "API キーのクォータを使い切りました（API が 401 を返しました）。API の管理画面でチャージしてから再試行してください。"
+ },
+ " In unattended mode it cannot pop up a window to ask for consent, so reading files, reading web pages and running commands outside the workspace are always rejected automatically.": {
+  "zh": "无人值守模式下它没法弹窗征求同意,工作区以外的读文件、读网页、跑命令一律自动拒绝。",
+  "ja": "無人実行モードでは同意を求めるウィンドウを表示できないため、ワークスペース外でのファイルの読み取り、Webページの読み取り、コマンドの実行は常に自動的に拒否されます。"
+ },
+ " PromptCut's tools are unaffected: {0}.": {
+  "zh": "PromptCut 的工具不受影响 —— {0}。",
+  "ja": "PromptCutのツールは影響を受けません：{0}。"
+ },
+ " The target is lost if it turns, zooms, or stays blocked for long. Installing the extension is much more stable, but it downloads about 400 MB": {
+  "zh": "目标转向、缩放或长时间被挡就会跟丢。装上拓展会稳得多，但要下约 400 MB",
+  "ja": "追跡対象が向きを変えたり、ズームしたり、長時間隠れたりすると、見失われます。拡張機能をインストールするとはるかに安定しますが、約400 MBのダウンロードが必要です"
+ },
+ " You can reduce the sampling points (pass times yourself), or first confirm the tier with subject_status: the full tier is an order of magnitude slower than light.": {
+  "zh": "可以减少采样点（自己传 times），或先用 subject_status 确认档位——full 档比 light 慢一个数量级。",
+  "ja": "サンプリング点を減らす（times を自分で渡す）か、先に subject_status で段階を確認してください。フル版はライト版より一桁遅くなります。"
+ },
+ "; {0} in total": {
+  "zh": ";等 {0} 条",
+  "ja": "；全 {0} 件"
+ },
+ "Transcribing": {
+  "zh": "转写中",
+  "ja": "文字起こし中"
+ },
+ "Composing cards": {
+  "zh": "配卡中",
+  "ja": "カード配置中"
+ },
+ "Gain": {
+  "zh": "增益",
+  "ja": "ゲイン"
+ },
+ "Raises or lowers the overall level, in decibels. +6 dB is about twice as loud, -6 dB about half; it can go above 0 dB, which is the only way to amplify a sound that is too quiet (clip volume maxes out at 1)": {
+  "zh": "整体抬高或压低,单位分贝。+6 dB 约两倍响,-6 dB 约一半;能超过 0 dB,这是把太轻的声音放大的唯一办法(片段音量最大只到 1)",
+  "ja": "全体のレベルをデシベル単位で引き上げ、または引き下げます。+6 dB で約2倍の音量、-6 dB で約半分になります。0 dB を超えることも可能で、小さすぎる音を増幅する唯一の方法です（クリップ音量の最大値は 1 です）。"
+ },
+ "Decibels": {
+  "zh": "分贝",
+  "ja": "デシベル"
+ },
+ "High-pass": {
+  "zh": "高通",
+  "ja": "ハイパス"
+ },
+ "Filters out low frequencies below freq: removes rumble and handheld wind noise, keeps voices from sounding muffled. Typical for voice: 80~120 Hz": {
+  "zh": "滤掉低于 freq 的低频:去隆隆声、去手持风噪、让人声不闷。人声常用 80~120 Hz",
+  "ja": "freq 未満の低域をカットします。ランブルノイズや手持ち撮影時の風切り音を除去し、声のこもりを防ぎます。ボイスでの一般的な設定値: 80〜120 Hz"
+ },
+ "Cutoff frequency": {
+  "zh": "截止频率",
+  "ja": "カットオフ周波数"
+ },
+ "Low-pass": {
+  "zh": "低通",
+  "ja": "ローパス"
+ },
+ "Filters out high frequencies above freq: removes hiss, gives the muffled feel of \"behind a wall / old radio\". Telephone sound is about 3400 Hz": {
+  "zh": "滤掉高于 freq 的高频:去嘶声、做「隔着墙 / 老收音机」的闷感。电话音约 3400 Hz",
+  "ja": "freq を超える高域をカットします。ヒスノイズを除去し、「壁越し／古いラジオ」のようなこもった質感を演出します。電話の音声は約 3400 Hz です。"
+ },
+ "Peaking EQ": {
+  "zh": "峰值均衡",
+  "ja": "ピーキング EQ"
+ },
+ "Raises or lowers db decibels around freq; the larger q is, the narrower the range. Voice clarity is often boosted 2~4 dB at 2~4 kHz; harsh sibilance is cut a few dB at 6~8 kHz": {
+  "zh": "在 freq 附近抬高或压低 db 分贝,q 越大范围越窄。人声清晰度常在 2~4 kHz 抬 2~4 dB;齿音刺耳在 6~8 kHz 压几分贝",
+  "ja": "freq 付近を db デシベル引き上げ、または引き下げます。q が大きいほど帯域が狭くなります。ボイスの明瞭度は 2〜4 kHz で 2〜4 dB 引き上げることが多く、耳障りな歯擦音は 6〜8 kHz で数 dB 引き下げます。"
+ },
+ "Center frequency": {
+  "zh": "中心频率",
+  "ja": "中心周波数"
+ },
+ "Low shelf": {
+  "zh": "低架",
+  "ja": "ローシェルフ"
+ },
+ "Raises or lowers everything below freq by db decibels: thickens / thins the low end": {
+  "zh": "freq 以下整体抬高或压低 db 分贝:加厚 / 减薄低频",
+  "ja": "freq 以下の帯域全体を db デシベル引き上げ、または引き下げます。低域を厚く／すっきりと調整します。"
+ },
+ "Corner frequency": {
+  "zh": "转折频率",
+  "ja": "コーナー周波数"
+ },
+ "High shelf": {
+  "zh": "高架",
+  "ja": "ハイシェルフ"
+ },
+ "Raises or lowers everything above freq by db decibels: brightens / muffles": {
+  "zh": "freq 以上整体抬高或压低 db 分贝:加亮 / 变闷",
+  "ja": "freq 以上の帯域全体を db デシベル引き上げ、または引き下げます。明るい響き／こもった響きに調整します。"
+ },
+ "Compressor": {
+  "zh": "压缩",
+  "ja": "コンプレッサー"
+ },
+ "Reduces the part above threshold by ratio, evening out sound that swings between loud and quiet (voiceover typically uses threshold -24, ratio 3~4). attack / release are in seconds": {
+  "zh": "超过 threshold 的部分按 ratio 压小,让忽大忽小的声音平一些(配音常用 threshold -24、ratio 3~4)。attack / release 是秒",
+  "ja": "threshold を超える部分を ratio の比率で圧縮し、音量のばらつきを均一にします（ボイスオーバーでは通常 threshold: -24、ratio: 3〜4）。attack / release の単位は秒です。"
+ },
+ "Threshold": {
+  "zh": "阈值",
+  "ja": "スレッショルド"
+ },
+ "Ratio": {
+  "zh": "比率",
+  "ja": "レシオ"
+ },
+ "Knee": {
+  "zh": "拐点",
+  "ja": "ニー"
+ },
+ "Attack": {
+  "zh": "起动",
+  "ja": "アタック"
+ },
+ "Release": {
+  "zh": "释放",
+  "ja": "リリース"
+ },
+ "Limiter": {
+  "zh": "限幅",
+  "ja": "リミッター"
+ },
+ "Pushes peaks down to around ceiling decibels (not a hard wall: compression ratio 20, attack 1 ms, hot signals may exceed it by a few tenths of a dB and transients may slip through), preventing clipping pops. Put it on the loudest segments when the peak exceeds 0 dB after mixing; leave ceiling a margin of -1~-2": {
+  "zh": "把峰值压到 ceiling 分贝附近(不是硬墙:压缩比 20、起动 1 ms,热信号会高零点几 dB、瞬态可能穿过去),防削波爆音。混音叠加之后峰值超过 0 dB 时挂在最响的那几段上,ceiling 留 -1~-2 的余量",
+  "ja": "ピークを ceiling デシベル付近に抑え（完全に遮断するハードウォールではなく、圧縮比 20、アタック 1 ms のため、過大信号はコンマ数 dB 超過したりトランジェントがすり抜けたりする場合があります）、クリッピングによる音割れを防ぎます。ミックス後にピークが 0 dB を超える場合は最も音量が大きいセグメントに適用し、ceiling には -1〜-2 のマージンを残してください。"
+ },
+ "Ceiling": {
+  "zh": "上限",
+  "ja": "シーリング"
+ },
+ "Repeats once every time seconds, feedback is the decay of each repeat, mix is the proportion of echo": {
+  "zh": "隔 time 秒重复一次,feedback 是每次重复的衰减,mix 是回声占的比例",
+  "ja": "time 秒ごとに1回繰り返します。feedback は各繰り返しの減衰量、mix はエコーの割合です。"
+ },
+ "Interval": {
+  "zh": "间隔",
+  "ja": "間隔"
+ },
+ "Feedback": {
+  "zh": "反馈",
+  "ja": "フィードバック"
+ },
+ "Mix": {
+  "zh": "混合",
+  "ja": "ミックス"
+ },
+ "Reverb": {
+  "zh": "混响",
+  "ja": "リバーブ"
+ },
+ "Sense of space. decay is how long the tail is (seconds): small room 0.4, big hall 2~3; mix is the proportion of reverb, usually 0.1~0.25 for voiceover": {
+  "zh": "空间感。decay 是尾巴多长(秒):小房间 0.4、大厅 2~3;mix 是混响占的比例,配音一般 0.1~0.25",
+  "ja": "空間感を演出します。decay は余韻の長さ（秒単位）で、小さな部屋なら 0.4、広いホールなら 2〜3 です。mix はリバーブの割合で、ボイスオーバーでは通常 0.1〜0.25 に設定します。"
+ },
+ "Decay": {
+  "zh": "衰减",
+  "ja": "ディケイ"
+ },
+ "Pan": {
+  "zh": "声像",
+  "ja": "パン"
+ },
+ "-1 full left, 0 center, 1 full right": {
+  "zh": "-1 全左、0 居中、1 全右",
+  "ja": "-1 で左端、0 で中央、1 で右端"
+ },
+ "Voiceover / interview voice: remove low-frequency rumble, boost 2~4 kHz slightly, then compress to even out loud and quiet parts": {
+  "zh": "配音 / 采访人声:去低频闷响,2~4 kHz 提一点,再压缩一下让大小声均匀",
+  "ja": "ボイスオーバー／インタビューの声: 低域のこもりを除去し、2〜4 kHz を少し持ち上げてから、コンプレッサーで音量のばらつきを均一にします。"
+ },
+ "Duck background": {
+  "zh": "压低背景",
+  "ja": "背景音を下げる"
+ },
+ "Make music / ambient sound yield to the voice: lower everything by amount dB (default -12); after attaching, adjust segment by segment as needed": {
+  "zh": "配乐 / 环境音给人声让路:整体降 amount 分贝(默认 -12),挂上后按需要逐段改",
+  "ja": "BGM や環境音を声に合わせて抑えます。全体を amount デシベル（デフォルト: -12）引き下げ、適用後は必要に応じてセグメントごとに調整してください。"
+ },
+ "Telephone": {
+  "zh": "电话音",
+  "ja": "電話"
+ },
+ "Narrow band of 300~3400 Hz, as if coming from a phone / walkie-talkie": {
+  "zh": "300~3400 Hz 的窄带,像从电话 / 对讲机里传出来",
+  "ja": "300〜3400 Hz の狭帯域で、電話やトランシーバーから聞こえてくるような音を再現します。"
+ },
+ "Room reverb": {
+  "zh": "房间混响",
+  "ja": "ルームリバーブ"
+ },
+ "Natural feel of a small space, short tail": {
+  "zh": "小空间的自然空间感,尾巴短",
+  "ja": "小さな空間の自然な響きを再現し、余韻は短めです。"
+ },
+ "Hall reverb": {
+  "zh": "大厅混响",
+  "ja": "ホールリバーブ"
+ },
+ "Wide space, long tail, suits intro / outro text": {
+  "zh": "宽阔的空间,尾巴长,适合片头 / 结尾的字",
+  "ja": "広々とした空間で余韻が長く、オープニングやエンディングのテキストに適しています。"
+ },
+ "Anti-clipping limiter": {
+  "zh": "防削波限幅",
+  "ja": "クリッピング防止リミッター"
+ },
+ "Keeps peaks below -1 dB; attach it to the loudest segments when the mix clips after layering": {
+  "zh": "峰值压在 -1 dB 以下,混音叠加后爆音时挂在最响的那几段上",
+  "ja": "ピークを -1 dB 以下に抑えます。ミックスを重ねた後に音割れが生じる場合は、最も音量が大きいセグメントに適用してください。"
+ },
+ "Muffled through a wall": {
+  "zh": "隔墙闷响",
+  "ja": "壁越しのこもり音"
+ },
+ "Low-pass at 600 Hz, as if heard through a wall / from the next room": {
+  "zh": "低通到 600 Hz,像隔着一堵墙 / 从隔壁房间传来",
+  "ja": "600 Hz のローパスフィルターにより、壁越しや隣の部屋から聞こえてくるような音を再現します。"
+ },
+ "inputs form a cycle, cannot generate": {
+  "zh": "输入存在循环，无法生成",
+  "ja": "入力に循環があるため、生成できません"
+ },
+ "source version is missing, please regenerate locally": {
+  "zh": "缺少源码版本，请在本地重新生成",
+  "ja": "ソースのバージョンが見つかりません。ローカルで再生成してください"
+ },
+ "input media is missing or has no content hash": {
+  "zh": "输入素材缺失或没有内容哈希",
+  "ja": "入力素材が見つからないか、コンテンツハッシュがありません"
+ },
+ "input node has been deleted": {
+  "zh": "输入节点已删除",
+  "ja": "入力ノードが削除されています"
+ },
+ "not generated yet, please generate the card audio first": {
+  "zh": "尚未生成，请先生成卡片声音",
+  "ja": "まだ生成されていません。先にカードのオーディオを生成してください"
+ },
+ "record is invalid, please regenerate": {
+  "zh": "记录无效，请重新生成",
+  "ja": "レコードが無効です。再生成してください"
+ },
+ "out of date (parameters, events, inputs or source have changed), please regenerate": {
+  "zh": "已过期（参数、事件、输入或源码已变化），请重新生成",
+  "ja": "期限切れです（パラメーター、イベント、入力、またはソースが変更されました）。再生成してください"
+ },
+ "prerender output does not cover the current range, please regenerate": {
+  "zh": "预渲染结果未覆盖当前范围，请重新生成",
+  "ja": "プリレンダリング結果が現在の範囲をカバーしていません。再生成してください"
+ },
+ "media is missing, please restore the media or regenerate": {
+  "zh": "素材缺失，请恢复素材或重新生成",
+  "ja": "素材が見つかりません。素材を復元するか、再生成してください"
+ },
+ "The same clip cannot have both an audio media effect card and a visual media effect card, duplicate the clip first": {
+  "zh": "同一片段不能同时挂音频素材效果卡和视觉素材效果卡，先复制片段",
+  "ja": "同一のクリップにオーディオ素材エフェクトカードとビジュアル素材エフェクトカードを同時に適用することはできません。先にクリップを複製してください"
+ },
+ "This segment has no media effect card attached": {
+  "zh": "这一段没有挂素材效果卡",
+  "ja": "このセグメントには素材エフェクトカードが適用されていません"
+ },
+ "This card has no inputs; it is the content of this segment itself, not an overlay. To remove it, delete the segment": {
+  "zh": "这张卡没有输入,它本身就是这一段的内容,不是叠加上去的;要去掉请删掉这一段",
+  "ja": "このカードには入力がありません。オーバーレイではなく、このセグメント自体のコンテンツです。削除する場合はセグメントを削除してください"
+ },
+ "The notation of the dropdown options (options) is not recognized": {
+  "zh": "下拉选项(options)的写法认不出",
+  "ja": "ドロップダウンの選択肢（options）の記述形式を認識できません"
+ },
+ "After a speed change, this video segment plays no original audio (the first version has no speed-changed audio). To hear sound, split the audio from the video; the split-out audio follows the speed change and its pitch shifts. Set it back to 1× to restore.": {
+  "zh": "变速后这一段视频不出原声（第一版不做变速声音）；要听声音可以音画分离，分出来的声音跟着变速、会变调。改回 1× 恢复。",
+  "ja": "速度変更後、この動画セグメントでは元の音声が再生されません（初期バージョンでは速度変更された音声に対応していません）。音声を聞くには映像から音声を分離してください。分離した音声は速度変更に追従し、ピッチが変化します。元に戻すには 1× に戻してください。"
+ },
+ "Audio segments shift in pitch after a speed change (the first version has no pitch-preserving speed change).": {
+  "zh": "声音段变速后跟着变调（第一版不做保调变速）。",
+  "ja": "音声セグメントは速度変更後にピッチが変化します（初期バージョンではピッチを維持した速度変更に対応していません）。"
+ },
+ "To shorten the crossfade, this segment was shifted later as a whole (content unchanged)": {
+  "zh": "为了缩短交叉溶解，这一段整体往后挪了（内容不变）",
+  "ja": "クロスディゾルブを短縮するため、このセグメント全体を後ろへ移動しました（内容は変わりません）"
+ },
+ "The other segment of the crossfade was shifted too": {
+  "zh": "交叉溶解的另一段跟着挪了",
+  "ja": "クロスディゾルブのもう一方のセグメントも連動して移動しました"
+ },
+ "The cut referenced by a cut segment cannot be changed; to replace it, delete this segment and place a new one with add_cut_segment": {
+  "zh": "剪辑段引用的剪辑不能改，要换就删掉这段，用 add_cut_segment 放一段新的",
+  "ja": "カットセグメントが参照しているカットは変更できません。置き換えるには、このセグメントを削除し、add_cut_segment で新しいセグメントを配置してください"
+ },
+ "Cut name cannot be empty": {
+  "zh": "剪辑名不能为空",
+  "ja": "カット名は空にできません"
+ },
+ "This is the last cut and cannot be deleted; to clear it, delete the segments inside": {
+  "zh": "这是最后一条剪辑,不能删;要清空的话删掉里面的段就行",
+  "ja": "これは最後のカットであるため削除できません。クリアする場合は中のセグメントを削除してください"
+ },
+ "Cut segment length must be greater than 0": {
+  "zh": "剪辑段的长度要大于 0",
+  "ja": "カットセグメントの長さは 0 より大きい必要があります"
+ },
+ "Shadow": {
+  "zh": "阴影",
+  "ja": "シャドウ"
+ },
+ "1 = unchanged, <1 darker, >1 brighter (multiplicative)": {
+  "zh": "1 = 原样,<1 变暗,>1 变亮(乘法)",
+  "ja": "1 = 変更なし、<1 で暗く、>1 で明るく（乗算）"
+ },
+ "Contrast": {
+  "zh": "对比度",
+  "ja": "コントラスト"
+ },
+ "1 = unchanged, >1 widens light and dark, <1 pulls toward mid-gray": {
+  "zh": "1 = 原样,>1 拉开明暗,<1 压向中灰",
+  "ja": "1 = 変更なし、>1 で明暗差を広げ、<1 で中間グレーに近づけます"
+ },
+ "Saturation": {
+  "zh": "饱和度",
+  "ja": "彩度"
+ },
+ "0 = colorless, 1 = unchanged, 2 = double": {
+  "zh": "0 = 无色,1 = 原样,2 = 两倍",
+  "ja": "0 = 無色、1 = 変更なし、2 = 2倍"
+ },
+ "Hue": {
+  "zh": "色相",
+  "ja": "色相"
+ },
+ "Hue rotation angle": {
+  "zh": "色相旋转角度",
+  "ja": "色相回転角度"
+ },
+ "Black and white": {
+  "zh": "黑白",
+  "ja": "モノクロ"
+ },
+ "0~1, 1 = fully black and white": {
+  "zh": "0~1,1 = 完全黑白",
+  "ja": "0〜1、1 = 完全にモノクロ"
+ },
+ "Vintage": {
+  "zh": "复古",
+  "ja": "ヴィンテージ"
+ },
+ "0~1, brown tone of old photos": {
+  "zh": "0~1,老照片的褐色调",
+  "ja": "0〜1、古い写真のような褐色調"
+ },
+ "0~1, 1 = negative": {
+  "zh": "0~1,1 = 负片",
+  "ja": "0〜1、1 = ネガ反転"
+ },
+ "Gaussian blur, in pixels within the clip frame (if the frame shrinks the blur shrinks with it; a clip filling the screen uses canvas pixels)": {
+  "zh": "高斯模糊,单位是片段框内的像素(框缩小了模糊也跟着缩;铺满画面的段就是画布像素)",
+  "ja": "ガウスぼかし。単位はクリップ枠内のピクセルです（枠が縮小するとぼかしも連動して縮小します。画面全体に広がるクリップはキャンバスピクセルになります）。"
+ },
+ "One 0~1 sample table per channel (2~33 points, linear interpolation); rgb is a shorthand shared by all three channels": {
+  "zh": "每通道一张 0~1 的取样表(2~33 点,线性插值);rgb 是三通道共用的简写",
+  "ja": "チャンネルごとに 0〜1 のサンプリングテーブルを1つ設定します（2〜33点、線形補間）。rgb は3チャンネル共通の省略形です。"
+ },
+ "Color matrix": {
+  "zh": "颜色矩阵",
+  "ja": "カラーマトリクス"
+ },
+ "values is a row-major 3×3 color mixing matrix (-4~4), offset is the amount added to each channel after mixing (-1~1)": {
+  "zh": "values 是行优先 3×3 混色矩阵(-4~4),offset 是混色之后每通道再加的量(-1~1)",
+  "ja": "values は行優先の 3×3 混色マトリクス（-4〜4）、offset は混色後に各チャンネルへ加算される値（-1〜1）です。"
+ },
+ "The expression must be a string": {
+  "zh": "表达式要是字符串",
+  "ja": "式は文字列である必要があります"
+ },
+ "Expression too complex": {
+  "zh": "表达式太复杂了",
+  "ja": "式が複雑すぎます"
+ },
+ "Incomplete expression": {
+  "zh": "表达式不完整",
+  "ja": "式が不完全です"
+ },
+ "The filter definition must be an object": {
+  "zh": "滤镜定义要是一个对象",
+  "ja": "フィルターの定義はオブジェクトである必要があります"
+ },
+ "ops needs at least one step, e.g. [{ \"kind\": \"brightness\", \"value\": 1.2 }]": {
+  "zh": "ops 至少一步,例:[{ \"kind\": \"brightness\", \"value\": 1.2 }]",
+  "ja": "ops には少なくとも1つのステップが必要です。例: [{ \"kind\": \"brightness\", \"value\": 1.2 }]"
+ },
+ " + offset": {
+  "zh": " + 偏移",
+  "ja": " + オフセット"
+ },
+ "This motion path is empty": {
+  "zh": "这条轨迹是空的",
+  "ja": "このモーションパスは空です"
+ },
+ "The card clip falls outside the range of this motion path": {
+  "zh": "卡片段落在这条轨迹的范围之外",
+  "ja": "カードクリップがこのモーションパスの範囲外にあります"
+ },
+ "Cannot move a part into its own subtree": {
+  "zh": "不能把部件挪进它自己的子树",
+  "ja": "パーツをそれ自体のサブツリー内に移動することはできません"
+ },
+ "A pixel map definition must be an object": {
+  "zh": "像素映射定义要是一个对象",
+  "ja": "ピクセルマップの定義はオブジェクトである必要があります"
+ },
+ "name is required, up to 40 characters": {
+  "zh": "name 必填,40 字以内",
+  "ja": "name は必須です（40文字以内）"
+ },
+ "where is required: write the selection weight using r/g/b/a/luma/x/y/t": {
+  "zh": "where 必填:用 r/g/b/a/luma/x/y/t 写选区权重",
+  "ja": "where は必須です。r/g/b/a/luma/x/y/t を使用して選択範囲のウェイトを記述してください"
+ },
+ "source must be an object": {
+  "zh": "source 要是对象",
+  "ja": "source はオブジェクトである必要があります"
+ },
+ "source.stage must be origin or after_filters": {
+  "zh": "source.stage 只能是 origin 或 after_filters",
+  "ja": "source.stage は origin または after_filters である必要があります"
+ },
+ "mode must be continuous or discrete": {
+  "zh": "mode 只能是 continuous 或 discrete",
+  "ja": "mode は continuous または discrete である必要があります"
+ },
+ "colorSequence requires both from and to": {
+  "zh": "colorSequence 要同时提供 from 和 to",
+  "ja": "colorSequence には from と to の両方を指定する必要があります"
+ },
+ "colorSequence does not need to, or to must be left empty": {
+  "zh": "colorSequence 不需要 to,或 to 只能留空",
+  "ja": "colorSequence には to は不要です。または to を空のままにする必要があります"
+ },
+ "colorSequence with a where other than 1: blending needs the original color, but the whole-frame color grading step has already erased it": {
+  "zh": "colorSequence 配上不是 1 的 where:混合要用到原色,而整帧调色那一步已经把原色抹掉了",
+  "ja": "where が 1 以外の colorSequence: ブレンドには元の色が必要ですが、フレーム全体のカラーグレーディング処理ですでに元の色が失われています"
+ },
+ "colorSequence from is not all grayscale (color picking is RGB nearest neighbor, not a lookup by a single scalar), or to contains semi-transparent colors": {
+  "zh": "colorSequence 的 from 不全是灰阶(取色是 RGB 最近邻,不是按一个标量查表),或 to 里有半透明色",
+  "ja": "colorSequence の from がすべてグレースケールではないか（色取得は RGB 最近傍法であり、単一スカラーによる参照ではありません）、または to に半透明色が含まれています"
+ },
+ "to.a changes alpha, which a curve / matrix cannot do": {
+  "zh": "to.a 会改 alpha,曲线 / 矩阵做不到",
+  "ja": "to.a は alpha を変更しますが、カーブ／マトリクスでは変更できません"
+ },
+ "The channels of to depend on each other: it is neither per-channel self-dependent (curve) nor a linear combination of r/g/b (matrix)": {
+  "zh": "to 的通道之间互相依赖:既不是每通道只依赖自己(曲线),也不是 r/g/b 的线性组合(矩阵)",
+  "ja": "to のチャンネル同士が相互依存しています。各チャンネル単独の依存（カーブ）でも、r/g/b の線形結合（マトリクス）でもありません"
+ },
+ "to is a semi-transparent color, and a curve / matrix cannot change alpha": {
+  "zh": "to 是半透明颜色,曲线 / 矩阵改不了 alpha",
+  "ja": "to が半透明色ですが、カーブ／マトリクスでは alpha を変更できません"
+ },
+ "to is transparent, and a curve / matrix cannot change alpha": {
+  "zh": "to 是 transparent,曲线 / 矩阵改不了 alpha",
+  "ja": "to が transparent ですが、カーブ／マトリクスでは alpha を変更できません"
+ },
+ "to is another media clip, which requires sampling a second texture per pixel": {
+  "zh": "to 是另一段素材,要逐像素取第二张纹理",
+  "ja": "to は別の素材クリップであり、ピクセルごとに2枚目のテクスチャをサンプリングする必要があります"
+ },
+ "The equivalent filter only changes RGB; on semi-transparent pixels the original definition also pushes alpha toward the target color. The two agree when the media is opaque.": {
+  "zh": "等价滤镜只改 RGB;原定义在半透明像素上还会把 alpha 一并推向目标色,素材不透明时两者一致。",
+  "ja": "等価なフィルターは RGB のみを変更します。元の定義では半透明ピクセルにおいて alpha も目標の色へ引き寄せられますが、素材が不透明な場合は両者の結果が一致します。"
+ },
+ "This is whole-frame color grading: where is a constant and to is just a color-to-color function, equivalent to a series of curves / matrix filter steps.": {
+  "zh": "这是整帧调色:where 是个常数,to 只是颜色到颜色的函数,等价于一串 curves / matrix 滤镜步骤。",
+  "ja": "これはフレーム全体のカラーグレーディングです。where は定数であり、to は色から色への関数にすぎないため、一連の curves / matrix フィルターステップと同等です。"
+ },
+ "This shot has no position that avoids covering the person. Consider shrinking the card, lowering its opacity, or placing it on a different shot.": {
+  "zh": "这个镜头没有不遮人的位置,考虑缩小卡片、降低不透明度,或者换一个镜头放。",
+  "ja": "このショットには人物と重ならない位置がありません。カードを縮小するか、不透明度を下げるか、別のショットへの配置をご検討ください。"
+ },
+ "A crossfade needs two different clips": {
+  "zh": "交叉溶解要两段不同的片段",
+  "ja": "クロスディゾルブには2つの異なるクリップが必要です"
+ },
+ "Import failed, nothing was registered as media.": {
+  "zh": "导入失败,没有登记成素材。",
+  "ja": "インポートに失敗しました。素材として登録されませんでした。"
+ },
+ "webgl2 is not available in the Worker": {
+  "zh": "Worker 里拿不到 webgl2",
+  "ja": "Worker 内で webgl2 を利用できません"
+ },
+ "GL Worker error": {
+  "zh": "GL Worker 出错",
+  "ja": "GL Worker エラー"
+ },
+ "GL Worker initialization failed": {
+  "zh": "GL Worker 初始化失败",
+  "ja": "GL Worker の初期化に失敗しました"
+ },
+ "No WebGL2 available": {
+  "zh": "没有可用的 WebGL2",
+  "ja": "利用可能な WebGL2 がありません"
+ },
+ "WebGL2 is not available on the main thread either": {
+  "zh": "主线程也拿不到 WebGL2",
+  "ja": "メインスレッドでも WebGL2 を利用できません"
+ },
+ "Could not get a webgl2 context": {
+  "zh": "拿不到 webgl2 上下文",
+  "ja": "webgl2 コンテキストを取得できませんでした"
+ },
+ "Playback frame is not fully written yet": {
+  "zh": "播放帧尚未完整写入",
+  "ja": "再生フレームがまだ完全に書き込まれていません"
+ },
+ "This runtime has no OffscreenCanvas, so pixel maps cannot be drawn (requires Chrome / WebView2)": {
+  "zh": "这个运行环境没有 OffscreenCanvas,画不了像素映射(需要 Chrome / WebView2)",
+  "ja": "この実行環境には OffscreenCanvas がないため、ピクセルマップを描画できません（Chrome / WebView2 が必要です）"
+ },
+ "Could not get a WebGL2 context, so pixel maps cannot be drawn": {
+  "zh": "拿不到 WebGL2 上下文,画不了像素映射",
+  "ja": "WebGL2 コンテキストを取得できないため、ピクセルマップを描画できません"
+ },
+ "System is loading": {
+  "zh": "系统正在加载",
+  "ja": "システムを読み込み中です"
+ },
+ "The prerender process is not ready yet, and this item needs it to finish.": {
+  "zh": "预渲染进程还没就绪,这一项要它才能完成。",
+  "ja": "プリレンダリングプロセスがまだ準備できていません。この項目を完了するにはその完了が必要です。"
+ },
+ "Asset request timed out": {
+  "zh": "素材请求超时",
+  "ja": "アセットのリクエストがタイムアウトしました"
+ },
+ "This browser has no VideoEncoder": {
+  "zh": "这个浏览器没有 VideoEncoder",
+  "ja": "このブラウザには VideoEncoder がありません"
+ },
+ "Track stream: frame rate required": {
+  "zh": "轨道流:要帧率",
+  "ja": "トラックストリーム: フレームレートが必要です"
+ },
+ "Track stream: this browser cannot encode": {
+  "zh": "轨道流:这个浏览器压不了",
+  "ja": "トラックストリーム: このブラウザではエンコードできません"
+ },
+ "Media collection": {
+  "zh": "素材收集",
+  "ja": "素材収集"
+ },
+ "Shot detection": {
+  "zh": "镜头识别",
+  "ja": "ショット検出"
+ },
+ "Motion tracking": {
+  "zh": "运动追踪",
+  "ja": "モーショントラッキング"
+ },
+ "Subject detection": {
+  "zh": "主体检测",
+  "ja": "被写体検出"
+ },
+ "Interpreter failed to start": {
+  "zh": "解释器启动失败",
+  "ja": "インタプリタの起動に失敗しました"
+ },
+ "Interpreter failed to start: {0}": {
+  "zh": "解释器启动失败：{0}",
+  "ja": "インタプリタの起動に失敗しました: {0}"
+ },
+ "The interpreter returned no parseable status": {
+  "zh": "解释器没有返回可解析的状态",
+  "ja": "インタプリタから解析可能なステータスが返されませんでした"
+ },
+ "Status is not valid JSON": {
+  "zh": "状态不是合法 JSON",
+  "ja": "ステータスは有効なJSONではありません"
+ },
+ "Auto": {
+  "zh": "自动",
+  "ja": "自動"
  }
 }

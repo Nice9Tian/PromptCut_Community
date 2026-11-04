@@ -1,6 +1,6 @@
 /*
- * 悬浮在顶栏下方居中,不占布局空间也不拦点击 —— 它只是个通知,
- * 用户完全可以不理它继续剪片子。
+ * Floats centered below the top bar, takes up no layout space and does not intercept clicks: it is just a notice,
+ * and the user is free to ignore it and keep editing the video.
  */
 .dep-prompt {
   position: fixed;

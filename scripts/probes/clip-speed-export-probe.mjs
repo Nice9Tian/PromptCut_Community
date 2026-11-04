@@ -1,37 +1,48 @@
 /**
- * 片段速度(`TrackClip.speed`,`src/kernel/clipTime.mjs`)的导出端到端探针:**逐帧**核变速段的画面取的是素材的哪一帧,
- * 再核变速段的原声在成片里确实不出(〔裁〕第一版变速段原声静音),音画分离出来的变速声音段在两条混音路里随倍率变调、两路对得上。
+ * End-to-end export probe for clip speed (`TrackClip.speed`, `src/kernel/clipTime.mjs`): verifies
+ * **frame-by-frame** which asset frame the speed-changed clip's video takes, and verifies that the
+ * speed-changed clip's original audio is indeed muted in the final video ([ruling] speed-changed clip
+ * original audio is muted in the first version); separated audio clips from audio-visual separation
+ * shift pitch according to the multiplier across two mix paths and the two paths match.
  *
- *   node scripts/probes/clip-speed-export-probe.mjs --port 5920 [--tree <检出根>] [--out <目录>] [--skip-audio]
+ *   node scripts/probes/clip-speed-export-probe.mjs --port 5920 [--tree <checkout-root>] [--out <dir>] [--skip-audio]
  *
- * `--tree` 缺省是本探针所在的检出;给开工提交解出来的树(如 `out/base-5a8f375a`)就是「改之前」的对照,用的是那棵树自己的
- * 开发服务器与导出脚本。素材目录、数据目录、卡片改动层都建在 `--out` 下,检出目录一个文件都不写;开发服务器用完按进程号收掉,
- * 不写端口文件(`PROMPTCUT_NO_PORT_FILE=1`)。
+ * `--tree` defaults to the checkout where this probe resides; passing a tree extracted from the
+ * kickoff commit (such as `out/base-5a8f375a`) serves as the "before changes" baseline, using that
+ * tree's own dev server and export script. Asset catalog, data directory, and card overlay layers
+ * are all created under `--out`, writing no files to the checkout directory; dev servers are
+ * cleaned up by PID after use, writing no port file (`PROMPTCUT_NO_PORT_FILE=1`).
  *
- * 素材:20 秒、30 帧每秒、320×180 的视频,第 N 帧整幅涂成一种颜色 —— r = 8 × (N mod 32)、g = 8 × ⌊N / 32⌋、b = 128,
- * 解码时由颜色反推 N(每档隔 8,编码误差远小于半档);另带一条 440 Hz 的正弦声。
+ * Asset: a 20-second, 30 fps, 320×180 video, with frame N painted entirely in one color:
+ * r = 8 × (N mod 32), g = 8 × ⌊N / 32⌋, b = 128; during decoding, N is inferred from the color
+ * (each tier spaced by 8, encoding error well below half a tier); also includes a 440 Hz sine tone.
  *
- * 项目(640×360,30 帧每秒,16 秒),主序列上一段接一段,全都铺满画面:
+ * Project (640×360, 30 fps, 16 s), back-to-back clips on the main track, all filling the frame:
  *
- *   A  0～2 秒   1×     从素材第 1 秒起                      对照组(缺省 1,不写 speed)
- *   B  2～4 秒   2×     从第 0.5 秒起
- *   C  4～6 秒   0.5×   从第 3 秒起
- *   D  6～8 秒   剪辑段:引用剪辑「内」,从它的第 0.5 秒起;那条剪辑里是一段 2× 的视频,从素材第 1 秒起
- *   E  8～10 秒  4×     从第 2 秒起
- *   F  10～12 秒 0.25×  从第 5 秒起
- *   G  12～14 秒 2×     从第 6 秒起,套一张素材效果卡(反色,取帧走素材节点的 `rate`)
- *   H  14～16 秒 1×     从第 9 秒起                          对照组
+ *   A  0-2 s    1×     starting from asset second 1         control group (default 1, no speed)
+ *   B  2-4 s    2×     starting from second 0.5
+ *   C  4-6 s    0.5×   starting from second 3
+ *   D  6-8 s    cut segment: quotes cut "inner", from its second 0.5; that cut contains a 2×
+ *               video, starting from asset second 1
+ *   E  8-10 s   4×     starting from second 2
+ *   F  10-12 s  0.25×  starting from second 5
+ *   G  12-14 s  2×     starting from second 6, wrapped with a media effect card (invert color, frame
+ *               fetch follows asset node `rate`)
+ *   H  14-16 s  1×     starting from second 9               control group
  *
- * 核对:
- *   1. 画面:整段 480 帧 PNG(`--workers 1 --no-video`),每帧取画面中心解出素材帧号,和
- *      `⌊(素材时刻 + 2 ms) × 30⌋` 比(素材时刻 = mediaOffset + (t − start) × speed;导出取帧 seek 到素材时刻 + 2 ms、
- *      显示时间戳不晚于它的最后一帧)。要求 480/480 逐帧一致。
- *   2. 声音:同一项目导出成片两次 —— 缺省的 Chrome 离线混音(`src/audio/renderMix.ts`)与 `--audio ffmpeg`
- *      (`server/bakery/mux-audio.mjs`)—— 各段中间 1.4 秒的响度:A、H 有声(高于 −30 dBFS),B～G 无声(低于 −70 dBFS)。
+ * Checks:
+ *   1. Video: full 480 PNG frames (`--workers 1 --no-video`); take screen center of each frame to
+ *      decode asset frame number, compared with `⌊(asset time + 2 ms) × 30⌋` (asset time =
+ *      mediaOffset + (t − start) × speed; export frame fetch seeks to asset time + 2 ms, with a
+ *      presentation timestamp no later than its last frame). Requires 480/480 frame-by-frame match.
+ *   2. Audio: export final video of the same project twice: default Chrome offline mix
+ *      (`src/audio/renderMix.ts`) and `--audio ffmpeg` (`server/bakery/mux-audio.mjs`): loudness of
+ *      the middle 1.4 s of each clip: A and H have audio (above −30 dBFS), B-G are silent
+ *      (below −70 dBFS).
  *
- * 输出 JSON 结论;任何一条不过以非零退出。
+ * Outputs JSON conclusion; exits non-zero if any check fails.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -51,7 +62,7 @@ const TREE = path.resolve(arg('tree', HERE));
 const PORT = Number(arg('port', 0)) || undefined;
 const OUT = path.resolve(arg('out', path.join(HERE, 'out', 'clip-speed-export', path.basename(TREE))));
 const SKIP_AUDIO = argv.includes('--skip-audio');
-/** 排查用:G 段(套素材效果卡的那段)的速度,缺省 2 */
+/** For troubleshooting: speed of clip G (the one with the media effect card), defaults to 2 */
 const G_SPEED = Number(arg('g-speed', 2));
 const FPS = 30, W = 640, H = 360, SRC_SECONDS = 20, DURATION = 16;
 const WORK = path.join(OUT, 'work');
@@ -65,7 +76,7 @@ async function findFfmpeg() {
   return f();
 }
 
-/** 第 N 帧整幅一种颜色 + 440 Hz 正弦声 */
+/** Frame N painted entirely in one color + 440 Hz sine tone */
 async function makeVideo(ffmpeg) {
   const tmp = path.join(WORK, 'coded.mp4');
   await execFileAsync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error',
@@ -86,15 +97,15 @@ async function writeCard() {
 import type { CardDef } from "../../kernel/types";
 import { glsl } from "../../render/cards/graphValues";
 
-/** 探针用(clip-speed-export-probe.mjs 临时写进改动层):输入画面取反色 */
+/** For the probe (clip-speed-export-probe.mjs temporarily writes it into the overlay layer): inverts the input image */
 export const probeSpeedTint: CardDef<{ amount: number }> = {
   id: "${TINT}",
-  name: "速度探针:反色",
-  description: "输入画面取反色",
+  name: "Speed probe: invert",
+  description: "Inverts the colors of the input image",
   source: "user",
   kind: "filter",
   frameMode: "direct",
-  inputs: { source: { description: "输入画面" } },
+  inputs: { source: { description: "Input image" } },
   defaults: { amount: 1 },
   controls: [],
   card: (sources, t, params) => glsl(
@@ -111,7 +122,8 @@ export const probeSpeedTint: CardDef<{ amount: number }> = {
 const full = { x: 0, y: 0, w: W, h: H, anchor: [0, 0], scale: 1, rotate: 0 };
 const SEGMENTS = [
   { id: 'A', start: 0, end: 2, mediaOffset: 1, audible: true, hz: 440 },
-  // B、C 两段的视频原声不出;下面「声音」序列上各有一段音画分离出来的声音段(同速度),随倍率变调出声
+  // Video original audio for clips B and C does not play; the "audio" track below has a separated
+  // audio clip each (same speed), playing sound pitch-shifted according to the multiplier
   { id: 'B', start: 2, end: 4, mediaOffset: 0.5, speed: 2, audible: true, hz: 880 },
   { id: 'C', start: 4, end: 6, mediaOffset: 3, speed: 0.5, audible: true, hz: 220 },
   { id: 'D', start: 6, end: 8, cut: { cutOffset: 0.5, inner: { mediaOffset: 1, speed: 2, start: 0 } } },
@@ -124,31 +136,33 @@ const SEGMENTS = [
 function projectOf(media) {
   const clips = SEGMENTS.map((s) => s.cut
     ? { id: s.id, cardId: '', cutId: 'inner', cutOffset: s.cut.cutOffset, start: s.start, end: s.end, params: {}, frame: full }
-    // 套素材效果卡的段(G):和 apply_card 挂上之后的样子一样,片段带着卡(cardId)、素材(mediaId)和节点(nodeId)
+    // Clip with a media effect card (G): looks just like after attaching via apply_card; clip carries
+    // card (cardId), media (mediaId), and node (nodeId)
     : { id: s.id, cardId: s.tint ? TINT : '', mediaId: media.id, mediaOffset: s.mediaOffset, start: s.start, end: s.end, params: s.tint ? { amount: 1 } : {}, frame: full, label: s.id,
       ...(s.speed ? { speed: s.speed } : {}), ...(s.tint ? { nodeId: 'n-tint' } : {}) });
   const inner = SEGMENTS.find((s) => s.cut).cut.inner;
   return {
     version: 1, id: 'p-speed-probe', name: 'speed-probe', width: W, height: H, fps: FPS, duration: DURATION, themeId: 'midnight',
-    // 音画分离出来的声音素材(和视频共用同一个文件,kind 为 audio,同 store 的 soundAssetFrom)
-    media: [media, { ...media, id: 'm-coded-sound', kind: 'audio', name: 'coded.mp4 的声音', soundOf: media.id }], filters: [], audioFx: [],
+    // Audio asset separated from audio-visual (shares the same file with video, kind is audio, same as
+    // soundAssetFrom in store)
+    media: [media, { ...media, id: 'm-coded-sound', kind: 'audio', name: 'Sound of coded.mp4', soundOf: media.id }], filters: [], audioFx: [],
     cardNodes: [{ id: 'n-tint', adapter: 'card', cardId: TINT, kind: 'filter', params: { amount: 1 }, inputs: { source: '@clip/G/source' } }],
-    tracks: [{ id: 't-main', name: '序列 1', clips: clips.map((c) => (c.id === 'B' || c.id === 'C' ? { ...c, audioMuted: true } : c)) },
-      { id: 't-sound', name: '声音', clips: SEGMENTS.filter((x) => x.id === 'B' || x.id === 'C').map((x) => ({ id: `${x.id}-sound`, cardId: '', mediaId: 'm-coded-sound', mediaOffset: x.mediaOffset, start: x.start, end: x.end, speed: x.speed, params: {} })) }],
-    cuts: [{ id: 'outer', name: '剪辑1' }, { id: 'inner', name: '内', duration: 8, transitions: [], tracks: [{ id: 't-in', name: '序列 1', clips: [
+    tracks: [{ id: 't-main', name: 'Track 1', clips: clips.map((c) => (c.id === 'B' || c.id === 'C' ? { ...c, audioMuted: true } : c)) },
+      { id: 't-sound', name: 'Sound', clips: SEGMENTS.filter((x) => x.id === 'B' || x.id === 'C').map((x) => ({ id: `${x.id}-sound`, cardId: '', mediaId: 'm-coded-sound', mediaOffset: x.mediaOffset, start: x.start, end: x.end, speed: x.speed, params: {} })) }],
+    cuts: [{ id: 'outer', name: 'Cut 1' }, { id: 'inner', name: 'Inner', duration: 8, transitions: [], tracks: [{ id: 't-in', name: 'Track 1', clips: [
       { id: 'b1', cardId: '', mediaId: media.id, mediaOffset: inner.mediaOffset, speed: inner.speed, start: inner.start, end: 8, params: {}, frame: full },
     ] }] }],
     activeCutId: 'outer',
   };
 }
 
-/** 第 i 帧(t = i / fps)该显示素材的第几帧 */
+/** Which asset frame should be displayed at frame i (t = i / fps) */
 function expectedFrame(i) {
   const t = i / FPS;
   const s = SEGMENTS.find((x) => t >= x.start - 1e-9 && t < x.end - 1e-9);
   let m;
   if (s.cut) {
-    const u = s.cut.cutOffset + (t - s.start); // 被引用剪辑里的时刻
+    const u = s.cut.cutOffset + (t - s.start); // Time within the referenced cut
     m = s.cut.inner.mediaOffset + (u - s.cut.inner.start) * s.cut.inner.speed;
   } else m = s.mediaOffset + (t - s.start) * (s.speed ?? 1);
   return { seg: s.id, media: m, frame: Math.floor((m + 0.002) * FPS + 1e-6), tint: !!s.tint };
@@ -174,7 +188,7 @@ function run(cmd, args, env, logFile) {
   });
 }
 
-/** 成片的声音解成 48 kHz 单声道 float(整条) */
+/** Decode audio of final video into 48 kHz mono float (entire track) */
 async function pcmOf(ffmpeg, file) {
   const { stdout } = await execFileAsync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-i', file, '-vn', '-ac', '1', '-ar', '48000', '-f', 'f32le', '-'],
     { windowsHide: true, encoding: 'buffer', maxBuffer: 1 << 28 });
@@ -183,7 +197,7 @@ async function pcmOf(ffmpeg, file) {
   return out;
 }
 const win = (pcm, a, b) => pcm.subarray(Math.round(a * 48000), Math.round(b * 48000));
-/** [a, b) 秒的响度(dBFS,RMS) */
+/** Loudness for [a, b) seconds (dBFS, RMS) */
 function loudness(pcm, a, b) {
   const x = win(pcm, a, b);
   if (!x.length) return -Infinity;
@@ -191,14 +205,14 @@ function loudness(pcm, a, b) {
   for (const v of x) sum += v * v;
   return 10 * Math.log10(sum / x.length + 1e-20);
 }
-/** [a, b) 秒的主频(过零点数 / 2 / 时长) */
+/** Dominant frequency for [a, b) seconds (zero-crossing count / 2 / duration) */
 function pitch(pcm, a, b) {
   const x = win(pcm, a, b);
   let n = 0;
   for (let i = 1; i < x.length; i++) if ((x[i - 1] < 0) !== (x[i] < 0)) n++;
   return n / 2 / ((b - a) || 1);
 }
-/** 两条路同一窗口的差:差信号的响度减去信号的响度(dB,越低越像) */
+/** Difference between both paths in same window: difference signal loudness minus signal loudness (dB, lower is closer) */
 function diffDb(p1, p2, a, b) {
   const x = win(p1, a, b), y = win(p2, a, b);
   const n = Math.min(x.length, y.length);
@@ -227,13 +241,13 @@ try {
   const timeline = 'data:application/json,' + encodeURIComponent(JSON.stringify(project));
   const url = `${dev.origin}/?export=1&timeline=${encodeURIComponent(timeline)}`;
 
-  // 1. 画面:逐帧
+  // 1. Video: frame-by-frame
   let code = 1;
   for (let attempt = 1; attempt <= 3 && code !== 0; attempt++) {
-    say(`导出 PNG 第 ${attempt} 次`);
+    say(`Exporting PNG, attempt ${attempt}`);
     code = await run(process.execPath, ['scripts/export-frames.mjs', '--url', url, '--out', path.join(OUT, 'frames-run'), '--fps', String(FPS), '--workers', '1', '--no-video'], env, path.join(OUT, 'export-frames.log'));
   }
-  if (code !== 0) throw new Error(`PNG 导出退出码 ${code}(日志 ${path.join(OUT, 'export-frames.log')})`);
+  if (code !== 0) throw new Error(`PNG export exit code ${code} (log ${path.join(OUT, 'export-frames.log')})`);
   const dir = path.join(OUT, 'frames-run', 'frames');
   const files = (await fs.readdir(dir)).filter((f) => f.endsWith('.png')).sort();
   const rows = [];
@@ -252,16 +266,18 @@ try {
   const match = rows.filter((r) => r.want === r.got).length;
   result.frames = { total: rows.length, expected: DURATION * FPS, match, bySeg };
   await fs.writeFile(path.join(OUT, 'frames.json'), JSON.stringify(rows));
-  if (rows.length !== DURATION * FPS) result.fails.push(`导出了 ${rows.length} 帧,应为 ${DURATION * FPS}`);
-  if (match !== rows.length) result.fails.push(`画面逐帧:${match}/${rows.length} 帧取到了该取的素材帧`);
+  if (rows.length !== DURATION * FPS) result.fails.push(`Exported ${rows.length} frames, expected ${DURATION * FPS}`);
+  if (match !== rows.length) result.fails.push(`Frame by frame: ${match}/${rows.length} frames fetched the media frame they should have`);
 
-  // 2. 声音:两条混音路各导一次成片
+  // 2. Audio: export final video once for each of the two mix paths
   if (!SKIP_AUDIO) {
     result.audio = {};
     const pcms = {};
     for (const [name, extra] of [['chrome', []], ['ffmpeg', ['--audio', 'ffmpeg']]]) {
-      // Chrome 离线混音要页面地址是 /@export/<id>/project.json(裁好的 wav 按这个 id 取,server/bakery/audio-mix.mjs);
-      // 用 data: 地址会「Chrome 混音失败,退回 ffmpeg」——两条路就成了同一条。所以按产品导出的摆法放:<导出目录>/export-<id>/
+      // Chrome offline mix requires page URL to be /@export/<id>/project.json (trimmed wav is fetched by
+      // this id, server/bakery/audio-mix.mjs); using data: URLs results in "Chrome mix failed, fallback to
+      // ffmpeg", turning both paths into the same one. So arrange per product export layout:
+      // <export-dir>/export-<id>/
       const id = `speed-${name}`;
       const outDir = path.join(WORK, `export-${id}`);
       await fs.mkdir(outDir, { recursive: true });
@@ -269,16 +285,17 @@ try {
       const url = `${dev.origin}/?export=1&timeline=${encodeURIComponent(`/@export/${id}/project.json`)}`;
       let c = 1;
       for (let attempt = 1; attempt <= 3 && c !== 0; attempt++) {
-        say(`导出成片(${name} 混音)第 ${attempt} 次`);
+        say(`Exporting final video (${name} mix), attempt ${attempt}`);
         c = await run(process.execPath, ['scripts/export-frames.mjs', '--url', url, '--out', outDir, '--fps', String(FPS), '--workers', '1', ...extra], env, path.join(OUT, `export-${name}.log`));
       }
-      if (c !== 0) { result.fails.push(`成片(${name} 混音)导出退出码 ${c}`); continue; }
-      // 核实两条路真的各走各的:Chrome 那一次必须真在 Chrome 里混、没有退回 ffmpeg
+      if (c !== 0) { result.fails.push(`Final video (${name} mix) export exit code ${c}`); continue; }
+      // Verify both paths truly run independently: Chrome run must genuinely mix in Chrome without
+      // falling back to ffmpeg
       const log = await fs.readFile(path.join(OUT, `export-${name}.log`), 'utf8');
-      const mixedIn = /退回 ffmpeg/.test(log) ? 'ffmpeg(Chrome 失败后退回)' : /in Chrome/.test(log) ? 'chrome' : /Muxing .* with ffmpeg/.test(log) ? 'ffmpeg' : '不明';
-      if (mixedIn !== name) result.fails.push(`${name} 那一次实际在 ${mixedIn} 里混音`);
+      const mixedIn = /falling back to ffmpeg/.test(log) ? 'ffmpeg (fell back after Chrome failed)' : /in Chrome/.test(log) ? 'chrome' : /Muxing .* with ffmpeg/.test(log) ? 'ffmpeg' : 'unknown';
+      if (mixedIn !== name) result.fails.push(`The ${name} attempt actually mixed in ${mixedIn}`);
       const mp4 = (await fs.readdir(outDir)).find((f) => f.endsWith('.mp4'));
-      if (!mp4) { result.fails.push(`成片(${name} 混音)没有 mp4`); continue; }
+      if (!mp4) { result.fails.push(`Final video (${name} mix) has no mp4`); continue; }
       const file = path.join(outDir, mp4);
       const pcm = await pcmOf(ffmpeg, file);
       pcms[name] = pcm;
@@ -288,26 +305,29 @@ try {
         const hz = pitch(pcm, s.start + 0.3, s.end - 0.3);
         const okDb = s.audible ? db > -30 : db < -70;
         const okHz = !s.hz || Math.abs(hz - s.hz) <= s.hz * 0.02;
-        segs[s.id] = { dBFS: Number.isFinite(db) ? +db.toFixed(1) : null, hz: s.audible ? +hz.toFixed(1) : null, expect: s.audible ? `有声 ${s.hz} Hz` : '无声', ok: okDb && okHz };
-        if (!okDb) result.fails.push(`${name} 混音:${s.id} 段 ${s.start}～${s.end} 秒应${s.audible ? '有声' : '无声'},实测 ${db.toFixed(1)} dBFS`);
-        if (s.audible && !okHz) result.fails.push(`${name} 混音:${s.id} 段主频应为 ${s.hz} Hz,实测 ${hz.toFixed(1)} Hz`);
+        segs[s.id] = { dBFS: Number.isFinite(db) ? +db.toFixed(1) : null, hz: s.audible ? +hz.toFixed(1) : null, expect: s.audible ? `audible ${s.hz} Hz` : 'silent', ok: okDb && okHz };
+        if (!okDb) result.fails.push(`${name} mix: segment ${s.id} (${s.start} to ${s.end} seconds) should be ${s.audible ? 'audible' : 'silent'}, measured ${db.toFixed(1)} dBFS`);
+        if (s.audible && !okHz) result.fails.push(`${name} mix: the dominant frequency of segment ${s.id} should be ${s.hz} Hz, measured ${hz.toFixed(1)} Hz`);
       }
       result.audio[name] = { file, mixedIn, segs };
     }
-    // 两条混音路逐段比:有声的段,差信号比信号本身低多少 dB
+    // Compare both mix paths clip by clip: for clips with audio, how many dB lower difference signal
+    // is than the signal itself
     if (pcms.chrome && pcms.ffmpeg) {
       result.audio.chromeVsFfmpeg = {};
       for (const s of SEGMENTS.filter((x) => x.audible)) {
         const d = diffDb(pcms.chrome, pcms.ffmpeg, s.start + 0.3, s.end - 0.3);
         result.audio.chromeVsFfmpeg[s.id] = +d.toFixed(1);
       }
-      // 尺子:两条路本来就不是逐采样相同(Chrome 离线混音 + 编码 与 ffmpeg 混音 + 编码),1 倍段的差就是这把尺子的底;
-      // 变速的声音段(B、C)两条路的差不能比 1 倍段(A、H)里差得最多的那段还大
+      // Yardstick: the two paths are not sample-by-sample identical to begin with (Chrome offline mix +
+      // encoding vs ffmpeg mix + encoding); difference in 1× clips serves as baseline for this yardstick;
+      // difference between both paths for speed-changed audio clips (B, C) cannot be greater than the
+      // maximum difference among 1× clips (A, H)
       const floor = Math.max(...SEGMENTS.filter((x) => x.audible && !x.speed).map((x) => result.audio.chromeVsFfmpeg[x.id]));
       result.audio.oneXFloor = floor;
       for (const s of SEGMENTS.filter((x) => x.audible && x.speed)) {
         const d = result.audio.chromeVsFfmpeg[s.id];
-        if (!(d <= floor + 1e-9)) result.fails.push(`两条混音路 ${s.id} 段(${s.speed}×)差 ${d} dB,比 1 倍段的 ${floor} dB 还大`);
+        if (!(d <= floor + 1e-9)) result.fails.push(`The two mix paths differ by ${d} dB in segment ${s.id} (${s.speed}×), more than the ${floor} dB of the 1× segment`);
       }
     }
   }

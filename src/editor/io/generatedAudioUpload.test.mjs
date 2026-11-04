@@ -2,7 +2,7 @@ import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 let base = "https://assets.example.test/api/asset", ticketCalls = 0;
-/** 账号云端项目:项目号,以及账号会话签发的素材票据(`force` 为真时换一张) */
+/** Account cloud project: project id, and asset ticket issued by account session (renewed when `force` is true) */
 let accountProject = null, accountTicketCalls = [], legacyTicketCalls = 0;
 mock.module(srcUrl("editor/media/assetTiers.ts"), { namedExports: {
   remoteAssetBase: () => base,
@@ -44,7 +44,7 @@ test("online mode without the connected asset service fails before trying any lo
   finally { base = oldBase; globalThis.fetch = oldFetch; }
 });
 
-test("账号云端项目:用账号会话签发的素材票据,不签旧的 auth.ticket;401 时强制换一张;请求不带 Cookie", async () => {
+test("Account cloud project: uses the asset ticket issued by the account session, does not sign the old auth.ticket; forces a new one on a 401; the request carries no Cookie", async () => {
   const old = globalThis.fetch;
   const calls = [];
   accountProject = "sp_aaaaaaaaaaaaaaaaaaaaaaaaaa"; accountTicketCalls = []; legacyTicketCalls = 0;
@@ -58,17 +58,17 @@ test("账号云端项目:用账号会话签发的素材票据,不签旧的 auth.
     const wav = await renderSoundEffectWav(createNotificationRecipe(), { yield: () => Promise.resolve() });
     const result = await uploadGeneratedAudio(wav, new AbortController().signal);
     assert.match(result.hash, /^[a-f0-9]{64}$/);
-    assert.equal(legacyTicketCalls, 0, "账号项目里不发 auth.ticket(账号连接上会被拒)");
-    assert.deepEqual(accountTicketCalls.slice(0, 2), [false, true], "先用手里的,回 401 强制换一张");
+    assert.equal(legacyTicketCalls, 0, "No auth.ticket is sent in an account project (it would be rejected on an account connection)");
+    assert.deepEqual(accountTicketCalls.slice(0, 2), [false, true], "Use the one in hand first, and force a replacement after a 401");
     assert.ok(calls.every(c => /^Bearer account-/.test(c.headers.Authorization)));
     assert.notEqual(calls[0].headers.Authorization, calls[1].headers.Authorization);
-    assert.ok(calls.every(c => c.credentials === "omit"), "不带网站的登录 Cookie");
+    assert.ok(calls.every(c => c.credentials === "omit"), "Does not carry the website's login Cookie");
     assert.equal(calls.filter(c => c.method === "PUT").length, 1);
-    assert.ok(calls.every(c => !c.url.includes("account-")), "票据不进地址");
+    assert.ok(calls.every(c => !c.url.includes("account-")), "The ticket does not go into the URL");
   } finally { globalThis.fetch = old; accountProject = null; }
 });
 
-test("账号云端项目:上传途中换了项目就取消", async () => {
+test("Account cloud project: switching projects during an upload cancels it", async () => {
   const old = globalThis.fetch;
   accountProject = "sp_aaaaaaaaaaaaaaaaaaaaaaaaaa";
   globalThis.fetch = async () => { accountProject = "sp_bbbbbbbbbbbbbbbbbbbbbbbbbb"; return Response.json({ complete: false, received: [] }); };

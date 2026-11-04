@@ -1,11 +1,13 @@
 /**
- * 根因 E 的回归测试:就绪索引的订阅只按 session 做键,编辑(localRev + 1)不重连、不清表。
- * 跑:node --experimental-test-module-mocks --test src/editor/snapshotSubscription.test.mjs
+ * Regression test for Root Cause E: ready index subscription is keyed only by session; edits
+ * (localRev + 1) do not reconnect or clear the table.
+ * Run: node --experimental-test-module-mocks --test src/editor/snapshotSubscription.test.mjs
  *
- * 以前 `syncSnapshotSubscription` 的键是 `session#localRev`:每次编辑 localRev + 1 就清空 readyIndex、
- * 重连 SSE,而服务端 `/api/frames/ready` 根本不看 session / localRev(`vite-plugin-frames.ts`)。
- * 重连空档里播放中的重卡一律透明。现在:客户端不再抢先清表,只听服务端的 `reset`
- * (预渲染进程在 `adoptCardPlan` 换了 entry 时发)。
+ * Previously, `syncSnapshotSubscription` keyed on `session#localRev`: every edit with localRev + 1
+ * cleared readyIndex and reconnected SSE, while server `/api/frames/ready` did not inspect session /
+ * localRev at all (`vite-plugin-frames.ts`). During reconnection gaps, playing heavy cards were
+ * uniformly transparent. Now: client no longer preemptively clears table, only listening to server
+ * `reset` (sent when prerender process changes entry in `adoptCardPlan`).
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock } from "node:test";
@@ -18,7 +20,7 @@ mock.module(srcUrl("editor/planDispatch.ts"), { exports: { currentPlan: () => ({
 
 const feed = await import(srcUrl("editor/snapshotFeed.ts"));
 
-test("编辑不重连、不清表;服务端 reset 才清;换 session 才重连", () => {
+test("Editing does not reconnect or clear the table; only a server reset clears it; only a session change reconnects", () => {
   const subs = [];
   feed.setSnapshotSource({
     subscribeReady: (session, rev, cb) => { const sub = { session, rev, cb, closed: false }; subs.push(sub); return () => { sub.closed = true; }; },
@@ -27,22 +29,22 @@ test("编辑不重连、不清表;服务端 reset 才清;换 session 才重连",
   feed.syncSnapshotSubscription(() => {});
   assert.equal(subs.length, 1);
   subs[0].cb({ type: "layer", clipId: "h", kind: "html", key: "K", ranges: [[0, 299]] });
-  assert.ok(feed.currentReadyIndex().get("h"), "层到了");
+  assert.ok(feed.currentReadyIndex().get("h"), "The layer has arrived");
 
-  // 用户编辑:localRev + 1,宿主照常再调一次
+  // User edits: localRev + 1, host calls once more as usual
   key = { session: "s", localRev: 2 };
   feed.syncSnapshotSubscription(() => {});
-  assert.equal(subs.length, 1, "同一个 session 不重连");
+  assert.equal(subs.length, 1, "The same session does not reconnect");
   assert.equal(subs[0].closed, false);
-  assert.ok(feed.currentReadyIndex().get("h"), "客户端不抢先清表:旧层留着顶上,直到服务端 reset");
+  assert.ok(feed.currentReadyIndex().get("h"), "The client does not clear the table ahead of the server: the old layer stays in use until the server resets");
 
-  // 服务端换了 entry:reset + 全量 layer
+  // Server changed entry: reset + full layer
   subs[0].cb({ type: "reset", localRev: 2 });
-  assert.equal(feed.currentReadyIndex().size, 0, "reset 清表");
+  assert.equal(feed.currentReadyIndex().size, 0, "reset clears the table");
   subs[0].cb({ type: "layer", clipId: "h", kind: "html", key: "K2", ranges: [[0, 10]] });
   assert.equal(feed.currentReadyIndex().get("h").get("html").key, "K2");
 
-  // 换项目(session 变了):重连并清表
+  // Switch project (session changed): reconnect and clear table
   key = { session: "s2", localRev: 1 };
   feed.syncSnapshotSubscription(() => {});
   assert.equal(subs.length, 2);

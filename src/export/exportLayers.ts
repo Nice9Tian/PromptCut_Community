@@ -1,15 +1,22 @@
 /**
- * 在线浏览器导出时卡片画面的来源,合在一处给合成器用(`frameCompositor.ts` 的 `layers`)。
+ * Sources of card visuals during online browser export, gathered in one place for the compositor
+ * (`layers` in `frameCompositor.ts`).
  *
- *   导出前(`prepareExportLayers`):
- *     快速导出 → 读层表与流清单,定出每条流的满密度分段(`streamFrames.ts`);
- *     定每张卡怎么出(`cardLayers.ts` 的 `planCardLayers`);
- *     有本页不执行、又没被满密度流盖满的卡 → 请渲染节点逐帧渲,等到齐(`exportFrames.ts`)。到齐之前不开始导。
- *   导出中(`at(frame, 挂着包裹层的片段)`):
- *     这一帧每张卡取哪一样(`layerChoiceAt`):流里的这一帧(解码、合成成带透明的图)、渲染节点渲好的这一帧(PNG),
- *     或者不贴(导出页活渲)。回要贴的那几层,合成器照预览一侧的规矩贴进快照。
+ *   Before export (`prepareExportLayers`):
+ *     Fast export → read layer tables and stream manifests, determine full-density segments for
+ *     each stream (`streamFrames.ts`);
+ *     Determine how each card is output (`planCardLayers` in `cardLayers.ts`);
+ *     Cards not executed on this page and not fully covered by full-density streams → request
+ *     render nodes to render frame-by-frame, wait until all have arrived (`exportFrames.ts`).
+ *     Do not start exporting before all arrive.
+ *   During export (`at(frame, clips mounting wrapper layers)`):
+ *     Which option each card takes for this frame (`layerChoiceAt`): this frame from stream
+ *     (decoded and composited into an image with transparency), this frame rendered by render
+ *     nodes (PNG), or do not paste (live rendered by export page). Return layers to paste;
+ *     the compositor pastes them into snapshots following preview-side rules.
  *
- * 一次只做一帧,图用完不留;流的解码器一条流一个,顺着帧号往前解。
+ * Process only one frame at a time, discard images after use; one stream decoder per stream,
+ * decoding forward along frame numbers.
  */
 import type { Project } from "../kernel/project";
 import { clipFrameWindow, layerChoiceAt, planCardLayers, type ExportMode, type FrameCoverage, type LayerPlan, type LayerRect } from "./cardLayers";
@@ -17,20 +24,20 @@ import { requestExportFrames, type ExportFrameDeps, type ExportFrames, type Expo
 import { loadReadableStreams, StreamFrameReader, type ReadableStream, type StreamFrameDeps } from "./streamFrames";
 import { ONLINE_EXPORT_TEXT } from "./text";
 
-/** 合成器要贴的一层 */
+/** A layer to be pasted by the compositor */
 export interface FrameLayer {
   clipId: string;
-  /** `local`:包裹层自己的坐标系,图放在包裹层里;`stage`:舞台坐标,图放在包裹层旁边、层序同它 */
+  /** `local`: wrapper layer's own coordinate system, image placed inside wrapper layer; `stage`: stage coordinates, image placed beside wrapper layer with same layer order */
   plane: "local" | "stage";
   rect: LayerRect;
-  /** `data:` 地址(别的地址会污染画布) */
+  /** `data:` URL (other URLs taint the canvas) */
   url: string;
 }
 
 export interface FrameLayers {
-  /** 导出页只挂包裹层、不挂组件的片段 */
+  /** Clips where the export page only mounts wrapper layers without components */
   wrapperOnly: readonly string[];
-  /** 这一帧(项目帧号)里,这些挂着包裹层的片段各自要贴的画面;本页活渲的不回 */
+  /** Visuals to paste for each clip mounting wrapper layers in this frame (project frame number); omitted for live renders on this page */
   at(frame: number, activeClipIds: readonly string[]): Promise<FrameLayer[]>;
   close(): void;
   readonly stats: ExportLayerStats;
@@ -38,28 +45,28 @@ export interface FrameLayers {
 
 export interface ExportLayerStats {
   mode: ExportMode;
-  /** 取流的片段数、整段都不活渲的片段数、请渲染节点渲的片段数 */
+  /** Number of clips using streams, clips not live rendering for entire segments, and clips requesting render nodes */
   streamClips: number;
   wrapperOnly: number;
   nodeClips: number;
-  /** 贴了几张:流里取的、渲染节点渲的 */
+  /** Number pasted: fetched from stream, rendered by render nodes */
   streamPictures: number;
   nodePictures: number;
-  /** 每个片段各贴了几张(探针核对「这一段取的是流」) */
+  /** Number pasted for each clip (probe verifies "this segment uses stream") */
   perClip: Record<string, { stream: number; frames: number }>;
   streamDecodeMs: number;
   streamBytes: number;
   nodeBytes: number;
-  /** 导出前等渲染节点花了多久 */
+  /** Time spent waiting for render nodes before export */
   waitMs: number;
 }
 
 export interface ExportLayerDeps {
-  /** 读层表、流清单、流字节 */
+  /** Read layer tables, stream manifests, and stream bytes */
   stream: StreamFrameDeps;
-  /** 请渲染节点、取它渲好的位图;null = 这个页面请不到(没连着项目) */
+  /** Request render nodes and fetch their rendered bitmaps; null = cannot request on this page (not connected to project) */
   frames: ExportFrameDeps | null;
-  /** 文档服务确认的项目版本号(清单计划按它发) */
+  /** Project version confirmed by document service (manifest plan is published using it) */
   projectRev: () => number | null;
 }
 
@@ -69,7 +76,7 @@ const statusText = (s: ExportFramesStatus): string => (
       : ONLINE_EXPORT_TEXT.waitingNode(s.clips)
 );
 
-/** 这个浏览器能不能解轨道流(没有 `VideoDecoder` 的浏览器,快速导出照完整导出的办法出) */
+/** Whether this browser can decode track streams (browsers without `VideoDecoder` output fast export using the full export approach) */
 const canDecodeStreams = () => typeof (globalThis as { VideoDecoder?: unknown }).VideoDecoder === "function";
 
 export async function prepareExportLayers({ project, projectId, mode, nonRunnable, deps, signal, onWaiting }: {
@@ -81,7 +88,7 @@ export async function prepareExportLayers({ project, projectId, mode, nonRunnabl
   const clips = project.tracks.flatMap((tr) => tr.clips).filter((c) => !!c.cardId).map((c) => ({ id: c.id, start: c.start, end: c.end, cardId: c.cardId }));
   const blocked = new Set(nonRunnable);
   const streams: ReadableStream[] = mode === "fast" && canDecodeStreams()
-    // 层表按项目自己的 id 存(`layers:<project.id>`,渲染节点按它认下的那一版项目写);任务队列按文档服务的项目号(`projectId`)。两个号不一定相同
+    // Layer tables are stored by project's own id (`layers:<project.id>`, written by render nodes for their claimed project version); task queues use document service project id (`projectId`). The two ids may differ
     ? await loadReadableStreams(project.id || null, project, deps.stream, { clipIds: new Set(clips.map((c) => c.id)) })
     : [];
   const plan: LayerPlan = planCardLayers({ clips, fps, total, mode, nonRunnable: blocked, streams });
@@ -94,10 +101,10 @@ export async function prepareExportLayers({ project, projectId, mode, nonRunnabl
     const t0 = Date.now();
     frames = await requestExportFrames({
       projectId, projectRev: rev as number, project, clips: plan.needFrames, deps: deps.frames, signal,
-      onStatus: (s) => { try { onWaiting?.(statusText(s)); } catch { /* 宿主坏了不影响等待 */ } },
+      onStatus: (s) => { try { onWaiting?.(statusText(s)); } catch { /* Host failure does not affect waiting */ } },
     });
     stats.waitMs = Date.now() - t0;
-    try { onWaiting?.(null); } catch { /* 同上 */ }
+    try { onWaiting?.(null); } catch { /* Same as above */ }
   }
   const coverage: Map<string, FrameCoverage> = frames?.coverage ?? new Map();
   const windows = new Map(clips.map((c) => [c.id, clipFrameWindow(c, fps, total)] as const));
@@ -133,7 +140,7 @@ export async function prepareExportLayers({ project, projectId, mode, nonRunnabl
           count(clipId, "frames");
           continue;
         }
-        // 本页不执行的卡这一帧什么都没有:片段的帧范围之外(包裹层在时间的边界上多挂了一拍)留空;范围之内是清单和核对时不一样了,停下
+        // Cards not executed on this page have nothing for this frame: leave blank outside clip frame range (wrapper layer hangs one extra tick at time boundaries); inside range means manifest differs from verification, stop
         const win = windows.get(clipId);
         if (win && frame >= win.first && frame <= win.last) throw new Error(ONLINE_EXPORT_TEXT.nodeFailed("frame-missing"));
       }

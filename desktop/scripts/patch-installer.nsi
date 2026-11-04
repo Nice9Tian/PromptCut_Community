@@ -1,31 +1,31 @@
-﻿; PromptCut 更新补丁的自解压外壳。
+﻿; Self-extracting shell of the PromptCut update patch.
 ;
-; 用户拿到的是一个 exe，双击就装。这里不重复实现更新逻辑 —— 逻辑都在
-; apply-patch.ps1 里（那份已经在真实安装目录的副本上验证过）。本脚本只做两件事：
-; 把补丁内容解到临时目录，然后把 apply-patch.ps1 跑起来并等它结束。
+; What the user gets is a single exe; double-click to install. The update logic is not re-implemented here: it all lives in
+; apply-patch.ps1 (that copy has already been verified on a copy of a real install directory). This script does only two things:
+; extract the patch contents to a temporary directory, then run apply-patch.ps1 and wait for it to finish.
 ;
-; 用 $PLUGINSDIR 存放解出来的内容：NSIS 在进程退出时（含中途被杀）自动清掉它，
-; 不会在用户的 %TEMP% 里留下几百 MB 的残骸。
+; Use $PLUGINSDIR to hold the extracted contents: NSIS cleans it up automatically when the process exits (including when killed midway),
+; so no hundreds of MB of debris are left in the user's %TEMP%.
 ;
-; 由 make-patch.mjs 调用：
-;   makensis -DVERSION=0.2.3 -DSRCDIR=<补丁目录> -DOUTFILE=<输出exe> -DICON=<ico> patch-installer.nsi
+; Invoked by make-patch.mjs:
+;   makensis -DVERSION=0.2.3 -DSRCDIR=<patch-dir> -DOUTFILE=<output-exe> -DICON=<ico> patch-installer.nsi
 
 Unicode true
-Name "PromptCut 更新补丁 ${VERSION}"
+Name "PromptCut update patch ${VERSION}"
 OutFile "${OUTFILE}"
 Icon "${ICON}"
 
-; 更新写的是 %LOCALAPPDATA%，要管理员权限反而会让 UAC 白弹一次，
-; 而且提权后 $LOCALAPPDATA 会指向管理员账户，找不到用户装的那一份。
+; The update writes to %LOCALAPPDATA%, so requiring administrator rights would only make UAC pop up for nothing,
+; and after elevation $LOCALAPPDATA would point to the administrator account and could not find the copy the user installed.
 RequestExecutionLevel user
 
-; 没有向导页：这个 exe 的界面就是 apply-patch.ps1 的控制台窗口，
-; 免得用户先点三下「下一步」再看一遍同样的进度。
+; No wizard pages: the UI of this exe is the console window of apply-patch.ps1,
+; so users do not have to click "Next" three times and then watch the same progress again.
 SilentInstall silent
 
 VIProductVersion "${VERSION}.0"
-VIAddVersionKey "ProductName" "PromptCut 更新补丁"
-VIAddVersionKey "FileDescription" "PromptCut ${VERSION} 更新补丁"
+VIAddVersionKey "ProductName" "PromptCut update patch"
+VIAddVersionKey "FileDescription" "PromptCut ${VERSION} update patch"
 VIAddVersionKey "FileVersion" "${VERSION}.0"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "LegalCopyright" "PromptCut"
@@ -37,15 +37,15 @@ Section
   SetOutPath "$PLUGINSDIR\patch"
   File /r "${SRCDIR}\*.*"
 
-  ; exe 自己的命令行原样转给脚本，这样装在非默认位置的用户仍然可以
+  ; The exe's own command line is passed to the script as is, so users who installed in a non-default location can still
   ;   PromptCut-patch-x.y.z.exe -InstallDir "D:\PromptCut"
-  ; 也方便先 -WhatIf 只检查不写入。
+  ; and it is also convenient to run -WhatIf first, which only checks and writes nothing.
   ${GetParameters} $R0
 
-  ; 传 -Force：双击进来的用户没有别的途径确认「可以关掉正在运行的 PromptCut」，
-  ; 在这里再弹一个窗口问反而啰嗦。apply-patch.ps1 只会关掉可执行文件在目标
-  ; 安装目录下的那些进程，不会误伤别处装的或开发中跑的。
-  ; 非交互验证沿用脚本已有的环境开关，整条命令链不弹控制台。
+  ; Pass -Force: a user who arrives by double-clicking has no other way to confirm "it is OK to close the running PromptCut",
+  ; and popping up yet another dialog here would just be wordy. apply-patch.ps1 only closes the processes whose executable is under the target
+  ; install directory, so it will not hit copies installed elsewhere or running in development by mistake.
+  ; Non-interactive verification reuses the script's existing environment switch, so the whole command chain opens no console.
   ReadEnvStr $R1 "PROMPTCUT_PATCH_NONINTERACTIVE"
   StrCmp $R1 "" interactive
     nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\patch\apply-patch.ps1" -Force $R0'

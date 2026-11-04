@@ -3,13 +3,17 @@ import type { CanvasContract } from "./CanvasCardProgram";
 import { glPlanes } from "./planes";
 
 /**
- * canvas 卡的 gl 平面(R9 M1):E7 的第五种兄弟平面 `[data-pc-gl-plane]`。
+ * gl plane for canvas cards (R9 M1): the fifth sibling plane `[data-pc-gl-plane]` of E7.
  *
- * - 尺寸 = 片段实体框,上下文是 `bitmaprenderer`(由 `glHost` 在收到 `done` 时取);
- * - **不加 `data-pc-clip`**:`solid.ts` 的 `isSolid` 把带它的元素当包裹层跳过,加了整类 canvas 卡点不中;
- * - 它是活渲的一部分,**不进**四条平面选择器的放过名单:藏子树时它和子树一起被藏。
+ * - Size = clip entity box, context is `bitmaprenderer` (retrieved by `glHost` when receiving
+ *   `done`);
+ * - **Do not add `data-pc-clip`**: `isSolid` in `solid.ts` skips elements with it as wrapper layers; if
+ *   added, this whole class of canvas cards cannot be clicked;
+ * - It is part of live render, and does **not** enter the allowlist of the four plane selectors:
+ *   when hiding subtrees, it is hidden together with the subtree.
  *
- * 画面不在这里画:每次提交只把「这一拍要画什么」登记进 `glPlanes`,由宿主经 `glHost.beat()` 发给 Worker。
+ * Visuals are not drawn here: each commit only registers "what to draw for this tick" into
+ * `glPlanes`, sent by the host to the Worker via `glHost.beat()`.
  */
 export function GlPlane(props: {
   clipId: string;
@@ -35,7 +39,7 @@ export function GlPlane(props: {
     for (const spec of contract.textures ?? []) {
       const raw = spec.param ? params[spec.param] : spec.url;
       if (typeof raw !== "string" || !raw.trim()) continue;
-      // Worker 的基址是它自己的脚本地址:这里先解析成绝对地址
+      // The base URL of the Worker is its own script URL: resolve to an absolute URL here first
       textures.push({ name: spec.name, url: new URL(raw.trim(), document.baseURI).href });
     }
     glPlanes.set(props.clipId, {

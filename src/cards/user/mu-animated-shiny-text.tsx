@@ -1,7 +1,8 @@
 /**
- * 来源: 搬自 Magic UI (https://magicui.design/docs/components/animated-shiny-text)
+ * Source: ported from Magic UI (https://magicui.design/docs/components/animated-shiny-text)
  * MIT License
- * 本地改动: 翻译器自动改写 @/lib/utils → ../magicui/vendor/cn;包成 CardDef。
+ * Local changes: translator automatically rewrote @/lib/utils → ../magicui/vendor/cn;
+ * wrapped into CardDef.
  */
 import type { CardDef, CardProps } from "../../kernel/types";
 import {
@@ -62,17 +63,18 @@ function ShinyTextCard({ params }: CardProps<Params>) {
 
 export const muAnimatedShinyText: CardDef<Params> = {
   id: "mu-animated-shiny-text",
-  name: "闪光文字",
-  description: "一道高光从文字上扫过,循环",
-  useWhen: "一个词或短句要「发光」地强调时用;高光 8 秒一循环、不会停,适合浅色底。不做数字滚动,不做多词轮换。",
-  tags: ["文字", "高光", "闪光"],
+  name: "Shiny text",
+  description: "A highlight sweeps across the text, looping",
+  useWhen: "Use when a word or short phrase needs a \"glowing\" emphasis; the highlight loops every 8 seconds and never stops, suited to light backgrounds. No number rolling, no rotating through multiple words.",
+  tags: ["Text", "highlight", "shine"],
   source: "magicui",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: { text: "PromptCut", shimmerWidth: 200 },
   controls: [
-    { key: "text", label: "文字", type: "text" },
-    { key: "shimmerWidth", label: "高光宽度(px)", type: "number", min: 50, max: 600, step: 10 },
+    { key: "text", label: "Text", type: "text" },
+    { key: "shimmerWidth", label: "Highlight width (px)", type: "number", min: 50, max: 600, step: 10 },
   ],
   Component: ShinyTextCard,
 };

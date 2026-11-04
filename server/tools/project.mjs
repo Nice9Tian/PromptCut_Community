@@ -1,47 +1,47 @@
 export const projectTools = [
   {
     name: "get_project",
-    description: "获取整个多轨 Project 对象,了解项目配置、素材和时间轴上的所有轨道与 clip。返回里 media 的 transcript 只是段数摘要，完整文字稿请用 get_transcript。**多条剪辑时注意**:`tracks` 只是当前激活那条剪辑的内容;别的(没激活的)剪辑里的片段在最前面的 `parkedCuts` 里列好了(每条剪辑的 cutId、片段 id、cardId / 标签、起止、所在 trackId,太多时有上限并指路 list_cuts 的 cutId)。**要改那些片段不用 user_interface_switch_cut**:把 clipId 直接交给 update_clip / set_clip / get_clip / set_position / set_rect / align / nudge / set_emphasis / set_clip_volume / set_clip_muted 就地改(切换会让所有成员的界面一起翻)。",
+    description: "Get the whole multi-track Project object, to learn the project configuration, media, and all tracks and clips on the timeline. The transcript of each media item in the result is only a segment-count summary; use get_transcript for the full transcript. **With multiple cuts, note**: `tracks` holds only the content of the currently active cut; clips in the other (inactive) cuts are listed up front in `parkedCuts` (for each cut: cutId, clip id, cardId / label, start and end, and its trackId; when there are too many it is capped and points you to the cutId for list_cuts). **You do not need user_interface_switch_cut to edit those clips**: pass the clipId directly to update_clip / set_clip / get_clip / set_position / set_rect / align / nudge / set_emphasis / set_clip_volume / set_clip_muted to edit in place (switching flips the interface for all members at once).",
     inputSchema: { type: "object", properties: {} },
     side: "agent"
   },
   {
     name: "list_media",
-    description: "列出素材库里所有素材，返回每条素材的 id、name、kind（video / image / audio）、duration、width、height、cardUrl、path、hasTranscript、transcriptSegments（文字稿段数）；想拿完整文字稿要用 get_transcript。需要素材的 mediaId 时优先用本工具，不要为了找 mediaId 去调 get_project。**卡片参数里要引用某张素材图片 / 视频，填它的 cardUrl**（形如 /@media/<文件名>，预览、渲染、导出都取得到）；path 是服务端磁盘路径，只给服务端内部用，你没有能读它的工具——想看素材长什么样用 see_frames({ source: \"media\", mediaId })。",
+    description: "List all media in the media library, returning for each item its id, name, kind (video / image / audio), duration, width, height, cardUrl, path, hasTranscript, transcriptSegments (number of transcript segments); to get the full transcript use get_transcript. When you need a media item's mediaId, prefer this tool; do not call get_project just to find a mediaId. **To reference a media image / video in card parameters, fill in its cardUrl** (of the form /@media/<filename>, available for preview, render, and export); path is a server disk path for server internal use only, and you have no tool that can read it; to see what a media item looks like use see_frames({ source: \"media\", mediaId }).",
     inputSchema: { type: "object", properties: {} },
     side: "agent"
   },
   {
     name: "get_selection",
-    description: "获取选区中的全部 clip 及其当前项目详情。账号云端模式返回项目内所有在线有效成员的每个页面选区，标明用户名和发起人；发起人离线时仅显示发消息时的非实时快照。本机/LAN 模式返回本页面的全部选区。",
+    description: "Get all clips in the selection along with their current project details. In account cloud mode it returns the selection of every page of all online, active members in the project, labeled with username and initiator; when the initiator is offline, only a non-live snapshot from the time the message was sent is shown. In local/LAN mode it returns all selections of this page.",
     inputSchema: { type: "object", properties: {} },
     side: "page"
   },
   {
     name: "set_project_meta",
-    description: "设置项目元数据:名称、画布宽高、帧率、主题,以及截断整条片子。总时长默认跟着内容走,只有要截断时才传 `duration`。",
+    description: "Set project metadata: name, canvas width and height, frame rate, theme, and truncating the whole video. The total duration follows the content by default; pass `duration` only when you want to truncate.",
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "项目名" },
-        width: { type: "number", description: "画布宽(像素)" },
-        height: { type: "number", description: "画布高(像素)" },
-        fps: { type: "number", description: "帧率" },
+        name: { type: "string", description: "Project name" },
+        width: { type: "number", description: "Canvas width (pixels)" },
+        height: { type: "number", description: "Canvas height (pixels)" },
+        fps: { type: "number", description: "Frame rate" },
         duration: {
           type: "number",
           description:
-            "把片子截断到这一秒,单位秒。时长缺省等于内容末尾(工具返回的 timeline 里的 contentEnd)," +
-            "加内容会撑长、删内容会缩短,不用你维护。给一个比 contentEnd 小的数就是截断:预览和导出都在这一刻切断," +
-            "之后再加的内容也被切掉,直到取消。给等于或大于 contentEnd 的数就是取消截断、回到跟着内容走 —— 拉不长。"
+            "Truncate the video at this second, in seconds. The duration defaults to the end of the content (contentEnd in the timeline returned by the tool)," +
+            "adding content extends it and deleting content shortens it, no need for you to maintain it. A value smaller than contentEnd means truncation: preview and export are both cut off at that moment," +
+            "and content added later is also cut off, until canceled. A value equal to or greater than contentEnd cancels the truncation and goes back to following the content: it cannot extend the video."
         },
-        themeId: { type: "string", description: "全局主题 id" }
+        themeId: { type: "string", description: "Global theme id" }
       }
     },
     side: "agent"
   },
   {
     name: "set_theme",
-    description: "设置项目的全局主题(如 'midnight' 等)。",
+    description: "Set the project's global theme (e.g. 'midnight').",
     inputSchema: {
       type: "object",
       properties: { themeId: { type: "string" } },
@@ -51,12 +51,12 @@ export const projectTools = [
   },
   {
     name: "import_media",
-    description: "把一个文件装进项目素材库。两种来源:(1) 用户用「+」发来的附件——附件放在对话的工作目录里，和素材库是两回事，`list_media` 看不到它，必须先用本工具导入才能转写、配字幕、配动效；url 就是用户消息末尾附件清单里的「站内地址」（形如 /@pcwork/<会话id>/<文件名>）。用户发了视频还让你处理它时，第一步就调它，不要回一句「请先手动导入」。(2) 网上的图片直链（https://…），素材库里缺配图时自己找来用；这时顺手传 name（带扩展名，如 asakusa.jpg）。按文件内容分类登记：视频放到视频轨上；图片、音频只进素材库、不上时间轴。返回 mediaId、kind 和 cardUrl——卡片参数里要引用这张图 / 这段视频就填 cardUrl。",
+    description: "Load a file into the project media library. Two sources: (1) an attachment the user sent with \"+\": attachments live in the chat's working directory, which is separate from the media library, and `list_media` cannot see them; you must import them with this tool first before you can transcribe, add captions, or add motion graphics; url is the \"in-app address\" in the attachment list at the end of the user message (of the form /@pcwork/<session id>/<filename>). When the user sends a video and asks you to process it, call this as the first step; do not reply \"please import it manually first\". (2) A direct image link from the web (https://…), which you find yourself when the media library lacks an image; in that case also pass name (with extension, e.g. asakusa.jpg). It is registered by file content type: videos are placed on a video track; images and audio only go into the media library, not onto the timeline. Returns mediaId, kind, and cardUrl; to reference this image / video in card parameters, fill in cardUrl.",
     inputSchema: {
       type: "object",
       properties: {
-        url: { type: "string", description: "附件的站内地址，取自用户消息末尾的附件清单" },
-        name: { type: "string", description: "文件名，不传就从地址里取" }
+        url: { type: "string", description: "In-app address of the attachment, taken from the attachment list at the end of the user message" },
+        name: { type: "string", description: "File name; if omitted it is taken from the address" }
       },
       required: ["url"]
     },
@@ -64,7 +64,7 @@ export const projectTools = [
   },
   {
     name: "list_media_effects",
-    description: "查看某个媒体连接在当前时间轴上的全部效果和顺序：普通滤镜、像素映射、音频效果，以及项目效果库定义。mediaId 可省略以列出全部片段。创建映射前先调用它，确认 source/to 的 stage 是 origin 还是 after_filters。",
+    description: "View all effects of a media connection on the current timeline and their order: regular filters, pixel maps, audio effects, and the project effects library definitions. mediaId can be omitted to list all clips. Call this before creating a map, to confirm whether the stage of source/to is origin or after_filters.",
     inputSchema: { type: "object", properties: { mediaId: { type: "string" } } },
     side: "agent"
   }

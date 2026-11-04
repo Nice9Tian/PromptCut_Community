@@ -4,23 +4,23 @@ import { isUserMessageCall, sayingsOf, userMessageText } from './userMessages.ts
 
 const say = (text, extra = {}) => ({ kind: 'tool', name: 'send_message', input: { to: 'user', text }, ok: true, ...extra });
 
-test('调过 send_message(to user) 的一轮:气泡只列这些话,按先后;文字回复不进气泡', () => {
-  const m = { text: '我先读一下项目', parts: [{ kind: 'text', text: '我先读一下项目' }, say('先看看开头的画面'),
-    { kind: 'tool', name: 'see_frames', input: {}, ok: true }, say('标题卡放好了'), { kind: 'tool', name: 'report_progress', input: { final: true, done: ['x'] } }] };
-  assert.deepEqual(sayingsOf(m).map(s => [s.text, s.from]), [['先看看开头的画面', 'send_message'], ['标题卡放好了', 'send_message']]);
+test('A round that called send_message(to user): the bubble lists only these messages, in order; text replies do not go into the bubble', () => {
+  const m = { text: 'Let me read the project first', parts: [{ kind: 'text', text: 'Let me read the project first' }, say('Let me look at the opening frames first'),
+    { kind: 'tool', name: 'see_frames', input: {}, ok: true }, say('The title card is in place'), { kind: 'tool', name: 'report_progress', input: { final: true, done: ['x'] } }] };
+  assert.deepEqual(sayingsOf(m).map(s => [s.text, s.from]), [['Let me look at the opening frames first', 'send_message'], ['The title card is in place', 'send_message']]);
 });
 
-test('一次都没调、只回了文字:文字当成一句「在做什么」;相邻文字并成一句,被工具隔开的分开', () => {
-  const m = { text: '', parts: [{ kind: 'text', text: '好' }, { kind: 'thinking', text: 'hmm' }, { kind: 'text', text: '的' },
-    { kind: 'tool', name: 'get_project', input: {} }, { kind: 'text', text: '  ' }, { kind: 'text', text: '改好了。' }] };
-  assert.deepEqual(sayingsOf(m).map(s => s.text), ['好的', '改好了。']);
-  assert.deepEqual(sayingsOf({ text: '旧记录', tools: [] }).map(s => s.text), ['旧记录'], '没有 parts 的旧记录');
+test('No calls at all, only text replies: the text is treated as one "what I\'m doing" line; adjacent text is merged into one line, text separated by a tool stays separate', () => {
+  const m = { text: '', parts: [{ kind: 'text', text: 'O' }, { kind: 'thinking', text: 'hmm' }, { kind: 'text', text: 'K' },
+    { kind: 'tool', name: 'get_project', input: {} }, { kind: 'text', text: '  ' }, { kind: 'text', text: 'Done.' }] };
+  assert.deepEqual(sayingsOf(m).map(s => s.text), ['OK', 'Done.']);
+  assert.deepEqual(sayingsOf({ text: 'Old record', tools: [] }).map(s => s.text), ['Old record'], 'Old record without parts');
 });
 
-test('发给别的 Agent、发空话、失败的那次不算对用户说话;名字带前缀也认', () => {
+test('Sending to another Agent, sending an empty message, or a failed attempt does not count as speaking to the user; names with a prefix are accepted too', () => {
   assert.equal(isUserMessageCall('mcp__promptcut__send_message', { to: 'User', text: 'x' }), true);
   assert.equal(isUserMessageCall('send_message', { to: 'cc-1', text: 'x' }), false);
   assert.equal(userMessageText('send_message', { to: 'user', text: '  ' }), null);
-  const m = { text: '', parts: [say('没说成', { ok: false }), { kind: 'tool', name: 'send_message', input: { to: 'all', text: '序列2 我来' } }, { kind: 'text', text: '收工' }] };
-  assert.deepEqual(sayingsOf(m).map(s => [s.text, s.from]), [['收工', 'text']]);
+  const m = { text: '', parts: [say('Failed to say it', { ok: false }), { kind: 'tool', name: 'send_message', input: { to: 'all', text: 'I\'ll take Track 2' } }, { kind: 'text', text: 'All done' }] };
+  assert.deepEqual(sayingsOf(m).map(s => [s.text, s.from]), [['All done', 'text']]);
 });

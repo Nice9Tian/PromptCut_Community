@@ -1,25 +1,41 @@
 /**
- * 舞台闸门与崩溃记录(`stageGate.ts`、`crashLog.ts`;语义 `product/platforms.md`「在线浏览器」的「舞台闸门」,
- * 做法 `mechanism/platforms.md`「三道闸门」的「崩溃记录」「舞台闸门的步骤」)。用例 SG-01～SG-16。
- * 跑:npm test -- src/online/stageGate.test.mjs
+ * Stage gate and crash log (`stageGate.ts`, `crashLog.ts`; semantics in "Stage gate" under "Online browser"
+ * in `product/platforms.md`, implementation in "Crash log" and "Stage gate steps" under "Three gates" in
+ * `mechanism/platforms.md`). Test cases SG-01-SG-16.
+ * Run: npm test -- src/online/stageGate.test.mjs
  *
- *   SG-01 判「崩了」:离上次还活着不到 1 分钟、没正常离开、不在后台;三样缺一样都不算
- *   SG-02 全新打开(没有记录):从低往高试,目标第三级,起手第一级
- *   SG-03 崩在哪一步停在哪一级:开可见舞台 → 最低一档;试后台舞台 → 第一级;试各一套 → 第二级;运行中第 L 级 → L−1(第一级 → 最低一档)
- *   SG-04 护栏:30 分钟起每崩一次翻倍(30、60、120、240……);护栏内停在上次到达的那一级、不试;过了护栏从头试
- *   SG-05 两种清零:往上试成功一次(试了、下次载入没判崩);软件升级(版本不同)
- *   SG-06 正常刷新(留了正常离开)不算崩;切到后台被回收不算崩;离上次还活着超过 1 分钟(用户过了 1 分钟才点重新加载)按全新打开
- *   SG-07 安卓上的 Chromium 系报不到 8 GB 不试、停在一个舞台;8 GB 才试;电脑上的 Chrome 系、Safari 直接试
- *   SG-08 iPad:停在第一级算手机,要试的先按电脑;别的身份照声明
- *   SG-09 崩在测某张卡:那张卡记进测崩的卡(下次直接当重卡),不算舞台崩、不清零;崩在测基准卡:最低一档、算舞台崩
- *   SG-10 崩在载入原尺寸:解码上限调低一级(累计),不算舞台崩
- *   SG-11 页面一侧:载入时留「开可见舞台」,往上走留每一步,走完留「第几级运行中」;定时更新还活着;正常离开、在后台照实记
- *   SG-12 握手容错退回单舞台:只管当次,不留崩溃记录、不算往上试成功
- *   SG-13 几个标签页:新开的标签页不把另一个还开着的标签页当成崩了(问一声有回音);没回音的才算
- *   SG-14 强制档位(开发与验收用):照它停,不改设备记录
- *   SG-15 记录读不懂、存不下都不抛:当没有记录;只在这一次有效
- *   SG-16 测量与素材的留记录:测完回到原来那一步;测量期间不被素材盖掉
- *   SG-17 测的时候闸门走完了:测完回「第几级运行中」(护栏内、崩过的那一次,基准卡和舞台挂好抢先后)
+ *   SG-01 Classify as "crashed": <1 min since last alive, did not exit normally, not in background;
+ *     missing any does not count
+ *   SG-02 Clean open (no record): test from low to high, target level 3, start at level 1
+ *   SG-03 Stop at level where crash occurred: open visible stage → lowest tier;
+ *     test background stage → level 1; test one set of each → level 2;
+ *     running at level L → L-1 (level 1 → lowest tier)
+ *   SG-04 Guard: doubles each crash starting from 30 min (30, 60, 120, 240...); within guard, stay at
+ *     last reached level without testing; past guard, test from the beginning
+ *   SG-05 Two reset conditions: one successful upward test (tested, next load not classified as
+ *     crashed); software upgrade (version differs)
+ *   SG-06 Normal refresh (recorded normal exit) does not count as crash; switched to background and
+ *     reclaimed does not count as crash; >1 min since last alive (user reloaded after 1 min) treated
+ *     as clean open
+ *   SG-07 Chromium-based on Android reporting <8 GB does not test, stays at single stage; tests only
+ *     at 8 GB; Chrome-based and Safari on desktop test directly
+ *   SG-08 iPad: staying at level 1 treated as mobile, testing treated as desktop first; other
+ *     identities as declared
+ *   SG-09 Crash testing a card: record card into crash-tested cards (treated directly as heavy card
+ *     next time), not a stage crash, no reset; crash testing baseline card: lowest tier, stage crash
+ *   SG-10 Crash loading original size: lower decode limit by one level (cumulative), not a stage crash
+ *   SG-11 Page side: record "open visible stage" on load, each step moving up, and "running at level N"
+ *     when done; periodically update alive; record normal exit and in-background truthfully
+ *   SG-12 Handshake fault-tolerant fallback to single stage: applies to current run only, leaves no
+ *     crash log, does not count as successful upward test
+ *   SG-13 Multiple tabs: a new tab does not treat another open tab as crashed (ping has echo);
+ *     only counts if no echo
+ *   SG-14 Forced tier (for dev and acceptance check): stop accordingly, do not change device record
+ *   SG-15 Unreadable or unsaveable records do not throw: treat as no record; valid for this run only
+ *   SG-16 Recording for measurement and assets: return to original step after measurement; not
+ *     overwritten by assets during measurement
+ *   SG-17 Gate finished while measuring: return to "running at level N" after measurement (within guard,
+ *     the run that crashed, race between baseline card and stage mounting)
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -92,25 +108,25 @@ test("SG-04 guard: starting at 30 minutes, doubles with each crash; within the g
   assert.deepEqual([1, 2, 3, 4, 5].map((n) => guardMsOf(n) / 60_000), [30, 60, 120, 240, 480]);
   let log = emptyLog(V);
   let now = 10_000_000;
-  // 第 1 次崩(试各一套时):停在第二级,护栏 30 分钟
+  // 1st crash (when testing one set of each): stay at level 2, guard 30 minutes
   let d = decideStageGate(log, crashAt({ kind: "stage", what: "try-separate" }), env({ now }));
   assert.equal(d.device.stage.guardUntil, now + 30 * 60_000);
   log = { ...log, device: d.device };
-  // 护栏内重新打开:停在第二级,不试
+  // Reopened within guard: stay at level 2, do not test
   d = decideStageGate(log, NOT, env({ now: now + 10 * 60_000 }));
   assert.deepEqual([d.target, d.fixed, d.reason], [2, true, "guard"]);
   log = { ...log, device: d.device };
-  // 过了护栏:从头试
+  // Past guard: test from the beginning
   now += 31 * 60_000;
   d = decideStageGate(log, NOT, env({ now }));
   assert.deepEqual([d.target, d.reached, d.fixed, d.reason], [3, 1, false, "trial"]);
   assert.equal(d.device.stage.crashes, 1, "passing the guard only lifts the guard, the crash count is kept (the next crash doubles)");
   log = { ...log, device: d.device };
-  // 又崩了(第 2 次):护栏 60 分钟
+  // Crashed again (2nd time): guard 60 minutes
   d = decideStageGate(log, crashAt({ kind: "stage", what: "try-separate" }), env({ now: now + 1000 }));
   assert.equal(d.device.stage.crashes, 2);
   assert.equal(d.device.stage.guardUntil, now + 1000 + 60 * 60_000);
-  // 第 3、4 次:120、240 分钟
+  // 3rd and 4th times: 120, 240 minutes
   log = { ...log, device: { ...d.device, stage: { ...d.device.stage, guardUntil: null } } };
   d = decideStageGate(log, crashAt({ kind: "running", level: 2, lowest: false }), env({ now }));
   assert.equal(d.device.stage.guardUntil - now, 120 * 60_000);
@@ -123,20 +139,20 @@ test("SG-05 two ways to reset: one successful try upward; software upgrade", () 
   let log = emptyLog(V);
   let d = decideStageGate(log, crashAt({ kind: "stage", what: "try-back" }), env());
   log = { ...log, device: { ...d.device, stage: { ...d.device.stage, guardUntil: null } } };
-  // 过了护栏,这次试了
+  // Past guard, tested this time
   d = decideStageGate(log, NOT, env());
   assert.equal(d.device.stage.tried, true);
   log = { ...log, device: d.device };
-  // 下次载入没判崩:试成功一次,清零
+  // Next load not classified as crashed: test succeeded once, reset
   d = decideStageGate(log, NOT, env());
   assert.equal(d.device.stage.crashes, 0);
   assert.equal(d.device.stage.guardUntil, null);
-  // 软件升级:崩的次数、护栏、测崩的卡、解码上限都清零
+  // Software upgrade: crash count, guard, crash-tested cards, and decode limit all reset
   const dirty = { ...emptyLog(V), device: { version: V, stage: { reached: 1, lowest: true, crashes: 3, guardUntil: Date.now() + 1e9, tried: false }, media: { lowered: 2 }, heavyCards: ["k1"] } };
   d = decideStageGate(dirty, NOT, env({ version: "v2" }));
   assert.deepEqual([d.reason, d.device.stage.crashes, d.device.stage.guardUntil, d.device.media.lowered, d.device.heavyCards.length], ["trial", 0, null, 0, 0]);
   assert.equal(d.device.version, "v2");
-  // 升级之后的第一次载入看到的「崩了」(旧版本留下的)也不算
+  // "Crashed" seen on first load after upgrade (left by old version) does not count either
   d = decideStageGate(dirty, crashAt({ kind: "stage", what: "open-visible" }), env({ version: "v2" }));
   assert.equal(d.reason, "trial");
 });
@@ -182,7 +198,8 @@ test("SG-09 crash while measuring a card: that card is recorded as a measurement
   assert.deepEqual(d.device.heavyCards, ["card-k1"]);
   assert.equal(d.reason, "trial", "Stage is tried as usual");
   assert.equal(d.device.stage.crashes, 0);
-  // 上次试过、这次判崩(崩在测卡):不算往上试成功,不清零
+  // Tested last time, classified as crashed this time (crashed testing cards):
+  // does not count as upward test success, no reset
   const log = { ...emptyLog(V), device: { ...emptyLog(V).device, stage: { reached: 3, lowest: false, crashes: 2, guardUntil: null, tried: true } } };
   const d2 = decideStageGate(log, crashAt({ kind: "measure", key: "card-k2", cardId: null }), env());
   assert.equal(d2.device.stage.crashes, 2, "Not reset to zero");
@@ -200,7 +217,7 @@ test("SG-10 crash while loading original size: decode limit is lowered one level
   assert.equal(d.device.media.lowered, 2);
 });
 
-/** 页面一侧的会话:存储都是假的,时钟手动拨 */
+/** Page-side session: storage is mocked, clock is advanced manually */
 async function open({ local = memKV(), session = memKV(), now = 1_000, ping, envOver = {} } = {}) {
   let t = now;
   const clock = { now: () => t, set: (v) => { t = v; } };
@@ -228,7 +245,7 @@ test("SG-11 page side: loading leaves \"open visible stage\", going up leaves ev
     assert.deepEqual(tab.step, { kind: "running", level: 3, lowest: false });
     assert.equal(s.log().device.stage.reached, 3);
     assert.equal(tierState().gate, "done");
-    // 运行中崩了(重新载入同一个标签页):停在第二级
+    // Crashed during runtime (reloading the same tab): stay at level 2
     s.clock.set(5_000);
     const again = await open({ local: s.local, session: s.session, now: 6_000 });
     assert.deepEqual([again.g.judged.crashed, again.g.decision.target, again.g.decision.fixed], [true, 2, true]);
@@ -255,12 +272,13 @@ test("SG-13 several tabs: a newly opened tab does not treat another still-open t
     const first = await open({ local, now: 1_000 });
     opened.push(first);
     first.g.stage("visible-ready");
-    // 另一个新标签页(没有 sessionStorage),3 秒后打开:第一个还开着,问一声有回音
+    // Another new tab (no sessionStorage), opened 3s later: first tab still open, ping gets echo
     const second = await open({ local, now: 4_000, ping: async (ids) => new Set(ids) });
     opened.push(second);
     assert.equal(second.g.judged.crashed, false);
     assert.equal(second.g.decision.reason, "trial");
-    // 再开一个:第二个还开着(回音),第一个没回音(其实已经崩了,用户新开了标签页):算崩,判据来自第一个
+    // Open another: second still open (echo), first has no echo (actually crashed, user opened new tab):
+    // counts as crash, criterion comes from the first
     const third = await open({ local, now: 5_000, ping: async () => new Set([second.g.tab]) });
     opened.push(third);
     assert.equal(third.g.judged.crashed, true);
@@ -309,7 +327,7 @@ test("SG-16 measurement and media leave records: after measuring, return to the 
     assert.deepEqual(s.log().tabs[s.g.tab].step, { kind: "media", capLevel: 2 });
     s.g.mediaEnd();
     assert.deepEqual(s.log().tabs[s.g.tab].step, running);
-    // 测崩的卡:下次载入直接在测崩的卡表里
+    // Crash-tested cards: appear directly in crash-tested cards table on next load
     s.g.measureStart("card-boom", "boom");
     const again = await open({ local: s.local, session: s.session, now: 3_000 });
     assert.ok(again.g.heavyCards().has("card-boom"));

@@ -4,9 +4,9 @@ import type { PartDef, PartProps } from "../../kernel/partTypes";
 import { easeExpoOut, accentOf } from "../../cards/native/hud";
 
 /**
- * 环形指标:一个 SVG 进度圆环和中心大数字。
- * 从 ring-metric 拆出,不含小字和玻璃板外壳。
- * 进场:圆环 strokeDashoffset 动画展开,数字从 0 滚动到目标值。
+ * Ring metric: an SVG progress ring and large center number.
+ * Extracted from ring-metric, without small text and glass board shell.
+ * Entrance: ring strokeDashoffset animates and unfolds, numbers scroll from 0 to target value.
  */
 interface Params {
   value: number;
@@ -78,10 +78,10 @@ function MetricRingPart({ params, width, height }: PartProps<Params>) {
 
 export const metricRing: PartDef<Params> = {
   id: "metric-ring",
-  name: "环形指标",
-  description: "环形进度与中心数字同步增加",
-  useWhen: "单个百分比或完成度指标时使用,用环形进度加中心数字表现;和 metric-odometer(大整数翻牌)、metric-stat(带前后缀和注脚的大数字)、chart-rank(多项比大小)区分。",
-  tags: ["百分比", "环形", "进度", "指标"],
+  name: "Ring metric",
+  description: "Ring progress and center number increase in sync",
+  useWhen: "Use for a single percentage or completion metric, shown as ring progress plus a center number. Distinguish it from metric-odometer (large-integer odometer), metric-stat (large number with prefix, suffix and footnote) and chart-rank (compare multiple items).",
+  tags: ["percentage", "circular", "progress", "metric"],
   role: "media",
   from: "ring-metric",
   defaults: {
@@ -90,9 +90,9 @@ export const metricRing: PartDef<Params> = {
     accent: "",
   },
   controls: [
-    { key: "value", label: "数值(0-100)", type: "number" },
-    { key: "ringSize", label: "环形尺寸(0 = 按框自适应)", type: "number", min: 0, max: 1000, step: 2, hint: "0 表示按部件的框自动算尺寸;想固定就填具体像素" },
-    { key: "accent", label: "颜色", type: "color" },
+    { key: "value", label: "Value (0-100)", type: "number" },
+    { key: "ringSize", label: "Ring size (0 = fit to box)", type: "number", min: 0, max: 1000, step: 2, hint: "0 means the size is computed automatically from the part's box; enter a specific pixel value to fix it" },
+    { key: "accent", label: "Color", type: "color" },
   ],
   defaultFrame: { x: 960, y: 540, w: 480, h: 480, anchor: [0.5, 0.5] },
   settleMs: () => 1500,

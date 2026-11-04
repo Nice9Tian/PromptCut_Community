@@ -27,13 +27,13 @@ export const effectsHandlers = {
     return {
       ok: true,
       transitions: transitionsOf(p).map((tr) => ({ ...tr, describe: describeTransition(p, tr) })),
-      hint: "转场把它引用的片段绑成一组:那几段的相对时间关系锁住了,单独改时长 / 换序列 / 切开都会被拒。整组平移不受限制。要单独调先 remove_transition。",
+      hint: "A transition binds the clips it references into one group: their relative timing is locked, and changing duration alone, changing track or splitting any of them will be rejected. Moving the whole group is not restricted. To adjust one individually, run remove_transition first.",
     };
   },
   addTransition: (args) => {
     const kind = String(args.kind ?? "") as TransitionKind;
     if (!["crossfade", "fadeIn", "fadeOut"].includes(kind)) {
-      throw new Error(`kind 只能是 crossfade / fadeIn / fadeOut,收到 ${JSON.stringify(args.kind)}`);
+      throw new Error(`kind must be crossfade / fadeIn / fadeOut, received ${JSON.stringify(args.kind)}`);
     }
     const r = actions.addTransition({ kind, clipId: args.clipId, otherClipId: args.otherClipId, dur: args.dur });
     if (!r.ok) throw new Error(r.error);
@@ -42,7 +42,7 @@ export const effectsHandlers = {
     return {
       ok: true, transition: r.transition, describe: describeTransition(p, r.transition),
       group: [r.transition.aId, ...(r.transition.bId ? [r.transition.bId] : [])],
-      note: "这几段现在绑成一组:相对时间关系锁住了(整组平移仍然可以)。要单独调先 remove_transition。",
+      note: "These segments are now bound into one group: their relative timing is locked (moving the whole group is still allowed). To adjust one individually, run remove_transition first.",
       timeline: timelineDigest(p),
     };
   },
@@ -52,22 +52,27 @@ export const effectsHandlers = {
     clipGuard.noteMutation();
     return { ok: true, ...(r.note ? { note: r.note } : {}), timeline: timelineDigest(getState().project) };
   },
-  /* ---------- 剪辑(多条时间轴) ---------- */
-  // 每条剪辑带上引用关系(referencedBy:哪些剪辑的哪几段引用了它;references:它里面的剪辑段引用了谁)
-  // 给了 cutId 就多返回那条剪辑的 timeline 一览(各序列和片段的 id、起止):不用 user_interface_switch_cut 就能拿到要改的片段 id,
-  // 拿到以后 update_clip / set_clip / get_clip / set_rect… 直接按 clipId 改(见 mcp/clipCut.ts)
+  /* ---------- Cuts (multiple timelines) ---------- */
+  // Each cut includes reference relationships (referencedBy: which cuts and segments reference it;
+  // references: which cuts the cut segments inside it reference). When cutId is provided,
+  // additionally return an overview of that cut's timeline (ids, start, and end for each track and
+  // clip): obtain the clip id to modify without user_interface_switch_cut, and after obtaining it,
+  // update_clip / set_clip / get_clip / set_rect… can modify directly by clipId (see mcp/clipCut.ts)
   listCuts: (args) => {
     const p = getState().project;
     const out: Record<string, unknown> = { activeCutId: p.activeCutId, cuts: listCuts(p) };
     if (args?.cutId !== undefined) {
       const cut = resolveCut(p, { cutId: String(args.cutId) });
       const content = cutContent(p, cut.id);
-      if (!content) throw new Error(`剪辑「${cut.name}」(${cut.id})没有可读的内容`);
-      // 这里的 digest 是借 p 拼出来的别条剪辑的内容,「别的剪辑」提示对它没有意义
+      if (!content) throw new Error(`Cut "${cut.name}" (${cut.id}) has no readable content`);
+      // The digest here is the content of another cut assembled using p; the "other cut" hint is
+      // meaningless for it
       const { otherCuts: _drop, ...digest } = timelineDigest({ ...p, tracks: content.tracks, duration: content.duration });
       out.timeline = { cutId: cut.id, name: cut.name, active: cut.id === activeCutIdOf(p), ...digest };
     } else {
-      // 不指定剪辑时,把所有停放剪辑里的片段(有上限)直接列出来:模型拿到 clipId 就不必为了「看进去」而 user_interface_switch_cut
+      // When no cut is specified, list clips from all parked cuts directly (with an upper limit):
+      // once the model obtains clipId, it does not need to call user_interface_switch_cut just to
+      // "look inside"
       const parkedCuts = parkedCutsIndex(p, { cardName: (id) => getCard(id)?.name });
       if (parkedCuts) out.parkedCuts = parkedCuts;
     }
@@ -80,19 +85,20 @@ export const effectsHandlers = {
     const p = getState().project;
     return {
       ok: true, activeCutId: p.activeCutId, cuts: listCuts(p), timeline: timelineDigest(p),
-      note: `已切换到「${cut.name}」。切换会改共享的激活剪辑,让所有成员的界面一起翻;只是要改别的剪辑里已有的片段时不需要它——` +
-        "把 clipId(list_cuts 的 cutId 参数 / get_project 的 parkedCuts 里有)直接交给 update_clip 等就地改;看别的剪辑的画面用 see_frames 的 cutId。" +
-        "上面的 timeline 现在是这条的;之前激活的那条已停放,它里面的片段同样可以直接改。",
+      note: `Switched to "${cut.name}". Switching changes the shared active cut and flips every member's interface together; it is not needed when you only want to edit clips that already exist in another cut:` +
+        " Pass the clipId (found in list_cuts' cutId parameter / get_project's parkedCuts) directly to update_clip etc. to edit in place; to see another cut's picture, use see_frames' cutId." +
+        " The timeline above is now this cut's; the previously active one is parked, and the clips inside it can likewise be edited directly.",
     };
   },
-  // 只建不切(2026-10-21 用户定):切换激活剪辑会动所有成员的界面,要切另调 user_interface_switch_cut
+  // Create only, do not switch (user decision, 2026-10-21): switching the active cut affects all
+  // members' UIs; to switch, call user_interface_switch_cut separately
   addCut: (args) => {
     const cut = actions.addCut(args?.name, { switchTo: false });
     clipGuard.noteMutation();
     const p = getState().project;
     return {
       ok: true, cut: { id: cut.id, name: cut.name }, activeCutId: p.activeCutId, cuts: listCuts(p),
-      note: `已新建「${cut.name}」(${cut.id}),没有切过去,激活的剪辑不变。要往里新增片段先 user_interface_switch_cut(会动所有成员的界面);也可以用 add_cut_segment 把它当剪辑段放进当前剪辑。`,
+      note: `Created "${cut.name}" (${cut.id}) without switching to it; the active cut is unchanged. To add clips into it, first run user_interface_switch_cut (this moves every member's interface); or use add_cut_segment to place it into the current cut as a cut segment.`,
     };
   },
   renameCut: (args) => {
@@ -103,7 +109,9 @@ export const effectsHandlers = {
   removeCut: (args) => {
     const p = getState().project;
     const cut = resolveCut(p, { cutId: args.cutId });
-    // 门槛和 remove_clip 一个道理:有内容、或被别的剪辑引用着(剪辑段),都不能一句话删掉,要 force + reason,理由回显给用户
+    // The gate follows the same logic as remove_clip: if it has content or is referenced by other cuts
+    // (cut segments), it cannot be deleted in a single prompt; force + reason are required, and the
+    // reason is echoed to the user
     const blocked = removeCutGate(cut.id, !!args.force, args.reason);
     if (blocked) throw new Error(blocked);
     const before = p.activeCutId;

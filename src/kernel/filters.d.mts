@@ -1,4 +1,5 @@
-// filters.mjs 的类型。实现写成纯 JS 是为了 node 直接跑的服务端合成也能 import,见那边的头注释。
+// Types for filters.mjs. Written in pure JS so server-side composition running directly in Node
+// can also import it; see the header comment there.
 
 export type FilterKind = "brightness" | "contrast" | "saturate" | "hue" | "grayscale" | "sepia" | "invert" | "blur";
 
@@ -20,19 +21,19 @@ export interface FilterParamSpec {
 
 export type TableFilterKind = "curves" | "matrix";
 
-/** 一步:数字,或随时间变化的表达式字符串(变量 t / d / p + 声明的参数) */
+/** One step: number, or time-varying expression string (variables t / d / p + declared parameters) */
 export interface ScalarFilterOp {
   kind: FilterKind;
   value: number | string;
 }
-/** 曲线:每通道一张 0~1 的取样表(2~33 点,线性插值)。存进工程的是补齐后的三张表 */
+/** Curve: 0~1 sample table per channel (2~33 points, linear interpolation). Three padded tables saved */
 export interface CurvesOp {
   kind: "curves";
   r: number[];
   g: number[];
   b: number[];
 }
-/** 颜色矩阵:values 行优先 3×3,offset 在混色截断之后每通道再加 */
+/** Color matrix: values row-major 3×3, offset added per channel after blend clamping */
 export interface MatrixOp {
   kind: "matrix";
   values: number[];
@@ -40,7 +41,7 @@ export interface MatrixOp {
 }
 export type FilterOp = ScalarFilterOp | CurvesOp | MatrixOp;
 
-/** 滤镜库里的一条(project.filters),素材库「转场/滤镜」页列的就是它 */
+/** An entry in filter library (project.filters), listed on media library "Transitions/Filters" tab */
 export interface FilterDef {
   id: string;
   name: string;
@@ -51,11 +52,11 @@ export interface FilterDef {
   createdAt?: number;
 }
 
-/** 片段上挂的滤镜:引用库里的一条 + 逐段覆盖参数 */
+/** Filter on clip: references an entry in the library + per-clip override parameters */
 export interface ClipFilter {
   id: string;
   params?: Record<string, number>;
-  /** 停用:挂载和逐段参数都留着,这一段上不生效。闸门在 `filterOfClip` */
+  /** Disabled: attachment and per-clip params kept, inactive on this clip. Gate in `filterOfClip` */
   off?: boolean;
 }
 
@@ -69,7 +70,7 @@ export interface FfmpegStage {
   filter: "lutrgb" | "colorchannelmixer" | "gblur";
   opts: Record<string, number | string>;
   linear?: { slope: number; icpt: number };
-  /** 查表 / 矩阵的步骤:不随时间变,sendcmd 不重发 */
+  /** Lookup table / matrix steps: time-invariant, sendcmd does not re-send */
   fixed?: boolean;
 }
 
@@ -95,7 +96,7 @@ export function normalizeParamDecls(rawParams: unknown, extraReserved?: Set<stri
 export function compiledOf(src: string, vars: string[]): { fn: (env: Record<string, number>) => number; uses: Set<string>; ast?: ExprNode };
 export function compileExpr(src: string, vars?: string[]): { fn: (env: Record<string, number>) => number; uses: Set<string>; ast: ExprNode };
 
-/** 表达式语法树:像素映射的分类器和 GLSL 翻译按形状看,所以是数据不是闭包 */
+/** Expression AST: pixel map classifier and GLSL translation inspect shape, so it is data, not a closure */
 export type ExprNode =
   | { t: "num"; v: number }
   | { t: "var"; name: string }

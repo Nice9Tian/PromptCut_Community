@@ -1,15 +1,22 @@
 /**
- * 放云端的时序缺口(`docs/reports/AGENT-upload-timing.md`):打开共享项目后、编辑器进程拿到上传目标
- * (远程素材服务的地址与 rw 票据)之前导入的素材,编辑器进程的上传队列看到的是本机目标、当空操作丢掉。
- * 页面一侧先记下,上传目标就绪后按哈希补交给上传队列(与后台补上哈希后入队同一条路)。
+ * Timing gap when moving to the cloud (`docs/reports/AGENT-upload-timing.md`): for assets imported
+ * after opening a shared project and before the editor process gets the upload target (address and
+ * rw ticket of the remote asset service), the upload queue in the editor process sees a local
+ * target and drops them as a no-op. The page side records them first, and submits them to the
+ * upload queue by hash once the upload target is ready (the same path as enqueuing after background
+ * backfills hashes).
  *
- *   UT-1  上传目标就绪之前导入的素材先记下,就绪后补交(图片、音频、视频都交,视频带两档)
- *   UT-2  上传目标已经就绪时导入的:当场按哈希交一次(服务端 prepareImport 入队与此重复无妨,队列按素材去重)
- *   UT-3  不是共享项目:什么都不做;就绪之前离开共享项目:记下的丢掉,不交给别的项目
- *   UT-4  本机就是主机(挑不到远程素材服务):不记;补交失败的留着,下一次就绪(续签)再交
- *   UT-5  补交时本机内容库里没有的(队列回 missing):列给用户
+ *   UT-1  Assets imported before upload target is ready are recorded first and submitted once ready
+ *         (images, audio, video all submitted; video with both tiers)
+ *   UT-2  Imported when upload target is already ready: submitted immediately by hash (duplicating
+ *         server prepareImport enqueue is harmless; queue deduplicates by asset)
+ *   UT-3  Not a shared project: do nothing; leaving shared project before ready: discard recorded
+ *         items, do not submit to another project
+ *   UT-4  This machine is the host (no remote asset service found): do not record; keep failed
+ *         submissions and resubmit upon next ready (renewal)
+ *   UT-5  Missing from local content store during resubmission (queue returns missing): list to user
  *
- * 跑:node --test src/editor/io/uploadTiming.test.mjs
+ * Run: node --test src/editor/io/uploadTiming.test.mjs
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { beforeEach, afterEach } from "node:test";
@@ -26,7 +33,8 @@ const waitFor = async (cond, ms = 3000) => { const t0 = Date.now(); while (!cond
 let realFetch;
 beforeEach(() => {
   realFetch = globalThis.fetch;
-  // 页面里这几个口子都打到编辑器进程;单测里一律 404,不让真的 fetch 出去
+  // These endpoints in the page all hit the editor process; unit tests return 404 across the board
+  // to prevent real fetch requests going out
   globalThis.fetch = async () => new Response(null, { status: 404 });
   resetTierBackfillForTest();
   T.resetAssetTiersForTest();
@@ -34,8 +42,9 @@ beforeEach(() => {
 afterEach(() => { globalThis.fetch = realFetch; resetTierBackfillForTest(); T.resetAssetTiersForTest(); });
 
 /**
- * 可控的上传目标:`link.request` 签票据前先等 `release()`,模拟打开共享项目后签 rw 票据要一会儿。
- * 回 { stop, release, renew }:`renew()` 触发下一次续签(定时器拿在手里)。
+ * Controllable upload target: `link.request` waits for `release()` before issuing a ticket,
+ * simulating delay in issuing rw ticket after opening a shared project. Returns
+ * { stop, release, renew }: `renew()` triggers next renewal (holding timer in hand).
  */
 function slowUploadTarget(base = "http://cloud/api/asset") {
   let open;
@@ -55,7 +64,10 @@ function slowUploadTarget(base = "http://cloud/api/asset") {
   };
 }
 
-/** 页面导入完一条素材:addMedia(pending)→ 入库回包 → applyUploadedMedia(所有导入路径的汇合处) */
+/**
+ * Page finishes importing an asset: addMedia(pending) → store response → applyUploadedMedia
+ * (junction of all import paths)
+ */
 function importOne({ kind, name, hash, small }) {
   const m = actions.addMedia({ kind, name, url: "", pending: true });
   applyUploadedMedia(m.id, {
@@ -77,7 +89,7 @@ function sharedHooks({ shared = () => true, respond = (body) => ({ queued: body.
   return { bodies, notified, deps, hooks };
 }
 
-test("UT-1 上传目标就绪之前导入的素材先记下,就绪后补交给上传队列(图片、音频、视频都交)", async () => {
+test("UT-1 Media imported before the upload target is ready is recorded first and handed to the upload queue once it is ready (images, audio and video are all handed over)", async () => {
   actions.newProject("Cloud project");
   const target = slowUploadTarget();
   const { bodies, hooks } = sharedHooks();
@@ -87,23 +99,23 @@ test("UT-1 上传目标就绪之前导入的素材先记下,就绪后补交给�
     importOne({ kind: "audio", name: "voice.mp3", hash: H("2") });
     importOne({ kind: "video", name: "clip.mp4", hash: H("3"), small: H("4") });
     await flush();
-    assert.equal(bodies.length, 0, "上传目标还没就绪:先不交(交了编辑器进程也会当本机目标丢掉)");
+    assert.equal(bodies.length, 0, "The upload target is not ready yet: do not hand over for now (if handed over, the editor process would treat it as a local target and drop it)");
     target.release();
     await waitFor(() => bodies.length > 0);
-    assert.equal(bodies.length, 1, "就绪后一次补交");
+    assert.equal(bodies.length, 1, "Handed over once when ready");
     assert.deepEqual(bodies[0], { items: [
       { name: "still.png", original: H("1") },
       { name: "voice.mp3", original: H("2") },
       { name: "clip.mp4", original: H("3"), small: H("4") },
     ] });
-    // 续签再推一次上传目标:已经交过的不再交
+    // Renewal pushes upload target again: do not resubmit what has already been submitted
     target.renew();
     await flush();
     assert.equal(bodies.length, 1);
   } finally { stop(); target.stop(); }
 });
 
-test("UT-2 上传目标已经就绪时导入的:当场按哈希交一次", async () => {
+test("UT-2 Media imported when the upload target is already ready: handed over once by hash immediately", async () => {
   actions.newProject("Cloud project");
   const target = slowUploadTarget();
   target.release();
@@ -117,8 +129,8 @@ test("UT-2 上传目标已经就绪时导入的:当场按哈希交一次", async
   } finally { stop(); target.stop(); }
 });
 
-test("UT-3 不是共享项目:什么都不做;就绪之前离开共享项目:记下的丢掉", async () => {
-  actions.newProject("本机项目");
+test("UT-3 Not a shared project: do nothing; leaving a shared project before it is ready: the recorded items are dropped", async () => {
+  actions.newProject("Local project");
   {
     const { bodies, hooks } = sharedHooks({ shared: () => false });
     const stop = startTierBackfill(hooks);
@@ -127,7 +139,7 @@ test("UT-3 不是共享项目:什么都不做;就绪之前离开共享项目:记
     target.release();
     await waitFor(() => T.uploadTargetReadyForTest() !== null);
     await flush();
-    assert.equal(bodies.length, 0, "本机项目的素材不交");
+    assert.equal(bodies.length, 0, "Media of a local project is not handed over");
     stop(); target.stop();
   }
   T.resetAssetTiersForTest();
@@ -136,29 +148,30 @@ test("UT-3 不是共享项目:什么都不做;就绪之前离开共享项目:记
     const { bodies, hooks } = sharedHooks();
     const stop = startTierBackfill(hooks);
     importOne({ kind: "image", name: "left-behind.png", hash: H("7") });
-    // 离开共享项目(syncManager → disconnectSharedAssets):上传目标回到本机
+    // Leave shared project (syncManager → disconnectSharedAssets): upload target returns to this machine
     target.stop();
     T.disconnectSharedAssets();
-    // 之后进了另一个共享项目、目标就绪:上一个项目里记下的不交过去
+    // Later entered another shared project and target is ready: items recorded in previous project
+    // are not submitted
     const next = slowUploadTarget("http://other/api/asset");
     next.release();
     await waitFor(() => T.uploadTargetReadyForTest() !== null);
     await flush();
-    assert.equal(bodies.length, 0, "离开前记下的丢掉");
+    assert.equal(bodies.length, 0, "Items recorded before leaving are dropped");
     stop(); next.stop(); target.release();
   }
 });
 
-test("UT-4 本机就是主机:不记;补交失败的留着,下一次就绪(续签)再交", async () => {
+test("UT-4 This machine is the host: nothing is recorded; items whose hand-over failed are kept and handed over again the next time it is ready (ticket renewal)", async () => {
   actions.newProject("Cloud project");
   {
-    // 本机就是主机:挑不到远程素材服务,startUploadTarget(link, null)
+    // This machine is the host: no remote asset service found, startUploadTarget(link, null)
     const link = { request: async () => ({ type: "auth.ticket.ok", ticket: "rw", exp: Date.now() + 60_000 }) };
     const stopLocal = T.startUploadTarget(link, null, { post: async () => {} });
     const { bodies, hooks } = sharedHooks();
     const stop = startTierBackfill(hooks);
     importOne({ kind: "image", name: "host.png", hash: H("8") });
-    assert.equal(T.deferredImportsForTest().length, 0, "本机就是主机:导入就是写进这个项目的素材服务,不用记");
+    assert.equal(T.deferredImportsForTest().length, 0, "This machine is the host: importing writes straight into this project's asset service, so there is nothing to record");
     assert.equal(bodies.length, 0);
     stop(); stopLocal();
   }
@@ -172,7 +185,7 @@ test("UT-4 本机就是主机:不记;补交失败的留着,下一次就绪(续�
     target.release();
     await waitFor(() => bodies.length === 1);
     await flush();
-    assert.deepEqual(T.deferredImportsForTest(), [H("9")], "补交没成(编辑器进程没回):留着");
+    assert.deepEqual(T.deferredImportsForTest(), [H("9")], "The hand-over did not succeed (the editor process did not reply): keep it");
     fail = false;
     target.renew();
     await waitFor(() => bodies.length === 2);
@@ -183,7 +196,7 @@ test("UT-4 本机就是主机:不记;补交失败的留着,下一次就绪(续�
   }
 });
 
-test("UT-5 补交时本机内容库里没有的:列给用户", async () => {
+test("UT-5 Items missing from the local content store at hand-over time: listed to the user", async () => {
   actions.newProject("Cloud project");
   const target = slowUploadTarget();
   const { notified, hooks } = sharedHooks({ respond: () => ({ queued: [], missing: [H("a")] }) });

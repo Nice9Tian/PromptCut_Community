@@ -1,11 +1,15 @@
 /**
- * Agent 在界面上的专属颜色(rail 上的 Agent 头像等):和皮肤强调色**同明度、同纯度**(OKLCH 的 L、C 不变),
- * 只把色相换成黄色 —— 和普通图标、选中用的强调色一眼分得开,又和整套皮肤一样亮、一样浓。
+ * Dedicated color for the Agent in the UI (Agent avatar on the rail, etc.): **same lightness and
+ * chroma** as the skin accent color (OKLCH L and C unchanged), switching only hue to yellow: easily
+ * distinguished from ordinary icons and selection accent colors, while staying just as bright and
+ * vivid as the entire skin.
  *
- * 两个例外:
- *   - 强调色本来就在黄橙一带(琥珀皮肤)时换成紫色,不然 Agent 和强调色撞色;
- *   - 换完色相超出 sRGB 色域时,保持明度和色相、逐步降纯度拉回色域。
- * 纯函数,skins.ts 生成皮肤变量 --ui-agent 时调用。
+ * Two exceptions:
+ *   - When the accent color is already in the yellow-orange range (Amber skin), switch to purple,
+ *     otherwise the Agent and accent color clash;
+ *   - When the new hue falls outside the sRGB gamut, keep lightness and hue while reducing chroma
+ *     step by step to pull it back into the gamut.
+ * Pure function, called when skins.ts generates the skin variable --ui-agent.
  */
 
 export interface Oklch {
@@ -15,21 +19,24 @@ export interface Oklch {
   h: number;
 }
 
-/** Agent 用的黄色色相 */
+/** Yellow hue used for Agent */
 export const AGENT_HUE = 95;
-/** 强调色本身就是黄橙时改用的色相(紫) */
+/** Alternative hue (purple) used when the accent color is already yellow-orange */
 export const AGENT_FALLBACK_HUE = 300;
-/** 强调色离黄色色相这么近就算撞色 */
+/** Accent color counts as clashing when this close to yellow hue */
 const CLASH_DEG = 40;
-/** 强调色几乎没颜色(灰)时,黄色至少给这么浓,不然看不出是黄 */
+/**
+ * Minimum yellow chroma when accent color is nearly achromatic (gray), otherwise yellow is
+ * indistinguishable
+ */
 const MIN_CHROMA = 0.09;
-/** 解析不了强调色时的兜底 */
+/** Fallback when accent color cannot be parsed */
 const FALLBACK = "#d6b13c";
 
 const toLinear = (v: number) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
 const toGamma = (v: number) => (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
 
-/** #rrggbb → OKLCH;格式不对返回 null */
+/** #rrggbb → OKLCH; returns null on invalid format */
 export function oklchOf(hex: string): Oklch | null {
   const m = /^#?([\da-f]{6})$/i.exec(hex.trim());
   if (!m) return null;
@@ -45,7 +52,7 @@ export function oklchOf(hex: string): Oklch | null {
   return { l: L, c: Math.hypot(A, B), h: h < 0 ? h + 360 : h };
 }
 
-/** OKLCH → sRGB(0~1,未裁剪,可能越界) */
+/** OKLCH → sRGB (0~1, unclipped, may be out of bounds) */
 function rgbOf({ l, c, h }: Oklch): [number, number, number] {
   const rad = (h * Math.PI) / 180;
   const A = c * Math.cos(rad);
@@ -62,7 +69,7 @@ function rgbOf({ l, c, h }: Oklch): [number, number, number] {
 
 const inGamut = (rgb: number[]) => rgb.every((v) => v >= -0.0005 && v <= 1.0005);
 
-/** 两个色相之间的夹角(0 ~ 180) */
+/** Angle between two hues (0 ~ 180) */
 export function hueGap(a: number, b: number): number {
   return Math.abs((((a - b) % 360) + 540) % 360 - 180);
 }
@@ -71,13 +78,13 @@ function toHex(rgb: number[]): string {
   return "#" + rgb.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, "0")).join("");
 }
 
-/** 由强调色推出 Agent 色(#rrggbb) */
+/** Derives Agent color (#rrggbb) from accent color */
 export function agentColorFor(accent: string): string {
   const base = oklchOf(accent);
   if (!base) return FALLBACK;
   const hue = base.c > 0.03 && hueGap(base.h, AGENT_HUE) < CLASH_DEG ? AGENT_FALLBACK_HUE : AGENT_HUE;
   const color: Oklch = { l: base.l, c: Math.max(MIN_CHROMA, base.c), h: hue };
-  // 出色域就二分找能放下的最大纯度(明度、色相不动)
+  // If out of gamut, binary-search maximum fitting chroma (keeping lightness and hue fixed)
   if (!inGamut(rgbOf(color))) {
     let lo = 0;
     let hi = color.c;

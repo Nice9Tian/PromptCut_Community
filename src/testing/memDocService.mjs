@@ -1,12 +1,16 @@
 /**
- * 仅供测试:内存里的文档服务假件,照 c65-design.md 第 3 节与 docs/plan/c65-ops-spec.md 第 5 节的
- * 项目提交协议做(project.open / project.op → state / ok / rejected / ops / overwritten)。
+ * For testing only: in-memory mock document service, implemented per project commit protocol in
+ * c65-design.md section 3 and docs/plan/c65-ops-spec.md section 5
+ * (project.open / project.op → state / ok / rejected / ops / overwritten).
  *
- * 消息不直接投递,而是进队列:上行(页面 → 服务)每条连接一个队列,下行(服务 → 页面)每条连接
- * 一个队列,各自先进先出;`step(r)` 随机挑一个非空队列投一条,模拟网络交错。`drain()` 投完为止。
+ * Messages are not delivered directly, but enter queues: upstream (page → service) has one queue per
+ * connection, downstream (service → page) has one queue per connection, each FIFO; `step(r)` randomly
+ * picks a non-empty queue to deliver one message, simulating network interleaving. `drain()` delivers
+ * until empty.
  *
- * 路径操作用 src/kernel/diffProject.ts 的 applyOps —— 这里测的是页面一侧,真文档服务的通用引擎
- * 由 c65-docservice 分支按同一页规范另写。
+ * Path operations use applyOps from src/kernel/diffProject.ts: what is tested here is the page side;
+ * general engine of real document service is written separately on c65-docservice branch per the same
+ * spec.
  */
 import { applyOps, entitiesOf } from "../kernel/diffProject.ts";
 
@@ -14,7 +18,7 @@ export class MemDocService {
   constructor({ project = null, rev = 0, overwriteWindowMs = 0, now = () => Date.now() } = {}) {
     this.project = project;
     this.rev = rev;
-    /** 每次落地的提交 */
+    /** Each applied commit */
     this.log = [];
     this.appliedRev = new Map();
     this.conns = new Set();
@@ -25,7 +29,7 @@ export class MemDocService {
     this.seq = 0;
   }
 
-  /** 新开一条连接;onMessage 收下行消息 */
+  /** Open a new connection; onMessage receives downstream messages */
   connect(session, onMessage) {
     const conn = { id: ++this.seq, session, actor: { userId: "u", deviceId: "d", session }, up: [], down: [], subscribed: false, open: true, onMessage };
     this.conns.add(conn);
@@ -37,7 +41,7 @@ export class MemDocService {
     };
   }
 
-  /** 断开:上行没处理的按 dropUp 决定丢不丢,下行没投的一律丢 */
+  /** Disconnect: unprocessed upstream items are dropped according to dropUp; undelivered downstream items are always dropped */
   disconnect(conn, { dropUp = true } = {}) {
     if (dropUp) conn.up.length = 0;
     else while (conn.up.length) this.handle(conn, conn.up.shift());
@@ -58,7 +62,7 @@ export class MemDocService {
       return;
     }
     if (msg.type !== "project.op") return;
-    // 按 opId 幂等,先于期望版本检查
+    // Idempotent by opId, before expected version check
     if (this.appliedRev.has(msg.opId)) {
       this.push(conn, { type: "project.op.ok", opId: msg.opId, rev: this.appliedRev.get(msg.opId) });
       return;
@@ -78,7 +82,7 @@ export class MemDocService {
     this.appliedRev.set(msg.opId, this.rev);
     this.log.push({ rev: this.rev, opId: msg.opId, session: msg.session, actor: conn.actor, ops: msg.ops, expectRev: msg.expectRev, undoOf: msg.undoOf });
 
-    // 覆盖通知
+    // Overwrite notification
     const overwrote = [];
     if (this.overwriteWindowMs > 0) {
       const at = this.now();
@@ -98,7 +102,7 @@ export class MemDocService {
     }
   }
 
-  /** 非空队列的列表(上行 / 下行各算一个) */
+  /** List of non-empty queues (upstream / downstream each count as one) */
   queues() {
     const out = [];
     for (const c of this.conns) {
@@ -108,7 +112,7 @@ export class MemDocService {
     return out;
   }
 
-  /** 随机投一条;没有可投的返回 false */
+  /** Randomly deliver one item; return false if there is nothing to deliver */
   step(r) {
     const qs = this.queues();
     if (!qs.length) return false;
@@ -118,7 +122,7 @@ export class MemDocService {
 
   drain(r) {
     let n = 0;
-    while (this.step(r)) if (++n > 1e6) throw new Error("drain 停不下来");
+    while (this.step(r)) if (++n > 1e6) throw new Error("drain cannot stop");
     return n;
   }
 }

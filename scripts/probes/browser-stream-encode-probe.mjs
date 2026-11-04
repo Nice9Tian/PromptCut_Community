@@ -1,26 +1,37 @@
 /**
- * 浏览器侧生成轨道流的实测:真的在 Chrome 里用 `src/render/streamEncode.ts` 压,再用 `streamPlayer.ts` 的解封装
- * 加 `VideoDecoder` 解回来,逐帧和原画比。
+ * Real-world test of generating track streams on the browser side: actually encodes in Chrome using
+ * `src/render/streamEncode.ts`, demuxes with `streamPlayer.ts` plus `VideoDecoder` to decode back,
+ * and compares frame-by-frame against source graphics.
  *
- *   node scripts/probes/browser-stream-encode-probe.mjs [选项]
+ *   node scripts/probes/browser-stream-encode-probe.mjs [options]
  *
- *   --size 1920x1080      卡片画面的宽高(偶数),可以给多组:--size 960x540,1920x1080
- *   --frames 90           压多少帧
+ *   --size 1920x1080      Width and height of the card frame (even numbers), multiple sets allowed:
+ *                         --size 960x540,1920x1080
+ *   --frames 90           Number of frames to encode
  *   --fps 30
- *   --software            只用处理器:Chrome 关掉显卡(--disable-gpu),编码器要「prefer-software」
- *   --cores 2             把整个 Chrome 进程树限制在前 N 个处理器核上(模拟低配机;只在 Windows 上做)
- *   --throttle 4          主线程再按倍数放慢(CDP 的处理器节流),模拟更慢的核
- *   --json <文件>         结果另存一份 JSON
+ *   --software            CPU only: disable GPU in Chrome (--disable-gpu), encoder requests
+ *                         "prefer-software"
+ *   --cores 2             Limit the entire Chrome process tree to the first N CPU cores (simulates
+ *                         low-spec machines; Windows only)
+ *   --throttle 4          Slow down the main thread further by a factor (CDP CPU throttling) to
+ *                         simulate slower cores
+ *   --json <file>         Save results to a separate JSON file
  *
- * 判过的标准(任一不满足退出码 1):
- *   - 每组都压得出来,出来的帧数 = 送进去的帧数,段数 = ceil(帧数 / 15),每段第一个样本是关键帧;
- *   - 解回来的帧数相同;
- *   - 色半区(预乘色)与透明度半区,和原画比的平均误差 ≤ 3/255、99% 分位 ≤ 12/255(有损压缩,不要求逐像素相同);
- *   - 全透明的地方色半区是黑的(预乘色的约定):那些像素的平均值 ≤ 3/255。
- * 速度只记录,不当通过条件(`docs/semantics/guide_files/verification.md`「耗时只记录,不当闸门」)。
+ * Pass criteria (exit code 1 if any condition is not met):
+ *   - Every set encodes successfully; output frame count = input frame count, segment count =
+ *     ceil(frame count / 15), and the first sample of each segment is a keyframe;
+ *   - Decoded frame count is identical;
+ *   - Average error of color half (premultiplied color) and alpha half compared to source graphics
+ *     is ≤ 3/255, 99th percentile ≤ 12/255 (lossy compression, pixel-identical match not required);
+ *   - Color half is black where fully transparent (premultiplied color convention): average value
+ *     of those pixels is ≤ 3/255.
+ * Speed is recorded only, not treated as a pass condition (`docs/semantics/guide_files/verification.md`
+ * "Record elapsed time only, do not treat as a gate").
  *
- * 页面经本机的一个临时 HTTP 服务打开(localhost 才算安全上下文,WebCodecs 要安全上下文);服务只发这次要用的三个源码文件,
- * TypeScript 当场用 sucrase 去掉类型。端口由系统分配,只听 127.0.0.1,跑完关掉。
+ * The page is opened via a local temporary HTTP server (only localhost counts as a secure context,
+ * and WebCodecs requires a secure context); the server only serves the three source files needed
+ * this time, with TypeScript types stripped on the fly using sucrase. Port is allocated by the
+ * system, listening only on 127.0.0.1, and shut down after running.
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -44,7 +55,7 @@ const CORES = Number(arg('--cores', '0'));
 const THROTTLE = Number(arg('--throttle', '1'));
 const JSON_OUT = arg('--json', null);
 
-/* ---------------------------------------------------------------- 临时服务:三个源码文件 + 一张空页面 */
+/* ---------------------------------------------------------------- Temporary server: three source files + an empty page */
 
 const MODULES = { '/m/streamEncode.js': 'src/render/streamEncode.ts', '/m/streamMux.js': 'src/render/streamMux.ts', '/m/streamPlayer.js': 'src/render/streamPlayer.ts' };
 const moduleSource = (rel) => transform(fs.readFileSync(path.join(ROOT, rel), 'utf8'), { transforms: ['typescript'], disableESTransforms: true }).code
@@ -60,12 +71,13 @@ const server = http.createServer((req, res) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const base = `http://localhost:${server.address().port}`;
 
-/* ---------------------------------------------------------------- 把 Chrome 进程树限制在前 N 个核上 */
+/* ---------------------------------------------------------------- Limit Chrome process tree to the first N cores */
 
 function limitCores(rootPid, cores) {
-  if (process.platform !== 'win32' || !(cores > 0)) return { applied: false, reason: process.platform !== 'win32' ? '只在 Windows 上做' : '没要求' };
+  if (process.platform !== 'win32' || !(cores > 0)) return { applied: false, reason: process.platform !== 'win32' ? 'Only done on Windows' : 'Not requested' };
   const mask = (2 ** cores) - 1;
-  // 进程树:根进程和它所有的子孙(Chrome 的显卡进程、渲染进程、工具进程都是根进程起的)
+  // Process tree: root process and all its descendants (Chrome GPU, render, and utility processes
+  // are all spawned by the root process)
   const script = `
 $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId
 $ids = New-Object System.Collections.Generic.List[int]; $ids.Add(${rootPid})
@@ -76,13 +88,14 @@ $n = 0; foreach ($id in $ids) { try { (Get-Process -Id $id -ErrorAction Stop).Pr
   return { applied: true, cores, mask, processes: out };
 }
 
-/* ---------------------------------------------------------------- 页面里跑的那一段 */
+/* ---------------------------------------------------------------- Section running in the page */
 
 async function inPage({ width, height, frames, fps, software }) {
   const { openStreamEncoder, packedSize, STREAM_HALF_PAD } = await import('/m/streamEncode.js');
   const { parseInit, parseSegment, chunkTimestamp, SEGMENT_FRAMES } = await import('/m/streamPlayer.js');
 
-  // 原画:带透明的动画(渐变色块在动、半透明的圆、一行字),每帧都能按帧号重画出来
+  // Source graphics: animation with transparency (moving gradient blocks, translucent circle, a line
+  // of text); each frame can be redrawn by frame number
   const src = new OffscreenCanvas(width, height);
   const g = src.getContext('2d');
   const paint = (i) => {
@@ -103,15 +116,15 @@ async function inPage({ width, height, frames, fps, software }) {
   const done = await enc.finish();
   const totalMs = performance.now() - t0;
 
-  // 结构核对:段数、每段样本数、段首关键帧
+  // Structure check: segment count, sample count per segment, segment-initial keyframe
   const problems = [];
   const wantSegs = Math.ceil(frames / SEGMENT_FRAMES);
-  if (segs.length !== wantSegs) problems.push(`段数 ${segs.length},应为 ${wantSegs}`);
+  if (segs.length !== wantSegs) problems.push(`Segment count ${segs.length}, expected ${wantSegs}`);
   const packed = packedSize(width, height);
   const cfg = parseInit(init.bytes.buffer.slice(init.bytes.byteOffset, init.bytes.byteOffset + init.bytes.byteLength));
-  if (cfg.width !== packed.width || cfg.height !== packed.height) problems.push(`初始化段里的宽高 ${cfg.width}×${cfg.height},应为 ${packed.width}×${packed.height}`);
+  if (cfg.width !== packed.width || cfg.height !== packed.height) problems.push(`Width and height in the init segment ${cfg.width}×${cfg.height}, expected ${packed.width}×${packed.height}`);
 
-  // 解回来,逐帧和原画比
+  // Decode back and compare frame-by-frame against source graphics
   const out = new OffscreenCanvas(packed.width, packed.height); const og = out.getContext('2d', { willReadFrequently: true });
   const ref = new OffscreenCanvas(width, height); const rg = ref.getContext('2d', { willReadFrequently: true });
   const stat = { n: 0, colorSum: 0, alphaSum: 0, blackSum: 0, blackN: 0, colorHist: new Uint32Array(256), alphaHist: new Uint32Array(256), colorMax: 0, alphaMax: 0 };
@@ -120,8 +133,8 @@ async function inPage({ width, height, frames, fps, software }) {
     const top = og.getImageData(0, 0, width, height).data;
     const bottom = og.getImageData(0, height + STREAM_HALF_PAD, width, height).data;
     paint(index); rg.clearRect(0, 0, width, height); rg.drawImage(src, 0, 0);
-    const want = rg.getImageData(0, 0, width, height).data;      // 非预乘的 RGBA
-    const step = 4 * 7;                                           // 每 7 个像素取一个,够判了
+    const want = rg.getImageData(0, 0, width, height).data;      // Non-premultiplied RGBA
+    const step = 4 * 7;                                           // Sample one every 7 pixels, enough for evaluation
     for (let p = 0; p < want.length; p += step) {
       const a = want[p + 3];
       for (let c = 0; c < 3; c++) {
@@ -135,7 +148,8 @@ async function inPage({ width, height, frames, fps, software }) {
       stat.n++;
     }
   };
-  // 解出来的帧当场比、当场关:解码器手里同时留着十来帧没关就会卡死(`streamPlayer.ts` 文件头记的那条硬约束)
+  // Compare and close decoded frames immediately: holding about a dozen unclosed frames in the
+  // decoder at once will freeze (the hard constraint noted in the `streamPlayer.ts` header)
   let decoded = 0; let decodeError = null;
   const dec = new VideoDecoder({ output: (f) => { try { compare(f, Math.round((f.timestamp * fps) / 1e6)); decoded++; } catch (e) { decodeError = String(e); } finally { f.close(); } }, error: (e) => { decodeError = String(e); } });
   dec.configure({ codec: cfg.codec, codedWidth: cfg.width, codedHeight: cfg.height, description: cfg.description });
@@ -143,15 +157,15 @@ async function inPage({ width, height, frames, fps, software }) {
   for (const seg of segs) {
     const buf = seg.bytes.buffer.slice(seg.bytes.byteOffset, seg.bytes.byteOffset + seg.bytes.byteLength);
     const table = parseSegment(buf);
-    if (table.length !== seg.samples) problems.push(`第 ${seg.index} 段解封装出 ${table.length} 个样本,应为 ${seg.samples}`);
-    if (!table[0]?.isSync) problems.push(`第 ${seg.index} 段的第一个样本不是关键帧`);
+    if (table.length !== seg.samples) problems.push(`Segment ${seg.index} demuxed to ${table.length} samples, expected ${seg.samples}`);
+    if (!table[0]?.isSync) problems.push(`The first sample of segment ${seg.index} is not a keyframe`);
     table.forEach((s, i) => dec.decode(new EncodedVideoChunk({ type: s.isSync ? 'key' : 'delta', timestamp: chunkTimestamp(seg.index * SEGMENT_FRAMES + i, fps), data: new Uint8Array(buf, s.offset, s.size) })));
-    await dec.flush();                                            // 一段一段解
+    await dec.flush();                                            // Decode segment by segment
   }
   dec.close();
   const decodeMs = performance.now() - t1;
-  if (decodeError) problems.push(`解码出错:${decodeError}`);
-  if (decoded !== frames) problems.push(`解回 ${decoded} 帧,应为 ${frames}`);
+  if (decodeError) problems.push(`Decode error: ${decodeError}`);
+  if (decoded !== frames) problems.push(`Decoded back ${decoded} frames, expected ${frames}`);
 
   const pct = (hist, total, q) => { let acc = 0; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= total * q) return v; } return 255; };
   const colorTotal = stat.n * 3;
@@ -168,7 +182,7 @@ async function inPage({ width, height, frames, fps, software }) {
   };
 }
 
-/* ---------------------------------------------------------------- 跑 */
+/* ---------------------------------------------------------------- Run */
 
 const report = { when: new Date().toISOString(), host: { cpu: os.cpus()[0]?.model?.trim(), logicalCores: os.cpus().length, memGiB: Math.round(os.totalmem() / 2 ** 30), platform: `${os.platform()} ${os.release()}` },
   options: { sizes: SIZES.map((s) => s.join('x')), frames: FRAMES, fps: FPS, software: SOFTWARE, cores: CORES || null, throttle: THROTTLE }, results: [], failures: [] };
@@ -180,20 +194,20 @@ try {
   if (CORES > 0) report.affinityAtLaunch = limitCores(browser.process().pid, CORES);
   const page = await browser.newPage();
   await page.goto(base + '/');
-  if (CORES > 0) report.affinityAfterPage = limitCores(browser.process().pid, CORES);     // 新起的渲染进程会继承,这里再扫一遍兜住已经起来的
+  if (CORES > 0) report.affinityAfterPage = limitCores(browser.process().pid, CORES);     // Newly spawned render processes will inherit it; scan again here to catch those already running
   report.page = await page.evaluate(() => ({ secure: isSecureContext, cores: navigator.hardwareConcurrency, hasEncoder: typeof VideoEncoder === 'function' }));
   if (THROTTLE > 1) { const cdp = await page.createCDPSession(); await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE }); }
   for (const [width, height] of SIZES) {
     let r;
     try { r = await page.evaluate(inPage, { width, height, frames: FRAMES, fps: FPS, software: SOFTWARE }); }
-    catch (err) { r = { size: `${width}x${height}`, problems: [`没压出来:${String(err?.message ?? err).split('\n')[0]}`] }; }
+    catch (err) { r = { size: `${width}x${height}`, problems: [`Encoding failed: ${String(err?.message ?? err).split('\n')[0]}`] }; }
     const fails = [...(r.problems ?? [])];
     if (r.decoded !== undefined) {
-      if (r.colorMean > 3) fails.push(`色半区平均误差 ${r.colorMean} > 3`);
-      if (r.colorP99 > 12) fails.push(`色半区 99% 分位误差 ${r.colorP99} > 12`);
-      if (r.alphaMean > 3) fails.push(`透明度平均误差 ${r.alphaMean} > 3`);
-      if (r.alphaP99 > 12) fails.push(`透明度 99% 分位误差 ${r.alphaP99} > 12`);
-      if (r.transparentColorMean !== null && r.transparentColorMean > 3) fails.push(`全透明处色半区平均 ${r.transparentColorMean} > 3(应为黑)`);
+      if (r.colorMean > 3) fails.push(`Color-half mean error ${r.colorMean} > 3`);
+      if (r.colorP99 > 12) fails.push(`Color-half 99th-percentile error ${r.colorP99} > 12`);
+      if (r.alphaMean > 3) fails.push(`Alpha mean error ${r.alphaMean} > 3`);
+      if (r.alphaP99 > 12) fails.push(`Alpha 99th-percentile error ${r.alphaP99} > 12`);
+      if (r.transparentColorMean !== null && r.transparentColorMean > 3) fails.push(`Color-half mean ${r.transparentColorMean} > 3 where fully transparent (should be black)`);
     }
     r.pass = fails.length === 0;
     report.results.push(r);
@@ -205,9 +219,9 @@ try {
 }
 
 const row = (r) => r.decoded === undefined ? `${r.size}  ${r.problems.join(';')}`
-  : `${r.size.padEnd(10)} 拼合 ${r.packed.padEnd(10)} ${r.mode.padEnd(9)} ${r.codec}  压 ${String(r.encodeFps).padStart(6)} 帧/秒 (${r.msPerFrame} 毫秒/帧)  ${String(r.kbps).padStart(6)} kbps  解回 ${r.decoded}/${r.frames}  色误差 均 ${r.colorMean} p99 ${r.colorP99} 最大 ${r.colorMax}  透明度误差 均 ${r.alphaMean} p99 ${r.alphaP99} 最大 ${r.alphaMax}  透明处色 ${r.transparentColorMean}  ${r.pass ? '过' : '不过'}`;
-console.log(`机器:${report.host.cpu},${report.host.logicalCores} 个逻辑核,${report.host.memGiB} GiB;${report.chrome}`);
-console.log(`条件:${SOFTWARE ? '只用处理器(关显卡、软件编码)' : '缺省(有显卡就用)'}${CORES ? `,限制在 ${CORES} 个核(进程 ${report.affinityAfterPage?.processes}),页面看到 ${report.page?.cores} 个核` : ''}${THROTTLE > 1 ? `,主线程放慢 ${THROTTLE} 倍` : ''};${FRAMES} 帧,${FPS} fps`);
+  : `${r.size.padEnd(10)} packed ${r.packed.padEnd(10)} ${r.mode.padEnd(9)} ${r.codec}  encode ${String(r.encodeFps).padStart(6)} fps (${r.msPerFrame} ms/frame)  ${String(r.kbps).padStart(6)} kbps  decoded ${r.decoded}/${r.frames}  color error mean ${r.colorMean} p99 ${r.colorP99} max ${r.colorMax}  alpha error mean ${r.alphaMean} p99 ${r.alphaP99} max ${r.alphaMax}  color at transparent ${r.transparentColorMean}  ${r.pass ? 'pass' : 'fail'}`;
+console.log(`Machine: ${report.host.cpu}, ${report.host.logicalCores} logical cores, ${report.host.memGiB} GiB; ${report.chrome}`);
+console.log(`Conditions: ${SOFTWARE ? 'CPU only (GPU off, software encoding)' : 'Default (use the GPU if present)'}${CORES ? `, limited to ${CORES} cores (processes ${report.affinityAfterPage?.processes}), page sees ${report.page?.cores} cores` : ''}${THROTTLE > 1 ? `, main thread slowed ${THROTTLE}x` : ''}; ${FRAMES} frames, ${FPS} fps`);
 for (const r of report.results) console.log(row(r));
 if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(report, null, 2));
-if (report.failures.length) { console.log('不过:\n  ' + report.failures.join('\n  ')); process.exitCode = 1; } else console.log('全部通过');
+if (report.failures.length) { console.log('Failed:\n  ' + report.failures.join('\n  ')); process.exitCode = 1; } else console.log('All passed');

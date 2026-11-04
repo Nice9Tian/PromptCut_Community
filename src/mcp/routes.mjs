@@ -1,26 +1,32 @@
 /**
- * 浏览器侧 MCP 工具 → EditorApi 方法的路由表。
+ * Routing table from browser-side MCP tools → EditorApi methods.
  *
- * 以前这张表是 src/ai/mcpExecutor.ts 里一条一百多个分支的 `else if (tool === "xxx")` 链。
- * 加一个工具要在三处登记(server/tools/*.mjs 的 schema、这条链、src/mcp/handlers/* 的实现),
- * 上一次重构就因此漏掉过两个工具 —— 漏在这条链上不会编译失败,只会在运行时报「未知工具」。
- * 现在链变成查表,server/test/mcp-routes.test.mjs 拿 server/mcp-tools.mjs 和这张表对账,
- * 漏登记当场测试失败。
+ * Previously, this table was an `else if (tool === "xxx")` chain of over a hundred branches in
+ * src/ai/mcpExecutor.ts. Adding a tool required registering in three places (schema in
+ * server/tools/*.mjs, this chain, and implementation in src/mcp/handlers/*), and the last refactor
+ * missed two tools because of this: missing on this chain causes no compile failure, only
+ * reporting "unknown tool" at runtime. Now the chain is converted to a table lookup;
+ * server/test/mcp-routes.test.mjs reconciles server/mcp-tools.mjs with this table, and missing
+ * registrations fail the test on the spot.
  *
- * 写成纯数据的 .mjs(类型在同名 .d.mts)是为了让 node:test 能直接 import 它;
- * 仓库里 src/kernel/frameMode.mjs 等已经是这个写法。
+ * Written as pure-data .mjs (types in .d.mts of the same name) so node:test can directly import it;
+ * src/kernel/frameMode.mjs and others in the repo already use this pattern.
  *
- * 每项逐条照抄原来那条分支的语义,不做统一:
- *   - passArgs:原分支传不传 args(`api.getProject()` 和 `api.listCards(args)` 是两种写法,
- *              前者的方法签名压根没有参数);
- *   - awaited :原分支 await 不 await。对非 Promise 值 await 本身是安全的,但它会多插一个
- *              微任务,改变这次调用和后面 getState() / flushDataMirror 之间的时序。
- *              纯重构不赌这个,原样保留。
+ * Each entry copies the semantics of its original branch item by item, without unifying them:
+ *   - passArgs: whether the original branch passed args (`api.getProject()` and
+ *              `api.listCards(args)` are two patterns, where the former's signature has no
+ *              parameters at all);
+ *   - awaited : whether the original branch awaited. Awaiting non-Promise values is inherently
+ *              safe, but inserts an extra microtask, altering timing between this call and
+ *              subsequent getState() / flushDataMirror. Pure refactoring does not gamble on this,
+ *              preserving it as-is.
  *
- * 顺序照抄原分发链,方便逐条对账。
+ * Order copies the original dispatch chain to facilitate item-by-item reconciliation.
  *
- * 键是模型侧的工具名。会动用户界面的工具名字带 `user_interface_`(2026-10-21 用户定,server/tools/ui-names.mjs);
- * 发给页面的内部操作名还是旧名,页面执行器进门先换成新名再查这张表(两种都认)。
+ * Keys are model-side tool names. Tools that touch the user interface have names containing
+ * `user_interface_` (user decision, 2026-10-21, server/tools/ui-names.mjs); internal operation
+ * names sent to the page are still legacy names; the page executor converts them to new names upon
+ * entry before looking up this table (both are accepted).
  */
 export const TOOL_ROUTES = {
   sound_presets: { method: "soundPresets", passArgs: false, awaited: false },
@@ -39,7 +45,7 @@ export const TOOL_ROUTES = {
   add_cut: { method: "addCut", passArgs: true, awaited: false },
   rename_cut: { method: "renameCut", passArgs: true, awaited: false },
   remove_cut: { method: "removeCut", passArgs: true, awaited: false },
-  // 剪辑段(src/mcp/handlers/cutSegments.ts)
+  // Cut segments (src/mcp/handlers/cutSegments.ts)
   add_cut_segment: { method: "addCutSegment", passArgs: true, awaited: false },
   set_cut_segment: { method: "setCutSegment", passArgs: true, awaited: false },
   set_position: { method: "setPosition", passArgs: true, awaited: false },
@@ -140,18 +146,22 @@ export const TOOL_ROUTES = {
 };
 
 /**
- * 不走路由表的浏览器侧工具。它们在 mcpExecutor 里各有各的特殊处理,留在表外:
+ * Browser-side tools that do not go through the routing table. They have their own special
+ * handling in mcpExecutor and remain outside the table:
  *
- *   - see_frames:一个工具两种画面 —— source="media" 走 seeSequences、
- *     source="timeline" 或不给走 seePreview;还要先剥掉 source 字段,并对缺 mediaId、
- *     非法 source 两种情况回错误对象(不是抛错)。一对一的表表达不了。
- *   - get_gif:实现不在 EditorApi 上,是 mcpExecutor 自己的 getGif()(直接打预渲染的
- *     /api/ai/visual);而且它成功之后不再走 withVisual,结果里自带 visualId。
- *   - web_*:浏览器整个在服务端,这八个工具不碰编辑台的任何状态。挂进 EditorApi 只会逼
- *     编辑台那边实现 8 个纯转发的方法,所以按 `web_` 前缀交给 runWebTool。
+ *   - see_frames: one tool, two visual sources: source="media" goes to seeSequences,
+ *     source="timeline" or omitted goes to seePreview; must also strip the source field first, and
+ *     return error objects (not throw errors) for missing mediaId or invalid source. A one-to-one
+ *     table cannot express this.
+ *   - get_gif: implementation is not on EditorApi, but is mcpExecutor's own getGif() (calling
+ *     prerender /api/ai/visual directly); and after success it does not go through withVisual, as
+ *     the result already contains visualId.
+ *   - web_*: the browser is entirely on the server; these eight tools touch no editor state.
+ *     Hooking them into EditorApi would only force the editor to implement 8 pure-forwarding
+ *     methods, so they are routed to runWebTool by `web_` prefix.
  *
- * 这张表也参与对账:每个 side === "browser" 的工具必须要么在 TOOL_ROUTES 里、
- * 要么在这里,多一个少一个都算漏登记。
+ * This table also participates in reconciliation: every tool with side === "browser" must either
+ * be in TOOL_ROUTES or here; one extra or one missing is considered a missed registration.
  */
 export const SPECIAL_TOOLS = [
   "see_frames",

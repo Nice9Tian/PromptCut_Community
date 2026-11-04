@@ -1,8 +1,10 @@
 /**
- * docsync 接进编辑器 store(core.ts 的挂钩)。跑:node --test src/store/docsyncStore.test.mjs
+ * docsync integrated into editor store (hook in core.ts). Run: node --test src/store/docsyncStore.test.mjs
  *
- * 钉的是:没连文档服务时一切照旧(快照栈);连上时 setProject / loadProject / undo / redo /
- * canUndo / canRedo 由 docsync 接管,接口不变;别人的改动写进 state 但不进撤销栈。
+ * Pinned: when not connected to document service, everything stays as before (snapshot stack);
+ * when connected, setProject / loadProject / undo / redo / canUndo / canRedo are taken over by
+ * docsync with the interface unchanged; changes by others are written into state but do not enter
+ * the undo stack.
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
@@ -14,7 +16,7 @@ const { actions, getState } = await import(srcUrl("store/project.ts"));
 const core = await import(srcUrl("store/core.ts"));
 const { DocSync, bindStore } = await import(srcUrl("store/docsync.ts"));
 
-function fresh(name = "起点") {
+function fresh(name = "Starting point") {
   actions.newProject(name);
   return getState().project;
 }
@@ -40,10 +42,10 @@ test("V5-snapshot stack mode: consecutive edits with the same mergeKey within 30
   assert.equal(getState().project, p0);
   fresh();
   core.setProject({ ...getState().project, width: 1 }, { mergeKey: "w" });
-  actions.setProjectMeta({ name: "别的" });
+  actions.setProjectMeta({ name: "Other" });
   core.setProject({ ...getState().project, width: 2 }, { mergeKey: "w" });
   assert.equal(core.history.length, 3);
-  // 不传 mergeKey 与以前完全一样:每次一步
+  // Passing no mergeKey is exactly the same as before: one step at a time
   fresh();
   core.setProject({ ...getState().project, width: 1 });
   core.setProject({ ...getState().project, width: 2 });
@@ -51,7 +53,7 @@ test("V5-snapshot stack mode: consecutive edits with the same mergeKey within 30
 });
 
 test("Connected to the document service: setProject goes through docsync, undo is per page session, other people's changes are written to state and not pushed onto the undo stack; after unbinding, falls back to the snapshot stack", () => {
-  const p0 = fresh("共享");
+  const p0 = fresh("Shared");
   const svc = new MemDocService({ project: structuredClone(p0), rev: 3 });
   let linkA;
   const A = new DocSync(p0, { projectId: "P", session: "A", send: (m) => linkA.send(m) });
@@ -68,19 +70,19 @@ test("Connected to the document service: setProject goes through docsync, undo i
   actions.setProjectMeta({ name: "Edited by A" });
   assert.equal(getState().project.name, "Edited by A");
   assert.equal(getState().project, A.project);
-  assert.equal(core.history.length, historyBefore); // 快照栈不动
+  assert.equal(core.history.length, historyBefore); // Snapshot stack untouched
   assert.equal(actions.canUndo(), true);
   svc.drain();
   assert.equal(svc.project.name, "Edited by A");
   assert.equal(B.project.name, "Edited by A");
 
-  // B 改了(序列名,另一个实体),A 的 state 跟着变,但 A 的撤销栈里没有它
+  // B changed (track name, another entity), A's state changes accordingly, but A's undo stack does not have it
   B.commit({ ...B.project, tracks: B.project.tracks.map((t, i) => (i === 0 ? { ...t, name: "Track edited by B" } : t)) });
   svc.drain();
   assert.equal(getState().project.tracks[0].name, "Track edited by B");
   assert.equal(getState().dirty, true);
   actions.undo();
-  assert.equal(getState().project.name, "共享");
+  assert.equal(getState().project.name, "Shared");
   assert.equal(getState().project.tracks[0].name, "Track edited by B");
   assert.equal(actions.canUndo(), false);
   assert.equal(actions.canRedo(), true);
@@ -90,7 +92,7 @@ test("Connected to the document service: setProject goes through docsync, undo i
   assert.equal(JSON.stringify(getState().project), JSON.stringify(svc.project));
   assert.equal(JSON.stringify(B.project), JSON.stringify(svc.project));
 
-  // loadProject 是一次根替换
+  // loadProject is a root replacement
   const other = { ...structuredClone(svc.project), name: "Old file that was opened" };
   actions.loadProject(other);
   assert.equal(actions.canUndo(), false);
@@ -118,7 +120,7 @@ test("AI panel \"Undo this step\" (revertRemote) undoes the track the Agent adde
   G.connect();
   svc.drain();
 
-  // Agent 加了一条轨道
+  // Agent added a track
   G.commit({ ...G.project, tracks: [...G.project.tracks, { id: "tAgent", name: "Agent's track", clips: [] }] });
   svc.drain();
   const agentOp = svc.log[svc.log.length - 1].opId;
@@ -127,13 +129,14 @@ test("AI panel \"Undo this step\" (revertRemote) undoes the track the Agent adde
 
   const r = A.revertRemote({ opId: agentOp });
   assert.equal(r.done, true);
-  // 修前:DocSync 本地副本已撤,store 还停在撤之前(bindStore 把这次当成 setProject 的 commit 跳过了)
+  // Before fix: DocSync local replica was undone, store still stayed before undo (bindStore treated
+  // this as a commit of setProject and skipped it)
   assert.equal(getState().project, A.project, "The store holds the post-undo copy from DocSync");
   assert.notEqual(getState().project, before, "Replaced with a new object, not modified in place");
   assert.ok(!getState().project.tracks.some((t) => t.id === "tAgent"), "The track disappears from the store on the spot");
   assert.ok(before.tracks.some((t) => t.id === "tAgent"), "The object from before the undo was not modified in place");
   assert.equal(getState().dirty, true);
-  // 进了页面自己的撤销栈:Ctrl+Z 把 Agent 的轨道恢复回来,store 同样当场跟上
+  // Entered page's own undo stack: Ctrl+Z restores Agent's track, store also catches up on the spot
   assert.equal(actions.canUndo(), true);
   actions.undo();
   assert.ok(getState().project.tracks.some((t) => t.id === "tAgent"));

@@ -77,17 +77,43 @@ export function switchLocale(next: Locale, url: URL = new URL(location.href)): v
 type Row = { zh: string; ja: string };
 const rows = table as Record<string, Row>;
 
+/*
+ * State shared with server/i18n.mjs through a global, so the page does not import from server/ and
+ * server code does not import from src/: this page's language, the lookup, and the rows added with
+ * addRows(). In Node the language here is English; requests bring their own.
+ */
+const shared = ((globalThis as Record<symbol, any>)[Symbol.for("promptcut.i18n")] ??= { translate: null, known: new Set(["en"]), locale: "en" });
+shared.extra ??= {};
+shared.version ??= 0;
+
+/**
+ * Rows kept outside table.json, for code that ships its own table. They are looked up after
+ * table.json, which wins when both have the same English. server/i18n.mjs has the same function
+ * for server code; a row added on either side is found by both.
+ */
+export function addRows(more: Record<string, Row>): void {
+  Object.assign(shared.extra, more);
+  shared.version++;
+}
+
 /**
  * Card names, parameter labels and other text that comes from card code or project data may still
  * be the Chinese original. Those are found by their Chinese wording, so the same tr() call keeps
  * working before and after that code is translated.
  */
-let byChinese: Map<string, string> | null = null;
+let byChinese = new Map<string, string>();
+let builtFor = -1;
 function rowOf(source: string): [string | undefined, Row | undefined] {
+  const extra: Record<string, Row> = shared.extra;
   if (Object.hasOwn(rows, source)) return [source, rows[source]];
-  byChinese ??= new Map(Object.entries(rows).map(([en, row]) => [row.zh, en]));
+  if (Object.hasOwn(extra, source)) return [source, extra[source]];
+  if (builtFor !== shared.version) {
+    // table.json goes in last, so its rows win when an added row has the same Chinese
+    byChinese = new Map([...Object.entries(extra), ...Object.entries(rows)].map(([en, row]) => [row.zh, en]));
+    builtFor = shared.version;
+  }
   const en = byChinese.get(source);
-  return en === undefined ? [undefined, undefined] : [en, rows[en]];
+  return en === undefined ? [undefined, undefined] : [en, Object.hasOwn(rows, en) ? rows[en] : extra[en]];
 }
 
 /** Tells the server which language to answer in (server/i18n.mjs). Installed once, from main.tsx. */
@@ -118,3 +144,9 @@ export function translate(target: Locale, source: string, args: ReadonlyArray<un
 export function tr(source: string, ...args: ReadonlyArray<unknown>): string {
   return translate(locale, source, args);
 }
+
+// Server modules that also run in the page (server/auth/client.mjs, server/render-node/) translate
+// through server/i18n.mjs, with this page's language and this lookup
+shared.translate = translate;
+shared.known = new Set(LOCALES.map((l) => l.id));
+shared.locale = locale;

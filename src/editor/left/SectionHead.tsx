@@ -4,12 +4,17 @@ import { useDockSide } from "../dock/dockSide";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 左栏五个分区统一的头部:标题行(分区名 +「收起面板」)+ 下面分区自己的主按钮 / 搜索 / 胶囊(children)。
+ * Shared head of the five left rail sections: a title row (section name + "Collapse panel") + the
+ * section's own main button / search / pill (children) below.
  *
- * 分区可以被拖到右侧 rail(dock/),收起钮跟着所在的一侧走:
- * 在左侧放右上角、收左侧(`data-pc="left-collapse"`);在右侧放左上角、收右侧(`data-pc="right-collapse"`)。
- * 收起钮和「再点一次 rail 上的当前项」走同一条路(sideRails):Editor.tsx 的列宽过渡、卡片的淡出都照旧,
- * 这里不自己做动画。收起后 rail 还在,点当前项就展开回来。
+ * A section can be dragged to the right rail (dock/), and the collapse button follows the side it
+ * is on: on the left it sits at the top right and collapses to the left
+ * (`data-pc="left-collapse"`); on the right it sits at the top left and collapses to the right
+ * (`data-pc="right-collapse"`).
+ * The collapse button takes the same path as "clicking the current rail item again" (sideRails):
+ * the column-width transition in Editor.tsx and the card fade-out work as before, and no
+ * animation is done here. After collapsing the rail stays, and clicking the current item expands
+ * it again.
  */
 export function SectionHead({ title, children }: { title: string; children?: ReactNode }) {
   const side = useDockSide("left");
@@ -22,7 +27,7 @@ export function SectionHead({ title, children }: { title: string; children?: Rea
       aria-label={tr("Collapse panel")}
       onClick={() => setRailCollapsed(side, true)}
     >
-      {/* 面板轮廓 + 贴着 rail 那一边的侧栏线 + 朝 rail 的箭头:往那一侧收 */}
+      {/* Panel outline + a sidebar line on the side next to the rail + an arrow toward the rail: collapse toward that side */}
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
         {side === "left" ? (

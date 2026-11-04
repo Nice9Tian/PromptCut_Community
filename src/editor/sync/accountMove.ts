@@ -1,70 +1,92 @@
 /**
- * 账号办法的「搬到云端」(桌面版):把本机打开的本地项目、或旧办法在本机开的协作房间,搬成一个属于当前登录账号的云端项目。
- * 用户 2026-10-13 定的四条在 `docs/plan/user-decisions-2026-10-13.md` 第 2 节「本地项目搬到云端」;报告 `docs/reports/AGENT-v18-move.md`。
+ * The account mode's "move to the cloud" (desktop app): move a local project opened on this machine, or a
+ * collaboration room opened locally under the old mode, into a cloud project owned by the currently logged-in account.
+ * The four rules the user decided on 2026-10-13 are in `docs/plan/user-decisions-2026-10-13.md`, section 2 "Move a
+ * local project to the cloud"; report: `docs/reports/AGENT-v18-move.md`.
  *
- * 本文件只有流程本身,不认识 store、界面和账号客户端:要用的东西都由调用方给(`MoveDeps`),接线在 `accountMoveFlow.ts`。
- * 这样每一步的成功与失败都能在 Node 里单测(`accountMove.test.mjs`),对着真服务的在 `server/test/account-move.test.mjs`。
+ * This file holds only the flow itself and knows nothing about the store, the UI or the account client: everything
+ * it needs is supplied by the caller (`MoveDeps`), and the wiring is in `accountMoveFlow.ts`. This way the success
+ * and failure of every step can be unit-tested in Node (`accountMove.test.mjs`), and tests against a real server
+ * are in `server/test/account-move.test.mjs`.
  *
- * **先云端、后本机**(旧流程的教训是先封锁本机房间再传,失败就把房间变成打不开的):
+ * **Cloud first, local after** (the lesson from the old flow: it blocked the local room first and then uploaded, and
+ * a failure left the room unopenable):
  *
- *   1 核对      登录了没有;协作房间要以创建者身份进入、并当场核对创建者密码(只读的一次核对,不改任何东西);
- *               等本机的修改都落定,取一份项目内容;内容超过文档服务一次根替换的上限就在这里停。
- *   2 建项目    `POST /hosted/shared/account/create`,带一份空白项目当占位(真内容不走这个接口:它的上限是 1 MiB,桌面外壳的账号桥
- *               也是 1 MiB,而且同一个请求号重放时内容必须一字不差)。请求号、项目名、占位内容先记在本机(`MoveAttemptStore`),
- *               失败后再点一次用的是同一个请求号 —— 新建接口对它幂等,云端不会多出一个重名的项目。
- *   3 传内容    另开一条文档连接(不是编辑器正在用的那条),把项目内容以一次根替换写进去;超过单次提交上限的由 `DocSync` 分片上传。
- *   4 核对      再开一条连接把云端的内容读回来,和本机那一份逐字段比;不一样就停。这期间本机又有新修改的,再传、再核对;
- *               传了几轮本机还在变(有 Agent 或工具在连着改)就停下,不往下走。
- *   —— 到这里为止,本机的项目文件、房间记录、协作状态一个字都没动。任何一步失败,本机原样可用。——
- *   5 协作房间  先把这台电脑上没有的素材拉齐(搬的人不在主机那台电脑上时),再关掉本机协作(删房间:旧成员的连接断开、
- *               旧邀请码作废、云端托管服务上的登记注销)。**关掉之后第一件事是把当前内容存到本机**(不带房间关联的普通本地项目),
- *               然后才补传关的那一下别人刚改过的;补传失败时本机这一份是全的,之后从本地项目再点一次,用原来的请求号接着补。
- *   6 进项目    编辑器接到云端项目上;素材交给上传队列在后台传(先小尺寸、再原尺寸)。
- *               **换过去的那一刻再比一次**(`MoveDeps.enter` 的约定):编辑器里的内容与云端核对过的那一份不同就不换、回来再传,
- *               所以不会出现「报了成功、云端却比本机旧」。
+ *   1 Check     Whether logged in; a collaboration room must be entered as its creator, and the creator password
+ *               is verified on the spot (a read-only check that changes nothing); wait for local changes to
+ *               settle, then take the project content; if the content exceeds the document service's limit for
+ *               one root replacement, stop here.
+ *   2 Create    `POST /hosted/shared/account/create`, with an empty project as a placeholder (the real content does
+ *               not go through this endpoint: its limit is 1 MiB, the desktop shell's account bridge is also
+ *               1 MiB, and when the same request ID is replayed the content must match byte for byte). The
+ *               request ID, project name and placeholder content are first recorded locally
+ *               (`MoveAttemptStore`); clicking again after a failure uses the same request ID, and the create
+ *               endpoint is idempotent on it, so the cloud does not end up with a duplicate-named project.
+ *   3 Upload    Open another document connection (not the one the editor is using) and write the project content
+ *               into it as one root replacement; anything over the single-commit limit is uploaded by `DocSync` in
+ *               chunks.
+ *   4 Verify    Open one more connection and read the cloud content back, then compare it field by field with the
+ *               local copy; stop if they differ. If the local side was modified again in the meantime, upload and
+ *               verify again; if the local side is still changing after several rounds (an Agent or tool keeps
+ *               editing through a connection), stop and do not go further.
+ *   -- Up to here, the local project file, room record and collaboration state have not been touched at all.
+ *   If any step fails, the local side stays usable as it was. --
+ *   5 Collab room   First pull any media this computer does not have (when the person moving is not on the host
+ *               computer), then close local collaboration (delete the room: old members' connections drop, old
+ *               invite codes are void, and the registration on the hosted cloud service is cancelled). **The first
+ *               thing after closing is to save the current content locally** (an ordinary local project with no
+ *               room link), and only then upload what others changed right as it closed; if that top-up fails,
+ *               the local copy is complete, and clicking again from the local project continues the top-up with
+ *               the original request ID.
+ *   6 Enter the project   The editor attaches to the cloud project; media goes to the upload queue and is uploaded
+ *               in the background (small size first, then original size).
+ *               **Compare once more at the moment of switching** (the contract of `MoveDeps.enter`): if the
+ *               editor's content differs from the copy verified with the cloud, do not switch and go back to
+ *               upload again, so "reported success but the cloud is older than local" cannot happen.
  *
- * 不随项目上云的东西(旧房间的成员与名单、项目密码、创建者口令、邀请码、禁入表、撤销栈、云端 Agent 对话等)列在报告里。
+ * What does not move to the cloud with the project (the old room's members and list, the project password, the
+ * creator passphrase, invite codes, the ban list, the undo stack, Cloud Agent chats, etc.) is listed in the report.
  */
 import type { Project } from "../../kernel/project";
 import { UPLOAD_MAX_PARTS, UPLOAD_PART_CHARS } from "../../store/docsync";
 import { SyncLink } from "./link";
 import { tr } from "../../i18n/index.ts";
 
-/* ---------------- 结果与错误 ---------------- */
+/* ---------------- Results and errors ---------------- */
 
 export type MoveStage = "check" | "create" | "upload" | "verify" | "pull-media" | "close-local" | "sync-last" | "enter" | "queue-media" | "done";
 
 export type MoveErrorCode =
-  /** 没登录网站账号 */
+  /** Not logged in to the website account */
   | "login-required"
-  /** 当前打开的不是能搬的东西(已经是云端项目、协作身份还没恢复、在线页面) */
+  /** What is currently open cannot be moved (already a cloud project, collaboration identity not yet restored, online page) */
   | "not-ready"
-  /** 协作房间:不是以创建者身份进入的 */
+  /** Collaboration room: not entered as its creator */
   | "not-creator"
-  /** 协作房间:要创建者密码(本机没存、界面上也没填) */
+  /** Collaboration room: the creator password is required (not stored locally and not filled in on the UI) */
   | "creator-password"
-  /** 协作房间:创建者密码不对 */
+  /** Collaboration room: wrong creator password */
   | "bad-password"
   | "rate-limited"
-  /** 另一个窗口正在搬同一个项目 */
+  /** Another window is moving the same project */
   | "busy"
-  /** 搬的过程中项目一直在被修改(Agent、工具还在改),传了几轮都追不上 */
+  /** The project kept being modified during the move (Agent or tool still editing), and several upload rounds could not catch up */
   | "busy-editing"
-  /** 本机的修改还没落定(等不到文档服务确认) */
+  /** Local changes have not settled (the document service never confirmed) */
   | "save-pending"
-  /** 项目内容超过一次根替换的上限 */
+  /** The project content exceeds the limit for one root replacement */
   | "too-large"
   | "name-taken"
   | "invalid-name"
-  /** 这个账号现在不许新建(托管方的策略、数量上限) */
+  /** This account is currently not allowed to create new ones (host policy, count limit) */
   | "create-refused"
-  /** 软件版本已过期(<0.7.18) */
+  /** The software version is out of date (<0.7.18) */
   | "version-expired"
-  /** 目标云端没有账号办法的新建接口(不是账号模式的节点) */
+  /** The target cloud has no account-mode create endpoint (not an account-mode node) */
   | "not-account-cloud"
-  /** 连不上云端(网络、超时) */
+  /** Cannot reach the cloud (network, timeout) */
   | "network"
-  /** 云端回了服务端错误(5xx):建没建成不确定,请求号留着 */
+  /** The cloud replied with a server error (5xx): whether creation succeeded is uncertain, keep the request ID */
   | "create-failed"
   | "upload-failed"
   | "verify-failed"
@@ -74,9 +96,9 @@ export type MoveErrorCode =
   | "enter-failed";
 
 export interface MediaReport {
-  /** 交给上传队列的素材个数 */
+  /** Number of media items handed to the upload queue */
   queued: number;
-  /** 本机找不到文件、传不上去的素材名字 */
+  /** Names of media whose files cannot be found locally and cannot be uploaded */
   missing: string[];
 }
 
@@ -84,17 +106,17 @@ export type MoveResult =
   | { ok: true; kind: "local" | "room"; projectId: string; name: string; link: string; media: MediaReport | null }
   | {
     ok: false; error: MoveErrorCode; stage: MoveStage; detail?: string;
-    /** 本机协作已经关掉(只有第 5 步之后的失败才是 true);false = 本机的项目、房间、协作状态原样没动 */
+    /** Local collaboration is already closed (only a failure after step 5 is true); false = the local project, room and collaboration state are untouched */
     localClosed: boolean;
-    /** 本机协作关掉之后,当前内容存到本机文件了没有(只在 `localClosed` 时有) */
+    /** After local collaboration was closed, whether the current content was saved to a local file (only present when `localClosed`) */
     localSaved?: boolean;
-    /** 云端已经建好的那个项目(再点一次接着用它);没有建成是 null */
+    /** The project already created in the cloud (clicking again continues with it); null if it was not created */
     cloud: { projectId: string; name: string } | null;
-    /** 限速时服务端给的冷却秒数 */
+    /** Cooldown seconds given by the server when rate limited */
     retryAfter?: number | null;
   };
 
-/* ---------------- 内容比较 ---------------- */
+/* ---------------- Content comparison ---------------- */
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((v) => (v === undefined ? null : canonical(v)));
@@ -109,23 +131,25 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
-/** 项目内容的规范文本:键排序、去掉 `undefined`(与 JSON 往返之后的结果一致) */
+/** Canonical text of the project content: keys sorted, `undefined` removed (consistent with the result after a JSON round trip) */
 export function contentText(project: unknown): string {
   return JSON.stringify(canonical(project));
 }
 
-/** 两份项目内容逐字段相同 */
+/** The two project contents are identical field by field */
 export function sameContent(a: unknown, b: unknown): boolean {
   return a === b || contentText(a) === contentText(b);
 }
 
 /**
- * 一次根替换装得下的字符数:`DocSync` 把超过单次提交上限的根替换拆成最多 `UPLOAD_MAX_PARTS` 片、每片 `UPLOAD_PART_CHARS` 个字符
- * (`src/store/docsync.ts` 的 `wireOps`;文档服务 `PROJECT_LIMITS.UPLOAD_MAX_PARTS`)。再大就传不上去。
+ * Number of characters one root replacement can hold: `DocSync` splits a root replacement that exceeds the
+ * single-commit limit into at most `UPLOAD_MAX_PARTS` pieces of `UPLOAD_PART_CHARS` characters each
+ * (`wireOps` in `src/store/docsync.ts`; the document service's `PROJECT_LIMITS.UPLOAD_MAX_PARTS`). Anything larger
+ * cannot be uploaded.
  */
 export const MAX_CONTENT_CHARS = UPLOAD_MAX_PARTS * UPLOAD_PART_CHARS;
 
-/* ---------------- 「云端」指的是不是账号云端 ---------------- */
+/* ---------------- Whether "the cloud" means the account cloud ---------------- */
 
 const hostOf = (url: string): string | null => {
   try {
@@ -135,10 +159,13 @@ const hostOf = (url: string): string | null => {
 };
 
 /**
- * 界面上填的(或房间登记用的)云端地址,指的是不是这台桌面版配置的账号云端。
- * 是:搬到云端走账号办法;不是(用户自己填了别的节点):照旧办法,由 `server/recovery/relocation-preflight.mjs` 把关。
- * 认三种:没填(缺省);和账号云端同一个主机;内置的缺省托管地址及它的 sslip.io 写法(与账号云端是同一个节点的另一个入口,
- * 账号任务书「在线浏览器的地址」)。
+ * Whether the cloud address filled in on the UI (or used for room registration) points to the account cloud
+ * configured for this desktop app.
+ * Yes: move to the cloud goes through the account mode. No (the user filled in another node themselves): the old
+ * way, guarded by `server/recovery/relocation-preflight.mjs`.
+ * Three cases are recognized: not filled in (default); the same host as the account cloud; the built-in default
+ * hosted address and its sslip.io form (another entrance to the same node as the account cloud; account brief,
+ * "Address of the online browser").
  */
 export function isAccountCloudTarget(serviceUrl: string | null | undefined, accountOrigin: string, defaultHostedUrl: string): boolean {
   const text = String(serviceUrl ?? "").trim();
@@ -151,31 +178,35 @@ export function isAccountCloudTarget(serviceUrl: string | null | undefined, acco
   return name(host) === name(builtin) || name(host) === `${name(builtin).replaceAll(".", "-")}.sslip.io`;
 }
 
-/* ---------------- 本机记下的一次搬迁(请求号) ---------------- */
+/* ---------------- A move recorded locally (request ID) ---------------- */
 
 /**
- * 一次还没做完的搬迁。只记在这台设备的页面存储里(不进项目文件、不进房间记录):
- * 做完就删;失败后再点一次按它接着做,用同一个请求号、同一份占位内容(新建接口按请求号幂等,内容不同会被拒)。
+ * A move that is not yet finished. It is recorded only in this device's page storage (not in the project file or
+ * the room record): deleted when done; after a failure, clicking again continues from it, using the same request ID
+ * and the same placeholder content (the create endpoint is idempotent on the request ID, and different content is
+ * rejected).
  */
 export interface MoveAttempt {
   v: 1;
   accountId: string;
-  /** 本机项目文件里的项目号(`project.id`);协作房间里也是它,不是房间号 */
+  /** The project ID in the local project file (`project.id`); it is also this in a collaboration room, not the room ID */
   contentId: string;
   requestId: string;
   name: string;
   stub: unknown;
-  /** 云端已经回了项目号(建成了);没有 = 上一次请求的结果不确定 */
+  /** The cloud already replied with a project ID (created); none = the result of the last request is uncertain */
   projectId?: string;
   /**
-   * 这次新建请求有没有带上本机原来的项目号(搬上去还是同一个项目,10-14 第 3.3 节)。原样重放时照它带或不带;
-   * 原号已被云端别的项目占着时改成不带、另起请求号,由云端发新号。旧记录没有这一项,按不带算(那时的请求就没带)
+   * Whether this create request carried the original local project ID (the project is still the same project after
+   * moving up, 10-14 section 3.3). On an exact replay, send it or not accordingly;
+   * if the original ID is already taken by another cloud project, switch to not sending it and start a new request ID,
+   * and the cloud issues a new ID. Old records lack this field and count as not sent (that request did not send it)
    */
   keepId?: boolean;
   at: number;
 }
 
-/** 本机原来的项目号能不能直接当云端项目号(与 `server/account/authority.mjs` 的 `projectIdOK` 同一个形状) */
+/** Whether the original local project ID can be used directly as the cloud project ID (same shape as `projectIdOK` in `server/account/authority.mjs`) */
 export const keepableProjectId = (id: string): boolean => /^(?:sp_[a-z2-7]{26}|[A-Za-z0-9_-]{8,64})$/.test(id);
 
 export interface AttemptStorage {
@@ -185,12 +216,12 @@ export interface AttemptStorage {
 }
 
 export const MOVE_ATTEMPTS_KEY = "pc.account.move";
-/** 「正在搬」的占位(同一台电脑上开了两个窗口时互相看得见);键同上,值是 `{ owner, at }` */
+/** A placeholder for "currently moving" (two windows on the same computer can see each other); the key is as above, the value is `{ owner, at }` */
 export const MOVE_LOCKS_KEY = "pc.account.move.lock";
-/** 占位多久没续就算那个窗口不在了(搬的时候每 `LOCK_BEAT_MS` 续一次) */
+/** If the placeholder is not renewed for this long, that window counts as gone (renewed every `LOCK_BEAT_MS` while moving) */
 export const LOCK_STALE_MS = 30_000;
 export const LOCK_BEAT_MS = 5_000;
-/** 搬到云端时关掉的本机协作房间(房间号 → 时刻):带着这些房间关联的旧文件重开时当普通本地项目开 */
+/** Local collaboration rooms closed when moving to the cloud (room ID → moment): an old file carrying these room links opens as an ordinary local project when reopened */
 export const MOVED_ROOMS_KEY = "pc.account.moved-rooms";
 const MOVED_ROOMS_KEEP = 200;
 
@@ -221,7 +252,7 @@ export function createAttemptStore(storage: AttemptStorage | null) {
       const a = readAll()[attemptKey(accountId, contentId)];
       return valid(a, accountId, contentId) ? a : null;
     },
-    /** 写不进去(存储满了、被禁用)要抛出来:记不住请求号就不该去建项目 */
+    /** A write failure (storage full, disabled) must be thrown: if the request ID cannot be remembered, the project should not be created */
     put(a: MoveAttempt): void {
       const all = readAll();
       all[attemptKey(a.accountId, a.contentId)] = a;
@@ -229,34 +260,37 @@ export function createAttemptStore(storage: AttemptStorage | null) {
       const back = readAll()[attemptKey(a.accountId, a.contentId)];
       if (!back || back.requestId !== a.requestId || back.projectId !== a.projectId) throw new Error(tr("The move record was not saved"));
     },
-    /** 只删自己那一次的记录:请求号对不上(另一个窗口后来记的)不动 */
+    /** Delete only this move's own record: if the request ID does not match (recorded later by another window), leave it alone */
     drop(accountId: string, contentId: string, requestId: string): void {
       const all = readAll();
       if (all[attemptKey(accountId, contentId)]?.requestId !== requestId) return;
       delete all[attemptKey(accountId, contentId)];
-      try { writeAll(all); } catch { /* 删不掉:下次按它接着用同一个项目,不会多建 */ }
+      try { writeAll(all); } catch { /* Cannot delete it: next time continue with the same project from it, so no extra one is created */ }
     },
-    /** 占住「正在搬这个项目」(自己已经占着就是续一次)。别的窗口占着、还没过期回 false */
+    /**
+     * Claim "this project is being moved" (if we already hold it, this renews it). Returns false if
+     * another window holds it and it has not expired
+     */
     lock(accountId: string, contentId: string, owner: string, at: number): boolean {
       const all = readJson(MOVE_LOCKS_KEY) as Record<string, { owner?: string; at?: number }>;
       const held = all[attemptKey(accountId, contentId)];
       if (held && held.owner !== owner && typeof held.at === "number" && at - held.at < LOCK_STALE_MS && at >= held.at) return false;
       all[attemptKey(accountId, contentId)] = { owner, at };
-      try { storage?.setItem(MOVE_LOCKS_KEY, JSON.stringify(all)); } catch { /* 占不上位:照常做,记录按请求号各管各的 */ }
+      try { storage?.setItem(MOVE_LOCKS_KEY, JSON.stringify(all)); } catch { /* Could not claim it: proceed as usual, records are kept separately per request ID */ }
       return true;
     },
     unlock(accountId: string, contentId: string, owner: string): void {
       const all = readJson(MOVE_LOCKS_KEY) as Record<string, { owner?: string }>;
       if (all[attemptKey(accountId, contentId)]?.owner !== owner) return;
       delete all[attemptKey(accountId, contentId)];
-      try { if (Object.keys(all).length) storage?.setItem(MOVE_LOCKS_KEY, JSON.stringify(all)); else storage?.removeItem(MOVE_LOCKS_KEY); } catch { /* 过期后自然失效 */ }
+      try { if (Object.keys(all).length) storage?.setItem(MOVE_LOCKS_KEY, JSON.stringify(all)); else storage?.removeItem(MOVE_LOCKS_KEY); } catch { /* Expires on its own */ }
     },
-    /** 记下「这个本机协作房间是搬到云端时关掉的」 */
+    /** Record that "this local collaboration room was closed when moving to the cloud" */
     noteMovedRoom(roomId: string, at: number): void {
       const all = readJson(MOVED_ROOMS_KEY) as Record<string, number>;
       all[roomId] = at;
       const keep = Object.entries(all).sort((a, b) => b[1] - a[1]).slice(0, MOVED_ROOMS_KEEP);
-      try { storage?.setItem(MOVED_ROOMS_KEY, JSON.stringify(Object.fromEntries(keep))); } catch { /* 记不下:那种旧文件重开时显示「原房间已删除」 */ }
+      try { storage?.setItem(MOVED_ROOMS_KEY, JSON.stringify(Object.fromEntries(keep))); } catch { /* Could not record it: such an old file shows "original room deleted" when reopened */ }
     },
     isMovedRoom(roomId: string): boolean {
       return typeof (readJson(MOVED_ROOMS_KEY) as Record<string, unknown>)[roomId] === "number";
@@ -266,65 +300,75 @@ export function createAttemptStore(storage: AttemptStorage | null) {
 
 export type AttemptStore = ReturnType<typeof createAttemptStore>;
 
-/* ---------------- 调用方给的东西 ---------------- */
+/* ---------------- What the caller provides ---------------- */
 
 export interface MoveSource {
   kind: "local" | "room";
   contentId: string;
-  /** 协作房间:本页面是不是以创建者身份进入的 */
+  /** Collaboration room: whether this page entered as the creator */
   creator?: boolean;
-  /** 协作房间:房间号 */
+  /** Collaboration room: room number */
   roomId?: string;
 }
 
-/** 账号接口的失败:`status` 0 = 没连上 */
+/** Failure of the account API: `status` 0 = could not connect */
 export interface StatusError { status?: number; code?: string; message?: string }
 
 export interface MoveDeps {
-  /** 现在打开的是什么;不能搬回 null */
+  /** What is open right now; null if it cannot be moved */
   source(): MoveSource | null;
-  /** 当前登录的账号;没登录回 null;连不上抛错 */
+  /** The currently logged-in account; null if not logged in; throws if unreachable */
   account(): Promise<{ id: string; name: string } | null>;
-  /** 新建云端项目;失败抛带 `status` / `code` 的错。`extra`:本机原来的项目号、历史序号与提交摘要(搬上去还是同一个项目) */
+  /**
+   * Create a cloud project; on failure throws an error carrying `status` / `code`. `extra`: the
+   * original local project ID, history sequence number and commit digest (the moved project is
+   * still the same project)
+   */
   create(name: string, stub: unknown, requestId: string, extra?: { projectId?: string; rev?: number; history?: unknown[] }): Promise<{ projectId: string }>;
   /**
-   * 本机这一份现在的历史序号与提交摘要:从当前连着的本机文档连接(`DocSync` 的 `rev` / `history`)读,
-   * 云端项目从这个序号接着往上数(10-14 第 3.3 节)。没有连着的文档连接回 null(云端从 1 起)
+   * The local copy's current history sequence number and commit digest: read from the currently
+   * connected local document connection (`rev` / `history` of `DocSync`); the cloud project keeps
+   * counting up from this number (10-14 section 3.3). Returns null when no document connection is
+   * attached (the cloud starts from 1)
    */
   lineage?(): { rev: number; history: unknown[] } | null;
-  /** 等本机的修改都落定,回一份项目内容的拷贝;等不到抛错 */
+  /** Wait until local edits settle, then return a copy of the project content; throws if that never happens */
   snapshot(): Promise<Project>;
-  /** 此刻编辑器里的项目内容(不拷贝,只用来比较) */
+  /** The project content in the editor right now (not copied, only used for comparison) */
   current(): Project;
-  /** 把内容写进云端项目(根替换);失败抛错 */
+  /** Write the content into the cloud project (root replace); throws on failure */
   upload(projectId: string, snapshot: Project): Promise<unknown>;
-  /** 另开一条连接把云端的内容读回来;失败抛错 */
+  /** Open a separate connection to read the cloud content back; throws on failure */
   read(projectId: string): Promise<Project>;
-  /** 协作房间:核对创建者密码(只读,不改东西) */
+  /** Collaboration room: verify the creator password (read-only, changes nothing) */
   checkCreator?(password: string): Promise<{ ok: true } | { ok: false; error: "bad-password" | "rate-limited" | "network" }>;
-  /** 协作房间:把这台电脑上没有的素材拉齐;`missing` 是还差几个 */
+  /** Collaboration room: fetch the media this computer lacks; `missing` is how many are still missing */
   pullMedia?(project: Project): Promise<{ ok: boolean; missing: number }>;
-  /** 协作房间:关掉本机协作(删房间),编辑器回到本机项目 */
+  /** Collaboration room: close local collaboration (delete the room); the editor returns to the local project */
   closeRoom?(password: string): Promise<{ ok: true } | { ok: false; error: string }>;
   /**
-   * 把本机这一份照现在的内容存到本机文件(不带房间关联)。本地项目:有草稿才存。协作房间(刚关掉):一定要存下来,
-   * 没有草稿就新开一份 —— 房间已经删了,这是唯一一份全的。存不下抛错
+   * Save the local copy as it is now to a local file (without the room association). Local project:
+   * save only if there is a draft. Collaboration room (just closed): it must be saved, creating a
+   * new copy if there is no draft -- the room is already deleted, so this is the only complete
+   * copy. Throws if it cannot be saved
    */
   saveLocal?(): Promise<void>;
   /**
-   * 编辑器接到云端项目上。**换过去的那一刻**要再比一次:编辑器里的内容、云端发来的内容,有一样与 `snapshot` 不同就不换,
-   * 抛带 `code: "content-changed"` 的错(流程回头再传、再来)。别的失败抛带 `status` 的错
+   * Attach the editor to the cloud project. **Compare once more at the moment of switching**: if the
+   * editor content or the content sent by the cloud differs from `snapshot` in any way, do not
+   * switch and throw an error with `code: "content-changed"` (the flow uploads again and retries).
+   * Other failures throw an error with `status`
    */
   enter(o: { projectId: string; name: string; snapshot: Project; kind: "local" | "room" }): Promise<void>;
-  /** 项目引用到的素材交给上传队列;交不上回 null(调用方自己提示并重试);不抛错 */
+  /** Hand the media referenced by the project to the upload queue; null if it cannot be handed over (the caller reports it and retries); does not throw */
   queueMedia(): Promise<MediaReport | null>;
-  /** 这个窗口的号(同一台电脑上两个窗口同时搬同一个项目时互相认得出);不给用一个随机的 */
+  /** This window's ID (so two windows on the same computer moving the same project at once can recognize each other); a random one is used if not given */
   owner?: string;
   attempts: AttemptStore;
   newRequestId(): string;
-  /** 新建时带的占位内容:一份完整的空白项目(编辑器打得开) */
+  /** Placeholder content sent on creation: a complete blank project (the editor can open it) */
   stub(name: string, contentId: string): unknown;
-  /** 项目链接 */
+  /** Project link */
   linkOf(projectId: string): string;
   onStage?(stage: MoveStage): void;
   now?(): number;
@@ -332,15 +376,15 @@ export interface MoveDeps {
 }
 
 export interface MoveInput {
-  /** 云端项目名(已经建好、接着做的那一次沿用建好时的名字) */
+  /** Cloud project name (an attempt that was already created and is being continued reuses the name it was created with) */
   name: string;
-  /** 协作房间:创建者密码 */
+  /** Collaboration room: creator password */
   creatorPassword?: string;
 }
 
-/** 内容在传的过程中本机又变了:最多再传几轮 */
+/** The local copy changed again during upload: maximum number of extra upload rounds */
 export const MAX_CONTENT_ROUNDS = 3;
-/** 进项目没成(连接一时不通)最多试几次 */
+/** Entering the project failed (connection temporarily unavailable): maximum number of attempts */
 export const ENTER_TRIES = 3;
 
 const statusOf = (error: unknown): number | undefined => {
@@ -354,17 +398,22 @@ const detailOf = (error: unknown): string => {
 };
 
 /**
- * 新建接口的失败:这个请求号**肯定没有**建出项目。只认这几种:名字重、名字不合法、账号不许建(403)、没有这条路由、
- * 软件版本过期、原来的项目号已被别的云端项目占着 ——
- * 它们都是落账之前就拒绝的。别的一律当「结果不确定」留着请求号:401 也是(云端先记下项目、占住名字,初始化完再核一次登录,
- * 那时回 401 项目已经落账,`server/account/authority.mjs` 的 `createProject`),丢了请求号再点就是对着自己看不见的项目报重名。
+ * Failures of the create API where this request ID **definitely did not** create a project. Only
+ * these cases count: name taken, name invalid, account not allowed to create (403), route missing,
+ * app version outdated, original project ID already held by another cloud project --
+ * all of them are rejected before anything is committed. Everything else is treated as "outcome
+ * uncertain" and the request ID is kept: 401 too (the cloud first records the project and holds the
+ * name, then checks the login again after initialization; if 401 is returned at that point the
+ * project is already committed, see `createProject` in `server/account/authority.mjs`). If the
+ * request ID were dropped, clicking again would report a duplicate name against a project we
+ * cannot see.
  */
 function createDefinitelyFailed(error: unknown): boolean {
   const kind = createErrorCode(error);
   return idTaken(error) || kind === "name-taken" || kind === "invalid-name" || kind === "create-refused" || kind === "not-account-cloud" || kind === "version-expired";
 }
 
-/** 云端说带去的原项目号已被别的项目占着(`project-id-taken`,409) */
+/** The cloud says the original project ID we brought is already held by another project (`project-id-taken`, 409) */
 const idTaken = (error: unknown): boolean => codeOf(error) === "project-id-taken";
 
 function createErrorCode(error: unknown): MoveErrorCode {
@@ -380,8 +429,10 @@ function createErrorCode(error: unknown): MoveErrorCode {
 }
 
 /**
- * 搬到云端。不抛错:结果里写清停在哪一步、本机协作关了没有、云端有没有已经建好的项目。
- * 同一个项目同一时间只做一次(同一台电脑上的别的窗口也算);中途失败后再调一次按本机记下的请求号接着做。
+ * Move to the cloud. Does not throw: the result states which step it stopped at, whether local
+ * collaboration was closed, and whether the cloud already has a created project.
+ * Only one move runs per project at a time (other windows on the same computer count too); after
+ * a mid-way failure, calling again continues with the request ID recorded locally.
  */
 export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Promise<MoveResult> {
   const now = deps.now ?? Date.now;
@@ -394,7 +445,7 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
   const fail = (error: MoveErrorCode, detail?: string, extra: { retryAfter?: number | null } = {}): MoveResult =>
     ({ ok: false, error, stage, localClosed, ...(localClosed ? { localSaved: localSaved === true } : {}), cloud, ...(detail ? { detail } : {}), ...extra });
 
-  /* 1 核对 */
+  /* 1 Verify */
   at("check");
   const source = deps.source();
   if (!source || !source.contentId) return fail("not-ready");
@@ -411,7 +462,8 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
     const checked = await deps.checkCreator(password);
     if (!checked.ok) return fail(checked.error);
   }
-  // 同一个项目同一时间只做一次:另一个窗口正在搬就不动(它的记录、它建的项目都不碰)
+  // Only one move per project at a time: if another window is moving it, do nothing (do not touch
+  // its record or the project it created)
   const owner = deps.owner ?? `w-${Math.random().toString(36).slice(2)}-${now()}`;
   if (!deps.attempts.lock(account.id, source.contentId, owner, now())) return fail("busy");
   const beat = setInterval(() => { deps.attempts.lock(account.id, source.contentId, owner, now()); }, LOCK_BEAT_MS);
@@ -427,10 +479,11 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
     const tooLarge = (p: Project) => JSON.stringify(p).length > MAX_CONTENT_CHARS;
     if (tooLarge(snapshot)) return fail("too-large", String(JSON.stringify(snapshot).length));
 
-    /* 2 建项目(或接着用上一次建好的那个) */
+    /* 2 Create the project (or continue with the one created last time) */
     at("create");
     const name = input.name.trim();
-    // 历史序号与提交摘要从本机当前的文档连接读(快照之后读:那时本机的修改已经落定),云端接着这个序号往上数
+    // Read the history sequence number and commit digest from the local document connection (read
+    // after the snapshot: by then local edits have settled); the cloud keeps counting up from this number
     const lineage = deps.lineage?.() ?? null;
     const extraOf = (a: MoveAttempt) => ({
       ...(a.keepId === true ? { projectId: a.contentId } : {}),
@@ -441,16 +494,20 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
     let idWasTaken = false;
     let attempt = deps.attempts.get(account.id, source.contentId);
     if (attempt && !attempt.projectId) {
-      // 上一次的请求结果不确定(没收到回包):先用原样的请求问清楚,免得换了名字又建一个。
-      // 云端的请求账本不过期,原样重放一直安全,所以这条记录也不设过期
+      // The outcome of the last request is uncertain (no response received): first ask about it with the
+      // identical request, to avoid creating another project under a new name.
+      // The cloud's request ledger does not expire and replaying the identical request is always safe,
+      // so this record has no expiry either
       try {
         const made = await deps.create(attempt.name, attempt.stub, attempt.requestId, extraOf(attempt));
         attempt = { ...attempt, projectId: made.projectId };
         deps.attempts.put(attempt);
       } catch (error) {
         if (!createDefinitelyFailed(error)) return fail(createErrorCode(error), detailOf(error));
-        // 那一次确实没建成:记录作废。名字没换、或者不是名字的问题,直接报给用户;换了名字的按这一次填的重新来
-        // (原来的项目号被占着的,下面另起一个不带原号的请求)
+        // That attempt really did not create anything: the record is void. If the name was not changed, or
+        // the problem is not the name, report it to the user directly; if the name was changed, start over
+        // with what was entered this time
+        // (if the original project ID is held, start a new request below without the original ID)
         deps.attempts.drop(account.id, source.contentId, attempt.requestId);
         const kind = createErrorCode(error);
         idWasTaken = idTaken(error);
@@ -460,11 +517,14 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
     }
     if (!attempt) {
       if (!name || name.length > 200 || /[\u0000-\u001f]/.test(name)) return fail("invalid-name");
-      // 先带本机原来的项目号去建(搬上去还是同一个项目);原号已被云端别的项目占着(比如这份文件就是从那个云端项目另存出来的),
-      // 改由云端发新号再建一次 —— 历史序号照样接着本机往上数
+      // First create with the local original project ID (the moved project is still the same project);
+      // if the original ID is already held by another cloud project (for example this file was saved as
+      // a copy from that cloud project), let the cloud issue a new ID and create again -- the history
+      // sequence number still continues counting up from the local one
       for (let keepId = keepableProjectId(source.contentId) && !idWasTaken; ; keepId = false) {
         attempt = fresh(keepId);
-        // 先记下请求号再发请求:发出去之后回包丢了,下一次也知道该问哪个请求
+        // Record the request ID before sending the request: if the response is lost after sending, the
+        // next attempt knows which request to ask about
         try { deps.attempts.put(attempt); } catch (error) { return fail("not-ready", detailOf(error)); }
         try {
           const made = await deps.create(attempt.name, attempt.stub, attempt.requestId, extraOf(attempt));
@@ -481,10 +541,10 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
     const made = attempt;
     const projectId = made.projectId!;
     cloud = { projectId, name: made.name };
-    /** 云端说这个项目不在了(被删了):记录作废,下次重新建 */
+    /** The cloud says this project is gone (deleted): the record is void, create it again next time */
     const goneCheck = (error: unknown) => { if (statusOf(error) === 404) deps.attempts.drop(account.id, source.contentId, made.requestId); };
 
-    /* 3、4 传内容、读回来核对 */
+    /* 3, 4 Upload the content, read it back and verify */
     const push = async (content: Project): Promise<MoveResult | null> => {
       at(localClosed ? "sync-last" : "upload");
       try { await deps.upload(projectId, content); }
@@ -500,7 +560,9 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
       if (!sameContent(back, content)) return fail(localClosed ? "sync-last-failed" : "verify-failed", "content-mismatch");
       return null;
     };
-    // 这期间本机又改了就再来一轮;传了几轮还在变(有 Agent 或工具连着改)就停下 —— 本机还没动过,不往下走
+    // If the local copy changed in the meantime, do another round; if it is still changing after
+    // several rounds (an Agent or tool is editing it), stop -- the local copy has not been touched, so
+    // do not proceed
     for (let round = 1; ; round++) {
       const failed = await push(snapshot);
       if (failed) return failed;
@@ -511,14 +573,14 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
       if (tooLarge(snapshot)) return fail("too-large", String(JSON.stringify(snapshot).length));
     }
 
-    /** 存过本机文件的那一份(对象身份);和 `snapshot` 不是同一个就还要再存 */
+    /** The copy that was saved to the local file (object identity); if it is not the same as `snapshot`, it must be saved again */
     let savedFor: Project | null = null;
     const saveLocal = async () => {
       try { await deps.saveLocal?.(); localSaved = true; savedFor = snapshot; }
       catch { localSaved = false; savedFor = null; }
     };
 
-    /* 5 协作房间:拉齐素材、关掉本机协作,关完第一件事是把当前内容存到本机 */
+    /* 5 Collaboration room: fetch media, close local collaboration; the first thing after closing is to save the current content locally */
     if (source.kind === "room") {
       if (deps.pullMedia) {
         at("pull-media");
@@ -527,7 +589,9 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
         if (!pulled.ok) return fail("media-pull-failed", String(pulled.missing));
       }
       at("close-local");
-      // 先记下「这个房间是搬到云端时关的」:带着它的关联、这次又写不回去的旧文件(从别处打开的那份),重开时当普通本地项目开
+      // First record that "this room was closed when moving to the cloud": an old file that carries its
+      // association and cannot be written back this time (the copy opened from elsewhere) is opened as a
+      // normal local project when reopened
       if (source.roomId) deps.attempts.noteMovedRoom(source.roomId, now());
       let closed: { ok: true } | { ok: false; error: string };
       try { closed = await deps.closeRoom!(password); } catch (error) { closed = { ok: false, error: detailOf(error) }; }
@@ -537,7 +601,7 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
       if (!sameContent(deps.current(), snapshot)) savedFor = null;
     }
 
-    /* 6 进项目。换过去之前、换过去的那一刻都再比:本机这一份与云端核对过的不同,就先补传再来 */
+    /* 6 Enter the project. Compare both before switching and at the moment of switching: if the local copy differs from what was verified with the cloud, upload the difference first and retry */
     let chases = 0;
     for (let tries = 1; ;) {
       if (!sameContent(deps.current(), snapshot)) {
@@ -545,19 +609,21 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
         try { snapshot = await deps.snapshot(); }
         catch (error) { return fail(localClosed ? "sync-last-failed" : "save-pending", detailOf(error)); }
         if (tooLarge(snapshot)) return fail("too-large", String(JSON.stringify(snapshot).length));
-        // 本机协作已经关了的:先存本机、再补传 —— 补传失败时本机这一份是全的
+        // If local collaboration is already closed: save the local copy first, then upload the difference --
+        // if the upload fails, the local copy is complete
         if (localClosed) await saveLocal();
         const failed = await push(snapshot);
         if (failed) return failed;
         continue;
       }
-      // 本机那一份照现在的样子存一次:搬完之后它是一个普通的本地项目
+      // Save the local copy once as it looks now: after the move it is an ordinary local project
       if (savedFor !== snapshot) await saveLocal();
       at("enter");
       try { await deps.enter({ projectId, name: made.name, snapshot, kind: source.kind }); break; }
       catch (error) {
         if (codeOf(error) === "content-changed") {
-          // 换过去的那一刻内容对不上(刚又改了):没有换。回到上面补传;连着几次都这样就停
+          // The content did not match at the moment of switching (it was just changed again): no switch.
+          // Go back up and upload the difference; stop if this happens several times in a row
           if (++chases > MAX_CONTENT_ROUNDS) return fail("busy-editing");
           continue;
         }
@@ -571,20 +637,27 @@ export async function moveToAccountCloud(deps: MoveDeps, input: MoveInput): Prom
     deps.attempts.drop(account.id, source.contentId, made.requestId);
     at("queue-media");
     let media: MediaReport | null = null;
-    // 交不上(上传通道没就绪)是 null:调用方自己提示「还没开始上传」并重试到交上为止
+    // null means it could not be handed over (upload channel not ready): the caller reports "upload has
+    // not started yet" and retries until it is handed over
     try { media = await deps.queueMedia(); } catch { media = null; }
     at("done");
     return { ok: true, kind: source.kind, projectId, name: made.name, link: deps.linkOf(projectId), media };
   }
 }
 
-/* ---------------- 放弃这次搬迁(〔裁〕H04,用户 2026-10-22 定) ---------------- */
+/* ---------------- Abandon this move ([ruling] H04, user decision, 2026-10-22) ---------------- */
 
 /**
- * 「半成品」的判据:这台设备的页面存储里,有一条「当前登录账号 + 当前打开的本机项目号」的搬迁记录(`MoveAttempt`),
- * 而且记录里**已经有云端回的项目号**(云端确实建成了)。这条记录只由搬迁流程写(先记请求号再发新建,回了项目号再补上),
- * 搬成了在进项目之后就删掉,所以「记录还在、带着项目号」= 上一次搬到云端建好了云端项目、但没做完。
- * 正在打开的是云端项目(不能搬的东西)时 `source` 是 null,不算;请求结果不确定(记录里没有项目号)的不算 —— 云端建没建成不知道。
+ * Criterion for a "half-finished move": the page storage of this device holds a move record
+ * (`MoveAttempt`) for "the currently logged-in account + the currently open local project ID", and
+ * the record **already has the project ID returned by the cloud** (the cloud really did create it).
+ * This record is written only by the move flow (record the request ID first, then send the create
+ * request, then add the project ID once returned), and is deleted after entering the project on a
+ * successful move, so "record still present and carrying a project ID" = the last move to the cloud
+ * created the cloud project but did not finish.
+ * When the open one is a cloud project (something that cannot be moved), `source` is null and it
+ * does not count; if the request outcome is uncertain (no project ID in the record) it does not
+ * count either -- it is unknown whether the cloud created it.
  */
 export function pendingAttempt(attempts: AttemptStore, accountId: string, source: MoveSource | null): (MoveAttempt & { projectId: string }) | null {
   if (!source?.contentId) return null;
@@ -593,80 +666,90 @@ export function pendingAttempt(attempts: AttemptStore, accountId: string, source
 }
 
 export type AbandonErrorCode =
-  /** 现在打开的不是本机项目或本机协作房间 */
+  /** What is open now is neither a local project nor a local collaboration room */
   | "not-ready"
   | "login-required"
-  /** 没有半成品可放弃(记录没了、或云端建没建成不确定) */
+  /** There is no half-finished move to abandon (the record is gone, or it is uncertain whether the cloud created it) */
   | "no-pending"
-  /** 这个窗口或另一个窗口正在搬这个项目 */
+  /** This window or another window is moving this project */
   | "busy"
-  /** 云端说当前账号不是那个项目的创建者 */
+  /** The cloud says the current account is not the creator of that project */
   | "not-creator"
-  /** 云端那个项目已经有别的成员、或有设备正连着:不当半成品删 */
+  /** That cloud project already has other members, or a device is connected: do not delete it as a half-finished move */
   | "in-use"
-  /** 连不上云端;删的请求发出去了而回包丢了、再查也查不到的,也是这一种(再点一次照样安全) */
+  /** Cannot reach the cloud; also this kind: the delete request was sent but the response was lost and a lookup finds nothing (clicking again is just as safe) */
   | "network"
-  /** 云端回了别的错误 */
+  /** The cloud returned another error */
   | "delete-failed";
 
 export type AbandonResult =
-  | { ok: true; projectId: string; name: string; /** 点之前云端那个项目已经不在了(只清了本机的记录) */ already: boolean }
+  | { ok: true; projectId: string; name: string; /** Before the click, that cloud project was already gone (only the local record was cleared) */ already: boolean }
   | { ok: false; error: AbandonErrorCode; name: string | null; detail?: string };
 
-/** 云端那个项目此刻的样子(账号接口 `/hosted/shared/account/members` 读到的) */
+/** What that cloud project looks like right now (read from the account API `/hosted/shared/account/members`) */
 export interface CloudProjectState {
   accessRevision: number;
-  /** 当前账号是不是它的创建者 */
+  /** Whether the current account is its creator */
   creator: boolean;
-  /** 除创建者之外的成员个数 */
+  /** Number of members other than the creator */
   otherMembers: number;
-  /** 此刻连着这个项目的设备个数(含创建者自己的别的设备) */
+  /** Number of devices connected to this project right now (including the creator's own other devices) */
   liveDevices: number;
 }
 
 export interface AbandonDeps {
   source(): MoveSource | null;
-  /** 当前登录的账号;没登录回 null;连不上抛错 */
+  /** The currently logged-in account; null if not logged in; throws if unreachable */
   account(): Promise<{ id: string; name: string } | null>;
   attempts: AttemptStore;
-  /** 读云端项目此刻的样子;项目不在了抛 404(`no-project` / `project-gone`) */
+  /** Read what the cloud project looks like right now; throws 404 if the project is gone (`no-project` / `project-gone`) */
   inspect(projectId: string): Promise<CloudProjectState>;
-  /** 删云端项目(`/hosted/shared/account/admin` 的 `op: "delete"`,「删除项目」走的同一个接口) */
+  /** Delete the cloud project (`op: "delete"` of `/hosted/shared/account/admin`, the same API that "Delete project" uses) */
   remove(projectId: string, expectedAccessRevision: number, requestId: string): Promise<unknown>;
-  /** 本页内存里记着、指向这个云端项目的关联清掉(另存文件时会写进文件的那一份,`recoveryAssociation.ts`) */
+  /** Clear the association kept in this page's memory that points to this cloud project (the copy that gets written into the file on save-as, `recoveryAssociation.ts`) */
   forget?(projectId: string): void;
   newRequestId(): string;
   owner?: string;
   now?(): number;
 }
 
-/** 账号接口 `/hosted/shared/account/members` 回的成员快照(`client.ts` 的 `AccountMembersSnapshot`)里用得着的几项 */
+/** The fields we need from the member snapshot returned by the account API `/hosted/shared/account/members` (`AccountMembersSnapshot` in `client.ts`) */
 export interface MembersLike {
   accessRevision: number; creatorAccountId: string; self: { creator: boolean };
   members: { accountId: string }[]; devices: { conns: { role: string }[] }[];
 }
 
-/** 成员快照 → 判「有没有人在用」要的几项。设备只算人开着的页面:托管方的渲染节点、云端 Agent 的连接跟着项目走,不代表有人在用 */
+/** Member snapshot → the fields needed to decide "is anyone using it". Only pages a person has open count as devices: the hosted side's render nodes and the Cloud Agent's connections follow the project and do not mean someone is using it */
 export function cloudProjectStateOf(m: MembersLike): CloudProjectState {
   return { accessRevision: m.accessRevision, creator: m.self.creator,
     otherMembers: m.members.filter((x) => x.accountId !== m.creatorAccountId).length,
     liveDevices: m.devices.filter((d) => d.conns.some((c) => c.role === "page")).length };
 }
 
-/** 云端确认这个项目不在了(删了、或从来没有):只认账号接口的这两种 404,`no-route`(不是账号模式的节点)不算 */
+/** The cloud confirms this project is gone (deleted, or never existed): only these two 404s from the account API count; `no-route` (a node not in account mode) does not */
 const projectGone = (error: unknown): boolean => statusOf(error) === 404 && ["no-project", "project-gone"].includes(codeOf(error));
 
-/** 删的那一下成员状态刚变过(`access-revision-mismatch`):重新查一遍再决定,最多几轮 */
+/** Member state had just changed at the moment of deletion (`access-revision-mismatch`): query again and then decide, at most this many rounds */
 export const ABANDON_ROUNDS = 3;
 
 /**
- * 放弃这次搬迁:删掉上一次搬到云端没做完时建好的那个云端项目,再清掉本机记的搬迁记录。不抛错。
+ * Abandon this move: delete the cloud project created by the last unfinished move to the cloud,
+ * then clear the move record kept locally. Does not throw.
  *
- * - 只认 `pendingAttempt` 的判据;删之前再问一次云端:必须是当前账号建的、没有别的成员、没有设备正连着,否则不删(`in-use`)。
- * - **幂等**:云端已经没有这个项目(以前删过、这次删的回包丢了)算成功,只清本机记录;重复点、断网后重试都不会报错。
- * - **先云端、后本机**:云端确认不在了才删本机记录;云端没删成时本机记录、本机项目都原样不动(下次「再点一次」照旧能接着搬)。
- * - 本机项目文件不动:搬迁失败时项目文件里本来就不记这个云端项目(进云端项目成功才记云端关联,`enterAccountProject`)。
- * - 和搬迁共用「正在搬这个项目」的占位:另一个窗口正在搬时不删。
+ * - Uses only the `pendingAttempt` criterion; before deleting, ask the cloud once more: it must
+ *   have been created by the current account, have no other members and no connected devices,
+ *   otherwise it is not deleted (`in-use`).
+ * - **Idempotent**: if the cloud no longer has the project (deleted earlier, or the response of
+ *   this delete was lost) it counts as success and only the local record is cleared; repeated
+ *   clicks and retries after a network drop never report an error.
+ * - **Cloud first, local second**: the local record is deleted only once the cloud confirms it is
+ *   gone; if the cloud delete did not succeed, the local record and local project stay untouched
+ *   (the next "click again" can still continue the move as before).
+ * - The local project file is untouched: when a move fails, the project file does not record this
+ *   cloud project at all (the cloud association is recorded only after entering the cloud project
+ *   succeeds, `enterAccountProject`).
+ * - Shares the "this project is being moved" claim with the move: if another window is moving it,
+ *   nothing is deleted.
  */
 export async function abandonMove(deps: AbandonDeps): Promise<AbandonResult> {
   const now = deps.now ?? Date.now;
@@ -687,7 +770,8 @@ export async function abandonMove(deps: AbandonDeps): Promise<AbandonResult> {
     return fail(s === 0 || codeOf(e) === "network" || codeOf(e) === "timeout" ? "network" : "delete-failed", e);
   };
   const finish = (already: boolean): AbandonResult => {
-    // 云端已经确认不在了:本机的记录删掉(按请求号,只删这一条),本页内存里指向它的关联也清掉
+    // The cloud has confirmed it is gone: delete the local record (by request ID, only this one) and
+    // also clear the association in this page's memory that points to it
     deps.attempts.drop(account!.id, source.contentId, attempt.requestId);
     deps.forget?.(projectId);
     return { ok: true, projectId, name, already };
@@ -704,10 +788,12 @@ export async function abandonMove(deps: AbandonDeps): Promise<AbandonResult> {
       try { await deps.remove(projectId, state.accessRevision, deps.newRequestId()); return finish(false); }
       catch (error) {
         if (projectGone(error)) return finish(true);
-        // 查完到删之间成员状态变了(有人加入、改了设置):重新查一遍,有人加入的就不删了
+        // Member state changed between the lookup and the delete (someone joined, settings changed):
+        // query again, and if someone joined, do not delete
         if (codeOf(error) === "access-revision-mismatch" && round < ABANDON_ROUNDS) continue;
         if (statusOf(error) === 401 || statusOf(error) === 403) return failOf(error);
-        // 回包丢了、云端 5xx:删没删成不确定,再问一次;问到不在了就是删成了
+        // Response lost, or cloud 5xx: it is uncertain whether the delete succeeded, so ask once more;
+        // if it is reported gone, the delete succeeded
         try { await deps.inspect(projectId); }
         catch (again) { if (projectGone(again)) return finish(false); }
         return failOf(error);
@@ -716,17 +802,17 @@ export async function abandonMove(deps: AbandonDeps): Promise<AbandonResult> {
   } finally { deps.attempts.unlock(account.id, source.contentId, owner); }
 }
 
-/* ---------------- 内容的上传与读回(真的文档连接) ---------------- */
+/* ---------------- Content upload and read-back (a real document connection) ---------------- */
 
 export interface ContentLinkOptions {
-  /** 云端文档服务的 WebSocket 地址(`wss://<账号云端>/hosted/`) */
+  /** WebSocket address of the cloud document service (`wss://<account cloud>/hosted/`) */
   url: string;
-  /** 取一张连接票据(每建一个会话取一次;背后的访问令牌要够用) */
+  /** Get a connection ticket (once per session created; the access token behind it must last long enough) */
   ticket: () => Promise<string>;
-  /** 整件事最多等多久(只为防卡死) */
+  /** Maximum time to wait for the whole thing (only to prevent hangs) */
   timeoutMs?: number;
   WebSocketImpl?: unknown;
-  /** 测试用:拿到这条连接(掐传输、断会话) */
+  /** For tests: get hold of this connection (cut the transport, drop the session) */
   onLink?: (link: SyncLink) => void;
 }
 
@@ -740,7 +826,7 @@ class ContentLinkError extends Error {
 
 let contentSeq = 0;
 
-/** 开一条只为这次搬迁用的文档连接,跑完就关。`run` 里用 `until` 等条件;连接被拒、超时、提交被拒都让整件事失败 */
+/** Open a document connection used only for this move and close it when done. Inside `run`, wait for conditions with `until`; a refused connection, a timeout, or a rejected commit makes the whole thing fail */
 async function withContentLink<T>(o: ContentLinkOptions, projectId: string, initial: Project,
   run: (link: SyncLink, until: (check: () => boolean) => Promise<void>) => Promise<T>): Promise<T> {
   let kill!: (error: unknown) => void;
@@ -751,14 +837,16 @@ async function withContentLink<T>(o: ContentLinkOptions, projectId: string, init
   const link: SyncLink = new SyncLink({
     url: o.url, projectId, session: `move-${++contentSeq}-${rand}`, initial, initialize: false,
     protocols: async () => ["promptcut.v1", `promptcut.account.${await o.ticket()}`],
-    // 关闭码不当终局(账号连接上 4003 也用在权限变化),该不该再连由取票据的接口说了算
+    // A close code is not final (4003 on an account connection is also used for permission changes);
+    // whether to reconnect is up to the ticket endpoint
     isFatalClose: () => false,
     onProtocolError: (error) => {
       const s = statusOf(error);
       if (s === 401 || s === 403 || s === 404) { kill(new ContentLinkError(codeOf(error) || "refused", s)); return true; }
       return false;
     },
-    // 这条连接背后的访问令牌到期:按断线处理,凭新票据重建会话,没确认的提交在新会话上补发
+    // The access token behind this connection expired: treat it as a disconnect, rebuild the session with
+    // a new ticket, and resend unconfirmed commits on the new session
     onAuthExpired: () => link.expire(),
     ...(o.WebSocketImpl ? { WebSocketImpl: o.WebSocketImpl as never } : {}),
   });
@@ -783,8 +871,10 @@ async function withContentLink<T>(o: ContentLinkOptions, projectId: string, init
 const linkReady = (link: SyncLink) => link.ds.confirmedProject !== null && link.ds.status === "online";
 
 /**
- * 把 `snapshot` 写成云端项目的内容:连上、拿到云端现在的内容,不一样就做一次根替换(大的由 `DocSync` 分片上传),等文档服务确认。
- * 云端已经是这份内容(上一次传到了、只是没来得及核对)就什么都不发。
+ * Write `snapshot` as the content of the cloud project: connect, fetch the cloud's current content, and if it
+ * differs do one root replace (large ones are uploaded in chunks by `DocSync`), then wait for the document
+ * service to confirm. If the cloud already has this content (the last upload got through but was not verified
+ * in time), send nothing.
  */
 export async function uploadProjectContent(o: ContentLinkOptions, projectId: string, snapshot: Project): Promise<{ rev: number; wrote: boolean }> {
   return withContentLink(o, projectId, snapshot, async (link, until) => {
@@ -800,7 +890,7 @@ export async function uploadProjectContent(o: ContentLinkOptions, projectId: str
   });
 }
 
-/** 另开一条连接,把云端项目现在的内容读回来(核对用:这份是文档服务发回来的,不是本端自己算的) */
+/** Open a separate connection and read the cloud project's current content back (for verification: this copy comes from the document service, not computed on this side) */
 export async function readProjectContent(o: ContentLinkOptions, projectId: string, placeholder: Project): Promise<{ project: Project; rev: number }> {
   return withContentLink(o, projectId, placeholder, async (link, until) => {
     await until(() => linkReady(link));
@@ -808,10 +898,10 @@ export async function readProjectContent(o: ContentLinkOptions, projectId: strin
   });
 }
 
-/* ---------------- 给用户看的字(草稿,待用户审;表在报告里) ---------------- */
+/* ---------------- User-facing text (draft, pending user review; the table is in the report) ---------------- */
 
 export const ACCOUNT_MOVE_TEXT = {
-  /** 设置里选了「放云端」、目标是账号云端时,表单上方的说明 */
+  /** Note above the form when "Put in the cloud" is chosen in settings and the target is the account cloud */
   intro: tr("A cloud project belongs to your website account. After you click \"OK\", the current project is moved to the cloud and the editor continues in the cloud project; the local copy stays as a regular local project."),
   loggedIn: (name: string) => tr("Logged in: {0}", name),
   checkingLogin: tr("Checking login status…"),
@@ -819,9 +909,9 @@ export const ACCOUNT_MOVE_TEXT = {
   loginButton: tr("Log in"),
   loginBusy: tr("Logging in…"),
   nameLabel: tr("Cloud project name"),
-  /** 上一次没做完、云端项目已经建好:再点「确定」接着做 */
+  /** The last move did not finish and the cloud project is already created: click "OK" again to continue */
   pending: (name: string) => tr("The last move to the cloud was not finished, and the cloud project \"{0}\" has already been created. Click \"OK\" to continue; no extra project will be created.", name),
-  /** 协作房间点「搬到云端」时的确认框 */
+  /** Confirmation dialog when "Move to the cloud" is clicked in a collaboration room */
   roomConfirm: (account: string) => tr("After the move, a new project belonging to the account \"{0}\" will be created in the cloud with the same content as now.\nLocal collaboration will be closed and the old invite code will be void. Existing members must rejoin using the new project link and their own website accounts.\nMove to the cloud?", account),
   stage: {
     check: tr("Moving to the cloud: checking login and project…"),
@@ -837,7 +927,7 @@ export const ACCOUNT_MOVE_TEXT = {
   } as Record<MoveStage, string>,
   doneLocal: tr("Moved to the cloud. You are now editing the cloud project. The local copy stays as a regular local project."),
   doneRoom: tr("Moved to the cloud. Local collaboration is closed, the old invite code is void, and the old ban list was not carried over. Send the new project link to the existing members; they can join after logging in to their own website accounts."),
-  /** 搬完的气泡(带「复制项目链接」按钮) */
+  /** Bubble shown after the move (with a "Copy project link" button) */
   toastLocal: tr("Moved to the cloud. You can send the project link to other logged-in members."),
   toastRoom: tr("Moved to the cloud. Local collaboration is closed, the old invite code is void, and the old ban list was not carried over. Send the new project link to the existing members."),
   copyLink: tr("Copy project link"),
@@ -848,11 +938,11 @@ export const ACCOUNT_MOVE_TEXT = {
   mediaRetrying: tr("Media upload failed and is being retried automatically, until it succeeds."),
   cardsUploading: tr("Card source code is still syncing to the cloud."),
   cardsStuck: tr("Card source code has not synced to the cloud yet (card sync is not connected), so other members cannot draw custom cards for now. It will be uploaded automatically once connected."),
-  /** 旧文件带着搬到云端时关掉的那个房间的关联:重开时当普通本地项目开,提示一次 */
+  /** An old file carries the link to the room that was closed when moving to the cloud: when reopened it opens as a plain local project, with a notice shown once */
   reopenedLocal: tr("This file's original local collaboration was closed when it was moved to the cloud. It is now opened as a regular local project."),
   versionExpired: tr("This app version has expired and cannot move to the cloud"),
-  /* 放弃这次搬迁(〔裁〕H04) */
-  /** 有没搬完的云端项目、但设置里没在「云端」表单上时的那一行(表单上是 `pending`) */
+  /* Abandon this move ([ruling] H04) */
+  /** The line shown when there is an unfinished cloud project but settings is not on the "Cloud" form (on the form it is `pending`) */
   pendingIdle: (name: string, room: boolean) => tr("The last move to the cloud was not finished, and the cloud project \"{0}\" has already been created. {1}; if you no longer want to move, you can abandon this move.", name, room ? tr("Click \"Move to cloud\" to continue") : tr("Check \"Multi-user collaboration\", choose cloud, and click \"OK\" to continue")),
   abandonButton: tr("Abandon this move"),
   abandonConfirm: (name: string) => tr("Abandoning this move will permanently delete the cloud project \"{0}\" (the one created when the last move to the cloud was not finished). Deleted cloud content cannot be recovered. The local project is not affected and can be edited and saved as usual; you can move it to the cloud again later.", name),
@@ -863,7 +953,7 @@ export const ACCOUNT_MOVE_TEXT = {
   abandonedAlready: (name: string) => tr("Abandoned this move: the cloud project \"{0}\" no longer exists, and the local move record has been cleared. The local project was not changed.", name),
 } as const;
 
-/** 放弃这次搬迁没成时的那句话:说清云端项目、本机项目现在是什么样 */
+/** The sentence shown when abandoning this move fails: states clearly what the cloud project and the local project look like now */
 export function abandonFailureText(r: Extract<AbandonResult, { ok: false }>): string {
   const what = r.name ? tr("Cloud project \"{0}\"", r.name) : tr("Cloud project");
   const kept = tr("{0} and the local project were both left unchanged.", what);
@@ -881,15 +971,15 @@ export function abandonFailureText(r: Extract<AbandonResult, { ok: false }>): st
 
 const unchanged = (kind: "local" | "room") => (kind === "room" ? tr("Local collaboration is unchanged, and the original room works as before.") : tr("The local project is unchanged."));
 const resume = tr("Clicking again will continue with the cloud project that was already created, without creating another one.");
-/** 本机协作已经关掉之后的失败:现在打开的是本地项目,入口是设置里的「多用户协作 → 云端」 */
+/** Failure after local collaboration was already closed: what is open now is a local project, and the entry point is "Multi-user collaboration → Cloud" in settings */
 const again = tr("In project settings, check \"Multi-user collaboration\", choose cloud, and click \"OK\". This will continue with the cloud project that was already created, without creating another one.");
 
-/** 本机协作已经关掉之后的失败:当前内容存到本机文件了没有 */
+/** Failure after local collaboration was already closed: whether the current content was saved to a local file */
 const savedNote = (r: Extract<MoveResult, { ok: false }>) => (r.localSaved === false
-  ? tr("The latest content is still in this window and could not be saved to the local file. Please save manually first; ")
-  : tr("The latest content is already saved in this local file; "));
+  ? tr("The latest content is still in this window and could not be saved to the local file. Please save manually first.")
+  : tr("The latest content is already saved in this local file."));
 
-/** 失败时给用户的那句话:说清停在哪、本机现在是什么状态 */
+/** The sentence shown to the user on failure: states clearly where it stopped and what state the local side is in */
 export function moveFailureText(r: Extract<MoveResult, { ok: false }>, kind: "local" | "room"): string {
   const local = unchanged(kind);
   switch (r.error) {
@@ -901,8 +991,8 @@ export function moveFailureText(r: Extract<MoveResult, { ok: false }>, kind: "lo
     case "rate-limited": return tr("Too many attempts. Wait 60 seconds and try again. {0}", local);
     case "busy": return tr("Another window is moving this project. Try again when it finishes.");
     case "busy-editing": return r.localClosed
-      ? tr("The project kept being modified (an Agent or tool may still be changing it), and the last changes were not caught up. Local collaboration is closed. {0}Stop it first, then move again: {1}", savedNote(r), again)
-      : tr("The project kept being modified during the move (an Agent or tool may still be changing it), so the move did not complete. {0}Stop it first, then click again; {1}", local, r.cloud ? resume : tr("No extra project will be created."));
+      ? tr("The project kept being modified (an Agent or tool may still be changing it), and the last changes were not caught up. Local collaboration is closed. {0} Stop it first, then move again: {1}", savedNote(r), again)
+      : tr("The project kept being modified during the move (an Agent or tool may still be changing it), so the move did not complete. {0} Stop it first, then click again. {1}", local, r.cloud ? resume : tr("No extra project will be created."));
     case "save-pending": return tr("Local changes have not finished saving, so the move did not start. {0}", local);
     case "too-large": return tr("The project content is too large (about {0} million characters, limit {1} million), so it cannot be moved to the cloud for now. {2}", (Number(r.detail) / 1_000_000 || 0).toFixed(1), (MAX_CONTENT_CHARS / 1_000_000).toFixed(1), local);
     case "name-taken": return tr("This project name is already taken. Please choose another name. {0}", local);
@@ -910,13 +1000,13 @@ export function moveFailureText(r: Extract<MoveResult, { ok: false }>, kind: "lo
     case "create-refused": return tr("This account cannot create a cloud project right now ({0}). {1}", r.detail || tr("rejected"), local);
     case "version-expired": return ACCOUNT_MOVE_TEXT.versionExpired;
     case "not-account-cloud": return tr("This cloud does not accept projects from website accounts, so nothing was moved. {0}", local);
-    case "network": return r.stage === "create" ? tr("Could not reach the cloud, so the cloud project was not created. {0}Click again later.", local) : tr("Could not reach the cloud, so the move did not start. {0}", local);
-    case "create-failed": return tr("The cloud is temporarily unavailable, so the cloud project was not created. {0}Click again later; no extra project will be created.", local);
-    case "upload-failed": return tr("The project content was not fully uploaded. {0}{1}", local, resume);
-    case "verify-failed": return tr("The cloud content check failed, so the move was stopped. {0}{1}", local, resume);
-    case "media-pull-failed": return tr("{0} media items have not been pulled to this computer yet, so local collaboration was not closed. {1}Click again after the media has finished pulling.", Number(r.detail) || tr("some"), local);
+    case "network": return r.stage === "create" ? tr("Could not reach the cloud, so the cloud project was not created. {0} Click again later.", local) : tr("Could not reach the cloud, so the move did not start. {0}", local);
+    case "create-failed": return tr("The cloud is temporarily unavailable, so the cloud project was not created. {0} Click again later; no extra project will be created.", local);
+    case "upload-failed": return tr("The project content was not fully uploaded. {0} {1}", local, resume);
+    case "verify-failed": return tr("The cloud content check failed, so the move was stopped. {0} {1}", local, resume);
+    case "media-pull-failed": return tr("{0} media items have not been pulled to this computer yet, so local collaboration was not closed. {1} Click again after the media has finished pulling.", Number(r.detail) || tr("Some"), local);
     case "close-failed": return tr("The cloud project has been created and verified, but local collaboration was not closed and it is still the original room. {0}", resume);
-    case "sync-last-failed": return tr("Local collaboration is closed, {0}the cloud project has been created, but the last few changes are missing. Sync them again: {1}", savedNote(r), again);
-    case "enter-failed": return tr("Moved to the cloud{0}, but could not enter the cloud project \"{1}\" this time. {2}You can also go back to the start page and open it with the project link.", r.localClosed ? tr(", local collaboration closed") : "", r.cloud?.name ?? "", again);
+    case "sync-last-failed": return tr("Local collaboration is closed. {0} The cloud project has been created, but the last few changes are missing. Sync them again: {1}", savedNote(r), again);
+    case "enter-failed": return tr("Moved to the cloud{0}, but could not enter the cloud project \"{1}\" this time. {2} You can also go back to the start page and open it with the project link.", r.localClosed ? tr(", local collaboration closed") : "", r.cloud?.name ?? "", again);
   }
 }

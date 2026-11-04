@@ -12,93 +12,104 @@ import { AgentUndoButton } from "../../sync/AgentUndoButton";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * 操作详细预览控件:一个 Agent 气泡里**所有**详细内容都在这里展示,一个气泡只放一个。
+ * Operation detail preview control: **all** the detail of one Agent bubble is shown here, and a bubble holds only one.
  *
- * 气泡上面是一排排图标(收到的 Agent 消息、各次操作、阶段 / 本轮小结),图标本身点了不摊开任何清单,
- * 只让这个控件跳到它那一项。控件按先后把每一项排成一页页:
- *   - 收到的 Agent 消息:只给消息内容;
- *   - 有画面的操作:每张看过的图一页、每次有前后动图的修改一页、只有参数差异的一页;
- *     画面上方叠这次操作的头一行(类别、工具名、耗时),下方叠结果里的 note(半透明加深底);
- *   - 没画面的操作(查找 / 读取、界面操作、对话、失败……):一页操作卡 —— 查找给参数和结果内容,对话只给内容,失败只给错误;
- *   - 小结:一页,绿 ✓ / 黄 ! / 红 !,下面是已完成 / 待办 / 问题。
+ * Above the bubble is a row of icons (received Agent messages, individual operations, stages / the
+ * summary of this round). Clicking an icon does not expand any list; it only makes this control jump
+ * to that item. The control lays every item out in order as pages:
+ *   - Received Agent message: shows only the message content;
+ *   - Operation with visuals: one page per image viewed, one page per modification that has
+ *     before/after animations, one page for parameter-only differences;
+ *     the first line of the operation (category, tool name, duration) is overlaid above the visual,
+ *     and the note from the result is overlaid below it (semi-transparent darkened background);
+ *   - Operation without visuals (find / read, UI operation, chat, failure...): one operation card.
+ *     Find shows parameters and result content, chat shows only content, failure shows only the error;
+ *   - Summary: one page, green ✓ / yellow ! / red !, followed by done / to-do / issues.
  *
- * 跟踪最新:默认停在最新一项上;还在跑的消息一页页往后翻(下一页渲染好了才翻,两次至少隔 AUTO_STEP_MS),
- * 已经跑完的消息直接停在最后一页。用户点了不是最新的图标、或者往前翻,就不再跟,顶部出「点击跟踪最新」;
- * 点最新的图标、翻回最后一页、点那个按钮,又接着跟。
+ * Track latest: by default it stays on the latest item. A message that is still running pages
+ * forward one page at a time (it turns only once the next page has rendered, and at least
+ * AUTO_STEP_MS apart); a message that has finished stays on the last page. If the user clicks an
+ * icon that is not the latest, or pages backward, it stops following and "Track latest" appears at
+ * the top; clicking the latest icon, paging back to the last page, or clicking that button resumes following.
  *
- * 只能翻到**渲染好的页**:图片加载完(或确定取不回来)、修改页的动图都出来(或确定失败)才算好,文字页天生就好。
- * 往还没好的页翻不会切过去,先让它开始渲染(一次只预先渲染一页),好了再自动切。
+ * It can only turn to a **rendered page**: an image is ready once loaded (or definitely unretrievable),
+ * and a modification page is ready once its animations are out (or definitely failed); text pages
+ * are ready by nature. Turning toward a page that is not ready does not switch; it first starts
+ * rendering it (only one page is prerendered at a time), then switches automatically once ready.
  */
 
-/** 拖过这么远就翻页 */
+/** Turn the page after dragging this far */
 const SWIPE_PX = 40;
-/** 甩得够快也翻页(像素 / 毫秒),哪怕没拖满 SWIPE_PX */
+/** A fast enough flick also turns the page (pixels / millisecond), even if SWIPE_PX was not reached */
 const FLING_SPEED = 0.5;
-/** 按下之后挪过这么远才算拖动;更短的算点击 */
+/** Only moving this far after press counts as a drag; anything shorter counts as a click */
 const DRAG_SLOP = 6;
-/** 横向滚轮累计到这么多才翻一页 */
+/** Horizontal wheel delta must accumulate to this much before turning one page */
 const WHEEL_PX = 60;
-/** 翻完一页之后这么久之内的滚轮不算:触控板松手后还有一串惯性事件,不挡的话一甩翻好几页 */
+/** Wheel events within this long after a page turn are ignored: a trackpad sends a string of inertia
+ * events after release, and without this guard one flick turns several pages */
 const WHEEL_LOCK_MS = 350;
-/** 画框两侧各占这么宽是翻页区 */
+/** The page-turn zones are this wide on each side of the frame */
 const EDGE = 0.22;
-/** 还在跑的消息自动往后翻时,两次切换的最短间隔 */
+/** Minimum interval between two switches when a running message auto-pages forward */
 const AUTO_STEP_MS = 1500;
 /**
- * 圆点最多显示几个:只显示当前页附近这几个,不把几十页的点全铺出来。
- * 窗口外还有页时,窗口最外侧的点缩小,提示还能往那边翻;其余的页照样缓存着,拖、滚、方向键都翻得到。
+ * Maximum number of dots shown: only these few around the current page are shown, instead of laying
+ * out dots for dozens of pages.
+ * When there are more pages outside the window, the outermost dot of the window shrinks to hint that
+ * you can still turn that way; the other pages stay cached, and drag, wheel and arrow keys all reach them.
  */
 const MAX_DOTS = 5;
 
-/** 老消息的工具结果里只有文件路径:认得出的图片才出页(和操作详情里的判断一致) */
+/** In an old message the tool result holds only a file path: only a recognizable image produces a page (same check as in operation details) */
 const IMG_RE = /\.(png|jpe?g)$/i;
 
 type DiffRow = NonNullable<VisualRecord["diff"]>[number];
 
-/** 小结的颜色:ok = 绿 ✓,warn = 报了问题(黄 !),err = 这一轮出错收尾(红 !) */
+/** Summary color: ok = green ✓, warn = issues reported (yellow !), err = this round ended with an error (red !) */
 export type SummaryTone = "ok" | "warn" | "err";
 export const SUMMARY_TONE_TEXT: Record<SummaryTone, string> = { ok: tr("No issues"), warn: tr("Issues to review"), err: tr("Error occurred") };
 
-/** 控件要展示的一项,和气泡上的一个图标一一对应(key 相同) */
+/** One item the control displays, matching one icon on the bubble (same key) */
 export type DetailItem =
   | { type: "inbound"; key: string; messages: InboundAgentMessage[] }
   | { type: "run"; key: string; tools: ToolCallInfo[] }
   | { type: "report"; key: string; report: ProgressReport; tone: SummaryTone };
 
 interface PageBase {
-  /** 在这条消息里唯一,当 React key */
+  /** Unique within this message, used as the React key */
   id: string;
-  /** 这一页属于哪一项(图标的完整 key) */
+  /** Which item this page belongs to (the icon's full key) */
   itemKey: string;
-  /** 产出这一页的工具名;说明行按它认动作类别 */
+  /** Name of the tool that produced this page; the caption line derives the action category from it */
   tool: string;
-  /** 画面页:产出它的那次操作在所属项里的下标,叠在画面上的头一行和 note 按它取 */
+  /** Visual page: index, within its item, of the operation that produced it; the first line and note overlaid on the visual are looked up by it */
   call?: number;
 }
 
-/** 控件的一页 */
+/** One page of the control */
 export type DetailPage =
-  /** 一张看过的图。viaPrerender = 可视化记录里的图,地址挂在预渲染进程上,要拼上它的源 */
+  /** One image viewed. viaPrerender = an image from the visual record, whose address hangs on the prerender process, so its origin must be prepended */
   | (PageBase & { kind: "image"; src: string; viaPrerender: boolean; label?: string })
-  /** 前后两段动图(加卡只有「后」、删卡只有「前」)+ 参数差异 */
+  /** Before/after animations (adding a card has only "after", deleting a card has only "before") + parameter differences */
   | (PageBase & { kind: "change"; before?: string; after?: string; beforeLabel: string; afterLabel: string; diff: DiffRow[] })
-  /** 只有参数差异,没有动图 */
+  /** Parameter differences only, no animation */
   | (PageBase & { kind: "diff"; diff: DiffRow[] })
-  /** 没有画面的一项操作:操作卡(内容按渲染时的 items 现取) */
+  /** One operation without visuals: an operation card (content is fetched from items at render time) */
   | (PageBase & { kind: "ops" })
-  /** 小结 */
+  /** Summary */
   | (PageBase & { kind: "summary" })
-  /** 收到的 Agent 消息 */
+  /** Received Agent message */
   | (PageBase & { kind: "inbound" });
 
 const isVisualPage = (p: DetailPage) => p.kind === "image" || p.kind === "change" || p.kind === "diff";
 
-/** 老消息里的文件路径换成页面能打开的地址(和 ToolDetail 里的拼法一致) */
+/** Turn a file path in an old message into an address the page can open (same construction as in ToolDetail) */
 function legacyUrl(f: string): string {
   return f.startsWith("http") || f.startsWith("data:") ? f : `/@fs/${f.replace(/\\/g, "/").replace(/^\/?/, "")}`;
 }
 
-/** 一份可视化记录拆成页:每张图一页;有前后动图的一页「修改」;只有参数差异的一页「差异」 */
+/** Split one visual record into pages: one page per image; one "Modification" page if there are before/after animations; one "Diff" page if there are only parameter differences */
 function recordPages(out: DetailPage[], rec: VisualRecord, idBase: string, itemKey: string, tool: string, call: number) {
   rec.images?.forEach((im, i) => {
     out.push({ kind: "image", id: `${idBase}:i${i}`, itemKey, tool, call, src: im.url, viaPrerender: true, label: im.label });
@@ -112,7 +123,7 @@ function recordPages(out: DetailPage[], rec: VisualRecord, idBase: string, itemK
       call,
       before: rec.before?.gif,
       after: rec.after?.gif,
-      // 标签和 ToolVisual 里一致:只有「后」是新加的卡(或 get_gif 的整段动效),只有「前」是删掉的卡
+      // Labels match ToolVisual: only "after" is a newly added card (or the whole motion graphics of get_gif), only "before" is a deleted card
       beforeLabel: rec.after ? tr("Before") : tr("Deleted card"),
       afterLabel: rec.before ? tr("After") : rec.tool === "get_gif" ? tr("Full animation") : tr("New card"),
       diff: rec.diff ?? [],
@@ -123,9 +134,11 @@ function recordPages(out: DetailPage[], rec: VisualRecord, idBase: string, itemK
 }
 
 /**
- * 按项的先后收集页面。操作项里有出画面的(带可视化记录,或老消息里的图片文件)就出画面页,
- * 记录还没取回来的先跳过,取回来之后下一次渲染就出现;记录取失败的不算有画面。
- * 一个画面都没有的操作项出一页操作卡(至少有一次操作出了结果才出)。
+ * Collect pages in item order. If an operation item produces visuals (has a visual record, or an
+ * image file in an old message), it yields visual pages; records not yet fetched are skipped and
+ * appear on the next render after they arrive; a record whose fetch failed does not count as having visuals.
+ * An operation item with no visuals at all yields one operation card (only if at least one
+ * operation produced a result).
  */
 function pagesOf(items: DetailItem[], failed: ReadonlySet<string>): DetailPage[] {
   const out: DetailPage[] = [];
@@ -168,15 +181,16 @@ function pagesOf(items: DetailItem[], failed: ReadonlySet<string>): DetailPage[]
 }
 
 /**
- * 从一串项收集页面。可视化记录走 ToolVisual 的模块级缓存,同一个 id 只取一次;
- * 每取回(或取失败)一份就重算一次,页面随记录陆续出现。
+ * Collect pages from a list of items. Visual records go through ToolVisual's module-level cache, and
+ * the same id is fetched only once; every time one is fetched (or fails) we recompute, so pages
+ * appear progressively as records arrive.
  */
 export function useDetailPages(items: DetailItem[]): DetailPage[] {
   const [loadedCount, bump] = useReducer((n: number) => n + 1, 0);
   const mounted = useRef(false);
-  /** 这个组件已经发起过的 id:取失败的不在这里反复重试 */
+  /** Ids this component has already requested: failed fetches are not retried over and over here */
   const tried = useRef(new Set<string>());
-  /** 取失败的 id:这些操作按「没画面」出操作卡 */
+  /** Ids whose fetch failed: these operations yield an operation card as "no visuals" */
   const failed = useRef(new Set<string>());
 
   const idSet = new Set<string>();
@@ -214,27 +228,27 @@ export function useDetailPages(items: DetailItem[]): DetailPage[] {
         },
       );
     }
-    // ids 由 idsKey 完整决定
+    // ids is fully determined by idsKey
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idsKey]);
 
-  // items 每次渲染都是新数组,按内容算的 key 记忆,控件拿到的 pages 引用才稳定
+  // items is a new array on every render; memoize by a content-based key so the pages reference the control gets stays stable
   // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(() => pagesOf(items, failed.current), [itemsKey, loadedCount]);
 }
 
-/** 耗时:一秒以内给毫秒,十秒以内一位小数,再长取整秒 */
+/** Duration: milliseconds under one second, one decimal under ten seconds, whole seconds beyond that */
 function fmtDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return ms < 10000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms / 1000)}s`;
 }
 
-// 标题只写一份,在 src/ai/progressReport.ts
+// The title is written in one place only, in src/ai/progressReport.ts
 
-/** 说明行左边那句 */
+/** The phrase on the left of the caption line */
 function pageCaption(p: DetailPage, item: DetailItem | undefined): string {
   if (p.kind === "inbound") return tr("Chat · received {0} messages", item?.type === "inbound" ? item.messages.length : 0);
-  // 小结的好坏只靠绿 ✓ / 黄 ! / 红 ! 的颜色和字形表达,不再写「有问题要看」这类字
+  // Whether a summary is good or bad is conveyed only by the color and glyph of green ✓ / yellow ! / red !; text such as "has issues, check" is no longer written
   if (p.kind === "summary") return item?.type === "report" ? reportTitle(item.report) : tr("Summary");
   if (p.kind === "ops") {
     const tools = item?.type === "run" ? item.tools : [];
@@ -256,7 +270,7 @@ function pageCaption(p: DetailPage, item: DetailItem | undefined): string {
   return `${kind} · ${what}`;
 }
 
-/** 「点击跟踪最新」上的图标:双箭头指向最后 */
+/** Icon on "Track latest": a double arrow pointing to the end */
 function IconFollowLatest(): JSX.Element {
   return (
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -267,44 +281,46 @@ function IconFollowLatest(): JSX.Element {
 
 export function OpDetailPreview(props: {
   pages: DetailPage[];
-  /** 页面所属的项:操作卡、小结、收到的消息按它现取内容 */
+  /** The item a page belongs to: operation cards, summaries and received messages fetch their content by it */
   items: DetailItem[];
-  /** 点图标跳页:seq 每点一次加一,跳到 key 所属的第一页;点的是最新那一项就跟踪最新 */
+  /** Click an icon to jump to a page: seq increases by one on every click, jumping to the first page of the key's item; clicking the latest item tracks latest */
   jump?: { key: string; seq: number } | null;
-  /** 当前页换了(自动跟踪或用户翻的):报上这一页所属项的 key,byUser = 用户翻的 / 点的 */
+  /** The current page changed (auto-tracking or turned by the user): report the key of this page's item, byUser = turned / clicked by the user */
   onPage?: (itemKey: string, byUser: boolean) => void;
-  /** 消息还在跑:跟踪最新时一页页往后翻 */
+  /** The message is still running: when tracking latest, page forward one page at a time */
   live?: boolean;
 }): JSX.Element | null {
   const { pages, items, jump, onPage, live } = props;
   const n = pages.length;
-  // 当前页和「要去的页」都按页 id 记:可视化记录是异步取回的,新页可能插到当前页前面,按下标记会把正在看的页悄悄换掉。
-  // 默认停在最新一项:还在跑的从头一页页翻过来,已经跑完的直接停在最后一页(还没有页时等页出来再按这条定)
+  // Both the current page and the "page to go to" are recorded by page id: visual records are fetched asynchronously, and a new page may be inserted before the current one; recording by index would silently swap the page being viewed.
+  // By default stay on the latest item: a running message pages forward from the start, a finished one stays on the last page (when there are no pages yet, wait for pages to appear and then apply this rule)
   const [curId, setCurId] = useState<string | null>(() => (pages.length ? (live ? pages[0].id : pages[pages.length - 1].id) : null));
-  /** 拖动中跟手的偏移(px) */
+  /** Offset (px) that follows the pointer during a drag */
   const [drag, setDrag] = useState(0);
   const [dragging, setDragging] = useState(false);
-  /** 鼠标停在哪一侧的翻页区,那一侧的箭头才露出来 */
+  /** The arrow shows only on the side whose page-turn zone the mouse is over */
   const [hover, setHover] = useState<"prev" | "next" | null>(null);
-  /** 渲染好的页(图片 / 动图加载完,或确定失败) */
+  /** Rendered pages (image / animation loaded, or definitely failed) */
   const [ready, setReady] = useState<ReadonlySet<string>>(() => new Set());
-  /** 用户要去、但还没渲染好的页(按页 id):渲染好就切过去 */
+  /** Page the user wants to go to but that is not rendered yet (by page id): switch to it once rendered */
   const [wantedId, setWantedId] = useState<string | null>(null);
-  /** 跟踪最新 */
+  /** Track latest */
   const [follow, setFollow] = useState(true);
   const frameRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<{ id: number; x: number; y: number; t: number; moved: boolean } | null>(null);
   /**
-   * 翻到过的页。「修改」页里的动图只在这些页(和正在预先渲染的那一页)里挂载:服务端现渲一段动图要几秒到几十秒,
-   * 一打开消息就把所有动图全触发,预渲染进程会被压垮。
+   * Pages that have been turned to. Animations in "Modification" pages are mounted only in these pages
+   * (and the one being prerendered): the server takes seconds to tens of seconds to render one
+   * animation on demand, and triggering all animations as soon as a message opens would overwhelm the
+   * prerender process.
    */
   const seen = useRef(new Set<string>());
-  /** 上一次切页的时刻:自动翻页按它卡最短间隔 */
+  /** Time of the last page switch: auto-paging uses it to enforce the minimum interval */
   const lastSwitchAt = useRef(0);
-  /** 下一次换页是不是用户弄的(报给 onPage) */
+  /** Whether the next page change is made by the user (reported to onPage) */
   const byUserRef = useRef(false);
   const base = usePrerenderBase();
-  /** 上一次渲染时当前页的下标:当前页那一页没了(比如可视化记录取失败换成了操作卡)时,留在原来的位置附近 */
+  /** Index of the current page at the last render: when the current page is gone (e.g. a visual record fetch failed and was replaced by an operation card), stay near the original position */
   const lastIndex = useRef(0);
   const found = curId ? pages.findIndex((p) => p.id === curId) : -1;
   const cur = found >= 0 ? found : n === 0 ? 0 : curId === null ? (live ? 0 : n - 1) : Math.min(lastIndex.current, n - 1);
@@ -339,11 +355,11 @@ export function OpDetailPreview(props: {
       setWantedId(null);
       show(next);
     } else {
-      // 还没渲染好:不切,先让它开始渲染,好了由下面的 effect 切过去
+      // Not rendered yet: do not switch, first start rendering it, and the effect below switches once it is ready
       setWantedId(pages[next].id);
     }
   };
-  // 原生滚轮监听只挂一次,通过 ref 拿到最新的页码和翻页函数
+  // The native wheel listener is attached only once, and gets the latest page index and page-turn function through a ref
   const goRef = useRef(go);
   goRef.current = go;
   const curRef = useRef(cur);
@@ -357,12 +373,12 @@ export function OpDetailPreview(props: {
 
   const wantedIdx = wantedId ? pages.findIndex((p) => p.id === wantedId) : -1;
   const wantedPage = wantedIdx >= 0 ? wantedIdx : null;
-  // 下一步要切到哪一页:用户点过的优先;跟踪最新时,还在跑的往后翻一页,跑完的直接去最后一页
+  // Which page to switch to next: the one the user clicked takes priority; when tracking latest, a running message pages forward one page, and a finished one goes straight to the last page
   const target = wantedPage ?? (follow && cur < n - 1 ? (live ? cur + 1 : n - 1) : null);
-  // 要去的页还没好,就先把它挂上开始渲染(一次只预先渲染这一页)
+  // The page to go to is not ready, so mount it first and start rendering (only this one page is prerendered at a time)
   const preloadId = target !== null && target !== cur && !isReady(target) ? pages[target].id : null;
 
-  // 第一页第一次显示出来也算一次切换:第二页不会紧跟着第一页闪过去
+  // The first page's first display also counts as a switch: the second page will not flash past right after the first
   const curReady = n > 0 && isReady(cur);
   const shownOnce = useRef(false);
   useEffect(() => {
@@ -372,8 +388,8 @@ export function OpDetailPreview(props: {
     }
   }, [curReady]);
 
-  // 要去的页渲染好了才切:用户点的、跑完的消息立刻切;还在跑的自动翻页离上次切换不足 AUTO_STEP_MS 就等到够了再切。
-  // 拖动中不自动翻
+  // Switch only once the target page has rendered: pages the user clicked and finished messages switch immediately; for a running message's auto-paging, if less than AUTO_STEP_MS has passed since the last switch, wait until it has.
+  // No auto-paging during a drag
   useEffect(() => {
     if (target === null || target === cur || dragging || !isReady(target)) return;
     const auto = wantedPage === null;
@@ -386,7 +402,7 @@ export function OpDetailPreview(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, cur, dragging, ready, wantedPage, live]);
 
-  // 当前页换了就报给气泡:它据此给对应的图标上描边 / 发光
+  // When the current page changes, report it to the bubble: it uses this to outline / glow the matching icon
   const pageId = n > 0 ? pages[cur].id : null;
   useEffect(() => {
     if (!pageId) return;
@@ -395,7 +411,7 @@ export function OpDetailPreview(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageId]);
 
-  // 图标那边点过来:点的是最新那一项就跟踪最新,否则跳到它的第一页(没渲染好就等它好了再跳)
+  // Click coming from the icon side: if it is the latest item, track latest; otherwise jump to its first page (if not rendered yet, wait until it is, then jump)
   useEffect(() => {
     if (!jump || !n) return;
     byUserRef.current = true;
@@ -409,8 +425,8 @@ export function OpDetailPreview(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jump?.seq]);
 
-  // 触控板 / 鼠标的横向滚动(或 Shift + 滚轮)翻页。
-  // React 的 onWheel 是被动监听,拦不住浏览器自己的横向手势(前进后退),所以挂原生的非被动监听
+  // Trackpad / mouse horizontal scroll (or Shift + wheel) turns pages.
+  // React's onWheel is a passive listener and cannot stop the browser's own horizontal gestures (back / forward), so attach a native non-passive listener
   const hasPages = n > 0;
   useEffect(() => {
     const el = frameRef.current;
@@ -419,11 +435,11 @@ export function OpDetailPreview(props: {
     let lockUntil = 0;
     const onWheel = (e: WheelEvent) => {
       const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.shiftKey ? e.deltaY : 0;
-      if (!dx) return; // 竖着滚的归消息列表(或操作卡自己的滚动)
+      if (!dx) return; // Vertical scrolling belongs to the message list (or the operation card's own scroll)
       e.preventDefault();
       const now = performance.now();
       if (now < lockUntil) {
-        // 惯性还在滚:把锁往后顺延一点,等这串事件停了再接受下一次
+        // Inertia is still scrolling: extend the lock a little, and accept the next one only after this string of events stops
         lockUntil = Math.max(lockUntil, now + 120);
         acc = 0;
         return;
@@ -439,7 +455,7 @@ export function OpDetailPreview(props: {
     return () => el.removeEventListener("wheel", onWheel);
   }, [hasPages]);
 
-  /** 指针落在左右哪一侧的翻页区;到头了那一侧不算 */
+  /** Which side's page-turn zone the pointer is in; a side at the end does not count */
   const sideOf = (clientX: number): "prev" | "next" | null => {
     const el = frameRef.current;
     if (!el) return null;
@@ -452,7 +468,7 @@ export function OpDetailPreview(props: {
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || !n) return;
-    // 动图的「重试」、操作卡里的文字这类自己处理点击 / 选字的,不当成拖动或翻页
+    // Things that handle clicks / text selection themselves, such as the animation's "Retry" and text in the operation card, are not treated as a drag or page turn
     if ((e.target as HTMLElement).closest("button, a, input, textarea, select, summary, pre, .ai-odp-text")) return;
     gesture.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), moved: false };
   };
@@ -466,7 +482,7 @@ export function OpDetailPreview(props: {
     const dx = e.clientX - g.x;
     if (!g.moved) {
       if (Math.abs(dx) < DRAG_SLOP) return;
-      // 竖着拖多半是想滚消息列表(触屏),让给浏览器
+      // A vertical drag is most likely an attempt to scroll the message list (touch screen), so leave it to the browser
       if (Math.abs(e.clientY - g.y) > Math.abs(dx)) {
         gesture.current = null;
         return;
@@ -477,10 +493,10 @@ export function OpDetailPreview(props: {
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
       } catch {
-        /* 指针已经抬起,捕获不了也无妨 */
+        /* The pointer is already released, so it does not matter if capture fails */
       }
     }
-    // 两头拖不动、邻页还没渲染好也拖不过去:只给三分之一的位移,手感上是「到头了」
+    // At both ends there is nothing to drag to, and a neighbor page that is not rendered yet cannot be dragged to either: give only a third of the displacement, so it feels like "reached the end"
     const blocked = dx > 0 ? cur === 0 || !isReady(cur - 1) : cur === n - 1 || !isReady(cur + 1);
     setDrag(blocked ? dx / 3 : dx);
   };
@@ -500,7 +516,7 @@ export function OpDetailPreview(props: {
       return;
     }
     if (cancelled) return;
-    // 没拖动 = 点了一下:左右两侧是翻页区,中间不做事
+    // No drag = a click: the left and right sides are page-turn zones, the middle does nothing
     const side = sideOf(e.clientX);
     if (side === "prev") go(cur - 1, true);
     else if (side === "next") go(cur + 1, true);
@@ -508,7 +524,7 @@ export function OpDetailPreview(props: {
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    // 编辑台全局也认方向键(挪播放头),画框有焦点时归控件
+    // The editor also handles arrow keys globally (moving the playhead); when the frame has focus they belong to the control
     e.preventDefault();
     e.stopPropagation();
     go(cur + (e.key === "ArrowRight" ? 1 : -1), true);
@@ -523,7 +539,7 @@ export function OpDetailPreview(props: {
     return it?.type === "run" ? it.tools : [];
   };
   const caption = pageCaption(page, itemByKey.get(page.itemKey));
-  // 圆点窗口:当前页尽量居中,两头贴边时整体往里收
+  // Dot window: keep the current page centered where possible, and shift inward when it hits an edge
   const dotStart = Math.max(0, Math.min(cur - Math.floor(MAX_DOTS / 2), n - MAX_DOTS));
   const dotEnd = Math.min(n, dotStart + MAX_DOTS);
 
@@ -532,19 +548,21 @@ export function OpDetailPreview(props: {
     if (p.kind === "ops") return <OpCards tools={toolsOf(p.itemKey)} />;
     if (p.kind === "summary") return it?.type === "report" ? <SummaryCard report={it.report} tone={it.tone} /> : null;
     if (p.kind === "inbound") return it?.type === "inbound" ? <InboundCards messages={it.messages} /> : null;
-    // 画面页:画面上方叠这次操作的头一行,下方叠结果里的 note(有才叠);两层都不吃鼠标,拖动翻页照旧
+    // Visual page: overlay the operation's first line above the visual and the note from the result below it (only if present); neither layer takes mouse events, so drag-to-turn works as before
     const call = it?.type === "run" && p.call !== undefined ? it.tools[p.call] : undefined;
     const note = call ? noteOf(call) : "";
     return (
       <>
-        {/* D5:同源退回已经删掉,拿不到预渲染的源就没有地址可拼 */}
+        {/* D5: same-origin fallback has been removed; without the prerender origin there is no address to build */}
         {base === null ? <div className="ai-visual-note">{tr("The prerender process is not ready yet, can't retrieve the visual")}</div> : <PageBody p={p} base={base} loadGif={loading(p.id)} onReady={markReady} />}
         {call ? (
           <div className="ai-odp-over-head" data-pc="odp-over-head">
             <OpHead t={call} />
           </div>
         ) : null}
-        {/* 改了项目的那一步在画面页上也能「撤销这步」:原来 AI 栏底部的「Agent 操作记录」每行都有,那块换成「Agent 操作」之后撤销只在这个控件里(2026-10-20) */}
+        {/* The step that changed the project can also be "Undo this step" on the visual page: the old
+   "Agent operation log" at the bottom of the AI panel had it on every row; after that block was
+   replaced by "Agent operations", undo lives only in this control (2026-10-20) */}
         {call && call.ok === true && (p.kind === "change" || p.kind === "diff") ? (
           <div className="ai-odp-over-undo" data-pc="odp-over-undo">
             <AgentUndoButton callId={call.callId} />
@@ -587,13 +605,15 @@ export function OpDetailPreview(props: {
         <div className="ai-carousel-track" style={{ transform: `translateX(calc(${-cur * 100}% + ${drag}px))` }}>
           {pages.map((p, i) => (
             <div key={p.id} className={`ai-carousel-page is-${p.kind}`} aria-hidden={i !== cur} data-ready={isReady(i) ? "" : undefined}>
-              {/* 只挂当前页、左右邻居(拖动时看得见邻居,图片顺便先加载)和正在预先渲染的那一页;翻远了就卸掉,
-                  不让整条消息里的图和动图一直挂着。翻到过的页记在 seen 里,回来时动图可以直接加载(浏览器有缓存) */}
+              {/* Only mount the current page, left and right neighbors (neighbors are visible when dragging, and
+                  images pre-load along the way), and the page currently being prerendered; unmount when paged far
+                  away, so images and GIFs in the whole message don't stay mounted. Record visited pages in seen, so
+                  GIFs load directly upon returning (browser cache) */}
               {Math.abs(i - cur) <= 1 || p.id === preloadId ? body(p) : null}
             </div>
           ))}
         </div>
-        {/* 当前页还没渲染好:盖一层提示,不露出半截图 */}
+        {/* The current page isn't rendered yet: cover it with a notice so no half-drawn image shows */}
         {!curReady ? <div className="ai-carousel-wait" role="status">{tr("Rendering frame…")}</div> : null}
         {cur > 0 ? <span className={`ai-carousel-arrow is-prev${hover === "prev" ? " is-on" : ""}`} aria-hidden>‹</span> : null}
         {cur < n - 1 ? <span className={`ai-carousel-arrow is-next${hover === "next" ? " is-on" : ""}`} aria-hidden>›</span> : null}
@@ -604,7 +624,7 @@ export function OpDetailPreview(props: {
             {pages.slice(dotStart, dotEnd).map((p, k) => {
               const i = dotStart + k;
               const pending = i !== cur && !isReady(i);
-              // 窗口外还有页:最外侧的点缩小
+              // There are more pages beyond the window: shrink the outermost dots
               const edge = (k === 0 && dotStart > 0) || (i === dotEnd - 1 && dotEnd < n);
               return (
                 <button
@@ -629,9 +649,9 @@ export function OpDetailPreview(props: {
   );
 }
 
-/* ── 文字页:操作卡、小结、收到的消息 ─────────────────────────────── */
+/* ── Text pages: operation card, summary, received messages ───────────────────────── */
 
-/** 结果摘要是 JSON 就解析成对象,不是就原样当文字 */
+/** If the result summary is JSON, parse it into an object; otherwise treat it as plain text */
 function parseResult(summary?: string): unknown {
   if (!summary) return null;
   try {
@@ -641,10 +661,10 @@ function parseResult(summary?: string): unknown {
   }
 }
 
-/** 这些字段是给界面 / 模型认的,不是给人读的内容 */
+/** These fields are for the UI / the model to recognize, not content meant for humans to read */
 const HIDDEN_KEYS = new Set(["ok", "visualId"]);
 
-/** 一个值压成一行字 */
+/** Squash one value into a single line of text */
 function short(v: unknown, max = 80): string {
   let s: string;
   if (v === null || v === undefined) s = "—";
@@ -672,7 +692,10 @@ function ShortList({ list, max }: { list: unknown[]; max: number }): JSX.Element
   );
 }
 
-/** 结果内容:对象按字段一行一个,数组给条数和前几条,文字原样 */
+/**
+ * Result content: objects get one line per field, arrays give the count and the first few items,
+ * text is shown as is
+ */
 function ResultFields({ value }: { value: unknown }): JSX.Element | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "object") return <div className="ai-opcard-text">{short(value, 600)}</div>;
@@ -700,7 +723,7 @@ function ResultFields({ value }: { value: unknown }): JSX.Element | null {
   );
 }
 
-/** 参数压成一行:参数 · a: 1 · b: x */
+/** Squash the params into one line: params · a: 1 · b: x */
 function paramsLine(input: unknown): string {
   if (!input || typeof input !== "object") return "";
   const entries = Object.entries(input as Record<string, unknown>).filter(([, v]) => v !== undefined && v !== null && v !== "");
@@ -708,7 +731,7 @@ function paramsLine(input: unknown): string {
   return tr("Parameters · ") + entries.map(([k, v]) => `${k}: ${short(v, 40)}`).join(" · ");
 }
 
-/** 对话 ID 换成页签名;找不到就给个短 ID */
+/** Replace a chat ID with its tab name; if not found, give a short ID */
 function agentName(conversationId: unknown): string {
   const id = String(conversationId ?? "");
   // i18n-allow: older records name an unknown writer in Chinese
@@ -721,7 +744,7 @@ function errorText(t: ToolCallInfo, res: unknown): string {
   return typeof res === "string" && res ? res : t.summary || tr("Failed, no reason returned");
 }
 
-/** 对话类操作(多 Agent 之间):只给内容 */
+/** Chat operations (between multiple Agents): show the content only */
 function agentContent(t: ToolCallInfo, res: unknown): ReactNode {
   const name = bareToolName(t.name);
   const input = (t.input && typeof t.input === "object" ? t.input : {}) as Record<string, unknown>;
@@ -775,7 +798,10 @@ function agentContent(t: ToolCallInfo, res: unknown): ReactNode {
   return <ResultFields value={res} />;
 }
 
-/** 操作的头一行:类别小方块 + 类别(失败时写「失败」)+ 工具名 + 耗时。操作卡用,画面页也叠在画面上方 */
+/**
+ * First line of an operation: category chip + category (write "Failed" on failure) + tool name +
+ * duration. Used by the operation card; the visual page also overlays it above the picture
+ */
 function OpHead({ t }: { t: ToolCallInfo }): JSX.Element {
   const kind = toolKind(t.name);
   return (
@@ -788,7 +814,7 @@ function OpHead({ t }: { t: ToolCallInfo }): JSX.Element {
   );
 }
 
-/** 结果里给人看的那句说明(note 字段);没有就不叠 */
+/** The human-readable sentence in the result (the note field); if there is none, don't overlay it */
 function noteOf(t: ToolCallInfo): string {
   if (t.ok !== true) return "";
   const res = parseResult(t.summary);
@@ -796,7 +822,7 @@ function noteOf(t: ToolCallInfo): string {
   return typeof note === "string" ? note.trim() : "";
 }
 
-/** 一次操作的卡片:头一行(OpHead),下面是内容 */
+/** The card for one operation: first line (OpHead), content below */
 function OpCard({ t }: { t: ToolCallInfo }): JSX.Element {
   const kind = toolKind(t.name);
   const res = t.ok === undefined ? null : parseResult(t.summary);
@@ -839,7 +865,10 @@ const REPORT_GROUPS = [
   { field: "problems", label: tr("Problems"), mark: "!", cls: "is-problem" },
 ] as const;
 
-/** 小结页:头一行是绿 ✓ / 黄 ! / 红 ! 的小方块 + 标题(好坏只看颜色和字形,不写字),下面三组条目(空组不显示) */
+/**
+ * Summary page: the first line is a chip (green ✓ / yellow ! / red !) + title (good or bad is shown
+ * only by color and glyph, no text), below it three groups of items (empty groups are hidden)
+ */
 function SummaryCard({ report, tone }: { report: ProgressReport; tone: SummaryTone }): JSX.Element {
   const groups = REPORT_GROUPS.filter((g) => report[g.field].length > 0);
   return (
@@ -869,7 +898,7 @@ function SummaryCard({ report, tone }: { report: ProgressReport; tone: SummaryTo
   );
 }
 
-/** 收到的 Agent 消息:只给内容 */
+/** A received Agent message: show the content only */
 function InboundCards({ messages }: { messages: InboundAgentMessage[] }): JSX.Element {
   return (
     <div className="ai-odp-text">
@@ -887,7 +916,7 @@ function InboundCards({ messages }: { messages: InboundAgentMessage[] }): JSX.El
   );
 }
 
-/* ── 画面页 ─────────────────────────────────────────────────────── */
+/* ── Visual page ────────────────────────────────────────────────────────────── */
 
 function PageBody({ p, base, loadGif, onReady }: { p: DetailPage; base: string; loadGif: boolean; onReady: (id: string) => void }): JSX.Element | null {
   if (p.kind === "image") {
@@ -904,7 +933,7 @@ function PageBody({ p, base, loadGif, onReady }: { p: DetailPage; base: string; 
   return null;
 }
 
-/** 修改页:前后动图都出来(或确定失败)才算渲染好 */
+/** Edit page: it counts as rendered once both the before and after animated images are out (or have definitely failed) */
 function ChangeBody({ p, base, loadGif, onReady }: { p: Extract<DetailPage, { kind: "change" }>; base: string; loadGif: boolean; onReady: (id: string) => void }): JSX.Element {
   const settled = useRef(new Set<"before" | "after">());
   const need = (p.before ? 1 : 0) + (p.after ? 1 : 0);
@@ -924,11 +953,14 @@ function ChangeBody({ p, base, loadGif, onReady }: { p: Extract<DetailPage, { ki
   );
 }
 
-/** 看过的一张图;取不回来就写一句,不留一块空白。按原尺寸显示(只缩不放),在画框里居中 */
+/**
+ * An image that was viewed; if it can't be fetched, write one sentence instead of leaving a blank.
+ * Shown at its original size (shrink only, never enlarge), centered in the frame
+ */
 function PageImage({ src, label, onSettled }: { src: string; label?: string; onSettled: () => void }): JSX.Element {
   const [bad, setBad] = useState(false);
   const ref = useRef<HTMLImageElement>(null);
-  // 缓存里的图可能在挂上 onLoad 之前就已经解码好了,补报一次
+  // An image from the cache may already be decoded before onLoad is attached, so report once more
   useEffect(() => {
     const el = ref.current;
     if (el?.complete && el.naturalWidth > 0) onSettled();
@@ -951,7 +983,7 @@ function PageImage({ src, label, onSettled }: { src: string; label?: string; onS
   );
 }
 
-/** 还没翻到的「修改」页:先占好动图的位置,翻到了再换成真的动图 */
+/** An "Edit" page not yet flipped to: reserve the animated image's spot first, swap in the real one once flipped to */
 function GifSlot({ label }: { label: string }): JSX.Element {
   return (
     <figure className="ai-visual-gif">

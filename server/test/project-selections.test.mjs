@@ -65,7 +65,7 @@ test('018 project selection provider over real WS: all pages, authority, revoke,
   assert.equal(state.type, 'selection.state');
   assert.equal(state.projectRev, 7);
   assert.deepEqual(state.members.map(m => m.accountId), ['alice', 'bob', 'carol']);
-  assert.equal(state.members[0].displayName, 'alice-trusted（当前用户）');
+  assert.equal(state.members[0].displayName, 'alice-trusted (current user)');
   assert.deepEqual(state.members[0].pages.map(p => p.pageId), ['a1', 'a2']);
   assert.deepEqual(state.members[0].pages[0].items.map(i => [i.id, !!i.missing]), [['c1', false], ['gone', true]]);
   assert.deepEqual(state.members[2].pages[0].selection.clipIds, [], 'empty online page remains');
@@ -98,7 +98,7 @@ test('018 project selection provider over real WS: all pages, authority, revoke,
     selection: { clipIds: ['c1'] } })).reason, 'forbidden');
   state = await askQuery();
   assert.deepEqual(state.members[0].pages.map(p => [p.pageId, p.live, p.note]),
-    [['sent-page', false, '发消息时的选区，非实时']]);
+    [['sent-page', false, 'Selection at the time the message was sent, not live']]);
   failHead = true;
   assert.equal((await askQuery()).reason, 'authority-unavailable', 'unreachable head fails closed');
   failHead = false;
@@ -177,14 +177,14 @@ test('018 read-only selection and strict authority/grant fences', async () => {
     runGrantId: 'run1' }), err => err.code === 'run-fence-unavailable');
 });
 
-test('一位成员的登录过期或被撤销:这一位不算,别的成员的选区照常读到;权威不可用仍然整次失败', async () => {
+test('when one member\'s login expires or is revoked: that member does not count, other members\' selections are still read as usual; if the authority is unavailable, the whole call still fails', async () => {
   const projectId = 'p1';
   const pageOf = accountId => ({ role: 'page', tenantId: projectId, accountId, accountName: accountId, loginId: `L-${accountId}` });
   const agent = { service: 'agent', tenantId: projectId };
   const project = { bodyOf: () => ({ tracks: [{ id: 't', clips: [{ id: 'c1' }, { id: 'c2' }] }] }), revOf: () => 7 };
   const grant = { projectId, runGrantId: 'run1', fenceRevision: 1, initiatorAccountId: 'alice', initiatorName: 'alice',
     selectionSnapshot: { source: 'sent-snapshot', projectId, accountId: 'alice', pageId: 'sent', selection: { clipIds: ['c2'] }, sentAt: 10 } };
-  /** 每位成员此刻问权威会得到什么:`true` 放行,函数就照它抛或回 */
+  /** What each member gets querying authority now: `true` allows, function throws or returns accordingly */
   const answers = new Map();
   const fail = (status, code) => () => { throw Object.assign(new Error(code), status === undefined ? {} : { status, code }); };
   const selection = mountSelection({ project,
@@ -202,36 +202,42 @@ test('一位成员的登录过期或被撤销:这一位不算,别的成员的选
   const liveOf = state => state.members.filter(m => m.pages.some(p => p.live)).map(m => m.accountId);
   assert.deepEqual(liveOf(await query()), members);
 
-  // bob 登录过期、carol 被撤销、dave 凭证对不上:三位都是 401。改之前这里整次查询抛 authority-unavailable,云端 Agent 看到的是「发起方不在线」
+  // bob's login expired, carol was revoked, dave's credentials did not match: all three are 401.
+  // Before the change, the entire query threw authority-unavailable; Cloud Agent saw "initiator is offline"
   answers.set('bob', fail(401, 'authorization-expired'));
   answers.set('carol', fail(401, 'credential-revoked'));
   answers.set('dave', fail(401, 'principal-mismatch'));
   let state = await query();
-  assert.deepEqual(liveOf(state), ['alice', 'erin'], '过期、被撤销的三位不算,发起方和另一位照常');
+  assert.deepEqual(liveOf(state), ['alice', 'erin'], 'the three members whose logins expired or were revoked do not count; the initiator and one other member are as usual');
   assert.equal(state.members.find(m => m.accountId === 'alice').isInitiator, true);
   assert.deepEqual(state.members.find(m => m.accountId === 'alice').pages.map(p => [p.pageId, p.live, p.selection.clipIds]), [['page-alice', true, ['c1']]],
-    '发起方读到的是它页面上实时的选区,不是发消息时的那一份');
-  assert.equal(/page-(bob|carol|dave)/.test(JSON.stringify(state)), false, '不算的成员的选区一个字都不在结果里');
-  assert.equal(selection.describe().pages, 2, '不算的那三条连接的在场记录撤掉了');
+    'the initiator reads the live selection on its page, not the one from when the message was sent');
+  assert.equal(/page-(bob|carol|dave)/.test(JSON.stringify(state)), false, 'not a single character of the uncounted members\' selections is in the result');
+  assert.equal(selection.describe().pages, 2, 'the presence records of the three uncounted connections were removed');
 
-  // 权限没有放松:那条连接凭过期的登录再发选区照旧被拒,进不了表
+  // Permissions are not relaxed: sending selections again over that connection with expired login
+  // is still rejected as before, and cannot enter the table
   await selection.handle(ctx, 'conn-bob', { type: 'selection.set', projectId, pageId: 'page-bob', revision: 2, selection: { clipIds: ['c2'] } });
   assert.deepEqual([ctx.replies.get('conn-bob').type, ctx.replies.get('conn-bob').reason], ['error', 'authorization-expired']);
   assert.deepEqual(liveOf(await query()), ['alice', 'erin']);
-  // 换一条连接重新登录(页面续登录就是这样):重新发选区之后回到表里
+  // Reconnect on another connection to log in again (as the page does when renewing login):
+  // returns to the table after resending selections
   answers.set('bob', true);
   selection.disconnect(ctx, 'conn-bob');
   selection.connect(ctx, 'conn-bob-2', pageOf('bob'));
   await selection.handle(ctx, 'conn-bob-2', { type: 'selection.set', projectId, pageId: 'page-bob-2', revision: 1, selection: { clipIds: ['c2'] } });
   assert.deepEqual(liveOf(await query()), ['alice', 'bob', 'erin']);
 
-  // 发起方自己的登录过期:它不算在线成员,结果里给的是文档服务自己存的发消息时的那一份(不是实时的),别的成员照常
+  // Initiator's own login expired: it is not counted as an online member; the result provides
+  // the copy stored by document service itself when the message was sent (not real-time),
+  // while other members remain normal
   answers.set('alice', fail(401, 'authorization-expired'));
   state = await query();
   assert.deepEqual(liveOf(state), ['bob', 'erin']);
   assert.deepEqual(state.members.find(m => m.accountId === 'alice').pages.map(p => [p.pageId, p.live, p.source, p.selection.clipIds]), [['sent', false, 'sent-snapshot', ['c2']]]);
 
-  // 没权限(403)照旧是这一位不算;答非所问(权威回的不是放行、或回的是别人的账号)也是
+  // No permission (403) still means this member is not counted; the same applies to irrelevant
+  // responses (authority did not return allow, or returned someone else's account)
   answers.set('erin', fail(403, 'not-listed'));
   assert.deepEqual(liveOf(await query()), ['bob']);
   selection.connect(ctx, 'conn-frank', pageOf('frank'));
@@ -239,21 +245,23 @@ test('一位成员的登录过期或被撤销:这一位不算,别的成员的选
   selection.connect(ctx, 'conn-gina', pageOf('gina'));
   answers.set('gina', () => 'yes');
   state = await query();
-  assert.deepEqual(liveOf(state), ['bob'], '答非所问的两位不算');
-  assert.equal(state.members.find(m => m.accountId === 'bob').pages.length, 1, '也没有被算成别人的页面');
+  assert.deepEqual(liveOf(state), ['bob'], 'the two members whose answers do not match the question do not count');
+  assert.equal(state.members.find(m => m.accountId === 'bob').pages.length, 1, 'and was not counted as someone else\'s page either');
   assert.equal(selection.describe().pages, 1);
 
-  // 查询途中断线的那一位不算,别的照常
+  // A member who disconnects during the query is not counted; others remain normal
   selection.connect(ctx, 'conn-hank', pageOf('hank'));
   answers.set('hank', () => { selection.disconnect(ctx, 'conn-hank'); return true; });
   assert.deepEqual(liveOf(await query()), ['bob']);
 
-  // 不是哪一位成员的事:权威不可用(5xx)、超时或连不上(没有状态码)、项目没了(404)、正在搬迁(409)、请求写错(400) —— 整次失败,不给缺人的表
+  // Not an issue with any single member: authority unavailable (5xx), timeout or connection failure
+  // (no status code), project gone (404), moving (409), malformed request (400): the entire query fails,
+  // and no incomplete table with missing members is returned
   for (const [status, code] of [[503, 'account-event-gap'], [500, 'internal'], [undefined, 'timeout'], [404, 'no-project'], [409, 'relocating'], [400, 'invalid-action'], [429, 'busy']]) {
     answers.set('bob', fail(status, code));
-    await assert.rejects(query(), err => err.status === 503 && err.code === 'authority-unavailable', `${status ?? '没有状态码'} ${code} 应该整次失败`);
-    assert.equal(selection.describe().pages, 1, '整次失败时不撤任何人的记录');
+    await assert.rejects(query(), err => err.status === 503 && err.code === 'authority-unavailable', `${status ?? 'no status code'} ${code} should fail the whole call`);
+    assert.equal(selection.describe().pages, 1, 'when the whole call fails, nobody\'s records are removed');
   }
   answers.set('bob', true);
-  assert.deepEqual(liveOf(await query()), ['bob'], '权威恢复后照常');
+  assert.deepEqual(liveOf(await query()), ['bob'], 'back to normal once the authority recovers');
 });

@@ -1,35 +1,42 @@
 /**
- * K3(b)「实际要追多少」的估算（pinned 渲染 4）。纯函数，单独一个文件是为了能单测 ——
- * `stageSwap.ts` 那一侧要卡片注册表和 store，拿不进 `node --test`。
+ * Estimation of K3(b) "actual catch-up amount" (pinned render 4). Pure function, kept in a separate
+ * file for unit testing: `stageSwap.ts` requires the card registry and store, which cannot be
+ * brought into `node --test`.
  *
- * # 公式
+ * # Formula
  *
  *   `t_c = (t − t_start) × FPS × t_oc`
  *
- * 长 motion 走的是**虚拟时间**：播放头此刻踩在它身上的第几帧，就只要追这么多帧。
- * `t_oc` 是单帧最差耗时 —— K1 探针量的正是「推帧过程中最慢一帧」（`stepMaxMs`），
- * 没有这个数就退回 p90 的 `stepMs`。
+ * Long motion runs on **virtual time**: whichever frame the playhead currently lands on within it,
+ * only that many frames need to be caught up. `t_oc` is the worst-case single-frame time: the K1
+ * probe measures precisely "the slowest frame during frame pushing" (`stepMaxMs`); if this number
+ * is missing, it falls back to p90 `stepMs`.
  *
- * # 为什么不直接用整段 `catchUpMs`
+ * # Why not directly use full-clip `catchUpMs`
  *
- * 整段 `catchUpMs` 是「从第 0 帧冲到**最后一帧**」的总代价（pinned 渲染 3 末句，K2 用它
- * 判轻重）。播放头刚进入一个 60 秒的片段时按它估，K5 第二路的目标拍 `T` 会被推出去好几秒：
- * 可见舞台白等，那张卡在 `suppressed` 里多透明一大截，而后台其实几十毫秒就补完了。
+ * Full-clip `catchUpMs` is the total cost of "rushing from frame 0 to the **last frame**"
+ * (pinned render 3 last sentence; K2 uses it to classify as light or heavy). Estimating by it when
+ * the playhead has just entered a 60-second clip would push the target tick `T` of K5's second
+ * path out by several seconds: the visible stage waits in vain, that card remains transparent
+ * inside `suppressed` for much longer, while the background actually finishes catch-up in tens of ms.
  *
- * # 封顶
+ * # Cap
  *
- * 位置估算**取不过整段代价**：`t_oc` 是单帧最差，乘满整段会比实测的整段总代价还悲观。
- * 算不出位置（没有 `t_oc`、或帧数为 0）就退回整段代价。
+ * Position estimate **cannot exceed the full-clip cost**: `t_oc` is single-frame worst case, and
+ * multiplying it across the entire clip is even more pessimistic than the measured full-clip cost.
+ * If position cannot be calculated (no `t_oc`, or frame count is 0), fall back to full-clip cost.
  *
- * **只影响「追多少」这个实际取值**：K2 的轻重分派仍按整段最差判（`clipWeight` 不受影响）。
+ * **Only affects the actual value of "how much to catch up"**: K2 light/heavy dispatch still
+ * evaluates by full-clip worst case (`clipWeight` is unaffected).
  */
 
 /**
- * 一张卡在播放位置 `frames`（= `(t − t_start) × fps`，已推进的帧数）上的补跑代价估计（毫秒）。
+ * Estimated catch-up run cost (milliseconds) for a card at playback position
+ * `frames` (= `(t − t_start) × fps`, number of frames advanced).
  *
- * @param {{ catchUpMs?: number, stepMaxMs?: number, stepMs?: number } | null | undefined} record K1 的成本记录
- * @param {number} frames 从入点到此刻的帧数
- * @returns {number} 毫秒；没有任何可用的数就回 0（调用方自己兜底）
+ * @param {{ catchUpMs?: number, stepMaxMs?: number, stepMs?: number } | null | undefined} record K1 cost record
+ * @param {number} frames Number of frames from the in point to the current moment
+ * @returns {number} Milliseconds; returns 0 if no usable value is available (caller handles fallback)
  */
 export function catchUpEstimateMs(record, frames) {
   const whole = Number(record?.catchUpMs) || 0;
@@ -42,24 +49,34 @@ export function catchUpEstimateMs(record, frames) {
 }
 
 /**
- * **整场景**补跑的代价（K3(b) 播放态互换的估时）。
+ * Cost of a **whole scene** catch-up run (time estimate for K3(b) playback swap).
  *
- * 后台舞台补跑是 `render(T, { jump: true })`：此刻活跃的卡全部重挂载，时钟从它们里最早的入点起
- * **整台戏**逐帧推到 `T`。后台舞台没有分派表，判重的卡在那里同样活渲 —— 所以要花的墙钟不是
- * 那张轻卡自己的追帧代价，而是这段时间里场上每张卡各自推帧代价的**和**（C10-A4 实测：
- * 一张 90 ms 的轻卡带着 9 张 40 ms/帧的重卡，补到 1.03 秒用了 11 秒）。
+ * Background stage catch-up run is `render(T, { jump: true })`: all cards active at this moment
+ * are remounted, and the clock pushes the **entire show** frame-by-frame to `T` from the earliest
+ * in point among them. The background stage has no dispatch table, and cards classified as heavy
+ * are also live rendered there: so the wall-clock time spent is not just that light card's own
+ * frame catch-up cost, but the **sum** of the individual frame-push costs of every card on stage
+ * during this period (C10-A4 benchmark: a 90 ms light card with nine 40 ms/frame heavy cards took
+ * 11 s to catch up to 1.03 s).
  *
- * @param {{ start: number, end: number, record?: object | null }[]} entries 场上的卡片段（不分轻重）
- * @param {number} t 播放头此刻（秒）
+ * @param {{ start: number, end: number, record?: object | null }[]} entries
+ *   Card clips on stage (both light and heavy)
+ * @param {number} t Playhead at the current moment (seconds)
  * @param {number} fps
- * @param {(entry: { start: number, end: number }, t: number) => boolean} [activeAt] 这一刻挂没挂载（缺省按入点、出点判）
+ * @param {(entry: { start: number, end: number }, t: number) => boolean} [activeAt]
+ *   Whether mounted at this moment (defaults to checking in and out points)
  * @returns {{ backlogMs: number, ratePerSec: number }}
- *   - `backlogMs`：从起推点（此刻活跃的卡里最早的入点）推到 `t` 的墙钟。每张卡从 max(入点, 起推点)
- *     推到 min(出点, t)，按 `catchUpEstimateMs` 估（和单卡同一个公式、同样封顶在整段代价上）；
- *   - `ratePerSec`：`t` 之后每多推 1 秒时间线要多花的墙钟（毫秒）＝ Σ(此刻活跃的卡的单帧代价) × fps。
- *     单帧和积压用**同一个数**（`stepMaxMs`，没有才退回 `stepMs`），积压与速率才是同一把尺子。
- *     实测（c10-browser-probe，PC）：按 `stepMaxMs` 估的积压 10982 ms 对上实测的 11 秒补跑；
- *     按 p90 `stepMs` 算的速率只有实测推帧速度的约九分之一。
+ *   - `backlogMs`: Wall-clock time to push from the push start point (earliest in point among
+ *     currently active cards) to `t`. Each card is pushed from max(in point, push start point)
+ *     to min(out point, t), estimated via `catchUpEstimateMs` (same formula as a single card,
+ *     likewise capped at the whole-clip cost);
+ *   - `ratePerSec`: Additional wall-clock time (ms) needed for each additional 1 s of timeline
+ *     pushed after `t` = Σ(single-frame cost of currently active cards) × fps.
+ *     The **exact same number** (`stepMaxMs`, falling back to `stepMs` only if absent) is used
+ *     for both single frame and backlog, so backlog and rate use the same scale.
+ *     Measured (c10-browser-probe, PC): backlog estimated by `stepMaxMs` of 10982 ms matched the
+ *     measured 11 s catch-up run; rate calculated by p90 `stepMs` was only about one-ninth of the
+ *     measured frame-push speed.
  */
 export function sceneCatchUpCost(entries, t, fps, activeAt = (e, sec) => sec >= e.start && sec < e.end) {
   const f = Math.max(1, Number(fps) || 30);
@@ -77,7 +94,8 @@ export function sceneCatchUpCost(entries, t, fps, activeAt = (e, sec) => sec >= 
   let ratePerSec = 0;
   for (const e of active) {
     const clipFrames = (e.end - e.start) * f;
-    // 没有单帧数、只有整段代价的记录:按整段均摊到每帧(积压那一侧 catchUpEstimateMs 对它直接取整段)
+    // Records with no per-frame value and only whole-clip cost: amortize across frames
+    // (on the backlog side, catchUpEstimateMs takes the whole clip directly)
     const perFrame = Number(e.record?.stepMaxMs) || Number(e.record?.stepMs)
       || (clipFrames > 0 ? (Number(e.record?.catchUpMs) || 0) / clipFrames : 0);
     ratePerSec += perFrame * f;
@@ -86,11 +104,15 @@ export function sceneCatchUpCost(entries, t, fps, activeAt = (e, sec) => sec >= 
 }
 
 /**
- * 播放态互换的目标拍要领先播放头多少毫秒；追不上回 `null`。
+ * How many milliseconds ahead of the playhead the target tick for playback swap must lead;
+ * returns `null` if it cannot catch up.
  *
- * 后台舞台先要补完 `backlogMs`，这期间可见舞台按 1 秒 / 秒往前走，后台每多推 1 秒时间线又要多花
- * `ratePerSec` 毫秒。领先 L 要满足 L ＝ backlog ＋ rate × L / 1000，即 L ＝ backlog ÷ (1 − rate / 1000)。
- * `rate ≥ 1000`（后台推 1 秒时间线就要 1 秒以上墙钟）时后台永远追不上可见舞台，没有这样的 L。
+ * The background stage must first finish `backlogMs`. Meanwhile, the visible stage advances at
+ * 1 s / s, and pushing each additional 1 s of timeline in the background takes an extra
+ * `ratePerSec` ms. The lead L must satisfy L = backlog + rate × L / 1000, i.e.,
+ * L = backlog / (1 − rate / 1000). When `rate ≥ 1000` (pushing 1 s of timeline in the background
+ * requires 1 s or more of wall-clock time), the background can never catch up to the visible stage,
+ * so no such L exists.
  *
  * @param {number} backlogMs
  * @param {number} ratePerSec

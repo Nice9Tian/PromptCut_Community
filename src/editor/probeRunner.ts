@@ -1,60 +1,84 @@
 /**
- * K1 的**常驻探针**（父页一侧的驱动）。
+ * K1's **resident probe** (the driver on the parent-page side).
  *
- * 打开项目时在加载遮罩（`ProbeGate`）下把所有活跃卡逐张测完才进编辑（pinned 渲染 5）；
- * 之后新添加的卡、或 `cardCostKey` 变了的卡随即在后台舞台补测，那时不再挡界面。
+ * When a project opens, every active card is measured one by one under the loading overlay
+ * (`ProbeGate`) before editing starts (pinned rendering 5). Cards added afterwards, and cards whose
+ * `cardCostKey` changed, are then measured on the background stage, which no longer blocks the UI.
  *
- * 离线版是 `scripts/probe-card-costs.mjs`，做的是同一件事、同一套数：
- * `device` 串（`src/render/costDevice.mjs`）和统计口径（`src/render/probeSummary.mjs`）
- * 都是同一份代码，两条路测出来的记录因此互相认得、可以并排比。
+ * The offline version is `scripts/probe-card-costs.mjs`; it does the same job with the same numbers:
+ * the `device` string (`src/render/costDevice.mjs`) and the statistics definitions
+ * (`src/render/probeSummary.mjs`) are the same code, so records measured by the two paths recognize
+ * each other and can be compared side by side.
  *
- * # 一张卡怎么测（K1）
+ * # How one card is measured (K1)
  *
- * 1. `pushProject('back', 缩水项目, { reset: true })` —— **一次只测一个片段**：`render` 没有
- *    clipId，不缩水的话舞台会把此刻全部活跃卡一起推，测出来的数被污染还不报错。
- *    形状同 `FrameScene` 的 `legacyTimeline`：一条轨道一个 clip。
- *    必须走 `pushProject` 而不是直接 `setProject` —— 后者绕过基线，之后的 `syncProject`
- *    会因为「和基线比没变」静默不发，`back` 就一直留在缩水项目上（E0 点名的坑）。
- * 2. `stepped` 卡三趟：
- *    - **计时趟** `render(最后一帧, { jump: true, probe: 'time', maxCatchUp: Infinity })`，
- *      拿逐帧活渲耗时 `steps`；**撞封顶回的 `{ aborted: true, reason: 'timeout' }` 是长片段的
- *      正常路径，不是失败**（R4a 报告 §8 第 8 条），按已推帧外推 `catchUpMs`；
- *    - **快照趟** `render(…, { probe: 'snapshot' })`，拿逐帧的三段生成快照耗时
- *      （回包的 `snapshotSteps`，一次往返；离线脚本为了同一批数逐帧发了 40 次往返，
- *      那在加载遮罩下太慢）。它仍受一拍预算约束，截断不影响任何判定；
- *    - **两趟布尔探针** `render(…, { probe: 'booleans' })`：`vtOk` / `seekOk` / `seekMs`
- *      整趟在舞台里跑（要 `pinner.syncIn` 钉子树虚拟时间，父页够不到）。
- * 3. `direct` 卡：按 cardId 播种随机抽本地帧，各发一次 `setTime(t, { probe: true })`，
- *    抽满 `STEP_MIN_SAMPLES`（8 不够就补抽，否则走不到百分位），`catchUpMs = 0`。
- * 4. 父页补齐 `device` / `mode` / `measuredAt` / `demoted: false` 后**整条 PUT**
- *    （`costs-store` 是整条替换，`validRecord` 要 `identityKey` + `device`）。
- *    `demoted: false` 要**显式写**：`STICKY_FLAGS` 是「没带就沿用旧值」，不写的话 K6 写过一次
- *    `true` 之后每次重测都会被贴回 `true`，卡就永久判重了（3.3）。
+ * 1. `pushProject('back', reduced project, { reset: true })`: **measure only one clip at a time**.
+ *    `render` has no clipId, so without reducing the project the stage would push all currently active
+ *    cards together, and the measured numbers would be polluted without any error.
+ *    The shape is the same as `legacyTimeline` in `FrameScene`: one track, one clip.
+ *    It must go through `pushProject` rather than calling `setProject` directly: the latter bypasses
+ *    the baseline, so a later `syncProject` silently sends nothing because "nothing changed compared
+ *    with the baseline", and `back` stays on the reduced project forever (a pitfall called out in E0).
+ * 2. A `stepped` card takes three passes:
+ *    - **timing pass** `render(last frame, { jump: true, probe: 'time', maxCatchUp: Infinity })`,
+ *      which yields the per-frame live render time `steps`; **the `{ aborted: true, reason: 'timeout' }`
+ *      returned when the cap is hit is the normal path for long clips, not a failure** (R4a report §8,
+ *      item 8); `catchUpMs` is extrapolated from the frames already pushed;
+ *    - **snapshot pass** `render(…, { probe: 'snapshot' })`, which yields the per-frame timings of the
+ *      three parts of generate snapshots (`snapshotSteps` in the response, one round trip; to get the
+ *      same numbers the offline script sent 40 round trips, one per frame, which is too slow under the
+ *      loading overlay). It is still bound by the one-tick budget, and truncation does not affect any
+ *      decision;
+ *    - **two-pass boolean probe** `render(…, { probe: 'booleans' })`: `vtOk` / `seekOk` / `seekMs`
+ *      run entirely inside the stage (it needs `pinner.syncIn` to pin the subtree's virtual time, which
+ *      the parent page cannot reach).
+ * 3. A `direct` card: sample local frames at random, seeded by cardId, and send one
+ *    `setTime(t, { probe: true })` for each, until `STEP_MIN_SAMPLES` is reached (top up if 8 is not
+ *    enough, otherwise the percentiles cannot be reached), `catchUpMs = 0`.
+ * 4. The parent page fills in `device` / `mode` / `measuredAt` / `demoted: false` and then does a
+ *    **PUT of the whole record** (`costs-store` replaces the whole record, and `validRecord` requires
+ *    `identityKey` + `device`).
+ *    `demoted: false` must be **written explicitly**: `STICKY_FLAGS` means "keep the old value if it
+ *    is not supplied", so if it is omitted, once K6 has written `true`, every re-measurement gets
+ *    `true` carried back, and the card is permanently classified as heavy (3.3).
  *
- * # 跳过已经测过的
+ * # Skipping what has already been measured
  *
- * 同一 `(identityKey, device)` 已有记录**且 `demoted !== true`** 的整张跳过
- * （pinned 渲染 5 末句：身份没变就直接复用）。`costs` 全命中时一张都不测，遮罩一帧都不出现。
+ * A card is skipped entirely when a record already exists for the same `(identityKey, device)`
+ * **and `demoted !== true`** (last sentence of pinned rendering 5: if the identity has not changed,
+ * reuse it directly). When `costs` is a full hit, no card is measured and the overlay never appears
+ * for even one frame.
  *
- * # 排队与掐断
+ * # Queuing and cut-off
  *
- * 每张卡的整套活经 `stageJobs` 的单飞队列排一次，档位是最低的 `'probe'` ——
- * 补跑（K5）和页面侧测量（D4）进来时探针让路，`ctx.signal` 一响就收摊，
- * 这张卡从头重排（E0：「`settled` 或补跑中止后……探针从当前这张卡的头重排」）。
+ * The whole job for each card is queued once through the single-flight queue of `stageJobs`, at the
+ * lowest tier, `'probe'`: when a catch-up run (K5) or a page-side measurement (D4) comes in, the probe
+ * yields; as soon as `ctx.signal` fires it stops, and this card is re-queued from the start
+ * (E0: "after `settled` or an aborted catch-up run... the probe re-queues from the start of the
+ * current card").
  *
- * `render` 中止回包按 E0 的五条规矩走（`renderAbortAction`）：
- *   `'timeout'` 忽略（正常路径）、`'project'` 重发（先重发缩水项目，最多 3 次）、
- *   `'superseded'` 丢弃、`'detached'` 换客户端重来、`'role'` 当错误。
+ * An aborted `render` response follows E0's five rules (`renderAbortAction`):
+ *   `'timeout'` is ignored (normal path), `'project'` is re-sent (re-send the reduced project first,
+ *   at most 3 times), `'superseded'` is discarded, `'detached'` starts over with another client,
+ *   `'role'` is treated as an error.
  *
- * **项目变了按新项目重排队列**：`syncProbeRun(project)` 递增代数，正在跑的那一张测完就退出，
- * 重新拉一次 `costs`、重新算 `identityKey`、重新排。新添加或 `cardCostKey` 变了的卡自然补测。
+ * **When the project changes, the queue is rebuilt for the new project**: `syncProbeRun(project)`
+ * increments the generation, the card currently running exits once it finishes, then `costs` is
+ * fetched again, `identityKey` is recomputed, and the queue is rebuilt. Newly added cards, and cards
+ * whose `cardCostKey` changed, are naturally measured afterwards.
  *
- * # 测完一张卡之后（在线页面：测量时就产稀疏的轨道流）
+ * # After a card is measured (online page: the sparse track stream is produced at measurement time)
  *
- * `docs/semantics/mechanism/rendering.md`「测量」：第二趟给判重的卡产一套稀疏的轨道流，在线页面由后台舞台紧接着这张卡的第一趟自己产。
- * 这里只留一个口子 `setCardMeasuredHook`：加载遮罩挡着的那一轮里，每测完一张卡、记录并进分派表之后调它一次并等它回
- * （遮罩因此等稀疏版）；产不产、等多久（最多 50 秒）由接的那一方定（`browserNodeHost.ts` → `online/pageStreams.ts` 的 `measure()`）。
- * 不挡界面的补测不调：之后要补的只在闲时产。没人接（桌面版）时一个字不变。
+ * `docs/semantics/mechanism/rendering.md` "Measurement": the second pass produces a sparse track
+ * stream for cards classified as heavy; on the online page the background stage produces it itself,
+ * right after this card's first pass.
+ * Only one hook is left here, `setCardMeasuredHook`: during the round that the loading overlay blocks,
+ * after each card is measured and its record merged into the dispatch table, it is called once and
+ * awaited (so the overlay waits for the sparse version); whether to produce one and how long to wait
+ * (50 seconds at most) is decided by the side that plugs in (`browserNodeHost.ts` → `measure()` in
+ * `online/pageStreams.ts`).
+ * Re-measurements that do not block the UI do not call it: whatever needs filling in afterwards is
+ * produced only when idle. When nothing plugs in (desktop app), nothing changes at all.
  */
 import { flatPlanProject, isFlatClipId } from "../kernel/cutFlatten.mjs";
 import type { Project } from "../kernel/project";
@@ -71,23 +95,25 @@ import { MAX_PROJECT_RESENDS, currentBackJob, renderAbortAction, runBackJob } fr
 import { measureGateOpen, whenMeasureGateOpen } from "./measureGate";
 import { tierGlRoute, tierState } from "../online/onlineTier";
 
-/* ------------------------------------------------------------------ 进度 */
+/* ------------------------------------------------------------------ progress */
 
 export interface ProbeProgress {
-  /** 这一轮还在测 */
+  /** This round is still measuring */
   running: boolean;
   /**
-   * 这一轮**要不要挡住界面**。只有「打开项目的第一轮」是 true（pinned 渲染 5）；
-   * 之后新添加的卡在后台补测，不再挡（K1：「兜底分派只用于『新卡还没测完』那几秒」）。
+   * Whether this round **should block the UI**. Only "the first round of opening a project" is true
+   * (pinned render 5); cards added afterwards are re-measured in the background and no longer block
+   * (K1: "the fallback dispatch is used only for the few seconds while a new card hasn't finished
+   * being measured").
    */
   blocking: boolean;
-  /** 这一轮要测几张 */
+  /** How many cards this round will measure */
   total: number;
-  /** 测完几张 */
+  /** How many cards have been measured */
   done: number;
-  /** 正在测的那张卡的 id（遮罩上的文案用） */
+  /** The id of the card being measured (for the text on the overlay) */
   card: string | null;
-  /** 测不出来的（诊断用，不挡流程） */
+  /** Those that couldn't be measured (for diagnostics, doesn't block the flow) */
   failed: string[];
 }
 
@@ -110,44 +136,49 @@ function setProgress(patch: Partial<ProbeProgress>): void {
   for (const cb of listeners) cb(progress);
 }
 
-/* ------------------------------------------------------------------ 常量 */
+/* ------------------------------------------------------------------ Constants */
 
-/** 挂载那一下给一个真任务边界再开测：React 要建树、Motion 要解析关键帧 */
+/** At mount, give it a real task boundary before starting to measure: React has to build the tree, and Motion has to resolve keyframes */
 const MOUNT_SETTLE_MS = 150;
-/** canvas 卡（three.js / tsParticles）还要等它异步把画布装起来，不然量的是一个空壳 */
+/** A canvas card (three.js / tsParticles) also has to wait for it to set up the canvas asynchronously, otherwise what is measured is an empty shell */
 const CANVAS_WAIT_TRIES = 20;
 const CANVAS_WAIT_STEP_MS = 50;
-/** 一张卡最多重来几次（`'project'` 重发的上限 + 一次换客户端） */
+/** The maximum number of retries per card (the cap for `'project'` resends + one client swap) */
 const MAX_ATTEMPTS = MAX_PROJECT_RESENDS + 1;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/* ------------------------------------------------------------------ 测完一张卡之后的口子 */
+/* ------------------------------------------------------------------ hook after a card is measured */
 
 export interface CardMeasuredInfo {
-  /** 测的是哪一版项目(store 里的对象) */
+  /** Which version of the project was measured (the object in the store) */
   project: Project;
-  /** 身份与刚测的这张卡相同的全部片段(同一张卡的多个片段只测一次) */
+  /** All clips with the same identity as the card just measured (several clips of one card are measured once) */
   clipIds: string[];
   cardId: string;
   identityKey: string;
-  /** 这一轮遮罩的编号:遮罩每出现一轮(打开项目、切帧率)换一个 */
+  /** Number of this loading-mask round: changes each time the mask appears (project opened, fps switched) */
   round: number;
-  /** 这一轮测量作废了没有(项目变了、换了连接) */
+  /** Whether this round of measurement was invalidated (project changed, connection switched) */
   stale: () => boolean;
 }
 type CardMeasuredHook = (info: CardMeasuredInfo) => Promise<unknown>;
 let cardMeasuredHook: CardMeasuredHook | null = null;
-/** 接上「测完一张卡之后」的口子;回退订。只有加载遮罩挡着的那一轮会调,调了就等它回(它自己管上限) */
+/**
+ * Attaches the "after a card is measured" hook; returns the unsubscribe function. Only called in a round
+ * blocked by the loading mask; once called, wait for it to return (it manages its own limit)
+ */
 export function setCardMeasuredHook(hook: CardMeasuredHook | null): () => void {
   cardMeasuredHook = hook;
   return () => { if (cardMeasuredHook === hook) cardMeasuredHook = null; };
 }
-/** 这一轮遮罩的编号 */
+/** Number of this loading-mask round */
 let maskRound = 0;
 /**
- * 遮罩下别的测量(两个舞台的界限搜索,`Preview.tsx`)测完一张卡之后也走同一个口子:给判重的卡产稀疏版,等它回。
- * 遮罩编号与常驻探针的同一个(一轮遮罩只有一个 50 秒的等稀疏版上限)。没人接(桌面版)时什么都不做。
+ * Other measurements under the mask (the boundary search over the two stages, `Preview.tsx`) also go through
+ * the same hook after measuring a card: produce a sparse version for cards judged heavy, and wait for it.
+ * The mask number is the same as the resident probe's (one mask round has a single 50-second limit for waiting
+ * on the sparse version). When nobody is attached (desktop app), it does nothing.
  */
 export async function runCardMeasuredHook(info: Omit<CardMeasuredInfo, "round">): Promise<void> {
   const hook = cardMeasuredHook;
@@ -156,18 +187,21 @@ export async function runCardMeasuredHook(info: Omit<CardMeasuredInfo, "round">)
   catch (err) { console.warn("[probeRunner] Error in the hook after a card is measured", err); }
 }
 
-/* ------------------------------------------------------------------ 身份与设备 */
+/* ------------------------------------------------------------------ identity and device */
 
-/** `import.meta.env.DEV`：桌面版跑的就是 vite dev server，分派用当前运行模式的记录（3.1） */
+/** `import.meta.env.DEV`: the desktop app runs the vite dev server, so dispatch uses the record for the current run mode (3.1) */
 const RUN_MODE: "dev" | "build" = import.meta.env.DEV ? "dev" : "build";
 
 /**
- * 本机身份（J4）。`compact` / `offscreenGl` 取**舞台握手报上来的那一份** ——
- * 离线探针拿的也是它，主文档自己再探一遍会是第二份实现、会走偏。
+ * Local machine identity (J4). `compact` / `offscreenGl` take **the copy reported by the stage handshake**:
+ * the offline probe uses it too, and probing again in the main document would be a second implementation
+ * that drifts.
  */
 /*
- * GPU 渲染器串一个页面会话里不变:读一次记下(C6.6 集成,T4)。以前每排一轮都新建一个 WebGL 上下文去读、再还回去,
- * 编辑时每改一次项目就多出几毫秒到十几毫秒。读成 `unknown`(上下文没建成)的不记,下次再读。
+ * The GPU renderer string does not change within a page session: read it once and remember it (C6.6
+ * integration, T4). Previously every round created a new WebGL context to read it and then released it,
+ * which added a few to a dozen milliseconds on every project change while editing. A result of `unknown`
+ * (the context could not be created) is not remembered; it is read again next time.
  */
 let gpuRenderer: string | null = null;
 function gpuRendererOnce(): string {
@@ -184,32 +218,32 @@ function deviceStringOf(tuning: PipelineTuning): string {
     renderer: gpuRendererOnce(),
     compact: !!caps?.compact,
     offscreenGl: !!caps?.offscreenGl,
-    // 生效路线(M2):桌面按项目选项、缺省路线 1;在线页面按舞台闸门(`onlineTier.ts`)。切了路线等于换机器,旧记录不命中、重探针
+    // Effective route (M2): desktop uses the project option, default route 1; online page uses the stage gate (`onlineTier.ts`). Switching route is like switching machines: old records miss and are probed again
     glRoute: effectiveGlRoute(currentProject),
     mode: RUN_MODE,
     tuning,
   });
 }
 
-/* ------------------------------------------------------------------ 要测哪些卡 */
+/* ------------------------------------------------------------------ Which cards to probe */
 
 interface ProbeJob {
   clipId: string;
   cardId: string;
   identityKey: string;
-  /** 声明的帧模式：`direct` 抽样，其余推帧 */
+  /** Declared frame mode: `direct` samples, the others push frames */
   frameMode: string;
   canvasHeavy: boolean;
-  /** 审阅表的轴三。只有 `independent` 的卡才把探针帧存成预渲染素材（K1 末句） */
+  /** Axis three of the review table. Only `independent` cards store probe frames as prerender assets (last sentence of K1) */
   independent: boolean;
   fps: number;
   lenSec: number;
   durationFrames: number;
-  /** 缩水项目：一条轨道一个 clip，形状同 `FrameScene` 的 `legacyTimeline` */
+  /** Shrunken project: one clip per track, shaped like `legacyTimeline` of `FrameScene` */
   project: Project;
 }
 
-/** 缩水项目（K1「一次只测一个片段」） */
+/** Shrunken project (K1 "measure only one clip at a time") */
 function shrinkProject(project: Project, track: Project["tracks"][number], clip: Project["tracks"][number]["clips"][number]): Project {
   return {
     ...project,
@@ -222,22 +256,23 @@ function shrinkProject(project: Project, track: Project["tracks"][number], clip:
 }
 
 function planJobs(project: Project, costs: CardCostRecord[], device: string): ProbeJob[] {
-  // 身份键和能力表和 `planDispatch` 共用同一份（`costIdentity.ts`）：
-  // 探针写进去的记录和分派表查的键必须是同一个算法算出来的
+  // The identity key and capability table are shared with `planDispatch` (`costIdentity.ts`):
+  // the record the probe writes and the key the dispatch table looks up must be computed by the same algorithm
   const { identityKeys, capabilities: capsOf } = clipIdentityOf(project);
 
-  // 已有记录且 demoted !== true 的整张跳过（pinned 渲染 5 末句）
+  // Skip the whole card if a record exists and demoted !== true (last sentence of pinned render 5)
   const known = new Set(costs.filter((r) => r.device === device && r.demoted !== true).map((r) => r.identityKey));
   const fps = Math.max(1, project.fps || 30);
   const jobs: ProbeJob[] = [];
   const seen = new Set<string>();
-  // 剪辑段里的卡照测(`kernel/cutFlatten.mjs` 的摊平视图;片段 id 是 `<段 id>~<卡的片段 id>`):缩水项目里它就是一张顶层卡
+  // Cards inside a cut segment are still measured (flattened view of `kernel/cutFlatten.mjs`; the clip id is
+  // `<segment id>~<card clip id>`): in the shrunken project it is a single top-level card
   for (const track of flatPlanProject(project).tracks ?? []) {
     for (const clip of track.clips ?? []) {
       if (!clip.cardId && !clip.nodeId) continue;
       const identityKey = identityKeys[clip.id];
       if (!identityKey) continue;
-      // 同一张卡的多个片段身份相同，只测一次
+      // Several clips of the same card have the same identity, so they are measured only once
       if (seen.has(identityKey) || known.has(identityKey)) continue;
       seen.add(identityKey);
       const caps = capsOf.get(clip.id) ?? {};
@@ -248,7 +283,8 @@ function planJobs(project: Project, costs: CardCostRecord[], device: string): Pr
         identityKey,
         frameMode: typeof caps.frameMode === "string" ? caps.frameMode : "stateful",
         canvasHeavy: caps.canvasHeavy === true,
-        // 剪辑段里的卡的探针帧不当预渲染素材(它们只产单卡轨道流,隔离工程要带着剪辑段链)
+        // Probe frames of cards inside a cut segment are not used as prerender assets (they only produce a
+        // single-card track stream, and the isolated project would have to carry the cut segment chain)
         independent: caps.compositing === "independent" && !isFlatClipId(clip.id),
         fps,
         lenSec,
@@ -260,12 +296,14 @@ function planJobs(project: Project, costs: CardCostRecord[], device: string): Pr
   return jobs;
 }
 
-/* ------------------------------------------------------------------ 端点 */
+/* ------------------------------------------------------------------ Endpoints */
 
 /**
- * 成本记录存在哪(C10 契约第 3 节):桌面运行环境是编辑器进程的 `GET / PUT /api/data/costs`;在线双舞台由 `Preview` 换成
- * 页面内快照库 L2 的 `costs` 表(`src/online/l2Costs.ts`,`mode=build`,关掉再开不重测)。
- * `forwardFrames`:探针帧要不要转发给预渲染进程(在线页面没有预渲染进程,不转发)。
+ * Where cost records are stored (C10 contract section 3): in the desktop runtime it is `GET / PUT /api/data/costs`
+ * of the editor process; for the online two-stage setup `Preview` swaps in the `costs` table of the in-page
+ * snapshot store L2 (`src/online/l2Costs.ts`, `mode=build`, no re-measurement after closing and reopening).
+ * `forwardFrames`: whether probe frames are forwarded to the prerender process (the online page has no
+ * prerender process, so it does not forward).
  */
 export interface CostBackend {
   load(): Promise<{ costs: CardCostRecord[]; tuning: PipelineTuning }>;
@@ -275,14 +313,16 @@ export interface CostBackend {
 const httpBackend: CostBackend = { load: () => getCostsHttp(), save: (records) => putCostsHttp(records), forwardFrames: true };
 let backend: CostBackend = httpBackend;
 
-/** 换成本记录的存放处;null 回到编辑器进程 */
+/** Swap the storage location of cost records; null goes back to the editor process */
 export function setCostBackend(next: CostBackend | null): void {
   backend = next ?? httpBackend;
 }
 
 /**
- * 测完写进成本记录的那一处留的订阅口(C10 契约第 18 节第 7 条):每写一次,把这次测得的记录发给订阅方
- * (`stored`:写没写成)。文档服务那一侧的共享成本记录由 `claude/c10-cost` 接在这里(集成时由主会话接线)。
+ * Subscription hook left at the point where a measurement is written to the cost records (C10 contract
+ * section 18, item 7): on every write, the record just measured is sent to the subscriber (`stored`: whether
+ * the write succeeded). The shared cost records on the document service side are attached here by
+ * `claude/c10-cost` (wired up by the lead session at integration).
  */
 const costRecordListeners = new Set<(records: CardCostRecord[], info: { stored: boolean }) => void>();
 export function onCostRecords(cb: (records: CardCostRecord[], info: { stored: boolean }) => void): () => void {
@@ -296,17 +336,17 @@ async function getCosts(): Promise<{ costs: CardCostRecord[]; tuning: PipelineTu
 
 async function putCosts(records: CardCostRecord[]): Promise<boolean> {
   const stored = await backend.save(records).catch(() => false);
-  for (const l of [...costRecordListeners]) { try { l(records, { stored }); } catch { /* 订阅方坏了不影响测量 */ } }
+  for (const l of [...costRecordListeners]) { try { l(records, { stored }); } catch { /* A broken subscriber does not affect measurement */ } }
   return stored;
 }
 
-/** 测过的片段(诊断、探针用;最近 200 条):哪个片段、哪张卡、身份键、什么时候开测 */
+/** Clips that were measured (for diagnostics and probes; latest 200): which clip, which card, identity key, when measuring started */
 const probedLog: Array<{ clipId: string; cardId: string; identityKey: string; at: number }> = [];
 export function probeRunDiag() {
   return { probed: probedLog.map((e) => ({ ...e })), running: progress.running, done: progress.done, total: progress.total };
 }
 
-/** 探针帧的诊断:收到几帧、其中几帧是压过的可转移字节(C10 契约第 2 节「大块产出」) */
+/** Diagnostics for probe frames: how many frames arrived, and how many of them are compressed transferable bytes (C10 contract section 2, "large output") */
 const probeFrameStats = { frames: 0, gzFrames: 0, gzBytes: 0, htmlBytes: 0 };
 export function probeFrameDiag() {
   return { ...probeFrameStats };
@@ -322,7 +362,8 @@ async function getCostsHttp(): Promise<{ costs: CardCostRecord[]; tuning: Pipeli
       tuning: resolveTuning(data?.tuning),
     };
   } catch {
-    // 插件没挂上 / 离线：这一轮用缺省系数，不跳过任何卡（测完 PUT 也会失败，但不该因此卡住界面）
+    // Plugin not attached / offline: this round uses default coefficients and skips no card (the PUT after
+    // measuring will also fail, but that should not block the UI)
     return { costs: [], tuning: resolveTuning(null) };
   }
 }
@@ -342,27 +383,28 @@ async function putCostsHttp(records: CardCostRecord[]): Promise<boolean> {
 
 
 
-/* ------------------------------------------------------------------ 测一张卡 */
+/* ------------------------------------------------------------------ Measure one card */
 
 const isAborted = (r: RenderReply): r is RenderAborted => !!r && (r as { aborted?: boolean }).aborted === true;
-/** 带 `probe` 的 `setTime` 只会被角色闸门拒（`{ aborted: true, reason: 'role' }`） */
+/** A `setTime` carrying `probe` can only be rejected by the role gate (`{ aborted: true, reason: 'role' }`) */
 const isSetTimeAborted = (r: SetTimeReply): r is SetTimeAborted => !!r && (r as { aborted?: boolean }).aborted === true;
 
 type Attempt =
   | { kind: "ok"; record: CardCostRecord }
-  /** 这张卡从头重排（`'project'` / `'detached'` / 更急的活抢了队） */
+  /** Reschedule this card from the start (`'project'` / `'detached'` / more urgent work took the queue) */
   | { kind: "retry" }
-  /** 这一轮别再试了（`'role'` / 抛错） */
+  /** Do not try again this round (`'role'` / threw an error) */
   | { kind: "fail" };
 
-/** 按 cardId 播种的随机数，和离线探针同一份实现 —— 同一台机器上复跑抽到同一批帧、可比 */
+/** Random numbers seeded by cardId, the same implementation as the offline probe: rerunning on the same machine samples the same frames, so results are comparable */
 const seedOf = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
 const mulberry32 = (a: number) => () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 
 /**
- * canvas 卡把画布装起来了没有。**跨源摸不到 iframe 的 document**（离线探针那一侧是同源、
- * 直接查 `[data-pc-clip] canvas`），所以改问 `rectsWithBounds({ pixels: 'all' })`：
- * 它会让舞台读一次画布像素算实体框，框出来了就说明画布真画上了东西。
+ * Whether the canvas card has set up its canvas. **The iframe's document cannot be reached cross-origin**
+ * (the offline probe side is same-origin and queries `[data-pc-clip] canvas` directly), so we ask
+ * `rectsWithBounds({ pixels: 'all' })` instead: it makes the stage read the canvas pixels once and compute
+ * the bounding box of the content; if a box comes out, something was really drawn on the canvas.
  */
 async function waitForCanvas(stage: StageRpcClient, clipId: string): Promise<void> {
   for (let i = 0; i < CANVAS_WAIT_TRIES; i++) {
@@ -386,11 +428,11 @@ async function probeCardOnce(
   device: string,
   stale: () => boolean,
 ): Promise<Attempt> {
-  /** 中止回包按 E0 的五条规矩翻译成「这张卡怎么办」 */
+  /** Translate an abort reply into "what to do with this card" following the five rules of E0 */
   const onAbort = (r: RenderAborted): Attempt | null => {
     if (r.reason === "role" && (stage !== backStage() || signal.aborted)) return { kind: "retry" };
     switch (renderAbortAction(r.reason, currentBackJob())) {
-      case "ignore": return null;            // 'timeout'：长片段的正常路径，不是失败
+      case "ignore": return null;            // 'timeout': the normal path for long clips, not a failure
       case "resend": return { kind: "retry" };
       case "rebind": return { kind: "retry" };
       case "drop": return { kind: "retry" };
@@ -398,7 +440,8 @@ async function probeCardOnce(
     }
   };
 
-  // 一次只测一个片段：先换缩水项目，再 render（顺序反了会在全量项目上把全部活跃卡一起推）
+  // Measure one clip at a time: swap in the shrunken project first, then render (in the wrong order, all
+  // active cards would be pushed together on the full project)
   await pushProject("back", job.project, { reset: true });
   if (stale() || signal.aborted) return { kind: "retry" };
   await stage.setTime(0);
@@ -418,8 +461,9 @@ async function probeCardOnce(
   if (job.frameMode === "direct") {
     kind = "random";
     /*
-     * 固定随机抽本地帧，**抽满 STEP_MIN_SAMPLES**（K1：8 次不够就补抽）——
-     * 不补的话 8 个样本走不到百分位，`robustStep` 只好退回取最大。
+     * Sample local frames with a fixed random sequence, **drawing up to STEP_MIN_SAMPLES** (K1: if 8 draws are
+     * not enough, draw more):
+     * without the extra draws, 8 samples do not reach the percentile, and `robustStep` has to fall back to the max.
      */
     const want = Math.max(8, Math.min(tuning.STEP_MIN_SAMPLES, job.durationFrames));
     const rnd = mulberry32(seedOf(job.cardId));
@@ -430,11 +474,11 @@ async function probeCardOnce(
       if (stale() || signal.aborted) return { kind: "retry" };
       const r = await stage.setTime(n / job.fps, { probe: true });
       if (isSetTimeAborted(r)) {
-        // K5 可能在 setTime 往返期间互换前后台舞台；旧客户端此时成了 front。
-        // 只在舞台已经换人或被高优先级工作抢占时，从新 back 重试。
+        // K5 may swap the visible and background stages during the setTime round trip; the old client then becomes front.
+        // Retry from the new back only when the stage has changed hands or been preempted by high-priority work.
         return stage !== backStage() || signal.aborted ? { kind: "retry" } : { kind: "fail" };
       }
-      // stepMs 是舞台在等那一次真 rAF **之前**取的，所以已经不含垂直同步（3.8 末条）
+      // stepMs is taken by the stage **before** it waits for that one real rAF, so it no longer includes vsync (last item of 3.8)
       steps.push(Number(r.stepMs) || 0);
       inline.push(Number(r.snapshot?.inlineMs) || 0);
       raster.push(Number(r.snapshot?.rasterMs) || 0);
@@ -446,19 +490,19 @@ async function probeCardOnce(
     const lastSec = Math.max(0, job.lenSec - 1 / job.fps);
     totalFrames = Math.max(1, Math.round(lastSec * job.fps) + 1);
 
-    /* ---- 计时趟：只推进、不生成快照 ---- */
+    /* ---- Timing pass: only advance, do not generate snapshots ---- */
     const timePass = await stage.render(lastSec, { jump: true, probe: "time", maxCatchUp: Infinity, maxFrames: PROBE_MAX_FRAMES });
     if (isAborted(timePass)) {
       const out = onAbort(timePass);
       if (out) return out;
-      truncated = true;                        // 'timeout'：撞封顶，正常路径
+      truncated = true;                        // 'timeout': hit the cap, normal path
     }
     for (const s of (timePass as { steps?: number[] }).steps ?? []) steps.push(Number(s) || 0);
     if (stale() || signal.aborted) return { kind: "retry" };
 
 
 
-    /* ---- 两趟布尔探针：整趟在舞台里跑（K1） ---- */
+    /* ---- Two-pass boolean probe: the whole pass runs inside the stage (K1) ---- */
     const boolPass = await stage.render(lastSec, { jump: true, probe: "booleans" });
     if (isAborted(boolPass)) {
       const out = onAbort(boolPass);
@@ -477,14 +521,15 @@ async function probeCardOnce(
     record: {
       identityKey: job.identityKey,
       fps: job.fps,
-      // 五个数分开报（3.8 + K1）；旧的 frameMs 已删，不留兼容
+      // Five numbers are reported separately (3.8 + K1); the old frameMs is removed, with no compatibility kept
       stepMs: round(summary.stepMs),
       stepMaxMs: round(summary.stepMaxMs),
       inlineMs: round(summary.inlineMs),
       rasterMs: round(summary.rasterMs),
       serializeMs: round(summary.serializeMs),
       catchUpMs: round(summary.catchUpMs),
-      // 计时趟真实采到的帧数(共享成本记录要它;没有时转写按 `device` 串里的 stepN 记,见 `sharedCosts.ts` 的 `samplesOf`)
+      // Number of frames actually sampled by the timing pass (the shared cost records need it; when missing, the
+      // transcription takes it from stepN in the `device` string, see `samplesOf` in `sharedCosts.ts`)
       ...(summary.samples > 0 ? { samples: summary.samples } : {}),
       ...(capped ? { capped: true } : {}),
       kind,
@@ -492,8 +537,9 @@ async function probeCardOnce(
       ...(typeof booleans.seekOk === "boolean" ? { seekOk: booleans.seekOk } : {}),
       ...(booleans.seekMs !== undefined ? { seekMs: booleans.seekMs === null ? null : round(booleans.seekMs) } : {}),
       mode: RUN_MODE,
-      // **显式写 false**（3.3）：STICKY_FLAGS 是「没带就沿用旧值」，不写的话 K6 写过一次 true
-      // 之后每次重测都会被贴回 true，这张卡就永久判重了。pinnedHeavy 留给人工钉死，这里不写。
+      // **Write false explicitly** (3.3): STICKY_FLAGS means "keep the old value if not supplied"; if we do not
+      // write it, once K6 has written true, every re-measurement will be pasted back to true and this card would be
+      // judged heavy forever. pinnedHeavy is left for manual pinning and is not written here.
       demoted: false,
       measuredAt: Date.now(),
       device,
@@ -501,17 +547,17 @@ async function probeCardOnce(
   };
 }
 
-/* ------------------------------------------------------------------ 主循环 */
+/* ------------------------------------------------------------------ main loop */
 
 let currentProject: Project | null = null;
 let queuedIdentity: string | null = null;
 let queuedBackend: CostBackend | null = null;
 let queuedDeviceInputs = "";
-/** 项目变了就 +1：正在跑的那一轮据此收摊、按新项目重排 */
+/** +1 whenever the project changes: the round in progress winds down accordingly and reschedules for the new project */
 let generation = 0;
 let settledGeneration = 0;
 let looping = false;
-/** 「打开项目的第一轮」过去了没有 —— 之后的补测不再挡界面 */
+/** Whether the "first round after opening a project" has passed; later top-up measurements no longer block the UI */
 let firstPassDone = false;
 
 const hasCardClip = (p: Project | null): boolean =>
@@ -523,8 +569,8 @@ export function probeSettledFor(project: Project): boolean {
 }
 
 /**
- * 项目变了叫一次（`ProbeGate` 在 effect 里叫）。同一个对象引用不重排 ——
- * store 是不可变更新，引用没变就什么都没变。
+ * Called once when the project changes (`ProbeGate` calls it in an effect). The same object reference does
+ * not reschedule: the store updates immutably, so if the reference is unchanged, nothing has changed.
  */
 export function syncProbeRun(project: Project | null): void {
   if (project === currentProject) return;
@@ -546,18 +592,19 @@ function deviceInputs(project: Project | null): string {
   return JSON.stringify([!!caps?.compact, !!caps?.offscreenGl, effectiveGlRoute(project)]);
 }
 
-/** 生效的 canvas 渲染路线:在线页面跟舞台闸门走(`tierGlRoute`),桌面按项目选项、缺省路线 1 */
+/** Effective canvas render route: the online page follows the stage gate (`tierGlRoute`); desktop uses the project option, default route 1 */
 function effectiveGlRoute(project: Project | null): "perDocument" | "shared" {
   return tierState().online ? tierGlRoute() : resolveGlRoute(project?.glRoute ?? null);
 }
 
 function queueProbeRun(project: Project | null, identity: string | null): void {
   /*
-   * **切 fps 要重走遮罩**（pinned 架构 7 的项目选项 + 渲染 5 的「每次打开项目都测」）。
-   * `cardCostKey` 把 fps 吃进了身份键，换帧率之后全部卡的记录都失配、一张都不能复用，
-   * 这一轮要测的张数和打开新项目时一样多 —— 不挡遮罩的话用户会看到一段边测边编辑的
-   * 空窗期，分派表在那期间还是兜底的那份。所以把 `firstPassDone` 拨回去，
-   * 让这一轮重新 `blocking`。预算 `B = 1000/fps × 70%` 也跟着变，重测正是必须的。
+   * **Switching fps must go through the loading mask again** (project option of pinned architecture 7 + "measure
+   * on every project open" of render 5). `cardCostKey` folds fps into the identity key, so after the frame rate
+   * changes the records of all cards mismatch and none can be reused; this round has as many cards to measure
+   * as when opening a new project. Without blocking behind the mask, the user would see a stretch of measuring
+   * while editing, during which the dispatch table is still the fallback one. So we reset `firstPassDone`,
+   * making this round `blocking` again. The budget `B = 1000/fps × 70%` changes too, so re-measuring is a must.
    */
   if (project && currentProject && Number(project.fps) !== Number(currentProject.fps)) { if (firstPassDone) maskRound++; firstPassDone = false; }
   currentProject = project;
@@ -569,12 +616,18 @@ function queueProbeRun(project: Project | null, identity: string | null): void {
 }
 
 /**
- * 卡片代码换了而项目没变(C6.6 第 5 节:同步装上了别人改的卡):`cardCostKey` 里的源码版本跟着变,
- * 但 `syncProbeRun` 按项目引用早退、`clipIdentityOf` 按项目引用记忆化,都看不出来;
- * 卡片模块的热更新虽然沿导入链重跑了本模块,实测并不会重排(C6.6 探针)。
- * 这里清掉身份缓存、按当前项目重排一轮,身份键变了、没有记录的卡照现有规则补测(分派表在这一轮开头跟着重算)。
- * 同一批热更新可能发多次通知:身份和测量环境相同的通知保留正在跑的测量,不递增代数。
- * 由 `ProbeGate.tsx` 在注册表 `onCardsUpdated` 通知、舞台装上新版代码之后调用。
+ * Card code changed while the project did not (C6.6 section 5: sync installed cards edited by someone else):
+ * the source version in `cardCostKey` changes with it, but `syncProbeRun` returns early by project reference
+ * and `clipIdentityOf` is memoized by project reference, so neither notices;
+ * although hot updates of card modules rerun this module along the import chain, in practice it does not
+ * reschedule (C6.6 probe).
+ * Here we clear the identity cache and reschedule a round for the current project: cards whose identity key
+ * changed and that have no record are measured under the existing rules (the dispatch table is recomputed at
+ * the start of this round).
+ * One batch of hot updates may send several notifications: a notification with the same identity and
+ * measurement environment keeps the measurement in progress and does not increment the generation.
+ * Called by `ProbeGate.tsx` after the registry's `onCardsUpdated` notification and after the stage has
+ * installed the new code.
  */
 export function requeueProbeRun(project: Project | null): void {
   resetClipIdentityCache();
@@ -585,8 +638,10 @@ export function requeueProbeRun(project: Project | null): void {
 }
 
 /**
- * 即时渲染闸门的口子(在线页面由 `Preview` 接到 `online/stageGate.ts`):测每张卡之前留崩溃记录、测完收;测崩过的卡(`skip`)不再测,
- * 直接当重卡(`planDispatch.setPlanForcedHeavy`)。桌面不接。
+ * Hook for the on-demand render gate (the online page attaches it to `online/stageGate.ts` via `Preview`):
+ * leave a crash record before measuring each card and clear it afterwards; cards that crashed during
+ * measurement (`skip`) are not measured again and are treated directly as heavy cards
+ * (`planDispatch.setPlanForcedHeavy`). Not attached on desktop.
  */
 export interface ProbeMeasureHooks {
   before?(identityKey: string, cardId: string): void;
@@ -599,12 +654,17 @@ export function setProbeMeasureHooks(next: ProbeMeasureHooks | null): void {
 }
 
 /**
- * 在线页面两个舞台、项目里已经有别的机器测好的成本记录时(语义 `product/platforms.md`「轻重判定」:有记录就二分只测几张来划线),
- * 打开项目先由界限搜索在后台舞台里只测几张(`Preview` 的界限搜索,遮罩下),常驻探针等它定下来:
- * - `holdProbe()`:先别开工(打开项目时由 `Preview` 叫);
- * - `releaseProbe({ blocking })`:开工;`blocking: false` = 这一轮不挡界面(界限搜索已经在遮罩下划好了线,探针在后台把其余的卡补测完,
- *   补齐 K3/K5 要的记录;补测完了分派表改按成本记录判)。没有记录的照旧在遮罩下逐张实测(`blocking: true`)。
- * 桌面不叫,一直开着。
+ * When the online page has two stages and the project already has cost records measured by other machines
+ * (semantics `product/platforms.md`, "light/heavy classification": if records exist, bisect and measure only
+ * a few cards to draw the line), opening a project first has the boundary search measure only a few cards in
+ * the background stage (`Preview`'s boundary search, under the mask), and the resident probe waits for it to
+ * settle:
+ * - `holdProbe()`: do not start yet (called by `Preview` when a project is opened);
+ * - `releaseProbe({ blocking })`: start; `blocking: false` = this round does not block the UI (the boundary
+ *   search already drew the line under the mask, and the probe measures the remaining cards in the background
+ *   to fill in the records that K3/K5 need; once that is done, the dispatch table switches to judging by cost
+ *   records). Cards without records are still measured one by one under the mask (`blocking: true`).
+ * Desktop never calls it; it stays open.
  */
 let holdGate: { promise: Promise<void>; release: () => void } | null = null;
 export function holdProbe(): void {
@@ -626,12 +686,14 @@ export function probeHeld(): boolean {
 async function runLoop(): Promise<void> {
   looping = true;
   try {
-    // E1：后台舞台就绪了才开工（不去够 Preview 内部的 stageReady）
+    // E1: start only once the background stage is ready (do not reach into Preview's internal stageReady)
     await whenStageReady("back");
     for (;;) {
       /*
-       * 在线页面:等卡片源码第一次同步完(同步来的用户卡在那之前是未知 id,不能测;`measureGate.ts`)。每一轮开头都问:
-       * 换了项目 / 连接,门会重新关上,等新项目的卡片源码同步完。桌面这道门一开始就开着。
+       * Online page: wait for the first sync of card source code to finish (user cards that arrive by sync have
+       * unknown ids until then and cannot be measured; `measureGate.ts`). Asked at the start of every round:
+       * when the project / connection changes, the gate closes again and waits for the new project's card source
+       * to sync. On desktop this gate is open from the start.
        */
       await whenMeasureGateOpen();
       while (holdGate) await holdGate.promise;
@@ -641,9 +703,9 @@ async function runLoop(): Promise<void> {
 
       const { costs, tuning } = await getCosts();
       const device = deviceStringOf(tuning);
-      // K2 的表跟着 `costs` / `tuning` 走（E0 的 setPlan）
+      // The K2 table follows `costs` / `tuning` (setPlan of E0)
       setPlanCosts(costs, tuning);
-      if (gen !== generation) continue;          // 拉 costs 期间项目又变了：重排
+      if (gen !== generation) continue;          // The project changed again while pulling costs: reschedule
 
       const jobs = planJobs(project, costs, device);
       const blocking = !firstPassDone;
@@ -652,25 +714,26 @@ async function runLoop(): Promise<void> {
       const failed: string[] = [];
       let done = 0;
       for (const job of jobs) {
-        // 门在这一轮里又关上了(换了连接):收摊,下一轮开头等门
+        // The gate closed again during this round (connection switched): wind down, and wait for the gate at the start of the next round
         if (gen !== generation || !measureGateOpen()) break;
         setProgress({ card: job.cardId, done });
         if (measureHooks.skip?.(job.identityKey)) { done++; setProgress({ done }); continue; }
         probedLog.push({ clipId: job.clipId, cardId: job.cardId, identityKey: job.identityKey, at: Date.now() });
         if (probedLog.length > 200) probedLog.splice(0, probedLog.length - 200);
-        try { measureHooks.before?.(job.identityKey, job.cardId); } catch { /* 记不下崩溃记录不挡测量 */ }
+        try { measureHooks.before?.(job.identityKey, job.cardId); } catch { /* Failing to save a crash record does not block measurement */ }
         let record: CardCostRecord | null;
         try {
           record = await probeCard(job, tuning, device, () => gen !== generation);
         } finally {
-          try { measureHooks.after?.(job.identityKey); } catch { /* 同上 */ }
+          try { measureHooks.after?.(job.identityKey); } catch { /* Same as above */ }
         }
         if (gen !== generation) break;
         if (record) {
           await putCosts([record]);
-          // 表跟着新记录走。就地合并,不再 GET 一次 —— 这条记录本来就在手上
+          // The table follows the new record. Merge in place instead of another GET: we already have this record in hand
           mergePlanCosts([record]);
-          // 遮罩挡着的这一轮:紧接着这张卡的第一趟,给它产稀疏的轨道流(在线页面;判不判重、产不产、等多久由接的一方定)
+          // In a round blocked by the mask: right after this card's first pass, produce a sparse track stream for it
+          // (online page; whether it is judged heavy, whether to produce it and how long to wait is up to the attached party)
           const hook = cardMeasuredHook;
           if (hook && blocking) {
             const { identityKeys } = clipIdentityOf(project);
@@ -686,9 +749,10 @@ async function runLoop(): Promise<void> {
         setProgress({ done, failed: [...failed] });
       }
 
-      if (gen !== generation || !measureGateOpen()) continue;          // 中途换了项目或连接：从头再排一轮
-      // 这一轮走完了。项目里确实有卡片段时才算「打开项目的第一轮」过去了 ——
-      // 空项目 / 还没加载完时那一轮不算，否则真项目到位时遮罩就不出现了。
+      if (gen !== generation || !measureGateOpen()) continue;          // Project or connection changed midway: schedule a new round from the start
+      // This round is done. Only when the project really has card clips does the "first round after opening a
+      // project" count as passed: an empty project / one not yet loaded does not count, otherwise the mask would
+      // not appear when the real project arrives.
       if (hasCardClip(project)) firstPassDone = true;
       setProgress({ running: false, card: null });
       if (gen === generation) {
@@ -700,20 +764,20 @@ async function runLoop(): Promise<void> {
       }
     }
   } catch (err) {
-    // 探针挂了不能把编辑器挡在遮罩后面：记一条诊断，放行
+    // A failed probe must not keep the editor stuck behind the mask: record a diagnostic and let it through
     console.error("[probeRunner] Error in this probe round", err);
-    queuedIdentity = null; // 暂时的 RPC/存储错误仍允许下一次通知重试。
+    queuedIdentity = null; // Transient RPC/storage errors still allow the next notification to retry.
     settledGeneration = generation;
     setProgress({ running: false, card: null });
     firstPassDone = true;
   } finally {
     looping = false;
-    // 收摊期间又换了项目：接着跑下一轮
+    // The project changed again while winding down: go on to run the next round
     if (generation !== 0 && currentProject && progress.running) void runLoop();
   }
 }
 
-/** 一张卡：排进单飞队列，按 E0 的规矩最多重来几次 */
+/** One card: queued into the single-flight queue, retried at most a few times following the rules of E0 */
 async function probeCard(job: ProbeJob, tuning: PipelineTuning, device: string, stale: () => boolean): Promise<CardCostRecord | null> {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (stale()) return null;
@@ -721,7 +785,7 @@ async function probeCard(job: ProbeJob, tuning: PipelineTuning, device: string, 
     try {
       out = await runBackJob("probe", (ctx) => probeCardOnce(job, ctx.stage, ctx.signal, tuning, device, stale));
     } catch {
-      // iframe 正在换 / RPC 抛了：换一次客户端再来
+      // The iframe is being swapped / the RPC threw: swap the client and try again
       await whenStageReady("back").catch(() => undefined);
       continue;
     }
@@ -731,7 +795,7 @@ async function probeCard(job: ProbeJob, tuning: PipelineTuning, device: string, 
   return null;
 }
 
-/** 测试用：把驱动恢复成刚加载的样子 */
+/** For tests: restore the driver to its just-loaded state */
 export function resetProbeRunner(): void {
   currentProject = null;
   queuedIdentity = null;

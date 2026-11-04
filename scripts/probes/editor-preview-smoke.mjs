@@ -1,30 +1,36 @@
 /**
- * 编辑台冒烟(E0 / E1 / D3 页面侧):真的打开编辑台(?editor),经 store 加两张卡、seek,
- * 看 Preview 是否只经 RPC 把项目和时间送到了舞台 iframe、命中测试和选中描边是否照常工作。
+ * Editor smoke test (E0 / E1 / D3 page side): actually opens editor (?editor), adds two cards via
+ * store, seeks, and verifies Preview only sends project and time to stage iframe via RPC,
+ * and hit testing and selection stroke work as usual.
  *
  *   node scripts/probes/editor-preview-smoke.mjs [--origin http://127.0.0.1:5211] [--stage | --legacy]
  *
- * 不带 `--origin` 就看 `PC_STAGE_TEST_URL`,再没有就打 `.claude/launch.json` 的 `dev-test`。
+ * Without `--origin`, check `PC_STAGE_TEST_URL`; if still absent, hit `dev-test` in `.claude/launch.json`.
  *
- * `--stage` 打开 `?preview=stage`(两个跨源舞台 iframe,E1),`--legacy` 打开
- * `?preview=legacy`(一个同源舞台 iframe)。**两个都不带就是「缺省是什么就验什么」**。
+ * `--stage` opens `?preview=stage` (two cross-origin stage iframes, E1), `--legacy` opens
+ * `?preview=legacy` (one same-origin stage iframe). **Omitting both means "verify whatever the default is"**.
  *
- * R7 之前缺省是 legacy,所以不带参数 = legacy;**R7 把缺省翻成了 stage**,
- * 不带参数就成了 stage。回滚那一条因此要显式写 `--legacy` —— 不然翻开关之后
- * 「验 legacy」的那一趟其实打开的是新路,断言必然对不上。
+ * Before R7, default was legacy, so omitting arguments = legacy; **R7 flipped default to stage**,
+ * so omitting arguments became stage. The rollback item must therefore explicitly specify `--legacy`:
+ * otherwise, after flipping the switch, the pass to "verify legacy" would actually open the new route,
+ * and assertions would inevitably fail.
  *
- * **同一台 dev server 上可以连跑**,每一趟都从同一个起点开始:
- *   - 先 `newProject` 换成空项目,再加两张卡,并断言项目里只有这两张;
- *   - 两张卡的文字参数带上本趟的标记。dev server 把每张卡的成本记录存在盘上
- *     (`out/card-costs.json`,跨趟、跨重启都在),按卡片身份(卡 + 参数 + 长度 + …)取用,
- *     K6 打上的 `demoted` 还会粘住。参数不变的话,下一趟一开场就按上一趟的降级记录走,
- *     实测那一趟 seek 之后舞台上两张卡的本地帧读到 0,「本地帧 45」那条挂。换了参数就是一张没见过的卡。
- *     代价是每趟往那台 server 的记录里多添几条;
- *   - 编辑台带 `nosetup=1`:首启 AI 设置对话框要等 `/api/ai/providers` 回来才弹,早晚不定,
- *     弹出来正好盖在点击点上,点不中预览。
+ * **Can run consecutively on the same dev server**, each pass starting from the same baseline:
+ *   - First `newProject` to switch to an empty project, then add two cards, and assert the
+ *     project only contains these two;
+ *   - Tag text parameters of both cards with current pass marker. Dev server persists cost records
+ *     for each card on disk (`out/card-costs.json`, preserved across passes and restarts), looked up
+ *     by card identity (card + parameters + duration + ...), and `demoted` tagged by K6 also sticks.
+ *     If parameters remain unchanged, the next pass starts off following the previous pass's downgrade
+ *     record; in testing, after seeking in that pass, local frames for both cards on stage read 0,
+ *     failing the "local frame 45" check. Changing parameters treats it as an unseen card.
+ *     The trade-off is adding a few extra records to that server's log each pass;
+ *   - Editor uses `nosetup=1`: initial AI setup dialog waits for `/api/ai/providers` before popping
+ *     up at unpredictable times; popping up lands right over the click point, blocking preview clicks.
  *
- * **舞台里的 DOM 一律走 puppeteer 的 frame 句柄**(`page.frames()` 对跨源 iframe 照样给得出),
- * 不用 `iframe.contentDocument` —— 跨源模式下父页碰不到它。
+ * **Stage DOM must consistently use Puppeteer's frame handles** (`page.frames()` still provides
+ * them for cross-origin iframes), not `iframe.contentDocument`: the parent page cannot access it
+ * in cross-origin mode.
  */
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
@@ -34,18 +40,27 @@ const args = process.argv.slice(2);
 const origin = devOrigin(args);
 const forceStage = args.includes('--stage');
 const forceLegacy = args.includes('--legacy');
-/** 缺省不带参数:开 `/?editor`,页面自己按 `previewMode()` 的缺省决定走哪条路 */
+/**
+ * Default without arguments: opens `/?editor`, page decides which route to take based on default
+ * `previewMode()`.
+ */
 const editorQuery = '/?editor&nosetup=1' + (forceStage ? '&preview=stage' : forceLegacy ? '&preview=legacy' : '');
-/** 本趟的标记,写进两张卡的文字参数:同一台 server 上前几趟留下的成本记录对不上这两张卡(见文件头) */
+/**
+ * Marker for this pass, written into text parameters of both cards: cost records left on same
+ * server from earlier passes will not match these two cards (see file header).
+ */
 const runTag = Date.now().toString(36);
 const fails = [];
 const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra !== undefined ? ' :: ' + JSON.stringify(extra) : '')); return cond; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const browser = await puppeteer.launch({ headless: true, args: [...PROBE_CHROME_ARGS, '--window-position=-32000,-32000', '--no-first-run', '--hide-scrollbars', '--force-device-scale-factor=1'] });
-/** 显式指定时就是它;不带参数时等页面加载完按「有没有第二个舞台」认出来 */
+/**
+ * Used when explicitly specified; without arguments, detected after page loads based on "whether
+ * there is a second stage".
+ */
 let stageMode = forceStage;
-const out = { mode: forceStage ? 'stage' : forceLegacy ? 'legacy' : '(默认,待认)', modeFrom: forceStage || forceLegacy ? 'flag' : 'default' };
+const out = { mode: forceStage ? 'stage' : forceLegacy ? 'legacy' : '(default, to be identified)', modeFrom: forceStage || forceLegacy ? 'flag' : 'default' };
 try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 1000 });
@@ -54,21 +69,23 @@ try {
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   await page.goto(origin + editorQuery, { waitUntil: 'domcontentloaded', timeout: 120000 });
   await page.waitForSelector('iframe[data-pc="stage-frame"]', { timeout: 120000 });
-  // 舞台握手 → stageBridge 里登记了 front 客户端
+  // Stage handshake → front client registered in stageBridge
   await page.waitForFunction(async () => {
     const m = await import('/src/editor/stageBridge.ts');
     return !!m.frontStage();
   }, { timeout: 120000, polling: 500 });
-  /** 可见舞台那个 iframe 的 frame 句柄(跨源时父页摸不到它的 document) */
+  /** Frame handle of visible stage iframe (parent page cannot access its document when cross-origin) */
   /**
-   * 可见舞台那个 iframe。**不能写死 id=A**:K5 的角色互换(R5)之后可见舞台可能是 B,
-   * 而那时 A 手里多半是探针的缩水项目 —— 照 A 去读 `data-pc-local-frame` 量到的是另一台戏。
-   * 谁是 front 由父页的 `__pcPreviewDiag()` 说了算;legacy / 还没就绪时退回 A。
+   * Visible stage iframe. **Cannot hardcode id=A**: after K5's role swap (R5), visible stage may be B,
+   * while A mostly holds probe's reduced project: reading `data-pc-local-frame` from A measures
+   * a completely different scene. Which stage is front is determined by parent page's
+   * `__pcPreviewDiag()`; falls back to A in legacy mode or when not yet ready.
    */
   /*
-   * 不带参数时:缺省是什么就验什么。判据是「页面真的挂了两个舞台 iframe」——
-   * `?preview=stage` 但端口被占的那一档只有一个 iframe,行为和 legacy 一样,
-   * 该按 legacy 验。给 back 一点时间登记再认。
+   * When omitting arguments: verify whatever the default is. Criterion is "page actually mounted
+   * two stage iframes": the tier with `?preview=stage` but occupied port has only one iframe,
+   * behaving like legacy and should be verified as legacy. Give back some time to register before
+   * detecting.
    */
   if (!forceStage && !forceLegacy) {
     await page.waitForFunction(() => document.querySelectorAll('iframe[data-pc^="stage-frame"]').length === 2,
@@ -83,7 +100,7 @@ try {
     return { backRole: m.backRole(), hasBack: m.backStage() !== m.frontStage() };
   });
   if (stageMode) {
-    // E1:第二个 iframe 在、而且真的登记成了 back
+    // E1: Second iframe exists and is actually registered as back
     await page.waitForFunction(async () => {
       const m = await import('/src/editor/stageBridge.ts');
       return m.backRole() === 'back';
@@ -107,7 +124,7 @@ try {
   await page.evaluate(() => { window.__smokeMarker = 1; });
   const ids = await page.evaluate(async (runTag) => {
     const { actions, getState } = await import('/src/store/project.ts');
-    actions.newProject('smoke'); // 编辑台开场会往空项目里塞演示卡,先换成空项目
+    actions.newProject('smoke'); // Editor inserts demo cards into empty projects on startup; switch to empty project first
     const a = actions.addCardClip('odometer', 0, { duration: 10, params: { label: `冒烟 ${runTag}` } });
     const b = actions.addCardClip('punch-pill', 0, { duration: 10, params: { text: `冒烟 ${runTag}` } });
     actions.seek(1.5);
@@ -132,12 +149,12 @@ try {
   check(stageState.wraps.length === 2 && stageState.wraps.every((w) => w.frame === '45'), 'stage shows both clips at local frame 45 (t=1.5s @30fps)', stageState);
   check(stageState.synced, 'stageBridge baseline equals the store project after sync', stageState.synced);
 
-  // 描边:选中 odometer 后描边应贴着内容(比整幅小)
+  // Stroke: after selecting odometer, stroke should tightly hug content (smaller than full frame)
   const sel = await page.evaluate(async (odo) => {
     const { actions, getState } = await import('/src/store/project.ts');
     actions.select([odo]);
     await new Promise((r) => setTimeout(r, 400));
-    // 再拨一次时间让 refreshRects 走一遍
+    // Scrub time once more to let refreshRects run
     actions.seek(1.6);
     await new Promise((r) => setTimeout(r, 600));
     const hit = document.querySelector('.pc-pv-hit');
@@ -148,14 +165,15 @@ try {
   out.sel = sel;
   check(sel.hit && sel.frame && sel.hit.w < sel.frame.w * 0.9 && sel.hit.h < sel.frame.h * 0.9, 'selection outline hugs the odometer content (smaller than the frame)', sel);
 
-  // 点击:在 odometer 内容中心点一下,选中的应是它(命中经 RPC 往返)
+  // Click: click at center of odometer content, and it should be selected (hit via RPC round trip)
   const click = await page.evaluate(async (odo) => {
     const { frontStage } = await import('/src/editor/stageBridge.ts');
     const { actions } = await import('/src/store/project.ts');
     actions.select([]);
     const list = await frontStage().rectsWithBounds({ pixels: 'all' });
     const b = list.find((x) => x.clipId === odo)?.bounds;
-    // 内容框的正中可能落在两位数字之间的空隙上(透明处穿透),在框内扫一个小网格找一个真能命中它的点
+    // Center of content box may land in the gap between two digits (penetrating transparency); scan
+    // a small grid inside box to find a point that actually hits it
     let px = null;
     for (let iy = 1; iy < 6 && !px; iy++) for (let ix = 1; ix < 12 && !px; ix++) {
       const x = b.left + (b.width * ix) / 12, y = b.top + (b.height * iy) / 6;
@@ -166,7 +184,9 @@ try {
     const scale = frame.width / 1920;
     if (!px) return null;
     const pt = { x: frame.left + px.x * scale, y: frame.top + px.y * scale };
-    // 选中之后编辑台会在预览上方弹出建议卡(.ais-card)之类的浮层,点在它上面就不是点预览;先按 Escape 收掉,再确认最上层是预览覆盖层
+    // After selection, editor pops up an overlay like suggestion card (.ais-card) above preview;
+    // clicking it is not clicking preview; press Escape first to dismiss, then confirm top layer is
+    // preview overlay
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await new Promise((r) => setTimeout(r, 200));
     const top = document.elementFromPoint(pt.x, pt.y);
@@ -183,15 +203,17 @@ try {
   out.clickSelection = after;
   check(after.length === 1 && after[0] === ids.odo, 'clicking the odometer content selects it via async hitTest', after);
 
-  // 点空白:取消选中
+  // Click empty space: deselect
   const blank = await page.evaluate(() => { const fr = document.querySelector('.pc-pv-frame').getBoundingClientRect(); return { x: fr.left + 20, y: fr.top + 20 }; });
   await page.mouse.click(blank.x, blank.y);
   await sleep(400);
   out.blankSelection = await page.evaluate(async () => (await import('/src/store/project.ts')).getState().selection);
   check(out.blankSelection.length === 0, 'clicking blank deselects', out.blankSelection);
 
-  // 播放 1 秒。stage 模式下 pause() 只同步改 store.playing，舞台要经异步 RPC 才停。
-  // 只观察播放器自行停拍；不能由探针再发 pause()，否则会掩盖播放器漏发 RPC 的故障。
+  // Play for 1 second. Under stage mode, pause() only synchronously changes store.playing; stage
+  // stops only via async RPC.
+  // Only observe player stopping ticks on its own; probe must not send pause() again, which would
+  // mask bugs where player fails to send RPC.
   const atPause = await page.evaluate(async () => {
     const { actions, getState } = await import('/src/store/project.ts');
     actions.seek(0.5); actions.play();
@@ -214,7 +236,8 @@ try {
         frames: [...document.querySelectorAll('[data-pc-clip]')].map((el) => Number(el.getAttribute('data-pc-local-frame'))),
       }));
       const after = await readHead();
-      // 前后两次父页读数夹住舞台读数；停拍后时刻不再变，得到一致的跨进程样本。
+      // Two parent page readings before and after bracket stage readings; once ticks stop, timestamp
+      // no longer changes, yielding a consistent cross-process sample.
       if (!before.playing && !after.playing && before.frontId === after.frontId && before.t === after.t
         && stage.diag?.role === 'front' && !stage.diag.beatRunning && stage.diag.beatPaused
         && Math.abs(stage.diag.beatLastSec - before.t) < 1e-6) {
@@ -229,7 +252,8 @@ try {
       [...document.querySelectorAll('[data-pc-clip]')].map((el) => Number(el.getAttribute('data-pc-local-frame'))));
     play = { t: atPause, stoppedAt: null, frames };
   }
-  // 播放没跟上时要看得见是谁停的(K4 的节拍在舞台里,父页只收 frame)
+  // When playback falls behind, make sure who stopped is visible (K4 ticks run in stage,
+  // parent page only receives frames)
   play.preview = await page.evaluate(() => (typeof window.__pcPreviewDiag === 'function' ? window.__pcPreviewDiag() : null));
   play.stages = {};
   for (const f of page.frames()) {
@@ -241,8 +265,10 @@ try {
   check(play.t > 1.0 && play.frames.every((n) => Math.abs(n - Math.round(play.t * 30)) <= 1),
     'after 1s of playback the stage local frame follows store.t', play);
 
-  // get_layout 的页面侧(D4):经后台舞台的单飞队列量实体框。legacy 下队列退回可见舞台,
-  // 跨源双舞台下它先 setRole('back', { job: 'catchup' })、量完交还 —— 两边回的数该一样
+  // Page side of get_layout (D4): measures entity box via single-flight queue on background stage.
+  // Legacy queue falls back to visible stage; under cross-origin dual stage it first calls
+  // setRole('back', { job: 'catchup' }) and releases after measuring: returned values from both sides
+  // should match
   const layout = await page.evaluate(async (odo) => {
     const { contentLayoutOf } = await import('/src/mcp/common.ts');
     const r = await contentLayoutOf([odo]);
@@ -252,11 +278,12 @@ try {
   check(layout && layout.contentBox && layout.contentBox.width > 0 && layout.contentBox.width < 1920 * 0.9,
     'get_layout (contentLayoutOf) measures a content box through the back-stage job queue', layout);
 
-  // 移动工具拖一下:命中 → 拖 → 松手写 frame。这条走的是 hitTest 的异步往返 + nudgeFrame
+  // Drag with move tool: hit → drag → release to write frame. This path uses hitTest async round
+  // trip + nudgeFrame
   const dragStart = await page.evaluate(async (odo) => {
     const { actions } = await import('/src/store/project.ts');
     actions.select([odo]);
-    // 工具行第二个钮是「移动」
+    // Second button in tool row is "Move"
     document.querySelectorAll('.pc-pv-tool')[1].click();
     await new Promise((r) => setTimeout(r, 200));
     const hit = document.querySelector('.pc-pv-hit').getBoundingClientRect();
@@ -275,7 +302,8 @@ try {
   check(out.drag && Number.isFinite(out.drag.x) && Number.isFinite(out.drag.y), 'dragging with the move tool writes a clip frame', out.drag);
   await page.evaluate(() => { document.querySelectorAll('.pc-pv-tool')[0].click(); });
 
-  // 其它 agent 改文件会让 vite 整页重载,那样的一轮结果不可信:标记丢了就报出来
+  // Other agents modifying files causes vite to reload entire page, making results of such a run
+  // untrustworthy: report if marker is lost
   out.reloaded = await page.evaluate(() => window.__smokeMarker !== 1);
   check(!out.reloaded, 'page was not reloaded by HMR during the run (rerun when the tree is quiet)');
   out.errors = errors.filter((e) => !/favicon|Download the React DevTools|Failed to load resource/i.test(e));

@@ -86,14 +86,16 @@ test('explicit stateful declarations override static fallback, including old pro
 });
 
 test('prerendering and independent compositing remain separate for all four combinations', () => {
-  // A0.2:independent 的唯一权威是审阅表 src/cards/capabilities.json,所以这里用真的卡 id ——
-  // punch-pill 表里是 independent,blur-text 是 belowDependent(毛玻璃)。
+  // The sole authority for A0.2:independent is the review table src/cards/capabilities.json,
+  // so real card IDs are used here: punch-pill is independent in the table, and blur-text
+  // is belowDependent (frosted glass).
   for (const need_prerendering of [true, false]) for (const [id, independent] of [['blur-text', false], ['punch-pill', true]]) {
     const caps = cardCapabilities({ id, need_prerendering });
     assert.equal(caps.need_prerendering, need_prerendering);
     assert.equal(caps.independentCache, independent);
   }
-  // 源码里写 compositing: 'independent' 一律不作数:审阅表里没有这张卡就是 unknown
+  // Writing compositing: 'independent' in source code never counts: if this card is not in the
+  // review table, it is unknown
   assert.equal(cardCapabilities({ id: 'no-such-card', compositing: 'independent' }).compositing, 'unknown');
   assert.equal(cardCapabilities({ id: 'no-such-card', compositing: 'context' }).compositing, 'context');
   assert.equal(cardCapabilities({ frameMode: 'direct' }).independentCache, false);

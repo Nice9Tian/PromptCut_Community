@@ -7,9 +7,10 @@ import { onPythonDrops, takePythonDrops, pythonDropMessage } from "./io/pythonDr
 import { tr } from "../i18n/index.ts";
 
 /**
- * 打开项目时的一次性提示层。两件事共用它（都只在加载那一刻发生、都只说一次）：
- * 素材分类迁移，和「旧 .proc 里的 Python 卡已停用」（H6：Python 卡运行时已归档，
- * 定义和节点在加载时直接丢弃，不向前兼容）。
+ * A one-time prompt layer shown when a project is opened. Two things share it (both happen only at load
+ * time and are each said only once): the media category migration, and "Python cards in the old .proc
+ * are disabled" (H6: the Python card runtime has been archived, and definitions and nodes are dropped
+ * directly at load, with no forward compatibility).
  */
 export function MediaMigrationDialog(): JSX.Element | null {
   const [items, setItems] = useState<MediaKindMigration[]>([]);
@@ -27,7 +28,8 @@ export function MediaMigrationDialog(): JSX.Element | null {
     pull();
     return onPythonDrops(pull);
   }, []);
-  // 无头实例是给导出 / Agent 用的，不应让一个只给人看的确认层挡住画面。
+  // A headless instance serves export / Agent, so a confirmation layer meant only for humans must not
+  // block the picture.
   if (headless) return null;
   if (!items.length && droppedCards > 0) {
     return createPortal(

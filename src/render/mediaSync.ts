@@ -1,93 +1,107 @@
 /**
- * 素材层跟播放头对齐时,这一帧该做什么。
+ * What to do this frame when aligning media layers with the playhead.
  *
- * # 为什么单独抽出来
+ * # Why extracted separately
  *
- * 原来的做法是一句话:播放中偏差超过 0.2s 就 `el.currentTime = target`。
- * 这句话在时间轴开头没问题,到中段就会把画面拖成一卡一卡的,原因是**纠偏手段的代价
- * 随着纠偏对象一起涨,而且没有任何阻尼**:
+ * The original approach was a single rule: during playback, if drift exceeds 0.2s,
+ * set `el.currentTime = target`.
+ * This worked fine at the beginning of the timeline, but caused stuttering in the middle section
+ * because **the cost of drift correction grows with what is being corrected, without any damping**:
  *
- *   1. `el.play()` 本身有启动延迟,视频时钟因此天然落后播放头一小截;
- *   2. 落差一旦过 0.2s 就硬 seek。文件中段的 seek 不便宜 —— 关键帧是每 5 秒一个
- *      (实测用户素材就是 5s),浏览器要从上一个关键帧开始解出最多 150 帧才能出画;
- *   3. 这 100~500ms 里播放头照走,seek 落定时又差了 0.2s 以上 → 再 seek;
- *   4. 于是进入自持循环:每次纠偏都制造出下一次纠偏的理由,画面每隔几百毫秒被打断一次。
+ *   1. `el.play()` has its own startup latency, so the video clock naturally lags slightly
+ *      behind the playhead;
+ *   2. Once lag exceeds 0.2s, a hard seek is triggered. Seeking in the middle of a file is
+ *      expensive: keyframes are every 5 seconds (measured at 5s in actual user media), so the
+ *      browser must decode up to 150 frames starting from the previous keyframe to display a frame;
+ *   3. During these 100~500ms, the playhead keeps advancing, so when seek settles, drift is
+ *      again over 0.2s → seek again;
+ *   4. This enters a self-sustaining loop: every correction creates a justification for the next
+ *      correction, stuttering playback every few hundred milliseconds.
  *
- * 开头那十几秒之所以没事,是因为 `preload="auto"` 已经把开头缓冲好了、而且 0 秒就是
- * 关键帧,seek 几乎不要钱,启动落差压根到不了 0.2s,循环起不来。
+ * The first dozen seconds were fine because `preload="auto"` had already buffered the beginning,
+ * and 0s is a keyframe, making seeks virtually free: startup lag never reached 0.2s, so the loop
+ * never started.
  *
- * # 现在的做法
+ * # Current approach
  *
- * 把「纠偏」和「重新对齐」分成两件事:
+ * Separates "drift correction" and "re-alignment" into two distinct operations:
  *
- *   - **小偏差用变速**(`playbackRate` 微调 ±10%)慢慢追回来。变速不打断解码,
- *     没有代价,也就不会制造下一次纠偏的理由;
- *   - **只有真的脱节了才 seek**(阈值放宽到 0.5s),而且 seek 之间有冷却时间,
- *     `el.seeking` 期间一律不下新指令 —— 这两条一起,把上面那个自持循环从根上断掉。
+ *   - **Use playback rate changes for small drifts** (fine-tune `playbackRate` by ±10%) to catch up
+ *     gradually. Rate changes do not interrupt decoding, carry no cost, and therefore do not create
+ *     reasons for further correction;
+ *   - **Seek only when truly desynchronized** (threshold relaxed to 0.5s), with a cooldown period
+ *     between seeks, and issue no new commands while `el.seeking` is true: together, these two
+ *     rules break the self-sustaining loop at its root.
  *
- * 纯函数,不碰 DOM,好单测:所有阈值和状态机都在这里,调用方只负责把 el 的读数递进来、
- * 把结果照着执行。
+ * Pure function, does not touch DOM, easy to unit test: all thresholds and state machines live
+ * here; the caller is only responsible for passing in el readings and executing the results.
  */
 
-/** 超过这个偏差才认为「脱节了」,值得付一次 seek 的代价 */
+/** Drift must exceed this threshold to be considered "desynchronized" and worth paying the seek cost */
 export const HARD_SEEK_SEC = 0.5;
-/** 两次纠偏 seek 之间至少隔这么久,给解码器把画面重新喂上的时间 */
+/** Minimum interval between drift-correction seeks, allowing the decoder time to feed new frames */
 export const SEEK_COOLDOWN_MS = 700;
-/** 小于这个偏差就当对齐了,不做任何纠正(视频帧本身就有 1/帧率 的粒度) */
+/** Drifts below this are considered aligned, with no correction needed (video frames naturally have 1/framerate granularity) */
 export const IN_SYNC_SEC = 0.04;
-/** 变速纠偏的上限:±10% 人眼和耳朵都听不出来,再多就该听出变调了 */
+/** Upper limit for playback rate drift correction: ±10% is undetectable to eyes and ears; beyond that, pitch shifts become audible */
 export const MAX_RATE_SKEW = 0.1;
-/** 暂停时对齐得准一点 —— 这时候 seek 不跟播放抢,而且用户在逐帧看 */
+/** Align more precisely when paused: seeks do not compete with playback, and the user is inspecting frame by frame */
 export const PAUSED_SEEK_SEC = 0.03;
 /**
- * 手按着播放头拖的时候,两次 seek 之间至少隔这么久。
+ * Minimum interval between seeks while scrubbing the playhead.
  *
- * 原来暂停时只要差过 0.03s 就立刻 seek,拖动时鼠标每动一下就是一次 —— 3 秒拖下来实测 154 次,
- * 每次都「从关键帧解到目标」,解码器一直在推翻重来。seeking 期间本来就不发新指令,
- * 这一条再管住「seek 很快落定」的那一头(同一个 GOP 里往后挪几乎不要钱):
- * 50ms 一次,3 秒最多 60 次。没发出去的那次由调用方按 retryInMs 补上,不会丢。
- * 松手之后 scrubbing 变回 false,立刻按 0.03s 精确对齐。
+ * Previously when paused, any drift over 0.03s immediately triggered a seek; during scrubbing,
+ * every mouse movement triggered one: measured 154 seeks over a 3-second scrub, each decoding
+ * from keyframe to target, forcing the decoder to restart repeatedly. While no new commands are
+ * issued during seeking, this rule reins in the "seek settles quickly" case (moving forward
+ * within the same GOP is virtually free):
+ * at 50ms per seek, at most 60 times in 3 seconds. Any dropped seek is caught up by the caller
+ * via retryInMs, avoiding loss.
+ * Once released, scrubbing reverts to false, immediately aligning precisely to 0.03s.
  */
 export const SCRUB_SEEK_MIN_MS = 50;
 
 export interface SyncInput {
-  /** 元素当前时间,null 表示还没有元数据、读不出来 */
+  /** Current element time, or null if metadata has not loaded and cannot be read */
   elTime: number;
-  /** 元素这一刻是不是正在 seek */
+  /** Whether the element is currently seeking */
   seeking: boolean;
-  /** 元素这一刻是不是暂停的 */
+  /** Whether the element is currently paused */
   paused: boolean;
-  /** 元素已经放到素材尽头(`el.ended`)。缺省 false */
+  /** The element has reached the end of the media (`el.ended`). Default false */
   ended?: boolean;
-  /** 播放头换算到这条素材上的时刻 */
+  /** Playhead time mapped to this media */
   target: number;
   /**
-   * 基准播放速率:片段速度(`TrackClip.speed`,缺省 1)。对齐时按它放,纠偏的 ±10% 乘在它上面,暂停时也停在它上面
-   * (下次起播不带着别的速率)。偏差、门槛照旧按素材秒算。
+   * Base playback rate: clip speed (`TrackClip.speed`, default 1). Playback aligns to it, ±10% drift
+   * correction multiplies onto it, and pause stays at it (resuming playback does not carry residual
+   * rate changes). Drift and thresholds are still calculated in media seconds.
    */
   baseRate?: number;
-  /** 时间轴在播放中 */
+  /** Timeline is playing */
   playing: boolean;
-  /** 手正按着播放头拖(见 timeline/useScrub.ts 的 isScrubbing);只影响暂停时 seek 的疏密 */
+  /** Scrubbing the playhead (see isScrubbing in timeline/useScrub.ts); only affects seek density when paused */
   scrubbing?: boolean;
-  /** 现在几点(ms),用来算冷却 */
+  /** Current time (ms), used to compute cooldown */
   now: number;
-  /** 上一次由我们发起的纠偏 seek 是什么时候,没有过就是 0 */
+  /** Timestamp of the last drift-correction seek initiated by us, or 0 if none */
   lastSeekAt: number;
 }
 
 export interface SyncPlan {
-  /** 要把 currentTime 设成这个值;null 表示不要动 */
+  /** Set currentTime to this value; null means leave unchanged */
   seekTo: number | null;
-  /** 要把 playbackRate 设成这个值;null 表示不要动 */
+  /** Set playbackRate to this value; null means leave unchanged */
   rate: number | null;
-  /** 要不要调 play() */
+  /** Whether to call play() */
   play: boolean;
-  /** 要不要调 pause() */
+  /** Whether to call pause() */
   pause: boolean;
   /**
-   * 这次该 seek 却没发(拖动时离上一次太近),过这么多毫秒再判一次;null 表示不用补。
-   * 调用方必须真的补:拖动停住以后不会再有新的渲染来触发同步,不补画面就停在旧的一帧。
+   * Seek was due but skipped (too close to previous seek during scrubbing); re-evaluate after this
+   * many milliseconds; null means no catch-up needed.
+   * The caller must perform the catch-up: once scrubbing stops, no new render will trigger sync,
+   * leaving the image frozen on the old frame without it.
    */
   retryInMs: number | null;
 }
@@ -95,26 +109,30 @@ export interface SyncPlan {
 const NOTHING: SyncPlan = { seekTo: null, rate: null, play: false, pause: false, retryInMs: null };
 
 /**
- * 这一帧该对元素做什么。
+ * What to do with the element this frame.
  *
- * 调用方拿到结果照做即可;`seekTo` 非空时要把 `lastSeekAt` 更新成 `now`。
+ * The caller simply applies the returned instructions; when `seekTo` is non-null, update
+ * `lastSeekAt` to `now`.
  *
- * seeking 期间来的新位置这里一律不理,所以调用方还要在 `seeked` 时拿**最新的**目标再调一次 ——
- * 不然最后一次拖动恰好落在 seek 中间时,最终位置永远补不上(render/mediaDrive.ts 的 driveMedia)。
+ * New positions arriving while seeking are ignored here, so the caller must also call again
+ * upon `seeked` with the **latest** target:
+ * otherwise, if the last scrub action falls mid-seek, the final position will never be caught up
+ * (driveMedia in render/mediaDrive.ts).
  */
 export function planSync(input: SyncInput): SyncPlan {
   const { elTime, seeking, paused, target, playing, scrubbing, now, lastSeekAt } = input;
   if (!Number.isFinite(target) || target < 0 || !Number.isFinite(elTime)) return NOTHING;
-  // 片段速度;缺省(或不合法)是 1,下面每一处 `base` 就是原来写死的 1
+  // Clip speed; defaults to (or invalid fallback) 1, where each `base` below was previously hardcoded to 1
   const base = typeof input.baseRate === "number" && Number.isFinite(input.baseRate) && input.baseRate > 0 ? input.baseRate : 1;
 
-  // seek 还没落定时什么都别做。这一条是断开自持循环的关键:seeking 期间 currentTime
-  // 读出来的是目标值不是真实进度,拿它算偏差只会得出「还差很多」,于是再发一次 seek,
-  // 把刚才那次的解码工作全部作废 —— 画面就永远出不来。
+  // Do nothing until seek has settled. This rule is key to breaking the self-sustaining loop:
+  // during seeking, currentTime reads as the target value rather than actual progress; computing
+  // drift with it yields "still far off", triggering yet another seek and discarding all previous
+  // decoding work: the frame never displays.
   if (seeking) return playing && paused ? { ...NOTHING, play: true } : NOTHING;
 
   if (!playing) {
-    // 暂停:速度先还原(到片段速度),免得下次起播带着上次的微调
+    // Pause: reset playback rate first (to clip speed), so resuming playback does not carry the previous adjustment
     const rate = base;
     const needSeek = Math.abs(elTime - target) > PAUSED_SEEK_SEC;
     const wait = scrubbing ? SCRUB_SEEK_MIN_MS - (now - lastSeekAt) : 0;
@@ -122,14 +140,18 @@ export function planSync(input: SyncInput): SyncPlan {
     return { seekTo: needSeek ? target : null, rate, play: false, pause: !paused, retryInMs: null };
   }
 
-  const drift = target - elTime; // 正数 = 视频落后于播放头
+  const drift = target - elTime; // Positive = video lags behind the playhead
   const off = Math.abs(drift);
 
   /*
-   * 元素已经放到素材尽头,而播放头还在这一段里(声音比播放头快了一点先放完,或片段比素材长)。
-   * 这时候**不能再调 play()**:浏览器对「放完了的元素」的 play() 是从头重播 —— 片段末尾会冒出一下开头的声音,
-   * 接着偏差过 0.5s 又被硬 seek 回末尾,尾巴再放一遍。放完了就安静等播放头走出这一段;
-   * 只有播放头真的回到了前面(超过硬 seek 的门槛)才 seek 回去接着放,seek 之后元素不再是「放完了」。
+   * Element reached the end of the media while the playhead is still within this clip (audio finished
+   * slightly ahead of the playhead, or the clip is longer than the media).
+   * At this point, **play() must not be called again**: the browser handles play() on an "ended
+   * element" by restarting from the beginning: audio from the start briefly plays at the clip end,
+   * then drift exceeds 0.5s and it gets hard-sought back to the end, playing the tail again. Once
+   * ended, wait quietly for the playhead to leave this clip;
+   * only seek back and resume playback if the playhead actually moves backward (exceeding the
+   * hard-seek threshold); after seeking, the element is no longer "ended".
    */
   if (input.ended) {
     if (drift >= -HARD_SEEK_SEC) return { ...NOTHING, rate: base };
@@ -138,8 +160,9 @@ export function planSync(input: SyncInput): SyncPlan {
   }
 
   if (off > HARD_SEEK_SEC) {
-    // 真脱节了。但冷却没过就先忍着 —— 上一次 seek 的解码可能还在路上,
-    // 这时候再发一次只会把它推翻重来,这正是原来那个循环的形状。
+    // Truly desynchronized. But hold off if cooldown has not elapsed: decoding for the previous seek
+    // may still be in flight; issuing another one now would just restart it, which is the exact shape
+    // of the original loop.
     if (now - lastSeekAt < SEEK_COOLDOWN_MS) return { ...NOTHING, rate: base, play: paused };
     return { seekTo: target, rate: base, play: paused, pause: false, retryInMs: null };
   }
@@ -147,11 +170,12 @@ export function planSync(input: SyncInput): SyncPlan {
   if (off <= IN_SYNC_SEC) return { seekTo: null, rate: base, play: paused, pause: false, retryInMs: null };
 
   /*
-   * 中等偏差:变速追。
+   * Moderate drift: catch up by adjusting playback rate.
    *
-   * 偏差 0.04~0.5s 之间线性映射到 ±10% 的速率:落后就快放一点、超前就慢放一点。
-   * 0.2s 的偏差按 ~4% 的速差算,5 秒左右能追平,期间画面是连续的 —— 而原来这一档
-   * 正好落在硬 seek 的触发区里,每次都要付一次中段 seek 的代价。
+   * Drift between 0.04~0.5s maps linearly to ±10% rate: speed up if lagging, slow down if ahead.
+   * A 0.2s drift with a ~4% rate difference catches up in about 5 seconds with continuous frames:
+   * whereas this range previously fell right into the hard-seek trigger zone, paying the mid-file
+   * seek cost every time.
    */
   const skew = (drift / HARD_SEEK_SEC) * MAX_RATE_SKEW;
   const rate = base * (1 + Math.max(-MAX_RATE_SKEW, Math.min(MAX_RATE_SKEW, skew)));
@@ -159,109 +183,126 @@ export function planSync(input: SyncInput): SyncPlan {
 }
 
 /*
- * ────────────────────────────── 双缓冲槽位 ──────────────────────────────
+ * ────────────────────────────── Double-buffered slots ──────────────────────────────
  *
- * 每条序列固定两个 <video>(槽位 0 / 1):一个放当前段,另一个提前装好下一段。
+ * Each track is fixed with two <video> elements (slots 0 / 1): one plays the current clip,
+ * while the other preloads the next clip.
  *
- * 为什么:原来每切一段就新建一个播放器、再从文件中段 seek,关键帧 5 秒一个,切一次要解上百帧
- * 才出画。真实项目 88.7 秒切 25 次,改前实测交界处出画延迟中位数 200ms 左右。同一个文件内部的
- * 切换在源文件里没有一次是连续的,所以光「按素材复用播放器」没用,那次 seek 省不掉 ——
- * 只能**提前付**:离下一段起点还有 PREROLL_SEC 时,把它装进空着的槽位、seek 到起点停好,
- * 等 requestVideoFrameCallback 说「这一帧画出来了」;到了交界只换显示、让它接着放。
+ * Why: previously, switching clips created a new player and sought into the middle of the file;
+ * with keyframes every 5 seconds, each switch required decoding hundreds of frames before a frame
+ * appeared. In a real project with 25 cuts across 88.7 seconds, median frame display latency at
+ * transitions was measured at ~200ms before the change. Switches within the same file are never
+ * contiguous in the source file, so simply "reusing players by media" does not help and cannot
+ * avoid that seek:
+ * the only option is to **pay in advance**: when PREROLL_SEC remains before the start of the next
+ * clip, load it into the empty slot, seek to the start and pause, waiting for
+ * requestVideoFrameCallback to confirm "this frame is rendered"; at the transition boundary,
+ * simply switch visibility and let it play.
  *
- * 下面是纯函数:给它两个槽位眼下装着什么、当前段和下一段是谁,它说每个槽位该装什么、
- * 哪个在播、哪个在备、这一帧显示哪个。执行在 render/VideoTrack.tsx。
+ * Below is a pure function: given what the two slots currently hold and what the current and next
+ * clips are, it returns what each slot should hold, which is playing, which is on standby, and
+ * which to display this frame. Executed in render/VideoTrack.tsx.
  */
 
-/** 离下一段起点还剩这么久时开始提前装(秒)。实测 1080p、5 秒关键帧的中段 seek 落定要 70~600ms */
+/** How long before next clip start to begin preloading (seconds). Measured: mid-clip seek settling takes 70-600ms for 1080p with 5s keyframes. */
 export const PREROLL_SEC = 1;
 /**
- * 新一段迟迟出不了画(没来得及提前装:片段比 PREROLL_SEC 还短、刚在播放中跳了位置)时,
- * 最多让上一段的最后一帧顶这么久;过了就硬切,别让画面一直停在上一段。
+ * When the new clip takes too long to render a frame (no time to preload: clip is shorter than
+ * `PREROLL_SEC`, or playhead just jumped position during playback), hold the previous clip's
+ * last frame for at most this long; cut hard once exceeded, rather than leaving the picture
+ * stuck on the previous clip.
  */
 export const NOT_READY_GRACE_SEC = 0.5;
-/** 判「首尾相接」的容差:上一段的 end 和这一段的 start 差不到这么多,才能拿上一段的末帧顶班 */
+/** Tolerance for judging "contiguous": the previous clip's end and this clip's start must differ by less than this to let the previous clip's last frame fill in. */
 const TOUCH_SEC = 0.05;
 
-/** 槽位能装的一段:只有视频段进槽位,图片段直接画 <img> */
+/** A clip that a slot can hold: only video clips enter slots; image clips render <img> directly. */
 export interface SlotClip {
   id: string;
   url: string;
   start: number;
   end: number;
-  /** 素材内起点(mediaOffset) */
+  /** Start point within asset (mediaOffset). */
   offset: number;
-  /** 片段速度(`TrackClip.speed`);缺省 1。这一段占用的素材区间是 offset ~ offset + (end − start) × speed */
+  /** Clip speed (`TrackClip.speed`); defaults to 1. The asset range occupied by this clip is offset ~ offset + (end − start) × speed. */
   speed?: number;
 }
 
 export interface SlotState {
-  /** 这个槽位眼下装着哪一段;还没装过是 null */
+  /** Which clip this slot currently holds; null if not yet loaded. */
   clip: SlotClip | null;
-  /** 装的这一段已经有一帧画出来了(requestVideoFrameCallback 回调过、时刻落在这一段的素材区间里) */
+  /** A frame from this loaded clip has rendered (requestVideoFrameCallback has fired with a timestamp inside this clip's asset range). */
   ready: boolean;
 }
 
 export interface SlotsInput {
   slots: readonly SlotState[];
-  /** 上一帧显示的是哪个槽位,没显示是 null */
+  /** Which slot was displayed in the previous frame; null if none was displayed. */
   shown: number | null;
-  /** 这条序列此刻的视频段 */
+  /** The video clip on this track at the current moment. */
   cur: SlotClip | null;
-  /** 这条序列 t 之后的第一段视频(kernel/project.ts 的 nextVideoLayerAfter) */
+  /** The first video clip on this track after t (nextVideoLayerAfter in kernel/project.ts). */
   next: SlotClip | null;
   t: number;
   playing: boolean;
   /**
-   * 换档预热的名额还有没有(同一页面同时预热的层数有上限,`VideoTrack` 的 `MAX_WARMING`)。
-   * 缺省 true。没有名额时上一档接着放,不装新档,等下一次渲染再看。
+   * Whether there is still quota for tier switch warm-up (there is a limit on concurrently warmed
+   * layers on the same page, `MAX_WARMING` in `VideoTrack`). Defaults to true. When quota is
+   * exhausted, the previous tier continues playing without loading the new tier, rechecked on the
+   * next render.
    */
   canWarm?: boolean;
 }
 
 export interface SlotsPlan {
-  /** 每个槽位该装哪一段;和 slots[i].clip 一样就是不动,null 表示从没装过 */
+  /** Which clip each slot should load; unchanged if identical to slots[i].clip, null means never loaded. */
   load: (SlotClip | null)[];
-  /** 放当前段、跟着播放头走的槽位 */
+  /** The slot playing the current clip and following the playhead. */
   active: number | null;
-  /** 提前装好下一段、停在起点的槽位 */
+  /** The slot preloaded with the next clip and paused at its start. */
   preload: number | null;
-  /** 这一帧显示哪个槽位 */
+  /** Which slot is displayed in this frame. */
   shown: number | null;
   /**
-   * 换档预热的槽位(C6.6 第 4 节「页面换档」):同一片段的新一档装在这里,静音、跟着播放头走,
-   * 由调用方确认它交出的帧与画面上那一档对齐到一帧以内(`tierAligned`)才标 ready;ready 了下一次
-   * 规划就把它换成 active + shown,一次提交里对调。没有换档时是 null。
+   * Slot for tier switch warm-up (C6.6 section 4 "Page tier switch"): the new tier of the same clip
+   * is loaded here, muted and following the playhead. Marked ready only after caller confirms its
+   * yielded frame aligns to within one frame of the on-screen tier (`tierAligned`); once ready,
+   * next planning run swaps it to active + shown in a single commit. null when no tier switch.
    */
   warm: number | null;
 }
 
-/** `HTMLMediaElement.NETWORK_NO_SOURCE`(纯函数这里不碰 DOM 常量) */
+/** `HTMLMediaElement.NETWORK_NO_SOURCE` (pure function avoids DOM constants here). */
 const NETWORK_NO_SOURCE = 3;
 
 /**
- * 素材服务上刚到齐的那一档:之前按它挂过、加载失败了(404:等待上传方)的元素要重新 `load()` 一次。
+ * The tier that just became complete on asset service: elements previously mounted with it that
+ * failed to load (404: waiting for uploader) must call `load()` once again.
  *
- * **这一轮刚换上 src 的元素不算**(`freshSrc`):src 一换,浏览器的资源选择算法当场把 `networkState`
- * 置成 `NETWORK_NO_SOURCE`,看上去和「挂失败了」一样,其实加载才刚开始。换档那一轮恰好就是这种情形
- * (到齐 → 换档地址 → 预热槽位换 src 同一次提交),以前会紧跟着再 `load()` 一次,把刚发出的请求和
- * 刚下的 seek 打断重来,慢网络下换档因此更晚(C6.6 T9-X2)。
+ * **Elements whose src was just swapped in this round do not count** (`freshSrc`): once src
+ * changes, the browser's resource selection algorithm immediately sets `networkState` to
+ * `NETWORK_NO_SOURCE`, looking identical to "mount failed" when loading has actually just begun.
+ * A tier switch round is precisely this scenario (complete → tier switch URL → warming slot src
+ * swap in the same commit); previously it would immediately call `load()` again, aborting and
+ * restarting the just-issued request and seek, delaying tier switches on slow networks (C6.6 T9-X2).
  */
 export function reloadOnComplete(input: {
-  /** 这个槽位装的那一档此刻在素材服务上到齐了 */
+  /** The tier loaded in this slot is now complete on the asset service. */
   doneNow: boolean;
-  /** 到齐之后这个槽位已经判过了(在用时判过、或 src 是到齐后才换上的):到齐之后只判一次 */
+  /** This slot was already evaluated after becoming complete (evaluated while in use, or src was swapped after arrival): evaluate only once after complete. */
   seenBefore: boolean;
-  /** 槽位装着东西 */
+  /** Slot holds content. */
   hasClip: boolean;
-  /** src 是这一轮刚换上的 */
+  /** src was freshly swapped in this round. */
   freshSrc: boolean;
   /**
-   * 槽位眼下在用(播当前段、换档预热、备下一段)。缺省 true。闲着的槽位不重载:重载只会和可播性探测抢带宽
-   * (跨机 T9 `ht9a0927`,`docs/archive/agent-reports/AGENT-tier-reload-seek.md`);调用方要保证轮到它用时还会再判一次。
+   * Slot is currently in use (playing current clip, warming for tier switch, preparing next clip).
+   * Defaults to true. Idle slots are not reloaded: reloading only contends for bandwidth with
+   * playability probing (cross-machine T9 `ht9a0927`, `docs/archive/agent-reports/AGENT-tier-reload-seek.md`);
+   * the caller must ensure it gets evaluated again when its turn to be used arrives.
    */
   inUse?: boolean;
-  /** 元素报了错(`el.error` 非空) */
+  /** Element reported an error (`el.error` is non-null). */
   error: boolean;
   networkState: number;
 }): boolean {
@@ -271,9 +312,11 @@ export function reloadOnComplete(input: {
 }
 
 /**
- * 换档对齐判据(C6.6 第 8 节查资料结论第 4 条):新一档交出的这一帧的 `mediaTime`
- * 与画面上那一档此刻的时刻(暂停时就是目标时刻)差不超过一帧(按项目帧率)才算对齐。
- * 只给微秒级容差吸收浮点误差；超过一帧的差值必须等下一帧再切。
+ * Tier switch alignment criterion (C6.6 section 8 research findings, item 4): the `mediaTime` of
+ * the frame yielded by the new tier must differ from the on-screen tier's current timestamp
+ * (target timestamp when paused) by no more than one frame (at project frame rate) to be aligned.
+ * Only microsecond-level tolerance is given to absorb floating-point errors; differences exceeding
+ * one frame must wait for the next frame before switching.
  */
 export function tierAligned(mediaTime: number, reference: number, fps: number): boolean {
   if (!Number.isFinite(mediaTime) || !Number.isFinite(reference)) return false;
@@ -281,31 +324,34 @@ export function tierAligned(mediaTime: number, reference: number, fps: number): 
   return Math.abs(mediaTime - reference) <= frame + 0.000001;
 }
 
-/** 把前台已经交出的帧外推到预热帧的预计显示时刻，再比较两档。 */
+/** Extrapolates the frame already yielded in foreground to expected display time of warming frame, then compares the two tiers. */
 export function frontTimeAtDisplay(front: { mediaTime: number; expectedDisplayTime: number }, warmExpectedDisplayTime: number, rate = 1): number {
-  // 素材时间按片段速度走:墙钟过去 Δ 秒,素材走 Δ × rate 秒(rate 缺省 1 时和原来逐位相同)
+  // Asset time advances with clip speed: Δ seconds of wall clock means Δ × rate seconds in asset (bit-identical when rate defaults to 1)
   return front.mediaTime + (warmExpectedDisplayTime - front.expectedDisplayTime) / 1000 * rate;
 }
 
 export function planSlots(input: SlotsInput): SlotsPlan {
   const { slots, shown, cur, next, t, playing, canWarm = true } = input;
   const load = slots.map((s) => s.clip);
-  // 认槽位要 id **和** url 都相同:同一片段换档(`mediaTier.ts` 的 playbackUrl 换了地址)就是新的一段,
-  // 得重新装、重新等出画(A1「换档 = 槽位级的换段」);只比 id 的话新地址永远装不进去
+  // Slot matching requires identical id **and** url: a tier switch on the same clip (`playbackUrl`
+  // in `mediaTier.ts` changed URL) is a new clip and must reload and wait to render again
+  // (A1 "tier switch = slot-level clip switch"); comparing only id would never load the new URL
   const holding = (c: SlotClip) => load.findIndex((x) => x?.id === c.id && x?.url === c.url);
   const sameUrl = (url: string) => {
     const i = load.findIndex((c) => c?.url === url);
     return i < 0 ? null : i;
   };
 
-  // ⓪ 换档(C6.6):显示着的槽位装的正是这一段的上一档、而且已经出过画 —— 上一档接着当 active
-  //    (播放中继续走、暂停中停在原地),新档装进另一个槽位预热;新档对齐出画了(ready)才对调。
-  //    这样换档时画面一直有上一档顶着,不冻、不跳,播放位置不变。
+  // (0) Tier switch (C6.6): the displayed slot holds the previous tier of this clip and has already
+  //     rendered a frame: previous tier continues as active (keeps playing during playback, stays
+  //     put when paused), while the new tier loads into the other slot to warm up; swapped only once
+  //     the new tier is aligned and renders a frame (ready). This way the previous tier holds the
+  //     screen during tier switch: no freeze, no jump, playback position stays unchanged.
   if (cur && shown !== null && load[shown]?.id === cur.id && load[shown]?.url !== cur.url && slots[shown]?.ready) {
     const other = 1 - shown;
     const warmed = load[other]?.id === cur.id && load[other]?.url === cur.url;
     if (warmed && slots[other]?.ready) {
-      // 对齐出画了:一次提交里对调,上一档这一拍起退下
+      // Aligned and rendered: swapped in a single commit; previous tier steps down starting this tick
       return { load, active: other, preload: null, shown: other, warm: null };
     }
     if (!warmed && !canWarm) return { load, active: shown, preload: null, shown, warm: null };
@@ -313,42 +359,46 @@ export function planSlots(input: SlotsInput): SlotsPlan {
     return { load, active: shown, preload: null, shown, warm: other };
   }
 
-  // ① 当前段放哪个槽位
+  // (1) Which slot holds the current clip
   let active: number | null = null;
   if (cur) {
     active = holding(cur);
     if (active < 0) {
       if (!playing) {
-        // 暂停时随手拖到哪算哪:只用正在显示的那个,和原来一个元素的行为一样。
-        // 没显示着的就挑装着同一个文件的(不用重新加载),都没有就 0 号。
-        // 例外:显示着的正是这一段的上一档(换档)—— 新档装进另一个,显示着的先顶着,出画了再换
+        // When paused, scrubbing lands wherever: use only the currently displayed slot, matching original
+        // single-element behavior. If none displayed, pick one holding the same file (no reload needed),
+        // or slot 0 if neither matches.
+        // Exception: displayed slot holds previous tier of this clip (tier switch): load new tier into
+        // the other slot, displayed slot holds the frame, swap once rendered
         active = shown !== null && load[shown]?.id === cur.id ? 1 - shown : (shown ?? sameUrl(cur.url) ?? 0);
       } else {
-        // 播放中却没提前装好:装进另一个,正在显示的那个先拿末帧顶着(见 ③)
+        // Playing but not preloaded: load into other slot; currently displayed one holds last frame (see (3))
         active = shown !== null ? 1 - shown : (sameUrl(cur.url) ?? 0);
       }
       load[active] = cur;
     }
   }
 
-  // ② 这一帧显示哪个
+  // (2) Which slot to display this frame
   let show: number | null = null;
   if (cur && active !== null) {
     const ready = slots[active].clip?.id === cur.id && slots[active].clip?.url === cur.url && slots[active].ready;
     const held = shown !== null && shown !== active ? slots[shown].clip : null;
     if (ready) show = active;
-    // 同一片段换档(同一个 id、换了地址):新档出画之前一直让上一档顶着,暂停、播放都一样 ——
-    // A1「换档时画面不跳」。url 从不变的时候不会走到这里(同 id 同 url 的槽位 holding 已经认出来了)
+    // Tier switch for the same clip (same id, changed URL): keep previous tier holding the screen
+    // until new tier renders, whether paused or playing: A1 "no visual jumps during tier switch".
+    // Never reaches here if url never changes (already matched by holding slot with same id and url)
     else if (held && held.id === cur.id) show = shown;
     else if (!playing || t - cur.start >= NOT_READY_GRACE_SEC) show = active;
-    // 新的一段还没出画:首尾相接的话,让上一段停在最后一帧顶一下,比闪黑或闪一帧别处的旧画面好
+    // New clip hasn't rendered yet: if contiguous, hold previous clip on its last frame; better than flashing black or a stale frame from elsewhere
     else if (held && Math.abs(cur.start - held.end) < TOUCH_SEC) show = shown;
-    // 接不上(中间有空档、或者是跳过来的):和原来新建播放器一样先空着,等它出画
+    // Non-contiguous (gap in between or jumped via seek): leave empty like a newly created player, wait for it to render
     else show = null;
   }
 
-  // ③ 下一段提前装进另一个槽位 —— 只在播放时做。暂停时拖来拖去,预备槽位跟着来回 seek 只会让
-  //    两个解码器一起推翻重来。正在顶班的那个不能拿去装,等新的一段出画再说
+  // (3) Preload next clip into the other slot: do only during playback. Scrubbing back and forth
+  //     while paused causes the standby slot to seek repeatedly, forcing both decoders to restart.
+  //     The slot currently filling in cannot be used for loading; wait until the new clip renders.
   let preload: number | null = null;
   if (playing && next && next.start > t && next.start - t <= PREROLL_SEC) {
     let p = holding(next);

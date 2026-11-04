@@ -72,9 +72,9 @@ import { MEDIA_PROXY_BASE } from "../online/stagePolicy.mjs";
 import type { IsolationReport } from "../online/isolation/isolationCheck";
 import { createStageHandshake, type StageHandshake } from "../online/stageHandshake";
 
-/** 换回双舞台时盖板最多留多久(〔裁〕2026-09-30 `claude/stage-handshake`) */
+/** How long the cover stays at most when switching back to dual stages ([ruling 2026-09-30] `claude/stage-handshake`) */
 const STAGE_HANDOVER_MAX_MS = 3000;
-/** 新的可见舞台第一次 `setTime` 回包(或报来第一拍)之后再等这么久撤盖板,让它把这一帧画到屏上 */
+/** After the new visible stage's first `setTime` reply (or its first reported beat), wait this long before removing the cover, so it can draw this frame onto the screen */
 const STAGE_HANDOVER_SETTLE_MS = 150;
 import { createStageWatch, type StageWatch } from "../online/stageWatch";
 import { builtinCardSourceFiles } from "../render/cardSourceFiles.mjs";
@@ -96,8 +96,8 @@ setCostResolver((proj, clipId) => {
 }, () => dualStage());
 
 /**
- * 单舞台界限搜索的本地复用(「卡片身份 + 本机环境指纹」→ 本机实测的单帧耗时;`boundarySearch.mjs`)。
- * 缺省是页面内存;在线页面经 `setSearchCostStore` 接到页面内快照库 L2 的 `costs` 表(方法同名 `getCost` / `putCost`)。
+ * Local reuse for single-stage boundary search ("card identity + this machine's environment fingerprint" → single-frame time measured on this machine; `boundarySearch.mjs`).
+ * Defaults to page memory; the online page connects it through `setSearchCostStore` to the `costs` table of the in-page snapshot store L2 (same method names `getCost` / `putCost`).
  */
 let searchCostStore: CostStore = createMemoryCostStore();
 export function setSearchCostStore(store: CostStore): void {
@@ -105,38 +105,37 @@ export function setSearchCostStore(store: CostStore): void {
 }
 
 /**
- * 界限搜索的本地复用接到页面内快照库 L2 的 `costs` 表(C10 集成:交接文件第 2.2 节第 3 条)。键形 `<identityKey>|<envFingerprint>`
- * (`boundarySearch.mjs` 的 `localCostKey`),与后台舞台 K1 记录的键(`<identityKey>
-<device>`,`l2Costs.ts`)不相撞;
- * 这些记录没有 `device`,读 K1 记录时滤掉。L2 打不开(没有 IndexedDB、被浏览器拒)时退回页面内存。
+ * Local reuse for boundary search is connected to the `costs` table of the in-page snapshot store L2 (C10 integration: handoff file section 2.2, item 3). Key shape `<identityKey>|<envFingerprint>`
+ * (`localCostKey` in `boundarySearch.mjs`), which does not collide with the key of the background stage K1 records (`<identityKey>\n<device>`, `l2Costs.ts`);
+ * these records have no `device`, so they are filtered out when reading K1 records. When L2 cannot be opened (no IndexedDB, or rejected by the browser) it falls back to page memory.
  */
 /**
- * 此刻页面自己判重的卡片段(预渲染集合):清单计划的清单、测量时产稀疏流的对象都取它。
- * 只列卡片段(素材段不产预渲染结果)。导出期间并上必须用预渲染原尺寸的同步卡片段(判轻时不在预渲染集合里,`export/exportWanted.ts`)
+ * The card clips the page itself judges heavy at this moment (the prerender set): the manifest of the manifest plan and the objects that produce sparse streams during measurement both take it.
+ * Lists card clips only (media clips produce no prerender output). During export, it must be merged with the synchronous card clips at the original prerender size (when judged light they are not in the prerender set, `export/exportWanted.ts`)
  */
 function heavyCardClips(): string[] {
   const plan = currentPlan();
   if (!plan) return [];
-  // 剪辑段里的卡(`kernel/cutFlatten.mjs` 的虚拟片段)也在里面:它们各自产单卡流,只由桌面应用与托管方的渲染服务产
+  // Cards inside cut segments (the virtual clips of `kernel/cutFlatten.mjs`) are in it too: each produces its own single-card stream, produced only by the render service of the desktop app and the hosted side
   const p = flatPlanProject(getState().project);
   const byId = new Map(p.tracks.flatMap((tr) => tr.clips).map((c) => [c.id, c] as const));
   return [...new Set([...plan.prerenderSet, ...exportWantedClips()])].filter((id) => !!byId.get(id)?.cardId);
 }
 
-/** 界限搜索、基准卡测每张卡之前、之后:即时渲染闸门留崩溃记录(`online/stageGate.ts`;测崩了的卡下次直接当重卡) */
+/** Before and after boundary search and the baseline card measures each card: the on-demand render gate leaves a crash record (`online/stageGate.ts`; a card whose measurement crashed is treated as a heavy card next time) */
 const searchMeasureHooks = {
   before: (key: string, cardId: string): void => { stageGate()?.measureStart(key, cardId); },
   after: (_key: string): void => { stageGate()?.measureEnd(); },
 };
 
-/** 测崩过的卡(identityKey;崩溃记录里的,这次使用期间不变) */
+/** Cards whose measurement crashed (identityKey; from the crash record, unchanged during this use) */
 function crashedCards(): ReadonlySet<string> {
   return stageGate()?.heavyCards() ?? new Set();
 }
 
 /**
- * 此刻挂着哪几台舞台:桌面两台(端口没起来时 legacy 只有 A,那时不经这里);在线页面读不到舞台源时一台都不挂,
- * 双舞台两台,只有一个舞台(舞台闸门第一级、最低一档、握手失败退回)只挂跨源的 A。
+ * Which stages are mounted at this moment: desktop has two (when the port did not come up, legacy has only A and does not go through here); the online page mounts none when it cannot read the stage origin,
+ * two for dual stages, and only the cross-origin A when there is only one stage (first level of the stage gate, lowest tier, fallback after a failed handshake).
  */
 function mountedStageIds(): StageId[] {
   if (!ONLINE) return [...STAGE_IDS];
@@ -145,37 +144,37 @@ function mountedStageIds(): StageId[] {
 }
 
 /**
- * 舞台素材路径号的作用域(`online/stageIsolation.ts` 的 `setScope`):路径号跟素材连接的项目走(cookie 里是那个项目的票据);
- * `codeProjectId` 是此刻打开的项目(要往舞台发的卡片代码属于它)。页面原地换项目时,项目先换、素材连接后换,
- * 中间这一段两者不同,本页不点头执行,新项目的卡片代码不进拿着上一个项目路径号的舞台文档。
+ * Scope of the stage's media path IDs (`setScope` in `online/stageIsolation.ts`): path IDs follow the project the media connection is attached to (the cookie holds that project's ticket);
+ * `codeProjectId` is the project open at this moment (the card code to send to the stage belongs to it). When the page switches projects in place, the project switches first and the media connection second,
+ * and during the stretch in between the two differ: this page does not approve execution, and the new project's card code does not enter a stage document that holds the previous project's path IDs.
  */
 function stageSidScope(): StageSidScope {
   const codeProjectId = currentDocProjectId() || null;
   return { accountId: getSyncView().shared?.accountId || null, projectId: remoteAccountProjectId() || codeProjectId, codeProjectId };
 }
 
-/** 声音线程起在哪一台:双舞台实例 B(后台舞台,线程跟实例走),单舞台只有 A */
+/** Which stage the audio thread starts on: instance B of dual stages (the background stage, the thread follows the instance), and only A with a single stage */
 function soundStageId(): StageId {
   return ONLINE && !dualStage() ? "A" : "B";
 }
 
-/** 打开项目的测量落定了没有:只有一个舞台时看界限搜索,两个舞台看后台舞台的常驻探针 */
+/** Whether the measurement for the open project has settled: with only one stage, look at boundary search; with two stages, look at the background stage's resident probe */
 function measurementSettled(): boolean {
   return planSearch() ? searchJudged() : probeSettledFor(getState().project);
 }
 
 /**
- * 素材闸门的结果交给取档策略(`render/mediaTier.ts`):最低一档视频素材只用小尺寸;超过解码上限(`online/mediaGate.ts`,打开时测一次)的
- * 视频素材只用小尺寸。网速(先拉小尺寸还是只拉原尺寸)由舞台自己看(`render/netSpeed.ts`),父页不给。
+ * The media gate result goes to the tier selection policy (`render/mediaTier.ts`): in the lowest tier, video media uses only the small size; video media beyond the decode limit (`online/mediaGate.ts`, measured once at open) uses
+ * only the small size. Network speed (pull the small size first, or only the original size) is judged by the stage itself (`render/netSpeed.ts`); the parent page does not supply it.
  */
 function mediaGatePolicy(lowest: boolean): Pick<MediaTierPolicy, "smallOnly" | "decodeMaxPixels" | "smallFirst"> {
   return { smallOnly: lowest, decodeMaxPixels: decodeLimit()?.maxPixels ?? null, smallFirst: true };
 }
 
-/** 各舞台报来的网速(查看口用) */
+/** Network speed reported by each stage (for the inspection hook) */
 const netSpeedByStage: Partial<Record<StageId, { mbps: number | null; samples: number; smallFirst: boolean; at: number }>> = {};
 
-/** 查看口:素材闸门的结果 */
+/** Inspection hook: the media gate result */
 function mediaGateSnapshot(): unknown {
   return { decode: decodeLimit(), net: { ...netSpeedByStage } };
 }
@@ -197,41 +196,43 @@ function l2SearchCostStore(): CostStore {
 }
 
 /*
- * 父页的在线浏览器模式开关(C10 契约第 9 节):与舞台 `StageView` 同一个判据(在线构建,或编辑页地址上的
- * `platform=browser`,后者经 `stageSrc` 转给舞台)。开着时这台设备跑不了的卡(用户卡、素材效果卡)一律按重卡贴预渲染结果
- * (`snapshotFeed` 的 `localOnlyOf`、`costIdentity.ts` 不给它们身份),贴不上时是沙漏、等渲染节点的结果
- * (2026-10-21 起没有「本地 PC 辅助渲染」的图标与徽标)。
+ * The parent page's online browser mode switch (C10 contract section 9): the same criterion as the stage `StageView` (an online build, or `platform=browser` in the editor page address,
+ * which is passed to the stage through `stageSrc`). When on, cards this device cannot run (user cards, media effect cards) are all treated as heavy cards and get prerender output attached
+ * (`localOnlyOf` of `snapshotFeed`; `costIdentity.ts` gives them no identity), and when it cannot be attached it is an hourglass, waiting for the render node's result
+ * (since 2026-10-21 there is no "local PC assisted render" icon or badge).
  */
-try { setOnlineBrowserMode(ONLINE || new URLSearchParams(location.search).get("platform") === "browser"); } catch { /* 没有 location */ }
+try { setOnlineBrowserMode(ONLINE || new URLSearchParams(location.search).get("platform") === "browser"); } catch { /* No location */ }
 
 /*
- * A1 的 `localHashes`:**当前连接的素材服务**报 `complete` 的哈希集合,换档判据只看它
- * (`src/render/mediaTier.ts` 的 chooseTier;`docs/semantics/mechanism/asset-service.md`「同步状态只问素材服务」)。
- * 来源是主文档每 2 秒轮询 `GET media/<hash>/chunks`(C6.6,`./media/assetTiers.ts`):
- * 预览挂着时开轮询,集合变了就下发给两个舞台(`setLocalHashes`),主文档的声音层直接读。
+ * A1's `localHashes`: the set of hashes the **currently connected asset service** reports as `complete`; the tier switch criterion looks only at it
+ * (chooseTier in `src/render/mediaTier.ts`; `docs/semantics/mechanism/asset-service.md` "Sync state is asked only of the asset service").
+ * It comes from the main document polling `GET media/<hash>/chunks` every 2 seconds (C6.6, `./media/assetTiers.ts`):
+ * polling runs while the preview is mounted, and when the set changes it is pushed to both stages (`setLocalHashes`) and read directly by the main document's audio layer.
  */
 
 /**
- * 中央预览:视频层 + 动效渲染面,按容器缩放。播放循环也在这里(rAF 推进 store.t)。
+ * Central preview: video layer + motion graphics render surface, scaled to the container. The playback loop is here too (rAF advances store.t).
  *
- * 动效不在这个文档里播:它跑在下面那个 ?stage=1 的 iframe(渲染面)里,时间被接管,
- * 这里只下发「现在是时间轴第几秒」,渲染面渲染出那一帧。所以拖播放头到片段中间
- * 看到的是那一刻该有的画面,而不是把进场动画从头重播一遍。详见 src/StageView.tsx。
+ * Motion graphics do not play in this document: they run in the ?stage=1 iframe below (the render surface), whose time is taken over.
+ * This side only sends down "which second of the timeline it is now", and the render surface renders that frame. So dragging the playhead to the middle of a clip
+ * shows the picture that belongs at that moment, rather than replaying the entrance animation from the start. See src/StageView.tsx for details.
  *
- * 视频层:按 videoClipAt 找当前该播的素材段,src 变了换源,时间对不上(>0.2s)就 seek。
+ * Video layer: find the media clip that should be playing with videoClipAt, switch the source when src changes, and seek when the time is off (>0.2s).
  */
 export function Preview(props: { variant?: "mobile" } = {}) {
-  /** 手机版界面(`src/mobile/`)只要画面:不挂 2D/3D 分页、工具条、播放条,播放与 seek 由手机版自己的控件调同一套 store 动作 */
+  /** The mobile app UI (`src/mobile/`) only wants the picture: no 2D/3D tab, toolbar or playback bar are mounted, and playback and seek are driven by the mobile app's own controls calling the same store actions */
   const mobile = props.variant === "mobile";
 
   const project = useStore((s) => s.project);
-  // C6.6:两档素材的换档集合(预览挂着时每 2 秒问一次当前素材服务)
+  // C6.6: the tier-switch set of the two-tier media (while the preview is mounted, ask the current asset service every 2 seconds)
   const tierList = useTierHashes();
-  // 在线页面没有本机编辑器进程与本地素材服务(c10a 第 2 节:不请求 `/api/*`),先告诉轮询再开
+  // The online page has no local editor process or local asset service (c10a section 2: it does not request `/api/*`); tell the polling first, then start it
   useEffect(() => { setNoEditorProcess(ONLINE); return startAssetTiers(); }, []);
-  // C6.6 设计稿第 9 节第 2 条:打开项目时,缺素材小尺寸、本地有素材原尺寸的视频在后台补转
-  // 在线页面没有本机转码(C6.6 的补转走编辑器进程),不补
-  // 同一时机补入库没有哈希的老素材;本机取不到的标「(缺失)」,放云端时补上哈希的交给上传队列(backfillUpload.ts)
+  // C6.6 design draft section 9, item 2: when a project is opened, videos whose media exists only at small size
+  // but has the original size locally are transcoded in the background
+  // Online pages have no local transcoding (the C6.6 transcode runs in the editor process), so skip it
+  // At the same time, old media without a hash are added to the library; those the local machine can't fetch are
+  // marked "(missing)", and those whose hash is filled in when moved to the cloud go to the upload queue (backfillUpload.ts)
   useEffect(() => (ONLINE ? undefined : startTierBackfill(backfillHooks)), []);
   const t = useStore((s) => s.t);
   const playing = useStore((s) => s.playing);
@@ -241,54 +242,66 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   const selection = useStore((s) => s.selection);
   const boxRef = useRef<HTMLDivElement>(null);
   /**
-   * 两个舞台 iframe(E1)。`A` / `B` **只是实例名,和角色无关** —— 起手 A 当可见舞台、
-   * B 当后台舞台(`INITIAL_ROLE_OF`),角色只经 `setRole` 定,K5 的互换之后就换过来了。
-   * legacy(缺省)下只挂 A 那一个、同源,和今天一模一样。
+   * The two stage iframes (E1). `A` / `B` **are only instance names, unrelated to roles**: initially A is the
+   * visible stage and B is the background stage (`INITIAL_ROLE_OF`). Roles are set only through `setRole`,
+   * and after the K5 swap they are reversed.
+   * In legacy mode (the default) only A is mounted, same-origin, exactly as it is today.
    */
   const frameARef = useRef<HTMLIFrameElement>(null);
   const frameBRef = useRef<HTMLIFrameElement>(null);
   /*
-   * 在线双舞台的两个舞台(C10 契约第 2 节):舞台源来自运行配置(页面载入时取,`src/online/boot.ts`),握手失败退回同源单舞台。
-   * 状态变了要重渲(`dualStage()` 读的是这一份)。运行配置还没取完时先不挂舞台 iframe,免得先按同源挂上、再换源重载一次。
+   * The two stages of the online dual stage (C10 contract section 2): the stage origins come from the runtime config
+   * (fetched at page load, `src/online/boot.ts`); if the handshake fails, fall back to a same-origin single stage.
+   * Re-render when the state changes (`dualStage()` reads this copy). Until the runtime config has been fetched, do not
+   * mount the stage iframes, so they are not first mounted same-origin and then reloaded with a different origin.
    */
   const onlineStages = useSyncExternalStore(subscribeOnlineStages, onlineStageState, onlineStageState);
   /*
-   * 在线浏览器这一次的档位(`src/online/onlineTier.ts`):舞台闸门在页面载入时定下(`online/stageGate.ts`,`boot.ts` 开),
-   * 定下之前(要问别的标签页、读崩溃记录)和运行配置还没取完一样,先不挂舞台。
+   * The tier of this online browser (`src/online/onlineTier.ts`): the stage gate is decided at page load
+   * (`online/stageGate.ts`, opened by `boot.ts`). Until it is decided (asking other tabs, reading the crash record),
+   * do not mount the stages, the same as when the runtime config has not been fetched yet.
    */
   const tierNow = useSyncExternalStore(subscribeTier, tierState, tierState);
   const stagesPending = ONLINE && (onlineStages.config !== "done" || !tierNow.online);
   const dual = dualStage();
   /**
-   * 首次握手的过渡期(`stageHandshake.ts` 的 `interim`,〔裁〕2026-09-30 `claude/stage-handshake`):可见舞台 A 挂上 20 秒还没握上,
-   * 先按同源单舞台出画面(`dual` 为假,和退回单舞台同一条路),原来那两个跨源 iframe 不拆,改作隐藏的预热 iframe 继续加载;
-   * 两台都握上手就换回双舞台(只换一次)。
+   * Interim period of the first handshake (`interim` in `stageHandshake.ts`, [ruling 2026-09-30 `claude/stage-handshake`]):
+   * if visible stage A has been mounted for 20 seconds without completing the handshake, show the picture from a
+   * same-origin single stage first (`dual` is false, the same path as falling back to a single stage). The two original
+   * cross-origin iframes are not torn down; they become hidden warm-up iframes and keep loading.
+   * Once both complete the handshake, switch back to the dual stage (only once).
    */
   const interim = interimStage();
-  /** 首次握手这一轮还在进行(双舞台等握手,或过渡期):计时器跨过「双舞台 → 过渡期 → 换回双舞台」不重建 */
+  /** The first handshake round is still in progress (dual stage waiting for the handshake, or the interim period): the timer is not rebuilt across "dual stage → interim → switch back to dual stage" */
   const handshakeRound = dual || interim;
   /**
-   * 换回双舞台那一下的画面衔接〔裁〕:过渡期的同源单舞台留在原位当盖板(不再连 RPC,停在最后一帧),新的可见舞台
-   * 先不露出来;等它按新项目画好当前这一帧(第一次 `setTime` 回包之后一小会儿,或播放中报来第一拍)再一次换过来,
-   * 最多等 `STAGE_HANDOVER_MAX_MS`。
+   * Picture handover when switching back to the dual stage [ruling]: the same-origin single stage of the interim period
+   * stays in place as a cover (no longer connected over RPC, stopped on the last frame), and the new visible stage is
+   * not revealed yet. Once it has drawn the current frame for the new project (a short while after the first `setTime`
+   * reply, or when the first beat is reported during playback), switch over in one go,
+   * waiting at most `STAGE_HANDOVER_MAX_MS`.
    */
   const [handoverDone, setHandoverDone] = useState(false);
   const handover = ONLINE && dual && onlineStages.interimAt !== null && !handoverDone;
   const handoverRef = useRef(handover);
   handoverRef.current = handover;
   /**
-   * 可见舞台渲 live 变体:双舞台,或在线页面的同源单舞台(`docs/plan/c10a-contract.md` 第 8.1 节)。
-   * 播放头跟舞台的 `frame`、快照 / 抑制经 RPC 投递、素材层在舞台里 —— 这些按 `live` 判;
-   * 只和后台舞台 B 有关的(互换、补跑、页面触发预渲染)仍按 `dual` 判。
+   * The visible stage renders the live variant: the dual stage, or the same-origin single stage of an online page
+   * (`docs/plan/c10a-contract.md` section 8.1).
+   * The playhead following the stage's `frame`, snapshots / suppression delivered over RPC, and the media layer living
+   * in the stage are all decided by `live`;
+   * only what concerns background stage B (swap, re-run, page-triggered prerender) is still decided by `dual`.
    */
   const live = liveStage();
   const online = singleLiveStage();
   /**
-   * 在线浏览器这一次的档位(`src/online/onlineTier.ts`;语义 `product/platforms.md`「在线浏览器」):
-   * - `single`:只有一个舞台(舞台闸门停在第一级、最低一档,或握手失败退回):轻重按界限搜索判(借可见舞台测),
-   *   停下时由可见舞台逐层追一帧;
-   * - `lowest`:最低一档:播放时不做任何即时渲染(显示用的表全部判重)、素材只用小尺寸、轨道流只贴稀疏版。
-   * 桌面恒为假。
+   * The tier of this online browser (`src/online/onlineTier.ts`; semantics `product/platforms.md` "Online browser"):
+   * - `single`: only one stage (the stage gate stopped at the first level, the lowest tier, or the handshake failed and
+   *   fell back): light/heavy is decided by bounded search (measured on the visible stage),
+   *   and when playback stops the visible stage catches up one frame layer by layer;
+   * - `lowest`: the lowest tier: no on-demand render during playback (all display tables are judged heavy), media uses
+   *   only the small size, and track streams use only the sparse version.
+   * Always false on desktop.
    */
   const lowest = ONLINE && lowestTier(tierNow);
   const lowestRef = useRef(lowest);
@@ -297,10 +310,12 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   const singleRef = useRef(single);
   singleRef.current = single;
   /**
-   * 怎么看这块画布:缩放多少、平移到哪、是不是还跟着窗口自动适应。换算见 preview/viewport2d.ts。
+   * How to view this canvas: how much it is zoomed, where it is panned, and whether it still auto-fits the window.
+   * See preview/viewport2d.ts for the conversion.
    *
-   * `scale` 下面还有七八处在用(命中测试、拖动换算、描边框),所以在这里解出来一个同名的量,
-   * 那些地方一个字都不用改 —— 它们本来就只关心「一个画面像素在屏幕上是几像素」。
+   * `scale` is still used in seven or eight places below (hit testing, drag conversion, outline boxes), so a value
+   * with the same name is derived here and none of those places needs a single character changed:
+   * all they care about is "how many screen pixels one picture pixel takes".
    */
   const [cam, setCam] = useState<View2D>({ scale: 0.4, tx: 0, ty: 0, auto: true });
   const scale = cam.scale;
@@ -309,103 +324,118 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   const camRef = useRef(cam);
   camRef.current = cam;
   /**
-   * 预览窗口有多大。**画框摆在哪儿由我们自己算**,所以这个尺寸得一直拿在手上。
+   * How large the preview window is. **We compute where the frame sits ourselves**, so this size must always be at hand.
    *
-   * 本来是想省掉它的:外层是 grid + place-items:center,画面自己就在正中,
-   * 只要再叠一个「相对中心的偏移」就行。**实测发现这条路不通**:画框一旦比窗口高,
-   * 浏览器就不再居中了,而是把顶边贴到 0(grid 的 safe 对齐,怕内容溢出到够不着的地方)。
-   * 试过 `align-items: unsafe center` 强制真居中 —— 计算样式确实变了,画框照样贴顶。
-   * 而「画框比窗口大」正是放大之后的常态,也正是最需要拖动的时候。
-   * 于是改成:画框绝对定位在左上角,位置完全由 frameOrigin 算出来,浏览器不掺和。
+   * We originally wanted to avoid it: the outer element is grid + place-items:center, so the picture is centered by
+   * itself, and we would only need to stack a "offset relative to the center" on top.
+   * **Testing showed this does not work**: once the frame is taller than the window, the browser no longer centers it
+   * and pins the top edge to 0 (grid's safe alignment, to keep content from overflowing out of reach).
+   * We tried `align-items: unsafe center` to force true centering: the computed style did change, but the frame still
+   * stuck to the top.
+   * And "the frame is larger than the window" is exactly the normal state after zooming in, and exactly when dragging
+   * is needed most.
+   * So we changed it: the frame is absolutely positioned at the top left, its position is computed entirely from
+   * frameOrigin, and the browser stays out of it.
    */
   const [boxSize, setBoxSize] = useState<{ width: number; height: number } | null>(null);
   /**
-   * 渲染面就绪的**代数**,不是一个布尔。0 = 还没就绪,之后每换一个新的渲染面就 +1。
+   * The **generation** of render-surface readiness, not a boolean. 0 = not ready yet, then +1 each time a new render
+   * surface replaces the old one.
    *
-   * 为什么不能是布尔:iframe 里的渲染面换了一个(开发时热更新整页重载、iframe 重新挂载),
-   * 它是空的,得重新收一遍 project 和时间。而 `setStageReady(true)` 在已经是 true 时
-   * 不改变 state,下面那两个 effect(下发 project、下发时间)就不会重跑 —— 画面一片空白,
-   * 得去碰一下时间轴让 `t` 变一下才回来。(最早撞上它的是切 3D 再切回;现在 3D 页不卸 2D 了,
-   * 但热重载照样是「新的渲染面 + 旧的 true」。)
+   * Why it can't be a boolean: when the render surface inside the iframe is replaced (hot update reloading the whole
+   * page during development, iframe remounted), it is empty and has to receive the project and the time again.
+   * But `setStageReady(true)` does not change state when it is already true, so the two effects below (sending the
+   * project, sending the time) would not rerun: the picture stays blank until you touch the timeline so that `t`
+   * changes. (It was first hit when switching to 3D and back; now the 3D page no longer unmounts 2D, but hot reload
+   * is still "a new render surface + an old true".)
    *
-   * 换成代数之后,每来一次 `pc-stage-ready` 都是一个新值,两个 effect 必定重跑。
+   * With a generation, every `pc-stage-ready` brings a new value, so both effects are sure to rerun.
    *
-   * `!stageReady` 对 0 照样成立,所以下面那几处判断一个字都不用改。
+   * `!stageReady` still holds for 0, so the checks below need not change at all.
    */
   const [stageReady, setStageReady] = useState(0);
-  /** 每台舞台 iframe 的重建代数:原地换项目(`plan.reload`)时 +1,让 React 卸掉旧 iframe、挂一个全新的浏览上下文(清掉会话历史) */
+  /** Rebuild generation of each stage iframe: +1 when the project is replaced in place (`plan.reload`), so React unmounts the old iframe and mounts a brand-new browsing context (clearing the session history) */
   const [stageFrameGen, setStageFrameGen] = useState<{ A: number; B: number }>({ A: 0, B: 0 });
   const tRef = useRef(t);
   tRef.current = t;
-  /** 上一次收尾(pause)之后给舞台发过 play 没有:收尾时只有真停过播放才认舞台回的 `stoppedAt` */
+  /** Whether play has been sent to the stage since the last wrap-up (pause): at wrap-up, the stage's `stoppedAt` reply is trusted only if playback was really stopped */
   const playedRef = useRef(false);
   const playingRef = useRef(playing);
   playingRef.current = playing;
 
   /*
-   * 预览分两页。2D 是成片(预览所见 = 导出所得),3D 是"这些东西在空间里怎么摆"。
-   * 两页各自回答一个问题,不要互相迁就 —— 2D 里出现代理色块就是把它的契约破了。
+   * The preview has two pages. 2D is the final video (what the preview shows = what the export gives), and 3D is "how
+   * these things are arranged in space".
+   * Each page answers its own question, and they must not accommodate each other: a proxy color block showing up in
+   * 2D breaks its contract.
    */
   const [view, setView] = useState<"2d" | "3d">("2d");
   const [pickedTool, setTool] = useState<ToolType>("select");
-  // 这个项目只给了只读权限(游客):移动、改文字都是写,工具一律退回「选择」(只能点选看参数);工具栏上那两个也置灰
+  // This project was given read-only permission (guest): moving and editing text are writes, so the tool always falls back to "select" (click to select and view parameters only); the two on the toolbar are also grayed out
   const readOnlyProject = useMemberReadOnly();
   const tool: ToolType = readOnlyProject ? "select" : pickedTool;
   const [rects, setRects] = useState<{ clipId: string; left: number; top: number; width: number; height: number }[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; clipId: string; cardId: string } | null>(null);
   const [editingText, setEditingText] = useState<{ clipId: string; key: string; value: string; x: number; y: number } | null>(null);
   
-  // 记录拖动工具过程中的位移预览状态
+  // Records the displacement preview state while using the drag tool
   const [dragPreview, setDragPreview] = useState<{ clipId: string; dx: number; dy: number } | null>(null);
-  // 舞台上拖动 / 改字中:告诉 Agent 用户正在编辑这张卡(A2)
+  // While dragging / editing text on the stage: tell the Agent the user is editing this card (A2)
   useUserEditing("stage-move", dragPreview?.clipId ?? null, "drag");
   useUserEditing("stage-text", editingText?.clipId ?? null, "text");
 
   /**
-   * 舞台的 RPC 客户端(E0):一个 iframe 实例一个,`pc-stage-ready` 握手到了就换新的、旧的 dispose。
-   * 主文档和舞台之间只有 postMessage,不再摸 iframe 里的 window.__pcStage。
-   * 右栏的定位工具经 stageBridge 拿同一个客户端(D4 页面侧),这里每换一次就登记一次。
+   * The stage's RPC client (E0): one per iframe instance; when the `pc-stage-ready` handshake arrives, switch to a new
+   * one and dispose the old one.
+   * Between the main document and the stage there is only postMessage; no more reaching into window.__pcStage inside
+   * the iframe.
+   * The positioning tool in the right rail gets the same client through stageBridge (D4 page side), and it is
+   * registered again each time it is replaced here.
    */
   const rpcRef = useRef<Record<StageId, StageRpcClient | null>>({ A: null, B: null });
   const hostCapsRef = useRef<Record<StageId, HostCapabilities | null>>({ A: null, B: null });
-  /** 在线双舞台这一轮握上手的舞台(C10 契约第 2 节:两个都握上才算成;超时算失败,退回同源单舞台) */
+  /** The stages that completed the handshake in this round of the online dual stage (C10 contract section 2: it counts only when both complete; a timeout counts as failure and falls back to the same-origin single stage) */
   const handshookRef = useRef(new Set<StageId>());
-  /** 在线双舞台握手之后的看守(心跳断 → 重载那一台 → 重载也握不回来就退回单舞台;`src/online/stageWatch.ts`) */
+  /** The watcher after the online dual-stage handshake (heartbeat lost → reload that stage → if the reload cannot handshake either, fall back to the single stage; `src/online/stageWatch.ts`) */
   const stageWatchRef = useRef<StageWatch | null>(null);
-  /** 在线双舞台的首次握手计时(每台从自己 iframe 的 `load` 起算,另有总上限;`src/online/stageHandshake.ts`) */
+  /** The first-handshake timer of the online dual stage (each stage counts from its own iframe `load`, plus an overall limit; `src/online/stageHandshake.ts`) */
   const handshakeRef = useRef<StageHandshake | null>(null);
   /**
-   * 在线双舞台:后台舞台 B 等可见舞台 A 的 iframe `load` 之后才挂〔裁:2026-09-30 `claude/stage-handshake`〕。
-   * 两个舞台各在自己的源上、各下一遍主脚本,同时下载就平分带宽;慢网络下让 A 先独占带宽,用户先看到画面,
-   * B 的握手时限从 B 自己的 `load` 起算,不吃亏。桌面(本机)不受影响,照旧一起挂。
+   * Online dual stage: background stage B is mounted only after the iframe `load` of visible stage A [ruling 2026-09-30
+   * `claude/stage-handshake`].
+   * The two stages each sit on their own origin and each download the main script once; downloading at the same time
+   * splits the bandwidth in half. On a slow network, let A take the bandwidth alone first so the user sees a picture
+   * first; B's handshake deadline counts from B's own `load`, so it loses nothing.
+   * Desktop (local) is not affected and mounts both together as before.
    */
   const [backStageMount, setBackStageMount] = useState(false);
-  /** 过渡期里预热的两个跨源 iframe(同一个元素,换回双舞台时直接接任 A / B,不重新加载) */
+  /** The two cross-origin iframes warmed up during the interim period (the same elements; when switching back to the dual stage they take over as A / B directly, without reloading) */
   const warmRef = useRef<Record<StageId, HTMLIFrameElement | null>>({ A: null, B: null });
   const warmRefOf = useMemo(() => ({
     A: (el: HTMLIFrameElement | null) => { warmRef.current.A = el; },
     B: (el: HTMLIFrameElement | null) => { warmRef.current.B = el; },
   }), []);
-  /** 每个舞台窗口最近一次的 `pc-stage-ready`(预热期间收到的握手,换回双舞台时照它补一遍握手) */
+  /** The latest `pc-stage-ready` of each stage window (handshakes received during warm-up; when switching back to the dual stage, the handshake is redone from it) */
   const readyByWinRef = useRef(new WeakMap<object, { origin: string; caps: HostCapabilities | null }>());
-  /** 握手处理本体(消息 effect 里建;换回双舞台时补握手也走它) */
+  /** The handshake handler itself (built in the message effect; the handshake redone when switching back to the dual stage goes through it too) */
   const processReadyRef = useRef<(id: StageId, win: Window, origin: string, caps: HostCapabilities | null) => void>(() => {});
   /**
-   * 下面那一堆(拖动、命中、心跳、节拍)问的都是**可见舞台**。
+   * The pile below (dragging, hit testing, heartbeat, beat) all asks about the **visible stage**.
    *
-   * 起手是 A,但 **K5 的角色互换之后就不是了** —— 所以问 `stageBridge` 要「此刻谁是 `front`」,
-   * 不能写死 `rpcRef.current.A`。legacy 的单舞台照样成立(它只登记了一个 `front`)。
+   * It starts as A, but **after the K5 role swap it is no longer** so ask `stageBridge` for "who is `front` right
+   * now"; do not hardcode `rpcRef.current.A`. The legacy single stage still works (it registers only one `front`).
    */
   const stage = useCallback((): StageRpcClient | null => frontStage(), []);
   /**
-   * 舞台 iframe 的 ref。**卸掉的那一刻就把它的客户端 dispose 并从 stageBridge 摘下。**
+   * The ref of the stage iframe. **The moment it is unmounted, dispose its client and remove it from stageBridge.**
    *
-   * 以前只在下一次 `pc-stage-ready` 才换掉旧客户端,中间这段 `frontStage()` 一直交出一个
-   * 指向已关窗口的客户端:发给它的请求被浏览器静默丢弃、永不回包(3D 页播放失效就是这么挂住的)。
-   * 摘掉之后 `stage()` 回 null,各处本来就有的「没有舞台就先不发」分支接手。
+   * Previously the old client was replaced only at the next `pc-stage-ready`, and in between `frontStage()` kept
+   * handing out a client pointing at a closed window: requests sent to it were silently dropped by the browser and
+   * never answered (this is how 3D page playback got stuck).
+   * After removal, `stage()` returns null, and the existing "no stage, don't send yet" branches take over.
    *
-   * 回调要**稳定**(useMemo 只建一次):每次渲染换一个新函数的话,React 会先拿 null 调旧的 ——
-   * 那就成了每渲染一次 dispose 一次。
+   * The callback must be **stable** (built only once with useMemo): if a new function is created on every render,
+   * React first calls the old one with null, which would dispose once per render.
    */
   const frameRefOf = useMemo(() => {
     const bind = (id: StageId, holder: React.RefObject<HTMLIFrameElement | null>) => (el: HTMLIFrameElement | null) => {
@@ -421,36 +451,45 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     return { A: bind("A", frameARef), B: bind("B", frameBRef) };
   }, []);
   /*
-   * R9 路线 2(`shared`):编辑器文档开**一个** GL Worker,两个舞台经各自的 `MessageChannel` 共用它。
-   * 懒建:生效路线真是 `shared` 时才建。端口在握手之后、任何 RPC 之前交(见下面 `pc-stage-ready` 那段)。
+   * R9 route 2 (`shared`): the editor document opens **one** GL Worker, and the two stages share it through their own
+   * `MessageChannel`.
+   * Built lazily: only when the effective route really is `shared`. The ports are handed over after the handshake and
+   * before any RPC (see the `pc-stage-ready` part below).
    */
   const sharedGlRef = useRef<SharedGl | null>(null);
   /*
-   * 在线执行同步来的用户卡与素材效果卡(`docs/plan/online-card-exec-contract.md` 第 2、8 节)的页面一侧:转译好的包、各舞台报回的运行状态与图形能力、
-   * 声音线程的连接。编辑页面只转译、发包、收状态,**不执行任何卡片代码**;包里只有转译结果,不带凭证或票据。
+   * The page side of the user cards and media effect cards synced for online execution
+   * (`docs/plan/online-card-exec-contract.md` sections 2 and 8): the transpiled bundle, the run state and graphics
+   * capabilities reported back by each stage, and the connection to the audio thread.
+   * The editor page only transpiles, sends bundles and receives state, and **executes no card code**; the bundle holds
+   * only transpiled results, with no credentials or tickets.
    */
   const cardBundlesRef = useRef<BundleResult[]>([]);
   const stageCardStatesRef = useRef<Partial<Record<StageId, Map<string, CardRunState>>>>({});
   const stageGraphRef = useRef<Partial<Record<StageId, StageGraphCapability>>>({});
   const refreshRunStatesRef = useRef<() => void>(() => {});
   const soundLinkRef = useRef<IsolatedSoundLink | null>(null);
-  /** 把此刻的包发给一台(或两台)舞台。本页不能执行时发空表(舞台把已载入的撤下)。声音线程只在一台起(双舞台实例 B,单舞台 A):线程跟实例走,不跟角色走 */
+  /** Sends the current bundle to one (or both) stages. When this page cannot execute, an empty table is sent (the stage removes what it has loaded). The audio thread starts on only one stage (instance B for the dual stage, A for the single stage): the thread follows the instance, not the role */
   const pushCardBundles = useCallback((only?: StageId) => {
     if (!ONLINE) return;
-    // 先按此刻打开的项目重算作用域:项目换了而素材连接还没换过来(或路径号要换)时,隔离会话当场改判不执行,下面就发空表
+    // First recompute the scope from the project currently open: when the project changed but the media connection has not switched over yet (or the path ID is about to change), the isolation session immediately rules it non-executable, and the empty table is sent below
     pageStageIsolation(() => onlineStageState().cardExec).setScope(stageSidScope());
     const list: CardBundle[] = cardExecAvailable() ? cardBundlesRef.current.filter((b): b is Extract<BundleResult, { ok: true }> => b.ok).map((b) => b.bundle) : [];
     for (const id of STAGE_IDS) {
       if (only && only !== id) continue;
       const c = rpcRef.current[id];
-      if (c) void c.loadUserCards(list, { sound: id === soundStageId() }).catch(() => { /* iframe 正在换:下一次握手会重发 */ });
+      if (c) void c.loadUserCards(list, { sound: id === soundStageId() }).catch(() => { /* The iframe is being replaced: the next handshake will resend */ });
     }
   }, []);
   const pushCardBundlesRef = useRef(pushCardBundles);
   pushCardBundlesRef.current = pushCardBundles;
   /*
-   * 页面一侧的执行前提(`cardRuntime/gate.ts`)由隔离会话立起来:站点总开关、双舞台握手、两台自检、票据交接(`online/stageIsolation.ts`)。
-   * 画面那一半另要两台的出口都由浏览器拦(`egress: "allowlist"`;〔裁:主会话 2026-10-06〕只靠脚本加固的浏览器上画面不执行,声音线程照常)。
+   * The page-side execution preconditions (`cardRuntime/gate.ts`) are established by the isolation session: the site
+   * master switch, the dual-stage handshake, the self-checks of both stages, and the ticket handover
+   * (`online/stageIsolation.ts`).
+   * The picture half additionally requires that the egress of both stages is blocked by the browser
+   * (`egress: "allowlist"`; [ruling, lead session 2026-10-06] on a browser hardened only by scripts the picture does
+   * not execute, while the audio thread works as usual).
    */
   useEffect(() => {
     if (!ONLINE) return;
@@ -462,26 +501,28 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     sync();
     return () => { for (const off of offs) off(); setCardExecGate({ isolated: false, reason: "page unload", visual: true }); };
   }, []);
-  /** 每台舞台的取档策略发到第几次了(等自检与票据交接是异步的,晚回来的旧一次不许盖掉新的) */
+  /** How many times the tier-selection policy of each stage has been sent (the self-check and ticket handover are asynchronous, and a late older round must not overwrite a newer one) */
   const policySeqRef = useRef<Partial<Record<StageId, number>>>({});
-  /** 各舞台窗口(含预热的)发来的自检结果:握手时清、结果到了存;换回双舞台时补交给隔离会话 */
+  /** Self-check results sent by each stage window (including warmed-up ones): cleared at handshake, stored when a result arrives; when switching back to the dual stage, they are handed to the isolation session again */
   const isoByWinRef = useRef(new WeakMap<object, IsolationReport | null>());
   const glPortTo = useCallback((id: StageId, win: Window, caps: HostCapabilities | null) => {
-    // 在线页面的路线跟舞台闸门走(`tierGlRoute`),桌面按项目选项
+    // The route of an online page follows the stage gate (`tierGlRoute`); desktop follows the project options
     if ((ONLINE ? tierGlRoute() : resolveGlRoute(getState().project.glRoute)) !== "shared") return;
     sharedGlRef.current ??= createSharedGl({ compact: !!caps?.compact });
     sharedGlRef.current.connect(win, stageTargetOrigin(id), id);
     if (typeof window !== "undefined") (window as unknown as Record<string, unknown>).__pcSharedGlDiag = () => sharedGlRef.current?.diag() ?? Promise.resolve(null);
   }, []);
   /*
-   * c10a 第 8 节:取档策略(素材闸门的结果 + 在线页面的远程素材服务)。主文档自己的声音层读模块级那份,
-   * 舞台是另一个文档,经 `setMediaPolicy` 下发。**只在在线模式里发**:桌面运行环境两边都照缺省,一个字节不变。
+   * c10a section 8: the tier-selection policy (the result of the media gate + the remote asset service of the online
+   * page). The main document's own audio layer reads the module-level copy;
+   * the stage is another document and gets it through `setMediaPolicy`. **Sent only in online mode**: the desktop
+   * runtime uses the defaults on both sides, not a byte changed.
    */
   const pushMediaPolicy = useCallback(async (): Promise<void> => {
     if (!ONLINE) return;
     const base = remoteAssetBase();
     let ticket: string | null = null;
-    // 等票据时素材连接或打开的项目换了(A → B):A 的票据不能交到按 B 算的路径号下,这一次作废(换连接、换作用域都会再推一次)
+    // While waiting for the ticket, the media connection or the open project changed (A → B): A's ticket must not be handed over under the path ID computed for B, so this round is void (changing the connection or the scope pushes again)
     const scopeKey = () => JSON.stringify([remoteAssetBase(), stageSidScope()]);
     const scopeBefore = scopeKey();
     if (base) { try { ticket = await remoteAssetTicket(); } catch { ticket = null; } }
@@ -489,12 +530,17 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     const policy: MediaTierPolicy = { ...mediaGatePolicy(lowestRef.current), online: true, remote: base ? { base, ticket } : null };
     setMediaTierPolicy(policy);
     /*
-     * 跨源的舞台(C10 契约第 2 节「舞台读素材」):一律用相对地址读**自己源上**的反代,不跨源直读素材服务
-     * (那要靠 CORS,媒体画进 canvas 会污染它)。
+     * Cross-origin stages (C10 contract section 2 "Stage reads media"): always use relative addresses to read the reverse
+     * proxy **on their own origin**, and never read the asset service directly across origins
+     * (that relies on CORS, and drawing the media into a canvas would taint it).
      *
-     * 票据怎么给(契约 `online-card-exec-contract.md` 第 4.1 节,`online/stageIsolation.ts`):这一台自检通过、票据交接成功 →
-     * 舞台读 `/media-s/<sid>/media/<哈希>`,票据不经 RPC(舞台源的服务端把它换成 HttpOnly cookie);否则照旧:基址换成 `/media` 的路径、
-     * 票据经 RPC 下发、走 `?t=`(这样的舞台文档不执行用户卡)。素材服务不在编辑器页源的 `/media/api/asset` 上(别的主机、别的路径)时没有那条反代,照旧。
+     * How the ticket is given (contract `online-card-exec-contract.md` section 4.1, `online/stageIsolation.ts`): if this
+     * stage passes its self-check and the ticket handover succeeds →
+     * the stage reads `/media-s/<sid>/media/<hash>`, the ticket does not go through RPC (the stage origin's server swaps it
+     * for an HttpOnly cookie); otherwise as before: the base address is changed to the `/media` path,
+     * the ticket is sent over RPC and goes via `?t=` (a stage document like this does not execute user cards). When the
+     * asset service is not at `/media/api/asset` on the editor page's origin (another host, another path), there is no
+     * such reverse proxy, so as before.
      */
     const iso = pageStageIsolation(() => onlineStageState().cardExec);
     iso.setStages(mountedStageIds());
@@ -510,10 +556,10 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         const plan = stageBase === MEDIA_PROXY_BASE && origins
           ? await iso.plan(id, { active: mountedStageIds().includes(id), stageOrigin: origins[id], ticket })
           : { mode: "legacy" as const, base: null, ticket, cardExec: false };
-        // 等自检与交接的时候这一台换了、或者又发起了一次更新的:这一次作废
+        // While waiting for the self-check and handover, this stage was replaced, or a newer update was started: this round is void
         if (rpcRef.current[id] !== c || policySeqRef.current[id] !== seq) return;
         if (plan.reload) {
-          // 舞台已经拿过上一个项目的路径号:重建这个槽位的 iframe 元素(新浏览上下文,清掉会话历史条目与 window.name)
+          // The stage already took the previous project's path ID: rebuild the iframe element of this slot (new browsing context, clearing session history entries and window.name)
           releaseStageClient(c);
           c.dispose();
           rpcRef.current[id] = null;
@@ -525,27 +571,28 @@ export function Preview(props: { variant?: "mobile" } = {}) {
           ? { smallOnly: policy.smallOnly, decodeMaxPixels: policy.decodeMaxPixels, remote: { base: plan.base!, ticket: null }, cardExec: plan.cardExec }
           : { smallOnly: policy.smallOnly, decodeMaxPixels: policy.decodeMaxPixels, remote: { base: stageBase, ticket: plan.ticket } };
       }
-      void c.setMediaPolicy(stagePolicy).catch(() => { /* iframe 正在换:下一次握手会重发 */ });
+      void c.setMediaPolicy(stagePolicy).catch(() => { /* The iframe is being replaced: the next handshake will resend */ });
     }));
   }, []);
-  // 本页能不能执行用户卡变了(另一台也隔离好了、出了加固拦下的事):两台的取档策略重发一遍
+  // Whether this page can execute user cards changed (the other stage is also isolated, or a hardening block event occurred): resend the tier-selection policy of both stages
   useEffect(() => {
     if (!ONLINE) return;
     return pageStageIsolation(() => onlineStageState().cardExec).subscribe(() => { void pushMediaPolicyRef.current(); });
   }, []);
   const pushMediaPolicyRef = useRef(pushMediaPolicy);
   pushMediaPolicyRef.current = pushMediaPolicy;
-  // 布局变了(握手失败退回单舞台):隔离会话按此刻挂着的舞台重算能不能执行(单舞台同样跨源隔离,照样执行用户卡)
+  // The layout changed (handshake failed, fell back to a single stage): the isolation session recomputes executability from the stages currently mounted (a single stage is also isolated cross-origin and still executes user cards)
   useEffect(() => {
     if (ONLINE) pageStageIsolation(() => onlineStageState().cardExec).setStages(mountedStageIds());
   }, [dual, stagesPending]);
   useEffect(() => {
     if (!ONLINE) return;
     void pushMediaPolicy();
-    // 远程素材服务换了(进入 / 离开共享项目)就重发。票据按它自己的寿命续:剩一半就重发一次(15 分钟的票据约 7 分钟一次;
-    // 测试里缩短了票据时限时跟着变快 —— C10 契约第 12 节),至多 5 分钟一次
+    // Resend when the remote asset service changes (entering / leaving a shared project). The ticket is renewed by its own
+    // lifetime: resend once when half is left (a 15-minute ticket about every 7 minutes;
+    // when a test shortens the ticket lifetime it speeds up accordingly, C10 contract section 12), at most once every 5 minutes
     const off = subscribeRemoteAssets(() => { void pushMediaPolicy(); });
-    // 解码上限测出来了(打开时测一次):重发一次,超过上限的视频素材改用小尺寸
+    // The decode limit has been measured (measured once at open): resend once, and video media over the limit switches to the small size
     const offDecode = subscribeDecodeLimit(() => { void pushMediaPolicy(); });
     let timer = 0;
     let alive = true;
@@ -560,15 +607,17 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     return () => { alive = false; off(); offDecode(); window.clearTimeout(timer); };
   }, [lowest, pushMediaPolicy]);
   /*
-   * 素材闸门:载入原尺寸之前留崩溃记录(`mechanism/platforms.md`「素材闸门」)。项目里要载入原尺寸的视频(没超过解码上限)换了一批
-   * (打开项目、导入了新素材)时,记「载入素材原尺寸」,`MEDIA_MARK_MS` 之后回到原来那一步;这段时间里页面崩了,下次载入解码上限调低一级。
-   * 最低一档不拉原尺寸,不记。
+   * Media gate: leave a crash record before loading the original size (`mechanism/platforms.md` "Media gate"). When the
+   * batch of videos in the project that need the original size loaded (not over the decode limit) changes
+   * (project opened, new media imported), record "loading media original size" and return to the previous step after
+   * `MEDIA_MARK_MS`; if the page crashes during this time, the decode limit is lowered one level at the next load.
+   * The lowest tier does not pull the original size and does not record.
    */
   const mediaSigRef = useRef("");
   const decodeReady = useSyncExternalStore(subscribeDecodeLimit, () => decodeLimit() !== null, () => false);
   const mediaMarkTimerRef = useRef(0);
   useEffect(() => {
-    // 等舞台闸门走完、基准卡测完再记(免得这一步盖掉舞台闸门的那几步,崩了算错地方)
+    // Record only after the stage gate has finished and the baseline card has been measured (so this step does not overwrite the stage gate's steps, and a crash is not attributed to the wrong place)
     if (!ONLINE || lowest || !stageReady || tierNow.gate !== "done" || tierNow.benchmark === "pending") return;
     const g = stageGate();
     const lim = decodeLimit();
@@ -582,10 +631,12 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [project.media, lowest, stageReady, tierNow.gate, tierNow.benchmark, decodeReady]);
   useEffect(() => () => window.clearTimeout(mediaMarkTimerRef.current), []);
   /*
-   * 只有一个舞台时轻重按共享成本记录加界限搜索判(下面那个 effect);最低一档播放时不做任何即时渲染(显示用的表全部判重)。
-   * 判定的表决定清单计划发哪些片段、导出时谁本机渲(语义 `product/platforms.md`「在线浏览器」的「轻重判定」与「最低一档」)。
+   * With only one stage, light/heavy is decided by the shared cost record plus bounded search (the effect below); the
+   * lowest tier does no on-demand render during playback (all display tables are judged heavy).
+   * The judged table decides which clips the manifest plan sends and who renders locally at export (semantics
+   * `product/platforms.md` "Online browser", "Light/heavy decision" and "Lowest tier").
    */
-  /** 两个舞台、项目里有别的机器测好的记录:打开时按界限搜索判(在后台舞台里只测几张),常驻探针补测完再改按成本记录(下面那个 effect) */
+  /** Two stages, and the project has records measured by other machines: at open, decide by bounded search (measuring only a few cards in the background stage), and once the resident probe finishes measuring, switch to the cost record (the effect below) */
   const [dualSearch, setDualSearch] = useState(false);
   useEffect(() => {
     setPlanSearch(single || dualSearch);
@@ -596,24 +647,27 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     return () => setPlanLowest(false);
   }, [lowest]);
   /*
-   * L4(C10 契约第 6 节、第 18 节第 1 条):在线页面重层每拍的换帧成本进每拍预算,分派时每张重卡每拍的固定成本也换成它
-   * (两边同一个预算)。最低一档播放时不活渲,不用这一套。
+   * L4 (C10 contract section 6, section 18 item 1): the per-beat frame-swap cost of heavy layers on an online page goes
+   * into the per-beat budget, and at dispatch the fixed per-beat cost of each heavy card is also replaced by it
+   * (the same budget on both sides). The lowest tier does not do live render during playback and does not use this set.
    */
   useEffect(() => {
     const on = ONLINE && !lowest;
-    // 每层的换帧成本按卡种取(swap-tuning 实测,`beatSwap.mjs` 的 `SWAP_MS_BY_KIND`);认不出卡种的按缺省 `SWAP_MS`
+    // The frame-swap cost of each layer is taken by card kind (measured by swap-tuning, `SWAP_MS_BY_KIND` in `beatSwap.mjs`); an unrecognized card kind uses the default `SWAP_MS`
     setBeatSwap(on, { swapMs: SWAP_MS, occupied: lightCostAt, costOf: on ? layerSwapMs : null });
     setPlanDeadMs(on ? SWAP_MS : null, on ? layerSwapMs : null);
     return () => { setBeatSwap(false, { costOf: null }); setPlanDeadMs(null); };
   }, [lowest]);
-  /* C10 契约第 3 节:在线页面后台舞台测的成本记录存进 L2 的 `costs` 表(`mode=build`,关掉再开不重测) */
+  /* C10 contract section 3: the cost records measured by the background stage of an online page are stored in the `costs` table of L2 (`mode=build`, not remeasured after closing and reopening) */
   useEffect(() => {
     if (!ONLINE) return;
     setCostBackend({ ...l2CostBackend(pageL2()), forwardFrames: false });
     /*
-     * 测完写进文档服务(契约第 3 节、第 18 节第 7 条;交接文件第 2.2 节第 2 条):连着共享项目时,每测完一张卡当场转写一次。
-     * 下面的 `SharedCostRelay` 每 5 秒也会从分派表里补传(接上共享项目之前测过的、这里没发成的),两路都走也无害:
-     * 文档服务按测量时刻留最新。
+     * After measuring, write to the document service (contract section 3, section 18 item 7; handover file section 2.2
+     * item 2): when connected to a shared project, relay once on the spot after each card is measured.
+     * The `SharedCostRelay` below also backfills from the dispatch table every 5 seconds (those measured before joining
+     * the shared project, whose send did not happen here), and using both paths is harmless:
+     * the document service keeps the latest by measurement time.
      */
     const diag = { calls: 0, ok: 0, failed: 0, records: 0, lastError: null as string | null };
     const off = onCostRecords((records) => {
@@ -631,7 +685,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     w.__pcCostPublish = () => ({ ...diag });
     return () => { off(); setCostBackend(null); delete w.__pcCostPublish; };
   }, []);
-  /* 最低一档切到后台时停预览(c10a 契约第 13 节 Q2 的采纳:后台计时器、rAF 都不保证继续,回来时从停着的地方接) */
+  /* When the lowest tier goes to the background, stop the preview (adoption of c10a contract section 13 Q2: background timers and rAF are not guaranteed to continue, and on return it resumes from where it stopped) */
   useEffect(() => {
     if (!ONLINE || !lowest) return;
     const onHide = () => { if (document.visibilityState === "hidden" && getState().playing) actions.pause(); };
@@ -643,43 +697,51 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   selectionRef.current = selection;
 
   /*
-   * 播放循环。**播放头只停在成片真有的那些帧上。**
+   * The playback loop. **The playhead stops only on frames the final video really has.**
    *
-   * 以前是按墙上时钟连续推的:显示器 60Hz 就一秒推 60 个 t,而成片是 fps 帧的,
-   * 于是有一半的 t 在成片里根本不存在。单看 2D 察觉不到,一切到 3D 就露馅 ——
-   * 那边显示的是预渲染好的整帧,两个视图对同一个播放头能差半帧,而进场动画最陡的就是那一段。
-   * 量化之后 2D 播放显示的就是导出会写出来的那一帧,3D 贴的也是同一帧。
+   * It used to advance continuously by wall clock: on a 60Hz display it pushed 60 values of t per second, while the
+   * final video has fps frames, so half of the t values did not exist in the final video at all. This is
+   * imperceptible in 2D alone, but it shows as soon as you switch to 3D:
+   * there the displayed picture is a prerendered whole frame, the two views could differ by half a frame for the same
+   * playhead, and the entrance animation is steepest exactly in that stretch.
+   * After quantization, 2D playback shows the very frame the export would write, and 3D pastes the same frame.
    *
-   * 累加器 acc 必须保持不量化,不然每帧丢掉的那点余数会累起来,播放越走越慢。
+   * The accumulator acc must stay unquantized, otherwise the small remainder dropped each frame accumulates and
+   * playback gets slower and slower.
    *
-   * 播放范围 = 最早的卡片 ~ 最晚的卡片(project.duration 由时间轴按内容末尾同步)。
-   * 按播放时播放头不在这个范围里(在第一张卡前面,或者已经播到头),从最早那张卡开始播。
+   * Playback range = the earliest card ~ the latest card (project.duration is synced by the timeline from the end of
+   * the content).
+   * If the playhead is not in this range when play is pressed (before the first card, or already played to the end),
+   * playback starts from the earliest card.
    */
   const contentStart = contentStartOf(project.tracks);
-  /** 舞台那一路的 `playing` effect 依赖只有三项(见那里的说明),播放起点从这里读 */
+  /** The stage-side `playing` effect has only three dependencies (see the note there), and the playback start point is read from here */
   const contentStartRef = useRef(contentStart);
   contentStartRef.current = contentStart;
   useEffect(() => {
     /*
-     * E6:**非 legacy 下这个循环不启动** —— 播放头由 K4 的 `frame` 事件推进
-     * (可见舞台自己按帧节拍,每拍渲完才报)。墙钟循环只留给 `?preview=legacy`。
+     * E6: **this loop does not start when not in legacy mode**: the playhead is advanced by K4's `frame`
+     * events (the visible stage ticks per frame on its own and reports after each tick finishes
+     * rendering). The wall-clock loop is kept only for `?preview=legacy`.
      */
     if (live) return;
     if (!playing) return;
     const fps = Math.max(1, project.fps || 30);
     let raf = 0;
     let last = performance.now();
-    let acc = tRef.current;      // 真实推进到哪儿(不量化)
+    let acc = tRef.current;      // Where playback has actually advanced to (not quantized)
     if (acc < contentStart || acc >= project.duration - 0.5 / fps) {
       acc = contentStart;
       actions.seek(contentStart);
     }
-    let wrote = atFrameGrid(acc, fps);  // 上一次交出去的帧时刻
+    let wrote = atFrameGrid(acc, fps);  // The frame time handed out last time
     const tick = (now: number) => {
       /*
-       * 播放中外面也可能 seek(点时间轴、拖播放头),那时以外面的为准。
-       * 判据是「差得比一帧还多」而不是「不相等」:tRef 在 render 里才赋值,量化之后 store 的 t
-       * 可能比这里晚一帧,那不是 seek —— 按 seek 处理会让播放隔几帧倒退一格。
+       * During playback something outside may also seek (clicking the timeline, dragging the playhead);
+       * in that case the outside value wins. The criterion is "differs by more than one frame", not
+       * "not equal": tRef is only assigned during render, so after quantization the store's t may be one
+       * frame behind this one. That is not a seek; treating it as one would make playback step back one
+       * frame every few frames.
        */
       if (Math.abs(tRef.current - wrote) > 1.5 / fps) acc = tRef.current;
       acc += (now - last) / 1000;
@@ -695,22 +757,24 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-    // contentStart 不进依赖:播放中挪了第一张卡不该把播放头拽回去
+    // contentStart is not in the dependencies: moving the first card during playback must not pull the playhead back
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, playing, project.duration, project.fps]);
 
   /*
-   * 量一次窗口有多大,顺便在「自动适应」还开着时重新算缩放比。
+   * Measure the window size once and, if "auto fit" is still on, recompute the zoom ratio.
    *
-   * 两件事都要做,原因不同:
-   *   - 窗口尺寸**必须一直跟着量**,因为画框摆在哪儿是我们自己算的(见下面 frameOrigin),
-   *     算式里就有窗口宽高;
-   *   - 缩放比只在 auto 时重算。以前这里是无条件重算的,那时候没有手动缩放也就无所谓。
-   *     现在不行了:用户放大到 200% 去调一个字的位置,拖一下侧栏宽度(ResizeObserver 就响了),
-   *     画面「啪」地跳回适应窗口,刚找好的地方就没了。
+   * Both need doing, for different reasons:
+   *   - The window size **must always be tracked**, because we compute where the frame sits
+   *     ourselves (see frameOrigin below), and the formula uses the window width and height;
+   *   - The zoom ratio is recomputed only in auto mode. It used to be recomputed unconditionally,
+   *     which did not matter when there was no manual zoom. Now it does: the user zooms to 200% to
+   *     adjust the position of one character, drags the sidebar width (the ResizeObserver fires),
+   *     and the view snaps back to fit the window, losing the spot they had just found.
    *
-   * 用 useLayoutEffect 而不是 useEffect:第一次渲染时还不知道窗口多大,画框会先摆在左上角。
-   * 布局效应在浏览器绘制**之前**同步跑完并触发重渲染,所以那一帧用户看不见。
+   * useLayoutEffect instead of useEffect: on the first render the window size is not known yet, so
+   * the frame is first placed at the top left. Layout effects run synchronously **before** the
+   * browser paints and trigger a re-render, so the user never sees that frame.
    */
   useLayoutEffect(() => {
     const el = boxRef.current;
@@ -727,7 +791,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     return () => ro.disconnect();
   }, [project.width, project.height, view]);
 
-  /** 回到「适应窗口」。工具行那个徽章点一下就走这儿 */
+  /** Go back to "fit window". Clicking that badge in the tool row comes here */
   const fitToWindow = useCallback(() => {
     const el = boxRef.current;
     if (!el) return;
@@ -737,13 +801,15 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [project.width, project.height]);
 
   /*
-   * 滚轮缩放 + 中键拖动平移。
+   * Wheel zoom + middle-button drag to pan.
    *
-   * 为什么不用 React 的 onWheel:React 17 起把 wheel 绑成**被动**监听器,
-   * 里面调 preventDefault 不但不起作用,还会在控制台报一行警告 ——
-   * 于是滚轮在缩放画面的同时把整个面板也滚了。只能自己 addEventListener 并显式关掉 passive。
+   * Why not React's onWheel: since React 17 the wheel is bound as a **passive** listener, so calling
+   * preventDefault inside it not only has no effect but also logs a console warning:
+   * the wheel then scrolls the whole panel while it zooms the view. We have to call
+   * addEventListener ourselves and explicitly turn passive off.
    *
-   * 依赖里只有画幅:cam 走 ref 读最新值,否则每缩放一格就要重新解绑重绑一次监听器。
+   * The only dependency is the aspect ratio: cam is read through a ref to get the latest value,
+   * otherwise every zoom step would unbind and rebind the listener.
    */
   useEffect(() => {
     const el = boxRef.current;
@@ -761,21 +827,23 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     };
 
     /*
-     * 中键拖动:按住不放拖动画布。左键留给选择 / 移动工具(它自己判 button !== 0 就退出),
-     * 右键留给菜单,所以平移只认中键 —— 三个键各管一件事,不用按修饰键。
+     * Middle-button drag: hold and drag to move the canvas. The left button is left to the select /
+     * move tool (which exits on its own when button !== 0), the right button to the menu, so panning
+     * only accepts the middle button: each of the three buttons does one thing, no modifier keys.
      */
     let panning = false;
     let lastX = 0;
     let lastY = 0;
     const onDown = (e: PointerEvent) => {
       if (e.button !== 1) return;
-      // 中键在很多浏览器上是「自动滚动」,不拦住就会弹出那个圆形滚动光标
+      // On many browsers the middle button means "autoscroll"; if not intercepted, that round scroll cursor pops up
       e.preventDefault();
       panning = true;
       lastX = e.clientX;
       lastY = e.clientY;
-      // 抓住指针,拖出预览区也照样跟手。指针要是已经没了(松开得比这行还早)会抛,不该因此中断拖动
-      try { el.setPointerCapture(e.pointerId); } catch { /* 没抓住就算了,照样能拖,只是出了区域会断 */ }
+      // Capture the pointer so the drag keeps following even outside the preview area. If the pointer is already gone
+      // (released even before this line) this throws, and that should not interrupt the drag
+      try { el.setPointerCapture(e.pointerId); } catch { /* If capture fails, never mind: dragging still works, it just breaks when leaving the area */ }
       el.style.cursor = "grabbing";
     };
     const onMove = (e: PointerEvent) => {
@@ -789,10 +857,10 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     const stopPan = (e: PointerEvent) => {
       if (!panning) return;
       panning = false;
-      try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch { /* 已经放开了 */ }
+      try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch { /* Already released */ }
       el.style.cursor = "";
     };
-    // 中键按下默认会开自动滚动,auxclick 也要拦一下,否则松开时还会触发
+    // Middle-button press starts autoscroll by default; auxclick must be intercepted too, or it still fires on release
     const onAux = (e: MouseEvent) => { if (e.button === 1) e.preventDefault(); };
 
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -812,17 +880,21 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [project.width, project.height, view]);
 
   /*
-   * 渲染面就绪:它挂载完会 postMessage 过来(带 J4 的宿主能力表);每来一次就给**那一个实例**
-   * 建一个新的 RPC 客户端。跨源时 `targetOrigin` 必须点名舞台的源(不能再用 `location.origin`)。
+   * Render surface ready: once mounted it posts a message over (carrying J4's host capability table);
+   * each time one arrives, create a new RPC client for **that one instance**. When cross-origin,
+   * `targetOrigin` must name the stage's origin explicitly (`location.origin` can no longer be used).
    *
-   * 握手之后立刻发一次 `setRole` 把实例和角色对上:舞台自己的缺省角色是 `front`,
-   * B 那个 iframe 不发就会顶着 `front` 的身份收探针(角色闸门会挡下来,但那是兜底不是设计)。
+   * Right after the handshake, send `setRole` once to match the instance with its role: the stage's
+   * own default role is `front`, so if the B iframe does not send it, it receives probes under the
+   * identity of `front` (the role gate would block them, but that is a fallback, not the design).
    */
   useEffect(() => {
     const frames: Record<StageId, React.RefObject<HTMLIFrameElement | null>> = { A: frameARef, B: frameBRef };
     /*
-     * 在线的跨源舞台(契约 `online-card-exec-contract.md` 第 3.2 节):只认 `event.origin` 是运行配置里那个舞台源的消息。
-     * 同源单舞台、桌面运行环境照旧不看(那里由 `event.source` 把关)。
+     * Online cross-origin stage (contract `online-card-exec-contract.md`, section 3.2): only accept
+     * messages whose `event.origin` is the stage origin in the runtime config.
+     * The same-origin single stage and the desktop runtime are unchanged and skip this check (there
+     * `event.source` is the guard).
      */
     const originOk = (id: StageId, origin: string, crossOrigin: boolean): boolean => {
       if (!ONLINE || !crossOrigin) return true;
@@ -832,7 +904,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     const onMessage = (e: MessageEvent) => {
       const type = (e.data as { type?: string } | null)?.type;
       if (type === "pc-stage-isolation") {
-        // 跨源舞台的自检结果、或加固拦下了事(`online/isolation/stageGuard.ts`):只在在线模式里认,只认自己挂的跨源舞台
+        // Self-check results from the cross-origin stage, or hardening blocking something (`online/isolation/stageGuard.ts`): honored only in online mode, and only from the cross-origin stage we mounted ourselves
         if (!ONLINE || !e.source) return;
         const iso = pageStageIsolation(() => onlineStageState().cardExec);
         for (const id of STAGE_IDS) {
@@ -851,22 +923,22 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         return;
       }
       if (type === "pc-stage-cards") {
-        // 舞台按新卡重渲完了(C6.6 集成 3b,`stageCards.ts`)
+        // The stage finished re-rendering for the new cards (C6.6 integration 3b, `stageCards.ts`)
         for (const id of STAGE_IDS) if (e.source === frames[id].current?.contentWindow) noteStageCards(id, Number((e.data as { stamp?: number }).stamp) || 0);
         return;
       }
       if (type !== "pc-stage-ready") return;
       const rawCaps = (e.data as { hostCapabilities?: HostCapabilities }).hostCapabilities ?? null;
-      // 在线页面:能力表按形状收一遍(跨源舞台的消息当不可信输入);桌面运行环境原样
+      // Online page: validate the capability table by shape (messages from the cross-origin stage are untrusted input); the desktop runtime takes it as is
       const readyCaps = ONLINE ? (sanitizeHostCapabilities(rawCaps) as HostCapabilities | null) : rawCaps;
       if (e.source && !ONLINE) readyByWinRef.current.set(e.source, { origin: e.origin, caps: readyCaps });
-      // 过渡期里预热的跨源舞台握上手了:只记进首次握手的计时(不建 RPC;换回双舞台时再补握手)
+      // The cross-origin stage prewarmed during the transition period completed its handshake: only record it in the first-handshake timing (no RPC is built; the handshake is completed when switching back to dual stage)
       for (const id of STAGE_IDS) {
         const warm = warmRef.current[id]?.contentWindow;
         if (warm && e.source === warm) {
           if (!originOk(id, e.origin, true)) return;
           readyByWinRef.current.set(warm, { origin: e.origin, caps: readyCaps });
-          isoByWinRef.current.delete(warm); // 新文档:旧的自检结果作废
+          isoByWinRef.current.delete(warm); // New document: the old self-check results are void
           handshakeRef.current?.ready(id);
           return;
         }
@@ -884,32 +956,31 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     processReadyRef.current = (id, win, origin, caps) => {
       {
         /*
-         * 这个实例此刻该是什么角色。**不能一律照 `INITIAL_ROLE_OF` 走** ——
-         * K5 的互换之后 A 可能已经是后台那一个了,它热重载一次就会顶着 `front` 回来、
-         * 把真正的可见舞台顶掉。
+         * What role this instance should have right now. **It must not always follow `INITIAL_ROLE_OF`**:
+         * after K5's swap, A may already be the background one, and one hot reload would bring it back
+         * as `front` and knock out the real visible stage.
          */
         const role = frontIdRef.current === id ? "front" : "back";
-        // 新载入的舞台就是最新的卡片代码
+        // The newly loaded stage has the latest card code
         noteStageFresh(id);
         rpcRef.current[id]?.dispose();
-        // 回包发给这个 iframe 此刻真实的源(换源重载的过渡期里 `stageTargetOrigin` 可能已经是另一个)
+        // Send the reply to the origin this iframe actually has right now (during the transition period of an origin-switch reload, `stageTargetOrigin` may already be a different one)
         const targetOrigin = origin && origin !== "null" ? origin : stageTargetOrigin(id);
-        // 在线的跨源舞台:回包与事件当不可信输入校验(`online/stageMessageGuard.ts`);同源单舞台、桌面运行环境照旧
+        // Online cross-origin stage: validate replies and events as untrusted input (`online/stageMessageGuard.ts`); the same-origin single stage and the desktop runtime are unchanged
         const untrusted = ONLINE && targetOrigin !== location.origin;
         const client = createStageRpc(win, targetOrigin, { untrusted, maxSec: () => getState().project.duration });
         if (ONLINE) {
           /*
-           * 轨道流(`docs/plan/browser-stream-task.md` 第七处):在线页面的舞台不自己取流的字节,父页发流平面时把清单和这台舞台还没有的
-           * 块一起带过去(`streamPlayer.ts` 的 `StreamPlaneSender` / `PushedStreamSource`;为什么不让舞台自己取,见那里的说明)。
-           * 接在这台舞台的 RPC 客户端上:每一处发流平面的(下面的 `pumpFeed`、`stageSwap.ts` 换班时那一次)都经过它,不用各改一遍。
-           * 一台舞台一本账;调用失败(舞台在换)就清账,下一次全部重发。
+           * Track stream (`docs/plan/browser-stream-task.md`, item 7): the stage on the online page does not fetch stream bytes itself; when the parent page sends the stream plane, it brings along the manifest and the chunks this stage does not have yet (`StreamPlaneSender` / `PushedStreamSource` in `streamPlayer.ts`; for why the stage does not fetch them itself, see the explanation there).
+           * It hooks into this stage's RPC client: everything that sends the stream plane (`pumpFeed` below, and the one time at the handover in `stageSwap.ts`) goes through it, so none of them needs changing separately.
+           * One ledger per stage; if a call fails (the stage is being swapped), clear the ledger and resend everything next time.
            */
           const sender = new StreamPlaneSender((key) => activeOnlineSource()?.streamPlane(key) ?? null);
           const sendPlanes = client.setStreamPlanes.bind(client);
           client.setStreamPlanes = (planes) => sendPlanes(sender.decorate(planes)).catch((err: unknown) => { sender.reset(); throw err; });
         }
         if (ONLINE) {
-          // 隔离会话:这一台是新文档,先清掉旧的自检结果与取档方式;它的结果要是已经到了(预热期间)就补交
+          // Isolated session: this one is a new document, so first clear the old self-check results and the fetch strategy; if its results have already arrived (during prewarm), hand them in now
           const iso = pageStageIsolation(() => onlineStageState().cardExec);
           iso.setStages(mountedStageIds());
           iso.handshake(id);
@@ -917,14 +988,14 @@ export function Preview(props: { variant?: "mobile" } = {}) {
           if (mountedStageIds().includes(id) && stored !== undefined) iso.report(id, stored);
         }
         handshookRef.current.add(id);
-        // 过渡期的同源单舞台握手不算首次握手(那是 A 的另一个 iframe)
+        // The same-origin single-stage handshake during the transition period does not count as the first handshake (that is another iframe of A)
         if (dualRef.current) handshakeRef.current?.ready(id);
         if (ONLINE && dualRef.current && handshookRef.current.has("A") && handshookRef.current.has("B")) markStageHandshake("ok");
         stageWatchRef.current?.ready(id);
         rpcRef.current[id] = client;
         hostCapsRef.current[id] = caps;
         if (ONLINE) {
-          // 新文档:这一台以前报的运行状态、图形能力、声音线程都作废,等它重新载入后再报
+          // New document: the runtime status, graphics capabilities and audio thread this one reported before are void; wait for it to report again after it reloads
           delete stageCardStatesRef.current[id];
           delete stageGraphRef.current[id];
           if (id === soundStageId()) soundLinkRef.current?.setState(null);
@@ -932,7 +1003,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
           client.onEvent((e) => {
             if (rpcRef.current[id] !== client) return;
             if (e.type === "card-states") {
-              // 画面那一半在这一台不执行(`visual: false`)时没有状态可言:当它没报
+              // When the visual half does not run on this one (`visual: false`) there is no status to speak of: treat it as not reported
               if (e.visual) stageCardStatesRef.current[id] = new Map(e.states); else delete stageCardStatesRef.current[id];
               stageGraphRef.current[id] = e.graph;
               setNodeGraphCapable(STAGE_IDS.every((s) => stageGraphRef.current[s] === "ok"));
@@ -944,20 +1015,20 @@ export function Preview(props: { variant?: "mobile" } = {}) {
             }
           });
         }
-        // R9 端口转交协议:路线 2 下,握手之后、发任何 RPC(含下面的 setRole)之前先把 GL 端口交过去
+        // R9 port handover protocol: under route 2, after the handshake and before sending any RPC (including setRole below), hand the GL port over first
         glPortTo(id, win, caps);
-        // 能力表一起登记:K1 的 device 串要 compact / offscreenGl,而它必须是**舞台**探到的那一份
+        // Register the capability table together: K1's device string needs compact / offscreenGl, and it must be the copy probed by the **stage**
         setStageClient(role, client, caps);
-        void client.setRole(role).catch(() => { /* iframe 又换了,下一次握手会重发 */ });
-        // c10a 第 8 节:在线页面把取档策略(素材闸门的结果、远程素材服务)交给这一台舞台;桌面运行环境不发,舞台照缺省
+        void client.setRole(role).catch(() => { /* The iframe changed again; the next handshake will resend */ });
+        // c10a section 8: the online page hands the fetch policy (the result of the asset gate, the remote asset service) to this stage; the desktop runtime does not send it, and the stage uses its defaults
         if (ONLINE) void pushMediaPolicyRef.current();
-        // C10 契约第 9 节:内容库同步来的用户卡(本机跑不了)交给这一台舞台;桌面运行环境不发
-        if (ONLINE) void client.setSyncedUserCards([...syncedUserCards().values()]).catch(() => { /* iframe 又换了,下一次握手会重发 */ });
-        // 在线执行:转译好的包交给这一台(排在同步表之后:舞台按同步表把入口摊到卡片 id 上);闸门没开的舞台先记着
+        // C10 contract section 9: user cards synced from the content store (which cannot run on this machine) are handed to this stage; the desktop runtime does not send them
+        if (ONLINE) void client.setSyncedUserCards([...syncedUserCards().values()]).catch(() => { /* The iframe changed again; the next handshake will resend */ });
+        // Online execution: hand the transpiled bundle to this one (queued after the sync table: the stage uses the sync table to spread entry points onto card ids); for a stage whose gate is not open, just remember it for now
         if (ONLINE) pushCardBundlesRef.current(id);
-        // 预览缩放倍数交给舞台:占位符(沙漏)据此补偿,屏幕上看得清;桌面与在线都发
-        void client.setViewScale(scaleRef.current).catch(() => { /* 同上 */ });
-        // 每来一次就 +1:同一个值再赋一遍不会触发重渲染,而新挂的 iframe 需要重新收一遍 project 和时间
+        // Hand the preview zoom factor to the stage: the placeholder (hourglass) compensates by it so it is clearly visible on screen; sent by both desktop and online
+        void client.setViewScale(scaleRef.current).catch(() => { /* Same as above */ });
+        // +1 each time one arrives: assigning the same value again does not trigger a re-render, while a newly mounted iframe needs to receive project and time again
         if (role === "front") setStageReady((n) => n + 1);
       }
     };
@@ -975,12 +1046,12 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [glPortTo]);
 
   /*
-   * 首次握手(C10 契约第 2 节;〔裁〕2026-09-30 `claude/stage-handshake`):每台的 20 秒从那一台 iframe 的 `load` 起算
-   * (慢网络下舞台页光下载就要几十秒,不再算作握手失败),自挂上起另有总上限;到点没都握上照旧退回同源单舞台。
+   * First handshake (C10 contract section 2; [ruling 2026-09-30] `claude/stage-handshake`): each stage's 20 seconds
+   * count from the `load` of that stage's iframe (on a slow network the stage page alone takes tens of seconds to download, which no longer counts as handshake failure), and there is also an overall cap counted from mounting; when time is up and not all have completed the handshake, fall back to the same-origin single stage as before.
    */
   useEffect(() => {
     if (!ONLINE || !handshakeRound) return;
-    // 这一轮只从 `pending` 开始计时(过渡期、换回之后都不重建;真走到这里说明布局被别的原因打断过,按失败收场)
+    // This round only starts timing from `pending` (not rebuilt during the transition period or after switching back; getting here for real means the layout was interrupted for some other reason, so end it as a failure)
     if (onlineStageState().handshake !== "pending") {
       if (onlineStageState().handshake === "interim") markStageHandshake("failed", trText("Handshake timer interrupted during the first handshake in the transition period"));
       return;
@@ -999,27 +1070,27 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       },
     });
     handshakeRef.current = hs;
-    // 这一轮已经握过手的舞台(effect 晚于握手跑到时)照样记上
+    // Stages that already completed the handshake this round (when the effect runs later than the handshake) are recorded all the same
     for (const id of STAGE_IDS) if (rpcRef.current[id]) hs.ready(id);
     const w = window as unknown as { __pcStageHandshake?: () => unknown };
     w.__pcStageHandshake = () => hs.status();
     return () => {
       hs.dispose();
       if (handshakeRef.current === hs) handshakeRef.current = null;
-      // 退回、换回之后留着观察口(探针核原因与时刻)
+      // Keep the observation port after falling back or switching back (the probe checks the reason and the moment)
       if (hs.phase !== "failed" && hs.phase !== "ok") delete w.__pcStageHandshake;
     };
   }, [handshakeRound]);
-  /** 跨源舞台 iframe 的 `load`(跨源也触发;预热期间也是它):首次握手按它起算;A 加载完才挂 B */
+  /** `load` of the cross-origin stage iframe (fires for cross-origin too; during prewarm it is this one as well): the first handshake counts from it; B is mounted only after A finishes loading */
   const onStageFrameLoad = useCallback((id: StageId) => {
     handshakeRef.current?.loaded(id);
-    // 在线页面的后台舞台由舞台闸门挂(可见舞台就绪、载入项目之后才试后台舞台,下面那个 effect);桌面照旧 A 加载完就挂
+    // On the online page the background stage is mounted by the stage gate (only after the visible stage is ready and the project is loaded does it try the background stage, in the effect below); desktop mounts it as before once A finishes loading
     if (id === "A" && !ONLINE) setBackStageMount(true);
   }, []);
   /*
-   * 即时渲染闸门(语义 `product/platforms.md`「即时渲染闸门」;做法 `mechanism/platforms.md`「即时渲染闸门」):
-   * - 测每张卡之前留崩溃记录(后台舞台的常驻探针、单舞台的界限搜索都经这里);测崩过的卡不再测、直接当重卡;
-   * - 舞台闸门走完之后先测基准卡:连它都跑不动就进最低一档(播放时不做任何即时渲染)。最低一档(一个舞台都撑不住)不测。
+   * On-demand render gate (semantics `product/platforms.md` "on-demand render gate"; implementation `mechanism/platforms.md` "on-demand render gate"):
+   * - Leave a crash record before measuring each card (the background stage's resident probe and the single stage's bound search both go through here); a card that crashed during measurement is not measured again and is treated directly as a heavy card;
+   * - After the stage gate finishes, measure the baseline card first: if even that cannot run, drop to the lowest tier (no on-demand render at all during playback). The lowest tier (not even one stage can hold up) is not measured.
    */
   useEffect(() => {
     if (!ONLINE) return;
@@ -1032,8 +1103,8 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     return () => { setProbeMeasureHooks(null); setPlanForcedHeavy([]); };
   }, [tierNow.online]);
   /*
-   * 舞台按这一级挂好了(后面舞台闸门的驱动走完)。护栏内、崩过、安卓不到 8 GB 的(`fixed`)一打开 `gate` 就是 `done`,可舞台还没挂好:
-   * 基准卡要等它,不然在后台舞台还没起来时测、测不出来(语义「即时渲染闸门」:舞台闸门走完之后先测基准卡)。
+   * The stages are mounted at this level (the stage gate driver below has finished). For cases within the guard, crashed, or Android under 8 GB (`fixed`), `gate` is `done` as soon as it opens, but the stages are not mounted yet:
+   * the baseline card has to wait for them, otherwise measuring before the background stage is up gives no result (semantics "on-demand render gate": after the stage gate finishes, measure the baseline card first).
    */
   const [gateDriven, setGateDriven] = useState(false);
   const benchmarkRunRef = useRef(false);
@@ -1064,11 +1135,11 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [stageReady, tierNow.gate, tierNow.lowest, gateDriven]);
 
   /*
-   * 舞台闸门(语义 `product/platforms.md`「在线浏览器」;做法 `mechanism/platforms.md`「舞台闸门的步骤」第 2～5 条):
-   * 可见舞台握上手、载入项目 → 记「可见舞台就绪」;要试第二级就记「开始试后台舞台」再挂 B,两个舞台都握上手并载入项目后记「双舞台已载入」;
-   * 要试第三级就记「开始试每个舞台各一套渲染器」,两台原地换到路线 1(`setGlRoute`,不重建舞台),回包后记下;走完之后这次使用期间
-   * 停在到达的那一级。护栏内、崩过、安卓不到 8 GB 的(`fixed`)不试,只把舞台按那一级挂好。每一步的记录写在崩溃记录里(`stageGate.ts`)。
-   * 握手容错(握不上、握上又断就退回单舞台)只管当次、不留崩溃记录(下面另一个 effect)。
+   * Stage gate (semantics `product/platforms.md` "online browser"; implementation `mechanism/platforms.md` "stage gate steps", items 2-5):
+   * visible stage completes the handshake and loads the project → record "visible stage ready"; to try the second level, record "start trying background stage" and then mount B, and once both stages have completed the handshake and loaded the project, record "dual stage loaded";
+   * to try the third level, record "start trying one renderer set per stage", switch both in place to route 1 (`setGlRoute`, stages not rebuilt), and record it after the replies; after it finishes, stay
+   * at the level reached for the rest of this session. For cases within the guard, crashed, or Android under 8 GB (`fixed`), do not try; just mount the stages at that level. The record of each step is written into the crash record (`stageGate.ts`).
+   * Handshake fault tolerance (cannot handshake, or handshakes and then drops, so fall back to a single stage) only covers the current run and leaves no crash record (another effect below).
    */
   const gateRunRef = useRef(false);
   const [gateDiag, setGateDiag] = useState<string>("");
@@ -1079,14 +1150,14 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     gateRunRef.current = true;
     const trying = !g.decision.fixed;
     /*
-     * `?gateHold=<一步>` 只给验收用(`scripts/probes/stage-gate-probe.mjs`):记下这一步之后停住不往下走,探针趁这时把页面进程杀掉,
-     * 验「崩在这一步、重新载入停在下一级」,或给舞台降速后叫 `__pcGateRelease()` 放行。不带它与平时一样。
+     * `?gateHold=<step>` is for acceptance checks only (`scripts/probes/stage-gate-probe.mjs`): after recording this step, stop and do not go on; meanwhile the probe kills the page process,
+     * to verify "crash at this step, reload stops at the next level", or, after slowing the stage down, calls `__pcGateRelease()` to let it through. Without it, everything is as usual.
      */
     const hold = (() => { try { return new URLSearchParams(location.search).get("gateHold"); } catch { return null; } })();
     const mark = async (what: Parameters<typeof g.stage>[0]) => {
       if (!trying) return;
       g.stage(what);
-      // 停住,直到探针叫 `window.__pcGateRelease()`(不叫就一直停着:杀页面进程的那几个场景)
+      // Hold until the probe calls `window.__pcGateRelease()` (if it never calls, hold forever: the scenarios that kill the page process)
       if (hold === what) await new Promise<void>((resolve) => { (window as unknown as Record<string, unknown>).__pcGateRelease = resolve; });
     };
     void (async () => {
@@ -1099,7 +1170,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         await mark("try-back");
         setBackStageMount(true);
         const back = await whenStageReady("back");
-        if (!dualRef.current) return; // 握手失败退回了单舞台(下面那个 effect 收摊)
+        if (!dualRef.current) return; // The handshake failed and fell back to the single stage (the effect below wraps up)
         await syncProject("back", getState().project);
         await mark("dual-loaded");
         g.reached(2);
@@ -1108,10 +1179,10 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         const front = frontStage();
         const results = await Promise.all([front, back].map((c) => c?.setGlRoute("perDocument").catch(() => null) ?? Promise.resolve(null)));
         if (!dualRef.current) return;
-        if (results.some((r) => !r)) { g.done(); return; } // 换不过去(舞台在换):这次停在第二级
+        if (results.some((r) => !r)) { g.done(); return; } // Cannot switch over (the stage is being swapped): stay at the second level this time
         await mark("separate-ready");
         g.reached(3);
-        // 共用的那一个 Worker 不再有人用:放掉(第三级每个舞台各一套)
+        // The one shared Worker has no users anymore: release it (at the third level each stage has its own set)
         sharedGlRef.current?.dispose();
         sharedGlRef.current = null;
         g.done();
@@ -1123,13 +1194,13 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       }
     })();
   }, [stageReady]);
-  /* 握手容错:握不上手、握上又断而退回单舞台(只管当次,不留崩溃记录;语义「三道闸门」的握手容错照旧) */
+  /* Handshake fault tolerance: cannot handshake, or handshakes and then drops, so fall back to the single stage (only covers the current run, no crash record; the handshake fault tolerance of semantics "three gates" is unchanged) */
   useEffect(() => {
     if (!ONLINE || onlineStages.handshake !== "failed") return;
     const g = stageGate();
     if (g && tierState().target !== 1) g.fallback(1);
   }, [onlineStages.handshake]);
-  /* 查看口与探针:此刻各闸门的结果与崩溃记录(不含凭证;`?gates=1` 的面板读同一份) */
+  /* Viewing port and probe: the results of each gate and the crash records right now (no credentials; the `?gates=1` panel reads the same copy) */
   useEffect(() => {
     if (!ONLINE) return;
     const w = window as unknown as Record<string, unknown>;
@@ -1138,11 +1209,11 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [gateDiag, benchmarkInfo]);
 
   /*
-   * 过渡期之后换回双舞台(只换一次):两个预热 iframe 已经接任 A / B(同一个元素,没重新加载),照它们预热时发来的
-   * `pc-stage-ready` 补一遍握手(建 RPC、定角色、灌项目);同源单舞台留作盖板,直到新的可见舞台画好当前这一帧。
+   * Switch back to dual stage after the transition period (only once): the two prewarmed iframes have already taken over as A / B (the same elements, not reloaded); complete the handshake again
+   * from the `pc-stage-ready` they sent during prewarm (build the RPC, set the role, load the project); the same-origin single stage stays as a cover until the new visible stage has drawn the current frame.
    */
   const handoverTimerRef = useRef<number | null>(null);
-  /** 诊断:换回那一下从哪一刻开始、因为什么撤的盖板(`setTime` / `frame` / `cap`)、撤盖板时离开始多久 */
+  /** Diagnostics: from which moment the switch-back started, why the cover was removed (`setTime` / `frame` / `cap`), and how long after the start it was removed */
   const handoverInfoRef = useRef<{ startedAt: number | null; by: string | null; ms: number | null }>({ startedAt: null, by: null, ms: null });
   const endHandover = useCallback((by: string) => {
     const info = handoverInfoRef.current;
@@ -1166,9 +1237,9 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [handover, endHandover]);
 
   /*
-   * 握手之后又断(C10 契约第 2 节「握手之后又断」〔裁〕):已握手的舞台心跳断了(卡死、跨源 iframe 的渲染进程崩了),
-   * 先照原来的做法整页重载那一台;重载后 20 秒内没握回来(或反复断),走首次握不上手的同一条路退回同源单舞台,
-   * 退回之后看守作废、不再重载(`markStageHandshake("failed")` 之后 `dual` 变假,本 effect 收摊)。
+   * Drop after the handshake (C10 contract section 2 "drop after the handshake" [ruling]): the heartbeat of a stage that had handshaken stopped (frozen, or the render process of the cross-origin iframe crashed),
+   * first reload that one whole page as before; if it does not handshake back within 20 seconds after the reload (or keeps dropping), take the same path as a first handshake failure and fall back to the same-origin single stage,
+   * after falling back the watchdog is void and no more reloads happen (after `markStageHandshake("failed")`, `dual` turns false and this effect wraps up).
    */
   useEffect(() => {
     if (!ONLINE || !dual) return;
@@ -1195,23 +1266,23 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       hidden: () => typeof document !== "undefined" && document.hidden,
     });
     stageWatchRef.current = watch;
-    // 这一轮已经握过手的舞台(effect 晚于握手跑到时)照样看守
+    // Stages that already completed the handshake this round (when the effect runs later than the handshake) are watched all the same
     for (const id of STAGE_IDS) if (rpcRef.current[id]) watch.ready(id);
     const w = window as unknown as { __pcStageWatch?: () => unknown };
     w.__pcStageWatch = () => ({ A: watch.status("A"), B: watch.status("B"), reloads: watch.reloads, fellBack: watch.fellBack, handshake: onlineStageState().handshake, reason: onlineStageState().reason });
     return () => {
       watch.dispose();
       if (stageWatchRef.current === watch) stageWatchRef.current = null;
-      // 退回之后留着观察口(探针核「退回后不再重载」),只把看守换成已作废的那一份
+      // Keep the observation port after falling back (the probe checks "no more reloads after falling back"), and only swap the watchdog for the voided one
       if (!watch.fellBack) delete w.__pcStageWatch;
     };
   }, [dual]);
 
   /*
-   * 卡片代码换了一般不重载舞台(C6.6 集成 3b)。以前改一张卡,热更新冒到本组件,Fast Refresh 重跑上面那个握手 effect,
-   * 清掉了舞台的 RPC 客户端,舞台停在旧画面,只好每次都整页重载两个 iframe(`b25f482`)。现在热更新在 `cards/index.ts`
-   * 接住、不冒到这里;舞台自己也收到同一份热更新,在舞台里重装卡片、重渲,然后发 `pc-stage-cards` 报到。
-   * 只有过了时限还没报到的舞台(代码确实过期)才在这里整页重载那一个(`stageCards.ts` 的 `whenStagesHaveCards`)。
+   * A change of card code generally does not reload the stage (C6.6 integration 3b). It used to be that editing a card bubbled the hot update up to this component, Fast Refresh reran the handshake effect above,
+   * cleared the stage's RPC client, and the stage stayed on the old picture, so both iframes had to be fully reloaded every time (`b25f482`). Now the hot update is caught in `cards/index.ts`
+   * and does not bubble up here; the stage itself also receives the same hot update, reinstalls the cards and re-renders in the stage, then sends `pc-stage-cards` to report in.
+   * Only a stage that has not reported in after the time limit (its code is truly stale) gets that one fully reloaded here (`whenStagesHaveCards` in `stageCards.ts`).
    */
   useEffect(() => {
     const ids: StageId[] = dual ? [...STAGE_IDS] : ["A"];
@@ -1231,9 +1302,9 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [dual]);
 
   /*
-   * 项目选项切了 `glRoute`(R9 约束第 1 条):切到 `shared` 时给已经握过手的舞台补交端口;
-   * 切回 `perDocument` 什么都不用发 —— 舞台收到新项目自己按生效路线重建 `glHost` 那一侧的连接。
-   * 重走 `ProbeGate` 遮罩(`device` 变了)不在这里,见 R9 报告。
+   * The project option switched `glRoute` (R9 constraint item 1): when switching to `shared`, hand the port to the stages that already handshook;
+   * when switching back to `perDocument` nothing needs sending: on receiving the new project the stage rebuilds the `glHost` side of the connection by the effective route.
+   * Re-running the `ProbeGate` overlay (`device` changed) is not here; see the R9 report.
    */
   const glRoute = project.glRoute;
   const glRouteSeen = useRef(glRoute);
@@ -1248,45 +1319,53 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [glRoute, glPortTo]);
 
   /**
-   * 素材和音频按墙钟播:**一拍的名义时长之外再慢这么多**就暂停它们
-   * (K4 / pinned 架构 10;`mediaSync.ts` 的 `IN_SYNC_SEC` 同值)。
-   * 下一拍准时到达时再放回去 —— 这就是用户能感到的「小卡」。
+   * Media and audio play by wall clock: when **a tick runs this much slower than its nominal duration**, pause them
+   * (K4 / pinned architecture 10; same value as `IN_SYNC_SEC` in `mediaSync.ts`).
+   * When the next tick arrives on time they are resumed: this is the "small hitch" the user can feel.
    *
-   * 阈值按 pinned 固定 40 毫秒、不按帧算;**量的是「停顿」而不是两条 `frame` 之间的
-   * 总间隔** —— 一拍本来就要 `1000/fps` 毫秒,把它算进卡顿是把正常节拍当成了停顿。
-   * 24 / 25 fps 尤其明显:60 Hz 屏上一拍 41.7 / 40 ms 排不进 16.7 ms 的格子,
-   * 实际到达是 33 / 50 交替(`StageView.tsx` 的节拍循环自己也这么说),
-   * 按总间隔判的话每隔一拍就误判一次卡顿、音频每 ~80 ms 暂停恢复一次。
-   * 按「超出名义拍长多少」判:24 fps 的 50 ms 拍只超出 8.3 ms,60 fps 掉一次 vsync
-   * 也只超出 16.7 ms,都进不了 40 ms;而真的卡一下(比如 300 ms)照样当场判出来。
+   * The threshold is pinned at a fixed 40 milliseconds, not computed in frames; **what is measured is the "stall", not the
+   * total interval between two `frame` events**: a tick naturally takes `1000/fps` milliseconds, and counting that as a hitch treats the normal cadence as a stall.
+   * This is especially visible at 24 / 25 fps: on a 60 Hz screen a tick of 41.7 / 40 ms does not fit into 16.7 ms slots,
+   * so the actual arrivals alternate 33 / 50 (the tick loop in `StageView.tsx` says so itself),
+   * and if judged by the total interval, every other tick would be misjudged as a hitch and the audio would pause and resume every ~80 ms.
+   * Judge by "how much it exceeds the nominal tick length": a 50 ms tick at 24 fps exceeds it by only 8.3 ms, and 60 fps dropping one vsync
+   * exceeds it by only 16.7 ms, neither reaching 40 ms; while a real hitch (say 300 ms) is still detected on the spot.
    */
   const MEDIA_STALL_MS = 40;
-  /** E6:播放中 `refreshRects` 改成定时器,别每拍都往返一次 */
+  /** E6: during playback `refreshRects` becomes a timer, so it does not make a round trip every tick */
   const RECTS_POLL_MS = 500;
 
   /**
-   * 播放中素材层 / 音频是不是被掐住了(K4 的 `mediaStalled`)。
+   * Whether the media layer / audio is being choked during playback (K4's `mediaStalled`).
    *
-   * **通道写死**:`MediaLayers` 的 `playing` prop 改成 `playing && !mediaStalled`,舞台侧经
-   * `setPlaying(false)` 同步。直接对元素 `pause()` 没用 —— `planSync` 在播放态的每个分支
-   * 都返回 `play: paused`,下一拍就被 `play()` 回来了。
+   * **Channel hard-wired**: the `playing` prop of `MediaLayers` is changed to `playing && !mediaStalled`, and the stage side syncs via
+   * `setPlaying(false)`. Calling `pause()` directly on the element is useless: in every branch of the playing state `planSync`
+   * returns `play: paused`, and the next tick gets it `play()`ed back.
    */
   const [mediaStalled, setMediaStalled] = useState(false);
   const stalledRef = useRef(false);
-  /** 上一条 `frame` 的**真实**到达时刻(首拍以 `play()` 回包时刻为起点) */
+  /** The **actual** arrival moment of the previous `frame` (for the first tick, the starting point is the moment the `play()` reply arrived) */
   const lastFrameAtRef = useRef(0);
-  /** 验收口:这一轮播放判过几次卡顿、最大的一次超出名义拍长多少毫秒 */
+  /** Acceptance check port: how many hitches this round of playback judged, and the largest one's excess over the nominal tick length in milliseconds */
   const stallCountRef = useRef(0);
   const gapMaxRef = useRef(0);
   /*
-   * 「音频跟随时刻」(`mechanism/rendering.md`)要音频跟着舞台的拍子走,原来有两处漏着,声音会先跑出去:
+   * "Audio follows the beat" (`mechanism/rendering.md`) requires audio to follow the stage's beat.
+   * There used to be two leaks that let sound run ahead:
    *
-   * 1. **起播到第一拍之间**:`playing` 一翻,主文档的音频立刻起播,而播放头要等舞台收到项目、回了 `play`、
-   *    渲完第一拍才动。舞台起步慢(刚打开项目、重卡)时声音先放出去几百毫秒,偏差过了硬 seek 的门槛又被拉回来重放一遍。
-   *    `firstBeatRef`:这一轮播放的第一拍到了才放开音频。只管主文档的音频,不动舞台里的素材层。
-   * 2. **卡顿是到货时才判的**:晚到的那一拍到了才知道它晚了,卡住的那几百毫秒里音频照放。
-   *    看门狗:上一拍(或 `play` 回包)之后过了「名义拍长 + 40 ms」还没有下一拍,当场按卡顿掐住;
-   *    判据与到货时那一条相同(超出名义拍长 40 ms),只是不等它到。
+   * 1. **Between start of playback and the first beat**: as soon as `playing` flips, the main document's
+   *    audio starts at once, while the playhead only moves after the stage has received the project,
+   *    answered with `play` and rendered the first beat. When the stage starts slowly (project just
+   *    opened, heavy cards), sound plays a few hundred milliseconds early, and the drift passes the hard
+   *    seek threshold and gets pulled back, replaying it.
+   *    `firstBeatRef`: audio is released only once the first beat of this playback run has arrived. It
+   *    only governs the main document's audio and does not touch the media layers inside the stage.
+   * 2. **Stalls were judged only on arrival**: a late beat was recognized as late only when it arrived,
+   *    and audio kept playing through the few hundred stalled milliseconds.
+   *    Watchdog: if no next beat shows up within "nominal beat length + 40 ms" after the previous beat
+   *    (or the `play` reply), it is treated as a stall on the spot and audio is held;
+   *    the criterion is the same as the one on arrival (exceeding the nominal beat length by 40 ms),
+   *    it just does not wait for the beat to arrive.
    */
   const firstBeatRef = useRef(false);
   const [, setFirstBeatSeen] = useState(0);
@@ -1307,38 +1386,54 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   useEffect(() => () => window.clearTimeout(stallWatchRef.current), []);
 
   /*
-   * 流平面 / 抑制 / 快照的投递(C4、C5、A3c;排程在 `snapshotFeed.ts`)。
+   * Delivery of stream plane / suppression / snapshots (C4, C5, A3c; scheduling is in `snapshotFeed.ts`).
    *
-   * 叫它的地方:每拍收到 `frame` 之后(播放中)、`setTime` 发完之后(暂停 / 拖动)、起播之前、舞台报 `settled` 之后,
-   * 项目改了之后,以及快照字节 / 新的就绪层到货之后。33 ms 的节流在 `deliverSnapshots` 里,所以可以放心地多叫几次。
+   * Called: after each `frame` is received per beat (while playing), after `setTime` is sent (paused /
+   * dragging), before playback starts, after the stage reports `settled`, after the project changes,
+   * and after snapshot bytes / newly ready layers arrive. The 33 ms throttle lives in
+   * `deliverSnapshots`, so it is safe to call this several times.
    */
   const dualRef = useRef(dual);
   dualRef.current = dual;
   const liveRef = useRef(live);
   liveRef.current = live;
-  /** 上一次发出去的抑制集合(拼成一条字符串比,省掉没变也发) */
+  /** The suppression set last sent (compared as one joined string, to skip sending when unchanged) */
   const suppressedRef = useRef("");
-  /** 上一次发出去的流平面(R8;同样拼成字符串比) */
+  /** The stream plane last sent (R8; also compared as a string) */
   const streamPlanesRef = useRef("[]");
-  /** 上一次的流平面发给了哪一台舞台(在线页面:换了一台就得重发,新的那台手里没有清单和字节) */
+  /** Which stage the last stream plane was sent to (online page: after a switch it must be resent, since the new stage has no manifest or bytes) */
   const streamPlanesStageRef = useRef<StageRpcClient | null>(null);
   /**
-   * 流平面与抑制集合各发一次(没变不发),**先发流平面、再发抑制**:重卡贴的是轨道流,播放、暂停、拖动都一样
-   * (mechanism/rendering.md「重管线:预渲染」)。舞台收到抑制时,这张卡的流还没画出第一帧就先不藏它原来的画面
-   * (`StageView` 的 `streamWaiting`),所以流平面要先到 —— 反过来的话那一层先空一下。
+   * Send the stream plane and the suppression set once each (nothing if unchanged), **stream plane
+   * first, suppression second**: heavy cards are pasted from the track stream, whether playing, paused
+   * or dragging (mechanism/rendering.md "Heavy pipeline: prerender"). When the stage receives
+   * suppression, a card whose stream has not drawn its first frame yet does not hide its previous
+   * picture (`streamWaiting` in `StageView`), so the stream plane has to arrive first. In the reverse
+   * order that layer would be empty for a moment.
    *
-   *   - 播放中:全部重卡抑制,这一帧有流的发流平面。
-   *   - 暂停 / 拖动:这一帧有流、还没追到精确活渲的重卡抑制、贴流;已经追上的不抑制,流平面照发,
-   *     舞台拿它把播放头下这一帧先解好(起播头一拍就有)。没有流的重卡进 scrub 待占位符（可活渲的纯 remotion 卡直接活渲）。
-   *   - **只有一个舞台时例外**(没有后台舞台可以追到精确再互换):暂停、拖动时重卡一律抑制 ——
-   *     子树藏着、不活渲,贴轨道流(最低一档贴每个分段的第一帧那一张,`snapshotFeed` 给流平面带 `first`),
-   *     没有流就由舞台显示占位符;停下后舞台逐层追一帧精确活渲(`settleLayersAt`),画好的层不再按抑制藏。
+   *   - Playing: all heavy cards are suppressed, and the stream plane is sent for those with a stream
+   *     for this frame.
+   *   - Paused / dragging: heavy cards that have a stream for this frame but have not caught up to the
+   *     exact live render are suppressed and pasted from the stream; those already caught up are not
+   *     suppressed, and the stream plane is still sent, so the stage can decode the frame under the
+   *     playhead first (the first beat after starting playback is ready at once). Heavy cards without
+   *     a stream go to the scrub pending placeholder (pure remotion cards that can be rendered live are
+   *     rendered live directly).
+   *   - **Exception when there is only one stage** (no background stage to catch up to exact and then
+   *     swap): when paused or dragging, heavy cards are always suppressed: the subtree is hidden, not
+   *     rendered live, and the track stream is pasted (the lowest tier pastes the first frame of each
+   *     segment, and `snapshotFeed` gives the stream plane a `first`); with no stream the stage shows
+   *     a placeholder; after stopping, the stage catches up layer by layer to an exact live render
+   *     (`settleLayersAt`), and layers already drawn are no longer hidden by suppression.
    */
   const syncPlanes = useCallback((s: StageRpcClient, head: { project: ReturnType<typeof getState>["project"]; t: number; playing: boolean; single: boolean; sparseOnly: boolean }) => {
     const planes = streamPlanesAt(head);
     /*
-     * 在线页面:流的清单与字节随流平面发给舞台(见握手那里的 `StreamPlaneSender`)。有流平面时把在线来源的 `streamRev` 也算进比较键 ——
-     * 同一段换了文件(稀疏段换成满密度)时就绪区间一个字不变,光比区间不会重发;可见舞台换了一台同样要重发。
+     * Online page: stream manifests and bytes are sent to the stage along with the stream plane (see
+     * `StreamPlaneSender` at the handshake). When there is a stream plane, the online source's
+     * `streamRev` is also included in the comparison key: when the same segment switches files (a sparse
+     * segment replaced by a full-density one) the ready ranges do not change at all, so comparing ranges
+     * alone would not resend; it must also be resent when the visible stage is swapped for another one.
      */
     const pushed = ONLINE && planes.length > 0;
     const planesKey = JSON.stringify(planes) + (pushed ? `#${activeOnlineSource()?.streamRev ?? 0}` : "");
@@ -1353,18 +1448,21 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       void s.setSuppressed(want ? want.split("|") : []).catch(() => {});
     }
   }, []);
-  /** `at`:不按 store 此刻的播放头,按给定的时刻与播放状态投一次(起播之前:按起播的那一秒、当作在播) */
+  /** `at`: instead of the store's current playhead, deliver once for the given time and play state (before playback starts: at the start second, treated as playing) */
   const pumpFeed = useCallback(async (at?: { t: number; playing: boolean }) => {
-    // 界限搜索正占着唯一那个舞台测量:不投快照、不发抑制(测完由 restore 重投)
+    // The bound search is occupying the only stage for measurement: no snapshots delivered, no suppression sent (restore redelivers after measuring)
     if (!liveRef.current || costSearchMeasuring()) return;
     const s = frontStage();
     if (!s) return;
     const head = { project: getState().project, t: at?.t ?? tRef.current, playing: at?.playing ?? playingRef.current, single: singleRef.current, sparseOnly: singleRef.current };
     if (head.playing) clearSettled("front", "playing");
     /*
-     * 暂停态第二路(后台整场景补跑后互换)正在跑:这一次不动抑制和流平面。互换那一步新的可见舞台已经是精确活渲,
-     * 而「整台都精确」(`markAllSettled`)要晚几个回包才记上 —— 这中间按「还没精确」重发的话,会把流平面盖回新的可见舞台上。
-     * 用户这时又拖了的话,`sendSetTime` 那一处照发(不经这里)。
+     * The second paused-state path (swap after the background stage re-runs the whole scene) is running:
+     * this time suppression and the stream plane are left alone. At the swap step the new visible stage
+     * is already an exact live render, while "the whole stage is exact" (`markAllSettled`) is only
+     * recorded a few replies later. Resending in between as "not yet exact" would overwrite the new
+     * visible stage with the stream plane.
+     * If the user drags again meanwhile, `sendSetTime` still sends as usual (it does not go through here).
      */
     const holdForSwap = !head.playing && !head.single && swapInFlight();
     if (!holdForSwap) syncPlanes(s, head);
@@ -1373,14 +1471,19 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   pumpRef.current = pumpFeed;
 
   /*
-   * C3 的就绪索引:页面直连预渲染进程的那条 SSE(`snapshotSource.ts`)。
+   * The ready index of C3: the SSE connection from the page directly to the prerender process
+   * (`snapshotSource.ts`).
    *
-   * **编辑不重连、不清表**(根因 E):项目每变一次这里只核一下 session(镜像可能刚起来、或换了项目),
-   * 同一个 session 什么都不做。以前清理函数挂在带 `project` 的 effect 上 —— 每次编辑先
-   * `stopSnapshotFeed()` 把就绪索引、字节缓存、投递基线全清掉再重连,重连空档里播放中的重卡全透明。
-   * 拆成两个:核 session 的跟着 `project` 跑,收摊的只在 `dual` 变了 / 卸载时跑。
+   * **Edits do not reconnect or clear the table** (root cause E): each time the project changes, this
+   * only checks the session (the mirror may have just started, or the project was switched), and does
+   * nothing for the same session. The cleanup function used to hang on the effect that depends on
+   * `project`: every edit first called `stopSnapshotFeed()`, wiping the ready index, byte cache and
+   * delivery baseline, then reconnected, and in the gap during reconnection heavy cards that were
+   * playing turned fully transparent.
+   * Split into two: the session check runs with `project`, and the teardown only runs when `dual`
+   * changes / on unmount.
    */
-  // 在线页面没有预渲染进程(没有 SSE 就绪索引):双舞台时快照来源照旧是下面的在线实现
+  // The online page has no prerender process (no SSE ready index): with two stages the snapshot source is still the online implementation below
   useEffect(() => {
     if (!dual || ONLINE) return;
     syncSnapshotSubscription(() => { void pumpRef.current(); });
@@ -1391,25 +1494,35 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [dual]);
 
   /*
-   * c10a 第 9 节「在线页面拉取」:在线页面没有预渲染进程,重层的画面是渲染节点推到素材服务的预渲染结果(轨道流)。
-   * 快照来源换成在线实现(`snapshotSource.ts` 的 `OnlineSnapshotSource`:按内容库的层表与清单、凭只读票据取 `px/<hash>`),
-   * 它发的 C3 消息直接并进 `snapshotFeed` 的就绪索引 —— 选帧、兜底、投递那一整条消费路一行不改。
-   * 小位图到货后自己重投一次(`snapshotFeed` 的到货回调只在 SSE 那条路上挂)。
+   * c10a section 9 "Online page pull": the online page has no prerender process, and the picture of
+   * heavy layers is the prerender output (track stream) that render nodes push to the asset service.
+   * The snapshot source is replaced with the online implementation (`OnlineSnapshotSource` in
+   * `snapshotSource.ts`: using the content store's layer table and manifest, it fetches `px/<hash>`
+   * with a read-only ticket); the C3 messages it emits merge straight into the ready index of
+   * `snapshotFeed`, so the whole consumption path of frame selection, fallback and delivery needs not
+   * a single line changed.
+   * Once the small bitmaps arrive it redelivers by itself (the arrival callback of `snapshotFeed` is
+   * only attached on the SSE path).
    */
   const onlineSourceRef = useRef<OnlineSnapshotSource | null>(null);
-  /** 本页的清单计划发布器(本页产流要问它「这一版计划发出去了没有、有没有节点接」;任务书「甲二」) */
+  /** This page's manifest plan publisher (this page's stream production asks it "has this version of the plan been sent out, and is any node picking it up"; task brief "A2") */
   const planPublisherRef = useRef<PlanPublisher | null>(null);
   useEffect(() => {
     if (!online) return;
     /*
-     * C10 契约第 4、5 节:取预渲染原尺寸(`snap/<hash>`,按层表 v 2 与清单)进页面内快照库 L2;只有一个舞台(精简模式、最低一档)
-     * 按 `small` 开(轨道流只贴稀疏版、流字节在内存里留得少,`snapshotSource.ts` 文件头第 7 条;`mechanism/platforms.md`「三道闸门」)。
+     * C10 contract sections 4 and 5: fetch the prerender at original size (`snap/<hash>`, by layer table
+     * v 2 and the manifest) into the in-page snapshot store L2; with only one stage (lean mode, lowest
+     * tier) it opens by `small` (the track stream is pasted only as the sparse version and fewer stream
+     * bytes are kept in memory; `snapshotSource.ts` file header item 7; `mechanism/platforms.md` "Three
+     * gates").
      */
     const src = new OnlineSnapshotSource({
       request: docRequest, assetBase: remoteAssetBase, authHeaders: assetAuthHeaders,
       /*
-       * 用户卡、素材效果卡的层与内置卡一样取清单与字节(C10 契约第 9 节,2026-09-29 起不再豁免);另外整段的清单都取,
-       * 时间轴据此判「预渲染结果覆盖整段没有」(徽标)。
+       * Layers of user cards and media effect cards fetch manifests and bytes just like built-in cards
+       * (C10 contract section 9, no longer exempt since 2026-09-29); in addition, manifests of whole
+       * segments are all fetched, from which the timeline judges "does the prerender output cover the
+       * whole segment" (badge).
        */
       coverageLayer: (clipId) => localOnlyOf(getState().project).has(clipId),
     }, { tier: singleRef.current ? "small" : "original", store: pageL2() });
@@ -1417,7 +1530,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     setActiveOnlineSource(src);
     setCoverageSource(src);
     setSnapshotSource(src);
-    // 投递时缺的那一帧取到之后也要重投一次(暂停着的页面没有别的事件会再投)
+    // After the frame that was missing at delivery time is fetched, deliver again (a paused page has no other event that would deliver)
     setSnapshotArrive(() => { void pumpRef.current(); });
     src.onFetched = () => { void pumpRef.current(); };
     const off = src.subscribeReady("online", 0, (m) => {
@@ -1443,50 +1556,66 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     };
   }, [online, single]);
   /*
-   * stale-layer:项目每变一次(本页改的、别的成员改了同步过来的)都把它交给在线来源。来源按它算各片段的输入签名,
-   * 与层表里每层记的 `inputSig` 比对:对不上的旧参数层马上撤掉(就绪区间发空,下一次投递就不再贴,用户卡、素材效果卡显示沙漏,
-   * 内置重卡照在线页面的兜底),渲染节点按新输入重写层表后新结果照常换上;改回原来的参数、原来那一层还在就照贴。
-   * 放在建来源那个 effect 之后:同一次提交里先建好来源再交项目。
+   * stale-layer: each time the project changes (changed on this page, or synced over after another
+   * member changed it), hand it to the online source. The source computes each clip's input signature
+   * from it and compares with the `inputSig` recorded for each layer in the layer table: old-parameter
+   * layers that do not match are withdrawn immediately (ready ranges sent empty, so the next delivery
+   * no longer pastes them; user cards and media effect cards show an hourglass, built-in heavy cards
+   * follow the online page's fallback), and after render nodes rewrite the layer table for the new
+   * input, the new result is swapped in as usual; if parameters are changed back and the original
+   * layer is still there, it is pasted again.
+   * Placed after the effect that builds the source: in the same commit the source is built first and
+   * then the project is handed over.
    */
   useEffect(() => {
     if (!online) return;
     onlineSourceRef.current?.setInputs(project);
   }, [online, single, project]);
   /*
-   * C10 契约第 9 节「识别」:在线页面经同一条文档服务连接读本项目内容库的卡片源码(`card-source`,键前缀 `src/cards/user/`),
-   * 解析出卡片的 id 与名字,进注册表作「已知但本机不能运行」的条目(`sync/onlineCardSources.ts`)。定时重取;连接换了
-   * (重连、换项目)清表重取。表变了发给两个舞台(舞台是另一份文档,有它自己的注册表)。
+   * C10 contract section 9 "Identification": the online page reads this project's content store card
+   * source (`card-source`, key prefix `src/cards/user/`) through the same document service connection,
+   * parses out each card's id and name, and enters them in the registry as "known but cannot run on
+   * this machine" entries (`sync/onlineCardSources.ts`). It refetches periodically; when the
+   * connection changes (reconnect, project switch) the table is cleared and refetched. When the table
+   * changes it is sent to both stages (a stage is a separate document with its own registry).
    */
   useEffect(() => {
     if (!online) return;
     /*
-     * 测量等卡片源码第一次同步完再开始(`measureGate.ts`):在那之前同步卡被当成未知 id,后台舞台可能把它测一次。
-     * 第一次同步有了结果(成功或失败)就开门;最多等 `MEASURE_GATE_MAX_MS`。桌面不关这道门。
+     * Measurement starts only after the card source has synced for the first time (`measureGate.ts`):
+     * before that, synced cards are treated as unknown ids, and the background stage might measure one
+     * once. The gate opens once the first sync has a result (success or failure); it waits at most
+     * `MEASURE_GATE_MAX_MS`. The desktop app does not close this gate.
      */
     const linkKey = () => (hasDocLink() ? currentSharedLink() : null);
-    // 门按连接算:换了项目 / 连接,问门时重新关上,等新连接的卡片源码同步完(`measureGate.ts`)
+    // The gate is per connection: after a project / connection switch it closes again when queried, waiting for the new connection's card source to finish syncing (`measureGate.ts`)
     setMeasureGateLink(linkKey);
     holdMeasureForCardSources();
     const sources = new OnlineCardSources({
       request: docRequest, linkKey,
-      // 用户卡源码从内置模块引进来的控件、默认值:用页面自己带着的那份(`src/cards/builtinSourceExports.ts`)
+      // Controls and defaults that user card source imports from built-in modules: use the copy the page itself carries (`src/cards/builtinSourceExports.ts`)
       builtins: builtinSourceExports, sourceFiles: builtinCardSourceFiles,
       onFirstSettled: (ok, link) => releaseMeasureGate(ok, link),
       /*
-       * 在线执行同步来的用户卡与素材效果卡(`docs/plan/online-card-exec-contract.md` 第 1、8 节):本页能执行时(`cardRuntime/gate.ts`,
-       * 由舞台的隔离自检立起来)把源码转译成包。转译器按需载入,不能执行的页面不取它。编辑页面只转译、不执行。
+       * Online execution of synced user cards and media effect cards (`docs/plan/online-card-exec-contract.md`
+       * sections 1 and 8): when this page can execute (`cardRuntime/gate.ts`, raised by the stage's
+       * isolation self-check), transpile the source into a bundle. The transpiler is loaded on demand, and
+       * pages that cannot execute do not fetch it. Editor pages only transpile and do not execute.
        */
       bundling: {
         enabled: cardExecAvailable,
-        // 编译期判:桌面构建里这一行整个剪掉,转译器那一块不进桌面的产物
+        // Decided at compile time: in desktop builds this whole line is cut, so the transpiler block does not enter the desktop output
         run: (job) => (import.meta.env.VITE_PC_ONLINE === "1" ? import("../online/cardRuntime/transpile.browser").then((m) => m.bundleCards(job)) : Promise.resolve([])),
         onBundles: (results) => { bundles = results; cardBundlesRef.current = results; refreshRunStates(); pushCardBundlesRef.current(); },
       },
     });
     let bundles: BundleResult[] = [];
     /*
-     * 每张同步卡在本页的运行状态(参数面板、徽标、轻重判定读 `registry.cardRunState`):页面自己知道的(没有隔离环境、转译不成)
-     * 合上挂着的舞台报回来的(载入成功、载入出错、图形能力不够、素材解不了、运行出错)。挂着的都报了能运行才算能运行(双舞台两台、单舞台一台)。
+     * Run state of each synced card on this page (the parameters panel, badges and light/heavy
+     * classification read `registry.cardRunState`): what the page itself knows (no isolated environment,
+     * transpile failed) merged with what the attached stages report back (loaded successfully, load
+     * error, insufficient graphics capability, media cannot be decoded, runtime error). A card counts as
+     * runnable only if all attached stages report it can run (two for dual stages, one for a single stage).
      */
     const refreshRunStates = () => {
       setCardRunStates(editorRunStates({
@@ -1495,7 +1624,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       }));
     };
     refreshRunStatesRef.current = refreshRunStates;
-    // 声音线程(双舞台的实例 B、单舞台的 A 起的专用后台线程)接成 `cardAudio.ts` 的隔离宿主;舞台报了声音状态才算接上
+    // The audio thread (a dedicated background thread started by instance B in dual-stage mode, or by A in single-stage mode) is connected as the isolated host of `cardAudio.ts`; it counts as connected only once the stage has reported audio state
     const soundLink = createIsolatedSoundLink({
       render: (request) => {
         const c = rpcRef.current[soundStageId()];
@@ -1504,7 +1633,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     });
     soundLinkRef.current = soundLink;
     const offGate = subscribeCardExecGate(() => {
-      // 本页不能执行了(出了加固拦下的事、站点关了):舞台报过的状态与声音线程都作废
+      // This page can no longer execute (hardening blocked something, or the site was shut down): the state reported by stages and the audio thread are void
       if (!cardExecAvailable()) { stageCardStatesRef.current = {}; stageGraphRef.current = {}; setNodeGraphCapable(false); soundLink.setState(null); }
       refreshRunStates();
       pushCardBundlesRef.current();
@@ -1515,7 +1644,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       const entries = [...syncedUserCards().values()];
       for (const id of STAGE_IDS) {
         const c = rpcRef.current[id];
-        if (c) void c.setSyncedUserCards(entries).catch(() => { /* iframe 正在换:下一次握手会重发 */ });
+        if (c) void c.setSyncedUserCards(entries).catch(() => { /* The iframe is being replaced: the next handshake will resend */ });
       }
     };
     const offChange = onSyncedUserCardsChanged(push);
@@ -1538,20 +1667,21 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     };
   }, [online]);
   /*
-   * 预览缩放倍数变了,发给两个舞台(占位符据此补偿:沙漏在屏幕上保持原大小)。
-   * 握手时另发一次(见 `pc-stage-ready` 那段)。桌面与在线都发。
+   * The preview zoom factor changed, sent to both stages (placeholders compensate accordingly: the
+   * hourglass keeps its original size on screen).
+   * Sent once more at handshake (see the `pc-stage-ready` part). Sent on both desktop and online.
    */
   useEffect(() => {
     for (const id of STAGE_IDS) {
       const c = rpcRef.current[id];
-      if (c) void c.setViewScale(scale).catch(() => { /* iframe 正在换:下一次握手会重发 */ });
+      if (c) void c.setViewScale(scale).catch(() => { /* The iframe is being replaced: the next handshake will resend */ });
     }
   }, [scale]);
   useEffect(() => {
     if (!onlineBrowserMode()) return;
     const refresh = () => {
-      // planDispatch 在同一批通知里用 queueMicrotask 重算 currentPlan;排在它后面重投一次流平面与抑制集合,
-      // 让刚变成 ready 的同步用户卡当场解除抑制(不必等用户点播放或拖时间轴)
+      // planDispatch recomputes currentPlan with queueMicrotask within the same batch of notifications; redeliver the stream plane and suppression set once after it,
+      // so synced user cards that have just become ready are unsuppressed on the spot (no need to wait for the user to click play or drag the timeline)
       queueMicrotask(() => { void pumpRef.current(); });
     };
     const offSynced = onSyncedUserCardsChanged(refresh);
@@ -1559,8 +1689,8 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     return () => { offSynced(); offRun(); };
   }, [online]);
   /*
-   * C10 契约第 7 节:队列报 task.done(本页发布的清单计划或它切出的细任务做完了):马上重取层表与清单,新快照下一拍换上。
-   * M7 D12:task.done 的结果键认定活着、task.failed { error: 'superseded' } 是另一份活着(不是失败),在线来源据此选层表 v 3 的候选。
+   * C10 contract section 7: the queue reports task.done (the manifest plan published by this page, or the subtasks split from it, finished): refetch the layer table and manifest at once, and the new snapshot is swapped in on the next beat.
+   * M7 D12: the result key of task.done is deemed alive, and task.failed { error: 'superseded' } means another copy is alive (not a failure); the online source uses this to choose candidates of layer table v 3.
    */
   useEffect(() => {
     if (!online) return;
@@ -1571,9 +1701,9 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     });
   }, [online]);
   /*
-   * M7(契约第 2 节):身份为电脑的在线页面,后台舞台在闲时兼做纯浏览器渲染节点。当不当节点由宿主每拍按条件判
-   * (在线构建且嵌了代码版本、身份为电脑、不是最低一档、两个跨源舞台都握上手、Chromium、以成员身份连着云端项目、测量落定)。
-   * 身份为手机、只有一个舞台的页面不当节点,只为本页产稀疏版(`browserNodeHost.ts` 的 `ownSparseOnly`)。
+   * M7 (contract section 2): for an online page whose identity is computer, the background stage doubles as a pure-browser render node when idle. Whether to act as a node is judged by the host on every beat from conditions
+   * (online build with the code version embedded, identity is computer, not the lowest tier, both cross-origin stages have handshaken, Chromium, connected to the cloud project as a member, measurement settled).
+   * A page whose identity is phone and which has only one stage does not act as a node, and only produces the sparse version for this page (`ownSparseOnly` in `browserNodeHost.ts`).
    */
   useEffect(() => {
     if (!online) return;
@@ -1583,7 +1713,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         codeVersion: CODE_VERSION,
         phone: phoneIdentity(),
         lowest: lowestRef.current,
-        // 按两个舞台开、还没都握上手(舞台闸门正在试后台舞台)是 `pending`:不当节点,也不按只有一个舞台算(不然本页产流会当成只产稀疏版、不等计划)
+        // Opened with two stages but not all handshaken yet (the stage gate is still trying the background stage) is `pending`: not acting as a node, and not counted as having one stage either (otherwise this page's stream production would assume it only produces the sparse version and not wait for the plan)
         stageLayout: !dualRef.current ? "single" : onlineStageState().handshake === "ok" ? "dual" : "pending",
         userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
         member: !!currentSharedLink() && hasDocLink(),
@@ -1591,12 +1721,12 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       }),
       projectId: () => (currentSharedLink() ? currentDocProjectId() || null : null),
       onAlive: (resultKey) => onlineSourceRef.current?.markAlive(resultKey),
-      // 本页产流(任务书「甲二」):线上没有能切分的节点接本页的清单计划时,本页自己产单卡流(判据在 `online/pageStreams.ts`)
+      // This page's stream production (task brief "A2"): when no splittable node online picks up this page's manifest plan, this page itself produces single-card streams (the criterion is in `online/pageStreams.ts`)
       pagePlan: () => planPublisherRef.current?.current() ?? null,
       planState: () => planPublisherRef.current?.probe() ?? Promise.resolve(null),
-      // 这条流有了(本页产的、先查查到的):不等下一轮轮询,马上重取层表与清单
+      // This stream now exists (produced by this page, or found on a first check): do not wait for the next polling round, refetch the layer table and manifest at once
       onPageStream: () => onlineSourceRef.current?.refresh(),
-      // 测量时就产稀疏版:此刻判重的片段(与清单计划的清单同一个算法)、此刻的已确认版本
+      // Produce the sparse version at measurement time: the clips classified as heavy right now (same algorithm as the manifest plan's manifest), and the currently confirmed version
       heavyClips: () => (singleRef.current ? [...(judgedPlan()?.prerenderSet ?? [])].sort() : heavyCardClips()),
       confirmed: () => {
         const ds = currentSharedLink()?.ds;
@@ -1611,23 +1741,22 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     });
   }, [online]);
   /*
-   * C10 契约第 7 节、第 18 节第 9 条:在线页面自己发布清单计划(各档都发,一律普通优先级;原来「为弱设备预渲染任务」的
-   * `backfill` 优先级 2026-10-07 撤销)—— 测量落定后发、防抖、项目每次改动(文档服务确认的版本变了)
-   * 或清单变了就重发;清单是页面自己判重的片段(预渲染集合)。这台设备跑不了的用户卡、素材效果卡一律判重(`costIdentity.ts`),
-   * 照样进清单,由桌面版等渲染节点认领(C10 契约第 9 节,2026-09-29 起不再去掉)。没人认领不报错。
+   * C10 contract section 7, section 18 item 9: the online page publishes its own manifest plan (sent at every tier, always with normal priority; the former `backfill` priority 2026-10-07 "for prerender tasks on weak devices" was revoked)
+   * --- sent after measurement settles, debounced, and resent on every project change (the version confirmed by the document service changed) or manifest change; the manifest is the clips this page classified as heavy (the prerender set). User cards and media effect cards that this device cannot run are always classified as heavy (`costIdentity.ts`),
+   * and still enter the manifest, to be claimed by render nodes such as the desktop app (C10 contract section 9, no longer removed since 2026-09-29). No error is reported if nobody claims them.
    */
   useEffect(() => {
     if (!online) return;
     const clips = heavyCardClips;
-    // 托管方渲染节点的「生成轨道流」(任务书「甲三」):本页看到它开着时清单计划带这一项(是另一个计划);从关变开时马上重发,
-    // 渲染节点据此再切一次、出它自己的那一份流任务,不用等项目下一次改动
+    // The hosted-side render node's "generate track stream" (task brief "A3"): when this page sees it turned on, the manifest plan carries this item (it is a different plan); when it goes from off to on, resend at once,
+    // so the render node splits again and produces its own stream task, without waiting for the next project change
     const streamsOn = () => { const v = getSyncView(); return hostedStreamsOn(v.shared?.where, v.hosted); };
     let lastStreams = streamsOn();
     const publisher = createPlanPublisher({
       request: docRequest, publisherId: `page-${pageSession()}`, clips, codeVersion: CODE_VERSION, streams: streamsOn,
-      // M7:本页当纯浏览器节点时,这一版的清单计划等节点报到完(拿到指纹)再发,最多 3 s(契约第 3.3 节)
+      // M7: when this page acts as a pure-browser node, this version of the manifest plan is sent only after the node finishes reporting in (gets its fingerprint), for at most 3 s (contract section 3.3)
       nodeReady: browserNodeReady,
-      // M7 D6:发之前把这一版的已确认项目按版本号留在内存,执行细任务时用任务的 projectRev 那一版
+      // M7 D6: before sending, keep this version of the confirmed project in memory by version number, and use the version of the task's projectRev when executing subtasks
       onPublish: () => {
         const ds = currentSharedLink()?.ds;
         if (ds) keepConfirmedProject(ds.rev, ds.confirmedProject);
@@ -1663,13 +1792,13 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   useEffect(() => { onlineSourceRef.current?.setProject(project.id || null); }, [project.id]);
 
   /*
-   * 两个舞台时的轻重判定(即时渲染闸门;语义 `product/platforms.md`「轻重判定」:项目里已经有别的机器测好的耗时时,按它排序、用二分法只测几张来划线):
-   * 打开项目时常驻探针先等着(`holdProbe`)。基准卡测完、卡片源码同步完、连上共享项目后读本项目的成本记录:
-   * - 一条都对不上项目里的卡:常驻探针照旧在遮罩下逐张实测(`releaseProbe({ blocking: true })`);
-   * - 有记录:界限搜索在后台舞台里只测几张(遮罩下,`borrow: false`,排进后台舞台的单飞队列),划好线就按它判轻重;测过的卡里判重的,
-   *   遮罩照旧挡着、紧接着给它产稀疏版(和常驻探针同一个口子 `runCardMeasuredHook`;`mechanism/rendering.md`「测量」),没测的(按记录划线
-   *   判重的)归闲时产;常驻探针随后在后台把其余的卡补测完(不挡界面,K3/K5 要的记录由它补齐),补测完分派表改按成本记录判。
-   * 读不到记录(没连上、被拒)隔一拍再试,40 拍之后照旧让常驻探针逐张测。
+   * Light/heavy classification with two stages (on-demand render gate; semantics `product/platforms.md` "Light/heavy classification": when the project already has timings measured by another machine, sort by them and use binary search to measure only a few cards to draw the line):
+   * when a project opens, the resident probe waits first (`holdProbe`). After the benchmark card is measured, card source has synced and the shared project is connected, read this project's cost records:
+   * - Not a single one matches the cards in the project: the resident probe measures card by card under the mask as before (`releaseProbe({ blocking: true })`);
+   * - There are records: the bound search measures only a few cards in the background stage (under the mask, `borrow: false`, queued in the background stage's single-flight queue), and once the line is drawn, light/heavy is judged by it; among the measured cards, those classified as heavy
+   *   keep the mask up as before and get their sparse version produced right away (the same hook as the resident probe, `runCardMeasuredHook`; `mechanism/rendering.md` "Measurement"), while those not measured (classified as heavy by the line from records)
+   *   are produced when idle; the resident probe then finishes measuring the remaining cards in the background (not blocking the UI; it fills in the records that K3/K5 need), and once done the dispatch table switches to judging by cost records.
+   * If the records cannot be read (not connected, rejected), retry after one beat; after 40 beats the resident probe measures card by card as before.
    */
   const dualSearchRef = useRef<"idle" | "deciding" | "searched" | "probe">("idle");
   useEffect(() => {
@@ -1689,7 +1818,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       const shared = currentSharedLink();
       const projectId = currentDocProjectId();
       if (!shared || !hasDocLink() || !projectId || !((shared.ds?.rev ?? 0) > 0) || !backStage()) return;
-      dualSearchRef.current = "searched"; // 这一拍在做,别的拍不进来
+      dualSearchRef.current = "searched"; // This beat is working; other beats cannot enter
       const project = getState().project;
       const identity = clipIdentityOf(project);
       let listed: Awaited<ReturnType<typeof listSharedCosts>>;
@@ -1713,7 +1842,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         if (disposed) return;
         const latest = getState().project;
         setPlanSearchLight(latest === project ? outcome.light : reclassify(outcome, latest, clipIdentityOf(latest).identityKeys, unsupported));
-        // 测过的卡:判重的紧接着产稀疏版(遮罩照旧挡着;判不判重、产不产、等多久由接的一方定,和常驻探针那一轮同一套)
+        // Measured cards: those classified as heavy get their sparse version produced right away (the mask stays up as before; whether to classify as heavy, whether to produce and how long to wait is decided by the receiving side, the same set as the resident probe's round)
         const measured = [...outcome.result.measured.entries()].filter(([, v]) => !v.cached && !v.failed).map(([k]) => k);
         const sparse: string[] = [];
         try {
@@ -1740,7 +1869,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     void tick();
     return () => { disposed = true; window.clearInterval(timer); if (dualSearchRef.current === "deciding") release(true, "probe"); };
   }, [online, dual, lowest]);
-  /* 常驻探针在后台把其余的卡补测完了:分派表改按成本记录判(两个舞台的界限搜索只管打开的那一下) */
+  /* The resident probe has finished measuring the remaining cards in the background: the dispatch table now judges by cost records (the two-stage bound search only covers the moment of opening) */
   useEffect(() => {
     if (!dualSearch) return;
     const check = () => { if (!probeProgress().running && probeSettledFor(getState().project)) setDualSearch(false); };
@@ -1750,10 +1879,10 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [dualSearch]);
 
   /*
-   * 只有一个舞台时的轻重判定(即时渲染闸门):共享成本记录加界限搜索(`costSearch.ts`;语义 `mechanism/rendering.md`「界限搜索与成本记录」)。
-   * 连上共享项目、项目到了、舞台就绪后,每个共享项目搜一次(有记录的二分只测几张,没有记录的逐张实测);之后项目变了(加卡、改参数):
-   * 没有记录的新卡补测那几张,其余按已有的界限判。取不到记录(没连上、被拒)隔一拍再试;真要测时 `CostSearchGate` 盖遮罩。
-   * 最低一档不测:播放时不做任何即时渲染,判定的表全部按重(清单计划照显示用的表发全部片段)。
+   * Light/heavy classification with only one stage (on-demand render gate): shared cost records plus bound search (`costSearch.ts`; semantics `mechanism/rendering.md` "Bound search and cost records").
+   * After the shared project is connected, the project has arrived and the stage is ready, search once per shared project (with records, binary search measures only a few cards; without records, measure card by card); after that, when the project changes (a card added, parameters changed):
+   * new cards without records get those few measured, and the rest are judged by the existing bound. If records cannot be fetched (not connected, rejected), retry after one beat; when measuring is really needed, `CostSearchGate` puts up the mask.
+   * The lowest tier does not measure: no on-demand render at all during playback, and the judgment table is entirely heavy (the manifest plan sends all clips by the table used for display).
    */
   const stageReadyRef = useRef(stageReady);
   stageReadyRef.current = stageReady;
@@ -1761,10 +1890,10 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   useEffect(() => {
     if (!online || !single) return;
     if (lowest) { setPlanSearchLight([]); return; }
-    // 本地复用接 L2(要在第一次界限搜索之前接上,否则那一轮用页面内存)
+    // Local reuse connects to L2 (must be connected before the first bound search, otherwise that round uses the page's memory)
     setSearchCostStore(l2SearchCostStore());
     let disposed = false;
-    // 本页跑不了的卡(没载入成功的用户卡、素材效果卡)与测崩过的卡不测、一律判重(界限搜索的 `forcedHeavy`)
+    // Cards this page cannot run (user cards and media effect cards that failed to load) and cards that crashed during measurement are not measured and always classified as heavy (`forcedHeavy` of the bound search)
     const crashed = crashedCards();
     const unsupported = (clip: { id?: string; cardId?: string }) => needsLocalPc(clip.cardId, clip.cardId ? getCard(clip.cardId) : undefined)
       || (!!clip.id && crashed.has(clipIdentityOf(getState().project).identityKeys[clip.id] ?? ""));
@@ -1773,7 +1902,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       pushProject: (p: Project) => pushProject("front", p, { reset: true }),
       currentProject: () => getState().project,
       restore: () => {
-        // 舞台回到可见舞台:整份项目已重灌;抑制、流平面、快照基线作废,stageReady +1 让时间与投递重来一遍
+        // The stage returned to being the visible stage: the whole project has been reloaded; suppression, stream plane and snapshot baseline are void, and stageReady +1 makes time and delivery start over
         suppressedRef.current = "";
         streamPlanesRef.current = "[]";
         markBaselineReset("front");
@@ -1791,9 +1920,9 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     };
     const tick = async () => {
       if (disposed) return;
-      // 测量等卡片源码第一次同步完(`measureGate.ts`):同步卡在那之前是未知 id,不能被当成普通卡去测
+      // Measurement waits for the card source's first sync to finish (`measureGate.ts`): before that, synced cards have unknown ids and must not be measured as ordinary cards
       if (!measureGateOpen()) return;
-      // 先等基准卡测完(它也借这一个舞台;跑不动就进最低一档,这里不再测)
+      // Wait for the benchmark card to finish measuring first (it also borrows this one stage; if it cannot run, go to the lowest tier and no measuring is done here)
       if (tierState().benchmark === "pending") return;
       const shared = currentSharedLink();
       const projectId = currentDocProjectId();
@@ -1805,20 +1934,20 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       if (cur && cur.projectId === projectId) {
         if (cur.running || !cur.outcome) return;
         const identity = clipIdentityOf(project);
-        // 项目变了:没有记录又没测过的新卡补测(随项目变化更新相关测量),其余按已有的界限判
+        // The project changed: new cards with no records and never measured get measured (updating the relevant measurements as the project changes), and the rest are judged by the existing bound
         cur.running = true;
         try {
           const next = await measureNewCards(cur.outcome, { ...stageDeps, project, identityKeys: identity.identityKeys, capabilities: identity.capabilities, unsupported });
           if (disposed) return;
           cur.outcome = next;
-        } catch { /* 下一拍再来 */ } finally { cur.running = false; }
+        } catch { /* Come back on the next beat */ } finally { cur.running = false; }
         const latest = getState().project;
         setPlanSearchLight(reclassify(cur.outcome, latest, clipIdentityOf(latest).identityKeys, unsupported));
         return;
       }
       const identity = clipIdentityOf(project);
       const cardClips = project.tracks.some((tr) => tr.clips.some((c) => !!c.cardId || !!c.nodeId));
-      // 卡片身份还没算出来(卡片注册表还在装):多等几拍,10 拍之后照样开始(算不出身份的卡按重卡)
+      // Card identity is not computed yet (the card registry is still loading): wait a few more beats, and start anyway after 10 beats (cards whose identity cannot be computed are treated as heavy cards)
       const waitKey = `${projectId}#wait`;
       const waited = cur?.projectId === waitKey ? cur.waited : 0;
       if (cardClips && !Object.keys(identity.identityKeys).length && waited < 10) {
@@ -1839,13 +1968,13 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         });
         if (disposed) return;
         searchRef.current = { projectId, outcome, running: false, waited };
-        // 搜索期间项目可能又变了:按最新的项目判一遍
+        // The project may have changed again during the search: judge once more by the latest project
         const latest = getState().project;
         setPlanSearchLight(latest === project ? outcome.light : reclassify(outcome, latest, clipIdentityOf(latest).identityKeys, unsupported));
         const ds = currentSharedLink()?.ds;
         if (ds?.confirmedProject && typeof ds.rev === "number") keepConfirmedProject(ds.rev, ds.confirmedProject);
       } catch {
-        // 取不到记录:下一拍再试
+        // Records cannot be fetched: retry on the next beat
         if (searchRef.current?.projectId === projectId) searchRef.current = null;
       }
     };
@@ -1879,9 +2008,9 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [online, single, lowest]);
 
   /*
-   * 桌面版与在线浏览器连着共享项目时,把本机后台舞台测完的成本记录转写进文档服务(`sharedCosts.ts`;
-   * 语义 `mechanism/document-service.md`「成本记录」:所有在线浏览器测完都写)。没连就不写、不报错;只转写这台浏览器测的、
-   * 当前项目用到的卡。只有一个舞台时界限搜索测的由 `costSearch.ts` 测完直接写。
+   * When the desktop app and online browsers are connected to a shared project, the cost records measured by this machine's background stage are copied over to the document service (`sharedCosts.ts`;
+   * semantics `mechanism/document-service.md` "Cost records": every online browser writes after measuring). Nothing is written and no error is reported when not connected; only the cards that this browser measured
+   * and that the current project uses are copied. With only one stage, what the bound search measures is written directly by `costSearch.ts` once measured.
    */
   useEffect(() => {
     const relay = new SharedCostRelay({
@@ -1902,24 +2031,24 @@ export function Preview(props: { variant?: "mobile" } = {}) {
 
   useEffect(() => { onlineSourceRef.current?.focus(t, project.fps || 30); }, [t, project.fps]);
 
-  /* 换了 iframe:那一份投递基线跟着作废,下一次带 `reset`(A3c) */
+  /* The iframe was replaced: that delivery baseline is void, and the next one carries `reset` (A3c) */
   useEffect(() => {
     if (!live || !stageReady) return;
     markBaselineReset("front");
     suppressedRef.current = "";
-    // 暂停着也发流平面了:换了一台舞台,这一份记录同样从零开始(新的那台手里没有)
+    // The stream plane is also sent while paused: after a stage swap, this record likewise starts from zero (the new stage has none)
     streamPlanesRef.current = "[]";
     /*
-     * 在线页面:预渲染小尺寸常常在舞台握手之前就取到了(取到时 `frontStage()` 还是空,那一次投递落空)。
-     * 暂停着的页面之后没有别的事件会再投,重卡就一直是占位 —— 舞台一握手就投一次(c10a-demo-probe 实测)。
+     * Online page: the small-size prerender is often fetched before the stage handshake (when fetched, `frontStage()` is still empty, and that delivery falls through).
+     * A paused page has no other event that would deliver afterwards, so heavy cards stay as placeholders forever --- deliver once as soon as the stage handshakes (measured in c10a-demo-probe).
      */
     if (onlineSourceRef.current) void pumpRef.current();
   }, [live, stageReady]);
   /*
-   * 项目改了(store 换了新的项目对象):流平面和抑制按新项目重算一次。依赖下层的卡的流只对产它时的那一版下层有效 ——
-   * 下层一改,那一层带的输入签名就对不上了(`snapshotFeed.ts` 的 `streamLayers`),旧流要当场撤下,不能等下一次 `setTime`:
-   * 暂停着、手按着标尺不动时改下层,之后没有别的事件会来投。播放中下一拍自己会投,这里多投一次无妨;没变的不会重发
-   * (`syncPlanes` 按内容比,快照那一半有 33 毫秒的节流)。
+   * The project changed (the store swapped in a new project object): recompute the stream plane and suppression for the new project once. A stream of a card that depends on lower layers is only valid for the version of the lower layers at the time it was produced ---
+   * once a lower layer changes, the input signature carried by that layer no longer matches (`streamLayers` in `snapshotFeed.ts`), and the old stream must be withdrawn on the spot, not wait for the next `setTime`:
+   * when paused with the hand held still on the ruler, after a lower layer is edited no other event will come to deliver. While playing, the next beat delivers by itself, so one extra delivery here does no harm; unchanged ones are not resent
+   * (`syncPlanes` compares by content, and the snapshot half has a 33 ms throttle).
    */
   useEffect(() => {
     if (!live || !stageReady) return;
@@ -1927,13 +2056,15 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [live, stageReady, project]);
 
   /*
-   * K5 (4) 的角色互换。**A / B 只是实例名**,谁是 `front` 由这个 state 说了算 ——
-   * 起手 A,互换之后就换过来了。两件事必须在**一次 React 提交**里做完:
-   * 对调两个 iframe 的可见性,和把「当前 front」指针切过去(`stageBridge` 的登记)。
+   * K5 (4) role swap. **A / B are only instance names**; which one is `front` is decided by this
+   * state: A starts as front, and after a swap it flips. Two things must be done in **one React
+   * commit**: swap the visibility of the two iframes, and switch the "current front" pointer over
+   * (the `stageBridge` registration).
    *
-   * 后台那个只能用 `opacity: 0; pointer-events: none` 藏 —— `display: none` /
-   * `visibility: hidden` 会让整份 OOPIF 退出渲染树,`requestVideoFrameCallback` 不再回调,
-   * K5 (3) 的 `mediaReady` 就只能等到超时(见 K5 (4) 的说明)。
+   * The background one can only be hidden with `opacity: 0; pointer-events: none`: `display: none` /
+   * `visibility: hidden` takes the whole OOPIF out of the render tree, `requestVideoFrameCallback`
+   * stops firing, and the `mediaReady` of K5 (3) can only wait until it times out (see the note on
+   * K5 (4)).
    */
   const [frontId, setFrontId] = useState<StageId>("A");
   const frontIdRef = useRef<StageId>("A");
@@ -1947,23 +2078,27 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     frontIdRef.current = nextId;
     flushSync(() => setFrontId(nextId));
     /*
-     * 基线跟着客户端走(根因 A):新 front 手里是补跑开始时灌的那一份,**不是**此刻的最新项目。
-     * 以前这里 `markPushed(role, getState().project)`,补跑期间的编辑(删片段)就永远补不上;
-     * 现在 `swapAndDress` 在互换之后补推一次 `syncProject`,按它真正持有的那份算增量。
+     * The baseline follows the client (root cause A): the new front holds the copy that was loaded when
+     * the catch-up run started, **not** the latest project right now. Before, this did
+     * `markPushed(role, getState().project)`, so edits made during the catch-up run (deleting a clip)
+     * could never be made up; now `swapAndDress` pushes `syncProject` once more after the swap and
+     * computes the delta against the copy it actually holds.
      */
     swapStageClients({ client: nextFront, caps: hostCapsRef.current[nextId] }, { client: nextBack, caps: hostCapsRef.current[cur] });
-    // 新 front 的抑制集合、流平面都从零开始记(暂停态互换时旧 front 挂着流平面,新 front 没有)
+    // The new front's suppressed set and stream plane both start from zero (when swapping while paused, the old front still holds the stream plane and the new front has none)
     suppressedRef.current = "";
     streamPlanesRef.current = "[]";
     return { front: nextFront, back: nextBack };
   }, []);
-  /* 退回单舞台(握手失败)时,可见舞台回到 A(B 已经卸掉) */
+  /* Falling back to a single stage (handshake failed): the visible stage returns to A (B is already unmounted) */
   useEffect(() => {
     if (!dual && frontIdRef.current !== "A") { frontIdRef.current = "A"; setFrontId("A"); }
   }, [dual]);
   /*
-   * C10 契约第 2 节「后台舞台的摆放与节拍」:在线双舞台的后台活由本页判空闲(页面可见、rAF 间隔不持续超过 500 ms、
-   * 父页 rIC 在回调),经 RPC 发开始 / 停止。桌面运行环境不发(照旧)。
+   * C10 contract section 2, "Placement and pacing of the background stage": for the online dual stage,
+   * this page decides when the background work is idle (page visible, rAF interval not persistently
+   * above 500 ms, parent page rIC calling back), and sends start / stop through RPC. The desktop app
+   * runtime does not send it (unchanged).
    */
   useEffect(() => {
     if (!dual || !ONLINE) return;
@@ -1973,57 +2108,57 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     if (!dual) return;
     setSwapHost({
       swapRoles,
-      // 2D 预览**不加 proxy=1**(见下面 iframe 那段注释),所以互换后重发的也是 false
+      // The 2D preview **does not add proxy=1** (see the comment on the iframe below), so what is resent after a swap is false too
       proxy: () => false,
-      // A1 的换档:舞台的 VideoTrack / 像素映射素材按它选档(T1a 审查 #5);来源见 LOCAL_HASHES
+      // A1 tier switch: the stage's VideoTrack / pixel map assets pick their tier by it (T1a review #5); see LOCAL_HASHES for the source
       localHashes: () => [...tierHashes()],
-      // 只有一个舞台时暂停后不经后台舞台追活渲(双舞台下不会是单舞台,这里只是兜一道)
+      // With only one stage, after pausing it does not go through the background stage to catch up the live render (with the dual stage this cannot be a single stage, this is just a safety net)
       singleStage: () => singleRef.current,
     });
     return () => setSwapHost(null);
   }, [dual, swapRoles]);
 
-  /** 这一轮播放已经为哪几张卡发起过互换(别每拍都发一次) */
+  /** For which cards this round of playback has already started a swap (do not send it on every tick) */
   const swapTriedRef = useRef(new Set<string>());
 
-  /* 验收探针的观察口:父页这一侧的状态(哪个 iframe 是 front、素材掐住没有、降级到哪一步) */
+  /* Observation port for the acceptance-check probe: state on the parent page side (which iframe is front, whether the assets are frozen, which step it downgraded to) */
   useEffect(() => {
     if (!live) return;
     const w = window as unknown as { __pcPreviewDiag?: () => unknown };
     w.__pcPreviewDiag = () => ({
       frontId: frontIdRef.current,
       mediaStalled: stalledRef.current,
-      // K4 / pinned 架构 10:这一轮播放里判过几次卡顿(正常播放应当是 0)
+      // K4 / pinned architecture 10: how many stalls were detected in this round of playback (normal playback should be 0)
       mediaStallCount: stallCountRef.current,
       mediaGapMaxMs: gapMaxRef.current,
       suppressed: suppressedRef.current ? suppressedRef.current.split("|") : [],
-      // 上一次发给可见舞台的流平面(暂停 / 拖动时也有)
+      // The last stream plane sent to the visible stage (also set on pause / drag)
       streamPlanes: streamPlanesRef.current,
       pendingDemote: [...pendingDemotes()],
       demoted: [...demotedClips()],
       swapInFlight: swapInFlight(),
       swapLog: stageSwapDebug(),
       swapTrace: stageSwapTrace(),
-      // 播放态互换的发起判断(整场景估时 / 追不上不发起)与停下时的让路次数
+      // Decision to start a swap in the playing state (whole-scene time estimate / cannot catch up means no start), and the count of yields when stopping
       swapPlaying: stageSwapPlayingDebug(),
       setTimeLog: setTimeLogRef.current.slice(),
       setTimeError: setTimeErrorRef.current,
-      // 这一次的档位(`onlineTier.ts`)与单舞台停下追一帧的上一次结果
+      // The tier of this time (`onlineTier.ts`) and the last result of the single-stage stop-and-catch-up-one-frame
       tier: ONLINE ? { ...tierState() } : null,
       single: singleRef.current,
       lowest: lowestRef.current,
       lastSettle: settleResultRef.current,
-      // C10:在线双舞台、按拍换快照、后台活开关、探针帧的可转移字节
+      // C10: online dual stage, snapshot swap per tick, background live render switch, transferable bytes of the probe frame
       dual: dualRef.current,
       onlineStages: onlineStageState(),
-      // 在线执行用户卡与素材效果卡:本页此刻能不能执行、为什么不能、路径号(按账号加项目固定,对其它项目的舞台保密;票据不在这里)
+      // Online execution of user cards and media effect cards: whether this page can execute right now, why not, and the path number (fixed per account plus project, kept secret from stages of other projects; the ticket is not here)
       cardExec: ONLINE ? { ...onlineCardExec(), sid: pageStageIsolation().sid } : null,
-      // 首次握手过渡期之后换回双舞台那一下(盖板因为什么、多久撤下)
+      // The moment of switching back to the dual stage after the first handshake transition period (why the cover overlay was up and how long until it came down)
       handover: { ...handoverInfoRef.current },
       beatSwap: beatSwapDebug(),
       backWork: backWorkDiag(),
       probeFrames: probeFrameDiag(),
-      // 常驻探针测过哪些片段、测量门什么时候开的(online-user-cards-probe 核对同步卡从没被测过)
+      // Which clips the resident probe has measured, and when the measurement gate opened (online-user-cards-probe checks that a sync card was never measured)
       probeRun: probeRunDiag(),
       measureGate: measureGateDiag(),
       hostCaps: { ...hostCapsRef.current },
@@ -2033,14 +2168,16 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [live]);
 
   /*
-   * 舞台事件的分发(E0 的七种;来源过滤在 stageBridge 里按角色做完了)。
+   * Dispatch of stage events (the seven of E0; source filtering is already done by role in
+   * stageBridge).
    *
-   * 监听只登记一次,所以里面读的一律是 ref / store,不读闭包里的 state。
+   * The listener is registered only once, so everything read inside is always a ref / store, never
+   * state from the closure.
    */
   useEffect(() => onStageEvent((e) => {
     switch (e.type) {
       case "frame": {
-        // K4:可见舞台每渲完一拍报一次 t,播放头跟它走(那时 Preview 的 rAF 循环不启动)
+        // K4: the visible stage reports t once after each tick it finishes rendering, and the playhead follows it (the Preview rAF loop does not start then)
         if (handoverRef.current) finishHandover(STAGE_HANDOVER_SETTLE_MS, "frame");
         const now = performance.now();
         const prev = lastFrameAtRef.current;
@@ -2048,16 +2185,19 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         armStallWatch();
         if (!firstBeatRef.current && playingRef.current) { firstBeatRef.current = true; setFirstBeatSeen((n) => n + 1); }
         actions.tick(e.sec);
-        // 这一拍的抑制集合和快照(C5:播放中发 setSuppressed(H(t)) + setSnapshots)
+        // The suppressed set and snapshots of this tick (C5: during playback send setSuppressed(H(t)) + setSnapshots)
         void pumpRef.current();
         /*
-         * K3(b) 的 `vtOk = false` 轻卡:播放头刚进入它时整场景在后台补跑后互换。
-         * 每张卡这一轮播放只发起一次 —— 补跑一次要几百毫秒,每拍发一次只会互相掐。
-         * 只给从它中间开始播放的卡:这一轮播放中逐拍走过挂载帧、自然进场的不发起(`playingSwapTargets`)。
-         * 拍序号先记下(连续、重复还是断开),再算目标。
+         * Light cards with `vtOk = false` from K3(b): when the playhead has just entered one, the whole scene
+         * is caught up in the background and then swapped.
+         * Each card starts only once per round of playback: a catch-up run takes a few hundred
+         * milliseconds, and sending one every tick would only make them pin each other down.
+         * Only for cards that playback starts in the middle of: those that this round of playback walks
+         * through the mount frame tick by tick and enters naturally do not start (`playingSwapTargets`).
+         * Record the tick number first (consecutive, repeated or broken), then compute the target.
          */
         notePlayFrame(e.sec);
-        // 只有双舞台才有后台舞台可换;在线页面的单舞台不走;最低一档播放时不活渲,也不走
+        // Only the dual stage has a background stage to swap with; the single stage of an online page does not go through it; at the lowest tier, playback does no live render and does not go through it either
         if (dualRef.current && !lowestRef.current && !swapInFlight()) {
           const targets = playingSwapTargets(getState().project, e.sec).filter((id) => !swapTriedRef.current.has(id));
           if (targets.length) {
@@ -2066,7 +2206,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
           }
         }
         if (!prev) break;
-        // 一拍的名义时长之外还慢了多少(见 MEDIA_STALL_MS 上面那段)
+        // How much slower than the nominal duration of one tick (see the comment above MEDIA_STALL_MS)
         const overBeat = now - prev - 1000 / Math.max(1, getState().project.fps || 30);
         if (overBeat > gapMaxRef.current) gapMaxRef.current = overBeat;
         const stalled = overBeat > MEDIA_STALL_MS;
@@ -2074,72 +2214,82 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         if (stalled) stallCountRef.current++;
         stalledRef.current = stalled;
         setMediaStalled(stalled);
-        // 舞台侧的素材层同步掐住 / 放回;主文档的音频由 MediaLayers 的 playing prop 管
+        // The stage-side media layer is frozen / released in sync; the audio of the main document is managed by the playing prop of MediaLayers
         void frontStage()?.setPlaying(!stalled && playingRef.current).catch(() => {});
         break;
       }
       case "ended":
         /*
-         * K4 播放到头:写 store(`pause()` + `seek(duration)`)。剩下三步
-         * (`setPlaying(false)`、`pause()` 拿 `stoppedAt`、`setTime(stoppedAt, { settle: true })`)
-         * 和按暂停**是同一段收尾** —— `playing` 翻成 false 之后由下面那个 effect 统一做,
-         * 少了最后一步的话最后一帧的重卡永远停在抑制态(pinned 架构 9)。
+         * K4 playback reached the end: write the store (`pause()` + `seek(duration)`). The remaining three
+         * steps (`setPlaying(false)`, `pause()` to get `stoppedAt`,
+         * `setTime(stoppedAt, { settle: true })`) are **the same wrap-up as pressing pause**: after
+         * `playing` flips to false, the effect below does it uniformly. Without the last step, the heavy
+         * cards of the last frame would stay in the suppressed state forever (pinned architecture 9).
          */
         actions.pause();
         actions.seek(e.sec);
         break;
       case "settled": {
         /*
-         * 舞台追上之后自己把这几张卡的抑制撤了(和露出活组件同一次提交,`StageView` 的 `releaseSettled`):
-         * 父页记的「上次发的抑制集合」不再可信,下一次照现状重发。互换转正的那一条(`clipIds` 为空)不走:
-         * 那边由 `swapRoles` 清记录、`markAllSettled` 记整台精确。
+         * After the stage catches up, it removes the suppression of these cards by itself (in the same commit
+         * as revealing the live component, `releaseSettled` of `StageView`): the "last sent suppressed set"
+         * recorded by the parent page is no longer trustworthy, and the next send resends it as things stand.
+         * The entry for a swap that became official (`clipIds` empty) is not handled here: there
+         * `swapRoles` clears the record and `markAllSettled` marks the whole stage as exact.
          */
         const named = e.clipIds.length > 0;
         if (named) suppressedRef.current = "\u0000";
-        // 只认这一次停下的那一秒:迟到的(用户又拖走了,舞台在新的跳转里已经把它们放回抑制)不算精确。
-        // 贴流的卡按 store 此刻的播放头比(`tRef` 要等下一次渲染才更新,刚暂停的那一下会慢一步);单舞台逐层追一帧照旧按 `tRef` 比
+        // Only the second of this stop counts: late ones (the user dragged away again, and the stage already put them back into suppression in the new jump) do not count as exact.
+        // Cards attached to the stream compare against the store's current playhead (`tRef` only updates on the next render, so right after a pause it lags one step); the single stage's layer-by-layer catch-up of one frame still compares against `tRef` as before
         const stale = singleRef.current ? Math.abs(e.sec - tRef.current) > 1e-6 : named && Math.abs(e.sec - getState().t) > 1e-6;
         if (stale) {
           if (named) void pumpRef.current();
           break;
         }
-        // K5:暂停态活渲就绪 —— 把这几张卡从投递基线里删掉(A3c),平面舞台自己摘了
+        // K5: live render ready in the paused state: remove these cards from the delivery baseline (A3c), and the flat stage removed them by itself
         noteSettled("front", e.clipIds);
         if (named) void pumpRef.current();
         break;
       }
       case "demote":
-        // K6:这张卡降级,父页整条 PUT { ...旧记录, capped: true, demoted: true }
+        // K6: this card is downgraded, and the parent page PUTs the whole record { ...old record, capped: true, demoted: true }
         void onStageDemote(e.clipId);
         break;
       case "probe":
       case "probe-frame":
-        // K1(R4):探针的成绩和它顺手推出来的死素材(消费方在 probeRunner)
+        // K1 (R4): the probe's results and the dead assets it incidentally derived (consumed in probeRunner)
         break;
       case "mediaReady":
-        // K5 第 (4) 步:后台舞台的素材层画出一帧了(消费方在 catchUp.ts,它自己订阅)
+        // K5 step (4): the background stage's media layer drew a frame (consumed in catchUp.ts, which subscribes by itself)
         break;
     }
   }), []);
 
   /**
-   * 选中描边用的外框:不用包裹层(每张卡都占满整屏),用片段的实体范围——
-   * 字幕卡的描边贴着字幕本身,而不是绕屏幕一圈。老渲染面没有 bounds 就退回包裹层。
+   * Outer frame for the selection outline: do not use the wrapper layer (every card fills the whole
+   * screen), use the clip's entity extent: the outline of a captions card hugs the captions
+   * themselves instead of going around the screen. An old render surface without bounds falls back to
+   * the wrapper layer.
    */
   /*
-   * R7(D3 第 4 步 / D5):主文档的 `mediaRects` 已经删掉。
+   * R7 (D3 step 4 / D5): the `mediaRects` of the main document has been removed.
    *
-   * 素材段现在由舞台自己画(E7 第 1 条,R3 落地),`data-pc-clip` 写在显示着的视频槽位
-   * 和图片层上,所以舞台的 `rects()` / `hitTest` 本来就认得它们 —— 主文档再补一份,
-   * 同一个 clipId 就会出现两次、命中时挑到错的那个。命中测试和实体框**全部走舞台**的
-   * `hitTest` / `rectsWithBounds`。
+   * Media clips are now drawn by the stage itself (E7 item 1, landed in R3), and `data-pc-clip` is
+   * written on the displayed video slot and image layer, so the stage's `rects()` / `hitTest` already
+   * recognize them: adding another copy in the main document would make the same clipId appear twice,
+   * and a hit would pick the wrong one. Hit testing and entity frames **all go through the stage's**
+   * `hitTest` / `rectsWithBounds`.
    */
 
   /**
-   * 一次往返拿全部活跃片段的外框 + 实体范围(rectsWithBounds,合并了以前 rects() 后逐个 bounds() 的 N+1)。
-   * 心跳只带 pixels: 'selected':只对选中的卡扫 canvas 像素(选中描边不回退到整块画布),
-   * 未选中的卡用元素矩形 —— 它们的框只进 rects 列表、不画描边。'all' 只在用户点击那一次用。
-   * 回包乱序时旧的一次不能盖掉新的,用代数守着。
+   * One round trip fetches the outer frames + entity extents of all active clips (rectsWithBounds,
+   * which merged the N+1 of the former rects() followed by bounds() one by one).
+   * The heartbeat only carries pixels: 'selected': only the selected card has its canvas pixels
+   * scanned (the selection outline does not fall back to the whole canvas); unselected cards use the
+   * element rectangle: their frames only go into the rects list and no outline is drawn. 'all' is
+   * used only at the moment of a user click.
+   * When replies arrive out of order, the old one must not overwrite the new one, guarded by a
+   * generation counter.
    */
   const rectsGen = useRef(0);
   const refreshRects = useCallback(async (pixels: "selected" | "all" = "selected") => {
@@ -2151,23 +2301,24 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         const list = await s.rectsWithBounds(pixels === "selected" ? { pixels, clipIds: selectionRef.current } : { pixels });
         cards = list.map((r) => ({ clipId: r.clipId, ...(r.bounds ?? r.rect) }));
       } catch {
-        // iframe 正在换(detached):这一次作废,新的 ready 会再刷一遍
+        // The iframe is being swapped (detached): this round is void, and the new ready will refresh once more
         return;
       }
     }
     if (gen !== rectsGen.current) return;
-    // R7:素材段也在舞台里了(E7 第 1 条),`rectsWithBounds` 一次就把卡片和素材段都带回来
+    // R7: media clips are in the stage now too (E7 item 1), and `rectsWithBounds` brings back both cards and media clips in one go
     setRects(cards);
   }, [stage]);
 
-  /** 刚被点中的片段:描边闪一下,让用户看清点到的是谁 */
+  /** The clip just clicked: the outline flashes so the user can see clearly which one was hit */
   const [flash, setFlash] = useState<{ clipId: string; token: number } | null>(null);
   const flashClip = (clipId: string) => setFlash({ clipId, token: Date.now() });
 
   /**
-   * 实体命中:问渲染面这一点上从最上层往下第一个「画了东西」的元素属于哪个片段。
-   * 透明容器穿过去——字幕卡在最上层也不会挡住下面的卡。老渲染面没有 hitTest 时
-   * 退回按包裹层外框找最上层的那个。
+   * Entity hit: ask the render surface which clip the first "drawn" element, from the top layer
+   * down, at this point belongs to. Transparent containers are passed through: a captions card on the
+   * top layer does not block the cards below. An old render surface without hitTest falls back to
+   * finding the topmost one by wrapper layer outer frame.
    */
   const hitAt = async (e: { clientX: number; clientY: number; currentTarget: EventTarget & Element }) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -2175,8 +2326,9 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     const y = (e.clientY - rect.top) / scale;
     const s = stage();
     /*
-     * R7:卡片和素材段都在舞台里,一次 `hitTest` 往返就是最终答案(D3)。
-     * 主文档只在**完全没有舞台**时(还没握手 / iframe 正在换)退回上一轮 `rects` 找一下。
+     * R7: cards and media clips are all in the stage, and one `hitTest` round trip is the final answer
+     * (D3). The main document falls back to the previous round's `rects` only when there is **no stage
+     * at all** (handshake not done yet / iframe being swapped).
      */
     let card: { clipId: string; left: number; top: number; width: number; height: number } | null = null;
     if (s) {
@@ -2188,52 +2340,65 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     return { hit, overlayRect: rect };
   };
 
-  // 项目文档变了就发过去:经 stageBridge 只发变了的片段(两层 diff),没有基线时整份 + reset
+  // Send the project document when it changes: through stageBridge only the changed clips are sent (two-level diff), and the whole copy + reset when there is no baseline
   useEffect(() => {
-    // 界限搜索测量期间舞台上是缩水项目:不推(测完整份重灌、stageReady +1 再来一次)
+    // During bound search measurement the stage holds a shrunken project: do not push (after measuring, reload the whole copy, stageReady +1 and go again)
     if (!stageReady || costSearchMeasuring()) return;
     void syncProject("front", project).then(() => refreshRects(), () => {});
   }, [stageReady, project, refreshRects]);
 
-  // 时间变了就下发。播放中是连续推进;拖播放头 / 跳转 / 重播(playToken 变)都按跳转处理:
-  // 重挂载 + 从入点补跑到那一刻。两者合在一个 effect 里,一次 seek 只渲染一帧。
+  // Send down when time changes. During playback it advances continuously; dragging the playhead / jump / replay (playToken changes) are all handled as a jump:
+  // remount + catch up from the in-point to that moment. Both are merged in one effect, so one seek renders only one frame.
   /*
-   * 只认「时间真的变了」:stage / refreshRects 这两个回调的引用会跟着项目、缩放一起换,
-   * 以前它们一换这个 effect 就重跑,于是 Agent 每写一次项目都多来一次 jump 渲染 ——
-   * 重挂载活跃的卡、从入点逐帧补跑到播放头,实测播放头在 60 秒处每次 230~350 ms 的主线程,
-   * 而项目变了该不该补跑,setProject 那边(StageView)已经按「哪张卡变了、在不在画面上」判过了。
+   * Only recognize "time really changed": the references of the stage / refreshRects callbacks change
+   * along with the project and zoom. Before, this effect reran whenever they changed, so every time the
+   * Agent wrote the project there was an extra jump render: remount the active cards and catch up
+   * frame by frame from the in-point to the playhead, measured at 230~350 ms of main thread each time
+   * with the playhead at 60 seconds. Whether a project change needs a catch-up run is already judged
+   * by setProject (StageView) by "which card changed, and whether it is on screen".
    */
   /*
-   * E0:暂停、拖动只发 setTime(不重挂载、不递增 playToken —— 时钟拨过去、提交 React、钉动画);
-   * 父页对可见舞台**不再**发 render(jump)。
+   * E0: pause and drag only send setTime (no remount, no playToken increment: the clock is moved over,
+   * React commits, animations are pinned); the parent page **no longer** sends render(jump) to the
+   * visible stage.
    *
-   * **E6:这个 effect 拆成了两半。** 发 `setTime(t)` 那半**播放中不跑**(K4 由舞台自己按帧节拍
-   * 推进,父页再发就是两个人抢方向盘);`refreshRects()` 那半改成播放中每 500 ms 一次的定时器
-   * (见下面那个 effect),结果按请求序号丢弃过期的(`refreshRects` 里的 `rectsGen`)。
-   * 先同步项目再拨时间,两条 RPC 顺序不能反(setTime 要在新项目上算活跃卡)。
+   * **E6: this effect is split into two halves.** The half that sends `setTime(t)` **does not run
+   * during playback** (K4 is advanced by the stage itself on its frame ticks, and the parent page
+   * sending it too would be two people fighting over the steering wheel); the `refreshRects()` half
+   * becomes a timer that fires every 500 ms during playback (see the effect below), and stale results
+   * are discarded by request number (`rectsGen` in `refreshRects`).
+   * Sync the project first and then move the time; the order of the two RPCs must not be reversed
+   * (setTime needs to compute the active cards on the new project).
    */
   const scrubbing = useSyncExternalStore(subscribeScrub, isScrubbing, isScrubbing);
   /*
-   * 双舞台模式下由页面触发预渲染(公共 hook,legacy 那一路在 `UnifiedPreview` 里用同一份):
-   * 编辑推送成功(`frameRequest` 先 `alignMirror`)且空闲(不在播放、不在拖动)时防抖发 `preload`,没就绪就接着问。
+   * In dual stage mode the page triggers the prerender (shared hook; the legacy path uses the same one
+   * in `UnifiedPreview`): when an edit push succeeds (`frameRequest` does `alignMirror` first) and it
+   * is idle (not playing, not dragging), send `preload` with debounce, and keep asking if it is not ready.
    */
   usePrerenderPreload(project, { enabled: dual && !ONLINE, idle: !playing && !scrubbing, waitForProbe: true });
-  /** 诊断:最近几次 setTime 与上一次失败(探针排查暂停后没追到活渲用) */
+  /** Diagnostics: the last few setTime calls and the last failure (for the probe to investigate why the live render was not caught up after pausing) */
   const setTimeLogRef = useRef<{ at: number; sec: number; settle: boolean }[]>([]);
   const setTimeErrorRef = useRef<{ at: number; sec: number; error: string } | null>(null);
   const scrubbingRef = useRef(scrubbing);
   scrubbingRef.current = scrubbing;
   const lastRenderKey = useRef("");
   /**
-   * 给可见舞台拨一次时间。**暂停和拖动的唯一入口**(播放走 K4)。
+   * Move the time of the visible stage once. **The only entry for pause and drag** (playback goes
+   * through K4).
    *
-   * `settle: true` 启动 K5 的暂停态活渲:点时间轴、拖动松开、按暂停、播放到头都带它,
-   * **拖动过程中不带**(E3)。
+   * `settle: true` starts the paused-state live render of K5: clicking the timeline, releasing a drag,
+   * pressing pause, and playback reaching the end all carry it, and
+   * **it is not carried during a drag** (E3).
    */
   /**
-   * 发给可见舞台的 `setTime` 的代数(每发一次 +1)。单舞台停下追一帧按「此刻最新的 setTime + 秒数」去重:
-   * 暂停那一下父页会连着发几次 setTime(暂停、舞台最后一拍改写的 t),各自的追一帧可能在最后一次 setTime 之后才发出;
-   * 同一秒两次追一帧在舞台里并发,后一次会把前一次画好的层打断成「没画好」,画好的层又回到抑制(单舞台在线探针 G3 实测)。
+   * Generation of the `setTime` sent to the visible stage (+1 on each send). The single stage's
+   * stop-and-catch-up-one-frame dedupes by "the latest setTime right now + the second": at the moment
+   * of pausing, the parent page sends setTime several times in a row (the pause, and the t rewritten
+   * by the stage's last tick), and each one's catch-up of one frame may be sent only after the last
+   * setTime; two catch-ups of one frame at the same second run concurrently in the stage, and the
+   * later one would interrupt the layers the earlier one had drawn into "not drawn", and the drawn
+   * layers would go back to suppression (measured by the single-stage online probe G3).
    */
   const setTimeEpochRef = useRef(0);
   const settleKeyRef = useRef<string | null>(null);
@@ -2248,37 +2413,42 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         clearSettled("front", `setTime ${sec}`);
         syncPlanes(s, { project: getState().project, t: sec, playing: false, single: singleRef.current, sparseOnly: singleRef.current });
       }
-      // 只有一个舞台时停下追一帧另走 `settleLayers`(下面),舞台的 K5 第一路不起
+      // With only one stage, stop-and-catch-up-one-frame goes through `settleLayers` instead (below), and the stage's first path of K5 does not start
       const { settle: _settle, ...stageOpts } = opts;
       setTimeEpochRef.current++;
       await s.setTime(sec, singleRef.current ? stageOpts : opts);
     } catch (e) {
-      // iframe 正在换(detached):新的 ready 会重发
+      // The iframe is being swapped (detached): the new ready will resend
       setTimeErrorRef.current = { at: Math.round(performance.now()), sec, error: String((e as Error)?.message ?? e).slice(0, 120) };
       markBaselineReset("front");
       return;
     }
-    // 换回双舞台的衔接:新的可见舞台按新项目落好这一帧了,稍等它画到屏上再撤盖板
+    // Handoff for switching back to the dual stage: the new visible stage has settled this frame on the new project, wait a moment for it to reach the screen before removing the cover overlay
     if (handoverRef.current && s === stage()) finishHandover(STAGE_HANDOVER_SETTLE_MS, "setTime");
     void refreshRects();
     void pumpRef.current();
     /*
-     * K5 第二路:只要这一刻有一张判重卡是 `vtOk = false`,就让后台舞台整场景补跑、
-     * 补完互换成精确活渲。`vtOk` 的那些已经在可见舞台里自己追了(K5 第一路,舞台侧)。
+     * K5 second path: as long as at this moment there is a card judged heavy with `vtOk = false`, make the
+     * background stage catch up the whole scene and, once done, swap into an exact live render. Those
+     * with `vtOk` already catch up by themselves in the visible stage (K5 first path, stage side).
      */
-    // 互换完了再投一次:新的可见舞台手里没有流平面,把播放头下这一帧先解好(互换期间 `pumpFeed` 不动流平面)
-    if (dualRef.current && opts.settle && !singleRef.current) void runSettleSwap(sec).then((swapped) => { if (swapped) void pumpRef.current(); }, () => { /* 后台舞台正在换:下一次 setTime 会重来 */ });
+    // Deliver once more after the swap is done: the new visible stage holds no stream plane, so first decode the frame under the playhead (during the swap `pumpFeed` does not touch the stream plane)
+    if (dualRef.current && opts.settle && !singleRef.current) void runSettleSwap(sec).then((swapped) => { if (swapped) void pumpRef.current(); }, () => { /* The background stage is being swapped: the next setTime will start over */ });
     /*
-     * 只有一个舞台时停下追当前一帧:暂停、点击或拖动松开、播放到头的这一次,舞台在可见舞台里把当前这一帧的所有卡活渲一次;
-     * 画好之前照兜底顺序显示(有预渲染结果贴它,没有是占位),画好一层替换一层,不设时限(最低一档「停下以后……不设时限」)。
+     * With only one stage, stop and catch up the current frame: on this pause, click or drag release, or
+     * playback reaching the end, the stage live-renders all cards of the current frame once in the
+     * visible stage;
+     * until drawn they are shown in fallback order (the prerender output is pasted on if there is one,
+     * a placeholder if not), and each layer replaces the previous one as it is drawn, with no time limit
+     * (lowest tier, "after stopping ... no time limit").
      */
     if (liveRef.current && opts.settle && singleRef.current) void settleLayersAt(s, sec);
   }, [stage, refreshRects, syncPlanes]);
-  /** 单舞台停下追一帧的代数(又停了一次 / 又动了:旧的结果不记)与上一次的结果(诊断) */
+  /** Generation of the single-stage stop-and-catch-up-one-frame (stopped again / moved again: the old result is not recorded) and the last result (diagnostics) */
   const settleGenRef = useRef(0);
   const settleResultRef = useRef<(SettleResult & { at: number }) | null>(null);
   const settleLayersAt = useCallback(async (s: StageRpcClient, sec: number): Promise<void> => {
-    // 同一次 setTime 之后同一秒已经在追:不再发第二次(见 setTimeEpochRef)
+    // After the same setTime the same second is already being caught up: do not send a second time (see setTimeEpochRef)
     const key = `${setTimeEpochRef.current}|${sec}`;
     if (settleKeyRef.current === key) return;
     settleKeyRef.current = key;
@@ -2291,46 +2461,52 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     }
     if (gen !== settleGenRef.current) return;
     settleResultRef.current = { ...result, at: Date.now() };
-    // 画好的层已经收到 `settled`;再投一次,把基线对齐到舞台此刻的样子
+    // The drawn layers have already received `settled`; deliver once more to align the baseline with how the stage looks right now
     void pumpRef.current();
   }, []);
-  /** K4 的起 / 停节拍只认 `playing`,所以那个 effect 读这一份、不把 `sendSetTime` 进依赖 */
+  /** The start / stop tick of K4 only recognizes `playing`, so that effect reads this copy and does not put `sendSetTime` in its dependencies */
   const sendSetTimeRef = useRef(sendSetTime);
   sendSetTimeRef.current = sendSetTime;
-  /** 上一次这个 effect 看到的 `playing` —— 「刚从播放翻成暂停」那一次要让给收尾那个 effect */
+  /** The `playing` this effect saw last time: the "just flipped from playing to paused" occasion must be left to the wrap-up effect */
   const wasPlayingRef = useRef(false);
   useEffect(() => {
     if (!stageReady) return;
-    // K4:播放中播放头由舞台的 `frame` 推,父页一拍都不发
+    // K4: during playback the playhead is driven by the stage's `frame`, and the parent page sends nothing on any tick
     if (live && playing) { wasPlayingRef.current = true; return; }
     /*
-     * **刚暂停的那一次不在这里发**(E0 / R5-4)。收尾是下面那个 effect 的事,它按
-     * `pause()` 回包的 `stoppedAt` 发;这里手上只有 `store.t`,可能比舞台落后一拍,
-     * 抢着发一次会走向后跳路径(全场 stateful 卡重挂载、`.pc-settling` 闪一下),
-     * 而且把 K5 的追帧 / 互换白启动一遍。播放到头(`ended`)走的是同一段。
+     * **The occasion of just pausing is not sent here** (E0 / R5-4). The wrap-up is the job of the effect
+     * below, which sends by the `stoppedAt` in the `pause()` reply; here we only have `store.t`, which
+     * may lag the stage by one tick, and rushing to send once would take the backward-jump path (remount
+     * of all stateful cards in the whole scene, a flash of `.pc-settling`), and would also start the
+     * catch-up / swap of K5 in vain. Playback reaching the end (`ended`) goes through the same path.
      */
     const justPaused = live && wasPlayingRef.current;
     wasPlayingRef.current = false;
     if (justPaused) return;
     /*
-     * **`scrubbing` 也进键**(E3 / pinned 架构 9)。拖动松开、在时间轴上点一下,
-     * `t` 都可能一点没变(松手坐标等于最后一次 flush 的位置;点击时 `seek` 和
-     * `beginScrub` 在同一个 React 事件里批成一次渲染,那一次 `scrubbing` 已经是 true)。
-     * 键里不带这一位的话,拖动 / 点击结束之后永远补不上那条 `settle: true`,
-     * 判重卡就停在快照上 —— 正是「点时间轴、拖动松开后不精确活渲」那条。
-     * legacy 下 `dual` 为 false,后缀恒定,不会多发。
+     * **`scrubbing` also goes into the key** (E3 / pinned architecture 9). On releasing a drag or
+     * clicking once on the timeline, `t` may not have changed at all (the release coordinate equals the
+     * position of the last flush; on a click, `seek` and `beginScrub` are batched into one render in the
+     * same React event, and `scrubbing` is already true at that render).
+     * Without this bit in the key, after a drag / click ends the `settle: true` one is never made up,
+     * and the cards judged heavy stay on the snapshot: exactly the "after clicking the timeline or
+     * releasing a drag, the live render is not exact" case.
+     * Under legacy `dual` is false and the suffix is constant, so nothing extra is sent.
      */
     const key = `${stageReady}|${t}|${playToken}|${live && scrubbing ? "scrub" : "settle"}`;
     if (key === lastRenderKey.current) return;
     lastRenderKey.current = key;
-    // 单舞台同样带 settle:停下时逐层追当前一帧,拖动过程中不带
+    // The single stage carries settle too: on stop, catch up the current frame layer by layer; not carried during a drag
     void sendSetTime(t, live && !scrubbingRef.current ? { settle: true } : {});
   }, [stageReady, live, playing, t, playToken, scrubbing, sendSetTime]);
 
   /*
-   * 同步卡运行状态变成 ready、或测量结果到了导致分派表重算后，停着的舞台重新投递抑制并结算当前帧：
-   * 刚打开项目时同步卡尚未 ready，首次 setTime(t, { settle: true }) 按 localOnly 把它记入抑制（显示沙漏）、
-   * swapTrace 也只记下没测过的那一次；之后卡 ready、测量完成，暂停中若不再触发结算就会一直停在沙漏。
+   * After a sync card's run state becomes ready, or measurement results arrive and the dispatch table
+   * is recomputed, the stopped stage redelivers the suppression and settles the current frame:
+   * when a project has just been opened the sync card is not ready yet, so the first
+   * setTime(t, { settle: true }) records it into the suppression per localOnly (showing an hourglass),
+   * and swapTrace only records that one unmeasured occasion; after that the card becomes ready and
+   * measurement completes, and if settling is not triggered again while paused it stays on the hourglass forever.
    */
   useEffect(() => {
     if (!live) return;
@@ -2360,7 +2536,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     return () => { offPlan(); offRunStates(); offProbe(); };
   }, [live]);
 
-  /* E6:播放中 `refreshRects` 改成定时器,一次往返、结果按序号丢过期的 */
+  /* E6: during playback `refreshRects` becomes a timer, one round trip, and stale results are discarded by sequence number */
   useEffect(() => {
     if (!live || !stageReady || !playing) return;
     const id = window.setInterval(() => { void refreshRects(); }, RECTS_POLL_MS);
@@ -2368,21 +2544,26 @@ export function Preview(props: { variant?: "mobile" } = {}) {
   }, [live, stageReady, playing, refreshRects]);
 
   /*
-   * K4 的父页侧:`playing` 翻成 true 就 `play(t)` 起节拍,翻成 false 就走收尾
-   * (`setPlaying(false)` → `pause()` 拿 `stoppedAt` → `setTime(stoppedAt, { settle: true })`)。
+   * Parent-page side of K4: when `playing` flips to true, call `play(t)` to start the tick loop; when it
+   * flips to false, run the wrap-up
+   * (`setPlaying(false)` → `pause()` to get `stoppedAt` → `setTime(stoppedAt, { settle: true })`).
    *
-   * **以舞台最后一拍的 `t` 为准,不用 `store.t`**(E0):store 的 `t` 可能比舞台落后一拍,
-   * 按它发会走向后跳路径、全场 stateful 卡重挂载。
-   * 播放到头(`ended`)走的是同一段 —— 那边只写 store,`playing` 翻 false 之后落到这里。
+   * **Use the `t` of the stage's last tick, not `store.t`** (E0): the store's `t` can lag the stage by
+   * one tick, and sending it would take the backward-jump path and remount every stateful card.
+   * Reaching the end of playback (`ended`) goes through the same code: that side only writes the store,
+   * and after `playing` flips to false it lands here.
    *
-   * 起播位置见 `playStartOf`:播放头不在内容范围里就回到最早那张卡(和 legacy 循环同一条规矩)。
+   * For the start position see `playStartOf`: if the playhead is outside the content range, go back to
+   * the earliest card (the same rule as the legacy loop).
    */
   /**
-   * 这一次按播放从哪一秒起。和 legacy 的墙钟循环(`:155-158`)逐字同一条规矩:
-   * 播放头在第一张卡之前、或者已经播到头,就从最早那张卡重播。
+   * The second from which this playback run starts. It is word for word the same rule as the legacy
+   * wall-clock loop (`:155-158`): if the playhead is before the first card, or has already reached the
+   * end, replay from the earliest card.
    *
-   * R7 把缺省翻成舞台之后这条规矩漏了,播到头再按播放会在舞台第一拍就
-   * `rawSec >= duration`、立刻 post `ended` —— 按下去什么都不发生(R7-11 的回归)。
+   * After R7 made the stage the default, this rule was missed: pressing play after reaching the end hit
+   * `rawSec >= duration` on the stage's first tick and posted `ended` immediately, so pressing play did
+   * nothing (the R7-11 regression).
    */
   const playStartOf = useCallback((): number => {
     const project = getState().project;
@@ -2390,7 +2571,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     const start = contentStartRef.current;
     const from = tRef.current;
     if (from >= start && from < project.duration - 0.5 / fps) return from;
-    // store 也要跟着回到起点:时间轴、素材层、`ended` 之后的那次 settle 都按 store.t 走
+    // The store must also go back to the start: the timeline, the media layer and the settle after `ended` all follow store.t
     actions.seek(start);
     return start;
   }, []);
@@ -2410,57 +2591,68 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       void (async () => {
         try {
           /*
-           * **先等项目送到这个舞台,再起节拍。**
+           * **First wait for the project to reach this stage, then start the tick loop.**
            *
-           * 新 iframe 握手之后 `stageReady` +1,上面那个 effect 发 `syncProject`、这里发 `play` ——
-           * 但 `syncProject` 走 stageBridge 的串行链(`chain.then`),真正 postMessage 要晚一个微任务,
-           * 而 `play` 是同步发的。于是「带着 `playing` 换 iframe」(切回 2D、舞台热重载)时
-           * 舞台先收到 `play`,手里还没有项目,回 `no-project`;这里又不重试 —— 按钮是「暂停」、画面不动。
-           * 串在同一条链上等它落定,顺序就钉死了。基线没变时 `syncProject` 什么都不发,不多一次往返。
+           * After a new iframe handshake `stageReady` is incremented; the effect above sends `syncProject` and
+           * this one sends `play`. But `syncProject` goes through stageBridge's serial chain (`chain.then`), so
+           * the real postMessage is one microtask later, while `play` is sent synchronously. So when "swapping
+           * the iframe while `playing`" (switching back to 2D, stage hot reload), the stage receives `play`
+           * first, has no project yet and replies `no-project`; there is no retry here, so the button shows
+           * "Pause" and the picture does not move.
+           * Chaining on the same line and waiting for it to settle pins the order down. When the baseline is
+           * unchanged `syncProject` sends nothing, so there is no extra round trip.
            */
           await syncProject("front", getState().project);
           if (!alive) return;
           const from = playStartOf();
-          // 这一轮播放的起点:起播那一刻已经挂着的卡算「从中间开始」,之后逐拍挂上的算自然进场(播放态互换只给前者)
+          // Start of this playback run: cards already mounted at the moment playback starts count as "starting mid-way", and those mounted tick by tick afterwards count as natural entrances (the playing-state swap only applies to the former)
           notePlayRunStart(from);
           /*
-           * 起播之前先把这一秒的流平面、抑制、快照摆好(以前等第一拍的 `frame` 才发:头一拍重卡是活渲的,又慢又会和流接不上)。
-           * 暂停着舞台已经把播放头下这一帧先解好了,这里一抑制,头一拍就是流的画面;流还没画出来的,舞台先不藏它原来的画面。
-           * 不等回包:几条消息和下面的 `play` 按发出的先后到。
+           * Before playback starts, set up this second's stream plane, suppression and snapshots first (before,
+           * this was sent only when the first tick's `frame` arrived: heavy cards on the first tick are live
+           * rendered, which is slow and can fail to join up with the stream).
+           * While paused the stage has already decoded the frame under the playhead; once suppressed here, the
+           * first tick shows the stream's picture. If the stream has not drawn yet, the stage does not hide its
+           * original picture first.
+           * Do not wait for replies: the several messages arrive in the order they were sent, before the `play` below.
            */
           void pumpRef.current({ t: from, playing: true });
           const reply = await s.play(from);
           if (!alive) return;
-          // 首拍的到达间隔以 `play()` 回包时刻为起点(K4)
+          // The first tick's arrival interval starts from the moment the `play()` reply arrives (K4)
           if (reply.ok) { lastFrameAtRef.current = performance.now(); armStallWatch(); }
           /*
-           * 舞台说起不了(没项目、角色不对):**把 store 也翻回暂停**,别让界面停在「在播」。
-           * 翻回去之后下面那一支照常收尾(`pause()` 拿 `stoppedAt` → `setTime(settle)`),
-           * 画面和播放头对齐到舞台真实停着的那一帧;用户再按一次播放就是一次干净的起播。
+           * The stage says it cannot start (no project, wrong role): **flip the store back to paused too**, so
+           * the UI does not stay stuck on "playing".
+           * After flipping back, the branch below wraps up as usual (`pause()` to get `stoppedAt` →
+           * `setTime(settle)`), aligning the picture and playhead to the frame the stage is really stopped on;
+           * when the user presses play again it is a clean start.
            */
           else if (getState().playing) actions.pause();
-        } catch { /* iframe 正在换:新的握手会让这个 effect 带着 playing 重跑一遍 */ }
+        } catch { /* The iframe is being swapped: the new handshake will rerun this effect with playing */ }
       })();
     } else {
       void (async () => {
-        // **发 pause() 的这一处同步清空 lastRenderKey**(E6),否则下一次 setTime 被去重吞掉
+        // **Clear lastRenderKey synchronously at the one place that sends pause()** (E6), otherwise the next setTime is swallowed by dedup
         lastRenderKey.current = "";
         window.clearTimeout(stallWatchRef.current);
         stalledRef.current = false;
         setMediaStalled(false);
         let stoppedAt = tRef.current;
         /*
-         * 只有「刚从播放停下来」才以舞台的 `stoppedAt` 为准。暂停中换了一个新的渲染面(`stageReady` +1:
-         * 卡片代码装上后舞台整页重载、热更新、iframe 重挂)也会走到这一支 —— 新舞台还停在 0,
-         * 照它改 store 就把用户定好的播放头冲回 0(C6.6 T9:成员加入共享项目、装上用户卡之后播放头从 2.5 s 回到 0)。
-         * 那时以 store 的 `t` 为准,只把它发给新舞台。
+         * Only when "just stopped from playing" is the stage's `stoppedAt` authoritative. A new render surface
+         * swapped in while paused (`stageReady` +1: the whole stage page reloads after card code is installed,
+         * hot update, iframe remount) also reaches this branch: the new stage is still at 0, and updating the
+         * store from it would wash the user-set playhead back to 0 (C6.6 T9: after a member joined a shared
+         * project and installed a user card, the playhead went from 2.5 s back to 0).
+         * In that case the store's `t` is authoritative, and it is only sent to the new stage.
          */
         const fromPlay = playedRef.current;
         playedRef.current = false;
         try {
           const reply = await s.pause();
           if (fromPlay && reply.ok && typeof reply.stoppedAt === "number") stoppedAt = reply.stoppedAt;
-        } catch { /* iframe 正在换 */ }
+        } catch { /* The iframe is being swapped */ }
         if (!alive) return;
         if (Math.abs(getState().t - stoppedAt) > 1e-6) actions.tick(stoppedAt);
         await sendSetTimeRef.current(stoppedAt, { settle: true });
@@ -2468,22 +2660,26 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     }
     return () => { alive = false; };
     /*
-     * **依赖只有三项**。`t` 每拍都在变,`stage` / `sendSetTime` 的身份也会跟着换 ——
-     * 进了依赖这个 effect 就每拍重跑一次:播放中会把刚起的节拍循环停掉重起,
-     * 暂停中那一支的 `actions.tick(stoppedAt)` 会把自己再触发一遍(无限更新)。
+     * **Only three dependencies.** `t` changes every tick, and the identities of `stage` / `sendSetTime`
+     * change along with it: if they were in the dependencies this effect would rerun every tick, stopping
+     * and restarting the tick loop just started during playback, and while paused the branch's
+     * `actions.tick(stoppedAt)` would trigger itself again (infinite updates).
      */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, stageReady, playing]);
 
   /*
-   * R3 的最小接线:非 legacy 下素材层在**舞台里**(E7 第 1 条),它要三样东西才动得起来 ——
-   * `mediaT`(跟哪一刻)、`scrubbing`(seek 放疏一点)、`playing`(只管素材层,不碰 K4 的节拍循环)。
+   * R3's minimal wiring: outside legacy the media layer lives **in the stage** (E7 item 1), and it needs
+   * three things to run: `mediaT` (which moment to follow), `scrubbing` (seek more sparsely) and
+   * `playing` (only drives the media layer, does not touch K4's tick loop).
    *
-   * **两个舞台都发**(E3:「素材层 `mediaT = t`,两种角色一样」):K5 第二路互换前
-   * `back` 的素材必须已经在目标拍上,不然互换后偏差过 `HARD_SEEK_SEC`、必付一次硬 seek。
-   * legacy 下一条都不发 —— 那边素材层还在主文档。
+   * **Send to both stages** (E3: "media layer `mediaT = t`, same for both roles"): before K5's second
+   * swap, the media of `back` must already be at the target tick, otherwise after the swap the drift
+   * exceeds `HARD_SEEK_SEC` and a hard seek must be paid.
+   * Under legacy none of these is sent: there the media layer is still in the main document.
    *
-   * `playing` 带上 `mediaStalled`(K4):舞台的素材层和主文档的音频一起掐、一起放。
+   * `playing` carries `mediaStalled` (K4): the stage's media layer is paused and resumed together with
+   * the main document's audio.
    */
   useEffect(() => {
     if (!live || !stageReady) return;
@@ -2502,7 +2698,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       void c.setMediaT(t).catch(() => {});
     }
   }, [live, stageReady, t]);
-  // C6.6:换档集合变了就下发给两个舞台(E3:素材层两种角色一样)
+  // C6.6: when the tier-switch set changes, send it to both stages (E3: media layer is the same for both roles)
   useEffect(() => {
     if (!live || !stageReady) return;
     for (const id of STAGE_IDS) {
@@ -2512,13 +2708,16 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     }
   }, [live, stageReady, tierList]);
 
-  // 画面层和声音层都由 MediaLayers 管:可以同时有多条画面(重叠+淡化=交叉溶解),音频段单独出声
+  // Both the picture layer and the sound layer are managed by MediaLayers: several pictures can be present at once (overlap + fade = crossfade), and audio clips sound on their own
 
-  // 命中测试与拖拽逻辑
+  // Hit-test and drag logic
   /**
-   * 命中是一次异步往返(舞台在 iframe 里),但**起点不能丢**:pointerdown 时先同步抓住指针、记下起点,
-   * 再 await hitTest;await 期间到达的 pointermove / pointerup 先累积,命中结果回来后再决定是选中还是开始拖动 ——
-   * 「点画布后立刻拖动」的那几个 move 事件不会漏,松手早于回包也不会留下一个永远在拖的状态。
+   * A hit is an async round trip (the stage is in an iframe), but **the start point must not be lost**:
+   * on pointerdown, synchronously capture the pointer and record the start point first, then await
+   * hitTest; pointermove / pointerup events arriving during the await accumulate first, and once the hit
+   * result returns we decide whether to select or start dragging.
+   * The first few move events of "click the canvas and drag at once" are not missed, and releasing
+   * before the reply arrives will not leave a state that drags forever.
    */
   const handleOverlayPointerDown = async (e: React.PointerEvent) => {
     if (e.button !== 0) return;
@@ -2526,9 +2725,9 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     const startX = e.clientX;
     const startY = e.clientY;
     const pointerId = e.pointerId;
-    try { overlay.setPointerCapture(pointerId); } catch { /* 指针已经没了,照样能算命中 */ }
+    try { overlay.setPointerCapture(pointerId); } catch { /* The pointer is already gone, but the hit can still be computed */ }
 
-    // await 期间的事件先记着
+    // Events during the await are recorded first
     let lastX = startX;
     let lastY = startY;
     let released = false;
@@ -2544,21 +2743,21 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     window.removeEventListener("pointerup", onEarlyUp);
     window.removeEventListener("pointercancel", onEarlyUp);
 
-    const release = () => { try { if (overlay.hasPointerCapture(pointerId)) overlay.releasePointerCapture(pointerId); } catch { /* 已经放开了 */ } };
+    const release = () => { try { if (overlay.hasPointerCapture(pointerId)) overlay.releasePointerCapture(pointerId); } catch { /* Already released */ } };
 
     if (tool === "select") {
       release();
-      // 选择工具：点在实体上则选中并闪一下描边，点空白(或透明区域下面没东西)则取消选中
+      // Select tool: clicking an entity selects it and flashes its outline; clicking blank space (or nothing under a transparent area) deselects
       if (targetRect) {
         actions.select([targetRect.clipId]);
         flashClip(targetRect.clipId);
-        // 点击那一次用 'all':新选中的 canvas 卡描边按像素框来,不回退到整块画布
+        // Use 'all' for this click: the outline of a newly selected canvas card follows the pixel box, and does not fall back to the whole canvas
         void refreshRects("all");
       } else {
         actions.select([]);
       }
     } else if (tool === "move") {
-      // 移动工具：按下开始拖拽，移动时更新本地拖拽状态，松开才写入 store 记录撤销
+      // Move tool: press to start dragging, update the local drag state while moving, and only write to the store on release to record undo
       if (!targetRect) { release(); return; }
       actions.select([targetRect.clipId]);
       flashClip(targetRect.clipId);
@@ -2567,7 +2766,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       let currentDx = 0;
       let currentDy = 0;
       const applyMove = (cx: number, cy: number) => {
-        // 覆盖层是按 scale 缩放显示的,位移换算回舞台像素,和 frame 用的是同一套单位
+        // The overlay is displayed scaled by scale; convert the displacement back to stage pixels, the same units frame uses
         currentDx = (cx - startX) / scale;
         currentDy = (cy - startY) / scale;
         setDragPreview({ clipId, dx: currentDx, dy: currentDy });
@@ -2578,10 +2777,12 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         release();
         if (Math.abs(currentDx) > 0.5 || Math.abs(currentDy) > 0.5) {
           /*
-           * 拖动改的是 clip 的 frame(位置框),不是卡片参数:卡片没有 x / y 参数,以前往 params 里
-           * 写 x / y 等于什么都没改 —— 描边跟着鼠标走了一段,松手就弹回去。
-           * 走 nudgeFrame 和 Agent 的 nudge / set_position 是同一条路:没有 frame 的卡先按铺满舞台
-           * 算出当前位置再加位移,松手只写一次,一次拖动 = 一步撤销。
+           * Dragging changes the clip's frame (the position box), not the card parameters: cards have no x / y
+           * parameters, and writing x / y into params used to change nothing: the outline followed the mouse for
+           * a while and then snapped back on release.
+           * It goes through nudgeFrame, the same path as the Agent's nudge / set_position: for a card without a
+           * frame, first compute the current position as if it filled the stage, then add the displacement; it
+           * writes only once on release, so one drag = one undo step.
            */
           const hit = findClip(getState().project, clipId);
           if (hit) {
@@ -2594,7 +2795,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         window.removeEventListener("pointercancel", onUp);
       };
 
-      // 回包之前已经动过 / 松过手的,现在补上
+      // If it already moved / was released before the reply arrived, catch up now
       if (lastX !== startX || lastY !== startY) applyMove(lastX, lastY);
       if (released) { onUp(); return; }
       window.addEventListener("pointermove", onMove);
@@ -2605,7 +2806,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     }
   };
 
-  // 文字工具逻辑
+  // Text tool logic
   const handleOverlayDoubleClick = async (e: React.MouseEvent) => {
     if (tool !== "text") return;
     const { hit: targetRect, overlayRect: rect } = await hitAt(e);
@@ -2621,7 +2822,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
 
     const val = (clip.params[textControl.key] as string) ?? def.defaults[textControl.key] ?? "";
     
-    // 输入框位置定位到卡片左上角（根据命中的目标矩形来换算）
+    // Position the input box at the card's top-left corner (converted from the hit target's rectangle)
     const inputX = targetRect.left * scale + rect.left;
     const inputY = targetRect.top * scale + rect.top;
 
@@ -2655,7 +2856,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     setEditingText(null);
   };
 
-  /** 画框左上角该摆在窗口的哪个位置。还没量到窗口大小时先不摆(那一帧在绘制前就过去了) */
+  /** Where in the window the frame's top-left corner should go. Not placed until the window size is measured (that frame passes before paint) */
   const frameXY = boxSize ? frameOrigin(cam, project, boxSize) : null;
 
   return (
@@ -2679,20 +2880,24 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       {view === "2d" && !mobile && <ToolBar tool={tool} onToolChange={setTool} zoom={cam.scale} fitted={cam.auto} onFit={fitToWindow} />}
 
       {/*
-        * **2D 这一页在 3D 页下面常驻,只是藏起来,不卸载。**
+        * **The 2D page resides permanently under the 3D page; it is only hidden, not unmounted.**
         *
-        * 以前是 `view === "3d" ? <3D/> : <2D/>`,切到 3D 就把舞台 iframe 连同主文档的音频层一起卸掉。
-        * 可播放头**跟随舞台**(docs/semantics/product/rendering.md「播放头跟随舞台」,K4:
-        * 非 legacy 下只有可见舞台的 `frame` 事件在推 `t`)—— 舞台没了,3D 页按播放就什么都不会动,
-        * 声音也没了。现在舞台一直在跑,3D 页读的还是同一个 `t`,播放轴和声音和 2D 页一模一样。
+        * Previously it was `view === "3d" ? <3D/> : <2D/>`; switching to 3D unmounted the stage iframe
+        * along with the audio layer of the main document. But the playhead **follows the stage**
+        * (docs/semantics/product/rendering.md "Playhead follows stage", K4: under non-legacy, only the
+        * `frame` event of the visible stage advances `t`): once the stage is gone, pressing play on the
+        * 3D page moves nothing and audio is gone too. Now the stage runs continuously, the 3D page still
+        * reads the same `t`, and the playback timeline and audio are identical to the 2D page.
         *
-        * 藏法只能是 `opacity: 0` + 不收指针(和后台舞台同一个理由,见 iframe B 的注释):
-        * `display: none` 会让 iframe 里的 rAF 和 `<video>` 停掉,`visibility: hidden` 会让 `isSolid`
-        * 判错实体框。`inert` 顺带挡掉键盘焦点落进看不见的那一页。
-        * 藏起来的那一页 `inset: 0` 铺在同一块地方,窗口尺寸不变,切回 2D 不用重新适应缩放。
+        * The only way to hide it is `opacity: 0` + ignoring pointer events (same reason as the background
+        * stage; see comments on iframe B): `display: none` stops rAF and `<video>` inside the iframe, while
+        * `visibility: hidden` causes `isSolid` to misclassify the entity box. `inert` additionally blocks
+        * keyboard focus from falling into the invisible page.
+        * The hidden page covers the same area with `inset: 0`; the window size is unchanged, so switching
+        * back to 2D requires no zoom re-adaptation.
         */}
       <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      {/* 档位气泡:舞台闸门走完、进入编辑界面后在预览窗口上方显示一次,几秒后自动消失(`TierBubble.tsx`) */}
+      {/* Tier bubble: shown once above the preview window after the stage gate finishes and the editor is entered, and disappears automatically after a few seconds (`TierBubble.tsx`) */}
       {online && <TierBubble ready={stageReady > 0} />}
       {view === "3d" && (
         <div className="pc-pv-stage" style={{ position: "relative" }}>
@@ -2713,34 +2918,42 @@ export function Preview(props: { variant?: "mobile" } = {}) {
             width: project.width * scale,
             height: project.height * scale,
             /*
-             * 位置完全由自己算(见 boxSize 那段说明:靠浏览器居中在放大之后会失准)。
-             * 绝对定位到左上角,再用 transform 挪到该在的地方 —— transform 不触发重排,
-             * 拖动时每一帧都在改它,用 left/top 会一路重排。
+             * The position is computed entirely by ourselves (see the note at boxSize: relying on the browser's
+             * centering becomes inaccurate after zooming in).
+             * Absolutely positioned at the top-left corner, then moved to where it should be with transform:
+             * transform does not trigger reflow, and it is changed on every frame while dragging, whereas
+             * left/top would reflow all the way.
              */
             position: "absolute",
             left: 0,
             top: 0,
             transform: frameXY ? `translate(${frameXY.x}px, ${frameXY.y}px)` : undefined,
             /*
-             * 透明棋盘格搬到 .pc-checker 了(见 preview/preview.css)。
+             * The transparent checkerboard has moved to .pc-checker (see preview/preview.css).
              *
-             * 原来这儿内联写着另一套偏暗的值,理由是「配色规范 04 条:透明格要比周围画布更暗更弱」。
-             * 那条规矩本身没错,但它和这块底真正要回答的问题冲突:**这儿是不是什么都没有?**
-             * 底一暗,一张深色的卡和「什么都没画」就长得一模一样 —— see_frames 和 3D 视图
-             * 都因为这个踩过坑。而且 2D 和 3D 两页各用一套值,同一个项目在两页里
-             * 「透明」长得都不一样。所以统一到中灰那一套,和 see_frames 逐值对齐。
+             * It used to be written inline here with a different, darker set of values, on the grounds of "color
+             * spec item 04: transparent cells must be darker and weaker than the surrounding canvas".
+             * That rule is not wrong in itself, but it conflicts with the question this background really has to
+             * answer: **is there nothing here?**
+             * Once the background is dark, a dark card looks exactly like "nothing drawn": see_frames and the 3D
+             * view have both been bitten by this. Also, the 2D and 3D tabs each used their own values, so the same
+             * project looked "transparent" differently on the two tabs. So it is unified onto the mid-gray set,
+             * aligned value by value with see_frames.
              */
           }}
         >
           <div style={{ transform: `scale(${scale})`, transformOrigin: "0 0", position: "absolute", left: 0, top: 0, ...themeStyle(project.themeId) }}>
             <div style={{ position: "relative", width: project.width, height: project.height }}>
-              {/* K4 的 `mediaStalled`:舞台的一拍比应到时刻晚出超过 40 ms 时,音频跟着停一下;这一轮播放的第一拍到之前音频不起播 */}
+              {/* K4's `mediaStalled`: when a stage tick comes more than 40 ms later than its due time, the audio pauses along with it; audio does not start before the first tick of this playback run arrives */}
               <MediaLayers project={project} t={t} playing={playing && !mediaStalled && (!live || firstBeatRef.current)} masterVolume={muted ? 0 : volume} audioOnly localHashes={tierList} />
               {/*
-                * 舞台 iframe 按槽位挂:单舞台(`single`,舞台闸门第一级、最低一档、握手失败退回,都是跨源 A)、跨源的 A(`dualA`)、
-                * 跨源的 B(`dualB`),顺序固定、按槽位作 key。
-                * 在线模式下一律跨源隔离:读不到舞台源时不再退回同源单舞台,直接不挂载舞台 iframe(2026-10-14 用户定);
-                * 握手失败退回跨源单舞台 A(只管当次,不留崩溃记录;`mechanism/platforms.md`「三道闸门」)。
+                * Stage iframes are mounted by slot: single stage (`single`, first level of the stage gate, lowest
+                * tier, fallback on handshake failure, all are cross-origin A), cross-origin A (`dualA`),
+                * cross-origin B (`dualB`), in fixed order, keyed by slot.
+                * Online mode always uses cross-origin isolation: when the stage origin cannot be read, it no longer
+                * falls back to a same-origin single stage, but simply does not mount the stage iframe
+                * (user decision, 2026-10-14); handshake failure falls back to cross-origin single stage A
+                * (only applies to the current run, leaving no crash records; `mechanism/platforms.md` "Three gates").
                 */}
               {!stagesPending && !(ONLINE && !stageOrigins()) && (() => {
                 const base = {
@@ -2766,21 +2979,25 @@ export function Preview(props: { variant?: "mobile" } = {}) {
                     sandbox={ONLINE ? STAGE_SANDBOX : undefined}
                     onLoad={() => onStageFrameLoad("A")}
                     /*
-                     * 这里**不加 proxy=1**:2D 预览的契约是「预览所见 = 导出所得」,
-                     * 播放时换成色块就把这条破了 —— 用户按播放是要看成片长什么样,
-                     * 不是要看构图草图。代理只活在 3D 视图里,而且只是预渲染没跟上时的过渡。
+                     * **Do not add proxy=1** here: the 2D preview's contract is "what the preview shows = what the export
+                     * gives", and swapping in color blocks during playback breaks it: when the user presses play they
+                     * want to see what the final video looks like, not a composition sketch. The proxy lives only in the
+                     * 3D view, and only as a transition while the prerender has not caught up.
                      */
                     src={stageSrc("A", { dual: false })}
                     style={{
                       ...base,
                       /*
-                       * R7:**舞台露出来**(D5)。可见的那一个不再是全透明的,用户看到的
-                       * 就是舞台 iframe 本身,不再是主文档里那张整帧 `<img>`。
+                       * R7: **the stage is exposed** (D5). The visible one is no longer fully transparent: what the user
+                       * sees is the stage iframe itself, no longer the full-frame `<img>` in the main document.
                        *
-                       * 判据是 `live`:在线页面的同源单舞台也渲 live 变体(`stageSrc` 带 `&preview=stage`)。
-                       * 桌面端口被占退回同源单舞台时那一份还是 placeholder 内容,
-                       * 露出来会是一张没有素材的画面 —— 那时候要继续用 `UnifiedPreview` 的整帧。
-                       * 换回双舞台的盖板照样露着(停在最后一帧),挡掉指针。
+                       * The criterion is `live`: the online page's same-origin single stage also renders the live variant
+                       * (`stageSrc` carries `&preview=stage`).
+                       * When the desktop app falls back to the same-origin single stage because a port is taken, that one
+                       * still has placeholder content, and exposing it would show a picture without media: in that case
+                       * keep using `UnifiedPreview`'s full frame.
+                       * The cover when switching back to dual stage stays exposed as well (stopped on the last frame) and
+                       * blocks the pointer.
                        */
                       ...(cover ? { opacity: 1, pointerEvents: "none" as const } : { opacity: live ? 1 : 0 }),
                     }}
@@ -2794,16 +3011,18 @@ export function Preview(props: { variant?: "mobile" } = {}) {
                     data-pc={warm ? "stage-frame-warm" : "stage-frame"}
                     title={warm ? trText("Warm-up stage") : trText("Preview stage")}
                     /*
-                     * 在线的跨源舞台带 sandbox(契约 `online-card-exec-contract.md` 第 3.3 节):只开脚本与保有自己的源两项,
-                     * 不给弹窗、带走顶层、表单、模态框、下载。舞台是跨源地址,`allow-same-origin` 只是让它保有自己的源
-                     * (读自己源上的素材要它),不会变成编辑器页的源。桌面运行环境不带。
+                     * The online cross-origin stage carries a sandbox (contract `online-card-exec-contract.md`, section
+                     * 3.3): only two flags are enabled, scripts and keeping its own origin; no popups, top-level
+                     * navigation, forms, modals or downloads. The stage is a cross-origin address, and
+                     * `allow-same-origin` only lets it keep its own origin (it needs that to read media on its own
+                     * origin); it does not become the editor page's origin. The desktop runtime does not carry it.
                      */
                     sandbox={ONLINE ? STAGE_SANDBOX : undefined}
                     src={stageSrc("A", { dual: true })}
                     onLoad={() => onStageFrameLoad("A")}
                     style={{
                       ...base,
-                      // 后台那个还要挡掉指针 —— K5 互换之后 A 可能就是后台那一个;换回双舞台的衔接期间先不露出来
+                      // The background one must also block the pointer: after the K5 swap, A may be the background one; do not expose it during the handoff when switching back to dual stage
                       ...(!warm && live && frontId === "A" && !handover ? { opacity: 1 } : hidden),
                     }}
                   />);
@@ -2819,12 +3038,13 @@ export function Preview(props: { variant?: "mobile" } = {}) {
                       style={{
                         ...base,
                         /*
-                         * 后台舞台**只能这么藏**(K5 (4)):`display: none` 会让里面的
-                         * `<video>` 和 rAF 停掉、布局全归零,补跑出来的画面和可见舞台对不上;
-                         * `visibility: hidden` 会让 `solid.ts` 的 `isSolid` 判它不是实体,
-                         * 量出来的实体框退回整屏。`opacity: 0` 保留布局和渲染,只是看不见。
+                         * The background stage **can only be hidden this way** (K5 (4)): `display: none` would stop the
+                         * `<video>` and rAF inside it and zero out the whole layout, so the caught-up picture would not match
+                         * the visible stage;
+                         * `visibility: hidden` would make `isSolid` in `solid.ts` judge it not a solid, and the measured solid
+                         * box would fall back to the full screen. `opacity: 0` keeps layout and rendering, it just cannot be seen.
                          *
-                         * R7:互换之后 B 可能是可见的那一个,那时它跟着露出来。
+                         * R7: after the swap B may be the visible one, and then it is exposed along with it.
                          */
                         ...(!warm && frontId === "B" && !handover ? { opacity: 1 } : hidden),
                       }}
@@ -2834,21 +3054,22 @@ export function Preview(props: { variant?: "mobile" } = {}) {
                 return out;
               })()}
               {/*
-                * R7(D5):整帧 `<img>` / `MovPlayer` canvas **只留在 legacy 分支**。
-                * 露出舞台之后再画一层整帧,等于把舞台盖住,而且那一层要等 HTTP
-                * ——「暂停拖动画面同一帧内更新、不等待 HTTP」这条就没了。
+                * R7(D5): full-frame `<img>` / `MovPlayer` canvas **remains only in the legacy branch**.
+                * Drawing another full frame after revealing the stage amounts to covering the stage, and that layer
+                * must wait for HTTP: the rule "paused scrubbing updates in the same frame without waiting for HTTP"
+                * would be lost.
                 */}
               {!live && <UnifiedPreview project={project} t={t} playing={playing} />}
             </div>
           </div>
           
-          {/* 四角标记:设计稿画面四角各一个 16 方的 L 形,提示这是可编辑画布 */}
+          {/* Corner marks: one 16-square L shape at each corner of the design frame, hinting that this is an editable canvas */}
           <span className="pc-pv-corner tl" aria-hidden="true" />
           <span className="pc-pv-corner tr" aria-hidden="true" />
           <span className="pc-pv-corner bl" aria-hidden="true" />
           <span className="pc-pv-corner br" aria-hidden="true" />
 
-          {/* 画布覆盖层，处理命中测试以及拖拽绘制 */}
+          {/* Canvas overlay, handles hit-testing and drag drawing */}
           <div
             style={{ position: "absolute", inset: 0, zIndex: 10 }}
             onPointerDown={handleOverlayPointerDown}
@@ -2861,7 +3082,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
               const dragDx = (dragPreview?.clipId === r.clipId) ? dragPreview.dx : 0;
               const dragDy = (dragPreview?.clipId === r.clipId) ? dragPreview.dy : 0;
 
-              // 描边贴着实体范围;刚点中的那个用 key 带上 token,每次点击都重新跑一遍脉冲动画
+              // The outline hugs the entity's extent; the one just hit carries a token in its key, so the pulse animation reruns on every click
               const pulsing = flash?.clipId === r.clipId;
               return (
                 <div

@@ -1,10 +1,14 @@
 /**
- * C6.5 撤销 / 重做（设计稿 `docs/plan/c65-design.md` 第 8 节；验收 V5）。
- * 跑：node --test server/test/c65-undo.test.mjs
+ * C6.5 undo / redo (design doc `docs/plan/c65-design.md` Section 8; acceptance check V5).
+ * Run: node --test server/test/c65-undo.test.mjs
  *
- * 只照设计稿写，不看实现。撤销栈按写入身份分开：每个页面会话一个栈；撤销就是提交 inverse（带 undoOf）；
- * inverse 涉及的实体若在这一步之后被别的写入身份改过，这些实体不撤、其余照撤，并告诉用户谁改的。
- * 页面同步实例的撤销接口见 `c65-kit.mjs` 假设 A7：`undo()` / `redo()` → `{ skipped: [{ entity, by }] }`。
+ * Written only against the design doc without looking at the implementation. Undo stacks are
+ * separated by write identity: one stack per page session; undo is committing inverse (with
+ * undoOf); if entities touched by inverse were modified by another write identity after this
+ * step, those entities are not undone while the rest are undone as usual, and tell the user who
+ * modified them.
+ * Undo interface of page sync instances: see `c65-kit.mjs` assumption A7:
+ * `undo()` / `redo()` → `{ skipped: [{ entity, by }] }`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +25,7 @@ async function setup(t) {
   const env = await startProjectService();
   t.after(env.cleanup);
   env.clock.t -= 60 * MIN;
-  await seedProject(env, PID, fixedProject({ clips: 4 })); // c1..c4，frame.x = 10、20、30、40
+  await seedProject(env, PID, fixedProject({ clips: 4 })); // c1..c4, frame.x = 10, 20, 30, 40
   env.clock.t += 60 * MIN;
   const pages = [];
   const open = async (opts) => {
@@ -29,54 +33,54 @@ async function setup(t) {
     pages.push(p);
     return p;
   };
-  t.after(() => { for (const p of pages) { try { p.close(); } catch { /* 已关 */ } } });
+  t.after(() => { for (const p of pages) { try { p.close(); } catch { /* Closed */ } } });
   return { env, open };
 }
 
 const skippedOf = (res) => (Array.isArray(res?.skipped) ? res.skipped : []);
 
-test('C65-V5-01 A 改片段 1、2，B 随后改片段 2，A 撤销：片段 1 回去，片段 2 保持 B 的，A 得知「片段 2 因 B 改过没撤」', async (t) => {
+test('C65-V5-01 A edits clips 1 and 2, B then edits clip 2, A undoes: clip 1 goes back, clip 2 keeps B\'s, and A learns that "clip 2 was not undone because B changed it"', async (t) => {
   const { env, open } = await setup(t);
   const A = await open({ user: 'alice', session: 'page-a' });
   const B = await open({ user: 'bob', session: 'page-b' });
   const w = await observer(env, PID);
 
-  A.edit((p) => { clipOf(p, 'c1').frame.x = 111; clipOf(p, 'c2').frame.x = 222; }); // 一步
+  A.edit((p) => { clipOf(p, 'c1').frame.x = 111; clipOf(p, 'c2').frame.x = 222; }); // One step
   await A.settled();
   const stepA = w.ops().find((m) => byIs(m.actor, { user: 'alice', session: 'page-a' }));
-  await waitFor(() => clipOf(B.project, 'c2').frame.x === 222, 5000, 'B 收到 A 的改动');
+  await waitFor(() => clipOf(B.project, 'c2').frame.x === 222, 5000, 'B receives A\'s change');
   B.edit((p) => { clipOf(p, 'c2').frame.x = 500; });
   await B.settled();
-  await waitFor(() => clipOf(A.project, 'c2').frame.x === 500, 5000, 'A 收到 B 的改动');
+  await waitFor(() => clipOf(A.project, 'c2').frame.x === 500, 5000, 'A receives B\'s change');
 
   const res = await A.undo();
   const skipped = skippedOf(res);
-  assert.equal(skipped.length, 1, `只有片段 2 没撤：${JSON.stringify(res)}`);
+  assert.equal(skipped.length, 1, `only clip 2 was not undone: ${JSON.stringify(res)}`);
   assert.equal(skipped[0].entity, C2);
-  assert.ok(byIs(skipped[0].by, { user: 'bob', session: 'page-b' }), `告诉用户是 B 改的：${JSON.stringify(skipped[0].by)}`);
+  assert.ok(byIs(skipped[0].by, { user: 'bob', session: 'page-b' }), `tells the user it was changed by B: ${JSON.stringify(skipped[0].by)}`);
 
   await A.settled();
   const st = await serverState(env, PID);
-  assert.equal(clipOf(st.project, 'c1').frame.x, 10, '片段 1 撤回原值');
-  assert.equal(clipOf(st.project, 'c2').frame.x, 500, '片段 2 保持 B 的');
-  assertSameBytes(A.project, st.project, '页面 A 与文档服务');
-  await waitFor(() => clipOf(B.project, 'c1').frame.x === 10, 5000, 'B 照常收到这次撤销');
+  assert.equal(clipOf(st.project, 'c1').frame.x, 10, 'clip 1 reverted to the original value');
+  assert.equal(clipOf(st.project, 'c2').frame.x, 500, 'clip 2 keeps B\'s');
+  assertSameBytes(A.project, st.project, 'page A and the document service');
+  await waitFor(() => clipOf(B.project, 'c1').frame.x === 10, 5000, 'B receives this undo as usual');
 
-  // 撤销是一次新的写入：带 undoOf 指向被撤的那次提交，版本照常加一
+  // Undo is a new write: with undoOf pointing to that undone commit, version increments by one as usual
   const undoMsg = w.ops().find((m) => m.undoOf !== undefined && m.undoOf !== null);
-  assert.ok(undoMsg, '别人收到的撤销提交带 undoOf');
-  assert.equal(undoMsg.undoOf, stepA.opId, 'undoOf 指向 A 那一步的 opId');
+  assert.ok(undoMsg, 'the undo commit that others receive carries undoOf');
+  assert.equal(undoMsg.undoOf, stepA.opId, 'undoOf points to the opId of A\'s step');
   assert.ok(undoMsg.rev > stepA.rev);
-  assert.ok(!undoMsg.ops.some((o) => o.path.startsWith(C2)), '撤销提交不碰片段 2');
+  assert.ok(!undoMsg.ops.some((o) => o.path.startsWith(C2)), 'the undo commit does not touch clip 2');
 });
 
-test('C65-V5-02 一步全部没撤成：出栈、不进重做栈；再按撤销撤的是更早的一步', async (t) => {
+test('C65-V5-02 a step where nothing could be undone: it is popped and does not enter the redo stack; pressing undo again undoes an earlier step', async (t) => {
   const { env, open } = await setup(t);
   const A = await open({ user: 'alice', session: 'page-a' });
   const B = await open({ user: 'bob', session: 'page-b' });
 
-  A.edit((p) => { clipOf(p, 'c3').frame.x = 333; }); // 第 1 步
-  A.edit((p) => { clipOf(p, 'c2').frame.x = 222; }); // 第 2 步
+  A.edit((p) => { clipOf(p, 'c3').frame.x = 333; }); // Step 1
+  A.edit((p) => { clipOf(p, 'c2').frame.x = 222; }); // Step 2
   await A.settled();
   await waitFor(() => clipOf(B.project, 'c2').frame.x === 222, 5000);
   B.edit((p) => { clipOf(p, 'c2').frame.x = 500; });
@@ -85,43 +89,43 @@ test('C65-V5-02 一步全部没撤成：出栈、不进重做栈；再按撤销�
   const revBefore = (await serverState(env, PID)).rev;
 
   const res = await A.undo();
-  assert.deepEqual(skippedOf(res).map((s) => s.entity), [C2], `全部没撤成，列出没撤的：${JSON.stringify(res)}`);
+  assert.deepEqual(skippedOf(res).map((s) => s.entity), [C2], `nothing could be undone, lists what was not undone: ${JSON.stringify(res)}`);
   await A.settled();
   await sleep(150);
   const st = await serverState(env, PID);
-  assert.equal(clipOf(st.project, 'c2').frame.x, 500, '保留了现在的样子');
-  assert.equal(clipOf(st.project, 'c3').frame.x, 333, '第 1 步没被动到');
-  assert.equal(st.rev, revBefore, '什么都没撤成时不产生提交');
-  assert.equal(A.canRedo(), false, '全部没撤成的一步不进重做栈');
-  assert.equal(A.canUndo(), true, '更早的一步还在');
+  assert.equal(clipOf(st.project, 'c2').frame.x, 500, 'the current state is kept');
+  assert.equal(clipOf(st.project, 'c3').frame.x, 333, 'step 1 was not touched');
+  assert.equal(st.rev, revBefore, 'no commit is produced when nothing could be undone');
+  assert.equal(A.canRedo(), false, 'a step where nothing could be undone does not enter the redo stack');
+  assert.equal(A.canUndo(), true, 'the earlier step is still there');
 
   const res2 = await A.undo();
-  assert.deepEqual(skippedOf(res2), [], '第 1 步完整撤回');
+  assert.deepEqual(skippedOf(res2), [], 'step 1 is fully undone');
   await A.settled();
   assert.equal(clipOf((await serverState(env, PID)).project, 'c3').frame.x, 30);
-  assert.equal(A.canUndo(), false, '全部出栈');
+  assert.equal(A.canUndo(), false, 'all popped');
 });
 
-test('C65-V5-03 撤销栈按写入身份分开：别人的改动不进我的栈；自己后来的改动不挡撤销', async (t) => {
+test('C65-V5-03 undo stacks are separate per writer identity: others\' changes do not enter my stack; my own later changes do not block undo', async (t) => {
   const { env, open } = await setup(t);
   const A = await open({ user: 'alice', session: 'page-a' });
-  const A2 = await open({ user: 'alice', session: 'page-a2' }); // 同一用户的另一个页面：另一个写入身份
+  const A2 = await open({ user: 'alice', session: 'page-a2' }); // Another page of the same user: another write identity
   A2.edit((p) => { clipOf(p, 'c4').frame.x = 44; });
   await A2.settled();
   await waitFor(() => clipOf(A.project, 'c4').frame.x === 44, 5000);
-  assert.equal(A.canUndo(), false, '别的页面会话的改动不进 A 的撤销栈');
+  assert.equal(A.canUndo(), false, 'changes from other page sessions do not enter A\'s undo stack');
 
   A.edit((p) => { clipOf(p, 'c1').frame.x = 1; });
   A.edit((p) => { clipOf(p, 'c1').frame.x = 2; });
   await A.settled();
   const res = await A.undo();
-  assert.deepEqual(skippedOf(res), [], '在这一步之后只有自己改过，不算冲突');
+  assert.deepEqual(skippedOf(res), [], 'after this step only the user\'s own edits were made, which is not a conflict');
   await A.settled();
   assert.equal(clipOf((await serverState(env, PID)).project, 'c1').frame.x, 1);
-  assert.equal(clipOf((await serverState(env, PID)).project, 'c4').frame.x, 44, '撤销不碰别人的改动');
+  assert.equal(clipOf((await serverState(env, PID)).project, 'c4').frame.x, 44, 'undo does not touch other people\'s changes');
 });
 
-test('C65-V5-04 重做：重做撤销的 inverse；中间有新的本地操作时重做栈清空', async (t) => {
+test('C65-V5-04 redo: redoes the inverse of the undo; the redo stack is cleared when a new local operation happens in between', async (t) => {
   const { env, open } = await setup(t);
   const A = await open({ user: 'alice', session: 'page-a' });
   A.edit((p) => { clipOf(p, 'c1').frame.x = 9; });
@@ -133,16 +137,16 @@ test('C65-V5-04 重做：重做撤销的 inverse；中间有新的本地操作�
   const res = await A.redo();
   assert.deepEqual(skippedOf(res), []);
   await A.settled();
-  assert.equal(clipOf((await serverState(env, PID)).project, 'c1').frame.x, 9, '重做回到改后的值');
+  assert.equal(clipOf((await serverState(env, PID)).project, 'c1').frame.x, 9, 'redo returns to the changed value');
 
   await A.undo();
   await A.settled();
   assert.equal(A.canRedo(), true);
   A.edit((p) => { clipOf(p, 'c2').frame.x = 1; });
-  assert.equal(A.canRedo(), false, '新的本地操作清空重做栈');
+  assert.equal(A.canRedo(), false, 'a new local operation clears the redo stack');
 });
 
-test('C65-V5-05 数字框的连续输入 300 ms 内合并成一步', async (t) => {
+test('C65-V5-05 consecutive input in a number box within 300 ms is merged into one step', async (t) => {
   const { env, open } = await setup(t);
   const clock = { t: 5_000_000 };
   const A = await open({ user: 'alice', session: 'page-a', now: () => clock.t });
@@ -151,18 +155,18 @@ test('C65-V5-05 数字框的连续输入 300 ms 内合并成一步', async (t) =
   clock.t += 100;
   A.edit((p) => { clipOf(p, 'c1').frame.x = 12; }, key);
   clock.t += 100;
-  A.edit((p) => { clipOf(p, 'c1').frame.x = 123; }, key); // 前三次两两相隔 100 ms：同一步
+  A.edit((p) => { clipOf(p, 'c1').frame.x = 123; }, key); // First three are 100 ms apart each: same step
   clock.t += 600;
-  A.edit((p) => { clipOf(p, 'c1').frame.x = 1234; }, key); // 隔了 600 ms：新的一步
+  A.edit((p) => { clipOf(p, 'c1').frame.x = 1234; }, key); // 600 ms apart: a new step
   await A.settled();
   assert.equal(clipOf((await serverState(env, PID)).project, 'c1').frame.x, 1234);
 
   await A.undo();
   await A.settled();
-  assert.equal(clipOf(A.project, 'c1').frame.x, 123, '第一次撤销只撤最后一步');
+  assert.equal(clipOf(A.project, 'c1').frame.x, 123, 'the first undo only undoes the last step');
   await A.undo();
   await A.settled();
-  assert.equal(clipOf(A.project, 'c1').frame.x, 10, '第二次撤销把合并的三次输入一起撤回原值');
-  assert.equal(A.canUndo(), false, '一共两步');
+  assert.equal(clipOf(A.project, 'c1').frame.x, 10, 'the second undo reverts the merged three inputs together to the original value');
+  assert.equal(A.canUndo(), false, 'two steps in total');
   assert.equal(clipOf((await serverState(env, PID)).project, 'c1').frame.x, 10);
 });

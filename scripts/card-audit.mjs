@@ -1,14 +1,21 @@
 /**
- * 卡片审计脚本
+ * Card audit script
  * 
- * 为什么要做这些检查：
- * - 位置无关：提交 4edf40e 验证过 34/34 张卡画面和绝对位置无关，缓存键因此不含位置；如果不满足，平移时间轴画面会变。
- * - 确定性：导出要求导两遍逐字节相同；若不满足会导致导出闪烁或不同次导出结果不一致。
- * - 结构稳定：HTML 采样缓存按「一棵树 + 逐帧数值表」存，结构变了就不成立；如果有 v-if/三元表达式增删 DOM，会导致采样缓存失效。
- * - 挂载时的网络请求：挂载时的动态 import 必须在出帧前等完；否则画面还没好就截进去了。
- * - 画面载体：canvas/WebGL 进不了 DOM 采样；我们需要知道哪些卡片用了无法被纯 DOM 序列化的技术。
+ * Why these checks are performed:
+ * - Position independence: commit 4edf40e verified that 34/34 card visuals are independent of
+ *   absolute position, so cache keys exclude position; if violated, shifting the timeline changes
+ *   the visuals.
+ * - Determinism: export requires two passes to be byte-for-byte identical; failure causes export
+ *   flickering or inconsistent results across runs.
+ * - Structural stability: HTML sample cache is stored as "one tree + per-frame value table", which
+ *   breaks if structure changes; adding/removing DOM nodes with v-if/ternary expressions will
+ *   invalidate the sample cache.
+ * - Network requests during mounting: dynamic imports during mounting must be awaited before
+ *   emitting frames; otherwise screenshots are captured before visuals are ready.
+ * - Visual carrier: canvas/WebGL cannot enter DOM sampling; we need to know which cards use
+ *   technologies that cannot be serialized into pure DOM.
  *
- * 用法:
+ * Usage:
  *   node scripts/card-audit.mjs --url "http://127.0.0.1:5197/?export=1"
  */
 
@@ -52,7 +59,7 @@ async function run() {
     });
     await p.close();
   } catch (e) {
-    console.error('获取卡片列表失败:', e);
+    console.error('Failed to fetch card list:', e);
     await plainBrowser.close();
     await bakery.close();
     process.exitCode = 1;
@@ -62,14 +69,14 @@ async function run() {
   const results = [];
   let exitCode = 0;
   
-  // 片内帧号 k
+  // Intra-clip frame number k
   const K_FRAMES = [3, 15, 45, 80].filter(k => k < 90);
   const A_FRAMES = K_FRAMES.map(k => Math.round(0.5 * 30) + k);
   const B_FRAMES = K_FRAMES.map(k => Math.round(7.3 * 30) + k);
 
   try {
     for (const id of cardIds) {
-      console.log(`\n=== 审计卡片: ${id} ===`);
+      console.log(`\n=== Auditing card: ${id} ===`);
       const res = { 
         id, 
         posPass: false, posMaxDiff: 0, posMatch: 0, posTotal: K_FRAMES.length, 
@@ -81,26 +88,26 @@ async function run() {
       
       let page = null;
       try {
-        // 1. 预渲染 A (start=0.5)
+        // 1. Prerender A (start=0.5)
         const tlA = { width: 1920, height: 1080, fps: 30, duration: 4.5, clips: [{ id: 'c1', cardId: id, start: 0.5, end: 3.5, params: {} }] };
         const urlA = base + '&timeline=' + encodeURIComponent('data:application/json,' + encodeURIComponent(JSON.stringify(tlA)));
         await bakery.reset(null, urlA);
         const outA = path.resolve('out', 'card-audit', id, 'a');
         await bakeFrames(bakery, { out: outA, format: 'png', targetFrames: A_FRAMES, warm: 3 });
 
-        // 2. 预渲染 B (start=7.3)
+        // 2. Prerender B (start=7.3)
         const tlB = { width: 1920, height: 1080, fps: 30, duration: 11.5, clips: [{ id: 'c1', cardId: id, start: 7.3, end: 10.3, params: {} }] };
         const urlB = base + '&timeline=' + encodeURIComponent('data:application/json,' + encodeURIComponent(JSON.stringify(tlB)));
         await bakery.reset(null, urlB);
         const outB = path.resolve('out', 'card-audit', id, 'b');
         await bakeFrames(bakery, { out: outB, format: 'png', targetFrames: B_FRAMES, warm: 3 });
 
-        // 3. 预渲染 A2 (再次预渲染 start=0.5)
+        // 3. Prerender A2 (prerender start=0.5 again)
         await bakery.reset(null, urlA);
         const outA2 = path.resolve('out', 'card-audit', id, 'a2');
         await bakeFrames(bakery, { out: outA2, format: 'png', targetFrames: A_FRAMES, warm: 3 });
 
-        // 对比 PNG
+        // Compare PNGs
         let posMatch = 0, posMaxDiff = 0;
         let detMatch = 0, detMaxDiff = 0;
 
@@ -116,7 +123,7 @@ async function run() {
           const imgB = PNG.sync.read(fs.readFileSync(fileB));
           const imgA2 = PNG.sync.read(fs.readFileSync(fileA2));
 
-          // 对比位置无关
+          // Compare position independence
           let pDiff = 0;
           if (imgA.width !== imgB.width || imgA.height !== imgB.height) {
             pDiff = 255;
@@ -129,7 +136,7 @@ async function run() {
           if (pDiff === 0) posMatch++;
           if (pDiff > posMaxDiff) posMaxDiff = pDiff;
 
-          // 对比确定性
+          // Compare determinism
           let dDiff = 0;
           if (imgA.width !== imgA2.width || imgA.height !== imgA2.height) {
             dDiff = 255;
@@ -153,7 +160,7 @@ async function run() {
 
         if (!res.posPass || !res.detPass) exitCode = 1;
 
-        // 4 & 5. 使用独立普通页面进行其他项检查
+        // 4 & 5. Use an isolated regular page to perform the other checks
         page = await plainBrowser.newPage();
         await page.evaluateOnNewDocument(MOCK);
         await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
@@ -172,20 +179,20 @@ async function run() {
         await page.goto(urlA, { waitUntil: 'load' });
         await page.waitForFunction(() => window.__pcReady === true, { timeout: 60000 });
         
-        // 拨到片段开始之前
+        // Seek to before clip start
         await page.evaluate(() => window.__pcSetT(0.1));
         await new Promise(r => setTimeout(r, 300));
 
-        phase = 'mount'; // 开始记录挂载请求
+        phase = 'mount'; // Start recording mount requests
         
-        // 拨到片段中间
+        // Seek to the middle of the clip
         await page.evaluate(() => window.__pcSetT(2.0));
         await new Promise(r => setTimeout(r, 1000));
         
         res.mountReqCount = mountReqs.size;
         res.mountReqs = [...mountReqs];
 
-        // 记录画面载体
+        // Record visual carrier
         res.carriers = await page.evaluate(() => {
           const root = document.getElementById('root')?.firstElementChild;
           if (!root) return {canvas: 0, svg: 0, video: 0, img: 0};
@@ -197,7 +204,7 @@ async function run() {
           };
         });
 
-        // DOM 结构稳定检查 (10 个片段内时刻)
+        // DOM structural stability check (10 intra-clip timestamps)
         const signatures = new Set();
         for (let i = 0; i < 10; i++) {
           const t = 0.5 + (i + 0.5) * (3.0 / 10);
@@ -220,7 +227,7 @@ async function run() {
         res.structCount = signatures.size;
 
       } catch (e) {
-        console.error(`审计卡片 ${id} 时出错:`, e);
+        console.error(`Error while auditing card ${id}:`, e);
         res.error = e.message;
         exitCode = 1;
       } finally {
@@ -233,7 +240,7 @@ async function run() {
     fs.writeFileSync('out/card-audit.json', JSON.stringify(results, null, 2));
 
     console.log('\n========================================================================================');
-    console.log('卡片 id'.padEnd(20) + ' | 位置无关 x/y | 确定性 x/y | 结构种数 | 挂载请求数 | canvas/svg/video/img');
+    console.log('card id'.padEnd(20) + ' | position-independent x/y | deterministic x/y | structure variants | mount requests | canvas/svg/video/img');
     console.log('---------------------|--------------|------------|----------|------------|-----------------------');
     
     const failures = [];
@@ -253,9 +260,9 @@ async function run() {
       console.log(`${r.id.padEnd(20)} | ${posStr} | ${detStr} | ${strCount} | ${reqCount} | ${carr}`);
 
       let reason = [];
-      if (!r.posPass) reason.push(`位置无关失败(最大差值 ${r.posMaxDiff})`);
-      if (!r.detPass) reason.push(`确定性失败(最大差值 ${r.detMaxDiff})`);
-      if (r.structCount > 1) reason.push(`结构不稳定(${r.structCount}种签名)`);
+      if (!r.posPass) reason.push(`position independence failed (max diff ${r.posMaxDiff})`);
+      if (!r.detPass) reason.push(`determinism failed (max diff ${r.detMaxDiff})`);
+      if (r.structCount > 1) reason.push(`unstable structure (${r.structCount} signatures)`);
       
       if (reason.length > 0) failures.push({ id: r.id, reason: reason.join('; ') });
       
@@ -265,7 +272,7 @@ async function run() {
     }
 
     if (withReqs.length > 0) {
-      console.log('\n以下卡片在挂载时发起了网络请求:');
+      console.log('\nThese cards made network requests on mount:');
       withReqs.forEach(w => {
         console.log(`- [${w.id}]`);
         w.reqs.forEach(req => console.log(`    ${req}`));
@@ -273,10 +280,10 @@ async function run() {
     }
 
     if (failures.length > 0) {
-      console.log('\n不通过清单:');
+      console.log('\nFailing list:');
       failures.forEach(f => console.log(`- [${f.id}] ${f.reason}`));
     } else {
-      console.log('\n所有卡片全部通过！');
+      console.log('\nAll cards passed!');
     }
 
     process.exitCode = exitCode;
@@ -288,6 +295,6 @@ async function run() {
 }
 
 run().catch(e => {
-  console.error('审计脚本发生未捕获的错误:', e);
+  console.error('Audit script hit an uncaught error:', e);
   process.exitCode = 1;
 });

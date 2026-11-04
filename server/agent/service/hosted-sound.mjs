@@ -1,16 +1,25 @@
 /**
- * 云端 Agent 的音效合成(`sound_generate`、`sound_status`、`sound_cancel`;契约 `docs/plan/cloud-agent-contract.md` 第 9.4a 节)。
+ * Sound effect synthesis for Cloud Agent (`sound_generate`, `sound_status`, `sound_cancel`;
+ * contract `docs/plan/cloud-agent-contract.md` section 9.4a).
  *
- * 提示音与键盘声的合成是确定性的纯计算(`src/kernel/soundEffects.ts`),不执行任何项目带来的代码,所以就在 Agent 服务进程里按块合成:
+ * Synthesis of notification sounds and keyboard sounds is deterministic pure computation
+ (`src/kernel/soundEffects.ts`) and executes no project-supplied code, so it is synthesized in chunks
+ * within the Agent service process:
  *
- *   参数 →(`src/audio/soundRequest.ts`,与桌面版同一份)配方 →(`src/audio/soundGeneration.ts`,与桌面版同一份)PCM16 WAV
- *     → 凭成员本人的素材票据写进素材服务(`media`)→ 在项目副本上原子登记(`commitSoundEffect`,与桌面版同一份:配方、内容哈希、片段)。
+ *   Parameters → (`src/audio/soundRequest.ts`, same as desktop app) recipe
+ *     → (`src/audio/soundGeneration.ts`, same as desktop app) PCM16 WAV
+ *     → written to asset service (`media`) with member's own asset ticket
+ *     → atomically registered on project replica (`commitSoundEffect`, same as desktop app:
+ *       recipe, content hash, clip).
  *
- * 所以同一份配方在云端与桌面版合成出的 WAV 逐样本相同(单测 CA-SND-01 比对)。
+ * Therefore, the same recipe produces sample-by-sample identical WAV in cloud and desktop apps
+ * (compared in unit test CA-SND-01).
  *
- * 作业表按实例(项目 × 成员)分:一个项目的对话看不到、取消不了别的项目或别的成员的作业;作业号带随机数。
- * 合成在整个进程里同时只跑一个(`slot`),每块让出一次事件循环;一位成员在一个项目里最多排 4 个(与桌面版同一个数)。
- * 前端代码只经 `ssr-host.mjs`(`host.sound`)。
+ * Job tables are partitioned by instance (project × member): a chat in one project cannot see or
+ * cancel jobs from other projects or other members; job ids include random numbers.
+ * Only one synthesis runs across the entire process at a time (`slot`), yielding the event loop once
+ * per chunk; a member can queue at most 4 jobs in a project (same number as desktop app).
+ * Frontend code only goes through `ssr-host.mjs` (`host.sound`).
  */
 import { randomBytes } from 'node:crypto';
 
@@ -18,11 +27,17 @@ const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'stale']);
 const finished = (job) => TERMINAL.has(job.state);
 const REDO = new Set(['failed', 'cancelled', 'stale']);
 
-/** 进程级:同时只让一个作业占着(合成是 CPU 活,不让几个项目的合成把服务进程占满) */
+/**
+ * Process-level: allows only one job to occupy at a time (synthesis is CPU-intensive work;
+ * prevents synthesis across multiple projects from maxing out the service process)
+ */
 export function createSlot() {
   let tail = Promise.resolve();
   return {
-    /** 等到轮到自己;回放手的函数。`signal` 取消时不再等(已经排上的那一格照样让给后面) */
+    /**
+     * Wait until one's turn; returns a release function. Stops waiting when `signal` is cancelled
+     * (the queued slot is still yielded to the next in line)
+     */
     acquire(signal) {
       let release;
       const mine = new Promise((resolve) => { release = resolve; });
@@ -42,7 +57,7 @@ export function createSlot() {
   };
 }
 
-/** 一个实例(项目 × 成员)的作业表 */
+/** Job table for an instance (project × member) */
 export const newSoundState = () => ({ jobs: new Map(), byRequest: new Map(), latest: new Map() });
 
 const viewOf = (job) => ({
@@ -51,16 +66,17 @@ const viewOf = (job) => ({
 });
 
 /**
- * 一个对话的三个工具。
+ * Three tools for a chat.
  * @param {object} d
- * @param {ReturnType<typeof newSoundState>} d.state 这个实例的作业表
- * @param {ReturnType<typeof createSlot>} d.slot 进程级的合成名额
+ * @param {ReturnType<typeof newSoundState>} d.state Job table for this instance
+ * @param {ReturnType<typeof createSlot>} d.slot Process-level synthesis slot
  * @param {() => Promise<object>} d.host `ssr-host.mjs`
- * @param {() => Promise<{ project: object }>} d.snapshot 此刻的项目副本
- * @param {(track: object, apply: (host: object) => any) => Promise<any>} d.mutate 在项目副本上改并提交(`track` 是这次调用的事件上下文)
- * @param {() => Promise<void>} d.ensureCanWrite 只读成员在这里被拒
- * @param {(wav: Uint8Array) => Promise<{ hash: string, size: number }>} d.put 写进素材服务
- * @param {(row: object) => void} d.record 记一行用量
+ * @param {() => Promise<{ project: object }>} d.snapshot Project replica at this moment
+ * @param {(track: object, apply: (host: object) => any) => Promise<any>} d.mutate
+ *   Modify on project replica and commit (`track` is event context for this call)
+ * @param {() => Promise<void>} d.ensureCanWrite Read-only members are rejected here
+ * @param {(wav: Uint8Array) => Promise<{ hash: string, size: number }>} d.put Write into asset service
+ * @param {(row: object) => void} d.record Record one usage row
  * @param {new (message: string, extra?: object) => Error} d.ToolError
  * @param {{ pendingJobs?: number, historyJobs?: number }} [d.limits]
  */
@@ -85,7 +101,7 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
     const stale = () => state.latest.get(job.targetKey) !== job.id;
     try {
       release = await slot.acquire(signal);
-      if (stale()) throw Object.assign(new Error('已有新的生成请求,旧结果未应用'), { stale: true });
+      if (stale()) throw Object.assign(new Error('A newer generation request exists; the old result was not applied'), { stale: true });
       job.state = 'rendering';
       const wav = await h.sound.renderWav(plan.recipe, {
         signal,
@@ -98,13 +114,14 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
       bytes = wav.byteLength;
       const asset = await put(wav);
       signal.throwIfAborted();
-      if (!/^[a-f0-9]{64}$/.test(asset.hash)) throw new Error('素材服务未返回有效内容哈希');
+      if (!/^[a-f0-9]{64}$/.test(asset.hash)) throw new Error('The asset service did not return a valid content hash');
       const reuseKey = await h.sound.reuseDigest(plan.recipe);
       let result = null;
       await mutate(track, (hh) => {
-        // 进锁之后再看一次:取消了、或有了更新的请求,这一份不落地
+        // Check once more after entering the lock: if cancelled or a newer request arrived,
+        // do not persist this one
         signal.throwIfAborted();
-        if (stale()) throw Object.assign(new Error('已有新的生成请求,旧结果未应用'), { stale: true });
+        if (stale()) throw Object.assign(new Error('A newer generation request exists; the old result was not applied'), { stale: true });
         result = hh.sound.commit({
           ...spec,
           asset: {
@@ -118,15 +135,15 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
       job.state = 'succeeded'; job.progress = 1; job.result = result;
     } catch (err) {
       const message = String(err?.message ?? err);
-      if (signal.aborted && job.state !== 'stale') { job.state = 'cancelled'; job.error = '已取消,原音效保持不变'; }
-      else if (job.state === 'stale') { /* 被更新的请求顶掉时已经写好了原因 */ }
-      else if (err?.stale || /已改变|已切换|has changed/.test(message)) { job.state = 'stale'; job.error = err?.stale ? message : `项目或片段已改变,旧生成结果未应用(${message})`; }
+      if (signal.aborted && job.state !== 'stale') { job.state = 'cancelled'; job.error = 'Cancelled; the original sound effect is unchanged'; }
+      else if (job.state === 'stale') { /* Reason already written when superseded by a newer request */ }
+      else if (err?.stale || /已改变|已切换|has changed/.test(message)) { job.state = 'stale'; job.error = err?.stale ? message : `The project or clip has changed; the old generation result was not applied (${message})`; }
       else { job.state = 'failed'; job.error = message.slice(0, 300); }
     } finally {
       release?.();
       try {
         record({ service: 'sound', vendor: 'builtin', model: plan.recipe.preset, units: bytes, unit: 'bytes', ok: job.state === 'succeeded', ms: Date.now() - t0 });
-      } catch { /* 记用量失败不影响结果 */ }
+      } catch { /* Failure to record usage does not affect the result */ }
       trim();
     }
     return job;
@@ -134,7 +151,7 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
 
   async function generate(args, track) {
     const requestId = args?.requestId;
-    if (typeof requestId !== 'string' || !requestId || requestId.length > 200) throw new ToolError('requestId 必须是 1 到 200 个字符');
+    if (typeof requestId !== 'string' || !requestId || requestId.length > 200) throw new ToolError('requestId must be 1 to 200 characters');
     await ensureCanWrite();
     const h = await host();
     const { project: p } = await snapshot();
@@ -150,16 +167,16 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
     const requestKey = `${targetKey}\0${requestId}`;
     const old = state.jobs.get(state.byRequest.get(requestKey) ?? '');
     if (old && !REDO.has(old.state)) {
-      if (old.signature !== signature) throw new ToolError('requestId 已用于不同配方,修改后请使用新的 requestId');
+      if (old.signature !== signature) throw new ToolError('requestId was already used for a different recipe; use a new requestId after changing it');
       const resultCurrent = () => !!p.media?.some((m) => m.id === old.result?.mediaId)
         && (!old.result?.clipId || p.tracks?.some((t) => t.clips.some((c) => c.id === old.result.clipId && c.mediaId === old.result.mediaId)));
       if (old.state !== 'succeeded' || resultCurrent()) return viewOf(await old.done);
     }
     const pending = [...state.jobs.values()].filter((j) => !finished(j) && j.targetKey !== targetKey);
-    if (pending.length >= pendingMax) throw new ToolError(`音效任务队列已满(最多 ${pendingMax} 个),请等待或取消`);
+    if (pending.length >= pendingMax) throw new ToolError(`The sound effect queue is full (max ${pendingMax}); wait or cancel`);
     for (const prior of state.jobs.values()) {
       if (prior.targetKey !== targetKey || finished(prior)) continue;
-      prior.state = 'stale'; prior.error = '已有新的生成请求,旧结果未应用';
+      prior.state = 'stale'; prior.error = 'A newer generation request exists; the old result was not applied';
       prior.abort.abort();
     }
     const job = {
@@ -176,21 +193,22 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
     return viewOf(await job.done);
   }
 
-  const withOk = (view) => (view.state === 'succeeded' ? { ok: true, ...view } : finished(view) ? { ok: false, ...view, error: view.error ?? '音效没有生成' } : view);
+  const withOk = (view) => (view.state === 'succeeded' ? { ok: true, ...view } : finished(view) ? { ok: false, ...view, error: view.error ?? 'No sound effect was generated' } : view);
 
   return {
     sound_generate: async (args, track) => withOk(await generate(args ?? {}, track ?? {})),
     sound_status: async (args) => {
       if (!args?.jobId) return { jobs: [...state.jobs.values()].map(viewOf) };
       const job = state.jobs.get(String(args.jobId));
-      if (!job) throw new ToolError('找不到音效任务(服务重启后请从片段的配方重新生成)');
+      if (!job) throw new ToolError('Sound effect job not found (after a service restart, regenerate from the clip\'s recipe)');
       return viewOf(job);
     },
     sound_cancel: async (args) => {
       const job = state.jobs.get(String(args?.jobId ?? ''));
-      if (!job) throw new ToolError('找不到音效任务');
+      if (!job) throw new ToolError('Sound effect job not found');
       if (!finished(job)) job.abort.abort();
-      // 已经在提交的那一下不可分:等它落定再答,不回一个之后会变的状态
+      // The moment of commit is atomic: wait for it to settle before responding, do not return
+      // a state that will change later
       const settled = await Promise.race([job.done, new Promise((resolve) => setTimeout(() => resolve(null), 2000))]);
       return viewOf(settled ?? job);
     },

@@ -1,17 +1,21 @@
 /**
- * 场景图的坐标换算:局部框 ⇄ 画面绝对位置,以及 Stage 要的 CSS。
+ * Scene graph coordinate conversion: local box ⇄ screen absolute position, and CSS needed by Stage.
  *
- * 原则只有一条:**只存局部坐标(ClipFrame),世界坐标永远由这里推导,不落盘。**
- * Agent 设世界坐标时,这里反解成局部存下来;设局部时,世界自动跟着变。
- * 两个都存的话早晚漂掉,谁都说不清哪个是真的。
+ * There is only one principle: **only store local coordinates (ClipFrame); world coordinates are
+ * always derived here and never persisted to disk.**
+ * When the Agent sets world coordinates, they are inverse-solved into local coordinates here and
+ * stored; when setting local coordinates, world coordinates update automatically. If both were
+ * stored, they would eventually drift, and no one could tell which is real.
  *
- * 卡片级的父坐标系就是舞台(原点左上角),所以现在 world == local,反解是恒等;
- * 函数签名都按「父框 → 子框」写,将来部件级(卡片内部的 title / rows …)接进来时
- * 只是多递归一层,接口不用动。
+ * The card-level parent coordinate system is the stage (origin at top-left), so currently
+ * world == local, and inverse-solving is an identity; function signatures are all written as
+ * "parent box → child box", so when part-level elements (title / rows inside cards…) are integrated
+ * in the future, it is just one more level of recursion without changing the interface.
  *
- * ⚠ 一个必须写进工具说明的坑:设世界坐标 ≠ 钉在屏幕上。反解出来存的是局部,
- * 之后父节点一动,子节点跟着走(标题理应跟着卡片走)。要"不管父节点怎么动都钉在
- * 屏幕这儿",是另一个意图(pin / 摘出组),不是这条路。
+ * ⚠ A pitfall that must be documented in tool descriptions: setting world coordinates ≠ pinning to
+ * the screen. The inverse-solved result is stored locally, so when the parent node moves later, child
+ * nodes follow (titles naturally should follow the card). Wanting to "pin here on screen regardless
+ * of how the parent node moves" is a different intent (pin / extract from group), not this approach.
  */
 import type { CSSProperties } from "react";
 import type { ClipFrame } from "./types";
@@ -23,7 +27,7 @@ export interface Size {
   height: number;
 }
 
-/** 父坐标系里的矩形(缩放旋转之前) */
+/** Rectangle in parent coordinate system (before scaling and rotation) */
 export interface Box {
   left: number;
   top: number;
@@ -31,7 +35,7 @@ export interface Box {
   height: number;
 }
 
-/** ClipFrame 补全默认值之后的形状 */
+/** Shape of ClipFrame after filling in default values */
 export interface FrameResolved {
   x: number;
   y: number;
@@ -40,17 +44,18 @@ export interface FrameResolved {
   anchor: [number, number];
   scale: number;
   rotate: number;
-  /** 绕水平轴(度)。0 = 不翻 */
+  /** Rotation around horizontal axis (degrees). 0 = no flip */
   rotateX: number;
-  /** 绕垂直轴(度)。0 = 不翻 */
+  /** Rotation around vertical axis (degrees). 0 = no flip */
   rotateY: number;
-  /** 深度平移(舞台像素),朝观众为正。0 = 在屏幕平面上 */
+  /** Depth translation (stage pixels), positive toward viewer. 0 = on the screen plane */
   translateZ: number;
 }
 
-/** 补全默认值:没有 frame = 铺满父坐标系 */
+/** Fill in default values: no frame = fills parent coordinate system */
 export function resolveFrame(frame: ClipFrame | undefined, parent: Size): FrameResolved {
-  // w/h 走 src/kernel/frameSize.mjs:服务端的共享快照键要算出一模一样的框宽高。
+  // w/h uses src/kernel/frameSize.mjs: the server's shared snapshot key must calculate the exact
+  // same frame width and height.
   const size = resolveFrameSize(frame, parent);
   return {
     x: frame?.x ?? 0,
@@ -67,25 +72,26 @@ export function resolveFrame(frame: ClipFrame | undefined, parent: Size): FrameR
 }
 
 /**
- * 这个 frame 有没有用到三维。
+ * Whether this frame uses 3D.
  *
- * frameCss(要不要写 preserve-3d)和 visualBox(要不要走投影)都问它 ——
- * 两处各写一遍 `rotateX || rotateY || translateZ` 的话,以后加第四个三维字段
- * 一定会漏掉其中一处,而漏掉不报错,只是某一边悄悄按二维算。
+ * Both `frameCss` (whether to write preserve-3d) and `visualBox` (whether to apply projection) query
+ * this: writing `rotateX || rotateY || translateZ` in both places would definitely lead to missing
+ * one place when adding a fourth 3D field in the future; missing it produces no error, but one
+ * side would silently compute in 2D.
  */
 export function frameIs3D(frame: ClipFrame | undefined | FrameResolved): boolean {
   return !!(frame?.rotateX || frame?.rotateY || frame?.translateZ);
 }
 
-/** 框在父坐标系里的矩形:锚点在 (x,y),左上角 = (x,y) 减去锚点在框内的偏移 */
+/** Rectangle of the frame in parent coordinates: anchor at (x,y), top-left = (x,y) minus anchor offset in frame */
 export function frameBox(frame: ClipFrame | undefined, parent: Size): Box {
   const f = resolveFrame(frame, parent);
   return { left: f.x - f.anchor[0] * f.w, top: f.y - f.anchor[1] * f.h, width: f.w, height: f.h };
 }
 
-/** 一个节点在世界坐标系里的描述(get_layout 返回的 world 部分) */
+/** Description of a node in world coordinates (the world portion returned by get_layout) */
 export interface WorldPlacement {
-  /** 锚点的世界坐标 */
+  /** World coordinates of the anchor point */
   x: number;
   y: number;
   anchor: [number, number];
@@ -93,29 +99,32 @@ export interface WorldPlacement {
   h: number;
   scale: number;
   rotate: number;
-  /** 世界坐标系里的矩形(缩放旋转之前,即画布) */
+  /** Rectangle in world coordinates (before scaling and rotation, i.e. the canvas) */
   box: Box;
-  /** 缩放旋转**之后**的外接矩形。判断遮挡、贴边、会不会出画,看这个,不是 box */
+  /** Bounding rectangle **after** scaling and rotation. Use this, not box, to check occlusion, edge alignment, or going off-screen */
   visualBox: Box;
 }
 
 /**
- * 变换之后在画面上占的外接矩形(AABB)。
+ * Axis-aligned bounding box (AABB) occupied on screen after transformation.
  *
- * 四个角走**和 frameCss 完全一样的一串变换**,最后按透视投影落到屏幕上。
- * CSS 的 transform 列表是右边的先作用,`frameCss` 写的是
- * `translateZ rotateX rotateY scale rotate`,所以顺序是:
- * 先平面旋转 → 缩放 → 绕 y 翻 → 绕 x 翻 → 沿 z 平移 → 投影。
+ * The four corners undergo **the exact same sequence of transformations as frameCss**, finally
+ * landing on screen via perspective projection. In CSS, transform lists apply right-to-left;
+ * `frameCss` specifies `translateZ rotateX rotateY scale rotate`, so the order is:
+ * 2D rotation first → scale → rotate around y → rotate around x → translate along z → projection.
  *
- * `fovDeg` 就是项目的 `camera3dFov`:
- *   - 不传(项目没开三维)= 没有透视,三维那几项只造成仿射压缩(rotateY 把宽压成 cos θ 倍),
- *     这也正是画面上真实发生的事 —— 所以照样要算,不能当它们不存在;
- *   - 传了就按针孔相机投影,和 CSS 的 perspective 是同一个公式(见 space3d.ts)。
+ * `fovDeg` is the project's `camera3dFov`:
+ *   - Omitted (project has not enabled 3D) = no perspective; the 3D properties only cause affine
+ *     compression (rotateY compresses width to cos θ times), which is exactly what really happens
+ *     on screen: so they still must be calculated and cannot be treated as nonexistent;
+ *   - Passed = pinhole camera projection, using the same formula as CSS perspective (see space3d.ts).
  *
- * **越过相机平面的降级**:卡片被推到相机上或相机后面(translateZ ≥ 相机距离)时,投影没有意义。
- * 这里把角点的 z 夹在相机前面一点点,于是得到一个**很大但有限**的框 ——
- * 大于舞台的框 clampToStage 本来就不夹(见那里的注释),get_layout 上也一眼看得出"这卡飞了"。
- * 不返回 Infinity 是因为那会顺着算进 NaN,而 NaN 会安静地毁掉后面每一个判断。
+ * **Downgrade when crossing the camera plane**: when a card is pushed onto or behind the camera
+ * (translateZ ≥ camera distance), projection is meaningless. Here, corner z coordinates are clamped
+ * just in front of the camera, yielding a **huge but finite** box: `clampToStage` already skips
+ * clamping boxes larger than the stage (see comments there), and `get_layout` makes it obvious at a
+ * glance that "this card flew off". Infinity is not returned because it propagates into NaN, and
+ * NaN silently ruins every subsequent check.
  */
 export function visualBox(frame: ClipFrame | undefined, parent: Size, fovDeg?: number): Box {
   const f = resolveFrame(frame, parent);
@@ -127,7 +136,7 @@ export function visualBox(frame: ClipFrame | undefined, parent: Size, fovDeg?: n
   const cosX = Math.cos(rx), sinX = Math.sin(rx);
   const cosY = Math.cos(ry), sinY = Math.sin(ry);
   const is3D = frameIs3D(f);
-  // 相机只在项目开了三维时才存在;没开就是平行投影
+  // The camera exists only when the project has 3D enabled; without it, it is parallel projection.
   const distance = fovDeg ? cameraFor(parent, fovDeg).distance : Infinity;
   const zCap = Number.isFinite(distance) ? distance * 0.98 : Infinity;
 
@@ -136,7 +145,8 @@ export function visualBox(frame: ClipFrame | undefined, parent: Size, fovDeg?: n
   ];
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const [cxi, cyi] of corners) {
-    // 绕锚点:先平面旋转,再缩放(均匀缩放和旋转可交换,顺序无所谓)
+    // Around anchor point: 2D rotation first, then scale (uniform scale and rotation commute, order does
+    // not matter)
     const dx0 = (cxi - f.x) * f.scale;
     const dy0 = (cyi - f.y) * f.scale;
     let x = dx0 * cos - dy0 * sin;
@@ -158,7 +168,8 @@ export function visualBox(frame: ClipFrame | undefined, parent: Size, fovDeg?: n
     let px = sx, py = sy;
     if (fovDeg && is3D) {
       const p = projectStage({ x: sx, y: sy, z: Math.min(z, zCap) }, parent, fovDeg);
-      // zCap 保证了 p 不会是 null;真为 null 时退回未投影的点,总比 NaN 强
+      // zCap guarantees that p will not be null; if truly null, fall back to the unprojected point,
+      // which is better than NaN
       if (p) { px = p.x; py = p.y; }
     }
     x0 = Math.min(x0, px); y0 = Math.min(y0, py); x1 = Math.max(x1, px); y1 = Math.max(y1, py);
@@ -167,13 +178,15 @@ export function visualBox(frame: ClipFrame | undefined, parent: Size, fovDeg?: n
 }
 
 /**
- * 局部框 → 世界描述。卡片级:父 = 舞台,原点重合,所以就是把 frame 补全再算两个矩形。
- * 部件级接进来时这里改成:parentWorld 的 box.left/top 加上局部 x,y,scale 相乘。
+ * Local box → world description. Card-level: parent = stage, origins coincide, so this simply
+ * completes the frame and computes two rectangles. When part-level is integrated, change this to:
+ * `box.left`/`top` of `parentWorld` plus local `x`, `y`, multiplied by `scale`.
  *
- * 字段**逐个列出来**而不是 `...f`:resolveFrame 现在还带着 rotateX / rotateY / translateZ,
- * 展开进去的话每个 clip(包括从没碰过三维的老项目)的 world 里都会多出三个 0,
- * 而 world 的语义是「投影之后在画面上的样子」,那三个是投影**之前**的局部量 ——
- * Agent 看见它们会以为 world 也能写三维。它们在 frame.local 里,该在那儿看。
+ * Fields are **listed individually** rather than `...f`: `resolveFrame` still carries `rotateX` /
+ * `rotateY` / `translateZ`; spreading them would add three zeros to `world` for every clip (including
+ * legacy projects that never touched 3D), whereas the semantics of `world` is "appearance on screen
+ * after projection", and those three are local quantities **before** projection: Agents seeing them
+ * might assume 3D can also be written to `world`. They are in `frame.local` and should be viewed there.
  */
 export function worldOf(frame: ClipFrame | undefined, parent: Size, fovDeg?: number): WorldPlacement {
   const f = resolveFrame(frame, parent);
@@ -185,14 +198,15 @@ export function worldOf(frame: ClipFrame | undefined, parent: Size, fovDeg?: num
 }
 
 /**
- * 世界坐标 → 局部坐标(只换算传了的字段)。卡片级恒等;签名留着是为了部件级。
- * 传进来的 x,y 是「锚点的世界坐标」,和存下来的语义一致,所以不需要知道尺寸。
+ * World coordinates → local coordinates (converts provided fields only). Card-level is identity;
+ * signature is kept for part-level. The incoming x, y are "anchor world coordinates", matching the
+ * stored semantics, so dimensions do not need to be known.
  */
 export function localFromWorld(world: Partial<ClipFrame>, _parent: Size): Partial<ClipFrame> {
   return { ...world };
 }
 
-/** set_position 的入参 */
+/** Input parameters for set_position */
 export interface PositionArgs {
   space?: "world" | "local";
   x?: number;
@@ -202,60 +216,63 @@ export interface PositionArgs {
   anchor?: [number, number];
   scale?: number;
   rotate?: number;
-  /** 绕水平轴翻转(度),正值 = 顶边往里倒。要项目开了 camera3dFov 才看得出透视 */
+  /** Tilt around horizontal axis (degrees), positive = top edge tilts inward. Requires camera3dFov enabled for perspective */
   rotateX?: number;
-  /** 绕垂直轴翻转(度),正值 = 右边往里转。同上 */
+  /** Rotation around vertical axis (degrees), positive = right edge rotates inward. Same as above */
   rotateY?: number;
-  /** 深度平移(舞台像素),正值朝观众 */
+  /** Depth translation (stage pixels), positive toward viewer */
   translateZ?: number;
 }
 
 /**
- * 把 set_position 的入参变成要合并进 frame 的补丁:校验数值、按 space 换算。
- * 只返回传了的字段 —— 调用方 { ...prev, ...patch } 合并,没传的保留。
- * 校验不过就 throw,错误信息给 Agent 看,所以说人话。
+ * Converts `set_position` arguments into a patch to merge into frame: validates numeric values and
+ * converts according to space.
+ * Only returns provided fields: caller merges `{ ...prev, ...patch }`, keeping unpassed fields.
+ * Throws if validation fails; error messages are presented to the Agent, so use clear plain language.
  */
 export function framePatchFromArgs(args: PositionArgs, parent: Size): Partial<ClipFrame> {
   const out: Partial<ClipFrame> = {};
   const num = (k: keyof PositionArgs, v: unknown, check?: (n: number) => string | null) => {
     if (v === undefined) return;
-    if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`${k} 必须是有限数字,收到 ${JSON.stringify(v)}`);
+    if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`${k} must be a finite number, got ${JSON.stringify(v)}`);
     const bad = check?.(v);
     if (bad) throw new Error(bad);
     (out as Record<string, unknown>)[k] = v;
   };
   num("x", args.x);
   num("y", args.y);
-  num("w", args.w, (n) => (n > 0 ? null : `w 必须大于 0,收到 ${n}`));
-  num("h", args.h, (n) => (n > 0 ? null : `h 必须大于 0,收到 ${n}`));
-  num("scale", args.scale, (n) => (n > 0 ? null : `scale 必须大于 0,收到 ${n};要隐藏卡片用 remove_clip 或 opacity,不要缩到 0`));
+  num("w", args.w, (n) => (n > 0 ? null : `w must be greater than 0, got ${n}`));
+  num("h", args.h, (n) => (n > 0 ? null : `h must be greater than 0, got ${n}`));
+  num("scale", args.scale, (n) => (n > 0 ? null : `scale must be greater than 0, got ${n}; to hide a card use remove_clip or opacity, do not shrink it to 0`));
   num("rotate", args.rotate);
-  // 三维。角度不设上下限(转 720° 是合法的动画意图),translateZ 也不限 ——
-  // 推到相机后面会被 projectStage 判成不可见,那是渲染层的事,不该在参数校验里替它决定
+  // 3D. Angles have no bounds (rotating 720° is a valid animation intent), and translateZ is also
+  // unbounded: being pushed behind the camera will be classified as invisible by projectStage, which
+  // is the rendering layer's responsibility and should not be decided during argument validation.
   num("rotateX", args.rotateX);
   num("rotateY", args.rotateY);
   num("translateZ", args.translateZ);
   if (args.anchor !== undefined) {
     const a = args.anchor;
     if (!Array.isArray(a) || a.length !== 2 || !a.every((n) => typeof n === "number" && Number.isFinite(n))) {
-      throw new Error(`anchor 必须是两个数字 [ax, ay],例如 [0.5, 0.5] 表示中心,收到 ${JSON.stringify(a)}`);
+      throw new Error(`anchor must be two numbers [ax, ay], e.g. [0.5, 0.5] for the center, got ${JSON.stringify(a)}`);
     }
     out.anchor = [a[0], a[1]];
   }
   if (Object.keys(out).length === 0) {
-    throw new Error("set_position 至少要传 x / y / w / h / anchor / scale / rotate / rotateX / rotateY / translateZ 中的一项,或 clear:true");
+    throw new Error("set_position needs at least one of x / y / w / h / anchor / scale / rotate / rotateX / rotateY / translateZ, or clear:true");
   }
   return args.space === "world" ? localFromWorld(out, parent) : out;
 }
 
 /**
- * Stage 要的样式。
+ * Styles required by Stage.
  *
- * 没有 frame 时**原样**输出以前那套(inset:0 + 可选的轨迹平移),一个字节都不变 ——
- * 老项目的导出结果有逐像素基线在,这里不冒险。有 frame 时才走 left/top/width/height
- * 那条路,transform 按「轨迹平移 → 缩放 → 旋转」的顺序合成,绕锚点。
- * 恒等的 scale / rotate 不写进 transform:即使是 scale(1),transform 属性的存在
- * 本身也可能让合成器换一条光栅路径。
+ * When there is no frame, output the legacy setup **as is** (inset:0 + optional trajectory translation)
+ * without changing a single byte: legacy project export results have pixel-by-pixel baselines, so take
+ * no risks here. Only when frame is present do we take the left/top/width/height path, composing
+ * transform in the order of "trajectory translation → scale → rotation" around the anchor point.
+ * Identity scale / rotate are omitted from transform: even for scale(1), the mere presence of the
+ * transform property may cause the compositor to switch rasterization paths.
  */
 export function frameCss(frame: ClipFrame | undefined, parent: Size, translate?: { dx: number; dy: number }): CSSProperties {
   const parts: string[] = [];
@@ -270,12 +287,14 @@ export function frameCss(frame: ClipFrame | undefined, parent: Size, translate?:
   const f = resolveFrame(frame, parent);
   const box = frameBox(frame, parent);
   /*
-   * 三维那几项排在 scale / rotate **前面**(CSS 里靠左 = 后作用 = 更外层),
-   * 对应的心智模型是「先在平面里排好版,再把整张卡摆进空间」——
-   * 反过来的话,倾斜会被后面的缩放拉伸,用户调 scale 时会发现透视跟着变形。
+   * The 3D items are placed **before** scale / rotate (leftmost in CSS = applied later = outer layer),
+   * corresponding to the mental model of "lay out in the 2D plane first, then place the entire card
+   * into 3D space": if reversed, tilting would be stretched by subsequent scaling, and users
+   * adjusting scale would see perspective distorting.
    *
-   * 三项全为 0 时一个字符都不往 transform 里加:老项目的导出有逐像素基线,
-   * 哪怕多一个恒等变换都可能让合成器换一条光栅路径。
+   * When all three items are 0, not a single character is added to transform: legacy project exports
+   * have pixel-by-pixel baselines, and even an extra identity transform could cause the compositor to
+   * switch rasterization paths.
    */
   if (f.translateZ !== 0) parts.push(`translateZ(${f.translateZ}px)`);
   if (f.rotateX !== 0) parts.push(`rotateX(${f.rotateX}deg)`);
@@ -292,29 +311,33 @@ export function frameCss(frame: ClipFrame | undefined, parent: Size, translate?:
     ...(parts.length ? { transform: parts.join(" ") } : null),
     ...(translate ? { willChange: "transform" } : null),
     /*
-     * 只有真的用到三维才写 preserve-3d,没用三维的卡走的还是和以前一模一样的那条路。
+     * Only write preserve-3d when 3D is actually used; cards without 3D still follow the exact same path
+     * as before.
      *
-     * 它管的是**这张卡内部的子元素**能不能有自己的空间关系,不管这张卡自己怎么被投影 ——
-     * 卡片自身的透视由父层的 perspective 决定(见 render/Stage.tsx)。
+     * It controls whether **child elements inside this card** can have their own spatial relationships,
+     * not how this card itself is projected: the card's own perspective is determined by perspective on
+     * the parent layer (see render/Stage.tsx).
      *
-     * 顺带记一条实测,因为它反直觉:`opacity` / `filter` / `overflow:hidden` 确实会把
-     * 这个元素的 transform-style **打回 flat**,但那只影响它的子树,
-     * **卡片自己的投影一点不变**。同一张 rotateY(40°) 的卡,三个属性各加一遍:
-     *   基线 / +opacity:0.5 / +filter:drop-shadow / +overflow:hidden
-     *   外框都是 154.88×133.93,左右两边高都是 133.93 / 108.69 —— 四组逐位相同。
-     * Stage 会在卡片外层写 opacity(淡入淡出)和 filter(强调),所以这条必须钉住:
-     * 那两个属性**不会**让摆进空间的卡突然摊平。
+     * Also note an empirical observation because it is counterintuitive: `opacity` / `filter` /
+     * `overflow:hidden` do indeed **force this element's transform-style back to flat**, but that only
+     * affects its subtree; **the card's own projection does not change at all**. For the same
+     * rotateY(40°) card, adding each of the three properties:
+     *   baseline / +opacity:0.5 / +filter:drop-shadow / +overflow:hidden
+     *   bounding box is always 154.88×133.93, left and right heights are always 133.93 / 108.69: all four
+     *   groups bit-for-bit identical.
+     * Stage writes opacity (fade in/out) and filter (emphasis) outside the card, so this must be pinned
+     * down: those two properties will **not** cause cards positioned in space to suddenly flatten.
      */
     ...(frameIs3D(f) ? { transformStyle: "preserve-3d" as const } : null),
   };
 }
 
 /* ------------------------------------------------------------------------------------------
- * 下面是 Agent 的另外几种说法 —— 矩形、对齐、微调。它们都只是把话换算成同一个 ClipFrame,
- * 存的东西没有第二种。
+ * Below are several other expressions for the Agent: rectangle, align, nudge. They all merely
+ * convert the wording into the same ClipFrame; there is no second format for stored data.
  * ---------------------------------------------------------------------------------------- */
 
-/** 两个对角点,顺序随意 */
+/** Two diagonal points, in any order */
 export interface Rect {
   x1: number;
   y1: number;
@@ -324,27 +347,30 @@ export interface Rect {
 
 function normRect(r: Rect): Box {
   for (const k of ["x1", "y1", "x2", "y2"] as const) {
-    if (typeof r[k] !== "number" || !Number.isFinite(r[k])) throw new Error(`${k} 必须是有限数字,收到 ${JSON.stringify(r[k])}`);
+    if (typeof r[k] !== "number" || !Number.isFinite(r[k])) throw new Error(`${k} must be a finite number, got ${JSON.stringify(r[k])}`);
   }
   const box = { left: Math.min(r.x1, r.x2), top: Math.min(r.y1, r.y2), width: Math.abs(r.x2 - r.x1), height: Math.abs(r.y2 - r.y1) };
-  if (!(box.width > 0 && box.height > 0)) throw new Error(`矩形必须有正的宽高,收到 x1=${r.x1} y1=${r.y1} x2=${r.x2} y2=${r.y2}`);
+  if (!(box.width > 0 && box.height > 0)) throw new Error(`Rectangle must have a positive width and height, got x1=${r.x1} y1=${r.y1} x2=${r.x2} y2=${r.y2}`);
   return box;
 }
 
 function checkAlign(a: unknown, name: string): [number, number] {
   if (!Array.isArray(a) || a.length !== 2 || !a.every((n) => typeof n === "number" && Number.isFinite(n))) {
-    throw new Error(`${name} 必须是两个数字 [ax, ay],例如 [0.5, 0.5] 表示中心,收到 ${JSON.stringify(a)}`);
+    throw new Error(`${name} must be two numbers [ax, ay], e.g. [0.5, 0.5] for the center, got ${JSON.stringify(a)}`);
   }
   return [a[0], a[1]];
 }
 
 /**
- * 把卡片放进一个矩形。
- *   fit(默认):画布尺寸不动,整体缩放到刚好装进矩形(保持比例),按 align 对齐在矩形里。
- *     大多数卡按 1920×1080 设计,"放进左半屏"该做的就是这个 —— 缩放后内容一定在矩形内。
- *   canvas:画布就是这个矩形(w/h = 矩形尺寸,scale 归 1)。内容按卡片自己的规则在新画布里
- *     布局,可能溢出(rank-bars 自带 min-w 1000px,放进 960 宽的画布就会露出去)。
- * 两种都不碰 rotate;fit 的"装进去"不考虑旋转后的外接框。
+ * Place the card into a rectangle.
+ *   fit (default): canvas dimensions remain unchanged, scaled as a whole to just fit inside the
+ *     rectangle (preserving aspect ratio), aligned in the rectangle per align. Most cards are
+ *     designed for 1920×1080, which is what "place in left half of screen" should do: content is
+ *     guaranteed to stay inside the rectangle after scaling.
+ *   canvas: canvas is this rectangle (w/h = rectangle dimensions, scale resets to 1). Content lays
+ *     out in the new canvas per the card's own rules and may overflow (rank-bars has a built-in min-w
+ *     1000px, which spills out if placed into a 960-wide canvas).
+ * Neither mode touches rotate; "fitting inside" in fit does not consider the bounding box after rotation.
  */
 export function rectToFrame(
   rect: Rect,
@@ -355,7 +381,7 @@ export function rectToFrame(
   const r = normRect(rect);
   const align = opts.align === undefined ? ([0.5, 0.5] as [number, number]) : checkAlign(opts.align, "align");
   const mode = opts.mode ?? "fit";
-  if (mode !== "fit" && mode !== "canvas") throw new Error(`mode 只能是 fit 或 canvas,收到 ${JSON.stringify(mode)}`);
+  if (mode !== "fit" && mode !== "canvas") throw new Error(`mode must be fit or canvas, got ${JSON.stringify(mode)}`);
   const x = r.left + align[0] * r.width;
   const y = r.top + align[1] * r.height;
   if (mode === "canvas") {
@@ -370,9 +396,10 @@ export type AlignH = "left" | "center" | "right";
 export type AlignV = "top" | "center" | "bottom";
 
 /**
- * 对齐到父坐标系的边或中心,带边距。锚点跟着对齐方式走(靠右就把锚点放到右边),
- * 缩放绕锚点,所以缩放后的可见框也贴在同一条边上。旋转会让角伸出去,不管。
- * 只传 h 或只传 v 时另一个方向保持不动。
+ * Align to edges or center of the parent coordinate system, with margins. The anchor point follows
+ * alignment (aligning right places the anchor on the right); scaling is around the anchor, so the
+ * visible box after scaling also clings to the same edge. Rotation causes corners to protrude, which
+ * is ignored. Passing only h or only v keeps the other direction unchanged.
  */
 export function alignToFrame(
   h: AlignH | undefined,
@@ -381,10 +408,10 @@ export function alignToFrame(
   prev: ClipFrame | undefined,
   parent: Size,
 ): ClipFrame {
-  if (h === undefined && v === undefined) throw new Error("align 至少要传 h(left/center/right)或 v(top/center/bottom)中的一个");
-  if (h !== undefined && !["left", "center", "right"].includes(h)) throw new Error(`h 只能是 left / center / right,收到 ${JSON.stringify(h)}`);
-  if (v !== undefined && !["top", "center", "bottom"].includes(v)) throw new Error(`v 只能是 top / center / bottom,收到 ${JSON.stringify(v)}`);
-  if (typeof margin !== "number" || !Number.isFinite(margin)) throw new Error(`margin 必须是有限数字,收到 ${JSON.stringify(margin)}`);
+  if (h === undefined && v === undefined) throw new Error("align needs at least one of h (left/center/right) or v (top/center/bottom)");
+  if (h !== undefined && !["left", "center", "right"].includes(h)) throw new Error(`h must be left / center / right, got ${JSON.stringify(h)}`);
+  if (v !== undefined && !["top", "center", "bottom"].includes(v)) throw new Error(`v must be top / center / bottom, got ${JSON.stringify(v)}`);
+  if (typeof margin !== "number" || !Number.isFinite(margin)) throw new Error(`margin must be a finite number, got ${JSON.stringify(margin)}`);
   const p = resolveFrame(prev, parent);
   const ax = h === "left" ? 0 : h === "right" ? 1 : h === "center" ? 0.5 : p.anchor[0];
   const ay = v === "top" ? 0 : v === "bottom" ? 1 : v === "center" ? 0.5 : p.anchor[1];
@@ -394,8 +421,9 @@ export function alignToFrame(
 }
 
 /**
- * 铺满舞台、又没缩小的卡片,对齐是看不出效果的:画布本来就和舞台一样大,贴哪条边都一样。
- * 给 align 的返回加一句提醒用。
+ * For a card filling the stage and not scaled down, alignment shows no visible effect: the canvas is
+ * already the same size as the stage, so snapping to any edge is identical. Used to add a notice to
+ * the align return value.
  */
 export function alignIsInvisible(frame: ClipFrame | undefined, parent: Size): boolean {
   const f = resolveFrame(frame, parent);
@@ -403,21 +431,26 @@ export function alignIsInvisible(frame: ClipFrame | undefined, parent: Size): bo
 }
 
 /**
- * 把框夹回父坐标系里:可见框(缩放旋转后)超出哪条边就往回挪多少。
- * 比父坐标系还大的框夹不回来,原样返回 —— 那是 scale 的事,不是位置的事。
- * 给 nudge / set_position 的 clamp 用:「再往右 300」不该把卡推出屏幕。
+ * Clamps the box back into the parent coordinate system: shifts back by however much the visible box
+ * (after scaling and rotation) exceeds any edge. Boxes larger than the parent coordinate system
+ * cannot be clamped back and are returned as is: that is a matter of scale, not position.
+ * Used for clamp in nudge / set_position: "300 more to the right" should not push cards off-screen.
  *
- * # 三维下要换算,而且要迭代
+ * # Conversion and iteration required in 3D
  *
- * 越界量是在**投影后**的画面上量的,而 `x/y` 存的是**投影前**的局部坐标,
- * 两者差一个 `d/(d−z)` 倍。直接把画面上的越界量加到 x 上,结果是:
- *   - z 为负(往里推,倍率 < 1):挪得不够,夹完还在画外。实测 translateZ:-800 的卡
- *     连夹三次,右边仍在 2002.5 → 1948.9 → 1930.1,永远贴不到 1920;
- *   - z 为正(朝观众,倍率 > 1):挪过头。实测 translateZ:700 的卡夹完右边落在 849.6,
- *     离该贴的 1920 差了大半屏 —— 卡片没出画,但被拽到了一个谁也没要求的位置。
+ * The out-of-bounds delta is measured on screen **after projection**, while `x/y` stores local
+ * coordinates **before projection**, differing by a factor of `d/(d−z)`. Directly adding the on-screen
+ * overflow to x results in:
+ *   - negative z (pushed inward, ratio < 1): not moved enough, still off-screen after clamping. In
+ *     testing, clamping a card with translateZ:-800 three consecutive times left the right edge at
+ *     2002.5 → 1948.9 → 1930.1, never reaching 1920;
+ *   - positive z (toward viewer, ratio > 1): over-moved. In testing, clamping a card with
+ *     translateZ:700 ended with the right edge at 849.6, more than half a screen away from the
+ *     intended 1920: the card stayed on screen, but got dragged to a position nobody asked for.
  *
- * 所以先除以锚点处的投影倍率再挪。旋转过的卡四个角倍率各不相同,一次除不干净,
- * 再迭代几轮收到不动点为止 —— 收敛得很快,纯 translateZ 一轮就够。
+ * Therefore, divide by the projection ratio at the anchor before moving. Rotated cards have different
+ * ratios across the four corners and cannot be resolved in a single step, so iterate several rounds
+ * until converging to a fixed point: convergence is fast, and pure translateZ takes just one round.
  */
 const CLAMP_PASSES = 6;
 
@@ -440,13 +473,15 @@ export function clampToStage(frame: ClipFrame | undefined, parent: Size, fovDeg?
       else if (vb.top + vb.height > parent.height) dy = parent.height - (vb.top + vb.height);
     }
     if (dx === 0 && dy === 0) break;
-    // 锚点处的投影倍率:锚点就是变换原点,旋转不动它,所以它的深度就是 translateZ
+    // Projection ratio at the anchor: the anchor is the transform origin and unaffected by rotation,
+    // so its depth is simply translateZ
     const k = fovDeg && frameIs3D(f)
       ? projectStage({ x: f.x, y: f.y, z: f.translateZ }, parent, fovDeg)?.scale || 1
       : 1;
     cur = { ...cur, x: f.x + dx / k, y: f.y + dy / k };
     moved = true;
-    // 二维时一轮就是精确解,不必再走一遍(也保证结果和以前逐位相同)
+    // In 2D, a single round is an exact solution without needing another pass (also ensuring results
+    // are bit-for-bit identical to before)
     if (k === 1) break;
     if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) break;
   }
@@ -459,8 +494,9 @@ export function clampToStage(frame: ClipFrame | undefined, parent: Size, fovDeg?
 export type SafeSide = "left" | "right" | "top" | "bottom";
 
 /**
- * 主体检测说「这一侧是空的」→ 一个能直接喂给 set_rect 的矩形。
- * left/right 是半屏,top/bottom 是 1/3 带(和主体检测算 occupancy 用的分区一致),四周留 margin。
+ * Subject detection says "this side is empty" → a rectangle that can be fed directly to set_rect.
+ * left/right is half screen, top/bottom is a 1/3 band (consistent with sections used by subject
+ * detection to calculate occupancy), leaving margins on all sides.
  */
 export function rectForSafeSide(side: SafeSide, parent: Size, margin = 40): Rect {
   const W = parent.width, H = parent.height;
@@ -469,11 +505,11 @@ export function rectForSafeSide(side: SafeSide, parent: Size, margin = 40): Rect
     case "right": return { x1: W / 2 + margin, y1: margin, x2: W - margin, y2: H - margin };
     case "top": return { x1: margin, y1: margin, x2: W - margin, y2: H / 3 - margin };
     case "bottom": return { x1: margin, y1: (H * 2) / 3 + margin, x2: W - margin, y2: H - margin };
-    default: throw new Error(`safeSide 只能是 left / right / top / bottom,收到 ${JSON.stringify(side)}`);
+    default: throw new Error(`safeSide must be left / right / top / bottom, got ${JSON.stringify(side)}`);
   }
 }
 
-/** 在现有基础上加减:位置加像素,缩放乘倍数,旋转加角度 */
+/** Add/subtract on top of existing values: add pixels to position, multiply scale, add angles to rotation */
 export function nudgeFrame(
   d: { dx?: number; dy?: number; scaleBy?: number; rotateBy?: number },
   prev: ClipFrame | undefined,
@@ -481,11 +517,11 @@ export function nudgeFrame(
 ): ClipFrame {
   for (const k of ["dx", "dy", "scaleBy", "rotateBy"] as const) {
     const v = d[k];
-    if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v))) throw new Error(`${k} 必须是有限数字,收到 ${JSON.stringify(v)}`);
+    if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v))) throw new Error(`${k} must be a finite number, got ${JSON.stringify(v)}`);
   }
-  if (d.scaleBy !== undefined && !(d.scaleBy > 0)) throw new Error(`scaleBy 是倍数,必须大于 0(0.5 = 缩到一半,2 = 放大一倍),收到 ${d.scaleBy}`);
+  if (d.scaleBy !== undefined && !(d.scaleBy > 0)) throw new Error(`scaleBy is a multiplier and must be greater than 0 (0.5 = shrink to half, 2 = double the size), got ${d.scaleBy}`);
   if (d.dx === undefined && d.dy === undefined && d.scaleBy === undefined && d.rotateBy === undefined) {
-    throw new Error("nudge 至少要传 dx / dy / scaleBy / rotateBy 中的一项");
+    throw new Error("nudge needs at least one of dx / dy / scaleBy / rotateBy");
   }
   const p = resolveFrame(prev, parent);
   return {

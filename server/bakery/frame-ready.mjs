@@ -23,7 +23,7 @@ export async function waitFrameReady(bakery, signal) {
     await Promise.race([task, new Promise(resolve => setTimeout(resolve, 4))]);
     if (signal?.aborted) throw Object.assign(new Error('Frame request cancelled'), { cancelled: true });
     if (!done) {
-      if (Date.now() - start > 20000) throw new Error('控件、字体或图片在 20 秒内未就绪，已停止截图');
+      if (Date.now() - start > 20000) throw new Error('Controls, fonts or images were not ready within 20 seconds, screenshot stopped');
       await bakery.beginFrame();
     }
   }

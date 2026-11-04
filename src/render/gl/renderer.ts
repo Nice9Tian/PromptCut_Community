@@ -1,25 +1,32 @@
 /**
- * canvas 卡的共享 WebGL 渲染器 —— 画的那一半(R9 M2 / M3)。
+ * Shared WebGL renderer for canvas cards: the drawing half (R9 M2 / M3).
  *
- * **同一份代码跑在两个地方**:GL Worker 里(`glWorker.ts`,两条路线的主路)和舞台主线程上
- * (`glHost.ts` 的能力退路:Worker 里拿不到 `OffscreenCanvas` 的 `webgl2` 时)。两处 import 同一张
- * `programs.ts`,所以画出来的是同一份代码。这里**不碰 DOM**(`OffscreenCanvas` 在两处都有)。
+ * **The same code runs in two places**: in the GL Worker (`glWorker.ts`, the primary path for both
+ * routes) and on the stage main thread (`glHost.ts` capability fallback: when `webgl2` on
+ * `OffscreenCanvas` is unavailable in the Worker). Both import the same `programs.ts`, so they
+ * render the exact same code. This does **not touch the DOM** (`OffscreenCanvas` exists in both
+ * places).
  *
- * # 统一的画法(两条路线一样)
+ * # Unified drawing approach (same for both routes)
  *
- * 上下文属性 `{ alpha: true, antialias: false, premultipliedAlpha: true }`;每个图集画在**多重采样 FBO**
- * 上(`renderbufferStorageMultisample`,`samples = min(4, MAX_SAMPLES)`),`blitFramebuffer` 解析到
- * 不带抗锯齿的默认帧缓冲(那张 `OffscreenCanvas`),再按区域 `createImageBitmap` 裁位图。
- * **不能直接开 `antialias: true`**:WebGL2 不允许往多重采样的绘制缓冲 blit。
+ * Context attributes `{ alpha: true, antialias: false, premultipliedAlpha: true }`; each atlas is
+ * drawn to a **multisample FBO** (`renderbufferStorageMultisample`, `samples = min(4, MAX_SAMPLES)`),
+ * resolved via `blitFramebuffer` to the default framebuffer without anti-aliasing (that
+ * `OffscreenCanvas`), and then cropped to bitmaps by region via `createImageBitmap`.
+ * **Cannot directly enable `antialias: true`**: WebGL2 does not allow blitting to a multisampled
+ * draw buffer.
  *
- * `three` 支的渲染器用共享上下文建**一次**;图集那个 FBO 经 `setRenderTargetFramebuffer` 交给它,
- * 渲染目标标成 `isXRRenderTarget`、纹理标 sRGB —— three 对这种目标按「画到屏幕」处理
- * (输出色彩空间、色调映射都和直接画画布一样),否则画进渲染目标会停在线性空间、整体偏暗。
+ * The `three` branch renderer is created **once** with the shared context; that atlas FBO is passed
+ * to it via `setRenderTargetFramebuffer`, with the render target marked as `isXRRenderTarget` and
+ * textures marked as sRGB: three treats such targets as "draw to screen" (output color space and
+ * tone mapping are identical to drawing directly to canvas), otherwise drawing into a render target
+ * stays in linear space and appears darker overall.
  *
- * # 每个 `stageId` 一份图集
+ * # One atlas per `stageId`
  *
- * 路线 2 下两个舞台共用这一个上下文:每个 `stageId` 各有「活跃卡集合 + 图集区域」,
- * program 缓存和纹理缓存共用(所以纹理只有一份)。`release({ stageId })` 只清那一份。
+ * Under Route 2, the two stages share this single context: each `stageId` has its own "active card
+ * set + atlas region", while program cache and texture cache are shared (so textures exist only
+ * once). `release({ stageId })` clears only that portion.
  */
 
 import * as THREE from "three";
@@ -38,7 +45,7 @@ interface Page {
   fbo: WebGLFramebuffer;
   color: WebGLRenderbuffer;
   depth: WebGLRenderbuffer;
-  /** three 画进这一页时用的渲染目标(懒建) */
+  /** Render target used when three draws into this page (lazily created) */
   rt: THREE.WebGLRenderTarget | null;
 }
 
@@ -53,18 +60,18 @@ interface CardState {
   textures: GlLayoutCard["textures"];
   stage: GlLayoutCard["stage"];
   params: Record<string, unknown>;
-  /** 参数 + 尺寸 + 纹理的身份;变了就重建 three 的 scene */
+  /** Identity of parameters + dimensions + textures; rebuilds three's scene when changed */
   buildKey: string;
   program: CanvasCardProgram | undefined;
-  /** three:建好的场景;`ready` 之前(编译 / 纹理)这张卡这一拍留空 */
+  /** three: built scene; leave this card blank for this tick before `ready` (compilation / textures) */
   built: ThreeBuilt | null;
-  /** 正在准备(编译、纹理解码);strict 的拍等它 */
+  /** Preparing (compilation, texture decoding); strict ticks wait for it */
   preparing: Promise<void> | null;
   ready: boolean;
   error: string | null;
-  /** 2d:自己的画布 */
+  /** 2d: its own canvas */
   canvas2d: OffscreenCanvas | null;
-  /** 引用着的纹理地址(给纹理缓存记引用) */
+  /** Referenced texture URLs (tracks references for texture cache) */
   refs: string[];
 }
 
@@ -81,7 +88,7 @@ interface GlProg {
   error: string | null;
   uniforms: Map<string, WebGLUniformLocation | null>;
   aPos: number;
-  /** `quad` 几何的 VAO(属性位置按 program 各不同,所以一个 program 一个) */
+  /** VAO for `quad` geometry (attribute locations differ by program, so one per program) */
   vao: WebGLVertexArrayObject | null;
 }
 
@@ -97,22 +104,23 @@ export interface GlRenderer {
 }
 
 /*
- * 主线程退路跑在舞台页里时,`setTimeout` 被舞台时钟换成了虚拟定时器(暂停时不响)—— 等编译、Worker 睡觉
- * 都要用真的那份。Worker 里没有这回事,`setTimeout` 就是真的。
+ * When the main-thread fallback runs in the stage page, `setTimeout` is replaced by the stage
+ * clock with a virtual timer (does not fire when paused): waiting for compilation and Worker
+ * sleep both require the real one. In the Worker there is no such thing; `setTimeout` is real.
  */
 const onMainThread = typeof window !== "undefined";
 const realTimeout: (cb: () => void, ms: number) => unknown =
   (onMainThread && (window as unknown as { __pcRealSetTimeout?: (cb: () => void, ms: number) => number }).__pcRealSetTimeout) || setTimeout;
 const sleep = (ms: number) => new Promise<void>((r) => realTimeout(r, ms));
 
-/** 位图解码的两种朝向:GL 纹理要自下而上(`flipY`),2D `drawImage` 要原样 */
+/** Two orientations for bitmap decoding: GL textures need bottom-to-top (`flipY`), 2D `drawImage` as-is */
 type Orientation = "flipY" | "none";
 
 export function createGlRenderer(opts: {
-  /** 只有一个舞台:图集按小的上限开(`ATLAS_MAX_COMPACT`) */
+  /** Only one stage: allocate atlas using the smaller upper limit (`ATLAS_MAX_COMPACT`) */
   compact: boolean;
   programOf: (id: string) => CanvasCardProgram | undefined;
-  /** 主线程退路在没有 `OffscreenCanvas` 的环境里自己给一张画布 */
+  /** Main-thread fallback provides a canvas itself in environments without `OffscreenCanvas` */
   canvas?: OffscreenCanvas | HTMLCanvasElement;
 }): GlRenderer {
   const maxAtlas = opts.compact ? ATLAS_MAX_COMPACT : ATLAS_MAX;
@@ -125,7 +133,7 @@ export function createGlRenderer(opts: {
       alpha: true, antialias: false, premultipliedAlpha: true,
       depth: false, stencil: false, preserveDrawingBuffer: false,
     }) as WebGL2RenderingContext | null;
-    if (!gl) error = "拿不到 webgl2 上下文";
+    if (!gl) error = "Could not get a webgl2 context";
   } catch (e) {
     canvas = null as unknown as OffscreenCanvas;
     error = e instanceof Error ? e.message : String(e);
@@ -141,19 +149,19 @@ export function createGlRenderer(opts: {
   const rendererName = gl ? String(gl.getParameter(gl.RENDERER)) : "";
   const parallel = gl?.getExtension("KHR_parallel_shader_compile") as { COMPLETION_STATUS_KHR: number } | null;
 
-  /* ---------------------------------------------------------------- 缓存(各 stageId 共用) */
+  /* ---------------------------------------------------------------- Cache (shared across stageIds) */
 
   const stages = new Map<string, StageState>();
-  /** GLSL 源码哈希 → 编译好的 program(同一张卡的多个片段共用) */
+  /** GLSL source hash → compiled program (shared across multiple clips of the same card) */
   const glPrograms = new Map<string, GlProg>();
-  /** 地址 + 朝向 → 解码后的位图(`mediaId + tier` 已由主线程解析进地址里) */
+  /** URL + orientation → decoded bitmap (`mediaId + tier` already resolved into URL by main thread) */
   const bitmaps = new Map<string, Promise<ImageBitmap>>();
   const bitmapDone = new Map<string, ImageBitmap>();
-  /** gl 支:地址 → 纹理 */
+  /** gl branch: URL → texture */
   const glTextures = new Map<string, WebGLTexture>();
-  /** three 支:地址 → 同一个 `THREE.Texture` 实例(同一个 renderer 下多张卡共用,只上传一次) */
+  /** three branch: URL → same `THREE.Texture` instance (shared by cards under same renderer, uploaded once) */
   const threeTextures = new Map<string, THREE.Texture>();
-  /** 纹理地址被多少张卡引用着(各 stageId 合计);归零就删 */
+  /** How many cards reference the texture URL (total across stageIds); delete when reaching zero */
   const texRefs = new Map<string, number>();
   let uploads = 0;
   let three: THREE.WebGLRenderer | null = null;
@@ -168,7 +176,7 @@ export function createGlRenderer(opts: {
     return three;
   };
 
-  /* ---------------------------------------------------------------- 纹理 */
+  /* ---------------------------------------------------------------- Textures */
 
   const bitmapOf = (url: string, orientation: Orientation): Promise<ImageBitmap> => {
     const key = `${orientation}|${url}`;
@@ -176,12 +184,12 @@ export function createGlRenderer(opts: {
     if (!p) {
       p = fetch(url)
         .then((r) => {
-          if (!r.ok) throw new Error(`纹理 ${r.status}: ${url}`);
+          if (!r.ok) throw new Error(`Texture ${r.status}: ${url}`);
           return r.blob();
         })
         .then((blob) => createImageBitmap(blob, { imageOrientation: orientation === "flipY" ? "flipY" : "from-image", premultiplyAlpha: "none" }))
         .then((bm) => { bitmapDone.set(key, bm); return bm; });
-      // 失败了别缓存:下一次再试
+      // Do not cache on failure: retry next time
       p.catch(() => bitmaps.delete(key));
       bitmaps.set(key, p);
     }
@@ -195,9 +203,9 @@ export function createGlRenderer(opts: {
     const again = threeTextures.get(url);
     if (again) return again;
     const tex = new THREE.Texture(bm as unknown as HTMLImageElement);
-    // 位图解码时已经翻过了:three 对 ImageBitmap 不认 flipY
+    // Already flipped during bitmap decoding: three ignores flipY for ImageBitmap
     tex.flipY = false;
-    // 和原来 TextureLoader 那条路一致:颜色空间标 sRGB,否则整体偏暗
+    // Consistent with original TextureLoader path: mark color space as sRGB, otherwise darker overall
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.needsUpdate = true;
     threeTextures.set(url, tex);
@@ -227,7 +235,7 @@ export function createGlRenderer(opts: {
 
   const addRefs = (urls: string[]) => { for (const u of urls) texRefs.set(u, (texRefs.get(u) ?? 0) + 1); };
   const dropRefs = (urls: string[]) => { for (const u of urls) texRefs.set(u, (texRefs.get(u) ?? 1) - 1); };
-  /** 没人引用的纹理全删(`back` 队列空时显存近零,下次任务重新上传) */
+  /** Delete all unreferenced textures (VRAM near zero when `back` queue is empty, re-upload on next task) */
   const collectTextures = () => {
     for (const [url, n] of [...texRefs]) {
       if (n > 0) continue;
@@ -245,10 +253,10 @@ export function createGlRenderer(opts: {
     }
   };
 
-  /* ---------------------------------------------------------------- gl 支的 program */
+  /* ---------------------------------------------------------------- gl branch programs */
 
   const hashOf = (s: string): string => {
-    // cyrb53 的简化版:只用来当缓存键
+    // Simplified version of cyrb53: used only as cache key
     let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
     for (let i = 0; i < s.length; i++) {
       const ch = s.charCodeAt(i);
@@ -260,7 +268,7 @@ export function createGlRenderer(opts: {
     return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
   };
 
-  /** `compileShader` / `linkProgram` 走 `KHR_parallel_shader_compile`,按 GLSL 哈希缓存 */
+  /** `compileShader` / `linkProgram` use `KHR_parallel_shader_compile`, cached by GLSL hash */
   const glProgramOf = (p: GlProgram): GlProg => {
     const key = hashOf(p.vertex + "\u0000" + p.fragment);
     const hit = glPrograms.get(key);
@@ -283,7 +291,7 @@ export function createGlRenderer(opts: {
     const finish = () => {
       prog.done = true;
       if (!g.getProgramParameter(program, g.LINK_STATUS)) {
-        prog.error = `着色器链接失败:${g.getShaderInfoLog(vs) || ""} ${g.getShaderInfoLog(fs) || ""} ${g.getProgramInfoLog(program) || ""}`.trim();
+        prog.error = `Shader link failed: ${g.getShaderInfoLog(vs) || ""} ${g.getShaderInfoLog(fs) || ""} ${g.getProgramInfoLog(program) || ""}`.trim();
       }
       prog.aPos = g.getAttribLocation(program, "aPos");
       g.deleteShader(vs);
@@ -300,7 +308,7 @@ export function createGlRenderer(opts: {
   };
   const glProgramReady = (prog: GlProg): boolean => (prog as GlProg & { check: () => boolean }).check();
 
-  /** 铺满区域的三角形条(−1..1),各 program 的 VAO 共用这一份顶点缓冲 */
+  /** Triangle strip covering the area (−1..1); VAOs of each program share this vertex buffer */
   const quadVaoOf = (prog: GlProg): WebGLVertexArrayObject | null => {
     if (prog.vao) return prog.vao;
     const g = gl!;
@@ -320,7 +328,7 @@ export function createGlRenderer(opts: {
     return prog.vao;
   };
 
-  /* ---------------------------------------------------------------- 卡的准备 */
+  /* ---------------------------------------------------------------- Card preparation */
 
   const stageOf = (stageId: string): StageState => {
     let s = stages.get(stageId);
@@ -332,7 +340,7 @@ export function createGlRenderer(opts: {
   };
 
   const disposeCard = (c: CardState) => {
-    try { c.built?.dispose?.(); } catch { /* 卡自己的 dispose 抛了也不能拖垮别的卡 */ }
+    try { c.built?.dispose?.(); } catch { /* Even if a card's own dispose throws, it must not bring down other cards */ }
     c.built = null;
     c.ready = false;
     c.preparing = null;
@@ -340,7 +348,7 @@ export function createGlRenderer(opts: {
     c.refs = [];
   };
 
-  /** three:建 scene(纹理先到位),编译完才算 ready */
+  /** three: build scene (textures in place first), considered ready only after compilation */
   const prepareThree = (c: CardState): Promise<void> => {
     const r = ensureThree();
     const program = c.program as Extract<CanvasCardProgram, { kind: "three" }>;
@@ -352,7 +360,8 @@ export function createGlRenderer(opts: {
       const built = program.build(THREE, c.params, { width: c.w, height: c.h, stage: c.stage, textures });
       c.built = built;
       built.update(0, { reset: true });
-      // three 的 compileAsync 靠全局 setTimeout 轮询:主线程上那是舞台的虚拟定时器,暂停时永远等不到,所以同步编
+      // three's compileAsync polls via global setTimeout: on the main thread that is the stage's
+      // virtual timer and never resolves when paused, so compile synchronously
       if (onMainThread) r.compile(built.scene, built.camera);
       else await r.compileAsync(built.scene, built.camera);
       if (c.buildKey !== key) return;
@@ -379,8 +388,8 @@ export function createGlRenderer(opts: {
 
   const startPrepare = (c: CardState) => {
     if (c.ready || c.preparing || c.error) return;
-    if (!c.program) { c.error = `没有注册 program:${c.programId}`; return; }
-    if (c.program.kind !== c.kind) { c.error = `program ${c.programId} 是 ${c.program.kind},契约写的是 ${c.kind}`; return; }
+    if (!c.program) { c.error = `No program registered: ${c.programId}`; return; }
+    if (c.program.kind !== c.kind) { c.error = `program ${c.programId} is ${c.program.kind}, but the contract says ${c.kind}`; return; }
     const p = c.kind === "three" ? prepareThree(c) : c.kind === "gl" ? prepareGl(c) : prepare2d(c);
     c.preparing = p.then(
       () => { c.preparing = null; },
@@ -388,7 +397,7 @@ export function createGlRenderer(opts: {
     );
   };
 
-  /* ---------------------------------------------------------------- 图集 */
+  /* ---------------------------------------------------------------- Atlas */
 
   const freePages = (s: StageState) => {
     const g = gl!;
@@ -401,7 +410,7 @@ export function createGlRenderer(opts: {
     s.pages = [];
   };
 
-  /** 默认帧缓冲(那张 OffscreenCanvas)取各舞台最大的一页,只在布局变了时改尺寸 */
+  /** Default framebuffer (that OffscreenCanvas) takes largest page across stages, resizing only on layout change */
   const fitCanvas = () => {
     let w = 1, h = 1;
     for (const s of stages.values()) for (const p of s.pages) { w = Math.max(w, p.w); h = Math.max(h, p.h); }
@@ -429,7 +438,7 @@ export function createGlRenderer(opts: {
   const layout = (stageId: string, cards: GlLayoutCard[]): RegionsMsg => {
     const s = stageOf(stageId);
     const next = new Map<string, GlLayoutCard>(cards.map((c) => [c.clipId, c]));
-    // 走了的卡:清掉它的场景和纹理引用
+    // Departed cards: clean up their scenes and texture references
     for (const [id, c] of [...s.cards]) {
       if (!next.has(id)) { disposeCard(c); s.cards.delete(id); }
     }
@@ -449,7 +458,7 @@ export function createGlRenderer(opts: {
       s.cards.set(lc.clipId, c);
     }
     collectTextures();
-    // 2d 卡不进图集(各自一张 OffscreenCanvas 2D)
+    // 2d cards do not enter the atlas (each has its own OffscreenCanvas 2D)
     const atlasCards = cards.filter((c) => c.kind !== "2d").map((c) => ({ id: c.clipId, w: c.w, h: c.h }));
     const key = layoutKeyOf(atlasCards);
     if (key !== s.layoutKey) {
@@ -482,16 +491,16 @@ export function createGlRenderer(opts: {
     fitCanvas();
   };
 
-  /* ---------------------------------------------------------------- 一拍 */
+  /* ---------------------------------------------------------------- One tick */
 
-  /** 这一页的渲染目标(three 用):外部帧缓冲 = 图集 FBO,按「画到屏幕」处理色彩 */
+  /** Render target for this page (used by three): external framebuffer = atlas FBO, colors treated as "draw to screen" */
   const rtOf = (page: Page): THREE.WebGLRenderTarget => {
     if (page.rt) return page.rt;
     const r = ensureThree();
     const rt = new THREE.WebGLRenderTarget(page.w, page.h, { depthBuffer: false });
     (rt as unknown as { isXRRenderTarget: boolean }).isXRRenderTarget = true;
     rt.texture.colorSpace = THREE.SRGBColorSpace;
-    // three 的公开方法(WebXR 用的那条),类型声明里没收
+    // Public method of three (the one used by WebXR), not included in type declarations
     (r as unknown as { setRenderTargetFramebuffer(rt: THREE.WebGLRenderTarget, fb: WebGLFramebuffer): void }).setRenderTargetFramebuffer(rt, page.fbo);
     page.rt = rt;
     return rt;
@@ -559,7 +568,7 @@ export function createGlRenderer(opts: {
     three?.resetState();
   };
 
-  /** 同一上下文里的活是串行的:两个 stageId 的 blit 串行(路线 2),`beat` 本来就是一拍一条 */
+  /** Work in the same context is serialized: blits for two stageIds are serialized (Route 2), `beat` is one per tick anyway */
   let queue: Promise<unknown> = Promise.resolve();
 
   const beatNow = async (msg: BeatMsg): Promise<{ msg: DoneMsg; transfer: Transferable[] }> => {
@@ -570,7 +579,7 @@ export function createGlRenderer(opts: {
       return { msg: done, transfer: [] };
     }
     const s = stageOf(msg.stageId);
-    // 先吃掉参数:只传变了的,和上一次的合并
+    // Consume parameters first: only pass what changed, merge with previous
     for (const bc of msg.cards) {
       const c = s.cards.get(bc.clipId);
       if (!c || !bc.params) continue;
@@ -578,7 +587,7 @@ export function createGlRenderer(opts: {
       const shapeKey = c.buildKey.slice(0, c.buildKey.indexOf("#"));
       const nextKey = `${shapeKey}#${JSON.stringify(bc.params)}`;
       if (nextKey !== c.buildKey) {
-        // 参数变了:three 重建场景(和原来组件在 layout effect 里整个重建一致)
+        // Parameters changed: three rebuilds the scene (consistent with component rebuilding entirely in layout effect)
         disposeCard(c);
         c.refs = c.textures.map((tx) => tx.url);
         addRefs(c.refs);
@@ -597,7 +606,7 @@ export function createGlRenderer(opts: {
     const now = () => (typeof performance !== "undefined" ? performance.now() : 0);
     const transfer: Transferable[] = [];
 
-    /* 2d:各画各的 */
+    /* 2d: each draws its own */
     for (const { bc, c } of cards) {
       if (c.kind !== "2d") continue;
       if (!c.ready || !c.canvas2d) { skipped[c.clipId] = c.error ?? "preparing"; continue; }
@@ -613,7 +622,7 @@ export function createGlRenderer(opts: {
       transfer.push(bm);
     }
 
-    /* 图集:每页 清 → 画 → blit 解析到默认帧缓冲 → 裁位图 */
+    /* Atlas: each page clear → draw → blit resolve to default framebuffer → crop bitmap */
     const crops: Array<Promise<void>> = [];
     s.pages.forEach((page, pageIndex) => {
       const onPage = cards.filter(({ c }) => c.kind !== "2d" && s.regions.get(c.clipId)?.page === pageIndex);
@@ -664,7 +673,8 @@ export function createGlRenderer(opts: {
       g.blitFramebuffer(0, 0, page.w, page.h, 0, 0, page.w, page.h, g.COLOR_BUFFER_BIT, g.NEAREST);
       g.bindFramebuffer(g.FRAMEBUFFER, null);
       three?.resetState();
-      // 默认帧缓冲比这一页大时,页贴在左下角:图像坐标的 y 要加上多出来的那一截
+      // When default framebuffer is larger than this page, the page is pinned to the bottom-left:
+      // add the extra offset to the image coordinate y
       const top = canvas.height - page.h;
       for (const { c, r } of drawn) {
         crops.push(createImageBitmap(canvas as OffscreenCanvas, r.x, top + r.y, r.w, r.h).then((bm) => {

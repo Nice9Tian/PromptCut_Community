@@ -1,4 +1,4 @@
-/** 第二道只读的样例（测试夹具，不进卡片库）：源码检查看不出的写法——绕一道变量再往顶层的对象里写。载入后一写就当场报错。 */
+/** Second read-only sample (test fixture, not in card library): pattern undetectable by source check: writes to top-level object via an intermediate variable; throws immediately on write once loaded. */
 import type { CardDef, CardProps } from "../../kernel/types";
 import { tween } from "../../kernel/remotionStyle";
 interface Params { text: string }
@@ -12,9 +12,9 @@ function C({ params, t = 0 }: CardProps<Params>) {
   return <div style={{ position: "absolute", inset: 0, opacity: tween(t, { duration: 0.4 }) }}>{params.text}{counter.frames}{seen.length}</div>;
 }
 export const card: CardDef<Params> = {
-  id: "rs-alias-write", name: "绕一道往顶层写", description: "remotion 式的规矩的违规样例", source: "user",
+  id: "rs-alias-write", name: "Indirect write to the top level", description: "Violation example of the remotion-style rules", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };

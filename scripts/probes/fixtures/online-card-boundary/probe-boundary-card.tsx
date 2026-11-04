@@ -1,12 +1,17 @@
 /**
- * 越权探测用户卡(夹具):画面组件一挂上就把探测跑一遍,`audio()` 在声音线程里再跑 Worker 那一组。探测代码本体在 `probe-boundary-attempts.ts`。
- * 经真实加载路径用(`online-card-security-probe.mjs`):`content.put` 到 `src/cards/user/probe-boundary-card.tsx`
- * (探测代码本体放 `src/cards/user/probe-boundary-attempts.ts`)→ 编辑页面转译 → 发给舞台 → 加载器执行。
+ * Overreach probe user card (fixture): runs the probe once when visual component mounts; `audio()`
+ * runs the Worker group in the sound thread. Probe code itself is in `probe-boundary-attempts.ts`.
+ * Used via real loading path (`online-card-security-probe.mjs`): `content.put` to
+ * `src/cards/user/probe-boundary-card.tsx` (probe code itself in
+ * `src/cards/user/probe-boundary-attempts.ts`) → transpiled by editor → sent to stage → executed by
+ * loader.
  *
- * 参数从片段的 `params.ctx` 来(收集站地址、会话号、素材哈希……;没有就什么都不做)。窗口那一半只在可见的那台舞台
- * (`role: "front"`)里跑一次,结果在那台舞台的 `globalThis.__pcBoundary["user-card"]`;声音那一半的结果从线程里 `postMessage` 出来
- * (探针在舞台里给 `Worker` 包了一层来接)。
- * 模块顶层往 `globalThis` 写一个记号:编辑页面、同源单舞台的文档里都不该出现它(契约第 10 节「编辑页面不执行」)。
+ * Parameters come from clip's `params.ctx` (collection station address, session id, asset hash…;
+ * does nothing if absent). Window half runs only once in visible stage (`role: "front"`), results
+ * are in `globalThis.__pcBoundary["user-card"]` on that stage; sound half results are emitted from
+ * thread via `postMessage` (probe wraps `Worker` in the stage to receive them).
+ * Module top level writes a marker to `globalThis`: it should not appear in documents of editor or
+ * same-origin single stage (card contract section 10, "Editor does not execute").
  */
 import { useEffect } from "react";
 import { runAll, workerAttempts } from "./probe-boundary-attempts";
@@ -29,14 +34,14 @@ let audioStarted = false;
 
 export const probeBoundaryCard = {
   id: "probe-boundary-card",
-  name: "探针越权探测用户卡",
-  description: "安全验收探针用:尝试读凭证、票据、本机存储、父页对象,并向外部地址发请求",
-  tags: ["探针"],
+  name: "Overreach probe user card",
+  description: "Used by the security acceptance probe: tries to read credentials, tickets, local storage and parent page objects, and sends requests to external addresses",
+  tags: ["probe"],
   frameMode: "stateful",
   defaults: { ctx: null },
   controls: [],
   Component: BoundaryCard,
-  // 声音线程里没有 DOM:只跑 Worker 那一组,结果从线程里发出去
+  // No DOM in the sound thread: only runs the Worker group, results are sent out from the thread
   audio: (_sources: unknown, range: { start: number; count: number }, params: any) => {
     const base = params?.ctx;
     if (base?.collector && !audioStarted) {

@@ -1,7 +1,8 @@
 /**
- * 分片与并发:一条时间轴切几段、开几个进程、各段怎么合回去。
+ * Sharding and concurrency: how many segments to split a timeline into, how many processes to
+ * spawn, and how each segment is merged back.
  *
- * 从 scripts/export-frames.mjs 拆出来(纯重构,逐字搬运)。
+ * Split from scripts/export-frames.mjs (pure refactoring, copied verbatim).
  */
 
 import path from 'path';
@@ -11,27 +12,36 @@ import { openBakery } from './chrome.mjs';
 import { bakeFrames } from './bake.mjs';
 
 /*
- * 多进程分片(docs/archive/topics/render-rebuild-plan.md 阶段 5)。
+ * Multi-process sharding (docs/archive/topics/render-rebuild-plan.md Stage 5).
  *
- * 每个分片**都从第 0 帧推起**,只截自己那一段 —— 动画锚点、按 delta 积分的卡片、带种子的随机数流
- * 都依赖「前面推过哪些帧」,跳着推就对不上。所以分片的输出和单进程逐字节相同,代价是每个分片都要
- * 付「推到自己那段开头」的钱:实测推进一帧约 20 ms、截一张约 24.5 ms(demo + 粒子 + scene-3d)。
- * 最后一个分片无论如何要把整条时间轴推一遍,所以理论上限约 (20+24.5)/20 ≈ 2.2 倍。
+ * Every shard **starts advancing from frame 0**, capturing only its own segment: animation anchor
+ * points, cards integrating over delta, and seeded random streams all depend on "which frames were
+ * advanced earlier"; skipping ahead causes mismatches. Therefore, shard outputs are byte-for-byte
+ * identical to single-process output, at the cost of each shard having to pay for "advancing to
+ * the beginning of its own segment": in benchmark tests, advancing one frame takes ~20 ms and
+ * capturing one frame takes ~24.5 ms (demo + particles + scene-3d). The final shard must advance
+ * through the entire timeline regardless, so the theoretical upper bound is ~(20+24.5)/20 ≈ 2.2×.
  *
- * **实测远到不了这个上限**(demo 全长 1800 帧 + 粒子 + scene-3d,28 线程机器):
- *   1 个 54.8s / 4 个 44.8s / 8 个 62.4s(比单进程还慢),三种输出两两 1800/1800 逐字节相同。
- * 软件光栅化的 Chrome 同时跑几个就互相抢 CPU,「推到自己那段开头」的钱又省不掉。
- * 导出默认使用 auto 分片；显式 --workers 1 可退回单进程，'auto' 最多 4 个。
- * 真要大幅提速得换思路:按片段边界跳过前面的推进(对全局随机数流有影响,见 pinEntropy.ts),
- * 或者用 HTML 采样缓存乱序重截(scripts/replay-frames.mjs)。
+ * **In benchmarks, it falls far short of this upper bound** (demo total length 1800 frames +
+ * particles + scene-3d, 28-thread machine):
+ *   1 worker 54.8s / 4 workers 44.8s / 8 workers 62.4s (slower than single process); the three
+ *   outputs are pairwise 1800/1800 byte-for-byte identical.
+ * Running multiple software-rasterized Chrome instances simultaneously causes them to compete for
+ * CPU, while the cost of "advancing to the beginning of its segment" cannot be saved. Export
+ * defaults to auto sharding; explicit --workers 1 can fall back to single process; 'auto' spawns
+ * up to 4. To truly speed up significantly requires a different approach: skip earlier
+ * advancement by clip boundaries (affects the global random number stream, see pinEntropy.ts), or
+ * re-capture out of order using an HTML sample cache (scripts/replay-frames.mjs).
  *
- * 为了让各分片同时结束,段长不是均分的:越靠前的分片推得越少,就多截几帧。按
- * 「分片成本 = (段尾+1)×推进 + 段长×截图」二分出一个共同的成本上限,再从前往后切。
+ * To have all shards finish at the same time, segment lengths are not divided equally: earlier
+ * shards advance fewer frames, so they capture more frames. Binary search for a shared cost ceiling
+ * using "shard cost = (segment end + 1) × advance + segment length × capture", then slice from
+ * front to back.
  */
 const PUSH_MS = 20;
 const SHOOT_MS = 24.5;
 
-/** 把 [start, end] 切成 n 段,让每段「推到段尾 + 截本段」的成本尽量一样 */
+/** Splits [start, end] into n segments so the cost of "advance to segment end + capture this segment" is as equal as possible */
 export function balancedShards(start, end, n) {
   const cost = (a, b) => (b + 1) * PUSH_MS + (b - a + 1) * SHOOT_MS;
   const fits = (limit) => {
@@ -58,8 +68,9 @@ export function balancedShards(start, end, n) {
 }
 
 /**
- * 开几个分片。'auto':每个 Chrome 约 1.9 个核、约 750 MB(实测),按核数和空闲内存一起夹,最多 8
- * (旧管线实测 8 个是拐点,12 个反而更慢)。
+ * How many shards to spawn. 'auto': each Chrome takes ~1.9 cores and ~750 MB (measured), clamped by
+ * core count and free memory together, up to 8 (in the old pipeline 8 was measured as the inflection
+ * point; 12 was actually slower).
  */
 export async function resolveWorkers(w) {
   if (w === undefined || w === null || w === '' || w === 1 || w === '1') return 1;
@@ -84,10 +95,11 @@ async function bakeSharded(opts, n) {
     // mode are treated as stateful.
     const clips = await first.page.evaluate(() => window.__pcClipFrameModes?.() ?? null);
     const shards = planShardRanges(clips ?? (timeline.clips || []), start, end, fps, n);
-    console.log(`分片导出:${shards.length} 个进程,段 ${shards.map(([a, b]) => `${a}-${b}`).join(' ')}`);
+    console.log(`Shard export: ${shards.length} processes, segments ${shards.map(([a, b]) => `${a}-${b}`).join(' ')}`);
     while (bakeries.length < shards.length) bakeries.push(await openBakery(opts));
     const t0 = Date.now();
-    // 推帧补画(`bake.mjs` 文件头):第二片起不补,理由同 `export-unified.mjs`(切点前面推过去的卡到切点都已卸掉)
+    // Frame-advancing catch-up rendering (`bake.mjs` header): skipped from second shard onward, for the
+    // same reason as `export-unified.mjs` (cards advanced before split point are unmounted by then)
     const results = await Promise.all(shards.map(([a, b], k) => bakeFrames(bakeries[k], { ...opts, frames: `${a}-${b}`,
       ...(k > 0 && typeof opts.pushDraw !== 'boolean' ? { pushDraw: false } : {}) })));
     const r0 = results[0];
@@ -104,13 +116,13 @@ async function bakeSharded(opts, n) {
         blurs: [...new Set(results.flatMap((r) => r.glass?.blurs || []))],
       },
     };
-    // 各分片各写了一份只覆盖自己那段的清单,合成一份覆盖全段的
+    // Each shard wrote a manifest covering only its own segment; merge into one covering the full range
     if (r0.domDir) {
       const mf = path.join(r0.domDir, 'manifest.json');
       const m = JSON.parse(await fs.readFile(mf, 'utf8'));
       await fs.writeFile(mf, JSON.stringify({ ...m, startFrame: start, endFrame: end }, null, 1));
     }
-    console.log(`分片导出完成:${totalFrames} 帧,${merged.elapsed}s。`);
+    console.log(`Shard export finished: ${totalFrames} frames, ${merged.elapsed}s.`);
     return merged;
   } finally {
     await Promise.all(bakeries.map((b) => b.close().catch(() => {})));

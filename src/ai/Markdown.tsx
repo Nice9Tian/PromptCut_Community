@@ -5,22 +5,26 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 
 /**
- * 模型回复的 Markdown 渲染。
- * - 表格、删除线、任务列表:remark-gfm
- * - 行内 / 独占一行的公式:remark-math + rehype-katex
- * - 不开 rehype-raw:回复里的原始 HTML 一律当文字转义,模型写什么都注入不进来
+ * Markdown rendering of model replies.
+ * - Tables, strikethrough, task lists: remark-gfm
+ * - Inline / standalone-line formulas: remark-math + rehype-katex
+ * - rehype-raw is not enabled: raw HTML in a reply is always escaped as text, so nothing the model
+ *   writes can be injected
  *
- * KaTeX 的样式表由 AiPanel 引入(这里不 import css,好让本文件能在 node 里直接跑测试)
+ * KaTeX's stylesheet is imported by AiPanel (this file does not import css, so that it can be
+ * tested directly in node)
  */
 
 /**
- * 把 \( … \) 和 \[ … \] 换成 remark-math 认识的 $ / $$。
- * 模型两种写法都会用,只认 $ 的话另一半就原样漏到画面上。
- * 代码块和行内代码里的反斜杠是代码的一部分,必须跳过。
+ * Replaces \( … \) and \[ … \] with the $ / $$ that remark-math recognizes.
+ * The model uses both forms; if only $ were recognized, the other half would leak onto the screen
+ * as is.
+ * Backslashes inside code blocks and inline code are part of the code and must be skipped.
  */
 export function normalizeMath(src: string): string {
   const out: string[] = [];
-  // 按 ``` 围栏和 ` 行内代码切开,偶数段是正文,奇数段是代码,原样放回
+  // Split on ``` fences and ` inline code: even-indexed segments are prose, odd-indexed ones are
+  // code, put back as is
   const parts = src.split(/(```[\s\S]*?```|`[^`\n]*`)/g);
   for (let i = 0; i < parts.length; i++) {
     if (i % 2 === 1) {
@@ -31,8 +35,9 @@ export function normalizeMath(src: string): string {
       parts[i]
         .replace(/\\\[([\s\S]*?)\\\]/g, (_m, body) => `$$${body}$$`)
         .replace(/\\\(([\s\S]*?)\\\)/g, (_m, body) => `$${body}$`)
-        // 独占一行的 $$…$$ 摊成三行:挤在一行时 remark-math 会当成行内公式,
-        // 不居中也不单独成块,而模型多半就写在一行里
+        // Spread a $$…$$ on its own line into three lines: when squeezed onto one line, remark-math treats
+        // it as an inline formula, neither centered nor a separate block, and the model mostly writes it on
+        // one line
         .replace(/^[ \t]*\$\$[ \t]*([^\n]+?)[ \t]*\$\$[ \t]*$/gm, (_m, body) => `$$\n${body}\n$$`),
     );
   }
@@ -40,8 +45,10 @@ export function normalizeMath(src: string): string {
 }
 
 /**
- * 按原文缓存渲染结果。同一段文字在每次列表重渲时都要重新过 remark / KaTeX,历史里几百段
- * 文字合起来是几十毫秒;流式时只有最后一段在变,其余全是缓存命中。React 元素可以原样复用。
+ * Caches render results keyed by the original text. The same text would otherwise go through
+ * remark / KaTeX again on every list re-render; across a few hundred pieces of text in the history
+ * that adds up to tens of milliseconds. While streaming only the last piece changes and all the
+ * rest are cache hits. React elements can be reused as they are.
  */
 const cache = new Map<string, ReactNode>();
 const CACHE_MAX = 400;
@@ -88,10 +95,11 @@ function renderMarkdownUncached(text: string): ReactNode {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
-      // throwOnError:公式写错就把原样式子显示出来,不要整条消息炸掉
+      // throwOnError: a wrongly written formula is displayed as written, so the whole message does not blow up
       rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
       components={{
-        // 表格在窄面板里放不下,给它自己的横向滚动容器,别把整个面板撑宽
+        // A table does not fit in a narrow panel: give it its own horizontal scroll container, so it does
+        // not stretch the whole panel
         table: ({ children, ...props }) => (
           <div className="md-table-wrap">
             <table {...props}>{children}</table>

@@ -1,21 +1,33 @@
 /**
- * 在线浏览器的逐帧导出(`docs/plan/c10a-contract.md` 第 11.1 节;语义 `product/platforms.md`「在线浏览器」的「导出」)。
+ * Frame-by-frame export for online browser (`docs/plan/c10a-contract.md` Section 11.1; semantics in
+ * `product/platforms.md` "Online browser" > "Export").
  *
- *   能力探测 → (没有 AAC 就先问一次)→ 导出前核对(素材原尺寸 complete;卡片画面的来源备齐,`exportLayers.ts`;不设超时,可取消)
- *   → 提示保持前台 → 混音并编 AAC → 逐帧:合成一帧到复用的原尺寸画布 → `VideoEncoder.encode()` → `frame.close()`
- *   (`encodeQueueSize` 不超过 3)→ 封装(`mp4Mux.ts`)写出。
+ *   Capability probe → (ask once if no AAC) → pre-export check (original-size asset complete; card
+ *   visual sources ready, `exportLayers.ts`; no timeout, cancellable) → prompt to stay in foreground
+ *   → mix audio and encode AAC → frame-by-frame: composite one frame onto reused original-size canvas
+ *   → `VideoEncoder.encode()` → `frame.close()` (`encodeQueueSize` not exceeding 3) → mux (`mp4Mux.ts`)
+ *   and write out.
  *
- * 时间按帧号定(`i / fps`,导出页的钉时间办法同 `src/kernel/exportClock.ts`)。导出只用原尺寸:素材原尺寸(导出页按它的地址、
- * Range 取);小尺寸在这里一张都不用。
+ * Time is determined by frame index (`i / fps`, export page time-pinning method is identical to
+ * `src/kernel/exportClock.ts`). Export only uses original size: original-size asset (export page
+ * fetches by its URL and Range); small size is never used here.
  *
- * 分两种方式(用户 2026-10-13 定,点导出时二选一,`mode`):
- *   - **完整导出**(`full`):本页能运行的卡由导出页逐帧渲,不管它平时判轻判重(导出不是实时的,重卡这时不抑制、不等预渲染);
- *     本页不执行的卡(同步来的用户卡与素材效果卡)导出开始时请渲染节点按原尺寸逐帧渲好再用,没到齐时提示等待;
- *   - **快速导出**(`fast`):有满密度轨道流的那一段直接取流里的画面(整段都有流的卡导出页连组件都不挂);只有稀疏版或没有流的那一段
- *     照完整导出的办法出。
- * 〔分界〕2026-10-13 之前的做法(重卡逐帧取每张卡存好的 HTML 快照,`originals.ts`)两种方式都不再走;那份代码留到撤快照那一块一并删。
+ * Two modes (user decision, 2026-10-13, choose between two when clicking export, `mode`):
+ *   - **Full export** (`full`): cards runnable on this page are rendered frame-by-frame by the
+ *     export page, regardless of whether normally classified as light or heavy (export is non-realtime;
+ *     heavy cards are not suppressed and do not wait for prerender); cards not executed on this page
+ *     (synced user cards and media effect cards) request render nodes to render frame-by-frame at
+ *     original size before use, showing a waiting prompt if not fully ready;
+ *   - **Fast export** (`fast`): sections with full-density track streams directly take visuals from
+ *     the stream (for cards with streams throughout, the export page does not even mount components);
+ *     sections with only sparse versions or no streams follow the full export approach.
+ * [Cutoff] The pre-2026-10-13 approach (heavy cards taking saved HTML snapshots of each card frame by
+ * frame, `originals.ts`) is no longer used by either mode; that code remains until the snapshot
+ * removal phase to be deleted together.
  *
- * 这一层不认识编辑器:项目、素材服务、文档服务、提示、确认都由调用方(`src/editor/io/index.ts` 的 `exportVideo` 在线分支)注入。
+ * This layer is unaware of the editor: project, asset service, document service, prompts, and
+ * confirmations are all injected by the caller (online branch of `exportVideo` in
+ * `src/editor/io/index.ts`).
  */
 import { assertProjectCardAudio } from "../audio/cardAudio";
 import type { Project } from "../kernel/project";
@@ -33,11 +45,11 @@ import { rgbaToI420 } from "./yuv";
 import { resampleVarispeed } from "../kernel/clipTime.mjs";
 import { tr } from "../i18n/index.ts";
 
-/** 编码队列上限(契约第 11.1 节) */
+/** Encoding queue upper limit (Section 11.1 of contract) */
 export const MAX_ENCODE_QUEUE = 3;
-/** 关键帧间隔(秒) */
+/** Keyframe interval (seconds) */
 export const KEYFRAME_SEC = 2;
-/** 导出前核对没过时,多久再核一次 */
+/** How often to recheck when pre-export check fails */
 export const PRECHECK_RETRY_MS = 3000;
 
 export interface BrowserExportDeps {
@@ -45,31 +57,44 @@ export interface BrowserExportDeps {
   sink: MuxSink;
   signal: AbortSignal;
   onProgress?: (done: number, total: number) => void;
-  /** 导出前核对没过:给用户看的话(null = 过了) */
+  /** Pre-export check failed: user-facing message (null = passed) */
   onWaiting?: (message: string | null) => void;
   confirm: (message: string) => boolean | Promise<boolean>;
   notify: (message: string, tone?: "info" | "warn") => void;
-  /** 被引用的素材原尺寸里还没 complete 的(C6.6 的 `exportGate`) */
+  /** Referenced original-size assets that are not yet complete (`exportGate` in C6.6) */
   checkMediaOriginals: () => Promise<MissingOriginal[]>;
-  /** 导出方式;不给 = 完整导出 */
+  /** Export mode; omitted = full export */
   mode?: ExportMode;
   /**
-   * 卡片画面的现成来源从哪取(文档服务、素材服务、渲染任务队列);null = 一律由导出页活渲(只给探针与桌面对照:
-   * 这时本页不执行的卡没有画面)。
+   * Where to fetch ready-made sources for card visuals (document service, asset service, render queue);
+   * null = always live render via export page (only for probes and desktop comparison: in this case,
+   * cards not executed on this page have no visuals).
    */
   cardLayers: (ExportLayerDeps & { projectId: () => string | null }) | null;
-  /** 本页不执行的卡片段(同步来的用户卡与素材效果卡:导出页与编辑页面同源,不执行它们的代码) */
+  /**
+   * Card clips not executed on this page (synced user cards and media effect cards: export page and
+   * editor are same-origin, not executing their code).
+   */
   nonRunnable?: () => string[];
-  /** 探针:每合成完一帧调一次(逐像素核对用;画布是复用的,要留就当场拷走) */
+  /**
+   * Probe: called once after each frame is composited (for pixel-by-pixel check; canvas is reused,
+   * copy immediately if retaining).
+   */
   onFrame?: (frame: number, canvas: HTMLCanvasElement) => void | Promise<void>;
-  /** 素材原尺寸的地址:在线页面换成远程素材服务 + 只读票据(`mediaTier.ts` 的 `remoteMediaUrl`) */
+  /**
+   * URL of original-size asset: replaced with remote asset service + read-only ticket on online
+   * pages (`remoteMediaUrl` in `mediaTier.ts`).
+   */
   mediaUrl?: (url: string) => string;
-  /** 当前的只读票据(导出途中续签,C10 契约第 12 节;`ticketRenewal.ts`):每一帧装素材前换进素材地址 */
+  /**
+   * Current read-only ticket (renewed during export, Section 12 of C10 contract; `ticketRenewal.ts`):
+   * swapped into asset URL before loading assets for each frame.
+   */
   freshTicket?: () => string | null;
-  /** 导出页地址(缺省按当前页面拼) */
+  /** Export page URL (constructed from current page by default) */
   exportUrl?: string;
   env?: EncoderEnv;
-  /** 探针:只导前 n 帧 */
+  /** Probe: export first n frames only */
   maxFrames?: number;
 }
 
@@ -81,7 +106,7 @@ export interface BrowserExportResult {
   ms: number;
   stats: Record<string, number>;
   mode: ExportMode;
-  /** 卡片画面取了哪些现成的来源(没用 `cardLayers` 时为 null) */
+  /** Which ready-made sources were used for card visuals (null when `cardLayers` is not used) */
   layers: ExportLayerStats | null;
 }
 
@@ -97,8 +122,12 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * 导出前核对:素材原尺寸到齐、卡片画面的现成来源备齐才往下走;不齐就提示、接着等,不设超时(用户可以取消)。
- * 先等素材(隔一会儿再核一次),再备卡片画面(要请渲染节点逐帧渲的,等它渲完;`exportLayers.ts`)。回卡片画面的来源(没有就 null)。
+ * Pre-export check: proceed only after original-size assets have all arrived and ready-made
+ * sources for card visuals are prepared; if incomplete, prompt and keep waiting without a timeout
+ * (the user can cancel).
+ * First wait for assets (re-check after a short interval), then prepare card visuals (for those
+ * requesting the render node to render frame by frame, wait for rendering to finish;
+ * `exportLayers.ts`). Returns the card visual sources (or null if none).
  */
 async function precheck(deps: BrowserExportDeps, mode: ExportMode): Promise<FrameLayers | null> {
   for (;;) {
@@ -118,15 +147,17 @@ async function precheck(deps: BrowserExportDeps, mode: ExportMode): Promise<Fram
   return layers;
 }
 
-/* ---------------- 音频 ---------------- */
+/* ---------------- Audio ---------------- */
 
 interface EncodedAudio { chunks: { data: Uint8Array; timestampUs: number; durationUs: number }[]; asc: Uint8Array }
 
-/** 一段素材原尺寸按时间轴裁出来的那一截 → 48 kHz 立体声浮点 WAV(给 `renderMix` 当「裁好的 wav」) */
+/** Slice of an original-size asset trimmed along timeline → 48 kHz stereo float WAV (passed to `renderMix` as "trimmed wav") */
 /**
- * ISO-BMFF(mp4 / mov)文件里有没有声音轨:找 `hdlr` 盒的 handler_type 是不是 `soun`。
- * 不是 ISO-BMFF 的回 null(不知道,照常解;解不出就让导出失败)。桌面导出用 ffprobe 做同一件事(`mux-audio.mjs` 的 `hasAudioStream`):
- * 视频不一定有声轨,没有的不进混音。
+ * Whether an ISO-BMFF (mp4 / mov) file has an audio track: check whether handler_type in `hdlr`
+ * box is `soun`.
+ * For non-ISO-BMFF files, return null (unknown, decode as usual; if decoding fails, fail export).
+ * Desktop export uses ffprobe for the same purpose (`hasAudioStream` in `mux-audio.mjs`):
+ * videos do not necessarily have an audio track; those without are excluded from the mix.
  */
 export function isoHasSoundTrack(bytes: Uint8Array): boolean | null {
   if (bytes.length < 12 || String.fromCharCode(...bytes.subarray(4, 8)) !== "ftyp") return null;
@@ -144,7 +175,8 @@ async function sliceWav(source: ArrayBuffer, offset: number, dur: number, speed 
   const n = Math.max(1, Math.ceil(dur * AUDIO_SAMPLE_RATE));
   const chans = Array.from({ length: AUDIO_CHANNELS }, (_, c) => {
     const src = decoded.getChannelData(Math.min(c, decoded.numberOfChannels - 1));
-    // 变速的声音段:素材按 speed 倍步进取样(变速变调,和 ffmpeg 两条路的 ffmpegVarispeed 同一个语义;kernel/clipTime.mjs)
+    // Speed-changed audio clip: sample asset with speed step factor (speed and pitch change,
+    // same semantics as ffmpegVarispeed in both ffmpeg paths; kernel/clipTime.mjs)
     if (speed !== 1) return resampleVarispeed(src, from, speed, n);
     const out = new Float32Array(n);
     out.set(src.subarray(from, Math.min(src.length, from + n)));
@@ -159,7 +191,8 @@ export async function encodeAudio(deps: BrowserExportDeps, durationSec: number):
   const all = audioPlanOf(project).filter((e: { start: number }) => e.start < durationSec);
   if (!all.length) return null;
   const byId = new Map(project.media.map((m) => [m.id, m]));
-  // 每份素材原尺寸取一次(同一份被好几段引用时共用);没有声音轨的视频不进混音
+  // Fetch each original-size asset once (shared when referenced by multiple clips);
+  // videos without audio tracks are excluded from the mix
   const sources = new Map<string, ArrayBuffer>();
   const entries: typeof all = [];
   for (const e of all) {
@@ -235,7 +268,7 @@ export async function encodeAudio(deps: BrowserExportDeps, durationSec: number):
   return { chunks, asc };
 }
 
-/* ---------------- 主流程 ---------------- */
+/* ---------------- Main workflow ---------------- */
 
 export async function runBrowserExport(deps: BrowserExportDeps): Promise<BrowserExportResult> {
   const t0 = performance.now();
@@ -263,7 +296,8 @@ export async function runBrowserExport(deps: BrowserExportDeps): Promise<Browser
   }
 
   const exportProject: Project = deps.mediaUrl
-    // 认定过「确认缺失」的素材地址原样留着:占位核对的是记录与素材的地址逐字相同,换成远程取回地址占位就失效、转去解一个不存在的文件
+    // Keep asset URLs marked "confirmed missing" as-is: placeholder checks match record and asset URLs
+    // verbatim; replacing with remote fetch URLs invalidates placeholder and decodes nonexistent file
     ? { ...project, media: project.media.map((m) => (confirmedMissing(m) ? m : { ...m, url: m.url ? deps.mediaUrl!(m.url) : m.url })) }
     : project;
   let compositor: ExportCompositor;
@@ -290,7 +324,8 @@ export async function runBrowserExport(deps: BrowserExportDeps): Promise<Browser
           video: { codec: cap.videoCodec!, width: project.width, height: project.height, fps, avcC },
           audio: audio ? { codec: "mp4a.40.2", sampleRate: AUDIO_SAMPLE_RATE, channels: AUDIO_CHANNELS, asc: audio.asc } : null,
         });
-        // 音频先写(块小、已经编好了):mdat 里音频在前、视频在后,偏移表各记各的
+        // Write audio first (small chunks, already encoded): in mdat audio comes first and video follows,
+        // each recording its own offset table
         for (const a of audio?.chunks ?? []) muxer.addAudioChunk(a.data, { timestampUs: a.timestampUs, durationUs: a.durationUs });
         for (const v of pendingVideo.splice(0)) muxer.addVideoChunk(v.data, { timestampUs: v.timestampUs, key: v.key });
       }
@@ -313,7 +348,7 @@ export async function runBrowserExport(deps: BrowserExportDeps): Promise<Browser
 
   try {
     const keyEvery = Math.max(1, Math.round(KEYFRAME_SEC * fps));
-    // 原尺寸画布 → I420(BT.601 有限范围,和桌面导出同一个换算,见 `yuv.ts`);缓冲复用
+    // Original-size canvas → I420 (BT.601 limited range, same conversion as desktop export, see `yuv.ts`); buffer reused
     let i420: Uint8Array | undefined;
     const colorSpace = { primaries: "smpte170m", transfer: "smpte170m", matrix: "smpte170m", fullRange: false } as VideoColorSpaceInit;
     for (let i = 0; i < total; i++) {
@@ -333,11 +368,12 @@ export async function runBrowserExport(deps: BrowserExportDeps): Promise<Browser
     if (failure) throw failure;
     if (!muxer) throw new Error(tr("The encoder produced no frames"));
     const bytes = await (muxer as Mp4Muxer).finalize();
-    // 先收掉合成器(连同卡片画面的来源):解码用时、取了多少字节这几项统计在收的时候才落定
+    // Tear down compositor first (along with card visual sources): stats like decode time and
+    // bytes fetched settle only upon teardown
     compositor.close();
     return { frames: total, bytes, audio: !!audio, videoCodec: cap.videoCodec, ms: performance.now() - t0, stats: { ...compositor.stats }, mode, layers: layers ? { ...layers.stats } : null };
   } finally {
-    try { if (encoder.state !== "closed") encoder.close(); } catch { /* 已经关了 */ }
+    try { if (encoder.state !== "closed") encoder.close(); } catch { /* Already closed */ }
     compositor.close();
   }
 }

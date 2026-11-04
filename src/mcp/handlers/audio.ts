@@ -22,7 +22,7 @@ export const audioHandlers = {
   soundStatus: (args) => {
     if (!args?.jobId) return { jobs: soundGenerationJobs().filter(job => job.targetKey.startsWith(`${getState().project.id}:`)).map(job => ({ ...job, jobId: job.id })) };
     const job = getSoundGenerationJob(String(args.jobId));
-    if (!job) throw new Error("找不到音效任务(重开页面后请从片段的配方重新生成)");
+    if (!job) throw new Error("Sound effect job not found (after reopening the page, regenerate it from the clip's recipe)");
     return job;
   },
   soundCancel: (args) => cancelSoundGeneration(String(args.jobId)),
@@ -46,9 +46,10 @@ export const audioHandlers = {
     return { ...result, timeline: timelineDigest(getState().project) };
   }),
   separateAudio: (args) => {
-    if (!!args.clipId === !!args.clipIds) return { ok: false, code: "INVALID_CLIP_IDS", error: "clipId 和 clipIds 必须且只能给一个" };
+    if (!!args.clipId === !!args.clipIds) return { ok: false, code: "INVALID_CLIP_IDS", error: "Exactly one of clipId and clipIds must be given" };
     const result = args.clipIds ? actions.separateAudios(args.clipIds) : actions.separateAudio(String(args.clipId));
-    // 明确的结构化失败交给 Agent；失败前未写项目，不创建空序列或静默降级。
+    // Explicit structured failures are handed over to the Agent; no project write before failure,
+    // creating no empty tracks or silent downgrades.
     if (!result.ok) return result;
     clipGuard.noteMutation();
     return { ...result, timeline: timelineDigest(getState().project) };
@@ -56,8 +57,8 @@ export const audioHandlers = {
   createAudio: (args) => {
     const mediaId = args.mediaId ? String(args.mediaId) : "";
     const clipId = args.clipId ? String(args.clipId) : "";
-    if (!mediaId && !clipId) throw new Error("给 mediaId(素材库里派生一份声音)或 clipId(把时间轴上这一段就地转成声音)");
-    if (mediaId && clipId) throw new Error("mediaId 和 clipId 只给一个:给 clipId 就是把那一段转成声音,顺带也会在素材库留一份");
+    if (!mediaId && !clipId) throw new Error("Give mediaId (derive audio into the media library) or clipId (convert this segment on the timeline to audio in place)");
+    if (mediaId && clipId) throw new Error("Give only one of mediaId and clipId: giving clipId converts that segment to audio and also leaves a copy in the media library");
     if (clipId) {
       const r = actions.convertClipToAudio(clipId);
       if (!r.ok) throw new Error(r.error);
@@ -66,7 +67,7 @@ export const audioHandlers = {
       const m = p.media.find((x) => x.id === r.mediaId);
       return {
         ok: true, clipId, mediaId: r.mediaId, name: m?.name,
-        note: r.already ? "这段本来就是声音,没动" : "这段现在只剩声音(画面没了),位置、长度、淡入淡出都留着;素材库里也多了这份声音",
+        note: r.already ? "This segment was already audio, nothing changed" : "This segment is now audio only (the picture is gone); position, length and fades are kept; the media library also gained this audio",
         timeline: timelineDigest(p),
       };
     }
@@ -75,8 +76,8 @@ export const audioHandlers = {
     return {
       ok: true, mediaId: r.media.id, name: r.media.name, created: r.created,
       note: r.created
-        ? "素材库里多了一份只有声音的素材(和源视频同一个文件,没转码),add_clip 传这个 mediaId 就是纯音频段"
-        : "这段视频的声音素材早就派生过了,直接用这个 mediaId",
+        ? "The media library gained an audio-only media item (the same file as the source video, not transcoded). Pass this mediaId to add_clip to get an audio-only clip"
+        : "The audio media for this video was already derived earlier, use this mediaId directly",
     };
   },
 
@@ -90,32 +91,33 @@ export const audioHandlers = {
       customVoices: config.customVoices.map((v) => ({ provider: v.provider, voiceId: v.voiceId, name: v.name, kind: v.kind, note: v.note })),
       textLimits: presets.textLimits,
       hint: config.apiKey.set
-        ? "voice_generate 的 voiceId 从 systemVoices / customVoices 里挑(customVoices 要配对 provider)。"
-        : "还没配 API Key,voice_generate 会失败。告诉用户去「配音设置」(开始页的配音卡、编辑台顶栏都能打开)里填 API Key。",
+        ? "Pick voice_generate's voiceId from systemVoices / customVoices (customVoices must be paired with a provider)."
+        : "No API Key is configured, so voice_generate will fail. Tell the user to enter the API Key in \"Voiceover settings\" (can be opened from the voiceover card on the start page or the editor top bar).",
     };
   },
 
   voiceGenerate: async (args) => {
-    if (!args.text || !String(args.text).trim()) throw new Error("text 不能是空的");
+    if (!args.text || !String(args.text).trim()) throw new Error("text must not be empty");
     const r = await generateVoice({
       text: args.text, provider: args.provider, voiceId: args.voiceId,
       speed: args.speed, emotion: args.emotion, name: args.name,
     });
-    // 服务端已经经素材服务的入库接口把这段语音送进内容库(server/vite-plugin-voice.ts),这里按回来的标识登记
+    // The server has already sent this voiceover into the content store via the asset service store
+    // API (server/vite-plugin-voice.ts); register it here using the returned identifier
     const mediaId = await importAudioFromServer({ url: r.url, name: r.name, uploaded: r.media ?? null });
     const media = getState().project.media.find((m) => m.id === mediaId);
     let clipId: string | undefined;
     if (typeof args.start === "number") {
       const clip = actions.addMediaClip(mediaId, Math.max(0, args.start), { trackId: args.trackId });
-      if (!clip) throw new Error(`语音已进素材库(mediaId ${mediaId}),但放上时间轴失败 —— trackId 不对?`);
+      if (!clip) throw new Error(`The speech is in the media library (mediaId ${mediaId}), but placing it on the timeline failed. Wrong trackId?`);
       clipId = clip.id;
     }
     return {
       mediaId, name: r.name, duration: media?.duration, clipId,
       provider: r.provider, model: r.model, voiceId: r.voiceId, chars: r.chars,
       hint: clipId
-        ? "已进素材库并放到时间轴。下一段的 start 接在这段 start + duration 后面。"
-        : "已进素材库(没放时间轴)。要上时间轴就传 start 再生成,或者用户可以自己从素材库拖。",
+        ? "Added to the media library and placed on the timeline. The next clip's start follows this clip's start + duration."
+        : "Added to the media library (not placed on the timeline). To put it on the timeline, pass start and generate again, or the user can drag it from the media library.",
     };
   },
 } satisfies Partial<EditorApi>;

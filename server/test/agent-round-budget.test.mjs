@@ -1,19 +1,24 @@
 /**
- * 两道通用闸(2026-10-24 用户定,起因见 docs/plan/agent-blind-stop.md):
+ * Two general gates (user decision, 2026-10-24; background in docs/plan/agent-blind-stop.md):
  *
- * 1. **轮次预算提示**:屏幕上的「第 N/M 轮」不进模型上下文,模型于是按「时间无限」干活 ——
- *    一次实跑里它把一张卡的源码打磨了 18 轮,`create_card` 一次没调到就撞上限,时间轴是空的。
- *    过半和只剩四分之一时各提醒一次。deepAuto 下一条都不发(那个开关的全部意思就是不跟模型谈轮次)。
- * 2. **同一个工具 + 同一个错误连成串**:第 2 次给硬提示,第 3 次停。现有的重复操作检测按整轮指纹算,
- *    一轮里只要还有别的调用指纹就不同,拦不住「同一个能力反复要」。
+ * 1. **Round budget notice**: "Round N/M" on the screen does not enter model context, so the model
+ *    works as if "time is infinite": in one actual run it spent 18 rounds polishing a card's
+ *    source code, hitting the limit without calling `create_card` even once, and the timeline
+ *    was empty. Reminds once when past half and once when only one quarter is left. Nothing sent
+ *    under deepAuto (the entire point of that toggle is not to discuss rounds with the model).
+ * 2. **Same tool + same error chained together**: hard prompt on the 2nd time, stop on the 3rd.
+ *    Existing repeat detection calculates by whole-round fingerprint, and as long as there are
+ *    other calls in a round the fingerprint differs, failing to stop "repeatedly asking for the
+ *    same capability".
  *
- * 断言都落在**模型看得见的那份上下文**(history)上,不落在 progress 事件上 —— 理由同 deep-auto.test.mjs。
+ * Assertions all fall on **the context visible to the model** (history), not on progress
+ * events: same reason as deep-auto.test.mjs.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Agent, failureKey } from '../harness/agent.mjs';
 
-/** 永远只调工具、从不收尾:拿它把循环逼到上限。每轮 input 不同,免得撞上整轮重复检测 */
+/** Always only calls tools, never finishes: pushes the loop to the limit. Different input per round avoids whole-round repeat detection */
 function neverStops(toolName = 'noop') {
   let n = 0;
   return { name: 'never', async *stream() {
@@ -29,11 +34,11 @@ const noopTool = {
   execute: async (input) => ({ ok: true, seq: input.n }),
 };
 
-/** 永远用同一个代号失败的工具:模拟「这个能力这次拿不到」 */
+/** A tool that always fails with the same code: simulates "this capability is unavailable this time" */
 const deadTool = {
   name: 'see_frames',
   inputSchema: { type: 'object', properties: { n: { type: 'number' } } },
-  execute: async () => ({ ok: false, code: 'media-fetch-failed', error: '这台云节点现在读不了项目素材的字节,重试也没用。' }),
+  execute: async () => ({ ok: false, code: 'media-fetch-failed', error: 'This cloud node cannot read the bytes of the project media right now, retrying won\'t help.' }),
 };
 
 const userText = (history) => history
@@ -44,41 +49,41 @@ const userText = (history) => history
 async function run(opts, tools = [noopTool], provider = neverStops()) {
   const events = [];
   const agent = new Agent({ provider, system: 's', tools, onEvent: (e) => events.push(e), ...opts });
-  const out = await agent.run('一直做');
+  const out = await agent.run('Keep going');
   return { out, events, text: userText(out.history.get()) };
 }
 
 const count = (text, re) => (text.match(re) ?? []).length;
 
-// ── 轮次预算提示 ───────────────────────────────────────────────
+// ── Round budget notice ───────────────────────────────────────────────
 
-test('过半和只剩四分之一时各提醒一次,各只发一次', async () => {
+test('remind once at the halfway point and once when only a quarter is left, each sent only once', async () => {
   const { text } = await run({ maxIterations: 8 });
-  // 8 轮:过半线是剩 4 轮(第 4 轮末),四分之一线是剩 2 轮(第 6 轮末)
-  assert.match(text, /还剩 4 轮模型往返/);
-  assert.match(text, /只剩 2 轮模型往返了/);
-  assert.equal(count(text, /还剩 \d+ 轮模型往返/g), 1, '过半那条只发一次');
-  assert.equal(count(text, /只剩 \d+ 轮模型往返了/g), 1, '四分之一那条只发一次');
-  assert.match(text, /先把能交付的最小版本真正落到项目里/);
-  assert.match(text, /代码块里的卡片源码 → create_card → add_clip/);
+  // 8 rounds: half line is 4 rounds left (end of round 4), one-quarter line is 2 rounds left (end of round 6)
+  assert.match(text, /4 model round trips left \(/);
+  assert.match(text, /Only 2 model round trips left/);
+  assert.equal(count(text, /\d+ model round trips left \(/g), 1, 'the halfway hint is sent only once');
+  assert.equal(count(text, /Only \d+ model round trips left/g), 1, 'the quarter hint is sent only once');
+  assert.match(text, /first land the smallest deliverable version in the project/);
+  assert.match(text, /card source in a code block → create_card → add_clip/);
 });
 
-test('预算提示不写在最后一轮:那一轮本来就要收尾', async () => {
+test('the budget hint is not written into the last round: that round is meant to wrap up anyway', async () => {
   const { out, text } = await run({ maxIterations: 4 });
   assert.equal(out.outcome, 'round_limit');
-  // 4 轮:过半线剩 2 轮(第 2 轮末)、四分之一线剩 1 轮(第 3 轮末);第 4 轮末 left 为 0,不提
-  assert.match(text, /还剩 2 轮模型往返/);
-  assert.match(text, /只剩 1 轮模型往返了/);
-  assert.match(text, /已达到 4 轮模型往返上限/);
+  // 4 rounds: half line leaves 2 rounds (end of round 2), one-quarter line leaves 1 round (end of round 3); at end of round 4 left is 0, not mentioned
+  assert.match(text, /2 model round trips left \(/);
+  assert.match(text, /Only 1 model round trips left/);
+  assert.match(text, /Reached the limit of 4 model round trips/);
 });
 
-test('深度自主:一条预算提示都不发,上下文里不出现轮次字样', async () => {
+test('deep autonomy: no budget hint is sent at all, and no mention of rounds appears in the context', async () => {
   const { out, text } = await run({ maxIterations: 8, deepAuto: true });
   assert.equal(out.outcome, 'round_limit');
-  assert.doesNotMatch(text, /轮/, 'deepAuto 的全部意思就是不跟模型谈轮次');
+  assert.doesNotMatch(text, /round/, 'the whole point of deepAuto is to not talk to the model about rounds');
 });
 
-test('不限轮次:没有分母可算,不发预算提示', async () => {
+test('unlimited rounds: there is no denominator to compute with, so no budget hints are sent', async () => {
   let rounds = 0;
   const ac = new AbortController();
   const provider = { name: 'never', async *stream() {
@@ -87,42 +92,42 @@ test('不限轮次:没有分母可算,不发预算提示', async () => {
     yield { type: 'stop', reason: 'tool_use' };
   } };
   const agent = new Agent({ provider, system: 's', tools: [noopTool], maxIterations: Infinity, signal: ac.signal, onEvent: () => {} });
-  await assert.rejects(() => agent.run('一直做'), (e) => e.name === 'AbortError');
-  assert.doesNotMatch(userText(agent.history.get()), /轮模型往返/);
+  await assert.rejects(() => agent.run('Keep going'), (e) => e.name === 'AbortError');
+  assert.doesNotMatch(userText(agent.history.get()), /model round trips/);
 });
 
-// ── 同一个工具 + 同一个错误连成串 ──────────────────────────────
+// ── Same tool + same error chained together ──────────────────────────────
 
-test('连续 2 次同一个错误:给硬提示,点名这个能力这次拿不到,并给出两条路', async () => {
+test('the same error 2 times in a row: give a hard hint that names the capability as unavailable this time and offers two options', async () => {
   const { text } = await run({ maxIterations: 2 }, [deadTool], neverStops('see_frames'));
-  assert.match(text, /see_frames 带着同一个错误连续失败 2 次了/);
-  assert.match(text, /不要再用同样的参数调第 3 次/);
-  assert.match(text, /硬前提/, '要指回提示词里那张决策表的判据');
+  assert.match(text, /see_frames failed 2 times in a row with the same error/);
+  assert.match(text, /Do not call it a 3rd time with the same arguments/);
+  assert.match(text, /hard prerequisite/, 'must point back to the criterion in the decision table in the prompt');
   assert.match(text, /report_progress/);
-  assert.match(text, /读不了项目素材的字节/, '原话要带上,模型才知道是哪个毛病');
+  assert.match(text, /cannot read the bytes of the project media/, 'the original wording must be included so the model knows which problem it is');
 });
 
-test('连续 3 次同一个错误:直接停,停下的原因点名那个工具', async () => {
+test('the same error 3 times in a row: stop right away, and the stop reason names that tool', async () => {
   const { out } = await run({ maxIterations: 20 }, [deadTool], neverStops('see_frames'));
   assert.equal(out.outcome, 'stalled');
-  assert.match(out.text, /see_frames 带着同一个错误连续失败 3 次/);
-  assert.equal(out.failed, 3, '第 3 次之后就不再往下调了');
+  assert.match(out.text, /see_frames failed 3 times in a row with the same error/);
+  assert.equal(out.failed, 3, 'after the 3rd time it stops calling');
 });
 
-test('中间成功过一次就不算连着:不发硬提示、不停', async () => {
-  // 失败、失败、成功、失败:第 2 轮发一次硬提示,之后清零,不该停
+test('one success in between breaks the streak: no hard hint, no stop', async () => {
+  // Fail, fail, succeed, fail: send a hard prompt once in round 2, reset afterward, should not stop
   const script = [false, false, true, false, true, true];
   let n = 0;
   const flaky = {
     name: 'see_frames',
     inputSchema: { type: 'object', properties: { n: { type: 'number' } } },
-    execute: async () => (script[n++] ? { ok: true } : { ok: false, code: 'media-fetch-failed', error: '读不了' }),
+    execute: async () => (script[n++] ? { ok: true } : { ok: false, code: 'media-fetch-failed', error: 'Cannot read' }),
   };
   const { out } = await run({ maxIterations: 6 }, [flaky], neverStops('see_frames'));
-  assert.equal(out.outcome, 'round_limit', '不该被当成无效重试停掉');
+  assert.equal(out.outcome, 'round_limit', 'must not be stopped as a futile retry');
 });
 
-test('两次失败的毛病不一样:不算连着', async () => {
+test('the two failures have different problems: not counted as consecutive', async () => {
   let n = 0;
   const twoFaults = {
     name: 'see_frames',
@@ -131,14 +136,14 @@ test('两次失败的毛病不一样:不算连着', async () => {
   };
   const { out, text } = await run({ maxIterations: 2 }, [twoFaults], neverStops('see_frames'));
   assert.equal(out.outcome, 'round_limit');
-  assert.doesNotMatch(text, /连续失败 2 次/);
+  assert.doesNotMatch(text, /failed 2 times in a row/);
 });
 
-test('失败的身份:优先用代号,没代号退回报错文字,两者都没有算 unknown', () => {
+test('failure identity: prefer the code, fall back to the error text when there is no code, and count it as unknown when there is neither', () => {
   assert.equal(failureKey('t', { ok: false, code: 'c1', error: 'e' }), 't\u0000c1');
-  assert.equal(failureKey('t', { ok: false, error: '缺少必填参数 x' }), 't\u0000缺少必填参数 x');
-  assert.notEqual(failureKey('t', { error: '缺少必填参数 x' }), failureKey('t', { error: '缺少必填参数 y' }), '带具体参数的报错本来就该算不同的毛病');
+  assert.equal(failureKey('t', { ok: false, error: 'Missing required parameter x' }), 't\u0000Missing required parameter x');
+  assert.notEqual(failureKey('t', { error: 'Missing required parameter x' }), failureKey('t', { error: 'Missing required parameter y' }), 'errors that carry specific parameters should naturally count as different problems');
   assert.equal(failureKey('t', 'plain text'), 't\u0000plain text');
   assert.equal(failureKey('t', null), 't\u0000unknown');
-  assert.notEqual(failureKey('a', { code: 'c' }), failureKey('b', { code: 'c' }), '不同工具不是同一个毛病');
+  assert.notEqual(failureKey('a', { code: 'c' }), failureKey('b', { code: 'c' }), 'different tools are not the same problem');
 });

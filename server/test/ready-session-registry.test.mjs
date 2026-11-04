@@ -1,38 +1,39 @@
 /**
- * Item 4 方案 A:编辑器进程的会话版本登记,和预渲染进程重启后的 preload 重放。
- * 跑:node --test server/test/ready-session-registry.test.mjs
+ * Item 4 Option A: Session version registration for the editor process, and preload replay after
+ * prerender process restart.
+ * Run: node --test server/test/ready-session-registry.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createReadySessionRegistry, replayReadySessions, READY_REGISTRY_MAX } from '../ready-session-registry.mjs';
 
-test('登记:同一会话只留最大的 localRev(上报乱序到达不倒退);缺省会话和没有 localRev 的不登记', () => {
+test('registration: for one session only the largest localRev is kept (out-of-order reports do not go backwards); the default session and ones without a localRev are not registered', () => {
   const registry = createReadySessionRegistry();
   assert.equal(registry.record('s', 3), true);
-  assert.equal(registry.record('s', 2), false, '晚到的旧版本不倒退');
+  assert.equal(registry.record('s', 2), false, 'a late-arriving old version does not go backwards');
   assert.equal(registry.record('s', 5), true);
-  assert.equal(registry.record('', 9), false, '缺省会话没有镜像,重放不出来');
+  assert.equal(registry.record('', 9), false, 'the default session has no mirror and cannot be replayed');
   assert.equal(registry.record('t', undefined), false);
   assert.equal(registry.record('t', 'x'), false);
   assert.deepEqual(registry.list().map(({ session, localRev }) => [session, localRev]), [['s', 5]]);
 });
 
-test('登记:最近上报的排前面;超过上限丢最久没动的', () => {
+test('registration: the most recently reported goes first; when over the limit, the one untouched the longest is dropped', () => {
   let now = 0;
   const registry = createReadySessionRegistry({ max: 3, now: () => ++now });
   for (const id of ['a', 'b', 'c']) registry.record(id, 1);
-  registry.record('a', 2);                                   // a 刚活跃过
-  registry.record('d', 1);                                   // 超上限:丢最久没动的 b
+  registry.record('a', 2);                                   // a was just active
+  registry.record('d', 1);                                   // Exceeded limit: drop b, which has been inactive the longest
   assert.deepEqual(registry.list().map(item => item.session), ['d', 'a', 'c']);
   assert.equal(READY_REGISTRY_MAX, 64);
 });
 
-test('重放:串行,一次只飞一个 preload;最近活跃的先;镜像里没有的跳过,滑出窗口的退到最新一版', async () => {
+test('replay: serial, only one preload in flight at a time; the most recently active first; those not in the mirror are skipped, and ones that slid out of the window fall back to the latest version', async () => {
   const registry = createReadySessionRegistry();
   registry.record('old', 4);
   registry.record('gone', 1);
   registry.record('fresh', 7);
-  const mirror = { fresh: [5, 6, 7], old: [9, 10] };          // old 记的 4 已经滑出窗口
+  const mirror = { fresh: [5, 6, 7], old: [9, 10] };          // The 4 recorded in old has already slid out of the window
   let flying = 0, peak = 0;
   const sent = [];
   const results = await replayReadySessions({
@@ -50,12 +51,12 @@ test('重放:串行,一次只飞一个 preload;最近活跃的先;镜像里没�
       return { ok: true, status: 'queued' };
     },
   });
-  assert.equal(peak, 1, '不并发:刚起来的预渲染进程不会被一齐打上来');
+  assert.equal(peak, 1, 'no concurrency: a freshly started prerender process is not flooded all at once');
   assert.deepEqual(sent, [['fresh', 7], ['old', 10]]);
   assert.deepEqual(results.map(r => r.skipped ?? r.ok), [true, 'no-mirror', true]);
 });
 
-test('重放:一个会话失败不影响后面的;预渲染进程又重启了就停', async () => {
+test('replay: one session failing does not affect the ones after it; stops when the prerender process has restarted again', async () => {
   const sessions = [{ session: 'a', localRev: 1 }, { session: 'b', localRev: 1 }, { session: 'c', localRev: 1 }];
   let current = true;
   const sent = [];
@@ -65,7 +66,7 @@ test('重放:一个会话失败不影响后面的;预渲染进程又重启了就
     preload: async ({ session }) => {
       sent.push(session);
       if (session === 'a') throw new Error('409');
-      current = false;                                         // 发完 b 之后它又崩了
+      current = false;                                         // After sending b, it crashed again
       return { ok: true };
     },
     isCurrent: () => current,
@@ -74,7 +75,7 @@ test('重放:一个会话失败不影响后面的;预渲染进程又重启了就
   assert.deepEqual(results.map(r => r.skipped ?? r.ok), [false, true, 'superseded']);
 });
 
-test('重放封顶:只重放最近活跃的那几个会话(早已关掉的标签页不白排后台活)', async () => {
+test('replay cap: only the few most recently active sessions are replayed (tabs closed long ago do not waste background work)', async () => {
   const { READY_REPLAY_MAX } = await import('../ready-session-registry.mjs');
   let now = 0;
   const registry = createReadySessionRegistry({ now: () => ++now });
@@ -82,5 +83,5 @@ test('重放封顶:只重放最近活跃的那几个会话(早已关掉的标签
   const sent = [];
   await replayReadySessions({ sessions: registry.list(), resolve: (_s, r) => r, preload: async ({ session }) => { sent.push(session); return { ok: true }; } });
   assert.equal(sent.length, READY_REPLAY_MAX);
-  assert.equal(sent[0], `s${READY_REPLAY_MAX + 2}`, '最近活跃的先');
+  assert.equal(sent[0], `s${READY_REPLAY_MAX + 2}`, 'the most recently active first');
 });

@@ -1,18 +1,22 @@
 /**
  * node --test server/test/codex-tool-errors.test.mjs
  *
- * codex 那条路上工具失败时的两件事:**原因要说得出来**,**被拒要认得出来**。
+ * Two things when a tool fails on the codex path: **the reason must be explainable**, **denial must
+ * be recognizable**.
  *
- * 来自一份用户诊断报告:三次工具调用的 summary 全是字面的 `[object Object]`。
- * 原因是 `String(item.error)` —— codex 的 error 是对象。后果不只是难看:
- *   1. 用户和日志都看不到真实原因;
- *   2. 模型只拿到这一坨,于是开始猜,猜出「当前会话禁止审批,请切换权限模式」这种
- *      用户根本做不到的指引(approval_policy="never" 是我们自己写死在启动参数里的);
- *   3. 更隐蔽的是,判定「是否被拒」写的是 `typeof err === 'string' && ...`,
- *      对象一律不成立 —— 于是 onPermissionDenied 不触发,claude / agy 都有的
- *      「被拒之后改用文本协议重试」那条兜底,对 codex 是死的。
+ * From a user diagnostic report: the summary of three tool calls was literally `[object Object]`.
+ * The reason is `String(item.error)`: codex error is an object. The consequence is not just being
+ * ugly:
+ *   1. Neither the user nor logs can see the real reason;
+ *   2. The model only receives this blob, so it starts guessing, producing guidance that the user
+ *      cannot possibly follow like "Current session forbids approval, please switch permission mode"
+ *      (approval_policy="never" is hardcoded by ourselves in the launch arguments);
+ *   3. More subtly, the check for "whether denied" was written as `typeof err === 'string' && ...`,
+ *      which never holds for objects: thus onPermissionDenied does not trigger, and the fallback
+ *      available in both claude / agy to "retry with text protocol after denial" is dead for codex.
  *
- * 这里直接测那两个纯函数(从模块里取,不起进程、不碰 CLI)。
+ * Directly test those two pure functions here (imported from the module without spawning processes
+ * or touching the CLI).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,75 +26,77 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 /*
- * errText / resultSummary / looksDenied 是模块内部函数,没有导出(导出它们只为测试,
- * 会让模块的公开面变大)。这里把源码里那三个函数抽出来单独 import —— 测的还是同一份代码,
- * 抽的时候不改一个字。
+ * errText / resultSummary / looksDenied are module-internal functions and not exported (exporting
+ * them just for testing would expand the module's public surface). Here those three functions are
+ * extracted from the source code and imported separately: it still tests the exact same code,
+ * without changing a single character during extraction.
  */
 const src = fs.readFileSync(new URL('../runners/codex.mjs', import.meta.url), 'utf8');
 const picked = ['errText', 'resultSummary', 'looksDenied'].map((name) => {
   const at = src.indexOf(`function ${name}(`);
-  assert.ok(at > 0, `codex.mjs 里应该有 function ${name}(`);
-  // 从函数头一路截到它那一行 `}` 为止(这三个函数都顶格闭合)
+  assert.ok(at > 0, `codex.mjs should contain function ${name}(`);
+  // Slice from the function header all the way to its closing `}` line (all three functions close
+  // flush-left)
   const end = src.indexOf('\n}', at);
-  assert.ok(end > at, `${name} 的函数体没找到结尾`);
+  assert.ok(end > at, `Could not find the end of the body of ${name}`);
   return src.slice(at, end + 2);
 }).join('\n\n');
 const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pc-codex-err-')), 'picked.mjs');
 fs.writeFileSync(tmp, picked + '\nexport { errText, resultSummary, looksDenied };\n');
 const { errText, resultSummary, looksDenied } = await import(pathToFileURL(tmp).href);
 
-test('errText:对象错误不能再变成 [object Object]', () => {
+test('errText: object errors must no longer turn into [object Object]', () => {
   for (const err of [
-    { message: '拒绝了' },
-    { error: { message: '拒绝了' } },
-    { code: 'x', message: '拒绝了' },
-    { detail: '拒绝了' },
-    { reason: '拒绝了' },
+    { message: 'Refused' },
+    { error: { message: 'Refused' } },
+    { code: 'x', message: 'Refused' },
+    { detail: 'Refused' },
+    { reason: 'Refused' },
   ]) {
     const t = errText(err);
     assert.ok(!t.includes('[object Object]'), `${JSON.stringify(err)} → ${t}`);
-    assert.ok(t.includes('拒绝了'), `${JSON.stringify(err)} → ${t}`);
+    assert.ok(t.includes('Refused'), `${JSON.stringify(err)} → ${t}`);
   }
 });
 
-test('errText:带 code 时一起报出来 —— 光有一句话不够定位', () => {
-  assert.equal(errText({ code: 'approval_denied', message: '需要审批' }), '需要审批(approval_denied)');
+test('errText: when there is a code, report it too. A sentence alone is not enough to locate the problem', () => {
+  assert.equal(errText({ code: 'approval_denied', message: 'Approval required' }), 'Approval required(approval_denied)');
 });
 
-test('errText:摸不出形状的对象也要给出内容,不是类型名', () => {
+test('errText: an object of unrecognizable shape must still yield content, not the type name', () => {
   const t = errText({ weird: 1, nested: { a: 2 } });
   assert.ok(!t.includes('[object Object]'));
-  assert.ok(t.includes('weird'), `应该退回 JSON,实际 ${t}`);
+  assert.ok(t.includes('weird'), `Should fall back to JSON, got ${t}`);
 });
 
-test('errText:字符串原样、空值给空串', () => {
+test('errText: strings pass through as is, empty values give an empty string', () => {
   assert.equal(errText('boom'), 'boom');
   assert.equal(errText(null), '');
   assert.equal(errText(undefined), '');
 });
 
-test('resultSummary:成功看 result', () => {
+test('resultSummary: on success, look at result', () => {
   assert.equal(resultSummary({ result: { items: [1, 2] } }), '{"items":[1,2]}');
 });
 
-test('resultSummary:失败一定要把 error 带出来 —— 原来这里是空串', () => {
-  assert.equal(resultSummary({ error: { message: '被拒' } }), '被拒');
+test('resultSummary: on failure the error must be included. It used to be an empty string here', () => {
+  assert.equal(resultSummary({ error: { message: 'Rejected' } }), 'Rejected');
   assert.equal(resultSummary({ error: 'plain' }), 'plain');
   assert.ok(!resultSummary({ error: { message: 'x' } }).includes('[object Object]'));
 });
 
-test('resultSummary:截到 300 字,别把整坨塞进界面', () => {
+test('resultSummary: truncate to 300 characters, do not stuff the whole blob into the UI', () => {
   assert.equal(resultSummary({ error: 'x'.repeat(1000) }).length, 300);
 });
 
-test('looksDenied:对象形状的拒绝也认得出来 —— 这条不成立时文本协议兜底是死的', () => {
+test('looksDenied: object-shaped denials are recognized too. When this does not hold, the text protocol fallback is dead', () => {
   assert.equal(looksDenied({ message: 'tool call denied by approval policy' }), true);
   assert.equal(looksDenied({ error: { message: 'not approved' } }), true);
-  assert.equal(looksDenied({ code: 'permission_error', message: '需要权限' }), true);
+  assert.equal(looksDenied({ code: 'permission_error', message: 'Permission required' }), true);
   assert.equal(looksDenied('request was rejected'), true);
 });
 
-test('looksDenied:别的错误不能误判成被拒 —— 否则会白走一次文本协议重试', () => {
+test('looksDenied: other errors must not be misjudged as denied. Otherwise a text protocol retry would be wasted', () => {
   assert.equal(looksDenied({ message: 'connection reset' }), false);
   assert.equal(looksDenied({ message: 'model overloaded' }), false);
   assert.equal(looksDenied(null), false);

@@ -1,37 +1,37 @@
-//! 把 sidecar 拴在外壳进程上:外壳无论怎么死,内核都把它整棵树一起收走。
+//! Tie the sidecar to the shell process: however the shell dies, the kernel takes the sidecar's whole process tree down with it.
 //!
-//! # 为什么需要这个
+//! # Why this is needed
 //!
-//! 外壳原本只在**正常退出**那条路上清理 sidecar(`RunEvent::ExitRequested | Exit` →
-//! `kill_sidecar_tree`,一句 `taskkill /F /T /PID`)。非正常退出全都漏:任务管理器结束进程、
-//! 崩溃、以及**安装器自己那一下强杀**(Tauri 的 NSIS 模板发现 PromptCut.exe 在跑,
-//! 就 `KillProcessCurrentUser` 一刀切,走的是 TerminateProcess,收尾代码根本没机会跑)。
+//! The shell originally cleaned up the sidecar only on the **normal exit** path (`RunEvent::ExitRequested | Exit` →
+//! `kill_sidecar_tree`, a single `taskkill /F /T /PID`). Every abnormal exit slips through: ending the process in Task Manager,
+//! crashes, and **the installer's own forced kill** (when Tauri's NSIS template finds PromptCut.exe running,
+//! it simply kills everything with `KillProcessCurrentUser`, which goes through TerminateProcess, so cleanup code never gets a chance to run).
 //!
-//! 漏掉的后果不是「多一个闲进程」那么轻:sidecar 和它底下的 ffmpeg / Chrome 还活着,
-//! 而 Windows 上进程会锁住自己的映像文件,于是安装器写 `runtime\ffmpeg\ffmpeg.exe` 被拒 ——
-//! 用户看到的就是「抽取: 无法写入文件 runtime\ffmpeg\ffmpeg.exe」。卸载重装也解不开,
-//! 因为卸载器用的是同一套检查,一样不管这些孤儿;只有重启才清得掉。
+//! The consequence of the leak is not as light as "one extra idle process": the sidecar and the ffmpeg / Chrome beneath it stay alive,
+//! and on Windows a process locks its own image file, so the installer's write to `runtime\ffmpeg\ffmpeg.exe` is denied:
+//! what the user sees is "Extract: unable to write file runtime\ffmpeg\ffmpeg.exe". Uninstalling and reinstalling does not fix it either,
+//! because the uninstaller uses the same checks and likewise ignores these orphans; only a reboot clears them.
 //!
-//! # 做法
+//! # Approach
 //!
-//! Windows 的 Job Object 加 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`:
-//! **job 的最后一个句柄关闭时,内核终止 job 里所有进程**。我们在外壳进程里开一个 job、
-//! 把 sidecar 放进去、然后一直攥着那个句柄不放。外壳进程一消失(哪怕是被 TerminateProcess
-//! 打死、哪怕是蓝屏后重启),句柄随进程一起被内核回收 → job 关闭 → sidecar 连同它派生的
-//! ffmpeg、Chrome 一起被终止。这条路不依赖我们的代码有没有机会执行,所以强杀也漏不掉。
+//! A Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`:
+//! **when the last handle of a job is closed, the kernel terminates all processes in the job**. We create a job in the shell process,
+//! put the sidecar into it, and then hold on to that handle for good. As soon as the shell process disappears (even if it is killed by TerminateProcess
+//! or the machine reboots after a blue screen), the handle is reclaimed by the kernel together with the process → the job closes → the sidecar, together with the
+//! ffmpeg and Chrome it spawned, is terminated. This path does not depend on whether our code gets a chance to run, so even a forced kill cannot slip through.
 //!
-//! 子进程默认继承 job,所以 sidecar 之后 spawn 的 ffmpeg / Chrome 自动在里面,不用逐个登记。
+//! Child processes inherit the job by default, so the ffmpeg / Chrome the sidecar spawns later are automatically in it and do not need to be registered one by one.
 //!
-//! 原来那句 `taskkill` 保留:正常退出时它更快、也更明确(不用等句柄回收),
-//! job 是**兜底**,不是替代。
+//! The original `taskkill` call is kept: on a normal exit it is faster and more explicit (no waiting for the handle to be reclaimed),
+//! the job is the **fallback**, not a replacement.
 
 #[cfg(windows)]
 pub use windows_impl::*;
 
 #[cfg(not(windows))]
 pub fn attach_to_kill_on_close_job(_pid: u32) -> Result<(), String> {
-    // 非 Windows 上没有 job object 这套东西,而这个应用只发 Windows 包。
-    // 留一个空实现,单纯是为了 `cargo check --target` 之类别在这儿断掉。
+    // There is no job object machinery on non-Windows, and this app only ships Windows packages.
+    // An empty implementation is left purely so that things like `cargo check --target` do not break here.
     Ok(())
 }
 
@@ -47,17 +47,17 @@ mod windows_impl {
     };
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
 
-    /// job 句柄要活到进程结束 —— 它一关,里面的进程就被杀了。所以存成进程级的单例,
-    /// 谁都别去 close 它:我们要的正是「进程没了句柄才没」这个时机。
+    /// The job handle must live until the process ends: once it is closed, the processes inside are killed. So it is stored as a process-wide singleton,
+    /// and nobody should close it: the timing we want is exactly "the handle goes away only when the process does".
     struct JobHandle(HANDLE);
-    // HANDLE 不是 Send/Sync,但这个句柄从创建之后就只被读、不被改,
-    // 而且生命周期等于整个进程。
+    // HANDLE is not Send/Sync, but this handle is only read and never modified after creation,
+    // and its lifetime equals that of the whole process.
     unsafe impl Send for JobHandle {}
     unsafe impl Sync for JobHandle {}
 
     static JOB: OnceLock<Option<JobHandle>> = OnceLock::new();
 
-    /// 建一个 kill-on-close 的 job(全进程只建一次)
+    /// Create a kill-on-close job (created only once per process)
     fn job() -> Option<HANDLE> {
         JOB.get_or_init(|| unsafe {
             let handle = CreateJobObjectW(None, None).ok()?;
@@ -70,7 +70,7 @@ mod windows_impl {
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             );
             if ok.is_err() {
-                // 设不上限制的 job 没有意义:留着反而会给人「已经保护上了」的错觉
+                // A job whose limit cannot be set is pointless: keeping it would only give the illusion that "protection is already in place"
                 let _ = CloseHandle(handle);
                 return None;
             }
@@ -80,19 +80,19 @@ mod windows_impl {
         .map(|j| j.0)
     }
 
-    /// 把某个 pid 放进 kill-on-close 的 job 里。
+    /// Put a pid into the kill-on-close job.
     ///
-    /// 失败不该让应用起不来 —— 少了这层保护只是回到从前(正常退出照样清理干净),
-    /// 所以调用方记一条日志继续跑就行。
+    /// Failure must not stop the app from starting: lacking this layer of protection merely goes back to how things were before (a normal exit still cleans up completely),
+    /// so the caller can just log a line and keep going.
     pub fn attach_to_kill_on_close_job(pid: u32) -> Result<(), String> {
-        let job = job().ok_or("创建 job object 失败")?;
+        let job = job().ok_or("failed to create the job object")?;
         unsafe {
             let proc = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid)
-                .map_err(|e| format!("打开 sidecar 进程({pid})失败: {e}"))?;
+                .map_err(|e| format!("failed to open the sidecar process ({pid}): {e}"))?;
             let r = AssignProcessToJobObject(job, proc);
-            // 进程句柄可以马上还回去:job 记的是进程本身,不是我们这个句柄。
+            // The process handle can be given back right away: the job tracks the process itself, not this handle of ours.
             let _ = CloseHandle(proc);
-            r.map_err(|e| format!("把 sidecar({pid})放进 job 失败: {e}"))?;
+            r.map_err(|e| format!("failed to put the sidecar ({pid}) into the job: {e}"))?;
         }
         Ok(())
     }

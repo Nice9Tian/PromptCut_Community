@@ -1,36 +1,57 @@
 /**
- * 导出开始时请渲染节点把本页不执行的卡按原尺寸逐帧渲好(语义 `docs/semantics/product/platforms.md`「在线浏览器」的「导出」:
- * 「本页不执行的同步用户卡、素材效果卡,导出开始时请渲染节点按原尺寸逐帧渲好再用,没到齐时提示等待」)—— 页面这一侧。
- * 节点那一侧见 `server/export-frames.mjs`。
+ * When export begins, request render nodes to render cards not executed on this page frame by
+ * frame at original size (semantics `docs/semantics/product/platforms.md` "Online browser"
+ * "Export": "Synced user cards and media effect cards not executed on this page should be
+ * rendered frame by frame at original size by render nodes before use when export begins; prompt
+ * to wait if not all have arrived"): the page side. For the node side, see
+ * `server/export-frames.mjs`.
  *
- * # 怎么请
+ * # How to request
  *
- * 页面在自己的文档服务连接上发布一个**只为导出**的清单计划(任务形状同 `online/planPublisher.ts` 的清单计划,另带 `input.exportOnly: true`,
- * 签名里多一段,所以它和平时那份清单计划不是一个任务):
+ * The page publishes an **export-only** manifest plan over its document service connection
+ * (task shape matches manifest plan in `online/planPublisher.ts`, with additional
+ * `input.exportOnly: true` and an extra segment in signature, so it is not the same task as
+ * normal manifest plans):
  *
- *   `plan:<projectId>@<projectRev>#clips:<sig>`   `input.clips` = 要渲染节点出的片段   `input.exportOnly: true`   (`input.exportSalt`)
+ *   `plan:<projectId>@<projectRev>#clips:<sig>`   `input.clips` = clips for render nodes to output   `input.exportOnly: true`   (`input.exportSalt`)
  *
- * 认领它的节点不切快照、不切轨道流,只给这些片段切**导出位图任务**;计划完成时的回包带一份索引(每个片段的结果键、矩形、帧范围、
- * 它的每一份任务原样一份,出不了的片段和原因)。页面是这个计划的发布方,计划完成时收到它的 `task.done`。
+ * Nodes claiming it do not slice snapshots or track streams, but only slice **export bitmap
+ * tasks** for these clips; the response upon plan completion carries an index (result key,
+ * rectangle, and frame range for each clip, an exact copy of each of its tasks, and clips that
+ * cannot be output with reasons). The page is the publisher of this plan and receives its
+ * `task.done` when the plan completes.
  *
- * # 怎么等(每一步都有尽头:要么到齐,要么说清楚为什么没到)
+ * # How to wait (each step has an end: either all arrived, or explaining why not)
  *
- * 一、等索引。每 `EXPORT_PLAN_POLL_MS` 把计划再发布一次,看回包里它的状态:`open` = 还没有节点认领(提示「没有渲染节点在线」,
- *    接着等,不设超时);`claimed` = 节点接了;`failed` = 计划失败了,报失败;`done` = 做完了 —— 已经做完的计划再发布时队列会把它的
- *    `task.done`(带索引)再发给这条连接一遍,所以这一轮之后还拿不到索引就是这份结果不带索引,报失败。
- * 二、等清单。每 `EXPORT_MANIFEST_POLL_MS` 取一次还没到的清单(内容库 `render-manifest`,键 `<结果键>:<起>-<止>`),每一帧都列了才算这一段到齐。
- *    另外每 `EXPORT_TASK_CHECK_MS` 把还没到的那几份任务原样再发布一次(索引里带着):队列不会为失败的任务补发通知,回包里的状态是
- *    `failed` 就报失败;任务已经不在了(页面的连接断开超过宽限,订阅被清、还没人认领的任务被删)这一下就重建了,不用用户重来。
- *    清单的帧数没有再涨、也没有哪份任务正被节点认领着,这样持续 `EXPORT_STALL_MS` 就报失败(节点切完计划之后退出了:任务绑着它的环境,
- *    别的节点接不了)。
- * 三、失败之后再点导出。队列里失败的任务在保留期(10 分钟)内不会重开,同一个计划也不会重切。所以这一页只要失败过一次,下一次的计划
- *    带一个新的标识(`input.exportSalt`,进计划的签名,也进导出位图的键):计划是新的、任务是新的,节点重新渲。没失败过不带,
- *    同一份内容再导出时直接用上一次的结果。
- * 全部到齐才开始导,不出半截的成片。节点说某个片段出不了、或节点渲的那一版和本页手里这一版对不上(导出期间项目被改了),同样抛带说明的错误。
+ * 1. Wait for index. Re-publish the plan every `EXPORT_PLAN_POLL_MS` and check its status in
+ *    the response: `open` = no node has claimed it yet (prompt "No render node online", keep
+ *    waiting, no timeout); `claimed` = a node took it; `failed` = plan failed, report failure;
+ *    `done` = completed: when a completed plan is re-published, the queue re-sends its
+ *    `task.done` (with index) to this connection, so failing to get the index after this round
+ *    means this result carries no index, report failure.
+ * 2. Wait for manifests. Fetch missing manifests every `EXPORT_MANIFEST_POLL_MS` (content store
+ *    `render-manifest`, key `<resultKey>:<from>-<to>`), considering this segment complete only
+ *    when every frame is listed. Additionally, re-publish pending tasks as-is every
+ *    `EXPORT_TASK_CHECK_MS` (carried in index): the queue will not resend notifications for failed
+ *    tasks, so report failure if status in response is `failed`; if tasks are gone (page
+ *    connection disconnected beyond grace period, subscriptions cleared, unclaimed tasks deleted),
+ *    they are rebuilt here without requiring user to restart. If manifest frame count stops
+ *    growing and no task is currently claimed by a node for `EXPORT_STALL_MS`, report failure
+ *    (the node exited after slicing the plan: tasks are bound to its environment and cannot be
+ *    taken over by other nodes).
+ * 3. Click export again after failure. Failed tasks in queue are not reopened within retention
+ *    period (10 minutes), nor is the same plan sliced again. Therefore, once this page has failed,
+ *    subsequent plans carry a new identifier (`input.exportSalt`, included in plan signature and
+ *    export bitmap key): plan is new, tasks are new, and nodes re-render. If no failure occurred,
+ *    it is omitted, and exporting the same content reuses the previous result directly.
+ * Start exporting only after all have arrived, avoiding half-finished final videos. If a node
+ * reports a clip cannot be produced, or the version rendered by the node does not match the
+ * version held by this page (project modified during export), also throw an error with explanation.
  *
- * # 怎么取
+ * # How to fetch
  *
- * 一帧一张 PNG(`px/<哈希>`,只读票据),取回来直接当 `data:` 地址用(无损,不解码)。只留当前这一帧,用完不留。
+ * One PNG per frame (`px/<hash>`, read-only ticket), used directly as a `data:` URL once fetched
+ * (lossless, no decoding). Keep only the current frame, discarding after use.
  */
 import { streamInputSig, streamSigStale } from "../render/streamInputSig.mjs";
 import { STREAM_SEGMENT_FRAMES } from "../render/streamSegments.mjs";
@@ -39,23 +60,26 @@ import type { FrameCoverage, LayerRect } from "./cardLayers";
 import { ONLINE_EXPORT_TEXT } from "./text";
 import { tr } from "../i18n/index.ts";
 
-/** 只为导出的清单计划在签名里多的那一段 */
+/** Extra segment in signature for export-only manifest plans */
 export const EXPORT_ONLY_SIG = "export=1";
-/** 多久把计划再发布一次(问状态、要回完成通知) */
+/** Interval to re-publish plan (query status, request completion notice) */
 export const EXPORT_PLAN_POLL_MS = 3000;
-/** 多久再取一次没到齐的清单 */
+/** Interval to re-fetch incomplete manifests */
 export const EXPORT_MANIFEST_POLL_MS = 2000;
-/** 等清单时多久把还没到的任务原样再发布一次(核对它们还在不在、失败没有;不在了就此重建) */
+/** Interval while waiting for manifests to re-publish pending tasks as-is (check existence and failures; rebuild if absent) */
 export const EXPORT_TASK_CHECK_MS = 6000;
 /**
- * 等清单时多久没有进展就报失败:清单的帧数没涨、也没有哪份任务正被节点认领着。只在这一处定(三级数字)。
- * 节点正在渲的任务一直是「认领着」,不会被它误伤;够不着的是「节点退出了、任务没人接」。
+ * Duration without progress while waiting for manifests before reporting failure: manifest frame
+ * count has not increased, and no task is currently claimed by a node. Defined only here (level-3
+ * number).
+ * Tasks actively rendered by nodes remain "claimed" and will not be falsely affected; what is
+ * caught is "node exited, task left unclaimed".
  */
 export const EXPORT_STALL_MS = 3 * 60_000;
 
-/** 同一项目/同一会话只为导出的计划最小发起间隔(毫秒):节流防短时间内高频重复提交 */
+/** Minimum launch interval (ms) for export-only plans per project/session: throttles rapid repeated submissions */
 export const EXPORT_PLAN_THROTTLE_MS = 2000;
-/** 同一项目/同一会话同时只允许 1 份导出的计划在执行 */
+/** Only 1 export plan allowed to execute concurrently per project/session */
 export const MAX_CONCURRENT_EXPORT_PLANS = 1;
 
 interface PlanThrottleEntry {
@@ -74,8 +98,10 @@ export function exportPlanThrottleState(key: string): { inFlight: boolean; lastT
 }
 
 /**
- * 这一页上一次请渲染节点失败之后,下一次带的新标识(见文件头「失败之后再点导出」);没失败过是 null。
- * 只认小写字母与数字、最多 32 位(节点一侧 `server/export-frames.mjs` 的 `exportSaltOf` 同一个口径)。
+ * New identifier carried on the next attempt after a previous render node request failure on this
+ * page (see file header "Click export again after failure"); null if never failed.
+ * Accepts only lowercase letters and digits, up to 32 chars (same standard as `exportSaltOf` in
+ * `server/export-frames.mjs` on node side).
  */
 let retrySalt: string | null = null;
 const freshSalt = () => (Math.random().toString(36).slice(2, 12) + Date.now().toString(36)).replace(/[^0-9a-z]/g, "").slice(0, 32);
@@ -84,9 +110,9 @@ export function resetExportRetry(): void { retrySalt = null; resetExportPlanThro
 const HASH_RE = /^[0-9a-f]{64}$/;
 
 export interface ExportFrameDeps {
-  /** 文档服务上的一次请求(回同一 reqId 的回包) */
+  /** A request on document service (returning response with matching reqId) */
   request(msg: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>>;
-  /** 队列推来的 `task.done` / `task.failed`(页面是发布方,自动订阅);回退订 */
+  /** `task.done` / `task.failed` pushed from queue (page is publisher, auto-subscribed); returns unsubscribe */
   subscribeQueue(cb: (msg: Record<string, unknown>) => void): () => void;
   assetBase(): string | null;
   authHeaders(): Promise<Record<string, string>>;
@@ -95,9 +121,9 @@ export interface ExportFrameDeps {
   fetch?: typeof fetch;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   now?: () => number;
-  /** 多久没有进展就报失败;不给 = `EXPORT_STALL_MS`(探针注成几秒) */
+  /** Duration without progress before reporting failure; omitted = `EXPORT_STALL_MS` (probes inject seconds) */
   stallMs?: number;
-  /** 多久核对一次任务;不给 = `EXPORT_TASK_CHECK_MS` */
+  /** Interval to check tasks; omitted = `EXPORT_TASK_CHECK_MS` */
   taskCheckMs?: number;
 }
 
@@ -114,12 +140,15 @@ export interface ExportPlanTask {
 }
 
 /**
- * 只为导出的计划在队列里的名次:排在所有细任务前面(锚帧 50、导出位图任务 60)。用户正等着导出;名次低的话,节点手里别的快照、
- * 轨道流任务没做完就轮不到它(实测同一个项目里等了五分钟)。整数名次仍属 normal 档(`server/render-queue/messages.mjs` 的 `priorityBand`)。
+ * Priority of export-only plans in queue: ranked ahead of all fine-grained tasks (anchor frame 50,
+ * export bitmap task 60). The user is waiting for export; if priority is low, it won't be reached
+ * until other snapshot and track stream tasks on the node finish (measured 5-minute wait in same
+ * project). Integer priority still falls into normal tier (`priorityBand` in
+ * `server/render-queue/messages.mjs`).
  */
 export const EXPORT_PLAN_PRIORITY = 70;
 
-/** 只为导出的清单计划(队列按清单计划收:结果键的形状、`input.clips` 的形状都照它的规矩) */
+/** Export-only manifest plan (queue accepts as manifest plan: result key shape and `input.clips` shape follow its rules) */
 export function exportPlanTask({ projectId, projectRev, clips, codeVersion, salt }: { projectId: string; projectRev: number; clips: readonly string[]; codeVersion?: string | null; salt?: string | null }): ExportPlanTask {
   const list = [...new Set(clips)].map(String).filter(Boolean).sort();
   const tail = typeof salt === "string" && /^[0-9a-z]{1,32}$/.test(salt) ? salt : "";
@@ -131,7 +160,7 @@ export function exportPlanTask({ projectId, projectRev, clips, codeVersion, salt
   };
 }
 
-/** 索引里的一条(节点那一侧 `server/render-node/export-plan.mjs` 的 `exportIndexOf`) */
+/** An entry in index (`exportIndexOf` in `server/render-node/export-plan.mjs` on node side) */
 export interface ExportIndexStream {
   clipId: string;
   kind: "card" | "below";
@@ -144,7 +173,7 @@ export interface ExportIndexStream {
   fps: number;
   rect: LayerRect;
   inputSig?: string;
-  /** 这条的每一份导出位图任务(节点发布时的那一份,原样;页面核对任务状态时原样再发布) */
+  /** Each export bitmap task for this entry (original copy published by node; re-published as-is when page checks task status) */
   tasks: Record<string, unknown>[];
 }
 export interface ExportIndex { streams: ExportIndexStream[]; unsupported: { clipId: string; reason: string }[] }
@@ -156,7 +185,7 @@ const rectOf = (r: unknown): LayerRect | null => {
   return [x, y, w, h].every((n) => typeof n === "number" && Number.isFinite(n)) && (w as number) > 0 && (h as number) > 0 ? { x: x as number, y: y as number, w: w as number, h: h as number } : null;
 };
 
-/** 计划完成回包里的索引;形状不对回 null,单条不对的跳过 */
+/** Index in plan completion response; returns null if shape is invalid, skipping invalid entries */
 export function parseExportIndex(raw: unknown): ExportIndex | null {
   const b = raw as { streams?: unknown; unsupported?: unknown } | null;
   if (!b || typeof b !== "object" || !Array.isArray(b.streams)) return null;
@@ -168,7 +197,8 @@ export function parseExportIndex(raw: unknown): ExportIndex | null {
     const ints = [s?.originFrame, s?.lastFrame, s?.lastSegment, s?.segmentsPerTask].map(Number);
     if (!s || typeof s.clipId !== "string" || !s.clipId || !HASH_RE.test(String(s.resultKey)) || !rect || !kind || !plane) continue;
     if (!ints.every(Number.isInteger) || ints[0] < 0 || ints[1] < ints[0] || ints[2] < 0 || ints[3] < 1 || !(Number(s.fps) > 0)) continue;
-    // 任务只收这条流自己的导出位图任务(id 是 `stream:<这条的结果键>:<起>-<止>`、带 `exportFrames`),别的不认
+    // Tasks only accept export bitmap tasks for this stream (id is `stream:<thisResultKey>:<from>-<to>`,
+    // with `exportFrames`), ignoring others
     const tasks = (Array.isArray(s.tasks) ? (s.tasks as Record<string, unknown>[]) : []).filter((t) => !!t && typeof t === "object" && t.kind === "stream"
       && typeof t.id === "string" && t.id.startsWith(`stream:${String(s.resultKey)}:`) && t.resultKey === s.resultKey
       && (t.input as { exportFrames?: unknown } | null)?.exportFrames === true);
@@ -182,14 +212,14 @@ export function parseExportIndex(raw: unknown): ExportIndex | null {
   return { streams, unsupported };
 }
 
-/** 这条的清单按任务怎么分段:`[from, to]`(分段号),与切分同一种切法 */
+/** How manifests for this entry are segmented by task: `[from, to]` (segment numbers), sliced with the same scheme */
 export function exportSpans(stream: Pick<ExportIndexStream, "lastSegment" | "segmentsPerTask">): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   for (let from = 0; from <= stream.lastSegment; from += stream.segmentsPerTask) out.push([from, Math.min(stream.lastSegment, from + stream.segmentsPerTask - 1)]);
   return out;
 }
 
-/** 一份清单里列着的帧:项目帧号 → PNG 的哈希 */
+/** Frames listed in a manifest: project frame number → PNG hash */
 export function readExportManifest(body: unknown, resultKey: string, span: [number, number]): Map<number, string> | null {
   const b = body as { kind?: unknown; resultKey?: unknown; range?: { from?: unknown; to?: unknown }; frames?: unknown } | null;
   if (!b || typeof b !== "object" || b.kind !== "export-frames" || b.resultKey !== resultKey || !Array.isArray(b.frames)) return null;
@@ -212,22 +242,22 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** 等待时报给调用方的状态 */
+/** Status reported to caller while waiting */
 export type ExportFramesStatus =
   | { phase: "publishing"; clips: number }
-  /** 计划发出去了,还没有渲染节点认领 */
+  /** Plan has been dispatched, no render node has claimed it yet */
   | { phase: "no-node"; clips: number }
-  /** 有节点接了,正在算怎么出 */
+  /** A node claimed it and is computing how to output */
   | { phase: "planning"; clips: number }
-  /** 节点正在逐帧渲:已到 `done` 帧,共 `total` 帧 */
+  /** Node is rendering frame by frame: reached `done` frames out of `total` frames */
   | { phase: "rendering"; clips: number; done: number; total: number };
 
 type PublishResult = { id?: string; error?: string; state?: string };
 
-/** 请到的位图:每个片段有哪些帧、怎么取 */
+/** Acquired bitmaps: which frames each clip has and how to fetch them */
 export interface ExportFrames {
   coverage: Map<string, FrameCoverage>;
-  /** 这个片段这一帧的 PNG(`data:` 地址) */
+  /** PNG for this clip at this frame (`data:` URL) */
   dataUrl(clipId: string, frame: number, signal?: AbortSignal): Promise<string>;
   stats: { fetched: number; bytes: number };
 }
@@ -239,8 +269,11 @@ export function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /**
- * 请渲染节点把 `clips` 逐帧渲好,等到齐。`project` 是导出用的那一版(页面手里的快照),`projectRev` 是文档服务确认的版本号。
- * 到齐的判据:索引里每个片段的每一段清单都在、清单把这一段的每一帧都列了(帧范围以节点给的为准:片段的第一帧到最后一帧)。
+ * Request render nodes to render `clips` frame by frame and wait until all arrive. `project` is
+ * the version used for export (snapshot held by the page), `projectRev` is revision confirmed
+ * by document service.
+ * Completion criteria: every manifest segment for each clip in index exists, and manifests list
+ * every frame in that segment (frame range follows what node provides: first to last clip frame).
  */
 export async function requestExportFrames({ projectId, projectRev, project, clips, deps, signal, onStatus }: {
   projectId: string; projectRev: number; project: unknown; clips: readonly string[];
@@ -265,9 +298,9 @@ export async function requestExportFrames({ projectId, projectRev, project, clip
   const taskCheckMs = deps.taskCheckMs ?? EXPORT_TASK_CHECK_MS;
   const task = exportPlanTask({ projectId, projectRev, clips, codeVersion: deps.codeVersion ?? null, salt: retrySalt });
   const want = task.input.clips;
-  const say = (s: ExportFramesStatus) => { try { onStatus?.(s); } catch { /* 宿主坏了不影响等待 */ } };
+  const say = (s: ExportFramesStatus) => { try { onStatus?.(s); } catch { /* Host failure does not affect waiting */ } };
   const heard: { index: ExportIndex | null; planFailed: string | null } = { index: null, planFailed: null };
-  /** 失败了的导出位图任务:结果键 → 原因(队列只在任务彻底失败时才发 `task.failed`:不可重试,或重试用尽) */
+  /** Failed export bitmap tasks: result key → reason (queue emits `task.failed` only on complete failure: non-retryable or retries exhausted) */
   const taskFailures = new Map<string, string>();
   const off = deps.subscribeQueue((msg) => {
     const id = typeof msg?.id === "string" ? msg.id : "";
@@ -276,17 +309,17 @@ export async function requestExportFrames({ projectId, projectRev, project, clip
       else if (msg.type === "task.failed") heard.planFailed = String(msg.error ?? "failed");
       return;
     }
-    // 流任务的 id:`stream:<结果键>:<起>-<止>`
+    // Stream task id: `stream:<resultKey>:<from>-<to>`
     if (msg?.type === "task.failed" && id.startsWith("stream:")) taskFailures.set(id.split(":")[1] ?? "", String(msg.error ?? "failed"));
   });
   const failureText = (error: string) => (error === "superseded" ? ONLINE_EXPORT_TEXT.projectChanged : ONLINE_EXPORT_TEXT.nodeFailed(error));
-  /** 请渲染节点这件事失败了:下一次导出带一个新的标识,计划和任务都是新的(队列里失败的那几份不会重开) */
+  /** Requesting render nodes failed: the next export carries a new identifier, with a new plan and tasks (failed items in the queue will not be reopened) */
   const failed = (message: string, extra: Record<string, unknown> = {}) => {
     retrySalt = freshSalt();
     return Object.assign(new Error(message), extra);
   };
   let hello = false;
-  /** 发布一批任务,回每一项的回包(按 id);连接断着、回包不对回 null(下一轮再发) */
+  /** Publishes a batch of tasks and returns each item's response (by id); returns null if disconnected or the response is invalid (resend in the next round) */
   const publish = async (tasks: readonly unknown[]): Promise<Map<string, PublishResult> | null> => {
     try {
       if (!hello) {
@@ -303,7 +336,7 @@ export async function requestExportFrames({ projectId, projectRev, project, clip
   };
   try {
     say({ phase: "publishing", clips: want.length });
-    // 一、发计划,等索引
+    // 1. Send the plan, wait for the index
     let doneRounds = 0;
     while (!heard.index) {
       if (signal.aborted) throw cancelled();
@@ -311,29 +344,29 @@ export async function requestExportFrames({ projectId, projectRev, project, clip
       const r = (await publish([task]))?.get(task.id);
       const state = r && !r.error && typeof r.state === "string" ? r.state : null;
       if (heard.index) break;
-      // 计划已经失败了(保留期内不会重开):不是「没有节点」,报失败
+      // The plan has already failed (will not be reopened during retention period): not "no nodes", report failure
       if (state === "failed") throw failed(failureText(heard.planFailed ?? "plan-failed"));
-      // 计划做完了,队列随回包把它的完成通知(带索引)又发了一遍;等过一轮还没有,这份结果就是不带索引的
+      // The plan is finished, and the queue resent its completion notice (with index) along with the response; if still missing after one round of waiting, this result has no index
       if (state === "done" && ++doneRounds > 1) throw failed(ONLINE_EXPORT_TEXT.nodeFailed("no-index"));
       say(state === "claimed" || state === "done" ? { phase: "planning", clips: want.length } : { phase: "no-node", clips: want.length });
       await sleep(EXPORT_PLAN_POLL_MS, signal);
     }
     const found: ExportIndex = heard.index;
-    // 二、节点说出不了的、没列出来的片段:导不了,说清楚是哪几个、为什么
+    // 2. Clips the node says it cannot output or did not list: cannot export, state clearly which ones and why
     const listed = new Map(found.streams.map((s) => [s.clipId, s]));
     const bad = want.filter((id) => !listed.has(id)).map((id) => ({ clipId: id, reason: found.unsupported.find((u) => u.clipId === id)?.reason ?? "unknown" }));
     if (bad.length) throw failed(ONLINE_EXPORT_TEXT.nodeCannot(bad.length, bad[0].reason), { unsupported: bad });
-    // 节点渲的那一版和本页手里这一版对不上(导出期间项目被改了):不拿别的版本的画面出片。
-    // 没带输入签名的没法核对,同样不用(当过期)
+    // The version rendered by the node does not match the version held on this page (project was modified during export): do not use visuals from other versions to produce the video.
+    // Those without an input signature cannot be verified, so skip them as well (treated as expired)
     for (const s of found.streams) {
       if (!want.includes(s.clipId)) continue;
       if (!s.inputSig) throw failed(ONLINE_EXPORT_TEXT.nodeFailed("no-input-signature"));
       if (streamSigStale(s.inputSig, streamInputSig(project, { clipIds: [s.clipId], kind: s.kind }))) throw failed(ONLINE_EXPORT_TEXT.projectChanged);
     }
-    // 三、等每一段的清单到齐
+    // 3. Wait until manifests for every segment have arrived
     const frames = new Map<string, Map<number, string>>();
     const pending = new Map<string, { stream: ExportIndexStream; span: [number, number] }>();
-    /** 清单键 → 这一段的任务(索引里带的);旧节点的索引不带,那几段只靠「没有进展」那一条兜着 */
+    /** Manifest key → task for this segment (included in the index); old node indexes omit it, so those segments rely solely on the "no progress" fallback rule */
     const taskOf = new Map<string, Record<string, unknown>>();
     let total = 0;
     for (const id of want) {
@@ -348,7 +381,7 @@ export async function requestExportFrames({ projectId, projectRev, project, clip
       }
     }
     const doneFrames = () => { let n = 0; for (const got of frames.values()) n += got.size; return n; };
-    /** 这一段清单把它盖住的每一帧都列了才收(节点只在一段全推完之后写清单,不全的不该出现) */
+    /** Only accept this segment's manifest if it lists every frame it covers (the node writes the manifest only after pushing the entire segment; incomplete ones should never appear) */
     const covers = (got: Map<number, string>, s: ExportIndexStream, span: [number, number]) => {
       const first = s.originFrame + span[0] * STREAM_SEGMENT_FRAMES;
       const last = Math.min(s.lastFrame, s.originFrame + (span[1] + 1) * STREAM_SEGMENT_FRAMES - 1);
@@ -374,7 +407,7 @@ export async function requestExportFrames({ projectId, projectRev, project, clip
       for (const [resultKey, error] of taskFailures) {
         if ([...pending.values()].some((p) => p.stream.resultKey === resultKey)) throw failed(failureText(error));
       }
-      // 核对还没到的任务:原样再发布一次,看回包里的状态(失败的不会有通知;不在了的就此重建)
+      // Check tasks that have not arrived yet: republish as is, and inspect the status in the response (failed tasks receive no notice; missing ones are rebuilt from here)
       if (now() - checkedAt >= taskCheckMs) {
         checkedAt = now();
         const tasks = [...pending.keys()].map((key) => taskOf.get(key)).filter((t): t is Record<string, unknown> => !!t);
@@ -382,7 +415,7 @@ export async function requestExportFrames({ projectId, projectRev, project, clip
         for (const r of results?.values() ?? []) {
           if (r.error) continue;
           if (r.state === "failed") throw failed(failureText(taskFailures.get(String(r.id).split(":")[1] ?? "") ?? "task-failed"));
-          // 有节点正认领着(或刚做完、清单还在路上):算有进展
+          // A node is currently claiming it (or just finished and manifest is on the way): count as progress
           if (r.state === "claimed" || r.state === "done") progressAt = now();
         }
       }
@@ -417,6 +450,6 @@ export async function requestExportFrames({ projectId, projectRev, project, clip
   } finally {
     throttleRecord.inFlight = false;
     throttleRecord.lastTime = now();
-    try { off(); } catch { /* 订阅方坏了 */ }
+    try { off(); } catch { /* The subscriber is broken */ }
   }
 }

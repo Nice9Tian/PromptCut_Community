@@ -50,12 +50,13 @@ function BlurTextCard({ params }: CardProps<Params>) {
 
 export const blurText: CardDef<Params> = {
   id: "blur-text",
-  name: "模糊浮现",
-  description: "词块逐个模糊浮现",
-  useWhen: "口播里出现「记住」「关键在于」「本质上」「核心是」这类强调句时,把整句做成词块逐个模糊浮现。**必须用 `|` 手动切词块**,不切就是整句一次性浮现;`*星号*` 包住的词用主色高亮。字号很大,控制在 15 字以内。",
-  tags: ["强调","金句","浮现","重点"],
+  name: "Blur fade",
+  description: "Word chunks fade in from blur one by one",
+  useWhen: "When the narration contains emphasis phrases such as \"Remember\", \"The key is\", \"Essentially\", \"The core is\", turn the whole sentence into word chunks that fade in from blur one by one. **You must split word chunks manually with `|`**; without splits the whole sentence appears at once. Words wrapped in `*asterisks*` are highlighted in the primary color. The font is very large, so keep it within 15 characters.",
+  tags: ["emphasis","quotable line","fade-in","key point"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -64,11 +65,11 @@ export const blurText: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "text", label: "文字", type: "text" },
-    { key: "staggerMs", label: "字间距(ms)", type: "number" },
+    { key: "text", label: "Text", type: "text" },
+    { key: "staggerMs", label: "Stagger (ms)", type: "number" },
   ],
   parts: [
-    { id: "text", label: "文字", role: "list", params: ["text", "staggerMs"], enterMs: 0, settleMs: 2 * 220 + 800 },
+    { id: "text", label: "Text", role: "list", params: ["text", "staggerMs"], enterMs: 0, settleMs: 2 * 220 + 800 },
   ],
   lifecycle: { settleMs: 1240, after: "hold", exit: ["fade"] },
   timing: (p) => {

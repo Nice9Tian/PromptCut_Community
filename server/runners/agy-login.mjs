@@ -19,5 +19,5 @@ try {
   });
   process.stdin.on('data', data => terminal.write(data));
 } catch (error) {
-  process.stderr.write(`后台登录组件启动失败：${error.message}\n`, () => process.exit(1));
+  process.stderr.write(`Background login component failed to start: ${error.message}\\n`, () => process.exit(1));
 }

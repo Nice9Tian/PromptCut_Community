@@ -11,20 +11,22 @@ import { apiUrl } from "../apiUrl";
 
 export const cardsHandlers = {
   /**
-   * 两档详略。默认摘要:每张卡只给 id/名字/干什么/什么时候用/参数名,
-   * 一次调用就能把二十几张卡扫完并选定用哪张。真要建卡时再带 cardId
-   * 取那一张的完整 schema —— 以前无论要哪张都得把所有卡的 controls
-   * 和 defaults 全量拉一遍,又贵又淹没重点。
+   * Two detail tiers. Default summary: each card only provides id/name/what it does/when to
+   * use/parameter names, scanning all twenty-plus cards and choosing which one to use in a single
+   * call. When actually creating a card, pass cardId to fetch that card's full schema: previously,
+   * whichever card was needed, controls and defaults for all cards had to be pulled in full, which
+   * was expensive and buried the focus.
    */
   listCards: (args) => {
     /*
-     * 卡片库对 Agent 暴露多少,由 editor/cardScope.ts 那三档决定 ——
-     * 内置卡按组开关,用户卡看「是不是本项目建的 / 有没有标共享」。
-     * 从前这里是全给,于是给 A 项目建的定制卡会出现在 B 项目里(用户原话:
-     * 「ThreeJS 的资产又从上一个项目泄露给他了」)。
+     * How much of the card library is exposed to the Agent is determined by the three tiers in
+     * editor/cardScope.ts: built-in cards are toggled by group, and user cards check "whether created
+     * by this project / whether marked as shared". Previously all were provided here, so custom cards
+     * built for project A would appear in project B (user's verbatim words: "ThreeJS assets leaked to
+     * it from the previous project again").
      *
-     * 点名要某一张卡时(带 cardId)**不过滤**:那是明确的指名道姓,
-     * 藏起来只会让它拿到一句「没有这张卡」而不知道为什么。
+     * When a specific card is requested by name (with cardId), **do not filter**: that is an explicit
+     * reference by name, and hiding it only makes it receive "no such card" without knowing why.
      */
     const wanted = args?.cardId
       ? [findCard(args.cardId)]
@@ -41,13 +43,14 @@ export const cardsHandlers = {
       return {
         ...base,
         params: c.controls.map((ct) => (ct.required ? `${ct.key}*` : ct.key)),
-        hint: "带 * 的是必填。要完整 schema 就用 list_cards({ cardId })。",
+        hint: "Fields marked * are required. For the full schema use list_cards({ cardId }).",
       };
     });
   },
   /**
-   * 现场建一张新卡片。源码落到 src/cards/user/<id>.tsx,vite HMR 编译后
-   * 自动注册,list_cards 立刻能看到 —— 不用重启,也不用改任何注册表文件。
+   * Create a new card on the fly. Source code lands in src/cards/user/<id>.tsx; once compiled by vite
+   * HMR, it registers automatically and list_cards sees it immediately: no restart needed, and no
+   * registry files to edit.
    */
   createCard: async (args) => {
     const res = await fetch(apiUrl("/api/cards/create"), {
@@ -59,27 +62,32 @@ export const cardsHandlers = {
         source: args.source,
         overwrite: args.overwrite === true,
         existingIds: allCards().map((c) => c.id),
-        // 盖归属戳:定制卡默认只属于建它的这个项目(见 editor/cardScope.ts)
+        // Stamp ownership: custom cards belong only to the project that created them by default (see
+        // editor/cardScope.ts)
         projectId: getState().project.id ?? undefined,
       }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || `建卡失败(HTTP ${res.status})`);
+    if (!res.ok || !data.ok) throw new Error(data.error || `Failed to create card (HTTP ${res.status})`);
     refreshScopes();
     return data;
   },
   /**
-   * 读回一张卡的源码(用户卡和内置卡都行)。改卡的第一步 —— 不读回来就改,等于凭记忆重写。
-   * 带 file 读这张卡用到的某个部件 / vendor 文件。
+   * Read back the source code of a card (both user cards and built-in cards work). The first step in
+   * modifying a card: modifying without reading back is equivalent to rewriting from memory. Pass
+   * file to read a specific part / vendor file used by this card.
    */
   getCardSource: async (args) => {
     const q = new URLSearchParams({ id: args.cardId, ...(args.file ? { file: args.file } : {}) });
     const res = await fetch(apiUrl(`/api/cards/source?${q}`));
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || `读不到卡片源码(HTTP ${res.status})`);
+    if (!res.ok || !data.ok) throw new Error(data.error || `Can't read card source (HTTP ${res.status})`);
     return data;
   },
-  /** 局部替换式改卡(带 file 改部件文件)。整篇重写交给 createCard,那条路只该走一次(建卡)。 */
+  /**
+   * Modify card by local replacement (pass file to modify part files). Full rewrite is handled by
+   * createCard; that path should only be taken once (when creating a card).
+   */
   editCard: async (args) => {
     const res = await fetch(apiUrl("/api/cards/edit"), {
       method: "POST",
@@ -87,7 +95,7 @@ export const cardsHandlers = {
       body: JSON.stringify({ id: args.cardId, file: args.file, find: args.find, replace: args.replace, replaceAll: args.replaceAll === true }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || `改卡失败(HTTP ${res.status})`);
+    if (!res.ok || !data.ok) throw new Error(data.error || `Failed to edit card (HTTP ${res.status})`);
     return data;
   },
   applyCard: (args) => {

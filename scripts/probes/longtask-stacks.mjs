@@ -1,14 +1,20 @@
 /**
- * 汇总一份 Chrome trace 里页面主线程上的长任务:每个长任务里有哪些时间线事件、V8 采样落在哪些函数上。
- * 配合 `tiers-probe.mjs --trace <文件>` 用(也能读 DevTools Performance 面板导出的 trace)。
+ * Summarizes long tasks on the page main thread in a Chrome trace: which timeline events occur
+ * in each long task, and which functions V8 samples hit.
+ * Used alongside `tiers-probe.mjs --trace <file>` (can also read traces exported from the
+ * DevTools Performance panel).
  *
  *   node scripts/probes/longtask-stacks.mjs <trace.json> [--min-ms 50] [--url-part "?editor"] [--top 15]
  *
- * - 页面进程:按 `TracingStartedInBrowser` 里 url 含 `--url-part` 的帧找 processId;找不到就取长任务最多的渲染进程。
- * - 长任务:该进程 `CrRendererMain` 线程上 `RunTask` 且时长 ≥ `--min-ms`。
- * - 每个长任务输出:起点(相对 trace 开头,ms)、时长、线程 CPU 时间(cpuMs,远小于时长说明主线程被抢了 CPU);任务里的时间线事件按名字累计(FunctionCall、TimerFire、
- *   Layout、UpdateLayoutTree、MinorGC 等);V8 采样的自身时间最多的函数;包含时间最多的调用栈(自顶向下,截到 12 层)。
- * 输出一行 JSON。
+ * - Page process: locates processId by frames in `TracingStartedInBrowser` whose url contains
+ *   `--url-part`; if not found, selects the renderer process with the most long tasks.
+ * - Long task: `RunTask` on the `CrRendererMain` thread of that process with duration ≥ `--min-ms`.
+ * - Output per long task: start point (relative to trace start, ms), duration, thread CPU time
+ *   (cpuMs, significantly less than duration indicates the main thread was starved of CPU);
+ *   timeline events in the task accumulated by name (FunctionCall, TimerFire, Layout,
+ *   UpdateLayoutTree, MinorGC, etc.); function with the highest self time in V8 samples;
+ *   call stack with the highest total time (top-down, truncated to 12 frames).
+ * Outputs a single line of JSON.
  */
 import fs from 'node:fs';
 
@@ -18,13 +24,13 @@ const arg = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) +
 const MIN_MS = Number(arg('--min-ms', 50));
 const URL_PART = arg('--url-part', '?editor');
 const TOP = Number(arg('--top', 15));
-if (!file) { console.error('用法:node scripts/probes/longtask-stacks.mjs <trace.json>'); process.exit(2); }
+if (!file) { console.error('Usage: node scripts/probes/longtask-stacks.mjs <trace.json>'); process.exit(2); }
 
 const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
 const events = Array.isArray(raw) ? raw : raw.traceEvents;
 const t0 = events.reduce((m, e) => (e.ts > 0 && e.ts < m ? e.ts : m), Infinity);
 
-// ---- 找页面进程与主线程 ----
+// ---- Find page process and main thread ----
 const mainTid = new Map(); // pid -> tid
 for (const e of events) if (e.ph === 'M' && e.name === 'thread_name' && e.args?.name === 'CrRendererMain') mainTid.set(e.pid, e.tid);
 let pagePid = null;
@@ -42,7 +48,7 @@ const tid = mainTid.get(pagePid);
 const onMain = events.filter((e) => e.pid === pagePid && e.tid === tid);
 const longs = onMain.filter((e) => isRun(e) && e.dur >= MIN_MS * 1000).sort((a, b) => a.ts - b.ts);
 
-// ---- V8 采样(Profile / ProfileChunk,按 id 拼) ----
+// ---- V8 samples (Profile / ProfileChunk, assembled by id) ----
 const profiles = new Map(); // id -> { nodes: Map, samples: [{ts, node}] }
 for (const e of events) {
   if (e.pid !== pagePid) continue;
@@ -88,7 +94,8 @@ const report = longs.map((L) => {
       self.set(top, (self.get(top) ?? 0) + w);
       const key = st.slice(0, 12).join(' > ');
       incl.set(key, (incl.get(key) ?? 0) + w);
-      // 本仓库的帧(/src/ 下):最外层那个(React 里就是被渲染的组件或 effect)与最内层那个,各自计包含时间
+      // Frames in this repo (under /src/): the outermost one (in React, the rendered component or effect)
+      // and the innermost one, each counting inclusive time
       const mine = st.filter((f) => f.includes(' /src/'));
       if (mine.length) {
         app.set(mine[0], (app.get(mine[0]) ?? 0) + w);

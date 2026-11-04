@@ -1,16 +1,23 @@
 /**
- * 预渲染进程的入口守卫：
- * 桌面版舞台锁死：舞台里的卡片代码不许调用本机预渲染进程接口。
+ * Ingress guard for the prerender process:
+ * Desktop app stage lockdown: card code inside the stage is not allowed to call local prerender
+ * process endpoints.
  *
- * 1. 凡是来自舞台的请求（Origin、Referer 带舞台端口或舞台源，或带 x-pc-stage-client 头）一律 403 拒掉。
- * 2. 凡是跨源请求（Origin 存在且不在 PROMPTCUT_CORS_ORIGINS 中），若没有合法内部 token（x-pc-internal-token === PROMPTCUT_INTERNAL_TOKEN）一律 403 拒掉。
+ * 1. Any request originating from the stage (Origin or Referer containing stage port or stage
+ *    origin, or carrying x-pc-stage-client header) is unconditionally rejected with 403.
+ * 2. Any cross-origin request (Origin exists and is not in PROMPTCUT_CORS_ORIGINS) without a valid
+ *    internal token (x-pc-internal-token === PROMPTCUT_INTERNAL_TOKEN) is unconditionally rejected
+ *    with 403.
  */
 import { apiPath } from "./http-guard.mjs";
 import { stagePortsOf } from "./stage-ports.mjs";
 
-export const PRERENDER_DENY_BODY = JSON.stringify({ ok: false, error: "舞台或未经授权的跨源请求禁止访问预渲染接口" });
+export const PRERENDER_DENY_BODY = JSON.stringify({ ok: false, error: "Stage or unauthorized cross-origin requests are not allowed to access the prerender endpoint" });
 
-/** 舞台唯二允许向预渲染进程只读拉取的字节前缀（轨道流与快照字节） */
+/**
+ * The only two byte prefixes that the stage is permitted to pull read-only from the prerender
+ * process (track streams and snapshot bytes)
+ */
 const STAGE_PRERENDER_READ_PREFIXES = ["/api/frames/stream/", "/api/frames/snapshot/"];
 
 function sneaky(rawPath) {
@@ -28,7 +35,7 @@ function isStageReadStreamOrSnapshot(req) {
 }
 
 /**
- * 获取当前配置的舞台端口集合
+ * Get the set of currently configured stage ports
  */
 export function getStagePorts() {
   const envPorts = String(process.env.PROMPTCUT_STAGE_PORTS || "").split(",").map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0);
@@ -38,18 +45,18 @@ export function getStagePorts() {
     try {
       const u = new URL(editorUrl);
       if (u.port) return new Set(stagePortsOf(Number(u.port)));
-    } catch { /* 忽略格式错误 */ }
+    } catch { /* Ignore format errors */ }
   }
   return new Set();
 }
 
 /**
- * 检查请求是否来自舞台或未授权跨源
+ * Check whether request originates from stage or unauthorized cross-origin
  * @param {import('node:http').IncomingMessage} req
  * @returns {{ ok: boolean, reason?: string }}
  */
 export function isPrerenderRequestAllowed(req) {
-  // 1. 带有舞台代理客户端标记头
+  // 1. Carries stage proxy client marker header
   if (req.headers && req.headers["x-pc-stage-client"] !== undefined) {
     if (isStageReadStreamOrSnapshot(req)) return { ok: true };
     return { ok: false, reason: "stage-client-header" };
@@ -59,7 +66,8 @@ export function isPrerenderRequestAllowed(req) {
   const origin = typeof req.headers?.origin === "string" ? req.headers.origin.trim() : null;
   const referer = typeof req.headers?.referer === "string" ? req.headers.referer.trim() : null;
 
-  // 2. 检查 Origin 是否为舞台端口（舞台只许 GET/HEAD 拉取 /api/frames/stream/* 与 /api/frames/snapshot/* 字节，其余接口一律 403）
+  // 2. Check if Origin is a stage port (stage is only allowed to pull /api/frames/stream/* and
+  // /api/frames/snapshot/* bytes via GET/HEAD; all other endpoints return 403)
   if (origin) {
     try {
       const u = new URL(origin);
@@ -68,10 +76,10 @@ export function isPrerenderRequestAllowed(req) {
         if (isStageReadStreamOrSnapshot(req)) return { ok: true };
         return { ok: false, reason: "stage-origin" };
       }
-    } catch { /* 非合法 URL 在后续跨源判断中拦截 */ }
+    } catch { /* Non-valid URLs are intercepted in subsequent cross-origin checks */ }
   }
 
-  // 3. 检查 Referer 是否包含舞台端口
+  // 3. Check if Referer contains a stage port
   if (referer) {
     try {
       const u = new URL(referer);
@@ -80,10 +88,11 @@ export function isPrerenderRequestAllowed(req) {
         if (isStageReadStreamOrSnapshot(req)) return { ok: true };
         return { ok: false, reason: "stage-referer" };
       }
-    } catch { /* 忽略格式异常 */ }
+    } catch { /* Ignore format anomalies */ }
   }
 
-  // 4. 检查跨源请求与内部 token（放行预渲染进程自己的同源请求，如无头 Chrome 加载 /?export=1 的模块）
+  // 4. Check cross-origin requests and internal token (allow prerender process's own same-origin
+  // requests, such as headless Chrome loading modules at /?export=1)
   if (origin) {
     const host = typeof req.headers?.host === "string" ? req.headers.host.trim() : "";
     const isSameOrigin = host && (origin === `http://${host}` || origin === `https://${host}`);
@@ -103,7 +112,7 @@ export function isPrerenderRequestAllowed(req) {
 }
 
 /**
- * Vite 插件：挂在预渲染进程中间件的最前列
+ * Vite plugin: attached at the front of prerender process middleware
  */
 export function prerenderGatePlugin() {
   return {

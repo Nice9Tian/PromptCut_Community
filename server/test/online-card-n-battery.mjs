@@ -1,9 +1,12 @@
 /**
- * 仅供测试。块 N(`docs/plan/online-card-exec-contract.md` 第 7 节)「内置卡的结果键与切分一个字不变」的对照用例。
+ * Test only. Control case for Block N (`docs/plan/online-card-exec-contract.md` section 7)
+ * "built-in card result keys and splitting do not change by a single character".
  *
- * 一组固定输入喂给 `splitPlan` 与指纹函数,收齐每份输出;测试把每一份输出的摘要、以及每个任务的结果键,
- * 与**改动之前**(起点提交 3820592c)的代码跑出来的字面值逐个比对。
- * 里面没有任何用户卡、素材效果卡、`browserCards`:全是内置卡的老形状,所以改前改后必须逐字相同。
+ * A fixed set of inputs is fed to `splitPlan` and fingerprint functions to collect each output;
+ * the test compares the digest of each output and the result key of each task one-by-one against
+ * the literal values produced by the code **before changes** (base commit 3820592c).
+ * There are no user cards, media effect cards, or `browserCards` inside: all are old shapes of
+ * built-in cards, so they must be identical word-for-word before and after changes.
  */
 import crypto from 'node:crypto';
 import { splitPlan } from '../render-node/split.mjs';
@@ -37,24 +40,24 @@ const cards = () => [
   control('e', { snapshotOversize: true }),
 ];
 
-/** 每一项:`[标签, splitPlan 的输入]` */
+/** Each item: `[label, splitPlan input]` */
 export function batteryInputs() {
   const base = { planTask, entryKey: 'entry-1', cardPlan: cards(), prerenderSet: null, envFingerprint: OWN, codeVersion: 'cv-1', anchorFrames: [0, 70], weightOf };
   return [
-    ['无浏览器', { ...base }],
-    ['浏览器指纹(docservice 给的)', { ...base, browserFingerprints: [BR] }],
-    ['浏览器指纹等于自己', { ...base, browserFingerprints: [OWN] }],
-    ['browser 对象写法', { ...base, browser: { nodeId: 'n-br', envFingerprint: BR } }],
-    ['锁在第三种环境', { ...base, browserFingerprints: [BR], cardLocks: { 'snapshot:ck-a': THIRD } }],
-    ['锁在第三种环境并接手', { ...base, browserFingerprints: [BR], cardLocks: { 'snapshot:ck-a': THIRD }, takeover: true }],
-    ['预渲染重试档', { ...base, browserFingerprints: [BR], lane: 'backfill' }],
-    ['改过源码的内置卡', { ...base, browserFingerprints: [BR], cardSourceVersions: { 'card-a': 'ver-a' } }],
-    ['含本地素材', { ...base, browserFingerprints: [BR], localMedia: 'node-1', usesLocalMedia: (c) => c.clipId === 'a' }],
-    ['有流', { ...base, browserFingerprints: [BR], streams: [{ streamKey: sk('st', OWN), contentKey: 'st', topClipId: 'bg', firstSegment: 0, lastSegment: 11 }] }],
+    ['no browser', { ...base }],
+    ['browser fingerprint (given by docservice)', { ...base, browserFingerprints: [BR] }],
+    ['browser fingerprint equals its own', { ...base, browserFingerprints: [OWN] }],
+    ['browser object form', { ...base, browser: { nodeId: 'n-br', envFingerprint: BR } }],
+    ['locked to a third environment', { ...base, browserFingerprints: [BR], cardLocks: { 'snapshot:ck-a': THIRD } }],
+    ['locked to a third environment, with takeover', { ...base, browserFingerprints: [BR], cardLocks: { 'snapshot:ck-a': THIRD }, takeover: true }],
+    ['prerender retry lane', { ...base, browserFingerprints: [BR], lane: 'backfill' }],
+    ['builtinCardWithModifiedSource', { ...base, browserFingerprints: [BR], cardSourceVersions: { 'card-a': 'ver-a' } }],
+    ['includes local media', { ...base, browserFingerprints: [BR], localMedia: 'node-1', usesLocalMedia: (c) => c.clipId === 'a' }],
+    ['has streams', { ...base, browserFingerprints: [BR], streams: [{ streamKey: sk('st', OWN), contentKey: 'st', topClipId: 'bg', firstSegment: 0, lastSegment: 11 }] }],
   ];
 }
 
-/** → `{ [标签]: { digest, keys: [每个任务的 resultKey…](去重、保序), count } }` */
+/** → `{ [label]: { digest, keys: [resultKey of each task…](deduplicated, order-preserving), count } }` */
 export function runBattery() {
   const out = {};
   for (const [label, input] of batteryInputs()) {
@@ -62,7 +65,7 @@ export function runBattery() {
     const keys = [...new Set(tasks.map((t) => t.resultKey))];
     out[label] = { count: tasks.length, digest: sha256(JSON.stringify(tasks)), keys };
   }
-  out['指纹函数'] = {
+  out['fingerprint function'] = {
     count: 3,
     digest: sha256(JSON.stringify([OWN, BR, envFingerprintOf({ os: 'linux', gpuClass: 'software', chromeMajor: 152 }), resultKeyOf('x', OWN)])),
     keys: [OWN, BR],

@@ -1,42 +1,59 @@
 /**
- * 界限搜索（语义 `docs/semantics/mechanism/rendering.md`「界限搜索与成本记录」；`product/platforms.md`「在线浏览器」的轻重判定；
- * 契约 `docs/plan/c10-contract.md` 第 3 节）。**纯逻辑**：不碰舞台、不碰网络，测量与本地存取都由调用方注入，
- * 浏览器和 Node 单测同一份代码。
+ * Bounds search (semantics `docs/semantics/mechanism/rendering.md` "Bounds search and cost records";
+ * light/heavy classification in `product/platforms.md` "Online browser"; contract
+ * `docs/plan/c10-contract.md` section 3). **Pure logic**: does not touch stage or network;
+ * measurement and local storage/retrieval are both injected by caller; same code for browser and
+ * Node unit tests.
  *
- * # 做法
+ * # Procedure
  *
- * 1. 每张卡取一个代表耗时：本项目的共享成本记录里这张卡（`identityKey`）各环境的活渲单帧耗时取中位数；
- * 2. 按代表耗时从小到大排序（相同的按 `identityKey` 定序）；没有记录的卡：`measureUnrecorded` 为真时**逐张实测**
- *    （2026-10-07 用户定「没有就逐张实测」；在线页面一律给真），为假时按重卡、不测（旧做法，单测留着）；
- * 3. 对排好的卡做二分查找：测中间那一张在本机的活渲单帧耗时，不超过预算 B 往更耗时的一半找，超过往更省的一半找，
- *    直到找到第一张本机跑不动的卡（界限）。它和比它耗时的全判重，比它省的全判轻；
- * 4. 余量：界限两侧各再测 `margin` 张（缺省 1），取离界限最近、还不知道本机耗时的那一张。实测和排序矛盾时以实测为准，
- *    界限随之挪动（省的一侧测出跑不动：界限挪到它；重的一侧测出跑得动：界限挪到它后面），挪动之后在同一侧接着再测，
- *    这样多测的总数不超过 `extraMax`（缺省 2）；
- * 5. 测过的卡一律按实测判，没测的卡按它在界限的哪一侧判；没有记录又没测的按重卡。
+ * 1. Take a representative duration for each card: median of single-frame live render durations
+ *    across environments for this card (`identityKey`) in this project's shared cost records;
+ * 2. Sort cards in ascending order of representative duration (ties ordered by `identityKey`);
+ *    for cards without records: when `measureUnrecorded` is true, **measure one by one**
+ *    ((user decision, 2026-10-07) "measure one by one if missing"; online pages always pass true);
+ *    when false, treat as heavy cards without measuring (legacy approach, kept for unit tests);
+ * 3. Perform binary search on the sorted cards: measure the local single-frame live render duration
+ *    of the middle card; if it does not exceed budget B, search in the more time-consuming half;
+ *    if it exceeds, search in the cheaper half, until finding the first card this machine cannot run
+ *    (the boundary). It and cards more time-consuming than it are all classified as heavy; cards
+ *    cheaper than it are all classified as light;
+ * 4. Margin: measure `margin` additional cards on each side of the boundary (defaults to 1),
+ *    picking the card closest to the boundary whose local duration is not yet known. If measurements
+ *    contradict the sort order, measurements take precedence and the boundary moves accordingly
+ *    (measured as cannot run on the cheaper side: boundary moves to it; measured as can run on the
+ *    heavy side: boundary moves behind it); after moving, continue measuring on the same side, such
+ *    that the total number of extra measurements does not exceed `extraMax` (defaults to 2);
+ * 5. Measured cards are always classified by measurement; unmeasured cards are classified by which
+ *    side of the boundary they fall on; unrecorded and unmeasured cards are classified as heavy cards.
  *
- * 测量次数上界 = ⌈log₂(卡数 + 1)⌉ + 2 × margin + extraMax，即约 log₂(卡数) + 2（`maxMeasurements`）。
+ * Upper bound on measurement count = ⌈log₂(card count + 1)⌉ + 2 × margin + extraMax,
+ * i.e., approximately log₂(card count) + 2 (`maxMeasurements`).
  *
- * # 本地复用
+ * # Local reuse
  *
- * 本机测过的结果按「卡片身份 + 本机环境指纹」（`localCostKey`，形如 `<identityKey>|<envFingerprint>`）经注入的
- * `store.getCost(key)` / `store.putCost(key, rec)` 存取（与页面内快照库 L2 的方法同名，集成时接到 L2 的 `costs` 表）。
- * 取到了就不再测，也不算进测量次数。测量失败（舞台没回、被打断）按跑不动算，不存。
+ * Locally measured results are accessed via injected `store.getCost(key)` / `store.putCost(key, rec)`
+ * by "card identity + local environment fingerprint" (`localCostKey`, shaped like
+ * `<identityKey>|<envFingerprint>`) (same method names as in-page snapshot store L2, connected to
+ * L2's `costs` table during integration). If retrieved, it is not measured again and does not count
+ * toward measurement count. Measurement failures (stage did not respond, interrupted) are treated
+ * as unable to run and not stored.
  *
- * # 判重的口径
+ * # Standard for classifying as heavy
  *
- * 与桌面分派同一个式子：`stepMs × COST_SCALE > B`（`pipelinePlan.mjs` 的 `clipWeight`）。`scale` 缺省 1。
+ * Same formula as desktop dispatch: `stepMs × COST_SCALE > B` (`clipWeight` in
+ * `pipelinePlan.mjs`). `scale` defaults to 1.
  */
 
-/** 界限两侧各再测几张（三级可调，`mechanism/rendering.md`「界限搜索与成本记录」） */
+/** Number of additional cards to measure on each side of the boundary (tier-3 tunable, `mechanism/rendering.md` "Bounds search and cost records") */
 export const BOUNDARY_MARGIN = 1;
-/** 余量测出矛盾、界限挪动之后，最多再多测几张（三级可调） */
+/** Maximum number of additional cards to measure after margin measurements contradict and the boundary moves (tier-3 tunable) */
 export const BOUNDARY_EXTRA_MAX = 2;
 
 const finite = (x) => typeof x === 'number' && Number.isFinite(x);
 const byKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** 中位数；空数组回 undefined。偶数个取中间两个的平均 */
+/** Median; returns undefined for empty array. Takes the average of middle two for even count */
 export function median(values) {
   const s = (values ?? []).filter(finite).sort((a, b) => a - b);
   if (!s.length) return undefined;
@@ -44,7 +61,8 @@ export function median(values) {
 }
 
 /**
- * 每张卡的代表耗时：同一个 `identityKey` 的各条记录（来自不同环境）取 `stepMs` 的中位数。
+ * Representative duration for each card: takes the median of `stepMs` across records for the same
+ * `identityKey` (from different environments).
  * @param {Iterable<{ identityKey: string, stepMs: number }>} records
  * @returns {Map<string, number>}
  */
@@ -61,12 +79,12 @@ export function representativeCosts(records) {
   return out;
 }
 
-/** 本地复用的键：卡片身份 + 本机环境指纹 */
+/** Key for local reuse: card identity + local environment fingerprint */
 export function localCostKey(identityKey, envFingerprint) {
   return `${identityKey}|${envFingerprint ?? ''}`;
 }
 
-/** 测量次数的上界：⌈log₂(n + 1)⌉ + 2 × margin + extraMax */
+/** Upper bound on measurement count: ⌈log₂(n + 1)⌉ + 2 × margin + extraMax */
 export function maxMeasurements(n, margin = BOUNDARY_MARGIN, extraMax = BOUNDARY_EXTRA_MAX) {
   const count = Math.max(0, Math.floor(Number(n) || 0));
   if (count === 0) return 0;
@@ -74,20 +92,25 @@ export function maxMeasurements(n, margin = BOUNDARY_MARGIN, extraMax = BOUNDARY
 }
 
 /**
- * 界限搜索。
+ * Bounds search.
  *
  * @param {object} o
- * @param {Iterable<string>} o.keys 要判的卡（`identityKey`，重复的只算一张）
- * @param {Iterable<{ identityKey: string, stepMs: number }>} o.records 本项目的共享成本记录（全部环境）
- * @param {number} o.budgetMs 预算 B（`budgetOf(fps)`）
- * @param {(key: string) => Promise<{ stepMs: number, samples?: number } | null>} o.measure 在本机舞台里测这张卡的活渲单帧耗时
- * @param {{ getCost(key: string): any, putCost(key: string, rec: object): any } | null} [o.store] 本地复用
- * @param {string} [o.envFingerprint] 本机环境指纹（本地复用的键用）
- * @param {number} [o.scale] `COST_SCALE`，缺省 1
- * @param {number} [o.margin] 界限两侧各再测几张，缺省 `BOUNDARY_MARGIN`
- * @param {number} [o.extraMax] 挪界限后最多再多测几张，缺省 `BOUNDARY_EXTRA_MAX`
- * @param {string} [o.mode] 本地复用的记录里记的构建模式
- * @param {boolean} [o.measureUnrecorded] 没有记录的卡逐张实测（缺省假：按重卡、不测）
+ * @param {Iterable<string>} o.keys Cards to classify (`identityKey`, duplicates counted once)
+ * @param {Iterable<{ identityKey: string, stepMs: number }>} o.records Shared cost records for this
+ *   project (all environments)
+ * @param {number} o.budgetMs Budget B (`budgetOf(fps)`)
+ * @param {(key: string) => Promise<{ stepMs: number, samples?: number } | null>} o.measure Measures
+ *   single-frame live render duration of this card on the local stage
+ * @param {{ getCost(key: string): any, putCost(key: string, rec: object): any } | null} [o.store] Local reuse
+ * @param {string} [o.envFingerprint] Local environment fingerprint (used by local reuse key)
+ * @param {number} [o.scale] `COST_SCALE`, defaults to 1
+ * @param {number} [o.margin] Number of additional cards to measure on each side of the boundary,
+ *   defaults to `BOUNDARY_MARGIN`
+ * @param {number} [o.extraMax] Maximum additional cards to measure after moving the boundary,
+ *   defaults to `BOUNDARY_EXTRA_MAX`
+ * @param {string} [o.mode] Build mode recorded in local reuse records
+ * @param {boolean} [o.measureUnrecorded] Measure unrecorded cards one by one (defaults to false:
+ *   treat as heavy cards without measuring)
  * @param {() => number} [o.now]
  * @returns {Promise<BoundaryResult>}
  */
@@ -134,14 +157,14 @@ export async function boundarySearch({
     trace.push({ index: i, key, ms: ok ? ms : null, cached: false });
     if (ok && store) {
       const rec = { identityKey: key, envFingerprint, stepMs: r.stepMs, samples: Number.isSafeInteger(r.samples) && r.samples > 0 ? r.samples : 1, measuredAt: now(), mode };
-      try { await store.putCost(lk, rec); } catch { /* 存不下就下次再测 */ }
+      try { await store.putCost(lk, rec); } catch { /* If it cannot be stored, measure again next time */ }
     }
     return ms;
   }
   const heavyMs = (ms) => ms * k > B;
   const heavyAt = async (i) => heavyMs(await costAt(i));
 
-  // 3. 二分：第一张跑不动的卡
+  // 3. Binary search: the first card that cannot keep up
   let lo = 0, hi = n;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
@@ -151,12 +174,13 @@ export async function boundarySearch({
   let boundary = lo;
   const searchMeasurements = measurements;
 
-  // 4. 余量：两侧各测 margin 张；矛盾时挪界限，同一侧接着测，多测的总数不超过 extraMax
+  // 4. Margin: measure margin cards on each side; on contradiction, shift boundary and continue
+  // measuring on the same side, with total extra measurements not exceeding extraMax
   let extra = Math.max(0, extraMax);
   const unknownBelow = (f) => { for (let i = f - 1; i >= 0; i--) if (!known.has(order[i].key)) return i; return -1; };
   const unknownAtOrAbove = (f) => { for (let i = f; i < n; i++) if (!known.has(order[i].key)) return i; return -1; };
   for (let m = 0; m < Math.max(0, margin); m++) {
-    // 省的一侧
+    // Light side
     for (let allowance = 1; allowance > 0; allowance--) {
       const j = unknownBelow(boundary);
       if (j < 0) break;
@@ -165,7 +189,7 @@ export async function boundarySearch({
         if (extra > 0) { extra--; allowance++; }
       }
     }
-    // 重的一侧
+    // Heavy side
     for (let allowance = 1; allowance > 0; allowance--) {
       const j = unknownAtOrAbove(boundary);
       if (j < 0) break;
@@ -176,10 +200,11 @@ export async function boundarySearch({
     }
   }
 
-  // 4b. 没有记录的卡逐张实测（在线页面；单测的旧做法不测）
+  // 4b. Measure cards without records card by card (online page; legacy unit test approach
+  // skips measurement)
   if (measureUnrecorded) for (const key of unrecorded) await costOf(key, -1);
 
-  // 5. 判
+  // 5. Classify
   const heavy = new Set();
   const light = new Set();
   for (const key of unrecorded) {
@@ -200,9 +225,13 @@ export async function boundarySearch({
 }
 
 /**
- * 搜索之后项目里又来了新卡（或别的机器补了记录）：不再测，按已有的结果判。
- * 测过的按实测；有代表耗时的按它落在界限的哪一侧（代表耗时不小于界限那张卡的算重）；没有记录的算重
- * （在线页面先把新来的、没有记录的卡补测进 `result.measured` 再来判，`src/editor/costSearch.ts` 的 `measureNewCards`）。
+ * When new cards arrive in the project after search (or another machine adds records): do not
+ * measure again; classify based on existing results.
+ * Measured cards follow actual measurements; cards with representative costs are classified by
+ * which side of the boundary they fall on (considered heavy if representative cost is not less than
+ * the boundary card); cards without records are considered heavy (the online page first catches up
+ * measurements for new, unrecorded cards into `result.measured` before classifying;
+ * `measureNewCards` in `src/editor/costSearch.ts`).
  * @param {BoundaryResult} result
  * @param {Iterable<string>} keys
  * @param {Iterable<{ identityKey: string, stepMs: number }>} records
@@ -223,7 +252,7 @@ export function classifyWithBoundary(result, keys, records) {
   return { heavy, light };
 }
 
-/** 本地复用的缺省实现：页面内存（关掉页面就没了）。集成时换成 L2 的 `costs` 表 */
+/** Default implementation for local reuse: in-page memory (lost on close). Replaced with L2 `costs` table upon integration */
 export function createMemoryCostStore() {
   const map = new Map();
   return {

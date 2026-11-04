@@ -1,8 +1,10 @@
 /**
- * 预览播放栏(配色诊断与修正 v2 整屏,中栏底部)。
- * 一张 L1 卡片:上面一条 3px 进度线(强调色填充 + 主文字色圆点),
- * 下面一行:上一段 / 播放 / 下一段 / 重播 四个 28 方钮(播放键是卡片里唯一的实心强调色),
- * 当前时间(等宽 15px,点一下能直接输入跳转)+ 总时长,右侧扬声器 + 64px 音量滑条。
+ * Preview control bar (color diagnosis and correction v2 full screen, bottom of the middle
+ * column). One L1 card: on top a 3px progress line (accent-color fill + primary-text-color dot),
+ * below it one row: previous clip / play / next clip / replay, four 28 square buttons (the play
+ * button is the only solid accent-color element in the card), the current time (monospace 15px,
+ * click to type a time and jump) + total duration, and on the right a speaker + a 64px volume
+ * slider.
  */
 import React, { useEffect, useRef, useState } from "react";
 import { actions, useStore } from "../../store/project";
@@ -60,7 +62,7 @@ export function ControlBar() {
     else if (e.key === "Escape") setEditing(false);
   };
 
-  /** 进度线:按下即定位,按住可拖 */
+  /** Progress line: press to seek, hold to drag */
   const scrubTo = (clientX: number) => {
     const el = progressRef.current;
     if (!el || duration <= 0) return;

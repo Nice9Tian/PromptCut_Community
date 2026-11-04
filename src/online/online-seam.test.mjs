@@ -1,14 +1,16 @@
 /**
- * 在线运行时与同步管理器云端扩展接缝单测（`src/online/online-seam.test.mjs`）。
+ * Online runtime and sync manager cloud extension seam unit tests (`src/online/online-seam.test.mjs`).
  *
- * 验证：
- *   1. 社区版缺省行为（无 `cloud/online/` 或未加载云端清单时）：
- *      - `getBuildInfo()` / `CODE_VERSION` 为 `null`；
- *      - `bootApiGuard()` / `installApiGuard()` 安全返回 `null`；
- *      - `startUpdateCheck()` 返回 `hasUpdate: false` 的静默控制器；
- *      - `getSyncCloudBackend()` 提供安全的公开侧兜底实现。
- *   2. `PROMPTCUT_CLOUD_DIR` 指向不存在目录（或 `cloud/` 目录被移走）时，`loadOnlineExtensions` 静默回 `false`。
- *   3. 当 `cloud/online/manifest.ts` 存在时，能够动态加载并装配云端扩展实现。
+ * Verify:
+ *   1. Community edition default behavior (without `cloud/online/` or when cloud manifest not loaded):
+ *      - `getBuildInfo()` / `CODE_VERSION` is `null`;
+ *      - `bootApiGuard()` / `installApiGuard()` safely returns `null`;
+ *      - `startUpdateCheck()` returns a silent controller with `hasUpdate: false`;
+ *      - `getSyncCloudBackend()` provides a safe fallback implementation on the open side.
+ *   2. When `PROMPTCUT_CLOUD_DIR` points to a non-existent directory (or `cloud/` directory is
+ *      moved away), `loadOnlineExtensions` silently returns `false`.
+ *   3. When `cloud/online/manifest.ts` exists, able to dynamically load and mount cloud extension
+ *      implementations.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -33,15 +35,16 @@ test("community edition defaults: buildInfo / apiGuard / updateCheck downgrade s
   resetOnlineExtensionsForTest();
   assert.deepEqual(getBuildInfo(), { codeVersion: null });
   assert.equal(CODE_VERSION, null);
-  // 入参形状照 `cloud/online/apiGuard.ts` 的真实签名：`{ href, base }`，不是原来写的 `{ online }`
+  // Input shape matches real signature in `cloud/online/apiGuard.ts`: `{ href, base }`,
+  // not `{ online }` as originally written
   assert.equal(bootApiGuard(false), null);
   assert.equal(bootApiGuard(true), null, "with no cloud guard registered, online mode can only return null too");
   assert.equal(installApiGuard(true, { base: "/editor/" }), null);
 
-  // 控制器形状照 `cloud/online/updateCheck.ts` 的真实签名：getState() / subscribe() / stop()，
-  // 状态是 { hasUpdate, currentVersion, latestVersion }。2026-10-27 之前这里断言的是
-  // state / reason / notifyProjectMinVersion 那一套，而那套 API 在真实现里根本不存在
-  // （boot.ts 里那段说明记了为什么能一直对不上）。
+  // Controller shape matches real signature in `cloud/online/updateCheck.ts`: getState() / subscribe() / stop(),
+  // status is { hasUpdate, currentVersion, latestVersion }. Before 2026-10-27, assertions here were for
+  // the state / reason / notifyProjectMinVersion set, but that API does not exist in the real implementation
+  // (the explanation in boot.ts recorded why they could remain mismatched for so long).
   const ctrl = startUpdateCheck({ codeVersion: "v1" });
   assert.deepEqual(ctrl.getState(), { hasUpdate: false, currentVersion: null, latestVersion: null });
   const unsub = ctrl.subscribe(() => {});
@@ -106,21 +109,24 @@ test("registerOnlineExtensions and cloud/online/manifest.ts (if present) assembl
   const cloudBase = process.env.PROMPTCUT_CLOUD_DIR || path.join(process.cwd(), "cloud");
   const manifestPath = path.join(cloudBase, "online", "manifest.ts");
   if (fs.existsSync(manifestPath)) {
-    // 不传 cloudDir 的那一支走 Vite 别名（`#promptcut-cloud-online`，见
-    // `server/vite-plugin-cloud-seams.ts`）。node --test 里没有别名表，所以必然是 false ——
-    // 那正是「没装云端扩展」，公开侧缺省继续生效。
+    // The branch not passing cloudDir uses Vite alias (`#promptcut-cloud-online`, see
+    // `server/vite-plugin-cloud-seams.ts`). node --test has no alias table, so it is bound to be false:
+    // that is precisely "cloud extension not installed", and open side default remains in effect.
     assert.equal(await loadOnlineExtensions({ forceReload: true }), false);
     assert.equal(getBuildInfo().codeVersion, null, "the defaults must not be overwritten when the alias cannot be resolved");
 
-    // 要验「装上之后」就显式给目录 —— 这是不变量 2 里「Node 侧从调用方拿」的那种形式
+    // To verify "after installation", explicitly provide directory: this is invariant 2's
+    // "Node side receives from caller" form
     const loaded = await loadOnlineExtensions({ cloudDir: cloudBase, forceReload: true });
     assert.equal(loaded, true);
   }
 });
 
 test("loadOnlineExtensions must wait for the manifest's ready: once it returns, it is usable", async () => {
-  // 2026-10-31：恢复协调器是清单里异步注册的，原来这里不等，`ensureOnlineExtensionsLoaded().then(start)`
-  // 打在公开侧的空实现上，真实现注册之后没人再叫一次，页面永远停在「正在恢复原协作房间」。
+  // 2026-10-31: Restore coordinator is asynchronously registered in manifest; originally this did
+  // not wait, and `ensureOnlineExtensionsLoaded().then(start)` hit the empty implementation on the
+  // open side; after real implementation registered, nobody called it again, leaving page forever
+  // stuck on "Restoring original collaboration room".
   resetOnlineExtensionsForTest();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "online-ready-"));
   try {
@@ -137,10 +143,11 @@ test("loadOnlineExtensions must wait for the manifest's ready: once it returns, 
 });
 
 test("after the cloud guard is registered: not installed in desktop mode, installed only in online mode", () => {
-  // 这一格原来是空的 —— 第十一节只验了把 `cloud/` **挪走之后**，没人在 `cloud/` 在位时
-  // 按桌面模式走一遍。2026-10-28 两位审查者查出的后果：云端表注册的是无条件的
-  // `installApiGuard`，而公开侧接缝又把 `online` 判据整个丢了，于是私有仓库的桌面构建
-  // 与 dev server 里也会装上在线守卫，桌面编辑器自己的 /api/* 被拒、全废。
+  // This slot was originally empty: section 11 only tested **after moving** `cloud/` away; nobody tested
+  // desktop mode while `cloud/` was in place. Consequences found by two reviewers on 2026-10-28: the cloud
+  // table registers unconditional `installApiGuard`, while the open-side seam completely dropped `online`
+  // criterion, so desktop builds and dev server in private repo also installed online guard; desktop
+  // editor's own /api/* was rejected and broke completely.
   resetOnlineExtensionsForTest();
   const calls = [];
   registerApiGuard((online, opts) => {

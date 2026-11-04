@@ -1,17 +1,18 @@
 /**
- * PromptCut — Build an update patch from the assembled runtime.
+ * PromptCut: Build an update patch from the assembled runtime.
  *
- * 绝大多数改动只落在 Node 那一半（源码 + dist，有时加上依赖），Rust 壳和
- * Chrome/ffmpeg/Python 这三个大块一动不动。完整安装包因此接近 1 GB，而这些
- * 改动本身通常只有几 MB。这个脚本把 runtime/app 里真正会变的部分单独打成一个
- * 可以覆盖到已安装目录上的补丁包。
+ * Vast majority of changes affect only the Node half (source + dist, occasionally dependencies),
+ * while the Rust shell and three large chunks Chrome/ffmpeg/Python remain untouched. The full
+ * installer is therefore nearly 1 GB, whereas these changes themselves are usually only a few MB.
+ * This script packages the parts in runtime/app that actually change into a patch package that can
+ * overwrite the installed directory.
  *
- *   node scripts/make-patch.mjs                # 依赖没变就不带 node_modules
- *   node scripts/make-patch.mjs --with-deps    # 强制带上 node_modules
- *   node scripts/make-patch.mjs --no-deps      # 强制不带（依赖变了会拒绝）
- *   node scripts/make-patch.mjs --base <file>  # 指定比较基准（release 清单）
+ *   node scripts/make-patch.mjs                # Do not include node_modules if deps unchanged
+ *   node scripts/make-patch.mjs --with-deps    # Force including node_modules
+ *   node scripts/make-patch.mjs --no-deps      # Force omitting (rejects if deps changed)
+ *   node scripts/make-patch.mjs --base <file>  # Specify comparison baseline (release manifest)
  *
- * 前提是 runtime/app 已经由 prepare-runtime 组装好。
+ * Prerequisite is that runtime/app has been assembled by prepare-runtime.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -26,19 +27,23 @@ const RUNTIME_DIR = path.join(DESKTOP_DIR, "src-tauri", "runtime");
 const APP_DIR = path.join(RUNTIME_DIR, "app");
 
 /**
- * Node 这半边最低要求的外壳版本 —— 手动声明,**不要**用「这次顺手一起编的外壳版本」。
+ * Minimum required shell version for the Node side: declare manually, **do not** use "the shell
+ * version built alongside this time".
  *
- * 这两件事很容易混:发布时一起编出来的外壳版本,和 Node 这半边真正依赖的外壳能力。
- * 拿前者当门槛的话,外壳每动一次(哪怕只是加个菜单项)就会把所有老外壳的用户挡在
- * 补丁外面,逼他们下三百多 MB 的完整包,只为换一个 11 MB 的 exe —— 而那些用户
- * 本来只是想拿 Node 这半边的更新。
+ * These two are easy to conflate: the shell version built together at release time, versus shell
+ * capabilities actually relied upon by the Node side. Using the former as the gate means every
+ * shell change (even just adding a menu item) blocks all users on older shells from patches,
+ * forcing them to download a full package of over 300 MB just to replace an 11 MB exe, when those
+ * users originally only wanted updates on the Node side.
  *
- * 什么时候才该抬高它:Node 这半边开始**硬依赖**某个新外壳能力,缺了就报错或整个
- * 功能不可用。「有了更好、没有也能降级」不算 —— 那种留在门槛下面,让老外壳照样能打补丁。
+ * When to raise it: when the Node side begins to **hard-depend** on a new shell capability, where
+ * missing it throws an error or makes the feature entirely unavailable. "Better with it, but
+ * downgrades gracefully without" does not count: keep those below the gate so older shells can
+ * still apply patches.
  *
- * 现在是 0.2.0:0.2.x 的任何外壳都跑得起来。0.2.3 新加的原生「外观 → 皮肤…」
- * 属于可降级项(前端读 window.__TAURI__ 走的是可选链,皮肤对话框在顶栏「⋯」里
- * 还有一个入口),所以不抬门槛。
+ * Currently 0.2.0: any 0.2.x shell can run it. The native "Appearance → Skin…" newly added in 0.2.3
+ * is a downgradable item (frontend accesses window.__TAURI__ via optional chaining, and the skin
+ * dialog has another entry in "..." on the top bar), so the gate is not raised.
  */
 const MIN_SHELL_VERSION = "0.2.0";
 const RELEASE_DIR = path.join(DESKTOP_DIR, "release");
@@ -52,38 +57,43 @@ const option = (name) => {
 };
 
 /**
- * 安装器那三个文件(apply-patch.ps1 / apply-patch.cmd / patch-installer.nsi)从哪儿取。
+ * Where to fetch those three installer files (apply-patch.ps1 / apply-patch.cmd /
+ * patch-installer.nsi).
  *
- * **默认是 `__dirname`,也就是当前工作区。这对 `--from-head` 是错的。**
- * payload 走的是 `runtime/app`,那是 prepare-runtime 从 HEAD 的临时 worktree 组装出来的;
- * 而这三个文件一直是直接从工作区拷的,于是 `--from-head` 那句「源码取自 HEAD、忽略未提交
- * 改动」对它们不成立 —— 打出来的包可能是「runtime 是已提交的 A 版、安装器是工作区的 B 版」,
- * 对不上任何一个提交。实测撞见过:安装器的改动还没提交就被打进了包,而它依赖的服务端字段
- * (那次是 /api/mcp/status 的 activeRuns)还停在旧版,两半对不上。
+ * **Default is `__dirname`, namely current workspace. This is wrong for `--from-head`.**
+ * payload uses `runtime/app`, which is assembled by prepare-runtime from a temporary HEAD worktree;
+ * whereas these three files have always been copied directly from the workspace, so the statement
+ * "source taken from HEAD, ignoring uncommitted changes" of `--from-head` does not hold for them:
+ * the built package could be "runtime is committed version A, installer is workspace version B",
+ * matching no commit at all. Observed in practice: installer changes were packaged before being
+ * committed, while the server field it depended on (activeRuns on /api/mcp/status that time)
+ * remained on the older version, causing the two halves to mismatch.
  *
- * 所以 build-release 在拆掉 worktree 之前会把这三个文件先拷到一个暂存目录,
- * 再用 `--installer-src` 指过来。单独手跑 make-patch 时不传,行为和以前一样。
+ * Therefore, build-release copies these three files to a staging directory first before tearing
+ * down the worktree, then points here with `--installer-src`. When running make-patch manually
+ * without passing it, behavior remains identical to before.
  */
 const INSTALLER_DIR = option("--installer-src") || __dirname;
-/** 三个文件缺一不可:少了任何一个,补丁包要么装不了,要么根本打不出来 */
+/** All three files are indispensable: missing any one, the patch package cannot install or build at all */
 const INSTALLER_FILES = ["apply-patch.ps1", "apply-patch.cmd", "patch-installer.nsi"];
 for (const f of INSTALLER_FILES) {
   if (!fs.existsSync(path.join(INSTALLER_DIR, f))) {
-    console.error(`[FAIL] 安装器文件缺失：${path.join(INSTALLER_DIR, f)}`);
+    console.error(`[FAIL] installer file missing: ${path.join(INSTALLER_DIR, f)}`);
     process.exit(1);
   }
 }
 
 /**
- * runtime/app 里不属于构建产物的东西：用户跑起来之后自己长出来的目录。
- * 补丁绝不能碰它们 —— 导出的视频和 AI 会话历史都在这里面。
+ * Items in runtime/app that are not build artifacts: directories generated on their own after
+ * the user runs the app. The patch must never touch them: exported videos and AI session history
+ * are all inside here.
  */
 const RUNTIME_STATE = new Set([
-  "node_modules",   // 单独处理：依赖变了才随包发出去
-  "exports",        // 用户导出的视频
-  ".pc-chats",      // AI 会话历史
-  ".pc-work",       // 每个会话的附件工作目录
-  ".pc-projects",   // 用户草稿 —— 漏了它,补丁会把打包机上的草稿发给所有人
+  "node_modules",   // Handled separately: only shipped with the package when dependencies change
+  "exports",        // User-exported videos
+  ".pc-chats",      // AI session history
+  ".pc-work",       // Attachment working directory for each session
+  ".pc-projects",   // User drafts: if missed, the patch will ship drafts from the build machine to everyone
   "out",
   ".vite",
   ".cache",
@@ -91,12 +101,13 @@ const RUNTIME_STATE = new Set([
 ]);
 
 /**
- * 单个文件级别的黑名单。目录名挡不住 `.env.local` 这种躺在根上的文件 ——
- * 它里面是诊断服务的提交令牌,跟着补丁发出去等于把密钥交给每一个装了补丁的用户。
+ * Single-file-level blocklist. Directory names cannot block files like `.env.local` sitting
+ * at the root: it contains submission tokens for diagnostic services; shipping it with the patch
+ * is equivalent to handing the key to every user who installed the patch.
  */
 const RUNTIME_STATE_FILES = [
   /^\.env($|\.)/,
-  /^\.dev\.vars($|\.)/, // wrangler 的本地密钥文件,不叫 .env 但装的是同一类东西
+  /^\.dev\.vars($|\.)/, // Local key file for wrangler; not named .env, but holds the same kind of content
   /^\.npmrc$/,
   /^\.pc-last-.*\.txt$/,
   /\.lock$/,
@@ -119,16 +130,18 @@ function sha256File(p) {
   return createHash("sha256").update(fs.readFileSync(p)).digest("hex");
 }
 
-/** app 目录里所有构建产物文件的相对路径（正斜杠），不含运行期状态和依赖。 */
+/** Relative paths (forward slashes) of all build artifact files in the app directory, excluding runtime state and dependencies. */
 function listPayloadFiles(dir = APP_DIR, base = "") {
   const out = [];
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
     if (base === "" && RUNTIME_STATE.has(ent.name)) continue;
-    // `.git`(worktree 里是指针文件,普通检出里是目录)任何层、任何形态都不进补丁。
-    // prepare-runtime 已经不拷它了;这里再挡一道,是因为 runtime/app 可能是旧版本留下的,
-    // 而 make-patch 可以 --skip-runtime 直接吃现成的 runtime/app。
+    // `.git` (a pointer file in a worktree, a directory in a normal checkout) never enters patches at
+    // any level or in any form. prepare-runtime already skips copying it; this adds another check
+    // because runtime/app might be left from an older version, and make-patch can directly consume
+    // the existing runtime/app via --skip-runtime.
     if (ent.name === ".git") continue;
-    // 文件级黑名单在**每一层**都查:.env.local 之类不是只会出现在根上
+    // The file-level blocklist is checked at **every level**: .env.local and similar files do not
+    // only appear at the root
     if (!ent.isDirectory() && RUNTIME_STATE_FILES.some((re) => re.test(ent.name))) continue;
     const rel = base ? `${base}/${ent.name}` : ent.name;
     const full = path.join(dir, ent.name);
@@ -139,16 +152,17 @@ function listPayloadFiles(dir = APP_DIR, base = "") {
 }
 
 /**
- * 复制整棵目录树。node_modules 有几万个文件、嵌套很深，Windows 上用 robocopy
- * 比逐个 copyFileSync 快得多，也不会撞上 260 字符的路径上限。
+ * Copies the entire directory tree. With tens of thousands of deeply nested files in node_modules,
+ * robocopy on Windows is much faster than calling copyFileSync one by one, and avoids hitting
+ * the 260-character path limit.
  */
 function copyTree(src, dest) {
   const r = spawnSync("robocopy.exe", [src, dest, "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP", "/R:1", "/W:1"], { windowsHide: true,
     stdio: "inherit", timeout: 1_800_000,
   });
-  // robocopy 用退出码表示做了什么，0–7 都算成功，≥8 才是真出错。
+  // robocopy uses exit codes to indicate what it did; 0–7 all count as success, only ≥8 is a real error.
   if (r.error || r.status === null || r.status >= 8) {
-    fail(`复制 ${src} 失败（robocopy 代码 ${r.status}${r.error ? `，${r.error.message}` : ""}）`);
+    fail(`Failed to copy ${src} (robocopy code ${r.status}${r.error ? `, ${r.error.message}` : ""})`);
   }
 }
 
@@ -168,17 +182,19 @@ function countTree(dir) {
 const mb = (bytes) => (bytes / 1048576).toFixed(1);
 
 /**
- * 上一次发布的清单，用来判断依赖有没有变、哪些文件被删了。
+ * Manifest from the previous release, used to determine whether dependencies changed and which
+ * files were deleted.
  *
- * 必须排掉「本次这个版本自己的清单」：重跑一遍 make-patch 时它已经躺在
- * release/ 里了，拿它当基准就是和自己比——依赖当然一致，于是产出一个不带
- * node_modules 的补丁，装到真正的上一版上要么被 lock 校验拦下，要么(万一
- * 绕过了)缺包跑不起来。
+ * Must exclude "the manifest for this version itself": when re-running make-patch, it is already
+ * sitting in release/, so using it as a baseline compares against itself: dependencies will
+ * naturally match, producing a patch without node_modules. When installed on the real previous
+ * version, it either gets blocked by lock verification or (if somehow bypassed) fails to run due
+ * to missing packages.
  */
 function findBaseManifest(appVersion) {
   const explicit = option("--base");
   if (explicit) {
-    if (!fs.existsSync(explicit)) fail(`--base 指定的清单不存在：${explicit}`);
+    if (!fs.existsSync(explicit)) fail(`manifest given by --base does not exist: ${explicit}`);
     return { path: explicit, data: JSON.parse(fs.readFileSync(explicit, "utf-8")) };
   }
   if (!fs.existsSync(RELEASE_DIR)) return null;
@@ -188,20 +204,22 @@ function findBaseManifest(appVersion) {
     .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
   for (const p of candidates) {
     const data = JSON.parse(fs.readFileSync(p, "utf-8"));
-    if (data.appVersion === appVersion) continue; // 自己，不能当基准
+    if (data.appVersion === appVersion) continue; // Itself; cannot be used as a baseline
     return { path: p, data };
   }
   return null;
 }
 
 /**
- * 只哈希 package-lock 里的**依赖内容**，跳过应用自己的版本号。
+ * Hashes only the **dependency content** in package-lock, skipping the app's own version number.
  *
- * 原先哈希的是整份文件，于是每次小版本发布（只改了 version 字段）都会被判成
- * 「依赖变了」，硬把 196 MB 的 node_modules 塞进补丁 —— 一个本该几 MB 的补丁
- * 变成 48 MB。而补丁这一层存在的理由就是它小。
+ * Previously, the entire file was hashed, so every minor release (which only changed the version
+ * field) was judged as "dependencies changed", forcibly stuffing 196 MB of node_modules into the
+ * patch: turning what should have been a few-MB patch into 48 MB. And the whole reason this patch
+ * layer exists is that it is small.
  *
- * 真正的依赖变化仍然抓得住：它们全在 packages 里，那部分一个字节都没跳过。
+ * Real dependency changes are still caught: they are all in packages, and not a single byte of
+ * that section was skipped.
  */
 function hashLockDeps(file) {
   const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
@@ -213,18 +231,20 @@ function hashLockDeps(file) {
 function main() {
   console.log("PromptCut make-patch");
 
-  if (!fs.existsSync(APP_DIR)) fail(`runtime/app 不存在，先跑 npm run prepare-runtime`);
+  if (!fs.existsSync(APP_DIR)) fail(`runtime/app does not exist, run npm run prepare-runtime first`);
   const distIndex = path.join(APP_DIR, "dist", "index.html");
-  if (!fs.existsSync(distIndex)) fail(`runtime/app/dist/index.html 不存在，先跑 npm run prepare-runtime`);
+  if (!fs.existsSync(distIndex)) fail(`runtime/app/dist/index.html does not exist, run npm run prepare-runtime first`);
 
   const appPkg = JSON.parse(fs.readFileSync(path.join(APP_DIR, "package.json"), "utf-8"));
-  // 防的是「改完源码忘了重跑 prepare-runtime，拿旧的 app 打补丁」。
-  // --from-head 的发布刚刚在同一次调用里组装过 runtime/app，源码来自 HEAD 而不是
-  // 工作区，跟工作区比反而会误报，所以那条路径跳过这一检查。
+  // Guards against "forgetting to rerun prepare-runtime after changing source code and patching with
+  // an old app".
+  // Releases with --from-head just assembled runtime/app in the same invocation; source code comes
+  // from HEAD rather than the working tree, so comparing with the working tree would cause false
+  // alarms, and that path skips this check.
   if (!flag("--skip-source-check")) {
     const rootPkg = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, "package.json"), "utf-8"));
     if (appPkg.version !== rootPkg.version) {
-      fail(`runtime/app 落后于源码（app ${appPkg.version} ≠ 源码 ${rootPkg.version}），先重跑 prepare-runtime`);
+      fail(`runtime/app is behind the source (app ${appPkg.version} ≠ source ${rootPkg.version}), rerun prepare-runtime first`);
     }
   }
   const appVersion = appPkg.version;
@@ -232,12 +252,13 @@ function main() {
     fs.readFileSync(path.join(DESKTOP_DIR, "src-tauri", "tauri.conf.json"), "utf-8")
   ).version;
 
-  // 门槛必须和这次外壳同一代次,否则清单自相矛盾:代次校验先过、门槛却指向另一代
+  // The gate must match the generation of this shell; otherwise the manifest is contradictory:
+  // generation verification passes first, but the gate points to a different generation
   const gen = (v) => v.split(".").slice(0, 2).join(".");
   if (gen(MIN_SHELL_VERSION) !== gen(shellVersion)) {
     fail(
-      `MIN_SHELL_VERSION(${MIN_SHELL_VERSION})和本次外壳(${shellVersion})不是同一代次。` +
-        `外壳换代时要把它一起挪到新代次的起点。`
+      `MIN_SHELL_VERSION(${MIN_SHELL_VERSION}) and this shell (${shellVersion}) are not the same generation.` +
+        ` When the shell generation changes, move it to the start of the new generation too.`
     );
   }
 
@@ -245,32 +266,34 @@ function main() {
   const lockHash = sha256File(lockPath);
   const lockDepsHash = hashLockDeps(lockPath);
   const base = findBaseManifest(appVersion);
-  if (base) console.log(`  基准清单：${path.basename(base.path)}（app ${base.data.appVersion}）`);
-  else console.log("  没有找到上一次发布的清单");
+  if (base) console.log(`  baseline manifest: ${path.basename(base.path)} (app ${base.data.appVersion})`);
+  else console.log("  no manifest from the previous release found");
 
-  // 依赖是否要随包发出去。lock 一样就不带，这才是「只改 Node 代码」的常见情形。
+  // Whether dependencies should be shipped with the package. If the lock matches, omit them;
+  // this is the common case of "only changing Node code".
   let includesDeps;
   let depsReason;
   if (flag("--with-deps")) {
-    includesDeps = true; depsReason = "命令行指定 --with-deps";
+    includesDeps = true; depsReason = "--with-deps given on the command line";
   } else if (flag("--no-deps")) {
-    includesDeps = false; depsReason = "命令行指定 --no-deps";
+    includesDeps = false; depsReason = "--no-deps given on the command line";
   } else if (!base) {
-    includesDeps = true; depsReason = "没有基准清单可比，保守起见带上依赖";
+    includesDeps = true; depsReason = "no baseline manifest to compare, including dependencies to be safe";
   } else if (!base.data.lockDepsHash) {
-    // 老清单只记了整份文件的哈希，没法判断变的是不是依赖，保守带上
-    includesDeps = true; depsReason = "基准清单来自旧版本，无法只比依赖";
+    // The old manifest only recorded the full file hash, making it impossible to determine whether
+    // dependencies changed; conservatively include them
+    includesDeps = true; depsReason = "baseline manifest is from an old version, cannot compare dependencies only";
   } else if (base.data.lockDepsHash !== lockDepsHash) {
-    includesDeps = true; depsReason = "依赖与基准不同";
+    includesDeps = true; depsReason = "dependencies differ from baseline";
   } else {
-    includesDeps = false; depsReason = "依赖与基准一致";
+    includesDeps = false; depsReason = "dependencies match baseline";
   }
-  console.log(`  依赖：${includesDeps ? "随包发出" : "不发"}（${depsReason}）`);
+  console.log(`  dependencies: ${includesDeps ? "shipped in package" : "not shipped"} (${depsReason})`);
   if (!includesDeps && base && base.data.lockDepsHash && base.data.lockDepsHash !== lockDepsHash) {
-    fail("依赖有变化，--no-deps 会产出一个装上去就跑不起来的补丁");
+    fail("dependencies changed, --no-deps would produce a patch that will not run once installed");
   }
 
-  // ── 收集载荷 ──────────────────────────────────────────────────────
+  // ── Collect payload ──────────────────────────────────────────────────────
   const files = listPayloadFiles();
   const hashes = {};
   let payloadBytes = 0;
@@ -279,15 +302,16 @@ function main() {
     hashes[rel] = sha256File(full);
     payloadBytes += fs.statSync(full).size;
   }
-  console.log(`  构建产物：${files.length} 个文件，${mb(payloadBytes)} MB`);
+  console.log(`  build output: ${files.length} files, ${mb(payloadBytes)} MB`);
 
-  // 上一版有、这一版没有的文件。只删构建产物，用户数据不在这个集合里。
+  // Files present in the previous version but absent in this version. Only deletes build artifacts;
+  // user data is not in this set.
   const removed = base?.data?.files
     ? Object.keys(base.data.files).filter((rel) => !(rel in hashes))
     : [];
-  if (removed.length) console.log(`  需要删除的旧文件：${removed.length} 个`);
+  if (removed.length) console.log(`  old files to delete: ${removed.length}`);
 
-  // ── 组装补丁目录 ──────────────────────────────────────────────────
+  // ── Assemble patch directory ───────────────────────────────────────────
   const stem = `PromptCut-patch-${appVersion}`;
   rmrf(STAGE_DIR);
   const root = path.join(STAGE_DIR, stem);
@@ -303,25 +327,27 @@ function main() {
   let deps = null;
   if (includesDeps) {
     const src = path.join(APP_DIR, "node_modules");
-    if (!fs.existsSync(src)) fail("要带依赖，但 runtime/app/node_modules 不存在");
-    console.log("  复制 node_modules…");
+    if (!fs.existsSync(src)) fail("dependencies are required, but runtime/app/node_modules does not exist");
+    console.log("  copying node_modules…");
     copyTree(src, path.join(payloadDir, "node_modules"));
     deps = countTree(path.join(payloadDir, "node_modules"));
-    console.log(`  依赖：${deps.files} 个文件，${mb(deps.bytes)} MB`);
+    console.log(`  dependencies: ${deps.files} files, ${mb(deps.bytes)} MB`);
   }
 
   const manifest = {
     format: "promptcut-patch/1",
     appVersion,
-    // 补丁只换 Node 那一半。内核代次（外壳版本的前两段）不同就一定装不了 ——
-    // Chrome / ffmpeg / Python / Rust 外壳都在完整安装包里，补丁碰不到。
+    // The patch only replaces the Node half. If the core generation (the first two segments of the shell
+    // version) differs, installation will definitely fail: Chrome / ffmpeg / Python / Rust shells are
+    // all in the full installer, which the patch cannot touch.
     shellGeneration: shellVersion.split(".").slice(0, 2).join("."),
     minShellVersion: MIN_SHELL_VERSION,
     builtAt: new Date().toISOString(),
     includesDeps,
     depsReason,
     lockHash,
-    // 下一次发布靠它判断依赖到底变没变（lockHash 会被版本号一起带偏）
+    // The next release relies on this to determine whether dependencies actually changed (lockHash
+    // gets skewed by the version number)
     lockDepsHash,
     baseAppVersion: base?.data?.appVersion ?? null,
     baseLockHash: base?.data?.lockHash ?? null,
@@ -335,24 +361,26 @@ function main() {
   fs.writeFileSync(path.join(root, "patch.json"), JSON.stringify(manifest, null, 2));
 
   fs.copyFileSync(path.join(INSTALLER_DIR, "apply-patch.ps1"), path.join(root, "apply-patch.ps1"));
-  fs.copyFileSync(path.join(INSTALLER_DIR, "apply-patch.cmd"), path.join(root, "安装更新.cmd"));
+  fs.copyFileSync(path.join(INSTALLER_DIR, "apply-patch.cmd"), path.join(root, "Install update.cmd"));
   fs.writeFileSync(path.join(root, "README.txt"), readmeText(manifest));
 
-  // ── 打包 ──────────────────────────────────────────────────────────
+  // ── Packaging ──────────────────────────────────────────────────────────
   mkdirp(RELEASE_DIR);
   const zipPath = path.join(RELEASE_DIR, `${stem}.zip`);
   rmrf(zipPath);
-  // 打包前先核对暂存目录：该进去的都在，才轮得到压缩。
-  const mustHave = ["patch.json", "apply-patch.ps1", "安装更新.cmd", "README.txt",
+  // Verify the staging directory before packaging: only proceed to compression once everything that
+  // should be inside is present.
+  const mustHave = ["patch.json", "apply-patch.ps1", "Install update.cmd", "README.txt",
     ...files.map((rel) => `payload/${rel}`)];
   const missing = mustHave.filter((p) => !fs.existsSync(path.join(root, p)));
-  if (missing.length) fail(`补丁内容少了 ${missing.length} 项，例如 ${missing[0]}`);
-  console.log(`  内容核对通过：${mustHave.length} 项`);
+  if (missing.length) fail(`patch is missing ${missing.length} items, for example ${missing[0]}`);
+  console.log(`  content check passed: ${mustHave.length} items`);
 
-  // 主产物是 exe：用户双击就装，不用先解压、也不会有人误在压缩包里点 cmd。
+  // The main artifact is an exe: users double-click to install without extracting first, and no one
+  // will mistakenly click cmd inside an archive.
   const exePath = path.join(RELEASE_DIR, `${stem}.exe`);
   rmrf(exePath);
-  console.log("  用 NSIS 打成 exe…");
+  console.log("  Packaging into an exe with NSIS…");
   const nsis = findMakensis();
   const build = spawnSync(nsis, [
     `-DVERSION=${appVersion}`,
@@ -362,60 +390,60 @@ function main() {
     path.join(INSTALLER_DIR, "patch-installer.nsi"),
   ], { windowsHide: true, encoding: "utf8", timeout: 1_800_000 });
   if (build.status !== 0 || !fs.existsSync(exePath)) {
-    fail(`NSIS 打包失败（退出码 ${build.status}）\n${(build.stdout || "").slice(-2000)}${build.stderr || ""}`);
+    fail(`NSIS packaging failed (exit code ${build.status})\n${(build.stdout || "").slice(-2000)}${build.stderr || ""}`);
   }
 
-  // 想看看补丁里到底有什么就加 --zip，日常发布用不到。
+  // Add --zip if you want to inspect what is inside the patch; not needed for routine releases.
   if (flag("--zip")) {
-    console.log("  额外打一份 zip…");
-    // hdrcharset=UTF-8 不能省：默认按 CP437 存文件名，「安装更新.cmd」会被
-    // 直接丢掉，只在 stderr 留一行警告。
+    console.log("  also building a zip…");
+    // hdrcharset=UTF-8 cannot be omitted: by default filenames are stored in CP437, so
+    // "Install Update.cmd" will be dropped directly, leaving only a single warning line on stderr.
     const tarExe = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
     const zip = spawnSync(fs.existsSync(tarExe) ? tarExe : "tar",
       ["-a", "-c", "--options", "hdrcharset=UTF-8", "-f", zipPath, stem], { windowsHide: true,
         cwd: STAGE_DIR, stdio: ["ignore", "inherit", "pipe"], encoding: "utf8", timeout: 1_800_000,
       });
-    if (zip.status !== 0) fail(`zip 打包失败（退出码 ${zip.status}）${zip.stderr || ""}`);
-    if (zip.stderr && zip.stderr.trim()) fail(`zip 里有文件被跳过：\n${zip.stderr.trim()}`);
+    if (zip.status !== 0) fail(`zip packaging failed (exit code ${zip.status})${zip.stderr || ""}`);
+    if (zip.stderr && zip.stderr.trim()) fail(`some files were skipped in the zip:\n${zip.stderr.trim()}`);
   }
 
-  // 清单单独放一份，下一次构建拿它当基准算差异
+  // Keep a separate copy of the manifest; the next build uses it as a baseline to calculate diffs
   fs.writeFileSync(path.join(RELEASE_DIR, `manifest-${appVersion}.json`), JSON.stringify(manifest, null, 2));
   rmrf(STAGE_DIR);
 
-  console.log(`\n  补丁：${exePath}（${mb(fs.statSync(exePath).size)} MB）`);
+  console.log(`\n  patch: ${exePath} (${mb(fs.statSync(exePath).size)} MB)`);
   return { exePath, manifest };
 }
 
-/** Tauri 自己装的那份 NSIS；没有就退回 PATH。 */
+/** The NSIS copy installed by Tauri itself; falls back to PATH if absent. */
 function findMakensis() {
   const bundled = path.join(process.env.LOCALAPPDATA || "", "tauri", "NSIS", "Bin", "makensis.exe");
   if (fs.existsSync(bundled)) return bundled;
   const probe = spawnSync("makensis", ["/VERSION"], { windowsHide: true, encoding: "utf8" });
   if (probe.status === 0 || probe.stdout) return "makensis";
-  fail("找不到 makensis。跑一次 npm run build 让 Tauri 把 NSIS 装下来，或者自己装 NSIS 并加进 PATH。");
+  fail("makensis not found. Run npm run build once to let Tauri install NSIS, or install NSIS yourself and add it to PATH.");
 }
 
 function readmeText(m) {
   return [
-    `PromptCut 更新补丁 ${m.appVersion}`,
+    `PromptCut update patch ${m.appVersion}`,
     ``,
-    `这个补丁只更新程序里 Node 那一部分（界面和后端逻辑）${m.includesDeps ? "以及依赖" : ""}，`,
-    `不动 Chrome、ffmpeg、Python 和外壳，所以比完整安装包小很多。`,
+    `This patch only updates the Node part of the app (UI and backend logic)${m.includesDeps ? " and dependencies" : ""},`,
+    `It does not touch Chrome, ffmpeg, Python or the shell, so it is much smaller than the full installer.`,
     ``,
-    `用法：双击「安装更新.cmd」。`,
+    `Usage: double-click "Install update.cmd".`,
     ``,
-    `它会做这些事：`,
-    `  1. 找到已安装的 PromptCut（默认 %LOCALAPPDATA%\\PromptCut）`,
-    `  2. 确认版本对得上（外壳需要 ${m.minShellVersion} 或更新）`,
-    `  3. 请你关掉正在运行的 PromptCut`,
-    `  4. 备份当前版本，然后覆盖更新`,
-    `  5. 出任何问题都会自动回滚到备份`,
+    `It will do the following:`,
+    `  1. Find the installed PromptCut (default %LOCALAPPDATA%\\PromptCut)`,
+    `  2. Check that versions match (shell needs ${m.minShellVersion} or newer)`,
+    `  3. Ask you to close the running PromptCut`,
+    `  4. Back up the current version, then overwrite it with the update`,
+    `  5. Roll back to the backup automatically if anything goes wrong`,
     ``,
-    `不会动的东西：导出的视频（exports）、AI 会话历史（.pc-chats）、`,
-    `设置和密钥（%LOCALAPPDATA%\\promptcut）、下载的语音模型。`,
+    `Left untouched: exported videos (exports), AI session history (.pc-chats), `,
+    `settings and keys (%LOCALAPPDATA%\\promptcut), downloaded speech models.`,
     ``,
-    `如果补丁装不上，用完整安装包覆盖安装即可，效果一样。`,
+    `If the patch cannot be installed, install the full installer over it instead; the result is the same.`,
   ].join("\r\n");
 }
 

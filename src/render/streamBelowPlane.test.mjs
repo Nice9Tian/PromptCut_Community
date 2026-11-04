@@ -1,16 +1,24 @@
 /**
- * 「依赖下层的流」在播放器一侧(`streamPlayer.ts`)的单测:这种流只有目标卡一张,但按舞台坐标产,画布挂在舞台根下
- * (`Stage` 的 `[data-pc-group-plane]`),不在包裹层里(契约 `prerender-products-contract.md` 第 5.4 节)。
- * 跑:npm test -- src/render/streamBelowPlane.test.mjs
+ * Unit tests for "below-dependent stream" on the player side (`streamPlayer.ts`): this kind of
+ * stream has only one target card, but is produced in stage coordinates, with the canvas mounted
+ * under the stage root (`[data-pc-group-plane]` of `Stage`), not inside the wrapper layer (section
+ * 5.4 of contract `prerender-products-contract.md`).
+ * Run: npm test -- src/render/streamBelowPlane.test.mjs
  *
- * 钉住:
- *   - 父页发来的平面带 `plane: "stage"` 时,播放器到舞台根下找画布、按清单的矩形(舞台坐标)摆,包裹层里的那块不碰;
- *   - 任意一帧都画得出来(片段不从 15 的倍数帧开始),和单卡流同一套取帧;
- *   - 清单说的坐标系和画布对不上时不画:清单是 `stage` 而平面没带标记(会被画进包裹层),或者反过来;
- *   - 实体框(`boxOf`)不回舞台坐标的框;`streamPlanesFor` 把那一层的 `plane` 原样带到流平面上。
+ * Pin:
+ *   - When the plane sent by the parent page has `plane: "stage"`, the player looks for the canvas
+ *     under the stage root, places it according to the manifest rectangle (stage coordinates), and
+ *     leaves the one in the wrapper layer untouched;
+ *   - Any frame can be drawn (clip does not start at a multiple-of-15 frame), using the same frame
+ *     fetching as single-card streams;
+ *   - Do not draw when the coordinate system in the manifest does not match the canvas: manifest is
+ *     `stage` while the plane has no marker (would be drawn into wrapper layer), or vice versa;
+ *   - Entity box (`boxOf`) does not return stage-coordinate boxes; `streamPlanesFor` carries that
+ *     layer's `plane` as-is onto the stream plane.
  *
- * 分段是真的(`streamMux.ts` 封的 fMP4);解码器和 WebGL 是假的(只记下画了哪一帧)。真的画面由探针
- * `scripts/probes/stream-below-stage-probe.mjs` 用像素核对。
+ * Segments are real (fMP4 muxed by `streamMux.ts`); decoder and WebGL are mocked (only record which
+ * frame was drawn). Real frames are verified pixel-by-pixel by probe
+ * `scripts/probes/stream-below-stage-probe.mjs`.
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +30,7 @@ const FPS = 30;
 const AVCC = Uint8Array.from([1, 0x64, 0x00, 0x1f, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0x00, 0x1f, 0x01, 0x00, 0x03, 0x68, 0xee, 0x3c]);
 const INIT_ID = 'i'.repeat(16);
 
-/* 假的解码器:一个宏任务出一帧,带着喂进来的那一块的标记 */
+/* Mock decoder: outputs one frame per macrotask, carrying the marker of the chunk fed in */
 const decoders = [];
 class FakeDecoder {
   constructor({ output }) { this.output = output; this.state = 'unconfigured'; this.gen = 0; this.queue = []; this.draining = false; decoders.push(this); }
@@ -48,8 +56,9 @@ globalThis.EncodedVideoChunk = class { constructor(o) { this.type = o.type; this
 globalThis.CSS = { escape: (s) => s };
 
 /*
- * 全部流平面共用一个 WebGL 上下文,建在一块离屏画布上(`streamPlayer.ts` 的 `SharedGl`):假的只记下最近上传的是哪一帧;
- * 平面自己是 2D 画布,`drawImage` 取走时把那一帧记成它画的。
+ * All stream planes share a single WebGL context, built on an offscreen canvas (`SharedGl` of
+ * `streamPlayer.ts`): the mock only records which frame was most recently uploaded; the plane
+ * itself is a 2D canvas, and when taken by `drawImage`, records that frame as drawn by it.
  */
 const sharedGl = { last: null, contexts: 0 };
 globalThis.OffscreenCanvas = class {
@@ -79,10 +88,10 @@ function fakeCanvas(name) {
 const flush = async (n = 12) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
 async function until(fn, label, rounds = 400) {
   for (let i = 0; i < rounds; i++) { if (fn()) return; await new Promise((r) => setImmediate(r)); }
-  assert.fail(`等不到:${label}`);
+  assert.fail(`Timed out waiting for: ${label}`);
 }
 
-/** 目标卡 `g` 的流,盖住项目帧 `firstFrame .. lastFrame`。`plane` / `kind` 是清单里写的 */
+/** Stream of target card `g`, covering project frames `firstFrame .. lastFrame`. `plane` / `kind` are written in the manifest */
 function streamOf(firstFrame, lastFrame, { plane = 'stage', kind = 'below' } = {}) {
   const { originFrame, lastSegment } = streamSegmentSpan(firstFrame, lastFrame);
   const init = buildStreamInit({ width: 64, height: 144, fps: FPS, avcC: AVCC });
@@ -94,7 +103,8 @@ function streamOf(firstFrame, lastFrame, { plane = 'stage', kind = 'below' } = {
     files.set(`${n}.m4s`, buildStreamSegment({ sequence: n + 1, baseDecodeTime: n * SEGMENT_FRAMES, samples }));
     segments[n] = { init: INIT_ID, file: `${n}.m4s`, stride: 1, samples: count };
   }
-  // 舞台坐标:上界是整个画面,收紧矩形是目标卡改动过的那一块(不在原点)
+  // Stage coordinates: upper bound is the whole video, tight rectangle is the chunk modified by
+  // the target card (not at origin)
   const tight = { x: 400, y: 200, w: 64, h: 64 };
   const manifest = { streamKey: 'K', kind, plane, clipIds: ['g'], fps: FPS, segmentFrames: SEGMENT_FRAMES, originFrame,
     bound: { x: 0, y: 0, w: 1920, h: 1080 }, tight,
@@ -105,7 +115,7 @@ function streamOf(firstFrame, lastFrame, { plane = 'stage', kind = 'below' } = {
     request: (extra = {}) => ({ clipIds: ['g'], key: 'K', ranges: [[0, lastSegment]], originFrame, ...extra }) };
 }
 
-/** 舞台上两块画布都在:包裹层里的那块(单卡流用)和舞台根下的那块(组流、依赖下层的流用) */
+/** Both canvases are on stage: the one in wrapper layer (for single-card streams) and the one under stage root (for group streams and below-dependent streams) */
 function stageWith(stream, request) {
   const local = fakeCanvas('local');
   local.parentElement = { getAttribute: (k) => (k === 'data-pc-clip' ? 'g' : null), querySelector: () => null };
@@ -128,35 +138,35 @@ function stageWith(stream, request) {
 
 beforeEach(() => { decoders.length = 0; });
 
-test('带 plane: stage 的平面画在舞台根下的画布上、按清单的舞台坐标摆;包裹层里的那块不碰;任意一帧都是它自己', async () => {
-  const stream = streamOf(55, 99);                  // 第 55 帧起 45 帧:分段是 55～69、70～84、85～99
+test('a plane with plane: stage is drawn on the canvas under the stage root, placed by the manifest\'s stage coordinates; the one inside the wrapper layer is untouched; any frame is its own', async () => {
+  const stream = streamOf(55, 99);                  // 45 frames starting from frame 55: segments are 55-69, 70-84, 85-99
   assert.deepEqual([stream.originFrame, stream.lastSegment], [55, 2]);
   const h = stageWith(stream, stream.request({ plane: 'stage' }));
   for (const f of [77, 55, 69, 70, 99, 84, 61]) {
     h.player.present(f / FPS);
-    await until(() => h.track()?.lastDrawn === f, `画出第 ${f} 帧`);
+    await until(() => h.track()?.lastDrawn === f, `drew frame ${f}`);
     const shot = h.staged.draws.at(-1);
-    assert.deepEqual(shot.mark, [Math.floor((f - 55) / 15), (f - 55) % 15], `第 ${f} 帧`);
+    assert.deepEqual(shot.mark, [Math.floor((f - 55) / 15), (f - 55) % 15], `Frame ${f}`);
     assert.equal(frameOfTimestamp(shot.timestamp, FPS), f);
   }
-  assert.equal(h.local.draws.length, 0, '包裹层里的画布一帧都没画');
-  assert.ok(h.asked.some((sel) => sel.includes('data-pc-group-plane')), '到舞台根下找画布');
-  assert.equal(h.asked.some((sel) => sel.includes('data-pc-stream-plane')), false, '不去找包裹层里的那块');
-  // 画布按清单的上界摆(舞台坐标,整个画面),不是包裹层的框
+  assert.equal(h.local.draws.length, 0, 'the canvas inside the wrapper layer drew no frames');
+  assert.ok(h.asked.some((sel) => sel.includes('data-pc-group-plane')), 'look for the canvas under the stage root');
+  assert.equal(h.asked.some((sel) => sel.includes('data-pc-stream-plane')), false, 'do not look for the one inside the wrapper layer');
+  // Canvas is placed by manifest upper bound (stage coordinates, whole video), not wrapper layer box
   assert.deepEqual([h.staged.width, h.staged.height], [1920, 1080]);
   assert.deepEqual(h.staged.style.props, { left: '0px', top: '0px', width: '1920px', height: '1080px' });
   assert.deepEqual([...h.player.showingClips()], ['g']);
-  assert.equal(h.player.boxOf('g'), null, '实体框在舞台坐标里,不当包裹层坐标回');
+  assert.equal(h.player.boxOf('g'), null, 'entity box is in stage coordinates, not returned as wrapper layer coordinates');
   const d = h.track();
   assert.deepEqual([d.plane, d.kind, d.fits], ['stage', 'below', true]);
-  // 早于这条流第一帧的帧没有流
+  // Frames earlier than the first frame of this stream have no stream
   h.player.present(54 / FPS);
   await flush();
   assert.notEqual(h.track().lastDrawn, 54);
   h.player.stop();
 });
 
-test('清单是 stage、平面没带标记(会被当成单卡流画进包裹层):一帧都不画,这一拍没有流画面', async () => {
+test('manifest is stage, plane carries no marker (would be treated as a single-card stream and drawn into the wrapper layer): draw no frames, no stream picture this tick', async () => {
   const stream = streamOf(55, 99);
   const h = stageWith(stream, stream.request());
   h.player.present(77 / FPS);
@@ -165,28 +175,28 @@ test('清单是 stage、平面没带标记(会被当成单卡流画进包裹层)
   assert.equal(h.staged.draws.length, 0);
   assert.equal(h.track().lastDrawn, null);
   assert.equal(h.track().fits, false);
-  assert.deepEqual([...h.player.showingClips()], [], '舞台据此落到占位符');
+  assert.deepEqual([...h.player.showingClips()], [], 'the stage falls back to the placeholder accordingly');
   h.player.stop();
 });
 
-test('反过来:清单是 local(单卡流)、平面带了 stage 标记:同样不画', async () => {
+test('conversely: manifest is local (single-card stream), plane carries a stage marker: likewise not drawn', async () => {
   const stream = streamOf(55, 99, { plane: 'local', kind: 'card' });
   const h = stageWith(stream, stream.request({ plane: 'stage' }));
   h.player.present(77 / FPS);
   await flush(40);
   assert.equal(h.local.draws.length + h.staged.draws.length, 0);
   assert.equal(h.track().fits, false);
-  // 不带标记:照单卡流画在包裹层里
+  // Unmarked: drawn in wrapper layer like single-card streams
   const ok = stageWith(stream, stream.request());
   ok.player.present(77 / FPS);
-  await until(() => ok.track()?.lastDrawn === 77, '单卡流画出第 77 帧');
+  await until(() => ok.track()?.lastDrawn === 77, 'single-card stream drew frame 77');
   assert.equal(ok.staged.draws.length, 0);
   assert.ok(ok.local.draws.length > 0);
   assert.deepEqual([ok.track().plane, ok.track().kind, ok.track().fits], ['local', 'card', true]);
   h.player.stop(); ok.player.stop();
 });
 
-test('同一张卡的流从单卡流换成依赖下层的流(同一个键不会,但平面种类变了就是另一条):旧的关掉、新的在舞台根下重建', async () => {
+test('the stream of the same card switches from a single-card stream to one that depends on the lower layer (the same key would not, but a changed plane kind makes it a different one): the old one is closed, the new one is rebuilt under the stage root', async () => {
   const stream = streamOf(55, 99);
   const h = stageWith(stream, stream.request());
   h.player.present(77 / FPS);
@@ -194,7 +204,7 @@ test('同一张卡的流从单卡流换成依赖下层的流(同一个键不会,
   const before = h.track().id;
   h.player.setPlanes([stream.request({ plane: 'stage' })], FPS);
   h.player.present(77 / FPS);
-  await until(() => h.track()?.lastDrawn === 77, '换成舞台平面以后画出第 77 帧');
+  await until(() => h.track()?.lastDrawn === 77, 'drew frame 77 after switching to the stage plane');
   assert.notEqual(h.track().id, before);
   assert.equal(h.player.diag().tracks.length, 1);
   assert.ok(h.staged.draws.length > 0);
@@ -202,7 +212,7 @@ test('同一张卡的流从单卡流换成依赖下层的流(同一个键不会,
   h.player.stop();
 });
 
-test('stagePlane / streamPlanesFor / planesWithinBudget:组流和带标记的单张算舞台平面;那一层的 plane 原样带到流平面上,占一个预算位', () => {
+test('stagePlane / streamPlanesFor / planesWithinBudget: group streams and marked single cards count as stage planes; that layer\'s plane is carried to the stream plane as is, taking one budget slot', () => {
   assert.equal(stagePlane({ clipIds: ['a'] }), false);
   assert.equal(stagePlane({ clipIds: ['a'], plane: 'stage' }), true);
   assert.equal(stagePlane({ clipIds: ['a', 'b'] }), true);
@@ -217,8 +227,8 @@ test('stagePlane / streamPlanesFor / planesWithinBudget:组流和带标记的单
     { clipIds: ['g'], key: 'KB', ranges: [[0, 2]], originFrame: 55, plane: 'stage' },
     { clipIds: ['c'], key: 'KC', ranges: [[0, 9]], originFrame: 0 },
     { clipIds: ['a', 'b'], key: 'KG', ranges: [[0, 9]], originFrame: 0 },
-  ], '组流本来就是舞台坐标,不另带标记');
+  ], 'a group stream is already in stage coordinates, no extra marker');
   assert.equal(planesWithinBudget(planes).length, 3);
-  // 第 100 帧:依赖下层的那条(第 55～99 帧)已经结束
+  // Frame 100: the below-dependent one (frames 55-99) has already ended
   assert.deepEqual(streamPlanesFor(layers, new Set(['g', 'c']), 100).map((p) => p.clipIds[0]), ['c']);
 });

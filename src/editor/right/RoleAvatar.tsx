@@ -1,19 +1,22 @@
 /**
- * 回复前面那个小方块头像。
+ * The small square avatar in front of a reply.
  *
- * 不用图片资源：角色卡就是 src/ai/roles/ 下的 .md，用户随时能加一个，
- * 加完不该还要配一张图。所以颜色由角色 id 哈希出来，字取名字的第一个字 ——
- * 新角色一放进去就自动有一个稳定、和别人不重样的头像。
+ * No image assets: a role card is just a .md under src/ai/roles/, users can add one at any time,
+ * and after adding one they should not also have to supply an image. So the color is hashed from
+ * the role id and the glyph is the first character of the name: a new role gets a stable avatar,
+ * distinct from the others, as soon as it is dropped in.
  *
- * 方块而不是圆：和整个界面的直角风格一致，也和用户消息那种气泡区分开。
+ * A square rather than a circle: consistent with the right-angle style of the whole UI, and
+ * distinct from the bubble of user messages.
  */
 import { ALL_ROLES } from "../../ai/roles";
 import "./RoleAvatar.css";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 从字符串定出一个色相。要求只有一条：同一个 id 每次都得到同一个颜色，
- * 换句话说不能用 Math.random，否则每次重渲染头像都在变色。
+ * Derives a hue from a string. There is only one requirement: the same id must get the same color
+ * every time. In other words Math.random cannot be used, or the avatar would change color on every
+ * re-render.
  */
 function hueOf(seed: string): number {
   let h = 0;
@@ -25,8 +28,9 @@ export function RoleAvatar(props: { roleId?: string; size?: number }) {
   const { roleId, size = 20 } = props;
   const role = roleId ? ALL_ROLES.find((r) => r.id === roleId) : undefined;
 
-  // 没有角色（普通对话、或者角色卡被删了）就退回一个中性的助手头像，
-  // 不要因为找不到角色就不显示——那样带角色和不带角色的气泡会长得不一样高。
+  // With no role (plain chat, or the role card was deleted) fall back to a neutral assistant avatar.
+  // Don't skip showing it just because the role is not found: then bubbles with and without a role
+  // would differ in height.
   const name = role?.name ?? "AI";
   const seed = role?.id ?? "assistant";
   const hue = hueOf(seed);
@@ -37,7 +41,7 @@ export function RoleAvatar(props: { roleId?: string; size?: number }) {
       style={{
         width: size,
         height: size,
-        // 无角色时用零饱和度的灰，让真正的角色在一堆回复里更跳出来
+        // With no role, use a zero-saturation gray, so real roles stand out more among a pile of replies
         background: role ? `hsl(${hue} 45% 32%)` : "var(--fill-subtle)",
         borderColor: role ? `hsl(${hue} 45% 46%)` : "var(--hairline-strong)",
         color: role ? `hsl(${hue} 60% 88%)` : "var(--ink-muted)",
@@ -51,7 +55,7 @@ export function RoleAvatar(props: { roleId?: string; size?: number }) {
   );
 }
 
-/** 头像 + 名字，占一整行。分工模式下每条回复顶上放这个。 */
+/** Avatar + name, taking a whole row. Placed at the top of each reply in division-of-labor mode. */
 export function RoleHeader(props: { roleId?: string }) {
   const role = props.roleId ? ALL_ROLES.find((r) => r.id === props.roleId) : undefined;
   return (
@@ -62,7 +66,7 @@ export function RoleHeader(props: { roleId?: string }) {
   );
 }
 
-/** 只有名字。聊天行左边已经有头像了,气泡里再放一个头像就重复了 */
+/** Name only. The chat row already has an avatar on the left; another avatar inside the bubble would be redundant */
 export function RoleName(props: { roleId?: string }) {
   const role = props.roleId ? ALL_ROLES.find((r) => r.id === props.roleId) : undefined;
   return <span className="pc-role-name">{role?.name ?? tr("AI assistant")}</span>;

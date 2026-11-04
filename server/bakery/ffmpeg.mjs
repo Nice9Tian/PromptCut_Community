@@ -1,7 +1,8 @@
 /**
- * ffmpeg 这一层:去哪儿找它、怎么把 Chrome 的 PNG 流直接喂给它、怎么读它的进度。
+ * The ffmpeg layer: where to find it, how to feed Chrome's PNG stream directly into it, and how to
+ * read its progress.
  *
- * 从 scripts/export-frames.mjs 拆出来(纯重构,逐字搬运)。
+ * Split out from scripts/export-frames.mjs (pure refactoring, ported verbatim).
  */
 
 import os from 'os';
@@ -9,7 +10,9 @@ import path from 'path';
 import zlib from 'zlib';
 import { spawn } from 'child_process';
 
-/** 本机的 ffmpeg:PATH 上有就用它,没有就退到 winget 装的那一份 */
+/**
+ * Local ffmpeg: use it if on PATH; if not, fall back to the one installed via winget
+ */
 export async function findFfmpeg() {
   const localAppData = process.env.LOCALAPPDATA || '';
   const ffmpegFallback = path.join(localAppData, 'Microsoft', 'WinGet', 'Packages', 'Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe', 'ffmpeg-9.0.1-full_build', 'bin', 'ffmpeg.exe');
@@ -75,9 +78,11 @@ export function streamPngVideo(ffmpeg, file, fps) {
 }
 
 /**
- * 跑一趟 ffmpeg,用 -progress 读出已出的帧数回调给 onFrame。
- * 看门狗:stallMs 内帧数一直不动就杀掉报错。ffmpeg 真卡住时 CPU 归零、不报错也不退出(实测过:卡片 PNG 中途变格式
- * 触发滤镜图重建,见 buildComposeArgs 里 -reinit_filter 那段),不设这道闸,导出会在界面上永远停在某个进度。
+ * Run an ffmpeg pass, reading output frame counts via -progress to callback to onFrame.
+ * Watchdog: if frame count remains unchanged within stallMs, kill and report error. When ffmpeg
+ * truly hangs, CPU drops to zero without error or exit (measured: card PNG changing format
+ * midstream triggers filtergraph rebuilding, see the -reinit_filter section in buildComposeArgs);
+ * without this gate, exports would stall forever at a certain progress on the UI.
  */
 function runFfmpegProgress(ffmpegCmd, args, onFrame, stallMs = Number(process.env.PC_COMPOSE_STALL_MS) || 45000) {
   return new Promise((resolve, reject) => {
@@ -110,9 +115,9 @@ function runFfmpegProgress(ffmpegCmd, args, onFrame, stallMs = Number(process.en
     });
     proc.on('close', (code) => {
       clearInterval(dog);
-      if (stalled) reject(Object.assign(new Error(`ffmpeg 合成 ${stallMs / 1000} 秒没有任何进展(停在第 ${Math.max(0, last)} 帧),已中止`), { stalled: true }));
+      if (stalled) reject(Object.assign(new Error(`ffmpeg compositing made no progress for ${stallMs / 1000} seconds (stuck at frame ${Math.max(0, last)}), aborted`), { stalled: true }));
       else if (code === 0) resolve();
-      else reject(new Error(`ffmpeg(素材合成)exited with code ${code}`));
+      else reject(new Error(`ffmpeg (media compositing) exited with code ${code}`));
     });
     proc.on('error', (e) => {
       clearInterval(dog);
@@ -124,22 +129,27 @@ function runFfmpegProgress(ffmpegCmd, args, onFrame, stallMs = Number(process.en
 export { ffprobeOf, runFfmpegProgress };
 
 /* ======================================================================== *
- * 轨道流(R8 / G3)的分段编码器
+ * Segment encoder for track streams (R8 / G3)
  *
- * 一个分段 = 一次 ffmpeg 调用:PNG 经 image2pipe 从 stdin 喂进去,fMP4 字节从 stdout 收回来。
- * 切 init / 分段、丢 mfra 在 Node 端(`server/frame-stream.mjs`),这里只管「编」。
+ * One segment = one ffmpeg invocation: PNGs are fed from stdin via image2pipe, and fMP4 bytes are
+ * received back from stdout.
+ * Splitting init / segments and dropping mfra happens on the Node side (`server/frame-stream.mjs`);
+ * this only handles "encoding".
  * ======================================================================== */
 
-/** 每个分段恰好这么多个样本(G2;末段除外) */
+/** Exactly this many samples per segment (G2; except the last segment) */
 export const STREAM_SEGMENT_FRAMES = 15;
 
 /**
- * 每个编码器一行参数(G3 的表):**不要拿公共块去拼** —— `-sc_threshold` 这类不是所有编码器都认。
- * `pixFmt`:滤镜链尾巴的像素格式。`h264_mf` 的硬件路径只收 `nv12`(G0-b (7):写 `yuv420p`
- * 直接 `format negotiation failed`)。
+ * One line of parameters per encoder (table in G3): **do not concatenate from common chunks**:
+ * options like `-sc_threshold` are not recognized by all encoders.
+ * `pixFmt`: pixel format at the tail of the filter chain. The hardware path of `h264_mf` only
+ * accepts `nv12` (G0-b (7): specifying `yuv420p` directly causes `format negotiation failed`).
  *
- * nvenc / qsv / amf 三行本机没跑成(G0-b (7):驱动 / 硬件缺席),是照任务书原样保留的,不是实测结论;
- * nvenc 的 `-tune ll` 与 `-rc vbr -cq` 二选一也没测成,这里保留任务书写的 `-rc vbr -cq` 那一组。
+ * The three rows nvenc / qsv / amf were not run successfully on this machine (G0-b (7): driver /
+ * hardware absent); they are preserved as-is from the task brief, not empirical conclusions; the
+ * choice between `-tune ll` and `-rc vbr -cq` for nvenc was not tested either, retaining the
+ * `-rc vbr -cq` set written in the task brief here.
  */
 export const STREAM_ENCODERS = {
   libx264: { pixFmt: 'yuv420p', args: ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16', '-g', '15', '-keyint_min', '15', '-sc_threshold', '0', '-bf', '0'] },
@@ -149,13 +159,19 @@ export const STREAM_ENCODERS = {
   h264_mf: { pixFmt: 'nv12', args: ['-c:v', 'h264_mf', '-hw_encoding', '1', '-rate_control', 'quality', '-quality', '90', '-g', '15', '-bf', '0'] },
 };
 
-/** 探测顺序(G0-b 结论 4):硬件优先,`libx264` 排在 `h264_mf` 前面(后者慢一倍、只出 Baseline) */
+/**
+ * Probe order (G0-b conclusion 4): hardware first; `libx264` precedes `h264_mf` (the latter is
+ * twice as slow and only outputs Baseline)
+ */
 export const STREAM_ENCODER_ORDER = ['h264_nvenc', 'h264_qsv', 'h264_amf', 'libx264', 'h264_mf'];
 
 /**
- * 缺省编码器是 `libx264`(G0-b 结论 4:本机唯一实测全过,耗时、体积、profile 三项都最好)。
- * 硬件编码器**只在显式点名时才先试**(`PROMPTCUT_STREAM_ENCODER=auto` 按上面的顺序探测,
- * 或直接写编码器名):本机四个硬件编码器全是「列着但跑不了」,而 nvenc 那一行的参数没实测过。
+ * The default encoder is `libx264` (G0-b conclusion 4: the only one on this machine passing all
+ * tests, best across duration, size, and profile).
+ * Hardware encoders are **tested first only when explicitly named**
+ * (`PROMPTCUT_STREAM_ENCODER=auto` probes in the order above, or specify the encoder name
+ * directly): all four hardware encoders on this machine are "listed but unusable", and parameters
+ * for the nvenc line have not been empirically tested.
  */
 export function streamEncoderPreference(env = process.env) {
   const want = String(env.PROMPTCUT_STREAM_ENCODER || '').trim();
@@ -165,18 +181,26 @@ export function streamEncoderPreference(env = process.env) {
 }
 
 /**
- * G3 的滤镜链。**色半区存预乘色**(`premultiply=inplace=1`,透明处 RGB 恒为纯黑);
- * **`out_range=tv`**(G0-b 结论 2:`pc` 在 Chrome 上会被当成限定范围再展开一次,alpha 平均误差 8.4/255)。
- * 宽高已经是 G1 外扩过的偶数,滤镜链不再取整。
+ * Filter chain for G3. **Color half stores premultiplied color** (`premultiply=inplace=1`,
+ * transparent RGB is constantly pure black); **`out_range=tv`** (G0-b conclusion 2: `pc` is
+ * treated as limited range by Chrome and expanded once more, average alpha error 8.4/255). Width
+ * and height are already even numbers padded outward in G1; the filter chain no longer rounds them.
  *
- * 和 `streamFilterIdentity` 那条旧写法逐字节等价(送进编码器的每一帧 YUV 都相同,见
- * `server/test/stream-encode-fast.test.mjs`),只是少做几趟整帧的活:
- *   - 预乘之后不再转回 `rgba` 再分叉(`docs/reports/AGENT-perf-encode.md`);
- *   - **alpha 半区在预乘之前分出去**:预乘只改色平面、不动 alpha 平面,所以取出来的 alpha 相同;
- *     而 ffmpeg 8 起帧上带 alpha 模式,预乘后的帧标成「已预乘」,`alphaextract` 只收「未预乘」的,
- *     分叉在预乘之后时滤镜图会自动插一个 `premultiply_dynamic` 把整帧反预乘回去(白算一趟、结果还被丢掉);
- *   - 两半用平面 `gbrp` 拼(`gbrap → gbrp`、`gray → gbrp` 只是搬平面),最后一趟 `gbrp → yuv` 比 `rgb24 → yuv` 省;
- * 单线程下这条链比上一版省约四分之一(`docs/reports/AGENT-perf-encode-2.md`)。
+ * Byte-for-byte equivalent to the legacy `streamFilterIdentity` (every frame's YUV fed into the
+ * encoder is identical, see `server/test/stream-encode-fast.test.mjs`), but does fewer full-frame
+ * passes:
+ *   - No longer converts back to `rgba` after premultiplication before branching
+ *     (`docs/reports/AGENT-perf-encode.md`);
+ *   - **Alpha half branches off before premultiplication**: premultiplication only modifies the
+ *     color plane and leaves the alpha plane untouched, so extracted alpha is identical; from
+ *     ffmpeg 8 onward, frames carry an alpha mode where premultiplied frames are marked as
+ *     "premultiplied", while `alphaextract` only accepts "unpremultiplied" frames; branching after
+ *     premultiplication causes the filtergraph to automatically insert a `premultiply_dynamic` to
+ *     unpremultiply the entire frame back (a wasted pass whose result is discarded);
+ *   - Both halves are combined using planar `gbrp` (`gbrap → gbrp` and `gray → gbrp` just move
+ *     planes); the final `gbrp → yuv` pass is cheaper than `rgb24 → yuv`;
+ * Under single thread, this chain saves ~one quarter compared to the previous version
+ * (`docs/reports/AGENT-perf-encode-2.md`).
  */
 export function streamFilter(pixFmt = 'yuv420p') {
   return '[0:v]format=gbrap,split=2[p][a];'
@@ -186,9 +210,12 @@ export function streamFilter(pixFmt = 'yuv420p') {
 }
 
 /**
- * 滤镜链的**身份**:分段签名里的编码参数哈希按它算(`encoderParamsHash`),不按 `streamFilter` 的字面。
- * 这是改写前的那条链;现在的链和它产出逐字节相同,所以盘上已有的分段照旧有效、不必重产。
- * **改滤镜链、使产出变了时,必须同时改这里**(否则新旧分段会被当成同一套参数的产物)。
+ * Filter chain **identity**: the encoding parameter hash in the segment signature is computed
+ * against it (`encoderParamsHash`), not the literal text of `streamFilter`.
+ * This is the chain before rewriting; the current chain produces byte-for-byte identical output to
+ * it, so existing segments on disk remain valid as-is and do not need to be re-produced.
+ * **When modifying the filter chain such that output changes, this must be modified at the same
+ * time** (otherwise old and new segments will be treated as products of the same parameter set).
  */
 export function streamFilterIdentity(pixFmt = 'yuv420p') {
   return '[0:v]format=gbrap,premultiply=inplace=1,format=rgba,split=2[c][a];'
@@ -198,41 +225,55 @@ export function streamFilterIdentity(pixFmt = 'yuv420p') {
 }
 
 /**
- * 输入端的三个选项,**只改什么时候开工、不改产出**(同样输入逐字节相同,见 `stream-encode-fast.test.mjs`):
- *   - `-probesize 32 -analyzeduration 0`:ffmpeg 开输入时缺省要先读够 5 MB(或 5 秒)才开工;一张 PNG 两三百 KB,
- *     一段 15 帧整段都凑不够,于是**不等 stdin 关掉什么都不做**。帧率由 `-framerate` 给定、宽高与像素格式
- *     从第一张 PNG 解出来,不需要多读;
- *   - `-threads 1`(PNG 解码):帧级多线程解码要先攒够「线程数 − 1」个包才出第一帧(16 线程的机器上正好一整段)。
- *     单线程解一张 1080p 截图只要一两毫秒,远快于后面的滤镜和编码,不成瓶颈。
- * 两者合起来,帧一到就进滤镜和编码器,喂完最后一张之后只剩最后几帧和收尾(按出帧节奏喂时,
- * 1080p 一段喂完到出完字节从约 270 ms 降到约 70 ms)。
+ * Three options on the input side, **only changing when work begins without changing output**
+ * (byte-for-byte identical for identical inputs, see `stream-encode-fast.test.mjs`):
+ *   - `-probesize 32 -analyzeduration 0`: by default, ffmpeg requires reading 5 MB (or 5 seconds)
+ *     before opening input and starting work; a single PNG is 200-300 KB, not enough to fill an
+ *     entire 15-frame segment, so **it does nothing until stdin closes**. Framerate is provided by
+ *     `-framerate`, and width, height, and pixel format are decoded from the first PNG, with no
+ *     need for extra reading;
+ *   - `-threads 1` (PNG decoding): frame-level multithreaded decoding must accumulate "thread count
+ *     − 1" packets before emitting the first frame (exactly a full segment on a 16-thread machine).
+ *     Single-threaded decoding of a 1080p screenshot takes only 1-2 ms, far faster than downstream
+ *     filtering and encoding, and is not a bottleneck.
+ * Combined, frames enter the filter and encoder as soon as they arrive; after feeding the last
+ * image, only the last few frames and finalization remain (when fed at the frame emission pace,
+ * 1080p from feeding finished to all bytes emitted dropped from ~270 ms to ~70 ms).
  */
 const STREAM_INPUT_ARGS = ['-probesize', '32', '-analyzeduration', '0', '-threads', '1'];
 
 /**
- * 滤镜图的切片线程数:缺省(0)是逻辑核数,这里封顶 8。滤镜和 x264(auto 线程是核数 × 1.5)抢同一批核,
- * 16 线程的笔记本上切 16 片反而比 8 片慢约 15 ms / 段(`docs/reports/AGENT-perf-encode-2.md`);8 核以下不变。
- * 切几片**不改产出**:swscale / premultiply / vstack 按行切片,1～16 片输出逐字节相同(单测里比 1 片和 3 片)。
+ * Filtergraph slice thread count: default (0) is logical core count, capped at 8 here. The filter
+ * and x264 (where auto thread count is cores × 1.5) compete for the same cores; on a 16-thread
+ * laptop, 16 slices is actually ~15 ms / segment slower than 8 slices
+ * (`docs/reports/AGENT-perf-encode-2.md`); unchanged below 8 cores.
+ * The number of slices **does not change output**: swscale / premultiply / vstack slice by row,
+ * with 1~16 slices producing byte-for-byte identical output (unit tests compare 1 slice vs 3
+ * slices).
  */
 export function streamFilterThreads(cpus = typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length, env = process.env) {
-  // PROMPTCUT_STREAM_FILTER_THREADS:手动指定(0 = 交给 ffmpeg,即逻辑核数),给别的机器调参用
+  // PROMPTCUT_STREAM_FILTER_THREADS: manually specify (0 = leave to ffmpeg, i.e., logical cores),
+  // for tuning parameters on other machines
   const forced = String(env.PROMPTCUT_STREAM_FILTER_THREADS ?? '').trim();
   if (/^\d+$/.test(forced)) return Number(forced);
   return Math.max(1, Math.min(8, Math.floor(Number(cpus)) || 1));
 }
 
 /**
- * 一个分段的完整命令行(输出 fMP4 到 stdout)。
+ * Complete command line for a segment (outputs fMP4 to stdout).
  *
- * `raw: { width, height }`(画布直取,`./capture-canvas.mjs`):输入不是 PNG,是一帧接一帧的 straight RGBA 原始像素
- * (`rawvideo`、`rgba`,每帧 `width × height × 4` 字节)。只换输入这一段,后面的滤镜链和编码参数一个字不变 ——
- * PNG 解出来也是同一种 `rgba` 帧,同样的像素两种输入编出来逐字节相同(`server/test/stream-encode-raw.test.mjs`)。
+ * `raw: { width, height }` (captured directly from canvas, `./capture-canvas.mjs`): input is not
+ * PNG, but frame-by-frame straight RGBA raw pixels (`rawvideo`, `rgba`, `width × height × 4` bytes
+ * per frame). Only this input section is replaced, with downstream filter chains and encoding
+ * parameters verbatim: decoded PNG yields the same `rgba` frames, and encoding the same pixels
+ * from either input produces byte-for-byte identical output
+ * (`server/test/stream-encode-raw.test.mjs`).
  */
 export function streamSegmentArgs({ encoder = 'libx264', fps, raw = null }) {
   const spec = STREAM_ENCODERS[encoder];
-  if (!spec) throw new Error(`未知的轨道流编码器 ${encoder}`);
-  if (!(Number(fps) > 0)) throw new Error('轨道流编码要帧率');
-  if (raw && !(Number.isInteger(raw.width) && Number.isInteger(raw.height) && raw.width > 0 && raw.height > 0)) throw new Error('原始像素输入要整数宽高');
+  if (!spec) throw new Error(`Unknown track stream encoder ${encoder}`);
+  if (!(Number(fps) > 0)) throw new Error('Track stream encoding requires a frame rate');
+  if (raw && !(Number.isInteger(raw.width) && Number.isInteger(raw.height) && raw.width > 0 && raw.height > 0)) throw new Error('Raw pixel input requires an integer width and height');
   const input = raw ? ['-f', 'rawvideo', '-pix_fmt', 'rgba', '-video_size', `${raw.width}x${raw.height}`] : ['-f', 'image2pipe', '-c:v', 'png'];
   return ['-y', '-hide_banner', '-loglevel', 'error', '-filter_complex_threads', String(streamFilterThreads()),
     '-reinit_filter', '0', ...STREAM_INPUT_ARGS, ...input, '-framerate', String(fps), '-i', 'pipe:0',
@@ -244,14 +285,17 @@ export function streamSegmentArgs({ encoder = 'libx264', fps, raw = null }) {
     '-f', 'mp4', 'pipe:1'];
 }
 
-/* ------------------------------------------------------------ 预先拉起的编码进程 */
+/* ------------------------------------------------------------ Pre-spawned encoding processes */
 
 /**
- * 每种命令行留一个**预先拉起、空等输入**的 ffmpeg(`openStreamSegmentEncoder` 领走它,再补拉一个)。
- * 同一条命令行、同一个可执行文件,产出与现拉的逐字节相同;省下的是进程装载和初始化那一截
- * (`docs/reports/AGENT-perf-encode.md` 的耗时拆分)。
- * 空等的进程不拖住 Node 退出(`unref`),空等超过 `SPARE_IDLE_MS` 就收掉;Node 退出时它的 stdin 断开,
- * 读到 EOF 自己退出,`exit` 时也会再杀一遍。`PROMPTCUT_STREAM_PREWARM=0` 关掉。
+ * Keep one **pre-spawned, idling for input** ffmpeg for each command line
+ * (`openStreamSegmentEncoder` claims it and spawns another replacement). The same command line and
+ * executable produce byte-for-byte identical output to freshly spawned ones; what is saved is
+ * process loading and initialization overhead (time breakdown in
+ * `docs/reports/AGENT-perf-encode.md`). Idling processes do not keep Node from exiting (`unref`)
+ * and are reaped after idling beyond `SPARE_IDLE_MS`; when Node exits, their stdin disconnects,
+ * they read EOF and exit on their own, and are killed again on `exit`. Disabled via
+ * `PROMPTCUT_STREAM_PREWARM=0`.
  */
 const SPARE_IDLE_MS = 60_000;
 const spareSegmentProcs = new Map();
@@ -269,7 +313,7 @@ function spawnSegmentProc(ffmpeg, args) {
 
 function setRef(proc, on) {
   for (const handle of [proc, proc.stdin, proc.stdout, proc.stderr]) {
-    try { if (on) handle?.ref?.(); else handle?.unref?.(); } catch { /* 句柄已关 */ }
+    try { if (on) handle?.ref?.(); else handle?.unref?.(); } catch { /* Handle already closed */ }
   }
 }
 
@@ -279,7 +323,8 @@ function parkSpare(ffmpeg, args) {
   let proc;
   try { proc = spawnSegmentProc(ffmpeg, args); } catch { return; }
   const entry = { proc, dead: false, timer: null, onGone: null };
-  // 空等期间出错或退出只是把它从池里拿掉;被领走之后由领的人接管(`takeSpare` 摘掉这个监听)
+  // Errors or exits while idling simply remove it from the pool; once claimed, the taker takes over
+  // (`takeSpare` removes this listener)
   entry.onGone = () => {
     entry.dead = true;
     clearTimeout(entry.timer);
@@ -308,7 +353,8 @@ function takeSpare(ffmpeg, args) {
   proc.off('error', entry.onGone);
   proc.off('exit', entry.onGone);
   proc.stdin.off('error', entry.onGone);
-  // 空等时 ffmpeg 不输出、不退出;已经退了(或被杀)就不要它
+  // While idling, ffmpeg produces no output and does not exit; if it has already exited
+  // (or was killed), discard it
   if (entry.dead || proc.exitCode !== null || proc.signalCode !== null || proc.killed || !proc.pid) {
     try { proc.kill(); } catch {}
     return null;
@@ -318,8 +364,10 @@ function takeSpare(ffmpeg, args) {
 }
 
 /**
- * 原始像素输入的命令行带着宽高,每种矩形是自己的一种命令行:空等的进程会比 PNG 那一种(只按编码器和帧率分)多。
- * 留最近的 `SPARE_MAX` 个,更早的收掉(`Map` 按放进去的先后排)。
+ * Command lines for raw pixel input carry width and height, where each rectangle is its own
+ * command line: there are more idling processes than for PNG (divided only by encoder and
+ * framerate). Keep the latest `SPARE_MAX` instances, reaping earlier ones (`Map` orders by
+ * insertion order).
  */
 const SPARE_MAX = 3;
 function trimSpares() {
@@ -333,7 +381,7 @@ function trimSpares() {
   }
 }
 
-/** 收掉全部空等的编码进程(测试和关停用) */
+/** Reap all idling encoding processes (for testing and shutdown) */
 export function dropStreamEncoderSpares() {
   for (const [key, entry] of spareSegmentProcs) {
     spareSegmentProcs.delete(key);
@@ -344,12 +392,14 @@ export function dropStreamEncoderSpares() {
   }
 }
 
-/** 池里空等的进程数(测试用) */
+/** Number of idling processes in the pool (for testing) */
 export function streamEncoderSpareCount() { return spareSegmentProcs.size; }
 
 /**
- * `buf` 是否恰好以一个完整的 `mfra` 顶层盒子收尾(mov 分片封装的 trailer 最后写的就是它)。
- * 看到它就说明 ffmpeg 已经把整段写完,不必再等进程退出(退出前释放编码器内存还要几十毫秒)。
+ * Whether `buf` ends exactly with a complete top-level `mfra` box (written last in the trailer of
+ * fragmented mov muxing). Seeing it indicates that ffmpeg has finished writing the entire segment,
+ * so there is no need to wait for process exit (releasing encoder memory before exit takes tens of
+ * milliseconds).
  */
 export function endsWithCompleteMfra(buf) {
   let off = 0, last = null;
@@ -368,13 +418,17 @@ export function endsWithCompleteMfra(buf) {
 }
 
 /**
- * 开一个分段编码器。`write(png)` 按到达顺序喂(背压:等 stdin 收下),`finish()` 回 ffmpeg 输出的
- * 整段 fMP4 字节(`ftyp moov moof mdat mfra`),`abort()` 丢掉。
- * 喂进去几帧、ffmpeg 就该编出几帧 —— 对不上由切分那一侧按样本数判(G2「少一帧就重拍」)。
+ * Open a segment encoder. `write(png)` feeds in arrival order (backpressure: wait for stdin to
+ * accept), `finish()` returns the full fMP4 bytes output by ffmpeg (`ftyp moov moof mdat mfra`),
+ * and `abort()` discards. However many frames are fed in, ffmpeg should encode that many:
+ * discrepancies are judged on the splitter side by sample count (G2 "retick if short a frame").
  *
- * `prewarm`(缺省看 `streamPrewarmEnabled`):优先领一个预先拉起的进程,并补拉下一个。
- * `raw: { width, height }`:喂的是原始 RGBA 帧,`write` 每次给恰好一帧(见 `streamSegmentArgs`)。
- * `finish()` 在输出以完整的 `mfra` 收尾时就交字节,不等进程退出;没收尾而进程退出码非零,照旧报错。
+ * `prewarm` (defaults to `streamPrewarmEnabled`): preferentially claims a pre-spawned process and
+ * spawns the next replacement.
+ * `raw: { width, height }`: feeds raw RGBA frames; `write` provides exactly one frame each time
+ * (see `streamSegmentArgs`).
+ * `finish()` delivers bytes as soon as output ends with a complete `mfra`, without waiting for
+ * process exit; if it did not end with `mfra` and process exit code is non-zero, errors as usual.
  */
 export function openStreamSegmentEncoder(ffmpeg, { encoder = 'libx264', fps, prewarm = streamPrewarmEnabled(), raw = null }) {
   const args = streamSegmentArgs({ encoder, fps, raw });
@@ -394,13 +448,16 @@ export function openStreamSegmentEncoder(ffmpeg, { encoder = 'libx264', fps, pre
   const done = new Promise((resolve, reject) => {
     proc.on('error', reject);
     proc.on('close', code => code === 0 ? resolve(Buffer.concat(chunks))
-      : reject(inputError || new Error(`ffmpeg(${encoder})退出码 ${code}:${stderr.trim()}`)));
+      : reject(inputError || new Error(`ffmpeg (${encoder}) exit code ${code}: ${stderr.trim()}`)));
   });
   done.catch(() => {});
   return {
     encoder,
     get written() { return written; },
-    /** 已经从 stdout 收到的字节数(喂帧期间就开始增长:编码器在第一帧到时就开工,见 `STREAM_INPUT_ARGS`) */
+    /**
+     * Number of bytes already received from stdout (starts growing while feeding frames: the encoder
+     * starts working when the first frame arrives, see `STREAM_INPUT_ARGS`).
+     */
     get received() { return received; },
     async write(buffer) {
       if (inputError) throw inputError;
@@ -413,16 +470,21 @@ export function openStreamSegmentEncoder(ffmpeg, { encoder = 'libx264', fps, pre
       proc.stdin.end();
       checkTrailer();
       const bytes = await Promise.race([done, trailer]);
-      // encodeMs:从开编码器到出完字节(和出帧重叠);tailMs:喂完最后一帧之后还要等多久
+      // encodeMs: from opening encoder to finishing byte output (overlaps with frame output); tailMs:
+      // how long to wait after feeding the last frame
       return { bytes, encodeMs: Date.now() - startedAt, tailMs: Date.now() - endedAt, written };
     },
     async abort() { try { proc.stdin.destroy(); } catch {} proc.kill(); await done.catch(() => {}); },
   };
 }
 
-/** 探测用的一小段:两张 320×240 的半透明 PNG(内联,不依赖任何素材文件;`h264_mf` 太小的画面直接拒编) */
+/**
+ * A short segment for probing: two 320×240 translucent PNGs (inlined, does not depend on any asset
+ * files; `h264_mf` directly refuses to encode frames that are too small).
+ */
 function probePngs() {
-  // RGBA,左半不透明红、右半全透明;两张内容相同即可 —— 只看能不能编出来
+  // RGBA, left half opaque red, right half fully transparent; identical content across both
+  // frames is fine: only checking whether encoding succeeds
   const width = 320, height = 240;
   const raw = Buffer.alloc((width * 4 + 1) * height);
   for (let y = 0; y < height; y++) {
@@ -455,17 +517,19 @@ function pngOf(raw, width, height) {
 }
 
 /**
- * 这台机器上哪些 H.264 编码器**真的能编**(G0-b 结论 4:必须真编一小段再判定 ——
- * 本机四个硬件编码器全是「`ffmpeg -encoders` 里列着但跑不了」)。
+ * Which H.264 encoders on this machine **can actually encode** (G0-b conclusion 4: must actually
+ * encode a short segment before deciding: all four hardware encoders on this machine are "listed in
+ * `ffmpeg -encoders` but cannot run").
  *
- * 走的是和分段一模一样的命令行(同一条滤镜链、同一组参数、同样输出 fMP4),
- * 编出来的字节里要有 `moof` 才算过。按 `order` 顺序逐个试,回全部结果。
+ * Uses the exact same command line as segments (same filter chain, same parameters, also outputs
+ * fMP4); encoded bytes must contain `moof` to pass. Tests one by one in `order` sequence and
+ * returns all results.
  */
 export async function probeEncoders(ffmpeg, { order = STREAM_ENCODER_ORDER, fps = 30, timeoutMs = 15000 } = {}) {
   const pngs = probePngs();
   const results = [];
   for (const name of order) {
-    if (!STREAM_ENCODERS[name]) { results.push({ name, ok: false, error: '未知编码器' }); continue; }
+    if (!STREAM_ENCODERS[name]) { results.push({ name, ok: false, error: 'Unknown encoder' }); continue; }
     const started = Date.now();
     const enc = openStreamSegmentEncoder(ffmpeg, { encoder: name, fps, prewarm: false });
     const timer = setTimeout(() => { void enc.abort(); }, timeoutMs);
@@ -473,7 +537,7 @@ export async function probeEncoders(ffmpeg, { order = STREAM_ENCODER_ORDER, fps 
       for (const png of pngs) await enc.write(png);
       const { bytes } = await enc.finish();
       const ok = bytes.includes(Buffer.from('moof', 'latin1')) && bytes.includes(Buffer.from('avcC', 'latin1'));
-      results.push({ name, ok, ms: Date.now() - started, error: ok ? null : '输出里没有 moof / avcC' });
+      results.push({ name, ok, ms: Date.now() - started, error: ok ? null : 'No moof / avcC in the output' });
     } catch (e) {
       results.push({ name, ok: false, ms: Date.now() - started, error: String(e?.message || e).split(/\r?\n/).slice(-2).join(' ') });
     } finally { clearTimeout(timer); }
@@ -481,7 +545,10 @@ export async function probeEncoders(ffmpeg, { order = STREAM_ENCODER_ORDER, fps 
   return results;
 }
 
-/** 按 `preference` 找第一个真能编的编码器;一个都不行就抛。结果按 ffmpeg 路径缓存 */
+/**
+ * Find the first encoder that can actually encode according to `preference`; throw if none work.
+ * Results are cached by ffmpeg path.
+ */
 const pickedEncoders = new Map();
 export async function pickStreamEncoder(ffmpeg, preference = streamEncoderPreference()) {
   const key = `${ffmpeg}\u0000${preference.join(',')}`;
@@ -489,7 +556,7 @@ export async function pickStreamEncoder(ffmpeg, preference = streamEncoderPrefer
     pickedEncoders.set(key, (async () => {
       const results = await probeEncoders(ffmpeg, { order: preference });
       const hit = results.find(r => r.ok);
-      if (!hit) throw Object.assign(new Error(`没有能用的 H.264 编码器:${results.map(r => `${r.name}(${r.error})`).join('; ')}`), { code: 'NO_STREAM_ENCODER', results });
+      if (!hit) throw Object.assign(new Error(`No usable H.264 encoder: ${results.map(r => `${r.name}(${r.error})`).join('; ')}`), { code: 'NO_STREAM_ENCODER', results });
       return { encoder: hit.name, results };
     })());
     pickedEncoders.get(key).catch(() => pickedEncoders.delete(key));

@@ -1,11 +1,15 @@
 /**
- * 总时长跟内容走(durationSync.ts):对时长排在渲染之前,一次编辑只渲一遍。
- * 跑:node --test src/editor/timeline/durationSync.test.mjs
+ * Total duration follows content (durationSync.ts): duration reconciliation is scheduled before
+ * rendering, rendering only once per edit.
+ * Run: node --test src/editor/timeline/durationSync.test.mjs
  *
- * 来历:tiers-probe T4(docs/archive/agent-reports/AGENT-perf-t4.md)。以前是时间轴渲染完在 effect 里 `syncDuration`,
- * 挪最后一段 → 整个编辑器渲一遍 → effect 改时长 → 同一个任务里再渲一遍。
- * 这里用一个「后订阅、收到通知就排一个微任务去读 state」的监听模拟 React 的 useSyncExternalStore
- * (React 也是在监听里排微任务刷新渲染),看它刷新时读到的是不是已经对好的时长。
+ * Origin: tiers-probe T4 (docs/archive/agent-reports/AGENT-perf-t4.md). Previously, `syncDuration`
+ * ran in an effect after the timeline finished rendering:
+ * moving the last clip → entire editor renders once → effect updates duration → renders once more
+ * in the same task.
+ * Here, a listener that "subscribes late and schedules a microtask to read state upon notification"
+ * simulates React's useSyncExternalStore (React also schedules microtasks in listeners to refresh
+ * rendering), checking whether what it reads on refresh is the already reconciled duration.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -23,7 +27,7 @@ function load(clips) {
   core.set({ durationManual: null });
 }
 
-/** 模拟 React:第一次收到通知时排一个微任务「渲染」,渲染时记下这一刻的项目时长 */
+/** Simulate React: schedule a "render" microtask on first notification, and record project duration at that moment during render */
 function fakeRenderer() {
   const renders = [];
   let pending = false;
@@ -39,20 +43,20 @@ function fakeRenderer() {
 }
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
-test("挪最后一段:渲染时时长已经对好,只渲一遍", async () => {
+test("Move the last clip: the duration is already correct at render time, so it renders only once", async () => {
   load([clip("a", 0, 2), clip("b", 2, 4)]);
   const stop = D.mountDurationSync();
   const r = fakeRenderer();
   actions.moveClip("b", { start: 3, end: 5 });
-  assert.equal(getState().project.duration, 4, "监听里不当场改(在别人的调用栈里,比如 docsync 的回调)");
+  assert.equal(getState().project.duration, 4, "Do not change it on the spot inside a listener (it is on someone else's call stack, e.g. a docsync callback)");
   await settle();
   assert.equal(getState().project.duration, 5);
-  assert.deepEqual(r.renders, [5], "一次编辑一次渲染,渲染时读到的就是新时长");
+  assert.deepEqual(r.renders, [5], "One edit, one render, and the render reads the new duration");
   r.off();
   stop();
 });
 
-test("对照(修之前的样子):不挂同步点时,渲染读到的是旧时长 —— 要靠渲染后的 effect 再改一次、再渲一遍", async () => {
+test("Control (how it was before the fix): without the sync point attached, the render reads the old duration; a post-render effect has to change it again and render once more", async () => {
   load([clip("a", 0, 2), clip("b", 2, 4)]);
   const r = fakeRenderer();
   actions.moveClip("b", { start: 3, end: 5 });
@@ -62,12 +66,12 @@ test("对照(修之前的样子):不挂同步点时,渲染读到的是旧时长 
   r.off();
 });
 
-test("手动截断照旧:内容变长也不超过手动值;缩回去跟着缩", async () => {
+test("Manual truncation works as before: longer content does not exceed the manual value; when content shrinks back, the duration shrinks with it", async () => {
   load([clip("a", 0, 2), clip("b", 2, 6)]);
   core.set({ durationManual: 5 });
   const stop = D.mountDurationSync();
   await settle();
-  assert.equal(getState().project.duration, 5, "挂上时补对一次");
+  assert.equal(getState().project.duration, 5, "Corrected once on attach");
   actions.moveClip("b", { start: 3, end: 7 });
   await settle();
   assert.equal(getState().project.duration, 5);
@@ -77,7 +81,7 @@ test("手动截断照旧:内容变长也不超过手动值;缩回去跟着缩", 
   stop();
 });
 
-test("时长同步不进撤销栈:撤销一步回到挪之前(片段和时长一起回去)", async () => {
+test("Duration sync does not enter the undo stack: one undo step returns to before the move (clips and duration go back together)", async () => {
   load([clip("a", 0, 2), clip("b", 2, 4)]);
   const stop = D.mountDurationSync();
   const depth = core.history.length;
@@ -91,7 +95,7 @@ test("时长同步不进撤销栈:撤销一步回到挪之前(片段和时长一
   stop();
 });
 
-test("时间轴没挂着(没 mount)就不动时长;卸下之后也不动", async () => {
+test("The duration is not touched while the timeline is not mounted (no mount), nor after it is unmounted", async () => {
   load([clip("a", 0, 2), clip("b", 2, 4)]);
   const stop = D.mountDurationSync();
   stop();
@@ -101,7 +105,7 @@ test("时间轴没挂着(没 mount)就不动时长;卸下之后也不动", async
   assert.equal(getState().project.duration, 4);
 });
 
-test("真的 React:挂着 useDurationFollowsContent 的组件,挪最后一段只渲一遍,渲出来就是新时长", async () => {
+test("Real React: a component with useDurationFollowsContent attached renders only once when the last clip is moved, and what it renders is already the new duration", async () => {
   const { React, mount, flush } = await import("../../testing/fakeReactRoot.mjs");
   const { useStore } = await import(srcUrl("store/project.ts"));
   load([clip("a", 0, 2), clip("b", 2, 4)]);
@@ -118,12 +122,12 @@ test("真的 React:挂着 useDurationFollowsContent 的组件,挪最后一段只
   seen.length = 0;
   actions.moveClip("b", { start: 3, end: 5 });
   await flush();
-  assert.deepEqual(seen, [[5, 5]], "一次渲染,片段和时长同时是新的");
+  assert.deepEqual(seen, [[5, 5]], "One render: clips and duration are both new at the same time");
   root.unmount();
   await flush();
 });
 
-test("对照(修之前时间轴里那个渲染后的 effect):同一次挪动渲两遍,第一遍时长是旧的", async () => {
+test("Control (the post-render effect in the timeline before the fix): the same move renders twice, and the first render has the old duration", async () => {
   const { React, mount, flush } = await import("../../testing/fakeReactRoot.mjs");
   const { useStore } = await import(srcUrl("store/project.ts"));
   const { contentEndOf, effectiveDuration } = await import(srcUrl("kernel/duration.ts"));

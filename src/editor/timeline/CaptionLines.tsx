@@ -10,15 +10,17 @@ import { useReadOnly } from "../readOnly";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 字幕卡内部的一条条字幕。
+ * The individual captions inside a captions card.
  *
- * 字幕的内容存在卡片的 `lines` 参数里,所以时间轴上它一直只是一个大色块 ——
- * 哪句话几秒出、压在哪个镜头上,全看不见。这里把每条字幕画成色块里的一小格:
- * 点一下跳过去、拖着挪、拽边改时长、双击改字、右键删。改完写回同一个 lines 字符串,
- * 画面那边(caption-track 卡)一个字都不用动。
+ * The caption content is stored in the card's `lines` parameter, so on the timeline it is always just
+ * one big color block: which line appears at which second, and over which shot, is invisible. Here each
+ * caption is drawn as a small cell inside the block:
+ * click to jump there, drag to move, pull an edge to change duration, double-click to edit text,
+ * right-click to delete. Changes are written back to the same lines string,
+ * so the picture side (the caption-track card) needs no change at all.
  *
- * 拖动全部限制在这张卡内、且不越过左右邻居(kernel/captions 的 captionBounds 说了算),
- * 所以不会出现两条字幕抢同一秒的情况。
+ * All dragging is confined to this card and never crosses the left or right neighbor (decided by
+ * captionBounds in kernel/captions), so two captions can never fight over the same second.
  */
 export function CaptionLines({ clip, height }: { clip: TrackClip; height: number }) {
   const { pxPerSec } = useTimelineContext();
@@ -28,7 +30,7 @@ export function CaptionLines({ clip, height }: { clip: TrackClip; height: number
   const [editing, setEditing] = useState<number | null>(null);
   const ro = useReadOnly();
 
-  // 行太矮(小号行高)就只画色块不写字:塞不下的字只会糊成一团
+  // Row too short (small row height): draw only the block, no text: text that does not fit just blurs into a mess
   const showText = height >= 40;
 
   return (
@@ -63,7 +65,7 @@ export function CaptionLines({ clip, height }: { clip: TrackClip; height: number
             {
               label: tr("Add one here"),
               action: () => {
-                // 从当前这条的末尾开始塞;塞不下 addCaption 会返回 -1,那就什么都不做
+                // Start stuffing from the end of the current one; if it does not fit, addCaption returns -1, so do nothing
                 const after = lines[menu.index];
                 actions.addCaption(clip.id, { start: after ? after.end : 0, zh: tr("New caption") });
               },
@@ -104,21 +106,23 @@ function CaptionBlock({
   onMenu: (x: number, y: number) => void;
 }) {
   /*
-   * 拖动中的临时时段:不写 store,松手才提交。
+   * Temporary time range during a drag: not written to the store, committed on release.
    *
-   * 同一份值同时放在 state(要重画)和 ref(松手时要读准)里 —— 松手的回调是
-   * useDrag 存下来的闭包,直接读 state 可能读到上一帧的值,所以以 ref 为准。
+   * The same value is kept in both state (needed for redraw) and a ref (needed for an accurate read on
+   * release): the release callback is a closure saved by useDrag, and reading state directly may give the
+   * previous frame's value, so the ref is authoritative.
    */
   const [drag, setDrag] = useState<{ start: number; end: number } | null>(null);
   const dragRef = useRef<{ start: number; end: number } | null>(null);
-  /** 这一次按下之后有没有真的动过:没动就当成「点一下」 */
+  /** Whether it really moved after this press: if not, treat it as a "click" */
   const movedRef = useRef(false);
   /*
-   * 双击自己数,不用浏览器的 dblclick。
+   * Count double-clicks ourselves, not with the browser's dblclick.
    *
-   * 这块在 pointerdown 里 setPointerCapture(拖动要用),指针一被捕获,浏览器就不再
-   * 把连着的两下算成一次双击 —— 实测原生 dblclick 根本不触发。所以记一下上次点的
-   * 时间,够快的第二下就进改字模式。
+   * This block calls setPointerCapture in pointerdown (dragging needs it); once the pointer is captured,
+   * the browser no longer counts two consecutive presses as one double-click: in testing the native
+   * dblclick never fires. So we record the time of the last click, and a fast enough second one enters
+   * text edit mode.
    */
   const lastClick = useRef(0);
 
@@ -127,14 +131,16 @@ function CaptionBlock({
     setDrag(v);
   };
 
-  // 字幕条拖动中 / 双击改字中:告诉 Agent 用户正在编辑这个字幕片段(A2)
+  // Caption bar being dragged / double-click text edit in progress: tell the Agent the user is editing
+  // this caption clip (A2)
   useUserEditing(`caption-drag:${clipId}:${index}`, drag ? clipId : null, "drag");
   useUserEditing(`caption-text:${clipId}:${index}`, editing ? clipId : null, "text");
 
   const start = drag ? drag.start : line.start;
   const end = drag ? drag.end : line.end;
 
-  // 这个项目只给了只读权限(游客):点一下照样跳过去看,但不能拖、拽边、双击改字
+  // This project grants read-only access only (guest): a click still jumps there to look, but no drag,
+  // edge pull or double-click text edit
   const ro = useReadOnly();
 
   const bodyRef = useDrag(
@@ -155,12 +161,12 @@ function CaptionBlock({
       const prev = dragRef.current;
       setBoth(null);
       if (ro.locked) {
-        // 只读:只有「点一下 = 把播放头挪过去」
+        // Read-only: only "click = move the playhead there"
         actions.seek(clipStart + line.start + 0.01);
         return;
       }
       if (movedRef.current) {
-        // 真拖过:只给 start,长度不变(editCaption 把「只给起点」理解成整条平移)
+        // Really dragged: give only start, length unchanged (editCaption reads "start only" as shifting the whole caption)
         if (prev) actions.editCaption(clipId, index, { start: prev.start });
         return;
       }
@@ -170,13 +176,14 @@ function CaptionBlock({
         onEdit();
       } else {
         lastClick.current = now;
-        // 点一下 = 把播放头挪到这条字幕上(加一点点,免得正好卡在边界上什么都不显示)
+        // Click = move the playhead onto this caption (plus a tiny bit, so it does not sit exactly on the
+        // boundary and show nothing)
         actions.seek(clipStart + line.start + 0.01);
       }
     },
   );
 
-  /** 修边:两头的把手各一套,松手时把起止一起写回去 */
+  /** Edge trimming: one set of handles at each end, and on release start and end are written back together */
   const commitTrim = () => {
     const prev = dragRef.current;
     setBoth(null);
@@ -212,11 +219,11 @@ function CaptionBlock({
   const geom = { left: `${start * pxPerSec}px`, width: `${width}px` };
 
   /*
-   * 改字时整块换成一个不带拖动的壳。
+   * While editing text, the whole block is swapped for a shell without dragging.
    *
-   * useDrag 挂的是**原生** pointerdown 并且会 setPointerCapture,输入框上那句
-   * React 的 stopPropagation 拦不住它 —— 留着拖动的话,点进输入框想放光标会被
-   * 指针捕获抢走,拖一下还会顺手把这条字幕挪了。
+   * useDrag attaches a **native** pointerdown and calls setPointerCapture; the React stopPropagation on
+   * the input cannot stop it. If dragging stayed, clicking into the input to place the cursor would be
+   * stolen by pointer capture, and a drag would also shift this caption along the way.
    */
   if (editing) {
     return (

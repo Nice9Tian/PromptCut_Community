@@ -5,7 +5,7 @@ import "../ProjectSettingsDialog.css";
 import { onGoneConversion, takeGoneNotices, type GoneConversion } from "./recoveryAssociation";
 import { CLOUD_GONE_TEXT } from "./recoveryTexts";
 
-/** 过期的云端项目转成本地项目之后，提示一次。文字在 `recoveryTexts.ts`。 */
+/** Shows a notice once after an expired cloud project is converted to a local project. The text is in `recoveryTexts.ts`. */
 export function CloudGoneDialog(): JSX.Element | null {
   const [items, setItems] = useState<GoneConversion[]>([]);
   useEffect(() => {
@@ -13,7 +13,8 @@ export function CloudGoneDialog(): JSX.Element | null {
     pull();
     return onGoneConversion(pull);
   }, []);
-  // 无头实例是给导出、Agent 用的，不让一个只给人看的确认层挡住画面
+  // A headless instance serves export and Agent, so a confirmation layer meant only for humans must not
+  // block the picture
   const headless = (() => { try { return new URLSearchParams(location.search).has("headless"); } catch { return false; } })();
   if (headless || !items.length) return null;
   const item = items[items.length - 1];

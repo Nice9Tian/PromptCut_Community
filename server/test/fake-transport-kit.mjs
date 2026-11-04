@@ -1,26 +1,37 @@
 /**
- * 仅供测试，生产代码不得引用。
+ * For testing only; must not be referenced by production code.
  *
- * 文档服务两种传输（WebSocket 与 HTTP 长轮询，`docs/plan/http-transport-contract.md`）的测试共用件：
+ * Shared test fixture for both document service transports (WebSocket and HTTP long polling,
+ * `docs/plan/http-transport-contract.md`):
  *
- *   transportClient(kind, url, protocols?)  kind 为 'ws' 用 Node 内置 WebSocket，'http' 用 `HttpWebSocket`；
- *                                           回的对象与 fake-ws-kit 的 wsClient 同形（opened / closed / send / next / quiet / close）。
- *                                           注意：`HttpWebSocket` 还是第 1 版的长轮询协议（批次号、`{ seq, data }` 外包），
- *                                           与第 2 版的服务端（会话层下的 `docservice/http-transport.mjs`）不通，HT-b 改客户端时一并改
- *   authByProtocols(req)                    按子协议列表里的 `x-user.<名>`、`x-role.<角色>`、`x-conv.<号>`、`x-dev.<设备>` 定 principal；
- *                                           `x-user.deny` 拒绝。两种传输都经 `sec-websocket-protocol` 交给它
- *   protocolsOf({ user, role, conv, dev })  拼上面那种列表（第一项 promptcut.v1）
- *   lp(base)                                直接打长轮询端点的原始客户端（契约第 2 版第 6 节）：open / send / recv / close / options，
- *                                           回 { status, body, headers }。open 的列表里要自己带会话项
- *   recvUntil(client, sid, match, opts)     反复 GET 收帧（帧是带 seq 的消息文本），直到 match 为真或带 closed
+ *   transportClient(kind, url, protocols?)  Uses Node built-in WebSocket for kind 'ws', and
+ *                                           `HttpWebSocket` for 'http'; returns an object with the
+ *                                           same shape as wsClient from fake-ws-kit
+ *                                           (opened / closed / send / next / quiet / close).
+ *                                           Note: `HttpWebSocket` still uses v1 long polling
+ *                                           protocol (batch number, `{ seq, data }` wrapper),
+ *                                           incompatible with v2 server
+ *                                           (`docservice/http-transport.mjs` under session layer);
+ *                                           will be updated together when HT-b updates the client.
+ *   authByProtocols(req)                    Determines principal by `x-user.<name>`,
+ *                                           `x-role.<role>`, `x-conv.<id>`, `x-dev.<device>` in the
+ *                                           subprotocol list; rejects `x-user.deny`. Both
+ *                                           transports pass to it via `sec-websocket-protocol`.
+ *   protocolsOf({ user, role, conv, dev })  Builds the list above (first item promptcut.v1).
+ *   lp(base)                                Raw client hitting the long polling endpoint directly
+ *                                           (contract v2 section 6): open / send / recv / close /
+ *                                           options, returning { status, body, headers }. The open
+ *                                           list must include session items itself.
+ *   recvUntil(client, sid, match, opts)     Repeatedly GETs to receive frames (frames are message
+ *                                           text with seq) until match is true or has closed.
  *
- * 只引 Node 内置模块与被测的 `render-node/http-transport.mjs`。
+ * Imports only Node built-in modules and `render-node/http-transport.mjs` under test.
  */
 import { HttpWebSocket } from '../render-node/http-transport.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** 子协议列表（`sec-websocket-protocol` 头） */
+/** Subprotocol list (`sec-websocket-protocol` header) */
 function offered(req) {
   const raw = req?.headers?.['sec-websocket-protocol'];
   if (raw === undefined) return [];
@@ -67,7 +78,7 @@ export function transportClient(kind, url, protocols) {
   });
   const opened = new Promise((resolve, reject) => {
     ws.addEventListener('open', resolve, { once: true });
-    ws.addEventListener('error', () => reject(new Error(`${kind} 连接失败`)), { once: true });
+    ws.addEventListener('error', () => reject(new Error(`${kind} connection failed`)), { once: true });
   });
   opened.catch(() => {});
   const closed = new Promise((resolve) => ws.addEventListener('close', (e) => resolve(e), { once: true }));
@@ -82,7 +93,7 @@ export function transportClient(kind, url, protocols) {
         waiters.push(w);
         setTimeout(() => {
           const k = waiters.indexOf(w);
-          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`[${kind}] 等消息超时；已收到：${JSON.stringify(all).slice(0, 800)}`)); }
+          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`[${kind}] timed out waiting for a message; received so far: ${JSON.stringify(all).slice(0, 800)}`)); }
         }, ms);
       });
     },
@@ -91,11 +102,11 @@ export function transportClient(kind, url, protocols) {
       await sleep(ms);
       return all.slice(before).filter(match);
     },
-    close() { try { ws.close(); } catch { /* 已关 */ } },
+    close() { try { ws.close(); } catch { /* Closed */ } },
   };
 }
 
-/** 长轮询端点的原始客户端（测服务端协议本身） */
+/** Raw client for long polling endpoint (tests server protocol itself) */
 export function lp(base) {
   const root = base.replace(/\/+$/, '');
   const call = async (method, route, { headers = {}, body, query = '' } = {}) => {
@@ -112,7 +123,7 @@ export function lp(base) {
       if (protocols !== null) h['x-promptcut-protocols'] = [].concat(protocols).join(', ');
       return call('POST', 'open', { headers: h, body: '{}' });
     },
-    /** `frames`：对象（自己带 seq）或已序列化的文本 */
+    /** `frames`: objects (carrying their own seq) or serialized text */
     send(sid, frames) {
       return call('POST', 'send', { headers: { ...bearer(sid), 'content-type': 'application/json' }, body: JSON.stringify({ frames: frames.map((f) => (typeof f === 'string' ? f : JSON.stringify(f))) }) });
     },
@@ -132,7 +143,7 @@ export function lp(base) {
   };
 }
 
-/** 收帧直到 match 为真（长轮询），回 { frames: 收到的消息对象（按 seq 去重）, ack } */
+/** Receives frames until match is true (long polling); returns { frames: received message objects (deduplicated by seq), ack } */
 export async function recvUntil(client, sid, match, { ack = 0, ms = 3000, wait = 500 } = {}) {
   const until = Date.now() + ms;
   const got = [];
@@ -148,5 +159,5 @@ export async function recvUntil(client, sid, match, { ack = 0, ms = 3000, wait =
     }
     if (r.body.closed || got.some(match)) return { frames: got, ack: last, closed: r.body.closed };
   }
-  throw new Error(`等帧超时；已收到：${JSON.stringify(got).slice(0, 800)}`);
+  throw new Error(`timed out waiting for a frame; received so far: ${JSON.stringify(got).slice(0, 800)}`);
 }

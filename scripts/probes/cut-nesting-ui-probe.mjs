@@ -1,22 +1,32 @@
 /**
- * 剪辑任务(`docs/plan/cut-nesting-task.md`「验收」)的本机界面探针:真的打开编辑台,逐条点、拖、截图。
+ * Local UI probe for cut task (`docs/plan/cut-nesting-task.md` "Acceptance check"): actually opens
+ * the editor, clicking, dragging, and capturing screenshots item by item.
  *
- *   node scripts/probes/cut-nesting-ui-probe.mjs --origin http://127.0.0.1:5350 --out <截图目录>
+ *   node scripts/probes/cut-nesting-ui-probe.mjs --origin http://127.0.0.1:5350 --out <screenshot-dir>
  *
- * dev server 要先起好(三个连号端口都空着;不碰 5190～5192)。舞台 iframe 走 puppeteer 的 frame 句柄。
- * 拖放用页面里构造的 `DragEvent` + `DataTransfer` 派发到素材库格子和时间轴序列上(和手拖走同一组 React 事件处理)。
+ * The dev server must be started beforehand (three consecutive ports must be free; do not touch
+ * 5190-5192). Stage iframe uses Puppeteer's frame handle.
+ * Drag-and-drop uses `DragEvent` + `DataTransfer` constructed in the page, dispatched to media
+ * library cells and timeline tracks (running through the same set of React event handlers as manual
+ * dragging).
  *
- * 断言(每条一个结论,最后一行打一行 JSON):
- *   A1 新建项目只有「剪辑1」(store 与标签栏、素材库剪辑组都只有一条;标签上没有「×」)
- *   A2 素材库出现「剪辑」组,显示名称与时长
- *   A3 单击素材库里的剪辑:时间轴上方开标签并激活
- *   A4 点别处、切左栏分区、失去焦点:标签都在
- *   A5 点「×」只关标签,剪辑还在素材库里;最后一个标签没有「×」
- *   A6 把剪辑2 拖进剪辑1 的序列:出现剪辑段;预览里画出剪辑2 的内容
- *   A7 改剪辑2,剪辑1 里跟着变(预览前后不同)
- *   A8 拖剪辑1 进剪辑1、在剪辑2 里拖剪辑1(A→B→A):落点预览标红并写明原因,松手不落
- *   A9 删除被引用的剪辑:确认框说明被哪些剪辑用着;确认后剪辑段一起删;撤销后都回来
- *   A10 选中剪辑段:编辑分区里没有换引用的「引用」下拉框(引用哪条剪辑不能改,2026-10-21 用户定),「打开被引用剪辑」按钮还在
+ * Assertions (one conclusion per item, the last line prints a JSON line):
+ *   A1 New project has only "Cut 1" (only one item in store, tab bar, and media library cut group;
+ *      no "×" on the tab)
+ *   A2 Media library shows a "Cuts" group, displaying name and duration
+ *   A3 Click a cut in the media library: opens a tab above the timeline and activates it
+ *   A4 Click elsewhere, switch left rail sections, lose focus: tabs remain present
+ *   A5 Click "×" only closes the tab, while the cut remains in the media library; the last tab has
+ *      no "×"
+ *   A6 Drag cut 2 into cut 1's track: a cut segment appears; preview renders cut 2's content
+ *   A7 Modify cut 2, cut 1 updates accordingly (preview differs before and after)
+ *   A8 Drag cut 1 into cut 1, or drag cut 1 inside cut 2 (A→B→A): drop target preview is highlighted
+ *      in red with reasons stated, releasing does not drop
+ *   A9 Delete a referenced cut: confirmation dialog explains which cuts are using it; upon
+ *      confirmation, cut segments are deleted together; all restored after undo
+ *   A10 Select a cut segment: no "Reference" dropdown to switch references in editing section
+ *      (which cut is referenced cannot be changed; user decision, 2026-10-21), "Open referenced cut"
+ *      button is still there
  */
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
@@ -65,7 +75,8 @@ try {
     return texts;
   };
   const openLibraryGroup = async () => {
-    // 素材库分区没露出来才点 rail(点已经展开的那一项会把抽屉收起来,藏起来的分区页不跟 store 更新)
+    // Only click rail if media library section is not exposed (clicking an already expanded item
+    // collapses the drawer; hidden section tabs do not update with the store)
     const shown = await page.evaluate(() => { const el = document.querySelector('[data-pc="library"]'); return !!el && el.getBoundingClientRect().width > 0; });
     if (!shown) await page.evaluate(() => document.querySelector('[data-pc-rail="library"]')?.click());
     await sleep(300);
@@ -74,23 +85,23 @@ try {
     await sleep(400);
   };
 
-  /* A1 新建项目 */
-  await page.evaluate(() => window.__pcStore.actions.newProject('剪辑验收'));
+  /* A1 New project */
+  await page.evaluate(() => window.__pcStore.actions.newProject('Cut acceptance check'));
   await sleep(2500);
   let s = await state();
-  check('A1', s.cuts.length === 1 && s.cuts[0].name === '剪辑1' && s.tabs.length === 1 && !s.tabs[0].close, '新建项目只有剪辑1,标签栏一个标签且没有 ×', s);
+  check('A1', s.cuts.length === 1 && s.cuts[0].name === 'Cut 1' && s.tabs.length === 1 && !s.tabs[0].close, 'A new project has only Cut 1, and the tab bar has one tab without ×', s);
   await openLibraryGroup();
   await shot('01-new-project-one-cut');
 
-  /* A2 素材库剪辑组 */
+  /* A2 Media library cut group */
   const lib = await page.evaluate(() => [...document.querySelectorAll('[data-pc-lib-cut]')].map((el) => el.innerText.replace(/\s+/g, ' ')));
-  check('A2', lib.length === 1 && /剪辑1/.test(lib[0]) && /\d+:\d\d/.test(lib[0]), '素材库「剪辑」组列出剪辑1 及时长', lib);
+  check('A2', lib.length === 1 && /Cut 1/.test(lib[0]) && /\d+:\d\d/.test(lib[0]), 'the "Cuts" group in the media library lists Cut 1 and its duration', lib);
 
-  /* 新建剪辑2(标签栏「+」),往里放一张卡和一段视频 */
+  /* Create cut 2 ("+" in tab bar), place a card and a video inside */
   await page.click('[data-pc="cut-add"]');
   await sleep(800);
   s = await state();
-  const cut2 = s.cuts.find((c) => c.name === '剪辑2')?.id;
+  const cut2 = s.cuts.find((c) => c.name === 'Cut 2')?.id;
   await page.evaluate(() => {
     const a = window.__pcStore.actions;
     const media = a.addMedia({ kind: 'video', name: 'fixture.mp4', url: '/@media/392128b6b4d1ba0f32751a1fb23df75e9f08cfc3981b1a19a457c5ff4ebb7e95', duration: 8, width: 320, height: 180, hash: '392128b6b4d1ba0f32751a1fb23df75e9f08cfc3981b1a19a457c5ff4ebb7e95' });
@@ -100,35 +111,35 @@ try {
   });
   await sleep(800);
 
-  /* A3 单击素材库里的剪辑:开标签并激活。先关掉剪辑2 的标签、回到剪辑1 */
+  /* A3 Click cut in media library: open tab and activate. First close cut 2's tab and return to cut 1 */
   await page.evaluate((id) => document.querySelector(`[data-pc-cut-tab="${id}"] [data-pc="cut-tab-close"]`)?.click(), cut2);
   await sleep(600);
   await openLibraryGroup();
   s = await state();
-  check('A5', s.tabs.length === 1 && s.cuts.length === 2 && s.active !== cut2 && !s.tabs[0].close, '× 只关标签:剪辑2 还在;只剩一个标签时没有 ×', s);
+  check('A5', s.tabs.length === 1 && s.cuts.length === 2 && s.active !== cut2 && !s.tabs[0].close, '× only closes the tab: Cut 2 is still there; with only one tab left there is no ×', s);
   const libAfterClose = await page.evaluate(() => [...document.querySelectorAll('[data-pc-lib-cut]')].map((el) => el.getAttribute('data-pc-lib-cut')));
-  check('A5b', libAfterClose.includes(cut2), '关掉标签后素材库里还有剪辑2', libAfterClose);
+  check('A5b', libAfterClose.includes(cut2), 'after closing the tab, Cut 2 is still in the media library', libAfterClose);
   await shot('02-tab-closed-cut-still-in-library');
   await openLibraryGroup();
   await page.evaluate((id) => document.querySelector(`[data-pc-lib-cut="${id}"]`)?.click(), cut2);
   await sleep(800);
   s = await state();
-  check('A3', s.active === cut2 && s.tabs.some((t) => t.id === cut2 && t.on), '单击素材库里的剪辑2:时间轴上方开标签并激活', s);
+  check('A3', s.active === cut2 && s.tabs.some((t) => t.id === cut2 && t.on), 'single-clicking Cut 2 in the media library opens and activates a tab above the timeline', s);
   await shot('03-click-library-opens-tab');
 
-  /* A4 点别处、切分区、失去焦点 */
-  await page.mouse.click(780, 400); // 预览
+  /* A4 Click elsewhere, switch section, lose focus */
+  await page.mouse.click(780, 400); // Preview
   await page.evaluate(() => document.querySelector('[data-pc-rail="animations"]')?.click());
   await sleep(300);
   await page.evaluate(() => { document.activeElement?.blur?.(); window.dispatchEvent(new Event('blur')); });
-  await page.mouse.click(1300, 300); // AI 栏
+  await page.mouse.click(1300, 300); // AI panel
   await sleep(500);
   s = await state();
-  check('A4', s.tabs.length === 2, '点预览、切左栏分区、失焦、点 AI 栏之后两个标签都在', s);
+  check('A4', s.tabs.length === 2, 'both tabs are still there after clicking the preview, switching the left rail section, losing focus, and clicking the AI panel', s);
   await shot('04-tabs-survive-focus-loss');
 
-  /* A6 回到剪辑1,把剪辑2 拖进剪辑1 的序列 */
-  const cut1 = s.cuts.find((c) => c.name === '剪辑1').id;
+  /* A6 Return to cut 1, drag cut 2 into cut 1's track */
+  const cut1 = s.cuts.find((c) => c.name === 'Cut 1').id;
   await page.evaluate((id) => document.querySelector(`[data-pc-cut-tab="${id}"] [role="tab"]`)?.click(), cut1);
   await sleep(800);
   await openLibraryGroup();
@@ -157,10 +168,11 @@ try {
   await page.evaluate((t) => window.__pcStore.actions.seek(t), s.segments[0] ? s.segments[0].start + 2 : 2);
   await sleep(5000);
   let st = await stageText();
-  check('A6', segOk && st.some((x) => x.cutScenes > 0 && x.text.includes('剪辑二的卡')), '剪辑2 拖进剪辑1:出现剪辑段,预览画出剪辑2 的卡', { dropRes, segments: s.segments, stage: st.map((x) => ({ cutScenes: x.cutScenes, has: x.text.includes('剪辑二的卡') })) });
+  check('A6', segOk && st.some((x) => x.cutScenes > 0 && x.text.includes('剪辑二的卡')), 'Cut 2 dragged into Cut 1: a cut segment appears, and the preview draws the card of Cut 2', { dropRes, segments: s.segments, stage: st.map((x) => ({ cutScenes: x.cutScenes, has: x.text.includes('剪辑二的卡') })) });
   await shot('05-cut2-dropped-into-cut1');
 
-  /* A10 剪辑段的属性面板(2026-10-21 用户定):编辑分区里没有换引用的「引用」下拉框,「打开被引用剪辑」按钮还在 */
+  /* A10 Cut segment parameters panel (user decision, 2026-10-21): no "Reference" dropdown
+   * to switch references in editing section, "Open referenced cut" button is still there */
   {
     const segEl = await page.$(`[data-pc-cut-segment="${cut2}"]`);
     if (segEl) await segEl.click();
@@ -174,13 +186,13 @@ try {
         open: !!f.querySelector('[data-pc="cut-segment-open"]'), offset: !!f.querySelector('[data-pc="cut-segment-offset"]'), text: f.innerText.replace(/\s+/g, ' ').slice(0, 160) } : null;
     });
     check('A10', !!form && !form.refSelect && form.selects === 0 && form.open && form.offset,
-      '剪辑段面板:没有「引用」下拉框,「打开被引用剪辑」按钮和起点偏移还在', form);
+      'cut segment panel: no "Reference" dropdown; the "Open referenced cut" button and the start offset are still there', form);
     await shot('05b-cut-segment-panel');
-    // 后面的拖放要素材库格子:切回素材库
+    // Subsequent drag-and-drop requires media library cells: switch back to media library
     await openLibraryGroup();
   }
 
-  /* A7 改剪辑2,剪辑1 里跟着变 */
+  /* A7 Modify cut 2, cut 1 updates accordingly */
   await page.evaluate((id) => {
     const a = window.__pcStore.actions;
     a.switchCut(id);
@@ -193,10 +205,10 @@ try {
   await page.evaluate((t) => window.__pcStore.actions.seek(t), s.segments[0].start + 2);
   await sleep(5000);
   st = await stageText();
-  check('A7', st.some((x) => x.text.includes('改过的剪辑二')) && !st.some((x) => x.text.includes('剪辑二的卡')), '改剪辑2 的卡,剪辑1 预览跟着变', st.map((x) => x.text.slice(0, 80)));
+  check('A7', st.some((x) => x.text.includes('改过的剪辑二')) && !st.some((x) => x.text.includes('剪辑二的卡')), 'editing the card of Cut 2, the Cut 1 preview changes with it', st.map((x) => x.text.slice(0, 80)));
   await shot('06-edit-cut2-reflects-in-cut1');
 
-  /* A8 拒绝自引用与 A→B→A */
+  /* A8 Reject self-reference and A→B→A */
   const selfDrag = await drag(cut1, 400, true);
   await shot('07-reject-self');
   await page.evaluate(() => { const row = document.querySelector('[data-track-id]'); row.dispatchEvent(new DragEvent('dragleave', { bubbles: true })); window.dispatchEvent(new Event('dragend')); });
@@ -212,10 +224,10 @@ try {
   await drag(cut1, 500, false);
   await sleep(500);
   const loopSegs = (await state()).segments.length;
-  check('A8', /放进它自己/.test(selfDrag.ghost) && selfDrag.red && afterSelf === 1 && /循环引用/.test(loopDrag.ghost) && loopDrag.red && loopSegs === 0,
-    '拖剪辑1 进剪辑1、在剪辑2 里拖剪辑1:都标红写明原因,松手不落', { selfDrag, selfDrop, afterSelf, loopDrag, loopSegs });
+  check('A8', /into itself/.test(selfDrag.ghost) && selfDrag.red && afterSelf === 1 && /circular reference/.test(loopDrag.ghost) && loopDrag.red && loopSegs === 0,
+    'Dragging Cut 1 into Cut 1 and dragging Cut 1 inside Cut 2: both turn red with the reason stated, and releasing does not drop it', { selfDrag, selfDrop, afterSelf, loopDrag, loopSegs });
 
-  /* A9 删除被引用的剪辑 */
+  /* A9 Delete referenced cut */
   await page.evaluate((id) => document.querySelector(`[data-pc-cut-tab="${id}"] [role="tab"]`)?.click(), cut1);
   await sleep(600);
   await openLibraryGroup();
@@ -224,16 +236,16 @@ try {
     tile.querySelector('[data-pc="lib-cut-delete"]').click();
   }, cut2);
   await sleep(500);
-  const dialogText = await page.evaluate(() => document.body.innerText.match(/剪辑「剪辑2」正被[^\n]*\n?[^\n]*/)?.[0] ?? '');
+  const dialogText = await page.evaluate(() => document.body.innerText.match(/Cut "Cut 2" is used by[^\n]*\n?[^\n]*/)?.[0] ?? '');
   await shot('09-delete-referenced-confirm');
-  await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.innerText.trim() === '删除')?.click());
+  await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.innerText.trim() === 'Delete')?.click());
   await sleep(800);
   const afterDelete = await state();
   await page.evaluate(() => window.__pcStore.actions.undo());
   await sleep(800);
   const afterUndo = await state();
-  check('A9', /用着/.test(dialogText) && /一起删除/.test(dialogText) && afterDelete.cuts.length === 1 && afterDelete.segments.length === 0 && afterUndo.cuts.length === 2 && afterUndo.segments.length === 1,
-    '删被引用的剪辑:确认框写明被谁用着;删后剪辑段一起没了;撤销全回来', { dialogText, afterDelete, afterUndo });
+  check('A9', /used by/.test(dialogText) && /also delete/.test(dialogText) && afterDelete.cuts.length === 1 && afterDelete.segments.length === 0 && afterUndo.cuts.length === 2 && afterUndo.segments.length === 1,
+    'Deleting a referenced cut: the confirmation dialog states who is using it; after deletion the cut segments are gone too; undo brings everything back', { dialogText, afterDelete, afterUndo });
   await shot('10-after-undo');
   console.log('page errors:', errors.slice(0, 5));
 } finally {

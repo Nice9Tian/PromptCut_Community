@@ -17,15 +17,18 @@ import { getQueueState, remove as removeQueued } from "./chatQueue";
 import { rewindAt, type RewindResult } from "./rewind";
 import { tr } from "../i18n/index.ts";
 
-/** 回退时这一页每家驱动的会话 id 都要清,清单在这里 */
+/** On rollback, the session id of every driver on this tab has to be cleared; the list is here */
 const ALL_PROVIDERS: AiProvider[] = ["claude", "agy", "codex", "api"];
 
 /**
- * 把素材库里的素材整理成附件清单的形状,跟着每次发送一起带上(服务端单列成「素材库」一段)。
+ * Arranges the media in the media library into the shape of an attachment manifest, attached to
+ * every send (the server lists it as a separate "media library" section).
  *
- * url 给卡片能直接引用的 /@media/<文件名>,**不给磁盘路径**:以前给的是 path,
- * 模型没有任何能读磁盘的工具,却每轮都被这串路径引着去 Read、去 curl(见 mediaRef.ts)。
- * 还没上传完、换算不出 cardUrl 的先不列,免得给出一个用不了的地址。
+ * url gives a /@media/<file name> that a card can reference directly, and **no disk path**: it used
+ * to give path, and the model, having no tool that can read the disk, was nevertheless led by that
+ * path on every round to Read and curl (see mediaRef.ts).
+ * Entries that have not finished uploading, so that cardUrl cannot be derived, are not listed for
+ * now, to avoid giving an address that cannot be used.
  */
 function mediaAsAttachments(): ChatAttachment[] {
   try {
@@ -49,7 +52,7 @@ function mediaAsAttachments(): ChatAttachment[] {
 /** Streaming text/thinking deltas are applied to state at most this often. */
 const DELTA_FLUSH_MS = 80;
 
-/** 给最近一个同名、还没有结果的工具片段补上结果 */
+/** Fill in the result for the most recent tool part with the same name that has no result yet */
 function completeToolPart(
   parts: MessagePart[] | undefined,
   ev: { name: string; ok: boolean; summary?: string; files?: string[]; callId?: string; durationMs?: number },
@@ -67,8 +70,9 @@ function completeToolPart(
 }
 
 /**
- * 首启设置对话框这一次页面加载只弹一次:以前认「主页」这一页去弹;分页清单按项目分开、
- * 第一个会话不再是固定的「main」之后,谁先走到这里谁弹。
+ * The first-run settings dialog pops up only once per page load: it used to be popped by the "main
+ * tab"; after the tab manifest was split per project and the first session was no longer the fixed
+ * "main", whichever tab gets here first pops it.
  */
 let setupGateClaimed = false;
 function claimSetupGate(): boolean {
@@ -78,21 +82,24 @@ function claimSetupGate(): boolean {
 }
 
 export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversationId?: () => string | undefined }) {
-  // 对话归项目所有(要随 .proc 存取、随项目切换),所以放在组件外的 store 里。
-  // 多 Agent 分页:每页一份 store,主页(MAIN_TAB)那份才随 .proc 存取
+  // The chat belongs to the project (it is saved and loaded with .proc and switched with the project),
+  // so it lives in a store outside the component.
+  // Multi-Agent tabs: one store per tab; only the main tab's (MAIN_TAB) is saved and loaded with
+  // .proc
   const tabId = opts?.tabId ?? MAIN_TAB;
   const store = getChatStore(tabId);
   const setMessages = store.set;
   const messages = useChatMessages(store);
-  // CLI 驱动的会话 id 也按页分开:两页共用一个 sessionId 等于两个 Agent 接着同一段对话说
+  // The CLI driver's session id is also kept separately per tab: two tabs sharing one sessionId would
+  // mean two Agents carrying on the same conversation
   const sessKey = (p: string) => (isMainTab(tabId) ? `aiSession:${p}` : `aiSession:${p}:${tabId}`);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [sttInfo, setSttInfo] = useState<SttInfo | null>(null);
   const [provider, setProvider] = useState<AiProvider | null>(null);
   const [sessionIds, setSessionIds] = useState<Partial<Record<AiProvider, string>>>({});
   /**
-   * 自动续跑还剩几次。用户每发一条新消息就重置成 1 ——
-   * 「一轮用户输入最多自动接一次」,不给无限循环留口子。
+   * How many automatic resumes are left. Every new message the user sends resets it to 1:
+   * "at most one automatic resume per round of user input", leaving no opening for an infinite loop.
    */
   const autoContinueLeftRef = useRef(1);
   const [streaming, setStreaming] = useState(false);
@@ -104,21 +111,29 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
 
   const abortControllerRef = useRef<AbortController | null>(null);
   /*
-   * 一轮的生命周期,给输入队列用(见 chatQueue.ts、下面的 pumpQueue):
-   * - sendSeqRef:每次 abort()(包括 send 开头那一次)加一。一轮落定时序号没变,
-   *   才说明它既没被用户停掉、也没被新的一次发送顶掉;
-   * - busyRef:send 开始到这一轮落定之间为 true。和 streaming 不同,它是同步读的;
-   * - autoContinueTimerRef:出错自动续跑已经排上、还没发出去的那一次;
-   * - workflowRef:一键配特效正在串行跑,队列等它跑完再发。
+   * The lifecycle of a round, for the input queue (see chatQueue.ts, pumpQueue below):
+   * - sendSeqRef: incremented on every abort() (including the one at the start of send). If the
+   *   sequence number has not changed when a round settles, it was neither stopped by the user nor
+   *   displaced by a new send;
+   * - busyRef: true from the start of send until this round settles. Unlike streaming, it is read
+   *   synchronously;
+   * - autoContinueTimerRef: the automatic resume after an error that has been scheduled but not yet
+   *   sent;
+   * - workflowRef: one-click effects is running serially, and the queue waits for it to finish
+   *   before sending.
    */
   const sendSeqRef = useRef(0);
   const busyRef = useRef(false);
   const autoContinueTimerRef = useRef<number | null>(null);
   const workflowRef = useRef(false);
   const unmountedRef = useRef(false);
-  /** 最新一次渲染的 send。落定后发队首、自动续跑都用它:旧闭包里那份的 provider / config 可能已经换了 */
+  /**
+   * The send from the latest render. Sending the queue head after a round settles, and automatic
+   * resuming, both use it: the provider / config in an old closure may already have changed
+   */
   const sendRef = useRef<(text: string, attachments?: ChatAttachment[], sendOpts?: { auto?: boolean; hops?: number }) => Promise<boolean>>(async () => false);
-  // 这一页被关掉(多 Agent 分页关页)时把还在跑的请求掐掉:连接一断服务端就会 abort 那一轮
+  // When this tab is closed (a multi-Agent tab being closed), cut off the request still running: as
+  // soon as the connection drops the server aborts that round
   useEffect(() => {
     unmountedRef.current = false;
     return () => {
@@ -131,7 +146,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
   const currentRunId = useRef<string | null>(null);
   const setupGateRef = useRef(false);
   const [setupJobs, setSetupJobs] = useState<CliSetupJob[]>([]);
-  /** CLI 安装:idle | installing | ok | timeout | failed */
+  /** CLI install: idle | installing | ok | timeout | failed */
   const [installState, setInstallState] = useState<Partial<Record<AiProvider, "idle" | "installing" | "ok" | "timeout" | "failed">>>({});
   const [installError, setInstallError] = useState<Partial<Record<AiProvider, string>>>({});
 
@@ -146,7 +161,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
       ]);
       setConfig({ version: 1, defaultProvider: null, toolProtocol: true, api: { vendor: "anthropic", baseUrl: "", model: "gpt-4o|gpt-4o-mini", maxTokens: 4096, apiKey: { set: false, last4: "" }, source: "" }, keys: { custom: { set: false, last4: "" }, router: { set: false, last4: "" } }, cliModels: { claude: "opus|sonnet|haiku", codex: "gpt-5.6-terra|gpt-5.6-sol", agy: "gemini-3.8-flash-high|gemini-3.8-flash-medium|gemini-3.8-flash-low|gemini-3.1-pro-high|gemini-3.1-pro-low|claude-sonnet-4-6" } });
       setProvider("claude");
-      // ?nosetup=1 给自动化脚本用:不弹首启设置对话框
+      // ?nosetup=1 is for automation scripts: do not pop up the first-run settings dialog
       if (localStorage.getItem("aiSetupDone") === null && !new URLSearchParams(location.search).has("nosetup") && claimSetupGate()) {
         setSetupOpen(true);
       }
@@ -155,7 +170,8 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
 
     fetch("/api/ai/config")
       .then((res) => res.json())
-      // 桥统一用 { ok, config } 信封(和其他接口一致);兼容裸 publicConfig
+      // The bridge uniformly uses the { ok, config } envelope (consistent with other interfaces); a bare
+      // publicConfig is accepted too
       .then((data) => setConfig(data?.config ?? data))
       .catch(() => {});
 
@@ -173,7 +189,8 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
         setSttInfo(stt);
 
         const stored = localStorage.getItem("aiProvider") as AiProvider;
-        // spawn_agent 拉起的子 Agent 沿用父对话的驱动(A3):这一页拉起时就定下了,不跟全局的选择走
+        // A subagent started by spawn_agent keeps the parent chat's driver (A3): it is fixed when this tab
+        // is started and does not follow the global selection
         const preset = getTabProvider(tabId) as AiProvider | null;
         if (preset) {
           setProvider(preset);
@@ -204,7 +221,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
   useEffect(() => {
     if (providers.length > 0 && !setupGateRef.current && !opts?.mock) {
       setupGateRef.current = true;
-      // ?nosetup=1 给自动化脚本用:不弹首启设置对话框
+      // ?nosetup=1 is for automation scripts: do not pop up the first-run settings dialog
       if (localStorage.getItem("aiSetupDone") === null && !new URLSearchParams(location.search).has("nosetup") && claimSetupGate()) {
         setSetupOpen(true);
       }
@@ -302,8 +319,9 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
             newApi.apiKey = { set: false, last4: "" };
           }
         }
-        // 假流也要照着真接口合并:漏掉哪个字段,界面上对应的开关就会在保存后
-        // 弹回原值,看着像 bug 其实是假流没跟上(toolProtocol 就这么坑过一次)
+        // The mock stream must also merge the way the real interface does: whichever field is missed, the
+        // corresponding switch in the UI will bounce back to its old value after saving, which looks like a
+        // bug but is really the mock stream not keeping up (toolProtocol fell into this once)
         return {
           ...prev,
           defaultProvider: patch.defaultProvider !== undefined ? patch.defaultProvider : prev.defaultProvider,
@@ -330,7 +348,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
     }
   }, [opts?.mock]);
 
-  /** 「清理密钥」:删掉那一路的密钥文件,拿回最新配置 */
+  /** "Clear key": delete the key file of that source and get the latest config back */
   const clearKey = useCallback(async (kind: KeyKind) => {
     if (opts?.mock) {
       setConfig(prev => {
@@ -365,7 +383,8 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
 
   useEffect(() => {
     if (!provider) return;
-    // 换模型不动对话:对话属于这个项目,换个模型接着聊是合理的
+    // Switching model leaves the chat alone: the chat belongs to this project, and carrying on with a
+    // different model is reasonable
     const sess = localStorage.getItem(sessKey(provider));
     if (sess) {
       setSessionIds((prev) => ({ ...prev, [provider]: sess }));
@@ -389,10 +408,12 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
   };
 
   const abort = useCallback(() => {
-    // 先让正在跑的这一轮「过期」:它之后落定时序号对不上,就不会去发队首
+    // First make the running round "expire": when it settles later its sequence number will not match,
+    // so it will not go on to send the queue head
     sendSeqRef.current += 1;
     busyRef.current = false;
-    // 还没发出去的自动续跑一并取消:用户停了就是停了,新发的消息也不该被续跑打断
+    // Also cancel any automatic resume that has not been sent: when the user stops, it stays stopped,
+    // and a newly sent message should not be interrupted by a resume either
     if (autoContinueTimerRef.current !== null) {
       window.clearTimeout(autoContinueTimerRef.current);
       autoContinueTimerRef.current = null;
@@ -413,15 +434,21 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
     setStreaming(false);
   }, [opts?.mock]);
 
-  /** 这一页此刻算不算在跑:发送进行中,或者排着一次自动续跑。Composer 交上来的话据此决定直接发还是进队列 */
+  /**
+   * Whether this tab counts as running right now: a send is in progress, or an automatic resume is
+   * scheduled. The Composer uses it to decide whether what it submits is sent directly or queued
+   */
   const isBusy = useCallback(() => busyRef.current || autoContinueTimerRef.current !== null, []);
 
   /**
-   * 空闲时发出输入队列的队首。调用点:一轮真正落定(finishRun)、用户点「继续」、一键配特效跑完。
-   * 暂停着、还排着一次自动续跑、一键配特效没跑完、此刻还在忙,都不发 —— 不会出现两条同时发出去。
+   * Sends the head of the input queue when idle. Call sites: a round really settles (finishRun), the
+   * user clicks "Continue", one-click effects finishes running.
+   * It does not send while paused, while an automatic resume is still scheduled, while one-click
+   * effects has not finished, or while currently busy, so two messages are never sent at the same time.
    *
-   * 先发再出队:send 的同步部分已经把 busyRef 置上,出队触发的订阅(AiPanel 里 agentBus 的自动投递)
-   * 看到的就是「忙」,不会趁这一下空当再塞一条进来。
+   * Send first, then dequeue: the synchronous part of send has already set busyRef, so the
+   * subscriptions triggered by dequeuing (the automatic delivery of agentBus in AiPanel) see "busy"
+   * and do not slip another one in during this brief gap.
    */
   const pumpQueue = useCallback((): boolean => {
     if (unmountedRef.current || busyRef.current || autoContinueTimerRef.current !== null || workflowRef.current) return false;
@@ -433,23 +460,31 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
     return true;
   }, [tabId]);
 
-  /** 一轮真正落定(增量已 flush、outcome 已写进消息,而且没被停掉 / 顶掉)时调 */
+  /**
+   * Called when a round really settles (deltas flushed, outcome written into the message, and not
+   * stopped / displaced)
+   */
   const finishRun = useCallback(() => {
     busyRef.current = false;
     pumpQueue();
   }, [pumpQueue]);
 
   /**
-   * 回退到某条用户消息之前。入口在 UserBubble,确认之后由 AiPanel 调;返回 null 表示 id 不对。
-   *   1. 正在跑就先停,分工模式的编排状态一并清掉(换代,旧编排晚到的更新不再写回来);
-   *   2. 这一页的消息换成截断后的那份;
-   *   3. 这一页**所有驱动**的会话 id 都清掉:下一次发送后端从头开会话,留下的几轮由「前情」带过去(buildHandoff)。
-   * 放回输入框、归档整份覆盖由 AiPanel 接着做;输入队列不动。
+   * Rolls back to before a given user message. The entry point is in UserBubble, and AiPanel calls it
+   * after confirmation; returns null when the id is wrong.
+   *   1. If running, stop first, and clear the arrangement state of split-work mode as well
+   *      (a new generation, so updates arriving late from the old arrangement are no longer written back);
+   *   2. This tab's messages are replaced with the truncated copy;
+   *   3. The session ids of **all drivers** on this tab are cleared: the next send starts the session
+   *      from scratch on the backend, and the rounds that remain are carried over by the "prior
+   *      context" (buildHandoff).
+   * Putting back into the input box and overwriting the whole archive are done next by AiPanel; the
+   * input queue is left alone.
    */
   const rewindTo = (userMessageId: string): RewindResult | null => {
     if (!rewindAt(store.get(), userMessageId)) return null;
     if (busyRef.current || autoContinueTimerRef.current !== null || abortControllerRef.current) abort();
-    // abort() 会把还在跑的消息标成已中止,按标完之后的那份再算一遍
+    // abort() marks the still-running message as aborted, so recompute from the copy after it has been marked
     const result = rewindAt(store.get(), userMessageId);
     if (!result) return null;
     setMessages(result.kept);
@@ -457,31 +492,37 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
       try {
         localStorage.removeItem(sessKey(p));
       } catch {
-        /* 存储不可用就只清 state */
+        /* If storage is unavailable, clear only state */
       }
     }
     setSessionIds({});
     return result;
   };
 
-  // 第三个参数叫 sendOpts 不叫 opts:这个函数体里到处在读**外层 hook 的** opts
-  // (opts.mock、opts.getConversationId),重名会把它整个遮住,而且遮得悄无声息 ——
-  // 类型对不上才炸出来,不然就是运行时读到 undefined。
+  // The third parameter is called sendOpts rather than opts: this function body reads the **outer
+  // hook's** opts everywhere (opts.mock, opts.getConversationId), and a same-name parameter would
+  // shadow it completely, silently: it only blows up when the types do not match, and otherwise it
+  // is an undefined read at runtime.
   //
-  // 返回这一轮是否正常落定(没被停掉、没被新的发送顶掉);一键配特效据此决定还跑不跑下一个角色。
-  // sendOpts.inbound:这条其实是其他 Agent 发来的消息(AiPanel 自动投递),原样挂到用户消息上给界面认
-  // sendOpts.hops:这条是第几层自动投递(别的 Agent 的消息,A3),服务端的公告板据此给连锁封顶
+  // Returns whether this round settled normally (not stopped, not displaced by a new send); one-click
+  // effects uses it to decide whether to run the next role.
+  // sendOpts.inbound: this message is actually one sent by another Agent (automatic delivery by
+  // AiPanel), attached unchanged to the user message so the UI recognizes it
+  // sendOpts.hops: which level of automatic delivery this is (messages from other Agents, A3), from
+  // which the server's bulletin board caps the chain
   const send = async (text: string, attachments?: ChatAttachment[], sendOpts?: { auto?: boolean; inbound?: ChatMessage["inbound"]; hops?: number }): Promise<boolean> => {
     if (!provider) return false;
-    // 用户自己发的才重置额度;自动续跑那次不重置,否则「续跑 → 又错 → 再续」能一直转下去
+    // Only what the user sends themselves resets the allowance; an automatic resume does not, otherwise
+    // "resume → error again → resume again" could spin forever
     if (!sendOpts?.auto) autoContinueLeftRef.current = 1;
 
     abort();
-    // 这一次发送的序号:每个 await 回来都对一下,对不上就是中途被停掉或被顶掉了
+    // The sequence number of this send: check it after every await returns; a mismatch means it was
+    // stopped or displaced midway
     const seq = sendSeqRef.current;
     busyRef.current = true;
 
-    // 用户那句话**发送的这一瞬间**就进消息流
+    // The user's message enters the message stream **at the very instant it is sent**
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       role: "user",
@@ -491,21 +532,25 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
     };
     setMessages((prev) => [...prev, userMsg]);
 
-    // 发送这一刻就把「这条用什么跑」定下来,而且**发出去的和记下来的是同一份**。
-    // 分开各读一次的话,用户在流式过程中换了模型,记录就会和实际跑的对不上。
+    // Fix "what this one runs with" at the moment of sending, and make **what is sent and what is
+    // recorded the same copy**. If they were read separately, a user switching model during streaming
+    // would make the record disagree with what actually ran.
     const choice = readChoice(provider);
     /*
-     * 模型名在这里再过一道清单。面板上早就这么做了(normalizeModel),但那只管下拉框
-     * 显示成什么;发请求一直用的是 localStorage 里的原值。于是一个已经不在清单里的
-     * 名字——设置改过、或者当初就手打错了一个字符——界面上显示「默认」,请求里却
-     * 照旧带着它。CLI 拿到不存在的模型名当场退出,用户什么提示都看不到。
-     * 显示和实际跑的必须是同一个值。
+     * The model name goes through the list once more here. The panel has long done this
+     * (normalizeModel), but that only decides what the dropdown shows; sending a request has always used
+     * the raw value in localStorage. So a name that is no longer in the list (settings were changed, or a
+     * character was mistyped by hand in the first place) shows "Default" in the UI, while the request
+     * still carries it. The CLI gets a model name that does not exist and exits on the spot, and the
+     * user sees no message at all.
+     * What is displayed and what actually runs must be the same value.
      */
     choice.model = normalizeModel(choice.model, modelsFor(provider, config));
     /*
-     * agy 的模型名和思考档必须配对(gemini-3.8-flash-low 配 --effort high 会被它当场拒),
-     * 而且每个模型自己有哪几档不一样。面板上是「基名 + 档位」两个框,发出去之前在这里
-     * 拼成 agy 认的那一对;别的驱动原样返回。
+     * agy's model name and thinking tier must be paired (gemini-3.8-flash-low with --effort high is
+     * refused on the spot), and which tiers each model has differs per model. The panel has two boxes,
+     * "base name + tier", and before sending they are assembled here into the pair agy accepts; other
+     * drivers are returned as is.
      */
     {
       const pair = pairModelEffort(provider, choice.model, choice.effort, config);
@@ -513,15 +558,19 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
       choice.effort = pair.effort;
     }
     /*
-     * 档位也要按清单兜一道 —— 和上面 normalizeModel 是同一个道理,而且踩过同一种坑。
+     * The tier also needs a fallback check against the list: the same reasoning as normalizeModel above,
+     * and the same pit was stepped in.
      *
-     * 档位存在 localStorage 里。清单改过之后(0ae554b 把 codex 的 `minimal` 去掉了,
-     * 因为上游根本不认、选中必 400),老用户浏览器里那个值还在。ModelBar 只把它降级成
-     * 「默认」**显示**,发请求这条路读的是 localStorage 原值 —— 于是界面上写着「默认」,
-     * 请求里照旧带着 minimal,还是那条 400。显示和实际跑的必须是同一个值。
+     * The tier is stored in localStorage. After the list changed (0ae554b removed codex's `minimal`
+     * because upstream does not recognize it at all and selecting it always gives a 400), that value is
+     * still in old users' browsers. ModelBar only downgrades it to "Default" for **display**, while the
+     * request path reads the raw localStorage value, so the UI says "Default" and the request still
+     * carries minimal, and gets the same 400. What is displayed and what actually runs must be the same
+     * value.
      */
     choice.effort = sanitizeEffort(provider, choice.model, choice.effort, config);
-    // 参数兼容模式:锁死的驱动 / 模型不听本地偏好,按策略定论;可调的把偏好交给服务端
+    // Parameter compatibility mode: a locked driver / model ignores the local preference and goes by
+    // the policy's verdict; an adjustable one hands the preference to the server
     choice.schemaCompat = compatToSend(provider, choice.model, config?.api?.vendor, choice.schemaCompat);
     const runtime: MessageRuntime = { provider, ...choice, toolProtocol: !!config?.toolProtocol };
 
@@ -539,7 +588,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
       trace: [],
     };
 
-    // 用户消息上面已经进去了,这里只追加助手那条
+    // The user message is already in above; only the assistant's one is appended here
     setMessages((prev) => [...prev, asstMsg]);
     setStreaming(true);
     setError(null);
@@ -548,15 +597,17 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
       let i = 0;
       const msg = tr("This is the built-in fake stream reply. I will call a tool to see how it works.");
       const timer = setInterval(() => {
-        // 被停掉或被新的发送顶掉:假流也跟着停,别往已中止的消息里接着写、也别事后把 streaming 关掉
+        // Stopped or displaced by a new send: the mock stream stops too; do not keep writing into the aborted
+        // message, and do not turn streaming off afterwards
         if (seq !== sendSeqRef.current) {
           clearInterval(timer);
           return;
         }
         if (i < msg.length) {
-          // 每帧写「到目前为止的整段文字」,不做增量拼接:
-          // 第一次 tick 有可能赶在助手消息真正入列之前,那一次增量更新会静默丢掉,
-          // 后面每个字就都错开一位(开头少一个字、结尾多一个 undefined)。
+          // Each frame writes "the whole text so far", not an incremental concatenation:
+          // the first tick may beat the assistant message actually being enqueued, and that incremental update
+          // would be silently dropped, shifting every later character by one (one missing at the start, an
+          // extra undefined at the end).
           i++;
           const soFar = msg.slice(0, i);
           setMessages(prev => prev.map(m => m.id === asstMsgId
@@ -581,8 +632,10 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
               const parts = completeToolPart(m.parts, { name: "get_editor_state", ok: true, summary: tr("Fetched successfully") });
               return { ...m, tools, parts };
             }));
-            // 工具跑完之后再说一句:详细模式下应当出现「文字 → 工具 → 文字」的真实顺序
-            // 这段同时充当渲染样张:表格、行内公式、独占一行的公式都在里面
+            // Say one more sentence after the tool finishes: in detailed mode the true order "text → tool → text"
+            // should appear.
+            // This passage also serves as a rendering sample: tables, inline formulas and standalone-line
+            // formulas are all in it
             const tail = [
               tr("The tool returned, and the timeline is empty now. Suggested arrangement:"),
               "",
@@ -601,7 +654,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
                 ? { ...m, text: m.text + "\n" + tail, parts: appendTextPart(m.parts, "\n" + tail), pending: false, outcome: "completed" }
                 : m));
               setStreaming(false);
-              // 假流这一轮落定:和真实流一样在这里发队首
+              // This round of the mock stream settles: send the queue head here, the same as for a real stream
               finishRun();
             }, 600);
           }, 1000);
@@ -612,7 +665,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
 
     const ac = new AbortController();
     abortControllerRef.current = ac;
-    /** 这一轮是否正常落定(见 finally 里发队首的那段) */
+    /** Whether this round settled normally (see the part in finally that sends the queue head) */
     let settled = false;
 
     /*
@@ -635,22 +688,27 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
 
     try {
       /*
-       * 会话 id 以 **localStorage 为准**,不用组件里那份 state。
+       * The session id goes by **localStorage**, not the state in the component.
        *
-       * 换项目时 projectAi.applyProjectAi 会把 `aiSession:*` 全清掉(理由见那边),
-       * 但它清不到这个 hook 的 state —— 读 state 的话,换了项目第一句还是会带着
-       * 上个项目的会话 id 发出去,服务端照旧把那边的历史整段读回来。
-       * state 留着只为显示;决定「接哪段历史」的必须是同一个真相源。
+       * When the project is switched, projectAi.applyProjectAi clears all `aiSession:*` (see there for
+       * the reason), but it cannot clear this hook's state: if the state were read, the first message after
+       * switching projects would still carry the previous project's session id, and the server would
+       * again read that history back in full.
+       * The state is kept only for display; what decides "which history to continue" must be the same
+       * source of truth.
        */
       const sessionId = (() => {
         try { return localStorage.getItem(sessKey(provider)) || undefined; }
         catch { return sessionIds[provider]; }
       })();
-      // 多 Agent:这一页的对话 ID 随请求带上,服务端把它塞给 MCP 进程,工具调用就知道是谁发的;
-      // 其他 Agent 的动态(范围变动、给它的消息)由服务端的公告板拼在提示词前面(A3)—— 只进模型,不进屏幕上那条用户消息
+      // Multi-Agent: this tab's chat ID is carried with the request, and the server hands it to the MCP
+      // process so that a tool call knows who sent it; the activity of other Agents (scope changes,
+      // messages to it) is prepended to the prompt by the server's bulletin board (A3). It goes to the
+      // model only, not into the user message shown on the screen
       const agentId = opts?.getConversationId?.();
-      // 换了模型:把这家没见过的那几轮摘成「前情」一起带上(理由见 handoff.ts)。
-      // 刚追加的这一问一答不算历史
+      // The model was switched: condense the rounds this provider has not seen into the "prior context"
+      // and send it along (see handoff.ts for the reason).
+      // The question and answer just appended do not count as history
       const handoff = buildHandoff(
         store.get().filter((m) => m.id !== userMsg.id && m.id !== asstMsgId),
         provider,
@@ -665,17 +723,21 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
           conversationId: agentId,
           ...(sendOpts?.hops ? { hops: sendOpts.hops } : {}),
           sessionId,
-          // 模型 / 推理强度 / 加速档:上面发送那一刻已经读好(choice),用户在面板上
-          // 换完下一条立刻生效。哪家支持哪几样由 runner 端翻译,这里只管把选择传过去。
+          // Model / reasoning effort / fast mode: already read at the moment of sending above (choice), so a
+          // change the user makes in the panel takes effect on the very next message. Which provider supports
+          // what is translated on the runner side; here we only pass the selection along.
           ...choice,
-          // 素材库里的东西一并列进附件清单:模型不用先花一轮 list_media 才知道
-          // 手上有哪些素材,「给每个视频配字幕」这类要求也才有确定的对象。
+          // What is in the media library is listed into the attachment manifest as well: the model does not
+          // have to spend a round on list_media to learn which media it has, and a request like "add
+          // captions to every video" then also has a definite target.
           attachments: [...(attachments ?? []), ...mediaAsAttachments()],
-          // 剧本每一轮都带上,由服务端拼进系统提示词 —— 多轮跑下来最容易跑偏,
-          // 只在第一条消息里说一次是拉不住的。
+          // The script is sent with every round and spliced into the system prompt by the server: over many
+          // rounds the model drifts most easily, and saying it once in the first message cannot keep it on track.
           script: getScript(),
-          // 创造力等级:这一页单独设的(null = 跟项目)和项目这一刻的默认等级。服务端的闸门按它们判越级调用,
-          // 项目默认以服务端读到的项目为准,读不到才用这里报的(server/vite-plugin-ai.ts 的 currentProjectCreativity)
+          // Creativity level: the one set separately for this tab (null = follow the project) and the project's
+          // default level at this moment. The server's gate uses them to judge calls that exceed the level; the
+          // project default goes by the project the server reads, and the one reported here is used only when
+          // it cannot be read (currentProjectCreativity in server/vite-plugin-ai.ts)
           creativity: getTabCreativity(tabId),
           projectCreativity: projectCreativity(getState().project),
         }),
@@ -701,7 +763,8 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
         buffer = rest;
 
         for (const ev of events as RunEvent[]) {
-          // 文字和思考增量排队合并(思考只进 parts,不进 m.text,见 applyDeltas)
+          // Text and thinking deltas are queued and merged (thinking goes only into parts, not into m.text;
+          // see applyDeltas)
           if (isDeltaEvent(ev)) {
             queuedDeltas.push(ev);
             if (deltaTimer === null) deltaTimer = window.setTimeout(flushDeltas, DELTA_FLUSH_MS);
@@ -772,22 +835,26 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
               )
             );
             /*
-             * 可续跑的中断:自动接着说一句,别让用户去点重试。
+             * A resumable interruption: automatically say one more sentence, so the user does not have to click
+             * retry.
              *
-             * 上下文不用我们搬 —— CLI 那几条路都带 `--conversation <id>`,agy 会把整段
-             * 对话原样带回来;要补的只是「刚才为什么停」,那句话由驱动拼好放在 retryPrompt 里
-             * (里面直接带着被拒的原始说明),这里原样发出去,模型不必自己开口问。
+             * We do not need to carry the context: the CLI routes all pass `--conversation <id>`, and agy brings
+             * the whole conversation back as is; all that needs filling in is "why did it stop just now", and
+             * that sentence is assembled by the driver and placed in retryPrompt (carrying the original
+             * rejection text directly), and sent out unchanged here, so the model does not have to ask itself.
              *
-             * **只续一次**。哪些错值得续由驱动判定(密钥错、模型名错、额度光了都不带这个标记),
-             * 但判定不可能永远对;万一续了还是同一个错,再续就是无限循环,在用户的额度上烧。
-             * 一次不成就停在那儿,把错误留给用户看 —— 他知道的比我们多。
-             * 用户自己发新消息时额度重置(见 send 开头)。
+             * **Resume only once**. Which errors are worth resuming is decided by the driver (wrong keys, wrong
+             * model names and exhausted quotas do not carry this flag), but the decision cannot always be right;
+             * if a resume hits the same error again, resuming further is an infinite loop burning the user's
+             * quota. If one attempt does not work, stop there and leave the error for the user to see: they
+             * know more than we do.
+             * The allowance resets when the user sends a new message (see the start of send).
              */
             if (!ev.authReason && ev.retryable && ev.retryPrompt && autoContinueLeftRef.current > 0) {
               autoContinueLeftRef.current -= 1;
               const prompt = ev.retryPrompt;
-              // 记下这次排着的续跑:发出去之前这一页仍算忙,输入队列不能抢在它前面(见 pumpQueue);
-              // 用户在这之前点了停止,abort() 会把它取消
+              // Record this scheduled resume: until it is sent this tab still counts as busy, and the input queue
+              // must not jump ahead of it (see pumpQueue); if the user clicks stop before then, abort() cancels it
               autoContinueTimerRef.current = window.setTimeout(() => {
                 autoContinueTimerRef.current = null;
                 void sendRef.current(prompt, undefined, { auto: true });
@@ -829,9 +896,13 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
         setStreaming(false);
       }
       /*
-       * 输入队列的自动发送挂在这里:走到 finally 时增量已经 flush、outcome 已经写进消息,这一轮才算真正落定。
-       * 序号没变 = 没被用户停掉(停掉的那次 outcome 是 aborted)、也没被新的发送顶掉;
-       * 连接被卸载掐断(关分页)的也不算。还排着一次出错自动续跑的话,pumpQueue 会让续跑先走。
+       * The automatic sending of the input queue hangs here: by the time finally is reached, the deltas have
+       * been flushed and the outcome has been written into the message, and only then has the round really
+       * settled.
+       * Sequence number unchanged = not stopped by the user (the outcome of a stopped one is aborted) and
+       * not displaced by a new send; a round cut off by the connection being unmounted (closing the tab)
+       * does not count either. If an automatic resume after an error is still scheduled, pumpQueue lets
+       * the resume go first.
        */
       if (seq === sendSeqRef.current && !ac.signal.aborted) {
         settled = true;
@@ -843,20 +914,23 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
   sendRef.current = send;
 
   /**
-   * 一键配特效:按顺序把 src/ai/roles/ 里的角色各跑一轮。
+   * One-click effects: runs each role in src/ai/roles/ for one round, in order.
    *
-   * 串行而不是拼成一段长提示词 —— 剪辑导演要先看齐全部素材才排得了片,
-   * 特效助理要先有文字稿才配得了字幕和动效,合在一轮里模型会顾此失彼。
-   * 每一轮都是完整的一次 send,所以被用户停掉之后,后面的角色不会再跑。
+   * Serial rather than spliced into one long prompt: the editing director has to see all the media
+   * before it can arrange the video, and the effects assistant needs a transcript before it can add
+   * captions and motion graphics; combined in one round, the model would neglect one for the other.
+   * Every round is a complete send, so once the user stops it, the later roles are not run.
    *
-   * 跑着的时候输入队列先等着(pumpQueue 看 workflowRef):不然前一个角色一落定就发队首,
-   * 下一个角色一开跑又把它打断。整串跑完再发。
+   * While it runs, the input queue waits (pumpQueue checks workflowRef): otherwise the queue head would
+   * be sent as soon as the previous role settles, only to be interrupted when the next role starts. It
+   * is sent after the whole series finishes.
    */
   const runWorkflow = useCallback(async () => {
     workflowRef.current = true;
     try {
       for (const role of WORKFLOW_ROLES) {
-        // 没正常落定(用户按了停止、被别的发送顶掉)就别继续下一个角色了
+        // If it did not settle normally (the user pressed stop, or another send displaced it), do not go on
+        // to the next role
         if (!(await sendRef.current(role.prompt))) break;
       }
     } finally {
@@ -877,11 +951,20 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
     streaming,
     send,
     abort,
-    /** 此刻算不算在跑(同步读,含排着的自动续跑);Composer 交上来的话据此决定直接发还是进队列 */
+    /**
+     * Whether it counts as running right now (read synchronously, including a scheduled automatic
+     * resume); the Composer uses it to decide whether to send directly or queue what it submits
+     */
     isBusy,
-    /** 空闲且没暂停时发出输入队列的队首(队列「继续」用;一轮落定时内部自己会调) */
+    /**
+     * Sends the head of the input queue when idle and not paused (used by the queue's "Continue"; it is
+     * also called internally when a round settles)
+     */
     pumpQueue,
-    /** 回退到某条用户消息之前:停掉运行、截断消息、清会话 id;返回放回输入框的内容 */
+    /**
+     * Roll back to before a given user message: stop the run, truncate the messages, clear the session
+     * id; returns what is put back into the input box
+     */
     rewindTo,
     newChat,
     error,

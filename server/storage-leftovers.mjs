@@ -1,27 +1,36 @@
 /**
- * 帧库与导出目录里的遗留文件（`docs/plan/storage-plan.md` 的 A 部分）。
+ * Leftover files in the frame store and export directory (part A of `docs/plan/storage-plan.md`).
  *
- * 两件事：
+ * Two things:
  *
- * 1. **启动清理**（`sweepFrameLibrary`、`sweepExportRoot`）：进程被强杀（桌面壳关窗、taskkill /F、崩溃）时
- *    来不及删自己的临时文件。下一次启动时按名字认出来、判定属主进程已不在，再删。只删下面列的几种形态，
- *    别的一律不碰：
- *    - `<键>/mov/full-<pid>.tmp.mov`、`controls/<键>/mov/full-<pid>.tmp.mov`：写到一半的整场景 / 独立卡 MOV；
- *    - `<键>/mov/playback-<pid>-<uuid>.mov`：旧式播放会话的稀疏 MOV；
- *      旧版本留下的 `playback-<uuid>.mov`（名字里没有 pid）按修改时刻判：超过 `legacyAgeMs` 没动就删；
- *    - `<键>/html-cache/live-<pid>-*`：快照归档的溢出目录；
- *    - `tracks/<键>/preview-<pid>.tmp.mp4`、`<键>/preview-<pid>.tmp.mp4`：写到一半的轨道前缀预览；
- *    - 导出目录下的 `export-vision-<pid>-*`：视觉工具的临时导出。
- *    `<键>` 只认 64 位十六进制（帧库的内容哈希）。遇到符号链接或 junction 跳过；删不掉（被别的进程占着）
- *    跳过并记一笔，下次启动再试。
+ * 1. **Startup cleanup** (`sweepFrameLibrary`, `sweepExportRoot`): when a process is forcibly killed
+ *    (desktop shell closing window, taskkill /F, crash), it has no time to delete its temporary
+ *    files. On the next startup, identify them by name, verify that the owner process is no longer
+ *    running, and delete them. Only delete the forms listed below, leaving everything else untouched:
+ *    - `<key>/mov/full-<pid>.tmp.mov`, `controls/<key>/mov/full-<pid>.tmp.mov`: half-written whole
+ *      scene / standalone card MOVs;
+ *    - `<key>/mov/playback-<pid>-<uuid>.mov`: sparse MOVs from legacy playback sessions;
+ *      `playback-<uuid>.mov` left by older versions (without pid in the name) is checked by
+ *      modification time: deleted if untouched for more than `legacyAgeMs`;
+ *    - `<key>/html-cache/live-<pid>-*`: overflow directories for snapshot archives;
+ *    - `tracks/<key>/preview-<pid>.tmp.mp4`, `<key>/preview-<pid>.tmp.mp4`: half-written track
+ *      prefix previews;
+ *    - `export-vision-<pid>-*` under the export directory: temporary exports from vision tools.
+ *    `<key>` only matches 64-digit hex (content hash in frame store). Skip symlinks or junctions;
+ *    if deletion fails (occupied by another process), skip and record an entry, retrying on the
+ *    next startup.
  *
- * 2. **导出目录的中间文件**（`pruneExportDir`）：导出成功后只留成片、透明层与 `project.json`；
- *    取消或失败时也删中间文件，已有的成片 / 透明层照留（列表显示用）。
+ * 2. **Intermediate files in export directory** (`pruneExportDir`): after export succeeds, retain
+ *    only final video, transparent layer, and `project.json`; intermediate files are also deleted
+ *    on cancellation or failure, keeping existing final videos / transparent layers (for list
+ *    display).
  *
- * 3. **导出目录命名**（`claimExportDir`）：同一秒两次导出不复用同一个目录。
+ * 3. **Export directory naming** (`claimExportDir`): two exports within the same second do not
+ *    reuse the same directory.
  *
- * 帧库的启动清理由 `FramePipeline` 在本进程第一次建帧服务时发起（`frame-pipeline.mjs`），
- * 导出目录的由 `vite-plugin-export.ts` 在 dev server 起来时发起。
+ * Startup cleanup of the frame store is initiated by `FramePipeline` when creating the frame
+ * service for the first time in this process (`frame-pipeline.mjs`); cleanup of the export directory
+ * is initiated by `vite-plugin-export.ts` when the dev server starts up.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -34,37 +43,49 @@ const LIVE_SPILL = /^live-(\d+)-/;
 const PREVIEW_TMP = /^preview-(\d+)\.tmp\.mp4$/;
 const VISION = /^export-vision-(\d+)-/;
 
-/** 旧版 `playback-<uuid>.mov` 多久没动算遗留 */
+/** How long legacy `playback-<uuid>.mov` must remain untouched to be considered leftover */
 export const LEGACY_PLAYBACK_AGE_MS = 60 * 60 * 1000;
 
 /*
- * 导出目录的规则只在这里定义一份：导出完成后的收拾（`pruneExportDir`，`vite-plugin-export.ts`）、
- * 导出列表与「只删中间文件」（`exports-list.mjs`）、`/api/storage` 的导出一栏（`frame-library-storage.mjs` 经
- * `exports-list.mjs` 的 `summarizeExports`）都引这几个。
+ * Export directory rules are defined only once here: cleanup after export completes
+ * (`pruneExportDir`, `vite-plugin-export.ts`), the export list and "delete intermediate files only"
+ * (`exports-list.mjs`), and the export section of `/api/storage` (`frame-library-storage.mjs` via
+ * `summarizeExports` of `exports-list.mjs`) all reference these.
  */
 
 /**
- * 一次导出的目录名：`export-YYYYMMDD-HHMMSS`（本地时间），同一秒重名时带 `-<n>`（`claimExportDir` 从 `-2` 起，
- * 最多到 `-999`；这里放宽到 1～4 位）。视觉工具的 `export-vision-*` 不匹配。
+ * Directory name for a single export: `export-YYYYMMDD-HHMMSS` (local time), with `-<n>` on collision
+ * in the same second (`claimExportDir` starts from `-2`, up to `-999`; relaxed here to 1-4 digits).
+ * `export-vision-*` from vision tools does not match.
  */
 export const EXPORT_ID_RE = /^export-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-(\d{1,4}))?$/;
-/** 名字像不像一次导出的目录（只看名字；是不是真目录、在不在导出目录下由调用方判） */
+/**
+ * Whether the name looks like an export directory (name check only; callers determine whether
+ * it is a real directory and under the export directory)
+ */
 export const isExportDirName = name => typeof name === 'string' && EXPORT_ID_RE.test(name);
-/** 交付物：成片、只含卡片的透明层（列表按这个顺序列） */
+/** Deliverables: final video, transparent layer containing only cards (lists are ordered by this sequence) */
 export const EXPORT_DELIVERABLES = Object.freeze(['preview.mp4', 'overlay.mov']);
-/** 导出成功后留下的（交付物加 `project.json`，列表显示所属项目用）；其余都是中间文件 */
+/**
+ * Retained after successful export (deliverables plus `project.json`, used for displaying owning
+ * project in lists); the rest are intermediate files
+ */
 export const EXPORT_KEEP = Object.freeze([...EXPORT_DELIVERABLES, 'project.json']);
-/** 导出目录顶层的这个名字是不是要留下的 */
+/** Whether this name at the top level of the export directory should be retained */
 export const isExportKeepName = name => EXPORT_KEEP.includes(name);
 
 /*
- * 帧库遗留文件的名字规则（启动清理 `sweepFrameLibrary` 删的、`frame-library-storage.mjs` 的 `measureDir` 计进
- * `leftovers.bytes` 的，是同一套）。
+ * Name rules for leftover files in the frame store (what startup cleanup `sweepFrameLibrary`
+ * deletes and what `measureDir` in `frame-library-storage.mjs` counts into `leftovers.bytes` share
+ * the same set).
  */
 
 /**
- * 一个帧库里的文件按名字算不算遗留：写到一半的 MOV / 预览、属主进程已不在的播放 MOV、旧版超龄的播放 MOV。
- * `dead(pid)` 判进程已不在；`ageMs` 是文件多久没动（只有旧版播放 MOV 要看）。回遗留的种类，不是回 null。
+ * Whether a file in the frame store counts as leftover by name: half-written MOV / preview,
+ * playback MOV whose owner process is no longer running, or overage playback MOV from older
+ * versions. `dead(pid)` determines whether the process is no longer running; `ageMs` is how long
+ * the file has been untouched (only checked for older playback MOVs). Returns the kind of leftover,
+ * or null if not.
  */
 export function leftoverFileKind(name, { dead, ageMs = 0, legacyAgeMs = LEGACY_PLAYBACK_AGE_MS }) {
   let m;
@@ -75,16 +96,18 @@ export function leftoverFileKind(name, { dead, ageMs = 0, legacyAgeMs = LEGACY_P
   return null;
 }
 
-/** `html-cache` 下的这个子目录是不是死进程留下的溢出目录 */
+/** Whether this subdirectory under `html-cache` is an overflow directory left by a dead process */
 export function isDeadSpillDir(name, dead) {
   const m = LIVE_SPILL.exec(name);
   return !!m && dead(Number(m[1]));
 }
 
 /**
- * 进程还在吗。`process.kill(pid, 0)` 在 Windows 与 Linux 上都只做存在性检查：
- * ESRCH = 不在；EPERM = 在（只是没权限发信号）；别的错误拿不准，按「在」处理，宁可不删。
- * 自己的 pid 一律算在。
+ * Whether the process is still running. `process.kill(pid, 0)` only performs an existence check on
+ * both Windows and Linux:
+ * ESRCH = not running; EPERM = running (just no permission to send signals); other errors are
+ * uncertain, so treat as "running", preferring not to delete.
+ * Own pid always counts as running.
  */
 export function pidAlive(pid) {
   pid = Number(pid);
@@ -99,7 +122,10 @@ async function entries(dir) {
   catch { return []; }
 }
 
-/** 目录树的字节数，以及里面有没有链接（符号链接、junction）。有链接就整个跳过，不顺着链接删到别处去。 */
+/**
+ * Byte count of the directory tree, and whether it contains links (symbolic links, junctions).
+ * If there are links, skip the whole thing to avoid following links and deleting elsewhere.
+ */
 async function inspect(target) {
   const stat = await fs.lstat(target);
   if (stat.isSymbolicLink()) return { linked: true, bytes: 0 };
@@ -114,8 +140,10 @@ async function inspect(target) {
 }
 
 /**
- * 删一个认出来的遗留（文件或目录）。结果记进 `report`：`removed` / `skipped`（带原因）。
- * 删前先确认里面没有链接；Windows 上文件被占用时 `fs.rm` 重试几次，还不行就跳过。
+ * Delete an identified leftover (file or directory). Record the result in `report`:
+ * `removed` / `skipped` (with reason).
+ * Before deleting, confirm that it contains no links; when a file is locked on Windows,
+ * retry `fs.rm` a few times, and skip if it still fails.
  */
 export async function removeLeftover(target, report, { kind = 'leftover', log = null } = {}) {
   let bytes = 0;
@@ -123,7 +151,7 @@ export async function removeLeftover(target, report, { kind = 'leftover', log = 
     const found = await inspect(target);
     if (found.linked) {
       report.skipped.push({ path: target, kind, reason: 'link' });
-      log?.(`[storage] 跳过（链接）：${target}`);
+      log?.(`[storage] Skipped (link): ${target}`);
       return false;
     }
     bytes = found.bytes;
@@ -134,7 +162,7 @@ export async function removeLeftover(target, report, { kind = 'leftover', log = 
   } catch (error) {
     if (error?.code === 'ENOENT') return false;
     report.skipped.push({ path: target, kind, reason: error?.code || String(error?.message || error) });
-    log?.(`[storage] 删不掉，跳过：${target}（${error?.code || error?.message || error}）`);
+    log?.(`[storage] Cannot delete, skipped: ${target} (${error?.code || error?.message || error})`);
     return false;
   }
 }
@@ -142,8 +170,9 @@ export async function removeLeftover(target, report, { kind = 'leftover', log = 
 const newReport = () => ({ removed: [], skipped: [], bytes: 0 });
 
 /**
- * 启动清理帧库。`root` 是帧库根（`<导出目录>/frame-library`）。回 `{ removed, skipped, bytes }`。
- * `alive`、`now` 给测试用。
+ * Startup cleanup of the frame store. `root` is the frame store root
+ * (`<export directory>/frame-library`). Returns `{ removed, skipped, bytes }`.
+ * `alive` and `now` are for testing.
  */
 export async function sweepFrameLibrary(root, { alive = pidAlive, now = Date.now(), legacyAgeMs = LEGACY_PLAYBACK_AGE_MS, log = null } = {}) {
   const report = newReport();
@@ -156,7 +185,7 @@ export async function sweepFrameLibrary(root, { alive = pidAlive, now = Date.now
       if (FULL_TMP.test(item.name)) {
         if (leftoverFileKind(item.name, { dead })) await removeLeftover(full, report, { kind: 'full-tmp', log });
       } else if (playback && (PLAYBACK.test(item.name) || PLAYBACK_LEGACY.test(item.name))) {
-        // 旧版不带 pid 的要看多久没动;带 pid 的只看进程
+        // Legacy versions without pid check inactivity duration; those with pid only check the process
         let ageMs = 0;
         if (PLAYBACK_LEGACY.test(item.name)) {
           const stat = await fs.lstat(full).catch(() => null);
@@ -175,7 +204,7 @@ export async function sweepFrameLibrary(root, { alive = pidAlive, now = Date.now
     }
   };
   for (const item of await entries(root)) {
-    if (!item.isDirectory() || !KEY.test(item.name)) continue;   // 链接的 Dirent 不是目录，自然跳过
+    if (!item.isDirectory() || !KEY.test(item.name)) continue;   // A linked Dirent is not a directory, so naturally skipped
     const dir = path.join(root, item.name);
     await sweepMov(path.join(dir, 'mov'), { playback: true });
     await sweepPreview(dir);
@@ -193,12 +222,12 @@ export async function sweepFrameLibrary(root, { alive = pidAlive, now = Date.now
     if (item.isDirectory() && KEY.test(item.name)) await sweepPreview(path.join(root, 'tracks', item.name));
   }
   if (report.removed.length || report.skipped.length) {
-    log?.(`[storage] 帧库遗留：删 ${report.removed.length} 个（${(report.bytes / 1048576).toFixed(1)} MB），跳过 ${report.skipped.length} 个`);
+    log?.(`[storage] Frame store leftovers: deleted ${report.removed.length} (${(report.bytes / 1048576).toFixed(1)} MB), skipped ${report.skipped.length}`);
   }
   return report;
 }
 
-/** 启动清理导出目录：只认死进程留下的 `export-vision-<pid>-*`。 */
+/** Startup cleanup of export directory: only recognizes `export-vision-<pid>-*` left by dead processes. */
 export async function sweepExportRoot(outRoot, { alive = pidAlive, log = null } = {}) {
   const report = newReport();
   if (typeof outRoot !== 'string' || !outRoot) return report;
@@ -209,15 +238,16 @@ export async function sweepExportRoot(outRoot, { alive = pidAlive, log = null } 
     await removeLeftover(path.join(outRoot, item.name), report, { kind: 'export-vision', log });
   }
   if (report.removed.length || report.skipped.length) {
-    log?.(`[storage] 视觉临时导出遗留：删 ${report.removed.length} 个，跳过 ${report.skipped.length} 个`);
+    log?.(`[storage] Visual temporary export leftovers: deleted ${report.removed.length}, skipped ${report.skipped.length}`);
   }
   return report;
 }
 
 /**
- * 删一次导出的中间文件：`dir` 下除 `EXPORT_KEEP` 以外的顶层条目全删（`frames`、`parts`、`glass`、`audio`、
- * `media`、`dom`、滤镜脚本、`preview-audio.mp4`、`trace.json`……）。链接跳过。
- * 回 `{ removed, skipped, bytes }`。
+ * Delete intermediate files of a single export: delete all top-level entries under `dir` except
+ * `EXPORT_KEEP` (`frames`, `parts`, `glass`, `audio`, `media`, `dom`, filter scripts,
+ * `preview-audio.mp4`, `trace.json`…). Skip links.
+ * Returns `{ removed, skipped, bytes }`.
  */
 export async function pruneExportDir(dir, { keep = EXPORT_KEEP, log = null } = {}) {
   const report = newReport();
@@ -232,9 +262,12 @@ export async function pruneExportDir(dir, { keep = EXPORT_KEEP, log = null } = {
 }
 
 /**
- * 一次导出的目录 `export-<YYYYMMDD-HHMMSS>`（本地时间）。同一秒已有同名目录（连点两次、两个窗口同时导）
- * 就加 `-2`、`-3`…… 后缀，不复用：复用会让两次导出往同一处写，后一次的清理还会删掉前一次的产物。
- * 用不带 recursive 的 mkdir 占位，两个请求同时来也只有一个拿得到同一个名字。回 `{ id, outDir }`。
+ * Directory for a single export `export-<YYYYMMDD-HHMMSS>` (local time). If a directory with the
+ * same name already exists in the same second (clicked twice, two windows exporting simultaneously),
+ * append suffixes like `-2`, `-3`… without reusing: reuse makes two exports write to the same place,
+ * and cleanup of the latter would delete outputs of the former.
+ * Use non-recursive mkdir as a placeholder, so if two requests arrive simultaneously, only one gets
+ * the same name. Returns `{ id, outDir }`.
  */
 export async function claimExportDir(base, now = new Date()) {
   const two = n => String(n).padStart(2, '0');
@@ -250,5 +283,5 @@ export async function claimExportDir(base, now = new Date()) {
       if (error?.code !== 'EEXIST') throw error;
     }
   }
-  throw new Error('同一秒内的导出目录太多');
+  throw new Error('Too many export directories within the same second');
 }

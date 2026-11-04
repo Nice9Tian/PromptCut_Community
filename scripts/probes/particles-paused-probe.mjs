@@ -1,18 +1,22 @@
 /**
- * 粒子卡暂停时画面非空、且按时间确定的探针。
+ * Probe for non-empty and time-deterministic visuals when particle card is paused.
  *
- *   node scripts/probes/particles-paused-probe.mjs [--origin http://127.0.0.1:5860] [--out <目录>] [--config <URL>]
+ *   node scripts/probes/particles-paused-probe.mjs [--origin http://127.0.0.1:5860] [--out <dir>] [--config <URL>]
  *
- * 不带 `--origin` 就看 `PC_STAGE_TEST_URL`,再没有就打 `.claude/launch.json` 的 `dev-test`。
+ * Without `--origin`, check `PC_STAGE_TEST_URL`; if still absent, hit `dev-test` in `.claude/launch.json`.
  *
- * 打开编辑器(`?editor&nosetup=1&preview=stage`),新建工程,放一张粒子卡(默认参数;`--config` 给了就填进 config),
- * 播放头停在 T 秒(不播放),等前台舞台 iframe 里的粒子 canvas 出来,然后:
- *   1. 读 canvas 的 2d 像素,数不透明像素(alpha > 0) —— 修前是 0(全透明),修后要 > 0;
- *   2. 跳到别处再跳回 T,再读一次像素哈希,和第一次比 —— 同一时刻两次画面逐像素相同;
- *   3. 拿另一个时刻 T2 的哈希,和 T 的不同 —— 画面确实随时间走;
- *   4. 留图写进 --out(缺省 out/particles-paused/):canvas 原始像素(*-canvas.png,透明底)与前台舞台 iframe 截图(*-stage.png)。
+ * Open editor (`?editor&nosetup=1&preview=stage`), create project, insert a particle card (default
+ * parameters; if `--config` is provided, fill into config), stop playhead at T seconds (not
+ * playing), wait for the particle canvas in the visible stage iframe to appear, then:
+ *   1. Read 2D pixels of canvas, count opaque pixels (alpha > 0): 0 (fully transparent) before
+ *      fix, must be > 0 after fix;
+ *   2. Jump elsewhere then back to T, read pixel hash again, compare with the first: visuals at the
+ *      same timestamp are pixel-identical both times;
+ *   3. Take hash at another timestamp T2, different from T: visuals indeed advance with time;
+ *   4. Save images to `--out` (default `out/particles-paused/`): raw canvas pixels (`*-canvas.png`,
+ *      transparent background) and visible stage iframe screenshot (`*-stage.png`).
  *
- * 输出 JSON 结论到 stdout;任何一条不过就以非零退出。
+ * Output JSON conclusion to stdout; exit with non-zero if any item fails.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -68,7 +72,7 @@ try {
     actions.seek(${T});
     return c?.id;`, CONFIG);
   out.clipId = clipId;
-  check(!!clipId, '加上了粒子卡');
+  check(!!clipId, 'particle card added');
 
   const stageFrames = () => page.frames().filter((f) => /[?&]stage=1/.test(f.url()));
   const frontFrame = async () => {
@@ -76,7 +80,7 @@ try {
     const fs2 = stageFrames();
     return fs2.find((f) => f.url().includes(`id=${id}`)) ?? fs2[0] ?? null;
   };
-  /** 前台舞台里粒子 canvas 的像素统计:尺寸、不透明像素数、sha1 */
+  /** Pixel stats for particle canvas in visible stage: dimensions, opaque pixel count, sha1 */
   const readCanvas = async () => {
     const f = await frontFrame();
     if (!f) return null;
@@ -96,7 +100,7 @@ try {
   };
   const seekAndRead = async (t) => {
     await store(`actions.seek(${t});`);
-    // 等画面稳:连续两次读到同一个哈希
+    // Wait for visuals to stabilize: read the same hash twice consecutively
     let prev = null;
     const got = await until(async () => {
       const r = await readCanvas();
@@ -108,15 +112,18 @@ try {
   };
 
   /**
-   * 留图:canvas 原始像素存一张 PNG(透明底),再等编辑器的「正在测量卡片」遮罩退掉后截前台舞台 iframe 一张。
-   * 遮罩是 K1 成本测量(后台舞台逐帧推这张卡量耗时)期间盖在预览上的,不等它退掉截到的只是遮罩。
+   * Save images: save raw canvas pixels as a PNG (transparent background), then wait for the
+   * editor's "Measuring card" overlay to dismiss before taking a screenshot of the visible stage
+   * iframe. The overlay covers the preview during K1 cost measurement (background stage pushes this
+   * card frame-by-frame to measure duration); without waiting for it to dismiss, the screenshot
+   * captures only the overlay.
    */
   const shoot = async (name) => {
     const f = await frontFrame();
     if (!f) return;
     const url = await f.evaluate(() => document.querySelector('.inset-0 > canvas')?.toDataURL('image/png') ?? null).catch(() => null);
     if (url) await fs.writeFile(path.join(OUT, `${name}-canvas.png`), Buffer.from(url.split(',')[1], 'base64'));
-    await until(() => page.evaluate(() => !document.body.innerText.includes('正在测量卡片')), 90000, 500);
+    await until(() => page.evaluate(() => !document.body.innerText.includes('Measuring card')), 90000, 500);
     const el = await f.frameElement();
     if (el) await el.screenshot({ path: path.join(OUT, `${name}-stage.png`) });
   };
@@ -124,18 +131,18 @@ try {
   const a = await seekAndRead(T);
   out.first = a;
   await shoot(`t${T}-first`);
-  check(!!a && a.w > 0, '粒子 canvas 在位', a);
-  check(!!a && a.ink > 0, `t=${T}s 暂停时粒子画面非空(不透明像素 > 0)`, a);
+  check(!!a && a.w > 0, 'particle canvas is in place', a);
+  check(!!a && a.ink > 0, `t=${T}s the particle image is non-empty when paused (opaque pixels > 0)`, a);
 
   const b = await seekAndRead(T2);
   out.other = b;
-  check(!!b && b.ink > 0, `t=${T2}s 暂停时粒子画面非空`, b);
-  check(!!a && !!b && a.hash !== b.hash, '不同时刻画面不同', { a: a?.hash, b: b?.hash });
+  check(!!b && b.ink > 0, `t=${T2}s the particle image is non-empty when paused`, b);
+  check(!!a && !!b && a.hash !== b.hash, 'the image differs at different times', { a: a?.hash, b: b?.hash });
 
   const a2 = await seekAndRead(T);
   out.again = a2;
   await shoot(`t${T}-again`);
-  check(!!a && !!a2 && a.hash === a2.hash, `跳走再跳回 t=${T}s,两次画面逐像素相同`, { a: a?.hash, a2: a2?.hash });
+  check(!!a && !!a2 && a.hash === a2.hash, `jump away and back to t=${T}s, the two images are pixel-identical`, { a: a?.hash, a2: a2?.hash });
   out.pageErrors = errors.slice(-5);
 } finally {
   await browser.close();

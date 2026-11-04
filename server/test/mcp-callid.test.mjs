@@ -1,6 +1,7 @@
 /**
- * c65-integ2:mcp-server 把 Claude Code 在 tools/call 里带的 `_meta["claudecode/toolUseId"]` 当 callId 转给编辑器
- * (/api/mcp/call 的请求体),编辑器把它放进工具调用事件,页面 AI 栏按它对上聊天记录;没带时不转。
+ * c65-integ2: mcp-server passes `_meta["claudecode/toolUseId"]` sent by Claude Code in tools/call as
+ * callId to editor (request body of /api/mcp/call); editor puts it into tool call events, and page
+ * AI panel matches chat history by it; not passed when absent.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const MCP = fileURLToPath(new URL('../mcp-server.mjs', import.meta.url));
 
-test('MCP-CALLID tools/call 的 _meta["claudecode/toolUseId"] 原样转成 /api/mcp/call 的 callId;没带就不带', async () => {
+test('MCP-CALLID _meta["claudecode/toolUseId"] of tools/call is passed through unchanged as the callId of /api/mcp/call; if it is missing, callId is omitted', async () => {
   const bodies = [];
   const bridge = http.createServer((req, res) => {
     let body = '';
@@ -31,7 +32,7 @@ test('MCP-CALLID tools/call 的 _meta["claudecode/toolUseId"] 原样转成 /api/
     const tick = () => {
       const line = buf.split('\n').find((l) => l.includes(`"id":${id}`));
       if (line) return resolve(JSON.parse(line));
-      if (Date.now() - t0 > 10000) return reject(new Error(`10 秒没收到 id ${id} 的回复`));
+      if (Date.now() - t0 > 10000) return reject(new Error(`No reply for id ${id} received within 10 s`));
       setTimeout(tick, 20);
     };
     tick();
@@ -45,7 +46,7 @@ test('MCP-CALLID tools/call 的 _meta["claudecode/toolUseId"] 原样转成 /api/
     assert.equal(calls.length, 2);
     assert.equal(calls[0].callId, 'toolu_01XYZ');
     assert.equal(calls[0].agent, 'conv-x');
-    assert.equal('callId' in calls[1], false, '没带 _meta 就不带 callId');
+    assert.equal('callId' in calls[1], false, 'No callId when _meta is absent');
   } finally {
     child.kill();
     bridge.close();

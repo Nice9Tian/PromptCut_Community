@@ -1,9 +1,14 @@
 /**
- * SP 局域网发现（契约 `docs/plan/shared-project-contract.md` 第 4 节参数；验收第 7 节 SP4 的本机部分）。
- * 跑：node --test server/test/sp-lan.test.mjs
+ * SP LAN discovery (parameters in Section 4 of `docs/plan/shared-project-contract.md`;
+ * local portion of Section 7 acceptance check SP4).
+ * Run: node --test server/test/sp-lan.test.mjs
  *
- * 契约只定参数，没定模块与函数：全部假设见 `sp-kit.mjs` 文件头 L0。本机单测用两个 dgram 套接字模拟（回环网卡注入、
- * 单播代替组播），端口都由系统分配（主机绑 0，查询发往它实际绑到的端口），同一台机器上并行跑几份也不串。跨机（真组播、定向广播、不同网段发现不到）在 W6 验。
+ * The contract specifies only parameters, not modules and functions: all assumptions are in
+ * `sp-kit.mjs` file header L0. Local unit tests simulate with two dgram sockets (loopback interface
+ * injection, unicast instead of multicast), with all ports assigned by the system (host binds to 0,
+ * queries are sent to the port it actually bound to), so running multiple copies in parallel on the
+ * same machine will not collide. Cross-machine (real multicast, directed broadcast, undiscoverable
+ * across different subnets) is verified in W6.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,9 +28,9 @@ function announceFields(extra = {}) {
   };
 }
 
-// ================================================================== 参数
+// ================================================================== Parameters
 
-test('SPC4-1 参数：239.255.42.99:54887、TTL 1、查询每 500 ms 共 3 次、通告 15 s ± 3 s、45 s 过期、单包 ≤ 1 KiB、发现限时 3 s、每 10 s 查网卡', async () => {
+test('SPC4-1 parameters: 239.255.42.99:54887, TTL 1, 3 queries 500 ms apart, announce every 15 s ± 3 s, expire after 45 s, single packet ≤ 1 KiB, discovery limited to 3 s, check network interfaces every 10 s', async () => {
   const { LAN_DISCOVERY: P } = await loadLan();
   assert.equal(P.group, '239.255.42.99');
   assert.equal(P.port, 54887);
@@ -40,9 +45,9 @@ test('SPC4-1 参数：239.255.42.99:54887、TTL 1、查询每 500 ms 共 3 次�
   assert.equal(P.interfaceCheckMs, 10_000);
 });
 
-// ================================================================== 包格式
+// ================================================================== Packet format
 
-test('SPC4-2 查询包：{ magic: promptcut-lan, v: 1, type: query, nonce, name? }，UTF-8 JSON', async () => {
+test('SPC4-2 query packet: { magic: promptcut-lan, v: 1, type: query, nonce, name? }, UTF-8 JSON', async () => {
   const { encodeQuery, decodePacket } = await loadLan();
   const q = json(encodeQuery({ nonce: 'abc123', name: '演示项目' }));
   assert.equal(q.magic, 'promptcut-lan');
@@ -51,11 +56,11 @@ test('SPC4-2 查询包：{ magic: promptcut-lan, v: 1, type: query, nonce, name?
   assert.equal(q.nonce, 'abc123');
   assert.equal(q.name, '演示项目');
   const noName = json(encodeQuery({ nonce: 'n2' }));
-  assert.equal(noName.name, undefined, 'name 可省');
+  assert.equal(noName.name, undefined, 'name is optional');
   assert.deepEqual(decodePacket(encodeQuery({ nonce: 'abc123', name: 'x' })), { magic: 'promptcut-lan', v: 1, type: 'query', nonce: 'abc123', name: 'x' });
 });
 
-test('SPC4-3 应答包：字段齐全、ttlMs 45000；超过 1 KiB 不发（回 null）', async () => {
+test('SPC4-3 reply packet: all fields present, ttlMs 45000; not sent when over 1 KiB (returns null)', async () => {
   const { encodeAnnounce, decodePacket } = await loadLan();
   const f = announceFields();
   const buf = encodeAnnounce(f);
@@ -63,15 +68,15 @@ test('SPC4-3 应答包：字段齐全、ttlMs 45000；超过 1 KiB 不发（回 
   assert.ok(buf.length <= 1024);
   const a = json(buf);
   for (const k of ['magic', 'v', 'type', 'nonce', 'projectId', 'name', 'mode', 'hostDeviceName', 'docservice', 'asset', 'ttlMs']) {
-    assert.deepEqual(a[k], f[k], `字段 ${k}`);
+    assert.deepEqual(a[k], f[k], `field ${k}`);
   }
   assert.deepEqual(decodePacket(buf).projectId, f.projectId);
-  assert.equal(encodeAnnounce(announceFields({ hostDeviceName: 'x'.repeat(1100) })), null, '超过 1 KiB 不发');
-  // 刚好按 UTF-8 字节算：多字节字符
-  assert.equal(encodeAnnounce(announceFields({ hostDeviceName: '设'.repeat(330) })), null, '按 UTF-8 字节数算，不按字符数');
+  assert.equal(encodeAnnounce(announceFields({ hostDeviceName: 'x'.repeat(1100) })), null, 'not sent when over 1 KiB');
+  // Calculated exactly in UTF-8 bytes: multibyte characters
+  assert.equal(encodeAnnounce(announceFields({ hostDeviceName: '设'.repeat(330) })), null, 'counted in UTF-8 bytes, not characters');
 });
 
-test('SPC4-4 decodePacket：magic、v、type 不对、不是 JSON、超过 1 KiB 都回 null', async () => {
+test('SPC4-4 decodePacket: a wrong magic, v or type, non-JSON, or more than 1 KiB all return null', async () => {
   const { decodePacket } = await loadLan();
   const enc = (o) => Buffer.from(JSON.stringify(o), 'utf8');
   assert.equal(decodePacket(enc({ ...announceFields(), magic: 'other' })), null);
@@ -79,13 +84,13 @@ test('SPC4-4 decodePacket：magic、v、type 不对、不是 JSON、超过 1 KiB
   assert.equal(decodePacket(enc({ ...announceFields(), type: 'hello' })), null);
   assert.equal(decodePacket(Buffer.from('{not json', 'utf8')), null);
   assert.equal(decodePacket(Buffer.from([0xff, 0xfe, 0x00])), null);
-  assert.equal(decodePacket(enc({ ...announceFields(), pad: 'y'.repeat(1100) })), null, '超过 1 KiB 的包不收');
+  assert.equal(decodePacket(enc({ ...announceFields(), pad: 'y'.repeat(1100) })), null, 'packets over 1 KiB are not accepted');
   assert.equal(decodePacket(enc(announceFields())).type, 'announce');
 });
 
-// ================================================================== 选网卡
+// ================================================================== Select network interface
 
-test('SPC4-5 选网卡：已启用、非回环、非链路本地、有 IPv4；算出子网定向广播地址', async () => {
+test('SPC4-5 selecting network interfaces: enabled, non-loopback, non-link-local, with IPv4; computes the subnet-directed broadcast address', async () => {
   const { selectInterfaces } = await loadLan();
   const ifs = {
     Loopback: [{ address: '127.0.0.1', netmask: '255.0.0.0', family: 'IPv4', internal: true, mac: '00:00:00:00:00:00' }],
@@ -104,32 +109,32 @@ test('SPC4-5 选网卡：已启用、非回环、非链路本地、有 IPv4；�
   ]);
 });
 
-// ================================================================== 过期
+// ================================================================== Expiration
 
-test('SPC4-6 客户端 45 s 没见到就移除；期间再见到就续期', async () => {
+test('SPC4-6 a client is removed if not seen for 45 s; seeing it again in the meantime renews it', async () => {
   const { createLanTable } = await loadLan();
   let now = 1_000_000;
   const table = createLanTable({ now: () => now });
   table.see(announceFields());
   assert.equal(table.list().length, 1);
   now += 44_000;
-  assert.equal(table.list().length, 1, '44 s 还在');
+  assert.equal(table.list().length, 1, 'still there at 44 s');
   table.see(announceFields());
   now += 44_000;
-  assert.equal(table.list().length, 1, '续期后又过 44 s 还在');
+  assert.equal(table.list().length, 1, 'still there 44 s after renewal');
   now += 2_000;
-  assert.equal(table.list().length, 0, '最后一次见到后超过 45 s 移除');
+  assert.equal(table.list().length, 0, 'removed once more than 45 s have passed since it was last seen');
   table.see(announceFields({ projectId: 'sp_bbbbbbbbbbbbbbbbbbbbbbbbbb' }));
   table.see(announceFields({ projectId: 'sp_bbbbbbbbbbbbbbbbbbbbbbbbbb' }));
-  assert.equal(table.list().length, 1, '同一项目同一主机只算一条');
+  assert.equal(table.list().length, 1, 'the same project on the same host counts as one entry');
 });
 
-// ================================================================== 两个 dgram 套接字
+// ================================================================== Two dgram sockets
 
 async function udpSocket(t, port = 0) {
   const s = dgram.createSocket({ type: 'udp4', reuseAddr: false });
   await new Promise((resolve, reject) => { s.once('error', reject); s.bind(port, '127.0.0.1', resolve); });
-  t.after(() => { try { s.close(); } catch { /* 已关 */ } });
+  t.after(() => { try { s.close(); } catch { /* Closed */ } });
   return s;
 }
 
@@ -141,7 +146,7 @@ async function lanHostFor(t, { projects, docservicePort = 5173, assetPort = 5173
   return host;
 }
 
-test('SPC4-7 主机收到查询，单播回应答：nonce 原样、地址取收到查询的那块网卡、ttlMs 45000、包 ≤ 1 KiB', async (t) => {
+test('SPC4-7 when the host receives a query it replies by unicast: nonce unchanged, address taken from the network interface that received the query, ttlMs 45000, packet ≤ 1 KiB', async (t) => {
   const { encodeQuery } = await loadLan();
   const proj = { projectId: 'sp_cccccccccccccccccccccccccc', name: 'lan-demo', mode: 'restricted' };
   const host = await lanHostFor(t, { projects: [proj], docservicePort: 5188, assetPort: 5188 });
@@ -149,7 +154,7 @@ test('SPC4-7 主机收到查询，单播回应答：nonce 原样、地址取收�
   const nonce = randomBytes(8).toString('hex');
   const got = new Promise((resolve) => client.on('message', (msg, rinfo) => resolve({ msg, rinfo })));
   client.send(encodeQuery({ nonce, name: 'lan-demo' }), host.port(), '127.0.0.1');
-  const { msg, rinfo } = await Promise.race([got, new Promise((_, rej) => setTimeout(() => rej(new Error('5 s 内没收到应答')), 5000))]);
+  const { msg, rinfo } = await Promise.race([got, new Promise((_, rej) => setTimeout(() => rej(new Error('no reply received within 5 s')), 5000))]);
   assert.ok(msg.length <= 1024);
   assert.equal(rinfo.address, '127.0.0.1');
   const a = json(msg);
@@ -166,7 +171,7 @@ test('SPC4-7 主机收到查询，单播回应答：nonce 原样、地址取收�
   assert.equal(a.ttlMs, 45000);
 });
 
-test('SPC4-8 discoverLan 经两个 dgram 套接字 5 s 内找到主机；名字不符的找不到；主机停了找不到', { timeout: 30_000 }, async (t) => {
+test('SPC4-8 discoverLan finds the host within 5 s through two dgram sockets; a non-matching name finds nothing; a stopped host is not found', { timeout: 30_000 }, async (t) => {
   const { discoverLan } = await loadLan();
   const proj = { projectId: 'sp_dddddddddddddddddddddddddd', name: 'Found-Me', mode: 'free' };
   const host = await lanHostFor(t, { projects: [proj] });
@@ -174,16 +179,16 @@ test('SPC4-8 discoverLan 经两个 dgram 套接字 5 s 内找到主机；名字�
   const t0 = Date.now();
   const found = await discoverLan({ name: 'Found-Me', ...opts });
   const ms = Date.now() - t0;
-  assert.ok(ms <= 5000, `发现用时 ${ms} ms ≤ 5 s`);
+  assert.ok(ms <= 5000, `discovery took ${ms} ms ≤ 5 s`);
   assert.deepEqual(found.map((a) => a.projectId), [proj.projectId]);
   const none = await discoverLan({ name: 'someone-else', ...opts });
-  assert.deepEqual(none, [], '名字不符的找不到');
+  assert.deepEqual(none, [], 'a non-matching name finds nothing');
   await host.stop();
   const gone = await discoverLan({ name: 'Found-Me', ...opts });
-  assert.deepEqual(gone, [], '主机停了找不到');
+  assert.deepEqual(gone, [], 'a stopped host is not found');
 });
 
-test('SPC4-9 发现与进入局域网主机期间，托管端的连接数不变', { timeout: 30_000 }, async (t) => {
+test('SPC4-9 the hosted side\'s connection count is unchanged while discovering and joining the LAN host', { timeout: 30_000 }, async (t) => {
   const { discoverLan } = await loadLan();
   const hosted = await hostFor(t);
   const lanHost = await hostFor(t, { attached: true });
@@ -194,7 +199,7 @@ test('SPC4-9 发现与进入局域网主机期间，托管端的连接数不变'
   assert.equal(found.length, 1);
   assert.equal(found[0].docservice, `ws://127.0.0.1:${lanHost.port}/docservice`);
   const c = await join(lanHost, proj, { username: 'bob', remote: '192.168.1.70' });
-  await waitFor(() => lanHost.principals().some((p) => p?.username === 'bob'), 2000, 'bob 进入局域网主机');
-  assert.equal(hosted.service.describe().conns.length, before, '托管端连接数不变');
+  await waitFor(() => lanHost.principals().some((p) => p?.username === 'bob'), 2000, 'bob joins the LAN host');
+  assert.equal(hosted.service.describe().conns.length, before, 'hosted side connection count unchanged');
   c.close();
 });

@@ -2,18 +2,23 @@ import { useRef } from "react";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 面板拖杆。左栏 / 右栏 / 时间轴共用这一根:
- * - axis="x" 拖出宽度,axis="y" 拖出高度
- * - invert:拖动方向和尺寸增长方向相反(右栏往左拖变宽、时间轴往上拖变高)
- * - 双击回到默认尺寸
+ * Panel drag handle. Shared by the left rail / right rail / timeline:
+ * - axis="x" drags out a width, axis="y" drags out a height
+ * - invert: the drag direction is opposite to the direction the size grows (the right rail grows wider when dragged
+ *   left, the timeline grows taller when dragged up)
+ * - double-click returns to the default size
  *
- * 拖动期间给 <body> 打上 data-pc-resizing:预览是个 iframe,鼠标滑进去就收不到
- * pointermove 了(虽然有 setPointerCapture 兜底,但按下时若捕获失败就会断),
- * 所以直接让它这会儿不吃鼠标事件。顺带把光标和禁选也统一成拖动态。
+ * During a drag, `<body>` gets data-pc-resizing: the preview is an iframe, and once the mouse slides into it,
+ * pointermove is no longer received (setPointerCapture is a fallback, but if capture fails on press it breaks),
+ * so it is made to ignore mouse events for the moment. This also unifies the cursor and text-selection
+ * disabling into the dragging state.
  *
- * 给了 `onNudge` 的那一根还能用键盘调(氛围式详细编辑里那一根这么用,issue #40):
- * 能 Tab 到、方向键一下一下地调、Shift 走大步、Home 复位 —— 只能用鼠标就把键盘用户关在门外了
- * (和开始页两条栏的拖缝一个道理,`src/start/WidthGrip.tsx`)。不给就还是原来那样,不进 Tab 顺序。
+ * A handle given `onNudge` can also be adjusted by keyboard (the one in Vibe mode detail editing uses it this way,
+ * issue #40):
+ * it can be tabbed to, arrow keys adjust step by step, Shift takes big steps, Home resets. Mouse-only would lock
+ * keyboard users out
+ * (same reasoning as the drag seams of the two rails on the start page, `src/start/WidthGrip.tsx`). Without it,
+ * it stays as before and is not in the Tab order.
  */
 export function ResizeHandle({
   axis,
@@ -39,14 +44,16 @@ export function ResizeHandle({
   onCommit: () => void;
   onReset?: () => void;
   /**
-   * 在当前尺寸上加减(px)。给了它这一根才吃键盘。
+   * Add or subtract on the current size (px). Only a handle given this takes keyboard input.
    *
-   * 为什么不是自己算 `value + step`:按住方向键时连发的几下都在同一帧里,每一下读到的 `value` 都还是旧的,
-   * 算出来是同一个数,尺寸就卡住不动了 —— 怎么接住见各调用方(同 `WidthGrip.tsx` 的 `onWidthNudge`)。
+   * Why not compute `value + step` itself: when an arrow key is held, the repeated presses all land in the same
+   * frame, and each one reads a `value` that is still the old one,
+   * so they compute the same number and the size gets stuck. How to handle it is up to each caller (same as
+   * `onWidthNudge` in `WidthGrip.tsx`).
    */
   onNudge?: (delta: number) => void;
   title?: string;
-  /** 探针用的记号(`data-pc`) */
+  /** Marker for probes (`data-pc`) */
   pc?: string;
 }) {
   const latest = useRef(value);
@@ -63,7 +70,7 @@ export function ResizeHandle({
     try {
       el.setPointerCapture(e.pointerId);
     } catch {
-      // 指针已经不在了(合成事件等),没有捕获也能拖
+      // The pointer is already gone (synthetic events, etc.); dragging works even without capture
     }
     document.body.dataset.pcResizing = axis;
     document.body.style.cursor = axis === "x" ? "col-resize" : "row-resize";
@@ -81,7 +88,7 @@ export function ResizeHandle({
       try {
         el.releasePointerCapture(ev.pointerId);
       } catch {
-        // 已经放开了
+        // Already released
       }
       delete document.body.dataset.pcResizing;
       document.body.style.cursor = "";
@@ -97,7 +104,7 @@ export function ResizeHandle({
   const disabledClass = disabled ? "is-disabled" : "";
 
   const keyboard = !!onNudge && !disabled;
-  /** 方向键按下去那一下,分隔条往屏幕哪个方向走 */
+  /** When an arrow key is pressed, which way on the screen the divider moves */
   const stepKeys = axis === "x" ? { less: "ArrowLeft", more: "ArrowRight" } : { less: "ArrowUp", more: "ArrowDown" };
 
   return (
@@ -120,7 +127,8 @@ export function ResizeHandle({
       onDoubleClick={onReset}
       onKeyDown={(e) => {
         if (!keyboard) return;
-        // 屏幕上往 less 那头走是负向;invert 的那一根(右栏、时间轴)尺寸增长方向正好相反
+        // Moving toward the less end on the screen is the negative direction; for an inverted handle (right rail,
+        // timeline) the size grows in exactly the opposite direction
         const screen = (e.shiftKey ? 32 : 8) * (invert ? -1 : 1);
         if (e.key === stepKeys.less) { e.preventDefault(); onNudge?.(-screen); }
         if (e.key === stepKeys.more) { e.preventDefault(); onNudge?.(screen); }

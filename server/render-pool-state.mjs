@@ -1,42 +1,48 @@
 /**
- * 预渲染进程里「渲染池之外、但也占着槽位」的活:目前只有完整导出。
+ * Work in the prerender process that is "outside the render pool, but still occupying slots":
+ * currently only full export.
  *
- * 导出是一整趟长任务,不走渲染池的队列(它自己 spawn scripts/export-frames.mjs),但它同样起一个 Chrome、
- * 同样吃核。所以池子算「还剩几个槽位」时要把它算进去,而且按计划 3.3 节:
+ * Export is a full long-running task pass that does not go through the render pool queue (it spawns
+ * scripts/export-frames.mjs itself), but it also starts a Chrome instance and consumes CPU cores.
+ * So when the pool calculates "remaining slots", it must be counted, and according to Section 3.3
+ * of the plan:
  *
- *   - 导出优先级最低,最多占「池子总数 − 1」个槽位,永远给 Agent 留一个;
- *   - 导出期间**暂停空闲预渲染** —— 预渲染是给 3D 视图猜着先渲的,这时用户多半不在看,
- *     让它和导出正常排,导出反而要排在一堆投机性的活后面。
+ *   - Export has the lowest priority, occupying at most "pool total - 1" slots, always reserving
+ *     one for the Agent;
+ *   - **Pause idle prerender** during export: prerendering speculatively renders ahead for 3D views
+ *     when the user is likely not looking; if queued normally with export, export would instead
+ *     queue behind a bunch of speculative tasks.
  *
- * 两个插件(vite-plugin-export 记账,vite-plugin-vision 查账)在同一个进程里,共用这一份模块状态。
+ * Two plugins (vite-plugin-export records, vite-plugin-vision audits) are in the same process and
+ * share this module state.
  */
 let exporting = 0;
 const listeners = new Set();
 
 function emit() {
   for (const fn of listeners) {
-    try { fn(); } catch { /* 一个监听者出错不该拖垮记账 */ }
+    try { fn(); } catch { /* An error in one listener should not break accounting */ }
   }
 }
 
-/** 一趟导出开始了 */
+/** An export pass has started */
 export function exportBegin() {
   exporting++;
   emit();
 }
 
-/** 一趟导出结束了(成功、失败、被取消都要调) */
+/** An export pass has ended (must be called on success, failure, or cancellation) */
 export function exportEnd() {
   exporting = Math.max(0, exporting - 1);
   emit();
 }
 
-/** 此刻有几趟导出在跑 */
+/** How many export passes are currently running */
 export function exportsRunning() {
   return exporting;
 }
 
-/** 导出开始 / 结束时通知(渲染池靠它在导出结束后接着派被暂停的预渲染) */
+/** Notified when export starts / ends (render pool relies on it to dispatch paused prerenders after export ends) */
 export function onPoolChange(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);

@@ -71,7 +71,7 @@ test('fixture HTTP proxy propagates aborted source and downstream cancel but pre
   }), 'truncated-client-abort');
   assert.equal(truncated.status, 200);
   assert.equal(truncated.body, 'partial');
-  assert.equal(truncated.ended, false, '上游中途关闭要让真实下游客户端及时观察到截断');
+  assert.equal(truncated.ended, false, 'when the upstream closes midway, the real downstream client must promptly observe the truncation');
 
   const complete = await within(new Promise((resolve, reject) => {
     const request = http.get(`http://127.0.0.1:${proxyPort}/complete`, response => {
@@ -82,7 +82,7 @@ test('fixture HTTP proxy propagates aborted source and downstream cancel but pre
     });
     request.once('error', reject);
   }), 'complete-response-end');
-  assert.deepEqual(complete, { status: 200, body: 'complete-body' }, '正常完整响应仍应完整透传');
+  assert.deepEqual(complete, { status: 200, body: 'complete-body' }, 'a normal complete response must still be passed through intact');
 
   const clientClosedUpstream = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timeout:upstream-sees-downstream-cancel')), 1500);
@@ -95,5 +95,5 @@ test('fixture HTTP proxy propagates aborted source and downstream cancel but pre
     });
     request.once('error', reject);
   }), 'client-cancel-start');
-  assert.equal(await within(clientClosedUpstream, 'upstream-close'), true, '下游取消后应销毁上游请求与响应流');
+  assert.equal(await within(clientClosedUpstream, 'upstream-close'), true, 'after the downstream cancels, the upstream request and response stream should be destroyed');
 });

@@ -1,10 +1,10 @@
-/* 「浏览器」面板:盖在顶栏以下的整块编辑区上,不是弹窗 —— 顶栏照常能点,页签一点就切回去 */
+/* "Browser" panel: covers the entire editing area below the top bar, it is not a popup: the top bar stays clickable as usual, and clicking a tab switches back */
 .abf-panel {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  /* top 由组件按顶栏底边算 */
+  /* top is computed by the component from the bottom edge of the top bar */
   z-index: 40;
   display: flex;
   flex-direction: column;
@@ -34,7 +34,7 @@
 }
 .abf-btn.is-ghost:hover { border-color: var(--ink-muted); }
 
-/* 子 webview 会盖在这块上面;留白只是占位,颜色给"还没摆上来"那一瞬看 */
+/* The child webview is laid over this block; the blank area is only a placeholder, and its color is for the moment when "it is not in place yet" */
 .abf-hole {
   flex: 1 1 auto;
   min-height: 200px;

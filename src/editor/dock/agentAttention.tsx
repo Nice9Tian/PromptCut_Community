@@ -7,15 +7,15 @@ import { agentItem, effectiveActive, sideOf } from "./railLayout";
 import { useRailLayout } from "./railStore";
 
 /**
- * rail 上 Agent 项的「等你查看」标记。
+ * The "waiting for you to look" marker on an Agent item in the rail.
  *
- *   正在跑        → 头像背景流动的光(RailBar 按 tab.busy 加 is-busy,不在这里记)
- *   跑完了        → 蓝点(done),等用户点开这一页看
- *   被停掉 / 出错 → 黄点(interrupted),同样等用户看
+ *   running                → flowing light on the avatar background (RailBar adds is-busy by tab.busy; not recorded here)
+ *   finished               → blue dot (done), waiting for the user to open this page
+ *   stopped / failed       → yellow dot (interrupted), likewise waiting for the user
  *
- * 只有**用户这时没在看这一页**才记:这一页是它那一侧 rail 的选中项、那一侧整列显示着、面板没收起,就算在看。
- * 用户切到这一页(或把收起的面板展开)就清掉;这一页又开始跑也清掉(跑的时候只显示流光)。
- * 标记只在内存里,不落盘:刷新之后没有「等你看」的东西。
+ * Only recorded if **the user is not looking at this page at that moment**: it counts as being looked at when this page is the selected item of its side's rail, that whole side is shown, and the panel is not collapsed.
+ * Cleared when the user switches to this page (or expands the collapsed panel); also cleared when this page starts running again (only the flowing light shows while running).
+ * Markers live only in memory and are not persisted: after a refresh nothing is "waiting for you".
  */
 export type AgentAttention = "done" | "interrupted";
 
@@ -38,14 +38,14 @@ function setMark(tabId: string, value: AgentAttention | null): void {
   for (const fn of listeners) fn();
 }
 
-/** 所有页的标记(引用只在有变化时换,RailBar 一次读全) */
+/** Markers for all pages (the reference changes only when something changes; RailBar reads everything at once) */
 export function useAgentAttentionMap(): ReadonlyMap<string, AgentAttention> {
   return useSyncExternalStore(subscribe, () => marks, () => marks);
 }
 
 /**
- * 一轮是怎么结束的:只有明确 outcome 为 completed 才算完成;
- * 用户停掉(aborted)、出错、其它结局、没写结局,以及消息还挂着 pending 就不跑了(比如跑着的时候回了首页,卸载时被 abort)都算中断
+ * How a turn ended: it counts as finished only when outcome is explicitly completed;
+ * the user stopping it (aborted), an error, any other outcome, no outcome written, and a message still left pending (not running anymore, e.g. went back to the start page while it was running and was aborted on unmount) all count as interrupted
  */
 export function attentionOf(last: Pick<ChatMessage, "outcome" | "error" | "pending"> | undefined): AgentAttention {
   if (!last) return "done";
@@ -60,8 +60,8 @@ function lastAssistant(tabId: string): ChatMessage | undefined {
 }
 
 /**
- * 盯着各页 busy 的变化打标记、按「用户在不在看」清标记。不画东西,DockPages 里挂一个。
- * 单独做成组件:它订阅收起状态,变化时只重渲它自己,不连累 DockPages 下面所有页面。
+ * Watches busy changes on each page to set markers, and clears markers by "whether the user is looking". Draws nothing; mount one in DockPages.
+ * Made a separate component: it subscribes to the collapsed state, so on change only it re-renders, not every page under DockPages.
  */
 export function AgentAttentionTracker(): null {
   const { tabs } = useAgentTabs();
@@ -70,7 +70,7 @@ export function AgentAttentionTracker(): null {
   const rightCollapsed = useRailCollapsed("right");
   const wasBusy = useRef(new Map<string, boolean>());
 
-  // layout effect:切到那一页时标记在画出来之前就清掉,不会闪一下点
+  // layout effect: when switching to that page the marker is cleared before it is painted, so the dot does not flash
   useLayoutEffect(() => {
     const viewing = (tabId: string) => {
       const item = agentItem(tabId);
@@ -90,7 +90,7 @@ export function AgentAttentionTracker(): null {
       if (was && !viewing(t.id)) setMark(t.id, attentionOf(lastAssistant(t.id)));
       else if (marks.has(t.id) && viewing(t.id)) setMark(t.id, null);
     }
-    // 关掉的页
+    // closed pages
     for (const id of [...wasBusy.current.keys()]) {
       if (tabs.some((t) => t.id === id)) continue;
       wasBusy.current.delete(id);

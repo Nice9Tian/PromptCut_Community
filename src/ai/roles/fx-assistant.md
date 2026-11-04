@@ -1,6 +1,6 @@
 ---
-capability: execution   # 按文字稿逐条建卡，量大但每步都直白，偏执行
+capability: execution   # builds cards one by one from the transcript; high volume but every step is direct; leans toward execution
 ---
-# 特效助理
+# Effects assistant
 
-帮我给每个视频创建字幕。然后根据他们说的内容创建对应的动画效果（比如趋势图）。清除当前冗余内容。
+Help me create captions for each video. Then create matching animation effects based on what they say (e.g. trend charts). Clear the current redundant content.

@@ -1,23 +1,23 @@
 /*
- * 编辑器外壳:把设计稿(配色诊断与修正 v2)的五级表面按区域分配。
+ * Editor shell: allocates the five surface levels of the design mockup (color diagnosis and correction v2) to the regions.
  *
- *   窗口栏(原生菜单)  #101316   —— 系统绘制,这里管不到
- *   画布 / 预览        L0  --ui-bg
- *   素材库 / 时间线    L1  --ui-bg-2
- *   工具栏 / 右栏      L2  --ui-panel
- *   控件               L3  --ui-panel-2
- *   悬浮 / 分隔        L4  --ui-float
+ *   Window bar (native menu)  #101316: drawn by the system, not controlled here
+ *   Canvas / preview        L0  --ui-bg
+ *   Media library / timeline    L1  --ui-bg-2
+ *   Toolbar / right rail      L2  --ui-panel
+ *   Controls               L3  --ui-panel-2
+ *   Floating / divider        L4  --ui-float
  *
- * 各区域的界面大量用 Tailwind 灰阶类,再由 skins.css 统一映射到 --ui-*。
- * 那张映射表是「全局一刀切」的(950→L0、900→L2、800→L3),但设计稿要求
- * 不同区域落在不同层级——素材库整块是 L1,里面的控件才是 L3——所以这里按
- * data-pc 区域再覆盖一层。只改层级归属,不改任何色值。
+ * The UI of each region uses a lot of Tailwind grayscale classes, which skins.css then maps uniformly to --ui-*.
+ * That mapping table is "one size fits all" (950→L0, 900→L2, 800→L3), but the design mock-up requires
+ * different areas to sit at different levels, with the whole media library at L1 and only the controls inside it at L3, so here we
+ * add another override layer per data-pc area. Only the level assignment changes, not any color value.
  */
 
-/* ── 素材库(左栏)抽屉 L1,控件 L3 ──────────────────────────────
- * 左栏根节点不刷底色:rail 要露出画布,底色由抽屉的 .pc-card-surface 给。
- * 分区能被拖到右侧 rail(editor/dock/),所以按分区页面节点的 data-pc-dock-kind="section" 挑,
- * 不按「在不在 [data-pc=left] 里」—— 否则分区到了右边丢配色,Agent 到了左边反被刷成素材库的层级 */
+/* ── Media library (left rail) drawer L1, controls L3 ──────────────────────────────
+ * The left rail root node does not paint a background color: the rail has to show the canvas, and the background comes from the drawer's .pc-card-surface.
+ * Sections can be dragged to the right rail (editor/dock/), so pick by the section page node's data-pc-dock-kind="section",
+ * not by "whether it is inside [data-pc=left]": otherwise a section moved to the right loses its colors, and the Agent moved to the left gets painted with the media library's level */
 [data-skin] [data-pc-dock-kind="section"] .bg-neutral-950,
 [data-skin] [data-pc-dock-kind="section"] .bg-neutral-950\/60 {
   background-color: var(--ui-bg-2);
@@ -35,7 +35,7 @@
   background-color: var(--ui-float);
 }
 
-/* ── 时间线整块 L1;选中 / 悬浮的行升到 L2 ────────────────────────── */
+/* ── Timeline as a whole L1; selected / hovered rows rise to L2 ────────────────────────── */
 [data-skin] [data-pc="timeline"],
 [data-skin] [data-pc="timeline"].bg-neutral-900 {
   background-color: var(--ui-bg-2);
@@ -50,18 +50,18 @@
 }
 
 /*
- * ── 右栏(AI 助手)整块 L1,和消息区同一个颜色 ─────────────────────────
- * 消息区是 L1。面板底若是 L2,消息区下面「Agent 操作」和输入框四周的边距露出 L2,
- * 消息区在「Agent 操作」上方齐齐截断,看上去是一条切缝(深色皮肤里最明显);
- * 浅色皮肤里则是输入框外面那 10px 露出白底,像输入框的白色溢到了面板边上。
- * 两种皮肤都整块用 L1:「Agent 操作」(L2)和输入框落在连续的底上,顶栏靠下边那条分隔线和消息区分开。
+ * ── Right rail (AI assistant) as a whole L1, the same color as the message area ─────────────────────────
+ * The message area is L1. If the panel background were L2, the margins around "Agent actions" and the input box below the message area would show L2,
+ * and the message area would be cut off flush above "Agent actions", looking like a slit (most obvious in dark skins);
+ * in light skins, the 10px outside the input box would show white instead, as if the input box's white had spilled onto the panel edge.
+ * Both skins use L1 for the whole block: "Agent actions" (L2) and the input box sit on a continuous background, and the divider line along the lower edge of the top bar sets it apart from the message area.
  */
 [data-skin] .ai-panel {
   background-color: var(--ui-bg-2);
 }
 
 /*
- * 拖杆是 8px 缝隙,静止时完全不可见,hover 时中间出现一条 2px 圆头的 --ui-accent-soft 线。
+ * The drag bar is an 8px gap, completely invisible at rest; on hover a 2px round-capped --ui-accent-soft line appears in the middle.
  */
 .pc-gutter {
   background: transparent;
@@ -99,11 +99,11 @@ body[data-pc-resizing] .pc-gutter::after {
 }
 
 /*
- * 两侧抽屉 / AI 面板收起、展开时,网格列宽过渡过去。
- * data-pc-rail-anim 只在收起状态切换的那一刻由 Editor.tsx 挂上一小会儿:拖杆拖宽度、
- * 窗口变窄时自动收缩面板都不走过渡(否则列宽追着鼠标慢半拍);拖动期间再强制关一次保险。
- * 过渡期间抽屉 / 面板卡片保持原宽、被列裁掉一截(left.css / chat.css),里面的内容不跟着逐帧重排;
- * 卡片自己的淡入淡出也挂在这个属性下面。
+ * When the side drawers / AI panel collapse or expand, the grid column widths transition over.
+ * data-pc-rail-anim is attached by Editor.tsx for a short while only at the moment the collapsed state switches: dragging a drag bar to change width,
+ * and panels auto-shrinking when the window narrows, neither goes through the transition (otherwise the column width trails the mouse by half a beat); during a drag it is forced off once more as insurance.
+ * During the transition the drawer / panel cards keep their original width and are clipped by the column (left.css / chat.css), so the content inside does not reflow frame by frame;
+ * the cards' own fade in / fade out also hangs off this attribute.
  */
 @media (prefers-reduced-motion: no-preference) {
   .pc-editor-grid[data-pc-rail-anim] {
@@ -114,7 +114,7 @@ body[data-pc-resizing] .pc-editor-grid {
   transition: none;
 }
 
-/* 时间轴卡片左右缩进(避开两侧 rail)跟着收起 / 展开一起滑,和上面网格列宽同一条曲线 */
+/* The timeline card's left/right inset (to clear the rails on both sides) slides along with collapse / expand, on the same curve as the grid column widths above */
 @media (prefers-reduced-motion: no-preference) {
   .pc-editor-bottom {
     transition: margin 220ms cubic-bezier(0.16, 1, 0.3, 1);

@@ -1,21 +1,24 @@
 /**
- * 云端对话的附件(契约 9.5 节,〔用户 2026-10-07 定〕云端下附件按钮可用)。纯函数,Node 单测直接用。
+ * Cloud chat attachments (contract section 9.5, (user decision, 2026-10-07: attachment button
+ * available under cloud)). Pure functions, used directly by Node unit tests.
  *
- * 云端不走本机的附件接口(`/api/` 下的;在线构建不许请求 `/api/*`,守门清单见 `server/test/c10a-online-api-paths.json`),
- * 所以不引 `src/ai/attachments.ts`(它带着那几个本机接口);这里只放页面一侧要的几样:
- *   - 服务端回包 → 输入区附件条与对话气泡用的 `ChatAttachment`;
- *   - 选文件对话框的 `accept`(与本机一致);
- *   - 附件相关的出错话。
+ * Cloud does not use local attachment endpoints (under `/api/`; online build must not request
+ * `/api/*`, see gatekeeper manifest `server/test/c10a-online-api-paths.json`), so
+ * `src/ai/attachments.ts` is not imported (it carries those local endpoints); only things needed
+ * by page side are kept here:
+ *   - Server response → `ChatAttachment` used by input area attachment bar and chat bubble;
+ *   - File picker dialog `accept` (consistent with local);
+ *   - Attachment-related error messages.
  *
- * （原在 `src/ai/cloud/attach.ts`，上移至公开侧 `src/ai/cloudAttach.ts`）
+ * (formerly in `src/ai/cloud/attach.ts`, moved up to public side `src/ai/cloudAttach.ts`)
  */
 import type { ChatAttachment } from "./types.ts";
 import { tr } from "../i18n/index.ts";
 
-/** 单个附件的上限(服务端 512 MB;超了回 413 `too-large`,同样的话也用于对话工作目录满了) */
+/** Limit for a single attachment (server 512 MB; returns 413 `too-large` when exceeded; same message is also used when chat working directory is full) */
 export const CLOUD_ATTACH_MAX_BYTES = 512 * 1024 * 1024;
 
-/** 选文件对话框的 `accept`:与本机一致(`src/ai/attachments.ts` 的 `acceptAttr`) */
+/** File picker dialog `accept`: consistent with local (`acceptAttr` in `src/ai/attachments.ts`) */
 export const CLOUD_ATTACH_ACCEPT = [
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".avif",
   ".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v",
@@ -24,19 +27,19 @@ export const CLOUD_ATTACH_ACCEPT = [
   ".txt", ".md", ".markdown", ".csv", ".log",
 ].join(",");
 
-/** 云端附件上传的悬停说明(附件按钮) */
+/** Hover description for cloud attachment upload (attachment button) */
 export const CLOUD_ATTACH_TITLE = tr("Add attachment: upload files to this cloud chat's working directory so the Cloud Agent can use them (max 512 MB each)");
 
 export const CLOUD_ATTACH_TOO_LARGE = tr("File too large, the cloud can't accept it (each file must be 512 MB or less, and this chat's working directory also has a total size limit).");
-/** 只发了附件、没写话:服务端不收空消息 */
+/** Sent attachment only with no text: server does not accept empty messages */
 export const CLOUD_ATTACH_NEED_TEXT = tr("Write one sentence explaining how you want the Cloud Agent to use these files.");
 
-/** 输入区上一个附件的占位 id(上传期间、失败重试、移除都靠它对上) */
+/** Placeholder id of an attachment in input area (matched against during upload, failed retry, and removal) */
 export function newCloudAttachId(): string {
   return `att-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6).padEnd(4, "0")}`;
 }
 
-/** 页面一侧按文件名猜的类型(上传期间占位用;回包里服务端给的类型为准) */
+/** Type inferred by page side from filename (used as placeholder during upload; type given by server in response takes precedence) */
 export function cloudAttachKindOfName(name: string): ChatAttachment["kind"] {
   const dot = name.lastIndexOf(".");
   const ext = dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
@@ -50,7 +53,7 @@ export function cloudAttachKindOfName(name: string): ChatAttachment["kind"] {
   return "other";
 }
 
-/** 服务端回的类型(`video` / `image` / `audio` / `text` / `file`) → `ChatAttachment.kind`;不认识的按文件名猜 */
+/** Type returned by server (`video` / `image` / `audio` / `text` / `file`) → `ChatAttachment.kind`; unrecognized types are inferred from filename */
 export function cloudAttachKind(serverKind: unknown, name: string): ChatAttachment["kind"] {
   switch (serverKind) {
     case "video": case "image": case "audio": case "text": return serverKind;
@@ -58,10 +61,10 @@ export function cloudAttachKind(serverKind: unknown, name: string): ChatAttachme
   }
 }
 
-/** 上传回包 `{ name, url, size, kind, text? }`(契约第 2.3 节) */
+/** Upload response `{ name, url, size, kind, text? }` (contract section 2.3) */
 export interface CloudAttachmentInfo {
   name: string;
-  /** 形如 `work:attachments/<文件名>`;下一条消息的 `attachments: [{ url }]` 带回去 */
+  /** Formatted as `work:attachments/<filename>`; passed back in `attachments: [{ url }]` of the next message */
   url: string;
   size: number;
   kind: ChatAttachment["kind"];
@@ -81,13 +84,13 @@ export function normalizeAttachmentInfo(raw: unknown, fallbackName: string): Clo
   };
 }
 
-/** 发消息时带上的:只要传好了的、且属于当前对话的;其余算「没带上」,返回它们的个数供界面提示 */
+/** Attached when sending: only uploaded and in current chat; others count as "not attached", returning count for UI hints */
 export function pickSendable(list: readonly ChatAttachment[], conversationId: string): { usable: ChatAttachment[]; skipped: number } {
   const usable = list.filter((a) => a.status === "ready" && !!a.url && (!a.conversationId || a.conversationId === conversationId));
   return { usable, skipped: list.length - usable.length };
 }
 
-/** 发出去的消息里附件的显示形状:气泡只要名字与图标,不带文件内容 */
+/** Display format of attachments in sent messages: bubbles only need name and icon, without file content */
 export function bubbleAttachments(list: readonly ChatAttachment[]): ChatAttachment[] {
   return list.map((a) => ({ url: a.url, name: a.name, kind: a.kind, bytes: a.bytes, status: "ready" as const }));
 }

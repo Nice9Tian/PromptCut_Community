@@ -1,30 +1,39 @@
 /**
- * 文档服务的日志存储：按 stream 追加 JSON 行、整条读回。契约见 `docs/plan/docservice-contract.md` 第 3 节。
+ * Document service log store: append JSON lines per stream, read back full streams. See contract
+ * `docs/plan/docservice-contract.md` section 3.
  *
- * stream 是 `projects/<projectId>`、`content/<kind>` 这样的相对名：`<命名空间>/<名字>`。
- * 文件存储把它映射成 `<dir>/<命名空间>/<名字>.ndjson`：
- * - 名字里 `[A-Za-z0-9._-]` 原样保留，其余每个 UTF-8 字节写成 `%XX`（大写十六进制），`%` 本身也编码
- *   （契约第 10 节）。例：`a:b` → `a%3Ab.ndjson`；
- * - 名字后面总接 `.ndjson`，所以 `.`、`..` 也只是普通文件名，映射后的路径还要再核一次落在 `<dir>` 里。
- * 读和写用同一个映射。
+ * Streams are relative names like `projects/<projectId>` or `content/<kind>`: `<namespace>/<name>`.
+ * File store maps them to `<dir>/<namespace>/<name>.ndjson`:
+ * - Characters in `[A-Za-z0-9._-]` are kept as is; every other UTF-8 byte is written as `%XX`
+ *   (uppercase hex), and `%` itself is also encoded (contract section 10).
+ *   Example: `a:b` → `a%3Ab.ndjson`;
+ * - Names always end with `.ndjson`, so `.` and `..` are just normal file names; the mapped path
+ *   is checked once more to ensure it falls inside `<dir>`.
+ * Reads and writes use the same mapping.
  *
- * Windows 的文件名不分大小写：只差大小写的两个名字会落进同一个文件。所以每条记录都带自己的键
- * （`projectId`、`kind`），模块回放时按键过滤，不依赖「一个 stream 一个文件」。
+ * Windows file names are case-insensitive: two names differing only in case fall into the same file.
+ * Therefore, each record carries its own key (`projectId`, `kind`), and modules filter by key upon
+ * replay, not relying on "one stream per file".
  *
- * 写用 `appendFileSync`：一条记录一次同步写，顺序与调用顺序相同。进程在写到一半时崩掉，最后一行可能是半行：
- * 读的时候丢掉解析不了的行并记日志；本进程第一次往这个文件追加前，先看文件是不是以换行结尾，不是就先补一个换行，
- * 免得新记录接在半行后面一起坏掉。
+ * Writing uses `appendFileSync`: one sync write per record, in invocation order. If the process
+ * crashes mid-write, the last line may be partial: upon read, discard unparseable lines and log them;
+ * before this process appends to this file for the first time, check if the file ends with a
+ * newline; if not, add a newline first so new records do not append to and corrupt a partial line.
  *
- * **整份文本**（M5b 的项目快照，`render-queue-contract.md` J.1）：`writeBlob(name, text)` / `readBlob(name)`。
- * `name` 是 `<命名空间>/<文件名>`，文件名由调用方先按上面的规则编码好（`fileNameOf`），存储层不再编码，
- * 只核对它只含 `[A-Za-z0-9._@%-]`、不全是点、映射后的路径落在 `<dir>` 里；不合格抛 TypeError。
- * 例：项目快照是 `projects/<fileNameOf(projectId)>@<projectRev>.json`。
- * 写入先写同目录下的临时文件、刷盘，再改名盖过目标，读的一方不会看到写了一半的文件。
+ * **Whole text** (project snapshot in M5b, `render-queue-contract.md` J.1): `writeBlob(name, text)` /
+ * `readBlob(name)`. `name` is `<namespace>/<filename>`, where the caller encodes the filename
+ * beforehand per above rules (`fileNameOf`); the storage layer does not re-encode, only verifying
+ * that it contains only `[A-Za-z0-9._@%-]`, is not all dots, and mapped path falls inside `<dir>`;
+ * throws TypeError if invalid. Example: project snapshot is
+ * `projects/<fileNameOf(projectId)>@<projectRev>.json`.
+ * Writes first write to a temp file in the same directory, flush to disk, then rename over the target;
+ * readers never see half-written files.
  *
- * **整条重写**（C6.5 的项目操作日志截断）：`rewrite(stream, records)` 把一条 stream 整个换成给定的记录，
- * 同样先写临时文件再改名，读的一方要么看到旧的整条、要么看到新的整条。
+ * **Full stream rewrite** (project operation log truncation in C6.5): `rewrite(stream, records)`
+ * replaces an entire stream with given records, likewise writing to temp file first then renaming;
+ * readers see either the old full stream or the new full stream.
  *
- * 只用 Node 内置模块（D2 守门覆盖 `server/docservice/`）。
+ * Uses Node built-in modules only (D2 gatekeeper covers `server/docservice/`).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,10 +41,10 @@ import path from 'node:path';
 const NAMESPACE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const MAX_NAME_LENGTH = 512;
 const SAFE_CHAR = /^[A-Za-z0-9._-]$/;
-/** 整份文本的文件名：调用方已编码，只许这些字符 */
+/** Filename for whole text: caller already encoded, only these characters allowed */
 const BLOB_FILE_RE = /^[A-Za-z0-9._@%-]{1,512}$/;
 
-/** 缺省日志：一行一条 JSON，写 stdout */
+/** Default log: one JSON line per entry, writes to stdout */
 function jsonLog(event, fields) {
   process.stdout.write(`${JSON.stringify({ t: new Date().toISOString(), event, ...fields })}\n`);
 }
@@ -43,8 +52,10 @@ function jsonLog(event, fields) {
 const hex = (ch) => [...Buffer.from(ch, 'utf8')].map((b) => `%${b.toString(16).toUpperCase().padStart(2, '0')}`).join('');
 
 /**
- * 名字 → 文件名（不含扩展名）：`[A-Za-z0-9._-]` 原样，其余每个 UTF-8 字节写成 `%XX`（大写十六进制），`%` 本身也编码。
- * 例：`a:b` → `a%3Ab`。直接拼 `a:b.ndjson` 的话，Windows 会把它写进文件 `a` 的备用数据流（文件夹里看不见，拷贝时丢）。
+ * Name → filename (without extension): `[A-Za-z0-9._-]` as is, each other UTF-8 byte written as
+ * `%XX` (uppercase hex), `%` itself is also encoded.
+ * Example: `a:b` → `a%3Ab`. Concatenating directly as `a:b.ndjson` causes Windows to write it into
+ * alternate data streams of file `a` (invisible in folders, lost on copy).
  */
 export function fileNameOf(name) {
   let out = '';
@@ -52,43 +63,43 @@ export function fileNameOf(name) {
   return out;
 }
 
-/** 拆 stream：`<命名空间>/<名字>`；不合法就抛 TypeError */
+/** Split stream: `<namespace>/<name>`; throws TypeError if invalid */
 function parseStream(stream) {
-  if (typeof stream !== 'string') throw new TypeError('stream 必须是字符串');
+  if (typeof stream !== 'string') throw new TypeError('stream must be a string');
   const i = stream.indexOf('/');
   const ns = i > 0 ? stream.slice(0, i) : '';
   const name = i > 0 ? stream.slice(i + 1) : '';
-  if (!NAMESPACE_RE.test(ns)) throw new TypeError(`stream 不合法：${JSON.stringify(stream)}`);
+  if (!NAMESPACE_RE.test(ns)) throw new TypeError(`Invalid stream: ${JSON.stringify(stream)}`);
   if (name === '' || name.length > MAX_NAME_LENGTH || /[/\\\u0000]/.test(name)) {
-    throw new TypeError(`stream 不合法：${JSON.stringify(stream)}`);
+    throw new TypeError(`Invalid stream: ${JSON.stringify(stream)}`);
   }
   return { ns, name };
 }
 
-/** 拆整份文本的名字：`<命名空间>/<已编码的文件名>`；不合法就抛 TypeError */
+/** Split whole text name: `<namespace>/<encodedFilename>`; throws TypeError if invalid */
 function parseBlobName(name) {
-  if (typeof name !== 'string') throw new TypeError('blob 名必须是字符串');
+  if (typeof name !== 'string') throw new TypeError('blob name must be a string');
   const i = name.indexOf('/');
   const ns = i > 0 ? name.slice(0, i) : '';
   const file = i > 0 ? name.slice(i + 1) : '';
   if (!NAMESPACE_RE.test(ns) || !BLOB_FILE_RE.test(file) || /^\.+$/.test(file)) {
-    throw new TypeError(`blob 名不合法：${JSON.stringify(name)}`);
+    throw new TypeError(`Invalid blob name: ${JSON.stringify(name)}`);
   }
   return { ns, file };
 }
 
 function checkBlobText(text) {
-  if (typeof text !== 'string') throw new TypeError('blob 内容必须是字符串');
+  if (typeof text !== 'string') throw new TypeError('blob content must be a string');
 }
 
 let tmpSeq = 0;
 
-/** 同步短等（存储接口是同步的，只在改名重试时用，最多一百来毫秒） */
+/** Synchronous short wait (storage interface is synchronous, used only on rename retries, ~100ms at most) */
 function pause(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-/** 先写临时文件、刷盘，再改名盖过目标。Windows 上目标正被别人读时改名可能 EPERM / EBUSY，短暂重试几次 */
+/** Write temp file first, flush, rename over target. On Windows, rename may hit EPERM / EBUSY if read by others; retry briefly */
 function writeAtomic(file, text) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}-${Date.now().toString(36)}-${(tmpSeq += 1)}`;
@@ -110,7 +121,7 @@ function writeAtomic(file, text) {
       }
     }
   } catch (err) {
-    try { fs.unlinkSync(tmp); } catch { /* 临时文件可能没建成 */ }
+    try { fs.unlinkSync(tmp); } catch { /* Temp file might not have been created */ }
     throw err;
   }
 }
@@ -120,7 +131,7 @@ function inside(child, parent) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-/** 把文件内容拆成记录：空行跳过，解析不了的行（通常是崩溃留下的最后半行）丢掉并记日志 */
+/** Split file into records: skip empty lines, drop unparseable lines (typically crash trailing partial line) and log */
 function parseLines(text, onBad) {
   const out = [];
   const lines = text.split('\n');
@@ -145,30 +156,30 @@ function parseLines(text, onBad) {
 }
 
 function serialize(record) {
-  if (record === null || typeof record !== 'object' || Array.isArray(record)) throw new TypeError('record 必须是对象');
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) throw new TypeError('record must be an object');
   return JSON.stringify(record);
 }
 
 /**
- * 文件存储：`<dir>/<命名空间>/<名字>.ndjson`，目录在第一次写时才建。
+ * File store: `<dir>/<namespace>/<name>.ndjson`, directories created on first write.
  * @param {object} options
- * @param {string} options.dir 根目录
+ * @param {string} options.dir Root directory
  * @param {(event: string, fields: object) => void} [options.log]
  */
 export function createFileStore({ dir, log = jsonLog } = {}) {
-  if (typeof dir !== 'string' || dir === '') throw new TypeError('createFileStore: dir 必须是非空字符串');
+  if (typeof dir !== 'string' || dir === '') throw new TypeError('createFileStore: dir must be a non-empty string');
   const root = path.resolve(dir);
-  /** 本进程已经确认过「以换行结尾」的文件 */
+  /** Files confirmed by this process to end with a newline */
   const checked = new Set();
 
   function fileOf(stream) {
     const { ns, name } = parseStream(stream);
     const file = path.join(root, ns, `${fileNameOf(name)}.ndjson`);
-    if (!inside(file, root)) throw new TypeError(`stream 不合法：${JSON.stringify(stream)}`);
+    if (!inside(file, root)) throw new TypeError(`Invalid stream: ${JSON.stringify(stream)}`);
     return file;
   }
 
-  /** 文件存在且最后一个字节不是换行：返回 true（要先补换行） */
+  /** File exists and last byte is not a newline: returns true (must append a newline first) */
   function needsNewline(file) {
     let fd;
     try {
@@ -191,7 +202,7 @@ export function createFileStore({ dir, log = jsonLog } = {}) {
   function blobFileOf(name) {
     const { ns, file: base } = parseBlobName(name);
     const file = path.join(root, ns, base);
-    if (!inside(file, root)) throw new TypeError(`blob 名不合法：${JSON.stringify(name)}`);
+    if (!inside(file, root)) throw new TypeError(`Invalid blob name: ${JSON.stringify(name)}`);
     return file;
   }
 
@@ -211,10 +222,10 @@ export function createFileStore({ dir, log = jsonLog } = {}) {
       checked.add(file);
     },
 
-    /** 整条换成给定的记录（原子：临时文件 + 刷盘 + 改名）；记录为空时留一个空文件 */
+    /** Replace whole stream with given records (atomic: temp file + flush + rename); leaves empty file when records are empty */
     rewrite(stream, records) {
       const file = fileOf(stream);
-      if (!Array.isArray(records)) throw new TypeError('records 必须是数组');
+      if (!Array.isArray(records)) throw new TypeError('records must be an array');
       const text = records.map((r) => `${serialize(r)}
 `).join('');
       writeAtomic(file, text);
@@ -235,14 +246,14 @@ export function createFileStore({ dir, log = jsonLog } = {}) {
       });
     },
 
-    /** 整份写入（原子：临时文件 + 刷盘 + 改名） */
+    /** Write whole file (atomic: temp file + flush + rename) */
     writeBlob(name, text) {
       const file = blobFileOf(name);
       checkBlobText(text);
       writeAtomic(file, text);
     },
 
-    /** 整份读回；没有就回 null */
+    /** Read back whole file; returns null if missing */
     readBlob(name) {
       const file = blobFileOf(name);
       try {
@@ -255,11 +266,11 @@ export function createFileStore({ dir, log = jsonLog } = {}) {
   };
 }
 
-/** 内存存储：测试与不落盘的场合用。记录存成 JSON 文本，读回的是新对象，调用方改了也不影响存储 */
+/** In-memory store: for tests and non-disk use. Records stored as JSON text; reading returns new objects, isolating caller mutations */
 export function createMemoryStore() {
   /** stream → string[] */
   const streams = new Map();
-  /** blob 名 → 文本 */
+  /** Blob name → text */
   const blobs = new Map();
   return {
     append(stream, record) {
@@ -275,7 +286,7 @@ export function createMemoryStore() {
     },
     rewrite(stream, records) {
       parseStream(stream);
-      if (!Array.isArray(records)) throw new TypeError('records 必须是数组');
+      if (!Array.isArray(records)) throw new TypeError('records must be an array');
       streams.set(stream, records.map(serialize));
     },
     writeBlob(name, text) {

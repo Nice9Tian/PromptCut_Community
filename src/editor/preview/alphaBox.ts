@@ -1,24 +1,29 @@
 /**
- * 从一张预渲染出来的贴图里量「这张卡真正画了东西的那一块」—— alpha 的包围盒。
+ * From a prerendered texture, measure "the block where this card actually drew something": the
+ * bounding box of alpha.
  *
- * # 为什么 3D 这边要自己量
+ * # Why the 3D side has to measure this itself
  *
- * 2D 的排版**不用**内容框:一张卡按它的 `frame` 摆,没写 `frame.w/h` 的就铺满舞台。
- * 项目里那个 `measureContentBox`(render/contentBox.ts)是量 DOM 的,给实体模式
- * 画色块用 —— 而 3D 视图手上没有卡片的 DOM,只有预渲染出来的 PNG。
+ * 2D layout does **not** use the content box: a card is placed by its `frame`, and without
+ * `frame.w/h` it fills the stage. The project's `measureContentBox` (render/contentBox.ts) measures
+ * the DOM and is used to draw color blocks in solid mode, whereas the 3D view has no card DOM, only
+ * the prerendered PNG.
  *
- * 好在预渲染的排版尺寸修对之后(见 bakeTarget 的 renderBox),PNG 的画布和卡片的框是
- * **1:1** 的。所以在这张图上量出来的包围盒,归一化之后就是「四个角在卡片框里的相对位置」,
- * 可以直接拿去从那块屏幕平面里裁一小块出来。
+ * Fortunately, once the prerender's layout size is fixed (see bakeTarget's renderBox), the PNG's
+ * canvas and the card's box are **1:1**. So the bounding box measured on this image, once normalized,
+ * is "the relative position of the four corners within the card's box", and can be used directly to
+ * crop a small piece out of that screen plane.
  *
- * # 和 measureContentBox 的一处**故意不同**
+ * # One **deliberate difference** from measureContentBox
  *
- * 那边会把「占了这张卡九成以上」的元素当背景跳过 —— 因为实体模式要回答的是
- * 「这块压上去是不是太重了」,满屏的底不算内容。这边不跳过:3D 要回答的是
- * 「这块板子该多大」,而铺满屏的底**就该**是一块铺满屏的板子。同一个词、两笔账。
+ * That one skips elements that take up more than ninety percent of the card as background, because
+ * solid mode has to answer "is this block laid on too heavily?", and a full-screen backdrop does not
+ * count as content. This one does not skip them: 3D has to answer "how big should this board be?",
+ * and a backdrop that fills the screen **should** be a board that fills the screen. Same word, two
+ * different accounts.
  */
 
-/** 归一化到 0..1 的框,原点在左上(和图片坐标一致) */
+/** A box normalized to 0..1, with its origin at the top-left (consistent with image coordinates) */
 export interface NormBox {
   x: number;
   y: number;
@@ -27,11 +32,14 @@ export interface NormBox {
 }
 
 /**
- * 扫 RGBA 像素,求 alpha 超过阈值的包围盒,归一化返回。全透明返回 null。
+ * Scan RGBA pixels, find the bounding box of pixels whose alpha exceeds the threshold, and return it
+ * normalized. Return null if fully transparent.
  *
- * **框会向外扩一个像素**。调用方多半是把大图缩到几百像素再扫(全尺寸扫一遍几百万像素
- * 太慢),缩过之后边缘那一行可能落在采样格之间;不外扩就会把内容切掉一点点,
- * 而板子切掉内容是看得见的错。外扩最多让板子大一圈,那是看不出来的。
+ * **The box expands outward by one pixel.** Callers mostly shrink a large image to a few hundred
+ * pixels before scanning (scanning millions of pixels at full size is too slow), and after shrinking
+ * the edge row may fall between sampling cells; without the expansion the content would be clipped a
+ * little, and a board clipping content is a visible error. Expanding at most makes the board one ring
+ * larger, which is not noticeable.
  */
 export function alphaBox(
   data: ArrayLike<number>,
@@ -52,7 +60,7 @@ export function alphaBox(
     }
   }
   if (x1 < 0) return null;
-  // 向外扩一个像素(见上面说明),再夹回图内
+  // Expand outward by one pixel (see the note above), then clamp back into the image
   x0 = Math.max(0, x0 - 1); y0 = Math.max(0, y0 - 1);
   x1 = Math.min(width - 1, x1 + 1); y1 = Math.min(height - 1, y1 + 1);
   return {
@@ -64,28 +72,32 @@ export function alphaBox(
 }
 
 /**
- * 这个框值不值得拿去裁板子。
+ * Whether this box is worth using to crop the board.
  *
- * 几乎铺满整张图的(比如满屏渐变底)就别裁了:裁出来和整块一样大,白白多一次几何重建,
- * 而且浮点上还可能差半个像素。留一点余量再判断。
+ * If it almost fills the whole image (for example a full-screen gradient backdrop), do not crop: the
+ * result is as big as the whole piece, costs an extra geometry rebuild for nothing, and may differ by
+ * half a pixel in floating point. Leave some margin before judging.
  */
 export function worthCropping(box: NormBox | null, minSaving = 0.04): boolean {
   if (!box) return false;
   return box.w < 1 - minSaving || box.h < 1 - minSaving;
 }
 
-/** 复用一张离屏画布:每张贴图都新建一个的话,一条片子几百张就是几百次分配 */
+/** Reuse one offscreen canvas: creating a new one for every texture would mean hundreds of allocations for a video with hundreds of them */
 let probe: HTMLCanvasElement | null = null;
 
 /**
- * 把一张已经加载好的图缩进 `maxEdge` 以内画到离屏画布上,量它的内容框。
+ * Draw an already loaded image, shrunk to within `maxEdge`, onto an offscreen canvas and measure its
+ * content box.
  *
- * 缩了再扫是为了快:全尺寸 1024×576 是五十多万像素,而缩到 256 之后只剩三万多,
- * 一次一两毫秒。精度损失由 `alphaBox` 的「向外扩一格」兜住 —— 板子大一圈看不出来,
- * 切掉内容才看得出来。
+ * Shrinking before scanning is for speed: 1024×576 at full size is over half a million pixels, while
+ * after shrinking to 256 only about thirty thousand remain, one to two milliseconds per run. The loss
+ * of precision is covered by `alphaBox`'s "expand outward by one cell": a board one ring larger is
+ * not noticeable, while clipped content is.
  *
- * 取不到像素就返回 null(调用方按「不裁」处理):画布被跨源图污染过、
- * 或者浏览器不给 2d 上下文的时候会这样,那时候宁可用整块板子,也不能瞎裁。
+ * If pixels cannot be read, return null (callers treat it as "do not crop"): this happens when the
+ * canvas has been tainted by a cross-origin image, or when the browser does not provide a 2d context;
+ * in that case better to use the whole board than to crop blindly.
  */
 export function measureImageBox(
   img: CanvasImageSource & { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number },

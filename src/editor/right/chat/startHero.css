@@ -1,11 +1,11 @@
 /*
- * AI 栏开始页(StartHero.tsx)。深色、青蓝强调色,和 chat.css 里的输入框、示例句同一套变量。
- * 动画只有三处:光点呼吸、指向输入框的箭头轻轻下沉、输入框 / 发送按钮的描边脉动;
- * prefers-reduced-motion 下全部关掉,只留静态描边。
+ * AI panel start page (StartHero.tsx). Dark, with a cyan-blue accent color, using the same set of variables as the input box and example sentences in chat.css.
+ * There are only three animations: the light dot breathing, the arrow pointing at the input box sinking gently, and the outline pulse of the input box / send button;
+ * Under prefers-reduced-motion all of them are turned off, leaving only a static outline.
  */
 .pc-start {
   align-items: center;
-  /* 内容比消息区高时从顶上排、能滚;不用 justify-content:center(那样顶上一截会被裁掉滚不到) */
+  /* When the content is taller than the message area it is laid out from the top and can scroll; justify-content:center is not used (the top part would be clipped and unreachable by scrolling) */
   justify-content: flex-start;
   text-align: center;
   gap: 10px;
@@ -45,7 +45,7 @@
   box-shadow: var(--ui-focus-ring, 0 0 0 2px #00DBDB);
 }
 
-/* 引导动画:光点 */
+/* Onboarding animation: light dot */
 .pc-start-orb {
   position: relative;
   width: 64px;
@@ -84,7 +84,7 @@
   0% { transform: scale(0.8); opacity: 0.55; }
   100% { transform: scale(1.6); opacity: 0; }
 }
-/* 指向输入框的箭头 */
+/* Arrow pointing at the input box */
 .pc-start-cue {
   margin-top: 6px;
   font-size: 20px;
@@ -97,7 +97,7 @@
   50% { transform: translateY(6px); opacity: 1; }
 }
 
-/* 输入框 / 发送按钮的引导:开始页上才有(Composer 的 guide 属性) */
+/* Guidance for the input box / send button: only on the start page (the guide property of Composer) */
 .ai-composer.is-guide-input {
   border-color: var(--ui-accent, #00DBDB);
   animation: pc-guide-glow 2.2s ease-in-out infinite;

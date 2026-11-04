@@ -1,9 +1,11 @@
 /**
- * 纯浏览器节点生成快照的纯函数(M7 契约第 4.3、4.5 节):
- *   - 切分方给浏览器那一份的 `input.bake` → 隔离单卡工程,与桌面 `FramePipeline#isolatedCardProject` 同一份(共用 `src/kernel/isolatedCard.mjs`);
- *   - 清单形状同桌面 `collectSnapshotResult`,过桌面的 `manifestMatches`;键同 `manifestKeyOf`;
- *   - 去重判据:形状对、覆盖整段、两档都齐才算。
- * 跑:node --test src/online/bakeTask.test.mjs
+ * Pure functions for snapshot generation on pure browser nodes (M7 contract sections 4.3 and 4.5):
+ *   - `input.bake` provided by splitter to browser → isolated single-card project, identical to
+ *     desktop `FramePipeline#isolatedCardProject` (sharing `src/kernel/isolatedCard.mjs`);
+ *   - Manifest shape matches desktop `collectSnapshotResult`, passes desktop `manifestMatches`;
+ *     key matches `manifestKeyOf`;
+ *   - Deduplication criteria: correct shape, covers entire segment, and both tiers present.
+ * Run: node --test src/online/bakeTask.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -47,7 +49,7 @@ test("M7-BT-01 the share the splitter gives the browser, input.bake → an isola
   const visible = page.tracks.filter((tr) => !tr.hidden);
   assert.deepEqual(visible.map((tr) => tr.clips.map((c) => c.id)), [["clip-a"]]);
   assert.equal(visible[0].clips[0].start, -1 / 60);
-  assert.notEqual(page, PROJECT, "换新对象,不原地改");
+  assert.notEqual(page, PROJECT, "returns a new object, does not modify in place");
   assert.equal(PROJECT.tracks[0].clips[0].start, 1.5);
 });
 
@@ -74,13 +76,13 @@ test("M7-BT-03 manifest shape same as collectSnapshotResult: passes manifestMatc
   assert.equal(RESULT_MAX_BYTES, SERVER_MAX);
   assert.equal(manifestCovers(m, task), true);
   assert.deepEqual(manifestBlocks(m).map((b) => `${b.ns}/${b.hash}`).sort(), [...[1, 2, 3].map((n) => `snap/${H(n)}`), ...[11, 12, 13].map((n) => `px/${H(n)}`)].sort());
-  // 没有小尺寸就不带 small;这时不算两档齐
+  // If there is no small size, small is omitted; at this point, both tiers are not considered present
   const noSmall = snapshotManifest(task, frames.map(({ small, ...f }) => f));
   assert.equal("small" in noSmall, false);
   assert.equal(manifestCovers(noSmall, task), false);
-  // 缺帧不算覆盖
+  // Missing frames do not count as coverage
   assert.equal(manifestCovers(snapshotManifest(task, frames.slice(1)), task), false);
-  // 超 256 KiB:抛 result-too-large,不可重试
+  // Exceeds 256 KiB: throws result-too-large, non-retryable
   const many = Array.from({ length: 4000 }, (_, i) => ({ localFrame: i, hash: H(i), bytes: 1 }));
   assert.throws(() => snapshotManifest({ ...task, range: { from: 0, to: 3999 } }, many), (e) => e.code === "result-too-large" && e.retryable === false);
 });

@@ -9,8 +9,12 @@ import { tr as trText } from "../../i18n/index.ts";
 
 export const effects = {
 
-  /* ---------- 滤镜库(项目级,和素材一样所有剪辑共用) ---------- */
-  /** 入库;给了 attach 就同一步挂到那一段上(一次 setProject = 一步撤销,不然撤销一次只摘掉、库里还留着) */
+  /* ---------- Filter library (project-level, shared across all cuts like assets) ---------- */
+  /**
+   * Stores into the library; if attach is provided, attaches to that clip in the same step
+   * (one setProject = one undo step; otherwise, a single undo only detaches it while it remains
+   * in the library)
+   */
   addFilter(def: FilterDef, attach?: { clipId: string; filter: ClipFilter }) {
     const p = state.project;
     let tracks = p.tracks;
@@ -23,7 +27,10 @@ export const effects = {
   updateFilter(filterId: string, def: FilterDef) {
     setProject({ ...state.project, filters: (state.project.filters ?? []).map((f) => (f.id === filterId ? def : f)) });
   },
-  /** 删滤镜:激活剪辑和停放剪辑里挂着它的段一并摘掉,不留指向已删滤镜的引用 */
+  /**
+   * Deletes a filter: clips with it attached in active and parked cuts are also detached,
+   * leaving no references pointing to the deleted filter
+   */
   removeFilter(filterId: string) {
     const p = state.project;
     setProject(stripFilterFromCuts({
@@ -33,7 +40,10 @@ export const effects = {
     }, filterId));
   },
 
-  /** 挂 / 换 / 摘片段上的滤镜(null = 摘掉)。找不到片段返回 false;校验在调用方 */
+  /**
+   * Attaches / replaces / detaches a filter on a clip (null = detach). Returns false if clip
+   * is not found; validation is on the caller
+   */
   setClipFilter(clipId: string, filter: ClipFilter | null): boolean {
     const p = state.project;
     const hit = findClip(p, clipId);
@@ -45,7 +55,7 @@ export const effects = {
     return true;
   },
 
-  /* ---------- 通用像素映射 ---------- */
+  /* ---------- Generic pixel maps ---------- */
   addPixelMap(def: PixelMapDef, attach?: { clipId: string; pixelMap: ClipPixelMap }) {
     const p = state.project;
     let tracks = p.tracks;
@@ -70,16 +80,19 @@ export const effects = {
     return true;
   },
 
-  /* ---------- 转场:加了就把相关片段绑成一组(规矩在 kernel/transitions.ts) ---------- */
+  /* ---------- Transitions: adding one binds related clips into a group (rules in kernel/transitions.ts) ---------- */
 
   /**
-   * 加一处转场。
+   * Adds a transition.
    *
-   *   - crossfade:要两段首尾相接的片段。同一条序列内不能重叠,所以会把后一段往前拉出
-   *     重叠、必要时挪到另一条序列(挪之前的位置记在 prevB 里,删转场时放回去);
-   *   - fadeIn / fadeOut:只认一段,分别写在它的头和尾。
+   *   - crossfade: requires two consecutive clips touching end-to-end. Since clips cannot overlap
+   *     within the same track, the second clip is pulled forward to create an overlap and moved to
+   *     another track if necessary (its position before moving is recorded in prevB and restored
+   *     when deleting the transition);
+   *   - fadeIn / fadeOut: only operates on a single clip, written to its start and end respectively.
    *
-   * 整件事一次 setProject 落地 —— 撤销一步就能全撤,不会留下「挪了但没绑」的半截状态。
+   * The entire operation is committed in a single setProject: a single undo step reverts everything,
+   * without leaving a half-finished state where it was "moved but not bound".
    */
   addTransition(args: { kind: TransitionKind; clipId: string; otherClipId?: string; dur?: number }):
     { ok: true; transition: Transition } | { ok: false; error: string } {
@@ -111,7 +124,8 @@ export const effects = {
       !tr.locked && tr.id !== aTrack.id &&
       !tr.clips.some((c) => c.id !== b.id && Math.max(newStart, c.start) < Math.min(newStart + len, c.end) - 1e-6);
 
-    // 先原地(后一段本来就不在前一段那条序列上、且挪过去放得下),再找别的,最后新建一条
+    // Try in-place first (the second clip was not on the first clip's track to begin with, and fits
+    // when moved), then look for others, finally create a new track
     const target = [bTrack, ...p.tracks.filter((t) => t.id !== bTrack.id)].find(fits);
     const newTrack: Track | null = target ? null : { id: newId("t"), name: trText("Track {0}", p.tracks.length + 1), clips: [] };
     const targetId = target?.id ?? newTrack!.id;
@@ -134,8 +148,9 @@ export const effects = {
   },
 
   /**
-   * 删一处转场:淡化擦掉、记录去掉,交叉溶解还会尽量把后一段放回加转场之前的位置
-   * (那儿被占了就留在原地,返回 note 说明)。删完这几段就自由了。
+   * Deletes a transition: clears fades, removes the record, and crossfade also tries to restore
+   * the second clip to its position before the transition was added (if that spot is occupied,
+   * it stays in place and returns note explaining). Once deleted, these clips are freed.
    */
   removeTransition(transitionId: string): { ok: true; note?: string } | { ok: false; error: string } {
     const p = state.project;
@@ -170,14 +185,16 @@ export const effects = {
     return { ok: true, ...(note ? { note } : {}) };
   },
   /**
-   * 把两段相接的素材接成交叉溶解:后一段往前拉出 dur 秒的重叠,两边各加 dur 秒的淡化。
-   * 同一条序列内不允许重叠,所以后一段必须落在别的序列上——现有序列都放不下就新建一条。
-   * 返回是否成功。
+   * Connects two adjacent media clips with a crossfade: the second clip is pulled forward to create
+   * a dur-second overlap, with dur seconds of fade added to each side. Overlapping within the same
+   * track is not allowed, so the second clip must land on another track: if no existing track can fit
+   * it, a new one is created. Returns whether successful.
    */
   /**
-   * 老名字,留着给已有调用方用:现在等价于 addTransition({ kind: "crossfade" })。
-   * 一定要走那条路 —— 只有它会写下转场记录,把两段绑成一组;光设 fadeIn / fadeOut
-   * 的话谁都能随手挪走其中一段,溶解就悄悄散了。
+   * Legacy name kept for existing callers: now equivalent to addTransition({ kind: "crossfade" }).
+   * Must follow that path: only it writes down the transition record and binds the two clips into
+   * a group; merely setting fadeIn / fadeOut allows anyone to move one of the clips away at will,
+   * silently breaking the crossfade.
    */
   applyCrossfade(aId: string, bId: string, dur: number): boolean {
     return effects.addTransition({ kind: "crossfade", clipId: aId, otherClipId: bId, dur }).ok;

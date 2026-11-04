@@ -1,30 +1,36 @@
 /**
- * R7「露出舞台」的验收探针（D5 + E + K 的合验里属于 R7 的那几条）。
+ * Acceptance probe for R7 "reveal stage" (the R7 items within the D5 + E + K combined acceptance
+ * check).
  *
  *   node scripts/probes/reveal-probe.mjs [--port 5291] [--origin http://127.0.0.1:5291]
  *                                        [--seconds 6] [--keep] [--json out/reveal.json]
- *                                        [--only 露出,拖动,播放,点选] [--headed]
+ *                                        [--only reveal,scrub,play,select] [--headed]
  *
- * 不带 `--origin` 时自己起一台 dev server（缺省 5291，舞台端口随之 5292 / 5293），
- * `PROMPTCUT_DATA_DIR` 指到临时目录 —— 不隔离的话这一趟会把仓库 `out/card-costs.json` 冲掉。
+ * When run without `--origin`, spins up its own dev server (default 5291, stage ports follow as
+ * 5292 / 5293), with `PROMPTCUT_DATA_DIR` pointing to a temp directory: without isolation, this
+ * pass would overwrite `out/card-costs.json` in the repository.
  *
- * # 这个探针和别的不一样的地方：**一个参数都不带地打开编辑台**
+ * # How this probe differs from others: **opens the editor without any parameters**
  *
- * 别的探针要么带 `?preview=stage`（验新路），要么带 `?preview=legacy`（验回滚）。
- * 这一个**故意什么都不带** —— R7 的全部意义就是「缺省翻了过来」，所以它开
- * `/?editor&headless=1`，然后断言看到的是双舞台、而且可见那一个**真的露出来了**。
- * 翻开关之前跑它必然是红的，这正是它该有的样子。
+ * Other probes either pass `?preview=stage` (verifying new path) or `?preview=legacy` (verifying
+ * rollback). This one **deliberately passes nothing**: the entire point of R7 is that "defaults are
+ * inverted", so it opens `/?editor&headless=1`, then asserts seeing dual stages and that the
+ * visible one is **truly revealed**.
+ * Before flipping the switch, running it is bound to be red, which is exactly how it should be.
  *
- * # 量法限制（照 R2 报告）
+ * # Measurement limitations (per R2 report)
  *
- * 无头 Chrome 不带 `--disable-gpu-vsync --disable-frame-rate-limit` 时 rAF 会退到 10 Hz，
- * 舞台的节拍循环等不到帧、拍长全错，所以两个开关必须带。**代价**：带了之后 rAF 不再被
- * 垂直同步量化成 16.6 ms 的格子，于是「24 fps 自然是 2/3 帧交替」这类现象在这里观察不到。
- * 能量准、也是真正要保的，是**到达间隔的均值 = 1000 / fps** 和**连续 `sec` 差恒为 1/fps**。
- * `--headed` 用有头 Chrome 再跑一遍播放和拖动 —— 用户真正看到的是有头浏览器，
- * 有头下 rAF 受真实显示节拍约束，报出来的间隔才是用户感觉到的那个。
+ * In headless Chrome without `--disable-gpu-vsync --disable-frame-rate-limit`, rAF drops to 10 Hz;
+ * stage tick loop never receives frames and tick durations are completely wrong, so both flags are
+ * mandatory. **Cost**: with them enabled, rAF is no longer quantized by vsync into 16.6 ms bins, so
+ * phenomena like "24 fps naturally alternates between 2/3 frames" cannot be observed here.
+ * What can be measured accurately and what really must be maintained are **mean arrival interval =
+ * 1000 / fps** and **consecutive `sec` delta is constant at 1/fps**.
+ * `--headed` runs playback and scrubbing again with headed Chrome: what the user actually sees is a
+ * headed browser; under headed mode, rAF is constrained by the real display cadence, and reported
+ * intervals reflect what users actually perceive.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,7 +41,7 @@ import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
 
 import { stagePortsOf } from '../../server/stage-ports.mjs';
 
-/* ------------------------------------------------------------------ 参数 */
+/* ------------------------------------------------------------------ Parameters */
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback = null) => { const i = argv.indexOf(name); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : fallback; };
@@ -51,9 +57,9 @@ const only = (flag('--only') || '').split(',').map((s) => s.trim()).filter(Boole
 const origin = (originArg || `http://127.0.0.1:${port}`).replace(/\/+$/, '');
 const wants = (name) => !only.length || only.includes(name);
 
-/** **一个参数都不带** —— R7 验的就是缺省行为 */
+/** **Without any parameters**: R7 verifies the default behavior */
 const EDITOR_URL = '/?editor&headless=1';
-/** 回滚那一条要显式带 legacy */
+/** Rollback case must explicitly include legacy */
 const LEGACY_URL = '/?editor&headless=1&preview=legacy';
 
 const fails = [];
@@ -83,11 +89,11 @@ async function startServer() {
     try {
       const res = await fetch(origin + '/@vite/client');
       if (res.ok) return proc;
-    } catch { /* 还没起来 */ }
+    } catch { /* Not up yet */ }
     await sleep(500);
   }
   proc.kill();
-  throw new Error(`dev server 240 秒没起来:\n${log.join('')}`);
+  throw new Error(`dev server did not start within 240 seconds:\n${log.join('')}`);
 }
 
 async function stopServer() {
@@ -100,7 +106,7 @@ async function stopServer() {
   server = null;
 }
 
-/* ------------------------------------------------------------------ 页面侧脚本 */
+/* ------------------------------------------------------------------ Page-side scripts */
 
 const INSTALL_RECORDERS = async () => {
   const bridge = await import('/src/editor/stageBridge.ts');
@@ -128,7 +134,7 @@ const INSTALL_RECORDERS = async () => {
 const RESET_RECORDERS = () => { window.__pcFrames = []; window.__pcEvents = []; window.__pcLongTasks = []; };
 const READ_RECORDERS = () => ({ frames: window.__pcFrames, events: window.__pcEvents, longTasks: window.__pcLongTasks });
 
-/** 建一个项目:一条轨道一张卡 */
+/** Create a project: one track, one card */
 const BUILD = async ({ fps, duration, cards }) => {
   await import('/src/cards/index.ts');
   const { actions, getState } = await import('/src/store/project.ts');
@@ -143,11 +149,13 @@ const BUILD = async ({ fps, duration, cards }) => {
 };
 
 /**
- * 主文档里此刻有没有「整帧预览」和「素材元素」。
+ * Whether the main document currently contains "full-frame preview" and "asset elements".
  *
- * R7 之后两样都该没有:整帧 `<img>`(UnifiedPreview)只留给 legacy,素材层在舞台里。
- * **只看预览区**(`.pc-pv-stagebox` 那棵子树 / 退回舞台 iframe 的父节点):
- * 右栏聊天里的截图、时间轴缩略图也是 `<img>`,它们不算。
+ * After R7, neither should exist: full-frame `<img>` (UnifiedPreview) is reserved only for legacy,
+ * and the asset layer resides inside the stage.
+ * **Only inspect the preview area** (the `.pc-pv-stagebox` subtree / parent node falling back to
+ * the stage iframe): screenshots in right rail chat and timeline thumbnails are also `<img>`; they
+ * do not count.
  */
 const SCAN_MAIN_DOC = () => {
   const frame = document.querySelector('iframe[data-pc="stage-frame"]');
@@ -167,10 +175,10 @@ const SCAN_MAIN_DOC = () => {
   return { imgs, videos, canvases, frames };
 };
 
-/** ProbeGate 遮罩还在不在 */
+/** Whether the ProbeGate overlay is still present */
 const GATE_ON = () => !!document.querySelector('[data-pc="probe-gate"]');
 
-/* ------------------------------------------------------------------ 小工具 */
+/* ------------------------------------------------------------------ Utilities */
 
 const stats = (xs) => {
   if (!xs.length) return null;
@@ -197,7 +205,7 @@ async function frontDiag(page) {
   return { preview: which, stage: await stageDiag(page, which.frontId) };
 }
 
-/** CDP 眼里有几个 `type: 'iframe'` 的 target —— 有 target 才说明它是独立进程的 iframe */
+/** How many `type: 'iframe'` targets CDP sees: having a target indicates an out-of-process iframe */
 async function iframeTargets(page) {
   const cdp = await page.target().createCDPSession();
   const { targetInfos } = await cdp.send('Target.getTargets');
@@ -205,7 +213,7 @@ async function iframeTargets(page) {
   return targetInfos.filter((t) => t.type === 'iframe');
 }
 
-/** 开一页编辑台并等到「能用」 */
+/** Open an editor page and wait until it is "usable" */
 async function openEditor(browser, url, { dual = true } = {}) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 1000 });
@@ -227,7 +235,7 @@ async function openEditor(browser, url, { dual = true } = {}) {
   return { page, errors };
 }
 
-/* ------------------------------------------------------------------ 主流程 */
+/* ------------------------------------------------------------------ Main flow */
 
 const launchOpts = {
   headless: !headed,
@@ -237,13 +245,14 @@ const launchOpts = {
 };
 if (headed) {
   /*
-   * **有头下不关垂直同步**:这一趟的意义就是量用户真正看到的那个数。关掉 vsync
-   * 量到的是「主线程最快能推多少拍」,不是屏幕上真实的节拍。
+   * **Do not disable vsync in headed mode**: the purpose of this pass is to measure the numbers users
+   * actually see. Disabling vsync measures "how many ticks the main thread can push at maximum", not
+   * real display ticks on the screen.
    */
 } else {
-  // R2 报告:不带这两个,这台机器上无头 Chrome 的 rAF 退到 10 Hz,节拍循环根本等不到帧
+  // R2 report: without these two, headless Chrome rAF drops to 10 Hz here, and the tick loop never gets frames
   launchOpts.args.push('--disable-gpu-vsync', '--disable-frame-rate-limit');
-  launchOpts.args.splice(PROBE_CHROME_ARGS.length, 0, '--window-position=-32000,-32000'); // 仍以 PROBE_CHROME_ARGS 打头
+  launchOpts.args.splice(PROBE_CHROME_ARGS.length, 0, '--window-position=-32000,-32000'); // Still starts with PROBE_CHROME_ARGS
 }
 
 const browser = await puppeteer.launch(launchOpts);
@@ -252,16 +261,16 @@ let page = null;
 let errors = [];
 try {
   server = await startServer();
-  step('goto editor (缺省模式,一个 preview 参数都不带)');
+  step('goto editor (default mode, no preview parameter at all)');
   ({ page, errors } = await openEditor(browser, EDITOR_URL, { dual: true }));
-  step('两个舞台都登记好了');
+  step('Both stages are registered');
   await page.evaluate(INSTALL_RECORDERS);
 
-  /* ========================================================= 1. 露出舞台 */
-  if (wants('露出')) {
-    // 建一个项目,让 ProbeGate 真的有东西要测
+  /* ========================================================= 1. Reveal stage */
+  if (wants('reveal')) {
+    // Create a project so ProbeGate actually has something to test
     await page.evaluate(BUILD, { fps: 30, duration: 12, cards: [{ id: 'probe-css' }, { id: 'odometer' }] });
-    // 遮罩:测的时候在,测完摘掉
+    // Overlay: present during testing, removed after testing
     const sawGate = await page.waitForFunction(GATE_ON, { timeout: 30000, polling: 50 }).then(() => true, () => false);
     await waitProbeIdle(page);
     await sleep(500);
@@ -272,22 +281,22 @@ try {
     const frontWhich = diag.preview?.frontId === 'B' ? 'stage-frame-back' : 'stage-frame';
     const frontEl = (scan.frames ?? []).find((f) => f.which === frontWhich);
     const backEl = (scan.frames ?? []).find((f) => f.which !== frontWhich);
-    out.cases['露出'] = { sawGate, gateAfter, scan, iframeTargets: targets.length, frontId: diag.preview?.frontId ?? null };
+    out.cases['reveal'] = { sawGate, gateAfter, scan, iframeTargets: targets.length, frontId: diag.preview?.frontId ?? null };
 
-    check(sawGate, '打开项目时 ProbeGate 遮罩出现过');
-    check(gateAfter === false, '测完之后遮罩摘掉了');
-    check(frontEl && frontEl.opacity === '1', '可见舞台露出来了(front 的 opacity 是 1)', frontEl);
+    check(sawGate, 'The ProbeGate overlay appeared when the project was opened');
+    check(gateAfter === false, 'The overlay was removed after measurement finished');
+    check(frontEl && frontEl.opacity === '1', 'The visible stage is revealed (front\'s opacity is 1)', frontEl);
     check(backEl && backEl.opacity === '0' && backEl.pointerEvents === 'none',
-      '后台舞台仍然是 opacity: 0 + pointer-events: none', backEl);
+      'The background stage is still opacity: 0 + pointer-events: none', backEl);
     check(backEl && backEl.display !== 'none' && backEl.visibility !== 'hidden',
-      '后台舞台不用 display / visibility 藏(K5 (4))', backEl);
-    check(targets.length === 2, 'CDP 里有两个 type: iframe 的 target(各自一个进程)', targets.length);
-    check((scan.imgs ?? []).length === 0, '主文档的预览区里没有整帧 <img>', scan.imgs);
-    check((scan.videos ?? []).length === 0, '主文档的预览区里没有素材 <video>(素材层在舞台里)', scan.videos);
+      'The background stage is not hidden with display / visibility (K5 (4))', backEl);
+    check(targets.length === 2, 'CDP has two targets of type: iframe (one process each)', targets.length);
+    check((scan.imgs ?? []).length === 0, 'No full-frame <img> in the preview area of the main document', scan.imgs);
+    check((scan.videos ?? []).length === 0, 'No media <video> in the preview area of the main document (the media layer is in the stage)', scan.videos);
   }
 
-  /* ========================================================= 2. 暂停拖动 */
-  if (wants('拖动')) {
+  /* ========================================================= 2. Paused scrub */
+  if (wants('drag')) {
     await page.evaluate(BUILD, { fps: 30, duration: 30, cards: [{ id: 'probe-css' }, { id: 'odometer' }] });
     await waitProbeIdle(page);
     await sleep(400);
@@ -303,13 +312,13 @@ try {
         const { actions } = await import('/src/store/project.ts');
         actions.seek(s);
       }, sec);
-      // 一次 setTime 往返(不等 HTTP)——父页发完就回
+      // One setTime round-trip (does not wait for HTTP): parent page returns right after sending
       await page.waitForFunction(async (s) => {
         const { getState } = await import('/src/store/project.ts');
         return Math.abs(getState().t - s) < 1e-6;
       }, { timeout: 5000, polling: 10 }, sec).catch(() => {});
       trips.push(Date.now() - t0);
-      // `.pc-awaiting` 必须 500 ms 内摘掉
+      // `.pc-awaiting` must be removed within 500 ms
       const st = await stageDiag(page, (await page.evaluate(() => window.__pcPreviewDiag?.().frontId)) || 'A');
       const awaiting = st?.awaiting ?? [];
       if (awaiting.length) {
@@ -327,20 +336,24 @@ try {
     }
     const genAfter = (await frontDiag(page)).stage?.remountGen ?? null;
     const beat = 1000 / 30;
-    out.cases['拖动'] = { trips: stats(trips), overBeat: trips.filter((x) => x > beat).length, awaitingSeen, awaitingStuck, genBefore, genAfter };
-    // 原先这里要求「每一次 setTime 往返都不超过三拍（100 ms）」。那个数量的是机器有多快，语义里没有这条时间承诺，
-    // 按 verification.md「耗时只记录，不当闸门」（2026-10-07 用户改定）改为只记录（往返次数与超过一拍的次数都在 out.cases['拖动'] 里）。
-    // 它想证的「不等 HTTP」更该用「这段里没有发出网络请求」来断言，记进报告的待办，这次没有现编新断言。
-    // 2026-10-23 探针总审第三遍扫描（阈值是表达式那一类，前两遍的正则都漏了）。
-    check(trips.length > 0, '暂停拖动:每一次 setTime 都回来了(往返用时只记录,不当闸门)', out.cases['拖动']);
-    check(awaitingStuck === 0, '.pc-awaiting 500 ms 内必被摘掉', { awaitingSeen, awaitingStuck });
+    out.cases['drag'] = { trips: stats(trips), overBeat: trips.filter((x) => x > beat).length, awaitingSeen, awaitingStuck, genBefore, genAfter };
+    // Originally, this required that "every setTime round-trip takes no more than three ticks
+    // (100 ms)". That measured how fast the machine was; semantics make no such timing guarantee;
+    // per verification.md "record elapsed time only, do not use as gate" (user revision, 2026-10-07),
+    // changed to record only (round trips and counts exceeding one tick are both in out.cases['scrub']).
+    // The "do not wait for HTTP" it wanted to prove should rather be asserted by "no network requests
+    // were sent in this section"; recorded in the report's to-dos, without adding a new assertion now.
+    // 2026-10-23 probe general audit third pass scan (threshold is expression category, missed by
+    // regexes in the first two passes).
+    check(trips.length > 0, 'Paused drag: every setTime came back (round-trip time is only recorded, not used as a gate)', out.cases['drag']);
+    check(awaitingStuck === 0, '.pc-awaiting is always removed within 500 ms', { awaitingSeen, awaitingStuck });
   }
 
-  /* ========================================================= 3. 播放 */
-  if (wants('播放')) {
+  /* ========================================================= 3. Play */
+  if (wants('Play')) {
     const cadence = {};
     for (const fps of [24, 30, 60]) {
-      step(`播放 ${fps} fps`);
+      step(`Playback at ${fps} fps`);
       await page.evaluate(BUILD, { fps, duration: seconds + 6, cards: [{ id: 'probe-css' }] });
       await waitProbeIdle(page);
       await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(0); });
@@ -357,23 +370,25 @@ try {
       const g = stats(gaps);
       cadence[fps] = { gap: g, secDiffWrong, frames: rec.frames.length, longTasks: rec.longTasks.length };
       check(g && Math.abs(g.mean - 1000 / fps) <= 1,
-        `播放 ${fps} fps:frame 到达间隔均值 = 1000/fps ± 1 ms`, { want: 1000 / fps, got: g?.mean });
-      check(secDiffWrong === 0, `播放 ${fps} fps:连续 sec 差恒为 1/fps(不跳帧)`, secDiffWrong);
+        `Playback at ${fps} fps: mean frame arrival interval = 1000/fps ± 1 ms`, { want: 1000 / fps, got: g?.mean });
+      check(secDiffWrong === 0, `Playback at ${fps} fps: consecutive sec differences are always 1/fps (no skipped frames)`, secDiffWrong);
     }
-    out.cases['播放'] = cadence;
+    out.cases['Play'] = cadence;
 
     /*
-     * 「零卡顿」那一条:**这次要同时跑着后台舞台探针和预渲染进程**(R5 只量了没跑预渲染的情形)。
-     * 后台探针靠换一份新项目触发(ProbeGate 之后 probeRunner 会继续在 back 上测),
-     * 预渲染进程由 vite-plugin-prerender 自己拉起来 —— 这里只确认它在。
+     * The "zero stutter" item: **this time, both background stage probe and prerender process must run
+     * concurrently** (R5 only measured the scenario without running prerender).
+     * Background probe is triggered by switching to a new project (after ProbeGate, probeRunner
+     * continues testing on back); prerender process is spun up by vite-plugin-prerender itself: here we
+     * only confirm it is present.
      */
-    step('零卡顿:播放 + 后台探针 + 预渲染进程');
+    step('Zero jank: playback + background probe + prerender process');
     const prerenderUp = await page.evaluate(async () => {
       try { const r = await fetch('/api/prerender/info', { cache: 'no-store' }); const d = await r.json(); return !!d?.ready; }
       catch { return false; }
     });
     await page.evaluate(BUILD, { fps: 30, duration: seconds + 6, cards: [{ id: 'probe-css' }, { id: 'odometer' }, { id: 'punch-pill' }] });
-    // 故意**不**等探针测完:让它在 back 上边测边播
+    // Deliberately do **not** wait for probe testing to finish: let it test on back while playing
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(0); });
     await sleep(200);
     await page.evaluate(RESET_RECORDERS);
@@ -383,22 +398,23 @@ try {
     await sleep(400);
     const busy = await page.evaluate(READ_RECORDERS);
     const probeState = await page.evaluate(async () => (await import('/src/editor/probeRunner.ts')).probeProgress());
-    out.cases['零卡顿'] = {
+    out.cases['zero-jank'] = {
       prerenderUp, probeRunningDuringPlayback: probeState.running,
       longTasks: busy.longTasks, longTaskCount: busy.longTasks.length, frames: busy.frames.length,
     };
-    check(busy.longTasks.length === 0, '播放中主文档的长任务(> 50 ms)为 0', busy.longTasks.slice(0, 5));
+    check(busy.longTasks.length === 0, 'The main document has 0 long tasks (> 50 ms) during playback', busy.longTasks.slice(0, 5));
   }
 
-  /* ========================================================= 4. 点选 */
-  if (wants('点选')) {
+  /* ========================================================= 4. Click-select */
+  if (wants('pick')) {
     const built = await page.evaluate(BUILD, { fps: 30, duration: 12, cards: [{ id: 'odometer' }] });
     await waitProbeIdle(page);
     await sleep(400);
     const odo = built.byCard['odometer'][0];
     await page.evaluate(async (id) => { const { actions } = await import('/src/store/project.ts'); actions.select([id]); }, odo);
     await sleep(300);
-    // 在它的实体框中心点一下,看选中的是不是同一个 clipId、和 hitTest 说的一不一致
+    // Click the center of its entity box to check whether the selected one is the same clipId and
+    // whether it matches hitTest
     const pt = await page.evaluate(async (id) => {
       const { frontStage } = await import('/src/editor/stageBridge.ts');
       const s = frontStage();
@@ -410,40 +426,41 @@ try {
       const hit = await s.hitTest(x, y);
       return { x, y, hitClipId: hit?.clipId ?? null };
     }, odo);
-    out.cases['点选'] = { odo, ...pt };
-    check(pt && pt.hitClipId === odo, '实体框中心的 hitTest 命中的就是它', pt);
+    out.cases['pick'] = { odo, ...pt };
+    check(pt && pt.hitClipId === odo, 'hitTest at the center of the entity box hits exactly it', pt);
   }
 
   const benign = (m) => /Failed to load resource/.test(m);
   out.errors = errors.filter((m) => !benign(m)).slice(0, 20);
   out.resourceErrors = errors.filter(benign).length;
-  check(out.errors.length === 0, '页面没有 JS 报错', out.errors.slice(0, 5));
+  check(out.errors.length === 0, 'The page has no JS errors', out.errors.slice(0, 5));
 
-  /* ========================================================= 5. 回滚 */
-  if (wants('回滚')) {
-    step('回滚:?preview=legacy 下舞台该藏回去');
+  /* ========================================================= 5. Rollback */
+  if (wants('rollback')) {
+    step('Rollback: the stage should hide again under ?preview=legacy');
     const { page: lp } = await openEditor(browser, LEGACY_URL, { dual: false });
     await sleep(1500);
     const lscan = await lp.evaluate(SCAN_MAIN_DOC);
-    out.cases['回滚'] = { scan: lscan };
+    out.cases['rollback'] = { scan: lscan };
     const lfront = (lscan.frames ?? [])[0];
-    check((lscan.frames ?? []).length === 1, 'legacy 下只有一个舞台 iframe', (lscan.frames ?? []).length);
-    check(lfront && lfront.opacity === '0', 'legacy 下舞台仍然是 opacity: 0(整帧 <img> 在上面)', lfront);
+    check((lscan.frames ?? []).length === 1, 'In legacy mode there is only one stage iframe', (lscan.frames ?? []).length);
+    check(lfront && lfront.opacity === '0', 'In legacy mode the stage is still opacity: 0 (the full-frame <img> is on top)', lfront);
     /*
-     * D5 / R7-6:回滚要把舞台里那个同名的 `LEGACY` 一起翻过去(`setProject` 立刻按跳转
-     * 重算这一帧)。以前 `stageSrc` 从不传 `preview`,舞台侧那一半永远不生效。
+     * D5 / R7-6: Rollback must flip the matching `LEGACY` inside the stage as well (`setProject`
+     * immediately recalculates this frame per jump). Previously `stageSrc` never passed `preview`, so
+     * the stage-side half never took effect.
      */
     check(!!lfront && /[?&]preview=legacy(&|$)/.test(lfront.src || ''),
-      'legacy 下 ?preview=legacy 传进了舞台 iframe(舞台里的同名开关也翻过去)', lfront?.src);
+      'In legacy mode, ?preview=legacy is passed into the stage iframe (the same-named switch inside the stage is flipped too)', lfront?.src);
     const lstage = lp.frames().find((fr) => fr.url().includes('stage=1'));
     const lstageUrl = lstage ? lstage.url() : null;
-    out.cases['回滚'].stageUrl = lstageUrl;
+    out.cases['rollback'].stageUrl = lstageUrl;
     check(!!lstageUrl && lstageUrl.includes('preview=legacy') && !lstageUrl.includes('preview=stage'),
-      'legacy 下舞台页自己的 URL 是 preview=legacy(不是 stage)', lstageUrl);
+      'In legacy mode, the stage page\'s own URL is preview=legacy (not stage)', lstageUrl);
     await lp.close().catch(() => {});
   }
 } catch (err) {
-  fails.push('探针自己抛了:' + (err?.stack || String(err)));
+  fails.push('The probe itself threw:' + (err?.stack || String(err)));
   exitCode = 1;
 } finally {
   out.fails = fails;
@@ -453,9 +470,9 @@ try {
     fs.writeFileSync(path.resolve(outJson), JSON.stringify(out, null, 2));
   }
   console.log(JSON.stringify(out, null, 2));
-  try { await browser.close(); } catch { /* 已经关了 */ }
+  try { await browser.close(); } catch { /* Already closed */ }
   await stopServer();
-  if (!keep) { try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* 删不掉就留着 */ } }
-  else console.log('临时数据目录留着:' + dataDir);
+  if (!keep) { try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* Keep if cannot be deleted */ } }
+  else console.log('Temporary data directory kept:' + dataDir);
 }
 process.exit(fails.length ? 1 : exitCode);

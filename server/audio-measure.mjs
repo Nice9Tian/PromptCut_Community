@@ -1,19 +1,20 @@
 /**
  * audio-measure.mjs
- * 纯函数: 生成 ffmpeg ebur128 测试参数并解析输出
+ * Pure functions: generate ffmpeg ebur128 test parameters and parse output
  */
 
 /**
- * 拼装单个文件或截断片段的 ffmpeg 参数
+ * Assemble ffmpeg arguments for a single file or trimmed clip
  * @param {object} opts
- * @param {string} opts.file - 绝对文件路径
- * @param {number} [opts.offset] - 起始时间(秒)
- * @param {number} [opts.duration] - 截取时长(秒)
+ * @param {string} opts.file - Absolute file path
+ * @param {number} [opts.offset] - Start time (seconds)
+ * @param {number} [opts.duration] - Trim duration (seconds)
  * @returns {string[]}
  */
 
 export function measureArgs({ file, offset, duration }) {
-  // -nostats:进度行(size= time= …)是 \r 分隔、和 ebur128 的逐帧行挤在一起,解析时会吞掉整秒的点
+  // -nostats: progress lines (size= time= …) are \r-delimited and crowded with ebur128
+  // per-frame lines; parsing would drop whole-second points
   const args = ["-hide_banner", "-nostats"];
   if (offset !== undefined) args.push("-ss", String(offset));
   if (duration !== undefined) args.push("-t", String(duration));
@@ -22,8 +23,10 @@ export function measureArgs({ file, offset, duration }) {
 }
 
 /**
- * 声音段变速(变调)的 ffmpeg 滤镜,和 `src/kernel/clipTime.mjs` 的 ffmpegVarispeed 逐字同一份(Agent 服务进程会载这个文件,
- * 这一侧不许 import src/,守门测试 SEAM-2 / SEAM-3,所以照抄)。速度为 1 时回空数组。
+ * ffmpeg filter for audio clip speed (pitch) changes, verbatim copy of `ffmpegVarispeed` in
+ * `src/kernel/clipTime.mjs` (the Agent service process loads this file, and this side is not
+ * allowed to import src/, gatekeeper tests SEAM-2 / SEAM-3, so copied as-is). Returns an empty
+ * array when speed is 1.
  */
 function ffmpegVarispeed(speed, rate = 48000) {
   if (!(speed > 0) || speed === 1) return [];
@@ -31,21 +34,25 @@ function ffmpegVarispeed(speed, rate = 48000) {
 }
 
 /**
- * 时间轴多段音频的混音图(和 mux-audio 一致):输入参数、每段的滤镜链、最后一步 amix(不带输出标签)。
- * 测响度(timelineMeasureArgs)和自定义测量解码 PCM(audio-pcm.mjs)共用这一份,两边混出来的是同一段声音。
+ * Mix graph for multi-clip timeline audio (consistent with mux-audio): input arguments, per-clip
+ * filter chains, and final amix step (without output label). Shared between loudness measurement
+ * (timelineMeasureArgs) and custom measurement PCM decoding (audio-pcm.mjs), ensuring both mix
+ * the exact same audio.
  * @param {Array<{file: string, start: number, dur: number, offset: number, volume: number, fadeIn: number, fadeOut: number}>} entries
- * @param {number} [duration] 时间轴时长(秒),混音在这里截断;不传就到最后一段结束
+ * @param {number} [duration] Timeline duration (seconds), where mix is truncated; if omitted,
+ *   runs until the end of the last clip
  * @returns {{ inputs: string[], filters: string[], mix: string }}
  */
 export function timelineMixParts(entries, duration) {
   const inputs = [];
   const filters = [];
   entries.forEach((p, i) => {
-    // 变速的声音段:读 dur × speed 秒素材、变速变调成 dur 秒(和导出两条混音路同一份 ffmpegVarispeed,kernel/clipTime.mjs)
+    // Speed-changed sound clip: read dur × speed seconds of asset, change speed and pitch to dur seconds
+    // (same ffmpegVarispeed as the two export mix paths, kernel/clipTime.mjs)
     const speed = Number(p.speed) > 0 ? Number(p.speed) : 1;
     inputs.push("-ss", String(p.offset), "-t", String(speed !== 1 ? p.dur * speed : p.dur), "-i", p.file);
-    // 因为这里只测音频没有视频文件参与，输入文件全都是音频，所以输入索引从 0 开始。
-    // 而 mux-audio.mjs 里有视频作为输入 0，所以那里的音频是从 1 开始的。
+    // Since only audio is measured here without video, all inputs are audio and index starts at 0.
+    // In mux-audio.mjs, video is input 0, so audio starts at 1 there.
     const k = i;
     const chain = [...ffmpegVarispeed(speed), `adelay=${Math.round(p.start * 1000)}:all=1`];
     if (p.fadeIn > 0) chain.push(`afade=t=in:st=${p.start.toFixed(3)}:d=${p.fadeIn}`);
@@ -61,16 +68,21 @@ export function timelineMixParts(entries, duration) {
 }
 
 /**
- * 拼装时间轴多段音频混音的 ffmpeg 参数 (和 mux-audio 一致)
+ * Assemble ffmpeg arguments for multi-clip timeline audio mix (consistent with mux-audio)
  * @param {Array<{file: string, start: number, dur: number, offset: number, volume: number, fadeIn: number, fadeOut: number}>} entries 
  * @returns {string[]}
  */
 export function timelineMeasureArgs(entries, duration) {
-  // duration:时间轴时长(秒),混音在这里截断,和导出(-t duration)测的是同一段;不传就测到最后一段结束。
-  // -nostats:进度行是 \r 分隔、和 ebur128 的逐帧行挤在一起,解析会吞掉整秒的点
-  // asetpts=N/SR/TB:按样本序号重打时间戳,再交给 ebur128。有一段先于结尾结束时,ffmpeg 9 的 amix 偶发给之后的帧
-  // 打 NOPTS,ebur128 的逐帧行就成了 t: -192153584101141.06(INT64_MIN / 48000),逐秒曲线在那之后缺点
-  // (实测约 1～13%,AGENT-maint-3)。正常时 amix 的输出从 0 连续,这一步是恒等的;响度只看样本,汇总值不受影响
+  // duration: timeline duration (seconds), where mix is truncated, measuring the same segment as
+  // export (-t duration); if omitted, measures until the end of the last clip.
+  // -nostats: progress lines are \r-delimited and crowded with ebur128 per-frame lines;
+  // parsing would drop whole-second points.
+  // asetpts=N/SR/TB: restamps timestamps by sample index before passing to ebur128. When a clip
+  // ends before the end, ffmpeg 9 amix occasionally stamps NOPTS on subsequent frames, making ebur128
+  // per-frame lines show t: -192153584101141.06 (INT64_MIN / 48000), causing missing points in
+  // the per-second curve after that point (measured at ~1-13%, AGENT-maint-3). Under normal conditions
+  // amix output is continuous from 0, so this step is an identity op; loudness only depends on
+  // samples, so summary values are unaffected.
   const { inputs, filters, mix } = timelineMixParts(entries, duration);
   return [
     "-hide_banner", "-nostats", ...inputs,
@@ -80,30 +92,32 @@ export function timelineMeasureArgs(entries, duration) {
 }
 
 /**
- * 解析 ebur128 滤镜的 stderr 输出
+ * Parse stderr output of the ebur128 filter
  * @param {string} stderr 
- * @returns {object} 解析得到的结果
+ * @returns {object} Parsed result
  */
 export function parseEbur128(stderr) {
-  // -inf 或 nan 转 null 的小函数
+  // Helper to convert -inf or nan to null
   const numOrNull = (str) => {
     if (!str || str.toLowerCase() === "-inf" || str.toLowerCase() === "nan") return null;
     const n = parseFloat(str);
     return isNaN(n) ? null : n;
   };
 
-  // 进度行是 \r 分隔的,不按 \r 切的话一行里会有好几个 t:,只匹配到第一个
+  // Progress lines are \r-delimited; without splitting on \r, a single line can contain
+  // multiple t: and only match the first
   const lines = stderr.split(/\r?\n|\r/).map(l => l.trim());
 
   let integrated, threshold, lra, lraLow, lraHigh, truePeak, duration;
   const series = [];
-  // 每整秒取落在 [k, k+1) 里的第一帧;按 floor 而不是「跨过 nextSec 就记」,丢一帧不会让后面整体错位
+  // For each integer second, take the first frame falling in [k, k+1); using floor instead of
+  // "record once nextSec is crossed" ensures a dropped frame won't shift all subsequent points
   let lastSec = -1;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // 匹配 ebur128 的逐帧输出，例如：
+    // Matches ebur128 per-frame output, for example:
     // [Parsed_ebur128_0 @ 0000021bd94a2540] t: 177.799977 TARGET:-23 LUFS    M: -46.4 S: -20.0     I: -12.4 LUFS       LRA:  11.0 LU  FTPK: -42.7 -46.6 dBFS  TPK:   0.0   0.0 dBFS
     const tMatch = line.match(/t:\s*([\d.]+)/);
     const sMatch = line.match(/S:\s*([-+\d.A-Za-z]+)/); 
@@ -120,7 +134,7 @@ export function parseEbur128(stderr) {
       }
     }
 
-    // 匹配 Summary section，例如：
+    // Matches Summary section, for example:
     //     I:         -12.4 LUFS
     if (line.match(/^\s*I:\s*([-+\d.A-Za-z]+)\s*LUFS/)) {
       integrated = numOrNull(line.match(/^\s*I:\s*([-+\d.A-Za-z]+)/)[1]);
@@ -130,7 +144,7 @@ export function parseEbur128(stderr) {
       if (threshold === undefined) threshold = numOrNull(line.match(/^\s*Threshold:\s*([-+\d.A-Za-z]+)/)[1]);
     }
 
-    // LRA section，例如：
+    // LRA section, for example:
     //     LRA:        11.5 LU
     if (line.match(/^\s*LRA:\s*([-+\d.A-Za-z]+)\s*LU/)) {
       lra = numOrNull(line.match(/^\s*LRA:\s*([-+\d.A-Za-z]+)/)[1]);
@@ -144,14 +158,14 @@ export function parseEbur128(stderr) {
       lraHigh = numOrNull(line.match(/^\s*LRA high:\s*([-+\d.A-Za-z]+)/)[1]);
     }
 
-    // True peak section，例如：
+    // True peak section, for example:
     //     Peak:        0.0 dBFS
     if (line.match(/^\s*Peak:\s*([-+\d.A-Za-z]+)\s*dBFS/)) {
       truePeak = numOrNull(line.match(/^\s*Peak:\s*([-+\d.A-Za-z]+)/)[1]);
     }
     
-    // 匹配 ffmpeg 进度输出以获得更准确的时长：
-    // size=N/A time=00:03:02.00 bitrate=N/A speed= 396x elapsed=0:00:00.45 
+    // Matches ffmpeg progress output to obtain more accurate duration:
+    // size=N/A time=00:03:02.00 bitrate=N/A speed= 396x elapsed=0:00:00.45
     const timeMatch = line.match(/time=(\d{2}):(\d{2}):([\d.]+)/);
     if (timeMatch) {
       const h = parseInt(timeMatch[1], 10);

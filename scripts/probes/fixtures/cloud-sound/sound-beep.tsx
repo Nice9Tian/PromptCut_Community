@@ -1,11 +1,15 @@
 /**
- * 「云端 Agent 的声音」探针的测试夹具(`scripts/probes/cloud-agent-sound-probe.mjs`):一张带 `audio()` 的声画用户卡。
+ * Test fixture for the "Cloud Agent sound" probe (`scripts/probes/cloud-agent-sound-probe.mjs`):
+ * an audio-visual user card with `audio()`.
  *
- * 画面是一块纯色;声音是一段单声道正弦波:第 n 个采样 = sin(2π · hz · n / 采样率) × gain,只由参数与采样位置决定。
- * 探针让云端 Agent 用 `create_card` 把它建进项目的内容库、放上时间轴,再 `render_card_audio`,然后逐样本核对入库的 WAV。
+ * The image is a solid color; the sound is a mono sine wave: sample n = sin(2π · hz · n / sample rate)
+ * × gain, determined solely by parameters and sample position. The probe has the Cloud Agent create
+ * it in the project content store via `create_card`, put it on the timeline, call `render_card_audio`,
+ * and then verify the stored WAV sample by sample.
  *
- * `audio()` 每次被调用都往 `globalThis` 记一个数(`__PC_SOUND_BEEP_RAN`):这张卡的声音代码在哪个进程里跑过,那个进程里就有它。
- * 探针据此断言它**没有**在云端 Agent 服务的进程里执行。它什么都不探、不发任何请求。
+ * Each time `audio()` is called, it records a count in `globalThis` (`__PC_SOUND_BEEP_RAN`): whichever
+ * process ran this card's audio code will have it. The probe asserts based on this that it **did not**
+ * execute inside the Cloud Agent service process. It probes nothing and sends no requests.
  */
 import type { CardDef, CardProps } from "../../kernel/types";
 
@@ -17,14 +21,14 @@ function SoundBeep(_props: CardProps<P>) {
 
 export const soundBeep: CardDef<P> = {
   id: "sound-beep",
-  name: "声音探针的哔声卡",
-  description: "测试夹具:纯色画面加一段正弦波",
-  tags: ["探针"],
+  name: "Beep card for the sound probe",
+  description: "Test fixture: solid color frame plus a sine wave",
+  tags: ["probe"],
   frameMode: "stateful",
   kind: "animation",
   inputs: {},
   defaults: { hz: 440, gain: 0.25 },
-  controls: [{ key: "hz", label: "频率", type: "number", min: 50, max: 4000 }, { key: "gain", label: "强度", type: "number", min: 0, max: 1, step: 0.05 }],
+  controls: [{ key: "hz", label: "Frequency", type: "number", min: 50, max: 4000 }, { key: "gain", label: "Intensity", type: "number", min: 0, max: 1, step: 0.05 }],
   Component: SoundBeep,
   audio: (_sources, range, params) => {
     const g = globalThis as { __PC_SOUND_BEEP_RAN?: number };

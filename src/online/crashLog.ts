@@ -1,49 +1,63 @@
 /**
- * 在线浏览器的崩溃记录(语义 `product/platforms.md`「在线浏览器」的三道闸门;做法 `mechanism/platforms.md`「三道闸门」的「崩溃记录」)。
+ * Online browser crash log (semantics: three gates in `product/platforms.md` "Online browser";
+ * mechanism: "Crash log" under "Three gates" in `mechanism/platforms.md`).
  *
- * 手机浏览器内存超限时整页被系统杀掉,页面收不到通知,所以每一步动手之前先留一条记录,重新载入时据此判断上次死在哪。
- * 记录写在同步的页面本地存储(`localStorage`,编辑器页的源)里,跟设备走、不跟项目走,每条带时间与软件版本。
+ * When a mobile browser exceeds memory limits, the system kills the whole page without notice, so
+ * a record is left before every step to determine where it died upon reload. Records are written to
+ * synchronous page local storage (`localStorage`, editor page origin), tied to the device rather
+ * than the project, each with timestamp and software version.
  *
- * # 判「崩了」
+ * # Determining "crashed"
  *
- * 这次载入离上次「还活着」的时刻不到 `CRASH_WINDOW_MS`(1 分钟,用户定),而且上次没有留下「正常离开」,也不处在「在后台」。崩一次就算。
+ * This load occurred within `CRASH_WINDOW_MS` (1 minute, user decision) since the last "still alive"
+ * timestamp, without a recorded "clean exit", and not while "in background". A single crash counts.
  *
- * - 「还活着」:每留一步记录时更新;之后定时更新(`HEARTBEAT_MS`),运行中途崩掉、随即重新载入的也接得住;
- * - 「正常离开」:`pagehide` 时记下(关页面、刷新、跳走);
- * - 「在后台」:`visibilitychange` 到 hidden 时记下,回到前台清掉。在后台被系统回收不算崩。
+ * - "still alive": updated whenever a step record is written; periodically updated afterwards
+ *   (`HEARTBEAT_MS`), catching mid-run crashes followed immediately by a reload;
+ * - "clean exit": recorded on `pagehide` (closing page, reload, navigation);
+ * - "in background": recorded when `visibilitychange` transitions to hidden, cleared upon returning
+ *   to foreground. Being reclaimed by the system while in the background does not count as a crash.
  *
- * # 一个设备、几个标签页
+ * # One device, multiple tabs
  *
- * 同一个源的几个标签页共用这份 `localStorage`。每个标签页有自己的一段(`tabs[<标签页 id>]`:还活着的时刻、正常离开、在后台、上一步),
- * 标签页 id 存在 `sessionStorage`(同一个标签页刷新、崩了重新载入都还在)。三道闸门的结果(舞台闸门到了哪一级、崩了几次、护栏、
- * 解码上限调低了几级、测崩的卡)是设备级的,放在 `device` 里,几个标签页共用。
+ * Multiple tabs from the same origin share this `localStorage`. Each tab has its own section
+ * (`tabs[<tab id>]`: alive timestamp, clean exit, in background, previous step), with tab id stored
+ * in `sessionStorage` (preserved across refreshes and crash reloads within the same tab). The
+ * results of the three gates (stage gate tier reached, crash count, guards, decoding cap tier
+ * downgrades, cards that crashed during testing) are device-level, stored in `device`, and shared
+ * among tabs.
  *
- * 载入时先看自己这个标签页上次的那一段;`sessionStorage` 丢了(新开的标签页)就看别的标签页留下的、像崩了的那几段 —— 那些标签页
- * 可能还开着(另一个标签页正在用),所以先经 `BroadcastChannel` 问一声,有回音的就是活着的,不算崩(`judgeLoad` 的 `alive` 参数)。
+ * On load, it first checks the previous section for its own tab; if `sessionStorage` was lost
+ * (newly opened tab), it inspects sections left by other tabs that look crashed: those tabs might
+ * still be open (in active use by another tab), so it queries via `BroadcastChannel` first; any tab
+ * that responds is alive and not counted as crashed (`alive` parameter in `judgeLoad`).
  *
- * 本模块是纯的(存储、时钟、标签页 id 都注入),Node 单测直接用;页面里的接线在 `stageGate.ts`。
+ * This module is pure (storage, clock, tab id are all injected), directly usable in Node unit
+ * tests; wiring in the page is in `stageGate.ts`.
  */
 
 export const CRASH_LOG_KEY = "pc.online.crashLog";
 export const CRASH_TAB_KEY = "pc.online.tab";
 export const CRASH_LOG_VERSION = 1;
-/** 判「崩了」的窗口:这次载入离上次「还活着」不到这么久(1 分钟,2026-10-07 用户定) */
+/** Window for determining "crashed": this load occurred within this duration since the last "still alive" (1 minute, user decision, 2026-10-07) */
 export const CRASH_WINDOW_MS = 60_000;
 /**
- * 「还活着」定时更新的间隔〔裁〕。崩了之后要在 `CRASH_WINDOW_MS - HEARTBEAT_MS` 之内重新载入才接得住,所以越短越好;
- * 每次是一次 `localStorage.setItem`(这台 PC 上实测一条约 2 KB 的记录写一次几十微秒,数字见报告「数字与依据」),5 秒一次可以忽略。
+ * Interval for periodic "still alive" updates [ruling]. After a crash, a reload must happen within
+ * `CRASH_WINDOW_MS - HEARTBEAT_MS` to be caught, so shorter is better; each write is a
+ * `localStorage.setItem` (benchmarked on this PC at tens of microseconds for a ~2 KB record; see
+ * "Numbers and rationale" in report), making once every 5 seconds negligible.
  */
 export const HEARTBEAT_MS = 5_000;
-/** 别的标签页的那一段多久没更新就当作已经关了,清掉(不影响判崩:判崩只看 1 分钟以内的) */
+/** How long without updates before another tab's section is treated as closed and cleared (does not affect crash determination, which only considers the last 1 minute) */
 export const TAB_STALE_MS = 24 * 3600_000;
-/** 设备级的「测崩的卡」最多记这么多张(先进先出) */
+/** Maximum number of cards recorded in device-level "cards that crashed during testing" (FIFO) */
 export const HEAVY_CARDS_MAX = 500;
-/** 查看口留最近几次判定 */
+/** Retains the last few determinations for the inspector */
 export const HISTORY_MAX = 12;
 
 export type StageLevel = 1 | 2 | 3;
 
-/** 每一步动手之前留的记录:舞台闸门的一步、素材闸门载入原尺寸、即时渲染闸门测一张卡、走完之后在某一级运行 */
+/** Record left before taking each step: a stage gate step, asset gate loading original size, on-demand render gate testing a card, running at a given tier after completion */
 export type CrashStep =
   | { kind: "stage"; what: "open-visible" | "visible-ready" | "try-back" | "dual-loaded" | "try-separate" | "separate-ready" }
   | { kind: "running"; level: StageLevel; lowest: boolean }
@@ -51,7 +65,7 @@ export type CrashStep =
   | { kind: "measure"; key: string; cardId: string | null };
 
 export interface TabRecord {
-  /** 这一段是哪次载入写的(载入时刻) */
+  /** Which load wrote this section (load timestamp) */
   startedAt: number;
   version: string;
   alive: number;
@@ -61,22 +75,22 @@ export interface TabRecord {
 }
 
 export interface DeviceRecord {
-  /** 写这份设备记录的软件版本;和当前不同就是升级了,清零 */
+  /** Software version that wrote this device record; reset if different from current version (upgrade) */
   version: string;
   stage: {
-    /** 上一次使用到达的级别;`lowest` 为真时是最低一档(一个舞台) */
+    /** Tier reached during last use; when `lowest` is true, it is the lowest tier (one stage) */
     reached: StageLevel | null;
     lowest: boolean;
-    /** 崩了几次(往上试成功一次、软件升级时清零) */
+    /** Crash count (reset upon one successful step-up or software upgrade) */
     crashes: number;
-    /** 护栏到什么时候;null = 没有护栏 */
+    /** When the guard expires; null = no guard */
     guardUntil: number | null;
-    /** 上一次使用往上试过(下次载入没判崩就算试成功,清零) */
+    /** Attempted a step-up during last use (counted as successful and reset if next load is not classified as crashed) */
     tried: boolean;
   };
-  /** 素材闸门:载入原尺寸撑崩过几次,解码上限就调低几级 */
+  /** Asset gate: how many times loading original size caused a crash; decoding cap is lowered by this many tiers */
   media: { lowered: number };
-  /** 即时渲染闸门:测崩了的卡(identityKey);基准卡测崩记 `@benchmark` */
+  /** On-demand render gate: cards that crashed during testing (`identityKey`); baseline card crash recorded as `@benchmark` */
   heavyCards: string[];
 }
 
@@ -84,7 +98,7 @@ export interface CrashLog {
   v: number;
   device: DeviceRecord;
   tabs: Record<string, TabRecord>;
-  /** 最近几次载入的判定(查看口用) */
+  /** Determinations from recent loads (used by the inspector) */
   history: { at: number; tab: string; crashed: boolean; step: CrashStep | null; note: string }[];
 }
 
@@ -113,7 +127,7 @@ function parseStep(v: unknown): CrashStep | null {
   return null;
 }
 
-/** 读记录;读不到、坏了、版本对不上都回空记录(不抛) */
+/** Reads records; returns an empty record if unreadable, corrupted, or version mismatch (does not throw) */
 export function readCrashLog(store: KV | null, version: string): CrashLog {
   let raw: unknown = null;
   try { raw = JSON.parse(store?.getItem(CRASH_LOG_KEY) ?? "null"); } catch { raw = null; }
@@ -151,25 +165,28 @@ export function writeCrashLog(store: KV | null, log: CrashLog): boolean {
   try { store?.setItem(CRASH_LOG_KEY, JSON.stringify(log)); return !!store; } catch { return false; }
 }
 
-/** 这一段像不像崩了(只看它自己:离现在不到 1 分钟、没正常离开、不在后台) */
+/** Whether this section looks crashed (checks only itself: less than 1 minute ago, no clean exit, not in background) */
 export function looksCrashed(tab: TabRecord | undefined, now: number): boolean {
   if (!tab) return false;
   return now - tab.alive < CRASH_WINDOW_MS && now >= tab.alive - 1000 && !tab.left && !tab.background;
 }
 
 export interface LoadJudgement {
-  /** 判为崩了 */
+  /** Classified as crashed */
   crashed: boolean;
-  /** 崩在哪一步(没崩为 null) */
+  /** Which step crashed (null if not crashed) */
   step: CrashStep | null;
-  /** 判据来自哪个标签页的那一段 */
+  /** Which tab's section provided the determination evidence */
   fromTab: string | null;
 }
 
 /**
- * 载入时判上次崩没崩。`tab` 是这个标签页的 id(`sessionStorage` 里有就是刷新 / 崩了重新载入,没有就是新开的标签页,`fresh` 为真);
- * `alive` 是此刻还活着的别的标签页(经 `BroadcastChannel` 问出来的)。
- * 自己这一段像崩了就是崩了;新开的标签页再看别的标签页留下的、像崩了而且没回音的那几段,取最近的那一段。
+ * Determines whether the previous session crashed on load. `tab` is this tab's id (present in
+ * `sessionStorage` for a refresh or crash reload; absent for a newly opened tab, where `fresh` is
+ * true); `alive` lists other tabs currently alive (queried via `BroadcastChannel`).
+ * If its own section looks crashed, it is classified as crashed; a newly opened tab additionally
+ * inspects sections left by other tabs that look crashed and did not respond, taking the most
+ * recent one.
  */
 export function judgeLoad(log: CrashLog, opts: { tab: string; fresh: boolean; now: number; alive?: ReadonlySet<string> }): LoadJudgement {
   const own = log.tabs[opts.tab];
@@ -183,31 +200,31 @@ export function judgeLoad(log: CrashLog, opts: { tab: string; fresh: boolean; no
   return best ? { crashed: true, step: best[1].step, fromTab: best[0] } : { crashed: false, step: null, fromTab: null };
 }
 
-/** 别的标签页里像崩了、要问一声还在不在的那几段 */
+/** Sections from other tabs that look crashed and need to be pinged to see if they are still alive */
 export function tabsToPing(log: CrashLog, tab: string, now: number): string[] {
   return Object.entries(log.tabs).filter(([id, t]) => id !== tab && looksCrashed(t, now)).map(([id]) => id);
 }
 
-/** 关了很久的标签页的那一段清掉 */
+/** Clears sections for tabs that have been closed for a long time */
 export function pruneTabs(log: CrashLog, now: number, keep: string): CrashLog {
   const tabs: Record<string, TabRecord> = {};
   for (const [id, t] of Object.entries(log.tabs)) if (id === keep || now - t.alive < TAB_STALE_MS) tabs[id] = t;
   return { ...log, tabs };
 }
 
-/** 一段新的标签页记录(载入时写:还活着、没离开、前后台照实) */
+/** A new tab section record (written on load: alive, not exited, foreground/background status recorded accurately) */
 export function freshTab(now: number, version: string, background: boolean, step: CrashStep | null): TabRecord {
   return { startedAt: now, version, alive: now, left: false, background, step };
 }
 
-/** 往设备记录里加一张测崩的卡(去重,先进先出) */
+/** Adds a card that crashed during testing to the device record (deduplicated, FIFO) */
 export function addHeavyCard(device: DeviceRecord, key: string): DeviceRecord {
   const list = device.heavyCards.filter((k) => k !== key);
   list.push(key);
   return { ...device, heavyCards: list.slice(-HEAVY_CARDS_MAX) };
 }
 
-/** 新的标签页 id(16 个字符,只是区分标签页,不是凭证) */
+/** New tab id (16 characters, only used to distinguish tabs, not a credential) */
 export function newTabId(random: () => number = Math.random): string {
   const a = "abcdefghijklmnopqrstuvwxyz0123456789";
   let s = "";

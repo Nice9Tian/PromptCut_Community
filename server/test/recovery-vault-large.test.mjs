@@ -1,13 +1,20 @@
 /**
- * 本机协作恢复信息的保护存储(`server/recovery/vault.mjs`)装得下大项目的离线修改记录。
+ * Local collaboration recovery info's protected storage (`server/recovery/vault.mjs`) can hold
+ * offline edit records for large projects.
  *
- * 原问题(做「搬到云端」时撞上的,两处):Windows 上保护存储经 PowerShell 调 DPAPI,
- *   一 `spawnSync` 的输出上限是缺省的 1 MiB:房间里的项目正文一过约 780 KB,离线修改记录就写不进去
- *      (ENOBUFS → 接口回 503「无法可靠读取或保存协作恢复信息」),页面的保存、取消多用户协作、搬到云端都跟着失败;
- *   二 核对输出是不是 base64 的那条正则带分组重复,输出到几 MB 时把调用栈撑爆(RangeError)。
+ * Original issue (hit when implementing "move to the cloud", two places): On Windows, protected
+ * storage calls DPAPI via PowerShell,
+ *   1. `spawnSync` output cap is default 1 MiB: once project body in a room exceeds ~780 KB,
+ *      offline edit records cannot be written (ENOBUFS → endpoint returns 503 "Cannot reliably
+ *      read or save collaboration recovery information"); page save, cancel multi-user
+ *      collaboration, and move to the cloud all fail as well;
+ *   2. The regex checking whether output is base64 has repeating groups, overflowing the call
+ *      stack (RangeError) when output reaches a few MB.
  *
- *   RVL-01 正文 160 万字符的离线修改记录:写得进去;另开一个实例(等于重启)读回来一字不差
- *   RVL-02 输出上限是个明确的数(与恢复接口请求体同一个量级),不是缺省值
+ *   RVL-01 Offline edit record with 1.6 million characters of body: can be written; opening
+ *          another instance (equivalent to restart) reads it back verbatim
+ *   RVL-02 Output cap is an explicit number (same order of magnitude as recovery endpoint request
+ *          body), not the default value
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,22 +23,22 @@ import os from 'node:os';
 import path from 'node:path';
 import { openRecoveryVault, PROTECT_MAX_BUFFER } from '../recovery/vault.mjs';
 
-test('RVL-01 大项目的离线修改记录写得进保护存储、重开读得回来', () => {
+test('RVL-01 a large project\'s offline edit log can be written to the protected store and read back after reopening', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-vault-large-'));
   try {
     const descriptor = { version: 1, roomId: 'sp_aaaaaaaaaaaaaaaaaaaaaaaaaa', service: 'http://127.0.0.1:1', where: 'lan' };
-    const project = { id: 'content', name: '大正文', tracks: [], media: [], note: '正文'.repeat(800_000) };
+    const project = { id: 'content', name: 'Large text', tracks: [], media: [], note: 'body'.repeat(1_200_000) };
     const journal = { version: 1, projectId: descriptor.roomId, project, rev: 7, offlineRev: null, pending: [] };
-    assert.ok(Buffer.byteLength(JSON.stringify(journal)) > 4 * 1024 * 1024, '记录本身大于 4 MiB');
+    assert.ok(Buffer.byteLength(JSON.stringify(journal)) > 4 * 1024 * 1024, 'the record itself is larger than 4 MiB');
     openRecoveryVault({ dir }).journal(descriptor, 'content', journal);
     const back = openRecoveryVault({ dir }).select(descriptor, 'content').journal;
     assert.equal(back.rev, 7);
-    assert.equal(back.project.note.length, 1_600_000);
+    assert.equal(back.project.note.length, 4_800_000);
     assert.deepEqual(back, journal);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('RVL-02 保护存储的输出上限是个明确的数', () => {
+test('RVL-02 the protected store\'s output limit is an explicit number', () => {
   assert.equal(PROTECT_MAX_BUFFER, 256 * 1024 * 1024);
-  assert.ok(PROTECT_MAX_BUFFER >= 64 * 1024 * 1024, '不小于恢复接口请求体的上限');
+  assert.ok(PROTECT_MAX_BUFFER >= 64 * 1024 * 1024, 'not smaller than the request body limit of the recovery endpoint');
 });

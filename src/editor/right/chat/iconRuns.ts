@@ -3,51 +3,51 @@ import { isReportTool } from "../../../ai/progressReport.ts";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * 聊天气泡里那排操作图标(ToolIcons.tsx)背后的纯函数:动作分类和图标分组。
+ * Pure functions behind the row of action icons in a chat bubble (ToolIcons.tsx): action classification and icon grouping.
  *
- * 单独成文件、不碰 React 和样式,好让 node 直接跑测试(iconRuns.test.mjs)。
+ * Kept in its own file, free of React and styles, so node can run the tests directly (iconRuns.test.mjs).
  */
 
 /**
- * 图标的颜色分类。
+ * Color classification of icons.
  *
- * 按「这一步对项目做了什么」分,不是按工具名字母序 —— 用户扫一眼要能看出
- * 哪几下是在删东西。读取类故意用最淡的颜色:它们数量最多但最不值得注意,
- * 满屏一样亮的话反而看不见真正的动作。
+ * Classified by "what this step did to the project", not by tool name in alphabetical order: the user should be able to see at a glance
+ * which steps are deleting things. Reads deliberately use the faintest color: they are the most numerous but the least worth noticing,
+ * and if everything on screen is equally bright, the real actions become hard to see.
  */
 export type ToolKind = "add" | "remove" | "edit" | "read" | "look" | "download" | "ui" | "agent" | "wait" | "job";
 
 /**
- * 去掉工具名前面的服务器前缀。Claude Code 报上来的是 `mcp__promptcut__add_clip`,
- * 别家有的是裸名、有的是 `promptcut.add_clip`。分类、比对和显示都按裸名来 ——
- * 不去掉的话下面的正则一条都对不上,Claude 跑的每一步都会落进兜底的「处理」。
+ * Strip the server prefix before the tool name. Claude Code reports `mcp__promptcut__add_clip`,
+ * while others use a bare name or `promptcut.add_clip`. Classification, comparison and display all use the bare name:
+ * without stripping, none of the regexes below would match, and every step Claude runs would fall into the catch-all "Process".
  */
 export function bareToolName(name: string): string {
   return name.replace(/^mcp__.+?__/, "").replace(/^[\w-]+\.(?=\w)/, "");
 }
 
 /*
- * 「处理」是兜底,只该剩下真正要跑一阵的活儿(转写、追踪、检测、预渲染、自动流程)。
- * 新工具落进「处理」的话,先想想它其实是在收集、改、读还是在点界面。
+ * "Process" is the catch-all and should only be left with work that really takes a while to run (transcription, tracking, detection, prerender, auto workflow).
+ * If a new tool falls into "Process", first consider whether it is really collecting, changing, reading or clicking the UI.
  */
 export function toolKind(rawName: string): ToolKind {
   const name = bareToolName(rawName);
-  // 界面操作:播放头、切剪辑、弹窗这类动用户界面、不改项目的。2026-10-21 起这些工具名字带 user_interface_ 前缀;
-  // 老对话的历史里还是旧名(play / pause / seek / switch_cut),两种都认。放最前:user_interface_collect_login 不算收集
+  // UI actions: playhead, switching cuts, popups, things that act on the user interface without changing the project. Since 2026-10-21 these tool names carry the user_interface_ prefix;
+  // old chat history still has the old names (play / pause / seek / switch_cut), and both are recognized. Placed first: user_interface_collect_login does not count as collecting
   if (/^user_interface_|^(play|pause|seek)$|^switch_/.test(name)) return "ui";
-  // 收集放在界面操作之后:search_web、collect_*、web_* 的目的都是往回搬素材和资料,哪怕名字像「读取」「查看」也归这里。
-  // *_install 装的是拓展包,和 collect_install 一样算往回搬东西
+  // Collecting goes after UI actions: search_web, collect_*, web_* all aim to bring media and material back, so they belong here even if the name looks like "read" or "view".
+  // *_install installs extension packs, and like collect_install counts as bringing things back
   if (/^(collect|web)_|^search_web$|_install$|download/i.test(name)) return "download";
-  // 多 Agent 之间报范围、互相递话。放在读取前面:list_agents / check_messages 名字像读取,其实是协作
+  // Multiple Agents reporting scope and passing messages to each other. Placed before reads: list_agents / check_messages look like reads by name, but are really collaboration
   if (/^(declare_scope|send_message|check_messages|list_agents)$/.test(name)) return "agent";
   if (/^(remove|delete|clear)_/.test(name)) return "remove";
-  // duplicate_clip 是多出一段、fill_captions 是铺出一批字幕,都算新增
+  // duplicate_clip adds one more clip and fill_captions lays out a batch of captions, both count as additions
   if (/^(add|create|import|insert|duplicate|fill)_/.test(name)) return "add";
-  // align / nudge 是在挪位置;attach / detach 是给 clip 挂上、摘掉运动 —— 都是改 clip
+  // align / nudge move positions; attach / detach attach and remove motion on a clip: all of them modify the clip
   if (/^(set|update|edit|move|rename|reorder|split|trim|attach|detach)_|^(align|nudge)$/.test(name)) return "edit";
-  // 看画面(see_frames、view_file 这类)单拎出来,和翻数据的读取分开
+  // Looking at the picture (see_frames, view_file and the like) is split out, separate from reads that browse data
   if (/^(see|view)_/.test(name)) return "look";
-  // detect_* 要跑一阵分析,不在这里 —— 落到下面的「处理」。*_status 只是问一句进度,算读取
+  // detect_* needs to run an analysis for a while, so it is not here: it falls through to "Process" below. *_status only asks about progress, so it counts as a read
   if (/^(list|get|read|search|find|check|inspect)_|_status$|_guide$/.test(name)) return "read";
   if (/^wait/.test(name)) return "wait";
   return "job";
@@ -67,39 +67,39 @@ export const KIND_LABEL: Record<ToolKind, string> = {
 };
 
 /**
- * 一个图标最多装这么多个操作。
+ * The maximum number of actions one icon holds.
  *
- * 以前是「连续 4 个同类就折成第一个 ×N,点开再摊平」:一串 30 次读取折成一个小方块,
- * 点开之后又一下子铺满一屏。改成每个图标最多叠 5 个、第 6 个开新图标 ——
- * 做得多的地方图标就多,一眼看得出哪一段忙;单个图标点开也只有几行清单。
+ * It used to be "4 consecutive actions of the same kind fold into the first one ×N, and expand on click": a run of 30 reads folded into one small square,
+ * and expanding it filled a whole screen at once. Now each icon stacks at most 5, and the 6th starts a new icon:
+ * where more is done there are more icons, so you can see at a glance which stretch was busy; a single icon expands to only a few lines of manifest.
  */
 export const ICON_RUN_MAX = 5;
 
-/** iconRuns 只看名字(认类别、认报告工具)和成败 */
+/** iconRuns only looks at the name (to recognize the category and the report tool) and success or failure */
 export type ToolPartLike = Pick<ToolCallInfo, "name" | "ok">;
 
 export interface IconRun {
   /**
-   * 在这一排里唯一且稳定:取装进来的第一个操作的下标。
-   * 流式时新操作只往后追加,已经出现的图标 key 不会变,展开状态和轮播聚焦就不会跳到别的图标上。
+   * Unique and stable within this row: the index of the first action it holds.
+   * While streaming, new actions are only appended at the end, so the keys of icons that already appeared do not change, and the expanded state and carousel focus do not jump to another icon.
    */
   key: string;
-  /** 第一个操作的动作类型,决定底色和字形 */
+  /** Action type of the first action, which decides the background color and glyph */
   kind: ToolKind;
-  /** 有失败的 → err;有还没出结果的 → run;否则 ok */
+  /** Any failure → err; any with no result yet → run; otherwise ok */
   state: "run" | "ok" | "err";
-  /** 装进这个图标的操作在传入数组里的下标,按先后顺序 */
+  /** Indexes in the input array of the actions held by this icon, in order */
   items: number[];
 }
 
 /**
- * 把一段操作切成图标。
+ * Split a run of actions into icons.
  *
- * - 报告工具(report_progress)不出图标:它画成报告卡。这里当它不存在,也不打断前后的同类操作;
- * - 相邻、分组键相同的操作合成一个图标。分组键 = 失败的用 "err"(红叹号自成一类,
- *   会把同类型的一串打断),否则用动作类型;
- * - stt_install 永远单独成一个:它可能渲染成进度条而不是图标,不和任何东西并;
- * - 一个图标最多装 ICON_RUN_MAX 个,满了开新图标(12 个同类 → 5、5、2)。
+ * - A report tool (report_progress) produces no icon: it is drawn as a report card. Here it is treated as nonexistent, and does not interrupt same-kind actions before and after it;
+ * - Adjacent actions with the same group key merge into one icon. Group key = "err" for failures (the red exclamation mark is its own kind,
+ *   and breaks a run of the same type), otherwise the action type;
+ * - stt_install always stands alone: it may render as a progress bar rather than an icon, and is merged with nothing;
+ * - One icon holds at most ICON_RUN_MAX actions, and when full a new icon starts (12 of the same kind → 5, 5, 2).
  */
 export function iconRuns(tools: readonly ToolPartLike[]): IconRun[] {
   const runs: IconRun[] = [];

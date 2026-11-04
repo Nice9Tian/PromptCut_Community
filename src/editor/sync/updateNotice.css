@@ -1,7 +1,7 @@
 /*
- * 在线浏览器的新版本提示条（语义 `docs/semantics/product/platforms.md` 与 `docs/semantics/mechanism/platforms.md`「在线浏览器」的「新版本提示」）。
- * 做法参照 `src/editor/sync/sync.css` 的 `.pc-offline-unsent`，固定在底部居中、`bottom: 72px`（位于离线常驻提示 `bottom: 36px` 上方，同时出现时不重叠）。
- * 手机版编辑器（`src/mobile/`）底部是子导航与分页栏，提示条改放在顶栏正下方，并让顶栏下面空出提示条那么高，不压任何按钮（见文件末）。
+ * New-version notice bar for the online browser (semantics: "New version notice" under "Online browser" in `docs/semantics/product/platforms.md` and `docs/semantics/mechanism/platforms.md`).
+ * Modeled on `.pc-offline-unsent` in `src/editor/sync/sync.css`: fixed at the bottom center, `bottom: 72px` (above the persistent offline notice at `bottom: 36px`, so they do not overlap when both appear).
+ * In the mobile app editor (`src/mobile/`) the bottom holds the sub-navigation bar and the tab bar, so the notice bar is placed directly below the top bar instead, and the area below the top bar is opened up by the height of the notice bar so it covers no button (see the end of the file).
  */
 
 .pc-update-notice {
@@ -10,7 +10,7 @@
   left: 50%;
   transform: translateX(-50%);
   z-index: 950;
-  /* 按内容取宽：只靠 left: 50% 收缩适配时宽度最多半个视口，手机上一行字会被挤成好几行 */
+  /* Size to content: with only left: 50% and shrink-to-fit, the width is at most half the viewport, and on a phone one line of text would be squeezed into several lines */
   width: max-content;
   max-width: calc(100vw - 32px);
   box-sizing: border-box;
@@ -52,8 +52,8 @@
   border-radius: 10px;
 }
 
-/* 手机版编辑器：提示条放到顶栏（44px 加刘海留白）正下方；顶栏下面让出提示条的实际高度（`--pc-update-notice-h`，`UpdateNotice.tsx` 量了写上），
-   下面的预览、时间轴、Agent 对话整体下移，同冲突横条 `.cfbar` 那样占位，不盖住内容。开始页没有顶栏，照旧在底部 */
+/* Mobile app editor: the notice bar goes directly below the top bar (44px plus the notch padding); the area below the top bar makes room for the notice's actual height (`--pc-update-notice-h`, measured and written by `UpdateNotice.tsx`),
+   so the preview, timeline and Agent chat below all move down, reserving the space just like the conflict banner `.cfbar` does, without covering content. The start page has no top bar, so it stays at the bottom as before */
 body:has(.pcm [data-pcm="editor"]) .pc-update-notice {
   top: calc(env(safe-area-inset-top, 0px) + 48px);
   bottom: auto;

@@ -1,6 +1,7 @@
 import { cliCommand, cliEnv, resolveCli, setupRoot } from './cli-runtime.mjs';
 import { execFile } from 'node:child_process';
 import { codexAuthState } from './codex-auth-state.mjs';
+import { tr } from '../i18n.mjs';
 const resolveExe = resolveCli;
 
 const cache = new Map();
@@ -58,7 +59,7 @@ export async function probeAuth(providerId, opts = {}) {
     } else {
       result.loggedIn = null;
       const combined = (stdout + '\n' + stderr).trim().substring(0, 300);
-      result.detail = combined || (error ? `探测命令没跑起来:${error.message}` : 'No output');
+      result.detail = combined || (error ? tr("Probe command failed to run: {0}", error.message) : 'No output');
     }
   } else if (providerId === 'codex') {
     const exe = resolveExe('codex');
@@ -72,7 +73,7 @@ export async function probeAuth(providerId, opts = {}) {
       const errorLine = lines.find(l => l.includes('config.toml')) || lines[0] || '';
       result.detail = errorLine.trim();
       
-      result.fixHint = `请检查 PromptCut 独立配置目录 ${cliEnv('codex').CODEX_HOME} 中的 config.toml。`;
+      result.fixHint = tr("Please check config.toml in the PromptCut standalone config directory {0}.", cliEnv('codex').CODEX_HOME);
     } else if (output.includes('Not logged in')) {
       result.loggedIn = false;
     } else if (!error && output.includes('Logged in')) {
@@ -80,15 +81,15 @@ export async function probeAuth(providerId, opts = {}) {
     } else {
       result.loggedIn = null;
       const combined = output.trim().substring(0, 300);
-      result.detail = combined || (error ? `探测命令没跑起来:${error.message}` : 'No output');
+      result.detail = combined || (error ? tr("Probe command failed to run: {0}", error.message) : 'No output');
     }
   } else if (providerId === 'agy') {
     const { stdout, stderr, error } = await runCommand(resolveExe('agy'), ['models'], providerId);
     const output = stdout + '\n' + stderr;
     result.loggedIn = !error && /^[\w.-]+\t\S/m.test(stdout) ? true
       : /authentication required|not (?:logged|signed) in|please (?:log|sign) in/i.test(output) ? false : null;
-    result.detail = result.loggedIn === true ? '已连接，模型列表获取成功。'
-      : result.loggedIn === false ? '请点击登录，在浏览器中完成授权。' : '暂时无法确认连接，请检查网络或重新登录。';
+    result.detail = result.loggedIn === true ? tr("Connected, model list fetched successfully.")
+      : result.loggedIn === false ? tr("Click log in and complete authorization in the browser.") : tr("Unable to confirm the connection for now, please check your network or log in again.");
     result.loginCommand = ['agy', 'models'];
   }
 

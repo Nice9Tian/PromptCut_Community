@@ -5,8 +5,10 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 模糊浮现文字:逐块模糊浮现的文字，支持用星号高亮重点词。从 blur-text 卡片拆出。
- * 词块按 staggerMs 依次进场，落定耗时由词块数和间隔决定。
+ * Blur-reveal text: text revealed with blur block by block, supporting asterisks to highlight
+ * key words. Extracted from blur-text card.
+ * Word blocks enter in sequence based on staggerMs; settling duration is determined by word block
+ * count and interval.
  */
 interface Params {
   text: string;
@@ -66,10 +68,10 @@ function BlurTextPart({ params, width, height }: PartProps<Params>) {
 
 export const textBlur: PartDef<Params> = {
   id: "text-blur",
-  name: "模糊浮现",
-  description: "文字按词块逐个从虚焦中模糊浮现，重点词可用主色高亮",
-  useWhen: "口播强调核心观点、结论或金句时使用，必须用「|」切分词块，用「*星号*」包裹高亮词；词块极短（单个短语）用 text-pill，带作者署名的名言用 text-quote。",
-  tags: ["文字", "模糊", "浮现", "强调", "重点"],
+  name: "Blur fade",
+  description: "Text emerges from a blurred focus chunk by chunk, and key words can be highlighted in the main color",
+  useWhen: "Use when the narration emphasizes a core idea, conclusion or pull quote. You must split chunks with \"|\" and wrap highlighted words in \"*asterisks*\". For very short chunks (a single phrase) use text-pill, and for quotes with an author attribution use text-quote.",
+  tags: ["Text", "blur", "fade-in", "emphasis", "key point"],
   role: "list",
   from: "blur-text",
   defaults: {
@@ -79,10 +81,10 @@ export const textBlur: PartDef<Params> = {
     accent: "",
   },
   controls: [
-    { key: "text", label: "文字", type: "text", required: true },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 200, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
-    { key: "staggerMs", label: "字间距(ms)", type: "number", min: 0, max: 2000, step: 20 },
-    { key: "accent", label: "主色(留空用主题色)", type: "color" },
+    { key: "text", label: "Text", type: "text", required: true },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 200, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
+    { key: "staggerMs", label: "Stagger (ms)", type: "number", min: 0, max: 2000, step: 20 },
+    { key: "accent", label: "Main color (leave empty to use theme color)", type: "color" },
   ],
   defaultFrame: { x: 260, y: 400, w: 1400, h: 280 },
   settleMs: (p) => (Math.max(1, p.text.split("|").length) - 1) * p.staggerMs + 800,

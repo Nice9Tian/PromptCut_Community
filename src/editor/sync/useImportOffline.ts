@@ -1,6 +1,8 @@
 /**
- * 「导入媒体」断网置灰(在线浏览器;桌面版照常导入,连上后再上传)。素材库的导入按钮与手机版素材库面板共用。
- * 判据是纯函数 `onlineStatus.ts` 的 `importOfflineOf`。
+ * "Import media" is greyed out when offline (online browser; the desktop app imports as usual and
+ * uploads once connected). Shared by the import button of the media library and the mobile app's
+ * media library panel.
+ * The check is `importOfflineOf` in the pure-function module `onlineStatus.ts`.
  */
 import { useSyncExternalStore } from "react";
 import { ONLINE } from "../../online/mode";

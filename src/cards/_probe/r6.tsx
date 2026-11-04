@@ -2,19 +2,26 @@ import { useEffect, useRef } from "react";
 import type { CardDef, CardProps } from "../../kernel/types";
 
 /**
- * R6(数据面)端到端探针用的四张固定卡。**只给 `scripts/probes/ready-index-probe.mjs` 用**,
- * 不出现在卡片面板的推荐里 —— 和 `probe.tsx` 一样住在 `_probe/`。
+ * Four fixed cards for the R6 (data plane) end-to-end probe. **Used only by
+ * `scripts/probes/ready-index-probe.mjs`**, and not shown in the card panel's recommendations: like
+ * `probe.tsx`, they live in `_probe/`.
  *
- * 四张卡各自钉一条 R6 的判据:
+ * Each of the four cards pins down one criterion of R6:
  *
- *   `r6-stateful` stateful 的 DOM 卡,审阅表 `independent` → **共享档**(`kind: 'html'`);
- *   `r6-canvas`   canvas 卡(审阅表 `surface: canvas2d`)→ 共享档,但体积上限走 1 MB 那一档;
- *   `r6-unknown`  **不进审阅表** → `compositing: 'unknown'` → 按下层依赖卡处理、
- *                 只有**本地档**(`kind: 'local'`),不上云、不进流(计划 3.1(2));
- *   `r6-huge`     故意让单帧快照超过 300 KB:照常落盘,但**不进就绪索引**(A3c)。
+ *   `r6-stateful` a stateful DOM card, review table `independent` → **shared tier** (`kind: 'html'`);
+ *   `r6-canvas`   a canvas card (review table `surface: canvas2d`) → shared tier, but its size limit
+ *                 takes the 1 MB tier;
+ *   `r6-unknown`  **not in the review table** → `compositing: 'unknown'` → handled as a below-dependent
+ *                 card, with only a **local tier** (`kind: 'local'`), not uploaded to the cloud and not
+ *                 put into streams (plan 3.1(2));
+ *   `r6-huge`     deliberately makes a single-frame snapshot exceed 300 KB: it is written to disk as
+ *                 usual, but **does not enter the ready index** (A3c).
  */
 
-/** `r6-huge` 撑出多少个节点。每个节点带一段独有的内联样式,差异内联压不掉 */
+/**
+ * How many nodes `r6-huge` is padded out to. Each node carries a unique piece of inline style, so
+ * the differences cannot be squeezed out by inlining
+ */
 const HUGE_NODES = 1400;
 
 function StatefulCard({ playToken }: CardProps<Record<string, never>>) {
@@ -38,7 +45,7 @@ function CanvasCard({ t = 0, playToken }: CardProps<Record<string, never>>) {
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // 按 t 画一圈点:画面随帧变,快照里它是一张 data:image
+    // Draw a ring of dots by t: the picture changes with the frame, and in the snapshot it is a data:image
     for (let i = 0; i < 48; i++) {
       const angle = (i / 48) * Math.PI * 2 + t;
       ctx.fillStyle = `hsl(${(i * 7 + t * 60) % 360} 80% 60%)`;
@@ -90,23 +97,23 @@ function HugeCard({ t = 0, playToken }: CardProps<Record<string, never>>) {
 }
 
 export const r6StatefulCard: CardDef<Record<string, never>> = {
-  id: "r6-stateful", name: "R6 推帧卡", description: "R6 探针:stateful 的 DOM 卡,走共享档",
+  id: "r6-stateful", name: "R6 frame-push card", description: "R6 probe: stateful DOM card, uses the shared tier",
   source: "native", frameMode: "stateful", defaults: {}, controls: [], Component: StatefulCard,
 };
 
 export const r6CanvasCard: CardDef<Record<string, never>> = {
-  id: "r6-canvas", name: "R6 画布卡", description: "R6 探针:canvas 卡,体积上限走 1 MB 那一档",
+  id: "r6-canvas", name: "R6 canvas card", description: "R6 probe: canvas card, size limit uses the 1 MB tier",
   source: "native", frameMode: "stateful", defaults: {}, controls: [], Component: CanvasCard,
 };
 
 export const r6UnknownCard: CardDef<Record<string, never>> = {
-  // **故意不进审阅表**:真实项目里的定制卡就是这个样子
-  id: "r6-unknown", name: "R6 未审阅卡", description: "R6 探针:审阅表没覆盖,按下层依赖卡处理、只有本地档",
+  // **Deliberately not in the review table**: this is what a custom card in a real project looks like
+  id: "r6-unknown", name: "R6 unreviewed card", description: "R6 probe: not covered by the review table, handled as a lower-level dependency card, local tier only",
   source: "native", frameMode: "stateful", defaults: {}, controls: [], Component: UnknownCard,
 };
 
 export const r6HugeCard: CardDef<Record<string, never>> = {
-  id: "r6-huge", name: "R6 超限卡", description: "R6 探针:单帧快照超过 300 KB,落盘但不进就绪索引",
+  id: "r6-huge", name: "R6 oversize card", description: "R6 probe: single-frame snapshot exceeds 300 KB, written to disk but not added to the ready index",
   source: "native", frameMode: "stateful", defaults: {}, controls: [], Component: HugeCard,
 };
 

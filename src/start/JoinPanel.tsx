@@ -1,11 +1,15 @@
 /**
- * 「用链接加入项目」：开始页顶栏右边那颗键点出来的一小块。
+ * "Join a project by link": the small panel opened by the button at the right of the start page's
+ * top bar.
  *
- * 接缝形状（替换型接缝 `JoinSource` + 云端账号适配器 `AccountProjectsHookResult`）：
- * - 当链接是局域网邀请链接（`#invite=<43位>&doc=<路径>`）或未提供云端账号上下文（社区版）时，
- *   走公开侧默认实现的局域网加入源（`getJoinSource().resolveLanInvite` + `joinLanByInvite`），
- *   凭用户名与项目口令/邀请码直接握手进入共享项目，不依赖网站账号；
- * - 当链接是云端账号项目链接且已安装云端账号扩展时，走 `ap.join`（支持二级密码与申请加入）。
+ * Seam shape (replaceable seam `JoinSource` + cloud account adapter `AccountProjectsHookResult`):
+ * - When the link is a LAN invite link (`#invite=<43 chars>&doc=<path>`) or no cloud account
+ *   context is provided (community edition), use the LAN join source from the public-side default
+ *   implementation (`getJoinSource().resolveLanInvite` + `joinLanByInvite`), which handshakes
+ *   straight into the shared project with a username and the project passphrase/invite code, with
+ *   no dependency on a website account;
+ * - When the link is a cloud account project link and the cloud account extension is installed,
+ *   use `ap.join` (supports secondary password and join requests).
  */
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
@@ -107,13 +111,13 @@ export function JoinPanel(props: { ap?: Ap | null; askPassword: boolean; onClose
     });
   };
 
-  // 申请被通过、或项目改回「知道链接就能进」:自动再走一次加入(同 AccountProjects.tsx)
+  // Request approved, or project switched back to "anyone with the link can enter": automatically go through join again (same as AccountProjects.tsx)
   const autoJoin = autoJoinKey(ap?.request ?? null);
   useEffect(() => {
     if (autoJoin && ap) void submit(undefined);
   }, [autoJoin]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 按 Esc 关
+  // Close on Esc
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") props.onClose();

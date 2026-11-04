@@ -1,22 +1,27 @@
 /**
- * 仅供测试与探针，生产代码不得引用。
+ * For testing and probes only; production code must not import this.
  *
- * 原始 TCP 上的最小 WebSocket 客户端（RFC 6455 客户端一侧），给背压测试用（契约 `docs/plan/render-queue-contract.md`
- * H.5 的 I3、I5）：它能在握手之后**停止读取 socket**，让服务端的发送缓冲真的积压起来。Node 内置的 `WebSocket`
- * 做不到这一点，它总是尽快把数据读走。
+ * Minimal WebSocket client over raw TCP (RFC 6455 client side), used for backpressure testing
+ * (contract `docs/plan/render-queue-contract.md` H.5 I3, I5): it can **stop reading the socket**
+ * after the handshake, allowing the server send buffer to genuinely build up a backlog. Node's
+ * built-in `WebSocket` cannot do this, as it always reads data as fast as possible.
  *
  *   const c = await rawWsClient(port, { protocols })
- *   c.send(obj)             发一条文本消息（带掩码）
- *   c.next(match, ms)       等一条匹配的消息（取走）
- *   c.pause() / c.resume()  停止 / 恢复读取 socket（停止期间内核缓冲写满后，服务端的 writableLength 会涨）
- *   c.closeFrame            收到的关闭帧 { code, reason }，没收到是 null
- *   c.ended                 Promise：socket 关掉时兑现 { closeFrame, bytesRead }
+ *   c.send(obj)             sends a text message (masked)
+ *   c.next(match, ms)       waits for a matching message (consumed)
+ *   c.pause() / c.resume()  stops / resumes reading the socket (during pause, after kernel buffers
+ *                           fill up, server writableLength grows)
+ *   c.closeFrame            received close frame { code, reason }, null if not received
+ *   c.ended                 Promise: resolves { closeFrame, bytesRead } when socket is closed
  *   c.stats                 { messages, bytesRead }
  *   c.destroy()
  *
- * 收到的消息默认只计数、不保留（`keep: true` 时保留在 inbox 里供 next 取），免得大量消息把测试进程的堆撑大。
- * 收到 ping 回 pong；收到关闭帧回一个关闭帧后结束 TCP。只支持文本帧与分片，二进制帧当作协议错误断开。
- * 只引 Node 内置模块。
+ * Received messages are only counted by default and not retained (retained in inbox for next to
+ * take when `keep: true`) to avoid bloating the test process heap with massive messages.
+ * Replies with pong on ping; replies with a close frame on receiving a close frame, then
+ * terminates TCP. Only supports text frames and fragments; binary frames disconnect as protocol
+ * errors.
+ * Only imports Node built-in modules.
  */
 import { connect as netConnect } from 'node:net';
 import { randomBytes, createHash } from 'node:crypto';
@@ -63,7 +68,7 @@ export async function rawWsClient(port, { host = '127.0.0.1', path = '/', protoc
 
   let buf = Buffer.alloc(0);
   const head = await new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('等握手响应超时')), 3000);
+    const t = setTimeout(() => reject(new Error('timed out waiting for the handshake response')), 3000);
     const onData = (d) => {
       buf = Buffer.concat([buf, d]);
       const end = buf.indexOf('\r\n\r\n');
@@ -75,13 +80,13 @@ export async function rawWsClient(port, { host = '127.0.0.1', path = '/', protoc
       resolve(text);
     };
     sock.on('data', onData);
-    sock.once('close', () => { clearTimeout(t); reject(new Error('握手时连接被关闭')); });
+    sock.once('close', () => { clearTimeout(t); reject(new Error('connection closed during the handshake')); });
   });
   const status = Number(head.split('\r\n')[0].split(' ')[1]);
   const accept = createHash('sha1').update(key + GUID).digest('base64');
   if (status !== 101 || !head.toLowerCase().includes(`sec-websocket-accept: ${accept.toLowerCase()}`)) {
     sock.destroy();
-    throw new Error(`握手失败：${head.split('\r\n')[0]}`);
+    throw new Error(`handshake failed: ${head.split('\r\n')[0]}`);
   }
 
   const inbox = [];
@@ -108,7 +113,7 @@ export async function rawWsClient(port, { host = '127.0.0.1', path = '/', protoc
         waiters.push(w);
         setTimeout(() => {
           const k = waiters.indexOf(w);
-          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`等消息超时（原始客户端，已收 ${stats.messages} 条）`)); }
+          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`timed out waiting for a message (raw client, ${stats.messages} received so far)`)); }
         }, ms);
       });
     },

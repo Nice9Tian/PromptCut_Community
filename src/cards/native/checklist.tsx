@@ -68,12 +68,13 @@ function ChecklistCard({ params }: CardProps<Params>) {
 
 export const checklist: CardDef<Params> = {
   id: "checklist",
-  name: "清单打勾",
-  description: "逐条划入并打勾",
-  useWhen: "口播在罗列并列要点(「要点」「包括」「分别是」「三点」「需要」),条目之间没有先后依赖时用它逐条打勾。有先后顺序的步骤用 step-timeline。",
-  tags: ["清单","要点","打勾","罗列"],
+  name: "Checklist ticks",
+  description: "Slide in items one by one and tick them off",
+  useWhen: "Use when the narration lists parallel key points (\"key points\", \"including\", \"namely\", \"three points\", \"need\") and the items do not depend on each other in order; it ticks them off one by one. Use step-timeline for ordered steps.",
+  tags: ["Checklist","Key points","tick","list"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -82,11 +83,11 @@ export const checklist: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "items", label: "条目(竖线分隔)", type: "text" },
-    { key: "stepMs", label: "行间隔(ms)", type: "number" },
+    { key: "items", label: "Items (separated by vertical bars)", type: "text" },
+    { key: "stepMs", label: "Row interval (ms)", type: "number" },
   ],
   parts: [
-    { id: "items", label: "条目", role: "list", params: ["items", "stepMs"], enterMs: 0, settleMs: 3 * 260 + 650 },
+    { id: "items", label: "Items", role: "list", params: ["items", "stepMs"], enterMs: 0, settleMs: 3 * 260 + 650 },
   ],
   lifecycle: { settleMs: 1430, after: "hold", exit: ["fade"] },
   timing: (p) => {

@@ -1,44 +1,67 @@
 /**
- * 声音合成的轻重判定:测量、记录、判据(`docs/semantics/mechanism/rendering.md`「声音的轻重」)。
+ * Light/heavy classification of sound synthesis: measurement, records, criteria
+ * (`docs/semantics/mechanism/rendering.md` "Light and heavy sound").
  *
- * 沿用画面那一套(`mechanism/rendering.md`「测量」「分派」):
- *   - 只进判定的数是「合成一块的耗时」的稳健统计值:第 90 百分位、至少 16 块(`pipelineTuning.mjs` 的 `robustStep`,
- *     与画面同一个函数、同一组可调系数);单次最大另记,只作诊断;
- *   - 预算与画面同形:画面是 `1000 / fps × 70%`(一帧的时长的七成),声音是「一块的时长 × 70%」;
- *   - 判重式相同:`blockMs × COST_SCALE > 预算`;
- *   - 身份(配方或卡片声音身份)和设备串都没变,就复用上次的记录,不重测。
+ * It follows the picture's scheme (`mechanism/rendering.md` "Measurement" and "Dispatch"):
+ *   - The only number that enters the classification is a robust statistic of "time to synthesize one
+ *     chunk": the 90th percentile, at least 16 chunks (`robustStep` in `pipelineTuning.mjs`, the same
+ *     function and the same set of tunable coefficients as the picture); the single-run maximum is
+ *     recorded separately, for diagnostics only;
+ *   - The budget has the same shape as the picture's: for the picture it is `1000 / fps × 70%`
+ *     (seventy percent of a frame's duration), for sound it is "chunk duration × 70%";
+ *   - The heavy-classification formula is the same: `blockMs × COST_SCALE > budget`;
+ *   - If the identity (the recipe or the card sound identity) and the device string are both
+ *     unchanged, the last record is reused and no re-measurement is made.
  *
- * **测量不出声**:测量只调纯合成函数、把算出来的采样块当场丢掉 —— 不建 `AudioContext`、不建媒体元素、不建可播放的地址,
- * 所以没有任何一条通向扬声器的路(探针 `scripts/probes/sound-ab-probe.mjs` 断言)。
+ * **Measurement makes no sound**: measurement only calls the pure synthesis function and throws the
+ * computed sample chunks away on the spot: it creates no `AudioContext`, no media element, and no
+ * playable address, so there is no path at all leading to the speakers (asserted by the probe
+ * `scripts/probes/sound-ab-probe.mjs`).
  *
- * 纯模块:不读编辑器、不碰 DOM。存取和时钟都由调用方注入,Node 单测直接跑。
+ * Pure module: it does not read the editor and does not touch the DOM. Storage and the clock are both
+ * injected by the caller, and Node unit tests run it directly.
  */
 import { resolveTuning, robustStep, type PipelineTuning } from "../render/pipelineTuning.mjs";
 
-/** 测量时一块多少采样帧(48 kHz 下约 85.3 ms;与独立音效的合成块 `SOUND_RENDER_BLOCK_FRAMES` 相同) */
+/**
+ * How many sample frames one chunk has during measurement (about 85.3 ms at 48 kHz; the same as the
+ * synthesis chunk of a standalone sound effect, `SOUND_RENDER_BLOCK_FRAMES`)
+ */
 export const SOUND_COST_BLOCK_FRAMES = 4096;
-/** 预算占一块时长的比例(与画面预算 `B = 1000 / fps × 70%` 的 70% 是同一个数) */
+/**
+ * The fraction of a chunk's duration that the budget takes (the same number as the 70% in the
+ * picture budget `B = 1000 / fps × 70%`)
+ */
 export const SOUND_BUDGET_SHARE = 0.7;
-/** 一次测量的墙钟封顶(同画面计时趟的 `PROBE_MAX_MS`):到了就按已有样本算,样本不足时 `robustStep` 取最大值,偏保守 */
+/**
+ * The wall-clock cap of one measurement (same as `PROBE_MAX_MS` of the picture's timing pass): when
+ * reached, compute from the samples collected so far; when samples are insufficient `robustStep`
+ * takes the maximum, erring on the conservative side
+ */
 export const SOUND_MEASURE_MAX_MS = 500;
 
 export type SoundKind = "effect" | "card";
 
 /**
- * 一条声音成本记录。字段名故意不叫 `identityKey`:它和画面的成本记录同放在页面内快照库 L2 的 `costs` 表里,
- * 画面那一侧按 `identityKey` + `device` 认记录(`l2Costs.ts` 的 `validRecord`),没有 `identityKey` 的会被它滤掉,两边互不干扰。
+ * One sound cost record. The field is deliberately not named `identityKey`: it sits in the `costs`
+ * table of the in-page snapshot store L2 together with the picture's cost records, and the picture
+ * side recognizes records by `identityKey` + `device` (`validRecord` in `l2Costs.ts`), filtering out
+ * any without `identityKey`, so the two sides do not interfere with each other.
  */
 export interface SoundCostRecord {
   soundKey: string;
   kind: SoundKind;
   device: string;
-  /** 合成一块(折算到 `blockFrames` 帧)的耗时:稳健统计值。唯一进判定的数 */
+  /**
+   * Time to synthesize one chunk (converted to `blockFrames` frames): a robust statistic. The only
+   * number that enters the classification
+   */
   blockMs: number;
-  /** 单次最大,只作诊断 */
+  /** Single-run maximum, for diagnostics only */
   blockMaxMs: number;
   blockFrames: number;
   sampleRate: number;
-  /** 真实采到的块数 */
+  /** Number of chunks actually collected */
   samples: number;
   measuredAt: number;
 }
@@ -53,12 +76,16 @@ export function createMemorySoundCostStore(): SoundCostStore & { size(): number 
   return { getCost: (key) => map.get(key) ?? null, putCost: (key, record) => { map.set(key, record); }, size: () => map.size };
 }
 
-/** `costs` 表里的键。前缀 `sound` 与画面记录(`<identityKey>\n<device>`)、界限搜索的本地记录(`<identityKey>|<指纹>`)都不相撞 */
+/**
+ * The key in the `costs` table. The prefix `sound` collides with neither the picture records
+ * (`<identityKey>\n<device>`) nor the local records of bounds search (`<identityKey>|<fingerprint>`)
+ */
 export const soundCostStoreKey = (soundKey: string, device: string): string => `sound\n${soundKey}\n${device}`;
 
 /**
- * 声音记录的设备串。合成只吃 CPU,所以不带 GPU 与渲染路线;带运行模式和量法(百分位、最少块数),
- * 量法变了旧记录自然不命中(同 `costDevice.mjs` 的理由)。
+ * The device string of a sound record. Synthesis uses only the CPU, so it carries no GPU or render
+ * route; it carries the run mode and the measuring method (percentile, minimum number of chunks), so
+ * when the method changes old records naturally miss (the same reason as in `costDevice.mjs`).
  */
 export function soundDeviceString(parts: { ua?: string; cores?: number; mode?: string; tuning?: Partial<PipelineTuning> | null }): string {
   const tuning = resolveTuning(parts.tuning ?? null);
@@ -71,12 +98,15 @@ export function soundDeviceString(parts: { ua?: string; cores?: number; mode?: s
   ].join(" | ");
 }
 
-/** 一块的预算(毫秒):块时长 × 70% */
+/** The budget of one chunk (milliseconds): chunk duration × 70% */
 export function soundBudgetMs(blockFrames: number, sampleRate: number): number {
   return (blockFrames / sampleRate) * 1000 * SOUND_BUDGET_SHARE;
 }
 
-/** 判重式:`blockMs × COST_SCALE > 预算`(与画面的 `stepMs × COST_SCALE > B` 同形) */
+/**
+ * Heavy-classification formula: `blockMs × COST_SCALE > budget` (the same shape as the picture's
+ * `stepMs × COST_SCALE > B`)
+ */
 export function soundIsHeavy(record: Pick<SoundCostRecord, "blockMs" | "blockFrames" | "sampleRate">, tuning?: Partial<PipelineTuning> | null): boolean {
   const t = resolveTuning(tuning ?? null);
   if (!Number.isFinite(record.blockMs)) return true;
@@ -84,25 +114,32 @@ export function soundIsHeavy(record: Pick<SoundCostRecord, "blockMs" | "blockFra
 }
 
 export interface MeasureSoundOptions {
-  /** 这段声音一共多少采样帧 */
+  /** How many sample frames this sound has in total */
   frames: number;
   sampleRate: number;
   /**
-   * 合成 `[start, start + count)` 这一块。返回值(采样)被当场丢掉,不播放、不保存。
-   * 可以是异步的(卡片的 `audio()` 允许返回 Promise)。
+   * Synthesizes the chunk `[start, start + count)`. The return value (samples) is thrown away on the
+   * spot, neither played nor saved.
+   * It may be asynchronous (a card's `audio()` is allowed to return a Promise).
    */
   renderBlock(start: number, count: number): unknown | Promise<unknown>;
   tuning?: Partial<PipelineTuning> | null;
   now?: () => number;
-  /** 块与块之间让出主线程(缺省 `setTimeout(0)`);让出的时间不计入耗时 */
+  /**
+   * Yield the main thread between chunks (default `setTimeout(0)`); the yielded time does not count
+   * toward the elapsed time
+   */
   yield?: () => Promise<void>;
   signal?: AbortSignal;
   maxMs?: number;
 }
 
 /**
- * 测一段声音的合成耗时。从头按块合成,到尾就绕回开头,直到采够 `STEP_MIN_SAMPLES` 块或墙钟到 `SOUND_MEASURE_MAX_MS`。
- * 不足一块的声音按它的实际帧数合成,耗时按比例折算到一整块。
+ * Measures the synthesis time of a piece of sound. It synthesizes chunk by chunk from the start,
+ * wraps back to the beginning at the end, until `STEP_MIN_SAMPLES` chunks are collected or the wall
+ * clock reaches `SOUND_MEASURE_MAX_MS`.
+ * A sound shorter than one chunk is synthesized at its actual frame count, and the time is scaled
+ * proportionally to a full chunk.
  */
 export async function measureSoundBlocks(o: MeasureSoundOptions): Promise<Pick<SoundCostRecord, "blockMs" | "blockMaxMs" | "blockFrames" | "sampleRate" | "samples">> {
   if (!Number.isSafeInteger(o.frames) || o.frames < 1) throw new Error("Invalid range for audio measurement");
@@ -152,14 +189,21 @@ export interface SoundJudgeTarget {
 }
 
 export interface SoundJudge {
-  /** 判一段声音轻重:有记录就复用,没有就测(不出声)、记下 */
+  /**
+   * Classify a piece of sound as light or heavy: reuse the record if there is one, otherwise measure
+   * (silently) and record it
+   */
   judge(target: SoundJudgeTarget, signal?: AbortSignal): Promise<SoundVerdict>;
-  /** 诊断与探针:测过几次、复用几次、此刻是不是正在测 */
+  /**
+   * Diagnostics and probes: how many times measured, how many times reused, and whether a measurement
+   * is in progress right now
+   */
   stats(): { measured: number; reused: number; measuring: number };
 }
 
 /**
- * 同一段声音同时被问到(预览挂上、导出、生成)时只测一次。
+ * When the same piece of sound is asked about simultaneously (preview attached, export, generation),
+ * it is measured only once.
  */
 export function createSoundJudge(deps: SoundJudgeDeps): SoundJudge {
   const inflight = new Map<string, Promise<SoundVerdict>>();
@@ -180,7 +224,7 @@ export function createSoundJudge(deps: SoundJudgeDeps): SoundJudge {
         try {
           const measured = await measureSoundBlocks({ frames: target.frames, sampleRate: target.sampleRate, renderBlock: target.renderBlock, tuning, now: deps.now, yield: deps.yield, signal });
           const record: SoundCostRecord = { soundKey: target.soundKey, kind: target.kind, device, ...measured, measuredAt: (deps.wallClock ?? Date.now)() };
-          try { await deps.store.putCost(key, record); } catch { /* 存不下就下次再测 */ }
+          try { await deps.store.putCost(key, record); } catch { /* If it cannot be stored, measure again next time */ }
           stats.measured++;
           return { heavy: soundIsHeavy(record, tuning), record, reused: false };
         } finally { stats.measuring--; }

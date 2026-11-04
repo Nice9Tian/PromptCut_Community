@@ -4,10 +4,10 @@ import type { GroupData, GroupItem } from "./groups";
 import { useReadOnly } from "../../readOnly";
 import { tr } from "../../../i18n/index.ts";
 
-/** 色块卡的高宽比:上面一排色块,下面名字和一句描述 */
+/** Aspect ratio of the swatch card: a row of swatches on top, the name and a one-line description below */
 const TILE_ASPECT = 0.75;
 
-/** 配色预览:主色占两份,文字 / 玻璃底 / 边线各一份 */
+/** Color scheme preview: the primary color takes two parts; text / glass background / border take one part each */
 function ThemeSwatch({ th }: { th: Theme }) {
   const accent = th.vars.accent || "#3b82f6";
   const fg = th.vars.fg || "#ffffff";
@@ -36,11 +36,12 @@ function ThemeBody({ th, current }: { th: Theme; current: boolean }) {
 }
 
 /**
- * 特效 → 全局风格组:主题做成色块卡,点一下切换项目全局主题(setProjectMeta({ themeId })),
- * 当前主题有强调色选中轮廓。
+ * Effects → global style group: themes are made into swatch cards, one click switches the project's
+ * global theme (setProjectMeta({ themeId })),
+ * and the current theme has an accent-color selection outline.
  */
 export function useThemesGroup(q: string): GroupData {
-  // 这个项目只给了只读权限(游客):换全局主题是写
+  // This project only has read-only permission (guest): switching the global theme is a write
   const ro = useReadOnly();
   const currentThemeId = useStore((s) => s.project.themeId);
   const hits = themes.filter(
@@ -69,7 +70,7 @@ export function useThemesGroup(q: string): GroupData {
     };
   });
 
-  // 缩略先放当前主题,一眼看到现在用的是哪套
+  // Put the current theme first in the thumbnails, so you can see at a glance which one is in use
   const ordered = [...hits].sort((a, b) => Number(b.id === currentThemeId) - Number(a.id === currentThemeId));
   const thumbs: GroupItem[] = ordered.slice(0, 2).map((th) => ({
     id: th.id,

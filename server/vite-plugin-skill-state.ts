@@ -2,20 +2,22 @@ import type { Plugin, ViteDevServer } from "vite";
 import type { ServerResponse, IncomingMessage } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { tr } from "./i18n.mjs";
 
 /**
- * SKILL 模式的开关接口,外加 .proc 的独占锁。
+ * SKILL mode toggle endpoints, plus an exclusive lock for .proc.
  *
- * 和 vite-plugin-skill.ts 分开:那边管「桌面 APP 怎么接进来」(登记),这边管「SKILL 开没开」(闸门的状态,
- * server/skill-gate.mjs)。
+ * Separated from vite-plugin-skill.ts: that side handles "how the desktop app connects"
+ * (registration), while this side handles "whether SKILL is enabled" (gate state,
+ * server/skill-gate.mjs).
  *
- * 接口:
- *   GET  /api/skill-mode              现在是不是 SKILL 模式(前端每秒问一次,Rust 壳直接读文件)
- *   POST /api/skill-mode/open         开(用户在顶栏切到 SKILL)
- *   POST /api/skill-mode/close        关(用户切回传统式)
- *   POST /api/skill-mode/last-action  页面交回桌面会话上一步动作的画面,给 SKILL 悬浮窗
- *   POST /api/skill-lock/acquire      .proc 独占锁:打开项目时抢
- *   POST /api/skill-lock/release      放锁
+ * Endpoints:
+ *   GET  /api/skill-mode              Whether currently in SKILL mode (frontend polls once per second, Rust shell reads file directly)
+ *   POST /api/skill-mode/open         Enable (user switches to SKILL in top bar)
+ *   POST /api/skill-mode/close        Disable (user switches back to Classic mode)
+ *   POST /api/skill-mode/last-action  Page returns the frame of the previous action in the desktop session for the SKILL floating window
+ *   POST /api/skill-lock/acquire      .proc exclusive lock: acquire when opening a project
+ *   POST /api/skill-lock/release      Release lock
  */
 
 function sendJson(res: ServerResponse, code: number, data: unknown) {
@@ -33,18 +35,18 @@ function readBody(req: IncomingMessage): Promise<string> {
       body += c;
       if (body.length > 1024 * 1024) {
         req.destroy();
-        reject(new Error("请求太大"));
+        reject(new Error("Request too large"));
       }
     });
     req.on("end", () => resolve(body));
-    req.on("error", () => reject(new Error("读取请求体失败")));
+    req.on("error", () => reject(new Error(tr("Failed to read request body"))));
   });
 }
 
 interface LockFile {
   pid: number;
   at: string;
-  /** 谁占的,给冲突提示用 */
+  /** Who holds the lock; used for conflict notices */
   host: string;
 }
 
@@ -63,33 +65,41 @@ function pidAlive(pid: number): boolean {
 }
 
 /**
- * 抢一份 .proc 的独占锁。
+ * Acquire an exclusive lock on a .proc.
  *
- * 为什么要独占:两个 PromptCut 同时开着同一个 .proc,各自按自己内存里的状态往回写,
- * 后写的把先写的整份盖掉 —— 不是合并,是丢。所以一个文件只许一个实例写。SKILL 模式下也一样:
- * 桌面 APP 的会话改的就是这个实例里的项目,不另开副本。
+ * Why exclusive: if two PromptCut instances open the same .proc simultaneously, each writes back
+ * based on its own in-memory state, and the later write completely overwrites the earlier one:
+ * not a merge, but data loss. Therefore, only one instance is permitted to write to a file.
+ * The same applies in SKILL mode: the desktop app session modifies the project in this instance,
+ * without creating a separate replica.
  *
- * # 两层判据,顺序不能反
+ * # Two layers of criteria; the order must not be reversed
  *
- * 锁是旁路文件 `<name>.proc.lock`(**不是 .proc 本体** —— 实测独占本体之后 Node 连读都读
- * 不了,等于把自己人挡在门外)。判「有没有人占着」按可靠性从高到低试:
+ * The lock is a sidecar file `<name>.proc.lock` (**not the .proc itself**: in testing, exclusively
+ * locking the file itself prevented Node from even reading it, locking out our own process).
+ * Test "whether someone holds it" in order from highest to lowest reliability:
  *
- * 1. **内核说的**:`open(lock,'r+')` 拿到 EBUSY,说明有进程正用共享模式 0 握着这个句柄
- *    (桌面版里是 Rust 外壳干的,见 desktop/src-tauri/src/proc_lock.rs)。这个信号最硬 ——
- *    持有者一死内核立刻收走句柄,不存在死锁,也不用判活。
- * 2. **锁文件里的 pid**:没有外壳的时候(开发期 `npm run dev`、浏览器里跑)只能退到这条。
- *    弱在两处:持有者被强杀会留下死锁文件;pid 会被系统回收,死进程的号被新进程占了就
- *    误判成「还有人占着」。所以它只是兜底,能用第 1 条就不用它。
+ * 1. **From the kernel**: getting EBUSY from `open(lock,'r+')` indicates a process is holding
+ *    this handle in share mode 0 (done by the Rust shell in the desktop app, see
+ *    desktop/src-tauri/src/proc_lock.rs). This signal is the most solid: as soon as the holder
+ *    dies, the kernel immediately reclaims the handle, so deadlocks do not exist and no liveness
+ *    check is needed.
+ * 2. **pid in the lock file**: when there is no shell (during development `npm run dev`, running
+ *    in a browser), we can only fall back to this. It has two weaknesses: if the holder is
+ *    forcefully killed, a dead lock file is left behind; pids can be recycled by the OS, so if a
+ *    dead process's pid is assigned to a new process, it is misjudged as "someone is still holding
+ *    it". Thus it is merely a fallback; avoid it whenever criterion 1 is usable.
  *
- * 创建用 `open(path,'wx')` 而不是「先 existsSync 再写」—— 后者不是原子的,两个实例能同时
- * 通过检查然后都以为自己拿到了锁。wx 是原子的(实测 20 个进程并发抢,恰好 1 个赢)。
+ * Creation uses `open(path,'wx')` rather than "existsSync first, then write": the latter is not
+ * atomic, and two instances can pass the check simultaneously and both assume they acquired the
+ * lock. wx is atomic (in testing with 20 processes competing concurrently, exactly 1 won).
  */
 export function acquireLock(procPath: string, retriesLeft = 3): { ok: boolean; error?: string; stolen?: boolean; by?: "kernel" | "pid" } {
   const file = lockPathFor(procPath);
   const mine = JSON.stringify({ pid: process.pid, at: new Date().toISOString(), host: "promptcut" });
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    // 原子创建。抢到了就是我的,不用再看任何东西
+    // Atomic creation. If acquired, it belongs to me; no need to check anything else
     try {
       fs.writeFileSync(file, mine, { flag: "wx" });
       return { ok: true };
@@ -97,61 +107,67 @@ export function acquireLock(procPath: string, retriesLeft = 3): { ok: boolean; e
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
     }
 
-    // 文件已经在了。先问内核:有没有人正握着它的句柄
+    // The file already exists. First ask the kernel: is anyone holding its handle
     try {
       fs.closeSync(fs.openSync(file, "r+"));
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "EBUSY") {
-        return { ok: false, by: "kernel", error: "这个项目文件正被另一个 PromptCut 打开" };
+        return { ok: false, by: "kernel", error: tr("This project file is already open in another PromptCut") };
       }
-      // 别的错(权限之类)当作拿不到锁,但说清楚原因
-      return { ok: false, error: `锁文件读不了:${(e as Error).message}` };
+      // Treat other errors (permissions, etc.) as failure to acquire the lock, but explain the reason
+      return { ok: false, error: tr("Cannot read lock file: {0}", (e as Error).message) };
     }
 
-    // 没人握句柄,退到 pid 那条弱判据。
-    // 读不出内容的锁文件当**无主**处理:0 字节的锁是真会出现的 —— Rust 那边探活时用
-    // 带 create 的方式开过它就会留下一个空文件。以前 JSON.parse 在这里抛出去,被最外层
-    // 那个「锁写不出来不该挡住打开项目」的兜底接住并返回 ok:true —— 于是谁都没真拿到锁,
-    // pid 这层防线对这个项目永久失效,还没有任何提示。
+    // No one is holding the handle; fall back to the weak pid criterion.
+    // Lock files whose contents cannot be read are treated as **unowned**: 0-byte locks really do
+    // occur: if Rust opens it with create flags during a liveness check, an empty file is left
+    // behind. Previously JSON.parse threw here, caught by the outermost fallback ("failure to write
+    // a lock should not block opening a project") which returned ok:true: consequently, neither side
+    // actually acquired the lock, the pid defense line permanently failed for this project, and
+    // there was no notice whatsoever.
     let cur: LockFile | null = null;
     try {
       const raw = fs.readFileSync(file, "utf8").trim();
       const parsed = raw ? (JSON.parse(raw) as LockFile) : null;
       if (parsed && typeof parsed.pid === "number") cur = parsed;
-    } catch { /* 内容非法 → 无主 */ }
+    } catch { /* Invalid content → unowned */ }
 
     if (cur && cur.pid === process.pid) return { ok: true };
     if (cur && pidAlive(cur.pid)) {
-      return { ok: false, by: "pid", error: `这个项目文件正被另一个 PromptCut 打开(进程 ${cur.pid},自 ${cur.at})` };
+      return { ok: false, by: "pid", error: tr("This project file is already open in another PromptCut (process {0}, since {1})", cur.pid, cur.at) };
     }
 
     /*
-     * 上一个持有者已经不在了(崩溃 / 强杀),或者这压根是个空壳锁 —— 接管。
+     * The previous holder is gone (crashed / killed), or this is an empty shell lock: take over.
      *
-     * # 接管这件事本身必须是原子的
+     * # Takeover itself must be atomic
      *
-     * 光「删掉再回头重抢」是不够的,这是上一版栽的地方:删除是**无条件**的,它不检查
-     * 文件是不是还是刚才判死的那一个。两个实例错开一点点就会这样 ——
+     * Simply "delete and re-acquire" is not enough; this is where the previous version failed:
+     * deletion is **unconditional**, and does not check whether the file is still the one judged dead
+     * just now. A slight timing offset between two instances results in:
      *
-     *   B: 读到死 pid,判定可以接管            (还没删)
-     *   A: 读到死 pid → 删掉 → wx 建新锁 → 赢    (锁里现在是 A 的 pid)
-     *   B: 接着往下走,把 **A 刚建好的锁**删掉 → wx → 也赢
+     *   B: Reads dead pid, decides it can take over            (not deleted yet)
+     *   A: Reads dead pid → deletes → wx creates new lock → wins   (lock now holds A's pid)
+     *   B: Proceeds, deletes **the lock A just created** → wx → also wins
      *
-     * 两边都拿到 ok:true,两份 PromptCut 一起往同一个 .proc 上写。
-     * (原来那条测试是 12 个进程齐步走,恰好掩盖了这种错开的时序。)
+     * Both receive ok:true, and two PromptCut instances write to the same .proc together.
+     * (The original test had 12 processes running in lockstep, which happened to mask this staggered timing.)
      *
-     * # 改法:先原子认领「接管权」,再接管
+     * # Fix: atomically claim the takeover right first, then take over
      *
-     * 用 `wx` 建一个旁路的 `.claim` 文件 —— 这一步是原子的,只有一个进程能建成。
-     * 建成的那个才有资格删旧锁;没建成的直接回去重新走一遍正常判定:那时旧锁要么已经
-     * 被赢家换成活着的 pid(于是它正确地被拒),要么恰好还没建好(于是它自己 wx 赢)。
-     * 两种都只有一个赢家。
+     * Use `wx` to create a sidecar `.claim` file: this step is atomic, and only one process can
+     * create it. The one that succeeds is eligible to delete the old lock; those that fail go back
+     * to repeat the normal check: by then the old lock has either been replaced with a live pid by
+     * the winner (so it is correctly rejected), or happens not to be created yet (so it wins via wx
+     * itself). In either case, there is only one winner.
      *
-     * claim 只在这几微秒里存在。万一持有 claim 的进程正好在这中间被强杀,claim 会残留 ——
-     * 所以下面对 claim 也判一次活,死的就清掉,不让一个残留文件把项目永久锁死。
+     * claim exists only for these few microseconds. If the process holding the claim happens to be
+     * killed in the middle, the claim will remain: therefore, we also perform a liveness check on
+     * the claim below and clean it up if dead, preventing a leftover file from permanently locking
+     * the project.
      */
     if (retriesLeft <= 0) {
-      return { ok: false, error: "锁文件反复被别人抢走,请稍后再试" };
+      return { ok: false, error: tr("The lock file was repeatedly taken by others, please try again later") };
     }
 
     const claim = file + ".claim";
@@ -159,37 +175,38 @@ export function acquireLock(procPath: string, retriesLeft = 3): { ok: boolean; e
       fs.writeFileSync(claim, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }), { flag: "wx" });
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      // 有人正在接管同一个死锁。先看看那个人还活着没
+      // Someone is taking over the same dead lock. First check whether that process is still alive
       let holder: number | null = null;
       try {
         const raw = fs.readFileSync(claim, "utf8").trim();
         const parsed = raw ? (JSON.parse(raw) as LockFile) : null;
         if (parsed && typeof parsed.pid === "number") holder = parsed.pid;
-      } catch { /* 读不出来就当没主 */ }
+      } catch { /* If unreadable, treat as unowned */ }
       if (holder === null || !pidAlive(holder)) {
-        try { fs.unlinkSync(claim); } catch { /* 别人抢先清了,无所谓 */ }
+        try { fs.unlinkSync(claim); } catch { /* Someone else cleaned it up first; ignore */ }
       }
-      // 回去重新走一遍正常判定 —— 赢家这时多半已经把新锁建好了
+      // Go back and repeat the normal evaluation: the winner has likely created the new lock by now
       return acquireLock(procPath, retriesLeft - 1);
     }
 
     try {
-      // 只有拿到 claim 的这一个进程会走到这里
+      // Only the process that acquired the claim reaches here
       try {
         fs.unlinkSync(file);
       } catch (e) {
-        // 删不掉多半是这一瞬间被别人(外壳的内核句柄)握住了 —— 那就是活锁,不是死锁
+        // If it cannot be deleted, it is likely held by someone else (the shell's kernel handle)
+        // at this moment: that means a live lock, not a dead lock
         if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
-          return { ok: false, by: "kernel", error: "这个项目文件正被另一个 PromptCut 打开" };
+          return { ok: false, by: "kernel", error: tr("This project file is already open in another PromptCut") };
         }
       }
       const again = acquireLock(procPath, retriesLeft - 1);
       return again.ok ? { ...again, stolen: true } : again;
     } finally {
-      try { fs.unlinkSync(claim); } catch { /* 已经没了就算了 */ }
+      try { fs.unlinkSync(claim); } catch { /* Already gone, ignore */ }
     }
   } catch (e) {
-    // 锁写不出来(只读目录之类)不该把「打开项目」这件事整个挡掉
+    // Inability to write a lock (e.g. read-only directory) should not block opening a project entirely
     return { ok: true, error: (e as Error).message };
   }
 }
@@ -197,14 +214,15 @@ export function acquireLock(procPath: string, retriesLeft = 3): { ok: boolean; e
 export function releaseLock(procPath: string): void {
   const file = lockPathFor(procPath);
   try {
-    // 空壳锁(Rust 探活留下的 0 字节文件)也顺手清掉:留着它下一次 acquire 又要走一趟
-    // 「无主 → 删 → 重抢」。别人真握着句柄的话 unlink 自己会失败,不会误删。
+    // Also clean up shell locks (0-byte files left by Rust liveness checks): leaving it means
+    // the next acquire has to go through another "unowned → delete → re-acquire" pass. If someone
+    // actually holds the handle, unlink will fail on its own and will not mistakenly delete it.
     const raw = fs.readFileSync(file, "utf8").trim();
     let cur: LockFile | null = null;
     try { cur = raw ? (JSON.parse(raw) as LockFile) : null; } catch { cur = null; }
     if (!cur || cur.pid === process.pid) fs.unlinkSync(file);
   } catch {
-    /* 没有锁、不是我的锁、或者外壳正握着它(删不掉),都不用管 */
+    /* If there is no lock, it is not my lock, or the shell is holding it (cannot delete), ignore */
   }
 }
 
@@ -212,7 +230,7 @@ export function skillStatePlugin(): Plugin {
   return {
     name: "promptcut-skill-state",
     configureServer(server: ViteDevServer) {
-      /** 本进程持有的锁,退出时一并放掉 */
+      /** Locks held by this process; release together on exit */
       const held = new Set<string>();
       const releaseAll = () => {
         for (const p of held) releaseLock(p);
@@ -233,9 +251,11 @@ export function skillStatePlugin(): Plugin {
             await readBody(req);
             return sendJson(res, 200, { ok: true, state: gate.openGate() });
           }
-          // 页面交回「桌面会话上一步做成的时间轴动作」的画面(编辑器进程经 SSE 的 skill.preview 要的):
-          // 写到 skillRoot/last-action.{png,json},壳的 watcher(desktop/src-tauri/src/skill_shell.rs)盯着 json 的
-          // 修改时间推给悬浮窗。SKILL 模式关着时不收 —— 悬浮窗只在 SKILL 模式下存在。
+          // The page returns the frame for "the timeline action completed in the previous step of the desktop
+          // session" (requested by the editor process via SSE skill.preview): written to
+          // skillRoot/last-action.{png,json}, and the shell watcher (desktop/src-tauri/src/skill_shell.rs)
+          // watches the json modification time and pushes it to the floating window. Not accepted when
+          // SKILL mode is disabled: the floating window only exists in SKILL mode.
           if (action === "last-action" && req.method === "POST") {
             if (!gate.readState().active) {
               return sendJson(res, 200, { ok: true, skipped: "skill-off" });
@@ -244,11 +264,12 @@ export function skillStatePlugin(): Plugin {
             const base64 = typeof body.base64 === "string" ? body.base64 : "";
             const png = Buffer.from(base64, "base64");
             if (png.length < 8 || png.subarray(0, 8).toString("binary") !== "\x89PNG\r\n\x1a\n") {
-              return sendJson(res, 400, { ok: false, error: "base64 不是一张 png" });
+              return sendJson(res, 400, { ok: false, error: "base64 is not a png" });
             }
             const root = gate.skillRoot();
             fs.mkdirSync(root, { recursive: true });
-            // png 先落临时文件再改名:壳每秒都在读,读到半张图就白推一次
+            // Save png to a temporary file first then rename: the shell reads every second, and reading
+            // half an image wastes a push
             const pngPath = path.join(root, "last-action.png");
             fs.writeFileSync(pngPath + ".tmp", png);
             fs.renameSync(pngPath + ".tmp", pngPath);
@@ -266,11 +287,11 @@ export function skillStatePlugin(): Plugin {
           if (action === "close" && req.method === "POST") {
             const body = JSON.parse((await readBody(req)) || "{}");
             const state = gate.closeGate(body.by || "user");
-            // 记一行到 sidecar 日志:用户报「关闭中…卡死」时,先看这里有没有收到请求
+            // Log a line to sidecar log: when a user reports "Closing… stuck", first check here if the request was received
             console.log(`[skill-mode] close by=${body.by || "user"} at=${state.closedAt}`);
             return sendJson(res, 200, { ok: true, state });
           }
-          return sendJson(res, 404, { ok: false, error: "没有这个接口" });
+          return sendJson(res, 404, { ok: false, error: "API not available" });
         } catch (e) {
           return sendJson(res, 400, { ok: false, error: (e as Error).message });
         }
@@ -283,22 +304,23 @@ export function skillStatePlugin(): Plugin {
         try {
           const body = JSON.parse((await readBody(req)) || "{}");
           /*
-           * 前端手里通常只有草稿 id(路径规则在服务端,而且可以被 PROMPTCUT_PROJECTS_DIR
-           * 改掉),所以这里两种都收:draftId 由 projects 插件解析成真实路径,path 留给
-           * 已经知道绝对路径的调用方。
+           * The frontend usually only has a draft id (path rules are on the server, and can be modified
+           * by PROMPTCUT_PROJECTS_DIR), so both are accepted here: draftId is resolved into the actual path
+           * by the projects plugin, while path is reserved for callers that already know the absolute path.
            */
           let raw = body.path;
           if (!raw && body.draftId) {
             const { draftFileFor } = await import(new URL("./vite-plugin-projects.ts", import.meta.url).href);
             raw = draftFileFor(server.config.root || process.cwd(), String(body.draftId));
-            if (!raw) return sendJson(res, 400, { ok: false, error: "草稿 id 不合法" });
+            if (!raw) return sendJson(res, 400, { ok: false, error: "Invalid draft id" });
           }
-          if (!raw) return sendJson(res, 400, { ok: false, error: "path 或 draftId 必填" });
+          if (!raw) return sendJson(res, 400, { ok: false, error: "path or draftId is required" });
           const target = path.resolve(String(raw));
           if (action === "acquire") {
             const out = acquireLock(target);
             if (out.ok) held.add(target);
-            // 把解析出的真实路径回给前端:桌面壳那层要拿它去独占内核句柄
+            // Return the resolved actual path to the frontend: the desktop shell layer needs it to
+            // exclusively hold the kernel handle
             return sendJson(res, out.ok ? 200 : 409, { ...out, file: target });
           }
           if (action === "release") {
@@ -306,7 +328,7 @@ export function skillStatePlugin(): Plugin {
             held.delete(target);
             return sendJson(res, 200, { ok: true });
           }
-          return sendJson(res, 404, { ok: false, error: "没有这个接口" });
+          return sendJson(res, 404, { ok: false, error: "API not available" });
         } catch (e) {
           return sendJson(res, 400, { ok: false, error: (e as Error).message });
         }

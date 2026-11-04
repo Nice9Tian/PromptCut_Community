@@ -3,23 +3,30 @@ import path from 'node:path';
 import { atomic } from './frame-mov.mjs';
 
 /**
- * 本机的卡片级指纹锁(契约 F.3;语义 `mechanism/rendering.md`「不同环境的结果不混用」「预渲染结果的复用」)。
+ * Per-card fingerprint lock on this machine (Contract F.3; semantics `mechanism/rendering.md`
+ * "Do not mix outputs from different environments" and "Reuse of prerender output").
  *
- * 本机只锁**共享档快照**这一种结果,锁键就是卡的内容键 `control.contentKey`(64 位小写十六进制)。
- * 同一把锁下只有一个环境的结果被产出、投递:页面的测量帧(用户浏览器的指纹)和本机预渲染进程
- * (SwiftShader 的指纹)谁先为这张卡产出,这张卡就锁在谁的环境上;另一方要么直接投递锁定方的结果,
- * 要么等锁定方闲置够久后用自己的指纹**接手**整张卡。
+ * This machine only locks one type of output: **shared-tier snapshots**. The lock key is the card's
+ * content key `control.contentKey` (64-character lowercase hex). Only outputs from a single
+ * environment are produced and delivered under the same lock: whichever produces for this card first
+ * between the page's measurement frame (user browser fingerprint) and this machine's prerender process
+ * (SwiftShader fingerprint) locks the card to its environment; the other party either directly delivers
+ * the locked party's output, or waits until the locked party has been idle long enough to **take over**
+ * the entire card using its own fingerprint.
  *
- * 本地档、轨道流、独立卡 PNG 缓存本机只有预渲染进程一个产出者,不加锁。
+ * Local tier, track streams, and standalone card PNG caches have only one producer on this machine
+ * (the prerender process), so they are not locked.
  *
- * # 锁库
+ * # Lock store
  *
- * 目录 `<库根>/controls-lock/`,一把锁一个文件 `<contentKey>.json`,内容
- * `{ envFingerprint, source: 'page' | 'prerender', since, touchedAt }`。
+ * Directory `<store-root>/controls-lock/`, one file per lock `<contentKey>.json`, containing
+ * `{ envFingerprint, source: 'page' | 'prerender', since, touchedAt }`.
  *
- * 读写都以内存为准、同步完成(调用方在写帧的热路径上判锁,不能等盘);写盘排在后面异步做,
- * 同一把锁连续改多次只写最后的样子(每帧都刷新 `touchedAt`,不能每帧落一次盘)。`flush()` 等
- * 排着的写盘全部落定。
+ * Both reads and writes take memory as the source of truth and complete synchronously (callers check
+ * locks on the hot path of writing frames and cannot wait for disk); disk writes are queued
+ * asynchronously behind them, and consecutive modifications to the same lock only write the final
+ * state (every frame refreshes `touchedAt`, and cannot flush to disk every frame). `flush()` waits
+ * for all queued disk writes to settle.
  */
 
 export const CARD_LOCK_IDLE_MS = 30_000;
@@ -29,13 +36,13 @@ const isContentKey = value => typeof value === 'string' && CONTENT_KEY.test(valu
 const isFingerprint = value => typeof value === 'string' && value.length > 0;
 
 function checkKey(contentKey) {
-  if (!isContentKey(contentKey)) throw new TypeError(`卡片锁的内容键必须是 64 位小写十六进制:${JSON.stringify(contentKey)}`);
+  if (!isContentKey(contentKey)) throw new TypeError(`The content key of a card lock must be 64 lowercase hex characters: ${JSON.stringify(contentKey)}`);
 }
 function checkFingerprint(envFingerprint) {
-  if (!isFingerprint(envFingerprint)) throw new TypeError(`卡片锁的环境指纹必须是非空字符串:${JSON.stringify(envFingerprint)}`);
+  if (!isFingerprint(envFingerprint)) throw new TypeError(`The environment fingerprint of a card lock must be a non-empty string: ${JSON.stringify(envFingerprint)}`);
 }
 
-/** 盘上读回来的一把锁是否可用;不可用的文件整个跳过 */
+/** Whether a lock read back from disk is usable; unusable files are skipped entirely */
 function validLock(value) {
   if (!value || typeof value !== 'object') return null;
   const { envFingerprint, source, since, touchedAt } = value;
@@ -52,7 +59,7 @@ const copy = lock => (lock ? { ...lock } : null);
 export function createCardLockStore({ dir, now = Date.now }) {
   /** contentKey → { envFingerprint, source, since, touchedAt } */
   const locks = new Map();
-  /** 改过、还没落盘的锁键 */
+  /** Modified lock keys not yet written to disk */
   const dirty = new Set();
   let draining = null;
 
@@ -62,8 +69,10 @@ export function createCardLockStore({ dir, now = Date.now }) {
   };
 
   /*
-   * 写盘:一次只跑一趟,把 `dirty` 里的键逐个写成**此刻**内存里的样子(`atomic` 先写临时文件再改名,
-   * 读的一方不会读到半个文件)。写失败不影响内存里的锁,下次改这把锁再写。
+   * Disk writes: runs only one pass at a time, writing keys in `dirty` one by one as they look in
+   * memory **at this moment** (`atomic` writes a temp file first and then renames it, so readers
+   * never read a partial file). Write failures do not affect locks in memory; the lock will be
+   * written again the next time it changes.
    */
   async function drain() {
     while (dirty.size) {
@@ -72,7 +81,7 @@ export function createCardLockStore({ dir, now = Date.now }) {
       for (const contentKey of keys) {
         const lock = locks.get(contentKey);
         if (!lock) continue;
-        try { await atomic(path.join(dir, `${contentKey}.json`), JSON.stringify(lock)); } catch { /* 见上 */ }
+        try { await atomic(path.join(dir, `${contentKey}.json`), JSON.stringify(lock)); } catch { /* See above */ }
       }
     }
   }
@@ -82,7 +91,10 @@ export function createCardLockStore({ dir, now = Date.now }) {
   }
 
   return {
-    /** 读目录里全部 `*.json`;坏文件跳过,目录不存在不算错。内存里已有的锁(load 之前就改过的)以内存为准 */
+    /**
+     * Reads all `*.json` in the directory; skips corrupt files, non-existent directory is not an error.
+     * Locks already in memory (modified before load) take memory as the source of truth.
+     */
     async load() {
       let names = [];
       try { names = await fs.readdir(dir); } catch { return; }
@@ -93,15 +105,16 @@ export function createCardLockStore({ dir, now = Date.now }) {
         try {
           const lock = validLock(JSON.parse(await fs.readFile(path.join(dir, name), 'utf8')));
           if (lock && !locks.has(contentKey)) locks.set(contentKey, lock);
-        } catch { /* 坏文件跳过 */ }
+        } catch { /* Skip corrupt files */ }
       }
     },
-    /** 同步;没有回 null。回的是副本 */
+    /** Synchronous; returns null if absent. Returns a replica */
     get(contentKey) {
       return copy(locks.get(contentKey));
     },
     /**
-     * 得锁(同步):没锁建锁;同指纹刷新 `touchedAt`;不同指纹 `granted: false`、锁不变。
+     * Acquire lock (synchronous): creates lock if absent; refreshes `touchedAt` on same fingerprint;
+     * `granted: false` and lock unchanged on different fingerprint.
      * @returns {{ granted: boolean, lock: { envFingerprint: string, source: string, since: number, touchedAt: number } }}
      */
     acquire(contentKey, envFingerprint, source) {
@@ -122,7 +135,10 @@ export function createCardLockStore({ dir, now = Date.now }) {
       }
       return { granted: false, lock: copy(current) };
     },
-    /** 接手(同步覆盖):锁转给 `envFingerprint`,`since = touchedAt = now()`。回新锁的副本 */
+    /**
+     * Take over (synchronous overwrite): transfers lock to `envFingerprint`, `since = touchedAt = now()`.
+     * Returns a replica of the new lock.
+     */
     takeover(contentKey, envFingerprint, source) {
       checkKey(contentKey);
       checkFingerprint(envFingerprint);
@@ -132,11 +148,11 @@ export function createCardLockStore({ dir, now = Date.now }) {
       schedule(contentKey);
       return copy(lock);
     },
-    /** `[{ contentKey, envFingerprint, source, since, touchedAt }]`,按 `contentKey` 排序 */
+    /** `[{ contentKey, envFingerprint, source, since, touchedAt }]`, sorted by `contentKey` */
     list() {
       return [...locks].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([contentKey, lock]) => ({ contentKey, ...lock }));
     },
-    /** 等排着的写盘全部落定 */
+    /** Waits for all queued disk writes to settle */
     async flush() {
       while (draining) await draining;
     },
@@ -144,12 +160,13 @@ export function createCardLockStore({ dir, now = Date.now }) {
 }
 
 /**
- * 本机预渲染进程遇到一张共享档卡时怎么办(纯函数,按顺序判):
+ * What the prerender process on this machine does when encountering a shared-tier card
+ * (pure function, evaluated in order):
  *
- *   1. 没锁,或锁在自己的指纹上 → `'own'`:照常渲,渲之前得锁;
- *   2. 锁定方的结果已齐(`complete`)→ `'reuse'`:直接投递锁定方的结果,不渲;
- *   3. 锁定方 `idleMs` 之内还产过 → `'defer'`:它可能还在产,先做别的卡;
- *   4. 其余 → `'takeover'`:用自己的指纹另起一套键、从头产这张卡。
+ *   1. No lock, or locked on its own fingerprint → `'own'`: render as normal, acquire lock before rendering;
+ *   2. Locked party's output is ready (`complete`) → `'reuse'`: deliver locked party's output directly, no render;
+ *   3. Locked party produced within `idleMs` → `'defer'`: it may still be producing, work on other cards first;
+ *   4. Otherwise → `'takeover'`: start a new set of keys with own fingerprint and produce this card from scratch.
  *
  * @param {{ lock: { envFingerprint: string, touchedAt: number } | null | undefined, ownFingerprint: string | null | undefined,
  *           complete: boolean, now?: number, idleMs?: number }} input

@@ -20,7 +20,10 @@ export interface CommitSoundEffectOptions {
   /** Expected whole clip values make an in-flight render stale on a user edit, split or removal. */
   expectedClip?: string;
   expectedSource?: string;
-  /** 导出前补齐声音时用:不改用户当前的选区,也不进撤销栈(只是把同一份声音的素材记录补回来) */
+  /**
+   * Used when backfilling sound before export: does not change current user selection or enter
+   * the undo stack (merely restores asset records for the same sound)
+   */
   silent?: boolean;
 }
 

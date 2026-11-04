@@ -1,11 +1,18 @@
 /**
- * 探针自己起的 Chrome(puppeteer 下载的 Chrome for Testing)共用的启动参数。各探针 `puppeteer.launch` 的 `args` 以它打头。
+ * Shared launch arguments for Chrome started by probes (Chrome for Testing downloaded by
+ * puppeteer). Each probe's `puppeteer.launch` `args` begins with this.
  *
- * `--disable-field-trial-config`:Chrome for Testing 缺省套用 Chromium 的实验配置(几十个在试的功能一起打开,
- * 网络日志常量里的 `activeFieldTrialGroups` 能看到),与用户手里的正式版 Chrome 不同。在这套配置下,站点服务用分块传输发的
- * 在线构建入口脚本(4 MB 多)会偶发永远加载不完:网络层几十毫秒就收完了全部字节,渲染进程却一直没把它收下,页面停在
- * `readyState: 'interactive'`,等不到 DOMContentLoaded;舞台 iframe 里的同一个脚本卡住时,页面退回单舞台。
- * 压测(`online-nav-stress-probe.mjs`)里新开页面约 1%～3% 中招;关掉实验配置、换 chrome-headless-shell、换本机正式版 Chrome
- * 都是 0 次。取证与数据见 `docs/archive/agent-reports/AGENT-nav-hang.md`。
+ * `--disable-field-trial-config`: Chrome for Testing applies Chromium experimental configuration
+ * by default (dozens of experimental features enabled at once, visible in `activeFieldTrialGroups`
+ * in network log constants), differing from release Chrome in users' hands. Under this
+ * configuration, the online build entry script (over 4 MB) sent via chunked transfer by the site
+ * service occasionally never finishes loading: the network layer receives all bytes in tens of
+ * milliseconds, but the render process never accepts it, leaving the page stuck at
+ * `readyState: 'interactive'` without reaching DOMContentLoaded; when the same script in the stage
+ * iframe hangs, the page falls back to single stage. In stress testing
+ * (`online-nav-stress-probe.mjs`), about 1%-3% of newly opened pages are affected; disabling
+ * experimental configuration, switching to chrome-headless-shell, or switching to local release
+ * Chrome all yield 0 occurrences. For forensics and data, see
+ * `docs/archive/agent-reports/AGENT-nav-hang.md`.
  */
 export const PROBE_CHROME_ARGS = Object.freeze(['--disable-field-trial-config']);

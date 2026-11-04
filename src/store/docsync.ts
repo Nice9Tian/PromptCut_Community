@@ -1,23 +1,34 @@
 /**
- * 页面到文档服务的同步层(c65-design.md 第 4、6、8 节)。
+ * Sync layer from page to document service (c65-design.md sections 4, 6, and 8).
  *
- * 一个 DocSync 实例 = 一个页面会话对一个项目的副本。它不认识 store,也不认识网络:
- *   - 往外发消息用构造时注入的 `send`;收到的消息由接线的一方调 `receive(msg)` 交进来;
- *   - 连上 / 断开由接线的一方调 `connect()` / `disconnect()` 告诉它;
- *   - 本地副本变了就发 `project` 事件,接 store 的那一侧(`bindStore`)把它写进 state。
- * 测试里用内存假件当文档服务,真连接由后续分支接。
+ * One DocSync instance = one replica of a project for a page session. It knows neither store
+ * nor network:
+ *   - Outgoing messages use `send` injected at construction; incoming messages are handed in
+ *     by the connecting side calling `receive(msg)`;
+ *   - Connecting / disconnecting is communicated by the connecting side calling `connect()` /
+ *     `disconnect()`;
+ *   - When the local replica changes, it emits a `project` event, and the side connected to
+ *     the store (`bindStore`) writes it into state.
+ * Tests use an in-memory mock as the document service; real connections are wired in later branches.
  *
- * 数据流:
- *   - 本地修改:`commit(next)` 算 `diffProject(local, next)`,本地先落地(乐观),进待确认队列,
- *     按顺序提交 `project.op`。本地存的是 `applyOps(local, ops)` 的结果而不是 next 本身,
- *     这样本地副本与文档服务的副本连键的顺序都一样。
- *   - 别人的 `project.ops`:应用到「已确认副本」上,再把还没确认的本地操作重放一遍得到本地副本。
- *     这就是设计稿说的「撤回 - 应用远端 - 重放」,只是撤回不靠逆操作,而是直接从已确认副本重放,
- *     结果与文档服务里的顺序(先远端、后本地)逐字节一致。
- *   - 离线:操作照常落地、进队列;重连后第一条带 `expectRev: offlineRev`,被接受就依次发其余的,
- *     被拒(stale)就整批停下(status = "paused"),等 `replayOffline()` 或 `discardOffline()`。
- *   - `.proc` 保存:`whenSettled()` 等所有本地操作都拿到 ok。
- *   - 撤销:每个实例一个栈,撤销 = 提交逆操作(带 undoOf);这一步之后被别的写入身份改过的实体不撤。
+ * Data flow:
+ *   - Local modifications: `commit(next)` computes `diffProject(local, next)`, lands locally first
+ *     (optimistically), enters the pending confirmation queue, and submits `project.op` in order.
+ *     What is stored locally is the result of `applyOps(local, ops)` rather than next itself,
+ *     so that even the order of keys matches between the local replica and the document service
+ *     replica.
+ *   - Others' `project.ops`: applied to the "confirmed replica", then unconfirmed local operations
+ *     are replayed to get the local replica. This is the "revert - apply remote - replay" from the
+ *     design spec, except reverting does not rely on inverse operations but replays directly from
+ *     the confirmed replica, producing a result byte-for-byte identical with the document service
+ *     order (remote first, then local).
+ *   - Offline: operations land and enter the queue as normal; upon reconnecting, the first carries
+ *     `expectRev: offlineRev`, and if accepted, the rest are sent in sequence; if rejected (stale),
+ *     the whole batch pauses (status = "paused"), waiting for `replayOffline()` or
+ *     `discardOffline()`.
+ *   - `.proc` save: `whenSettled()` waits until all local operations receive ok.
+ *   - Undo: one stack per instance; undo = submit inverse operations (with undoOf); entities
+ *     modified by another write identity after this step are not reverted.
  */
 import {
   applyOps,
@@ -34,9 +45,9 @@ import { attachProjectSync, set, state } from "./core";
 import { pageStateAfterRemote } from "./remotePageState";
 import { tr } from "../i18n/index.ts";
 
-/* ---------------- 消息 ---------------- */
+/* ---------------- Messages ---------------- */
 
-/** 写入身份:actor 来自连接凭证(文档服务填),session 是页面会话或 Agent 对话号 */
+/** Write identity: actor comes from connection credentials (filled by document service), session is a page session or Agent chat number */
 export interface Writer {
   actor?: unknown;
   session?: string;
@@ -47,7 +58,7 @@ export interface OpenMsg {
   projectId: string;
 }
 
-/** 线上的一条操作:多了一种「引用分片上传的整份项目」的根替换(`project.upload`,c65-design.md 第 13 节) */
+/** An operation on the wire: added a root replacement variant that "references a whole project uploaded in chunks" (`project.upload`, c65-design.md section 13) */
 export type WireOp = PathOp | { op: "set"; path: ""; upload: string };
 
 export interface OpMsg {
@@ -60,7 +71,7 @@ export interface OpMsg {
   undoOf?: string;
 }
 
-/** 大的根替换分片上传(文档服务 `project.upload`):收齐后由 `project.op` 的 `{ op: 'set', path: '', upload }` 引用 */
+/** Chunked upload for large root replacements (document service `project.upload`): once all parts are received, referenced by `project.op`'s `{ op: 'set', path: '', upload }` */
 export interface UploadMsg {
   type: "project.upload";
   projectId: string;
@@ -76,7 +87,7 @@ export interface StateMsg {
   type: "project.state";
   projectId?: string;
   rev: number;
-  /** 大项目不带 project、带 parts(分片数),随后是 project.state.part / project.state.end */
+  /** Large projects do not include project, but include parts (chunk count), followed by project.state.part / project.state.end */
   project?: Project | null;
   parts?: number;
   writers?: unknown;
@@ -124,7 +135,7 @@ export interface OpsMsg {
   type: "project.ops";
   rev: number;
   opId: string;
-  /** 上传引用的大根替换广播时不带 ops、带 resync: true,页面重新 open */
+  /** Large root replacements referencing uploads do not carry ops when broadcast, but carry resync: true, and the page re-opens */
   ops?: PathOp[];
   resync?: boolean;
   actor?: unknown;
@@ -141,33 +152,38 @@ export interface OverwrittenMsg {
 
 export type ServerMsg = StateMsg | StatePartMsg | StateEndMsg | OkMsg | RejectedMsg | OpsMsg | OverwrittenMsg;
 
-/* ---------------- 对外的状态与通知 ---------------- */
+/* ---------------- External state and notifications ---------------- */
 
 /**
- * idle:还没连;connecting:发了 open 在等 project.state;online:正常;
- * offline:断线,操作进队列;paused:离线批次的第一条被拒,等用户选「重放 / 丢弃」
+ * idle: not connected yet; connecting: sent open and waiting for project.state; online: normal;
+ * offline: disconnected, operations queued; paused: first item of offline batch was rejected,
+ * waiting for user to choose "replay / discard"
  */
 export type SyncStatus = "idle" | "connecting" | "online" | "offline" | "paused";
 
 export interface SkippedEntity {
   entity: string;
-  /** 这一步之后改过它的写入身份(最近的那一个) */
+  /** The write identity that modified it after this step (the most recent one) */
   by: Writer;
 }
 
 export interface UndoResult {
-  /** 至少撤了一处 */
+  /** At least one change was reverted */
   done: boolean;
-  /** 因为别的写入身份后来改过而没撤的实体 */
+  /** Entities not reverted because another write identity modified them later */
   skipped: SkippedEntity[];
-  /** 逆操作落不下去(比如父级已被删)而没撤的实体 */
+  /** Entities not reverted because inverse operations could not be applied (e.g. parent already deleted) */
   failed: string[];
-  /** 这次撤销 / 重做提交的 opId;done 为 false 时没有 */
+  /** The opId submitted by this undo / redo; absent when done is false */
   opId?: string;
   /**
-   * 因为别人后来改过而没撤的那几样(`skipped`)交给「冲突合并」窗口用的材料(2026-10-18 用户定,0.7.20 接上):
-   * `landed` 是那一步落地后的项目,`reverted` 是在它上面只撤这几样之后的项目。界面按修改项逐条比(`mergeItems.ts` 的 `diffThings`):
-   * 基准是 `landed`(期望云端仍是它)、我这边是 `reverted`。不知道那一步落地后是什么样(撤别人那一步、本页面没亲眼看到它落地)时没有。
+   * Materials passed to the "conflict merge" window for items not reverted because someone else
+   * modified them later (`skipped`) (user decision, 2026-10-18, wired in 0.7.20):
+   * `landed` is the project after that step landed; `reverted` is the project after reverting only
+   * those items on top of it. The UI compares item by item across modified items (`diffThings`
+   * in `mergeItems.ts`): the baseline is `landed` (expected to still be on the cloud), and my side
+   * is `reverted`. Absent when the state after that step landed is unknown (reverting someone else's
+   * step where this page did not see it land directly).
    */
   conflict?: { landed: Project; reverted: Project };
 }
@@ -179,35 +195,37 @@ export type SyncNotice =
   | { kind: "overwritten"; entity: string; by: Writer; rev: number }
   | { kind: "undo"; redo: boolean; result: UndoResult }
   | { kind: "resync"; reason: string }
-  /** 别人的一次改动落到了本地副本上(时间轴描边 1.5 s 用) */
+  /** A change by someone else landed on the local replica (used for 1.5 s timeline outline) */
   | { kind: "remote"; rev: number; opId: string; entities: string[]; by: Writer; undoOf?: string }
-  /** AI 栏「撤销这一步」:撤的是别人(Agent)那次提交 */
+  /** AI panel "Undo this step": reverts that commit made by someone else (Agent) */
   | { kind: "revert-remote"; of: string; result: UndoResult };
 
-/** 本地备份:被覆盖的实体、或被丢弃的离线批次。由接线的一方落盘(草稿目录下 backups/) */
+/** Local backup: overwritten entities, or discarded offline batches. Persisted to disk by the connecting side (backups/ under the draft directory) */
 export type LocalBackup =
   | { kind: "overwritten"; projectId: string; entity: string; by: Writer; rev: number; value: unknown; at: number }
   | { kind: "offline-discard"; projectId: string; baseRev: number; batch: { opId: string; ops: PathOp[] }[]; project: Project; at: number };
 
 export interface PausedInfo {
-  /** 离线时记下的版本 */
+  /** Version recorded when offline */
   offlineRev: number;
-  /** 文档服务当前的版本 */
+  /** Current version in the document service */
   currentRev?: number;
-  /** 离线期间别人落地的改动 */
+  /** Changes landed by others while offline */
   since?: SinceEntry[];
-  /** 攒着没发的本地操作条数 */
+  /** Number of queued unsent local operations */
   queued: number;
 }
 
 /**
- * 本页面看到落地的一次提交(自己的拿到 ok、别人的收到 project.ops)的摘要,形状同文档服务历史里的那一条
- * (`server/docservice/modules/project.mjs` 的提交摘要)。「搬到云端」把它连同历史序号带上去(`history` 读)。
+ * Summary of a commit seen landed by this page (own commit receiving ok, others' receiving
+ * project.ops), matching the shape of an entry in document service history (commit summary in
+ * `server/docservice/modules/project.mjs`). "Move to the cloud" carries it up along with its
+ * history sequence number (read by `history`).
  */
 export interface CommitSummary {
   rev: number;
   opId: string;
-  /** 自己的提交是 null(写入身份由文档服务按连接定,本页面不知道原样) */
+  /** null for own commits (write identity is determined by document service per connection; this page does not know the original) */
   actor: unknown;
   at: number;
   paths: string[];
@@ -215,11 +233,11 @@ export interface CommitSummary {
 }
 
 export interface CommitOptions {
-  /** false:不进撤销栈(素材元数据回填、总时长跟随等) */
+  /** false: does not enter undo stack (asset metadata backfill, total duration tracking, etc.) */
   undoable?: boolean;
-  /** 同一个 key、合并窗口内的提交合并成撤销栈上的一步(滑块一次拖动、数字框连续步进) */
+  /** Commits with the same key within the merge window are merged into a single step on the undo stack (single slider drag, continuous number box stepping) */
   mergeKey?: string;
-  /** 合并窗口(毫秒,以上一次合并为准往后滚);不传取 `MERGE_WINDOW_MS`;`Infinity` = 只认 key */
+  /** Merge window (ms, rolling forward from the last merge); defaults to `MERGE_WINDOW_MS` if omitted; `Infinity` = match key only */
   mergeWindowMs?: number;
 }
 
@@ -227,7 +245,7 @@ export interface DocSyncOptions {
   /** Only explicit creation may initialize an empty service room. */
   initialize?: boolean;
   projectId: string;
-  /** 这个页面会话的 id,写进每次提交 */
+  /** ID of this page session, written into each commit */
   session: string;
   send: (msg: ClientMsg) => void;
   newOpId?: () => string;
@@ -235,7 +253,7 @@ export interface DocSyncOptions {
   saveBackup?: (backup: LocalBackup) => void;
 }
 
-/* ---------------- 内部 ---------------- */
+/* ---------------- Internal ---------------- */
 
 interface Pending {
   opId: string;
@@ -243,22 +261,22 @@ interface Pending {
   inverse: PathOp[];
   undoOf?: string;
   sent: boolean;
-  /** 拿到 ok 但还没并进已确认副本(在等 project.state 时) */
+  /** Received ok but not yet merged into confirmed replica (while waiting for project.state) */
   ackRev?: number;
-  /** 已发出、但在最新的已确认副本上重放失败 —— 文档服务那边也会拒 */
+  /** Sent, but failed to replay on the latest confirmed replica: the document service side will also reject it */
   brokenLocally?: boolean;
 }
 
 interface Step {
   opIds: string[];
-  /** 撤这一步要应用的操作(按顺序) */
+  /** Operations to apply to undo this step (in order) */
   inverse: PathOp[];
   entities: string[];
-  /** 这一步第一条提交落地的版本;还没确认时为 undefined */
+  /** Version when the first commit of this step landed; undefined if not yet confirmed */
   rev?: number;
   mergeKey?: string;
   lastAt: number;
-  /** 这一步落地后的本地副本(撤销遇到冲突时交给「冲突合并」窗口当基准;项目对象不原地改,存引用不复制) */
+  /** Local replica after this step landed (passed to the "conflict merge" window as baseline when undo encounters conflicts; project objects are not mutated in place, storing reference without copying) */
   after?: Project;
 }
 
@@ -269,28 +287,30 @@ interface RemoteWrite {
   entities: string[];
 }
 
-/** 本页面已确认的提交(AI 栏撤 Agent 那一步时,自己后来改过的也要挡) */
+/** Confirmed commits from this page (when AI panel reverts that Agent step, own later modifications must also be blocked) */
 interface LocalWrite {
   rev: number;
   entities: string[];
 }
 
-/** 撤别人的一次提交要的材料(AI 栏「撤销这一步」):那次提交的 opId 与逆操作,知道的话再给它落地的版本号 */
+/** Materials required to revert another's commit (AI panel "Undo this step"): that commit's opId and inverse operations, plus the version number it landed at if known */
 export interface RemoteStep {
   opId: string;
-  /** 不给就用本页面收到那次提交时自己算的逆操作;两边都没有就撤不了 */
+  /** If omitted, uses inverse operations computed by this page when receiving that commit; cannot revert if neither has them */
   inverse?: PathOp[];
-  /** 那次提交落地的版本号;不给就按本页面收到的 project.ops 查 */
+  /** Version number at which that commit landed; if omitted, looked up from project.ops received by this page */
   rev?: number;
-  /** 那次提交的写入身份;不给就按本页面收到的 project.ops 查(都查不到时,之后的任何远端写入都算别人) */
+  /** Write identity of that commit; if omitted, looked up from project.ops received by this page (if not found, any subsequent remote write is considered someone else) */
   by?: Writer;
 }
 
 type Events = {
   /**
-   * 本地副本换了。`commit` / `load` 是 store 自己(setProject / loadProject)发起的,调用方拿返回值写 state;
-   * 其余都不是经 store 发起的,接 store 的一侧要把它写进 state。`revert-remote` 是 AI 栏「撤销这步」
-   * (`revertRemote`):以本页面身份提交,但不经 setProject,所以不能算 `commit`。
+   * Local replica replaced. `commit` / `load` are initiated by the store itself (setProject /
+   * loadProject), where callers use the return value to write state; the rest are not initiated
+   * via store, and the side connected to store must write it into state. `revert-remote` is AI panel
+   * "Undo this step" (`revertRemote`): submitted with this page's identity, but without going
+   * through setProject, so it cannot count as `commit`.
    */
   project: (project: Project, cause: "commit" | "remote" | "state" | "rejected" | "undo" | "redo" | "revert-remote" | "discard" | "replay" | "load") => void;
   status: (status: SyncStatus) => void;
@@ -298,27 +318,27 @@ type Events = {
 };
 
 export const UNDO_LIMIT = 100;
-/** 本页面发出的提交记多少条 opId(`opIdsSince`) */
+/** How many opIds of commits sent by this page to record (`opIdsSince`) */
 const OWN_OPS_KEEP = 1000;
 export const MERGE_WINDOW_MS = 300;
-/** 文档服务单次提交 ops 序列化后的上限(`PROJECT_LIMITS.MAX_OPS_BYTES`):超过就改成根替换、走分片上传 */
+/** Upper limit on serialized ops for a single document service commit (`PROJECT_LIMITS.MAX_OPS_BYTES`): if exceeded, switch to root replacement and use chunked upload */
 export const MAX_OPS_BYTES = 256 * 1024;
-/** 分片上传每片的字符数:UTF-8 最坏 4 字节 / 字符,128 Ki 字符不超过文档服务每片 512 KiB 的上限 */
+/** Character count per chunk in chunked upload: worst case UTF-8 is 4 bytes / char, 128 Ki chars does not exceed document service 512 KiB per-chunk limit */
 export const UPLOAD_PART_CHARS = 128 * 1024;
-/** 文档服务 `UPLOAD_MAX_PARTS` */
+/** Document service `UPLOAD_MAX_PARTS` */
 export const UPLOAD_MAX_PARTS = 64;
 
-/** 文本按 UTF-8 的字节数;短到不可能超限时直接回字符数,省一次编码 */
+/** Byte count of text in UTF-8; returns character count directly when short enough that exceeding the limit is impossible, saving an encoding step */
 const utf8Bytes = (text: string): number => {
   if (text.length * 3 <= MAX_OPS_BYTES) return text.length;
   return new TextEncoder().encode(text).length;
 };
 const BEFORE_REMOTE_KEEP = 32;
-/** 记多少次 Agent 提交的逆操作 */
+/** How many Agent commit inverse operations to record */
 const REMOTE_INVERSE_KEEP = 200;
-/** 提交摘要记多少条(与文档服务 `PROJECT_LIMITS.HISTORY` 同数) */
+/** How many commit summaries to record (matches document service `PROJECT_LIMITS.HISTORY`) */
 const COMMIT_LOG_KEEP = 1000;
-/** 一条摘要里最多记几个路径(文档服务的 `capPaths` 也只留一部分) */
+/** Maximum number of paths recorded in one summary (document service `capPaths` also only retains a subset) */
 const COMMIT_PATHS_KEEP = 32;
 
 let opSeq = 0;
@@ -344,9 +364,9 @@ export class DocSync {
 
   private connected = false;
   private awaitingState = false;
-  /** 断线时最后知道的版本;没有离线批次时为 null */
+  /** Last known version upon disconnect; null when there is no offline batch */
   private offlineRev: number | null = null;
-  /** 离线批次的第一条已发出、在等它的回音;这期间其余的不发 */
+  /** The first item of the offline batch has been sent and is awaiting response; during this time, the rest are not sent */
   private gateOpId: string | null = null;
   private paused: PausedInfo | null = null;
 
@@ -355,11 +375,11 @@ export class DocSync {
   private stepOf = new Map<string, Step>();
   private remoteWrites: RemoteWrite[] = [];
   private localWrites: LocalWrite[] = [];
-  /** Agent 提交的 opId → 它落地的版本号与逆操作(按收到的 project.ops 在已确认副本上算) */
+  /** Agent commit opId → version number it landed at and inverse operations (computed on confirmed replica from received project.ops) */
   private remoteInverses = new Map<string, { rev: number; inverse: PathOp[]; after?: Project }>();
-  /** rev → 应用这次远端改动之前的本地副本,给覆盖备份用 */
+  /** rev → local replica before applying this remote modification, used for overwrite backup */
   private beforeRemote = new Map<number, Project>();
-  /** 本页面看到落地的提交摘要(按历史序号递增;`history` 读) */
+  /** Commit summaries seen landed by this page (in ascending history sequence number order; read by `history`) */
   private commitLog: CommitSummary[] = [];
 
   private listeners: { [K in keyof Events]: Set<Events[K]> } = { project: new Set(), status: new Set(), notice: new Set() };
@@ -376,28 +396,33 @@ export class DocSync {
     this.initialize = opts.initialize !== false;
   }
 
-  /* ---------- 读 ---------- */
+  /* ---------- Read ---------- */
 
   get project(): Project {
     return this.local;
   }
 
-  /** 文档服务确认过的版本号 */
+  /** Version number confirmed by document service */
   get rev(): number {
     return this.confirmedRev;
   }
 
   /**
-   * 文档服务确认过的那一版项目(`rev` 那一版;还没有回 null)。只读:纯浏览器节点发布清单计划时按版本号留存它
-   * (M7 契约 D6:执行细任务用任务的 `projectRev` 那一版),不改它。
+   * The version of the project confirmed by document service (the `rev` version; returns null
+   * if none yet). Read-only: browser-only nodes retain it by version number when publishing
+   * manifest plans (M7 contract D6: fine-grained task execution uses the task's `projectRev`
+   * version), without modifying it.
    */
   get confirmedProject(): Project | null {
     return this.confirmed;
   }
 
   /**
-   * 本页面看到落地的提交摘要(历史序号递增、最多 `COMMIT_LOG_KEEP` 条;拷贝,不给改)。只含这条连接打开以来确认过的那几笔:
-   * 更早的在文档服务自己的历史里。「搬到云端」连同 `rev` 一起带上去,云端项目的历史序号与摘要接着本机这一份往下记。
+   * Commit summaries seen landed by this page (ascending history sequence numbers, at most
+   * `COMMIT_LOG_KEEP` entries; copy, read-only). Contains only those confirmed since this connection
+   * was opened: earlier entries reside in document service's own history. "Move to the cloud"
+   * carries them up together with `rev`; cloud project history sequence numbers and summaries
+   * continue recording from this local copy.
    */
   get history(): CommitSummary[] {
     return this.commitLog.map((c) => ({ ...c, paths: [...c.paths], entities: [...c.entities] }));
@@ -440,7 +465,7 @@ export class DocSync {
     return this.paused ? { ...this.paused, queued: this.pending.length } : null;
   }
 
-  /** 还没拿到 ok 的本地提交条数 */
+  /** Number of local commits that have not yet received ok */
   get unconfirmed(): number {
     return this.pending.length;
   }
@@ -475,9 +500,9 @@ export class DocSync {
     if (after !== before) this.emit("status", after);
   }
 
-  /* ---------- 连接 ---------- */
+  /* ---------- Connection ---------- */
 
-  /** 连上了(或重连上了):发 project.open,等 project.state */
+  /** Connected (or reconnected): send project.open, wait for project.state */
   connect() {
     const before = this.status;
     this.connected = true;
@@ -487,7 +512,7 @@ export class DocSync {
     this.statusChanged(before);
   }
 
-  /** 断了:在途的提交当没发(重连后用原 opId 重发,文档服务按 opId 去重) */
+  /** Disconnected: in-flight commits are treated as unsent (re-sent with original opId after reconnecting; document service deduplicates by opId) */
   disconnect() {
     if (!this.connected) return;
     const before = this.status;
@@ -502,11 +527,18 @@ export class DocSync {
   }
 
   /**
-   * 计划内换连接(账号云端项目的连接到期前换到新会话上,`src/editor/sync/link.ts` 的 `renew`):新连接已经建好、旧连接作废的那一刻调。
-   * 和断线重连的区别是**不记成离线**:在途的提交当没发、在新连接上重新 `project.open`,拿到状态后未确认的照常补发
-   * (文档服务按 opId 去重),不走离线批次的版本闸 —— 这一下不是用户离线,别人恰好在这时改了项目也不该弹离线对话框。
-   * 拿到的状态版本与手里已确认的相同(换的这一下没有别人的改动)时,手里的项目对象原样留着,不换新对象。
-   * 本来就在离线批次里(已有离线版本、或正暂停着)的,照离线的规矩走,这里不改。
+   * Planned connection switch (switching to a new session before an account cloud project connection
+   * expires, `renew` in `src/editor/sync/link.ts`): called the moment the new connection is established
+   * and the old connection is invalidated.
+   * The difference from disconnect-reconnect is that it is **not recorded as offline**: in-flight
+   * commits are treated as unsent, `project.open` is re-issued on the new connection, and unconfirmed
+   * commits are re-sent as normal once state is received (document service deduplicates by opId),
+   * without going through the offline batch version gate: this is not a user going offline, and someone
+   * modifying the project at this exact moment should not pop up an offline dialog.
+   * When the received state version matches the confirmed version in hand (no changes from others during
+   * this switch), keep the project object in hand as-is without replacing it with a new object.
+   * Sessions already in an offline batch (already have an offline version, or are currently paused)
+   * follow offline rules and are not changed here.
    */
   handover() {
     const before = this.status;
@@ -520,7 +552,7 @@ export class DocSync {
   }
   private handingOver = false;
 
-  /** 收到文档服务的一条消息 */
+  /** Received a message from document service */
   receive(msg: ServerMsg) {
     const before = this.status;
     switch (msg.type) {
@@ -565,7 +597,7 @@ export class DocSync {
     const handover = this.handingOver;
     this.handingOver = false;
     if (this.gateOpId) {
-      // 离线批次的第一条还没回音就重新同步了:按没发处理,下面重新试
+      // Resynced before the first item of offline batch received a response: treat as unsent, retry below
       const g = this.pending.find((p) => p.opId === this.gateOpId);
       if (g && g.ackRev === undefined) g.sent = false;
       this.gateOpId = null;
@@ -577,7 +609,7 @@ export class DocSync {
         this.emit("status", this.status);
         return;
       }
-      // 文档服务还没有这个项目:把本地这一份(连同还没确认的修改)以根替换写进去
+      // Document service does not have this project yet: write local copy (along with unconfirmed changes) as a root replacement
       const seed: Pending = { opId: this.newOpId(), ops: [{ op: "set", path: "", value: this.local }], inverse: [], sent: false };
       for (const p of this.pending) {
         const step = this.stepOf.get(p.opId);
@@ -590,10 +622,12 @@ export class DocSync {
       this.flush();
       return;
     }
-    // 已经在这份快照里的(拿过 ok、rev 不超过快照)不再重放
+    // Those already in this snapshot (received ok, rev does not exceed snapshot) are not replayed again
     this.pending = this.pending.filter((p) => p.ackRev === undefined || p.ackRev > msg.rev);
     if (handover && this.confirmed !== null && msg.rev === this.confirmedRev && this.offlineRev === null && !this.paused) {
-      // 计划内换连接、期间没有新版本:同一个版本的内容必然相同,手里的对象(已确认副本与本地副本)原样留着,只把没确认的补发
+      // Planned connection switch with no new version in the interim: content for the same version is
+      // necessarily identical, so keep objects in hand (confirmed replica and local replica) as-is
+      // and only re-send unconfirmed ones
       this.flush();
       return;
     }
@@ -603,7 +637,7 @@ export class DocSync {
     this.beforeRemote.clear();
     const hasBacklog = this.offlineRev !== null && this.pending.some((p) => !p.sent);
     if (hasBacklog && !this.paused) {
-      // 离线批次:本地副本先不动,第一条带 offlineRev 去试
+      // Offline batch: leave local replica untouched for now, try the first item with offlineRev
       this.sendGate();
       return;
     }
@@ -613,7 +647,7 @@ export class DocSync {
     this.flush();
   }
 
-  /** 分片接收中的快照:拼完之前到的 project.ops(rev 大于快照的)先攒着 */
+  /** Snapshot receiving in chunks: buffer project.ops (with rev greater than snapshot) that arrive before assembly completes */
   private partial: { rev: number; count: number; chunks: string[]; buffered: OpsMsg[] } | null = null;
 
   private onStateStart(msg: StateMsg) {
@@ -643,7 +677,7 @@ export class DocSync {
   }
 
   private onOps(msg: OpsMsg) {
-    // 文档服务不回发给提交者;万一回发了,当 ok 处理
+    // Document service does not echo back to submitter; if echoed back, treat as ok
     if (this.pending.some((p) => p.opId === msg.opId)) {
       this.onOk({ type: "project.op.ok", opId: msg.opId, rev: msg.rev });
       return;
@@ -667,8 +701,10 @@ export class DocSync {
       this.resync(tr("Remote operation cannot be applied to the confirmed copy: {0}", r.detail));
       return;
     }
-    // 顺手记下这次别人提交的逆操作(AI 栏「撤销这一步」用;事件里带了 inverse 时以事件为准)。
-    // 不按 actor.role 挑:本机 local 空间里 Agent 的连接眼下还是 page 身份(c65-integ 报告第 7 节),分不出来
+    // Record inverse operations for this commit by someone else (used by AI panel "Undo this step";
+    // defer to event if inverse is included in event).
+    // Do not filter by actor.role: in this machine local space, Agent connections currently still
+    // have page identity (c65-integ report section 7), indistinguishable
     this.remoteInverses.set(msg.opId, { rev: msg.rev, inverse: diffProject(r.value, this.confirmed).ops, after: r.value });
     if (this.remoteInverses.size > REMOTE_INVERSE_KEEP) this.remoteInverses.delete(this.remoteInverses.keys().next().value!);
     this.confirmed = r.value;
@@ -682,10 +718,10 @@ export class DocSync {
     this.beforeRemote.set(msg.rev, this.local);
     if (this.beforeRemote.size > BEFORE_REMOTE_KEEP) this.beforeRemote.delete(this.beforeRemote.keys().next().value!);
 
-    // 离线批次在等回音、或已暂停:本地副本先不动
+    // Offline batch is awaiting response or paused: leave local replica untouched for now
     if (this.gateOpId || this.paused) return;
     if (this.pending.length === 0) {
-      // 没有未确认的:直接在本地副本上应用,与已确认副本合成同一棵树
+      // No unconfirmed commits: apply directly to local replica, merging into the same tree as confirmed replica
       const r2 = applyOps(this.local, msg.ops);
       if (r2.ok) {
         this.confirmed = r2.value;
@@ -711,20 +747,22 @@ export class DocSync {
       return;
     }
     if (msg.rev <= this.confirmedRev) {
-      // 重发的提交其实早已落地(已经含在快照里):去掉,不再应用
+      // Re-sent commit actually landed long ago (already included in snapshot): remove, do not apply again
       this.pending.splice(idx, 1);
       if (this.gateOpId === entry.opId) this.openGate();
       else if (!this.gateOpId && !this.paused && this.confirmed) this.setLocal(this.replay(this.confirmed), "commit");
       return;
     }
-    // 换连接之后也可能走到这里:旧连接上在途的提交晚到,先于排在它前面那条的回音。不去猜前面那条落没落地
-    // (猜错了页面与文档服务的内容会悄悄不一样),一律整份重取、在取到的状态上重放没确认的
+    // Can also reach here after switching connections: an in-flight commit on the old connection
+    // arrived late, before the response to the one ahead of it. Do not guess whether the preceding
+    // commit landed (guessing wrong will silently cause page and document service contents to diverge),
+    // refetch the whole document unconditionally and replay unconfirmed commits on the fetched state
     if (idx !== 0 || msg.rev !== this.confirmedRev + 1 || entry.brokenLocally) {
       this.resync(tr("Acknowledgement out of order or inconsistent with local: {0} rev {1}", entry.opId, msg.rev));
       return;
     }
     if (this.confirmed === null) {
-      // 根替换建项目
+      // Create project via root replacement
       const r0 = applyOps({} as Project, entry.ops);
       if (!r0.ok) return this.resync(tr("The root replacement that creates the project cannot be applied"));
       this.confirmed = r0.value;
@@ -745,7 +783,7 @@ export class DocSync {
       this.openGate();
       return;
     }
-    // 全部确认完:本地副本就是已确认副本,并成同一棵树
+    // All confirmed: local replica becomes confirmed replica, merged into the same tree
     if (this.pending.length === 0 && !this.paused && !this.gateOpId) this.confirmed = this.local;
   }
 
@@ -763,7 +801,7 @@ export class DocSync {
     this.dropSteps([entry.opId]);
     this.emit("notice", { kind: "rejected", opId: entry.opId, reason: msg.reason });
     if (this.gateOpId === entry.opId) {
-      // 离线批次的第一条因为别的原因被拒:下一条接着当「第一条」去试
+      // First item of offline batch rejected for other reasons: next item continues as "first item" to try
       this.gateOpId = null;
       this.sendGate();
       return;
@@ -772,13 +810,13 @@ export class DocSync {
   }
 
   private onOverwritten(msg: OverwrittenMsg) {
-    // 先把自己那一版的该实体存成本地备份,再(或已经)换成新版本
+    // Save its version of this entity as a local backup first, then (or already) switch to new version
     const mine = this.beforeRemote.get(msg.rev) ?? this.local;
     this.saveBackup?.({ kind: "overwritten", projectId: this.projectId, entity: msg.entity, by: msg.by, rev: msg.rev, value: getAt(mine, entityValuePath(msg.entity)), at: this.now() });
     this.emit("notice", { kind: "overwritten", entity: msg.entity, by: msg.by, rev: msg.rev });
   }
 
-  /* ---------- 离线批次 ---------- */
+  /* ---------- Offline batch ---------- */
 
   private sendGate() {
     const first = this.pending.find((p) => !p.sent);
@@ -798,7 +836,7 @@ export class DocSync {
     this.flush();
   }
 
-  /** 离线批次被拒后,用户选「重放」:去掉期望版本,依次提交 */
+  /** Offline batch rejected, user selects "Replay": drop expected version, submit in sequence */
   replayOffline() {
     if (!this.paused) return;
     const before = this.status;
@@ -810,7 +848,7 @@ export class DocSync {
     this.checkSettled();
   }
 
-  /** 离线批次被拒后,用户选「丢弃」:先把这批存成本地备份,再回到文档服务的版本 */
+  /** Offline batch rejected, user selects "Discard": save as local backup first, then revert to document service version */
   discardOffline() {
     if (!this.paused) return;
     const before = this.status;
@@ -827,18 +865,22 @@ export class DocSync {
   }
 
   /**
-   * 把一份离线改过的内容(从云端项目另存出去、之后在本地副本里改过的文件)当一次普通修改合上去(10-14 第 3.4 节)。
-   * 差异按当前已确认的那一版算,`baseRev` 是那份文件另存时的历史序号:
-   * - 文档服务现在还是 `baseRev`(期间没人改过):就是一次普通提交;
-   * - 期间有人改过:照离线批次办 —— 这一条带 `baseRev` 去试,被拒成 stale 就停下(paused),
-   *   由用户照现有的冲突处理选「重放 / 丢弃」(丢弃前存一份本地备份)。
-   * 连接还没就绪(没拿到已确认的一版、在等状态、已经停着)抛错;没有差异回 false,什么都不发。
+   * Merge offline-modified content (a file saved out from a cloud project and subsequently
+   * modified in the local replica) as a normal modification (10-14 Section 3.4).
+   * Diff is calculated against the currently confirmed version; `baseRev` is the history sequence
+   * number when that file was saved out:
+   * - Document service is still at `baseRev` (unmodified in the interim): just a normal commit;
+   * - Modified in the interim: handle as an offline batch: try this item with `baseRev`, pause if
+   *   rejected as stale, letting user choose "Replay / Discard" per existing conflict handling
+   *   (save a local backup before discarding).
+   * Throw error if connection is not ready (not received confirmed version, waiting for status,
+   * or already paused); return false and send nothing if there is no diff.
    */
   mergeOffline(next: Project, baseRev: number): boolean {
     if (!this.connected || this.awaitingState || !this.confirmed || this.paused || this.gateOpId) throw new Error(tr("The document connection is not ready yet; offline changes cannot be merged"));
     if (!Number.isSafeInteger(baseRev) || baseRev < 0) throw new Error(tr("The history sequence number of the offline changes is wrong"));
     if (baseRev === this.confirmedRev && this.offlineRev === null) {
-      // 不是经 store 发起的:用 replay 作原因,接 store 的一侧把结果写进 state
+      // Not initiated via store: use replay as reason, side connected to store writes result into state
       const prev = this.local;
       return this.commitInternal(next, {}, undefined, undefined, "replay") !== prev;
     }
@@ -852,7 +894,8 @@ export class DocSync {
     this.pending.push(entry);
     this.noteOwnOp(entry.opId);
     this.offlineRev = baseRev;
-    // 离线批次:本地副本是带着离线修改的那一份,已确认副本不动;文档服务答了再定
+    // Offline batch: local replica is the one with offline modifications, confirmed replica stays
+    // untouched; decide after document service responds
     this.setLocal(r.value, "replay");
     this.sendGate();
     this.statusChanged(before);
@@ -860,25 +903,27 @@ export class DocSync {
   }
 
   /**
-   * 撤销遇到冲突时,同一样东西里没被别人改过的那几项直接撤(0.7.20,`src/editor/sync/undoConflict.ts`):
-   * 一次普通提交,但不进撤销栈(它是刚才那次撤销的一部分);不是经 store 发起的,用 replay 作原因让接 store 的一侧写进 state。
+   * When undo encounters conflict, items in the same object not modified by others are undone directly
+   * (0.7.20, `src/editor/sync/undoConflict.ts`): a normal commit, but does not enter undo stack (it is
+   * part of that preceding undo); not initiated via store, use replay as reason so the side connected
+   * to store writes into state.
    */
   commitAside(next: Project): boolean {
     const prev = this.local;
     return this.commitInternal(next, { undoable: false }, undefined, undefined, "replay") !== prev;
   }
 
-  /* ---------- 本地修改 ---------- */
+  /* ---------- Local modifications ---------- */
 
   /**
-   * 本地改成 next:算差异、乐观落地、进队列并尽量发出。
-   * 返回落地后的本地副本(键的顺序以它为准),调用方把它写进 store。
+   * Locally change to next: compute diff, optimistically apply, enqueue, and send eagerly.
+   * Return applied local replica (key order is based on it); caller writes it into store.
    */
   commit(next: Project, opts: CommitOptions = {}): Project {
     return this.commitInternal(next, opts, undefined, undefined);
   }
 
-  /** 载入另一份内容(打开旧 .proc、Skill 合并结果):一次根替换,清空撤销栈 */
+  /** Load another content (opening old .proc, skill merge result): a root replacement, clear undo stack */
   load(next: Project): Project {
     this.undoStack = [];
     this.redoStack = [];
@@ -891,7 +936,7 @@ export class DocSync {
     return this.local;
   }
 
-  /* ---------- 本页面发出的提交(留在页面的 Agent 工具回包里带 opIds 用) ---------- */
+  /* ---------- Commits sent by this page (used for carrying opIds in Agent tool responses staying on page) ---------- */
 
   private ownOps: string[] = [];
   private ownOpsBase = 0;
@@ -905,12 +950,12 @@ export class DocSync {
     }
   }
 
-  /** 记个位置;之后用 `opIdsSince` 取这之后本页面发出的提交的 opId */
+  /** Record a position; later use `opIdsSince` to get opId of commits sent by this page after this */
   opMark(): number {
     return this.ownOpsBase + this.ownOps.length;
   }
 
-  /** `opMark()` 之后本页面发出的提交(含撤销、载入);太久远、已修剪掉的那部分取不到 */
+  /** Commits sent by this page after `opMark()` (including undo, load); old, pruned parts cannot be retrieved */
   opIdsSince(mark: number): string[] {
     return this.ownOps.slice(Math.max(0, mark - this.ownOpsBase));
   }
@@ -927,15 +972,17 @@ export class DocSync {
     if (d.ops.length === 0) return prev;
     const r = applyOps(prev, d.ops);
     if (!r.ok) throw new Error(tr("Operations produced by diffProject cannot be applied: {0}", r.detail));
-    // 差异本身超过文档服务的单次上限:改成一条根替换(值就是落地后的本地副本),发送时走分片上传。
-    // 在已确认副本上重放它得到的仍是这一份,与文档服务「最后写的赢」一致;逆操作照旧用差异算的那份
+    // Diff itself exceeds document service per-request limit: convert to a root replacement (value is
+    // applied local replica), sent via chunked upload.
+    // Replaying it on confirmed replica still yields this copy, consistent with document service
+    // "last write wins"; inverse op still uses the one calculated from diff
     const ops: PathOp[] = utf8Bytes(JSON.stringify(d.ops)) > MAX_OPS_BYTES ? [{ op: "set", path: "", value: r.value }] : d.ops;
     const entry: Pending = { opId: this.newOpId(), ops, inverse: d.inverse, undoOf, sent: false };
     this.pending.push(entry);
     this.noteOwnOp(entry.opId);
     const now = this.now();
     if (target) {
-      // 撤销 / 重做本身:它的逆操作进对面的栈
+      // Undo / redo itself: its inverse operation enters the opposite stack
       const step: Step = { opIds: [entry.opId], inverse: d.inverse, entities: undoEntitiesOf(d.ops), lastAt: now, after: r.value };
       this.stepOf.set(entry.opId, step);
       const stack = target === "undo" ? this.redoStack : this.undoStack;
@@ -971,8 +1018,10 @@ export class DocSync {
   }
 
   /**
-   * 超过单次上限的根替换改走 `project.upload`:先按顺序发完分片,再发引用它的 `project.op`。
-   * 同一条连接上消息按序处理,所以不用等 `project.uploaded` 的回音。片数超过上限时照原样发,由文档服务回 too-large。
+   * Root replacements exceeding single limit switch to `project.upload`: first send all chunks in
+   * sequence, then send `project.op` referencing it.
+   * Messages on the same connection are processed in order, so no need to wait for `project.uploaded`
+   * reply. When chunk count exceeds limit, send as-is and let document service return too-large.
    */
   private wireOps(p: Pending): WireOp[] {
     const only = p.ops.length === 1 ? p.ops[0] : null;
@@ -988,7 +1037,7 @@ export class DocSync {
     return [{ op: "set", path: "", upload: uploadId }];
   }
 
-  /** 能发就按顺序把没发的都发出去 */
+  /** Send all unsent items in sequence whenever possible */
   private flush() {
     if (!this.connected || this.awaitingState || this.gateOpId || this.paused) return;
     for (const p of this.pending) {
@@ -998,7 +1047,7 @@ export class DocSync {
     }
   }
 
-  /** 在已确认副本上依次重放未确认的本地操作;没发出去又落不下去的直接丢掉 */
+  /** Replay unconfirmed local operations in sequence on confirmed replica; drop unsent ones that cannot be applied */
   private replay(base: Project): Project {
     let cur = base;
     const dropped: string[] = [];
@@ -1022,7 +1071,7 @@ export class DocSync {
     return cur;
   }
 
-  /** 这些提交作废了:含它们的撤销步整步拿掉(逆操作已经对不上了) */
+  /** These commits are invalidated: undo steps containing them are completely removed (inverse ops no longer match) */
   private dropSteps(opIds: string[]) {
     const gone = new Set(opIds);
     const keep = (s: Step) => !s.opIds.some((id) => gone.has(id));
@@ -1031,7 +1080,7 @@ export class DocSync {
     for (const id of opIds) this.stepOf.delete(id);
   }
 
-  /* ---------- 撤销 / 重做 ---------- */
+  /* ---------- Undo / redo ---------- */
 
   undo(): UndoResult | null {
     const step = this.undoStack.pop();
@@ -1045,10 +1094,10 @@ export class DocSync {
     return this.revert(step, "redo");
   }
 
-  /** 这一步之后被别的写入身份改过的实体 → 最近改它的是谁 */
+  /** Entities modified by another write identity after this step → who modified it most recently */
   private conflictsFor(step: Step): Map<string, Writer> {
     const out = new Map<string, Writer>();
-    if (step.rev === undefined) return out; // 还没确认:之后收到的远端改动都排在它前面
+    if (step.rev === undefined) return out; // Not yet confirmed: remote changes received later are all ordered before it
     for (const w of this.remoteWrites) {
       if (w.rev <= step.rev) continue;
       for (const e of step.entities) if (w.entities.some((x) => entitiesOverlap(x, e))) out.set(e, w.by);
@@ -1057,12 +1106,15 @@ export class DocSync {
   }
 
   /**
-   * AI 栏「撤销这一步」:以本页面的身份提交别人(Agent)那次提交的逆操作,带 `undoOf` 指向那次提交,
-   * 进本页面自己的撤销栈(c65-design.md 第 8 节裁定)。冲突检查同 `undo`:那次提交之后,
-   * 被**别的写入身份**(含本页面自己后来的改动)改过的实体不撤;那次提交的写入者自己后来又改的不算。
-   * 那次提交的版本号查不到(页面连上之前落地、记录已修剪,事件里也没带)时只按本页面没确认的修改挡。
+   * AI panel "Undo this step": submit inverse operation of that commit by others (Agent) under this
+   * page's identity, with `undoOf` pointing to that commit, entering this page's own undo stack
+   * (c65-design.md section 8 ruling). Conflict check is same as `undo`: after that commit, entities
+   * modified by **another write identity** (including this page's own subsequent changes) are not
+   * undone; subsequent changes by that commit's own author do not count.
+   * When version number of that commit cannot be found (applied before page connected, records pruned,
+   * not included in event), block only based on unconfirmed modifications of this page.
    */
-  /** 撤得了这次别人的提交吗:事件带了逆操作,或本页面收到它时记下了 */
+  /** Can this commit from others be undone: event carried inverse op, or this page recorded it when received */
   canRevertRemote(opId: string, inverse?: PathOp[]): boolean {
     return (inverse?.length ?? 0) > 0 || this.remoteInverses.has(opId);
   }
@@ -1088,11 +1140,11 @@ export class DocSync {
         for (const e of entities) if (w.entities.some((x) => entitiesOverlap(x, e))) blocked.set(e, mine);
       }
     }
-    // 还没确认的本地修改也算「后来改过」
+    // Unconfirmed local modifications also count as "modified later"
     for (const p of this.pending) {
       for (const x of undoEntitiesOf(p.ops)) for (const e of entities) if (entitiesOverlap(x, e)) blocked.set(e, mine);
     }
-    // 本页面亲眼看到它落地,才知道「那一步落地后」是什么样
+    // Only when this page sees it land directly does it know what "after that step landed" looks like
     const after = kept?.after;
     const step: Step = { opIds: [remote.opId], inverse, entities, lastAt: this.now(), after };
     const result = this.applyRevert(step, blocked, undefined);
@@ -1107,17 +1159,19 @@ export class DocSync {
     return result;
   }
 
-  /** 按冲突表撤一步:落得下的照撤;kind 为空时(撤别人那一步)结果当一次普通修改进撤销栈 */
+  /** Undo step by conflict table: undo those that apply; when kind is empty (undoing step from others), result enters undo stack as normal modification */
   private applyRevert(step: Step, blocked: Map<string, Writer>, kind: "undo" | "redo" | undefined): UndoResult {
     const skipped: SkippedEntity[] = [...blocked].map(([entity, by]) => ({ entity, by }));
-    // 被挡住的那几样:在「那一步落地后」上只撤它们,交给冲突合并窗口逐项比(撤不下去就不给,界面退回提示条)
+    // Blocked items: undo only them on "after that step landed", hand over to conflict merge window
+    // to compare item by item (if undo fails, reject; UI returns to notice bar)
     let conflict: UndoResult["conflict"];
     if (blocked.size && step.after) {
       const r = applyOps(step.after, relocateOps(step.after, step.inverse.filter((op) => blocked.has(undoEntityOfOp(op)))));
       if (r.ok && r.value !== step.after) conflict = { landed: step.after, reverted: r.value };
     }
-    // 逆操作记的是写入当时序列住的位置(激活剪辑的 /tracks 或停放剪辑的 /cuts/@X/tracks);之后切换剪辑搬过家的,
-    // 按序列 id 找到它现在住哪儿再套用,不切换激活剪辑(kernel/cutPaths.ts)
+    // Inverse operation records track location at write time (active cut's /tracks or parked cut's
+    // /cuts/@X/tracks); for tracks moved by later cut switching, find current location by track id
+    // and apply without switching active cut (kernel/cutPaths.ts)
     const allowed = relocateOps(this.local, step.inverse.filter((op) => !blocked.has(undoEntityOfOp(op))));
     const failed: string[] = [];
     let candidate = this.local;
@@ -1125,7 +1179,7 @@ export class DocSync {
       const all = applyOps(candidate, allowed);
       if (all.ok) candidate = all.value;
       else {
-        // 整批落不下:按实体分组逐组试,落不下的那组记为没撤成
+        // Entire batch cannot apply: group by entity and try group by group; mark the failing group as failed to undo
         const groups = new Map<string, PathOp[]>();
         for (const op of allowed) {
           const e = undoEntityOfOp(op);
@@ -1140,12 +1194,13 @@ export class DocSync {
       }
     }
     if (candidate === this.local) {
-      // 一处都没撤成:出栈,也不进对面的栈(c65-design.md 第 8 节裁定)
+      // Not a single place succeeded in undoing: pop from stack, do not enter opposite stack (c65-design.md section 8 ruling)
       return { done: false, skipped, failed, ...(conflict ? { conflict } : {}) };
     }
     const undoOf = step.opIds[step.opIds.length - 1];
     const before = this.pending.length;
-    // 撤别人那一步不经 setProject:以 revert-remote 发出,让接 store 的一侧写进 state(不然页面要等下一次改动才刷新)
+    // Undoing that step from others bypasses setProject: send as revert-remote so store bridge side
+    // writes into state (otherwise page waits for next change to refresh)
     this.commitInternal(candidate, kind ? { undoable: false } : {}, undoOf, kind, kind ?? "revert-remote");
     const opId = this.pending.length > before ? this.pending[this.pending.length - 1].opId : undefined;
     return { done: opId !== undefined, skipped, failed, opId, ...(conflict ? { conflict } : {}) };
@@ -1159,15 +1214,16 @@ export class DocSync {
     this.localWrites = this.localWrites.filter((w) => w.rev > min);
   }
 
-  /* ---------- 保存 ---------- */
+  /* ---------- Save ---------- */
 
   private isSettled(): boolean {
     return this.connected && !this.awaitingState && !this.paused && !this.gateOpId && this.pending.length === 0 && this.confirmed !== null;
   }
 
   /**
-   * 等所有本地操作都拿到 ok(`.proc` 只在这之后写)。返回文档服务确认过的版本号和那一版内容。
-   * 超时(缺省不超时)就 reject,调用方提示用户。
+   * Wait until all local operations receive ok (`.proc` is written only after this). Return version
+   * number confirmed by document service and that version of content.
+   * Reject on timeout (no timeout by default); caller prompts the user.
    */
   whenSettled(opts: { timeoutMs?: number } = {}): Promise<{ rev: number; project: Project }> {
     if (this.isSettled()) return Promise.resolve({ rev: this.confirmedRev, project: this.confirmed! });
@@ -1194,37 +1250,40 @@ export class DocSync {
   }
 }
 
-/* ---------------- 接 store ---------------- */
+/* ---------------- Connect to store ---------------- */
 
 /**
- * 把一个 DocSync 接到编辑器 store 上:setProject / loadProject / undo / redo / canUndo / canRedo
- * 改由它接管,别人的改动写进 state(不进撤销栈、不回发)。返回解绑函数,解绑后回到快照栈模式。
+ * Connect a DocSync to editor store: setProject / loadProject / undo / redo / canUndo / canRedo
+ * are taken over by it; changes from others write into state (not into undo stack, no echo back).
+ * Return unbind function; after unbinding, revert to snapshot stack mode.
  *
- * 换项目(另一个 projectId)时先解绑、再为新项目建一个 DocSync;`loadProject` 在接着的时候
- * 是对**当前这个项目**的一次根替换。
+ * When switching projects (another projectId), unbind first, then create a DocSync for the new
+ * project; when connected, `loadProject` is a root replacement on **this current project**.
  */
 export function bindStore(ds: DocSync, opts: { load?: (project: Project) => Project } = {}): () => void {
   if (ds.project !== state.project) {
-    // DocSync 应以 store 里的那一份建;不是的话以 DocSync 为准
+    // DocSync should be created from the copy in store; if not, DocSync takes precedence
     set({ project: ds.project });
   }
   attachProjectSync({
     commit: (_prev, next, opts) => ds.commit(next, opts),
-    // 接线的一方可以接管「载入」:载入的是另一个项目时,换一个 DocSync 而不是对当前项目做根替换
+    // Connecting side can take over "load": when loading another project, replace DocSync instead of
+    // doing root replacement on current project
     load: (project) => (opts.load ? opts.load(project) : ds.load(project)),
     undo: () => void ds.undo(),
     redo: () => void ds.redo(),
     canUndo: () => ds.canUndo(),
     canRedo: () => ds.canRedo(),
-    // .proc 只在所有本地修改都拿到确认之后写(c65-design.md 第 4 节、V7)
+    // .proc is only written after all local modifications receive confirmation (c65-design.md section 4, V7)
     whenSettled: (opts) => ds.whenSettled(opts),
   });
   const off = ds.on("project", (project, cause) => {
-    // commit / load 由 setProject / loadProject 自己写进 state
+    // commit / load are written into state by setProject / loadProject themselves
     if (cause === "commit" || cause === "load") return;
     if (project === state.project) return;
     const prev = state.project;
-    // 别人的改动:本页面的页面状态跟着调(切剪辑换播放头、总时长手动值、选区里被删的片段;c65-integ2 裁定)
+    // Changes from others: page state of this page adjusts accordingly (switch cuts to update
+    // playhead, manual total duration value, deleted clips in selection; c65-integ2 ruling)
     const pagePatch = cause === "remote" ? pageStateAfterRemote(prev, project, state) : null;
     set({ project, dirty: true, ...(pagePatch ?? {}) });
   });

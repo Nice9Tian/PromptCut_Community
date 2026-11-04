@@ -1,15 +1,22 @@
 /**
- * 块 N 的页面一侧与整条链路(`docs/plan/online-card-exec-contract.md` 第 7 节,任务书第二段第 16 条)。
- * 舞台里真正执行用户卡、素材效果卡的接线还没合流,所以这里用「替身渲染结果」(`bakeFrame` 直接回确定的哈希)把
- * 认领、指纹、结果键、入库后别的成员能贴上这条链路钉住;真执行的端到端见 `scripts/probes/online-card-node-probe.mjs`。
+ * Chunk N page side and full pipeline (`docs/plan/online-card-exec-contract.md` section 7,
+ * task brief paragraph 2 item 16).
+ * Wiring for actually executing user cards and media effect cards in the stage is not yet merged,
+ * so "stand-in render output" (`bakeFrame` directly returns a deterministic hash) is used here to pin
+ * down the pipeline: claim, fingerprint, result key, and pasting by other members once stored;
+ * for actual end-to-end execution see `scripts/probes/online-card-node-probe.mjs`.
  *
- *   OCN-08 登记处:算能运行的卡、换代后一小段时间不报、订阅
- *   OCN-09 browserNode:hello 多报运行时版本、welcome 的 cardEnvFingerprint、能力位与代码身份、晚到的运行时版本重新报到
- *   OCN-10 planPublisher:input.browser 随清单计划发出、签名带它、登记变了重发、与队列侧逐字段相同
- *   OCN-11 整条链路:页面发清单计划 → 切分(桌面同机的另一份)→ 浏览器节点认领自己的 → 替身渲染 → 完成 →
- *          层表候选里有浏览器那份、别的成员按它贴上;别人的任务、代码身份对不上的页面一个都不认领
+ *   OCN-08 Registry: compute runnable cards, do not report briefly after generation change, subscribe
+ *   OCN-09 browserNode: hello additionally reports runtime version, welcome's cardEnvFingerprint,
+ *          capability bits and code identity, late-arriving runtime version re-checks in
+ *   OCN-10 planPublisher: input.browser sent with manifest plan, included in signature, resent on
+ *          registry change, field-by-field identical to queue side
+ *   OCN-11 Full pipeline: page sends manifest plan → split (another copy on same machine as
+ *          desktop) → browser node claims own → stand-in render → complete → layer table
+ *          candidates include browser copy, other members paste from it; page claims none of
+ *          others' tasks or tasks with mismatched code identity
  *
- * 跑:node --experimental-test-module-mocks --test src/online/nodeCards.test.mjs
+ * Run: node --experimental-test-module-mocks --test src/online/nodeCards.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -32,7 +39,7 @@ const RUNTIME = "ocr1:sucrase@3.35.1:tailwindcss@4.3.3";
 const BR = describeCardEnvironment({ platform: ENV.winNvidiaChrome.platform, renderer: ENV.winNvidiaChrome.renderer, vendor: ENV.winNvidiaChrome.vendor, chromeVersion: ENV.winNvidiaChrome.userAgent, cardRuntime: RUNTIME });
 const CARDFP = BR.cardEnvFingerprint;
 const ENVFP = BR.fingerprint;
-/** 同一台机器上的桌面节点 */
+/** Desktop node on the same machine */
 const DESK_FP = describeEnvironment({ platform: "win32", renderer: ENV.winNvidiaChrome.renderer, vendor: ENV.winNvidiaChrome.vendor, chromeVersion: "HeadlessChrome/152.0.7977.75" }).fingerprint;
 const IDENT = "ab".repeat(16);
 const USER = "zoe@devA";
@@ -50,7 +57,7 @@ test("OCN-08 registry: only cards that are ready and have a computable identity 
   assert.deepEqual(computeNodeCardInfo({ runtime: RUNTIME, available: false, graphCapable: true, cards, stateOf: () => "ready", identities }),
     { cardRuntime: null, userCards: false, graphCards: false, cardSources: {} }, "this page cannot execute: nothing at all");
 
-  // 登记与换代
+  // Registration and generation change
   const timers = [];
   __setNodeCardInfoTimers({ set: (fn, ms) => { const t = { fn, ms }; timers.push(t); return t; }, clear: (t) => { t.cleared = true; } });
   try {
@@ -58,18 +65,18 @@ test("OCN-08 registry: only cards that are ready and have a computable identity 
     const off = subscribeNodeCardInfo(() => { notified++; });
     assert.equal(setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia" } }, 10_000), true);
     assert.equal(notified, 1);
-    assert.equal(setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia" } }, 10_100), false, "没变不通知");
+    assert.equal(setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia" } }, 10_100), false, "No notification when nothing changed");
     assert.deepEqual(getNodeCardInfo(10_000 + NODE_CARD_SETTLE_MS - 1).cardSources, {}, "newly appeared card: not reported before it settles");
     assert.deepEqual(getNodeCardInfo(10_000 + NODE_CARD_SETTLE_MS).cardSources, { a: "ia" }, "reported once the time has passed");
     const last = timers.filter((t) => !t.cleared).at(-1);
     assert.ok(last && last.ms >= NODE_CARD_SETTLE_MS, "started a timer to notify when due");
     last.fn();
     assert.equal(notified, 2, "subscribers are notified when due");
-    // 换代:身份变了就重新计时,旧身份不再报
+    // Generation change: restart timer when identity changes; stop reporting old identity
     setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia2" } }, 50_000);
     assert.deepEqual(getNodeCardInfo(50_000 + 10).cardSources, {}, "not reported for a short time after a generation change (nor the old identity)");
     assert.deepEqual(getNodeCardInfo(50_000 + NODE_CARD_SETTLE_MS).cardSources, { a: "ia2" });
-    // cardEnvFingerprint 单独登记
+    // cardEnvFingerprint registered separately
     assert.equal(setNodeCardEnvFingerprint(CARDFP), true);
     assert.equal(setNodeCardEnvFingerprint(CARDFP), false);
     assert.equal(getNodeCardInfo(99_999_999).cardEnvFingerprint, CARDFP);
@@ -141,14 +148,15 @@ test("OCN-09 browserNode: the cardEnvFingerprint from welcome is recorded and ha
   assert.equal(d.cardEnvFingerprint, CARDFP);
   assert.deepEqual(d.cards, { runtime: RUNTIME, userCards: true, graphCards: false, sources: { "ouc-user": IDENT } });
 
-  // 用户卡任务(指纹 cardEnvFingerprint):认领
+  // User card task (fingerprint cardEnvFingerprint): claim
   const task = TASK();
   rig.node.receive({ type: "queue.snapshot", tasks: [{ ...task, state: "open", version: 1 }] });
   rig.node.tick();
   await flush();
   assert.deepEqual(rig.of("task.claim").map((m) => m.id), [task.id], "matching user card tasks are claimed");
 
-  // 对不上的不认领:另一个身份、素材效果卡但没有图形能力、桌面那份指纹、别人的
+  // Do not claim mismatches: different identity, media effect card without graphics capability,
+  // desktop fingerprint, others'
   const other = nodeRig({ info: INFO({ cardSources: { "ouc-user": "other-version" } }) });
   other.node.start(); other.welcome();
   other.node.receive({ type: "queue.snapshot", tasks: [{ ...task, state: "open", version: 1 }] });
@@ -164,14 +172,14 @@ test("OCN-09 browserNode: the cardEnvFingerprint from welcome is recorded and ha
   noGraph.node.tick();
   assert.equal(noGraph.of("task.claim").length, 0);
   assert.deepEqual(Object.keys(noGraph.node.debug().counters.blocked).sort(), ["0:other-user", "1:env-fingerprint", "3:graph-cards"]);
-  // 有图形能力:素材效果卡任务认领
+  // With graphics capability: claim media effect card tasks
   const withGraph = nodeRig({ info: INFO({ graphCards: true }) });
   withGraph.node.start(); withGraph.welcome();
   withGraph.node.receive({ type: "queue.snapshot", tasks: [{ ...graphTask, state: "open", version: 1 }] });
   withGraph.node.tick();
   assert.equal(withGraph.of("task.claim").length, 1);
 
-  // 内置卡任务:照旧按 envFingerprint,不管有没有卡片登记
+  // Built-in card tasks: use envFingerprint as before, regardless of whether cards are registered
   const builtin = { ...TASK({ id: "snapshot:rk-b:0-2", resultKey: "rk-b", requires: { envFingerprint: ENVFP, codeVersion: "cv", cardSources: {}, transcode: false, userCards: false, graphCards: false, belowDependent: false } }), state: "open", version: 1 };
   const plain = nodeRig({ info: null });
   plain.node.start(); plain.welcome({ cardEnvFingerprint: undefined });
@@ -197,7 +205,7 @@ test("OCN-09 browserNode: the runtime version becomes reportable only after chec
   rig.node.tick();
   assert.equal(rig.node.debug().cards.userCards, true);
   assert.equal(rig.of("node.hello").length, 2);
-  // 运行时版本又没了(闸门关了):重新报到,清掉
+  // Runtime version gone again (gate closed): check in again and clear
   rig.state.info = null;
   rig.node.tick();
   assert.equal(rig.of("node.hello").length, 3);
@@ -208,7 +216,7 @@ test("OCN-09 browserNode: the runtime version becomes reportable only after chec
   rig.node.tick();
   assert.deepEqual(rig.node.debug().cards, { runtime: null, userCards: false, graphCards: false, sources: {} });
 
-  // 旧队列(welcome 不带 cardEnvFingerprint):报了运行时版本也不声明能力
+  // Legacy queue (welcome without cardEnvFingerprint): do not declare capabilities even if runtime version reported
   const old = nodeRig({ info: INFO(), cardFp: null });
   old.node.start(); old.welcome();
   old.node.tick();
@@ -252,7 +260,7 @@ test("OCN-10 planPublisher: cards that can run on this page go into input.browse
   assert.deepEqual(browserCardsOf(page), serverBrowserCardsOf(page));
   assert.equal(browserCardsSig(browserCardsOf(page)), serverBrowserCardsSig(serverBrowserCardsOf(page)));
 
-  // 默认读登记处
+  // Read registry by default
   assert.equal(browserCardsFromInfo({ cardRuntime: null, userCards: false, graphCards: false, cardSources: {}, cardEnvFingerprint: CARDFP }), null, "cannot execute: not included");
   assert.equal(browserCardsFromInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "va" }, cardEnvFingerprint: null }), null, "did not get cardEnvFingerprint: not included");
   assert.equal(browserCardsFromInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: {}, cardEnvFingerprint: CARDFP }), null, "no card that can run: not included");
@@ -267,7 +275,8 @@ test("OCN-10 planPublisher: cards that can run on this page go into input.browse
     assert.equal("browser" in first.input, false, "the registry is empty: the plan is the same as without this feature");
     assert.deepEqual(first, clipsPlanTaskOf({ projectId: "p1", projectRev: 7, clips: ["c1", "c2"], codeVersion: "cv-9" }));
 
-    // 节点报到、卡载入成功:登记变了 → 防抖后重发,input.browser 带上,是另一个计划
+    // Node checked in, card loaded successfully: registry changed → debounced resend,
+    // include input.browser, which is a different plan
     setNodeCardEnvFingerprint(CARDFP);
     setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "va" } }, 0);
     assert.equal(tm.fire(), true, "the registry change scheduled one resend");
@@ -276,13 +285,13 @@ test("OCN-10 planPublisher: cards that can run on this page go into input.browse
     assert.deepEqual(second.input.browser, { cardEnvFingerprint: CARDFP, userCards: true, graphCards: false, cardSources: { a: "va" } });
     assert.notEqual(second.id, first.id);
     assert.equal(second.id, clipsPlanTaskOf({ projectId: "p1", projectRev: 7, clips: ["c1", "c2"], codeVersion: "cv-9", browser: second.input.browser }).id);
-    // 换代:另一个计划
+    // Generation change: a different plan
     setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "va2" } }, 0);
     assert.equal(tm.fire(), true);
     await flush();
     assert.notEqual(published(q)[2].id, second.id);
     assert.equal(published(q).length, 3);
-    // 同一份登记不重发
+    // Do not resend for the same registration
     assert.equal(setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "va2" } }, 0), false);
   } finally {
     pub.dispose();
@@ -324,7 +333,7 @@ test("OCN-11 full pipeline: the page sends a manifest plan (with the cards that 
     }
   };
 
-  /* 切分方:桌面同机(env 指纹与浏览器相同)的独立主机,只切分不认领 */
+  /* Splitter: standalone host on same machine as desktop (same env fingerprint as browser), only splits, does not claim */
   let afterSplitTasks = null;
   const hostEndpoint = { send: (m) => { rig.send("host", m); return true; }, onMessage: (h) => { handlers.set("host", h); } };
   const host = createLocalNode({
@@ -334,7 +343,7 @@ test("OCN-11 full pipeline: the page sends a manifest plan (with the cards that 
     sink: { has: async () => false, put: async () => ({ complete: true }) },
   });
 
-  /* 浏览器节点(本人,代码身份对)、本人但代码身份是另一版、别人的 */
+  /* Browser node (self, matching code identity), self but different code identity version, others' */
   const bakes = [];
   const finishes = [];
   const makeBrowser = (conn, userId, cardInfo, extra = {}) => {
@@ -374,11 +383,11 @@ test("OCN-11 full pipeline: the page sends a manifest plan (with the cards that 
   assert.equal(getNodeCardInfo().cardEnvFingerprint, CARDFP, "the host records it in the registry");
   assert.equal(brM.cardEnvFingerprint, CARDFP, "another person's page computes the same fingerprint (same environment, same version), but it cannot get this user's tasks");
 
-  /* 页面发清单计划:本页能运行的卡随计划交出 */
+  /* Page sends manifest plan: cards runnable on this page are provided with the plan */
   rig.ask("page", { type: "publisher.hello", publisherId: "page-1" });
   const request = async (msg) => rig.ask("page", msg);
   const pub = createPlanPublisher({ request, publisherId: "page-1", clips: () => ["clip-u"], codeVersion: "cv-1", debounceMs: 0, nodeReady: () => "ready",
-    // 防抖计时器换成立即执行:不靠真实计时
+    // Replace debounce timer with immediate execution: do not rely on real time
     setTimer: (fn) => { queueMicrotask(fn); return 0; }, clearTimer: () => {} });
   try {
     pub.measured({ projectId: "p1", projectRev: 7 });
@@ -400,7 +409,7 @@ test("OCN-11 full pipeline: the page sends a manifest plan (with the cards that 
     assert.equal(deskCopy[0].resultKey, resultKeyOf(CK, DESK_FP));
     assert.notEqual(brCopy[0].resultKey, deskCopy[0].resultKey, "on the same machine, the desktop and browser result keys differ");
 
-    /* 浏览器节点(本人、身份对)认领并完成;身份对不上的与别人的一个都没认领 */
+    /* Browser node (self, matching identity) claims and completes; claims none with mismatched identity or belonging to others */
     assert.equal(brCopy[0].state, "done", `the browser's part completed: ${JSON.stringify(brCopy[0])}`);
     assert.deepEqual(deskCopy.map((t) => [t.state, t.lastError]), [["failed", "superseded"]], "the desktop's part is voided: this layer comes only from the browser environment");
     assert.deepEqual(bakes.map((b) => [b.conn, b.localFrame]), [0, 1, 2, 3, 4, 5].map((f) => ["br", f]), "all six frames are generated by this user's page");
@@ -411,7 +420,7 @@ test("OCN-11 full pipeline: the page sends a manifest plan (with the cards that 
     assert.deepEqual(brM.debug().counters.blocked, {}, "the task is not even visible (the server only shows it to its owner)");
     assert.equal(rig.describe().locks.find((l) => l.lockKey === `snapshot:${CK}`)?.envFingerprint, CARDFP);
 
-    /* 入库后别的成员能贴上:层表的候选里有浏览器那份,按「活着」认定就贴它 */
+    /* Other members can paste once stored: layer table candidates include browser copy; paste it if deemed "alive" */
     const ctx = planContext(DESK_FP);
     const entry = { key: "entry-1", project: { id: "p1", fps: 30, width: 1920, height: 1080, tracks: [] }, cardPlan: ctx.cardPlan };
     const candidates = splitCandidatesOf(afterSplitTasks);
@@ -420,7 +429,7 @@ test("OCN-11 full pipeline: the page sends a manifest plan (with the cards that 
     assert.equal(table.v, 3);
     const layer = table.layers[0];
     assert.deepEqual(layer.candidates.map((c) => [c.envFingerprint, c.resultKey]), [[DESK_FP, resultKeyOf(CK, DESK_FP)], [CARDFP, resultKeyOf(CK, CARDFP)]]);
-    const alive = new Set([brCopy[0].resultKey]);   // task.done 与清单认定它活着
+    const alive = new Set([brCopy[0].resultKey]);   // task.done and manifest consider it alive
     const picked = layerRefOf(table, "clip-u", { alive });
     assert.ok(picked, "other members pick up this layer from the layer table");
     assert.equal(picked.envFingerprint, CARDFP);

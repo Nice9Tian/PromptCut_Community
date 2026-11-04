@@ -1,12 +1,18 @@
 /**
- * 在线卡片运行时版本(`docs/plan/online-card-exec-contract.md` 第 5 节):加载规则的版本 + 转译器与 Tailwind 的版本。
+ * Online card runtime version (`docs/plan/online-card-exec-contract.md` section 5): loading rule
+ * version + transpiler and Tailwind version.
  *
- * 进什么:转译缓存的键、舞台里已载入模块的代、成本记录的设备串、纯浏览器节点做用户卡与素材效果卡任务时的环境指纹。
- * 声音产物的键不带它(主会话 2026-10-06 裁定:与桌面产物通用)。
+ * Where it goes: transpilation cache key, generation of loaded modules on the stage, device string
+ * in cost records, environment fingerprint for browser-only nodes executing user card and media
+ * effect card tasks.
+ * Sound output keys omit it (lead session ruling 2026-10-06: shared with desktop outputs).
  *
- * - `CARD_RUNTIME_ABI`:改了模块解析规则、写法预检规则、声音线程的模块表、转译选项,就加一。
- * - 转译器与 Tailwind 的版本由在线构建以 `__PC_CARD_RUNTIME_DEPS__` 注入(`vite.config.ts`,取自实际装的那一版);
- *   开发服务器、桌面构建、Node 单测里没有它,写 `dev`(这些环境不执行同步来的卡,也不当纯浏览器节点)。
+ * - `CARD_RUNTIME_ABI`: increment by one when module resolution rules, syntax pre-check rules,
+ *   sound thread module table, or transpilation options change.
+ * - Transpiler and Tailwind versions are injected by the online build via
+ *   `__PC_CARD_RUNTIME_DEPS__` (`vite.config.ts`, taken from the version actually installed);
+ *   dev server, desktop build, and Node unit tests do not have it and use `dev` (these
+ *   environments do not execute synced cards, nor do they act as browser-only nodes).
  */
 declare const __PC_CARD_RUNTIME_DEPS__: { sucrase?: string; tailwindcss?: string } | undefined;
 
@@ -18,5 +24,5 @@ export function cardRuntimeVersionOf(abi: string, d: { sucrase?: string; tailwin
   return `${abi}:sucrase@${d?.sucrase || "dev"}:tailwindcss@${d?.tailwindcss || "dev"}`;
 }
 
-/** 形如 `ocr2:sucrase@3.35.1:tailwindcss@4.3.3` */
+/** Formatted like `ocr2:sucrase@3.35.1:tailwindcss@4.3.3` */
 export const CARD_RUNTIME_VERSION: string = cardRuntimeVersionOf(CARD_RUNTIME_ABI, deps);

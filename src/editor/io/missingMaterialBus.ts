@@ -1,13 +1,15 @@
 /**
- * 「这次打开项目，新认定了哪些素材确认缺失」的通知，界面据此弹一次窗口列出来（`MissingMaterialsDialog.tsx`）。
- * 认定在 `mediaUpload.ts`（打开本机项目后的后台检查）；这里只传话，不判断。
+ * Notification of "which assets were newly judged confirmed missing when this project was opened"; the UI uses
+ * it to pop up a dialog once listing them (`MissingMaterialsDialog.tsx`).
+ * The judging happens in `mediaUpload.ts` (the background check after opening a local project); this only
+ * relays the message and does not judge.
  */
 export interface MissingMaterialNotice {
   id: string;
-  /** 原素材的显示名（不带「(缺失) 」标记） */
+  /** Display name of the original asset (without the "(missing) " marker) */
   name: string;
   kind: "video" | "audio" | "image";
-  /** 原位置上有文件，但内容已经不是原来那一份（内容哈希对不上） */
+  /** There is a file at the original location, but its content is no longer the original (content hash mismatch) */
   changed?: boolean;
 }
 
@@ -18,7 +20,7 @@ export function publishMissingMaterials(items: MissingMaterialNotice[]): void {
   if (!items.length) return;
   const seen = new Set(pending.map((item) => item.id));
   pending = [...pending, ...items.filter((item) => !seen.has(item.id))];
-  for (const listener of [...listeners]) { try { listener(); } catch { /* 一个订阅者出错不挡别的 */ } }
+  for (const listener of [...listeners]) { try { listener(); } catch { /* One subscriber failing does not block the others */ } }
 }
 export function takeMissingMaterials(): MissingMaterialNotice[] { const out = pending; pending = []; return out; }
 export function onMissingMaterials(listener: () => void): () => void {

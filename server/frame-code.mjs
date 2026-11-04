@@ -5,32 +5,40 @@ import { fileURLToPath } from 'node:url';
 const fingerprints = new Map();
 const captures = new Map();
 const snapshots = new Map();
-/** server/ 的上一级 —— 仓库根,也是打包后的 runtime/app 根。snapshotCode 只读源码,
- * 调用方(card-cache)手里只有缓存目录、拿不到仓库根时用它。 */
+/** Parent of server/: repository root, and also the runtime/app root after packaging.
+ * snapshotCode only reads source code; callers (card-cache) use this when they only hold the cache
+ * directory and cannot obtain the repository root. */
 const APP_ROOT = path.resolve(fileURLToPath(import.meta.url), '../..');
 /** Code that decides which pixels a screenshot contains. A fix here (e.g. a
  * readiness wait or a stale-screenshot guard) must retire frames captured by
  * the old code, including card caches whose keys do not contain frameCode. */
-/* `scripts/export-frames.mjs` 那一整个文件现在是 `server/bakery/` 里的七个模块
- * (chrome / bake / shards / media / ffmpeg / export / audio-mix),七个一起列出来 ——
- * 哈希到的内容和搬家前完全一样,既不多也不少。 */
+/* That entire `scripts/export-frames.mjs` file is now seven modules in `server/bakery/`
+ * (chrome / bake / shards / media / ffmpeg / export / audio-mix), all seven listed together:
+ * the hashed content is exactly identical to before the move, neither more nor less. */
 const BAKERY_FILES = ['server/bakery/chrome.mjs', 'server/bakery/bake.mjs', 'server/bakery/shards.mjs',
   'server/bakery/media.mjs', 'server/bakery/ffmpeg.mjs', 'server/bakery/export.mjs', 'server/bakery/audio-mix.mjs'];
-/* 画布直取(产轨道流时从画布取像素,不经过截图)的两个文件也决定流里的像素:Node 一侧的 `capture-canvas.mjs`
- * 和页面一侧的 `src/render/gl/canvasGrab.ts`。它们不决定快照 HTML,不进下面的 `SNAPSHOT_FILES`。
- * 依赖下层的流的差分取层(`capture-below.mjs`:怎么藏目标卡、怎么由两张截图算出那一层)同理。 */
+/* Direct canvas capture (grabbing pixels from the canvas when producing track streams, bypassing
+ * screenshots) also determines pixels in the stream via two files: `capture-canvas.mjs` on the
+ * Node side and `src/render/gl/canvasGrab.ts` on the page side. They do not determine snapshot HTML
+ * and do not enter `SNAPSHOT_FILES` below. The same applies to differential layer extraction for
+ * below-dependent streams (`capture-below.mjs`: how to hide target cards and compute that layer from
+ * two screenshots). */
 const CAPTURE_FILES = [...BAKERY_FILES, 'server/bakery/capture-frame.mjs', 'server/bakery/capture-snapshot.mjs', 'server/bakery/frame-media.mjs',
   'server/bakery/frame-ready.mjs', 'server/bakery/png-integrity.mjs', 'server/bakery/capture-canvas.mjs', 'src/render/gl/canvasGrab.ts',
   'server/bakery/capture-below.mjs'];
 /**
- * 源码按文本哈希,换行先统一成 LF:仓库是 `text=auto`,Windows 检出是 CRLF、Linux 检出是 LF,
- * 同一个提交在两种机器上不能算出两个代码版本(另一台机器上的独立渲染主机按代码版本分池、按快照键核对任务)。
+ * Source code is hashed as text, normalizing newlines to LF first: the repository is `text=auto`,
+ * checked out as CRLF on Windows and LF on Linux; the same commit must not compute two different
+ * code versions across the two machines (standalone render hosts on other machines partition pools
+ * by code version and verify tasks by snapshot key).
  */
 const textOf = (file) => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
-/* 哈希的是文件原文,注释也在里头:改下面任何一份清单里的文件,哪怕只动一行注释,也会换一个代码版本,
- * 让已有的快照键和卡片缓存键全部作废、下次部署整站重渲。先例:2026-10-23 的探针总审要把
- * `src/render/snapshotRename.ts` 文件头里的探针路径改成归档路径,〔裁〕V21-30 按这条理由驳回,
- * 把去向记在 `scripts/archive/probes/README.md`。 */
+/* What is hashed is the verbatim file content, including comments: modifying any file in the
+ * manifests below, even touching a single line of comments, will change the code version,
+ * invalidating all existing snapshot keys and card cache keys, forcing the entire site to rerender
+ * on next deployment. Precedent: in the probe audit on 2026-10-23, changing the probe path in the
+ * header of `src/render/snapshotRename.ts` to the archive path was rejected by [ruling] V21-30 on
+ * these grounds, recording its destination in `scripts/archive/probes/README.md`. */
 const hashFiles = (hash, root, files) => {
   for (const file of files) {
     hash.update(file);
@@ -38,11 +46,14 @@ const hashFiles = (hash, root, files) => {
   }
 };
 /**
- * 用户卡目录里除了装载入口 `index.ts` 以外的一切(卡片文件、它们用到的文件、归属表 `_scopes.json`)
- * 不进全局代码版本(C6.6 c66-host-cards):用户卡是项目的内容,不是渲染器的版本。两台节点多一张、少一张
- * 或改过一张用户卡,仍是同一个代码版本、同一个池;用到用户卡(或改动层里改过的卡)的任务在
- * `requires.cardSources` 里另标它要的那张卡的代码身份,节点手里有这份代码才认领(`server/card-code.mjs`)。
- * 改动层(`card-overrides.mjs`)本来就不在这里:它在数据目录里,不在 `src/` 下。
+ * Everything in the user card directory except the loading entry point `index.ts` (card files, files
+ * they use, ownership table `_scopes.json`) does not enter the global code version (C6.6
+ * c66-host-cards): user cards are project content, not the renderer version. If two nodes have one
+ * more, one less, or a modified user card, they remain the same code version and the same pool; tasks
+ * that use user cards (or cards modified in the overlay layer) separately specify the code identity
+ * of the card they need in `requires.cardSources`, and a node claims it only if it has this code
+ * (`server/card-code.mjs`). The overlay layer (`card-overrides.mjs`) is not here in the first place:
+ * it lives in the data directory, not under `src/`.
  */
 export function isUserCardSource(rel) {
   const r = String(rel).replaceAll('\\', '/');
@@ -73,26 +84,33 @@ export function captureCode(root) {
 }
 
 /**
- * 生成快照的代码指纹 —— 共享快照键(A3a)里唯一一项「渲染器版本」。
+ * Code fingerprint for generating snapshots: the only "renderer version" entry in the shared
+ * snapshot key (A3a).
  *
- * 只哈希 CAPTURE_FILES 里**和生成快照有关**的两个:原 `export-frames.mjs`
- * (`__pcCreateSnapshot` 本体:样式内联、id 改名、canvas 换 img、按 data-pc-clip 切 control
- * 子树;搬家后是 `server/bakery/` 的那七个模块)和
- * `capture-snapshot.mjs`(把快照 HTML 塞回文档栅格化);再加页面侧的
- * `src/render/createSnapshot.ts` 及它调的四个模块(`snapshot/inlineStyles.ts` /
- * `snapshot/rasterizeCanvas.ts` / `snapshot/snapshotStyleProps.mjs` / `snapshot/renameSceneIds.ts`)和
- * `src/render/snapshotRename.ts`。
- * 其余 CAPTURE_FILES(capture-frame / frame-media / frame-ready / png-integrity)
- * 决定的是**截图**,不决定快照 HTML 的内容,不进这个指纹。
+ * Hashes only the two in CAPTURE_FILES **related to generating snapshots**: the original
+ * `export-frames.mjs` (`__pcCreateSnapshot` core: style inlining, id renaming, replacing canvas with
+ * img, cutting the control subtree by data-pc-clip; after the move, these are the seven modules in
+ * `server/bakery/`) and `capture-snapshot.mjs` (injecting snapshot HTML back into the document for
+ * rasterization); plus `src/render/createSnapshot.ts` on the page side along with the four modules it
+ * calls (`snapshot/inlineStyles.ts` / `snapshot/rasterizeCanvas.ts` /
+ * `snapshot/snapshotStyleProps.mjs` / `snapshot/renameSceneIds.ts`) and
+ * `src/render/snapshotRename.ts`. The remaining CAPTURE_FILES (capture-frame / frame-media /
+ * frame-ready / png-integrity) determine **screenshots**, not snapshot HTML content, and are not
+ * included in this fingerprint.
  *
- * J1 联动(必须一起读):J1 把生成快照的逻辑从原 export-frames.mjs 搬进 src/ 之后,
- * **这里只在快照代码自己拆文件时跟着加** —— 集合要恰好覆盖决定快照内容的那些文件。于是:
- *   - 改生成快照的代码 ⇒ 指纹变 ⇒ 共享键变 ⇒ 旧快照自然失效,不会被错误复用;
- *   - 不改 ⇒ 指纹不变 ⇒ 旧快照跨机器照常复用,搬家本身不作废任何快照。
- * 反例:直接用 `frameCode`(它哈希整个 src/(用户卡除外)加 frame-pipeline.mjs)的话,任何一次
- * 无关的卡片改动都会把全世界的共享快照冲掉,共享档就没有意义了。
+ * J1 linkage (must be read together): after J1 moved snapshot generation logic from the original
+ * export-frames.mjs into src/, **additions are made here only when snapshot code itself splits
+ * files**: the set must precisely cover those files that determine snapshot content. Thus:
+ *   - Modify snapshot generation code → fingerprint changes → shared key changes → old snapshots
+ *     naturally invalidate and will not be erroneously reused;
+ *   - No modification → fingerprint unchanged → old snapshots are reused across machines as usual,
+ *     and the move itself does not invalidate any snapshots.
+ * Counterexample: using `frameCode` directly (which hashes all of src/ (except user cards) plus
+ * frame-pipeline.mjs) would wipe out shared snapshots worldwide on any unrelated card change,
+ * rendering the shared tier useless.
  *
- * 缺文件按 `hashFiles` 的老规矩记 `'missing'`:某个模块还没落地时指纹也是确定的。
+ * Missing files are recorded as `'missing'` following the established `hashFiles` convention: the
+ * fingerprint remains deterministic even when a module is not yet landed.
  */
 const SNAPSHOT_FILES = [...BAKERY_FILES, 'server/bakery/capture-snapshot.mjs',
   'src/render/createSnapshot.ts', 'src/render/snapshot/inlineStyles.ts',

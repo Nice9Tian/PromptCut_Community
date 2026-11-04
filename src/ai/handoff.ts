@@ -3,15 +3,19 @@ import { reportsOf, reportText } from "./progressReport.ts";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 换模型接手时的「前情」。
+ * The "prior context" when a different model takes over.
  *
- * 每家 CLI 的历史都挂在它自己的会话 id 上(aiSession:<provider>),请求里只带这一轮说的话。
- * 于是面板上换一个模型,新模型拿到的就只有一句「你来接替继续」—— 前面几轮用户骂过什么、
- * 要的是什么,它一概不知。一次真实对话里 Opus 就这么接的手:它看不到用户那句
- * 「根本没有视频和图片」,只能照着项目现状自己找活干,还去磁盘上翻「交接笔记」。
+ * Each CLI's history hangs on its own session id (aiSession:<provider>), and a request carries only
+ * what was said in this round. So when the model is switched in the panel, the new model gets only
+ * a "you take over and continue": what the user complained about and wanted in the earlier rounds
+ * is all unknown to it. In one real chat Opus took over exactly like this: it could not see the
+ * user's line "there are no videos or images at all", could only find work to do from the project's
+ * current state, and even went digging through the disk for "handoff notes".
  *
- * 这里把**这家模型没见过的那几轮**摘成一段,拼在这一轮提示词前面(只进模型,不进屏幕)。
- * 「没见过」= 这家最后一次回复之后的消息;这家还没有会话 id 就是整段对话。
+ * This condenses **the rounds this provider's model has not seen** into one passage and prepends it
+ * to this round's prompt (it goes to the model only, not to the screen).
+ * "Not seen" = the messages after this provider's last reply; if this provider has no session id
+ * yet, it is the whole chat.
  */
 
 const LABEL: Record<AiProvider, string> = {
@@ -27,11 +31,13 @@ function clip(text: string, max: number): string {
 }
 
 /**
- * 这条消息在前情里摘成什么。
+ * What this message is condensed into in the prior context.
  *
- * 改版后 Agent 的文字回复默认不给用户看,它可能一个字不说、只交 report_progress。
- * 那样的回复只看 m.text 就是空的,前情里会像是它什么都没做 —— 回退之后新会话的模型
- * 就不知道前面几轮已经做完了什么。文字为空时用报告拼一句「已完成:…;待办:…;问题:…」代替。
+ * Since the redesign, the Agent's text replies are not shown to the user by default, and it may
+ * say nothing at all and only submit report_progress. Judged by m.text alone, such a reply is empty
+ * and the prior context would look as if it did nothing: after a fallback, the model in the new
+ * session would not know what the earlier rounds had already finished. When the text is empty, a
+ * line "Done: …; To do: …; Issues: …" assembled from the report is used instead.
  */
 function spokenText(m: ChatMessage): string {
   const text = m.text?.trim() ?? "";
@@ -58,8 +64,9 @@ export function buildHandoff(
   }
   const unseen = history.slice(from).filter((m) => !m.pending);
 
-  // 有会话 id 时,只有别家真的说过话才算有前情;自家报错、用户连发几句都不用补。
-  // 只交了进度报告、没写文字的回复也算说过话
+  // When there is a session id, prior context counts only if another provider has actually spoken;
+  // this provider's own errors and several messages sent in a row by the user need no catching up.
+  // A reply that only submitted a progress report and wrote no text also counts as having spoken
   const othersSpoke = unseen.some((m) => m.role === "assistant" && spokenText(m) && m.runtime?.provider !== provider);
   const anySpoke = unseen.some((m) => m.role === "assistant" && spokenText(m));
   if (hasSession ? !othersSpoke : !anySpoke) return "";
@@ -75,7 +82,8 @@ export function buildHandoff(
     }
   }
 
-  // 从最近的往前收,收满为止;最早那几条让位 —— 用户最新的要求比开头寒暄要紧
+  // Collect from the most recent backwards until full; the earliest few yield, since the user's
+  // latest request matters more than the opening pleasantries
   const kept: string[] = [];
   let size = 0;
   for (let i = lines.length - 1; i >= 0; i--) {

@@ -1,19 +1,23 @@
 /**
- * 让系统分配端口时避开「坏端口」。只用 Node 内置模块。
+ * Avoid "bad ports" when the system allocates a port. Uses only Node built-in modules.
  *
- * 背景：WHATWG fetch 规范「bad port」一节列了一张端口表，浏览器（Chromium 报 `ERR_UNSAFE_PORT`）
- * 和 Node 的 `fetch` / 内置 `WebSocket`（undici，报 `bad port`）都拒绝连这些端口，连都不连。
- * 有的机器把 TCP 动态端口段改到了低段（例如从 1024 起），`listen(0)` 就可能拿到 1719、6000、
- * 6665～6669、10080 这些号，起起来的服务从浏览器和 Node 那边都连不上。
+ * Background: The "bad port" section of the WHATWG fetch spec lists a table of ports. Browsers
+ * (Chromium reports `ERR_UNSAFE_PORT`) and Node's `fetch` / built-in `WebSocket` (undici, reporting
+ * `bad port`) all refuse to connect to these ports altogether.
+ * Some machines modify the TCP ephemeral port range to lower ranges (e.g. starting from 1024),
+ * so `listen(0)` might get ports like 1719, 6000, 6665-6669, 10080; the started service cannot be
+ * reached from either the browser or Node.
  *
- * 用法：本来写 `server.listen(0, host, cb)` 的地方，改成 `const port = await listenSafe(server, host)`。
- * 拿到坏端口就关掉重来，最多 20 次。
+ * Usage: Where `server.listen(0, host, cb)` was previously written, change to
+ * `const port = await listenSafe(server, host)`. If a bad port is obtained, close and retry,
+ * up to 20 times.
  */
 
 /**
- * WHATWG fetch 规范「bad port」表，全表（含 1～1023 里的那些）。
- * 与 Chromium 的受限端口表一致；本机 Node 24 的 fetch 实测拒绝的端口（1～11000 扫过）与本表除 0 外逐个相同。
- * 0 在规范表里，但 `listen(0)` 不会返回 0，放进来只为和规范一致。
+ * Full "bad port" table from the WHATWG fetch specification (including those in 1-1023).
+ * Consistent with Chromium's restricted ports table; ports rejected in tests by local Node 24 fetch
+ * (scanned 1-11000) match this table one by one, except for 0.
+ * 0 is in the spec table, but `listen(0)` will not return 0; included here solely to match the spec.
  */
 export const UNSAFE_PORTS = Object.freeze([
   0, 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95,
@@ -26,12 +30,12 @@ export const UNSAFE_PORTS = Object.freeze([
 
 const UNSAFE_SET = new Set(UNSAFE_PORTS);
 
-/** 这个端口浏览器 / fetch 会不会拒绝连 */
+/** Whether browsers / fetch will refuse to connect to this port */
 export function isUnsafePort(port) {
   return UNSAFE_SET.has(Number(port));
 }
 
-/** 最多试几次 */
+/** Maximum retry attempts */
 export const LISTEN_SAFE_TRIES = 20;
 
 function listenOnce(server, host) {
@@ -50,9 +54,12 @@ function closeServer(server) {
 }
 
 /**
- * 在 `host` 上 `listen(0)`，拿到坏端口就关掉重来，最多 {@link LISTEN_SAFE_TRIES} 次。
- * 成功时 server 保持监听，返回端口号；试满仍是坏端口就关掉 server 并抛错。
- * `server` 只要有 `listen` / `close` / `address` 和 `once` / `off` 事件接口（`net.Server`、`http.Server` 都行）。
+ * Calls `listen(0)` on `host`; if a bad port is obtained, close and retry, up to
+ * {@link LISTEN_SAFE_TRIES} times.
+ * On success, the server keeps listening and returns the port number; if it still gets a bad
+ * port after exhausting all attempts, closes the server and throws an error.
+ * `server` only needs to provide `listen` / `close` / `address` and `once` / `off` event
+ * interfaces (both `net.Server` and `http.Server` work).
  *
  * @param {import('node:net').Server} server
  * @param {string} [host]
@@ -66,5 +73,5 @@ export async function listenSafe(server, host) {
     got.push(port);
     await closeServer(server);
   }
-  throw new Error(`listenSafe: ${LISTEN_SAFE_TRIES} 次都拿到坏端口（${got.join(', ')}）`);
+  throw new Error(`listenSafe: got a bad port ${LISTEN_SAFE_TRIES} times (${got.join(', ')})`);
 }

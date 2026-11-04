@@ -29,7 +29,7 @@ export function isBrowserLoss(error) {
   return false;
 }
 
-/** How the Chrome process ended, e.g. "退出码 0xC0000409". The WebSocket can
+/** How the Chrome process ended, e.g. "exit code 0xC0000409". The WebSocket can
  * close slightly before the process reports its exit, so wait briefly. */
 export async function browserExitNote(browser, waitMs = 2000) {
   const proc = browser?.process?.();
@@ -42,9 +42,9 @@ export async function browserExitNote(browser, waitMs = 2000) {
     });
   }
   if (proc.exitCode !== null && proc.exitCode !== undefined) {
-    return `退出码 0x${(proc.exitCode >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
+    return `exit code 0x${(proc.exitCode >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
   }
-  return proc.signalCode ? `信号 ${proc.signalCode}` : '';
+  return proc.signalCode ? `signal ${proc.signalCode}` : '';
 }
 
 /** Use a bakery and always close it. The connection state and the exit status
@@ -92,10 +92,10 @@ export async function retryOnBrowserLoss(run, { attempts = 3, label = '', log = 
       if (!isBrowserLoss(error)) throw error;
       const exit = error.browserExit ? `,${error.browserExit}` : '';
       if (attempt + 1 >= attempts) {
-        throw new Error(`导出用的 Chrome 在渲染${label}时中途退出${exit},换新 Chrome 重试 ${attempts - 1} 次仍失败。`
-          + '可以减少并行分片数、关掉占内存的程序后再导出。', { cause: error });
+        throw new Error(`The export Chrome exited midway while rendering ${label}${exit}, and retrying with a fresh Chrome ${attempts - 1} times still failed.`
+          + ' You can reduce the number of parallel shards or close memory-hungry programs, then export again.', { cause: error });
       }
-      log(`[export] 渲染${label}时 Chrome 中途退出${exit},换一个新 Chrome 重渲这一段(第 ${attempt + 2}/${attempts} 次)`);
+      log(`[export] Chrome exited midway while rendering ${label}${exit}, re-rendering this segment with a fresh Chrome (attempt ${attempt + 2}/${attempts})`);
     }
   }
 }

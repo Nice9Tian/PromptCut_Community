@@ -9,7 +9,7 @@
 //   node scripts/probes/oac-probe.mjs --connect        -> the desktop shell's WebView2 on 9333
 //   node scripts/probes/oac-probe.mjs --json out.json
 //
-// 冷启动第一轮有噪声，所以每个配置默认跑两遍（--repeats）。
+// The first cold-start round has noise, so each config runs twice by default (--repeats).
 import fs from 'node:fs';
 import { connectArg, flagArg, openBrowser, pageFactory, listTargets, serve, closeAll, sleep }
   from './probe-connect.mjs';
@@ -50,8 +50,8 @@ const parentPage = (a, b) => `<!doctype html><title>parent</title><body style="m
 // `--reuse-browser` makes launch mode behave like connect mode — that is how you show
 // that the sticky origin-keying below is Chromium behaviour and not a WebView2 quirk.
 const reuseBrowser = process.argv.includes('--reuse-browser') || process.argv.includes('--reuse-page');
-// `--reuse-page` 还要求所有配置共用同一个 page（连 BrowsingInstance 一起共用），这正是
-// connect 模式在 WebView2 里的处境。
+// `--reuse-page` also requires all configs to share the same page (sharing BrowsingInstance
+// together), which is exactly the situation for connect mode in WebView2.
 const reusePage = process.argv.includes('--reuse-page');
 let shared = null;
 async function withBrowser(fn) {
@@ -69,9 +69,11 @@ async function withBrowser(fn) {
   try { return await fn(b); } finally { await b.close(); }
 }
 
-// `--only <子串>` 只跑匹配的配置。用来做对照：Chromium 把「这个 origin 是不是 origin-keyed」
-// 的判定按 BrowsingInstance 缓存，同一个浏览器里先跑过不带头的配置，再拿同一组端口跑带头的
-// 配置就可能读到旧判定 —— connect 模式没法换浏览器，只能换端口或重启壳来复验。
+// `--only <substring>` runs only matching configs. Used as a control: Chromium caches the
+// determination of "whether this origin is origin-keyed" per BrowsingInstance; if a config without
+// the header runs first in the same browser, running a config with the header on the same ports may
+// read the stale determination: connect mode cannot switch browsers, so one can only change ports or
+// restart the shell to re-verify.
 const only = flagArg('only');
 
 const results = [];

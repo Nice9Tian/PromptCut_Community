@@ -1,12 +1,19 @@
 /**
- * 剪辑段里的卡逐张产轨道流(`src/kernel/cutFlatten.mjs`;用户 2026-10-21 定)。跑:node --test server/test/cut-flatten-streams.test.mjs
+ * Cards in cut segments produce track streams card by card (`src/kernel/cutFlatten.mjs`; user
+ * decision, 2026-10-21). Run: node --test server/test/cut-flatten-streams.test.mjs
  *
- * 钉死:
- *   - 卡片计划(`CardFrameCache.plan`)里剪辑段里的卡各有自己的控件,id 是 `<段 id>~<卡的片段 id>`,不走整帧 PNG 那一支;
- *   - 流的划分:独立卡各一条 `solo: 'flat'` 的单卡流(不并组流),从嵌套场景最早挂上的那一帧回放;依赖下层的卡不出流;
- *   - 键:改被引用剪辑里一张卡只改那张卡的流键;同一剪辑引用两次各自一条;成本键随实例不变(同一张卡只测一次);
- *   - 隔离工程带着剪辑段链;
- *   - 没有剪辑段的项目:图、控件、流与改动前逐字相同。
+ * Locked down:
+ *   - In card plan (`CardFrameCache.plan`), cards in cut segments each have their own control with
+ *     id `<segment id>~<card clip id>`, not taking the full-frame PNG branch;
+ *   - Stream partitioning: standalone cards each get a single-card stream with `solo: 'flat'` (not
+ *     merged into group streams), played back from earliest frame mounted in nested scene;
+ *     below-dependent cards do not output streams;
+ *   - Keys: modifying a card in referenced cut only modifies that card's stream key; referencing
+ *     same cut twice yields separate streams; cost key remains invariant across instances (same
+ *     card measured only once);
+ *   - Isolated project carries cut segment chain;
+ *   - Projects without cut segments: graph, controls, and streams are verbatim identical to
+ *     pre-change.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,8 +37,8 @@ function project({ heavyText = 'h', second = false } = {}) {
       { id: 'tc', clips: [card('top', 'punch-pill', 0, 10)] },
     ],
     cuts: [
-      { id: 'A', name: '剪辑1' },
-      { id: 'B', name: '剪辑2', duration: 8, transitions: [], tracks: [
+      { id: 'A', name: 'Cut 1' },
+      { id: 'B', name: 'Cut 2', duration: 8, transitions: [], tracks: [
         { id: 'b1', clips: [card('H', 'punch-pill', 0, 8, { params: { text: heavyText }, frame: { x: 0, y: 0, w: 400, h: 200 } })] },
         { id: 'b2', clips: [card('G', 'blur-text', 0, 8)] },
         { id: 'b3', clips: [card('L', 'r6-stateful', 3, 4)] },
@@ -50,34 +57,35 @@ function planOf(p) {
 const everything = () => true;
 const streamsOf = (p, controls) => planStreams({ project: p, cardPlan: controls }, { envFingerprint: 'fp', picked: everything });
 
-test('卡片计划:剪辑段里的卡各有控件,不走整帧 PNG', () => {
+test('Card plan: each card inside a cut segment has its own control, and does not go through the full-frame PNG', () => {
   const { controls } = planOf(project());
   const ids = controls.map(c => c.clipId);
   for (const id of ['top', `S${FLAT_SEP}H`, `S${FLAT_SEP}G`, `S${FLAT_SEP}L`]) assert.ok(ids.includes(id), id);
-  assert.ok(!ids.includes('S'), '段本身没有控件');
+  assert.ok(!ids.includes('S'), 'The segment itself has no control');
   const H = controls.find(c => c.clipId === `S${FLAT_SEP}H`);
   assert.equal(H.cacheable, false);
   assert.equal(controls.find(c => c.clipId === 'top').cacheable, true);
-  // 露出窗口 [2, 6):第 60 帧起 120 帧
+  // Exposure window [2, 6): 120 frames starting from frame 60
   assert.equal(H.sampling.firstFrame, 60);
   assert.equal(H.count, 120);
 });
 
-test('流:独立卡各一条 solo flat 的单卡流,从嵌套场景挂上那一帧回放;依赖下层的卡不出流', () => {
+test('Streams: each solo card gets one solo flat single-card stream, replayed from the frame where the nested scene is mounted; cards that depend on the layers below produce no stream', () => {
   const p = project();
   const { controls } = planOf(p);
   const specs = streamsOf(p, controls);
   const H = specs.find(s => s.topClipId === `S${FLAT_SEP}H`);
-  assert.ok(H, '重卡 H 有流');
+  assert.ok(H, 'Heavy card H has a stream');
   assert.equal(H.solo, 'flat');
   assert.equal(H.kind, 'card');
   assert.equal(H.plane, 'local');
   assert.deepEqual(H.clipIds, [`S${FLAT_SEP}H`]);
   assert.equal(H.firstFrame, 60);
-  assert.equal(H.mountFrame, mountFrameOf({ start: 1 }, 30), '嵌套场景最早从 max(0, 段起点 − 偏移) 挂上');
-  assert.ok(!specs.some(s => s.clipIds.includes(`S${FLAT_SEP}G`)), '依赖下层的卡(blur-text)不出流');
-  assert.ok(!specs.some(s => s.kind === 'group' && s.clipIds.some(id => id.includes(FLAT_SEP))), '不并组流');
-  // 隔离工程:顶层只剩段 S(去掉框),剪辑 B 里只剩 H(框摆到截图位置)
+  assert.equal(H.mountFrame, mountFrameOf({ start: 1 }, 30), 'The nested scene is mounted from max(0, segment start - offset) at the earliest');
+  assert.ok(!specs.some(s => s.clipIds.includes(`S${FLAT_SEP}G`)), 'A card that depends on the layers below (blur-text) produces no stream');
+  assert.ok(!specs.some(s => s.kind === 'group' && s.clipIds.some(id => id.includes(FLAT_SEP))), 'No merging into group streams');
+  // Isolated project: top level only retains segment S (box removed), Cut B only retains H
+  // (box positioned at snapshot location)
   const iso = isolatedStreamProject(p, H);
   const shown = iso.tracks.filter(t => !t.hidden).flatMap(t => t.clips);
   assert.deepEqual(shown.map(c => c.id), ['S']);
@@ -87,7 +95,7 @@ test('流:独立卡各一条 solo flat 的单卡流,从嵌套场景挂上那一�
   assert.deepEqual(inner[0].frame, { x: H.offset.x, y: H.offset.y, w: 400, h: 200, anchor: [0, 0] });
 });
 
-test('键:改被引用剪辑里一张卡只改它的流键;成本键各实例相同;同一剪辑引用两次各自一条', () => {
+test('Keys: editing one card in the referenced cut changes only its stream key; cost keys are the same across instances; a cut referenced twice gets one stream each', () => {
   const a = planOf(project());
   const b = planOf(project({ heavyText: 'changed' }));
   const key = (plan, id) => plan.controls.find(c => c.clipId === id);
@@ -99,8 +107,10 @@ test('键:改被引用剪辑里一张卡只改它的流键;成本键各实例相
   const specs = streamsOf(p2, two.controls);
   const h1 = specs.find(s => s.topClipId === `S${FLAT_SEP}H`), h3 = specs.find(s => s.topClipId === `S3${FLAT_SEP}H`);
   assert.ok(h1 && h3);
-  assert.notEqual(h1.streamKey, h3.streamKey, '露出窗口不同,各自一条');
-  // 成本键:同一张卡同样长度时与实例无关(这里 H 在两个实例里都露出 4 秒 / 2 秒,长度不同成本键本来就不同 —— 换同样长度再比)
+  assert.notEqual(h1.streamKey, h3.streamKey, 'Different visible windows get one each');
+  // Cost key: independent of instance for the same card at the same duration (here H is exposed
+  // for 4s / 2s across two instances; with different durations cost keys are inherently different:
+  // compare again with identical duration)
   const lenEq = project({ second: true });
   lenEq.tracks[1].clips[0] = seg('S3', 'B', 6, 10, { cutOffset: 1 });
   const k = planOf(lenEq).controls;
@@ -108,7 +118,7 @@ test('键:改被引用剪辑里一张卡只改它的流键;成本键各实例相
   assert.notEqual(k.find(c => c.clipId === `S${FLAT_SEP}H`).streamMemberKey, k.find(c => c.clipId === `S3${FLAT_SEP}H`).streamMemberKey);
 });
 
-test('没有剪辑段的项目:摊平视图、图、控件、流与不摊时逐字相同', () => {
+test('Project without cut segments: the flattened view, graph, controls and streams are identical character for character to the unflattened ones', () => {
   const p = project();
   p.tracks = [p.tracks[1]];
   assert.equal(flatPlanProject(p), p);

@@ -14,23 +14,26 @@ import { noteGraphCardError, noteGraphCardOk } from "./cardTrouble";
 
 type Graph = Timeline["graph"];
 
-/** 只看节点:图里有这个节点、是素材效果卡节点、不是音频卡 —— 那这个片段的画面由 GraphCard 出,
- * 原始素材层不再画(否则滤镜卡会叠成「原素材 + 滤镜」两层)。 */
+/** Look only at the node: if this node is in the graph, is a media effect card node, and is not
+ * an audio card: this clip's visuals are produced by GraphCard, and the original media layer is no
+ * longer drawn (otherwise filter cards would stack into two layers: "original media + filter"). */
 export function graphVisualNode(graph: Graph, nodeId?: string) {
   if (!nodeId) return false;
   const node = graph?.nodes.find((node) => node.id === nodeId);
   return !!node && node.adapter === "card" && node.kind !== "audio";
 }
 
-/** 上游递归的深度上限。环由 validateCardGraph 的层级校验挡掉,这里只防深度。 */
+/** Maximum upstream recursion depth. Cycles are blocked by hierarchy validation in
+ * validateCardGraph; this only guards against depth. */
 const MAX_DEPTH = 8;
 
 /**
- * 素材效果卡的宿主组件:`card()` 在页面里跑(没有任何服务端往返),
- * 算出的 `CardGpuValue` 交 `CardSurface` 在 WebGL 上执行。
+ * Host component for media effect cards: `card()` runs in the page (without any server round-trips),
+ * and the computed `CardGpuValue` is passed to `CardSurface` for execution on WebGL.
  *
- * 输入自己解:素材节点走浏览器的 `CardMediaSource`,上游素材效果卡节点在一块离屏画布上
- * 递归执行成位图。整条路上一个请求都不发(素材经 `/@media` 的那条照常)。
+ * Resolves inputs locally: asset nodes go through browser's `CardMediaSource`, while upstream media
+ * effect card nodes recursively execute into bitmaps on an offscreen canvas. Not a single request
+ * is sent along the entire path (media fetched via `/@media` continues as usual).
  */
 export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
   def: CardDef<any>;
@@ -46,25 +49,28 @@ export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
   const ticket = useRef<ReturnType<typeof beginFrameWork> | null>(null);
   const bitmaps = useRef(new Map<string, Promise<ImageBitmap>>());
   const decoder = useRef(new CardMediaSource());
-  /** 每个深度一块离屏画布 + 一个执行器,跟着这张卡活,不每帧新建 WebGL 上下文 */
+  /** One offscreen canvas + one executor per depth, living with this card to avoid creating
+   * a new WebGL context every frame */
   const upstream = useRef(new Map<number, { canvas: OffscreenCanvas; executor: CardGpuExecutor }>());
 
   const width = stage?.width ?? 1920;
   const height = stage?.height ?? 1080;
-  // 面板拖入 / add_clip 建的素材效果卡片段没有 nodeId,图里是就地合成的那个渲染节点
+  // Media effect card clips dragged from the panel or created by add_clip have no nodeId;
+  // in the graph, it is the render node composited in place
   const nodeId = clip.nodeId ?? `@clip/${clip.id}/card`;
   const duration = clip.end - clip.start;
 
   const nodeAt = useCallback((id: string) => graph?.nodes.find((node) => node.id === id), [graph]);
 
-  /** 一个节点在 `time` 的画面,解成位图。素材节点走解码器,素材效果卡节点递归执行。 */
+  /** A node's visual at `time`, decoded into a bitmap. Asset nodes go through the decoder;
+   * media effect card nodes execute recursively. */
   const renderNode = useCallback(async (id: string, time: number, depth: number, signal?: AbortSignal): Promise<ImageBitmap> => {
-    if (depth > MAX_DEPTH) throw new Error("素材效果卡输入嵌套过深");
+    if (depth > MAX_DEPTH) throw new Error("Media effect card inputs are nested too deeply");
     const node = nodeAt(id);
-    if (!node) throw new Error(`素材效果卡输入节点不存在：${id}`);
+    if (!node) throw new Error(`Media effect card input node does not exist: ${id}`);
     const media = node.adapter === "media" ? (node.media as { url?: string } | undefined) : undefined;
-    // 素材节点的取帧时刻 = 片段内时间 × 片段速度(`rate`,只在变速段上有,`kernel/cardGraph.mjs`)+ 裁剪起点。
-    // 没有 rate 时不乘,和原来逐位相同
+    // Asset node frame-fetch time = intra-clip time * clip speed (`rate`, only on speed-changed clips,
+    // `kernel/cardGraph.mjs`) + trim start. When rate is absent, do not multiply, bit-identical to before
     const rate = Number(node.rate);
     const mediaAt = (Number.isFinite(rate) && rate > 0 && rate !== 1 ? time * rate : time) + (Number(node.offset) || 0);
     const key = media?.url
@@ -87,9 +93,9 @@ export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
   }, [nodeAt, width, height]);
 
   const renderUpstream = useCallback(async (node: CardNode, time: number, depth: number, signal?: AbortSignal): Promise<ImageBitmap> => {
-    if (node.adapter !== "card") throw new Error(`素材效果卡输入节点不是素材效果卡：${node.id}`);
+    if (node.adapter !== "card") throw new Error(`Media effect card input node is not a media effect card: ${node.id}`);
     const upstreamDef = getCard(node.cardId as string);
-    if (typeof upstreamDef?.card !== "function") throw new Error(`上游素材效果卡的定义找不到：${node.cardId}`);
+    if (typeof upstreamDef?.card !== "function") throw new Error(`Definition of the upstream media effect card not found: ${node.cardId}`);
     const upstreamParams = { ...upstreamDef.defaults, ...(node.params as Record<string, unknown>) };
     const sourceTime = time + (Number(node.timeOffset) || 0);
     const upstreamValue = await upstreamDef.card(sourcesOf(node, sourceTime, depth), sourceTime, upstreamParams,
@@ -111,11 +117,12 @@ export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
   }, [fps, width, height, duration, stage]);
 
   const resolveValue = useCallback(async (source: SourceValue | PixelsValue, requestedTime: number, depth: number, signal?: AbortSignal) => {
-    if (source.type !== "source") throw new Error("素材效果卡不产生需要宿主下载的像素结果");
+    if (source.type !== "source") throw new Error("A media effect card does not produce pixel results that the host needs to download");
     return renderNode(source.nodeId, requestedTime, depth, signal);
   }, [renderNode]);
 
-  /** 一个节点的 `sources`:`at()` 只给引用,`pixels()` 才落像素,`block()` 取采样。 */
+  /** A node's `sources`: `at()` only gives references, `pixels()` actually yields pixels,
+   * and `block()` fetches samples. */
   const sourcesOf = useCallback((node: CardNode, time: number, depth: number): Record<string, GraphCardSource> => {
     const audioContext: AudioSourceContext = { graph, project: { tracks: [], media: [] }, getCard, sampleRate: CARD_AUDIO_SAMPLE_RATE };
     const sources: Record<string, GraphCardSource> = {};
@@ -130,13 +137,14 @@ export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
       };
     }
     /*
-     * 输入片段被删掉时 validateCardGraph 把那条边丢了、名字留在 missingInputs 里。
-     * 这里挂一个一读就抛的取值器:`card()` 碰它才抛,被下面 evaluate 的 .catch 接住
-     * 变成错误态 —— 一张坏卡不该让整份图或者整个舞台陪葬。
+     * When an input clip is deleted, validateCardGraph drops that edge and leaves its name
+     * in missingInputs. Attach a getter here that throws on read: it throws only when `card()`
+     * accesses it, caught by .catch in evaluate below to become an error state:
+     * a broken card should not bring down the entire graph or the whole stage.
      */
     for (const name of (node.missingInputs as string[] | undefined) ?? []) {
       Object.defineProperty(sources, name, { enumerable: true, configurable: true,
-        get() { throw new Error("输入片段已删除：" + name); } });
+        get() { throw new Error("Input clip was deleted: " + name); } });
     }
     return sources;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -146,21 +154,24 @@ export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
     if (!graph) return;
     const controller = new AbortController();
     ticket.current?.dispose();
-    const work = beginFrameWork(`素材效果卡 ${nodeId} @ ${t}`); ticket.current = work;
+    const work = beginFrameWork(`Media effect card ${nodeId} @ ${t}`); ticket.current = work;
     setFailure("");
     const evaluate = (async () => {
       const node = nodeAt(nodeId);
-      if (!node) throw new Error(`素材效果卡节点不存在：${nodeId}`);
-      if (typeof def.card !== "function") throw new Error(`${def.id} 不是视觉素材效果卡`);
+      if (!node) throw new Error(`Media effect card node does not exist: ${nodeId}`);
+      if (typeof def.card !== "function") throw new Error(`${def.id} is not a visual media effect card`);
       const sourceTime = t + (Number(node.timeOffset) || 0);
       return def.card(sourcesOf(node, sourceTime, 0), sourceTime, params, { fps, width, height, duration, stage });
     })();
     void evaluate
       .then((result) => { if (!controller.signal.aborted) setValue({ value: result, evaluatedTime: t, evaluatedGraph: graph, evaluatedNodeId: nodeId }); })
-      // 出事只记一笔(`cardTrouble.ts`):在线舞台据此把这张素材效果卡退回原做法;没有订阅方的文档(桌面、导出)行为不变
+      // Trouble is only recorded once (`cardTrouble.ts`): the online stage uses this to revert
+      // this media effect card to the original approach; documents without subscribers (desktop, export)
+      // do not change behavior
       .catch((error) => { if (!controller.signal.aborted) { noteGraphCardError(def.id, error); work.fail(error); setFailure(error instanceof Error ? error.message : String(error)); } });
     return () => { controller.abort(); work.dispose(); };
-    // `params` 每次 render 都是新对象,直接进依赖就是 effect → setValue → 重渲染 → 自激死循环
+    // `params` is a new object on every render; putting it directly in dependencies causes
+    // effect → setValue → rerender → self-reinforcing infinite loop
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [def, clip.nodeId, graph, t, cardJson(params)]);
 
@@ -179,7 +190,9 @@ export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
     };
   }, [graph]);
 
-  // 这一帧画出来了 / 上 GPU 或解输入时出错:各记一笔(`cardTrouble.ts`;在线舞台据此把解不了输入、连着出错的素材效果卡退回原做法)
+  // This frame rendered / error uploading to GPU or resolving inputs: record each entry
+  // (`cardTrouble.ts`; the online stage uses this to revert media effect cards that cannot decode
+  // inputs or repeatedly error to the original approach)
   const ready = useCallback(() => { noteGraphCardOk(def.id); ticket.current?.ready(); }, [def.id]);
   const failed = useCallback((error: CardGpuError) => { noteGraphCardError(def.id, error); ticket.current?.fail(error); setFailure(error.message); }, [def.id]);
 

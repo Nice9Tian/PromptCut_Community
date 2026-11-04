@@ -17,12 +17,12 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP_DIR = path.resolve(__dirname, "..");
 /**
- * 源码从哪里来。默认是本仓库工作区；发布时由 build-release 传 --source 指向
- * 一棵 HEAD 的 worktree,好让产物对应一个已提交的状态,而不是把工作区里
- * 别人没提交完的改动一起打进去。
+ * Where the source code comes from. Defaults to this repo workspace; during release, build-release
+ * passes --source pointing to a HEAD worktree, so the artifact corresponds to a committed state,
+ * rather than bundling uncommitted changes left by others in the workspace.
  *
- * 只换源码这一处:Chrome / ffmpeg / Python / Rust 编译缓存仍然用 desktop/ 下
- * 原来那份,不必为一次发布重下重编。
+ * Only the source code is swapped here: Chrome / ffmpeg / Python / Rust build caches still use
+ * the existing copies under desktop/, without needing to re-download or recompile for a release.
  */
 const SOURCE_ARG = process.argv.indexOf("--source");
 const PROJECT_ROOT = SOURCE_ARG >= 0
@@ -32,7 +32,7 @@ const RUNTIME_DIR = path.resolve(DESKTOP_DIR, "src-tauri", "runtime");
 const BINARIES_DIR = path.resolve(DESKTOP_DIR, "src-tauri", "binaries");
 
 const CHECK_ONLY = process.argv.includes("--check");
-/** 发布构建带这个:VITE_ 变量一个都找不到时当场失败,而不是默默出一个功能残废的包 */
+/** Pass for release builds: fail immediately if no VITE_ variables are found, instead of silently producing a broken package */
 const REQUIRE_VITE_ENV = process.argv.includes("--require-vite-env");
 const t0 = Date.now();
 
@@ -109,68 +109,75 @@ function stepSidecar() {
 
 /** Names/patterns to skip when copying the app. */
 /*
- * 这是**黑名单**:没列到的一律拷进 runtime/app,然后进安装包发给所有用户。
- * 所以少列一条不是「打包大了点」,是把开发机上的东西发出去。
+ * This is a **blocklist**: anything not listed is copied into runtime/app and then packaged
+ * into the installer distributed to all users.
+ * So missing an entry is not just "a slightly larger package", but shipping things from the dev machine.
  *
- * 除了构建产物,这里必须挡住三类:
- *   - `.env*` —— 里面有诊断服务的提交令牌之类的密钥;
- *   - `.pc-*` —— 用户/开发者的草稿、AI 会话历史、Skill 任务目录,全是个人数据;
- *   - tools 下各 crate 的 `target`、`.cache` —— Rust 编译产物,单是 tools 下面就有 2.7 GB。
- *     (这一行别写成 `tools/<星号>/target` 的字面形式:那里面的 `<星号>/` 会当场
- *     把这段块注释关掉,整个文件从下一行起被当代码解析,直接 SyntaxError。
- *     c0a66b8 就是这么把 prepare-runtime 打瘫的,连 --check 都跑不起来。)
- * `--from-head` 只在用它的时候才干净;有人手跑 `npm run prepare-runtime` 就全靠这份名单。
+ * Aside from build artifacts, three categories must be blocked here:
+ *   - `.env*`: keys such as submission tokens for the diagnostic service;
+ *   - `.pc-*`: user/developer drafts, AI session histories, and Skill task directories, all personal data;
+ *   - `target`, `.cache` across crates under tools: Rust build artifacts, 2.7 GB under tools alone.
+ *     (Do not write this line literally as `tools/<asterisk>/target`: the `<asterisk>/` in it will
+ *     immediately close this block comment, causing the rest of the file from the next line onwards
+ *     to be parsed as code, resulting in a direct SyntaxError.
+ *     That was how c0a66b8 broke prepare-runtime, preventing even --check from running.)
+ * `--from-head` is only clean when used; when someone manually runs `npm run prepare-runtime`,
+ * it relies entirely on this list.
  */
 const SKIP_DIRS = new Set([
   "node_modules", "out", "dist", ".git", ".vite", "desktop",
-  "target",            // Rust 编译产物(tools/*/target,2.7 GB)
+  "target",            // Rust build artifacts (tools/*/target, 2.7 GB)
   ".cache",
-  ".pc-projects",      // 本机草稿
-  ".pc-chats",         // AI 会话历史
-  ".pc-work",          // 会话附件 / 打开 .proc 时的副本
+  ".pc-projects",      // Local drafts
+  ".pc-chats",         // AI session history
+  ".pc-work",          // Session attachments / replicas when opening .proc
   ".pc-projects-headless",
-  ".claude",           // 本机的 agent 配置和权限
-  ".wrangler",         // wrangler dev 的本地缓存(诊断 Worker 那套)
+  ".claude",           // Local agent configuration and permissions
+  ".wrangler",         // Local cache for wrangler dev (diagnostic Worker setup)
   /*
-   * 各任务的 git worktree。少这一条就是把**每一条分支的整份源码**打进安装包发给用户 ——
-   * 2026-10-24 出 0.7.25 时撞上:`runtime/app` 从 378 MB 涨到 11 GB(光 `_export-baseline`
-   * 那份像素基线就 7.9 GB),makensis 直接 `error mmapping datablock` 挂掉,连着两次。
-   * 注意 `out` / `node_modules` 这些是按**名字**挡的、任何层级都挡,所以挡不住 worktree 本身,
-   * 只能单列这一条。
+   * git worktrees for tasks. Missing this entry means bundling the **entire source code of every branch**
+   * into the installer and shipping it to users:
+   * hit on 2026-10-24 when releasing 0.7.25: `runtime/app` surged from 378 MB to 11 GB (the
+   * `_export-baseline` pixel baseline alone was 7.9 GB), and makensis crashed twice in a row with
+   * `error mmapping datablock`.
+   * Note that entries like `out` / `node_modules` are blocked by **name** at any level, so they cannot
+   * block the worktree itself; this entry must be listed separately.
    */
   ".worktrees",
   "release",
-  // AI harness 的文本工具就往这儿落文件(server/harness/tools/textEditor.mjs、
-  // server/vite-plugin-cards.ts)。开发机上跑过 AI 面板就有模型写的 .md/.txt/.json/.png,
-  // 上面那份文件名黑名单只挡 .mp4/.mov/.webm/.log,一个都拦不住 —— 不挡就随安装包发出去,
-  // 并且装完躺在用户自己的导出目录里。make-patch.mjs 的 RUNTIME_STATE 早把它算作
-  // 「用户状态」了,两处口径得一致。
+  // Text tools from the AI harness drop files here (server/harness/tools/textEditor.mjs,
+  // server/vite-plugin-cards.ts). Running the AI panel on dev machines leaves .md/.txt/.json/.png
+  // written by models. The filename blocklist above only blocks .mp4/.mov/.webm/.log and misses these:
+  // unblocked, they ship in the installer and land in the user's export directory after installation.
+  // RUNTIME_STATE in make-patch.mjs already treats this as "user state", so both places must align.
   "exports",
   "work",             // Local agent reviews, fixtures and acceptance evidence.
   "__pycache__",
 ]);
 /**
- * 不论是目录还是**文件**都按名字跳过的名字。
+ * Names that are skipped by name whether they are directories or **files**.
  *
- * `.git` 必须在这里:它在普通检出里是目录,但在 git worktree(`build-release --from-head`
- * 开的 desktop/.cache/release-src 就是一棵)和子模块里是一个 `gitdir: …` 指针**文件**。
- * 只对目录生效的 SKIP_DIRS 拦不住它,这个指向打包机路径的文件就进了 runtime/app、
- * 补丁清单和安装包(0.7.13 的 manifest 里第一个键就是 ".git")。
+ * `.git` must be here: it is a directory in regular checkouts, but in a git worktree
+ * (desktop/.cache/release-src created by `build-release --from-head` is one) and submodules,
+ * it is a `gitdir: …` pointer **file**. SKIP_DIRS, which only takes effect on directories,
+ * cannot block it, so this file pointing to a packager machine path entered runtime/app,
+ * the patch manifest, and the installer (the first key in the 0.7.13 manifest was ".git").
  *
- * SKIP_DIRS 里其它名字没有同样处理:它们(node_modules、out、dist、target、release、work、
- * exports、desktop 等)都是普通英文词,只在「目录」形态下才是构建产物/本机状态;
- * 同名的**源码文件**理应拷贝,不能按名字一刀切。`git ls-files` 里也没有任何一个同名文件。
- * 往这里加名字之前先想清楚这一点。
+ * Other names in SKIP_DIRS are not treated the same way: they (node_modules, out, dist, target,
+ * release, work, exports, desktop, etc.) are ordinary English words and are only build
+ * artifacts/local state in "directory" form; **source files** with the same name should be copied
+ * and not blanket-filtered by name. There are no files with the same name in `git ls-files`.
+ * Think this through before adding names here.
  */
 const SKIP_ANY_KIND = new Set([".git"]);
 const SKIP_FILE_PATTERNS = [
-  /^\.env($|\.)/,      // .env / .env.local / .env.production —— 里面是密钥
-  // wrangler 读本地密钥就用这个固定文件名,里面正是 ADMIN_KEY / FEISHU_WEBHOOK / SUBMIT_TOKEN。
-  // 它不叫 .env,所以上面那条匹配不到 —— 单列一条。
+  /^\.env($|\.)/,      // .env / .env.local / .env.production: contain keys
+  // wrangler uses this fixed filename to read local keys, which contains ADMIN_KEY / FEISHU_WEBHOOK / SUBMIT_TOKEN.
+  // It is not named .env, so the rule above cannot match it: listed separately.
   /^\.dev\.vars($|\.)/,
-  /^\.npmrc$/,         // 可能带私有 registry 的认证 token
+  /^\.npmrc$/,         // May contain auth tokens for private registries
   /^\.pc-last-.*\.txt$/,
-  /\.lock$/,           // .proc 的独占锁,开发机上的残留
+  /\.lock$/,           // Exclusive lock for .proc, leftovers from dev machines
   /^AGY-TASK-.*\.md$/,
   /^left-probe\.html$/,
   /^probe-data\.html$/,
@@ -189,48 +196,54 @@ const SKIP_PATH_PATTERNS = [
 ];
 
 /**
- * `.env` 一行右边那串东西按 dotenv 的规矩解出来:**引号内原样,引号外的 `#` 起注释**。
+ * Resolve the right-hand side of a `.env` line following dotenv rules: **preserve inside quotes,
+ * `#` outside quotes starts a comment**.
  *
- * 为什么不能只 trim 一下就用:开发期 vite 读同一个文件走的是 dotenv,`A=x  # 线上` 解出来是 `x`;
- * 这里要是把 `  # 线上` 一起当成值注入,就成了「同一份 .env.local,开发跑得好好的、打出来的包
- * 是坏的,而且哪儿都不报错」—— 前端拿到的 URL 尾巴上挂着一段注释,请求发不出去。
+ * Why we cannot just trim and use it: during development, vite reads the same file via dotenv,
+ * so `A=x  # online` resolves to `x`; if `  # online` were injected as part of the value here,
+ * we would get "the same .env.local works fine in development but produces a broken package,
+ * without reporting errors anywhere": the frontend receives a URL trailing with a comment,
+ * and requests fail to send.
  */
 function parseEnvValue(raw) {
   const s = String(raw).trim();
   const quoted = s.match(/^(['"])([\s\S]*?)\1/);
-  if (quoted) return quoted[2];          // 引号里的 # 是值的一部分,不是注释
-  return s.replace(/\s+#.*$/, "").trim(); // 裸值:空白 + # 之后是注释
+  if (quoted) return quoted[2];          // # inside quotes is part of the value, not a comment
+  return s.replace(/\s+#.*$/, "").trim(); // Bare value: whitespace + # onwards is a comment
 }
 
 /**
- * 把仓库根 `.env*` 里的 `VITE_` 变量取出来,**交给 vite build 当环境变量**。
+ * Extract `VITE_` variables from `.env*` at the repo root and **pass them to vite build as env vars**.
  *
- * 为什么要绕这一道:`VITE_` 前缀的变量是在构建时**内联进前端产物**的
- * (`import.meta.env.VITE_DIAG_SUBMIT_URL` 之类)。而上面的黑名单把 `.env*` 挡在了
- * 拷贝之外 —— 文件不进包是对的,但 vite build 是在 `runtime/app` 里跑的,那里没有这个
- * 文件,于是那些值也一起没了:**打出来的包里诊断提交功能是死的**,按钮灰掉说
- * 「还没配收报告的地址」。是打完第一个完整包才发现的,靠单测和 --check 都看不出来。
+ * Why this detour is needed: variables prefixed with `VITE_` are **inlined into frontend artifacts**
+ * at build time (`import.meta.env.VITE_DIAG_SUBMIT_URL`, etc.). But the blocklist above excluded `.env*`
+ * from being copied: keeping files out of the package is right, but vite build runs in `runtime/app`
+ * where this file does not exist, so those values disappear: **the diagnostic submission feature in
+ * the built package is dead**, with the button grayed out saying "Report receiving address not
+ * configured yet". Found only after making the first full package; unit tests and --check miss it.
  *
- * vite 的 loadEnv 除了读 .env 文件,也会把 process.env 里带前缀的变量收进去,
- * 所以这样传就够了,不用把文件拷过去再删。
+ * vite's loadEnv reads .env files and also gathers prefixed variables from process.env,
+ * so passing them this way is enough without needing to copy the file over and delete it later.
  *
- * 只取 `VITE_` 开头的:那些本来就是「要发给用户」的值(诊断服务的地址和提交令牌 ——
- * 令牌是公开可得的,worker.js 里写明了它只挡随手扫到的人)。真正的服务端密钥
- * (ADMIN_KEY 之类)放在 `.dev.vars` 和 wrangler secret 里,不带 VITE_ 前缀,取不到也不该取。
+ * Only pick those starting with `VITE_`: they are originally meant "to be shipped to users"
+ * (diagnostic service address and submission token: the token is public, and worker.js states that
+ * it only blocks casual scanners). Real server keys (ADMIN_KEY, etc.) live in `.dev.vars` and
+ * wrangler secret without the VITE_ prefix; they cannot and should not be retrieved.
  */
 function viteEnvFromDotEnv() {
   /*
-   * 找两个地方,**真仓库在前、源码根在后(后者覆盖前者)**:
+   * Check two locations, **real repository first, source root second (the latter overrides the former)**:
    *
-   *   path.resolve(DESKTOP_DIR, "..")  真仓库。`.env*` 是 gitignore 的开发者本地文件,
-   *                                    只存在于这里;
-   *   PROJECT_ROOT                     源码根。`--source` 指过来时是一棵**临时 worktree**,
-   *                                    那里面没有 .env*(gitignore 的东西不会进 worktree)。
+   *   path.resolve(DESKTOP_DIR, "..")  Real repository. `.env*` are gitignored local developer files,
+   *                                    existing only here;
+   *   PROJECT_ROOT                     Source root. When pointed via `--source`, it is a **temporary worktree**
+   *                                    without .env* (gitignored files do not enter worktrees).
    *
-   * 只看 PROJECT_ROOT 是不够的 —— 那正是第一版的毛病:手动建 worktree 时我把 .env.local
-   * 拷进去了,所以验过;而真正的发布路径 `build-release --from-head` 会自己开一棵
-   * desktop/.cache/release-src,那里面永远没有这个文件,于是 VITE_ 变量照样丢,
-   * 装出来的包诊断提交还是死的。加上真仓库这条回退才算真修好。
+   * Checking only PROJECT_ROOT is not enough: that was exactly the bug in the first version. When creating
+   * a worktree manually, I copied .env.local into it, so it passed testing; but the real release path
+   * `build-release --from-head` creates desktop/.cache/release-src on its own, which never contains
+   * this file, so VITE_ variables were still lost and diagnostic submission in the built package was dead.
+   * Adding this fallback to the real repository truly fixed it.
    */
   const roots = [path.resolve(DESKTOP_DIR, ".."), PROJECT_ROOT];
   const out = {};
@@ -250,61 +263,66 @@ function viteEnvFromDotEnv() {
   }
   const keys = Object.keys(out);
   if (keys.length) {
-    console.log(`  注入构建期变量:${keys.join(", ")}`);
+    console.log(`  Injected build-time variables: ${keys.join(", ")}`);
     return out;
   }
   /*
-   * 一个都没找到。手跑(比如别人克隆这个仓库)时这不算错,警告一句就行;
-   * **正经发布时必须当场失败**。
+   * None found. When running manually (e.g. someone clones this repo), this is not an error,
+   * just log a warning; **for formal releases, it must fail immediately**.
    *
-   * 这个坑修过两回(d4d1a00 传给 vite build、ca46dd3 加真仓库回退),两回都是发出去才发现的,
-   * 因为流程里没有任何一步会因此失败:vite build 照常成功、--check 看不出来、单测更测不到,
-   * 装出来的包一切正常,只有「提交诊断报告」那个按钮是灰的。缺值本身好修,难的是**没人知道**。
-   * 所以 build-release 会带上 --require-vite-env,让它在这里就断掉。
+   * This trap was fixed twice (d4d1a00 passed to vite build, ca46dd3 added real repo fallback),
+   * and both times were discovered only after release, because no step in the pipeline fails:
+   * vite build succeeds as usual, --check cannot tell, unit tests cannot test it, and the installed
+   * package looks completely normal, except the "Submit diagnostic report" button is grayed out.
+   * Missing values are easy to fix; the hard part is **nobody knows**.
+   * Therefore build-release passes --require-vite-env to abort right here.
    */
-  console.log("  ⚠ 没找到任何 VITE_ 变量(查过真仓库和源码根的 .env*)");
-  console.log("    后果:装出来的包里「提交诊断报告」会灰掉,只能「保存为文件」。");
+  console.log("  ⚠ No VITE_ variables found (checked .env* in the real repo and the source root)");
+  console.log("    Consequence: in the built package, \"Submit diagnostic report\" will be greyed out, leaving only \"Save as file\".");
   if (REQUIRE_VITE_ENV) {
-    console.error("[FAIL] 发布构建要求 VITE_ 变量就位,但一个都没找到。");
-    console.error(`       在仓库根建 .env.local 并填上 VITE_DIAG_* 再重来;`);
-    console.error(`       确实要发一个没有诊断提交功能的包,就去掉 --require-vite-env。`);
+    console.error("[FAIL] Release build requires VITE_ variables to be in place, but none were found.");
+    console.error(`       Create .env.local in the repo root, fill in VITE_DIAG_*, and try again;`);
+    console.error(`       if you really want to ship a package without diagnostic submission, drop --require-vite-env.`);
     process.exit(1);
   }
   return out;
 }
 
 /**
- * 把那些 `VITE_` 变量**再落一份 `.env.local` 进包里**。
+ * Write those `VITE_` variables **into another `.env.local` inside the package**.
  *
- * 上面那道「传给 vite build」只喂饱了 `dist/`,而**装出来的应用根本不读 dist** ——
- * 壳(desktop/src-tauri/src/lib.rs)是拿 sidecar 的 node 在 `runtime/app` 里起一个
- * `vite --port 5210` 的 dev server,前端是现编译现送的。那个进程还是 `env_clear()`
- * 起的,只拿到壳显式塞进去的几个 PROMPTCUT_*,于是 `import.meta.env.VITE_DIAG_SUBMIT_URL`
- * 在用户机器上恒为空:诊断子窗口的「提交」永远灰着,写着「还没配收报告的地址」。
- * 0.2.12 之前每一个版本都是这样,dist 里明明内联好了也没用 —— 那份产物没人加载。
+ * The step above "passing to vite build" only feeds `dist/`, but **the installed app never reads dist**:
+ * the shell (desktop/src-tauri/src/lib.rs) uses the sidecar node to spin up a `vite --port 5210`
+ * dev server in `runtime/app`, compiling and serving the frontend on the fly. That process is launched
+ * via `env_clear()`, receiving only the few PROMPTCUT_* variables explicitly injected by the shell,
+ * so `import.meta.env.VITE_DIAG_SUBMIT_URL` is always empty on user machines: "Submit" in the diagnostic
+ * subwindow is permanently grayed out, saying "Report receiving address not configured yet".
+ * Every version before 0.2.12 was like this; even though inlined in dist, nobody loaded that artifact.
  *
- * 所以这里在拷贝**之后**自己生成一份:内容只有 VITE_ 变量,是重新写的,不是把开发机的
- * `.env.local` 原样拷进来(那里面可能有别的东西)。SKIP_FILE_PATTERNS 挡的是「原样拷贝」,
- * 挡的对;这份是白名单过滤后的结果,该进包。
+ * So here, **after** copying, generate a copy ourselves: containing only VITE_ variables, rewritten
+ * rather than copying the dev machine's `.env.local` verbatim (which might contain other things).
+ * SKIP_FILE_PATTERNS blocks "verbatim copying", which is correct; this file is the result of
+ * allowlist filtering and belongs in the package.
  *
- * 值本身是公开的:地址就是要发给用户的,提交令牌 worker.js 里写明了只挡随手扫到的人。
+ * The values themselves are public: the address is meant to be distributed to users, and worker.js
+ * states that the submission token only blocks casual scanners.
  */
 function writeRuntimeEnv(appDir, viteEnv) {
   const keys = Object.keys(viteEnv);
   const target = path.join(appDir, ".env.local");
   if (keys.length === 0) {
-    // 没有值就别留个空文件在那儿装样子,不然下次排查时看见文件在会以为这条路通了
+    // If there are no values, don't leave an empty dummy file, or someone troubleshooting later will assume this path works
     if (fs.existsSync(target)) fs.rmSync(target);
     return;
   }
   const body = [
-    "# 由 desktop/scripts/prepare-runtime.mjs 生成,不要手改。",
-    "# 应用是在这个目录里跑 vite dev 的,前端的 import.meta.env 从这里来。",
+    "# Generated by desktop/scripts/prepare-runtime.mjs, do not edit by hand.",
+    "# The app runs vite dev in this directory; the frontend's import.meta.env comes from here.",
     ...keys.map((k) => `${k}=${viteEnv[k]}`),
     "",
   ].join("\n");
   fs.writeFileSync(target, body);
-  console.log(`  写入 runtime .env.local:${keys.join(", ")}`);
+  console.log(`  Wrote runtime .env.local: ${keys.join(", ")}`);
 }
 
 export function shouldCopyApp(name, fullPath, isDir) {
@@ -336,12 +354,13 @@ function stepApp() {
     const rolldown = path.join(appDir, "node_modules", "@rolldown", "binding-win32-x64-msvc");
     assert(fs.existsSync(rolldown), `rolldown binding not found: ${rolldown}`);
     /*
-     * 这份 .env.local 是应用里「提交诊断报告」唯一的地址来源(见 writeRuntimeEnv)。
-     * 开发机上有值却没生成,说明打包那步漏了 —— 只是包里少了个按钮,不该让整个 --check
-     * 挂掉,但一定要吼一声:上一次就是没人吼,一连发了十几个版本才发现。
+     * This .env.local is the sole source of the address for "Submit diagnostic report" in the app
+     * (see writeRuntimeEnv). Having values on the dev machine without generating it means the packaging
+     * step missed it: it only disables a button in the package and shouldn't fail the whole --check,
+     * but it must shout out: last time no one alerted, and it went unnoticed for over a dozen releases.
      */
     if (Object.keys(viteEnvFromDotEnv()).length > 0 && !fs.existsSync(path.join(appDir, ".env.local"))) {
-      console.log("  ⚠ runtime/app/.env.local 不在:包里的「提交诊断报告」会是灰的。重跑一次不带 --check 的打包");
+      console.log("  ⚠ runtime/app/.env.local is missing: \"Submit diagnostic report\" in the package will be greyed out. Re-run the packaging without --check");
     }
     console.log(`  ✓ App exists (${dirSizeMB(appDir)} MB) [${((Date.now() - stepT) / 1000).toFixed(1)}s]`);
     return { appDir };
@@ -453,23 +472,26 @@ function stepChrome(appDir) {
   const chromeExe = path.join(destVersionDir, "chrome-win64", "chrome.exe");
 
   /*
-   * 这一版已经在位就别再拷一遍。
+   * If this version is already in place, do not copy it again.
    *
-   * 目录名里带版本号(win64-<version>),所以「文件在」就等于「正是要的这一版」——
-   * 换版本会走另一个目录,末尾那段清理逻辑会把旧版删掉,不存在拿到陈旧 Chrome 的可能。
+   * The directory name includes the version (win64-<version>), so "files exist" means "it is exactly
+   * the desired version": changing versions will use another directory, and the cleanup logic at the end
+   * will delete old versions, so there is no possibility of using an outdated Chrome.
    *
-   * 不跳会出事:开发机上很可能有东西正开着这份 Chrome(dev server 的网页工具就常驻一个,
-   * user-data-dir 落在 out/web-profile),覆盖 chrome.dll 会拿到 EBUSY,整个发布当场中断。
-   * 实测过一次 —— 而那 428 MB 拷过去的内容和已经在的一模一样,纯属白费。
-   * 真要重来就先把 runtime/chrome 删掉。
+   * Not skipping causes issues: dev machines very likely have something running this Chrome (the dev
+   * server web tool keeps a resident instance, with user-data-dir in out/web-profile); overwriting
+   * chrome.dll yields EBUSY, aborting the entire release immediately. Tested once in practice: the
+   * 428 MB copied over is identical to what is already there, a complete waste. If you really need to
+   * redo it, delete runtime/chrome first.
    */
   /*
-   * 两个浏览器都要:
-   *   chrome                —— 完整 Chrome,给网页工具 / 采集用(server/web/browser.mjs)
-   *   chrome-headless-shell —— 导出和预渲染用。0.4 起渲染后端是 HeadlessExperimental.beginFrame,
-   *                            这个 CDP 域只在 headless-shell 里有(见 server/bakery/chrome.mjs 文件头)。
-   *                            以前为了省约 200 MB 专门不拷它,现在少了它导出直接起不来。
-   * puppeteer 按 PUPPETEER_CACHE_DIR(= runtime/chrome,lib.rs 里设)下的 <browser>/win64-<版本> 找它们。
+   * Both browsers are required:
+   *   chrome                : Full Chrome, used for web tools / media collection (server/web/browser.mjs)
+   *   chrome-headless-shell : Used for export and prerender. Since 0.4, the render backend uses
+   *                            HeadlessExperimental.beginFrame; this CDP domain only exists in
+   *                            headless-shell (see header of server/bakery/chrome.mjs).
+   *                            Previously omitted to save ~200 MB, but now without it, export fails to start.
+   * puppeteer looks for them under <browser>/win64-<version> in PUPPETEER_CACHE_DIR (= runtime/chrome, set in lib.rs).
    */
   const BROWSERS = [
     { name: "chrome", exe: path.join("chrome-win64", "chrome.exe") },
@@ -487,9 +509,9 @@ function stepChrome(appDir) {
   for (const b of BROWSERS) {
     const dest = path.join(chromeDir, b.name, `win64-${version}`);
     const cacheDir = path.join(userProfile, ".cache", "puppeteer", b.name, `win64-${version}`);
-    // 这一版已经在位就别再拷(理由见上面 already 那段:开着的 Chrome 会让覆盖拿到 EBUSY)
+    // Don't recopy if this version is in place (reason in "already" above: running Chrome causes overwrite to fail with EBUSY)
     if (fs.existsSync(exeOf(b))) {
-      console.log(`  ${b.name}:已是同一版本,跳过拷贝(下面的旧版本清理照跑)`);
+      console.log(`  ${b.name}: already the same version, skipping copy (the old-version cleanup below still runs)`);
     } else if (fs.existsSync(cacheDir)) {
       console.log(`  ${b.name}:Copying from cache: ${cacheDir}`);
       mkdirp(dest);
@@ -629,15 +651,17 @@ function stepFfmpeg() {
 // ── Step 5: Python ──────────────────────────────────────────────────────
 
 /**
- * 内置 Python 和 Node 一样是**必须件**,缺了就不许出包。
+ * Embedded Python, like Node, is a **mandatory requirement**; packaging is forbidden if missing.
  *
- * 这里以前是「detect only」:找不到只打一条 WARN 就往下走,理由是「语音识别功能
- * 不可用」——那是 Python 还只喂 STT 时的写法。现在它下面挂着转场识别、主体检测、
- * 运动追踪四个包,README 也把它和 Node / Chrome / ffmpeg 并列写进「全部运行时」,
- * 放行等于打出一个装上去才发现半边功能是死的安装包。
+ * This used to be "detect only": if not found, it only logged a WARN and proceeded, claiming
+ * "speech-to-text feature unavailable": that was written when Python only served STT. Now it hosts
+ * four packages: transition detection, subject detection, and motion tracking; the README also lists
+ * it alongside Node / Chrome / ffmpeg under "All Runtimes", so allowing it means producing an installer
+ * where half the features are dead upon installation.
  *
- * 这一步只做检测、不做组装:组装归 prepare-python.mjs(要联网下 embeddable zip
- * 和 pip),那是个几分钟的活儿,不该埋在每次 prepare-runtime 里偷偷触发。
+ * This step only detects, not assembles: assembly belongs to prepare-python.mjs (which downloads the
+ * embeddable zip and pip from the network), a multi-minute job that should not run stealthily inside
+ * every prepare-runtime run.
  */
 function stepPython() {
   const stepT = Date.now();
@@ -646,16 +670,16 @@ function stepPython() {
 
   assert(
     fs.existsSync(pythonExe),
-    `内置 Python 缺失: ${pythonExe}\n` +
-    "         它是必须件(转场识别 / 主体检测 / 运动追踪 / 语音识别都跑在它上面)。\n" +
-    "         先跑 npm run prepare-python 组装,再重跑本脚本。"
+    `Bundled Python missing: ${pythonExe}\n` +
+    "         It is required (transition detection / subject detection / motion tracking / speech recognition all run on it).\n" +
+    "         Run npm run prepare-python to assemble it first, then re-run this script."
   );
 
   let ver;
   try {
     ver = execSync(`"${pythonExe}" -V`, { windowsHide: true, encoding: "utf-8", timeout: 5000 }).trim(); // "Python 3.11.x"
   } catch (e) {
-    assert(false, `内置 Python 存在但跑不起来: ${e.message}\n         用 npm run prepare-python -- --force 重装。`);
+    assert(false, `Bundled Python exists but fails to run: ${e.message}\n         Reinstall with npm run prepare-python -- --force.`);
   }
   console.log(`  Python found: ${ver} [${((Date.now() - stepT) / 1000).toFixed(1)}s]`);
   return ver;
@@ -664,18 +688,20 @@ function stepPython() {
 // ── Step 6: VERSIONS.json ───────────────────────────────────────────────
 
 /*
- * 源码指纹:相对路径 + 大小,**不算 mtime**。
+ * Source fingerprint: relative path + size, **excluding mtime**.
  *
- * 曾经把 `Math.floor(st.mtimeMs)` 也算进来,于是 `--from-head` 那条路必然对不上:
- * 那时源码根是一棵新检出的 worktree(desktop/.cache/release-src),git 把每个文件的
- * mtime 都置成检出那一刻,内容一个字节没变、指纹却全变了 —— `--check` 报「runtime/app
- * 落后于源码」,`--from-head --skip-runtime` 直接跑不通。反过来也一样:发过一次
- * `--from-head` 之后,VERSIONS.json 里记的是 worktree 的 mtime,之后每次普通
- * `--check` 都会误报落后。
+ * `Math.floor(st.mtimeMs)` was once included, which inevitably broke `--from-head`: at that time,
+ * the source root was a freshly checked-out worktree (desktop/.cache/release-src), and git set every
+ * file's mtime to the checkout timestamp; without a single byte changing, the fingerprint changed
+ * completely: `--check` reported "runtime/app is behind source", and `--from-head --skip-runtime`
+ * failed directly. The reverse was also true: after releasing once with `--from-head`, VERSIONS.json
+ * recorded worktree mtimes, causing subsequent regular `--check` runs to falsely report being behind.
  *
- * 换成**内容哈希**而不是退回「路径 + 大小」:后者漏掉「改了内容但字节数没变」的编辑
- * (改个常量、换个字符),而这道校验正是拿来挡「改完忘了重新组装」的。整棵 app 源码
- * (已按 shouldCopyApp 过滤,不含 node_modules / dist / .git)读一遍是秒级的,值这个钱。
+ * Switched to **content hashes** instead of falling back to "path + size": the latter misses edits
+ * where "content changed but byte count stayed the same" (changing a constant, replacing a char),
+ * whereas this check specifically prevents "forgot to reassemble after editing". Reading the entire
+ * app source tree (already filtered via shouldCopyApp, excluding node_modules / dist / .git) takes
+ * only seconds and is well worth the cost.
  */
 function computeAppSrcHash(appDir) {
   const entries = [];
@@ -721,7 +747,8 @@ function stepVersions(nodeVer, chromeVer, ffmpegVer, pythonVer) {
       const existing = JSON.parse(fs.readFileSync(versionsPath, "utf-8"));
       if (existing.appSrcHash !== appSrcHash) {
         console.error(
-          `[FAIL] runtime/app 落后于源码，请重跑 npm run prepare-runtime\n` +
+          `[FAIL] runtime/app is behind the source, please re-run npm run prepare-runtime
+` +
           `       Expected hash: ${appSrcHash}\n` +
           `       Got: ${existing.appSrcHash}`
         );
@@ -788,24 +815,26 @@ function main() {
 }
 
 /**
- * 本文件是不是被当入口直接执行的(而不是被单测 import)。
+ * Whether this file is executed directly as the entry point (rather than imported by unit tests).
  *
- * 不能拿 `import.meta.url` 和 `argv[1]` 拼出来的 URL 逐字比:Node 会把入口解析成真实路径,
- * 而 argv[1] 保持用户敲的样子 —— 路径里有目录联接 / 符号链接,或者盘符、目录大小写不同,
- * 就对不上,main() 不跑,prepare-runtime 悄无声息地什么也不做,出包时很难发现。
- * 所以两边都取真实路径(取不到就退回 path.resolve),win32 上不分大小写比。
+ * Cannot compare URLs built from `import.meta.url` and `argv[1]` verbatim: Node resolves the entry point
+ * to a real path, while argv[1] preserves what the user typed: if the path has directory junctions /
+ * symlinks, or drive letter / directory casing differs, they will not match, main() will not run,
+ * and prepare-runtime will silently do nothing, making it very hard to spot during packaging.
+ * Therefore, get real paths on both sides (fall back to path.resolve if unavailable), and compare
+ * case-insensitively on win32.
  */
 export function isDirectRun(metaUrl = import.meta.url, argv1 = process.argv[1]) {
   if (!argv1) return false;
   const real = (p) => {
-    try { return fs.realpathSync.native(p); } catch { /* 退回下面 */ }
+    try { return fs.realpathSync.native(p); } catch { /* Fall back below */ }
     try { return fs.realpathSync(p); } catch { return path.resolve(p); }
   };
   const norm = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
   return norm(real(fileURLToPath(metaUrl))) === norm(real(argv1));
 }
 
-// 只有被当脚本直接执行时才跑;被单测 import 时(desktop/test/prepare-runtime-filter.test.mjs)不动手
+// Only run when executed directly as a script; do nothing when imported by unit tests (desktop/test/prepare-runtime-filter.test.mjs)
 if (isDirectRun()) {
   main();
 }

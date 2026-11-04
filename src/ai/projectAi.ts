@@ -5,25 +5,30 @@ import { resetAiSessionIds } from "./aiSessionKeys";
 import { getRealTabs, noteProjectChatApplied } from "./agentTabs";
 
 /**
- * 随项目一起存取的 AI 状态:剧本 + 这段对话。
+ * The AI state saved and loaded with the project: script + this chat.
  *
- * 它和 `project` 平级放在 .proc 里,而不是塞进 Project 对象内部 ——
- * Project 会被 `get_project` 原样返回给模型,把整段对话history 放进去
- * 等于每次调用都把自己说过的话再读一遍,又贵又容易绕。
+ * It sits alongside `project` in .proc rather than being stuffed inside the Project object:
+ * Project is returned to the model as is by `get_project`, and putting the whole chat history in
+ * it would mean re-reading its own words on every call, which is both expensive and easy to get
+ * tangled in.
  *
- * 「每个项目一份对话」就是这么来的:打开哪个 .proc,就灌回哪一份。
+ * That is where "one chat per project" comes from: whichever .proc is opened, that copy is poured
+ * back in.
  */
 export interface ProjectAi {
-  /** 剧本;空串表示没写 */
+  /** The script; an empty string means nothing was written */
   script: string;
-  /** 可见对话(不含执行轨迹,见 liveChat.messagesForSave) */
+  /** Visible chat (without the execution trace, see liveChat.messagesForSave) */
   messages: ChatMessage[];
 }
 
 /**
- * 随项目文件存的是本项目第一个会话(清单里排第一的真页)的对话。老版本里它就是主页(「main」,store 即主对话 store);
- * 分页清单按项目分开之后新建的会话各有自己的 store,所以按页取。没有会话时是空的。
- * 下次打开这个项目文件而本机没有它的分页清单时,这段对话补成该项目的「Agent 1」(agentTabs.setAgentProject)。
+ * What is saved with the project file is the chat of this project's first session (the first real tab
+ * in the manifest). In old versions that was the main tab ("main", whose store is the main chat
+ * store); after the tab manifest was split per project, each newly created session has its own store,
+ * so it is taken per tab. It is empty when there are no sessions.
+ * The next time this project file is opened on a machine that has no tab manifest for it, this chat
+ * is filled in as the project's "Agent 1" (agentTabs.setAgentProject).
  */
 function savedStore() {
   const first = getRealTabs()[0];
@@ -36,24 +41,25 @@ export function collectProjectAi(): ProjectAi {
 }
 
 /**
- * 灌回一份 AI 状态。传 null / undefined(旧的 .proc 没有这一段)就清空 ——
- * 打开一个没有对话记录的项目,不该看到上一个项目的对话。
+ * Pour an AI state back in. Passing null / undefined (an old .proc has no such section) clears it:
+ * opening a project that has no chat record must not show the previous project's chat.
  */
 export function applyProjectAi(ai: unknown): void {
   const src = (ai && typeof ai === "object" ? ai : {}) as Partial<ProjectAi>;
   setScript(typeof src.script === "string" ? src.script : "");
   replaceMessages(src.messages);
-  // 分页清单按项目分开:项目自带对话的话,紧接着换项目时给它补一个页接住这段对话(agentTabs.setAgentProject)
+  // The tab manifest is split per project: if the project brings its own chat, a tab is added to hold
+  // that chat right after the project is switched (agentTabs.setAgentProject)
   noteProjectChatApplied(getMessages().length > 0);
   resetAiSessionIds();
 }
 
-/** 新建项目:两样都清空 */
+/** New project: clear both */
 export function resetProjectAi(): void {
   applyProjectAi(null);
 }
 
-/** 有没有值得存的东西,用来决定 .proc 里要不要写这一段 */
+/** Whether there is anything worth saving, used to decide whether to write this section into .proc */
 export function hasProjectAi(): boolean {
   return getScript().trim() !== "" || (savedStore()?.get().length ?? 0) > 0;
 }

@@ -1,14 +1,16 @@
 /**
  * node --test server/test/env-snapshot.test.mjs
  *
- * 诊断报告里服务端那一半的现场。
+ * Server-side state in the diagnostic report.
  *
- * 重点是**会话文件柜**:界面上的对话按项目走,而服务端接哪段历史取决于
- * localStorage 里那把会话 id,两者脱节时界面上一点症状都没有(见 81f255b)。
- * 报告要能把「这台机器上躺着几段历史、各几条」摆出来,这类串台才有物证。
+ * The key focus is the **session file cabinet**: chats in the UI are organized by project,
+ * while which history the server connects to depends on the session id in localStorage;
+ * when the two are disconnected, the UI shows no symptoms at all (see 81f255b).
+ * The report must expose "how many histories exist on this machine and how many entries each",
+ * providing hard evidence for this type of session mix-up.
  *
- * 同样重要的是它**不能报出对话内容** —— 用户点「诊断」是为了把报告发给我们,
- * 报告里多一句原话,就是多一次不该发生的外泄。
+ * Equally important: it **must not report chat content**: the user clicks "diagnose" to send
+ * the report to us, and every extra original word in the report is an unnecessary leak.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -22,49 +24,49 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "pc-envsnap-"));
 }
 
-test("目录不存在时报一句人话,而不是抛异常把整份报告带走", () => {
+test("when the directory does not exist, reports a plain-language sentence instead of throwing an exception that takes the whole report down", () => {
   const missing = path.join(tmpDir(), "nope");
   const r = inspectSessionStore(missing);
   assert.equal(r.exists, false);
   assert.equal(r.files, 0);
-  assert.match(r.note, /目录不存在/);
+  assert.match(r.note, /Directory does not exist/);
 });
 
-test("报每段历史有几条、什么角色 —— 这就是「界面空着后端却接着旧对话」的物证", () => {
+test("reports how many entries each history has and which roles: this is the hard evidence for \"the interface is empty but the backend continues the old chat\"", () => {
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, "api-9433c3ac.json"), JSON.stringify([
-    { role: "user", content: "上一个项目的第一句" },
-    { role: "assistant", content: "回话" },
-    { role: "user", content: "又一句" },
+    { role: "user", content: "the first sentence of the previous project" },
+    { role: "assistant", content: "reply" },
+    { role: "user", content: "another sentence" },
   ]));
   const r = inspectSessionStore(dir);
   assert.equal(r.exists, true);
   assert.equal(r.files, 1);
-  assert.equal(r.recent[0].sessionId, "api-9433c3ac", "文件名去掉 .json 就是会话 id,要能和 localStorage 那把对上");
+  assert.equal(r.recent[0].sessionId, "api-9433c3ac", "the file name minus .json is the session id, and it must match the one in localStorage");
   assert.equal(r.recent[0].messages, 3);
   assert.deepEqual(r.recent[0].roles, { user: 2, assistant: 1 });
 });
 
-test("绝不能把对话内容带进报告", () => {
+test("chat content must never end up in the report", () => {
   const dir = tmpDir();
-  fs.writeFileSync(path.join(dir, "s.json"), JSON.stringify([{ role: "user", content: "喝完野生狗奶直接化身快乐小狗" }]));
+  fs.writeFileSync(path.join(dir, "s.json"), JSON.stringify([{ role: "user", content: "drank some wild dog milk and instantly turned into a happy puppy" }]));
   const dumped = JSON.stringify(inspectSessionStore(dir));
-  assert.ok(!dumped.includes("快乐小狗"), `原话漏进报告了: ${dumped}`);
+  assert.ok(!dumped.includes("happy puppy"), `original wording leaked into the report: ${dumped}`);
 });
 
-test("坏掉的历史文件不许拖垮整个目录的统计", () => {
+test("a corrupted history file must not break the statistics for the whole directory", () => {
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, "good.json"), JSON.stringify([{ role: "user" }]));
-  fs.writeFileSync(path.join(dir, "broken.json"), "{ 这不是 JSON");
-  fs.writeFileSync(path.join(dir, "notes.txt"), "不是 json,不该被数进去");
+  fs.writeFileSync(path.join(dir, "broken.json"), "{ this is not JSON");
+  fs.writeFileSync(path.join(dir, "notes.txt"), "not json, should not be counted");
   const r = inspectSessionStore(dir);
-  assert.equal(r.files, 2, "只数 .json");
+  assert.equal(r.files, 2, "count .json only");
   const broken = r.recent.find((x) => x.sessionId === "broken");
-  assert.equal(broken.messages, "(读不出来)");
+  assert.equal(broken.messages, "(unreadable)");
   assert.equal(r.recent.find((x) => x.sessionId === "good").messages, 1);
 });
 
-test("最新的排在前面 —— 排查时先看的就是刚才那一段", () => {
+test("newest first: when troubleshooting, the first one to look at is the one from just now", () => {
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, "old.json"), "[]");
   fs.writeFileSync(path.join(dir, "new.json"), "[]");
@@ -75,20 +77,20 @@ test("最新的排在前面 —— 排查时先看的就是刚才那一段", () 
   assert.deepEqual(r.recent.map((x) => x.sessionId), ["new", "old"]);
 });
 
-test("文件多到一定数量就只细看最新的那些,并说明白截了", () => {
+test("when there are too many files, inspect only the newest ones in detail, and state clearly that it was truncated", () => {
   const dir = tmpDir();
   for (let i = 0; i < 25; i++) fs.writeFileSync(path.join(dir, `s${i}.json`), "[]");
   const r = inspectSessionStore(dir);
-  assert.equal(r.files, 25, "总数照报");
+  assert.equal(r.files, 25, "the total is still reported");
   assert.equal(r.recent.length, 20);
-  assert.match(r.note, /共 25 个/);
+  assert.match(r.note, /25 in total/);
 });
 
-test("默认目录必须和 runners/api.mjs 读写的是同一个", () => {
+test("the default directory must be the same one that runners/api.mjs reads and writes", () => {
   assert.equal(sessionStoreDir("/T"), path.join("/T", "promptcut", "harness-sessions"));
 });
 
-test("Node 进程状态要能回答「是不是刚重启过」和「是不是打包版」", () => {
+test("Node process state must be able to answer \"was it just restarted\" and \"is it a packaged build\"", () => {
   const n = nodeStatus();
   assert.match(n.version, /^v\d+/);
   assert.equal(typeof n.uptimeSeconds, "number");
@@ -97,7 +99,7 @@ test("Node 进程状态要能回答「是不是刚重启过」和「是不是打
   assert.ok(n.osMemoryMB.total > 0);
 });
 
-test("打包版要认得出来 —— 打包版和源码版的路径行为不一样", () => {
+test("the packaged build must be recognizable: the packaged build and the source build behave differently with paths", () => {
   const fake = { version: "v24.0.0", versions: {}, pid: 1, uptime: () => 5, memoryUsage: () => ({}), execPath: "x", cwd: () => "y", env: { PROMPTCUT_RUNTIME_ROOT: "C:/app" } };
   const o = { tmpdir: () => "/t", totalmem: () => 1, freemem: () => 1, cpus: () => [], release: () => "1" };
   assert.equal(nodeStatus(fake, o).packaged, true);

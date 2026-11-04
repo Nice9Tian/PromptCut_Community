@@ -1,30 +1,40 @@
 /**
- * 待合并表模块(语义 `docs/semantics/product/document-service.md`「冲突」:每个用户的待合并项保存在文档服务、项目 JSON 之外;
- * 机制 `docs/semantics/mechanism/document-service.md`「保存基准与修改状态检查」:按「项目 × 用户身份」存)。
+ * Pending merge table module (semantics `docs/semantics/product/document-service.md` "Conflicts":
+ * each user's pending merge items are stored in the document service outside the project JSON;
+ * mechanism `docs/semantics/mechanism/document-service.md` "Save baseline and modification state
+ * check": stored by "project × user identity").
  *
- * - **独立于项目 JSON**:不经项目模块、不增加项目历史序号、不广播给别的成员;按项目落在同一空间存储的 `merges/<项目号>` 里。
- * - **按「项目 × 用户」分**:用户身份只取连接的 principal(账号项目按账号号,口令项目按用户名,本机空间是 `local`),
- *   消息里自报的一律不认。同一用户换设备、换页面看到的是同一张表;不同用户互相看不见。
- * - 表里的一条是一样东西(`src/editor/sync/mergeItems.ts` 的 `MergeThing`),本模块不认识内容,只认 `key` 与 `props[].prop`,只限大小。
+ * - **Independent of project JSON**: does not go through the project module, does not increment
+ *   the project history sequence number, and is not broadcast to other members; stored by project
+ *   in `merges/<project-id>` in the same space.
+ * - **Divided by "project × user"**: user identity takes only the connection's principal (by
+ *   account id for account projects, by username for passphrase projects, and `local` for local
+ *   space); self-reported identities in messages are never accepted. The same user sees the same
+ *   table across different devices and pages; different users cannot see each other's tables.
+ * - An entry in the table is a thing (`MergeThing` in `src/editor/sync/mergeItems.ts`); this module
+ *   is agnostic to content, recognizes only `key` and `props[].prop`, and only limits size.
  *
- * 消息(都带 `projectId`,可带 `reqId`):
- * - `merge.list`:回 `merge.state { projectId, things, version }`;
- * - `merge.put { things }`:按 `key` 整条替换或新增,回 `merge.state`;
- * - `merge.remove { remove: [{ key, props? }] }`:拿掉这些二级项(`props` 不给 = 整条),二级项拿光的整条拿掉,回 `merge.state`。
- *   拿掉不存在的不报错(重复提交幂等);
- * - 表变了,同一用户在这个项目里的别的连接收到一条 `merge.state`(换设备也能马上看到)。
- * 渲染节点、托管方服务、Agent 的连接不能用(待合并表是人的)。
+ * Messages (all include `projectId`, may include `reqId`):
+ * - `merge.list`: returns `merge.state { projectId, things, version }`;
+ * - `merge.put { things }`: replaces the entire entry or adds by `key`, returns `merge.state`;
+ * - `merge.remove { remove: [{ key, props? }] }`: removes these second-level items (`props` omitted
+ *   = entire entry); when all second-level items are removed, removes the entire entry and returns
+ *   `merge.state`. Removing non-existent items does not throw errors (idempotent duplicate submission);
+ * - When the table changes, other connections of the same user in this project receive a
+ *   `merge.state` (immediately visible when switching devices).
+ * Connections from render nodes, host services, and Agents cannot use this (the pending merge
+ * table belongs to humans).
  */
 
 export const MERGE_MODULE = 'merge';
 
-/** 三级数字(报告里交主会话定) */
+/** Tier-3 number (deferred to lead session in report) */
 export const MERGE_LIMITS = Object.freeze({
-  /** 一个用户在一个项目里最多记多少样东西 */
+  /** Maximum number of things a user can record in a project */
   THINGS_PER_USER: 2000,
-  /** 一样东西序列化后的上限(UTF-8 字节) */
+  /** Upper limit for a serialized thing (UTF-8 bytes) */
   THING_BYTES: 512 * 1024,
-  /** 一个用户在一个项目里整张表的上限 */
+  /** Upper limit for a user's entire table in a project */
   USER_BYTES: 4 * 1024 * 1024,
 });
 
@@ -38,8 +48,10 @@ class Refused extends Error {
 }
 
 /**
- * 连接属于哪个用户;不能用待合并表的连接回 null。
- * 账号项目按账号号(`account:<号>`),口令项目按用户名(`user:<名>`,同一用户名在哪台设备上都是同一张表),本机空间是 `local`。
+ * Which user the connection belongs to; connections that cannot use the pending merge table
+ * return null.
+ * Account projects use account id (`account:<id>`), passphrase projects use username (`user:<name>`,
+ * same username is the same table on any device), and local space is `local`.
  */
 export function mergeUserOf(principal) {
   if (!principal || principal.scope === 'admin' || principal.scope === 'service') return null;
@@ -51,26 +63,27 @@ export function mergeUserOf(principal) {
 }
 
 function checkThing(t, limits = MERGE_LIMITS) {
-  if (!isObj(t) || typeof t.key !== 'string' || t.key.length < 1 || t.key.length > 512) throw new Refused('bad-message', 'things[].key 必须是 1～512 个字符');
-  if (!Array.isArray(t.props) || t.props.some((p) => !isObj(p) || typeof p.prop !== 'string' || p.prop.length > 256)) throw new Refused('bad-message', 'things[].props 必须是 { prop } 的数组');
+  if (!isObj(t) || typeof t.key !== 'string' || t.key.length < 1 || t.key.length > 512) throw new Refused('bad-message', 'things[].key must be 1-512 characters');
+  if (!Array.isArray(t.props) || t.props.some((p) => !isObj(p) || typeof p.prop !== 'string' || p.prop.length > 256)) throw new Refused('bad-message', 'things[].props must be an array of { prop }');
   let n;
-  try { n = bytes(t); } catch { throw new Refused('bad-message', '记录不能序列化'); }
-  if (n > limits.THING_BYTES) throw new Refused('too-large', `一样东西超过 ${limits.THING_BYTES} 字节`);
+  try { n = bytes(t); } catch { throw new Refused('bad-message', 'Record cannot be serialized'); }
+  if (n > limits.THING_BYTES) throw new Refused('too-large', `An item exceeds ${limits.THING_BYTES} bytes`);
   return t;
 }
 
 /**
  * @param {object} options
- * @param {{ read(stream: string): object[], rewrite(stream: string, records: object[]): void }} options.store 同一空间的日志存储
+ * @param {{ read(stream: string): object[], rewrite(stream: string, records: object[]): void }} options.store
+ *   Log storage in the same space
  * @param {() => number} [options.now]
- * @param {typeof MERGE_LIMITS} [options.limits] 单测换小数字用
+ * @param {typeof MERGE_LIMITS} [options.limits] Used by unit tests to swap in smaller numbers
  */
 export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMITS } = {}) {
-  if (!store || typeof store.read !== 'function' || typeof store.rewrite !== 'function') throw new TypeError('pendingMergeModule: store 必须有 read / rewrite');
+  if (!store || typeof store.read !== 'function' || typeof store.rewrite !== 'function') throw new TypeError('pendingMergeModule: store must have read / rewrite');
   const principals = new Map();
-  /** projectId → Map<user, { things: object[], version: number }>(用到时从存储读) */
+  /** projectId → Map<user, { things: object[], version: number }> (read from storage when used) */
   const projects = new Map();
-  /** connId → Set<projectId>(列过表的连接:表变了推给它) */
+  /** connId → Set<projectId> (connections that listed tables: pushed to them when the table changes) */
   const watching = new Map();
   const stats = { lists: 0, puts: 0, removes: 0 };
 
@@ -96,12 +109,13 @@ export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMIT
   }
 
   function common(connId, msg) {
-    if (typeof msg.projectId !== 'string' || !PROJECT_ID_RE.test(msg.projectId)) throw new Refused('bad-message', 'projectId 不合法');
+    if (typeof msg.projectId !== 'string' || !PROJECT_ID_RE.test(msg.projectId)) throw new Refused('bad-message', 'projectId is invalid');
     const principal = principals.get(connId);
     const user = mergeUserOf(principal);
-    if (!user) throw new Refused('forbidden', '这条连接不能用待合并表');
-    // 共享项目的空间就是项目本身:只能碰这个项目的表(本机空间的项目号由页面给)
-    if (principal.tenantId && principal.tenantId !== 'local' && msg.projectId !== principal.tenantId) throw new Refused('forbidden', '不是这条连接的项目');
+    if (!user) throw new Refused('forbidden', 'This connection cannot use the pending merge list');
+    // A shared project's space is the project itself: can only touch this project's table (the project
+    // id for local space is provided by the page)
+    if (principal.tenantId && principal.tenantId !== 'local' && msg.projectId !== principal.tenantId) throw new Refused('forbidden', 'Not the project of this connection');
     return { projectId: msg.projectId, user };
   }
 
@@ -115,7 +129,7 @@ export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMIT
     ctx.send(connId, message);
   }
 
-  /** 同一用户在这个项目里别的连接 */
+  /** Other connections of the same user in this project */
   function push(ctx, exceptConn, projectId, user) {
     for (const [connId, set] of watching) {
       if (connId === exceptConn || !set.has(projectId)) continue;
@@ -139,7 +153,7 @@ export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMIT
 
   function put(ctx, connId, msg, reqId) {
     const { projectId, user } = common(connId, msg);
-    if (!Array.isArray(msg.things)) throw new Refused('bad-message', 'things 必须是数组');
+    if (!Array.isArray(msg.things)) throw new Refused('bad-message', 'things must be an array');
     const incoming = msg.things.map((t) => checkThing(t, limits));
     const t = tableOf(projectId);
     const e = t.get(user) ?? { things: [], version: 0 };
@@ -149,9 +163,11 @@ export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMIT
       if (i >= 0) things[i] = x;
       else things.push(x);
     }
-    // 超限:整条不收(不丢最旧的、不收一半),表原样;页面把这几条留在本机,窗口里说「暂时只存在这台设备上」
-    if (things.length > limits.THINGS_PER_USER) throw new Refused('too-many', `待合并表最多 ${limits.THINGS_PER_USER} 样东西`);
-    if (bytes(things) > limits.USER_BYTES) throw new Refused('too-large', `待合并表超过 ${limits.USER_BYTES} 字节`);
+    // Limit exceeded: rejects the entire item (does not drop the oldest or accept half), leaving the
+    // table as is; the page keeps these items locally and displays "Temporarily exists only on this device"
+    // in the window
+    if (things.length > limits.THINGS_PER_USER) throw new Refused('too-many', `The pending merge list holds at most ${limits.THINGS_PER_USER} items`);
+    if (bytes(things) > limits.USER_BYTES) throw new Refused('too-large', `The pending merge list exceeds ${limits.USER_BYTES} bytes`);
     t.set(user, { things, version: e.version + 1 });
     persist(projectId);
     stats.puts += 1;
@@ -163,7 +179,7 @@ export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMIT
   function remove(ctx, connId, msg, reqId) {
     const { projectId, user } = common(connId, msg);
     if (!Array.isArray(msg.remove) || msg.remove.some((r) => !isObj(r) || typeof r.key !== 'string' || (r.props !== undefined && (!Array.isArray(r.props) || r.props.some((p) => typeof p !== 'string')))))
-      throw new Refused('bad-message', 'remove 必须是 { key, props? } 的数组');
+      throw new Refused('bad-message', 'remove must be an array of { key, props? }');
     const t = tableOf(projectId);
     const e = t.get(user);
     watch(connId, projectId);
@@ -207,7 +223,7 @@ export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMIT
     handle(ctx, connId, msg) {
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '待合并表模块不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The pending merge list module does not support this message' }, reqId);
       try {
         fn(ctx, connId, msg, reqId);
       } catch (err) {

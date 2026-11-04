@@ -1,20 +1,27 @@
 /**
- * 守门：测试与探针起的编辑器不写公共的 `%TEMP%\promptcut\port.json`。
+ * Gatekeeper: Editors started by tests and probes do not write to shared
+ * `%TEMP%\promptcut\port.json`.
  *
- * 编辑器一起来就把端口写进这个文件（`server/vite-plugin-ai.ts`），用户会话里的 PromptCut MCP 服务
- * （`server/mcp-server.mjs`）按它找编辑器。探针起的编辑器写了它，会把用户的 MCP 工具调用引到探针那台上；
- * 2026-09-29 反方向出过一次：`ready-index-probe --port 5693` 把它写成 5693，之后 `c10-ui-probe` 的代理开在 5693，
- * 收到了本机 MCP 客户端的 `/api/mcp/call`，A7 误挂。
+ * As soon as the editor starts, it writes its port into this file (`server/vite-plugin-ai.ts`),
+ * which the PromptCut MCP service (`server/mcp-server.mjs`) in user sessions uses to find the
+ * editor. If an editor started by a probe writes to it, user MCP tool calls are routed to that probe
+ * machine; on 2026-09-29 the reverse occurred once: `ready-index-probe --port 5693` wrote 5693, and
+ * then `c10-ui-probe` opened its proxy on 5693 and received `/api/mcp/call` from the local MCP
+ * client, causing A7 to fail spuriously.
  *
- * 做法：`PROMPTCUT_NO_PORT_FILE=1` 时编辑器不写；探针的公共入口 `scripts/lib/no-user-dirs.mjs` 与
- * `npm test` 的全局准备设上它（`scripts/lib/user-dirs.mjs` 的 `markNoPortFile`）。这里守：
- *   1. `markNoPortFile` 本身，以及引入 `no-user-dirs.mjs` 的进程和它的子进程真的带上了这个变量；
- *   2. `npm test` 的全局准备设了它；
- *   3. `vite-plugin-ai.ts` 认它，而且在写文件之前就返回；
- *   4. `scripts/` 下每个起编辑器（默认配置的 vite dev server）的脚本都带上它：第一个 import 是
- *      `no-user-dirs.mjs`，或者起进程时显式设；产品入口另有办法（渲染主机）；
- *   5. 桌面版与 `npm run dev` 不设它，照旧写。
- * 只读仓库文件、起一个不连网的 node 子进程，不碰公共的 port.json。
+ * Approach: The editor does not write when `PROMPTCUT_NO_PORT_FILE=1`; the probe common entry point
+ * `scripts/lib/no-user-dirs.mjs` and the global setup of `npm test` (`markNoPortFile` in
+ * `scripts/lib/user-dirs.mjs`) set it. Guard here:
+ *   1. `markNoPortFile` itself, as well as processes importing `no-user-dirs.mjs` and their child
+ *      processes, actually carry this variable;
+ *   2. `npm test` global setup sets it;
+ *   3. `vite-plugin-ai.ts` honors it and returns before writing the file;
+ *   4. Every script under `scripts/` that starts an editor (vite dev server with default config)
+ *      includes it: either the first import is `no-user-dirs.mjs`, or it is explicitly set when
+ *      spawning the process; production entry points have separate handling (render host);
+ *   5. Desktop app and `npm run dev` do not set it, writing as usual.
+ * Only read repository files and spawn a node child process without network access; do not touch
+ * the shared port.json.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,17 +34,17 @@ import { NO_PORT_FILE_ENV, markNoPortFile } from '../../scripts/lib/user-dirs.mj
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
 
-test('port-file:markNoPortFile 设成 1,返回原值', () => {
+test('port-file: markNoPortFile sets it to 1 and returns the original value', () => {
   assert.equal(NO_PORT_FILE_ENV, 'PROMPTCUT_NO_PORT_FILE');
   const env = { PATH: 'p' };
   assert.equal(markNoPortFile(env), undefined);
   assert.deepEqual(env, { PATH: 'p', PROMPTCUT_NO_PORT_FILE: '1' });
   const env2 = { PROMPTCUT_NO_PORT_FILE: '0' };
-  assert.equal(markNoPortFile(env2), '0', '外面设成 0 也改成 1:探针不写公共的 port.json');
+  assert.equal(markNoPortFile(env2), '0', 'Even when set to 0 outside, it is changed to 1: probes do not write the shared port.json');
   assert.equal(env2.PROMPTCUT_NO_PORT_FILE, '1');
 });
 
-test('port-file:引入 no-user-dirs.mjs 的进程和它 { ...process.env } 起的子进程都带 PROMPTCUT_NO_PORT_FILE=1', () => {
+test('port-file: a process that imports no-user-dirs.mjs, and the child processes it starts with { ...process.env }, both carry PROMPTCUT_NO_PORT_FILE=1', () => {
   const lib = pathToFileURL(path.join(REPO, 'scripts', 'lib', 'no-user-dirs.mjs')).href;
   const script = [
     `await import(${JSON.stringify(lib)});`,
@@ -52,33 +59,34 @@ test('port-file:引入 no-user-dirs.mjs 的进程和它 { ...process.env } 起�
   assert.deepEqual(JSON.parse(r.stdout), { self: '1', child: '1' });
 });
 
-test('port-file:npm test 的全局准备设了 PROMPTCUT_NO_PORT_FILE=1', () => {
+test('port-file: the global setup of npm test sets PROMPTCUT_NO_PORT_FILE=1', () => {
   const src = read('server/test/global-setup.mjs');
   const body = src.slice(src.indexOf('export async function globalSetup'));
-  assert.match(body.slice(0, body.indexOf('\n}')), /markNoPortFile\(process\.env\)/, 'globalSetup 里要设本进程的环境');
-  // 在全局准备之下运行时(它设的 PROMPTCUT_TEST_BAD_PORTS_HELD 在),本进程已经带上
+  assert.match(body.slice(0, body.indexOf('\n}')), /markNoPortFile\(process\.env\)/, 'globalSetup must set this process\'s environment');
+  // When running under global setup (PROMPTCUT_TEST_BAD_PORTS_HELD set by it is present),
+  // this process already carries it
   if (process.env.PROMPTCUT_TEST_BAD_PORTS_HELD !== undefined) {
     assert.equal(process.env.PROMPTCUT_NO_PORT_FILE, '1');
   }
 });
 
-test('port-file:vite-plugin-ai.ts 认 PROMPTCUT_NO_PORT_FILE=1,在写 port.json 之前返回', () => {
+test('port-file: vite-plugin-ai.ts honors PROMPTCUT_NO_PORT_FILE=1 and returns before writing port.json', () => {
   const src = read('server/vite-plugin-ai.ts');
   const at = src.indexOf("httpServer?.on('listening'");
-  assert.ok(at > 0, '找不到写 port.json 的 listening 回调');
+  assert.ok(at > 0, 'Cannot find the listening callback that writes port.json');
   const write = src.indexOf("'port.json'", at);
-  assert.ok(write > at, 'listening 回调里找不到写 port.json 的地方');
+  assert.ok(write > at, 'Cannot find where port.json is written in the listening callback');
   const guard = src.slice(at, write);
-  assert.match(guard, /process\.env\.PROMPTCUT_NO_PORT_FILE === '1'[^\n]*\)\s*return;/, '写文件之前要按 PROMPTCUT_NO_PORT_FILE 返回');
-  assert.equal(src.split("'port.json'").length - 1, 1, 'vite-plugin-ai.ts 里只有一处写 port.json');
+  assert.match(guard, /process\.env\.PROMPTCUT_NO_PORT_FILE === '1'[^\n]*\)\s*return;/, 'Must return on PROMPTCUT_NO_PORT_FILE before writing the file');
+  assert.equal(src.split("'port.json'").length - 1, 1, 'There is only one place in vite-plugin-ai.ts that writes port.json');
 });
 
-/** 起一台默认配置(vite.config.ts,带 vite-plugin-ai)的 dev server:`<vite 入口>, '--port'` */
+/** Start a dev server with default config (vite.config.ts, with vite-plugin-ai): `<vite entry>, '--port'` */
 const STARTS_EDITOR = /(?:viteBin\(\)|viteBin|vite\.js['"]|\bbin\b|['"]vite['"])\s*,\s*['"]--port['"]/;
-/** 同进程 createServer 用了带 vite-plugin-ai 的配置(不是 configFile:false、不是 vite.prerender.config.ts) */
+/** In-process createServer used a config with vite-plugin-ai (not configFile:false, not vite.prerender.config.ts) */
 const IN_PROCESS_EDITOR = /createServer\(\{\s*configFile\s*:\s*(?!false\b)(?![^}\n]*prerender)/;
 
-/** 产品入口:不引 no-user-dirs.mjs,用自己的办法不写公共的 port.json */
+/** Production entry points: do not import no-user-dirs.mjs, use their own mechanism to avoid writing to shared port.json */
 const PRODUCT_ENTRIES = new Map([
   ['cloud/scripts/render-host.mjs', /TEMP/],
 ]);
@@ -92,7 +100,7 @@ function listMjs(dir, out = []) {
   return out;
 }
 
-test('port-file:scripts/ 下起编辑器的脚本都带 PROMPTCUT_NO_PORT_FILE=1', () => {
+test('port-file: every script under scripts/ that starts the editor carries PROMPTCUT_NO_PORT_FILE=1', () => {
   const offenders = [];
   const checked = [];
   for (const file of listMjs(path.join(REPO, 'scripts'))) {
@@ -101,7 +109,7 @@ test('port-file:scripts/ 下起编辑器的脚本都带 PROMPTCUT_NO_PORT_FILE=1
     if (!STARTS_EDITOR.test(src) && !IN_PROCESS_EDITOR.test(src)) continue;
     checked.push(rel);
     if (PRODUCT_ENTRIES.has(rel)) {
-      if (!PRODUCT_ENTRIES.get(rel).test(src)) offenders.push(`${rel}:产品入口,却没看到它自己的不写办法`);
+      if (!PRODUCT_ENTRIES.get(rel).test(src)) offenders.push(`${rel}: product entry point, but its own way of not writing was not found`);
       continue;
     }
     const first = src.match(/^import[\s{*'"][^\n]*/m)?.[0] || '';
@@ -109,16 +117,16 @@ test('port-file:scripts/ 下起编辑器的脚本都带 PROMPTCUT_NO_PORT_FILE=1
     const spec = want.startsWith('.') ? want : `./${want}`;
     const viaEntry = first.startsWith(`import '${spec}'`);
     const explicit = /PROMPTCUT_NO_PORT_FILE:\s*'1'/.test(src);
-    if (!viaEntry && !explicit) offenders.push(`${rel}:会起编辑器,第一个 import 不是 no-user-dirs.mjs,也没显式设 PROMPTCUT_NO_PORT_FILE: '1'`);
+    if (!viaEntry && !explicit) offenders.push(`${rel}: starts the editor, but its first import is not no-user-dirs.mjs and it does not explicitly set PROMPTCUT_NO_PORT_FILE: '1'`);
   }
-  assert.ok(checked.length >= 25, `扫描到的脚本太少(${checked.length}),识别规则可能坏了:${checked.join(', ')}`);
+  assert.ok(checked.length >= 25, `Too few scripts scanned (${checked.length}), the detection rule may be broken: ${checked.join(', ')}`);
   for (const must of ['scripts/lib/dev-server.mjs', 'scripts/probes/ready-index-probe.mjs', 'scripts/probes/cold-start-probe.mjs']) {
-    assert.ok(checked.includes(must), `${must} 起编辑器,识别规则却没认出来`);
+    assert.ok(checked.includes(must), `${must} starts the editor, but the detection rule did not recognize it`);
   }
-  assert.deepEqual(offenders, [], '这些脚本起的编辑器会覆盖公共的 %TEMP%\\promptcut\\port.json');
+  assert.deepEqual(offenders, [], 'The editors started by these scripts would overwrite the shared %TEMP%\\promptcut\\port.json');
 });
 
-test('port-file:桌面版与 npm run dev 不设 PROMPTCUT_NO_PORT_FILE(照旧写 port.json)', () => {
+test('port-file: the desktop app and npm run dev do not set PROMPTCUT_NO_PORT_FILE (port.json is written as before)', () => {
   const pkg = JSON.parse(read('package.json'));
   assert.doesNotMatch(pkg.scripts.dev, /PROMPTCUT_NO_PORT_FILE/);
   assert.doesNotMatch(read('desktop/src-tauri/src/lib.rs'), /PROMPTCUT_NO_PORT_FILE/);

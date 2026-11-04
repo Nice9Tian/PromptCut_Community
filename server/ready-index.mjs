@@ -1,49 +1,57 @@
 import { mergeRanges } from './snapshot-store.mjs';
 
 /**
- * C3 就绪索引:**按层**记「这一层现在有哪些本地帧」,并把变化推给页面。
+ * C3 ready index: records "which local frames currently exist for this layer" **by layer**, and
+ * pushes changes to the page.
  *
- * 一层 = (片段 clipId, 档位 kind)。同一张重卡的 `stream` 表和 `html` 表并存、
- * 互不覆盖 —— 播放贴流、拖动贴快照,两条路各查各的。
+ * One layer = (clip clipId, tier kind). The `stream` table and `html` table for the same heavy card
+ * coexist without overwriting each other: stream paste during playback, snapshot paste during scrub;
+ * the two paths query independently.
  *
- * # 档位名的三处同义
+ * # Three synonyms for tier names
  *
- *   目录 `controls-html`  ↔ `snapshotTier()` 的 `'shared'` ↔ 线上 `kind: 'html'`
- *   目录 `controls-local` ↔ `snapshotTier()` 的 `'local'`  ↔ 线上 `kind: 'local'`
- *   轨道流(R8)                                            ↔ 线上 `kind: 'stream'`
+ *   Directory `controls-html`  ↔ `'shared'` of `snapshotTier()` ↔ online `kind: 'html'`
+ *   Directory `controls-local` ↔ `'local'` of `snapshotTier()`  ↔ online `kind: 'local'`
+ *   Track stream (R8)                                           ↔ online `kind: 'stream'`
  *
- * `snapshotTier` 的返回值由调用方用 `kindOfTier` 映射成 `kind`。K1 记录里的
- * `kind: 'random' | 'stepped'` 是探针方法,同字不同物。
+ * The return value of `snapshotTier` is mapped to `kind` by callers using `kindOfTier`.
+ * `kind: 'random' | 'stepped'` in K1 records is the probe method, same word for different things.
  *
- * # 消息三种(格式定死,C3)
+ * # Three message types (fixed format, C3)
  *
- *   { type: 'reset', localRev }                       项目版本换了,页面清表
+ *   { type: 'reset', localRev }                       Project version changed, page clears tables
  *   { type: 'layer', clipId, kind, key, ranges, groupClipIds?, originFrame?, streamKind?, inputSig? }
- *                                                     该层当前**全部**就绪的本地帧
- *                                                     闭区间,**每次发全量、不发增量**
- *                                                     `stream` 层的区间单位是分段号,另带 `originFrame`:
- *                                                     这条流自己的第一帧(项目帧号),页面按它把帧号换成
- *                                                     分段号(`src/render/streamSegments.mjs`);不带的
- *                                                     `stream` 层页面不贴
- *   { type: 'done', localRev }                        锚帧全部就绪(C2 的门槛)
+ *                                                     Currently **all** ready local frames for this layer
+ *                                                     Closed intervals, **always full, never delta**
+ *                                                     The interval unit of the `stream` layer is segment
+ *                                                     number, with an additional `originFrame`: the
+ *                                                     first frame of this stream itself (project frame
+ *                                                     number); the page uses it to convert frame
+ *                                                     numbers to segment numbers
+ *                                                     (`src/render/streamSegments.mjs`); `stream` layers
+ *                                                     without it are not pasted by the page
+ *   { type: 'done', localRev }                        All anchor frames ready (C2 gate)
  *
- * 全量语义是刻意的:一条消息丢了不会让页面的表永远缺一段,下一条同层消息就补回来;
- * 重连时服务端先发 `reset` 再发全量 `layer`,所以不需要轮询端点(J3 / F5 共用这条路)。
+ * Full semantics is intentional: losing one message will not leave a permanent gap in the page
+ * table, as the next message for the same layer will make it up; upon reconnecting, the server sends
+ * `reset` first and then full `layer`, so polling endpoints is not needed (J3 / F5 share this path).
  *
- * # 为什么 `layer` 要等项目到位(F5)
+ * # Why `layer` must wait for the project to arrive (F5)
  *
- * 扫盘只得到「键 → 区间」:目录名是剥掉 clipId 的共享键,而 `layer` 和页面的
- * `readyIndex` 都按 clipId 索引。所以重启后先把区间挂在键上(`stageByKey`),
- * 等 card plan 算出来(`control.clipId` ↔ `control.snapshotKey`)再反查、
- * 全量 `layer`。项目没到之前一条 `layer` 都不发。
+ * Disk scanning only yields "key → ranges": directory names are shared keys stripped of clipId,
+ * whereas `layer` and the page's `readyIndex` are indexed by clipId. Therefore, after restart,
+ * ranges are first staged on keys (`stageByKey`), and once the card plan is computed
+ * (`control.clipId` ↔ `control.snapshotKey`), reverse lookup and full `layer` emissions take place.
+ * Not a single `layer` is sent before the project arrives.
  *
- * # 按会话分片(Item 4)
+ * # Sharding by session (Item 4)
  *
- * 预渲染进程里是 `createReadyHub`:每个页面会话一份索引,会话的当前版本只由页面的 preload 设定,
- * 发层按 entry 过闸。见文件末尾 `createReadyHub` 的说明。
+ * In the prerender process it is `createReadyHub`: one index per page session; the session's current
+ * version is set solely by the page's preload, and sending layers passes gates by entry. See notes
+ * on `createReadyHub` at the end of the file.
  */
 
-/** `snapshotTier()` → 线上的 `kind`;不产快照的档回 null */
+/** `snapshotTier()` → online `kind`; returns null for tiers that do not produce snapshots */
 export function kindOfTier(tier) {
   if (tier === 'shared') return 'html';
   if (tier === 'local') return 'local';
@@ -53,9 +61,10 @@ export function kindOfTier(tier) {
 export const READY_KINDS = ['html', 'local', 'stream'];
 
 /**
- * 线上的 `key`(C3 / J3):共享档就是共享键;本地档**自带一个斜杠** ——
- * `<entry.key>/<共享键>`,因为同一个共享键在不同项目下各有一棵本地档子树。
- * 目录形状(`snapshot-store.mjs` 的两层目录)和线上的键在这里对齐,只此一处。
+ * Online `key` (C3 / J3): the shared tier is simply the shared key; the local tier **comes with a
+ * slash**: `<entry.key>/<shared-key>`, because the same shared key has a separate local tier subtree
+ * under each project. Directory layout (two-tier directory of `snapshot-store.mjs`) aligns with online
+ * keys here, and nowhere else.
  */
 export function wireSnapshotKey(tier, entryKey, snapshotKey) {
   if (!snapshotKey) return null;
@@ -65,19 +74,21 @@ export function wireSnapshotKey(tier, entryKey, snapshotKey) {
 }
 
 const layerId = (clipId, kind) => `${kind}:${clipId}`;
-/** `stream` 层带的第一帧(非负整数才带);别的档位不带这一项 */
+/** First frame included in `stream` layers (only included for non-negative integers); other tiers do not include this item */
 const originOf = (kind, originFrame) => (kind === 'stream' && Number.isInteger(originFrame) && originFrame >= 0 ? { originFrame } : {});
 /**
- * 依赖下层的流的层另带的两项(`server/frame-stream.mjs` 的 `belowLayerMark`):`streamKind: 'below'`(页面按舞台坐标贴)和
- * `inputSig`(产这条流的那一版项目的输入签名,页面对不上就不贴)。别的层、别的档位不带,发出去的消息一个字不变。
+ * Two additional fields included for layers of below-dependent streams (`belowLayerMark` in
+ * `server/frame-stream.mjs`): `streamKind: 'below'` (page pastes by stage coordinates) and
+ * `inputSig` (input signature of the project version that produced this stream; page does not paste
+ * if mismatched). Not included in other layers or tiers; outgoing messages remain completely unchanged.
  */
 const belowOf = (kind, item) => (kind === 'stream' && item?.streamKind === 'below'
   ? { streamKind: 'below', ...(typeof item.inputSig === 'string' && item.inputSig ? { inputSig: item.inputSig } : {}) } : {});
 
 /**
- * `staged`:还没认领的「键 → 区间」。缺省每个索引自带一份;按会话分片时(`createReadyHub`)
- * 所有会话共用 hub 的那一份 —— 扫盘和轨道流挂上去的区间是内容寻址的,和哪个会话无关。
- */
+ * `staged`: unclaimed "key → ranges". By default each index has its own copy; when sharding by session
+ * (`createReadyHub`), all sessions share the hub's copy: ranges attached by disk scanning and track
+ * streams are content-addressed and independent of any session. */
 export function createReadyIndex({ staged: shared = null } = {}) {
   const staged = shared ?? new Map();
   /** layerId -> { clipId, kind, key, ranges, groupClipIds?, originFrame?, streamKind?, inputSig? } */
@@ -87,10 +98,10 @@ export function createReadyIndex({ staged: shared = null } = {}) {
   let done = false;
 
   function emit(message) {
-    for (const send of subscribers) { try { send(message); } catch { /* 一个订阅者断了不影响别人 */ } }
+    for (const send of subscribers) { try { send(message); } catch { /* One subscriber disconnecting does not affect others */ } }
   }
 
-  /** 项目版本换了:清表、通知页面清表。`layer` 从这一刻起重新长。 */
+  /** Project version changed: clear tables, notify page to clear tables. `layer` regrows from this moment. */
   function reset(rev = localRev) {
     localRev = Number(rev) || 0;
     layers.clear();
@@ -99,14 +110,14 @@ export function createReadyIndex({ staged: shared = null } = {}) {
   }
 
   /**
-   * 把这一批新帧并进某一层,并发一条**全量** `layer`。
-   * `frames` 可以是帧号、闭区间,或两者混排(`mergeRanges` 的口径)。
+   * Merges this batch of new frames into a layer and sends a **full** `layer`.
+   * `frames` can be frame numbers, closed intervals, or a mix of both (criteria of `mergeRanges`).
    */
   function addFrames({ clipId, kind, key, frames, groupClipIds = undefined, originFrame = undefined, streamKind = undefined, inputSig = undefined }) {
     if (!clipId || !READY_KINDS.includes(kind) || !key) return null;
     const id = layerId(clipId, kind);
     const before = layers.get(id);
-    // 换了键(卡的参数变了)就从头记:旧键的区间和新键没有关系
+    // If the key changes (card parameters changed), record from scratch: ranges of the old key have no relation to the new key
     const base = before && before.key === key ? before.ranges : [];
     const ranges = mergeRanges([...base, ...(frames ?? [])]);
     const layer = { clipId, kind, key, ranges, ...(groupClipIds ? { groupClipIds } : {}), ...originOf(kind, originFrame), ...belowOf(kind, { streamKind, inputSig }) };
@@ -115,7 +126,7 @@ export function createReadyIndex({ staged: shared = null } = {}) {
     return layer;
   }
 
-  /** 整层直接给一份区间表(F5 的重建路);和 `addFrames` 一样发全量 `layer`。 */
+  /** Directly provides an interval table for the whole layer (the F5 rebuild path); sends a full `layer`, just like `addFrames`. */
   function setLayer({ clipId, kind, key, ranges, groupClipIds = undefined, originFrame = undefined, streamKind = undefined, inputSig = undefined }) {
     if (!clipId || !READY_KINDS.includes(kind) || !key) return null;
     const layer = { clipId, kind, key, ranges: mergeRanges(ranges), ...(groupClipIds ? { groupClipIds } : {}), ...originOf(kind, originFrame), ...belowOf(kind, { streamKind, inputSig }) };
@@ -124,14 +135,14 @@ export function createReadyIndex({ staged: shared = null } = {}) {
     return layer;
   }
 
-  /** 锚帧全部就绪(C2 的门槛)。重复调只发一次。 */
+  /** All anchor frames are ready (the C2 gate). Repeated calls send only once. */
   function markDone() {
     if (done) return;
     done = true;
     emit({ type: 'done', localRev });
   }
 
-  /** 扫盘得到的「键 → 区间」:先挂着,等 card plan 到位再认领(F5) */
+  /** "Key → interval" from disk scan: staged first, waiting for card plan to be in place before claiming (F5) */
   function stageByKey({ kind, key, ranges }) {
     if (!READY_KINDS.includes(kind) || !key) return;
     const id = `${kind}:${key}`;
@@ -140,13 +151,16 @@ export function createReadyIndex({ staged: shared = null } = {}) {
   }
 
   /**
-   * card plan 到位:用 `control.clipId` ↔ `control.snapshotKey` 把挂着的区间认领成层。
-   * `layers` = [{ clipId, kind, key, originFrame? }],`key` 已经是**线上的键**(本地档是
-   * `<entry.key>/<共享键>`,C3),由调用方用 `wireSnapshotKey` 拼好;`stream` 层的 `originFrame` 由调用方按这一版的
-   * 流计划给(挂着的「键 → 区间」里没有它:它是这条流在这一版项目里的位置,不是流库里的东西)。返回认领了几层。
+   * Card plan in place: use `control.clipId` ↔ `control.snapshotKey` to claim staged intervals into
+   * layers. `layers` = [{ clipId, kind, key, originFrame? }], `key` is already the **wire key**
+   * (local tier is `<entry.key>/<shared key>`, C3), assembled by the caller using
+   * `wireSnapshotKey`; `originFrame` for the `stream` layer is provided by the caller according to
+   * this version's stream plan (the staged "key → interval" does not have it: it is the position of
+   * this stream in this version of the project, not something in the stream store). Returns the
+   * number of claimed layers.
    *
-   * 认领是**全量重发**:先 `reset`(页面清表),再对每一层发一条 `layer`。这和 C3
-   * 的语义一致,所以不需要新端点。
+   * Claiming is a **full resend**: first `reset` (page clears the table), then send one `layer` for
+   * each layer. This is consistent with C3 semantics, so no new endpoint is needed.
    */
   function claim(layers_, rev = localRev) {
     const claimed = [];
@@ -169,9 +183,11 @@ export function createReadyIndex({ staged: shared = null } = {}) {
   }
 
   /**
-   * 按会话分片之后的认领(`createReadyHub().claim`):**不 reset**,把挂着的区间并进已有的层
-   * (同一层同一个键时取并集,键不同就以挂着的为准),只对真的变了的层发全量 `layer`。
-   * 会话换版本时的清表由 `reset` 单独做(hub 的 `adopt`),认领只负责「补」。返回变了几层。
+   * Claiming after per-session sharding (`createReadyHub().claim`): **does not reset**, merges staged
+   * intervals into existing layers (takes the union for the same key on the same layer; if keys
+   * differ, staged takes precedence), sending a full `layer` only for layers that actually changed.
+   * Clearing the table when a session switches versions is handled separately by `reset` (hub's
+   * `adopt`); claiming is only responsible for "filling in". Returns the number of changed layers.
    */
   function absorb(layers_) {
     let changed = 0;
@@ -183,7 +199,8 @@ export function createReadyIndex({ staged: shared = null } = {}) {
       const before = layers.get(id);
       const ranges = mergeRanges([...(before?.key === item.key ? before.ranges : []), ...hit.ranges]);
       const origin = originOf(item.kind, item.originFrame ?? (before?.key === item.key ? before.originFrame : undefined));
-      // 依赖下层的流的两项:认领表带了就用它的(这一版计划给的),没带、键又没变就留着原来那一层的
+      // Two items for below-dependent streams: if the claim table includes them, use its values
+      // (provided by this version's plan); if omitted and the key has not changed, keep the original layer's
       const below = belowOf(item.kind, item.streamKind ? item : (before?.key === item.key ? before : null));
       if (before?.key === item.key && JSON.stringify(before.ranges) === JSON.stringify(ranges) && before.originFrame === origin.originFrame
         && before.streamKind === below.streamKind && before.inputSig === below.inputSig) continue;
@@ -196,7 +213,7 @@ export function createReadyIndex({ staged: shared = null } = {}) {
     return changed;
   }
 
-  /** 连上 SSE 时先灌的那一份:`reset` + 每层一条全量 `layer`(+ 已经 done 的话再一条) */
+  /** Initial feed when connecting to SSE: `reset` + one full `layer` per layer (+ one more if already done) */
   function backlog() {
     const out = [{ type: 'reset', localRev }];
     for (const layer of layers.values()) out.push({ type: 'layer', ...layer });
@@ -206,7 +223,7 @@ export function createReadyIndex({ staged: shared = null } = {}) {
 
   function subscribe(send) {
     subscribers.add(send);
-    for (const message of backlog()) { try { send(message); } catch { /* 刚连上就断了 */ } }
+    for (const message of backlog()) { try { send(message); } catch { /* Disconnected right after connecting */ } }
     return () => subscribers.delete(send);
   }
 
@@ -215,27 +232,27 @@ export function createReadyIndex({ staged: shared = null } = {}) {
     get localRev() { return localRev; },
     set localRev(value) { localRev = Number(value) || 0; },
     get done() { return done; },
-    /** 测试 / 探针用 */
+    /** For testing / probes */
     list: () => [...layers.values()].map(layer => ({ ...layer })),
     stagedKeys: () => [...staged.values()].map(item => ({ ...item })),
     subscriberCount: () => subscribers.size,
-    // 共用的 `staged` 属于 hub,一个会话清不掉别的会话要认领的东西
+    // The shared `staged` belongs to the hub; one session cannot clear what other sessions need to claim
     clear: () => { layers.clear(); if (!shared) staged.clear(); done = false; },
   };
 }
 
-/** 不带 session 的调用方(脚本、探针、迁移期带整份 `project` 的页面)共用的那个会话 */
+/** The shared session used by callers without a session (scripts, probes, pages carrying the full `project` during migration) */
 export const DEFAULT_READY_SESSION = '';
-/** 没有订阅者、也这么久没发过 preload 的会话被回收 */
+/** Sessions with no subscribers that have not sent a preload for this long are reclaimed */
 export const READY_SESSION_IDLE_MS = 10 * 60 * 1000;
-/** 同时记着的会话上限;超了先回收最久没动静、又没有订阅者的 */
+/** Cap on simultaneously tracked sessions; when exceeded, reclaim idle ones with no subscribers first */
 export const READY_SESSION_MAX = 64;
-/** 共用 `staged` 里最多挂这么多个键(一个键一小段区间表) */
+/** Maximum keys staged in shared `staged` (each key holds a small interval table) */
 export const READY_STAGED_MAX = 20000;
-/** 会话 id 的长度上限(`/ready` 和 `/preload` 共用一个校验) */
+/** Maximum session id length (validation shared between `/ready` and `/preload`) */
 export const READY_SESSION_ID_MAX = 200;
 
-/** 页面带来的 session 参数:缺省 / 空 = 缺省会话;超长或不是字符串 = null(调用方回 400) */
+/** Session parameter from the page: omitted / empty = default session; too long or non-string = null (caller returns 400) */
 export function readySessionOf(value) {
   if (value === undefined || value === null) return DEFAULT_READY_SESSION;
   if (typeof value !== 'string' || value.length > READY_SESSION_ID_MAX) return null;
@@ -243,16 +260,19 @@ export function readySessionOf(value) {
 }
 
 /**
- * 按会话分片的就绪索引(Item 4,`docs/reports/REPORT-item4-session-isolation.md`)。
+ * Ready index sharded by session (Item 4, `docs/reports/REPORT-item4-session-isolation.md`).
  *
- * 每个页面会话(镜像的 `session`)一份 `createReadyIndex`,`/api/frames/ready?session=` 只订阅自己那份。
- * 会话的「当前版本」(`entryKey`)**只由页面发起的 `preload` 设定**(`adopt`),别的渲染
- * (Agent 查询、导出、交互帧)不认领、不 reset 任何会话的索引。
+ * One `createReadyIndex` per page session (`session` in the mirror); `/api/frames/ready?session=`
+ * subscribes only to its own instance. A session's "current version" (`entryKey`) is **only set by
+ * page-initiated `preload`** (`adopt`); other renders (Agent queries, exports, interactive frames)
+ * do not claim or reset any session's index.
  *
- * 发布一律带上它属于的 entry(`publish(entryKey, layer)`):只写进当前版本正是这个 entry 的会话,
- * 其余丢弃 —— 旧版本晚到的批次、别的会话 / 后台任务渲的版本都进不来。
+ * All publishes must include the entry they belong to (`publish(entryKey, layer)`): written only to
+ * sessions whose current version is this entry, discarding the rest: late-arriving batches from old
+ * versions and versions rendered by other sessions / background tasks cannot enter.
  *
- * 扫盘(F5)和轨道流挂上去的「键 → 区间」是内容寻址的,所有会话共用一份 `staged`。
+ * "Key → interval" staged from disk scans (F5) and track streams are content-addressed; all sessions
+ * share a single `staged`.
  */
 export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_IDLE_MS, maxSessions = READY_SESSION_MAX, maxStaged = READY_STAGED_MAX } = {}) {
   const staged = new Map();
@@ -275,8 +295,9 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
   }
 
   /**
-   * 回收:没有订阅者、`idleMs` 内没动静的会话删掉;还超上限就按最久没动静的顺序删(同样只删没有订阅者的)。
-   * `keep` 是正在用的那个会话,不删。
+   * Reclamation: delete sessions with no subscribers and no activity within `idleMs`; if still over
+   * the limit, delete in order of least recently active (likewise only deleting those with no
+   * subscribers). `keep` is the session currently in use and will not be deleted.
    */
   function prune(keep) {
     const t = now();
@@ -293,8 +314,9 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
   }
 
   /**
-   * 页面的 preload 刚到:先领一张号。`adopt` 只认最新一张号 —— 两个 preload 在 `await entry()`
-   * 那一段交错完成时,晚发出的那个版本赢,不是晚算完的那个。
+   * Page preload just arrived: acquire a ticket first. `adopt` only recognizes the latest ticket:
+   * when two preloads complete interleaved during `await entry()`, the later-sent version wins, not
+   * the one that finished computing later.
    */
   function request(id) {
     const record = session(id);
@@ -304,8 +326,9 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
   }
 
   /**
-   * 这张号 / 这个 localRev 已经被更新的 preload 取代了吗(取代了就既不认领、也不该再排后台活)。
-   * 会话在领号之后被回收、又重建了(`ticket === 0`)时不算取代 —— 没有更新的请求。
+   * Has this ticket / this localRev been superseded by a newer preload (if superseded, neither claim
+   * nor schedule further background jobs)? If the session was reclaimed after taking a ticket and
+   * then recreated (`ticket === 0`), it is not considered superseded: there was no newer request.
    */
   function stale(id, ticket, localRev) {
     const record = sessions.get(norm(id));
@@ -316,10 +339,12 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
   }
 
   /**
-   * 设定会话的当前版本(**只有页面的 preload 调**)。版本换了就 reset 这个会话的索引(页面清表);
-   * 版本没换只记新的 `localRev`,不清表。回 `true` = 换了版本。
+   * Sets the session's current version (**called only by page preload**). If the version changed,
+   * resets this session's index (page clears the table); if the version did not change, records only
+   * the new `localRev` without clearing the table. Returns `true` = version changed.
    *
-   * 过期的号(`ticket` 不是这个会话最新的那张)或更旧的 `localRev` 一律不认。
+   * Expired tickets (`ticket` is not the latest one for this session) or older `localRev` values are
+   * rejected unconditionally.
    */
   function adopt(id, entryKey, localRev, ticket, { defer = false } = {}) {
     const record = session(id);
@@ -332,13 +357,15 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
       if (Number.isFinite(rev) && record.pendingReset) record.pendingRev = rev;
       return false;
     }
-    // 闸门当场换到新版本:从这一刻起旧版本的发布一律进不来
+    // The gate switches to the new version immediately: from this moment on, old version publishes cannot enter
     record.entryKey = entryKey;
     const target = Number.isFinite(rev) ? rev : record.index.localRev;
     if (defer) {
-      // 新版本的计划还没算出来,这时清表页面只会空等几秒(重卡一路退到占位符)。表先留着
-      // (「沿用旧的预渲染结果」),等这一版第一次往这个会话里写东西(认领 / 发层 / done)时再 reset,
-      // reset 和补回来的层是紧挨着的一串消息
+      // The new version's plan is not computed yet; clearing the table now would leave the page idling for
+      // a few seconds (heavy cards falling back all the way to placeholders). Keep the table for now
+      // ("reuse old prerender output"), resetting only when this version writes to this session for the
+      // first time (claim / send layer / done); the reset and refilled layers are an immediate sequence
+      // of messages
       record.pendingReset = true;
       record.pendingRev = target;
     } else {
@@ -348,7 +375,7 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
     return true;
   }
 
-  /** 挂着的 reset 在这一版第一次写进会话之前补上 */
+  /** The pending reset is applied before this version writes to the session for the first time */
   function flush(record) {
     if (!record.pendingReset) return;
     record.pendingReset = false;
@@ -361,11 +388,14 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
   }
 
   /**
-   * 发一层:只写进当前版本是 `entryKey` 的会话。回写进了几个会话(0 = 丢弃)。
+   * Send one layer: write only into sessions whose current version is `entryKey`. Returns how many
+   * sessions it was written to (0 = discarded).
    *
-   * 不论有没有会话收下,区间都挂进 `staged`:键是内容寻址的(本地档的键自带 entry.key),
-   * 挂着不会串到别的版本 —— 只有 card plan 里同一个键的片段才认领得到。这样会话换回某一版
-   * (撤销、页面刷新成新会话)时 `adopt` + 认领当场就能把这一版已有的层全补回来,不必等后台重跑。
+   * Regardless of whether any session accepted it, intervals are staged into `staged`: keys are
+   * content-addressed (local tier keys carry entry.key), so staging will not leak to other versions:
+   * only clips with the same key in the card plan can claim them. This way, when a session switches
+   * back to a version (undo, page refresh into a new session), `adopt` + claim can immediately
+   * backfill all existing layers for that version on the spot without waiting for background reruns.
    */
   function publish(entryKey, layer) {
     stageByKey(layer);
@@ -374,7 +404,7 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
     return n;
   }
 
-  /** 当前版本是 `entryKey` 的会话都清一次表(版本没换、只是这一版要撤掉某些层时用),localRev 不变 */
+  /** Clear tables for all sessions whose current version is `entryKey` (used when layers are removed in this version without changing version); localRev unchanged */
   function resetOn(entryKey) {
     for (const record of sessionsOn(entryKey)) {
       if (record.pendingReset) { flush(record); continue; }
@@ -387,8 +417,10 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
   }
 
   /**
-   * card plan 到位:把挂着的区间认领进当前版本是 `entryKey` 的会话。已经在这一版上的会话不 reset
-   * (见 `absorb`);刚换过来、reset 还挂着的会话先 reset 再补 —— 页面看到的是紧挨着的一串。
+   * Card plan in place: claim staged intervals into sessions whose current version is `entryKey`.
+   * Sessions already on this version are not reset (see `absorb`); sessions that just switched over
+   * with a pending reset are reset first and then backfilled: the page sees an immediately consecutive
+   * sequence.
    */
   function claim(entryKey, layers) {
     let n = 0;
@@ -396,7 +428,7 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
     return n;
   }
 
-  /** 挂着的键按最近使用排序,超过 `maxStaged` 丢最久没动的(Map 的插入顺序就是 LRU 顺序) */
+  /** Staged keys sorted by recency; when exceeding `maxStaged`, drop the least recently used (Map insertion order is LRU order) */
   function stageByKey({ kind, key, ranges }) {
     if (!READY_KINDS.includes(kind) || !key) return;
     const id = `${kind}:${key}`;
@@ -407,8 +439,10 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
   }
 
   /**
-   * 摘掉挂着的键(帧库淘汰删了它的目录之后,`frame-library-storage.mjs`):`key` 摘一个,`prefix` 摘这一族里
-   * 键以它开头的全部(本地档的键是 `<entry.key>/<共享键>`)。已经发进会话的层不动 —— 被删的只会是没开着的版本。
+   * Remove staged keys (after frame store eviction deletes its directory, `frame-library-storage.mjs`):
+   * `key` removes one; `prefix` removes all in this family whose keys start with it (local tier keys
+   * are `<entry.key>/<shared key>`). Layers already sent into sessions are untouched: only unopened
+   * versions will be deleted.
    */
   function unstage({ kind, key, prefix } = {}) {
     if (!READY_KINDS.includes(kind)) return 0;
@@ -418,7 +452,7 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
     return n;
   }
 
-  /** `/api/frames/ready?session=` 的订阅。退订后这个会话按 `idleMs` 回收 */
+  /** Subscription for `/api/frames/ready?session=`. After unsubscribing, this session is reclaimed according to `idleMs`. */
   function subscribe(id, send) {
     const record = session(id);
     record.seenAt = now();
@@ -441,7 +475,7 @@ export function createReadyHub({ now = () => Date.now(), idleMs = READY_SESSION_
     drop: id => sessions.delete(norm(id)),
     sessionCount: () => sessions.size,
     stagedKeys: () => [...staged.values()].map(item => ({ ...item })),
-    /** 诊断读口 */
+    /** Diagnostic read endpoint */
     describe: () => [...sessions.values()].map(r => ({ session: r.id, entryKey: r.entryKey ?? null, localRev: r.localRev ?? null, pendingReset: r.pendingReset,
       subscribers: r.index.subscriberCount(), layers: r.index.list().length, done: r.index.done, seenAt: r.seenAt })),
   };

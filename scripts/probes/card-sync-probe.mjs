@@ -1,34 +1,50 @@
 /**
- * 卡片源码同步的端到端探针(C6.6 设计稿 `docs/plan/c66-design.md` 第 5 节、验收 T8 前半):
- * 两个编辑器实例加入同一个共享项目(本机文档与素材服务 `lib/probe-services.mjs`,代替线上),A 改卡,B 看到新代码生效。
+ * End-to-end probe for card source sync (Section 5 of C6.6 design doc `docs/plan/c66-design.md`,
+ * first half of acceptance check T8): two editor instances join the same shared project (local
+ * document and asset services `lib/probe-services.mjs`, replacing cloud), A modifies a card, and B
+ * sees the new code take effect.
  *
- * 用法(在仓库根或 worktree 根):
- *   node scripts/probes/card-sync-probe.mjs [--doc-port 8790] [--asset-port 8791] [--a-port 5580] [--b-port 5583] [--cut-b <代理端口>] [--out <截图目录>] [--keep-temp]
+ * Usage (at repository root or worktree root):
+ *   node scripts/probes/card-sync-probe.mjs [--doc-port 8790] [--asset-port 8791] [--a-port 5580] [--b-port 5583] [--cut-b <proxy-port>] [--out <screenshot-dir>] [--keep-temp]
  *
- * --cut-b <端口>(M8 计划 D9,卡片源码同步接会话层):B 经 `render-queue-proxy.mjs --cut-once --stdin-control`(听在这个端口)
- *   连托管组合,B 的页面连接与卡片同步连接都走它;A 改卡之前切一次 B 此刻开着的全部连接,A 紧接着改卡。另核对:
- *   B 的卡片同步没有建新会话(opens 不变)、接续过(resumes 增加)、这一版恰好装一次;切前切后的计数写进结果的 `cut`。
+ * --cut-b <port> (M8 plan D9, card source sync connects to session layer): B connects to the hosted
+ *   suite via `render-queue-proxy.mjs --cut-once --stdin-control` (listening on this port); both
+ *   B's page connection and card sync connection go through it; before A modifies the card, sever
+ *   all currently open connections of B once, and A immediately modifies the card. Also verify:
+ *   B's card sync did not create a new session (opens unchanged), resumed (resumes increased), and
+ *   this version was installed exactly once; counts before and after the cut are written to `cut` in
+ *   the result.
  *
- * 做什么:
- *   1. 在临时目录起托管组合(文档服务 --doc-port、素材服务 --asset-port,只绑 127.0.0.1);
- *   2. 在本仓库根起两个编辑器(vite,端口各占 +1、+2 当舞台端口),各有自己的卡片改动层(PROMPTCUT_CARD_OVERRIDES,临时目录)
- *      和设备号;两者共用仓库里的底版,所以「B 装上新版」只能是写进 B 的改动层,仓库里的原卡不动;
- *   3. 写一张探针用的用户卡(底版,画面上写着记号 v1),A 的项目里放一个它的片段;经托管端建一个共享项目,
- *      A 以创建者、B 以成员进入(syncManager.enterShared,和「打开共享项目」对话框同一条路);
- *   4. A 经 `/api/cards/edit`(edit_card 的服务端)把记号改成 v2;
- *   5. 计时并核对 B 这一侧:
- *      - installMs:B 的 `/api/cards/source` 读到 v2(B 的改动层里装上了);
- *      - hmrMs:B 页面注册表里这张卡的源码是 v2(热更新落地);
- *      - remeasureMs:B 页面这个片段的身份键(cardCostKey,带源码版本)变了,且探针为这张卡重测(进度里出现它,或成本表里出现新键的记录);
- *      - stageMs:B 的舞台(iframe)里画出了 v2 记号(尽力而为,拿不到记 null);
- *      - 托管端内容库里这张卡的 cardRev 与正文;底版文件仍是 v1,A、B 的改动层都是 v2;
- *   6. 收尾:只结束自己起的进程树(两个编辑器、托管组合),删掉探针卡的底版、它在 .pc-work/card-history 的旧版、
- *      还原 src/cards/user/_scopes.json;临时目录缺省删掉(--keep-temp 留着)。
+ * What it does:
+ *   1. Start the hosted suite in a temp directory (document service --doc-port, asset service
+ *      --asset-port, binding only to 127.0.0.1);
+ *   2. Start two editors at this repo root (vite, ports taking +1, +2 as stage ports), each with its
+ *      own card overlay layer (PROMPTCUT_CARD_OVERRIDES, temp directory) and device id; both share
+ *      the base version in the repo, so "B installs new version" can only mean writing into B's
+ *      overlay layer, leaving original card in repo untouched;
+ *   3. Write a probe user card (base version, visual displays marker v1), place a clip of it in
+ *      A's project; create a shared project via hosted side, A enters as creator and B enters as
+ *      member (syncManager.enterShared, same path as "Open shared project" dialog);
+ *   4. A modifies marker to v2 via `/api/cards/edit` (server side of edit_card);
+ *   5. Measure time and verify on B's side:
+ *      - installMs: B's `/api/cards/source` reads v2 (installed in B's overlay layer);
+ *      - hmrMs: source for this card in B's page registry is v2 (hot update landed);
+ *      - remeasureMs: identity key (cardCostKey, with source version) of this clip in B's page
+ *        changed, and probe remeasures this card (appears in progress, or new key record appears in
+ *        cost table);
+ *      - stageMs: B's stage (iframe) rendered v2 marker (best effort, recorded as null if
+ *        unavailable);
+ *      - cardRev and body of this card in hosted side content store; base version file remains v1,
+ *        while overlay layers of both A and B are v2;
+ *   6. Cleanup: terminate only its own spawned process tree (two editors, hosted suite); delete
+ *      probe card base version and its old version in .pc-work/card-history; restore
+ *      src/cards/user/_scopes.json; temp directory deleted by default (kept with --keep-temp).
  *
- * 输出:过程写 stderr;stdout 只有最后一行 JSON:
- *   { ok, installMs, hmrMs, remeasureMs, stageMs, cardRev, ..., fails: [] }。ok 要求 installMs ≤ 5000 且各项核对通过。
+ * Output: progress written to stderr; stdout has only the last JSON line:
+ *   { ok, installMs, hmrMs, remeasureMs, stageMs, cardRev, ..., fails: [] }.
+ *   ok requires installMs ≤ 5000 and all verification checks pass.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
 import { createTimings } from './probe-timings.mjs';
@@ -64,7 +80,7 @@ async function waitFor(fn, ms, what) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时(${ms} ms)`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what} (${ms} ms)`);
     await sleep(100);
   }
 }
@@ -81,10 +97,10 @@ function C({ params }: CardProps<Params>) {
   return <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 72, color: "#fff", background: "#224" }}>{"${MARK(v)}"} {params.text}</div>;
 }
 export const csProbe: CardDef<Params> = {
-  id: "${CARD_ID}", name: "同步探针", description: "card-sync-probe", source: "user",
+  id: "${CARD_ID}", name: "Sync probe", description: "card-sync-probe", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };
 `;
@@ -94,12 +110,19 @@ const SCOPES = path.join(ROOT, 'src', 'cards', 'user', '_scopes.json');
 const scopesBefore = fs.existsSync(SCOPES) ? fs.readFileSync(SCOPES) : null;
 const procs = [];
 const fails = [];
-/** 耗时只记录(docs/semantics/guide_files/verification.md「耗时只记录,不当闸门」):卡片源码到达另一台、重新测量各用了多久只写进 TIMINGS 行,不决定过不过 */
+/**
+ * Elapsed time is recorded only (docs/semantics/guide_files/verification.md "Elapsed time is
+ * recorded only, not used as a gate"): how long card source took to reach the other machine and
+ * remeasurement took are only written to the TIMINGS line, not deciding pass/fail.
+ */
 const timingLog = createTimings('card-sync-probe');
 const navigations = [];
 const consoleLog = [];
 const bHmrMessages = [];
-/** B 页面里舞台 iframe 的导航(重载)记下来:集成 3b 之后改卡不该重载舞台 */
+/**
+ * Record navigations (reloads) of stage iframe in B's page: after Integration 3b, modifying
+ * a card should not reload the stage.
+ */
 const stageNavs = [];
 const res = { runId: RUN, cardId: CARD_ID, docPort: DOC_PORT, ports: { a: A_PORT, b: B_PORT } };
 
@@ -128,7 +151,8 @@ async function stopAll() {
     const c = p.child;
     if (!c.pid || c.exitCode !== null) continue;
     const exited = new Promise((r) => c.once('exit', r));
-    // 编辑器还拉着预渲染进程和 Chrome:连进程树一起结束(只结束自己起的这几棵)
+    // Editor also holds prerender process and Chrome: terminate together with process tree
+    // (only the trees started by this probe)
     if (process.platform === 'win32') spawn('taskkill', ['/PID', String(c.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
     else c.kill('SIGKILL');
     await Promise.race([exited, sleep(10_000)]);
@@ -151,9 +175,9 @@ async function startEditor(tag, port) {
   });
   const origin = `http://127.0.0.1:${port}`;
   await waitFor(async () => {
-    if (p.child.exitCode !== null) throw new Error(`编辑器 ${tag} 退出了:${p.log.join('').slice(-600)}`);
+    if (p.child.exitCode !== null) throw new Error(`Editor ${tag} exited: ${p.log.join('').slice(-600)}`);
     return fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  }, 180_000, `编辑器 ${tag} 起来`);
+  }, 180_000, `Editor ${tag} started`);
   return { tag, origin, overrides, proc: p };
 }
 
@@ -166,7 +190,8 @@ async function openEditor(browser, ed) {
       window.__pcCardSyncEvents = [];
       window.addEventListener('pc-cards-synced', () => window.__pcCardSyncEvents.push(Date.now()));
     });
-    // CDP 观察 B 页面收到的原始 WebSocket 帧，不依赖业务模块或 import.meta.hot 的监听状态。
+    // CDP observes raw WebSocket frames received by B's page, independent of business modules or
+    // listener state of import.meta.hot.
     const cdp = await page.createCDPSession();
     await cdp.send('Network.enable');
     cdp.on('Network.webSocketFrameReceived', ({ response }) => {
@@ -174,28 +199,29 @@ async function openEditor(browser, ed) {
         const msg = JSON.parse(response.payloadData);
         if (msg.type !== 'custom' || msg.event !== 'pc:card-sync') return;
         bHmrMessages.push({ at: Date.now(), type: msg.data?.type ?? null, key: msg.data?.key ?? null, rev: msg.data?.rev ?? null });
-      } catch { /* 其它 WebSocket 帧不是 JSON */ }
+      } catch { /* Other WebSocket frames are not JSON */ }
     });
   }
   page.on('pageerror', (e) => say('pageerror', { tag: ed.tag, message: String(e?.message ?? e).slice(0, 300) }));
   page.on('dialog', (d) => void d.dismiss());
   page.on('console', (m) => { consoleLog.push({ tag: ed.tag, at: Date.now(), type: m.type(), text: m.text().slice(0, 400) }); });
-  // 主框架整页导航(刷新)记下来:卡换代码时页面应当热更新,不该整页刷新(刷新会离开共享项目)
+  // Record main frame full-page navigation (reload): page should hot-update when card code changes,
+  // not reload full page (reloading leaves shared project)
   page.on('framenavigated', (f) => {
     if (f === page.mainFrame()) navigations.push({ tag: ed.tag, at: Date.now(), url: f.url() });
     else if (ed.tag === 'b' && /[?&]stage=/.test(f.url())) stageNavs.push({ at: Date.now(), url: f.url() });
   });
   await page.goto(`${ed.origin}/?editor`, { waitUntil: 'domcontentloaded' });
-  await waitFor(() => P(page, () => !!window.__pcSyncTest && window.__pcSyncTest.view().status === 'online'), 120_000, `${ed.tag} 页面同步接上`);
-  // 打开项目时的卡片测量遮罩:等它退下
-  await waitFor(() => P(page, () => !document.querySelector('[data-pc="probe-gate"]')), 300_000, `${ed.tag} 测量遮罩退下`).catch(() => null);
-  await P(page, () => { for (const b of document.querySelectorAll('.ais-dialog .ais-btn')) if (b.textContent?.trim() === '关闭') b.click(); });
+  await waitFor(() => P(page, () => !!window.__pcSyncTest && window.__pcSyncTest.view().status === 'online'), 120_000, `${ed.tag} page sync connected`);
+  // Card measurement overlay when opening project: wait for it to dismiss
+  await waitFor(() => P(page, () => !document.querySelector('[data-pc="probe-gate"]')), 300_000, `${ed.tag} measurement overlay dismissed`).catch(() => null);
+  await P(page, () => { for (const b of document.querySelectorAll('.ais-dialog .ais-btn')) if (b.textContent?.trim() === 'Close') b.click(); });
   return page;
 }
 
 const getJson = (url) => fetch(url, { signal: AbortSignal.timeout(5000) }).then((r) => r.json());
 
-/** 托管端内容库里这张卡:凭创建者身份另开一条连接 content.get */
+/** This card in hosted side content store: open a separate connection for content.get using creator identity */
 async function hostedCard(base, projectId, cred) {
   const protocols = await buildAuthProtocols({
     base, projectId, username: cred.username, as: cred.as, password: cred.password, role: 'page',
@@ -203,7 +229,7 @@ async function hostedCard(base, projectId, cred) {
   });
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsBaseOf(base), protocols);
-    const timer = setTimeout(() => { reject(new Error('托管端 content.get 超时')); ws.close(); }, 10_000);
+    const timer = setTimeout(() => { reject(new Error('Hosted side content.get timed out')); ws.close(); }, 10_000);
     ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'content.get', kind: 'card-source', key: CARD_REL, reqId: 'g1' })));
     ws.addEventListener('message', (e) => {
       const m = JSON.parse(e.data);
@@ -212,14 +238,17 @@ async function hostedCard(base, projectId, cred) {
       resolve(m);
       ws.close();
     });
-    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('连不上托管端')); });
+    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Cannot connect to the hosted side')); });
   });
 }
 
 /**
- * 页面里:这张卡的源码(注册表)、片段的身份键、测量遮罩在不在。
- * 注册表(kernel/registry.ts)不在卡片的热更新链上,热更新后仍是同一个实例、内容是新的;身份键用 costIdentity 按注册表里的
- * 源码现算(清掉它的记忆化)。重测看遮罩或成本表里的新记录(集成 3b 之后探针模块也不在热更新链上了,进度可以直接读)。
+ * In page: whether this card's source (registry), clip identity key, and measurement overlay exist.
+ * The registry (kernel/registry.ts) is not on the card hot update chain; after hot update it
+ * remains the same instance with updated content; identity key is computed on the fly via
+ * costIdentity from source in registry (clearing its memoization). Remeasurement is checked via
+ * overlay or new records in cost table (after Integration 3b probe module is also off the hot
+ * update chain, progress can be read directly).
  */
 const pageCardState = (page, cardId, clipId) => P(page, async (cardId, clipId) => {
   const R = await import('/src/kernel/registry.ts');
@@ -234,20 +263,20 @@ const pageCardState = (page, cardId, clipId) => P(page, async (cardId, clipId) =
   return { src, key, gate };
 }, cardId, clipId);
 
-/** 舞台 iframe 里有没有画出这段文字 */
+/** Whether stage iframe rendered this text */
 async function stageHas(page, text) {
   for (const f of page.frames()) {
     if (f === page.mainFrame()) continue;
     try {
       if (await f.evaluate((t) => document.body?.innerText?.includes(t) ?? false, text)) return f.url();
-    } catch { /* 跨源或正在导航的 frame 取不到就跳过 */ }
+    } catch { /* Skip if cross-origin or navigating frame is inaccessible */ }
   }
   return null;
 }
 
 let browser = null;
 try {
-  // ---------- 1. 托管组合
+  // ---------- 1. Hosted suite
   const hostedDir = path.join(TMP, 'hosted');
   fs.mkdirSync(hostedDir, { recursive: true });
   const hosted = start('hosted', [path.join(ROOT, 'scripts', 'probes', 'lib', 'probe-services.mjs')], {
@@ -258,22 +287,22 @@ try {
   });
   const hostedUrl = `http://127.0.0.1:${DOC_PORT}`;
   await waitFor(async () => {
-    if (hosted.child.exitCode !== null) throw new Error(`托管组合退出了:${hosted.log.join('').slice(-600)}`);
+    if (hosted.child.exitCode !== null) throw new Error(`Hosted bundle exited: ${hosted.log.join('').slice(-600)}`);
     return fetch(`${hostedUrl}/healthz`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false);
-  }, 30_000, '托管组合起来');
+  }, 30_000, 'Hosted bundle started');
   say('hosted.ready', { hostedUrl });
-  // --cut-b:B 与托管组合之间插一层 TCP 代理,只切一次(按标准输入的 cut)
+  // --cut-b: insert a TCP proxy layer between B and hosted suite, cut once (on stdin cut)
   let cutProxy = null;
   if (CUT_B_PORT !== null) {
     cutProxy = start('cut-proxy', [path.join(ROOT, 'scripts', 'probes', 'render-queue-proxy.mjs'), '--listen', `127.0.0.1:${CUT_B_PORT}`, '--target', `127.0.0.1:${DOC_PORT}`, '--cut-once', '--stdin-control'], {}, { stdin: 'pipe' });
     await waitFor(async () => {
-      if (cutProxy.child.exitCode !== null) throw new Error(`代理退出了:${cutProxy.log.join('').slice(-400)}`);
+      if (cutProxy.child.exitCode !== null) throw new Error(`Proxy exited: ${cutProxy.log.join('').slice(-400)}`);
       return fetch(`http://127.0.0.1:${CUT_B_PORT}/healthz`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false);
-    }, 15_000, '代理起来');
+    }, 15_000, 'Proxy started');
     say('cut-proxy.ready', { port: CUT_B_PORT });
   }
 
-  // ---------- 2. 探针卡(底版)与两个编辑器
+  // ---------- 2. Probe card (base version) and two editors
   fs.writeFileSync(CARD_ABS, cardSource('v1'));
   const A = await startEditor('a', A_PORT);
   browser = await puppeteer.launch({
@@ -282,20 +311,21 @@ try {
     args: [...PROBE_CHROME_ARGS, '--window-position=-32000,-32000', '--no-first-run', '--hide-scrollbars', '--force-device-scale-factor=1'],
   });
   const pageA = await openEditor(browser, A);
-  // A 先起、页面打开之后再起 B:两个实例共用仓库根,依赖预构建错开
+  // Start A first, then start B after page opens: two instances share repo root,
+  // stagger dependency pre-bundling
   const B = await startEditor('b', B_PORT);
   const pageB = await openEditor(browser, B);
   say('editors.ready', { a: A.origin, b: B.origin });
 
-  // ---------- 3. A 的项目里放一个探针卡的片段,建共享项目,A、B 进入
-  await waitFor(() => P(pageA, async (id) => (await import('/src/kernel/registry.ts')).getCard(id) != null, CARD_ID), 30_000, 'A 页面认出探针卡');
+  // ---------- 3. Place a probe card clip in A's project, create shared project, A and B enter
+  await waitFor(() => P(pageA, async (id) => (await import('/src/kernel/registry.ts')).getCard(id) != null, CARD_ID), 30_000, 'Page A recognizes the probe card');
   const clipId = await P(pageA, async (id) => {
     const S = await import('/src/store/project.ts');
     const c = S.actions.addCardClip(id, 0, { duration: 5 });
     S.actions.seek(1);
     return c?.id ?? null;
   }, CARD_ID);
-  if (!clipId) throw new Error('A 没放上探针卡的片段');
+  if (!clipId) throw new Error('No clip with the probe card was placed on A');
   res.clipId = clipId;
 
   const name = `card-sync-${RUN}`;
@@ -313,27 +343,31 @@ try {
   }, cand, cred, initialize);
   // A has just created this fixture room; B and later entries must never initialize it.
   const ea = await enter(pageA, { as: 'creator', username: 'alice', password: creatorPw }, candidate, true);
-  if (!ea?.ok) throw new Error(`A 进不去共享项目:${JSON.stringify(ea)}`);
-  // A 把项目带进共享项目时,项目用到的探针卡(用户卡)传上内容库
+  if (!ea?.ok) throw new Error(`A cannot join the shared project: ${JSON.stringify(ea)}`);
+  // When A brings project into shared project, probe card (user card) used by project
+  // is uploaded to content store
   const aPushed = await waitFor(async () => {
     const s = await getJson(`${A.origin}/api/cards/sync/status`);
     return s.projectId === shared.projectId && s.connected && s.records?.[CARD_REL]?.rev >= 1 ? s : null;
-  }, 20_000, 'A 把探针卡传上内容库');
+  }, 20_000, 'A uploads the probe card to the content store');
   say('a.pushed', { rev: aPushed.records[CARD_REL].rev, spaceId: aPushed.spaceId });
 
-  // --cut-b:B 经代理进入(页面连接与卡片同步连接都走代理)
+  // --cut-b: B enters via proxy (both page connection and card sync connection go through proxy)
   const eb = await enter(pageB, { as: 'member', username: 'bob', password: projectPw }, CUT_B_PORT !== null ? { ...candidate, base: `http://127.0.0.1:${CUT_B_PORT}` } : candidate);
-  if (!eb?.ok) throw new Error(`B 进不去共享项目:${JSON.stringify(eb)}`);
-  await waitFor(() => P(pageB, async (clipId) => (await import('/src/store/project.ts')).getState().project.tracks.some((t) => t.clips.some((c) => c.id === clipId)), clipId), 20_000, 'B 看到探针卡的片段');
+  if (!eb?.ok) throw new Error(`B cannot join the shared project: ${JSON.stringify(eb)}`);
+  await waitFor(() => P(pageB, async (clipId) => (await import('/src/store/project.ts')).getState().project.tracks.some((t) => t.clips.some((c) => c.id === clipId)), clipId), 20_000, 'B sees the clip with the probe card');
   await P(pageB, async () => (await import('/src/store/project.ts')).actions.seek(1));
   const bBound = await waitFor(async () => {
     const s = await getJson(`${B.origin}/api/cards/sync/status`);
     return s.projectId === shared.projectId && s.connected && s.records?.[CARD_REL] ? s : null;
-  }, 20_000, 'B 对账到探针卡');
+  }, 20_000, 'B reconciles the probe card');
   say('b.bound', { record: bBound.records[CARD_REL] });
-  // 进入共享项目后的第一轮测量(挡界面的那一轮)先测完,再改卡。
-  // 只看遮罩会抢跑:遮罩可能还没出来(集成时见过一次,改卡后才冒出这一轮的遮罩、测了 18 s)。
-  // 集成 3b 之后探针模块不在卡片的热更新链上,可以直接读它的进度:连续 1.5 s 没在测、也没有遮罩才算测完
+  // Finish the first round of measurement after entering the shared project (the round blocking the UI)
+  // before editing cards.
+  // Only checking the overlay can jump the gun: the overlay may not have appeared yet (seen once
+  // during integration, where this round's overlay popped up only after editing the card and measured for 18 s).
+  // After Integration 3b, the probe module is not on the card's hot reload chain, so its progress can
+  // be read directly: considered finished only when not measuring and having no overlay for 1.5 s continuously.
   let idleSince = null;
   await waitFor(async () => {
     const idle = await P(pageB, async () => {
@@ -343,7 +377,7 @@ try {
     if (!idle) { idleSince = null; return false; }
     idleSince ??= Date.now();
     return Date.now() - idleSince >= 1500;
-  }, 300_000, 'B 第一轮测量测完').catch(() => null);
+  }, 300_000, 'B finishes its first round of measurement').catch(() => null);
   const before = await pageCardState(pageB, CARD_ID, clipId);
   res.keyBefore = before.key;
   if (!before.src?.includes(MARK('v1'))) fails.push('b-page-not-v1-before');
@@ -351,9 +385,11 @@ try {
   res.stageV1 = !!stageBefore;
   await pageB.screenshot({ path: path.join(OUT, `${RUN}-b-1-before.png`) });
 
-  // ---------- 集成 3b:改卡前记下编辑器的一批 DOM 节点(重挂的话全换新)、关掉首启的 AI 助手对话框,
-  // 改卡后看它们还在不在、对话框有没有重新弹出;另起一路采样可见舞台上的 v1 / v2,量预览中断多久
-  await P(pageB, () => { for (const b of document.querySelectorAll('.ais-dialog .ais-btn')) if (b.textContent?.trim() === '关闭') b.click(); });
+  // ---------- Integration 3b: before editing the card, record a batch of editor DOM nodes (if remounted,
+  // they are all replaced), close the AI assistant dialog from first launch,
+  // check whether they are still present after editing the card and whether the dialog popped up again;
+  // start another lane to sample v1 / v2 on the visible stage, measuring how long preview was interrupted
+  await P(pageB, () => { for (const b of document.querySelectorAll('.ais-dialog .ais-btn')) if (b.textContent?.trim() === 'Close') b.click(); });
   await sleep(300);
   res.dialogBeforeEdit = await P(pageB, () => !!document.querySelector('.ais-dialog'));
   await P(pageB, () => { window.__pcProbeNodes = [...document.querySelectorAll('#root *')].filter((_, i) => i % 40 === 0); });
@@ -368,7 +404,7 @@ try {
     };
     requestAnimationFrame(tick);
   });
-  /** 可见舞台(不透明的那个 iframe)此刻画的是 v1、v2,还是都没有(断画 / 重载中) */
+  /** Whether the visible stage (the opaque iframe) currently draws v1, v2, or neither (render interruption / reloading) */
   const visibleStageMark = async () => {
     const port = await P(pageB, () => [...document.querySelectorAll('iframe')]
       .filter((x) => /[?&]stage=/.test(x.src) && getComputedStyle(x).visibility !== 'hidden' && Number(getComputedStyle(x).opacity) > 0.5)
@@ -389,7 +425,8 @@ try {
     }
   })();
 
-  // ---------- 4. A 改卡(edit_card 的服务端);--cut-b 时先切一次 B 的传输,A 紧接着改卡(B 这时正在接续)
+  // ---------- 4. A edits the card (server side of edit_card); when --cut-b, disconnect B's transport
+  // once first, then A immediately edits the card (B is resuming at this point)
   const pick = (s) => ({ connected: s.connected, opens: s.opens, resumes: s.resumes, link: s.link ?? null, installed: (s.notices ?? []).filter((n) => n.type === 'installed' && n.key === CARD_REL).map((n) => n.rev) });
   if (cutProxy) {
     res.cut = { before: pick(await getJson(`${B.origin}/api/cards/sync/status`)) };
@@ -402,21 +439,21 @@ try {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: CARD_ID, find: MARK('v1'), replace: MARK('v2') }),
   }).then((r) => r.json());
-  if (!edit.ok) throw new Error(`A 改卡失败:${edit.error}`);
-  res.aEditBackup = edit.backup ?? null; // B2:用户卡也备份
+  if (!edit.ok) throw new Error(`A failed to edit the card: ${edit.error}`);
+  res.aEditBackup = edit.backup ?? null; // B2: Also back up user cards
   if (!edit.backup) fails.push('a-edit-no-backup(B2)');
   say('a.edited', { backup: edit.backup });
 
-  // ---------- 5. B 这一侧
+  // ---------- 5. B's side
   const installed = await waitFor(async () => {
     const s = await getJson(`${B.origin}/api/cards/source?id=${CARD_ID}`);
     return s.ok && s.source.includes(MARK('v2')) ? Date.now() : null;
-  }, 15_000, 'B 装上新版').catch(() => null);
+  }, 15_000, 'B installs the new version').catch(() => null);
   res.installMs = installed ? installed - t0 : null;
   const hmr = await waitFor(async () => {
     const s = await pageCardState(pageB, CARD_ID, clipId);
     return s.src?.includes(MARK('v2')) ? Date.now() : null;
-  }, 15_000, 'B 页面热更新').catch(() => null);
+  }, 15_000, 'Page B hot update').catch(() => null);
   res.hmrMs = hmr ? hmr - t0 : null;
   if (!hmr && process.env.PROBE_DEBUG) {
     const d = await P(pageB, async (cardId, v1, v2) => {
@@ -435,7 +472,8 @@ try {
     }, CARD_ID, MARK('v1'), MARK('v2')).catch((e) => ({ evalError: String(e?.message ?? e) }));
     say('debug.registry', d);
   }
-  // 重测:身份键(带源码版本)变了,且按现有规则重排了一轮——测量遮罩出现过,或成本表里有了新键的记录(测完)
+  // Remeasure: identity key (with source version) changed, and a round was rescheduled under current
+  // rules: measurement overlay appeared, or cost table has a record with the new key (measurement completed)
   let remeasure = null;
   let recordedAt = null;
   let keyAfter = null;
@@ -484,12 +522,13 @@ try {
     })));
     res.stageV1After = !!(await stageHas(pageB, MARK('v1')));
   }
-  const stageAt = await waitFor(async () => ((await stageHas(pageB, MARK('v2'))) ? Date.now() : null), 15_000, 'B 舞台画出 v2').catch(() => null);
+  const stageAt = await waitFor(async () => ((await stageHas(pageB, MARK('v2'))) ? Date.now() : null), 15_000, 'B stage renders v2').catch(() => null);
   res.stageMs = stageAt ? stageAt - t0 : null;
   sampling = false;
   await sampler;
   {
-    // 可见舞台:最后一次画 v1、第一次画 v2;之间(以及改卡之后任何时候)拿不到画面或两者都没有的时长
+    // Visible stage: last time v1 was drawn, first time v2 was drawn; duration between them (and at any
+    // time after editing the card) when no frame was obtained or neither was present
     const after = stageSamples.filter((s) => s.at >= t0);
     const firstV2 = after.find((s) => s.m === 'v2')?.at ?? null;
     const lastV1 = [...after].reverse().find((s) => s.m === 'v1' && (firstV2 === null || s.at < firstV2))?.at ?? null;
@@ -518,7 +557,7 @@ try {
   res.bKindAfter = await P(pageB, () => window.__pcSyncTest?.view().kind ?? null).catch(() => null);
   res.shots = [`${RUN}-b-1-before.png`, `${RUN}-b-2-after.png`].map((f) => path.join(OUT, f));
 
-  // 服务端与文件核对
+  // Verify server against files
   const bStatus = await getJson(`${B.origin}/api/cards/sync/status`);
   const aStatus = await getJson(`${A.origin}/api/cards/sync/status`);
   res.bRecord = bStatus.records?.[CARD_REL] ?? null;
@@ -532,9 +571,10 @@ try {
   res.aOverrideV2 = !!overOf(A)?.includes(MARK('v2'));
   res.bOverrideV2 = !!overOf(B)?.includes(MARK('v2'));
 
-  // 原来 installMs、remeasureMs 各有 ≤ 5 秒的通过条件;到没到、测没测仍然判,用时只记录
-  timingLog.record('B 装上 A 改的卡片源码', res.installMs, { formerLimit: '≤ 5 秒' });
-  timingLog.record('B 装上后重新测量', res.remeasureMs, { formerLimit: '≤ 5 秒' });
+  // Originally installMs and remeasureMs each had a pass condition of ≤ 5 seconds; whether reached and
+  // whether measured are still evaluated, elapsed time is only recorded
+  timingLog.record('B installs the card source A edited', res.installMs, { formerLimit: '≤ 5 seconds' });
+  timingLog.record('B re-measures after installing', res.remeasureMs, { formerLimit: '≤ 5 seconds' });
   if (res.installMs === null) fails.push('installMs=null');
   if (res.hmrMs === null) fails.push('b-page-no-hmr');
   if (res.remeasureMs === null) fails.push('b-no-remeasure');
@@ -566,19 +606,19 @@ try {
   say('error', { message: String(err?.stack ?? err).slice(0, 1200) });
   for (const p of procs) if (p.child.exitCode !== null) say('proc.exited', { name: p.name, code: p.child.exitCode, tail: p.log.join('').slice(-800) });
 } finally {
-  try { await browser?.close(); } catch { /* 已经关了 */ }
+  try { await browser?.close(); } catch { /* Already closed */ }
   await stopAll();
-  // 探针卡的底版、card-history 里的旧版、归属表
-  try { fs.rmSync(CARD_ABS, { force: true }); } catch { /* 没有就算了 */ }
+  // Base template of the probe card, old version in card-history, ownership table
+  try { fs.rmSync(CARD_ABS, { force: true }); } catch { /* Ignore if absent */ }
   try {
     const hist = path.join(ROOT, '.pc-work', 'card-history');
     for (const f of fs.existsSync(hist) ? fs.readdirSync(hist) : []) if (f.startsWith(`${CARD_ID}.`)) fs.rmSync(path.join(hist, f), { force: true });
-  } catch { /* 清不掉不影响结论 */ }
+  } catch { /* Failure to clean up does not affect the conclusion */ }
   try {
     if (scopesBefore === null) fs.rmSync(SCOPES, { force: true });
     else fs.writeFileSync(SCOPES, scopesBefore);
-  } catch { /* 同上 */ }
-  if (!argv.includes('--keep-temp')) { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* Windows 上偶有句柄没放 */ } }
+  } catch { /* Same as above */ }
+  if (!argv.includes('--keep-temp')) { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* Handles are occasionally not released on Windows */ } }
   else res.temp = TMP;
   res.fails = fails;
   res.ok = fails.length === 0;

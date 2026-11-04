@@ -1,19 +1,30 @@
 /**
- * 页面这一侧的两档素材(`docs/plan/c66-design.md` 第 4 节;任务书 `docs/plan/cloud-task.md` A1「换档判据」):
+ * The two media tiers on the page side (`docs/plan/c66-design.md` section 4; task brief
+ * `docs/plan/cloud-task.md` A1, "tier-switch criterion"):
  *
- * - **轮询**:每 2 秒向**当前连接的素材服务**问 `GET media/<hash>/chunks`,把报 `complete` 的哈希集合交给
- *   换档判据(`src/render/mediaTier.ts` 的 `chooseTier`):舞台经 `setLocalHashes` 下发、主文档的声音层直接读。
- *   只问还没到顶档的那一档:素材原尺寸到齐了这份素材就不再问;哈希不可变,问到齐的不会再变回去。
- *   连本地素材服务时问的是本机 `/api/asset`;进了共享项目问的是那个项目的远程素材服务(带只读素材票据)——
- *   本机缓存落没落盘不作判据(`docs/semantics/mechanism/asset-service.md`「同步状态只问素材服务」)。
- * - **远程素材服务**:进入共享项目时由 `syncManager` 设(`connectSharedAssets`),同时告诉本机编辑器进程
- *   (`POST /api/media/remote`),读路由才会按需拉取、预取队列才会动。票据按时续签后再推一次。
- * - **上传目标**:进入共享项目时把远程素材服务基址和一张 `rw` 素材票据交给编辑器进程的上传队列
- *   (`POST /api/media/upload-queue/target`),剩 1/3 有效期时续签;离开时推 `{ base: null }`(设计稿第 9 节第 1 条)。
- * - **预取**:项目的素材表变了(打开项目、导入)且连着远程素材服务时,把 `prefetchOrder` 的清单交给编辑器进程。
- * - **导出前的拦截**:`exportGate` 问当前素材服务,时间轴上用到的素材原尺寸哪些还没 `complete`。
+ * - **Polling**: every 2 seconds, ask **the current connection's asset service** with
+ *   `GET media/<hash>/chunks`, and hand the set of hashes reported as `complete` to the tier-switch
+ *   criterion (`chooseTier` in `src/render/mediaTier.ts`): the stage receives it via `setLocalHashes`, and
+ *   the main document's audio layer reads it directly. Only the tier that has not reached the top tier is
+ *   polled: once the original-size asset has fully arrived, that asset is no longer polled; hashes are
+ *   immutable, so one that has fully arrived never reverts. When connected to the local asset service, the
+ *   request goes to this machine's `/api/asset`; inside a shared project it goes to that project's remote
+ *   asset service (with a read-only asset ticket). Whether the local cache has been written to disk is not
+ *   a criterion (`docs/semantics/mechanism/asset-service.md`, "Sync state only asks the asset service").
+ * - **Remote asset service**: set by `syncManager` when entering a shared project (`connectSharedAssets`),
+ *   which also tells the local editor process (`POST /api/media/remote`), so that the read route fetches on
+ *   demand and the prefetch queue starts moving. The ticket is pushed again after it is renewed on schedule.
+ * - **Upload target**: when entering a shared project, the remote asset service base URL and an `rw` asset
+ *   ticket are handed to the editor process's upload queue (`POST /api/media/upload-queue/target`), renewed
+ *   when 1/3 of the validity period remains; on leaving, `{ base: null }` is pushed (design doc section 9,
+ *   item 1).
+ * - **Prefetch**: when the project's asset table changes (opening a project, importing) and a remote asset
+ *   service is connected, the `prefetchOrder` manifest is handed to the editor process.
+ * - **Pre-export gate**: `exportGate` asks the current asset service which original-size assets used on the
+ *   timeline are not yet `complete`.
  *
- * 集合里带一个标记(`TIERS_KNOWN_LOCAL` / `TIERS_KNOWN_REMOTE`):「问过了、一个都没到齐」和「还没问过」分得开。
+ * The set carries a marker (`TIERS_KNOWN_LOCAL` / `TIERS_KNOWN_REMOTE`), so "asked, and none has fully
+ * arrived" can be told apart from "not asked yet".
  */
 import { withoutConfirmedMissing } from "../../audio/missingMaterialRecord";
 import { useSyncExternalStore } from "react";
@@ -25,31 +36,33 @@ import {
 } from "../../render/mediaTier";
 import { tr } from "../../i18n/index.ts";
 
-/** 轮询间隔(A1:每 2 秒) */
+/** Polling interval (A1: every 2 seconds) */
 export const POLL_MS = 2000;
-/** 在线页面素材全到齐时,每这么多轮问一次素材服务看它还在不在(`pollOnce`) */
+/** On the online page, once all assets have arrived, ask the asset service once every this many rounds to see whether it is still there (`pollOnce`) */
 const HEALTH_EVERY = 5;
 let idleRounds = 0;
-/** 同一轮里同时在飞的 `chunks` 请求数 */
+/** Number of `chunks` requests in flight at the same time within one round */
 const POLL_CONCURRENCY = 4;
-/** 素材票据的有效期(`server/auth/protocol.mjs` 的 `TICKET_TTL.asset`);剩 1/3 时续签 */
+/** Validity period of an asset ticket (`TICKET_TTL.asset` in `server/auth/protocol.mjs`); renewed when 1/3 remains */
 const ASSET_TICKET_TTL_MS = 15 * 60_000;
 
 export interface RemoteAssets {
-  /** 远程素材服务的 API 基址,形如 `http://<ip>:<port>/api/asset` */
+  /** API base URL of the remote asset service, of the form `http://<ip>:<port>/api/asset` */
   base: string;
   /** Account cache identity is project scoped even when the public base is shared. */
   accountProjectId?: string;
-  /** 取一张只读素材票据;取不到给 null(那就不带,由素材服务回 401) */
+  /** Get a read-only asset ticket; returns null if none is available (then it is omitted, and the asset service replies 401) */
   ticket?: (() => Promise<string | null>) & { info?: (opts?: { force?: boolean }) => Promise<{ ticket: string; exp: number } | null> };
 }
 
 const LOCAL_BASE = "/api/asset";
 
 /**
- * 在线浏览器模式(c10a 第 2 节「在线页面不请求 `/api/*`」):没有本机编辑器进程,也没有本地素材服务。
- * 由 `Preview` 在挂上时按 `ONLINE` 设(本文件不读编译期常量,单测里没有它)。设了之后:
- * 不再告诉编辑器进程远程素材服务 / 上传目标 / 预取清单,也不问本地素材服务(还没连上远程素材服务时不轮询)。
+ * Online browser mode (c10a section 2, "the online page does not request `/api/*`"): there is no local editor
+ * process and no local asset service. Set by `Preview` on mount according to `ONLINE` (this file does not read
+ * the compile-time constant, which is absent in unit tests). Once set: the editor process is no longer told
+ * about the remote asset service / upload target / prefetch manifest, and the local asset service is not
+ * polled (and nothing is polled until a remote asset service is connected).
  */
 let noEditorProcess = false;
 export function setNoEditorProcess(on: boolean): void {
@@ -57,8 +70,10 @@ export function setNoEditorProcess(on: boolean): void {
 }
 
 /**
- * 当前共享项目的文档服务连接(`connectSharedAssets` 交进来的那一条)。c10a 第 9 节:在线页面按内容库的清单
- * 拉预渲染小尺寸,要在这条连接上 `content.get`(`src/render/snapshotSource.ts` 的在线实现经 `docRequest` 用它)。
+ * The document service connection of the current shared project (the one handed in by
+ * `connectSharedAssets`). c10a section 9: the online page fetches prerendered small-size output per the
+ * content store's manifest, and needs `content.get` on this connection (the online implementation in
+ * `src/render/snapshotSource.ts` uses it via `docRequest`).
  */
 let docLink: LinkLike | null = null;
 let sharedAssetContext: { link: LinkLike; docBase: string; online: boolean; fallback: string | null } | null = null;
@@ -73,7 +88,7 @@ export function hasDocLink(): boolean {
 }
 
 let remote: RemoteAssets | null = null;
-/** 当前素材服务上到齐的哈希(换了素材服务就清空) */
+/** Hashes that have fully arrived on the current asset service (cleared when the asset service changes) */
 let complete = new Set<string>();
 let known = false;
 let snapshot: readonly string[] = [];
@@ -87,7 +102,7 @@ function publish() {
   for (const l of [...listeners]) l();
 }
 
-/** 换档判据用的集合(带标记);还没问过是空数组 */
+/** The set used by the tier-switch criterion (with marker); an empty array if not asked yet */
 export function tierHashes(): readonly string[] {
   return snapshot;
 }
@@ -101,23 +116,27 @@ export function useTierHashes(): readonly string[] {
   return useSyncExternalStore(subscribeTierHashes, tierHashes, tierHashes);
 }
 
-/** 当前连的是不是远程素材服务(基址);本地给 null */
+/** Whether the current connection is a remote asset service (base URL); null for local */
 export function remoteAssetBase(): string | null {
   return remote?.base ?? null;
 }
 
 /**
- * 当前远程素材服务是不是账号云端项目的(是就回那个项目号,不是回 null)。账号项目的素材票据由账号会话签发
- * (`syncManager.ts` 的 `enterAccountProject`),读写是同一张、权限跟着成员走;旧的 `auth.ticket` 在账号连接上被拒,
- * 要写素材的地方据此改用 `remoteAssetTicketInfo`。
+ * Whether the current remote asset service belongs to an account cloud project (if so, returns that project
+ * id; otherwise null). An account project's asset ticket is issued by the account session
+ * (`enterAccountProject` in `syncManager.ts`); read and write use the same ticket, and permissions follow
+ * the member; the old `auth.ticket` is rejected on an account connection, so places that need to write
+ * assets use `remoteAssetTicketInfo` instead.
  */
 export function remoteAccountProjectId(): string | null {
   return remote?.accountProjectId ?? null;
 }
 
 /**
- * 当前远程素材服务的只读票据连同过期时刻(C10 契约第 12 节:逐帧导出续签票据的 `fetchTicket`,`src/export/ticketRenewal.ts`)。
- * `force`:不管手里那张还剩多久,换一张新的。本地素材服务、取不到给 null。
+ * The current remote asset service's read-only ticket together with its expiry time (C10 contract section 12:
+ * `fetchTicket` for ticket renewal during frame-by-frame export, `src/export/ticketRenewal.ts`).
+ * `force`: get a new one regardless of how long the current one has left. Null for the local asset service,
+ * or if none is available.
  */
 export async function remoteAssetTicketInfo(force = false): Promise<{ ticket: string; exp: number } | null> {
   const info = remote?.ticket?.info;
@@ -125,20 +144,20 @@ export async function remoteAssetTicketInfo(force = false): Promise<{ ticket: st
   try { return await info({ force }); } catch { return null; }
 }
 
-/** 当前远程素材服务的只读票据(在线页面给 `<video>` 的查询串、取预渲染小尺寸用;c10a 第 8、9 节);本地给 null */
+/** The current remote asset service's read-only ticket (for the online page's `<video>` query string and for fetching prerendered small-size output; c10a sections 8 and 9); null for local */
 export async function remoteAssetTicket(): Promise<string | null> {
   if (!remote?.ticket) return null;
   try { return (await remote.ticket()) || null; } catch { return null; }
 }
 
 const remoteListeners = new Set<() => void>();
-/** 远程素材服务换了(进入 / 离开共享项目)时通知;回退订 */
+/** Notified when the remote asset service changes (entering / leaving a shared project); returns an unsubscribe function */
 export function subscribeRemoteAssets(cb: () => void): () => void {
   remoteListeners.add(cb);
   return () => { remoteListeners.delete(cb); };
 }
 
-/** 带当前素材票据的请求头(`Authorization: Bearer`);本地素材服务给空对象 */
+/** Request headers carrying the current asset ticket (`Authorization: Bearer`); an empty object for the local asset service */
 export async function assetAuthHeaders(): Promise<Record<string, string>> {
   return authHeaders();
 }
@@ -154,7 +173,7 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 let pushedTicket: string | null = null;
-/** 告诉本机编辑器进程(按需拉取与预取靠它);在线浏览器模式没有本机编辑器,失败就算了 */
+/** Tell the local editor process (on-demand fetch and prefetch depend on it); online browser mode has no local editor, so failure is ignored */
 async function pushRemoteToEditor(): Promise<void> {
   if (noEditorProcess) return;
   try {
@@ -167,11 +186,12 @@ async function pushRemoteToEditor(): Promise<void> {
     const ticket = auth.Authorization ? auth.Authorization.slice("Bearer ".length) : null;
     pushedTicket = ticket;
     await fetch("/api/media/remote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base: remote.base, ticket }) });
-  } catch { /* 没有本机编辑器 */ }
+  } catch { /* No local editor */ }
 }
 
 /**
- * 设当前连接的远程素材服务;null = 回到本地素材服务。换了就清空集合、立刻重问一轮、重排预取。
+ * Set the current connection's remote asset service; null = return to the local asset service. On change,
+ * clear the set, immediately poll one more round, and reschedule prefetch.
  */
 export function setRemoteAssets(next: RemoteAssets | null): void {
   const base = next ? next.base.replace(/\/+$/, "") : null;
@@ -186,12 +206,13 @@ export function setRemoteAssets(next: RemoteAssets | null): void {
   known = false;
   publish();
   lastPrefetchKey = "";
-  for (const l of [...remoteListeners]) { try { l(); } catch { /* 一个订阅者坏了不影响别人 */ } }
+  for (const l of [...remoteListeners]) { try { l(); } catch { /* A broken subscriber does not affect the others */ } }
   void pushRemoteToEditor().then(() => { kick(); });
 }
 
 /**
- * 问当前素材服务:这些哈希里哪些 `complete`。问不到的算没到齐。
+ * Ask the current asset service which of these hashes are `complete`. Those that cannot be queried count as
+ * not fully arrived.
  */
 export async function askComplete(hashes: readonly string[]): Promise<Set<string>> {
   const base = remote?.base ?? LOCAL_BASE;
@@ -205,31 +226,33 @@ export async function askComplete(hashes: readonly string[]): Promise<Set<string
       let r: Response;
       try {
         r = await fetch(`${base}/media/${h}/chunks`, { headers, cache: "no-store", ...(remote?.accountProjectId ? { credentials: 'omit' as const } : {}) });
-      } catch { unreachable++; continue; } // 网络错误:连不上素材服务
+      } catch { unreachable++; continue; } // Network error: cannot reach the asset service
       answered++;
       try {
         if (!r.ok) continue;
         const body = await r.json();
         if (body?.complete === true) out.add(h);
-      } catch { /* 算没到齐 */ }
+      } catch { /* Counts as not fully arrived */ }
     }
   };
   await Promise.all(Array.from({ length: Math.min(POLL_CONCURRENCY, queue.length) }, worker));
-  // 远程素材服务连不连得上(在线页面顶栏「连不上素材服务」用):这一轮一个回应都没有、全是网络错误才算连不上
+  // Whether the remote asset service is reachable (used for "Cannot reach asset service" in the online page's
+  // top bar): it only counts as unreachable if this round got no response at all and every request was a
+  // network error
   if (remote && gen === serviceGen && (answered || unreachable)) setRemoteDown(answered === 0);
   return out;
 }
 
-/* ---------------- 远程素材服务连不连得上(C10 契约第 10 节) ---------------- */
+/* ---------------- Whether the remote asset service is reachable (C10 contract section 10) ---------------- */
 
 let remoteDown = false;
 const healthListeners = new Set<() => void>();
 function setRemoteDown(down: boolean): void {
   if (down === remoteDown) return;
   remoteDown = down;
-  for (const l of [...healthListeners]) { try { l(); } catch { /* 同上 */ } }
+  for (const l of [...healthListeners]) { try { l(); } catch { /* Same as above */ } }
 }
-/** 最近一轮问远程素材服务时一个回应都没拿到(网络错误,不是 4xx/5xx)。本地素材服务、还没问过都给 false */
+/** The latest round of asking the remote asset service got no response at all (a network error, not 4xx/5xx). Gives false for the local asset service or if not asked yet */
 export function remoteAssetsDown(): boolean {
   return !!remote && remoteDown;
 }
@@ -238,7 +261,7 @@ export function subscribeRemoteAssetsHealth(cb: () => void): () => void {
   return () => { healthListeners.delete(cb); };
 }
 
-/** 这一轮要问的哈希:素材原尺寸还没到齐的素材问素材原尺寸,素材小尺寸还没到齐的也问素材小尺寸;全到顶档的不问 */
+/** Hashes to ask about this round: for assets whose original size has not fully arrived, ask for the original size; for those whose small size has not fully arrived, also ask for the small size; those at the top tier are not asked */
 export function hashesToAsk(project: Pick<Project, "media">, done: ReadonlySet<string>): string[] {
   const ask: string[] = [];
   for (const m of project.media ?? []) {
@@ -251,28 +274,30 @@ export function hashesToAsk(project: Pick<Project, "media">, done: ReadonlySet<s
   return [...new Set(ask)];
 }
 
-/** 跑一轮轮询(导出前、切换素材服务后也直接调) */
+/** Run one polling round (also called directly before export and after switching asset services) */
 export async function pollOnce(project: Pick<Project, "media"> = getState().project): Promise<void> {
-  // 在线页面没有本地素材服务:还没连上远程素材服务就不问
+  // The online page has no local asset service: if the remote asset service is not connected yet, do not ask
   if (noEditorProcess && !remote) return;
   const gen = serviceGen;
   const ask = hashesToAsk(project, complete);
   /*
-   * 在线页面:素材全到齐之后这一轮本来什么都不问,也就看不出素材服务断没断。每 `HEALTH_EVERY` 轮
-   * 顺带问一张已经到齐的素材原尺寸(一个很小的对账请求),只为顶栏的「连不上素材服务」。
+   * Online page: once all assets have arrived, this round would otherwise ask nothing, so a dropped asset
+   * service would go unnoticed. Every `HEALTH_EVERY` rounds, also ask about the original size of one asset
+   * that has already fully arrived (a tiny reconciliation request), solely for the top bar's "Cannot reach
+   * asset service".
    */
   if (!ask.length && noEditorProcess && remote && ++idleRounds % HEALTH_EVERY === 0) {
     const probe = (project.media ?? []).map(originalHashOf).find(Boolean);
     if (probe) ask.push(probe);
   }
   const got = ask.length ? await askComplete(ask) : new Set<string>();
-  if (gen !== serviceGen) return; // 这一轮问的是换掉之前的素材服务
+  if (gen !== serviceGen) return; // This round asked the asset service that has since been replaced
   for (const h of got) complete.add(h);
   known = true;
   publish();
 }
 
-/* ---------------- 预取 ---------------- */
+/* ---------------- Prefetch ---------------- */
 
 let lastPrefetchKey = "";
 async function maybePrefetch(project: Project): Promise<void> {
@@ -283,10 +308,10 @@ async function maybePrefetch(project: Project): Promise<void> {
   lastPrefetchKey = key;
   try {
     await fetch("/api/media/prefetch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
-  } catch { /* 没有本机编辑器 */ }
+  } catch { /* No local editor */ }
 }
 
-/* ---------------- 轮询循环 ---------------- */
+/* ---------------- Polling loop ---------------- */
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 let running = 0;
@@ -304,7 +329,7 @@ async function loop() {
   polling = true;
   try {
     const project = getState().project;
-    // 票据续签过:编辑器进程那份也换掉(它拿这张去按需拉取)
+    // The ticket was renewed: replace the editor process's copy too (it uses this ticket for on-demand fetch)
     if (remote?.ticket) {
       const auth = await authHeaders();
       const t = auth.Authorization ? auth.Authorization.slice("Bearer ".length) : null;
@@ -319,8 +344,9 @@ async function loop() {
 }
 
 /**
- * 开始轮询(预览挂上时调),回停止函数。素材表换了(打开别的项目、导入)立刻问一轮,不等 2 秒。
- * 可以重复调,引用计数。
+ * Start polling (called when the preview mounts); returns a stop function. When the asset table changes
+ * (opening another project, importing), poll one round immediately without waiting 2 seconds.
+ * Can be called repeatedly; reference counted.
  */
 export function startAssetTiers(): () => void {
   running++;
@@ -332,7 +358,8 @@ export function startAssetTiers(): () => void {
     kick();
   });
   if (running === 1) {
-    // 页面重载过:编辑器进程那边可能还留着上一个页面设的远程素材服务,按本页面的状态对齐一次
+    // The page was reloaded: the editor process may still hold the remote asset service set by the previous
+    // page, so align it once with this page's state
     void pushRemoteToEditor();
     kick();
   }
@@ -343,14 +370,16 @@ export function startAssetTiers(): () => void {
   };
 }
 
-/* ---------------- 导出前的拦截 ---------------- */
+/* ---------------- Pre-export gate ---------------- */
 
 /**
- * 导出前问一遍当前素材服务:时间轴上用到的素材原尺寸哪些还没 `complete`(A1「导出只用素材原尺寸」「等待上传方」)。
- * 空数组 = 可以导出。
+ * Before export, ask the current asset service once: which original-size assets used on the timeline are not
+ * yet `complete` (A1, "export only uses original-size assets" and "upload waiters").
+ * Empty array = export is allowed.
  */
 export async function exportGate(source: Project): Promise<MissingOriginal[]> {
-  // 认定过「确认缺失」的素材不会再到齐:不拦,导出时照原位置出占位
+  // Assets that have been confirmed missing will never fully arrive: do not block, and at export time output a
+  // placeholder in the original position
   const project = withoutConfirmedMissing(source);
   const first = missingOriginals(project, []);
   if (!first.length) return [];
@@ -359,22 +388,25 @@ export async function exportGate(source: Project): Promise<MissingOriginal[]> {
   return missingOriginals(project, got);
 }
 
-/** 不发请求的快速判断:按轮询到的集合。还没问过给 null(不知道) */
+/** Quick check that sends no request: based on the polled set. Gives null if not asked yet (unknown) */
 export function exportGateNow(project: Project): MissingOriginal[] | null {
   if (!known) return null;
   return missingOriginals(withoutConfirmedMissing(project), complete);
 }
 
-/* ---------------- 共享项目 ---------------- */
+/* ---------------- Shared project ---------------- */
 
 interface LinkLike {
   request(msg: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>>;
 }
 
 /**
- * 按 `auth.ticket` 取只读素材票据,剩 1/3 有效期时换新的。「有效期」按这一张实际的寿命算(签发到过期),不写死 15 分钟:
- * 测试里缩短了票据时限(C10 契约第 12 节的验收)时照样提前换。
- * 回的函数带 `info({ force })`:连同过期时刻给出(逐帧导出的续签用,`src/export/ticketRenewal.ts`)。
+ * Get a read-only asset ticket via `auth.ticket`, and replace it with a new one when 1/3 of the validity
+ * period remains. "Validity period" is computed from this ticket's actual lifetime (issue to expiry), not
+ * hard-coded to 15 minutes: when the ticket lifetime is shortened in tests (the acceptance check of C10
+ * contract section 12), it is still replaced early.
+ * The returned function carries `info({ force })`: it also gives the expiry time (used for renewal during
+ * frame-by-frame export, `src/export/ticketRenewal.ts`).
  */
 export function assetTicketSource(link: LinkLike, now: () => number = Date.now): (() => Promise<string | null>) & { info: (opts?: { force?: boolean }) => Promise<{ ticket: string; exp: number } | null> } {
   let cur: { ticket: string; exp: number; issued: number } | null = null;
@@ -403,12 +435,14 @@ export function assetTicketSource(link: LinkLike, now: () => number = Date.now):
 }
 
 /**
- * 从文档服务的服务地址登记(`service.watch`,kind `asset`)里挑这个共享项目的素材服务:
- * 优先和文档服务同一台主机的那一个;指向本页面自己的(本机就是主机)不算远程。
+ * From the document service's service address registry (`service.watch`, kind `asset`), pick this shared
+ * project's asset service: prefer the one on the same host as the document service; one pointing at this
+ * page itself (this machine is the host) does not count as remote.
  *
- * 在线浏览器模式(`online`)不排除同主机的:在线页面、文档服务、素材服务都在托管端的同一个源下
- * (nginx 的 `/editor`、`/hosted/`、`/media/`,c10a 契约第 2 节),同源的素材服务正是远端那一个,
- * 本页面自己并没有素材服务。
+ * Online browser mode (`online`) does not exclude the same host: the online page, document service and asset
+ * service are all under one origin on the hosted side (nginx `/editor`, `/hosted/`, `/media/`, c10a contract
+ * section 2), and the same-origin asset service is exactly the remote one; this page itself has no asset
+ * service.
  */
 export function pickAssetEndpoint(endpoints: unknown, docBase: string, selfHost: string, { online = false }: { online?: boolean } = {}): string | null {
   const urls: string[] = [];
@@ -418,18 +452,21 @@ export function pickAssetEndpoint(endpoints: unknown, docBase: string, selfHost:
     for (const u of Array.isArray(rec?.urls) ? rec.urls : []) if (typeof u === "string") urls.push(u);
   }
   let docHost = "";
-  try { docHost = new URL(docBase).hostname; } catch { /* 留空 */ }
+  try { docHost = new URL(docBase).hostname; } catch { /* Left blank */ }
   const ok = urls.filter((u) => { try { return online || new URL(u).host !== selfHost; } catch { return false; } });
   return ok.find((u) => { try { return new URL(u).hostname === docHost; } catch { return false; } }) ?? ok[0] ?? null;
 }
 
 /**
- * 放本机(局域网)项目的素材服务后备地址(M8-X1):素材服务与文档服务在主机的同一个编辑器进程里
- * (`docs/semantics/product/document-service.md`「部署组合」),主机不一定向服务地址登记素材服务
- * (`server/vite-plugin-media.ts` 只在设了 `PROMPTCUT_DOCSERVICE_URL` 时登记)。先用局域网发现通告里的
- * `asset`,没有(手填地址、邀请链接)就按文档服务地址推同一进程的 `/api/asset`——与独立渲染主机的推法相同
- * (`server/vite-plugin-frames.ts` 的 `hostAssetClient`)。放云端不推:托管组合的素材服务不在 `/api/asset`,
- * 且它已登记。
+ * Fallback address of the asset service for a project hosted on this machine (LAN) (M8-X1): the asset service
+ * and the document service are in the same editor process on the host
+ * (`docs/semantics/product/document-service.md`, "Deployment combinations"), and the host does not always
+ * register the asset service with the service address registry (`server/vite-plugin-media.ts` only registers
+ * it when `PROMPTCUT_DOCSERVICE_URL` is set). First use `asset` from the LAN discovery announcement; if there
+ * is none (manually entered address, invite link), derive the same process's `/api/asset` from the document
+ * service address, the same derivation as for a standalone render host (`hostAssetClient` in
+ * `server/vite-plugin-frames.ts`). Not derived for projects moved to the cloud: the hosted combination's
+ * asset service is not at `/api/asset`, and it is already registered.
  */
 export function lanAssetBaseOf(candidate: { where?: string; base?: string; asset?: string } | null | undefined): string | null {
   if (candidate?.where !== "lan") return null;
@@ -446,7 +483,7 @@ export function lanAssetBaseOf(candidate: { where?: string; base?: string; asset
   } catch { return null; }
 }
 
-/** 登记里挑不到时用后备;后备指向本页面自己(本机就是主机)的不算远程 */
+/** Use the fallback when the registry has no match; a fallback pointing at this page itself (this machine is the host) does not count as remote */
 function withFallback(picked: string | null, fallback: string | null, online: boolean): string | null {
   if (picked || !fallback) return picked;
   if (online) return fallback;
@@ -458,9 +495,12 @@ function relayAssetBase(docBase: string, fallback: string | null): string | null
 }
 
 /**
- * 进入共享项目后调:从服务地址登记里挑素材服务、设成当前远程素材服务。登记里挑不到时用 `fallback`
- * (放本机项目由 `lanAssetBaseOf` 给);都没有、或指向本页面自己(本机就是主机)就留在本地素材服务。回挑中的基址。
- * `online`:在线浏览器模式(调用方按 `mode.ts` 的 `ONLINE` 给;本模块会被 Node 单测载入,不静态引 `mode.ts`)。
+ * Called after entering a shared project: pick the asset service from the service address registry and set it
+ * as the current remote asset service. When the registry has no match, use `fallback` (given by
+ * `lanAssetBaseOf` for a project hosted on this machine); if there is none, or it points at this page itself
+ * (this machine is the host), stay on the local asset service. Returns the chosen base URL.
+ * `online`: online browser mode (supplied by the caller per `ONLINE` in `mode.ts`; this module is loaded by
+ * Node unit tests, so it does not statically import `mode.ts`).
  */
 export async function connectSharedAssets(link: LinkLike, docBase: string, { online = false, fallback = null, account }: { online?: boolean; fallback?: string | null; account?: { base: string; projectId: string; ticket: NonNullable<RemoteAssets['ticket']> } } = {}): Promise<string | null> {
   // Account tickets are issued by the HTTP session authority. v2 forbids the old
@@ -475,7 +515,9 @@ export async function connectSharedAssets(link: LinkLike, docBase: string, { onl
     return account.base;
   }
   let base: string | null = null;
-  // 同一条连接重连后再调(重新订阅登记):已经挑好的素材服务不因一次失败退回本地,挑到同一个也不重设
+  // Called again after the same connection reconnects (re-subscribe and register): an asset service
+  // that was already picked does not fall back to local because of one failure, and picking the same
+  // one again does not reset it
   const again = docLink === link && remote !== null;
   let failed = false;
   const generation = ++discoveryGeneration;
@@ -486,7 +528,7 @@ export async function connectSharedAssets(link: LinkLike, docBase: string, { onl
   try {
     const r = await link.request({ type: "service.watch", kinds: ["asset"] });
     base = pickAssetEndpoint(r.endpoints, docBase, typeof location === "undefined" ? "" : location.host, { online });
-  } catch { failed = true; /* 取不到登记:用后备,没有就留在本地 */ }
+  } catch { failed = true; /* Registry lookup failed: use the fallback, or stay local if there is none */ }
   base = relayAssetBase(docBase, fallback) ?? withFallback(base, fallback, online);
   if (generation !== discoveryGeneration || docLink !== link) return null;
   if (again && remote && (failed || base === remote.base)) {
@@ -499,7 +541,8 @@ export async function connectSharedAssets(link: LinkLike, docBase: string, { onl
   setRemoteAssets(base ? { base, ticket: assetTicketSource(link) } : null);
   stopUploadTarget?.();
   stopUploadTarget = startUploadTarget(link, base);
-  // 在线页面没有本地素材服务：登记请求失败或服务尚未出现，都要继续找。
+  // An online page has no local asset service: keep looking whether the registration request failed
+  // or the service has not appeared yet.
   if (online && !base) discoveryTimer = setTimeout(() => {
     discoveryTimer = null;
     if (docLink === link) void connectSharedAssets(link, docBase, { online, fallback });
@@ -507,7 +550,8 @@ export async function connectSharedAssets(link: LinkLike, docBase: string, { onl
   return base;
 }
 
-/** 文档服务的 service.watch 后续全量通知；素材服务晚登记也能接上。 */
+/** Full follow-up notifications from the document service's service.watch; an asset service that
+ * registers late can still be picked up. */
 export function receiveSharedAssetEndpoints(endpoints: unknown): void {
   const ctx = sharedAssetContext;
   if (!ctx || docLink !== ctx.link) return;
@@ -525,7 +569,7 @@ export function receiveSharedAssetEndpoints(endpoints: unknown): void {
   }, 2000);
 }
 
-/** 离开共享项目:回到本地素材服务 */
+/** Leaving the shared project: back to the local asset service */
 export function disconnectSharedAssets(): void {
   discoveryGeneration++;
   if (discoveryTimer !== null) clearTimeout(discoveryTimer);
@@ -537,14 +581,17 @@ export function disconnectSharedAssets(): void {
   stopUploadTarget = startUploadTarget(null, null);
 }
 
-/* ---------------- 上传目标(设计稿第 9 节第 1 条) ---------------- */
+/* ---------------- Upload target (design doc section 9, item 1) ---------------- */
 
 /**
- * 编辑器进程的上传队列(`server/upload-queue.mjs`)要知道「当前连接的素材服务」和一张能写的票据,
- * 它自己没有项目凭证,由页面给:进入共享项目时 `POST /api/media/upload-queue/target { base, ticket }`
- * (`rw` 素材票据,经本页面的文档服务连接签),票据剩 1/3 有效期时续签再推一次;离开共享项目、
- * 或本机就是主机(挑不到远程素材服务)时推 `{ base: null }`,队列回到「本机素材服务 = 空操作」。
- * 没有本机编辑器(在线浏览器模式)时推送失败就算了。
+ * The editor process's upload queue (`server/upload-queue.mjs`) needs to know the "currently connected
+ * asset service" and a writable ticket. It has no project credentials of its own, so the page supplies
+ * them: on entering a shared project it sends `POST /api/media/upload-queue/target { base, ticket }`
+ * (an `rw` asset ticket, signed through this page's document service connection), and when 1/3 of the
+ * ticket's lifetime is left it renews and pushes again. When leaving the shared project, or when this
+ * machine is the host (no remote asset service can be picked), it pushes `{ base: null }` and the queue
+ * goes back to "local asset service = no-op".
+ * With no local editor (online browser mode), a failed push is simply ignored.
  */
 let stopUploadTarget: (() => void) | null = null;
 
@@ -560,36 +607,40 @@ async function postUploadTarget(body: { base: string | null; ticket?: string | n
   if (noEditorProcess) return;
   try {
     await fetch("/api/media/upload-queue/target", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  } catch { /* 没有本机编辑器 */ }
+  } catch { /* No local editor */ }
 }
 
-/** 签不到票据时隔多久再试 */
+/** How long to wait before retrying when no ticket can be signed */
 const UPLOAD_TICKET_RETRY_MS = 30_000;
 
 /**
- * 把上传目标交给编辑器进程并按时续签,回停止函数(停止时推 `{ base: null }`)。
- * `link` / `base` 为 null:只推一次 `{ base: null }`。
+ * Hands the upload target to the editor process and renews it on time; returns a stop function (which
+ * pushes `{ base: null }` when stopped).
+ * `link` / `base` is null: push `{ base: null }` only once.
  */
 export function startUploadTarget(link: LinkLike | null, base: string | null, deps: UploadTargetDeps = {}): () => void {
   const post = deps.post ?? postUploadTarget;
   const now = deps.now ?? Date.now;
   const setTimer = deps.setTimer ?? ((fn: () => void, ms: number) => {
     const t = setTimeout(fn, ms);
-    (t as { unref?: () => void }).unref?.(); // Node(单测)里不拖住进程;浏览器没有 unref
+    (t as { unref?: () => void }).unref?.(); // In Node (unit tests) do not hold the process open; browsers have no unref
     return t;
   });
   const clearTimer = deps.clearTimer ?? ((t: unknown) => clearTimeout(t as ReturnType<typeof setTimeout>));
   let stopped = false;
   let timer: unknown = null;
   setUploadTargetReady(null);
-  // 本机就是主机(有连接、挑不到远程素材服务):导入就是写进这个项目的素材服务,导入的素材不用记;没有连接(离开共享项目)时记下的丢掉
+  // This machine is the host (there is a connection but no remote asset service can be picked): an
+  // import is written straight into this project's asset service, so imported assets need no record;
+  // with no connection (left the shared project), whatever was recorded is dropped
   uploadTargetLocal = !!link && !base;
   if (!link || !base) deferredImports.clear();
-  // 自动渲染节点(`sync/renderNodeHandoff.ts`):预渲染进程推产物用同一个素材服务(本机就是主机时为 null,它推本机的)
+  // Auto render node (`sync/renderNodeHandoff.ts`): the prerender process pushes its output to the same
+  // asset service (null when this machine is the host, in which case it pushes to this machine's)
   noteRenderNodeAssetBase(link && base ? base : null);
   if (!link || !base) {
     void post({ base: null });
-    return () => { /* 本来就是本机 */ };
+    return () => { /* It was local all along */ };
   }
   const renew = async () => {
     timer = null;
@@ -603,12 +654,12 @@ export function startUploadTarget(link: LinkLike | null, base: string | null, de
         const r = await link.request({ type: "auth.ticket", kind: "asset", access: "rw" });
         if (r.type === "auth.ticket.ok" && typeof r.ticket === "string") { ticket = r.ticket; exp = Number(r.exp) || exp; }
       }
-    } catch { /* 下面按签不到处理 */ }
+    } catch { /* Treated as unable to sign below */ }
     if (stopped) return;
     await post({ base, ticket });
     if (stopped) return;
     if (ticket) setUploadTargetReady(base);
-    // 剩 1/3 有效期时续:从签发起过了 2/3 的寿命
+    // Renew when 1/3 of the lifetime is left: 2/3 of the lifetime has passed since issue
     const delay = ticket ? Math.max(1000, Math.floor((exp - issued) * 2 / 3)) : UPLOAD_TICKET_RETRY_MS;
     timer = setTimer(() => { void renew(); }, delay);
   };
@@ -623,9 +674,10 @@ export function startUploadTarget(link: LinkLike | null, base: string | null, de
   };
 }
 
-/* ---------------- 开启「放云端」时把项目里已有的素材交给上传队列(C10a 集成返工) ---------------- */
+/* ---------------- When "move to the cloud" is turned on, hand the project's existing assets to the upload queue (C10a integration rework) ---------------- */
 
-/** 编辑器进程已经拿到带 rw 票据的远程上传目标:那个基址;没有是 null */
+/** The base address if the editor process already has a remote upload target with an rw ticket; null
+ * if not */
 let uploadTargetReadyBase: string | null = null;
 const uploadTargetWaiters = new Set<(base: string) => void>();
 
@@ -636,7 +688,8 @@ function setUploadTargetReady(base: string | null): void {
   if (deferredImports.size) void flushDeferredImports();
 }
 
-/** 等编辑器进程拿到带 rw 票据的远程上传目标(`startUploadTarget` 第一次带票据推成功);超时回 null */
+/** Waits until the editor process has a remote upload target with an rw ticket (the first successful
+ * push of `startUploadTarget` with a ticket); returns null on timeout */
 export function whenUploadTargetReady(timeoutMs = 30_000): Promise<string | null> {
   if (uploadTargetReadyBase) return Promise.resolve(uploadTargetReadyBase);
   return new Promise((resolve) => {
@@ -650,13 +703,18 @@ export function whenUploadTargetReady(timeoutMs = 30_000): Promise<string | null
 
 type ExistingMedia = { id?: string; name?: string; hash?: string; pending?: boolean; tiers?: { original?: string; small?: string } | null };
 
-/** 没法按哈希交给上传队列的一条素材(没有合法哈希):调用方据此提示用户;`pending` 是还在导入、入库后由导入那一路上传 */
+/** An asset that cannot be handed to the upload queue by hash (it has no valid hash): the caller uses
+ * this to notify the user; `pending` means it is still importing and the import path uploads it after
+ * ingest */
 export interface SkippedMedia { id?: string; name: string; pending?: boolean }
 
 /**
- * 项目里已有的素材 → 按哈希入队的请求体:一个素材一项,视频两档(`tiers.small`、`tiers.original`),
- * 图片、音频只有素材原尺寸一档;同一素材原尺寸只列一次。没有哈希的(迁移期老素材、还在入库的)进不了队列,
- * **不许悄悄跳过**:一律出现在 `skipped` 里(调用方先补入库,补不上的列给用户)。
+ * The project's existing assets → the request body for enqueuing by hash: one entry per asset, two
+ * tiers for video (`tiers.small`, `tiers.original`), and only the asset's original-size tier for
+ * images and audio; the original size of the same asset is listed only once. Assets without a hash
+ * (old assets from the migration period, ones still being ingested) cannot enter the queue and
+ * **must not be skipped silently**: they always appear in `skipped` (the caller backfills ingest
+ * first, and lists the ones that cannot be backfilled to the user).
  */
 export function existingMediaItems(media: readonly ExistingMedia[]): { items: { name: string; original: string; small?: string }[]; skipped: SkippedMedia[] } {
   const seen = new Set<string>();
@@ -679,11 +737,16 @@ export function existingMediaItems(media: readonly ExistingMedia[]): { items: { 
 export interface EnqueueExistingResult { queued: string[]; missing: string[]; local?: boolean; skipped?: SkippedMedia[] }
 
 /**
- * 开启多用户协作「放云端」之后调:等编辑器进程拿到远程上传目标与 rw 票据,再把项目里已有的素材按哈希交给
- * 上传队列(`deps.post` 发 `POST /api/media/upload-queue/enqueue`,只收本地内容库里有的,缺的回 `missing`)。
- * 之后照 C6.6 队列规则逐个素材、先小后大地传。没有本机编辑器(在线浏览器模式)、等不到目标时回 null。
- * 没有哈希、进不了队列的素材放在结果的 `skipped` 里(调用方应先 `ingestUnhashedMedia` 补入库再调这里)。
- * `post` 由调用方给(`collab.ts` 按编译期的 `ONLINE` 给,在线构建里连同接口地址一起被剪掉)。
+ * Called after multi-user collaboration "move to the cloud" is turned on: waits until the editor process
+ * has the remote upload target and rw ticket, then hands the project's existing assets to the upload
+ * queue by hash (`deps.post` sends `POST /api/media/upload-queue/enqueue`; only assets present in the
+ * local content store are accepted, missing ones come back as `missing`).
+ * After that, assets are uploaded one by one, small first and large later, following the C6.6 queue
+ * rules. Returns null when there is no local editor (online browser mode) or the target never arrives.
+ * Assets with no hash that cannot enter the queue are placed in the result's `skipped` (the caller
+ * should first run `ingestUnhashedMedia` to backfill ingest, then call this).
+ * `post` is supplied by the caller (`collab.ts` provides it according to the compile-time `ONLINE`;
+ * in the online build it is pruned together with the API address).
  */
 export async function enqueueExistingMedia(
   media: readonly ExistingMedia[],
@@ -697,16 +760,22 @@ export async function enqueueExistingMedia(
   return r ? { ...r, skipped } : null;
 }
 
-/** 已经列给用户看过的「补不上」素材 id:同一页面会话里不反复弹 */
+/** IDs of "cannot be backfilled" assets already listed to the user: not popped up repeatedly within the
+ * same page session */
 const backfillNotified = new Set<string>();
 
 /**
- * 打开项目后在后台补入库(`io/mediaUpload.ts` 的 `ingestUnhashedMedia`)做完之后调:项目这时已经「放云端」
- * (编辑器进程有带 rw 票据的远程上传目标)的,把这次补上哈希的素材按哈希交给上传队列 —— 图片、音频的入库
- * 不会自己进队列(`server/media-tiers.mjs` 的 prepareImport 只管视频),不交就只在本机,别的成员拿不到;
- * 视频重复交无妨(队列按素材去重)。补不上的、本机内容库里没有的,照开启放云端时的做法用 `deps.notify` 列给用户
- * (同一条素材一个会话里只列一次)。
- * 不是共享项目(`deps.shared` 为假)、或等不到上传目标(本机就是主机、没有本机编辑器)时什么都不做,回 null。
+ * Called after the background backfill ingest after opening a project (`ingestUnhashedMedia` in
+ * `io/mediaUpload.ts`) finishes: if the project is already "moved to the cloud" at this point (the
+ * editor process has a remote upload target with an rw ticket), the assets that just got hashes are
+ * handed to the upload queue by hash. Ingest of images and audio does not enter the queue by itself
+ * (prepareImport in `server/media-tiers.mjs` only handles video); without handing them over they stay on
+ * this machine only and other members cannot get them. Handing over video twice is harmless (the queue
+ * dedupes by asset). Assets that cannot be backfilled or are not in the local content store are listed to
+ * the user through `deps.notify`, the same as when move to the cloud was turned on (each asset is listed
+ * only once per session).
+ * Does nothing and returns null when this is not a shared project (`deps.shared` is falsy) or when no
+ * upload target can be awaited (this machine is the host, or there is no local editor).
  */
 export async function queueBackfilledMedia(
   r: { ingested: readonly string[]; failed: readonly { id?: string; name: string }[] },
@@ -739,21 +808,28 @@ export async function queueBackfilledMedia(
   return res;
 }
 
-/* ---------------- 上传目标就绪之前导入的素材:记下,就绪后补交 ---------------- */
+/* ---------------- Assets imported before the upload target is ready: record them, hand over once ready ---------------- */
 
 /*
- * 打开共享项目后,上传目标是异步设上的(`connectSharedAssets` 先问服务地址登记,再签 rw 素材票据、推给编辑器进程)。
- * 这之前导入的素材,编辑器进程那一侧(`server/media-tiers.mjs` 的 prepareImport)入队时看到的是本机目标,当空操作丢掉,
- * 别的成员拿不到。页面一侧在导入完成时(`io/mediaUpload.ts` 的 applyUploadedMedia → hooks.afterImport)记下,
- * 上传目标就绪(`setUploadTargetReady`)后按哈希补交给上传队列,走开启放云端时同一个入队口子(`enqueueExistingMedia`)。
- * 上传目标已经就绪时导入的也当场交一次:服务端的入队与导入请求是并行的,赶不赶得上说不准;重复交无妨,队列按素材去重。
+ * After a shared project is opened, the upload target is set asynchronously (`connectSharedAssets` first
+ * looks up the service address registration, then signs an rw asset ticket and pushes it to the editor
+ * process). For assets imported before that, when the editor process side (prepareImport in
+ * `server/media-tiers.mjs`) enqueues them it sees the local target and drops them as a no-op, so other
+ * members cannot get them. The page side records them when the import completes (applyUploadedMedia in
+ * `io/mediaUpload.ts` → hooks.afterImport), and once the upload target is ready (`setUploadTargetReady`)
+ * hands them to the upload queue by hash, through the same enqueue entry point used when move to the
+ * cloud is turned on (`enqueueExistingMedia`).
+ * Assets imported when the upload target is already ready are also handed over on the spot: the server's
+ * enqueue and the import request run in parallel, so it is uncertain whether it gets there in time;
+ * handing over twice is harmless, the queue dedupes by asset.
  */
 
-/** 素材原尺寸哈希 → 那条素材(同一素材只记一次) */
+/** Original-size hash of the asset → that asset (the same asset is recorded only once) */
 const deferredImports = new Map<string, ExistingMedia>();
-/** 最近一次记下时给的入队口子与提示(补交时用) */
+/** The enqueue entry point and notify callback given at the most recent recording (used when handing
+ * over later) */
 let deferredDeps: ImportQueueDeps | null = null;
-/** 当前共享项目本机就是主机(`startUploadTarget(link, null)`) */
+/** This machine is the host of the current shared project (`startUploadTarget(link, null)`) */
 let uploadTargetLocal = false;
 let deferredFlushing = false;
 
@@ -786,7 +862,9 @@ async function flushDeferredImports(): Promise<void> {
   let r: EnqueueExistingResult | null = null;
   try { r = await handImported(list, deps); } catch { r = null; }
   finally { deferredFlushing = false; }
-  // 没交成(编辑器进程没回、期间上传目标又掉了):留着,下一次就绪(续签再推一次)再交;期间已经离开了共享项目的不留
+  // Hand-over failed (the editor process did not respond, or the upload target dropped in the meantime):
+  // keep it and hand it over the next time the target is ready (renewal pushes again); do not keep it if
+  // the shared project was left in the meantime
   if (!r && deps.shared() && !uploadTargetLocal) {
     for (const m of list) { const h = importHashOf(m); if (!deferredImports.has(h)) deferredImports.set(h, m); }
   }
@@ -794,9 +872,12 @@ async function flushDeferredImports(): Promise<void> {
 }
 
 /**
- * 一条素材导入完成之后调(`sync/backfillUpload.ts` 挂在 hooks.afterImport 上)。共享项目里:上传目标已就绪的当场按哈希
- * 交给上传队列;还没就绪的先记下,就绪后补交;本机内容库里没有的(队列回 missing)用 `deps.notify` 列给用户。
- * 不是共享项目、没有入队的口子(在线构建)、本机就是主机、没有合法哈希时什么都不做,回 null。
+ * Called after one asset finishes importing (`sync/backfillUpload.ts` hooks it onto hooks.afterImport).
+ * In a shared project: if the upload target is ready, the asset is handed to the upload queue by hash on
+ * the spot; if not yet ready, it is recorded and handed over once ready; assets not in the local content
+ * store (the queue returns missing) are listed to the user through `deps.notify`.
+ * Does nothing and returns null when this is not a shared project, there is no enqueue entry point
+ * (online build), this machine is the host, or there is no valid hash.
  */
 export async function queueImportedMedia(media: ExistingMedia, deps: ImportQueueDeps): Promise<EnqueueExistingResult | null> {
   if (!deps.post || !deps.shared() || uploadTargetLocal) return null;
@@ -812,22 +893,22 @@ export async function queueImportedMedia(media: ExistingMedia, deps: ImportQueue
   return r;
 }
 
-/** 单测用:还记着、等上传目标就绪的素材原尺寸哈希 */
+/** For unit tests: original-size hashes of assets still recorded and waiting for the upload target */
 export function deferredImportsForTest(): string[] {
   return [...deferredImports.keys()];
 }
 
-/** 单测用:编辑器进程已经拿到的上传目标基址 */
+/** For unit tests: the upload target base address the editor process already has */
 export function uploadTargetReadyForTest(): string | null {
   return uploadTargetReadyBase;
 }
 
-/** 探针与单测的观察口 */
+/** Observation hook for probes and unit tests */
 export function assetTiersDebug() {
   return { remote: remote?.base ?? null, known, complete: [...complete].sort(), snapshot: [...snapshot] };
 }
 
-/** 单测用 */
+/** For unit tests */
 export function resetAssetTiersForTest(): void {
   backfillNotified.clear();
   deferredImports.clear();

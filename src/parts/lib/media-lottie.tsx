@@ -3,9 +3,9 @@ import { LottieView } from "../../cards/native/lottie";
 import { assetOptions } from "../../cards/catalogAssets";
 
 /**
- * Lottie 动画。
- * 从 lottie 卡片拆出的媒体部件，按时间轴逐帧定位。
- * 进场: 跟着时间轴走，挂载即显，不靠自己的时钟。
+ * Lottie animation.
+ * Media part extracted from lottie card, positioned frame by frame according to timeline.
+ * Entrance: follows timeline, displays upon mount, and does not rely on its own clock.
  */
 interface Params {
   json: string;
@@ -32,10 +32,10 @@ function MediaLottiePart({ params, t, width, height }: PartProps<Params>) {
 
 export const mediaLottie: PartDef<Params> = {
   id: "media-lottie",
-  name: "Lottie 动画",
-  description: "播放一段 Lottie 动画,跟着时间轴逐帧走",
-  useWhen: "放一段现成的 Lottie(AE 导出的 JSON)动画;软件自带 5 段素材列在 src 的 hint 里,也可以贴 JSON 文本进 json 或填别的 URL;它不会自己「播」,是按时间逐帧定位,speed 调快慢、loop 决定到头循环还是停在最后一帧;素材许可证要自己核对;不适合从零画动效。",
-  tags: ["lottie", "动画文件", "AE", "素材"],
+  name: "Lottie animation",
+  description: "Play a Lottie animation, advancing frame by frame with the timeline",
+  useWhen: "Place a ready-made Lottie animation (JSON exported from AE). The 5 built-in assets are listed in the hint of src; you can also paste JSON text into json or enter another URL. It does not \"play\" by itself but is positioned frame by frame according to time; speed adjusts the pace and loop decides whether it loops at the end or stays on the last frame. Check the asset license yourself. Not suitable for drawing motion graphics from scratch.",
+  tags: ["lottie", "animation file", "AE", "media"],
   role: "media",
   from: "lottie",
   defaults: {
@@ -46,11 +46,11 @@ export const mediaLottie: PartDef<Params> = {
     fit: "contain",
   },
   controls: [
-    { key: "json", label: "Lottie JSON 文本(优先)", type: "text", hint: "整个 .json 文件的内容;留空则用 src" },
-    { key: "src", label: "素材 / URL", type: "asset", kind: "lottie", options: assetOptions("lottie"), hint: "从素材目录里挑一个(options 里的 URL),或填别的 JSON URL;json 留空时才用它" },
-    { key: "speed", label: "速度倍率", type: "number", min: 0.1, max: 8, step: 0.1 },
-    { key: "loop", label: "到头后", type: "select", options: [{ value: "no", label: "停在最后一帧" }, { value: "yes", label: "循环" }] },
-    { key: "fit", label: "适配", type: "select", options: [{ value: "contain", label: "完整显示" }, { value: "cover", label: "铺满裁切" }] },
+    { key: "json", label: "Lottie JSON text (preferred)", type: "text", hint: "Contents of the whole .json file; leave empty to use src" },
+    { key: "src", label: "Asset / URL", type: "asset", kind: "lottie", options: assetOptions("lottie"), hint: "Pick one from the asset catalog (a URL in options), or enter another JSON URL; it is only used when json is empty" },
+    { key: "speed", label: "Speed multiplier", type: "number", min: 0.1, max: 8, step: 0.1 },
+    { key: "loop", label: "At the end", type: "select", options: [{ value: "no", label: "Hold last frame" }, { value: "yes", label: "Loop" }] },
+    { key: "fit", label: "Fit", type: "select", options: [{ value: "contain", label: "Show in full" }, { value: "cover", label: "Fill and crop" }] },
   ],
   defaultFrame: { x: 960, y: 540, w: 600, h: 600, anchor: [0.5, 0.5] },
   settleMs: () => 0,

@@ -1,22 +1,29 @@
 /**
- * 核对「现有卡片的源码版本有没有变」：把基准提交与当前工作区各算一遍，逐张比。
+ * Verify "whether source versions of existing cards have changed": compute once for baseline commit
+ * and current workspace, and compare card by card.
  *
- * 为什么要有它：每张卡的源码版本 = 它的定义文件连同导入闭包里每个文件的全文（`src/render/cardSourceVersion.mjs`）。
- * 闭包里任何一个文件哪怕只加一行注释，这张卡的预渲染结果的键就变了，已生成的卡片声音也会被判过期。
- * 改卡片载入、kernel、render 之后跑一遍，确认没有把现有卡的键带着变。
+ * Why it exists: source version of each card = its definition file together with full text of every
+ * file in its import closure (`src/render/cardSourceVersion.mjs`). Even adding a single comment line
+ * to any file in the closure changes the key for this card's prerender output, and generated card
+ * sounds will also be marked expired. Run once after modifying card loading, kernel, or render to
+ * confirm existing card keys were not inadvertently changed.
  *
- * 用法（在仓库根或 worktree 根）：
+ * Usage (at repository root or worktree root):
  *   node scripts/probes/card-source-version-compare.mjs [--base main]
  *
- * 做什么：
- *   1. 用 `git archive <base> src` 把基准提交的 `src/` 解到临时目录（不动工作区、不切分支）；
- *   2. 两边各建一张源码表（口径同 `src/render/cardSourceFiles.mjs` 的 glob：cards、parts、render、kernel 下的
- *      ts / tsx / mjs / css，不含测试），对 `src/cards/`、`src/parts/` 下的每个文件当入口算一遍源码版本（页面一侧的算法）；
- *   3. 两边各对每张内置卡算一遍服务端的代码身份（`server/vite-plugin-cards.ts` 的 `cardCodeIdentity`）；
- *   4. 逐个比。只在基准里有、只在当前里有的入口单列。
+ * What it does:
+ *   1. Extract `src/` from baseline commit to a temp directory via `git archive <base> src` (without
+ *      touching workspace or switching branches);
+ *   2. Build a source table on each side (matching `src/render/cardSourceFiles.mjs` glob: ts / tsx /
+ *      mjs / css under cards, parts, render, kernel, excluding tests), and compute source version
+ *      using each file under `src/cards/` and `src/parts/` as an entry (page-side algorithm);
+ *   3. Compute server-side code identity (`cardCodeIdentity` in `server/vite-plugin-cards.ts`) for
+ *      each built-in card on both sides;
+ *   4. Compare one by one. Entries present only in baseline or only in current are listed separately.
  *
- * 输出：过程写 stderr；stdout 最后一行 JSON：{ ok, base, entries, changed: [...], added: [...], removed: [...], identities, identityChanged: [...] }。
- * 通过标准：changed 与 identityChanged 都是空的（新增的文件不算变）。
+ * Output: progress written to stderr; last line of stdout is JSON:
+ *   { ok, base, entries, changed: [...], added: [...], removed: [...], identities, identityChanged: [...] }.
+ * Pass criteria: both changed and identityChanged are empty (added files are not counted as changes).
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -37,7 +44,7 @@ const cards = await import(pathToFileURL(path.join(ROOT, 'server/vite-plugin-car
 const sha = (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 16);
 const walk = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)])) : []);
 
-/** 一棵树的源码表：`/src/...` → 原文（口径同 cardSourceFiles.mjs 的 glob） */
+/** Source table for a tree: `/src/...` → raw text (matches glob in cardSourceFiles.mjs) */
 function sourceTable(root) {
   const files = {};
   for (const dir of ['cards', 'parts', 'render', 'kernel']) {
@@ -49,7 +56,7 @@ function sourceTable(root) {
   return files;
 }
 
-/** 每个卡片 / 部件文件当入口的源码版本（哈希） */
+/** Source version (hash) using each card / part file as an entry */
 function versions(root) {
   const files = sourceTable(root);
   const out = new Map();
@@ -60,7 +67,7 @@ function versions(root) {
   return out;
 }
 
-/** 每张内置卡的服务端代码身份 */
+/** Server-side code identity for each built-in card */
 function identities(root) {
   const out = new Map();
   for (const id of cards.builtinCardIds(root).sort()) {
@@ -75,15 +82,16 @@ let result = { ok: false };
 try {
   const tar = path.join(tmp, 'base.tar');
   const archive = spawnSync('git', ['archive', '--format=tar', '-o', tar, BASE, 'src'], { cwd: ROOT, windowsHide: true, encoding: 'utf8' });
-  if (archive.status !== 0) throw new Error(`git archive ${BASE} 失败：${archive.stderr}`);
+  if (archive.status !== 0) throw new Error(`git archive ${BASE} failed: ${archive.stderr}`);
   const baseRoot = path.join(tmp, 'base');
   fs.mkdirSync(baseRoot);
   const untar = spawnSync('tar', ['-xf', 'base.tar', '-C', 'base'], { cwd: tmp, windowsHide: true, encoding: 'utf8' });
-  if (untar.status !== 0) throw new Error(`解包失败：${untar.stderr}`);
+  if (untar.status !== 0) throw new Error(`Unpack failed: ${untar.stderr}`);
   const baseCommit = spawnSync('git', ['rev-parse', '--short', BASE], { cwd: ROOT, windowsHide: true, encoding: 'utf8' }).stdout.trim();
   say('base', { ref: BASE, commit: baseCommit });
 
-  // 改动层会让「生效的源码」不是检出里的那一份：这里比的是两棵检出，不带改动层
+  // An overlay layer causes "effective source" to differ from the checkout:
+  // this compares two checkouts without overlay layers
   delete process.env.PROMPTCUT_CARD_OVERRIDES;
   const before = versions(baseRoot), after = versions(ROOT);
   const changed = [...after.keys()].filter((k) => before.has(k) && before.get(k) !== after.get(k)).sort();

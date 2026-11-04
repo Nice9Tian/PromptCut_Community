@@ -1,32 +1,38 @@
 /**
- * 能拖宽窄的那条缝。左边的项目栏、聊天页右边的拓展栏共用这一个。
+ * The divider you drag to resize. The project sidebar on the left and the side panel on the right of the
+ * chat page share this one.
  *
- * **平时不画线**(用户 2026-10-23 定:不要常驻的竖线),只有鼠标压上来、或者用键盘聚焦到它时才亮一条
- * 强调色的线 —— 所以两栏和主区之间平时是连着的一片,要拖的时候才看得见边界在哪。
+ * **No line is drawn normally** (user decision, 2026-10-23: no permanent vertical line); a line in the
+ * emphasis color lights up only when the mouse presses on it or when it gets keyboard focus. So the two
+ * bars and the main area normally look like one connected piece, and you see where the boundary is only
+ * when you are about to drag.
  *
- * 双击回默认宽度;方向键也能调(Shift 走大步)—— 只能用鼠标就把键盘用户关在门外了。
+ * Double-click returns to the default width; the arrow keys can adjust it too (Shift takes big steps):
+ * being mouse-only would lock keyboard users out.
  */
 import type { JSX, PointerEvent as ReactPointerEvent } from "react";
 import { clampWidth, type WidthSpec } from "./sideWidth";
 
 export function WidthGrip(props: {
   spec: WidthSpec;
-  /** 缝在哪一边:栏在左边就是 `right`,栏在右边就是 `left` */
+  /** Which side the divider is on: `right` when the bar is on the left, `left` when the bar is on the right */
   side: "left" | "right";
   width: number;
   label: string;
   pc: string;
-  /** 拖的过程中每帧调 */
+  /** Called every frame while dragging */
   onWidth: (px: number) => void;
-  /** 松手、双击、按键时调(这一个才写进本机) */
+  /** Called on release, double-click and key press (only this one is written locally) */
   onWidthCommit: (px: number) => void;
   /**
-   * 在当前宽度上加减。方向键必须走这一条,不能自己算 `width + step` ——
-   * 按住方向键时连发的几下都在同一帧里,每一下读到的 `width` 都还是旧的,算出来是同一个数,宽度就卡住不动了。
+   * Add or subtract on the current width. Arrow keys must go through this one; do not compute
+   * `width + step` yourself --
+   * when an arrow key is held, the repeated presses all land in the same frame, and each one reads the
+   * old `width`, computes the same number, and the width gets stuck.
    */
   onWidthNudge: (delta: number) => void;
 }): JSX.Element {
-  /** 栏在右边时,鼠标往左拖是变宽,所以方向要反过来 */
+  /** When the bar is on the right, dragging the mouse left makes it wider, so the direction has to be reversed */
   const dir = props.side === "right" ? 1 : -1;
 
   const onDown = (e: ReactPointerEvent<HTMLDivElement>) => {

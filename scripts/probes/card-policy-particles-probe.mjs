@@ -1,7 +1,10 @@
 /**
- * particles 唯一画面变化的精确验收，不用没有NASA的演示项目代替。
- * 真实 ParticlesCard 旧/新源码逐帧比较；空/inline/URL配置、参数边界、seed/links、背景各种分支。
- * 每例12帧，另核当前逐帧与直接跳帧相同。在线NASA使用原URL；网络截获回公开纯色fixture图，未打包徽标。
+ * Exact acceptance check for the only visual change in particles, not replaced with a demo
+ * project lacking NASA.
+ * Frame-by-frame comparison of real ParticlesCard old vs. new source; empty/inline/URL configs,
+ * parameter boundaries, seed/links, and various background branches.
+ * 12 frames per case; also verify current frame-by-frame matches direct frame jumping. Online NASA
+ * uses original URL; network interception returns public solid-color fixture image, unbundled logo.
  * node scripts/probes/card-policy-particles-probe.mjs --port 5908 [--out <TMP>] [--before 461206a3]
  */
 import fs from 'node:fs';
@@ -63,14 +66,14 @@ try{
       await page.close();
     }
     let equal=0;for(let i=0;i<12;i++){const old=snapshots.old[i],current=snapshots.current[i];if(old.data.equals(current.data))equal++;frames.push({name,t:i/30,old:hash(old),current:hash(current)});last=current;}
-    check(name+' 桌面改前后12帧逐像素相同',equal===12,{equal,total:12});
-    const jump=await pageFor('current',p);await jump.evaluate(t=>window.frame(t),11/30);const direct=await pixels(jump);check(name+' 逐帧与直接跳帧一致',direct.data.equals(last.data));await jump.close();
+    check(name+' desktop: 12 frames pixel-identical before and after the change',equal===12,{equal,total:12});
+    const jump=await pageFor('current',p);await jump.evaluate(t=>window.frame(t),11/30);const direct=await pixels(jump);check(name+' frame by frame matches jumping directly to the frame',direct.data.equals(last.data));await jump.close();
   }
   const p={...params,config:'/nasa.json'};const old=await pageFor('old',p,true),current=await pageFor('current',p,true);
   const oldBg=await old.evaluate(()=>document.querySelector('canvas').style.backgroundImage);const currentBg=await current.evaluate(()=>document.querySelector('canvas').style.backgroundImage);
-  check('在线旧策略删背景、新策略保留原NASA URL',!oldBg&&currentBg.includes(NASA_URL),{oldBg,currentBg});
+  check('Online: the old policy removes the background, the new policy keeps the original NASA URL',!oldBg&&currentBg.includes(NASA_URL),{oldBg,currentBg});
   const painted=await pixels(current);let cyanCount=0;for(let i=0;i<painted.data.length;i+=4)if(painted.data[i]===0&&painted.data[i+1]===210&&painted.data[i+2]===225)cyanCount++;
-  check('在线外链背景图真实可见，原URL请求实际发生',cyanCount>100&&requests.some(r=>r.key==='current'&&r.online&&r.url===NASA_URL),{cyanCount});
+  check('The online external background image is really visible and the request to the original URL actually happened',cyanCount>100&&requests.some(r=>r.key==='current'&&r.online&&r.url===NASA_URL),{cyanCount});
   fs.writeFileSync(path.join(OUT,'nasa-online.png'),PNG.sync.write(await pixels(current)));await old.close();await current.close();
 }finally{await browser.close();await vite.close();}
-const result={ok:checks.every(c=>c.ok),before:BEFORE,cases:cases.length,desktopFrames:cases.length*12,checks,frames,requests,out:OUT,nasaFixture:'原URL网络响应替换为公开纯色PNG，未外网下载/未将NASA徽标入包'};fs.writeFileSync(path.join(OUT,'result.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({ok:result.ok,cases:result.cases,desktopFrames:result.desktopFrames,fail:checks.filter(c=>!c.ok),out:OUT}));process.exitCode=result.ok?0:1;
+const result={ok:checks.every(c=>c.ok),before:BEFORE,cases:cases.length,desktopFrames:cases.length*12,checks,frames,requests,out:OUT,nasaFixture:'Network response for the original URL replaced with a public solid-color PNG, not downloaded from the external network / NASA logo not bundled'};fs.writeFileSync(path.join(OUT,'result.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({ok:result.ok,cases:result.cases,desktopFrames:result.desktopFrames,fail:checks.filter(c=>!c.ok),out:OUT}));process.exitCode=result.ok?0:1;

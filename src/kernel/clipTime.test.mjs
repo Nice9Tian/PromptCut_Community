@@ -5,7 +5,7 @@ import {
   normalizeSpeed, withSpeed, speedKeyPart, speedLabel, CLIP_SPEED_MIN, CLIP_SPEED_MAX, resampleVarispeed, speedInRange,
 } from "./clipTime.mjs";
 
-test("clipSpeed:没有字段、不是有限正数一律按 1", () => {
+test("clipSpeed: a missing field or anything that is not a finite positive number counts as 1", () => {
   for (const speed of [undefined, null, 0, -1, NaN, Infinity, "2"]) assert.equal(clipSpeed({ speed }), 1, String(speed));
   assert.equal(clipSpeed(undefined), 1);
   assert.equal(clipSpeed({ speed: 0.5 }), 0.5);
@@ -14,7 +14,7 @@ test("clipSpeed:没有字段、不是有限正数一律按 1", () => {
   assert.equal(isSpeedChanged({ speed: 2 }), true);
 });
 
-test("缺省 1:mediaTimeAt / timelineTimeAt / mediaOffsetAfter / 跨度与原来的写法逐位相同(随机 2 万组)", () => {
+test("Default 1: mediaTimeAt / timelineTimeAt / mediaOffsetAfter / span are bit-for-bit identical to the original formulation (20,000 random cases)", () => {
   let seed = 12345;
   const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
   for (let i = 0; i < 20000; i++) {
@@ -30,7 +30,7 @@ test("缺省 1:mediaTimeAt / timelineTimeAt / mediaOffsetAfter / 跨度与原来
   }
 });
 
-test("变速:素材时刻 = mediaOffset + (t − start) × speed,反函数对得上", () => {
+test("Speed change: media time = mediaOffset + (t − start) × speed, and the inverse function matches", () => {
   const clip = { start: 10, end: 14, mediaOffset: 3, speed: 2 };
   assert.equal(mediaTimeAt(clip, 11), 5);
   assert.equal(timelineTimeAt(clip, 5), 11);
@@ -42,13 +42,13 @@ test("变速:素材时刻 = mediaOffset + (t − start) × speed,反函数对得
   assert.equal(timelineTimeAt(slow, 1.5), 3);
 });
 
-test("speedMutesSource:只有变速的素材段;卡片段、剪辑段不算", () => {
+test("speedMutesSource: only speed-changed media clips; card clips and cut segments do not count", () => {
   assert.equal(speedMutesSource({ mediaId: "v", speed: 2 }), true);
   assert.equal(speedMutesSource({ mediaId: "v" }), false);
   assert.equal(speedMutesSource({ cardId: "x", speed: 2 }), false);
   const project = { media: [{ id: "v", kind: "video" }, { id: "s", kind: "audio" }] };
-  assert.equal(speedMutesSource({ mediaId: "v", speed: 2 }, project), true, "视频段不出原声");
-  assert.equal(speedMutesSource({ mediaId: "s", speed: 2 }, project), false, "声音段(音画分离出来的)照常出声、变调");
+  assert.equal(speedMutesSource({ mediaId: "v", speed: 2 }, project), true, "A video clip produces no original audio");
+  assert.equal(speedMutesSource({ mediaId: "s", speed: 2 }, project), false, "Sound clips (split from audio-visual clips) play as usual, with pitch change");
 });
 
 test("normalizeSpeed / withSpeed / speedKeyPart", () => {
@@ -58,20 +58,20 @@ test("normalizeSpeed / withSpeed / speedKeyPart", () => {
   assert.equal(normalizeSpeed(0.01), CLIP_SPEED_MIN);
   assert.equal(normalizeSpeed(1.234), 1.23);
   const c = { id: "a", speed: 2 };
-  assert.deepEqual(withSpeed(c, 1), { id: "a" }, "改回 1 删字段");
+  assert.deepEqual(withSpeed(c, 1), { id: "a" }, "Setting it back to 1 removes the field");
   assert.deepEqual(withSpeed({ id: "a" }, 0.5), { id: "a", speed: 0.5 });
-  assert.equal(c.speed, 2, "不原地改");
+  assert.equal(c.speed, 2, "Not modified in place");
   assert.equal(speedKeyPart({}), null);
   assert.equal(speedKeyPart({ speed: 1 }), null);
   assert.deepEqual(speedKeyPart({ speed: 3 }), { speed: 3 });
   assert.equal(speedLabel(0.5), "0.5×");
 });
 
-test("resampleVarispeed:按倍率步进线性插值;speedInRange", () => {
+test("resampleVarispeed: linear interpolation stepping by the speed ratio; speedInRange", () => {
   const src = Float32Array.from({ length: 10 }, (_, i) => i);
   assert.deepEqual([...resampleVarispeed(src, 2, 2, 4)], [2, 4, 6, 8]);
   assert.deepEqual([...resampleVarispeed(src, 0, 0.5, 4)], [0, 0.5, 1, 1.5]);
-  assert.deepEqual([...resampleVarispeed(src, 8, 2, 3)], [8, 0, 0], "越界补 0");
+  assert.deepEqual([...resampleVarispeed(src, 8, 2, 3)], [8, 0, 0], "Out of range is padded with 0");
   assert.equal(speedInRange(0.25), true);
   assert.equal(speedInRange(4), true);
   assert.equal(speedInRange(4.01), false);

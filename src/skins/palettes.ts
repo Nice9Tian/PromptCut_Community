@@ -1,21 +1,25 @@
 import { tr } from "../i18n/index.ts";
 /**
- * 主题库调色板:来自「视频剪辑软件 UI 色卡」设计稿的五套主题,深浅各一份取值。
- * 结构固定:5 级表面(L0 画布 / L1 面板底 / L2 面板 / L3 控件底 / L4 悬浮)、
- * 主次文字、强调色、7 类素材轨道色;浅色一档多一个描边值(深色描边由表面推导)。
- * 相邻层级明度差 4–6%,靠描边而非阴影分层;轨道色深浅两版分别保证片段上白字 / 黑字 4.5:1。
+ * Theme library palettes: five themes from the "Video editing software UI swatch" design draft,
+ * with light and dark values for each.
+ * Fixed structure: 5 surface tiers (L0 canvas / L1 panel base / L2 panel / L3 control base /
+ * L4 floating), primary/secondary text, accent color, 7 media track colors; the light tier has an
+ * extra border value (dark borders are derived from surfaces).
+ * Adjacent tiers differ by 4-6% in lightness, layered via borders rather than shadows; dark and light
+ * track colors guarantee 4.5:1 contrast for white/black text on clips respectively.
  */
 export interface PaletteSide {
   surfaces: [string, string, string, string, string]; // L0..L4
   fg: string;
   fgMuted: string;
   accent: string;
-  /** 浅色一档设计稿给的描边(强);深色留空,由表面推导 */
+  /** Border (strong) from design draft for light tier; left empty for dark, derived from surface */
   border?: string;
   /**
-   * 「配色诊断与修正 v2」给钢蓝·深单独标了三个值,推导公式凑不准,所以允许显式给:
-   * hairline 面板之间的分隔线、borderStrong 控件描边、fgFaint 弱文字下限。
-   * 没给的主题照旧由表面推导。
+   * "Color diagnosis and correction v2" explicitly specified three values for Steel Blue · Dark,
+   * which derivation formulas cannot accurately match, so explicit values are allowed:
+   * hairline dividers between panels, borderStrong control borders, fgFaint faint text lower bound.
+   * Themes without them are derived from surfaces as before.
    */
   hairline?: string;
   borderStrong?: string;
@@ -42,7 +46,8 @@ export const palettes: Palette[] = [
     id: "studio",
     name: tr("Flow"),
     en: "Studio",
-    // 强调色沿用 PromptCut 一直以来的青蓝品牌色(和靛夜那套同一个值),底色换成更深的生产力工具灰
+    // Accent color keeps PromptCut's longtime cyan-blue brand color (same value as Indigo Night),
+    // base color replaced with a deeper productivity-tool gray
     blurb: tr("Deep modern productivity-tool base colors with a cyan-blue brand accent and clear layering."),
     dark: {
       surfaces: ["#111016", "#1B1A21", "#23222A", "#2C2B34", "#383742"],
@@ -64,7 +69,8 @@ export const palettes: Palette[] = [
     dark: {
       surfaces: ["#0A0C0E", "#14171A", "#1B1F23", "#23282D", "#2E343A"],
       fg: "#E9EDF1", fgMuted: "#9BA5AF", accent: "#7FA8D4",
-      // 配色诊断与修正 v2 实测值:分隔线 / 控件描边 / 弱文字下限
+      // Measured values from Color diagnosis and correction v2: dividers / control borders /
+      // faint text lower bound
       hairline: "#262C32", borderStrong: "#3C444C", fgFaint: "#6A737C",
       tracks: T("#37A39B", "#57A55F", "#9182DD", "#D6A03F", "#CC6AA8", "#6F8CE0", "#D2764F"),
     },
@@ -140,7 +146,10 @@ export const palettes: Palette[] = [
   },
 ];
 
-/** 语义色:设计稿只定义了一套,深浅各一份,所有主题共用 */
+/**
+ * Semantic colors: design draft defines only one set, one each for dark and light,
+ * shared by all themes
+ */
 export const semantic = {
   dark: { danger: "#E2564D", warn: "#E0A13A", success: "#4F9E5C" },
   light: { danger: "#C0433B", warn: "#A5762A", success: "#3D7F45" },

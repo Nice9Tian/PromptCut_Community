@@ -117,12 +117,13 @@ function FocusCard({ params, t = 0 }: CardProps<Params>) {
 
 export const focusCard: CardDef<Params> = {
   id: "focus-card",
-  name: "人物聚焦",
-  description: "半屏口播半屏要点",
-  useWhen: "人物出镜讲解的全屏版式:不透明实色背景会完全盖住底层画面,仅限 16:9 横屏。必须给独立口播视频地址 camSrc,否则那半屏只是写着「口播视频」的占位块;另一侧放 2 到 3 条要点。要点文字固定白色,所以 bg 要用深色。只想在原视频上叠要点浮层,改用 pin-board 或 checklist。",
-  tags: ["人物","半屏","出镜","要点"],
+  name: "Person focus",
+  description: "Half-screen narration, half-screen key points",
+  useWhen: "Full-screen layout for a person presenting on camera: the opaque solid background fully covers the underlying picture, 16:9 landscape only. You must provide a separate narration video URL camSrc, otherwise that half of the screen is just a placeholder block reading \"narration video\"; the other side holds 2 to 3 key points. The key point text is fixed white, so bg must be a dark color. If you only want to overlay key points on the original video, use pin-board or checklist instead.",
+  tags: ["person","half-screen","on camera","Key points"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -139,21 +140,21 @@ export const focusCard: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "bg", label: "背景", type: "select", options: [{ value: "cream", label: "米色" }, { value: "mist", label: "雾白" }, { value: "dark", label: "暗色" }] },
-    { key: "side", label: "口播位置", type: "select", options: [{ value: "left", label: "左" }, { value: "right", label: "右" }] },
-    { key: "items", label: "要点(|分隔)", type: "text" },
-    { key: "stepMs", label: "弹入间隔ms", type: "number" },
-    { key: "camSrc", label: "视频URL", type: "text" },
-    { key: "showRing", label: "显示外环", type: "select", options: [{ value: "true", label: "是" }, { value: "false", label: "否" }] },
-    { key: "camDX", label: "视频X偏移", type: "number" },
-    { key: "camDY", label: "视频Y偏移", type: "number" },
-    { key: "camW", label: "视频宽", type: "number" },
-    { key: "camH", label: "视频高", type: "number" },
+    { key: "bg", label: "background", type: "select", options: [{ value: "cream", label: "Cream" }, { value: "mist", label: "Mist white" }, { value: "dark", label: "Dark" }] },
+    { key: "side", label: "Narration position", type: "select", options: [{ value: "left", label: "Left" }, { value: "right", label: "Right" }] },
+    { key: "items", label: "Key points (| separated)", type: "text" },
+    { key: "stepMs", label: "Pop-in interval ms", type: "number" },
+    { key: "camSrc", label: "Video URL", type: "text" },
+    { key: "showRing", label: "Show outer ring", type: "select", options: [{ value: "true", label: "yes" }, { value: "false", label: "no" }] },
+    { key: "camDX", label: "Video X offset", type: "number" },
+    { key: "camDY", label: "Video Y offset", type: "number" },
+    { key: "camW", label: "Video width", type: "number" },
+    { key: "camH", label: "Video height", type: "number" },
   ],
   parts: [
-    { id: "bg", label: "背景", role: "decor", params: ["bg"], enterMs: 0, settleMs: 500 },
-    { id: "cam", label: "口播视频", role: "media", params: ["camSrc", "showRing", "camDX", "camDY", "camW", "camH", "side"], enterMs: 0, settleMs: 700 },
-    { id: "items", label: "要点", role: "list", params: ["items", "stepMs"], enterMs: 300, settleMs: 300 + 2 * 300 + 600 },
+    { id: "bg", label: "background", role: "decor", params: ["bg"], enterMs: 0, settleMs: 500 },
+    { id: "cam", label: "Narration video", role: "media", params: ["camSrc", "showRing", "camDX", "camDY", "camW", "camH", "side"], enterMs: 0, settleMs: 700 },
+    { id: "items", label: "Key points", role: "list", params: ["items", "stepMs"], enterMs: 300, settleMs: 300 + 2 * 300 + 600 },
   ],
   lifecycle: { settleMs: 1500, after: "evolve", exit: ["fade"] },
   Component: FocusCard,

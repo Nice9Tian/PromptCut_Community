@@ -1,15 +1,19 @@
 import { tr } from "../i18n/index.ts";
 /**
- * 纯浏览器的设备身份（C10a 契约 `docs/plan/c10a-contract.md` 第 2 节；主执行计划 12.2 节「设备名」）。
+ * Device identity for browser-only mode (C10a contract `docs/plan/c10a-contract.md` section 2;
+ * main execution plan section 12.2 "Device name").
  *
- * 在线浏览器模式没有编辑器进程，不经 `GET /api/docservice/device`：
- * - 设备 id：128 位随机数，base64url（22 个字符，落在 auth 契约 `deviceId` 的 16～64 个 `[A-Za-z0-9_-]` 里）；
- * - 设备名：「浏览器名 + 系统名 + 随机 4 位」，例如 `Chrome · Android · 4821`；
- * - 两样都存在页面本地（localStorage `pc.online.device`），下次打开还是同一台设备。本地存不了（隐私模式、被禁用）时
- *   只在这一次会话里有效。
- * 桌面运行环境照旧由编辑器进程给（`syncManager.ts` 的 `loadDevice`）。
+ * Online browser mode has no editor process and does not call `GET /api/docservice/device`:
+ * - Device id: 128-bit random number, base64url (22 characters, within the 16-64 `[A-Za-z0-9_-]`
+ *   characters of auth contract `deviceId`);
+ * - Device name: "browser name + OS name + 4 random digits", e.g. `Chrome · Android · 4821`;
+ * - Both are stored locally in the page (localStorage `pc.online.device`), identifying the same
+ *   device on subsequent opens. If local storage is unavailable (incognito mode, disabled), it is
+ *   only valid for this session.
+ * Desktop runtime environments are provided by the editor process as before (`loadDevice` in
+ * `syncManager.ts`).
  *
- * 不引 `mode.ts`，Node 单测直接用（UA 与存储都可注入）。
+ * Does not import `mode.ts`; directly usable in Node unit tests (UA and storage can be injected).
  */
 
 export interface BrowserDevice {
@@ -27,7 +31,7 @@ interface UaData {
   mobile?: boolean;
 }
 
-/** UA → 浏览器名与系统名（只为给人看；识别不了就写「浏览器」「未知系统」） */
+/** UA → browser name and OS name (for display only; writes "Browser" and "Unknown OS" if unrecognized) */
 export function browserLabel(ua: string, uaData?: UaData | null, maxTouchPoints = 0): { browser: string; os: string } {
   const s = String(ua || "");
   let browser = tr("Browser");
@@ -42,7 +46,7 @@ export function browserLabel(ua: string, uaData?: UaData | null, maxTouchPoints 
   let os = tr("Unknown OS");
   const platform = uaData?.platform ?? "";
   if (/iPhone|iPod/.test(s)) os = "iOS";
-  else if (/iPad/.test(s) || (/Macintosh/.test(s) && maxTouchPoints > 1)) os = "iPadOS"; // iPad 常报桌面 UA
+  else if (/iPad/.test(s) || (/Macintosh/.test(s) && maxTouchPoints > 1)) os = "iPadOS"; // iPads often report desktop UAs
   else if (/Android/i.test(s) || /Android/i.test(platform)) os = "Android";
   else if (/Windows/i.test(s) || /Windows/i.test(platform)) os = "Windows";
   else if (/Mac OS X|Macintosh/.test(s) || /macOS/i.test(platform)) os = "macOS";
@@ -75,7 +79,7 @@ function defaultStorage(): Pick<Storage, "getItem" | "setItem"> | null {
 
 let memo: BrowserDevice | null = null;
 
-/** 取（必要时生成并存下）这台浏览器的设备身份 */
+/** Gets (generating and storing if necessary) the device identity of this browser */
 export function loadBrowserDevice(deps: DeviceDeps = {}): BrowserDevice {
   const storage = deps.storage === undefined ? defaultStorage() : deps.storage;
   const random = deps.random ?? ((b: Uint8Array) => globalThis.crypto.getRandomValues(b));
@@ -85,7 +89,7 @@ export function loadBrowserDevice(deps: DeviceDeps = {}): BrowserDevice {
       return { deviceId: saved.deviceId, deviceName: saved.deviceName.slice(0, 64) };
     }
   } catch {
-    /* 存的东西坏了：重新生成 */
+    /* Stored data is corrupted: regenerate */
   }
   if (deps.storage === undefined && memo) return memo;
   const nav = typeof navigator !== "undefined" ? (navigator as Navigator & { userAgentData?: UaData }) : null;
@@ -97,7 +101,7 @@ export function loadBrowserDevice(deps: DeviceDeps = {}): BrowserDevice {
   try {
     storage?.setItem(DEVICE_KEY, JSON.stringify(device));
   } catch {
-    /* 存不了：只在这次会话里用 */
+    /* Cannot persist: use only for this session */
   }
   if (deps.storage === undefined) memo = device;
   return device;

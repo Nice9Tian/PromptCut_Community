@@ -3,18 +3,19 @@ import { STEP_BURST_MS, commitMerged, newGestureKey } from "./mergedEdit";
 import { formatNumber, isTypingInput, reduceField, type FieldEvent } from "./numberDraft";
 
 /**
- * 编辑面板里改项目内容的数字框(2026-10-20 用户定,`docs/semantics/workflow/editing.md`「撤销、重做」):
- * 在框里输入一个值只算一步改动、只记一步撤销,输入过程中的中间值不进项目。
+ * Number field for editing project content in the editor panel (user decision, 2026-10-20, `docs/semantics/workflow/editing.md` "Undo, redo"):
+ * entering a value in the field counts as one change and records one undo step; intermediate values while typing do not enter the project.
  *
- *   - 敲字、粘贴、删除:只改本地草稿,不提交。
- *   - 回车、失去焦点:提交一次(`onCommit`)。回车同时让框失焦,这样 Ctrl+Z 马上能撤这一步。
- *   - Esc:放弃草稿,显示回项目里的值。
- *   - 输入是空的、半截(「-」)、不是数、`validate` 不认、或和显示的值一样:不提交,失焦后显示回项目里的值。
- *   - 上下方向键、输入框自带的上下箭头(浏览器给的是没有 inputType 的 input 事件):每一下立即提交,
- *     连续步进(相隔不超过 STEP_BURST_MS)并成一步撤销。
+ *   - Typing, pasting, deleting: only change the local draft, no commit.
+ *   - Enter, losing focus: commit once (`onCommit`). Enter also blurs the field, so Ctrl+Z can undo this step right away.
+ *   - Esc: discard the draft and show the project value again.
+ *   - Input is empty, half-typed ("-"), not a number, rejected by `validate`, or equal to the displayed value: no commit,
+ *     and after blur the project value is shown again.
+ *   - Up/down arrow keys and the input's built-in up/down arrows (the browser sends an input event without inputType):
+ *     each press commits immediately, and consecutive steps (no more than STEP_BURST_MS apart) merge into one undo step.
  *
- * `onCommit` 收到的是已经确认过的有限数;夹到范围、校验、报错由调用方做(和以前一样)。
- * `value` 不是有限数(参数没有值)时显示空,配 `placeholder`。
+ * `onCommit` receives an already confirmed finite number; clamping to range, validation and error reporting are done by the caller (as before).
+ * When `value` is not a finite number (the parameter has no value), the field is shown empty, with `placeholder`.
  */
 export interface NumberFieldProps {
   value: number | null | undefined;
@@ -25,11 +26,11 @@ export interface NumberFieldProps {
   disabled?: boolean;
   placeholder?: string;
   className?: string;
-  /** 显示最多几位小数,默认 3 */
+  /** Maximum number of decimals to display, default 3 */
   digits?: number;
-  /** 不认的数当没输入处理(例如框的宽高必须大于 0) */
+  /** A rejected number is treated as no input (for example, the width and height of a box must be greater than 0) */
   validate?: (n: number) => boolean;
-  /** 其余要原样写到 input 上的属性(`data-pc`、`aria-label`、`title`…) */
+  /** Other attributes to write onto the input as they are (`data-pc`, `aria-label`, `title`…) */
   attrs?: Record<string, string>;
 }
 
@@ -38,7 +39,7 @@ export function NumberField({ value, onCommit, step, min, max, disabled, placeho
   const burstKey = useRef<string>("");
   if (!burstKey.current) burstKey.current = newGestureKey("number-step");
 
-  /** 逐事件交给状态机(numberDraft.ts 的 reduceField),它决定草稿怎么变、要不要提交 */
+  /** Hand each event to the state machine (reduceField in numberDraft.ts), which decides how the draft changes and whether to commit */
   const dispatch = (ev: FieldEvent, input?: HTMLInputElement) => {
     const out = reduceField(draft, ev, { value, validate, digits });
     setDraft(out.draft);
@@ -47,7 +48,7 @@ export function NumberField({ value, onCommit, step, min, max, disabled, placeho
       if (out.commit.step) commitMerged(burstKey.current, STEP_BURST_MS, () => onCommit(v));
       else onCommit(v);
     }
-    if (out.blur) input?.blur(); // 失焦事件随后到,提交在那里
+    if (out.blur) input?.blur(); // The blur event arrives next, and the commit happens there
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {

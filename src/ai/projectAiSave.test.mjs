@@ -1,6 +1,8 @@
 /**
- * 项目文件里存的对话取本项目第一个会话的(2026-10-22:分页清单按项目分开后,新会话各有自己的 store)。
- * 跑:node --test src/ai/projectAiSave.test.mjs。用例 PA-1:没有会话存空;第一个会话的对话存进去;打开带对话的项目文件补成「Agent 1」。
+ * The chat saved in the project file is taken from this project's first session (2026-10-22: after
+ * tab manifests were split per project, new sessions each have their own store).
+ * Run: node --test src/ai/projectAiSave.test.mjs. Case PA-1: save empty when there are no sessions;
+ * save the first session's chat; opening a project file with chat supplements it as "Agent 1".
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
@@ -13,16 +15,16 @@ const tabs = await import(srcUrl("ai/agentTabs.ts"));
 const chat = await import(srcUrl("ai/liveChat.ts"));
 const ai = await import(srcUrl("ai/projectAi.ts"));
 
-test("PA-1 随项目文件存第一个会话的对话;没有会话存空;打开带对话的项目文件补成 Agent 1", () => {
+test("PA-1 The first session's chat is saved with the project file; with no session, empty is saved; opening a project file that contains chat backfills it as Agent 1", () => {
   tabs.setAgentProject("pA");
   assert.deepEqual(ai.collectProjectAi().messages, []);
   assert.equal(ai.hasProjectAi(), false);
   const first = tabs.commitDraft(tabs.getActiveTabId());
-  chat.getChatStore(first.id).replace([{ id: "m1", role: "user", text: "你好" }, { id: "m2", role: "assistant", text: "好", pending: true }]);
-  assert.deepEqual(ai.collectProjectAi().messages.map((m) => m.id), ["m1"], "没跑完的消息不存");
+  chat.getChatStore(first.id).replace([{ id: "m1", role: "user", text: "Hello" }, { id: "m2", role: "assistant", text: "OK", pending: true }]);
+  assert.deepEqual(ai.collectProjectAi().messages.map((m) => m.id), ["m1"], "Messages that have not finished running are not saved");
   assert.equal(ai.hasProjectAi(), true);
-  // 打开另一个带对话的项目文件:对话灌进来,新项目补一个页接住
-  ai.applyProjectAi({ script: "", messages: [{ id: "x1", role: "user", text: "旧对话" }] });
+  // Open another project file with chat: chat is poured in, and the new project adds a tab to catch it
+  ai.applyProjectAi({ script: "", messages: [{ id: "x1", role: "user", text: "Old chat" }] });
   tabs.setAgentProject("pB");
   assert.deepEqual(tabs.getTabs().map((t) => [t.id, t.title]), [["pB_main", "Agent 1"]]);
   assert.deepEqual(ai.collectProjectAi().messages.map((m) => m.id), ["x1"]);

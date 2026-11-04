@@ -1,35 +1,49 @@
 /**
- * 在场状态模块(计划 `docs/plan/agent-workflow-plan.md` A3 第二阶段;语义 `user-workflow.md`「保护」「多 Agent」)。
+ * Presence module (plan `docs/plan/agent-workflow-plan.md` A3 stage 2;
+ * semantics `user-workflow.md` "Protection", "Multi-Agent").
  *
- * 共享项目里,各成员页面的「正在编辑」、各 Agent 的范围声明和互发的消息,要让同一项目的其它成员知道。
- * 它们**不进项目历史**、带过期时间:本模块只在内存里转发,不落盘、不记版本,重启就清空。
+ * In shared projects, the "editing" status on each member's page, each Agent's scope declarations,
+ * and messages sent between them must be made known to other members of the same project.
+ * They **do not enter project history** and have an expiration time: this module only forwards in
+ * memory, does not write to disk, does not record versions, and clears on restart.
  *
- * 消息(都带 `projectId`,可带 `session`;写入身份照项目模块取 principal 加 `session`,消息里自报的身份一律不认):
- * - `presence.set { key, data, ttlMs? }`:记下「这个身份的这一项」(同一身份同一 key 整条替换),在项目频道上
- *   给别的订阅者广播 `presence.update { projectId, key, from, data, expiresAt }`,回 `presence.ok`;
- * - `presence.clear { key }`:撤掉,广播 `presence.update { …, data: null, expiresAt: 0 }`;
- * - `presence.list`:回 `presence.state { projectId, entries: [{ key, from, data, expiresAt }] }`(没过期的);
- * - `presence.send { data }`:不记,只广播一次 `presence.message { projectId, from, data, at }`(Agent 之间的消息);
- * - 连接断了,它记下的各项一并撤掉(广播撤销)。
- * `data` 由客户端约定(`kind: 'editing' | 'agent' | 'agent-message'`),本模块不认识内容,只限大小。
+ * Messages (all carry `projectId`, may carry `session`; write identity is taken from the project
+ * module as principal plus `session`, and self-reported identities in messages are never accepted):
+ * - `presence.set { key, data, ttlMs? }`: records "this entry for this identity" (replacing the
+ *   entire entry for the same identity and same key), broadcasts
+ *   `presence.update { projectId, key, from, data, expiresAt }` to other subscribers on the
+ *   project channel, and returns `presence.ok`;
+ * - `presence.clear { key }`: removes it, and broadcasts
+ *   `presence.update { …, data: null, expiresAt: 0 }`;
+ * - `presence.list`: returns
+ *   `presence.state { projectId, entries: [{ key, from, data, expiresAt }] }` (unexpired ones);
+ * - `presence.send { data }`: does not record, only broadcasts
+ *   `presence.message { projectId, from, data, at }` once (messages between Agents);
+ * - If the connection drops, all entries it recorded are removed together (broadcasting revocations).
+ * `data` is defined by client convention (`kind: 'editing' | 'agent' | 'agent-message'`); this
+ * module does not inspect the content, only limits its size.
  *
- * 广播借同一空间里项目模块的 `publishToProject`(订阅就是 `project.open`),与事件模块同一个做法;渲染节点的连接不能发。
+ * Broadcasting borrows `publishToProject` from the project module in the same space (subscription is
+ * simply `project.open`), following the same approach as the events module; connections from render
+ * nodes cannot send.
  *
- * **兼容**:旧版文档服务没有本模块,这几种消息回 `error { reason: 'unsupported' }`(核心的「没有模块处理这种消息」),
- * 客户端据此停发、不报错、不断线;旧客户端不发这些消息,不受影响。
+ * **Compatibility**: Older versions of the document service do not have this module, and return
+ * `error { reason: 'unsupported' }` for these messages (the core's "no module handles this message"),
+ * based on which the client stops sending, reports no errors, and does not disconnect; old clients
+ * do not send these messages and are unaffected.
  */
 import { actorOf } from './actor.mjs';
 
 export const PRESENCE_MODULE = 'presence';
 
 export const PRESENCE_LIMITS = Object.freeze({
-  /** `data` 序列化后的上限(UTF-8 字节) */
+  /** Upper limit for serialized `data` (UTF-8 bytes) */
   DATA_BYTES: 8 * 1024,
-  /** 过期时间:缺省、最短、最长 */
+  /** Expiration time: default, minimum, maximum */
   TTL_DEFAULT_MS: 30_000,
   TTL_MIN_MS: 1_000,
   TTL_MAX_MS: 30 * 60_000,
-  /** 每个项目最多记多少项 */
+  /** Maximum number of items recorded per project */
   PER_PROJECT: 256,
 });
 
@@ -51,11 +65,12 @@ const identityOf = (a) => JSON.stringify([a?.userId ?? null, a?.deviceId ?? null
 
 /**
  * @param {object} options
- * @param {{ publishToProject(projectId: string, message: object, opts?: object): number }} options.project 同一空间的项目模块
+ * @param {{ publishToProject(projectId: string, message: object, opts?: object): number }} options.project
+ *   Project module in the same space
  * @param {() => number} [options.now]
  */
 export function presenceModule({ project, now } = {}) {
-  if (!project || typeof project.publishToProject !== 'function') throw new TypeError('presenceModule: project 必须是带 publishToProject 的项目模块');
+  if (!project || typeof project.publishToProject !== 'function') throw new TypeError('presenceModule: project must be a project module with publishToProject');
   const principals = new Map();
   /** projectId → Map<entryKey, { key, from, data, expiresAt, connId }> */
   const projects = new Map();
@@ -68,22 +83,22 @@ export function presenceModule({ project, now } = {}) {
   }
 
   function common(connId, msg) {
-    if (typeof msg.projectId !== 'string' || !PROJECT_ID_RE.test(msg.projectId)) bad('projectId 不合法');
+    if (typeof msg.projectId !== 'string' || !PROJECT_ID_RE.test(msg.projectId)) bad('projectId is invalid');
     let session = null;
     if (msg.session !== undefined && msg.session !== null) {
-      if (typeof msg.session !== 'string' || msg.session.length < 1 || msg.session.length > 128) bad('session 必须是 1～128 个字符的字符串');
+      if (typeof msg.session !== 'string' || msg.session.length < 1 || msg.session.length > 128) bad('session must be a string of 1-128 characters');
       session = msg.session;
     }
     const principal = principals.get(connId);
-    if (principal?.role === 'render') throw new Refused('forbidden', '渲染节点的连接不能发在场状态');
+    if (principal?.role === 'render') throw new Refused('forbidden', 'Render node connections cannot send presence state');
     return { projectId: msg.projectId, from: actorOf(principal, session) };
   }
 
   function checkData(v) {
-    if (!isObj(v)) bad('data 必须是对象');
+    if (!isObj(v)) bad('data must be an object');
     let bytes;
-    try { bytes = Buffer.byteLength(JSON.stringify(v), 'utf8'); } catch { bad('data 不能序列化'); }
-    if (bytes > PRESENCE_LIMITS.DATA_BYTES) throw new Refused('too-large', `data 超过 ${PRESENCE_LIMITS.DATA_BYTES} 字节`);
+    try { bytes = Buffer.byteLength(JSON.stringify(v), 'utf8'); } catch { bad('data cannot be serialized'); }
+    if (bytes > PRESENCE_LIMITS.DATA_BYTES) throw new Refused('too-large', `data exceeds ${PRESENCE_LIMITS.DATA_BYTES} bytes`);
     return v;
   }
 
@@ -99,18 +114,18 @@ export function presenceModule({ project, now } = {}) {
 
   function set(ctx, connId, msg, reqId) {
     const { projectId, from } = common(connId, msg);
-    if (typeof msg.key !== 'string' || !KEY_RE.test(msg.key)) bad('key 必须是 1～64 个 [A-Za-z0-9._:-] 字符');
+    if (typeof msg.key !== 'string' || !KEY_RE.test(msg.key)) bad('key must be 1-64 characters from [A-Za-z0-9._:-]');
     const data = checkData(msg.data);
     let ttl = PRESENCE_LIMITS.TTL_DEFAULT_MS;
     if (msg.ttlMs !== undefined) {
-      if (!Number.isFinite(msg.ttlMs)) bad('ttlMs 必须是数字');
+      if (!Number.isFinite(msg.ttlMs)) bad('ttlMs must be a number');
       ttl = Math.min(PRESENCE_LIMITS.TTL_MAX_MS, Math.max(PRESENCE_LIMITS.TTL_MIN_MS, Math.round(msg.ttlMs)));
     }
     const t = clock(ctx);
     const list = listOf(projectId);
     prune(list, t);
     const entryKey = `${identityOf(from)}|${msg.key}`;
-    if (!list.has(entryKey) && list.size >= PRESENCE_LIMITS.PER_PROJECT) throw new Refused('too-many', `这个项目的在场状态已有 ${PRESENCE_LIMITS.PER_PROJECT} 项`);
+    if (!list.has(entryKey) && list.size >= PRESENCE_LIMITS.PER_PROJECT) throw new Refused('too-many', `This project already has ${PRESENCE_LIMITS.PER_PROJECT} presence entries`);
     const expiresAt = t + ttl;
     list.set(entryKey, { key: msg.key, from, data, expiresAt, connId });
     stats.sets += 1;
@@ -120,7 +135,7 @@ export function presenceModule({ project, now } = {}) {
 
   function clear(ctx, connId, msg, reqId) {
     const { projectId, from } = common(connId, msg);
-    if (typeof msg.key !== 'string' || !KEY_RE.test(msg.key)) bad('key 必须是 1～64 个 [A-Za-z0-9._:-] 字符');
+    if (typeof msg.key !== 'string' || !KEY_RE.test(msg.key)) bad('key must be 1-64 characters from [A-Za-z0-9._:-]');
     const list = projects.get(projectId);
     const had = list?.delete(`${identityOf(from)}|${msg.key}`);
     stats.clears += 1;
@@ -179,7 +194,7 @@ export function presenceModule({ project, now } = {}) {
     handle(ctx, connId, msg) {
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '在场状态模块不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The presence module does not support this message' }, reqId);
       try {
         fn(ctx, connId, msg, reqId);
       } catch (err) {

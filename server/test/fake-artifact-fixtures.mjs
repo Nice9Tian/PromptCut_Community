@@ -1,18 +1,24 @@
 /**
- * 仅供测试，生产代码不得引用。
+ * For testing only, must not be referenced by production code.
  *
- * C6.4 三个产物测试（`artifact-dedup` / `artifact-push` / `artifact-adopt`）共用的夹具，写法沿用 C6.2 的
- * `artifact-transfer.test.mjs`：
+ * Shared fixtures for the three C6.4 artifact tests (`artifact-dedup` / `artifact-push` /
+ * `artifact-adopt`), following the style of `artifact-transfer.test.mjs` in C6.2:
  *
- *   - 环境与指纹：`OWN_ENV`（两个 FramePipeline 自己的环境）、`TASK_FP`（任务的锁指纹，故意与之不同）；
- *   - 任务（TaskView，B.4 / E.5 / E.9 / F.1 的形状）：`snapshotTask`、`streamTask`；`dirKeyOf`、`manifestKey`、`refOf`；
- *   - 快照：`htmlOf`、`bigHtml`、`dataImageHtml`、`seedSnapshots`；流：`writeStreamFixture`（按 `frame-stream.mjs` 的格式手工造）；
- *   - 帧库：`makeRoots(FramePipeline)` 建临时帧库与管线，`cleanup()` 关管线、删目录；
- *   - 服务：`startServices(harness)` 起素材服务（memory，端口 0）与文档服务（内容库，memory，端口 0），
- *     回 `{ srv, client, docs, content, cleanup }`；
- *   - 其它：`unpack`（`collect*` 的回值）、`wire`（JSON 往返）、`filesOf`、`watchEntry`、`staged`、`range`。
+ *   - Environment and fingerprint: `OWN_ENV` (the two FramePipelines' own environments),
+ *     `TASK_FP` (the task's lock fingerprint, intentionally different from it);
+ *   - Tasks (TaskView, shapes of B.4 / E.5 / E.9 / F.1): `snapshotTask`, `streamTask`;
+ *     `dirKeyOf`, `manifestKey`, `refOf`;
+ *   - Snapshots: `htmlOf`, `bigHtml`, `dataImageHtml`, `seedSnapshots`; streams:
+ *     `writeStreamFixture` (manually crafted in the format of `frame-stream.mjs`);
+ *   - Frame store: `makeRoots(FramePipeline)` creates temporary frame stores and pipelines,
+ *     `cleanup()` closes pipelines and deletes directories;
+ *   - Services: `startServices(harness)` starts the asset service (memory, port 0) and document
+ *     service (content store, memory, port 0), returning `{ srv, client, docs, content, cleanup }`;
+ *   - Other: `unpack` (return value of `collect*`), `wire` (JSON round-trip), `filesOf`,
+ *     `watchEntry`, `staged`, `range`.
  *
- * 引了 `frame-stream.mjs`（为 `segmentSignature`），所以要在测试文件 `mock.module` 了 `bakery/index.mjs` 之后再动态 import 本文件。
+ * References `frame-stream.mjs` (for `segmentSignature`), so dynamically import this file after
+ * the test file runs `mock.module` on `bakery/index.mjs`.
  */
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -56,7 +62,10 @@ export function snapshotTask({ tier = 'shared', contentKey, entryKey = null, fro
     priority: 10, state: 'claimed', version: 1, attempts: 1,
   };
 }
-/** 共享档的落盘键 = 结果键；本地档 = resultKeyOf(去掉 entryKey 前缀的内容键, 任务的锁指纹)（E.9） */
+/**
+ * On-disk key for shared tier = result key; local tier = resultKeyOf(content key stripped of
+ * entryKey prefix, task lock fingerprint) (E.9)
+ */
 export const dirKeyOf = (task) => (task.tier === 'local'
   ? resultKeyOf(task.input.contentKey.slice(task.input.entryKey.length + 1), task.requires.envFingerprint)
   : task.resultKey);
@@ -73,19 +82,21 @@ export function streamTask({ streamKey, contentKey, from, to, clipId = 'clip-s',
   };
 }
 
-/** 内容库清单的键：`<resultKey>:<from>-<to>`（契约第 1 节） */
+/** Content store manifest key: `<resultKey>:<from>-<to>` (Section 1 of the contract) */
 export const manifestKey = (task) => `${task.resultKey}:${task.range.from}-${task.range.to}`;
-/** 清单的 kind：快照 → snapshot-manifest，流 → render-manifest */
+/** Manifest kind: snapshot → snapshot-manifest, stream → render-manifest */
 export const manifestKind = (task) => (task.kind === 'stream' ? 'render-manifest' : 'snapshot-manifest');
-/** sink 的 ref（C6.2 第 11 节第 3 条：带上任务的 input 与 requires） */
+/** Sink ref (C6.2 Section 11 Item 3: includes task input and requires) */
 export const refOf = (t) => ({ resultKey: t.resultKey, kind: t.kind, tier: t.kind === 'stream' ? null : t.tier, range: t.range, input: t.input, requires: t.requires });
 export const metaOf = (t) => ({ taskId: t.id, nodeId: 'node-1', token: 1 });
 
 export const htmlOf = (n, tag = 'A') => `<div data-pc-scene="" data-f="${n}">${tag} frame ${n} ${'·'.repeat(n % 7)}</div>`;
 export const bigHtml = (n = 0) => `<div data-pc-scene="" data-f="${n}">${'x'.repeat(310 * 1024)}</div>`;
 /**
- * `data:image` 占比约为 `share` 的一帧 HTML（按 `scripts/archive/probes/snapshot-size-probe.mjs` 的 `dataImageBytes` 口径（该探针 2026-10-23 归档，算法在这里是复制的，不受影响）：
- * 匹配 `data:image/<type>;base64,<base64>` 的字符数，除以整帧 UTF-8 字节数）。
+ * One frame of HTML where `data:image` accounts for approximately `share` (measured by
+ * `dataImageBytes` in `scripts/archive/probes/snapshot-size-probe.mjs` (probe archived 2026-10-23,
+ * the algorithm is copied here and unaffected): number of characters matching
+ * `data:image/<type>;base64,<base64>`, divided by total UTF-8 bytes of the full frame).
  */
 export function dataImageHtml(n, share, total = 8000) {
   const img = Math.round(total * share);
@@ -95,11 +106,17 @@ export function dataImageHtml(n, share, total = 8000) {
   const pad = Math.max(0, total - head.length - uri.length - tail.length - 6);
   return `${head}${uri}${tail}${'p'.repeat(pad)}</div>`;
 }
-/** 与 `scripts/archive/probes/snapshot-size-probe.mjs`（2026-10-23 归档） 的 `dataImageBytes` 相同的算法（复制，不引用探针） */
+/**
+ * Same algorithm as `dataImageBytes` in `scripts/archive/probes/snapshot-size-probe.mjs`
+ * (archived 2026-10-23) (copied, does not reference probe)
+ */
 const DATA_IMG = /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g;
 export const dataImageBytes = (s) => { let n = 0; for (const m of (s || '').match(DATA_IMG) || []) n += m.length; return n; };
 
-/** 往 pipeline 的帧库写 `frames` 这些帧（走 `commitSnapshots`，这是写快照的唯一入口） */
+/**
+ * Write `frames` into the pipeline frame store (via `commitSnapshots`, the sole entry point for
+ * writing snapshots)
+ */
 export async function seedSnapshots(pipeline, task, frames, { html = htmlOf, tag = 'A', capabilities, clipId } = {}) {
   const caps = capabilities ?? (task.tier === 'local' ? LOCAL_CAPS : SHARED_CAPS);
   const items = frames.map((n) => ({ localFrame: n, html: html(n, tag) }));
@@ -108,14 +125,14 @@ export async function seedSnapshots(pipeline, task, frames, { html = htmlOf, tag
   });
 }
 
-/** `collect*` 的回值（C6.2 第 11 节第 1 条：`{ result, readBlob }`） */
+/** Return value of `collect*` (C6.2 Section 11 Item 1: `{ result, readBlob }`) */
 export function unpack(out) {
-  assert.ok(out && typeof out === 'object', 'collect* 要回一个对象');
+  assert.ok(out && typeof out === 'object', 'collect* must return an object');
   const direct = out.v !== undefined || out.kind !== undefined;
   const result = direct ? out : out.result;
   const readBlob = direct ? out.readBlob : (out.readBlob ?? out.result?.readBlob);
-  assert.ok(result && typeof result === 'object', '拿不到清单（result）');
-  assert.equal(typeof readBlob, 'function', 'collect* 要同时给出 readBlob(hash)');
+  assert.ok(result && typeof result === 'object', 'Cannot get the manifest (result)');
+  assert.equal(typeof readBlob, 'function', 'collect* must also provide readBlob(hash)');
   return { result: wire(result), readBlob, raw: result };
 }
 
@@ -130,7 +147,7 @@ export async function filesOf(dir) {
   return out;
 }
 
-/** 递归列出一棵目录里的全部文件：{ 相对路径: Buffer } */
+/** Recursively list all files in a directory tree: { relativePath: Buffer } */
 export async function treeOf(dir) {
   const out = {};
   const walk = async (d, rel) => {
@@ -150,7 +167,10 @@ export async function treeOf(dir) {
 export const A_ENCODER = 'h264_nvenc';
 export const B_ENCODER = 'libx264';
 
-/** 在 root 下按 `frame-stream.mjs` 的格式手工造一条流（字节是造的，不是真 fMP4）。回 { manifest, files, dir } */
+/**
+ * Manually construct a stream under root following the `frame-stream.mjs` format (bytes are
+ * synthetic, not real fMP4). Returns { manifest, files, dir }
+ */
 export async function writeStreamFixture(root, { streamKey, segments, encoder = A_ENCODER, seed = 1, originFrame = 0, lastFrame }) {
   const dir = path.join(root, 'streams', streamKey);
   await fs.mkdir(dir, { recursive: true });
@@ -160,8 +180,10 @@ export async function writeStreamFixture(root, { streamKey, segments, encoder = 
   const id1 = sha16(init1);
   const files = { [`init-${id1}.mp4`]: init1 };
   const manifest = {
-    // `originFrame`:这条流自己的第一帧(分段从它起数);清单不带它的结果别处不收(`streamAdoption`)
-    // `lastFrame`(给了才写):这条流自己的最后一帧,推送时清单 header 带上它(写内容库时按它截 8 段一桶的终点)
+    // `originFrame`: this stream's own first frame (segment indexing starts from it); results
+    // without it in manifest are rejected elsewhere (`streamAdoption`)
+    // `lastFrame` (written only if provided): this stream's own last frame, included in manifest
+    // header when pushing (used to truncate the 8-segment bucket boundary when writing to content store)
     version: 1, streamKey, kind: 'card', plane: 'local', clipIds: ['clip-s'], fps: 30, originFrame, ...(Number.isInteger(lastFrame) ? { lastFrame } : {}), bound, offset: { x: 32, y: 32 }, tight,
     inits: { [id1]: { codec: 'avc1.64001f', width: 48, height: 96, timescale: 15360, rect: tight, encoder, bytes: init1.length } },
     segments: {},
@@ -181,8 +203,9 @@ export async function writeStreamFixture(root, { streamKey, segments, encoder = 
 }
 
 /**
- * 建临时帧库与管线。`make(root, { interactive })` 建一个 FramePipeline（注入环境、不探测），`root()` 建一个临时目录。
- * `cleanup()` 关掉全部管线、删掉全部目录。
+ * Create temporary frame stores and pipelines. `make(root, { interactive })` creates a
+ * FramePipeline (injects environment, does not probe), and `root()` creates a temporary directory.
+ * `cleanup()` shuts down all pipelines and deletes all directories.
  */
 export function makeRoots(FramePipeline, prefix = 'pc-c64-lib-') {
   const roots = [];
@@ -201,16 +224,19 @@ export function makeRoots(FramePipeline, prefix = 'pc-c64-lib-') {
   };
 }
 
-/** 流生产者：接上读口、定下编码器名（不探测、不开 worker） */
+/** Stream producer: connect read port, set encoder name (does not probe, does not start workers) */
 export function producerOf(pipeline, encoder = B_ENCODER) {
   const p = pipeline.streamProducer();
-  assert.ok(p, '拿不到流生产者（streamProducer()，只在 interactive: true 的管线上有）');
+  assert.ok(p, 'cannot get the stream producer (streamProducer(), which exists only on a pipeline with interactive: true)');
   p.attachRoute();
   p.encoderName = encoder;
   return p;
 }
 
-/** 在 pipeline 上挂一个 entry 和一个页面会话：用来看发布之后会话收没收到 layer */
+/**
+ * Attach an entry and a page session to the pipeline: used to check whether the session receives
+ * the layer after publishing
+ */
 export function watchEntry(pipeline, entry) {
   pipeline.entries.set(entry.key, entry);
   const seen = [];
@@ -221,8 +247,8 @@ export function watchEntry(pipeline, entry) {
 export const staged = (pipeline, kind, key) => pipeline.ready.stagedKeys().find((s) => s.kind === kind && s.key === key) ?? null;
 
 /**
- * 素材服务（memory，端口 0）+ 文档服务（内容库，memory，端口 0）。
- * `newClient(base)` 由调用方给（载不进 client.mjs 时各条用例各自失败）。
+ * Asset service (memory, port 0) + document service (content store, memory, port 0).
+ * `newClient(base)` is provided by caller (individual test cases fail if client.mjs cannot be loaded).
  */
 export async function startServices(harness, newClient) {
   const srv = await harness.serve();
@@ -233,14 +259,15 @@ export async function startServices(harness, newClient) {
     docs = await startContentService();
     ({ content } = await connectContent(docs));
   } catch (err) {
-    // 载不进被测模块时也要把起了的服务关掉，否则进程不退出
+    // Even when the module under test fails to load, shut down started services; otherwise
+    // the process does not exit
     await docs?.cleanup();
     await srv.close();
     throw err;
   }
   return {
     srv, client, docs, content,
-    /** 再连一条内容库客户端（另一台机器） */
+    /** Connect an additional content store client (another machine) */
     async another(user = 'node-b') { return (await connectContent(docs, { user })).content; },
     async cleanup() { await docs.cleanup(); await srv.close(); },
   };

@@ -15,9 +15,9 @@ import { tr } from "../../i18n/index.ts";
 export type { GenerateSoundOptions };
 
 let renderWav: typeof renderSoundEffectWavInWorker = renderSoundEffectWavInWorker;
-/** 单测换合成实现(真实页面里恒是 Worker 那一份) */
+/** Unit tests swap the synthesis implementation (in a real page it is always the Worker one) */
 export function setSoundEffectRenderer(next: typeof renderSoundEffectWavInWorker | null): void { renderWav = next ?? renderSoundEffectWavInWorker; }
-// 在线页面:判轻才在浏览器里合成(`onlineSoundJudge.ts`;桌面运行环境恒合成)
+// Online page: synthesize in the browser only if judged light (`onlineSoundJudge.ts`; the desktop runtime always synthesizes)
 const manager = createSoundGenerationManager({ upload: uploadGeneratedAudio, renderWav: async (recipe, options) => {
   const decision = await decideRecipeSound(recipe, options?.signal);
   if (!decision.synth) throw new Error(decision.message);
@@ -85,13 +85,18 @@ export const cancelSoundGeneration = manager.cancel;
 export const waitSoundGeneration = manager.wait;
 
 /**
- * 把一段独立音效(提示音、键盘声)的声音按它片段里存着的配方重新合成、入库(导出前补齐缺失的声音用,
- * `docs/semantics/product/rendering.md`「有声动效卡」)。配方不变,所以合成出来的是同一份声音:
+ * Re-synthesize a standalone sound effect (notification sound, keyboard sound) from the recipe stored in
+ * its clip and add it to the store (used to fill in missing sounds before export,
+ * `docs/semantics/product/rendering.md` "audible motion graphics card"). The recipe does not change, so
+ * the synthesized sound is the same one:
  *
- *   - 项目里的素材记录还在、哈希相同 → 只是把字节补回素材服务,项目不动;
- *   - 素材记录没了或对不上 → 入库后一次提交把记录补回来、片段指过去(不进撤销栈、不改选区)。
+ *   - If the project's media record is still there with the same hash → only put the bytes back into the
+ *     asset service; the project is untouched;
+ *   - If the media record is gone or does not match → after adding to the store, one commit restores the
+ *     record and points the clip at it (not pushed onto the undo stack, selection untouched).
  *
- * 取消、片段中途被改都不提交;在线页面判重的不在浏览器里合成(`onlineSoundJudge.ts`)。
+ * Nothing is committed if cancelled or if the clip is edited midway; an online page that judged it
+ * heavy does not synthesize in the browser (`onlineSoundJudge.ts`).
  */
 export async function restoreSoundEffectAsset(clipId: string, options: { signal?: AbortSignal; onProgress?: (fraction: number) => void } = {}): Promise<{ clipId: string; mediaId: string; committed: boolean }> {
   if (isViewOnly()) throw new Error(tr("Read-only pages cannot generate sound effects"));

@@ -1,19 +1,26 @@
 /**
- * 节点端点的会话诊断与会话日志的节流（`docs/archive/agent-reports/AGENT-host-diag.md`；契约 `docs/plan/http-transport-contract.md`
- * 第 8、9 节）。
+ * Session diagnostics and session log throttling for node endpoints
+ * (`docs/archive/agent-reports/AGENT-host-diag.md`; contract
+ * `docs/plan/http-transport-contract.md` sections 8 and 9).
  *
- * 队列节点（桌面预渲染进程里的本机节点、独立渲染主机）到文档服务的连接是 `createDocEndpoint` 的会话（`session-link.mjs`）。
- * 混沌测试（断网、服务端重启、代理丢包、传输中断后会话接续）要从诊断里判「接续了几次、丢了几次、是否重建会话」，
- * 所以：
- *   - `sessionCountersOf(endpoint)`：从 `stats()` 取会话计数，给 `/api/frames/queue` 每个节点的 `session` 字段；
- *   - `createLogThrottle()`：会话事件日志的节流，同一种事件一个窗口里只打头几条，其余计数，下一条打出时带上
- *     `suppressed`（断网期间每次退避都有一条 `session.connect-failed` / `session.retry`，不能刷屏）；
- *   - `SESSION_FORWARD_EVENTS`：进日志的会话事件。
+ * Connections from queue nodes (local nodes in the desktop prerender process, standalone render
+ * hosts) to the document service are `createDocEndpoint` sessions (`session-link.mjs`). Chaos
+ * testing (network disconnects, server restarts, proxy packet loss, session resumes after transport
+ * interruptions) needs to determine from diagnostics "how many resumes, how many drops, whether
+ * the session was rebuilt", so:
+ *   - `sessionCountersOf(endpoint)`: extracts session counters from `stats()` for the `session`
+ *     field of each node in `/api/frames/queue`;
+ *   - `createLogThrottle()`: session event log throttling that only outputs the first few entries
+ *     for the same event within a window and counts the rest, including `suppressed` with the next
+ *     emitted entry (during network outages, every backoff logs `session.connect-failed` /
+ *     `session.retry`, which must not spam the screen);
+ *   - `SESSION_FORWARD_EVENTS`: session events that enter the log.
  *
- * 只给计数、关闭码与关闭原因，不给会话号、地址里的查询串与任何凭证（`session-link.mjs` 的日志本来就不含这些）。
+ * Provides only counters, close codes, and close reasons; does not provide session IDs, query
+ * strings in URLs, or any credentials (logs in `session-link.mjs` already omit these).
  */
 
-/** 进预渲染进程日志（并由编辑器进程转出）的会话事件 */
+/** Session events entering prerender process logs (and forwarded by the editor process) */
 export const SESSION_FORWARD_EVENTS = Object.freeze(new Set([
   'session.open',
   'session.close',
@@ -31,11 +38,15 @@ export const SESSION_FORWARD_EVENTS = Object.freeze(new Set([
 const num = (v) => (Number.isFinite(v) ? v : 0);
 
 /**
- * 端点的会话计数（`createDocEndpoint().stats()`；旧端点没有的项给 0 / null）。
- *   opens 建成的会话数（含重建）、resumes 接续、detaches 脱开、renews 重建（前一个会话结束后又建的）、
- *   lost 接续被拒（会话在服务端已没了）、expired 本端判出保留期满、connectFails 建新会话没成、closes 会话结束、
- *   dropped 丢弃的出站消息、lastClose `{ code, reason, at }`、lastDetach `{ code, at }`。
- * 没有 `stats()` 回 null。
+ * Endpoint session counters (`createDocEndpoint().stats()`; items missing from legacy endpoints
+ * are set to 0 / null).
+ *   opens: established sessions (including rebuilds), resumes: resumes, detaches: detaches,
+ *   renews: rebuilds (re-established after previous session ended),
+ *   lost: resume rejected (session no longer exists on server),
+ *   expired: client-determined retention expired, connectFails: failed to establish new session,
+ *   closes: session ended, dropped: discarded outbound messages, lastClose `{ code, reason, at }`,
+ *   lastDetach `{ code, at }`.
+ * Returns null if `stats()` is missing.
  */
 export function sessionCountersOf(endpoint) {
   const st = typeof endpoint?.stats === 'function' ? endpoint.stats() : null;
@@ -63,7 +74,8 @@ export function sessionCountersOf(endpoint) {
 }
 
 /**
- * 节点诊断里的会话部分：`transport`（脱开时 null）、`resumes`、`legacy`（HT-a 起就有，探针在读）加 `session`（上面的计数）。
+ * Session section in node diagnostics: `transport` (null when detached), `resumes`, `legacy`
+ * (present since HT-a, read by probes), plus `session` (counters above).
  */
 export function sessionDiagOf(endpoint) {
   const st = typeof endpoint?.stats === 'function' ? endpoint.stats() : null;
@@ -72,8 +84,10 @@ export function sessionDiagOf(endpoint) {
 }
 
 /**
- * 日志节流：每个键在 `windowMs` 里最多放 `burst` 条。`take(key)` 回 `null`（这条不打）或 `{ suppressed }`
- * （打，`suppressed` 是这个键上一次打出之后被压下的条数）。窗口按键各自从第一条算起。
+ * Log throttle: each key allows at most `burst` entries within `windowMs`. `take(key)` returns
+ * `null` (do not log this entry) or `{ suppressed }` (log, where `suppressed` is the number of
+ * entries suppressed for this key since the last logged entry). Windows are counted independently
+ * per key starting from the first entry.
  */
 export function createLogThrottle({ burst = 5, windowMs = 60_000, now = Date.now } = {}) {
   const keys = new Map();
@@ -97,7 +111,7 @@ export function createLogThrottle({ burst = 5, windowMs = 60_000, now = Date.now
       k.suppressed++;
       return null;
     },
-    /** 各键此刻被压下、还没随下一条带出去的条数 */
+    /** Number of entries currently suppressed for each key and not yet emitted with the next entry */
     pending() {
       const out = {};
       for (const [key, k] of keys) if (k.suppressed > 0) out[key] = k.suppressed;
@@ -107,8 +121,9 @@ export function createLogThrottle({ burst = 5, windowMs = 60_000, now = Date.now
 }
 
 /**
- * 给 `createDocEndpoint({ log })` 用的会话日志：只打 `SESSION_FORWARD_EVENTS` 里的事件，按事件节流，
- * 打到 `write(event, fields)`（带 `extra` 字段；被压下过的带 `suppressed`）。
+ * Session logger for `createDocEndpoint({ log })`: only logs events in `SESSION_FORWARD_EVENTS`,
+ * throttled per event, written to `write(event, fields)` (includes `extra` field; includes
+ * `suppressed` if previously suppressed).
  */
 export function sessionLogger(write, { extra = {}, throttle = createLogThrottle(), events = SESSION_FORWARD_EVENTS } = {}) {
   return (event, fields = {}) => {
@@ -119,32 +134,51 @@ export function sessionLogger(write, { extra = {}, throttle = createLogThrottle(
   };
 }
 
-/** 预渲染进程输出里的会话事件行:`[queue-node] docservice.session.<事件> {…}` 或 `[artifact-push] docservice.session.<事件> {…}` */
+/**
+ * Session event lines in prerender process output: `[queue-node] docservice.session.<event> {…}`
+ * or `[artifact-push] docservice.session.<event> {…}`
+ */
 export const SESSION_LINE_RE = /^\[(?:queue-node|artifact-push)\] docservice\.(session\.[a-z-]+)\b/;
 
 /**
- * 预渲染进程输出里的逐任务收尾行(`docs/archive/agent-reports/AGENT-stall-phases.md`):`[queue-node] node.task-<lost|failed|superseded|discarded|completed|dedup> {…}`
- * 与产物库没收全的 `[queue-node] sink.incomplete {…}`(`vite-plugin-frames.ts` 的 `taskEventLog`、`artifact-transfer.mjs` 的 `put`),
- * 以及产物库去重那一步的 `sink.has-miss`(为什么没走去重)/ `sink.has-pushed` / `sink.has-push-failed`、内容库清单读写出错的
- * `manifest.get-failed` / `manifest.put-failed`(`artifact-transfer.mjs` 的 `has`、`writeManifest`;`docs/archive/agent-reports/AGENT-xnode-dedup.md`)。
- * 另有队列细任务渲一段的分段耗时 `executor.render-timing`(`prerender-executor.mjs`;`docs/archive/agent-reports/AGENT-uc-latency.md`)。
- * 这些行只带任务 id、原因、阶段与毫秒数,不带会话号与凭证。
+ * Per-task finalization lines in prerender process output
+ * (`docs/archive/agent-reports/AGENT-stall-phases.md`):
+ * `[queue-node] node.task-<lost|failed|superseded|discarded|completed|dedup> {…}`,
+ * `[queue-node] sink.incomplete {…}` when the artifact store did not receive everything
+ * (`taskEventLog` in `vite-plugin-frames.ts`, `put` in `artifact-transfer.mjs`),
+ * as well as `sink.has-miss` (why deduplication was skipped) / `sink.has-pushed` /
+ * `sink.has-push-failed` in the artifact store deduplication step, and `manifest.get-failed` /
+ * `manifest.put-failed` on read/write errors for content store manifests (`has` and `writeManifest`
+ * in `artifact-transfer.mjs`; `docs/archive/agent-reports/AGENT-xnode-dedup.md`).
+ * Also includes segment render timing for queue fine-grained tasks `executor.render-timing`
+ * (`prerender-executor.mjs`; `docs/archive/agent-reports/AGENT-uc-latency.md`).
+ * These lines only contain task id, reason, phase, and milliseconds; they do not contain
+ * session IDs or credentials.
  */
 export const TASK_LINE_RE = /^\[queue-node\] (node\.task-(?:lost|failed|superseded|discarded|completed|dedup)|sink\.(?:incomplete|has-miss|has-pushed|has-push-failed)|manifest\.(?:get|put)-failed|executor\.render-timing)\b/;
 
 /**
- * 自动渲染节点的起停行(`docs/archive/agent-reports/AGENT-desktop-auto-node.md`):`[queue-node] render-node.<事件> {…}`(交接、起停、补推、等页面)、节点没起来的原因 `[queue-node] queue.skip {…}`
- * 与推送队列的建队 / 跳过 / 选定素材服务 `[artifact-push] push.(started|skip|asset-base) {…}`。安装版的用户只交得出编辑器进程的日志,
- * 「这台桌面有没有成为渲染节点、推到了哪台素材服务」要在那里看得到。行里只有文档服务 / 素材服务的地址与项目 id,不带票据。
+ * Start/stop lines for auto render nodes (`docs/archive/agent-reports/AGENT-desktop-auto-node.md`):
+ * `[queue-node] render-node.<event> {…}` (handoff, start/stop, catch-up push, waiting for page),
+ * reasons why the node did not start `[queue-node] queue.skip {…}`, and push queue creation / skip
+ * / asset service selection `[artifact-push] push.(started|skip|asset-base) {…}`. Users on the
+ * installed version can only provide editor process logs; "whether this desktop became a render
+ * node and which asset service it pushed to" must be visible there. Lines only contain document
+ * service / asset service addresses and project ids, without tickets.
  */
 export const AUTO_NODE_LINE_RE = /^\[(?:queue-node\] (render-node\.[a-z-]+|queue\.skip)|artifact-push\] (push\.(?:started|skip|asset-base|asset-ready|scope|out-of-scope|rescope)))\b/;
 
 /**
- * 按行转发子进程输出里的会话事件行(编辑器进程收预渲染进程的 stdout / stderr 用)。块可能在行中间断开,
- * 不完整的尾巴留到下一块;单行超过 `maxLine` 字符截断。源头(预渲染进程)已按事件节流,这里再兜一层:
- * 每种事件每个窗口最多 `burst` 行,压下的条数随下一行带出(行尾 ` (suppressed N)`)。
- * 逐任务收尾行(`TASK_LINE_RE`)另走 `taskThrottle`(每种每分钟 60 行):一轮几十个任务,不该被会话事件的额度压掉。
- * 回 `(chunk) => void`。
+ * Forwards session event lines in subprocess output line by line (used by the editor process to
+ * receive stdout / stderr from the prerender process). Chunks may split in the middle of a line,
+ * leaving incomplete tails for the next chunk; individual lines exceeding `maxLine` characters are
+ * truncated. The source (prerender process) already throttles per event; an extra fallback layer is
+ * applied here: at most `burst` lines per window for each event type, and suppressed counts are
+ * emitted with the next line (` (suppressed N)` at the end of the line).
+ * Per-task finalization lines (`TASK_LINE_RE`) go through a separate `taskThrottle` (60 lines per
+ * minute for each type): dozens of tasks in a single round should not be suppressed by the session
+ * event quota.
+ * Returns `(chunk) => void`.
  */
 export function createSessionLineForwarder(write, {
   throttle = createLogThrottle({ burst: 10, windowMs: 60_000 }), maxLine = 2000, re = SESSION_LINE_RE,
@@ -170,9 +204,12 @@ export function createSessionLineForwarder(write, {
 }
 
 /**
- * 独立渲染主机(`cloud/scripts/render-host.mjs`)的会话状态行:从 `/api/frames/queue` 的结果取每个节点的会话部分。
- * 回 `{ key, status }`:`status` 是 `[render-host] session {…}` 这一行的内容(`nodes: [{ projectId, nodeId, connected,
- * transport, session }]`),`key` 只由计数与最后关闭码组成 —— 计数变了才换,主机据此只在有变化时打一行。
+ * Session status line for standalone render hosts (`cloud/scripts/render-host.mjs`): extracts the
+ * session portion of each node from the `/api/frames/queue` result.
+ * Returns `{ key, status }`: `status` is the content of the `[render-host] session {…}` line
+ * (`nodes: [{ projectId, nodeId, connected, transport, session }]`), and `key` consists only of
+ * counters and the last close code: it changes only when counters change, so the host logs a line
+ * only when there is a change.
  */
 export function sessionStatusOf(summary) {
   const nodes = Array.isArray(summary?.nodes) ? summary.nodes : [];

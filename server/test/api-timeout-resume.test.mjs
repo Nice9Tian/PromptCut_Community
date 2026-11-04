@@ -1,11 +1,14 @@
 /**
  * node --test server/test/api-timeout-resume.test.mjs
  *
- * 超时中断之后:①历史要落盘 ②错误要标成可续跑。
+ * After timeout interruption: (1) history must be written to disk (2) error must be marked as
+ * resumable.
  *
- * 用户撞到的是「The operation was aborted due to timeout」,然后**手打「继续」**才接上。
- * 两个毛病:自动续跑没触发(那个错没标 retryable),而且就算续了也接不上 ——
- * 历史只在成功那条路写盘,中断这一轮做过的事全丢,下次读到的还是上一轮的。
+ * The user hit "The operation was aborted due to timeout", and only reconnected after **manually
+ * typing "continue"**. Two defects: automatic resumption was not triggered (that error was not
+ * marked retryable), and even if resumed, it could not reconnect: history is only written to disk
+ * on the success path, losing everything done in this interrupted round, and next time it still
+ * reads from the previous round.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,8 +34,8 @@ const okReply = (text) => sse([
   'data: [DONE]\n\n',
 ]);
 
-/** 跑一轮,收齐事件 */
-function run(sessionId, fetchImpl, prompt = '你好') {
+/** Run a round and collect all events */
+function run(sessionId, fetchImpl, prompt = 'Hello') {
   const events = [];
   return new Promise((resolve) => {
     startRun({
@@ -48,9 +51,9 @@ function run(sessionId, fetchImpl, prompt = '你好') {
   });
 }
 
-test('超时:报成可续跑的错误,并把中断原因拼进续跑话术', async () => {
+test('Timeout: reported as a resumable error, with the reason for the interruption assembled into the resume prompt', async () => {
   const sid = `t-timeout-${Math.random().toString(36).slice(2, 8)}`;
-  try { fs.unlinkSync(historyFileOf(sid)); } catch { /* 本来就没有 */ }
+  try { fs.unlinkSync(historyFileOf(sid)); } catch { /* Did not exist in the first place */ }
 
   const events = await run(sid, async () => {
     const e = new Error('The operation was aborted due to timeout');
@@ -59,40 +62,40 @@ test('超时:报成可续跑的错误,并把中断原因拼进续跑话术', asy
   });
 
   const err = events.find((e) => e.type === 'error');
-  assert.ok(err, '超时该报错误,不该悄悄变成一条「已中止」的状态');
-  assert.equal(err.retryable, true, '超时是可续跑的 —— 上下文都在,只是这次没吐字');
-  assert.match(err.retryPrompt, /timeout/i, '把中断原因拼进去,模型不用自己开口问');
-  assert.match(err.retryPrompt, /接着|继续/);
+  assert.ok(err, 'A timeout should be reported as an error, not quietly turn into an "Aborted" status');
+  assert.equal(err.retryable, true, 'A timeout is resumable: the context is all still there, it just produced no text this time');
+  assert.match(err.retryPrompt, /timeout/i, 'Put the reason for the interruption in, so the model does not have to ask');
+  assert.match(err.retryPrompt, /continue|carry on/);
 });
 
-test('中断了也要落历史 —— 不然「继续」接的是更早的那一轮', async () => {
+test('An interrupted round must still be saved to the history, otherwise "Continue" would pick up an earlier round', async () => {
   const sid = `t-hist-${Math.random().toString(36).slice(2, 8)}`;
   const file = historyFileOf(sid);
-  try { fs.unlinkSync(file); } catch { /* 本来就没有 */ }
+  try { fs.unlinkSync(file); } catch { /* Did not exist in the first place */ }
 
   await run(sid, async () => {
     const e = new Error('The operation was aborted due to timeout');
     e.name = 'TimeoutError';
     throw e;
-  }, '把小狗素材整理一下');
+  }, 'Organize the puppy media');
 
-  assert.ok(fs.existsSync(file), '中断这一轮的历史必须存下来');
+  assert.ok(fs.existsSync(file), 'The history of the interrupted round must be saved');
   const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
   const dump = JSON.stringify(saved);
-  assert.match(dump, /把小狗素材整理一下/, '至少要记住用户这一轮说了什么');
-  try { fs.unlinkSync(file); } catch { /* 清理 */ }
+  assert.match(dump, /Organize the puppy media/, 'At the very least it must remember what the user said this round');
+  try { fs.unlinkSync(file); } catch { /* Cleanup */ }
 });
 
-test('成功那条路照旧落历史', async () => {
+test('The success path still saves to the history as before', async () => {
   const sid = `t-ok-${Math.random().toString(36).slice(2, 8)}`;
   const file = historyFileOf(sid);
-  try { fs.unlinkSync(file); } catch { /* 本来就没有 */ }
-  await run(sid, async () => okReply('好的'));
+  try { fs.unlinkSync(file); } catch { /* Did not exist in the first place */ }
+  await run(sid, async () => okReply('OK'));
   assert.ok(fs.existsSync(file));
-  try { fs.unlinkSync(file); } catch { /* 清理 */ }
+  try { fs.unlinkSync(file); } catch { /* Cleanup */ }
 });
 
-test('普通错误(不是超时)不标可续跑 —— 那种续了也是白续', async () => {
+test('An ordinary error (not a timeout) is not marked resumable: resuming it would be pointless anyway', async () => {
   const sid = `t-plain-${Math.random().toString(36).slice(2, 8)}`;
   const events = await run(sid, async () => ({
     ok: false, status: 401, headers: { get: () => null },
@@ -100,6 +103,6 @@ test('普通错误(不是超时)不标可续跑 —— 那种续了也是白续'
   }));
   const err = events.find((e) => e.type === 'error');
   assert.ok(err);
-  assert.notEqual(err.retryable, true, '密钥错了,自动续跑只会空烧');
-  try { fs.unlinkSync(historyFileOf(sid)); } catch { /* 清理 */ }
+  assert.notEqual(err.retryable, true, 'The key is wrong, so automatic resuming just burns resources for nothing');
+  try { fs.unlinkSync(historyFileOf(sid)); } catch { /* Cleanup */ }
 });

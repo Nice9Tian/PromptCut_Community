@@ -1,28 +1,44 @@
 /**
- * AI 栏聊天记录列表窗口化的探针(chat-list-window 分支,修 REPORT-C6.5.md 第 8 节的遗留)。
+ * Probe for AI panel chat history list windowing (branch `chat-list-window`, fixing leftovers
+ * from Section 8 of REPORT-C6.5.md).
  *
- * 在临时目录里造一个 2000 条消息的历史会话,起一台编辑器(`?editor&aimock=1`,内置假流,不要任何模型后端),
- * 从「历史对话」抽屉打开它,然后:
- *   1. 消息 DOM 节点(`.ai-messages [data-pc-msg]`)不超过 60 个,打开后贴在底部;
- *   2. 用滚轮滚到顶、再滚回底:全程没有超过 50 ms 的长任务(PerformanceObserver 的 longtask),
- *      节点数全程不超过 60,滚到顶时第一条就是会话的第一条,滚回底时贴底;
- *   3. 焦点:让一个气泡里的按钮拿到焦点,滚远了它仍在文档里、仍是焦点;
- *   4. 贴底:打开「显示思考」(所有气泡变高)仍贴底;在底部发一条消息,假流输出期间每次采样都在底部(≤ 40px)、结束时贴底(≤ 2px);
- *   5. 翻到中间再发一条消息:假流输出期间视口顶上那条的位置不动、不被拽回底部,流式中的那条始终渲染在 DOM 里。
- * 截图写进 `--out`(底部、顶部、中间、流式结束后)。
+ * Create a historical session with 2000 messages in a temporary directory, launch an editor
+ * (`?editor&aimock=1`, with built-in mock stream, requiring no model backend), and open it from
+ * the "Chat history" drawer, then:
+ *   1. Message DOM nodes (`.ai-messages [data-pc-msg]`) do not exceed 60, sticking to the bottom
+ *      after opening;
+ *   2. Scroll to top then back to bottom with mouse wheel: no long tasks exceeding 50 ms throughout
+ *      (PerformanceObserver longtask), node count never exceeds 60 throughout, top item is the session's
+ *      first message when scrolled to top, and sticks to bottom when scrolled back;
+ *   3. Focus: let a button in a bubble acquire focus; when scrolled far away, it remains in the
+ *      document and retains focus;
+ *   4. Sticking to bottom: enable "Show thinking" (all bubbles become taller) still sticks to bottom;
+ *      send a message at bottom, and every sample during mock stream output is at bottom (≤ 40px),
+ *      sticking to bottom when finished (≤ 2px);
+ *   5. Scroll to middle and send another message: during mock stream output, position of item at top
+ *      of viewport does not move without being dragged back to bottom, and streaming item is always
+ *      rendered in DOM.
+ * Screenshots are written to `--out` (bottom, top, middle, after streaming ends).
  *
- * 用法:
+ * Usage:
  *   node scripts/probes/chat-window-probe.mjs [--port 5670] [--out out/chat-window-probe] [--height 900] [--origin http://127.0.0.1:N] [--keep]
  *
- * - `--height`:浏览器视口高度(缺省 900,这时消息区只有两百来像素高);消息区越高同时渲染的条越多,节点数上限要在高视口下也成立。
+ * - `--height`: Browser viewport height (defaults to 900, where message area is only about 200px tall);
+ *   taller message area renders more items concurrently, and node count upper limit must hold under
+ *   tall viewports.
  *
- * - 缺省自己在仓库根起编辑器(`vite --port <port> --strictPort --host 127.0.0.1`,另占 +1、+2 当舞台端口),
- *   会话目录、工作目录、数据目录、AI 配置都指到一个新建的临时目录(`PROMPTCUT_CHATS_DIR`、`PROMPTCUT_WORK_DIR`、
- *   `PROMPTCUT_DATA_DIR`、`PROMPTCUT_AI_CONFIG`),不碰用户数据目录;跑完结束自己起的进程树、删掉临时目录(`--keep` 保留)。
- * - `--origin`:改用外面现成的编辑器(不起进程);那台编辑器的会话目录要自己保证能写,探针经 `/api/chats/save` 写入会话。
- * 结果:每项一行 JSON(`{ check, ok, ... }`),最后一行 `{ summary }`;有失败退出码 1。
+ * - By default starts an editor at repo root (`vite --port <port> --strictPort --host 127.0.0.1`,
+ *   additionally taking +1 and +2 as stage ports), pointing session directory, work directory,
+ *   data directory, and AI config to a newly created temporary directory (`PROMPTCUT_CHATS_DIR`,
+ *   `PROMPTCUT_WORK_DIR`, `PROMPTCUT_DATA_DIR`, `PROMPTCUT_AI_CONFIG`) without touching user data
+ *   directory; terminates its own process tree after running and removes temporary directory
+ *   (`--keep` preserves it).
+ * - `--origin`: Uses an existing external editor instead (no process started); you must ensure that
+ *   editor's session directory is writable; probe writes sessions via `/api/chats/save`.
+ * Result: one JSON line per item (`{ check, ok, ... }`), with `{ summary }` on the last line; exit
+ * code 1 on failure.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
 import fs from 'node:fs';
@@ -59,27 +75,27 @@ const check = (name, ok, extra = {}) => {
 };
 const say = (what, extra = {}) => console.log(JSON.stringify({ at: what, ...extra }));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(fn, ms = 10_000, what = '条件') {
+async function waitFor(fn, ms = 10_000, what = 'condition') {
   const t0 = Date.now();
   for (;;) {
     const v = await fn();
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what}`);
     await sleep(100);
   }
 }
 
-/** 造 2000 条:用户、回复交替;每条回复各自一个气泡,条目数和长短不一,高度各不相同 */
+/** Generate 2000 items: alternating user and replies; each reply has its own bubble with varying lengths and heights */
 function makeMessages() {
   const out = [];
   let t = Date.UTC(2026, 8, 1, 1, 0, 0);
   for (let i = 0; i < N_MESSAGES / 2; i++) {
-    // 每 7 轮隔 10 分钟:出时间分隔行
+    // Every 7 rounds separated by 10 minutes: emit time divider row
     t += i % 7 === 0 ? 10 * 60_000 : 60_000;
-    const words = '把第三段字幕往后挪半秒,再给开头加一张金句卡'.repeat(1 + (i % 4));
-    out.push({ id: String(t), role: 'user', text: `第 ${i + 1} 轮:${words}` });
-    const done = Array.from({ length: 1 + (i % 3) }, (_, k) => `第 ${i + 1} 轮完成的第 ${k + 1} 件事` + '。细节说明'.repeat(i % 5));
-    const text = `第 ${i + 1} 轮的回复正文。` + '这一段是模型说的话,打开「显示思考」才看得到。'.repeat(1 + (i % 3));
+    const words = 'Shift the third caption back by half a second, then add a punchline card at the start'.repeat(1 + (i % 4));
+    out.push({ id: String(t), role: 'user', text: `Round ${i + 1}: ${words}` });
+    const done = Array.from({ length: 1 + (i % 3) }, (_, k) => `Item ${k + 1} done in round ${i + 1}` + '. Detail notes'.repeat(i % 5));
+    const text = `Reply body for round ${i + 1}.` + 'This paragraph is what the model said, visible only when "Show thinking" is turned on.'.repeat(1 + (i % 3));
     out.push({
       id: `a-${i}`,
       role: 'assistant',
@@ -89,9 +105,9 @@ function makeMessages() {
       outcome: 'completed',
       parts: [
         { kind: 'text', text },
-        { kind: 'tool', name: 'get_editor_state', input: {}, ok: true, summary: '获取成功' },
-        ...(i % 2 ? [{ kind: 'tool', name: 'add_clip', input: { start: i, end: i + 2 }, ok: true, summary: '加好了' }] : []),
-        { kind: 'tool', name: 'report_progress', input: { final: true, done, todo: i % 4 === 0 ? ['下一步看看节奏'] : [], problems: [] }, ok: true, summary: 'ok' },
+        { kind: 'tool', name: 'get_editor_state', input: {}, ok: true, summary: 'Fetched successfully' },
+        ...(i % 2 ? [{ kind: 'tool', name: 'add_clip', input: { start: i, end: i + 2 }, ok: true, summary: 'Added' }] : []),
+        { kind: 'tool', name: 'report_progress', input: { final: true, done, todo: i % 4 === 0 ? ['Check the pacing next'] : [], problems: [] }, ok: true, summary: 'ok' },
       ],
     });
   }
@@ -117,7 +133,7 @@ async function spawnEditor() {
   const now = Date.now();
   fs.writeFileSync(
     path.join(chats, `${CHAT_ID}.json`),
-    JSON.stringify({ id: CHAT_ID, title: '窗口化探针 2000 条', createdAt: now, updatedAt: now, messages: makeMessages() }),
+    JSON.stringify({ id: CHAT_ID, title: 'Windowing probe, 2000 messages', createdAt: now, updatedAt: now, messages: makeMessages() }),
   );
   const env = {
     ...process.env,
@@ -143,9 +159,9 @@ async function spawnEditor() {
   origin = `http://127.0.0.1:${PORT}`;
   say('editor.spawn', { pid: editorProc.pid, origin, tmpDir });
   await waitFor(async () => {
-    if (editorProc.exitCode !== null) throw new Error(`编辑器进程退出了(${editorProc.exitCode}):${editorLog.join('').slice(-600)}`);
+    if (editorProc.exitCode !== null) throw new Error(`The editor process exited (${editorProc.exitCode}): ${editorLog.join('').slice(-600)}`);
     return fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  }, 180_000, '编辑器起来');
+  }, 180_000, 'editor started');
 }
 
 async function stopEditor() {
@@ -169,7 +185,7 @@ async function stopEditor() {
   }
 }
 
-/** 滚动区此刻的状态 */
+/** Current state of the scroll area */
 const listState = (page) =>
   page.evaluate(() => {
     const box = document.querySelector('.ai-messages');
@@ -210,7 +226,7 @@ try {
     const res = await fetch(`${origin}/api/chats/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: CHAT_ID, title: '窗口化探针 2000 条', messages: makeMessages() }),
+      body: JSON.stringify({ id: CHAT_ID, title: 'Windowing probe, 2000 messages', messages: makeMessages() }),
     });
     check('seed.via-api', res.ok, { status: res.status });
   }
@@ -224,32 +240,32 @@ try {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e?.message ?? e)));
   await page.goto(`${origin}/?editor&aimock=1&nosetup=1`, { waitUntil: 'domcontentloaded' });
-  await waitFor(() => page.$('[data-pc="ai-history"]'), 120_000, 'AI 栏');
+  await waitFor(() => page.$('[data-pc="ai-history"]'), 120_000, 'AI panel');
 
-  // 从历史对话抽屉打开这个会话(真实用户路径)
-  // 页面刚起来时可能还盖着测量遮罩,点不到就再点
+  // Open this session from the "Chat history" drawer (real user path)
+  // Page may still be covered by measurement overlay right after startup; click again if unclickable
   const item = await waitFor(async () => {
     if (!(await page.$('.chat-history-drawer'))) await page.click('[data-pc="ai-history"]').catch(() => {});
     const items = await page.$$('.chat-drawer-item');
     for (const it of items) {
       const t = await it.evaluate((el) => el.textContent ?? '');
-      if (t.includes('窗口化探针')) return it;
+      if (t.includes('Windowing probe')) return it;
     }
     return null;
-  }, 60_000, '历史抽屉里的探针会话');
+  }, 60_000, 'Probe session in the history drawer');
   await item.click();
-  await waitFor(async () => ((await listState(page))?.nodes ?? 0) > 0, 20_000, '消息出现');
+  await waitFor(async () => ((await listState(page))?.nodes ?? 0) > 0, 20_000, 'Messages appear');
   await sleep(1500);
   await frames(page, 4);
 
-  // ── 1. 打开后:节点数、贴底 ──
+  // ── 1. After opening: node count, sticking to bottom ──
   const open = await listState(page);
   check('open.nodes<=60', open.nodes <= MAX_NODES, open);
   check('open.stuck-bottom', open.fromBottom <= 2, { fromBottom: open.fromBottom });
   check('open.last-is-last', open.lastId === `a-${N_MESSAGES / 2 - 1}`, { lastId: open.lastId });
   await page.screenshot({ path: path.join(OUT, '1-open-bottom.png') });
 
-  // ── 2. 滚到顶再滚回底:长任务 ──
+  // ── 2. Scroll to top then back to bottom: long tasks ──
   await page.evaluate(() => {
     window.__lt = [];
     new PerformanceObserver((l) => {
@@ -293,7 +309,7 @@ try {
   check('scroll.no-longtask>50ms', longTasks.every((e) => e.dur <= LONG_TASK_MS), { count: longTasks.length, worst, longTasks: longTasks.slice(0, 10) });
   check('scroll.back-bottom', back.fromBottom <= 2 && back.lastId === `a-${N_MESSAGES / 2 - 1}`, { fromBottom: back.fromBottom, lastId: back.lastId });
 
-  // ── 3. 焦点:气泡里的按钮拿到焦点,滚远了还在 ──
+  // ── 3. Focus: button in bubble acquires focus, still remains when scrolled away ──
   const focused = await page.evaluate(() => {
     const btn = [...document.querySelectorAll('.ai-messages button')].reverse().find((b) => b.getBoundingClientRect().height > 0);
     if (!btn) return null;
@@ -316,7 +332,7 @@ try {
   await sleep(300);
   await frames(page, 3);
 
-  // ── 4. 贴底:打开「显示思考」、在底部发消息 ──
+  // ── 4. Sticking to bottom: enable "Show thinking", send message at bottom ──
   await page.click('[data-pc="ai-show-thinking"]');
   await sleep(500);
   await frames(page, 4);
@@ -332,7 +348,8 @@ try {
   const sampleStream = async (fn) => {
     const samples = [];
     const t0 = Date.now();
-    // 假流:约 1.3 s 逐字输出 + 1 s 工具 + 0.6 s 收尾;采样到流式结束(没有 is-streaming)再多两次
+    // Mock stream: ~1.3 s character-by-character output + 1 s tools + 0.6 s finalize; sample until
+    // streaming ends (no is-streaming) plus two more times
     let idleSeen = 0;
     while (Date.now() - t0 < 15_000) {
       await sleep(80);
@@ -344,12 +361,14 @@ try {
     }
     return samples;
   };
-  await sendMsg('窗口化探针:在底部发一条');
+  await sendMsg('Windowing probe: send one at the bottom');
   const bottomSamples = await sampleStream(async (s) => ({ fromBottom: s.fromBottom, lastNew: !seeded.has(s.lastId ?? '') }));
   const grew = new Set(bottomSamples.map((x) => x.scrollHeight)).size;
-  // 采样本身会强制排版:content-visibility 刚把一行换成真高度、ResizeObserver 还没回调(它在同一帧绘制之前回调)时,
-  // 读到的离底距离会短暂地多出几像素。所以流式中每次采样按「在底部」的定义(≤ 40px,listWindow.ts 的 BOTTOM_SLACK)判,
-  // 流式结束后最后一次采样必须真正贴底(≤ 2px)
+  // Sampling itself forces layout: when content-visibility just swapped a row to real height and
+  // ResizeObserver has not fired its callback yet (it fires before painting in the same frame),
+  // read distance from bottom will briefly have extra pixels. So each sample during streaming is
+  // judged by "at bottom" definition (≤ 40px, BOTTOM_SLACK in listWindow.ts), and the final sample
+  // after streaming ends must truly stick to bottom (≤ 2px)
   const lastBottom = bottomSamples[bottomSamples.length - 1];
   check('stream-at-bottom.stuck', bottomSamples.every((x) => x.fromBottom <= 40) && lastBottom.fromBottom <= 2, {
     last: lastBottom.fromBottom,
@@ -361,7 +380,8 @@ try {
   check('stream-at-bottom.new-rendered', bottomSamples.some((x) => x.streaming) && bottomSamples.every((x) => x.lastNew), { firstSample: bottomSamples[0] });
   await page.screenshot({ path: path.join(OUT, '3-after-stream-bottom.png') });
 
-  // ── 5. 翻到中间来新消息:不被拽回底部,视口顶上那条不动,流式中的那条一直在 DOM 里 ──
+  // ── 5. Scroll to middle and receive new message: not dragged back to bottom, item at top of
+  // viewport does not move, streaming item stays in DOM ──
   await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2);
   await page.evaluate(() => {
     const b = document.querySelector('.ai-messages');
@@ -369,13 +389,13 @@ try {
   });
   await sleep(400);
   await frames(page, 4);
-  // 再用滚轮挪一小段,当作用户最后一次表态
+  // Move a short distance with mouse wheel again as the user's latest interaction
   await page.mouse.wheel({ deltaY: -200 });
   await sleep(300);
   await frames(page, 4);
   const mid = await listState(page);
   await page.screenshot({ path: path.join(OUT, '4-middle-before.png') });
-  await sendMsg('窗口化探针:翻到中间时来的消息');
+  await sendMsg('Windowing probe: message that arrives while scrolled to the middle');
   const midSamples = await sampleStream(async (s) => ({
     fromBottom: s.fromBottom,
     scrollTop: s.scrollTop,
@@ -391,20 +411,23 @@ try {
   check('stream-in-middle.nodes<=60', midSamples.every((x) => x.nodes <= MAX_NODES), { max: Math.max(...midSamples.map((x) => x.nodes)) });
   await page.screenshot({ path: path.join(OUT, '5-middle-after-stream.png') });
 
-  // ── 6. 短对话(不到窗口化门槛 150 条,全渲染):新开一页从空对话发三条,每条流式期间都贴底,没有占位 ──
+  // ── 6. Short chat (under windowing gate of 150 items, fully rendered): open a new page, send three
+  // messages from empty chat, each sticks to bottom during streaming, no placeholders ──
   const first = page;
   page = await browser.newPage();
   page.on('pageerror', (e) => pageErrors.push(String(e?.message ?? e)));
   await page.goto(`${origin}/?editor&aimock=1&nosetup=1`, { waitUntil: 'domcontentloaded' });
-  // 2026-10-22 起新项目没有会话时 AI 栏是开始页(.ai-messages.pc-start),不再是空对话的示例句;从它发第一条消息就建出 Agent 1
-  await waitFor(() => page.$('.ai-messages .ai-empty-state, .ai-messages.pc-start'), 120_000, '新页面的空对话(开始页)');
+  // As of 2026-10-22, when a new project has no sessions, the AI panel shows start page
+  // (.ai-messages.pc-start), no longer empty chat example prompts; sending first message creates Agent 1
+  await waitFor(() => page.$('.ai-messages .ai-empty-state, .ai-messages.pc-start'), 120_000, 'Empty chat on a new page (start page)');
   const smallSamples = [];
   for (let k = 0; k < 3; k++) {
-    await sendMsg(`短对话第 ${k + 1} 条`);
+    await sendMsg(`Short chat, message ${k + 1}`);
     smallSamples.push(...(await sampleStream(async (s) => ({ fromBottom: s.fromBottom, spacers: s.spacers, nodes: s.nodes }))));
   }
   const small = await listState(page);
-  // 每一轮的回复各占一个气泡(2026-10-20 去掉了「没交本轮小结就并进上一个气泡」):3 条用户消息 + 3 个回复气泡
+  // Replies for each round take one bubble each (on 2026-10-20 removed "merge into previous bubble if
+  // round summary not submitted"): 3 user messages + 3 reply bubbles
   check('small.all-rendered-no-spacer', small.nodes === 6 && smallSamples.every((x) => x.spacers === 0), { nodes: small.nodes, spacers: small.spacers });
   check('small.stuck', smallSamples.every((x) => x.fromBottom <= 40) && small.fromBottom <= 2, {
     last: small.fromBottom,

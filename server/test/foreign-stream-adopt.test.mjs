@@ -1,15 +1,27 @@
 /**
- * 「先查,没有才产」的桌面一侧(任务书 `docs/plan/render-refactor-task.md`「甲二」):在线页面在没有切分节点时自己产的单卡流,
- * 之后上线的桌面预渲染进程不重产、把它拉回本机并照它的键用。
+ * The desktop side of "Check first, produce only if missing" (task brief
+ * `docs/plan/render-refactor-task.md` "Jia-2"): single-card streams produced by the online page
+ * itself when there is no splitter node are not re-produced by the desktop prerender process that
+ * comes online later; it pulls them back to this machine and uses them per their keys.
  *
- *   FSA-01  `relockStreams`:单卡流的内容键在锁里就照那个指纹出键;组流不换;没有锁时原样;`planStreams` 读 entry 上的锁
- *   FSA-02  `adoptForeignStreams`:层表里列着别的指纹、那个指纹的清单整条满密度 → 从素材服务拉回流库、记锁、落盘;
- *           之后本机的流计划、切分用的流、层表的候选都是那个指纹的键;生产者把它当满密度的现成流(不重产)
- *   FSA-03  不锁的情形:清单缺一份、有稀疏的分段、层表里没有同内容键的行、本机自己的键已经整条都有
- *   FSA-04  锁落盘:重启后的新管线照样照锁出键;拉回来的流不齐了(被清掉)就解锁,回到自己的键
- *   FSA-05  切分:照锁只出一份,键与指纹都是锁定方的;浏览器在线时那一份是浏览器的形状(它去重即完成),本机不出自己的那一份
+ *   FSA-01  `relockStreams`: single-card stream content keys in the lock output keys per that
+ *           fingerprint; group streams do not swap; as-is when unlocked; `planStreams` reads
+ *           the lock on entry
+ *   FSA-02  `adoptForeignStreams`: layer table lists another fingerprint, and that fingerprint's
+ *           manifest has full density for the entire stream → pull back from asset service to
+ *           stream store, record lock, persist to disk; afterward, local stream plan, stream used
+ *           for splitting, and layer table candidates all use that fingerprint's key; producer
+ *           treats it as a ready-made full-density stream (no re-producing)
+ *   FSA-03  Cases not locked: manifest missing one copy, has sparse segments, layer table lacks
+ *           a row with the same content key, or this machine already has the entire stream for
+ *           its own key
+ *   FSA-04  Lock persisted to disk: new pipeline after restart still outputs keys per lock; if
+ *           pulled stream is incomplete (cleared), unlocks and reverts to own key
+ *   FSA-05  Splitting: outputs only one copy per lock, with both key and fingerprint belonging
+ *           to the locking party; when the browser is online, that copy has the browser's shape
+ *           (completes upon deduplication); this machine does not output its own copy
  *
- * 跑:npm test -- server/test/foreign-stream-adopt.test.mjs
+ * Run: npm test -- server/test/foreign-stream-adopt.test.mjs
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +29,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createAssetHarness } from './fake-asset-service.mjs';
 
-const refuse = (name) => () => { throw new Error(`单测不渲染(${name})`); };
+const refuse = (name) => () => { throw new Error(`Unit test does not render (${name})`); };
 mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: { openBakery: async () => refuse('openBakery')(), findFfmpeg: async () => refuse('findFfmpeg')(), streamPngVideo: refuse('streamPngVideo'), bakeFrames: async () => refuse('bakeFrames')() },
 });
@@ -58,7 +70,10 @@ const entryOf = (pipeline) => {
 };
 const ownSpecs = (pipeline, entry) => planStreams({ ...entry, streamLocks: null }, { budget: Infinity, codeVersion: `${STREAM_CODE_VERSION}:${CAPTURE}`, envFingerprint: pipeline.envFingerprint });
 
-/** 页面那一侧:照 `pageStreamTasks` 的形状出这条流的任务,封开头文件与分段、推素材服务、把清单写进内容库(假的) */
+/**
+ * The page side: outputs tasks for this stream in the shape of `pageStreamTasks`, packages head
+ * file and segments, pushes to asset service, and writes manifest into content store (mock)
+ */
 function pageProduce(spec, { stride = () => 1 } = {}) {
   const resultKey = resultKeyOf(spec.contentKey, BROWSER);
   const size = packedSize(spec.bound.w, spec.bound.h);
@@ -85,7 +100,7 @@ function pageProduce(spec, { stride = () => 1 } = {}) {
   return { resultKey, manifests, blobs };
 }
 
-/** 假的内容库:只有 `get(kind, key)`;记下取过哪些键 */
+/** Mock content store: only has `get(kind, key)`; records which keys were fetched */
 function fakeContent() {
   const items = new Map();
   const gets = [];
@@ -93,7 +108,10 @@ function fakeContent() {
     get: async (kind, key) => { gets.push(`${kind}:${key}`); const body = items.get(`${kind}\u0000${key}`); return body === undefined ? { missing: true } : { body: structuredClone(body) }; } };
 }
 
-/** 一套场景:一条真的管线、假的内容库、真的(本机的)素材服务;页面把 clip-a 的流产好、推好,层表里写了它的那一行 */
+/**
+ * A scenario: a real pipeline, mock content store, and real (local) asset service; page produces
+ * and pushes the clip-a stream, and writes its row into the layer table
+ */
 async function scene(t, { produce = true, rowFor = null, stride } = {}) {
   const roots = F.makeRoots(FramePipeline, 'pc-foreign-');
   t.after(() => roots.cleanup());
@@ -125,115 +143,117 @@ async function scene(t, { produce = true, rowFor = null, stride } = {}) {
   return { pipeline, producer, entry, specs, a, b, content, client: svc.client, page, root, make };
 }
 
-test('FSA-01 relockStreams:单卡流照锁出键,组流不换,没有锁时原样;planStreams 读 entry 上的锁', () => {
+test('FSA-01 relockStreams: a single-card stream is keyed per the lock, a group stream is not swapped, and with no lock it is returned unchanged; planStreams reads the lock on the entry', () => {
   const OWN = '1111111111111111';
   const entry = { key: 'e', project: project(), cardPlan: [control(OWN, 'clip-a', 0, 150), control(OWN, 'clip-b', 30, 60)] };
   const opts = { budget: 6, codeVersion: '1:x', envFingerprint: OWN };
   const plain = planStreams(entry, opts);
   assert.equal(plain.length, 2);
-  assert.equal(relockStreams(plain, null), plain, '没有锁:同一个数组');
+  assert.equal(relockStreams(plain, null), plain, 'no lock: the same array');
   assert.equal(relockStreams(plain, new Map()), plain);
   const a = plain.find(s => s.topClipId === 'clip-a');
   const locks = new Map([[a.contentKey, BROWSER]]);
   const locked = planStreams({ ...entry, streamLocks: locks }, opts);
   const la = locked.find(s => s.topClipId === 'clip-a'), lb = locked.find(s => s.topClipId === 'clip-b');
-  assert.equal(la.streamKey, resultKeyOf(a.contentKey, BROWSER), '流键 = 内容键 × 锁定方的指纹');
+  assert.equal(la.streamKey, resultKeyOf(a.contentKey, BROWSER), 'stream key = content key × the locking side\'s fingerprint');
   assert.equal(la.envFingerprint, BROWSER);
   assert.equal(la.ownEnvFingerprint, OWN);
-  assert.equal(la.contentKey, a.contentKey, '内容键不变');
-  assert.deepEqual({ ...la, streamKey: 0, envFingerprint: 0, ownEnvFingerprint: 0 }, { ...a, streamKey: 0, envFingerprint: 0, ownEnvFingerprint: 0 }, '别的字段不变');
-  assert.deepEqual(lb, plain.find(s => s.topClipId === 'clip-b'), '没锁的流不动');
-  // 锁在自己的指纹上:不换
+  assert.equal(la.contentKey, a.contentKey, 'content key unchanged');
+  assert.deepEqual({ ...la, streamKey: 0, envFingerprint: 0, ownEnvFingerprint: 0 }, { ...a, streamKey: 0, envFingerprint: 0, ownEnvFingerprint: 0 }, 'other fields unchanged');
+  assert.deepEqual(lb, plain.find(s => s.topClipId === 'clip-b'), 'streams without a lock are left alone');
+  // Locked on own fingerprint: do not swap
   assert.deepEqual(planStreams({ ...entry, streamLocks: new Map([[a.contentKey, OWN]]) }, opts), plain);
-  // 预算压到 1:两张卡并成组流,组流不照锁换
+  // Budget squeezed to 1: two cards merge into group stream; group streams do not swap per lock
   const grouped = planStreams({ ...entry, streamLocks: locks }, { ...opts, budget: 1 });
   assert.equal(grouped.length, 1);
   assert.equal(grouped[0].kind, 'group');
   assert.equal(grouped[0].envFingerprint, OWN);
 });
 
-test('FSA-02 层表里列着别的指纹、整条满密度:拉回流库、记锁;之后的流计划、层表、生产者都照那个键', async (t) => {
+test('FSA-02 the layer table lists another fingerprint and the whole stream is at full density: pull it back into the stream store and record a lock; later stream plans, layer tables and producers all use that key', async (t) => {
   const { pipeline, producer, entry, a, b, content, client, page, root } = await scene(t);
   const report = await pipeline.adoptForeignStreams(entry, content, client);
   assert.deepEqual({ checked: report.checked, locked: report.locked, unlocked: report.unlocked, error: report.error }, { checked: 1, locked: 1, unlocked: 0, error: null });
   assert.equal(pipeline.streamLocks.get(a.contentKey), BROWSER);
-  assert.equal(pipeline.streamLocks.has(b.contentKey), false, '没人产过的那条不锁');
-  // 落进了流库:清单、开头文件、每个分段,字节与页面推的相同
+  assert.equal(pipeline.streamLocks.has(b.contentKey), false, 'the one nobody has produced is not locked');
+  // Stored into stream store: manifest, head file, and each segment have identical bytes to what the
+  // page pushed
   const dir = path.join(root, 'streams', page.resultKey);
   const onDisk = JSON.parse(await fs.readFile(path.join(dir, 'stream.json'), 'utf8'));
   assert.equal(onDisk.streamKey, page.resultKey);
   assert.deepEqual(Object.keys(onDisk.segments).map(Number).sort((x, y) => x - y), Array.from({ length: a.lastSegment - a.firstSegment + 1 }, (_, i) => a.firstSegment + i));
   for (const m of page.manifests) for (const [n, seg] of Object.entries(m.segments)) {
-    assert.ok((await fs.readFile(path.join(dir, onDisk.segments[n].file))).equals(page.blobs.get(seg.hash)), `分段 ${n} 逐字节相同`);
+    assert.ok((await fs.readFile(path.join(dir, onDisk.segments[n].file))).equals(page.blobs.get(seg.hash)), `Segment ${n} is byte-for-byte identical`);
     assert.equal(onDisk.segments[n].adopted, true);
   }
-  // 本机的流计划(与生产者、与切分同一组参数)照锁出键
+  // Local stream plan (same parameters as producer and splitting) outputs keys per lock
   const planned = planStreams(entry, { budget: 6, codeVersion: `${STREAM_CODE_VERSION}:${CAPTURE}`, envFingerprint: pipeline.envFingerprint });
   const pa = planned.find(s => s.topClipId === 'clip-a');
   assert.equal(pa.streamKey, page.resultKey);
-  assert.equal(planned.find(s => s.topClipId === 'clip-b').streamKey, b.streamKey, '别的流照旧是自己的键');
-  // 生产者:这条流进了这一版的计划,拉来的分段算满密度、不旧 —— 没有要产的
+  assert.equal(planned.find(s => s.topClipId === 'clip-b').streamKey, b.streamKey, 'other streams keep their own keys as before');
+  // Producer: this stream is in this plan version; pulled segments count as full density and not
+  // stale: nothing to produce
   await producer.update(entry);
   const state = producer.streams.get(page.resultKey);
-  assert.ok(state && !state.adoptedOnly, '拉来的流进了这一版的计划');
-  for (let n = a.firstSegment; n <= a.lastSegment; n++) assert.equal(producer.segmentState(state, n), 'dense', `分段 ${n}`);
-  assert.equal(producer.streams.has(a.streamKey), false, '本机自己指纹的那条流不在计划里(不产)');
-  assert.deepEqual(producer.claimLayers(entry.key).filter(l => l.clipId === 'clip-a'), [{ clipId: 'clip-a', kind: 'stream', key: page.resultKey, originFrame: 0 }], '发给舞台的层就是拉回来的那条(带着这条流的第一帧)');
-  // 层表:这一行的候选是锁定方的指纹
+  assert.ok(state && !state.adoptedOnly, 'the pulled-in stream entered this version\'s plan');
+  for (let n = a.firstSegment; n <= a.lastSegment; n++) assert.equal(producer.segmentState(state, n), 'dense', `segment ${n}`);
+  assert.equal(producer.streams.has(a.streamKey), false, 'the stream with this machine\'s own fingerprint is not in the plan (not produced)');
+  assert.deepEqual(producer.claimLayers(entry.key).filter(l => l.clipId === 'clip-a'), [{ clipId: 'clip-a', kind: 'stream', key: page.resultKey, originFrame: 0 }], 'the layer sent to the stage is the one pulled back (carrying the first frame of this stream)');
+  // Layer table: candidate for this row is the locking party's fingerprint
   const map = layerMapOf(entry, { fingerprint: pipeline.envFingerprint, streams: planned });
   assert.deepEqual(map.streams.find(r => r.topClipId === 'clip-a').candidates, [{ envFingerprint: BROWSER, resultKey: page.resultKey }]);
-  // 诊断里看得见
+  // Visible in diagnostics
   assert.deepEqual(pipeline.diagnostics().foreignStreams.locks, [[a.contentKey, BROWSER]]);
-  // 再查一次:已经锁着,不再读清单、不再下载
+  // Check again: already locked, no longer reads manifest or downloads
   const before = content.gets.length;
   const again = await pipeline.adoptForeignStreams(entry, content, client);
-  assert.deepEqual({ checked: again.checked, locked: again.locked }, { checked: 0, locked: 0 }, '锁着的不再查;没人产过的那条没有候选');
+  assert.deepEqual({ checked: again.checked, locked: again.locked }, { checked: 0, locked: 0 }, 'locked ones are no longer checked; the one nobody has produced has no candidate');
   assert.equal(content.gets.slice(before).some(k => k.startsWith('render-manifest:')), false);
 });
 
-test('FSA-03 不锁的情形:清单缺一份、有稀疏的分段、层表里没有同内容键的行、本机自己的键已经整条都有', async (t) => {
-  // 清单缺一份(页面只产了前 8 段)
+test('FSA-03 cases where no lock is made: a manifest is missing, there are sparse segments, the layer table has no row with the same content key, or this machine\'s own key already has the whole stream', async (t) => {
+  // Manifest missing one copy (page only produced the first 8 segments)
   const part = await scene(t);
   part.content.items.delete(`render-manifest\u0000${part.page.manifests.at(-1).resultKey}:${part.page.manifests.at(-1).range.from}-${part.page.manifests.at(-1).range.to}`);
-  assert.ok(part.page.manifests.length >= 2, '这条流不止一份清单');
+  assert.ok(part.page.manifests.length >= 2, 'this stream has more than one manifest');
   const r1 = await part.pipeline.adoptForeignStreams(part.entry, part.content, part.client);
   assert.equal(r1.locked, 0);
   assert.equal(part.pipeline.streamLocks.size, 0);
-  await assert.rejects(fs.access(path.join(part.root, 'streams', part.page.resultKey)), '不整条就不拉');
-  // 有稀疏的分段
+  await assert.rejects(fs.access(path.join(part.root, 'streams', part.page.resultKey)), 'not pulled unless it is the whole stream');
+  // Has sparse segments
   const sparse = await scene(t, { stride: n => (n === 2 ? 15 : 1) });
   assert.equal((await sparse.pipeline.adoptForeignStreams(sparse.entry, sparse.content, sparse.client)).locked, 0);
-  // 层表里那一行是别的内容键(旧参数的流)
+  // That row in layer table has a different content key (stream with old parameters)
   const other = await scene(t, { rowFor: 'some-old-content-key' });
   const r3 = await other.pipeline.adoptForeignStreams(other.entry, other.content, other.client);
   assert.deepEqual({ checked: r3.checked, locked: r3.locked }, { checked: 0, locked: 0 });
-  // 本机自己的键已经整条都有:不查
+  // This machine already has its own key for the entire stream: do not check
   const mine = await scene(t);
   const own = pageProduce(mine.a);
   await mine.producer.adoptSegments({ ...own.manifests[0], resultKey: mine.a.streamKey }, own.blobs).catch(() => {});
   for (const m of own.manifests) await mine.producer.adoptSegments({ ...m, resultKey: mine.a.streamKey }, own.blobs);
   const r4 = await mine.pipeline.adoptForeignStreams(mine.entry, mine.content, mine.client);
-  assert.equal(r4.locked, 0, '自己已经有整条,不换成别人的');
+  assert.equal(r4.locked, 0, 'already has the whole stream itself, so it does not switch to someone else\'s');
   assert.equal(mine.pipeline.streamLocks.size, 0);
-  // 没有内容库、没有素材服务客户端:什么都不做
+  // No content store, no asset service client: do nothing
   assert.deepEqual((await mine.pipeline.adoptForeignStreams(mine.entry, null, mine.client)).locked, 0);
 });
 
-test('FSA-04 锁落盘:重启后的新管线照锁出键;拉回来的流不齐了就解锁', async (t) => {
+test('FSA-04 the lock is persisted to disk: a new pipeline after restart keys per the lock; if the pulled-back stream is no longer complete, unlock', async (t) => {
   const { pipeline, entry, a, content, client, page, root, make } = await scene(t);
   await pipeline.adoptForeignStreams(entry, content, client);
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(root, 'stream-locks.json'), 'utf8')).entries, [[a.contentKey, BROWSER]]);
   const again = make();
   F.producerOf(again, 'libx264');
-  assert.equal(again.streamLocks.get(a.contentKey), BROWSER, '重启后锁还在');
+  assert.equal(again.streamLocks.get(a.contentKey), BROWSER, 'the lock is still there after restart');
   const entry2 = entryOf(again);
   const planned = planStreams(entry2, { budget: 6, codeVersion: `${STREAM_CODE_VERSION}:${CAPTURE}`, envFingerprint: again.envFingerprint });
   assert.equal(planned.find(s => s.topClipId === 'clip-a').streamKey, page.resultKey);
-  // 复核:流库里那条还齐,锁留着(不读内容库)
+  // Recheck: stream in stream store is still complete, lock remains (does not read content store)
   const r = await again.adoptForeignStreams(entry2, fakeContent(), client);
   assert.equal(r.unlocked, 0);
   assert.equal(again.streamLocks.get(a.contentKey), BROWSER);
-  // 流库里那条被清掉了:解锁,回到自己的键
+  // Stream in stream store was cleared: unlock and revert to own key
   const fresh = make();
   F.producerOf(fresh, 'libx264');
   await fs.rm(path.join(root, 'streams', page.resultKey), { recursive: true, force: true });
@@ -245,7 +265,7 @@ test('FSA-04 锁落盘:重启后的新管线照锁出键;拉回来的流不齐�
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(root, 'stream-locks.json'), 'utf8')).entries, []);
 });
 
-test('FSA-05 切分:照锁只出一份,键与指纹都是锁定方的;浏览器在线时是浏览器的形状,本机不出自己的那一份', async (t) => {
+test('FSA-05 splitting: emit only one copy per the lock, with both the key and the fingerprint belonging to the locking side; when the browser is online it takes the browser\'s shape, and this machine does not emit its own copy', async (t) => {
   const { pipeline, entry, a, b, content, client, page } = await scene(t);
   await pipeline.adoptForeignStreams(entry, content, client);
   const own = pipeline.envFingerprint;
@@ -254,19 +274,20 @@ test('FSA-05 切分:照锁只出一份,键与指纹都是锁定方的;浏览器�
   const base = { planTask: { id: 'plan:p@1', source: { projectId: 'p', projectRev: 1 } }, entryKey: entry.key, cardPlan: entry.cardPlan, prerenderSet: new Set(['clip-a', 'clip-b']), streams,
     envFingerprint: own, codeVersion: 'cv', weightOf: () => ({ class: 'medium', estMs: null }), cardLocks };
   const tasksOf = (extra) => splitPlan({ ...base, ...extra }).filter(x => x.kind === 'stream');
-  // 浏览器(锁定方)在线
+  // Browser (locking party) is online
   const online = tasksOf({ browserFingerprints: [BROWSER] });
   const forA = online.filter(x => x.input.clipId === 'clip-a');
   assert.ok(forA.length >= 1);
   assert.ok(forA.every(x => x.resultKey === page.resultKey && x.requires.envFingerprint === BROWSER && x.requires.transcode === false && x.input.stream && !('dual' in x.input)),
-    '只有锁定方的那一份,浏览器的形状,不成对');
-  assert.equal(online.some(x => x.input.clipId === 'clip-a' && x.requires.envFingerprint === own), false, '本机不出自己的那一份');
-  // 没锁的那条照旧成对(自己的、浏览器的)
+    'only the locking side\'s copy, in the browser\'s shape, not paired');
+  assert.equal(online.some(x => x.input.clipId === 'clip-a' && x.requires.envFingerprint === own), false, 'this machine does not emit its own copy');
+  // Unlocked stream pairs as usual (own, browser's)
   const forB = online.filter(x => x.input.clipId === 'clip-b');
   assert.deepEqual([...new Set(forB.map(x => x.requires.envFingerprint))].sort(), [BROWSER, own].sort());
   assert.ok(forB.every(x => x.input.dual === true));
   assert.ok(forB.some(x => x.resultKey === b.streamKey));
-  // 浏览器不在线:照锁出一份(指纹仍是锁定方的,本机认领不了它,也就不重产)
+  // Browser offline: outputs one copy per lock (fingerprint still belongs to locking party, this
+  // machine cannot claim it, so does not re-produce)
   const offline = tasksOf({});
   assert.ok(offline.filter(x => x.input.clipId === 'clip-a').every(x => x.requires.envFingerprint === BROWSER && x.resultKey === page.resultKey));
   assert.equal(a.contentKey, forA[0].input.contentKey);

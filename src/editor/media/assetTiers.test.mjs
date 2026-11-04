@@ -1,7 +1,9 @@
 /**
- * C6.6 第 4 节:页面这一侧的轮询(每 2 秒问当前素材服务的 `chunks`)、共享项目的素材服务、导出前的拦截。
- * 跑:node --test src/editor/media/assetTiers.test.mjs
- * `fetch` 换成假的:按地址回 `chunks`,记下问了哪些、带没带票据。
+ * C6.6 section 4: polling on the page side (queries current asset service `chunks` every 2 seconds),
+ * asset service for shared projects, interception before export.
+ * Run: node --test src/editor/media/assetTiers.test.mjs
+ * `fetch` is replaced with a fake: returns `chunks` by address, records which were queried and
+ * whether tickets were attached.
  */
 import "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -33,78 +35,78 @@ function fakeFetch(completeOn) {
 const realFetch = globalThis.fetch;
 test.afterEach(() => { globalThis.fetch = realFetch; T.resetAssetTiersForTest(); });
 
-test("T5-poll-1:只问还没到顶档的那一档:素材原尺寸到齐的素材不再问;迁移期的不问", () => {
+test("T5-poll-1: only asks about the tier that has not reached the top tier yet: assets whose original-size asset is complete are no longer asked about; assets in the migration period are not asked about", () => {
   assert.deepEqual(T.hashesToAsk(project, new Set()), [h("1"), h("2"), h("3")]);
-  assert.deepEqual(T.hashesToAsk(project, new Set([h("2")])), [h("1"), h("3")], "素材小尺寸到齐了只问素材原尺寸");
-  assert.deepEqual(T.hashesToAsk(project, new Set([h("1"), h("3")])), [], "全到顶档就停");
+  assert.deepEqual(T.hashesToAsk(project, new Set([h("2")])), [h("1"), h("3")], "Once the small-size asset is complete, only the original-size asset is asked about");
+  assert.deepEqual(T.hashesToAsk(project, new Set([h("1"), h("3")])), [], "Stop once everything has reached the top tier");
 });
 
-test("T5-poll-2:连本地素材服务时问本机 /api/asset;问过之后集合带本地标记", async () => {
+test("T5-poll-2: when connected to the local asset service, ask /api/asset on this machine; after asking, the set carries a local marker", async () => {
   const calls = fakeFetch((_u, hash) => hash === h("2"));
-  assert.deepEqual(T.tierHashes(), [], "还没问过");
+  assert.deepEqual(T.tierHashes(), [], "Not asked yet");
   await T.pollOnce(project);
   assert.ok(calls.every((c) => c.url.startsWith("/api/asset/media/")));
   assert.deepEqual(T.tierHashes(), [TIERS_KNOWN_LOCAL, h("2")]);
 });
 
-test("T5-poll-3:连远程素材服务时问远程、带票据;换素材服务时集合清空、标记换成远程", async () => {
+test("T5-poll-3: when connected to a remote asset service, ask the remote one and send a ticket; when the asset service changes, the set is cleared and the marker becomes remote", async () => {
   const calls = fakeFetch((url, hash) => url.startsWith("http://nas:5460") && hash !== h("3"));
   await T.pollOnce(project);
   assert.deepEqual(T.tierHashes(), [TIERS_KNOWN_LOCAL]);
   T.setRemoteAssets({ base: "http://nas:5460/api/asset/", ticket: async () => "tkt-r" });
-  assert.deepEqual(T.tierHashes(), [], "换了素材服务:回到「还没问过」");
-  await new Promise((r) => setTimeout(r, 10)); // 推给编辑器进程的那一下
+  assert.deepEqual(T.tierHashes(), [], "Asset service changed: back to \"not asked yet\"");
+  await new Promise((r) => setTimeout(r, 10)); // The moment it is pushed to the editor process
   const pushed = calls.find((c) => c.url === "/api/media/remote" && c.method === "POST");
-  assert.ok(pushed, "告诉本机编辑器进程(按需拉取与预取)");
+  assert.ok(pushed, "Tells the local editor process (on-demand fetch and prefetch)");
   assert.deepEqual(JSON.parse(pushed.body), { base: "http://nas:5460/api/asset", ticket: "tkt-r" });
   calls.length = 0;
   await T.pollOnce(project);
   assert.ok(calls.length && calls.every((c) => c.url.startsWith("http://nas:5460/api/asset/media/") && c.auth === "Bearer tkt-r"));
   assert.deepEqual(T.tierHashes(), [TIERS_KNOWN_REMOTE, h("1"), h("2")]);
-  // 到齐的不再问
+  // Those that have fully arrived are no longer queried
   calls.length = 0;
   await T.pollOnce(project);
   assert.deepEqual(calls.map((c) => c.url.split("/media/")[1]), [`${h("3")}/chunks`]);
 });
 
-test("T5-poll-4:问不到(网络错)的算没到齐,不抛", async () => {
+test("T5-poll-4: those that cannot be queried (network error) count as incomplete, without throwing", async () => {
   globalThis.fetch = async () => { throw new Error("down"); };
   await T.pollOnce(project);
   assert.deepEqual(T.tierHashes(), [TIERS_KNOWN_LOCAL]);
 });
 
-test("T5-shared-1:从服务地址登记里挑素材服务:优先和文档服务同主机的,指向本页面自己的不算", () => {
+test("T5-shared-1: pick the asset service from the registered service addresses: prefer the one on the same host as the document service; one that points at this page itself does not count", () => {
   const eps = [
     { kind: "asset", urls: ["http://10.0.0.9:5460/api/asset"] },
     { kind: "asset", urls: ["http://192.168.1.5:5190/api/asset", "http://127.0.0.1:5190/api/asset"] },
   ];
   assert.equal(T.pickAssetEndpoint(eps, "http://192.168.1.5:5190/", "localhost:5190"), "http://192.168.1.5:5190/api/asset");
   assert.equal(T.pickAssetEndpoint(eps, "https://cloud.example/", "localhost:5190"), "http://10.0.0.9:5460/api/asset");
-  assert.equal(T.pickAssetEndpoint([{ kind: "asset", urls: ["http://127.0.0.1:5190/api/asset"] }], "http://x/", "127.0.0.1:5190"), null, "本机就是主机");
+  assert.equal(T.pickAssetEndpoint([{ kind: "asset", urls: ["http://127.0.0.1:5190/api/asset"] }], "http://x/", "127.0.0.1:5190"), null, "This machine is the host");
   assert.equal(T.pickAssetEndpoint(null, "http://x/", "h"), null);
 });
 
-test("T5-shared-1b:在线浏览器模式认同源的素材服务(页面、文档服务、素材服务同在托管端一个源下,c10a)", () => {
+test("T5-shared-1b: online browser mode accepts a same-origin asset service (the page, document service and asset service all sit under one origin on the hosted side, c10a)", () => {
   const eps = [{ kind: "asset", urls: ["https://203-0-113-16.sslip.io/media/api/asset"] }];
   const doc = "https://203-0-113-16.sslip.io/hosted/";
-  assert.equal(T.pickAssetEndpoint(eps, doc, "203-0-113-16.sslip.io"), null, "桌面运行环境:同主机的算本机自己");
+  assert.equal(T.pickAssetEndpoint(eps, doc, "203-0-113-16.sslip.io"), null, "Desktop runtime: a service on the same host counts as this machine itself");
   assert.equal(T.pickAssetEndpoint(eps, doc, "203-0-113-16.sslip.io", { online: true }), "https://203-0-113-16.sslip.io/media/api/asset");
 });
 
-test("T5-shared-2:素材票据经文档服务连接取,剩 1/3 有效期才换新的", async () => {
+test("T5-shared-2: the asset ticket is fetched through the document service connection and renewed only when 1/3 of its validity is left", async () => {
   let now = 0, n = 0;
   const link = { request: async (msg) => { n++; assert.deepEqual(msg, { type: "auth.ticket", kind: "asset", access: "r" }); return { type: "auth.ticket.ok", ticket: `t${n}`, exp: now + 15 * 60_000 }; } };
   const ticket = T.assetTicketSource(link, () => now);
   assert.equal(await ticket(), "t1");
   now += 9 * 60_000;
-  assert.equal(await ticket(), "t1", "还剩 6 分钟:不换");
+  assert.equal(await ticket(), "t1", "6 minutes left: no renewal");
   now += 2 * 60_000;
-  assert.equal(await ticket(), "t2", "只剩 4 分钟(不到 1/3):换新的");
+  assert.equal(await ticket(), "t2", "Only 4 minutes left (under 1/3): renew");
   const bad = T.assetTicketSource({ request: async () => ({ type: "error" }) });
   assert.equal(await bad(), null);
 });
 
-test("T5-shared-3:进共享项目 → 用 service.watch 里的素材服务;离开 → 回本地", async () => {
+test("T5-shared-3: enter a shared project → use the asset service from service.watch; leave → back to local", async () => {
   fakeFetch(() => false);
   const link = { request: async (msg) => msg.type === "service.watch" ? { type: "service.endpoints", endpoints: [{ kind: "asset", urls: ["http://10.0.0.9:5460/api/asset"] }] } : { type: "auth.ticket.ok", ticket: "t", exp: Date.now() + 900000 } };
   assert.equal(await T.connectSharedAssets(link, "http://10.0.0.9:5460/"), "http://10.0.0.9:5460/api/asset");
@@ -113,13 +115,13 @@ test("T5-shared-3:进共享项目 → 用 service.watch 里的素材服务;离�
   assert.equal(T.remoteAssetBase(), null);
 });
 
-test("T5-shared-4:在线页服务登记请求失败一次后重试，晚到的全量通知也能设地址", async () => {
+test("T5-shared-4: the online page retries after one failed service registration request, and a late full notification can also set the address", async () => {
   fakeFetch(() => false);
   const endpoint = { kind: "asset", urls: ["http://10.0.0.9:5460/api/asset"] };
   let calls = 0;
   const link = { request: async (msg) => {
     if (msg.type !== "service.watch") return { type: "auth.ticket.ok", ticket: "t", exp: Date.now() + 900000 };
-    if (++calls === 1) throw new Error("暂时断线");
+    if (++calls === 1) throw new Error("Temporarily disconnected");
     return { type: "service.endpoints", endpoints: [endpoint] };
   } };
   try {
@@ -127,7 +129,7 @@ test("T5-shared-4:在线页服务登记请求失败一次后重试，晚到的�
     assert.equal(T.remoteAssetBase(), null);
     await new Promise((resolve, reject) => {
       const end = Date.now() + 3500;
-      const check = () => T.remoteAssetBase() ? resolve() : Date.now() > end ? reject(new Error("没有重试服务登记")) : setTimeout(check, 20);
+      const check = () => T.remoteAssetBase() ? resolve() : Date.now() > end ? reject(new Error("Service registration was not retried")) : setTimeout(check, 20);
       check();
     });
     assert.equal(T.remoteAssetBase(), endpoint.urls[0]);
@@ -140,14 +142,14 @@ test("T5-shared-4:在线页服务登记请求失败一次后重试，晚到的�
   }
 });
 
-test("T5-shared-5:同一条连接重连后重新登记失败,已挑好的素材服务不退回本地;挑到同一个不重设", async () => {
+test("T5-shared-5: if re-registration fails after the same connection reconnects, the asset service already picked does not fall back to local; picking the same one does not reset it", async () => {
   fakeFetch(() => false);
   const endpoint = { kind: "asset", urls: ["http://10.0.0.9:5460/api/asset"] };
   let fail = false;
   let changes = 0;
   const link = { request: async (msg) => {
     if (msg.type !== "service.watch") return { type: "auth.ticket.ok", ticket: "t", exp: Date.now() + 900000 };
-    if (fail) throw new Error("重连后第一次请求失败");
+    if (fail) throw new Error("First request after reconnect failed");
     return { type: "service.endpoints", endpoints: [endpoint] };
   } };
   const off = T.subscribeRemoteAssets(() => { changes++; });
@@ -159,44 +161,44 @@ test("T5-shared-5:同一条连接重连后重新登记失败,已挑好的素材�
     assert.equal(T.remoteAssetBase(), endpoint.urls[0]);
     fail = false;
     assert.equal(await T.connectSharedAssets(link, "http://10.0.0.9:5460/"), endpoint.urls[0]);
-    assert.equal(changes, after, "同一个素材服务不重设(不重发取档策略、不重启上传目标)");
+    assert.equal(changes, after, "The same asset service is not reset (the tier selection policy is not resent, the upload target is not restarted)");
   } finally {
     off();
     T.disconnectSharedAssets();
   }
 });
 
-test("M8-X1-a:放本机项目的素材服务后备地址:先用局域网发现通告的 asset,再按文档服务地址推同一进程的 /api/asset;放云端不推", () => {
+test("M8-X1-a: fallback address of the asset service for a project kept on this machine: first use the asset announced by LAN discovery, then derive /api/asset of the same process from the document service address; not derived when moved to the cloud", () => {
   assert.equal(T.lanAssetBaseOf({ where: "lan", base: "http://192.168.1.5:5190/docservice/", asset: "http://192.168.1.5:5190/api/asset" }), "http://192.168.1.5:5190/api/asset");
-  assert.equal(T.lanAssetBaseOf({ where: "lan", base: "http://192.168.1.5:5190/docservice/" }), "http://192.168.1.5:5190/api/asset", "手填地址 / 邀请链接没有通告:按文档服务地址推");
+  assert.equal(T.lanAssetBaseOf({ where: "lan", base: "http://192.168.1.5:5190/docservice/" }), "http://192.168.1.5:5190/api/asset", "A manually entered address / invite link has no announcement: derive from the document service address");
   assert.equal(T.lanAssetBaseOf({ where: "lan", base: "https://pc.lan:8443/docservice/" }), "https://pc.lan:8443/api/asset");
-  assert.equal(T.lanAssetBaseOf({ where: "hosted", base: "https://203-0-113-16.sslip.io/hosted/" }), null, "放云端:只认托管组合登记的素材服务");
-  assert.equal(T.lanAssetBaseOf({ where: "lan", base: "不是地址" }), null);
+  assert.equal(T.lanAssetBaseOf({ where: "hosted", base: "https://203-0-113-16.sslip.io/hosted/" }), null, "Moved to the cloud: only the asset service registered by the hosted bundle counts");
+  assert.equal(T.lanAssetBaseOf({ where: "lan", base: "Not an address" }), null);
 });
 
-test("M8-X1-b:放本机的主机没登记素材服务时,成员页面用后备地址;有登记时登记优先;后备指向本页面自己时留在本地", async () => {
+test("M8-X1-b: when the host of a project kept on this machine has not registered an asset service, the member page uses the fallback address; when one is registered, the registration takes priority; when the fallback points at this page itself, stay local", async () => {
   fakeFetch(() => false);
   const mk = (endpoints) => ({ request: async (msg) => msg.type === "service.watch" ? { type: "service.endpoints", endpoints } : { type: "auth.ticket.ok", ticket: "t", exp: Date.now() + 900000 } });
   const doc = "http://192.168.1.5:5190/docservice/";
   const fallback = "http://192.168.1.5:5190/api/asset";
   try {
-    assert.equal(await T.connectSharedAssets(mk([]), doc, { fallback }), fallback, "登记里没有:用后备");
+    assert.equal(await T.connectSharedAssets(mk([]), doc, { fallback }), fallback, "Not in the registration: use the fallback");
     assert.equal(T.remoteAssetBase(), fallback);
     T.receiveSharedAssetEndpoints([]);
-    assert.equal(T.remoteAssetBase(), fallback, "后续全量通知仍为空:不退回本地");
+    assert.equal(T.remoteAssetBase(), fallback, "A later full notification is still empty: does not fall back to local");
     T.disconnectSharedAssets();
     const registered = "http://192.168.1.5:5190/api/asset-registered";
-    assert.equal(await T.connectSharedAssets(mk([{ kind: "asset", urls: [registered] }]), doc, { fallback }), registered, "登记优先");
+    assert.equal(await T.connectSharedAssets(mk([{ kind: "asset", urls: [registered] }]), doc, { fallback }), registered, "Registration takes priority");
     T.disconnectSharedAssets();
     globalThis.location = { host: "127.0.0.1:5190" };
-    assert.equal(await T.connectSharedAssets(mk([]), "http://127.0.0.1:5190/docservice/", { fallback: "http://127.0.0.1:5190/api/asset" }), null, "本机就是主机:留在本地素材服务");
+    assert.equal(await T.connectSharedAssets(mk([]), "http://127.0.0.1:5190/docservice/", { fallback: "http://127.0.0.1:5190/api/asset" }), null, "This machine is the host: stay on the local asset service");
   } finally {
     delete globalThis.location;
     T.disconnectSharedAssets();
   }
 });
 
-test("T7-gate-2:导出前问当前素材服务:素材原尺寸没到齐的列出来(素材小尺寸到齐不算);都到齐了放行", async () => {
+test("T7-gate-2: before export, ask the current asset service: list those whose original-size asset is incomplete (a complete small-size asset does not count); let it pass when all are complete", async () => {
   fakeFetch((_u, hash) => hash === h("2") || hash === h("3"));
   const missing = await T.exportGate(project);
   assert.deepEqual(missing.map((m) => m.name), ["开场.mov"]);
@@ -204,7 +206,7 @@ test("T7-gate-2:导出前问当前素材服务:素材原尺寸没到齐的列出
   assert.deepEqual(await T.exportGate(project), []);
 });
 
-test("T7-gate-3:不发请求的快速判断:还没问过给 null,问过就按集合判", async () => {
+test("T7-gate-3: quick check without sending a request: not asked yet gives null, once asked decide by the set", async () => {
   assert.equal(T.exportGateNow(project), null);
   fakeFetch((_u, hash) => hash === h("3"));
   await T.pollOnce(project);

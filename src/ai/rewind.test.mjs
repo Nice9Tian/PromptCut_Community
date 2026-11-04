@@ -1,7 +1,8 @@
 /**
  * node --test src/ai/rewind.test.mjs
  *
- * 「回退到这里」的纯逻辑:那条用户消息和它之后的全部移除,原文和附件放回输入框。
+ * Pure logic for "Rewind to here": that user message and everything after it are removed, with the
+ * original text and attachments put back into the input box.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -11,52 +12,52 @@ const { rewindAt } = await import("./rewind.ts");
 const u = (id, text = id, extra = {}) => ({ id, role: "user", text, ...extra });
 const a = (id, text = id, extra = {}) => ({ id, role: "assistant", text, ...extra });
 
-const convo = () => [u("u1", "第一问"), a("a1"), u("u2", "第二问"), a("a2"), u("u3", "第三问"), a("a3")];
+const convo = () => [u("u1", "First question"), a("a1"), u("u2", "Second question"), a("a2"), u("u3", "Third question"), a("a3")];
 const ids = (list) => list.map((m) => m.id);
 
-test("回退中间一轮:之前的留下,这条和之后的全部移除,原文放回", () => {
+test("Rewinding a middle round: earlier messages stay, this one and everything after it are removed, and the original text is put back", () => {
   const r = rewindAt(convo(), "u2");
   assert.deepEqual(ids(r.kept), ["u1", "a1"]);
   assert.deepEqual(ids(r.removed), ["u2", "a2", "u3", "a3"]);
-  assert.equal(r.restored.text, "第二问");
+  assert.equal(r.restored.text, "Second question");
   assert.deepEqual(r.restored.attachments, []);
 });
 
-test("回退第一条:什么都不留", () => {
+test("Rewinding the first message: nothing is kept", () => {
   const r = rewindAt(convo(), "u1");
   assert.deepEqual(r.kept, []);
   assert.equal(r.removed.length, 6);
-  assert.equal(r.restored.text, "第一问");
+  assert.equal(r.restored.text, "First question");
 });
 
-test("回退最后一条用户消息:等于撤回重写,只移除最后一问一答", () => {
+test("Rewinding the last user message: equivalent to unsending and rewriting, only the last question and answer are removed", () => {
   const r = rewindAt(convo(), "u3");
   assert.deepEqual(ids(r.kept), ["u1", "a1", "u2", "a2"]);
   assert.deepEqual(ids(r.removed), ["u3", "a3"]);
 });
 
-test("最后一条用户消息后面还没有回复(刚发出去就回退)也行", () => {
-  const list = [u("u1"), a("a1"), u("u2", "刚发的")];
+test("It also works when the last user message has no reply yet (rewinding right after sending)", () => {
+  const list = [u("u1"), a("a1"), u("u2", "Just sent")];
   const r = rewindAt(list, "u2");
   assert.deepEqual(ids(r.kept), ["u1", "a1"]);
   assert.deepEqual(ids(r.removed), ["u2"]);
 });
 
-test("一问多答:带 roleId 的几条 Agent 回复一起移除", () => {
+test("One question, several answers: the Agent replies carrying roleId are removed together", () => {
   const list = [
     u("u1"), a("a1"),
-    u("u2", "拆成几步做"),
+    u("u2", "Break it into a few steps"),
     a("t-1", "", { roleId: "director", pending: true }),
     a("t-2", "", { roleId: "vfx" }),
-    a("t-3", "配好了", { roleId: "editor" }),
+    a("t-3", "All set", { roleId: "editor" }),
   ];
   const r = rewindAt(list, "u2");
   assert.deepEqual(ids(r.kept), ["u1", "a1"]);
   assert.deepEqual(ids(r.removed), ["u2", "t-1", "t-2", "t-3"]);
-  assert.ok(r.removed.slice(1).every((m) => m.roleId), "角色回复都在被移除的那一段");
+  assert.ok(r.removed.slice(1).every((m) => m.roleId), "All role replies are in the removed section");
 });
 
-test("附件原样放回,但是拷贝,不和原消息共用对象", () => {
+test("Attachments are put back unchanged, but as a copy, not sharing the object with the original message", () => {
   const att = { id: "f1", name: "口播.mp4", kind: "video", url: "/x", status: "ready" };
   const list = [u("u1", "", { attachments: [att] }), a("a1")];
   const r = rewindAt(list, "u1");
@@ -65,7 +66,7 @@ test("附件原样放回,但是拷贝,不和原消息共用对象", () => {
   assert.notEqual(r.restored.attachments[0], att);
 });
 
-test("非法 id:不存在、或者指向 Agent 消息,返回 null", () => {
+test("Invalid id: nonexistent, or pointing to an Agent message, returns null", () => {
   assert.equal(rewindAt(convo(), "nope"), null);
   assert.equal(rewindAt(convo(), "a2"), null);
   assert.equal(rewindAt([], "u1"), null);

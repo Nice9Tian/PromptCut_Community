@@ -55,22 +55,23 @@ function AnimatedCircularProgressBarCard({ params }: CardProps<Params>) {
 
 export const animatedCircularProgressBarCard: CardDef<Params> = {
   id: "mu-circular-progress",
-  name: "环形进度",
-  description: "环形进度条动画",
-  useWhen: "全屏居中的大环形进度(环 + 中心百分比 + 下方说明文字),没有底板。要毛玻璃底板、或要摆在角落/底部而不是正中,用 ring-metric;要中英引导字和数据来源注脚用 stat-proof。",
-  tags: ["百分比","环形","进度"],
+  name: "Circular progress",
+  description: "Circular progress bar animation",
+  useWhen: "A large full-screen centered circular progress (ring + center percentage + caption below), with no backing plate. For a frosted-glass plate, or to place it in a corner/at the bottom instead of the center, use ring-metric; for bilingual lead-in text and a data-source footnote, use stat-proof.",
+  tags: ["percentage","circular","progress"],
   source: "magicui",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: { value: 75, label: "加载中", accent: "" },
   controls: [
-    { key: "value", label: "目标值", type: "number" },
-    { key: "label", label: "说明文字", type: "text" },
-    { key: "accent", label: "主色(留空用主题色)", type: "color" },
+    { key: "value", label: "Target value", type: "number" },
+    { key: "label", label: "Caption", type: "text" },
+    { key: "accent", label: "Main color (leave empty to use theme color)", type: "color" },
   ],
   parts: [
-    { id: "ring", label: "进度环", role: "media", params: ["value", "accent"], enterMs: 0, settleMs: 1200 },
-    { id: "label", label: "说明", role: "text", params: ["label"], enterMs: 0, settleMs: 0 },
+    { id: "ring", label: "Progress ring", role: "media", params: ["value", "accent"], enterMs: 0, settleMs: 1200 },
+    { id: "label", label: "notes", role: "text", params: ["label"], enterMs: 0, settleMs: 0 },
   ],
   lifecycle: { settleMs: 1200, after: "hold", exit: ["fade"] },
   Component: AnimatedCircularProgressBarCard,

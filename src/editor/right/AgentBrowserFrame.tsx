@@ -7,14 +7,18 @@ import { webHandoff } from "../../ai/web";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 桌面壳模式下的「浏览器」面板:顶栏的「浏览器」页签点开就是它。
+ * The "Browser" panel in desktop shell mode: opening the "Browser" tab in the top bar shows it.
  *
- * agent 的浏览器是主窗口里的一块子 webview,平时藏在客户区外面。这个面板盖在顶栏
- * 以下的整块编辑区上,只画一行头部(agent 为什么要你来、静音开关、回到编辑)和一块空,
- * 空的位置量出来交给壳,壳把 webview 摆进去。子 webview 永远压在主页面之上,所以这块
- * 空里不能放任何要点的东西。
+ * The agent's browser is a child webview inside the main window, normally hidden outside the client area. This
+ * panel covers the whole editing area
+ * below the top bar and draws only a header row (why the agent needs you, the mute switch, back to editing) and a
+ * blank area;
+ * the blank area's position is measured and handed to the shell, and the shell places the webview into it. The
+ * child webview always sits above the main page, so nothing
+ * clickable can go in this blank area.
  *
- * 不是弹窗:它不遮顶栏、不锁交互,用户随时点页签切回编辑,agent 的页面还在,不丢。
+ * It is not a popup: it does not cover the top bar and does not lock interaction, the user can click a tab at any
+ * time to switch back to editing, and the agent's page is still there, not lost.
  */
 export function AgentBrowserFrame() {
   const st = useAgentBrowserState();
@@ -22,7 +26,7 @@ export function AgentBrowserFrame() {
   return <Panel key={st.seq} reason={st.reason} />;
 }
 
-/** 面板从顶栏底边开始。量不到顶栏就退回 36px(顶栏的固定高度) */
+/** The panel starts at the bottom edge of the top bar. If the top bar cannot be measured, fall back to 36px (the top bar's fixed height) */
 function topOffset(): number {
   const bar = document.querySelector(".pc-bar--main");
   return bar ? Math.round(bar.getBoundingClientRect().bottom) : 36;
@@ -32,8 +36,9 @@ function Panel(props: { reason: string }) {
   const { reason } = props;
   const hole = useRef<HTMLDivElement>(null);
   const [top, setTop] = useState(topOffset);
-  // 壳里的 webview 默认静音(agent 打开的页面会自动播视频)。只有用户在这里点喇叭才放开;
-  // 回到编辑时壳自己会静回去,这里不用管。
+  // The webview in the shell is muted by default (pages the agent opens autoplay video). It is unmuted only when
+  // the user clicks the speaker here;
+  // the shell re-mutes itself when returning to editing, so nothing to do here.
   const [muted, setMuted] = useState(true);
   const toggleMute = async () => {
     const next = !muted;
@@ -47,11 +52,12 @@ function Panel(props: { reason: string }) {
       setTop(topOffset());
       if (hole.current) void showAgentWebview(rectOf(hole.current));
     };
-    // 不管是 agent 交出来的还是用户自己点页签进来的,都要让 Node 那边解除 1280×800 的
-    // 视口仿真,页面才会跟着这块空的尺寸走 —— 不然页面右边和底部对不上,滚动条也是错位的。
-    // 这是直接打服务端接口,不经过 MCP,所以不会再点亮一次页签。
+    // Whether the agent handed it over or the user entered by clicking the tab, the Node side must lift the 1280×800
+    // viewport emulation so the page follows the size of this blank area; otherwise the page's right edge and bottom
+    // do not line up, and the scrollbars are misplaced.
+    // This hits the server endpoint directly, not through MCP, so it will not light up the tab again.
     void webHandoff({}).catch(() => {});
-    // 布局稳定后再量:第一帧面板还没排好
+    // Measure after the layout is stable: in the first frame the panel is not yet laid out
     const raf = requestAnimationFrame(place);
     const ro = new ResizeObserver(place);
     if (hole.current) ro.observe(hole.current);
@@ -67,7 +73,7 @@ function Panel(props: { reason: string }) {
 
   const back = () => {
     closeAgentBrowser();
-    // Node 那边恢复固定视口;失败也不要紧,下次 web_view 会再设
+    // The Node side restores the fixed viewport; failure does not matter, the next web_view will set it again
     void webHandoff({ hide: true }).catch(() => {});
   };
 

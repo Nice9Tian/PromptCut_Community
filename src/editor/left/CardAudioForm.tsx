@@ -9,14 +9,14 @@ import { onlinePage } from "../../online/pageFlag";
 import { clipSoundRunnable } from "../io/onlineSoundJudge";
 import { tr } from "../../i18n/index.ts";
 
-/** 卡内声音依附同一片段。生成不是分离音轨；失败不把旧声音或画面替掉。 */
+/** Audio inside a card attaches to the same clip. Generating is not separating the audio track; on failure the old audio or picture is not replaced. */
 export function CardAudioForm({ clip }: { clip: TrackClip }) {
   const project = useStore(s => s.project);
   const [busy, setBusy] = useState(false), [progress, setProgress] = useState(0), [error, setError] = useState("");
   const active = useRef(false);
   if (!clipHasEmbeddedAudio(project, clip, getCard)) return null;
   const locked = project.tracks.find(track => track.clips.some(c => c.id === clip.id))?.locked;
-  // 在线页面(`product/platforms.md`「卡片声音的平台边界」):本页能运行的有声卡可以在浏览器里合成(判轻的);跑不了的照旧只用同步来的声音
+  // Online page (`product/platforms.md`, "Platform boundaries for card audio"): audio cards that can run on this page can be synthesized in the browser (judged light); those that can't run keep using only the synced audio as before
   const online = onlinePage(), synthHere = !online || clipSoundRunnable(project, clip);
   let ready = false, status = tr("Card audio not generated yet");
   try { persistentCardAudio(project, clip); ready = true; status = tr("Audio saved; preview and export share the same WAV"); }

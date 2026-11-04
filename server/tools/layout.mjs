@@ -1,24 +1,24 @@
 export const layoutTools = [
   {
     name: "set_position",
-    description: "给卡片定位:把它的锚点放到画面上某个坐标,可选尺寸、缩放、旋转。**这是把任何卡片摆到任何位置的正道**——不再受卡片自带 position 档位(center/bottom/…)限制,不用为了位置换卡。坐标系:舞台像素,原点左上角,1920×1080 时中心是 960,540。anchor 决定 x,y 指的是框内哪个点([0,0] 左上、[0.5,0.5] 中心、[1,1] 右下),缩放和旋转也绕它;例如把卡片中心放到左半屏正中:{ x:480, y:540, anchor:[0.5,0.5] }。只传的字段会改,其余保留;传 clear:true 恢复铺满全屏。w/h 是卡片的**画布**尺寸(大多数卡按 1920×1080 设计,缩小画布不等于缩小内容,整体缩小用 scale)。space 对卡片级 world/local 等价(父坐标系就是舞台),将来部件级才有区别。**三维**:rotateX / rotateY / translateZ 把卡片摆进空间,但要先调 set_camera3d 打开透视,否则看到的是仿射拉伸不是透视。返回 layout 的 local / world 和 look;实体框 contentBox 要另调 get_layout。",
+    description: "Position a card: place its anchor at a coordinate on the frame, with optional size, scale and rotation. **This is the proper way to put any card at any position**: it is no longer limited by the card's built-in position tiers (center/bottom/…), and there is no need to swap cards just for position. Coordinate system: stage pixels, origin at top left; at 1920×1080 the center is 960,540. anchor decides which point in the box x,y refers to ([0,0] top left, [0.5,0.5] center, [1,1] bottom right), and scale and rotation also pivot around it; for example, to put the card center at the middle of the left half of the screen: { x:480, y:540, anchor:[0.5,0.5] }. Only the fields passed are changed, the rest are kept; pass clear:true to restore filling the whole screen. w/h are the card's **canvas** size (most cards are designed for 1920×1080; shrinking the canvas does not shrink the content, use scale to shrink the whole). space is equivalent for card-level world/local (the parent coordinate system is the stage); it will only differ at part level in the future. **3D**: rotateX / rotateY / translateZ place the card in space, but call set_camera3d first to enable perspective, otherwise you get an affine stretch, not perspective. Returns the layout's local / world and look; for the solid box contentBox, call get_layout separately.",
     inputSchema: {
       type: "object",
       properties: {
         clipId: { type: "string" },
-        space: { type: "string", enum: ["world", "local"], description: "默认 local;卡片级两者等价" },
-        x: { type: "number", description: "锚点的横坐标(像素)" },
-        y: { type: "number", description: "锚点的纵坐标(像素)" },
-        w: { type: "number", description: "画布宽(像素),省略=舞台宽" },
-        h: { type: "number", description: "画布高(像素),省略=舞台高" },
-        anchor: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "[ax, ay],0~1;默认 [0,0]" },
-        scale: { type: "number", description: "绕锚点缩放,默认 1" },
-        rotate: { type: "number", description: "绕锚点旋转,度,顺时针,默认 0。这是**平面内**的旋转" },
-        rotateX: { type: "number", description: "三维:绕水平轴翻转,度。正值=**顶边往里倒、底边朝观众抬起来**(像把牌子朝后仰)。**要先用 set_camera3d 打开三维**,否则只会看到仿射拉伸而不是透视。**只对卡片生效**,素材段(视频/图片)会被拒" },
-        rotateY: { type: "number", description: "三维:绕垂直轴翻转,度。正值=**右边往里转、左边朝观众转过来**。同样要先 set_camera3d,同样只对卡片生效" },
-        translateZ: { type: "number", description: "三维:沿深度平移,舞台像素,正值朝观众(变大)、负值往里(变小)。同样要先 set_camera3d,同样只对卡片生效。注意推得太靠前会越过相机:translateZ 接近\"相机距离\"(set_camera3d 会告诉你这个数)时卡片会涨到占满整幅甚至更大" },
-        clear: { type: "boolean", description: "true = 删掉框,恢复铺满全屏" },
-        clamp: { type: "boolean", description: "true = 算完后把可见框夹回舞台内,不让卡片出画" }
+        space: { type: "string", enum: ["world", "local"], description: "Default local; the two are equivalent at card level" },
+        x: { type: "number", description: "Horizontal coordinate of the anchor (pixels)" },
+        y: { type: "number", description: "Vertical coordinate of the anchor (pixels)" },
+        w: { type: "number", description: "Canvas width (pixels), omitted = stage width" },
+        h: { type: "number", description: "Canvas height (pixels), omitted = stage height" },
+        anchor: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "[ax, ay], 0~1; default [0,0]" },
+        scale: { type: "number", description: "Scale around the anchor, default 1" },
+        rotate: { type: "number", description: "Rotation around the anchor, in degrees, clockwise, default 0. This is an **in-plane** rotation" },
+        rotateX: { type: "number", description: "3D: flip around the horizontal axis, in degrees. Positive = **top edge tilts inward, bottom edge lifts toward the viewer** (like leaning a sign backward). **Enable 3D with set_camera3d first**, otherwise you only get an affine stretch instead of perspective. **Only works on cards**; media clips (video/image) are rejected" },
+        rotateY: { type: "number", description: "3D: flip around the vertical axis, in degrees. Positive = **right edge turns inward, left edge turns toward the viewer**. Likewise requires set_camera3d first, and likewise only works on cards" },
+        translateZ: { type: "number", description: "3D: translate along depth, in stage pixels. Positive moves toward the viewer (larger), negative moves inward (smaller). Likewise requires set_camera3d first, and likewise only works on cards. Note that pushing too far forward crosses the camera: when translateZ approaches the \"camera distance\" (set_camera3d tells you this number), the card grows to fill the whole frame or even larger" },
+        clear: { type: "boolean", description: "true = delete the box and restore full-screen fill" },
+        clamp: { type: "boolean", description: "true = after computing, clamp the visible box back inside the stage so the card does not leave the frame" }
       },
       required: ["clipId"]
     },
@@ -26,15 +26,15 @@ export const layoutTools = [
   },
   {
     name: "set_rect",
-    description: "把卡片放进画面上的一个矩形(两个对角点,顺序随意)。**要把卡放到「空的那一边」首选它**。mode 默认 fit:画布不动,整体缩放到刚好装进矩形、保持比例,按 align 对齐在矩形里(默认居中)——大多数卡按 1920×1080 设计,这样缩放后的内容一定在矩形内。mode:canvas 则画布就是这个矩形(内容按卡片自己的规则重新布局,可能溢出,只在你确实要改画布尺寸时用)。返回 layout 的 local / world(看 world.visualBox 核对)和 look,不含 contentBox。和 set_position / align / nudge 改的是同一个框,只是说法不同。",
+    description: "Place a card into a rectangle on the frame (two diagonal corner points, any order). **Preferred way to put a card on the \"empty side\"**. mode defaults to fit: the canvas stays as is and is scaled as a whole to just fit inside the rectangle, keeping its proportions, and aligned inside the rectangle per align (centered by default). Most cards are designed at 1920×1080, so after scaling the content is guaranteed to be inside the rectangle. With mode: canvas the canvas becomes the rectangle itself (the content is laid out again by the card's own rules and may overflow; use it only when you really need to change the canvas size). Returns the layout's local / world (check world.visualBox) and look, without contentBox. It edits the same box as set_position / align / nudge, just expressed differently.",
     inputSchema: {
       type: "object",
       properties: {
         clipId: { type: "string" },
         x1: { type: "number" }, y1: { type: "number" },
         x2: { type: "number" }, y2: { type: "number" },
-        mode: { type: "string", enum: ["fit", "canvas"], description: "默认 fit" },
-        align: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "在矩形里靠哪:[0,0] 左上、[0.5,0.5] 中心(默认)、[1,1] 右下" }
+        mode: { type: "string", enum: ["fit", "canvas"], description: "Default fit" },
+        align: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Where to sit in the rectangle: [0,0] top left, [0.5,0.5] center (default), [1,1] bottom right" }
       },
       required: ["clipId", "x1", "y1", "x2", "y2"]
     },
@@ -42,14 +42,14 @@ export const layoutTools = [
   },
   {
     name: "align",
-    description: "把卡片贴到画面的边或中心,带边距:h 是 left/center/right,v 是 top/center/bottom,只传一个另一个方向不动。锚点会跟着对齐方式走,缩放过的卡片贴的是可见框的边。**铺满全屏又没缩小的卡片对齐看不出效果**(画布和舞台一样大),返回里会带 note 提醒——先 set_rect 或 nudge scaleBy 缩小再对齐。返回 layout 的 local / world 和 look,不含 contentBox。",
+    description: "Snap a card to an edge or the center of the frame, with a margin: h is left/center/right, v is top/center/bottom; pass only one and the other direction stays put. The anchor follows the alignment, and for a scaled card the visible box's edge is what gets snapped. **Aligning a card that fills the full screen and is not scaled down has no visible effect** (the canvas and the stage are the same size), and the result carries a note to remind you: use set_rect or nudge scaleBy to shrink it first, then align. Returns the layout's local / world and look, without contentBox.",
     inputSchema: {
       type: "object",
       properties: {
         clipId: { type: "string" },
         h: { type: "string", enum: ["left", "center", "right"] },
         v: { type: "string", enum: ["top", "center", "bottom"] },
-        margin: { type: "number", description: "离边的像素,默认 0" }
+        margin: { type: "number", description: "Pixels from the edge, default 0" }
       },
       required: ["clipId"]
     },
@@ -57,14 +57,14 @@ export const layoutTools = [
   },
   {
     name: "nudge",
-    description: "在现有位置上微调:dx/dy 加像素(右、下为正),scaleBy 乘倍数(0.8 = 缩小两成),rotateBy 加角度(顺时针)。看完 look 觉得「再往左一点、再小一点」就用它,不用重算绝对坐标。返回 layout 的 local / world 和 look,不含 contentBox。",
+    description: "Fine-tune from the current position: dx/dy add pixels (right and down are positive), scaleBy multiplies (0.8 = 20% smaller), rotateBy adds degrees (clockwise). Use it when, after looking at the look, you think \"a bit more to the left, a bit smaller\", instead of recomputing absolute coordinates. Returns the layout's local / world and look, without contentBox.",
     inputSchema: {
       type: "object",
       properties: {
         clipId: { type: "string" },
         dx: { type: "number" }, dy: { type: "number" },
         scaleBy: { type: "number" }, rotateBy: { type: "number" },
-        clamp: { type: "boolean", description: "true = 算完后把可见框夹回舞台内,不让卡片出画;微调时建议带上" }
+        clamp: { type: "boolean", description: "true = after computing, clamp the visible box back inside the stage so the card does not leave the frame; recommended when fine-tuning" }
       },
       required: ["clipId"]
     },
@@ -72,7 +72,7 @@ export const layoutTools = [
   },
   {
     name: "get_layout",
-    description: "读卡片的布局:local(存下来的框,没设过为 null 即铺满全屏)、world(算出来的画面绝对位置:锚点坐标、尺寸、box 是画布矩形、visualBox 是缩放旋转之后画布真正占的矩形)和 **contentBox(量出来的实体内容框:文字、图片、有底色的盒子的并集,透明容器不算)**。判断「这张卡会不会盖住人」看 contentBox —— 默认卡的画布铺满全屏,看 box/visualBox 永远是「会盖住」;判断「会不会出画」看 visualBox。contentBox 由预渲染按整场景在指定时刻实测,卡片此刻不在画面上时为 null 并附 contentNote(先 seek 进它的时段)。不传 clipId 返回全部卡片和素材段的加舞台尺寸。set_position / set_rect / align / nudge 四个工具改的都是同一个框,任何一个改完都能在这里读到一致的结果。",
+    description: "Read a card's layout: local (the stored box; null if never set, meaning full-screen fill), world (the computed absolute position on the frame: anchor coordinates, size, box is the canvas rectangle, visualBox is the rectangle the canvas actually occupies after scaling and rotation) and **contentBox (the measured box of solid content: the union of text, images and boxes with a background color; transparent containers do not count)**. To judge \"will this card cover the person\", look at contentBox: the default card's canvas fills the full screen, so box/visualBox always say \"covers\"; to judge \"will it leave the frame\", look at visualBox. contentBox is measured by prerender over the whole scene at a given moment; when the card is not on screen at this moment it is null and comes with contentNote (seek into its time range first). Without clipId, returns all cards and media clips plus the stage size. set_position / set_rect / align / nudge all edit the same box, so after any of them you can read a consistent result here.",
     inputSchema: {
       type: "object",
       properties: {
@@ -84,25 +84,25 @@ export const layoutTools = [
   {
     name: "set_camera3d",
     description:
-      "打开 / 关掉三维透视,并调它的强度。**这是三维的唯一开关**,整个项目一档,不是逐卡的。" +
-      "关着的时候 set_position 的 rotateX / rotateY / translateZ 只会得到仿射拉伸 —— 卡片被斜切,但没有近大远小,看着像贴纸不像立在空间里。" +
-      "打开之后舞台变成一个透视空间:屏幕平面是 z=0,translateZ 正值朝观众来(变大)、负值往里去(变小)。" +
+      "Turn 3D perspective on / off, and adjust its strength. **This is the only 3D switch**, one tier per project, not per card." +
+      " While it is off, rotateX / rotateY / translateZ in set_position only produce an affine stretch: the card is skewed but with no near-large far-small effect, so it looks like a sticker rather than standing in space." +
+      " Once on, the stage becomes a perspective space: the screen plane is z=0, positive translateZ comes toward the viewer (larger), negative goes inward (smaller)." +
       "\n\n" +
-      "强度用 fovDeg(视场角)调,**没有\"相机距离\"这个参数** —— 距离是从 fov 和画布高度推出来的(d = H / (2·tan(fov/2)))。" +
-      "这么设计是因为竖屏项目画布高 1920、横屏 1080,同一个距离在两种画幅下透视强度完全不同,而 fov 直接就是\"透视有多强\",换画幅不用重调。" +
-      "档位:**30° 克制**(接近正交,适合规整的信息版面)、**40° 默认**、**50~60° 明显**(卡片一转就有纵深)、**80° 以上是鱼眼**,边角会夸张变形。" +
+      "Strength is adjusted with fovDeg (field of view), **there is no \"camera distance\" parameter**: the distance is derived from fov and canvas height (d = H / (2·tan(fov/2)))." +
+      " It is designed this way because a portrait project has a canvas height of 1920 and a landscape one 1080, so the same distance gives completely different perspective strength in the two aspect ratios, while fov is directly \"how strong the perspective is\" and needs no retuning when the aspect ratio changes." +
+      " Tiers: **30° restrained** (close to orthographic, suits tidy information layouts), **40° default**, **50~60° noticeable** (a card has depth as soon as it turns), **80° and above is fisheye**, with exaggerated distortion at the corners." +
       "\n\n" +
-      "改完一定要 see_frames 看真实画面:透视强度只能看出来,算不出来。",
+      "After changing it, always check the real frames with see_frames: perspective strength can only be judged by eye, not calculated.",
     inputSchema: {
       type: "object",
       properties: {
         enabled: {
           type: "boolean",
-          description: "true = 打开三维(不同时传 fovDeg 时:这个项目之前调过就回到那个值,没调过用默认 40°);false = 关掉,回到纯二维。卡片上已有的 rotateX/rotateY/translateZ 不会被清掉,只是不再有透视",
+          description: "true = turn 3D on (when fovDeg is not passed at the same time: if this project was tuned before it returns to that value, otherwise it uses the default 40°); false = turn it off, back to pure 2D. Existing rotateX/rotateY/translateZ on cards are not cleared, they just no longer have perspective",
         },
         fovDeg: {
           type: "number",
-          description: "视场角(度),5~120,越大透视越夸张。传了它就等于同时把三维打开,不用再传 enabled",
+          description: "Field of view (degrees), 5~120; the larger, the more exaggerated the perspective. Passing it also turns 3D on, so there is no need to pass enabled",
         },
       },
     },

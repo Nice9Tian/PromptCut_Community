@@ -1,48 +1,63 @@
 /**
- * 文档服务的第二种传输：HTTP 长轮询（契约 `docs/plan/http-transport-contract.md` 第 6 节），接在会话层（`session.mjs`）下面。
+ * Second transport for document service: HTTP long polling (contract
+ * `docs/plan/http-transport-contract.md` Section 6), hooked below the session layer (`session.mjs`).
  *
- * **本阶段不接线**（契约文件头「2026-09-27 拆分」：HT-a 只做会话模型与 WebSocket，HTTP 长轮询是 HT-b）：`service.mjs` 不引本文件，
- * 文档服务不答 `/lp/…`。HT-b 接线时，组装层照这样接：
+ * **Not wired in this phase** (contract header "split, 2026-09-27": HT-a covers only session model
+ * and WebSocket; HTTP long polling is HT-b): `service.mjs` does not import this file, and document
+ * service does not respond to `/lp/…`. When HT-b is wired, the assembly layer hooks it up as follows:
  *   const http = createHttpTransport({ sessions, authenticate, canOpen, remoteOf, normalizePrincipal, … });
- *   独立模式的 HTTP 处理里先 `if (http.handle(req, res)) return;`；心跳每轮 `http.sweep()`；关停时 `http.shutdown()`。
- * 挂载模式（vite 里的本地文档服务）不接（语义「内嵌模式」）。
+ *   In standalone mode HTTP handling, run `if (http.handle(req, res)) return;` first; `http.sweep()` on
+ *   each heartbeat; `http.shutdown()` on shutdown.
+ * Attached mode (local document service inside vite) is not connected (semantics "embedded mode").
  *
- * 给出口只放行 443 HTTPS、不支持 WebSocket 升级的节点用。会话、序号、确认、保留、补发都在会话层，本文件只搬运：
- * - `POST /lp/open`：请求头 `X-Promptcut-Protocols` 就是 WebSocket 的子协议列表，含会话项（第 4.1 节）；可选 `X-Promptcut-Fallback`
- *   （降级原因，第 4.3 节第 5 条）。新会话把列表当作 `sec-websocket-protocol` 交给**同一个** `authenticate(req)`（证明、票据、
- *   本机声明、限速、回环信任全照旧；`req.socket` 仍是真实 socket）；接续只按会话号查，不再鉴权。回包带会话号与 welcome 的字段；
- * - `POST /lp/send`：`Authorization: Bearer <sid>`，体 `{ frames: ["<带 seq 的消息文本>", …] }`，逐帧交会话层（按 seq 去重、跳号 1002）；
- *   同一会话同一时刻只一个 POST 在途（再来的回 409 `busy`）；回服务端已收全的 `ack`；
- * - `GET /lp/recv?ack=&wait=`：先按 `ack` 释放，再回还没被确认的帧（纯文本，带 seq；一次最多 1 MiB）；没有就挂着
- *   （一个会话只一个挂起的 GET，新的替换旧的，旧的回 `superseded: true`）；会话结束时先回完剩下的帧、再带 `closed`；
- * - `POST /lp/close`：客户端主动结束会话。
+ * Used for nodes whose egress only permits 443 HTTPS and does not support WebSocket upgrade.
+ * Sessions, sequence numbers, acknowledgements, retention, and retransmissions are all in the
+ * session layer; this file only forwards:
+ * - `POST /lp/open`: header `X-Promptcut-Protocols` is the WebSocket subprotocol list, including
+ *   session items (Section 4.1); optional `X-Promptcut-Fallback` (downgrade reason, Section 4.3
+ *   item 5). A new session passes the list as `sec-websocket-protocol` to the **same**
+ *   `authenticate(req)` (proof, ticket, local claim, rate limiting, loopback trust all as usual;
+ *   `req.socket` is still the real socket); resuming queries only by session id, without
+ *   re-authentication. Response contains session id and welcome fields;
+ * - `POST /lp/send`: `Authorization: Bearer <sid>`, body `{ frames: ["<message text with seq>", …] }`,
+ *   passed frame-by-frame to session layer (deduplicated by seq, gap error 1002); only one POST in
+ *   flight per session at a time (subsequent ones return 409 `busy`); returns `ack` fully received
+ *   by server;
+ * - `GET /lp/recv?ack=&wait=`: first releases by `ack`, then returns unacknowledged frames (plain text
+ *   with seq; up to 1 MiB at a time); hangs if none (only one pending GET per session, newer
+ *   replaces older, older returns `superseded: true`); when session ends, returns remaining frames
+ *   before returning `closed`;
+ * - `POST /lp/close`: client actively ends the session.
  *
- * 传输断开（第 6.5 节）：`waitMs + 15 s` 内既没有挂着的 GET、也没来过请求，`sweep()` 判这条传输断开，会话脱开、进保留期
- * （不再是第 1 版的「过期即断线」）；墓碑只在会话结束时由会话层立。
- * `sid` 与请求头里的凭证不进日志、不进 URL。只引 Node 内置模块与同目录的 `session.mjs`。
+ * Transport disconnect (Section 6.5): if there is neither a pending GET nor an incoming request
+ * within `waitMs + 15 s`, `sweep()` marks this transport disconnected, and the session detaches and
+ * enters the retention period (no longer v1's "disconnect on expiration"); tombstones are set by the
+ * session layer only when the session ends.
+ * `sid` and credentials in request headers do not enter logs or URLs. Only imports Node built-in
+ * modules and `session.mjs` in the same directory.
  */
 import { parseSessionItem } from './session.mjs';
 
 export const HTTP_TRANSPORT_DEFAULTS = Object.freeze({
-  /** 挂起的 GET 最多等多久（客户端的 `wait` 与它取小） */
+  /** Maximum duration a pending GET can wait (takes minimum of client's `wait` and this) */
   WAIT_MS: 25_000,
-  /** `waitMs` 的上限：常见代理与负载均衡的空闲超时是 30～60 s */
+  /** Upper bound for `waitMs`: idle timeout for common proxies and load balancers is 30-60 s */
   MAX_WAIT_MS: 30_000,
-  /** 既没有挂着的 GET、也没来过请求，过了 `waitMs` 再加这么久，算传输断开（第 6.5 节） */
+  /** If no pending GET or incoming request, after `waitMs` plus this duration, consider transport disconnected (Section 6.5) */
   IDLE_SLACK_MS: 15_000,
-  /** 会话结束后，还没来取剩余帧与 `closed` 的传输留多久 */
+  /** How long to keep a transport after session ends if remaining frames and `closed` are uncollected */
   CLOSED_KEEP_MS: 120_000,
-  /** 一次 POST /lp/send 的请求体比单帧上限多出的余量 */
+  /** Margin by which a POST /lp/send request body can exceed the single-frame limit */
   BODY_SLACK_BYTES: 64 * 1024,
-  /** 一次 GET 回包里帧的总字节数上限（至少一帧） */
+  /** Upper limit on total frame bytes in a single GET response (at least one frame) */
   RECV_MAX_BYTES: 1024 * 1024,
-  /** open / close 的请求体上限（本来就只是空或很小的 JSON） */
+  /** Request body upper limit for open / close (originally just empty or very small JSON) */
   SMALL_BODY_BYTES: 4096,
 });
 
 export const PROTOCOLS_HEADER = 'x-promptcut-protocols';
 export const FALLBACK_HEADER = 'x-promptcut-fallback';
-/** 降级原因（第 4.3 节第 5 条）；别的值不记 */
+/** Downgrade reason (Section 4.3 item 5); other values are not recorded */
 export const FALLBACK_REASONS = Object.freeze(['ws-error', 'ws-timeout', 'ws-closed']);
 
 const JSON_TYPE = 'application/json; charset=utf-8';
@@ -54,14 +69,14 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const byteLen = (text) => Buffer.byteLength(text, 'utf8');
 const positive = (v, fallback) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback);
 
-/** 请求头里的子协议列表（逗号分隔、去空白、去空项；多个同名头拼起来） */
+/** Subprotocol list in request headers (comma-separated, trimmed, empty items removed; duplicate headers concatenated) */
 function protocolList(raw) {
   if (raw === undefined) return [];
   const text = Array.isArray(raw) ? raw.join(',') : String(raw);
   return text.split(',').map((s) => s.trim()).filter((s) => s !== '');
 }
 
-/** `Authorization: Bearer <sid>` 里的 sid；没有或格式不对回 null */
+/** sid in `Authorization: Bearer <sid>`; returns null if missing or malformed */
 function bearerOf(req) {
   const m = /^Bearer[ \t]+([A-Za-z0-9_-]{43})$/.exec(String(req.headers.authorization ?? '').trim());
   return m ? m[1] : null;
@@ -73,8 +88,8 @@ function fallbackOf(req) {
 }
 
 /**
- * 读请求体，最多 `limit` 字节。超了回 `{ tooLarge: true }`（剩下的字节丢弃，不再累积）。
- * 客户端中途断开回 `{ aborted: true }`。
+ * Reads request body, up to `limit` bytes. Returns `{ tooLarge: true }` if exceeded (remaining
+ * bytes discarded, no longer accumulated). Returns `{ aborted: true }` if client disconnects midway.
  */
 function readBody(req, limit) {
   return new Promise((resolve) => {
@@ -108,17 +123,21 @@ function readBody(req, limit) {
 
 /**
  * @param {object} options
- * @param {ReturnType<import('./session.mjs').createSessionLayer>} options.sessions 会话层
- * @param {(req: object) => object | null} options.authenticate 与 WebSocket 握手同一个
- * @param {() => null | 'closing' | 'full'} [options.canOpen] 能不能建新会话（关停中、会话数满），缺省总能
- * @param {(req: object) => string | null} [options.remoteOf] 来源地址，缺省 socket 对端
- * @param {(principal: object) => object} [options.normalizePrincipal] 规整鉴权给的 principal（组装层的同名函数），缺省原样
- * @param {string} [options.prefix] 基址的路径部分（不带结尾斜杠；根路径是空串）。端点是 `<prefix>/lp/<名>`
- * @param {string} [options.protocol] 列表里必须有它，而且是第一项；缺省 `promptcut.v1`
- * @param {number} [options.retainMs] 回包里的 `retainMs`（与会话层同一个值）
- * @param {number} [options.maxFrameBytes] 单帧上限（= WebSocket 的 `maxPayload`）
+ * @param {ReturnType<import('./session.mjs').createSessionLayer>} options.sessions Session layer
+ * @param {(req: object) => object | null} options.authenticate Same as WebSocket handshake
+ * @param {() => null | 'closing' | 'full'} [options.canOpen] Whether new sessions can be opened
+ *   (shutting down, session pool full); defaults to always
+ * @param {(req: object) => string | null} [options.remoteOf] Source address, defaults to socket peer
+ * @param {(principal: object) => object} [options.normalizePrincipal] Normalizes principal from auth
+ *   (same-named function in assembly layer); defaults to as-is
+ * @param {string} [options.prefix] Path portion of base URL (without trailing slash; empty string
+ *   for root path). Endpoint is `<prefix>/lp/<name>`
+ * @param {string} [options.protocol] Must be present in list and be first item; defaults to `promptcut.v1`
+ * @param {number} [options.retainMs] `retainMs` in response (same value as in session layer)
+ * @param {number} [options.maxFrameBytes] Single-frame limit (= WebSocket `maxPayload`)
  * @param {number} [options.waitMs]
- * @param {string[]} [options.corsOrigins] 允许跨源的 Origin，缺省空：不回任何 CORS 头
+ * @param {string[]} [options.corsOrigins] Allowed cross-origin Origins; defaults to empty: does not
+ *   return any CORS headers
  * @param {() => number} [options.now]
  * @param {(event: string, fields: object) => void} [options.log]
  */
@@ -144,8 +163,8 @@ export function createHttpTransport({
   now = Date.now,
   log = () => {},
 } = /** @type {any} */ ({})) {
-  if (!sessions || typeof sessions.openSession !== 'function') throw new TypeError('createHttpTransport: 要给会话层 sessions');
-  if (typeof authenticate !== 'function') throw new TypeError('createHttpTransport: authenticate 必须是函数');
+  if (!sessions || typeof sessions.openSession !== 'function') throw new TypeError('createHttpTransport: the session layer `sessions` is required');
+  if (typeof authenticate !== 'function') throw new TypeError('createHttpTransport: authenticate must be a function');
   const base = String(prefix).replace(/\/+$/, '');
   const lpRoot = `${base}/lp/`;
   const waitCap = Math.min(positive(waitMs, HTTP_TRANSPORT_DEFAULTS.WAIT_MS), HTTP_TRANSPORT_DEFAULTS.MAX_WAIT_MS);
@@ -153,9 +172,9 @@ export function createHttpTransport({
   const maxFrame = positive(maxFrameBytes, 1024 * 1024);
   const maxSendBody = maxFrame + HTTP_TRANSPORT_DEFAULTS.BODY_SLACK_BYTES;
   const corsSet = new Set(Array.isArray(corsOrigins) ? corsOrigins.filter((o) => typeof o === 'string' && o !== '') : []);
-  const say = (event, fields) => { try { log(event, fields); } catch { /* 日志出错不影响传输 */ } };
+  const say = (event, fields) => { try { log(event, fields); } catch { /* Logging errors do not affect transport */ } };
 
-  /** sid → 本传输的传输对象（最近一次经 HTTP 接上的；会话结束后留到剩余帧被取走） */
+  /** sid → transport object for this transport (most recently connected via HTTP; kept after session ends until remaining frames fetched) */
   const bySid = new Map();
   // Active request/response pairs, including superseded transports. finish does
   // not remove an owner: both actual close events must have happened.
@@ -186,7 +205,7 @@ export function createHttpTransport({
     }
   }
 
-  // ---------- 回包 ----------
+  // ---------- Response ----------
 
   function corsFor(req) {
     const origin = req.headers.origin;
@@ -202,14 +221,17 @@ export function createHttpTransport({
     res.end(JSON.stringify(body));
   }
 
-  // ---------- 传输对象 ----------
+  // ---------- Transport object ----------
 
   /**
-   * 一条 HTTP 传输（一次 `open` 接上的）。会话层看到的形状：`kind`、`send`、`control`、`close`。
-   * - `send`：有新帧，叫醒挂着的 GET（帧由 GET 向会话层 `pull`，所以这里不存帧）；
-   * - `control`：不用（welcome 在 open 的回包里，确认在 send 的回包里）；
-   * - `close(code, reason, rest)`：4009 是被别的传输替换（挂着的 GET 回 `superseded`）；别的码是会话结束，
-   *   记下 `closed` 与剩下的帧，挂着的 GET 立刻回。
+   * An HTTP transport (connected via an `open`). Shape seen by the session layer: `kind`, `send`,
+   * `control`, `close`.
+   * - `send`: Has new frames; wakes up the pending GET (frames are pulled by the GET from the session
+   *   layer via `pull`, so frames are not stored here);
+   * - `control`: Unused (welcome is in the open response, ack is in the send response);
+   * - `close(code, reason, rest)`: 4009 means replaced by another transport (the pending GET responds
+   *   with `superseded`); other codes mean the session ended, recording `closed` and remaining
+   *   frames, and the pending GET responds immediately.
    */
   function newTransport(sid) {
     const t = {
@@ -218,12 +240,12 @@ export function createHttpTransport({
       connId: null,
       waiter: null,
       wakeQueued: false,
-      /** 会话结束：{ code, reason }；剩下的帧在 `rest` */
+      /** Session ended: { code, reason }; remaining frames are in `rest` */
       closed: null,
       rest: [],
       closedAt: 0,
       superseded: false,
-      /** 已判断开（sweep）或被替换：之后的请求不再算这条传输的 */
+      /** Deemed disconnected (sweep) or replaced: subsequent requests no longer belong to this transport */
       dead: false,
       sending: false,
       lastSeen: now(),
@@ -257,7 +279,11 @@ export function createHttpTransport({
     return w;
   }
 
-  /** 立即回一次 recv：会话还开着就向会话层取帧；已结束就回剩下的帧，都回完了带 `closed` 并忘掉这条传输 */
+  /**
+   * Immediately respond to a recv: if the session is still open, fetch frames from the session
+   * layer; if ended, return remaining frames; once all returned, include `closed` and forget this
+   * transport
+   */
   function respondRecv(t, res, cors, lease) {
     if (lease) return Promise.resolve().then(() => lease.check()).then(() => {
       if (t.fenced || t.dead || t.superseded || !t.closed && !sessions.isCurrent(t.connId, t))
@@ -284,7 +310,10 @@ export function createHttpTransport({
     sendJson(res, 200, { ok: true, frames, closed: null }, cors);
   }
 
-  /** 有新帧或会话结束了：叫醒挂着的 GET。同一轮里连写几条时攒成一次回包 */
+  /**
+   * New frames available or session ended: wake up the pending GET. When multiple writes occur in the
+   * same round, batch them into a single response
+   */
   function wake(t, immediate = false) {
     if (!t.waiter) return;
     if (immediate) {
@@ -302,8 +331,10 @@ export function createHttpTransport({
   }
 
   /**
-   * 按 `Authorization` 找这条会话的 HTTP 传输；找不到时已经回了 404 / 410 / 409，返回 null。
-   * 会话已被别的传输接走（例如客户端改走了 WebSocket）回 409 `superseded`。
+   * Find the HTTP transport for this session by `Authorization`; if not found, 404 / 410 / 409 has
+   * already been sent, return null.
+   * If the session was already taken over by another transport (e.g. the client switched to
+   * WebSocket), respond with 409 `superseded`.
    */
   function transportOf(req, res, cors) {
     const sid = bearerOf(req);
@@ -319,7 +350,7 @@ export function createHttpTransport({
       return null;
     }
     if (sid && sessions.connIdOf(sid)) {
-      // 会话在，但挂着的不是 HTTP：要先经 open 接续
+      // Session exists, but the attached transport is not HTTP: must resume via open first
       sendJson(res, 409, { ok: false, error: 'superseded' }, cors);
       return null;
     }
@@ -327,12 +358,12 @@ export function createHttpTransport({
     return null;
   }
 
-  /** 会话结束之后还拿着这条传输来发、来关：回 410 */
+  /** Using this transport to send or close after the session has ended: respond with 410 */
   function closedReply(t, res, cors) {
     sendJson(res, 410, { ok: false, error: 'session-closed', code: t.closed.code, reason: t.closed.reason }, cors);
   }
 
-  // ---------- 端点 ----------
+  // ---------- Endpoints ----------
 
   const openReply = (welcome) => ({
     ok: true,
@@ -369,7 +400,7 @@ export function createHttpTransport({
     const offered = protocolList(req.headers[PROTOCOLS_HEADER]);
     if (offered.length === 0 || offered[0] !== protocol) return sendJson(res, 400, { ok: false, error: 'bad-protocols' }, cors);
     const item = parseSessionItem(offered, protocol);
-    // 长轮询没有旧客户端：列表里必须有会话项
+    // Long polling has no legacy clients: the list must contain a session entry
     if (item.kind === 'bad' || item.kind === 'legacy') return sendJson(res, 400, { ok: false, error: 'bad-protocols' }, cors);
     const body = await readBody(req, HTTP_TRANSPORT_DEFAULTS.SMALL_BODY_BYTES);
     if (body.aborted) return undefined;
@@ -377,7 +408,8 @@ export function createHttpTransport({
     const fallback = fallbackOf(req);
 
     if (item.kind === 'resume') {
-      // 接续项在鉴权之前按 sid 查（第 14 节「open 的判定顺序」另加的一条）
+      // Resume entries are looked up by sid before authentication (an extra rule added in Section 14
+      // "Evaluation order of open")
       if (canOpen() === 'closing') return sendJson(res, 503, { ok: false, error: 'unavailable' }, cors);
       const t = newTransport(item.sid);
       t.isUsable = () => !shuttingDown && !res.destroyed && !res.writableEnded && !req.aborted;
@@ -401,9 +433,10 @@ export function createHttpTransport({
       return sendJson(res, 200, openReply(r.welcome), cors);
     }
 
-    // 读请求体期间可能开始关停或会话数满了
+    // While reading the request body, shutdown may have started or sessions may have reached capacity
     if (canOpen() !== null) return sendJson(res, 503, { ok: false, error: 'unavailable' }, cors);
-    // 同一个请求对象，只把子协议列表放进 WebSocket 握手的那个头；socket、url、其余头都不变
+    // Same request object: only put the subprotocol list into the WebSocket handshake header;
+    // socket, url, and remaining headers stay unchanged
     const headers = { ...req.headers, 'sec-websocket-protocol': offered.join(', ') };
     const authReq = Object.create(req, { headers: { value: headers, enumerable: true, writable: true, configurable: true },
       transportBodyText: { value: body.text }, transportProtocolHeaders: { value: req.headers } });
@@ -522,7 +555,8 @@ export function createHttpTransport({
     const rawWait = Number(url.searchParams.get('wait') ?? waitCap);
     const wait = Number.isFinite(rawWait) && rawWait >= 0 ? Math.min(rawWait, waitCap) : waitCap;
 
-    // 新的 GET 替换旧的（客户端超时重连后旧请求可能还挂在这里）
+    // New GET replaces the old one (after client timeout and reconnect, the old request may still
+    // be pending here)
     const old = clearWaiter(t);
     if (old) {
       counters.superseded += 1;
@@ -533,7 +567,7 @@ export function createHttpTransport({
       const ack = Number(url.searchParams.get('ack') ?? 0);
       const last = sessions.lastSeq(t.connId);
       if (!Number.isSafeInteger(ack) || ack < 0 || ack > last) {
-        // 越界的 ack：会话已坏（第 3.5 节），会话层以 1002 结束它
+        // Out-of-bounds ack: session is corrupted (Section 3.5); session layer ends it with 1002
         sessions.ack(t.connId, ack);
         sendJson(res, 400, { ok: false, error: 'bad-ack', last }, cors);
         return replied;
@@ -578,7 +612,7 @@ export function createHttpTransport({
       requireCurrentInvocation(t);
       if (needsInvocation(t.principal, req)) track(t, req, res);
       if (!t.closed) sessions.end(t.connId, isObj(msg) ? msg.code : undefined, isObj(msg) ? msg.reason : '');
-      // 客户端自己关的：剩下的帧它不要了
+      // Closed by the client itself: it does not want the remaining frames
       if (bySid.get(t.sid) === t) bySid.delete(t.sid);
       sendJson(res, 200, { ok: true }, cors);
       return undefined;
@@ -586,7 +620,8 @@ export function createHttpTransport({
   }
 
   /**
-   * 处理一个 HTTP 请求。是 `<prefix>/lp/…` 的就接手并回 true，别的回 false、什么都不动。
+   * Handle an HTTP request. If it matches `<prefix>/lp/…`, take over and return true; otherwise
+   * return false without touching anything.
    */
   function handle(req, res) {
     let url;
@@ -599,7 +634,8 @@ export function createHttpTransport({
     const cors = corsFor(req);
     const name = url.pathname.slice(lpRoot.length);
     if (req.method === 'OPTIONS') {
-      // 预检不做任何会话操作；名单为空（或 Origin 不在名单里）时不回任何 CORS 头
+      // Preflight performs no session operations; when the list is empty (or Origin is not in the
+      // list), do not return any CORS headers
       const headers = { 'cache-control': 'no-store', ...(cors ?? {}) };
       if (cors) {
         headers['access-control-allow-methods'] = CORS_METHODS;
@@ -668,8 +704,10 @@ export function createHttpTransport({
     },
 
     /**
-     * 组装层的心跳每轮调：`waitMs + 15 s` 内既没有挂着的 GET、也没来过请求的传输判断开，会话脱开（会话层进保留期）；
-     * 会话已结束而客户端一直不来取剩余帧的，过一阵忘掉。
+     * Assembly layer heartbeat invoked every round: transports with neither pending GET nor incoming
+     * requests within `waitMs + 15 s` are deemed disconnected, detaching the session (session layer
+     * enters retention period);
+     * if the session has ended and the client never fetches remaining frames, forget it after a while.
      */
     sweep() {
       const t0 = now();
@@ -689,12 +727,18 @@ export function createHttpTransport({
       }
     },
 
-    /** 关停：不再建会话；挂着的 GET 由会话层结束会话时回 `closed`（组装层先 `sessions.closeAll`） */
+    /**
+     * Shutdown: no longer create sessions; pending GETs respond with `closed` when the session layer
+     * ends the session (assembly layer calls `sessions.closeAll` first)
+     */
     shutdown() {
       shuttingDown = true;
     },
 
-    /** 诊断：HTTP 上挂着的传输数与被替换的 GET 数（会话的统计在会话层） */
+    /**
+     * Diagnostics: number of transports attached to HTTP and number of superseded GETs (session
+     * statistics are in the session layer)
+     */
     stats() {
       return { transports: [...bySid.values()].filter((t) => !t.closed && !t.dead).length, superseded: counters.superseded };
     },

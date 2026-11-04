@@ -1,41 +1,49 @@
 /**
- * CLI 驱动的额度阈值(熔断)。
+ * Quota thresholds (circuit breaker) for CLI drivers.
  *
- * Claude Code 和 Codex 都是订阅制,有 5 小时 / 每周的用量窗口。窗口用完 CLI 会直接拒绝,
- * 而且往往是在一段编排做到一半的时候 —— 所以在用量**逼近**上限(默认 80%)时就把这一路
- * 断掉,抛一条说人话的错误,而不是让 agent 撞墙。
+ * Both Claude Code and Codex are subscription-based, with 5-hour / weekly usage windows. When a
+ * window is exhausted, the CLI rejects directly, and often midway through an arrangement: so when
+ * usage **approaches** the limit (default 80%), this path is cut off, throwing a human-readable
+ * error instead of letting the agent hit a wall.
  *
- * 用量从哪儿来(两家都不用碰 TUI,不弹窗、不占前台):
- *   - Claude Code:`claude -p "/usage" --output-format text`,打印模式也认这条斜杠命令,
- *     输出形如「Current session: 18% used · resets Sep 8, 3pm (Asia/Tokyo)」;
- *     API Key 模式没有订阅窗口,输出里没有这些行 → 不支持,不拦。
- *   - Codex:`codex app-server`(JSON-RPC over stdio),initialize 之后调 `account/rateLimits/read`,
- *     primary 是 5 小时窗口、secondary 是每周窗口,都是 usedPercent + resetsAt(unix 秒)。
- *     用的是 PromptCut 自己的 CODEX_HOME(和 runner 一致),没登录就查不到 → 不拦。
+ * Where usage comes from (neither touches the TUI, with no popups and without occupying the foreground):
+ *   - Claude Code: `claude -p "/usage" --output-format text`, print mode also accepts this slash command,
+ *     with output shaped like "Current session: 18% used · resets Sep 8, 3pm (Asia/Tokyo)";
+ *     API Key mode has no subscription window, so these lines are absent in the output
+ *     → unsupported, do not block.
+ *   - Codex: `codex app-server` (JSON-RPC over stdio); calls `account/rateLimits/read` after initialize,
+ *     where primary is a 5-hour window and secondary is a weekly window, both with
+ *     usedPercent + resetsAt (unix seconds).
+ *     Uses PromptCut's own CODEX_HOME (consistent with runner); cannot be queried if not logged in
+ *     → do not block.
  *
- * 什么时候查(createQuotaGuard):
- *   - 每次对话开始前 gate():没查过、或上次查的结果太旧(staleMs)就先查一次再放行;
- *   - 每次对话结束 note(bytes):累计这条路新增的上下文字节数(提示词 + 回复),超过
- *     checkEveryBytes 就在后台再查一次 —— 查到超线,正在跑的同一路对话由调用方掐掉。
- *   查额度这一步失败(没装、没登录、超时)一律**不拦**:阈值是保护,不该变成新的故障点。
+ * When to check (createQuotaGuard):
+ *   - Before each chat starts gate(): if never checked, or the last checked result is too old (staleMs),
+ *     check once before allowing passage;
+ *   - After each chat ends note(bytes): accumulate newly added context bytes on this path (prompt + reply);
+ *     if exceeding checkEveryBytes, check again in the background: if over the limit, the currently running
+ *     chat on the same path is killed by the caller.
+ *   If checking quota fails (not installed, not logged in, timed out), **never block**: the threshold
+ *   is protection, and should not become a new point of failure.
  */
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { cliCommand, cliEnv, resolveCli, setupRoot } from './cli-runtime.mjs';
-import { codexAuthState, AUTH_RECOVERY } from './codex-auth-state.mjs';
+import { codexAuthState, authRecovery } from './codex-auth-state.mjs';
+import { tr } from '../i18n.mjs';
 
 export const QUOTA_PROVIDERS = ['claude', 'codex'];
 
 export const DEFAULT_QUOTA_CONFIG = Object.freeze({
   enabled: true,
-  /** 任一窗口用到这个百分比就熔断 */
+  /** Circuit-break when any window reaches this percentage */
   thresholdPercent: 80,
-  /** 这条路新增多少字节的上下文后,后台再查一次额度 */
+  /** How many bytes of new context on this path before re-checking quota in the background */
   checkEveryBytes: 256 * 1024,
 });
 
-/** 查过的结果多久算旧(gate 时超过这个就重查) */
+/** How long before a checked result is considered stale (re-checks at gate if exceeded) */
 export const STALE_MS = 10 * 60 * 1000;
 
 export class QuotaExceededError extends Error {
@@ -46,12 +54,12 @@ export class QuotaExceededError extends Error {
   }
 }
 
-/* ---------------- 解析(纯函数,可单测) ---------------- */
+/* ---------------- Parsing (pure functions, unit-testable) ---------------- */
 
 const PROVIDER_LABEL = { claude: 'Claude Code', codex: 'Codex' };
 
 /**
- * claude -p "/usage" 的文本:
+ * Text from claude -p "/usage":
  *   Current session: 18% used · resets Sep 8, 3pm (Asia/Tokyo)
  *   Current week (all models): 51% used · resets Sep 14, 10am (Asia/Tokyo)
  *   Current week (Fable): 75% used · resets Sep 14, 10am (Asia/Tokyo)
@@ -69,14 +77,14 @@ export function parseClaudeUsage(text) {
 }
 
 function zhLabel(label) {
-  if (/session/i.test(label)) return '当前 5 小时';
-  if (/all models/i.test(label)) return '本周(全部模型)';
+  if (/session/i.test(label)) return tr("Current 5 hours");
+  if (/all models/i.test(label)) return tr("This week (all models)");
   const m = /week\s*\(([^)]+)\)/i.exec(label);
-  if (m) return `本周(${m[1]})`;
+  if (m) return tr("This week ({0})", m[1]);
   return label;
 }
 
-/** codex app-server 的 account/rateLimits/read 结果 */
+/** account/rateLimits/read result from codex app-server */
 export function parseCodexRateLimits(result) {
   const rl = result?.rateLimits;
   if (!rl || typeof rl !== 'object') return [];
@@ -85,8 +93,8 @@ export function parseCodexRateLimits(result) {
     if (!w || typeof w.usedPercent !== 'number') return;
     const mins = Number(w.windowDurationMins) || 0;
     const label = id === 'primary'
-      ? (mins >= 240 && mins <= 360 ? '当前 5 小时' : mins ? `${Math.round(mins / 60)} 小时窗口` : '短期窗口')
-      : (mins >= 10000 && mins <= 10100 ? '本周' : mins ? `${Math.round(mins / 1440)} 天窗口` : '长期窗口');
+      ? (mins >= 240 && mins <= 360 ? tr("Current 5 hours") : mins ? tr("{0}-hour window", Math.round(mins / 60)) : tr("Short-term window"))
+      : (mins >= 10000 && mins <= 10100 ? tr("This week") : mins ? tr("{0}-day window", Math.round(mins / 1440)) : tr("Long-term window"));
     windows.push({
       id: id === 'primary' ? 'session' : 'week',
       label,
@@ -112,21 +120,25 @@ function formatReset(ms) {
 }
 
 /**
- * 哪些窗口该参与「拦不拦」的判定 —— **按当前跑的模型筛**。
+ * Which windows should participate in the "block or not" verdict: **filtered by the currently running model**.
  *
- * claude 的 /usage 会同时报好几个窗口:
- *   Current session            当前 5 小时,跟模型无关
- *   Current week (all models)  本周全部模型合计
- *   Current week (Fable)       **只有 Fable 这一个模型的**本周额度
+ * claude's /usage reports multiple windows at the same time:
+ *   Current session            current 5 hours, model-agnostic
+ *   Current week (all models)  this week's total across all models
+ *   Current week (Fable)       weekly quota **for the Fable model only**
  *
- * 原来是拿所有窗口里最高的那个去比阈值,于是 Fable 那一栏一涨,跑 opus / sonnet 的对话
- * 也跟着被熔断 —— 明明那条路的额度还剩很多。用户没选 Fable 的时候,Fable 用了多少
- * 跟他这次对话没有任何关系。
+ * Previously, the highest value across all windows was compared against the threshold; thus, once
+ * the Fable entry rose, chats running opus / sonnet were also circuit-broken: even though plenty of
+ * quota remained on that path. When the user did not select Fable, how much Fable was used had
+ * nothing to do with this chat.
  *
- * 规则:`session` 和 `week`(全部模型)任何时候都算;`week-<模型名>` 只有正在跑那个模型时才算。
- * 模型名匹配用「包含」,因为界面上填的可能是别名 `fable`,也可能是全名 `claude-fable-5-1`。
- * 没指定模型(走驱动默认)时不计入任何模型专属窗口 —— 这时候按全部模型那一栏判,
- * 宁可放过也不误伤。
+ * Rule: `session` and `week` (all models) always count; `week-<model-name>` counts only when
+ * currently running that model.
+ * Model name matching uses "contains", because the UI may specify the alias `fable` or the full
+ * name `claude-fable-5-1`.
+ * When no model is specified (falling back to driver default), do not count any model-specific
+ * windows: in this case, evaluate against the all-models entry, preferring false negatives over
+ * false positives.
  */
 export function decidingWindows(windows, model) {
   const m = String(model || '').toLowerCase();
@@ -138,17 +150,17 @@ export function decidingWindows(windows, model) {
   });
 }
 
-/** 一组窗口里用量最高的那个 */
+/** The highest usage among a set of windows */
 function worstOf(windows) {
   return (windows || []).reduce((a, w) => (!a || w.usedPercent > a.usedPercent ? w : a), null);
 }
 
 /**
- * 把窗口列表收成一份结果。
+ * Collapses the window list into a single result.
  *
- * `maxUsedPercent` / `worst` 是**所有窗口**里最高的那个,给界面显示用 ——
- * 用户想看到自己哪一栏快满了,哪怕这次不跑那个模型。
- * 拦不拦是另一回事,走 decidingWindows,见 verdict()。
+ * `maxUsedPercent` / `worst` is the highest among **all windows**, used for UI display:
+ * users want to see which entry is almost full, even if not running that model this time.
+ * Whether to block is another matter, handled via decidingWindows; see verdict().
  */
 export function summarize(provider, windows, extra = {}) {
   const worst = worstOf(windows);
@@ -166,7 +178,7 @@ export function summarize(provider, windows, extra = {}) {
   };
 }
 
-/* ---------------- 探测 ---------------- */
+/* ---------------- Probe ---------------- */
 
 function probeDir() {
   const dir = path.join(setupRoot(), 'quota-probe');
@@ -183,14 +195,14 @@ function probeClaude({ timeoutMs = 60000 } = {}) {
       const windows = parseClaudeUsage(text);
       if (windows.length) return resolve(summarize('claude', windows));
       const combined = (text + '\n' + (stderr || '')).trim();
-      const reason = error ? `claude 没跑起来:${error.message}` : /api key|anthropic api/i.test(combined) ? 'API Key 模式没有订阅额度窗口' : `没在输出里找到用量行:${combined.slice(0, 200)}`;
+      const reason = error ? tr("claude failed to run: {0}", error.message) : /api key|anthropic api/i.test(combined) ? tr("API Key mode has no subscription quota window") : tr("No usage line found in the output: {0}", combined.slice(0, 200));
       resolve({ ...summarize('claude', []), ok: false, error: reason });
     });
   });
 }
 
 function probeCodex({ timeoutMs = 20000 } = {}) {
-  if (codexAuthState().snapshot().state !== 'normal') return Promise.resolve({ ...summarize('codex', []), ok: false, error: AUTH_RECOVERY });
+  if (codexAuthState().snapshot().state !== 'normal') return Promise.resolve({ ...summarize('codex', []), ok: false, error: authRecovery() });
   return new Promise((resolve) => {
     const exe = resolveCli('codex');
     const { command, args } = cliCommand(exe, ['app-server']);
@@ -198,7 +210,7 @@ function probeCodex({ timeoutMs = 20000 } = {}) {
     try {
       child = spawn(command, args, { cwd: probeDir(), env: cliEnv('codex'), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
-      return resolve({ ...summarize('codex', []), ok: false, error: `codex 没跑起来:${e.message}` });
+      return resolve({ ...summarize('codex', []), ok: false, error: tr("codex failed to run: {0}", e.message) });
     }
     let buf = '';
     let done = false;
@@ -210,10 +222,10 @@ function probeCodex({ timeoutMs = 20000 } = {}) {
       try { child.kill(); } catch {}
       resolve(r);
     };
-    const timer = setTimeout(() => finish({ ...summarize('codex', []), ok: false, error: 'codex app-server 20 秒没回应' + (stderrText ? `:${stderrText.slice(0, 200)}` : '') }), timeoutMs);
+    const timer = setTimeout(() => finish({ ...summarize('codex', []), ok: false, error: tr("codex app-server did not respond within 20 seconds") + (stderrText ? `:${stderrText.slice(0, 200)}` : '') }), timeoutMs);
     const send = (o) => { try { child.stdin.write(JSON.stringify(o) + '\n'); } catch {} };
-    child.on('error', (e) => finish({ ...summarize('codex', []), ok: false, error: `codex 没跑起来:${e.message}` }));
-    child.on('exit', () => finish({ ...summarize('codex', []), ok: false, error: 'codex app-server 提前退出' + (stderrText ? `:${stderrText.slice(0, 200)}` : '') }));
+    child.on('error', (e) => finish({ ...summarize('codex', []), ok: false, error: tr("codex failed to run: {0}", e.message) }));
+    child.on('exit', () => finish({ ...summarize('codex', []), ok: false, error: tr("codex app-server exited early") + (stderrText ? `:${stderrText.slice(0, 200)}` : '') }));
     child.stderr.on('data', (d) => { stderrText += d.toString('utf8'); });
     child.stdout.on('data', (d) => {
       buf += d.toString('utf8');
@@ -224,14 +236,14 @@ function probeCodex({ timeoutMs = 20000 } = {}) {
         let msg;
         try { msg = JSON.parse(line); } catch { continue; }
         if (msg.id === 1) {
-          if (msg.error) return finish({ ...summarize('codex', []), ok: false, error: `initialize 失败:${msg.error.message || JSON.stringify(msg.error)}` });
+          if (msg.error) return finish({ ...summarize('codex', []), ok: false, error: tr("initialize failed: {0}", msg.error.message || JSON.stringify(msg.error)) });
           send({ jsonrpc: '2.0', method: 'initialized', params: {} });
           send({ jsonrpc: '2.0', id: 2, method: 'account/rateLimits/read', params: {} });
         } else if (msg.id === 2) {
-          if (msg.error) return finish({ ...summarize('codex', []), ok: false, error: `读不到额度:${msg.error.message || JSON.stringify(msg.error)}(没登录?)` });
+          if (msg.error) return finish({ ...summarize('codex', []), ok: false, error: tr("Cannot read quota: {0} (not logged in?)", msg.error.message || JSON.stringify(msg.error)) });
           const windows = parseCodexRateLimits(msg.result);
           const planType = msg.result?.rateLimits?.planType;
-          if (!windows.length) return finish({ ...summarize('codex', []), ok: false, error: '返回里没有额度窗口(没登录?)' });
+          if (!windows.length) return finish({ ...summarize('codex', []), ok: false, error: tr("The response has no quota window (not logged in?)") });
           return finish(summarize('codex', windows, { planType }));
         }
       }
@@ -240,14 +252,14 @@ function probeCodex({ timeoutMs = 20000 } = {}) {
   });
 }
 
-/** 查一次用量。不支持的驱动(agy / api)返回 supported:false */
+/** Checks usage once. Returns supported:false for unsupported drivers (agy / api) */
 export async function probeQuota(provider, opts = {}) {
   if (provider === 'claude') return probeClaude(opts);
   if (provider === 'codex') return probeCodex(opts);
   return { provider, label: provider, supported: false, ok: false, checkedAt: Date.now(), windows: [], maxUsedPercent: null, worst: null };
 }
 
-/* ---------------- 熔断器 ---------------- */
+/* ---------------- Circuit breaker ---------------- */
 
 export function normalizeQuotaConfig(raw) {
   const cfg = { ...DEFAULT_QUOTA_CONFIG };
@@ -259,26 +271,26 @@ export function normalizeQuotaConfig(raw) {
   return cfg;
 }
 
-/** `worst` 传的是**参与判定的那些窗口**里最高的那个,不一定等于 info.worst(那是所有窗口的最高) */
+/** `worst` passes the highest among **windows participating in the verdict**, not necessarily equal to info.worst (which is the highest across all windows) */
 export function exceededMessage(info, thresholdPercent, worst = info.worst) {
   const w = worst;
-  const reset = w?.resetsText ? `,${w.label}窗口 ${w.resetsText} 重置` : '';
-  return `${info.label} 额度已用 ${w?.usedPercent ?? '?'}%(${w?.label ?? '窗口'}),超过阈值 ${thresholdPercent}%,已中断${reset}。要继续可以在 AI 设置里调高阈值或关掉熔断。`;
+  const reset = w?.resetsText ? tr(", {0} window resets {1}", w.label, w.resetsText) : '';
+  return tr("{0} quota used {1}% ({2}), over the {3}% threshold, interrupted{4}. To continue, raise the threshold or turn off the circuit breaker in AI settings.", info.label, w?.usedPercent ?? '?', w?.label ?? tr("window"), thresholdPercent, reset);
 }
 
 /**
- * @param deps.probe  查用量的函数(测试里换成假的)
- * @param deps.now    时钟
+ * @param deps.probe  Function to check usage (mocked in tests)
+ * @param deps.now    Clock
  */
 export function createQuotaGuard(deps = {}) {
   const probe = deps.probe ?? probeQuota;
   const now = deps.now ?? Date.now;
   const staleMs = deps.staleMs ?? STALE_MS;
-  /** provider → 最近一次结果 */
+  /** provider → latest result */
   const results = new Map();
-  /** provider → 正在进行的探测,避免并发重复查 */
+  /** provider → ongoing probe, avoiding concurrent duplicate checks */
   const inflight = new Map();
-  /** provider → 上次查过之后新增的上下文字节数 */
+  /** provider → newly added context bytes since the last check */
   const bytes = new Map();
 
   async function refresh(provider) {
@@ -286,7 +298,8 @@ export function createQuotaGuard(deps = {}) {
     const p = (async () => {
       let info;
       try { info = await probe(provider); } catch (e) { info = { provider, label: PROVIDER_LABEL[provider] || provider, supported: true, ok: false, checkedAt: now(), windows: [], maxUsedPercent: null, worst: null, error: String(e?.message || e) }; }
-      // 查完的时刻以熔断器自己的时钟为准(探测函数可能是假的 / 时钟可能被测试换掉)
+      // The completion timestamp is based on the circuit breaker's own clock (the probe function may be
+      // mocked / the clock may be replaced by tests)
       info.checkedAt = now();
       results.set(provider, info);
       bytes.set(provider, 0);
@@ -296,7 +309,7 @@ export function createQuotaGuard(deps = {}) {
     return p;
   }
 
-  /** model:这次对话跑的模型。决定 week-<模型> 那类窗口算不算,见 decidingWindows */
+  /** model: model run for this chat. Determines whether week-<model> windows count; see decidingWindows */
   function verdict(provider, cfg, model) {
     const info = results.get(provider);
     if (!info || !info.ok || !cfg.enabled) return { blocked: false, info };
@@ -308,7 +321,7 @@ export function createQuotaGuard(deps = {}) {
   }
 
   return {
-    /** 对话开始前:没查过或太旧就查,超线就抛 QuotaExceededError。model 决定模型专属窗口算不算 */
+    /** Before chat starts: check if never checked or stale; throw QuotaExceededError if over the limit. model determines whether model-specific windows count */
     async gate(provider, rawCfg, model) {
       const cfg = normalizeQuotaConfig(rawCfg);
       if (!cfg.enabled || !QUOTA_PROVIDERS.includes(provider)) return null;
@@ -319,8 +332,9 @@ export function createQuotaGuard(deps = {}) {
       return v.info;
     },
     /**
-     * 对话结束后记账:新增了多少字节。累计超过 checkEveryBytes 就后台重查,
-     * 返回 Promise<verdict | null>(null = 这次没触发重查),调用方拿到 blocked 就去掐正在跑的对话。
+     * Accounting after chat ends: how many bytes were added. If accumulated beyond checkEveryBytes,
+     * re-checks in the background and returns Promise<verdict | null> (null = did not trigger a re-check
+     * this time); if caller receives blocked, it terminates the running chat.
      */
     note(provider, n, rawCfg, model) {
       const cfg = normalizeQuotaConfig(rawCfg);
@@ -330,7 +344,7 @@ export function createQuotaGuard(deps = {}) {
       if (total < cfg.checkEveryBytes) return null;
       return refresh(provider).then(() => verdict(provider, cfg, model));
     },
-    /** 当前缓存(给界面显示);refresh=true 强制重查 */
+    /** Current cache (for UI display); refresh=true forces a re-check */
     async get(provider, { refresh: force = false } = {}) {
       if (!QUOTA_PROVIDERS.includes(provider)) return { provider, supported: false, ok: false, windows: [], maxUsedPercent: null, worst: null };
       if (force || !results.has(provider)) await refresh(provider);

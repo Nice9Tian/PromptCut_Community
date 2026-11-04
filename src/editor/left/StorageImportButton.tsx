@@ -13,21 +13,28 @@ import { getDriveToken, pickDriveFiles, requestDriveAuthCode, forgetDriveToken }
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 素材页的「从网盘导入」(任务书 `docs/plan/drive-connector-task.md` 第 5 节)。
+ * "Import from cloud drive" on the media page (task brief `docs/plan/drive-connector-task.md`,
+ * section 5).
  *
- * 单独一个组件,`LibrarySection` 里只加一行引用 —— 那个文件同期还有别人在改,这样冲突面最小。
+ * A standalone component, with only one line referencing it added to `LibrarySection` -- someone
+ * else is editing that file at the same time, so this keeps the conflict surface smallest.
  *
- * # 两条凭据路在界面上怎么体现
+ * # How the two credential paths show up in the UI
  *
- * - **不托管(A3)**:点「Google Drive」→ 授权 → Picker 选文件。那张票一小时就过期,关掉页面就没了。
- * - **托管(A2)**:在「已连接的网盘」里点一次「连接」,长期授权就交给编辑器进程保管。之后导入时
- *   **拉取不再依赖页面手里那张票** —— 几个 G 的大文件拉一小时也不会半路断掉。
+ * - **Not hosted (A3)**: click "Google Drive" → authorize → pick files in the Picker. That ticket
+ *   expires in an hour and is gone once the page is closed.
+ * - **Hosted (A2)**: click "Connect" once under "Connected cloud drives", and the long-lived
+ *   authorization is kept by the editor process. After that, importing **no longer depends on the
+ *   ticket the page holds** -- a multi-GB file can be pulled for an hour without breaking midway.
  *
- * **Picker 本身总是要一张当场的票**(它要在页面里列出文件),所以托管与否都会走一次 `getDriveToken`;
- * 区别只在「拉字节」那一段用谁的票。
+ * **The Picker itself always needs a ticket on the spot** (it lists files in the page), so hosted
+ * or not, `getDriveToken` is called once; the only difference is whose ticket is used for the
+ * "pull bytes" stage.
  *
- * 字节不经过页面:页面只递文件 id,拉取与入库都在编辑器进程里做。
- * 在线浏览器构建里不显示:那边没有本机的编辑器进程,拉不了(`storageImportSupported`)。
+ * Bytes never pass through the page: the page only hands over the file id, and both pulling and
+ * storing happen in the editor process.
+ * Not shown in the online browser build: there is no local editor process there, so nothing can
+ * be pulled (`storageImportSupported`).
  */
 export function StorageImportButton({
   disabled = false,
@@ -37,7 +44,7 @@ export function StorageImportButton({
 }: {
   disabled?: boolean;
   disabledTitle?: string;
-  /** 导入完成后把用户带到素材落地的那一组 */
+  /** After the import finishes, take the user to the group where the media landed */
   onImported?: (firstKind: "video" | "audio" | "image") => void;
   flash: (msg: string) => void;
 }) {
@@ -60,7 +67,7 @@ export function StorageImportButton({
     return () => { alive = false; };
   }, []);
 
-  // 点别处关掉菜单
+  // Click elsewhere to close the menu
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -76,12 +83,12 @@ export function StorageImportButton({
     setOpen(false);
     setBusy(true);
     try {
-      // Picker 要一张当场的票才能列出文件,托管与否都要
+      // The Picker needs a ticket on the spot to list files, hosted or not
       const { token } = await getDriveToken(cfg);
       const picked = await pickDriveFiles(cfg, token);
-      if (!picked || picked.length === 0) return;           // 用户取消,什么都不说
+      if (!picked || picked.length === 0) return;           // The user cancelled, say nothing
 
-      // 已托管就不把票递下去:拉取方用它自己保管的凭据换票,不受这张票过期的影响
+      // If hosted, do not pass the ticket down: the puller swaps for a ticket with the credentials it keeps itself, unaffected by this ticket expiring
       const managed = !!connectedOf(cfg.kind);
       flash(tr("Importing {1} files from {0}…{2}", cfg.label, picked.length, managed ? tr(" (hosted authorization)") : ""));
 
@@ -114,7 +121,7 @@ export function StorageImportButton({
     setBusy(true);
     try {
       const got = await requestDriveAuthCode(cfg);
-      if (!got) return;                                     // 用户关了授权窗口
+      if (!got) return;                                     // The user closed the authorization window
       await connectStorage(cfg.kind, got.code, got.codeVerifier);
       await refreshConnections();
       flash(tr("Authorization for {0} has been handed to this machine for safekeeping", cfg.label));
@@ -232,7 +239,7 @@ export function StorageImportButton({
   );
 }
 
-/** Picker 给的类型未必有,退回看扩展名。和 io/storageImport 里那份同一套判法 */
+/** The type from the Picker may be missing, fall back to the extension. Same logic as the one in io/storageImport */
 function guessKind(mimeType: string | undefined, name: string): "video" | "audio" | "image" {
   const mt = String(mimeType || "").toLowerCase();
   if (mt.startsWith("video/")) return "video";
@@ -245,14 +252,17 @@ function guessKind(mimeType: string | undefined, name: string): "video" | "audio
 }
 
 /**
- * 各家网盘的徽标。放在菜单和管理面板里,一眼能认出是哪家。
+ * Badges for the various cloud drives. Placed in the menu and the management panel, so you can
+ * tell which one it is at a glance.
  *
- * 画成内联 SVG,不引外链图片:编辑器要能离线用,而且素材页不该为了一个图标去发网络请求。
- * 颜色写死品牌色,不跟主题变 —— 徽标变了色就不是那个徽标了。
+ * Drawn as inline SVG, with no external images: the editor must work offline, and the media page
+ * should not make a network request just for an icon.
+ * Colors are hard-coded brand colors and do not change with the theme -- a badge in another color
+ * is no longer that badge.
  */
 function ProviderIcon({ kind, size = 16 }: { kind: string; size?: number }) {
   if (kind === "google-drive") {
-    // Drive 的三角由三块拼成:左下绿、右下蓝、上方黄,中间一条深色折线把三块分开
+    // The Drive triangle is made of three pieces: green bottom left, blue bottom right, yellow on top, with a dark polyline in the middle separating the three
     return (
       <svg width={size} height={size} viewBox="0 0 87.3 78" aria-hidden="true" style={{ flex: "none" }}>
         <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066da" />

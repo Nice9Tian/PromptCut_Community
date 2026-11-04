@@ -1,7 +1,9 @@
 /**
- * 在线页面两个跨源舞台的首次握手计时(`stageHandshake.ts`,〔裁〕2026-09-30 `claude/stage-handshake`):
- * 每台从自己 iframe 的 `load` 起算 20 秒,另有自打开起的总上限;慢加载不退回,加载完握不上照旧退回。
- * 跑:node --test src/online/stageHandshake.test.mjs
+ * Initial handshake timing for two cross-origin stages on online page (`stageHandshake.ts`,
+ * [ruling 2026-09-30] `claude/stage-handshake`): each stage counts 20s from its iframe `load`,
+ * with an overall cap from open; slow loading does not trigger fallback, failing to handshake
+ * after load falls back as usual.
+ * Run: node --test src/online/stageHandshake.test.mjs
  */
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -77,7 +79,7 @@ test("H2 slow load: stage loads only after 40 seconds, handshake 1 second later,
   hs.loaded("A");
   clock.advance(1000);
   hs.ready("A");
-  // B 依次加载(Preview 在 A load 之后才挂 B):再 38 秒 load、1 秒握上
+  // B loads sequentially (Preview mounts B only after A loads): another 38s to load, 1s to handshake
   clock.advance(38_000);
   hs.loaded("B");
   clock.advance(1000);
@@ -104,7 +106,7 @@ test("H3 no handshake 20 seconds after load finishes → fall back to single sta
   assert.equal(onlineStageState().handshake, "failed");
   assert.equal(layout(), "single");
   assert.equal(clock.pending(), 0);
-  // 退回之后迟到的握手不改结果
+  // Late handshake after fallback does not change the result
   hs.ready("B");
   assert.equal(calls.ok, 0);
   assert.equal(onlineStageState().handshake, "failed");
@@ -113,7 +115,7 @@ test("H3 no handshake 20 seconds after load finishes → fall back to single sta
 test("H4 stage source returns an error page: the iframe still loads, fall back after 20 seconds (same as the original on-time fallback)", () => {
   const { clock, calls, hs } = harness();
   clock.advance(300);
-  hs.loaded("A"); // 503 错误页也是一次 load,永远不会握手
+  hs.loaded("A"); // A 503 error page is also a load, will never handshake
   clock.advance(STAGE_HANDSHAKE_TIMEOUT_MS);
   assert.equal(calls.fail.length, 1);
   assert.match(calls.fail[0], /Stage A did not complete the handshake 20 s after loading/);
@@ -173,7 +175,7 @@ test("H9 after dispose nothing is reported (dual turns false or unmount)", () =>
   assert.equal(clock.pending(), 0);
 });
 
-/* ---------------------------------------------------------------- 过渡的同源单舞台(interim) */
+/* ---------------------------------------------------------------- Interim same-origin single stage (interim) */
 
 function harnessInterim(opts = {}) {
   const calls = { interim: [] };
@@ -228,16 +230,16 @@ test("H12 switch only once: if problems occur again after switching back to dual
   clock.advance(25_000);
   hs.loaded("A"); hs.ready("A"); hs.loaded("B"); hs.ready("B");
   assert.equal(onlineStageState().handshake, "ok");
-  // 计时器收摊后不会再报过渡期
+  // Will not report transition period again after timer tears down
   clock.advance(STAGE_HANDSHAKE_TOTAL_MS);
   assert.equal(calls.interim.length, 1);
-  // 状态机也不许 ok → interim
-  markStageHandshake("interim", "不该生效");
+  // State machine also does not allow ok → interim
+  markStageHandshake("interim", "should not take effect");
   assert.equal(onlineStageState().handshake, "ok");
-  // 看守判断开 → failed,之后 interim、ok 都不生效
+  // Guard determines open → failed; neither interim nor ok takes effect afterwards
   markStageHandshake("failed", "Stage A disconnected and reloaded, no handshake back within 20 seconds");
   assert.equal(layout(), "single");
-  markStageHandshake("interim", "不该生效");
+  markStageHandshake("interim", "should not take effect");
   markStageHandshake("ok");
   assert.equal(onlineStageState().handshake, "failed");
   assert.equal(layout(), "single");
@@ -272,7 +274,7 @@ test("H14 visible stage handshakes within 20 seconds (B still loading) → does 
 
 test("H15 stage prewarmed during the interim period finishes loading but fails to handshake within 20 seconds → failed, stays on a single stage", () => {
   const { clock, calls, hs } = harnessInterim();
-  clock.advance(10_000); hs.loaded("A"); // 加载完了但坏了,握不上
+  clock.advance(10_000); hs.loaded("A"); // Loaded but broken, cannot handshake
   clock.advance(10_000);
   assert.equal(hs.phase, "interim", "Show the picture first at 20 seconds");
   clock.advance(STAGE_HANDSHAKE_TIMEOUT_MS - 10_000);

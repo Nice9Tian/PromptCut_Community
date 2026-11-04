@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { LOCALES, getLocale, matchLocale, tr, translate } from "./index.ts";
+import { LOCALES, addRows, getLocale, matchLocale, tr, translate } from "./index.ts";
 
 const table = JSON.parse(fs.readFileSync(new URL("./table.json", import.meta.url), "utf8"));
 const holes = (s) => [...s.matchAll(/\{(\d+)\}/g)].map((m) => m[1]).sort().join(",");
@@ -23,6 +23,17 @@ test("outside a page the language is English and text passes through", () => {
 test("translate: a missing row and an empty cell both fall back to English", () => {
   assert.equal(translate("ja", "Not in the table"), "Not in the table");
   assert.equal(translate("zh-CN", "constructor"), "constructor");
+});
+
+test("addRows: rows kept outside the table are found by English and by Chinese, and the table wins", () => {
+  // i18n-allow-start: the rows under test are Chinese and Japanese
+  addRows({ "Row kept outside the table": { zh: "表外的行", ja: "表外の行" }, Cancel: { zh: "不该盖过表里的", ja: "表を上書きしない" } });
+  assert.equal(translate("zh-CN", "Row kept outside the table"), "表外的行");
+  assert.equal(translate("ja", "表外的行"), "表外の行");
+  assert.equal(translate("en", "表外的行"), "Row kept outside the table");
+  // i18n-allow-end
+  assert.equal(translate("zh-CN", "Cancel"), table.Cancel.zh);
+  assert.equal(translate("ja", "Cancel"), table.Cancel.ja);
 });
 
 test("translate: a hole with no argument stays visible", () => {

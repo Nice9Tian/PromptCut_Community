@@ -1,11 +1,12 @@
-// AI 助手附件后台复制子进程：在独立进程中复制大文件，避免阻塞 Dev Server
+// AI assistant attachment background copy child process: copy large files in an independent
+// process to avoid blocking Dev Server
 import fs from "node:fs/promises";
 import path from "node:path";
 
 async function main() {
   const [, , src, dest] = process.argv;
   if (!src || !dest) {
-    console.log(JSON.stringify({ ok: false, error: "缺少源文件或目标文件路径参数" }));
+    console.log(JSON.stringify({ ok: false, error: "Missing source file or target file path argument" }));
     process.exit(1);
   }
 

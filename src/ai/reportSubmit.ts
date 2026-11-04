@@ -1,36 +1,44 @@
 import { tr } from "../i18n/index.ts";
 /**
- * 诊断报告的「提交」通道。
+ * The "submit" channel of the diagnostic report.
  *
- * 收报告的服务还没定,所以这里**不发明一个后端**:地址从构建期变量
- * `VITE_DIAG_SUBMIT_URL` 读,没配就是没配 —— 按钮灰掉并说清楚原因,
- * 让用户走「保存为文件」把报告发过来,而不是点一下什么也没发生。
+ * The service that receives reports has not been decided yet, so **no backend is invented here**:
+ * the address is read from the build-time variable `VITE_DIAG_SUBMIT_URL`, and if it is not set, it
+ * is not set: the button is grayed out with the reason stated clearly, so that the user sends the
+ * report over via "Save as file", instead of clicking and having nothing happen.
  *
- * 接 Cloudflare Worker(收报告端在 tools/report-worker/)时,在 .env.local 里写两行:
+ * To connect a Cloudflare Worker (the receiving end is in tools/report-worker/), write two lines in
+ * .env.local:
  *   VITE_DIAG_SUBMIT_URL=https://xxx.workers.dev
- *   VITE_DIAG_SUBMIT_TOKEN=<和 Worker 那边 SUBMIT_TOKEN 一样的串>
- * 这边不用改代码。
+ *   VITE_DIAG_SUBMIT_TOKEN=<the same string as SUBMIT_TOKEN on the Worker side>
+ * No code change is needed on this side.
  */
 
-/** 收报告的地址。空 = 还没配 */
+/** Address that receives reports. Empty = not configured yet */
 export const SUBMIT_URL: string = (import.meta.env.VITE_DIAG_SUBMIT_URL || "").trim();
 
 /*
- * 提交令牌。它跟着前端打包一起发出去,所以**不是**真正的密钥 —— 它挡的是
- * 「地址被扫到之后随手 curl 一下」,不是铁了心要灌数据的人。真要防滥用,
- * 在 Cloudflare 后台给那条路由加一条按 IP 的 Rate limiting 规则。
+ * Submit token. It ships with the frontend bundle, so it is **not** a real secret key: what it
+ * blocks is "someone casually curling the address after scanning it", not a determined attacker
+ * stuffing data in. To really prevent abuse, add a per-IP Rate limiting rule for that route in the
+ * Cloudflare dashboard.
  */
 const SUBMIT_TOKEN: string = (import.meta.env.VITE_DIAG_SUBMIT_TOKEN || "").trim();
 
 /**
- * 能提交的最大体积。
+ * The maximum size that can be submitted.
  *
- * 浏览器直传一个几 MB 的 body,慢、容易被中间层掐断,失败了用户还得重来一遍。
- * 超过这个数就明说「太大了,请存成文件发过来」——那条路是本地写盘,不会失败。
+ * Uploading a body of several MB straight from the browser is slow and easily cut off by
+ * intermediaries, and after a failure the user has to start over.
+ * Above this number, say plainly "too large, please save it as a file and send that over": that
+ * route is a local disk write and does not fail.
  */
 export const SUBMIT_LIMIT = 4 * 1024 * 1024;
 
-/** 没法提交时的原因(给按钮的 title 和禁用态用);能提交就返回空串 */
+/**
+ * The reason submitting is impossible (for the button's title and disabled state); returns an empty
+ * string when it can be submitted
+ */
 export function submitBlockedReason(text: string): string {
   if (!SUBMIT_URL) return tr("No address is configured for receiving reports (VITE_DIAG_SUBMIT_URL). Please use \"Save as file\" and send the report to us");
   if (text.length > SUBMIT_LIMIT) {
@@ -40,11 +48,12 @@ export function submitBlockedReason(text: string): string {
 }
 
 /**
- * 提交报告,返回一句可以念给用户听的回执。
+ * Submits the report and returns a receipt sentence that can be read out to the user.
  *
- * 用 text/plain 发:这样它是 CORS 的「简单请求」,不触发预检 —— 收报告的那头
- * 只要回一个 Access-Control-Allow-Origin 就够了,不用额外处理 OPTIONS。
- * 正文本身还是 JSON,收的一侧照常 JSON.parse。
+ * Sent as text/plain: that makes it a CORS "simple request" that does not trigger a preflight, so
+ * the receiving end only needs to reply with an Access-Control-Allow-Origin and does not have to
+ * handle OPTIONS separately.
+ * The body itself is still JSON, and the receiving side calls JSON.parse as usual.
  */
 export async function submitReport(text: string, label: string, extra?: Record<string, unknown>): Promise<string> {
   const blocked = submitBlockedReason(text);
@@ -55,7 +64,8 @@ export async function submitReport(text: string, label: string, extra?: Record<s
     body: JSON.stringify({ token: SUBMIT_TOKEN, label, at: new Date().toISOString(), ...extra, text }),
   });
   if (!res.ok) throw new Error(tr("Submit failed: HTTP {0}", res.status));
-  // 回执编号是给我们对单用的,有就报给用户,没有也不算失败
+  // The receipt number is for us to match records against; report it to the user if present, and
+  // it is not a failure if absent
   const body = await res.text().catch(() => "");
   let id = "";
   try { id = JSON.parse(body)?.id || ""; } catch { id = ""; }

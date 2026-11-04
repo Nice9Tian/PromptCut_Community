@@ -1,23 +1,23 @@
-//! 后台运行(A5):关掉编辑界面不退出,转成托盘图标和悬浮窗继续跑。
+//! Background mode (A5): closing the editor does not quit; it turns into a tray icon and a floating window that keep running.
 //!
-//! 语义见 `docs/semantics/user-workflow.md`「后台运行」:
-//!   * 关闭编辑界面不退出软件,转为托盘图标和悬浮窗继续运行;
-//!   * 点托盘图标或悬浮窗重新打开编辑界面;
-//!   * 只有在托盘图标或悬浮窗上右键选「关闭」才退出。
+//! For the semantics see `docs/semantics/user-workflow.md` "Background mode":
+//!   * Closing the editor does not quit the app; it turns into a tray icon and a floating window that keep running;
+//!   * Click the tray icon or the floating window to reopen the editor;
+//!   * The app quits only when you right-click the tray icon or the floating window and choose "Close".
 //!
-//! # 「收起」为什么是挪到屏幕外而不是 hide()
+//! # Why "collapse" means moving off-screen instead of hide()
 //!
-//! 编辑界面收起时页面不能停:AI 栏里的 Agent、桌面 APP 经 MCP 接进来的会话,它们的
-//! `side: "page"` 工具(读选区、渲一帧、交回悬浮窗预览……)都在这份页面里执行。
-//! WebView2 被 hide() 之后会停渲染(agent_webview.rs 里的子 webview 早就踩过),
-//! 所以这里跟它一样:主窗留着「可见」,只是挪到所有显示器的左边外面、不进任务栏、
-//! 不抢焦点。Chromium 自己的遮挡判断(CalculateNativeWinOcclusion)会把屏幕外的窗口
-//! 当成被挡住而降频,所以 `agent_webview::browser_args` 里一并把它和后台降频关掉。
+//! The page must not stop while the editor is collapsed: the Agent in the AI panel and the sessions the desktop app connects through MCP all have their
+//! `side: "page"` tools (read the selection, render a frame, hand back the floating window preview, etc.) run in this page.
+//! WebView2 stops rendering once hide() is called on it (the child webview in agent_webview.rs hit this long ago),
+//! so here we do the same: the main window stays "visible" and is only moved to the left of all monitors, kept out of the taskbar,
+//! and not stealing focus. Chromium's own occlusion detection (CalculateNativeWinOcclusion) treats off-screen windows
+//! as covered and throttles them, so `agent_webview::browser_args` turns it off together with background throttling.
 //!
-//! # 状态机
+//! # State machine
 //!
-//! 纯逻辑放在 [`transition`] 里,窗口操作只按它给的动作做 —— 这样「关窗→收起」「收起时
-//! 再点关闭不退出」「退出中不再拦关窗」这些规则能在 `cargo test` 里测,不必开窗。
+//! The pure logic lives in [`transition`], and window operations just do what it dictates, so rules like "close window → collapse", "when collapsed,
+//! clicking close again does not quit" and "no longer block window close while quitting" can be tested in `cargo test` without opening a window.
 
 use std::sync::Mutex;
 
@@ -25,50 +25,50 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime};
 
-/// 编辑界面(主窗口)现在的样子。
+/// The current state of the editor (main window).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiState {
-    /// 编辑界面开着(含最小化:最小化是用户自己的事,不算收起)
+    /// The editor is open (including minimized: minimizing is the user's own business and does not count as collapsing)
     Open,
-    /// 收起了:主窗在屏幕外,托盘 + 悬浮窗
+    /// Collapsed: the main window is off-screen; tray + floating window
     Collapsed,
-    /// 正在退出:之后的关窗一律放行
+    /// Quitting: every window close from now on is let through
     Quitting,
 }
 
-/// 触发状态变化的事。
+/// Events that trigger state changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiEvent {
-    /// 点了主窗的关闭(标题栏的 ×、Alt+F4)
+    /// The main window's close was clicked (the × in the title bar, Alt+F4)
     CloseRequested,
-    /// 要打开编辑界面:托盘左键、托盘或悬浮窗菜单「打开编辑界面」、单击悬浮窗、第二次启动
+    /// Open the editor: tray left click, "Open editor" in the tray or floating window menu, a click on the floating window, second launch
     OpenRequested,
-    /// 真退出:托盘或悬浮窗菜单「关闭」(以及标题栏菜单「退出」)
+    /// Really quit: "Close" in the tray or floating window menu (and "Quit" in the title bar menu)
     QuitRequested,
-    /// SKILL 模式打开(状态文件变成 active)
+    /// SKILL mode turned on (the state file becomes active)
     SkillOn,
-    /// SKILL 模式关掉
+    /// SKILL mode turned off
     SkillOff,
 }
 
-/// 状态机要窗口层做的事。
+/// What the state machine asks the window layer to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiAction {
-    /// 什么都不做(关窗事件里意味着「拦下,不关」)
+    /// Do nothing (in the close-window event this means "block it, do not close")
     None,
-    /// 主窗挪到屏幕外、出悬浮窗
+    /// Move the main window off-screen and show the floating window
     Collapse,
-    /// 主窗挪回来、收悬浮窗
+    /// Move the main window back and hide the floating window
     Restore,
-    /// 已经开着:只把它提到前面
+    /// Already open: just bring it to the front
     Focus,
-    /// 走干净退出(sidecar 清理、锁释放由 RunEvent 那一头做)
+    /// Take the clean-exit path (sidecar cleanup and lock release are done on the RunEvent side)
     Exit,
-    /// 关窗放行(只在退出途中)
+    /// Let the window close through (only while quitting)
     AllowClose,
 }
 
-/// 纯状态转移。所有窗口层的决定都从这里来。
+/// Pure state transition. Every decision of the window layer comes from here.
 pub fn transition(state: UiState, event: UiEvent) -> (UiState, UiAction) {
     use UiAction as A;
     use UiEvent as E;
@@ -84,20 +84,20 @@ pub fn transition(state: UiState, event: UiEvent) -> (UiState, UiAction) {
         (S::Open, E::OpenRequested) => (S::Open, A::Focus),
         (S::Collapsed, E::OpenRequested) => (S::Open, A::Restore),
 
-        // SKILL 缺省关闭编辑界面;用户之后自己打开的,不再被收回去(只认「变成」SKILL 的那一下)
+        // SKILL closes the editor by default; if the user opens it afterwards it is not collapsed again (only the moment of "becoming" SKILL counts)
         (S::Open, E::SkillOn) => (S::Collapsed, A::Collapse),
         (S::Collapsed, E::SkillOn) => (S::Collapsed, A::None),
-        // 回到传统式 = 打开编辑界面
+        // Back to Classic mode = open the editor
         (S::Collapsed, E::SkillOff) => (S::Open, A::Restore),
         (S::Open, E::SkillOff) => (S::Open, A::None),
     }
 }
 
-/// 托盘菜单与悬浮窗右键菜单共用的两项的 id。
+/// IDs of the two items shared by the tray menu and the floating window's right-click menu.
 pub const MENU_OPEN: &str = "pc-bg-open";
 pub const MENU_QUIT: &str = "pc-bg-quit";
 
-/// 菜单项 → 事件。不认识的 id(别的菜单)返回 None。
+/// Menu item → event. An unrecognized id (from another menu) returns None.
 pub fn menu_event(id: &str) -> Option<UiEvent> {
     match id {
         MENU_OPEN => Some(UiEvent::OpenRequested),
@@ -106,7 +106,7 @@ pub fn menu_event(id: &str) -> Option<UiEvent> {
     }
 }
 
-/// 物理像素的矩形(显示器或窗口)。
+/// A rectangle in physical pixels (a monitor or a window).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
     pub x: i32,
@@ -122,7 +122,7 @@ impl Rect {
     fn bottom(&self) -> i64 {
         self.y as i64 + self.h as i64
     }
-    /// 有没有重叠(面积大于零)
+    /// Whether they overlap (area greater than zero)
     pub fn overlaps(&self, o: &Rect) -> bool {
         (self.x as i64) < o.right()
             && (o.x as i64) < self.right()
@@ -131,25 +131,25 @@ impl Rect {
     }
 }
 
-/// 离所有显示器的空隙。多留一点,免得窗口阴影或 DPI 取整蹭到屏幕边上。
+/// Gap from all monitors. Leave a bit extra so the window shadow or DPI rounding does not graze the screen edge.
 const OFFSCREEN_GAP: i64 = 256;
 
-/// 收起时主窗放哪:所有显示器最左边再往左一个窗宽加空隙,上沿对齐最上面的显示器。
+/// Where the main window goes when collapsed: one window width plus the gap to the left of the leftmost monitor, with its top edge aligned to the topmost monitor.
 ///
-/// 不用 -32000:那是 Windows 给最小化窗口的坐标,有的程序(和 Windows 自己)见到它会当成
-/// 「最小化了」。也不能只放 x = -4000 这种定值:显示器排在主屏左边时,负坐标可能正好在屏上。
+/// Not -32000: that is the coordinate Windows gives minimized windows, and some programs (and Windows itself) that see it will treat it as
+/// "minimized". Nor can we just use a fixed value like x = -4000: when a monitor is arranged to the left of the primary screen, a negative coordinate may land right on a screen.
 pub fn offscreen_position(monitors: &[Rect], win_w: u32, win_h: u32) -> (i32, i32) {
     let min_x = monitors.iter().map(|m| m.x as i64).min().unwrap_or(0);
     let min_y = monitors.iter().map(|m| m.y as i64).min().unwrap_or(0);
     let _ = win_h;
     let x = min_x - win_w as i64 - OFFSCREEN_GAP;
-    // 夹在 i32 里;真夹到了也还是在所有显示器左边
+    // Clamped within i32; even if it really gets clamped, it is still to the left of all monitors
     let x = x.clamp(i32::MIN as i64 / 2, i32::MAX as i64);
     (x as i32, min_y.clamp(i32::MIN as i64 / 2, i32::MAX as i64) as i32)
 }
 
-/// 挪回来时用不用记下的位置:还有显示器和它重叠就用,否则(显示器拔了、换了排列)交给
-/// 调用方居中。
+/// Whether to use the remembered position when moving back: use it if some monitor still overlaps it, otherwise (a monitor was unplugged or the arrangement changed) leave it to
+/// the caller to center.
 pub fn restore_position(saved: Rect, monitors: &[Rect]) -> Option<(i32, i32)> {
     if monitors.iter().any(|m| m.overlaps(&saved)) {
         Some((saved.x, saved.y))
@@ -158,7 +158,7 @@ pub fn restore_position(saved: Rect, monitors: &[Rect]) -> Option<(i32, i32)> {
     }
 }
 
-/// 收起前主窗的样子,挪回来时照着还原。位置、尺寸是「还原」状态下的(最大化的先还原再记)。
+/// The main window's state before collapsing, used to restore it when it moves back. Position and size are those of the "restored" state (a maximized window is restored first and then recorded).
 #[derive(Clone, Copy, Debug)]
 struct Saved {
     rect: Rect,
@@ -170,7 +170,7 @@ struct Inner {
     saved: Option<Saved>,
 }
 
-/// 进程级状态。`lib.rs` 在 setup 之前 `.manage(Background::new())`。
+/// Process-level state. `lib.rs` calls `.manage(Background::new())` before setup.
 pub struct Background(Mutex<Inner>);
 
 impl Background {
@@ -185,14 +185,14 @@ impl Default for Background {
     }
 }
 
-/// 现在收没收起。悬浮窗的轮询线程用它决定要不要推进度。
+/// Whether it is collapsed right now. The floating window's polling thread uses it to decide whether to push progress.
 pub fn is_collapsed<R: Runtime>(app: &AppHandle<R>) -> bool {
     app.try_state::<Background>()
         .map(|b| b.0.lock().map(|g| g.state == UiState::Collapsed).unwrap_or(false))
         .unwrap_or(false)
 }
 
-/// 走一步状态机,再照动作操作窗口。返回动作(关窗拦截要看它)。
+/// Advance the state machine one step, then operate the windows according to the action. Returns the action (close-window interception needs it).
 pub fn dispatch<R: Runtime>(app: &AppHandle<R>, event: UiEvent) -> UiAction {
     let Some(bg) = app.try_state::<Background>() else {
         return UiAction::None;
@@ -216,15 +216,15 @@ pub fn dispatch<R: Runtime>(app: &AppHandle<R>, event: UiEvent) -> UiAction {
     action
 }
 
-/// 主窗的关窗事件。返回 true = 要拦下(不关)。
+/// The main window's close event. Returns true = block it (do not close).
 pub fn on_close_requested<R: Runtime>(app: &AppHandle<R>) -> bool {
     dispatch(app, UiEvent::CloseRequested) != UiAction::AllowClose
 }
 
-/// 主窗口。**不能用 `get_webview_window("main")`**:主窗口里加了 agent 的子 webview
-/// (agent_webview.rs)之后它就不再是「一个窗口一个 webview」的 WebviewWindow,那个查法
-/// 返回 None —— 老的 SKILL 收起(`main.hide()`)和第二次启动时的「叫回窗口」就是这样
-/// 悄悄失效的。窗口层的操作都在 `Window` 上,按窗口查就对了。
+/// The main window. **Do not use `get_webview_window("main")`**: once the main window holds the agent's child webview
+/// (agent_webview.rs), it is no longer a WebviewWindow of the "one window, one webview" kind, and that lookup
+/// returns None: this is how the old SKILL collapse (`main.hide()`) and the "bring the window back" on second launch
+/// silently stopped working. Window-level operations all live on `Window`; looking up by window is the right way.
 fn main_window<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::Window<R>> {
     app.get_window("main")
 }
@@ -255,7 +255,7 @@ fn take_saved<R: Runtime>(app: &AppHandle<R>) -> Option<Saved> {
         .and_then(|bg| bg.0.lock().ok().and_then(|mut g| g.saved.take()))
 }
 
-/// 收起:记下位置,主窗挪到屏幕外(仍「可见」,页面照常跑),不进任务栏、不抢焦点;出悬浮窗。
+/// Collapse: remember the position, move the main window off-screen (still "visible", so the page keeps running), keep it out of the taskbar and do not steal focus; show the floating window.
 fn collapse<R: Runtime>(app: &AppHandle<R>) {
     if let Some(main) = main_window(app) {
         if main.is_minimized().unwrap_or(false) {
@@ -263,7 +263,7 @@ fn collapse<R: Runtime>(app: &AppHandle<R>) {
         }
         let maximized = main.is_maximized().unwrap_or(false);
         if maximized {
-            // 最大化的窗口挪不动;先还原,记还原后的位置,挪回来时再最大化
+            // A maximized window cannot be moved; restore it first, record the restored position, and maximize it again when moving back
             let _ = main.unmaximize();
         }
         let pos = main.outer_position().unwrap_or(PhysicalPosition::new(0, 0));
@@ -279,13 +279,13 @@ fn collapse<R: Runtime>(app: &AppHandle<R>) {
         let _ = main.set_skip_taskbar(true);
         let _ = main.set_focusable(false);
         let _ = main.set_position(PhysicalPosition::new(x, y));
-        // 万一之前被别的路径 hide() 过(老版本的 SKILL 收起),这里确保它还「可见」
+        // In case it was hidden earlier through hide() by another path (the old SKILL collapse), make sure here that it is still "visible"
         let _ = main.show();
     }
     crate::skill_shell::show_overlay(app);
 }
 
-/// 挪回来:回到记下的位置(显示器没了就居中)、进任务栏、拿焦点;收悬浮窗。
+/// Move back: return to the remembered position (center if the monitor is gone), reappear in the taskbar, take focus; hide the floating window.
 fn restore<R: Runtime>(app: &AppHandle<R>) {
     crate::skill_shell::hide_overlay(app);
     let saved = take_saved(app);
@@ -295,10 +295,10 @@ fn restore<R: Runtime>(app: &AppHandle<R>) {
         match saved.and_then(|s| restore_position(s.rect, &monitors_of(&main)).map(|p| (p, s))) {
             Some(((x, y), s)) => {
                 if s.maximized {
-                    // window-state 插件把「最大化之前的位置」记成最后一次 Moved 之前的坐标(prev_x)。
-                    // 还原位置恰好等于最大化后的坐标时,maximize 不发 Moved,prev 就会停在屏幕外的
-                    // 那个坐标上,下次启动再取消最大化窗口就看不见了(笔记本上实测踩到)。先挪到旁边
-                    // 一个像素再挪回来,让 prev 一定落在屏幕上。
+                    // The window-state plugin records "the position before maximizing" as the coordinates from before the last Moved (prev_x).
+                    // When the restored position happens to equal the maximized coordinates, maximize emits no Moved, so prev stays at the off-screen
+                    // coordinates, and un-maximizing the window at the next launch leaves it invisible (hit in testing on the laptop). First move it aside by
+                    // one pixel and then back, so that prev always lands on screen.
                     let _ = main.set_position(PhysicalPosition::new(x + 1, y));
                 }
                 let _ = main.set_position(PhysicalPosition::new(x, y));
@@ -327,17 +327,17 @@ fn focus_main<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-/// 退出。收起状态下先把主窗(藏起来)挪回记下的位置,不然 window-state 插件退出时
-/// 记下的是屏幕外的坐标;子进程清理与 .proc 锁释放在 `lib.rs` 的 RunEvent 里,
-/// 和原来标题栏「退出」走同一条路。
+/// Quit. When collapsed, first move the main window (hidden) back to the remembered position, otherwise the window-state plugin would, on exit,
+/// record off-screen coordinates; child-process cleanup and .proc lock release happen in the RunEvent in `lib.rs`,
+/// taking the same path as the original title bar "Quit".
 fn exit<R: Runtime>(app: &AppHandle<R>) {
     if let Some(saved) = take_saved(app) {
         if let Some(main) = main_window(app) {
-            // 先藏再挪,屏幕上不闪一下;window-state 不记「可见」(lib.rs 里去掉了那一位)。
-            // 收起前是最大化的,这里只还原到最大化之前的位置,不再最大化:藏着的窗口一最大化
-            // 就会显示出来,而且实测(笔记本上的开发构建)退出那一刻最大化还没生效,
-            // window-state 记下的是最大化的坐标加普通尺寸,下次启动窗口歪在左上角。
-            // 代价是这种情况下下次启动不是最大化。
+            // Hide first, then move, so nothing flashes on screen; window-state does not record "visible" (that bit was removed in lib.rs).
+            // If it was maximized before collapsing, we only restore it to the pre-maximize position here and do not maximize again: a hidden window that gets maximized
+            // becomes visible, and in testing (a dev build on the laptop) the maximize had not yet taken effect at the moment of quitting,
+            // so window-state recorded the maximized coordinates with the normal size, leaving the window askew in the top-left corner on the next launch.
+            // The cost is that in this case the next launch is not maximized.
             let _ = main.hide();
             let _ = main.set_position(PhysicalPosition::new(saved.rect.x, saved.rect.y));
         }
@@ -346,16 +346,16 @@ fn exit<R: Runtime>(app: &AppHandle<R>) {
     app.exit(0);
 }
 
-/// 两项菜单:打开编辑界面 / 关闭。托盘与悬浮窗右键共用这一份的样子(各建各的实例)。
+/// A two-item menu: Open editor / Close. The tray and the floating window's right-click share this layout (each builds its own instance).
 pub fn build_menu<R: Runtime, M: Manager<R>>(manager: &M) -> tauri::Result<Menu<R>> {
-    let open = MenuItem::with_id(manager, MENU_OPEN, "打开编辑界面", true, None::<&str>)?;
+    let open = MenuItem::with_id(manager, MENU_OPEN, crate::ui_text::text("Open editor", &[]), true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(manager)?;
-    let quit = MenuItem::with_id(manager, MENU_QUIT, "关闭", true, None::<&str>)?;
+    let quit = MenuItem::with_id(manager, MENU_QUIT, crate::ui_text::text("Quit", &[]), true, None::<&str>)?;
     Menu::with_items(manager, &[&open, &sep, &quit])
 }
 
-/// 托盘图标:常在;左键单击打开编辑界面,右键出菜单。菜单事件走 app 级的
-/// `on_menu_event`(见 [`install_menu_handler`]),托盘这边不另外接,免得同一下触发两次。
+/// Tray icon: always present; left click opens the editor, right click shows the menu. Menu events go through the app-level
+/// `on_menu_event` (see [`install_menu_handler`]); the tray does not hook it separately, to avoid one click firing twice.
 pub fn install_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let menu = build_menu(app)?;
     let mut builder = TrayIconBuilder::with_id("promptcut-tray")
@@ -379,7 +379,7 @@ pub fn install_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 托盘菜单和悬浮窗右键菜单的点击都从这里进。
+/// Clicks on the tray menu and the floating window's right-click menu both come in here.
 pub fn install_menu_handler<R: Runtime>(app: &AppHandle<R>) {
     app.on_menu_event(|app, event| {
         if let Some(e) = menu_event(event.id().as_ref()) {
@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn close_collapses_instead_of_quitting() {
         assert_eq!(transition(S::Open, E::CloseRequested), (S::Collapsed, A::Collapse));
-        // 已经收起了再来一次关窗(比如任务管理器之外的途径),还是不退出
+        // A close arriving when already collapsed (for example by some route other than Task Manager) still does not quit
         assert_eq!(transition(S::Collapsed, E::CloseRequested), (S::Collapsed, A::None));
     }
 
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn full_cycle() {
-        // 开着 → 关窗收起 → 托盘点开 → SKILL 收起 → 用户点开一起改 → 右键关闭
+        // open → close collapses it → opened from the tray → SKILL collapse → user opens it to co-edit → right-click Close
         let mut s = S::Open;
         let mut acts = vec![];
         for e in [E::CloseRequested, E::OpenRequested, E::SkillOn, E::OpenRequested, E::QuitRequested, E::CloseRequested] {
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn offscreen_with_monitor_left_of_primary() {
-        // 副屏排在主屏左边、还更高:负坐标就在屏上,不能写死 -4000
+        // A secondary monitor placed left of the primary one and higher up: negative coordinates are on screen, so -4000 cannot be hardcoded
         let m = [
             Rect { x: 0, y: 0, w: 2560, h: 1440 },
             Rect { x: -3840, y: -600, w: 3840, h: 2160 },
@@ -499,14 +499,14 @@ mod tests {
         let left = Rect { x: -1920, y: 0, w: 1920, h: 1080 };
         let primary = Rect { x: 0, y: 0, w: 1920, h: 1080 };
         assert_eq!(restore_position(saved, &[primary, left]), Some((-1800, 100)));
-        // 左边那块屏拔掉了:不还原到看不见的地方
+        // The left monitor was unplugged: do not restore to a place that cannot be seen
         assert_eq!(restore_position(saved, &[primary]), None);
     }
 
     #[test]
     fn rect_overlap_edges() {
         let a = Rect { x: 0, y: 0, w: 100, h: 100 };
-        assert!(!a.overlaps(&Rect { x: 100, y: 0, w: 10, h: 10 }), "只贴边不算重叠");
+        assert!(!a.overlaps(&Rect { x: 100, y: 0, w: 10, h: 10 }), "merely touching edges is not an overlap");
         assert!(a.overlaps(&Rect { x: 99, y: 99, w: 10, h: 10 }));
     }
 }

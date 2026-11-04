@@ -14,7 +14,7 @@ const { chooseTier } = await import(srcUrl("render/mediaTier.ts"));
 const original = "a".repeat(64), small = "b".repeat(64);
 const video = { url: `/@media/${original}`, hash: original, tiers: { original, small }, ext: "mp4", kind: "video" };
 
-test("在线页地址未就绪时连后台可播性探针也不请求 /@media", () => {
+test("When the online page URL is not ready, even the background playability probe does not request /@media", () => {
   const hashes = [original, small];
   assert.deepEqual(chooseTier(video, hashes, { online: true, remote: null, smallOnly: false }), { url: "", tier: "none", awaiting: true });
   assert.deepEqual(probes, []);

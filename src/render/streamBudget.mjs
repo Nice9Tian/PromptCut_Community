@@ -1,91 +1,130 @@
 /**
- * 同屏轨道流的预算 —— **唯一出处**。划分流的一侧(预渲染进程 `server/frame-stream.mjs` 的 `planStreams`、在线页面
- * `src/online/pageStreamPlan.ts`)据它决定什么时候把相邻的独立重卡并成组流;贴流的一侧(父页 `src/editor/snapshotFeed.ts`、
- * 舞台 `src/render/streamPlayer.ts`)据它决定这一拍哪些层贴流、哪些层超出预算显示占位符。两边是同一个口径、同一组数。
+ * On-screen track stream budget: **single source of truth**. The stream partitioning side
+ * (`planStreams` in prerender process `server/frame-stream.mjs`, online page
+ * `src/online/pageStreamPlan.ts`) uses it to decide when to merge adjacent standalone heavy cards
+ * into a group stream; the stream pasting side (parent page `src/editor/snapshotFeed.ts`, stage
+ * `src/render/streamPlayer.ts`) uses it to decide on this tick which layers paste streams and
+ * which layers exceed budget and display placeholders. Both sides share the same criteria and
+ * the same numbers.
  *
- * # 口径:数像素,不数条数
+ * # Criteria: count pixels, not stream count
  *
- * 一条流的开销 = 它的**编码画幅**(上下拼合以后的宽 × 高,按这条流的矩形上界算)× 帧率,单位是「每秒要解的像素」。
- * 三条规则,页面和服务端一样:
+ * The cost of a stream = its **encoded aspect ratio** (width × height after top-and-bottom
+ * splicing, computed by the rectangular upper bound of this stream) × frame rate, in units of
+ * "pixels to decode per second". Three rules, identical across page and server:
  *
- *   1. 同屏不超过 `STREAM_FREE_COUNT`(6)条:**不管像素多少都放行**。原来的预算就是「同屏 6 条」、不看像素,
- *      所以原来放得过的现在一律照样放得过 —— 4K、高帧率的项目里一条流的像素是 1080p 的好几倍,只看像素的话它们同屏两三条就超了;
- *   2. 超过 6 条:各条流的开销加起来不超过 `STREAM_PIXEL_RATE_BUDGET`;
- *   3. 条数的硬上限 `STREAM_COUNT_BUDGET`(32)。
+ *   1. No more than `STREAM_FREE_COUNT` (6) streams on-screen: **pass regardless of pixel count**.
+ *      The original budget was simply "6 streams on-screen" without checking pixels, so whatever
+ *      passed previously continues to pass as-is: in 4K and high-frame-rate projects, a stream's
+ *      pixels are several times those of 1080p, and checking only pixels would cause two or three
+ *      on-screen streams to exceed budget;
+ *   2. More than 6 streams: the combined cost of all streams must not exceed
+ *      `STREAM_PIXEL_RATE_BUDGET`;
+ *   3. Hard limit on stream count: `STREAM_COUNT_BUDGET` (32).
  *
- * 为什么不数条数(`docs/reports/AGENT-rr-merged-eval.md` 第 1.3、4 节,在一台 RTX 3080 的 PC 上量的):同时开 64 个硬件解码器
- * 都正常出帧,30 张小卡各一个解码器、60 帧每秒按时画上 240 / 240;卡住的是硬解每秒能解的像素总量(约 17.8 亿)——
- * 12 张满屏卡 60 帧每秒(30 亿)只按时画上 6 / 240,30 帧每秒(15 亿)118～120 / 120。
+ * Why not count stream count (`docs/reports/AGENT-rr-merged-eval.md` Sections 1.3 and 4, measured
+ * on an RTX 3080 PC): opening 64 hardware decoders simultaneously outputs frames normally, 30 small
+ * cards with one decoder each at 60 fps painted 240 / 240 on time; what stalls is the total
+ * hardware decoding throughput per second (approx. 1.78 billion pixels): 12 full-screen cards at
+ * 60 fps (3 billion) only painted 6 / 240 on time, while at 30 fps (1.5 billion) painted
+ * 118-120 / 120.
  *
- * # 这几个数怎么来的(三级数字,只写在这里)
+ * # How these numbers were derived (tier-3 numbers, documented only here)
  *
- *   - `STREAM_FREE_COUNT` = 6:原来的条数预算。6 条以内照原来的办法不看像素(上面第 1 条)。
- *   - `STREAM_PIXEL_RATE_BUDGET` = 6 × 1920 × 2176 × 60 ≈ 15.04 亿像素每秒:第 7 条起才看它。就是原来「同屏 6 条」在
- *     1080p、60 帧每秒的满屏卡上允许的量,是那台 PC 实测产能(约 17.8 亿)的 84%。折下来(1080p):满屏卡 60 帧 6 张、
- *     30 帧 12 张;704×864 的小卡 60 帧 41 张、30 帧 82 张(先碰到条数上限)。大于 1080p 或高于 60 帧的项目里 6 条满屏流
- *     就已经超过这个数,它们照第 1 条放行(和原来一样),第 7 条起一条都加不进。别的机器(核显、手机)的产能没量过,
- *     要按机器定时改这一个数。
- *   - `STREAM_BUDGET_MIN_FPS` = 30:帧率低于 30 的项目按 30 算。不设的话 24 帧的项目能放 15 张满屏卡,而每条流要保底留 3 帧
- *     解好的画面(`streamPlayer.ts` 的 `MIN_FRAMES_PER_STREAM`),显存跟着涨;设了以后保底的解码帧最多是
- *     12 张满屏卡 × 3 帧 ≈ 225 MB(原来 6 张 × 3 帧 ≈ 113 MB)。
- *   - `STREAM_COUNT_BUDGET` = 32:流平面共用一个 WebGL 上下文以后,条数只剩解码器个数和每条流保底的解码帧两样要管。
- *     实测 64 个解码器正常、30 个各播一条按时画齐;取实测正常值的一半。32 条小卡流保底的解码帧约 87 MB。
- *     只贴稀疏版时另有一组小得多的数,见下一节。
+ *   - `STREAM_FREE_COUNT` = 6: original stream count budget. Up to 6 streams follow the old approach
+ *     without checking pixels (Rule 1 above).
+ *   - `STREAM_PIXEL_RATE_BUDGET` = 6 × 1920 × 2176 × 60 ≈ 1.504 billion pixels per second: checked
+ *     only from the 7th stream onward. This equals the volume allowed by the original "6 streams
+ *     on-screen" on 1080p 60 fps full-screen cards, which is 84% of that PC's measured throughput
+ *     (approx. 1.78 billion). Broken down (1080p): 6 full-screen cards at 60 fps, 12 at 30 fps;
+ *     41 small cards of 704×864 at 60 fps, 82 at 30 fps (hitting the stream count cap first). In
+ *     projects larger than 1080p or higher than 60 fps, 6 full-screen streams already exceed this
+ *     number; they pass per Rule 1 (same as before), but not a single stream can be added from the
+ *     7th onward. Throughput on other machines (integrated graphics, mobile phones) has not been
+ *     measured and should be adjusted per machine periodically.
+ *   - `STREAM_BUDGET_MIN_FPS` = 30: projects with frame rate below 30 are calculated at 30. Without
+ *     this, a 24 fps project could accommodate 15 full-screen cards, but each stream must retain a
+ *     floor of 3 decoded frames (`MIN_FRAMES_PER_STREAM` in `streamPlayer.ts`), causing VRAM to
+ *     rise; with this set, floor decoded frames reach at most 12 full-screen cards × 3 frames ≈
+ *     225 MB (previously 6 cards × 3 frames ≈ 113 MB).
+ *   - `STREAM_COUNT_BUDGET` = 32: after stream planes share a single WebGL context, stream count
+ *     leaves only decoder count and floor decoded frames per stream to manage. Measured: 64 decoders
+ *     ran normally, 30 playing one stream each painted fully on time; take half of the measured
+ *     normal value. Floor decoded frames for 32 small-card streams take approx. 87 MB. When pasting
+ *     sparse versions only, another much smaller set of numbers applies; see the next section.
  *
- * # 只有一个舞台(精简模式与最低一档,在线浏览器性能不足时)的预算:`sparseStreamBudget()`
+ * # Budget when only one stage is present (lite mode and lowest tier, when online browser performance is insufficient): `sparseStreamBudget()`
  *
- * 这一档每条流**每个分段只解第一帧那一张**(`streamPlayer.ts` 的 `presentFirst`;2026-10-13 用户定「性能不足时只贴稀疏版,
- * 同时活着的解码器给得少」,2026-10-22 起归只有一个舞台的页面(精简模式与最低一档),`mechanism/platforms.md`「三道闸门」〔裁〕),
- * 30 帧的项目一条流一秒解两张,花的不是「每秒解的像素」,是同时开着的解码器个数和留着的画面。所以这一档的开销不乘项目帧率,
- * 一律按「编码画幅 × `STREAM_BUDGET_MIN_FPS`」算(调用方把帧率传成 `STREAM_BUDGET_MIN_FPS`),像素预算就等于「同屏各条流编码画幅之和」的上限。
- * 没在真手机上量过,三个数都是保守的起点(要量什么见 `docs/reports/AGENT-rr-lowmem-streams.md`「真手机上要量的」):
+ * In this tier, each stream **decodes only the first frame per segment** (`presentFirst` in
+ * `streamPlayer.ts`; (user decision, 2026-10-13) "paste sparse version only when performance is
+ * insufficient, keeping fewer concurrently alive decoders", assigned from 2026-10-22 to pages with
+ * only one stage (lite mode and lowest tier), "Three gates" [ruling] in `mechanism/platforms.md`).
+ * In a 30 fps project, a stream decodes two frames per second; what is spent is not "pixels decoded
+ * per second", but the number of concurrently open decoders and retained frames. Therefore, cost in
+ * this tier is not multiplied by project frame rate, but calculated uniformly as "encoded aspect
+ * ratio × `STREAM_BUDGET_MIN_FPS`" (caller passes frame rate as `STREAM_BUDGET_MIN_FPS`), so the
+ * pixel budget equals the cap on the sum of encoded aspect ratios across on-screen streams. Not
+ * measured on a real phone; all three numbers are conservative starting points (see "What to measure
+ * on real phones" in `docs/reports/AGENT-rr-lowmem-streams.md`):
  *
- *   - `SPARSE_STREAM_COUNT` = 4:同时开着的解码器不超过 4 个。手机的硬件 H.264 解码器能同时开几路各家不一,
- *     没有保证的下限;用户给的例子是 2 路,4 是「常见的入门机也开得出、开不出时浏览器还能退到软解」的取值。
- *   - `SPARSE_STREAM_PIXELS` = 2 × 1920 × 2176:同屏各条流的编码画幅之和不超过两张 1080p 的满屏卡。每条流稳态只留画布上那一张
- *     解码帧(换分段的那一下两张),NV12 按 1.5 字节每像素:稳态约 12.5 MB,瞬时最多约 25 MB(双舞台的解码帧预算是 80 MB)。
- *     流裁到实体框,小卡远小于满屏:四张 704×864 的小卡合计约 5 MB。
- *   - `SPARSE_STREAM_FREE` = 1:头一条不看像素。不设的话大于 1080p 的项目里一张满屏卡就超了,一条都贴不上。
+ *   - `SPARSE_STREAM_COUNT` = 4: no more than 4 concurrently open decoders. How many concurrent
+ *     channels mobile hardware H.264 decoders can open varies across vendors, with no guaranteed
+ *     lower bound; user-provided example is 2 channels, and 4 is a value that "common entry-level
+ *     phones can also open, and if not, the browser can fall back to software decoding".
+ *   - `SPARSE_STREAM_PIXELS` = 2 × 1920 × 2176: sum of encoded aspect ratios of all on-screen
+ *     streams does not exceed two 1080p full-screen cards. In steady state, each stream retains
+ *     only that one decoded frame on canvas (two at the moment of switching segments); at 1.5 bytes
+ *     per pixel for NV12: steady state approx. 12.5 MB, instantaneous peak approx. 25 MB (decoded
+ *     frame budget for dual stage is 80 MB). Streams are clipped to the entity box, and small cards
+ *     are far smaller than full screen: four 704×864 small cards total approx. 5 MB.
+ *   - `SPARSE_STREAM_FREE` = 1: first stream does not check pixels. Without this, in projects larger
+ *     than 1080p, a single full-screen card would exceed budget and not a single one could be
+ *     pasted.
  *
- * 超出的层照别的档的办法:父页标 `over`,舞台不建解码器,显示占位符(`snapshotFeed.ts`)。
- * 这组数只在贴流的一侧用(产流、划分流照各自的规矩)。
+ * Layers exceeding budget follow the approach of other tiers: parent page marks `over`, stage
+ * creates no decoders, and placeholders are displayed (`snapshotFeed.ts`). This set of numbers is
+ * only used on the stream pasting side (stream generation and partitioning follow their respective
+ * rules).
  *
- * 纯函数;服务端与页面共用这一份(`server/` 引 `src/render/` 下的 `.mjs` 是现成的做法)。
+ * Pure function; shared between server and page (having `server/` import `.mjs` under `src/render/`
+ * is established practice).
  */
 import { resolveFrameSize } from '../kernel/frameSize.mjs';
 
-/** 上下两个半区下面各垫的黑边行数;与 `streamEncode.ts` 的 `STREAM_HALF_PAD`、ffmpeg 滤镜里的 `pad=iw:ih+8` 同值(守门单测核对) */
+/** Number of black padding lines padded under each of the upper and lower halves; same value as `STREAM_HALF_PAD` in `streamEncode.ts` and `pad=iw:ih+8` in ffmpeg filters (verified by gatekeeper unit tests) */
 export const STREAM_BUDGET_HALF_PAD = 8;
-/** 单卡流的矩形上界比框大一圈的像素数;与 `server/frame-stream.mjs` 的 `LOCAL_OVERFLOW_PX` 同值(守门单测核对) */
+/** Number of pixels by which the rectangular upper bound of a single-card stream exceeds the box; same value as `LOCAL_OVERFLOW_PX` in `server/frame-stream.mjs` (verified by gatekeeper unit tests) */
 export const STREAM_BUDGET_OVERFLOW_PX = 32;
 
-/** 同屏各条流每秒要解的像素之和的上限(见文件头) */
+/** Cap on the sum of pixels to decode per second across on-screen streams (see file header) */
 export const STREAM_PIXEL_RATE_BUDGET = 6 * 1920 * 2176 * 60;
-/** 同屏流的条数硬上限(见文件头) */
+/** Hard cap on the number of on-screen streams (see file header) */
 export const STREAM_COUNT_BUDGET = 32;
-/** 同屏不超过这么多条时不看像素(原来的条数预算;见文件头) */
+/** Pixels are not checked when on-screen streams do not exceed this count (original stream count budget; see file header) */
 export const STREAM_FREE_COUNT = 6;
-/** 算开销时帧率的下限(见文件头) */
+/** Lower bound on frame rate when calculating cost (see file header) */
 export const STREAM_BUDGET_MIN_FPS = 30;
-/** 不知道编码画幅的流(没带这一项的旧消息)按一张 1920×1080 的满屏卡算 */
+/** Streams with unknown encoded aspect ratio (legacy messages omitting this item) are calculated as one 1920×1080 full-screen card */
 export const STREAM_DEFAULT_PIXELS = 1920 * 2176;
 
-/** 只贴稀疏版时:同时开着的解码器个数上限(见文件头「只贴稀疏版时的预算」) */
+/** When pasting sparse version only: cap on concurrently open decoder count (see file header "Budget when pasting sparse version only") */
 export const SPARSE_STREAM_COUNT = 4;
-/** 只贴稀疏版时:同屏各条流的编码画幅之和的上限(见文件头) */
+/** When pasting sparse version only: cap on the sum of encoded aspect ratios across on-screen streams (see file header) */
 export const SPARSE_STREAM_PIXELS = 2 * STREAM_DEFAULT_PIXELS;
-/** 只贴稀疏版时:头这么多条不看像素(见文件头) */
+/** When pasting sparse version only: the first this many streams do not check pixels (see file header) */
 export const SPARSE_STREAM_FREE = 1;
 
 /**
- * 只贴稀疏版时的预算,形状同 `streamBudgetOf` 的入参。和它配套的开销要按 `streamCost(pixels, STREAM_BUDGET_MIN_FPS)` 算
- * (不乘项目帧率,见文件头)。
+ * Budget when only pasting the sparse version, with the same shape as the argument to
+ * `streamBudgetOf`. Its matching cost must be calculated with
+ * `streamCost(pixels, STREAM_BUDGET_MIN_FPS)` (not multiplied by the project frame rate; see the
+ * file header).
  */
 export function sparseStreamBudget() {
   return { count: SPARSE_STREAM_COUNT, pixelRate: SPARSE_STREAM_PIXELS * STREAM_BUDGET_MIN_FPS, free: SPARSE_STREAM_FREE };
 }
 
-/** 编码画幅的像素数:矩形宽 × (2 × 矩形高 + 两条黑边) */
+/** Pixel count of the encoded aspect ratio: rect width × (2 × rect height + two black borders) */
 export function streamCodedPixels(w, h) {
   if (!(w > 0) || !(h > 0)) return 0;
   return Math.ceil(w) * (2 * Math.ceil(h) + 2 * STREAM_BUDGET_HALF_PAD);
@@ -93,21 +132,27 @@ export function streamCodedPixels(w, h) {
 
 const even = (n) => (n % 2 ? n + 1 : n);
 
-/** 按舞台坐标产的流(组流、依赖下层的流)的编码画幅:矩形上界是整幅画面 */
+/**
+ * Encoded aspect ratio of streams produced in stage coordinates (group streams, below-dependent
+ * streams): the rect upper bound is the full frame
+ */
 export function stageStreamPixels(stage) {
   const w = Math.max(2, Math.ceil(Number(stage?.width) || 0)), h = Math.max(2, Math.ceil(Number(stage?.height) || 0));
   return streamCodedPixels(even(w), even(h));
 }
 
 /**
- * 单卡流矩形上界的宽高:包裹层的框外扩 `STREAM_BUDGET_OVERFLOW_PX`,夹在画面里,宽高外扩到偶数。
- * 与 `server/frame-stream.mjs` 的 `localPlacement(...).bound` 同一个式子(守门单测逐个尺寸核对)。
+ * Width and height of the single-card stream rectangle upper bound: the wrapper layer box is
+ * expanded by `STREAM_BUDGET_OVERFLOW_PX`, clamped within the frame, and width and height are
+ * expanded to even numbers. Same formula as `localPlacement(...).bound` in
+ * `server/frame-stream.mjs` (verified size by size in gatekeeper unit tests).
  */
 export function localStreamBoundSize(frame, stage) {
   const size = resolveFrameSize(frame, stage);
   const w = Math.max(2, Math.ceil(size.w)), h = Math.max(2, Math.ceil(size.h));
   const side = (len, full) => {
-    // 框在隔离工程里居中:平面坐标下画面覆盖 [-o, full - o];框外扩以后是 [-pad, len + pad]
+    // The box is centered in the isolated project: in plane coordinates, the frame covers
+    // [-o, full - o]; after expanding the box, it is [-pad, len + pad]
     const o = Math.max(0, Math.floor((full - len) / 2));
     const lo = -o, hi = full - o;
     let a = Math.max(lo, -STREAM_BUDGET_OVERFLOW_PX), b = Math.min(hi, len + STREAM_BUDGET_OVERFLOW_PX);
@@ -118,21 +163,27 @@ export function localStreamBoundSize(frame, stage) {
   return { w: side(w, Number(stage?.width) || 0), h: side(h, Number(stage?.height) || 0) };
 }
 
-/** 单卡流的编码画幅 */
+/** Encoded aspect ratio of a single-card stream */
 export function localStreamPixels(frame, stage) {
   const { w, h } = localStreamBoundSize(frame, stage);
   return streamCodedPixels(w, h);
 }
 
-/** 一条流的开销:每秒要解的像素。`pixels` 不是正数(不知道)按 `STREAM_DEFAULT_PIXELS` 算 */
+/**
+ * Cost of a stream: pixels to decode per second. If `pixels` is not positive (unknown),
+ * calculate as `STREAM_DEFAULT_PIXELS`.
+ */
 export function streamCost(pixels, fps) {
   const px = pixels > 0 ? pixels : STREAM_DEFAULT_PIXELS;
   return px * Math.max(STREAM_BUDGET_MIN_FPS, Number(fps) || 0);
 }
 
 /**
- * 预算 `{ count, pixelRate, free }`:条数硬上限、像素预算、不看像素的条数。不给就是产品的那一组数;给一个数是只改条数上限
- * (`PROMPTCUT_STREAM_DECODERS`,探针拿它把预算压到 1 逼出组流);给对象可以三样都改(单测)。`free` 不会比条数上限大。
+ * Budget `{ count, pixelRate, free }`: hard count limit, pixel budget, and stream count that
+ * ignores pixels. If omitted, uses the production numbers; passing a single number changes only
+ * the count limit (`PROMPTCUT_STREAM_DECODERS`, used by probes to squeeze the budget to 1 to force
+ * group streams); passing an object can change all three (unit tests). `free` will not be larger
+ * than the count limit.
  */
 export function streamBudgetOf(budget) {
   const pick = (v, fallback) => (Number.isFinite(v) && v > 0 ? v : fallback);
@@ -142,9 +193,11 @@ export function streamBudgetOf(budget) {
 }
 
 /**
- * 这一拍哪几条放得进预算。`costs`:按优先顺序排好的各条流的开销(`streamCost`)。回放行的下标。
- * 头 `free` 条不看像素(原来放得过的照样放得过);之后某一条的像素放不下时跳过它接着看后面的(后面更小的还放得下);
- * 条数到了硬上限就停。
+ * Which streams fit into the budget on this tick. `costs`: costs of each stream (`streamCost`)
+ * sorted by priority. Returns indices of streams allowed through.
+ * The first `free` streams do not check pixels (streams that passed before continue to pass);
+ * after that, if a stream's pixels cannot fit, skip it and keep checking subsequent ones (smaller
+ * ones later may still fit); stop once the stream count reaches the hard limit.
  */
 export function withinStreamBudget(costs, budget) {
   const { count, pixelRate, free } = streamBudgetOf(budget);
@@ -161,8 +214,9 @@ export function withinStreamBudget(costs, budget) {
 }
 
 /**
- * 区间集合在同一帧上的最大重叠数,以及峰值出现在哪一帧。`skip`(帧号的集合)给了,就不把这些帧当候选:
- * 回的是剩下的帧里重叠最多的那一帧。
+ * Maximum overlap count of an interval set on the same frame, and which frame the peak occurs
+ * on. If `skip` (a set of frame numbers) is provided, these frames are not considered candidates:
+ * returns the frame with the most overlap among the remaining frames.
  */
 export function peakConcurrency(intervals, skip = null) {
   const events = [];
@@ -174,8 +228,10 @@ export function peakConcurrency(intervals, skip = null) {
 }
 
 /**
- * 同上,但加的是每条流的开销(`cost`,没带的算 0):同一帧上开销之和的峰值。`moreThan` 给了,只看同屏条数**超过**它的帧
- * (条数不超过它的帧不看像素);回的 `count` 是峰值那一帧上的条数。
+ * Same as above, but sums the cost of each stream (`cost`, defaulting to 0 if omitted): peak
+ * sum of costs on the same frame. If `moreThan` is provided, only inspect frames where the
+ * on-screen stream count **exceeds** it (frames whose stream count does not exceed it do not
+ * check pixels); the returned `count` is the stream count on that peak frame.
  */
 export function peakCost(intervals, skip = null, moreThan = 0) {
   const byFrame = new Map();
@@ -195,24 +251,39 @@ export function peakCost(intervals, skip = null, moreThan = 0) {
 }
 
 /**
- * 同屏的流超出预算时,把**相邻**的独立重卡合并成组流(G1:「这是唯一的合并规则」)。
+ * When on-screen streams exceed the budget, merge **adjacent** standalone heavy cards into a
+ * group stream (G1: "this is the only merge rule").
  *
- * `streams`:按画家顺序排好的单卡流 `[{ clipIds: [id], order, from, to, cost }]`;`layers`:全部画面层;
- * `budget`:见 `streamBudgetOf`;`groupCost`:一条组流的开销(组流按整幅画面产,和成员多少无关)。`cost` 都不带时只看条数,
- * 和改成数像素之前完全一样。
+ * `streams`: single-card streams sorted in painter's order
+ * `[{ clipIds: [id], order, from, to, cost }]`; `layers`: all frame layers; `budget`: see
+ * `streamBudgetOf`; `groupCost`: cost of one group stream (group streams are produced for the
+ * whole frame, regardless of member count). When `cost` is omitted on all items, only stream count
+ * is checked, exactly as before switching to counting pixels.
  *
- * 先看条数的硬上限、再看像素:
- *   - 条数超了硬上限:在重叠最多的那一帧上,挑画家顺序里**紧挨着**的两条流(两者之间、在它们合并后的时间段里没有别的画面层插着)合并;
- *   - 条数没超硬上限:只看同屏**超过 `free` 条**的帧(不超过的不看像素,原来放得过的照样放得过)。像素超了的,在开销最大的那一帧上
- *     同样只看紧挨着的两条,取「并了以后这一帧要解的像素少得最多」的一对(一样多取画家顺序里最靠前的)。并了不变少的不并 ——
- *     两张小卡并成一条整幅的组流反而更贵;例外是这一帧正好比 `free` 多一条,并掉一条就回到不看像素的条数里,这时照并。
- *     这一帧找不到就换下一个超预算的帧。
- * 反复直到都不超,或者再也找不到可合并的一对。回合并后的列表(每项 `clipIds` 按画家顺序,最后一个是最上面那张)。
+ * Check the hard count limit first, then pixels:
+ *   - Count exceeds the hard limit: on the frame with the most overlap, pick two streams that are
+ *     **immediately adjacent** in painter's order (with no other frame layers interposed between
+ *     them during their merged time range) and merge them;
+ *   - Count does not exceed the hard limit: only check frames with **more than `free` streams** on
+ *     screen (those not exceeding it do not check pixels; streams that passed before continue to
+ *     pass). If pixels exceed the budget, on the frame with the largest cost, likewise only look
+ *     at immediately adjacent streams, picking the pair where "merging reduces this frame's
+ *     pixels to decode the most" (if tied, pick the earliest in painter's order). Do not merge if
+ *     merging does not reduce pixels: merging two small cards into a full-frame group stream is
+ *     actually more expensive. The exception is when this frame has exactly one more stream than
+ *     `free`, where merging one stream drops back into the count that ignores pixels, so merge
+ *     anyway. If none can be found on this frame, move to the next frame that exceeds the budget.
+ * Repeat until none exceed the budget, or no mergeable pair can be found. Returns the merged list
+ * (each item's `clipIds` is in painter's order, with the last being the topmost card).
  *
- * `fixed`:不参加合并、但同样占预算的流(依赖下层的流、单独成流的两类卡)`[{ from, to, cost }]`。它们只算进峰值,
- * 不会被挑去合并,也不出现在结果里。它们在 `layers` 里本来就有自己那一层,夹在两张卡中间时照旧挡住那两张卡合并。
- * 有它们的时候,峰值那一帧上可能没有能合的一对(挤在那里的都是不能合的流),而别的超预算的帧上有:这一帧找不到就记进
- * `tried`、换下一个超预算的帧,合成一次以后从头再看。
+ * `fixed`: streams that do not participate in merging but still consume budget (below-dependent
+ * streams, two categories of cards that form streams on their own) `[{ from, to, cost }]`. They
+ * only count toward the peak, are not picked for merging, and do not appear in the result. They
+ * already have their own layer in `layers`; when sandwiched between two cards, they still block
+ * those two cards from merging. When they are present, the peak frame might not have a mergeable
+ * pair (streams crowded there are all unmergeable), while other over-budget frames do: if none can
+ * be found on this frame, record it into `tried`, switch to the next over-budget frame, and start
+ * over from the beginning once a merge succeeds.
  */
 export function groupStreams(streams, layers, budget = undefined, fixed = [], groupCost = 0) {
   const { count: maxCount, pixelRate, free } = streamBudgetOf(budget);
@@ -228,16 +299,20 @@ export function groupStreams(streams, layers, budget = undefined, fixed = [], gr
       let count = 0;
       ({ peak, at, count } = peakCost(all, tried, free));
       if (peak <= pixelRate) break;
-      // 这一帧正好比不看像素的条数多一条:并掉哪一对都行
+      // This frame has exactly one more stream than the count that ignores pixels: merging any pair
+      // is fine
       lastFree = count === free + 1;
     }
     const active = list.map((s, i) => ({ s, i })).filter(({ s }) => s.from <= at && at <= s.to).sort((a, b) => a.s.order - b.s.order);
-    // 这一帧上能并的一对:条数超了取画家顺序里最靠前的(原来的规则);只为省像素时取省得最多的(一样多取最靠前的)
+    // A mergeable pair on this frame: if the count is exceeded, take the earliest in painter's order
+    // (the original rule); when merging solely to save pixels, take the one that saves the most (if
+    // tied, take the earliest)
     let pick = null;
     for (let k = 0; k + 1 < active.length; k++) {
       const lo = active[k].s, hi = active[k + 1].s;
       const saving = (lo.cost > 0 ? lo.cost : 0) + (hi.cost > 0 ? hi.cost : 0) - groupCost;
-      // 只为省像素而并:并了以后这一帧不变少的不并(两张小卡并成一条整幅的组流反而更贵)
+      // Merging solely to save pixels: do not merge if this frame does not decrease after merging
+      // (merging two small cards into a full-frame group stream is actually more expensive)
       if (byCost && !lastFree && !(saving > 0)) continue;
       if (pick && !(saving > pick.saving)) continue;
       const span = { from: Math.min(lo.from, hi.from), to: Math.max(lo.to, hi.to) };

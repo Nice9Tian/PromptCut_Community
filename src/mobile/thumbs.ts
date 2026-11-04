@@ -1,68 +1,75 @@
 import { tr } from "../i18n/index.ts";
 /**
- * 手机版素材格子、缩略卡的真画面(`docs/plan/mobile-online-task.md` 待用户项第 5 条,用户 2026-10-21 定「要」):
- * 视频取首帧(时间轴上的段取它的入点那一帧),图片取缩略图。
+ * Real images for mobile app media cells and thumbnail cards (`docs/plan/mobile-online-task.md`, pending user
+ * items, item 5, user decision 2026-10-21: "yes"):
+ * for video, grab the first frame (for a segment on the timeline, the frame at its in point); for images, grab the thumbnail.
  *
- * - **取素材的路**:只用编辑界面现成的素材预览地址 `usePreviewMediaUrl`(`src/editor/media/previewUrl.ts` →
- *   `render/mediaTier.ts` 的 `previewMediaUrl`)。在线页面上它给的是远程素材服务带只读票据的地址
- *   (`product/asset-service.md`「凭票据读写」),先小后大;远程地址还没就绪、确认缺失时给 "",这时不发请求。
- *   不另造取素材的路,也不碰本机路径。
- * - **按需**:格子进了视口附近才排队取(`IntersectionObserver`),滑走了还没轮到的撤掉。
- * - **限流**:同时最多解码 `MAX_ACTIVE` 个,其余排队;手机上素材多也不会一次全解。
- * - **缓存**:按「去掉票据查询串的地址 + 取帧时刻」记成一张小 JPEG(data URL),最近用过的留 `CACHE_MAX` 张;
- *   票据轮换不重取,面板关了再开不重取。
- * - **取不到**:解码失败、超时、跨源画不进画布,一律当没取到,格子仍是原来的取色底色加类型图标,不出现空白或破图;
- *   失败不记缓存,下次再出现在视口里重试。
+ * - **How assets are fetched**: only use the ready-made asset preview URL from the editor, `usePreviewMediaUrl`
+ *   (`src/editor/media/previewUrl.ts` → `previewMediaUrl` in `render/mediaTier.ts`). On the online page it
+ *   gives the remote asset service address carrying a read-only ticket (`product/asset-service.md`,
+ *   "Read and write by ticket"), small first, then large; when the remote address is not ready or confirmed
+ *   missing it gives "", and no request is sent. No separate fetch path is created, and local paths are not touched.
+ * - **On demand**: a cell is queued only once it is near the viewport (`IntersectionObserver`); ones scrolled
+ *   away before their turn are removed.
+ * - **Throttling**: at most `MAX_ACTIVE` decodes at the same time, the rest queue; even with many assets on a phone
+ *   they are not all decoded at once.
+ * - **Cache**: keyed by "URL with the ticket query string removed + frame time", stored as a small JPEG (data URL),
+ *   the most recently used `CACHE_MAX` are kept; ticket rotation does not refetch, and closing and reopening the
+ *   panel does not refetch.
+ * - **Fetch failure**: decode failure, timeout, or a cross-origin image that cannot be drawn to the canvas all count as
+ *   not fetched; the cell keeps its original sampled base color plus the type icon, with no blank or broken image;
+ *   failures are not cached, and it retries the next time the cell appears in the viewport.
  */
 
-/** 缩略图宽度上限(像素):格子 / 缩略卡最宽约 110 CSS 像素,两倍屏够用 */
+/** Maximum thumbnail width (pixels): a cell / thumbnail card is at most about 110 CSS pixels wide, enough for a 2x screen */
 export const THUMB_W = 224;
-/** 同时最多解码几个 */
+/** Maximum number of simultaneous decodes */
 export const MAX_ACTIVE = 2;
-/** 缓存几张 */
+/** Number of cached images */
 export const CACHE_MAX = 160;
-/** 一张最多等多久(毫秒);只为防卡死 */
+/** Maximum wait per image (milliseconds); only to prevent hangs */
 export const GRAB_TIMEOUT_MS = 20000;
 
 export type ThumbKind = "video" | "image";
 
-/** 缓存键:地址去掉查询串与锚点(在线的查询串是会轮换的票据),视频再加取帧时刻(精确到 0.01 秒) */
+/** Cache key: the URL with the query string and anchor removed (the online query string is a rotating ticket); for video, plus the frame time (to 0.01 seconds) */
 export function thumbKey(url: string, kind: ThumbKind, t = 0): string {
   const base = String(url || "").split(/[?#]/, 1)[0];
   return kind === "video" ? `${base}@${(Math.max(0, t) || 0).toFixed(2)}` : base;
 }
 
-/** 视频取帧时刻:钳在 [0, 时长 - 一帧] 里;0 换成一个极小值,好让浏览器真的发出一次 seeked */
+/** Video frame time: clamped to [0, duration - one frame]; 0 is replaced by a tiny value so the browser really fires a seeked event */
 export function seekTarget(t: number, duration: number): number {
   const d = Number.isFinite(duration) && duration > 0 ? duration : Infinity;
   const x = Math.min(Math.max(0, Number.isFinite(t) ? t : 0), Math.max(0, d - 0.04));
   return x > 0 ? x : 0.001;
 }
 
-/** 缩到宽不超过 maxW,保持比例,至少 1 像素 */
+/** Scale down to a width of at most maxW, keeping the aspect ratio, at least 1 pixel */
 export function fitSize(w: number, h: number, maxW = THUMB_W): { w: number; h: number } {
   if (!(w > 0) || !(h > 0)) return { w: 0, h: 0 };
   const s = Math.min(1, maxW / w);
   return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)) };
 }
 
-/** 地址里按哈希寻址的那一段(`/@media/<哈希>` 或远程素材服务的 `.../media/<哈希>`) */
+/** The hash-addressed part of the URL (`/@media/<hash>` or `.../media/<hash>` of the remote asset service) */
 export function urlHash(url: string): string | null {
   const m = /\/(?:@media|media)\/([0-9a-f]{64})(?:[.?#/]|$)/i.exec(String(url || ""));
   return m ? m[1].toLowerCase() : null;
 }
 
 /**
- * 现在去取会不会白跑一趟(素材服务还没收全,会答 404):判据只问素材服务(`mechanism/asset-service.md`「同步状态只问素材服务」),
- * 即编辑器每 2 秒轮询得到的「已收全哈希」集合 `tierHashes`(带标记,问过才非空)。
- * - 问过了:地址里的哈希(或这份素材的原尺寸哈希)在集合里才取;
- * - 还没问过:素材还在入库(`pending`)就等,否则先取(取不到按退避重试);
- * - 不是按哈希寻址的地址(老素材):照取。
+ * Whether fetching now would be a wasted trip (the asset service has not received all of it yet and would answer 404): the criterion
+ * only asks the asset service (`mechanism/asset-service.md`, "Sync state only asks the asset service"),
+ * that is, the "fully received hashes" set `tierHashes` obtained by the editor's 2-second polling (with a marker; non-empty only after it has been asked).
+ * - Already asked: fetch only if the hash in the URL (or the original-size hash of this asset) is in the set;
+ * - Not asked yet: if the asset is still being stored (`pending`), wait; otherwise fetch first (on failure, retry with backoff);
+ * - A URL that is not hash-addressed (old asset): fetch as usual.
  */
 export function fetchableNow(url: string, tierHashes: readonly string[], pending: boolean, originalHash?: string | null): boolean {
   const h = urlHash(url);
   if (!h) return true;
-  // 原尺寸收全之后轮询就不再问小尺寸(`assetTiers.ts` 的 hashesToAsk),小尺寸先于原尺寸上传,原尺寸在集合里也算
+  // Once the original size is fully received, polling no longer asks for the small size (`hashesToAsk` in `assetTiers.ts`); the small size is uploaded before the original, so being in the set as the original also counts
   if (tierHashes.length) return tierHashes.includes(h) || (!!originalHash && tierHashes.includes(originalHash.toLowerCase()));
   return !pending;
 }
@@ -72,8 +79,8 @@ export type Grab = (url: string, kind: ThumbKind, t: number) => Promise<string>;
 interface Job { key: string; url: string; kind: ThumbKind; t: number; wanted: number; promise: Promise<string | null>; resolve: (v: string | null) => void }
 
 /**
- * 取缩略图的队列与缓存。`grab` 真去解码(浏览器里是 `grabFrame`,单测里注入假的)。
- * `request` 返回一个取消函数:还在排队、又没人要了,就撤掉不取。
+ * Queue and cache for fetching thumbnails. `grab` really decodes (`grabFrame` in the browser, a fake is injected in unit tests).
+ * `request` returns a cancel function: if the request is still queued and nobody wants it anymore, it is removed and not fetched.
  */
 export function createThumbLoader(opts: { grab: Grab; maxActive?: number; cacheMax?: number }) {
   const maxActive = opts.maxActive ?? MAX_ACTIVE;
@@ -82,7 +89,7 @@ export function createThumbLoader(opts: { grab: Grab; maxActive?: number; cacheM
   const jobs = new Map<string, Job>();
   const queue: Job[] = [];
   let active = 0;
-  /** 谁在等某一张:别处取到了也告诉它(同一素材同一时刻在格子和缩略卡上各出现一次,先失败的那处不用等重试) */
+  /** Who is waiting for a given image: also notify it when it is fetched elsewhere (the same asset at the same time appears once in a cell and once in a thumbnail card, so the one that failed first need not wait for a retry) */
   const watchers = new Map<string, Set<(v: string) => void>>();
 
   const remember = (key: string, v: string) => {
@@ -106,7 +113,7 @@ export function createThumbLoader(opts: { grab: Grab; maxActive?: number; cacheM
   };
 
   return {
-    /** 已缓存的那张(最近使用顺序往后挪) */
+    /** The cached image (moved to the back in most-recently-used order) */
     peek(key: string): string | null {
       const v = cache.get(key);
       if (v === undefined) return null;
@@ -140,14 +147,14 @@ export function createThumbLoader(opts: { grab: Grab; maxActive?: number; cacheM
         }
       };
     },
-    /** 这一张一旦取到(不论是谁要的)就回调;回退订 */
+    /** Callback once this image is fetched (no matter who asked for it); returns an unsubscribe function */
     watch(key: string, fn: (v: string) => void): () => void {
       let set = watchers.get(key);
       if (!set) { set = new Set(); watchers.set(key, set); }
       set.add(fn);
       return () => { set!.delete(fn); if (!set!.size) watchers.delete(key); };
     },
-    /** 单测用:排队数、在解码数、缓存数 */
+    /** For unit tests: queued count, decoding count, cached count */
     stats() { return { queued: queue.length, active, cached: cache.size }; },
   };
 }
@@ -167,11 +174,11 @@ function toDataUrl(src: CanvasImageSource, w: number, h: number): string {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error(tr("No 2D canvas"));
   ctx.drawImage(src, 0, 0, size.w, size.h);
-  // 跨源又没给 CORS 的画面会污染画布,这里抛错 → 当没取到
+  // A cross-origin image without CORS taints the canvas, so this throws → counts as not fetched
   return canvas.toDataURL("image/jpeg", 0.72);
 }
 
-/** 浏览器里真去解码一帧,缩成小 JPEG。视频用一个不挂到页面上的 <video>,取完立刻卸掉源 */
+/** Really decode one frame in the browser and scale it into a small JPEG. For video, use a <video> that is not attached to the page, and release its source right after the grab */
 export const grabFrame: Grab = (url, kind, t) => {
   if (kind === "image") {
     const img = new Image();
@@ -189,7 +196,7 @@ export const grabFrame: Grab = (url, kind, t) => {
   v.muted = true;
   v.playsInline = true;
   v.preload = "auto";
-  const release = () => { v.removeAttribute("src"); try { v.load(); } catch { /* 已经卸了 */ } };
+  const release = () => { v.removeAttribute("src"); try { v.load(); } catch { /* Already released */ } };
   const p = new Promise<string>((resolve, reject) => {
     v.onerror = () => reject(new Error(tr("Video cannot be decoded")));
     v.onloadedmetadata = () => {

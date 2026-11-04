@@ -8,33 +8,33 @@
   );
 }
 
-/* 声音关闭必须一眼可见，不能只靠悬停或参数面板。极窄片段的图标由 ClipView 画在裁切框外。 */
+/* Sound being off must be visible at a glance, not only via hover or the parameters panel. For extremely narrow clips the icon is drawn by ClipView outside the clipping box. */
 .pc-clip.is-audio-muted { border-color: #f5bf4f !important; box-shadow: inset 0 -3px 0 #f5bf4f; }
 .pc-clip-mute-badge { position: absolute; right: 3px; bottom: 3px; z-index: 25; display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px; min-height: 16px; border: 1px solid #ffdd91; border-radius: 4px; color: #211503; background: #f5bf4f; font-size: 10px; line-height: 14px; font-weight: 700; pointer-events: none; white-space: nowrap; }
 .pc-clip-mute-badge.is-compact { width: 18px; height: 16px; padding: 1px 2px; bottom: auto; justify-content: center; }
 .pc-track-mute-summary { flex: none; border-radius: 3px; padding: 1px 3px; color: #211503; background: #f5bf4f; font-size: 9px; font-weight: 700; white-space: nowrap; }
 
-/* ── 时间轴的两条滚动条:右侧竖条(原生)和底部横条(Scrollbar.tsx)同一套样子 ──────────
- * 可见部分都是 10px 粗、全圆角,同一个淡底槽、同一个滑块色;外面各留 2px,占位 14px。
- * 竖条只在时间轴里改,全局皮肤那条 6px 的滚动条(skins.css)不动。
- * 选择器前面挂 [data-pc="timeline"],特异性压过全局的 [data-skin] ::-webkit-scrollbar-*,
- * 不用管两份 CSS 谁先加载。 */
+/* ── The timeline's two scrollbars: the right vertical bar (native) and the bottom horizontal bar (Scrollbar.tsx) share one look ──────────
+ * The visible parts are both 10px thick and fully rounded, with the same faint groove and the same thumb color; 2px is left outside each, taking up 14px.
+ * The vertical bar is changed only inside the timeline; the global skin's 6px scrollbar (skins.css) is left alone.
+ * The selector is prefixed with [data-pc="timeline"], whose specificity beats the global [data-skin] ::-webkit-scrollbar-*,
+ * so it does not matter which of the two CSS files loads first. */
 [data-pc="timeline"] {
   --pc-tl-sb-track: color-mix(in oklab, var(--ui-fg, #e5e5e5) 6%, transparent);
   --pc-tl-sb-thumb: var(--ui-scroll-thumb, #404040);
   --pc-tl-sb-thumb-hover: var(--ui-scroll-thumb-hover, #737373);
-  /* 横条两端的把手帽:往前景色里混一点,深色皮肤里更亮、浅色皮肤里更深,总之比条身显眼 */
+  /* Grip caps at both ends of the horizontal bar: mix in a bit of the foreground color, so they are brighter in dark skins and darker in light skins, in any case more conspicuous than the bar body */
   --pc-tl-sb-cap: color-mix(in oklab, var(--pc-tl-sb-thumb) 68%, var(--ui-fg, #e5e5e5));
   --pc-tl-sb-cap-hover: color-mix(in oklab, var(--pc-tl-sb-thumb-hover) 72%, var(--ui-fg, #e5e5e5));
   --pc-tl-sb-cap-active: color-mix(in oklab, var(--pc-tl-sb-thumb-hover) 42%, var(--ui-fg, #e5e5e5));
-  /* 把手上的竖纹往底色那边走,和把手帽反着来,两种明暗的皮肤里都看得见 */
+  /* The vertical stripes on the grip go toward the background color, the opposite of the grip caps, so they are visible in both light and dark skins */
   --pc-tl-sb-grip: color-mix(in oklab, var(--ui-bg-2, #0a0a0a) 78%, transparent);
 }
 
-/* 自定义横向滚动条接管后隐藏原生横条，竖条保留。 */
+/* Once the custom horizontal scrollbar takes over, hide the native horizontal bar; keep the vertical one. */
 [data-pc="timeline"] .pc-tl-scroll::-webkit-scrollbar:horizontal { height: 0; }
 [data-pc="timeline"] .pc-tl-scroll::-webkit-scrollbar:vertical { width: 14px; }
-/* 底槽和滑块都用 2px 透明边 + padding-box 裁掉,可见宽度正好 10px,和底部横条对齐 */
+/* Both groove and thumb use a 2px transparent border + padding-box clipping, so the visible width is exactly 10px, aligned with the bottom horizontal bar */
 [data-pc="timeline"] .pc-tl-scroll::-webkit-scrollbar-track {
   background: var(--pc-tl-sb-track);
   border: 2px solid transparent;
@@ -53,9 +53,9 @@
   background-clip: padding-box;
 }
 
-/* 底部横条:一行 14px 高 = 上 2 + 条身 10 + 下 2。
- * 右边的 padding 由 Scrollbar.tsx 按竖条实际占的宽度写进来,底槽就停在竖条那一格的左边,
- * 右下角空出一个 14×14 的角,和原生滚动条的拐角一样;没有竖条时底槽一直伸到右边。 */
+/* Bottom horizontal bar: one row 14px high = 2 on top + 10 bar body + 2 at the bottom.
+ * The right padding is written in by Scrollbar.tsx according to the width the vertical bar actually takes, so the groove stops at the left edge of the vertical bar's cell,
+ * leaving a 14×14 corner at the bottom right, like the corner of a native scrollbar; when there is no vertical bar the groove extends all the way to the right. */
 .pc-tl-hbar {
   flex-shrink: 0;
   display: flex;
@@ -87,7 +87,7 @@
 .pc-tl-hbar-thumb[data-drag] {
   background: var(--pc-tl-sb-thumb-hover);
 }
-/* 中间一截:按住平移 */
+/* Middle section: press and drag to pan */
 .pc-tl-hbar-pan {
   flex: 1;
   min-width: 0;
@@ -97,7 +97,7 @@
 .pc-tl-hbar-thumb[data-drag="pan"] .pc-tl-hbar-pan {
   cursor: grabbing;
 }
-/* 两端把手帽:12px 宽,常驻显示,颜色比条身亮一档,中间两道 1×6 的竖纹 */
+/* Grip caps at both ends: 12px wide, always shown, one step brighter than the bar body, with two 1×6 vertical stripes in the middle */
 .pc-tl-hbar-grip {
   position: relative;
   flex: none;
@@ -129,7 +129,7 @@
 .pc-tl-hbar-thumb[data-drag] .pc-tl-hbar-grip {
   background: var(--pc-tl-sb-cap-hover);
 }
-/* 指着的那个把手、正在拖的那个把手再亮一档 */
+/* The grip being pointed at and the grip being dragged get one step brighter */
 .pc-tl-hbar-thumb .pc-tl-hbar-grip:hover,
 .pc-tl-hbar-thumb[data-drag="left"] .pc-tl-hbar-grip.is-left,
 .pc-tl-hbar-thumb[data-drag="right"] .pc-tl-hbar-grip.is-right {
@@ -140,18 +140,18 @@
  * six pixels wide but must not draw a second line inside the header column. */
 .pc-tl-headers {
   border-right: 1px solid var(--ui-border);
-  /* 序列栏往右投一道窄阴影,和右边的片段区分开;横向滚动时片段从阴影底下滑过去。
-     列是 sticky + z-30,阴影盖在轨道上面。深浅皮肤用同一个黑,浅色里淡、深色里几乎只加深边缘 */
+  /* The track column casts a narrow shadow to the right to set it apart from the clips on the right; when scrolling horizontally, clips slide under the shadow.
+     The column is sticky + z-30, and the shadow sits on top of the tracks. Dark and light skins use the same black: faint in light skins, and in dark skins it hardly does more than darken the edge */
   box-shadow: 6px 0 10px -6px rgba(0, 0, 0, 0.28);
 }
 .pc-tl-header-resize [data-pc-resize="x"].pc-gutter {
   background-image: none;
 }
 
-/* ── 时间线(配色诊断与修正 v2 整屏,底部) ───────────────────────────────
- * 整块 L1(见 editor/shell.css);选中的序列行 L2;控件 L3。 */
+/* ── Timeline (color scheme diagnosis and fix v2, full screen, bottom) ───────────────────────────────
+ * Whole block L1 (see editor/shell.css); selected track row L2; controls L3. */
 
-/* 顶部工具行:40 高 */
+/* Top tool row: 40 high */
 .pc-tl-bar {
   display: flex;
   align-items: center;
@@ -162,7 +162,7 @@
   flex-shrink: 0;
   font-size: 11.5px;
 }
-/* 行高分段(小/中/大):一圈控件描边,选中格实心强调色 */
+/* Row-height segments (small/medium/large): a control outline around the group, the selected cell filled with the emphasis color */
 .pc-tl-seg {
   display: flex;
   border: 1px solid var(--ui-border-strong);
@@ -258,7 +258,7 @@
   cursor: pointer;
 }
 
-/* 序列列表头:和标尺同高(index.tsx 按 RULER_H 行内给),等宽小字,字距拉开 */
+/* Track list header: same height as the ruler (index.tsx sets it inline from RULER_H), small monospaced text, wide letter spacing */
 .pc-tl-hdr {
   padding: 0 12px;
   display: flex;
@@ -268,12 +268,12 @@
   letter-spacing: 0.1em;
   color: var(--ui-fg-faint);
 }
-/* 标尺下面那一行空行(index.tsx 的 .pc-tl-toprow):行头列这一侧底边画分隔线,线紧贴在第一条序列上方。
-   用内阴影不用 border,不占高度,两侧空行保持和行高一样 */
+/* The empty row below the ruler (.pc-tl-toprow in index.tsx): on the row header column side a divider line is drawn at the bottom edge, directly above the first track.
+   An inset shadow is used instead of a border so it takes no height, and the empty rows on both sides stay equal to the row height */
 .pc-tl-headers > .pc-tl-toprow {
   box-shadow: inset 0 -1px 0 var(--ui-border);
 }
-/* 序列行:拖动把手 + 名字 + 右侧常驻的两个图标(不再悬停才出现) */
+/* Track row: drag handle + name + two always-visible icons on the right (no longer shown only on hover) */
 .pc-tl-row {
   display: flex;
   align-items: center;
@@ -357,11 +357,11 @@
   background: var(--ui-float);
 }
 
-/* 标尺:高度由 Ruler.tsx 的 RULER_H 行内给;底边线由预渲染进度(.pc-tl-ruler-progress)画 */
+/* Ruler: the height is set inline from RULER_H in Ruler.tsx; the bottom edge line is drawn by the prerender progress (.pc-tl-ruler-progress) */
 .pc-tl-ruler {
   box-sizing: border-box;
 }
-/* 次刻度:1×4 短竖线;主刻度:1×10 竖线,右边 4px 跟时间。都在标尺行里竖向居中 */
+/* Minor tick: 1×4 short vertical line; major tick: 1×10 vertical line, with the time label 4px to its right. Both are vertically centered in the ruler row */
 .pc-tl-tick {
   position: absolute;
   top: 8px;
@@ -378,8 +378,8 @@
 .pc-tl-tick-label {
   position: absolute;
   left: 4px;
-  /* 竖向中心和主刻度线中心、播放头时间胶囊中心对齐:标尺行扣掉底边 2px 进度线后的中线(22 高 → 10px)。
-     标签挂在主刻度线(top 5、高 10)里面,所以相对它是 5px */
+  /* The vertical center is aligned with the center of the major tick line and the center of the playhead time pill: the midline of the ruler row after subtracting the 2px progress line at the bottom edge (22 high → 10px).
+     The label hangs inside the major tick line (top 5, height 10), so relative to it, it is 5px */
   top: 5px;
   transform: translateY(-50%);
   font-family: var(--ui-font-mono);
@@ -388,7 +388,7 @@
   color: var(--ui-fg-faint);
   white-space: nowrap;
 }
-/* 底边线 = 预渲染进度 */
+/* Bottom edge line = prerender progress */
 .pc-tl-ruler-progress {
   position: absolute;
   left: 0;
@@ -396,7 +396,7 @@
   bottom: 0;
 }
 
-/* 新建序列落区:26 高,虚线控件描边,淡强调色底 */
+/* New-track drop zone: 26 high, dashed control outline, faint emphasis-color background */
 .pc-tl-newzone {
   height: 26px;
   background: color-mix(in oklab, var(--ui-accent) 7%, transparent);
@@ -417,7 +417,7 @@
   background: var(--ui-accent-soft);
 }
 
-/* 片段两端的修剪把手:悬停时出一条居中的圆角白条 */
+/* Trim handles at both ends of a clip: on hover a centered rounded white bar appears */
 .pc-clip-trim:hover::after {
   content: "";
   position: absolute;
@@ -430,10 +430,10 @@
   border-radius: 1.5px;
 }
 
-/* 空轨道占位:轨道行(TrackRow 根上的 .pc-tl-track)里一个片段都没有时,内缩画一个 1px 虚线、
-   圆角的框,提示这里能放东西。不加元素、不加文字,片段一放进来框就消失。
-   伪元素不吃鼠标,拖放照样落在行上;落点预览(z-30)和锁定遮罩(z-50)都盖在它上面。
-   隐藏的轨道不渲染片段,所以也会显示这个框。 */
+/* Empty track placeholder: when the track row (.pc-tl-track on the TrackRow root) holds no clip at all, draw an inset 1px dashed,
+   rounded box to hint that things can be dropped here. No element and no text is added, and the box disappears as soon as a clip is put in.
+   The pseudo-element does not take mouse events, so drag and drop still lands on the row; the drop target preview (z-30) and the lock overlay (z-50) both cover it.
+   Hidden tracks do not render clips, so they also show this box. */
 .pc-tl-track:not(:has(.pc-clip))::before {
   content: "";
   position: absolute;
@@ -443,8 +443,8 @@
   pointer-events: none;
 }
 
-/* 播放头上的时间胶囊:主文字色底、底色字。竖向中心 = 标尺行中线(top 由 Playhead.tsx 给),
-   和标尺上的刻度时间同一个高度;按自身宽度水平居中在播放头上 */
+/* Time pill on the playhead: primary text color as background, background color as text. Vertical center = ruler row midline (top is set by Playhead.tsx),
+   at the same height as the tick times on the ruler; horizontally centered on the playhead by its own width */
 .pc-tl-playhead-label {
   position: absolute;
   left: 50%;
@@ -462,7 +462,7 @@
   pointer-events: none;
 }
 
-/* 底部状态栏:细一点,放在画布上 */
+/* Bottom status bar: slimmer, placed on the canvas */
 .pc-statusbar {
   display: flex;
   align-items: center;
@@ -491,8 +491,8 @@
   background: var(--ui-warn);
 }
 
-/* 时间轴右键菜单:portal 在 body 上(见 ContextMenu.tsx),不在 [data-pc="timeline"] 里,颜色直接取皮肤变量。
-   z 要高过编辑台里所有面板,和左栏右键菜单(z-[900])同一档。 */
+/* Timeline context menu: portaled onto body (see ContextMenu.tsx), not inside [data-pc="timeline"], so colors come straight from the skin variables.
+   z must be higher than every panel in the editor, the same tier as the left rail context menu (z-[900]). */
 .pc-tl-ctxmenu {
   z-index: 900;
   background: var(--ui-float, #262626);
@@ -505,8 +505,8 @@
   background: var(--ui-panel-2, #404040);
 }
 
-/* ── 镜头切换标记 ─────────────────────────────────────────────
-   画在片段内部、内容之上，但不吃鼠标事件：拖片段、改长度都要照常。 */
+/* ── Shot change markers ─────────────────────────────────────────────
+   Drawn inside the clip, above the content, but does not take mouse events: dragging the clip and changing its length must work as usual. */
 .pc-shot-layer {
   position: absolute;
   inset: 0;
@@ -532,7 +532,7 @@
 }
 .pc-shot-line--end { right: 0; }
 
-/* 溶解是一段区间，底色标出渐变范围；硬切没有跨度，只有一条线 */
+/* A dissolve is a span, and the background marks the gradient range; a hard cut has no span, only a line */
 .pc-shot-dissolve {
   background: linear-gradient(
     to right,
@@ -550,7 +550,7 @@
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
 }
 
-/* 溶解：两张叠着画，后一张半透明压在前一张上 */
+/* Dissolve: two thumbnails drawn stacked, the later one semi-transparent on top of the earlier one */
 .pc-shot-stack {
   position: absolute;
   width: max-content;
@@ -566,29 +566,29 @@
   opacity: 0.72;
 }
 
-/* 硬切的缩略图靠在竖线右侧（切换之后那一边），不居中 */
+/* The thumbnail of a hard cut sits to the right of the vertical line (the side after the switch), not centered */
 .pc-shot-stack--cut {
   left: 2px;
   transform: none;
 }
 
-/* ── 预渲染绿条(AE 顶上那条)──────────────────────────────────
-   绿 = 拖过去立刻有画面;空白 = 要等它渲完(一张约 4 秒)。
-   段的算法在 src/editor/preview/bakeCoverage.ts,画法上宁可少画不能多画。 */
+/* ── Prerender green bar (the one on top in AE)──────────────────────────────────
+   Green = dragging there shows a picture immediately; blank = you have to wait for it to render (about 4 seconds each).
+   The segment algorithm is in src/editor/preview/bakeCoverage.ts; when drawing, better to draw too little than too much. */
 
-/* 底槽:整条片子多长。比面板底色亮一点,好看出"还有多少没预渲染" */
+/* Groove: how long the whole video is. A bit brighter than the panel background, to show "how much is still not prerendered" */
 .pc-tl-renderbar-track {
   background: var(--ui-panel-2);
 }
-/* 低帧率那一档:黄。拖过去有画面,但最多差 0.25 秒 */
+/* The low frame rate tier: yellow. Dragging there shows a picture, but it can be off by up to 0.25 s */
 .pc-tl-renderbar-coarse {
   background: var(--ui-warn);
 }
-/* 原始帧率那一档:绿。逐帧精确,盖在黄的上面 */
+/* The original frame rate tier: green. Frame-accurate, drawn over the yellow */
 .pc-tl-renderbar-done {
   background: var(--ui-success);
 }
-/* 正在渲的那一刻:一道竖线。绿条一时不动时,它说明"没死,正卡在这儿" */
+/* The moment currently being rendered: a vertical line. When the green bar is not moving for a while, it shows "not dead, just stuck here" */
 .pc-tl-renderbar-now {
   width: 2px;
   background: var(--ui-warn);
@@ -609,11 +609,11 @@
 .pc-volume-actions button[type=submit] { background: var(--ui-accent-grad); color: white; }
 .pc-volume-actions button:disabled { opacity: .4; cursor: default; }
 
-/* ── 叠加卡:片段里的那条带(editor/timeline/OverlayBand.tsx、overlays.ts)──────
-   挂在片段上的东西原来时间轴上一个字都不显示,只能到左栏检查器里翻。
-   取色全部跟着片段走:`--clip` 是轨道色、`--clip-ink` 是它的墨色(skins.css 的 .pc-clip)。 */
+/* ── Overlay card: the band inside a clip (editor/timeline/OverlayBand.tsx, overlays.ts)──────
+   What was attached to a clip used to show not a single word on the timeline; you could only dig through it in the left rail inspector.
+   Colors all follow the clip: `--clip` is the track color and `--clip-ink` is its ink color (.pc-clip in skins.css). */
 
-/* 这一格每个片段都留着,没挂东西时透明 —— 只给挂了东西的片段留,同一行里的名字会一高一低 */
+/* This cell is kept for every clip and is transparent when nothing is attached: if it were reserved only for clips with something attached, names in the same row would sit at uneven heights */
 .pc-ov-band {
   flex: none;
   display: flex;
@@ -650,7 +650,7 @@
 .pc-ov-chip:focus-visible { outline: 1.5px solid var(--clip-ink); outline-offset: 1px; }
 .pc-ov-chip .g { font-family: var(--ui-font-mono); opacity: 0.75; }
 .pc-ov-chip .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 带里摆不下的收成 +N:高度不随数量涨,点开挑 */
+/* What does not fit in the band is collapsed into +N: the height does not grow with the count, click to open and pick */
 .pc-ov-more,
 .pc-ov-pill {
   flex: none;
@@ -669,9 +669,9 @@
 .pc-ov-pill:hover { background: color-mix(in oklab, var(--clip-ink) 46%, transparent); }
 .pc-ov-more:focus-visible,
 .pc-ov-pill:focus-visible { outline: 1.5px solid var(--clip-ink); outline-offset: 1px; }
-/* 小行高那一档没有带:+N 跟在名字后面靠右,和手机版同一个样子 */
+/* The small row height tier has no band: +N follows the name, aligned right, looking the same as on the mobile app */
 .pc-ov-pill { height: 14px; line-height: 14px; }
-/* 指着片段才出现,平时不占注意力 */
+/* Appears only when pointing at the clip, so it does not draw attention normally */
 .pc-ov-add {
   flex: none;
   margin-left: auto;
@@ -692,7 +692,7 @@
 .pc-ov-add:focus-visible { opacity: 0.8; }
 .pc-ov-add:hover { background: color-mix(in oklab, var(--clip-ink) 26%, transparent); opacity: 1; }
 
-/* 名字和时长排同一行:分两行的话,中行高扣掉叠加带只剩 23px,标题会被切掉上半截 */
+/* Name and duration on the same row: if split over two lines, the medium row height minus the overlay band leaves only 23px, and the upper half of the title would be cut off */
 .pc-clip-body {
   flex: 1;
   min-height: 0;
@@ -714,9 +714,9 @@
 .pc-clip-line .nm { font-weight: 500; }
 .pc-clip-line .du { opacity: 0.7; }
 
-/* ── 右键菜单:菜单头与下一级 ────────────────────────────────────
-   菜单头是「我现在动的是哪一段 / 哪一张」的唯一凭据,底下就是复制和删除。
-   叠加卡那一侧填底(底色取那一段的轨道色),选错了一眼看得出来;普通片段的菜单不填底。 */
+/* ── Context menu: menu header and next level ────────────────────────────────────
+   The menu header is the only evidence of "which segment / which card am I acting on now", and below it are copy and delete.
+   The overlay card variant fills the header background (the fill takes the track color of that segment), so a wrong pick is visible at a glance; the menu of an ordinary clip has no fill. */
 .pc-tl-ctxhead {
   display: flex;
   align-items: baseline;
@@ -772,8 +772,8 @@
 .pc-tl-ctxmenu-item.has-sub:hover .chev { color: inherit; }
 .pc-tl-ctxmenu-item.is-danger { color: var(--ui-danger); }
 
-/* 停用的叠加卡:虚线 + 名字划掉。挂载和逐段参数都留着,只是这一段上不生效 ——
-   调不出想要的效果时先关掉比一比,不用摘掉再回左栏的库里找回来重填参数。 */
+/* Disabled overlay card: dashed line + name struck through. The attachment and the per-segment parameters are all kept; they just take no effect on this segment:
+   when you cannot get the effect you want, turn it off first and compare, instead of removing it, going back to the left rail library to find it again and re-entering the parameters. */
 .pc-ov-chip.is-off {
   background: transparent;
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--clip-ink) 40%, transparent);

@@ -1,43 +1,54 @@
 /**
- * 「这张卡该预渲染哪一刻」—— 3D 视图显示哪一刻、预渲染排哪几刻,都问这里。
+ * "Which moment of this card should be prerendered": which moment the 3D view shows and which
+ * moments get queued for prerender are both decided here.
  *
- * # 为什么要有这个文件
+ * # Why this file exists
  *
- * 原来这个问题有一个写死的答案:**片段中点**(`t: (c.start + c.end) / 2`)。
- * 理由是「起止两端常卡在进出场动画上,预渲染出来是个半透明中间态」——避开半透明这件事本身没错,
- * 错在它把「避开」做成了「永远只看那一刻」。代价是**任何带动画的卡在 3D 里显示的都不是当前这一刻**:
+ * This question used to have one hardcoded answer: the **clip midpoint**
+ * (`t: (c.start + c.end) / 2`). The reasoning was "the two ends of a clip often sit on the
+ * entrance or exit animation, and the prerendered image would be a semi-transparent in-between
+ * state". Avoiding semi-transparency was right in itself; the mistake was turning "avoid" into
+ * "only ever look at that one moment". The cost is that **any card with animation shows in 3D a
+ * moment other than the current one**:
  *
- *     mu-number-ticker(滚动 1.6 秒),clip [0,2],播放头 0.23 秒
- *       2D 预览 / 成片:  81%
- *       3D 视图(渲中点): 100%
+ *     mu-number-ticker (rolls for 1.6 s), clip [0,2], playhead at 0.23 s
+ *       2D preview / final video:  81%
+ *       3D view (renders the midpoint): 100%
  *
- * 这个视图是给人**摆位置**用的。摆的时候看到的是别的时刻的画面,判断就是错的 ——
- * 而且它不会报错,只会让人对着一张不存在的画面调参数。数字滚动、打字机、进度环、
- * 清单打勾、步骤时间线,全中。
+ * This view is for people to **place things**. If what they see while placing is another
+ * moment's image, their judgment is wrong, and it raises no error: it just makes people tune
+ * parameters against an image that does not exist. Number rollers, typewriters, progress rings,
+ * checklist ticks and step timelines are all hit.
  *
- * # 为什么不是「跟着播放头逐帧渲」
+ * # Why not "render frame by frame following the playhead"
  *
- * 预渲染一张要起一个 Chrome,实测 4.7~6.5 秒。逐帧不可能。所以把播放头**吸附到一个格子**上:
- * 看到的那一刻和播放头最多差一格,而同一格永远命中同一份缓存(缓存键里本来就有 t)。
+ * One prerender needs to launch a Chrome, measured at 4.7~6.5 seconds. Frame by frame is
+ * impossible. So the playhead is **snapped to a grid cell**: the moment you see differs from the
+ * playhead by at most one cell, and the same cell always hits the same cache entry (the cache
+ * key already contains t).
  *
- * # 格子不是均匀铺满的,因为卡片自己说了它什么时候还在动
+ * # The grid is not laid out uniformly, because the card itself says when it is still moving
  *
- * `CardLifecycle.after` 已经把这件事写清楚了(见 kernel/types.ts):
- *   - `hold`   落定之后停住 —— 落定点之后**整段只需要一张图**,再密也是同一帧;
- *   - `loop` / `evolve` 一直在变 —— 整段都得按格子采。
- * 库里 31 张卡,22 张 hold、8 张 evolve、1 张 loop。所以绝大多数卡的代价是
- * 「进场那一两秒密采几张 + 落定后一张」,而不是整段密采。
+ * `CardLifecycle.after` already spells this out (see kernel/types.ts):
+ *   - `hold`   stays still after it settles: after the settle point **the whole rest needs only
+ *              one image**, denser sampling is the same frame;
+ *   - `loop` / `evolve` keep changing: the whole span has to be sampled by grid.
+ * Of the 31 cards in the library, 22 are hold, 8 are evolve and 1 is loop. So for most cards the
+ * cost is "a few densely sampled images over the one or two seconds of entrance + one image
+ * after settling", not dense sampling of the whole span.
  *
- * `timing(params)` 比 `lifecycle` 更准(条目数、字数一改落定时刻就变),有就用它。
+ * `timing(params)` is more accurate than `lifecycle` (the settle moment changes when the number
+ * of items or characters changes), so use it when present.
  *
- * # 一份口径,两个用途
+ * # One definition, two uses
  *
- * 前台显示问 `pickBakeT`,预渲染排队问 `sampleTimesFor`,两者产出的时刻**落在同一个格子上**。
- * 分成两处各自算的话,会出现「明明预渲染过还是要现场渲染」——而且不报错,只表现为莫名其妙的慢。
- * 这和 `bakeTarget` 只有一处的理由是同一个。
+ * Foreground display asks `pickBakeT` and prerender queueing asks `sampleTimesFor`; the moments
+ * they produce **land on the same grid cell**. If they were computed separately in two places,
+ * you would get "clearly prerendered but still rendered on the spot", and with no error, just
+ * mysterious slowness. This is the same reason `bakeTarget` exists in only one place.
  */
 
-/** 排队和显示都只需要片段的这几件事 */
+/** Queueing and display need only these few things about a clip */
 export interface TimedClip {
   id: string;
   cardId: string;
@@ -47,64 +58,73 @@ export interface TimedClip {
   frame?: { w?: number; h?: number } | null;
 }
 
-/** 卡片对「我什么时候还在动」的自述。从 CardDef 的 lifecycle / timing 里摘出来的那一小块 */
+/** A card's self-description of "when am I still moving". A small piece extracted from CardDef's lifecycle / timing */
 export interface CardMotion {
-  /** 进场动画多久落定(毫秒) */
+  /** How long the entrance animation takes to settle (milliseconds) */
   settleMs?: number;
-  /** 落定之后:停住 / 循环 / 一直在变 */
+  /** After settling: stay still / loop / keep changing */
   after?: "hold" | "loop" | "evolve";
 }
 
 export interface SampleOpts {
-  /** 吸附格子(秒)。看到的那一刻和播放头最多差这么多 */
+  /** Snap grid (seconds). The moment you see differs from the playhead by at most this much */
   stepSec?: number;
   /**
-   * 一段最多排几个时刻去预渲染。**只影响预渲染的覆盖率,不影响 `pickBakeT` 的正确性** ——
-   * 播放头停在没被预渲染的格子上,那一格照样会被现场渲染,只是要等几秒。
+   * The maximum number of moments queued for prerender per clip. **It only affects prerender
+   * coverage, not the correctness of `pickBakeT`**: if the playhead rests on a cell that was not
+   * prerendered, that cell is still rendered on the spot, it just takes a few seconds to wait.
    */
   maxPerClip?: number;
 }
 
-/** 吸附格子。0.25 秒 = 一格 7~8 帧,肉眼够用,又不至于让一段两秒的卡产出几十张 */
+/** Snap grid. 0.25 s = 7~8 frames per cell, enough for the eye, and does not make a two-second card produce dozens of images */
 export const DEFAULT_STEP_SEC = 0.25;
-/** 一段最多排几张去预渲染。按单张 5 秒算,12 张是一分钟——再多就该让别的片段先排上了 */
+/** The maximum number of images queued for prerender per clip. At 5 seconds each, 12 images is a minute; any more and other clips should get queued first */
 export const DEFAULT_MAX_PER_CLIP = 12;
 /**
- * 卡片没写 lifecycle 时假设的落定时刻。
+ * The settle moment assumed when a card does not write a lifecycle.
  *
- * 库里写了的那些落在 250~1900 毫秒之间,取上限一侧:**宁可多采几张,不要让还在动的卡显示旧帧**。
- * 少采的代价是画面骗人,多采的代价只是多花几秒预渲染——两者不对等。
- * (31 张卡里只有 2 张没写,所以这个默认值很少真的用上。)
+ * Those that are written in the library fall between 250 and 1900 ms; we take the upper side:
+ * **better to sample a few extra images than to let a card that is still moving show an old
+ * frame**. The cost of sampling too little is a misleading picture, and the cost of sampling too
+ * much is only a few more seconds of prerendering; the two are not equal.
+ * (Only 2 of the 31 cards do not write one, so this default is rarely actually used.)
  */
 export const DEFAULT_SETTLE_MS = 2000;
 
-/** 浮点比较用。时间是秒,格子是 0.25,这个量级足够 */
+/** For float comparison. Time is in seconds and the grid is 0.25, so this magnitude is enough */
 const EPS = 1e-6;
 
 /**
- * 第 `i` 个格子落在哪一刻(相对片段起点的秒数)。
+ * At which moment the `i`-th grid cell falls (seconds relative to the clip start).
  *
- * **只有这一处算得出格子的位置** —— `pickBakeT` 和 `sampleTimesFor` 都走它。
- * 分开算过一次,代价是这样的:`sampleTimesFor` 当时是**累加**(`rel += step`),
- * `pickBakeT` 是 **floor 再乘**(`Math.floor(rel / step) * step`)。step = 0.25 时
- * 两者逐位相同(0.25 是二进制精确的),**1/30 不是** —— 30fps 下 60 个采样点里
- * 有 39 个对不上,差 2.8e-17。
+ * **This is the only place that can work out a cell's position**: `pickBakeT` and
+ * `sampleTimesFor` both go through it. We once computed them separately, and the cost was this:
+ * `sampleTimesFor` then **accumulated** (`rel += step`), while `pickBakeT` did **floor, then
+ * multiply** (`Math.floor(rel / step) * step`). With step = 0.25 the two are bit-identical (0.25
+ * is exactly representable in binary), **1/30 is not**: at 30fps, 39 of 60 sample points did not
+ * match, differing by 2.8e-17.
  *
- * 而缓存键是拿这个浮点数格式化出来的,所以后果不是"差一点点",是**预渲染出来的图
- * 显示端一张都问不到,而且不报错** —— 只表现为「明明预渲染过还是要现场渲染」。
- * 按序号乘则两边必然逐位相同:`floor(i * step / step)` 取整回 `i`,再乘同一个 `step`。
+ * And the cache key is formatted from this float, so the consequence is not "off by a tiny bit",
+ * it is that **the display side finds none of the prerendered images, and no error is raised**,
+ * showing up only as "clearly prerendered but still rendered on the spot".
+ * Multiplying by index makes both sides bit-identical: `floor(i * step / step)` rounds back to
+ * `i`, then multiplies by the same `step`.
  *
- * (顺带记一笔:试过"量化到固定小数位"来兜这件事,更糟 —— 1/30 截成 0.033333 比
- * 帧边界小一点,floor 会直接退回一整帧。别再走那条路。)
+ * (A side note: we tried "quantize to a fixed number of decimals" to cover this, and it was
+ * worse: 1/30 truncated to 0.033333 is slightly below the frame boundary, and floor falls
+ * straight back a whole frame. Do not go down that road again.)
  */
 const gridAt = (i: number, step: number): number => i * step;
 
 /**
- * 从卡片定义里读出「它什么时候还在动」。`timing(params)` 优先 —— 它按**这一张**卡的
- * 实际参数算,而 lifecycle 里的是默认参数下的静态值。
+ * Read "when it is still moving" from the card definition. `timing(params)` takes priority: it
+ * is computed from **this** card's actual parameters, while the one in lifecycle is a static
+ * value under default parameters.
  *
- * `timing` 是卡片作者写的任意函数,可能对没见过的参数抛异常。抛了就退回 lifecycle:
- * 一张卡的时序函数写坏了,不该让整个 3D 视图跟着黑掉。
+ * `timing` is an arbitrary function written by the card author and may throw on parameters it
+ * has not seen. If it throws, fall back to lifecycle: one card's broken timing function should
+ * not black out the whole 3D view.
  */
 export function motionOf(
   def:
@@ -123,7 +143,7 @@ export function motionOf(
     try {
       timed = def.timing({ ...(def.defaults ?? {}), ...(params ?? {}) });
     } catch {
-      // 时序函数写坏了就当没写,下面退回 lifecycle
+      // A broken timing function is treated as not written; below we fall back to lifecycle
     }
   }
   return {
@@ -132,31 +152,34 @@ export function motionOf(
   };
 }
 
-/** 这张卡在这段里「还在动」的那一段有多长(秒,相对片段起点) */
+/** How long the "still moving" stretch of this card is within this clip (seconds, relative to the clip start) */
 function liveSpan(clip: TimedClip, motion: CardMotion): { len: number; settle: number; alwaysMoving: boolean } {
   const len = Math.max(0, clip.end - clip.start);
   const settleMs = Number.isFinite(motion.settleMs as number) ? Math.max(0, motion.settleMs as number) : DEFAULT_SETTLE_MS;
   const settle = Math.min(len, settleMs / 1000);
-  // 没写 after 的按 hold 处理 —— 和 kernel/types.ts 里「没写 = 有进场动画、之后停住」一致
+  // A missing after is handled as hold, consistent with "missing = has an entrance animation, then stays still" in kernel/types.ts
   const alwaysMoving = motion.after === "loop" || motion.after === "evolve";
   return { len, settle, alwaysMoving };
 }
 
 /**
- * 播放头在 `t` 这一刻,这块板子该显示**哪一刻**预渲染出来的图。返回时间轴绝对秒。
+ * With the playhead at moment `t`, which moment's prerendered image this board should show.
+ * Returns absolute timeline seconds.
  *
- * 两条不变式:
+ * Two invariants:
  *
- *   1. **只往回取,不往前取**(`Math.floor`)。看到的一定是**已经发生过的**那一刻 ——
- *      往前取会把还没播到的画面提前显示出来,比慢一格更让人误判。
- *   2. **hold 的卡落定之后一律返回落定那一刻**。落定之后每一帧都一样,再分格子只是
- *      同一张图渲很多遍。一段 10 秒的静态卡因此只要 1 张,不是 40 张。
+ *   1. **Only look back, never forward** (`Math.floor`). What you see is always a moment that
+ *      **has already happened**: looking forward would show a frame that has not been reached
+ *      yet, which misleads people more than being one cell behind.
+ *   2. **After a hold card settles, always return the settle moment**. Every frame after
+ *      settling is identical, and splitting into more cells would just render the same image many
+ *      times. A 10-second static card therefore needs only 1 image, not 40.
  */
 export function pickBakeT(clip: TimedClip, motion: CardMotion, t: number, opts: SampleOpts = {}): number {
   const step = Math.max(1e-3, opts.stepSec ?? DEFAULT_STEP_SEC);
   const { len, settle, alwaysMoving } = liveSpan(clip, motion);
   if (len <= 0) return clip.start;
-  // 播放头在段外(预渲染会问到还没播到的段)就按段首算
+  // Playhead outside the clip (prerender asks about clips not yet reached): compute from the clip start
   const rel = Math.min(Math.max(0, (Number.isFinite(t) ? t : clip.start) - clip.start), Math.max(0, len - EPS));
   if (!alwaysMoving && rel >= settle - EPS) return clip.start + settle;
   const snapped = gridAt(Math.floor(rel / step + EPS), step);
@@ -164,12 +187,14 @@ export function pickBakeT(clip: TimedClip, motion: CardMotion, t: number, opts: 
 }
 
 /**
- * 这一段一共有哪几个时刻值得预渲染,按时间升序。**产出的每个值都是 `pickBakeT` 可能返回的值**,
- * 所以预渲染过的格子前台一定命中缓存。
+ * Which moments of this clip are worth prerendering, in ascending time order. **Every value
+ * produced is a value `pickBakeT` may return**, so a cell that has been prerendered always hits
+ * the cache in the foreground.
  *
- * 超过 `maxPerClip` 就均匀抽稀,但**首尾必留**:段首是进场第一帧(最常被看),
- * 末尾对 hold 的卡是落定帧(占了整段最长的时间)。抽稀只让预渲染覆盖得疏一点,
- * 没被覆盖的格子照样能现场渲染。
+ * Beyond `maxPerClip` it thins out evenly, but **the first and last are always kept**: the clip
+ * start is the first frame of the entrance (the most often seen), and the end, for a hold card,
+ * is the settle frame (which takes up the longest time in the clip). Thinning only makes
+ * prerender coverage sparser; cells that are not covered can still be rendered on the spot.
  */
 export function sampleTimesFor(clip: TimedClip, motion: CardMotion, opts: SampleOpts = {}): number[] {
   const step = Math.max(1e-3, opts.stepSec ?? DEFAULT_STEP_SEC);
@@ -179,30 +204,33 @@ export function sampleTimesFor(clip: TimedClip, motion: CardMotion, opts: Sample
 
   const out: number[] = [];
   const live = alwaysMoving ? len : settle;
-  // 按**序号**取格子,不要 `rel += step` 累加 —— 累加出来的值 pickBakeT 吸附不回来(见 gridAt)
+  // Take cells by **index**, do not accumulate with `rel += step`: accumulated values cannot be snapped back by pickBakeT (see gridAt)
   for (let i = 0; ; i++) {
     const rel = gridAt(i, step);
     if (rel >= live - EPS) break;
     out.push(clip.start + rel);
   }
-  // 落定之后整段是同一帧,用落定那一刻当它的代表
+  // After settling the whole rest is the same frame, so use the settle moment as its representative
   if (!alwaysMoving) out.push(clip.start + settle);
   if (!out.length) out.push(clip.start);
 
   if (out.length <= cap) return out;
-  // 均匀抽稀,首尾必留
+  // Thin out evenly, always keep the first and last
   const thinned: number[] = [];
   for (let i = 0; i < cap; i++) thinned.push(out[Math.round((i * (out.length - 1)) / (cap - 1))]);
   return [...new Set(thinned)];
 }
 
 /**
- * 贴图缓存的键。**必须带上是哪一刻** —— 原来的键只有「哪张卡、什么参数、画布多大」,
- * 于是同一张卡的不同时刻算同一个键,换了时刻也不会重新取图,画面就停在第一次渲的那一帧。
+ * The texture cache key. **It must include which moment**: the old key had only "which card,
+ * what parameters, how big the canvas", so different moments of the same card computed the same
+ * key, and changing the moment would not fetch the image again, leaving the picture stuck on
+ * the first frame rendered.
  *
- * 位置和三维变换**不进键**:服务端预渲染的时候会把 frame 整个摘掉(见 bakeTarget),
- * 转一下卡片、推一下深度贴图一个像素都不会变。进了键的后果是在「三维」面板里拖滑杆,
- * 每一格都算缓存未命中,于是每一格发一次预渲染请求。
+ * Position and the 3D transform **are not in the key**: when the server prerenders it strips the
+ * whole frame (see bakeTarget), so rotating the card or nudging the depth map does not change a
+ * single pixel. Putting them in the key would mean that dragging a slider in the "3D" panel
+ * makes every step a cache miss, and so sends one prerender request per step.
  */
 export function texKeyOf(clip: TimedClip, bakeT: number): string {
   return [
@@ -215,8 +243,9 @@ export function texKeyOf(clip: TimedClip, bakeT: number): string {
 }
 
 /**
- * 显示的那一刻和播放头差了多少(秒)。给界面用:差得超过一格就该说出来是第几秒,
- * 别让人以为板子上就是当前这一帧 —— 沉默地显示另一个时刻正是原来那个 bug。
+ * How far the displayed moment is from the playhead (seconds). For the UI: when it is off by
+ * more than one cell, it should say which second it is, so people do not think the board shows
+ * the current frame. Silently showing another moment is exactly the original bug.
  */
 export function staleBy(bakeT: number, t: number): number {
   return Math.abs((Number.isFinite(t) ? t : bakeT) - bakeT);

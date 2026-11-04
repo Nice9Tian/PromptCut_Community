@@ -1,17 +1,19 @@
 /**
- * 3D 视图轨道流播放与停下就精确探针 (rr-bake3d-stream)。
+ * 3D view track stream playback and precise-on-pause probe (rr-bake3d-stream).
  *
- * 验收意图：
- *   1. 3D 模式开启（切到 3D 页）后，planDispatch 的 view3d 为 true，
- *      独立轻卡（如 punch-pill）纳入 prerenderSet（scene-3d 照旧除外）；
- *   2. 播放中 (playing: true)：
- *      - 绝对不向 /api/vision/bake-batch 或 /api/ui-render/bake-batch 发起渲染请求；
- *      - 3D 板子使用轨道流画面（且几何按 bound 收紧，不是拉伸为全屏）；
- *   3. 暂停态 (!playing)：
- *      - 发起当前时刻的精确单帧渲染；
- *      - 在精确图返回前保持流画面/占位作为过渡；到位后无缝切换为精确 PNG 快照。
+ * Acceptance goals:
+ *   1. After 3D mode is enabled (switch to 3D tab), planDispatch view3d is true, and standalone
+ *      light cards (such as punch-pill) are included in prerenderSet (scene-3d excluded as usual);
+ *   2. During playback (playing: true):
+ *      - Never send render requests to /api/vision/bake-batch or /api/ui-render/bake-batch;
+ *      - 3D board uses track stream visuals (with geometry tightened to bound, not stretched to
+ *        full screen);
+ *   3. Paused state (!playing):
+ *      - Initiate precise single-frame render for current time;
+ *      - Keep stream visuals/placeholder as transition until precise image returns; seamlessly
+ *        switch to precise PNG snapshot once available.
  *
- * 运行方式：
+ * Usage:
  *   node scripts/probes/preview-3d-stream-probe.mjs [--port 20020] [--out <dir>]
  */
 import '../lib/no-user-dirs.mjs';
@@ -80,7 +82,7 @@ try {
     serverProc.stdout.resume();
     serverProc.stderr.resume();
 
-    // 等待服务就绪
+    // Wait for service to be ready
     const deadline = Date.now() + 60000;
     let up = false;
     while (Date.now() < deadline) {
@@ -90,7 +92,7 @@ try {
       } catch {}
       await sleep(500);
     }
-    if (!up) throw new Error(`Dev server 启动超时: ${origin}`);
+    if (!up) throw new Error(`Dev server startup timed out: ${origin}`);
   }
 
   out.origin = origin;
@@ -127,18 +129,19 @@ try {
     return !!m.frontStage() && m.backRole() === 'back';
   }, { timeout: 120000, polling: 500 }).catch(() => {});
 
-  // 创建项目：包含 scene-3d（右后方）与 punch-pill（左前方），保证两者互不遮挡
+  // Create project: contains scene-3d (back right) and punch-pill (front left),
+  // ensuring neither blocks the other
   const ids = await page.evaluate(async () => {
     const { actions, getState } = await import('/src/store/project.ts');
     actions.newProject('3d-stream-test');
-    // scene-3d 挪到右侧偏后
+    // Move scene-3d to the right and slightly back
     const a = actions.addCardClip('scene-3d', 0, {
       duration: 8,
     });
     if (a?.id) {
       actions.setClipFrame(a.id, { x: 1200, y: 540, w: 750, h: 550, translateZ: -120, rotateY: -15 });
     }
-    // punch-pill 设在左前方，带倾角和深度
+    // Set punch-pill at front left, with tilt and depth
     const b = actions.addCardClip('punch-pill', 0, {
       duration: 8,
       params: { text: '3D Stream Test' },
@@ -150,11 +153,11 @@ try {
     return { scene: a?.id, pill: b?.id, clips: getState().project.tracks.reduce((n, t) => n + t.clips.length, 0) };
   });
   out.ids = ids;
-  check(ids.scene && ids.pill, '成功添加 scene-3d 与 punch-pill 片段', ids);
+  check(ids.scene && ids.pill, 'Successfully added scene-3d and punch-pill clips', ids);
 
   await sleep(1000);
 
-  // 切到 3D 选项卡
+  // Switch to 3D tab
   await page.evaluate(() => {
     const btn = [...document.querySelectorAll('[data-pc="preview-tabs"] button')].find((b) => b.textContent?.trim() === '3D');
     btn?.click();
@@ -162,7 +165,7 @@ try {
   await page.waitForSelector('.pc-3d-checker canvas', { timeout: 30000 });
   await sleep(1000);
 
-  // 1. 验证 3D 视图开启后 planDispatch 的 view3d 与 prerenderSet 行为
+  // 1. Verify planDispatch view3d and prerenderSet behavior after enabling 3D view
   const planInfo = await page.evaluate(async (pillId, sceneId) => {
     const { plan3DView, currentPlan } = await import('/src/editor/planDispatch.ts');
     const plan = currentPlan();
@@ -173,11 +176,11 @@ try {
     };
   }, ids.pill, ids.scene);
   out.planInfo = planInfo;
-  check(planInfo.view3d === true, '切到 3D 视图时 plan3DView() 为 true', planInfo);
-  check(planInfo.pillInPrerenderSet === true, '3D 模式下 punch-pill 独立轻卡纳入 prerenderSet', planInfo);
-  check(planInfo.sceneInPrerenderSet === false, '3D 模式下 scene-3d 真三维卡不纳入 prerenderSet', planInfo);
+  check(planInfo.view3d === true, 'plan3DView() is true when switching to the 3D view', planInfo);
+  check(planInfo.pillInPrerenderSet === true, 'In 3D mode the standalone light card punch-pill is included in prerenderSet', planInfo);
+  check(planInfo.sceneInPrerenderSet === false, 'In 3D mode the true 3D card scene-3d is not included in prerenderSet', planInfo);
 
-  // 触发并等待预渲染进程产出 punch-pill 的轨道流
+  // Trigger and wait for prerender process to produce punch-pill track stream
   const streamReadyDeadline = Date.now() + 120000;
   let streamReady = false;
   let lastDiag = null;
@@ -224,9 +227,9 @@ try {
   out.streamReady = streamReady;
   out.lastDiag = lastDiag;
   out.lastReadyIndex = lastReadyIndex;
-  check(streamReady, 'punch-pill 轨道流已在父页就绪索引中 ready', { streamReady, lastReadyIndex, lastDiag: out.lastDiag?.streams?.stats });
+  check(streamReady, 'The punch-pill track stream is already ready in the ready index of the parent page', { streamReady, lastReadyIndex, lastDiag: out.lastDiag?.streams?.stats });
 
-  // 2. 播放测试：播放中绝对不发 bake-batch 请求，在两个不同时刻分别截图
+  // 2. Playback test: never send bake-batch requests during playback; screenshot at two different times
   bakeRequestsWhilePlaying = 0;
   isCurrentlyPlaying = true;
   await page.evaluate(async () => {
@@ -235,64 +238,65 @@ try {
   });
   await page.click('.pc-pv-btn--play');
 
-  // 等待播放推进至 t ≈ 0.3s
+  // Wait for playback to advance to t ≈ 0.3s
   await sleep(350);
   const headT1 = await page.evaluate(async () => {
     const { getState } = await import('/src/store/project.ts');
     return { t: getState().t, playing: getState().playing };
   });
   out.headT1 = headT1;
-  check(headT1.playing === true, '时刻 1 播放中 playing 为 true', headT1);
+  check(headT1.playing === true, 'At time point 1, during playback, playing is true', headT1);
 
-  // 截图 1：播放中时刻 1
+  // Screenshot 1: playback moment 1
   const playingT1Path = path.join(OUT_DIR, '3d-playing-t1.png');
   await page.screenshot({ path: playingT1Path });
   out.playingT1Screenshot = playingT1Path;
 
-  // 继续播放至 t ≈ 1.5s
+  // Continue playback to t ≈ 1.5s
   await sleep(1200);
   const headT2 = await page.evaluate(async () => {
     const { getState } = await import('/src/store/project.ts');
     return { t: getState().t, playing: getState().playing };
   });
   out.headT2 = headT2;
-  check(headT2.playing === true, '时刻 2 播放中 playing 为 true', headT2);
-  check(headT2.t > headT1.t, '播放头从时刻 1 持续前进至时刻 2', { t1: headT1.t, t2: headT2.t });
-  check(bakeRequestsWhilePlaying === 0, '播放中严禁调用 /bake-batch', { bakeRequestsWhilePlaying });
+  check(headT2.playing === true, 'At time point 2, during playback, playing is true', headT2);
+  check(headT2.t > headT1.t, 'The playhead keeps advancing from time point 1 to time point 2', { t1: headT1.t, t2: headT2.t });
+  check(bakeRequestsWhilePlaying === 0, '/bake-batch must never be called during playback', { bakeRequestsWhilePlaying });
 
-  // 截图 2：播放中时刻 2
+  // Screenshot 2: playback moment 2
   const playingT2Path = path.join(OUT_DIR, '3d-playing-t2.png');
   await page.screenshot({ path: playingT2Path });
   out.playingT2Screenshot = playingT2Path;
 
-  // 3. 暂停测试：停下就精确
+  // 3. Pause test: precise on pause
   isCurrentlyPlaying = false;
   await page.click('.pc-pv-btn--play');
 
-  // 等待暂停状态生效并触发停下精确渲染（parked 延迟 500ms，开始请求 bake-batch）
+  // Wait for paused state and trigger precise-on-pause render
+  // (parked delay 500ms, start bake-batch request)
   await sleep(1000);
 
-  // 等待 .pc-3d-note 烘焙提示彻底消失（精确 PNG 快照渲染并贴上完成）
+  // Wait for .pc-3d-note bake notice to completely disappear (precise PNG snapshot rendered and applied)
   await page.waitForFunction(() => {
     const note = document.querySelector('.pc-3d-note');
     return !note || note.textContent === '';
   }, { timeout: 60000, polling: 500 }).catch(() => {});
 
-  await sleep(800); // 确保最后一次 raf 渲染完毕并上屏
+  await sleep(800); // Ensure the last raf finishes rendering and is painted to screen
 
   const headAfterPause = await page.evaluate(async () => {
     const { getState } = await import('/src/store/project.ts');
     return { t: getState().t, playing: getState().playing };
   });
   out.headAfterPause = headAfterPause;
-  check(headAfterPause.playing === false, '暂停后 playing 变为 false', headAfterPause);
+  check(headAfterPause.playing === false, 'playing becomes false after pause', headAfterPause);
 
-  // 截图 3：暂停后精确渲染
+  // Screenshot 3: precise render after pause
   const pausedExactPath = path.join(OUT_DIR, '3d-paused-exact.png');
   await page.screenshot({ path: pausedExactPath });
   out.pausedExactScreenshot = pausedExactPath;
 
-  // 4. 切回 2D 视图时 view3d 应恢复为 false
+  // 4. Switching back to 2D view should restore view3d to false
   await page.evaluate(() => {
     const btn = [...document.querySelectorAll('[data-pc="preview-tabs"] button')].find((b) => b.textContent?.trim() === '2D');
     btn?.click();
@@ -303,10 +307,10 @@ try {
     return plan3DView();
   });
   out.view3dAfter2D = view3dAfter2D;
-  check(view3dAfter2D === false, '切回 2D 视图后 plan3DView() 恢复为 false', { view3dAfter2D });
+  check(view3dAfter2D === false, 'plan3DView() returns to false after switching back to the 2D view', { view3dAfter2D });
 
   out.errors = errors.filter((e) => !/favicon|Download the React DevTools|Failed to load resource/i.test(e));
-  check(out.errors.length === 0, '页面无未捕获异常', out.errors);
+  check(out.errors.length === 0, 'no uncaught exceptions on the page', out.errors);
 } catch (err) {
   fails.push('exception: ' + (err?.stack || err));
 } finally {

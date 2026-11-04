@@ -1,27 +1,39 @@
 /**
- * 画布直取(渲染重构「己一」,`docs/plan/prerender-products-contract.md` 第 6.1、6.2 节)—— 页面一侧。
+ * Direct canvas grab (render refactor "Ji-1", `docs/plan/prerender-products-contract.md`
+ * sections 6.1 and 6.2): page side.
  *
- * 画布与 WebGL 的卡产轨道流时,预渲染进程不截图,直接问页面要「这张卡的画布此刻的像素」:
- * 页面把包裹层里唯一的那张 `<canvas>` 按它在舞台上的位置画进一张和截图矩形一样大的草稿画布,
- * 读出 straight RGBA(和截图出来的 PNG 同一种口径),交给 Node(`server/bakery/capture-canvas.mjs`)。
- * 只由导出页挂成 `window.__pcGrabCanvas`(`src/ExportView.tsx`),别处不用。
+ * When canvas and WebGL cards produce track streams, the prerender process does not take
+ * screenshots, but directly asks the page for "pixels of this card's canvas at this moment":
+ * the page draws the sole `<canvas>` in the wrapper layer into a draft canvas of the same size
+ * as the screenshot rectangle based on its position on the stage, reads out straight RGBA (same
+ * format as the screenshot PNG), and hands it to Node (`server/bakery/capture-canvas.mjs`).
+ * Only attached as `window.__pcGrabCanvas` by the export page (`src/ExportView.tsx`); not used
+ * anywhere else.
  *
- * # 画布怎么认
+ * # How to identify the canvas
  *
- * 包裹层(`[data-pc-clip="<片段 id>"]`)里**唯一**的 `<canvas>`;一张都没有或不止一张就不取。
- * 共享 WebGL 渲染器的平面(`[data-pc-gl-plane]`)取之前照 `snapshot/rasterizeCanvas.ts` 的办法核帧号:
- * `data-pc-gl-frame` 必须等于包裹层的 `data-pc-local-frame`,对不上就是这一帧的位图还没贴上(或贴的是别的帧),
- * 回 `gl-frame`,**不交出空图**。
+ * The **sole** `<canvas>` inside wrapper layer (`[data-pc-clip="<clip id>"]`); if there is none
+ * or more than one, skip grabbing. Before grabbing a plane sharing the WebGL renderer
+ * (`[data-pc-gl-plane]`), verify frame number following `snapshot/rasterizeCanvas.ts`:
+ * `data-pc-gl-frame` must equal the wrapper layer's `data-pc-local-frame`; a mismatch means this
+ * frame's bitmap has not been pasted yet (or another frame was pasted), returning `gl-frame`
+ * and **not handing over an empty image**.
  *
- * 这里不判「卡片的画面是不是全在画布里」(画布外面还有别的元素、祖先带不透明度或滤镜、像素尺寸和排版尺寸不一致):
- * 那一道由 Node 拿这里交出的像素和同一帧的截图比(契约第 6.1 节第 2 道)。
+ * This does not check "whether the card's graphics are entirely within the canvas" (elements
+ * exist outside canvas, ancestors have opacity or filters, pixel and layout sizes mismatch):
+ * that check is performed by Node comparing handed-over pixels with the screenshot of the same
+ * frame (contract section 6.1, check 2).
  *
- * # 像素怎么交
+ * # How to hand over pixels
  *
- * 经 CDP 回一个 base64 字符串。CDP 搬大字符串很慢(实测 1080p 一帧原始像素 8.3 MB 要 90 毫秒左右,比截图慢几倍),
- * 所以先把**全透明的像素游程**压掉:输出是一串 `[跳过几个像素, 接着几个像素, 这些像素的 RGBA…]`(小端 32 位),
- * 画布卡多数画面大半透明,压完只剩几十到几百 KB。压完不比原样小就原样交。
- * `maxBytes`:压完超过这么多字节就不交(回 `dense`),由调用方改走截图。
+ * Returns a base64 string via CDP. Transferring large strings over CDP is slow (measured at
+ * ~90 ms for 8.3 MB raw pixels of a 1080p frame, several times slower than screenshots), so
+ * **runs of fully transparent pixels** are compressed away first: output is a sequence of
+ * `[skip N pixels, next N pixels, RGBA of these pixels...]` (little-endian 32-bit). Most canvas
+ * card graphics are largely transparent, leaving only tens to hundreds of KB after compression.
+ * If compressed size is not smaller than original, deliver as-is.
+ * `maxBytes`: if compressed size exceeds this many bytes, do not deliver (return `dense`),
+ * letting the caller fall back to screenshots.
  */
 
 export interface CanvasGrabRect { x: number; y: number; w: number; h: number }
@@ -30,7 +42,7 @@ export type CanvasGrab =
   | { ok: true; w: number; h: number; packed: boolean; b64: string; bytes: number; readMs: number; packMs: number }
   | { ok: false; reason: string; bytes?: number; readMs?: number; packMs?: number };
 
-/** 导出页的 `performance.now` 被钉在导出毫秒上(`kernel/exportClock.ts`),量真实耗时要绕开实例上的那一层 */
+/** The export page's `performance.now` is pinned to export milliseconds (`kernel/exportClock.ts`); measuring real elapsed time must bypass that layer on the instance */
 const realNow = (): number => {
   try { return Performance.prototype.now.call(performance); } catch { return 0; }
 };
@@ -43,7 +55,7 @@ function scratchFor(w: number, h: number): CanvasRenderingContext2D | null {
     scratch = document.createElement("canvas");
     scratch.width = w;
     scratch.height = h;
-    // 只读不显示:让它留在内存里,`getImageData` 不必从显存读回
+    // Read-only, not displayed: keep it in memory so `getImageData` does not need to read back from VRAM
     scratchCtx = scratch.getContext("2d", { willReadFrequently: true });
   }
   return scratchCtx;
@@ -51,13 +63,15 @@ function scratchFor(w: number, h: number): CanvasRenderingContext2D | null {
 
 let packBuffer: Uint32Array | null = null;
 
-/** 把全透明的像素游程压掉。回压好的字节(下一次调用会改写它);不比原样小回 null */
+/** Compress away runs of fully transparent pixels. Returns compressed bytes (overwritten by the next call); returns null if not smaller than original */
 export function packTransparentRuns(rgba: Uint8ClampedArray | Uint8Array): Uint8Array | null {
   if (rgba.byteOffset % 4 || rgba.byteLength % 4) return null;
   const px = new Uint32Array(rgba.buffer, rgba.byteOffset, rgba.byteLength >> 2);
   const n = px.length;
-  // 最坏情况(透明与不透明逐像素交替)每个像素多带两个头,只按原样大小留地方,写不下就放弃。
-  // 缓冲区留着下一帧接着用(调用方拿到结果立刻转成 base64,不留引用)
+  // In the worst case (transparent and opaque alternate pixel-by-pixel), each pixel carries two extra
+  // headers; only reserve space for original size, and abort if it does not fit.
+  // The buffer is retained for reuse in the next frame (caller converts result to base64 immediately
+  // without retaining references).
   if (!packBuffer || packBuffer.length < n) packBuffer = new Uint32Array(n);
   const out = packBuffer;
   let o = 0, i = 0;
@@ -80,16 +94,17 @@ export function packTransparentRuns(rgba: Uint8ClampedArray | Uint8Array): Uint8
 function toBase64(bytes: Uint8Array): string {
   const native = (bytes as unknown as { toBase64?: () => string }).toBase64;
   if (typeof native === "function") return native.call(bytes);
-  // 旧内核没有 `Uint8Array.prototype.toBase64`:分块拼字符串再 `btoa`(慢,但结果相同)
+  // Older engines lack `Uint8Array.prototype.toBase64`: chunk and concatenate strings then `btoa` (slow, but identical result)
   let s = "";
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000) as unknown as number[]);
   return btoa(s);
 }
 
 /**
- * 取片段 `clipId` 的画布在舞台矩形 `rect`(整数,场景坐标)里的像素。
- * 回 `{ ok: true, w, h, packed, b64, … }`,或 `{ ok: false, reason }`(`no-wrapper` / `canvas-count:<n>` /
- * `gl-frame` / `empty-canvas` / `no-context` / `unreadable` / `dense`)。
+ * Grab pixels of clip `clipId`'s canvas within stage rectangle `rect` (integers, scene
+ * coordinates). Returns `{ ok: true, w, h, packed, b64, … }`, or `{ ok: false, reason }`
+ * (`no-wrapper` / `canvas-count:<n>` / `gl-frame` / `empty-canvas` / `no-context` /
+ * `unreadable` / `dense`).
  */
 export function grabCanvasPixels(clipId: string, rect: CanvasGrabRect, opts: { maxBytes?: number } = {}): CanvasGrab {
   const t0 = realNow();
@@ -117,7 +132,8 @@ export function grabCanvasPixels(clipId: string, rect: CanvasGrabRect, opts: { m
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
     ctx.clearRect(0, 0, w, h);
-    // 画布按它的排版框摆:像素尺寸和排版尺寸不一致时这里会缩放,和合成器缩得一不一样由 Node 那一侧的实测判
+    // Canvas is placed according to its layout box: scaled here when pixel and layout sizes mismatch;
+    // whether scaling matches compositor is verified by tests on Node side.
     ctx.drawImage(canvas, box.left - (scene?.left ?? 0) - rect.x, box.top - (scene?.top ?? 0) - rect.y, box.width, box.height);
     data = ctx.getImageData(0, 0, w, h).data;
   } catch {

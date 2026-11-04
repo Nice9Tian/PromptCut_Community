@@ -1,6 +1,8 @@
 /**
- * 多项目模式的两支逐帧比对探针共用的测试项目与比对（`multi-project-expand-probe.mjs`：看画面那一路；`multi-project-stream-probe.mjs`：产流那一路）。
- * 不是探针本身，不单独跑。
+ * Shared test project and comparison for the two frame-by-frame comparison probes in multi-project
+ * mode (`multi-project-expand-probe.mjs`: frame viewing path; `multi-project-stream-probe.mjs`:
+ * stream generation path).
+ * Not a probe itself, not run standalone.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -33,7 +35,7 @@ export function testProject({ v1, v2, img }) {
     ],
     filters: [{ id: 'f-blur', name: 'blur', kind: 'blur', params: {} }],
     transitions: [{ id: 'x1', kind: 'crossfade', aId: 'clip-va', bId: 'clip-vb', dur: 1 }],
-    // tracks[0] 是最上层（kernel/project.ts「序列」）：卡在上、剪辑段其次、素材在最下
+    // tracks[0] is the top layer (kernel/project.ts "Tracks"): cards on top, cut segments next, assets at the bottom
     tracks: [
       { id: 't-cards-1', name: 'cards 1', clips: [
         { id: 'c-odo', cardId: 'odometer', start: 0, end: 3, params: {} },
@@ -62,7 +64,7 @@ export function testProject({ v1, v2, img }) {
   };
 }
 
-/** 把一份项目交给导出页，取这几帧（项目帧号）的 PNG */
+/** Pass a project to the export page to fetch PNGs of these frames (project frame numbers) */
 export async function renderFrames(origin, project, frames, dir) {
   const url = `${origin}/?export=1&timeline=${encodeURIComponent('data:application/json,' + encodeURIComponent(JSON.stringify(project)))}`;
   const out = await exportUnified(project, { url, out: dir, targetFrames: frames, noVideo: true });

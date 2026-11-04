@@ -7,13 +7,19 @@ import { timelineDigest } from "../tools/toolEcho";
 import { clipGuard } from "../common";
 
 /**
- * 剪辑段的 Agent 工具(`product/project-model.md`「剪辑」「片段」,kernel/cutSegments.ts):
- *   - `add_cut_segment`:在激活剪辑里放一个引用别的剪辑的剪辑段;放进自己、会循环引用(任意深度)时拒绝并说明原因;
- *   - `set_cut_segment`:改剪辑段从被引用剪辑的哪一秒开始;引用哪条剪辑不能改(2026-10-21 用户定),带了 cutId / name 就拒(起止、框、不透明度、淡入淡出用 update_clip /
- *     set_position / set_rect,音量与静音用 set_clip_volume / set_clip_muted,切分与复制用 split_clip / duplicate_clip)。
+ * Agent tools for cut segments (`product/project-model.md` "Cut", "Clip", kernel/cutSegments.ts):
+ *   - `add_cut_segment`: place a cut segment referencing another cut into the active cut; reject
+ *     and explain the reason when placing into itself or causing circular reference (at any depth);
+ *   - `set_cut_segment`: modify which second of the referenced cut the cut segment starts from;
+ *     which cut is referenced cannot be changed (user decision, 2026-10-21), reject if cutId / name
+ *     is passed (use update_clip / set_position / set_rect for start/end, box, opacity, fade;
+ *     use set_clip_volume / set_clip_muted for volume and mute; use split_clip / duplicate_clip
+ *     for split and duplicate).
  *
- * 两个工具在 `EditorApi`(src/ai/mcpExecutor.ts)上各有自己的方法,路由表(src/mcp/routes.mjs)直连;
- * 本机(编辑台的工具执行器)与云端(托管档在项目副本上执行,server/agent/ssr-host.mjs)走同一张表、同一份实现。
+ * Both tools have their own methods on `EditorApi` (src/ai/mcpExecutor.ts), directly connected via
+ * the routing table (src/mcp/routes.mjs); local (tool executor in editor) and cloud (hosted tier
+ * executing on project replicas, server/agent/ssr-host.mjs) share the same table and the same
+ * implementation.
  */
 type Args = Record<string, any>;
 
@@ -27,7 +33,8 @@ function segmentInfo(clipId: string) {
   return {
     clipId: c.id, trackId: hit.track.id, cutId: c.cutId!, cutName: name, cutOffset: c.cutOffset ?? 0,
     start: c.start, end: c.end, cutDuration: total,
-    // 被引用剪辑事后变短:超出它总时长的那一截透明无声
+    // When the referenced cut becomes shorter after the fact: the portion exceeding its total duration
+    // is transparent and silent
     beyondCutEnd: Math.max(0, (c.end - c.start) - Math.max(0, total - (c.cutOffset ?? 0))),
     ...(c.frame ? { frame: c.frame } : {}), ...(c.opacity !== undefined ? { opacity: c.opacity } : {}),
     ...(c.fadeIn ? { fadeIn: c.fadeIn } : {}), ...(c.fadeOut ? { fadeOut: c.fadeOut } : {}),
@@ -41,7 +48,7 @@ export const cutSegmentHandlers: Pick<EditorApi, "addCutSegment" | "setCutSegmen
     const cut = resolveCut(p, { cutId: args.cutId, name: args.name });
     const reason = p.activeCutId ? cutCycleReason(p, p.activeCutId, cut.id) : null;
     if (reason) throw new Error(reason);
-    if (typeof args.start !== "number" || !Number.isFinite(args.start) || args.start < 0) throw new Error(`start 必须是不小于 0 的秒数,收到 ${JSON.stringify(args.start)}`);
+    if (typeof args.start !== "number" || !Number.isFinite(args.start) || args.start < 0) throw new Error(`start must be a number of seconds not less than 0, received ${JSON.stringify(args.start)}`);
     const clip = actions.addCutSegment(cut.id, args.start, {
       ...(args.trackId ? { trackId: String(args.trackId) } : {}),
       ...(typeof args.duration === "number" ? { duration: args.duration } : {}),
@@ -53,12 +60,13 @@ export const cutSegmentHandlers: Pick<EditorApi, "addCutSegment" | "setCutSegmen
   setCutSegment: (args: Args) => {
     const p = getState().project;
     const hit = findClip(p, String(args.clipId ?? ""));
-    if (!hit) throw new Error(`找不到 clip ${args.clipId}`);
-    if (!isCutSegment(hit.clip)) throw new Error(`clip ${args.clipId} 不是剪辑段;卡片段、素材段用 update_clip`);
-    // 引用哪条剪辑不能改(2026-10-21 用户定):要换就删掉这段重新放
+    if (!hit) throw new Error(`clip ${args.clipId} not found`);
+    if (!isCutSegment(hit.clip)) throw new Error(`clip ${args.clipId} is not a cut segment; use update_clip for card clips and media clips`);
+    // Which cut is referenced cannot be changed (user decision, 2026-10-21): to change it, delete this
+    // segment and place it again
     if (args.cutId !== undefined || args.name !== undefined) throw new Error(CUT_SEGMENT_REF_FIXED);
     if (args.cutOffset !== undefined && (typeof args.cutOffset !== "number" || !Number.isFinite(args.cutOffset) || args.cutOffset < 0)) {
-      throw new Error(`cutOffset 必须是不小于 0 的秒数,收到 ${JSON.stringify(args.cutOffset)}`);
+      throw new Error(`cutOffset must be a number of seconds not less than 0, received ${JSON.stringify(args.cutOffset)}`);
     }
     actions.setCutSegment(hit.clip.id, { ...(args.cutOffset !== undefined ? { cutOffset: args.cutOffset } : {}) });
     clipGuard.noteMutation();
@@ -66,17 +74,20 @@ export const cutSegmentHandlers: Pick<EditorApi, "addCutSegment" | "setCutSegmen
   },
 };
 
-/** remove_cut 的门槛:有内容、或被别的剪辑引用着,都要 force + reason;返回删前说明 */
+/**
+ * Gate for remove_cut: if it has content or is referenced by other cuts, require force + reason;
+ * return pre-deletion explanation
+ */
 export function removeCutGate(cutId: string, force: boolean, reason?: string): string | null {
   const p = getState().project;
   const info = listCuts(p).find((c) => c.id === cutId)!;
   const refs = cutReferences(p, cutId).filter((r) => r.cutId !== cutId);
   if (refs.length && !force) {
-    const list = refs.map((r) => `「${r.name}」(${r.clipIds.length} 段:${r.clipIds.join("、")})`).join("、");
-    return `「${info.name}」正被这些剪辑引用:${list}。删除会连同引用它的剪辑段一起删掉(可撤销);确实要删就传 force:true 并在 reason 里写明理由`;
+    const list = refs.map((r) => `"${r.name}" (${r.clipIds.length} segments: ${r.clipIds.join(", ")})`).join(", ");
+    return `"${info.name}" is referenced by these cuts: ${list}. Deleting it will also delete the cut segments that reference it (undoable); if you really want to delete, pass force:true and state the reason in reason`;
   }
-  if (info.clipCount > 0 && !force) return `「${info.name}」里有 ${info.clipCount} 段内容,不能直接删;确实要删就传 force:true 并在 reason 里写明理由`;
-  if (force && !(reason && reason.trim())) return "force 删除必须在 reason 里写明理由";
+  if (info.clipCount > 0 && !force) return `"${info.name}" contains ${info.clipCount} segments of content and cannot be deleted directly; if you really want to delete, pass force:true and state the reason in reason`;
+  if (force && !(reason && reason.trim())) return "A force delete must state the reason in reason";
   return null;
 }
 

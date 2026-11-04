@@ -1,18 +1,23 @@
 /**
- * 在线双舞台的成本记录存在页面内快照库 L2 的 `costs` 表里(C10 契约第 3 节:「成本记录以 `mode=build` 按卡片身份与本机环境指纹为键
- * 写进 L2 的 `costs` 表;关掉再开,已有记录的卡不再测」)。
+ * Cost records for online dual stage are stored in the `costs` table of in-page snapshot store L2
+ * (C10 contract Section 3: "Cost records are written to the `costs` table in L2 with `mode=build`,
+ * keyed by card identity and local environment fingerprint; after closing and reopening, cards
+ * with existing records are not measured again").
  *
- * 形状同桌面编辑器进程的 `GET / PUT /api/data/costs`(`src/editor/probeRunner.ts` 的成本后端):
- *   - `load()` 回 `{ costs, tuning }`(在线页面没有编辑器进程给的可调系数,用缺省);
- *   - `save(records)` 按 `(identityKey, device)` 整条替换(同 `costs-store.mjs` 的 upsert 键)。
+ * Shape matches desktop editor process `GET / PUT /api/data/costs`
+ * (cost backend of `src/editor/probeRunner.ts`):
+ *   - `load()` returns `{ costs, tuning }` (online pages do not have tunable coefficients
+ *     provided by editor process, uses defaults);
+ *   - `save(records)` replaces whole entries by `(identityKey, device)`
+ *     (same upsert key as `costs-store.mjs`).
  *
- * 本模块属于 render 这一层(`src/online/`):只引 render 与同目录。
+ * This module belongs to the render layer (`src/online/`): only imports render and current directory.
  */
 import type { CardCostRecord } from "../render/cardCostKey.mjs";
 import { resolveTuning, type PipelineTuning } from "../render/pipelineTuning.mjs";
 import type { L2Store } from "./l2";
 
-/** 一条成本记录在 `costs` 表里的键:卡片身份 + 本机环境(`device` 串里已含环境指纹、运行模式与可调系数) */
+/** Cost record key in `costs` table: card identity + local environment (`device` string contains environment fingerprint, running mode, and tunable coefficients) */
 export const costKeyOf = (r: Pick<CardCostRecord, "identityKey" | "device">): string => `${r.identityKey}\n${r.device}`;
 
 const validRecord = (r: unknown): r is CardCostRecord =>

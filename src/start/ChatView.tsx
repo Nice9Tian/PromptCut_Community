@@ -1,17 +1,26 @@
 /**
- * 聊天页:侧栏里点一条项目 Agent(云端 Agent 对话)就进这里(界面形状用户 2026-10-23 定)。
+ * Chat page: clicking a project Agent (Cloud Agent chat) in the sidebar comes here (UI shape: user
+ * decision, 2026-10-23).
  *
- * 形状照手机 App 里那种对话:中间是消息,下面是贴底的输入框。自己说的话靠右、强调色气泡;Agent 说的话靠左、
- * 面板色气泡,前面放一个星芒头像 —— 和编辑器右栏那套一致(`src/editor/right/chat/MessageList.tsx`)。
+ * The shape follows the chats in a mobile app: messages in the middle, a bottom-pinned input box below.
+ * Your own messages go on the right in accent-color bubbles; Agent messages go on the left in
+ * panel-color bubbles, with a sparkle avatar in front: consistent with the editor's right rail
+ * (`src/editor/right/chat/MessageList.tsx`).
  *
- * 2026-10-23 接上业务层(`docs/reports/AGENT-claude-vibe-wire.md`):消息、发送、停止都是真的,数据和动作由
- * 调用方按 `vibeAgent.ts` 的 `VibeAgent` 给 —— 在线浏览器是云端 Agent(`useVibeCloud.ts`),桌面版是本机的
- * CLI / API Agent(`useVibeLocal.ts`,和编辑界面 AI 栏同一套)。这一页对两种一视同仁,不认具体是哪一种。
- *   - 一轮回复按 `product/agent.md`「汇报」拆:气泡里只放 Agent 说的「在做什么」,做过的操作列在「Agent 操作」那一块
- *     (拆法与手机版共用 `src/mobile/agentView.ts` 的 `roundView`);
- *   - 自己的消息云端还没收下之前写明发送状态,没发出去写原因;共有对话里别人发的标上是谁;
- *   - 对话是空的时候只有一条示例句(`workflow/production.md`「用户发送指令」),点它填进输入框;
- *   - 发不了(只读成员、创建者看别人的私有对话、开关关着)时输入框置灰,下面那一行写为什么。
+ * 2026-10-23: connected to the business layer (`docs/reports/AGENT-claude-vibe-wire.md`): messages, send
+ * and stop are all real, and the data and actions are supplied by the caller per `VibeAgent` in
+ * `vibeAgent.ts`: the online browser uses the Cloud Agent (`useVibeCloud.ts`), and the desktop app uses
+ * the local CLI / API Agent (`useVibeLocal.ts`, the same set as the editor's AI panel). This page treats
+ * both alike and does not care which one it is.
+ *   - A round of reply is split per "Report" in `product/agent.md`: the bubble holds only what the Agent
+ *     says about "what it is doing", and the operations done are listed in the "Agent actions" block
+ *     (the split is shared with the mobile app via `roundView` in `src/mobile/agentView.ts`);
+ *   - Before the cloud has accepted your own message, its sending status is shown, and if it was not
+ *     sent the reason is shown; in a shared chat, messages sent by others are labeled with who sent them;
+ *   - When the chat is empty there is only one example sentence (`workflow/production.md`, "User sends an
+ *     instruction"); click it to fill it into the input box;
+ *   - When sending is impossible (read-only member, the creator viewing someone else's private chat, the
+ *     switch is off) the input box is greyed out and the line below says why.
  */
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
@@ -29,7 +38,7 @@ import { DetailEdit } from "./DetailEdit";
 import type { VibeAgent } from "./vibeAgent";
 import { tr } from "../i18n/index.ts";
 
-/** 开始页那句话自动发出之前,选区连上之后再等多久(毫秒):给文档服务登记这张页面留的余量 */
+/** Before the sentence from the start page is sent automatically, how much longer to wait after the selection connects (milliseconds): leaves margin for the document service to register this page */
 const PENDING_SETTLE_MS = 2000;
 
 const MARK: Record<string, string> = { done: "✓", run: "…", todo: "·", err: "!", ask: "!" };
@@ -113,14 +122,14 @@ function AgentMessage(props: { m: ChatMessage; ordinal: number }): JSX.Element {
 
 export function ChatView(props: {
   vibe: VibeAgent;
-  /** 对话标题(顶栏上那一行);这里输入框的占位文字要用 */
+  /** Chat title (the line on the top bar); the input box placeholder here needs it */
   title: string;
-  /** 开始页上说的那句话:进了聊天页自动发出去一次(发过就由上层清掉) */
+  /** The sentence said on the start page: sent out automatically once on entering the chat page (cleared by the parent once sent) */
   pending: string | null;
   onPendingSent: () => void;
-  /** 右边那条拓展栏开着没有。开关在顶栏上(`TopBar.tsx`),所以状态拿在 `OnlineStart` */
+  /** Whether the side panel on the right is open. The toggle is on the top bar (`TopBar.tsx`), so the state is held in `OnlineStart` */
   panel: boolean;
-  /** 切到传统式(打开编辑界面);按钮在「详细编辑」的头上 */
+  /** Switch to Classic mode (opens the editor); the button is on the head of "Detail editing" */
   onPro: () => void;
   ext: {
     width: number;
@@ -132,15 +141,15 @@ export function ChatView(props: {
   const { vibe } = props;
   const messages = vibe.chat.messages;
   const [text, setText] = useState("");
-  /** 拓展栏、详细编辑里点出来的那句说明,显示在输入框下面 */
+  /** The note raised from the side panel or detail editing, shown under the input box */
   const [note, setNote] = useState("");
   const [detail, setDetail] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
   const tail = useRef<HTMLDivElement>(null);
   const convId = vibe.chat.conversationId;
 
-  // 换一条对话:没发出去的草稿不带过去。开始页带过来的那句话先放进输入框(看得见),就绪后自动发出;
-  // 没能发出去(拒绝了告知)就一直留在输入框里,不用重打
+  // Switching to another chat: an unsent draft is not carried over. The sentence brought from the start page is first put into the input box (visible) and sent automatically when ready;
+  // if it could not be sent (rejected with a notice), it stays in the input box and does not need retyping
   useEffect(() => {
     setText(props.pending ?? "");
     setNote("");
@@ -150,14 +159,18 @@ export function ChatView(props: {
   useEffect(() => { tail.current?.scrollIntoView({ block: "end" }); }, [messages]);
 
   /*
-   * 输入框此刻在哪(用户 2026-10-26 定,issue #4):详细编辑展开、拓展栏又开着时，它在拓展栏里那块
-   * 聊天面板的底部；其余三种组合都在聊天列底部。
+   * Where the input box is right now (user decision, 2026-10-26, issue #4): when detail editing is
+   * expanded and the side panel is also open, it is at the bottom of the chat panel in the side panel;
+   * in the other three combinations it is at the bottom of the chat column.
    *
-   * 所以人自己把拓展栏收了(顶栏最右那颗 `start-chat-ext-toggle`)，输入框就掉回聊天列底部，
-   * 详细编辑照开 —— 两颗开关各管各的，哪种组合都有地方说话。issue #4 嫌的是「默认就长在时间轴
-   * 正下方」，不是这个位置绝对不能用。
+   * So when the user collapses the side panel themselves (the rightmost button on the top bar,
+   * `start-chat-ext-toggle`), the input box drops back to the bottom of the chat column and detail editing
+   * stays open: the two switches each do their own job, and every combination has somewhere to talk.
+   * What issue #4 objected to was "it sits right under the timeline by default", not that this position
+   * can never be used.
    *
-   * 两处是同一个 `text`,草稿自己跟着走;换了地方 textarea 要重挂，焦点在这里补回来。
+   * Both places share the same `text`, so the draft follows by itself; the textarea remounts when it moves,
+   * and focus is restored here.
    */
   const inPanel = detail && props.panel;
   const placed = useRef(inPanel);
@@ -172,13 +185,13 @@ export function ChatView(props: {
     if (!t) return;
     setText("");
     const ok = await vibe.send(t);
-    // 没发出去(还没确认告知、被拒):原文放回输入框,不让人重打
+    // Not sent (not yet confirmed, rejected): put the original text back into the input box so the user does not retype it
     if (!ok) setText((cur) => cur || t);
   };
 
-  // 开始页上说的那句话:对话就绪(能发了)就发一次
-  // 还要等这张页面的选区在文档服务那边登记上:账号模式发消息带的是这张页面的选区快照,刚进项目那一下文档服务还没有这张页面,
-  // 立刻发会被拒(`selection-page-unavailable`)。手动发不会撞上(人打字比它慢),自动发的这一条等选区连上之后再等一小会儿
+  // The sentence said on the start page: send it once when the chat is ready (able to send)
+  // It must also wait until this page's selection is registered on the document service side: in account mode a sent message carries a snapshot of this page's selection, and right after entering a project the document service does not yet have this page,
+  // so sending immediately would be rejected (`selection-page-unavailable`). A manual send never hits this (people type slower than that), but this auto-sent one waits a little after the selection connects
   const pendingSent = useRef<string | null>(null);
   useEffect(() => {
     const p = props.pending;
@@ -210,13 +223,13 @@ export function ChatView(props: {
 
   const footNote = note
     || (vibe.whyNot && vibe.projectId ? vibe.whyNot : "")
-    // 云端的执行服务没在接活:和编辑器右栏同一句(`CloudAiPanel.tsx` 的 cloud-note)。本机 Agent 没有执行服务,恒为假
+    // The cloud execution service is not taking jobs: same sentence as the editor's right rail (cloud-note in `CloudAiPanel.tsx`). The local Agent has no execution service, always false
     || (vibe.waitingExecutor ? tr("Messages are queued persistently while waiting for the executor service; reopen to pick up where you left off.") : "")
 
     || (vibe.queued > 0 ? tr("{0} more ahead in the queue, running one turn at a time.", vibe.queued) : "")
     || vibe.hint;
 
-  // 同一个输入框,两个落点:要么在聊天列底部,要么在拓展栏那块面板里(见上面 `inPanel`)
+  // The same input box, two placements: either at the bottom of the chat column, or in the panel in the side panel (see `inPanel` above)
   const composer = (
     <Composer
       text={text}
@@ -276,7 +289,7 @@ export function ChatView(props: {
             </div>
           )}
 
-          {/* 详细编辑 + 拓展栏都开着时，这一块整个让出来,输入框搬进右边那块聊天面板 */}
+          {/* When detail editing + the side panel are both open, this whole block yields, and the input box moves into the chat panel on the right */}
           {!inPanel && composer}
         </div>
 

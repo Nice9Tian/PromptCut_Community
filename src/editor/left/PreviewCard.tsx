@@ -2,28 +2,33 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useReadOnly } from "../readOnly";
 
 /**
- * 左栏统一的预览卡:动效卡片、部件、转场、强调、视频、图像都长这样。
+ * The left rail's unified preview card: motion graphics cards, parts, transitions, emphasis, video and
+ * images all look like this.
  *
- * 一张卡 = 画面区 + 压在底边的标题条 + (可选)贴着底边的强调色进度条。
- * 画面区放什么由调用方决定(`preview`),这里只负责壳:尺寸、悬停、拖拽、右键、
- * 标题、角标、进度条、错误提示。悬停状态由这里维护并回传(`onHover`),视频要在悬停时
- * 才播、动效卡要在悬停时才起动画,都靠这一个信号。
+ * A card = picture area + a title bar pressed against the bottom edge + (optional) an accent-colored
+ * progress bar along the bottom edge.
+ * What goes in the picture area is up to the caller (`preview`); this only handles the shell: size, hover,
+ * drag, right click, title, corner badge, progress bar, error message. Hover state is maintained here and
+ * passed back (`onHover`); videos should only play on hover and motion graphics cards should only start
+ * animating on hover, both relying on this one signal.
  *
- * 尺寸两种给法:`fill` 铺满外面给的格子(瀑布流按 tileHeight 定好了高),否则按 `aspect`(高 / 宽,默认正方形)。
- * 媒体用 object-fit: cover 居中裁切。
+ * Size can be given in two ways: `fill` fills the cell given from outside (the masonry layout has already
+ * fixed the height by tileHeight), otherwise `aspect` (height / width, default square) is used.
+ * Media is center-cropped with object-fit: cover.
  *
- * 样式在 left.css 的 .pc-lib-card*。**不复用** `.cursor-grab.bg-neutral-900` 那套皮肤规则:
- * 它悬停时往卡片左边画一道 3px 的强调色内阴影,预览一铺满就成了漏进画面里的一条色边,
- * 这里的悬停态只描边、不画内阴影。
+ * Styles are in .pc-lib-card* of left.css. It **does not reuse** the `.cursor-grab.bg-neutral-900` skin
+ * rules: on hover they draw a 3px accent-colored inner shadow on the card's left edge, and once the preview
+ * fills the card that becomes a colored edge leaking into the picture. The hover state here only draws an
+ * outline, no inner shadow.
  */
 export interface PreviewCardProps {
   title: string;
   subtitle?: string;
-  /** 画面区内容。null 时只显示标题和说明(动效卡不悬停时就是这样) */
+  /** Picture area content. When null, only the title and description are shown (this is how a motion graphics card looks when not hovered) */
   preview: ReactNode;
-  /** 0..1,给底边画强调色进度条;null / undefined 不画 */
+  /** 0..1, draws the accent-colored progress bar along the bottom edge; null / undefined draws nothing */
   progress?: number | null;
-  /** 悬停延迟(毫秒):动效卡要等一下再起动画,免得鼠标扫过去就全体开演 */
+  /** Hover delay (milliseconds): a motion graphics card waits a moment before animating, so that sweeping the mouse across does not make them all perform at once */
   hoverDelayMs?: number;
   onHover?: (hot: boolean) => void;
   onClick?: () => void;
@@ -31,24 +36,26 @@ export interface PreviewCardProps {
   draggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onDragEnd?: (e: React.DragEvent) => void;
-  /** 一闪而过的错误提示(比如「没有动效轨」),非空就显示 */
+  /** A fleeting error message (e.g. "no motion track"), shown whenever non-empty */
   error?: string | null;
-  /** 画面区下面再接一行(转场页接缝卡的操作按钮) */
+  /** One more row below the picture area (the action buttons of a seam card on the transitions tab) */
   footer?: ReactNode;
-  /** 挂在根节点上的 data-* 之类,自动化测试靠它们定位 */
+  /** Things like data-* attributes set on the root node, which automated tests use to locate them */
   attrs?: Record<string, string>;
   titleAttr?: string;
-  /** 标题条什么时候显示:一直 / 只在悬停时(动效卡不悬停时名字已经写在画面区里) */
+  /** When the title bar is shown: always / only on hover (when a motion graphics card is not hovered, its name is already written in the picture area) */
   caption?: "always" | "hover";
-  /** 高 / 宽;不给是正方形。fill 时不看它 */
+  /** Height / width; square if not given. Ignored when fill is set */
   aspect?: number;
-  /** 左下角的深色小胶囊(视频时长 0:13) */
+  /** Small dark pill at the bottom left (video duration 0:13) */
   badge?: ReactNode;
-  /** 铺满父容器(瀑布流的格子) */
+  /** Fill the parent container (a masonry cell) */
   fill?: boolean;
   /**
-   * 点它或拖它会改项目(加到时间轴、加进组合卡、给片段套强调 / 转场)。这个项目只给了只读权限(游客)时,
-   * 带这一项的卡不接点击和拖动,悬停写明原因;悬停预览、右键菜单这类只看的照常。
+   * Clicking or dragging it changes the project (add to the timeline, add into a composite card, apply
+   * emphasis / a transition to a clip). When this project only grants read-only access (guest), a card with
+   * this item does not accept clicks or drags, and hovering states the reason; view-only things such as hover
+   * preview and the right-click menu work as usual.
    */
   edits?: boolean;
 }
@@ -85,7 +92,7 @@ export function PreviewCard(props: PreviewCardProps) {
     setHotBoth(false);
   };
 
-  // 卸载时别留着定时器,也别让父级以为还悬停着
+  // On unmount, do not leave a timer behind, and do not let the parent think it is still hovered
   useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
 
   const showCaption = caption === "always" || hot;

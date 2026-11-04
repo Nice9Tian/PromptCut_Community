@@ -1,8 +1,10 @@
 /**
- * 在线页面发布清单计划(C10 契约第 7 节、第 18 节第 9 条):形状与队列侧逐字段相同、队列的入站校验收它;
- * 测量落定后才发、防抖、改了重发、同一版不重发;requires 不带 envFingerprint / preferNode,codeVersion 给了才写;
- * 没人认领、发不出去都不抛。
- * 跑:node --test src/online/planPublisher.test.mjs
+ * Online page publishes manifest plan (C10 contract section 7, section 18 item 9): field-by-field shape
+ * matches queue side, queue inbound validation accepts it;
+ * sent only after measurement settles, debounced, resent on change, same version not resent;
+ * requires does not include envFingerprint / preferNode, codeVersion written only when provided;
+ * neither unclaimed tasks nor failed sends throw.
+ * Run: node --test src/online/planPublisher.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -21,7 +23,7 @@ test("C10-PP-01 the shape is identical field by field to the queue-side clipsPla
   assert.equal(clipsSig(["b", "a"]), backfillSig(["a", "b", "a"]));
   const t = clipsPlanTask({ projectId: "p", projectRev: 1, clips: ["x"] });
   assert.equal(t.priority, "normal");
-  assert.deepEqual(t.requires, {}, "不带 envFingerprint、preferNode");
+  assert.deepEqual(t.requires, {}, "Does not carry envFingerprint or preferNode");
 });
 
 function fakeQueue({ fail = null } = {}) {
@@ -132,7 +134,7 @@ test("C10-PP-04 endpoint shape: waits for the reply by reqId, forwards the task.
   assert.deepEqual(events, ["task.done"]);
 });
 
-/** 带虚拟时钟的计时器:`runFor(ms)` 按到期先后跑,时钟跟着走 */
+/** Timer with virtual clock: `runFor(ms)` runs in expiration order, clock advances accordingly */
 function clockTimers() {
   let t = 0;
   let q = [];
@@ -192,7 +194,7 @@ test("M7-PP-06 node never finishes checking in: waits at most 3 s, sends anyway 
   assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 1, "Sent anyway at 3 s");
   assert.equal(pub.debug().log.at(-1).waitedMs, BROWSER_NODE_WAIT_MS);
   assert.equal(pub.debug().nodeWaitMs, null);
-  // 下一版:节点还是没报到完,重新等(每一版各等一次)
+  // Next version: nodes still have not all checked in, wait again (wait once for each version)
   pub.changed({ projectId: "p", projectRev: 2 });
   await c.runFor(PLAN_DEBOUNCE_MS + 100);
   assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 1);
@@ -210,7 +212,7 @@ test("M7-PP-06 node never finishes checking in: waits at most 3 s, sends anyway 
   none.dispose();
 });
 
-/* ---------------- 托管方渲染节点的「生成轨道流」(任务书 `docs/plan/render-refactor-task.md`「甲三」):打开后当场生效 ---------------- */
+/* ---------------- Host render node "generate track stream" (task brief `docs/plan/render-refactor-task.md` "Jia-3"): takes effect immediately when enabled ---------------- */
 
 const PAGE_CARDS = { cardEnvFingerprint: "0123456789abcdef", userCards: true, graphCards: false, cardSources: { "user:a": "v1" } };
 
@@ -224,7 +226,7 @@ test("C10-PP-ST-01 this option is off (or not given): result key and input are i
     }
     assert.equal("streams" in plain.input, false);
   }
-  // 钉住原来的写法:没有附加内容时签名就是清单本身的签名(改动之前的公式)
+  // Pin down original behavior: with no extra content, signature is manifest's own signature (formula before change)
   assert.equal(clipsPlanTask({ projectId: "sp_x", projectRev: 7, clips }).resultKey, `sp_x@7${CLIPS_KEY_MARK}${backfillSig(["c1", "c2", "c3"])}`);
   assert.equal(clipsPlanTask({ projectId: "sp_x", projectRev: 7, clips }).id, "plan:sp_x@7#clips:" + backfillSig(["c1", "c2", "c3"]));
 });
@@ -241,20 +243,21 @@ test("C10-PP-ST-02 this option is on: it is a different plan (different result k
     assert.equal(on.input.streams, true);
     assert.deepEqual({ ...on.input, streams: undefined }, { ...off.input, streams: undefined }, "other inputs unchanged");
     assert.deepEqual([on.requires, on.priority, on.source], [off.requires, off.priority, off.source]);
-    // 新旧文档服务都只看签名的字符集(1～32 位小写字母与数字)与任务 id 的形状:带这一项的键照样合格
+    // Both old and new document services only check signature character set (1-32 lowercase letters and numbers)
+    // and task id shape: keys with this entry are still valid
     assert.match(on.resultKey.slice(`sp_x@7${CLIPS_KEY_MARK}`.length), /^[0-9a-z]{1,32}$/);
     const parsed = parseInbound({ type: "task.publish", tasks: [on] });
     assert.equal(parsed.ok, true);
     assert.equal(parsed.body.tasks[0].input.streams, true);
   }
-  // 入站:`input.streams` 不是布尔 true 的去掉(任务照收)
+  // Inbound: strip `input.streams` if not boolean true (task still accepted)
   const off = clipsPlanTask({ projectId: "sp_x", projectRev: 7, clips });
   for (const bad of [false, 1, "true", {}, null]) {
     const parsed = parseInbound({ type: "task.publish", tasks: [{ ...off, input: { ...off.input, streams: bad } }] });
     assert.equal(parsed.ok, true);
     assert.equal("streams" in parsed.body.tasks[0].input, false);
   }
-  // 旧页面(不带这一项)连新文档服务:照旧收,形状不变
+  // Old pages (without this item) connecting to new document service: accept as usual, shape unchanged
   const legacy = parseInbound({ type: "task.publish", tasks: [off] });
   assert.equal(legacy.ok, true);
   assert.deepEqual(legacy.body.tasks[0].input, { clips: ["c1", "c2"] });
@@ -272,11 +275,11 @@ test("C10-PP-ST-03 publish: when this item is seen on while on this page, the pl
   await t.flush();
   assert.equal(published().length, 1);
   assert.deepEqual(published()[0], clipsPlanTaskOf({ projectId: "sp_x", projectRev: 3, clips: ["c1"], codeVersion: "cv" }), "off: verbatim identical to when this feature did not exist");
-  // 关着时宿主误调:任务 id 没变,不重发
+  // Host mistakenly calls when disabled: task id unchanged, do not resend
   pub.streamsOn();
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(published().length, 1);
-  // 创建者打开:宿主调 streamsOn,不等防抖就发
+  // Creator enables: host calls streamsOn, sends without waiting for debounce
   on = true;
   pub.streamsOn();
   assert.equal(t.pending(), 0, "no debounce queued");
@@ -289,7 +292,7 @@ test("C10-PP-ST-03 publish: when this item is seen on while on this page, the pl
   pub.streamsOn();
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(published().length, 2, "this one was already published: do not republish");
-  // 开着时项目改了:新一版照样带这一项
+  // Project modified while enabled: new version still includes this item
   pub.changed({ projectId: "sp_x", projectRev: 4 });
   await t.flush();
   assert.equal(published().length, 3);
@@ -350,7 +353,7 @@ test("C10-PP-PS-01 the two things this page needs to produce a stream: current()
   assert.equal(pubs.length, 4);
   assert.deepEqual(pubs.map((m) => m.tasks[0].id), Array(4).fill(cur.id), "status queries publish the same task (the queue only merges, never starts a new one)");
   assert.equal(pub.current().at, 5000, "publish time does not change with status queries");
-  // 连接换了:队列可能重启过,上一版不算数,等重新发成
+  // Connection changed: queue may have restarted, previous version invalid, wait until resent successfully
   pub.reset();
   assert.equal(pub.current(), null);
   assert.equal(await pub.probe(), null);

@@ -8,9 +8,10 @@ import { useReadOnly } from "../readOnly";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 「字幕」分区:导入 .srt / .vtt → 搜索 → 字幕树(CaptionsTab)。
- * 当前聚焦的素材(mediaId)由 LeftPanel 持有:时间轴 / 素材库右键「转写字幕」会把它设成那份素材,
- * 它同时决定导入的字幕挂到谁身上(没有就挂第一条)。
+ * The "Captions" section: import .srt / .vtt → search → caption tree (CaptionsTab).
+ * The currently focused media (mediaId) is held by LeftPanel: right-click "Transcribe captions" on the
+ * timeline / media library sets it to that media.
+ * It also decides which media imported captions attach to (the first one if none is set).
  */
 export function CaptionsSection({
   mediaId,
@@ -20,14 +21,14 @@ export function CaptionsSection({
 }: {
   mediaId: string | null;
   onPick: (id: string | null) => void;
-  /** 每次外部请求聚焦一份素材就 +1:字幕树据此展开并滚到那一项 */
+  /** Incremented each time something outside asks to focus a media: the caption tree expands and scrolls to that item */
   revealToken: number;
-  /** 空态里「前往导入」:切到素材库分区 */
+  /** "Go to import" in the empty state: switch to the media library section */
   onGoImport: () => void;
 }) {
   const [search, setSearch] = useState("");
   const srtInputRef = useRef<HTMLInputElement>(null);
-  // 这个项目只给了只读权限(游客):导入字幕是写
+  // This project only grants read-only access (guest): importing captions is a write
   const ro = useReadOnly();
 
   const handleSrtFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -1,10 +1,14 @@
 /**
- * Agent 的提交(`project.op`)等回包超时之后,同一个 opId 原样重发(线上 2026-10-21 switch_cut 报「15000 ms 内没有回包」、
- * 其实约 60 秒后落地了;`docs/archive/agent-reports/AGENT-cut-stream-fix.md` 缺陷 5)。
+ * After Agent commit (`project.op`) times out waiting for response, the same opId is resent as-is
+ * (in production on 2026-10-21 switch_cut reported "no response within 15000 ms", which actually
+ * landed about 60 seconds later; `docs/archive/agent-reports/AGENT-cut-stream-fix.md` defect 5).
  *
- *   AOR1  头两次等回包超时、第三次回 `project.op.ok`(duplicate):工具成功、写入记进 ctx.write;三次发的是同一个 opId 与同一批 ops
- *   AOR2  一直超时:重发 `opResends` 次之后照旧报 timeout(不无限等)
- *   AOR3  回 `project.op.rejected`(stale)不重发
+ *   AOR1  Times out waiting for response first two times, returns `project.op.ok` (duplicate) third
+ *         time: tool succeeds, write recorded in ctx.write; all three sends share the same opId and
+ *         same batch of ops
+ *   AOR2  Times out continuously: reports timeout as usual after resending `opResends` times (does
+ *         not wait indefinitely)
+ *   AOR3  Returns `project.op.rejected` (stale), does not resend
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +26,7 @@ function fakeLink(replies) {
         async request(message) {
           sent.push(message);
           const r = replies.shift() ?? 'timeout';
-          if (r === 'timeout') throw Object.assign(new Error(`${message.type} 在 15000 ms 内没有回包`), { code: 'timeout' });
+          if (r === 'timeout') throw Object.assign(new Error(`${message.type} got no reply within 15000 ms`), { code: 'timeout' });
           return r;
         },
       };
@@ -42,7 +46,7 @@ const run = (link) => {
   return { logs, ctx, go: () => exec.mutate('switch_cut', 'conv', ctx, (h) => { h.setProject({ ...h.getProject(), name: 'b' }); return { ok: true }; }) };
 };
 
-test('AOR1 头两次超时、第三次回 ok:工具成功,三次是同一个 opId', async () => {
+test('AOR1 the first two time out, the third replies ok: the tool succeeds, and all three use the same opId', async () => {
   const link = fakeLink(['timeout', 'timeout', { type: 'project.op.ok', rev: 6, duplicate: true }]);
   const r = run(link);
   const out = await r.go();
@@ -55,14 +59,14 @@ test('AOR1 头两次超时、第三次回 ok:工具成功,三次是同一个 opI
   assert.ok(r.logs.some((l) => l.event === 'agent.op-slow' && l.attempts === 3));
 });
 
-test('AOR2 一直超时:重发几次之后照旧报 timeout', async () => {
+test('AOR2 it times out every time: after several resends it still reports timeout', async () => {
   const link = fakeLink([]);
   const r = run(link);
   await assert.rejects(r.go(), (e) => e.code === 'timeout');
   assert.equal(link.sent.filter((m) => m.type === 'project.op').length, 5);
 });
 
-test('AOR3 stale 不重发', async () => {
+test('AOR3 stale is not resent', async () => {
   const link = fakeLink([{ type: 'project.op.rejected', reason: 'stale', currentRev: 7, since: [] }]);
   const r = run(link);
   await assert.rejects(r.go(), (e) => e.code === 'stale');

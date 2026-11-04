@@ -3,9 +3,10 @@ import type { GroupCategory, GroupData, GroupDef } from "./groups";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * 打开一个组时顶部的胶囊行:`所有`(回总览)、这个组的分类(回总览并只看这一类)、
- * 组名胶囊(选中态,带 × 关闭)。
- * 分区里只有一种分类时(「动画」)分类那颗和「所有」是一回事,`showCategory={false}` 不画它。
+ * Pill row at the top when a group is open: `All` (back to the overview), this group's category (back
+ * to the overview showing only that category), and the group name pill (selected, with × to close).
+ * When the section has only one category ("Animations"), the category pill is the same as "All", and
+ * `showCategory={false}` does not draw it.
  */
 export function DetailChips({
   def,
@@ -55,7 +56,7 @@ export function DetailChips({
   );
 }
 
-/** 组详情:「N 个项目」+ 上方附加内容 + 按组的 layout 瀑布流排的全部项目 + 下方附加内容 */
+/** Group detail: "N projects" + extra content above + all items laid out in the group's layout as a masonry layout + extra content below */
 export function GroupDetail({ def, data, searching }: { def: GroupDef; data: GroupData; searching: boolean }) {
   const n = data.items.length;
   return (

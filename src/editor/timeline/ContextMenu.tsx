@@ -6,22 +6,23 @@ interface ContextMenuProps {
   x: number;
   y: number;
   items: ContextMenuItem[];
-  /** 菜单头:动的是哪一段 / 哪一张。不给就没有头(老调用方一个字不变) */
+  /** Menu header: which segment / which card is being changed. If not given there is no header (old callers unchanged to the letter) */
   head?: ContextMenuHead;
   onClose: () => void;
 }
 
-/** 菜单离视口边缘至少留这么多 */
+/** The menu keeps at least this much distance from the viewport edge */
 const EDGE = 6;
-/** 鼠标离开之后多久收起下一级(中途拐进下一级不收) */
+/** How long after the mouse leaves before the next level closes (no closing if you turn into the next level midway) */
 const SUB_CLOSE_MS = 220;
 
 export function ContextMenu({ x, y, items, head, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x, top: y });
 
-  // 靠窗口右边 / 底部时往回夹:时间轴就在窗口最下面,右键靠下的片段时菜单原来会戳出窗口。
-  // layout effect 里量完再改位置,浏览器画出来之前就已经夹好了
+  // Clamp back when near the right edge / bottom of the window: the timeline is at the very bottom of the
+  // window, and right-clicking a low clip used to make the menu poke out of the window.
+  // Measure in a layout effect and then change the position, so it is already clamped before the browser paints
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -33,14 +34,14 @@ export function ContextMenu({ x, y, items, head, onClose }: ContextMenuProps) {
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      // 下一级是另开的 portal,不在 ref 里;它自己标了 data-pc="tl-ctxsub"
+      // The next level is a separate portal, not inside the ref; it marks itself with data-pc="tl-ctxsub"
       const t = e.target as HTMLElement | null;
       if (ref.current && !ref.current.contains(t) && !t?.closest?.('[data-pc="tl-ctxsub"]')) onClose();
     };
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    // 时间轴或窗口一滚动 / 缩放,菜单指着的位置就不对了,直接关掉
+    // Once the timeline or window scrolls / zooms, the position the menu points at is wrong, so just close it
     const close = () => onClose();
     window.addEventListener("mousedown", handleClickOutside);
     window.addEventListener("keydown", handleKey);
@@ -56,9 +57,11 @@ export function ContextMenu({ x, y, items, head, onClose }: ContextMenuProps) {
     };
   }, [onClose]);
 
-  // 片段 / 行头所在的层是独立层叠上下文(index.tsx 的 isolation),菜单留在里面会被吸顶的标尺和行头列压住,
-  // 所以 portal 到 body。React 事件仍按组件树冒泡,和原来挂在片段里一样;颜色不再能靠 [data-pc="timeline"] 下的换色规则,
-  // 直接用皮肤变量(.pc-tl-ctxmenu,timeline.css)。
+  // The layer holding clips / row headers is its own stacking context (isolation in index.tsx), so a menu
+  // left inside it would be covered by the sticky ruler and row header column, hence the portal to body.
+  // React events still bubble along the component tree, same as when it was mounted inside the clip; colors
+  // can no longer rely on the recolor rules under [data-pc="timeline"] and use skin variables directly
+  // (.pc-tl-ctxmenu, timeline.css).
   return createPortal(
     <Panel ref={ref} left={pos.left} top={pos.top} items={items} head={head} onClose={onClose} />,
     document.body,
@@ -66,8 +69,8 @@ export function ContextMenu({ x, y, items, head, onClose }: ContextMenuProps) {
 }
 
 /**
- * 一级面板。带 `sub` 的项鼠标停上去在右边开下一级,下一级还是这个组件 ——
- * 「片段菜单 → 叠加卡 → 这一张能做的事」三级共用一份代码。
+ * First-level panel. An item with `sub` opens the next level on the right on hover, and the next level
+ * is this same component: "clip menu → overlay card → what this card can do" share one piece of code.
  */
 function Panel({
   ref, left, top, items, head, onClose, nested,
@@ -120,7 +123,7 @@ function Panel({
           onMouseEnter={(e) => (item.sub ? openSub(i, e.currentTarget) : (hold(), setOpen(null)))}
           onClick={(e) => {
             if (item.disabled) return;
-            // 带下一级的项自己不执行:点一下也当成展开,触屏和习惯点击的人都走得通
+            // An item with a next level does not run itself: a click also expands it, which works for touch screens and for people used to clicking
             if (item.sub) { openSub(i, e.currentTarget); return; }
             item.action();
             onClose();
@@ -146,7 +149,7 @@ function Panel({
   );
 }
 
-/** 下一级:位置量完再往回夹,免得戳出窗口 */
+/** Next level: measure the position first, then clamp it back so it does not poke out of the window */
 function SubPanel({
   left, top, items, onClose, onHold, onRelease,
 }: {

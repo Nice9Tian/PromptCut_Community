@@ -6,14 +6,14 @@ const { restoreMediaUrls, mediaUrlFromPath } = await import("./mediaUrls.ts");
 
 const name = "雄伟的寺庙！浅草寺 [BV1Zn4y1d71C].mp4";
 
-test("mediaUrlFromPath:取路径最后一段、编码;没有 path 给 null", () => {
+test("mediaUrlFromPath: takes the last path segment and encodes it; no path gives null", () => {
   assert.equal(mediaUrlFromPath(`C:\\Users\\admin\\Videos\\PromptCut\\media\\${name}`), `/@media/${encodeURIComponent(name)}`);
   assert.equal(mediaUrlFromPath("/srv/media/a b.mp4"), "/@media/a%20b.mp4");
   assert.equal(mediaUrlFromPath(undefined), null);
   assert.equal(mediaUrlFromPath(""), null);
 });
 
-test("存盘留下的裸文件名 + path(这次的 3.proc)→ /@media/<文件名>", () => {
+test("Bare file name left by saving + path (this time's 3.proc) → /@media/<filename>", () => {
   const { media, missing } = restoreMediaUrls([
     { id: "m1", kind: "video", name, url: name, path: `C:\\x\\media\\${name}` },
   ]);
@@ -22,7 +22,7 @@ test("存盘留下的裸文件名 + path(这次的 3.proc)→ /@media/<文件名
   assert.deepEqual(missing, []);
 });
 
-test("死掉的 blob: 有 path 就找回;没 path 标缺失、清空地址", () => {
+test("Dead blob: URLs: recovered if there is a path; marked missing with the URL cleared if there is none", () => {
   const { media, missing } = restoreMediaUrls([
     { id: "a", kind: "video", name: "a.mp4", url: "blob:http://127.0.0.1:5210/x", path: "C:/m/a.mp4" },
     { id: "b", kind: "video", name: "b.mp4", url: "blob:http://127.0.0.1:5210/y" },
@@ -33,19 +33,19 @@ test("死掉的 blob: 有 path 就找回;没 path 标缺失、清空地址", () 
   assert.deepEqual(missing.map((m) => m.id), ["b"]);
 });
 
-test("没 path 的裸文件名标缺失;反复打开不会叠「(缺失)」", () => {
+test("A bare file name without a path is marked missing; reopening repeatedly does not stack \"(missing)\"", () => {
   const once = restoreMediaUrls([{ id: "c", kind: "image", name: "c.jpg", url: "c.jpg" }]).media;
   const twice = restoreMediaUrls([{ ...once[0], url: "c.jpg" }]).media;
   assert.equal(once[0].name, "(missing) c.jpg");
   assert.equal(twice[0].name, "(missing) c.jpg");
 });
 
-test("老项目里已有的中文标记「(缺失) 」也不会再叠一层", () => {
-  const once = restoreMediaUrls([{ id: "c", kind: "image", name: "(缺失) c.jpg", url: "c.jpg" }]).media;
-  assert.equal(once[0].name, "(缺失) c.jpg");
+test("The Chinese marker \"(缺失) \" already in old projects does not get another one stacked on top", () => {
+  const once = restoreMediaUrls([{ id: "c", kind: "image", name: "(missing) c.jpg", url: "c.jpg" }]).media;
+  assert.equal(once[0].name, "(missing) c.jpg");
 });
 
-test("本来就能用的地址原样保留;空 url 不算缺失;不改入参", () => {
+test("URLs that already work are kept as is; an empty url does not count as missing; the input arguments are not modified", () => {
   const input = [
     { id: "1", kind: "video", name: "1", url: "/@media/x.mp4" },
     { id: "2", kind: "video", name: "2", url: "https://example.com/v.mp4" },
@@ -59,7 +59,7 @@ test("本来就能用的地址原样保留;空 url 不算缺失;不改入参", (
   assert.equal(JSON.stringify(input), snapshot);
 });
 
-test("「· 声音」派生素材带着源文件的 path,一样按 path 找回", () => {
+test("\"· Sound\" derived media carries the source file's path and is recovered by path just the same", () => {
   const src = "山田豊 [BV1r64y1q7uB].m4a";
   const { media } = restoreMediaUrls([
     { id: "s", kind: "audio", name: "山田豊 · 声音", url: src, path: `C:\\m\\${src}`, soundOf: "v" },
@@ -67,7 +67,7 @@ test("「· 声音」派生素材带着源文件的 path,一样按 path 找回",
   assert.equal(media[0].url, `/@media/${encodeURIComponent(src)}`);
 });
 
-test("旧项目把 jpg / mp3 错记成 video 时按扩展名迁移分页", () => {
+test("Old projects that recorded jpg / mp3 as video are migrated to the right tab by extension", () => {
   const { media, moved } = restoreMediaUrls([
     { id: "jpg", kind: "video", name: "东京.jpg", url: "/@media/%E4%B8%9C%E4%BA%AC.jpg" },
     { id: "mp3", kind: "video", name: "bgm.mp3", url: "/@media/bgm.mp3" },
@@ -80,19 +80,19 @@ test("旧项目把 jpg / mp3 错记成 video 时按扩展名迁移分页", () =>
   ]);
 });
 
-test("派生声音素材即使源文件是 mp4 也不被迁移回视频", () => {
+test("Derived sound media is not migrated back to video even if the source file is mp4", () => {
   const { media, moved } = restoreMediaUrls([
-    { id: "sound", kind: "audio", name: "片段 · 声音", url: "/@media/a.mp4", path: "C:/m/a.mp4", soundOf: "video" },
+    { id: "sound", kind: "audio", name: "Clip · Sound", url: "/@media/a.mp4", path: "C:/m/a.mp4", soundOf: "video" },
   ]);
   assert.equal(media[0].kind, "audio");
   assert.deepEqual(moved, []);
 });
 
-/* ---------------- A1:素材键(内容 sha256)优先于一切 ---------------- */
+/* ---------------- A1: asset key (content sha256) takes precedence over everything ---------------- */
 
 const HASH = "c28c081b3ffbc80cf0feafd8efba149355609f625e4968b62b7375d2954b31cb";
 
-test("mediaUrlFromHash:64 位 hex 才认,大写归一,其余给 null", async () => {
+test("mediaUrlFromHash: only a 64-digit hex is accepted, uppercase is normalized, anything else gives null", async () => {
   const { mediaUrlFromHash } = await import("./mediaUrls.ts");
   assert.equal(mediaUrlFromHash(HASH), `/@media/${HASH}`);
   assert.equal(mediaUrlFromHash(HASH.toUpperCase()), `/@media/${HASH}`);
@@ -100,20 +100,20 @@ test("mediaUrlFromHash:64 位 hex 才认,大写归一,其余给 null", async () 
   assert.equal(mediaUrlFromHash(undefined), null);
 });
 
-test("有 hash 就一律 /@media/<hash> —— path 换了机器也不影响,pending 顺手清掉", () => {
+test("If there is a hash, it is always /@media/<hash>: a path from another machine makes no difference, and pending is cleared along the way", () => {
   const { media, missing } = restoreMediaUrls([
-    // 存盘时那台机器的落点,这台机器上根本不存在
-    { id: "h", kind: "video", name: "a.mp4", url: "", hash: HASH, ext: "mp4", path: "D:/别人的机器/media/a.mp4", pending: true },
-    // 死掉的 blob: 也照样被 hash 救回来
+    // The drop target from that machine when saved does not exist at all on this machine
+    { id: "h", kind: "video", name: "a.mp4", url: "", hash: HASH, ext: "mp4", path: "D:/another-machine/media/a.mp4", pending: true },
+    // Dead blob: is still recovered by hash
     { id: "b", kind: "image", name: "b.png", url: "blob:http://127.0.0.1:5204/x", hash: HASH },
   ]);
   assert.equal(media[0].url, `/@media/${HASH}`);
-  assert.equal(media[0].pending, undefined, "pending 只在导入那一次的会话里有意义");
+  assert.equal(media[0].pending, undefined, "pending only has meaning within the session of that one import");
   assert.equal(media[1].url, `/@media/${HASH}`);
-  assert.deepEqual(missing, [], "有 hash 就不算缺失");
+  assert.deepEqual(missing, [], "Having a hash does not count as missing");
 });
 
-test("没有 hash 的老 .proc 照旧按 path 的文件名找得回来", () => {
+test("An old .proc without a hash can still be recovered by the file name in its path as before", () => {
   const { media, missing } = restoreMediaUrls([
     { id: "old", kind: "video", name: "旧片.mp4", url: "blob:http://127.0.0.1:5190/y", path: "C:\\m\\旧片.mp4" },
   ]);

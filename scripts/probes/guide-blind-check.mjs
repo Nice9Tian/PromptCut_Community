@@ -1,37 +1,63 @@
 /**
- * 建卡指南的「盲写」验收脚本（任务书 `docs/plan/render-refactor-task.md`「丙」的验收：派一个不带上下文的子 Agent，只读
- * `server/card-authoring-guide.md`，各写一张 remotion 式和一张 motion 式的卡，都能通过建卡检查并渲染正确）。
+ * "Blind authoring" acceptance check script for the card authoring guide (acceptance check for
+ * task brief `docs/plan/render-refactor-task.md` "Bing": dispatch a subagent without context that
+ * only reads `server/card-authoring-guide.md`, writes one remotion-style card and one motion-style
+ * card, and both pass card creation checks and render correctly).
  *
- * 给它两个源码文件，它：
- *   1. 在临时目录里建改动层与数据目录，在本检出根起一个自己的开发服务器（卡片同步关掉），建的卡只写进改动层，检出目录一个文件都不多；
- *   2. 经真的 `POST /api/cards/create`（Agent 的 `create_card` 调的就是它）把两张卡建出来，必须都回 200；
- *   3. 在真 Chrome 里渲染（画面台 `scripts/probes/remotion-style-harness.html?css=1`，只把卡的 Component 挂在 1920×1080 的框里，带上编辑器自己的样式，用 Tailwind 类写的卡也排得对）：
- *        - remotion 式的那张：和 `remotion-style-probe.mjs` 一样的办法——在一页上从第 0 帧顺着渲到第 N 帧（中途在几个检查点截图），
- *          与另开一页直接渲那一帧逐像素比，再在同一页上倒着跳一遍也比；检查点之间画面确实不同、最后一帧不是空的；
- *        - motion 式的那张：挂上后顺着播若干帧（每帧等一小会儿，让 Motion 之类自带时钟的动画往前走），确认画面在变、最后一帧不是空的；
- *      各存几张截图到 --out；
- *   4. 收尾：只结束自己起的进程树；临时目录缺省删掉。
+ * Given two source files, it:
+ *   1. Creates an overlay layer and data directory in a temp directory, starts its own dev server
+ *      at this checkout root (card sync disabled), writes created cards only into the overlay
+ *      layer, leaving not a single extra file in the checkout directory;
+ *   2. Creates both cards via real `POST /api/cards/create` (what the Agent's `create_card` calls),
+ *      and both must return 200;
+ *   3. Renders in real Chrome (visual harness `scripts/probes/remotion-style-harness.html?css=1`,
+ *      mounting only the card Component in a 1920×1080 box with the editor's own styles so cards
+ *      written with Tailwind classes also lay out correctly):
+ *        - For the remotion-style card: same approach as `remotion-style-probe.mjs`: render
+ *          forward from frame 0 to frame N on one page (taking screenshots at several checkpoints),
+ *          compare pixel-by-pixel against rendering that frame directly on a freshly opened page,
+ *          and compare jumping backward across the same page; checkpoints must actually differ and
+ *          the final frame must not be empty;
+ *        - For the motion-style card: after mounting, play forward for several frames (waiting
+ *          briefly on each frame so self-clocked animations like Motion advance), confirming the
+ *          visual is changing and the final frame is not empty;
+ *      Saves several screenshots to --out for each;
+ *   4. Teardown: terminates only its own spawned process tree; deletes the temp directory by
+ *      default.
  *
- * 用法（在仓库根或 worktree 根）：
- *   node scripts/probes/guide-blind-check.mjs --remotion <remotion 式的卡的 .tsx> --motion <motion 式的卡的 .tsx>
- *        [--port 7450] [--out <截图目录>] [--frames 90] [--motion-seconds 2] [--keep-temp]
+ * Usage (at repository root or worktree root):
+ *   node scripts/probes/guide-blind-check.mjs --remotion <remotion-style card .tsx> --motion <motion-style card .tsx>
+ *        [--port 7450] [--out <screenshot dir>] [--frames 90] [--motion-seconds 2] [--keep-temp]
  *
- * 端口：编辑器用 --port，另占 +1、+2 当舞台端口，三个连号都要空着。不碰用户常驻的 5190～5192、58xx、59xx。
- * 两张卡也可以只给一张（只验那一种）。卡的 Component 要存在（画面台只挂 DOM 卡）。
+ * Ports: editor uses --port, occupies +1 and +2 as stage ports; all three consecutive ports must
+ * be free. Does not touch resident ports 5190-5192, 58xx, 59xx.
+ * Can also provide only one card (verifying only that type). The card Component must exist
+ * (visual harness mounts only DOM cards).
  *
- * remotion 式那张的判据（2026-10-13 主会话用盲写的两张卡实跑后定）：
- *   - 同一页「顺着渲」对「倒着跳」：必须 **0** 个像素不同。同一页上两条路径走到同一个 t，画面逐像素相同，这才是「卡是时间的纯函数」的判据；
- *   - 另开新页「直接渲」对同一页「顺着渲」：允许极小的容差——不同的像素不超过总数的十万分之五（1920×1080 是 103 个），且最大通道差不超过 2。
- *     输出里照样打印实际的像素数和最大通道差（`seqVsDirect` / `jumpVsDirect` 里的 `px`、`max`），不因为过了容差就不打印。
- *   原因（核实过）：用盲写的 blind-counter 在第 20、45、90 帧各比一次：新页与同页的 DOM（innerHTML）和每个元素的计算样式逐字相同；
- *   而两个全新的页面彼此之间也差 0～32 个像素（去掉所有不透明度淡入后还是 0～15 个），差的是大数字字形边缘的文字抗锯齿，最大通道差 2 以内。
- *   所以这几个像素是 Chrome 每个页面各自的文字光栅化/合成历史造成的，不是卡读了前一帧的东西（读了前一帧会差成百上千个像素，
- *   `remotion-style-probe.mjs` 的有状态对照卡差 13619 个）。
+ * Criteria for the remotion-style card (decided 2026-10-13 in lead session after actual runs with
+ * two blind-authored cards):
+ *   - "Render forward" vs "jump backward" on the same page: must have **0** differing pixels. Two
+ *     paths reaching the same t on the same page must produce pixel-identical images; this is the
+ *     criterion for "a card is a pure function of time";
+ *   - Fresh page "direct render" vs same page "render forward": allows a tiny tolerance: differing
+ *     pixels not exceeding 5 / 100,000 of the total (103 pixels for 1920×1080), and maximum
+ *     channel difference not exceeding 2. The output still prints actual pixel counts and maximum
+ *     channel difference (`px`, `max` in `seqVsDirect` / `jumpVsDirect`), not omitting them just
+ *     because tolerance passed.
+ *   Reason (verified): comparing blind-counter at frames 20, 45, and 90: fresh page vs same page
+ *   DOM (innerHTML) and each element's computed style are verbatim identical; two fresh pages also
+ *   differ by 0-32 pixels (still 0-15 pixels after removing all opacity fade-ins), due to text
+ *   antialiasing at large digit glyph edges, with max channel difference within 2.
+ *   Therefore, these few pixels are caused by Chrome's per-page text rasterization/compositing
+ *   history, not the card reading state from the previous frame (reading previous frames would
+ *   differ by hundreds or thousands of pixels; `remotion-style-probe.mjs` stateful control card
+ *   differed by 13619 pixels).
  *
- * 通过标准：fails 为空，退出码 0；不过退出码 1；用法不对或起不来退出码 2。
- * 输出：过程写 stderr；stdout 只有最后一行 JSON：{ ok, ..., fails: [] }。
+ * Pass criteria: fails is empty, exit code 0; failure exit code 1; invalid usage or startup failure
+ * exit code 2.
+ * Output: progress written to stderr; stdout contains only the final JSON line: { ok, ..., fails: [] }.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import：不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import puppeteer from 'puppeteer';
 import { PNG } from 'pngjs';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
@@ -56,8 +82,8 @@ const MOTION_FILE = arg('--motion', null);
 
 const say = (step, fields = {}) => process.stderr.write(`${JSON.stringify({ step, t: Date.now(), ...fields })}\n`);
 const die = (message, code = 2) => { process.stdout.write(`${JSON.stringify({ ok: false, fails: [message] })}\n`); process.exit(code); };
-if (!REMOTION_FILE && !MOTION_FILE) die('用法：--remotion <文件> 和/或 --motion <文件>');
-if ([5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2) || (PORT >= 5800 && PORT < 6000)) die('这一段端口是用户常驻或别的探针占的，换一个');
+if (!REMOTION_FILE && !MOTION_FILE) die('Usage: --remotion <file> and/or --motion <file>');
+if ([5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2) || (PORT >= 5800 && PORT < 6000)) die('This port range is taken by the user\'s always-on dev server or another probe, pick another');
 fs.mkdirSync(OUT, { recursive: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -67,26 +93,26 @@ async function waitFor(fn, ms, what) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时(${ms} ms)`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what} (${ms} ms)`);
     await sleep(150);
   }
 }
 
-/** 读一张卡的源码，认出它的 id 和声明的写法 */
+/** Read a card's source code and identify its id and declared style */
 function loadCard(label, file, expectMode) {
   const abs = path.resolve(file);
-  if (!fs.existsSync(abs)) die(`${label}：找不到文件 ${abs}`);
+  if (!fs.existsSync(abs)) die(`${label}: cannot find file ${abs}`);
   const source = fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n');
   const id = /\bid:\s*["'`]([^"'`]+)["'`]/.exec(source)?.[1];
   const mode = /\bframeMode:\s*["'`](direct|stateful)["'`]/.exec(source)?.[1] ?? null;
-  if (!id) die(`${label}：源码里读不出 id`);
+  if (!id) die(`${label}: cannot read the id from the source`);
   return { label, file: abs, source, id, mode, expectMode };
 }
 const cardsToCheck = [
   REMOTION_FILE ? loadCard('remotion', REMOTION_FILE, 'direct') : null,
   MOTION_FILE ? loadCard('motion', MOTION_FILE, 'stateful') : null,
 ].filter(Boolean);
-if (cardsToCheck.length === 2 && cardsToCheck[0].id === cardsToCheck[1].id) die('两张卡的 id 相同');
+if (cardsToCheck.length === 2 && cardsToCheck[0].id === cardsToCheck[1].id) die('The two cards have the same id');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-guide-blind-'));
 const OVERLAY = path.join(TMP, 'card-overrides');
@@ -109,7 +135,7 @@ function viteBin() {
   return path.join(main.slice(0, at + 6), 'bin', 'vite.js');
 }
 
-/** 两张截图：不同的像素数 px、最大通道差 max（0～255）、总像素数 total；尺寸不同 px 回 -1 */
+/** Two screenshots: diff pixels px, max channel diff max (0-255), total total; px returns -1 on size diff */
 function diffStats(a, b) {
   const pa = PNG.sync.read(a), pb = PNG.sync.read(b);
   if (pa.width !== pb.width || pa.height !== pb.height) return { px: -1, max: 255, total: pa.width * pa.height };
@@ -122,10 +148,10 @@ function diffStats(a, b) {
   return { px, max, total: pa.width * pa.height };
 }
 const diffPixels = (a, b) => diffStats(a, b).px;
-/** 新页直接渲对同页顺着渲的容差：不超过总数的十万分之五，最大通道差不超过 2 */
+/** Tolerance of fresh page direct vs same page forward render: <= 5/100,000 of total, max channel diff <= 2 */
 const TOLERANCE = { fraction: 5e-5, maxChannel: 2 };
 const withinTolerance = (d) => d.px >= 0 && d.px <= Math.floor(d.total * TOLERANCE.fraction) && d.max <= TOLERANCE.maxChannel;
-/** 不是画面台底色的像素有多少（画面是不是空的） */
+/** How many pixels are not the visual harness background color (whether the visual is empty) */
 function inkPixels(buf) {
   const p = PNG.sync.read(buf);
   let n = 0;
@@ -137,7 +163,7 @@ let child = null;
 let browser = null;
 const listBefore = userDirList();
 try {
-  // ---------- 1. 编辑器（带改动层）
+  // ---------- 1. Editor (with overlay layer)
   const log = [];
   child = spawn(process.execPath, [viteBin(), '--port', String(PORT), '--strictPort', '--host', '127.0.0.1'], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
@@ -160,9 +186,9 @@ try {
   const origin = `http://127.0.0.1:${PORT}`;
   const HARNESS = `${origin}/scripts/probes/remotion-style-harness.html?css=1`;
   await waitFor(async () => {
-    if (child.exitCode !== null) throw new Error(`编辑器退出了：${log.join('').slice(-600)}`);
+    if (child.exitCode !== null) throw new Error(`The editor exited: ${log.join('').slice(-600)}`);
     return fetch(HARNESS, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  }, 180_000, '编辑器起来');
+  }, 180_000, 'editor started');
 
   browser = await puppeteer.launch({
     headless: true,
@@ -172,7 +198,7 @@ try {
   res.chrome = await browser.version();
   const pageErrors = [];
   const consoleErrors = [];
-  /** 每个用例一页：新的文档、新的模块实例，谁也不沾谁 */
+  /** One page per test case: fresh document, fresh module instance, fully isolated from each other */
   const openHarness = async () => {
     const page = await browser.newPage();
     page.on('pageerror', (e) => pageErrors.push(String(e?.message ?? e).slice(0, 300)));
@@ -183,7 +209,7 @@ try {
     return page;
   };
   const shot = async (page) => Buffer.from(await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: 1920, height: 1080 } }));
-  /** 等字体与这一帧画完（两次动画帧），再截 */
+  /** Wait for fonts and this frame to finish rendering (two animation frames) before taking screenshot */
   const settle = (page) => page.evaluate(async () => {
     await document.fonts.ready;
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -196,7 +222,7 @@ try {
     return { status: r.status, body: await r.json().catch(() => null) };
   }, url, body);
 
-  // ---------- 2. 建卡（真的 /api/cards/create）
+  // ---------- 2. Create cards (real /api/cards/create)
   res.created = [];
   for (const c of cardsToCheck) {
     if (c.mode !== c.expectMode) fail(`${c.label}-declared-${c.mode ?? 'none'}-expected-${c.expectMode}`);
@@ -211,7 +237,7 @@ try {
   }
   if (JSON.stringify(userDirList()) !== JSON.stringify(listBefore)) fail('checkout-user-dir-changed');
 
-  // ---------- 3a. remotion 式：顺着渲到第 N 帧 与 直接渲第 N 帧，逐像素比
+  // ---------- 3a. Remotion-style: render forward to frame N vs direct render of frame N, compared pixel by pixel
   const rem = cardsToCheck.find((c) => c.label === 'remotion');
   if (rem?.created) {
     const url = `/src/cards/user/${rem.id}.tsx`;
@@ -249,7 +275,8 @@ try {
       const row = { frame: n, seqVsJump: seqVsJump.px, seqVsDirect: { px: seqVsDirect.px, max: seqVsDirect.max }, jumpVsDirect: { px: jumpVsDirect.px, max: jumpVsDirect.max }, ink: inkPixels(direct) };
       rows.push(row);
       saved.push(save(`remotion-${rem.id}-f${String(n).padStart(3, '0')}-direct.png`, direct));
-      // 同一页上两条路径必须逐像素相同；新页直接渲允许极小的容差（见文件头）
+      // Two paths on the same page must be pixel-identical; fresh-page direct render allows a tiny
+      // tolerance (see file header)
       if (seqVsJump.px !== 0) { fail(`remotion-f${n}-same-page-sequential-vs-jump-differs-${seqVsJump.px}`); save(`remotion-${rem.id}-f${String(n).padStart(3, '0')}-sequential.png`, sequential.get(n)); save(`remotion-${rem.id}-f${String(n).padStart(3, '0')}-jumped.png`, jumped.get(n)); }
       if (!withinTolerance(seqVsDirect)) { fail(`remotion-f${n}-new-page-differs-${seqVsDirect.px}px-max${seqVsDirect.max}`); save(`remotion-${rem.id}-f${String(n).padStart(3, '0')}-sequential.png`, sequential.get(n)); }
       if (!withinTolerance(jumpVsDirect)) { fail(`remotion-f${n}-jump-vs-new-page-differs-${jumpVsDirect.px}px-max${jumpVsDirect.max}`); save(`remotion-${rem.id}-f${String(n).padStart(3, '0')}-jumped.png`, jumped.get(n)); }
@@ -262,7 +289,7 @@ try {
     say('remotion', res.remotion);
   }
 
-  // ---------- 3b. motion 式：顺着播若干帧，画面在变、不是空的
+  // ---------- 3b. Motion-style: play forward for several frames, visual is changing and not empty
   const mot = cardsToCheck.find((c) => c.label === 'motion');
   if (mot?.created) {
     const url = `/src/cards/user/${mot.id}.tsx`;
@@ -274,7 +301,7 @@ try {
     const shots = [];
     for (let i = 0; i <= steps; i++) {
       if (i > 0) {
-        await sleep(200); // 让 Motion 之类自带时钟的动画往前走
+        await sleep(200); // Let self-clocked animations like Motion advance
         await page.evaluate((t) => window.__rs.set(t), (i * 200) / 1000);
       }
       await settle(page);
@@ -302,14 +329,14 @@ try {
 } catch (err) {
   fail('probe-crashed', String(err?.stack ?? err).slice(0, 600));
 } finally {
-  try { await browser?.close(); } catch { /* 已经关了 */ }
+  try { await browser?.close(); } catch { /* Already closed */ }
   if (child?.pid && child.exitCode === null) {
-    // 只结束自己起的这一棵（编辑器下面还挂着预渲染进程和 Chrome）
+    // Terminate only the tree spawned by itself (the editor also has prerender processes and Chrome under it)
     if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 15000 });
     else child.kill('SIGKILL');
     say('stopped', { pid: child.pid });
   }
-  if (!KEEP_TEMP) { try { fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* 留给系统清 */ } }
+  if (!KEEP_TEMP) { try { fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* Left for the system to clean */ } }
 }
 process.stdout.write(`${JSON.stringify({ ok: fails.length === 0, ...res, out: OUT, fails })}\n`);
 process.exit(fails.length === 0 ? 0 : 1);

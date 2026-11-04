@@ -1,32 +1,41 @@
-// 对应 claude-quickstarts/agents/providers/base.py
+// Corresponds to claude-quickstarts/agents/providers/base.py
 
 /**
- * Provider 契约:
+ * Provider contract:
  * createProvider(cfg, { fetchImpl = globalThis.fetch } = {})
- * 返回 { name: string, stream: async function*(messages, tools, system, signal) }
+ * Returns { name: string, stream: async function*(messages, tools, system, signal) }
  * 
- * stream 产出以下事件之一:
+ * stream yields one of the following events:
  * - { type: 'text_delta', text: string }
  * - { type: 'tool_use', id: string, name: string, input: object }
  * - { type: 'usage', input: number, output: number, cacheRead?: number }
- *   input 是这一轮完整的输入长度(含命中缓存的部分);cacheRead 是其中命中缓存的量,报得出来的家才有
+ *   input is the full input length for this turn (including cached parts); cacheRead is the cached
+ *   amount among them, present only for providers that report it
  * - { type: 'stop', reason: string }
- * - { type: 'tool_use_partial', id, name, args: string }  写到输出上限时没写完的工具调用,args 是收到的参数原文(A07)
- * - { type: 'notice', stage: string, data: object }       给运行日志的提示(输出上限 400 降档、换字段、流被中途掐断)
- * - { type: 'response_open', sentAt: number }             响应头到了;sentAt 是最后一次真正发出请求的时刻(按速度设上限时算用时用)
+ * - { type: 'tool_use_partial', id, name, args: string }  Incomplete tool call when hitting the output
+ *   limit; args is the raw arguments received (A07)
+ * - { type: 'notice', stage: string, data: object }       Notice for the run log (output limit 400 tier
+ *   stepdown, field replacement, stream cut midway)
+ * - { type: 'response_open', sentAt: number }             Response headers arrived; sentAt is the
+ *   timestamp of the last actual request (used for elapsed time when capping by speed)
  *
- * 停止原因 `stream_cut`(STREAM_CUT):流已经开始出数据之后、正常收尾之前断了 —— 流里来了 error 事件、连接被断、
- * 或者流读完却没有收尾标志。三家都按截断收尾:已经收到的文字照常交出,没写完的工具调用交成 tool_use_partial,
- * 由 agent.mjs 存代码块、让模型接着写(2026-10-22 用户定:「中途被网关掐断按截断处理(保住半截参数、走代码块续写)」)。
- * 还没收到任何数据就断的,照旧抛错。
+ * Stop reason `stream_cut` (STREAM_CUT): stream disconnected after it started emitting data and before
+ * normal finalization: an error event arrived in the stream, connection was severed, or stream ended
+ * without a finalization flag. All three providers finalize as truncated: already received text is
+ * delivered as usual, incomplete tool calls are delivered as tool_use_partial, and agent.mjs stores
+ * the code block and lets the model continue writing (user decision, 2026-10-22: "Treat midway gateway
+ * disconnection as truncation (preserve partial arguments, continue via code blocks)").
+ * If disconnected before receiving any data, throw an error as usual.
  */
 
-/** 停止原因:流在正常收尾之前被断了(多半是网关单次请求约 300 秒的上限,2026-10-22 实测) */
+/** Stop reason: stream disconnected before normal finalization (mostly gateway ~300s limit, verified 2026-10-22) */
 export const STREAM_CUT = 'stream_cut';
 
 /**
- * 读流时抛的这个错,能不能当「中途被掐断」:用户点停止(signal 已中止)和我们自己的闲置超时(TimeoutError / AbortError)不算,
- * 照旧抛 —— 闲置超时是上游 120 秒不出字,有现成的续跑(runners/api.mjs 的 retryable),这次不改〔裁:stream-cut 2026-10-22〕。
+ * Whether this error thrown while reading the stream can be treated as "cut off midway": user
+ * clicking stop (signal aborted) and our own idle timeouts (TimeoutError / AbortError) do not count,
+ * throw as usual. An idle timeout means upstream produced no text for 120 seconds and has existing
+ * retry logic (retryable in runners/api.mjs); leave unchanged this time [ruling:stream-cut 2026-10-22].
  */
 export function isCutReadError(err, signal) {
   if (signal?.aborted) return false;
@@ -35,13 +44,14 @@ export function isCutReadError(err, signal) {
   return true;
 }
 
-/** 掐断时交给运行日志的那条提示 */
+/** Notice passed to the run log upon disconnection */
 export function streamCutNotice(vendor, how, detail, extra = {}) {
   return { type: 'notice', stage: 'stream-cut', data: { vendor, how, detail: String(detail || '').slice(0, 300), ...extra } };
 }
 
 /**
- * 创建 SSE 解析器。返回一个函数 feed(chunkString)，返回本次解析出的事件数组，元素形如 {event, data}。
+ * Creates an SSE parser. Returns a function feed(chunkString) that returns an array of events
+ * parsed in this call, with elements of the form {event, data}.
  */
 export function createSseParser() {
   let buffer = '';
@@ -71,7 +81,7 @@ export function createSseParser() {
            currentData = [];
         }
       } else if (line.startsWith(':')) {
-        // 注释行，忽略
+        // Comment line, ignore
       } else {
         const colonIndex = line.indexOf(':');
         if (colonIndex !== -1) {
@@ -97,7 +107,7 @@ export function createSseParser() {
 }
 
 /**
- * 增量解码 response.body，逐个 yield {event, data}
+ * Incrementally decodes response.body, yielding {event, data} one by one
  */
 export async function* readSse(response, { signal } = {}) {
   const parser = createSseParser();
@@ -139,7 +149,7 @@ export async function* readSse(response, { signal } = {}) {
 }
 
 /**
- * 断言 HTTP 响应为 2xx，否则抛出截断后的异常
+ * Asserts that the HTTP response is 2xx, otherwise throws a truncated exception
  */
 export async function assertOk(response, vendor) {
   if (response.ok) return;
@@ -151,7 +161,7 @@ export async function assertOk(response, vendor) {
     // ignore
   }
   
-  let msg = '无 message 字段';
+  let msg = 'no message field';
   if (text) {
     try {
       const body = JSON.parse(text);

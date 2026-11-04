@@ -1,6 +1,7 @@
 /**
- * C6.6 集成 3b:改卡之后等两个舞台都换上这一版卡片再重测;过了时限没换上的才重载那一个(`stageCards.ts`)。
- * 跑:node --test src/editor/stageCards.test.mjs
+ * C6.6 Integration 3b: after modifying a card, wait until both stages switch to this card revision
+ * before retesting; only reload the one that has not switched after timeout (`stageCards.ts`).
+ * Run: node --test src/editor/stageCards.test.mjs
  */
 import "../testing/registerTs.mjs";
 import test from "node:test";
@@ -10,37 +11,37 @@ const S = await import("./stageCards.ts");
 
 test.afterEach(() => S.resetStageCardsForTest());
 
-test("C66-3b-01 两个舞台都报到这一版才放行;先报到的不算,后报到的一到就放行", async () => {
+test("C66-3b-01 Proceed only when both stages have checked in for this version; the one that checked in first does not count on its own, and as soon as the later one arrives it proceeds", async () => {
   const reloaded = [];
   S.bindStageCards(["A", "B"], (id) => reloaded.push(id));
   let done = null;
   const p = S.whenStagesHaveCards(100, 2000).then((r) => { done = r; });
   S.noteStageCards("A", 100);
   await new Promise((r) => setTimeout(r, 20));
-  assert.equal(done, null, "B 还没报到");
+  assert.equal(done, null, "B has not checked in yet");
   S.noteStageCards("B", 100);
   await p;
-  assert.deepEqual(done, [], "都报到了:不重载");
+  assert.deepEqual(done, [], "Both have checked in: no reload");
   assert.deepEqual(reloaded, []);
 });
 
-test("C66-3b-02 已经报到过更新的一版(舞台先收到热更新)或刚握过手:立刻放行", async () => {
-  S.bindStageCards(["A", "B"], () => assert.fail("不该重载"));
+test("C66-3b-02 A newer version has already been checked in (the stage received the hot update first) or a handshake has just happened: proceed immediately", async () => {
+  S.bindStageCards(["A", "B"], () => assert.fail("Should not reload"));
   S.noteStageCards("A", 200);
   S.noteStageFresh("B", 300);
   assert.deepEqual(await S.whenStagesHaveCards(150, 2000), []);
   assert.deepEqual(S.staleStages(250), ["A"]);
 });
 
-test("C66-3b-03 过了时限还没报到的舞台才算代码过期:只重载它;legacy 单舞台只等 A", async () => {
+test("C66-3b-03 Only a stage that has not checked in after the time limit counts as running stale code: reload only it; a legacy single stage waits only for A", async () => {
   const reloaded = [];
   S.bindStageCards(["A", "B"], (id) => reloaded.push(id));
   S.noteStageCards("A", 500);
   assert.deepEqual(await S.whenStagesHaveCards(500, 50), ["B"]);
   assert.deepEqual(reloaded, ["B"]);
   S.resetStageCardsForTest();
-  S.bindStageCards(["A"], () => assert.fail("不该重载"));
+  S.bindStageCards(["A"], () => assert.fail("Should not reload"));
   S.noteStageCards("A", 600);
   assert.deepEqual(await S.whenStagesHaveCards(600, 50), []);
-  assert.deepEqual(await S.whenStagesHaveCards(0, 50), [], "没有时间戳(没换过卡)不等");
+  assert.deepEqual(await S.whenStagesHaveCards(0, 50), [], "No timestamp (no card has been changed): do not wait");
 });

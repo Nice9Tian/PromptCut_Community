@@ -1,9 +1,13 @@
 /**
- * 账号客户端接成同步引擎的传输(`src/start/orgTransport.ts`)。跑:npm test -- src/start/orgTransport.test.mjs
+ * Account client connected as sync engine transport (`src/start/orgTransport.ts`).
+ * Run: npm test -- src/start/orgTransport.test.mjs
  *
- *   TRN-01 服务端没有这条路由(404 / 405 / 501、no-route、org-unavailable)翻成 OrgUnsupportedError;别的错误原样抛
- *   TRN-02 冲突和成功的结果原样交给引擎;客户端还没就绪抛普通错误(引擎当待同步)
- *   TRN-03 接上引擎:老服务端 404 → 界面状态 unsupported、不抛;网络错 → pending
+ *   TRN-01 Server has no such route (404 / 405 / 501, no-route, org-unavailable) translated into
+ *     OrgUnsupportedError; other errors thrown as is
+ *   TRN-02 Conflict and success results passed to engine as is; client not ready throws regular
+ *     error (engine treats as pending sync)
+ *   TRN-03 Connect to engine: old server 404 → UI state unsupported, do not throw; network error →
+ *     pending
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

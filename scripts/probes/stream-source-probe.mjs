@@ -1,46 +1,81 @@
 /**
- * 源依赖卡和外框用了三维变形的卡的轨道流 —— 产流、贴回舞台、改了输入以后作废重产的端到端探针,**逐帧比像素**
- * (语义 `docs/semantics/mechanism/rendering.md`「重管线:预渲染」「怎么产,按卡分」;计划的一侧在 `server/frame-stream.mjs` 的 `soloStreamKind`)。
+ * Track streams for source-dependent cards and cards whose outer frames use 3D transforms:
+ * end-to-end probe for stream generation, pasting back onto stage, and invalidating and re-producing
+ * after modifying inputs, **comparing pixels frame by frame** (semantics
+ * `docs/semantics/mechanism/rendering.md` "Heavy pipeline: prerender", "How to produce, split by card";
+ * the plan side is in `soloStreamKind` of `server/frame-stream.mjs`).
  *
  *   node scripts/probes/stream-source-probe.mjs --port 27060 [--host-port 27070] [--out <dir>] [--keep] [--json <file>]
- *   node scripts/probes/stream-source-probe.mjs --port 27060 --measure [--size 1920x1080] [--seconds 10]     只量耗时与体积(见文末)
+ *   node scripts/probes/stream-source-probe.mjs --port 27060 --measure [--size 1920x1080] [--seconds 10]     Measure elapsed time and size only (see end of text)
  *
- * 自己在检出根起一台开发服务器(`--port`,另占 +1、+2 当舞台端口;素材目录、数据目录、卡片改动层都是新建的临时目录,
- * 检出目录一个文件都不写),用完按进程号收掉。本进程里直接起 `FramePipeline`(同预渲染进程的代码),库根放临时目录。
+ * Starts a dev server at checkout root itself (`--port`, occupying +1 and +2 as stage ports; asset
+ * catalog, data directory, and card overlay layer are all newly created temporary directories, not
+ * writing a single file to checkout directory), torn down by process ID after use. Directly starts
+ * `FramePipeline` in this process (same code as prerender process), with store root in a temporary
+ * directory.
  *
- * 项目(1280×720,30 帧每秒)里三类卡,都钉成重卡,**都不从 15 的倍数帧开始**:
+ * Three kinds of cards in project (1280×720, 30 frames per second), all pinned as heavy cards,
+ * **none starting at a frame multiple of 15**:
  *
- *   fx     一段视频套一张素材效果卡(反色,motion 式:产流时从挂载帧回放),第 39～128 帧。片段自己带着素材和卡
- *   trans  两段视频之间的一个转场(交叉溶解,remotion 式:产流时不回放),第 166～195 帧;两段视频 va、vb 是时间轴上普通的素材段
- *   tilt   一张外框带三维变形的独立卡(`r6-stateful`,一块字每帧横移 10 像素;rotateY 35°、rotateX 12°),第 70～144 帧,压在 fx 上面
+ *   fx     a video clip wrapped with a media effect card (invert color, motion-style: playback from
+ *          mount frame during stream generation), frames 39-128. Clip carries its own asset and card
+ *   trans  a transition between two video clips (crossfade, remotion-style: no playback during stream
+ *          generation), frames 166-195; two video clips va and vb are normal media clips on timeline
+ *   tilt   a standalone card whose outer frame has 3D transforms (`r6-stateful`, a block of text
+ *          moves horizontally by 10 pixels per frame; rotateY 35°, rotateX 12°), frames 70-144,
+ *          layered on top of fx
  *
- * 逐条核对:
+ * Check item by item:
  *
- *   1. 计划:三条都是单卡流(`kind: 'card'`、`plane: 'local'`),fx、trans 标 `solo: 'source'`,tilt 标 `solo: 'spatial'`;
- *      各自的第一帧是片段的第一帧,分段从它起数。
- *   2. 稀疏版(生产者先把三条流的稀疏版铺满,探针卡住不让补满密度):每个分段 `stride` 是一个分段的帧数、带位置矩形 `box`;
- *      **舞台贴稀疏版**:时间设到分段中间的帧,舞台上贴出来的画面最像导出页里这个分段第一帧的那一幅(源依赖卡的流里带着视频,
- *      所以这时整幅画面连视频一起停在分段第一帧 —— 这是要报给用户的那个后果)。
- *   3. 放行补满密度。**产流,逐帧**:把每个分段解出来,第 n 段的第 k 个样本应当是项目的第 `originFrame + n × 15 + k` 帧。参照是这条流的
- *      隔离工程在导出页顺推、每帧截一张:fx、trans 的参照里就是「视频经过这张卡以后」的画面;tilt 的参照是**变形之前**的平面画面
- *      (隔离工程里框只留位置和宽高)。每个样本拿去比它自己、前后各两帧,最像的必须是它自己。
- *   4. **舞台贴流,逐帧**(测试页扮演父页,流平面用产品里的 `streamPlanesFor`):三条流在场的每一帧,打乱顺序跳(拖动),
- *      等流平面画出这一帧,截舞台,和**完整项目的导出页同一帧**比,同样比前后各一帧,最像的必须是它自己。tilt 的流里是平面画面,
- *      贴的时候由包裹层做三维变形,所以这一条同时验「贴的时候再做变形,结果和导出一致」;fx 的那一段舞台上没有别的东西在画视频。
- *   5. 真的播放一小段再暂停:不跳帧,暂停的那一帧同样比。
- *      (「停下以后回到精确活渲」不在这里核:测试页没有成本记录和分派表,舞台不起追帧。三维外框的那一种在真的编辑器里核,
- *      `scrub-stream-probe.mjs --tilt`;素材效果卡没有成本记录,停下以后怎么回到活渲是原来就有的另一条路,这次没有动。)
- *   6. **改了输入**:视频的裁剪起点(fx)、卡的参数(trans)、三维的角度(tilt)各改一处。fx、trans 的流键换了(旧流不属于这一版,
- *      就绪消息里是新键),重产;tilt 的流键不变、一个分段都不重产。重产完以后三条流各抽几帧,舞台贴出来的和**改过的项目**的导出同一帧最像
- *      (tilt 那几帧验的是同一条流照新的角度贴)。
+ *   1. Plan: all three are single-card streams (`kind: 'card'`, `plane: 'local'`), fx and trans
+ *      marked `solo: 'source'`, tilt marked `solo: 'spatial'`; the first frame of each is the first
+ *      frame of the clip, and segments count from it.
+ *   2. Sparse version (producer first fully populates sparse version of three streams, probe blocks
+ *      to prevent catching up to full density): each segment's `stride` is the frame count of one
+ *      segment, with position rectangle `box`;
+ *      **Stage pastes sparse version**: set time to a frame in middle of segment; image pasted on
+ *      stage is closest to that of the first frame of this segment on export page (stream of a
+ *      source-dependent card carries video, so at this time the full-frame image pauses at the
+ *      segment's first frame together with video: this is the consequence to report to user).
+ *   3. Release to catch up to full density. **Stream generation, frame by frame**: decode each
+ *      segment; the k-th sample of the n-th segment should be frame `originFrame + n × 15 + k` of
+ *      the project. Reference is stepping forward frame by frame on export page for this stream's
+ *      isolated project, taking one screenshot per frame: in references for fx and trans, it is
+ *      the image "after video passes through this card"; tilt's reference is planar image **before
+ *      transform** (in isolated project, box only retains position, width, and height). Compare each
+ *      sample against itself and two frames before and after; closest match must be itself.
+ *   4. **Stage pastes stream, frame by frame** (test page acts as parent page, stream planes use
+ *      `streamPlanesFor` from product): for every frame where the three streams are present, jump
+ *      in shuffled order (scrub), wait for stream plane to draw this frame, capture stage, and
+ *      compare against the **same frame on export page of complete project**, also comparing one
+ *      frame before and after; closest match must be itself. tilt's stream contains a planar
+ *      image, and 3D transform is applied by wrapper layer when pasting, so this item also verifies
+ *      "applying transform when pasting yields results consistent with export"; during fx's
+ *      section, nothing else on stage is drawing video.
+ *   5. Truly play a short segment and then pause: do not jump frames, compare paused frame the same
+ *      way. ("Returning to exact live render after stopping" is not checked here: test page lacks
+ *      cost records and dispatch tables, stage does not start frame catch-up. The 3D outer frame kind
+ *      is checked in real editor, `scrub-stream-probe.mjs --tilt`; media effect cards have no cost
+ *      records, and how to return to live render after stopping is an existing separate path, not
+ *      touched this time.)
+ *   6. **Modified inputs**: modify one place each for video crop start point (fx), card parameters
+ *      (trans), and 3D angle (tilt). Stream keys for fx and trans change (old stream does not
+ *      belong to this version, ready message contains new keys) and are re-produced; tilt's stream
+ *      key remains unchanged, and not a single segment is re-produced. After re-producing, sample
+ *      several frames from each of three streams; what stage pastes is closest to the same frame
+ *      exported from **modified project** (those frames for tilt verify pasting the same stream
+ *      according to new angle).
  *
- * `--measure`:只量。一个项目里只有一段视频套一张素材效果卡(缺省 10 秒、1920×1080),从 `preload` 起计时:稀疏版铺满用了多久、
- * 满密度补齐用了多久、这条流稀疏版和满密度版各多大。不比像素。耗时只记录,不是通过条件。缺省用 motion 式的那张卡(产流时每帧都推);
- * 加 `--direct` 换成 remotion 式的写法(稀疏版直接跳到要截的帧)。
+ * `--measure`: measure only. A project contains only one video clip wrapped with a media effect card
+ * (default 10 seconds, 1920×1080), timed from `preload`: how long to fully populate sparse version,
+ * how long to complete full density, and how large sparse and full-density versions of this stream
+ * are. Does not compare pixels. Elapsed time is recorded only, not a pass condition. Defaults to
+ * using motion-style card (pushes every frame during stream generation); add `--direct` to switch to
+ * remotion-style implementation (sparse version jumps directly to frame to capture).
  *
- * 输出 JSON 结论,过程写 stderr;任何一条不过就以非零退出。
+ * Outputs JSON conclusion, writes progress to stderr; exits non-zero if any check fails.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
@@ -61,13 +96,13 @@ const args = process.argv.slice(2);
 const PORT = Number(flagArg('port', '0', args));
 const KEEP = args.includes('--keep');
 const MEASURE = args.includes('--measure');
-/** `--measure --direct`:素材效果卡换成 remotion 式的那一张(产流时不回放、稀疏版直接跳到要截的帧) */
+/** `--measure --direct`: media effect card switches to remotion-style one (no playback during stream generation, sparse version jumps directly to frame to capture) */
 const DIRECT = args.includes('--direct');
 const JSON_OUT = flagArg('json', null, args);
 const HOST_PORT = Number(flagArg('host-port', '0', args)) || 0;
 const RUN = Date.now().toString(36) + crypto.randomBytes(2).toString('hex');
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-stream-source-probe-${RUN}`));
-if (!PORT) { console.error('要给 --port <自己起一台开发服务器的端口>'); process.exit(2); }
+if (!PORT) { console.error('Pass --port <port of a dev server you start yourself>'); process.exit(2); }
 
 const FPS = 30;
 const [WIDTH, HEIGHT] = MEASURE ? String(flagArg('size', '1920x1080', args)).split('x').map(Number) : [1280, 720];
@@ -87,14 +122,14 @@ async function until(label, fn, timeoutMs, everyMs = 500) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
 
-/* ------------------------------------------------------------------ 素材与卡 */
+/* ------------------------------------------------------------------ Assets and cards */
 
-/** ffmpeg 的测试图样(有清晰的边、有连续的运动、每帧都不一样),按内容哈希放进素材目录。回项目里的素材记录 */
+/** ffmpeg test pattern (sharp edges, continuous motion, distinct every frame), placed into asset catalog by content hash. Returns asset record in project */
 async function makeVideo(ffmpeg, id, filter, seconds, width, height) {
   const tmp = path.join(WORK, `${id}.mp4`);
   await execFileAsync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `testsrc2=size=${width}x${height}:rate=${FPS}:duration=${seconds}`,
@@ -106,22 +141,22 @@ async function makeVideo(ffmpeg, id, filter, seconds, width, height) {
 }
 
 const TINT = 'probe-source-tint', FADE = 'probe-source-fade', TINT_DIRECT = 'probe-source-tint-direct';
-/** 两张素材效果卡,写进临时的卡片改动层。反色那张写成 motion 式(产流时从挂载帧回放),溶解那张是 remotion 式(不回放) */
+/** Two media effect cards, written into temporary card overlay layer. Invert card written as motion-style (playback from mount frame during stream generation), dissolve card is remotion-style (no playback) */
 async function writeCards() {
   const dir = path.join(OVERRIDES, 'src', 'cards', 'user');
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, `${TINT}.tsx`), `import type { CardDef } from "../../kernel/types";
 import { glsl } from "../../render/cards/graphValues";
 
-/** 探针用(stream-source-probe.mjs 临时写进改动层):把输入画面按强度混向它的反色 */
+/** For the probe (stream-source-probe.mjs temporarily writes it into the overlay layer): blend the input picture toward its inverse color by strength */
 export const probeSourceTint: CardDef<{ amount: number }> = {
   id: "${TINT}",
-  name: "源依赖探针:反色",
-  description: "把输入画面按强度混向它的反色",
+  name: "Source-dependent probe: invert",
+  description: "Blend the input picture toward its inverse color by strength",
   source: "user",
   kind: "filter",
   frameMode: "stateful",
-  inputs: { source: { description: "输入画面" } },
+  inputs: { source: { description: "Input picture" } },
   defaults: { amount: 1 },
   controls: [],
   card: (sources, t, params) => glsl(
@@ -133,19 +168,19 @@ export const probeSourceTint: CardDef<{ amount: number }> = {
   ),
 };
 `);
-  // 同一张反色卡的 remotion 式写法(`--measure --direct` 用)
+  // Remotion-style implementation of the same invert card (used by `--measure --direct`)
   await fs.writeFile(path.join(dir, `${TINT_DIRECT}.tsx`), `import "../../kernel/remotionStyle";
 import type { CardDef } from "../../kernel/types";
 import { glsl } from "../../render/cards/graphValues";
 
 export const probeSourceTintDirect: CardDef<{ amount: number }> = {
   id: "${TINT_DIRECT}",
-  name: "源依赖探针:反色(remotion 式)",
-  description: "把输入画面按强度混向它的反色",
+  name: "Source-dependent probe: invert (remotion style)",
+  description: "Blend the input picture toward its inverse color by strength",
   source: "user",
   kind: "filter",
   frameMode: "direct",
-  inputs: { source: { description: "输入画面" } },
+  inputs: { source: { description: "Input picture" } },
   defaults: { amount: 1 },
   controls: [],
   card: (sources, t, params) => glsl(
@@ -161,15 +196,15 @@ export const probeSourceTintDirect: CardDef<{ amount: number }> = {
 import type { CardDef } from "../../kernel/types";
 import { glsl } from "../../render/cards/graphValues";
 
-/** 探针用(stream-source-probe.mjs 临时写进改动层):A 在片段时长内溶解到 B;swap 为 1 时反过来 */
+/** For the probe (stream-source-probe.mjs temporarily writes it into the overlay layer): A dissolves into B over the clip duration; when swap is 1 it runs the other way round */
 export const probeSourceFade: CardDef<{ swap: number }> = {
   id: "${FADE}",
-  name: "源依赖探针:溶解",
-  description: "A 画面溶解到 B 画面",
+  name: "Source-dependent probe: dissolve",
+  description: "Picture A dissolves into picture B",
   source: "user",
   kind: "transition",
   frameMode: "direct",
-  inputs: { A: { description: "转场前的画面" }, B: { description: "转场后的画面" } },
+  inputs: { A: { description: "Picture before the transition" }, B: { description: "Picture after the transition" } },
   defaults: { swap: 0 },
   controls: [],
   card: (sources, t, params, ctx) => glsl(
@@ -189,9 +224,9 @@ export const probeSourceFade: CardDef<{ swap: number }> = {
 `);
 }
 
-/* ------------------------------------------------------------------ 项目 */
+/* ------------------------------------------------------------------ Project */
 
-/** 三张卡在时间轴上的帧(闭区间)与秒。入点、出点按秒写,落在两帧之间 */
+/** Timeline frames (closed interval) and seconds for three cards. In and out points written in seconds, falling between two frames */
 const CLIPS = {
   fx: { frames: [39, 128], start: 1.29, end: 4.29, solo: 'source' },
   tilt: { frames: [70, 144], start: 2.32, end: 4.82, solo: 'spatial' },
@@ -203,15 +238,15 @@ const TILT_FRAME = { x: 640, y: 400, w: 900, h: 260, anchor: [0.5, 0.5], rotateY
 
 function project(media, { fxOffset = 0.4, swap = 0, rotateY = TILT_FRAME.rotateY } = {}) {
   return {
-    id: 'stream-source-probe', name: '源依赖卡与三维外框卡的流探针', width: WIDTH, height: HEIGHT, fps: FPS, duration: DURATION,
+    id: 'stream-source-probe', name: 'Stream probe for source-dependent cards and 3D outer-frame cards', width: WIDTH, height: HEIGHT, fps: FPS, duration: DURATION,
     themeId: 'dark', camera3dFov: 50, media: [media.a, media.b, media.c], filters: [], pixelMaps: [], audioFx: [], style: {},
     cardNodes: [
       { id: 'n-fx', adapter: 'card', cardId: TINT, kind: 'filter', params: { amount: 1 }, inputs: { source: { nodeId: '@clip/fx/source', offset: 0, rate: 1 } } },
-      // 两路输入的时间偏移取成「接着那段视频自己的时间走」:A 是 va 在转场入点时放到哪,B 是 vb 入点之前的那一截
+      // Time offsets of the two inputs are set to "follow that video's own time": A is where va plays at transition in point, B is the segment before vb in point
       { id: 'n-trans', adapter: 'card', cardId: FADE, kind: 'transition', params: { swap },
         inputs: { A: { nodeId: '@clip/va/source', offset: +(CLIPS.trans.start - VA.start).toFixed(4), rate: 1 }, B: { nodeId: '@clip/vb/source', offset: +(CLIPS.trans.start - VB.start).toFixed(4), rate: 1 } } },
     ],
-    // 第一条序列在最上面
+    // First track is on top
     tracks: [
       { id: 'tr-tilt', name: 'tilt', hidden: false, clips: [{ id: 'tilt', kind: 'card', cardId: 'r6-stateful', start: CLIPS.tilt.start, end: CLIPS.tilt.end, params: {}, frame: { ...TILT_FRAME, rotateY } }] },
       { id: 'tr-trans', name: 'trans', hidden: false, clips: [{ id: 'trans', kind: 'card', cardId: FADE, nodeId: 'n-trans', start: CLIPS.trans.start, end: CLIPS.trans.end, params: { swap } }] },
@@ -222,20 +257,20 @@ function project(media, { fxOffset = 0.4, swap = 0, rotateY = TILT_FRAME.rotateY
   };
 }
 
-/** `--measure` 的项目:只有一段视频套一张素材效果卡,从第 0 帧起、整段 */
+/** Project for `--measure`: only one video clip wrapped with a media effect card, starting from frame 0, entire clip */
 function measureProject(media, seconds) {
   const card = DIRECT ? TINT_DIRECT : TINT;
   return {
-    id: 'stream-source-measure', name: '源依赖卡的流:量耗时与体积', width: WIDTH, height: HEIGHT, fps: FPS, duration: seconds,
+    id: 'stream-source-measure', name: 'Source-dependent card streams: measure time and size', width: WIDTH, height: HEIGHT, fps: FPS, duration: seconds,
     themeId: 'dark', media: [media.c], filters: [], pixelMaps: [], audioFx: [], style: {},
     cardNodes: [{ id: 'n-fx', adapter: 'card', cardId: card, kind: 'filter', params: { amount: 1 }, inputs: { source: { nodeId: '@clip/fx/source', offset: 0, rate: 1 } } }],
     tracks: [{ id: 'tr-fx', name: 'fx', hidden: false, clips: [{ id: 'fx', cardId: card, nodeId: 'n-fx', mediaId: media.c.id, mediaOffset: 0, start: 0, end: seconds, params: { amount: 1 }, volume: 0 }] }],
   };
 }
 
-/* ------------------------------------------------------------------ 比像素 */
+/* ------------------------------------------------------------------ Compare pixels */
 
-/** RGBA PNG → 垫在测试页底色上的 RGB(导出页的整帧是透明底,舞台截图叠在测试页的底色上) */
+/** RGBA PNG → RGB underlaid with test page background color (full frame of export page has transparent background, stage screenshot is overlaid on test page background color) */
 function rgbOver(buf, bg = [0x20, 0x20, 0x20]) {
   const png = PNG.sync.read(buf);
   const out = new Uint8Array(png.width * png.height * 3);
@@ -245,7 +280,10 @@ function rgbOver(buf, bg = [0x20, 0x20, 0x20]) {
   }
   return { width: png.width, height: png.height, rgb: out };
 }
-/** 两幅 RGB 的差:平均差,和差超过 48 的像素数(「明显不是同一幅」的像素) */
+/**
+ * Difference between two RGB images: average difference, and number of pixels with difference > 48
+ * (pixels "clearly not the same image").
+ */
 function rgbDiff(a, b) {
   if (a.width !== b.width || a.height !== b.height) return { mean: Infinity, bad: Infinity };
   let sum = 0, bad = 0;
@@ -286,7 +324,7 @@ window.__ready = Promise.all([waitReady(document.getElementById('a'), '${oa}'), 
   .then(([a, b]) => { window.__rpc = a; window.__rpcB = b; a.onEvent((ev) => { if (ev.type === 'frame') window.__frames.push({ sec: ev.sec, at: performance.now() }); }); return true; });
 </script></body></html>`;
 
-/* ------------------------------------------------------------------ 主流程 */
+/* ------------------------------------------------------------------ Main flow */
 
 const out = { measure: MEASURE, out: OUT, size: `${WIDTH}x${HEIGHT}`, fps: FPS };
 await fs.mkdir(MEDIA_DIR, { recursive: true });
@@ -294,7 +332,7 @@ await fs.mkdir(DATA_DIR, { recursive: true });
 let dev = null, bakery = null, pipeline = null, browser = null, hostServer = null, dropSpares = () => {};
 const started = Date.now();
 try {
-  // 这几样环境变量本进程里的管线也要(卡片改动层、素材目录):和开发服务器用同一份
+  // These environment variables are also needed by pipeline in this process (card overlay layer, asset catalog): share the same with dev server
   const env = { PROMPTCUT_EXPORT_DIR: WORK, PROMPTCUT_DATA_DIR: DATA_DIR, PROMPTCUT_CARD_OVERRIDES: OVERRIDES, PROMPTCUT_NO_PORT_FILE: '1',
     PROMPTCUT_CARD_SYNC: '0', PROMPTCUT_PUSH: '0', PROMPTCUT_LAN_HOST: '', PROMPTCUT_DEVICE_ID: `srcprobe-${RUN}`.padEnd(16, '0'), PROMPTCUT_DEVICE_NAME: 'source-probe' };
   Object.assign(process.env, env);
@@ -320,7 +358,7 @@ try {
   out.origin = origin;
   say('spawn', { pid: dev.pid, port: PORT, stagePorts: dev.stagePorts });
 
-  /** 起一条管线:钉成重卡;加「稀疏的都齐了以后先卡住」的闸(`hold`),放行以后才补满密度 */
+  /** Start a pipeline: pin as heavy cards; add gate (`hold`) to "block once all sparse ones are ready", and catch up to full density only after release */
   const openPipeline = (root) => {
     const p = new FramePipeline({ root, origin: () => origin, interactive: true, playhead: () => null });
     p.streamPicked = () => true;
@@ -336,7 +374,7 @@ try {
     p.readyIndex.subscribe((message) => { if (message.type === 'layer' && message.kind === 'stream') layers.set(message.clipId, message); });
     return { pipeline: p, producer, gate, stored, layers };
   };
-  /** 这一版的每条流每个分段都满足 `want`(而且没有在产的)才回状态 */
+  /** Return status only when every segment of each stream in this version satisfies `want` (and none are currently generating) */
   const allAt = (producer, keys, want) => {
     const s = producer.status();
     const rows = s.streams.filter((row) => keys.has(row.streamKey));
@@ -351,7 +389,7 @@ try {
     return { sparse, dense, inits };
   };
 
-  /* ================================================================ 只量 */
+  /* ================================================================ Measure only */
   if (MEASURE) {
     const PROJECT = measureProject(media, MEASURE_SECONDS);
     const P = openPipeline(path.join(OUT, 'library'));
@@ -360,36 +398,36 @@ try {
     const entry = await pipeline.preload(PROJECT);
     void entry;
     const keysOf = () => new Set([...P.producer.streams.values()].map((s) => s.spec.streamKey));
-    const sparse = await until('稀疏版铺满', () => (P.producer.streams.size ? allAt(P.producer, keysOf(), (seg) => !!seg) : null), 1_800_000, 200);
+    const sparse = await until('Sparse version fully laid out', () => (P.producer.streams.size ? allAt(P.producer, keysOf(), (seg) => !!seg) : null), 1_800_000, 200);
     const sparseMs = Date.now() - t0;
     const state = [...P.producer.streams.values()][0];
-    if (!sparse || !state) throw new Error(`稀疏版没铺完:${JSON.stringify(P.producer.status().log.slice(-8))}`);
+    if (!sparse || !state) throw new Error(`Sparse version not fully laid out: ${JSON.stringify(P.producer.status().log.slice(-8))}`);
     const sparseBytes = bytesOf(state);
     const segments = state.spec.lastSegment + 1;
     const sparseCapture = { ...(state.capture ?? {}) };
     P.gate.hold = false;
     P.producer.kick();
-    const dense = await until('满密度补齐', () => { const s = allAt(P.producer, keysOf(), (seg) => seg?.stride === 1); return s && !P.producer.workers.size && !P.producer.encoding.size ? s : null; }, 3_600_000, 300);
+    const dense = await until('Full density filled in', () => { const s = allAt(P.producer, keysOf(), (seg) => seg?.stride === 1); return s && !P.producer.workers.size && !P.producer.encoding.size ? s : null; }, 3_600_000, 300);
     const denseMs = Date.now() - t0;
-    if (!dense) throw new Error(`满密度没补完:${JSON.stringify(P.producer.status().log.slice(-8))}`);
+    if (!dense) throw new Error(`Full density not filled in: ${JSON.stringify(P.producer.status().log.slice(-8))}`);
     const denseBytes = bytesOf(state);
     const frames = state.spec.lastFrame - state.spec.originFrame + 1;
     const cap = state.capture ?? {};
     out.result = {
-      seconds: MEASURE_SECONDS, frames, segments, card: DIRECT ? 'remotion 式' : 'motion 式', encoder: dense.encoder, solo: state.spec.solo ?? null, replay: state.spec.replay,
+      seconds: MEASURE_SECONDS, frames, segments, card: DIRECT ? 'remotion-style' : 'motion style', encoder: dense.encoder, solo: state.spec.solo ?? null, replay: state.spec.replay,
       sourceVideoBytes: media.c.bytes,
       sparseMs, denseMs, denseOnlyMs: denseMs - sparseMs,
       sparseBytes: sparseBytes.sparse, denseBytes: denseBytes.dense, initBytes: denseBytes.inits,
-      // 取图那一段的累计(生产者自己记的):截了几张、截图一共多少毫秒、推帧(含等素材效果卡解出这一帧的视频)一共多少毫秒
+      // Frame capture stage cumulative total (recorded by producer): frames captured, screenshot duration in milliseconds, frame-push duration (including waiting for media effect card to decode this frame's video) in milliseconds
       sparsePass: { captured: sparseCapture.frames ?? 0, captureMs: Math.round(sparseCapture.captureMs ?? 0), stepMs: Math.round(sparseCapture.stepMs ?? 0) },
       densePass: { captured: (cap.frames ?? 0) - (sparseCapture.frames ?? 0), captureMs: Math.round((cap.captureMs ?? 0) - (sparseCapture.captureMs ?? 0)), stepMs: Math.round((cap.stepMs ?? 0) - (sparseCapture.stepMs ?? 0)) },
       tight: state.manifest.tight, bound: state.manifest.bound, resets: state.resets ?? null, replayedFrames: state.replayedFrames ?? 0,
     };
     say('measure', out.result);
-    check(state.spec.kind === 'card' && state.spec.solo === 'source', '量的这条流是源依赖卡的单卡流', { kind: state.spec.kind, solo: state.spec.solo });
-    check(sparseBytes.sparse > 0 && denseBytes.dense > 0, '稀疏版、满密度版都产出来了', { sparseBytes, denseBytes });
+    check(state.spec.kind === 'card' && state.spec.solo === 'source', 'The measured stream is the single-card stream of a source-dependent card', { kind: state.spec.kind, solo: state.spec.solo });
+    check(sparseBytes.sparse > 0 && denseBytes.dense > 0, 'Both the sparse and full-density versions were produced', { sparseBytes, denseBytes });
   } else {
-  /* ================================================================ 逐帧核对 */
+  /* ================================================================ Check frame by frame */
   const PROJECT = project(media);
   const A = openPipeline(path.join(OUT, 'library'));
   pipeline = A.pipeline;
@@ -398,9 +436,9 @@ try {
   await pipeline.preload(PROJECT);
   const keysNow = () => new Set([...producer.streams.values()].map((s) => s.spec.streamKey));
 
-  // ---------- 1. 计划 + 2. 稀疏版
-  const sparseStatus = await until('三条流的稀疏版铺满', () => (producer.streams.size ? allAt(producer, keysNow(), (seg) => !!seg) : null), 900_000, 200);
-  if (!sparseStatus) throw new Error(`稀疏版没铺完:${JSON.stringify(producer.status().log.slice(-8))}`);
+  // ---------- 1. Plan + 2. Sparse version
+  const sparseStatus = await until('Sparse versions of the three streams fully laid out', () => (producer.streams.size ? allAt(producer, keysNow(), (seg) => !!seg) : null), 900_000, 200);
+  if (!sparseStatus) throw new Error(`Sparse version not fully laid out: ${JSON.stringify(producer.status().log.slice(-8))}`);
   out.sparseMs = Date.now() - t0;
   out.encoder = sparseStatus.encoder;
   const states = () => [...producer.streams.values()];
@@ -408,37 +446,37 @@ try {
   out.plan = states().map((s) => ({ clip: s.spec.topClipId, kind: s.spec.kind, plane: s.spec.plane, solo: s.spec.solo ?? null, replay: s.spec.replay,
     originFrame: s.spec.originFrame, lastFrame: s.spec.lastFrame, lastSegment: s.spec.lastSegment, bound: s.spec.bound, offset: s.spec.offset }));
   say('plan', { ms: out.sparseMs, plan: out.plan });
-  check(states().length === 3, '有三条流', out.plan.map((p) => `${p.kind}:${p.clip}`));
+  check(states().length === 3, 'There are three streams', out.plan.map((p) => `${p.kind}:${p.clip}`));
   for (const [id, want] of Object.entries(CLIPS)) {
     const st = stateOf(id);
-    if (!check(!!st, `${id}:有这条流`)) continue;
+    if (!check(!!st, `${id}: has this stream`)) continue;
     const { spec, manifest } = st;
     const lastSegment = Math.floor((want.frames[1] - want.frames[0]) / STREAM_SEGMENT_FRAMES);
-    check(spec.kind === 'card' && spec.plane === 'local' && spec.solo === want.solo, `${id}:单卡流,solo 是 ${want.solo}`, { kind: spec.kind, plane: spec.plane, solo: spec.solo });
+    check(spec.kind === 'card' && spec.plane === 'local' && spec.solo === want.solo, `${id}: single-card stream, solo is ${want.solo}`, { kind: spec.kind, plane: spec.plane, solo: spec.solo });
     check(spec.originFrame === want.frames[0] && spec.lastFrame === want.frames[1] && spec.firstSegment === 0 && spec.lastSegment === lastSegment,
-      `${id}:第一帧 ${want.frames[0]}、最后一帧 ${want.frames[1]}、分段 0～${lastSegment}`, { originFrame: spec.originFrame, lastFrame: spec.lastFrame, lastSegment: spec.lastSegment });
-    check(want.frames[0] % STREAM_SEGMENT_FRAMES !== 0, `${id}:第一帧不是 15 的倍数`, want.frames[0]);
-    check(spec.replay === (id !== 'trans'), `${id}:回放与否(反色那张和 r6 是 motion 式,溶解那张是 remotion 式)`, spec.replay);
+      `${id}: first frame ${want.frames[0]}, last frame ${want.frames[1]}, segments 0-${lastSegment}`, { originFrame: spec.originFrame, lastFrame: spec.lastFrame, lastSegment: spec.lastSegment });
+    check(want.frames[0] % STREAM_SEGMENT_FRAMES !== 0, `${id}: the first frame is not a multiple of 15`, want.frames[0]);
+    check(spec.replay === (id !== 'trans'), `${id}: replay or not (the invert card and r6 are motion style, the dissolve card is remotion style)`, spec.replay);
     const sparseSegs = Object.entries(manifest.segments);
-    check(sparseSegs.length === lastSegment + 1 && sparseSegs.every(([, seg]) => seg.stride === SPARSE_STRIDE), `${id}:稀疏版每个分段的间隔是一个分段的帧数`, sparseSegs.map(([n, seg]) => [n, seg.stride]));
-    check(sparseSegs.every(([n, seg]) => seg.samples === streamSegmentFrameCount(Number(n), want.frames[0], want.frames[1])), `${id}:稀疏分段的样本数 = 这一段盖住的帧数`, sparseSegs.map(([n, seg]) => [n, seg.samples]));
-    check(sparseSegs.every(([, seg]) => seg.box && seg.box.w > 0 && seg.box.h > 0), `${id}:稀疏版每个分段带位置矩形`, sparseSegs.map(([n, seg]) => [n, seg.box ?? null]));
+    check(sparseSegs.length === lastSegment + 1 && sparseSegs.every(([, seg]) => seg.stride === SPARSE_STRIDE), `${id}: in the sparse version every segment's stride is the frame count of one segment`, sparseSegs.map(([n, seg]) => [n, seg.stride]));
+    check(sparseSegs.every(([n, seg]) => seg.samples === streamSegmentFrameCount(Number(n), want.frames[0], want.frames[1])), `${id}: a sparse segment's sample count = the number of frames this segment covers`, sparseSegs.map(([n, seg]) => [n, seg.samples]));
+    check(sparseSegs.every(([, seg]) => seg.box && seg.box.w > 0 && seg.box.h > 0), `${id}: every segment in the sparse version carries a position rectangle`, sparseSegs.map(([n, seg]) => [n, seg.box ?? null]));
     const layer = A.layers.get(id);
-    check(!!layer && layer.key === spec.streamKey && layer.originFrame === want.frames[0], `${id}:就绪消息带着流键和第一帧`, layer && { key: layer.key.slice(0, 12), originFrame: layer.originFrame, ranges: layer.ranges });
+    check(!!layer && layer.key === spec.streamKey && layer.originFrame === want.frames[0], `${id}: the ready message carries the stream key and the first frame`, layer && { key: layer.key.slice(0, 12), originFrame: layer.originFrame, ranges: layer.ranges });
   }
   out.sparseBytes = Object.fromEntries(states().map((s) => [s.spec.topClipId, bytesOf(s).sparse]));
-  // fx 的位置矩形:视频铺满画面、不透明,所以每个分段的框就是整个画面
+  // Position rectangle for fx: video fills the frame and is opaque, so bounding box for each segment is the entire frame
   {
     const st = stateOf('fx');
     const boxes = Object.values(st?.manifest.segments ?? {}).map((seg) => seg.box);
-    check(boxes.length > 0 && boxes.every((b) => b && b.x === 0 && b.y === 0 && b.w === WIDTH && b.h === HEIGHT), 'fx:位置矩形是整个画面(流里带着视频,不透明)', boxes.slice(0, 2));
+    check(boxes.length > 0 && boxes.every((b) => b && b.x === 0 && b.y === 0 && b.w === WIDTH && b.h === HEIGHT), 'fx: the position rectangle is the whole picture (the stream carries video, opaque)', boxes.slice(0, 2));
   }
 
-  // ---------- 参照:完整项目在导出页顺推,每帧截一张整幅
+  // ---------- Reference: complete project steps forward on export page, capturing one full frame per frame
   const emptyUrl = emptyUrlOf(origin, { width: WIDTH, height: HEIGHT });
   bakery = await openBakery({ url: emptyUrl });
   const LAST = CLIPS.trans.frames[1];
-  /** 导出页顺推 0..last,每帧截一张整幅(透明底)。回 `{ png(f), rgba(f), rgb(f) }` */
+  /** Export page steps forward 0..last, capturing one full frame per frame (transparent background). Returns `{ png(f), rgba(f), rgb(f) }` */
   const exportAll = async (proj, last, dir) => {
     await fs.mkdir(dir, { recursive: true });
     const pngs = new Map();
@@ -450,7 +488,7 @@ try {
     return {
       has: (f) => pngs.has(f),
       png: (f) => pngs.get(f),
-      rgba(f) { if (!rgbaCache.has(f)) { const d = decodePngRgba(pngs.get(f))?.data; if (!d) throw new Error(`解不开第 ${f} 帧的参照`); rgbaCache.set(f, d); if (rgbaCache.size > 40) rgbaCache.delete(rgbaCache.keys().next().value); } return rgbaCache.get(f); },
+      rgba(f) { if (!rgbaCache.has(f)) { const d = decodePngRgba(pngs.get(f))?.data; if (!d) throw new Error(`Could not resolve the reference for frame ${f}`); rgbaCache.set(f, d); if (rgbaCache.size > 40) rgbaCache.delete(rgbaCache.keys().next().value); } return rgbaCache.get(f); },
       rgb(f) { if (!rgbCache.has(f)) { rgbCache.set(f, rgbOver(pngs.get(f))); if (rgbCache.size > 24) rgbCache.delete(rgbCache.keys().next().value); } return rgbCache.get(f); },
     };
   };
@@ -459,11 +497,11 @@ try {
   out.exportMs = Date.now() - tExport;
   say('exported', { frames: LAST + 2, ms: out.exportMs });
 
-  // ---------- 舞台
+  // ---------- Stage
   const u = new URL(origin);
   const [originA, originB] = dev.stagePorts.slice(0, 2).map((p) => `${u.protocol}//${u.hostname}:${p}`);
   const HOST_PATH = '/__stream-source-probe-host';
-  /** 被换掉的稀疏分段文件生产者过几秒就删;流播放器手里可能还拿着旧清单,留一份照样给(同 `sparse-stream-probe`) */
+  /** Replaced sparse segment files are deleted by producer after a few seconds; stream player may still hold old manifest, keep a copy and serve as usual (same as `sparse-stream-probe`) */
   const kept = new Map();
   let servedKept = 0;
   hostServer = await serve(HOST_PORT, (req, res) => {
@@ -475,7 +513,7 @@ try {
       const m = /^\/stream\/([a-f0-9]{64})\/(\d+-[a-f0-9]{16}\.m4s)$/.exec(rest);
       if (m) {
         const file = path.join(pipeline.streamProducer().store.dir(m[1]), m[2]);
-        if (fsSync.existsSync(file)) { try { kept.set(rest, fsSync.readFileSync(file)); } catch { /* 正在删 */ } }
+        if (fsSync.existsSync(file)) { try { kept.set(rest, fsSync.readFileSync(file)); } catch { /* Deleting */ } }
         else if (kept.has(rest)) { servedKept++; res.setHeader('Content-Type', 'video/iso.segment'); res.end(kept.get(rest)); return; }
       }
       if (handleStreamRequest(pipeline.streamProducer().store, req, res, rest)) return;
@@ -496,7 +534,7 @@ try {
   const heavy = Object.keys(CLIPS);
   let layersNow = () => [...A.layers.values()];
   const planesAt = (f) => streamPlanesFor(layersNow(), new Set(heavy), f);
-  /** (重新)打开父页和两个舞台:流播放器从头建 */
+  /** (Re)open parent page and two stages: rebuild stream player from scratch */
   const openStage = async (proj) => {
     await page.goto(base + HOST_PATH);
     await page.waitForFunction(() => window.__ready, { timeout: 120000 });
@@ -516,7 +554,10 @@ try {
     await page.screenshot({ clip: { x: iframeBox.x, y: iframeBox.y, width: WIDTH, height: HEIGHT } });
     return rgbOver(await page.screenshot({ clip: { x: iframeBox.x, y: iframeBox.y, width: WIDTH, height: HEIGHT } }));
   };
-  /** 把时间设到第 f 帧,等每条在场的流画出这一帧。照父页的做法:先发流平面,再抑制这一帧贴流的那几张,再设时间 */
+  /**
+   * Set time to frame f, wait for each present stream to draw this frame. Following parent page's
+   * behavior: send stream plane first, then suppress cards pasting streams on this frame, then set time.
+   */
   const seekTo = async (f) => {
     const planes = planesAt(f);
     await rpc('setStreamPlanes', planes);
@@ -544,13 +585,13 @@ try {
   await openStage(PROJECT);
   iframeBox = await (await page.$('#a')).boundingBox();
 
-  // ---------- 2(续). 舞台贴稀疏版:分段中间的帧,贴出来的是分段第一帧的画面
+  // ---------- 2 (cont.). Stage pastes sparse version: for frames in the middle of a segment, what gets pasted is the image of the segment's first frame
   {
     const rows = [];
-    // [帧, 判哪条流] —— fx 单独在场的、trans 的、tilt 单独在场的(第 129 帧以后下面没有东西)
+    // [frame, which stream to evaluate]: fx present alone, trans, tilt present alone (nothing underneath after frame 129)
     for (const [f, id] of [[46, 'fx'], [63, 'fx'], [174, 'trans'], [190, 'trans'], [137, 'tilt'], [142, 'tilt']]) {
       const { planes, got } = await seekTo(f);
-      if (!check(got.ms !== null && planes.length === onStage(f).length, `舞台贴稀疏版:第 ${f} 帧流平面画出来了`, { got, planes: planes.length })) continue;
+      if (!check(got.ms !== null && planes.length === onStage(f).length, `Stage with sparse version: stream plane rendered frame ${f}`, { got, planes: planes.length })) continue;
       const stage = await shotStage();
       const first = streamSegmentFirstFrame(streamSegmentOf(f, CLIPS[id].frames[0]), CLIPS[id].frames[0]);
       const scores = [...new Set([first, f, f - 1])].map((c) => [c, rgbDiff(stage, exported.rgb(c)).mean]).sort((x, y) => x[1] - y[1]);
@@ -559,17 +600,17 @@ try {
     }
     out.stageSparse = rows;
     say('stage-sparse', { rows: rows.map((r) => [r.frame, r.clip, r.segmentFirst, r.best, r.scores]) });
-    check(rows.length === 6, '舞台贴稀疏版:六帧都比过了', rows.length);
-    check(rows.every((r) => r.best === r.segmentFirst), '舞台贴稀疏版:分段中间的帧,贴的是分段第一帧的画面(源依赖卡的流连视频一起停在那一帧)', rows.filter((r) => r.best !== r.segmentFirst));
-    check(rows.every((r) => r.placeholders === 0), '舞台贴稀疏版:没有占位符', rows.filter((r) => r.placeholders));
+    check(rows.length === 6, 'Stage shows the sparse version: all six frames were compared', rows.length);
+    check(rows.every((r) => r.best === r.segmentFirst), 'Stage shows the sparse version: frames in the middle of a segment show the segment\'s first-frame picture (a source-dependent card\'s stream freezes the video along with it at that frame)', rows.filter((r) => r.best !== r.segmentFirst));
+    check(rows.every((r) => r.placeholders === 0), 'Stage shows the sparse version: no placeholders', rows.filter((r) => r.placeholders));
   }
 
-  // ---------- 3. 放行补满密度;产流逐帧
+  // ---------- 3. Unblock filling to full density; generate stream frame by frame
   const tDense = Date.now();
   A.gate.hold = false;
   producer.kick();
-  const denseStatus = await until('三条流补成满密度', () => { const s = allAt(producer, keysNow(), (seg) => seg?.stride === 1); return s && !producer.workers.size && !producer.encoding.size ? s : null; }, 1_800_000, 300);
-  if (!denseStatus) throw new Error(`满密度没补完:${JSON.stringify(producer.status().log.slice(-8))}`);
+  const denseStatus = await until('The three streams filled in to full density', () => { const s = allAt(producer, keysNow(), (seg) => seg?.stride === 1); return s && !producer.workers.size && !producer.encoding.size ? s : null; }, 1_800_000, 300);
+  if (!denseStatus) throw new Error(`Full density not filled in: ${JSON.stringify(producer.status().log.slice(-8))}`);
   out.denseMs = Date.now() - tDense;
   out.denseBytes = Object.fromEntries(states().map((s) => [s.spec.topClipId, bytesOf(s).dense]));
   say('dense', { ms: out.denseMs, bytes: out.denseBytes });
@@ -587,19 +628,19 @@ try {
     const wrong = [];
     for (let n = 0; n <= lastSegment; n++) {
       const seg = manifest.segments[n];
-      if (!check(seg?.stride === 1, `${id}#${n}:满密度`, seg)) continue;
+      if (!check(seg?.stride === 1, `${id}#${n}: full density`, seg)) continue;
       const count = streamSegmentFrameCount(n, first0, last0);
-      check(seg.samples === count, `${id}#${n}:样本数 = 这一段盖住的帧数`, { samples: seg.samples, count });
-      check(seg.box !== undefined, `${id}#${n}:补成满密度以后位置矩形还在`, seg.box ?? null);
+      check(seg.samples === count, `${id}#${n}: sample count = number of frames this segment covers`, { samples: seg.samples, count });
+      check(seg.box !== undefined, `${id}#${n}: the position rectangle is still there after filling in to full density`, seg.box ?? null);
       const meta = manifest.inits[seg.init];
       const rect = { x: meta.rect.x + spec.offset.x, y: meta.rect.y + spec.offset.y, w: meta.rect.w, h: meta.rect.h };
       const init = await fs.readFile(producer.store.initFile(spec.streamKey, seg.init));
       const bytes = await fs.readFile(path.join(producer.store.dir(spec.streamKey), seg.file));
       const decoded = await decodeSegment(ffmpeg, init, bytes, dir, `seg-${n}`);
       const frameBytes = rect.w * 2 * (rect.h + 8) * 3;
-      if (!check(decoded.length === seg.samples * frameBytes, `${id}#${n}:解出 ${seg.samples} 帧`, decoded.length / frameBytes)) continue;
+      if (!check(decoded.length === seg.samples * frameBytes, `${id}#${n}: decoded ${seg.samples} frames`, decoded.length / frameBytes)) continue;
       const first = streamSegmentFirstFrame(n, first0);
-      // 参照的底:同一批真画面裁到同一个矩形,原样过一遍同一个编码器
+      // Reference baseline: same real frames cropped to same rectangle, passed through same encoder as is
       const plain = openStreamSegmentEncoder(ffmpeg, { encoder: denseStatus.encoder, fps: FPS, raw: { width: rect.w, height: rect.h } });
       for (let k = 0; k < count; k++) await plain.write(cropRgba(truth.rgba(first + k), WIDTH, rect));
       const plainParts = splitFmp4((await plain.finish()).bytes);
@@ -620,20 +661,20 @@ try {
       }
     }
     const record = { clip: id, solo: spec.solo, streamKey: spec.streamKey.slice(0, 16), frames, tight: manifest.tight, bound: manifest.bound, resets: state.resets ?? null, replayedFrames: state.replayedFrames ?? 0,
-      error: { 对它自己那一帧: errorSummary(got), 参照_同一幅画面原样过一遍编码器: errorSummary(floor), 对照_下一帧: errorSummary(next) },
+      error: { vsItsOwnFrame: errorSummary(got), referenceSamePictureThroughEncoderAsIs: errorSummary(floor), controlNextFrame: errorSummary(next) },
       wrongFrames: wrong.slice(0, 6), wrongCount: wrong.length, minMargin: Number.isFinite(minMargin) ? round2(minMargin) : null };
     out.streams.push(record);
     say('produce-compare', { clip: id, frames, wrong: wrong.length, minMargin: record.minMargin, ...record.error });
-    const g = record.error.对它自己那一帧, ref = record.error.参照_同一幅画面原样过一遍编码器, nx = record.error.对照_下一帧;
-    check(frames === last0 - first0 + 1, `${id}:从第 ${first0} 帧到第 ${last0} 帧每一帧都比过了`, frames);
-    check(wrong.length === 0, `${id}:产流逐帧 —— 每个样本最像的都是它该是的那一帧`, { wrong: wrong.length, first: wrong.slice(0, 3) });
-    check(g.mean <= ref.mean + 0.5 && g.bad <= ref.bad * 1.25 + g.pixels * 0.001, `${id}:和它自己那一帧的差在编码误差以内`, { got: g, ref });
-    check(nx.mean > 2 * g.mean, `${id}:对照(下一帧)明显更大`, { got: g, next: nx });
+    const g = record.error.vsItsOwnFrame, ref = record.error.referenceSamePictureThroughEncoderAsIs, nx = record.error.controlNextFrame;
+    check(frames === last0 - first0 + 1, `${id}: every frame from frame ${first0} to frame ${last0} was compared`, frames);
+    check(wrong.length === 0, `${id}: frame-by-frame stream production, each sample is most similar to the frame it should be`, { wrong: wrong.length, first: wrong.slice(0, 3) });
+    check(g.mean <= ref.mean + 0.5 && g.bad <= ref.bad * 1.25 + g.pixels * 0.001, `${id}: the difference from its own frame is within encoding error`, { got: g, ref });
+    check(nx.mean > 2 * g.mean, `${id}: the control (next frame) is clearly larger`, { got: g, next: nx });
     if (!KEEP) await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 
-  // ---------- 4. 舞台贴流,逐帧(拖动)
-  /** 一批帧:逐帧设时间、等流画出来、截舞台,和 `ref` 的同一帧、前后各一帧比。回汇总 */
+  // ---------- 4. Stage stream paste, frame by frame (scrub)
+  /** A batch of frames: set time frame by frame, wait for stream to draw, capture stage, and compare with the same frame and one frame before and after in `ref`. Return summary */
   const scrubFrames = async (order, ref, tag) => {
     const acc = { frames: 0, wrong: [], notDrawn: [], retried: [], placeholders: [], minMargin: Infinity, seekMs: [], same: { mean: 0, bad: 0 }, next: { mean: 0, bad: 0 }, byClip: {}, rows: [] };
     const score = (stage, f) => { const scores = [f - 1, f, f + 1].map((c) => [c, rgbDiff(stage, ref.rgb(c))]); return { scores, best: [...scores].sort((x, y) => x[1].mean - y[1].mean)[0][0] }; };
@@ -646,7 +687,7 @@ try {
       let stage = await shotStage();
       let { scores, best } = score(stage, f);
       if (best !== f) {
-        // 没对上:先存下来,等一会儿原样再截(截图那一刻舞台还没合成完),还不对就重新设一次时间;如实记进 retried
+        // Mismatch: save first, wait a moment and capture again as-is (stage had not finished compositing at the moment of capture); if still mismatched, set time once again; record truthfully into retried
         await fs.writeFile(path.join(OUT, `stage-mismatch-${tag}-${f}.png`), toPng(stage));
         const firstTry = { best, scores: scores.map(([c, d]) => [c, round2(d.mean), d.bad]) };
         await sleep(400);
@@ -673,13 +714,13 @@ try {
       retried: acc.retried, retriedCount: acc.retried.length, placeholdersLeft: acc.placeholders.slice(0, 6), placeholdersLeftCount: acc.placeholders.length,
       seekMsMedian: acc.seekMs.length ? [...acc.seekMs].sort((a, b) => a - b)[acc.seekMs.length >> 1] : null, seekMsMax: acc.seekMs.length ? Math.max(...acc.seekMs) : null,
       minMargin: Number.isFinite(acc.minMargin) ? round2(acc.minMargin) : null,
-      // 和同一帧差得最多的几帧、和相邻帧分得最不开的几帧(给人看的:哪几帧最悬)
+      // Frames differing most from the same frame, and frames least distinguishable from adjacent frames (for human inspection: which frames are most borderline)
       worstSame: [...acc.rows].sort((x, y) => y.same - x.same).slice(0, 4),
       closest: [...acc.rows].sort((x, y) => Math.min(x.prev, x.next) / Math.max(x.same, 1e-6) - Math.min(y.prev, y.next) / Math.max(y.same, 1e-6)).slice(0, 4),
-      对导出同一帧: { mean: round2(acc.same.mean / n), bad: Math.round(acc.same.bad / n) }, 对照_导出相邻帧里更像的那一帧: { mean: round2(acc.next.mean / n), bad: Math.round(acc.next.bad / n) },
-      按在场的流分: Object.fromEntries(Object.entries(acc.byClip).map(([k, r]) => [k, { frames: r.frames, same: round2(r.same / r.frames), sameMax: round2(r.sameMax), next: round2(r.next / r.frames) }])) };
+      vsExportSameFrame: { mean: round2(acc.same.mean / n), bad: Math.round(acc.same.bad / n) }, controlMoreSimilarNeighborExportFrame: { mean: round2(acc.next.mean / n), bad: Math.round(acc.next.bad / n) },
+      byPresentStream: Object.fromEntries(Object.entries(acc.byClip).map(([k, r]) => [k, { frames: r.frames, same: round2(r.same / r.frames), sameMax: round2(r.sameMax), next: round2(r.next / r.frames) }])) };
   };
-  // 换一页(流播放器从头建:刚才贴过稀疏版,它手里是旧清单),然后打乱着跳
+  // Switch page (rebuild stream player from scratch: sparse version was pasted just now, it holds the old manifest), then jump in shuffled order
   await openStage(PROJECT);
   const all = [];
   for (let f = CLIPS.fx.frames[0]; f <= CLIPS.tilt.frames[1]; f++) all.push(f);
@@ -688,14 +729,14 @@ try {
   for (let i = 0; i < order.length; i++) { const j = (i * 37 + 11) % order.length; [order[i], order[j]] = [order[j], order[i]]; }
   out.scrub = await scrubFrames(order, exported, 'scrub');
   say('scrub', out.scrub);
-  check(out.scrub.notDrawnCount === 0, '拖动:每一帧流平面都画出了这一帧', out.scrub.notDrawn);
-  check(out.scrub.placeholdersLeftCount === 0, '拖动:流的帧画出来的那一刻没有占位符', out.scrub.placeholdersLeft);
-  check(out.scrub.retried.every((r) => r.fixedBy !== null), '拖动:重截过的帧原样再截就对上了', out.scrub.retried.slice(0, 3));
-  check(out.scrub.frames === all.length, `拖动:三条流在场的 ${all.length} 帧每一帧都比过了`, out.scrub.frames);
-  check(out.scrub.wrongCount === 0, '拖动逐帧 —— 舞台上贴出来的画面最像的都是导出页的同一帧(不是前一帧、后一帧)', { wrong: out.scrub.wrongCount, first: out.scrub.wrong.slice(0, 3) });
-  check(out.scrub.对导出同一帧.mean < 3, '拖动:舞台(贴流)与导出同一帧的平均差 < 3/255', out.scrub.对导出同一帧);
+  check(out.scrub.notDrawnCount === 0, 'drag: for every frame the stream plane drew that frame', out.scrub.notDrawn);
+  check(out.scrub.placeholdersLeftCount === 0, 'Scrub: no placeholder at the moment the stream\'s frame is drawn', out.scrub.placeholdersLeft);
+  check(out.scrub.retried.every((r) => r.fixedBy !== null), 'Scrub: frames that were re-captured matched when captured again as is', out.scrub.retried.slice(0, 3));
+  check(out.scrub.frames === all.length, `Scrub: all ${all.length} frames where the three streams are present were compared`, out.scrub.frames);
+  check(out.scrub.wrongCount === 0, 'frame-by-frame drag, the picture pasted on the stage is most similar to the same frame of the export page (not the previous or next frame)', { wrong: out.scrub.wrongCount, first: out.scrub.wrong.slice(0, 3) });
+  check(out.scrub.vsExportSameFrame.mean < 3, 'drag: mean difference between the stage (stream paste) and the same export frame < 3/255', out.scrub.vsExportSameFrame);
 
-  // ---------- 5. 真的播放:从 fx 入场之前起播,播进 tilt,暂停
+  // ---------- 5. Real playback: start playback before fx entrance, play into tilt, pause
   {
     const forced = layersNow().map((l) => ({ clipIds: [l.clipId], key: l.key, ranges: l.ranges, originFrame: l.originFrame }));
     const from = 60;
@@ -719,14 +760,14 @@ try {
       tracks: d.streams.tracks.map((t) => ({ id: String(t.id).slice(0, 14), lastDrawn: t.lastDrawn, drawn: t.drawn, errors: t.errors })),
       scores: scores.map(([c, x]) => [c, round2(x.mean), x.bad]), best };
     say('play', out.play);
-    check(out.play.noSkip && frames.length > 5, '播放:不跳帧(frame 的 sec 差恒为 1/fps)', { beats: frames.length, steps: [...new Set(steps)] });
-    check(stopped > CLIPS.tilt.frames[0] && stopped <= CLIPS.fx.frames[1], '播放:播进了 tilt 压着 fx 的那一段', stopped);
-    check(active.length >= 2 && active.every((t) => t.errors === 0 && t.drawn > 3), '播放:两条流平面一路画着,解码器没报错', out.play.tracks);
-    check(active.every((t) => t.lastDrawn === stopped), '播放:暂停时流平面停在暂停的那一帧', out.play.tracks);
-    check(best === stopped && scores[1][1].mean < 3, '播放:暂停的那一帧,舞台(贴流)最像导出页的同一帧', out.play.scores);
+    check(out.play.noSkip && frames.length > 5, 'playback: no frame skipping (the sec difference between frames is always 1/fps)', { beats: frames.length, steps: [...new Set(steps)] });
+    check(stopped > CLIPS.tilt.frames[0] && stopped <= CLIPS.fx.frames[1], 'Playback: it reached the stretch where tilt is on top of fx', stopped);
+    check(active.length >= 2 && active.every((t) => t.errors === 0 && t.drawn > 3), 'Playback: both stream planes kept drawing the whole way and the decoder reported no errors', out.play.tracks);
+    check(active.every((t) => t.lastDrawn === stopped), 'playback: when paused, the stream plane stops on the paused frame', out.play.tracks);
+    check(best === stopped && scores[1][1].mean < 3, 'playback: at the paused frame, the stage (stream paste) is most similar to the same frame of the export page', out.play.scores);
   }
 
-  // ---------- 6. 改了输入:视频的裁剪(fx)、卡的参数(trans)、三维的角度(tilt)
+  // ---------- 6. Changed inputs: video crop (fx), card parameters (trans), 3D angle (tilt)
   {
     const before = Object.fromEntries(states().map((s) => [s.spec.topClipId, { key: s.spec.streamKey, contentKey: s.spec.contentKey }]));
     const storedBefore = A.stored.length;
@@ -735,50 +776,50 @@ try {
     const tEdit = Date.now();
     await pipeline.preload(EDITED);
     const after = () => Object.fromEntries(states().map((s) => [s.spec.topClipId, { key: s.spec.streamKey, contentKey: s.spec.contentKey }]));
-    await until('改过的这一版的流进了生产者', () => { const a = after(); return a.fx && a.trans && a.tilt && a.fx.key !== before.fx.key ? a : null; }, 60_000, 100);
+    await until('The edited version\'s streams entered the producer', () => { const a = after(); return a.fx && a.trans && a.tilt && a.fx.key !== before.fx.key ? a : null; }, 60_000, 100);
     const now = after();
-    check(now.fx?.contentKey !== before.fx.contentKey, '改了视频的裁剪起点:fx 的流键换了', { before: before.fx.key.slice(0, 12), after: now.fx?.key.slice(0, 12) });
-    check(now.trans?.contentKey !== before.trans.contentKey, '改了卡的参数:trans 的流键换了', { before: before.trans.key.slice(0, 12), after: now.trans?.key.slice(0, 12) });
-    check(now.tilt?.key === before.tilt.key, '只改三维的角度:tilt 的流键不变(三维不在流里)', { before: before.tilt.key.slice(0, 12), after: now.tilt?.key.slice(0, 12) });
-    // 旧流不属于这一版:生产者手里没有旧键,就绪消息(父页据此贴流)里这两张卡是新键
-    check(!producer.streams.has(before.fx.key) && !producer.streams.has(before.trans.key), '旧的两条流不在这一版里', [...producer.streams.keys()].map((k) => k.slice(0, 12)));
-    const redone = await until('改过的两条流重产完(满密度)', () => { const s = allAt(producer, keysNow(), (seg) => seg?.stride === 1); return s && !producer.workers.size && !producer.encoding.size ? s : null; }, 1_800_000, 300);
+    check(now.fx?.contentKey !== before.fx.contentKey, 'Changed the video\'s trim start: fx\'s stream key changed', { before: before.fx.key.slice(0, 12), after: now.fx?.key.slice(0, 12) });
+    check(now.trans?.contentKey !== before.trans.contentKey, 'Changed the card\'s parameters: trans\'s stream key changed', { before: before.trans.key.slice(0, 12), after: now.trans?.key.slice(0, 12) });
+    check(now.tilt?.key === before.tilt.key, 'Changed only the 3D angle: tilt\'s stream key is unchanged (3D is not in the stream)', { before: before.tilt.key.slice(0, 12), after: now.tilt?.key.slice(0, 12) });
+    // Old stream does not belong to this version: producer does not have old keys, and these two cards have new keys in ready message (parent page pastes stream based on this)
+    check(!producer.streams.has(before.fx.key) && !producer.streams.has(before.trans.key), 'The two old streams are not in this version', [...producer.streams.keys()].map((k) => k.slice(0, 12)));
+    const redone = await until('The two edited streams finished re-production (full density)', () => { const s = allAt(producer, keysNow(), (seg) => seg?.stride === 1); return s && !producer.workers.size && !producer.encoding.size ? s : null; }, 1_800_000, 300);
     out.edit = { reproduceMs: Date.now() - tEdit, before: Object.fromEntries(Object.entries(before).map(([k, v]) => [k, v.key.slice(0, 12)])), after: Object.fromEntries(Object.entries(now).map(([k, v]) => [k, v.key.slice(0, 12)])) };
-    if (!check(!!redone, '改过的两条流重产完了', producer.status().log.slice(-6))) throw new Error('重产没做完');
+    if (!check(!!redone, 'The two edited streams finished re-production', producer.status().log.slice(-6))) throw new Error('Re-production did not finish');
     const redoneKeys = new Set(A.stored.slice(storedBefore).map((s) => s.key));
     out.edit.restored = [...redoneKeys].map((k) => k.slice(0, 12));
-    check(redoneKeys.has(now.fx.key) && redoneKeys.has(now.trans.key), '重产的是 fx 和 trans 的新流', out.edit.restored);
-    check(!redoneKeys.has(now.tilt.key), 'tilt 的流一个分段都没有重产', out.edit.restored);
+    check(redoneKeys.has(now.fx.key) && redoneKeys.has(now.trans.key), 'What was re-produced are the new streams of fx and trans', out.edit.restored);
+    check(!redoneKeys.has(now.tilt.key), 'Not a single segment of tilt\'s stream was re-produced', out.edit.restored);
     for (const id of ['fx', 'trans']) {
       const layer = A.layers.get(id);
-      check(layer?.key === now[id].key, `${id}:就绪消息里是新流的键(旧流不再贴)`, layer && { key: layer.key.slice(0, 12), ranges: layer.ranges });
+      check(layer?.key === now[id].key, `${id}: the ready message has the new stream's key (the old stream is no longer shown)`, layer && { key: layer.key.slice(0, 12), ranges: layer.ranges });
     }
-    // 改过的项目的导出,当参照;舞台换成改过的项目,三条流各抽几帧
+    // Export of the modified project, as reference; switch stage to modified project, sample a few frames from each of the three streams
     const exportedEdit = await exportAll(EDITED, LAST + 1, path.join(OUT, 'ref-edited'));
     await openStage(EDITED);
     const sample = [41, 55, 77, 90, 100, 113, 128, 131, 137, 144, 166, 173, 180, 188, 195];
     out.edit.scrub = await scrubFrames(sample, exportedEdit, 'edited');
     say('edit', out.edit);
-    check(out.edit.scrub.notDrawnCount === 0 && out.edit.scrub.frames === sample.length, '改了以后:抽的每一帧流平面都画出来了', out.edit.scrub.notDrawn);
-    check(out.edit.scrub.wrongCount === 0, '改了以后:舞台贴出来的最像改过的项目导出的同一帧(fx、trans 是重产的流;tilt 是原来那条流照新的角度贴)', out.edit.scrub.wrong);
-    check(out.edit.scrub.对导出同一帧.mean < 3, '改了以后:与导出同一帧的平均差 < 3/255', out.edit.scrub.对导出同一帧);
-    // 对照:改过的舞台和**没改的**项目的导出比,明显对不上(说明贴的确实是新画面,不是旧流)
+    check(out.edit.scrub.notDrawnCount === 0 && out.edit.scrub.frames === sample.length, 'After the edit: every sampled frame was drawn on the stream plane', out.edit.scrub.notDrawn);
+    check(out.edit.scrub.wrongCount === 0, 'After the edit: what the stage shows is most similar to the same frame exported from the edited project (fx and trans are re-produced streams; tilt is the original stream shown at the new angle)', out.edit.scrub.wrong);
+    check(out.edit.scrub.vsExportSameFrame.mean < 3, 'After the edit: mean difference to the exported same frame < 3/255', out.edit.scrub.vsExportSameFrame);
+    // Control: modified stage compared with export of **unmodified** project clearly does not match (indicating that what is pasted is indeed new image, not old stream)
     {
       const rows = [];
       for (const f of [100, 137, 170]) {
         await seekTo(f);
         const stage = await shotStage();
-        rows.push({ frame: f, 对改过的: round2(rgbDiff(stage, exportedEdit.rgb(f)).mean), 对没改的: round2(rgbDiff(stage, exported.rgb(f)).mean) });
+        rows.push({ frame: f, vsEdited: round2(rgbDiff(stage, exportedEdit.rgb(f)).mean), vsUnedited: round2(rgbDiff(stage, exported.rgb(f)).mean) });
       }
       out.edit.versusOld = rows;
-      check(rows.every((r) => r.对没改的 > 2 * r.对改过的 + 1), '改了以后:和没改的项目的导出明显对不上', rows);
+      check(rows.every((r) => r.vsUnedited > 2 * r.vsEdited + 1), 'After the edit: clearly does not match the export of the unedited project', rows);
     }
   }
   out.servedKept = servedKept;
   await rpc('setRole', 'back', { job: 'probe' });
   }
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   try { await browser?.close(); } catch { /* ignore */ }

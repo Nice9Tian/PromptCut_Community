@@ -1,42 +1,65 @@
 /**
- * 节点到文档服务的 HTTP 长轮询端点（契约 `docs/plan/http-transport-contract.md` 第 8 节）。
+ * Node-to-document-service HTTP long polling endpoint (section 8 of contract
+ * `docs/plan/http-transport-contract.md`).
  *
- * 给出口只放行 443 HTTPS、不支持 WebSocket 升级的节点用（云端开发容器经出站代理）。两样东西：
+ * Used for nodes whose egress permits only 443 HTTPS and does not support WebSocket upgrades
+ * (cloud dev containers via outbound proxy). Two components:
  *
- * - `HttpWebSocket` / `httpWebSocketClass(deps)`：仿 WebSocket 的类（`new HttpWebSocket(url, protocols)`，
- *   `readyState`、`protocol`、`bufferedAmount`、`send`、`close`、`addEventListener` 与 `on*`），协议是服务端
- *   `server/docservice/http-transport.mjs` 的四个端点。给 `doc-link` 这类直接 `new WebSocket` 的调用方注入。
- *   - 建连 `POST /lp/open`，子协议列表放 `X-Promptcut-Protocols`（与 WebSocket 同一个列表，证明、票据都在里面）；
- *   - 发送：`send` 进队，同一时刻只有一个 `POST /lp/send` 在途，小帧攒成一批（请求体不超过单帧上限 + 64 KiB），
- *     批次号从 1 起；没收到回包就重发同一批（服务端按批次号去重）；
- *   - 接收：一直挂一个 `GET /lp/recv?ack=&wait=`，只在确实收到回包后才推进 `ack`，按帧序号去重；
- *   - 临时错误（网络错误、超时、5xx、429）不立刻算断线：在 `idleMs / 2` 之内按短退避（250 ms 起，翻倍，封顶 5 s）
- *     重试同一请求；超过才以 1006 关闭。404（会话不存在）、410（会话已结束）立刻按断开处理（410 带服务端的关闭码）；
- *   - `sid` 是 bearer 凭证：只放 `Authorization` 头，不进 URL、日志、错误信息。
- * - `createHttpEndpoint(options)`：与 `createWsEndpoint` 同一个形状、同名同义的选项（退避重连、`protocols()` 每次现取、
- *   断线期间 `send` 丢弃计入 `stats().dropped`），就是 `createWsEndpoint` 套上 `HttpWebSocket`；另有 `fetch`、`waitMs`。
- *   `url` 收 `http(s)://` 或 `ws(s)://`，指文档服务基址。
+ * - `HttpWebSocket` / `httpWebSocketClass(deps)`: WebSocket-like class
+ *   (`new HttpWebSocket(url, protocols)`, `readyState`, `protocol`, `bufferedAmount`, `send`,
+ *   `close`, `addEventListener`, and `on*`), speaking the protocol of the four endpoints in server
+ *   `server/docservice/http-transport.mjs`. Injected into callers that directly do `new WebSocket`
+ *   such as `doc-link`.
+ *   - Connection: `POST /lp/open`, with the subprotocol list in `X-Promptcut-Protocols` (same list
+ *     as WebSocket, containing credentials and tickets);
+ *   - Sending: `send` enqueues, only one `POST /lp/send` in flight at a time, batching small frames
+ *     (request body does not exceed single-frame limit + 64 KiB), batch numbers starting at 1;
+ *     retries the same batch if no response is received (server deduplicates by batch number);
+ *   - Receiving: keeps a pending `GET /lp/recv?ack=&wait=`, advances `ack` only after actually
+ *     receiving a response, deduplicating by frame sequence number;
+ *   - Transient errors (network error, timeout, 5xx, 429) are not immediately treated as disconnect:
+ *     retries the same request with short backoff (starts at 250 ms, doubles, caps at 5 s) within
+ *     `idleMs / 2`; only closes with 1006 once exceeded. 404 (session not found) and 410 (session
+ *     ended) are treated as disconnect immediately (410 carries server close code);
+ *   - `sid` is a bearer token: placed only in `Authorization` header, never in URLs, logs, or
+ *     error messages.
+ * - `createHttpEndpoint(options)`: Same shape and options with identical names and semantics as
+ *   `createWsEndpoint` (backoff reconnect, `protocols()` fetched fresh each time, `send` drops during
+ *   disconnect counted in `stats().dropped`), simply wrapping `createWsEndpoint` over `HttpWebSocket`;
+ *   also accepts `fetch`, `waitMs`. `url` accepts `http(s)://` or `ws(s)://`, pointing to
+ *   document service base URL.
  *
- * 只用全局 `fetch`、`AbortController`、`TextEncoder` 与计时器（都可注入），不引任何包，浏览器可以原样用。
- * 代理：本模块不自己处理。Node 24.5 起以 `NODE_USE_ENV_PROXY=1`（或 `--use-env-proxy`）加 `HTTPS_PROXY` 运行，
- * 全局 `fetch` 就经 CONNECT 隧道走代理；要显式控制时注入带 `dispatcher` 的 `fetch`。
+ * Uses only global `fetch`, `AbortController`, `TextEncoder`, and timers (all injectable), imports
+ * no packages, and can be used as-is in browsers.
+ * Proxies: not handled by this module directly. Running on Node 24.5+ with `NODE_USE_ENV_PROXY=1`
+ * (or `--use-env-proxy`) plus `HTTPS_PROXY` routes global `fetch` through proxies via CONNECT tunnels;
+ * inject `fetch` with `dispatcher` when explicit control is needed.
  */
 import { createWsEndpoint } from './ws-transport.mjs';
 
 export const HTTP_CLIENT_DEFAULTS = Object.freeze({
-  /** 请服务端挂多久（服务端与它的 `waitMs` 取小） */
+  /** How long to ask the server to hold (min of server value and its `waitMs`) */
   waitMs: 25_000,
-  /** 一次请求（含挂起的 GET）最多等多久；比挂起时长多 15 s（契约第 11 节：客户端超时 35～40 s） */
+  /**
+   * Max wait time for a single request (including pending GET); 15 s longer than hold duration
+   * (contract section 11: client timeout 35-40 s)
+   */
   requestSlackMs: 15_000,
-  /** 服务端没说时用的会话空闲期（决定临时错误最多重试多久：它的一半） */
+  /**
+   * Session idle duration used when omitted by server (determines max retry time for transient
+   * errors: half of it)
+   */
   idleMs: 60_000,
   retryBaseMs: 250,
   retryMaxMs: 5_000,
-  /** `close()` 最多等多久（发完剩下的、`POST /lp/close`），过了直接报关闭 */
+  /**
+   * Max wait time for `close()` (sending remaining frames, `POST /lp/close`); reports closed
+   * directly if exceeded
+   */
   closeTimeoutMs: 5_000,
-  /** 服务端没说时用的单帧上限 */
+  /** Single-frame limit used when omitted by server */
   maxFrameBytes: 1024 * 1024,
-  /** 一批的请求体比单帧上限多出的余量（与服务端一致） */
+  /** Margin by which a batch request body can exceed the single-frame limit (matches server) */
   bodySlackBytes: 64 * 1024,
 });
 
@@ -49,36 +72,42 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const encoder = new TextEncoder();
 const byteLen = (text) => encoder.encode(text).byteLength;
 
-/** 文档服务地址 → http(s) 基址（`ws:` → `http:`、`wss:` → `https:`，路径保留、去掉结尾斜杠与查询串） */
+/**
+ * Document service address → http(s) base URL (`ws:` → `http:`, `wss:` → `https:`, path
+ * preserved, trailing slashes and query strings stripped)
+ */
 export function httpBaseOf(url) {
   const u = new URL(url);
   if (u.protocol === 'ws:') u.protocol = 'http:';
   else if (u.protocol === 'wss:') u.protocol = 'https:';
-  else if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new TypeError('文档服务地址必须是 http(s):// 或 ws(s)://');
+  else if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new TypeError('The document service address must be http(s):// or ws(s)://');
   return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`;
 }
 
-/** 反过来：http(s) → ws(s)（`createWsEndpoint` 只收 ws(s)，套 `HttpWebSocket` 时用它传地址） */
+/**
+ * In reverse: http(s) → ws(s) (`createWsEndpoint` only accepts ws(s); used to pass address when
+ * wrapping `HttpWebSocket`)
+ */
 function wsUrlOf(url) {
   const u = new URL(url);
   if (u.protocol === 'http:') u.protocol = 'ws:';
   else if (u.protocol === 'https:') u.protocol = 'wss:';
-  else if (u.protocol !== 'ws:' && u.protocol !== 'wss:') throw new TypeError('文档服务地址必须是 http(s):// 或 ws(s)://');
+  else if (u.protocol !== 'ws:' && u.protocol !== 'wss:') throw new TypeError('The document service address must be http(s):// or ws(s)://');
   return u.toString();
 }
 
-/** 临时错误：网络错误（status 0）、超时、网关与服务端错误、限流 */
+/** Transient errors: network errors (status 0), timeouts, gateway and server errors, rate limiting */
 const transient = (status) => status === 0 || status === 408 || status === 429 || status >= 500;
 
 /**
- * 返回绑好依赖的 `HttpWebSocket` 类。
+ * Returns the `HttpWebSocket` class bound with dependencies.
  * @param {object} [deps]
- * @param {typeof globalThis.fetch} [deps.fetch]  缺省调用时的全局 `fetch`
- * @param {number} [deps.waitMs]  请服务端挂多久，缺省 25 000
- * @param {number} [deps.requestTimeoutMs]  单次请求上限，缺省 `waitMs + 15 000`
+ * @param {typeof globalThis.fetch} [deps.fetch]  Global `fetch` used by default
+ * @param {number} [deps.waitMs]  How long to ask the server to hold, default 25 000
+ * @param {number} [deps.requestTimeoutMs]  Single-request limit, default `waitMs + 15 000`
  * @param {(fn: () => void, ms: number) => any} [deps.setTimeout]
  * @param {(handle: any) => void} [deps.clearTimeout]
- * @param {() => number} [deps.now]  重试期限按它算
+ * @param {() => number} [deps.now]  Used to calculate retry deadline
  * @param {(event: string, fields: object) => void} [deps.log]
  */
 export function httpWebSocketClass(deps = {}) {
@@ -91,10 +120,10 @@ export function httpWebSocketClass(deps = {}) {
     now = () => Date.now(),
     log = () => {},
   } = deps;
-  const say = (event, fields) => { try { log(event, fields); } catch { /* 日志出错不影响连接 */ } };
+  const say = (event, fields) => { try { log(event, fields); } catch { /* Logging errors do not affect the connection */ } };
   const doFetch = (url, init) => {
     const f = fetchImpl ?? globalThis.fetch;
-    if (typeof f !== 'function') throw new TypeError('HttpWebSocket：没有可用的 fetch');
+    if (typeof f !== 'function') throw new TypeError('HttpWebSocket: no fetch available');
     return f(url, init);
   };
 
@@ -126,21 +155,21 @@ export function httpWebSocketClass(deps = {}) {
     #waitMs = waitMs;
     #idleMs = HTTP_CLIENT_DEFAULTS.idleMs;
     #maxFrame = HTTP_CLIENT_DEFAULTS.maxFrameBytes;
-    /** 待发的帧与它们的字节数；在途那一批的字节数另记 */
+    /** Pending frames to send and their byte counts; in-flight batch byte count is tracked separately */
     #queue = [];
     #queuedBytes = 0;
     #inflightBytes = 0;
     #sendSeq = 0;
     #sending = null;
     #lastSeq = 0;
-    /** 在途请求的中止器、重试的计时器：关闭时一起清掉 */
+    /** Abort controllers for in-flight requests, retry timers: cleared together upon close */
     #aborters = new Set();
     #timers = new Set();
     #closeWanted = null;
 
     /**
-     * @param {string} url  文档服务基址：`http(s)://` 或 `ws(s)://`
-     * @param {string | string[]} [protocols]  与 WebSocket 同一个子协议列表
+     * @param {string} url  Document service base URL: `http(s)://` or `ws(s)://`
+     * @param {string | string[]} [protocols]  Same subprotocol list as WebSocket
      */
     constructor(url, protocols = []) {
       this.#url = String(url);
@@ -170,9 +199,12 @@ export function httpWebSocketClass(deps = {}) {
       if (i >= 0) list.splice(i, 1);
     }
 
-    /** 发一条文本。连接中调用抛错（同 WebSocket）；已在关闭或已关闭时丢弃 */
+    /**
+     * Sends a text message. Throws if called while connecting (matches WebSocket); drops if closing
+     * or closed
+     */
     send(data) {
-      if (this.#state === CONNECTING) throw new Error('InvalidStateError: HttpWebSocket 还没连上');
+      if (this.#state === CONNECTING) throw new Error('InvalidStateError: HttpWebSocket is not connected yet');
       if (this.#state !== OPEN) return;
       const text = typeof data === 'string' ? data : String(data);
       const bytes = byteLen(text);
@@ -181,11 +213,15 @@ export function httpWebSocketClass(deps = {}) {
       this.#kickSend();
     }
 
-    /** 关闭：先把已进队的发完，再 `POST /lp/close`，然后报 `close`。最多等 `closeTimeoutMs` */
+    /**
+     * Close: finishes sending enqueued frames first, then `POST /lp/close`, and reports `close`.
+     * Waits up to `closeTimeoutMs`
+     */
     close(code = 1000, reason = '') {
       if (this.#state === CLOSING || this.#state === CLOSED) return;
       if (this.#state === CONNECTING) {
-        // 同 WebSocket：连上之前就关，报 1006；建连回来了也立刻关掉服务端那头
+        // Matches WebSocket: if closed before connected, reports 1006; once connection response returns,
+        // immediately closes server side too
         this.#closeWanted = { code, reason };
         this.#state = CLOSING;
         return;
@@ -194,7 +230,7 @@ export function httpWebSocketClass(deps = {}) {
       void this.#closeOpen(code, typeof reason === 'string' ? reason : '');
     }
 
-    // ---------- 内部 ----------
+    // ---------- Internal ----------
 
     #emit(type, event) {
       const handler = this[`on${type}`];
@@ -221,7 +257,10 @@ export function httpWebSocketClass(deps = {}) {
       });
     }
 
-    /** 发一次请求；回 `{ status, body }`，网络错误或超时回 `{ status: 0, error }`（不抛） */
+    /**
+     * Sends a single request; returns `{ status, body }`, or `{ status: 0, error }` on network error
+     * or timeout (does not throw)
+     */
     async #request(method, route, { headers = {}, body, timeoutMs, query = '' } = {}) {
       const ac = new AbortController();
       this.#aborters.add(ac);
@@ -247,8 +286,9 @@ export function httpWebSocketClass(deps = {}) {
     }
 
     /**
-     * 可重试的请求：临时错误在 `idleMs / 2` 之内按退避重试同一请求。回最后的 `{ status, body }`；
-     * 本端已关闭回 null；重试用完回 `{ status: 0, exhausted: true }`。
+     * Retryable request: retries the same request with backoff on transient errors within `idleMs / 2`.
+     * Returns the final `{ status, body }`; returns null if this end is already closed; returns
+     * `{ status: 0, exhausted: true }` when retries are exhausted.
      */
     async #reliable(stage, method, route, opts, alive) {
       let delay = HTTP_CLIENT_DEFAULTS.retryBaseMs;
@@ -284,7 +324,8 @@ export function httpWebSocketClass(deps = {}) {
         return;
       }
       if (!ok) {
-        // 同 WebSocket 握手失败：先 error 再 close 1006，不说原因（401、503、网络不通都一样）
+        // Matches WebSocket handshake failure: emit error then close 1006 without disclosing reason (401,
+        // 503, network failure are all the same)
         this.#state = CLOSED;
         this.#emit('error', { message: r.status ? `open ${r.status}` : `open failed: ${r.error ?? 'network'}` });
         this.#emit('close', { code: 1006, reason: '', wasClean: false });
@@ -325,7 +366,7 @@ export function httpWebSocketClass(deps = {}) {
       }
     }
 
-    /** 不可重试的回包：404 / 410 / 409 / 413 等，按断开处理 */
+    /** Non-retryable responses: 404 / 410 / 409 / 413 etc., treated as disconnect */
     #failFrom(r) {
       const b = isObj(r.body) ? r.body : {};
       if (r.status === 410) return this.#finish(Number.isInteger(b.code) ? b.code : 1006, typeof b.reason === 'string' ? b.reason : '', false);
@@ -342,7 +383,7 @@ export function httpWebSocketClass(deps = {}) {
       });
     }
 
-    /** 一批一批地发，直到队空；同一时刻只有一个 POST 在途 */
+    /** Sends in batches until queue is empty; only one POST in flight at a time */
     async #sendLoop() {
       const alive = () => this.#state === OPEN || this.#state === CLOSING;
       const budget = this.#maxFrame + HTTP_CLIENT_DEFAULTS.bodySlackBytes - 64;
@@ -352,7 +393,8 @@ export function httpWebSocketClass(deps = {}) {
         let raw = 0;
         while (this.#queue.length > 0) {
           const next = this.#queue[0];
-          // 请求体里每帧是转义后的 JSON 字符串加一个逗号；至少带一帧（超限的单帧由服务端回 413）
+          // Each frame in the request body is an escaped JSON string plus a comma; carries at least one frame
+          // (server returns 413 for oversized single frames)
           const escaped = byteLen(JSON.stringify(next.text)) + 1;
           if (frames.length > 0 && size + escaped > budget) break;
           size += escaped;
@@ -378,7 +420,7 @@ export function httpWebSocketClass(deps = {}) {
         const h = setTimer(() => { timedOut = true; resolve(); }, HTTP_CLIENT_DEFAULTS.closeTimeoutMs);
         this.#timers.add(h);
       });
-      // 挂着的 GET 不要了；在途的发送等它回来，剩下的发完
+      // Discard pending GET; wait for in-flight sends to return, then finish sending the rest
       const work = (async () => {
         if (this.#sending) await this.#sending;
         if (this.#state === CLOSING && this.#queue.length > 0) await this.#sendLoop();
@@ -389,11 +431,11 @@ export function httpWebSocketClass(deps = {}) {
       this.#finish(code, reason, !timedOut);
     }
 
-    /** 报关闭（只一次）：中止在途请求、清计时器、清队列 */
+    /** Reports closed (only once): aborts in-flight requests, clears timers, clears queue */
     #finish(code, reason, wasClean) {
       if (this.#state === CLOSED) return;
       this.#state = CLOSED;
-      for (const ac of this.#aborters) { try { ac.abort(); } catch { /* 已中止 */ } }
+      for (const ac of this.#aborters) { try { ac.abort(); } catch { /* Aborted */ } }
       this.#aborters.clear();
       for (const h of this.#timers) clearTimer(h);
       this.#timers.clear();
@@ -406,15 +448,20 @@ export function httpWebSocketClass(deps = {}) {
   return HttpWebSocket;
 }
 
-/** 用全局 `fetch` 与计时器的 `HttpWebSocket` */
+/** `HttpWebSocket` using global `fetch` and timers */
 export const HttpWebSocket = httpWebSocketClass();
 
 /**
- * 与 `createWsEndpoint` 同一个形状的端点，底下是 HTTP 长轮询（契约第 8 节）。
- * 选项同名同义：`url`（http(s) 或 ws(s)）、`protocols`、`token`、`setTimeout`、`clearTimeout`、`random`、`backoff`、`log`。
- * `setTimeout` / `clearTimeout` 与 WebSocket 端点一样只管重连退避；单次请求的超时、临时错误的重试间隔另由
- * `httpTimers: { setTimeout, clearTimeout }` 注入（缺省全局计时器），免得两种计时器混在一起。
- * 另有 `fetch`（缺省全局 `fetch`）、`waitMs`（缺省 25 000）、`requestTimeoutMs`、`now`。
+ * Endpoint of the same shape as `createWsEndpoint`, backed by HTTP long polling (section 8 of the
+ * contract).
+ * Options have identical names and semantics: `url` (http(s) or ws(s)), `protocols`, `token`,
+ * `setTimeout`, `clearTimeout`, `random`, `backoff`, `log`.
+ * Like the WebSocket endpoint, `setTimeout` / `clearTimeout` only handle reconnect backoff;
+ * single-request timeouts and transient error retry intervals are injected separately via
+ * `httpTimers: { setTimeout, clearTimeout }` (defaults to global timers) to avoid mixing the two
+ * timer types.
+ * Also accepts `fetch` (defaults to global `fetch`), `waitMs` (defaults to 25 000),
+ * `requestTimeoutMs`, `now`.
  * @param {object} options
  * @returns {import('./ws-transport.mjs').WsEndpoint}
  */
@@ -424,7 +471,7 @@ export function createHttpEndpoint(options = /** @type {any} */ ({})) {
   try {
     wsUrl = wsUrlOf(url);
   } catch {
-    throw new TypeError('createHttpEndpoint：url 必须是 http(s):// 或 ws(s)://');
+    throw new TypeError('createHttpEndpoint: url must be http(s):// or ws(s)://');
   }
   const WebSocketImpl = httpWebSocketClass({
     fetch,

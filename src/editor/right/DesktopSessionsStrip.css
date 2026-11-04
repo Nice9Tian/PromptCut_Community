@@ -1,4 +1,4 @@
-/* 桌面 APP 会话在 AI 栏里的分组(DesktopSessionsStrip.tsx)。报告卡沿用 chat/agent.css 的 .ai-report */
+/* The group of desktop app sessions inside the AI panel (DesktopSessionsStrip.tsx). Report cards reuse .ai-report from chat/agent.css */
 .pc-desktop-sessions {
   display: flex;
   flex-direction: column;

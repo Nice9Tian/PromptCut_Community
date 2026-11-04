@@ -1,6 +1,6 @@
 /*
- * rail 放不下时的「▾ n」和它弹出的子窗口(railOverflow.tsx)。rail 上半截和剪辑组共用。
- * 子窗口里每项一行:图标 + 全名。rail 项按钮放进来时横过来排,去掉 rail 外侧那条选中竖条。
+ * The "▾ n" shown when the rail cannot fit everything, and the sub-window it pops up (railOverflow.tsx). Shared by the upper half of the rail and the cut group.
+ * One row per item in the sub-window: icon + full name. A rail item button placed here is laid out horizontally, with the selected vertical bar on the outer side of the rail removed.
  */
 .pc-rail-more {
   flex: 0 0 auto;
@@ -25,7 +25,7 @@
   color: var(--ui-fg, #F2F1F6);
   background: var(--ui-panel-2, #2C2B34);
 }
-/* 收起来的项里有当前选中项:字换强调色,知道它在里面 */
+/* The collapsed items include the currently selected one: the text switches to the accent color so you know it is in there */
 .pc-rail-more.has-active {
   color: var(--ui-accent, #00DBDB);
 }
@@ -91,7 +91,7 @@
   top: 9px;
   right: 5px;
 }
-/* 角标、状态点在一行里放不下原来的位置,贴到右边 */
+/* Badges and status dots cannot keep their original position within a single row, so they snap to the right */
 .pc-rail-menu .pc-rr-badge {
   top: 9px;
   right: 24px;

@@ -1,12 +1,17 @@
 /**
- * 在线浏览器的档位(`onlineTier.ts`;语义 `product/platforms.md`「在线浏览器」的「名词」)。用例 OT-01～OT-05。
- * 跑:npm test -- src/online/onlineTier.test.mjs
+ * Online browser tiers (`onlineTier.ts`; semantics in "Terminology" under "Online browser"
+ * in `product/platforms.md`). Test cases OT-01 to OT-05.
+ * Run: npm test -- src/online/onlineTier.test.mjs
  *
- *   OT-01 四档的名字与气泡文字照用户定的(2026-10-08),一个字不差
- *   OT-02 由状态推出来的:第三级顶配、第二级标准、第一级精简、最低一档低配;路线:第三级各一套,其余共用
- *   OT-03 桌面恒为桌面的样子(双舞台、各一套、不是最低一档、身份电脑)
- *   OT-04 只升不降、试的途中退回、基准卡跑不动进最低一档(只进不出)
- *   OT-05 起手的样子(舞台地址用):要试的从共用起,定下停在第三级的各一套;之后往上走、进最低一档都不改它
+ *   OT-01 Names and bubble text of four tiers match verbatim (user decision, 2026-10-08)
+ *   OT-02 Inferred from state: Tier 3 top-spec, Tier 2 standard, Tier 1 lite, lowest tier low-spec;
+ *          route: Tier 3 has separate sets, others shared
+ *   OT-03 Desktop is always in desktop form (dual stage, separate sets, not lowest tier,
+ *          computer identity)
+ *   OT-04 Upgrades only, never downgrades; rolls back midway during trial; baseline card cannot run
+ *          and enters lowest tier (one-way entry)
+ *   OT-05 Initial state (used for stage URLs): trials start from shared; settled at Tier 3 with
+ *          separate sets; subsequent upgrades or entering lowest tier do not change it
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

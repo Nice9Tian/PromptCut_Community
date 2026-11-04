@@ -1,6 +1,6 @@
 /*
- * 时间轴上方的剪辑标签栏(CutTabs.tsx 的 CutTabBar)和时间轴上的剪辑段(ClipView 的 data-pc-cut-segment)。
- * 全部走 --ui-* 变量,深浅皮肤都跟着换。
+ * The cut tab bar above the timeline (CutTabBar in CutTabs.tsx) and the cut segments on the timeline (data-pc-cut-segment in ClipView).
+ * Everything goes through --ui-* variables, so dark and light skins both follow.
  */
 .pc-tl-cuts {
   display: flex;
@@ -101,7 +101,7 @@
   opacity: 1;
   background: color-mix(in oklab, var(--ui-fg, #F2F1F6) 12%, transparent);
 }
-/* 最后一个标签:不画「×」,只留同宽的空位(标题提示为什么) */
+/* Last tab: do not draw the "×", just leave an empty slot of the same width (the title tooltip says why) */
 .pc-tl-cut-x.is-off {
   cursor: default;
   opacity: 0;
@@ -125,16 +125,16 @@
   background: color-mix(in oklab, var(--ui-fg, #F2F1F6) 8%, transparent);
 }
 
-/* 时间轴上的剪辑段:上下两排胶片齿孔,一眼和素材段分开。
-   齿孔只画在正文那一格里(.pc-clip-body),不穿过上面那条叠加带 ——
-   穿过去的话带本身就成了虚线,和同一行别的片段对不上(2026-10-24 用户看出来的)。
-   底色仍由 skins.css 的 .pc-clip 画,这里不再整组重写 background。 */
+/* Cut segments on the timeline: two rows of film sprocket holes, top and bottom, to tell them apart from media clips at a glance.
+   The sprocket holes are drawn only inside the body cell (.pc-clip-body) and do not cross the overlay band above:
+   if they crossed it, the band itself would become a dashed line and no longer line up with the other clips in the same row (spotted by the user, 2026-10-24).
+   The base color is still painted by .pc-clip in skins.css; the whole background property is no longer rewritten here. */
 .pc-clip[data-pc-cut-segment] .pc-clip-body {
   background:
     repeating-linear-gradient(90deg, color-mix(in oklab, var(--clip-ink, #000) 40%, transparent) 0 4px, transparent 4px 9px) 0 2px / 100% 3px no-repeat,
     repeating-linear-gradient(90deg, color-mix(in oklab, var(--clip-ink, #000) 40%, transparent) 0 4px, transparent 4px 9px) 0 calc(100% - 2px) / 100% 3px no-repeat;
 }
-/* 被引用剪辑事后变短:超出它总时长的那一截透明无声,斜线标出来 */
+/* The referenced cut was shortened afterwards: the part beyond its total duration is transparent and silent, marked with diagonal stripes */
 .pc-clip-cut-over {
   position: absolute;
   top: 0;
@@ -144,10 +144,10 @@
   background: repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.35) 0 4px, transparent 4px 8px);
 }
 
-/* 素材库「剪辑」组的格子 */
+/* Cells of the media library's "Cut" group */
 /*
- * 名字和时长压在底边(和视频、图片格子的标题条同一个位置、同一个字号起步),不随格子高度被挤:
- * 总览组框里的缩略只有约 95×53 像素,以前名字排在上半截、被 flex 挤成 1 像素高,几乎看不见(2026-10-20 线上实测)。
+ * The name and duration are pinned to the bottom edge (same position and same starting font size as the title bar of video and image cells), and are not squeezed by the cell height:
+ * the thumbnail in the overview group box is only about 95×53 pixels; the name used to be laid out in the upper half and got squeezed to 1 pixel high by flex, almost invisible (measured online, 2026-10-20).
  */
 .pc-lib-cut {
   display: flex;

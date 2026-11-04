@@ -1,45 +1,52 @@
 /**
- * 文档服务的通用核心：连接登记、解析 JSON 信封、按消息类型把消息路由给已挂的模块、模块挂载与冲突检查、
- * 频道分发，以及每条连接的出站背压。
+ * General core of the document service: connection registration, parsing JSON envelopes, routing
+ * messages to mounted modules by message type, module mounting and conflict checks, channel
+ * distribution, and outbound backpressure for each connection.
  *
- * 契约见 `docs/plan/` 下 M5a 契约的 G.2、G.3 与 C6.1 的 H.1、H.2、H.4（文件名含守门词，这里不写全）。
- * 文档服务是通用的文本 / JSON 分发中心（`docs/semantics/product/document-service.md`「职责」），
- * 所以本文件不认识任何具体业务：不引用业务模块，也不按业务消息名写分支。业务都在组装层挂上来的模块里。
- * 频道前缀、合并键都是模块给的字符串，核心只做比较，不认识任何具体取值。
+ * Contracts: see G.2, G.3 of M5a contract and H.1, H.2, H.4 of C6.1 under `docs/plan/` (file
+ * names contain gatekeeper terms, not written in full here). The document service is a general
+ * text / JSON distribution center (`docs/semantics/product/document-service.md` "Responsibilities"),
+ * so this file is unaware of any specific business logic: it does not reference business modules,
+ * nor branch on business message names. Business logic lives entirely in modules mounted by the
+ * assembly layer. Channel prefixes and merge keys are strings provided by modules; the core only
+ * compares them and is unaware of any concrete values.
  *
- * 传输由组装层负责：本文件只经构造时给的 `write` / `buffered` / `close` 操作连接，底层排空时组装层调 `drained`。
+ * Transport is handled by the assembly layer: this file manipulates connections only via `write` /
+ * `buffered` / `close` provided at construction, and the assembly layer calls `drained` when the
+ * underlying layer drains.
  */
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isReqId = (v) => typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v));
 
-/** 出站背压的缺省值（H.2）：底层积压到高水位就改进核心自己的出站队列；队列加积压超过上限就以 1013 关闭 */
+/** Default values for outbound backpressure (H.2): when underlying backlog reaches high watermark, switches to entering the core's own outbox; when the outbox plus backlog exceeds upper limit, closes with 1013 */
 export const CORE_DEFAULTS = Object.freeze({
   HIGH_WATER_BYTES: 64 * 1024,
   MAX_PENDING_BYTES: 1024 * 1024,
 });
 
-/** 背压关闭用的 WebSocket 关闭码（Try Again Later） */
+/** WebSocket close code used for backpressure closure (Try Again Later) */
 const CLOSE_TRY_AGAIN = 1013;
 
-/** 核心自己在 `describeConn` 里给的字段，模块不能重名（G.3「字段冲突」，H.4） */
+/** Fields provided by the core itself in `describeConn`; modules cannot duplicate these names (G.3 "Field conflicts", H.4) */
 const CORE_CONN_FIELDS = Object.freeze(['connId', 'remote', 'principal', 'connectedAt', 'pendingBytes', 'subscriptions']);
 /**
- * `/healthz` 的核心字段（G.4、H.4），模块的 `health()` 不能重名。`conns` 也留给核心：
- * 组装层的 `describe()` 把健康字段和 `conns` 平铺在同一层。
+ * Core fields for `/healthz` (G.4, H.4); module `health()` cannot duplicate names. `conns` is also
+ * reserved for the core: the assembly layer's `describe()` flattens health fields and `conns` onto
+ * the same level.
  */
 const CORE_HEALTH_FIELDS = Object.freeze([
   'ok', 'service', 'uptimeMs', 'connections', 'protocol', 'modules', 'conns',
   'channels', 'subscriptions', 'pendingBytesMax', 'coalesced', 'backpressureCloses',
 ]);
 
-/** 挂载时拿来问 `describeConn` 字段名的连接 id：不会和真连接撞上 */
+/** Connection id used during mount to query `describeConn` field names: will not collide with real connections */
 const PROBE_CONN_ID = '\u0000probe';
 
-/** 频道前缀（H.1）：频道名是 `<前缀>:<其余>`，其余部分非空 */
+/** Channel prefix (H.1): channel name is `<prefix>:<rest>`, with non-empty rest */
 const CHANNEL_PREFIX = /^[a-z][a-z0-9-]{0,31}$/;
 
-/** 频道名的前缀；不合法返回 null */
+/** Prefix of channel name; returns null if invalid */
 function prefixOf(channel) {
   if (typeof channel !== 'string') return null;
   const i = channel.indexOf(':');
@@ -48,7 +55,7 @@ function prefixOf(channel) {
   return CHANNEL_PREFIX.test(prefix) ? prefix : null;
 }
 
-/** 两条类型声明是否会认领同一条消息（G.3「类型冲突」） */
+/** Whether two type declarations claim the same message (G.3 "Type conflicts") */
 function typesClash(a, b) {
   const pa = a.endsWith('.');
   const pb = b.endsWith('.');
@@ -59,11 +66,11 @@ function typesClash(a, b) {
 
 function fieldNames(fn, arg) {
   const out = fn(arg);
-  if (!isObj(out)) throw new TypeError('describeConn / health 必须返回对象');
+  if (!isObj(out)) throw new TypeError('describeConn / health must return an object');
   return Object.keys(out);
 }
 
-/** 把模块给的字段合进 `into`；已有的字段（核心字段、先挂的模块）不让覆盖 */
+/** Merges fields provided by the module into `into`; does not allow overwriting existing fields (core fields, previously mounted modules) */
 function mergeFields(into, fields) {
   if (!isObj(fields)) return;
   for (const [k, v] of Object.entries(fields)) {
@@ -71,9 +78,9 @@ function mergeFields(into, fields) {
   }
 }
 
-/** 发送选项里的合并键：只认字符串，别的一律当没有键 */
+/** Merge key in send options: only recognizes strings; everything else is treated as having no key */
 const keyOf = (opts) => (isObj(opts) && typeof opts.coalesceKey === 'string' ? opts.coalesceKey : undefined);
-/** 广播时跳过的那条连接（`opts.except`，连接 id）：只认字符串，别的一律当没有 */
+/** Connection to skip during broadcast (`opts.except`, connection id): only recognizes strings; everything else is treated as absent */
 const exceptOf = (opts) => (isObj(opts) && typeof opts.except === 'string' ? opts.except : undefined);
 
 const positive = (v, fallback) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback);
@@ -82,14 +89,20 @@ const positive = (v, fallback) => (typeof v === 'number' && Number.isFinite(v) &
  * @param {object} options
  * @param {() => number} [options.now]
  * @param {(event: string, fields: object) => void} [options.log]
- * @param {(connId: string, text: string) => void} options.write 把一条已序列化的消息写进连接（不管底层是否积压）
- * @param {(connId: string) => number} [options.buffered] 底层尚未发出的字节数；缺省 0（不做背压）
- * @param {(connId: string, code: number, reason: string) => void} [options.close] 主动关闭连接
- * @param {number} [options.highWaterBytes] 缺省 `CORE_DEFAULTS.HIGH_WATER_BYTES`
- * @param {number} [options.maxPendingBytes] 缺省 `CORE_DEFAULTS.MAX_PENDING_BYTES`
+ * @param {(connId: string, text: string) => void} options.write Writes a serialized message to the
+ *   connection (regardless of underlying backlog)
+ * @param {(connId: string) => number} [options.buffered] Number of unsent bytes in the underlying
+ *   layer; defaults to 0 (no backpressure)
+ * @param {(connId: string, code: number, reason: string) => void} [options.close] Proactively
+ *   closes the connection
+ * @param {number} [options.highWaterBytes] Defaults to `CORE_DEFAULTS.HIGH_WATER_BYTES`
+ * @param {number} [options.maxPendingBytes] Defaults to `CORE_DEFAULTS.MAX_PENDING_BYTES`
  * @param {(principal: object, type: string, msg: object) => string | null} [options.gate]
- *   派发前的放行判断：回一个原因字符串就不交给模块，直接回 `error { reason }`；回 null 照常派发。
- *   核心不认识任何身份或业务，判据全在组装层（例：管理身份只能发管理接口的消息，`auth-contract.md` 第 5 节）
+ *   Admission check before dispatch: returning a reason string skips the module and directly
+ *   returns `error { reason }`; returning null dispatches normally.
+ *   The core is unaware of any identity or business logic; all criteria reside in the assembly
+ *   layer (e.g. admin identities can only send messages for admin endpoints, `auth-contract.md`
+ *   section 5)
  */
 export function createRouter({
   now = Date.now,
@@ -101,25 +114,27 @@ export function createRouter({
   maxPendingBytes,
   gate = null,
 }) {
-  if (typeof write !== 'function') throw new TypeError('createRouter: write 必须是函数');
-  if (typeof buffered !== 'function') throw new TypeError('createRouter: buffered 必须是函数');
-  if (typeof close !== 'function') throw new TypeError('createRouter: close 必须是函数');
+  if (typeof write !== 'function') throw new TypeError('createRouter: write must be a function');
+  if (typeof buffered !== 'function') throw new TypeError('createRouter: buffered must be a function');
+  if (typeof close !== 'function') throw new TypeError('createRouter: close must be a function');
   const highWater = positive(highWaterBytes, CORE_DEFAULTS.HIGH_WATER_BYTES);
   const maxPending = positive(maxPendingBytes, CORE_DEFAULTS.MAX_PENDING_BYTES);
 
   /**
-   * connId → 连接记录：
-   * - 身份：`connId`、`principal`、`remote`、`connectedAt`；
-   * - 出站队列（H.2）：`outbox` 按进队顺序存 `{ text, bytes, key, dead }`，`head` 之前的已写出；
-   *   被合并掉的项只标 `dead`，排空时跳过。`live` 是还没写出、没被合并的条数，`bytes` 是它们的字节数，
-   *   `byKey` 是合并键 → 队里那一项；
-   * - `shut`：已因背压关闭，之后的发送一律丢弃；
-   * - `subs`：订阅的频道（H.1）。
+   * connId → connection record:
+   * - Identity: `connId`, `principal`, `remote`, `connectedAt`;
+   * - Outbox (H.2): `outbox` stores `{ text, bytes, key, dead }` in arrival order, with
+   *   items before `head` already written out;
+   *   coalesced items are only marked `dead` and skipped during drain. `live` is the count of items
+   *   not yet written out and not coalesced, `bytes` is their byte count,
+   *   `byKey` is coalesce key → that item in the outbox;
+   * - `shut`: closed due to backpressure; subsequent sends are all dropped;
+   * - `subs`: subscribed channels (H.1).
    */
   const conns = new Map();
-  /** 按挂载顺序：{ mod, ctx, connFields, healthFields, channels: Set<前缀>, live } */
+  /** In mount order: { mod, ctx, connFields, healthFields, channels: Set<prefix>, live } */
   const mounted = [];
-  /** 频道 → 订阅它的连接 id；没有订阅者的频道不留在表里 */
+  /** Channel → connection ids subscribed to it; channels with no subscribers are not kept in the table */
   const channels = new Map();
   let coalesced = 0;
   let backpressureCloses = 0;
@@ -134,12 +149,12 @@ export function createRouter({
     return Number.isFinite(n) && n > 0 ? n : 0;
   }
 
-  /** 这条连接的积压：出站队列里的字节数 + 底层尚未发出的字节数 */
+  /** Backlog for this connection: bytes in the outbox + unsent bytes in underlying layer */
   const pendingOf = (conn) => conn.bytes + bufferedOf(conn.connId);
 
-  // ---------- 出站：直接写、进队、合并、排空、背压（H.2） ----------
+  // ---------- Outbound: direct write, buffering, coalesce, drain, backpressure (H.2) ----------
 
-  /** 清空出站队列 */
+  /** Clears the outbox */
   function resetOutbox(conn) {
     conn.outbox = [];
     conn.head = 0;
@@ -148,7 +163,7 @@ export function createRouter({
     conn.byKey.clear();
   }
 
-  /** 超过上限：清空、以 1013 关闭、计数。之后的发送一律丢弃，等组装层报断开 */
+  /** Exceeded limit: clear, close with 1013, count. Subsequent sends are dropped, waiting for assembly layer to report disconnect */
   function shed(conn, pendingBytes) {
     resetOutbox(conn);
     conn.shut = true;
@@ -162,8 +177,10 @@ export function createRouter({
   }
 
   /**
-   * 把一条已序列化的消息交给这条连接：队列空且底层没到高水位就直接写，否则进队（同键先删旧的）。
-   * 返回是否被接受（写出或进队）；已关闭、或这一次进队触发了背压关闭，返回 false。
+   * Hands a serialized message to this connection: writes directly if the outbox is empty and underlying
+   * layer has not reached high-water mark, otherwise buffers it (deletes older with same key first).
+   * Returns whether it was accepted (written out or buffered); returns false if already closed or
+   * if buffering it triggered a backpressure close.
    */
   function deliver(conn, text, key) {
     if (conn.shut) return false;
@@ -193,7 +210,7 @@ export function createRouter({
     return true;
   }
 
-  /** 底层排空了：按进队顺序写，直到队空，或底层又到高水位 */
+  /** Underlying layer drained: write in arrival order until the outbox is empty or underlying reaches high-water mark again */
   function drained(connId) {
     const conn = conns.get(connId);
     if (!conn || conn.shut) return;
@@ -232,7 +249,7 @@ export function createRouter({
     send(connId, msg);
   }
 
-  // ---------- 频道（H.1） ----------
+  // ---------- Channels (H.1) ----------
 
   function unsubscribeAll(conn) {
     for (const ch of conn.subs) {
@@ -244,7 +261,7 @@ export function createRouter({
     conn.subs.clear();
   }
 
-  /** 卸载模块时，它前缀下的订阅全部清掉 */
+  /** When unmounting a module, all subscriptions under its prefix are cleared */
   function dropChannelsOf(prefixes) {
     if (prefixes.size === 0) return;
     for (const [ch, set] of [...channels]) {
@@ -254,12 +271,12 @@ export function createRouter({
     }
   }
 
-  /** 给某个已挂模块做的频道操作：频道名要合法、前缀要是它声明的，否则抛错 */
+  /** Channel operations for a mounted module: channel name must be valid and prefix must be one it declared, otherwise throws */
   function channelOps(entry) {
     const own = (channel) => {
       const prefix = prefixOf(channel);
-      if (prefix === null) throw new Error(`频道名不合法：${String(channel)}`);
-      if (!entry.channels.has(prefix)) throw new Error(`模块 ${entry.mod.name} 没有声明频道前缀 ${prefix}`);
+      if (prefix === null) throw new Error(`Invalid channel name: ${String(channel)}`);
+      if (!entry.channels.has(prefix)) throw new Error(`Module ${entry.mod.name} did not declare channel prefix ${prefix}`);
     };
     return {
       subscribe(connId, channel) {
@@ -302,9 +319,9 @@ export function createRouter({
     };
   }
 
-  // ---------- 模块 ----------
+  // ---------- Modules ----------
 
-  /** 调模块的生命周期钩子；抛错只记日志，不影响核心和别的模块 */
+  /** Invokes module lifecycle hooks; thrown errors are only logged without affecting core or other modules */
   function callHook(entry, hook, ...args) {
     const fn = entry.mod[hook];
     if (typeof fn !== 'function') return;
@@ -325,49 +342,49 @@ export function createRouter({
   }
 
   function validate(mod) {
-    if (!isObj(mod)) throw new TypeError('模块必须是对象');
-    if (typeof mod.name !== 'string' || mod.name === '') throw new TypeError('模块的 name 必须是非空字符串');
+    if (!isObj(mod)) throw new TypeError('Module must be an object');
+    if (typeof mod.name !== 'string' || mod.name === '') throw new TypeError('Module name must be a non-empty string');
     if (!Array.isArray(mod.types) || mod.types.some((t) => typeof t !== 'string' || t === '')) {
-      throw new TypeError(`模块 ${mod.name} 的 types 必须是非空字符串数组`);
+      throw new TypeError(`types of module ${mod.name} must be a non-empty string array`);
     }
-    if (typeof mod.handle !== 'function') throw new TypeError(`模块 ${mod.name} 的 handle 必须是函数`);
+    if (typeof mod.handle !== 'function') throw new TypeError(`handle of module ${mod.name} must be a function`);
     for (const hook of ['connect', 'disconnect', 'tick', 'describeConn', 'health', 'describe']) {
-      if (mod[hook] !== undefined && typeof mod[hook] !== 'function') throw new TypeError(`模块 ${mod.name} 的 ${hook} 必须是函数`);
+      if (mod[hook] !== undefined && typeof mod[hook] !== 'function') throw new TypeError(`${hook} of module ${mod.name} must be a function`);
     }
     if (mod.channels !== undefined) {
       if (!Array.isArray(mod.channels) || mod.channels.some((p) => typeof p !== 'string' || !CHANNEL_PREFIX.test(p))) {
-        throw new TypeError(`模块 ${mod.name} 的 channels 必须是频道前缀数组（[a-z][a-z0-9-]{0,31}，不带冒号）`);
+        throw new TypeError(`channels of module ${mod.name} must be an array of channel prefixes ([a-z][a-z0-9-]{0,31}, no colon)`);
       }
-      if (new Set(mod.channels).size !== mod.channels.length) throw new Error(`模块 ${mod.name} 的 channels 有重复前缀`);
+      if (new Set(mod.channels).size !== mod.channels.length) throw new Error(`channels of module ${mod.name} has duplicate prefixes`);
     }
   }
 
   function mount(mod) {
     validate(mod);
-    if (mounted.some((e) => e.mod.name === mod.name)) throw new Error(`模块名 ${mod.name} 已经挂上了`);
+    if (mounted.some((e) => e.mod.name === mod.name)) throw new Error(`Module name ${mod.name} is already mounted`);
     for (const e of mounted) {
       for (const a of mod.types) {
         for (const b of e.mod.types) {
-          if (typesClash(a, b)) throw new Error(`模块 ${mod.name} 的类型 ${a} 与已挂模块 ${e.mod.name} 的 ${b} 冲突`);
+          if (typesClash(a, b)) throw new Error(`Type ${a} of module ${mod.name} conflicts with ${b} of mounted module ${e.mod.name}`);
         }
       }
     }
     const prefixes = new Set(mod.channels ?? []);
     for (const p of prefixes) {
       const other = mounted.find((e) => e.channels.has(p));
-      if (other) throw new Error(`模块 ${mod.name} 的频道前缀 ${p} 已被模块 ${other.mod.name} 声明`);
+      if (other) throw new Error(`Channel prefix ${p} of module ${mod.name} is already declared by module ${other.mod.name}`);
     }
     const connFields = mod.describeConn ? fieldNames((id) => mod.describeConn(id), PROBE_CONN_ID) : [];
     const healthFields = mod.health ? fieldNames(() => mod.health()) : [];
     for (const f of connFields) {
-      if (CORE_CONN_FIELDS.includes(f)) throw new Error(`模块 ${mod.name} 的连接字段 ${f} 与核心字段重名`);
+      if (CORE_CONN_FIELDS.includes(f)) throw new Error(`Module ${mod.name}: connection field ${f} duplicates a core field`);
       const other = mounted.find((e) => e.connFields.includes(f));
-      if (other) throw new Error(`模块 ${mod.name} 的连接字段 ${f} 与模块 ${other.mod.name} 重名`);
+      if (other) throw new Error(`Module ${mod.name}: connection field ${f} duplicates one in module ${other.mod.name}`);
     }
     for (const f of healthFields) {
-      if (CORE_HEALTH_FIELDS.includes(f)) throw new Error(`模块 ${mod.name} 的健康字段 ${f} 与核心字段重名`);
+      if (CORE_HEALTH_FIELDS.includes(f)) throw new Error(`Module ${mod.name}: health field ${f} duplicates a core field`);
       const other = mounted.find((e) => e.healthFields.includes(f));
-      if (other) throw new Error(`模块 ${mod.name} 的健康字段 ${f} 与模块 ${other.mod.name} 重名`);
+      if (other) throw new Error(`Module ${mod.name}: health field ${f} duplicates one in module ${other.mod.name}`);
     }
 
     const entry = { mod, ctx: null, connFields, healthFields, channels: prefixes, live: true };
@@ -379,14 +396,17 @@ export function createRouter({
       subscribe: ops.subscribe,
       unsubscribe: ops.unsubscribe,
       publish: ops.publish,
-      // 这条连接的积压：核心出站队列里的字节数 + 底层尚未发出的字节数；连接不存在回 0。
-      // 模块发一长串消息时据此节流，别让积压超过 maxPendingBytes 被 1013 断开（H.2）
+      // Backlog for this connection: bytes in the core's outbox + unsent bytes in underlying layer;
+      // returns 0 if connection does not exist.
+      // Modules throttle based on this when sending long bursts of messages, preventing backlog
+      // from exceeding maxPendingBytes and being disconnected with 1013 (H.2)
       pendingBytes: (connId) => {
         const conn = conns.get(connId);
         return conn ? pendingOf(conn) : 0;
       },
       maxPendingBytes: maxPending,
-      // 主动关闭一条连接（例：创建者踢人、删项目时以 4003 / 4004 关闭，`auth-contract.md` 第 7 节）；连接不存在回 false
+      // Proactively closes a connection (e.g. creator kicks member or deletes project with 4003 / 4004 close,
+      // `auth-contract.md` section 7); returns false if connection does not exist
       close: (connId, code, reason) => {
         if (!conns.has(connId)) return false;
         try {
@@ -396,7 +416,8 @@ export function createRouter({
         }
         return true;
       },
-      // 这条连接的来源地址（组装层登记时给的）；连接不存在回 null
+      // Remote address of this connection (provided when registered by assembly layer);
+      // returns null if connection does not exist
       remote: (connId) => conns.get(connId)?.remote ?? null,
     });
     mounted.push(entry);
@@ -423,19 +444,19 @@ export function createRouter({
     try {
       msg = JSON.parse(text);
     } catch {
-      return replyError(connId, 'bad-message', '不是合法的 JSON');
+      return replyError(connId, 'bad-message', 'Not valid JSON');
     }
     const reqId = isObj(msg) && isReqId(msg.reqId) ? msg.reqId : undefined;
-    if (!isObj(msg) || typeof msg.type !== 'string') return replyError(connId, 'bad-message', '消息必须是带字符串 type 字段的对象', reqId);
+    if (!isObj(msg) || typeof msg.type !== 'string') return replyError(connId, 'bad-message', 'Message must be an object with a string type field', reqId);
     const entry = ownerOf(msg.type);
-    if (!entry) return replyError(connId, 'unsupported', '没有模块处理这种消息', reqId);
+    if (!entry) return replyError(connId, 'unsupported', 'No module handles this kind of message', reqId);
     const fail = (err) => {
       log('module.error', { module: entry.mod.name, type: msg.type, message: String(err?.message ?? err) });
-      replyError(connId, 'internal', '处理这条消息时出错', reqId);
+      replyError(connId, 'internal', 'Error while handling this message', reqId);
     };
     const handle = (reason) => {
       if (conns.get(connId) !== conn) return;
-      if (typeof reason === 'string') return replyError(connId, reason, '这条连接不能发这种消息', reqId);
+      if (typeof reason === 'string') return replyError(connId, reason, 'This connection cannot send this kind of message', reqId);
       try {
         const result = entry.mod.handle(entry.ctx, connId, msg);
         if (result && typeof result.then === 'function') return result.catch(fail);
@@ -461,7 +482,7 @@ export function createRouter({
 
   return {
     connect(connId, principal, info = {}) {
-      if (conns.has(connId)) throw new Error(`连接 ${connId} 已经登记过`);
+      if (conns.has(connId)) throw new Error(`Connection ${connId} is already registered`);
       const conn = {
         connId,
         principal: { ...principal },
@@ -497,10 +518,10 @@ export function createRouter({
       }
     },
 
-    /** 模块之外的发送入口；`opts.coalesceKey` 见 H.2 */
+    /** Entry point for sending outside modules; see H.2 for `opts.coalesceKey` */
     send,
 
-    /** 组装层在底层 'drain' 时调 */
+    /** Called by assembly layer when underlying layer emits 'drain' */
     drained,
 
     describeConn(connId) {
@@ -550,7 +571,7 @@ export function createRouter({
       return out;
     },
 
-    /** 诊断：频道 → 订阅数（只列有订阅者的频道，按名排序） */
+    /** Diagnostics: channel → subscriber count (only lists channels with subscribers, sorted by name) */
     channels() {
       return Object.fromEntries([...channels.keys()].sort().map((ch) => [ch, channels.get(ch).size]));
     },

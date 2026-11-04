@@ -108,12 +108,13 @@ function Terminal3dCard({ params, playToken }: CardProps<Params>) {
 
 export const terminal3d: CardDef<Params> = {
   id: "terminal-3d",
-  name: "终端3D",
-  description: "3D终端打字机",
-  useWhen: "演示命令行、代码或技术操作时,用 3D 终端把命令逐字打出来。**行首符号决定颜色**:`$` 白、`#` 灰、`❯` 青、`✓` 绿,排版一半靠它。播放时长等于总字符数除以 cps,clip 太短会打不完。普通文字打字机用 mu-typing。",
-  tags: ["终端","命令行","代码","打字机"],
+  name: "Terminal 3D",
+  description: "3D terminal typewriter",
+  useWhen: "When demonstrating command lines, code or technical operations, use the 3D terminal to type commands out character by character. **The leading symbol decides the color**: `$` white, `#` gray, `❯` cyan, `✓` green; the layout depends on it largely. Playback duration equals total characters divided by cps, so a clip that is too short won't finish typing. For a plain-text typewriter use mu-typing.",
+  tags: ["terminal","command line","code","Typewriter"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -124,12 +125,12 @@ export const terminal3d: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "file", label: "文件名", type: "text" },
-    { key: "lines", label: "行(|分隔)", type: "text" },
-    { key: "cps", label: "每秒字符", type: "number" },
+    { key: "file", label: "File name", type: "text" },
+    { key: "lines", label: "Lines (separated by |)", type: "text" },
+    { key: "cps", label: "Characters per second", type: "number" },
   ],
   parts: [
-    { id: "terminal", label: "终端", role: "list", params: ["file", "lines", "cps"], enterMs: 0, settleMs: 1900 },
+    { id: "terminal", label: "terminal", role: "list", params: ["file", "lines", "cps"], enterMs: 0, settleMs: 1900 },
   ],
   lifecycle: { settleMs: 1900, after: "evolve", exit: ["fade"] },
   timing: (p) => {

@@ -1,12 +1,13 @@
 /**
- * M2 渲染节点纯逻辑：指纹、能力过滤、候选挑选、plan 任务切分。
- * 跑：node --test server/test/render-node-logic.test.mjs
+ * M2 render node pure logic: fingerprinting, capability filtering, candidate selection, plan task splitting.
+ * Run: node --test server/test/render-node-logic.test.mjs
  *
- * 只照 `docs/plan/render-queue-contract.md` B.1～B.4（下称「契约」）和
- * `docs/plan/distributed-prerender-queue.md` 第 2、2.1、4.3 节写，不看实现。
- * 期望值里的哈希按契约写明的公式用 `node:crypto` 独立算，不借被测函数算期望。
- * 任务 id 同样按契约 A.4 的公式手写，不从 `render-queue` 引 `taskIdOf`，
- * 这样本文件只依赖 `server/render-node/` 的四个模块。
+ * Written strictly to `docs/plan/render-queue-contract.md` B.1-B.4 (hereafter "the contract") and
+ * `docs/plan/distributed-prerender-queue.md` sections 2, 2.1, 4.3, without looking at the implementation.
+ * Hashes in expected values are computed independently via `node:crypto` using formulas specified in
+ * the contract, without using the tested functions. Task ids are likewise hand-written using the
+ * contract A.4 formula without importing `render-queue`'s `taskIdOf`, so this file depends only on
+ * the four modules in `server/render-node/`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,15 +19,15 @@ import { planTaskOf, splitPlan } from '../render-node/split.mjs';
 import { cardSampling } from '../card-identity.mjs';
 
 const sha256 = text => crypto.createHash('sha256').update(text).digest('hex');
-// 契约 B.1 的两条公式，独立实现，用来算期望值
+// Two formulas from contract B.1, implemented independently to compute expected values
 const fpOf = (os, gpuClass, chromeMajor) => sha256(`${os}\n${gpuClass}\n${chromeMajor}`).slice(0, 16);
 const rkOf = (contentKey, fp) => sha256(`${contentKey}\n${fp}`);
 const HEX16 = /^[0-9a-f]{16}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 
-// ---------------------------------------------------------------- B.1 指纹
+// ---------------------------------------------------------------- B.1 Fingerprint
 
-test('B.1 normalizeOs：win32/windows → windows，darwin/macos → macos，linux → linux，其它 → other', () => {
+test('B.1 normalizeOs: win32/windows → windows, darwin/macos → macos, linux → linux, anything else → other', () => {
   assert.equal(normalizeOs('win32'), 'windows');
   assert.equal(normalizeOs('windows'), 'windows');
   assert.equal(normalizeOs('darwin'), 'macos');
@@ -35,7 +36,7 @@ test('B.1 normalizeOs：win32/windows → windows，darwin/macos → macos，lin
   for (const other of ['freebsd', 'aix', 'sunos', 'android', '']) assert.equal(normalizeOs(other), 'other', other);
 });
 
-test('B.1 gpuClassOf：各厂商的常见 WebGL 字符串归到五类', () => {
+test('B.1 gpuClassOf: common WebGL strings of each vendor map to five classes', () => {
   const cases = [
     ['ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11)', 'Google Inc. (NVIDIA)', 'nvidia'],
     ['Quadro P2000/PCIe/SSE2', '', 'nvidia'],
@@ -51,7 +52,7 @@ test('B.1 gpuClassOf：各厂商的常见 WebGL 字符串归到五类', () => {
   for (const [renderer, vendor, expected] of cases) assert.equal(gpuClassOf(renderer, vendor), expected, `${renderer} | ${vendor}`);
 });
 
-test('B.1 gpuClassOf：大小写不敏感', () => {
+test('B.1 gpuClassOf: case-insensitive', () => {
   assert.equal(gpuClassOf('GEFORCE GTX 1080', ''), 'nvidia');
   assert.equal(gpuClassOf('rtx a4000', ''), 'nvidia');
   assert.equal(gpuClassOf('RADEON', ''), 'amd');
@@ -61,35 +62,35 @@ test('B.1 gpuClassOf：大小写不敏感', () => {
   assert.equal(gpuClassOf('LLVMPIPE', ''), 'software');
 });
 
-test('B.1 gpuClassOf：renderer 与 vendor 拼起来一起匹配（只有一边带厂商字样也认）', () => {
+test('B.1 gpuClassOf: renderer and vendor are concatenated and matched together (also recognized when only one side carries a vendor name)', () => {
   assert.equal(gpuClassOf('', 'NVIDIA Corporation'), 'nvidia');
   assert.equal(gpuClassOf('Generic Renderer', 'Intel Inc.'), 'intel');
   assert.equal(gpuClassOf('Generic Renderer', 'Apple Inc.'), 'apple');
   assert.equal(gpuClassOf('Generic Renderer', 'Google SwiftShader'), 'software');
 });
 
-test('B.1 gpuClassOf：匹配顺序 software > nvidia > amd > intel > apple', () => {
-  // 1 先于 2：软件渲染字样压过厂商字样
+test('B.1 gpuClassOf: match order software > nvidia > amd > intel > apple', () => {
+  // 1 before 2: software rendering string overrides vendor string
   assert.equal(gpuClassOf('SwiftShader', 'NVIDIA Corporation'), 'software');
   assert.equal(gpuClassOf('llvmpipe', 'AMD'), 'software');
   assert.equal(gpuClassOf('Microsoft Basic Render Driver', 'Intel'), 'software');
-  // 2 先于 4、5
+  // 2 before 4, 5
   assert.equal(gpuClassOf('NVIDIA GeForce GT 750M', 'Intel Inc.'), 'nvidia');
   assert.equal(gpuClassOf('NVIDIA GeForce GT 750M', 'Apple Inc.'), 'nvidia');
-  // 3 先于 4、5（旧款 Mac 上 vendor 是 Apple、renderer 是 AMD）
+  // 3 before 4, 5 (on older Macs, vendor is Apple and renderer is AMD)
   assert.equal(gpuClassOf('AMD Radeon Pro 5500M', 'Apple Inc.'), 'amd');
   assert.equal(gpuClassOf('Radeon', 'Intel'), 'amd');
-  // 4 先于 5
+  // 4 before 5
   assert.equal(gpuClassOf('Intel Iris Plus Graphics', 'Apple Inc.'), 'intel');
 });
 
-test('B.1 gpuClassOf：都不含时兜底为 software', () => {
+test('B.1 gpuClassOf: falls back to software when none match', () => {
   assert.equal(gpuClassOf('Mali-G78 MC24', 'ARM'), 'software');
   assert.equal(gpuClassOf('Adreno (TM) 740', 'Qualcomm'), 'software');
   assert.equal(gpuClassOf('', ''), 'software');
 });
 
-test('B.1 chromeMajorOf：版本串、HeadlessChrome/ 前缀、数字都取主版本；解析不出回 0', () => {
+test('B.1 chromeMajorOf: a version string, a HeadlessChrome/ prefix, or a number all yield the major version; returns 0 when parsing fails', () => {
   assert.equal(chromeMajorOf('138.0.7204.49'), 138);
   assert.equal(chromeMajorOf('HeadlessChrome/138.0.7204.49'), 138);
   assert.equal(chromeMajorOf(138), 138);
@@ -97,13 +98,13 @@ test('B.1 chromeMajorOf：版本串、HeadlessChrome/ 前缀、数字都取主�
   for (const bad of ['', 'not a version', undefined, null]) assert.equal(chromeMajorOf(bad), 0, String(bad));
 });
 
-test('B.1 envFingerprintOf：16 位小写十六进制，等于 sha256(os\\ngpuClass\\nchromeMajor) 的前 16 位', () => {
+test('B.1 envFingerprintOf: 16 lowercase hex digits, equal to the first 16 digits of sha256(os\\ngpuClass\\nchromeMajor)', () => {
   const fp = envFingerprintOf({ os: 'windows', gpuClass: 'nvidia', chromeMajor: 138 });
   assert.match(fp, HEX16);
   assert.equal(fp, fpOf('windows', 'nvidia', 138));
 });
 
-test('B.1 envFingerprintOf：确定（同输入同输出），三项任一变化结果都变', () => {
+test('B.1 envFingerprintOf: deterministic (same input, same output); the result changes when any of the three items changes', () => {
   const base = { os: 'windows', gpuClass: 'nvidia', chromeMajor: 138 };
   const fp = envFingerprintOf(base);
   assert.equal(envFingerprintOf({ ...base }), fp);
@@ -114,7 +115,7 @@ test('B.1 envFingerprintOf：确定（同输入同输出），三项任一变化
   assert.equal(new Set(variants).size, variants.length);
 });
 
-test('B.1 envFingerprintOf：缺项按 \'\' / 0 计，不抛', () => {
+test('B.1 envFingerprintOf: missing items count as \'\' / 0, no throw', () => {
   assert.equal(envFingerprintOf({}), fpOf('', '', 0));
   assert.equal(envFingerprintOf({ os: 'windows', gpuClass: 'nvidia' }), fpOf('windows', 'nvidia', 0));
   assert.equal(envFingerprintOf({ os: 'windows', gpuClass: 'nvidia' }), envFingerprintOf({ os: 'windows', gpuClass: 'nvidia', chromeMajor: 0 }));
@@ -122,7 +123,7 @@ test('B.1 envFingerprintOf：缺项按 \'\' / 0 计，不抛', () => {
   assert.equal(envFingerprintOf({ os: 'macos', chromeMajor: 138 }), fpOf('macos', '', 138));
 });
 
-test('B.1 describeEnvironment：由平台、WebGL 字符串、Chrome 版本得出 { os, gpuClass, chromeMajor, fingerprint }', () => {
+test('B.1 describeEnvironment: derives { os, gpuClass, chromeMajor, fingerprint } from the platform, the WebGL string and the Chrome version', () => {
   const env = describeEnvironment({
     platform: 'win32',
     renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11)',
@@ -135,15 +136,15 @@ test('B.1 describeEnvironment：由平台、WebGL 字符串、Chrome 版本得�
   assert.equal(soft.fingerprint, envFingerprintOf({ os: 'linux', gpuClass: 'software', chromeMajor: 140 }));
 });
 
-test('B.1 resultKeyOf：64 位小写十六进制，等于 sha256(contentKey\\nenvFingerprint)', () => {
+test('B.1 resultKeyOf: 64 lowercase hex digits, equal to sha256(contentKey\\nenvFingerprint)', () => {
   const fp = fpOf('windows', 'nvidia', 138);
   const key = resultKeyOf('9f3a0000e1', fp);
   assert.match(key, HEX64);
   assert.equal(key, rkOf('9f3a0000e1', fp));
-  assert.equal(resultKeyOf('9f3a0000e1', fp), key, '确定');
+  assert.equal(resultKeyOf('9f3a0000e1', fp), key, 'OK');
 });
 
-test('B.1 resultKeyOf：随指纹变化，也随内容键变化', () => {
+test('B.1 resultKeyOf: changes with the fingerprint and also with the content key', () => {
   const a = fpOf('windows', 'nvidia', 138), b = fpOf('windows', 'intel', 138);
   const k1 = resultKeyOf('content', a), k2 = resultKeyOf('content', b), k3 = resultKeyOf('content-2', a);
   assert.notEqual(k1, k2);
@@ -151,22 +152,26 @@ test('B.1 resultKeyOf：随指纹变化，也随内容键变化', () => {
   for (const k of [k1, k2, k3]) assert.match(k, HEX64);
 });
 
-// ---------------------------------------------------------------- B.2 过滤
+// ---------------------------------------------------------------- B.2 Filtering
 
 const FP = fpOf('windows', 'nvidia', 138);
 const CV = 'c0de5a';
 
-/** 去掉值为 undefined 的键：夹具里写 `x: undefined` 表示「没有这一项」，不让实现去分辨 in 与 undefined。 */
+/**
+ * Strip keys with undefined value: writing `x: undefined` in fixtures means "no such item",
+ * so the implementation does not have to distinguish in vs undefined.
+ */
 const clean = obj => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
 
-/** 造一个 TaskView（契约 A.4）；over 里的 source / requires / weight 浅合并进缺省值。 */
+/** Create a TaskView (contract A.4); shallow-merge source / requires / weight in over into default values. */
 function taskView(over = {}) {
   const { source, requires, weight, ...rest } = over;
   return clean({
     id: 'snapshot:rk:0-59', kind: 'snapshot', tier: 'shared', resultKey: 'rk',
     range: { unit: 'localFrame', from: 0, to: 59 },
     source: clean({ userId: 'u1', tenantId: 't1', projectId: 'p1', projectRev: 1, publisher: { id: 'P' }, publishedAt: 1000, derivedFrom: null, ...source }),
-    // M7 D4（filter.mjs 规则 7）：纯浏览器只收共享档的独立卡，切分方在浏览器那一份里写 input.compositing
+    // M7 D4 (filter.mjs rule 7): browser-only only accepts shared tier standalone cards;
+    // splitter writes input.compositing in the browser copy
     input: { compositing: 'independent' },
     weight: clean({ class: 'medium', estMs: null, frames: 60, ...weight }),
     requires: clean({ envFingerprint: FP, codeVersion: CV, ...requires }),
@@ -182,7 +187,7 @@ function planView(over = {}) {
     source, requires: { envFingerprint: undefined, codeVersion: undefined, ...requires }, ...rest,
   });
 }
-/** 能力全开、与缺省任务完全匹配的节点。 */
+/** A node with all capabilities enabled, fully matching the default task. */
 function nodeOf(over = {}) {
   const { capabilities, ...rest } = over;
   return clean({
@@ -192,165 +197,168 @@ function nodeOf(over = {}) {
   });
 }
 function rejected(result, rule, label) {
-  assert.equal(result.ok, false, `${label}：应当不过`);
-  assert.equal(result.rule, rule, `${label}：应当是规则 ${rule}，实际 ${result.rule}（${result.reason}）`);
-  assert.equal(typeof result.reason, 'string', `${label}：reason 是字符串`);
+  assert.equal(result.ok, false, `${label}: should fail`);
+  assert.equal(result.rule, rule, `${label}: should be rule ${rule}, got ${result.rule} (${result.reason})`);
+  assert.equal(typeof result.reason, 'string', `${label}: reason is a string`);
 }
 function accepted(result, label) {
   assert.deepEqual(result, { ok: true }, label);
 }
 
-test('B.2 DEFAULT_WEIGHT_POLICY 的形状', () => {
+test('B.2 shape of DEFAULT_WEIGHT_POLICY', () => {
   assert.deepEqual(DEFAULT_WEIGHT_POLICY, { browser: ['light', 'medium'], pc: { editing: 'own-or-light', idle: 'all' }, host: 'all' });
 });
 
-test('B.2 基准：能力全开、要求全符的节点通过，回 { ok: true }', () => {
+test('B.2 baseline: a node with all capabilities on and all requirements met passes and returns { ok: true }', () => {
   for (const profile of ['host', 'pc', 'browser']) accepted(checkClaimable(taskView(), nodeOf({ profile })), profile);
 });
 
-test('B.2 规则 0：browser 只收自己用户的任务', () => {
-  rejected(checkClaimable(taskView({ source: { userId: 'u2' } }), nodeOf({ profile: 'browser', userId: 'u1' })), 0, 'browser 别人的任务');
-  accepted(checkClaimable(taskView({ source: { userId: 'u1' } }), nodeOf({ profile: 'browser', userId: 'u1' })), 'browser 自己的任务');
+test('B.2 rule 0: browser accepts only tasks of its own user', () => {
+  rejected(checkClaimable(taskView({ source: { userId: 'u2' } }), nodeOf({ profile: 'browser', userId: 'u1' })), 0, 'browser, task from another user');
+  accepted(checkClaimable(taskView({ source: { userId: 'u1' } }), nodeOf({ profile: 'browser', userId: 'u1' })), 'browser, own task');
 });
 
-test('B.2 规则 0：pc / host 不按用户过滤', () => {
-  accepted(checkClaimable(taskView({ source: { userId: 'u2' } }), nodeOf({ profile: 'pc', userId: 'u1' })), 'pc 别人的任务');
-  accepted(checkClaimable(taskView({ source: { userId: 'u2' } }), nodeOf({ profile: 'host', userId: 'u1' })), 'host 别人的任务');
+test('B.2 rule 0: pc / host do not filter by user', () => {
+  accepted(checkClaimable(taskView({ source: { userId: 'u2' } }), nodeOf({ profile: 'pc', userId: 'u1' })), 'pc, task from another user');
+  accepted(checkClaimable(taskView({ source: { userId: 'u2' } }), nodeOf({ profile: 'host', userId: 'u1' })), 'host, task from another user');
 });
 
-test('B.2 规则 0 最先查：browser 拿到别人的 plan 任务回规则 0 而不是规则 6', () => {
-  rejected(checkClaimable(planView({ source: { userId: 'u2' } }), nodeOf({ profile: 'browser', userId: 'u1' })), 0, '别人的 plan');
+test('B.2 rule 0 is checked first: when browser gets a plan task from another user it returns rule 0, not rule 6', () => {
+  rejected(checkClaimable(planView({ source: { userId: 'u2' } }), nodeOf({ profile: 'browser', userId: 'u1' })), 0, 'plan from another user');
 });
 
-test('B.2 规则 1：环境指纹不符不过；任务不要求指纹时通过', () => {
-  rejected(checkClaimable(taskView({ requires: { envFingerprint: fpOf('linux', 'intel', 138) } }), nodeOf()), 1, '指纹不符');
-  accepted(checkClaimable(taskView({ requires: { envFingerprint: undefined } }), nodeOf()), '不要求指纹');
+test('B.2 rule 1: an environment fingerprint mismatch fails; passes when the task requires no fingerprint', () => {
+  rejected(checkClaimable(taskView({ requires: { envFingerprint: fpOf('linux', 'intel', 138) } }), nodeOf()), 1, 'Fingerprint mismatch');
+  accepted(checkClaimable(taskView({ requires: { envFingerprint: undefined } }), nodeOf()), 'No fingerprint required');
 });
 
-test('B.2 规则 1：codeVersion 不在 codeVersions 里不过；在里面（多版本之一）通过', () => {
-  rejected(checkClaimable(taskView({ requires: { codeVersion: 'other' } }), nodeOf()), 1, '代码版本不符');
-  accepted(checkClaimable(taskView({ requires: { codeVersion: 'v2' } }), nodeOf({ codeVersions: ['v1', 'v2'] })), '多版本之一');
-  accepted(checkClaimable(taskView({ requires: { codeVersion: undefined } }), nodeOf()), '不要求代码版本');
+test('B.2 rule 1: codeVersion not in codeVersions fails; present in it (one of several versions) passes', () => {
+  rejected(checkClaimable(taskView({ requires: { codeVersion: 'other' } }), nodeOf()), 1, 'Code version mismatch');
+  accepted(checkClaimable(taskView({ requires: { codeVersion: 'v2' } }), nodeOf({ codeVersions: ['v1', 'v2'] })), 'One of several versions');
+  accepted(checkClaimable(taskView({ requires: { codeVersion: undefined } }), nodeOf()), 'No code version required');
 });
 
-test('B.2 规则 1：cardSources 里任一 [cardId, version] 本机没有就不过', () => {
+test('B.2 rule 1: fails if any [cardId, version] in cardSources is not available on this machine', () => {
   const requires = { cardSources: { particles: 'builtin:12', text: 'builtin:3' } };
-  accepted(checkClaimable(taskView({ requires }), nodeOf({ cardSourceVersions: { particles: ['builtin:11', 'builtin:12'], text: ['builtin:3'] } })), '全都有');
-  rejected(checkClaimable(taskView({ requires }), nodeOf({ cardSourceVersions: { particles: ['builtin:11'], text: ['builtin:3'] } })), 1, '版本不对');
-  rejected(checkClaimable(taskView({ requires }), nodeOf({ cardSourceVersions: { particles: ['builtin:12'] } })), 1, '缺一张卡');
-  rejected(checkClaimable(taskView({ requires }), nodeOf({ cardSourceVersions: undefined })), 1, '节点没报卡片源码版本');
-  accepted(checkClaimable(taskView({ requires: { cardSources: {} } }), nodeOf({ cardSourceVersions: undefined })), '空 cardSources');
+  accepted(checkClaimable(taskView({ requires }), nodeOf({ cardSourceVersions: { particles: ['builtin:11', 'builtin:12'], text: ['builtin:3'] } })), 'All present');
+  rejected(checkClaimable(taskView({ requires }), nodeOf({ cardSourceVersions: { particles: ['builtin:11'], text: ['builtin:3'] } })), 1, 'Wrong version');
+  rejected(checkClaimable(taskView({ requires }), nodeOf({ cardSourceVersions: { particles: ['builtin:12'] } })), 1, 'A card is missing');
+  rejected(checkClaimable(taskView({ requires }), nodeOf({ cardSourceVersions: undefined })), 1, 'The node did not report card source versions');
+  accepted(checkClaimable(taskView({ requires: { cardSources: {} } }), nodeOf({ cardSourceVersions: undefined })), 'Empty cardSources');
 });
 
-test('B.2 规则 1：plan 任务只查 codeVersion（指纹、卡片源码不查）', () => {
-  // M6b 起 host 不认 plan（规则 6，render-host-contract 第 3、4 节），规则 1 对 plan 的判定改在 pc 节点上测
+test('B.2 rule 1: a plan task checks only codeVersion (the fingerprint and card source are not checked)', () => {
+  // From M6b, host does not claim plan (rule 6, render-host-contract sections 3 and 4);
+  // rule 1 judgment on plan is now tested on pc nodes
   const pc = nodeOf({ profile: 'pc' });
-  accepted(checkClaimable(planView({ requires: { envFingerprint: fpOf('linux', 'intel', 1) } }), pc), 'plan 带着别的指纹');
-  accepted(checkClaimable(planView({ requires: { cardSources: { particles: 'builtin:99' } } }), pc), 'plan 带着本机没有的卡片源码');
-  accepted(checkClaimable(planView({ requires: { codeVersion: CV } }), pc), 'plan 代码版本相符');
-  rejected(checkClaimable(planView({ requires: { codeVersion: 'other' } }), pc), 1, 'plan 代码版本不符');
+  accepted(checkClaimable(planView({ requires: { envFingerprint: fpOf('linux', 'intel', 1) } }), pc), 'plan carries a different fingerprint');
+  accepted(checkClaimable(planView({ requires: { cardSources: { particles: 'builtin:99' } } }), pc), 'plan carries card sources that this machine does not have');
+  accepted(checkClaimable(planView({ requires: { codeVersion: CV } }), pc), 'plan code version matches');
+  rejected(checkClaimable(planView({ requires: { codeVersion: 'other' } }), pc), 1, 'plan code version mismatch');
 });
 
-// browser-stream-task.md 第二处：规则 2 改成只看任务自己写的 requires.transcode。切分方的流任务本来就写 transcode: true（split.mjs），
-// 所以这里的流任务夹具照它的真实形状带上这一项；没写这一项的流任务不再一律要求转码（给浏览器的单卡流那一份写的是 false）
-test('B.2 规则 2：requires.transcode 要转码能力（切分方的流任务写了它）', () => {
+// browser-stream-task.md part 2: rule 2 changed to only look at requires.transcode written by task
+// itself. Splitter's stream task already writes transcode: true (split.mjs), so the stream task
+// fixture here includes this item matching its real shape; stream tasks omitting this item no
+// longer always require transcoding (browser copy for single-card stream writes false)
+test('B.2 rule 2: requires.transcode needs transcoding capability (stream tasks from the splitter set it)', () => {
   const noTranscode = nodeOf({ capabilities: { transcode: false } });
   const stream = taskView({ id: 'stream:rk:0-7', kind: 'stream', tier: undefined, range: { unit: 'segment', from: 0, to: 7 }, requires: { transcode: true } });
-  rejected(checkClaimable(stream, noTranscode), 2, 'stream 无转码');
-  accepted(checkClaimable(taskView({ id: 'stream:rk:0-7', kind: 'stream', tier: undefined, range: { unit: 'segment', from: 0, to: 7 }, requires: { transcode: false } }), noTranscode), 'stream 自己写了不要转码');
-  rejected(checkClaimable(taskView({ requires: { transcode: true } }), noTranscode), 2, 'snapshot 要转码');
-  accepted(checkClaimable(stream, nodeOf({ capabilities: { transcode: true } })), 'stream 有转码');
-  accepted(checkClaimable(taskView({ requires: { transcode: false } }), noTranscode), 'snapshot 不要转码');
+  rejected(checkClaimable(stream, noTranscode), 2, 'stream without transcoding');
+  accepted(checkClaimable(taskView({ id: 'stream:rk:0-7', kind: 'stream', tier: undefined, range: { unit: 'segment', from: 0, to: 7 }, requires: { transcode: false } }), noTranscode), 'stream itself says no transcoding is needed');
+  rejected(checkClaimable(taskView({ requires: { transcode: true } }), noTranscode), 2, 'snapshot needs transcoding');
+  accepted(checkClaimable(stream, nodeOf({ capabilities: { transcode: true } })), 'stream with transcoding');
+  accepted(checkClaimable(taskView({ requires: { transcode: false } }), noTranscode), 'snapshot needs no transcoding');
 });
 
-test('B.2 规则 3：userCards / graphCards 要对应能力', () => {
+test('B.2 rule 3: userCards / graphCards need the matching capability', () => {
   rejected(checkClaimable(taskView({ requires: { userCards: true } }), nodeOf({ capabilities: { userCards: false } })), 3, 'userCards');
   rejected(checkClaimable(taskView({ requires: { graphCards: true } }), nodeOf({ capabilities: { graphCards: false } })), 3, 'graphCards');
-  accepted(checkClaimable(taskView({ requires: { userCards: true, graphCards: true } }), nodeOf()), '能力都有');
-  accepted(checkClaimable(taskView({ requires: { userCards: false, graphCards: false } }), nodeOf({ capabilities: { userCards: false, graphCards: false } })), '都不要求');
+  accepted(checkClaimable(taskView({ requires: { userCards: true, graphCards: true } }), nodeOf()), 'All capabilities present');
+  accepted(checkClaimable(taskView({ requires: { userCards: false, graphCards: false } }), nodeOf({ capabilities: { userCards: false, graphCards: false } })), 'Neither is required');
 });
 
-test('B.2 规则 4：browser 只收 light / medium', () => {
+test('B.2 rule 4: browser accepts only light / medium', () => {
   const browser = nodeOf({ profile: 'browser' });
   accepted(checkClaimable(taskView({ weight: { class: 'light' } }), browser), 'light');
   accepted(checkClaimable(taskView({ weight: { class: 'medium' } }), browser), 'medium');
   rejected(checkClaimable(taskView({ weight: { class: 'heavy' } }), browser), 4, 'heavy');
 });
 
-test('B.2 规则 4：host 全收', () => {
+test('B.2 rule 4: host accepts all', () => {
   for (const cls of ['light', 'medium', 'heavy']) accepted(checkClaimable(taskView({ weight: { class: cls } }), nodeOf({ profile: 'host' })), cls);
 });
 
-test('B.2 规则 4：pc 闲时（editing 不为 true）全收', () => {
+test('B.2 rule 4: pc accepts all when idle (editing is not true)', () => {
   for (const editing of [false, undefined]) for (const cls of ['light', 'medium', 'heavy'])
     accepted(checkClaimable(taskView({ weight: { class: cls }, source: { projectId: 'other' } }), nodeOf({ profile: 'pc', editing, ownProjectIds: ['p1'] })), `${editing} ${cls}`);
 });
 
-test('B.2 规则 4：pc 编辑中只收自己项目的任务或 light 任务', () => {
+test('B.2 rule 4: pc while editing accepts only tasks of its own project or light tasks', () => {
   const pc = nodeOf({ profile: 'pc', editing: true, ownProjectIds: ['p1'] });
-  for (const cls of ['light', 'medium', 'heavy']) accepted(checkClaimable(taskView({ weight: { class: cls }, source: { projectId: 'p1' } }), pc), `自己项目 ${cls}`);
-  accepted(checkClaimable(taskView({ weight: { class: 'light' }, source: { projectId: 'p9' } }), pc), '别的项目 light');
-  rejected(checkClaimable(taskView({ weight: { class: 'medium' }, source: { projectId: 'p9' } }), pc), 4, '别的项目 medium');
-  rejected(checkClaimable(taskView({ weight: { class: 'heavy' }, source: { projectId: 'p9' } }), pc), 4, '别的项目 heavy');
-  // 没报 ownProjectIds：没有「自己项目」，只剩 light
+  for (const cls of ['light', 'medium', 'heavy']) accepted(checkClaimable(taskView({ weight: { class: cls }, source: { projectId: 'p1' } }), pc), `Own project ${cls}`);
+  accepted(checkClaimable(taskView({ weight: { class: 'light' }, source: { projectId: 'p9' } }), pc), 'Other project light');
+  rejected(checkClaimable(taskView({ weight: { class: 'medium' }, source: { projectId: 'p9' } }), pc), 4, 'Other project medium');
+  rejected(checkClaimable(taskView({ weight: { class: 'heavy' }, source: { projectId: 'p9' } }), pc), 4, 'Other project heavy');
+  // ownProjectIds not reported: no "own project", only light remains
   const pcNoOwn = nodeOf({ profile: 'pc', editing: true });
-  accepted(checkClaimable(taskView({ weight: { class: 'light' } }), pcNoOwn), '无 ownProjectIds light');
-  rejected(checkClaimable(taskView({ weight: { class: 'heavy' } }), pcNoOwn), 4, '无 ownProjectIds heavy');
+  accepted(checkClaimable(taskView({ weight: { class: 'light' } }), pcNoOwn), 'No ownProjectIds light');
+  rejected(checkClaimable(taskView({ weight: { class: 'heavy' } }), pcNoOwn), 4, 'No ownProjectIds heavy');
 });
 
-test('B.2 规则 4：缺 weight 按 medium 计', () => {
+test('B.2 rule 4: missing weight counts as medium', () => {
   const bare = taskView(); delete bare.weight;
-  accepted(checkClaimable(bare, nodeOf({ profile: 'browser' })), 'browser 收 medium');
-  accepted(checkClaimable(bare, nodeOf({ profile: 'host' })), 'host 收');
-  // 区分 medium 与 light：pc 编辑中、别人的项目，medium 不收
+  accepted(checkClaimable(bare, nodeOf({ profile: 'browser' })), 'browser accepts medium');
+  accepted(checkClaimable(bare, nodeOf({ profile: 'host' })), 'host accepts');
+  // Distinguish medium and light: editing on pc, others' project, medium not accepted
   const other = taskView({ source: { projectId: 'p9' } }); delete other.weight;
-  rejected(checkClaimable(other, nodeOf({ profile: 'pc', editing: true, ownProjectIds: ['p1'] })), 4, 'pc 编辑中按 medium 不收');
+  rejected(checkClaimable(other, nodeOf({ profile: 'pc', editing: true, ownProjectIds: ['p1'] })), 4, 'pc while editing: counted as medium, not accepted');
 });
 
-test('B.2 规则 4：weight 为 null 按 medium 计（A.10a：队列对缺省 weight 存 null）', () => {
+test('B.2 rule 4: a null weight counts as medium (A.10a: the queue stores null when weight is omitted)', () => {
   const nul = { ...taskView(), weight: null };
-  accepted(checkClaimable(nul, nodeOf({ profile: 'browser' })), 'browser 收 medium');
-  accepted(checkClaimable(nul, nodeOf({ profile: 'pc', editing: true, ownProjectIds: ['p1'] })), 'pc 编辑中自己项目');
+  accepted(checkClaimable(nul, nodeOf({ profile: 'browser' })), 'browser accepts medium');
+  accepted(checkClaimable(nul, nodeOf({ profile: 'pc', editing: true, ownProjectIds: ['p1'] })), 'pc while editing, own project');
   const other = { ...taskView({ source: { projectId: 'p9' } }), weight: null };
-  rejected(checkClaimable(other, nodeOf({ profile: 'pc', editing: true, ownProjectIds: ['p1'] })), 4, 'pc 编辑中别的项目按 medium 不收');
+  rejected(checkClaimable(other, nodeOf({ profile: 'pc', editing: true, ownProjectIds: ['p1'] })), 4, 'pc while editing: other project, counted as medium, not accepted');
   assert.deepEqual(filterClaimable([nul], nodeOf({ profile: 'browser' })).length, 1);
 });
 
-test('B.2 规则 4：weightPolicy 可由节点覆盖（browser 只收 light）', () => {
+test('B.2 rule 4: weightPolicy can be overridden by the node (browser accepts only light)', () => {
   const policy = { ...DEFAULT_WEIGHT_POLICY, browser: ['light'] };
   const browser = nodeOf({ profile: 'browser', weightPolicy: policy });
   accepted(checkClaimable(taskView({ weight: { class: 'light' } }), browser), 'light');
   rejected(checkClaimable(taskView({ weight: { class: 'medium' } }), browser), 4, 'medium');
 });
 
-test('B.2 规则 5：requires.memoryMB 超过 capabilities.memoryMB 不过；相等、任一方不是数时通过', () => {
-  rejected(checkClaimable(taskView({ requires: { memoryMB: 4001 } }), nodeOf({ capabilities: { memoryMB: 4000 } })), 5, '超出');
-  accepted(checkClaimable(taskView({ requires: { memoryMB: 4000 } }), nodeOf({ capabilities: { memoryMB: 4000 } })), '相等');
-  accepted(checkClaimable(taskView({ requires: { memoryMB: 900 } }), nodeOf({ capabilities: { memoryMB: undefined } })), '节点没报内存');
-  accepted(checkClaimable(taskView({ requires: { memoryMB: undefined } }), nodeOf({ capabilities: { memoryMB: 100 } })), '任务不要求内存');
+test('B.2 rule 5: requires.memoryMB exceeding capabilities.memoryMB fails; passes when equal or when either side is not a number', () => {
+  rejected(checkClaimable(taskView({ requires: { memoryMB: 4001 } }), nodeOf({ capabilities: { memoryMB: 4000 } })), 5, 'Exceeds');
+  accepted(checkClaimable(taskView({ requires: { memoryMB: 4000 } }), nodeOf({ capabilities: { memoryMB: 4000 } })), 'Equal');
+  accepted(checkClaimable(taskView({ requires: { memoryMB: 900 } }), nodeOf({ capabilities: { memoryMB: undefined } })), 'The node did not report memory');
+  accepted(checkClaimable(taskView({ requires: { memoryMB: undefined } }), nodeOf({ capabilities: { memoryMB: 100 } })), 'The task requires no memory');
 });
 
-test('B.2 规则 6：plan 任务 browser 不认、host 不认（M6b render-host-contract 第 3、4 节），pc 认', () => {
+test('B.2 rule 6: for plan tasks, browser does not claim, host does not claim (M6b render-host-contract sections 3 and 4), pc claims', () => {
   rejected(checkClaimable(planView(), nodeOf({ profile: 'browser' })), 6, 'browser');
   accepted(checkClaimable(planView(), nodeOf({ profile: 'pc' })), 'pc');
   rejected(checkClaimable(planView(), nodeOf({ profile: 'host' })), 6, 'host');
 });
 
-test('B.2 按规则号顺序检查，返回第一条不过的', () => {
-  // 1 与 5 同时不过 → 1
-  rejected(checkClaimable(taskView({ requires: { codeVersion: 'x', memoryMB: 99999 } }), nodeOf()), 1, '1 与 5');
-  // 2 与 4 同时不过（browser、stream、heavy）→ 2
+test('B.2 checks in rule number order and returns the first one that fails', () => {
+  // Both 1 and 5 fail → 1
+  rejected(checkClaimable(taskView({ requires: { codeVersion: 'x', memoryMB: 99999 } }), nodeOf()), 1, '1 and 5');
+  // Both 2 and 4 fail (browser, stream, heavy) → 2
   const stream = taskView({ id: 'stream:rk:0-7', kind: 'stream', tier: undefined, range: { unit: 'segment', from: 0, to: 7 }, weight: { class: 'heavy' }, requires: { transcode: true } });
-  rejected(checkClaimable(stream, nodeOf({ profile: 'browser', capabilities: { transcode: false } })), 2, '2 与 4');
-  // 3 与 5 同时不过 → 3
-  rejected(checkClaimable(taskView({ requires: { userCards: true, memoryMB: 99999 } }), nodeOf({ capabilities: { userCards: false } })), 3, '3 与 5');
-  // 4 与 5 同时不过 → 4
-  rejected(checkClaimable(taskView({ weight: { class: 'heavy' }, requires: { memoryMB: 99999 } }), nodeOf({ profile: 'browser' })), 4, '4 与 5');
-  // 1 与 6 同时不过（browser 的 plan、代码版本不符）→ 1
-  rejected(checkClaimable(planView({ requires: { codeVersion: 'x' } }), nodeOf({ profile: 'browser' })), 1, '1 与 6');
+  rejected(checkClaimable(stream, nodeOf({ profile: 'browser', capabilities: { transcode: false } })), 2, '2 and 4');
+  // Both 3 and 5 fail → 3
+  rejected(checkClaimable(taskView({ requires: { userCards: true, memoryMB: 99999 } }), nodeOf({ capabilities: { userCards: false } })), 3, '3 and 5');
+  // Both 4 and 5 fail → 4
+  rejected(checkClaimable(taskView({ weight: { class: 'heavy' }, requires: { memoryMB: 99999 } }), nodeOf({ profile: 'browser' })), 4, '4 and 5');
+  // Both 1 and 6 fail (browser plan, code version mismatch) → 1
+  rejected(checkClaimable(planView({ requires: { codeVersion: 'x' } }), nodeOf({ profile: 'browser' })), 1, '1 and 6');
 });
 
-test('B.2 filterClaimable：只留通过的，保持原顺序', () => {
+test('B.2 filterClaimable: keeps only those that pass, preserving the original order', () => {
   const node = nodeOf({ profile: 'browser' });
   const tasks = [
     taskView({ id: 'a' }),
@@ -362,17 +370,17 @@ test('B.2 filterClaimable：只留通过的，保持原顺序', () => {
   ];
   const kept = filterClaimable(tasks, node);
   assert.deepEqual(kept.map(t => t.id), ['a', 'd', 'f']);
-  assert.equal(tasks.length, 6, '不改入参');
+  assert.equal(tasks.length, 6, 'The input argument is not modified');
   assert.deepEqual(filterClaimable([], node), []);
 });
 
-// ---------------------------------------------------------------- B.3 挑选
+// ---------------------------------------------------------------- B.3 Selection
 
-/** 挑选只看 id、priority、source.publishedAt、source.projectId。 */
+/** Selection only checks id, priority, source.publishedAt, source.projectId. */
 const cand = (id, priority, publishedAt, projectId = 'p1') => taskView({ id, priority, source: { publishedAt, projectId } });
 const ids = tasks => tasks.map(t => t.id);
 
-test('B.3 rankCandidates：priority 降序 → publishedAt 升序 → id 升序，返回新数组、不改入参', () => {
+test('B.3 rankCandidates: priority descending → publishedAt ascending → id ascending, returns a new array and does not modify its input', () => {
   const input = [
     cand('z', 10, 5), cand('b', 10, 3), cand('a', 10, 3), cand('x', 50, 9), cand('m', 0, 1), cand('c', 50, 2),
   ];
@@ -383,74 +391,75 @@ test('B.3 rankCandidates：priority 降序 → publishedAt 升序 → id 升序�
   assert.deepEqual(ids(input), before);
 });
 
-test('B.3 pickCandidate：空数组回 null', () => {
+test('B.3 pickCandidate: an empty array returns null', () => {
   assert.equal(pickCandidate([]), null);
   assert.equal(pickCandidate([], { random: () => 0.5, lastProjectId: 'p1' }), null);
 });
 
-test('B.3 pickCandidate：在排名前 K（缺省 4）里按 random 取 floor(random × 长度)', () => {
-  // 排名：t1 t2 t3 t4 t5 t6（同优先级，按 publishedAt）
+test('B.3 pickCandidate: among the top K ranked (default 4), picks floor(random × length) using random', () => {
+  // Ranking: t1 t2 t3 t4 t5 t6 (same priority, ordered by publishedAt)
   const tasks = [6, 3, 1, 5, 2, 4].map(n => cand(`t${n}`, 10, n));
   assert.equal(pickCandidate(tasks, { random: () => 0 }).id, 't1');
   assert.equal(pickCandidate(tasks, { random: () => 0.25 }).id, 't2');
   assert.equal(pickCandidate(tasks, { random: () => 0.5 }).id, 't3');
-  assert.equal(pickCandidate(tasks, { random: () => 0.999999 }).id, 't4', '缺省 K = 4，第 5、6 名轮不到');
+  assert.equal(pickCandidate(tasks, { random: () => 0.999999 }).id, 't4', 'Default K = 4, ranks 5 and 6 are never picked');
   assert.equal(pickCandidate(tasks, { k: 6, random: () => 0.999999 }).id, 't6');
   assert.equal(pickCandidate(tasks, { k: 2, random: () => 0.6 }).id, 't2');
   assert.equal(pickCandidate(tasks, { k: 1, random: () => 0.999999 }).id, 't1');
 });
 
-test('B.3 pickCandidate：不足 K 个时在全部里取', () => {
+test('B.3 pickCandidate: with fewer than K candidates, picks among all of them', () => {
   const tasks = [cand('b', 10, 2), cand('a', 10, 1)];
   assert.equal(pickCandidate(tasks, { random: () => 0 }).id, 'a');
   assert.equal(pickCandidate(tasks, { random: () => 0.999999 }).id, 'b');
   assert.equal(pickCandidate([cand('only', 0, 0)], { random: () => 0.7 }).id, 'only');
 });
 
-test('B.3 pickCandidate：random 注入后结果确定', () => {
+test('B.3 pickCandidate: the result is deterministic once random is injected', () => {
   const tasks = [1, 2, 3, 4, 5].map(n => cand(`t${n}`, n % 2 ? 10 : 20, n, `p${n}`));
   const seq = [0.1, 0.9, 0.4, 0.4, 0.75];
   const run = () => seq.map(r => pickCandidate(tasks, { random: () => r, lastProjectId: 'p2' })?.id);
   assert.deepEqual(run(), run());
 });
 
-test('B.3 pickCandidate：给了 lastProjectId 时，同优先级里只留别的项目（按项目轮转）', () => {
-  // 排名：A(p1,10) B(p1,10) C(p2,10) D(p1,5)
+test('B.3 pickCandidate: when lastProjectId is given, only other projects are kept within the same priority (rotation by project)', () => {
+  // Ranking: A(p1,10) B(p1,10) C(p2,10) D(p1,5)
   const tasks = [cand('D', 5, 0, 'p1'), cand('C', 10, 3, 'p2'), cand('B', 10, 2, 'p1'), cand('A', 10, 1, 'p1')];
   for (const r of [0, 0.3, 0.6, 0.999999]) assert.equal(pickCandidate(tasks, { random: () => r, lastProjectId: 'p1' }).id, 'C', `random=${r}`);
-  // 第一名本身不是上次的项目时，它也留在候选里
+  // When the top rank itself is not from the previous project, it also remains among candidates
   const tasks2 = [cand('A', 10, 1, 'p2'), cand('B', 10, 2, 'p1'), cand('C', 10, 3, 'p3')];
   assert.equal(pickCandidate(tasks2, { random: () => 0, lastProjectId: 'p1' }).id, 'A');
   assert.equal(pickCandidate(tasks2, { random: () => 0.5, lastProjectId: 'p1' }).id, 'C');
 });
 
-test('B.3 pickCandidate：别的项目只在更低优先级里有时，不按项目过滤', () => {
-  // 排名：A(p1,10) B(p2,5)；B 和第一名不同优先级，不算
+test('B.3 pickCandidate: when other projects exist only at lower priority, no filtering by project', () => {
+  // Ranking: A(p1,10) B(p2,5); B has a different priority from first place, not counted
   const tasks = [cand('A', 10, 1, 'p1'), cand('B', 5, 2, 'p2')];
   assert.equal(pickCandidate(tasks, { random: () => 0, lastProjectId: 'p1' }).id, 'A');
-  // 〔裁〕2026-09-28（契约 B.3 第 2 步改写）：只在排头那一个整数名次里挑，更低优先级的 B 不再进候选
+  // [ruling] 2026-09-28 (contract B.3 step 2 rewrite): pick only within the top integer rank;
+  // lower-priority B no longer enters candidates
   assert.equal(pickCandidate(tasks, { random: () => 0.999999, lastProjectId: 'p1' }).id, 'A');
 });
 
-test('B.3 pickCandidate：轮转只在前 K 个里找，第 K+1 名的别的项目不算', () => {
-  // 前 4 名都是 p1，第 5 名是 p2
+test('B.3 pickCandidate: rotation looks only within the top K; another project at rank K+1 does not count', () => {
+  // The top 4 are all p1, and the 5th is p2
   const tasks = [1, 2, 3, 4].map(n => cand(`a${n}`, 10, n, 'p1')).concat(cand('b5', 10, 5, 'p2'));
   assert.equal(pickCandidate(tasks, { random: () => 0, lastProjectId: 'p1' }).id, 'a1');
   assert.equal(pickCandidate(tasks, { random: () => 0.999999, lastProjectId: 'p1' }).id, 'a4');
 });
 
-test('B.3 pickCandidate：lastProjectId 为 null 时不过滤', () => {
+test('B.3 pickCandidate: no filtering when lastProjectId is null', () => {
   const tasks = [cand('A', 10, 1, 'p1'), cand('B', 10, 2, 'p2')];
   assert.equal(pickCandidate(tasks, { random: () => 0, lastProjectId: null }).id, 'A');
   assert.equal(pickCandidate(tasks, { random: () => 0 }).id, 'A');
 });
 
-// ---------------------------------------------------------------- B.4 切分
+// ---------------------------------------------------------------- B.4 Split
 
 const PROJECT = 'proj-42', REV = 118, ENTRY = 'entry-abc';
 const PLAN_ID = `plan:${PROJECT}@${REV}`;
 
-test('B.4 planTaskOf：形状与 id、resultKey', () => {
+test('B.4 planTaskOf: shape, id and resultKey', () => {
   assert.deepEqual(planTaskOf({ projectId: PROJECT, projectRev: REV }), {
     id: PLAN_ID, kind: 'plan', resultKey: `${PROJECT}@${REV}`, range: null,
     source: { projectId: PROJECT, projectRev: REV }, input: {}, weight: { class: 'medium', estMs: null, frames: null },
@@ -459,10 +468,10 @@ test('B.4 planTaskOf：形状与 id、resultKey', () => {
   const urgent = planTaskOf({ projectId: 'p', projectRev: 3, priority: 100 });
   assert.equal(urgent.priority, 100);
   assert.equal(urgent.id, 'plan:p@3');
-  assert.equal(urgent.id, `plan:${urgent.resultKey}`, '符合 taskIdOf 的 plan 公式');
+  assert.equal(urgent.id, `plan:${urgent.resultKey}`, 'Matches the plan formula of taskIdOf');
 });
 
-/** 按 card-cache.mjs 的 plan() 输出造一个 control（只放切分会读到的字段和几个常见字段）。 */
+/** Create a control from card-cache.mjs plan() output (only fields read by split and common fields). */
 function control({ clipId, cardId, snapshotKey, tier, capabilities, compositing, start = 0, count, withTier = true }) {
   const c = {
     key: `png-${clipId}`, snapshotKey, costKey: `cost-${clipId}`, frameMode: capabilities?.frameMode,
@@ -479,7 +488,7 @@ function control({ clipId, cardId, snapshotKey, tier, capabilities, compositing,
 const SHARED_CAPS = { frameMode: 'stateful', compositing: 'independent' };
 const LOCAL_CAPS = { frameMode: 'stateful', compositing: 'belowDependent' };
 
-/** 按契约 B.4 的对象字面量算一个快照任务的期望值。 */
+/** Calculate the expected value of a snapshot task from the contract B.4 object literal. */
 function expectSnapshot({ ctl, tier, from, to, priority, cardSources = {}, userCards = false, graphCards = false, weight = { class: 'heavy', estMs: null }, fp = FP, cv = CV }) {
   const contentKey = tier === 'shared' ? ctl.snapshotKey : `${ENTRY}/${ctl.snapshotKey}`;
   const resultKey = rkOf(contentKey, fp);
@@ -502,14 +511,14 @@ const baseArgs = over => ({
 });
 const ranges = tasks => tasks.map(t => [t.range.from, t.range.to]);
 
-test('B.4 splitPlan：count 恰为 60 的倍数时切成整段', () => {
+test('B.4 splitPlan: when count is exactly a multiple of 60, it is split into whole segments', () => {
   const ctl = control({ clipId: 'a', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 120 });
   const out = splitPlan(baseArgs({ cardPlan: [ctl] }));
   assert.deepEqual(ranges(out), [[0, 59], [60, 119]]);
   assert.deepEqual(ranges(splitPlan(baseArgs({ cardPlan: [{ ...ctl, count: 60 }] }))), [[0, 59]]);
 });
 
-test('B.4 splitPlan：count 不是 60 的倍数时最后一段到 count-1', () => {
+test('B.4 splitPlan: when count is not a multiple of 60, the last segment ends at count-1', () => {
   const ctl = control({ clipId: 'a', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 130 });
   assert.deepEqual(ranges(splitPlan(baseArgs({ cardPlan: [ctl] }))), [[0, 59], [60, 119], [120, 129]]);
   assert.deepEqual(ranges(splitPlan(baseArgs({ cardPlan: [{ ...ctl, count: 61 }] }))), [[0, 59], [60, 60]]);
@@ -517,22 +526,23 @@ test('B.4 splitPlan：count 不是 60 的倍数时最后一段到 count-1', () =
   assert.deepEqual(ranges(splitPlan(baseArgs({ cardPlan: [{ ...ctl, count: 1 }] }))), [[0, 0]]);
 });
 
-test('B.4 splitPlan：constants.SNAPSHOT_SPAN 覆盖段长', () => {
+test('B.4 splitPlan: constants.SNAPSHOT_SPAN overrides the segment length', () => {
   const ctl = control({ clipId: 'a', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 60 });
   const out = splitPlan(baseArgs({ cardPlan: [ctl], constants: { SNAPSHOT_SPAN: 25 } }));
   assert.deepEqual(ranges(out), [[0, 24], [25, 49], [50, 59]]);
   assert.deepEqual(out.map(t => t.weight.frames), [25, 25, 10]);
 });
 
-test('B.4 splitPlan：shared 与 local 档的内容键、结果键和完整任务形状', () => {
+test('B.4 splitPlan: content keys, result keys and full task shape of the shared and local tiers', () => {
   const a = control({ clipId: 'clip-a', cardId: 'particles', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 60, start: 2 });
   const b = control({ clipId: 'clip-b', cardId: 'glass', snapshotKey: 'skb', tier: 'local', capabilities: LOCAL_CAPS, compositing: 'belowDependent', count: 60, start: 0.5 });
   const out = splitPlan(baseArgs({ cardPlan: [a, b], cardSourceVersions: { particles: 'builtin:12' } }));
   assert.equal(out.length, 2);
   assert.deepEqual(out[0], expectSnapshot({ ctl: a, tier: 'shared', from: 0, to: 59, priority: 10, cardSources: { particles: 'builtin:12' } }));
-  // 契约 B.4〔c66-host-cards 改〕:本地档画整个场景(内容键里有 entry.key),要这一版全部定制卡的代码
+  // Contract B.4 [c66-host-cards change]: local tier draws the whole scene (entry.key in content key),
+  // requiring all custom card code for this version
   assert.deepEqual(out[1], expectSnapshot({ ctl: b, tier: 'local', from: 0, to: 59, priority: 10, cardSources: { particles: 'builtin:12' } }));
-  // 逐项再核一次关键字段，失败时信息更直观
+  // Re-verify key fields item by item for clearer failure messages
   assert.equal(out[0].input.contentKey, 'ska');
   assert.equal(out[0].resultKey, rkOf('ska', FP));
   assert.equal(out[0].input.entryKey, null);
@@ -541,10 +551,10 @@ test('B.4 splitPlan：shared 与 local 档的内容键、结果键和完整任�
   assert.equal(out[1].input.entryKey, ENTRY);
   assert.equal(out[1].requires.belowDependent, true);
   assert.equal(out[0].requires.belowDependent, false);
-  assert.deepEqual(out[1].requires.cardSources, { particles: 'builtin:12' }, '本地档要这一版全部定制卡(glass 不在 cardSourceVersions 里,不列)');
+  assert.deepEqual(out[1].requires.cardSources, { particles: 'builtin:12' }, 'The local tier requires all custom cards of this version (glass is not in cardSourceVersions, so it is not listed)');
 });
 
-test('B.4 splitPlan：resultKey 与 id 随环境指纹变化', () => {
+test('B.4 splitPlan: resultKey and id change with the environment fingerprint', () => {
   const a = control({ clipId: 'a', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 60 });
   const other = fpOf('linux', 'intel', 138);
   const [x] = splitPlan(baseArgs({ cardPlan: [a] }));
@@ -556,21 +566,22 @@ test('B.4 splitPlan：resultKey 与 id 随环境指纹变化', () => {
   assert.equal(y.id, `snapshot:${y.resultKey}:0-59`);
 });
 
-test('B.4 splitPlan：没有 control.tier 时按 snapshotTier(capabilities) 定档（现一律为 none，跳过切快照任务）', () => {
-  // 没有 tier；capabilities 标了 needPrerendering 与 belowDependent → snapshotTier 给 none，splitPlan 不切快照任务
+test('B.4 splitPlan: without control.tier, the tier is set by snapshotTier(capabilities) (currently always none, so snapshot task splitting is skipped)', () => {
+  // No tier; capabilities marks needPrerendering and belowDependent → snapshotTier is none,
+  // splitPlan does not split snapshot tasks
   const c = control({ clipId: 'c', snapshotKey: 'skc', capabilities: { needPrerendering: true, compositing: 'belowDependent' }, count: 10, withTier: false });
   assert.deepEqual(splitPlan(baseArgs({ cardPlan: [c] })), []);
-  // 没有 tier、stateful + independent → snapshotTier 给 none，同样不切快照任务
+  // No tier, stateful + independent → snapshotTier is none, likewise not splitting snapshot tasks
   const d = control({ clipId: 'd', snapshotKey: 'skd', capabilities: SHARED_CAPS, count: 10, withTier: false });
   assert.deepEqual(splitPlan(baseArgs({ cardPlan: [d] })), []);
 });
 
-test('B.4 splitPlan：control.compositing 优先于 capabilities.compositing', () => {
+test('B.4 splitPlan: control.compositing takes precedence over capabilities.compositing', () => {
   const c = control({ clipId: 'c', snapshotKey: 'skc', tier: 'local', capabilities: LOCAL_CAPS, compositing: 'unknown', count: 10 });
   assert.equal(splitPlan(baseArgs({ cardPlan: [c] }))[0].requires.belowDependent, false);
 });
 
-test('B.4 splitPlan：无 snapshotKey、无 clipId、档位 none 的 control 跳过', () => {
+test('B.4 splitPlan: a control with no snapshotKey, no clipId, or tier none is skipped', () => {
   const ok = control({ clipId: 'ok', snapshotKey: 'sk-ok', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 10 });
   const noKey = control({ clipId: 'nokey', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 10 });
   const noClip = control({ snapshotKey: 'sk-noclip', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 10 });
@@ -580,7 +591,7 @@ test('B.4 splitPlan：无 snapshotKey、无 clipId、档位 none 的 control 跳
   assert.deepEqual(out.map(t => t.input.clipId), ['ok']);
 });
 
-test('B.4 splitPlan：本地档缺 entryKey 时跳过该 control，共享档不受影响（A.10a）', () => {
+test('B.4 splitPlan: in the local tier a control missing entryKey is skipped, while the shared tier is unaffected (A.10a)', () => {
   const shared = control({ clipId: 'a', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 10 });
   const local = control({ clipId: 'b', snapshotKey: 'skb', tier: 'local', capabilities: LOCAL_CAPS, compositing: 'belowDependent', count: 10 });
   for (const entryKey of [undefined, null]) {
@@ -590,7 +601,7 @@ test('B.4 splitPlan：本地档缺 entryKey 时跳过该 control，共享档不�
   }
 });
 
-test('B.4 splitPlan：没有 streamKey 的流跳过（A.10a）', () => {
+test('B.4 splitPlan: a stream without streamKey is skipped (A.10a)', () => {
   const streams = [
     { topClipId: 'no-key', firstSegment: 0, lastSegment: 7 },
     { streamKey: 's', topClipId: 'top', firstSegment: 0, lastSegment: 7 },
@@ -598,7 +609,7 @@ test('B.4 splitPlan：没有 streamKey 的流跳过（A.10a）', () => {
   assert.deepEqual(splitPlan(baseArgs({ streams })).map(t => t.input.clipId), ['top']);
 });
 
-test('B.4 splitPlan：prerenderSet 给了就只切其中的片段；undefined 不过滤；空集合全跳过', () => {
+test('B.4 splitPlan: when prerenderSet is given, only the clips in it are split; undefined does not filter; an empty set skips everything', () => {
   const a = control({ clipId: 'a', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 10 });
   const b = control({ clipId: 'b', snapshotKey: 'skb', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 10 });
   assert.deepEqual(splitPlan(baseArgs({ cardPlan: [a, b], prerenderSet: new Set(['b']) })).map(t => t.input.clipId), ['b']);
@@ -606,34 +617,34 @@ test('B.4 splitPlan：prerenderSet 给了就只切其中的片段；undefined �
   assert.deepEqual(splitPlan(baseArgs({ cardPlan: [a, b], prerenderSet: new Set() })), []);
 });
 
-test('B.4 splitPlan：含锚帧的段 priority 50，其余 10；锚帧是全局帧，按 sampling.firstFrame 换成本地帧', () => {
-  // a 从 2 秒开始（firstFrame 60），count 120；b 从 0.5 秒开始（firstFrame 15），count 130
+test('B.4 splitPlan: a segment containing an anchor frame gets priority 50 and the others 10; anchor frames are global frames and are converted to local frames by sampling.firstFrame', () => {
+  // a starts at 2s (firstFrame 60), count 120; b starts at 0.5s (firstFrame 15), count 130
   const a = control({ clipId: 'a', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 120, start: 2 });
   const b = control({ clipId: 'b', snapshotKey: 'skb', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 130, start: 0.5 });
   assert.equal(a.sampling.firstFrame, 60);
   assert.equal(b.sampling.firstFrame, 15);
   const out = splitPlan(baseArgs({ cardPlan: [a, b], anchorFrames: [59, 135] }));
-  // a：59 → 本地 -1（不在任何段）；135 → 本地 75（[60,119]）
-  // b：59 → 本地 44（[0,59]）；135 → 本地 120（[120,129]）
+  // a: 59 → local -1 (not in any segment); 135 → local 75 ([60,119])
+  // b: 59 → local 44 ([0,59]); 135 → local 120 ([120,129])
   assert.deepEqual(out.map(t => [t.input.clipId, t.range.from, t.priority]), [
     ['a', 0, 10], ['a', 60, 50],
     ['b', 0, 50], ['b', 60, 10], ['b', 120, 50],
   ]);
 });
 
-test('B.4 splitPlan：锚帧恰在段的首帧、末帧都算；落在 count 之外不算；没给锚帧全是 10', () => {
+test('B.4 splitPlan: an anchor frame exactly at the first or last frame of a segment counts; one outside count does not; with no anchor frames all are 10', () => {
   const a = control({ clipId: 'a', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 120, start: 0 });
   const pri = anchorFrames => splitPlan(baseArgs({ cardPlan: [a], anchorFrames })).map(t => t.priority);
-  assert.deepEqual(pri([59]), [50, 10], '段末帧');
-  assert.deepEqual(pri([60]), [10, 50], '段首帧');
+  assert.deepEqual(pri([59]), [50, 10], 'Last frame of a segment');
+  assert.deepEqual(pri([60]), [10, 50], 'First frame of a segment');
   assert.deepEqual(pri([0]), [50, 10]);
   assert.deepEqual(pri([119]), [10, 50]);
-  assert.deepEqual(pri([120, 500]), [10, 10], 'count 之外');
+  assert.deepEqual(pri([120, 500]), [10, 10], 'Outside count');
   assert.deepEqual(pri([]), [10, 10]);
-  assert.deepEqual(splitPlan(baseArgs({ cardPlan: [a] })).map(t => t.priority), [10, 10], '缺省 anchorFrames');
+  assert.deepEqual(splitPlan(baseArgs({ cardPlan: [a] })).map(t => t.priority), [10, 10], 'Default anchorFrames');
 });
 
-test('B.4 splitPlan：weightOf / isUserCard / isGraphCard 按 control 调用，结果进 weight 与 requires', () => {
+test('B.4 splitPlan: weightOf / isUserCard / isGraphCard are called per control, and the results go into weight and requires', () => {
   const a = control({ clipId: 'a', cardId: 'particles', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 70 });
   const b = control({ clipId: 'b', cardId: 'user-x', snapshotKey: 'skb', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 10 });
   const seen = [];
@@ -641,21 +652,21 @@ test('B.4 splitPlan：weightOf / isUserCard / isGraphCard 按 control 调用，�
     cardPlan: [a, b],
     weightOf: c => { seen.push(c.clipId); return c.clipId === 'a' ? { class: 'light', estMs: 1234 } : { class: 'heavy', estMs: null }; },
     isUserCard: c => c.cardId === 'user-x',
-    isGraphCard: c => (c.cardId === 'particles' ? 1 : 0),   // 返回真值 / 假值，结果要是布尔
+    isGraphCard: c => (c.cardId === 'particles' ? 1 : 0),   // Returns truthy / falsy; result must be boolean
   }));
-  assert.ok(seen.includes('a') && seen.includes('b'), 'weightOf 收到 control');
+  assert.ok(seen.includes('a') && seen.includes('b'), 'weightOf receives the control');
   assert.deepEqual(out.map(t => t.weight), [
     { class: 'light', estMs: 1234, frames: 60 }, { class: 'light', estMs: 1234, frames: 10 }, { class: 'heavy', estMs: null, frames: 10 },
   ]);
   assert.deepEqual(out.map(t => [t.requires.userCards, t.requires.graphCards]), [[false, true], [false, true], [true, false]]);
 });
 
-test('B.4 splitPlan：缺省 weightOf 给 heavy、estMs null', () => {
+test('B.4 splitPlan: the default weightOf gives heavy and estMs null', () => {
   const a = control({ clipId: 'a', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 10 });
   assert.deepEqual(splitPlan(baseArgs({ cardPlan: [a] }))[0].weight, { class: 'heavy', estMs: null, frames: 10 });
 });
 
-test('B.4 splitPlan：cardSources 只在 control 有 cardId 且 cardSourceVersions 里有它时填', () => {
+test('B.4 splitPlan: cardSources is filled only when the control has a cardId and cardSourceVersions contains it', () => {
   const withSrc = control({ clipId: 'a', cardId: 'particles', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 10 });
   const noSrc = control({ clipId: 'b', cardId: 'text', snapshotKey: 'skb', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 10 });
   const noCard = control({ clipId: 'c', snapshotKey: 'skc', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 10 });
@@ -664,7 +675,7 @@ test('B.4 splitPlan：cardSources 只在 control 有 cardId 且 cardSourceVersio
   assert.deepEqual(out.map(t => t.input.cardId), ['particles', 'text', null]);
 });
 
-test('B.4 splitPlan：source 只取 planTask.source 的 projectId / projectRev，derivedFrom 是 planTask.id（planTask 可以是 TaskView）', () => {
+test('B.4 splitPlan: source takes only projectId / projectRev of planTask.source, derivedFrom is planTask.id (planTask can be a TaskView)', () => {
   const planTask = {
     ...planTaskOf({ projectId: PROJECT, projectRev: REV }),
     source: { userId: 'u1', tenantId: 't1', projectId: PROJECT, projectRev: REV, publisher: { id: 'P' }, publishedAt: 5, derivedFrom: null },
@@ -676,10 +687,10 @@ test('B.4 splitPlan：source 只取 planTask.source 的 projectId / projectRev�
     assert.deepEqual(t.source, { projectId: PROJECT, projectRev: REV, derivedFrom: PLAN_ID }, t.id);
 });
 
-test('B.4 splitPlan：流任务按 STREAM_SEGMENTS（缺省 8）切段，字段按契约', () => {
+test('B.4 splitPlan: stream tasks are split into segments by STREAM_SEGMENTS (default 8), with fields per the contract', () => {
   const streams = [
-    { streamKey: 'stream-1', topClipId: 'top-1', firstSegment: 0, lastSegment: 15 },   // 恰为 8 的倍数
-    { streamKey: 'stream-2', topClipId: 'top-2', firstSegment: 8, lastSegment: 26 },   // 不是
+    { streamKey: 'stream-1', topClipId: 'top-1', firstSegment: 0, lastSegment: 15 },   // Exactly a multiple of 8
+    { streamKey: 'stream-2', topClipId: 'top-2', firstSegment: 8, lastSegment: 26 },   // Not
   ];
   const weightCalls = [];
   const out = splitPlan(baseArgs({ streams, weightOf: arg => { weightCalls.push(arg); return { class: 'medium', estMs: 7 }; } }));
@@ -697,15 +708,15 @@ test('B.4 splitPlan：流任务按 STREAM_SEGMENTS（缺省 8）切段，字段�
     assert.deepEqual(t.source, { projectId: PROJECT, projectRev: REV, derivedFrom: PLAN_ID });
     assert.deepEqual(t.input, { clipId: top, cardId: null, entryKey: null, contentKey: t.input.contentKey });
     assert.deepEqual(t.weight, { class: 'medium', estMs: 7, frames: (t.range.to - t.range.from + 1) * 15 });
-    // M6c X1：流任务另带 requires.capabilities.streams = true
+    // M6c X1: stream tasks additionally carry requires.capabilities.streams = true
     assert.deepEqual(t.requires, { envFingerprint: FP, codeVersion: CV, cardSources: {}, transcode: true, userCards: false, graphCards: false, belowDependent: false, capabilities: { streams: true } });
     assert.equal(t.priority, 10);
   }
-  assert.ok(weightCalls.some(arg => arg && arg.clipId === 'top-1'), 'weightOf 以 { clipId: topClipId } 调用');
+  assert.ok(weightCalls.some(arg => arg && arg.clipId === 'top-1'), 'weightOf is called with { clipId: topClipId }');
   assert.ok(weightCalls.some(arg => arg && arg.clipId === 'top-2'));
 });
 
-test('B.4 splitPlan：流任务的段数可由 constants.STREAM_SEGMENTS 覆盖；锚帧不影响流任务优先级', () => {
+test('B.4 splitPlan: the segment count of stream tasks can be overridden by constants.STREAM_SEGMENTS; anchor frames do not affect stream task priority', () => {
   const streams = [{ streamKey: 's', topClipId: 'top', firstSegment: 0, lastSegment: 9 }];
   const out = splitPlan(baseArgs({ streams, constants: { STREAM_SEGMENTS: 4 }, anchorFrames: [0, 1, 2, 3, 100] }));
   assert.deepEqual(ranges(out), [[0, 3], [4, 7], [8, 9]]);
@@ -713,7 +724,7 @@ test('B.4 splitPlan：流任务的段数可由 constants.STREAM_SEGMENTS 覆盖�
   assert.deepEqual(out.map(t => t.priority), [10, 10, 10]);
 });
 
-test('B.4 splitPlan：输出顺序是先快照（cardPlan 顺序、段升序）后流（streams 顺序、段升序）', () => {
+test('B.4 splitPlan: output order is snapshots first (cardPlan order, segments ascending), then streams (streams order, segments ascending)', () => {
   const a = control({ clipId: 'a', snapshotKey: 'ska', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 70 });
   const b = control({ clipId: 'b', snapshotKey: 'skb', tier: 'local', capabilities: LOCAL_CAPS, compositing: 'belowDependent', count: 130 });
   const streams = [
@@ -729,18 +740,18 @@ test('B.4 splitPlan：输出顺序是先快照（cardPlan 顺序、段升序）�
   ]);
 });
 
-test('B.4 splitPlan：同一个 id 只出现一次，先出现的留下', () => {
-  // 两个片段用同一张共享快照（同 snapshotKey、shared）：第一个 60 帧，第二个 130 帧
+test('B.4 splitPlan: the same id appears only once, and the first occurrence is kept', () => {
+  // Two clips use the same shared snapshot (same snapshotKey, shared): first 60 frames, second 130 frames
   const first = control({ clipId: 'first', snapshotKey: 'same', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 60 });
   const second = control({ clipId: 'second', snapshotKey: 'same', tier: 'shared', capabilities: SHARED_CAPS, compositing: 'independent', count: 130 });
-  // 同 snapshotKey 但本地档：内容键不同，不算重复
+  // Same snapshotKey but local tier: content keys differ, not considered duplicate
   const local = control({ clipId: 'local', snapshotKey: 'same', tier: 'local', capabilities: LOCAL_CAPS, compositing: 'belowDependent', count: 60 });
   const streams = [
     { streamKey: 'st', topClipId: 'x', firstSegment: 0, lastSegment: 7 },
     { streamKey: 'st', topClipId: 'y', firstSegment: 0, lastSegment: 15 },
   ];
   const out = splitPlan(baseArgs({ cardPlan: [first, second, local], streams }));
-  assert.equal(new Set(out.map(t => t.id)).size, out.length, 'id 不重复');
+  assert.equal(new Set(out.map(t => t.id)).size, out.length, 'No duplicate ids');
   assert.deepEqual(out.map(t => [t.input.clipId, t.range.from, t.range.to]), [
     ['first', 0, 59], ['second', 60, 119], ['second', 120, 129],
     ['local', 0, 59],
@@ -748,6 +759,6 @@ test('B.4 splitPlan：同一个 id 只出现一次，先出现的留下', () => 
   ]);
 });
 
-test('B.4 splitPlan：什么都没有时回空数组', () => {
+test('B.4 splitPlan: returns an empty array when there is nothing', () => {
   assert.deepEqual(splitPlan(baseArgs({})), []);
 });

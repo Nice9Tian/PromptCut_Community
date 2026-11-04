@@ -1,12 +1,12 @@
 /**
- * 公开侧（社区版）默认实现的局域网「成员源」与「加入源」（见 `docs/plan/community-boundary.md`）。
+ * The LAN "member source" and "join source" of the public side's (community edition) default implementation (see `docs/plan/community-boundary.md`).
  *
- * 社区版没有网站账号，但局域网共享项目有一整套完整的凭证、成员与邀请码机制：
- * - `server/auth/`：项目口令、创建者口令、连接票据、邀请码签发与兑换、`kick` / `unban` / `add-member` / `remove-member` 管理指令；
- * - `server/lan/`：局域网主机发现与广播；
- * - `src/editor/sync/`：实时同步连接上的在线成员列表（`getSyncView().members`）与管理操作（`adminOp`）。
+ * The community edition has no website accounts, but LAN shared projects have a complete set of credential, member and invite code mechanisms:
+ * - `server/auth/`: project passphrase, creator passphrase, connection ticket, invite code issuing and redemption, and the `kick` / `unban` / `add-member` / `remove-member` admin commands;
+ * - `server/lan/`: LAN host discovery and broadcast;
+ * - `src/editor/sync/`: the online member list on the live sync connection (`getSyncView().members`) and the admin operation (`adminOp`).
  *
- * 本模块提供不依赖 React 的纯逻辑构造器（方便 Node 单测直接注入验证），供 `MembersPanel.tsx`、`useMembers.ts`、`JoinPanel.tsx` 挂载为默认实现。
+ * This module provides React-independent pure-logic constructors (so Node unit tests can inject and verify them directly), for `MembersPanel.tsx`, `useMembers.ts` and `JoinPanel.tsx` to mount as the default implementations.
  */
 import { docBaseOf, hostedWsUrlOf, parseInviteLink } from "../../online/invite.ts";
 import type {
@@ -77,10 +77,10 @@ export interface LanMemberSourceDeps {
 }
 
 /**
- * 整理局域网共享项目的成员列表：
- * - 同名多连接合并（只要有一条在线就算在线，创建者身份保留）；
- * - 自己的连接尚未出现在回包里时，把自己按在线补进列表；
- * - 创建者排第一，其余按用户名排序，拆成「在线」与「离线」两组。
+ * Tidy the member list of a LAN shared project:
+ * - merge multiple connections with the same name (online if at least one is online, creator identity kept);
+ * - when your own connection has not yet appeared in the response, add yourself to the list as online;
+ * - the creator comes first, the rest are sorted by username, split into "online" and "offline" groups.
  */
 export function splitLanMembers(
   members: readonly LanMemberInput[],
@@ -133,7 +133,7 @@ export function splitLanMembers(
   };
 }
 
-/** 构造公开侧默认局域网成员源 */
+/** Construct the public side's default LAN member source */
 export function createLanMemberSource(deps: LanMemberSourceDeps): MemberSource {
   return {
     kind: "lan",
@@ -235,7 +235,7 @@ export function createLanMemberSource(deps: LanMemberSourceDeps): MemberSource {
   };
 }
 
-/* ---------------- 公开侧局域网加入源 ---------------- */
+/* ---------------- Public-side LAN join source ---------------- */
 
 export const LAN_JOIN_TEXT = Object.freeze({
   badLink: tr("This is not a valid invite link."),

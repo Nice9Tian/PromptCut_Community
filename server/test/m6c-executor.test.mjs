@@ -1,14 +1,18 @@
 /**
- * M6c 契约（`docs/plan/m6c-contract.md`）里要用执行器与预渲染管线的两项：
- *   MC-X1-exec-*  执行器接受 `kind: 'stream'` 的细任务，不再抛 `stream-not-supported`（烟测，〔假设 A-X1-1〕）
- *   MC-X5-*       本机队列节点的闲时门槛：执行器有空位、且最近 500 ms 没有交互帧请求就认领；
- *                 preload 没到 ready 也照样认领；拖动期间新认领 0 次，手里在做的做完
- * 跑：node --experimental-test-module-mocks --test server/test/m6c-executor.test.mjs
+ * Two items in M6c contract (`docs/plan/m6c-contract.md`) requiring executor and prerender pipeline:
+ *   MC-X1-exec-*  Executor accepts fine-grained tasks with `kind: 'stream'`, no longer throws
+ *                 `stream-not-supported` (smoke test, [Assumption A-X1-1])
+ *   MC-X5-*       Idle gate for local queue node: claims if executor has available slots and no
+ *                 interactive frame requests in last 500 ms; claims even if preload has not reached
+ *                 ready; 0 new claims during scrub, finishes what is currently in hand
+ * Run: node --experimental-test-module-mocks --test server/test/m6c-executor.test.mjs
  *
- * 只照契约写，不看实现。`server/bakery/index.mjs` 整个换成假的（`mock.module`），单测不开 Chrome、不找 ffmpeg。
- * X5 用真的 `FramePipeline`（`interactive: false`、注入 `environment` 与 `playhead`）和真的 `createPrerenderExecutor`；
- * Date 由 `mock.timers` 接管。preload 与交互的模拟方式见 `m6c-kit.mjs` 的〔假设 A-X5-1〕〔A-X5-2〕〔A-X5-3〕。
- * 实现不在测试分支上：新行为的用例在这里失败是预期的。
+ * Written strictly per contract, not looking at implementation. `server/bakery/index.mjs` entirely
+ * replaced with fake (`mock.module`), unit test does not launch Chrome or look for ffmpeg. X5 uses
+ * real `FramePipeline` (`interactive: false`, injects `environment` and `playhead`) and real
+ * `createPrerenderExecutor`; Date taken over by `mock.timers`. For simulation of preload and
+ * interaction, see [Assumption A-X5-1] [A-X5-2] [A-X5-3] in `m6c-kit.mjs`. Implementation is not
+ * on test branch: test cases for new behaviors are expected to fail here.
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,10 +22,10 @@ import path from 'node:path';
 
 mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: {
-    openBakery: async () => { throw new Error('单测不开 Chrome'); },
-    findFfmpeg: async () => { throw new Error('单测不找 ffmpeg'); },
-    streamPngVideo: () => { throw new Error('单测不编码'); },
-    bakeFrames: async () => { throw new Error('单测不渲染'); },
+    openBakery: async () => { throw new Error('Unit test does not open Chrome'); },
+    findFfmpeg: async () => { throw new Error('Unit test does not look for ffmpeg'); },
+    streamPngVideo: () => { throw new Error('Unit test does not encode'); },
+    bakeFrames: async () => { throw new Error('Unit tests do not render'); },
   },
 });
 
@@ -42,7 +46,7 @@ const ENV = describeEnvironment({
 const temps = [];
 const pipelines = [];
 after(async () => {
-  for (const p of pipelines) { try { await p.closeNow?.(); } catch { /* 收尾出错不影响结果 */ } }
+  for (const p of pipelines) { try { await p.closeNow?.(); } catch { /* Finalize error does not affect result */ } }
   for (const dir of temps) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
 });
 
@@ -58,10 +62,10 @@ async function makePipeline(playhead) {
 
 const noProjects = { get: async () => null };
 
-/* ================================================================== X1 执行器接受流任务 */
+/* ================================================================== X1 executor accepts stream tasks */
 
-test('MC-X1-exec：执行器 render 流任务不再以 stream-not-supported 拒绝（烟测）', async () => {
-  // 假管线：流生产者的任何方法都是异步空操作；真产流（ffmpeg）归 queue-mode-probe / stream-produce-probe
+test('MC-X1-exec: the executor\'s render of a stream task is no longer rejected with stream-not-supported (smoke test)', async () => {
+  // Fake pipeline: any method of stream producer is an async no-op; real stream production (ffmpeg) belongs to queue-mode-probe / stream-produce-probe
   const producer = new Proxy({}, { get: (_, key) => (key === 'then' ? undefined : async () => ({})) });
   const pipeline = {
     closed: false, envFingerprint: ENV.fingerprint, entries: new Map(), generations: new Map(),
@@ -80,36 +84,36 @@ test('MC-X1-exec：执行器 render 流任务不再以 stream-not-supported 拒�
   ]);
   controller.abort('test-end');
   if (outcome.ok === false) {
-    assert.notEqual(outcome.error?.code, 'stream-not-supported', `执行器仍拒绝流任务：${outcome.error?.message}`);
+    assert.notEqual(outcome.error?.code, 'stream-not-supported', `The executor still rejects the stream task: ${outcome.error?.message}`);
   }
 });
 
-/* ================================================================== X5 闲时门槛 */
+/* ================================================================== X5 idle gate */
 
-test('MC-X5-idle：preload 没到 ready、500 ms 内没有交互时，执行器算闲', async (t) => {
+test('MC-X5-idle: when preload has not reached ready and there has been no interaction within 500 ms, the executor counts as idle', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 });
   const playhead = createPlayhead();
   const pipeline = await makePipeline(playhead);
   const executor = createPrerenderExecutor({ pipeline, projects: noProjects });
   simulatePreloadRunning(pipeline);
-  assert.equal(queueIdle(pipeline, Date.now()), true, 'preload 在跑、没有交互：应算闲');
+  assert.equal(queueIdle(pipeline, Date.now()), true, 'preload running, no interaction: should count as idle');
   playhead.stop(Date.now() - 2000);
-  assert.equal(queueIdle(pipeline, Date.now()), true, '2 秒前停下的播放头：应算闲');
+  assert.equal(queueIdle(pipeline, Date.now()), true, 'Playhead that stopped 2 seconds ago: should count as idle');
 });
 
-test('MC-X5-drag：100 ms 前拖过不闲；拖动停下 500 ms 之后又闲', async (t) => {
+test('MC-X5-drag: not idle if dragged 100 ms ago; idle again 500 ms after the drag stops', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 });
   const playhead = createPlayhead();
   const pipeline = await makePipeline(playhead);
   const executor = createPrerenderExecutor({ pipeline, projects: noProjects });
   playhead.drag(Date.now());
   t.mock.timers.tick(100);
-  assert.equal(queueIdle(pipeline, Date.now()), false, '100 ms 前拖过：不闲');
+  assert.equal(queueIdle(pipeline, Date.now()), false, 'Dragged 100 ms ago: not idle');
   t.mock.timers.tick(500);
-  assert.equal(queueIdle(pipeline, Date.now()), true, '最后一次拖动在 600 ms 前：按契约 500 ms 应算闲');
+  assert.equal(queueIdle(pipeline, Date.now()), true, 'The last drag was 600 ms ago: per the contract of 500 ms it should count as idle');
 });
 
-test('MC-X5-play：播放中不闲', async (t) => {
+test('MC-X5-play: not idle during playback', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 });
   const playhead = createPlayhead();
   const pipeline = await makePipeline(playhead);
@@ -120,8 +124,8 @@ test('MC-X5-play：播放中不闲', async (t) => {
 });
 
 /**
- * 真队列 + 环回 + 本机节点：`isIdle` 接真执行器的闲时门槛，`render` 由测试控制（手动放行）。
- * 页面发布 4 段快照，preload 一直在跑。
+ * Real queue + loopback + local node: `isIdle` connects to idle gate of real executor, `render`
+ * controlled by test (manually released). Page publishes 4 snapshot clips, preload runs continuously.
  */
 async function idleRig(t) {
   t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 });
@@ -139,14 +143,14 @@ async function idleRig(t) {
   page.send({ type: 'publisher.hello', publisherId: 'page-1' });
 
   const claims = [];
-  const gates = new Map();   // id → 放行函数
+  const gates = new Map();   // id → release function
   const ep = lb.connect('conn-node', { userId: 'u1', tenantId: 't1' });
   const endpoint = {
     send: (m) => { if (m?.type === 'task.claim') claims.push({ id: m.id, at: Date.now() }); ep.send(m); },
     onMessage: (h) => ep.onMessage(h),
   };
   const executor = {
-    plan: async () => { throw new Error('这里不切分'); },
+    plan: async () => { throw new Error('No splitting here'); },
     render: (task) => new Promise((resolve) => gates.set(task.id, resolve)),
     isIdle: (now) => queueIdle(pipeline, now),
   };
@@ -174,36 +178,36 @@ async function idleRig(t) {
   return { playhead, claims, gates, tasks, step, settle, lb, pageInbox, local };
 }
 
-test('MC-X5-claim-before-ready：preload 没到 ready 时本机节点已开始认领细任务', async (t) => {
+test('MC-X5-claim-before-ready: this machine\'s node already starts claiming fine-grained tasks while preload has not reached ready', async (t) => {
   const rig = await idleRig(t);
   for (let i = 0; i < 4; i += 1) await rig.step(250);
-  assert.ok(rig.claims.length >= 1, `preload 在跑时也应认领；认领：${JSON.stringify(rig.claims)}`);
+  assert.ok(rig.claims.length >= 1, `Should also claim while preload is running; claims: ${JSON.stringify(rig.claims)}`);
 });
 
-test('MC-X5-drag-no-claim：模拟拖动期间新认领 0 次，手里在做的做完；拖动停下后恢复认领', async (t) => {
+test('MC-X5-drag-no-claim: during a simulated drag there are 0 new claims and the task in hand is finished; claiming resumes after the drag stops', async (t) => {
   const rig = await idleRig(t);
   for (let i = 0; i < 4 && rig.gates.size === 0; i += 1) await rig.step(250);
-  assert.equal(rig.gates.size, 1, `先认领到一段并开工：${JSON.stringify(rig.claims)}`);
+  assert.equal(rig.gates.size, 1, `First claimed a segment and started work: ${JSON.stringify(rig.claims)}`);
   const [heldId] = [...rig.gates.keys()];
 
-  // 拖动 2 秒：每 100 ms 报一次播放头
+  // Scrub for 2 seconds: report playhead every 100 ms
   const dragStart = Date.now();
   rig.playhead.drag(Date.now());
   let released = false;
   for (let i = 0; i < 20; i += 1) {
     rig.playhead.drag(Date.now());
-    if (i === 5 && !released) { rig.gates.get(heldId)(null); released = true; }   // 手里这段在拖动中途做完
+    if (i === 5 && !released) { rig.gates.get(heldId)(null); released = true; }   // Segment in hand completes halfway through scrub
     await rig.step(100);
   }
   const during = rig.claims.filter(c => c.at > dragStart);
-  assert.equal(during.length, 0, `拖动期间不该有新认领：${JSON.stringify(during)}`);
+  assert.equal(during.length, 0, `There should be no new claims during the drag: ${JSON.stringify(during)}`);
   const done = rig.pageInbox.filter(m => m.type === 'task.done').map(m => m.id);
-  assert.ok(done.includes(heldId), `手里在做的那段应做完：${JSON.stringify(done)}`);
+  assert.ok(done.includes(heldId), `The segment in hand should be finished: ${JSON.stringify(done)}`);
 
-  // 停下 500 ms 之后恢复
+  // Resumes after stopping for 500 ms
   const stopAt = Date.now();
   for (let i = 0; i < 10; i += 1) await rig.step(100);
-  assert.ok(rig.claims.some(c => c.at > stopAt), `拖动停下后应恢复认领：${JSON.stringify(rig.claims)}`);
+  assert.ok(rig.claims.some(c => c.at > stopAt), `Claiming should resume after the drag stops: ${JSON.stringify(rig.claims)}`);
   for (const resolve of rig.gates.values()) resolve(null);
   rig.local.stop();
 });

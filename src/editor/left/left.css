@@ -1,13 +1,13 @@
 /*
- * 左栏(src/editor/left):竖向 rail + 抽屉卡片 + 五个分区(素材库 / 动画 / 特效 / 编辑 / 字幕)。
+ * Left rail (src/editor/left): vertical rail + drawer cards + five sections (media library / animation / effects / edit / captions).
  *
- * 共享类 .pc-rail* / .pc-card-surface / .pc-chip* / .pc-icon-btn / .pc-btn-primary / .pc-section-title
- * 在 skins/studio.css,这里不重写,只写左栏自己的 .pc-left-*(外壳、表单、通用小件)和 .pc-lib-*(分组浏览)。
- * 变量一律带回退值:皮肤没合进来时也不至于崩。
- * 这些规则不在 Tailwind 的 layer 里,优先级天然压过同名属性的工具类 —— 所以这里的控件类不写宽度,宽度交给 w-* 工具类。
+ * The shared classes .pc-rail* / .pc-card-surface / .pc-chip* / .pc-icon-btn / .pc-btn-primary / .pc-section-title
+ * are in skins/studio.css and are not rewritten here; only the left rail's own .pc-left-* (shell, forms, common widgets) and .pc-lib-* (group browsing) are written here.
+ * Variables always carry fallback values, so nothing falls apart even when the skin has not been merged in.
+ * These rules are not inside a Tailwind layer, so they naturally outrank utility classes that set the same property: therefore the control classes here do not set a width, and width is left to the w-* utility classes.
  */
 
-/* ── 外壳:rail + 抽屉 ─────────────────────────────────────────── */
+/* ── Shell: rail + drawer ─────────────────────────────────────────── */
 .pc-left {
   display: flex;
   height: 100%;
@@ -15,7 +15,7 @@
   min-height: 0;
   background-color: transparent;
 }
-/* shell.css 给 [data-pc="left"] 整块刷了一层底色;新布局里 rail 要露出画布,底色只给抽屉卡片 */
+/* shell.css paints a background color over the whole [data-pc="left"] block; in the new layout the rail must show the canvas, so the background color is given only to the drawer card */
 [data-skin] [data-pc="left"].pc-left {
   background-color: transparent;
 }
@@ -24,9 +24,9 @@
   height: 100%;
 }
 /*
- * 抽屉宽度按 Editor.tsx 给的 --pc-left-drawer-w 定死、不许被压窄(平时它正好等于列宽减 rail)。
- * 收起 / 展开的列宽过渡里,列在变、抽屉不变,多出来的一截被外面 aside 的 overflow:hidden 裁掉 ——
- * 里面的瀑布流不会逐帧重排。拿不到变量(不在编辑器网格里)时退回 flex: 1 铺满。
+ * The drawer width is fixed to the --pc-left-drawer-w given by Editor.tsx and must never be squeezed narrower (normally it equals the column width minus the rail).
+ * During the column-width transition when collapsing / expanding, the column changes but the drawer does not, and the extra stretch is clipped by overflow:hidden on the outer aside,
+ * so the masonry layout inside does not reflow frame by frame. When the variable is unavailable (not inside the editor grid), it falls back to flex: 1 to fill the space.
  */
 .pc-left-drawer {
   flex: 1 0 var(--pc-left-drawer-w, 0px);
@@ -36,8 +36,8 @@
   color: var(--ui-fg, #F2F1F6);
 }
 /*
- * 收起 / 展开抽屉时卡片淡出淡入、带一点横移(Editor.tsx 只在切换那一刻给网格挂 data-pc-rail-anim)。
- * 收起:行内 display:none 等淡出演完再生效(allow-discrete);展开:从 @starting-style 淡进来。
+ * When the drawer collapses / expands the card fades out / in with a slight horizontal shift (Editor.tsx attaches data-pc-rail-anim to the grid only at the moment of switching).
+ * Collapse: the inline display:none takes effect only after the fade-out finishes (allow-discrete); expand: fades in from @starting-style.
  */
 @media (prefers-reduced-motion: no-preference) {
   [data-pc-rail-anim] .pc-left-drawer {
@@ -71,7 +71,7 @@
   flex-direction: column;
 }
 
-/* 分区头部:标题 → 主按钮 / 搜索 / 胶囊 */
+/* Section header: title → primary button / search / pill */
 .pc-left-head {
   flex: none;
   display: flex;
@@ -79,8 +79,8 @@
   gap: 10px;
   padding: 14px 12px 10px;
 }
-/* 标题行(SectionHead):左边分区名,右上角「收起面板」。
- * 按钮用负外边距吃掉比标题高出来的那截,标题行还是原来的高度、图标贴齐右边内容线 */
+/* Title row (SectionHead): section name on the left, "Collapse panel" in the top right.
+ * The button uses a negative margin to absorb the part that is taller than the title, so the title row keeps its original height and the icon sits flush with the right content line */
 .pc-left-titlerow {
   display: flex;
   align-items: center;
@@ -112,7 +112,7 @@
   position: relative;
   color: var(--ui-fg-muted, #A6A4B2);
 }
-/* 有档位关着时右上角一个强调色小点,提醒「现在看到的卡片不是全部」 */
+/* When a tier is switched off, a small accent-color dot appears in the top right, reminding that "the cards you see now are not all of them" */
 .pc-left-filter.is-narrowed::after {
   content: "";
   position: absolute;
@@ -124,12 +124,12 @@
   background: var(--ui-accent, #00DBDB);
 }
 
-/* ── 搜索框 ────────────────────────────────────────────────────── */
+/* ── Search box ────────────────────────────────────────────────────── */
 .pc-left-search {
   flex: 1;
   min-width: 0;
   height: 32px;
-  /* 特效 / 字幕分区里它直接落在纵向 flex 头部里,flex: 1 的 basis 0 会把高度压扁;搜索行里是横向,不受影响 */
+  /* In the effects / captions sections it sits directly in a vertical flex header, where the 0 basis of flex: 1 would squash the height; in the search row the flex is horizontal and unaffected */
   min-height: 32px;
   display: flex;
   align-items: center;
@@ -159,7 +159,7 @@
   font-size: 12.5px;
   color: var(--ui-fg, #F2F1F6);
 }
-/* 描边已经画在外面的 label 上,里面的输入框别再叠一圈焦点框 */
+/* The outline is already drawn on the outer label, so the input inside must not stack another focus ring */
 [data-pc-dock-kind="section"] .pc-left-search input:focus,
 [data-pc-dock-kind="section"] .pc-left-search input:focus-visible {
   outline: none;
@@ -186,7 +186,7 @@
   background: var(--ui-float, #35343F);
 }
 
-/* ── 滚动容器 ──────────────────────────────────────────────────── */
+/* ── Scroll container ──────────────────────────────────────────────── */
 .pc-left-scroll::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -202,7 +202,7 @@
   background-color: transparent;
 }
 
-/* ── 分组浏览:胶囊行 + 总览 / 详情 ───────────────────────────────── */
+/* ── Group browsing: pill row + overview / detail ───────────────────────────────── */
 .pc-lib-browser {
   flex: 1;
   min-height: 0;
@@ -223,7 +223,7 @@
   overflow-x: hidden;
   overflow-y: auto;
 }
-/* 纵向 flex 里的组框 / 详情块不许被压扁 */
+/* Group boxes / detail blocks inside the vertical flex must not be squashed */
 .pc-lib-scroll > * {
   flex-shrink: 0;
 }
@@ -238,7 +238,7 @@
 .pc-lib-seg .pc-chip:not(.is-on):hover {
   background-color: var(--ui-float, #35343F);
 }
-/* 「视觉 ▾」:胶囊本体和小箭头是两个按钮,拼成一颗胶囊 */
+/* "Visual ▾": the pill body and the small arrow are two buttons, joined into one pill */
 .pc-chip.pc-lib-split {
   position: relative;
   gap: 0;
@@ -284,7 +284,7 @@
   cursor: pointer;
 }
 
-/* 胶囊的下拉小菜单、筛选浮层 */
+/* The pill's small dropdown menu and filter popover */
 .pc-lib-menu,
 .pc-lib-popover {
   position: absolute;
@@ -343,7 +343,7 @@
   color: var(--ui-fg-muted, #A6A4B2);
 }
 
-/* 卡片筛选(CardScopeBar) */
+/* Card filter (CardScopeBar) */
 .pc-lib-scope {
   position: relative;
   display: flex;
@@ -412,7 +412,7 @@
   accent-color: var(--ui-accent, #00DBDB);
 }
 
-/* ── 总览:组框 ────────────────────────────────────────────────── */
+/* ── Overview: group box ────────────────────────────────────────────── */
 .pc-lib-group {
   display: flex;
   flex-direction: column;
@@ -494,7 +494,7 @@
   color: var(--ui-fg, #F2F1F6);
 }
 
-/* 缩略预览:纯展示,整块点下去是打开组 */
+/* Thumbnail preview: display only, clicking anywhere on the block opens the group */
 .pc-lib-thumbs {
   display: grid;
   gap: 6px;
@@ -526,15 +526,15 @@
 .pc-lib-thumbs.is-big_strip > .pc-lib-thumb {
   height: 56px;
 }
-/* 格子的高由 aspect-ratio 定,内容绝对定位铺满,不靠百分比高度 */
+/* The cell height is set by aspect-ratio and the content is absolutely positioned to fill it, without relying on percentage heights */
 .pc-lib-thumbs .pc-lib-thumb > * {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
 }
-/* 视频缩略悬停播放(ThumbTile onHover):只有这一格把指针接回来,好知道悬停在哪一格;
- * 点击照样冒泡到组框打开组。<video> 本身不接,右键不会弹浏览器自带的视频菜单 */
+/* Hover-to-play for video thumbnails (ThumbTile onHover): only this cell takes pointer events back, so we know which cell is hovered;
+ * clicks still bubble up to the group box and open the group. The <video> itself takes none, so right-click does not bring up the browser's built-in video menu */
 .pc-lib-thumbs .pc-lib-card.is-hoverplay {
   pointer-events: auto;
 }
@@ -542,7 +542,7 @@
   pointer-events: none;
 }
 
-/* ── 详情:计数 + 附加块 + 瀑布流 ───────────────────────────────── */
+/* ── Detail: count + extra block + masonry layout ───────────────────────────────── */
 .pc-lib-detail {
   display: flex;
   flex-direction: column;
@@ -552,7 +552,7 @@
   font-size: 11px;
   color: var(--ui-fg-muted, #A6A4B2);
 }
-/* 间距必须和 library/layout.ts 的 GAP(8)一致,瀑布流才算得准 */
+/* The spacing must match GAP (8) in library/layout.ts, otherwise the masonry layout cannot be computed accurately */
 .pc-lib-masonry {
   width: 100%;
   display: flex;
@@ -668,7 +668,7 @@
   white-space: nowrap;
 }
 
-/* 参考说明(音频效果种类) */
+/* Reference notes (kinds of audio effects) */
 .pc-lib-details {
   font-size: 11px;
   color: var(--ui-fg-muted, #A6A4B2);
@@ -707,8 +707,8 @@
   color: var(--ui-fg-muted, #A6A4B2);
 }
 
-/* ── 预览卡(PreviewCard / ThumbTile):动效卡 / 部件 / 转场 / 强调 / 视频 / 图片共用 ──
- * 悬停只描边不画内阴影:皮肤里那条 `.cursor-grab.bg-neutral-900:hover` 的 3px 左侧内阴影会漏进铺满的预览画面里。 */
+/* ── Preview card (PreviewCard / ThumbTile): shared by motion graphics cards / parts / transitions / emphasis / videos / images ──
+ * Hovering only draws an outline and no inner shadow: the 3px left inner shadow of the `.cursor-grab.bg-neutral-900:hover` rule in the skin would leak into the fully filled preview image. */
 .pc-lib-card-wrap {
   width: 100%;
   min-width: 0;
@@ -753,7 +753,7 @@
   object-position: center;
   background: #000;
 }
-/* 画面区里的文字说明(动效卡没悬停时) */
+/* Text description inside the picture area (when a motion graphics card is not hovered) */
 .pc-lib-card-text {
   padding: 8px 9px;
   pointer-events: none;
@@ -810,7 +810,7 @@
   font-variant-numeric: tabular-nums;
   color: rgba(238, 242, 248, 0.72);
 }
-/* 左下角的深色小胶囊(视频时长) */
+/* Small dark pill in the bottom left (video duration) */
 .pc-lib-card-badge {
   flex: none;
   padding: 1px 6px;
@@ -828,7 +828,7 @@
   z-index: 1;
   pointer-events: none;
 }
-/* 播放进度:贴着底边,只看不拖 */
+/* Playback progress: sits on the bottom edge, view only, not draggable */
 .pc-lib-card-bar {
   position: absolute;
   left: 0;
@@ -856,20 +856,20 @@
   background: rgba(0, 0, 0, 0.6);
   pointer-events: none;
 }
-/* 接缝卡下面那行操作 */
+/* The row of actions under a seam card */
 .pc-lib-card-foot {
   display: flex;
   gap: 6px;
   margin-top: 6px;
 }
-/* 接缝卡悬停:后一段在前一段上来回淡入淡出 */
+/* Seam card hover: the later clip fades in and out back and forth over the earlier one */
 @keyframes pc-xfade {
   0%, 15% { opacity: 0; }
   50%, 65% { opacity: 1; }
   100% { opacity: 0; }
 }
 
-/* ── 音频条(AudioStrip):音频素材 / 音频效果 / 音频预设 ───────────── */
+/* ── Audio strip (AudioStrip): audio media / audio effects / audio presets ───────────── */
 .pc-lib-strip {
   position: relative;
   width: 100%;
@@ -935,7 +935,7 @@
   font-variant-numeric: tabular-nums;
   color: var(--ui-fg-muted, #A6A4B2);
 }
-/* 操作按钮只在悬停 / 键盘聚焦时露出来;「确认删除」待确认时一直露着 */
+/* Action buttons show only on hover / keyboard focus; "Confirm delete" stays visible while awaiting confirmation */
 .pc-lib-strip-actions {
   position: absolute;
   top: 0;
@@ -967,7 +967,7 @@
   }
 }
 
-/* ── 滤镜色块卡 ────────────────────────────────────────────────── */
+/* ── Filter swatch card ────────────────────────────────────────────── */
 .pc-lib-fxcard {
   width: 100%;
   height: 100%;
@@ -1017,7 +1017,7 @@
   min-width: 0;
 }
 
-/* ── 全局风格色块卡 ────────────────────────────────────────────── */
+/* ── Global style swatch card ────────────────────────────────────────────── */
 .pc-lib-theme {
   width: 100%;
   height: 100%;
@@ -1037,7 +1037,7 @@
 .pc-lib-theme:hover {
   border-color: var(--ui-border-strong, #3A3944);
 }
-/* 当前主题:强调色选中轮廓 */
+/* Current theme: selected outline in the accent color */
 .pc-lib-theme.is-on {
   border-color: var(--ui-accent, #00DBDB);
   box-shadow: 0 0 0 1px var(--ui-accent, #00DBDB);
@@ -1080,7 +1080,7 @@
   color: var(--ui-fg-muted, #A6A4B2);
 }
 
-/* ── 说明文字、提示条、空态 ────────────────────────────────────── */
+/* ── Description text, notice bar, empty state ────────────────────────────────────── */
 .pc-left-note {
   font-size: 11.5px;
   line-height: 1.6;
@@ -1101,7 +1101,7 @@
   border-radius: 0;
   border-bottom: 1px solid var(--ui-border, #2A2932);
 }
-/* 分区底部一闪而过的提示 */
+/* Brief notice that flashes by at the bottom of the section */
 .pc-left-flash {
   flex: none;
   padding: 8px 12px;
@@ -1115,7 +1115,7 @@
   border-top: 0;
   border-bottom: 1px solid var(--ui-border, #2A2932);
 }
-/* 空态:虚线方框图标 + 两三行说明 + 一个按钮,整体居中 */
+/* Empty state: dashed-box icon + two or three lines of description + one button, all centered */
 .pc-left-empty {
   flex: 1;
   min-height: 200px;
@@ -1155,7 +1155,7 @@
   background: var(--ui-float, #35343F);
 }
 
-/* ── 字幕树 ────────────────────────────────────────────────────── */
+/* ── Caption tree ────────────────────────────────────────────────── */
 .pc-left-cap-node {
   border-bottom: 1px solid var(--ui-border, #2A2932);
 }
@@ -1197,7 +1197,7 @@
   opacity: 0.5;
 }
 
-/* ── 表单控件(编辑分区、字幕转写面板) ───────────────────────────── */
+/* ── Form controls (edit section, caption transcription panel) ───────────────────────────── */
 .pc-left-input,
 .pc-left-select {
   height: 28px;
@@ -1273,7 +1273,7 @@
 [data-pc-dock-kind="section"] .pc-left-code:focus {
   border-color: var(--ui-accent, #00DBDB);
 }
-/* JSON 不合法:红框(scripts/left-check.mjs 按边框颜色断言) */
+/* Invalid JSON: red border (scripts/left-check.mjs asserts on the border color) */
 [data-pc-dock-kind="section"] .pc-left-code.is-error,
 [data-pc-dock-kind="section"] .pc-left-code.is-error:focus {
   border-color: var(--ui-danger, #ef4444);
@@ -1379,8 +1379,8 @@
   border-bottom: 1px solid var(--ui-border, #2A2932);
 }
 
-/* ── 从网盘导入(StorageImportButton)─────────────────────────────── */
-/* 次要按钮:和主按钮同高同圆角,描边不填色 —— 素材页上「导入媒体」才是主动作 */
+/* ── Import from cloud drive (StorageImportButton)─────────────────────────────── */
+/* Secondary button: same height and corner radius as the primary button, outlined and not filled: on the media page "Import media" is the primary action */
 .pc-btn-ghost {
   height: 36px;
   border-radius: var(--ui-radius, 6px);
@@ -1502,7 +1502,7 @@
   opacity: 0.45;
   cursor: default;
 }
-/* 网盘名字前面的徽标 */
+/* Logo in front of the cloud drive name */
 .pc-storage-name {
   display: inline-flex;
   align-items: center;

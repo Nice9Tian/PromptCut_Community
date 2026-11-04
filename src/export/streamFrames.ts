@@ -1,18 +1,31 @@
 /**
- * 「快速导出」取轨道流里的画面(语义 `docs/semantics/product/platforms.md`「在线浏览器」的「导出」):读层表的 `streams` 表与流清单,
- * 定出每条流哪几个分段是满密度的;导出时按帧取分段字节、解码、把上下两半(预乘色 + 不透明度)合成一张带透明的图。
+ * "Fast export" fetches frames from track streams (semantics in `docs/semantics/product/platforms.md`
+ * "Online browser" "Export"): reads the `streams` table in the layer table and stream manifests to
+ * determine which segments in each stream are full density; during export, fetches segment bytes
+ * frame by frame, decodes, and composites top and bottom halves (premultiplied color + opacity)
+ * into a transparent image.
  *
- * 和预览一侧同一份数据、同一套换算:
- *   - 层表(内容库 `snapshot-manifest`,键 `layers:<项目 id>`)、流清单(`render-manifest`,键 `<结果键>:<起>-<止>`)、分段字节(素材服务 `px/<哈希>`);
- *   - 分段号从这条流自己的第一帧起每 15 帧一段(`streamSegments.mjs`);解封装用 `streamPlayer.ts` 的 `parseInit` / `parseSegment`;
- *   - 合成照 `streamPlayer.ts` 的着色器:色半区是预乘色、钳一次 `rgb ≤ a`,不透明度取下半区的亮度;上下两半之间隔 8 行、底下再留 8 行。
+ * Uses the same data and conversions as preview:
+ *   - Layer table (content store `snapshot-manifest`, key `layers:<project id>`), stream manifests
+ *     (`render-manifest`, key `<result key>:<start>-<end>`), segment bytes (asset service `px/<hash>`);
+ *   - Segment numbers start from the stream's first frame, 15 frames per segment (`streamSegments.mjs`);
+ *     demuxing uses `parseInit` / `parseSegment` from `streamPlayer.ts`;
+ *   - Compositing follows `streamPlayer.ts` shader: color half is premultiplied color clamped to
+ *     `rgb ≤ a`, opacity is luminance of bottom half; 8 rows between halves, 8 rows reserved at bottom.
  *
- * 只认**一张卡一条**的流(单卡流,含源依赖卡与三维外框的卡;依赖下层的流的行页面认得时同样认),组流不取(`cardLayers.ts` 文件头)。
- * 旧输入的流(行里的输入签名和这一版项目算的对不上)不取。一条流有几个候选(几种环境各产了一份)时取满密度分段最多的那一份,
- * 一条流只用一个候选的分段,不混环境。
+ * Only accepts **one stream per card** (single-card stream, including source-dependent cards and
+ * cards with 3D bounding boxes; below-dependent stream rows recognized by the page are also
+ * accepted); group streams are omitted (`cardLayers.ts` file header).
+ * Stale-input streams (input signature in row mismatches that computed for this project version)
+ * are omitted. When a stream has multiple candidates (produced by different environments), pick the
+ * one with the most full-density segments; a stream uses segments from only one candidate, never
+ * mixing environments.
  *
- * 解码按帧号递增顺着来(导出本来就是顺推):同一个分段里接着喂,不重置解码器;跨分段时从下一段的关键帧起。
- * 同一份字节、同一个解码器解出来的像素是确定的,所以同一个项目导两次逐帧相同。
+ * Decoding proceeds sequentially in ascending frame number order (export naturally moves forward):
+ * feeds continuously within the same segment without resetting decoder; across segments, resumes
+ * from the next segment's keyframe.
+ * The same bytes and decoder produce deterministic pixels, so exporting the same project twice
+ * yields identical frames.
  */
 import { isFlatClipId } from "../kernel/cutFlatten.mjs";
 import { LAYER_MAP_PREFIX, parseLayerMap, streamSpansInWindow, type OnlineStream } from "../render/snapshotSource";
@@ -30,15 +43,15 @@ export interface StreamFrameDeps {
 }
 
 const HASH_RE = /^[0-9a-f]{64}$/;
-/** 上下两半之间、以及底下各留的行数(与 `server/bakery/ffmpeg.mjs` 的拼法、`streamPlayer.ts` 的着色器同值) */
+/** Row count reserved between the top and bottom halves and at the bottom (matches `server/bakery/ffmpeg.mjs` layout and `streamPlayer.ts` shader) */
 export const HALF_GAP_ROWS = 8;
-/** 等一帧解出来最多这么久(只为防卡死) */
+/** Maximum wait time for decoding a frame (only to prevent hanging) */
 export const DECODE_TIMEOUT_MS = 30_000;
 
 interface InitMeta { hash: string; rect: LayerRect }
 interface SegMeta { hash: string; init: string; stride: number; samples: number }
 
-/** 一条可取的流,连同取字节要的清单 */
+/** An eligible stream, along with the manifest required to fetch bytes */
 export interface ReadableStream extends StreamCoverage {
   fps: number;
   inits: Map<string, InitMeta>;
@@ -52,7 +65,7 @@ const rectOf = (r: unknown): LayerRect | null => {
   return [x, y, w, h].every((n) => typeof n === "number" && Number.isFinite(n)) && (w as number) > 0 && (h as number) > 0 ? { x: x as number, y: y as number, w: w as number, h: h as number } : null;
 };
 
-/** 内容库回的一份流清单里,这个范围内形状对的分段与它们的开头文件(同 `snapshotSource.ts` 的 `parseStreamManifest`) */
+/** Segments with matching shape in this range and their head files from a stream manifest returned by the content store (same as `parseStreamManifest` in `snapshotSource.ts`) */
 export function readStreamManifest(body: unknown, resultKey: string, span: [number, number]): { fps: number; inits: Map<string, InitMeta>; segments: Map<number, SegMeta> } | null {
   const b = body as { kind?: unknown; resultKey?: unknown; header?: Record<string, unknown>; inits?: Record<string, Record<string, unknown>>; segments?: Record<string, Record<string, unknown>> } | null;
   if (!b || typeof b !== "object" || b.kind !== "stream" || b.resultKey !== resultKey) return null;
@@ -76,8 +89,10 @@ export function readStreamManifest(body: unknown, resultKey: string, span: [numb
 }
 
 /**
- * 读层表和每条流的清单,回这一版项目里可取的流(只列至少有一个满密度分段的)。取不到层表、没有流,回空表(快速导出照完整导出的办法出)。
- * `clipIds`:只看这些片段的流(不给 = 全部)。
+ * Reads layer table and manifest for each stream, returning eligible streams in this project version
+ * (only listing those with at least one full-density segment). If layer table is unavailable or has
+ * no streams, returns an empty table (fast export falls back to full export behavior).
+ * `clipIds`: only inspect streams for these clips (omitted = all).
  */
 export async function loadReadableStreams(projectId: string | null, project: unknown, deps: StreamFrameDeps, { clipIds = null as ReadonlySet<string> | null } = {}): Promise<ReadableStream[]> {
   if (!projectId) return [];
@@ -89,14 +104,16 @@ export async function loadReadableStreams(projectId: string | null, project: unk
   } catch { rows = []; }
   const out: ReadableStream[] = [];
   for (const row of rows) {
-    // 只认一张卡一条的流;组流不取
+    // Only accepts single-card streams; group streams are omitted
     if (row.clipIds.length !== 1 || (row.kind as string) === "group") continue;
     const clipId = row.clipIds[0];
     if (clipIds && !clipIds.has(clipId)) continue;
-    // 剪辑段里的卡(`kernel/cutFlatten.mjs` 的虚拟片段)不从流取:导出时嵌套场景整帧活渲
+    // Cards inside cut segments (virtual clips in `kernel/cutFlatten.mjs`) are not fetched from streams: nested scenes are live rendered whole frame during export
     if (isFlatClipId(clipId)) continue;
-    // 旧输入的流不取(行里的签名和页面按这一版项目算的不同)。没带签名的行没法核对,导出时同样不取(预览照旧贴,那是它自己的规矩):
-    // 成片里贴进一段别的版本的画面比慢一点更糟
+    // Stale-input streams are omitted (the signature in the row differs from that computed by the page
+    // for this project version). Rows without signatures cannot be verified and are likewise omitted
+    // during export (preview pastes as before according to its own rules):
+    // pasting visuals from a different version into the final video is worse than being slightly slower
     if (!row.inputSig || streamSigStale(row.inputSig, streamInputSig(project, row))) continue;
     let best: ReadableStream | null = null;
     for (const candidate of row.candidates) {
@@ -127,12 +144,14 @@ export async function loadReadableStreams(projectId: string | null, project: unk
   return out;
 }
 
-/** 一帧解出来的画面:带透明的画布(宽高 = `rect` 的宽高),和它盖住的矩形(平面坐标) */
+/** Decoded frame: canvas with transparency (width/height = `rect` dimensions) and the rectangle it covers (plane coordinates) */
 export interface StreamPicture { canvas: HTMLCanvasElement | OffscreenCanvas; rect: LayerRect }
 
 /**
- * 上下拼合的一帧(`rgba` 是整帧的像素,宽 `width`、高 `total`)→ 带透明的 straight RGBA(宽 `width`、高 `h`)。
- * 色半区在上(预乘色),不透明度在下半区的红色通道,从第 `h + HALF_GAP_ROWS` 行起。钳一次 `rgb ≤ a` 再除回 straight。
+ * Vertically stitched frame (`rgba` is the full frame pixels, width `width`, height `total`) →
+ * straight RGBA with transparency (width `width`, height `h`).
+ * Color half is on top (premultiplied color), opacity is in red channel of bottom half, starting
+ * from row `h + HALF_GAP_ROWS`. Clamp once to `rgb ≤ a` before dividing back to straight.
  */
 export function composeHalves(rgba: Uint8ClampedArray | Uint8Array, width: number, total: number, h: number, out: Uint8ClampedArray = new Uint8ClampedArray(width * h * 4)): Uint8ClampedArray {
   const alphaTop = h + HALF_GAP_ROWS;
@@ -152,13 +171,13 @@ export function composeHalves(rgba: Uint8ClampedArray | Uint8Array, width: numbe
   return out;
 }
 
-/** 解出来的一帧的宽度就是这一段矩形的宽;对不上就抛(调用方不裁、不拉伸) */
+/** The decoded frame width matches this segment's rectangle width; throws on mismatch (caller does not crop or stretch) */
 export function frameWidthOf(decodedWidth: number, rect: LayerRect, frame: number): number {
   if (decodedWidth !== rect.w) throw new Error(tr("Track stream frame {0} decoded to width {1}, which does not match the segment's rect width {2} in the manifest", frame, decodedWidth, rect.w));
   return rect.w;
 }
 
-/** 一条流的顺序解码器:按帧号递增取帧 */
+/** Sequential decoder for a stream: fetch frames in ascending frame number order */
 export class StreamFrameReader {
   private stream: ReadableStream;
   private deps: StreamFrameDeps;
@@ -194,15 +213,15 @@ export class StreamFrameReader {
     const bytes = new Uint8Array(await res.arrayBuffer());
     this.stats.fetched++;
     this.stats.bytes += bytes.length;
-    // 开头文件一条流就那么一两个,留着;分段只留当前这一段
+    // There are only one or two head files for a stream, keep them; for segments, only keep the current one
     if (keep) this.blocks.set(hash, bytes);
     return bytes;
   }
 
   private closeDecoder() {
-    for (const f of this.outputs.values()) { try { f.close(); } catch { /* 已经关了 */ } }
+    for (const f of this.outputs.values()) { try { f.close(); } catch { /* Already closed */ } }
     this.outputs.clear();
-    try { if (this.decoder && this.decoder.state !== "closed") this.decoder.close(); } catch { /* 已经关了 */ }
+    try { if (this.decoder && this.decoder.state !== "closed") this.decoder.close(); } catch { /* Already closed */ }
     this.decoder = null;
   }
 
@@ -224,10 +243,10 @@ export class StreamFrameReader {
     const fps = this.stream.fps;
     const decoder = new VideoDecoder({
       output: (frame) => {
-        // 时间戳 = 项目帧号 × 1e6 / fps;换回这一段里的第几个样本
+        // Timestamp = project frame number × 1e6 / fps; convert back to the sample index in this segment
         const idx = Math.round((frame.timestamp * fps) / 1e6) - first;
         const old = this.outputs.get(idx);
-        if (old) { try { old.close(); } catch { /* 已经关了 */ } }
+        if (old) { try { old.close(); } catch { /* Already closed */ } }
         this.outputs.set(idx, frame);
         this.wake?.();
       },
@@ -238,7 +257,7 @@ export class StreamFrameReader {
     this.stats.segments++;
   }
 
-  /** 等解码器出点东西(一帧出来、出错,或过一小会儿) */
+  /** Wait for the decoder to output something (a frame comes out, an error occurs, or after a short while) */
   private pause(ms = 20): Promise<void> {
     return new Promise((resolve) => {
       const done = () => { this.wake = null; clearTimeout(timer); resolve(); };
@@ -247,14 +266,18 @@ export class StreamFrameReader {
     });
   }
 
-  /** 取第 `frame` 帧(项目帧号)的画面。调用方保证这一帧在满密度的分段里(`streamCovers`) */
+  /**
+   * Fetch the image of frame `frame` (project frame number). The caller guarantees this frame is in
+   * a full-density segment (`streamCovers`)
+   */
   async picture(frame: number): Promise<StreamPicture> {
     if (this.signal?.aborted) throw Object.assign(new Error(tr("Cancelled")), { cancelled: true });
     const t0 = performance.now();
     const n = streamSegmentOf(frame, this.stream.originFrame);
     const first = streamSegmentFirstFrame(n, this.stream.originFrame);
     const idx = frame - first;
-    // 换了分段,或者这一帧已经喂过去、画面又不在手里(往回跳):从这一段的关键帧重新解
+    // Switched segment, or this frame was already fed and the image is not in hand (jumping backwards):
+    // decode again from the keyframe of this segment
     if (n !== this.seg || !this.decoder || (idx < this.fed && !this.outputs.has(idx))) await this.openSegment(n);
     if (idx < 0 || idx >= this.samples.length) throw new Error(tr("Track stream segment {0} has no sample {1}", n, idx));
     const fps = this.stream.fps;
@@ -264,7 +287,8 @@ export class StreamFrameReader {
       if (this.failure) throw new Error(tr("Track stream decode error: {0}", String((this.failure as Error)?.message ?? this.failure)));
       if (performance.now() - started > DECODE_TIMEOUT_MS) throw new Error(tr("Track stream frame {0} was not decoded within {1} s", frame, DECODE_TIMEOUT_MS / 1000));
       const decoder = this.decoder!;
-      // 手里攒的帧不多、还有样本没喂:再喂一个(解码器有延迟时要多喂几个才吐前面的)
+      // Not many frames accumulated in hand, and still samples left to feed: feed one more
+      // (when the decoder has latency, multiple samples must be fed before it emits the earlier ones)
       if (this.fed < this.samples.length && this.outputs.size < 6 && decoder.decodeQueueSize < 2) {
         const s = this.samples[this.fed];
         decoder.decode(new EncodedVideoChunk({ type: s.isSync ? "key" : "delta", timestamp: chunkTimestamp(first + this.fed, fps),
@@ -273,7 +297,8 @@ export class StreamFrameReader {
         continue;
       }
       if (this.fed >= this.samples.length && !this.flushed) {
-        // 这一段全喂完了还没等到:冲一次,把解码器里压着的都吐出来(冲过之后下一段从关键帧起,本来就是)
+        // Finished feeding this whole segment and still waiting: flush once to emit everything buffered in
+        // the decoder (after flushing, the next segment starts from a keyframe anyway)
         this.flushed = true;
         await decoder.flush();
         continue;
@@ -281,13 +306,15 @@ export class StreamFrameReader {
       if (this.fed >= this.samples.length && this.flushed) throw new Error(tr("Track stream frame {0} cannot be decoded", frame));
       await this.pause();
     }
-    // 这一帧之前的画面用不着了
-    for (const [i, f] of this.outputs) if (i < idx) { try { f.close(); } catch { /* 已经关了 */ } this.outputs.delete(i); }
+    // Frame images before this frame are no longer needed
+    for (const [i, f] of this.outputs) if (i < idx) { try { f.close(); } catch { /* Already closed */ } this.outputs.delete(i); }
     const vf = this.outputs.get(idx)!;
     const seg = this.stream.segments.get(n)!;
     const rect = this.stream.inits.get(seg.init)!.rect;
     const width = vf.displayWidth || vf.codedWidth, total = vf.displayHeight || vf.codedHeight;
-    // 解出来的宽度应当就是这一段的矩形宽(编码时按矩形编的)。对不上说明清单和字节不是一回事:不裁、不拉伸,报错,不导出错的画面
+    // The decoded width should be the rectangle width of this segment (encoded according to the rectangle).
+    // A mismatch indicates the manifest and bytes do not match: do not crop, do not stretch, throw an
+    // error, do not export incorrect frames
     const w = frameWidthOf(width, rect, frame), h = rect.h;
     const make = (cw: number, ch: number) => {
       if (typeof document !== "undefined") { const c = document.createElement("canvas"); c.width = cw; c.height = ch; return c; }

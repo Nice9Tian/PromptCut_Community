@@ -1,28 +1,36 @@
 /**
- * M7 验收探针（`m7-browser-probe.mjs`）读页面节点诊断的**唯一适配处**。
+ * The **sole adaptation point** for the M7 acceptance probe (`m7-browser-probe.mjs`) reading page
+ * node diagnostics.
  *
- * 契约 `docs/plan/m7-contract.md` 第 7 节只列了页面诊断「有哪些量」，没定字段名与形状；页面节点分支（`claude/rq-m7-node`）
- * 合入之前也看不到实现。探针照契约写、不看实现，凡是「契约没定形状」的读法都收在本文件：集成时对一遍页面节点的真实形状，
- * **只改这里**，探针主体不动。探针的判据尽量不靠这里：认领、续约、放回、完成、报到等一律从线上消息（CDP 抓的 WebSocket 帧）
- * 与文档服务的 `describe()` 判；这里读到的只作对照与补充（逐帧耗时、推了几块、页面自己记的放回原因）。
+ * Section 7 of contract `docs/plan/m7-contract.md` only lists "which metrics exist" for page
+ * diagnostics, without specifying field names or shapes; implementation is also invisible before
+ * the page node branch (`claude/rq-m7-node`) is merged. The probe is written against the contract
+ * without looking at implementation; all readings where "shape is not specified in the contract"
+ * are collected in this file: during integration, verify against real page node shapes and
+ * **modify only here**, leaving the probe body untouched. Probe criteria rely as little as possible
+ * on this: claim, renew lease, release, completion, check in, etc. are all determined from wire
+ * messages (WebSocket frames captured via CDP) and document service `describe()`; values read here
+ * serve only for comparison and supplementation (frame-by-frame elapsed time, how many chunks were
+ * pushed, release reasons recorded by the page itself).
  *
- * 假设清单（`ASSUMPTIONS`，报告里原样列出）：每条写「假设什么」与「对不上时改哪一个函数」。
+ * List of assumptions (`ASSUMPTIONS`, listed verbatim in the report): each item states "what is
+ * assumed" and "which function to modify on mismatch".
  */
 
-/** 适配函数的假设（报告与结果 JSON 都带上） */
+/** Assumptions of adapter functions (included in both report and result JSON) */
 export const ASSUMPTIONS = Object.freeze([
-  'A-1 页面诊断钩子是编辑器页（顶层文档）上的 `window.__pcBrowserNode()`，同步回一个可结构化克隆的对象（契约第 7 节只给了名字）；没有这个函数 = 页面节点代码不在。改 `readNodeDiag`。',
-  "A-2 `state` 取值 `off` / `idle` / `busy` / `baking`（契约第 7 节原文），另有 `reason`（字符串，说明为什么 off）；`nodeId`、`envFingerprint`、`codeVersion` 平铺在顶层。改 `normalizeNodeDiag`。",
-  'A-3 持有的任务在 `held`（或 `tasks`、`holding`）：数组，元素是任务 id 字符串或带 `id` 的对象。改 `normalizeNodeDiag` 的 `heldOf`。',
-  'A-4 〔对账后，rq-m7-node 9774eda 报告「诊断形状」一节〕计数在 `counters`：`claims completed dedup failed lost bakedFrames`；放回在 `counters.released`，键是线上原因原文（`yield-play` `yield-drag` `yield-urgent` `yield-hidden` `no-snapshot` `offline` `unsupported`），按 `releaseCauseOf` 归类；节点侧过滤挡掉的在 `counters.blocked`（「规则号:原因」）；推送在 `upload`：`pushed skipped bytes failed reauth recheck`；小尺寸帧数在 `stage.smallFrames`。旧的猜测名（`counts`、`stats`、平铺）仍兜底。改 `countsOf`。',
-  'A-5 〔对账后〕页面侧一帧（含推送）的耗时在 `counters.frameMs { n, p50, p95 }`；舞台侧在 `stage.frameMs`、`stage.pausedMs`（被门挡住的时长，不进耗时）。改 `countsOf`。',
-  'A-6 最近一次错误在 `lastError`（字符串或 `{ message }`）。改 `normalizeNodeDiag`。',
-  'A-7 舞台侧的生成快照诊断在舞台文档的 `window.__pcStageDiag().bake`（C10 已有 `__pcStageDiag`，`bake` 这一项是假设）：`{ frames, frameMs: { p50, p95 }, pausedMs }`。改 `readStageBakeDiag`。',
-  "A-8 `task.release` 的放回原因（契约第 2 节、第 4.2 节只有 `no-snapshot` 一个写明了）：让路（拖动 / 播放）认 `yield` `busy` `interaction` `drag` `play`，页面隐藏认 `hidden` `visibility`，更急的后台活认 `urgent` `preempt` `measure` `catch-up`，取不到项目认 `no-snapshot`。认不出的记 `other`，判据里「放回 1 次」不看原因。改 `releaseCauseOf`。",
-  'A-9 C10 已有的诊断照旧可读：`__pcPreviewDiag()`（`dual`、`frontId`、`backWork`）、`__pcOnlineSnapshots()`（`tier`、`layers[].{clipId, resultKey, envFingerprint, ready}`）、`__pcPlanPublisher()`（`log`）；这些不是本适配处的假设，但页面节点若改了它们的形状，探针在同名函数里读。',
+  'A-1 The page diagnostic hook is `window.__pcBrowserNode()` on the editor page (top-level document), returning synchronously an object that can be structured-cloned (section 7 of the contract gives only the name); no such function = the page node code is not there. Change `readNodeDiag`.',
+  "A-2 `state` takes the values `off` / `idle` / `busy` / `baking` (original wording of contract section 7), plus `reason` (a string explaining why it is off); `nodeId`, `envFingerprint` and `codeVersion` are flat at the top level. Change `normalizeNodeDiag`.",
+  'A-3 The tasks held are in `held` (or `tasks`, `holding`): an array whose elements are task id strings or objects with an `id`. Change `heldOf` in `normalizeNodeDiag`.',
+  'A-4 [after reconciliation, section "diagnostic shape" of the rq-m7-node 9774eda report] The counts are in `counters`: `claims completed dedup failed lost bakedFrames`; releases are in `counters.released`, keyed by the original on-the-wire cause text (`yield-play` `yield-drag` `yield-urgent` `yield-hidden` `no-snapshot` `offline` `unsupported`), classified by `releaseCauseOf`; items blocked by the node-side filter are in `counters.blocked` ("rule number:cause"); pushes are in `upload`: `pushed skipped bytes failed reauth recheck`; the small-size frame count is in `stage.smallFrames`. The old guessed names (`counts`, `stats`, flat) still serve as a fallback. Change `countsOf`.',
+  'A-5 [after reconciliation] The page-side time per frame (including the push) is in `counters.frameMs { n, p50, p95 }`; the stage side is in `stage.frameMs` and `stage.pausedMs` (time blocked by the gate, not counted in the timing). Change `countsOf`.',
+  'A-6 The most recent error is in `lastError` (a string or `{ message }`). Change `normalizeNodeDiag`.',
+  'A-7 The stage-side snapshot generation diagnostics are in `window.__pcStageDiag().bake` of the stage document (C10 already has `__pcStageDiag`; the `bake` entry is an assumption): `{ frames, frameMs: { p50, p95 }, pausedMs }`. Change `readStageBakeDiag`.',
+  "A-8 Release causes of `task.release` (contract sections 2 and 4.2 spell out only `no-snapshot`): yielding (drag / play) is recognized by `yield` `busy` `interaction` `drag` `play`, page hidden by `hidden` `visibility`, more urgent background jobs by `urgent` `preempt` `measure` `catch-up`, failing to get the project by `no-snapshot`. Anything unrecognized is recorded as `other`; the criterion \"released once\" ignores the cause. Change `releaseCauseOf`.",
+  'A-9 The diagnostics that C10 already has stay readable as before: `__pcPreviewDiag()` (`dual`, `frontId`, `backWork`), `__pcOnlineSnapshots()` (`tier`, `layers[].{clipId, resultKey, envFingerprint, ready}`), `__pcPlanPublisher()` (`log`); these are not assumptions of this adapter, but if the page node changes their shape, the probe reads from the functions of the same names.',
 ]);
 
-/** 在页面里取诊断（结构化克隆一遍，去掉函数与循环） */
+/** Fetch diagnostics in the page (perform structuredClone once, stripping functions and cycles) */
 const cloneIn = (page, name) => page.evaluate((fn) => {
   try {
     const f = window[fn];
@@ -47,7 +55,8 @@ function countsOf(raw) {
   const up = pick(raw, 'upload') ?? c;
   const st = pick(raw, 'stage') ?? {};
   const relRaw = pick(c, 'released', 'releases') ?? {};
-  // 放回：键是线上原因原文（yield-play …），按 releaseCauseOf 归类；旧猜测的已归类键（yield、hidden …）原样认
+  // Release: keys are verbatim wire reasons (yield-play …), categorized by releaseCauseOf;
+  // legacy guessed categorized keys (yield, hidden …) are recognized as-is
   const released = { yield: 0, hidden: 0, urgent: 0, noSnapshot: 0, other: 0, raw: typeof relRaw === 'object' ? { ...relRaw } : relRaw };
   if (relRaw && typeof relRaw === 'object') {
     for (const [k, v] of Object.entries(relRaw)) {
@@ -77,7 +86,10 @@ function countsOf(raw) {
   };
 }
 
-/** 页面诊断原样 → 探针用的固定形状；`available` 为假表示页面上没有这个钩子（页面节点代码不在） */
+/**
+ * Raw page diagnostics → fixed shape used by the probe; `available` false indicates this hook is
+ * absent on the page (page node code not present)
+ */
 export function normalizeNodeDiag(raw) {
   if (!raw || raw.__missing) return { available: false, reason: 'no-hook' };
   if (raw.__error) return { available: false, reason: `hook-error: ${raw.__error}` };
@@ -95,12 +107,15 @@ export function normalizeNodeDiag(raw) {
   };
 }
 
-/** 读编辑器页的页面节点诊断（第 7 节「页面」） */
+/** Read page node diagnostics from the editor page (Section 7, "Page") */
 export async function readNodeDiag(page) {
   return normalizeNodeDiag(await cloneIn(page, '__pcBrowserNode'));
 }
 
-/** 读后台舞台的生成快照诊断（第 7 节「舞台」）；两个舞台都读，回 `{ A: …, B: … }`（读不到的是 null） */
+/**
+ * Read generate snapshots diagnostics from background stage (Section 7, "Stage"); reads both
+ * stages, returning `{ A: …, B: … }` (null if unreadable)
+ */
 export async function readStageBakeDiag(page) {
   const out = {};
   for (const f of page.frames()) {
@@ -119,8 +134,9 @@ export async function readStageBakeDiag(page) {
 }
 
 /**
- * `task.release` 的原因 → 探针的分类（A-8）。线上消息是契约定的（`{ type: 'task.release', id, token, reason }`），
- * 原因字符串契约只写了 `no-snapshot`。
+ * `task.release` reason → probe categorization (A-8). Wire messages are specified by contract
+ * (`{ type: 'task.release', id, token, reason }`), while the contract only specifies `no-snapshot`
+ * for the reason string.
  */
 export function releaseCauseOf(reason) {
   const r = String(reason ?? '').toLowerCase();

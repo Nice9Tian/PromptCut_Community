@@ -1,20 +1,24 @@
 /**
- * 「时间轴上哪几段已经预渲染好了」—— 算给那条绿条用的(像 AE 顶上那条)。
+ * "Which segments of the timeline are already prerendered": computed for that green bar (like the
+ * one at the top of AE).
  *
- * # 一个预渲染好的时刻覆盖的是一小段,不是一个点
+ * # A prerendered moment covers a short segment, not a point
  *
- * 预渲染是按**时刻**渲的(哪几个时刻由 bakeTime.ts 的 sampleTimesFor 定),而播放头落在
- * 两个时刻之间时,显示的是**往回取**的那一个(pickBakeT 用 floor)。所以渲好 t_i 那一张,
- * 等于 `[t_i, t_{i+1})` 这一整段都有图可显示 —— 最后一个时刻一直管到这张卡结束。
+ * Prerendering renders by **moment** (which moments is decided by sampleTimesFor in bakeTime.ts), and
+ * when the playhead falls between two moments, what is shown is the one **taken backwards** (pickBakeT
+ * uses floor). So having t_i rendered means the whole segment `[t_i, t_{i+1})` has an image to show:
+ * the last moment covers up to the end of the card.
  *
- * 这也是绿条唯一诚实的画法:绿的地方拖过去一定立刻有画面,不绿的地方一定要等。
- * 按「渲好几张 / 一共几张」画个百分比进度条就做不到这一点 —— 那种条能显示 90%,
- * 而用户偏偏拖到了剩下那 10% 里,一样要干等五秒,条却是绿的。
+ * This is also the only honest way to draw the green bar: where it is green, dragging there always
+ * has a picture immediately, and where it is not green, you always have to wait. A percentage progress
+ * bar of "how many are rendered / how many in total" cannot do this: such a bar can show 90%, while
+ * the user happens to drag into the remaining 10% and still waits five seconds, yet the bar is green.
  *
- * # 为什么不按 clip 整段算
+ * # Why not compute per whole clip
  *
- * 一张卡有十来个时刻,渲到一半时它**前半段能看、后半段不能**。整段涂绿会骗人,
- * 整段留白又埋没了已经渲好的部分。所以按时刻切段,一段一段涂。
+ * A card has a dozen or so moments, and when it is half rendered **its first half can be seen and its
+ * second half cannot**. Painting the whole clip green would lie, and leaving it all blank would bury
+ * the part already rendered. So split into segments by moment and paint them one by one.
  */
 
 export interface CoverageSegment {
@@ -22,47 +26,50 @@ export interface CoverageSegment {
   end: number;
 }
 
-/** 浮点比较的容差:时刻是 0.25 秒一格累加出来的,末位会有误差 */
+/** Tolerance for floating-point comparison: moments are accumulated in steps of 0.25 seconds, so the last digit can have error */
 const EPS = 1e-6;
 
 /**
- * 一刻的标识:`<clipId>@<t>`。
+ * Moment identifier: `<clipId>@<t>`.
  *
- * **判断「渲了没」用它,不用服务端那个缓存键。** 前台现场渲染和空闲预渲染走的是两条路,
- * 前台手上只有 (clipId, t),没有服务端算的哈希;两条路要是各用各的键,前台渲完了
- * 覆盖表也认不出来 —— 表现就是「画面已经出来了,时间轴上的条还没变」。
+ * **Use it to decide "is it rendered", not the server's cache key.** The foreground on-demand
+ * render and the idle prerender take two different paths. The foreground only has (clipId, t) and
+ * no server-computed hash; if each path used its own key, the coverage table would not recognize
+ * a moment even after the foreground rendered it. The symptom: "the picture is already showing,
+ * but the bar on the timeline has not changed".
  */
 export const momentId = (clipId: string, t: number) => `${clipId}@${t}`;
 
 export interface CoverageInput {
   clipId: string;
-  /** 这一刻的标识(momentId)。覆盖表按它记「渲了没」 */
+  /** Identifier of this moment (momentId). The coverage table records "is it rendered" by it */
   id?: string;
-  /** 这一刻的缓存键。判断「渲了没」要用它,所以这里也带上 */
+  /** Cache key of this moment. Deciding "is it rendered" needs it, so it is carried here too */
   key?: string;
-  /** 属于哪一档(低帧率 / 原始帧率)。分开画黄绿两条 */
+  /** Which tier it belongs to (low frame rate / original frame rate). Drawn as separate yellow and green bars */
   tier?: "coarse" | "full";
-  /** 是否落在原始帧率的格子上 */
+  /** Whether it falls on a cell of the original frame rate */
   fine?: boolean;
-  /** 这一刻预渲染出来的图代表哪个瞬间(时间轴绝对秒) */
+  /** Which instant the image prerendered for this moment represents (absolute timeline seconds) */
   t: number;
-  /** 这张卡的区间 —— 最后一个时刻要一直管到 end */
+  /** The range of this card: the last moment must cover all the way to end */
   start: number;
   end: number;
 }
 
 /**
- * 已经渲好的那些时刻,在时间轴上覆盖了哪几段。
+ * Which spans on the timeline are covered by the moments that are already rendered.
  *
- * `isBaked` 由调用方给:预渲染那边知道哪些键已经落盘了。
- * 返回的段按时间排好,并且**相邻的合并过** —— 不合并的话一张卡会画出十几条挨着的小绿块,
- * 每块之间一道缝,看着像"渲得断断续续",其实是连续的。
+ * `isBaked` is supplied by the caller: the prerender side knows which keys are already on disk.
+ * The returned spans are sorted by time and **adjacent ones are merged**. Without merging, one card
+ * would draw a dozen small green blocks side by side with a gap between each, which looks like
+ * "rendered in fits and starts" when it is actually continuous.
  */
 export function coverageSegments(
   moments: CoverageInput[],
   isBaked: (m: CoverageInput) => boolean,
 ): CoverageSegment[] {
-  // 按卡分组:一个时刻能管到哪儿,取决于**同一张卡里**的下一个时刻,不能跨卡去找
+  // Group by card: how far a moment reaches depends on the next moment **in the same card**; never look across cards
   const byClip = new Map<string, CoverageInput[]>();
   for (const m of moments) {
     const list = byClip.get(m.clipId);
@@ -77,7 +84,7 @@ export function coverageSegments(
       const m = sorted[i];
       if (!isBaked(m)) continue;
       const next = sorted[i + 1];
-      // 管到下一个时刻为止;它是这张卡的最后一个,就一直管到卡结束
+      // It reaches up to the next moment; if it is the last one of this card, it reaches to the end of the card
       const end = next ? Math.min(next.t, m.end) : m.end;
       const start = Math.max(m.start, m.t);
       if (end > start + EPS) raw.push({ start, end });
@@ -88,11 +95,12 @@ export function coverageSegments(
 }
 
 /**
- * 把挨着或重叠的段并起来。不合并的话一张卡会画出十几条挨着的小块,每块之间一道缝,
- * 看着像「渲得断断续续」,其实是连续的。
+ * Merge spans that touch or overlap. Without merging, one card would draw a dozen small blocks
+ * side by side with a gap between each, which looks like "rendered in fits and starts" when it is
+ * actually continuous.
  *
- * 单独导出是因为**画的时候还要再合一次**:覆盖是按卡分开存的(见 ClipCoverage),
- * 而首尾相接的两张卡各自的段应该连成一条。
+ * Exported on its own because **drawing needs to merge once more**: coverage is stored per card
+ * (see ClipCoverage), while the spans of two cards that meet end to end should join into one bar.
  */
 export function mergeSegments(segs: CoverageSegment[]): CoverageSegment[] {
   const raw = [...segs].sort((a, b) => a.start - b.start || a.end - b.end);
@@ -106,20 +114,22 @@ export function mergeSegments(segs: CoverageSegment[]): CoverageSegment[] {
 }
 
 /**
- * 时间轴上**压根没有东西要预渲染**的那几段。
+ * The spans of the timeline where **there is nothing to prerender at all**.
  *
- * # 为什么这些段也该是绿的
+ * # Why these spans should also be green
  *
- * 条子的契约是「绿的地方拖过去一定立刻有画面,不绿的地方一定要等」。空白的那几秒
- * ——没有卡、或者只有素材段(视频 / 图片,本来就是位图,不用渲)、或者只有 scene-3d
- * (在 3D 视图里是真几何,不需要贴图)—— 拖过去**立刻**就是它该有的样子,一秒都不用等。
- * 按契约它就该是绿的。
+ * The bar's contract is "anywhere green can be scrubbed to with an immediate picture, anywhere not
+ * green must wait". The blank seconds, or those with only media clips (video / image, which are
+ * already bitmaps and need no rendering), or only scene-3d (real geometry in the 3D view, needing
+ * no texture), look exactly as they should **immediately** when scrubbed to, with no waiting at
+ * all. By the contract they should be green.
  *
- * 原来它们永远是白的,后果不只是难看:用户没法把「这一段还没渲」和「这一段本来就没东西」
- * 分开,于是条子永远差一块,**看上去像预渲染卡住了**,而其实早就全渲完了。
+ * They used to be white forever, and the consequence was more than ugliness: users could not tell
+ * "this span is not rendered yet" from "this span has nothing in it", so the bar was always one
+ * piece short and **looked like the prerender was stuck** when everything had long been rendered.
  *
- * `spans` 传的是「有东西要渲」的那些段(调用方按项目当前状态算),这里返回它们在
- * `[0, duration]` 里的补集。
+ * `spans` is passed the spans that "have something to render" (computed by the caller from the
+ * project's current state); this returns their complement within `[0, duration]`.
  */
 export function idleSpans(spans: CoverageSegment[], duration: number): CoverageSegment[] {
   if (!(duration > 0)) return [];
@@ -136,93 +146,111 @@ export function idleSpans(spans: CoverageSegment[], duration: number): CoverageS
 }
 
 /**
- * 进度条要显示的全部信息。**两档分开**:
+ * Everything the progress bar needs to show. **The two tiers are kept apart**:
  *
- * coarse(黄)—— 低帧率那一档。拖过去立刻有画面,但看到的那一刻最多和播放头差 0.25 秒。
- * full(绿)—— 原始帧率那一档。那一段是逐帧精确的。
+ * coarse (yellow): the low frame rate tier. Scrubbing there gives an immediate picture, but the
+ * moment you see is off from the playhead by at most 0.25 seconds.
+ * full (green): the original frame rate tier. That span is frame-accurate.
  *
- * 两档分开画而不是合成一个百分比,是因为它们对用户的意义完全不同:
- * 黄的地方"能看但不准",绿的地方"就是这一帧"。合成一条就把这个区别抹掉了。
+ * The two tiers are drawn separately instead of being merged into one percentage because they mean
+ * completely different things to the user: yellow is "viewable but inexact", green is "exactly this
+ * frame". Merging them into one bar wipes out that difference.
  */
 /**
- * 一张卡的覆盖情况。**带着这张卡当时的内容指纹**。
+ * Coverage of one card. **It carries the content fingerprint the card had at the time.**
  *
- * 分卡存 + 带指纹,是为了「改了 A,A 那一段立刻变白」这件事能**不依赖任何异步**:
- * 画条子的时候拿当前项目的指纹对一遍,对不上的直接不画。用户一改参数,store 里的
- * project 就换了,条子这一帧就把 A 抹掉了 —— 不用等盘点、不用等预渲染、也不会有竞态。
+ * Storing per card with a fingerprint is so that "change A and A's span turns white at once" works
+ * **without depending on anything asynchronous**: when drawing the bar, check against the current
+ * project's fingerprints and simply do not draw those that do not match. As soon as the user
+ * changes a parameter, the project in the store is replaced and the bar wipes A in that very
+ * frame, with no waiting for an inventory scan, no waiting for the prerender, and no race.
  *
- * 之前是把所有卡合成一条整段存的,于是**只有预渲染循环能更新它**,而那个循环要等
- * 当前这批渲完、再盘点一次才轮得到发布。结果就是「改完卡片,条子纹丝不动」。
+ * Before, all cards were merged into one whole span and stored, so **only the prerender loop could
+ * update it**, and that loop only gets to publish after the current batch finishes rendering and
+ * another inventory scan runs. The result was "after editing a card, the bar does not budge".
  */
 export interface ClipCoverage {
   clipId: string;
-  /** 这张卡当时长什么样(clipFingerprint)。和当前项目对不上就说明它已经作废了 */
+  /** What this card looked like at the time (clipFingerprint). A mismatch with the current project means it is stale */
   fp: string;
   /**
-   * 发布这条覆盖时,这张卡在时间轴上的起点。
+   * The start of this card on the timeline when this coverage was published.
    *
-   * **没有它,条子会在卡挪走之后继续在原地涂绿。** 指纹里故意不带时间轴位置(挪一下位置
-   * 像素一个都不变,预渲染出来的图还是那一张,见 bakeTarget),所以光看指纹是看不出卡挪没挪的;
-   * 而每个时刻记的 `t / start / end` 都是**绝对秒**,卡挪走了它们还停在老地方。
-   * 实测:把一张 [20,24] 的卡挪到 27 秒,条子仍然在 [20,24] 上画着绿,而那里已经空了,
-   * `stale` 还报 0 —— 正是「明明没渲好却是绿的」。
+   * **Without it, the bar keeps painting green in the old place after the card is moved away.** The
+   * fingerprint deliberately excludes the timeline position (moving it changes not one pixel, and the
+   * prerendered image is still the same one, see bakeTarget), so the fingerprint alone cannot tell
+   * whether the card moved; and the `t / start / end` recorded for each moment are all **absolute
+   * seconds**, so after the card moves away they stay at the old place. Measured: move a [20,24] card
+   * to second 27, and the bar still paints green over [20,24], which is already empty, while `stale`
+   * still reports 0. That is exactly "green although it is not actually rendered".
    *
-   * 记下起点之后,画的时候按差值整体平移(见 visibleCoverage):图还是那几张、账还是那本账,
-   * 只是画到卡片现在待的地方去。
+   * Once the start is recorded, drawing shifts everything by the difference (see visibleCoverage):
+   * the images are still those images and the ledger is still that ledger, they are just drawn where
+   * the card now sits.
    */
   start: number;
-  /** 这张卡要预渲染的全部时刻 */
+  /** All the moments this card needs prerendered */
   moments: CoverageInput[];
 }
 
 /**
- * 覆盖表存的是**事实**(有哪些时刻、哪些已经渲好),段落是画的时候现算的。
+ * The coverage table stores **facts** (which moments exist, which are already rendered); spans are
+ * computed on the fly when drawing.
  *
- * 这样安排是因为「渲好了」这件事有两个来源:空闲预渲染,和用户正盯着时前台的现场渲染。
- * 存算好的段的话,只有预渲染那条路能更新它 —— 前台渲完,画面出来了,条子还得等下一轮
- * 盘点才变。存事实就没这问题:哪条路渲完都只是往 `baked` 里加一个 id,条子当帧就重算。
+ * It is arranged this way because "rendered" has two sources: the idle prerender, and the
+ * foreground on-demand render while the user is watching. If the computed spans were stored, only
+ * the prerender path could update them: the foreground finishes, the picture appears, and the bar
+ * still has to wait for the next inventory scan to change. Storing facts avoids that: whichever
+ * path finishes only adds an id to `baked`, and the bar recomputes in that very frame.
  */
 export interface BakeCoverage {
-  /** 按卡分开存,画的时候按指纹过滤 */
+  /** Stored per card, filtered by fingerprint when drawing */
   clips: ClipCoverage[];
-  /** 已经渲好的那些时刻(momentId)。两条渲染路径共用这一个集合 */
+  /** The moments that are already rendered (momentId). Both render paths share this one set */
   baked: Set<string>;
-  /** 正在渲的那一刻(时间轴绝对秒);没在渲就是 null */
+  /** The moment being rendered (absolute timeline seconds); null when nothing is rendering */
   bakingAt: number | null;
-  /** 已经占了多少磁盘(字节,实测值) */
+  /** How much disk is already used (bytes, measured value) */
   bytes: number;
 }
 
 const EMPTY: BakeCoverage = { clips: [], baked: new Set(), bakingAt: null, bytes: 0 };
 
 /**
- * 一张卡「长什么样」的指纹 —— 只带**决定像素**的东西。
+ * Fingerprint of what a card "looks like": it carries only the things that **determine pixels**.
  *
- * 这一份是**唯一**的算法:Scene3DView 判断要不要重建场景用它,进度条判断某段覆盖
- * 是不是过期了也用它。两处各写一套的话,会出现「条子认为还有效、画面已经换了」这种
- * 对不上的状态,而且不报错。
+ * This is the **only** algorithm: Scene3DView uses it to decide whether to rebuild the scene, and
+ * the progress bar uses it to decide whether the coverage of a span is stale. If each place had
+ * its own copy, there would be mismatched states like "the bar thinks it is still valid but the
+ * picture has already changed", and no error would be reported.
  *
- * 位置和三维变换不进指纹:服务端预渲染的时候会把 frame 整个摘掉(见 bakeTarget),
- * 转一下卡、推一下深度,像素一个都不变。
+ * Position and 3D transform are not part of the fingerprint: when the server prerenders it strips
+ * the whole frame (see bakeTarget), so rotating the card or pushing its depth changes not one
+ * pixel.
  */
 export function clipFingerprint(c: {
   id: string; cardId: string; params?: unknown; frame?: { w?: number; h?: number } | null;
   start?: number; end?: number;
 }): string {
   /*
-   * **列黑名单,不列白名单。**
+   * **A blacklist, not a whitelist.**
    *
-   * 服务端的缓存键是拿「整个 clip 去掉 frame」哈希出来的(见 bakeTarget),所以凡是 clip 上的
-   * 字段变了,预渲染出来就可能是另一张图。这里原来只挑了 id / cardId / params / frame 四样,
-   * 于是 `emphasis`(描边)、`motion`(运动轨迹)、`fadeIn/fadeOut`、`opacity`、`parts`
-   * (组合卡的部件树)改了之后**指纹纹丝不动** —— 条子照旧是绿的,而那几张图其实已经作废。
-   * 白名单还有个毛病:以后往 Clip 上加字段的人不会想到来这里补一笔,漏了也不报错。
+   * The server's cache key is a hash of "the whole clip minus frame" (see bakeTarget), so whenever
+   * a field on the clip changes, the prerender may produce a different image. This used to pick
+   * only id / cardId / params / frame, so after `emphasis` (outline), `motion` (motion path),
+   * `fadeIn/fadeOut`, `opacity` or `parts` (the part tree of a composite card) changed, **the
+   * fingerprint did not budge**: the bar stayed green while those images were actually stale.
+   * A whitelist has another flaw: whoever adds a field to Clip later will not think of adding it
+   * here, and the omission reports no error.
    *
-   * 所以反过来:除了下面这三样,**其余一律进指纹**。
-   *   - `start` 单独排除:挪位置不改像素(bakeTarget 会把片段挪到固定起跑线再渲),
-   *     所以挪一下不该让覆盖作废 —— 位置的变化由 ClipCoverage.start 平移来吸收。
-   *   - `end` 也不直接进,但**长度进**:剪短剪长会改键(键里带片内帧数),必须作废。
-   *   - `frame` 只取 w×h:那是排版尺寸,会改像素;x/y/旋转/缩放不改(预渲染的时候整个 frame 被摘掉)。
+   * So it is reversed: apart from the three below, **everything else goes into the fingerprint**.
+   *   - `start` is excluded on its own: moving does not change pixels (bakeTarget moves the clip to
+   *     a fixed starting line before rendering), so a move should not invalidate coverage. The
+   *     position change is absorbed by the ClipCoverage.start shift.
+   *   - `end` does not go in directly either, but **the length does**: trimming shorter or longer
+   *     changes the key (the key carries the frame count within the clip), so it must invalidate.
+   *   - `frame` takes only w×h: that is the layout size, which changes pixels; x/y/rotation/scale do
+   *     not (the whole frame is stripped during prerender).
    */
   const { start: _start, end: _end, frame: _frame, ...rest } = c as Record<string, unknown> & typeof c;
   const dur = Math.max(0, (Number(c.end) || 0) - (Number(c.start) || 0));
@@ -234,14 +262,17 @@ export function clipFingerprint(c: {
 }
 
 /*
- * 模块级的小仓库:预渲染那边写,时间轴那边读。
+ * A small module-level store: the prerender side writes, the timeline side reads.
  *
- * 走模块级而不是 React context,是因为这两处在组件树上离得很远(预渲染挂在预览面板的 3D 页里,
- * 绿条在时间轴顶上),中间那一整条链路没有一个组件需要这个值 —— 穿过去只会让沿途每个组件
- * 都多一个用不上的 prop 或者多一次重渲染。
+ * It goes through the module level instead of a React context because the two places are far
+ * apart in the component tree (the prerender is mounted in the 3D tab of the preview panel, the
+ * green bar sits on top of the timeline), and not one component along the whole chain between them
+ * needs this value. Passing it through would only give every component on the way an unused prop
+ * or an extra re-render.
  *
- * 值留在模块里还有个好处:从 3D 页切回 2D 页,预渲染停了,但**已经渲到哪儿的信息还在**,
- * 绿条不会因为切了个页就整条清空。
+ * Keeping the value in the module has another benefit: when switching from the 3D tab back to the
+ * 2D tab, the prerender stops, but **the information on how far it has rendered is still there**,
+ * and the green bar is not cleared entirely just because a tab was switched.
  */
 let current: BakeCoverage = EMPTY;
 const listeners = new Set<() => void>();
@@ -251,22 +282,23 @@ export function publishCoverage(next: BakeCoverage): void {
   for (const fn of listeners) fn();
 }
 
-/** useSyncExternalStore 要的那两个:订阅 + 取快照 */
+/** The two that useSyncExternalStore needs: subscribe + get snapshot */
 export function subscribeCoverage(fn: () => void): () => void {
   listeners.add(fn);
   return () => { listeners.delete(fn); };
 }
 
 /**
- * 取当前值。**必须返回同一个引用**(除非真的变了)—— useSyncExternalStore 每次渲染都会
- * 调它并和上次比引用,这里要是每次新建一个对象,React 会判定"变了"从而无限重渲染。
+ * Get the current value. **It must return the same reference** (unless it really changed):
+ * useSyncExternalStore calls it on every render and compares the reference with the last one; if
+ * a new object were created each time here, React would decide "it changed" and re-render forever.
  */
 export function getCoverage(): BakeCoverage {
   return current;
 }
 
 
-/** 进度条真正要画的东西:过滤掉作废的卡之后,跨卡合并出来的段和计数 */
+/** What the progress bar really draws: spans merged across cards and counts, after filtering out stale cards */
 export interface VisibleCoverage {
   coarse: CoverageSegment[];
   full: CoverageSegment[];
@@ -274,20 +306,22 @@ export interface VisibleCoverage {
   coarseTotal: number;
   fullBaked: number;
   fullTotal: number;
-  /** 有多少张卡的覆盖已经作废(刚改过参数,还没重渲) */
+  /** How many cards have stale coverage (parameters just changed, not yet re-rendered) */
   stale: number;
 }
 
 /**
- * 拿**当前项目**的指纹过一遍覆盖,只留还算数的,再跨卡合并。
+ * Run the coverage through the fingerprints of the **current project**, keep only what still
+ * counts, then merge across cards.
  *
- * 这是「改了 A,A 那一段当帧就变白」的全部机制:指纹对不上就不画。
- * 它是个纯函数,所以这条行为可以单测 —— 而它要是错了,界面上的表现是
- * 「条子显示绿的,拖过去却要等五秒」,属于会骗人的那一类,必须钉住。
+ * This is the whole mechanism behind "change A and A's span turns white in that very frame": if
+ * the fingerprint does not match, it is not drawn. It is a pure function, so this behavior can be
+ * unit tested, and if it were wrong, the UI would show "the bar is green, but scrubbing there
+ * waits five seconds". That is the kind that lies, so it must be pinned down.
  */
 export function visibleCoverage(
   cov: BakeCoverage,
-  /** 当前项目里还活着的卡:指纹 → 它**现在**在时间轴上的起点(指纹里带 clip.id,所以不会撞) */
+  /** Cards still alive in the current project: fingerprint → its start on the timeline **now** (the fingerprint carries clip.id, so there are no collisions) */
   liveClips: Map<string, number>,
 ): VisibleCoverage {
   const isBaked = (m: CoverageInput) => !!m.id && cov.baked.has(m.id);
@@ -296,15 +330,17 @@ export function visibleCoverage(
   let dropped = 0;
   for (const c of cov.clips) {
     const liveStart = liveClips.get(c.fp);
-    // 指纹对不上 = 这张卡改过或者没了,它的覆盖全部作废
+    // Fingerprint mismatch = this card was changed or is gone, so all its coverage is stale
     if (liveStart === undefined) { dropped++; continue; }
     /*
-     * **卡挪走了就把覆盖跟着挪。**
+     * **When a card is moved away, move the coverage with it.**
      *
-     * 时刻记的是绝对秒,卡一挪它们就指着老地方;而挪位置并不会让预渲染好的图作废
-     * (bakeTarget 把片段挪到固定起跑线再渲,实测挪完 34/34 张仍命中同一个文件)。
-     * 所以正确的做法是平移,不是作废 —— 作废会让条子在缓存明明还在的时候闪一下白。
-     * 平移只动画到哪儿,`m.id` 一个字不改,所以「渲没渲」这本账照旧对得上。
+     * Moments record absolute seconds, so once the card moves they point at the old place; but moving
+     * does not invalidate the prerendered images (bakeTarget moves the clip to a fixed starting line
+     * before rendering; measured, after the move 34/34 images still hit the same file). So the
+     * correct approach is to shift, not to invalidate: invalidating makes the bar flash white while
+     * the cache is clearly still there. The shift only moves where it is drawn, and `m.id` does not
+     * change by a single character, so the ledger of "rendered or not" still matches.
      */
     const shift = liveStart - (c.start ?? 0);
     for (const m of c.moments) {
@@ -312,8 +348,9 @@ export function visibleCoverage(
         ? m
         : { ...m, t: m.t + shift, start: m.start + shift, end: m.end + shift };
       if ((m.tier ?? "coarse") === "coarse") coarseM.push(at);
-      // 绿用 fine 而不是 tier:0.5 秒这类点两档都落在上面,排队时算低帧率,
-      // 但它同样是逐帧那一档的一格 —— 漏掉它绿条会每隔半秒缺一块
+      // Green uses fine rather than tier: points like 0.5 seconds fall on both tiers and count as low
+      // frame rate when queued, but they are equally a cell of the per-frame tier. Missing them would
+      // leave a gap in the green bar every half second
       if (m.fine) fineM.push(at);
     }
   }
@@ -329,10 +366,13 @@ export function visibleCoverage(
 }
 
 /**
- * 记下「这一刻渲好了」。**前台现场渲染完也要调这个** —— 不调的话画面已经换成真图了,
- * 时间轴上那一段还是空的,要等下一轮盘点才补上,看起来就是条子慢半拍。
+ * Record that "this moment is rendered". **The foreground on-demand render must call this too**:
+ * if it does not, the picture has already become the real image while that span on the timeline
+ * is still empty until the next inventory scan fills it in, which looks like the bar lagging a
+ * beat.
  *
- * 只加不算段:段是画的时候现算的,所以这里 O(1) 就够,每渲完一张调一次不心疼。
+ * It only adds and does not compute spans: spans are computed on the fly when drawing, so O(1) is
+ * enough here, and calling it once per rendered image costs nothing.
  */
 export function markBaked(ids: string[]): void {
   const add = ids.filter((id) => !current.baked.has(id));

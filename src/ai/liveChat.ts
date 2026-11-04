@@ -2,30 +2,35 @@ import { useSyncExternalStore } from "react";
 import type { ChatMessage } from "./types.ts";
 
 /**
- * 当前项目正在进行的 AI 对话。
+ * The AI chat currently in progress for the current project.
  *
- * (和 chatStore.ts 不是一回事:那个管的是服务端的历史会话归档,
- *  这里管的是「此刻屏幕上这一段」。)
+ * (Not the same thing as chatStore.ts: that one manages the server's archive of past sessions,
+ *  while this one manages "the segment on the screen right now".)
  *
- * 以前它是 useAiChat 里的一个 useState,并按 provider 存进 localStorage
- * (`aiChat:claude`)—— 那意味着对话跟着「用哪个模型」走、跨项目共用同一份,
- * 打开另一个项目还接着上一个项目的话。但对话其实是**项目的一部分**:
- * 它记录的正是这条片子怎么做出来的。
+ * It used to be a useState inside useAiChat, stored in localStorage per provider
+ * (`aiChat:claude`). That meant the chat followed "which model is used" and was shared across
+ * projects, so opening another project would pick up the previous project's conversation. But the
+ * chat is really **part of the project**: it records exactly how this video was made.
  *
- * 所以挪成模块级 store:组件外也读得到(存 .proc 要收集、打开 .proc 要灌回),
- * 并且随项目整体换掉。
+ * So it became a module-level store: readable from outside components too (saving .proc needs to
+ * collect it, opening .proc needs to pour it back in), and replaced as a whole along with the
+ * project.
  *
- * 多 Agent 分页之后一个页面上同时有好几段对话,每一页一份 store(getChatStore(tabId))。
- * 「主」那一页(MAIN_TAB)还是原来那份:存进 .proc、随项目切换的只有它 ——
- * 别的页是临时开来并行干活的 Agent,它们各自的历史走服务端的会话归档就够了。
+ * With multi-Agent tabs, one page has several chats at the same time, one store per tab
+ * (getChatStore(tabId)). The "main" tab (MAIN_TAB) is still the original one: it is the only one
+ * saved into .proc and switched along with the project. The other tabs are Agents opened
+ * temporarily to work in parallel, and it is enough for their histories to go through the server's
+ * session archive.
  */
 
 export const MAIN_TAB = "main";
 
 /**
- * 是不是「主页」:随 .proc 存取的那一页。老版本里它的 id 就是 "main";分页清单按项目分开之后,
- * 项目自带的主对话页叫「项目ID_main」(`agentTabs.setAgentProject` 在项目的 .proc 带着对话时补出来)。
- * 两种叫法都认,对话 store 共用同一份。新开的会话(「项目ID_<随机>」)都不是主页。
+ * Whether this is the "main tab": the one saved and loaded with .proc. In old versions its id was
+ * simply "main"; after the tab manifests were split per project, a project's own main chat tab is
+ * called "projectId_main" (`agentTabs.setAgentProject` fills it in when the project's .proc carries
+ * a chat). Both names are recognized and share the same chat store. Newly opened sessions
+ * ("projectId_<random>") are never the main tab.
  */
 export function isMainTab(tabId: string): boolean {
   return tabId === MAIN_TAB || tabId.endsWith(`_${MAIN_TAB}`);
@@ -63,7 +68,10 @@ function createStore(): ChatStore {
 
 const stores = new Map<string, ChatStore>();
 
-/** 某一页的对话 store。没有就建一份空的;关掉的页用 dropChatStore 收掉 */
+/**
+ * The chat store of a given tab. Creates an empty one if there is none; a closed tab is cleaned up
+ * with dropChatStore
+ */
 export function getChatStore(tabId: string = MAIN_TAB): ChatStore {
   const key = isMainTab(tabId) ? MAIN_TAB : tabId;
   let s = stores.get(key);
@@ -85,12 +93,12 @@ export function getMessages(): ChatMessage[] {
   return main.get();
 }
 
-/** 和 React 的 setState 一样,支持直接给值或给更新函数(主页那一份) */
+/** Like React's setState, accepts either a value or an updater function (for the main tab's store) */
 export function setMessages(next: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) {
   main.set(next);
 }
 
-/** 换项目 / 新建项目时整体换掉(主页那一份) */
+/** Replaced as a whole when switching projects / creating a new project (the main tab's store) */
 export function replaceMessages(next: unknown) {
   main.replace(next);
 }
@@ -100,11 +108,12 @@ export function useChatMessages(store: ChatStore = main): ChatMessage[] {
 }
 
 /**
- * 存进 .proc 的那一份。
+ * The copy that is saved into .proc.
  *
- * 只留可见对话和工具调用摘要:执行轨迹(trace)体积很大而且只对当场排查有用,
- * 没跑完的消息(pending)存下来也复原不了,一并去掉。
- * 条数封顶,免得一个长项目把 .proc 撑到几十兆。
+ * Only the visible chat and tool-call summaries are kept: the execution trace (trace) is very large
+ * and useful only for on-the-spot troubleshooting, and unfinished messages (pending) could not be
+ * restored even if saved, so both are dropped.
+ * The number of entries is capped, so that one long project does not bloat .proc to tens of MB.
  */
 export function messagesForSave(limit = 100, from: ChatStore = main): ChatMessage[] {
   return from.get()

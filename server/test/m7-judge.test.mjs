@@ -1,6 +1,7 @@
 /**
- * M7 验收探针 D1-D2-D12 判据（`scripts/probes/m7-judge.mjs`）。夹具取自笔记本在 claude/rq-m7 4047133 上那一轮
- * （h1、h3 的 page 那份中途被 D2 接手，旧判据报 badRanges ["0-59:2"]）。
+ * Criteria for M7 acceptance check probe D1-D2-D12 (`scripts/probes/m7-judge.mjs`). Fixtures taken
+ * from laptop run on claude/rq-m7 4047133 (page copy on h1, h3 was taken over midway by D2,
+ * old criterion reported badRanges ["0-59:2"]).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +13,7 @@ import { judgeDualClip, observedSuperseded, observeLayerEnvironments, createTask
 const RANGES = ['0-59', '60-119', '120-179', '180-239', '240-299'];
 const all = (live) => RANGES.map((range) => ({ range, live }));
 
-/** 旧判据（改前的探针）：所有出键合起来每段恰好一份有效 */
+/** Old criterion (probe before change): all output keys combined have exactly one valid copy per segment */
 function oldJudge({ groups, candidates }) {
   const counts = new Map();
   for (const list of Object.values(groups)) for (const t of list) counts.set(t.range, (counts.get(t.range) ?? 0) + (t.live ? 1 : 0));
@@ -20,7 +21,7 @@ function oldJudge({ groups, candidates }) {
   return { ok: badRanges.length === 0 && candidates.includes('pc') && candidates.includes('page'), badRanges };
 }
 
-test('笔记本那一轮的 h1 / h3：page 做完 0-59 后被 pc 按 D2 接手——旧判据挂、新判据过（接手只作说明）', () => {
+test('h1 / h3 of the laptop round: after page finished 0-59, pc took over per D2; the old criterion fails and the new criterion passes (the takeover is for information only)', () => {
   const clip = {
     groups: { page: RANGES.map((range) => ({ range, live: range === '0-59' })), pc: all(true) },
     candidates: ['page', 'pc'], layerFp: 'pc',
@@ -29,23 +30,23 @@ test('笔记本那一轮的 h1 / h3：page 做完 0-59 后被 pc 按 D2 接手�
   assert.equal(old.ok, false);
   assert.deepEqual(old.badRanges, ['0-59:2']);
   const r = judgeDualClip(clip);
-  assert.equal(r.ok, true, r.reasons.join('；'));
+  assert.equal(r.ok, true, r.reasons.join(';'));
   assert.equal(r.winner, 'pc');
   assert.deepEqual(r.takenOverMidway, ['page']);
 });
 
-test('先认领者得卡（常规）：另一组整份作废，两种判据都过；pc 先得卡也合契约', () => {
+test('The first claimer gets the card (normal case): the other group is invalidated as a whole and both criteria pass; pc getting the card first also fits the contract', () => {
   for (const [winner, loser] of [['page', 'pc'], ['pc', 'page']]) {
     const clip = { groups: { [winner]: all(true), [loser]: all(false) }, candidates: ['pc', 'page'], layerFp: winner };
     assert.equal(oldJudge(clip).ok, true);
     const r = judgeDualClip(clip);
-    assert.equal(r.ok, true, r.reasons.join('；'));
+    assert.equal(r.ok, true, r.reasons.join(';'));
     assert.deepEqual(r.fullySuperseded, [loser]);
     assert.deepEqual(r.takenOverMidway, []);
   }
 });
 
-test('该判挂的照样挂：两组都整份有效（没作废）、接手方缺段、层表缺候选、层没指向其中一组', () => {
+test('Cases that should fail still fail: both groups fully valid (not invalidated), the taking-over side is missing segments, the layer table lacks candidates, the layer does not point to either group', () => {
   assert.equal(judgeDualClip({ groups: { page: all(true), pc: all(true) }, candidates: ['pc', 'page'], layerFp: 'pc' }).ok, false);
   assert.equal(judgeDualClip({ groups: { page: RANGES.map((range) => ({ range, live: range === '0-59' })), pc: RANGES.map((range) => ({ range, live: range !== '240-299' })) }, candidates: ['pc', 'page'], layerFp: 'pc' }).ok, false);
   assert.equal(judgeDualClip({ groups: { page: all(true), pc: all(false) }, candidates: ['page'], layerFp: 'page' }).ok, false);

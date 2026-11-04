@@ -1,22 +1,26 @@
 /**
- * 认领闸端到端探针(`scripts/probes/claim-gate-probe.mjs`,AGENT-maint-3 第 4 项)的判定函数。
+ * Decision function for claim gate end-to-end probe (`scripts/probes/claim-gate-probe.mjs`, item 4
+ * of AGENT-maint-3).
  *
- *   MNT3-C-1  judgeAgentOrder:Agent 任务开工前专用实例没接新的普通预渲染 → 过;接了 → 不过并列出来;没有这次的 Agent 任务 → 不过;
- *   MNT3-C-2  summarizeSamples:最大持有数、多出的格子、专用实例开没开、专用实例在做队列任务的样本数;
- *   MNT3-C-3  judgeRun:专用实例开着 / 没开两种各自的通过与不通过条件;
- *   MNT3-C-4  judgeAgentWait:Agent 任务的等待不超过「一批加一次切换」的上界。
+ *   MNT3-C-1  judgeAgentOrder: dedicated instance took no new regular prerenders before Agent task
+ *             starts → passes; took one → fails and lists them; missing this Agent task → fails;
+ *   MNT3-C-2  summarizeSamples: max held count, extra slots, whether dedicated instance is enabled,
+ *             sample count of dedicated instance running queue tasks;
+ *   MNT3-C-3  judgeRun: pass and fail conditions for dedicated instance enabled / disabled;
+ *   MNT3-C-4  judgeAgentWait: Agent task wait does not exceed upper bound of "one batch plus one
+ *             switch".
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { judgeAgentOrder, judgeAgentWait, summarizeSamples, judgeRun } from '../../scripts/probes/claim-gate-judge.mjs';
 
-test('MNT3-C-1 judgeAgentOrder:发请求那一刻已在做的那一项不算,之后专用实例再接普通预渲染才算插到 Agent 前面', () => {
+test('MNT3-C-1 judgeAgentOrder: the item already being worked on at the moment the request is sent does not count; only if the dedicated instance then takes an ordinary prerender afterwards does it count as jumping ahead of the Agent', () => {
   const t0 = 10_000;
   const ok = judgeAgentOrder([
-    { kind: 'queue', worker: 'agent', at: t0 - 3000, waitMs: 5 },    // 发请求时专用实例手里那一项
-    { kind: 'queue', worker: 'queue', at: t0 + 100, waitMs: 50 },    // queue lane 自己接下一项:不相干
-    { kind: 'agent', worker: 'agent', at: t0 + 2400, waitMs: 2400 }, // 等手里那一项做完就轮到它
-    { kind: 'queue', worker: 'agent', at: t0 + 5000, waitMs: 9 },    // Agent 做完以后再接:没问题
+    { kind: 'queue', worker: 'agent', at: t0 - 3000, waitMs: 5 },    // The item held by dedicated instance when request was sent
+    { kind: 'queue', worker: 'queue', at: t0 + 100, waitMs: 50 },    // queue lane picks up next item itself: irrelevant
+    { kind: 'agent', worker: 'agent', at: t0 + 2400, waitMs: 2400 }, // Its turn arrives once the held item finishes
+    { kind: 'queue', worker: 'agent', at: t0 + 5000, waitMs: 9 },    // Picking up after Agent finishes: no problem
   ], t0);
   assert.deepEqual({ ok: ok.ok, agentAt: ok.agentAt, agentWaitMs: ok.agentWaitMs, jumped: ok.jumped }, { ok: true, agentAt: t0 + 2400, agentWaitMs: 2400, jumped: [] });
 
@@ -31,8 +35,8 @@ test('MNT3-C-1 judgeAgentOrder:发请求那一刻已在做的那一项不算,之
 
   const none = judgeAgentOrder([{ kind: 'agent', worker: 'agent', at: t0 - 1 }], t0);
   assert.equal(none.ok, false);
-  assert.match(none.reason, /没有这次请求的 Agent 任务/);
-  // 记录乱序也照时间排
+  assert.match(none.reason, /No Agent task for this request/);
+  // Sort by time even if records are out of order
   assert.equal(judgeAgentOrder([{ kind: 'agent', worker: 'agent', at: t0 + 50 }, { kind: 'queue', worker: 'agent', at: t0 + 10 }], t0).ok, false);
 });
 
@@ -47,7 +51,7 @@ test('MNT3-C-2 summarizeSamples', () => {
   assert.deepEqual(summarizeSamples(null), { count: 0, maxHeld: 0, heldTwo: 0, spareSeen: false, agentOpenSeen: false, agentOnQueue: 0, maxQueueAtAgent: 0 });
 });
 
-test('MNT3-C-3 judgeRun:开着要见到多认领并交给专用实例;没开不许多认领、不许开专用实例', () => {
+test('MNT3-C-3 judgeRun: when enabled, extra claims must be seen and handed to the dedicated instance; when disabled, no extra claims and no dedicated instance are allowed', () => {
   const on = { maxHeld: 2, spareSeen: true, agentOpenSeen: true };
   assert.deepEqual(judgeRun({ withAgent: true, summary: on, counts: { 'queue@agent': 2 } }), []);
   const onBad = judgeRun({ withAgent: true, summary: { maxHeld: 1, spareSeen: false, agentOpenSeen: true }, counts: {} });
@@ -58,7 +62,7 @@ test('MNT3-C-3 judgeRun:开着要见到多认领并交给专用实例;没开不�
   assert.equal(offBad.length, 4);
 });
 
-test('MNT3-C-4 judgeAgentWait:等一批加一次切换以内过;像改前那样等整项(38 s)不过;没量到不过', () => {
+test('MNT3-C-4 judgeAgentWait: passes if the wait is within one batch plus one switch; waiting for the whole item (38 s) as before the change fails; fails if not measured', () => {
   assert.deepEqual(judgeAgentWait({ agentWaitMs: 4200 }, 15000), []);
   assert.equal(judgeAgentWait({ agentWaitMs: 38347 }, 15000).length, 1);
   assert.equal(judgeAgentWait({ agentWaitMs: null }, 15000).length, 1);

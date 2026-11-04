@@ -9,15 +9,22 @@ import "./SkillDialog.css";
 import { tr } from "../i18n/index.ts";
 
 /**
- * SKILL 对话框(计划 `docs/plan/agent-workflow-plan.md` A4;语义 `user-workflow.md`「工作方式」「Agent 接入方式」)。
+ * SKILL dialog (plan `docs/plan/agent-workflow-plan.md` A4; semantics `user-workflow.md`,
+ * sections "Working mode" and "Agent connection type").
  *
- * SKILL = 桌面 APP 里的 Agent 经 MCP 直连用户正在用的这个项目。这里做三件事:
- *   1. **登记到 Claude Code / Codex**:把 PromptCut 的 MCP 服务写进它们的用户级配置(条目名固定 `promptcut`,
- *      不写端口,写之前备份,能撤销;`server/desktop-register.mjs`)。登记一次就行,换项目、重开 PromptCut 不用重登;
- *   2. **看接进来的会话**:每个桌面 APP 会话一个身份,标厂商和正在进行的操作(AI 栏里也按会话分组显示);
- *   3. **进入 SKILL 模式**:之后桌面 APP 的会话才能动手;退出点顶栏的「传统式」。
+ * SKILL = the Agent in the desktop app connects directly, via MCP, to the project the user is
+ * working on. This does three things:
+ *   1. **Register with Claude Code / Codex**: write PromptCut's MCP service into their user-level
+ *      config (the entry name is fixed as `promptcut`, no port is written, a backup is made before
+ *      writing, and it can be undone; `server/desktop-register.mjs`). Registering once is enough;
+ *      switching projects or restarting PromptCut does not require registering again;
+ *   2. **See the connected sessions**: each desktop app session has one identity, labeled with its
+ *      vendor and the operation in progress (the AI panel also groups them by session);
+ *   3. **Enter SKILL mode**: only after that can desktop app sessions take action; to exit, click
+ *      "Classic mode" in the top bar.
  *
- * 原来这里是「选驱动 → 快照项目进任务目录 → 起无头实例 → 深链拉起新对话 → 回来三方合并」,已归档。
+ * This used to be "pick a driver → snapshot the project into the task directory → start a headless
+ * instance → deep link to open a new chat → come back and three-way merge"; it is archived.
  */
 
 interface TargetStatus {
@@ -26,7 +33,7 @@ interface TargetStatus {
   file: string;
   exists: boolean;
   registered: boolean;
-  /** 登记的正是这份 PromptCut(命令与脚本一致) */
+  /** The registration targets exactly this PromptCut (the command matches the script) */
   current: boolean;
   undoable: boolean;
   registeredAt?: string;

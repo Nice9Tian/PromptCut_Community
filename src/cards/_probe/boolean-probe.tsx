@@ -3,25 +3,30 @@ import { useRef } from "react";
 import type { CardDef, CardProps } from "../../kernel/types";
 
 /**
- * K1 两趟布尔探针（`vtOk` / `seekOk`）的**判例卡**。
+ * The **test-case cards** for the K1 two-pass boolean probe (`vtOk` / `seekOk`).
  *
- * 验收要三张判例：一张只有 CSS / WAAPI 动画的卡 `vtOk: true` 且 `seekOk: true`、
- * 一张粒子卡 `vtOk: true`、一张用 JS 驱动的卡 `vtOk: false`。
- * 粒子卡库里有（`particles-snow` 这些），另外两张卡库里没有**干净**的
- * ——`probe` 那张把 CSS 动画、Motion 元素和一条裸 rAF 计数器混在一张卡上，
- * 判出来的布尔是三者取交，说明不了任何一条判据。所以这里各放一张最小的。
+ * The acceptance check needs three test cases: a card with only CSS / WAAPI animation with
+ * `vtOk: true` and `seekOk: true`, a particle card with `vtOk: true`, and a JS-driven card with
+ * `vtOk: false`.
+ * The card library has particle cards (`particles-snow` and the like), but has no **clean** ones for
+ * the other two: the `probe` card mixes CSS animation, a Motion element and a bare rAF counter on one
+ * card, so the boolean it yields is the intersection of all three and proves nothing about any
+ * single criterion. So one minimal card of each kind is placed here.
  *
- * 两张卡都**不进审阅表**（`capabilities.json`），所以轴三是 `unknown`、按 `belowDependent` 处理，
- * 探针帧不会被当成预渲染素材存下去（K1 末句）。它们只在探针的验收里被点名加载，
- * 左栏和 Agent 照常看得到，但没人会把它们放进成片。
+ * Neither card goes into the review table (`capabilities.json`), so axis three is `unknown` and is
+ * handled as `belowDependent`, and the probe frames will not be stored as prerender assets (the last
+ * sentence of K1). They are loaded by name only in the probe's acceptance check; the left rail and
+ * the Agent see them as usual, but nobody will put them into a final video.
  */
 
 /**
- * **只有 CSS @keyframes**：一条 `transform` 的线性平移，没有任何 JS 参与。
+ * **CSS @keyframes only**: a linear translation of one `transform`, with no JS involved.
  *
- * 判例期望：`vtOk: true`（`pinner.syncIn` 把这条动画的 `currentTime` 钉到第 8 帧，
- * 画面就是第 8 帧该有的样子，和全局时钟推 8 帧逐字相同）、`seekOk: true`
- * （一步钉到第 8 帧和逐帧推到第 8 帧结果相同 —— 文档时间线上的动画本来就能直接定位）。
+ * Expected for this test case: `vtOk: true` (`pinner.syncIn` pins this animation's `currentTime` to
+ * frame 8, and the picture is exactly what frame 8 should look like, identical to advancing the
+ * global clock by 8 frames), and `seekOk: true` (pinning to frame 8 in one step gives the same
+ * result as advancing frame by frame to frame 8: an animation on the document timeline can be
+ * positioned directly to begin with).
  */
 function ProbeCssCard({ playToken }: CardProps<Record<string, never>>) {
   return (
@@ -39,11 +44,14 @@ function ProbeCssCard({ playToken }: CardProps<Record<string, never>>) {
 }
 
 /**
- * **JS 驱动**：Motion 的帧循环（`useAnimationFrame`）每帧读全局时间戳、自己写 `transform`。
+ * **JS-driven**: Motion's frame loop (`useAnimationFrame`) reads the global timestamp every frame and
+ * writes `transform` itself.
  *
- * 判例期望：`vtOk: false`。子树虚拟时间那一趟**不动全局时钟**，被 `stageClock` 接管的
- * rAF 队列因此没人排空，这条回调一次都不跑 —— 画面停在挂载帧，和全局时钟推出来的第 8 帧不同。
- * 这正是 K3(b) / K5 要把它交给后台舞台整场景补跑的那一类（pinned 划分轴一第 3 条）。
+ * Expected for this test case: `vtOk: false`. The subtree virtual-time pass **does not move the global
+ * clock**, so nobody drains the rAF queue taken over by `stageClock`, and this callback never runs:
+ * the picture stays on the mount frame, unlike frame 8 produced by the global clock.
+ * This is exactly the kind that K3(b) / K5 hand to the background stage for a whole-scene catch-up run
+ * (pinned partition axis one, item 3).
  */
 function ProbeMotionJsCard({ playToken }: CardProps<Record<string, never>>) {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -51,7 +59,8 @@ function ProbeMotionJsCard({ playToken }: CardProps<Record<string, never>>) {
   useAnimationFrame((ms) => {
     if (startRef.current < 0) startRef.current = ms;
     const elapsed = ms - startRef.current;
-    // 写进内联样式:生成快照时被 inlineDOMStyles 原样读走,两趟比得出差别
+    // Written into inline styles: inlineDOMStyles reads it as is when generating snapshots, so the two
+    // passes can show a difference
     if (boxRef.current) boxRef.current.style.transform = `translateX(${(elapsed / 5).toFixed(3)}px)`;
   });
   return (
@@ -70,10 +79,11 @@ function ProbeMotionJsCard({ playToken }: CardProps<Record<string, never>>) {
 
 export const probeCssCard: CardDef<Record<string, never>> = {
   id: "probe-css",
-  name: "探针卡 · 纯 CSS",
-  description: "K1 布尔探针的判例:只有 CSS @keyframes,应当 vtOk / seekOk 都为 true",
+  name: "Probe card · pure CSS",
+  description: "Reference case for the K1 boolean probe: CSS @keyframes only, both vtOk and seekOk should be true",
   source: "native",
-  // 帧模式:有动画历史,按 stateful 走推帧那条路(布尔探针只对 stepped 卡跑)
+  // Frame mode: it has animation history and takes the frame-push route as stateful (the boolean
+  // probe runs only on stepped cards)
   frameMode: "stateful",
   defaults: {},
   controls: [],
@@ -82,8 +92,8 @@ export const probeCssCard: CardDef<Record<string, never>> = {
 
 export const probeMotionJsCard: CardDef<Record<string, never>> = {
   id: "probe-motion-js",
-  name: "探针卡 · JS 驱动",
-  description: "K1 布尔探针的判例:Motion 的帧循环每帧自己写 transform,应当 vtOk 为 false",
+  name: "Probe card · JS-driven",
+  description: "Reference case for the K1 boolean probe: Motion's frame loop writes transform itself every frame, vtOk should be false",
   source: "native",
   frameMode: "stateful",
   defaults: {},

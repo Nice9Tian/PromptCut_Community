@@ -1,15 +1,20 @@
 /**
- * 「依赖下层的流」两支探针(`below-diff-measure-probe.mjs`、`stream-below-probe.mjs`)共用的东西:
- * 两个场景的项目、素材视频和发它的小服务、开发服务器、把流盖回下层再比的那几种算法。
+ * Shared elements for the two "below-dependent stream" probes (`below-diff-measure-probe.mjs`,
+ * `stream-below-probe.mjs`): projects for the two scenes, asset video and the small service serving
+ * it, dev server, and several algorithms for pasting stream back over lower layer and comparing.
  *
- * 场景(`docs/plan/render-refactor-task.md`「戊二」的验收,契约 `docs/plan/prerender-products-contract.md` 第 13.2 节「下层二」):
+ * Scenes (acceptance check for "Wu-2" in `docs/plan/render-refactor-task.md`, section 13.2 "Lower
+ * layer 2" of contract `docs/plan/prerender-products-contract.md`):
  *
- *   甲  毛玻璃卡(里程表 `odometer`,审阅表里依赖下层)压在一张会动的卡(粒子 `particles`)和一段视频上面;
- *   乙  下层是半透明的:一枚不透明度 0.6、带阴影的药丸(`punch-pill`),底下什么都没有(透明),上面压同一张毛玻璃卡。
+ *   A  A frosted-glass card (odometer `odometer`, below-dependent in review table) placed over an
+ *      animated card (particles `particles`) and a video clip;
+ *   B  The lower layer is translucent: a pill (`punch-pill`) with opacity 0.6 and shadow, with
+ *      nothing underneath (transparent), covered by the same frosted-glass card on top.
  *
- * 毛玻璃卡从 0.2 秒入场(不在分段边界上),所以头一个分段里有几帧页面上还没有它。
+ * The frosted-glass card enters from 0.2s (not on segment boundary), so there are several frames in
+ * the first segment where it is not yet on the page.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:这里会起开发服务器,不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: a dev server will be started here, not inheriting external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import http from 'node:http';
@@ -24,7 +29,7 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 export const DURATION = 3;
 export const FPS = 30;
 export const TARGET = 'clip-glass';
-/** `edit: 'above'` 时加在毛玻璃卡上面的那张卡 */
+/** The card added on top of frosted-glass card when `edit: 'above'` */
 export const ABOVE = 'clip-above';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -32,20 +37,21 @@ export const round2 = (n) => (n === null || n === undefined || Number.isNaN(n) ?
 export const round3 = (n) => (n === null || n === undefined || Number.isNaN(n) ? null : +Number(n).toFixed(3));
 export const median = (list) => { const s = [...list].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
 
-/** 里程表按 1920×1080 设计:小画幅时整张卡按比例缩 */
+/** Odometer is designed for 1920×1080: scales entire card proportionally on smaller aspect ratios */
 const glassFrame = (width, height) => (width === 1920 && height === 1080 ? {} : { frame: { x: 0, y: 0, w: 1920, h: 1080, anchor: [0, 0], scale: width / 1920 } });
 
 /**
- * 场景项目。`kind`:`'a'`(甲)或 `'b'`(乙);`mediaUrl`:甲的视频地址。
- * `edit`:`'below'` 时把下层那张卡的参数改一处(验「下层改了键就变」用);`'above'` 时在毛玻璃卡上面多加一张卡
- * (验「上面的层怎么改键都不变」用)。
+ * Scene project. `kind`: `'a'` (A) or `'b'` (B); `mediaUrl`: video URL for A.
+ * When `edit`: `'below'`, changes one parameter of the card in lower layer (used to verify "key
+ * changes when lower layer changes"); when `'above'`, adds an extra card on top of frosted-glass card
+ * (used to verify "key never changes no matter how layers above are modified").
  */
 export function scenarioProject(kind, { width, height, mediaUrl = '', edit = null } = {}) {
   const glass = { id: 'tr-glass', name: 'glass', hidden: false, clips: [
     { id: TARGET, kind: 'card', cardId: 'odometer', start: 0.2, end: DURATION, params: { position: 'left', value: 86420, label: '下层二探针' }, ...glassFrame(width, height) },
   ] };
-  const base = { name: '依赖下层的流探针', width, height, fps: FPS, duration: DURATION, themeId: 'dark', filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {} };
-  // 上面的层:右上角一枚小药丸,在毛玻璃卡上面
+  const base = { name: 'Below-dependent stream probe', width, height, fps: FPS, duration: DURATION, themeId: 'dark', filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {} };
+  // Upper layer: a small pill in top-right corner, above frosted-glass card
   const above = edit === 'above' ? [{ id: 'tr-above', name: 'above', hidden: false, clips: [
     { id: ABOVE, kind: 'card', cardId: 'punch-pill', start: 0.5, end: 2, params: { text: '上面的层' },
       frame: { x: Math.round(width * 0.75), y: Math.round(height * 0.25), w: 1280, h: 720, anchor: [0.5, 0.5], scale: width / 1920 * 0.6 } },
@@ -74,7 +80,7 @@ export function scenarioProject(kind, { width, height, mediaUrl = '', edit = nul
     ] };
 }
 
-/** 场景里除目标卡以外的片段(都是它的下层) */
+/** Clips in scene other than the target card (all of which are its lower layer) */
 export const lowerClipIds = (kind) => (kind === 'a' ? ['clip-move', 'clip-video'] : ['clip-block']);
 
 export function viteBin() {
@@ -85,9 +91,12 @@ export function viteBin() {
   return path.join(main.slice(0, at + 6), 'bin', 'vite.js');
 }
 
-/** 在检出根起一台开发服务器(另占 +1、+2 当舞台端口)。回 `{ origin, stop() }`;只收自己起的这棵进程树 */
+/**
+ * Start a dev server at checkout root (additionally taking +1 and +2 as stage ports). Returns
+ * `{ origin, stop() }`; cleans up only this process tree started by itself
+ */
 export async function startDevServer({ port, dataDir, tag = 'below' }) {
-  if ([5190, 5191, 5192].some((p) => p >= port && p <= port + 2)) throw new Error('这一段是用户常驻的开发服务器的端口,换一个');
+  if ([5190, 5191, 5192].some((p) => p >= port && p <= port + 2)) throw new Error('This port range belongs to the user\'s resident dev servers; use another one');
   const log = [];
   const child = spawn(process.execPath, [viteBin(), '--port', String(port), '--strictPort', '--host', '127.0.0.1'], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
@@ -106,15 +115,18 @@ export async function startDevServer({ port, dataDir, tag = 'below' }) {
   };
   const deadline = Date.now() + 180_000;
   for (;;) {
-    if (child.exitCode !== null) throw new Error(`dev server 退出了:${log.join('').slice(-600)}`);
+    if (child.exitCode !== null) throw new Error(`dev server exited: ${log.join('').slice(-600)}`);
     if (await fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false)) break;
-    if (Date.now() > deadline) { await stop(); throw new Error(`dev server 没起来:${log.join('').slice(-600)}`); }
+    if (Date.now() > deadline) { await stop(); throw new Error(`dev server did not start: ${log.join('').slice(-600)}`); }
     await sleep(300);
   }
   return { origin, pid: child.pid, stop };
 }
 
-/** 甲的视频:ffmpeg 的测试图样(有清晰的边、有连续的运动),每种画幅一份 */
+/**
+ * Video for A: ffmpeg test pattern (with clear edges and continuous motion), one for each aspect
+ * ratio
+ */
 export async function ensureVideo(ffmpeg, dir, width, height) {
   const file = path.join(dir, `below-probe-${width}x${height}.mp4`);
   if (!fsSync.existsSync(file)) {
@@ -125,7 +137,10 @@ export async function ensureVideo(ffmpeg, dir, width, height) {
   return file;
 }
 
-/** 发素材文件的小服务(认 Range,视频要能拖)。回 `{ url(name), close() }` */
+/**
+ * Small service serving asset files (recognizes Range, video must be scrubbable). Returns
+ * `{ url(name), close() }`
+ */
 export function serveMedia(port, dir) {
   const server = http.createServer((req, res) => {
     const name = path.basename(decodeURIComponent(String(req.url || '').split('?')[0]));
@@ -154,10 +169,13 @@ export function serveMedia(port, dir) {
   });
 }
 
-/** 导出页的空项目地址(`FramePipeline.emptyUrl` 的写法) */
+/** Empty project URL for export page (written as `FramePipeline.emptyUrl`) */
 export const emptyUrlOf = (origin, { width, height }) => `${origin}/?export=1&timeline=${encodeURIComponent(`data:application/json,${encodeURIComponent(JSON.stringify({ width, height, fps: FPS, duration: 1, tracks: [], media: [] }))}`)}`;
 
-/** ffmpeg 把 init + 一个分段解成逐帧 RGB(上下拼合的编码画面:上半预乘色,下半不透明度,各垫 8 行) */
+/**
+ * ffmpeg decodes init + one segment into frame-by-frame RGB (vertically stitched encoded frame:
+ * top half premultiplied color, bottom half opacity, each padded with 8 rows)
+ */
 export async function decodeSegment(ffmpeg, init, seg, dir, name) {
   const file = path.join(dir, `${name}.mp4`);
   await fs.writeFile(file, Buffer.concat([init, seg]));
@@ -168,8 +186,10 @@ export async function decodeSegment(ffmpeg, init, seg, dir, name) {
 }
 
 /**
- * 误差的累计器:逐像素比「盖回去的画面」和「真画面」(都按预乘色,满分 255),四个通道一起算。
- * `mean`:平均差;`max`:最大差;`p999`:千分之九百九十九的像素不超过这个数;`bad`:最大通道差超过 `BAD` 的像素数。
+ * Error accumulator: compares the "pasted-back visuals" and "ground-truth visuals" pixel by pixel
+ * (both in premultiplied color, full scale 255), calculated across all four channels together.
+ * `mean`: average difference; `max`: maximum difference; `p999`: 99.9% of pixels do not exceed this
+ * number; `bad`: number of pixels whose maximum channel difference exceeds `BAD`.
  */
 export const BAD = 16;
 export function newError() { return { sum: 0, count: 0, max: 0, bad: 0, hist: new Float64Array(256) }; }
@@ -190,8 +210,9 @@ const tally = (e, d0, d1, d2, d3) => {
 };
 
 /**
- * 把一层 S(straight RGBA,`rect` 那么大)按普通的叠加盖在 `lower`(整幅,straight RGBA)上,和 `truth`(整幅)比,只比 `rect` 里面。
- * `frameWidth`:整幅的宽。误差记进 `e`。
+ * Overlays a layer S (straight RGBA, size of `rect`) onto `lower` (full frame, straight RGBA) using
+ * standard blending, and compares with `truth` (full frame), comparing only inside `rect`.
+ * `frameWidth`: width of full frame. Error is recorded into `e`.
  */
 export function tallyStraight(e, layer, rect, lower, truth, frameWidth) {
   for (let y = 0; y < rect.h; y++) {
@@ -209,8 +230,9 @@ export function tallyStraight(e, layer, rect, lower, truth, frameWidth) {
 }
 
 /**
- * 同上,S 是解码出来的编码画面(`decoded`:RGB,宽 `rect.w`,上半 `rect.h` 行是预乘色,隔 8 行以后是不透明度)。
- * 照页面的着色器(`src/render/streamPlayer.ts`)钳一次:颜色不超过不透明度。
+ * Same as above, where S is the decoded encoded frame (`decoded`: RGB, width `rect.w`, top `rect.h`
+ * rows are premultiplied color, followed by opacity after 8 rows of spacing). Clamped once following
+ * the page shader (`src/render/streamPlayer.ts`): color does not exceed opacity.
  */
 export function tallyDecoded(e, decoded, rect, lower, truth, frameWidth) {
   const alphaTop = (rect.h + 8) * rect.w * 3;
@@ -230,8 +252,10 @@ export function tallyDecoded(e, decoded, rect, lower, truth, frameWidth) {
 }
 
 /**
- * 编码本身的误差:解码出来的编码画面直接和 `truth`(整幅,straight RGBA)在 `rect` 里比(预乘色和不透明度),不盖任何东西。
- * 把真画面原样编一遍再这样比,得到的就是「同一幅画面过一遍这个编码器会差多少」,当误差的参照。
+ * Error of encoding itself: decoded encoded frame is directly compared with `truth` (full frame,
+ * straight RGBA) within `rect` (premultiplied color and opacity), without overlaying anything.
+ * Encoding the ground-truth frame as-is and comparing this way yields "how much the same frame
+ * differs after passing through this encoder", serving as an error reference.
  */
 export function tallyDecodedDirect(e, decoded, rect, truth, frameWidth) {
   const alphaTop = (rect.h + 8) * rect.w * 3;
@@ -248,7 +272,10 @@ export function tallyDecodedDirect(e, decoded, rect, truth, frameWidth) {
   }
 }
 
-/** 把解码出来的一帧盖回 `lower` 以后的画面裁出来(straight RGBA,`rect` 那么大),存图自己看用 */
+/**
+ * Crop out the visuals after overlaying a decoded frame back onto `lower` (straight RGBA, size of
+ * `rect`), saving the image for visual inspection
+ */
 export function composeDecoded(decoded, rect, lower, frameWidth) {
   const out = Buffer.alloc(rect.w * rect.h * 4);
   const alphaTop = (rect.h + 8) * rect.w * 3;
@@ -267,14 +294,14 @@ export function composeDecoded(decoded, rect, lower, frameWidth) {
   return out;
 }
 
-/** 整幅 straight RGBA 里裁一块 */
+/** Crop a region from a full straight RGBA frame */
 export function cropRgba(data, frameWidth, rect) {
   const out = Buffer.alloc(rect.w * rect.h * 4);
   for (let y = 0; y < rect.h; y++) data.copy(out, y * rect.w * 4, ((y + rect.y) * frameWidth + rect.x) * 4, ((y + rect.y) * frameWidth + rect.x + rect.w) * 4);
   return out;
 }
 
-/** straight RGBA 垫在深灰底上存成 PNG(给人看的) */
+/** Save straight RGBA over dark gray background as PNG (for human viewing) */
 export async function savePreview(file, rgba, width, height) {
   const { PNG } = await import('pngjs');
   const png = new PNG({ width, height });

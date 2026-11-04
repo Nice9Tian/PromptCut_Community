@@ -47,9 +47,12 @@ export function signatureMatches(recorded, expected) {
  */
 export class MovFrameStore {
   /**
-   * `movie`(缺省 true):要不要把连续的 PNG 前缀编成 `mov/full.mov`。整场景那一份(`entry.mov`)传 false:
-   * 那个文件只被判过存在、没有人读内容(legacy 整帧通道方案 B,AGENT-maint-3),PNG 表照旧是它的全部用途。
-   * 传 false 时 `start()` 什么也不做,载入时把旧版本留下的 `full.mov` 删掉。独立卡的那一份(`card-cache.mjs`)不变。
+   * `movie` (default true): whether to encode consecutive PNG prefixes into `mov/full.mov`. Pass false
+   * for the whole-scene copy (`entry.mov`): that file is only checked for existence and no one reads
+   * its content (legacy full-frame channel scheme B, AGENT-maint-3), with the PNG table remaining its
+   * sole purpose.
+   * When passing false, `start()` does nothing, and deletes leftover `full.mov` from older versions
+   * upon loading. The standalone card copy (`card-cache.mjs`) remains unchanged.
    */
   constructor({ dir, fps = 30, movie = true } = {}) {
     this.dir = dir;
@@ -235,8 +238,10 @@ export class MovFrameStore {
   }
 
   /**
-   * `renders`(X7,缺省 1):这一帧已经被同一个产出方渲过几遍。只有从别的节点**原样取回**的帧会传它
-   * (`artifact-transfer.mjs` 的 PNG 落地):对方已经二次确认过的全透明帧,落到本机不该又算「待确认」。
+   * `renders` (X7, default 1): how many times this frame has been rendered by the same producer. Only
+   * frames **retrieved as-is** from other nodes pass this (`artifact-transfer.mjs` PNG persistence):
+   * fully transparent frames re-confirmed by the remote side should not be treated as "pending
+   * confirmation" when written locally.
    */
   async put(frame, buffer, signature = null, { renders = 1 } = {}) {
     const first = Number.isSafeInteger(renders) && renders >= 1 ? renders : 1;
@@ -388,7 +393,8 @@ export class MovFrameStore {
     await writer?.abort().catch(() => {});
     await this.starting;
     await this.writeChain.catch(() => {});
-    // 中止的流不会再接着写(下一次 start 从第 0 帧重来),写了一半的临时 MOV 就地删掉
+    // Aborted streams will not be resumed (next start restarts from frame 0); partially written
+    // temporary MOVs are deleted on the spot
     await fs.rm(this.tempMovie, { force: true }).catch(() => {});
     this.nextFrame = 0; this.pending = new Set(this.frames);
     await this.persist();
@@ -396,8 +402,8 @@ export class MovFrameStore {
 }
 
 /**
- * 本进程还开着的播放 MOV。进程正常退出时同步删掉;强杀来不及,靠下次启动时
- * `storage-leftovers.mjs` 按文件名里的 pid 清。
+ * Playback MOVs still open in this process. Deleted synchronously on normal process exit; if
+ * force-killed, cleaned up on next startup by `storage-leftovers.mjs` using pid in filename.
  */
 const livePlaybackFiles = new Set();
 let exitHookInstalled = false;
@@ -421,7 +427,8 @@ export class PlaybackMovStore {
   constructor({ dir, width, height, fps = 30, count }) {
     this.fps = fps; this.count = count;
     this.width = width; this.height = height;
-    // 名字带 pid:属主进程被强杀时,下次启动据此认出它是遗留(storage-leftovers.mjs)
+    // Name contains pid: if owner process is force-killed, next startup recognizes it as a leftover
+    // based on this (`storage-leftovers.mjs`)
     this.name = `playback-${process.pid}-${randomUUID()}.mov`;
     this.movieFile = path.join(dir, 'mov', this.name);
     this.samples = new Map();
@@ -513,7 +520,7 @@ export class PlaybackMovStore {
     return { fps: this.fps, count: this.count, width: this.width, height: this.height, placeholder: this.placeholder, frames };
   }
   async close() { await this.ready; await this.writeChain; this.closed = true; await this.file?.close(); }
-  /** 播放会话用完:关掉并删掉文件。它只是播放时的中转,不是缓存(帧在 MovFrameStore 的 PNG 里)。 */
+  /** Playback session finished: close and delete the file. It is only a relay during playback, not a cache (frames are in MovFrameStore's PNGs). */
   async dispose() {
     this.closed = true;
     await this.ready.catch(() => {});

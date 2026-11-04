@@ -1,26 +1,37 @@
 /**
- * 导出专用的逐帧位图(在线浏览器的「完整导出」「快速导出」里,本页不执行的卡的画面来源;
- * 语义 `docs/semantics/product/platforms.md`「在线浏览器」的「导出」,用户 2026-10-13 定)—— 渲染节点这一侧。
+ * Export-dedicated frame-by-frame bitmaps (visual source for cards not executed on this page
+ * during "Full export" and "Quick export" in the online browser; semantics in
+ * `docs/semantics/product/platforms.md` "Online browser" > "Export", user decision, 2026-10-13):
+ * render node side.
  *
- * 在线页面的导出页不执行同步来的用户卡与素材效果卡。导出开始时页面发一个**只为导出**的清单计划(`input.exportOnly: true`),
- * 认领它的节点按清单里的片段各算一条流的计划(和轨道流同一个算法、同一个隔离工程、同一个取帧办法),但**不压成视频**:
- * 每一帧存成一张带透明的 PNG(原尺寸、无损),推到素材服务的像素那一类(`px/<哈希>`),清单写进内容库。页面按清单逐帧取。
+ * The export page of the online page does not execute synced user cards and media effect cards.
+ * When export begins, the page sends an **export-only** manifest plan (`input.exportOnly: true`),
+ * and the node that claims it calculates a plan for each clip in the manifest as a stream (using
+ * the same algorithm, same isolated project, and same frame retrieval method as track streams),
+ * but **without compressing into video**:
+ * Each frame is saved as a transparent PNG (original size, lossless) and pushed to the asset service's
+ * pixel category (`px/<hash>`), with the manifest written into the content store. The page fetches
+ * frames according to the manifest.
  *
- * 和轨道流的区别:
- *   - 只给这一次导出用,不进层表,预览不读它;节点本机也不留(推完就删);
- *   - 没有稀疏版、没有收紧矩形:每帧都按这条流的矩形上界取;
- *   - 键另算:`exportKey = sha256("export-frames:<版本>\n<流的内容键>")`,结果键 = `exportKey × 环境指纹`。和这张卡的轨道流不是一个键,
- *     不占轨道流的卡片级指纹锁(任务的 `input` 里不带 `contentKey`,队列不给它建锁)。
+ * Differences from track streams:
+ *   - Used only for this export, not entered into the layer table, not read by preview; not kept
+ *     on the node locally (deleted once pushed);
+ *   - No sparse version, no tight rectangle: each frame is retrieved using this stream's upper bounding rect;
+ *   - Keys computed separately: `exportKey = sha256("export-frames:<version>\n<stream content key>")`,
+ *     result key = `exportKey × environment fingerprint`. Different key from this card's track stream,
+ *     not occupying the track stream's per-card fingerprint lock (task `input` lacks `contentKey`,
+ *     so the queue creates no lock for it).
  *
- * 任务沿用队列里的流任务(`kind: 'stream'`,范围单位是分段号),靠 `input.exportFrames: true` 认;队列和文档服务不用改。
+ * Tasks reuse the queue's stream tasks (`kind: 'stream'`, range unit is segment number), identified
+ * by `input.exportFrames: true`; queue and document service require no changes.
  *
- * # 清单(内容库 `render-manifest`,键 `<结果键>:<起>-<止>`)
+ * # Manifest (content store `render-manifest`, key `<result key>:<start>-<end>`)
  *
- *   { v: 1, kind: 'export-frames', resultKey, range: { from, to },          // 范围是分段号(这条流自己的,从它的第一帧起每 15 帧一段)
+ *   { v: 1, kind: 'export-frames', resultKey, range: { from, to },          // range is segment number (this stream's own, 15 frames per segment from its first frame)
  *     header: { kind: 'card' | 'below', plane: 'local' | 'stage', clipIds, fps, originFrame, lastFrame, rect, offset },
- *     frames: [[项目帧号, PNG 的 sha256, 字节数], ...] }                    // 帧号升序;`rect` 是每张图盖住的矩形(平面坐标)
+ *     frames: [[project frame number, PNG sha256, byte count], ...] }       // ascending frame numbers; `rect` is the rectangle covered by each image (plane coordinates)
  *
- * 本机落盘:`<库根>/export-frames/<结果键>/<项目帧号>.png`,推送成功后整段删掉。
+ * Local disk: `<store root>/export-frames/<result key>/<project frame number>.png`, deleted as a whole segment after successful push.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -30,28 +41,32 @@ import { isStreamOrigin, streamSegmentFirstFrame, streamSegmentLastFrame } from 
 
 export { EXPORT_FRAMES_PRIORITY, isExportFramesTask, isExportOnlyPlan, exportIndexOf } from './render-node/export-plan.mjs';
 
-/** 这种产物的版本:改了取帧办法或清单形状就加一,旧的结果键全部不再认 */
+/** Version of this artifact: incremented when frame retrieval method or manifest shape changes; all old result keys are invalidated */
 export const EXPORT_FRAMES_VERSION = 1;
-/** 清单的 `kind` */
+/** Manifest `kind` */
 export const EXPORT_FRAMES_KIND = 'export-frames';
-/** 清单的版本(同 `artifact-transfer.mjs` 的 `RESULT_VERSION`) */
+/** Manifest version (same as `RESULT_VERSION` in `artifact-transfer.mjs`) */
 export const EXPORT_RESULT_VERSION = 1;
-/** 导出专用位图与清单的默认保留期:24 小时 */
+/** Default retention period for export-dedicated bitmaps and manifests: 24 hours */
 export const EXPORT_FRAMES_TTL_MS = 24 * 60 * 60 * 1000;
-/** 推块的并发 */
+/** Concurrency for pushing chunks */
 const PUSH_CONCURRENCY = 4;
 const KEY_RE = /^[a-f0-9]{64}$/;
 const sha256 = data => createHash('sha256').update(data).digest('hex');
 const fail = (message, extra = {}) => Object.assign(new Error(message), extra);
 
 /**
- * 重新做的标识(`salt`):页面上一次导出失败之后再点导出,计划里带一个新的标识(`input.exportSalt`),导出键跟着换,
- * 这一次的任务就是新任务 —— 队列里失败的任务在保留期内不会重开,不换键的话重新导出也只会拿到上一次的失败。
- * 只认小写字母与数字、最多 32 位;别的当没带。平时(没失败过)不带,同一份内容的结果键不变、再导出时直接用。
+ * Rerun identifier (`salt`): when the page clicks export again after a previous export failure,
+ * the plan carries a new identifier (`input.exportSalt`), changing the export key accordingly,
+ * so this task is treated as a new task: failed tasks in the queue are not reopened during the
+ * retention period, and without changing the key, re-exporting would only retrieve the previous failure.
+ * Only lowercase letters and numbers are recognized, up to 32 characters; others are treated as absent.
+ * Normally omitted (when there are no failures), keeping the result key unchanged for the same content
+ * so it can be reused directly upon re-export.
  */
 export const exportSaltOf = value => (typeof value === 'string' && /^[0-9a-z]{1,32}$/.test(value) ? value : '');
 
-/** 流的内容键 → 导出位图的内容键 */
+/** Stream content key → export bitmap content key */
 export function exportFramesKey(streamContentKey, salt = '') {
   const tail = exportSaltOf(salt);
   return sha256(`export-frames:${EXPORT_FRAMES_VERSION}\n${streamContentKey ?? ''}${tail ? `\n${tail}` : ''}`);
@@ -81,10 +96,10 @@ function pngChunk(type, data) {
   crc.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), data])), 0);
   return Buffer.concat([head, data, crc]);
 }
-/** straight RGBA 原始像素 → PNG(8 位 RGBA,每行滤波 0)。画布直取与差分取层交出来的是原始像素,不是 PNG */
+/** Straight RGBA raw pixels → PNG (8-bit RGBA, filter 0 per row). Direct canvas extraction and differential layer extraction yield raw pixels, not PNG */
 export function rgbaToPng(rgba, width, height) {
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) throw new Error('rgbaToPng 要正整数宽高');
-  if (!rgba || rgba.length !== width * height * 4) throw new Error(`rgbaToPng 像素长度不对:${rgba?.length} ≠ ${width}×${height}×4`);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) throw new Error('rgbaToPng requires a positive integer width and height');
+  if (!rgba || rgba.length !== width * height * 4) throw new Error(`rgbaToPng pixel length is wrong: ${rgba?.length} ≠ ${width}×${height}×4`);
   const src = Buffer.isBuffer(rgba) ? rgba : Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength);
   const raw = Buffer.alloc((width * 4 + 1) * height);
   for (let y = 0; y < height; y++) src.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
@@ -95,18 +110,20 @@ export function rgbaToPng(rgba, width, height) {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     pngChunk('IHDR', ihdr), pngChunk('IDAT', zlib.deflateSync(raw, { level: 6 })), pngChunk('IEND', Buffer.alloc(0))]);
 }
-/** 取帧钩子交来的一帧(PNG 的 Buffer,或 `{ rgba, width, height }`)→ PNG 字节 */
+/** Frame handed over by the frame retrieval hook (PNG Buffer, or `{ rgba, width, height }`) → PNG bytes */
 export function shotToPng(shot) {
   if (shot && typeof shot === 'object' && shot.rgba) return rgbaToPng(shot.rgba, shot.width, shot.height);
   if (Buffer.isBuffer(shot) || shot instanceof Uint8Array) return Buffer.isBuffer(shot) ? shot : Buffer.from(shot);
-  throw new Error('取到的这一帧既不是 PNG 也不是原始像素');
+  throw new Error('The captured frame is neither PNG nor raw pixels');
 }
 
-/* ------------------------------------------------------------------ 计划 */
+/* ------------------------------------------------------------------ Plan */
 
 /**
- * 一条流的计划(`frame-stream.mjs` 的 `planStreams` 的一项)→ 导出位图的计划。只认单卡流(平面的独立卡、源依赖卡、三维外框的卡)
- * 和依赖下层的流;组流不认(导出位图一张卡一份,调用方算流时不合并)。回 null = 这条流出不了导出位图。
+ * Plan for a stream (an item from `planStreams` in `frame-stream.mjs`) → plan for export bitmap.
+ * Only recognizes single-card streams (plane standalone cards, source-dependent cards, cards with 3D bounding box)
+ * and below-dependent streams; group streams are not recognized (export bitmaps are one per card,
+ * caller does not merge them when calculating streams). Returning null = this stream cannot produce an export bitmap.
  */
 export function exportSpecOf(spec, envFingerprint, salt = '') {
   if (!spec || typeof spec !== 'object') return null;
@@ -118,7 +135,7 @@ export function exportSpecOf(spec, envFingerprint, salt = '') {
   return { ...spec, exportKey, exportResultKey: sha256(`${exportKey}\n${envFingerprint}`), ...(tail ? { exportSalt: tail } : {}) };
 }
 
-/** 交给切分和回给页面的那一份(不带成员卡的控件等大对象) */
+/** The portion handed to the splitter and returned to the page (without large objects like member card controls) */
 export function exportStreamOf(spec) {
   return {
     clipId: spec.clipIds[0], kind: spec.kind, plane: spec.plane, ...(spec.solo ? { solo: spec.solo } : {}),
@@ -130,14 +147,14 @@ export function exportStreamOf(spec) {
   };
 }
 
-/* ------------------------------------------------------------------ 本机落盘 */
+/* ------------------------------------------------------------------ Local disk persistence */
 
 export const exportFramesDir = (root, resultKey) => path.join(root, 'export-frames', resultKey);
 const frameFile = (dir, frame) => path.join(dir, `${frame}.png`);
 
-/** 存一帧(先写临时名再改名,读的一侧不会读到半张) */
+/** Save one frame (write to a temporary name first then rename, so the reading side never reads a partial frame) */
 export async function storeExportFrame(root, resultKey, frame, png) {
-  if (!KEY_RE.test(String(resultKey))) throw fail(`导出位图的结果键不对:${resultKey}`, { retryable: false });
+  if (!KEY_RE.test(String(resultKey))) throw fail(`Wrong result key for bitmap export: ${resultKey}`, { retryable: false });
   const dir = exportFramesDir(root, resultKey);
   await fs.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, `.${frame}.${process.pid}.tmp`);
@@ -145,7 +162,7 @@ export async function storeExportFrame(root, resultKey, frame, png) {
   await fs.rename(tmp, frameFile(dir, frame));
 }
 
-/** 任务的范围(分段号)→ 它盖住的项目帧 `[from, to]`;`header` 是任务 `input.stream` 里带的那几项 */
+/** Task range (segment number) → project frames it covers `[from, to]`; `header` includes the fields from task `input.stream` */
 export function exportTaskFrames(task) {
   const s = task?.input?.stream;
   const from = task?.range?.from, to = task?.range?.to;
@@ -160,12 +177,12 @@ const headerOf = task => {
   return { kind: s.kind, plane: s.plane, clipIds: [s.clipId], fps: s.fps, originFrame: s.originFrame, lastFrame: s.lastFrame, rect: s.rect, offset: s.offset ?? null };
 };
 
-/** 本机这一段已有的帧 → 清单(缺的帧不列)。回 `{ result, readBlob }` */
+/** Existing frames for this segment locally → manifest (missing frames omitted). Returns `{ result, readBlob }` */
 export async function collectExportResult(root, task) {
   const key = task?.resultKey;
-  if (!KEY_RE.test(String(key))) throw fail(`导出位图任务的 resultKey 不对:${key}`, { retryable: false });
+  if (!KEY_RE.test(String(key))) throw fail(`Wrong resultKey for bitmap export task: ${key}`, { retryable: false });
   const span = exportTaskFrames(task);
-  if (!span) throw fail('导出位图任务缺流的形状', { retryable: false });
+  if (!span) throw fail('Bitmap export task is missing the stream shape', { retryable: false });
   const dir = exportFramesDir(root, key);
   const files = new Map();
   const frames = [];
@@ -183,7 +200,7 @@ export async function collectExportResult(root, task) {
   return { result, readBlob: async hash => (files.has(hash) ? fs.readFile(files.get(hash)) : null) };
 }
 
-/** 清单是不是这一段的、而且每一帧都列了 */
+/** Whether the manifest belongs to this segment and lists every frame */
 export function exportResultComplete(body, task) {
   if (!body || typeof body !== 'object' || body.v !== EXPORT_RESULT_VERSION || body.kind !== EXPORT_FRAMES_KIND) return false;
   if (body.resultKey !== task?.resultKey || body.range?.from !== task?.range?.from || body.range?.to !== task?.range?.to) return false;
@@ -198,18 +215,19 @@ export function exportResultComplete(body, task) {
   return true;
 }
 
-/** 推送成功后删掉本机这一段的帧(只给这一次导出用,不留);目录空了一并删 */
+/** Delete frames for this segment locally after successful push (used only for this export, not kept); delete directory if empty */
 export async function dropExportFrames(root, task) {
   const span = exportTaskFrames(task);
   if (!span || !KEY_RE.test(String(task?.resultKey))) return;
   const dir = exportFramesDir(root, task.resultKey);
-  for (let f = span[0]; f <= span[1]; f++) { try { await fs.rm(frameFile(dir, f), { force: true }); } catch { /* 已经没了 */ } }
-  try { await fs.rmdir(dir); } catch { /* 还有别的段的帧 */ }
+  for (let f = span[0]; f <= span[1]; f++) { try { await fs.rm(frameFile(dir, f), { force: true }); } catch { /* Already gone */ } }
+  try { await fs.rmdir(dir); } catch { /* There are frames from other segments */ }
 }
 
 /**
- * 清理过期的导出位图（按保留期 TTL 24 小时清理落盘帧目录与内容库清单；素材服务上的块若支持也一并释放）。
- * 写入新导出位图时顺带触发，也可在定时任务或维护中调用。
+ * Clean up expired export bitmaps (clean on-disk frame directories and content store manifests
+ * based on retention period TTL 24 hours; chunks on asset service are also released if supported).
+ * Triggered incidentally when writing new export bitmaps, or called in scheduled tasks or maintenance.
  */
 export async function sweepExpiredExportFrames(root, { maxAgeMs = EXPORT_FRAMES_TTL_MS, now = Date.now(), content = null, client = null, log = () => {} } = {}) {
   let cleanedDirs = 0, cleanedFrames = 0, cleanedManifests = 0;
@@ -227,9 +245,9 @@ export async function sweepExpiredExportFrames(root, { maxAgeMs = EXPORT_FRAMES_
           await fs.rm(dirPath, { recursive: true, force: true });
           cleanedDirs++;
         }
-      } catch { /* 忽略单个目录的错误 */ }
+      } catch { /* Ignore errors for individual directories */ }
     }
-  } catch { /* 目录可能不存在 */ }
+  } catch { /* Directory might not exist */ }
 
   if (content && typeof content.list === 'function' && typeof content.del === 'function') {
     try {
@@ -248,16 +266,16 @@ export async function sweepExpiredExportFrames(root, { maxAgeMs = EXPORT_FRAMES_
               }
             }
           }
-        } catch { /* 单项失败不中断 */ }
+        } catch { /* Single item failure does not interrupt */ }
       }
-    } catch { /* list 不支持时不处理 */ }
+    } catch { /* Do not process when list is not supported */ }
   }
 
   log?.('export-frames.sweep', { cleanedDirs, cleanedFrames, cleanedManifests });
   return { cleanedDirs, cleanedFrames, cleanedManifests };
 }
 
-/** 导出完成或释放时显式释放特定结果键的本地临时帧与清单 */
+/** Explicitly release local temporary frames and manifests for a specific result key upon export completion or release */
 export async function releaseExportFrames(root, resultKey, { content = null, client = null } = {}) {
   if (!KEY_RE.test(String(resultKey))) return;
   const dir = exportFramesDir(root, resultKey);
@@ -274,7 +292,7 @@ export async function releaseExportFrames(root, resultKey, { content = null, cli
   }
 }
 
-/* ------------------------------------------------------------------ sink(推素材服务、写内容库) */
+/* ------------------------------------------------------------------ sink (push to asset service, write to content store) */
 
 const manifestKey = task => `${task.resultKey}:${task.range.from}-${task.range.to}`;
 
@@ -291,14 +309,18 @@ async function settleLimited(items, limit, work) {
 }
 
 /**
- * 导出位图任务在产物库这一侧的三件事(形状同 `artifact-transfer.mjs` 的 `createAssetSink`,由它转过来):
- *   - `has`:内容库里有这一段的清单、每一帧都列了、块都在素材服务上 → 真(重发的计划不重渲);
- *   - `put`:按本机落盘的帧列清单、逐块推 `px`、清单写内容库,推完删本机的帧;缺帧或推失败回 `{ complete: false }`;
- *   - `resultFor`:`has` 认下的那一份清单。
+ * Three things on the artifact store side for export bitmap tasks (same shape as `createAssetSink`
+ * in `artifact-transfer.mjs`, adapted from it):
+ *   - `has`: The content store has the manifest for this segment, every frame is listed, and all
+ *     chunks are on the asset service → true (re-sent plans are not rerendered);
+ *   - `put`: Builds a manifest from locally persisted frames, pushes `px` chunk by chunk, writes
+ *     the manifest to the content store, and deletes local frames after pushing; returns
+ *     `{ complete: false }` if frames are missing or push fails;
+ *   - `resultFor`: The manifest accepted by `has`.
  */
 export function createExportFramesSink({ root, client, content = null, log = () => {} }) {
   const remembered = new Map();
-  const say = (event, fields) => { try { log?.(event, fields); } catch { /* 日志出错不影响推送 */ } };
+  const say = (event, fields) => { try { log?.(event, fields); } catch { /* Logging errors do not affect pushing */ } };
   let lastSweep = 0;
   const SWEEP_INTERVAL_MS = 10 * 60 * 1000;
   return {
@@ -324,7 +346,7 @@ export function createExportFramesSink({ root, client, content = null, log = () 
         lastSweep = started;
         sweepExpiredExportFrames(root, { maxAgeMs: EXPORT_FRAMES_TTL_MS, now: started, content, client, log }).catch(() => {});
       }
-      const tell = fields => { try { report?.(fields); } catch { /* 诊断回调出错不影响推送 */ } };
+      const tell = fields => { try { report?.(fields); } catch { /* Errors in diagnostic callbacks do not affect push */ } };
       let pushed = 0, bytes = 0, blocks = null;
       const incomplete = (reason, extra = {}) => {
         const out = { complete: false, reason, stats: { blocks, pushed, bytes, ms: Date.now() - started } };
@@ -342,9 +364,9 @@ export function createExportFramesSink({ root, client, content = null, log = () 
         tell({ stage, blocks, pushed, bytes });
         await settleLimited(unique, PUSH_CONCURRENCY, async ([, hash]) => {
           const buf = await readBlob(hash);
-          if (!buf || sha256(buf) !== hash) throw fail(`块 ${hash} 的内容和清单对不上`);
+          if (!buf || sha256(buf) !== hash) throw fail(`Content of chunk ${hash} does not match the manifest`);
           const put = await client.put('px', buf, { ext: 'png' });
-          if (put?.hash && put.hash !== hash) throw fail(`素材服务回的哈希 ${put.hash} 和清单里的 ${hash} 不同`);
+          if (put?.hash && put.hash !== hash) throw fail(`The hash ${put.hash} returned by the asset service differs from ${hash} in the manifest`);
           pushed++; bytes += buf.length;
           tell({ stage, blocks, pushed, bytes });
         });
@@ -355,7 +377,8 @@ export function createExportFramesSink({ root, client, content = null, log = () 
         await dropExportFrames(root, ref);
         return { complete: true, result, stats: { blocks, pushed, bytes, ms: Date.now() - started } };
       } catch (error) {
-        // 素材服务说托管方渲染服务的产物到了容量上限:重试也没用(同 `createAssetSink`)
+        // The asset service reports that host render service artifacts hit the capacity limit:
+        // retrying won't help (same as `createAssetSink`)
         if (error?.status === 507 && error?.body?.error === 'service-quota') throw Object.assign(new Error('service-quota'), { code: 'service-quota', status: 507, retryable: false });
         const code = error?.code ?? error?.status ?? null;
         return incomplete(`${stage}-failed${code !== null ? `:${String(code).slice(0, 40)}` : ''}`, { message: String(error?.message ?? error).slice(0, 200) });

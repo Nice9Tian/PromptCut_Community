@@ -21,37 +21,38 @@ test("generated-only and video-backed card audio replace source entries without 
   assert.equal(plan.find(x => x.clipId === "video-backed").file, undefined, "video source must not double-play beside its generated node");
   assert.equal(plan.find(x => x.clipId === "ordinary").file, "/disk/audio");
   assert.throws(() => buildFfmpegArgs("video.mp4", plan, "out.mp4", 5), /cannot render card audio/);
-  // 只看节点:Node 侧读不到 TSX 定义,kind 是 H2 从定义抄进节点的那一份
+  // Only inspect node: Node side cannot read TSX definitions; kind is the copy H2 copied into the
+  // node from definition
   assert.equal(isCardAudioNode(project, "n1"), true);
-  assert.equal(isCardAudioNode(project, "n3"), false, "kind 不是 audio 的素材效果卡节点不出声");
+  assert.equal(isCardAudioNode(project, "n3"), false, "a media effect card node whose kind is not audio makes no sound");
   assert.equal(isCardAudioNode(project, undefined), false);
 });
 
-test("持久化合成 WAV 保留采样定位，缺文件或无音轨必须报错", () => {
+test("the persisted synthesized WAV keeps sample-accurate positioning; a missing file or a missing audio track must raise an error", () => {
   const clip = { id: "sound", mediaId: "s", start: 17 / 48000, end: 48017 / 48000, mediaOffset: 7 / 48000 };
   const project = {
     media: [{ id: "s", kind: "audio", url: "/@media/s.wav", soundEffect: { reuseKey: "r" } }],
     tracks: [{ id: "t", clips: [clip] }],
   };
   const source = () => "/disk/s.wav";
-  assert.throws(() => buildAudioPlan(project, ".", () => false, source), /合成音效文件缺失/);
-  assert.throws(() => buildAudioPlan(project, ".", () => true, () => null), /合成音效文件缺失/);
+  assert.throws(() => buildAudioPlan(project, ".", () => false, source), /synthesized sound effect file missing/);
+  assert.throws(() => buildAudioPlan(project, ".", () => true, () => null), /synthesized sound effect file missing/);
   const plan = buildAudioPlan(project, ".", () => true, source);
-  assert.equal(plan.length, 1, "只播普通素材一次，不加入素材效果卡音频");
+  assert.equal(plan.length, 1, "plays only the regular media once, without adding the media effect card audio");
   assert.equal(plan[0].soundEffect, true);
   assert.equal(plan[0].start, clip.start);
   assert.equal(plan[0].offset, clip.mediaOffset);
-  assert.throws(() => playableAudioPlan(plan, "ffprobe", () => false), /合成音效无法读取音轨/);
+  assert.throws(() => playableAudioPlan(plan, "ffprobe", () => false), /synthesized sound effect audio track is unreadable/);
   assert.deepEqual(playableAudioPlan(plan, "ffprobe", () => true), plan);
   assert.deepEqual(playableAudioPlan([{ file: "/silent-video.mp4" }], "ffprobe", () => false), []);
   const args = buildFfmpegArgs("v.mp4", plan, "out.mp4", 2);
   assert.match(args[args.indexOf("-filter_complex") + 1], /aresample=48000,adelay=17S:all=1/);
 });
 
-test("只有匹配的 confirmed-missing 音频使用软件内固定 WAV 且从片段起点播放", () => {
+test("only matching confirmed-missing audio uses the fixed WAV built into the software and plays from the clip start", () => {
   const project = {
-    media: [{ id: "gone", kind: "audio", name: "旁白.wav", url: "/@media/original", missingMaterial: {
-      v: 1, mediaId: "gone", original: { kind: "audio", name: "旁白.wav", url: "/@media/original" }, reason: "confirmed-missing", visual: false, audio: true,
+    media: [{ id: "gone", kind: "audio", name: "narration.wav", url: "/@media/original", missingMaterial: {
+      v: 1, mediaId: "gone", original: { kind: "audio", name: "narration.wav", url: "/@media/original" }, reason: "confirmed-missing", visual: false, audio: true,
     } }],
     tracks: [{ id: "audio", clips: [{ id: "lost-clip", mediaId: "gone", start: 4, end: 8, mediaOffset: 53, audioVolume: .4, fadeIn: .2, fadeOut: .3 }] }],
   };
@@ -68,13 +69,13 @@ test("只有匹配的 confirmed-missing 音频使用软件内固定 WAV 且从�
   assert.ok(requireFileExists(plan[0].file));
 });
 
-test("分离的声音引用已确认缺失视频的音轨时仍只计划固定占位人声", () => {
+test("a detached sound that references the audio track of a confirmed-missing video still plans only the fixed placeholder voice", () => {
   const project = {
     media: [
       { id: "video", kind: "video", name: "scene.mp4", url: "/@media/scene", missingMaterial: {
         v: 1, mediaId: "video", original: { kind: "video", name: "scene.mp4", url: "/@media/scene" }, reason: "confirmed-missing", visual: true, audio: true,
       } },
-      { id: "sound", kind: "audio", name: "scene · 声音", url: "/@media/scene", soundOf: "video" },
+      { id: "sound", kind: "audio", name: "scene · sound", url: "/@media/scene", soundOf: "video" },
     ],
     tracks: [{ id: "audio", clips: [{ id: "separated", mediaId: "sound", start: 2, end: 4, mediaOffset: 19 }] }],
   };

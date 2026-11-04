@@ -1,17 +1,25 @@
 /**
- * 内容库模块（契约 `docs/plan/docservice-contract.md` 第 2 节）。
+ * Content store module (contract `docs/plan/docservice-contract.md` Section 2).
  *
- * 按 `(kind, key)` 存小的 JSON 正文：卡片源码、快照清单、渲染清单、事件详情（`docs/plan/cloud-task.md` 组件表）。
- * - `content.put` / `get` / `list`：存、取、按前缀列；
- * - `content.watch`：订阅 `content:<kind>` 频道，之后每次写入都收到 `content.changed`。
+ * Stores small JSON bodies by `(kind, key)`: card source, snapshot manifests, render manifests,
+ * event details (`docs/plan/cloud-task.md` component table).
+ * - `content.put` / `get` / `list`: store, get, list by prefix;
+ * - `content.watch`: subscribe to `content:<kind>` channel, receiving `content.changed` on every
+ *   subsequent write.
  *
- * `card-source` 这一类按键发 `rev`（就是 `cardRev`）：每次 `put` 加一，内容相同也加。其它 `kind` 没有 `rev`。
- * 同一键再写时后写的赢（语义 `docs/semantics/product/document-service.md`「冲突」），
- * 覆盖方看 `content.stored`，被覆盖方看频道里 `content.changed.previousActor`，两边都知道。
+ * The `card-source` kind issues a `rev` per key (which is `cardRev`): incremented on each `put`,
+ * even if the content is identical. Other `kind`s do not have a `rev`.
+ * Subsequent writes to the same key follow last-write-wins (semantics
+ * `docs/semantics/product/document-service.md` "Conflicts");
+ * the overwriting side checks `content.stored`, and the overwritten side checks
+ * `content.changed.previousActor` in the channel, so both sides know.
  *
- * 写入者身份取建连时的 principal，消息里自报的 `userId` 一律不认。
- * 每个 `kind` 一条追加日志，第一次用到时回放一次，恢复每个键的最后状态与 `rev`，之后只在内存里维护。
- * 这条连接只传小消息：正文序列化后超过 `maxBodyBytes` 就拒收，不落任何状态。
+ * Writer identity is taken from the connection principal; self-reported `userId` in messages
+ * is never accepted.
+ * Each `kind` has an append log, replayed once upon first use to restore the latest state and
+ * `rev` for each key, and maintained in memory thereafter.
+ * This connection transmits only small messages: if the serialized body exceeds `maxBodyBytes`,
+ * it is rejected and no state is persisted.
  */
 import { createHash } from 'node:crypto';
 import { createMemoryStore } from '../store/index.mjs';
@@ -21,7 +29,7 @@ export const CONTENT_MODULE = 'content';
 export const CONTENT_KINDS = Object.freeze(['card-source', 'snapshot-manifest', 'render-manifest', 'event-detail']);
 export const CONTENT_DEFAULTS = Object.freeze({ MAX_BODY_BYTES: 256 * 1024, MAX_LIST: 1000, MAX_KEY_LENGTH: 512 });
 
-/** 按键发 rev 的类别 */
+/** Kinds that issue a rev per key */
 const REV_KINDS = new Set(['card-source']);
 
 const isReqId = (v) => typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v));
@@ -31,25 +39,25 @@ function bad(detail) { throw new BadMessage(detail); }
 class TooLarge extends Error {}
 
 function checkKind(v) {
-  if (typeof v !== 'string' || !CONTENT_KINDS.includes(v)) bad(`kind 只能是 ${CONTENT_KINDS.join(' / ')}`);
+  if (typeof v !== 'string' || !CONTENT_KINDS.includes(v)) bad(`kind must be one of ${CONTENT_KINDS.join(' / ')}`);
   return v;
 }
 
 function checkKey(v) {
-  if (typeof v !== 'string' || v.length < 1 || v.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) bad('key 必须是 1～512 个字符的字符串');
+  if (typeof v !== 'string' || v.length < 1 || v.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) bad('key must be a string of 1-512 characters');
   return v;
 }
 
 function checkPrefix(v) {
   if (v === undefined || v === null) return '';
-  if (typeof v !== 'string' || v.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) bad('prefix 必须是不超过 512 个字符的字符串');
+  if (typeof v !== 'string' || v.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) bad('prefix must be a string of at most 512 characters');
   return v;
 }
 
-/** `session` 可选（同项目版本模块）：没给记为 null；给了就得是 1～128 个字符的字符串 */
+/** Optional `session` (same as project version module): null if omitted; 1-128 chars if provided */
 function checkSession(v) {
   if (v === undefined || v === null) return null;
-  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad('session 必须是 1～128 个字符的字符串');
+  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad('session must be a string of 1-128 characters');
   return v;
 }
 
@@ -58,7 +66,7 @@ const streamOf = (kind) => `content/${kind}`;
 const channelOf = (kind) => `content:${kind}`;
 const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** 把 rev（只有按键发 rev 的类别才有）加进消息 */
+/** Add rev (present only for kinds that issue a rev per key) to the message */
 function withRev(message, kind, rev) {
   if (REV_KINDS.has(kind)) message.rev = rev;
   return message;
@@ -67,18 +75,18 @@ function withRev(message, kind, rev) {
 /**
  * @param {object} [options]
  * @param {{ append(stream: string, record: object): void, read(stream: string): object[] }} [options.store]
- *   日志存储（`../store/index.mjs`）；缺省用内存存储，不跨重启
- * @param {() => number} [options.now] 缺省用 `ctx.now()`
- * @param {number} [options.maxBodyBytes] 正文序列化后的上限，缺省 256 KiB
+ *   Log store (`../store/index.mjs`); defaults to in-memory store, does not persist across restarts
+ * @param {() => number} [options.now] Defaults to `ctx.now()`
+ * @param {number} [options.maxBodyBytes] Upper limit on serialized body size, defaults to 256 KiB
  */
 export function contentModule({ store = createMemoryStore(), now, maxBodyBytes = CONTENT_DEFAULTS.MAX_BODY_BYTES } = {}) {
-  /** kind → Map<key, { body, hash, rev, actor, at }>；第一次用到某个 kind 时从日志回放 */
+  /** kind → Map<key, { body, hash, rev, actor, at }>; replayed from log when a kind is first used */
   const kinds = new Map();
   /** connId → principal */
   const principals = new Map();
-  /** connId → 订阅的 kind（最后一次 watch 为准） */
+  /** connId → subscribed kind (last watch takes precedence) */
   const watching = new Map();
-  /** 最近一次拿到的上下文：别的模块代为写入（`putFromModule`）时借它广播 */
+  /** Latest context: borrowed for broadcasting when another module writes on its behalf (`putFromModule`) */
   let lastCtx = null;
 
   const clock = (ctx) => (typeof now === 'function' ? now() : ctx.now());
@@ -103,12 +111,13 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
   }
 
   /**
-   * 写一条（`content.put` 与 `putFromModule` 共用）：校验大小、落日志、改内存，返回回包字段与要广播的消息。
-   * 超过上限抛 TooLarge，什么都不落。
+   * Writes one entry (shared by `content.put` and `putFromModule`): validates size, appends to log,
+   * updates memory, and returns response fields and message to broadcast.
+   * Throws TooLarge if exceeding the limit, persisting nothing.
    */
   function write(ctx, kind, key, bodyIn, actor) {
     const text = JSON.stringify(bodyIn);
-    if (Buffer.byteLength(text, 'utf8') > maxBodyBytes) throw new TooLarge(`body 序列化后超过 ${maxBodyBytes} 字节`);
+    if (Buffer.byteLength(text, 'utf8') > maxBodyBytes) throw new TooLarge(`body exceeds ${maxBodyBytes} bytes after serialization`);
     const items = itemsOf(kind);
     const prev = items.get(key);
     const hash = sha256(text);
@@ -119,7 +128,7 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
     record.actor = actor;
     record.at = at;
     record.body = body;
-    // 先落日志再改内存：落盘失败时状态不变，核心回 internal
+    // Append to log before updating memory: state remains unchanged on disk failure, core returns internal
     store.append(streamOf(kind), record);
     items.set(key, { body, hash, rev, actor, at });
     const changed = withRev({ type: 'content.changed', kind, key, hash }, kind, rev);
@@ -131,7 +140,7 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
   function put(ctx, connId, msg, reqId) {
     const kind = checkKind(msg.kind);
     const key = checkKey(msg.key);
-    if (!('body' in msg) || msg.body === undefined) bad('缺少 body');
+    if (!('body' in msg) || msg.body === undefined) bad('Missing body');
     const session = checkSession(msg.session);
     const actor = actorOf(principals.get(connId), session);
     const { hash, rev, changed } = write(ctx, kind, key, msg.body, actor);
@@ -160,7 +169,7 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
   }
 
   function watch(ctx, connId, msg, reqId) {
-    if (!Array.isArray(msg.kinds)) bad('kinds 必须是字符串数组');
+    if (!Array.isArray(msg.kinds)) bad('kinds must be an array of strings');
     const wanted = [...new Set(msg.kinds.map(checkKind))];
     const before = watching.get(connId) ?? new Set();
     for (const kind of before) {
@@ -184,7 +193,7 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
     },
 
     disconnect(ctx, connId) {
-      // 频道订阅由核心在断开时清掉
+      // Channel subscriptions are cleaned up by core upon disconnect
       principals.delete(connId);
       watching.delete(connId);
     },
@@ -193,7 +202,7 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
       lastCtx = ctx;
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '内容库不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The content store does not support this message' }, reqId);
       try {
         fn(ctx, connId, msg, reqId);
       } catch (err) {
@@ -211,15 +220,18 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
     },
 
     /**
-     * 同一空间里的别的模块代为写一条（C6.5 第 7 节：工具调用的完整参数进 `event-detail`）。
-     * `actor` 由调用方按它那条连接的 principal 算好（`actor.mjs`），这里不再核对。写完照常广播 `content.changed`。
-     * 校验不过抛 TypeError；超过上限抛错，`err.reason === 'too-large'`，什么都不落。
+     * Another module in the same space writes an entry on caller's behalf (C6.5 Section 7: full tool
+     * call arguments go into `event-detail`).
+     * `actor` is computed by caller from that connection's principal (`actor.mjs`) and not checked here.
+     * Broadcasts `content.changed` as usual after writing.
+     * Throws TypeError if validation fails; throws error with `err.reason === 'too-large'` if exceeding
+     * limit, persisting nothing.
      * @returns {{ kind: string, key: string, hash: string, rev?: number }}
      */
     putFromModule({ kind, key, body, actor } = {}) {
-      if (typeof kind !== 'string' || !CONTENT_KINDS.includes(kind)) throw new TypeError(`kind 只能是 ${CONTENT_KINDS.join(' / ')}`);
-      if (typeof key !== 'string' || key.length < 1 || key.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) throw new TypeError('key 必须是 1～512 个字符的字符串');
-      if (body === undefined) throw new TypeError('缺少 body');
+      if (typeof kind !== 'string' || !CONTENT_KINDS.includes(kind)) throw new TypeError(`kind must be one of ${CONTENT_KINDS.join(' / ')}`);
+      if (typeof key !== 'string' || key.length < 1 || key.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) throw new TypeError('key must be a string of 1-512 characters');
+      if (body === undefined) throw new TypeError('Missing body');
       const ctx = lastCtx ?? { now: () => Date.now(), publish: () => 0 };
       let out;
       try {
@@ -234,6 +246,6 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
   };
 }
 
-/** 别名：与其它工厂的命名习惯对齐 */
+/** Alias: aligned with naming conventions of other factories */
 export const createContentModule = contentModule;
 export default contentModule;

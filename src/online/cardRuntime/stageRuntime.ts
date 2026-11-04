@@ -1,17 +1,24 @@
 /**
- * 舞台这一侧的接线(`docs/plan/online-card-exec-contract.md` 第 2、4、8 节):加载器 + 页面自带模块的表 + 样式注入 +
- * 把载入成功的定义写进舞台自己的注册表 + 图形能力判定 + 出事的卡撤下。**只在跨源舞台里建**(由舞台按需载入;
- * 建不建、执行不执行由舞台自己的执行闸门决定,`online/isolation/execGate.ts`)。
+ * Stage-side wiring (`docs/plan/online-card-exec-contract.md` Sections 2, 4, 8): loader + table of
+ * modules bundled with page + style injection + writing successfully loaded definitions into the
+ * stage's own registry + graphics capabilities determination + taking down troubled cards.
+ * **Created only in cross-origin stages** (loaded on demand by stage; whether to create or
+ * execute is determined by stage's own execution gate, `online/isolation/execGate.ts`).
  *
- *   const rt = createStageCardRuntime({ onStates: (states, graph) => 报给编辑页面, longSide: () => 画幅长边 });
- *   await rt.setBundles(编辑页面经 RPC 发来的包);   // 回每个入口的结论
- *   rt.dispose();                                    // 闸门关上、舞台卸载时
+ *   const rt = createStageCardRuntime({ onStates: (states, graph) => report to editor page, longSide: () => aspect ratio long side });
+ *   await rt.setBundles(bundles sent by editor page via RPC);   // return conclusion for each entry
+ *   rt.dispose();                                                // when gate closes or stage unmounts
  *
- * 运行状态的摊法:载入成功的卡是 `ready`;失败的入口摊到「同步表里源码是这个入口」的那些卡上
- * (同步表由编辑页面经 `setSyncedUserCards` 发来,在舞台自己的注册表里)。载入成功之后再按两样改判:
- *   - 素材效果卡(有 `card()`)而这台舞台的图形能力不够 → `gpu`(4.3;第一次载入素材效果卡时判一次,丢过上下文改判);
- *   - 这张卡在这份文档里出过事(`render/cards/cardTrouble.ts`:输入解不了 → `media`,运行中抛错 → `runtime-error`)。
- * 改判的卡写进注册表的 `setLocalCardExec`,舞台不再挂它们,照原做法贴预渲染结果。
+ * Distribution of runtime states: successfully loaded cards are `ready`; failed entries are
+ * distributed to cards whose source in the sync table matches that entry (sync table is sent
+ * by the editor page via `setSyncedUserCards` into stage's own registry). After successful
+ * loading, re-evaluate based on two criteria:
+ *   - Media effect cards (with `card()`) where this stage lacks graphics capabilities → `gpu`
+ *     (4.3; evaluated once when media effect cards are first loaded, re-evaluated if context lost);
+ *   - This card encountered trouble in this document (`render/cards/cardTrouble.ts`: input
+ *     unresolvable → `media`, threw runtime error → `runtime-error`).
+ * Reclassified cards are written to `setLocalCardExec` in the registry; stage no longer mounts
+ * them, pasting prerender output as before.
  */
 import { setLocalCardExec, setRuntimeCards, syncedUserCards, type CardRunState } from "../../kernel/registry.ts";
 import type { StageGraphCapability } from "../../render/stageRpc.ts";
@@ -24,25 +31,25 @@ import type { CardBundle, LoadResult } from "./protocol.ts";
 
 export interface StageCardRuntime {
   setBundles(bundles: readonly CardBundle[]): Promise<LoadResult[]>;
-  /** 此刻每张同步卡的运行状态(卡片 id → 状态) */
+  /** Current runtime state of each synced card (card id → state) */
   states(): [string, CardRunState][];
-  /** 这台舞台的图形能力;还没载入过素材效果卡是 `unknown` */
+  /** Graphics capabilities of this stage; `unknown` before any media effect card has been loaded */
   graph(): StageGraphCapability;
-  /** 运行中丢了 WebGL 上下文:图形能力改判为不够,素材效果卡全部退回 */
+  /** Lost WebGL context during runtime: graphics capabilities re-evaluated as insufficient, all media effect cards reverted */
   noteContextLost(): void;
-  /** 项目画幅变了:按新的长边重判(最大纹理尺寸那一条) */
+  /** Project aspect ratio changed: re-evaluate by new long side (the maximum texture size rule) */
   refreshGraph(): void;
   dispose(): void;
 }
 
 export interface StageCardRuntimeOptions {
-  /** 运行状态或图形能力变了(整份) */
+  /** Runtime state or graphics capabilities changed (full set) */
   onStates?: (states: [string, CardRunState][], graph: StageGraphCapability) => void;
-  /** 开了 Trusted Types 的舞台给一个走策略的编译函数(见 `loader.ts` 的 `compile`) */
+  /** Stages with Trusted Types enabled provide a policy-based compilation function (see `compile` in `loader.ts`) */
   compile?: CardLoaderOptions["compile"];
-  /** 项目画幅的长边(像素);没有项目时给 1920 */
+  /** Long side of the project aspect ratio (pixels); defaults to 1920 when there is no project */
   longSide?: () => number;
-  /** 单测换掉探测 */
+  /** Swap out probe for unit tests */
   probe?: () => GraphFacts | null;
   doc?: Document;
 }
@@ -56,7 +63,7 @@ export function createStageCardRuntime(opts: StageCardRuntimeOptions = {}): Stag
   let facts: GraphFacts | null | undefined;
   let contextLost = false;
   let graph: StageGraphCapability = "unknown";
-  /** 入口 → 上一次的代(换代时清掉这张卡的出事记录) */
+  /** Entry → previous generation (clears trouble records for this card on generation switch) */
   const generations = new Map<string, string>();
   let lastResults: ReadonlyMap<string, LoadResult> = new Map();
 
@@ -91,7 +98,7 @@ export function createStageCardRuntime(opts: StageCardRuntimeOptions = {}): Stag
     compile: opts.compile,
     onStyles(entry, cssFiles) {
       const previous = [...doc.head.querySelectorAll<HTMLStyleElement>(`style[${STYLE_ATTR}]`)].filter(style => style.getAttribute(STYLE_ATTR) === entry);
-      const anchor = previous[0] ?? null; // 换代保留这张卡在其它卡样式之间的顺序
+      const anchor = previous[0] ?? null; // Preserve this card's order relative to other card styles across generation switches
       for (const css of cssFiles) {
         const style = doc.createElement("style");style.setAttribute(STYLE_ATTR, entry);style.textContent = css;doc.head.insertBefore(style, anchor);
       }
@@ -99,7 +106,7 @@ export function createStageCardRuntime(opts: StageCardRuntimeOptions = {}): Stag
     },
     onCards: (defs) => { setRuntimeCards(defs); },
     onResults(results) {
-      // 换了一代的入口:它那几张卡的出事记录不作数,新一代重新来过
+      // Entries that switched generations: trouble records for their cards are invalidated, start fresh with the new generation
       const fresh: string[] = [];
       for (const [entry, r] of results) {
         if (generations.get(entry) !== r.generation) { generations.set(entry, r.generation); if (r.ok) fresh.push(...r.cardIds); }

@@ -22,40 +22,41 @@ mod chrome_path;
 mod kill_on_close;
 mod proc_lock;
 mod skill_shell;
+mod ui_text;
 
 const EDITOR_URL: &str = "http://127.0.0.1:5210/";
 
-/// 编辑器自己的端口(`EDITOR_URL` 里那个)。
+/// The editor's own port (the one in `EDITOR_URL`).
 const EDITOR_PORT: u16 = 5210;
 
-/// 两个舞台端口 = 编辑器端口 +1 / +2(`server/stage-ports.mjs`)。
+/// The two stage ports = editor port +1 / +2 (`server/stage-ports.mjs`).
 ///
-/// R7 之后缺省就是跨源双舞台,这两个端口由编辑器进程起反向代理
-/// (`server/vite-plugin-stage-ports.ts`,带 `Origin-Agent-Cluster: ?1`)。
-/// 被别的程序占住时编辑器**不会**起不来:它只是不起那一个代理、页面退回同源单舞台,
-/// 两个舞台 iframe 也就掉回一个。所以这里只提醒、不拦启动 —— 拦了反而比网页版更糟。
+/// Since R7 the default is the cross-origin dual stage, and these two ports are served by reverse proxies the editor process starts
+/// (`server/vite-plugin-stage-ports.ts`, with `Origin-Agent-Cluster: ?1`).
+/// When another program occupies one, the editor does **not** fail to start: it merely skips that one proxy and the page falls back to the same-origin single stage,
+/// so the two stage iframes drop back to one. Hence we only warn here and do not block startup: blocking would be worse than the web version.
 const STAGE_PORTS: [u16; 2] = [EDITOR_PORT + 1, EDITOR_PORT + 2];
 
-/// 启动参数里的 .proc 文件(双击文件、右键「打开方式」)。只认真实存在的文件。
+/// The .proc file in the launch arguments (double-clicking the file, right-click "Open with"). Only files that actually exist count.
 fn proc_arg<I: Iterator<Item = String>>(args: I) -> Option<String> {
     args.filter(|a| a.to_lowercase().ends_with(".proc"))
         .find(|a| std::path::Path::new(a).is_file())
 }
 
-/// 启动参数里的 `--quit`:让已经在跑的那一份干净退出(更新补丁 apply-patch.ps1 用)。
-/// 第一个参数是 exe 自己,不算。
+/// `--quit` in the launch arguments: makes the already running instance exit cleanly (used by the update patch apply-patch.ps1).
+/// The first argument is the exe itself and does not count.
 const QUIT_ARG: &str = "--quit";
 
-/// 第二次启动交给已在跑的实例做什么。
+/// What a second launch asks the already running instance to do.
 #[derive(Debug, PartialEq, Eq)]
 enum SecondLaunch {
-    /// 带 `--quit`:走和托盘「关闭」同一条退出路径
+    /// With `--quit`: take the same exit path as the tray "Close"
     Quit,
-    /// 其它:唤回编辑界面,带着 .proc 的话顺带打开
+    /// Otherwise: bring the editor back, and open the .proc as well if one is given
     Open(Option<String>),
 }
 
-/// 解析第二次启动的参数(不含 exe 本身)。`--quit` 优先:更新补丁要的是关掉,不是打开文件。
+/// Parse the arguments of the second launch (excluding the exe itself). `--quit` takes priority: the update patch wants to shut down, not open a file.
 fn second_launch<I: Iterator<Item = String>>(args: I) -> SecondLaunch {
     let args: Vec<String> = args.collect();
     if has_quit_arg(args.iter().cloned()) {
@@ -69,8 +70,8 @@ fn has_quit_arg<I: Iterator<Item = String>>(mut args: I) -> bool {
     args.any(|a| a.eq_ignore_ascii_case(QUIT_ARG))
 }
 
-/// 最小的百分号编码:除了字母数字和 -_.~ 全部转义,前端 URLSearchParams 解得开。
-/// 不引 url 编码的 crate,就这一处用。
+/// Minimal percent-encoding: everything except letters, digits and -_.~ is escaped, and the frontend's URLSearchParams can decode it.
+/// We do not pull in a url-encoding crate, since this is the only place that needs it.
 fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
@@ -82,8 +83,8 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
-/// 编辑器地址。带着要打开的 .proc 时挂成 ?open=<路径>:前端 Shell 会让服务端**先复制一份**
-/// 再读副本,原文件不被占用、不被改。
+/// Editor URL. When there is a .proc to open, it is attached as ?open=<path>: the frontend Shell has the server **make a copy first**
+/// and then read the replica, so the original file is neither held open nor modified.
 fn editor_url_with_open(open: Option<String>) -> String {
     match open {
         Some(p) => format!("{}?open={}", EDITOR_URL, percent_encode(&p)),
@@ -125,7 +126,7 @@ fn desktop_titlebar_command(handle: tauri::AppHandle, command: String) {
     let app_data_dir = match handle.path().app_data_dir() {
         Ok(path) => path,
         Err(e) => {
-            eprintln!("[titlebar] 无法定位应用数据目录: {e}");
+            eprintln!("[titlebar] cannot locate the app data directory: {e}");
             return;
         }
     };
@@ -144,8 +145,8 @@ fn desktop_titlebar_command(handle: tauri::AppHandle, command: String) {
         "reset-pylibs" => {
             let path = app_data_dir.join("pylibs");
             let confirm = rfd::MessageDialog::new()
-                .set_title("PromptCut — 重置 Python 库")
-                .set_description(&format!("会删除 {}，下次转写时需要重新下载引擎，继续吗？", path.display()))
+                .set_title(ui_text::text("PromptCut — Reset Python libraries", &[]))
+                .set_description(ui_text::text("This deletes {0}. The engine has to be downloaded again the next time you transcribe. Continue?", &[&path.display()]))
                 .set_level(rfd::MessageLevel::Warning)
                 .set_buttons(rfd::MessageButtons::OkCancel)
                 .show();
@@ -153,20 +154,20 @@ fn desktop_titlebar_command(handle: tauri::AppHandle, command: String) {
                 match fs::remove_dir_all(&path) {
                     Ok(_) => rfd::MessageDialog::new()
                         .set_title("PromptCut")
-                        .set_description("已删除，下次使用语音识别时会重新下载")
+                        .set_description(ui_text::text("Deleted. It is downloaded again the next time you use speech recognition.", &[]))
                         .set_level(rfd::MessageLevel::Info)
                         .show(),
                     Err(e) => rfd::MessageDialog::new()
-                        .set_title("PromptCut — 删除失败")
-                        .set_description(&format!("删除失败: {e}"))
+                        .set_title(ui_text::text("PromptCut — Deletion failed", &[]))
+                        .set_description(ui_text::text("Deletion failed: {0}", &[&e]))
                         .set_level(rfd::MessageLevel::Error)
                         .show(),
                 };
             }
         }
         "about" => show_about(&handle, &runtime_dir),
-        // 标题栏菜单的「退出」和托盘、悬浮窗右键的「关闭」走同一条路(background.rs):
-        // 收起状态下先把主窗挪回原位再退,sidecar 清理与锁释放在 RunEvent 里做
+        // The title bar menu's "Quit" and the tray / floating window right-click "Close" take the same path (background.rs):
+        // When collapsed, first move the main window back to its original position and then quit; sidecar cleanup and lock release are done in RunEvent
         "quit" => {
             background::dispatch(&handle, background::UiEvent::QuitRequested);
         }
@@ -174,16 +175,16 @@ fn desktop_titlebar_command(handle: tauri::AppHandle, command: String) {
     }
 }
 
-/* ── .proc 独占锁的三个命令 ──────────────────────────────────────────────
+/* ── The three commands for the .proc exclusive lock ──────────────────────────────────────────────
  *
- * 真正的独占只有外壳做得到:Windows 的共享模式由内核管,进程一死内核就收走。
- * Node 那半(server/vite-plugin-skill-state.ts)负责原子创建锁文件和 pid 兜底,
- * 内核那一层的句柄由这里握着 —— 两半合起来才既挡得住并发、又不会因为进程被强杀
- * 而留下一把永远解不开的锁。锁的是旁路的 `<name>.proc.lock`,不是 .proc 本体
- * (锁本体会把自家 sidecar 的读写一起挡掉,见 proc_lock.rs 的说明)。
+ * True exclusivity can only be done by the shell: Windows share modes are managed by the kernel, and the kernel reclaims them as soon as the process dies.
+ * The Node half (server/vite-plugin-skill-state.ts) handles atomic creation of the lock file and the pid fallback,
+ * while the kernel-level handle is held here. Only the two halves together can both block concurrent access and avoid, when a process is force-killed,
+ * leaving behind a lock that can never be released. What gets locked is the side file `<name>.proc.lock`, not the .proc itself
+ * (locking the file itself would also block our own sidecar's reads and writes; see the explanation in proc_lock.rs).
  *
- * 前端在浏览器里跑时这几个命令不存在,那边只走 Node 那半 —— 够用,只是少了
- * 「被强杀也能自动解锁」这一层。
+ * These commands do not exist when the frontend runs in a browser, where only the Node half is used: that is enough, it just lacks
+ * the "auto-unlock even when force-killed" layer.
  */
 
 #[tauri::command]
@@ -215,7 +216,7 @@ fn status_eval_script(message: &str) -> String {
          if(!e){{e=document.createElement('div');e.id='pc-service-error';e.setAttribute('role','alert');\
          e.style.cssText='position:fixed;left:16px;right:16px;bottom:16px;z-index:2147483647;padding:16px;background:#842323;color:white;white-space:pre-wrap;font:14px sans-serif';\
          document.body.appendChild(e);}}\
-         e.textContent=m+'\\n编辑器中的未保存内容仍然保留，请勿直接刷新页面。';}}\
+         e.textContent=m+'\\nUnsaved content in the editor is still preserved. Do not refresh the page directly.';}}\
          if(document.body){{w();}}else{{document.addEventListener('DOMContentLoaded',w,{{once:true}});}}}})()",
         literal
     )
@@ -224,7 +225,7 @@ fn status_eval_script(message: &str) -> String {
 /// Try a raw HTTP GET to `127.0.0.1:<port>` and return the response body
 /// (up to 64 KiB) if the connection succeeds within `timeout`.
 ///
-/// `Err` 就是「连不上」,也就是这个端口没人占 —— 舞台端口的预检靠的正是这一条。
+/// `Err` means "cannot connect", i.e. nobody occupies this port: this is exactly what the stage port pre-check relies on.
 fn probe_port_at(port: u16, timeout: Duration) -> Result<String, String> {
     let addr = format!("127.0.0.1:{port}");
     let mut stream =
@@ -256,12 +257,12 @@ fn probe_port_at(port: u16, timeout: Duration) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&buf[..total]).to_string())
 }
 
-/// 编辑器端口的预检(老调用点的形状没变)。
+/// Pre-check of the editor port (old call sites see the same shape as before).
 fn probe_port(timeout: Duration) -> Result<String, String> {
     probe_port_at(EDITOR_PORT, timeout)
 }
 
-/// 哪几个舞台端口已经被占住了。连得上就算被占。
+/// Which stage ports are already occupied. A port that accepts a connection counts as occupied.
 fn occupied_stage_ports(timeout: Duration) -> Vec<u16> {
     STAGE_PORTS
         .iter()
@@ -302,26 +303,26 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             match second_launch(args.into_iter().skip(1)) {
-                // `promptcut.exe --quit`(更新补丁):和托盘「关闭」同一条路 —— 收起状态下先把
-                // 主窗挪回原位再退,sidecar 清理与 .proc 锁释放在 RunEvent 里做
+                // `promptcut.exe --quit` (update patch): the same path as the tray "Close"; when collapsed, first move the
+                // main window back to its original position and then quit; sidecar cleanup and .proc lock release are done in RunEvent
                 SecondLaunch::Quit => {
                     background::dispatch(app, background::UiEvent::QuitRequested);
                 }
                 SecondLaunch::Open(proc) => {
-                    // 第二次启动 = 打开编辑界面(收起在后台的话挪回来)
+                    // A second launch = open the editor (move it back if it is collapsed in the background)
                     background::dispatch(app, background::UiEvent::OpenRequested);
-                    // 多半是双击了一个 .proc:交给已经开着的窗口去开
-                    // (前端收到 pc-open-file 后走「复制一份再读」那条路)
+                    // Most likely a .proc was double-clicked: hand it to the window that is already open
+                    // (after the frontend receives pc-open-file it takes the "copy first, then read" path)
                     if let Some(p) = proc {
                         let _ = app.emit("pc-open-file", p);
                     }
                 }
             }
         }))
-        // 窗口边框不交给 window-state 记:旧版本存下的 "decorated": true 会在启动时
-        // 把系统标题栏装回来,和皮肤标题栏叠成两条。边框只由建窗口时的 decorations(false) 决定。
-        // 「可见」也不记:后台运行退出前会先把主窗藏起来再挪回原位(background.rs 的 exit),
-        // 记下「不可见」的话下次启动主窗就出不来了。主窗启动时总是显示。
+        // Do not leave the window border to window-state: a "decorated": true saved by an old version would, at startup,
+        // bring the system title bar back, stacking it with the skin title bar into two bars. The border is decided only by decorations(false) when the window is created.
+        // "Visible" is not recorded either: before exiting, background mode first hides the main window and then moves it back to its original position (exit in background.rs),
+        // and if "invisible" were recorded, the main window would never show up on the next launch. The main window is always shown at startup.
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
@@ -337,9 +338,9 @@ pub fn run() {
     // -- Setup ------------------------------------------------------------
     builder
         .manage(proc_lock::ProcLocks::new())
-        // 后台运行的状态机(编辑界面开着 / 收起 / 正在退出),见 background.rs
+        // The background-mode state machine (editor open / collapsed / quitting), see background.rs
         .manage(background::Background::new())
-        // agent 浏览器的调试端口启动时就定下来:主窗口和子 webview 的启动参数都要带它
+        // The agent browser's debugging port is fixed at startup: both the main window's and the child webview's launch arguments must carry it
         .manage(agent_webview::AgentBrowser::new(agent_webview::pick_port()))
         .invoke_handler(tauri::generate_handler![
             account_vault::account_bridge,
@@ -354,14 +355,14 @@ pub fn run() {
             chrome_color::menu_bar_color
         ])
         .setup(|app| {
-            // 带 `--quit` 却走到了这里,说明没有别的实例在跑(有的话单实例插件已经把参数交过去、
-            // 本进程早退了)。要退出的东西不在,也就不该反过来起一份新的。
+            // Reaching here with `--quit` means no other instance is running (if there were one, the single-instance plugin would already have passed the arguments on and
+            // this process would have exited early). There is nothing to quit, so it must not start a new instance instead.
             if has_quit_arg(env::args().skip(1)) {
                 std::process::exit(0);
             }
             let handle = app.handle().clone();
 
-            // 双击 .proc 启动时,把路径挂在编辑器地址上带给前端
+            // When launched by double-clicking a .proc, attach the path to the editor URL to pass it to the frontend
             let port_override = env::var("PROMPTCUT_ACCOUNT_TEST_EDITOR_PORT").ok();
             let editor_port = account_editor_port(&handle.config().identifier, port_override.as_deref())
                 .map_err(std::io::Error::other)?;
@@ -385,9 +386,7 @@ pub fn run() {
                     // Port is occupied by something else.
                     rfd::MessageDialog::new()
                         .set_title("PromptCut")
-                        .set_description(&format!(
-                            "端口被占用\n\n端口 {editor_port} 被别的程序占用，请关掉它再启动。"
-                        ))
+                        .set_description(ui_text::text("Port in use\n\nPort {0} is used by another program. Close it and start again.", &[&editor_port]))
                         .set_level(rfd::MessageLevel::Error)
                         .show();
                     std::process::exit(1);
@@ -395,12 +394,12 @@ pub fn run() {
             }
 
             /*
-             * 两个舞台端口的预检(R7)。只在「这一份要自己起编辑器」时查 ——
-             * 已经有一份 PromptCut 在跑的话,5211 / 5212 本来就该是它占着的。
+             * Pre-check of the two stage ports (R7). Only done when "this instance has to start the editor itself":
+             * If a PromptCut is already running, 5211 / 5212 are supposed to be held by it anyway.
              *
-             * 被占**不拦启动**:编辑器那一侧只是不起那一个反向代理、页面退回同源单舞台,
-             * 照样能用。拦掉反而比网页版更糟。但要点名是哪一个,不然用户只会看到
-             * 「预览怎么变慢了」而无从查起。
+             * Being occupied **does not block startup**: the editor side just does not start that one reverse proxy, and the page falls back to the same-origin single stage,
+             * which still works. Blocking would be worse than the web version. But it must say which one, otherwise the user will only see
+             * "why did the preview get slower" with no way to investigate.
              */
             if !existing_instance {
                 let busy = if editor_port == EDITOR_PORT { occupied_stage_ports(Duration::from_millis(400)) }
@@ -410,13 +409,12 @@ pub fn run() {
                         .iter()
                         .map(|p| p.to_string())
                         .collect::<Vec<_>>()
-                        .join("、");
+                        .join(", ");
                     rfd::MessageDialog::new()
                         .set_title("PromptCut")
-                        .set_description(&format!(
-                            "舞台端口被占用\n\n端口 {list} 被别的程序占用。\n\n\
-                             PromptCut 照常启动，但预览舞台会退回同源单舞台模式（后台预渲染舞台用不上，\
-                             拖动和播放会比平时吃力）。关掉占用这些端口的程序再重启就能恢复。"
+                        .set_description(ui_text::text(
+                            "Stage ports in use\n\nPorts {0} are used by another program.\n\nPromptCut starts as usual, but the preview falls back to a single stage on one origin (the background prerender stage cannot be used, so scrubbing and playback are heavier than usual). Close the programs using these ports and restart to restore it.",
+                            &[&list],
                         ))
                         .set_level(rfd::MessageLevel::Warning)
                         .show();
@@ -455,12 +453,12 @@ pub fn run() {
                 // The webview owns the CodeX-style title bar now. Keeping the native
                 // frame hidden also prevents a second, OS-colored menu/title strip.
                 .decorations(false)
-                // 必须关掉:开着的话 WebView2 会装上 OS 级文件拖放处理,把页面里的 HTML5
-                // 拖放事件整个吃掉——素材库拖卡片到时间轴在浏览器里正常、装成桌面版就拖不动,
-                // 就是这个原因。本应用不用 Tauri 的文件拖放事件(要接系统拖入文件时,
-                // 关掉之后走网页标准的 dataTransfer.files 即可)。
+                // This must be turned off: if enabled, WebView2 installs an OS-level file drag-and-drop handler that swallows the page's HTML5
+                // drag-and-drop events entirely: dragging a card from the media library to the timeline works in the browser but not once installed as the desktop app,
+                // and that is exactly why. This app does not use Tauri's file drag-and-drop events (to accept files dragged in from the system,
+                // use the standard web dataTransfer.files once it is off).
                 .disable_drag_drop_handler()
-                // 主窗口和 agent 子 webview 共用一个 WebView2 环境,启动参数必须一样(含调试端口)
+                // The main window and the agent child webview share one WebView2 environment, so their launch arguments must be identical (including the debugging port)
                 .additional_browser_args(&agent_webview::browser_args(
                     handle.state::<agent_webview::AgentBrowser>().port,
                 ))
@@ -487,25 +485,25 @@ pub fn run() {
                 })
                 .build()?;
 
-            // agent 的浏览器:主窗口里的子 webview,一开始就建好(藏在客户区外面),
-            // Node 那边连调试端口时它必须已经在。建不出来只记日志,不影响编辑器本身。
+            // The agent's browser: a child webview inside the main window, created right at the start (hidden outside the client area),
+            // it must already exist when the Node side connects to the debugging port. If it cannot be created, only log it; the editor itself is unaffected.
             if let Err(e) = agent_webview::ensure(&handle) {
-                eprintln!("[promptcut] agent webview 没建起来: {e}");
+                eprintln!("[promptcut] agent webview was not created: {e}");
             }
 
-            // ── 后台运行:托盘图标、悬浮窗、关窗不退出(background.rs、skill_shell.rs) ──
-            // 托盘或悬浮窗右键菜单的点击都从 app 级的菜单事件进来
+            // ── Background mode: tray icon, floating window, closing the window does not quit (background.rs, skill_shell.rs) ──
+            // Clicks on the tray or floating window right-click menu all arrive through the app-level menu event
             background::install_menu_handler(&handle);
-            // 托盘建不出来只记日志:还有悬浮窗能叫回编辑界面、右键关闭
+            // If the tray cannot be created, only log it: the floating window can still bring the editor back, and right-click Close still works
             if let Err(e) = background::install_tray(&handle) {
-                eprintln!("[promptcut] 托盘图标没建起来: {e}");
+                eprintln!("[promptcut] tray icon was not created: {e}");
             }
-            // 盯 SKILL 状态文件(变成 SKILL 时收起编辑界面),收起时给悬浮窗推进度
+            // Watch the SKILL state file (collapse the editor when it becomes SKILL) and push progress to the floating window while collapsed
             skill_shell::spawn_watcher(handle.clone());
             let close_handle = handle.clone();
             win.on_window_event(move |event| {
-                // 点关闭不是退出,是收起编辑界面转入后台 —— 页面、sidecar、Agent 的连接都还在跑。
-                // 只有托盘或悬浮窗右键「关闭」(以及标题栏菜单「退出」)才真退出。
+                // Clicking close is not quitting: it collapses the editor into the background, and the page, the sidecar and the Agent connections all keep running.
+                // Only "Close" from the tray or floating window right-click (and "Quit" from the title bar menu) really quits.
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     if background::on_close_requested(&close_handle) {
                         api.prevent_close();
@@ -552,7 +550,7 @@ pub fn run() {
             envs.insert("PROMPTCUT_PYLIBS".into(), pylibs_dir.to_string_lossy().into_owned());
             envs.insert("PROMPTCUT_MODELS".into(), models_dir.to_string_lossy().into_owned());
             envs.insert("PROMPTCUT_DATA_DIR".into(), app_data_dir.to_string_lossy().into_owned());
-            // agent 浏览器就是壳里的子 webview:把调试端口交给 Node,那边 puppeteer 直接连
+            // The agent browser is just the child webview inside the shell: pass the debugging port to Node, and puppeteer there connects directly
             let agent_port = handle.state::<agent_webview::AgentBrowser>().port;
             if agent_port != 0 {
                 envs.insert("PROMPTCUT_AGENT_CDP".into(), agent_port.to_string());
@@ -562,7 +560,7 @@ pub fn run() {
             // ── Spawn sidecar ───────────────────────────────────────
             let app_dir = runtime_dir.join("app");
             let sidecar_cmd = handle.shell().sidecar("node").map_err(|e| {
-                let msg = format!("无法创建 sidecar 命令: {e}");
+                let msg = ui_text::text("Could not create the sidecar command: {0}", &[&e]);
                 rfd::MessageDialog::new()
                     .set_title("PromptCut")
                     .set_description(&msg)
@@ -583,7 +581,7 @@ pub fn run() {
                 .envs(envs);
 
             let (mut rx, child) = sidecar_cmd.spawn().map_err(|e| {
-                let msg = format!("无法启动 Node 进程: {e}");
+                let msg = ui_text::text("Could not start the Node process: {0}", &[&e]);
                 rfd::MessageDialog::new()
                     .set_title("PromptCut")
                     .set_description(&msg)
@@ -596,13 +594,13 @@ pub fn run() {
             let pid = child.pid();
             handle.manage(SidecarPid(Mutex::new(Some(pid))));
 
-            // 再上一道内核级的保险:把 sidecar 放进一个 kill-on-close 的 job object,
-            // 外壳进程无论怎么死(崩溃、任务管理器、安装器强杀)都会连它一起带走。
-            // 下面那句 taskkill 只在正常退出时跑得到,强杀那条路上一行代码都执行不了 ——
-            // 留下的孤儿 ffmpeg 会锁住 runtimefmpegfmpeg.exe,让下次安装写不进去。
-            // 失败只记日志:少这层保护就是回到从前,不该因此起不来。
+            // One more kernel-level safeguard: put the sidecar into a kill-on-close job object,
+            // so that however the shell process dies (crash, Task Manager, forced kill by the installer) it takes the sidecar with it.
+            // The taskkill below only runs on a normal exit; on the forced-kill path not a single line of code can execute:
+            // the orphaned ffmpeg left behind locks runtimefmpegfmpeg.exe and makes the next install unable to write to it.
+            // On failure only log it: lacking this layer just returns to the old behavior and must not stop the app from starting.
             if let Err(e) = kill_on_close::attach_to_kill_on_close_job(pid) {
-                eprintln!("[sidecar] kill-on-close 保护没挂上,非正常退出可能留下孤儿进程: {e}");
+                eprintln!("[sidecar] kill-on-close protection was not attached; an abnormal exit may leave orphan processes: {e}");
             }
 
             // ── Logging + terminated detection ──────────────────────
@@ -640,10 +638,7 @@ pub fn run() {
                                 .code
                                 .map(|c| c.to_string())
                                 .unwrap_or_else(|| "unknown".into());
-                            let msg = format!(
-                                "Node 已退出（code={}），请查看日志:\n{}",
-                                code_str, log_path_str
-                            );
+                            let msg = ui_text::text("Node exited (code={0}). See the log:\n{1}", &[&code_str, &log_path_str]);
                             if let Some(f) = log_file.as_mut() {
                                 let _ = writeln!(f, "[terminated] code={code_str}");
                             }
@@ -669,10 +664,7 @@ pub fn run() {
                         break;
                     }
                     if start.elapsed() > Duration::from_secs(90) {
-                        let msg = format!(
-                            "启动超时，请查看日志:\n{}",
-                            log_path_poll.to_string_lossy()
-                        );
+                        let msg = ui_text::text("Startup timed out. See the log:\n{0}", &[&log_path_poll.to_string_lossy()]);
                         let _ = win_poll.eval(&status_eval_script(&msg));
                         break;
                     }
@@ -692,9 +684,9 @@ pub fn run() {
         .expect("failed to build tauri application")
         .run(|handle, event| match event {
             RunEvent::ExitRequested { .. } | RunEvent::Exit => {
-                // 句柄本来在进程退出时就会被内核收走,这里显式放一次是为了「正常退出」
-                // 这条路上锁文件能被 Node 那半删掉(它只删自己 pid 写的那份,而删的前提
-                // 是没人握着句柄)。不放的话下一次启动要走 pid 兜底那条弱判据。
+                // The kernel would reclaim the handle at process exit anyway; releasing it explicitly here is for the "normal exit"
+                // path, where the lock file can be deleted by the Node half (it only deletes the one written by its own pid, and deletion requires that
+                // nobody holds the handle). If we do not release it, the next launch has to fall back to the weak pid criterion.
                 proc_lock::release_all(&handle.state::<proc_lock::ProcLocks>());
                 kill_sidecar_tree(handle);
             }
@@ -752,8 +744,8 @@ fn show_about(handle: &tauri::AppHandle, runtime_dir: &PathBuf) {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
 
-    let unknown = "未知".to_string();
-    let not_installed = "未安装".to_string();
+    let unknown = ui_text::text("unknown", &[]);
+    let not_installed = ui_text::text("not installed", &[]);
 
     let app_ver = v.app.as_deref().unwrap_or(&unknown);
     let node_ver = v.node.as_deref().unwrap_or(&unknown);
@@ -761,18 +753,13 @@ fn show_about(handle: &tauri::AppHandle, runtime_dir: &PathBuf) {
     let ffmpeg_ver = v.ffmpeg.as_deref().unwrap_or(&unknown);
     let python_ver = v.python.as_deref().unwrap_or(&not_installed);
 
-    let text = format!(
-        "PromptCut\n\n\
-         壳版本: {shell_version}\n\
-         应用: {app_ver}\n\
-         Node: {node_ver}\n\
-         Chrome: {chrome_ver}\n\
-         FFmpeg: {ffmpeg_ver}\n\
-         Python: {python_ver}"
+    let text = ui_text::text(
+        "PromptCut\n\nShell version: {0}\nApp: {1}\nNode: {2}\nChrome: {3}\nFFmpeg: {4}\nPython: {5}",
+        &[&shell_version, &app_ver, &node_ver, &chrome_ver, &ffmpeg_ver, &python_ver],
     );
 
     rfd::MessageDialog::new()
-        .set_title("关于 PromptCut")
+        .set_title(ui_text::text("About PromptCut", &[]))
         .set_description(&text)
         .set_level(rfd::MessageLevel::Info)
         .show();
@@ -817,14 +804,14 @@ mod tests {
     fn quit_arg_wins() {
         assert_eq!(second_launch(args(&["--quit"])), SecondLaunch::Quit);
         assert_eq!(second_launch(args(&["--QUIT"])), SecondLaunch::Quit);
-        // 同时带着 .proc 也是退出:更新补丁要的是关掉
+        // Carrying a .proc as well is still a quit: the update patch wants it shut down
         assert_eq!(second_launch(args(&[r"C:\x\a.proc", "--quit"])), SecondLaunch::Quit);
     }
 
     #[test]
     fn plain_second_launch_opens() {
         assert_eq!(second_launch(args(&[])), SecondLaunch::Open(None));
-        // 不存在的 .proc 不算(proc_arg 只认真实文件);像 --quit 却不是的参数也不算
+        // A .proc that does not exist does not count (proc_arg only accepts real files); an argument that looks like --quit but is not one does not count either
         assert_eq!(second_launch(args(&[r"Z:\nope\a.proc", "--quitx", "quit"])), SecondLaunch::Open(None));
     }
 

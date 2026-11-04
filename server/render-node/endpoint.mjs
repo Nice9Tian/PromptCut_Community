@@ -1,21 +1,25 @@
 /**
- * 文档服务端点解析与服务地址订阅（分布式预渲染 M5a，契约 `docs/plan/render-queue-contract.md` G.7；
- * M5b 按 J.3 加了编辑器里挂的文档服务）。
+ * Document service endpoint resolution and service address subscription (distributed prerender M5a,
+ * contract `docs/plan/render-queue-contract.md` G.7; M5b added the document service mounted in the
+ * editor per J.3).
  *
- * resolveDocservice      按顺序探活（远端 → 编辑器 → 本机回环），定下节点接哪个文档服务，或者回落本机（offline）
- * watchServiceEndpoints  经一条 `createWsEndpoint` 端点订阅服务地址登记（G.6 的 `service.watch`）
+ * resolveDocservice      Probes in order (remote → editor → local loopback) to determine which
+ *                        document service the node connects to, or falls back to local (offline)
+ * watchServiceEndpoints  Subscribes to service address registrations via a `createWsEndpoint`
+ *                        endpoint (`service.watch` in G.6)
  *
- * 不读文件系统、不引任何模块；环境变量和 `fetch` 都由调用方注入（缺省取 `process.env`、全局 `fetch`）。
+ * Does not read the file system or import any modules; environment variables and `fetch` are
+ * injected by the caller (defaults to `process.env` and global `fetch`).
  */
 import { PROTOCOL } from './ws-transport.mjs';
 
 const DEFAULT_PORT = 8787;
 
-/** 编辑器里挂的文档服务的路径与健康检查路由（`docservice-contract.md` 第 5 节） */
+/** Path and health-check route for document service mounted in the editor (`docservice-contract.md` Section 5) */
 const EDITOR_WS_PATH = '/docservice';
 const EDITOR_HEALTH_PATH = '/api/docservice/healthz';
 
-/** 独立文档服务的候选：协议换成 http: / https:，`/healthz` 取在源站根上（G.11）；不是 ws: / wss: 回 null */
+/** Candidate for standalone doc service: protocol changed to http: / https:, `/healthz` at origin root (G.11); null if not ws: / wss: */
 function healthUrlOfWs(wsUrl) {
   try {
     const parsed = new URL(wsUrl);
@@ -28,9 +32,11 @@ function healthUrlOfWs(wsUrl) {
 }
 
 /**
- * 编辑器里挂的文档服务（J.3、C6.4 第 9 节第 10 条）：从编辑器地址（`http:` / `https:`）推出
- * `ws(s)://<编辑器源>/docservice`，探活用 `GET <编辑器源>/api/docservice/healthz`。
- * 编辑器地址只取源站，带的路径忽略。不是 http: / https: 回 null。
+ * Document service mounted in the editor (J.3, C6.4 Section 9, item 10): derives
+ * `ws(s)://<editor-origin>/docservice` from editor address (`http:` / `https:`), and probes with
+ * `GET <editor-origin>/api/docservice/healthz`.
+ * Only the origin is taken from the editor address; any included path is ignored. Returns null if
+ * not http: / https:.
  */
 function editorCandidateOf(editorUrl) {
   try {
@@ -44,7 +50,8 @@ function editorCandidateOf(editorUrl) {
 }
 
 /**
- * 单个候选的探活：GET 健康检查地址，超时 `timeoutMs`；`ok === true` 且 `protocol === 'promptcut.v1'` 才算可用。
+ * Liveness probe for a single candidate: GET health-check URL with timeout `timeoutMs`; considered
+ * available only when `ok === true` and `protocol === 'promptcut.v1'`.
  * @returns {Promise<{ ok: true, health: object } | { ok: false, reason: string }>}
  */
 async function probe(target, fetchImpl, timeoutMs) {
@@ -76,18 +83,20 @@ async function probe(target, fetchImpl, timeoutMs) {
 }
 
 /**
- * 定下节点接哪个文档服务。顺序（G.7，M5b 按 J.3 加了第 2 项）：
- *   1. `PROMPTCUT_DOCSERVICE_URL`（`ws://` 或 `wss://`），可用 → `remote`；
- *   2. 编辑器里挂的文档服务：由 `PROMPTCUT_EDITOR_URL`（`http://` 或 `https://`）推出
- *      `ws(s)://<编辑器源>/docservice`，探活 `GET <编辑器源>/api/docservice/healthz`，可用 → `editor`；
- *   3. `ws://127.0.0.1:${PROMPTCUT_DOCSERVICE_PORT ?? 8787}`，可用 → `local`；
- *   4. 都不行 → `offline`，调用方回落本机 preload 路径。
- * 第 1、2 项没设（或是空串）就不试，`tried` 里也没有它；设了但地址不合法的记 `bad-url`，继续试下一项。
+ * Determines which document service the node connects to. Order (G.7; M5b added item 2 per J.3):
+ *   1. `PROMPTCUT_DOCSERVICE_URL` (`ws://` or `wss://`), available → `remote`;
+ *   2. Document service mounted in the editor: derives `ws(s)://<editor-origin>/docservice` from
+ *      `PROMPTCUT_EDITOR_URL` (`http://` or `https://`), probes
+ *      `GET <editor-origin>/api/docservice/healthz`, available → `editor`;
+ *   3. `ws://127.0.0.1:${PROMPTCUT_DOCSERVICE_PORT ?? 8787}`, available → `local`;
+ *   4. None work → `offline`; caller falls back to local preload path.
+ * If items 1 or 2 are unset (or empty strings), they are not tried and not included in `tried`; if
+ * set but invalid, recorded as `bad-url`, and continues to the next item.
  *
  * @param {object} [options]
- * @param {Record<string, string | undefined>} [options.env]  缺省 `process.env`
- * @param {typeof fetch} [options.fetch]  缺省全局 `fetch`
- * @param {number} [options.timeoutMs]  每个候选的探活超时，缺省 3000
+ * @param {Record<string, string | undefined>} [options.env]  Defaults to `process.env`
+ * @param {typeof fetch} [options.fetch]  Defaults to global `fetch`
+ * @param {number} [options.timeoutMs]  Liveness probe timeout for each candidate, defaults to 3000
  * @returns {Promise<{ mode: 'remote' | 'editor' | 'local' | 'offline', url?: string, health?: object, tried: { url: string, ok: boolean, reason?: string }[] }>}
  */
 export async function resolveDocservice({
@@ -122,20 +131,22 @@ export async function resolveDocservice({
 }
 
 /**
- * 订阅服务地址登记：每次 `onOpen` 发一次 `service.watch { kinds }`；收到 `service.endpoints` 就调
- * `onChange(endpoints)`（G.6：推送一律是全量）。
- * 调用时端点已经连上的，立刻补发一次 `service.watch`（否则要等到下次重连才订阅上）。
+ * Subscribes to service address registrations: sends `service.watch { kinds }` on each `onOpen`;
+ * calls `onChange(endpoints)` upon receiving `service.endpoints` (G.6: pushes are always full).
+ * If the endpoint is already connected when called, immediately re-sends `service.watch` (otherwise
+ * subscription waits until next reconnect).
  *
  * @param {{ send: (message: object) => boolean, onMessage: (h: (m: object) => void) => void, onOpen: (h: () => void) => void, connected?: boolean }} wsEndpoint
  * @param {string[] | 'all'} kinds
  * @param {(endpoints: { announcerId: string, kind: string, urls: string[], meta: any, since: number }[]) => void} onChange
- * @returns {() => void} stop：之后不再发订阅、不再调 `onChange`（端点没有撤销处理器的接口，这里靠标志位）
+ * @returns {() => void} stop: no further subscriptions sent and `onChange` no longer called
+ *   (endpoints lack an API to remove handlers; uses a flag here)
  */
 export function watchServiceEndpoints(wsEndpoint, kinds, onChange) {
   if (kinds !== 'all' && !(Array.isArray(kinds) && kinds.every((k) => typeof k === 'string'))) {
-    throw new TypeError("watchServiceEndpoints：kinds 必须是字符串数组或 'all'");
+    throw new TypeError("watchServiceEndpoints: kinds must be a string array or 'all'");
   }
-  if (typeof onChange !== 'function') throw new TypeError('watchServiceEndpoints：onChange 必须是函数');
+  if (typeof onChange !== 'function') throw new TypeError('watchServiceEndpoints: onChange must be a function');
   const watchKinds = kinds === 'all' ? 'all' : [...kinds];
   let stopped = false;
 

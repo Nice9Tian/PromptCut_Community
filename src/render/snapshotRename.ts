@@ -1,49 +1,57 @@
 /*
- * 消费侧的快照 id 改名(A2(7))。
+ * Snapshot id renaming on consumer side (A2(7)).
  *
- * 为什么在消费侧做:control 快照的共享键刻意剥掉了 clipId,同一份快照会挂到多个片段上。预渲染时
- * 按某个 clipId 改好名的话,两个片段同文档就撞 id —— growth-curve.tsx:104 的 <linearGradient id={gradId}>
- * 按 id 解析到第一个,后挂的那片渐变整片错掉。所以预渲染侧保留原 id,挂哪个片段就按哪个片段改名。
+ * Why do it on consumer side: the shared key for control snapshots deliberately strips clipId,
+ * so the same snapshot can attach to multiple clips. If renamed by a specific clipId during
+ * prerendering, two clips in the same document would collide on id:
+ * `<linearGradient id={gradId}>` at growth-curve.tsx:104 would resolve to the first by id, and the
+ * gradient of the later attached clip would be completely broken. Therefore, the prerender side
+ * keeps the original id, and renaming is done according to whichever clip it attaches to.
  *
- * ── 探针结论(scripts/probes/svg-url-serialize-probe.mjs,2026-09-17,Chrome 152 headless)──
- * 疑点是当年 export-frames.mjs 的 `[^)"'&]*` 把 `&` 排除在外,而导出页地址含 `&`
- * (frame-pipeline.mjs:183 的 '/?export=1&timeline='),怕 outerHTML 把它序列化成 `&amp;` 后漏掉。
- * 实测(一条 growth-curve 片段,页面地址 http://127.0.0.1:5208/?export=1&timeline=data%3A…):
+ * -- Probe conclusions (scripts/probes/svg-url-serialize-probe.mjs, 2026-09-17, Chrome 152 headless) --
+ * The doubt was that `[^)"'&]*` in export-frames.mjs back then excluded `&`, while the export
+ * page URL contains `&` ('/?export=1&timeline=' in frame-pipeline.mjs:183), fearing outerHTML would
+ * serialize it as `&amp;` and miss it. Actual measurements (a growth-curve clip, page URL
+ * http://127.0.0.1:5208/?export=1&timeline=data%3A…):
  *
  *   getAttribute("fill")   "url(#_r_0_)"
- *   getComputedStyle().fill "url(\"#_r_0_\")"      ← 相对形式,Chrome 不把页面 URL 补进去
- *   生成快照后 outerHTML        style="fill: url(&quot;#_r_0_&quot;);"
- *   整棵 control 生成快照后(516806 字节)出现过的 url(…#…) 形式只有两种:
- *       "url(#_r_0_)"  和  "url(&quot;#_r_0_&quot;)"
- *   整段里不含 &amp;;href="#…" 一处都没有;id 只有 " id=\"_r_0_\"" 一个
- *   收 id 的两条路径(浏览器 DOMParser / Node 正则扫描)在这份真快照上给出同一个集合
+ *   getComputedStyle().fill "url(\"#_r_0_\")"      ← Relative form, Chrome does not prepend page URL
+ *   outerHTML after snapshot generation            style="fill: url(&quot;#_r_0_&quot;);"
+ *   The only two forms of url(…#…) appearing in the entire control after snapshot generation (516806 bytes):
+ *       "url(#_r_0_)"  and  "url(&quot;#_r_0_&quot;)"
+ *   No &amp; anywhere in the segment; not a single href="#…"; only one id: " id=\"_r_0_\""
+ *   Both paths for collecting ids (browser DOMParser / Node regex scan) produce the same set on this real snapshot
  *
- * 结论:**没有绝对形式**,`&` 的担心不成立。另外 React 19 的 useId 产出 `_r_0_`(不再是 `:r1:`),
- * 但改名仍按原字符串匹配、不用 CSS.escape,含冒号的 id 照样能改。
+ * Conclusion: **no absolute form exists**, so concerns about `&` do not hold. In addition,
+ * React 19's useId produces `_r_0_` (no longer `:r1:`), but renaming still matches against the raw
+ * string without CSS.escape, so ids containing colons can still be renamed.
  *
- * 最终正则(比 :215 放开一格,并且丢掉前缀):
- *   id 属性   /\sid=(["'])([^"']*)\1/
- *   href 引用 /(?:xlink:)?href=(["'])#([^"']*)\1/
- *   url 引用  /url\((&quot;|["'])?([^)"']*?)(&quot;|["'])?\)/   取最后一个 `#` 之后的片段当 id
- * 字符类从 `[^)"'&]*` 放开成 `[^)"']*` 是防御性的:万一哪天(别的 Chrome 版本、别的属性)真序列化成
- * 绝对形式,这条仍然命中。命中后**整段前缀丢掉**,重写成 url(#新id) —— 快照要与 host 无关,
- * 它会被别的页面(舞台页,端口和查询串都不一样)挂起来用。
+ * Final regexes (loosened by one step compared to :215, and discarding the prefix):
+ *   id attribute        /\sid=(["'])([^"']*)\1/
+ *   href reference      /(?:xlink:)?href=(["'])#([^"']*)\1/
+ *   url reference       /url\((&quot;|["'])?([^)"']*?)(&quot;|["'])?\)/   takes the fragment after the last `#` as id
+ * Loosening the character class from `[^)"'&]*` to `[^)"']*` is defensive: if some day (in
+ * another Chrome version or for another attribute) it actually serializes into an absolute form,
+ * this will still match. Upon matching, the **entire prefix is discarded** and rewritten as
+ * url(#newId): snapshots must be host-independent, as they will be mounted and used by other pages
+ * (stage pages, with different ports and query strings).
  */
 
-/** clipId 里非 [A-Za-z0-9_-] 的字符换成 `_`,避免把 clipId 的怪字符带进 id */
+/** Replaces characters in clipId other than [A-Za-z0-9_-] with `_` to avoid odd characters in id */
 export function safeClipId(clipId: string): string {
   return String(clipId).replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
 /**
- * HTML 属性值的序列化转义。DOMParser 给回来的是**解码后**的 id,而改名是在**原字符串**上做的,
- * 两边要对齐才能和正则扫描路径得出同一个集合。Chrome 的序列化器在属性值里只转义这三样。
+ * Serialization escaping for HTML attribute values. DOMParser returns the **decoded** id, while
+ * renaming operates on the **raw string**; both sides must align to produce the same set as the
+ * regex scanning path. Chrome's serializer escapes only these three items in attribute values.
  */
 function escapeAttr(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/ /g, "&nbsp;");
 }
 
-/** 正则扫描收 id(Node 单测走这条;浏览器里没有 DOMParser 时也走这条) */
+/** Collects ids via regex scan (used by Node unit tests, and in browser when DOMParser is absent) */
 export function collectIdsByScan(html: string): Set<string> {
   const ids = new Set<string>();
   const re = /\sid=(["'])([^"']*)\1/g;
@@ -51,7 +59,7 @@ export function collectIdsByScan(html: string): Set<string> {
   return ids;
 }
 
-/** DOMParser 收 id(浏览器路径)。≤ 300 KB 的快照解析在 1~3 ms 量级 */
+/** Collects ids via DOMParser (browser path). Parsing a snapshot ≤ 300 KB is on the order of 1-3 ms */
 export function collectIdsByParse(html: string, parser: DOMParser): Set<string> {
   const doc = parser.parseFromString(html, "text/html");
   const ids = new Set<string>();
@@ -62,21 +70,28 @@ export function collectIdsByParse(html: string, parser: DOMParser): Set<string> 
   return ids;
 }
 
-/** 有 DOMParser 就解析,没有(Node)就扫。两条路径对同一份输入给出同一个集合。 */
+/** Parses if DOMParser exists, scans if not (Node). Both paths produce the same set on the same input. */
 export function collectIds(html: string): Set<string> {
   const P = (globalThis as { DOMParser?: new () => DOMParser }).DOMParser;
   return P ? collectIdsByParse(html, new P()) : collectIdsByScan(html);
 }
 
 /*
- * 一趟扫完:id 属性、href="#…" / xlink:href="#…"、以及任意位置(含行内 style="…")的 url(…#…)。
- * 分三条正则轮流改的话,第二条可能撞上第一条刚写出来的新 id;并成一条交替、查表决定改不改就没这问题。
+ * Scanned in a single pass: id attributes, href="#…" / xlink:href="#…", and url(…#…) anywhere
+ * (including inline style="…").
+ * If rewritten with three sequential regexes, the second might collide with a new id just produced
+ * by the first; combining them into a single alternating regex and checking a table to decide
+ * whether to rewrite avoids this issue.
  *
- * **不处理 <style> 文本里的 `#id` 选择器**(和预渲染侧当年 export-frames.mjs 的 `__r` 一样不处理)。
- * 理由:control 快照是卡片包裹层的 innerHTML,而 __pcCreateSnapshot 已经把每个元素要用的计算样式内联成
- * style 属性,`<style>` 规则即使还在也已被内联值盖掉,改不改名都不影响呈现;全仓两处 <defs> 也都直接
- * 写在卡片自己的 <svg> 里(growth-curve.tsx / chart-growth.tsx),不靠样式表选中。注意 `<style>` 文本里
- * 的 `url(#id)` 反而会被下面这条 url 分支改掉 —— 这方向是安全的(跟着元素一起改),单测钉了。
+ * **Does not handle `#id` selectors in <style> text** (left unhandled just like `__r` in
+ * export-frames.mjs on the prerender side back then).
+ * Reason: control snapshots are the innerHTML of the card wrapper layer, and __pcCreateSnapshot has
+ * already inlined the computed styles needed by each element into style attributes. Even if <style>
+ * rules are still present, they are overridden by the inlined values, so renaming them or not does
+ * not affect rendering; both <defs> across the repo are also written directly in the card's own
+ * <svg> (growth-curve.tsx / chart-growth.tsx) rather than selected via stylesheets. Note that
+ * `url(#id)` inside <style> text will instead be rewritten by the url branch below: this is safe
+ * (renamed along with the element), pinned by unit tests.
  */
 const REF_RE =
   /(?<idpre>\sid=(?<idq>["']))(?<idval>[^"']*)\k<idq>|(?<hpre>(?:xlink:)?href=(?<hq>["']))#(?<hval>[^"']*)\k<hq>|url\((?<q1>&quot;|["'])?(?<uref>[^)"']*?)(?<q2>&quot;|["'])?\)/g;
@@ -94,18 +109,19 @@ function rewrite(html: string, ids: Set<string>, suffix: string): string {
     const ref = g.uref;
     if (ref === undefined) return match;
     const hash = ref.lastIndexOf("#");
-    if (hash < 0) return match; // url(/@media/…) 之类,不是片段引用
+    if (hash < 0) return match; // Things like url(/@media/…), not a fragment reference
     const id = ref.slice(hash + 1);
-    if (!ids.has(id)) return match; // 不是这份快照里的 id,别碰
-    // 前缀(万一是绝对形式)整段丢掉:快照要挂到别的页面上,不能带着预渲染页的地址
+    if (!ids.has(id)) return match; // Not an id in this snapshot; do not touch
+    // Drop the prefix entirely (in case it is absolute): snapshots will be mounted onto other pages
+    // and cannot carry the prerender page's address
     const q = g.q1 ?? g.q2 ?? "";
     return `url(${q}#${id}${suffix}${q})`;
   });
 }
 
-/* ── 缓存:同一片段同一快照不重复解析 ─────────────────────────────── */
+/* -- Cache: do not re-parse the same snapshot for the same clip --------------------------- */
 
-/** cyrb53:非加密,够快够散,只用来当 Map 的键 */
+/** cyrb53: non-cryptographic, fast and well-distributed, only used as Map keys */
 function cyrb53(s: string, seed = 0): string {
   let h1 = 0xdeadbeef ^ seed;
   let h2 = 0x41c6ce57 ^ seed;
@@ -124,12 +140,12 @@ const cache = new Map<string, { html: string; clipId: string; out: string }>();
 let hits = 0;
 let misses = 0;
 
-/** 单测用:看缓存到底有没有命中(两个相等的字符串没法靠 === 区分) */
+/** For unit tests: check whether the cache actually hit (two equal strings cannot be distinguished by ===) */
 export function snapshotRenameCacheStats(): { size: number; hits: number; misses: number } {
   return { size: cache.size, hits, misses };
 }
 
-/** 单测用 */
+/** For unit tests */
 export function clearSnapshotRenameCache(): void {
   cache.clear();
   hits = 0;
@@ -137,17 +153,18 @@ export function clearSnapshotRenameCache(): void {
 }
 
 /**
- * 把快照 html 里的全部 id 改成 `${id}__s${safe(clipId)}`,并同步改掉 url(#id) / href="#id" 引用。
- * 只改这份 html 里收集到的 id,别的 `#` 片段不碰。
+ * Rewrite all ids in the snapshot html to `${id}__s${safe(clipId)}`, and synchronously update
+ * url(#id) / href="#id" references.
+ * Only modify ids collected in this html; leave other `#` fragments untouched.
  */
 export function renameSnapshotIds(html: string, clipId: string): string {
   if (!html) return html;
   const key = `${cyrb53(html)}:${html.length}:${clipId}`;
   const hit = cache.get(key);
-  // 哈希撞了也不会串:命中后再逐字比一遍原文
+  // Even if hashes collide, there is no mix-up: compare the raw text character by character on hit
   if (hit && hit.html === html && hit.clipId === clipId) {
     hits++;
-    cache.delete(key); // 重新插到队尾:淘汰的是最久没用的那份,不是最早存进来的那份
+    cache.delete(key); // Reinsert at the end of the queue: evict the least recently used item, not the earliest inserted one
     cache.set(key, hit);
     return hit.out;
   }

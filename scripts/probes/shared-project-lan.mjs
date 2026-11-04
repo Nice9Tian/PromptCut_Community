@@ -1,42 +1,60 @@
 /**
- * 共享项目探针的局域网模式（契约 `docs/plan/shared-project-contract.md` 第 6 节 `--mode lan`、第 7 节 SP4 / SP2）。
- * 由 `shared-project-probe.mjs` 在 `--mode lan` 时调 `runLan(role, argv)`；单独放一个文件，集成时和互联网模式的部分互不干扰。
+ * LAN mode for the shared project probe (contract `docs/plan/shared-project-contract.md`
+ * section 6 `--mode lan`, section 7 SP4 / SP2).
+ * Called by `shared-project-probe.mjs` via `runLan(role, argv)` when `--mode lan`; placed in a
+ * separate file so that integration does not interfere with the Internet mode parts.
  *
  * ## --mode lan --role creator
  *
- *   node scripts/probes/shared-project-probe.mjs --mode lan --role creator [--port 5480] [--state <目录>] [--coord <url>]
- *        [--name <项目名>] [--tasks 3] [--hold-min 10] [--timeout-ms 180000] [--keep]
+ *   node scripts/probes/shared-project-probe.mjs --mode lan --role creator [--port 5480] [--state <dir>] [--coord <url>]
+ *        [--name <project-name>] [--tasks 3] [--hold-min 10] [--timeout-ms 180000] [--keep]
  *
- *   1. 起局域网主机：worktree 的编辑器（vite，`--port`，不给 `--host`），环境变量 `PROMPTCUT_LAN_HOST=1` 让它绑 `0.0.0.0`；
- *      等 `/api/docservice/healthz`，再从本机局域网地址访问共享端点，确认编辑器在局域网上可达（`editorOnLan`）；
- *   2. 从本机回环建一个自由进入的局域网模式项目（`route.mjs` 的 `createSharedProject({ where: 'lan' })`），编辑器开始广播：
- *      等编辑器日志里的 `lan.start`，并自己发现一次（`selfDiscoverMs`）；
- *   3. 以本机声明（`promptcut.tenant.<projectId>`，回环）连文档服务：传一个素材（回环不要票据）、登记一版项目并传快照
- *      （快照里写着素材哈希与任务数）、以发布方身份发布 `--tasks` 个假细任务（同 `render-queue-e2e.mjs`）；
- *   4. 写出成员要的东西（项目名、项目口令、任务数）：`<state>/lan-member.json`，给了 `--coord` 时同时 `PUT /kv/lan-member`
- *      （协调口的格式同互联网模式的 `--role coord`）；
- *   5. 等全部 `task.done`（`completed`、`duplicateDone`），再等成员的结果（`<state>/lan-member-result.json` 或协调口
- *      `lan-member-result`，最多 `--hold-min` 分钟）；
- *   6. 以创建者操作删掉项目（`shared.admin { op: 'delete' }`），再发现一次，确认查不到了（`goneAfterDelete`）；`--keep` 时不删；
- *   7. 关编辑器（只结束自己起的进程树），输出一行 JSON。
+ *   1. Start LAN host: worktree editor (vite, `--port`, without `--host`), environment variable
+ *      `PROMPTCUT_LAN_HOST=1` makes it bind to `0.0.0.0`; wait for `/api/docservice/healthz`, then
+ *      access shared endpoint from local LAN address to verify editor is reachable over LAN
+ *      (`editorOnLan`);
+ *   2. Create an open-entry LAN mode project from local loopback (`route.mjs`'s
+ *      `createSharedProject({ where: 'lan' })`), and editor starts broadcasting: wait for
+ *      `lan.start` in editor logs and run discovery once on itself (`selfDiscoverMs`);
+ *   3. Connect to document service with local assertion (`promptcut.tenant.<projectId>`, loopback):
+ *      upload an asset (loopback does not require a ticket), register a project revision, upload
+ *      a snapshot (the snapshot contains asset hashes and task count), and publish `--tasks` mock
+ *      fine-grained tasks as the publisher (same as `render-queue-e2e.mjs`);
+ *   4. Write what member needs (project name, project passphrase, task count):
+ *      `<state>/lan-member.json`; when `--coord` is provided, also `PUT /kv/lan-member`
+ *      (coordination endpoint format matches `--role coord` in Internet mode);
+ *   5. Wait for all `task.done` (`completed`, `duplicateDone`), then wait for member results
+ *      (`<state>/lan-member-result.json` or coordination endpoint `lan-member-result`,
+ *      up to `--hold-min` minutes);
+ *   6. Delete project as a creator action (`shared.admin { op: 'delete' }`), run discovery once
+ *      more to confirm it is no longer found (`goneAfterDelete`); do not delete when `--keep`;
+ *   7. Shut down editor (only terminates the process tree it started), output a single JSON line.
  *
  * ## --mode lan --role member [--manual <url>]
  *
- *   node scripts/probes/shared-project-probe.mjs --mode lan --role member [--state <目录>] [--coord <url>]
- *        [--name <项目名> --password <口令>] [--manual <http://192.168.x.y:port>] [--hosted <url>] [--expect-tasks <n>] [--timeout-ms 120000]
+ *   node scripts/probes/shared-project-probe.mjs --mode lan --role member [--state <dir>] [--coord <url>]
+ *        [--name <project-name> --password <passphrase>] [--manual <http://192.168.x.y:port>] [--hosted <url>] [--expect-tasks <n>] [--timeout-ms 120000]
  *
- *   1. 项目名与口令取参数，没给就读 `<state>/lan-member.json`（或协调口 `lan-member`）；
- *   2. 发现：`findSharedProject({ name, hostedUrl: null, lan: { discover: discoverLan, manual } })`，记发现耗时（`discovery.ms`）与
- *      第一次见到主机的时刻（`discovery.firstSeenMs`）。不给 `--hosted` 时不问托管端（全程不连托管端，SP4）；
- *   3. 管理接口从局域网来源连不上（SP2）：不带凭证、带集群令牌格式的项握手都 401；
- *   4. 凭项目凭证进入（`page`）：读项目快照（核摘要）、不带票据读素材 401、带票据读素材 200 且 sha256 相符；
- *   5. 以 `render` 角色认领并完成任务（至少 1 个，缺省等于创建者发布的任务数）；
- *   6. 写 `<state>/lan-member-result.json`（与协调口 `lan-member-result`），输出一行 JSON。
+ *   1. Take project name and passphrase from arguments; if not provided, read
+ *      `<state>/lan-member.json` (or coordination endpoint `lan-member`);
+ *   2. Discovery: `findSharedProject({ name, hostedUrl: null, lan: { discover: discoverLan, manual } })`,
+ *      recording discovery duration (`discovery.ms`) and timestamp when host was first seen
+ *      (`discovery.firstSeenMs`). Do not query hosted side when `--hosted` is omitted
+ *      (no connection to hosted side throughout, SP4);
+ *   3. Admin interface is unreachable from LAN sources (SP2): handshakes without credentials or
+ *      with cluster token format both return 401;
+ *   4. Enter with project credentials (`page`): read project snapshot (verify digest), read asset
+ *      without ticket returns 401, read asset with ticket returns 200 and matches sha256;
+ *   5. Claim and complete tasks with `render` role (at least 1, defaults to task count published by creator);
+ *   6. Write `<state>/lan-member-result.json` (and coordination endpoint `lan-member-result`),
+ *      output a single JSON line.
  *
- * 同一台机器上跑：成员经本机局域网地址（不是回环）连编辑器，服务端看到的来源是局域网地址，走的是局域网成员的路径。
- * 口令只写在 state 目录与协调口里（探针自建的一次性项目），不打到输出里。
+ * Running on the same machine: member connects to editor via local LAN address (not loopback);
+ * server sees the source as a LAN address and follows the LAN member path.
+ * Passphrase is only written to state directory and coordination endpoint (disposable project created
+ * by probe) and is not printed to output.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -53,7 +71,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const mod = (rel) => import(new URL(`../../${rel}`, import.meta.url));
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
-/** 流程中途放弃：原因已经记进 fails，跳到收尾 */
+/** Workflow aborted midway: reason is already recorded in fails, skip to finalize */
 const STOP = Symbol('stop');
 
 function makeArgs(argv) {
@@ -63,13 +81,13 @@ function makeArgs(argv) {
     const v = arg(name, undefined);
     if (v === undefined) return fallback;
     const n = Number(v);
-    if (!Number.isInteger(n) || n < 0) throw new Error(`${name} 要是非负整数`);
+    if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a non-negative integer`);
     return n;
   };
   return { arg, flag, int };
 }
 
-/* ------------------------------------------------------------------ 公共件 */
+/* ------------------------------------------------------------------ Common utilities */
 
 const readJson = async (file) => JSON.parse(await fs.readFile(file, 'utf8'));
 const writeJson = async (file, value) => {
@@ -79,21 +97,21 @@ const writeJson = async (file, value) => {
   await fs.rename(tmp, file);
 };
 
-/** 协调口客户端（`probe-coord.mjs`：`PUT /kv/<键>`、`GET /kv/<键>?wait=<毫秒>`，同互联网模式与 render-host-probe 的协调口）；没给地址回 null */
+/** Coordination endpoint client (`probe-coord.mjs`: `PUT /kv/<key>`, `GET /kv/<key>?wait=<ms>`, same as coordination endpoint in Internet mode and render-host-probe); returns null if no address provided */
 const coordClient = (base) => (base ? kvClient(base) : null);
 
-/** 等 state 文件或协调口里的键出现 */
+/** Wait for key in state file or coordination endpoint to appear */
 async function waitShared({ state, coord, file, key, ms }) {
   const deadline = Date.now() + ms;
   for (;;) {
     if (fsSync.existsSync(path.join(state, file))) {
-      try { return await readJson(path.join(state, file)); } catch { /* 正在写 */ }
+      try { return await readJson(path.join(state, file)); } catch { /* Writing */ }
     }
     if (coord) {
       try {
         const v = await coord.get(key, Math.min(2000, Math.max(0, deadline - Date.now())));
         if (v) return v;
-      } catch { /* 协调口还没起来 */ }
+      } catch { /* Coordination endpoint is not up yet */ }
     } else {
       await delay(300);
     }
@@ -101,7 +119,7 @@ async function waitShared({ state, coord, file, key, ms }) {
   }
 }
 
-/** 一条 WebSocket：按 reqId 等回包、按条件等消息 */
+/** One WebSocket: wait for response by reqId, wait for messages matching condition */
 function openWs(url, protocols) {
   const ws = new WebSocket(url, protocols);
   const inbox = [];
@@ -115,7 +133,7 @@ function openWs(url, protocols) {
   });
   const opened = new Promise((resolve, reject) => {
     ws.addEventListener('open', () => resolve(), { once: true });
-    ws.addEventListener('error', () => reject(new Error('连接失败')), { once: true });
+    ws.addEventListener('error', () => reject(new Error('Connection failed')), { once: true });
   });
   opened.catch(() => {});
   const closed = new Promise((resolve) => ws.addEventListener('close', (e) => resolve({ code: e.code, reason: e.reason }), { once: true }));
@@ -127,7 +145,7 @@ function openWs(url, protocols) {
       waiters.push(w);
       setTimeout(() => {
         const k = waiters.indexOf(w);
-        if (k >= 0) { waiters.splice(k, 1); reject(new Error('等消息超时')); }
+        if (k >= 0) { waiters.splice(k, 1); reject(new Error('Timed out waiting for a message')); }
       }, ms).unref?.();
     });
   };
@@ -139,18 +157,18 @@ function openWs(url, protocols) {
   };
   const close = async () => {
     if (ws.readyState === WebSocket.CLOSED) return;
-    try { ws.close(1000, 'probe done'); } catch { /* 已关 */ }
+    try { ws.close(1000, 'probe done'); } catch { /* Closed */ }
     await Promise.race([closed, delay(3000)]);
   };
   return { ws, opened, closed, next, request, inbox, close, send: (m) => ws.send(JSON.stringify(m)) };
 }
 
-/** 原始 WebSocket 握手，只要状态码 */
+/** Raw WebSocket handshake, only need status code */
 function handshakeStatus(host, port, pathName, protocols) {
   return new Promise((resolve) => {
     const sock = net.connect(port, host);
     let buf = '';
-    const done = (v) => { try { sock.destroy(); } catch { /* 已关 */ } resolve(v); };
+    const done = (v) => { try { sock.destroy(); } catch { /* Closed */ } resolve(v); };
     const t = setTimeout(() => done(null), 5000);
     sock.on('error', () => { clearTimeout(t); done(null); });
     sock.on('connect', () => {
@@ -192,8 +210,9 @@ const portFree = (port, host) => new Promise((resolve) => {
 });
 
 /**
- * 打结果行、定退出码，让进程自然退出（同 `shared-project-probe.mjs` 的 `finish`）：Windows 上有句柄还在关闭中就
- * `process.exit`，libuv 会断言崩掉（0xC0000409）。10 s 后还有东西挂着才强制退出。
+ * Print result line, set exit code, and let process exit naturally (same as `finish` in
+ * `shared-project-probe.mjs`): on Windows, calling `process.exit` while handles are still closing
+ * causes libuv to crash on assertion (0xC0000409). Force exit only if handles still pending after 10 s.
  */
 function finish(result, code) {
   result.ok = code === 0;
@@ -227,14 +246,14 @@ async function runCreator(argv) {
   await fs.rm(path.join(state, 'lan-member-result.json'), { force: true });
   await fs.mkdir(state, { recursive: true });
   const lanIface = selectInterfaces()[0];
-  if (!check(lanIface, '本机没有可用的局域网网卡')) return finish(result, 2);
+  if (!check(lanIface, 'No usable LAN network interface on this machine')) return finish(result, 2);
   result.lanAddress = lanIface.address;
   for (const p of [port, port + 1, port + 2]) {
-    check(await portFree(p, '127.0.0.1') && await portFree(p, '0.0.0.0'), `端口 ${p} 空着`);
+    check(await portFree(p, '127.0.0.1') && await portFree(p, '0.0.0.0'), `Port ${p} is free`);
   }
   if (fails.length) return finish(result, 2);
 
-  // 1. 起局域网主机
+  // 1. Start LAN host
   const env = { ...process.env };
   for (const k of ['PROMPTCUT_DOCSERVICE_URL', 'PROMPTCUT_CLUSTER_TOKEN', 'PROMPTCUT_QUEUE_NODE', 'PROMPTCUT_SHARED_CONFIG', 'PROMPTCUT_HEADLESS', 'PROMPTCUT_ROLE', 'PROMPTCUT_ASSET_URL', 'PROMPTCUT_HOSTED_URL']) delete env[k];
   const tmp = path.join(state, 'tmp');
@@ -255,14 +274,14 @@ async function runCreator(argv) {
     for (;;) {
       const ok = await fetch(`${editor}/api/docservice/healthz`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok).catch(() => false);
       if (ok) break;
-      if (child.exitCode !== null) { check(false, '编辑器提前退出', log.slice(-20)); throw STOP; }
-      if (Date.now() - t0 > timeoutMs) { check(false, '编辑器没起来', log.slice(-20)); throw STOP; }
+      if (child.exitCode !== null) { check(false, 'Editor exited early', log.slice(-20)); throw STOP; }
+      if (Date.now() - t0 > timeoutMs) { check(false, 'Editor did not start', log.slice(-20)); throw STOP; }
       await delay(500);
     }
     const lanProbe = await fetch(`${lanBase}/docservice/shared/lookup?name=__none__`, { signal: AbortSignal.timeout(5000) }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) })).catch((e) => ({ error: String(e?.message ?? e) }));
-    result.editorOnLan = check(lanProbe.status === 404 && lanProbe.body?.error === 'no-project', '编辑器在局域网地址上可达（绑了 0.0.0.0）', lanProbe);
+    result.editorOnLan = check(lanProbe.status === 404 && lanProbe.body?.error === 'no-project', 'Editor is reachable on the LAN address (bound to 0.0.0.0)', lanProbe);
 
-    // 2. 建项目（回环），开始广播
+    // 2. Create project (loopback), start broadcasting
     const creatorPw = randomBytes(12).toString('base64url');
     const projectPw = randomBytes(12).toString('base64url');
     const created = await createSharedProject({ where: 'lan', lanBase: `ws://127.0.0.1:${port}/docservice`, name, mode: 'free', creator: { username: 'lan-creator', password: creatorPw }, password: projectPw });
@@ -273,18 +292,18 @@ async function runCreator(argv) {
       if (Date.now() - tStart > 10_000) break;
       await delay(100);
     }
-    check(result.broadcasting, '编辑器日志里有 lan.start', log.filter((l) => l.includes('lan.')).slice(-5));
+    check(result.broadcasting, 'Editor log contains lan.start', log.filter((l) => l.includes('lan.')).slice(-5));
     const selfT0 = Date.now();
     const self = await discoverLan({ name });
     result.selfDiscoverMs = self.hosts.length ? Date.now() - selfT0 : null;
     result.selfFirstSeenMs = self.hosts[0]?.firstSeenMs ?? null;
-    check(self.hosts.some((h) => h.projectId === created.projectId && h.docservice === `ws://${lanIface.address}:${port}/docservice`), '自己能发现自己的广播', self);
+    check(self.hosts.some((h) => h.projectId === created.projectId && h.docservice === `ws://${lanIface.address}:${port}/docservice`), 'It can discover its own broadcast', self);
 
-    // 3. 素材、快照、任务（本机声明，回环）
+    // 3. Asset, snapshot, tasks (local assertion, loopback)
     const media = randomBytes(256 * 1024);
     const assetHash = sha256(media);
     const put = await createAssetClient({ base: `${editor}/api/asset` }).put('media', media, { ext: 'bin' });
-    check(put.hash === assetHash, '素材上传', put);
+    check(put.hash === assetHash, 'Asset upload', put);
     ws = openWs(`ws://127.0.0.1:${port}/docservice`, ['promptcut.v1', `promptcut.tenant.${created.projectId}`, 'promptcut.role.page']);
     await ws.opened;
     const snapshot = JSON.stringify({ probe: 'shared-project-lan', projectId: created.projectId, name, assets: [assetHash], tasks: taskCount, at: Date.now() });
@@ -292,7 +311,7 @@ async function runCreator(argv) {
     const ann = await ws.request({ type: 'project.announce', projectId: created.projectId, digest, session: 'lan-probe' });
     check(ann.type === 'project.announced', 'project.announce', ann);
     const stored = await ws.request({ type: 'project.snapshot.put', projectId: created.projectId, projectRev: ann.projectRev, digest, index: 0, count: 1, data: snapshot });
-    check(stored.type === 'project.snapshot.stored' && stored.complete === true, '项目快照', stored);
+    check(stored.type === 'project.snapshot.stored' && stored.complete === true, 'Project snapshot', stored);
     const runId = randomBytes(3).toString('hex');
     const tasks = Array.from({ length: taskCount }, (_, i) => snapshotTaskInput({ resultKey: `lan-${runId}-${i}`, projectId: created.projectId, projectRev: ann.projectRev }));
     const ids = new Set(tasks.map((x) => x.id));
@@ -312,22 +331,22 @@ async function runCreator(argv) {
     check(pub.type === 'task.published' && (pub.results ?? []).every((r) => !r.error), 'task.publish', pub);
     result.published = tasks.length;
 
-    // 4. 交给成员
+    // 4. Hand off to member
     const info = { name, password: projectPw, tasks: taskCount, host: lanIface.address, port };
     await writeJson(path.join(state, 'lan-member.json'), info);
-    if (coord) await coord.put('lan-member', info).catch((e) => check(false, '协调口 PUT lan-member', String(e?.message ?? e)));
+    if (coord) await coord.put('lan-member', info).catch((e) => check(false, 'Coordinator PUT lan-member', String(e?.message ?? e)));
 
-    // 5. 等完成与成员结果
+    // 5. Wait for completion and member result
     const deadline = Date.now() + Math.max(timeoutMs, 0);
     while (done.size < tasks.length && Date.now() < deadline) await delay(200);
     await delay(300);
-    check(done.size === tasks.length, `全部 task.done（${done.size}/${tasks.length}）`);
-    check(result.duplicateDone === 0, '没有重复的 task.done');
+    check(done.size === tasks.length, `All task.done received (${done.size}/${tasks.length})`);
+    check(result.duplicateDone === 0, 'No duplicate task.done');
     result.member = await waitShared({ state, coord, file: 'lan-member-result.json', key: 'lan-member-result', ms: holdMs });
-    if (result.member) check(result.member.ok === true, '成员结果 ok', result.member.fails);
-    else check(false, `${holdMs / 60_000} 分钟内没等到成员结果`);
+    if (result.member) check(result.member.ok === true, 'Member result ok', result.member.fails);
+    else check(false, `No member result within ${holdMs / 60_000} minutes`);
 
-    // 6. 删项目：停止通告这个项目
+    // 6. Delete project: stop announcing this project
     if (!keep) {
       const ch = await ws.request({ type: 'shared.challenge' });
       if (check(ch.type === 'shared.challenge.ok', 'shared.challenge', ch)) {
@@ -338,12 +357,12 @@ async function runCreator(argv) {
         await delay(300);
         const after = await discoverLan({ name });
         result.goneAfterDelete = after.hosts.length === 0;
-        check(result.goneAfterDelete, '删掉之后发现不到', after.hosts);
+        check(result.goneAfterDelete, 'Not discoverable after deletion', after.hosts);
         result.lanStopLogged = log.some((l) => l.includes('lan.stop'));
       }
     }
   } catch (err) {
-    if (err !== STOP) check(false, '创建者流程出错', String(err?.stack ?? err));
+    if (err !== STOP) check(false, 'Creator flow failed', String(err?.stack ?? err));
   } finally {
     await ws?.close();
     killTree(child);
@@ -372,7 +391,7 @@ async function runMember(argv) {
   let expect = int('--expect-tasks', null);
   if (!name || !password) {
     const info = await waitShared({ state, coord, file: 'lan-member.json', key: 'lan-member', ms: timeoutMs });
-    if (!info) { check(false, '没拿到项目名与口令（--name/--password、state 或协调口）'); return finish(result, 2); }
+    if (!info) { check(false, 'Could not get the project name and passphrase (--name/--password, state, or coordinator)'); return finish(result, 2); }
     name ??= info.name;
     password ??= info.password;
     expect ??= info.tasks;
@@ -390,28 +409,28 @@ async function runMember(argv) {
   const eps = [];
   let ws = null;
   try {
-    // 2. 发现
+    // 2. Discovery
     const t0 = Date.now();
     const found = await findSharedProject({ name, hostedUrl: hosted ?? null, lan: { discover: discoverLan, manual } });
     const discoveryMs = Date.now() - t0;
     const route = pickRoute(found);
     const cand = route.action === 'enter' ? route.candidate : route.action === 'choose' ? route.candidates.find((c) => c.where === 'lan') : null;
     result.discovery = { ms: discoveryMs, firstSeenMs: cand?.firstSeenMs ?? null, via: cand?.via ?? null, action: route.action, candidates: found.candidates.length, errors: found.errors };
-    if (!check(cand && cand.where === 'lan', '发现到局域网候选', found)) throw STOP;
-    check(discoveryMs <= 5000, `发现耗时 ≤ 5 s（${discoveryMs} ms）`);
+    if (!check(cand && cand.where === 'lan', 'Found a LAN candidate', found)) throw STOP;
+    check(discoveryMs <= 5000, `Discovery took ≤ 5 s (${discoveryMs} ms)`);
     result.candidate = { base: cand.base, projectId: cand.projectId, hostDeviceName: cand.hostDeviceName ?? null, asset: cand.asset ?? null };
-    // 候选的 base 是 http 形（契约第 11 节裁定），连 WebSocket 用 ws 形
+    // Candidate base is in http format (contract section 11 ruling), use ws format to connect WebSocket
     const wsUrl = wsBaseOf(cand.base);
     const u = new URL(wsUrl);
     const assetBase = cand.asset ?? `http://${u.host}/api/asset`;
 
-    // 3. 管理接口从局域网来源连不上
+    // 3. Admin interface is unreachable from LAN sources
     const bare = await handshakeStatus(u.hostname, Number(u.port), u.pathname, null);
     const tokenish = await handshakeStatus(u.hostname, Number(u.port), u.pathname, ['promptcut.v1', `promptcut.token.${randomBytes(32).toString('base64url')}`]);
     result.adminFromLan = { bare, token: tokenish };
-    check(bare === 401 && tokenish === 401, '局域网来源的管理接口（不带凭证、带令牌）都 401', result.adminFromLan);
+    check(bare === 401 && tokenish === 401, 'Admin endpoints from a LAN source return 401 (both without credentials and with a token)', result.adminFromLan);
 
-    // 4. 进入、快照、素材
+    // 4. Enter, snapshot, asset
     const hs0 = Date.now();
     ws = openWs(wsUrl, await buildAuthProtocols({ base: cand.base, projectId: cand.projectId, username: 'lan-member', deviceId, deviceName, as: 'member', password, role: 'page' }));
     await ws.opened;
@@ -430,7 +449,7 @@ async function runMember(argv) {
     const snapText = text.join('');
     const snap = (() => { try { return JSON.parse(snapText); } catch { return null; } })();
     result.snapshot = { projectRev: st.projectRev, bytes: Buffer.byteLength(snapText), digestOk: digest !== null && sha256(snapText) === digest };
-    check(result.snapshot.digestOk && snap?.assets?.length === 1, '项目快照取回、摘要相符', result.snapshot);
+    check(result.snapshot.digestOk && snap?.assets?.length === 1, 'Project snapshot retrieved, digest matches', result.snapshot);
     const hash = snap?.assets?.[0];
     const tk = await ws.request({ type: 'auth.ticket', kind: 'asset', access: 'r' });
     check(tk.type === 'auth.ticket.ok', 'auth.ticket', { type: tk.type, reason: tk.reason });
@@ -438,13 +457,14 @@ async function runMember(argv) {
     const withTicket = await fetch(`${assetBase}/media/${hash}`, { headers: { Authorization: `Bearer ${tk.ticket}` }, signal: AbortSignal.timeout(30_000) })
       .then(async (r) => ({ status: r.status, sha: sha256(Buffer.from(await r.arrayBuffer())) })).catch((e) => ({ status: null, error: String(e?.message ?? e) }));
     result.asset = { noTicket, withTicket: withTicket.status, sha256Ok: withTicket.sha === hash };
-    check(noTicket === 401, '不带票据读素材 401（局域网来源）', noTicket);
-    check(withTicket.status === 200 && withTicket.sha === hash, '带票据读素材 200、sha256 相符', result.asset);
+    check(noTicket === 401, 'Reading an asset without a ticket returns 401 (LAN source)', noTicket);
+    check(withTicket.status === 200 && withTicket.sha === hash, 'Reading an asset with a ticket returns 200, sha256 matches', result.asset);
     if (Number.isInteger(snap?.tasks)) expect = Math.min(expect, snap.tasks) || expect;
 
-    // 5. 认领并完成
+    // 5. Claim and complete
     const counts = { claims: 0, completed: 0, dedup: 0, failed: 0 };
-    // 节点连接是一个会话（HT-a，`session-link.mjs` 的 `createDocEndpoint`）：传输断开在保留期内接续，认领不掉
+    // Node connection is a session (HT-a, `createDocEndpoint` in `session-link.mjs`):
+    // resumes within retention period if transport disconnects; claims are not lost
     const ep = createDocEndpoint({
       url: wsUrl,
       protocols: () => buildAuthProtocols({ base: cand.base, projectId: cand.projectId, username: 'lan-member', deviceId, deviceName, as: 'member', password, role: 'render' }),
@@ -462,19 +482,19 @@ async function runMember(argv) {
     });
     ep.onOpen(() => node.start(node.session.held().map(({ id, token }) => ({ id, token }))));
     ep.onMessage((m) => { if (m.type === 'task.claimed') counts.claims += 1; });
-    const tick = setInterval(() => { try { node.tick(); } catch { /* 下一拍再说 */ } }, 50);
+    const tick = setInterval(() => { try { node.tick(); } catch { /* Defer to next tick */ } }, 50);
     const deadline = Date.now() + timeoutMs;
     while (counts.completed + counts.dedup < expect && Date.now() < deadline) await delay(100);
     clearInterval(tick);
     result.render = { ...counts, expect };
-    check(counts.completed + counts.dedup >= expect, `以 render 角色完成 ≥ ${expect} 个任务`, counts);
+    check(counts.completed + counts.dedup >= expect, `Completed ≥ ${expect} tasks in the render role`, counts);
   } catch (err) {
-    if (err !== STOP) check(false, '成员流程出错', String(err?.stack ?? err));
+    if (err !== STOP) check(false, 'Member flow failed', String(err?.stack ?? err));
   } finally {
     await ws?.close();
     for (const ep of eps) {
       const closedP = ep.connected ? new Promise((r) => ep.onClose(r)) : Promise.resolve();
-      try { ep.close(); } catch { /* 已关 */ }
+      try { ep.close(); } catch { /* Closed */ }
       await Promise.race([closedP, delay(3000)]);
     }
     result.ok = fails.length === 0;
@@ -492,6 +512,6 @@ async function runMember(argv) {
 export async function runLan(role, argv) {
   if (role === 'creator') return runCreator(argv);
   if (role === 'member') return runMember(argv);
-  console.error('--mode lan 只有 --role creator | member');
+  console.error('--mode lan only supports --role creator | member');
   process.exit(2);
 }

@@ -1,10 +1,12 @@
-// 文本协议下,工具调用是写在回复正文里的,而正文一个字一个字流给界面。
-// 围栏必须在流的途中就摘掉,否则用户会在聊天框里看到裸 JSON 和一条空的深色代码块。
+// Under the text protocol, tool calls are written in the response body, which streams to the UI
+// character by character.
+// The fence must be stripped mid-stream, otherwise the user sees raw JSON and an empty dark code
+// block in the chat box.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createFenceFilter } from "../harness/tool-protocol.mjs";
 
-/** 把整段文本按给定大小切块喂进去,返回用户最终看到的正文 */
+/** Chunk the full text by given size and feed it in; return the body text the user ultimately sees */
 function feed(text, chunkSize) {
   const f = createFenceFilter();
   let out = "";
@@ -16,79 +18,80 @@ function feed(text, chunkSize) {
 
 const CALL = '```promptcut-tool\n{"name":"list_media","input":{}}\n```';
 
-test("没有围栏就原样放行", () => {
-  const text = "我先确认视频素材，再根据内容添加字幕。";
+test("Without a fence it passes through unchanged", () => {
+  const text = "First I will check the video media, then add captions based on its content.";
   for (const n of [1, 3, 7, 1000]) assert.equal(feed(text, n), text);
 });
 
-test("围栏整段摘掉,前后的话都留着", () => {
-  const text = `我先确认视频素材。\n\n${CALL}\n\n好了。`;
-  const want = "我先确认视频素材。\n\n\n\n好了。";
+test("The whole fence is stripped, and the text before and after it stays", () => {
+  const text = `First I will check the video media.\n\n${CALL}\n\nDone.`;
+  const want = "First I will check the video media.\n\n\n\nDone.";
   for (const n of [1, 2, 5, 13, 1000]) {
-    assert.equal(feed(text, n), want, `分块大小 ${n} 时没摘干净`);
+    assert.equal(feed(text, n), want, `Not stripped cleanly at chunk size ${n}`);
   }
 });
 
-test("逐字符喂也不会漏出 JSON 或反引号", () => {
-  const seen = feed(`说一句。${CALL}`, 1);
-  assert.ok(!seen.includes("list_media"), `漏出了工具名: ${JSON.stringify(seen)}`);
-  assert.ok(!seen.includes("`"), `漏出了反引号: ${JSON.stringify(seen)}`);
-  assert.ok(!seen.includes("promptcut-tool"), "漏出了围栏标记");
-  assert.ok(seen.startsWith("说一句。"), "把正文也吞了");
+test("Feeding one character at a time does not leak JSON or backticks either", () => {
+  const seen = feed(`Say something.${CALL}`, 1);
+  assert.ok(!seen.includes("list_media"), `Leaked the tool name: ${JSON.stringify(seen)}`);
+  assert.ok(!seen.includes("`"), `Leaked backticks: ${JSON.stringify(seen)}`);
+  assert.ok(!seen.includes("promptcut-tool"), "Leaked the fence marker");
+  assert.ok(seen.startsWith("Say something."), "Swallowed the body text as well");
 });
 
-test("连着几个围栏都摘掉", () => {
-  const text = `一。${CALL}二。${CALL}三。`;
-  assert.equal(feed(text, 4), "一。二。三。");
+test("Several fences in a row are all stripped", () => {
+  const text = `One.${CALL}Two.${CALL}Three.`;
+  assert.equal(feed(text, 4), "One.Two.Three.");
 });
 
-test("普通 ``` 代码块不受影响 —— 起始标记拼不出来就得放行", () => {
-  const text = "看这段:\n```js\nconst a = 1;\n```\n就这样。";
+test("An ordinary ``` code block is unaffected: if the start marker cannot be assembled, it must pass through", () => {
+  const text = "Look at this:\n```js\nconst a = 1;\n```\nThat is all.";
   for (const n of [1, 3, 9, 1000]) assert.equal(feed(text, n), text);
 });
 
-test("只是提到 promptcut 两个字,不该被当成围栏", () => {
-  const text = "promptcut-tool 这个名字是我们自己起的。";
+test("Merely mentioning the word promptcut must not be treated as a fence", () => {
+  const text = "We came up with the name promptcut-tool ourselves.";
   assert.equal(feed(text, 2), text);
 });
 
-test("围栏没收尾就整段丢掉,不把半截 JSON 甩给用户", () => {
-  const seen = feed('说一句。```promptcut-tool\n{"name":"list_me', 3);
-  assert.equal(seen, "说一句。");
+test("A fence that never closes is dropped entirely, rather than dumping partial JSON on the user", () => {
+  const seen = feed('Say something.```promptcut-tool\n{"name":"list_me', 3);
+  assert.equal(seen, "Say something.");
 });
 
-test("扣住的半截标记如果最终没拼成围栏,要在 flush 时放出来", () => {
+test("A held-back partial marker that never ends up forming a fence must be released on flush", () => {
   const f = createFenceFilter();
-  let out = f.push("结尾有个反引号 `");
+  let out = f.push("Ends with a backtick `");
   out += f.flush();
-  assert.equal(out, "结尾有个反引号 `");
+  assert.equal(out, "Ends with a backtick `");
 });
 
-test("围栏之后的正文照常流出来", () => {
+test("Text after the fence flows out as usual", () => {
   const f = createFenceFilter();
   let out = f.push(CALL);
-  out += f.push("工具跑完了，");
-  out += f.push("接着说。");
+  out += f.push("The tool finished running,");
+  out += f.push("continuing.");
   out += f.flush();
-  assert.equal(out, "工具跑完了，接着说。");
+  assert.equal(out, "The tool finished running,continuing.");
 });
 
 /*
- * 端到端钉住这次的回归本身。
+ * Pin down this regression itself end-to-end.
  *
- * 原来的 bug 不在过滤器,而在转发那一句:onEvent 里 text 分支累积完 collectedText
- * 之后**没有 return**,又落进 else 被原样转发出去。所以光测过滤器不够 —— 得真跑一遍
- * runTextProtocolLoop,确认界面收到的 text 事件里干干净净。
+ * The original bug was not in the filter, but in that forwarding line: in onEvent, after the text
+ * branch accumulated collectedText, there was **no return**, so it fell into else and was forwarded
+ * as-is. So testing only the filter is not enough: runTextProtocolLoop must actually be run to
+ * confirm that the text events received by the UI are completely clean.
  */
 import { runTextProtocolLoop } from "../harness/tool-protocol.mjs";
 
-test("端到端:围栏和裸 JSON 不会流到界面上", async () => {
-  // 故意在围栏标记中间断开,模拟流式分块
+test("End-to-end: fences and bare JSON do not stream into the UI", async () => {
+  // Intentionally split inside fence markers to simulate streaming chunks
   const chunks = [
-    "我先确认视频素材。\n\n``",
+    "First I will check the video media.\n\n``",
     '`promptcut-tool\n{"name":"li',
     'st_media","input":{}}\n```\n\n',
-    "好了。",
+    "Done.",
   ];
   let round = 0;
   const startRun = ({ onEvent }) => {
@@ -96,7 +99,7 @@ test("端到端:围栏和裸 JSON 不会流到界面上", async () => {
     const mine = round;
     const done = (async () => {
       if (mine === 1) for (const c of chunks) onEvent({ type: "text", delta: c });
-      else onEvent({ type: "text", delta: "都排好了。" });
+      else onEvent({ type: "text", delta: "Everything is arranged." });
       onEvent({ type: "done" });
     })();
     return { abort() {}, done };
@@ -107,19 +110,19 @@ test("端到端:围栏和裸 JSON 不会流到界面上", async () => {
     startRun,
     opts: {
       systemPrompt: "sys",
-      prompt: "给视频加字幕",
+      prompt: "Add captions to the video",
       callTool: async () => ({ media: [] }),
     },
     onEvent: (ev) => seen.push(ev),
   }).done;
 
   const shown = seen.filter((e) => e.type === "text").map((e) => e.delta).join("");
-  assert.ok(!shown.includes("promptcut-tool"), `围栏标记漏出来了: ${JSON.stringify(shown)}`);
-  assert.ok(!shown.includes("list_media"), `工具名漏出来了: ${JSON.stringify(shown)}`);
-  assert.ok(!shown.includes("```"), `反引号漏出来了: ${JSON.stringify(shown)}`);
-  assert.ok(shown.includes("我先确认视频素材。"), "把正文吞了");
-  assert.ok(shown.includes("好了。"), "围栏后面的正文丢了");
+  assert.ok(!shown.includes("promptcut-tool"), `The fence marker leaked out: ${JSON.stringify(shown)}`);
+  assert.ok(!shown.includes("list_media"), `The tool name leaked out: ${JSON.stringify(shown)}`);
+  assert.ok(!shown.includes("```"), `Backticks leaked out: ${JSON.stringify(shown)}`);
+  assert.ok(shown.includes("First I will check the video media."), "Swallowed the body text");
+  assert.ok(shown.includes("Done."), "The text after the fence was lost");
 
-  // 工具本身仍然要被识别、被调用 —— 摘围栏不能把功能一起摘掉
-  assert.ok(seen.some((e) => e.type === "tool_call" && e.name === "list_media"), "没有识别出工具调用");
+  // The tool itself must still be recognized and invoked: stripping fences must not strip functionality
+  assert.ok(seen.some((e) => e.type === "tool_call" && e.name === "list_media"), "No tool call was recognized");
 });

@@ -1,44 +1,57 @@
 /**
- * 多 Agent 的协调公告板(计划 `docs/plan/agent-workflow-plan.md` A3;语义 `user-workflow.md`「多 Agent」「保护」)。
+ * Coordination bulletin board for multi-agent (plan `docs/plan/agent-workflow-plan.md` A3; semantics
+ * `user-workflow.md` "Multi-Agent", "Protection").
  *
- * 以前在页面内存里(`src/ai/agentBus.ts`),只看得见经这个页面执行的工具调用;现在放在编辑器进程里,**按项目一份**
- * (`createAgentBoards`),`declare_scope` / `list_agents` / `send_message` / `check_messages` 在服务端答,所有 Agent
- * (AI 栏各页签、拉起的子 Agent、以后经 MCP 直连的桌面 APP 会话)看到同一份。
+ * Previously in page memory (`src/ai/agentBus.ts`), only seeing tool calls executed through that
+ * page; now placed in the editor process, **one per project** (`createAgentBoards`), with
+ * `declare_scope` / `list_agents` / `send_message` / `check_messages` answered on the server side,
+ * so all Agents (AI panel tabs, spawned subagents, and future desktop app sessions directly connected
+ * via MCP) see the same copy.
  *
- * 四样东西:
- *   1. **Agent 名单**:页面报上来的页签(`setTabs`:对话 ID、页签名、忙不忙)、调过工具的会话(`touch`)、
- *      共享项目里别的成员那边的 Agent(`applyRemote*`,经文档服务转来,第二阶段)。
- *   2. **范围声明**:`declare_scope` 记在名单上,页签名跟着改(经 SSE 推给页面)。
- *   3. **改动记录**:由文档服务的**提交流**喂(`noteCommit`,带写入身份:页面 = 用户、各 Agent、共享项目里别的成员),
- *      按提交前后的项目算碰了哪几条「剪辑->序列」(`src/kernel/agentScopes.mjs`)。没接文档服务时退回由工具入口记
- *      (`noteChange`,页面执行器算好范围随结果带回来)。
- *   4. **信箱**:`send_message` 投进收件方的信箱。收件页签空闲就由页面取走、作为一条用户消息发出;忙就攒着,
- *      跑完再送;自动连锁有层数上限 `MAX_AUTO_HOPS`。
+ * Four things:
+ *   1. **Agent list**: tabs reported by pages (`setTabs`: chat ID, tab name, busy status), sessions
+ *      that have called tools (`touch`), and Agents from other members in shared projects
+ *      (`applyRemote*`, forwarded via document service, Phase 2).
+ *   2. **Scope declarations**: `declare_scope` recorded on the list, updating tab names accordingly
+ *      (pushed to the page via SSE).
+ *   3. **Change log**: fed by the document service's **commit stream** (`noteCommit`, with write
+ *      identity: page = user, each Agent, other members in shared projects), calculating which
+ *      "cut -> track" items were touched before and after the commit (`src/kernel/agentScopes.mjs`).
+ *      When not connected to the document service, falls back to recording at tool entry points
+ *      (`noteChange`, page executor computes scope and returns it with results).
+ *   4. **Mailbox**: `send_message` drops into the recipient's mailbox. If the recipient tab is idle,
+ *      the page picks it up and sends it as a user message; if busy, it accumulates and is sent
+ *      after execution completes; automatic hops are capped at `MAX_AUTO_HOPS`.
  *
- * 另外,收件方**下一次工具结果**里带上(`pendingFor` / `annotate`,放法与 A2 的 `user-editing.mjs` 一致,`notice` 在最前):
- *   - 信箱里的消息(带出即算送达,不再自动投递);
- *   - 别人动了你声明的范围(每条只提示一次);
- *   - 你写的内容被覆盖了(文档服务发给你那条连接的 `project.overwritten`,`noteOverwritten`);
- * 写入方这一次的结果里带「你写进了 Agent <对话> 声明在改的范围」(`writerNotice`)。
+ * Additionally, the recipient's **next tool result** includes (`pendingFor` / `annotate`, placed
+ * consistently with A2's `user-editing.mjs`, with `notice` first):
+ *   - Messages in the mailbox (carried out counts as delivered, no longer auto-delivered);
+ *   - Others modified your declared scope (notified only once per item);
+ *   - Content you wrote was overwritten (`project.overwritten` sent by the document service on your
+ *     connection, `noteOverwritten`);
+ * The writer's current result includes "You wrote into the scope declared for editing by Agent <chat>"
+ * (`writerNotice`).
  *
- * 只在内存里:编辑器进程重启就清空,页签和会话下一次动作时重新出现。
+ * In-memory only: cleared when the editor process restarts, reappearing on the next action of tabs
+ * and sessions.
  */
 import { diffScopes, overlappingScopes, splitScopes, scopeOverlaps } from './ssr-host.mjs';
+import { tr } from '../i18n.mjs';
 
 export const BOARD_DEFAULTS = Object.freeze({
-  /** 自动投递最多连锁几层;超过就留在信箱里,等用户下一次和它说话时一并带上 */
+  /** Maximum auto-delivery chain depth; beyond this, messages stay in the mailbox until the user speaks to it next time */
   MAX_AUTO_HOPS: 3,
-  /** 改动记录留多少条 */
+  /** How many change records to keep */
   maxChanges: 500,
-  /** 信箱最多攒多少条(全项目) */
+  /** Maximum messages accumulated in the mailbox (project-wide) */
   maxInbox: 200,
-  /** 一个 Agent 多久没动静(没开页签、没调工具、没在跑)就不再算「在跑」,它声明的范围不再拿来比(〔裁〕30 分钟) */
+  /** How long an Agent has no activity (no open tab, no tools called, not running) before it is no longer considered "running", and its declared scope is no longer compared ([ruling] 30 minutes) */
   idleMs: 30 * 60_000,
-  /** 结果里最多列几条 */
+  /** Maximum number of items listed in results */
   showMax: 8,
-  /** 一轮开始时附在提示词前面的动态最多几条 */
+  /** Maximum number of updates prepended to the prompt at the start of a round */
   notesMax: 40,
-  /** 每个 Agent 记住已在工具结果里提示过的改动条数 */
+  /** Each Agent remembers the count of changes already notified in tool results */
   notifiedKeep: 500,
 });
 
@@ -50,7 +63,7 @@ function fmtTime(at) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
 }
 
-/** 文档服务的写入身份 → 记录里的「谁」:{ kind: 'user' | 'agent' | 'render' | 'unknown', agent?, userId? } */
+/** Document service write identity → "who" in the record: { kind: 'user' | 'agent' | 'render' | 'unknown', agent?, userId? } */
 export function byOfActor(actor) {
   if (!isPlainObject(actor)) return { kind: 'unknown' };
   if (actor.role === 'page') {
@@ -69,34 +82,36 @@ export function byOfActor(actor) {
 /**
  * @param {object} [o]
  * @param {() => number} [o.now]
- * @param {(key: string) => string | null} [o.labelOf] 对话 ID → 厂商名(「Agent <对话>(<厂商>)」里用)
+ * @param {(key: string) => string | null} [o.labelOf] Chat ID → provider name (used in
+ *   "Agent <chat>(<provider>)")
  * @param {(key: string) => { role?: string | null, roleName?: string | null, parent?: string | null } | null} [o.infoOf]
- *   对话 ID → 登记表里的角色、父对话(名单里显示)
- * @param {(msg: object) => boolean} [o.forwardRemote] 收件方是共享项目别的成员那边的 Agent 时,经文档服务转过去(第二阶段);回 false 表示转不出去
+ *   Chat ID → role and parent chat in the registry (displayed in the list)
+ * @param {(msg: object) => boolean} [o.forwardRemote] When recipient is an Agent belonging to another
+ *   member in a shared project, forward via document service (Phase 2); returns false if forwarding fails
  */
 export function createAgentBoard({ now = () => Date.now(), labelOf = () => null, infoOf = () => null, forwardRemote = null, limits: limitsIn = {} } = {}) {
   const L = { ...BOARD_DEFAULTS, ...limitsIn };
-  /** key → 名单条目 */
+  /** key → list entry */
   const agents = new Map();
   const changes = [];
   const inbox = [];
   let seq = 0;
-  /** key → 上一次「拿走动态」时的序号 */
+  /** key → sequence number from the last "take activity" */
   const seen = new Map();
-  /** key → 已在工具结果里提示过的改动序号 */
+  /** key → change sequence number already reported in tool results */
   const notified = new Map();
-  /** key → 被覆盖的记录(下一次工具结果里带出) */
+  /** key → overwritten records (included in the next tool result) */
   const overwritten = new Map();
   const overwrittenSeen = new Set();
-  /** key → 这一刻正在跑的工具名(提交流里认出是它写的,记录带上工具名) */
+  /** key → tool name currently running (recognized in commit stream as written by it, record includes tool name) */
   const calls = new Map();
-  /** 页面替某个 Agent 执行的写入:opId → 对话 */
+  /** Writes executed by the page on behalf of an Agent: opId → chat */
   const pageOps = new Map();
   const listeners = new Set();
 
   function emit() {
     for (const fn of [...listeners]) {
-      try { fn(); } catch { /* 订阅方出错不影响公告板 */ }
+      try { fn(); } catch { /* Subscriber errors do not affect the bulletin board */ }
     }
   }
 
@@ -115,21 +130,21 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
     return v;
   };
 
-  /** 「Agent <对话>(<厂商>)」;共享项目别的成员那边的带上成员名 */
+  /** "Agent <chat>(<vendor>)"; for other members in a shared project, include the member name */
   function agentText(key) {
-    if (key === '' || key === null || key === undefined) return '某个没带对话 ID 的 Agent';
+    if (key === '' || key === null || key === undefined) return 'An Agent without a chat ID';
     const a = agents.get(key);
     const vendor = a?.remote?.vendor ?? label(key);
-    const member = a?.remote?.member ? `,成员 ${a.remote.member} 那边` : '';
-    return `Agent ${key}${vendor || member ? `(${[vendor, member.slice(1)].filter(Boolean).join(',')})` : ''}`;
+    const member = a?.remote?.member ? `on member ${a.remote.member}'s side` : '';
+    return `Agent ${key}${vendor || member ? ` (${[vendor, member].filter(Boolean).join(', ')})` : ''}`;
   }
 
   function byText(by) {
-    if (!by) return '未知的写入方';
-    if (by.kind === 'user') return by.userId ? `用户 ${by.userId}` : '用户';
+    if (!by) return 'Unknown writer';
+    if (by.kind === 'user') return by.userId ? `User ${by.userId}` : 'User';
     if (by.kind === 'agent') return agentText(by.agent);
-    if (by.kind === 'render') return '渲染节点';
-    return by.userId ? `用户 ${by.userId}` : '未知的写入方';
+    if (by.kind === 'render') return 'Render node';
+    return by.userId ? `User ${by.userId}` : 'Unknown writer';
   }
 
   const isBusy = (key) => {
@@ -137,7 +152,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
     return !!a && (a.runs > 0 || a.tabBusy);
   };
 
-  /** 还算「在跑」:页签开着、在跑一轮、最近动过,或共享项目别的成员那边报过且没过期 */
+  /** Considered "running": tab open, round running, recently active, or reported by others in shared project and unexpired */
   function isLive(a, t = now()) {
     if (!a) return false;
     if (a.remote) return a.remote.expiresAt > t;
@@ -161,10 +176,10 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
 
   function fmtChange(c) {
     const who = byText(c.by);
-    if (c.kind === 'declare') return `${fmtTime(c.at)} ${who} 声明了修改范围:${c.scopes.join(',')}`;
+    if (c.kind === 'declare') return `${fmtTime(c.at)} ${who} declared edit scope: ${c.scopes.join(',')}`;
     const scopeOf = c.by?.kind === 'agent' ? agents.get(c.by.agent)?.scope : null;
-    const whoScope = scopeOf ? `(声明范围「${scopeOf}」)` : '';
-    return `${fmtTime(c.at)} ${who}${whoScope}${c.tool ? ` 用 ${c.tool}` : ''} 改了 ${c.scopes.join(',')}`;
+    const whoScope = scopeOf ? `(declared scope "${scopeOf}")` : '';
+    return `${fmtTime(c.at)} ${who}${whoScope}${c.tool ? ` using ${c.tool}` : ''} changed ${c.scopes.join(',')}`;
   }
 
   function markNotified(key, s) {
@@ -185,14 +200,14 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       return () => listeners.delete(fn);
     },
 
-    /** 当前序号(工具调用前记下,调用后看这期间多了哪些记录) */
+    /** Current sequence number (recorded before tool call; check after call for records added in the interim) */
     seq() {
       return seq;
     },
 
-    /* ---------------- 名单 ---------------- */
+    /* ---------------- List ---------------- */
 
-    /** 页面报上来的页签(整份替换):[{ conversationId, title, busy }] */
+    /** Tabs reported by the page (full replacement): [{ conversationId, title, busy }] */
     setTabs(list) {
       const present = new Set();
       for (const raw of Array.isArray(list) ? list : []) {
@@ -210,24 +225,24 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       emit();
     },
 
-    /** 这个页签还开着吗(拉起的子 Agent 算并发名额用) */
+    /** Is this tab still open (used for concurrency quota counting of spawned subagents) */
     tabOpen(key) {
       return !!agents.get(key)?.tab;
     },
 
-    /** 页签关过(报过开、后来不在了) */
+    /** Tab was closed (reported open, later no longer present) */
     tabClosed(key) {
       const a = agents.get(key);
       return !!a && !a.tab && a.closedAt != null;
     },
 
-    /** 这个对话调了一次工具 */
+    /** This chat called a tool once */
     touch(key) {
       if (typeof key !== 'string' || !key) return;
       entry(key).lastActive = now();
     },
 
-    /** 一轮开始(AI 栏发出一条消息):记下它是第几层自动投递(0 = 用户自己发的) */
+    /** Round starts (AI panel sends a message): record its auto-delivery level (0 = sent by user) */
     beginRun(key, hops = 0) {
       if (typeof key !== 'string' || !key) return;
       const a = entry(key);
@@ -250,8 +265,10 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
     isBusy,
 
     /**
-     * 撤掉这个对话声明的范围;原来有才回 true。云端的一轮结束时用(`service/instance.mjs`):云端的对话没有页签可关,
-     * 一轮结束(含失败、被停、被撤销)后范围还挂着的话,别的成员会一直看到「〈成员〉的云端 Agent 正在改:…」。
+     * Revoke the scope declared by this chat; returns true only if it previously existed. Used when
+     * a cloud round ends (`service/instance.mjs`): cloud chats have no tabs to close; if the scope
+     * remains attached after a round ends (including failure, stopped, or revoked), other members
+     * will continuously see "<member>'s Cloud Agent is editing: …".
      */
     clearScope(key) {
       const a = agents.get(key);
@@ -263,7 +280,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       return true;
     },
 
-    /** 这个对话此刻在跑的工具(提交流的记录带上工具名) */
+    /** Tool currently running for this chat (commit stream records include the tool name) */
     beginCall(key, tool) {
       if (typeof key === 'string') calls.set(key, tool);
     },
@@ -271,17 +288,18 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       calls.delete(key);
     },
 
-    /* ---------------- 改动记录 ---------------- */
+    /* ---------------- Change records ---------------- */
 
     /**
-     * 文档服务的一次提交落到了副本上(`doc-link.mjs` 的 `onCommit`):按提交前后的项目算范围,记一笔。
+     * A commit from the document service landed on the replica (`onCommit` in `doc-link.mjs`):
+     * calculate the scope based on the project before and after the commit, and record an entry.
      * @param {{ rev?: number, opId?: string | null, actor?: object, before: object, after: object }} c
      */
     noteCommit({ rev = null, opId = null, actor = null, before, after }) {
       const scopes = diffScopes(before, after);
       if (!scopes.length) return null;
       let by = byOfActor(actor);
-      // 页面替某个 Agent 执行的工具写入(以页面身份提交):归到那个 Agent
+      // Tool write executed by the page on behalf of an Agent (committed with page identity): attribute to that Agent
       if (opId && pageOps.has(opId)) {
         by = { kind: 'agent', agent: pageOps.get(opId) };
         pageOps.delete(opId);
@@ -291,7 +309,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       return changes[changes.length - 1];
     },
 
-    /** 没接文档服务时的退路:工具入口记(页面执行器算好的范围) */
+    /** Fallback when not connected to document service: record at tool entry (scope computed by page executor) */
     noteChange(key, tool, scopes) {
       const list = Array.isArray(scopes) ? scopes.filter((s) => typeof s === 'string' && s).slice(0, 32) : [];
       if (!list.length) return null;
@@ -299,7 +317,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       return changes[changes.length - 1];
     },
 
-    /** 页面替这个 Agent 执行的写入(页面回包带的 opIds):提交流里认到这些 opId 时记到它名下 */
+    /** Writes by page for this Agent (opIds in page response): attribute to it when recognized in commit stream */
     attributeOps(key, opIds) {
       for (const id of Array.isArray(opIds) ? opIds : []) {
         if (typeof id !== 'string') continue;
@@ -310,7 +328,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       while (pageOps.size > 256) pageOps.delete(pageOps.keys().next().value);
     },
 
-    /** (sinceSeq, now] 之间 key 写的范围 */
+    /** Scope written by key between (sinceSeq, now] */
     writtenBy(key, sinceSeq) {
       const out = [];
       for (const c of changes) {
@@ -319,7 +337,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       return out;
     },
 
-    /** 被覆盖的一方:文档服务发给它那条连接的 `project.overwritten`(去重) */
+    /** The overwritten party: `project.overwritten` sent by document service to its connection (deduplicated) */
     noteOverwritten(victim, { entity, by, rev, at } = {}) {
       if (typeof victim !== 'string' || typeof entity !== 'string') return;
       const k = `${victim}|${rev}|${entity}`;
@@ -332,13 +350,13 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       if (list.length > 64) list.splice(0, list.length - 64);
     },
 
-    /* ---------------- 工具 ---------------- */
+    /* ---------------- Tools ---------------- */
 
     declareScope(key, args) {
       const scope = typeof args?.scope === 'string' ? args.scope.trim().slice(0, 120) : '';
-      if (!scope) throw new Error('scope 必填,写成「剪辑X->序列X」,多个用逗号分开');
+      if (!scope) throw new Error('scope is required, write it as "cut X->track X", separate multiple with commas');
       if (!key) {
-        return { ok: false, error: '这条调用没带 Agent 对话 ID(可能是走 agy 或外部命令行调的),范围没法记到页签上;别的 Agent 也看不到这次声明' };
+        return { ok: false, error: 'This call carries no Agent chat ID (it may have come through agy or an external command line), so the scope cannot be recorded on the tab; other Agents will not see this declaration either' };
       }
       const a = entry(key);
       a.scope = scope;
@@ -354,7 +372,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
         you: key,
         tab: a.title,
         otherAgents: others,
-        ...(clash.length ? { warning: `范围和 ${clash.map((c) => `${c.id}(${c.scope})`).join('、')} 有重叠,先用 send_message 商量好谁改哪部分` } : {}),
+        ...(clash.length ? { warning: `The scope overlaps with ${clash.map((c) => `${c.id}(${c.scope})`).join(', ')}; use send_message first to agree on who edits which part` } : {}),
       };
     },
 
@@ -363,7 +381,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
         const info = (() => { try { return infoOf(a.id) ?? null; } catch { return null; } })();
         return {
           id: a.id,
-          title: a.title ?? (a.remote ? `成员 ${a.remote.member} 的 Agent` : null),
+          title: a.title ?? (a.remote ? tr("Member {0}'s Agent", a.remote.member) : null),
           scope: a.scope,
           busy: a.remote ? !!a.remote.busy : isBusy(a.id),
           you: a.id === key,
@@ -383,12 +401,13 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
     sendMessage(key, args) {
       const text = typeof args?.text === 'string' ? args.text.trim().slice(0, 4000) : '';
       const to = typeof args?.to === 'string' ? args.to.trim() : '';
-      if (!text) throw new Error('text 必填');
-      if (!to) throw new Error('to 必填:收件 Agent 的对话 ID,用 list_agents 查;写 all 就是发给所有其他 Agent;写 user 是对用户说话');
-      // 对用户说话(2026-10-20 用户定):界面按工具调用里的 text 画进这一轮的气泡,公告板不投递(server/harness/tools/userMessage.mjs)
-      if (to.toLowerCase() === 'user') return { ok: true, shown: true, note: '已显示在用户的对话气泡里' };
+      if (!text) throw new Error('text is required');
+      if (!to) throw new Error('to is required: the chat ID of the recipient Agent, look it up with list_agents; use all to send to every other Agent; use user to speak to the user');
+      // Speak to the user (user decision, 2026-10-20): the UI renders text from the tool call into this round's
+      // bubble; the bulletin board does not deliver it (server/harness/tools/userMessage.mjs)
+      if (to.toLowerCase() === 'user') return { ok: true, shown: true, note: 'Shown in the user\'s chat bubble' };
       const targets = to === 'all' ? liveAgents().filter((a) => a.id !== key).map((a) => a.id) : [to];
-      if (targets.length === 0) return { ok: false, error: '没有别的 Agent 在跑' };
+      if (targets.length === 0) return { ok: false, error: 'No other Agent is running' };
       const hops = (key && agents.get(key)?.hops) || 0;
       const delivered = [];
       const unknown = [];
@@ -405,23 +424,23 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
         delivered.push(t);
       }
       emit();
-      if (delivered.length === 0) throw new Error(`没有这个 Agent:${unknown.join('、')}(用 list_agents 看有哪些)`);
+      if (delivered.length === 0) throw new Error(`No such Agent: ${unknown.join(', ')} (use list_agents to see which exist)`);
       const busyTargets = delivered.filter((t) => !remote.includes(t) && isBusy(t));
       return {
         ok: true,
         delivered,
         ...(unknown.length ? { unknown } : {}),
         note: busyTargets.length
-          ? `${busyTargets.join('、')} 正在跑,消息会带在它下一次工具调用的结果里,这一轮结束后没看到的再自动送到;空闲的那些已经作为一条消息发给它了`
+          ? `${busyTargets.join(', ')} is running; the message will be included in the result of its next tool call, and anything it has not seen after this turn ends will be delivered automatically; the idle ones have already been sent it as a message`
           : hops + 1 >= L.MAX_AUTO_HOPS
-            ? '已经连续互发好几轮了,这条会留在对方信箱里,等用户下一次和它说话时一并带上,不再自动触发它跑'
+            ? 'The Agents have already messaged each other for several rounds in a row; this message will stay in the recipient\'s mailbox and be delivered together the next time the user talks to it, and will no longer trigger it to run automatically'
             : remote.length === delivered.length
-              ? '对方在共享项目别的成员那边,消息已经经文档服务转过去'
-              : '对方空闲,消息已作为一条用户消息发给它,它会开始处理',
+              ? 'The recipient is with another member of the shared project; the message has been forwarded through the document service'
+              : 'The recipient is idle; the message was sent to it as a user message and it will start processing',
       };
     },
 
-    /** 投一条消息进信箱(本机的,或文档服务转来的) */
+    /** Deliver a message into the mailbox (local, or forwarded from the document service) */
     deliver({ from = null, fromLabel = null, to, text, hops = 1 }) {
       if (typeof to !== 'string' || typeof text !== 'string' || !text) return;
       entry(to);
@@ -430,9 +449,9 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       emit();
     },
 
-    /** 自己信箱里还没处理的消息(不取走)与自上次以来别人改了什么 */
+    /** Unprocessed messages in its own mailbox (not consumed) and what others changed since last time */
     checkMessages(key) {
-      if (!key) return { ok: false, error: '这条调用没带 Agent 对话 ID' };
+      if (!key) return { ok: false, error: 'This call carries no Agent chat ID' };
       const list = inbox.filter((m) => m.to === key);
       const others = changes.filter((c) => !mine(c, key) && c.seq > (seen.get(key) ?? 0));
       return {
@@ -442,9 +461,9 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       };
     },
 
-    /* ---------------- 投递 / 注入 ---------------- */
+    /* ---------------- Delivery / Injection ---------------- */
 
-    /** 取走投给这个 Agent 的消息;onlyAuto 只取层数没到顶的(页面空闲时自动投递用) */
+    /** Fetch messages delivered to this Agent; onlyAuto only fetches those within depth limit (for idle page auto-delivery) */
     takeInbox(key, onlyAuto) {
       const picked = [];
       for (let i = inbox.length - 1; i >= 0; i -= 1) {
@@ -462,14 +481,15 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       return inbox.some((m) => m.to === key && m.hops < L.MAX_AUTO_HOPS);
     },
 
-    /** 一个 Agent 刚出现时先把序号对齐,免得把它出生前的历史当新闻 */
+    /** When an Agent first appears, align sequence numbers first to avoid treating pre-creation history as news */
     markSeen(key) {
       if (typeof key === 'string' && !seen.has(key)) seen.set(key, seq);
     },
 
     /**
-     * 这个 Agent 这一轮提示词前面要带的「其他 Agent 的动态」:别人改了什么、信箱里到顶没自动投递的消息。取走即视为已读。
-     * 已经在工具结果里提示过的改动不再列。
+     * "Other agents' activity" to prepend to this Agent's prompt for this round: what others
+     * changed, and messages in the mailbox that reached the limit and were not auto-delivered.
+     * Considered read once fetched. Changes already reported in tool results are not listed again.
      */
     consumeNotes(key) {
       if (typeof key !== 'string' || !key) return '';
@@ -479,15 +499,16 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       const held = board.takeInbox(key, false);
       seen.set(key, seq);
       if (others.length === 0 && held.length === 0) return '';
-      const lines = ['[其他 Agent 的动态 —— 系统自动附上,不是用户说的话]', `你的 Agent 对话 ID:${key}`];
+      const lines = ['[Activity from other Agents: attached automatically by the system, not something the user said]', `Your Agent chat ID: ${key}`];
       for (const c of others.slice(-L.notesMax)) lines.push(`- ${fmtChange(c)}`);
-      for (const m of held) lines.push(`- ${fmtTime(m.at)} ${m.fromLabel ?? agentText(m.from)} 给你的消息:${m.text}`);
-      lines.push('[/其他 Agent 的动态]');
+      for (const m of held) lines.push(`- Message to you from ${m.fromLabel ?? agentText(m.from)} ${fmtTime(m.at)}: ${m.text}`);
+      lines.push('[/Activity from other Agents]');
       return lines.join('\n');
     },
 
     /**
-     * 这个 Agent 下一次工具结果里要带的:信箱里的消息(带出即送达)、别人动了它声明的范围、它写的被覆盖了。取走即清。
+     * Items to include in this Agent's next tool result: messages in mailbox (delivered once included),
+     * modifications by others to its declared scope, and overwrites of its writes. Cleared once fetched.
      * @returns {{ messages: object[], scopeChanges: object[], overwrittenBy: object[] }}
      */
     pendingFor(key) {
@@ -516,7 +537,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
     },
 
     /**
-     * 写入方:这次写到的范围落在别的在跑的 Agent 声明的范围里。
+     * Writer: the scope written this time overlaps with the declared scope of another running Agent.
      * @returns {Array<{ agent: string, who: string, scope: string, written: string[] }>}
      */
     writerNotice(key, sinceSeq) {
@@ -531,9 +552,9 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       return out;
     },
 
-    /* ---------------- 页面要看的 ---------------- */
+    /* ---------------- For the page ---------------- */
 
-    /** 推给页面的一份(SSE `agent.board`):各对话的范围、未读、可自动投递的条数、忙不忙 */
+    /** Pushed to the page (SSE `agent.board`): scope, unread count, auto-deliverable count, busy state per chat */
     snapshot() {
       return [...agents.values()].map((a) => ({
         id: a.id,
@@ -545,13 +566,13 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       }));
     },
 
-    /* ---------------- 共享项目别的成员那边的 Agent(第二阶段,经文档服务) ---------------- */
+    /* ---------------- Agents from other members in a shared project (Phase 2, via document service) ---------------- */
 
-    /** 别的成员那边的 Agent 报了范围(或续期);scope 为 null 表示撤掉 */
+    /** An Agent from another member reported a scope (or renewed); scope as null means revoke */
     applyRemoteAgent({ id, member, vendor = null, scope = null, busy = false, expiresAt }) {
       if (typeof id !== 'string' || !KEY_RE.test(id)) return;
       const local = agents.get(id);
-      if (local && !local.remote && (local.tab || local.runs > 0)) return; // 本机的同名对话优先(不会发生,防御)
+      if (local && !local.remote && (local.tab || local.runs > 0)) return; // Prefer local chat with the same name (should not happen, defensive)
       const a = entry(id);
       a.remote = { member: typeof member === 'string' && member ? member.slice(0, 64) : '?', vendor: typeof vendor === 'string' ? vendor.slice(0, 64) : null, busy: !!busy, expiresAt: Number.isFinite(expiresAt) ? expiresAt : now() + L.idleMs };
       if (scope !== a.scope) {
@@ -568,24 +589,25 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       if (a?.remote) { agents.delete(id); emit(); }
     },
 
-    /** 诊断与测试 */
+    /** Diagnostics and testing */
     describe() {
       return { seq, agents: board.snapshot(), changes: changes.length, inbox: inbox.length };
     },
     _changes() {
       return changes;
     },
-    /** 挂钩:本机的 Agent 声明了范围(第二阶段经文档服务广播) */
+    /** Hook: local Agent declared a scope (broadcast via document service in Phase 2) */
     onDeclare: null,
   };
   return board;
 }
 
-/* ------------------------------------------------------------------ 结果里的提示 */
+/* ------------------------------------------------------------------ Notices in results */
 
 /**
- * 公告板要告诉这个 Agent 的,放进它这一次的工具结果:`notice` 在最前(已有的 notice 接在后面),另加
- * `messages` / `scopeChanges` / `overwrittenBy` / `scopeClash` 字段。放法与 `user-editing.mjs` 的 `annotateResult` 一致。
+ * Put what the bulletin board needs to tell this Agent into its current tool result: `notice` comes
+ * first (existing notices appended after it), plus `messages` / `scopeChanges` / `overwrittenBy` /
+ * `scopeClash` fields. Placement is consistent with `annotateResult` in `user-editing.mjs`.
  * @param {any} result
  * @param {{ messages?: object[], scopeChanges?: object[], overwrittenBy?: object[], scopeClash?: object[] }} extra
  */
@@ -593,28 +615,28 @@ export function annotateBoard(result, { messages = [], scopeChanges = [], overwr
   const lines = [];
   const fields = {};
   const cap = (arr) => arr.slice(0, limits.showMax);
-  const more = (arr) => (arr.length > limits.showMax ? ` 等 ${arr.length} 条` : '');
+  const more = (arr) => (arr.length > limits.showMax ? ` and ${arr.length} more` : '');
   if (overwrittenBy.length) {
     const shown = cap(overwrittenBy).map((o) => {
       const clip = /\/clips\/@([^/]+)/.exec(o.entity)?.[1];
-      return `${clip ? `片段 ${clip}` : o.entity}(被 ${o.who} 覆盖${o.rev != null ? `,rev ${o.rev}` : ''})`;
+      return `${clip ? `clip ${clip}` : o.entity} (overwritten by ${o.who}${o.rev != null ? `, rev ${o.rev}` : ''})`;
     });
-    lines.push(`你写的 ${shown.join('、')}${more(overwrittenBy)}。先重读确认现在的内容,需要时和对方协调,不要直接改回去。`);
+    lines.push(`You wrote ${shown.join(', ')}${more(overwrittenBy)}. Re-read to confirm the current content, coordinate with them if needed, and do not simply revert it.`);
     fields.overwrittenBy = overwrittenBy;
   }
   if (scopeClash.length) {
-    const shown = cap(scopeClash).map((c) => `${c.who} 声明在改的「${c.scope}」(你写到了 ${c.written.join(',')})`);
-    lines.push(`这次写入落在别的 Agent 正在改的范围里:${shown.join('、')}${more(scopeClash)}。对方下一次工具调用会得知;先用 send_message 和它商量谁改哪部分。`);
+    const shown = cap(scopeClash).map((c) => `"${c.scope}" that ${c.who} declared it is editing (you wrote to ${c.written.join(',')})`);
+    lines.push(`This write falls within a scope another Agent is editing: ${shown.join(', ')}${more(scopeClash)}. It will learn of this on its next tool call; first use send_message to agree with it on who edits which part.`);
     fields.scopeClash = scopeClash;
   }
   if (scopeChanges.length) {
-    const shown = cap(scopeChanges).map((c) => `${c.who}${c.tool ? ` 用 ${c.tool}` : ''} 改了 ${c.scopes.join(',')}`);
-    lines.push(`别人正在改你声明的范围:${shown.join(';')}${more(scopeChanges)}。重读后再继续,需要时用 send_message 协调。`);
+    const shown = cap(scopeChanges).map((c) => `${c.who}${c.tool ? ` using ${c.tool}` : ''} changed ${c.scopes.join(',')}`);
+    lines.push(`Someone else is editing a scope you declared: ${shown.join(';')}${more(scopeChanges)}. Re-read before continuing, and coordinate with send_message if needed.`);
     fields.scopeChanges = scopeChanges;
   }
   if (messages.length) {
-    const shown = cap(messages).map((m) => `【${m.fromLabel ?? (m.from ? `Agent ${m.from}` : '未知')}】${m.text}`);
-    lines.push(`别的 Agent 给你的消息(系统附上,不是用户说的话):${shown.join(' ')}${more(messages)}`);
+    const shown = cap(messages).map((m) => `[${m.fromLabel ?? (m.from ? `Agent ${m.from}` : 'unknown')}] ${m.text}`);
+    lines.push(`Message from another Agent (attached by the system, not something the user said): ${shown.join(' ')}${more(messages)}`);
     fields.messages = messages;
   }
   if (!lines.length) return result;
@@ -625,8 +647,10 @@ export function annotateBoard(result, { messages = [], scopeChanges = [], overwr
 }
 
 /**
- * 按项目一份公告板。`boardFor(projectId)` 没有就建;`projectId` 为空时用 `''`(没绑项目副本时的本机那一份)。
- * @param {(projectId: string) => object} [options] 传给每一份 `createAgentBoard` 的选项(可以按项目给)
+ * One bulletin board per project. `boardFor(projectId)` creates one if absent; when `projectId`
+ * is empty, use `''` (the local one when no project replica is bound).
+ * @param {(projectId: string) => object} [options] Options passed to each `createAgentBoard`
+ *   (can be provided per project)
  */
 export function createAgentBoards(optionsFor = () => ({})) {
   const boards = new Map();

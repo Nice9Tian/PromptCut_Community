@@ -18,72 +18,76 @@ import "./chat.css";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * 云端下「一键配特效」置灰的悬停说明。它在本机只是按角色依次发两条消息(`useAiChat.ts` 的 `runWorkflow`),本身云端也做得了;
- * 卡在第一步:剪辑导演之后的特效助理要「根据他们说的内容」配字幕与动效,那得先给每个视频做语音识别(`transcribe_media`),
- * 而语音识别在云节点上这一版还没接上(`server/agent/service/cloud-tools.mjs` 里 `transcribe_media`、`auto_workflow` 记为「还没接上」)。
- * 接上之后:去掉这里的置灰,`CloudAiPanel` 的 `workflowRoles`、`onRunWorkflow` 改成按角色依次发给云端对话。
+ * Hover tooltip for "One-click effects" when it is grayed out under Cloud. Locally it just sends two messages
+ * in role order (`runWorkflow` in `useAiChat.ts`), so the cloud could do it too;
+ * it is stuck on the first step: after the cut director, the effects assistant has to set up captions and
+ * motion graphics "based on what they say", which needs speech recognition on every video first (`transcribe_media`),
+ * and speech recognition is not hooked up on cloud nodes in this version (`server/agent/service/cloud-tools.mjs`
+ * marks `transcribe_media` and `auto_workflow` as "not hooked up yet").
+ * Once it is hooked up: remove the gray-out here, and change `workflowRoles` and `onRunWorkflow` in `CloudAiPanel`
+ * to send to the cloud chat in role order.
  */
 export const CLOUD_NO_WORKFLOW = tr("The first step of one-click effects is running speech recognition on each video. This version of the cloud node does not support speech recognition yet (it needs a Python runtime and a speech model on the node), so the feature is unavailable until it does. For now you can switch to the local connection type");
 
-/** 「✦」菜单里的几样:不常点、但一点就改变这一轮怎么跑的东西,原来挤在顶栏上 */
+/** A few items in the "✦" menu: rarely clicked, but one click changes how this round runs; they used to crowd the top bar */
 export interface ComposerMenuProps {
-  /** 「一键配特效」依次跑的角色,只用来写悬停说明 */
+  /** The roles that "One-click effects" runs in order, used only to write the hover tooltip */
   workflowRoles: Role[];
   onRunWorkflow: () => void;
-  /** 有对话才出得了诊断报告 */
+  /** A diagnostic report can only be produced when there is a chat */
   canDiagnose: boolean;
   onOpenDiagnostics: () => void;
   onNewChat: () => void;
-  /** 新对话开不了（游客每个项目只能开一个对话）时的说明：给了就把「新对话」置灰、悬停写这一句；不给照常 */
+  /** Explanation for when a new chat cannot be opened (a guest can only open one chat per project): if given, "New chat" is grayed out and the hover shows this sentence; if not given, behaves as usual */
   newChatDisabledReason?: string;
-  /** 「云端」接入方式:一键配特效在云端下置灰(悬停写原因);诊断报告照常可用,内容换成这段云端对话的(〔用户 2026-10-07 定〕) */
+  /** "Cloud" connection type: One-click effects is grayed out under Cloud (hover shows the reason); the diagnostic report still works, with the content switched to this cloud chat's (user decision, 2026-10-07) */
   cloudMode?: boolean;
 }
 
-/** 「云端」接入方式(契约 9.5) */
+/** "Cloud" connection type (contract 9.5) */
 export interface ComposerCloud {
-  /** 驱动下拉里要不要有「云端」这一项 */
+  /** Whether the driver dropdown should have a "Cloud" entry */
   show: boolean;
   selected: boolean;
-  /** 这一项能不能选(创建者关了开关时不能,`disabledReason` 是悬停说明) */
+  /** Whether this entry can be selected (not when the creator turned the switch off; `disabledReason` is the hover tooltip) */
   disabled?: boolean;
   disabledReason?: string;
   onSelect: () => void;
-  /** 选中云端时又选了本机的某个驱动 */
+  /** A local driver was selected while Cloud is selected */
   onLeave: (p: AiProvider) => void;
-  /** 云端下模型那一组(`CloudModelBar`) */
+  /** The model group under Cloud (`CloudModelBar`) */
   toolbar: ReactNode;
-  /** 云端下附件按钮的悬停说明(附件传到云端这个对话的工作目录) */
+  /** Hover tooltip of the attachment button under Cloud (attachments go to this chat's working directory in the cloud) */
   attachTitle?: string;
-  /** 已不用(云端下附件按钮不再置灰)。`AiPanel.tsx` 里还在传一个空串,等那边顺手删掉后这一项也可以删 */
+  /** No longer used (the attachment button is no longer grayed out under Cloud). `AiPanel.tsx` still passes an empty string; once it is removed there, this entry can be removed too */
   attachReason?: string;
 }
 
 export interface ComposerProps {
-  /** 草稿文字。状态在 AiPanel:预览右键引用卡片、空状态的示例句都要往里写 */
+  /** Draft text. The state lives in AiPanel: quoting a card via the preview right-click and the example sentences in the empty state both write into it */
   text: string;
   onTextChange: (text: string) => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   attachments: ChatAttachment[];
   uploading: boolean;
-  /** 点曲别针:AiPanel 去点它自己那个隐藏的 file input */
+  /** Click the paperclip: AiPanel clicks its own hidden file input */
   onPickFiles: () => void;
   onRetryAttachment: (id: string, srcPath: string | null) => void;
   onRemoveAttachment: (idx: number) => void;
   /**
-   * Enter、「发送」「加入队列」按钮都走这里,交上去的是此刻输入框里的原文(没 trim)。
-   * 直接发还是进队列由 AiPanel 看这一页忙不忙决定
+   * Enter and the "Send" and "Add to queue" buttons all go through here, submitting the raw text currently in the input (not trimmed).
+   * Whether it is sent directly or queued is decided by AiPanel, depending on whether this tab is busy
    */
   onSubmit: (text: string) => void;
-  /** 运行中「■ 停止」 */
+  /** "■ Stop" while running */
   onStop: () => void;
   /** Optional authority gate for shared cloud runs; omitted local callers keep their historical stop behavior. */
   canStop?: boolean;
   stopDisabledReason?: string;
   streaming: boolean;
-  /** 快捷键被别处接管(对话框开着之类)时 Enter 只是换行 */
+  /** When the shortcut is taken over elsewhere (a dialog is open, for example), Enter just inserts a newline */
   hotkeysOff?: boolean;
-  /** 这一页不在前台时 Enter 也只是换行 */
+  /** When this tab is not in the foreground, Enter also just inserts a newline */
   active?: boolean;
   provider: AiProvider | null;
   providers: ProviderInfo[];
@@ -91,22 +95,24 @@ export interface ComposerProps {
   config: PublicAiConfig | null;
   menu: ComposerMenuProps;
   /**
-   * 「云端」接入方式:不给就与原来逐条相同。给了,驱动下拉里多一项「云端」(`show`),选中时模型那一组换成 `toolbar`,
-   * 附件按钮照常可用(传到云端);「一键配特效」置灰并写原因。在线页面没有本机驱动,下拉里只有这一项。
+   * "Cloud" connection type: if not given, identical to before. If given, the driver dropdown gets an extra "Cloud" entry (`show`),
+   * and when selected the model group is replaced with `toolbar`; the attachment button still works (uploads to the cloud);
+   * "One-click effects" is grayed out with a reason. The online page has no local driver, so the dropdown has only this entry.
    */
   cloud?: ComposerCloud;
-  /** 这一页的 id:运行选项里的创造力等级按页存 */
+  /** The id of this tab: the creativity level in the run options is stored per tab */
   tabId?: string;
-  /** 开始页上的引导(StartHero.tsx):"input" = 输入框描边脉动;"send" = 发送按钮闪;不给 = 不引导 */
+  /** Guidance on the start page (StartHero.tsx): "input" = the input box outline pulses; "send" = the send button flashes; not given = no guidance */
   guide?: "input" | "send" | null;
-  /** 禁用输入框与发送按钮（如当前对话已无读取权限） */
+  /** Disable the input box and the send button (for example when the current chat no longer has read permission) */
   disabled?: boolean;
   disabledReason?: string;
   /**
-   * 这个项目只给了只读权限（游客，`editor/readOnly.ts`）：不能给 Agent 发消息，也不能停别人的任务；
-   * 一键配特效、新对话置灰，没有引导输入的脉动。对话历史照常读。`readOnlyReason` 是置灰说明（`viewOnlyText()` 那一句），
-   * 由面板（AiPanel / CloudAiPanel）读出来传进来：这里不自己订阅权限，输入区的渲染不依赖同步管理。
-   * 和 `disabled` 并存时，「对话没有读取权限」那一条原因优先。
+   * This project only has read-only permission (guest, `editor/readOnly.ts`): cannot send messages to the Agent, nor stop other people's tasks;
+   * One-click effects and New chat are grayed out, and there is no input guidance pulse. Chat history can still be read. `readOnlyReason` is the gray-out explanation
+   * (the `viewOnlyText()` sentence), read out by the panel (AiPanel / CloudAiPanel) and passed in: this component does not subscribe to permissions itself,
+   * so rendering the input area does not depend on the sync manager.
+   * When it coexists with `disabled`, the "chat has no read permission" reason takes priority.
    */
   readOnly?: boolean;
   readOnlyReason?: string;
@@ -116,13 +122,13 @@ function providerLabel(p: ProviderInfo): string {
   return p.label || (p.id === "claude" ? "Claude Code" : p.id === "agy" ? "Antigravity" : p.id === "codex" ? "Codex" : p.id);
 }
 
-/** 工具条上的「✦」菜单 */
+/** The "✦" menu on the toolbar */
 function ComposerMenu(props: ComposerMenuProps & { streaming: boolean; readOnly?: boolean; readOnlyReason?: string }) {
   const { workflowRoles, onRunWorkflow, canDiagnose, onOpenDiagnostics, onNewChat, newChatDisabledReason, streaming, cloudMode } = props;
   const pop = usePopover();
-  // 这个项目只给了只读权限(游客):一键配特效、新对话都是要给 Agent 发话,置灰;诊断报告只读对话内容,照常
+  // This project only has read-only permission (guest): One-click effects and New chat both send messages to the Agent, so they are grayed out; the diagnostic report only reads chat content, so it works as usual
   const ro = { locked: !!props.readOnly, why: props.readOnlyReason ?? "", title: (own?: string) => (props.readOnly ? props.readOnlyReason : own) };
-  /** 点了一项就收起菜单 */
+  /** Clicking an item closes the menu */
   const pick = (fn: () => void) => () => {
     pop.setOpen(false);
     fn();
@@ -177,15 +183,15 @@ function ComposerMenu(props: ComposerMenuProps & { streaming: boolean; readOnly?
 }
 
 /**
- * 输入区右上角的拖柄(⌝):竖着拖改输入区高度,往上拖变高;双击回到默认的三分之一。
+ * Drag handle at the top right of the input area (⌝): drag vertically to change the input area height, drag up to make it taller; double-click to return to the default one third.
  *
- * 高度记在 composerHeight 的模块级 store 里,所有分页一起变。上限是面板高度的 70%,
- * 在按下那一刻量面板 —— 拖动过程中面板本身不会变高变矮,不用每帧再量。
- * 拖动期间给 <body> 打 data-pc-resizing,和 ResizeHandle 一样:预览 iframe 这会儿不吃鼠标事件。
+ * The height is kept in the module-level store of composerHeight, so all tabs change together. The upper limit is 70% of the panel height,
+ * measured at the moment of pressing down: the panel itself does not get taller or shorter during the drag, so there is no need to measure every frame.
+ * During the drag, `<body>` gets data-pc-resizing, like ResizeHandle: the preview iframe does not take mouse events for the time being.
  */
 function ComposerGrip({ boxRef }: { boxRef: RefObject<HTMLDivElement | null> }) {
   const [dragging, setDragging] = useState(false);
-  /** 正在拖时的收尾。分页在拖动中途被关掉(组件卸载)也要执行,否则 <body> 上的拖动状态一直留着 */
+  /** Cleanup when a drag is in progress. It must also run if the tab is closed mid-drag (component unmounted), otherwise the drag state stays on `<body>` forever */
   const endDrag = useRef<(() => void) | null>(null);
   useEffect(() => () => endDrag.current?.(), []);
 
@@ -196,7 +202,7 @@ function ComposerGrip({ boxRef }: { boxRef: RefObject<HTMLDivElement | null> }) 
     const grip = e.currentTarget;
     const panel = box.closest<HTMLElement>(".ai-panel");
     const panelH = panel?.clientHeight ?? window.innerHeight;
-    // 同一列里别的块(顶栏、思考条、排队列表)照实扣掉,消息区至少留 MESSAGES_MIN_H;再用比例夹一道
+    // Other blocks in the same column (top bar, thinking bar, queue list) are subtracted as they really are, and the message area keeps at least MESSAGES_MIN_H; then clamp by the ratio
     let others = 0;
     for (const el of Array.from(box.parentElement?.children ?? [])) {
       if (el !== box && !el.classList.contains("ai-messages")) others += (el as HTMLElement).offsetHeight;
@@ -205,13 +211,13 @@ function ComposerGrip({ boxRef }: { boxRef: RefObject<HTMLDivElement | null> }) 
     const startY = e.clientY;
     const startH = box.getBoundingClientRect().height;
     const pointerId = e.pointerId;
-    /** 真的拖动过才落盘:只点一下(双击复位的前两下也是)不能把默认的三分之一记成一个固定像素值 */
+    /** Persist only after a real drag: a single click (including the first two clicks of a double-click reset) must not record the default one third as a fixed pixel value */
     let moved = false;
 
     try {
       grip.setPointerCapture(pointerId);
     } catch {
-      // 指针已经不在了(合成事件等),没有捕获也能拖
+      // The pointer is already gone (synthetic events, etc.); dragging works even without capture
     }
     setDragging(true);
     document.body.dataset.pcResizing = "y";
@@ -219,7 +225,7 @@ function ComposerGrip({ boxRef }: { boxRef: RefObject<HTMLDivElement | null> }) 
     document.body.style.userSelect = "none";
 
     const onMove = (ev: PointerEvent) => {
-      // 往上拖(clientY 变小)是变高
+      // Dragging up (clientY gets smaller) makes it taller
       const dy = startY - ev.clientY;
       if (!moved && dy === 0) return;
       moved = true;
@@ -235,7 +241,7 @@ function ComposerGrip({ boxRef }: { boxRef: RefObject<HTMLDivElement | null> }) 
       try {
         grip.releasePointerCapture(pointerId);
       } catch {
-        // 已经放开了
+        // Already released
       }
       setDragging(false);
       delete document.body.dataset.pcResizing;
@@ -261,7 +267,7 @@ function ComposerGrip({ boxRef }: { boxRef: RefObject<HTMLDivElement | null> }) 
       onPointerDown={onPointerDown}
       onDoubleClick={() => resetComposerHeight()}
     >
-      {/* 一个转了 90° 的 L:上沿一横、右沿一竖,落在输入框的右上角 */}
+      {/* An L rotated by 90°: a horizontal stroke on the top edge and a vertical one on the right edge, sitting at the top right corner of the input box */}
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M3.5 3.5h7v7" />
       </svg>
@@ -270,11 +276,11 @@ function ComposerGrip({ boxRef }: { boxRef: RefObject<HTMLDivElement | null> }) 
 }
 
 /**
- * 输入区,占面板高度的 1/3:附件卡片在最上,输入框填满中间(不自动增高,超出在里面滚),
- * 底部一条 36px 工具条 —— 左边 附件(曲别针)、「✦」菜单、驱动方式 + 模型、「⋯」运行选项,右边发送 / 停止。
+ * Input area, taking 1/3 of the panel height: attachment cards on top, the input box fills the middle (no auto-grow; overflow scrolls inside),
+ * and a 36px toolbar at the bottom: on the left the attachment (paperclip), the "✦" menu, driver + model, and the "⋯" run options; on the right Send / Stop.
  *
- * 这里不直接碰 useAiChat:发送、停止都交给 onSubmit / onStop,草稿也是受控的,
- * 发什么、什么时候清空由 AiPanel 决定。
+ * It does not touch useAiChat directly: sending and stopping are both handed to onSubmit / onStop, and the draft is controlled too,
+ * so what to send and when to clear it is decided by AiPanel.
  */
 export function Composer(props: ComposerProps) {
   const {
@@ -306,20 +312,20 @@ export function Composer(props: ComposerProps) {
     readOnly = false,
     readOnlyReason = "",
   } = props;
-  // 这个项目只给了只读权限(游客):不能给 Agent 发消息(也不能停别人的任务)。对话历史照常读,输入区整个置灰,说明是 viewOnlyText()。
-  // 已有的「对话无读取权限」那一条原因优先(那是另一回事)
+  // This project only has read-only permission (guest): cannot send messages to the Agent (nor stop other people's tasks). Chat history can still be read, and the whole input area is grayed out, with viewOnlyText() as the explanation.
+  // The existing "chat has no read permission" reason takes priority (that is a different matter)
   const disabled = disabledProp || readOnly;
   const disabledReason = disabledProp ? disabledReasonProp : readOnly ? readOnlyReason : disabledReasonProp;
   const guide = readOnly ? null : guideProp;
   const canStop = canStopProp && !readOnly;
   const stopDisabledReason = readOnly ? readOnlyReason : stopReasonProp;
   const cloudOn = !!cloud?.selected;
-  /** 附件条上的动词:本机是「导入」,云端是传到云节点的「上传」 */
+  /** The verb on the attachment bar: locally it is "Import", under Cloud it is "Upload" to the cloud node */
   const verb = cloudOn ? tr("Upload") : tr("Import");
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (hotkeysOff || !active) return;
-    // 输入法还在拼字时按的 Enter 是「上屏」,不是发送
+    // An Enter pressed while the IME is still composing is "commit", not send
     if (e.nativeEvent.isComposing) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -328,11 +334,11 @@ export function Composer(props: ComposerProps) {
     }
   };
 
-  /** 用户拖过的高度(所有分页共用);没拖过是 null,照 chat.css 占面板三分之一 */
+  /** The height the user dragged to (shared by all tabs); null if never dragged, which follows chat.css and takes one third of the panel */
   const composerH = useComposerHeight();
   const boxRef = useRef<HTMLDivElement>(null);
-  // 拖过就换成这个高度,但允许缩(最矮到 CSS 的 min-height):面板后来变矮、思考条和排队列表又占了地方时,
-  // 输入框先让出来,消息区保住 min-height。再用 70% 夹一道
+  // Once dragged, use this height, but allow shrinking (down to the CSS min-height): when the panel later gets shorter and the thinking bar and queue list take up more space,
+  // the input box yields first and the message area keeps its min-height. Then clamp by 70%
   const sizeStyle = composerH !== null
     ? { flex: `0 1 ${composerH}px`, maxHeight: `${Math.round(COMPOSER_MAX_RATIO * 100)}%` }
     : undefined;
@@ -349,7 +355,7 @@ export function Composer(props: ComposerProps) {
               title={a.status === "error" ? (a.error || tr("{0} failed", verb)) : a.name}
               onClick={() => {
                 if (a.status !== "error") return;
-                // 失败的卡片点一下重试:先变回导入中,再重新走一遍导入
+                // Click a failed card to retry: first turn it back to importing, then run the import again
                 if (a.id) onRetryAttachment(a.id, a.srcPath ?? null);
               }}
             >
@@ -395,7 +401,7 @@ export function Composer(props: ComposerProps) {
             <IconPaperclip size={16} />
           </button>
           <ComposerMenu {...menu} cloudMode={cloudOn} streaming={streaming} readOnly={readOnly} readOnlyReason={readOnlyReason} />
-          {/* 当前用哪个驱动是这一页的身份,再窄也留在工具条上 */}
+          {/* The driver currently in use is the identity of this tab, so it stays on the toolbar even when narrow */}
           <select
             className="ai-bar-select ai-provider-select"
             data-pc="ai-provider"
@@ -424,7 +430,7 @@ export function Composer(props: ComposerProps) {
         </div>
         {streaming ? (
           <>
-            {/* 运行中还能接着写:有内容就给「加入队列」(Enter 也是),这一轮落定后按顺序自动发 */}
+            {/* You can keep typing while running: if there is content, offer "Add to queue" (Enter too), and it is sent automatically in order once this round settles */}
             {(text.trim().length > 0 || attachments.length > 0) && (
               <button type="button" className="pc-btn-primary ai-send-btn" data-pc="ai-enqueue" title={tr("Sent automatically after the Agent finishes this round (Enter)")} disabled={disabled} onClick={() => !disabled && onSubmit(text)}>
                 {tr("Queue")}

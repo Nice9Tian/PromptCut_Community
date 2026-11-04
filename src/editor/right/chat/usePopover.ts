@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * 输入区工具条上两个小弹层(「✦」菜单、模型的「⋯」运行选项)共用的开合逻辑。
+ * Open/close logic shared by the two small popovers on the input toolbar (the "✦" menu and the model's
+ * "⋯" run options).
  *
- * 用法:anchorRef 挂在「按钮 + 弹层」外面那一层;弹层上带 data-pop,开合用行内 display。
- * 弹层不走 portal:它从输入区往上弹,落在消息区上方,仍在右栏卡片里,不会被卡片的
- * overflow:hidden 裁掉;挂在面板里还能跟着分页一起 display:none,切到别的分页时
- * 不会留下一个孤零零的菜单。
+ * Usage: put anchorRef on the layer wrapping "button + popover"; the popover carries data-pop, and
+ * opening/closing uses inline display. The popover does not use a portal: it pops up from the input
+ * area and lands above the message area, still inside the right-rail card, so the card's
+ * overflow:hidden does not clip it; being mounted in the panel it also goes display:none together
+ * with its tab, so switching to another tab leaves no orphaned menu behind.
  */
 export function usePopover() {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
 
-  // 点外面、按 Escape 关闭;窗口尺寸一变也关掉,免得弹层和按钮错位
+  // Close on outside click or Escape; also close on window resize, so the popover and button don't get misaligned
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -22,7 +24,7 @@ export function usePopover() {
       if (e.key !== "Escape") return;
       e.preventDefault();
       setOpen(false);
-      // 焦点还给打开它的那个按钮,键盘用户不至于掉回 body
+      // Return focus to the button that opened it, so keyboard users don't fall back to body
       anchorRef.current?.querySelector<HTMLElement>("[aria-haspopup]")?.focus();
     };
     const close = () => setOpen(false);
@@ -36,7 +38,7 @@ export function usePopover() {
     };
   }, [open]);
 
-  // 打开后把焦点送进弹层。跳过 disabled 的项(比如没消息时的「诊断报告」),否则焦点会落空
+  // After opening, move focus into the popover. Skip disabled items (e.g. "Diagnostic report" when there are no messages), otherwise focus would be lost
   useEffect(() => {
     if (!open) return;
     anchorRef.current

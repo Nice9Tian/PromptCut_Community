@@ -78,9 +78,9 @@ export class MovPlayer {
     const started = performance.now();
     try {
       const response = await fetch(url, { headers: { Range: `bytes=${sample.offset}-${sample.offset + sample.size - 1}` }, cache: 'no-store', signal });
-      if (response.status !== 206) throw new Error(`播放帧读取失败 (${response.status})`);
+      if (response.status !== 206) throw new Error(`Failed to read playback frame (${response.status})`);
       const bytes = await response.arrayBuffer();
-      if (bytes.byteLength !== sample.size) throw new Error('播放帧尚未完整写入');
+      if (bytes.byteLength !== sample.size) throw new Error('Playback frame is not fully written yet');
       const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
       if (generation !== this.generation || signal.aborted) { bitmap.close(); return; }
       this.deliveryMs = this.deliveryMs * 0.8 + (performance.now() - started) * 0.2;

@@ -2,12 +2,12 @@ import puppeteer from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
 
-// 地址必须显式给(--url <地址> 或环境变量 PROMPTCUT_BASE),不给就报用法退出:
-// 永不缺省连用户常驻的编辑器(5190～5192)。
+// URL must be explicitly provided (--url <url> or environment variable PROMPTCUT_BASE);
+// if omitted, report usage and exit: never connect to the user's resident editor by default (5190-5192).
 const urlArg = process.argv.indexOf('--url');
 const BASE = ((urlArg >= 0 ? process.argv[urlArg + 1] : '') || process.env.PROMPTCUT_BASE || '').replace(/\/+$/, '');
 if (!BASE || BASE.startsWith('--')) {
-  console.error('用法: node scripts/timeline-verify.mjs --url http://127.0.0.1:<自己起的 dev server 端口>\n  或设环境变量 PROMPTCUT_BASE。不给地址不跑:不缺省连用户常驻的编辑器。');
+  console.error('Usage: node scripts/timeline-verify.mjs --url http://127.0.0.1:<port of your own dev server>\n  or set the environment variable PROMPTCUT_BASE. It does not run without an address: it never defaults to the editor the user keeps running.');
   process.exit(2);
 }
 
@@ -43,7 +43,7 @@ async function run() {
     console.log('Found .ais-backdrop, dismissing...');
     await page.evaluate(() => {
       const btns = Array.from(document.querySelectorAll('button'));
-      const closeBtn = btns.find(b => b.textContent && b.textContent.includes('以后再说'));
+      const closeBtn = btns.find(b => b.textContent && b.textContent.includes('Maybe later'));
       if (closeBtn) {
         closeBtn.click();
       }
@@ -78,11 +78,11 @@ async function run() {
   }
 
   let state = await getStoreState();
-  // 序列不分种类了,演示片段都在第一条有内容的序列上
+  // Tracks are no longer differentiated by type; demo clips are all on the first track with content
   const overlayTrackIndex = Math.max(0, state.tracks.findIndex(t => t.clips.length > 0));
   
   try {
-    // 1. 拖动改时段（能动的情形）
+    // 1. Drag to change time range (cases where it can move)
     console.log('1. Drag last clip to change time...');
     const lastClip = state.tracks[overlayTrackIndex].clips[state.tracks[overlayTrackIndex].clips.length - 1];
     let clipSelector = `[data-clip-id="${lastClip.id}"]`;
@@ -105,7 +105,7 @@ async function run() {
     assert(Math.abs(newDur - originalDur) < 0.05, "Duration should remain the same");
     addSummary("Drag clip (free)", img1, lastClip, afterDragClip, true);
 
-    // 2. 拖动被邻居挡住（防压扁回归测试）
+    // 2. Drag blocked by neighbors (anti-squish regression test)
     console.log('2. Drag first clip blocked by neighbor...');
     const firstClip = state.tracks[overlayTrackIndex].clips[0];
     clipSelector = `[data-clip-id="${firstClip.id}"]`;
@@ -126,7 +126,7 @@ async function run() {
     assert(afterBlockedDrag.start >= 0 && afterBlockedDrag.start <= 2, "Start should stay in valid range");
     addSummary("Drag clip (blocked)", img2, firstClip, afterBlockedDrag, true);
 
-    // 3. 左把手 / 右把手
+    // 3. Left handle / right handle
     console.log('3. Resize left/right handles...');
     clipSelector = `[data-clip-id="${afterDragClip.id}"]`; // use the last clip again
     await page.evaluate((sel) => document.querySelector(sel).scrollIntoView(), clipSelector);
@@ -169,12 +169,12 @@ async function run() {
     assert(Math.abs(afterLeftResize.end - afterRightResize.end) < 0.05, "End time should not change on left resize");
     addSummary("Resize handles", img3, afterDragClip, afterLeftResize, true);
 
-    // 4. 跨轨拖动
+    // 4. Cross-track drag
     console.log('4. Cross track drag...');
     // create a new track
     await page.evaluate(() => {
       const btns = Array.from(document.querySelectorAll('button'));
-      const btn = btns.find(b => b.textContent && b.textContent.includes('+ 动效轨'));
+      const btn = btns.find(b => b.textContent && b.textContent.includes('+ Motion graphics track'));
       if (btn) btn.click();
     });
     await new Promise(r => setTimeout(r, 500));
@@ -198,7 +198,7 @@ async function run() {
     assert(newTrackClips.some(c => c.id === afterLeftResize.id), "Clip should be in new track");
     addSummary("Cross track drag", img4, { track: state.tracks[overlayTrackIndex].id }, { track: newTrackId }, true);
 
-    // 5. 右键分割
+    // 5. Right-click split
     console.log('5. Split clip...');
     const clipToSplit = newTrackClips[0];
     const midTime = clipToSplit.start + (clipToSplit.end - clipToSplit.start) / 2;
@@ -209,7 +209,7 @@ async function run() {
     await page.mouse.click(clipBox.x + 20, clipBox.y + 10, { button: 'right' });
     
     await page.evaluate(() => {
-       const items = Array.from(document.querySelectorAll('div')).filter(el => el.textContent === '在播放头处分割');
+       const items = Array.from(document.querySelectorAll('div')).filter(el => el.textContent === 'Split at playhead');
        if (items.length > 0) items[0].click();
     });
     await new Promise(r => setTimeout(r, 500));
@@ -222,7 +222,7 @@ async function run() {
     assert(Math.abs(splitTrackClips[1].start - midTime) < 0.05, "Right clip start should equal playhead time");
     addSummary("Split clip", img5, { count: 1 }, { count: 2 }, true);
 
-    // 6. 删除
+    // 6. Delete
     console.log('6. Delete clip...');
     clipBox = await (await page.$(`[data-clip-id="${splitTrackClips[1].id}"]`)).boundingBox();
     await page.mouse.click(clipBox.x + 5, clipBox.y + 10);
@@ -234,12 +234,12 @@ async function run() {
     assert(state.tracks[state.tracks.length - 1].clips.length === 1, "Track should have 1 clip after delete");
     addSummary("Delete clip", img6, { count: 2 }, { count: 1 }, true);
 
-    // 7. 新增轨道
+    // 7. Add track
     console.log('7. Add tracks...');
     const trackCountBefore = state.tracks.length;
-    // 序列统一后只剩一个「＋ 序列」按钮，点两次
+    // After tracks were unified, only one "+ Track" button remains; click it twice
     await page.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent && b.textContent.includes('序列'));
+      const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent && b.textContent.includes('track'));
       if (btn) { btn.click(); btn.click(); }
     });
     await new Promise(r => setTimeout(r, 500));
@@ -249,7 +249,7 @@ async function run() {
     assert(state.tracks.length === trackCountBefore + 2, "Track count should increase by 2");
     addSummary("Add tracks", img7, { count: trackCountBefore }, { count: state.tracks.length }, true);
 
-    // 8. Ctrl+滚轮缩放
+    // 8. Ctrl+wheel zoom
     console.log('8. Zoom...');
     clipSelector = `[data-clip-id="${firstClip.id}"]`;
     await page.evaluate((sel) => document.querySelector(sel).scrollIntoView(), clipSelector);
@@ -267,10 +267,11 @@ async function run() {
     assert(newWidth > oldWidth, "Clip width should increase after zoom in");
     addSummary("Zoom", img8, { width: oldWidth }, { width: newWidth }, true);
 
-    // 9. 播放头拖动
-    // 上一步缩放后播放头停在 20 秒开外、又被横向滚动挡在视口右侧之外，
-    // 鼠标事件根本落不到它身上。所以先 seek 回 2 秒并把轨道区滚回最左边，
-    // 保证播放头在视口内，再测拖动。
+    // 9. Playhead scrub
+    // After zooming in the previous step, the playhead stopped beyond 20 seconds and was pushed outside
+    // the right side of the viewport by horizontal scrolling, so mouse events cannot reach it at all.
+    // Therefore, first seek back to 2 seconds and scroll the track area back to the far left to ensure
+    // the playhead is inside the viewport before testing scrubbing.
     await page.evaluate(() => {
       window.__pcStore.actions.seek(2);
       const sc = document.querySelector('.flex-1.flex.min-h-0.overflow-auto');
@@ -280,9 +281,11 @@ async function run() {
     state = await getStoreState();
     const tBefore = state.t;
     console.log(`9. Drag playhead... from ${tBefore}`);
-    // 前面加过轨道又缩放过，轨道区可能横竖都被滚动过，播放头元素的 rect 有一截在视口外。
-    // 这里取「播放头矩形 ∩ 滚动容器可见区域」的中点作为落点，并且真的用 elementsFromPoint
-    // 确认那一点命中的是播放头本身，否则直接报错而不是静默拖了个空。
+    // Tracks were added and zoomed earlier, so the track area may have been scrolled both horizontally
+    // and vertically, leaving part of the playhead element's rect outside the viewport.
+    // Here we take the midpoint of "playhead rectangle ∩ scroll container visible area" as the drop
+    // target, and actually use elementsFromPoint to confirm that the point hits the playhead itself,
+    // otherwise throw an error directly instead of silently dragging into thin air.
     const phPick = await page.evaluate(() => {
       const el = document.querySelector('.clip-playhead').parentElement;
       const sc = document.querySelector('.flex-1.flex.min-h-0.overflow-auto');
@@ -295,10 +298,10 @@ async function run() {
       const top = document.elementsFromPoint(x, y)[0];
       return { x, y, hit: top === el, hitCls: (top && top.className || '').toString().slice(0, 70) };
     });
-    if (!phPick.hit) throw new Error(`播放头落点 (${phPick.x}, ${phPick.y}) 命中的是别的元素: ${phPick.hitCls}`);
+    if (!phPick.hit) throw new Error(`Playhead landing point (${phPick.x}, ${phPick.y}) hit a different element: ${phPick.hitCls}`);
     await page.mouse.move(phPick.x, phPick.y);
     await page.mouse.down();
-    // 往右拖 300px
+    // Drag right by 300px
     await page.mouse.move(phPick.x + 300, phPick.y, { steps: 5 });
     await page.mouse.up();
     await new Promise(r => setTimeout(r, 200));
@@ -309,7 +312,7 @@ async function run() {
     assert(Math.abs(state.t - tBefore) > 0.1, "Playhead t should change significantly");
     addSummary("Playhead drag", img9, { t: tBefore }, { t: state.t }, true);
 
-    // 10. 接收卡片 drop
+    // 10. Accept card drop
     console.log('10. Drop card (Match)...');
     const overlayTrackForDrop = state.tracks.find(t => t.clips.length > 0) || state.tracks[0];
     const overlayTrackId = overlayTrackForDrop.id;
@@ -339,7 +342,8 @@ async function run() {
     assert(overlayTrackAfter.clips.length === overlayClipsBefore + 1, "Drop match should add 1 clip");
     addSummary("Drop Match", img10, { count: overlayClipsBefore }, { count: overlayTrackAfter.clips.length }, true);
 
-    // 11. 锁定的序列不接受落卡（以前这一步验的是 overlay/video kind 不匹配，序列统一后那条规则没有了）
+    // 11. Locked tracks do not accept card drops (previously this step verified overlay/video kind
+    // mismatch; after tracks were unified that rule no longer exists)
     console.log('11. Drop card onto locked sequence...');
     const lockedTrack = state.tracks.find(t => t.id !== overlayTrackForDrop.id) || state.tracks[0];
     await page.evaluate((id) => window.__pcStore.actions.updateTrack(id, { locked: true }), lockedTrack.id);
@@ -367,15 +371,16 @@ async function run() {
     
     state = await getStoreState();
     const videoTrackAfter = state.tracks.find(t => t.id === videoTrack.id);
-    assert(videoTrackAfter.clips.length === videoClipsBefore, "锁定的序列不该接受落卡");
+    assert(videoTrackAfter.clips.length === videoClipsBefore, "A locked track should not accept a dropped card");
     await page.evaluate((id) => window.__pcStore.actions.updateTrack(id, { locked: false }), videoTrack.id);
     addSummary("Drop onto locked", img11, { count: videoClipsBefore }, { count: videoTrackAfter.clips.length }, true);
 
-    // 12. 性能
+    // 12. Performance
     console.log('12. Performance (100+ clips)...');
-    // addCardClip 不传 trackId 时落在第一条序列，所以待会儿要去第一条序列上找，
-    // 不是最后一条（最后一条是第 7 步新建的空轨）。
-    // 间隔 5 秒、时长 3 秒，故意留出 2 秒空档，这样被测的 clip 是真的能拖动的。
+    // When addCardClip is called without trackId, it lands on the first track, so we need to look for it
+    // on the first track later, not the last track (the last track is the empty track created in step 7).
+    // With a 5-second interval and a 3-second duration, leaving a 2-second gap deliberately, the clip
+    // under test can genuinely be dragged.
     await page.evaluate((cardId) => {
       for (let i = 0; i < 110; i++) {
         window.__pcStore.actions.addCardClip(cardId, 20 + i * 5, { duration: 3 });
@@ -385,9 +390,9 @@ async function run() {
 
     state = await getStoreState();
     const perfTrack = state.tracks[0];
-    assert(perfTrack.clips.length >= 100, `性能用例需要 100+ clip，实际只有 ${perfTrack.clips.length}`);
+    assert(perfTrack.clips.length >= 100, `The performance case needs 100+ clips, but there are only ${perfTrack.clips.length}`);
     console.log(`Clips on track for perf test: ${perfTrack.clips.length}`);
-    // 取中间偏后的一张，保证它左右都有空档
+    // Pick one toward the middle-back to ensure it has gaps on both its left and right
     const testClip = perfTrack.clips[perfTrack.clips.length - 5];
     clipSelector = `[data-clip-id="${testClip.id}"]`;
     await page.waitForSelector(clipSelector);

@@ -1,11 +1,17 @@
 /**
- * 侧栏的本机整理(`src/start/vibeOrg.ts`)。跑:npm test -- src/start/vibeOrg.test.mjs
+ * Local organization in the sidebar (`src/start/vibeOrg.ts`).
+ * Run: npm test -- src/start/vibeOrg.test.mjs
  *
- * 盯三件事:项目一律以云端列表为准(本机整理不凭空造项目、取不到列表时不丢整理信息);
- * 本机存的东西坏了不白屏;**别人的私有对话不列出来**(`product/agent.md`,创建者只读例外)。
+ * Focus on three things: projects are always based on the cloud list (local organization does not
+ * create projects out of thin air, does not drop organization data when list cannot be fetched);
+ * no white screen when locally stored data is corrupted; **others' private chats are not listed**
+ * (`product/agent.md`, creator read-only exception).
  *
- * 2026-10-23 分本地、云端两套之后:整理信息带 `realm`、项目清单的每一项带 `realm`。这里的用例都在云端那一套上跑(`emptyOrg('cloud')`、
- * 项目标 `realm: 'cloud'`),只改了这几处样子,断言没动;两套之间的规矩(只收同一套、跨套放不进、键互不覆盖)在 `orgRealm.test.mjs`。
+ * After splitting into local and cloud sets on 2026-10-23: organization data includes `realm`,
+ * each item in the project manifest includes `realm`. The test cases here all run on the cloud set
+ * (`emptyOrg('cloud')`, projects marked with `realm: 'cloud'`), only changing these appearances,
+ * assertions untouched; rules between the two sets (only accept the same set, cannot place across
+ * sets, keys do not overwrite each other) are in `orgRealm.test.mjs`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,9 +19,9 @@ import { addGroup, emptyOrg, mergeChats, mergeProjects, moveProject, parseOrg, v
 
 const EMPTY_ORG = emptyOrg('cloud');
 const cloud = [
-  { id: 'p1', name: '一', role: 'owned', realm: 'cloud' },
-  { id: 'p2', name: '二', role: 'owned', realm: 'cloud' },
-  { id: 'p3', name: '三', role: 'joined', realm: 'cloud' },
+  { id: 'p1', name: 'One', role: 'owned', realm: 'cloud' },
+  { id: 'p2', name: 'Two', role: 'owned', realm: 'cloud' },
+  { id: 'p3', name: 'three', role: 'joined', realm: 'cloud' },
 ];
 const C = 'cloud';
 
@@ -34,7 +40,7 @@ test('VORG-02 the order, groups and pins recorded on this machine are applied as
     { id: 'p1', realm: C, groupId: null, archived: true },
   ]);
   const list = mergeProjects(org, cloud);
-  // p2 是新出现的,排最前;gone 不在云端列表里,不出现
+  // p2 is new, ranked first; gone is not in the cloud list, does not appear
   assert.deepEqual(list.map((p) => p.id), ['p2', 'p3', 'p1']);
   assert.equal(list[1].groupId, 'g-aaa');
   assert.equal(list[1].pinned, true);
@@ -46,7 +52,7 @@ test('VORG-03 writing back organization data: entries missing from this manifest
   const next = withProjects(org, [{ id: 'b', realm: C, groupId: null, pinned: true }]);
   assert.deepEqual(next.projects.map((p) => p.id), ['b', 'a']);
   assert.equal(next.projects[0].pinned, true);
-  assert.notEqual(next, org, '换新对象,不原地改');
+  assert.notEqual(next, org, 'returns a new object, does not modify in place');
   assert.equal(org.projects[1].pinned, undefined);
 });
 

@@ -1,38 +1,53 @@
 /**
- * 纯浏览器节点的预渲染小尺寸(M7 契约第 4.4 节,D5 选项 a):后台舞台把这一帧的 HTML 快照包进 SVG `foreignObject`,
- * 以 `data:` 地址画上画布,出 WebP(质量 80)。原尺寸 HTML 不变。
+ * Prerender small size for pure browser nodes (M7 contract section 4.4, D5 option a): the background
+ * stage wraps this frame's HTML snapshot into an SVG `foreignObject`, draws it onto the canvas using
+ * a `data:` URL, and outputs WebP (quality 80). The original-size HTML remains unchanged.
  *
- * 尺寸与桌面 `server/bakery/small-bitmap.mjs` 同一套(单测对拍):缩放比 `s = min(1, 800 / 项目宽, 600 / 项目高)`,
- * 画的是包裹层的框(片段框 w×h,没设框就是整个舞台)里的内容,像素尺寸向下取整、至少 1。快照挂法也照桌面:
- * 框大小的盒子整体 `scale(s)`、快照平面 `inset: 0`、清掉脚本与事件属性(快照是数据,不是能执行的页面)。
+ * Same dimensions as desktop `server/bakery/small-bitmap.mjs` (unit test cross-check): scale factor
+ * `s = min(1, 800 / project width, 600 / project height)`, drawing the content inside the wrapper
+ * layer box (clip box w×h; if no box is set, the entire stage), with pixel dimensions rounded down
+ * to at least 1. Snapshot mounting also follows desktop: the box sized to the clip box has
+ * `scale(s)` overall, the snapshot plane has `inset: 0`, and scripts and event attributes are stripped
+ * (snapshots are data, not executable pages).
  *
- * **必须内嵌页面的全局样式表**(Tailwind 的基础层等):快照的样式内联只写「与同标签基线不同」的值,基线靠重放页的全局样式;
- * SVG 图是独立文档,不带就退回浏览器缺省值(`box-sizing` 成了 `content-box`,药丸胖一圈,探针 P3)。带上之后内置卡与桌面
- * CDP 截的小位图差 ≤ 0.9% 像素(文字抗锯齿与模糊边缘)。SVG 图里取不到外部资源,外部字体会退回系统字体 —— 内置卡只用系统字体,
- * 这一条只影响用户卡(用户卡不进浏览器)。Chrome 实测 `data:` 地址的 foreignObject 图不污染画布(探针 P3、`frameCompositor.ts`)。
+ * **Must inline the page's global stylesheets** (Tailwind base layer, etc.): snapshot inline styles
+ * only specify values "different from the baseline of the same tag", and the baseline relies on
+ * the replay page's global styles; an SVG image is an independent document, and without them it
+ * falls back to browser defaults (`box-sizing` becomes `content-box`, the pill becomes fatter, probe
+ * P3). With them included, the difference between built-in cards and small bitmaps captured via
+ * desktop CDP is ≤ 0.9% pixels (text antialiasing and blurred edges). External resources cannot be
+ * fetched inside SVG images, so external fonts fall back to system fonts: built-in cards only use
+ * system fonts, so this only affects user cards (user cards do not enter the browser). Chrome
+ * testing confirms that foreignObject images with `data:` URLs do not taint the canvas (probe P3,
+ * `frameCompositor.ts`).
  *
- * # 原尺寸的一块像素(`renderSnapshotBitmap`,`docs/plan/browser-stream-task.md` 第三处)
+ * # A block of original-size pixels (`renderSnapshotBitmap`, section 3 of `docs/plan/browser-stream-task.md`)
  *
- * 浏览器节点产轨道流要每一帧的像素。同一条路:快照包进 SVG、内嵌页面样式表、画上画布,只是**不缩放**,把包裹层坐标里的一个矩形
- * (轨道流的 `bound`:框外留了一圈给阴影、描边,所以 x、y 可以为负)平移到画布左上角,交出带透明的位图。
- * 这样产出的流画在包裹层自己的坐标系里,与桌面单卡流(`server/frame-stream.mjs` 的 `plane: 'local'`)同一个口径。
+ * Browser nodes producing track streams require pixels for every frame. The same approach: wrap
+ * the snapshot into an SVG, embed the page stylesheet, and draw onto the canvas, except **without
+ * scaling**, translating a rectangle in wrapper layer coordinates (track stream `bound`: leaves extra
+ * margin outside the box for shadows and strokes, so x and y can be negative) to the top-left of
+ * the canvas to yield a bitmap with transparency. Streams produced this way are drawn in the wrapper
+ * layer's own coordinate system, using the same standard as desktop single-card streams
+ * (`plane: 'local'` in `server/frame-stream.mjs`).
  *
- * 本模块属于 render 这一层;只在舞台页里用(要 DOM 与画布)。换算部分是纯函数,Node 单测直接载。
+ * This module belongs to the render layer; used only in stage pages (requires DOM and canvas).
+ * The conversion part is a pure function, loaded directly by Node unit tests.
  */
 
 export const SMALL_MAX_WIDTH = 800;
 export const SMALL_MAX_HEIGHT = 600;
-/** WebP 质量(c10a 契约第 9 节;画布 API 的质量取 0～1) */
+/** WebP quality (c10a contract section 9; canvas API quality takes 0-1) */
 export const SMALL_WEBP_QUALITY = 0.8;
 
-/** 项目画幅 → 缩放比(不放大;同 `small-bitmap.mjs` 的 `smallScale`) */
+/** Project aspect ratio → scale factor (no upscale; matches `smallScale` in `small-bitmap.mjs`) */
 export function smallScale(projectWidth: number, projectHeight: number): number {
   const w = Number(projectWidth), h = Number(projectHeight);
   if (!(w > 0) || !(h > 0)) return 1;
   return Math.min(1, SMALL_MAX_WIDTH / w, SMALL_MAX_HEIGHT / h);
 }
 
-/** 一个框按项目的缩放比缩下来的像素尺寸(同 `small-bitmap.mjs` 的 `smallSize`) */
+/** Pixel dimensions of a box scaled down by the project scale factor (matches `smallSize` in `small-bitmap.mjs`) */
 export function smallSize({ projectWidth, projectHeight, boxWidth = projectWidth, boxHeight = projectHeight }: {
   projectWidth: number; projectHeight: number; boxWidth?: number; boxHeight?: number;
 }): { scale: number; width: number; height: number } {
@@ -43,7 +58,7 @@ export function smallSize({ projectWidth, projectHeight, boxWidth = projectWidth
 
 const XHTML = "http://www.w3.org/1999/xhtml";
 
-/** 快照 HTML 清洗后的节点(与桌面 `small-bitmap.mjs`、`capture-snapshot.mjs` 同一道清洗) */
+/** Sanitized node from snapshot HTML (same sanitization pass as desktop `small-bitmap.mjs` and `capture-snapshot.mjs`) */
 function sanitizedNodes(doc: Document, html: string): Node[] {
   const template = doc.createElement("template");
   template.innerHTML = String(html ?? "");
@@ -56,7 +71,7 @@ function sanitizedNodes(doc: Document, html: string): Node[] {
   return [...template.content.childNodes];
 }
 
-/** 这个文档的样式表全文(读得到规则的那些;跨源的读不到就跳过) */
+/** Full text of stylesheets in this document (those whose rules are readable; skips unreadable cross-origin ones) */
 export function documentCss(doc: Document): string {
   let out = "";
   for (const sheet of Array.from(doc.styleSheets)) {
@@ -68,8 +83,10 @@ export function documentCss(doc: Document): string {
 }
 
 /**
- * 这一帧的 SVG(foreignObject 里:页面样式、框大小整体缩放的盒子、`inset: 0` 的快照平面)。`left` / `top` 是盒子在这张图里的位置
- * (小尺寸恒为 0;原尺寸取一块时是矩形左上角的相反数)。
+ * SVG of this frame (inside foreignObject: page styles, box of the clip box size scaled overall,
+ * snapshot plane with `inset: 0`). `left` / `top` is the position of the box in this image
+ * (always 0 for small size; the negation of the rectangle top-left when cropping a block at
+ * original size).
  */
 function snapshotSvg(doc: Document, { html, boxWidth, boxHeight, scale, width, height, css = "", left = 0, top = 0 }: {
   html: string; boxWidth: number; boxHeight: number; scale: number; width: number; height: number; css?: string; left?: number; top?: number;
@@ -84,15 +101,15 @@ function snapshotSvg(doc: Document, { html, boxWidth, boxHeight, scale, width, h
     + `<div style="position:absolute;inset:0">${body}</div></div></div></foreignObject></svg>`;
 }
 
-/** 这一帧的小尺寸 SVG(盒子在左上角、整体缩放) */
+/** Small-size SVG for this frame (box at top-left, scaled overall) */
 export function smallSvg(doc: Document, o: { html: string; boxWidth: number; boxHeight: number; scale: number; width: number; height: number; css?: string }): string {
   return snapshotSvg(doc, o);
 }
 
-/** 要像素的矩形一边最长多少(只为挡坏数据:8K 画幅再外扩也到不了) */
+/** Maximum length of a side of the rectangle requesting pixels (only to block bad data: even expanded 8K aspect ratio cannot reach this) */
 export const PIXELS_MAX_SIDE = 8192;
 
-/** 要像素的矩形:整数、宽高为偶数(4:2:0 取样)、不超过上限;不合格回 null */
+/** Rectangle requesting pixels: integers, even width and height (4:2:0 sampling), within upper limit; returns null if invalid */
 export function pixelRect(rect: unknown): { x: number; y: number; w: number; h: number } | null {
   const r = rect as { x?: unknown; y?: unknown; w?: unknown; h?: unknown } | null;
   if (!r || typeof r !== "object") return null;
@@ -103,7 +120,7 @@ export function pixelRect(rect: unknown): { x: number; y: number; w: number; h: 
   return { x, y, w, h };
 }
 
-/** 原尺寸取一块的 SVG:图的大小是矩形的大小,框大小的盒子不缩放、挪到 (-rect.x, -rect.y) */
+/** SVG for cropping a block at original size: image size is rectangle size, box of clip box size is unscaled and moved to (-rect.x, -rect.y) */
 export function pixelsSvg(doc: Document, { html, boxWidth, boxHeight, rect, css = "" }: {
   html: string; boxWidth: number; boxHeight: number; rect: { x: number; y: number; w: number; h: number }; css?: string;
 }): string {
@@ -111,7 +128,7 @@ export function pixelsSvg(doc: Document, { html, boxWidth, boxHeight, rect, css 
 }
 
 let cssCache: { doc: Document; count: number; text: string } | null = null;
-/** 样式表全文缓存一份(样式表数目变了才重读) */
+/** Cached copy of full stylesheet text (reread only when the number of stylesheets changes) */
 function cachedCss(doc: Document): string {
   const count = doc.styleSheets.length;
   if (cssCache && cssCache.doc === doc && cssCache.count === count) return cssCache.text;
@@ -120,7 +137,8 @@ function cachedCss(doc: Document): string {
 }
 
 /**
- * 一帧 HTML 快照 → 小尺寸 WebP 字节。画布透明(带 alpha);浏览器出不了 WebP(`toBlob` 退回 PNG)时回 null。
+ * Single-frame HTML snapshot → small-size WebP bytes. Canvas is transparent (with alpha);
+ * returns null when the browser cannot output WebP (`toBlob` falls back to PNG).
  */
 export async function renderSmallWebp({ html, projectWidth, projectHeight, boxWidth = projectWidth, boxHeight = projectHeight, doc = document }: {
   html: string; projectWidth: number; projectHeight: number; boxWidth?: number; boxHeight?: number; doc?: Document;
@@ -144,8 +162,10 @@ export async function renderSmallWebp({ html, projectWidth, projectHeight, boxWi
 }
 
 /**
- * 一帧 HTML 快照 → 原尺寸的一块位图(带透明)。`rect` 是包裹层坐标里的矩形(过 `pixelRect`);位图的大小就是矩形的大小。
- * 画不出来(SVG 解码失败、拿不到画布)抛错,调用方按这一帧没成处理。位图用完要 `close()`。
+ * Single-frame HTML snapshot → a block of original-size bitmap (with transparency). `rect` is
+ * the rectangle in wrapper layer coordinates (passed through `pixelRect`); bitmap size is the
+ * rectangle size. Throws on draw failure (SVG decode failed, unable to get canvas); caller handles
+ * as frame failure. Close bitmap via `close()` after use.
  */
 export async function renderSnapshotBitmap({ html, boxWidth, boxHeight, rect, doc = document }: {
   html: string; boxWidth: number; boxHeight: number; rect: { x: number; y: number; w: number; h: number }; doc?: Document;
@@ -159,7 +179,7 @@ export async function renderSnapshotBitmap({ html, boxWidth, boxHeight, rect, do
   if (Offscreen) {
     const canvas = new Offscreen(rect.w, rect.h);
     const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("拿不到 2D 画布");
+    if (!ctx) throw new Error("Cannot get a 2D canvas");
     ctx.clearRect(0, 0, rect.w, rect.h);
     ctx.drawImage(img, 0, 0, rect.w, rect.h);
     return canvas.transferToImageBitmap();
@@ -168,7 +188,7 @@ export async function renderSnapshotBitmap({ html, boxWidth, boxHeight, rect, do
   canvas.width = rect.w;
   canvas.height = rect.h;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("拿不到 2D 画布");
+  if (!ctx) throw new Error("Cannot get a 2D canvas");
   ctx.clearRect(0, 0, rect.w, rect.h);
   ctx.drawImage(img, 0, 0, rect.w, rect.h);
   return await createImageBitmap(canvas);

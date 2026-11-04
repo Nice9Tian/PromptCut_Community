@@ -1,17 +1,22 @@
 /**
- * 片段里的「叠加带」:把挂在这一段上的东西(滤镜、像素映射、音频效果、素材效果卡)画出来。
+ * The "overlay band" inside a clip: draws what is attached to this segment (filters, pixel maps,
+ * audio effects, media effect cards).
  *
- * 在这之前,时间轴上一个字都看不出一个片段挂没挂东西,只能到左栏检查器里翻。
+ * Before this, nothing on the timeline showed whether a clip had anything attached; you had to dig
+ * through the inspector in the left rail.
  *
- * # 这一格在每个片段上都留着
+ * # This slot is kept on every clip
  *
- * 没挂东西时透明、不画底也不画分隔线。只给挂了东西的片段留的话,同一行里的名字会一高一低。
+ * Transparent when nothing is attached: no background and no divider. If it were kept only for clips
+ * with attachments, names in the same row would sit at uneven heights.
  *
- * # 点哪儿出什么
+ * # What opens where
  *
- * 点一张卡片 → 这一张能做的事;点 `+N` → 这一段挂的全部。两处出的都是片段右键菜单里
- * 「叠加卡」那一支,只是入口不同(菜单本身在 `ClipView.tsx` 里拼)。
- * 带里的按钮都吃掉 pointerdown:不吃的话这一下会被片段的拖动接走,点不出菜单。
+ * Click a card → what can be done with that one; click `+N` → everything attached to this segment.
+ * Both open the "Overlay cards" branch of the clip context menu, just from different entry points
+ * (the menu itself is assembled in `ClipView.tsx`).
+ * Every button in the band swallows pointerdown: otherwise the clip's drag takes over the press and
+ * the menu never opens.
  */
 import { useEffect, useRef } from "react";
 import type { MouseEvent } from "react";
@@ -23,24 +28,25 @@ import { tr } from "../../i18n/index.ts";
 export interface OverlayBandProps {
   items: OverlayItem[];
   rowSize: RowSize;
-  /** 带里留给卡片的宽度(planClipLayout 给) */
+  /** Width in the band reserved for cards (provided by planClipLayout) */
   avail: number;
-  /** 片段太窄:不摆卡片,带里只放一个 `+N` */
+  /** Clip too narrow: no cards, the band holds only a `+N` */
   countOnly: boolean;
-  /** 只读项目不给「＋」 */
+  /** Read-only projects get no "+" */
   frozen: boolean;
-  /** 打开这一张能做的事 */
+  /** Open what can be done with this one */
   onOpenOne: (index: number, at: { x: number; y: number }) => void;
-  /** 打开这一段挂的全部 */
+  /** Open everything attached to this segment */
   onOpenAll: (at: { x: number; y: number }) => void;
 }
 
 const at = (e: MouseEvent) => ({ x: e.clientX, y: e.clientY });
 
 /**
- * 带里的按钮左键右键是同一件事:点哪儿就从哪儿开始。
- * 右键必须自己接住 —— 不接的话事件冒到片段上,出的是片段的右键菜单,
- * 用户明明点的是某一张卡,却得从「叠加卡」那一项再走一遍。
+ * Left click and right click on a button in the band do the same thing: start from where you clicked.
+ * The right click must be handled here: otherwise the event bubbles up to the clip and the clip's
+ * context menu opens, so a user who clicked one specific card would have to go through the
+ * "Overlay cards" entry all over again.
  */
 function press(run: (at: { x: number; y: number }) => void) {
   const fire = (e: MouseEvent) => {
@@ -52,12 +58,14 @@ function press(run: (at: { x: number; y: number }) => void) {
 }
 
 /**
- * 带里的按钮自己把 pointerdown 吃掉。
+ * Buttons in the band swallow pointerdown themselves.
  *
- * 片段的拖动(`useDrag`)挂的是**原生**监听、而且一按下就 `setPointerCapture`:
- * React 的 `onPointerDown` 在根上代理,轮到它时片段那一下早跑完了,指针也已经被片段捕获 ——
- * 这一次点击的 `click` 会派到片段身上,带里的按钮根本收不到。
- * 所以这里挂一个真的 DOM 监听:按钮是后代,冒泡先经过它,拦住就不会进片段。
+ * The clip's drag (`useDrag`) uses a **native** listener and calls `setPointerCapture` as soon as the
+ * press happens: React's `onPointerDown` is delegated at the root, so by the time it runs the clip's
+ * handler has long finished and the pointer is already captured by the clip ->
+ * the `click` of this press is dispatched to the clip, and the button in the band never receives it.
+ * So a real DOM listener is attached here: the button is a descendant, bubbling passes through it
+ * first, and stopping it there keeps the event from reaching the clip.
  */
 function useOwnPointerDown<T extends HTMLElement>() {
   const ref = useRef<T>(null);
@@ -123,8 +131,9 @@ export function OverlayBand({ items, rowSize, avail, countOnly, frozen, onOpenOn
 }
 
 /**
- * 小行高那一档没有带:`+N` 排在名字后面靠右,再短就只剩它。
- * 和带里的 `+N` 同一个动作,样子也照着来。
+ * The small row height tier has no band: `+N` sits after the name, right-aligned; any shorter and
+ * only it is left.
+ * Same action as the `+N` in the band, and it is styled to match.
  */
 export function OverlayPill({ count, onOpenAll }: { count: number; onOpenAll: (at: { x: number; y: number }) => void }) {
   const ref = useOwnPointerDown<HTMLButtonElement>();

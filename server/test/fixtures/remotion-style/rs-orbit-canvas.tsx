@@ -1,4 +1,4 @@
-/** remotion 式的框架的示例卡（测试夹具，不进卡片库）：画布上的一圈光点绕着中心转，每一帧整张重画。 */
+/** Example card for the remotion-style framework (test fixture, not in the card library): a ring of light points circles the center on a canvas, redrawn in full every frame. */
 import { useLayoutEffect, useRef } from "react";
 import type { CardDef, CardProps } from "../../kernel/types";
 import { interpolate, loop, noise, pingPong, random, randomRange, tween } from "../../kernel/remotionStyle";
@@ -13,7 +13,7 @@ function OrbitCanvas({ params, t = 0 }: CardProps<Params>) {
   useLayoutEffect(() => {
     const ctx = ref.current?.getContext("2d");
     if (!ctx) return;
-    // 每一帧从空白开始整张重画：画布上不留上一帧的像素
+    // Redraw the whole canvas from blank on every frame: no pixels from the previous frame stay on the canvas
     ctx.clearRect(0, 0, WIDTH, HEIGHT);
     const count = Math.max(1, Math.min(400, Math.round(params.count)));
     const appear = tween(t, { duration: 0.8 });
@@ -38,18 +38,18 @@ function OrbitCanvas({ params, t = 0 }: CardProps<Params>) {
 
 export const orbitCanvas: CardDef<Params> = {
   id: "rs-orbit-canvas",
-  name: "环绕光点",
-  description: "画布上的一圈光点绕着中心转，位置和大小由种子决定",
+  name: "Orbiting dots",
+  description: "A ring of dots on the canvas orbits the center; positions and sizes are determined by the seed",
   source: "user",
-  useWhen: "框架示例：要用画布画一组按时间直接算位置的点时用。",
-  tags: ["画布", "光点", "示例"],
+  useWhen: "Framework example: use when drawing on a canvas a set of points whose positions are computed directly from time.",
+  tags: ["canvas", "dots", "example"],
   frameMode: "direct",
   defaults: { count: 160, seed: 11, color: "#9bf6ff", speed: 1 },
   controls: [
-    { key: "count", label: "光点个数", type: "number", min: 1, max: 400, step: 1 },
-    { key: "seed", label: "随机种子", type: "number", min: 0, max: 9999, step: 1 },
-    { key: "color", label: "颜色", type: "color" },
-    { key: "speed", label: "转速", type: "number", min: 0, max: 4, step: 0.1 },
+    { key: "count", label: "Number of dots", type: "number", min: 1, max: 400, step: 1 },
+    { key: "seed", label: "Random seed", type: "number", min: 0, max: 9999, step: 1 },
+    { key: "color", label: "Color", type: "color" },
+    { key: "speed", label: "Rotation speed", type: "number", min: 0, max: 4, step: 0.1 },
   ],
   Component: OrbitCanvas,
   lifecycle: { settleMs: 1200, after: "evolve", exit: ["fade"] },

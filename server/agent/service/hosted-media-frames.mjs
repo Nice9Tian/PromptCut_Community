@@ -1,15 +1,22 @@
 /**
- * 云端 Agent 的素材抽帧拼图提供者（`see_frames({ source: 'media', ... })`；拆包表 P1 素材拼图那一半）。
+ * Media frame extraction and collage provider for Cloud Agent (`see_frames({ source: 'media', ... })`;
+ * the media collage half of package breakdown table P1).
  *
- * 规矩：
- *   - 每次调用前用 `resources.authorize(context, 'read')`（或 `contextAccess.authorize(context, 'read')`）核验当前 `runGrant` 与 `fenceRevision`；
- *   - 通过 `project.getMedia(context, mediaId)` 与 `assets.openRead(context, mediaId)` 读取受权项目素材，绝不接受路径或跨项目 `mediaId`；
- *   - 遵循桌面版 `visionTools` 对 `source: 'media'` 的 schema 与拼图网格契约（默认 6 帧/镜头、最多 12，支持 `grid: 4` / `grid: 9`，图片直出，音频拒绝）；
- *   - 缺 `ffmpeg` 或起不来时返回 `{ ok: false, cloudUnavailable: true, error: ... }`；
- *   - 抽帧/拼图子进程经 `perception/runner.mjs` 的 `spawnTree` + `superviseChild` 登记到 `resources.register(context, { kind: 'child', ... })`，
- *     本轮取消（`abortForFence`）或 `close()` 时真实终止子进程树并清理临时文件。
+ * Rules:
+ *   - Before each call, verify current `runGrant` and `fenceRevision` using
+ *     `resources.authorize(context, 'read')` (or `contextAccess.authorize(context, 'read')`);
+ *   - Read authorized project media via `project.getMedia(context, mediaId)` and
+ *     `assets.openRead(context, mediaId)`; never accept paths or cross-project `mediaId`;
+ *   - Follow desktop app `visionTools` schema and collage grid contract for `source: 'media'`
+ *     (default 6 frames/shot, max 12, supports `grid: 4` / `grid: 9`, images output directly, audio rejected);
+ *   - When `ffmpeg` is missing or fails to start, return
+ *     `{ ok: false, cloudUnavailable: true, error: ... }`;
+ *   - Frame extraction/collage child processes are registered via `perception/runner.mjs`
+ *     `spawnTree` + `superviseChild` to `resources.register(context, { kind: 'child', ... })`;
+ *     on cancellation of this round (`abortForFence`) or `close()`, actually terminate the child
+ *     process tree and clean up temporary files.
  *
- * 纯 Node 模块，不直接 import `src/`。
+ * Pure Node module, does not directly import `src/`.
  */
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -65,9 +72,9 @@ export class MediaFramesToolError extends Error {
 }
 
 const MEDIA_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,199}$/;
-const KIND_NAME = { image: '图片', audio: '音频', video: '视频' };
-const NOT_CONFIGURED = '这台云节点没有配置 ffmpeg，云端 Agent 无法对视频素材抽帧拼图（see_frames source:"media"）。请改看时间轴画面或请用户在电脑上的 PromptCut 里查看。';
-const NO_FFMPEG = '这台云节点上 ffmpeg 起不来，云端 Agent 无法对视频素材抽帧拼图（see_frames source:"media"）。请改看时间轴画面或请用户在电脑上的 PromptCut 里查看。';
+const KIND_NAME = { image: 'an image', audio: 'audio', video: 'a video' };
+const NOT_CONFIGURED = 'This cloud node has no ffmpeg configured, so the Cloud Agent cannot extract frames into a contact sheet from video media (see_frames source:"media"). View the timeline picture instead, or ask the user to check in PromptCut on their computer.';
+const NO_FFMPEG = 'ffmpeg cannot start on this cloud node, so the Cloud Agent cannot extract frames into a contact sheet from video media (see_frames source:"media"). View the timeline picture instead, or ask the user to check in PromptCut on their computer.';
 
 function topBoxes(boxes, limit = 4) {
   return [...boxes]
@@ -102,7 +109,7 @@ function subjectDigest(k, info, stage) {
     sampledAt: info.times,
     boxCount: info.boxes.length,
     boxes: topBoxes(info.boxes),
-    ...(info.approximate ? { approximate: true, note: '这段区间里没有采样点,数字来自时间上最近的一次采样,只是近似' } : null),
+    ...(info.approximate ? { approximate: true, note: 'There are no sample points in this range; the numbers come from the nearest sample in time and are only approximate' } : null),
   };
 }
 
@@ -127,12 +134,12 @@ function resolveBinaries({ ffmpeg, ffprobe, config }) {
  * @param {object} [d.contextAccess] F0 `createToolRunContextAccess`
  * @param {object} d.resources F0 `createRunResources`
  * @param {object} d.assets F0 `createProjectAssets`
- * @param {((context: object) => object | Promise<object>) | object} [d.workspace] 对话工作区（函数或实例；缺省用系统临时目录下的受控子目录）
+ * @param {((context: object) => object | Promise<object>) | object} [d.workspace] Chat workspace (function or instance; defaults to controlled subdirectory under system temp directory)
  * @param {object} d.project `{ getMedia(context, mediaId), getStage?(context) }`
- * @param {string | null} [d.ffmpeg] ffmpeg 可执行文件路径
- * @param {string | null} [d.ffprobe] ffprobe 可执行文件路径
- * @param {object | null} [d.config] 可选 `{ ffmpeg, ffprobe, ffmpegArgs?, ffprobeArgs? }`
- * @param {object | null} [d.kernel] 可选 `{ subjectForRange, suggestPosition, rectForSafeSide }`
+ * @param {string | null} [d.ffmpeg] Path to ffmpeg executable
+ * @param {string | null} [d.ffprobe] Path to ffprobe executable
+ * @param {object | null} [d.config] Optional `{ ffmpeg, ffprobe, ffmpegArgs?, ffprobeArgs? }`
+ * @param {object | null} [d.kernel] Optional `{ subjectForRange, suggestPosition, rectForSafeSide }`
  */
 export function createMediaFramesTools({
   contextAccess = null,
@@ -151,9 +158,9 @@ export function createMediaFramesTools({
   const authProvider = resources && typeof resources.authorize === 'function'
     ? resources
     : (contextAccess && typeof contextAccess.authorize === 'function' ? contextAccess : null);
-  if (!authProvider) throw new MediaFramesToolError('素材拼图缺少依赖:resources/contextAccess', 'media-frames-unconfigured');
-  if (!assets || typeof assets.openRead !== 'function') throw new MediaFramesToolError('素材拼图缺少依赖:assets', 'media-frames-unconfigured');
-  if (!project || typeof project.getMedia !== 'function') throw new MediaFramesToolError('素材拼图缺少依赖:project.getMedia', 'media-frames-unconfigured');
+  if (!authProvider) throw new MediaFramesToolError('Media contact sheet is missing a dependency: resources/contextAccess', 'media-frames-unconfigured');
+  if (!assets || typeof assets.openRead !== 'function') throw new MediaFramesToolError('Media contact sheet is missing a dependency: assets', 'media-frames-unconfigured');
+  if (!project || typeof project.getMedia !== 'function') throw new MediaFramesToolError('Media contact sheet is missing a dependency: project.getMedia', 'media-frames-unconfigured');
 
   const limits = { ...MEDIA_FRAMES_DEFAULTS, ...limitsIn };
   const bins = resolveBinaries({ ffmpeg, ffprobe, config });
@@ -167,45 +174,47 @@ export function createMediaFramesTools({
   const inFlight = new Set();
 
   async function authorize(context, action = 'read') {
-    if (closing) throw new MediaFramesToolError('云端 Agent 服务正在关闭,不再接新活。', 'media-frames-closing', 503);
+    if (closing) throw new MediaFramesToolError('The Cloud Agent service is shutting down and no longer accepts new work.', 'media-frames-closing', 503);
     if (!context || typeof context !== 'object' || typeof context.projectId !== 'string' || typeof context.runGrantId !== 'string') {
-      throw new MediaFramesToolError('缺少可信的运行上下文', 'tool-context-untrusted', 403);
+      throw new MediaFramesToolError('Missing trusted run context', 'tool-context-untrusted', 403);
     }
     try {
       return await authProvider.authorize(context, action);
     } catch (error) {
       if (error instanceof MediaFramesToolError) throw error;
       if (['run-authority-unavailable', 'tool-instance-unavailable', 'fence-unavailable', 'authorization-unavailable'].includes(error?.code)) {
-        throw new MediaFramesToolError('文档服务暂时联系不上,没法确认这一轮的权限。稍后再试。', 'authority-unavailable', 503);
+        throw new MediaFramesToolError('The document service is temporarily unreachable, so permissions for this turn cannot be confirmed. Try again later.', 'authority-unavailable', 503);
       }
-      throw new MediaFramesToolError('这一轮没有读项目的权限(被停止、转私有或权限已撤)。', 'media-frames-forbidden', 403);
+      throw new MediaFramesToolError('This turn has no permission to read the project (stopped, made private, or permission revoked).', 'media-frames-forbidden', 403);
     }
   }
 
   function scrub(text, wsDir = null) {
     let out = String(text ?? '');
-    if (wsDir) out = out.split(wsDir).join('<工作目录>');
+    if (wsDir) out = out.split(wsDir).join('<working directory>');
     for (const secret of [bins.ffmpeg, bins.ffprobe].filter(Boolean)) {
-      out = out.split(secret).join('<节点目录>');
+      out = out.split(secret).join('<node directory>');
     }
-    return out.replace(/[A-Za-z]:\\[^\s'",)]+/g, '<节点目录>');
+    return out.replace(/[A-Za-z]:\\[^\s'",)]+/g, '<node directory>');
   }
 
   /*
-   * `assets.openRead` 的报错翻成模型看得懂的话。图片和视频两条路都走这里,免得其中一条
-   * 把 `project-assets-read-failed` 这种代号原样丢给模型 —— 它看不出该不该重试,只会再试一遍。
-   * 通道整个不可用时明说「重试没用」,模型才会改走别的路。
+   * Translate `assets.openRead` errors into text that the model can understand. Both image and video
+   * paths go through here, preventing either path from passing raw codes like
+   * `project-assets-read-failed` to the model: the model cannot tell if it should retry and would
+   * just try again. When the channel is completely unavailable, state clearly that "retrying will
+   * not help", so the model switches to another path.
    */
   function mediaFetchError(error, wsDir = null) {
     const code = error?.code ?? error?.message;
     const gone = error?.status === 404 || code === 'asset-missing';
     const shut = ['project-assets-read-failed', 'project-assets-unconfigured', 'project-assets-closed',
       'run-asset-transport-unconfigured', 'run-asset-response-invalid'].includes(code);
-    const msg = gone ? '素材的字节在素材服务上找不到(上传没完成或已被清理)'
-      : shut ? `这台云节点现在读不了项目素材的字节(素材服务没放行 Agent 读取:${scrub(code, wsDir).slice(0, 60)}),重试也没用。请改看时间轴画面(see_frames 不传 mediaId),或请用户检查云节点上的素材服务。`
-      : error?.status === 403 ? '这一轮没有读这份素材的权限(被停止、转私有或权限已撤)。'
-      : ['asset-size-mismatch', 'asset-hash-mismatch'].includes(code) ? '素材的字节和登记的大小/哈希对不上,这份素材在素材服务上坏了。'
-      : `取素材失败(${scrub(code ?? error, wsDir).slice(0, 120)})`;
+    const msg = gone ? 'The media bytes were not found on the asset service (upload incomplete or already cleaned up)'
+      : shut ? `This cloud node cannot read the project media bytes right now (the asset service did not allow the Agent to read: ${scrub(code, wsDir).slice(0, 60)}), and retrying will not help. View the timeline picture instead (see_frames without mediaId), or ask the user to check the asset service on the cloud node.`
+      : error?.status === 403 ? 'This turn has no permission to read this media (stopped, made private, or permission revoked).'
+      : ['asset-size-mismatch', 'asset-hash-mismatch'].includes(code) ? 'The media bytes do not match the registered size/hash; this media is corrupted on the asset service.'
+      : `Failed to fetch media (${scrub(code ?? error, wsDir).slice(0, 120)})`;
     return new MediaFramesToolError(msg, 'media-fetch-failed', error?.status === 403 ? 403 : shut ? 503 : 404);
   }
 
@@ -240,7 +249,7 @@ export function createMediaFramesTools({
         },
       });
     } catch {
-      throw new MediaFramesToolError('这一轮已经没有权限继续(被停止、转私有或 Agent 关闭),抽帧进程没有启动。', 'media-frames-forbidden', 403);
+      throw new MediaFramesToolError('This turn no longer has permission to continue (stopped, made private, or Agent closed). The frame extraction process was not started.', 'media-frames-forbidden', 403);
     }
     const done = run.done.then((end) => ({
       code: end.spawnError ? -1 : (end.code ?? -1),
@@ -270,7 +279,7 @@ export function createMediaFramesTools({
       });
       const end = await run.done;
       await run.closed;
-      if (end.aborted || closing) throw new MediaFramesToolError('抽帧已取消', 'cancelled', 499);
+      if (end.aborted || closing) throw new MediaFramesToolError('Frame extraction cancelled', 'cancelled', 499);
       const version = out.split(/\r?\n/)[0]?.match(/ffmpeg version (\S+)/)?.[1];
       value = end.code === 0 && (version || bins.ffmpegArgs.length > 0) ? { ok: true, version: version ?? 'stub' } : { ok: false, reason: NO_FFMPEG };
     } catch (error) {
@@ -296,7 +305,7 @@ export function createMediaFramesTools({
       });
       const end = await run.done;
       await run.closed;
-      if (end.aborted || closing) throw new MediaFramesToolError('抽帧已取消', 'cancelled', 499);
+      if (end.aborted || closing) throw new MediaFramesToolError('Frame extraction cancelled', 'cancelled', 499);
       if (end.code !== 0) return 0;
       const parsed = JSON.parse(out);
       const dur = Number(parsed?.format?.duration);
@@ -317,15 +326,15 @@ export function createMediaFramesTools({
     activeStreams.add(read.stream);
     const chunks = [];
     let total = 0;
-    const timer = setTimeout(() => read.stream.destroy(new MediaFramesToolError('读取图片超时', 'fetch-timeout')), limits.fetchMs);
+    const timer = setTimeout(() => read.stream.destroy(new MediaFramesToolError('Image read timed out', 'fetch-timeout')), limits.fetchMs);
     timer.unref?.();
     try {
       for await (const chunk of read.stream) {
-        if (closing) throw new MediaFramesToolError('抽帧已取消', 'cancelled', 499);
+        if (closing) throw new MediaFramesToolError('Frame extraction cancelled', 'cancelled', 499);
         const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         total += buf.length;
         if (total > limits.maxImageBytes) {
-          throw new MediaFramesToolError('图片文件太大,无法直出', 'too-large');
+          throw new MediaFramesToolError('Image file is too large to return directly', 'too-large');
         }
         chunks.push(buf);
       }
@@ -355,35 +364,35 @@ export function createMediaFramesTools({
       width,
       height,
       cardUrl,
-      note: '这是一张图片,下面就是它本身(长边缩到 1280 以内)。卡片参数里要用它就填 cardUrl。',
-      __images: [{ sceneIndex: 1, label: '原图', mime, base64: full.toString('base64') }],
+      note: 'This is an image, shown below as is (long edge scaled down to within 1280). To use it in card parameters, fill in cardUrl.',
+      __images: [{ sceneIndex: 1, label: 'Original image', mime, base64: full.toString('base64') }],
     };
   }
 
   async function seeMediaFrames(context, args) {
     await authorize(context, 'read');
     if (args?.source !== undefined && args.source !== 'media') {
-      throw new MediaFramesToolError('hosted-media-frames 只处理 source: "media" 的素材抽帧拼图', 'unsupported-source');
+      throw new MediaFramesToolError('hosted-media-frames only handles frame contact sheets for source: "media" media', 'unsupported-source');
     }
     const mediaId = args?.mediaId;
     if (typeof mediaId !== 'string' || !MEDIA_ID_RE.test(mediaId)) {
-      throw new MediaFramesToolError('mediaId 必填,是素材的 id(可用 list_media 查看)', 'bad-args');
+      throw new MediaFramesToolError('mediaId is required, it is the id of the media (see list_media)', 'bad-args');
     }
     const media = await project.getMedia(context, mediaId);
     if (!media) {
-      throw new MediaFramesToolError(`找不到素材 ${String(mediaId).slice(0, 80)}(没有这个 id,或它不在当前项目里)`, 'media-not-found', 404);
+      throw new MediaFramesToolError(`Media ${String(mediaId).slice(0, 80)} not found (no such id, or it is not in the current project)`, 'media-not-found', 404);
     }
     if (media.kind === 'audio') {
-      throw new MediaFramesToolError(`${media.name} 不是视频(是音频),没有画面可看`, 'media-kind');
+      throw new MediaFramesToolError(`${media.name} is not a video (it is audio), so there is no picture to view`, 'media-kind');
     }
     if (media.pending) {
-      throw new MediaFramesToolError(`${media.name} 还没进素材服务(上传没完成或失败),稍后再试或重新导入`, 'media-pending');
+      throw new MediaFramesToolError(`${media.name} is not in the asset service yet (upload incomplete or failed), try again later or re-import`, 'media-pending');
     }
     if (media.kind === 'image') {
       return await readImageMedia(context, media);
     }
     if (media.kind !== 'video') {
-      throw new MediaFramesToolError(`${media.name} 不是视频${KIND_NAME[media.kind] ? `(是${KIND_NAME[media.kind]})` : ''},没有画面可看`, 'media-kind');
+      throw new MediaFramesToolError(`${media.name} is not a video${KIND_NAME[media.kind] ? ` (it is ${KIND_NAME[media.kind]})` : ''}, so there is no picture to view`, 'media-kind');
     }
 
     const ws = await resolveWorkspace(context);
@@ -402,7 +411,7 @@ export function createMediaFramesTools({
     const wsDir = ws && typeof ws.dir === 'function' ? ws.dir() : absDir;
 
     try {
-      // 1. 从受权 ProjectAssets 流式读取视频到对话工作区临时目录
+      // 1. Stream video from authorized ProjectAssets to chat workspace temp directory
       let read;
       try {
         read = await assets.openRead(context, mediaId);
@@ -418,16 +427,16 @@ export function createMediaFramesTools({
       let fetched = 0;
       let fetchError = null;
       const fetchTimer = setTimeout(() => {
-        fetchError = new MediaFramesToolError('取素材超时', 'fetch-timeout');
+        fetchError = new MediaFramesToolError('Media fetch timed out', 'fetch-timeout');
         read.stream.destroy();
       }, limits.fetchMs);
       fetchTimer.unref?.();
       try {
         for await (const piece of read.stream) {
-          if (closing) throw new MediaFramesToolError('抽帧已取消', 'cancelled', 499);
+          if (closing) throw new MediaFramesToolError('Frame extraction cancelled', 'cancelled', 499);
           const buf = Buffer.isBuffer(piece) ? piece : Buffer.from(piece);
           fetched += buf.length;
-          if (fetched > limits.maxFetchBytes) throw new MediaFramesToolError('素材太大,云端抽帧取不下来', 'too-large');
+          if (fetched > limits.maxFetchBytes) throw new MediaFramesToolError('Media is too large, cloud frame extraction cannot fetch it', 'too-large');
           if (writer) writer.write(buf);
           else fs.writeSync(fd, buf);
         }
@@ -446,7 +455,7 @@ export function createMediaFramesTools({
       }
       await read.closed?.catch?.(() => {});
 
-      // 2. 确定时长与镜头规划
+      // 2. Determine duration and shot plan
       let duration = Number(media.duration);
       if (!(duration > 0)) {
         duration = await probeDuration(context, ws, absMedia, absDir);
@@ -454,7 +463,7 @@ export function createMediaFramesTools({
       const shots = media.shots ?? null;
       const { scenes: all, fallback } = scenesOf(shots, duration);
       if (!all.length) {
-        throw new MediaFramesToolError(`${media.name} 没有可看的画面(时长为 0?)`, 'empty-media');
+        throw new MediaFramesToolError(`${media.name} has no picture to view (duration is 0?)`, 'empty-media');
       }
       let plan;
       try {
@@ -463,13 +472,14 @@ export function createMediaFramesTools({
         throw new MediaFramesToolError(error?.message || String(error), 'bad-args');
       }
 
-      // 3. 按镜头并发抽帧拼图（最多 maxConcurrency 个 ffmpeg 子进程，均经 superviseChild 登记到 resources）
+      // 3. Concurrently extract frames and build collages per shot (up to maxConcurrency ffmpeg child
+      // processes, all registered with resources via superviseChild)
       const results = new Array(plan.scenes.length);
       let cursor = 0;
       const workerCount = Math.min(limits.maxConcurrency, Math.max(1, plan.scenes.length));
       const runSheetWorker = async () => {
         for (;;) {
-          if (closing) throw new MediaFramesToolError('抽帧已取消', 'cancelled', 499);
+          if (closing) throw new MediaFramesToolError('Frame extraction cancelled', 'cancelled', 499);
           const i = cursor++;
           if (i >= plan.scenes.length) return;
           const sc = plan.scenes[i];
@@ -490,14 +500,14 @@ export function createMediaFramesTools({
             const end = await run.done;
             await run.closed;
             if (end.aborted || closing) {
-              throw new MediaFramesToolError('抽帧已取消', 'cancelled', 499);
+              throw new MediaFramesToolError('Frame extraction cancelled', 'cancelled', 499);
             }
             if (end.timedOut) {
-              throw new Error('ffmpeg 拼图超时');
+              throw new Error('ffmpeg contact sheet timed out');
             }
             if (end.code !== 0 || !fs.existsSync(outFile)) {
               const tail = scrub(end.stderrTail.slice(-3).join(' '), wsDir).slice(0, 240);
-              throw new Error(`ffmpeg 退出码 ${end.code}${tail ? `:${tail}` : ''}`);
+              throw new Error(`ffmpeg exit code ${end.code}${tail ? `: ${tail}` : ''}`);
             }
             const base64 = fs.readFileSync(outFile).toString('base64');
             results[i] = { ok: true, frames: spec.frames, __image: { mime: 'image/jpeg', base64 } };
@@ -513,7 +523,7 @@ export function createMediaFramesTools({
       };
       await Promise.all(Array.from({ length: workerCount }, () => runSheetWorker()));
 
-      // 4. 返回前重验当前授权与 fenceRevision
+      // 4. Re-verify current authorization and fenceRevision before returning
       await authorize(context, 'read');
 
       let stage = null;
@@ -549,19 +559,19 @@ export function createMediaFramesTools({
       });
 
       if (plan.scenes.length > 0 && images.length === 0) {
-        const firstErr = results.find((r) => r?.error)?.error ?? '抽帧失败';
-        throw new MediaFramesToolError(`素材抽帧拼图失败:${firstErr}`, 'sheet-failed');
+        const firstErr = results.find((r) => r?.error)?.error ?? 'Frame extraction failed';
+        throw new MediaFramesToolError(`Media frame contact sheet failed: ${firstErr}`, 'sheet-failed');
       }
 
       const notes = [];
       if (fallback) {
-        notes.push('这个素材还没跑镜头识别,下面按每 10 秒一段切,边界不是真镜头。');
+        notes.push('Shot detection has not been run on this media, so it is split into 10-second segments below; the boundaries are not real shots.');
       }
-      notes.push('每张拼图对应 scenes 里同序号的镜头,格子按行从左到右对应 frames 里的秒数。');
-      notes.push(plan.nextPage ? `还有 ${plan.pages - plan.page} 页:see_frames({ source: "media", mediaId, page: ${plan.nextPage} })。` : '这是最后一页。');
-      notes.push("某个镜头看不清:see_frames({ source: 'media', mediaId, scene: 序号, grid: 9 })。");
+      notes.push('Each contact sheet corresponds to the shot with the same index in scenes; cells, row by row from left to right, correspond to the seconds in frames.');
+      notes.push(plan.nextPage ? `${plan.pages - plan.page} more page${plan.pages - plan.page === 1 ? '' : 's'}: see_frames({ source: "media", mediaId, page: ${plan.nextPage} }).` : 'This is the last page.');
+      notes.push("If a shot is hard to see: see_frames({ source: 'media', mediaId, scene: index, grid: 9 }).");
       if (!media.transcript) {
-        notes.push('这个素材还没转写,想对照说了什么先 transcribe_media。');
+        notes.push('This media has not been transcribed yet; to check what is said, run transcribe_media first.');
       }
 
       return {
@@ -594,7 +604,7 @@ export function createMediaFramesTools({
     handles: new Set(MEDIA_FRAMES_TOOL_NAMES),
     call(name, args, context, _options = {}) {
       if (!MEDIA_FRAMES_TOOL_NAMES.includes(name)) {
-        return Promise.reject(new MediaFramesToolError(`素材拼图不处理 ${String(name).slice(0, 60)}`, 'unknown-tool'));
+        return Promise.reject(new MediaFramesToolError(`Media contact sheet does not handle ${String(name).slice(0, 60)}`, 'unknown-tool'));
       }
       const p = Promise.resolve().then(() => seeMediaFrames(context, args ?? {}));
       inFlight.add(p);

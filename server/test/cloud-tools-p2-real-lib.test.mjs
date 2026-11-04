@@ -1,5 +1,7 @@
-// 真实验证的依赖准备在两种位置都对:在 .worktrees/<名> 里,和在 main 自己里(ROOT 就是主工作区)。
-// 用临时目录和临时 git 仓库模拟,不碰真的主工作区。
+// Dependency preparation for real verification is correct in both locations: inside
+// .worktrees/<name>, and inside main itself (ROOT is main checkout).
+// Simulated with temporary directories and a temporary git repo, without touching the real main
+// checkout.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -43,7 +45,7 @@ test('copyDeps when the tree IS the main workspace: sources are its own out/…,
   assert.ok(fs.existsSync(path.join(main, 'out', 'p2-stt', 'models', MODEL, 'snapshots', 'r1', 'model.bin')));
   const added = listing(main).filter((f) => !before.includes(f));
   assert.ok(added.length > 0 && added.every((f) => f.startsWith(path.join('out', 'p2-stt'))), added.join(', '));
-  copyDeps({ root: main, mainRoot: main });                                 // 已有就不动
+  copyDeps({ root: main, mainRoot: main });                                 // Leaves untouched if already present
   assert.deepEqual(depSources(main, main).roots, [main], 'the same directory is listed once');
 });
 
@@ -60,7 +62,7 @@ test('copyDeps in a worktree: own out/… first, else the main workspace; the ma
   copyDeps({ root: own, mainRoot: main });
   assert.equal(fs.readFileSync(path.join(own, 'out', 'p2-stt', 'pylibs', 'faster_whisper', '__init__.py'), 'utf8'), 'own', 'the tree\'s own copy wins');
   const empty = tmp(t);
-  assert.throws(() => copyDeps({ root: empty, mainRoot: empty }), /找不到可复制的来源/);
+  assert.throws(() => copyDeps({ root: empty, mainRoot: empty }), /No copyable source found/);
 });
 
 test('findPython looks in the tree first and then the main workspace', (t) => {

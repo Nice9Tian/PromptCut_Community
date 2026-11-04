@@ -1,14 +1,21 @@
 import type { EditorApi } from "../ai/mcpExecutor";
 
-/** EditorApi 里**不收参数**的方法名(原分发链里写成 `api.play()` 的那些) */
+/**
+ * Method names in EditorApi that **take no arguments** (those written as `api.play()` in the
+ * original dispatch chain)
+ */
 export type NoArgMethod = { [K in keyof EditorApi]: Parameters<EditorApi[K]> extends [] ? K : never }[keyof EditorApi];
-/** EditorApi 里**收一个参数**的方法名(原分发链里写成 `api.addClip(args)` 的那些,含可选参数) */
+/**
+ * Method names in EditorApi that **take one argument** (those written as `api.addClip(args)` in the
+ * original dispatch chain, including optional parameters)
+ */
 export type ArgMethod = { [K in keyof EditorApi]: Parameters<EditorApi[K]> extends [] ? never : K }[keyof EditorApi];
 
 /**
- * 一条工具路由。字段含义见 routes.mjs 的头注释。
- * 按 passArgs 分成可辨识联合,是为了让分发处 `api[route.method](args)` 这一句
- * 不用任何强转就能过类型检查 —— 零参方法和一参方法的签名对不上。
+ * A tool route. For field semantics, see the header comment in routes.mjs.
+ * Split into a discriminated union by passArgs so that the dispatch line `api[route.method](args)`
+ * passes type checking without any type casting: the signatures of zero-arg and single-arg methods
+ * do not match.
  */
 export type ToolRoute =
   | { method: NoArgMethod; passArgs: false; awaited: boolean }

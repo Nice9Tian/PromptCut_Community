@@ -1,12 +1,18 @@
 /**
- * 项目设置「多用户协作」里托管方服务的勾选行（契约 `docs/plan/hosted-render-contract.md` 第 3 节；语义 `workflow/project.md`）。
+ * Checkbox rows for host services in project settings "Multi-user collaboration" (contract
+ * `docs/plan/hosted-render-contract.md` section 3; semantics `workflow/project.md`).
  *
- * 按服务名各渲染一行：项目放云端、且这台托管端有这个服务（`available`）才出现；创建者能改（点勾选后走创建者身份验证，
- * 见 `MembersPanel.tsx` 的 `CreatorFlow`），其他成员只读。放本机的项目没有这一组。
- * 服务那一行下面缩进挂它的子选项（渲染节点的「生成轨道流」，`hostedOptionRowsOf`）：文档服务报了这个选项才出现；服务那一行关着时
- * 这一行置灰、不可点；创建者能改，其他成员只读。
+ * One row is rendered per service name: it appears only if the project is in the cloud and this
+ * hosted side has the service (`available`). The creator can change it (after ticking, creator
+ * authentication runs, see `CreatorFlow` in `MembersPanel.tsx`); other members see it read-only.
+ * Projects kept on this machine have no such group.
+ * Under a service row, its sub-options hang indented (the render node's "Generate track stream",
+ * `hostedOptionRowsOf`): they appear only if the document service reported the option; while the
+ * service row is off, this row is greyed out and cannot be clicked; the creator can change it,
+ * other members see it read-only.
  *
- * 组件本身不读同步管理：数据与动作都从属性来，单测直接渲染它。
+ * The component does not read the sync manager itself: data and actions all come from props, and
+ * unit tests render it directly.
  */
 import { HOSTED_SERVICE_TEXT, hostedOptionRowsOf, hostedOptionText, hostedRowsOf, type HostedOptionName, type HostedServiceName, type HostedView } from "./hostedServices";
 import "./sync.css";
@@ -15,11 +21,11 @@ import { tr } from "../../i18n/index.ts";
 export function HostedServiceRows({ where, hosted, creator, busy = false, onToggle, onToggleOption }: {
   where: "lan" | "hosted" | null | undefined;
   hosted: HostedView | null;
-  /** 我是创建者:能改;否则只读 */
+  /** I am the creator: can change it; otherwise read-only */
   creator: boolean;
   busy?: boolean;
   onToggle: (service: HostedServiceName, enabled: boolean) => void;
-  /** 子选项(渲染节点的「生成轨道流」)的勾选；不给就当不能改 */
+  /** Checkbox for the sub-option (the render node's "Generate track stream"); if not given, treated as not changeable */
   onToggleOption?: (service: HostedServiceName, option: HostedOptionName, enabled: boolean) => void;
 }) {
   const rows = hostedRowsOf(where, hosted);

@@ -1,64 +1,71 @@
 /**
- * 给 API 直连的请求加自动重试。
+ * Add automatic retry to direct API requests.
  *
- * # 起因
+ * # Background
  *
- * 中转站在上游拥挤时会直接回:
+ * When upstreams are congested, relay services return directly:
  *
  *   openai HTTP 429: Current group upstream load is saturated, please try again later
  *
- * 这类错误是**临时的**,过几秒再发一次多半就成了。而现在一撞上就整条对话报错中断,
- * 用户看到的是一条红字,而不是稍等一下的结果。
+ * Such errors are **transient**; resending after a few seconds will mostly succeed. But currently,
+ * hitting this immediately aborts the entire chat with an error, so the user sees red error text
+ * instead of the result after waiting briefly.
  *
- * # 哪些码值得重试
+ * # Which status codes are worth retrying
  *
- * 照 openlux 文档的 HTTP Status Codes 那一页(doc.openlux.ai/en/tutorials/http-status-codes):
+ * According to the HTTP Status Codes page in the openlux documentation
+ * (doc.openlux.ai/en/tutorials/http-status-codes):
  *
  *   408 Timeout            "Shrink payload, retry, or use async APIs"
  *   429 Too Many Requests  "Back off; lower concurrency"
  *   500 Internal Error     "Retry later"
  *   502 / 503 / 504        "Exponential backoff; reduce concurrency at peak"
  *
- * 不重试的:400(参数错)、401(密钥错)、403(没权限 / 模型不在组里 / IP 不允许)、
- * 404(路径或任务 id 错)。这几个再发一百次也是同一个结果,重试只会拖慢报错、
- * 让用户更晚看到真正该改的东西。
+ * Not retried: 400 (bad parameter), 401 (invalid key), 403 (no permission / model not in group /
+ * IP not allowed), 404 (invalid path or task id). Sending these a hundred more times yields the same
+ * result; retrying only delays the error, making the user see what actually needs fixing later.
  *
- * 网络层的异常(连接被重置、DNS 抽风、TLS 握手失败)也重试 —— 那和 502 是一回事。
- * 但 **AbortError 不重试**:那是用户点了停止、或者上层超时,重试等于不听话。
+ * Network layer exceptions (connection reset, DNS glitch, TLS handshake failure) are also retried:
+ * that is the same as 502. But **AbortError is not retried**: that is when the user clicked stop,
+ * or upper layer timed out; retrying amounts to disobeying.
  *
- * # 为什么只包住「发请求」这一下,不包流
+ * # Why only wrap the "send request" step, not the stream
  *
- * 这些都是流式请求。重试**只在还没开始读流之前**是安全的:
- * 拿到错误状态码时一个字节的正文都还没交给上层,重发是干净的。
- * 而流读到一半断掉时再重发整个请求,模型会从头再说一遍,已经显示出去的那半段
- * 就重复了 —— 那种情况必须让它报错,由用户决定要不要重来。
- * 所以这个包装器只认「响应还没返回」和「响应返回了但状态码是可重试的」这两种。
+ * These are all streaming requests. Retrying is safe **only before reading the stream begins**:
+ * when receiving an error status code, not a single byte of body has been delivered to upper layers,
+ * so resending is clean. But when a stream breaks midway, resending the entire request causes the model
+ * to start over from the beginning, duplicating the portion already displayed: in that case it must
+ * report an error, letting the user decide whether to retry.
+ * Therefore, this wrapper only recognizes two cases: "response has not returned yet" and "response
+ * returned but status code is retryable".
  */
 
 import { createSseParser } from './providers/base.mjs';
 import { createThinkSplitter } from './think-tags.mjs';
 
-/** 文档里写明可以重试的状态码 */
+/** Status codes documented as retryable */
 export const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
 export const DEFAULT_RETRY = Object.freeze({
-  /** 最多重试几次(不含第一次)。用户要求 10 */
+  /** Maximum retry attempts (excluding the first). User requested 10 */
   maxRetries: 10,
-  /** 第一次退避多久 */
+  /** How long to back off on the first attempt */
   baseDelayMs: 500,
-  /** 单次退避的上限。指数涨上去之后就按这个走 */
+  /** Upper bound for single backoff. Capped at this once exponential growth reaches it */
   maxDelayMs: 8000,
   /**
-   * 整个请求(含所有重试和等待)的总预算。
+   * Total budget for the entire request (including all retries and waits).
    *
-   * 单次上游超时(如 openlux 网关 90~95s 返回 SSE upstream timed out,或本地 120s 闲置超时)
-   * 约 90~120 秒;若只给 5 分钟,连续 4 次尝试(首次 + 3 次重试,累计约 380s)就会在第 3/10 次重试时
-   * 被总预算提前截断。设为 20 分钟足以覆盖 maxRetries: 10 的完整退避重试,到点再把最后一次错误抛出去。
+   * A single upstream timeout (such as openlux gateway returning SSE upstream timed out in 90~95s, or
+   * local 120s idle timeout) is about 90~120 seconds; if only 5 minutes is given, 4 consecutive attempts
+   * (initial + 3 retries, totaling ~380s) would be prematurely truncated by the total budget on retry 3/10.
+   * Setting it to 20 minutes is sufficient to cover full backoff retries for maxRetries: 10,
+   * throwing the last error once time expires.
    */
   maxTotalMs: 20 * 60 * 1000,
 });
 
-/** 睡一会儿,期间可以被 abort 打断(用户点停止时不该还在傻等) */
+/** Sleep briefly, abortable in the meantime (do not keep waiting blindly if user clicked stop) */
 function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason ?? new Error('aborted'));
@@ -69,12 +76,14 @@ function sleep(ms, signal) {
 }
 
 /**
- * 区分「用户主动点停止」与「单次尝试内部闲置超时(TimeoutError)」。
+ * Distinguish between "user actively clicked stop" and "single-attempt internal idle timeout (TimeoutError)".
  *
- * - 只要调用方传了外部 signal(opts.signal 或 init.signal),就只认外层 signal.aborted 这一个真凭据:
- *   withIdleTimeout 包在 createRetryingFetch 里面,单次尝试到点抛出的 TimeoutError / AbortError
- *   并不会让外部 signal.aborted 变真,应当作为可重试故障继续退避重试。
- * - 调用方没传外部 signal 时(如裸单测),TimeoutError 仍按超时重试,仅把非超时的 AbortError 当停止。
+ * - As long as the caller passed an external signal (opts.signal or init.signal), only recognize
+ *   outer signal.aborted as the single true proof: withIdleTimeout is wrapped inside createRetryingFetch;
+ *   TimeoutError / AbortError thrown when a single attempt times out does not make external signal.aborted
+ *   true, and should continue backoff retry as a retryable failure.
+ * - When the caller did not pass an external signal (e.g. bare unit tests), TimeoutError is still
+ *   retried as a timeout, and only non-timeout AbortError is treated as stop.
  */
 function isUserAbort(e, externalSignal) {
   if (externalSignal) return Boolean(externalSignal.aborted);
@@ -84,7 +93,7 @@ function isUserAbort(e, externalSignal) {
 }
 
 /**
- * 从单条已解析的 SSE 事件里提取错误描述;不是错误事件就返回 null。
+ * Extract error description from a single parsed SSE event; return null if not an error event.
  */
 export function extractSseError(event, parsed) {
   if (!parsed || typeof parsed !== 'object') return null;
@@ -92,7 +101,7 @@ export function extractSseError(event, parsed) {
   const raw = parsed.error && typeof parsed.error === 'object' ? parsed.error : parsed;
   const message = typeof parsed.error === 'string'
     ? parsed.error
-    : (raw.message || parsed.message || 'API 流返回错误');
+    : (raw.message || parsed.message || 'API stream returned an error');
   const type = String(raw.type || parsed.type || '');
   const code = raw.code ?? parsed.code ?? null;
   const statusNum = Number(raw.status ?? raw.http_status ?? parsed.status ?? (typeof code === 'number' ? code : NaN));
@@ -105,14 +114,16 @@ export function extractSseError(event, parsed) {
 }
 
 const NON_RETRYABLE_SSE_ERROR_RE =
-  /invalid[_ -]?api[_ -]?key|incorrect[_ -]?api[_ -]?key|authentication[_ -]?error|unauthenticated|unauthorized|permission[_ -]?error|permission[_ -]?denied|forbidden|access denied|invalid[_ -]?argument|invalid[_ -]?request|bad[_ -]?request|unknown name|model[_ -]?not[_ -]?found|not[_ -]?found[_ -]?error|context[_ -]?length[_ -]?exceeded|maximum context length|insufficient[_ -]?quota|exceeded your current quota|credit balance is too low|out of credits|payment required|余额不足|配额已用尽/i;
+  /invalid[_ -]?api[_ -]?key|incorrect[_ -]?api[_ -]?key|authentication[_ -]?error|unauthenticated|unauthorized|permission[_ -]?error|permission[_ -]?denied|forbidden|access denied|invalid[_ -]?argument|invalid[_ -]?request|bad[_ -]?request|unknown name|model[_ -]?not[_ -]?found|not[_ -]?found[_ -]?error|context[_ -]?length[_ -]?exceeded|maximum context length|insufficient[_ -]?quota|exceeded your current quota|credit balance is too low|out of credits|payment required|insufficient balance|quota exhausted/i;
 
 const RETRYABLE_SSE_ERROR_RE =
   /timed?\s*out|timeout|overloaded|saturated|rate[_ -]?limit|too many requests|\b(408|429|500|502|503|504|529)\b|bad gateway|service unavailable|gateway timeout|internal[_ -]?(server[_ -]?)?error|server[_ -]?error|api[_ -]?error|upstream|try again( later)?|temporarily unavailable|connection reset|socket hang up|econnreset|etimedout|busy/i;
 
 /**
- * 判断 SSE 流内首包之前的 error 事件是否属于可自动重试的临时故障。
- * 明确的参数错、鉴权错、模型不存在、账户配额耗尽一律不重试。
+ * Determine whether an error event before the first packet in the SSE stream is a retryable
+ * transient failure.
+ * Explicit parameter errors, auth errors, nonexistent models, and exhausted account quotas are
+ * never retried.
  */
 export function isRetryableSseError(info) {
   if (!info) return false;
@@ -185,13 +196,16 @@ function rebuildResponse(response, bufferedChunks, remainingIter) {
 }
 
 /**
- * 预读 HTTP 200 的 SSE 流,直到确认产出首个可向下游交付的内容块(text_delta / thinking_delta / tool_use)
- * 或正常收尾事件为止。
+ * Preread HTTP 200 SSE stream until confirming output of the first deliverable downstream content
+ * block (text_delta / thinking_delta / tool_use) or normal finalization event.
  *
- * - 若在产出任何内容块之前收到可重试的 SSE error 事件(如 openlux 网关 90s 后发的
- *   `The upstream service timed out. Please try again later.`)或空流意外结束,返回 `{ ok: false }` 触发重试;
- * - 若收到不可重试的 SSE error(如 invalid api key / invalid argument),返回 `{ ok: true }` 原样放行给下游立即报错;
- * - 一旦见到首个有效内容块,把已读到的原始 chunk 原样回放并拼接后续流,此后流中任何错误绝不重发。
+ * - If receiving a retryable SSE error event before yielding any content block (e.g. openlux gateway
+ *   sending `The upstream service timed out. Please try again later.` after 90s) or empty stream ends
+ *   unexpectedly, return `{ ok: false }` to trigger retry;
+ * - If receiving a non-retryable SSE error (such as invalid api key / invalid argument), return
+ *   `{ ok: true }` to pass through as-is to downstream to report error immediately;
+ * - Once the first valid content block is seen, replay already-read raw chunks as-is and concatenate
+ *   subsequent stream; any subsequent stream error is never resent.
  */
 async function preflightSseResponse(response, userSignal) {
   const iter = toAsyncIterator(response.body);
@@ -208,7 +222,7 @@ async function preflightSseResponse(response, userSignal) {
       try {
         parsed = JSON.parse(data);
       } catch {
-        // 非 JSON 的自定义流数据直接放行
+        // Pass custom non-JSON stream data through directly
         return { kind: 'content' };
       }
       const errInfo = extractSseError(event, parsed);
@@ -223,7 +237,7 @@ async function preflightSseResponse(response, userSignal) {
         return { kind: 'non_retryable_error' };
       }
 
-      // Anthropic SSE 事件判定
+      // Anthropic SSE event determination
       const anthType = event && event !== 'message' ? event : parsed?.type;
       if (
         anthType === 'ping' ||
@@ -261,7 +275,7 @@ async function preflightSseResponse(response, userSignal) {
         continue;
       }
 
-      // OpenAI 兼容 SSE 事件判定
+      // OpenAI-compatible SSE event determination
       if (Array.isArray(parsed?.choices)) {
         const choice = parsed.choices[0];
         if (!choice) continue;
@@ -284,7 +298,7 @@ async function preflightSseResponse(response, userSignal) {
         continue;
       }
 
-      // Gemini SSE 事件判定
+      // Gemini SSE event determination
       if (Array.isArray(parsed?.candidates)) {
         const cand = parsed.candidates[0];
         if (!cand) continue;
@@ -301,7 +315,7 @@ async function preflightSseResponse(response, userSignal) {
         continue;
       }
 
-      // 其它非空 JSON 事件按有效内容放行
+      // Pass through other non-empty JSON events as valid content
       return { kind: 'content' };
     }
     return { kind: 'preamble' };
@@ -332,7 +346,7 @@ async function preflightSseResponse(response, userSignal) {
         return {
           ok: false,
           reason: 'SSE stream ended before first content block',
-          error: new Error('API 响应流提前结束或未返回 SSE 数据，请检查接口协议。'),
+          error: new Error('The API response stream ended early or returned no SSE data. Check the API protocol.'),
           fallbackResponse: rebuildResponse(response, bufferedChunks, null),
         };
       }
@@ -360,8 +374,9 @@ async function preflightSseResponse(response, userSignal) {
 }
 
 /**
- * 服务端说了「多久之后再来」就听它的。
- * `Retry-After` 可以是秒数,也可以是 HTTP 日期。给个上限,免得对方甩一个很大的值过来把我们挂死。
+ * If the server specifies "how long to wait before coming back", respect it.
+ * `Retry-After` can be seconds or an HTTP date. Impose an upper limit to prevent the peer from
+ * throwing a massive value that hangs us indefinitely.
  */
 function retryAfterMs(response, capMs) {
   const raw = response?.headers?.get?.('retry-after');
@@ -372,19 +387,23 @@ function retryAfterMs(response, capMs) {
   return Math.min(ms, capMs);
 }
 
-/** 第 n 次重试等多久:指数退避 + 抖动。抖动是为了别让并发的几条请求在同一刻一起回来再撞一次 */
+/**
+ * How long to wait for retry n: exponential backoff + jitter. Jitter prevents concurrent
+ * requests from returning at the exact same moment and colliding again.
+ */
 export function backoffMs(attempt, { baseDelayMs, maxDelayMs }, rand = Math.random) {
   const raw = Math.min(baseDelayMs * 2 ** attempt, maxDelayMs);
   return Math.round(raw * (0.5 + rand() * 0.5));
 }
 
 /**
- * 把一个 fetch 包成会自动重试的。
+ * Wrap a fetch to automatically retry.
  *
- * @param fetchImpl 真正发请求的那个(每次尝试都会重新调它 —— 里面通常会新建
- *                  per-attempt 的超时 signal,不能复用上一次那个已经烧掉的)
- * @param opts.signal   用户的停止信号。退避等待期间也听它
- * @param opts.onRetry  每次决定重试时回调 `{ attempt, status, delayMs, reason }`,用来打日志
+ * @param fetchImpl The actual request sender (called anew on every attempt: usually creates a new
+ *                  per-attempt timeout signal inside, and cannot reuse the already-burned one from
+ *                  the previous attempt)
+ * @param opts.signal   User stop signal. Respected during backoff wait as well
+ * @param opts.onRetry  Callback on each retry decision `{ attempt, status, delayMs, reason }`, used for logging
  */
 export function createRetryingFetch(fetchImpl, opts = {}) {
   const cfg = { ...DEFAULT_RETRY, ...opts };
@@ -414,7 +433,7 @@ export function createRetryingFetch(fetchImpl, opts = {}) {
           }
         }
       } catch (e) {
-        if (isUserAbort(e, userSignal)) throw e; // 用户主动喊停,不重试
+        if (isUserAbort(e, userSignal)) throw e; // User actively stopped; do not retry
         lastError = e;
         response = null;
       }
@@ -422,7 +441,8 @@ export function createRetryingFetch(fetchImpl, opts = {}) {
       const canRetry = attempt < cfg.maxRetries;
       const overBudget = now() - startedAt >= cfg.maxTotalMs;
       if (!canRetry || overBudget) {
-        // 退不动了:有 SSE 预读失败的回放壳就交上去让 provider 照原样抛错;有 HTTP 错误响应就交 assertOk;否则抛最后那个异常
+        // Retries exhausted: if an SSE preread failure replay shell exists, pass it up for the provider to
+        // throw as-is; if an HTTP error response exists, pass to assertOk; otherwise throw the last exception
         if (sseFailure?.fallbackResponse) return sseFailure.fallbackResponse;
         if (response) return response;
         throw lastError;
@@ -431,8 +451,8 @@ export function createRetryingFetch(fetchImpl, opts = {}) {
       const delay = (!sseFailure && response ? retryAfterMs(response, cfg.maxDelayMs) : null)
         ?? backoffMs(attempt, cfg, rand);
 
-      // 错误响应的正文要消费掉,不然连接可能一直挂着不还给连接池
-      if (response && !sseFailure) { try { await response.text(); } catch { /* 无所谓 */ } }
+      // Error response body must be consumed, otherwise connection may hang without returning to the pool
+      if (response && !sseFailure) { try { await response.text(); } catch { /* Doesn't matter */ } }
 
       onRetry?.({
         attempt: attempt + 1,

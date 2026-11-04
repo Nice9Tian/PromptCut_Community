@@ -3,8 +3,8 @@ import { TypingAnimation } from "../../cards/magicui/vendor/typing-animation";
 import { fitOr } from "../fit";
 
 /**
- * 打字机文字:从 mu-typing 拆出。
- * 逐字打印的动画效果。
+ * Typewriter text: extracted from mu-typing.
+ * Character-by-character typing animation effect.
  */
 interface Params {
   text: string;
@@ -44,10 +44,10 @@ function TypingPart({ params, width, height }: PartProps<Params>) {
 
 export const textTyping: PartDef<Params> = {
   id: "text-typing",
-  name: "打字机",
-  description: "逐字打印动画的单行或多行文字",
-  useWhen: "需要逐字打印效果的普通文字时使用，播放时长严格等于字数乘以每字时长(duration)；如果是复杂多级排版建议用 text-typeshift。",
-  tags: ["打字机", "逐字", "文字"],
+  name: "Typewriter",
+  description: "Single-line or multi-line text with a character-by-character typing animation",
+  useWhen: "Use for ordinary text that needs a character-by-character typing effect; playback duration is strictly equal to the character count times the per-character duration (duration); for complex multi-level typography, text-typeshift is recommended.",
+  tags: ["Typewriter", "character by character", "Text"],
   role: "text",
   from: "mu-typing",
   defaults: {
@@ -56,9 +56,9 @@ export const textTyping: PartDef<Params> = {
     duration: 120,
   },
   controls: [
-    { key: "text", label: "文本", type: "text", required: true },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 240, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
-    { key: "duration", label: "每字毫秒", type: "number", min: 10, max: 1000, step: 10 },
+    { key: "text", label: "Text", type: "text", required: true },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 240, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
+    { key: "duration", label: "Milliseconds per character", type: "number", min: 10, max: 1000, step: 10 },
   ],
   defaultFrame: { x: 200, y: 440, w: 1520, h: 200 },
   settleMs: (p) => p.text.length * p.duration,

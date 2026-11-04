@@ -8,21 +8,22 @@ import { RangeField } from "../fields/RangeField";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 编辑 → 三维:把这张卡摆进空间。
+ * Edit → 3D: place this card in space.
  *
- * # 为什么相机开关也放在这儿
+ * # Why the camera switch is here too
  *
- * 三维是**整个项目一档**的(一个画面只有一台相机),而这三个旋钮是**每张卡**的。
- * 分在两个地方的话必然出现这一幕:用户把 rotateY 拉到 40°,画面只是斜切了一下,
- * 没有近大远小,然后他以为是这个功能不好用 —— 其实只是相机没开。
- * 所以把开关放在同一屏,而且没开的时候直接把话说出来。
+ * 3D is **one tier for the whole project** (a picture has only one camera), while these three knobs are **per card**.
+ * If they were split across two places, this scene would inevitably occur: the user drags rotateY to 40°, the picture
+ * just shears, with no perspective foreshortening, and then they think the feature doesn't work well -- in fact the
+ * camera just isn't on.
+ * So the switch goes on the same screen, and when it is off we say so directly.
  *
- * # 没有 frame 的卡怎么办
+ * # What about a card with no frame
  *
- * 大多数卡没有 frame(铺满画幅)。要给它加三维就得先有个 frame,
- * 这里补的是 `{x:0, y:0}` —— resolveFrame 会把 w/h 补成整个画幅、锚点补成左上角,
- * 也就是和「没有 frame」一模一样的位置。所以加这个 frame 不会让画面动,
- * 只是让它有地方存三维那三个值。
+ * Most cards have no frame (they fill the aspect ratio). To add 3D to one you first need a frame,
+ * and what gets filled in here is `{x:0, y:0}` -- resolveFrame fills w/h to the whole aspect ratio and the anchor to the top-left corner,
+ * which is exactly the same position as "no frame". So adding this frame doesn't move the picture,
+ * it just gives it a place to store the three 3D values.
  */
 
 const RESET: Partial<ClipFrame> = { rotateX: 0, rotateY: 0, translateZ: 0 };
@@ -34,7 +35,7 @@ export function Frame3DForm({ clip }: { clip: TrackClip }) {
   const on = !!project.camera3dFov;
   const fov = project.camera3dFov ?? DEFAULT_FOV_DEG;
 
-  /** 只改传进来的那几项,其余保留;没有 frame 就补一个和「铺满」等价的 */
+  /** Change only the items passed in and keep the rest; if there is no frame, fill in one equivalent to "fill" */
   const patch = (p: Partial<ClipFrame>) => {
     const prev = clip.frame ?? { x: 0, y: 0 };
     actions.setClipFrame(clip.id, { ...prev, ...p } as ClipFrame);
@@ -92,8 +93,9 @@ export function Frame3DForm({ clip }: { clip: TrackClip }) {
       </div>
 
       {/*
-        没开相机却已经拧了旋钮 —— 这是最容易让人以为"功能坏了"的状态:
-        画面确实变了(仿射斜切),但没有近大远小。所以直接说破,并给一个一键打开。
+        The knob was turned without turning on the camera: this is the state most prone to making people
+        think the "feature is broken": the visual indeed changed (affine shear), but lacks perspective.
+        So state it plainly and provide a one-click enable button.
       */}
       {!on && is3D && (
         <button
@@ -140,8 +142,9 @@ export function Frame3DForm({ clip }: { clip: TrackClip }) {
       </div>
 
       {/*
-        深度推过头会越过相机 —— 那时画面上这张卡会涨到占满整幅甚至更大,
-        看起来像"炸了"。与其让人自己猜,不如在越界时直接说。
+        Pushing depth too far will pass beyond the camera: at that point, this card on screen expands to
+        fill the entire frame or even larger, looking like it "blew up". Rather than making users guess,
+        state it directly when out of bounds.
       */}
       {on && f.translateZ >= perspectivePx(stage, fov) && (
         <div className="text-[11px] leading-relaxed text-rose-400/90">

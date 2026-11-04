@@ -1,46 +1,78 @@
 /**
- * 客户端会话层：到文档服务的一条**会话**（契约 `docs/plan/http-transport-contract.md` 第 3、4、9、16 节；
- * 语义 `docs/semantics/product/document-service.md` 与 `docs/semantics/mechanism/document-service.md` 的「会话与传输」）。
+ * Client session layer: a **session** to the document service (contract
+ * `docs/plan/http-transport-contract.md` sections 3, 4, 9, 16; semantics
+ * `docs/semantics/product/document-service.md` and `docs/semantics/mechanism/document-service.md`
+ * "Session and transport").
  *
- * `createDocEndpoint` 返回值与 `createWsEndpoint` 同形状（`send`、`onMessage`、`onOpen`、`onClose`、`close`、
- * `connected`、`closed`、`stats()`），另加 `onResume`，可以直接交给 `createLocalNode`、`createContentClient` 等。
+ * `createDocEndpoint` return value has the same shape as `createWsEndpoint` (`send`, `onMessage`,
+ * `onOpen`, `onClose`, `close`, `connected`, `closed`, `stats()`), plus `onResume`, and can be
+ * passed directly to `createLocalNode`, `createContentClient`, etc.
  *
- * 会话与传输：
- *   - 建会话：握手的子协议是 `protocols()` 现取的鉴权列表加 `promptcut.session.new`；服务端的第一条消息是
- *     `session.welcome { sid, resumed, ack, retainMs, transport }`，收到它才算建成，调 `onOpen`（节点在这里发
- *     `hello.resume`，页面在这里重新订阅）。
- *   - 序号与确认：出站业务消息带 `seq`（本会话里从 1 起），顺带 `ack`（已按序收全的服务端最大 `seq`）；入站按 `seq`
- *     收，摘掉 `seq` / `ack` 再交 `onMessage`，重发丢弃，跳号或越界的 `ack` 按会话已坏结束（1002）。没有顺带机会时，
- *     收满 `ackEvery` 条（32）、或收下的消息原文满 `ackBytes`（64 KiB，〔裁〕2026-09-27）就立刻、否则 `ackDelayMs`（1 s）内
- *     单发 `{ type: 'session.ack', ack }`。`session.*` 控制消息不带 `seq`、不交上层。
- *   - 传输断开只让会话**脱开**：未确认的出站留着，`send` 照收；按退避接续，接续的子协议只有
- *     `promptcut.v1` 与 `promptcut.session.<sid>.<ack>`（不再调 `protocols()`）。接续成功调 `onResume`（不调
- *     `onOpen`），按 `welcome.ack` 释放、其余按原 `seq` 依次补发。传输的断开与接续只进日志与 `stats()`。
- *   - 会话结束才调 `onClose { code, reason }`：服务端以非「传输故障」的关闭码关（4003、4004、1013、1001、1002 等）；
- *     接续被拒（服务端先接受升级再以 4404 会话不存在 / 4410 会话已结束关，契约第 16 节第 1 条）；脱开超过
- *     `welcome.retainMs` 还没接续上；本端发现跳号（1002）或未确认的出站超过 `maxPendingBytes`（1013）。
- *     4410 的 `reason` 里带着原关闭码；原码属于「连着时收到也不会重连」的 `FINAL_CLOSE`（4003、4004）时，报给
- *     `onClose` 的是原关闭码与原因（脱开期间项目被删，上层照样看到 4004），其余报 4410（〔裁〕2026-09-27，契约第 17 节）。
- *     结束后未确认的消息丢弃（计入 `stats().dropped`），之后 `send` 丢弃并计数，按退避重新取凭证建新会话。
- *   - `close()`：先发 `{ type: 'session.close', code: 1000, reason: 'closed' }` 再关传输，服务端立刻结束会话；不再重连。
+ * Session and transport:
+ *   - Session establishment: The handshake subprotocol is the auth list freshly retrieved from
+ *     `protocols()` plus `promptcut.session.new`; the server's first message is
+ *     `session.welcome { sid, resumed, ack, retainMs, transport }`; only upon receiving it is the
+ *     session established, calling `onOpen` (nodes send `hello.resume` here, pages resubscribe here).
+ *   - Sequence numbers and acknowledgments: Outbound business messages carry `seq` (starting from 1
+ *     in this session) and piggyback `ack` (the highest server `seq` received completely in order);
+ *     inbound messages are received by `seq`, stripped of `seq` / `ack` before being passed to
+ *     `onMessage`, retransmissions are dropped, and skipped sequence numbers or out-of-bounds `ack`
+ *     terminate the session as corrupted (1002). When there is no piggybacking opportunity,
+ *     immediately send a standalone `{ type: 'session.ack', ack }` once `ackEvery` messages (32)
+ *     have been received or the raw text of received messages reaches `ackBytes` (64 KiB, [ruling]
+ *     2026-09-27), otherwise within `ackDelayMs` (1 s). `session.*` control messages do not carry
+ *     `seq` and are not passed to higher layers.
+ *   - Transport disconnects only cause the session to **detach**: unacknowledged outbound messages
+ *     are retained, and `send` still accepts messages; resuming follows backoff, and the resume
+ *     subprotocols are only `promptcut.v1` and `promptcut.session.<sid>.<ack>` (without calling
+ *     `protocols()` again). On successful resume, call `onResume` (not `onOpen`), release messages
+ *     up to `welcome.ack`, and retransmit the rest in order using their original `seq`. Transport
+ *     disconnects and resumes are only recorded in logs and `stats()`.
+ *   - Only when the session terminates is `onClose { code, reason }` called: the server closes with
+ *     a close code other than "transport failure" (4003, 4004, 1013, 1001, 1002, etc.); resume is
+ *     rejected (the server accepts the upgrade first, then closes with 4404 session does not exist
+ *     / 4410 session ended, contract section 16 item 1); detached longer than `welcome.retainMs`
+ *     without resuming; this end detects skipped sequence numbers (1002) or unacknowledged outbound
+ *     bytes exceed `maxPendingBytes` (1013). The `reason` of 4410 carries the original close code;
+ *     when the original code belongs to `FINAL_CLOSE` (4003, 4004, which would not trigger
+ *     reconnect even if received while connected), the original close code and reason are reported
+ *     to `onClose` (e.g. project deleted while detached, higher layers still see 4004), otherwise
+ *     4410 is reported ([ruling] 2026-09-27, contract section 17). After termination,
+ *     unacknowledged messages are dropped (counted in `stats().dropped`), subsequent `send` calls
+ *     drop messages and increment the counter, and a new session is established after re-fetching
+ *     credentials following backoff.
+ *   - `close()`: First sends `{ type: 'session.close', code: 1000, reason: 'closed' }` before
+ *     closing the transport, and the server terminates the session immediately; no reconnects.
  *
- * 选传输（第 4.3 节）：HT-a 只走 WebSocket。`url` 收 `ws(s)://` 或 `http(s)://`，一律换成 WebSocket 地址。
- * `transport` 选项（浏览器由调用方给）或 Node 的 `PROMPTCUT_TRANSPORT`：`ws` 强制 WebSocket；`auto`（缺省）
- * 在 HT-a 等同 `ws`；`http` 在 HT-a 未启用，构造时抛 `code: 'transport-unavailable'`。HTTP 长轮询回落、
- * `X-Promptcut-Fallback` 与 `fetch` 留给 HT-b：`fallbackAfter()` 是接口位置，HT-a 永远回 null（每次重连仍从
- * WebSocket 开始，`stats().fallbacks` 恒为 0）。
+ * Transport selection (section 4.3): HT-a only uses WebSocket. `url` accepts `ws(s)://` or
+ * `http(s)://`, and converts them all into WebSocket addresses. The `transport` option (provided by
+ * caller in browser) or Node's `PROMPTCUT_TRANSPORT`: `ws` forces WebSocket; `auto` (default) is
+ * equivalent to `ws` in HT-a; `http` is not enabled in HT-a, throwing
+ * `code: 'transport-unavailable'` during construction. HTTP long polling fallback,
+ * `X-Promptcut-Fallback`, and `fetch` are reserved for HT-b: `fallbackAfter()` is the interface
+ * hook; HT-a always returns null (each reconnect still starts from WebSocket, and
+ * `stats().fallbacks` is always 0).
  *
- * 契约之外的两处（报告 `docs/archive/agent-reports/AGENT-ht-client.md` 写明）：
- *   - **旧服务端**：服务端还没有会话层时（握手成功、第一条消息不是 `session.welcome`），退化为「一条传输就是一个会话」：
- *     消息不带 `seq` / `ack`，传输一断会话就结束，行为与 `createWsEndpoint` 相同（`stats().legacy` 为真）。为了
- *     尽快分辨，握手后 `legacyProbeMs` 内没收到任何消息，就发一条无害的 `{ type: 'session.ack', ack: 0 }`：新服务端
- *     早已发了 welcome，旧服务端回 `error unsupported`（这条回包不交上层）。
- *   - `onConnectFail(handler)`：建新会话没成（握手失败、没等到 welcome、`protocols()` 失败）时调，给页面分辨
- *     「口令错被拒」用；`renew: false` 时端点只跑一个会话，建不成或结束后自己关掉，由调用方决定要不要再建。
- *     `dropTransport()`：开发与测试用，只断当前传输（会话脱开后接续），不结束会话。
+ * Two points outside the contract (specified in report
+ * `docs/archive/agent-reports/AGENT-ht-client.md`):
+ *   - **Legacy servers**: When the server does not have a session layer yet (handshake succeeds,
+ *     first message is not `session.welcome`), degrades to "one transport is one session": messages
+ *     carry no `seq` / `ack`, the session ends as soon as the transport disconnects, and behavior
+ *     is identical to `createWsEndpoint` (`stats().legacy` is true). To distinguish quickly, if no
+ *     message is received within `legacyProbeMs` after the handshake, send a harmless
+ *     `{ type: 'session.ack', ack: 0 }`: new servers have already sent welcome, while legacy
+ *     servers reply with `error unsupported` (this response is not passed to higher layers).
+ *   - `onConnectFail(handler)`: Called when establishing a new session fails (handshake failed,
+ *     timed out waiting for welcome, or `protocols()` failed), used by pages to distinguish
+ *     "rejected due to incorrect passphrase"; when `renew: false`, the endpoint only runs a single
+ *     session, closing itself if establishment fails or after it terminates, leaving it up to the
+ *     caller to decide whether to create another one.
+ *     `dropTransport()`: For development and testing only; drops only the current transport
+ *     (session detaches and resumes) without terminating the session.
  *
- * 只用全局的 `WebSocket` 与计时器（都可注入），浏览器与 Node 通用；不自己处理代理（Node 22.22 起加
- * `NODE_USE_ENV_PROXY=1`）。会话号与凭证不进地址、日志与任何错误信息。
+ * Uses only global `WebSocket` and timers (both injectable), compatible with both browser and Node;
+ * does not handle proxies directly (set `NODE_USE_ENV_PROXY=1` starting from Node 22.22). Session
+ * IDs and credentials are never included in URLs, logs, or any error messages.
  */
 import { PROTOCOL, BACKOFF_DEFAULTS, backoffDelay } from './ws-transport.mjs';
 
@@ -49,56 +81,76 @@ export const SESSION_PREFIX = 'promptcut.session.';
 const TOKEN_PREFIX = 'promptcut.token.';
 
 export const SESSION_DEFAULTS = Object.freeze({
-  /** 收到的消息里还没确认的满这么多条就单发 `session.ack`（第 3.3 节） */
+  /** Sends a standalone `session.ack` once unacknowledged received messages reach this count (section 3.3) */
   ackEvery: 32,
-  /** 收到消息后这么久内没有顺带的机会就单发 `session.ack`（第 3.3 节） */
+  /**
+   * Sends a standalone `session.ack` if no piggyback opportunity occurs within this duration after
+   * receiving a message (section 3.3)
+   */
   ackDelayMs: 1000,
   /**
-   * 收到的还没确认的消息原文满这么多字节就立刻单发 `session.ack`（〔裁〕2026-09-27 主会话，两端同一条，契约第 17 节补）：
-   * 快照分片这类大消息只按条数与 1 s 确认的话，对方一秒内能攒下超过 1 MiB 未确认，把自己的会话以 1013 结束
+   * Sends a standalone `session.ack` immediately once received unacknowledged raw message bytes
+   * reach this threshold ([ruling 2026-09-27 lead session, identical for both ends, added in contract
+   * section 17]): if large messages such as snapshot chunks are only acknowledged by message count
+   * and 1 s, the peer could accumulate over 1 MiB unacknowledged within one second, terminating its
+   * own session with 1013
    */
   ackBytes: 64 * 1024,
-  /** 客户端未确认的出站字节上限，超了以 1013 结束会话（第 3.4 节） */
+  /**
+   * Upper limit on client unacknowledged outbound bytes; exceeding terminates the session with 1013
+   * (section 3.4)
+   */
   maxPendingBytes: 1024 * 1024,
-  /** welcome 没带 `retainMs` 时按这个算（第 4.2 节缺省） */
+  /** Used when welcome does not include `retainMs` (section 4.2 default) */
   retainMs: 60_000,
-  /** 握手成功后等 `session.welcome` 的上限，超了按这次握手失败处理 */
+  /**
+   * Timeout waiting for `session.welcome` after handshake succeeds; exceeding is treated as a failed
+   * handshake
+   */
   welcomeTimeoutMs: 10_000,
-  /** 握手成功后这么久一条消息都没收到，就发一条探测，分辨旧服务端 */
+  /**
+   * If no message is received for this long after handshake succeeds, sends a probe to distinguish
+   * legacy servers
+   */
   legacyProbeMs: 250,
 });
 
-/** 会话结束时的关闭码：接续失败（契约第 16 节第 1 条） */
+/** Close code when session ends: resume failed (contract section 16, item 1) */
 export const CLOSE_NO_SESSION = 4404;
 export const CLOSE_SESSION_ENDED = 4410;
 /**
- * 传输故障：这些关闭码只让会话脱开、接着接续；其余关闭码（1000、1001、1002、1013、4003、4004、4009 等）都是
- * 服务端结束了会话，不接续（第 4.2 节「服务端主动关」）。
+ * Transport failures: these close codes only cause the session to detach and then resume; other
+ * close codes (1000, 1001, 1002, 1013, 4003, 4004, 4009, etc.) indicate that the server terminated
+ * the session and will not resume (section 4.2 "Server-initiated close").
  */
 const TRANSPORT_FAULT = new Set([1005, 1006, 1011, 1012, 1014, 1015]);
 /**
- * 「连着时收到也不会重连」的关闭码：创建者操作的结果，4003 踢人 / 移出（`kicked` / `removed`）、4004 删项目（`deleted`），
- * `auth-contract.md` 第 7 节；页面 `SyncLink` 的 `FATAL_CLOSE` 与它一致。脱开期间会话因这些码结束时，接续得到的 4410
- * 按原关闭码报给上层、不重建，使上层与连着时收到该码一样（〔裁〕2026-09-27 主会话，契约第 17 节）。
+ * Close codes that "would not reconnect even if received while connected": results of creator
+ * actions, 4003 kick / remove (`kicked` / `removed`), 4004 delete project (`deleted`),
+ * `auth-contract.md` section 7; matches `FATAL_CLOSE` in the page's `SyncLink`. When a session
+ * terminates due to these codes while detached, the 4410 received on resume is reported to upper
+ * layers as the original close code without rebuilding, keeping behavior identical to receiving the
+ * code while connected ([ruling] 2026-09-27 lead session, contract section 17).
  */
 export const FINAL_CLOSE = new Set([4003, 4004]);
 
 /**
- * 4410 的 `reason`（服务端写法 `session-closed <原关闭码>[ <原原因>]`，契约第 4.1 节）里取出原关闭码与原因；
- * 不是这个写法回 null。
+ * Extracts the original close code and reason from the `reason` of 4410 (server format
+ * `session-closed <orig-close-code>[ <orig-reason>]`, contract section 4.1); returns null if it does
+ * not match this format.
  */
 export function closedCodeOf(reason) {
   const m = /^session-closed (\d{4})(?: ([\s\S]*))?$/.exec(typeof reason === 'string' ? reason : '');
   return m ? { code: Number(m[1]), reason: m[2] ?? '' } : null;
 }
 
-/** HT-b 用的降级原因（第 4.3 节第 5 条）；HT-a 不降级 */
+/** Downgrade reasons used by HT-b (section 4.3, item 5); HT-a does not downgrade */
 export const FALLBACK_REASONS = Object.freeze(['ws-error', 'ws-timeout', 'ws-closed']);
 
 const OPEN = 1;
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-/** 字符串按 UTF-8 编码的字节数（不分配缓冲） */
+/** Byte count of a string UTF-8 encoded (without allocating a buffer) */
 export function utf8Length(text) {
   let n = 0;
   for (let i = 0; i < text.length; i++) {
@@ -111,21 +163,21 @@ export function utf8Length(text) {
   return n;
 }
 
-/** `ws(s)://` 或 `http(s)://` → WebSocket 地址 */
+/** `ws(s)://` or `http(s)://` → WebSocket address */
 export function wsUrlOf(url) {
   let u;
   try {
     u = new URL(url);
   } catch {
-    throw new TypeError('createDocEndpoint：url 不是合法地址');
+    throw new TypeError('createDocEndpoint: url is not a valid address');
   }
   if (u.protocol === 'http:') u.protocol = 'ws:';
   else if (u.protocol === 'https:') u.protocol = 'wss:';
-  else if (u.protocol !== 'ws:' && u.protocol !== 'wss:') throw new TypeError('createDocEndpoint：url 必须是 ws(s):// 或 http(s)://');
+  else if (u.protocol !== 'ws:' && u.protocol !== 'wss:') throw new TypeError('createDocEndpoint: url must be ws(s):// or http(s)://');
   return u.toString();
 }
 
-/** `ws(s)://` 或 `http(s)://` → HTTP 地址（HT-b 的长轮询基址用） */
+/** `ws(s)://` or `http(s)://` → HTTP address (used as long polling base URL in HT-b) */
 export function httpUrlOf(url) {
   const u = new URL(wsUrlOf(url));
   u.protocol = u.protocol === 'wss:' ? 'https:' : 'http:';
@@ -133,28 +185,34 @@ export function httpUrlOf(url) {
 }
 
 /**
- * 定传输：选项优先，其次 Node 的 `PROMPTCUT_TRANSPORT`，都没有是 `auto`。回 `'auto' | 'ws'`。
- * `http` 在 HT-a 未启用：抛 `code: 'transport-unavailable'`；别的取值抛 TypeError。
+ * Determines transport: options take precedence, followed by Node's `PROMPTCUT_TRANSPORT`,
+ * defaulting to `auto`. Returns `'auto' | 'ws'`.
+ * `http` is not enabled in HT-a: throws `code: 'transport-unavailable'`; other values throw TypeError.
  */
 export function transportOf(option, env = globalThis.process?.env?.PROMPTCUT_TRANSPORT) {
   const raw = option ?? env;
   const v = raw === undefined || raw === null ? 'auto' : String(raw).trim().toLowerCase() || 'auto';
   if (v === 'auto' || v === 'ws') return v;
   if (v === 'http') {
-    throw Object.assign(new Error('HTTP 长轮询传输在本版（HT-a）未启用，只能走 WebSocket：去掉 PROMPTCUT_TRANSPORT=http（或 --transport http），或改成 ws'), { code: 'transport-unavailable' });
+    throw Object.assign(new Error('HTTP long polling transport is not enabled in this version (HT-a), only WebSocket is available: remove PROMPTCUT_TRANSPORT=http (or --transport http), or change it to ws'), { code: 'transport-unavailable' });
   }
-  throw new TypeError(`传输只能是 auto、ws 或 http：${JSON.stringify(String(raw)).slice(0, 40)}`);
+  throw new TypeError(`Transport must be auto, ws or http: ${JSON.stringify(String(raw)).slice(0, 40)}`);
 }
 
 /**
  * @param {object} options
- * @param {string} options.url  `ws(s)://` 或 `http(s)://`
- * @param {() => (string[] | Promise<string[]>)} [options.protocols]  每次**建会话**前现取鉴权列表（含 `promptcut.v1`，不含会话项）
- * @param {() => (string[] | Promise<string[]>)} [options.resumeProtocols] 中继接续时另取网关路由能力；会话秘密不变，失败保留会话退避重试
- * @param {string} [options.token]  集群令牌（管理接口用）；与 `protocols` 互斥；都不给就只带 `promptcut.v1`
- * @param {'auto' | 'ws' | 'http'} [options.transport]  缺省读 Node 的 `PROMPTCUT_TRANSPORT`，再缺省 `auto`
- * @param {typeof fetch} [options.fetch]  HT-b 的 HTTP 长轮询用；HT-a 不调
- * @param {number} [options.waitMs]  HT-b 的挂起时长；HT-a 不用
+ * @param {string} options.url  `ws(s)://` or `http(s)://`
+ * @param {() => (string[] | Promise<string[]>)} [options.protocols]  Fetches auth list on demand
+ *   before each **session creation** (includes `promptcut.v1`, excludes session items)
+ * @param {() => (string[] | Promise<string[]>)} [options.resumeProtocols] Separately fetches gateway
+ *   routing capabilities during relay resume; session secret unchanged, retains session and
+ *   backs off to retry on failure
+ * @param {string} [options.token]  Cluster token (for management API); mutually exclusive with
+ *   `protocols`; only includes `promptcut.v1` if neither is given
+ * @param {'auto' | 'ws' | 'http'} [options.transport]  Defaults to Node's `PROMPTCUT_TRANSPORT`,
+ *   otherwise defaults to `auto`
+ * @param {typeof fetch} [options.fetch]  Used for HT-b HTTP long polling; not called in HT-a
+ * @param {number} [options.waitMs]  Wait duration for HT-b; not used in HT-a
  * @param {any} [options.WebSocket]
  * @param {(fn: () => void, ms: number) => any} [options.setTimeout]
  * @param {(handle: any) => void} [options.clearTimeout]
@@ -162,8 +220,10 @@ export function transportOf(option, env = globalThis.process?.env?.PROMPTCUT_TRA
  * @param {Partial<typeof BACKOFF_DEFAULTS>} [options.backoff]
  * @param {(event: string, fields: object) => void} [options.log]
  * @param {() => number} [options.now]
- * @param {number} [options.maxPendingBytes]  未确认出站的上限，缺省 1 MiB（第 3.4 节）
- * @param {boolean} [options.renew]  缺省 true：会话结束后自动建新会话；false：只跑一个会话
+ * @param {number} [options.maxPendingBytes]  Cap on unacknowledged outbound bytes, defaults to 1 MiB
+ *   (Section 3.4)
+ * @param {boolean} [options.renew]  Defaults to true: automatically creates a new session after
+ *   session ends; false: runs only one session
  */
 export function createDocEndpoint({
   url,
@@ -192,18 +252,18 @@ export function createDocEndpoint({
 } = /** @type {any} */ ({})) {
   const mode = transportOf(transport);
   const wsUrl = wsUrlOf(url);
-  if (typeof WebSocketImpl !== 'function') throw new TypeError('createDocEndpoint：没有可用的 WebSocket');
+  if (typeof WebSocketImpl !== 'function') throw new TypeError('createDocEndpoint: no WebSocket available');
   if (token !== undefined && token !== null && (typeof token !== 'string' || token === '')) {
-    throw new TypeError('createDocEndpoint：token 必须是非空字符串');
+    throw new TypeError('createDocEndpoint: token must be a non-empty string');
   }
   if (protocolsOf !== undefined && protocolsOf !== null) {
-    if (typeof protocolsOf !== 'function') throw new TypeError('createDocEndpoint：protocols 必须是函数');
-    if (token) throw new TypeError('createDocEndpoint：protocols 与 token 不能同时给');
+    if (typeof protocolsOf !== 'function') throw new TypeError('createDocEndpoint: protocols must be a function');
+    if (token) throw new TypeError('createDocEndpoint: protocols and token cannot both be given');
   }
   const policy = { ...BACKOFF_DEFAULTS, ...(backoff ?? {}) };
   const fixedProtocols = token ? [PROTOCOL, TOKEN_PREFIX + token] : [PROTOCOL];
   const parsed = new URL(wsUrl);
-  /** 日志里只写不含凭证的地址 */
+  /** Logs only write URLs without credentials */
   const safeUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
 
   const messageHandlers = [];
@@ -212,34 +272,38 @@ export function createDocEndpoint({
   const closeHandlers = [];
   const connectFailHandlers = [];
   /**
-   * 计数（`stats()` 原样给出，节点诊断从这里取，混沌测试靠它判「接续了几次、丢了几次、是否重建会话」）：
-   *   opens 建成的会话数（含重建）；renews 其中在前一个会话结束之后建的（重建）；resumes 接续成功；detaches 传输断开、
-   *   会话脱开；lost 接续被服务端拒（4404 / 4410）；expired 本端判出脱开超过保留期；connectFails 建新会话没成；
-   *   closes 会话结束；dropped 丢弃的出站消息（会话结束时未确认的、没有会话时 `send` 的）。
+   * Counters (`stats()` returns as-is, node diagnostics reads from here, chaos tests use it to
+   * determine "how many times resumed, how many times lost, whether session was rebuilt"):
+   *   opens number of established sessions (including rebuilds); renews those created after previous
+   *   session ended (rebuilds); resumes successful resumes; detaches transport disconnected,
+   *   session detached; lost resume rejected by server (4404 / 4410); expired local end determined
+   *   detachment exceeded retention period; connectFails failed to establish new session;
+   *   closes session ended; dropped dropped outbound messages (unacknowledged when session ended,
+   *   `send` called when no session existed).
    */
   const counters = { opens: 0, closes: 0, sent: 0, received: 0, dropped: 0, badFrames: 0, duplicates: 0, resumes: 0, detaches: 0, fallbacks: 0,
     renews: 0, lost: 0, expired: 0, connectFails: 0 };
-  /** 最后一次会话结束 `{ code, reason, at }` 与最后一次脱开 `{ code, at }`；reason 截到 120 字符（服务端的关闭原因不含凭证） */
+  /** Last session close `{ code, reason, at }` and last detachment `{ code, at }`; reason is truncated to 120 characters (server close reasons contain no credentials) */
   let lastClose = null;
   let lastDetach = null;
-  /** 有过会话（下一次建成的算重建） */
+  /** Had a session (the next established one counts as a rebuild) */
   let hadSession = false;
 
   let closed = false;
   /**
-   * 当前会话；null = 没有会话（还没建成、或已结束）。
+   * Current session; null = no session (not yet established or already ended).
    * { sid, legacy, retainMs, outSeq, outBuf: [{ seq, body, bytes }], pendingBytes, inAck, inUnacked, ackTimer, detachedAt }
    */
   let sess = null;
-  /** 当前这一条传输（握手中、等 welcome、或已挂上）；旧传输的迟到事件一律忽略 */
+  /** Current transport (in handshake, waiting for welcome, or attached); late events from old transports are ignored */
   let cur = null;
   let attempt = 0;
   let retryTimer = null;
-  /** 正在取鉴权列表（`protocols()` 还没回） */
+  /** Fetching auth list (`protocols()` has not returned yet) */
   let pendingProtocols = false;
 
   const say = (event, fields = {}) => {
-    try { log(event, { url: safeUrl, ...fields }); } catch { /* 日志失败不影响连接 */ }
+    try { log(event, { url: safeUrl, ...fields }); } catch { /* Logging failures do not affect the connection */ }
   };
 
   function emit(handlers, arg, what) {
@@ -278,7 +342,7 @@ export function createDocEndpoint({
     if (s && s.ackTimer !== null) { clearTimer(s.ackTimer); s.ackTimer = null; }
   }
 
-  // ------------------------------------------------------------------ 建会话、接续
+  // ------------------------------------------------------------------ Session creation, resume
 
   function connect() {
     retryTimer = null;
@@ -294,13 +358,13 @@ export function createDocEndpoint({
         dial([PROTOCOL, `${SESSION_PREFIX}${sess.sid}.${sess.inAck}`], 'resume');
         return;
       }
-      // 会话秘密仍由原服务核验；中继网关另需当前路由能力，不能因接续省略它。
+      // Session secret is still verified by original service; relay gateway additionally requires current routing capabilities, cannot be omitted due to resume.
       const saved = sess;
       pendingProtocols = true;
       Promise.resolve().then(() => resumeProtocolsOf()).then(list => {
         pendingProtocols = false;
         if (closed || sess !== saved || cur !== null) return;
-        if (!Array.isArray(list) || list.some(p => typeof p !== 'string')) throw new TypeError('resumeProtocols() 必须回字符串数组');
+        if (!Array.isArray(list) || list.some(p => typeof p !== 'string')) throw new TypeError('resumeProtocols() must return an array of strings');
         dial([PROTOCOL, `${SESSION_PREFIX}${saved.sid}.${saved.inAck}`, ...list.filter(p => p !== PROTOCOL && p !== SESSION_NEW && !p.startsWith(SESSION_PREFIX))], 'resume');
       }).catch(() => {
         pendingProtocols = false;
@@ -325,7 +389,7 @@ export function createDocEndpoint({
     Promise.resolve(got).then((list) => {
       pendingProtocols = false;
       if (closed) return;
-      if (!Array.isArray(list) || list.some((p) => typeof p !== 'string')) throw new TypeError('protocols() 必须回字符串数组');
+      if (!Array.isArray(list) || list.some((p) => typeof p !== 'string')) throw new TypeError('protocols() must return an array of strings');
       dial([...list.filter((p) => p !== SESSION_NEW && !p.startsWith(SESSION_PREFIX)), SESSION_NEW], 'new');
     }).catch((error) => {
       pendingProtocols = false;
@@ -335,12 +399,12 @@ export function createDocEndpoint({
   }
 
   function protocolsFailed(error) {
-    // 日志只记原因，不记子协议（里面有证明或票据）
+    // Logs only record reasons, not subprotocols (which contain proofs or tickets)
     say('session.error', { stage: 'protocols', message: String(error?.message ?? error) });
     newSessionFailed({ code: 0, reason: 'protocols' });
   }
 
-  /** 建新会话没成：告诉调用方；`renew: false` 时就此关掉，否则退避再建 */
+  /** Failed to establish new session: notify caller; close if `renew: false`, otherwise back off and retry */
   function newSessionFailed(info) {
     emit(connectFailHandlers, info, 'connect-fail');
     if (closed) return;
@@ -352,8 +416,9 @@ export function createDocEndpoint({
   }
 
   /**
-   * HT-b 的接口位置：WebSocket 握手失败后转哪种传输（第 4.3 节第 3 条）。HT-a 不接 HTTP 长轮询，永远回 null，
-   * 下一次仍从 WebSocket 开始；`mode === 'ws'`（强制）时本来也不降级。
+   * Hook point for HT-b: which transport to switch to after WebSocket handshake fails (Section 4.3,
+   * Item 3). HT-a does not connect to HTTP long polling, always returning null and starting from
+   * WebSocket again next time; `mode === 'ws'` (forced) does not downgrade either.
    */
   function fallbackAfter(/* rec, reason */) {
     if (mode === 'ws') return null;
@@ -376,7 +441,7 @@ export function createDocEndpoint({
     listen(socket, 'open', () => onSocketOpen(rec));
     listen(socket, 'message', (event) => onSocketMessage(rec, event));
     listen(socket, 'error', (event) => {
-      // 握手失败时 Node 的实现可能只有 error、没有 close（2026-09-27 云端实测）：error 就当这条传输没了
+      // When handshake fails, Node's implementation may emit only error and no close (verified in cloud testing, 2026-09-27): treat error as transport gone
       if (rec.ended) return;
       say('session.transport-error', { stage: rec.stage, message: String(event?.message ?? event?.error?.message ?? 'error') });
       onSocketGone(rec, 1006, '');
@@ -389,7 +454,7 @@ export function createDocEndpoint({
   function onSocketOpen(rec) {
     if (cur !== rec || rec.ended) return;
     if (closed) {
-      try { rec.socket.close(1000, 'closed'); } catch { /* 已经在关 */ }
+      try { rec.socket.close(1000, 'closed'); } catch { /* Already closing */ }
       return;
     }
     rec.stage = 'open';
@@ -408,9 +473,9 @@ export function createDocEndpoint({
     }
   }
 
-  /** 本端放弃这条传输（等 welcome 超时等）：关掉并按传输没了处理 */
+  /** Local end gives up on transport (wait for welcome timed out, etc.): close and treat as transport gone */
   function abortSocket(rec, code, reason) {
-    try { rec.socket.close(1000, reason); } catch { /* 已经在关 */ }
+    try { rec.socket.close(1000, reason); } catch { /* Already closing */ }
     onSocketGone(rec, code, reason);
   }
 
@@ -442,7 +507,7 @@ export function createDocEndpoint({
     const s = sess;
     if (!s) return;
     if (s.legacy) {
-      // 探测的回包（旧服务端不认 `session.ack`）不交上层
+      // Probe responses (old servers do not recognize `session.ack`) are not passed to upper layers
       if (rec.probeSent && !rec.probeSwallowed && msg.type === 'error' && msg.reqId === undefined && msg.reason === 'unsupported') {
         rec.probeSwallowed = true;
         return;
@@ -481,7 +546,7 @@ export function createDocEndpoint({
     emit(openHandlers, undefined, 'open');
   }
 
-  /** 建成一个会话：计数；回是不是重建 */
+  /** Established a session: update counters; returns whether it is a rebuild */
   function noteOpen() {
     counters.opens++;
     const renewed = hadSession;
@@ -518,7 +583,7 @@ export function createDocEndpoint({
     attempt = 0;
     s.retainMs = retainMs;
     if (!onPeerAck(msg.ack ?? 0)) return;
-    // 接续项里已带上本端的 ack
+    // Resume item already includes local ack
     s.inUnacked = 0;
     s.inUnackedBytes = 0;
     clearAckTimer(s);
@@ -534,9 +599,9 @@ export function createDocEndpoint({
     emit(resumeHandlers, undefined, 'resume');
   }
 
-  // ------------------------------------------------------------------ 确认
+  // ------------------------------------------------------------------ Acknowledgment
 
-  /** 对方的 `ack`：释放已确认的出站；越界按会话已坏结束。回 false = 会话已结束 */
+  /** Peer's `ack`: release acknowledged outbound; out-of-bounds ends session as corrupted. Returns false = session already ended */
   function onPeerAck(value) {
     const s = sess;
     if (!s) return false;
@@ -550,7 +615,7 @@ export function createDocEndpoint({
     return true;
   }
 
-  /** 收下一条业务消息（`bytes` 是它的原文字节数）：满条数或满字节就立刻确认，否则 `ackDelayMs` 内确认 */
+  /** Receive next application message (`bytes` is raw byte count): ack immediately if full count or bytes reached, else within `ackDelayMs` */
   function noteInbound(s, bytes) {
     s.inUnacked++;
     s.inUnackedBytes += bytes;
@@ -586,7 +651,7 @@ export function createDocEndpoint({
     }
   }
 
-  // ------------------------------------------------------------------ 传输没了、会话结束
+  // ------------------------------------------------------------------ Transport lost, session ended
 
   function onSocketGone(rec, code, reason) {
     if (rec.ended) return;
@@ -596,10 +661,10 @@ export function createDocEndpoint({
     cur = null;
     if (closed) return;
     if (rec.stage !== 'attached') {
-      // 这次握手没成
+      // This handshake failed
       if (rec.kind === 'resume') {
         if (code === CLOSE_NO_SESSION || code === CLOSE_SESSION_ENDED) {
-          // 脱开期间会话因「连着时收到也不会重连」的码结束（例如项目被删）：按原关闭码报，上层与连着时收到一样
+          // During detachment, session ended due to code that "would not reconnect even if received while connected" (e.g. project deleted): report original close code, upper layer handles same as connected
           const orig = code === CLOSE_SESSION_ENDED ? closedCodeOf(reason) : null;
           counters.lost++;
           if (orig && FINAL_CLOSE.has(orig.code)) {
@@ -639,8 +704,9 @@ export function createDocEndpoint({
   }
 
   /**
-   * 结束会话：未确认的丢弃并计数，`notify` 时先发 `session.close` 让服务端立刻结束，关掉当前传输，报 `onClose`；
-   * 之后按 `renew` 建新会话或关掉端点。
+   * End session: unacknowledged messages are dropped and counted; when `notify` is set, send
+   * `session.close` first to let server terminate immediately, close current transport, report
+   * `onClose`; then create new session or close endpoint according to `renew`.
    */
   function endSession(code, reason, { notify }) {
     const s = sess;
@@ -656,7 +722,7 @@ export function createDocEndpoint({
       if (notify && !s.legacy && rec.stage === 'attached') rawSend(rec, { type: 'session.close', code, reason });
       rec.ended = true;
       clearRecTimers(rec);
-      try { rec.socket.close(1000, String(reason).slice(0, 100)); } catch { /* 已经在关 */ }
+      try { rec.socket.close(1000, String(reason).slice(0, 100)); } catch { /* Already closing */ }
     }
     counters.closes++;
     lastClose = { code, reason: String(reason ?? '').slice(0, 120), at: now() };
@@ -678,7 +744,7 @@ export function createDocEndpoint({
     retryTimer = setTimer(connect, delayMs);
   }
 
-  /** 端点自己关掉（`renew: false` 的会话结束）：不发 session.close、不再重连 */
+  /** Endpoint closes itself (session ended with `renew: false`): does not send session.close, no more reconnects */
   function shutdown() {
     closed = true;
     if (retryTimer !== null) {
@@ -687,7 +753,7 @@ export function createDocEndpoint({
     }
   }
 
-  // ------------------------------------------------------------------ 对外
+  // ------------------------------------------------------------------ External
 
   function send(message) {
     if (!isObj(message) || closed || !sess) {
@@ -744,7 +810,7 @@ export function createDocEndpoint({
       if (s && !s.legacy && rec.stage === 'attached') rawSend(rec, { type: 'session.close', code: 1000, reason: 'closed' });
       rec.ended = true;
       clearRecTimers(rec);
-      try { rec.socket.close(1000, 'closed'); } catch { /* 已经在关 */ }
+      try { rec.socket.close(1000, 'closed'); } catch { /* Already closing */ }
     }
     if (s) {
       clearAckTimer(s);
@@ -757,12 +823,12 @@ export function createDocEndpoint({
     say('session.closed');
   }
 
-  /** 开发与测试用：只断当前传输，会话脱开后接续（旧服务端上等于断线）。回有没有断 */
+  /** Dev and test only: only disconnect current transport; session detaches then resumes (disconnect on older servers). Returns whether disconnected */
   function dropTransport() {
     const rec = cur;
     if (!rec || rec.stage !== 'attached' || closed) return false;
     rec.dropping = true;
-    try { rec.socket.close(1000, 'drop'); } catch { /* 已经在关 */ }
+    try { rec.socket.close(1000, 'drop'); } catch { /* Already closing */ }
     onSocketGone(rec, 1006, 'drop');
     return true;
   }
@@ -778,7 +844,7 @@ export function createDocEndpoint({
     onConnectFail(handler) { connectFailHandlers.push(handler); },
     close,
     dropTransport,
-    /** 会话在（含脱开中，这时 `send` 进缓冲、接续后补发） */
+    /** Session is active (including while detached, during which `send` buffers and replays after resume) */
     get connected() { return !closed && sess !== null; },
     get closed() { return closed; },
     stats() {

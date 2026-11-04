@@ -1,9 +1,9 @@
 /*
- * 输入队列(QueueList)和用户气泡上的「回退到这里」(UserBubble)。
- * 配色、圆角一律走 --ui-* 变量并带回退值;图标钮、主按钮复用 studio.css 的 .pc-icon-btn / .pc-btn-primary。
+ * The input queue (QueueList) and the "Roll back to here" on user bubbles (UserBubble).
+ * Colors and corner radii always go through --ui-* variables with fallback values; icon buttons and primary buttons reuse .pc-icon-btn / .pc-btn-primary from studio.css.
  */
 
-/* ── 输入队列:在思考条带和输入区之间,最多占面板高度的 30%,多了在里面滚 ─────── */
+/* ── Input queue: between the thinking strip and the input area, at most 30% of the panel height, and it scrolls inside when longer ─────── */
 .ai-queue {
   flex: 0 0 auto;
   max-height: 30%;
@@ -14,7 +14,7 @@
   background: var(--ui-bg-2, #1B1A21);
 }
 
-/* 头部一行弱文字;暂停时字色提一档,右边一个「继续」 */
+/* Header row of muted text; when paused the text color is raised one level, with a "Resume" on the right */
 .ai-queue-head {
   flex: 0 0 auto;
   display: flex;
@@ -49,7 +49,7 @@
   gap: 2px;
 }
 
-/* 一条一行:序号、单行省略的文字、附件数、插入 / 编辑 / × */
+/* One row per entry: sequence number, single-line ellipsized text, attachment count, insert / edit / × */
 .ai-queue-item {
   flex: 0 0 auto;
   display: flex;
@@ -57,7 +57,7 @@
   gap: 4px;
   min-width: 0;
   min-height: 30px;
-  /* 四边一样:22px 的行内按钮上下各留 4px,正好 30px 高 */
+  /* Equal on all four sides: 22px inline buttons with 4px above and below, exactly 30px tall */
   padding: 4px;
   box-sizing: border-box;
   border-radius: var(--ui-radius, 6px);
@@ -95,7 +95,7 @@
   white-space: nowrap;
 }
 
-/* 行内小按钮:默认透明弱色,「插入」「继续」「替换」是强调色 */
+/* Small inline buttons: transparent and muted by default; "Insert", "Resume" and "Replace" use the accent color */
 .ai-queue-btn {
   flex: 0 0 auto;
   height: 22px;
@@ -135,10 +135,10 @@
   box-shadow: var(--ui-focus-ring, 0 0 0 2px #00DBDB);
 }
 
-/* ── 用户气泡:悬停出现的小工具条 + 行内确认层 ───────────────────────── */
+/* ── User bubble: small toolbar that appears on hover + inline confirmation layer ───────────────────────── */
 /*
- * 确认层放在气泡下面的文档流里,不做绝对定位的浮层:.ai-row 开了 content-visibility:auto,
- * 自带绘制裁剪,浮出行框的部分会被裁掉。
+ * The confirmation layer sits in the document flow below the bubble instead of being an absolutely positioned popover: .ai-row has content-visibility:auto,
+ * which brings its own paint clipping, so any part that floats out of the row box would be clipped.
  */
 .ai-user-turn {
   flex: 1 1 auto;
@@ -236,9 +236,9 @@
 }
 
 /*
- * 队列的进出(QueueList.tsx):新排进来的行 pc-enter-fade、队列从空变有时整块 pc-enter-rise(skins/motion.css);
- * 发出去 / 删掉 / 拿去编辑的行在原位留一行幽灵行(.is-leaving),淡出并收起高度;
- * 队列清空时头部也收起。时长和 QueueList 里的 LEAVE_MS(160)一致。
+ * Queue enter/exit (QueueList.tsx): a newly queued row gets pc-enter-fade, and when the queue goes from empty to non-empty the whole block gets pc-enter-rise (skins/motion.css);
+ * a row that was sent / deleted / taken away for editing leaves a ghost row in place (.is-leaving), which fades out and collapses its height;
+ * when the queue is emptied the header collapses too. The duration matches LEAVE_MS (160) in QueueList.
  */
 .ai-queue-item.is-leaving,
 .ai-queue-head.is-leaving {

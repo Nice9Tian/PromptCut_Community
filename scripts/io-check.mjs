@@ -3,12 +3,12 @@ import fs from 'fs';
 import path from 'path';
 import { PNG } from 'pngjs';
 
-// 地址必须显式给(--url <地址> 或环境变量 PROMPTCUT_BASE),不给就报用法退出:
-// 永不缺省连用户常驻的编辑器(5190～5192)。
+// URL must be explicitly provided (--url <url> or environment variable PROMPTCUT_BASE);
+// if omitted, report usage and exit: never connect to the user's resident editor by default (5190-5192).
 const urlArg = process.argv.indexOf('--url');
 const BASE = ((urlArg >= 0 ? process.argv[urlArg + 1] : '') || process.env.PROMPTCUT_BASE || '').replace(/\/+$/, '');
 if (!BASE || BASE.startsWith('--')) {
-  console.error('用法: node scripts/io-check.mjs --url http://127.0.0.1:<自己起的 dev server 端口>\n  或设环境变量 PROMPTCUT_BASE。不给地址不跑:不缺省连用户常驻的编辑器。');
+  console.error('Usage: node scripts/io-check.mjs --url http://127.0.0.1:<port of your own dev server>\n  or set the PROMPTCUT_BASE environment variable. It won\'t run without an address: it never defaults to the user\'s long-running editor.');
   process.exit(2);
 }
 
@@ -81,7 +81,7 @@ if (!BASE || BASE.startsWith('--')) {
     };
   }, jsonStr);
   console.log('Reimport result:', reimportResult);
-  console.log('Has missing prefix:', reimportResult.mediaName.includes('(缺失)'));
+  console.log('Has missing prefix:', reimportResult.mediaName.includes('(missing)'));
   console.log('Is url empty string:', reimportResult.mediaUrl === '');
   console.log('Are video clips preserved:', reimportResult.videoClipCount > 0);
 
@@ -108,8 +108,9 @@ if (!BASE || BASE.startsWith('--')) {
   console.log('Warnings caught during this step:', warnCount - oldFormatWarnCountBefore);
 
   console.log('\n--- Step 6: Final exportVideo ---');
-  // 第 5 步把项目换成了只含 1 张卡(0-2s)的旧编排,直接导 0-89 帧的话第 89 帧上没有卡片。
-  // reload 一次让 Editor 重新自动铺满 10 张演示卡,保证 0-3s 全程都有动效叠在视频上。
+  // Step 5 replaced the project with an old arrangement containing only 1 card (0-2s); if exporting
+  // frames 0-89 directly, frame 89 has no card. Reload once to let Editor automatically tile 10 demo
+  // cards again, ensuring motion graphics are overlaid on the video across the entire 0-3s.
   await page.reload();
   await page.waitForFunction(() => {
     if (!window.__pcIo) return false;

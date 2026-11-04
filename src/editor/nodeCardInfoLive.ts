@@ -1,14 +1,23 @@
 /**
- * 把本页「能运行哪些用户卡与素材效果卡」写进登记处(`src/online/nodeCardInfo.ts`,块 N,
- * `docs/plan/online-card-exec-contract.md` 第 7 节第 1 条):纯浏览器节点的能力位、`cardSourceVersions`
- * 和清单计划的 `input.browser` 都读那里。
+ * Writes "which user cards and media effect cards this page can run" into the registry
+ * (`src/online/nodeCardInfo.ts`, block N, `docs/plan/online-card-exec-contract.md` section 7, item 1):
+ * the capability flags of the pure browser node, `cardSourceVersions`, and the `input.browser` of the
+ * manifest plan all read from there.
  *
- * 输入(任一变了就重算):本页能不能执行**画面**(`cardRuntime/gate.ts` 的 `cardVisualExecAvailable`:节点做的是画面的快照;只靠脚本加固拦 WebRTC 的浏览器上画面不执行,不报能力)、同步来的卡(注册表)、每张卡的运行状态
- * (注册表,`ready` 才算「已载入成功」)、这台设备的图形能力(登记处的 `nodeGraphCapable`)。
- * 代码身份用块 T 的 `codeIdentities()` 现算(与桌面 `cardCodeIdentity` 同一算法,算出同一个值),源码读 `OnlineCardSources` 手里的那份。
- * 转译器那一块按需载入:只在本页能执行、且有 `ready` 的同步卡时才 `import()`;桌面构建里整段剪掉。
+ * Inputs (recomputed when any changes): whether this page can execute **visuals** (`cardVisualExecAvailable`
+ * in `cardRuntime/gate.ts`: what the node makes are snapshots of the visuals; on a browser that blocks
+ * WebRTC only through script hardening, visuals do not execute and no capability is reported), the synced
+ * cards (registry), the run state of each card (registry, only `ready` counts as "loaded successfully"),
+ * and this device's graphics capability (the registry's `nodeGraphCapable`).
+ * The code identity is computed on the spot with block T's `codeIdentities()` (the same algorithm as the
+ * desktop `cardCodeIdentity`, producing the same value), and the source is read from the copy held by
+ * `OnlineCardSources`.
+ * The transpiler part is loaded on demand: `import()` only when this page can execute and there are
+ * synced cards that are `ready`; the whole section is pruned in the desktop build.
  *
- * 由 `browserNodeHost.ts` 起,随宿主一起停;在线页面里宿主在双舞台、身份为电脑时当节点(手机、单舞台只为本页产稀疏版,最低一档都不做)。
+ * Started from `browserNodeHost.ts` and stopped together with the host; on an online page, the host acts
+ * as a node when it has dual stages and its identity is computer (on mobile or with a single stage it
+ * only produces a sparse version for this page, and does not even do the lowest tier).
  */
 import { onCardRunStatesChanged, onSyncedUserCardsChanged, cardRunState, syncedUserCards } from "../kernel/registry";
 import { cardVisualExecAvailable, subscribeCardExecGate } from "../online/cardRuntime/gate";
@@ -43,12 +52,13 @@ export function startNodeCardInfoLive(): () => void {
   };
   const kick = () => { void refresh(); };
   const offs = [onCardRunStatesChanged(kick), onSyncedUserCardsChanged(kick), subscribeCardExecGate(kick)];
-  // 图形能力变了也要重算;登记处自己的通知会回到这里,算出来没变就不再通知,不会绕圈
+  // A change in graphics capability also requires recomputing; the registry's own notification comes back
+  // here, and if the result is unchanged it does not notify again, so there is no loop
   offs.push(subscribeNodeCardInfo(kick));
   kick();
   return () => {
     stopped = true;
-    for (const off of offs) { try { off(); } catch { /* 已经退订 */ } }
+    for (const off of offs) { try { off(); } catch { /* Already unsubscribed */ } }
     setNodeCardInfo(EMPTY);
   };
 }

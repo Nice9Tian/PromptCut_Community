@@ -1,8 +1,9 @@
 /**
- * 渲染任务队列的调优常量（设计第 8 节 Q4 的基线值）。
+ * Tuning constants for render queue (baseline values from design section 8 Q4).
  *
- * M1 / M2 只用基线值、只导出以后的环境变量名，不读环境变量：读环境变量是挂上文档服务（M5）的
- * 适配层的事，队列本体保持纯逻辑，测试靠 `createRenderQueue({ constants })` 覆盖。
+ * M1 / M2 use only baseline values and export future env var names without reading env vars:
+ * reading env vars is the job of the adapter layer attached to document service (M5);
+ * the queue itself remains pure logic, and tests are covered via `createRenderQueue({ constants })`.
  */
 
 export const QUEUE_DEFAULTS = Object.freeze({
@@ -10,15 +11,18 @@ export const QUEUE_DEFAULTS = Object.freeze({
   RECONNECT_GRACE_MS: 10_000, STALL_MS: 120_000, MAX_ATTEMPTS: 3,
   DONE_TTL: 600_000, MAX_TASKS_PER_PROJECT: 5000,
   SNAPSHOT_SPAN: 60, STREAM_SEGMENTS: 8, PICK_K: 4,
-  // 按节点指纹前置过滤的开关（契约 I.1）；false 时行为与加这一项之前完全相同，作对照组。唯一不是数的一项
+  // Switch for pre-filtering by node fingerprint (contract I.1); when false, behavior is identical
+  // to before adding this item, acting as control group. The only non-numeric entry
   PREFILTER: true,
-  // 一个扫描周期内 card-locked 拒绝超过这个数，这条连接之后的认领回 throttled，直到下一次 tick（I.5）
+  // If card-locked rejections exceed this count within one sweep cycle, subsequent claims on this
+  // connection return throttled until the next tick (I.5)
   THROTTLE_REJECTS: 20,
-  // plan 就近认领的独占窗口（M6c X4）：带 requires.preferNode 的 plan 发布后这么久之内，只有那个节点能认领
+  // Exclusive window for nearby claim of plan (M6c X4): for this duration after publishing a plan
+  // with requires.preferNode, only that node can claim
   PLAN_PREFER_MS: 5_000,
 });
 
-/** 以后抽成环境变量时用的名字（设计第 8 节的表），键与 QUEUE_DEFAULTS 一一对应 */
+/** Names to use when extracted into env vars later (table in design section 8), keys map 1:1 to QUEUE_DEFAULTS */
 export const QUEUE_ENV = Object.freeze({
   LEASE_MS: 'PROMPTCUT_QUEUE_LEASE_MS', RENEW_INTERVAL_MS: 'PROMPTCUT_QUEUE_RENEW_MS',
   SWEEP_INTERVAL_MS: 'PROMPTCUT_QUEUE_SWEEP_MS', RECONNECT_GRACE_MS: 'PROMPTCUT_QUEUE_GRACE_MS',
@@ -31,17 +35,24 @@ export const QUEUE_ENV = Object.freeze({
 });
 
 /**
- * 队列锁闲置多久切分方就可以接手（M7 契约 D2，第 13 节裁定）：严格超过这么久没有产出（认领、续约、完成），
- * 锁定方这张卡又还没做完，pc 与独立渲染主机切分时带 takeover 按自己的指纹重发（`render-node/local-node.mjs` 的
- * `idleLockTakeover`）。与本机锁库 `server/card-lock.mjs` 的 `CARD_LOCK_IDLE_MS` 同一个数（三级数字）；那边引了
- * 文件系统，节点侧不能引，所以在这里另记一份，单测核对两边相等。不是 QUEUE_DEFAULTS 的一项：队列本体不用它。
+ * How long a queue lock can stay idle before splitter takes over (M7 contract D2, section 13
+ * ruling): strictly exceeding this duration without output (claim, renew, complete) while this
+ * card is not yet finished by the locking party, pc and standalone render host resend with
+ * takeover under their own fingerprint upon split (`idleLockTakeover` in
+ * `render-node/local-node.mjs`). Same number as `CARD_LOCK_IDLE_MS` in local lock store
+ * `server/card-lock.mjs` (tier-3 number); that side imports filesystem which node side cannot
+ * import, so recorded separately here, with unit tests checking both sides match. Not an entry
+ * in QUEUE_DEFAULTS: render queue itself does not use it.
  */
 export const LOCK_IDLE_TAKEOVER_MS = 30_000;
 
 /**
- * 节点报「还在、在忙」（`node.active`，M7 D2 补充〔裁〕，`claude/queue-maint`）的间隔：队列在 `node.welcome` 里以
- * `activeIntervalMs` 告诉节点，节点忙着（生成别的卡的快照、后台舞台在测量或补跑）又没有这张卡的认领时按它报。
- * 必须明显小于 `LOCK_IDLE_TAKEOVER_MS`：两次之间锁的闲置最多长到这么久，远不到接手的门槛（三级数字，沿用续约间隔）。
- * 不是 QUEUE_DEFAULTS 的一项（那张表的键被契约 A.2 列死）。
+ * Interval for node to report "still here, busy" (`node.active`, M7 D2 supplement [ruling],
+ * `claude/queue-maint`): queue informs node via `activeIntervalMs` in `node.welcome`, and node
+ * reports according to it when busy (generating snapshots for other cards, background stage
+ * measuring or running catch-up runs) without holding a claim on this card.
+ * Must be significantly less than `LOCK_IDLE_TAKEOVER_MS`: lock idleness between two reports
+ * grows at most to this duration, far below the takeover gate (tier-3 number, reusing renewal
+ * interval). Not an entry in QUEUE_DEFAULTS (keys in that table are strictly fixed by contract A.2).
  */
 export const NODE_ACTIVE_INTERVAL_MS = 10_000;

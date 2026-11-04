@@ -1,9 +1,12 @@
 /**
- * 探针共用:给刚用 `createSharedProject` 建好的共享项目写进一份空项目内容(替创建者的桌面版)。
+ * Shared by probes: write empty project content into a shared project freshly created with
+ * `createSharedProject` (on behalf of the creator's desktop app).
  *
- * 在线页面只加入、不新建(`dce4b22b`,2026-10-04:加入用 `initialize: false`,服务端没有项目内容就拒绝,
- * 不拿本地这份去盖),所以探针里「建项目 → 页面加入」之间要先有内容,否则页面显示「连不上服务器」、等不到成员按钮。
- * 尺寸、时长同「新建项目」的缺省。
+ * Online pages only join, never create (`dce4b22b`, 2026-10-04: join uses `initialize: false`; if
+ * server has no project content, it rejects instead of overwriting with the local copy), so in
+ * probes content must exist between "create project → page join"; otherwise the page displays
+ * "Cannot connect to server" and never waits for the member button. Dimensions and duration match
+ * defaults of "New project".
  */
 import { randomBytes } from 'node:crypto';
 import { buildAuthProtocols } from '../../server/auth/client.mjs';
@@ -25,7 +28,7 @@ export async function seedSharedProject({ base, projectId, creator, name, device
   try {
     const opened = await ask({ type: 'project.open', projectId });
     const body = { version: 1, id: `seed-${projectId.slice(-8)}`, name, width: 1920, height: 1080, fps: 30, duration: 30, themeId: 'midnight', media: [],
-      tracks: [{ id: 't-1', name: '序列 1', clips: [] }, { id: 't-2', name: '序列 2', clips: [] }] };
+      tracks: [{ id: 't-1', name: 'Track 1', clips: [] }, { id: 't-2', name: 'Track 2', clips: [] }] };
     const seeded = await ask({ type: 'project.op', projectId, opId: randomBytes(16).toString('base64url'), ops: [{ op: 'set', path: '', value: body }] });
     const bad = (m) => /error|reject/i.test(String(m?.type ?? ''));
     return { ok: !bad(opened) && !bad(seeded), opened: opened?.type, seeded: seeded?.type };

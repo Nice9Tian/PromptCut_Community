@@ -1,32 +1,49 @@
 /**
- * 按需拉取与预取队列(`docs/plan/c66-design.md` 第 4 节;任务书 `docs/plan/cloud-task.md` A1「按需拉取」「预取队列」;
- * 语义 `docs/semantics/product/asset-service.md`「拉取」「本地内容库」)。
+ * On-demand pull and prefetch queue (`docs/plan/c66-design.md` Section 4; task brief
+ * `docs/plan/cloud-task.md` A1 "On-demand pull" "Prefetch queue"; semantics
+ * `docs/semantics/product/asset-service.md` "Pull" "Local content store").
  *
- * 本地素材服务的读路由 `/@media/<hash>`(`vite-plugin-media.ts`)在本地内容库里找不到这个哈希时,
- * 交给这里:向**当前连接的远程素材服务** `GET <base>/media/<hash>` 流式拉取,**边落盘边按 Range 服务**,
- * 拉完按 sha256 校验、改名进本地内容库(之后就是普通的本地命中)。远程也没有(404)才回 404。
- * 页面照常挂 `src`,同一次请求就拿到字节,没有「重挂」这一步;首字节到达前 `<video>` 只是在缓冲。
+ * When the local asset service read route `/@media/<hash>` (`vite-plugin-media.ts`) cannot find
+ * this hash in the local content store, it delegates here: streams a pull via
+ * `GET <base>/media/<hash>` from the **currently connected remote asset service**, **serving Range
+ * requests while writing to disk**, verifies via sha256 once pulled, and renames it into the local
+ * content store (after which it is a normal local hit). Only returns 404 if the remote also does
+ * not have it (404).
+ * The page sets `src` as usual, receiving bytes in the same request with no "reattach" step;
+ * `<video>` is simply buffering before the first byte arrives.
  *
- * # 当前连接的远程素材服务
+ * # Currently connected remote asset service
  *
- * 由页面告诉编辑器进程(`POST /api/media/remote { base, ticket }`,`src/editor/media/assetTiers.ts`):
- * 进入共享项目时是那个项目的素材服务(API 基址,形如 `http://<ip>:<port>/api/asset`),票据是经文档服务取的
- * 只读素材票据(M6a),页面按时续签后再推一次。离开共享项目(回到本机空间)时清掉 —— 本地素材服务就是真身,
- * 找不到就是没有。放在 `globalThis` 上:配置被打包过一次、模块可能有两份实例。
- * 票据只进 `Authorization` 头,不进地址、不进日志、不进回包。
+ * The page informs the editor process (`POST /api/media/remote { base, ticket }`,
+ * `src/editor/media/assetTiers.ts`): when entering a shared project, it is that project's asset
+ * service (API base URL, e.g. `http://<ip>:<port>/api/asset`), with the ticket being a read-only
+ * asset ticket (M6a) obtained via the document service, which the page pushes again after renewing
+ * on schedule. Cleared when leaving a shared project (returning to the local space): the local
+ * asset service is the true source; if not found, it does not exist. Placed on `globalThis`:
+ * configuration was bundled once, and the module may have two instances.
+ * Tickets only go into the `Authorization` header, not into URLs, logs, or responses.
  *
- * # 边落盘边服务
+ * # Serving while writing to disk
  *
- * 同一个哈希同时只有一个拉取任务(`jobs`),读请求挂在它上面:
- * - 回包头(长度、类型、Range)在远程回了头之后立刻给;字节从临时文件里读,读到还没落盘的位置就等;
- * - 请求的 Range 起点远在已落盘的位置之后(超过 `AHEAD_LIMIT`,比如 moov 在尾部的老文件),这一段直接从远程
- *   透传(不缓存),不让播放器干等整段下完;
- * - 拉完:sha256 不符就丢掉临时文件、这次拉取作废(已经在读的请求断开);相符就改名进本地内容库、写索引。
+ * Only one pull job (`jobs`) exists for the same hash at a time, with read requests attached to it:
+ * - Response headers (length, type, Range) are returned immediately after the remote returns
+ *   headers; bytes are read from the temporary file, waiting if reading reaches a position not yet
+ *   written to disk;
+ * - If the requested Range start is far beyond what has been written to disk (exceeding
+ *   `AHEAD_LIMIT`, such as legacy files with moov at the tail), this segment is passed through
+ *   directly from the remote (not cached), so the player does not wait idly for the entire file
+ *   to finish downloading;
+ * - Once pulled: if sha256 does not match, the temporary file is discarded and this pull is
+ *   invalidated (disconnecting requests currently reading); if it matches, it is renamed into the
+ *   local content store and the index is written.
  *
- * # 预取队列
+ * # Prefetch queue
  *
- * 页面打开项目后给一份有序清单(`prefetchOrder`:先全部素材小尺寸、再全部素材原尺寸,各按片段在时间轴上的先后),
- * 这里**一次拉一个**、按需拉取在跑时让路(低优先级),本地已有的跳过。换了远程素材服务或清掉时队列作废。
+ * After the page opens a project, it provides an ordered manifest (`prefetchOrder`: all
+ * small-size assets first, then all original-size assets, each in clip order along the timeline),
+ * and here it pulls **one at a time**, yields when on-demand pulls are running (low priority),
+ * and skips what is already present locally. The queue is invalidated when switching or clearing
+ * the remote asset service.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -34,11 +51,14 @@ import path from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 const HASH = /^[0-9a-f]{64}$/;
-/** 请求的起点比已落盘的位置超前这么多,就直接从远程透传这一段 */
+/**
+ * If the request start point is ahead of the written-to-disk position by this much,
+ * pass through this segment directly from the remote
+ */
 export const AHEAD_LIMIT = 8 * 1024 * 1024;
-/** 远程回头的时限 */
+/** Timeout for remote to return headers */
 const HEADERS_TIMEOUT_MS = 30_000;
-/** 预取在按需拉取跑着时让路,多久看一次 */
+/** How often prefetch checks to yield while on-demand pull is running */
 const YIELD_POLL_MS = 250;
 
 const STATE_KEY = Symbol.for('promptcut.media-pull.state');
@@ -54,17 +74,17 @@ function state() {
     remote: null,          // { base, ticket: string | (() => Promise<string|null>) | null, gen }
     gen: 0,
     jobs: new Map(),       // hash → Job
-    onDemand: 0,           // 正在服务的按需读请求数
-    queue: [],             // 预取:待拉的哈希(有序)
+    onDemand: 0,           // Number of on-demand read requests currently being served
+    queue: [],             // Prefetch: hashes waiting to be pulled (ordered)
     queueGen: 0,
     running: false,
-    log: [],               // 最近的事件(探针和单测看顺序用),只记哈希与动作,不记票据
+    log: [],               // Recent events (used by probes and unit tests to check order); records only hashes and actions, not tickets
   };
   if (scope) holder.set(scope.root, value); else g[STATE_KEY] = value;
   return value;
 }
 
-/** 每项目独立remote/jobs/queue；异步任务继承范围，local旧默认保持。 */
+/** Per-project independent remote/jobs/queue; async tasks inherit scope, local legacy defaults retained. */
 export function projectMediaPull(scope) {
   if (!scope?.projectId || !scope.root) throw new TypeError('project pull scope required');
   const api = {};
@@ -79,12 +99,14 @@ function note(event, fields) {
 }
 
 /* ------------------------------------------------------------------ *
- * 当前连接的远程素材服务
+ * Currently connected remote asset service
  * ------------------------------------------------------------------ */
 
 /**
- * 设当前连接的远程素材服务;null 清掉(回到只用本地素材服务)。
- * 基址换了:在跑的拉取中止、预取队列作废。只是续签票据(基址不变):什么都不打断。
+ * Sets the currently connected remote asset service; null clears it (reverting to using only the
+ * local asset service).
+ * Base URL changed: running pulls are aborted, prefetch queue is invalidated. Only renewing
+ * tickets (base URL unchanged): nothing is interrupted.
  * @param {{ base: string, ticket?: string | null | (() => (string | null | Promise<string | null>)) } | null} remote
  */
 export function setRemoteAssetService(remote) {
@@ -100,9 +122,9 @@ export function setRemoteAssetService(remote) {
   }
   const base = String(remote.base || '').trim().replace(/\/+$/, '');
   let url;
-  try { url = new URL(base); } catch { throw new TypeError('远程素材服务的基址解析不了'); }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new TypeError('远程素材服务的基址只能是 http(s)');
-  if (url.username || url.password) throw new TypeError('远程素材服务的基址不能带用户名或密码');
+  try { url = new URL(base); } catch { throw new TypeError('The base URL of the remote asset service could not be parsed'); }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new TypeError('The base URL of the remote asset service must be http(s)');
+  if (url.username || url.password) throw new TypeError('The base URL of the remote asset service must not contain a username or password');
   const ticket = remote.ticket ?? null;
   const scope = context.getStore();
   if (scope && remote.projectId !== scope.projectId) throw Object.assign(new Error('project-mismatch'), { code: 'project-mismatch' });
@@ -119,7 +141,7 @@ export function setRemoteAssetService(remote) {
   return { base };
 }
 
-/** 当前连接的远程素材服务的基址(不含票据);没有给 null */
+/** Base URL of the currently connected remote asset service (excluding tickets); null if none */
 export function remoteAssetBase() {
   return state().remote?.base ?? null;
 }
@@ -130,19 +152,29 @@ async function authHeaders(r = state().remote) {
   return typeof t === 'string' && t ? { authorization: `Bearer ${t}` } : {};
 }
 
-/** 产物按需拉取的时限(一块 PNG,整件读完) */
+/** Timeout for on-demand artifact pulls (a single PNG chunk, read as a whole file) */
 export const ARTIFACT_PULL_TIMEOUT_MS = 30_000;
-/** 按需拉取发出的请求带这个头;收到它的素材服务不再往下拉(`asset-service.ts`) */
+/**
+ * Requests sent by on-demand pulls include this header; asset services receiving it
+ * will not pull further down (`asset-service.ts`)
+ */
 export const ARTIFACT_PULL_HEADER = 'x-promptcut-pull';
-/** 产物按需拉取整件进内存,只收这么大以内的(卡片快照最大 2048² 的 PNG,远小于它) */
+/**
+ * On-demand artifact pulls load the whole file into memory, accepting only sizes up to
+ * this limit (card snapshots are at most 2048² PNGs, far smaller than this)
+ */
 export const ARTIFACT_PULL_MAX_BYTES = 64 * 1024 * 1024;
 
 /**
- * 产物命名空间(`px`)的按需拉取(claude/bake-asset):本机素材服务的 `GET px/<hash>` 在本机没有这一块时,
- * 向**当前连接的远程素材服务**整件取一次 `GET <base>/<ns>/<hash>`(带只读票据),校验 sha256 后交回调用方入库
- * (`asset-service.ts` 的 `pullArtifactInto`)。共享项目里别的成员推上去的卡片快照(`/api/asset/px/<hash>`)
- * 因此在本机也取得到。与素材不同:产物很小,不做边落盘边服务,不进预取队列。
- * 没连远程、远程 404、不是 2xx、超大、校验不符都回 null(调用方照旧回 404);不抛。
+ * On-demand pull for artifact namespace (`px`) (claude/bake-asset): when `GET px/<hash>` on the
+ * local asset service does not have this chunk locally, fetches the whole file once from the
+ * **currently connected remote asset service** via `GET <base>/<ns>/<hash>` (with a read-only ticket),
+ * verifies sha256, and returns it to the caller to be stored (`pullArtifactInto` in
+ * `asset-service.ts`). Card snapshots (`/api/asset/px/<hash>`) pushed by other members in a shared
+ * project are thus also retrievable locally. Unlike assets: artifacts are tiny, so they are not
+ * served while writing to disk and do not enter the prefetch queue.
+ * Returns null if not connected to remote, remote returns 404, non-2xx status, oversized, or
+ * checksum mismatch (caller returns 404 as usual); does not throw.
  * @param {'px' | 'snap'} ns
  * @param {string} hash
  * @returns {Promise<{ bytes: Buffer, contentType: string } | null>}
@@ -154,7 +186,9 @@ export async function fetchRemoteArtifact(ns, hash, { timeoutMs = ARTIFACT_PULL_
   if (!remote) return null;
   note('artifact.pull', { ns, hash: key });
   try {
-    // 带上「这是按需拉取」的头:对面若也是本仓库的素材服务,不再替这个请求往它自己连的远程拉(防互指成环)
+    // Include the "this is an on-demand pull" header: if the other side is also an asset service
+    // from this repo, it will not pull further to its own connected remote for this request
+    // (preventing circular references)
     const res = await fetch(`${remote.base}/${ns}/${key}`, { headers: { ...(await authHeaders(remote)), [ARTIFACT_PULL_HEADER]: '1' }, signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) { await res.body?.cancel().catch(() => {}); note('artifact.miss', { ns, hash: key, status: res.status }); return null; }
     const len = Number(res.headers.get('content-length'));
@@ -171,12 +205,12 @@ export async function fetchRemoteArtifact(ns, hash, { timeoutMs = ARTIFACT_PULL_
   }
 }
 
-/** 最近的事件(拷贝);探针与单测看拉取顺序用 */
+/** Recent events (copy); used by probes and unit tests to check pull order */
 export function pullLog() {
   return state().log.map((e) => ({ ...e }));
 }
 
-/** 状态摘要(`GET /api/media/remote`) */
+/** Status summary (`GET /api/media/remote`) */
 export function pullStatus() {
   const s = state();
   return {
@@ -188,15 +222,19 @@ export function pullStatus() {
 }
 
 /* ------------------------------------------------------------------ *
- * 拉取任务
+ * Pull jobs
  * ------------------------------------------------------------------ */
 
 /**
- * @typedef {object} PullStore  本地内容库的几样操作(由 vite-plugin-media 给,本模块不认目录布局)
- * @property {string} dir  临时文件放在这里(和本地内容库同一个卷,改名不跨盘)
- * @property {(hash: string) => Promise<string | null>} resolve  本地已有就给路径
- * @property {(hash: string, tmp: string, ext: string, contentType: string) => Promise<string>} finalize  校验过的临时文件改名入库,回最终路径
- * @property {(contentType: string) => string} extForType  Content-Type → 扩展名(认不出给空串)
+ * @typedef {object} PullStore  Several local content store operations (provided by
+ *   vite-plugin-media; this module is agnostic to directory layout)
+ * @property {string} dir  Temporary files are placed here (same volume as local content store,
+ *   rename does not cross disks)
+ * @property {(hash: string) => Promise<string | null>} resolve  Returns path if already present locally
+ * @property {(hash: string, tmp: string, ext: string, contentType: string) => Promise<string>} finalize
+ *   Renames verified temporary file into the store, returns final path
+ * @property {(contentType: string) => string} extForType  Content-Type → extension (empty string if
+ *   unrecognized)
  */
 
 function abortAll() {
@@ -215,7 +253,8 @@ function wake(job) {
 }
 
 /**
- * 开一个拉取任务(同一个哈希已有就复用)。回 Job;`job.head` 在远程回了头(或失败)时 resolve。
+ * Starts a pull job (reuses existing if for the same hash). Returns Job; `job.head` resolves
+ * when the remote returns headers (or fails).
  * @param {string} hash
  * @param {PullStore} store
  * @param {'demand' | 'prefetch'} by
@@ -294,7 +333,8 @@ function startJob(hash, store, by) {
         if (job.tmp) await fs.rm(job.tmp, { force: true }).catch(() => {});
       }
       wake(job);
-      // 完成的任务留着没用(之后就是本地命中);失败的留一小会儿,让挂着的读请求看到原因
+      // Completed jobs are useless to keep (subsequent reads are local hits); failed jobs are kept
+      // briefly so attached read requests can see the cause
       setTimeout(() => { if (s.jobs.get(hash) === job) s.jobs.delete(hash); }, job.error ? 2000 : 0).unref?.();
     }
   })();
@@ -302,7 +342,7 @@ function startJob(hash, store, by) {
 }
 
 /**
- * 解析 Range(与 vite-plugin-media 的 parseRange 同口径,单段)
+ * Parses Range (same specification as parseRange in vite-plugin-media, single-range)
  * @returns {{ start: number, end: number } | null | 'unsatisfiable'}
  */
 function parseRange(header, size) {
@@ -322,7 +362,10 @@ function parseRange(header, size) {
   return { start, end };
 }
 
-/** 这一段直接从远程透传(不缓存):Range 起点远在已落盘位置之后 */
+/**
+ * Passes through this segment directly from remote (not cached): Range start point is far
+ * beyond the written-to-disk position
+ */
 async function passThrough(hash, req, res) {
   const remote = state().remote;
   if (!remote) { res.statusCode = 404; return res.end('Not found'); }
@@ -349,8 +392,9 @@ async function passThrough(hash, req, res) {
 }
 
 /**
- * 读路由在本地内容库里没找到这个哈希时调它。
- * 回 `true`:已经答了(拉取中服务、透传、或远程也没有回的 404);回 `false`:没有连远程素材服务,调用方自己回 404。
+ * Called by the read route when this hash is not found in the local content store.
+ * Returns `true`: already answered (served during pull, pass-through, or 404 returned when remote
+ * also lacks it); returns `false`: not connected to a remote asset service, caller returns 404 itself.
  * @param {{ hash: string, req: import('http').IncomingMessage, res: import('http').ServerResponse, store: PullStore, serveFile: (file: string) => unknown }} o
  */
 export async function pullThrough({ hash, req, res, store, serveFile }) {
@@ -365,7 +409,7 @@ export async function pullThrough({ hash, req, res, store, serveFile }) {
     if (job.done && job.final) { await serveFile(job.final); return true; }
     if (job.error || job.size === null) {
       if (job.error === 'not-found' || job.error === 'no-remote') { res.statusCode = 404; res.end('Not found'); return true; }
-      // 没有长度的远程回包:等整件落盘再按普通文件答
+      // Remote response without length: wait for the whole file to be written to disk before serving as a normal file
       if (!job.error) { await job.finished; if (job.done && job.final) { await serveFile(job.final); return true; } }
       res.statusCode = 502;
       res.end('Remote asset service failed');
@@ -395,12 +439,13 @@ export async function pullThrough({ hash, req, res, store, serveFile }) {
     if (req.method === 'HEAD') { res.end(); return true; }
     let closed = false;
     res.on('close', () => { closed = true; wake(job); });
-    // 读临时文件用自己的句柄:拉完改名之后句柄照样有效(Windows 上 libuv 带 FILE_SHARE_DELETE 打开)
+    // Uses its own handle to read temporary files: the handle remains valid after renaming upon
+    // completion (libuv opens with FILE_SHARE_DELETE on Windows)
     let fh;
     try {
       fh = await fs.open(job.final ?? job.tmp, 'r');
     } catch {
-      // 恰好在这一刻拉完改了名
+      // Exactly at this moment pulling completed and the file was renamed
       await job.finished;
       if (!job.final) { res.destroy(); return true; }
       fh = await fs.open(job.final, 'r');
@@ -433,12 +478,13 @@ export async function pullThrough({ hash, req, res, store, serveFile }) {
 }
 
 /* ------------------------------------------------------------------ *
- * 预取队列
+ * Prefetch queue
  * ------------------------------------------------------------------ */
 
 /**
- * 换一份预取清单(有序;页面按 `prefetchOrder` 排好)。只在连着远程素材服务时有效,否则忽略。
- * 回这次排进队列的哈希数。
+ * Replaces the prefetch manifest (ordered; sorted by page according to `prefetchOrder`). Only
+ * effective when connected to a remote asset service; ignored otherwise.
+ * Returns the number of hashes queued this time.
  * @param {{ hash: string }[] | string[]} items
  * @param {PullStore} store
  */
@@ -463,14 +509,14 @@ async function runQueue(store) {
   s.running = true;
   try {
     while (s.queue.length && s.remote) {
-      // 低优先级:按需拉取在服务时让路
+      // Low priority: yields when on-demand pull is serving
       if (s.onDemand > 0) { await new Promise((r) => setTimeout(r, YIELD_POLL_MS)); continue; }
       const gen = s.queueGen;
       const hash = s.queue.shift();
       if (await store.resolve(hash)) continue;
       const job = startJob(hash, store, 'prefetch');
       await job.finished;
-      if (gen !== s.queueGen) continue; // 清单换过了:接着按新清单走
+      if (gen !== s.queueGen) continue; // Manifest was replaced: continue following the new manifest
     }
   } finally {
     s.running = false;
@@ -478,13 +524,15 @@ async function runQueue(store) {
 }
 
 /* ------------------------------------------------------------------ *
- * 当前素材服务上到齐没有(导出前的拦截)
+ * Whether everything has arrived on the current asset service (intercept before export)
  * ------------------------------------------------------------------ */
 
 /**
- * 这些哈希里哪些在**当前连接的素材服务**上还没 `complete`。连远程素材服务时问它的 `chunks`
- * (本机缓存落没落盘不算数,A1「换档判据」);没连远程时就是本地素材服务,看本地内容库。
- * 问不到(网络错)的也算没到齐。
+ * Identifies which of these hashes are not yet `complete` on the **currently connected asset service**.
+ * Queries its `chunks` when connected to a remote asset service (whether local cache has been written
+ * to disk does not count, A1 "Tier switch criterion"); checks the local content store on the local
+ * asset service when not connected to remote.
+ * Those that cannot be queried (network errors) are also counted as not having fully arrived.
  * @param {string[]} hashes
  * @param {PullStore} store
  * @returns {Promise<string[]>}
@@ -509,7 +557,7 @@ export async function incompleteOnService(hashes, store) {
   return out;
 }
 
-/** 单测用:清掉全部状态 */
+/** Unit tests only: clears all state */
 export function resetPullStateForTest() {
   const s = state();
   abortAll();

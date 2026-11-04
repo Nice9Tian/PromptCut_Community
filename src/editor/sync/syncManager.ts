@@ -1,16 +1,23 @@
 /**
- * 页面的同步管理(c65-design.md 第 4、6、8、9 节):页面用 WebSocket 接文档服务、把 DocSync 挂上 store。
+ * The page's sync manager (c65-design.md sections 4, 6, 8, 9): the page connects to the document service
+ * over WebSocket and attaches DocSync to the store.
  *
- * - **本机项目**:连本机编辑器的 `/docservice`(回环什么都不带 = `local` 空间),项目号就是 `project.id`。
- *   载入另一个项目(开始页、打开 .proc、新建)时换一条连接、一个新的 DocSync,并把载入的内容以根替换写进去
- *   (打开的文件就是用户要的那一份);载入的还是同一个项目时是对它的一次根替换。
- * - **共享项目**:按进入时的连接(凭证明,`server/auth/client.mjs`),项目号就是共享项目的 `projectId`。
- *   在共享项目里载入别的项目 = 离开共享项目、回到本机空间(不会把别的文件整份盖到大家的项目上)。
- * - `?join=<项目号>`:第二个页面加入同一个本机项目,内容以文档服务为准,不做根替换(V2 的真实页面版用)。
- * - 无头实例(`?headless=1`)、只读查看、连不上本机文档服务时不接:store 照旧用快照栈。
+ * - **Local project**: connects to the local editor's `/docservice` (loopback with nothing attached =
+ *   the `local` space), and the project ID is `project.id`.
+ *   When another project is loaded (start page, open .proc, new), it switches to a new connection and a
+ *   new DocSync and writes the loaded content in as a root replacement (the opened file is the copy the
+ *   user wants); when the loaded one is still the same project, it is a root replacement of it.
+ * - **Shared project**: by the connection at entry time (by proof, `server/auth/client.mjs`), and the
+ *   project ID is the shared project's `projectId`.
+ *   Loading another project inside a shared project = leaving the shared project and returning to the
+ *   local space (another file is not laid over everyone's project in full).
+ * - `?join=<project ID>`: a second page joins the same local project, the content follows the document
+ *   service and no root replacement is done (used by the real page version of V2).
+ * - Headless instance (`?headless=1`), read-only viewing, or when the local document service cannot be
+ *   reached: not attached, and the store uses the snapshot stack as before.
  *
- * 界面状态(同步状态、离线对话框、撤销提示条、成员列表、阻断弹窗、气泡)放在这里的一个小仓库里,
- * 组件用 `useSync(selector)` 读。
+ * UI state (sync status, offline dialog, undo toast, member list, blocking popup, bubble) lives in a
+ * small store here, and components read it with `useSync(selector)`.
  */
 import { useSyncExternalStore } from "react";
 import { bindStore, DocSync, type CommitSummary, type LocalBackup, type PausedInfo, type SyncNotice, type SyncStatus, type UndoResult, type Writer } from "../../store/docsync";
@@ -61,15 +68,17 @@ import {
 
 
 /**
- * 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」),值同 `ONLINE`。只用在剪枝处,
- * 写成 `!ONLINE_BUILD && !ONLINE`:在线构建里整句折成 false,单测里把 `mode.ts` 换成在线桩时照旧按 `ONLINE` 走。
+ * Compile-time constant of the online build (see "Online build pruning" in `src/online/pageFlag.ts` for
+ * the syntax and purpose), with the same value as `ONLINE`. Used only at pruning sites, written as
+ * `!ONLINE_BUILD && !ONLINE`: in the online build the whole expression folds to false, and in unit tests,
+ * when `mode.ts` is swapped for an online stub, it still follows `ONLINE` as before.
  */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
-/** 账号项目：续会话读创建者改过的服务开关、自己的权限与成员变化的间隔(毫秒)；会话快到期时随时续 */
+/** Account project: interval (milliseconds) for renewing the session to read the service switches the creator changed, one's own permissions and member changes; renewed any time when the session is about to expire */
 export const ACCOUNT_METADATA_RENEW_MS = 15_000;
-/** 进了云端项目那条气泡的键:同键只留一条,进了别的项目就替换掉上一条(issue #15) */
+/** Key of the bubble for entering a cloud project: one bubble per key, and entering another project replaces the previous one (issue #15) */
 export const ENTERED_TOAST_KEY = "cloud-entered";
-/** 进了云端项目那条气泡停留多久(毫秒)。调用方自带文案的(「搬到云端」)不受这个数管,见 `enterAccountProject` */
+/** How long the bubble for entering a cloud project stays (milliseconds). Callers that bring their own text ("move to the cloud") are not governed by this number, see `enterAccountProject` */
 export const ENTERED_TOAST_MS = 8000;
 import { loadBrowserDevice } from "../../online/device";
 
@@ -145,14 +154,14 @@ import { offlineThings } from "./offlineTransfer";
 import { cacheKey, defaultStore, defaultStoreDurable } from "./offlineCache";
 import { tr } from "../../i18n/index.ts";
 
-/* ---------------- 界面状态 ---------------- */
+/* ---------------- UI state ---------------- */
 
 export interface DeviceInfo {
   deviceId: string;
   deviceName: string;
-  /** 编辑器绑在局域网上(以 PROMPTCUT_LAN_HOST=1 启动):能当局域网主机 */
+  /** The editor is bound to the LAN (started with PROMPTCUT_LAN_HOST=1): can act as a LAN host */
   lanHost: boolean;
-  /** 页面是本机编辑器给的(回环地址打开);纯浏览器(在线浏览器模式)不能当局域网主机 */
+  /** The page is served by the local editor (opened via the loopback address); a pure browser (online browser mode) cannot act as a LAN host */
   localEditor: boolean;
 }
 
@@ -163,9 +172,9 @@ export interface MemberRow {
   displayName: string;
   creator: boolean;
   tags: { editing: boolean; rendering: boolean; agents: number };
-  /** `service: 'agent'` 的那一项是代这位成员进项目的云端 Agent */
+  /** The entry with `service: 'agent'` is the Cloud Agent that entered the project on behalf of this member */
   conns: { role: string; conversation?: number | string; service?: string }[];
-  /** 托管方的服务(不是成员):这一行按服务名显示(`hostedServices.ts`),不计入成员数、没有踢人按钮 */
+  /** A service of the host (not a member): this row is shown by service name (`hostedServices.ts`), not counted in the member count, and has no kick button */
   service?: string;
 }
 
@@ -176,13 +185,15 @@ export interface SharedInfo {
   where: Where;
   base: string;
   username: string;
-  /** 以创建者身份进入 */
+  /** Enter as the creator */
   creator: boolean;
   hostDeviceName?: string;
   accountId?: string;
   /**
-   * 服务端发的权限（`'r'` 只读 / `'rw'` 读写）。游客进别人的项目一律是 `'r'`（2026-10-23 用户定）。
-   * 界面据此走只读（`src/editor/io/viewOnly.ts`）；真正拦住写的是服务端，不是这一项。
+   * Permission sent by the server (`'r'` read-only / `'rw'` read-write). A guest entering someone else's
+   * project is always `'r'` (user decision, 2026-10-23).
+   * The UI goes read-only based on it (`src/editor/io/viewOnly.ts`); what really blocks writes is the
+   * server, not this field.
    */
   access?: 'r' | 'rw';
 }
@@ -191,7 +202,7 @@ export interface UndoNoticeView {
   id: number;
   kind: "undo" | "redo" | "agent";
   result: UndoResult;
-  /** 出提示时的项目(实体名按它取) */
+  /** The project when the prompt is shown (the entity name is taken from it) */
   project: Project;
 }
 
@@ -199,11 +210,12 @@ export interface Toast {
   id: number;
   text: string;
   tone: "info" | "warn";
-  /** 气泡上的一个按钮(在线页面的「下载备份」):点了照样不关气泡,用户自己关 */
+  /** A button on a bubble ("Download backup" on the online page): clicking it still doesn't close the bubble; the user closes it */
   action?: { label: string; run: () => void; pc?: string };
   /**
-   * 同一类气泡的键:再推一条同键的,旧的那条让位(issue #15 —— 原来每进一次云端项目就叠一条常驻气泡,
-   * 在氛围式里来回点几个项目就叠成一摞)。不给键的照旧各自独立
+   * Key for a class of bubbles: pushing another one with the same key makes the old one give way (issue #15:
+   * every time you entered a cloud project a new persistent bubble was stacked, and clicking between a few
+   * projects in Vibe mode piled them into a stack). Bubbles without a key stay independent as before
    */
   key?: string;
 }
@@ -211,9 +223,9 @@ export interface Toast {
 export type Blocked = "kicked" | "removed" | "deleted";
 
 export interface AgentOp {
-  /** 事件 id(`events.event` 的 eventId) */
+  /** Event id (the eventId of `events.event`) */
   eventId: string;
-  /** 这次工具调用的 callId(事件里带了才有;AI 栏按它对上 SSE 的工具调用) */
+  /** callId of this tool call (only present if the event carries it; the AI panel uses it to match SSE tool calls) */
   callId?: string;
   opId: string;
   inverse?: PathOp[];
@@ -223,8 +235,10 @@ export interface AgentOp {
 }
 
 /**
- * AI 栏的一条工具调用记录(D2,c65-design.md 第 7 节):Agent 服务端每个工具调用发「创建」「完成」两条事件,
- * 按 `eventId` 合成这一条;文字回复是一条 `kind: "text"`。只存摘要,完整参数在内容库 `event-detail`,展开时再拉。
+ * One tool call record in the AI panel (D2, c65-design.md section 7): for each tool call the Agent server sends two
+ * events, "created" and "completed"; they are merged into this record by `eventId`. A text reply is a record with
+ * `kind: "text"`. Only a summary is stored; the full parameters are in the content store under `event-detail`
+ * and are fetched on expand.
  */
 export interface EventRecord {
   eventId: string;
@@ -235,13 +249,13 @@ export interface EventRecord {
   args?: string | null;
   callId?: string;
   actor?: Record<string, unknown>;
-  /** null = 还在跑(只收到了创建) */
+  /** null = still running (only the creation event was received) */
   status: "ok" | "error" | "cancelled" | null;
   summary?: string | null;
   durationMs?: number | null;
   at?: number;
   text?: string;
-  /** 这次调用写进项目的那次提交(成功的写才有) */
+  /** The commit this call wrote into the project (only present for successful writes) */
   opId?: string;
   detailKey?: string | null;
 }
@@ -250,7 +264,7 @@ export interface SyncView {
   hostRegistration: string | null;
   association: CollaborationDescriptor | null;
   reopenState: string | null;
-  /** 页面接上了文档服务(不然 store 用快照栈) */
+  /** The page is connected to the document service (otherwise the store uses the snapshot stack) */
   active: boolean;
   kind: "local" | "shared" | "off";
   status: SyncStatus;
@@ -258,34 +272,37 @@ export interface SyncView {
   offlineOpen: boolean;
   shared: SharedInfo | null;
   members: MemberRow[];
-  /** 托管方服务的可用与开关(成员列表顶层的 `hosted`);放本机的项目与没有登记表的托管端没有 */
+  /** Availability and switch of the host's service (`hosted` at the top level of the member list); absent for projects kept on this machine and for hosted sides without a registry */
   hosted: HostedView | null;
   blocked: Blocked | null;
   notice: UndoNoticeView | null;
   toasts: Toast[];
   device: DeviceInfo | null;
-  /** AI 栏记录的版本号:agentOps 变了就加一 */
+  /** Version number of the AI panel records: incremented whenever agentOps changes */
   agentOpsVersion: number;
-  /** 工具调用记录(eventRecords)的版本号:变了就加一 */
+  /** Version number of the tool call records (eventRecords): incremented whenever they change */
   eventsVersion: number;
-  /** 还没拿到文档服务确认的本地提交条数(在线页面的离线提示用;桌面不更新,恒为 0) */
+  /** Number of local commits not yet confirmed by the document service (for the online page's offline notice; not updated on desktop, always 0) */
   unconfirmed: number;
-  /** 在线页面从离线回来的恢复阶段(C10 契约第 10 节,`onlineStatus.ts` 的 `nextRecovery`) */
+  /** Recovery phase of the online page coming back from offline (C10 contract section 10, `nextRecovery` in `onlineStatus.ts`) */
   recovery: "recovering" | "recovered" | null;
-  /** 在线页面内存里的本地备份份数(`onlineBackups.ts`) */
+  /** Number of local backups in the online page's memory (`onlineBackups.ts`) */
   onlineBackups: number;
-  /** 当前项目的历史序号（文档服务确认的 rev） */
+  /** History sequence number of the current project (the rev confirmed by the document service) */
   rev: number | null;
   /**
-   * 待合并表(「冲突合并」窗口,`mergeItems.ts`):当前项目里这位用户还没处理完的东西。
-   * 按「项目 × 用户」存在文档服务(连不上时先用本机暂存的副本),离线重连与 0.7.20 的撤销冲突共用。
+   * Pending merge table (the "Merge conflicts" window, `mergeItems.ts`): what this user has not finished handling
+   * in the current project. Stored in the document service per "project × user" (using a copy staged on this
+   * machine when it is unreachable); shared by offline reconnect and the undo conflicts of 0.7.20.
    */
   merge: { things: MergeThing[]; version: number; blocked: string | null };
-  /** 「冲突合并」窗口开着(重连转进新的离线批次时自动打开;导航栏的「冲突合并」按钮也打开它) */
+  /** The "Merge conflicts" window is open (opened automatically when a reconnect moves into a new offline batch; the "Merge conflicts" button in the navigation bar also opens it) */
   mergeOpen: boolean;
   /**
-   * 离线改动现在存在哪(离线常驻提示与离开确认用,`onlineStatus.ts`):`saved` = 已存在本机(账号云端项目落盘到浏览器本地缓存、
-   * 桌面版的本机恢复文件);`page` = 只在这个页面里(在线页面里旧办法的口令房间,或浏览器本地缓存这次没写成)。
+   * Where offline changes are stored now (for the persistent offline notice and the leave confirmation,
+   * `onlineStatus.ts`): `saved` = stored on this machine (account cloud projects are written to the browser's
+   * local cache; the desktop app's local recovery file); `page` = only in this page (the passphrase room of
+   * the old approach on the online page, or the browser local cache failed to write this time).
    */
   offlineStore: OfflineStore;
 }
@@ -320,8 +337,9 @@ const viewListeners = new Set<() => void>();
 
 function patch(p: Partial<SyncView>) {
   view = { ...view, ...p };
-  // 界面的只读开关跟着当前项目的权限走(`src/editor/io/viewOnly.ts`)。只在这里拨一次:
-  // 退出项目的地方有七八处,各记一遍迟早漏一处,漏了就会把只读状态带进下一个项目
+  // The UI's read-only switch follows the current project's permissions (`src/editor/io/viewOnly.ts`). Flip it
+  // only here, once: there are seven or eight places that leave a project, and recording it in each would
+  // eventually miss one, carrying the read-only state into the next project
   if ('shared' in p) setProjectAccess(view.shared ? (view.shared.access ?? 'rw') : null);
   for (const l of viewListeners) l();
 }
@@ -330,8 +348,10 @@ export function getSyncView(): SyncView {
   return view;
 }
 
-// 探针与排障的只读口子(同 __pcStore、__pcCloud 一类的 __pc* 钩子):这一刻连没连上、没确认的条数、离线改动存在哪。
-// 界面自己用 useSync,不走这里;探针拿它核对真状态,免得只能从界面上的提示倒推
+// Read-only hook for probes and troubleshooting (like __pcStore and __pcCloud, a __pc* hook): whether we are
+// connected right now, the count of unconfirmed items, and where offline changes are stored.
+// The UI uses useSync itself, not this; probes use it to check the real state, instead of having to infer it
+// backwards from the notices in the UI
 if (typeof window !== "undefined") {
   (window as unknown as { __pcSync?: { view: () => SyncView } }).__pcSync = { view: () => view };
 }
@@ -347,8 +367,9 @@ export function useSync<T>(selector: (v: SyncView) => T): T {
 
 let toastSeq = 0;
 /**
- * `ms` 给 `Infinity` 就不自己消失(用户点 × 关)。回这条气泡的号(`dismissToast` 用)。
- * 给了 `key`:同键的旧气泡先撤掉,屏幕上同一类永远只有一条
+ * If `ms` is `Infinity` the bubble does not disappear on its own (the user clicks × to close it). Returns this
+ * bubble's number (for `dismissToast`). If `key` is given: the old bubble with the same key is removed first,
+ * so there is only ever one of a class on screen
  */
 export function pushToast(text: string, tone: Toast["tone"] = "info", ms = 6000, action?: Toast["action"], key?: string): number {
   const t: Toast = { id: ++toastSeq, text, tone, ...(action ? { action } : {}), ...(key ? { key } : {}) };
@@ -367,30 +388,30 @@ export function dismissNotice() {
   patch({ notice: null });
 }
 
-/* ---------------- 连接 ---------------- */
+/* ---------------- Connection ---------------- */
 
 interface Current {
   link: SyncLink;
   kind: "local" | "shared";
   docProjectId: string;
-  /** 这条连接连的文档服务地址(告诉 Agent 服务端,见 bindAgentSide) */
+  /** Address of the document service this connection connects to (told to the Agent server, see bindAgentSide) */
   url: string;
   unbind: () => void;
   offs: (() => void)[];
   /** Change the in-memory proof used by subsequent reconnects after a successful own-password update. */
   updateAuthentication?: (key: string) => void;
   setAccountAgentEnabled?: (enabled: boolean) => Promise<void>;
-  /** 账号项目:创建者改托管方的渲染节点的开关,或它下面的子选项(「生成轨道流」)。成员调用被服务端拒(403) */
+  /** Account project: the creator changes the switch of the host's render node, or its sub-option ("Generate track stream"). Member calls are rejected by the server (403) */
   setAccountHosted?: (change: { service: "render"; enabled: boolean } | { service: "render"; option: HostedOptionName; enabled: boolean }) => Promise<void>;
   accountMembers?: () => Promise<AccountMembersSnapshot>;
-  /** 诊断:账号项目里这条连接的寿命 */
+  /** Diagnostics: the lifetime of this connection in an account project */
   accountLife?: () => { expiresAt: number | null; trusted: boolean | null; renews: number; expires: number; busy: boolean };
   accountMemberAdmin?: (operation: AccountMemberOperation) => Promise<AccountMemberResult>;
-  /** 账号项目:创建者作废并重新生成项目链接,回新的项目链接(先续一次会话,拿当前的访问版本号) */
+  /** Account project: the creator revokes and regenerates the project link, returning the new project link (renews the session once first to get the current access version number) */
   regenAccountLink?: () => Promise<string>;
-  /** 账号项目:创建者设置 / 修改(字符串)或清除(null)项目二级密码(同上,先续会话) */
+  /** Account project: the creator sets / changes (string) or clears (null) the project secondary password (same as above, renews the session first) */
   setAccountSecondaryPassword?: (password: string | null) => Promise<void>;
-  /** 账号项目:现在的项目链接(创建者带当前的链接口令) */
+  /** Account project: the current project link (the creator gets it with the current link passphrase) */
   accountLink?: () => string;
 }
 
@@ -429,12 +450,12 @@ export async function returnToAccountProjectHome(): Promise<void> {
   window.dispatchEvent(new Event('pc-go-home'));
 }
 
-/** 当前连着的项目号(本机项目是 project.id,共享项目是共享项目的 projectId);没接文档服务时是 project.id */
+/** Id of the project currently connected (project.id for a local project, the shared project's projectId for a shared project); project.id when not connected to the document service */
 export function currentDocProjectId(): string {
   return cur?.docProjectId ?? getState().project.id ?? "";
 }
 
-/** 本页面是谁(撤销提示条里认「你在另一个页面」用) */
+/** Who this page is (used by the undo notice bar to recognize "you are on another page") */
 export function me(): Me {
   const s = view.shared;
   if (s && view.device) return { session, userId: `${s.accountId ? `account:${s.accountId}` : s.username}@${view.device.deviceId}` };
@@ -444,14 +465,16 @@ export function me(): Me {
 export function displayNames(): DisplayNames {
   const m: DisplayNames = new Map();
   for (const row of view.members) if (row.deviceId) m.set(`${row.username}@${row.deviceId}`, row.displayName);
-  // 账号云端项目:`view.members` 是空的(成员名单另走账号接口),名字按账号记在 `accountNames` 里
+  // Account cloud project: `view.members` is empty (the member list goes through the account API instead), and names are recorded per account in `accountNames`
   for (const [accountId, name] of accountNames) m.set(accountNameKey(accountId), name);
   return m;
 }
 
 /**
- * 账号云端项目里各成员账号的名字(提示气泡里「谁改的」用):进项目时取一次成员名单,之后成员有变化(会话里的权限版本变了)再取。
- * 离开项目清掉。取不到就没有名字,气泡照原来的退路显示。
+ * Names of each member's account in an account cloud project (used for "who changed it" in notice bubbles):
+ * fetch the member list once when entering the project, then again when members change (the permission version
+ * in the session changed). Cleared on leaving the project. If it can't be fetched there are no names, and the
+ * bubble shows its original fallback.
  */
 let accountNames = new Map<string, string>();
 function accountNamesFrom(snapshot: AccountMembersSnapshot): void {
@@ -471,8 +494,9 @@ function isLoopbackHost(host: string): boolean {
 }
 
 /**
- * 设备信息:本机编辑器给的;纯浏览器(在线浏览器模式)用存在页面本地的随机 id 和「浏览器名 + 系统名 + 随机 4 位」
- * (C10a 契约第 2 节,`src/online/device.ts`),不经 `/api/docservice/device`。
+ * Device info: provided by the local editor; a pure browser (online browser mode) uses a random id stored in
+ * the page's local storage and "browser name + OS name + random 4 digits"
+ * (C10a contract section 2, `src/online/device.ts`), without going through `/api/docservice/device`.
  */
 async function loadDevice(): Promise<DeviceInfo | null> {
   if (ONLINE) {
@@ -480,10 +504,11 @@ async function loadDevice(): Promise<DeviceInfo | null> {
     return { deviceId: d.deviceId, deviceName: d.deviceName, lanHost: false, localEditor: false };
   }
   /*
-   * 局域网里的设备（「局域网里的第二块屏」：手机、平板打开主机的页面）问不到这个接口 ——
-   * 除素材服务外的 `/api/**` 只答回环（`server/vite-plugin-api-guard.ts`），它们拿到的是 403。
-   * 那就用页面自己的那一份身份，和在线浏览器同一条路（`src/online/device.ts`）：这台设备本来也没有
-   * 编辑器进程，`localEditor` 为假。2026-10-26 端到端探针照出来的：不退回的话这些设备连不进共享项目。
+   * Devices on the LAN ("the second screen on the LAN": a phone or tablet opening the host's page) cannot reach
+   * this API: `/api/**` other than the asset service only answers loopback (`server/vite-plugin-api-guard.ts`),
+   * and they get a 403. So use the page's own identity, the same path as the online browser
+   * (`src/online/device.ts`): this device has no editor process to begin with, so `localEditor` is false.
+   * Found by the 2026-10-26 end-to-end probe: without this fallback these devices cannot join a shared project.
    */
   const onLoopback = isLoopbackHost(location.hostname);
   const browserDevice = (): DeviceInfo => {
@@ -501,11 +526,12 @@ async function loadDevice(): Promise<DeviceInfo | null> {
   }
 }
 
-/* ---------------- 本地备份 ---------------- */
+/* ---------------- Local backup ---------------- */
 
 /**
- * 在线页面的本地备份只留在本页内存里(C10 契约第 10 节、第 18 节第 4 条;`onlineBackups.ts`):
- * 不写浏览器存储、不自动下载,关页面即丢。桌面照旧写编辑器进程的 `/api/project-backups`。
+ * The online page's local backups stay only in this page's memory (C10 contract section 10, section 18 item 4;
+ * `onlineBackups.ts`): nothing is written to browser storage, nothing is downloaded automatically, and closing
+ * the page loses them. Desktop writes to the editor process's `/api/project-backups` as before.
  */
 const onlineBackupStore: OnlineBackups = createOnlineBackups({ projectName: () => getState().project.name });
 onlineBackupStore.subscribe(() => patch({ onlineBackups: onlineBackupStore.list().length }));
@@ -515,9 +541,11 @@ export function onlineBackups(): OnlineBackups {
 }
 
 /**
- * 在线页面:存进内存,当场给「下载备份」按钮。
- * - 被覆盖:一条不打断操作的提示(气泡,10 秒后自己消失;面板里仍能下载);
- * - 丢弃离线修改:用户刚在对话框里点了「不要了」,气泡留着直到用户关。
+ * Online page: store in memory and give the "Download backup" button on the spot.
+ * - Overwritten: a notice that doesn't interrupt the operation (a bubble that disappears after 10 seconds;
+ *   the panel can still download it);
+ * - Offline changes discarded: the user just clicked "Discard" in the dialog, and the bubble stays until the
+ *   user closes it.
  */
 function saveOnlineBackup(b: LocalBackup) {
   const index = onlineBackupStore.save(b);
@@ -531,7 +559,7 @@ function saveOnlineBackup(b: LocalBackup) {
 }
 
 async function saveBackup(b: LocalBackup) {
-  // 离线批次逐项转进待合并表时的那一下整批回退:内容在待合并表里,这份只是安全网,不弹「已丢弃」(在线页面留在本页内存里)
+  // The whole-batch rollback when an offline batch is moved item by item into the pending merge table: the content is in the pending merge table and this copy is only a safety net, so no "Discarded" notice (on the online page it stays in this page's memory)
   const quiet = b.kind === "offline-discard" && transferringBatch;
   if (quiet) {
     if (ONLINE) { onlineBackupStore.save(b); return; }
@@ -548,12 +576,12 @@ async function saveBackup(b: LocalBackup) {
     const r = await fetch("/api/project-backups", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!r.ok) throw new Error(String(r.status));
   } catch (e) {
-    // 存不下来也要让用户知道:不能让他以为备份在那儿(转表时的安全网除外:内容在待合并表里)
+    // Even if it can't be saved, the user must know: don't let them think the backup is there (except the safety net when moving to the table: the content is in the pending merge table)
     if (!quiet) pushToast(tr("The local backup was not saved ({0}); the overwritten version cannot be recovered.", (e as Error).message), "warn", 10_000);
   }
 }
 
-/* ---------------- 远端改动描边 ---------------- */
+/* ---------------- Outline for remote changes ---------------- */
 
 const FLASH_MS = 1500;
 
@@ -568,7 +596,7 @@ function flashEntities(entities: string[]) {
     if (track) for (const c of project.tracks.find((t) => t.id === track[1])?.clips ?? []) ids.add(c.id);
   }
   if (!ids.size) return;
-  // 等这次改动渲染出来再找元素(新插进来的片段这时才有 DOM)。用计时器不用 rAF:页面在后台时 rAF 不跑
+  // Wait until this change has rendered before looking up the element (a newly inserted clip only has its DOM then). Use a timer, not rAF: rAF doesn't run while the page is in the background
   setTimeout(() => {
     for (const id of ids) {
       for (const el of document.querySelectorAll<HTMLElement>(`[data-clip-id="${CSS.escape(id)}"]`)) {
@@ -586,7 +614,7 @@ function flashEntities(entities: string[]) {
   }, 30);
 }
 
-/* ---------------- 绑定 ---------------- */
+/* ---------------- Binding ---------------- */
 
 function onNotice(n: SyncNotice) {
   switch (n.kind) {
@@ -594,8 +622,8 @@ function onNotice(n: SyncNotice) {
     case "revert-remote": {
       const r = n.result;
       if (!r.skipped.length && !r.failed.length) return;
-      // 别人在它基础上又改过的:按修改项细分,没被改过的直接撤,真冲突的进「冲突合并」窗口(2026-10-18 用户定);
-      // 提示条只留「已不存在、没法退回」的
+      // Changed further by others on top of it: split by changed item; items nobody changed are undone directly, real conflicts go to the "Merge conflicts" window (user decision, 2026-10-18);
+      // the notice bar keeps only those that "no longer exist and can't be rolled back"
       const routed = r.skipped.length > 0 && r.conflict !== undefined && routeUndoConflict(r.conflict);
       const shown = routed ? { ...r, skipped: [] } : r;
       if (!shown.skipped.length && !shown.failed.length) return;
@@ -603,7 +631,7 @@ function onNotice(n: SyncNotice) {
       return;
     }
     case "overwritten": {
-      // 文案按交互稿第 5 节,「找回入口待裁定」换成裁定定下的入口(c65-design.md 第 8 节)
+      // Wording follows section 5 of the interaction draft, with "recovery entry pending ruling" replaced by the entry the ruling settled on (c65-design.md section 8)
       const who = writerLabel(n.by, me(), displayNames());
       pushToast(tr("Your recent edits were overwritten by {0}. Your edited version has been saved to the draft backups (find it under the \"Project\" menu → \"Local backups…\").", who), "warn", 10_000);
       return;
@@ -625,7 +653,7 @@ function onNotice(n: SyncNotice) {
 function refreshStatus() {
   if (!cur) return;
   const ds = cur.link.ds;
-  // 离线批次被拒、停下:逐项转进待合并表(转不了才退回整份处理的离线对话框)
+  // Offline batch rejected and stopped: move it item by item into the pending merge table (only if that fails, fall back to the offline dialog that handles the whole batch)
   if (ds.status === "paused" && mergeTable && !transferringBatch) transferOffline(cur.link);
   const status = ds.status;
   const paused = ds.pausedInfo;
@@ -635,14 +663,15 @@ function refreshStatus() {
 }
 
 /*
- * 在线页面:未确认的提交条数与恢复阶段(C10 契约第 10 节)。DocSync 不为「未确认条数变了」发事件,
- * 这里每 500 ms 看一眼(只在变了时才更新界面状态);状态变化时 `refreshStatus` 也顺带看一次。
+ * Online page: the count of unconfirmed commits and the recovery phase (C10 contract section 10). DocSync emits
+ * no event for "the unconfirmed count changed", so we check every 500 ms here (updating the UI state only when
+ * it changed); `refreshStatus` also checks once on the way when the state changes.
  */
 export const ONLINE_TICK_MS = 500;
 let recoveryState: { phase: "recovering" | "recovered" | null; wasOffline: boolean; hadUnsent: boolean } = { phase: null, wasOffline: false, hadUnsent: false };
-/** 这一轮的离线改动存不住(浏览器给不了存储,或写失败):气泡只在这两种时候说,口令房间那种「本来就不落盘」不说 */
+/** Offline changes of this round can't be kept (the browser can't provide storage, or the write failed): the bubble speaks only in these two cases, not for the passphrase room, which "never persists to disk anyway" */
 let journalUnstorable = false;
-/** 那句气泡这一轮说过了没有(常驻提示一直挂着,气泡出一次就够) */
+/** Whether that bubble has already been shown this round (the persistent notice stays up, so showing the bubble once is enough) */
 let noStoreToasted = false;
 let recoveredTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -661,21 +690,22 @@ function tickOnline() {
     }, RECOVERED_SHOW_MS);
   }
   if (unconfirmed !== view.unconfirmed || recoveryState.phase !== view.recovery) patch({ unconfirmed, recovery: recoveryState.phase });
-  // 存不住、又真攒下了没提交的改动:弹一次气泡说清为什么(常驻提示只说「在哪」)
+  // Can't be kept, and there really are uncommitted changes piled up: show a bubble once to explain why (the persistent notice only says "where")
   if (journalUnstorable && !noStoreToasted && unsentAtRisk(ds.status, unconfirmed, view.offlineStore)) {
     noStoreToasted = true;
     pushToast(UNSENT_NO_STORE_TOAST, "warn", 12_000);
   }
 }
 
-/* ---------------- Agent 服务端的项目副本:绑定与解绑在 `agentSideBinding.ts`,这里只答它要的票据 ---------------- */
+/* ---------------- Project copy on the Agent server: binding and unbinding are in `agentSideBinding.ts`, here we only answer the ticket it needs ---------------- */
 
 /**
- * SSE 里的 `agent.ticket`:Agent 服务端要一张 agent 角色的连接票据(k:'conn', r:'agent', c:对话号)。
- * 在本页面这条共享项目的连接上签(身份与本页面相同),交回 POST /api/agent/ticket。
+ * `agent.ticket` in SSE: the Agent server wants a connection ticket with the agent role (k:'conn', r:'agent',
+ * c: chat id). Signed on this page's connection to this shared project (same identity as this page), and handed
+ * back to POST /api/agent/ticket.
  */
 export async function issueAgentTicket(req: { reqId?: unknown; projectId?: unknown; conversation?: unknown }): Promise<void> {
-  if (ONLINE) return; // Agent 服务端在编辑器进程里,在线页面没有
+  if (ONLINE) return; // The Agent server lives in the editor process, which the online page doesn't have
   const reqId = typeof req.reqId === "string" ? req.reqId : null;
   if (!reqId) return;
   let reply: Record<string, unknown>;
@@ -691,8 +721,9 @@ export async function issueAgentTicket(req: { reqId?: unknown; projectId?: unkno
 }
 
 /**
- * 卡片源码同步(C6.6 第 5 节,`cardSync.ts`):编辑器进程要 page 角色的连接票据时在本页面的共享项目连接上签;
- * 提示走同一套气泡,写入身份按成员名单显示。
+ * Card source sync (C6.6 section 5, `cardSync.ts`): when the editor process wants a connection ticket with the
+ * page role, it is signed on this page's shared project connection; notices go through the same bubbles, and
+ * the writer identity is shown per the member list.
  */
 const cardSyncHooks = {
   ticket: async (projectId: string): Promise<string> => {
@@ -704,7 +735,7 @@ const cardSyncHooks = {
   toast: (text: string, tone: Toast["tone"], ms?: number) => pushToast(text, tone, ms),
   who: (actor: Record<string, unknown> | null | undefined) =>
     actor ? writerLabel({ actor, session: typeof actor.session === "string" ? actor.session : undefined }, me(), displayNames()) : tr("Someone else"),
-  // 断网期间改过、云端也被别人改过的卡:一张卡一条进「冲突合并」(本机已换成云端的版本,我的版本在表里,另有备份)
+  // A card changed during the disconnection and also changed in the cloud by someone else: one entry per card goes into "Merge conflicts" (this machine has switched to the cloud version, my version is in the table, and there is also a backup)
   conflict: (c: { key: string; mine: string; cloud: string; rev: number }) => {
     const table = mergeTable;
     if (!table) return false;
@@ -715,8 +746,10 @@ const cardSyncHooks = {
 };
 
 /**
- * 桌面应用自动成为共享项目的渲染节点(`renderNodeHandoff.ts`):预渲染进程建新会话时要的 render 连接票据,
- * 在本页面的共享项目连接上签(`owner: { kind: 'user' }`:这是用户自己的桌面节点,能认领本项目任何成员的任务)。
+ * The desktop app automatically becomes a render node of the shared project (`renderNodeHandoff.ts`): the render
+ * connection ticket the prerender process needs when it creates a new session is signed on this page's shared
+ * project connection (`owner: { kind: 'user' }`: this is the user's own desktop node, and it can claim tasks of
+ * any member of this project).
  */
 const renderNodeHooks = {
   ticket: async (projectId: string): Promise<string> => {
@@ -728,10 +761,14 @@ const renderNodeHooks = {
 };
 
 /**
- * 云端 Agent 的身份(契约 `docs/plan/cloud-agent-contract.md` 第 4.2 节):委托票据与对话委托都在本页面这条共享项目的连接上要
- * (`auth.ticket { kind: 'delegate', audience: 'agent', conversation? }`),身份与权限就是本页面这位成员的。在线页面与桌面版同一条路。
- * 票据不缓存(委托票据只活 2 分钟,每个请求现取;对话委托每发一条消息取一张新的)、不进日志。
- * 连接换了(离开项目、换项目)这份身份就作废:之后再要直接拒,不会拿到别的项目的票据。
+ * Identity of the Cloud Agent (contract `docs/plan/cloud-agent-contract.md` section 4.2): the delegation ticket
+ * and the chat delegation are both requested on this page's connection to the shared project
+ * (`auth.ticket { kind: 'delegate', audience: 'agent', conversation? }`), and the identity and permissions are
+ * those of this page's member. Same path for the online page and the desktop app.
+ * Tickets are not cached (a delegation ticket lives only 2 minutes and is fetched fresh per request; chat
+ * delegation fetches a new one for every message sent) and are not logged.
+ * When the connection is replaced (leaving the project, switching projects) this identity is invalidated:
+ * later requests are refused outright and never get another project's ticket.
  */
 function cloudIdentityOf(link: SyncLink): CloudIdentity {
   const ask = async (conversation?: string): Promise<string> => {
@@ -748,7 +785,7 @@ function cloudIdentityOf(link: SyncLink): CloudIdentity {
   return { getTicket: () => ask(), getGrant: (conversationId) => ask(conversationId) };
 }
 
-/** 留在页面的 Agent 工具执行前记个位置,执行后取这期间本页面发出的提交(回包里带 opIds,server/agent/agent-side.mjs 用) */
+/** Before an Agent tool that stays on the page executes, record a position; after it executes, take the commits this page issued in between (the reply carries opIds, used by server/agent/agent-side.mjs) */
 export function pageOpMark(): number | null {
   return cur ? cur.link.ds.opMark() : null;
 }
@@ -771,13 +808,13 @@ function bind(link: SyncLink, kind: "local" | "shared", docProjectId: string, ur
   const offs = [
     link.ds.on("status", () => refreshStatus()),
     link.ds.on("notice", onNotice),
-    // 卡片源码同步:项目用到的卡变了(时间轴上添了卡)再报一次(C6.6 第 5 节)
+    // Card source sync: report again when the cards the project uses change (a card was added on the timeline) (C6.6 section 5)
     subscribe(() => {
       const p = getState().project;
       if (p === seenProject) return;
       seenProject = p;
       noteProjectForCardSync(p);
-      // 自动渲染节点:项目文档的 id(层表键用它)晚到时再交一次(同一个项目只换 id,不重建)
+      // Automatic render node: hand over again when the project document's id (used by the layer table key) arrives late (the same project only changes its id, no rebuild)
       if (!account && kind === "shared" && !ONLINE_BUILD && !ONLINE) bindRenderNode({ url, projectId: docProjectId, contentId: p.id || null }, renderNodeHooks);
     }),
     link.ds.on("project", () => { patch({ rev: link.ds.rev }); }),
@@ -790,15 +827,15 @@ function bind(link: SyncLink, kind: "local" | "shared", docProjectId: string, ur
   }
   cur = { link, kind, docProjectId, url, unbind, offs };
   bindMergeTable(docProjectId, mergeUser);
-  // 账号云端项目(在线浏览器与桌面版都是):断网期间的修改落盘到浏览器本地缓存(旧办法的协作房间在桌面版另有本机恢复文件)
+  // Account cloud project (both online browser and desktop app): changes made during disconnection are written to the browser local cache (the collaboration room of the old approach additionally has a local recovery file on the desktop app)
   if (mergeUser && account) offs.push(watchBrowserJournal(link, docProjectId, mergeUser));
-  // 离线改动存在哪:账号项目落盘到浏览器本地缓存、桌面版有本机恢复文件 → 本机;在线页面的口令房间不落盘 → 只在本页。
-  // 这台浏览器连 IndexedDB 和 localStorage 都给不了(隐私模式、存储被禁)时,缓存退到内存版、写进去不报错,
-  // 那一份关页面就没 —— 一律算「只在这个页面里」,别让假的「已存在本机」把提示和离开确认都瞒过去
+  // Where offline changes are stored: an account project is written to the browser local cache, and the desktop app has a local recovery file → this machine; the online page's passphrase room is not written to disk → only this page.
+  // When this browser can provide neither IndexedDB nor localStorage (private mode, storage disabled), the cache falls back to an in-memory version that raises no error on write,
+  // and that copy is gone when the page closes: always count it as "only in this page", so a false "stored on this machine" doesn't hide it from both the notice and the leave confirmation
   journalUnstorable = !defaultStoreDurable();
   noStoreToasted = false;
   patch({ offlineStore: offlineStoreOf({ durable: !journalUnstorable, account, online: ONLINE }) });
-  // 云端 Agent 的身份跟着共享项目的连接走:接上就绪,回本机空间撤掉(界面据此重取一次 info 与对话列表)
+  // The Cloud Agent's identity follows the shared project's connection: ready once connected, revoked on returning to the local space (the UI re-fetches info and the chat list accordingly)
   setCloudIdentity(kind === "shared" && !account ? cloudIdentityOf(link) : null);
   setCloudConsentSource(kind === "shared" && accountClient ? { client: accountClient, accountId: accountClient.principal?.id ?? "" } : null);
   if (kind !== "shared") clearHostedAgent();
@@ -810,31 +847,31 @@ function bind(link: SyncLink, kind: "local" | "shared", docProjectId: string, ur
       checkHost(); const timer = setInterval(checkHost, 2000); offs.push(() => clearInterval(timer));
     }
   }
-  // 在场状态(A3 第二阶段):这个页面「正在编辑」的片段经这条连接发布,别的成员那边 Agent 的范围经它收
+  // Presence (A3 phase 2): the clips this page is "editing" are published over this connection, and the Agent's scope on other members' side is received through it
   setPresenceLink(link, docProjectId, me().userId ?? "", account);
   patch({ active: true, kind, rev: link.ds.rev, members: kind === "local" ? [] : view.members, hosted: kind === "local" ? null : view.hosted, notice: null });
   refreshStatus();
-  // Agent 服务端与卡片源码同步都在编辑器进程里;在线页面没有编辑器进程(C10a 第 2 节),不去绑(在线构建里连同 /api/agent/bind、/api/cards/sync/bind 剪掉)
+  // The Agent server and card source sync both live in the editor process; the online page has no editor process (C10a section 2), so don't bind (in the online build /api/agent/bind and /api/cards/sync/bind are stripped out)
   if (!account && !ONLINE_BUILD && !ONLINE) {
     bindAgentSide(kind, docProjectId, url);
     bindCardSync({ kind, projectId: docProjectId, url }, getState().project, cardSyncHooks);
     /*
-     * 桌面应用自动成为共享项目的渲染节点(语义 product/platforms.md「渲染节点」;`renderNodeHandoff.ts`):
-     * 离开共享项目(回本机空间、取消协作、换开别的项目)撤掉;接上共享项目把共享配置交给预渲染进程。
-     * 页面刚打开时先接本机空间(prev 为空)不算离开:别的标签页或上一次打开时交过的配置不动。
+     * The desktop app automatically becomes a render node of the shared project (semantics product/platforms.md "render node"; `renderNodeHandoff.ts`):
+     * revoked on leaving the shared project (back to the local space, cancelling collaboration, switching to open another project); on connecting to a shared project the shared config is handed to the prerender process.
+     * Connecting to the local space when the page has just opened (prev is empty) doesn't count as leaving: the config handed over by another tab or the last open stays untouched.
      */
     if (prev?.kind === "shared" && (kind !== "shared" || prev.docProjectId !== docProjectId)) unbindRenderNode(prev.docProjectId, kind === "shared" ? "switched" : "left");
     if (kind === "shared") bindRenderNode({ url, projectId: docProjectId, contentId: getState().project.id || null }, renderNodeHooks);
   }
-  // 账号云端项目(桌面版):解掉 Agent 服务端留着的旧绑定,卡片源码同步凭账号办法的票据接上(渲染节点这次不接)
+  // Account cloud project (desktop app): release the old binding left on the Agent server, and connect card source sync with the ticket from the account approach (the render node doesn't connect this time)
   if (accountClient && !ONLINE_BUILD && !ONLINE) bindAccountEditorSide(link, docProjectId, url, accountClient);
   if (prev && prev.link !== link) retire(prev.link);
 }
 
 /**
- * 桌面版进账号云端项目时编辑器进程那一侧要做的事(渲染节点不在内):
- * - Agent 服务端:账号项目里不绑(本机 Agent 走「页面代做」),但上一个项目留在服务端的绑定要解掉(`agentSideBinding.ts`);
- * - 卡片源码同步:编辑器进程要票据时,页面凭登录另取一份项目会话,交出其中的连接票据(`accountCardSync.ts`)。
+ * What the editor process side must do when the desktop app enters an account cloud project (render node not included):
+ * - Agent server: don't bind in an account project (the local Agent goes through "page does it on its behalf"), but the binding the previous project left on the server must be released (`agentSideBinding.ts`);
+ * - Card source sync: when the editor process wants a ticket, the page fetches another project session with the login and hands over the connection ticket in it (`accountCardSync.ts`).
  */
 function bindAccountEditorSide(link: SyncLink, docProjectId: string, url: string, client: CloudAccountClient) {
   releaseAgentSide();
@@ -849,7 +886,7 @@ function bindAccountEditorSide(link: SyncLink, docProjectId: string, url: string
   });
 }
 
-/** 在线页面离开共享项目:没有本机文档服务可回,解开当前连接,store 回到快照栈(C10a) */
+/** Online page leaves a shared project: there is no local document service to return to, so release the current connection and the store goes back to the snapshot stack (C10a) */
 function detach() {
   const prev = cur;
   cur = null;
@@ -866,7 +903,7 @@ function detach() {
     retire(prev.link);
     if (prev.kind === "shared" && !ONLINE_BUILD && !ONLINE) unbindRenderNode(prev.docProjectId, "left");
     if (!ONLINE_BUILD && !ONLINE) {
-      // 账号项目进来时已经解过 Agent 服务端的绑定,这里只解卡片源码同步
+      // When entering an account project the Agent server binding was already released, so here only card source sync is released
       if (!view.shared?.accountId) releaseAgentSide();
       detachCardSync();
     }
@@ -874,7 +911,7 @@ function detach() {
   patch({ active: false, kind: "off", status: "idle", paused: null, offlineOpen: false, notice: null, unconfirmed: 0, recovery: null, hostRegistration: null });
 }
 
-/** 换下来的连接:等它手里没确认的提交落地(最多 5 s)再关 */
+/** The replaced connection: wait until its unconfirmed commits land (at most 5 s), then close it */
 function retire(link: SyncLink) {
   link.ds
     .whenSettled({ timeoutMs: 5000 })
@@ -891,16 +928,16 @@ function newLocalLink(docProjectId: string, initial: Project): SyncLink {
     initial,
     saveBackup: (b) => void saveBackup(b),
     onMessage: onSideMessage,
-    // 连上后补一次最近的工具调用记录(AI 栏的操作记录;文档服务按项目在内存里留最近 500 条)
+    // After connecting, backfill the most recent tool call records (the AI panel's action log; the document service keeps the latest 500 per project in memory)
     onOpen: () => void link.send({ type: "events.list", projectId: docProjectId }),
   });
   return link;
 }
 
-/** 切到本机空间里的这个项目;`load` 为真时把这份内容以根替换写进去(文件内容为准) */
+/** Switch to this project in the local space; when `load` is true, write this content in as a root replacement (the file content wins) */
 function switchToLocal(project: Project, { load }: { load: boolean }): Project {
   if (ONLINE) {
-    // 在线页面没有本机空间:离开共享项目就是断开(C10a 第 2 节)
+    // The online page has no local space: leaving a shared project means disconnecting (C10a section 2)
     detach();
     patch({ shared: null, members: [], hosted: null, blocked: null });
     disconnectSharedAssets();
@@ -911,13 +948,13 @@ function switchToLocal(project: Project, { load }: { load: boolean }): Project {
   if (load) link.ds.load(project);
   bind(link, "local", id, localWsUrl());
   patch({ shared: null, members: [], hosted: null, blocked: null });
-  // C6.6:回到本机空间 = 回到本地素材服务
+  // C6.6: returning to the local space = returning to the local asset service
   disconnectSharedAssets();
   link.start();
   return link.ds.project;
 }
 
-/** store 的载入(loadProject)交到这里:同一个本机项目是根替换,别的项目换连接 */
+/** The store's load (loadProject) is handed over here: the same local project is a root replace, any other project switches the connection */
 function onLoad(project: Project): Project {
   const previousAssociation = currentAssociation();
   identitySave = null; lastIdentity = null;
@@ -932,15 +969,15 @@ function onLoad(project: Project): Project {
     setCloudAssociation(cloudAssoc);
     void handleCloudAssociationReopen(project, cloudAssoc, {
       toast: pushToast,
-      // 「不是成员」那条带「发送申请」的提示,发成了要关掉(recoveryAssociation.ts 的 notMemberToast)
+      // The "not a member" prompt with the "Send request" button was sent as one that must be dismissed (notMemberToast in recoveryAssociation.ts)
       dismissToast,
       openAsLocal: (p) => { switchToLocal(p, { load: false }); },
       enterProject: async (opts) => {
         await enterAccountProject(opts);
         const ds = cur?.link.ds;
         if (!ds || !ds.confirmedProject) return;
-        // 固定非本机快照(`cloudSnapshot.ts`):文件里带着另存时的基准,就拿它和文件内容逐项比 ——
-        // 云端没人动过直接提交;被别人改过进「冲突合并」,别人后来的改动不会被当成「我撤销的」
+        // Pinned non-local snapshot (`cloudSnapshot.ts`): the file carries the baseline from when it was saved as, so compare it with the file content item by item:
+        // if nobody touched the cloud, commit directly; if others changed it, go to "Conflict merge", and later changes by others are not treated as "undone by me"
         const plan = reopenPlan(cloudAssoc, project, ds.rev, { batch: newBatchId(), at: Date.now() });
         if (plan.kind === "none") return;
         if (plan.kind === "table") {
@@ -953,7 +990,7 @@ function onLoad(project: Project): Project {
           ds.mergeOffline(project, ds.rev);
           return;
         }
-        // 老文件没有基准:照旧以连回时的云端为基准合上去(有冲突照离线批次办)
+        // Old file without a baseline: merge in against the cloud state at reconnect time as before (conflicts are handled like an offline batch)
         if (JSON.stringify(project) !== JSON.stringify(ds.confirmedProject)) ds.mergeOffline(project, cloudAssoc.savedRev);
       },
     });
@@ -973,16 +1010,20 @@ function onLoad(project: Project): Project {
   return switchToLocal(project, { load: true });
 }
 
-/* ---------------- 刷新之后回到共享项目 ---------------- */
+/* ---------------- Returning to the shared project after a refresh ---------------- */
 
 /**
- * 同一个标签页刷新(整页重载)之后,回到刷新前打开的共享项目(C10a r2;语义没写到,按「对用户最小意外」做,待定级)。
+ * After the same browser tab refreshes (full page reload), return to the shared project that was open before the refresh
+ * (C10a r2; the semantics did not cover it, so follow "least surprise for the user", tier to be decided).
  *
- * - 存在 `sessionStorage`:只属于这个标签页,关掉标签页就没了;
- * - 存进入用的候选(项目号、地址、名字、进入方式)、身份与用户名,以及派生出的 `K`
- *   (`client.buildAuthProtocols` 的 `onKey`,「缓存 K,不缓存口令」);不存口令,也不存邀请码;
- * - 主动离开(取消多用户协作、回开始页)、被踢、被移出、项目被删、换开别的项目时清掉;
- * - 连不上(离线、限速、设备信息没取到)时留着,下次刷新再试;凭证不对、项目没了、被踢过就清掉。
+ * - Stored in `sessionStorage`: belongs to this tab only and is gone once the tab is closed;
+ * - Stores the candidate used to enter (project number, address, name, entry type), the identity and user name,
+ *   and the derived `K` (`onKey` of `client.buildAuthProtocols`, "cache K, not the passphrase");
+ *   the passphrase and the invite code are not stored;
+ * - Cleared on explicit leave (cancel multi-user collaboration, back to the start page), kick, removal,
+ *   project deletion, and opening a different project;
+ * - When it cannot connect (offline, rate-limited, device info not fetched), keep it and retry on the next refresh;
+ *   clear it when the credentials are wrong, the project is gone, or the user was kicked.
  */
 const SHARED_RESUME_KEY = "pc.shared.resume";
 
@@ -1012,21 +1053,23 @@ function rememberSharedResume(r: SharedResume): void {
   const { access: _access, routeProtocol: _route, originalHost: _host, ...candidate } = r.candidate;
   // Desktop pointers contain no K. A valid legacy K is migrated only after trusted room matching.
   const saved = ONLINE ? { ...r, candidate } : { candidate, as: r.as, username: r.username, key: "device-vault" };
-  try { sessionStorage.setItem(SHARED_RESUME_KEY, JSON.stringify(saved)); } catch { /* 存不了:刷新后回开始页 */ }
+  try { sessionStorage.setItem(SHARED_RESUME_KEY, JSON.stringify(saved)); } catch { /* Cannot be stored: back to the start page after a refresh */ }
 }
 
 function clearSharedResume(): void {
-  try { sessionStorage.removeItem(SHARED_RESUME_KEY); } catch { /* 同上 */ }
+  try { sessionStorage.removeItem(SHARED_RESUME_KEY); } catch { /* Same as above */ }
 }
 
-/** 这个标签页刷新前开着共享项目(还没回去) */
+/** This tab had a shared project open before the refresh (not yet returned to) */
 export function hasSharedResume(): boolean {
   return readSharedResume() !== null;
 }
 
 /**
- * 回到刷新前打开的共享项目。已经在这个项目里回 true;没有记录回 false。
- * 调用方先把 store 换成一份空项目(同「加入别人的项目」),内容以文档服务为准。
+ * Return to the shared project that was open before the refresh. Returns true if already in this project;
+ * returns false if there is no record.
+ * The caller first swaps the store for an empty project (same as "join someone else's project"); the content
+ * is whatever the document service says.
  */
 export async function resumeShared(): Promise<boolean> {
   const r = readSharedResume();
@@ -1041,7 +1084,7 @@ export async function resumeShared(): Promise<boolean> {
   return true;
 }
 
-/** 回开始页(顶栏「回到首页」)之后再刷新,留在开始页:忘掉这条记录 */
+/** After going back to the start page (top bar "Back to home") and then refreshing, stay on the start page: forget this record */
 export function forgetSharedResume(): void {
   recoveryCoordinator.cancel();
   cancelHostTask(currentAssociation());
@@ -1051,7 +1094,7 @@ export function forgetSharedResume(): void {
   clearSharedResume();
 }
 
-/* ---------------- 其余消息:成员、事件、通知 ---------------- */
+/* ---------------- Other messages: members, events, notifications ---------------- */
 
 const agentOps = new Map<string, AgentOp>();
 
@@ -1059,12 +1102,12 @@ function asOps(v: unknown): PathOp[] | undefined {
   return Array.isArray(v) && v.length ? (v as PathOp[]) : undefined;
 }
 
-/** 工具调用记录:eventId → 记录(插入序,超过上限丢最早的) */
+/** Tool call records: eventId → record (insertion order, the oldest is dropped past the limit) */
 const eventRecords = new Map<string, EventRecord>();
 const EVENT_RECORDS_KEEP = 1000;
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
-/** 按 eventId 更新一条记录(创建、完成、文字、events.list 的条目都走这里);回合成后的记录 */
+/** Update one record by eventId (creation, completion, text and events.list entries all go through here); the record after merging */
 function upsertRecord(e: Record<string, unknown>): EventRecord | null {
   const eventId = str(e.eventId);
   if (!eventId) return null;
@@ -1093,12 +1136,12 @@ function upsertRecord(e: Record<string, unknown>): EventRecord | null {
   return rec;
 }
 
-/** AI 栏的操作记录(最新的在前) */
+/** Operation log of the AI panel (newest first) */
 export function eventRecordList(): EventRecord[] {
   return [...eventRecords.values()].reverse();
 }
 
-/** 按 eventId 取 AI 栏「撤销这步」要的那条写入记录 */
+/** Get, by eventId, the write record that the AI panel's "Undo this step" needs */
 export function agentOpOfEvent(eventId: string): AgentOp | null {
   return agentOps.get(eventId) ?? null;
 }
@@ -1127,8 +1170,9 @@ function rememberEvent(e: Record<string, unknown>) {
 }
 
 /**
- * 渲染任务队列推给本页(作为发布方)的完成通知(C10 契约第 7 节:页面订阅 `task.done`,并入层表与就绪)。
- * 发布方自动订阅自己发布的 plan 与它切出的细任务;这里只转,不解释。
+ * Completion notifications that the render queue pushes to this page (as publisher) (C10 contract section 7: the page
+ * subscribes to `task.done`, merging it into the layer table and readiness).
+ * The publisher automatically subscribes to the plan it published and the subtasks split from it; here we only forward, without interpreting.
  */
 const queueEventListeners = new Set<(msg: AnyMsg) => void>();
 export function subscribeQueueEvents(cb: (msg: AnyMsg) => void): () => void {
@@ -1138,7 +1182,7 @@ export function subscribeQueueEvents(cb: (msg: AnyMsg) => void): () => void {
 
 function onSideMessage(msg: AnyMsg) {
   if (msg.type === "task.done" || msg.type === "task.failed") {
-    for (const l of [...queueEventListeners]) { try { l(msg); } catch { /* 订阅方坏了不影响别人 */ } }
+    for (const l of [...queueEventListeners]) { try { l(msg); } catch { /* A broken subscriber must not affect others */ } }
     return;
   }
   switch (msg.type) {
@@ -1147,14 +1191,14 @@ function onSideMessage(msg: AnyMsg) {
       return;
     case "shared.members.list":
       patch({ members: Array.isArray(msg.devices) ? (msg.devices as MemberRow[]) : [], hosted: parseHosted(msg.hosted) });
-      // 托管端有没有云端 Agent、开没开、在哪(顶层 `hosted.agent`,比界面状态多一个 `url`;放本机的项目没有这个字段)
+      // Whether the hosted side has a Cloud Agent, whether it is on, and where it is (top-level `hosted.agent`, one more `url` than the UI state; projects kept locally have no such field)
       setHostedAgent(view.shared?.projectId ?? currentDocProjectId(), (msg.hosted as { agent?: unknown } | undefined)?.agent ?? null);
       return;
     case "shared.notice":
       if (msg.event === "password-changed") pushToast(tr("The project password has been changed. Your current connection is not affected, but you will need the new password next time you enter."), "info", 8000);
-      // 改密码后选了退出、文档服务撤回了旧设备在那段时间里的修改:此刻在线的成员各一条(不在线的不补)
+      // After the password change the user chose to sign out, and the document service revoked the old device's changes made in that period: one entry per member currently online (offline members are not backfilled)
       if (msg.event === "content-rolled-back") pushToast(rolledBackText(msg.name), "info", 8000);
-      // 创建者开关了托管方的服务:界面马上跟着变(紧接着还有一条刷新后的成员列表,以它为准)
+      // The creator toggled the hosted side's service: the UI follows immediately (a refreshed member list follows right after, and that one takes precedence)
       if (msg.event === "hosted-service-changed") {
         const next = applyHostedChange(view.hosted, msg.service, msg.enabled);
         if (next !== view.hosted) {
@@ -1162,10 +1206,10 @@ function onSideMessage(msg: AnyMsg) {
           const text = HOSTED_SERVICE_TEXT[msg.service as HostedServiceName]?.changed(msg.enabled === true);
           if (text) pushToast(text, "info", 6000);
         }
-        // AI 栏里「云端」一项随之置灰或恢复
+        // The "cloud" entry in the AI panel is greyed out or restored accordingly
         if (msg.service === "agent" && typeof msg.enabled === "boolean") setHostedAgentEnabled(view.shared?.projectId ?? currentDocProjectId(), msg.enabled);
       }
-      // 创建者改了托管方服务下面的子选项(渲染节点的「生成轨道流」):同上,界面马上跟着变,只在关闭时给别的成员一条提示
+      // The creator changed a sub-option under the hosted side's service (the render node's "Generate track stream"): same as above, the UI follows immediately, and other members get a notice only when it is turned off
       if (msg.event === "hosted-option-changed") {
         const next = applyHostedOptionChange(view.hosted, msg.service, msg.option, msg.enabled);
         if (next !== view.hosted) {
@@ -1187,7 +1231,7 @@ function onSideMessage(msg: AnyMsg) {
       receivePresence(msg as Record<string, unknown>);
       return;
     case "merge.state":
-      // 同一用户在别的设备、别的页面改了待合并表
+      // The same user changed the pending merge table on another device or another page
       mergeTable?.receive(msg as { projectId?: unknown; things?: unknown; version?: unknown });
       return;
     default:
@@ -1195,35 +1239,35 @@ function onSideMessage(msg: AnyMsg) {
   }
 }
 
-/* ---------------- 验收用的钩子(只在开发模式) ---------------- */
+/* ---------------- Hooks for acceptance checks (dev mode only) ---------------- */
 
 if (typeof window !== "undefined" && import.meta.env?.DEV) {
   (window as unknown as { __pcSyncTest?: unknown }).__pcSyncTest = {
-    /** 断网 ms 毫秒(离线对话框的验收) */
+    /** Cut the network for ms milliseconds (acceptance check of the offline dialog) */
     drop: (ms: number) => cur?.link.dropFor(ms),
-    /** 只断一次传输(会话在保留期内接续;HT-a 的页面验收) */
+    /** Drop the transport just once (the session resumes within the retention period; page acceptance check for HT-a) */
     cut: () => cur?.link.cutTransport() ?? false,
-    /** 当前会话的诊断:实际用的传输、接续次数、未确认字节、是否对着没有会话层的旧服务端 */
+    /** Diagnostics of the current session: the transport actually used, resume count, unacknowledged bytes, and whether it faces an old server without a session layer */
     link: () => cur?.link.stats() ?? null,
-    /** 交一条文档服务消息给页面(AI 栏「撤销这一步」:事件里的 opId 与 inverse 眼下由 c65-agent 那一路补) */
+    /** Hand one document service message to the page (AI panel "Undo this step": opId and inverse in the event are currently filled in by the c65-agent path) */
     inject: (msg: AnyMsg) => onSideMessage(msg),
     view: () => view,
     docProjectId: () => currentDocProjectId(),
     rev: () => cur?.link.ds.rev ?? null,
     agentOp: (callId: string) => agentOpFor(callId),
-    /** 账号云端项目:这条连接能用到什么时候、换过几次会话(`accountLinkLife.ts`) */
+    /** Account cloud project: how long this connection stays usable and how many times the session was replaced (`accountLinkLife.ts`) */
     accountLife: () => cur?.accountLife?.() ?? null,
     events: () => eventRecordList(),
-    /** 交一条卡片源码同步的提示给页面(和编辑器进程经 HMR 送来的同一条路;冲突合并里卡片那一行的验收用) */
+    /** Hand one card source sync notice to the page (the same path the editor process uses via HMR; for the acceptance check of the card row in conflict merge) */
     cardNotice: (n: Record<string, unknown>) => receiveCardSyncNotice(n),
-    /** 待合并表现在的样子 */
+    /** The current state of the pending merge table */
     mergeThings: () => view.merge.things,
   };
 }
 
-/* ---------------- 启动 ---------------- */
+/* ---------------- Startup ---------------- */
 
-/** 编辑器挂上时调一次(幂等)。连不上本机文档服务就什么都不接 */
+/** Called once when the editor mounts (idempotent). If the local document service is unreachable, nothing is connected */
 export async function startSync(): Promise<void> {
   if (started) return;
   started = true;
@@ -1232,9 +1276,9 @@ export async function startSync(): Promise<void> {
   const device = view.device ?? (await loadDevice());
   if (!device) return;
   patch({ device });
-  // 在线页面没有本机文档服务:只在从开始页进了共享项目之后才接(C10a 第 2 节)
+  // The online page has no local document service: connect only after entering a shared project from the start page (C10a section 2)
   if (ONLINE) return;
-  // 开始页上已经进了共享项目(「加入别人的项目」,C10a 第 4 节):不换回本机空间
+  // A shared project was already entered on the start page ("Join someone else's project", C10a section 4): do not switch back to the local space
   if (cur) return;
   const association = currentAssociation();
   if (association) { recoveryCoordinator.start(association, getState().project.id); return; }
@@ -1248,10 +1292,10 @@ export async function startSync(): Promise<void> {
   switchToLocal(getState().project, { load: true });
 }
 
-/** `?join=` 打开的页面:内容以文档服务为准,演示卡之类的开场填充不要做 */
+/** Page opened via `?join=`: content is whatever the document service says, so skip opening fillers such as demo cards */
 export function isJoinPage(): boolean {
-  // C10a:从开始页「加入别人的项目」进来的(已经连着共享项目),以及在线页面(只能从加入进编辑器),
-  // 内容同样以文档服务为准:编辑器挂上时不塞演示卡,不然每个加入的人都往大家的项目里加一遍
+  // C10a: those who come in from the start page via "Join someone else's project" (already connected to a shared project), and the online page (which can only enter the editor via join),
+  // likewise take content from the document service: do not insert demo cards when the editor mounts, otherwise every joiner would add them to everyone's project again
   if (ONLINE || currentAssociation() || cur?.kind === "shared" || hasSharedResume()) return true;
   try {
     return new URLSearchParams(location.search).has("join");
@@ -1260,9 +1304,9 @@ export function isJoinPage(): boolean {
   }
 }
 
-/* ---------------- 保存 ---------------- */
+/* ---------------- Save ---------------- */
 
-/** `.proc` 只在所有本地修改都拿到确认之后写(语义「项目文件」);没接文档服务时直接放行 */
+/** `.proc` is written only after all local changes are acknowledged (semantics "project file"); passes straight through when no document service is connected */
 export async function whenSaved(timeoutMs = 10_000): Promise<void> {
   if (identitySave) { try { await identitySave; } catch { if (!lastIdentity) throw new Error(tr("Collaboration identity not saved")); identitySave = saveRecoveryIdentity(lastIdentity.descriptor, lastIdentity.record); await identitySave; } }
   if (currentAssociation() && !cur && view.reopenState !== "unsupported") throw new Error(tr("The collaboration identity has not been restored yet; wait for the host or re-authenticate before saving. The file content has been kept."));
@@ -1272,7 +1316,7 @@ export async function whenSaved(timeoutMs = 10_000): Promise<void> {
   if (descriptor && !ONLINE_BUILD && !ONLINE) { persistJournal(cur.link.ds, descriptor, getState().project.id ?? ""); await journalWrite; }
 }
 
-/* ---------------- 离线 ---------------- */
+/* ---------------- Offline ---------------- */
 
 export function setOfflineOpen(open: boolean) {
   patch({ offlineOpen: open });
@@ -1291,16 +1335,18 @@ export function discardOffline() {
 }
 
 
-/* ---------------- 冲突合并:待合并表 ---------------- */
+/* ---------------- Conflict merge: pending merge table ---------------- */
 
 /**
- * 当前项目里这位用户的待合并表(`mergeTable.ts`):连上文档服务以它为准,断网时用本机暂存的副本。
- * 用户按「项目 × 用户」:账号项目 `account:<号>`,口令项目 `user:<名>`,本机空间 `local`(与文档服务按连接身份取的同一口径)。
+ * This user's pending merge table in the current project (`mergeTable.ts`): when connected to the document service it
+ * follows the service, and when offline it uses the copy staged on this machine.
+ * Users are keyed by "project × user": account project `account:<id>`, passphrase project `user:<name>`, local space `local`
+ * (the same scheme the document service uses when keying by connection identity).
  */
 let mergeTable: MergeTable | null = null;
-/** 待合并表现在接在哪条连接上(在线才接) */
+/** Which connection the pending merge table is currently attached to (attached only when online) */
 let mergeAttached: SyncLink | null = null;
-/** 正在把离线批次转进待合并表(那一下整批回退不弹「已丢弃」) */
+/** Currently moving the offline batch into the pending merge table (that whole-batch rollback does not show "Discarded") */
 let transferringBatch = false;
 
 function bindMergeTable(docProjectId: string | null, user: string | null) {
@@ -1308,7 +1354,7 @@ function bindMergeTable(docProjectId: string | null, user: string | null) {
   mergeTable?.attach(null);
   mergeAttached = null;
   const table: MergeTable | null = docProjectId && user ? new MergeTable({ projectId: docProjectId, user, kv: defaultStore(), onChange: (things) => {
-    // 换了项目之后旧表迟到的回调(本机暂存读得慢、旧连接的回包)不算
+    // After switching projects, late callbacks from the old table (slow local staging reads, replies from the old connection) are ignored
     if (!table || mergeTable !== table) return;
     patch({ merge: { things, version: view.merge.version + 1, blocked: table.blocked } });
   } }) : null;
@@ -1325,9 +1371,10 @@ function attachMergeChannel(link: SyncLink | null) {
 const newBatchId = () => `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 /**
- * 离线批次被拒(断网期间项目被别人改过):基准 → 我这边逐项比出待合并的东西,交给待合并表;DocSync 当场回到云端现状照常同步,
- * 离线修改只留在待合并表里(`product/document-service.md`「离线」:连上后存进该用户的待合并记录)。打开「冲突合并」窗口。
- * 同步做完再等存储:等的这一会儿里的新修改不会被那一下整批回退带走。算不出基准时退回整份处理的离线对话框。
+ * Offline batch rejected (the project was changed by others while offline): baseline → compare item by item on my side to find what is pending merge, and hand it to the pending merge table;
+ * DocSync immediately returns to the current cloud state and syncs as usual,
+ * and the offline changes remain only in the pending merge table (`product/document-service.md` "Offline": after reconnecting, save into that user's pending merge records). Opens the "Conflict merge" window.
+ * Wait for storage after the sync finishes: new changes made during that wait are not swept away by the whole-batch rollback. If the baseline cannot be computed, fall back to the offline dialog that handles the whole copy.
  */
 function transferOffline(link: SyncLink) {
   const ds = link.ds, table = mergeTable;
@@ -1341,7 +1388,7 @@ function transferOffline(link: SyncLink) {
     transferringBatch = false;
   }
   if (things.length) patch({ mergeOpen: true });
-  // 在线页面的恢复阶段:离线修改没有提交,转进了待合并表,不能说「离线时的修改已全部提交」
+  // Recovery phase of the online page: the offline changes were not committed but moved into the pending merge table, so we must not say "All changes made while offline have been committed"
   if (ONLINE) { recoveryState = { phase: null, wasOffline: false, hadUnsent: false }; patch({ recovery: null }); }
   void table.add(things).then((durable) => {
     if (!durable && table.pendingOps) pushToast(tr("Offline edits were moved into \"Conflict merge\", but this device cannot store them for now; do not close the page until the document service is reachable."), "warn", 10_000);
@@ -1350,9 +1397,9 @@ function transferOffline(link: SyncLink) {
 }
 
 /**
- * 按撤销(含 AI 栏「撤销这一步」)遇到冲突:被挡住的那几样按修改项细分(`undoConflict.ts`)。
- * 没被别人改过的直接撤(不进撤销栈);别人改过的进这位用户的待合并表(来源 `undo`),打开「冲突合并」窗口。
- * 没接上待合并表(还没连过文档服务)时回 false,退回原来的提示条。
+ * Undo (including the AI panel's "Undo this step") hit a conflict: the blocked items are broken down by changed item (`undoConflict.ts`).
+ * Those not changed by others are undone directly (not pushed onto the undo stack); those changed by others go into this user's pending merge table (source `undo`) and the "Conflict merge" window opens.
+ * Returns false when no pending merge table is attached (the document service was never connected), falling back to the original notice bar.
  */
 function routeUndoConflict(conflict: NonNullable<UndoResult["conflict"]>): boolean {
   const table = mergeTable, ds = cur?.link.ds;
@@ -1373,12 +1420,12 @@ export function setMergeOpen(open: boolean) {
   patch({ mergeOpen: open });
 }
 
-/** 合并、删除选中的结果:给窗口里显示的一句话 */
+/** Result of merging or deleting the selection: a sentence shown in the window */
 export interface MergeOutcome { ok: boolean; message: string; stale?: string[] }
 
 /**
- * 「合并」:把选中的二级项照我这边写进项目(一次普通修改,进撤销栈),写成的从待合并表里拿掉。
- * 每次都重新核对:`seen` 是窗口显示时各二级项的云端值,和现在的不一样(窗口打开后又被别人改过)的这次不并,交还给界面刷新再看。
+ * "Merge": write the selected secondary items into the project as they are on my side (one ordinary change, pushed onto the undo stack), and remove the ones written from the pending merge table.
+ * Re-checked every time: `seen` is each secondary item's cloud value when the window was shown; an item that differs from the current one (changed again by others after the window opened) is not merged this time and is handed back to the UI to refresh and review.
  */
 export function mergeSelected(sel: Selection, seen: Map<string, Box>): MergeOutcome {
   const table = mergeTable;
@@ -1392,7 +1439,7 @@ export function mergeSelected(sel: Selection, seen: Map<string, Box>): MergeOutc
     if (kept.size) chosen.set(key, kept);
   }
   const r = applyMerge(ds.project, things, chosen, { manualDuration: getState().durationManual });
-  // 卡片源码:交给编辑器进程照我这边的装回并传上去,成了再从表里拿掉(异步;结果另给一句气泡)
+  // Card source: hand it to the editor process to install as on my side and upload, then remove it from the table once done (async; the result gets its own bubble)
   if (r.external.length) void mergeCards(r.external);
   if (r.done.length) {
     try {
@@ -1418,7 +1465,7 @@ async function mergeCards(list: { key: string; props: string[]; thing: MergeThin
   }
 }
 
-/** 「删除选中」:从待合并表里拿掉,云端保持现状;断网时也能删(连上后再交给文档服务) */
+/** "Delete selected": remove from the pending merge table, the cloud stays as is; works while offline too (handed to the document service after reconnecting) */
 export function deleteSelected(sel: Selection): MergeOutcome {
   const table = mergeTable;
   if (!table) return { ok: false, message: tr("No pending items to merge.") };
@@ -1428,12 +1475,12 @@ export function deleteSelected(sel: Selection): MergeOutcome {
   return { ok: true, message: tr("Deleted {0} items, the cloud stays as it is.", n) };
 }
 
-/* ---------------- 浏览器本地缓存里的离线批次 ---------------- */
+/* ---------------- Offline batches in the browser local cache ---------------- */
 
 /**
- * 账号云端项目与在线页面:断网期间的修改(DocSync 的离线批次)落盘到浏览器本地缓存(`offlineCache.ts`,IndexedDB),
- * 关页面、刷新都不丢;再进这个项目时先恢复进来,照常走「第一条带期望版本去试」。都确认了就删掉。
- * 写入合并成每 `BROWSER_JOURNAL_MS` 一次。
+ * Account cloud project and online page: changes made while offline (DocSync's offline batch) are persisted to the browser local cache (`offlineCache.ts`, IndexedDB),
+ * so closing or refreshing the page does not lose them; on re-entering this project they are restored first, then go through the usual "try the first one with the expected version". Deleted once all are acknowledged.
+ * Writes are coalesced to once per `BROWSER_JOURNAL_MS`.
  */
 export const BROWSER_JOURNAL_MS = 300;
 let journalSaved = true;
@@ -1449,14 +1496,14 @@ function watchBrowserJournal(link: SyncLink, projectId: string, user: string): (
     const job = ds.unconfirmed > 0 && ds.status !== "paused" ? kv.put(key, ds.recoveryJournal()) : ds.status === "online" && ds.unconfirmed === 0 ? kv.delete(key) : null;
     if (!job) return;
     journalSaved = false;
-    // 写成了才算「已存在本机」;写不成(配额、隐私模式)如实改说「只在这个页面里」
+    // Only counts as "already on this machine" once written; if the write fails (quota, private mode), honestly say "only in this page" instead
     job.then(() => { journalSaved = true; if (cur?.link === link) patch({ offlineStore: "saved" }); },
       () => { journalSaved = false; journalUnstorable = true; if (cur?.link === link) patch({ offlineStore: "page" }); });
   };
   const schedule = () => { if (!timer) timer = setTimeout(write, BROWSER_JOURNAL_MS); };
   const offs = [link.ds.on("project", schedule), link.ds.on("status", schedule)];
-  // 退出项目时把攒着的那一拍补写出去(不是丢掉):不然离线时最后 300 毫秒内的改动没落盘,
-  // 「已存在本机」就不作数,而离开编辑界面时正是照它决定要不要问一句(`TopBar.tsx` 的 okToLeaveOnline)
+  // When leaving the project, flush the pending beat (do not drop it): otherwise changes in the last 300 ms while offline are not persisted,
+  // "already on this machine" would not hold, and that is exactly what decides whether to ask when leaving the editor (okToLeaveOnline in `TopBar.tsx`)
   return () => { if (timer) { clearTimeout(timer); write(); } for (const off of offs) off(); };
 }
 
@@ -1466,7 +1513,7 @@ function clearBrowserJournal(link: SyncLink) {
   void defaultStore().delete(journalKey(link.ds.projectId, user)).catch(() => undefined);
 }
 
-/** 进项目前:浏览器本地缓存里有这个项目这位用户上次没交出去的离线批次,恢复进新连接的 DocSync */
+/** Before entering a project: if the browser local cache holds an offline batch this user did not submit last time for this project, restore it into the new connection's DocSync */
 async function restoreBrowserJournal(ds: DocSync, user: string): Promise<boolean> {
   try {
     const saved = await defaultStore().get(journalKey(ds.projectId, user));
@@ -1478,12 +1525,12 @@ async function restoreBrowserJournal(ds: DocSync, user: string): Promise<boolean
   }
 }
 
-/** 浏览器本地缓存里的离线批次最近一次存下了没有(离开页面的确认用) */
+/** Whether the offline batch in the browser local cache was last saved (used for the confirmation on leaving the page) */
 export function browserJournalSaved(): boolean {
   return journalSaved;
 }
 
-/** 离线对话框里「这段时间项目有以下改动」:谁改了哪些实体 */
+/** "The project changed as follows in the meantime" in the offline dialog: who changed which entities */
 export function pausedSummary(): { who: string; what: string[] }[] {
   const since = view.paused?.since ?? [];
   const project = getState().project;
@@ -1497,7 +1544,7 @@ export function pausedSummary(): { who: string; what: string[] }[] {
   });
 }
 
-/* ---------------- 撤销:跳过去看 ---------------- */
+/* ---------------- Undo: jump over to look ---------------- */
 
 export function jumpToEntity(entity: string) {
   const clip = clipOfEntity(entity);
@@ -1513,14 +1560,14 @@ export function jumpToEntity(entity: string) {
   if (entity.startsWith("/meta/")) window.dispatchEvent(new Event("pc-open-project-settings"));
 }
 
-/* ---------------- AI 栏「撤销这一步」 ---------------- */
+/* ---------------- AI panel "Undo this step" ---------------- */
 
 export function agentOpFor(callId: string | undefined): AgentOp | null {
   if (!callId) return null;
   return agentOps.get(`call:${callId}`) ?? agentOps.get(callId) ?? null;
 }
 
-/** 撤 Agent 那一步:以本页面身份提交逆操作 + undoOf,进本页面的撤销栈 */
+/** Undo an Agent step: submit the inverse operation + undoOf under this page's identity, onto this page's undo stack */
 export function revertAgentOp(rec: AgentOp): UndoResult | null {
   if (!cur) return null;
   const ds = cur.link.ds;
@@ -1533,13 +1580,13 @@ export function revertAgentOp(rec: AgentOp): UndoResult | null {
     rec.state = "done";
     patch({ agentOpsVersion: view.agentOpsVersion + 1 });
   } else if (!result.skipped.length && !result.failed.length) {
-    // 既没有被后来的改动挡住的、也没有落不下去的,却一处都没撤成:要说出来,不能让按钮点了没反应
+    // Nothing was blocked by later changes and nothing failed to apply, yet nothing at all was undone: say so, so the button never appears to do nothing when clicked
     pushToast(tr("This step could not be undone: what it changed already looks the way it did before the step (it may have been undone already), so there is nothing to roll back."), "warn");
   }
   return result;
 }
 
-/* ---------------- 共享项目 ---------------- */
+/* ---------------- Shared project ---------------- */
 
 export type EnterError = "auth" | "rate-limited" | "unreachable" | "no-project" | "kicked" | "not-ready" | "host-data-missing";
 
@@ -1547,28 +1594,28 @@ export interface EnterCredentials {
   as: "member" | "creator";
   username: string;
   password: string;
-  /** 已派生好的 K(C10a:凭邀请码兑换自由进入的项目时服务端回的项目口令 K);给了就不再按密码派生 */
+  /** An already derived K (C10a: the project passphrase K the server returns when an open entry project is redeemed with an invite code); when given, it is no longer derived from the password */
   key?: string;
 }
 
-/** 进入失败:原因,限速时另带服务端给的冷却秒数(C10a 表 A「请 {秒数} 秒后再试」) */
+/** Entry failed: the reason, and when rate-limited also the cooldown seconds given by the server (C10a table A "Try again in {seconds} seconds") */
 export type EnterResult = { ok: true } | { ok: false; error: EnterError; retryAfter?: number | null };
 
 /** Account v2 cloud entry. Server projection wins; no local root upload or legacy password proof. */
 export async function enterAccountProject(options: { client: CloudAccountClient; origin: string; projectId: string;
   name: string; initial: Project; firstSession?: ProjectSession;
-  /** 进来之后那条带「复制项目链接」的气泡换一句话(账号办法的「搬到云端」用,`accountMoveFlow.ts`);不给是缺省那句 */
+  /** Change the wording of the bubble with "Copy project link" shown after entering (used by the account route's "Move to the cloud", `accountMoveFlow.ts`); when omitted, the default wording is used */
   enteredText?: string;
   /**
-   * 弹不弹进来之后那条气泡。缺省弹。
+   * Whether to show the bubble after entering. Shown by default.
    *
-   * 从「我的项目」列表点进一个已经加入过的项目时给 false(issue #15):那不是新加入,没有「把链接发给别人」这件事,
-   * 而氛围式里来回点几个项目就会叠一摞常驻气泡。新建、凭链接加入、搬到云端照旧弹。
+   * Pass false when clicking into an already joined project from the "My projects" list (issue #15): that is not a new join, there is no "send the link to others" step,
+   * and in Vibe mode clicking back and forth between a few projects would stack up a pile of persistent bubbles. Creating, joining by link, and moving to the cloud still show it.
    */
   announce?: boolean;
   /**
-   * 换过去的那一刻(云端内容已经到手、编辑器还没接上去)调一次,给的是云端发来的内容;抛错就不换、整次进入失败,编辑器留在原来的项目里。
-   * 「搬到云端」用它保证换过去时编辑器里的内容与云端一致(`accountMove.ts` 的 `MoveDeps.enter`)。同步调用,中间没有空当
+   * Called once at the moment of the switch (cloud content has arrived, the editor is not yet attached), given the content sent from the cloud; if it throws, no switch happens, the whole entry fails, and the editor stays in the original project.
+   * "Move to the cloud" uses it to guarantee the editor content matches the cloud when switched over (`MoveDeps.enter` in `accountMove.ts`). Called synchronously, with no gap in between
    */
   guard?: (cloud: Project) => void }): Promise<void> {
   await ensureDevice();
@@ -1577,31 +1624,31 @@ export async function enterAccountProject(options: { client: CloudAccountClient;
   let first = true, stopped = false, renewing: Promise<ProjectSession> | null = null;
   const projectAccountId = options.client.principal?.id;
   const isCurrent = () => !stopped && cur?.link === link && options.client.principal?.id === projectAccountId;
-  /** 本页自己正在改托管方服务的开关(改完续会话读到新状态时不给自己弹「创建者关闭了…」) */
+  /** This page is itself changing the hosted side's service toggle (so that reading the new state when resuming the session after the change does not show itself "The creator turned off…") */
   let ownHostedChange = 0;
   const projectSession = (value: ProjectSession) => {
     if (!isCurrent()) return;
-    // 账号项目没有 `hosted-service-changed` / `hosted-option-changed` 这两种通知:成员靠每次续会话读到的状态知道创建者改了什么。
-    // 与口令项目同一个规矩:只在关闭时给别的成员一条提示,打开时不提示(文案同一处,`hostedChangeNotices`)
+    // Account projects have no `hosted-service-changed` / `hosted-option-changed` notifications: members learn what the creator changed from the state read on each session resume.
+    // Same rule as passphrase projects: only show other members a notice when it is turned off, none when turned on (same wording source, `hostedChangeNotices`)
     if (ownHostedChange === 0 && view.shared) for (const text of hostedChangeNotices(view.hosted, value.hosted)) pushToast(text, "info", 6000);
     patch({ shared: view.shared ? { ...view.shared, creator: value.creator } : null, hosted: value.hosted });
     setHostedAgent(options.projectId, value.hosted.agent);
-    // 自己的权限变了(只读改可写):换一个会话,新连接才写得进去
+    // Own permission changed (read-only to writable): switch to a new session so the new connection can write
     if (ready) void life.accessSeen(value.access);
-    // 成员有变化(有人加入、被踢、改权限)时重取一次名字
+    // When members change (someone joins, is kicked, permissions change), fetch the names again
     if (ready && value.accessRevision !== namesRevision) {
       namesRevision = value.accessRevision;
       void options.client.members(options.projectId).then((snapshot: AccountMembersSnapshot) => { if (isCurrent()) accountNamesFrom(snapshot); }, () => { if (namesRevision === value.accessRevision) namesRevision = null; });
     }
   };
   let namesRevision: number | null = null;
-  // 会话剩不到 60 秒就续（下面 `ticket.info` 与云端身份两处）。续的时候要让网站登录也至少还剩 70 秒：登录令牌只活 2 分钟，客户端缺省剩 10 秒才续它，
-  // 而会话的到期时间跟着登录令牌走；不这样要求的话，最后 50 秒里续出来的会话照样剩不到 60 秒，云端 Agent 每发一个请求就续一次
-  // （2026-10-17 实测一分钟最多 50 次 `/account/session`）
+  // Resume the session when under 60 seconds remain (the `ticket.info` below and the cloud identity, two places). When resuming, require the website login to still have at least 70 seconds left too: the login token lives only 2 minutes, and the client by default resumes it only at 10 seconds left,
+  // while the session's expiry follows the login token; without this requirement, a session resumed in the last 50 seconds would still have under 60 seconds left, and the Cloud Agent would resume on every request
+  // (measured 2026-10-17: up to 50 calls per minute to `/account/session`)
   const renew = (): Promise<ProjectSession> => renewing ??= options.client.session(options.projectId, { minRemainingMs: 70_000 }).then((value: ProjectSession) => {
     current = value; projectSession(value); return value;
   }).finally(() => { renewing = null; });
-  // 页面这条连接只能用到票据背后的访问令牌到期:到期前换到新会话上,换不成如实转离线(`accountLinkLife.ts`)
+  // This page's connection is usable only until the access token behind the ticket expires: before expiry, switch to a new session, and if that fails, honestly go offline (`accountLinkLife.ts`)
   const life = createAccountLinkLife({
     session: ({ minRemainingMs }) => options.client.session(options.projectId, { minRemainingMs }).then((value: ProjectSession) => { current = value; projectSession(value); return value; }),
     link: () => link,
@@ -1622,33 +1669,41 @@ export async function enterAccountProject(options: { client: CloudAccountClient;
   let resolveEntry!: () => void, rejectEntry!: (error: unknown) => void;
   const opened = new Promise<void>((resolve, reject) => { resolveEntry = resolve; rejectEntry = reject; });
   const fail = (error: unknown) => { stopped = true; link.stop(); if (cur?.link === link) { setCloudConsentSource(null); setCloudIdentity(null);
-    // 登录失效、被踢、项目没了:编辑器进程那条卡片源码同步的连接一起停(回本机空间,不再向本页面要票据)
+    // Login invalid, kicked, project gone: the editor process's card source sync connection stops too (back to the local space, no longer asking this page for tickets)
     if (!ONLINE_BUILD && !ONLINE) detachCardSync();
     if (error instanceof AccountFailure && error.status === 403 && ['banned', 'not-listed'].includes(error.code))
       patch({ blocked: error.code === 'banned' ? 'kicked' : 'removed' });
   } if (!ready) rejectEntry(error);
     else { disconnectSharedAssets(); pushToast(error instanceof Error ? error.message : tr("Cloud sign-in has expired, please sign in again."), 'warn', Infinity); } };
   const link = new SyncLink({ url, projectId: options.projectId, initial: options.initial, initialize: false, session,
-    // 接续不带票据:文档服务规定接续项旁边不能有鉴权项(带了握手回 400,只能白等保留期过完再重建会话);
-    // 接续时服务端按会话里记下的身份重新核对登录与成员资格。票据只在建新会话时出示(`protocols`)
+    // Resume without a ticket: the document service forbids an auth item next to a resume item (with
+    // one, the handshake returns 400 and all you can do is wait out the retention period, then rebuild
+    // the session). On resume the server re-checks login and membership using the identity recorded in
+    // the session. The ticket is only presented when building a new session (`protocols`)
     protocols,
     saveBackup: b => void saveBackup(b), onMessage: onSideMessage,
-    // 服务端关连接的码不当终局(可写改只读时也是 4003):退避着凭新票据重连,取票据的接口说不行才收场 ——
-    // 401 登录失效、403 被踢 / 不在名单、404 项目没了(文案用客户端里已有的那句「这个云端项目已不存在。」)
+    // A close code from the server is not final (4003 also appears when writable changes to read-only):
+    // back off and reconnect with a new ticket, and only give up when the ticket endpoint says no:
+    // 401 login expired, 403 kicked / not on the list, 404 project gone (the message is the string the
+    // client already has, "This cloud project no longer exists.")
     isFatalClose: () => false,
     onProtocolError: error => { const e = error as { status?: number }; if (e.status === 401 || e.status === 403) { fail(error); return true; }
       if (e.status === 404) { fail(new AccountFailure(404, 'project-gone')); return true; }
       pushToast(error instanceof Error ? error.message : tr("Cloud service is temporarily unavailable, waiting to reconnect."), 'warn'); return false; },
     onAuthExpired: () => { void life.authExpired(); },
     onOpen: () => { life.opened(); void (async () => {
-      // 重新建成会话(断线重连、到期前换会话):进项目时接好的东西都还在,只把跟着连接走的那几样在新连接上重建 ——
-      // 选区与在场(`resyncPresenceLink`)、工具调用记录(`events.list`);发布方登记由 `SyncLink.renew` 自己重报;
-      // 其余(素材票据、成员名单、云端 Agent 的身份、卡片源码同步)不走这条连接。清单见 `docs/reports/AGENT-v18-cardsync.md`
+      // Rebuilding a session (reconnect after a drop, or swapping sessions before expiry): everything set
+      // up when entering the project is still there, and only the things that travel with the connection
+      // are rebuilt on the new one: selection and presence (`resyncPresenceLink`), the tool call log
+      // (`events.list`); the publisher registration is re-reported by `SyncLink.renew` itself;
+      // everything else (asset tickets, member list, Cloud Agent identity, card source sync) does not use
+      // this connection. For the list see `docs/reports/AGENT-v18-cardsync.md`
       if (ready) { if (!stopped && cur?.link === link) { resyncPresenceLink(); link.send({ type: 'events.list', projectId: options.projectId }); refreshStatus(); } return; }
       await sharedStateReady(link);
       if (stopped) return;
-      // 以谁的身份进:账号或游客(`client.principal`)。原先看 `client.account`,游客那里必是 null,
-      // 游客点自己的项目必报「请先登录账号。」(claude/guest-enter,0.7.21 线上实测)
+      // Which identity to enter with: account or guest (`client.principal`). It used to check
+      // `client.account`, which is always null for a guest, so a guest opening their own project always
+      // got "Please sign in to your account first." (claude/guest-enter, verified online on 0.7.21)
       const account = options.client.principal;
       if (!account) throw new AccountFailure(401, 'login-required');
       options.guard?.(link.ds.project);
@@ -1688,8 +1743,10 @@ export async function enterAccountProject(options: { client: CloudAccountClient;
             if ('option' in change) await options.client.setHostedOption(options.projectId, change.service, change.option, change.enabled, current.accessRevision, crypto.randomUUID());
             else await options.client.setHostedService(options.projectId, change.service, change.enabled, current.accessRevision, crypto.randomUUID());
           } catch (error) {
-            // 被拒(例如不在「生成轨道流」的权限分组)或没做成:马上再读一次会话,开关与置灰照服务器的真实状态,
-            // 不等下一次定时续会话;读不到也照样把原来的错误交给界面明说
+            // Rejected (e.g. not in the permission group for "generate track streams") or not done: re-read the
+            // session right away, so switches and greyed-out states follow the server's real state, without
+            // waiting for the next scheduled session renewal; if the read fails, still hand the original error
+            // to the UI to state plainly
             await renew().catch(() => undefined);
             throw error;
           }
@@ -1697,8 +1754,11 @@ export async function enterAccountProject(options: { client: CloudAccountClient;
         } finally { ownHostedChange -= 1; }
       };
       if (cur?.link === link) {
-        // 作废并重新生成项目链接、项目二级密码(10-14 第 3.3 节):与上面的开关同一个规矩 —— 先续一次会话拿到当前的访问版本号
-        // (账本按它防并发改动,写死 0 会被拒成 409),改完再续一次,让页面手里的版本号与链接口令跟上
+        // Invalidate and regenerate the project link and project secondary password (10-14 section 3.3):
+        // same rule as the switches above: first renew the session to get the current access version
+        // number (the ledger uses it to guard against concurrent changes, hard-coding 0 gets rejected with
+        // 409), then renew once more after the change, so the version number and link token held by the
+        // page catch up
         cur.regenAccountLink = async () => {
           if (!isCurrent()) throw new AccountFailure(401, 'credential-revoked');
           await renew();
@@ -1736,9 +1796,11 @@ export async function enterAccountProject(options: { client: CloudAccountClient;
         };
       }
       if (cur?.link === link) {
-        // 每 3 秒看一眼连接到期没有(本机算，不发请求)；续会话(读创建者改过的服务开关、自己的权限、成员变化)
-        // 每 15 秒一次，会话快到期时随时续。原来每 3 秒无条件续一次，2 分钟 34 次 `/account/session`(2026-10-19 在线实测)，
-        // 文档服务每次都要签三张票据
+        // Every 3 seconds check whether the connection has expired (computed locally, no request); renew the
+        // session (read the service switches the creator changed, own permissions, member changes) every 15
+        // seconds, and at any time when the session is about to expire. It used to renew unconditionally
+        // every 3 seconds: 34 calls to `/account/session` in 2 minutes (measured online 2026-10-19), and
+        // the document service had to sign three tickets each time
         let lastRenew = Date.now();
         const metadataTimer = setInterval(() => {
           if (!isCurrent()) return;
@@ -1749,7 +1811,9 @@ export async function enterAccountProject(options: { client: CloudAccountClient;
           void life.tick();
         }, 3000);
         cur.offs.push(() => clearInterval(metadataTimer));
-        // 页面回到前台、网络恢复、电脑睡眠醒来:不等定时器(后台标签页的定时器会被浏览器压到一分钟一次),当场看一眼连接到期没有
+        // Page back in the foreground, network restored, computer woke from sleep: don't wait for the timer
+        // (browsers throttle timers in background tabs to once a minute), check on the spot whether the
+        // connection has expired
         const wake = () => { if (isCurrent() && (typeof document === "undefined" || document.visibilityState !== "hidden")) void life.tick(); };
         if (typeof window !== "undefined") {
           window.addEventListener("online", wake); window.addEventListener("focus", wake); window.addEventListener("pageshow", wake);
@@ -1760,12 +1824,17 @@ export async function enterAccountProject(options: { client: CloudAccountClient;
       await connectSharedAssets(link, base, { online: ONLINE_BUILD || ONLINE, account: { base: `${origin}/media/api/asset`, projectId: options.projectId, ticket } });
       link.send({ type: 'events.list', projectId: options.projectId });
       ready = true; resolveEntry();
-      // 成员名字(提示气泡里「谁改的」)进来就取一次,之后成员有变化再取
+      // Fetch member names ("who changed it" in the tooltip bubble) once on arrival, and again after
+      // member changes
       projectSession(current);
-      // 链接在点的时候再拼:创建者重新生成过项目链接的,复制到的是带新口令的那一条
+      // Build the link at click time: if the creator regenerated the project link, what gets copied is the
+      // one with the new token
       const linkText = () => projectLink(origin, options.projectId, current.creator ? current.linkToken ?? undefined : undefined);
-      // 同一个键:再进别的项目时替换掉上一条,不叠(issue #15)。缺省那句只是提醒可以把链接发给别人,8 秒就够
-      // (氛围式顶栏另有一颗常驻的「复制项目链接」);调用方自带文案的(「搬到云端」)是一次性的要紧通知,照旧常驻、由用户自己关
+      // Same key: entering another project replaces the previous one instead of stacking (issue #15). The
+      // default message only reminds that the link can be shared with others, 8 seconds is enough
+      // (Vibe mode's top bar also has a permanent "Copy project link" button); messages supplied by the
+      // caller ("Move to the cloud") are one-off important notices, which stay as before and are
+      // dismissed by the user
       if (options.announce !== false) pushToast(options.enteredText ?? tr("Entered the cloud project. You can send the project link to another signed-in member."), 'info',
         options.enteredText ? Infinity : ENTERED_TOAST_MS, {
           label: tr("Copy project link"), pc: 'cloud-project-copy', run: () => { const text = linkText(); void navigator.clipboard.writeText(text).then(
@@ -1775,7 +1844,9 @@ export async function enterAccountProject(options: { client: CloudAccountClient;
     onClosed: info => { if (!ready || info.fatal) fail(new AccountFailure(info.fatal ? 403 : 0, info.reason || 'network'));
       else refreshStatus(); },
   });
-  // 上次在这个项目里断网时没交出去的修改(浏览器本地缓存):先恢复进来,连上后照常提交,被拒就逐项转进待合并表
+  // Changes not delivered when the network dropped last time in this project (browser local cache):
+  // restore them first, submit as usual after connecting, and move them item by item into the pending
+  // merge items when rejected
   if (projectAccountId) await restoreBrowserJournal(link.ds, `account:${projectAccountId}`);
   const timeout = setTimeout(() => { if (!ready) fail(new AccountFailure(503, 'session-unavailable')); }, 20_000);
   link.start();
@@ -1787,7 +1858,8 @@ const CREATORS_KEY = "pc.shared.creators";
 
 function readJson<T>(key: string, fallback: T): T {
   try {
-    // 旧托管主机名换成新的(hosted-default.mjs 的 RETIRED_HOSTED_HOSTS):恢复凭证、本机记录照旧能用
+    // Swap the old hosted host name for the new one (RETIRED_HOSTED_HOSTS in hosted-default.mjs):
+    // recovery credentials and local records keep working as before
     const v = hosted.migrateHostedDeep(JSON.parse(localStorage.getItem(key) ?? ""));
     return v && typeof v === "object" ? (v as T) : fallback;
   } catch {
@@ -1799,11 +1871,11 @@ function writeJson(key: string, v: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(v));
   } catch {
-    /* 存不了就算了:只影响提示文案 */
+    /* If it cannot be saved, so be it: only affects the notice text */
   }
 }
 
-/** 这台设备上建过的共享项目的创建者用户名(打开时「我是创建者」预填用) */
+/** Creator user names of the shared projects created on this device (used to prefill "I am the creator" when opening) */
 export function knownCreator(projectId: string): string | null {
   return readJson<Record<string, string>>(CREATORS_KEY, {})[projectId] ?? null;
 }
@@ -1828,8 +1900,9 @@ function wasKicked(projectId: string, username: string): boolean {
 }
 
 /**
- * 设备信息:没取过就现取(开始页上还没进编辑器、`startSync` 没跑过时,「加入别人的项目」先要它)。
- * 取不到回 null(桌面运行环境里编辑器进程没应答)。
+ * Device info: fetch it on demand if not fetched yet (on the start page, before entering the editor
+ * and before `startSync` has run, "Join someone else's project" needs it first).
+ * Returns null if it cannot be fetched (the editor process did not respond in the desktop runtime).
  */
 export async function ensureDevice(): Promise<DeviceInfo | null> {
   if (view.device) return view.device;
@@ -1839,8 +1912,10 @@ export async function ensureDevice(): Promise<DeviceInfo | null> {
 }
 
 /**
- * 进入共享项目:取挑战、凭证明连上;连上之后本页面改连这个项目的空间,项目内容以文档服务为准
- * (项目还空着时,DocSync 把当前这份以根替换写进去 —— 新建共享项目就是这样把当前项目带过去的)。
+ * Enter a shared project: fetch the challenge and connect with the proof; once connected, this page
+ * switches to this project's space, and the project content follows the document service
+ * (when the project is still empty, DocSync writes the current one into it as a root replace: this
+ * is how creating a shared project carries the current project over).
  */
 export async function enterShared(candidate: Candidate, cred: EnterCredentials, options: { initialize?: boolean; current?: () => boolean } = {}): Promise<EnterResult> {
   const current = options.current ?? (() => true);
@@ -1870,7 +1945,8 @@ export async function enterShared(candidate: Candidate, cred: EnterCredentials, 
     });
     return candidate.routeProtocol ? [...protocols, candidate.routeProtocol] : protocols;
   };
-  // 先取一次挑战:限速(429)、项目没了(404)、连不上,在这一步就分得清
+  // Fetch the challenge once first: rate limiting (429), project gone (404) and unreachable can be
+  // told apart at this step
   let first: string[] | null;
   try {
     first = await make();
@@ -1893,7 +1969,8 @@ export async function enterShared(candidate: Candidate, cred: EnterCredentials, 
       clearSharedResume(); detach(); disconnectSharedAssets();
       patch({ blocked: failure === "auth" ? null : failure, shared: null, members: [], hosted: null, reopenState: failure === "auth" ? "needs-auth" : failure === "deleted" ? "deleted" : "rejected" });
       if (failure === "auth") pushToast(tr("The original collaboration identity has expired, please authenticate again; local content has been kept."), "warn", Infinity);
-      // 即便隧道在致命关闭帧到达前中断，可信发现接口的 deleted 也必须持久注销。
+      // Even if the tunnel breaks before the fatal close frame arrives, `deleted` from the trusted
+      // discovery endpoint must still be durably deregistered.
       if (failure === "deleted" && descriptor && !ONLINE_BUILD && !ONLINE) {
         void recoveryRequest("revoke", descriptor).catch(() => pushToast(tr("The room was deleted, but saving the local revocation record failed. Check the disk and try again."), "warn", Infinity));
       }
@@ -1931,7 +2008,7 @@ export async function enterShared(candidate: Candidate, cred: EnterCredentials, 
       onOpen: () => { void (async () => {
         if (!current()) { link.stop(); resolve({ code: 0, reason: "cancelled", fatal: false, neverOpened: true }); return; }
         if (settled) {
-          // 重连上了:重新订阅成员变化
+          // Reconnected: resubscribe to member changes
           link.send({ type: "shared.watch" });
           void connectSharedAssets(link, candidate.base, { online: ONLINE, fallback: lanAssetBaseOf(candidate) });
           return;
@@ -1945,7 +2022,8 @@ export async function enterShared(candidate: Candidate, cred: EnterCredentials, 
         bind(link, "shared", candidate.projectId, wsUrl, null, `user:${cred.username}`);
         if (cur?.link === link) cur.updateAuthentication = k => { key = k; };
         patch({
-          // 口令那条路(本机 / 局域网)还没有只读成员这种身份,进去就是读写(`server/auth/delegation.mjs` 的 memberAccess)
+          // The password path (local / LAN) has no read-only member identity yet, entering means read-write
+          // (memberAccess in `server/auth/delegation.mjs`)
           shared: { projectId: candidate.projectId, name: candidate.name, mode: candidate.mode, where: candidate.where, base: candidate.base, username: cred.username, creator: cred.as === "creator", hostDeviceName: candidate.hostDeviceName, access: 'rw' },
           members: [],
           hosted: null,
@@ -1953,7 +2031,8 @@ export async function enterShared(candidate: Candidate, cred: EnterCredentials, 
         });
         rememberKicked(candidate.projectId, cred.username, false);
         if (cred.as === "creator") rememberCreator(candidate.projectId, cred.username);
-        // 同一个标签页刷新之后回到这里(只存派生出的 K,不存口令;见 resumeShared)
+        // Coming back here after a refresh of the same tab (only the derived K is stored, not the password;
+        // see resumeShared)
         if (key) rememberSharedResume({ candidate, as: cred.as, username: cred.username, key });
         patch({ association: descriptor, reopenState: "connected" });
         if (key) {
@@ -1968,8 +2047,10 @@ export async function enterShared(candidate: Candidate, cred: EnterCredentials, 
         }
         link.send({ type: "shared.watch" });
         link.send({ type: "events.list", projectId: candidate.projectId });
-        // C6.6:这个共享项目的素材服务(服务地址登记里的 asset)当作当前连接的远程素材服务
-        // 在线浏览器模式:素材服务与本页同源,也要认(c10a;assetTiers.pickAssetEndpoint)
+        // C6.6: the asset service of this shared project (asset in the service address registry) is treated
+        // as the remote asset service of the current connection
+        // Online browser mode: the asset service is same-origin with this page, and must be accepted too
+        // (c10a; assetTiers.pickAssetEndpoint)
         void connectSharedAssets(link, candidate.base, { online: ONLINE, fallback: lanAssetBaseOf(candidate) });
         resolve("open");
       })(); },
@@ -1982,7 +2063,8 @@ export async function enterShared(candidate: Candidate, cred: EnterCredentials, 
           }
           return;
         }
-        // 自己删项目(取消多用户协作)时的 4004 是预料之中的,不弹阻断弹窗
+        // The 4004 received when deleting one's own project (cancelling multi-user collaboration) is
+        // expected, and does not show the blocking dialog
         if (info.fatal && cur?.link === link && expectedClose !== link) {
           const blocked: Blocked = info.code === 4004 ? "deleted" : info.reason === "removed" ? "removed" : "kicked";
           endIdentity(link, blocked);
@@ -2001,7 +2083,8 @@ export async function enterShared(candidate: Candidate, cred: EnterCredentials, 
   });
   if (outcome === "open") return { ok: true };
   if (outcome.reason === "host-data-missing") return { ok: false, error: "host-data-missing" };
-  // 打开前就断:浏览器里分不出握手被拒和没连上,拿新证明问一次 shared/verify 再定(enterFailure.ts)
+  // Dropped before opening: the browser cannot tell a rejected handshake from a failed connection, so
+  // ask shared/verify once with a fresh proof and then decide (enterFailure.ts)
   const failed = await classifyEnterFailure(outcome, {
     fresh: make,
     verify: (protocols) => client.verifyProtocols({ base: candidate.base, protocols, ...(candidate.access ? { fetch: relayFetch(candidate.access) } : {}) }),
@@ -2010,17 +2093,19 @@ export async function enterShared(candidate: Candidate, cred: EnterCredentials, 
   return { ok: false, ...failed };
 }
 
-/** 自己要关掉的那条共享项目连接(取消多用户协作时删项目会收到 4004,不算被删) */
+/** The shared project connection we are closing ourselves (deleting the project when cancelling multi-user collaboration receives 4004, which does not count as deleted) */
 let expectedClose: SyncLink | null = null;
 
-/** 接下来当前这条共享项目连接会被服务端关掉(自己删项目),不弹阻断弹窗 */
+/** The current shared project connection is about to be closed by the server (we deleted the project ourselves), do not show the blocking dialog */
 export function expectSharedClose(on = true) {
   expectedClose = on ? cur?.link ?? null : null;
 }
 
 /**
- * 离开共享项目回到本机空间,并把 `project`(缺省当前这份)以根替换写进本机项目(C10a 第 6 节「取消勾选」:
- * 项目真身拉回本机)。在线页面没有本机空间,只是断开。
+ * Leave the shared project and return to the local space, and write `project` (defaults to the
+ * current one) into the local project as a root replace (C10a section 6 "Uncheck": the project's
+ * real content is pulled back to this machine). An online page has no local space, it only
+ * disconnects.
  */
 export function leaveSharedToLocal(project: Project = getState().project): Project {
   recoveryCoordinator.cancel(); cancelHostTask(currentAssociation()); setAssociation(null);
@@ -2069,9 +2154,12 @@ async function saveRecoveryIdentity(descriptor: CollaborationDescriptor, record:
   await recoveryRequest("identity", descriptor, { record, contentId: getState().project.id });
 }
 /**
- * 文档服务确认原云端项目已不存在（证明已核对过）：把手上这份内容转成一个独立的本地项目。
- * 内容用正在保留的那一份（文件里的内容，加上这台设备上还没发出去的离线修改）；换新的本地项目号；清掉协作关联
- * （多用户协作缺省关）；本机存的旧房间身份一并注销；保存落点与草稿归属由订阅者清掉（原文件保留）；界面提示一次。
+ * The document service confirmed that the original cloud project no longer exists (proof already
+ * checked): turn the content at hand into an independent local project. The content is the one being
+ * kept (the content in the file plus the offline changes on this device not yet sent); switch to a
+ * new local project ID; clear the collaboration link (multi-user collaboration is off by default);
+ * deregister the old room identity stored on this machine as well; the save target and draft
+ * ownership are cleared by subscribers (the original file is kept); the UI shows a notice once.
  */
 let goneConversion = 0;
 async function becomeLocalAfterGone(answer: { proof: GoneProof }) {
@@ -2081,7 +2169,8 @@ async function becomeLocalAfterGone(answer: { proof: GoneProof }) {
   const contentId = getState().project.id ?? "";
   const ticket = ++goneConversion;
   const stillHere = () => ticket === goneConversion && currentAssociation() === descriptor && holding === kept;
-  // 先把这台设备上没发出去的离线修改并进来，再转换；并不进来就不转、不注销本机身份，内容原样保留
+  // First merge in the offline changes on this device that were not sent, then convert; if they cannot
+  // be merged in, do not convert and do not deregister the local identity, the content stays as is
   if (kept && !ONLINE_BUILD && !ONLINE) {
     try {
       await restoreOfflineEdits({ restored: kept.restored,
@@ -2107,7 +2196,8 @@ async function becomeLocalAfterGone(answer: { proof: GoneProof }) {
   patch({ association: null, reopenState: null, shared: null, members: [], hosted: null, blocked: null });
   if (!ONLINE_BUILD && !ONLINE) void recoveryRequest("revoke", descriptor).catch(() => undefined);
   noteConvertedFrom(converted.project, converted.from);
-  // 走载入：没有关联的项目由 onLoad 接到本机空间（文件内容为准的一次根替换）
+  // Go through load: a project without a link is picked up by onLoad into the local space (a root
+  // replace based on the file content)
   actions.loadProject(converted.project, getState().filePath);
   publishGoneConversion({ projectId: converted.project.id!, name: converted.project.name, from: converted.from });
 }
@@ -2118,8 +2208,11 @@ function movedRoomAssociation(): CollaborationDescriptor | null {
   return !ONLINE_BUILD && !ONLINE && d?.version === 1 && d.where === "lan" && d.roomId && movedRooms.isMovedRoom(d.roomId) ? d : null;
 }
 /**
- * 文件里记着的本机协作房间已经在「搬到云端」时关掉(这台设备的保护存储里是已注销,页面存储里记着是搬迁关的):
- * 用手上这份内容当一个普通的本地项目开,清掉房间关联;之后保存出来的文件不再带它。
+ * The local collaboration room recorded in the file was already closed on "Move to the cloud" (in
+ * this device's protected storage it is deregistered, in page storage it is recorded as closed by
+ * the move):
+ * open the content at hand as an ordinary local project and clear the room link; files saved
+ * afterwards no longer carry it.
  */
 function becomeLocalAfterMove() {
   const descriptor = movedRoomAssociation();
@@ -2136,12 +2229,16 @@ function becomeLocalAfterMove() {
 const recoveryCoordinator = new RecoveryCoordinator({
   state: (reopenState: string, detail?: { proof: GoneProof }) => {
     if (reopenState === "gone" && detail?.proof) { void becomeLocalAfterGone(detail); return; }
-    // 本机协作房间是「搬到云端」时关掉的:带着它的关联的旧文件(当时写不回去的那份)按普通本地项目开,不停在「原房间已删除」
+    // The local collaboration room was closed on "Move to the cloud": an old file still carrying its
+    // link (the copy that could not be written back then) opens as an ordinary local project instead of
+    // getting stuck on "The original room has been deleted"
     if (reopenState === "deleted" && movedRoomAssociation()) { queueMicrotask(becomeLocalAfterMove); return; }
     patch({ reopenState });
   },
-  // 信任表只有随软件分发的那一张（`gone-proof.mjs` 的 `TRUSTED_GONE_AUTHORITIES`，`queryGone` 的缺省值）：这里不传、也不许传别的表。
-  // 守门测试 `server/test/gone-trust-source.test.mjs` 会拦。
+  // The trust table is only the one shipped with the software (`TRUSTED_GONE_AUTHORITIES` in
+  // `gone-proof.mjs`, the default of `queryGone`): do not pass any other table here, and none is
+  // allowed.
+  // The gatekeeper test `server/test/gone-trust-source.test.mjs` blocks it.
   gone: (descriptor: CollaborationDescriptor, signal: AbortSignal) => queryGone(descriptor, { signal }),
   identity: async (descriptor: CollaborationDescriptor, contentId: string, signal: AbortSignal) => {
     if (ONLINE) {
@@ -2253,7 +2350,9 @@ function holdRecovery(project: Project, descriptor: CollaborationDescriptor) {
 function releaseHolding() { holding?.off(); holding = null; }
 setProjectLoader(onLoad);
 setRealtimeRevGetter(() => cur?.link?.ds?.rev ?? null);
-// 另存 .proc 时的「非本机内容确定快照」:只在连着这个云端项目时给(以本地副本打开时 cur 是本机空间,不能拿它的序号与内容)
+// "Non-local content-determined snapshot" when saving as .proc: only provided while connected to this
+// cloud project (when opened as a local copy, cur is the local space, and its sequence number and
+// content must not be used)
 setCloudSnapshotGetter((projectId) => {
   const ds = cur?.kind === "shared" && cur.docProjectId === projectId ? cur.link.ds : null;
   return ds?.confirmedProject ? { rev: ds.rev, project: ds.confirmedProject } : null;
@@ -2323,17 +2422,17 @@ export async function authenticateRecovery(username: string, password: string, a
   return result;
 }
 
-/** 当前是不是连着共享项目(项目设置「多用户协作」按它显示勾选状态) */
+/** Whether a shared project is currently connected (the project settings "Multi-user collaboration" shows its checked state by it) */
 export function currentSharedLink(): SyncLink | null {
   return cur && cur.kind === "shared" ? cur.link : null;
 }
 
-/** 当前共享项目连接的文档服务地址(纯浏览器节点的 render 连接连同一个地址,M7 契约第 5 节);没连共享项目回 null */
+/** Document service address of the current shared project connection (the render connection of a pure browser node uses the same address, M7 contract section 5); returns null when no shared project is connected */
 export function currentSharedUrl(): string | null {
   return cur && cur.kind === "shared" ? cur.url : null;
 }
 
-/** 被踢 / 被移出 / 项目被删之后点「开始页」:回到本机空间,回开始页 */
+/** Click "Start page" after being kicked / removed / the project was deleted: return to the local space, then to the start page */
 export function leaveBlocked() {
   clearSharedResume();
   patch({ blocked: null, shared: null, members: [], hosted: null });
@@ -2341,13 +2440,15 @@ export function leaveBlocked() {
   window.dispatchEvent(new Event("pc-go-home"));
 }
 
-/* ---------------- 创建者操作 ---------------- */
+/* ---------------- Creator actions ---------------- */
 
 export type AdminError = "forbidden" | "rate-limited" | "bad-message" | "offline" | "other";
 
 /**
- * 做一次创建者操作(契约 `auth-contract.md` 第 7 节):同一连接取挑战、按创建者密码派生 K、算证明、发 `shared.admin`。
- * 密码每次当场给(不缓存);`key` 是同一次操作流程里刚验证过的那份 K(验证身份与真正的操作是两次证明)。
+ * Do one creator operation (contract `auth-contract.md` section 7): on the same connection fetch the
+ * challenge, derive K from the creator password, compute the proof, send `shared.admin`.
+ * The password is given on the spot each time (not cached); `key` is the K just verified in the same
+ * operation flow (verifying identity and the actual operation are two proofs).
  */
 export async function adminOp(
   op: string,
@@ -2390,13 +2491,16 @@ export async function adminOp(
 }
 
 /**
- * 创建者开关托管方的服务(契约 `docs/plan/hosted-render-contract.md` 第 3 节):`shared.admin { op: 'set-hosted-service' }`,
- * 证明与其它创建者操作相同(`key` 是同一次流程里刚验证过的 K)。成功后马上把本页的开关状态改过来
- * (服务端随后还会推一条刷新后的成员列表,以它为准)。
+ * The creator switches the host's service on or off (contract `docs/plan/hosted-render-contract.md`
+ * section 3): `shared.admin { op: 'set-hosted-service' }`, with the same proof as other creator
+ * operations (`key` is the K just verified in the same flow). On success, immediately update this
+ * page's switch state (the server later pushes a refreshed member list, which takes precedence).
  */
 export async function setHostedService(service: HostedServiceName, enabled: boolean, key: string): Promise<HostedChangeResult> {
   if (view.shared?.accountId) {
-    // 账号项目:不走创建者密码的证明,凭账号的登录态,服务端按创建者身份把关(成员回 403)。改完续一次会话,界面照读到的状态走
+    // Account project: no creator-password proof, it relies on the account's login state, and the server
+    // checks the creator identity (members get 403). Renew the session after the change, and the UI
+    // follows the state it read
     try {
       if (service === 'agent') await setAccountAgentEnabled(enabled);
       else await setAccountHosted({ service, enabled });
@@ -2406,15 +2510,20 @@ export async function setHostedService(service: HostedServiceName, enabled: bool
   const r = await adminOp("set-hosted-service", { key }, { service, enabled });
   if (!r.ok) return r;
   patch({ hosted: applyHostedChange(view.hosted, service, enabled) });
-  // 创建者自己这一页的 AI 栏也马上跟着变(通知只发给别的连接)
+  // The creator's own AI panel on this page also changes right away (the notification is only sent to
+  // other connections)
   if (service === "agent") setHostedAgentEnabled(view.shared?.projectId ?? currentDocProjectId(), enabled);
   return { ok: true };
 }
 
 /**
- * 创建者改托管方服务下面的子选项(渲染节点的「生成轨道流」,契约 `docs/plan/hosted-render-contract.md` 第 3.1 节):
- * `shared.admin { op: 'set-hosted-option' }`,证明与其它创建者操作相同。成功后马上把本页的状态改过来(服务端随后还会推一条刷新后的成员列表)。
- * 账号项目(云端账号那条路):创建者经 `/hosted/shared/account/admin` 的 `set-hosted-option` 改,凭账号的登录态,成员被服务端拒。
+ * The creator changes a sub-option under the host's service (the render node's "generate track
+ * streams", contract `docs/plan/hosted-render-contract.md` section 3.1):
+ * `shared.admin { op: 'set-hosted-option' }`, with the same proof as other creator operations. On
+ * success, immediately update this page's state (the server later pushes a refreshed member list).
+ * Account project (the cloud account path): the creator changes it through `set-hosted-option` on
+ * `/hosted/shared/account/admin`, relying on the account's login state, and members are rejected by
+ * the server.
  */
 export async function setHostedOption(service: HostedServiceName, option: HostedOptionName, enabled: boolean, key: string): Promise<HostedChangeResult> {
   if (view.shared?.accountId) {
@@ -2434,24 +2543,25 @@ export async function setAccountAgentEnabled(enabled: boolean): Promise<void> {
   await cur.setAccountAgentEnabled(enabled);
 }
 
-/** 账号项目:创建者改托管方的渲染节点的开关或它的子选项(同上,凭账号的登录态) */
+/** Account project: the creator changes the host's render node switch or its sub-option (same as above, relying on the account's login state) */
 async function setAccountHosted(change: Parameters<NonNullable<Current["setAccountHosted"]>>[0]): Promise<void> {
   if (!cur?.setAccountHosted) throw new AccountFailure(503, 'session-unavailable');
   await cur.setAccountHosted(change);
 }
 
-/** 改托管方服务开关的结果。账号项目失败时另带 `message`(服务端给的拒绝原因翻成的一句话),见 `hostedServices.ts` 的 `accountHostedFailure` */
+/** Result of changing the host's service switch. On failure in an account project it also carries `message` (one sentence translated from the rejection reason given by the server), see `accountHostedFailure` in `hostedServices.ts` */
 export type HostedChangeResult = { ok: true } | { ok: false; error: AdminError; message?: string };
 
 
-/** 新的一份口令凭证(改项目密码、改名单、改创建者密码用),kdf 与项目记录一致用缺省 */
+/** A new password credential (used for changing the project password, the list, and the creator password); kdf uses the default, consistent with the project record */
 export function makeCredential(password: string) {
   return client.makeCredential(password);
 }
 
 /**
- * 账号云端项目:作废并重新生成项目链接(10-14 第 3.3 节)。旧链接失效,已经进来的成员不受影响,新人用回的新链接。
- * 只有账号项目有这一项(旧办法的房间走「作废并重新生成邀请码」)。
+ * Account cloud project: invalidate and regenerate the project link (10-14 section 3.3). The old link
+ * stops working, members already inside are unaffected, and new people use the new link.
+ * Only account projects have this (rooms of the old way use "Invalidate and regenerate invite code").
  */
 export async function regenAccountProjectLink(): Promise<{ ok: true; link: string } | { ok: false; error: string }> {
   if (!view.shared?.accountId || !cur?.regenAccountLink) return { ok: false, error: tr("This is not an account cloud project.") };
@@ -2459,22 +2569,25 @@ export async function regenAccountProjectLink(): Promise<{ ok: true; link: strin
   catch (e) { return { ok: false, error: e instanceof Error && e.message ? e.message : tr("Failed to regenerate the project link.") }; }
 }
 
-/** 账号云端项目:设置 / 修改项目二级密码(字符串,照原样,不去空白)或清除(null 或空串)(10-14 第 3.3 节) */
+/** Account cloud project: set / change the project secondary password (a string, as is, whitespace not trimmed) or clear it (null or empty string) (10-14 section 3.3) */
 export async function setAccountSecondaryPassword(password: string | null): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!view.shared?.accountId || !cur?.setAccountSecondaryPassword) return { ok: false, error: tr("This is not an account cloud project.") };
   try { await cur.setAccountSecondaryPassword(password || null); return { ok: true }; }
   catch (e) { return { ok: false, error: e instanceof Error && e.message ? e.message : tr("Failed to set the project secondary password.") }; }
 }
 
-/** 账号云端项目现在的项目链接(创建者带当前的链接口令);不在账号项目里回 null */
+/** The current project link of an account cloud project (the creator gets it with the current link token); returns null when not in an account project */
 export function currentAccountProjectLink(): string | null {
   return view.shared?.accountId && cur?.accountLink ? cur.accountLink() : null;
 }
 
 /**
- * 「搬到云端」要带上去的历史序号与提交摘要(10-14 第 3.3 节):读当前这条本机文档连接的 `DocSync`
- * (本地项目连本机文档服务、旧办法的协作房间连房间),只在它连的正是这份内容(`contentId`)时给;
- * 还没拿到文档服务确认的序号(`rev` 为 0)或已经在账号云端项目里时回 null。
+ * The history sequence number and commit summary to carry up on "Move to the cloud" (10-14 section
+ * 3.3): read from the `DocSync` of the current local document connection (a local project connects
+ * to the local document service, a collaboration room of the old way connects to the room), only
+ * given when it is connected to exactly this content (`contentId`); returns null when the sequence
+ * number confirmed by the document service is not yet available (`rev` is 0) or when already in an
+ * account cloud project.
  */
 export function currentDocLineage(contentId: string): { rev: number; history: CommitSummary[] } | null {
   const ds = cur?.link.ds;

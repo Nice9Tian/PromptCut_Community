@@ -30,7 +30,7 @@ test("visual/audio flags honor image silence and preserve the original display n
   assert.equal(M.missingMaterialLabel(m), "scene.mp4");
   assert.equal(M.confirmedMissingAudio(media({ kind: "image", missingMaterial: { ...media().missingMaterial, original: { ...media().missingMaterial.original, kind: "image" } } })), false);
   const video = media({ id: "source", kind: "video", missingMaterial: { ...media().missingMaterial, mediaId: "source" } });
-  const derived = { id: "source-sound", kind: "audio", name: "scene · 声音", url: video.url, soundOf: "source" };
+  const derived = { id: "source-sound", kind: "audio", name: "scene · sound", url: video.url, soundOf: "source" };
   assert.equal(M.confirmedMissingAudio(derived, { media: [video, derived] }), true, "a separated sound asset inherits only the source video's confirmed audio-missing state");
   } finally { await server.close(); }
 });

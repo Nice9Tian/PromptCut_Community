@@ -2,11 +2,15 @@ import { getState, subscribe } from "../store/project";
 import { setAgentProject } from "./agentTabs";
 
 /**
- * 让 AI 栏的分页清单跟着编辑器此刻打开的项目走(清单按项目分开,见 agentTabs.ts)。
+ * Keep the AI panel's tab manifest in sync with the project currently open in the editor
+ * (manifests are separated per project, see agentTabs.ts).
  *
- * 盯着编辑器 store 的项目 id 和 `projectLoadToken`(每次载入项目加一):换了项目、或同一个项目重新载入,都通知 agentTabs。
- * 单独一个文件是为了让 agentTabs.ts 不依赖 store,Node 里的单测能直接载入它。
- * 导入本文件就会接上(railStore.ts 导入它);模块载入时先对一次,所以第一次读清单时已经是当前项目的。
+ * Watches editor store project id and `projectLoadToken` (incremented each time a project is
+ * loaded): when the project changes or the same project is reloaded, notify agentTabs.
+ * Kept in a separate file so agentTabs.ts does not depend on store, allowing Node unit tests to
+ * load it directly.
+ * Importing this file connects them (railStore.ts imports it); reconciled once on module load,
+ * so the first time the manifest is read it is already for the current project.
  */
 let lastToken = -1;
 let lastId = "";

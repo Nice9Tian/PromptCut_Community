@@ -47,9 +47,9 @@ export function devOrigin(argv = process.argv.slice(2), launchJson = LAUNCH_JSON
   try {
     port = JSON.parse(fs.readFileSync(launchJson, 'utf8')).configurations?.find((c) => c.name === 'dev-test')?.port;
   } catch (e) {
-    throw new Error(`读不到 ${launchJson}(${e.message}):用 --origin 或 PC_STAGE_TEST_URL 指定 dev server`);
+    throw new Error(`Cannot read ${launchJson} (${e.message}): specify the dev server with --origin or PC_STAGE_TEST_URL`);
   }
-  if (!Number.isInteger(port)) throw new Error(`${launchJson} 里没有带 port 的 dev-test 配置:用 --origin 或 PC_STAGE_TEST_URL 指定 dev server`);
+  if (!Number.isInteger(port)) throw new Error(`No dev-test config with a port in ${launchJson}: specify the dev server with --origin or PC_STAGE_TEST_URL`);
   return `http://127.0.0.1:${port}`;
 }
 
@@ -67,7 +67,8 @@ export async function openBrowser({ connect, launch } = {}) {
       close: async () => { await browser.disconnect(); },
     };
   }
-  // 起的 Chrome 以 PROBE_CHROME_ARGS 打头(`probe-chrome.mjs`),调用方给的参数接在后面
+  // Launched Chrome starts with PROBE_CHROME_ARGS (`probe-chrome.mjs`), followed by caller-supplied
+  // arguments
   const opts = launch ?? { headless: true };
   const browser = await puppeteer.launch({ ...opts, args: [...PROBE_CHROME_ARGS, ...(opts.args ?? []).filter((a) => !PROBE_CHROME_ARGS.includes(a))] });
   return {
@@ -87,7 +88,7 @@ export async function openBrowser({ connect, launch } = {}) {
  */
 export async function pickExistingPage(browser, hint = null) {
   const pages = await browser.pages();
-  if (!pages.length) throw new Error('连上了浏览器但一个 page target 都没有');
+  if (!pages.length) throw new Error('Connected to the browser, but there is not a single page target');
   if (hint) {
     const byHint = pages.find((p) => p.url().includes(hint));
     if (byHint) return byHint;

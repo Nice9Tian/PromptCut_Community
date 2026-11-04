@@ -33,7 +33,7 @@ export interface AttachJobView {
   startedAt?: number;
 }
 
-/** 根据文件名后缀推导附件类型 */
+/** Infer attachment type from file extension */
 export function kindOfName(name: string): AttachmentKind {
   const dotIndex = name.lastIndexOf(".");
   if (dotIndex === -1) return "other";
@@ -63,20 +63,20 @@ export function kindOfName(name: string): AttachmentKind {
   return "other";
 }
 
-/** 生成唯一附件 ID */
+/** Generate unique attachment ID */
 export function newAttachmentId(): string {
   const time = Date.now().toString(36);
   const rand = Math.random().toString(36).slice(2, 6).padEnd(4, "0");
   return `att-${time}-${rand}`;
 }
 
-/** 从 File 对象读取底层原生磁盘路径（桌面环境有，Web 浏览器环境为 null） */
+/** Read underlying native disk path from File object (present in desktop environment, null in Web browser environment) */
 export function pickSrcPath(file: File): string | null {
   const rawPath = (file as any).path;
   return typeof rawPath === "string" && rawPath.length > 0 ? rawPath : null;
 }
 
-/** 返回支持的文件后缀名字符串，供 input accept 属性使用 */
+/** Return supported file extension string for use by the input accept attribute */
 export function acceptAttr(): string {
   return [
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".avif",
@@ -89,7 +89,7 @@ export function acceptAttr(): string {
   ].join(",");
 }
 
-/** 通过已有本地路径向服务端导入附件 */
+/** Import attachment to the server via an existing local path */
 export async function importByPath(
   conversationId: string,
   srcPath: string,
@@ -138,7 +138,7 @@ export async function importByPath(
   }
 }
 
-/** 通过流式上传将浏览器中的 File 发送给服务端 */
+/** Send File from browser to the server via streaming upload */
 export async function uploadFile(
   conversationId: string,
   file: File
@@ -193,7 +193,7 @@ export async function uploadFile(
   }
 }
 
-/** 查询单个附件导入任务的状态 */
+/** Query status of a single attachment import task */
 export async function pollJob(jobId: string): Promise<AttachJobView | null> {
   try {
     const res = await fetch(`/api/chats/attach/status?jobId=${encodeURIComponent(jobId)}`);
@@ -205,7 +205,7 @@ export async function pollJob(jobId: string): Promise<AttachJobView | null> {
   }
 }
 
-/** 轮询等待任务完成：每 600ms 检查一次，最长等待 10 分钟 */
+/** Poll and wait for task completion: check every 600ms, wait up to 10 minutes */
 export async function waitForJob(
   jobId: string,
   onTick?: (j: AttachJobView) => void

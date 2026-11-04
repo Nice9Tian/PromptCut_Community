@@ -1,38 +1,64 @@
 /**
- * 两档素材换档的端到端探针(`docs/plan/c66-design.md` 第 4 节、验收 T5 / T6 / T7):真 Chrome 里的真编辑台,
- * 素材从一台「远程素材服务」来,经本地素材服务的读路由按需拉取。
+ * End-to-end probe for two-tier asset tier switch (`docs/plan/c66-design.md` section 4, acceptance
+ * checks T5 / T6 / T7): real editor in real Chrome, assets come from a "remote asset service",
+ * pulled on demand via local asset service read routing.
  *
  *   node scripts/probes/tier-switch-probe.mjs --origin http://127.0.0.1:5570 [--remote-port 5575] [--out <dir>]
  *
- * dev server 按分配的端口段起:`npx vite --port 5570 --strictPort --host 127.0.0.1`(舞台端口 5571 / 5572)。
- * 「远程素材服务」由本探针自己在 `--remote-port` 上起(只实现契约里本探针用到的几条:
- * `GET media/<hash>`(含 Range)、`GET media/<hash>/chunks`、跨源预检),每一档 `complete` 与否由探针控制。
+ * dev server starts per allocated port range: `npx vite --port 5570 --strictPort --host 127.0.0.1`
+ * (stage ports 5571 / 5572). The "remote asset service" is started by this probe itself on
+ * `--remote-port` (only implements endpoints used by this probe in contract: `GET media/<hash>`
+ * (including Range), `GET media/<hash>/chunks`, cross-origin preflight); whether each tier is
+ * `complete` is controlled by the probe.
  *
- * 测试素材现场用 ffmpeg 生成(设计稿第 8 节「测试素材」):1280×720、30 fps、6 秒,画面顶上一条 10 格的黑白条
- * 按二进制编码帧号(第 k 格亮 = 帧号第 k 位是 1),素材小尺寸照设计稿的素材小尺寸命令转(800×450),ProRes 素材原尺寸是同一段画面
- * 转 `prores_ks`。每次运行在元数据里写一个随机串,哈希每次都不一样,不会命中上一次留在本地内容库里的文件。
+ * Test assets are generated on the fly with ffmpeg (design doc section 8 "Test assets"): 1280×720,
+ * 30 fps, 6 seconds, a 10-block black-and-white bar at top of video encodes frame numbers in
+ * binary (block k lit = bit k of frame number is 1); small-size asset is converted per design
+ * doc small-size asset command (800×450), ProRes original-size asset converts same video with
+ * `prores_ks`. Writes a random string in metadata on each run so hash differs each time, avoiding
+ * hitting files left in local content store from previous runs.
  *
- * 场景:
- *   T5a(暂停中换档):素材层先透明(还没连远程,两档都没到齐,角上「等待上传方」)→ 连上远程、只有素材小尺寸到齐:素材小尺寸出现
- *        → 素材原尺寸到齐:下一次轮询内换素材原尺寸;换档前后同一目标时刻(2.5 s)解出的帧号相差不超过一帧,换档期间逐帧采样无黑帧。
- *   T5b(播放中换档):素材小尺寸在播,中途素材原尺寸到齐;换档那一刻前后两帧的帧号跳变与时间差对得上(误差 ≤ 1 帧),无黑帧。
- *   T6 :素材原尺寸是 ProRes:本机探出放不了(设备本地缓存记 0),两档都到齐也一直停在素材小尺寸。
- *   T7 :素材原尺寸没到齐时导出:`exportVideo` 拒绝、提示「等待上传方」,顶栏点导出弹出同样的提示,没有任何导出请求发出。
- *   T5c(暂停中、素材原尺寸慢到;`docs/archive/agent-reports/AGENT-tier-reload-seek.md`):同 T5a 的开头(先等待上传方、素材原尺寸地址挂失败过),
- *        素材原尺寸报齐后远程先扣住字节 `--hold-ms`(回了头、不给字节),可播性探测因此超时(记「未知」);之后探针不再碰页面的
- *        任何状态(播放头停着、集合不变),也必须换到素材原尺寸。跨机 T9 `ht9a0927` 里观察端就是这样一直停在素材小尺寸。
- *   T5e(暂停中、可播性早有结论、预热槽位要重载):同 T5a 的开头,但本机早就记下「素材原尺寸放得了」;素材原尺寸报齐那一轮,
- *        之前挂失败过的槽位直接成了预热槽位、又被 `load()` 重载 —— 重载会把刚下的定位清回 0;之后没有重渲染也必须
- *        回到 2.5 s、交出对齐的一帧并换档。
+ * Scenarios:
+ *   T5a (tier switch while paused): asset layer transparent at first (not connected to remote yet,
+ *        neither tier arrived, "Waiting for uploader" in corner) -> connected to remote, only
+ *        small-size asset arrived: small-size asset appears -> original-size asset arrived: switch
+ *        to original-size asset within next polling interval; decoded frame numbers before and after
+ *        tier switch at same target time (2.5 s) differ by no more than one frame, frame-by-frame
+ *        sampling during tier switch has no black frames.
+ *   T5b (tier switch during playback): small-size asset is playing, original-size asset arrives
+ *        midway; at tier switch moment, frame number jump between adjacent frames matches time
+ *        difference (error ≤ 1 frame), no black frames.
+ *   T6 : Original-size asset is ProRes: local probe detects it cannot be played (recorded as 0 in
+ *        device local cache), stays on small-size asset even when both tiers arrive.
+ *   T7 : Export when original-size asset has not arrived: `exportVideo` rejects with "Waiting for
+ *        uploader", clicking export in top bar pops up the same notice, no export request is sent.
+ *   T5c (paused, original-size asset arrives slowly; `docs/archive/agent-reports/AGENT-tier-reload-seek.md`):
+ *        Same as beginning of T5a (waiting for uploader first, original-size asset URL attach failed
+ *        previously); after original-size asset is reported ready, remote holds bytes for `--hold-ms`
+ *        (headers returned, no bytes served), playability probe therefore times out (recorded as
+ *        "unknown"); after that probe no longer touches any page state (playhead stopped, set
+ *        unchanged), must still switch to original-size asset. In cross-machine T9 `ht9a0927`,
+ *        observing side stayed on small-size asset like this.
+ *   T5e (paused, playability already determined, warmup slot needs reload): Same as beginning of
+ *        T5a, but local machine already recorded "original-size asset can be played"; in the round
+ *        original-size asset is reported ready, the slot that failed to attach before directly becomes
+ *        a warmup slot and is reloaded by `load()`: reload clears freshly applied seek back to 0;
+ *        after that, even without re-render, must still return to 2.5 s, yield an aligned frame,
+ *        and switch tiers.
  *
- *   `--only T5a,T5c` 只跑列出的场景(缺省全跑)。
+ *   `--only T5a,T5c` only runs listed scenarios (runs all by default).
  *
- * 耗时只记录(verification.md「耗时只记录,不当闸门」):T5a「complete 翻真后多久被页面轮询看到」(原门槛 ≤ 2600 ms)与各场景
- * 换到素材原尺寸的用时只写进 `TIMINGS` 行与结果的 `timings`,不决定过不过。黑帧数、帧号与帧误差(不超过一帧)、
- * 「等待上传方」的提示照旧是通过条件。等待时限只为防卡死,一律不少于 120 秒。
+ * Duration recorded only (verification.md "record duration only, do not use as gate"): T5a "how long
+ * after complete turns true it is observed by page polling" (original gate ≤ 2600 ms) and time
+ * taken by each scenario to switch to original-size asset are only written to `TIMINGS` line and
+ * `timings` in result, without deciding pass/fail. Black frame count, frame numbers and frame error
+ * (no more than one frame), and "Waiting for uploader" prompt remain pass conditions as before.
+ * Wait timeouts are only to prevent hangs, never less than 120 seconds.
  *
- * 输出:最后一行是一行 JSON(`ok`、各场景的关键数),截图在 `--out` 目录。
- * 帧号的读法:在可见舞台里对**显示着的**那个 `<video>` 做 `drawImage`,读顶上那条的 10 个格子。
+ * Output: The last line is a JSON line (`ok`, key metrics for each scenario), screenshots in
+ * `--out` directory.
+ * How to read frame numbers: Call `drawImage` on the **visible** `<video>` in visible stage, and
+ * read the 10 blocks on the top bar.
  */
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -54,13 +80,13 @@ const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `p
 const FPS = 30;
 const ONLY = flagArg('only', null, args);
 const want = (scene) => !ONLY || ONLY.split(',').map((x) => x.trim()).includes(scene);
-/** T5c:素材原尺寸报齐后远程扣住字节多久(要长过远端可播性探测的 10 s 时限,再留出轮询的 2 s) */
+/** T5c: How long remote holds bytes after original-size asset is reported ready (must exceed 10 s limit of remote playability probe, plus 2 s for polling) */
 const HOLD_MS = Number(flagArg('hold-ms', '16000', args));
 const fails = [];
 const notes = [];
 const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra === undefined ? '' : ' :: ' + JSON.stringify(extra).slice(0, 400))); return !!cond; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-/** 等待时限只为防卡死(verification.md「耗时只记录,不当闸门」):不到 WAIT_FLOOR_MS 的一律提到它;等到头没有结果仍算不过 */
+/** Wait timeout is only to prevent hangs (verification.md "record duration only, do not use as gate"): anything below WAIT_FLOOR_MS is raised to it; timing out with no result still fails */
 const WAIT_FLOOR_MS = 120000;
 const timings = createTimings('tier-switch-probe');
 async function until(label, fn, timeoutMs, everyMs = 200) {
@@ -69,19 +95,19 @@ async function until(label, fn, timeoutMs, everyMs = 200) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
 
-/* ------------------------------------------------------------------ 素材 */
+/* ------------------------------------------------------------------ Assets */
 await fs.mkdir(OUT, { recursive: true });
 const ffmpeg = await findFfmpeg();
 function ff(argv) {
   const r = spawnSync(ffmpeg, ['-v', 'error', '-y', ...argv], { windowsHide: true, encoding: 'utf8' });
-  if (r.status !== 0) throw new Error(`ffmpeg 失败:${r.stderr}`);
+  if (r.status !== 0) throw new Error(`ffmpeg failed: ${r.stderr}`);
 }
-/** 一对素材(素材原尺寸 + 素材小尺寸)。`prores` 时素材原尺寸转 ProRes MOV */
+/** A pair of assets (original-size asset + small-size asset). When `prores`, original-size asset is converted to ProRes MOV */
 async function makePair(tag, { prores = false } = {}) {
   const src = path.join(OUT, `${tag}-src.mp4`);
   ff(['-f', 'lavfi', '-i', `color=c=gray:s=1280x720:r=${FPS}:d=6`,
@@ -91,7 +117,7 @@ async function makePair(tag, { prores = false } = {}) {
   const orig = prores ? path.join(OUT, `${tag}-orig.mov`) : src;
   if (prores) ff(['-i', src, '-c:v', 'prores_ks', '-profile:v', '3', '-pix_fmt', 'yuv422p10le', '-an', '-metadata', `comment=${RUN}-${tag}-p`, orig]);
   const small = path.join(OUT, `${tag}-small.mp4`);
-  // 设计稿第 8 节的素材小尺寸命令(保留 VFR 时间戳、只丢间隔不足 1/60 s 的帧、限 800×600、偶数尺寸)
+  // Small-size asset command from section 8 of design doc (preserves VFR timestamps, drops only frames with interval < 1/60 s, limits to 800×600, even dimensions)
   ff(['-i', orig, '-map', '0:v:0', '-map', '0:a:0?',
     '-vf', "select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,1/60)',scale=w='min(iw\\,800)':h='min(ih\\,600)':force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1,format=yuv420p",
     '-fps_mode:v', 'vfr', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '64k', '-movflags', '+faststart', small]);
@@ -102,10 +128,10 @@ async function makePair(tag, { prores = false } = {}) {
   return { orig: await read(orig, prores ? 'video/quicktime' : 'video/mp4'), small: await read(small, 'video/mp4'), ext: prores ? 'mov' : 'mp4' };
 }
 
-/* ------------------------------------------------------------------ 远程素材服务 */
+/* ------------------------------------------------------------------ Remote asset service */
 const remoteFiles = new Map(); // hash → { bytes, type, complete }
 const remoteLog = [];
-/** T5c:回了头、字节扣到 `holdUntil` 才给(慢链路上「素材原尺寸还在路上」) */
+/** T5c: Headers returned, bytes withheld until `holdUntil` before serving ("original-size asset still in transit" on slow links) */
 function later(f, req, res, body) {
   if (req.method === 'HEAD') return res.end();
   const wait = (f.holdUntil ?? 0) - Date.now();
@@ -141,7 +167,7 @@ await new Promise((r) => remote.listen(REMOTE_PORT, '127.0.0.1', r));
 const REMOTE_BASE = `http://127.0.0.1:${REMOTE_PORT}/api/asset`;
 const publish = (x, complete, holdUntil = 0) => remoteFiles.set(x.hash, { bytes: x.bytes, type: x.type, complete, holdUntil });
 
-/* ------------------------------------------------------------------ 页面 */
+/* ------------------------------------------------------------------ Page */
 const out = { ok: false, origin, run: RUN, out: OUT, T5a: {}, T5b: {}, T5c: {}, T5e: {}, T6: {}, T7: {} };
 const browser = await puppeteer.launch({ headless: true, protocolTimeout: 300000,
   args: [...PROBE_CHROME_ARGS, '--window-position=-32000,-32000', '--no-first-run', '--hide-scrollbars', '--force-device-scale-factor=1', '--autoplay-policy=no-user-gesture-required'] });
@@ -152,7 +178,7 @@ try {
   page.on('pageerror', (e) => pageErrors.push(String(e)));
   const exportRequests = [];
   page.on('request', (r) => { if (/\/api\/export(\/|$)/.test(r.url())) exportRequests.push(r.url()); });
-  // 并行跑别的 Chrome 任务时 Vite 的首次模块转换偶尔会超时；只重试舞台初始化。
+  // When running other Chrome tasks in parallel, Vite initial module transform occasionally times out; only retry stage initialization.
   let booted = false;
   for (let attempt = 0; attempt < 3 && !booted; attempt++) {
     try {
@@ -193,7 +219,7 @@ try {
     await page.screenshot({ path: file, clip: box ? { x: Math.max(0, box.x - 4), y: Math.max(0, box.y - 4), width: box.width + 8, height: box.height + 8 } : undefined });
     return file;
   };
-  /** 显示着的素材层眼下是什么:哪一档、解出的帧号、就绪没有、角上有没有「等待上传方」 */
+  /** What the displayed asset layer currently is: which tier, decoded frame number, whether ready, whether "Waiting for uploader" is in corner */
   const layer = async () => (await front())?.evaluate((F) => {
     const v = document.querySelector('[data-pc-media] > video');
     const awaiting = !!document.querySelector('[data-pc-media-awaiting]');
@@ -215,7 +241,7 @@ try {
     }
     return r;
   }, FPS);
-  /** 在可见舞台里逐帧(真 rAF)采样显示着的那一层,直到 stopSampler */
+  /** Sample the displayed layer frame by frame (real rAF) in visible stage until stopSampler */
   const startSampler = async () => (await front()).evaluate((F) => {
     window.__tierSamples = [];
     window.__tierSampling = true;
@@ -239,7 +265,7 @@ try {
           let idx = 0;
           for (let k = 0; k < 10; k++) if (ctx.getImageData(Math.round(cv.width * ((k + 0.5) / 10)), y, 1, 1).data[0] > 128) idx |= 1 << k;
           s.idx = idx;
-          // 下半截的平均亮度:全黑(< 16)就是黑帧
+          // Average luminance of the lower half: fully black (< 16) is a black frame
           const d = ctx.getImageData(0, Math.round(cv.height * 0.5), cv.width, 1).data;
           let sum = 0;
           for (let i = 0; i < d.length; i += 4) sum += d[i];
@@ -259,7 +285,7 @@ try {
     samples.trace = trace;
     return { samples, trace };
   });
-  /** T5b:在显示元素交帧时读实际画面；DOM 换槽后立即订阅新元素。 */
+  /** T5b: Read actual frame when display element delivers frame; immediately subscribe to new element after DOM swaps slot. */
   const startFrameSampler = async () => (await front()).evaluate(() => {
     const frames = [];
     const watched = new Map();
@@ -307,9 +333,11 @@ try {
   const blackOf = (samples, fromAt) => samples.filter((s) => s.at >= fromAt && (!s.shown || s.rs < 2 || !(s.luma > 16)));
 
   /**
-   * 新项目 + 一段 6 秒的视频片段,素材记录带两档。
-   * 注意:载入别的项目 = 回到本机空间(syncManager 的 switchToLocal),当前远程素材服务随之清掉 ——
-   * 和「在共享项目里载入别的项目 = 离开共享项目」一个口径。所以 `remote` 为真时建完项目再连一次远程。
+   * New project + a 6-second video clip, asset record has two tiers.
+   * Note: loading another project = returning to local space (syncManager's switchToLocal), and
+   * current remote asset service is cleared accordingly: aligned with "loading another project in
+   * a shared project = leaving shared project". Therefore, when `remote` is true, reconnect to remote
+   * after creating project.
    */
   const setupProject = async (pair, name, remote = true) => {
     const r = await setupProjectOnly(pair, name);
@@ -318,9 +346,10 @@ try {
   };
   const setupProjectOnly = async (pair, name) => {
     await store('actions.newProject(args[0]);', name);
-    // 远程素材来自共享项目。只改素材服务地址却仍留在本机空间，会让
-    // 本机缺失检查按正常规则清空尚未拉到的原尺寸地址，干扰换档观察。
-    // 用真实协作入口建立隔离的共享项目，再由场景控制远程素材服务。
+    // Remote assets come from a shared project. Only changing asset service address while staying in
+    // local space causes local missing check to clear unfetched original-size URLs per normal rules,
+    // interfering with tier switch observation. Use real collaboration entry to create an isolated
+    // shared project, then let scenario control remote asset service.
     const shared = await page.evaluate(async (name) => {
       const { enableCollab } = await import('/src/editor/sync/collab.ts');
       const result = await enableCollab({ where: 'lan', mode: 'free', name,
@@ -328,7 +357,7 @@ try {
         projectPassword: 'isolated-tier-probe-project' });
       return { ok: result.ok, error: result.ok ? null : result.error };
     }, name);
-    if (!shared.ok) throw new Error(`换档探针共享项目初始化失败: ${shared.error}`);
+    if (!shared.ok) throw new Error(`Tier-switch probe shared project initialization failed: ${shared.error}`);
     return store(`
     const m = actions.addMedia({ kind: 'video', name: args[0] + '.' + args[4], url: '/@media/' + args[1], hash: args[1], ext: args[4], size: args[3],
       tiers: { original: args[1], small: args[2] }, duration: 6, width: 1280, height: 720 });
@@ -337,74 +366,74 @@ try {
     return { mediaId: m.id, clipId: c && c.id };`, name, pair.orig.hash, pair.small.hash, pair.orig.bytes.length, pair.ext);
   };
 
-  /* ============================================================ T5a:暂停中换档 */
+  /* ============================================================ T5a: Tier switch while paused */
   if (want('T5a')) {
   const A = await makePair('a');
   publish(A.small, false);
   publish(A.orig, false);
   await tiers('T.setRemoteAssets(null);');
   const setupA = await setupProject(A, `tier-a-${RUN}`, false);
-  check(setupA?.clipId, 'T5a:加上了视频片段');
-  // 1) 还没连远程:本地素材服务上两档都没有 → 透明 + 「等待上传方」
-  const transparent = await until('T5a:素材层透明、角上「等待上传方」', async () => {
+  check(setupA?.clipId, 'T5a: video clip added');
+  // 1) Not connected to remote yet: neither tier on local asset service → transparent + "Waiting for uploader"
+  const transparent = await until('T5a: asset layer is transparent and the corner shows "Waiting for uploader"', async () => {
     const l = await layer();
     return l && l.awaiting && !(l.shown && l.rs >= 2) ? l : null;
   }, 15000);
   out.T5a.transparent = transparent ? { awaiting: transparent.awaiting, shown: transparent.shown, rs: transparent.rs ?? null } : null;
   out.T5a.shotTransparent = await preview('t5a-1-transparent');
-  // 2) 连上远程、只有素材小尺寸到齐 → 素材小尺寸出现
+  // 2) Connected to remote, only small-size asset arrived → small-size asset appears
   publish(A.small, true);
   const tConnect = Date.now();
   await tiers(`T.setRemoteAssets({ base: args[0], ticket: async () => 'probe-ticket' });`, REMOTE_BASE);
-  const smallUp = await until('T5a:素材小尺寸出现', async () => {
+  const smallUp = await until('T5a: asset small size appears', async () => {
     const l = await layer();
     return l && l.shown && l.rs >= 2 && l.src.includes(A.small.hash) && Number.isInteger(l.idx) ? l : null;
   }, 20000);
   out.T5a.smallMs = Date.now() - tConnect;
   out.T5a.small = smallUp ? { idx: smallUp.idx, expect: smallUp.expect, awaiting: smallUp.awaiting } : null;
-  check(smallUp && !smallUp.awaiting, 'T5a:素材小尺寸出现后「等待上传方」撤下', smallUp);
-  check(smallUp && Math.abs(smallUp.idx - 75) <= 1, 'T5a:素材小尺寸停在 2.5 s(帧号 75 ± 1)', smallUp);
+  check(smallUp && !smallUp.awaiting, 'T5a: "Waiting for uploader" is removed after the asset small size appears', smallUp);
+  check(smallUp && Math.abs(smallUp.idx - 75) <= 1, 'T5a: asset small size parks at 2.5 s (frame number 75 ± 1)', smallUp);
   out.T5a.shotSmall = await preview('t5a-2-small');
-  // 3) 素材原尺寸到齐 → 下一次轮询内换素材原尺寸(轮询 2 s + 按需拉取 + 可播性探测 + 预热对齐)
+  // 3) Original-size asset arrived → switch to original-size asset within next polling interval (polling 2 s + on-demand fetch + playability probe + warmup alignment)
   await startSampler();
   const samplerStart = await (await front()).evaluate(() => (window.__pcRealNow ?? (() => performance.now()))());
   publish(A.orig, true);
   const tOrig = Date.now();
-  const polled = await until('T5a:页面轮询看到素材原尺寸到齐', () => tiers(`return T.tierHashes().includes(args[0]);`, A.orig.hash), 10000, 50);
+  const polled = await until('T5a: the page poll sees the asset original size fully arrived', () => tiers(`return T.tierHashes().includes(args[0]);`, A.orig.hash), 10000, 50);
   out.T5a.pollMs = polled ? Date.now() - tOrig : null;
-  // 耗时只记录:原来 ≤ 2600 ms 是通过条件;「看到了」由上面的 until 判(等不到记超时)
-  timings.record('T5a complete 翻真到页面轮询看到素材原尺寸', out.T5a.pollMs, { formerLimit: '≤ 2600 ms(轮询 2 s + 余量)' });
-  const origUp = await until('T5a:换到素材原尺寸', async () => {
+  // Duration recorded only: originally ≤ 2600 ms was pass condition; "seen" is determined by until above (times out if not reached)
+  timings.record('T5a from complete turning true to the page poll seeing the asset original size', out.T5a.pollMs, { formerLimit: '≤ 2600 ms (2 s poll + margin)' });
+  const origUp = await until('T5a: switched to asset original size', async () => {
     const l = await layer();
     return l && l.shown && l.rs >= 2 && l.src.includes(A.orig.hash) && Number.isInteger(l.idx) ? l : null;
   }, 20000);
   out.T5a.switchMs = Date.now() - tOrig;
-  timings.record('T5a 素材原尺寸到齐到换到素材原尺寸(暂停中)', origUp ? out.T5a.switchMs : null, { formerLimit: '等待上限 20 秒' });
+  timings.record('T5a from asset original size fully arrived to switch to asset original size (while paused)', origUp ? out.T5a.switchMs : null, { formerLimit: 'Wait limit 20 seconds' });
   await sleep(300);
   const { samples: samplesA, trace: traceA } = await stopSampler();
   out.T5a.trace = traceA.map((x) => ({ mediaTime: +x.mediaTime.toFixed(4), ref: +x.ref.toFixed(4), errFrames: +((x.mediaTime - x.ref) * x.fps).toFixed(2), playing: x.playing }));
-  check(traceA.length >= 1 && traceA.every((x) => Math.abs(x.mediaTime - x.ref) * x.fps <= 1.03), 'T5a:换档那一帧的帧回调 mediaTime 与目标差不超过一帧', out.T5a.trace);
+  check(traceA.length >= 1 && traceA.every((x) => Math.abs(x.mediaTime - x.ref) * x.fps <= 1.03), 'T5a: at the tier-switch frame, the frame callback\'s mediaTime differs from the target by no more than one frame', out.T5a.trace);
   out.T5a.original = origUp ? { idx: origUp.idx, expect: origUp.expect } : null;
-  check(origUp && smallUp && Math.abs(origUp.idx - smallUp.idx) <= 1, 'T5a:换档前后同一目标时刻的帧号相差不超过一帧', { small: smallUp?.idx, orig: origUp?.idx });
+  check(origUp && smallUp && Math.abs(origUp.idx - smallUp.idx) <= 1, 'T5a: for the same target time before and after the tier switch, the frame numbers differ by no more than one frame', { small: smallUp?.idx, orig: origUp?.idx });
   const blackA = blackOf(samplesA, samplerStart);
   out.T5a.samples = samplesA.length;
   out.T5a.black = blackA.length;
-  check(samplesA.length > 10 && blackA.length === 0, 'T5a:换档期间逐帧采样无黑帧 / 无空档', blackA.slice(0, 3));
+  check(samplesA.length > 10 && blackA.length === 0, 'T5a: per-frame sampling during the tier switch shows no black frames / no gaps', blackA.slice(0, 3));
   const idxsA = [...new Set(samplesA.filter((s) => Number.isInteger(s.idx)).map((s) => s.idx))];
   out.T5a.idxSeen = idxsA;
-  check(idxsA.every((i) => Math.abs(i - 75) <= 1), 'T5a:暂停中换档,画面一直停在 2.5 s(帧号 75 ± 1),没有跳回片头', idxsA);
+  check(idxsA.every((i) => Math.abs(i - 75) <= 1), 'T5a: tier switch while paused, the picture stays at 2.5 s (frame number 75 ± 1) the whole time, with no jump back to the start', idxsA);
   out.T5a.shotOriginal = await preview('t5a-3-original');
   out.T5a.playable = await (await front()).evaluate((h) => Object.keys(localStorage).filter((k) => k.endsWith(h)).map((k) => [k.split('.').slice(0, 3).join('.'), localStorage.getItem(k)]), A.orig.hash);
 
   }
-  /* ============================================================ T5b:播放中换档 */
+  /* ============================================================ T5b: Tier switch during playback */
   if (want('T5b')) {
   const B = await makePair('b');
   publish(B.small, true);
   publish(B.orig, false);
   await setupProject(B, `tier-b-${RUN}`);
   await store('actions.seek(0.3);');
-  const readyB = await until('T5b:素材小尺寸就绪', async () => { const l = await layer(); return l && l.rs >= 2 && l.src.includes(B.small.hash) ? l : null; }, 20000);
+  const readyB = await until('T5b: asset small size ready', async () => { const l = await layer(); return l && l.rs >= 2 && l.src.includes(B.small.hash) ? l : null; }, 20000);
   if (!readyB) {
     out.T5b.debug = { layer: await layer(), tiers: await tiers('return T.assetTiersDebug();'), small: B.small.hash.slice(0, 8), orig: B.orig.hash.slice(0, 8),
       remoteLog: remoteLog.slice(-12), status: await (await fetch(origin + '/api/media/remote')).json() };
@@ -416,16 +445,16 @@ try {
   await sleep(800);
   publish(B.orig, true);
   const tB = Date.now();
-  const switchedB = await until('T5b:播放中换到素材原尺寸', async () => { const l = await layer(); return l && l.rs >= 2 && l.src.includes(B.orig.hash) ? l : null; }, 15000, 100);
+  const switchedB = await until('T5b: switched to asset original size during playback', async () => { const l = await layer(); return l && l.rs >= 2 && l.src.includes(B.orig.hash) ? l : null; }, 15000, 100);
   out.T5b.switchMs = switchedB ? Date.now() - tB : null;
-  timings.record('T5b 素材原尺寸到齐到换到素材原尺寸(播放中)', out.T5b.switchMs, { formerLimit: '等待上限 15 秒' });
+  timings.record('T5b from asset original size fully arrived to switch to asset original size (during playback)', out.T5b.switchMs, { formerLimit: 'Wait limit 15 seconds' });
   await sleep(600);
   const { samples: samplesB, trace: traceB } = await stopSampler();
   const framesB = await stopFrameSampler();
   out.T5b.trace = traceB.map((x) => ({ mediaTime: +x.mediaTime.toFixed(4), ref: +x.ref.toFixed(4), errFrames: +((x.mediaTime - x.ref) * x.fps).toFixed(2), playing: x.playing }));
   const swapTrace = traceB.find((x) => x.playing);
   check(swapTrace && Math.abs(swapTrace.mediaTime - swapTrace.ref) * swapTrace.fps <= 1.03,
-    'T5b:播放中换档当帧与前台交帧外推到同一显示时刻的误差不超过一帧', out.T5b.trace);
+    'T5b: during playback the error between the tier-switch frame and the foreground handed-off frame, extrapolated to the same display time, is no more than one frame', out.T5b.trace);
   await store('actions.pause();');
   const shotB = await preview('t5b-after-switch');
   out.T5b.shot = shotB;
@@ -433,36 +462,41 @@ try {
   const k = decB.findIndex((s, i) => i > 0 && decB[i - 1].src === B.small.hash.slice(0, 8) && s.src === B.orig.hash.slice(0, 8));
   if (k > 0) {
     const a = decB[k - 1], b = decB[k];
-    // 两个逐帧回调的显示时刻不相同，把前一帧外推到后一帧的显示时刻再比较。
-    // 探针自身可能因负载漏收中间的 rVFC；精确对调帧取预热回调里与前台回调同显示时刻的比较。
-    // 显示元素的逐帧读图另外验证两侧确有画；回调延迟时画布可能已走到后一帧，
-    // 因此不把画布帧号强行配给该次回调的 mediaTime。
+    // Display times of the two per-frame callbacks are not identical, extrapolate earlier frame to
+    // display time of later frame before comparing. Probe itself may miss intermediate rVFC due to load;
+    // for exact swap frames, compare warmup callback and foreground callback at same display time.
+    // Frame-by-frame image reading of display element additionally verifies that both sides indeed render
+    // frames; when callback is delayed, canvas may have already moved to next frame, therefore do not
+    // forcibly match canvas frame number to mediaTime of this callback.
     const frameError = swapTrace ? (swapTrace.mediaTime - swapTrace.ref) * FPS : NaN;
     const observedGap = (b.mediaTime - (a.mediaTime + (b.at - a.at) / 1000)) * FPS;
     out.T5b.swap = { before: { idx: a.idx, mediaTime: a.mediaTime, displayTime: a.at },
       after: { idx: b.idx, mediaTime: b.mediaTime, displayTime: b.at }, frameError: +frameError.toFixed(2), observedGap: +observedGap.toFixed(2) };
-    check(Math.abs(out.T5b.swap.frameError) <= 1, 'T5b:播放中换档那一刻帧误差不超过一帧', out.T5b.swap);
-    check(b.idx >= a.idx - 1, 'T5b:换档不往回跳', out.T5b.swap);
-    // 换档之后 300 ms 内每一帧都有画(新档对调时已经交过对齐的帧)
+    check(Math.abs(out.T5b.swap.frameError) <= 1, 'T5b: frame error at the moment of the tier switch during playback is no more than one frame', out.T5b.swap);
+    check(b.idx >= a.idx - 1, 'T5b: the tier switch does not jump backward', out.T5b.swap);
+    // Every frame renders within 300 ms after tier switch (aligned frame was already delivered when swapping to new tier)
     const after = framesB.filter((s) => s.at >= b.at && s.at <= b.at + 300);
     out.T5b.afterSwapBlack = after.filter((s) => s.rs < 2 || !(s.luma > 16)).length;
-    check(after.length > 0 && out.T5b.afterSwapBlack === 0, 'T5b:换档那一刻起 300 ms 内无黑帧 / 无空档', after.slice(0, 4));
-  } else check(false, 'T5b:采样里找到了素材小尺寸 → 素材原尺寸的换档那一刻', { n: decB.length, srcs: [...new Set(samplesB.map((s) => s.src))] });
-  // 解得出的帧里没有一帧是黑的(下半截平均亮度 < 16)
+    check(after.length > 0 && out.T5b.afterSwapBlack === 0, 'T5b: no black frames / no gaps within 300 ms from the moment of the tier switch', after.slice(0, 4));
+  } else check(false, 'T5b: the tier-switch moment from asset small size → asset original size was found in the samples', { n: decB.length, srcs: [...new Set(samplesB.map((s) => s.src))] });
+  // None of the decoded frames is black (average luminance of lower half < 16)
   const lumaBlack = decB.filter((s) => !(s.luma > 16));
   out.T5b.samples = samplesB.length;
   out.T5b.decoded = decB.length;
   out.T5b.lumaBlack = lumaBlack.length;
-  check(decB.length > 10 && lumaBlack.length === 0, 'T5b:播放全程解得出的帧没有黑帧', lumaBlack.slice(0, 3));
-  // 与换档无关的缓冲(播放中纠偏 seek 时 readyState 掉到 1,屏幕上仍是上一帧):只记数,不判
+  check(decB.length > 10 && lumaBlack.length === 0, 'T5b: no black frames among the frames that could be decoded throughout playback', lumaBlack.slice(0, 3));
+  // Buffering unrelated to tier switch (readyState drops to 1 during correction seek while playing, screen still shows previous frame): count only, do not judge
   out.T5b.bufferingSamples = blackOf(samplesB, bStart).length;
   const errs = decB.map((s) => s.idx - Math.round(s.t * FPS));
   out.T5b.frameErrVsStage = { min: Math.min(...errs), max: Math.max(...errs) };
 
   }
   /**
-   * T5c / T5e 共用:暂停在 2.5 s,先「等待上传方」(素材原尺寸地址挂过、失败了)→ 素材小尺寸到齐、显示 → 素材原尺寸报齐。
-   * 素材原尺寸报齐之后探针**不再碰页面的任何状态**(不 seek、不改集合、不点东西),只看它自己能不能换到素材原尺寸。
+   * Shared by T5c / T5e: paused at 2.5 s, first "Waiting for uploader" (original-size asset URL was
+   * attached previously and failed) → small-size asset arrives and displays → original-size asset
+   * is reported ready. After original-size asset is reported ready, probe **no longer touches any
+   * page state** (no seek, no set changes, no clicks), only observing whether it can switch to
+   * original-size asset on its own.
    */
   const pausedSwapAfterFailedOriginal = async (scene, tag, { holdMs = 0, cachePlayable = false, timeoutMs }) => {
     const o = out[scene];
@@ -471,35 +505,35 @@ try {
     publish(X.orig, false);
     await tiers('T.setRemoteAssets(null);');
     const setup = await setupProject(X, `tier-${tag}-${RUN}`, false);
-    check(setup?.clipId, `${scene}:加上了视频片段`);
-    const awaiting = await until(`${scene}:先等待上传方(素材原尺寸地址挂失败)`, async () => {
+    check(setup?.clipId, `${scene}: video clip added`);
+    const awaiting = await until(`${scene}: first waiting for uploader (asset original size URL rigged to fail)`, async () => {
       const l = await layer();
       return l && l.awaiting && !(l.shown && l.rs >= 2) ? l : null;
     }, 15000);
     o.awaitingFirst = !!awaiting;
     if (cachePlayable) {
-      // 本机早就探过「素材原尺寸放得了」(两个舞台各是一个页面源,各记一份)
+      // This machine already probed that "original-size asset can be played" (the two stages are each a page origin, each recording one copy)
       for (const f of stageFrames()) await f.evaluate(async (h) => { (await import('/src/render/playability.ts')).rememberPlayable(h, true); }, X.orig.hash);
     }
     publish(X.small, true);
     await tiers(`T.setRemoteAssets({ base: args[0], ticket: async () => 'probe-ticket' });`, REMOTE_BASE);
-    const small = await until(`${scene}:素材小尺寸出现`, async () => {
+    const small = await until(`${scene}: asset small size appears`, async () => {
       const l = await layer();
       return l && l.shown && l.rs >= 2 && l.src.includes(X.small.hash) && Number.isInteger(l.idx) ? l : null;
     }, 20000);
     o.small = small ? { idx: small.idx } : null;
-    check(small && Math.abs(small.idx - 75) <= 1, `${scene}:素材小尺寸停在 2.5 s(帧号 75 ± 1)`, small);
+    check(small && Math.abs(small.idx - 75) <= 1, `${scene}: asset small size parks at 2.5 s (frame number 75 ± 1)`, small);
     const els = () => [...document.querySelectorAll('video')].map((v) => ({ src: (v.currentSrc || v.getAttribute('src') || '').split('/@media/')[1]?.slice(0, 8) ?? '',
       rs: v.readyState, net: v.networkState, err: v.error?.code ?? null, ct: +v.currentTime.toFixed(3), shown: getComputedStyle(v.parentElement).visibility === 'visible' }));
     o.elsBefore = await (await front()).evaluate(els);
-    // 元素事件时间线(load() 调用、seeking / seeked),只记不判
+    // Element event timeline (load() calls, seeking / seeked), record only, do not judge
     await (await front()).evaluate(() => {
       window.__tierEv = [];
       const now = () => (window.__pcRealNow ?? (() => performance.now()))();
       window.__tierT0 = now();
       const rec = (v, type) => window.__tierEv.push({ at: Math.round(now() - window.__tierT0), type, src: (v.currentSrc || v.getAttribute('src') || '').split('/@media/')[1]?.slice(0, 8) ?? '', rs: v.readyState, ct: +v.currentTime.toFixed(3) });
       for (const v of document.querySelectorAll('video')) {
-        // 槽位元素跨场景复用:每个元素只挂一次
+        // Slot elements reused across scenarios: each element is attached only once
         if (v.__tierHooked) continue;
         v.__tierHooked = true;
         for (const type of ['loadstart', 'loadedmetadata', 'loadeddata', 'seeking', 'seeked', 'emptied', 'error']) v.addEventListener(type, () => rec(v, type));
@@ -511,12 +545,12 @@ try {
     const samplerStart = await (await front()).evaluate(() => (window.__pcRealNow ?? (() => performance.now()))());
     const tOrig = Date.now();
     publish(X.orig, true, holdMs ? tOrig + holdMs : 0);
-    const orig = await until(`${scene}:换到素材原尺寸(素材原尺寸报齐之后没有任何别的状态变化)`, async () => {
+    const orig = await until(`${scene}: switched to asset original size (no other state change after the asset original size was reported complete)`, async () => {
       const l = await layer();
       return l && l.shown && l.rs >= 2 && l.src.includes(X.orig.hash) && Number.isInteger(l.idx) ? l : null;
     }, timeoutMs, 250);
     o.switchMs = orig ? Date.now() - tOrig : null;
-    timings.record(`${scene} 素材原尺寸报齐到换到素材原尺寸`, o.switchMs, { formerLimit: `等待上限 ${Math.round(timeoutMs / 1000)} 秒` });
+    timings.record(`${scene} from asset original size reported complete to switch to asset original size`, o.switchMs, { formerLimit: `Wait limit ${Math.round(timeoutMs / 1000)} seconds` });
     await sleep(300);
     const { samples, trace } = await stopSampler();
     o.trace = trace.map((x) => ({ mediaTime: +x.mediaTime.toFixed(4), ref: +x.ref.toFixed(4), errFrames: +((x.mediaTime - x.ref) * x.fps).toFixed(2), playing: x.playing }));
@@ -524,93 +558,93 @@ try {
     o.elsAfter = await (await front()).evaluate(els);
     o.playable = await (await front()).evaluate((h) => Object.keys(localStorage).filter((k) => k.endsWith(h)).map((k) => localStorage.getItem(k)), X.orig.hash);
     o.original = orig ? { idx: orig.idx } : null;
-    check(orig && small && Math.abs(orig.idx - small.idx) <= 1, `${scene}:换档前后同一目标时刻的帧号相差不超过一帧`, { small: small?.idx, orig: orig?.idx });
-    check(!orig || (trace.length >= 1 && trace.every((x) => Math.abs(x.mediaTime - x.ref) * x.fps <= 1.03)), `${scene}:换档那一帧的帧回调 mediaTime 与目标差不超过一帧`, o.trace);
+    check(orig && small && Math.abs(orig.idx - small.idx) <= 1, `${scene}: for the same target time before and after the tier switch, the frame numbers differ by no more than one frame`, { small: small?.idx, orig: orig?.idx });
+    check(!orig || (trace.length >= 1 && trace.every((x) => Math.abs(x.mediaTime - x.ref) * x.fps <= 1.03)), `${scene}: at the tier-switch frame, the frame callback's mediaTime differs from the target by no more than one frame`, o.trace);
     const black = blackOf(samples, samplerStart);
     o.samples = samples.length;
     o.black = black.length;
-    check(samples.length > 10 && black.length === 0, `${scene}:换档期间逐帧采样无黑帧 / 无空档`, black.slice(0, 3));
+    check(samples.length > 10 && black.length === 0, `${scene}: per-frame sampling during the tier switch shows no black frames / no gaps`, black.slice(0, 3));
     const idxs = [...new Set(samples.filter((s) => Number.isInteger(s.idx)).map((s) => s.idx))];
     o.idxSeen = idxs;
-    check(idxs.every((i) => Math.abs(i - 75) <= 1), `${scene}:画面一直停在 2.5 s(帧号 75 ± 1)`, idxs);
+    check(idxs.every((i) => Math.abs(i - 75) <= 1), `${scene}: the picture stays at 2.5 s (frame number 75 ± 1) the whole time`, idxs);
     o.shot = await preview(`${scene.toLowerCase()}-original`);
   };
 
-  /* ============================================================ T5c:暂停中、素材原尺寸慢到(可播性探测超时) */
+  /* ============================================================ T5c: Paused, original-size asset arrives slowly (playability probe timeout) */
   if (want('T5c')) await pausedSwapAfterFailedOriginal('T5c', 'e', { holdMs: HOLD_MS, timeoutMs: HOLD_MS + 30000 });
 
-  /* ============================================================ T5e:暂停中、可播性早有结论、预热槽位重载 */
+  /* ============================================================ T5e: Paused, playability already concluded, warmup slot reloaded */
   if (want('T5e')) await pausedSwapAfterFailedOriginal('T5e', 'f', { cachePlayable: true, timeoutMs: 20000 });
 
-  /* ============================================================ T6:素材原尺寸不可播(ProRes) */
+  /* ============================================================ T6: Original-size asset unplayable (ProRes) */
   if (want('T6')) {
   const C = await makePair('c', { prores: true });
   publish(C.small, true);
   publish(C.orig, true);
   await setupProject(C, `tier-c-${RUN}`);
-  const verdict = await until('T6:本机探出 ProRes 素材原尺寸放不了(设备本地缓存记 0)', async () => {
+  const verdict = await until('T6: this machine detected that the ProRes asset original size cannot be played (device-local cache records 0)', async () => {
     const v = await (await front()).evaluate((h) => { const k = Object.keys(localStorage).find((x) => x.startsWith('pc.playable.') && x.endsWith(h)); return k ? { key: k.replace(h, '<hash>'), value: localStorage.getItem(k) } : null; }, C.orig.hash);
     return v;
   }, 25000, 300);
   out.T6.cache = verdict;
-  check(verdict && verdict.value === '0', 'T6:缓存结论是放不了', verdict);
-  // 结论出来之后再看 5 秒:一直停在素材小尺寸
+  check(verdict && verdict.value === '0', 'T6: the cached verdict is that it cannot be played', verdict);
+  // Observe for 5 more seconds after conclusion is reached: remains on small-size asset throughout
   const stay = [];
   for (let i = 0; i < 10; i++) { const l = await layer(); stay.push(l?.src.includes(C.small.hash) ? 'small' : l?.src.includes(C.orig.hash) ? 'orig' : 'none'); await sleep(500); }
   out.T6.stay = [...new Set(stay)];
-  check(stay.every((s) => s === 'small'), 'T6:两档都到齐,预览仍一直停在素材小尺寸', stay);
+  check(stay.every((s) => s === 'small'), 'T6: with both tiers fully arrived, the preview still stays on asset small size the whole time', stay);
   const lc = await layer();
   out.T6.idx = lc?.idx ?? null;
   out.T6.shot = await preview('t6-prores-stays-small');
   const projectHasNoPlayable = await store(`return JSON.stringify(getState().project).includes('playable');`);
-  check(!projectHasNoPlayable, 'T6:项目文档里没有可播性字段');
-  // 导出侧仍按素材原尺寸:导出拦截问的是素材原尺寸的哈希(两档都到齐 → 放行,不拿素材小尺寸代替)
+  check(!projectHasNoPlayable, 'T6: the project document has no playability field');
+  // Export side still uses original-size asset: export intercept queries hash of original-size asset (both tiers arrived → allow, do not substitute with small-size asset)
   const gateC = await tiers(`return (await T.exportGate((await import('/src/store/project.ts')).getState().project)).map((m) => m.hash);`);
   out.T6.exportGate = gateC;
-  check(Array.isArray(gateC) && gateC.length === 0, 'T6:素材原尺寸到齐了,导出不拦(导出只认素材原尺寸)', gateC);
+  check(Array.isArray(gateC) && gateC.length === 0, 'T6: asset original size has fully arrived, so export is not blocked (export only recognizes asset original size)', gateC);
 
   }
-  /* ============================================================ T7:素材原尺寸没到时导出 */
+  /* ============================================================ T7: Export when original-size asset has not arrived */
   if (want('T7')) {
   const D = await makePair('d');
   publish(D.small, true);
   publish(D.orig, false);
   await setupProject(D, `tier-d-${RUN}`);
-  await until('T7:素材小尺寸就绪', async () => { const l = await layer(); return l && l.rs >= 2 && l.src.includes(D.small.hash) ? l : null; }, 20000);
+  await until('T7: asset small size ready', async () => { const l = await layer(); return l && l.rs >= 2 && l.src.includes(D.small.hash) ? l : null; }, 20000);
   exportRequests.length = 0;
   const viaIo = await page.evaluate(async () => {
     try { await window.__pcIo.exportVideo(); return { resolved: true }; } catch (e) { return { message: String(e?.message ?? e), code: e?.code ?? null, missing: (e?.missing ?? []).length }; }
   });
   out.T7.exportVideo = viaIo;
-  check(viaIo.code === 'awaiting-uploader' && /等待上传方/.test(viaIo.message) && viaIo.missing === 1, 'T7:exportVideo 拒绝并提示「等待上传方」、列出缺的素材', viaIo);
-  // 顶栏点「导出」:不弹另存为,直接给同样的提示
-  await sleep(2200); // 让轮询把「素材原尺寸没到齐」记进集合
+  check(viaIo.code === 'awaiting-uploader' && /Waiting for uploader/.test(viaIo.message) && viaIo.missing === 1, 'T7: exportVideo refuses and shows "Waiting for uploader", listing the missing assets', viaIo);
+  // Click "Export" in top bar: does not pop up Save As, gives the same notice directly
+  await sleep(2200); // Let polling record "original-size asset has not arrived" into set
   const clicked = await page.evaluate(() => {
-    const b = [...document.querySelectorAll('button')].find((x) => /导出/.test(x.textContent || '') || /导出/.test(x.getAttribute('title') || '') || /导出/.test(x.getAttribute('aria-label') || ''));
+    const b = [...document.querySelectorAll('button')].find((x) => /Export/.test(x.textContent || '') || /Export/.test(x.getAttribute('title') || '') || /Export/.test(x.getAttribute('aria-label') || ''));
     if (!b) return false;
     b.click();
     return true;
   });
-  const dialog = clicked ? await until('T7:导出对话框的提示', () => page.evaluate(() => { const t = document.body.innerText; return /等待上传方/.test(t) ? t.split('\n').find((l) => /等待上传方/.test(l)) : null; }), 5000) : null;
+  const dialog = clicked ? await until('T7: prompt in the export dialog', () => page.evaluate(() => { const t = document.body.innerText; return /Waiting for uploader/.test(t) ? t.split('\n').find((l) => /Waiting for uploader/.test(l)) : null; }), 5000) : null;
   out.T7.dialog = dialog;
-  check(clicked, 'T7:顶栏找到了导出按钮');
-  check(dialog && dialog.includes(`tier-d-${RUN}`), 'T7:对话框提示「等待上传方」并列出素材名', dialog);
+  check(clicked, 'T7: found the export button in the top bar');
+  check(dialog && dialog.includes(`tier-d-${RUN}`), 'T7: the dialog shows "Waiting for uploader" and lists the asset names', dialog);
   await sleep(300);
   out.T7.shot = path.join(OUT, 't7-export-blocked.png');
   await page.screenshot({ path: out.T7.shot });
   out.T7.exportRequests = exportRequests.length;
-  check(exportRequests.length === 0, 'T7:没有发出任何导出请求(不出片)', exportRequests);
+  check(exportRequests.length === 0, 'T7: no export request was sent (no video produced)', exportRequests);
 
   }
-  /* ============================================================ 收尾 */
+  /* ============================================================ Finalize */
   const status = await (await fetch(origin + '/api/media/remote')).json();
   out.remoteAuthSeen = remoteLog.some((e) => e.auth);
   out.pull = { base: status.base, jobs: status.jobs.length };
   out.pageErrors = pageErrors.slice(0, 5);
-  check(pageErrors.length === 0, '页面没有未捕获的错误', pageErrors.slice(0, 3));
+  check(pageErrors.length === 0, 'Page has no uncaught errors', pageErrors.slice(0, 3));
   await tiers('T.setRemoteAssets(null);');
 } catch (err) {
-  fails.push(`探针异常:${err?.stack ?? err}`);
+  fails.push(`Probe error: ${err?.stack ?? err}`);
 } finally {
   await browser.close().catch(() => {});
   remote.close();

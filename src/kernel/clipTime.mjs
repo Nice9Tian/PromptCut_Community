@@ -1,59 +1,80 @@
 /**
- * 片段速度与「时间轴时刻 ↔ 素材时刻」的换算。全项目只此一份,各处都调它,不各写一遍。
+ * Clip speed and the conversion between "timeline time ↔ media time". The only copy in the whole project;
+ * every place calls it instead of writing its own.
  *
- * # 规则
+ * # Rule
  *
- *   素材时刻 = mediaOffset + (时间轴时刻 − start) × speed
+ *   media time = mediaOffset + (timeline time − start) × speed
  *
- * `speed` 是素材段(`TrackClip.speed`)的播放速度,缺省 1。0.5 是慢放(时间轴上 1 秒只走素材 0.5 秒),
- * 2 是快放。只给**视频**素材段设(图片没有时间,声音段变速会没声,见下)。
+ * `speed` is the playback speed of a media clip (`TrackClip.speed`), 1 by default. 0.5 is slow motion
+ * (1 second on the timeline only advances 0.5 seconds of the media), 2 is fast forward. Only set it on
+ * **video** media clips (images have no time, and a sound clip with a speed change would be silent, see below).
  *
- * # 缺省 1 时一个字节都不变
+ * # With the default 1 nothing changes by a single byte
  *
- * - 没有 `speed` 字段、或它不是有限正数时按 1 算。IEEE 754 里 `x × 1 === x`、`x / 1 === x`,
- *   所以 `mediaOffset + (t − start) × 1` 与原来的 `mediaOffset + (t − start)` 逐位相同。
- * - 店里(store)写速度时,改回 1 就把字段删掉(`withSpeed`),不留 `speed: 1`:
- *   整份序列进哈希的那几处身份(帧服务的帧身份、镜像的项目哈希、快照签名)只要片段对象不多一个键就不变。
- * - 按字段挑着进键的那几处(层表的输入签名、卡片图的素材节点)只在 `speed !== 1` 时才加这一项(`speedKeyPart`)。
+ * - If there is no `speed` field, or it is not a finite positive number, it counts as 1. In IEEE 754
+ *   `x × 1 === x` and `x / 1 === x`, so `mediaOffset + (t − start) × 1` is bit-for-bit identical to the
+ *   old `mediaOffset + (t − start)`.
+ * - When the store writes a speed, setting it back to 1 deletes the field (`withSpeed`) and does not leave
+ *   `speed: 1`: the few identities that hash a whole track list (the frame identity of the frame service,
+ *   the project hash of the mirror, the snapshot signature) stay unchanged as long as the clip object has
+ *   no extra key.
+ * - The places that pick individual fields into a key (the input signature of the layer table, the asset
+ *   node of the card graph) only add this item when `speed !== 1` (`speedKeyPart`).
  *
- * # 声音
+ * # Sound
  *
- * 〔裁〕第一版变速段的原声一律不出(`speedMutesSource`),界面写明。浏览器离线混音没有现成的保调变速,
- * ffmpeg 有 `atempo`,两边做出来不一样,会破「导出与预览一致」(`src/audio/renderMix.ts` 与
- * `server/bakery/mux-audio.mjs` 一一对应)。只有「不出声」两边必然一致。
+ * [ruling] In the first version the original audio of a speed-changed clip is never output
+ * (`speedMutesSource`), and the UI says so. The browser's offline mix has no ready-made pitch-preserving
+ * speed change; ffmpeg has `atempo`; the two would produce different results, which would break
+ * "export matches preview" (`src/audio/renderMix.ts` and `server/bakery/mux-audio.mjs` correspond one to
+ * one). Only "no sound" is guaranteed to match on both sides.
  *
- * 纯 JS(.mjs):服务端(导出合成、看画面、帧身份)直接 import,不经 TS。
+ * Plain JS (.mjs): the server (export composition, viewing frames, frame identity) imports it directly,
+ * without going through TS.
  */
 
-/** 速度的下限与上限(倍) */
+/** Lower and upper limits of the speed (multiples) */
 export const CLIP_SPEED_MIN = 0.25;
 export const CLIP_SPEED_MAX = 4;
-/** 界面上写明「变速段不出原声」的那一句(〔裁〕第一版):桌面编辑分区、手机版「速度」面板同一句 */
-export const SPEED_MUTE_NOTE = "变速后这一段视频不出原声（第一版不做变速声音）；要听声音可以音画分离，分出来的声音跟着变速、会变调。改回 1× 恢复。";
-/** 声音段(含音画分离出来的)变速时的说明 */
-export const SPEED_AUDIO_NOTE = "声音段变速后跟着变调（第一版不做保调变速）。";
-/** 界面上给的几档 */
+/**
+ * The sentence in the UI that says "a speed-changed clip has no original audio" ([ruling], first version):
+ * the same sentence in the desktop editing section and in the "Speed" panel of the mobile app
+ */
+export const SPEED_MUTE_NOTE = "After a speed change, this video segment plays no original audio (the first version has no speed-changed audio). To hear sound, split the audio from the video; the split-out audio follows the speed change and its pitch shifts. Set it back to 1× to restore.";
+/** The note for when a sound clip (including ones separated by audio-visual separation) changes speed */
+export const SPEED_AUDIO_NOTE = "Audio segments shift in pitch after a speed change (the first version has no pitch-preserving speed change).";
+/** The few presets offered in the UI */
 export const CLIP_SPEED_PRESETS = Object.freeze([0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4]);
 
-/** 片段的速度;没有、或不是有限正数时为 1 */
+/** The speed of a clip; 1 when absent or not a finite positive number */
 export function clipSpeed(clip) {
   const s = clip?.speed;
   return typeof s === "number" && Number.isFinite(s) && s > 0 ? s : 1;
 }
 
-/** 这一段改过速度(不是 1) */
+/** This clip has had its speed changed (it is not 1) */
 export function isSpeedChanged(clip) {
   return clipSpeed(clip) !== 1;
 }
 
 /**
- * 这一段的**视频原声**因为变速而不出(〔裁〕第一版变速段原声静音)。只看视频素材段:卡片段、剪辑段没有素材速度;
- * **声音段**(素材是 audio,比如音画分离出来的那一条)变速时照常出声,随倍率变速变调(`ffmpegVarispeed` / `resampleVarispeed`,
- * 2026-10-23 用户定「可以分离,失真问题记待办」)。
- * `project` 给了就按素材的种类判;没给(拿不到项目的地方)按视频办。
- * 预览的声音层、导出混音(`audioPlanOf`)、测响度都用这一条。挂在变速视频段上的卡片声音不受它管:**音频素材效果卡**读这段素材当输入,
- * 随倍率变速变调(`render/cards/audioSources.ts` 的 `varispeedBlock`,2026-10-23 用户定「放开。」);**声画一体卡**也照常出声
- * (2026-10-23 用户定「出声。」),它读这段素材时同样变速变调,自己合成的那部分跟着卡的时钟走(`cardClockOffset`)。
+ * Whether the **original video audio** of this clip is silenced because of the speed change ([ruling] in
+ * the first version, the original audio of speed-changed clips is muted). Only video media clips count:
+ * card clips and cut segments have no media speed;
+ * **sound clips** (the asset is audio, for example the one separated out by audio-visual separation) still
+ * make sound when their speed changes, with the pitch changing with the rate (`ffmpegVarispeed` /
+ * `resampleVarispeed`, user decision, 2026-10-23: "separation is allowed, record the distortion problem
+ * as a to-do").
+ * If `project` is given, it judges by the kind of the asset; if not (places that cannot get the project),
+ * it is treated as video.
+ * The preview's sound layer, the export mix (`audioPlanOf`) and loudness measurement all use this one.
+ * The card sound of a card attached to a speed-changed video clip is not governed by it: an **audio media
+ * effect card** reads this clip's asset as its input, and its speed and pitch change with the rate
+ * (`varispeedBlock` in `render/cards/audioSources.ts`, user decision, 2026-10-23: "allow it."); an
+ * **integrated audio-visual card** also makes sound as usual (user decision, 2026-10-23: "make sound."),
+ * its speed and pitch change the same way when it reads this clip's asset, and the part it synthesizes
+ * itself follows the card's clock (`cardClockOffset`).
  */
 export function speedMutesSource(clip, project) {
   if (!clip?.mediaId || !isSpeedChanged(clip)) return false;
@@ -62,9 +83,13 @@ export function speedMutesSource(clip, project) {
 }
 
 /**
- * 声音段变速(变调)在 ffmpeg 里的那一截滤镜:先统一采样率,`asetrate` 把它当成快/慢 speed 倍的采样率,再重采样回来。
- * 读素材时要读 `时长 × speed` 秒,出来正好是时间轴上的时长。导出的两条混音路(Chrome 离线混音的裁段与 ffmpeg 混音)
- * 和测响度都用这一份,所以两条路拿到的是同一份重采样结果。速度为 1 时回空数组(滤镜链一个字不变)。
+ * The filter segment in ffmpeg for a sound clip's speed change (with pitch change): first unify the
+ * sample rate, then `asetrate` treats it as a sample rate faster/slower by a factor of speed, then
+ * resample back. When reading the asset, `duration × speed` seconds must be read, so that exactly the
+ * duration on the timeline comes out. The two export mixing paths (the segment trimming of Chrome's
+ * offline mix, and the ffmpeg mix) and the loudness measurement all use this one copy, so both paths get
+ * the same resampling result. Returns an empty array when speed is 1 (the filter chain does not change
+ * by a single word).
  */
 export function ffmpegVarispeed(speed, rate = 48000) {
   if (!(speed > 0) || speed === 1) return [];
@@ -72,8 +97,10 @@ export function ffmpegVarispeed(speed, rate = 48000) {
 }
 
 /**
- * 在线浏览器导出(没有 ffmpeg)那一路的变速变调:从 `src[from]` 起按 speed 倍步进线性插值取 n 个采样。
- * 和 `ffmpegVarispeed` 是同一个语义(时间轴第 i 个采样 = 素材第 from + i × speed 个采样),插值算法不同(ffmpeg 是 swr 的 sinc)。
+ * The speed change with pitch change on the online browser export path (which has no ffmpeg): starting
+ * at `src[from]`, stepping by speed, take n samples with linear interpolation.
+ * The semantics are the same as `ffmpegVarispeed` (sample i on the timeline = sample from + i × speed of
+ * the media), and the interpolation algorithm differs (ffmpeg uses swr's sinc).
  */
 export function resampleVarispeed(src, from, speed, n) {
   const out = new Float32Array(n);
@@ -89,17 +116,26 @@ export function resampleVarispeed(src, from, speed, n) {
 }
 
 /**
- * 声画一体卡的**卡片时钟**起点(秒):挂在素材段上的声画一体卡,画面(`t`)与声音(`audio()` 的 `range.start`)都按
- * 「片段内时间(时间轴秒)+ 这个起点」走,已生成的卡片声音也按它对位(`cardAudioRendition.mjs` 的 `cardAudioSourceOffset`)。
+ * The starting point (seconds) of the **card clock** of an integrated audio-visual card: for an integrated
+ * audio-visual card attached to a media clip, both the picture (`t`) and the sound (`range.start` of
+ * `audio()`) run on "in-clip time (timeline seconds) + this starting point", and the already generated
+ * card sound is also aligned by it (`cardAudioSourceOffset` of `cardAudioRendition.mjs`).
  *
- *   卡片时钟起点 = mediaOffset ÷ speed
+ *   card clock start = mediaOffset ÷ speed
  *
- * 1 倍时就是 `mediaOffset`(逐位相同,`x / 1` 不做:直接回原值)。为什么变速时要除以倍率:切分、裁剪按倍率推进素材起点
- * (`mediaOffsetAfter`:往后走 dt 秒时间轴,mediaOffset 加 dt × speed),而卡片自己的画面和声音是按时间轴秒走的。
- * 起点若直接用 mediaOffset,2 倍段在第 d 秒切开,后半段的卡片时钟会凭空往前跳 d 秒(画面跳一截,已生成的声音对不上位、
- * 或判「未覆盖」要重新生成);除以倍率之后切分、裁剪只把它推进 dt,和没切之前那一刻的时钟接得上。
- * 卡读这段素材的那一路不受影响:读素材的位置仍是 mediaOffset +(片段内时间 + 边的偏移)× speed(`withMediaRates` 补偿边)。
- * `mediaOffset` 没写时回 undefined,由调用方照旧退到节点的 `timeOffset`。
+ * At 1x it is just `mediaOffset` (bit-for-bit identical; `x / 1` is not done: the original value is
+ * returned directly). Why divide by the rate when the speed changes: splitting and trimming advance the
+ * media start by the rate (`mediaOffsetAfter`: going dt seconds forward on the timeline adds dt × speed to
+ * mediaOffset), while the card's own picture and sound run in timeline seconds.
+ * If the start used mediaOffset directly, then when a 2x clip is split at second d, the card clock of the
+ * second half would jump forward by d seconds out of nowhere (the picture jumps a stretch, the already
+ * generated sound is misaligned, or is judged "not covered" and has to be regenerated); after dividing by
+ * the rate, splitting and trimming only advance it by dt, which connects with the clock at that moment
+ * before the split.
+ * The path on which the card reads this clip's media is unaffected: the position at which the media is read
+ * is still mediaOffset + (in-clip time + the offset of the edge) × speed (`withMediaRates` compensates the
+ * edge). When `mediaOffset` is not written it returns undefined, and the caller falls back to the node's
+ * `timeOffset` as before.
  */
 export function cardClockOffset(clip) {
   const m = clip?.mediaOffset;
@@ -108,33 +144,37 @@ export function cardClockOffset(clip) {
   return s === 1 ? m : m / s;
 }
 
-/** 时间轴时刻 t → 素材时刻(秒) */
+/** Timeline time t → media time (seconds) */
 export function mediaTimeAt(clip, t) {
   return (clip.mediaOffset ?? 0) + (t - clip.start) * clipSpeed(clip);
 }
 
-/** 素材时刻 → 时间轴时刻(秒)。`mediaTimeAt` 的反函数 */
+/** Media time → timeline time (seconds). The inverse function of `mediaTimeAt` */
 export function timelineTimeAt(clip, mediaSec) {
   return clip.start + (mediaSec - (clip.mediaOffset ?? 0)) / clipSpeed(clip);
 }
 
-/** 从片段起点往后走 `dt` 秒(时间轴)之后的素材起点:切分的后半段、剪辑段截掉的那一截 */
+/**
+ * The media start after moving `dt` seconds (timeline) forward from the clip start: the second half of a
+ * split, the part trimmed off a cut segment
+ */
 export function mediaOffsetAfter(clip, dt) {
   return (clip.mediaOffset ?? 0) + dt * clipSpeed(clip);
 }
 
-/** 时间轴上一段时长 `dur`(缺省整段)用掉多少秒素材 */
+/** How many seconds of media a stretch of `dur` on the timeline (the whole clip by default) uses up */
 export function mediaSpanOf(clip, dur = clip.end - clip.start) {
   return dur * clipSpeed(clip);
 }
 
-/** 一段素材时长在这一段上占多少秒时间轴 */
+/** How many seconds of timeline a stretch of media duration takes up on this clip */
 export function timelineSpanOf(clip, mediaDur) {
   return mediaDur / clipSpeed(clip);
 }
 
 /**
- * 把输入的速度收成合法值:不是有限正数 → null(调用方拒绝);否则夹到 [MIN, MAX]、取到百分之一倍。
+ * Normalizes the input speed into a valid value: not a finite positive number → null (the caller
+ * rejects it); otherwise clamp to [MIN, MAX] and round to 0.01x.
  */
 export function normalizeSpeed(value) {
   const n = Number(value);
@@ -142,40 +182,58 @@ export function normalizeSpeed(value) {
   return Math.round(Math.min(CLIP_SPEED_MAX, Math.max(CLIP_SPEED_MIN, n)) * 100) / 100;
 }
 
-/** 这个倍率在不在允许范围里(手动输入的倍率超出范围时拒绝、不夹,让用户知道) */
+/**
+ * Whether this rate is within the allowed range (a manually entered rate outside the range is rejected,
+ * not clamped, so the user knows)
+ */
 export function speedInRange(value) {
   const n = Number(value);
   return Number.isFinite(n) && n >= CLIP_SPEED_MIN - 1e-9 && n <= CLIP_SPEED_MAX + 1e-9;
 }
 
-/** 换上新速度的片段(新对象);速度为 1 时**删掉字段**,不留 `speed: 1`(见文件头「缺省 1 时一个字节都不变」) */
+/**
+ * The clip with the new speed applied (a new object); when the speed is 1 the **field is deleted**,
+ * leaving no `speed: 1` (see the file header, "With the default 1 nothing changes by a single byte")
+ */
 export function withSpeed(clip, speed) {
   const { speed: _old, ...rest } = clip;
   return speed === 1 ? rest : { ...rest, speed };
 }
 
-/** 进身份键的那一项:速度不是 1 时 `{ speed }`,是 1 时 null(展开后什么都不加) */
+/**
+ * The item that goes into the identity key: `{ speed }` when the speed is not 1, null when it is 1
+ * (spreading it adds nothing)
+ */
 export function speedKeyPart(clip) {
   const s = clipSpeed(clip);
   return s === 1 ? null : { speed: s };
 }
 
 /**
- * 卡片图(`kernel/cardGraph.mjs` 的 `projectCardGraph` 的结果)里变速段的素材节点补上倍率 `rate`
- * (取帧时刻 = 片段内时间 × rate + offset,`render/cards/GraphCard.tsx`)。它进节点的身份,接这段素材的素材效果卡、
- * 转场的预渲染键跟着变(不加就会命中旧快照、画面错了不报错)。
+ * Adds the rate `rate` to the media nodes of speed-changed clips in the card graph (the result of
+ * `projectCardGraph` in `kernel/cardGraph.mjs`) (frame fetch time = in-clip time × rate + offset,
+ * `render/cards/GraphCard.tsx`). It goes into the node's identity, so the prerender keys of media effect
+ * cards connected to this media and of transitions change with it (without it, old snapshots would be
+ * hit and the picture would be wrong without any error).
  *
- * 为什么不直接写在 `projectCardGraph` 里:`cardGraph.mjs` 在内置有声卡的源码导入闭包里,改它一个字,用户已生成的卡片声音
- * 就全被判「已过期」(守门测试 `src/render/audioCardSourceVersion.test.mjs`,出处 `docs/plan/prerender-products-contract.md`
- * 第 9.2 节)。所以由出画面、出键的几处在拿到图之后调这一个函数:导出页(画面与 `__pcCardPlan`)、舞台、剪辑段的嵌套场景、
- * 在线页面的卡片计划(`editor/browserNodeHost.ts`)。
+ * Why it is not written directly in `projectCardGraph`: `cardGraph.mjs` is in the source import closure
+ * of the built-in sound cards, and changing a single word in it would make every card sound the user has
+ * already generated be judged "expired" (gatekeeper test `src/render/audioCardSourceVersion.test.mjs`,
+ * source `docs/plan/prerender-products-contract.md` section 9.2). So the few places that produce pictures
+ * and keys call this one function after getting the graph: the export page (picture and `__pcCardPlan`),
+ * the stage, the nested scene of cut segments, and the card plan of the online page
+ * (`editor/browserNodeHost.ts`).
  *
- * 同一处还给挂在变速素材段上的**声画一体卡节点**换卡片时钟(2026-10-23 用户定「出声。」):`projectCardGraph` 把它的
- * `timeOffset` 写成 `mediaOffset`(素材秒),这里改成 `cardClockOffset`(mediaOffset ÷ speed),并把它读自己这段素材的那条边的
- * `offset` 补上同样的差,读素材的位置一个采样不变(见 `cardClockOffset`)。画面(`GraphCard.tsx`)、声音
- * (`audio/cardAudio.ts`、在线声音线程)拿的是同一份图,所以两边同一个时钟。
+ * The same place also swaps the card clock for the **integrated audio-visual card nodes** attached to
+ * speed-changed media clips (user decision, 2026-10-23: "make sound."): `projectCardGraph` writes its
+ * `timeOffset` as `mediaOffset` (media seconds), and here it is changed to `cardClockOffset` (mediaOffset ÷
+ * speed), and the same difference is added to the `offset` of the edge by which it reads its own clip's
+ * media, so the position at which the media is read does not change by a single sample (see
+ * `cardClockOffset`). The picture (`GraphCard.tsx`) and the sound (`audio/cardAudio.ts`, the online sound
+ * thread) take the same graph, so both sides share the same clock.
  *
- * 没有变速段时回**同一个对象**(图、键一个字节不变)。
+ * When there are no speed-changed clips it returns **the same object** (graph and keys are unchanged by a
+ * single byte).
  */
 export function withMediaRates(project, graph) {
   if (!graph || !Array.isArray(graph.nodes)) return graph;
@@ -191,7 +249,8 @@ export function withMediaRates(project, graph) {
   return { ...graph, nodes: graph.nodes.map((node) => {
     if (node?.adapter === "media" && rates.has(node.id)) return { ...node, rate: rates.get(node.id) };
     const clip = node?.adapter === "card" && node.embeddedAudio === true ? clocks.get(node.id) : undefined;
-    // projectCardGraph 只在 mediaOffset 有值时把 timeOffset 写成它(cardGraph.mjs 的实例参数那一段),这里只接那一种
+    // projectCardGraph only writes timeOffset as mediaOffset when mediaOffset has a value (the instance
+    // parameters part of cardGraph.mjs), and this only handles that case
     if (!clip || node.timeOffset !== clip.mediaOffset) return node;
     const clock = cardClockOffset(clip), shift = clip.mediaOffset - clock, own = `@clip/${clip.id}/source`;
     const inputs = Object.fromEntries(Object.entries(node.inputs ?? {}).map(([name, ref]) =>
@@ -200,23 +259,25 @@ export function withMediaRates(project, graph) {
   }) };
 }
 
-const TRANSITION_NAME = { crossfade: "交叉溶解", fadeIn: "淡入", fadeOut: "淡出" };
+const TRANSITION_NAME = { crossfade: "Crossfade", fadeIn: "Fade in", fadeOut: "Fade out" };
 
 /**
- * 改速度之后的那句说明(桌面编辑分区的提示与手机版的气泡共用):转场跟着缩了几秒、谁跟着挪了、后面推开了几段。
- * 没有要说的回 null。`r` 是 store 的 setClipSpeed 成功时的结果。
+ * The note after changing speed (shared by the hint of the desktop editing section and the bubble of the
+ * mobile app): how many seconds the transitions shrank with it, which ones moved along, how many clips
+ * behind were pushed apart.
+ * Returns null if there is nothing to say. `r` is the result of a successful setClipSpeed of the store.
  */
 export function speedChangeNotes(r, clipId) {
   const parts = [];
-  for (const t of r?.transitions ?? []) parts.push(`${TRANSITION_NAME[t.kind] ?? "转场"}跟着缩短：${t.from.toFixed(2)} 秒 → ${t.to.toFixed(2)} 秒（这一段变短，原来的转场装不下）`);
+  for (const t of r?.transitions ?? []) parts.push(`${TRANSITION_NAME[t.kind] ?? "Transition"} shortened accordingly: ${t.from.toFixed(2)} s → ${t.to.toFixed(2)} s (this segment got shorter, so the original transition no longer fits)`);
   const moved = r?.moved ?? [];
-  if (moved.includes(clipId)) parts.push("为了缩短交叉溶解，这一段整体往后挪了（内容不变）");
-  if (moved.some((id) => id !== clipId)) parts.push("交叉溶解的另一段跟着挪了");
-  if (r?.pushed) parts.push(`后面 ${r.pushed.clips} 段整体往后推了 ${r.pushed.by.toFixed(2)} 秒`);
-  return parts.length ? parts.join("；") : null;
+  if (moved.includes(clipId)) parts.push("To shorten the crossfade, this segment was shifted later as a whole (content unchanged)");
+  if (moved.some((id) => id !== clipId)) parts.push("The other segment of the crossfade was shifted too");
+  if (r?.pushed) parts.push(`The following ${r.pushed.clips} segments were pushed later by ${r.pushed.by.toFixed(2)} s`);
+  return parts.length ? parts.join("; ") : null;
 }
 
-/** 给人看的倍数:`2×`、`0.5×` */
+/** The multiple shown to people: `2×`, `0.5×` */
 export function speedLabel(speed) {
   return `${Math.round(speed * 100) / 100}×`;
 }

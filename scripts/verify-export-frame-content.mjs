@@ -17,7 +17,8 @@ execFileSync('ffmpeg',['-y','-hide_banner','-loglevel','error',
   '-c:v','libx264','-pix_fmt','yuv420p',media],{windowsHide:true});
 process.env.PROMPTCUT_ROLE='prerender';
 process.env.PROMPTCUT_MEDIA_DIR=out;
-// 自己起的服务器用 5226:5190～5199 留给用户的编辑台和别的常驻服务,5203～5205 是验证用的 dev-test
+// Self-started server uses 5226: 5190-5199 are reserved for the user's editor and other resident
+// services, 5203-5205 are dev-test for verification
 const server=await createServer({configFile:'vite.prerender.config.ts',server:{host:'127.0.0.1',port:5226,strictPort:true}});
 const origin='http://127.0.0.1:5226';
 const project={id:'export-frame-content',width:64,height:64,fps:30,duration:1,themeId:'default',tracks:[],media:[]};

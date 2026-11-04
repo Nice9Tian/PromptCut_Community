@@ -13,11 +13,12 @@ export function useChatHistory(opts: {
   provider: string | null;
   messages: ChatMessage[];
   sessionId?: string;
-  /** localStorage 里记「当前会话 id」的键;多 Agent 分页时每页一个 */
+  /** The localStorage key that records the "current session id"; one per tab with multi-Agent tabs */
   storageKey?: string;
 }) {
   const keyRef = useRef(opts.storageKey ?? "pcChatId");
-  // 当前会话 ID，初值从 localStorage 读，没有就创建并写回
+  // The current session ID: the initial value is read from localStorage; if there is none, it is
+  // created and written back
   const [conversationId, setConversationId] = useState<string>(() => {
     try {
       const stored = localStorage.getItem(keyRef.current);
@@ -46,7 +47,7 @@ export function useChatHistory(opts: {
   const queryRef = useRef(query);
   queryRef.current = query;
 
-  // 立即将当前会话存盘（如果有非 pending 的消息），并清理防抖计时器
+  // Immediately save the current session to disk (if there are non-pending messages), and clear the debounce timer
   const flush = useCallback(() => {
     if (saveTimerRef.current !== null) {
       window.clearTimeout(saveTimerRef.current);
@@ -64,12 +65,17 @@ export function useChatHistory(opts: {
   }, []);
 
   /**
-   * 回退之后立刻把截断的那份整份写回归档,**空列表也写**。
+   * Right after a rollback, write the truncated copy back to the archive in full, **even when the list
+   * is empty**.
    *
-   * 保存接口本身是整份覆盖,截断后的非空列表走下面的防抖存盘就对了;但回退到第一条时
-   * 消息是空的,防抖那边「为空不存」,归档里就还是回退前的整段 —— 非主页刷新回来会从归档
-   * 把回退掉的消息原样找回来。这里不能改成「变空就存」:换项目时主页的消息也会变空而
-   * 会话 id 不变,那样会把上一个项目的归档清掉。所以只让回退显式调这一个。
+   * The save interface itself overwrites the whole copy, and a non-empty truncated list going through
+   * the debounced save below is fine; but when rolling back to the first message the messages are
+   * empty, the debounce side "does not save when empty", and the archive would still hold the whole
+   * pre-rollback conversation: a non-main tab coming back after a refresh would find the rolled-back
+   * messages again from the archive. This cannot be changed to "save as soon as it becomes empty":
+   * when the project is switched the main tab's messages also become empty while the session id stays
+   * the same, and that would wipe the previous project's archive. So only rollback calls this one
+   * explicitly.
    */
   const overwrite = useCallback((messages: ChatMessage[]) => {
     if (saveTimerRef.current !== null) {
@@ -85,7 +91,8 @@ export function useChatHistory(opts: {
     });
   }, []);
 
-  // 监听 messages 变化，防抖 800ms 自动存盘；messages 为空时不存(回退清空走 overwrite)
+  // Watch messages for changes and auto-save with an 800 ms debounce; do not save when messages is
+  // empty (clearing on rollback goes through overwrite)
   useEffect(() => {
     const toSave = opts.messages.filter((m) => !m.pending);
     if (toSave.length === 0) return;
@@ -112,7 +119,7 @@ export function useChatHistory(opts: {
     };
   }, [opts.messages, conversationId, opts.provider, opts.sessionId]);
 
-  // 刷新会话历史列表
+  // Refresh the session history list
   const refresh = useCallback(async (customQuery?: string) => {
     const q = customQuery !== undefined ? customQuery : queryRef.current;
     setLoading(true);
@@ -124,7 +131,7 @@ export function useChatHistory(opts: {
     }
   }, []);
 
-  // query 变化防抖 250ms 自动刷新
+  // Auto-refresh when query changes, debounced by 250 ms
   useEffect(() => {
     const timer = window.setTimeout(() => {
       refresh(query);
@@ -132,7 +139,7 @@ export function useChatHistory(opts: {
     return () => window.clearTimeout(timer);
   }, [query, refresh]);
 
-  // 打开历史会话：切换前先 flush 当前会话
+  // Open a historical session: flush the current session before switching
   const openChat = useCallback(
     async (id: string): Promise<ChatMessage[] | null> => {
       flush();
@@ -142,7 +149,7 @@ export function useChatHistory(opts: {
         try {
           localStorage.setItem(keyRef.current, id);
         } catch {
-          /* 忽略本地存储写入失败 */
+          /* Ignore local storage write failures */
         }
         return chat.messages;
       }
@@ -151,7 +158,7 @@ export function useChatHistory(opts: {
     [flush]
   );
 
-  // 开始新会话：切换前先 flush 当前会话
+  // Start a new session: flush the current session before switching
   const startNewChat = useCallback((): string => {
     flush();
     const nextId = newChatId();
@@ -159,12 +166,12 @@ export function useChatHistory(opts: {
     try {
       localStorage.setItem(keyRef.current, nextId);
     } catch {
-      /* 忽略本地存储写入失败 */
+      /* Ignore local storage write failures */
     }
     return nextId;
   }, [flush]);
 
-  // 删除指定会话：若删除的是当前会话则顺手 startNewChat
+  // Delete the given session: if it is the current session, also call startNewChat
   const removeChat = useCallback(
     async (id: string) => {
       await deleteChat(id);

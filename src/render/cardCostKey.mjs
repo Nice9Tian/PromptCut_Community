@@ -13,14 +13,16 @@ export function stableJson(value) {
  *
  * - `clipId` is stripped: the same card in two clips is measured once.
  * - `sourceVersion` is included: editing the card's source must retire the old timing record
- *   (pinned 渲染 5: the record is reused only while the identity is unchanged). It is passed
+ *   (pinned render 5: the record is reused only while the identity is unchanged). It is passed
  *   separately because cardGraph.mjs's synthesized node does not carry it (card-identity.mjs
  *   feeds it to `digest` as a sibling of `node`).
  * - `node.capabilities` (the review table) stays inside the node, so a review-table edit re-probes.
  * - Synchronous, browser-safe (cyrb53), NOT the SHA-256 `digest` used by the snapshot keys (A3a).
  */
 export function cardCostKey(node, sourceVersion, fps, durationFrames) {
-  // `flat`(剪辑段里摊出来的卡露出窗口截了多少头、经过哪几层段,`kernel/cutFlatten.mjs`)只改流里的像素,不改每帧多贵:同一张卡在各实例只测一次
+  // `flat` (how much head is cropped by visible window of a flattened card in cut segment, and which
+  // segment layers it passes through; `kernel/cutFlatten.mjs`) only changes pixels in stream,
+  // not frame cost: the same card is measured only once across instances
   const { clipId: _clipId, id: _id, inputs: _inputs, flat: _flat, ...rest } = node ?? {};
   return cyrb53(stableJson({ node: rest, sourceVersion: sourceVersion ?? null, fps, durationFrames }));
 }

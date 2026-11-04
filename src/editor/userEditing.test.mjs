@@ -1,7 +1,10 @@
 /**
- * 「用户正在编辑」的接线(src/editor/userEditing.ts,计划 docs/plan/agent-workflow-plan.md A2)。用例 UE-W1～UE-W2。
- * 旁听 store:选中的片段被本页面改了算「刚动过」;没选中的、Agent 让页面执行的工具期间的修改不算;推送走 /api/agent/editing。
- * 跑:node --test src/editor/userEditing.test.mjs
+ * Wiring for "user is editing" (src/editor/userEditing.ts, plan docs/plan/agent-workflow-plan.md A2).
+ * Test cases UE-W1~UE-W2.
+ * Listen to store: modifications to selected clips by this page count as "recently modified";
+ * unselected clips and modifications during tools executed by the page for the Agent do not count;
+ * push via /api/agent/editing.
+ * Run: node --test src/editor/userEditing.test.mjs
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
@@ -16,7 +19,7 @@ globalThis.fetch = async (url, init) => {
 const { actions, getState } = await import(srcUrl("store/project.ts"));
 const { createEmptyProject } = await import(srcUrl("kernel/project.ts"));
 const ue = await import(srcUrl("editor/userEditing.ts"));
-/** 一个两段片段的项目(不依赖卡片注册表) */
+/** A project with two clips (not dependent on card registry) */
 function load(name) {
   const p = createEmptyProject(name);
   p.tracks = [{ id: "t1", name: "Video", clips: [
@@ -28,14 +31,14 @@ function load(name) {
 }
 const kinds = () => ue.userEditingSnapshot().map((e) => `${e.clipId}:${e.kind}`);
 
-test("UE-W1 选中的片段被本页面改了算「刚动过」;只选中、改没选中的都不算;推送到 /api/agent/editing", async () => {
+test("UE-W1 A selected clip changed by this page counts as \"just touched\"; only selecting, or changing an unselected one, does not count; pushed to /api/agent/editing", async () => {
   const { a, b } = load("ue");
   const stop = ue.startUserEditing();
   try {
     actions.select([a.id]);
-    assert.deepEqual(kinds(), [], "只选中不算");
+    assert.deepEqual(kinds(), [], "Selecting alone does not count");
     actions.updateClip(b.id, { opacity: 0.5 });
-    assert.deepEqual(kinds(), [], "改没选中的不算");
+    assert.deepEqual(kinds(), [], "Changing an unselected one does not count");
     actions.updateClip(a.id, { opacity: 0.4 });
     assert.deepEqual(kinds(), [`${a.id}:recent`]);
     await new Promise((r) => setTimeout(r, 300));
@@ -45,13 +48,13 @@ test("UE-W1 选中的片段被本页面改了算「刚动过」;只选中、改�
     assert.deepEqual(last.body.entities.map((e) => [e.clipId, e.kind]), [[a.id, "recent"]]);
     assert.ok(last.body.entities[0].remainingMs > 29_000 && last.body.entities[0].remainingMs <= 30_000);
     actions.select([]);
-    assert.deepEqual(kinds(), [], "取消选中就撤");
+    assert.deepEqual(kinds(), [], "Deselecting withdraws it");
   } finally {
     stop();
   }
 });
 
-test("UE-W2 Agent 让页面执行的工具期间的修改不算用户动过", () => {
+test("UE-W2 Edits made during a tool that the Agent has the page execute do not count as the user having touched it", () => {
   const { a } = load("ue2");
   const stop = ue.startUserEditing();
   try {

@@ -4,8 +4,8 @@ import { easeExpoOut } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 实体名牌:从 entity-chips 卡片拆出。
- * 展示人物或机构的名牌胶囊，无旁注。
+ * Entity nameplates: extracted from entity-chips card.
+ * Displays nameplate pills for people or institutions, without side notes.
  */
 interface Params {
   chips: string;
@@ -67,10 +67,10 @@ function ChipsPart({ params, width, height }: PartProps<Params>) {
 
 export const listChips: PartDef<Params> = {
   id: "list-chips",
-  name: "实体名牌",
-  description: "人物或机构的名牌胶囊列表，逐条滑入",
-  useWhen: "介绍团队成员、嘉宾或合作机构等实体名称时使用，黑白胶囊胶着姓名和头衔逐条滑入；普通要点列表用 list-pins，带打勾状态用 list-check。",
-  tags: ["名牌", "实体", "人物", "机构"],
+  name: "Entity name tags",
+  description: "List of name-tag pills for people or organizations, sliding in one by one",
+  useWhen: "Use when introducing entity names such as team members, guests or partner organizations; black and white pills holding a name and title slide in one by one. Use list-pins for ordinary key-point lists and list-check for items with a tick state.",
+  tags: ["name tag", "entity", "person", "organization"],
   role: "list",
   from: "entity-chips",
   defaults: {
@@ -79,9 +79,9 @@ export const listChips: PartDef<Params> = {
     stepMs: 150,
   },
   controls: [
-    { key: "chips", label: "名牌(牌面|名|身份,换行)", type: "text", required: true },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 120, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
-    { key: "stepMs", label: "间隔(ms)", type: "number", min: 0, max: 2000, step: 10 },
+    { key: "chips", label: "Name tags (style|name|title, newline-separated)", type: "text", required: true },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 120, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
+    { key: "stepMs", label: "Interval (ms)", type: "number", min: 0, max: 2000, step: 10 },
   ],
   defaultFrame: { x: 160, y: 360, w: 600, h: 360 },
   settleMs: (p) => (Math.max(1, p.chips.split("\n").filter(Boolean).length) - 1) * p.stepMs + 600,

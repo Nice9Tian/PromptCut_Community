@@ -1,13 +1,20 @@
 /**
- * 舞台里卡片代码能引的页面自带模块(`docs/plan/online-card-exec-contract.md` 第 2 节)。
- * **只给舞台用**(由舞台那一侧按需载入);靠 Vite 的 `import.meta.glob`,Node 单测载不进来。
+ * Page built-in modules that card code in the stage can import
+ * (`docs/plan/online-card-exec-contract.md` Section 2).
+ * **Stage only** (loaded on-demand by the stage side); relies on Vite's `import.meta.glob` and
+ * cannot be loaded in Node unit tests.
  *
- * - 包:与桌面 `create_card` 的白名单一致,少 `three/` 下的子路径。都是页面自己用的那一个实例
- *   (同一个 React、同一个 Motion —— 卡片的组件要挂进页面的 React 树)。
- * - 内置模块:`src/cards/`(用户卡目录除外)、`src/parts/`、`src/kernel/`,以及 `src/render/cards/graphValues.ts`。
- *   表是**随本模块一起载入**的(`eager`),不是每个模块各自按需载入:实测按需载入会让打包器把页面主块拆成
- *   一百多个小块(在线构建的文件数 26 → 134),开页面多出一百多个请求;随本模块载入只多三四个文件,
- *   主块大小不变。已经在页面主块里的模块,这里拿到的就是页面那一个实例。重的包(`three` 等)仍按需载入。
+ * - Packages: Matches the desktop `create_card` allowlist, minus subpaths under `three/`. All use
+ *   the exact instance the page itself uses (the same React, the same Motion: card components must
+ *   mount into the page's React tree).
+ * - Built-in modules: `src/cards/` (excluding user card directory), `src/parts/`, `src/kernel/`,
+ *   and `src/render/cards/graphValues.ts`.
+ *   The table is **loaded eagerly with this module** (`eager`), rather than loading each module
+ *   on-demand: measurements showed on-demand loading caused the bundler to split the page main chunk
+ *   into over a hundred small chunks (file count in online build: 26 → 134), adding over a hundred
+ *   requests when opening the page; loading with this module only adds three or four files, while
+ *   main chunk size remains unchanged. For modules already in the page main chunk, what is obtained
+ *   here is that exact page instance. Heavy packages (`three`, etc.) are still loaded on-demand.
  */
 import type { HostModules } from "./loader.ts";
 import { CARD_PACKAGES } from "./protocol.ts";
@@ -36,7 +43,7 @@ for (const [file, load] of Object.entries(globbed)) {
   if (isBuiltinModulePath(path)) builtin.set(path, () => load);
 }
 
-/** 白名单与这张表要一一对上(单测 `cardRuntime.test.mjs` 核文本) */
+/** Allowlist and this table must match one-to-one (unit test `cardRuntime.test.mjs` verifies text) */
 export const HOST_PACKAGE_NAMES: readonly string[] = Object.freeze(Object.keys(packages));
 if (import.meta.env.DEV && (HOST_PACKAGE_NAMES.length !== CARD_PACKAGES.length || CARD_PACKAGES.some((n) => !Object.hasOwn(packages, n)))) {
   console.error("[cardRuntime] Package table does not match the allowlist", HOST_PACKAGE_NAMES, CARD_PACKAGES);

@@ -6,11 +6,13 @@ import { pairingSession } from '../agent/call-pairing.mjs';
 import { codexAuthState, codexAuthReason, authErrorDecoder, authFailureEvent } from './codex-auth-state.mjs';
 
 /**
- * Codex 把「工具是否暴露」和「调用是否要审批」分成两个配置项。只注册 server 不会
- * 自动放行；在 approval_policy="never" 下，默认需要审批的 MCP 调用会当场被拒。
+ * Codex splits "whether tools are exposed" and "whether invocations need approval" into two config
+ * options. Registering the server alone does not automatically permit them; under
+ * approval_policy="never", MCP invocations requiring approval by default are rejected on the spot.
  *
- * 两项都显式传：enabled_tools 把能力限制在 PromptCut 自己公布的清单里，approve 则
- * 只免批这个 MCP server 的工具。shell 仍受 read-only sandbox 约束。
+ * Pass both explicitly: enabled_tools restricts capabilities to the manifest published by
+ * PromptCut itself, while approve exempts only tools of this MCP server from approval. shell is
+ * still subject to read-only sandbox constraints.
  */
 export function getCodexMcpPolicyArgv() {
   return [
@@ -20,18 +22,21 @@ export function getCodexMcpPolicyArgv() {
 }
 
 /**
- * 把任意形状的错误变成人能读的一行。
+ * Turn an error of arbitrary shape into a human-readable single line.
  *
- * 原来这里写的是 `String(item.error)` —— codex 的 error 是**对象**时,那句话的结果是
- * 字面的 `[object Object]`。用户诊断报告里那三行 `summary: "[object Object]"` 就是它。
- * 后果不只是难看:模型也只拿到这一坨,于是它开始猜为什么失败,猜出「当前会话禁止审批,
- * 请切换权限模式」这种用户根本做不到的指引(那个 approval_policy="never" 是我们自己
- * 写死在启动参数里的)。真实原因被吃掉,是整条误导的起点。
+ * Previously this was `String(item.error)`: when codex's error is an **object**, the result of
+ * that expression is literally `[object Object]`. The three lines of
+ * `summary: "[object Object]"` in the user diagnostic report were precisely this. The consequence
+ * was not just looking ugly: the model also only received this blob, so it started guessing why it
+ * failed, coming up with guidance like "approval disabled for the current session, please switch
+ * permission mode" that the user cannot possibly follow (approval_policy="never" was hardcoded by
+ * us in the startup parameters). Swallowing the real cause was the origin of the entire
+ * misguidance.
  */
 function errText(err) {
   if (err == null) return '';
   if (typeof err === 'string') return err;
-  // 常见形状:{ message } / { error: { message } } / { code, message }
+  // Common shapes: { message } / { error: { message } } / { code, message }
   const msg = err.message ?? err.error?.message ?? err.detail ?? err.reason;
   if (typeof msg === 'string' && msg) {
     const code = err.code ?? err.error?.code ?? err.type;
@@ -40,7 +45,7 @@ function errText(err) {
   try { return JSON.stringify(err); } catch { return Object.prototype.toString.call(err); }
 }
 
-/** 工具结果的摘要:成功看 result,失败**一定要把 error 带出来** */
+/** Summary of tool results: check result on success, **must include error** on failure */
 function resultSummary(o) {
   if (o?.result !== undefined && o.result !== null) {
     try { return JSON.stringify(o.result).substring(0, 300); } catch { return String(o.result).substring(0, 300); }
@@ -49,11 +54,12 @@ function resultSummary(o) {
 }
 
 /**
- * 这个错误是不是「被拒 / 需要审批」。
+ * Whether this error is "rejected / requires approval".
  *
- * 原来的判断是 `typeof err === 'string' && (含 denied|approval)` —— error 是对象时
- * 条件永远不成立,于是 onPermissionDenied 不触发,claude / agy 都有的「被拒之后改用
- * 文本协议重试」那条兜底对 codex 是**死的**。先摊平成文本再判,对象也就认得出来了。
+ * The original check was `typeof err === 'string' && (contains denied|approval)`: when error is an
+ * object, the condition is never true, so onPermissionDenied never triggers, and the fallback to
+ * "retry with text protocol after rejection" that both claude / agy have was **dead** for codex.
+ * Flatten to text before checking so objects can be recognized too.
  */
 function looksDenied(err) {
   const t = errText(err).toLowerCase();
@@ -78,6 +84,7 @@ export async function getCodexProvider() {
 }
 
 import { runTextProtocolLoop } from '../harness/tool-protocol.mjs';
+import { tr } from '../i18n.mjs';
 
 export function startRun(opts) {
   if (opts.toolProtocol) {
@@ -108,7 +115,7 @@ export function startRun(opts) {
 
   const donePromise = run.done.then((res) => {
     if (rejected && !authFailed && !cancelled) {
-      opts.onEvent({ type: 'status', text: '原生工具被拒，改用文本协议重试' });
+      opts.onEvent({ type: 'status', text: tr("Native tool was rejected, retrying with text protocol") });
       const nextRun = runTextProtocolLoop({ startRun: _startRun, opts, onEvent: opts.onEvent });
       abortRef.abort = nextRun.abort;
       return nextRun.done;
@@ -148,8 +155,8 @@ export function buildCodexArgs(opts) {
   if (opts.model) {
       args.push('-m', opts.model);
   }
-  // codex 没有 --effort,推理档只能通过 -c 覆盖配置项。codex 没有加速档,
-  // 所以 opts.fast 在这里没有对应物,前端也会把那个开关灰掉。
+  // codex has no --effort; reasoning tiers can only override config items via -c. codex has no fast
+  // tier, so opts.fast has no counterpart here, and the frontend also grays out that toggle.
   if (opts.effort) {
       args.push('-c', `model_reasoning_effort="${opts.effort}"`);
   }
@@ -162,7 +169,7 @@ function _startRun(opts) {
   const snapshot = state.snapshot();
   if (snapshot.state === 'invalid' || snapshot.state === 'unknown') {
     opts.onEvent(snapshot.state === 'invalid' ? authFailureEvent(snapshot.reason)
-      : { type: 'error', message: 'Codex 登录状态待确认，请重新登录。', authProvider: 'codex', authReason: 'state_unknown', authGeneration: snapshot.revision, retryable: false });
+      : { type: 'error', message: tr("Codex login state needs confirmation, please log in again."), authProvider: 'codex', authReason: 'state_unknown', authGeneration: snapshot.revision, retryable: false });
     return { abort() {}, done: Promise.resolve() };
   }
   let terminal = false;
@@ -175,7 +182,7 @@ function _startRun(opts) {
   const exePath = resolveExe('codex');
   const args = buildCodexArgs(opts);
 
-  const fullPrompt = `<<<系统说明>>>\n${opts.systemPrompt}\n<<<用户消息>>>\n${opts.prompt}`;
+  const fullPrompt = `<<<System instructions>>>\n${opts.systemPrompt}\n<<<User message>>>\n${opts.prompt}`;
   
   const { child, safeOnEvent, finish, abort, donePromise } = spawnCli(exePath, args, { cwd: opts.cwd, env: cliEnv('codex'), stopOnFinish: true }, emit, 'Codex CLI');
   const failAuth = reason => {
@@ -189,10 +196,12 @@ function _startRun(opts) {
   let threadId = null;
   let warnedConfig = false;
   /*
-   * callId:codex 输出流里工具条目的 id 是 item_0、item_1 …,每起一次 codex(续跑也是)都从 0 数,
-   * 所以前面拼上这次运行的随机段。它经 tool_call / tool_result 发给页面,再经 opts.callPairing 报到,
-   * 让经 MCP 进来的同一次调用按(thread、工具名、参数)认领到同一个 id(server/agent/call-pairing.mjs)。
-   * 页面 AI 栏按它把文档服务的工具调用事件对上聊天记录里的这一条。
+   * callId: IDs of tool entries in codex output stream are item_0, item_1 …, counting from 0 every
+   * time codex starts (including resumed runs), so prepend a random segment for this run. It is sent
+   * to the page via tool_call / tool_result, then checked in via opts.callPairing so that the same
+   * call coming in via MCP can claim the same ID by (thread, tool name, parameters)
+   * (server/agent/call-pairing.mjs). The page AI panel uses it to match document service tool call
+   * events to this entry in the chat history.
    */
   const runTag = Math.random().toString(36).slice(2, 10);
   const pairing = pairingSession(opts.callPairing);
@@ -206,7 +215,7 @@ function _startRun(opts) {
       const str = data.toString('utf8');
       if (!warnedConfig && str.includes('config.toml') && (str.includes('unknown variant') || str.includes('unknown field'))) {
           warnedConfig = true;
-          safeOnEvent({ type: 'status', text: 'Codex 无法读取 PromptCut 的独立配置，请根据上一条错误检查配置。' });
+          safeOnEvent({ type: 'status', text: tr("Codex cannot read PromptCut's standalone config, please check the config based on the previous error.") });
       }
   });
 
@@ -227,7 +236,7 @@ function _startRun(opts) {
          pairing.open(`codex:${threadId}`);
          safeOnEvent({ type: 'session', sessionId: ev.thread_id });
       } else if (evType === 'turn.started') {
-         safeOnEvent({ type: 'status', text: 'Codex 开始处理' });
+         safeOnEvent({ type: 'status', text: tr("Codex started working") });
       } else if (evType === 'item.started' || evType === 'item.completed' || evType === 'item.updated') {
          const item = ev.item;
          if (item) {
@@ -244,7 +253,7 @@ function _startRun(opts) {
                  if (evType === 'item.started') {
                      const name = item.tool ?? item.name ?? item.tool_name;
                      const input = item.arguments ?? item.input ?? {};
-                     // 先报到再发给页面:MCP 那边的认领可能紧跟着就到
+                     // Check in before sending to the page: the claim from MCP might arrive immediately after
                      if (callId && threadId && isOurs(item)) pairing.announce(`codex:${threadId}`, name, input, callId);
                      safeOnEvent({ type: 'tool_call', name, input, ...call });
                  } else if (evType === 'item.completed') {
@@ -275,7 +284,7 @@ function _startRun(opts) {
          finish({ type: 'error', message: ev.error?.message || ev.message || 'Codex turn failed' });
       } else if (evType === 'error') {
          const msg = errText(ev.message || ev.error || 'Codex error');
-         if (typeof msg === 'string' && (msg.startsWith('Reconnecting') || msg.includes('重试'))) {
+         if (typeof msg === 'string' && (msg.startsWith('Reconnecting') || msg.includes('重试'))) { // i18n-allow
              safeOnEvent({ type: 'status', text: msg });
          } else {
              finish({ type: 'error', message: msg });

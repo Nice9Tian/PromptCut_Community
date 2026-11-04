@@ -1,22 +1,32 @@
 /**
- * 氛围式里**桌面版**那一种 Agent:本机的 CLI / API Agent(`user-workflow.md`「Agent 接入方式」里的前两行)。
+ * The kind of Agent for **the desktop app** in Vibe mode: the local CLI / API Agent (the first two rows of
+ * "Agent connection types" in `user-workflow.md`).
  *
- * 云端不是前提(用户 2026-10-23 定,原话「桌面版也要可以用。云端不是必须。因为聊天窗可以走用户的CLI或者API。」):
- * 桌面版的氛围式对话走的就是编辑界面 AI 栏的那一套 —— `src/ai/useAiChat.ts` 发请求、`src/ai/agentTabs.ts` 管分页,
- * 所以**同一个项目在氛围式和传统式里看到的是同一段对话**,来回切不丢。本模块只是把那一套翻成聊天页认的
- * `VibeAgent`(`vibeAgent.ts`),不自己造第二套对话。
+ * The cloud is not a prerequisite (user decision, 2026-10-23, verbatim: "The desktop app must work too.
+ * The cloud is not required. Because the chat window can go through the user's CLI or API."):
+ * the desktop app's Vibe-mode chat goes through the same set as the AI panel of the editor:
+ * `src/ai/useAiChat.ts` sends requests and `src/ai/agentTabs.ts` manages the tabs, so **the same
+ * project shows the same chat in Vibe mode and in Classic mode**, and switching back and forth loses
+ * nothing. This module only translates that set into the `VibeAgent` that the chat page recognizes
+ * (`vibeAgent.ts`); it does not build a second chat system of its own.
  *
- * 和云端那一份(`useVibeCloud.ts`)的区别,都是本机没有的东西:
- *   - 没有账号,所以没有「谁发的」,也没有「告知托管方能读」—— `me` 为 null、`consent` 恒关;
- *   - 没有共有 / 私有,对话就是本机这一份;
- *   - 跑在本机:关掉软件这一轮就停了,这句写在输入框下面(`hint`),不照抄云端那句「关闭后继续」。
+ * What differs from the cloud version (`useVibeCloud.ts`) is all things that the local machine does not
+ * have:
+ *   - No account, so no "who sent it" and no "host-can-read notice": `me` is null and `consent` is always
+ *     off;
+ *   - No shared / private: the chat is just this local copy;
+ *   - It runs locally: closing the software stops the round, and this sentence is written under the input
+ *     box (`hint`) rather than copying the cloud sentence "Continues after closing".
  *
- * 「这个项目底下有几条对话」用的是 AI 栏的 Agent 分页(每页一个独立 Agent,见 `agentTabs.ts` 文件头),
- * 侧栏里列的就是它们,点一条等于把那一页设为当前页。
+ * "How many chats this project has" uses the Agent tabs of the AI panel (each tab is an independent Agent,
+ * see the header of `agentTabs.ts`), and those are what the sidebar lists; clicking one sets that tab as
+ * the current tab.
  *
- * 手机版 Agent 分页也用这一份(`src/mobile/AgentChatLocal.tsx`),区别只有一样:它每个会话各挂一份、
- * 不跟着「当前页」走,所以把页号经 `tabId` 传进来。注意手机是另一张页面:分页清单与消息都在各自页面里,
- * 和电脑上的 AI 栏**不是同一段对话**;共用的是同一个编辑器进程与同一个项目。
+ * The mobile app's Agent tabs use this version too (`src/mobile/AgentChatLocal.tsx`), with only one
+ * difference: each session mounts its own copy and does not follow the "current tab", so the tab number
+ * is passed in through `tabId`. Note that the phone is a different page: the tab manifest and the
+ * messages live in each page, and are **not the same chat** as the AI panel on the computer; what they
+ * share is the same editor process and the same project.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAiChat } from "../ai/useAiChat";
@@ -27,29 +37,32 @@ import type { VibeChat } from "./types";
 import { tr } from "../i18n/index.ts";
 
 export interface VibeLocal extends VibeAgent {
-  /** 底下那一份 `useAiChat`。驱动条和「配置 Agent」那个窗口要整份,所以原样交出去 */
+  /** The `useAiChat` underneath. The driver bar and the "Configure Agent" window need the whole thing, so it is handed out as is */
   ai: ReturnType<typeof useAiChat>;
-  /** 侧栏里这个项目底下列的对话(= AI 栏的 Agent 分页) */
+  /** The chats listed under this project in the sidebar (= the Agent tabs of the AI panel) */
   chats: VibeChat[];
-  /** 正在看的那条 */
+  /** The one being viewed */
   current: VibeChat | null;
-  /** 当前这一页的 id(= `conversationId`) */
+  /** The id of the current tab (= `conversationId`) */
   tabId: string;
   openChat: (id: string) => void;
   newChat: () => void;
-  /** 关掉一条对话(= 关掉那一页)。最后一页也能关,关光了回到占位的开始页 */
+  /** Close a chat (= close that tab). The last tab can be closed too, and when all are closed it returns to the placeholder start page */
   removeChat: (id: string) => void;
 }
 
-/** 没打开项目时 `useAiChat` 也得挂着(hook 数目不能变),用这个页名,它不进存储 */
+/** When no project is open `useAiChat` still has to stay mounted (the number of hooks cannot change); use this tab name, which is not stored */
 const NO_PROJECT_TAB = "vibe-local-idle";
 
 export function useVibeLocal(o: { projectId: string | null; tabId?: string }): VibeLocal {
   /*
-   * Agent 分页按项目分开。项目换了就换一份清单(没开项目时是 `none` 那一份,只在内存里)。
+   * Agent tabs are kept apart per project. When the project changes, the manifest changes with it (with no
+   * project open it is the `none` one, which lives only in memory).
    *
-   * 指定了页号的调用方(手机版 Agent 分页:每个会话各挂一份,切标签不卸载)自己让清单跟着项目走
-   * (`src/ai/agentTabsProject.ts`),这里就不再设一遍 —— 同一个项目被几份实例抢着设,等于白跑。
+   * Callers that specify a tab number (the mobile app's Agent tabs: each session mounts its own copy, and
+   * switching tabs does not unmount) make the manifest follow the project themselves
+   * (`src/ai/agentTabsProject.ts`), so it is not set again here: when several instances race to set the
+   * same project, the work is wasted.
    */
   const owns = o.tabId === undefined;
   useEffect(() => { if (owns) setAgentProject(o.projectId); }, [owns, o.projectId]);
@@ -59,7 +72,7 @@ export function useVibeLocal(o: { projectId: string | null; tabId?: string }): V
   const ai = useAiChat({ tabId });
   const queue = useQueue(tabId);
 
-  /** 顶上那条红字是 `useAiChat` 的 error。它自己没有「清掉」的入口,所以在这一层记一下关掉的是哪一条 */
+  /** The red text at the top is the error of `useAiChat`. It has no "dismiss" entry of its own, so this layer remembers which one was dismissed */
   const [dismissed, setDismissed] = useState<string | null>(null);
   const banner = ai.error && ai.error !== dismissed ? ai.error : null;
   const clearBanner = useCallback(() => setDismissed(ai.error), [ai.error]);
@@ -71,18 +84,20 @@ export function useVibeLocal(o: { projectId: string | null; tabId?: string }): V
       name: t.title,
       projectId: o.projectId!,
       state: t.busy ? ("running" as const) : ("idle" as const),
-      // 本机对话没有共有 / 私有,也没有「别人的私有对话」这回事
+      // Local chats have no shared / private, and no such thing as "someone else's private chat"
       visibility: "shared" as const,
       readOnly: false,
-      // 占位的开始页:还没发过第一条消息,和云端那边「还没发过消息的新对话」是同一种东西
+      // The placeholder start page: no first message has been sent yet, which is the same thing as the cloud side's "new chat that has not sent a message yet"
       ...(t.draft ? { fresh: true } : {}),
     }));
   }, [o.projectId, tabs.tabs]);
   const current = chats.find((c) => c.id === tabId) ?? null;
 
   /**
-   * 发不了的原因。**「还在找」和「一个都没有」要分开说** —— 刚进来那一两秒 `useAiChat` 正在问服务端有哪些驱动
-   * (`providers` 还是空的,`provider` 还是 null),这时候写「还没选 Agent」是冤枉人:过一会儿它自己就选上了。
+   * The reason sending is not possible. **"Still looking" and "none at all" must be told apart**: in the
+   * first second or two, `useAiChat` is asking the server which drivers exist (`providers` is still empty
+   * and `provider` is still null), and writing "No Agent selected yet" at that moment would be unfair: it
+   * selects one by itself a moment later.
    */
   const looking = ai.providers.length === 0;
   const whyNot = !o.projectId
@@ -93,28 +108,28 @@ export function useVibeLocal(o: { projectId: string | null; tabId?: string }): V
         ? tr("Looking for Agents on this machine…")
         : tr("No Agent selected yet: click \"Configure Agent\" above to pick a local CLI Agent, or enter an API key.");
 
-  /** 发送。这一页在跑就排队(不打断它),空闲就直发 —— 和 AI 栏的 `handleSend` 同一条路 */
+  /** Send. If this tab is running, queue (without interrupting it); if idle, send directly: the same path as `handleSend` of the AI panel */
   const send = useCallback(async (text: string): Promise<boolean> => {
     const body = text.trim();
     if (!body || whyNot) return false;
-    // 占位的开始页:点了发送才变成本项目的第一个真会话
+    // The placeholder start page: it becomes this project's first real session only once send is clicked
     commitDraft(tabId);
     if (ai.isBusy()) { enqueueChat(tabId, { text: body }); return true; }
     return ai.send(body);
   }, [whyNot, tabId, ai]);
 
-  /** 停:停掉这一轮,队列里还排着的暂停,不自动接着发(同 AI 栏的「■ 停止」) */
+  /** Stop: stop this round, and whatever is still queued is paused and not sent automatically (same as "■ Stop" in the AI panel) */
   const stop = useCallback(async () => {
     if (getQueue(tabId).length > 0) setPaused(tabId, true);
     ai.abort();
   }, [tabId, ai]);
 
-  // 关掉一页之后 `useAiChat` 还挂在这一页上:切到清单给出的新当前页由 `useAgentTabs` 自己推，这里只管关
+  // After a tab is closed, `useAiChat` is still mounted on that tab: switching to the new current tab given by the manifest is pushed by `useAgentTabs` itself; here we only handle closing
   const openChat = useCallback((id: string) => activateTab(id), []);
   const newChat = useCallback(() => { addTab(); }, []);
   const removeChat = useCallback((id: string) => closeTab(id), []);
 
-  /** 告知托管方只和云端有关,本机这一份永远是关的。写成常量对象会每次重建,聊天页的 effect 跟着抖 */
+  /** The host notice only concerns the cloud, and the local copy is always off. Writing it as a constant object would rebuild it every time, and the chat page's effect would jitter along */
   const consent = useRef({ open: false, pending: false, error: null, accept: () => {}, reject: () => {} }).current;
 
   return {
@@ -128,9 +143,9 @@ export function useVibeLocal(o: { projectId: string | null; tabId?: string }): V
     chat: {
       messages: ai.messages,
       conversationId: tabId,
-      // 本机没有「别人」,不标发送者
+      // There is no "someone else" locally, so the sender is not marked
       view: {},
-      // 本机对话就在内存里,不用等服务端回历史
+      // Local chats are in memory, so there is no need to wait for the server to return the history
       history: { loaded: true },
     },
     me: null,
@@ -141,7 +156,7 @@ export function useVibeLocal(o: { projectId: string | null; tabId?: string }): V
     streaming: ai.streaming,
     canStop: ai.streaming,
     queued: queue.items.length,
-    // 本机 Agent 就在这台机器上跑,没有「等云端执行服务」这回事
+    // The local Agent runs right on this machine, so "waiting for the cloud execution service" does not exist
     waitingExecutor: false,
     consent,
     send,

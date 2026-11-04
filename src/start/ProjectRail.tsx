@@ -1,9 +1,11 @@
 /**
- * 最近项目那一排缩略图。
+ * The row of recent project thumbnails.
  *
- * 一排放几个按**画面宽度**算:量一下这一条的实际宽度,除以一格的宽度加间距。窗口一变就重算
- * (ResizeObserver),所以不会出现半格或者挤成一团。第一格恒定是「Create A New」,剩下的位置
- * 给项目,多出来的用「<」「>」翻页 —— 不做横向滚动条:鼠标用户找不到它,触控板又容易误触。
+ * How many fit in a row is computed from the **viewport width**: measure the actual width of the strip
+ * and divide by one tile's width plus the gap. It is recomputed whenever the window changes
+ * (ResizeObserver), so there are never half tiles or a crowded mess. The first tile is always
+ * "Create A New"; the remaining slots go to projects, and the overflow is paged with "<" and ">".
+ * There is no horizontal scrollbar: mouse users cannot find it, and trackpads trigger it by accident.
  */
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
@@ -11,22 +13,25 @@ import { CreateTile, ProjectThumb } from "./ProjectThumb";
 import type { VibeProject } from "./types";
 import { tr } from "../i18n/index.ts";
 
-/** 一格的宽度和间距,与 `start.css` 里 `.ps-tile` 的 flex-basis、`.ps-strip` 的 gap 对齐 */
+/** Width and gap of one tile, aligned with the flex-basis of `.ps-tile` and the gap of `.ps-strip` in
+ * `start.css` */
 const TILE_W = 196;
 const GAP = 12;
 
 export function ProjectRail(props: {
   title: string;
   projects: VibeProject[];
-  /** 换文件夹时翻回第一页用:值变了就重头看 */
+  /** Used to flip back to the first page when the folder changes: when the value changes, start over */
   resetKey: string;
   onCreate: () => void;
-  /** 新建不可用(游客已经建过一个)时置灰,悬停说为什么 */
+  /** Grayed out when creating is unavailable (the guest has already created one); hover shows why */
   createDisabled?: string | null;
   onOpen: (id: string) => void;
   /**
-   * 列表还在取、取不到、没登录时这一排说什么(不显示假数据、不白屏)。
-   * 不给就什么都不写 —— 「一个项目都没有」用户自己看得见,不用多一句话(issue #10)。
+   * What this row says while the list is still loading, cannot be loaded, or the user is not logged in
+   * (no fake data, no blank screen).
+   * If not given, nothing is written. "No projects at all" is visible to the user already, so no extra
+   * sentence is needed (issue #10).
    */
   empty?: string;
 }): JSX.Element {
@@ -39,7 +44,7 @@ export function ProjectRail(props: {
     if (!el) return;
     const measure = () => setSlots(Math.max(2, Math.floor((el.clientWidth + GAP) / (TILE_W + GAP))));
     measure();
-    // 窗口拖动、侧栏宽度变化都要跟着重算
+    // Dragging the window and changing the sidebar width both require a recompute
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
@@ -47,9 +52,10 @@ export function ProjectRail(props: {
 
   useEffect(() => { setPage(0); }, [props.resetKey]);
 
-  const perPage = Math.max(1, slots - 1); // 第一格让给 Create A New
+  const perPage = Math.max(1, slots - 1); // The first tile is given to Create A New
   const pages = Math.max(1, Math.ceil(props.projects.length / perPage));
-  // 窗口变宽之后每页能放更多,原来的页码可能已经越界,渲染时收回范围内
+  // After the window gets wider, each page fits more, so the old page index may be out of range;
+  // clamp it back into range when rendering
   const at = Math.min(page, pages - 1);
   const shown = props.projects.slice(at * perPage, at * perPage + perPage);
 
@@ -88,9 +94,10 @@ export function ProjectRail(props: {
         ))}
       </div>
       {/*
-        空着的时候只说**用户不知道的事**(列表还在取、取不到、没登录);一个都没有本身不用再写一句
-        「这里还没有项目。点第一格的『Create A New』建一个。」—— 第一格就在眼前,这句话是冗余的
-        (issue #10:游客首屏上这块被指出来)。
+        When empty, only state **what the user doesn't already know** (list is still fetching, failed to
+        fetch, not logged in); having none does not need an extra "There are no projects here yet. Click
+        'Create A New' in the first tile to create one": the first tile is right in front of them, making
+        that sentence redundant (issue #10: pointed out on the guest first screen).
       */}
       {props.projects.length === 0 && props.empty && (
         <p className="ps-empty" data-pc="start-rail-empty">{props.empty}</p>

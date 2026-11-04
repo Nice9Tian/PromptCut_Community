@@ -1,12 +1,14 @@
 /**
- * 单测里跑真的 React 渲染(react-dom/client),不要 DOM:组件只渲 `null`,容器是个假的元素。
- * 够测 hook 的订阅、重渲次数、context 翻转;测不了真的 DOM 输出(那要探针)。
+ * Run real React rendering (react-dom/client) in unit tests without DOM: components render only
+ * `null`, container is a fake element. Sufficient to test hook subscriptions, re-render counts,
+ * and context toggles; cannot test real DOM output (that requires probes).
  *
  *   const { React, mount } = await import("./fakeReactRoot.mjs");
  *   const root = mount(React.createElement(App));  … await root.flush(); root.unmount();
  *
- * react-dom 在提交阶段要读 `window.event`、`window.HTMLIFrameElement`、容器的 `ownerDocument`,
- * 这里只补这几样。`node --test` 每个测试文件一个进程,补上的 `window` 不会漏到别的文件。
+ * react-dom reads `window.event`, `window.HTMLIFrameElement`, container's `ownerDocument` during
+ * commit phase; only polyfill these few here. `node --test` runs one process per test file, so
+ * polyfilled `window` will not leak to other files.
  */
 import { createRequire } from "node:module";
 
@@ -19,7 +21,7 @@ const { flushSync } = require("react-dom");
 
 const doc = { nodeType: 9, addEventListener() {}, removeEventListener() {}, defaultView: globalThis.window, activeElement: null };
 
-/** 等 React 把排着的同步渲染和 effect 都做完(它们排在微任务和宏任务里) */
+/** Wait for React to finish queued synchronous renders and effects (queued in microtasks and macrotasks) */
 export const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 export function mount(element) {
@@ -30,7 +32,8 @@ export function mount(element) {
   };
   const errors = [];
   const root = createRoot(container, { onUncaughtError: (e) => errors.push(e), onCaughtError: (e) => errors.push(e) });
-  // 挂载、换 props 用 flushSync 当场渲完;store 触发的更新是同步档,排在微任务里,flush() 等得到
+  // Mount and prop changes render immediately with flushSync; store-triggered updates are in
+  // synchronous tier, queued in microtasks, flush() can wait for them
   flushSync(() => root.render(element));
   return {
     errors,

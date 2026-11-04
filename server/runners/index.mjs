@@ -10,10 +10,11 @@ import { codexAuthState } from './codex-auth-state.mjs';
 export const resolveExe = resolveCli;
 
 /**
- * 探测 CLI 版本。npm 全局装出来的是 .cmd 包装器,而 Node 出于安全限制不允许
- * execFile 直接执行 .cmd/.bat(要么 shell: true,要么自己走 cmd.exe)——
- * 不绕这一下的话,用「安装」按钮装好的 CLI 会一直被判成「未安装」。
- * 返回版本字符串;跑不起来就抛错,由调用方记进 note。
+ * Detect CLI version. Global npm installs produce .cmd wrappers, while Node due to security
+ * restrictions does not allow execFile to execute .cmd/.bat directly (either shell: true, or invoke
+ * cmd.exe manually): without this workaround, a CLI installed via the "Install" button would
+ * constantly be deemed "not installed".
+ * Returns version string; throws if it cannot run, recorded into note by the caller.
  */
 export function probeVersion(exePath, args = ['--version']) {
   const opts = { timeout: 15000, encoding: 'utf8', windowsHide: true, env: cliEnv(), stdio: ['ignore', 'pipe', 'pipe'] };
@@ -40,7 +41,7 @@ export async function listProviders(opts = {}) {
   ]);
   
   await Promise.all(baseProviders.map(async (p) => {
-    p.auth = p.available ? await probeAuth(p.id, { refresh: !!opts.refresh }) : { loggedIn: false, detail: '请先安装' };
+    p.auth = p.available ? await probeAuth(p.id, { refresh: !!opts.refresh }) : { loggedIn: false, detail: tr("Please install first") };
   }));
 
   const providers = [...baseProviders];
@@ -48,14 +49,14 @@ export async function listProviders(opts = {}) {
   try {
     const mod = await import('./api.mjs');
     const p = await mod.getApiProvider();
-    providers.push({ label: 'API 直连', ...p, id: 'api' });
+    providers.push({ label: tr("Direct API"), ...p, id: 'api' });
   } catch {
     providers.push({
       id: 'api',
-      label: 'API 直连',
+      label: tr("Direct API"),
       available: false,
-      note: 'api runner 缺失',
-      auth: { loggedIn: false, detail: 'api runner 还没就绪' }
+      note: 'api runner missing',
+      auth: { loggedIn: false, detail: tr("api runner is not ready yet") }
     });
   }
 
@@ -66,10 +67,10 @@ export async function listProviders(opts = {}) {
       const cfg = aiConfig.publicConfig();
       apiEntry.auth = {
         loggedIn: cfg.api.apiKey.set,
-        detail: cfg.api.apiKey.set ? '' : '还没填 API Key'
+        detail: cfg.api.apiKey.set ? '' : tr("API key not set yet")
       };
     } catch {
-      apiEntry.auth = { loggedIn: false, detail: '获取配置失败' };
+      apiEntry.auth = { loggedIn: false, detail: tr("Failed to get config") };
     }
   }
 
@@ -86,10 +87,12 @@ export async function listProviders(opts = {}) {
 }
 
 import { startCliLoop } from './cli-loop.mjs';
+import { tr } from '../i18n.mjs';
 
 export function startRun(opts) {
   if (opts.provider === 'claude') return startClaude(opts);
-  // 审查环路走 agy:每个角色回合起一次 agy(见 cli-loop.mjs)。开关规则和 API 直连一样
+  // Review loop runs via agy: launch agy once per role turn (see cli-loop.mjs). Toggle rules are the
+  // same as direct API
   if (opts.provider === 'agy' && (opts.reviewLoop ?? !!opts.deepAuto)) return startCliLoop(opts, startAgy);
   if (opts.provider === 'agy') return startAgy(opts);
   if (opts.provider === 'codex') return startCodex(opts);
@@ -101,7 +104,7 @@ export function startRun(opts) {
       try {
         mod = await import('./api.mjs');
       } catch {
-        try { opts.onEvent({ type: 'error', message: 'API 直连还没就绪:server/runners/api.mjs 缺失或加载失败' }); } catch {}
+        try { opts.onEvent({ type: 'error', message: tr("Direct API is not ready: server/runners/api.mjs is missing or failed to load") }); } catch {}
         return;
       }
       if (aborted) return;
@@ -165,7 +168,7 @@ export function spawnCli(exePath, args, opts, onEvent, providerName) {
     shell: false
   });
 
-  safeOnEvent({ type: 'status', text: `已启动 ${providerName || 'CLI'}` });
+  safeOnEvent({ type: 'status', text: tr("Started {0}", providerName || 'CLI') });
 
   let stderrBuffer = '';
   let hasDone = false;
@@ -244,7 +247,7 @@ export function spawnCli(exePath, args, opts, onEvent, providerName) {
   const abort = () => {
     if (isAborted || hasDone) return;
     isAborted = true;
-    safeOnEvent({ type: 'status', text: '已中止' });
+    safeOnEvent({ type: 'status', text: tr("Aborted") });
     
     try { stopChild(); } catch {}
 

@@ -5,10 +5,10 @@
 <title>PromptCut</title>
 <style>
   /*
-   * 后台运行的悬浮窗(编辑界面收起时出现,见 desktop/src-tauri/src/background.rs)。
-   * 整个窗口透明无边框,这里画的圆角卡片就是用户看到的全部。
-   *   单击:打开编辑界面;按住拖:挪位置;右键:「打开编辑界面 / 关闭」菜单(外壳弹的原生菜单)。
-   * SKILL 模式下多显示桌面 APP 会话在做什么,和「上一步动作」的画面。
+   * The background-mode floating window (appears when the editor is collapsed, see desktop/src-tauri/src/background.rs).
+   * The whole window is transparent and borderless; the rounded card drawn here is all the user sees.
+   *   Click: open the editor; press and drag: move it; right-click: the "Open editor / Close" menu (a native menu popped up by the shell).
+   * In SKILL mode it additionally shows what the desktop app sessions are doing, and the picture of the "last action".
    */
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; }
@@ -48,8 +48,8 @@
   .hint { font-size: 10px; color: #56719b; margin-top: 1px; }
 
   /*
-   * 「上一步动作」预览(只在 SKILL 下)。壳只在第一张图到了之后才把窗口撑高,所以没有图的时候
-   * 这块根本不占地方。不放任何控件:它只回答一个问题 —— agent 刚才那一步做出来是什么样。
+   * The "last action" preview (only in SKILL mode). The shell enlarges the window only after the first image arrives, so when there is no image
+   * this block takes up no space at all. It contains no controls; it answers a single question: what the agent's last step turned out to look like.
    */
   .preview {
     display: none;
@@ -81,29 +81,33 @@
 <script src="overlay-summary.js"></script>
 </head>
 <body>
-  <div class="card" id="card" title="单击打开编辑界面，右键可关闭 PromptCut">
+  <div class="card" id="card" title="Click to open the editor, right-click to quit PromptCut" data-t-title>
     <div class="dot"></div>
     <div class="text">
-      <div class="title" id="title">PromptCut 在后台运行</div>
-      <div class="sub" id="sub">编辑界面已收起，Agent 照常工作</div>
-      <div class="hint">单击打开 · 右键关闭</div>
+      <div class="title" id="title" data-t>PromptCut is running in background mode</div>
+      <div class="sub" id="sub" data-t>Editor is collapsed, Agent keeps working</div>
+      <div class="hint" data-t>Click to open · right-click to quit</div>
     </div>
   </div>
-  <div class="preview" id="preview" title="AI 上一步做成的时间轴动作，那一刻的画面">
-    <img id="preview-img" alt="上一步动作的画面">
+  <div class="preview" id="preview" title="The AI's last timeline action, and the picture at that moment" data-t-title>
+    <img id="preview-img" alt="Picture of the last action" data-t-alt>
     <div class="cap" id="preview-cap"></div>
   </div>
 
 <script>
+  // Static text follows the system display language, through the same table as the lines pushed by the shell
+  document.querySelectorAll('[data-t]').forEach(function (el) { el.textContent = window.pcOverlay.t(el.textContent); });
+  document.querySelectorAll('[data-t-title]').forEach(function (el) { el.title = window.pcOverlay.t(el.title); });
+  document.querySelectorAll('[data-t-alt]').forEach(function (el) { el.alt = window.pcOverlay.t(el.alt); });
   var T = window.__TAURI__;
   function emit(name) {
     if (T && T.event && T.event.emit) T.event.emit(name);
   }
 
   /*
-   * 单击打开、按住拖动。无边框窗口没有标题栏,拖动交给外壳(startDragging);
-   * 按下后挪了超过几个像素才算拖,松开时没拖过才算单击 —— 免得拖一下就把编辑界面弹出来。
-   * 整张卡和预览块都算(预览块也是悬浮窗的一部分)。
+   * Click to open, press and hold to drag. A borderless window has no title bar, so dragging is handed to the shell (startDragging);
+   * It only counts as a drag once the pointer has moved more than a few pixels after pressing, and as a click only if it was not dragged on release, so a drag does not pop up the editor.
+   * The whole card and the preview block both count (the preview block is part of the floating window too).
    */
   var DRAG_PX = 4;
   var press = null;
@@ -124,7 +128,7 @@
     press = null;
     if (clicked) emit('pc-overlay-open');
   });
-  // 右键:外壳弹原生菜单(打开编辑界面 / 关闭)。浏览器自己的右键菜单不要。
+  // Right-click: the shell pops up a native menu (Open editor / Close). The browser's own right-click menu is not wanted.
   document.addEventListener('contextmenu', function (e) {
     e.preventDefault();
     press = null;
@@ -139,7 +143,7 @@
   }
 
   if (T && T.event && T.event.listen) {
-    // 外壳推的状态(只在变了的时候推)
+    // State pushed by the shell (pushed only when it changes)
     T.event.listen('pc-overlay-state', function (e) {
       var s = window.pcOverlay.summarize((e && e.payload) || {});
       document.getElementById('title').textContent = s.title;
@@ -147,11 +151,11 @@
       var card = document.getElementById('card');
       card.classList.toggle('is-skill', s.skill);
       card.classList.toggle('is-busy', s.busy);
-      // 出了 SKILL,预览收起(窗口高度由壳缩回去)
+      // After leaving SKILL, the preview collapses (the shell shrinks the window height back)
       if (!s.skill) document.getElementById('preview').classList.remove('is-on');
     });
 
-    // 「上一步动作」的预览图:json 的修改时间变了才推一次,所以这里不用去重
+    // The "last action" preview image: pushed once only when the json's modification time changes, so no deduplication is needed here
     T.event.listen('pc-skill-preview', function (e) {
       var d = (e && e.payload) || {};
       if (!d.data_url) return;
@@ -160,14 +164,14 @@
       var cap = document.getElementById('preview-cap');
       cap.textContent = '';
       var b = document.createElement('b');
-      b.textContent = '上一步';
+      b.textContent = window.pcOverlay.t('Last step');
       cap.appendChild(b);
       cap.appendChild(document.createTextNode(' ' + c.what + c.rest));
       document.getElementById('preview').classList.add('is-on');
     });
   }
 
-  // 告诉外壳页面好了:悬浮窗第一次收起时才建,之前推的状态都没收到,让它重推一遍
+  // Tell the shell the page is ready: the floating window is only built the first time it is collapsed, so it never received the state pushed earlier; make the shell push it again
   emit('pc-overlay-ready');
 </script>
 </body>

@@ -1,24 +1,30 @@
 /**
- * A2(8) 的属性表对账:`src/render/snapshot/snapshotStyleProps.mjs` 的 `INHERITED_PROPS` 到底和
- * Chrome 的实际继承行为对不对得上。
+ * Property table reconciliation for A2(8): check whether `INHERITED_PROPS` in
+ * `src/render/snapshot/snapshotStyleProps.mjs` actually matches Chrome's real inheritance behavior.
  *
  *   node scripts/probes/inherited-props-probe.mjs [--json out/inherited-props.json]
  *
- * 判法就是任务书 A2(8) 那句「单测用父子两层干净元素逐个属性验『父设了非初始值、子跟不跟』」:
- * 一个干净的 `<div><div></div></div>`(和一份 SVG 版),对每个 longhand 属性,
- * **给父元素换一个和初始值不同的值**,看子元素的计算值跟不跟着走。
+ * Verification logic follows the quote from task brief A2(8): "unit test uses two clean
+ * parent-child element layers to verify per-property 'if parent sets a non-initial value, does child
+ * follow'": a clean `<div><div></div></div>` (and an SVG version); for each longhand property,
+ * **set the parent element to a value different from the initial value**, and see if the child
+ * element's computed value follows.
  *
- * 「和初始值不同的值」怎么来:不逐个属性手写候选值(写不全,也容易写错),而是用
- * `CSS.registerProperty` 之外的一条通路 —— 对每个属性试一组通用候选值
- * (`inherit` 不算;用一批覆盖面广的字面量),取第一个能让**父元素**的计算值变掉的,
- * 再看子元素。属性没有任何候选值能改动父元素的(多半是只读 / 别名 / 简写),报成 `skipped`,
- * 不参与判定 —— 表里有它不算错,表里没有它也不算错。
+ * How to get "a value different from the initial value": instead of manually writing candidate
+ * values per property (incomplete and error-prone), use a path outside `CSS.registerProperty`:
+ * test a set of generic candidate values for each property (`inherit` does not count; use a broad
+ * batch of literals), take the first one that changes the **parent element's** computed value, and
+ * then inspect the child element. If a property has no candidate value that can alter the parent
+ * element (mostly read-only / alias / shorthand), report it as `skipped` and exclude it from the
+ * verdict: having it in the table is not an error, and not having it in the table is not an error.
  *
- * 退出码 1 的两种情况:
- *   - 表里写了、Chrome 说它**不继承**(多内联几个字节,不致错,但表该改);
- *   - Chrome 说它继承、表里**没写**(顶层元素之外都安全,见 snapshotStyleProps.mjs 的说明;
- *     顶层元素会因此漏掉这个属性 —— 该补)。
- * 两种都只打印,由人决定改表还是改探针的候选值。
+ * Two cases for exit code 1:
+ *   - Listed in the table, but Chrome says it **does not inherit** (inlines a few extra bytes, not
+ *     fatal, but the table should be updated);
+ *   - Chrome says it inherits, but it is **not listed** in the table (safe for non-top-level
+ *     elements, see snapshotStyleProps.mjs explanation; top-level elements would miss this
+ *     property as a result: should be added).
+ * Both cases only log; humans decide whether to update the table or probe candidate values.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,7 +38,7 @@ const argv = process.argv.slice(2);
 const flag = (name, fallback = null) => { const i = argv.indexOf(name); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : fallback; };
 const outJson = flag('--json', 'out/inherited-props.json');
 
-/* 通用候选值:覆盖各种取值语法,逐个试到父元素的计算值真的变掉为止 */
+/* Generic candidate values: covers syntax variants, tested until parent element's computed value actually changes */
 const CANDIDATES = [
   '33px', '7', '0.37', 'red', 'rgb(1, 2, 3)', 'none', 'auto', 'hidden', 'visible', 'collapse',
   'block', 'inline', 'flex', 'bold', 'italic', 'uppercase', 'center', 'right', 'justify',
@@ -73,7 +79,8 @@ try {
           }
           parent.style.removeProperty(prop);
           if (decided) break;
-          // 子元素本来就跟着变就说明候选值被拒了但触发了别的副作用,按未决处理
+          // If child element already changes along, candidate was rejected but triggered other side effects;
+          // treat as undetermined
           void childBefore;
         }
       }
@@ -89,25 +96,26 @@ try {
 
   const wrongInTable = table.filter((p) => chromeNot.has(p));
   /*
-   * 布局解析值属性(width / inline-size …)会被探针误判成「继承」:给父元素设 width,
-   * 块级子元素的**使用值**跟着变,但那是布局不是继承。它们本来就在 LAYOUT_USED_VALUE_PROPS
-   * 里一律全内联,和继承表无关,所以这里排掉。
+   * Layout resolved-value properties (width / inline-size …) are misidentified by the probe as
+   * "inherited": setting width on the parent changes the block-level child's **used value**, but that
+   * is layout, not inheritance. They are already fully inlined in LAYOUT_USED_VALUE_PROPS anyway and
+   * have nothing to do with the inheritance table, so they are excluded here.
    */
   const missingFromTable = report.inherited.filter((p) => !INHERITED_PROPS.has(p) && !LAYOUT_USED_VALUE_PROPS.has(p));
   const unverified = table.filter((p) => !chromeInherited.has(p) && !chromeNot.has(p));
 
-  console.log(`Chrome 判定:继承 ${report.inherited.length} 个、不继承 ${report.notInherited.length} 个、没定论 ${report.skipped.length} 个`);
-  console.log(`表里 ${table.length} 个;其中 ${table.filter((p) => chromeInherited.has(p)).length} 个被 Chrome 证实继承。`);
-  if (wrongInTable.length) { exitCode = 1; console.log(`\n表里写了但 Chrome 说不继承(${wrongInTable.length}):\n  ${wrongInTable.join(', ')}`); }
-  if (missingFromTable.length) { exitCode = 1; console.log(`\nChrome 说继承但表里没写(${missingFromTable.length}):\n  ${missingFromTable.join(', ')}`); }
-  if (unverified.length) console.log(`\n表里有、探针没定论(候选值都改不动父元素,不算错,${unverified.length}):\n  ${unverified.join(', ')}`);
-  console.log(`\n没定论的属性共 ${skipped.size} 个。`);
+  console.log(`Chrome verdict: ${report.inherited.length} inherited, ${report.notInherited.length} not inherited, ${report.skipped.length} inconclusive`);
+  console.log(`${table.length} in the table; ${table.filter((p) => chromeInherited.has(p)).length} of them confirmed inherited by Chrome.`);
+  if (wrongInTable.length) { exitCode = 1; console.log(`\nListed in the table but Chrome says not inherited (${wrongInTable.length}):\n  ${wrongInTable.join(', ')}`); }
+  if (missingFromTable.length) { exitCode = 1; console.log(`\nChrome says inherited but not listed in the table (${missingFromTable.length}):\n  ${missingFromTable.join(', ')}`); }
+  if (unverified.length) console.log(`\nListed in the table, probe inconclusive (no candidate value could change the parent element, not counted as an error, ${unverified.length}):\n  ${unverified.join(', ')}`);
+  console.log(`\n${skipped.size} properties in total are inconclusive.`);
 
   if (outJson) {
     const file = path.resolve(ROOT, outJson);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify({ ...report, table, wrongInTable, missingFromTable, unverified }, null, 2), 'utf8');
-    console.log(`\n原始数据写到 ${file}`);
+    console.log(`\nRaw data written to ${file}`);
   }
 } catch (err) {
   console.error(err && err.stack || err);

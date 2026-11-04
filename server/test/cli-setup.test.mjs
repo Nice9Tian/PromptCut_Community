@@ -29,7 +29,8 @@ function fakeService(options = {}) {
     launch(command, args, opts) {
       const child = new EventEmitter();
       child.stdout = new PassThrough(); child.stderr = new PassThrough();
-      // 只有任务要求把标准输入接成管道(stdio[0] === 'pipe')才有 stdin,和真的 spawn 一致。
+      // stdin is present only when the task requests piping standard input (stdio[0] === 'pipe'),
+      // consistent with real spawn.
       if (opts?.stdio?.[0] === 'pipe') {
         child.stdin = new PassThrough();
         child.stdin.written = '';
@@ -85,8 +86,10 @@ test('Codex home is created and inherited PowerShell module paths are removed', 
   assert.ok(env.Path.endsWith('custom'));
 });
 
-// 桌面外壳为了不让 Vite 自己开浏览器,给后台进程设了 BROWSER=none;这个值传给登录命令,
-// Claude Code 就把 "none" 当成浏览器程序去找,找不到,登录页不弹(2026-10-06 用户真机)。
+// To prevent Vite from opening the browser on its own, the desktop shell set BROWSER=none for
+// background processes; when passed to the login command, Claude Code looked for "none" as the
+// browser executable, failed to find it, and the login page did not pop up
+// (user physical machine, 2026-10-06).
 test('the BROWSER=none marker set by the desktop shell is not passed on to a CLI, a real browser choice is', () => {
   for (const provider of ['claude', 'codex', 'agy']) {
     assert.equal(cliEnv(provider, { BROWSER: 'none', Path: 'custom' }).BROWSER, undefined, provider);
@@ -99,7 +102,7 @@ test('the BROWSER=none marker set by the desktop shell is not passed on to a CLI
   assert.equal(base.BROWSER, 'none', 'the environment object passed in is left alone');
 });
 
-// Claude Code 2.1.x 把登录页从 claude.ai 换到了 claude.com/cai/oauth/authorize。
+// Claude Code 2.1.x moved the login page from claude.ai to claude.com/cai/oauth/authorize.
 test('Claude login link on claude.com is recognised, look-alike hosts are not', () => {
   const link = 'https://claude.com/cai/oauth/authorize?code=true&client_id=x&state=y';
   const out = ['Opening browser to sign in…', `If the browser did not open, visit: ${link}`, 'Paste code here if prompted > '].join('\n');
@@ -174,7 +177,7 @@ test('timeout stops the child and makes the operation retryable', async () => {
   service.start('agy', 'install');
   await until(() => service.list()[0].state === 'failed');
   assert.equal(calls[0].child.killed, true);
-  assert.match(service.list()[0].message, /超时/);
+  assert.match(service.list()[0].message, /timed out/);
 });
 
 test('cancel waits for child exit before allowing retry', async () => {
@@ -207,8 +210,9 @@ test('Codex auth accepts status on stderr (actual child process)', { skip: proce
 });
 
 test('Codex Desktop under Programs\ is excluded too, not just the where.exe hit', () => {
-  // 这条路径曾经写在候选表里、当作合法 CLI 直接返回,而排除只写在 where.exe 那一支 ——
-  // 候选表命中就 return,那道排除对它永远跑不到。
+  // This path was previously in the candidate table and returned directly as a valid CLI, while
+  // the exclusion was only written in the where.exe branch: hitting the candidate table returns
+  // immediately, so that exclusion was never reached for it.
   const local = path.join(root, 'LocalAppData-programs');
   const desktop = path.join(local, 'Programs', 'OpenAI', 'Codex', 'bin', 'codex.exe');
   fs.mkdirSync(path.dirname(desktop), { recursive: true }); fs.writeFileSync(desktop, '');
@@ -219,8 +223,8 @@ test('Codex Desktop under Programs\ is excluded too, not just the where.exe hit'
   assert.equal(result, 'codex');
 });
 
-// ---- 粘贴授权码:登录任务接上标准输入(2026-10-21 用户定做) ----
-// 下面这串是测试里随手编的占位值,不是任何真实授权码。
+// ---- Paste authorization code: login task connects standard input (user custom request, 2026-10-21) ----
+// The string below is an arbitrary placeholder value made up for testing, not any real authorization code.
 const FAKE_CODE = 'Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA_-.~#c3RhdGUtc3RhdGUtc3RhdGU9';
 
 test('only Claude login gets a stdin pipe; other logins and installs keep stdin ignored', async () => {
@@ -254,7 +258,7 @@ test('submitted code reaches the login process stdin as one line and is not expo
   let view;
   try {
     view = service.submitCode('claude', '  ' + FAKE_CODE + '\n');
-    // CLI 回显码或把它写进报错时,也不能经任务对外的字段出去。
+    // When the CLI echoes the code or writes it into an error, it must not leak through external task fields.
     child.stdout.write('Paste code here if prompted > ' + FAKE_CODE + '\n');
     child.stderr.write('code ' + FAKE_CODE + ' rejected\n');
     await tick();
@@ -274,15 +278,15 @@ test('malformed codes are refused before anything is written to the child', asyn
   service.start('claude', 'login'); await until(() => calls.length === 1);
   const bad = [
     '', '   ', 'short', 'a'.repeat(15), 'a'.repeat(513),
-    FAKE_CODE.slice(0, 20) + ' ' + FAKE_CODE.slice(20),   // 中间有空格
-    FAKE_CODE.slice(0, 20) + '\n' + 'calc.exe',            // 多行:第二行会变成命令行输入
+    FAKE_CODE.slice(0, 20) + ' ' + FAKE_CODE.slice(20),   // Spaces in the middle
+    FAKE_CODE.slice(0, 20) + '\n' + 'calc.exe',            // Multiple lines: the second line becomes command-line input
     FAKE_CODE.slice(0, 20) + '\r\n' + FAKE_CODE.slice(20),
     FAKE_CODE + '"; whoami; "', FAKE_CODE + '&& dir', FAKE_CODE + '\x00', FAKE_CODE + '\x1b[31m',
     '密'.repeat(20), undefined, null, 12345678901234567890, { toString: () => FAKE_CODE }, [FAKE_CODE],
   ];
   for (const code of bad) {
     let message = '';
-    assert.throws(() => service.submitCode('claude', code), error => { message = error.message; return /授权码格式不对/.test(message); });
+    assert.throws(() => service.submitCode('claude', code), error => { message = error.message; return /Invalid authorization code format/.test(message); });
     assert.ok(!message.includes(FAKE_CODE.slice(0, 20)), 'the error must not echo the input');
   }
   assert.equal(calls[0].child.stdin.written, '');
@@ -292,17 +296,17 @@ test('malformed codes are refused before anything is written to the child', asyn
 
 test('code is refused when no login job is waiting for it', async () => {
   const { service, calls } = fakeService();
-  assert.throws(() => service.submitCode('claude', FAKE_CODE), /没有在等授权码/);
-  assert.throws(() => service.submitCode('__proto__', FAKE_CODE), /没有在等授权码/);
+  assert.throws(() => service.submitCode('claude', FAKE_CODE), /No login task is currently waiting for an authorization code/);
+  assert.throws(() => service.submitCode('__proto__', FAKE_CODE), /No login task is currently waiting for an authorization code/);
   service.start('codex', 'login'); await until(() => calls.length === 1);
-  assert.throws(() => service.submitCode('codex', FAKE_CODE), /没有在等授权码/, 'codex login has no stdin pipe');
+  assert.throws(() => service.submitCode('codex', FAKE_CODE), /No login task is currently waiting for an authorization code/, 'codex login has no stdin pipe');
   service.start('claude', 'install'); await until(() => calls.length === 2);
-  assert.throws(() => service.submitCode('claude', FAKE_CODE), /没有在等授权码/, 'install jobs never accept a code');
+  assert.throws(() => service.submitCode('claude', FAKE_CODE), /No login task is currently waiting for an authorization code/, 'install jobs never accept a code');
   calls[1].child.emit('close', 0);
   await until(() => service.list().find(j => j.provider === 'claude').state === 'succeeded');
   service.start('claude', 'login'); await until(() => calls.length === 3);
   service.cancel('claude');
-  assert.throws(() => service.submitCode('claude', FAKE_CODE), /没有在等授权码/, 'a cancelled login no longer accepts a code');
+  assert.throws(() => service.submitCode('claude', FAKE_CODE), /No login task is currently waiting for an authorization code/, 'a cancelled login no longer accepts a code');
   await until(() => service.list().find(j => j.provider === 'claude').state === 'failed');
   service.dispose(); await tick();
 });
@@ -320,7 +324,7 @@ test('stdin is closed when the login finishes, fails, times out, is cancelled, o
     await until(() => service.list()[0].state !== 'running');
     assert.equal(child.stdin.destroyed, true, how + ': stdin destroyed');
     assert.equal(service.list()[0].acceptsCode, false, how + ': no longer accepts a code');
-    assert.throws(() => service.submitCode('claude', FAKE_CODE), /没有在等授权码/, how);
+    assert.throws(() => service.submitCode('claude', FAKE_CODE), /No login task is currently waiting for an authorization code/, how);
     service.dispose(); await tick();
   }
 });
@@ -346,7 +350,7 @@ test('code submissions per login are capped', async () => {
   const { service, calls } = fakeService();
   service.start('claude', 'login'); await until(() => calls.length === 1);
   for (let i = 0; i < 5; i++) service.submitCode('claude', FAKE_CODE);
-  assert.throws(() => service.submitCode('claude', FAKE_CODE), /次数太多/);
+  assert.throws(() => service.submitCode('claude', FAKE_CODE), /Too many authorization code submissions/);
   assert.equal(calls[0].child.stdin.written, (FAKE_CODE + '\n').repeat(5));
   service.dispose(); await tick();
 });
@@ -364,7 +368,8 @@ test('a retried login starts with a clean submission count and a fresh stdin', a
 });
 
 test('real child process: the pasted code arrives on its stdin, and an unfinished login ends when stdin closes', async () => {
-  // 真的 spawn 一个 Node 进程当「登录命令」:读一行标准输入,和期望值一致才以 0 退出。
+  // Actually spawns a Node process as the "login command": reads one line from standard input,
+  // and exits with 0 only if it matches the expected value.
   const script = `
     process.stdout.write('Paste code here if prompted > ');
     let data = '';
@@ -382,7 +387,8 @@ test('real child process: the pasted code arrives on its stdin, and an unfinishe
   await until(() => ok.list()[0].state !== 'running'); assert.equal(ok.list()[0].state, 'succeeded', ok.list()[0].message);
   assert.equal(ok.list()[0].acceptsCode, false);
 
-  // 码不对:进程以 3 退出,任务失败,界面拿到的失败信息里没有码
+  // Invalid code: process exits with 3, task fails, and the failure message received by the UI
+  // contains no code
   const wrong = real({ EXPECT_CODE: 'something-else-entirely' });
   wrong.start('claude', 'login');
   await until(() => wrong.list()[0]?.acceptsCode === true);
@@ -390,7 +396,7 @@ test('real child process: the pasted code arrives on its stdin, and an unfinishe
   await until(() => wrong.list()[0].state === 'failed');
   assert.ok(!JSON.stringify(wrong.list()).includes(FAKE_CODE));
 
-  // 取消:标准输入随任务关掉,进程不留着
+  // Cancellation: standard input is closed along with the task, leaving no lingering process
   const cancelled = real({ EXPECT_CODE: FAKE_CODE });
   cancelled.start('claude', 'login');
   await until(() => cancelled.list()[0]?.acceptsCode === true);

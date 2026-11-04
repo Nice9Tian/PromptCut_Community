@@ -14,29 +14,33 @@ import type { GroupData, GroupItem } from "./groups";
 import { tr as trText } from "../../../i18n/index.ts";
 
 /**
- * 特效 → 转场组。
+ * Effects → transitions group.
  *
- * 转场是**对象**:加一处就在项目里落一条记录,把它引用的片段绑成一组 —— 那几段的相对
- * 时间关系锁住,想单独挪、改长度、切开,得先删转场(规矩在 kernel/transitions.ts)。
+ * A transition is an **object**: adding one writes a record into the project that binds the clips it
+ * references into a group. Their relative timing is locked; to move one on its own, change its
+ * length, or cut it, you must first delete the transition (the rules are in kernel/transitions.ts).
  *
- * 这个组三件事:
- *   1. 三张卡是转场本身,拖到时间轴上 —— 拖到两段首尾相接处 = 交叉溶解,
- *      拖到一段的开头 / 结尾 = 淡入 / 淡出。选中片段时点一下也能直接加;
- *   2. 下面列出**已有的转场**,每条都能删(删完那几段就解锁);
- *   3. 再下面列出时间轴上首尾相接的接缝,一键接成交叉溶解。
+ * This group does three things:
+ *   1. The three cards are the transitions themselves, dragged onto the timeline: dropped where two
+ *      clips meet end to end = crossfade, dropped at the start / end of a clip = fade in / fade out.
+ *      With a clip selected, a click also adds one directly;
+ *   2. Below, the **existing transitions** are listed, and each can be deleted (after deleting, those
+ *      clips are unlocked);
+ *   3. Below that, the seams where clips meet end to end on the timeline are listed, with one click to
+ *      join them into a crossfade.
  *
- * 同一条序列内不允许重叠,所以交叉溶解会把后一段往前拉、必要时挪到另一条序列;
- * 删转场时再尽量放回去。
+ * Overlap is not allowed within one track, so a crossfade pulls the later clip forward and, if
+ * necessary, moves it to another track; when the transition is deleted it tries to put it back.
  */
 
 const DURATIONS = [0.3, 0.5, 1, 1.5, 2];
 const KINDS = ["crossfade", "fadeIn", "fadeOut"] as const;
-/** 示意图卡的高宽比:图形都在中间一条带里,用不着正方形 */
+/** Aspect ratio of the diagram card: the shapes all sit in a band in the middle, so a square is not needed */
 const GLYPH_ASPECT = 0.75;
 
 type Pair = { a: TrackClip; aTrack: string; b: TrackClip; bTrack: string };
 
-/** 时间上相邻(或已重叠)的两段素材,按先后给出 */
+/** Two media clips adjacent in time (or already overlapping), given in order */
 function findPairs(p: Project): Pair[] {
   const all: Array<{ clip: TrackClip; trackId: string }> = [];
   for (const tr of p.tracks) {
@@ -44,7 +48,7 @@ function findPairs(p: Project): Pair[] {
       if (!c.mediaId) continue;
       const m = p.media.find((x) => x.id === c.mediaId);
       if (!m) continue;
-      // 声音也算:两段音乐重叠 + 各自淡化就是听得见的交叉淡入淡出,和画面同一套做法
+      // Audio counts too: two overlapping music clips, each faded, make an audible crossfade, done the same way as for video
       all.push({ clip: c, trackId: tr.id });
     }
   }
@@ -53,16 +57,16 @@ function findPairs(p: Project): Pair[] {
   for (let i = 0; i < all.length - 1; i++) {
     const a = all[i];
     const b = all[i + 1];
-    // 只认「首尾相接」或已经重叠的:差得太远就不是一个转场点
+    // Only accept "end to end" or already overlapping: too far apart is not a transition point
     if (b.clip.start - a.clip.end > 0.001) continue;
     pairs.push({ a: a.clip, aTrack: a.trackId, b: b.clip, bTrack: b.trackId });
   }
   return pairs;
 }
 
-/** 一段素材的静态画面:图片直接放,视频取首帧,声音没有画面就给一块底色(转场卡只看溶解,不播) */
+/** Static picture of a media clip: an image is placed directly, a video takes its first frame, audio has no picture so gets a flat color (the transition card only shows the dissolve, no playback) */
 function Still({ media, style }: { media: MediaAsset | undefined; style?: React.CSSProperties }) {
-  // 桌面是 media.url;在线浏览器模式换成远程素材服务的地址(只用小尺寸的素材只给小尺寸),没就绪时不挂 src
+  // On desktop this is media.url; in online browser mode it is replaced by the remote asset service address (media used only at small size gets only the small size); src is not set until ready
   const src = usePreviewMediaUrl(media) || undefined;
   if (!media) return <div style={{ ...style, background: "var(--ui-panel-2)" }} />;
   if (media.kind === "audio") {
@@ -79,9 +83,11 @@ function Still({ media, style }: { media: MediaAsset | undefined; style?: React.
 const layer: React.CSSProperties = { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" };
 
 /**
- * 三张转场卡的示意图:两块色带 + 渐变,一眼看出是「叠着化过去」还是「从黑里出来」。
- * 渐变 id 每个实例各用一份:总览缩略和详情卡同时在 DOM 里(总览只是隐藏),
- * 重名的话 url(#id) 会指到隐藏的那一份上,渐变就画不出来。
+ * Diagrams for the three transition cards: two color bands + a gradient, so you can see at a glance
+ * whether it is "dissolving over" or "coming out of black".
+ * Each instance uses its own gradient id: the overview thumbnail and the detail card are in the DOM
+ * at the same time (the overview is only hidden),
+ * and with duplicate names url(#id) would point at the hidden one, and the gradient would not draw.
  */
 function TransitionGlyph({ kind }: { kind: TransitionKind }) {
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
@@ -125,9 +131,9 @@ const KIND_HINT: Record<TransitionKind, string> = {
   fadeOut: trText("Drag to the end of a clip (or select a clip and click once)"),
 };
 
-/** q 是已经 trim + 小写的搜索词;flash 是分区底部的提示条 */
+/** q is the search term, already trimmed and lowercased; flash is the hint bar at the bottom of the section */
 export function useTransitionsGroup(q: string, flash: (text: string, ms?: number) => void): GroupData {
-  // 这个项目只给了只读权限(游客):加转场 / 删转场都是写
+  // This project only has read-only permission (guest): adding / deleting a transition are both writes
   const ro = useReadOnly();
   const project = useStore((s) => s.project);
   const selection = useStore((s) => s.selection);
@@ -144,7 +150,7 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
     flash(r.ok ? trText("Added {0}s crossfade, these two clips are now a group", dur) : r.error);
   };
 
-  /** 点卡片:淡入淡出加在选中的片段上;交叉溶解要两段,让用户去拖或用下面的接缝列表 */
+  /** Click a card: fade in / out is added to the selected clip; a crossfade needs two clips, so the user is told to drag or use the seam list below */
   const clickKind = (kind: TransitionKind) => {
     if (kind === "crossfade") {
       flash(trText("A crossfade needs two clips: drag this card to where two clips meet on the timeline, or use the seam list below"));
@@ -152,20 +158,20 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
     }
     const clipId = selection[0];
     if (!clipId) {
-      flash(trText("First select a clip on the timeline, then click {0}; or drag the card straight to the clip's {1}", TRANSITION_LABEL[kind], kind === "fadeIn" ? trText("Start") : trText("end")));
+      flash(trText("First select a clip on the timeline, then click {0}; or drag the card straight to the clip's {1}", trText(TRANSITION_LABEL[kind]), kind === "fadeIn" ? trText("Start") : trText("end")));
       return;
     }
     const r = actions.addTransition({ kind, clipId, dur });
-    flash(r.ok ? trText("Added {0}s {1}", dur, TRANSITION_LABEL[kind]) : r.error);
+    flash(r.ok ? trText("Added {0}s {1}", dur, trText(TRANSITION_LABEL[kind])) : r.error);
   };
 
   const drag = (kind: TransitionKind) => (e: React.DragEvent) => {
     e.dataTransfer.setData(MIME_TRANSITION, kind);
     e.dataTransfer.effectAllowed = "copy";
-    setDragPayload({ kind: "transition", transition: kind, name: TRANSITION_LABEL[kind], duration: dur });
+    setDragPayload({ kind: "transition", transition: kind, name: trText(TRANSITION_LABEL[kind]), duration: dur });
   };
 
-  const kinds = KINDS.filter((k) => !q || TRANSITION_LABEL[k].toLowerCase().includes(q) || KIND_HINT[k].includes(q));
+  const kinds = KINDS.filter((k) => !q || trText(TRANSITION_LABEL[k]).toLowerCase().includes(q) || KIND_HINT[k].includes(q));
 
   const items: GroupItem[] = kinds.map((kind) => ({
     id: kind,
@@ -173,7 +179,7 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
     node: (
       <PreviewCard
         attrs={{ "data-pc-transition": kind }}
-        title={TRANSITION_LABEL[kind]}
+        title={trText(TRANSITION_LABEL[kind])}
         subtitle={`${dur}s`}
         preview={<TransitionGlyph kind={kind} />}
         draggable
@@ -189,7 +195,7 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
 
   const thumbs: GroupItem[] = kinds.map((kind) => ({
     id: kind,
-    node: <ThumbTile title={TRANSITION_LABEL[kind]} preview={<TransitionGlyph kind={kind} />} />,
+    node: <ThumbTile title={trText(TRANSITION_LABEL[kind])} preview={<TransitionGlyph kind={kind} />} />,
   }));
 
   const detailTop = (
@@ -207,7 +213,7 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
 
   const detailBottom = (
     <>
-      {/* 已经加上的转场:每条都能删,删完那几段就解锁 */}
+      {/* Transitions already added: each can be deleted, and after deleting those clips are unlocked */}
       {transitions.length > 0 && (
         <div className="pc-lib-block">
           <div className="pc-lib-label">
@@ -238,7 +244,7 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
         </div>
       )}
 
-      {/* 时间轴上首尾相接的接缝:一键接成交叉溶解 */}
+      {/* Seams where clips meet end to end on the timeline: one click to join into a crossfade */}
       <div className="pc-lib-block">
         <div className="pc-lib-label">{trText("Adjoining clips")}</div>
         {pairs.length === 0 ? (
@@ -252,7 +258,7 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
             {pairs.map((pair, i) => {
               const has = transitionsOfClip(project, pair.a.id).some((tr) => tr.kind === "crossfade" && tr.bId === pair.b.id);
               const hot = hotIndex === i;
-              // 悬停时后一段在前一段上来回淡入淡出,周期 = 当前选的转场时长(往返各一次)
+              // On hover, the later clip fades in and out over the earlier one back and forth, with period = the currently selected transition duration (one round trip each)
               const fadeStyle: React.CSSProperties = hot
                 ? { ...layer, animation: `pc-xfade ${Math.max(0.3, dur) * 2}s ease-in-out infinite` }
                 : { ...layer, opacity: 0 };

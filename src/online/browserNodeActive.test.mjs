@@ -1,13 +1,18 @@
 /**
- * 任务 D（`claude/queue-maint`）页面这一侧：纯浏览器节点报忙（`node.active`，M7 D2 补充〔裁〕）。
- * 队列一侧（锁闲置怎么算、切分方接不接手）见 `server/test/queue-maint-d2-busy.test.mjs`。
+ * Task D (`claude/queue-maint`) page side: pure browser node reports busy (`node.active`, M7 D2
+ * supplementary [ruling]). Queue side (how lock idle is calculated, whether splitter takes over)
+ * see `server/test/queue-maint-d2-busy.test.mjs`.
  *
- *   QM-D-P1 旧队列（welcome 不带 activeIntervalMs）：忙着也一条不发，行为同改动之前
- *   QM-D-P2 新队列、手里有认领（在生成快照）：按间隔报 busy 'bake'，不比间隔更勤
- *   QM-D-P3 手里没有认领：宿主说后台舞台在忙（'stage'）才报；闲着（null）不报；宿主抛错当不忙
- *   QM-D-P4 下线（stop）、报到被拒之后不再报；重新报到后忙着就在下一拍报
+ *   QM-D-P1 Old queue (welcome without activeIntervalMs): sends nothing even when busy, matching
+ *     behavior before the change
+ *   QM-D-P2 New queue, holding a claim (generating snapshots): reports busy 'bake' at intervals,
+ *     no more frequent than the interval
+ *   QM-D-P3 Holding no claim: reports only if host says background stage is busy ('stage'); does not
+ *     report when idle (null); host throwing an error treated as not busy
+ *   QM-D-P4 Going offline (stop), or after check-in rejected: no longer reports; after re-checking in,
+ *     reports on next tick if busy
  *
- * 跑：node --test src/online/browserNodeActive.test.mjs
+ * Run: node --test src/online/browserNodeActive.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -51,7 +56,7 @@ function rig({ welcome = { activeIntervalMs: EVERY }, busy } = {}) {
 test("QM-D-P1 old queue (node.welcome without activeIntervalMs): holds a claim and the host also says busy, yet not a single node.active is sent", async () => {
   const r = rig({ welcome: {}, busy: () => "stage" });
   await r.claim();
-  assert.equal(r.bakes.length, 1, "第 0 帧在做");
+  assert.equal(r.bakes.length, 1, "Frame 0 is in progress");
   for (let i = 0; i < 5; i++) { r.advance(EVERY); r.node.tick(); }
   assert.equal(r.of("node.active").length, 0);
   assert.equal(r.node.debug().counters.active, 0);
@@ -77,7 +82,7 @@ test("QM-D-P2 new queue, holding a claim (generating snapshots): reports busy 'b
 
 test("QM-D-P3 no claim held: reports only when the host says the background stage is busy ('stage'); idle (null) does not report; a host that throws counts as not busy", () => {
   let state = null;
-  const r = rig({ busy: () => { if (state === "throw") throw new Error("坏了"); return state; } });
+  const r = rig({ busy: () => { if (state === "throw") throw new Error("Broken"); return state; } });
   r.node.tick();
   assert.equal(r.of("node.active").length, 0, "idle does not report");
   state = "stage";
@@ -99,7 +104,7 @@ test("QM-D-P4 no more reports after going offline (stop) or after check-in is re
   const r = rig({ busy: () => "stage" });
   r.node.tick();
   assert.equal(r.of("node.active").length, 1);
-  // 会话断了重连：新会话的 welcome 之后不等满一个间隔
+  // Session disconnected and reconnected: does not wait for a full interval after welcome of the new session
   r.node.start();
   r.node.receive({ type: "node.welcome", nodeId: "n", resumed: [], lost: [], envFingerprint: FP, activeIntervalMs: EVERY });
   r.node.tick();

@@ -1,12 +1,13 @@
-// 对应 claude-quickstarts/agents/utils/history.py
+// Corresponds to claude-quickstarts/agents/utils/history.py
 
 /**
- * 衡量历史有多长。
+ * Measure how long history is.
  *
- * 图片的 base64 不算进去：一张 768px 的截图就是几十万字符，按字面长度算的话，
- * 只要看过一次画面就必然超过 maxChars，截断会把整段对话削光。而模型那边图片是
- * 按尺寸计费的，字节数根本不是它的成本。所以这里只用一个和它 token 量级相当的
- * 常数占位（约 1200 token × 3 字符）。
+ * Image base64 is not counted: a 768px screenshot is hundreds of thousands of characters; calculating
+ * by literal length, viewing an image even once inevitably exceeds maxChars, and truncation would shave
+ * off the entire conversation. On the model side, images are billed by dimensions, so byte count is not
+ * its cost at all. Thus, only a constant placeholder commensurate with its token magnitude is used here
+ * (approx. 1200 tokens × 3 characters).
  */
 function sizeOf(messages) {
   return JSON.stringify(messages, (key, v) => (key === 'data' && typeof v === 'string' && v.length > 4096 ? 'x'.repeat(3600) : v)).length;
@@ -28,25 +29,28 @@ export class MessageHistory {
   }
 
   /**
-   * 加一句用户的话,末尾已经是 user 消息时**并进那一条**。
+   * Add a user message; when the end is already a user message, **merge into that one**.
    *
-   * 历史里出现两条连着的 user 是个真实形状,不是理论问题:接着上一段往下说时,
-   * 末尾可能是中断落盘补的那条(装 tool_result 的 user),也可能是上一轮撞到
-   * 轮次上限时收尾用的那条。Anthropic 不收连续同角色,而三家 provider 的转换
-   * 里都没有合并逻辑 —— 所以在这里挡住,而不是指望每个调用方自己记得。
+   * Two consecutive user messages in history is a real shape, not a theoretical problem: when continuing
+   * from the previous section, the end might be the backfilled message persisted upon interruption
+   * (the user message holding tool_result), or the closing message used when hitting the round limit
+   * in the previous round. Anthropic rejects consecutive same-role messages, and none of the three
+   * providers' conversions include merge logic: so intercept it here, rather than counting on each caller
+   * to remember.
    *
-   * 放在 MessageHistory 上是因为这是**历史自己的不变量**:让调用方拿 get() 的
-   * 返回值去改末尾那条,靠的是「get 返回的是浅拷贝、里面的对象还是同一批」这个
-   * 巧合,哪天 get 改成深拷贝就无声失效了。
+   * Placed on MessageHistory because this is **history's own invariant**: letting callers mutate the last
+   * message via get()'s return value relies on the coincidence that "get returns a shallow copy and the
+   * inner objects are still the same batch"; if get changes to a deep copy someday, it silently breaks.
    */
   appendUserText(text) {
     const last = this.messages[this.messages.length - 1];
     if (last?.role !== 'user') { this.messages.push({ role: 'user', content: [{ type: 'text', text }] }); return; }
     /*
-     * 末尾是 user,但 content 是一个字符串(老格式,或盘上那个文件被外部改过 ——
-     * api.mjs 读回来时只 JSON.parse,不校验形状)。原来这里退回「新起一条」,
-     * 可末尾本来就是 user,新起一条正好拼出这个方法要消灭的形状。
-     * 就地规范成块数组再并进去。
+     * The end is a user message, but content is a string (legacy format, or the file on disk was modified
+     * externally: api.mjs only runs JSON.parse on read-back without schema validation). Originally this fell
+     * back to "starting a new message", but the end was already user, so starting a new one assembled
+     * the exact shape this method aims to eliminate.
+     * Normalize in-place into an array of blocks before merging in.
      */
     if (typeof last.content === 'string') last.content = [{ type: 'text', text: last.content }];
     if (Array.isArray(last.content)) last.content.push({ type: 'text', text });
@@ -66,11 +70,13 @@ export class MessageHistory {
   }
 
   /**
-   * 只保留最近 keep 张截图，更早的换成一句说明。
+   * Retain only the most recent keep screenshots, replacing earlier ones with an explanation.
    *
-   * 图片按尺寸计费，不按字节，但每张仍是几百个 token，而且 base64 本身要走一遍
-   * 网络。一次任务里可能看十几次画面，全留着既贵又没用——模型要判断的是「刚改完
-   * 现在长什么样」，三轮前的旧样子留在上下文里反而会让它把旧画面当成现状。
+   * Images are billed by dimensions rather than bytes, but each is still hundreds of tokens, and base64
+   * itself must traverse the network. A single task might inspect images dozens of times; keeping them all
+   * is both expensive and useless: the model needs to judge "what it looks like now right after changes",
+   * and having the old appearance from three rounds ago in context can mislead it into treating old visuals
+   * as the current state.
    */
   pruneImages(keep = 10) {
     let seen = 0;
@@ -79,7 +85,7 @@ export class MessageHistory {
       if (!Array.isArray(msg.content)) continue;
       for (let j = msg.content.length - 1; j >= 0; j--) {
         if (msg.content[j].type !== 'image') continue;
-        if (++seen > keep) msg.content[j] = { type: 'text', text: '(更早的一张截图已从上下文移除；需要重看请再截一次)' };
+        if (++seen > keep) msg.content[j] = { type: 'text', text: '(An earlier screenshot was removed from the context; take another screenshot if you need to look again)' };
       }
     }
   }
@@ -89,12 +95,15 @@ export class MessageHistory {
   }
 
   /**
-   * 按 API 报回来的真实 token 数截断。
+   * Truncate by actual token count reported by the API.
    *
-   * 字符数除以 3 估 token 对英文和 JSON 大致准,中文差不多一字一 token,会被低估到三分之一。
-   * 所以不再猜换算比:拿这一轮实际的 input token 数和当前历史的字符数算出比例,
-   * 把 maxChars 定到「预算对应的字符数」再截。0.9 是给下一轮新增内容留的余量。
-   * reported 里还含着系统提示和工具说明(不在 history 里),按比例算会截得略多一点,偏安全。
+   * Dividing character count by 3 to estimate tokens is roughly accurate for English and JSON, but Chinese
+   * is about one character per token, underestimating by up to a factor of three.
+   * So stop guessing the conversion ratio: calculate the ratio from this round's actual input token count
+   * and the character count of current history, setting maxChars to "the character count corresponding to
+   * the budget" before truncating. 0.9 leaves headroom for new content in the next round.
+   * reported also includes system prompt and tool definitions (not in history); calculating proportionally
+   * truncates slightly more, which leans safe.
    */
   fitTokens(reported, budget) {
     if (!(reported > budget) || !(budget > 0)) return;
@@ -108,7 +117,7 @@ export class MessageHistory {
     let truncated = false;
 
     while (this.messages.length > 2 && sizeOf(this.messages) > this.maxChars) {
-      // 检查如果要删除第一条及关联的记录后，是否至少还剩 2 条消息
+      // Check whether at least 2 messages remain if the first message and associated records are deleted
       let nextMessages = JSON.parse(JSON.stringify(this.messages));
       // Keep the latest actual user request while removing complete old tool pairs.
       const pinned = this.messages.findLastIndex(m => m.role === 'user' && m.content?.some(b => b.type === 'text') && !m.content?.some(b => b.type === 'tool_result'));
@@ -145,7 +154,7 @@ export class MessageHistory {
     }
     
     if (truncated) {
-      this.onEvent({ type: 'status', text: '对话历史过长,已截断早期消息' });
+      this.onEvent({ type: 'status', text: 'Chat history too long, earlier messages truncated' });
     }
   }
 

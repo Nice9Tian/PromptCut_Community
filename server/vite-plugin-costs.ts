@@ -5,53 +5,66 @@ import { isPrerender } from "./render-role.mjs";
 import { prerenderState } from "./prerender-client.mjs";
 
 /**
- * K1 探针记录的 HTTP 面(目标 K/K1)。**两个进程都挂这一份插件**,和 A7 的镜像一样。
+ * HTTP surface for K1 probe records (target K/K1). **Both processes mount this plugin**, just like
+ * the mirror in A7.
  *
- *   GET  /api/data/costs?device=<字符串>[&mode=dev|build]   → { ok, device, mode, costs, tuning }
+ *   GET  /api/data/costs?device=<string>[&mode=dev|build]   → { ok, device, mode, costs, tuning }
  *   PUT  /api/data/costs  { records: [] }  → { ok, count, added, updated }
  *   PUT  /api/data/costs/tuning  { tuning: {…} | null }  → { ok, tuning }
  *
- * # 为什么 tuning 的写入口挂在这个前缀下
+ * # Why the tuning write entry point is mounted under this prefix
  *
- * R4a 只做了读(改系数靠人手编辑 `out/pipeline-tuning.json`),「不改代码就能调」只剩半条。
- * 写入口挂成 `/api/data/costs/tuning` 而不是另开一个顶层路由,是因为 connect 的
- * `middlewares.use(前缀)` 本来就把子路径一起收进来了 —— 读写同一份数据的两个口子在同一个
- * 中间件里,转发给预渲染进程那一段也能原样复用(两端必须用同一份系数,否则算不出同一张表)。
- * 请求体是 `{ tuning: {…} }`;`tuning` 给 `null` / 不是对象 = **清掉覆盖、全用缺省**(删文件)。
- * 落盘的是夹取之后的一份(见 `costs-store.mjs` 的 `saveTuning`)。不做界面。
+ * R4a only implemented read (changing coefficients relied on manually editing
+ * `out/pipeline-tuning.json`), leaving "tune without changing code" only half-done.
+ * Mounting the write entry point as `/api/data/costs/tuning` instead of opening another top-level
+ * route is because connect's `middlewares.use(prefix)` already includes subpaths by default: having
+ * both entry points that read and write the same data in the same middleware allows reusing the
+ * forwarding section to the prerender process as is (both sides must use the same coefficients,
+ * otherwise they cannot compute the same table).
+ * The request body is `{ tuning: {…} }`; passing `null` / non-object for `tuning` = **clear overrides,
+ * use all defaults** (delete file).
+ * What is written to disk is the clamped copy (see `saveTuning` in `costs-store.mjs`). No UI is built.
  *
- * # 为什么 `tuning` 搭这趟车
+ * # Why `tuning` piggybacks on this
  *
- * K2 的三个可调系数(`COST_SCALE` / `STEP_PERCENTILE` / `STEP_MIN_SAMPLES`)覆盖值存在本机
- * `out/pipeline-tuning.json`(没有这个文件 = 全用缺省)。`planPipelines` 在页面和预渲染进程
- * 各算一次、两端必须用**同一份系数**,而两端本来就都要拉 `costs` —— 再开一个端点只会多一个
- * 「一端拿到新系数、另一端还是旧的」的窗口。所以 GET 回包里**加一个 `tuning` 字段**,
- * 原有的 `{ ok, device, mode, costs }` 一个都不动:`scripts/probe-card-costs.mjs`、
- * `server/test/costs.test.mjs` 和将来的页面侧只读自己认识的字段,不受影响
- * (任务书 K2 写的是 `{ records, tuning }`,那会把 `costs` 改名、连带改掉全部现有调用方;
- *  加字段能达到同样的效果,代价小得多)。
+ * Override values for the three tunable coefficients of K2 (`COST_SCALE` / `STEP_PERCENTILE` /
+ * `STEP_MIN_SAMPLES`) are stored locally in `out/pipeline-tuning.json` (absence of this file = use
+ * all defaults). `planPipelines` is computed once each in the page and prerender process, and both
+ * sides must use the **same coefficients**, while both sides already fetch `costs` anyway: opening
+ * another endpoint would only introduce an extra window where "one side gets new coefficients while
+ * the other side still has old ones". Therefore, **add a `tuning` field** in the GET response,
+ * keeping the original `{ ok, device, mode, costs }` completely untouched:
+ * `scripts/probe-card-costs.mjs`, `server/test/costs.test.mjs`, and the future page side only read
+ * fields they recognize, remaining unaffected (task brief K2 specified `{ records, tuning }`, which
+ * would rename `costs` and change all existing callers; adding a field achieves the same effect at
+ * a much lower cost).
  *
- * # 为什么预渲染那一端也要挂
+ * # Why the prerender side also mounts it
  *
- * `user` / `full` 模式的预渲染进程要按 `costs` 算 `plan.prerenderSet`(K6 的
- * 降级 → 预渲染 → 就绪 → 切换那条闭环)。它自己的页面不跑探针,记录只能从编辑器进程来。
- * 和镜像同一个套路:编辑器进程落盘之后把**同一份 PUT** 原样转过去(不等回复),
- * 预渲染那一端的这份插件就地写自己那一份副本,`frame-pipeline.mjs` 在 4 帧批边界读它。
- * 转发丢了也不致命 —— 下一次探针 PUT 会把整批再带过去,而记录本身是幂等 upsert。
+ * The prerender process in `user` / `full` mode needs to compute `plan.prerenderSet` according to
+ * `costs` (the K6 closed loop of downgrade → prerender → ready → switch). Its own page does not run
+ * probes, so records can only come from the editor process.
+ * Same pattern as the mirror: after writing to disk, the editor process forwards the **exact same
+ * PUT** as is (without waiting for a reply); this plugin on the prerender side writes its own local
+ * copy, and `frame-pipeline.mjs` reads it at 4-frame batch boundaries.
+ * Dropped forwarded requests are not fatal: the next probe PUT will bring the entire batch along
+ * again, and records themselves are idempotent upserts.
  *
- * `agent` 模式的预渲染进程用不上(Agent 的查询全活渲、不预渲染),但「是不是 agent 模式」
- * 在编辑器这一端看不出来(那是预渲染进程自己的启动参数),所以照转不误 —— 它那边只是
- * 多写一个没人读的文件,没有副作用。
+ * The prerender process in `agent` mode does not need it (Agent queries are all live rendered, no
+ * prerendering), but "whether it is in agent mode" cannot be seen from the editor side (that is the
+ * prerender process's own startup argument), so it forwards regardless: writing one more unread
+ * file over there has no side effects.
  *
- * # 去重
+ * # Deduplication
  *
- * 按 `(identityKey, device)`,见 `server/costs-store.mjs`。`identityKey` 已含 fps,
- * 所以键里不再单列 fps。
+ * By `(identityKey, device)`, see `server/costs-store.mjs`. `identityKey` already includes fps,
+ * so fps is no longer listed separately in the key.
  *
- * # 方法
+ * # Method
  *
- * 语义上是整批 upsert,所以用 PUT;POST 也收(转发链路和某些旧调用方只会发 POST)。
- * 同源守卫(`vite-plugin-api-guard`)排在所有接口前面,这里不重复判。
+ * Semantically this is a batch upsert, so PUT is used; POST is also accepted (the forwarding chain
+ * and some legacy callers only send POST). The same-origin guard (`vite-plugin-api-guard`) is placed
+ * in front of all endpoints, so checks are not repeated here.
  */
 
 const MAX_BODY = 8 * 1024 * 1024;
@@ -69,7 +82,7 @@ function readBody(req: IncomingMessage, res: ServerResponse, then: (d: any) => v
   req.on("data", (c: Buffer) => {
     if (over) return;
     size += c.length;
-    if (size > MAX_BODY) { over = true; sendJson(res, 413, { ok: false, error: "探针记录太大" }); req.destroy(); return; }
+    if (size > MAX_BODY) { over = true; sendJson(res, 413, { ok: false, error: "Probe record too large" }); req.destroy(); return; }
     body += c;
   });
   req.on("end", () => {
@@ -83,13 +96,15 @@ function query(req: IncomingMessage, key: string): string | null {
   try { return new URL(req.url || "/", "http://127.0.0.1").searchParams.get(key); } catch { return null; }
 }
 
-/* ---------------------------------------------------------------- 转发 */
+/* ---------------------------------------------------------------- Forwarding */
 
-// 串成一条链发:两批探针记录同时飞的话,到达顺序没保证,后发的那一批可能先落盘。
-// upsert 是幂等的,但「后写的是旧数据」仍然会让预渲染那一端短暂拿到过期成绩。
+// Send as a chained sequence: if two probe record batches fly concurrently, arrival order is not
+// guaranteed, and the batch sent later might be written to disk first.
+// Upsert is idempotent, but "writing older data later" still allows the prerender side to briefly
+// receive stale scores.
 let forwardChain: Promise<unknown> = Promise.resolve();
 
-/** 把这一次 PUT 转给当前就绪的预渲染进程。只有编辑器进程做这件事,而且不等回复 */
+/** Forward this PUT to the ready prerender process. Only editor process does this, without waiting for reply */
 function forwardToPrerender(path: string, body: unknown) {
   if (isPrerender) return;
   const remote = prerenderState();
@@ -103,7 +118,7 @@ function forwardToPrerender(path: string, body: unknown) {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(15000),
       });
-    } catch { /* 预渲染没就绪 / 正在重启:下一批探针 PUT 会把记录再带过去 */ }
+    } catch { /* Prerender not ready / restarting: next batch of probe PUTs will bring the records along */ }
   }, () => {});
 }
 
@@ -114,7 +129,7 @@ export function costsPlugin(): Plugin {
       const root = server.config.root;
       server.middlewares.use("/api/data/costs", (req, res) => {
         const method = String(req.method || "GET").toUpperCase();
-        // connect 把前缀摘掉了:`/api/data/costs/tuning` 进来时 req.url 是 `/tuning`
+        // connect stripped the prefix: req.url is `/tuning` when `/api/data/costs/tuning` comes in
         let sub = "/";
         try { sub = new URL(req.url || "/", "http://127.0.0.1").pathname.replace(/\/+$/, "") || "/"; } catch { sub = "/"; }
 
@@ -122,35 +137,38 @@ export function costsPlugin(): Plugin {
           if (method !== "PUT" && method !== "POST") return sendJson(res, 405, { ok: false, error: "PUT only" });
           return readBody(req, res, (d) => {
             /*
-             * body 是 `{ tuning: {…} }`;裸对象也收(和 records 那一支一个待遇)。
-             * `tuning: null` = 清掉覆盖、全用缺省。同源守卫由 vite-plugin-api-guard 统一挡在前面,
-             * 这里不重复判(它已经保证:跨源 Origin 拒、带 body 必须是 application/json)。
+             * body is `{ tuning: {…} }`; bare objects are also accepted (same treatment as the records branch).
+             * `tuning: null` = clear overrides, use all defaults. The same-origin guard is handled upfront by
+             * vite-plugin-api-guard, not rechecked here (it guarantees: reject cross-origin Origin, requests
+             * with body must be application/json).
              */
             const raw = d && typeof d === "object" && "tuning" in d ? d.tuning : d;
             try {
               const tuning = saveTuning(root, raw);
               sendJson(res, 200, { ok: true, tuning });
-              // 两端必须用同一份系数,否则 planPipelines 算不出同一张表(K2)
+              // Both sides must use the same coefficients; otherwise planPipelines cannot compute the same table (K2)
               forwardToPrerender("/api/data/costs/tuning", { tuning: raw });
             } catch (e: any) {
               sendJson(res, 500, { ok: false, error: e?.message || String(e) });
             }
           });
         }
-        if (sub !== "/") return sendJson(res, 404, { ok: false, error: `没有这个接口:${sub}` });
+        if (sub !== "/") return sendJson(res, 404, { ok: false, error: `No such endpoint: ${sub}` });
 
         if (method === "GET") {
           const device = query(req, "device");
-          // mode(dev | build):分派用当前运行模式的记录(任务书 3.1);缺字段的旧记录当 dev
+          // mode(dev | build): dispatch uses records of current run mode (task brief 3.1);
+          // legacy records missing fields are treated as dev
           const mode = query(req, "mode");
           const costs = filterCosts(loadCosts(root), device, mode);
-          // tuning 是加出来的字段,原来四项一个不动(见文件头「为什么 tuning 搭这趟车」)
+          // tuning is an added field, leaving original four items untouched
+          // (see "Why tuning piggybacks on this" at the file header)
           return sendJson(res, 200, { ok: true, device: device ?? null, mode: mode ?? null, costs, tuning: loadTuning(root) });
         }
         if (method !== "PUT" && method !== "POST") return sendJson(res, 405, { ok: false, error: "GET / PUT only" });
         readBody(req, res, (d) => {
           const records = Array.isArray(d?.records) ? d.records : Array.isArray(d) ? d : null;
-          if (!records) return sendJson(res, 400, { ok: false, error: "缺 records:[]" });
+          if (!records) return sendJson(res, 400, { ok: false, error: "Missing records:[]" });
           try {
             const out = upsertCosts(root, records);
             sendJson(res, 200, { ok: true, count: out.count, added: out.added, updated: out.updated });

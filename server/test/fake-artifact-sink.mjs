@@ -1,30 +1,40 @@
 /**
- * 仅供测试与进程内集成，生产代码不得引用。
+ * For testing and in-process integration only; production code must not reference it.
  *
- * 内存产物库（契约 `docs/plan/render-queue-contract.md` D.1 的 `sink`、D.3）。M5 起由素材服务实现，
- * 语义见 `mechanism/asset-service.md`「先推送、确认收全，再报完成」与设计 4.4「开工前先问素材服务这一段是不是已经有了」。
+ * In-memory artifact sink (`sink` in D.1, D.3 of contract `docs/plan/render-queue-contract.md`).
+ * Implemented by asset service starting in M5; semantics see `mechanism/asset-service.md`
+ * "Push first, confirm everything received, then report completion" and design 4.4
+ * "Before starting work, ask asset service if this segment already exists".
  *
  *   sink.has({ resultKey, kind, tier, range })                         → Promise<boolean>
  *   sink.put({ resultKey, kind, tier, range, artifacts, meta })        → Promise<{ complete: boolean }>
  *
- * 一段 = 一个结果键的一个范围（`resultKey` + `range.from`～`range.to`）。按内容寻址：同一段再推一次不覆盖
- * 第一次收全的那份，只记进推送历史。
+ * A segment = a range of a result key (`resultKey` + `range.from` to `range.to`). Content-addressed:
+ * pushing the same segment again does not overwrite the copy fully received the first time;
+ * it is only recorded in push history.
  *
- * 测试用的附加接口：
- *   entries()           收全了的段：[{ resultKey, kind, tier, range, artifacts, meta }]，按收全的先后
- *   seed({ resultKey, range, kind?, tier? })   预置一段为已收全（meta 为 null）
- *   failNextPut(n)      接下来 n 次 put 回 { complete: false }，不存
- *   putCount(resultKey) 对这个结果键调过几次 put（含没收全的）
- *   puts()              全部 put 的记录：[{ resultKey, range, meta, complete }]
- *   hasCalls()          全部 has 的记录：[{ resultKey, range, answer }]
- *   misuse()            参数不合 D.1 的调用（缺 resultKey / range、meta 缺字段）：测试断言为空
- *   holds(resultKey, range)   这个范围里每个单位都收到过（同步）
- *   stores(resultKey, range)  这一项（结果键 + 范围）存着没有（同步；轨道流另按「8 段一桶」存，规矩同 `writeManifest`，
- *                             桶的终点截到任务 `input.stream` 换算的整条流的最后一段，`src/render/streamBuckets.mjs`）
+ * Additional interfaces for testing:
+ *   entries()           fully received segments:
+ *                       [{ resultKey, kind, tier, range, artifacts, meta }], in order of completion
+ *   seed({ resultKey, range, kind?, tier? })   preset a segment as fully received (meta is null)
+ *   failNextPut(n)      next n put calls return { complete: false }, not stored
+ *   putCount(resultKey) how many times put was called for this result key (including incomplete ones)
+ *   puts()              records of all puts: [{ resultKey, range, meta, complete }]
+ *   hasCalls()          records of all has calls: [{ resultKey, range, answer }]
+ *   misuse()            calls violating D.1 (missing resultKey / range, meta missing fields):
+ *                       test asserts empty
+ *   holds(resultKey, range)   every unit in this range has been received (synchronous)
+ *   stores(resultKey, range)  whether this item (result key + range) is stored (synchronous;
+ *                             track streams are also stored by "8 segments per bucket", rules
+ *                             same as `writeManifest`, with bucket end truncated to the last
+ *                             segment of the entire stream converted from task `input.stream`,
+ *                             `src/render/streamBuckets.mjs`)
  *
- * `has` 按单位答：任务范围里每个分段（快照的每帧）都收到过（满密度任务另要满密度的那一版）才算有，同 `createAssetSink` 的查找。
+ * `has` answers per unit: considered present only if every segment in the task range (every frame
+ * of a snapshot) has been received (full density tasks also require the full density version),
+ * same as lookup in `createAssetSink`.
  *
- * 所有方法都立即落定（回的是已兑现的 Promise），不依赖任何计时器。
+ * All methods settle immediately (returning a fulfilled Promise) without depending on any timer.
  */
 
 import { streamBucketRanges, streamLastSegmentOf } from '../../src/render/streamBuckets.mjs';
@@ -32,23 +42,28 @@ import { streamBucketRanges, streamLastSegmentOf } from '../../src/render/stream
 const segmentKey = (resultKey, range) => `${resultKey}#${range.from}-${range.to}`;
 
 const clone = value => (value === undefined ? undefined : structuredClone(value));
-/** 这次调用是不是稀疏流任务的(task-runner 给的 ref 带任务的 `input`) */
+/** Whether this call is for a sparse stream task (the ref given by task-runner carries task `input`) */
 const sparseRef = args => args?.kind === 'stream' && args?.input?.density === 'sparse';
 
 function badArgs(what, args) {
-  if (!args || typeof args !== 'object') return `${what}：参数不是对象`;
-  if (typeof args.resultKey !== 'string' || args.resultKey === '') return `${what}：resultKey 必须是非空字符串`;
+  if (!args || typeof args !== 'object') return `${what}: args is not an object`;
+  if (typeof args.resultKey !== 'string' || args.resultKey === '') return `${what}: resultKey must be a non-empty string`;
   const r = args.range;
-  if (!r || typeof r !== 'object' || !Number.isInteger(r.from) || !Number.isInteger(r.to)) return `${what}：range 必须带整数 from / to`;
+  if (!r || typeof r !== 'object' || !Number.isInteger(r.from) || !Number.isInteger(r.to)) return `${what}: range must have integer from / to`;
   return null;
 }
 
 export function createArtifactSink() {
-  /** segmentKey → 收全了的一段(轨道流另按「8 段一桶」各存一项,同 `writeManifest`) */
+  /**
+   * segmentKey → a fully received segment (track streams additionally store one entry per
+   * "8 segments per bucket", same as `writeManifest`)
+   */
   const stored = new Map();
   /**
-   * 每个结果键的每个单位(流的分段、快照的帧)收到的是哪一版:`<resultKey>#<n>` → 'dense' | 'sparse'。
-   * `has` 按它答(同 `createAssetSink` 的查找:只看任务范围里的分段,不看桶里别的任务的那几段齐没齐)
+   * Which version was received for each unit (stream segment, snapshot frame) of each result key:
+   * `<resultKey>#<n>` → 'dense' | 'sparse'.
+   * `has` answers based on it (same as lookup in `createAssetSink`: checks only segments in task
+   * range, without checking whether segments of other tasks in the bucket are complete)
    */
   const covered = new Map();
   const putLog = [];
@@ -88,9 +103,9 @@ export function createArtifactSink() {
       return Promise.reject(new TypeError(bad));
     }
     const { resultKey, kind, tier, range, artifacts, meta } = args;
-    // D.1：meta = { taskId, nodeId, token }，供记账（设计第 7 节「节点信任」）
+    // D.1: meta = { taskId, nodeId, token }, for accounting (Section 7 of design, "Node Trust")
     if (!meta || typeof meta.taskId !== 'string' || typeof meta.nodeId !== 'string' || !Number.isInteger(meta.token)) {
-      misuse.push(`put：meta 必须是 { taskId: string, nodeId: string, token: int }，实际 ${JSON.stringify(meta)}`);
+      misuse.push(`put: meta must be { taskId: string, nodeId: string, token: int }, got ${JSON.stringify(meta)}`);
     }
     let complete = true;
     if (failing > 0) {
@@ -101,7 +116,9 @@ export function createArtifactSink() {
     const sparse = sparseRef(args);
     if (complete) {
       cover(resultKey, range, sparse);
-      // 轨道流:任务自己的范围,再加「8 段一桶」里与它不同的每个桶(桶的终点截到任务 `input.stream` 换算的整条流的最后一段)
+      // Track stream: the task's own range, plus each distinct bucket in "8 segments per bucket"
+      // (the bucket end is truncated to the last segment of the entire stream calculated from task
+      // `input.stream`)
       const ranges = [{ from: range.from, to: range.to }];
       if (kind === 'stream') {
         const lastSegment = streamLastSegmentOf(args.input?.stream);
@@ -129,16 +146,22 @@ export function createArtifactSink() {
       cover(resultKey, range, false);
     },
     failNextPut(n = 1) {
-      if (!Number.isInteger(n) || n < 0) throw new TypeError('failNextPut：n 必须是非负整数');
+      if (!Number.isInteger(n) || n < 0) throw new TypeError('failNextPut: n must be a non-negative integer');
       failing += n;
     },
     putCount: resultKey => putLog.filter(p => p.resultKey === resultKey).length,
     puts: () => putLog.map(p => clone(p)),
     hasCalls: () => hasLog.map(h => clone(h)),
     misuse: () => misuse.slice(),
-    /** 这一段收全了没有（同步，给断言用）:这个范围里每个单位都收到过 */
+    /**
+     * Whether this segment was fully received (synchronous, for assertions): every unit in this
+     * range has been received
+     */
     holds: (resultKey, range) => coversAll(resultKey, range, true),
-    /** 内容库里这一项(结果键 + 范围,含按桶写的)有没有(同步,给断言用) */
+    /**
+     * Whether this item (result key + range, including bucket writes) exists in the content store
+     * (synchronous, for assertions)
+     */
     stores: (resultKey, range) => stored.has(segmentKey(resultKey, range)),
   };
 }

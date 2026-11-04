@@ -1,14 +1,20 @@
 /**
- * 多 Agent 第二阶段:跨设备(经文档服务的在场状态)。计划 docs/plan/agent-workflow-plan.md A3 第 5 条。用例 MA-X1～MA-X5。
+ * Multi-agent phase 2: cross-device (presence via document service). Plan
+ * docs/plan/agent-workflow-plan.md A3 item 5. Test cases MA-X1-MA-X5.
  *
- * - MA-X1 文档服务的在场状态模块:set / list / clear / send,只转给同一项目的别的订阅者,不回发给自己,断线撤掉,限大小;
- * - MA-X2～X4 两个成员共用一个真的文档服务(按查询串给身份:alice@devA、bob@devB):
- *     成员 B 的页面发布「正在编辑 c2」→ 成员 A 编辑器进程里的 Agent 读 c2,结果带「用户 bob 正在编辑」;
- *     A 的 Agent 声明范围 → B 的页面收到 presence.update、B 编辑器进程的公告板名单里有它;
- *     B 的 Agent 给 A 的 Agent 发消息 → 进 A 的信箱(标明是成员 bob 那边);
- * - MA-X5 旧版文档服务(没有在场状态模块)的退回:工具照常、不报错、不断线,桥记下「不支持」后不再发。
+ * - MA-X1 Document service presence module: set / list / clear / send, forwards only to other
+ *   subscribers of the same project, does not echo back to self, removed on disconnect, size-limited;
+ * - MA-X2-X4 Two members share a real document service (identity via query string: alice@devA,
+ *   bob@devB):
+ *     Member B's page publishes "editing c2" → the Agent in member A's editor process reads c2,
+ *     result includes "user bob is editing";
+ *     A's Agent declares scope → B's page receives presence.update, present in bulletin board
+ *     list of B's editor process;
+ *     B's Agent sends message to A's Agent → enters A's inbox (marked as from member bob side);
+ * - MA-X5 Fallback for legacy document service (without presence module): tools work as usual,
+ *   no errors, does not disconnect; bridge stops sending after recording "unsupported".
  *
- * 跑法:node --test server/test/multi-agent-presence.test.mjs
+ * Run: node --test server/test/multi-agent-presence.test.mjs
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -29,7 +35,10 @@ import { wsClient, waitFor } from './fake-ws-kit.mjs';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
-/** 查询串给身份:?user=<userId>&role=<page|agent>&conv=<n>(测试里模拟共享项目的成员身份) */
+/**
+ * Identity via query string: ?user=<userId>&role=<page|agent>&conv=<n> (simulates member identity
+ * in a shared project in tests)
+ */
 function authByQuery(req) {
   const q = new URL(req.url ?? '/', 'http://localhost').searchParams;
   const role = q.get('role') ?? 'page';
@@ -42,7 +51,7 @@ async function startService(t, { withPresence = true } = {}) {
   const service = createDocService({ authenticate: authByQuery, modules, autoTick: false, log: () => {} });
   const { port } = await service.listen(0, '127.0.0.1');
   const clients = [];
-  t.after(async () => { for (const c of clients) { try { c.close(); } catch { /* 已关 */ } } await service.close(); });
+  t.after(async () => { for (const c of clients) { try { c.close(); } catch { /* Closed */ } } await service.close(); });
   const url = (user, role = 'page', conv) => `ws://127.0.0.1:${port}/?user=${encodeURIComponent(user)}&role=${role}${conv ? `&conv=${conv}` : ''}`;
   let seq = 0;
   async function client(user) {
@@ -59,9 +68,9 @@ async function startService(t, { withPresence = true } = {}) {
   return { url, client, clients };
 }
 
-/* ------------------------------------------------------------------ 模块 */
+/* ------------------------------------------------------------------ Module */
 
-test('MA-X1 在场状态模块:只转给同一项目的别的订阅者、不回发给自己;list 取现有的;clear 与断线撤掉;send 只广播不记;限大小', async (t) => {
+test('MA-X1 presence module: relays only to other subscribers of the same project, never back to the sender; list returns the current entries; clear and disconnect remove them; send only broadcasts and does not record; size-limited', async (t) => {
   const svc = await startService(t);
   const a = await svc.client('alice@devA');
   const b = await svc.client('bob@devB');
@@ -74,27 +83,27 @@ test('MA-X1 在场状态模块:只转给同一项目的别的订阅者、不回�
   const up = await b.c.next((m) => m.type === 'presence.update', 2000);
   assert.deepEqual({ key: up.key, user: up.from.userId, role: up.from.role, session: up.from.session, clip: up.data.entities[0].clipId }, { key: 'editing', user: 'alice@devA', role: 'page', session: 'ue-a', clip: 'c1' });
   assert.ok(up.expiresAt > Date.now() + 10_000);
-  assert.equal(a.c.inbox.some((m) => m.type === 'presence.update'), false, '不回发给自己');
-  assert.equal(other.c.inbox.some((m) => m.type === 'presence.update'), false, '别的项目收不到');
+  assert.equal(a.c.inbox.some((m) => m.type === 'presence.update'), false, 'not sent back to itself');
+  assert.equal(other.c.inbox.some((m) => m.type === 'presence.update'), false, 'other projects receive nothing');
   const st = await b.ask({ type: 'presence.list', projectId: 'p1' });
   assert.equal(st.entries.length, 1);
-  // send:只广播
+  // send: broadcast only
   await b.ask({ type: 'presence.send', projectId: 'p1', data: { v: 1, kind: 'agent-message', to: 'x', text: 'hi' } });
   const msg = await a.c.next((m) => m.type === 'presence.message', 2000);
   assert.equal(msg.from.userId, 'bob@devB');
-  assert.equal((await b.ask({ type: 'presence.list', projectId: 'p1' })).entries.length, 1, 'send 不记');
+  assert.equal((await b.ask({ type: 'presence.list', projectId: 'p1' })).entries.length, 1, 'send does not record');
   // clear
   await a.ask({ type: 'presence.clear', projectId: 'p1', session: 'ue-a', key: 'editing' });
   const cl = await b.c.next((m) => m.type === 'presence.update', 2000);
   assert.equal(cl.data, null);
-  // 断线撤掉
+  // Removed on disconnect
   await a.ask({ type: 'presence.set', projectId: 'p1', session: 'ue-a', key: 'editing', data: { kind: 'editing' } });
   await b.c.next((m) => m.type === 'presence.update' && m.data, 2000);
   a.c.close();
   const gone = await b.c.next((m) => m.type === 'presence.update', 3000);
   assert.equal(gone.data, null);
   assert.equal((await b.ask({ type: 'presence.list', projectId: 'p1' })).entries.length, 0);
-  // 限大小、key 格式
+  // Size limit, key format
   const big = await b.ask({ type: 'presence.set', projectId: 'p1', key: 'editing', data: { pad: 'x'.repeat(PRESENCE_LIMITS.DATA_BYTES) } });
   assert.deepEqual([big.type, big.reason], ['error', 'too-large']);
   const badKey = await b.ask({ type: 'presence.set', projectId: 'p1', key: 'a b', data: {} });
@@ -103,7 +112,7 @@ test('MA-X1 在场状态模块:只转给同一项目的别的订阅者、不回�
   assert.equal(memberOf({ userId: 'local' }), null);
 });
 
-/* ------------------------------------------------------------------ 两个成员 */
+/* ------------------------------------------------------------------ Two members */
 
 async function startVite(t) {
   const vite = await createVite({ configFile: false, root: ROOT, logLevel: 'silent', server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] } });
@@ -112,14 +121,17 @@ async function startVite(t) {
   return { load, createEmptyProject: (await load('/src/kernel/project.ts')).createEmptyProject };
 }
 
-/** 一个成员的编辑器进程:与 vite-plugin-ai.ts 同样的拼装(公告板、A2 看板、multiAgent、在场状态的桥) */
+/**
+ * A member's editor process: same assembly as vite-plugin-ai.ts (bulletin board, A2 board,
+ * multiAgent, presence bridge)
+ */
 function editorProcess(t, svc, load, { user, projectId }) {
   const sessions = createAgentSessions();
   let bridge = null;
   const boards = createAgentBoards(() => ({ labelOf: (k) => sessions.get(k).vendor, forwardRemote: (m) => bridge?.forward(m) ?? false }));
   const board = () => boards.boardFor(projectId);
   const editing = createUserEditingBoard();
-  const ma = createMultiAgent({ sessions, board, openTab: async () => { throw new Error('这个测试里没有页面'); } });
+  const ma = createMultiAgent({ sessions, board, openTab: async () => { throw new Error('there is no page in this test'); } });
   const side = createAgentSide({
     projectId,
     url: (n) => svc.url(user, 'agent', n),
@@ -127,7 +139,7 @@ function editorProcess(t, svc, load, { user, projectId }) {
     loadHost: () => loadSsrHost(load),
     tools,
     toolGroups,
-    callPage: async () => { throw new Error('这个测试里没有页面'); },
+    callPage: async () => { throw new Error('there is no page in this test'); },
     callServer: (tool, args, ctx) => ma.handle(tool, args, ctx?.agent ?? ''),
     userEditing: () => editing.current(),
     agentLabel: (k) => sessions.get(k).vendor,
@@ -145,18 +157,18 @@ async function seed(svc, createEmptyProject, projectId) {
   await pg.ask({ type: 'project.open', projectId });
   const p = createEmptyProject('ma-x');
   p.id = projectId;
-  p.cuts = [{ id: 'cut-1', name: '剪辑1' }];
+  p.cuts = [{ id: 'cut-1', name: 'Cut 1' }];
   p.activeCutId = 'cut-1';
   p.tracks = [
-    { id: 't1', name: '序列1', clips: [{ id: 'c1', cardId: 'title', params: { text: '一' }, start: 0, end: 3 }] },
-    { id: 't2', name: '序列2', clips: [{ id: 'c2', cardId: 'title', params: { text: '二' }, start: 3, end: 6 }] },
+    { id: 't1', name: 'Track 1', clips: [{ id: 'c1', cardId: 'title', params: { text: 'One' }, start: 0, end: 3 }] },
+    { id: 't2', name: 'Track 2', clips: [{ id: 'c2', cardId: 'title', params: { text: 'Two' }, start: 3, end: 6 }] },
   ];
   const r = await pg.ask({ type: 'project.op', projectId, opId: 'seed-1', session: 'page-a', ops: [{ op: 'set', path: '', value: p }] });
   assert.equal(r.type, 'project.op.ok', JSON.stringify(r));
   return pg;
 }
 
-test('MA-X2～X4 两个成员共用一个文档服务:正在编辑、范围、消息都经在场状态转给另一个成员', async (t) => {
+test('MA-X2 to X4, two members sharing one document service: editing status, scope and messages are all relayed to the other member through presence', async (t) => {
   const svc = await startService(t);
   const { load, createEmptyProject } = await startVite(t);
   const pid = 'proj-ma-x';
@@ -165,85 +177,86 @@ test('MA-X2～X4 两个成员共用一个文档服务:正在编辑、范围、�
   A.sessions.register('conv-a', { type: 'cli', vendor: 'claude' });
   await A.bridge.start();
 
-  await t.test('MA-X2 成员 B 的页面正在拖 c2:A 的 Agent 读 c2,结果带「用户 bob 正在编辑」;读 c1 不带;B 撤掉后不再带', async () => {
+  await t.test('MA-X2 member B\'s page is dragging c2: A\'s Agent reads c2 and the result carries "user bob is editing"; reading c1 does not; after B withdraws it, it no longer does', async () => {
     const pageB = await svc.client('bob@devB');
     await pageB.ask({ type: 'project.open', projectId: pid });
     const set = await pageB.ask({ type: 'presence.set', projectId: pid, session: 'ue-b', key: 'editing', ttlMs: 60000, data: { v: 1, kind: 'editing', session: 'ue-b', entities: [{ clipId: 'c2', kind: 'drag' }] } });
     assert.equal(set.type, 'presence.ok');
-    await waitFor(() => A.editing.current().length === 1, 20_000, 'A 的看板收到 B 的编辑状态');
+    await waitFor(() => A.editing.current().length === 1, 20_000, 'A\'s board receives B\'s editing status');
     assert.deepEqual(A.editing.current().map((e) => [e.clipId, e.kind, e.who]), [['c2', 'drag', 'bob']]);
     const r = await A.call('get_clip', { clipId: 'c2' }, 'conv-a');
     assert.deepEqual(r.userEditing, [{ clipId: 'c2', kind: 'drag', who: 'bob' }]);
-    assert.ok(r.notice.startsWith('用户 bob 正在编辑片段 c2(拖动中)。这是提示不是禁止'), r.notice);
+    assert.ok(r.notice.startsWith('User bob is editing clip c2 (dragging). This is a hint, not a prohibition'), r.notice);
     const r1 = await A.call('get_clip', { clipId: 'c1' }, 'conv-a');
     assert.equal(r1.userEditing, undefined);
-    // A 本机的页面同时在编辑 c1:两句分开
+    // A's local page is editing c1 at the same time: two separate statements
     A.editing.report('ue-a-local', [{ clipId: 'c1', kind: 'text' }]);
     const whole = await A.call('get_project', {}, 'conv-a');
-    assert.match(whole.notice, /^用户正在编辑片段 c1\(文字编辑中\);用户 bob 正在编辑片段 c2\(拖动中\)。/);
+    assert.match(whole.notice, /^User is editing clip c1 \(editing text\); User bob is editing clip c2 \(dragging\)\./);
     A.editing.report('ue-a-local', []);
-    // A 本机页面自己经文档服务发回来的那份(同一个会话号)不当别人
+    // The copy sent back by A's local page itself via document service (same session id) is not treated
+    // as someone else
     assert.equal(A.editing.reportRemote('ue-a-local', [{ clipId: 'c1', kind: 'drag' }], { who: 'alice' }), 0);
     await pageB.ask({ type: 'presence.clear', projectId: pid, session: 'ue-b', key: 'editing' });
-    await waitFor(() => A.editing.current().length === 0, 20_000, 'B 撤掉后 A 的看板清掉');
+    await waitFor(() => A.editing.current().length === 0, 20_000, 'after B withdraws it, A\'s board clears it');
   });
 
   let B = null;
-  await t.test('MA-X3 A 的 Agent 声明的范围:B 的页面收到 presence.update;B 编辑器进程的公告板名单里有它(带成员名)', async () => {
+  await t.test('MA-X3 scope declared by A\'s Agent: B\'s page receives presence.update; it appears in the bulletin board list of B\'s editor process (with the member name)', async () => {
     const pageB = await svc.client('bob@devB');
     await pageB.ask({ type: 'project.open', projectId: pid });
     B = editorProcess(t, svc, load, { user: 'bob@devB', projectId: pid });
     B.sessions.register('conv-b', { type: 'cli', vendor: 'codex' });
     await B.bridge.start();
-    const d = await A.call('declare_scope', { scope: '剪辑1->序列2', note: '配字幕' }, 'conv-a');
+    const d = await A.call('declare_scope', { scope: 'Cut 1->Track 2', note: 'Add captions' }, 'conv-a');
     assert.equal(d.ok, true);
     const up = await pageB.c.next((m) => m.type === 'presence.update' && m.key === 'agent:conv-a', 3000);
-    assert.deepEqual({ scope: up.data.scope, vendor: up.data.vendor, user: up.from.userId, role: up.from.role }, { scope: '剪辑1->序列2', vendor: 'claude', user: 'alice@devA', role: 'agent' });
-    await waitFor(() => B.board().listRaw('conv-b').some((x) => x.id === 'conv-a'), 20_000, 'B 的公告板收到 A 的 Agent');
+    assert.deepEqual({ scope: up.data.scope, vendor: up.data.vendor, user: up.from.userId, role: up.from.role }, { scope: 'Cut 1->Track 2', vendor: 'claude', user: 'alice@devA', role: 'agent' });
+    await waitFor(() => B.board().listRaw('conv-b').some((x) => x.id === 'conv-a'), 20_000, 'B\'s bulletin board receives A\'s Agent');
     const la = await B.call('list_agents', {}, 'conv-b');
     const remote = la.agents.find((x) => x.id === 'conv-a');
-    assert.deepEqual({ scope: remote.scope, member: remote.member, remote: remote.remote, vendor: remote.vendor }, { scope: '剪辑1->序列2', member: 'alice', remote: true, vendor: 'claude' });
-    // A 自己那边不把自己的 Agent 当成远端的
+    assert.deepEqual({ scope: remote.scope, member: remote.member, remote: remote.remote, vendor: remote.vendor }, { scope: 'Cut 1->Track 2', member: 'alice', remote: true, vendor: 'claude' });
+    // A's own side does not treat its own Agent as remote
     assert.equal(A.board().listRaw('').some((x) => x.remote), false);
-    t.diagnostic(`A 的桥:${JSON.stringify(A.bridge.describe())}`);
+    t.diagnostic(`A's bridge:${JSON.stringify(A.bridge.describe())}`);
   });
 
-  await t.test('MA-X4 B 的 Agent 给 A 的 Agent 发消息:进 A 的信箱,标明是成员 bob 那边', async () => {
-      const s = await B.call('send_message', { to: 'conv-a', text: '序列2 你来,我改序列1' }, 'conv-b');
+  await t.test('MA-X4 B\'s Agent sends a message to A\'s Agent: it goes into A\'s mailbox, marked as coming from member bob\'s side', async () => {
+      const s = await B.call('send_message', { to: 'conv-a', text: 'You take Track 2, I\'ll edit Track 1' }, 'conv-b');
       assert.equal(s.ok, true, JSON.stringify(s));
-      assert.match(s.note, /经文档服务转过去/);
-      await waitFor(() => A.board().checkMessages('conv-a').messages.length === 1, 20_000, 'A 的信箱收到');
+      assert.match(s.note, /forwarded through the document service/);
+      await waitFor(() => A.board().checkMessages('conv-a').messages.length === 1, 20_000, 'A\'s mailbox received it');
       const m = A.board().checkMessages('conv-a').messages[0];
-      assert.equal(m.text, '序列2 你来,我改序列1');
-      assert.match(m.fromLabel, /^Agent conv-b\(codex,成员 bob 那边\)$/);
-      // A 的 Agent 下一次工具结果里带上
+      assert.equal(m.text, 'You take Track 2, I\'ll edit Track 1');
+      assert.match(m.fromLabel, /^Agent conv-b \(codex, on member bob's side\)$/);
+      // Included in A's Agent's next tool result
       const r = await A.call('get_clip', { clipId: 'c1' }, 'conv-a');
-      assert.match(r.notice, /【Agent conv-b\(codex,成员 bob 那边\)】序列2 你来,我改序列1/);
+      assert.match(r.notice, /\[Agent conv-b \(codex, on member bob's side\)\] You take Track 2, I'll edit Track 1/);
   });
 });
 
-test('MA-X5 旧版文档服务(没有在场状态模块):工具照常、不报错、不断线;桥记下「不支持」后不再发', async (t) => {
+test('MA-X5 old document service (without the presence module): tools work as usual, no errors, no disconnect; after the bridge records "unsupported" it stops sending', async (t) => {
   const svc = await startService(t, { withPresence: false });
   const { load, createEmptyProject } = await startVite(t);
   const pid = 'proj-ma-old';
   await seed(svc, createEmptyProject, pid);
   const A = editorProcess(t, svc, load, { user: 'alice@devA', projectId: pid });
   await A.bridge.start();
-  assert.equal(A.bridge.supported(), false, '旧版回 unsupported');
-  const d = await A.call('declare_scope', { scope: '剪辑1->序列1' }, 'conv-a');
+  assert.equal(A.bridge.supported(), false, 'the old version answers unsupported');
+  const d = await A.call('declare_scope', { scope: 'Cut 1->Track 1' }, 'conv-a');
   assert.equal(d.ok, true);
   await A.call('get_project', {}, 'conv-a');
   const w = await A.call('update_clip', { clipId: 'c1', opacity: 0.5 }, 'conv-a');
-  assert.equal(w.ok, true, '写入照常');
+  assert.equal(w.ok, true, 'writes work as usual');
   const sent = A.bridge.describe().stats.sent;
   await A.bridge.publishAgent('conv-a');
-  assert.equal(A.bridge.describe().stats.sent, sent, '记下不支持之后不再发');
+  assert.equal(A.bridge.describe().stats.sent, sent, 'stops sending after recording unsupported');
   assert.equal(A.bridge.forward({ from: 'conv-a', to: 'x', text: 'y', hops: 1 }), false);
-  assert.equal(A.side.link.describe().conversations.every((c) => c.state === 'open'), true, '连接没断');
-  // 页面那一侧:旧版对 presence.set 回 unsupported,不断线
+  assert.equal(A.side.link.describe().conversations.every((c) => c.state === 'open'), true, 'the connection stays up');
+  // Page side: legacy version returns unsupported for presence.set, does not disconnect
   const pg = await svc.client('bob@devB');
   const r = await pg.ask({ type: 'presence.set', projectId: pid, key: 'editing', data: { kind: 'editing' } });
   assert.deepEqual([r.type, r.reason], ['error', 'unsupported']);
   const again = await pg.ask({ type: 'project.open', projectId: pid });
-  assert.equal(again.type, 'project.state', '同一条连接照常能用');
+  assert.equal(again.type, 'project.state', 'the same connection still works as usual');
 });

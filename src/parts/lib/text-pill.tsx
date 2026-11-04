@@ -5,8 +5,8 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 金句药丸:强调核心信息的胶囊设计。从 punch-pill 拆出。
- * 发光扩散并弹簧弹入。
+ * Punchline pill: pill design emphasizing core information. Extracted from punch-pill.
+ * Glows, diffuses, and springs into view.
  */
 interface Params {
   text: string;
@@ -57,10 +57,10 @@ function PunchPillPart({ params, width, height }: PartProps<Params>) {
 
 export const textPill: PartDef<Params> = {
   id: "text-pill",
-  name: "金句药丸",
-  description: "强调核心信息的发光胶囊",
-  useWhen: "极短的重点词、核心卖点、标签或口号（2 到 8 字）需要强烈视觉冲击时使用；长句子用 text-blur，引言名言用 text-quote。",
-  tags: ["金句", "标语", "短句", "感叹", "药丸"],
+  name: "Punchline pill",
+  description: "Glowing pill that emphasizes key information",
+  useWhen: "Use for very short key words, core selling points, labels or slogans (2 to 8 characters) that need strong visual impact; use text-blur for long sentences and text-quote for quotations and famous sayings.",
+  tags: ["quotable line", "Slogan", "short phrase", "exclamation", "pill"],
   role: "text",
   from: "punch-pill",
   defaults: {
@@ -69,9 +69,9 @@ export const textPill: PartDef<Params> = {
     accent: "",
   },
   controls: [
-    { key: "text", label: "短句", type: "text", required: true },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 200, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
-    { key: "accent", label: "主色(留空用主题色)", type: "color" },
+    { key: "text", label: "short phrase", type: "text", required: true },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 200, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
+    { key: "accent", label: "Main color (leave empty to use theme color)", type: "color" },
   ],
   defaultFrame: { x: 660, y: 460, w: 600, h: 160 },
   settleMs: () => 1200,

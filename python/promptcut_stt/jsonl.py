@@ -1,11 +1,11 @@
-"""逐行 JSON（JSONL）输出。
+"""Line-by-line JSON (JSONL) output.
 
-调用方（node 侧）按行解析 stdout，所以约定：
-  - 每次输出恰好一行，行尾一个 \\n；
-  - 每行写完立刻 flush，否则流式进度会被缓冲住看不到；
-  - ensure_ascii=False，中文直接以 UTF-8 落到流里，不转成 \\uXXXX。
+The caller (node side) parses stdout line by line, so the conventions are:
+  - Each output is exactly one line, with one \\n at the end of the line;
+  - Flush immediately after writing each line, otherwise the streamed progress gets buffered and cannot be seen;
+  - ensure_ascii=False: Chinese text goes into the stream directly as UTF-8, not converted to \\uXXXX.
 
-stderr 不是 JSON，是给人看的提示（缺 ffmpeg、pip 失败原因等），由 warn() 输出。
+stderr is not JSON but hints for humans (ffmpeg missing, reasons for pip failures, etc.), written by warn().
 """
 
 from __future__ import annotations
@@ -16,12 +16,12 @@ from typing import Any
 
 
 def _force_utf8() -> None:
-    """把 stdout/stderr 固定成 UTF-8 + \\n 换行。
+    """Fix stdout/stderr to UTF-8 + \\n newlines.
 
-    Windows 控制台默认代码页不是 UTF-8，不改的话中文会变成乱码或直接抛
-    UnicodeEncodeError；换行不固定成 \\n 的话 Windows 会写成 \\r\\n，按行解析虽然
-    还能用但每行尾会多一个 \\r。reconfigure 在 Python 3.7+ 才有，且流被替换成
-    StringIO（单元测试里就是这样）时没有这个方法，所以整段用 try 包住。
+    The default code page of the Windows console is not UTF-8; if it is not changed, Chinese turns into garbled text or directly raises
+    UnicodeEncodeError; if newlines are not fixed to \\n, Windows writes \\r\\n, and although line-by-line parsing
+    still works, every line ends with an extra \\r. reconfigure only exists in Python 3.7+, and when the stream is replaced with
+    StringIO (as is the case in unit tests) it does not have this method, so the whole block is wrapped in try.
     """
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -34,24 +34,24 @@ _force_utf8()
 
 
 def emit(obj: Any) -> None:
-    """输出一行 JSON 并立刻 flush。"""
+    """Output one line of JSON and flush immediately."""
     sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
 
 def emit_log(line: str) -> None:
-    """转发一行外部进程（pip）的输出。"""
+    """Forward one line of output from an external process (pip)."""
     emit({"event": "log", "line": line})
 
 
 def emit_error(message: str, **extra: Any) -> None:
-    """输出一个错误事件；extra 里的字段并进同一个对象。"""
+    """Emit an error event; the fields in extra are merged into the same object."""
     obj = {"event": "error", "message": message}
     obj.update(extra)
     emit(obj)
 
 
 def warn(message: str) -> None:
-    """写一行人话提示到 stderr（不是 JSON，node 侧原样转发给界面）。"""
+    """Write one plain-language hint line to stderr (not JSON; the node side forwards it to the UI as is)."""
     sys.stderr.write(message.rstrip("\n") + "\n")
     sys.stderr.flush()

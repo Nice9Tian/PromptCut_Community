@@ -52,12 +52,13 @@ function TermCard({ params }: CardProps<Params>) {
 
 export const termCard: CardDef<Params> = {
   id: "term-card",
-  name: "术语解释卡",
-  description: "带拼音或英文小注的名词解释",
-  useWhen: "口播在下定义、解释名词(「所谓」「叫做」「是指」「指的是」)时,把术语和解释做成卡片。**en 小注会被强制大写**,所以只适合放英文,别放拼音。",
-  tags: ["术语","定义","名词","解释"],
+  name: "Term explainer card",
+  description: "Term explanation with a small pinyin or English note",
+  useWhen: "When the narration gives a definition or explains a term (\"so-called\", \"is called\", \"refers to\", \"means\"), turn the term and its explanation into a card. **The en note is forced to uppercase**, so it only suits English, not pinyin.",
+  tags: ["term","definition","noun","explanation"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -68,14 +69,14 @@ export const termCard: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "en", label: "英文/拼音", type: "text" },
-    { key: "term", label: "术语", type: "text" },
-    { key: "def", label: "定义", type: "text" },
+    { key: "en", label: "English/pinyin", type: "text" },
+    { key: "term", label: "term", type: "text" },
+    { key: "def", label: "definition", type: "text" },
   ],
   parts: [
-    { id: "en", label: "小注", role: "text", params: ["en"], enterMs: 250, settleMs: 850 },
-    { id: "term", label: "术语", role: "text", params: ["term"], enterMs: 0, settleMs: 800 },
-    { id: "def", label: "定义", role: "text", params: ["def"], enterMs: 0, settleMs: 14 * 30 + 100 },
+    { id: "en", label: "Note", role: "text", params: ["en"], enterMs: 250, settleMs: 850 },
+    { id: "term", label: "term", role: "text", params: ["term"], enterMs: 0, settleMs: 800 },
+    { id: "def", label: "definition", role: "text", params: ["def"], enterMs: 0, settleMs: 14 * 30 + 100 },
   ],
   lifecycle: { settleMs: 850, after: "hold", exit: ["fade"] },
   Component: TermCard,

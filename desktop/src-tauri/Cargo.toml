@@ -4,8 +4,8 @@ version = "0.2.9"
 edition = "2021"
 authors = []
 description = "PromptCut Desktop"
-# 这个 crate 是本仓库的应用代码,不发 crates.io。写明之后 cargo-deny 才把它当私有 crate
-# 跳过许可证判定(见 deny.toml 的 [licenses.private]),否则每次检查都卡在「自己没有许可证」
+# This crate is the application code of this repo and is not published to crates.io. Only when this is declared does cargo-deny treat it as a private crate
+# and skip license evaluation (see [licenses.private] in deny.toml); otherwise every check gets stuck on "the crate itself has no license"
 publish = false
 
 [lib]
@@ -17,8 +17,8 @@ serde_json = "1"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# unstable:一个窗口里放多个 webview(agent 的浏览器是主窗口里的子 webview,见 agent_webview.rs)
-# tray-icon:后台运行的托盘图标(见 background.rs)
+# unstable: multiple webviews in one window (the agent's browser is a child webview inside the main window, see agent_webview.rs)
+# tray-icon: the tray icon for background mode (see background.rs)
 tauri = { version = "2", features = ["unstable", "tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
@@ -27,18 +27,18 @@ tauri-plugin-window-state = "2"
 rfd = "0.16"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# SKILL 悬浮窗下面那张「上一步动作」预览图:壳读 png 再以 data URL 推给悬浮页
+# The "previous action" preview image below the SKILL floating window: the shell reads the png and pushes it to the floating page as a data URL
 base64 = "0.22"
 
-# 下面这一段之后的都是**只在 Windows 上才有的依赖**。往这里加东西之前先想清楚:
-# 通用 crate 掉进来的话,非 Windows 目标一编译就是 unresolved import,而本机只发
-# Windows 包、cargo build 照样过 —— 错了也要等到别人换平台或者 CI 加交叉检查才发现。
+# Everything after this section is a **dependency that only exists on Windows**. Think it through before adding anything here:
+# if a generic crate falls in here, non-Windows targets hit an unresolved import as soon as they compile, whereas this machine only ships
+# Windows packages and cargo build passes anyway: a mistake would only surface once someone switches platform or CI adds a cross check.
 #
-# agent 子 webview 的静音要直接调 WebView2 的 ICoreWebView2_8::IsMuted,Tauri 没包这一层。
-# 版本跟 tauri 2.11 锁的一致(见 Cargo.lock),不然会出现两份 windows-rs 类型对不上。
+# Muting the agent child webview requires calling WebView2's ICoreWebView2_8::IsMuted directly; Tauri does not wrap this layer.
+# Keep the version consistent with what tauri 2.11 locks (see Cargo.lock), otherwise two copies of windows-rs appear and their types do not match.
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
-# Win32_Graphics_Gdi:采样屏幕像素读菜单栏颜色(chrome_color.rs)
-# Win32_System_JobObjects + Win32_System_Threading:把 sidecar 拴进 kill-on-close 的
-# job object,外壳被强杀时内核照样把它整棵树收走(见 src/kill_on_close.rs)
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }
+# Win32_Graphics_Gdi: sample screen pixels to read the menu bar color (chrome_color.rs)
+# Win32_System_JobObjects + Win32_System_Threading: tie the sidecar into a kill-on-close
+# job object, so the kernel still reclaims its whole tree when the shell is force-killed (see src/kill_on_close.rs)
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Gdi", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }

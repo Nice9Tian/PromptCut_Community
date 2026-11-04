@@ -22,8 +22,9 @@ function isSpeakerVideoControl(ctrl: Control): boolean {
 }
 
 /**
- * 同步来的用户卡 / 素材效果卡没在这个浏览器里运行时,说明为什么(`docs/plan/online-card-exec-contract.md` 第 8 节的表)。
- * 能运行、还在载入、不是同步来的卡:什么都不画。
+ * When a synced user card / media effect card is not running in this browser, explain why (the table in
+ * section 8 of `docs/plan/online-card-exec-contract.md`).
+ * Runnable, still loading, or not a synced card: draw nothing.
  */
 function CardRunNote({ cardId }: { cardId: string | undefined }) {
   useSyncExternalStore(onCardRunStatesChanged, cardRunStatesGen);
@@ -34,11 +35,14 @@ function CardRunNote({ cardId }: { cardId: string | undefined }) {
 }
 
 /**
- * `cardDef`:能跑的定义,或在线页面同步来的用户卡的只读视图(`registry.syncedCardView`;没有组件,改参数照常经文档服务提交)。
+ * `cardDef`: a runnable definition, or the read-only view of a user card synced from the online page
+ * (`registry.syncedCardView`; no component, parameter changes are still submitted through the document
+ * service as usual).
  */
 export function ParamsForm({ clip, cardDef }: { clip: TrackClip; cardDef: ParamsCardView | undefined }) {
   const [pickerCtrlKey, setPickerCtrlKey] = useState<string | null>(null);
-  // 只读项目(游客):外面有只读围栏把原生控件置灰;这里管围栏管不到的「按住标签左右拖」改数字
+  // Read-only project (guest): an outer read-only fence greys out the native controls; this handles the
+  // "hold the label and drag left/right" number editing that the fence cannot cover
   const ro = useReadOnly();
 
   const empty = paramsEmptyText(cardDef);
@@ -67,7 +71,8 @@ export function ParamsForm({ clip, cardDef }: { clip: TrackClip; cardDef: Params
     el.classList.add("pc-left-strong");
     document.body.style.cursor = "ew-resize";
 
-    // 一次左右拖动(按下到松开)只记一步撤销;拖动中提交限速,松手补交最后一个值
+    // One left/right drag (press to release) records a single undo step; submissions during the drag are
+    // throttled, and on release the final value is submitted
     const gestureKey = newGestureKey("params-scrub");
     const throttle = createLatestThrottle<number>(
       (v) => commitMerged(gestureKey, GESTURE_WINDOW_MS, () => actions.setClipParams(clip.id, { [key]: v })),
@@ -87,7 +92,7 @@ export function ParamsForm({ clip, cardDef }: { clip: TrackClip; cardDef: Params
 
     const onUp = (upEvent: PointerEvent) => {
       throttle.flush();
-      try { el.releasePointerCapture(upEvent.pointerId); } catch { /* 已经放掉了(pointercancel) */ }
+      try { el.releasePointerCapture(upEvent.pointerId); } catch { /* Already released (pointercancel) */ }
       el.classList.remove("pc-left-strong");
       document.body.style.cursor = "";
       el.removeEventListener("pointermove", onMove);
@@ -218,7 +223,8 @@ export function ParamsForm({ clip, cardDef }: { clip: TrackClip; cardDef: Params
 
       <CardRunNote cardId={clip.cardId} />
 
-      {/* 同步来的卡:源码里有控件没认出来,认出的照常画,这里说明其余的在线改不了 */}
+      {/* Synced card: the source has controls that were not recognized; the recognized ones are drawn as usual,
+   and this explains that the rest cannot be edited online */}
       {paramsPartialText(cardDef) && (
         <div className="px-3 pt-2 text-[11px] pc-left-muted" data-pc="params-partial">
           {paramsPartialText(cardDef)}

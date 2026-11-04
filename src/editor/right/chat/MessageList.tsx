@@ -13,17 +13,17 @@ import { HeightBook, isAtBottom, planSegments, prefixOffsets, shouldWindow, touc
 import "./chat.css";
 import { tr } from "../../../i18n/index.ts";
 
-/** 空对话里唯一的示例句(本机与云端都用它;云端用它也要能只靠内置卡做出一支短片,见 `scripts/probes/cloud-agent-first-video-probe.mjs`) */
+/** The only example sentence in an empty chat (used by both local and cloud; the cloud must also be able to make a short video with built-in cards alone, see `scripts/probes/cloud-agent-first-video-probe.mjs`) */
 export const EMPTY_EXAMPLE = tr("Quickly create a video for me that shows what the app can do.");
 
-/** 工具方块 / 工具详情的展开回调。AiPanel 里经 ref 中转,引用永远不变 */
+/** Expand callbacks for tool blocks / tool details. Relayed through a ref in AiPanel, so the reference never changes */
 export interface RowHandlers {
   toggleTool: (key: string) => void;
   toggleChip: (key: string) => void;
   toggleRun: (key: string) => void;
 }
 
-/** 一条消息里属于它自己的展开状态:key 都以 `<消息id>:` 开头,取出来拼成字符串好做浅比较 */
+/** The expand state belonging to one message: its keys all start with `<message id>:`, joined into a string for shallow comparison */
 function keysFor(set: Set<string>, id: string): string {
   const prefix = id + ":";
   const out: string[] = [];
@@ -31,15 +31,16 @@ function keysFor(set: Set<string>, id: string): string {
   return out.sort().join("|");
 }
 
-/** 两轮之间隔了这么久,就在中间插一行时间 */
+/** If this much time has passed between two rounds, insert a time row between them */
 const TIME_GAP_MS = 5 * 60 * 1000;
-/** 一次提交里新冒出来超过这么多条,就当是整段换进来的(打开历史会话),不放入场动画 */
+/** If more than this many entries newly appear in one commit, treat it as a whole run swapped in (opening a historical session) and skip the entrance animation */
 const MAX_ENTER_ROWS = 2;
 
 /**
- * 一条消息大概发生在什么时候。助手消息有 startedAt;用户消息没有,
- * 但它的 id 就是发送那一刻的 Date.now()(旧记录里多角色回复的是 `时间戳-任务id`,parseInt 取得到前缀)。
- * 只认像毫秒时间戳的数,别把随手起的短 id 当成 1970 年。
+ * Roughly when a message happened. Assistant messages have startedAt; user messages do not,
+ * but their id is the Date.now() of the moment of sending (in old records, a multi-role reply is
+ * `timestamp-task id`, and parseInt gets the prefix).
+ * Only accept numbers that look like millisecond timestamps, so a short id made up on the spot is not taken as 1970.
  */
 function timeOf(m: ChatMessage): number | null {
   if (typeof m.startedAt === "number") return m.startedAt;
@@ -49,7 +50,7 @@ function timeOf(m: ChatMessage): number | null {
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
-/** 时间分隔行的写法:M月D日 HH:mm */
+/** Format of the time separator row: M/D HH:mm (month, day, time) */
 function formatStamp(ts: number): string {
   const d = new Date(ts);
   return tr("{0}/{1} {2}:{3}", d.getMonth() + 1, d.getDate(), pad2(d.getHours()), pad2(d.getMinutes()));
@@ -63,31 +64,34 @@ interface MessageRowProps {
   installJobs: ReturnType<typeof useInstallJobs>;
   expanded: Set<string>;
   openRuns: Set<string>;
-  /** 这条消息自己的展开 key(见 keysFor):memo 只看它,别的消息点开点收不牵动这一条 */
+  /** This message's own expand keys (see keysFor): memo looks only at them, so expanding or collapsing other messages does not affect this one */
   openKeys: string;
   runKeys: string;
-  /** 稳定引用的回调(AiPanel 里用 ref 中转),不然每次渲染都是新函数、memo 白做 */
+  /** Callbacks with stable references (relayed through a ref in AiPanel); otherwise every render makes a new function and memo is wasted */
   on: RowHandlers;
-  /** 用户气泡上「回退到这里」的回调,同样是稳定引用;不给就不显示回退入口 */
+  /** Callback for "Rewind to here" on a user bubble, also a stable reference; if not given, the rewind entry is not shown */
   rewind?: RewindHandlers;
-  /** 「Agent 操作」此刻显示的是不是这一轮(只对 Agent 回复有意义) */
+  /** Whether "Agent activity" currently shows this round (only meaningful for Agent replies) */
   selected?: boolean;
-  /** 点 Agent 回复的气泡:「Agent 操作」切到这一轮;稳定引用 */
+  /** Click an Agent reply bubble: switches "Agent activity" to this round; stable reference */
   onSelectRound?: (id: string) => void;
 }
 
 /**
- * 一条消息的气泡(连同左边的头像)。
+ * The bubble of one message (together with the avatar on the left).
  *
- * 为什么单独成组件并 memo:Agent 一轮几百次工具调用,每个流式片段都 setMessages 一次;
- * 以前整个列表在 AiPanel 里 map 出来,每个片段都把**所有**历史消息重渲一遍(重新 partsOf、
- * renderMarkdown、JSON.stringify),历史到 1200 次工具时实测每片段 114 ms,界面卡死。
- * 流式只换最后一条的对象,其余消息引用不变 —— memo 之后它们一次都不重渲。
+ * Why it is a separate memoized component: one Agent round makes hundreds of tool calls, and every
+ * streamed fragment calls setMessages once; previously the whole list was mapped out in AiPanel, so
+ * every fragment re-rendered **all** historical messages (partsOf, renderMarkdown and
+ * JSON.stringify again), and with 1200 tool calls of history it measured 114 ms per fragment and
+ * the UI froze.
+ * Streaming replaces only the last entry's object and the other messages keep their references:
+ * with memo, they never re-render.
  */
-// 标纯调用:否则本模块被 chat.css 的引入带进在线构建时,这一行算副作用,连带工具图标、ToolVisual 背后的 /api 调用都留下(M8 遗留 L24)
+// Mark as a pure call: otherwise, when this module is pulled into the online build by the chat.css import, this line counts as a side effect and keeps the tool icons and the /api calls behind ToolVisual (M8 leftover L24)
 const MessageRow = /* @__PURE__ */ React.memo(function MessageRow(props: MessageRowProps) {
   const { m } = props;
-  // 用户消息靠右、不放头像
+  // User messages are right-aligned, with no avatar
   if (m.role === "user") {
     return (
       <div className="ai-row ai-row--user" data-pc-msg={m.id}>
@@ -96,7 +100,7 @@ const MessageRow = /* @__PURE__ */ React.memo(function MessageRow(props: Message
       </div>
     );
   }
-  // Agent 消息靠左:28px 圆形头像 + 气泡。带 roleId 的(旧记录里的角色回复)头像按角色取色取字;普通对话就是「AI」
+  // Agent messages are left-aligned: 28px round avatar + bubble. For ones with a roleId (role replies in old records), the avatar takes its color and letter from the role; a normal chat shows "AI"
   return (
     <div className="ai-row ai-row--assistant" data-pc-msg={m.id}>
       <span className="ai-row-avatar">
@@ -120,17 +124,17 @@ export interface MessageListProps {
   expanded: Set<string>;
   openRuns: Set<string>;
   rowHandlers: RowHandlers;
-  /** 空对话时点了示例句:把那句填进输入框 */
+  /** Clicked the example sentence in an empty chat: fill it into the input box */
   onPickExample: (text: string) => void;
-  /** 用户气泡上「回退到这里」的回调(稳定引用,见 UserBubble 的 RewindHandlers);不给就不显示回退入口 */
+  /** Callback for "Rewind to here" on a user bubble (stable reference, see RewindHandlers of UserBubble); if not given, the rewind entry is not shown */
   rewind?: RewindHandlers;
-  /** 「Agent 操作」此刻显示的那一轮(ActivityPanel 的 useRoundSelection) */
+  /** The round currently shown by "Agent activity" (useRoundSelection of ActivityPanel) */
   selectedRound?: string | null;
-  /** 点 Agent 回复的气泡:让「Agent 操作」切到这一轮(稳定引用) */
+  /** Click an Agent reply bubble: make "Agent activity" switch to this round (stable reference) */
   onSelectRound?: (id: string) => void;
 }
 
-/** 列表里的一条:消息气泡、时间分隔行、「收到其他 Agent 的消息」小字、编排折叠块。每条渲染出来恰好是滚动区的一个直接子元素 */
+/** One entry in the list: a message bubble, a time separator row, small text "Received a message from another Agent", or a collapsed arrangement block. Each renders as exactly one direct child of the scroll area */
 type EntryKind = "user" | "assistant" | "time" | "note";
 interface Entry {
   key: string;
@@ -138,15 +142,16 @@ interface Entry {
   render: () => React.ReactElement;
 }
 
-/** 没量过的条先按这些高度估;同类量满几条后改按它们的平均值(HeightBook) */
+/** Unmeasured entries are first estimated with these heights; once a few of a kind are measured, their average is used instead (HeightBook) */
 const DEFAULT_HEIGHTS: Record<EntryKind, number> = { user: 60, assistant: 200, time: 20, note: 20 };
-/** 最近点过、按过键的几条保持渲染,气泡自己的状态(翻到哪一页、确认层开着)不因滚远被卸载而丢 */
+/** The few entries recently clicked or key-pressed stay rendered, so a bubble's own state (which page it is on, a confirmation layer being open) is not lost when scrolling far away unmounts it */
 const PIN_CAP = 8;
-/** 还没量到滚动区高度时(第一次渲染)按这么高算窗口 */
+/** Height to compute the window with before the scroll area height has been measured (first render) */
 const FALLBACK_VIEW_H = 800;
 /**
- * 这一条的内容此刻真的排了版(没被 content-visibility: auto 跳过)。checkVisibility 只看祖先是否跳过内容,
- * 所以问它的第一个子元素;老浏览器没有这个参数时当作排了。
+ * Whether this entry's content has actually been laid out right now (not skipped by
+ * content-visibility: auto). checkVisibility only looks at whether an ancestor skips content,
+ * so ask about its first child element; old browsers without this parameter are treated as laid out.
  */
 function visibleForLayout(el: Element): boolean {
   const probe = el.firstElementChild;
@@ -155,43 +160,52 @@ function visibleForLayout(el: Element): boolean {
   return typeof fn === "function" ? fn.call(probe, { contentVisibilityAuto: true }) : true;
 }
 
-/** 上下余量:可视高度的一半,至少 300px */
+/** Margin above and below: half the visible height, at least 300px */
 const overscanFor = (h: number) => Math.max(300, h / 2);
 
 /**
- * 消息滚动区:贴底跟随、编排折叠块的插入位置、两轮之间的时间分隔、窗口化都在这里。
+ * Message scroll area: stick-to-bottom following, the insertion position of the collapsed
+ * arrangement block, the time separator between two rounds, and windowing all live here.
  *
- * 窗口化(C6.5 遗留):条数超过 WINDOW_MIN_ENTRIES(150)时只渲染可视区附近的几条(listWindow.ts),
- * 上下没渲染的用占位 div 顶住滚动条。消息高度不固定:渲染出来的每条都挂 ResizeObserver,实测高度按 key 记在 HeightBook 里,
- * 没量过的按同类平均估。流式中的那条、最后一条、有焦点的、最近动过的几条不论在哪都渲染。
+ * Windowing (C6.5 leftover): when the entry count exceeds WINDOW_MIN_ENTRIES (150), only the
+ * entries near the visible area are rendered (listWindow.ts), and spacer divs above and below hold
+ * up the scrollbar. Message heights are not fixed: every rendered entry gets a ResizeObserver, the
+ * measured height is recorded by key in HeightBook, and unmeasured entries are estimated by the
+ * average of their kind. The streaming entry, the last entry, the focused ones and the few recently
+ * touched ones are rendered wherever they are.
  *
- * 滚动位置不靠浏览器的滚动锚定(overflow-anchor: none,见 chat.css),自己锚:不贴底时记住视口顶上第一条的位置,
- * 上面的条换了高度、占位换了估计、窗口挪了,在绘制之前把它挪回原处;贴底时照旧滚到底。
+ * The scroll position does not rely on the browser's scroll anchoring (overflow-anchor: none, see
+ * chat.css) but anchors itself: when not stuck to the bottom, it remembers the position of the first
+ * entry at the top of the viewport; when entries above change height, a spacer changes its estimate
+ * or the window moves, it moves it back to where it was before painting; when stuck to the bottom,
+ * it scrolls to the bottom as before.
  */
 export function MessageList(props: MessageListProps) {
   const { messages, view, showThinking, installJobs, expanded, openRuns, rowHandlers, onPickExample, rewind, selectedRound, onSelectRound } = props;
   const messagesScrollRef = useRef<HTMLDivElement>(null);
 
   /**
-   * 贴底跟随。
+   * Stick-to-bottom following.
    *
-   * 原来是在内容长出来之后才量「离底部还有多远」——那时候 scrollHeight 已经包含
-   * 新内容了,只要这一批比阈值高,就会被判成「用户自己滚上去了」,于是再也不跟随。
-   * 所以要在**内容变化之前**就把「当时在不在底部」记下来:onScroll 里维护 stickRef,
-   * 那是用户最后一次表态。
+   * It used to measure "how far from the bottom" only after the content had grown: by then
+   * scrollHeight already included the new content, so any batch taller than the threshold was judged
+   * as "the user scrolled up on their own" and it never followed again.
+   * So whether it was at the bottom at that time must be recorded **before the content changes**:
+   * onScroll maintains stickRef, which is the user's last statement.
    *
-   * 不贴底时不往底部拽 —— 内容追加在下方,看的那一段不动;上方有高度变化时由锚点挪回。
+   * When not stuck to the bottom, it does not pull toward the bottom: content is appended below and
+   * the part being read does not move; height changes above are moved back by the anchor.
    */
   const stickRef = useRef(true);
 
   const bookRef = useRef<HeightBook | null>(null);
   if (!bookRef.current) bookRef.current = new HeightBook(DEFAULT_HEIGHTS);
   const [, bump] = useReducer((x: number) => x + 1, 0);
-  /** 最近一次量到的滚动位置与可视高度 */
+  /** The most recently measured scroll position and visible height */
   const viewRef = useRef({ scrollTop: 0, clientHeight: 0 });
-  /** 这一次渲染的布局:偏移表、是否窗口化、窗口范围;onScroll 里拿它判断要不要重渲 */
+  /** The layout of this render: offset table, whether windowed, window range; onScroll uses it to decide whether to re-render */
   const layoutRef = useRef<{ off: number[]; windowed: boolean; first: number; last: number }>({ off: [0], windowed: false, first: 0, last: 0 });
-  /** 渲染出来的条,按 DOM 顺序(不含占位) */
+  /** The rendered entries, in DOM order (spacers excluded) */
   const shownRef = useRef<string[]>([]);
   const kindRef = useRef(new Map<string, EntryKind>());
   const elKeyRef = useRef(new WeakMap<Element, string>());
@@ -199,15 +213,18 @@ export function MessageList(props: MessageListProps) {
   const observedRef = useRef(new Set<Element>());
   const roRef = useRef<ResizeObserver | null>(null);
   /**
-   * 不贴底时的锚:视口顶上第一条,和它顶边在滚动内容里的位置(离内容顶边多远,不随滚动变)。
-   * 按内容位置记而不是按离视口多远记:用户滚了一下、滚动事件还没到时布局先变了(ResizeObserver 先回调),
-   * 按视口距离挪回会把用户这一下滚动也一起撤掉。
+   * Anchor when not stuck to the bottom: the first entry at the top of the viewport, and the position
+   * of its top edge in the scroll content (its distance from the content top, which does not change
+   * with scrolling).
+   * It is recorded by content position rather than distance from the viewport: if the user scrolls a
+   * bit and the layout changes before the scroll event arrives (ResizeObserver calls back first),
+   * moving back by viewport distance would also undo the user's scroll.
    */
   const anchorRef = useRef<{ key: string; contentTop: number } | null>(null);
   const pinnedRef = useRef<string[]>([]);
-  /** 上一次落定(或滚动事件)时的内容高度与可视高度;隐藏期间清空 */
+  /** Content height and visible height at the last settle (or scroll event); cleared while hidden */
   const lastMetricsRef = useRef<{ scrollHeight: number; clientHeight: number } | null>(null);
-  /** 上一次 settle 落定后的滚动位置:滚动事件报上来的还是这个位置,就是 settle 自己挪的回声 */
+  /** Scroll position after the last settle: if a scroll event reports this same position, it is the echo of settle's own move */
   const settledTopRef = useRef(-1);
   const focusKeyRef = useRef<string | null>(null);
 
@@ -226,7 +243,7 @@ export function MessageList(props: MessageListProps) {
       const el = keyElRef.current.get(key);
       if (!el) continue;
       const r = el.getBoundingClientRect();
-      // 只认和视口有交集的:视口里只有占位时不锚(强制渲染的最后一条远在下面,拿它当锚会把视口拖着跑)
+      // Only accept entries that intersect the viewport: when the viewport holds only spacers, do not anchor (the force-rendered last entry is far below, and using it as the anchor would drag the viewport along)
       if (r.top >= br.bottom) return;
       if (r.bottom > top) {
         anchorRef.current = { key, contentTop: r.top - top + box.scrollTop };
@@ -235,24 +252,27 @@ export function MessageList(props: MessageListProps) {
     }
   };
 
-  /** 布局变了之后、绘制之前:贴底的滚到底,不贴底的把锚挪回原处 */
+  /** After the layout changes, before painting: scroll to the bottom if stuck to the bottom, otherwise move the anchor back to where it was */
   const settle = () => {
     const box = messagesScrollRef.current;
     if (!box) return;
-    // 分页不在前台(display:none)时量什么都是 0:不动,等它显示出来 ResizeObserver 再叫一次
+    // When the tab is not in the foreground (display:none), everything measures 0: do nothing, and wait for ResizeObserver to call again once it is shown
     if (box.getClientRects().length === 0) {
       lastMetricsRef.current = null;
       return;
     }
     /*
-     * 「当时在不在底部」按变化之前的内容高度判断:用户刚滚到底(或刚往上翻)、滚动事件还没派发,
-     * 布局先变了(新进来的几条量出了真高度)——这时 stickRef 还是旧的表态。拿上一次的内容高度、可视高度
-     * 和此刻的滚动位置比,就是用户最后停在哪儿。刚从隐藏变可见时滚动位置被清零了,不算数,沿用 stickRef。
+     * Whether it was "at the bottom" is judged by the content height before the change: the user just
+     * scrolled to the bottom (or just scrolled up), the scroll event has not been dispatched yet, and
+     * the layout changed first (the newly arrived entries measured their real heights); at that moment
+     * stickRef is still the old statement. Comparing the previous content height and visible height
+     * with the current scroll position tells where the user last stopped. Right after going from
+     * hidden to visible the scroll position was reset to zero, which does not count, so keep using stickRef.
      */
     const prev = lastMetricsRef.current;
     if (prev) {
       const atPrevBottom = isAtBottom(prev.scrollHeight, box.scrollTop, prev.clientHeight);
-      // 内容变矮、滚动位置被浏览器夹回底部时,按旧高度算会「离底很远」:那也还是在底部
+      // The content got shorter and the browser clamped the scroll position back to the bottom: computing with the old height would say "far from the bottom", but it is still at the bottom
       const atNowBottom = isAtBottom(box.scrollHeight, box.scrollTop, box.clientHeight);
       if (stickRef.current) stickRef.current = atPrevBottom || atNowBottom;
       else stickRef.current = atPrevBottom;
@@ -278,7 +298,7 @@ export function MessageList(props: MessageListProps) {
   const onMessagesScroll = () => {
     const el = messagesScrollRef.current;
     if (!el) return;
-    // 自己在 settle 里挪出来的滚动也会派发滚动事件,等它到的时候内容可能又长了一截:那不是用户的表态,不重判贴底
+    // A scroll that settle moved itself also dispatches a scroll event, and by the time it arrives the content may have grown again: that is not the user's statement, so do not re-judge sticking to the bottom
     if (Math.abs(el.scrollTop - settledTopRef.current) >= 1) stickRef.current = isAtBottom(el.scrollHeight, el.scrollTop, el.clientHeight);
     viewRef.current = { scrollTop: el.scrollTop, clientHeight: el.clientHeight };
     lastMetricsRef.current = { scrollHeight: el.scrollHeight, clientHeight: el.clientHeight };
@@ -289,7 +309,7 @@ export function MessageList(props: MessageListProps) {
     if (r.first !== lay.first || r.last !== lay.last) bump();
   };
 
-  // 实测高度:渲染出来的每一条和滚动区本身都挂着。隐藏的分页(display:none)量出来全是 0,不记
+  // Measured heights: every rendered entry and the scroll area itself are observed. A hidden tab (display:none) measures all 0, so do not record
   useLayoutEffect(() => {
     const ro = new ResizeObserver((list) => {
       const box = messagesScrollRef.current;
@@ -303,12 +323,12 @@ export function MessageList(props: MessageListProps) {
         const key = elKeyRef.current.get(e.target);
         const kind = key ? kindRef.current.get(key) : undefined;
         if (!key || !kind) continue;
-        // 被 content-visibility 跳过、还没真正排过版的行,量到的是 contain-intrinsic-size 的占位值,不是真高度:不记
+        // Rows skipped by content-visibility that have not actually been laid out measure the placeholder value of contain-intrinsic-size, not the real height: do not record
         if (!visibleForLayout(e.target)) continue;
         const h = e.borderBoxSize?.[0]?.blockSize ?? e.target.getBoundingClientRect().height;
         if (bookRef.current!.set(key, kind, h)) changed = true;
       }
-      // 有尺寸通知就说明布局动了(哪怕记账没变,比如占位值换成真高度而这个高度早就记过):先落定,再看要不要重算窗口
+      // A size notification means the layout moved (even if the bookkeeping did not change, e.g. a placeholder value replaced by a real height that was already recorded): settle first, then see whether to recompute the window
       settleRef.current();
       if (changed) bump();
     });
@@ -323,9 +343,12 @@ export function MessageList(props: MessageListProps) {
   }, []);
 
   /*
-   * 新消息淡入、上浮一点(enterMotion)。只给「刚追加进来」的一两条放:第一次渲染时已有的历史、
-   * 打开历史会话一口气换进来的整段都不演 —— 几十条一起动既看不清也白花力气。
-   * 见过的 id 记下来,之后流式更新、分页切回来都不再放。窗口外没渲染的那条自然不演。
+   * New messages fade in and rise a little (enterMotion). Played only for the one or two entries
+   * that were "just appended": history already present on the first render, and a whole run swapped
+   * in at once when opening a historical session, are not animated, since dozens moving together are
+   * hard to see and waste effort.
+   * Seen ids are recorded, and later streaming updates and switching back to the tab do not play it
+   * again. An entry outside the window that is not rendered naturally does not animate.
    */
   const seenIds = useRef<Set<string> | null>(null);
   useLayoutEffect(() => {
@@ -345,19 +368,21 @@ export function MessageList(props: MessageListProps) {
     for (const id of fresh) playEnter(box.querySelector(`[data-pc-msg="${CSS.escape(id)}"]`), "pc-enter-rise");
   }, [messages]);
 
-  /** 到上一条为止最晚的时间点;新一轮(用户消息)离它超过 TIME_GAP_MS 就插时间行 */
+  /** The latest time point up to the previous entry; a time row is inserted when a new round (user message) is more than TIME_GAP_MS away from it */
   let lastAt: number | null = null;
 
-  // 只装其他 Agent 消息的用户消息不画,挂到紧跟着的回复上(在「Agent 操作」里显示);每一轮的回复各画各的气泡,不合并(rowPlan.ts)
+  // A user message that holds only messages from other Agents is not drawn, and is attached to the reply that follows it (shown in "Agent activity"); the replies of each round each draw their own bubble, with no merging (rowPlan.ts)
   const { inboundOnly, orphanNote } = inboundPlan(messages);
 
   /*
-   * 摊平成一条条(Entry):每条渲染出来是滚动区的一个直接子元素,key 各自独立 ——
-   * 窗口挪动、前后插时间行 / 编排块,MessageRow 都不会换位置重挂(memo 和展开状态都保得住)。
-   * 这里只记怎么画,真正建元素只对窗口里的那几条做。
+   * Flatten into individual entries (Entry): each renders as one direct child of the scroll area,
+   * with its own independent key ---
+   * when the window moves or time rows / arrangement blocks are inserted before or after, MessageRow
+   * is never remounted at a different position (memo and expand state are both preserved).
+   * This only records how to draw; elements are actually built only for the few entries in the window.
    */
   const entries: Entry[] = [];
-  /** 流式中的消息画在哪一条里(并进前面气泡的,画在组头那一条) */
+  /** Which entry the streaming message is drawn in (for one merged into a preceding bubble, the entry of the group head) */
   const liveKeys = new Set<string>();
   messages.forEach((m) => {
     const hidden = inboundOnly.has(m.id);
@@ -366,7 +391,7 @@ export function MessageList(props: MessageListProps) {
       const stampAt = at;
       entries.push({ key: `${m.id}:time`, kind: "time", render: () => <div key={`${m.id}:time`} className="ai-time-sep">{formatStamp(stampAt)}</div> });
     }
-    // 不画出来的(收到的 Agent 消息)也照样推进时间点,不然后面会多出时间分隔行
+    // Entries that are not drawn (received Agent messages) still advance the time point, otherwise extra time separator rows appear later
     const end = typeof m.finishedAt === "number" ? m.finishedAt : at;
     if (end !== null) lastAt = lastAt === null ? end : Math.max(lastAt, end);
     if (inboundOnly.has(m.id)) {
@@ -436,8 +461,9 @@ export function MessageList(props: MessageListProps) {
   for (const s of segments) if (s.kind === "item") shown.push(entries[s.index].key);
   shownRef.current = shown;
 
-  // 每次提交之后、绘制之前:把渲染出来的条和 DOM 对上号、挂上测量,再贴底或挪回锚点。
-  // 不给依赖数组 —— 流式输出每来一段都是一次提交,每次提交都要重新贴住。
+  // After every commit, before paint: match the rendered rows to the DOM, attach measurement, then
+  // stick to the bottom or move back to the anchor.
+  // No dependency array: streaming output is a commit on every chunk, and every commit has to re-stick.
   useLayoutEffect(() => {
     const box = messagesScrollRef.current;
     const ro = roRef.current;
@@ -459,7 +485,7 @@ export function MessageList(props: MessageListProps) {
         ro.observe(el);
         observed.add(el);
       }
-      // 滚出视口被 content-visibility 跳过的行按实测高度占位,量到的就是真高度,不会在估计值和真值之间来回跳
+      // Rows scrolled out of the viewport and skipped by content-visibility get a placeholder at their measured height; what we measure is the real height, so it never jumps between estimate and real value
       const h = bookRef.current!.measured(key);
       if (h !== undefined && el.classList.contains("ai-row")) el.style.containIntrinsicSize = `auto ${Math.round(h)}px`;
     }
@@ -469,13 +495,13 @@ export function MessageList(props: MessageListProps) {
       observed.delete(el);
     }
     keyElRef.current = map;
-    // 对话换了、消息被回退掉:丢掉不再出现的高度记录
+    // Chat switched or messages rolled back: drop height records that no longer appear
     const bk = bookRef.current!;
     if (bk.size > 2 * kindRef.current.size + 200) bk.prune(new Set(kindRef.current.keys()));
     settle();
   });
 
-  /** 事件落在哪一条上:从事件目标往上找到滚动区的直接子元素 */
+  /** Which row an event landed on: walk up from the event target to the direct child of the scroll area */
   const entryKeyOf = (node: EventTarget | null): string | null => {
     const box = messagesScrollRef.current;
     let el: Node | null = node instanceof Node ? node : null;
@@ -504,7 +530,7 @@ export function MessageList(props: MessageListProps) {
     >
       {messages.length === 0 ? (
         <div className="ai-empty-state">
-          {/* 空对话只留这一条示例句,本机与云端相同〔用户 2026-10-07 定〕 */}
+          {/* An empty chat keeps only this one sample sentence, same for local and cloud (user decision, 2026-10-07) */}
           <button type="button" className="ai-empty-example" data-pc="ai-empty-example" onClick={() => onPickExample(EMPTY_EXAMPLE)}>
             {EMPTY_EXAMPLE}
           </button>

@@ -1,65 +1,67 @@
 /**
- * 在线浏览器执行用户卡与素材效果卡:编辑页面 → 舞台 / 声音线程之间传的数据形状
- * (`docs/plan/online-card-exec-contract.md` 第 1、2、8 节)。只有类型与常量,哪一侧都能引。
+ * Online browser executing user cards and media effect cards: shape of data transferred between
+ * editor page → stage / sound thread (`docs/plan/online-card-exec-contract.md` Sections 1, 2, and 8).
+ * Only types and constants, importable by either side.
  *
- * 流程:编辑页面取到内容库的卡片源码 → 转译、解析每个导入(`transpile.ts`)→ 一张卡一个 `CardBundle` →
- * 经舞台 RPC 发给舞台 → 舞台里的加载器(`loader.ts`)执行、取出卡片定义、报回运行状态。
- * 编辑页面的源里从不执行 `CardModule.js`。
+ * Flow: editor page fetches card source from content store → transpiles and resolves each import
+ * (`transpile.ts`) → one `CardBundle` per card → sent to stage via stage RPC → loader in stage
+ * (`loader.ts`) executes, extracts card definitions, and reports back runtime status.
+ * `CardModule.js` is never executed in the editor page origin.
  */
 import type { CardRunState } from "../../kernel/registry.ts";
 
 export type { CardRunState, CardRunStateName } from "../../kernel/registry.ts";
 
-/** 卡片能引的包(与桌面 `create_card` 的白名单一致,少 `three/` 下的子路径;契约第 2 节) */
+/** Packages cards can import (matches desktop `create_card` allowlist, minus `three/` subpaths; contract Section 2) */
 export const CARD_PACKAGES: readonly string[] = Object.freeze([
   "react", "react/jsx-runtime", "react-dom", "motion", "motion/react", "three", "lottie-web", "@tsparticles/engine", "@tsparticles/slim",
 ]);
 
-/** 一个导入解析到哪里 */
+/** Where an import resolves to */
 export type ResolvedImport =
-  /** 页面自带的包 */
+  /** Page built-in package */
   | { kind: "package"; name: string }
-  /** 内容库同步来的源码(同一个包里的另一个模块) */
+  /** Source code synced from content store (another module in the same bundle) */
   | { kind: "synced"; key: string }
-  /** 页面自带的内置模块(仓库相对路径,如 `src/cards/native/hud.tsx`) */
+  /** Page built-in internal module (repository-relative path, e.g. `src/cards/native/hud.tsx`) */
   | { kind: "builtin"; path: string }
-  /** 同步来的样式文件:不执行,文本在 `CardBundle.styles` 里 */
+  /** Synced style file: not executed, text is in `CardBundle.styles` */
   | { kind: "style"; key: string };
 
-/** 一个转译好的模块 */
+/** A transpiled module */
 export interface CardModule {
-  /** 内容库的键(仓库相对路径) */
+  /** Content store key (repository-relative path) */
   key: string;
-  /** 内容库的内容哈希(模块实例按「键 + 哈希」缓存,哈希没变不重新执行) */
+  /** Content store content hash (module instances cached by "key + hash", not re-executed if hash unchanged) */
   hash: string;
-  /** CommonJS 文本 */
+  /** CommonJS text */
   js: string;
-  /** 源码里写的说明符 → 解析结果(转译结果里 `require("<说明符>")` 的每一个都在这里) */
+  /** Specifier written in source → resolution result (every `require("<specifier>")` in transpiled output is here) */
   imports: Record<string, ResolvedImport>;
 }
 
-/** 一张卡的入口文件连同它的闭包 */
+/** A card's entry file along with its closure */
 export interface CardBundle {
-  /** 在线卡片运行时版本(`version.ts`);与舞台自己的不同就不载入 */
+  /** Online card runtime version (`version.ts`); not loaded if different from the stage's own version */
   runtime: string;
-  /** 入口文件的键(`src/cards/user/<名>.tsx`) */
+  /** Entry file key (`src/cards/user/<name>.tsx`) */
   entry: string;
-  /** 闭包里的模块,入口在第一个 */
+  /** Modules in the closure, entry is first */
   modules: CardModule[];
-  /** 同步来的样式文件(键与文本) */
+  /** Synced style files (key and text) */
   styles: { key: string; hash: string; css: string }[];
-  /** 按闭包源码里出现的类名补生成的 Tailwind 样式(只有主题变量与工具类两层);没有为空串 */
+  /** Tailwind styles generated from class names in closure source (theme variables and utilities layers only); empty string if none */
   tailwind: string;
-  /** 这一代的签名:运行时版本 + 闭包里每个文件的键与哈希。变了才换代 */
+  /** Signature for this generation: runtime version + key and hash of each closure file. Switches generations only on change */
   generation: string;
 }
 
-/** 转译这一步对一张卡的结论 */
+/** Outcome of transpilation step for a card */
 export type BundleResult =
   | { ok: true; entry: string; bundle: CardBundle }
   | { ok: false; entry: string; state: CardRunState };
 
-/** 加载器对一个包的结论 */
+/** Loader's outcome for a bundle */
 export type LoadResult =
   | { ok: true; entry: string; generation: string; cardIds: string[] }
   | { ok: false; entry: string; generation: string; state: CardRunState };

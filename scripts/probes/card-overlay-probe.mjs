@@ -1,24 +1,33 @@
 /**
- * 用户卡与改动层的端到端探针(报告 `docs/archive/agent-reports/AGENT-card-overlay.md`):一个带改动层的编辑器(装机版的样子),
- * 核对「有改动层时检出目录一个文件都不写」与「create_card 带 overwrite 不被改动层旧版盖住」在真 Vite 里成立。
+ * End-to-end probe for user cards and overlay layer (report
+ * `docs/archive/agent-reports/AGENT-card-overlay.md`): an editor with an overlay layer (installed
+ * desktop app appearance), verifying that "when an overlay layer is present, not a single file is
+ * written to the checkout directory" and "create_card with overwrite is not overwritten by the old
+ * version in the overlay layer" hold true in real Vite.
  *
- * 用法(在仓库根或 worktree 根):
- *   node scripts/probes/card-overlay-probe.mjs [--port 5610] [--out <截图目录>] [--keep-temp]
+ * Usage (at repository root or worktree root):
+ *   node scripts/probes/card-overlay-probe.mjs [--port 5610] [--out <screenshot-dir>] [--keep-temp]
  *
- * 做什么:
- *   1. 临时目录里建改动层(PROMPTCUT_CARD_OVERRIDES)与数据目录;改动层里先放一张检出里没有的用户卡 A(记号 a1),
- *      检出里放一张用户卡 B 的底版(b1)、改动层里放 B 的改过版(b1x);
- *   2. 在本检出根起一个编辑器(vite --port,舞台端口 +1、+2;卡片同步关掉);
- *   3. 页面里核对:注册表里有 A(源码 a1)与 B(源码 b1x);`/api/cards/source` 读得到 A;
- *   4. create_card 带 overwrite 把 B 改成 b2:注册表热更新到 b2,B 的底版仍是 b1(CO1);
- *   5. create_card 建一张新卡 C(c1):写进改动层,检出目录不多文件;注册表热更新出 C,主框架不整页刷新(CO2);
- *      归属表写进改动层,检出里的 `_scopes.json` 不变;
- *   6. 删掉改动层里的 A:注册表里 A 消失;
- *   7. 收尾:只结束自己起的进程树;删 B 的底版、它在 .pc-work/card-history 的旧版;还原检出里的 `_scopes.json`;临时目录缺省删掉。
+ * What it does:
+ *   1. Create an overlay layer (PROMPTCUT_CARD_OVERRIDES) and data directory in a temp directory;
+ *      put user card A (marker a1) not in the checkout into overlay layer, put base version of
+ *      user card B (b1) into checkout, and put modified version of B (b1x) into overlay layer;
+ *   2. Start an editor at this checkout root (vite --port, stage ports +1, +2; card sync disabled);
+ *   3. Verify in page: registry has A (source a1) and B (source b1x); `/api/cards/source` reads A;
+ *   4. Call create_card with overwrite to modify B to b2: registry hot-updates to b2, base version
+ *      of B remains b1 (CO1);
+ *   5. Call create_card to create new card C (c1): written into overlay layer, no extra files in
+ *      checkout directory; registry hot-updates C, main frame does not reload full page (CO2);
+ *      ownership table is written into overlay layer, `_scopes.json` in checkout is unchanged;
+ *   6. Delete A in overlay layer: A disappears from registry;
+ *   7. Cleanup: terminate only its own spawned process tree; delete base version of B and its old
+ *      version in .pc-work/card-history; restore `_scopes.json` in checkout; delete temp directory
+ *      by default.
  *
- * 输出:过程写 stderr;stdout 只有最后一行 JSON:{ ok, ..., fails: [] }。
+ * Output: progress written to stderr; stdout has only the last line of JSON:
+ *   { ok, ..., fails: [] }.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
 import fs from 'node:fs';
@@ -46,7 +55,7 @@ async function waitFor(fn, ms, what) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时(${ms} ms)`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what} (${ms} ms)`);
     await sleep(100);
   }
 }
@@ -62,10 +71,10 @@ function C({ params }: CardProps<Params>) {
   return <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64, color: "#fff", background: "#243" }}>{"${MARK(v)}"} {params.text}</div>;
 }
 export const card: CardDef<Params> = {
-  id: "${id}", name: "改动层探针", description: "card-overlay-probe", source: "user",
+  id: "${id}", name: "Overlay layer probe", description: "card-overlay-probe", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };
 `;
@@ -98,7 +107,8 @@ async function stopAll() {
     const c = p.child;
     if (!c.pid || c.exitCode !== null) continue;
     const exited = new Promise((r) => c.once('exit', r));
-    // 编辑器还拉着预渲染进程和 Chrome:连进程树一起结束(只结束自己起的这一棵)
+    // The editor also keeps prerender processes and Chrome running: terminate along with the process
+    // tree (only terminate this tree spawned by itself)
     if (process.platform === 'win32') spawn('taskkill', ['/PID', String(c.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
     else c.kill('SIGKILL');
     await Promise.race([exited, sleep(10_000)]);
@@ -107,7 +117,7 @@ async function stopAll() {
 }
 
 const P = (page, fn, ...args) => page.evaluate(fn, ...args);
-/** 页面里注册表的样子:这几张卡在不在、注册表里的源码带哪个记号 */
+/** Registry state in the page: whether these cards exist and which marker the source in registry has */
 const registry = (page) => P(page, async (ids, marks) => {
   await import('/src/cards/index.ts');
   const R = await import('/src/kernel/registry.ts');
@@ -124,13 +134,13 @@ const markOf = (m) => (m ? m.slice(`OV-PROBE-${RUN}-`.length) : null);
 
 let browser = null;
 try {
-  // ---------- 1. 改动层与检出里的探针卡
+  // ---------- 1. Probe cards in overlay layer and checkout
   put(path.join(OVERLAY, USER, `${ID.a}.tsx`), cardSource(ID.a, 'a1'));
   put(B_BASE, cardSource(ID.b, 'b1'));
   put(path.join(OVERLAY, USER, `${ID.b}.tsx`), cardSource(ID.b, 'b1x'));
   const listBefore = userDirList();
 
-  // ---------- 2. 编辑器
+  // ---------- 2. Editor
   const child = spawn(process.execPath, [viteBin(), '--port', String(PORT), '--strictPort', '--host', '127.0.0.1'], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     env: {
@@ -152,9 +162,9 @@ try {
   say('spawn', { pid: child.pid });
   const origin = `http://127.0.0.1:${PORT}`;
   await waitFor(async () => {
-    if (child.exitCode !== null) throw new Error(`编辑器退出了:${log.join('').slice(-600)}`);
+    if (child.exitCode !== null) throw new Error(`Editor exited: ${log.join('').slice(-600)}`);
     return fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  }, 180_000, '编辑器起来');
+  }, 180_000, 'editor started');
 
   browser = await puppeteer.launch({
     headless: true,
@@ -167,8 +177,8 @@ try {
   page.on('framenavigated', (f) => { if (f === page.mainFrame()) navigations.push({ at: Date.now(), url: f.url() }); });
   await page.goto(`${origin}/?editor`, { waitUntil: 'domcontentloaded' });
 
-  // ---------- 3. 起来时:改动层里的 A、改过的 B 都在注册表里
-  const r0 = await waitFor(async () => { const r = await registry(page); return r.a.card && r.b.card ? r : null; }, 120_000, '注册表认出 A、B');
+  // ---------- 3. On startup: A in overlay layer and modified B are both in registry
+  const r0 = await waitFor(async () => { const r = await registry(page); return r.a.card && r.b.card ? r : null; }, 120_000, 'Registry recognizes A and B');
   res.start = { a: markOf(r0.a.mark), b: markOf(r0.b.mark) };
   if (markOf(r0.a.mark) !== 'a1') fails.push('start-a-not-a1');
   if (markOf(r0.b.mark) !== 'b1x') fails.push('start-b-not-overlay');
@@ -183,12 +193,12 @@ try {
     return { status: r.status, body: await r.json() };
   }, { id, source, overwrite, projectId: `probe-${RUN}` });
 
-  // ---------- 4. CO1:create_card 带 overwrite 改 B
+  // ---------- 4. CO1: create_card modifies B with overwrite
   const t1 = Date.now();
   const cb = await create(ID.b, cardSource(ID.b, 'b2'), true);
   res.overwrite = { status: cb.status, overwritten: cb.body?.overwritten ?? null };
   if (cb.status !== 200) fails.push(`overwrite-status-${cb.status}:${cb.body?.error ?? ''}`);
-  const r1 = await waitFor(async () => { const r = await registry(page); return markOf(r.b.mark) === 'b2' ? r : null; }, 15_000, '注册表里 B 变成 b2').catch(() => null);
+  const r1 = await waitFor(async () => { const r = await registry(page); return markOf(r.b.mark) === 'b2' ? r : null; }, 15_000, 'B becomes b2 in the registry').catch(() => null);
   res.overwriteHmrMs = r1 ? Date.now() - t1 : null;
   if (!r1) fails.push('overwrite-not-effective');
   if (fs.readFileSync(B_BASE, 'utf8') !== cardSource(ID.b, 'b1')) fails.push('b-base-changed');
@@ -197,12 +207,12 @@ try {
 
   await page.screenshot({ path: path.join(OUT, `${RUN}-1-after-overwrite.png`) });
 
-  // ---------- 5. CO2:create_card 建新卡 C
+  // ---------- 5. CO2: create_card creates new card C
   const t2 = Date.now();
   const cc = await create(ID.c, cardSource(ID.c, 'c1'), false);
   res.create = { status: cc.status };
   if (cc.status !== 200) fails.push(`create-status-${cc.status}:${cc.body?.error ?? ''}`);
-  const r2 = await waitFor(async () => { const r = await registry(page); return r.c.card && markOf(r.c.mark) === 'c1' ? r : null; }, 15_000, '注册表认出 C').catch(() => null);
+  const r2 = await waitFor(async () => { const r = await registry(page); return r.c.card && markOf(r.c.mark) === 'c1' ? r : null; }, 15_000, 'Registry recognizes C').catch(() => null);
   res.createHmrMs = r2 ? Date.now() - t2 : null;
   if (!r2) fails.push('new-card-not-registered');
   res.overlayHasC = fs.existsSync(path.join(OVERLAY, USER, `${ID.c}.tsx`));
@@ -217,7 +227,7 @@ try {
   res.overlayScopesHasC = fs.existsSync(overlayScopes) && !!JSON.parse(fs.readFileSync(overlayScopes, 'utf8'))[ID.c];
   if (!res.overlayScopesHasC) fails.push('overlay-scopes-missing-c');
   await page.screenshot({ path: path.join(OUT, `${RUN}-2-after-create.png`) });
-  // 舞台(iframe,舞台端口)里画得出只在改动层里的 C
+  // Stage (iframe, stage port) renders C, which exists only in overlay layer
   const clipId = await P(page, async (id) => {
     const S = await import('/src/store/project.ts');
     const c = S.actions.addCardClip(id, 0, { duration: 5 });
@@ -227,17 +237,17 @@ try {
   const stageHas = async (text) => {
     for (const f of page.frames()) {
       if (f === page.mainFrame()) continue;
-      try { if (await f.evaluate((t) => document.body?.innerText?.includes(t) ?? false, text)) return f.url(); } catch { /* 跨源或正在导航 */ }
+      try { if (await f.evaluate((t) => document.body?.innerText?.includes(t) ?? false, text)) return f.url(); } catch { /* Cross-origin or navigating */ }
     }
     return null;
   };
-  res.stageC = clipId ? await waitFor(() => stageHas(MARK('c1')), 60_000, '舞台画出 C').catch(() => null) : null;
+  res.stageC = clipId ? await waitFor(() => stageHas(MARK('c1')), 60_000, 'Stage renders C').catch(() => null) : null;
   if (!res.stageC) fails.push('stage-c-not-drawn');
   await page.screenshot({ path: path.join(OUT, `${RUN}-3-stage.png`) });
 
-  // ---------- 6. 删掉改动层里的 A
+  // ---------- 6. Delete A in overlay layer
   fs.rmSync(path.join(OVERLAY, USER, `${ID.a}.tsx`));
-  const r3 = await waitFor(async () => { const r = await registry(page); return !r.a.card ? r : null; }, 15_000, '注册表里 A 消失').catch(() => null);
+  const r3 = await waitFor(async () => { const r = await registry(page); return !r.a.card ? r : null; }, 15_000, 'A disappears from the registry').catch(() => null);
   if (!r3) fails.push('a-not-removed');
   res.fullReloads = navigations.length - navBase;
   if (res.fullReloads !== 0) fails.push('page-full-reload');
@@ -246,18 +256,18 @@ try {
 } catch (e) {
   fails.push(`error:${e?.message ?? e}`);
 } finally {
-  try { await browser?.close(); } catch { /* 已关 */ }
+  try { await browser?.close(); } catch { /* Closed */ }
   await stopAll();
-  try { fs.rmSync(B_BASE, { force: true }); } catch { /* 没有就算了 */ }
+  try { fs.rmSync(B_BASE, { force: true }); } catch { /* Ignore if absent */ }
   try {
     const hist = path.join(ROOT, '.pc-work', 'card-history');
     for (const f of fs.existsSync(hist) ? fs.readdirSync(hist) : []) if (f.includes(RUN)) fs.rmSync(path.join(hist, f), { force: true });
-  } catch { /* 没有就算了 */ }
+  } catch { /* Ignore if absent */ }
   try {
     if (scopesBefore === null) fs.rmSync(SCOPES, { force: true });
     else if (!fs.readFileSync(SCOPES).equals(scopesBefore)) fs.writeFileSync(SCOPES, scopesBefore);
-  } catch { /* 还原不了记在输出里 */ }
-  if (!argv.includes('--keep-temp')) { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* Windows 上偶有句柄没放 */ } }
+  } catch { /* Record in output if restore fails */ }
+  if (!argv.includes('--keep-temp')) { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* Handles are occasionally not released on Windows */ } }
 }
 res.fails = fails;
 res.ok = fails.length === 0;

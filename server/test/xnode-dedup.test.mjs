@@ -1,19 +1,31 @@
 /**
- * 跨节点去重:文档服务重启后,别的节点做完、两档都已在素材服务里的一段,被另一个节点领到时走去重完成
- * (`docs/archive/agent-reports/AGENT-xnode-dedup.md`;语义 `mechanism/document-service.md`「渲染任务队列」:「已经在素材服务里的结果不用重做」;
- * `product/rendering.md`「两档」:渲染节点产出原尺寸后一并生成小尺寸,两档都推送到素材服务)。
- * 跑:node --experimental-test-module-mocks --test server/test/xnode-dedup.test.mjs
+ * Cross-node deduplication: after document service restarts, when a segment completed by another
+ * node with both tiers already in asset service is claimed by another node, it completes via
+ * deduplication (`docs/archive/agent-reports/AGENT-xnode-dedup.md`; semantics in
+ * `mechanism/document-service.md` "Render queue": "Results already in the asset service do not need
+ * to be redone"; `product/rendering.md` "Two tiers": render nodes produce small size alongside
+ * original size, and push both tiers to asset service).
+ * Run: node --experimental-test-module-mocks --test server/test/xnode-dedup.test.mjs
  *
- * 场景(M8 E3 放本机,run `m8e3lanM` / `xdA1`):host-a 做完一段,PC 收 `task.done` 按清单把原尺寸拉进本机帧库
- * (`applyResult` 只拉原尺寸与 PNG,不拉小尺寸);局域网主机重启后 PC 领到这一段 —— 本机帧库「覆盖」了整段,却没有小尺寸。
+ * Scenario (M8 E3 on local, run `m8e3lanM` / `xdA1`): host-a finishes a segment, PC receives
+ * `task.done` and pulls original size into the local frame store by manifest (`applyResult` only
+ * pulls original size and PNG, not small size); after LAN host restarts, PC claims this segment:
+ * local frame store "covers" the whole segment, but lacks small size.
  *
- *   X1  本机覆盖、缺小尺寸,内容库里别的节点写的清单两档齐、块都在:has 回 true(去重),resultFor 回那份清单,一块都不推
- *   X2  同上,但清单里没有小尺寸(产出方没做小尺寸):has 回 false,记 sink.has-miss { reason: 'local-small-missing' }
- *       —— 交给执行器从本机原尺寸补画小尺寸(不重渲原尺寸)
- *   X3  同上,清单两档齐,但素材服务上缺一张小位图:has 回 false,记 sink.has-miss { reason: 'blocks-missing', missing: 1 }
- *   X4  sink.has-miss 的其它原因:清单不在、对不上、不全、取清单出错(诊断;不改行为)
- *   X5  独立渲染主机的管线(没有推送队列)打开小尺寸(`enableSmallTier`):commitSnapshots 之后照样记下这一批的小尺寸,
- *       不进推送队列、不开 Chrome;`PROMPTCUT_SMALL_TIER=0` 仍能关
+ *   X1  Local coverage, missing small size; manifest written by another node in content store has
+ *       both tiers ready and chunks present: has returns true (deduplication), resultFor returns
+ *       that manifest, pushing no chunks at all
+ *   X2  Same as above, but manifest lacks small size (producer did not generate small size): has
+ *       returns false, records sink.has-miss { reason: 'local-small-missing' }
+ *       : handed over to executor to draw missing small size from local original size (no re-render
+ *       of original size)
+ *   X3  Same as above, manifest has both tiers ready, but asset service is missing one small
+ *       bitmap: has returns false, records sink.has-miss { reason: 'blocks-missing', missing: 1 }
+ *   X4  Other reasons for sink.has-miss: manifest missing, mismatch, incomplete, error fetching
+ *       manifest (diagnostics; no behavior change)
+ *   X5  Standalone render host pipeline (without push queue) enables small size (`enableSmallTier`):
+ *       records small size for this batch as usual after commitSnapshots, without entering push
+ *       queue and without opening Chrome; `PROMPTCUT_SMALL_TIER=0` can still disable it
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +36,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 const bakeryCalls = [];
-const refuse = (name) => (...args) => { bakeryCalls.push(name); void args; throw new Error(`单测不渲染(${name})`); };
+const refuse = (name) => (...args) => { bakeryCalls.push(name); void args; throw new Error(`Unit test does not render (${name})`); };
 mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: {
     openBakery: async (...a) => refuse('openBakery')(...a),
@@ -46,11 +58,12 @@ const htmlOf = (f) => Buffer.from(`<div>frame ${f}</div>`);
 const smallOf = (f) => Buffer.from(`RIFF-small-${f}`);
 
 const cleanups = [];
-after(async () => { for (const c of cleanups.reverse()) { try { await c(); } catch { /* 收拾失败不影响结论 */ } } });
+after(async () => { for (const c of cleanups.reverse()) { try { await c(); } catch { /* Cleanup failure does not affect outcome */ } } });
 
 /**
- * PC 的帧库替身:原尺寸按 `write` 写,小尺寸按 `writeSmall` 写(拉来的帧没有小尺寸);`smallTier` 决定管线开没开小尺寸
- * (PC 配了推送队列 = 开)。
+ * PC frame store mock: original size written via `write`, small size written via `writeSmall`
+ * (pulled frames lack small size); `smallTier` determines whether the pipeline enabled small size
+ * (PC configured with push queue = enabled).
  */
 function frameLibrary({ smallTier = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-xnode-'));
@@ -71,7 +84,7 @@ function frameLibrary({ smallTier = true } = {}) {
   };
 }
 
-/** 素材服务替身(按内容寻址) */
+/** Asset service mock (content-addressed) */
 function assetStore() {
   const blocks = new Map();
   const calls = { put: 0, uploaded: 0, has: 0 };
@@ -96,14 +109,14 @@ function contentStore({ failGet = false } = {}) {
     items,
     async put(kind, key, body) { items.set(`${kind}|${key}`, structuredClone(body)); },
     async get(kind, key) {
-      if (failGet) throw Object.assign(new Error('内容库 content.get:连接已断开'), { code: 'disconnected' });
+      if (failGet) throw Object.assign(new Error('Content store content.get: connection disconnected'), { code: 'disconnected' });
       const body = items.get(`${kind}|${key}`);
       return body ? { body: structuredClone(body) } : null;
     },
   };
 }
 
-/** 别的节点(host-a)产出、推送后写进内容库的清单:原尺寸 + (可选)小尺寸 */
+/** Manifest written to content store after output and push by another node (host-a): original size + (optional) small size */
 function otherNodeManifest(from, to, { small = true } = {}) {
   const frames = [], smalls = [];
   for (let f = from; f <= to; f++) {
@@ -122,9 +135,9 @@ const blocksOf = (from, to, { small = true } = {}) => {
 };
 const missLines = (logs) => logs.filter((l) => l.event === 'sink.has-miss').map((l) => l.fields);
 
-test('X1 本机覆盖、缺小尺寸,内容库里别的节点的清单两档齐、块都在:has 回 true(去重),resultFor 回那份清单,一块都不推', async () => {
+test('X1 Locally covered but missing the small size, while another node\'s manifest in the content store has both tiers and all chunks present: has returns true (dedup), resultFor returns that manifest, and not a single chunk is pushed', async () => {
   const lib = frameLibrary();
-  lib.write(0, 7); // 按清单拉来的原尺寸,没有小尺寸
+  lib.write(0, 7); // Original size pulled by manifest, without small size
   const store = assetStore();
   store.preload(blocksOf(0, 7));
   const content = contentStore();
@@ -132,14 +145,14 @@ test('X1 本机覆盖、缺小尺寸,内容库里别的节点的清单两档齐�
   await content.put('snapshot-manifest', manifestKeyOf(refOf(0, 7)), manifest);
   const logs = [];
   const sink = createAssetSink({ pipeline: lib.pipeline, client: store, content, log: (event, fields) => logs.push({ event, fields }) });
-  assert.equal(await sink.has(refOf(0, 7)), true, `应走去重:${JSON.stringify(missLines(logs))}`);
-  assert.equal(store.calls.put, 0, '一块都不推');
+  assert.equal(await sink.has(refOf(0, 7)), true, `Should take the dedup path: ${JSON.stringify(missLines(logs))}`);
+  assert.equal(store.calls.put, 0, 'Not a single chunk is pushed');
   const got = await sink.resultFor(refOf(0, 7));
-  assert.deepEqual(got, manifest, 'resultFor 回内容库里那份(带小尺寸)清单,不是本机现算的缺小尺寸的那份');
+  assert.deepEqual(got, manifest, 'resultFor returns the manifest from the content store (with the small size), not the one computed locally that lacks the small size');
   assert.equal(missLines(logs).length, 0);
 });
 
-test('X2 本机覆盖、缺小尺寸,清单里也没有小尺寸:has 回 false,记 sink.has-miss local-small-missing(交给执行器补画小尺寸)', async () => {
+test('X2 Locally covered but missing the small size, and the manifest has no small size either: has returns false and logs sink.has-miss local-small-missing (handing it to the executor to draw the small size)', async () => {
   const lib = frameLibrary();
   lib.write(0, 7);
   const store = assetStore();
@@ -152,10 +165,10 @@ test('X2 本机覆盖、缺小尺寸,清单里也没有小尺寸:has 回 false,�
   const [line] = missLines(logs);
   assert.equal(line?.reason, 'local-small-missing', JSON.stringify(logs));
   assert.equal(line.covered, true);
-  assert.equal(line.manifest, 'no-small', '写明内容库里那份清单为什么也不能用');
+  assert.equal(line.manifest, 'no-small', 'State why the manifest in the content store cannot be used either');
 });
 
-test('X3 本机覆盖、缺小尺寸,清单两档齐但素材服务上缺一张小位图:has 回 false,记 blocks-missing', async () => {
+test('X3 Locally covered but missing the small size, and the manifest has both tiers but one small bitmap is missing on the asset service: has returns false and logs blocks-missing', async () => {
   const lib = frameLibrary();
   lib.write(0, 7);
   const store = assetStore();
@@ -172,10 +185,10 @@ test('X3 本机覆盖、缺小尺寸,清单两档齐但素材服务上缺一张�
   assert.equal(line.errors, 0);
 });
 
-test('X4 sink.has-miss 的其它原因:清单不在、对不上、不全、取清单出错(本机没有这一段)', async () => {
+test('X4 Other reasons for sink.has-miss: manifest absent, mismatched, incomplete, or an error fetching the manifest (this machine does not have this segment)', async () => {
   const cases = [
     { name: 'manifest-missing', setup: async () => {} },
-    { name: 'manifest-mismatch', setup: async (c) => c.put('snapshot-manifest', manifestKeyOf(refOf(0, 7)), { ...otherNodeManifest(0, 7), resultKey: sha256('别的') }), field: /^resultKey:/ },
+    { name: 'manifest-mismatch', setup: async (c) => c.put('snapshot-manifest', manifestKeyOf(refOf(0, 7)), { ...otherNodeManifest(0, 7), resultKey: sha256('Other') }), field: /^resultKey:/ },
     { name: 'manifest-incomplete', setup: async (c) => c.put('snapshot-manifest', manifestKeyOf(refOf(0, 7)), { ...otherNodeManifest(0, 7), frames: otherNodeManifest(0, 7).frames.slice(0, 5) }) },
     { name: 'manifest-get-failed', failGet: true, setup: async () => {} },
   ];
@@ -193,7 +206,7 @@ test('X4 sink.has-miss 的其它原因:清单不在、对不上、不全、取�
     assert.equal(line.covered, false);
     if (k.field) assert.match(line.field, k.field);
   }
-  // 不给内容库
+  // Not given to content store
   const lib = frameLibrary();
   const logs = [];
   const sink = createAssetSink({ pipeline: lib.pipeline, client: assetStore(), log: (event, fields) => logs.push({ event, fields }) });
@@ -201,36 +214,36 @@ test('X4 sink.has-miss 的其它原因:清单不在、对不上、不全、取�
   assert.equal(missLines(logs)[0]?.reason, 'no-content');
 });
 
-/* ------------------------------------------------------------------ X5 独立渲染主机的管线打开小尺寸 */
+/* ------------------------------------------------------------------ X5 Standalone render host pipeline enables small size */
 
 const OWN_ENV = describeEnvironment({
   platform: 'win32', renderer: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)',
   vendor: 'Google Inc. (Google)', chromeVersion: 'HeadlessChrome/138.0.7204.49',
 });
 
-test('X5 没有推送队列的管线(独立渲染主机)打开小尺寸:commitSnapshots 之后记下这一批的小尺寸,不进推送队列、不开 Chrome', async () => {
+test('X5 A pipeline without a push queue (standalone render host) enables the small size: after commitSnapshots it records this batch\'s small sizes, without entering the push queue and without launching Chrome', async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'pc-xnode-host-'));
   const p = new FramePipeline({ root, origin: () => 'http://127.0.0.1:1', environment: OWN_ENV, dataRoot: root, interactive: false });
   cleanups.push(async () => { await p.close(); await fsp.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); });
   const args = { tier: 'shared', key: 'f'.repeat(64), clipId: 'c1', items: [{ localFrame: 0, html: '<div>0</div>' }, { localFrame: 1, html: '<div>1</div>' }] };
-  assert.equal(p.smallTierEnabled(), false, '缺省:没有推送队列就不开');
+  assert.equal(p.smallTierEnabled(), false, 'Default: without a push queue it is not enabled');
   await p.snapshots().commitSnapshots(args);
-  assert.equal(p.smallPending?.length ?? 0, 0, '没开时不记');
+  assert.equal(p.smallPending?.length ?? 0, 0, 'Nothing is recorded when it is not enabled');
   p.enableSmallTier();
-  assert.equal(p.smallTierEnabled(), false, '己二：小尺寸已停产，恒为 false');
-  assert.equal(p.pushQueue ?? null, null, '仍没有推送队列');
+  assert.equal(p.smallTierEnabled(), false, 'Ji-2: the small size has been discontinued, always false');
+  assert.equal(p.pushQueue ?? null, null, 'Still no push queue');
   const calls = bakeryCalls.length;
   await p.snapshots().commitSnapshots({ ...args, items: [{ localFrame: 2, html: '<div>2</div>' }] });
-  assert.equal(p.smallPending?.length ?? 0, 0, '停产后不再记小尺寸');
-  assert.equal(p.enqueueSnapshotPush(args), 0, '没有推送队列:不进队');
-  assert.equal(bakeryCalls.length, calls, '一次 openBakery 都没有');
-  assert.equal(p.scheduleSmallSnapshots({ ...args, adopted: true }), false, '拉来的帧照旧不排');
+  assert.equal(p.smallPending?.length ?? 0, 0, 'No small sizes are recorded after discontinuation');
+  assert.equal(p.enqueueSnapshotPush(args), 0, 'No push queue: nothing is enqueued');
+  assert.equal(bakeryCalls.length, calls, 'openBakery was never called');
+  assert.equal(p.scheduleSmallSnapshots({ ...args, adopted: true }), false, 'Pulled-in frames are still not scheduled');
   p.smallPending = [];
 });
 
-/* ------------------------------------------------------------------ X6 整条链:host 做完 → PC 拉原尺寸 → 重启 → PC 领到 */
+/* ------------------------------------------------------------------ X6 Full chain: host finishes → PC pulls original size → restart → PC claims */
 
-test('X6 整条链:host 两档做完推上去;PC 按清单拉原尺寸;队列重建(文档服务重启)后只有 PC 在,领到这一段以去重完成、执行器没调', async (t) => {
+test('X6 The whole chain: host finishes both tiers and pushes them up; PC pulls the original size per the manifest; after the queue is rebuilt (document service restart) only PC is present, claims this segment and completes it by dedup, and the executor is not called', async (t) => {
   const F = await import('./fake-artifact-fixtures.mjs');
   const { createAssetHarness } = await import('./fake-asset-service.mjs');
   const { createAssetClient } = await import('../asset-store/client.mjs');
@@ -242,7 +255,7 @@ test('X6 整条链:host 两档做完推上去;PC 按清单拉原尺寸;队列重
   const svc = await F.startServices(harness, (base) => createAssetClient({ base }));
   t.after(() => svc.cleanup());
 
-  // host-a:没有推送队列、打开小尺寸(修前没有这个开关,小尺寸文件由夹具直接写,模拟它已生成)
+  // host-a: no push queue, enables small size (before fix this switch did not exist; fixture wrote small size files directly to simulate generation)
   const A = roots.make(await roots.root());
   A.enableSmallTier?.();
   const task = F.snapshotTask({ contentKey: sha256('card-xnode'), from: 0, to: 29 });
@@ -251,17 +264,17 @@ test('X6 整条链:host 两档做完推上去;PC 按清单拉原尺寸;队列重
   for (const f of F.range(0, 29)) await fsp.writeFile(path.join(dirA, `${f}${SMALL_SUFFIX}`), smallOf(f));
   const putA = await T.createAssetSink({ pipeline: A, client: svc.client, content: svc.content }).put({ ...F.refOf(task), artifacts: null, meta: F.metaOf(task) });
   assert.equal(putA.complete, true, JSON.stringify(putA).slice(0, 300));
-  assert.equal(T.smallFramesOf(putA.result).length, 30, 'host 的清单两档齐');
+  assert.equal(T.smallFramesOf(putA.result).length, 30, 'The host\'s manifest has both tiers');
 
-  // PC:配着推送队列(小尺寸开);收 task.done 按清单拉 —— 只拉原尺寸
+  // PC: configured with push queue (small size enabled); receives task.done and pulls by manifest: pulls only original size
   const B = roots.make(await roots.root());
-  assert.equal(B.smallTierEnabled(), false, '已退役：小尺寸停产');
+  assert.equal(B.smallTierEnabled(), false, 'Retired: small size discontinued');
   await T.applyResult(B, svc.client, putA.result);
   const dirB = B.snapshots().dir({ tier: 'shared', key: task.resultKey });
-  assert.ok(fs.existsSync(path.join(dirB, '0.html')), 'PC 本机有原尺寸');
-  assert.ok(!fs.existsSync(path.join(dirB, `0${SMALL_SUFFIX}`)), 'PC 本机没有小尺寸(applyResult 不拉)');
+  assert.ok(fs.existsSync(path.join(dirB, '0.html')), 'PC has the original size locally');
+  assert.ok(!fs.existsSync(path.join(dirB, `0${SMALL_SUFFIX}`)), 'PC has no small size locally (applyResult does not pull it)');
 
-  // 文档服务重启:队列只在内存里,重建为空;发布方重新发布同一段;重启后只有 PC 的节点在
+  // Document service restart: queue exists in memory only and rebuilds empty; publisher republishes the same segment; after restart only PC node remains
   const { createRenderQueue } = await import('../render-queue/index.mjs');
   const { createLocalNode } = await import('../render-node/local-node.mjs');
   const { createLoopback } = await import('./fake-loopback-transport.mjs');
@@ -270,7 +283,7 @@ test('X6 整条链:host 两档做完推上去;PC 按清单拉原尺寸;队列重
   const lb = createLoopback();
   const queue = createRenderQueue({ now: clock.now, send: lb.queueSend, epoch: 'epoch-after-restart' });
   lb.attach(queue);
-  const exec = createFakeExecutor({ clock, planContext: () => { throw new Error('X6 不做 plan'); } });
+  const exec = createFakeExecutor({ clock, planContext: () => { throw new Error('X6 does not plan'); } });
   const page = lb.connect('conn-page', { userId: 'u1', tenantId: 't1' });
   const inbox = [];
   page.onMessage((m) => inbox.push(m));
@@ -297,14 +310,14 @@ test('X6 整条链:host 两档做完推上去;PC 按清单拉原尺寸;队列重
   const t0 = Date.now();
   while (!done() && Date.now() - t0 < 15_000) {
     lb.flush(); node.tick(); lb.flush(); queue.tick(); lb.flush();
-    await new Promise((resolve) => setTimeout(resolve, 5)); // sink.has 走真网络
+    await new Promise((resolve) => setTimeout(resolve, 5)); // sink.has uses real network
     clock.advance(200);
   }
   node.stop();
   lb.flush();
-  assert.ok(done(), `收到 task.done:${JSON.stringify(inbox.map((m) => m.type))};节点事件:${JSON.stringify(events).slice(0, 400)}`);
+  assert.ok(done(), `Received task.done: ${JSON.stringify(inbox.map((m) => m.type))}; node events: ${JSON.stringify(events).slice(0, 400)}`);
   assert.ok(events.some((e) => e.type === 'dedup' && e.id === task.id),
-    `以去重的方式完成:${JSON.stringify(events.map((e) => e.type))};${JSON.stringify(logs.filter((l) => l.event === 'sink.has-miss'))}`);
-  // 己二：小尺寸已停产；PC 本机原尺寸已齐走去重完成
-  assert.equal((done().result?.frames ?? []).length, 30, 'task.done 带的是 30 帧原尺寸清单');
+    `Completed via dedup: ${JSON.stringify(events.map((e) => e.type))}; ${JSON.stringify(logs.filter((l) => l.event === 'sink.has-miss'))}`);
+  // Ji-2: small size discontinued; PC local original size is complete, completes via deduplication
+  assert.equal((done().result?.frames ?? []).length, 30, 'task.done carries a manifest of 30 frames at the original size');
 });

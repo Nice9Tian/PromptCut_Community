@@ -2,11 +2,12 @@ import { useSyncExternalStore } from "react";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 听写引擎安装任务的共享状态。
+ * Shared state of the speech-to-text engine install job.
  *
- * 装引擎有两个入口 —— 启动时的缺依赖提示、AI 通过 MCP 调 stt_install ——
- * 而进度要显示在第三个地方(聊天窗口里的进度控件)。三边不在同一棵组件树上,
- * 所以放一个模块级的小 store,谁写谁读各管各的。
+ * Installing the engine has two entry points (the missing-dependency prompt at startup, and the AI
+ * calling stt_install through MCP), while progress has to be shown in a third place (the progress
+ * control in the chat window). The three are not in the same component tree, so a small
+ * module-level store is used, where whoever writes and whoever reads each do their own thing.
  */
 
 export type InstallPhase = "starting" | "resolving" | "downloading" | "installing" | "done" | "failed";
@@ -15,14 +16,17 @@ export interface InstallJob {
   jobId: string;
   engine: string;
   phase: InstallPhase;
-  /** 当前在处理哪个包 */
+  /** Which package is currently being processed */
   currentPackage?: string;
-  /** 当前这个包的下载进度(MB)。只有 pip 打出 "12.3/45.6 MB" 这类行时才有 */
+  /** Download progress of the current package (MB). Present only when pip prints a line like "12.3/45.6 MB" */
   gotMB?: number;
   totalMB?: number;
-  /** 已经开始下载过的包数量 */
+  /** Number of packages whose download has started */
   downloaded: number;
-  /** pip 解完依赖后会一次列全要装的包,这个数到那时才知道 */
+  /**
+   * After pip resolves the dependencies it lists all the packages to install at once; this number is
+   * only known at that point
+   */
   packageCount?: number;
   startedAt: number;
   finishedAt?: number;
@@ -35,7 +39,7 @@ const listeners = new Set<() => void>();
 let snapshot: InstallJob[] = [];
 
 function emit() {
-  // useSyncExternalStore 要求快照引用稳定,所以每次变更重建数组
+  // useSyncExternalStore requires a stable snapshot reference, so the array is rebuilt on every change
   snapshot = [...jobs.values()].sort((a, b) => a.startedAt - b.startedAt);
   for (const fn of listeners) fn();
 }
@@ -47,7 +51,7 @@ export function subscribe(fn: () => void) {
 
 export const getJobs = (): InstallJob[] => snapshot;
 export const getJob = (jobId: string): InstallJob | undefined => jobs.get(jobId);
-/** 正在跑的那个。同一时刻只允许一个安装,所以最多一个 */
+/** The one that is running. Only one install is allowed at a time, so there is at most one */
 export const runningJob = (): InstallJob | undefined =>
   snapshot.find((j) => j.phase !== "done" && j.phase !== "failed");
 
@@ -70,13 +74,16 @@ export function finishJob(jobId: string, ok: boolean, error?: string) {
 const UNIT_MB: Record<string, number> = { kB: 1 / 1024, KB: 1 / 1024, MB: 1, GB: 1024 };
 
 /**
- * 从一行 pip 输出里读出阶段。
+ * Reads the stage from one line of pip output.
  *
- * 只认 pip 真的会打出来的东西,不编百分比。要装多少个包在 pip 解完依赖之前
- * 谁也不知道(传递依赖),所以整体百分比没有诚实的算法;唯一有真分母的是
- * **当前这个文件**的下载字节数,pip 会打成 "12.3/45.6 MB"。
- * 「Installing collected packages」到「Successfully installed」之间 pip 一行不打,
- * 所以那一段只能是不确定态动画 —— 硬做成进度条就是个卡在 0% 的假条。
+ * Only what pip really prints is recognized; no percentages are invented. How many packages will be
+ * installed is unknown to anyone before pip finishes resolving dependencies (transitive
+ * dependencies), so there is no honest algorithm for an overall percentage; the only thing with a
+ * real denominator is the download byte count of **the current file**, which pip prints as
+ * "12.3/45.6 MB".
+ * Between "Installing collected packages" and "Successfully installed" pip prints nothing, so that
+ * stretch can only be an indeterminate animation; forcing it into a progress bar would give a fake
+ * bar stuck at 0%.
  */
 export function feedLine(jobId: string, rawLine: string) {
   const job = jobs.get(jobId);
@@ -92,15 +99,15 @@ export function feedLine(jobId: string, rawLine: string) {
     job.phase = "resolving";
     job.currentPackage = m[1];
     job.gotMB = job.totalMB = undefined;
-    // 末尾的 (?=\s|$) 很关键:pip 解依赖时会先拉 "xxx.whl.metadata",
-    // 那不是包体,漏了这个前瞻会把每个包数成两次。
+    // The trailing (?=\s|$) is crucial: while resolving dependencies pip first fetches "xxx.whl.metadata",
+    // which is not the package body, and without this lookahead every package would be counted twice.
   } else if ((m = line.match(/^\s*Downloading\s+([^\s/\\]+?)(?:-[\d][^\s]*?)?\.(?:whl|tar\.gz)(?=\s|$)/))) {
     job.phase = "downloading";
     job.currentPackage = m[1];
     job.downloaded += 1;
     job.gotMB = job.totalMB = undefined;
   } else if ((m = line.match(/([\d.]+)\s*\/\s*([\d.]+)\s*(kB|KB|MB|GB)/))) {
-    // pip 的下载进度行,当前文件真实的已下载/总量
+    // pip's download progress line: the real downloaded / total size of the current file
     const unit = UNIT_MB[m[3]] ?? 1;
     job.gotMB = parseFloat(m[1]) * unit;
     job.totalMB = parseFloat(m[2]) * unit;
@@ -119,8 +126,10 @@ export function feedLine(jobId: string, rawLine: string) {
 }
 
 /**
- * 0-1 的进度,**只在真的知道分母时**返回数字,其余返回 null 让界面走不确定态。
- * 下载阶段给的是当前这个文件的进度,不是整体进度 —— 界面上要如实标出来。
+ * Progress from 0 to 1; **it returns a number only when the denominator is really known**, and
+ * otherwise returns null so the UI goes into the indeterminate state.
+ * During the download stage it gives the progress of the current file, not the overall progress, and
+ * the UI must label that truthfully.
  */
 export function fractionOf(job: InstallJob): number | null {
   if (job.phase === "done") return 1;
@@ -130,7 +139,10 @@ export function fractionOf(job: InstallJob): number | null {
   return null;
 }
 
-/** 给界面用的一句话说明,和进度条分开:说清现在到底在干什么 */
+/**
+ * A one-sentence description for the UI, separate from the progress bar: it says clearly what is
+ * actually going on right now
+ */
 export function describe(job: InstallJob): string {
   switch (job.phase) {
     case "starting":
@@ -151,18 +163,21 @@ export function describe(job: InstallJob): string {
 }
 
 /**
- * 把一次 stt_install 工具调用对上它的安装任务。
+ * Matches a stt_install tool call to its install job.
  *
- * jobId 在工具的**返回值**里(stt_install 立刻返回 jobId 就走了),所以调用刚发出、
- * 结果还没回来的那一小会儿匹配不到 —— 这时退回「当前正在跑的那个安装」,
- * 因为同一时刻只允许一个安装。历史消息里的调用则靠 summary 里的 jobId 精确对上,
- * 这样翻旧对话时看到的是当时那次安装的最终状态,不会串到后来的新安装上。
+ * The jobId is in the tool's **return value** (stt_install returns the jobId immediately and is
+ * done), so in the short moment right after the call is sent and before the result comes back there
+ * is nothing to match; at that point it falls back to "the install currently running", because only
+ * one install is allowed at a time. A call in a historical message is matched exactly by the jobId in
+ * its summary, so that when browsing an old chat you see the final state of the install from back
+ * then, and it does not get mixed up with a later new install.
  */
 export function matchInstallJob(
   tool: { name: string; summary?: string; ok?: boolean },
   list: InstallJob[],
 ): InstallJob | undefined {
-  // Claude Code 报上来的工具名带 mcp__promptcut__ 前缀,别家是裸名;两种都要认
+  // Tool names reported by Claude Code carry the mcp__promptcut__ prefix, while other providers use
+  // the bare name; both must be recognized
   if (tool.name.replace(/^mcp__.+?__/, "") !== "stt_install") return undefined;
   const id = typeof tool.summary === "string" ? tool.summary.match(/install-[a-z-]+-[a-z0-9]+/i)?.[0] : undefined;
   if (id) return list.find((j) => j.jobId === id);

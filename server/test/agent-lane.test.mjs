@@ -1,12 +1,14 @@
 /*
- * T1a 审查 #12:Agent lane 只有一个入队口(`FramePipeline.runAgentTask`)。
+ * T1a review #12: Agent lane has only one enqueue entry point (`FramePipeline.runAgentTask`).
  *
- * `see_frames` 的 agent 批、`layout`、`entityRects`、`/api/cards/dom`(经 runAgentTask 的 work)
- * 交错着进来时必须**串行**:同一时刻至多一个任务拿着 agent lane 的 bakery。以前 `/api/cards/dom`
- * 另有一条 `domChain` 和自己的 Chrome,和在飞的 see_frames 能同时驱动页面。
+ * When the agent batch of `see_frames`, `layout`, `entityRects`, and `/api/cards/dom` (work via
+ * runAgentTask) arrive interleaved, they must be **serialized**: at any moment, at most one task
+ * holds the agent lane's bakery. Previously, `/api/cards/dom` had a separate `domChain` and its own
+ * Chrome, which could drive the page simultaneously with in-flight see_frames.
  *
- * 浏览器全部替掉:`acquire` 记「借出」,`release` 记「还回」,借出期间再借一次就是重叠。
- * 跑法:`node --experimental-test-module-mocks --test server/test/agent-lane.test.mjs`
+ * All browsers replaced: `acquire` records "check out", `release` records "return", acquiring
+ * again during check out is an overlap.
+ * Run: `node --experimental-test-module-mocks --test server/test/agent-lane.test.mjs`
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,7 +42,7 @@ const project = {
   media: [],
 };
 
-/** 只挡住磁盘和浏览器;runAgentTask / layout / entityRects / see_frames 的排队本身跑真的 */
+/** Only intercept disk and browser; queuing for runAgentTask / layout / entityRects / see_frames itself runs for real */
 function harness() {
   const service = new FramePipeline({ root: '.', origin: () => '' });
   const entry = { key: 'k', project, dir: '.', html: new Map(), controls: new Map(), recordVersion: 0 };
@@ -49,7 +51,7 @@ function harness() {
   const bakery = { page: { evaluate: async () => [] } };
   service.entry = async () => entry;
   service.save = async () => {};
-  // 这里每个任务只借一次,所以「借出未还」的计数 > 1 就是两个任务重叠
+  // Here each task checks out only once, so a "checked out but not returned" count > 1 means two tasks overlap
   service.acquire = async lane => {
     assert.equal(lane, 'agent');
     acquires++; out++; max = Math.max(max, out);
@@ -57,10 +59,11 @@ function harness() {
     return bakery;
   };
   service.release = lane => { assert.equal(lane, 'agent'); releases++; out--; };
-  // see_frames 的 agent 批:读帧核心换成「借一下、干一会儿」,看它是不是拿着 runAgentTask 给的 lease 进来
+  // agent batch of see_frames: frame-reading core replaced with "borrow briefly, do work for a while",
+  // check if it enters holding the lease given by runAgentTask
   service.readFramesCore = async (_entry, frames, lane, _signal, _onSession, _onFrame, lease) => {
     assert.equal(lane, 'agent');
-    assert.equal(typeof lease, 'function', 'agent 批必须经 runAgentTask 拿 lease,不能自己 acquire');
+    assert.equal(typeof lease, 'function', 'an agent batch must get its lease via runAgentTask and must not acquire by itself');
     await lease(project);
     log.push('see:start'); await sleep(20); log.push('see:end');
     return new Map(frames.map(n => [n, { buf: Buffer.alloc(0), source: 'mov' }]));
@@ -68,14 +71,15 @@ function harness() {
   return { service, log, stats: () => ({ max, acquires, releases }) };
 }
 
-test('see_frames / layout / entityRects / DOM 查询交错到达时串行执行,同一时刻只有一个任务拿着 bakery', async () => {
+test('when see_frames / layout / entityRects / DOM queries arrive interleaved they run serially, and only one task holds the bakery at any moment', async () => {
   const { service, log, stats } = harness();
   const dom = label => service.runAgentTask(async lease => {
     await lease(project, { asIs: true });
     log.push(`${label}:start`); await sleep(10); log.push(`${label}:end`);
     return label;
   });
-  // 交错:DOM 先到,see_frames(12 ms 攒批)、layout、entityRects、第二个 DOM 紧跟着进来
+  // Interleaved: DOM arrives first; see_frames (12 ms batching), layout, entityRects,
+  // and second DOM follow immediately
   const results = await Promise.all([
     dom('dom1'),
     service.see_frames(project, [0.5, 1]),
@@ -87,22 +91,23 @@ test('see_frames / layout / entityRects / DOM 查询交错到达时串行执行,
   assert.equal(results[0], 'dom1');
   assert.equal(results[4], 'dom2');
   assert.equal(stats().max, 1);
-  // 每个任务都借过、也都还了。两个 see_frames 在同一个 12 ms 窗口里到达,合成一批(一个任务):
-  // dom1、see 批、layout、entityRects、dom2 = 5 个任务
+  // Every task checked out and returned. Two see_frames arrived in the same 12 ms window,
+  // merged into one batch (one task):
+  // dom1, see batch, layout, entityRects, dom2 = 5 tasks
   assert.equal(stats().acquires, 5);
   assert.equal(stats().releases, 5);
   assert.equal(log.filter(x => x === 'see:start').length, 1);
-  // 记了日志的三个任务:开始和结束两两相邻,中间没有别人插进来
+  // The three logged tasks: start and end are pairwise adjacent, with no other task interleaved in between
   for (let i = 0; i < log.length; i += 2) {
     assert.match(log[i], /:start$/);
     assert.equal(log[i + 1], log[i].replace(':start', ':end'));
   }
 });
 
-test('编辑器进程(interactive: false)没有 Agent lane:四条路都回 503 NO_AGENT_LANE,不借 bakery', async () => {
+test('the editor process (interactive: false) has no Agent lane: all four routes return 503 NO_AGENT_LANE and do not borrow the bakery', async () => {
   const service = new FramePipeline({ root: '.', origin: () => '', interactive: false });
   service.entry = async () => ({ key: 'k', project, dir: '.', html: new Map(), controls: new Map() });
-  service.acquire = async () => { throw new Error('编辑器进程不该开 Chrome'); };
+  service.acquire = async () => { throw new Error('the editor process must not open Chrome'); };
   for (const run of [
     () => service.runAgentTask(async () => 'x'),
     () => service.layout(project, { t: 0, clipIds: ['card-a'] }),
@@ -113,7 +118,7 @@ test('编辑器进程(interactive: false)没有 Agent lane:四条路都回 503 N
   }
 });
 
-test('一个任务出错不堵后面的任务;出错的任务照样还 bakery', async () => {
+test('a failing task does not block the tasks behind it; the failing task still returns the bakery', async () => {
   const { service, stats } = harness();
   const failed = service.runAgentTask(async lease => { await lease(project); throw new Error('boom'); });
   const next = service.runAgentTask(async lease => { await lease(project); return 'ok'; });
@@ -122,7 +127,7 @@ test('一个任务出错不堵后面的任务;出错的任务照样还 bakery', 
   assert.equal(stats().releases, 2);
 });
 
-test('没借过 bakery 的任务不还(只问素材段的 layout 不开浏览器)', async () => {
+test('a task that never borrowed the bakery does not return it (asking only for the layout of a media clip does not open a browser)', async () => {
   const { service, stats } = harness();
   const mediaOnly = { ...project, tracks: [{ id: 't1', clips: [{ id: 'm1', start: 0, end: 4 }] }] };
   const out = await service.layout(mediaOnly, { t: 0, clipIds: ['m1'] });
@@ -131,7 +136,7 @@ test('没借过 bakery 的任务不还(只问素材段的 layout 不开浏览器
   assert.equal(stats().releases, 0);
 });
 
-test('release(agent) 起 10 分钟空闲计时器,再借就清掉;到点关掉并从 lanes 里删', async () => {
+test('release(agent) starts a 10-minute idle timer, which is cleared on the next borrow; when it expires, the lane is closed and removed from lanes', async () => {
   const service = new FramePipeline({ root: '.', origin: () => '' });
   let closed = 0;
   const session = { bakery: { close: async () => { closed++; } } };

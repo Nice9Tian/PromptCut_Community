@@ -4,13 +4,17 @@ import "./railOverflow.css";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * rail 竖向放不下时的收纳:最后一格换成「▾ n」,点开一个贴着 rail 弹出的子窗口,列出放不下的项。
- * rail 上半截(分区 / 剧本 / Agent,RailBar)和时间轴旁边的剪辑组(CutTabs)共用。
+ * Overflow handling when the rail is too short vertically: the last slot becomes "▾ n", and clicking it opens
+ * a popover attached to the rail that lists the items that do not fit.
+ * Shared by the upper half of the rail (sections / script / Agent, RailBar) and the cut group beside the
+ * timeline (CutTabs).
  */
 
 /**
- * el 的顶边到它所在滚动列表(父元素)底边还剩多高。列表尺寸变了(窗口缩放、时间轴拖高)就重算。
- * 只用 offsetTop 的差,不用绝对坐标:卡片入场有一段上浮动画,量绝对位置会量到动画中途。
+ * How much height is left from the top edge of el to the bottom edge of the scrolling list (its parent) it is
+ * in. Recomputed when the list size changes (window resize, timeline dragged taller).
+ * Uses only the difference of offsetTop, not absolute coordinates: cards have a rise-up entrance animation,
+ * and measuring absolute positions would catch it mid-animation.
  */
 export function useRoomBelow(ref: React.RefObject<HTMLElement | null>, list: () => HTMLElement | null | undefined): number {
   const [room, setRoom] = useState(Infinity);
@@ -26,13 +30,13 @@ export function useRoomBelow(ref: React.RefObject<HTMLElement | null>, list: () 
     const ro = new ResizeObserver(measure);
     ro.observe(box);
     return () => ro.disconnect();
-    // list 是取元素的函数,每次渲染都是新的;只按 ref 挂一次
+    // list is a function that fetches the elements and is new on every render; attach it only once by ref
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref]);
   return room;
 }
 
-/** 「▾ n」按钮高 24 + 间距 4 */
+/** The "▾ n" button is 24 high + 4 spacing */
 export const RAIL_MORE_H = 28;
 
 export const RailMoreButton = forwardRef<
@@ -60,8 +64,10 @@ export const RailMoreButton = forwardRef<
 });
 
 /**
- * 子窗口:贴着「▾」按钮、朝 rail 里侧(左 rail 往右、右 rail 往左)弹出,底边和按钮底边对齐(放不下就往上挪)。
- * portal 到 body,不被 rail 列表的 overflow 裁掉;点外面或 Esc 关。
+ * Popover: attached to the "▾" button, pops out toward the inside of the rail (rightward for the left rail,
+ * leftward for the right rail), with its bottom edge aligned to the button's bottom edge (shifted up if it
+ * does not fit).
+ * Portaled to body so the overflow of the rail list does not clip it; closes on click outside or Esc.
  */
 export function RailOverflowMenu({
   anchor,

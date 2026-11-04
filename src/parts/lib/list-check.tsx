@@ -5,8 +5,8 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 逐条打勾的清单:从 checklist 卡片拆出。
- * 每条带圆圈和打勾动画，行间隔决定进场和打勾时机。
+ * Checklist with item-by-item checkmarks: extracted from checklist card.
+ * Each item has a circle and checkmark animation; line interval determines entrance and checkmark timing.
  */
 interface Params {
   items: string;
@@ -83,10 +83,10 @@ function ChecklistPart({ params, width, height }: PartProps<Params>) {
 
 export const listCheck: PartDef<Params> = {
   id: "list-check",
-  name: "清单打勾",
-  description: "逐条划入并打勾的清单项",
-  useWhen: "口播在罗列并列要点、事项清单或检查清单时使用，每项带圆圈打勾动效；条目之间若无打勾仪式感、仅需简洁条形展示时用 list-pins。",
-  tags: ["清单", "打勾", "列表", "要点", "罗列"],
+  name: "Checklist ticks",
+  description: "Checklist items that wipe in one by one and get ticked",
+  useWhen: "Use when the narration lists parallel key points, to-do items or a checklist; each item gets a circle tick animation. If the items need no tick ceremony and just a simple bar display, use list-pins.",
+  tags: ["Checklist", "tick", "List", "Key points", "list"],
   role: "list",
   from: "checklist",
   defaults: {
@@ -96,10 +96,10 @@ export const listCheck: PartDef<Params> = {
     accent: "",
   },
   controls: [
-    { key: "items", label: "条目(竖线分隔)", type: "text", required: true },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 160, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
-    { key: "stepMs", label: "行间隔(ms)", type: "number", min: 0, max: 2000, step: 20 },
-    { key: "accent", label: "主色(留空用主题色)", type: "color" },
+    { key: "items", label: "Items (separated by vertical bars)", type: "text", required: true },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 160, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
+    { key: "stepMs", label: "Row interval (ms)", type: "number", min: 0, max: 2000, step: 20 },
+    { key: "accent", label: "Main color (leave empty to use theme color)", type: "color" },
   ],
   defaultFrame: { x: 460, y: 220, w: 1000, h: 640 },
   settleMs: (p) => (Math.max(1, p.items.split("|").filter(Boolean).length) - 1) * p.stepMs + 650,

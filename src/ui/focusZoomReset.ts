@@ -1,22 +1,26 @@
 /**
- * 手机浏览器点输入框时会自动放大页面(iOS Safari 遇到字号小于 16px 的输入框就放大),输入完失焦后却不缩回,
- * 页面一直停在放大状态。两道防线:
+ * Mobile browsers automatically zoom in the page when an input box is tapped (iOS Safari zooms in on an
+ * input box whose font size is below 16px), but do not zoom back out after the input loses focus, so the
+ * page stays zoomed in. Two lines of defense:
  *
- * 1. `index.css` 在触屏设备上把输入框字号抬到不小于 16px,浏览器就不触发聚焦放大;
- * 2. 本文件兜底:输入框失焦、焦点没落到另一个输入框上,而页面仍是放大的,就临时给 viewport 加
- *    `maximum-scale=1` 把缩放拉回 100%,稍后恢复原样(恢复后用户照旧能双指放大页面)。
+ * 1. `index.css` raises the input font size to at least 16px on touch devices, so the browser does not
+ *    trigger the focus zoom;
+ * 2. This file is the fallback: when an input loses focus, focus did not land on another input, and the
+ *    page is still zoomed in, it temporarily adds `maximum-scale=1` to the viewport to pull the zoom back
+ *    to 100%, then restores it shortly afterwards (after the restore the user can still pinch-zoom the
+ *    page as usual).
  *
- * 纯逻辑在 `planReset`,单测 `focusZoomReset.test.mjs`。
+ * The pure logic is in `planReset`, with unit test `focusZoomReset.test.mjs`.
  */
 
-/** 页面缩放高于这个值才算「放大着」(留一点浮点余量) */
+/** The page counts as "zoomed in" only above this scale (leaving a little floating-point margin) */
 export const ZOOMED_SCALE = 1.01;
-/** 失焦后等这么久再判断:焦点可能正从一个输入框挪到下一个 */
+/** After losing focus, wait this long before judging: focus may be moving from one input to the next */
 export const SETTLE_MS = 60;
-/** 加上 `maximum-scale=1` 之后保持这么久再恢复,给浏览器时间把缩放拉回来 */
+/** After adding `maximum-scale=1`, hold for this long before restoring, to give the browser time to pull the zoom back */
 export const RESTORE_MS = 400;
 
-/** 会唤起键盘、可能触发聚焦放大的元素 */
+/** Elements that bring up the keyboard and may trigger the focus zoom */
 export function isTextEntry(el: { tagName?: string; type?: string; isContentEditable?: boolean } | null | undefined): boolean {
   if (!el || !el.tagName) return false;
   if (el.isContentEditable) return true;
@@ -27,14 +31,14 @@ export function isTextEntry(el: { tagName?: string; type?: string; isContentEdit
   return !["button", "submit", "reset", "checkbox", "radio", "range", "color", "file", "image", "hidden"].includes(t);
 }
 
-/** 原 viewport 内容加上 `maximum-scale=1`;已有的 maximum-scale 换掉 */
+/** The original viewport content plus `maximum-scale=1`; an existing maximum-scale is replaced */
 export function clampedViewport(base: string): string {
   const parts = base.split(",").map((s) => s.trim()).filter((s) => s && !/^maximum-scale\s*=/i.test(s));
   parts.push("maximum-scale=1");
   return parts.join(", ");
 }
 
-/** 失焦稳定之后要不要把缩放拉回 100% */
+/** Whether to pull the zoom back to 100% once the focus loss has settled */
 export function planReset(scale: number | undefined, activeIsTextEntry: boolean): boolean {
   if (activeIsTextEntry) return false;
   return typeof scale === "number" && scale > ZOOMED_SCALE;
@@ -42,7 +46,7 @@ export function planReset(scale: number | undefined, activeIsTextEntry: boolean)
 
 let installed = false;
 
-/** 装一次即可(`main.tsx` 调);没有 visualViewport 或 viewport meta 的环境什么都不做 */
+/** Install once and that is enough (called by `main.tsx`); in an environment without visualViewport or a viewport meta, it does nothing */
 export function installFocusZoomReset(): void {
   if (installed || typeof window === "undefined" || typeof document === "undefined") return;
   installed = true;

@@ -1,38 +1,48 @@
 /**
- * 共享项目的 HTTP 端点（契约 `docs/plan/auth-contract.md` 第 4 节）。
+ * HTTP endpoints for shared projects (contract `docs/plan/auth-contract.md` section 4).
  *
- * | 端点 | 说明 |
+ * | Endpoint | Description |
  * |---|---|
- * | `POST shared/create` | 建项目，客户端交派生好的 `K`；201 / 400 / 403 / 409 / 429 |
- * | `GET shared/lookup?name=` | 按名字查项目 id；200 / 404 |
- * | `POST shared/challenge` | 取进入挑战；200 / 400 / 404 / 429 |
- * | `POST shared/invite/resolve` | 凭邀请码查项目（C10a）：200 / 404 `invite-invalid` / 429 |
- * | `POST shared/invite/redeem` | 凭邀请码兑换（C10a）：200 / 400 / 401 `banned` / 404 `invite-invalid` / 429 |
- * | `POST shared/verify` | 〔裁〕核对一份进入证明（`claude/join-error`）：200 / 400 / 401 / 429 |
- * | `POST shared/service-challenge` | 托管方服务取握手挑战（`docs/plan/hosted-render-contract.md` 第 1.2 节）：200 / 400 / 429；组装方没给登记表时 404 |
+ * | `POST shared/create` | Create project, client provides derived `K`; 201 / 400 / 403 / 409 / 429 |
+ * | `GET shared/lookup?name=` | Look up project id by name; 200 / 404 |
+ * | `POST shared/challenge` | Fetch entry challenge; 200 / 400 / 404 / 429 |
+ * | `POST shared/invite/resolve` | Look up project by invite code (C10a): 200 / 404 `invite-invalid` / 429 |
+ * | `POST shared/invite/redeem` | Redeem by invite code (C10a): 200 / 400 / 401 `banned` / 404 `invite-invalid` / 429 |
+ * | `POST shared/verify` | [ruling] Verify an entry proof (`claude/join-error`): 200 / 400 / 401 / 429 |
+ * | `POST shared/service-challenge` | Host service fetches handshake challenge (`docs/plan/hosted-render-contract.md` section 1.2): 200 / 400 / 429; 404 when assembler provides no registry |
  *
- * `shared/verify`〔裁〕：体 `{ protocols: [...] }` 就是 WebSocket 握手要给的子协议列表，其中必须有证明
- * （`promptcut.auth.…`），交给与握手**同一个** `authenticate` 核对：过了回 200 `{ ok: true }`，不过回 401 `unauthorized`
- * （与握手一样不说原因）。证明里的 nonce 照样用掉、失败照样计入限速。用处：浏览器里 WebSocket 握手被 401 拒和根本没连上
- * 看起来一样（都是 1006），页面进不去时拿一份新证明来问一次，分清「用户名或密码不对」与「连不上服务器」。
- * 组装方不给 `authenticate` 时本端点回 404（与没有这个端点的旧服务一样）。
+ * `shared/verify` [ruling]: body `{ protocols: [...] }` is the subprotocol list to be provided for the
+ * WebSocket handshake, which must contain the proof (`promptcut.auth.…`), submitted for verification
+ * to the **same** `authenticate` as the handshake: returns 200 `{ ok: true }` if passed, returns 401
+ * `unauthorized` if not (giving no reason, same as the handshake). The nonce in the proof is consumed
+ * as usual, and failure counts toward rate limiting as usual. Purpose: in browsers, a WebSocket
+ * handshake rejected with 401 and failing to connect at all look identical (both are 1006); when
+ * unable to enter the page, query once with a new proof to distinguish "wrong username or password"
+ * from "cannot connect to server". When the assembler does not provide `authenticate`, this endpoint
+ * returns 404 (same as old services without this endpoint).
  *
- * 独立模式挂在文档服务自己的 http 服务器上（路径 `/shared/…`），挂载模式挂在 `<WS 路径>/shared/…`
- * （vite 里是 `/docservice/shared/…`）。本模块只认调用方给的前缀，其余路径一概不碰。
+ * Standalone mode is mounted on the document service's own HTTP server (path `/shared/…`), and
+ * attached mode is mounted on `<WS path>/shared/…` (in vite it is `/docservice/shared/…`). This module
+ * only recognizes the prefix given by the caller, and leaves all other paths untouched.
  *
- * 全部回 JSON、`Cache-Control: no-store`、`Access-Control-Allow-Origin: *`（不带凭证），答 `OPTIONS` 预检。
- * 请求体上限 64 KiB，超出回 413。错误统一为 `{ ok: false, error: '<原因>' }`。
+ * All return JSON, `Cache-Control: no-store`, `Access-Control-Allow-Origin: *` (without credentials),
+ * answering `OPTIONS` preflight. Request body limit is 64 KiB, returning 413 if exceeded. Errors
+ * uniformly return `{ ok: false, error: '<reason>' }`.
  *
- * 谁能建〔裁〕：
- * - 托管端（`mode: 'hosted'`，独立模式）：任何来源都能建；同一来源每小时最多 10 个，整台服务最多 1000 个，超出 429；
- * - 局域网主机（`mode: 'lan'`，挂载模式）：只有本机回环来源能建，别的 403。
+ * Who can create [ruling]:
+ * - Hosted side (`mode: 'hosted'`, standalone mode): any origin can create; maximum 10 per hour from
+ *   the same origin, maximum 1000 across the entire service, returns 429 if exceeded;
+ * - LAN host (`mode: 'lan'`, attached mode): only local loopback origins can create, others get 403.
  *
- * 回环来源（`isLoopback`）：局域网主机只让回环建项目；回环的挑战、邀请码失败不计入限速。本机信任关掉时
- * （`PROMPTCUT_TRUST_LOOPBACK=0`，托管端在反向代理之后，`docs/plan/http-transport-contract.md` 第 10 节），
- * 组装方（`createSharedDocService`）传进来的 `isLoopback` 一律回 false，回环与别的来源一样受限。
+ * Loopback origins (`isLoopback`): LAN host only allows loopback to create projects; loopback
+ * challenge and invite code failures do not count toward rate limiting. When local trust is disabled
+ * (`PROMPTCUT_TRUST_LOOPBACK=0`, hosted side behind reverse proxy,
+ * `docs/plan/http-transport-contract.md` section 10), `isLoopback` passed in by the assembler
+ * (`createSharedDocService`) always returns false, and loopback is restricted like any other origin.
  *
- * 名单外的用户名（以及 `as: 'creator'` 而不是创建者）回伪盐：`HMAC-SHA256(serverSecret, projectId + '\n' + username)`
- * 的前 16 字节，同一用户名每次都一样，形状与真盐相同。
+ * Usernames not on the list (and `as: 'creator'` when not the creator) return pseudo-salt: first 16
+ * bytes of `HMAC-SHA256(serverSecret, projectId + '\n' + username)`, identical every time for the same
+ * username, with the same shape as a real salt.
  */
 import { createHmac } from 'node:crypto';
 import {
@@ -66,7 +76,7 @@ const fail = (res, status, error) => send(res, status, { ok: false, error });
 
 class TooLarge extends Error {}
 
-/** 读请求体（上限 maxBody）；超出抛 TooLarge */
+/** Read request body (limit maxBody); throws TooLarge if exceeded */
 function readBody(req, maxBody) {
   return new Promise((resolve, reject) => {
     const declared = Number(req.headers['content-length']);
@@ -101,11 +111,14 @@ function readBody(req, maxBody) {
 }
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-/** 成员能用的用户名：形状对，且不是留给服务身份的 `service:` 开头（`hosted-render-contract.md` 第 1.4 节） */
+/**
+ * Usernames usable by members: correct shape, and not starting with `service:` reserved for service
+ * identity (`hosted-render-contract.md` section 1.4)
+ */
 const isUsername = (v) => isUsernameShape(v) && !isReservedUsername(v);
 const isCred = (v) => isObj(v) && isB64Bytes(v.salt, SALT_BYTES) && isB64Bytes(v.key, KEY_BYTES);
 
-/** 校验 `shared/create` 的请求体；合格回规整后的对象，否则 null */
+/** Validate request body of `shared/create`; returns normalized object if valid, otherwise null */
 export function parseCreate(body) {
   if (!isObj(body)) return null;
   const { name, mode, kdf, creator, project, list } = body;
@@ -130,7 +143,7 @@ export function parseCreate(body) {
   return out;
 }
 
-/** 校验名单（`set-list` 也用）：`[{ username, salt, key }]`，不重名、不含创建者 */
+/** Validate list (also used by `set-list`): `[{ username, salt, key }]`, no duplicate names, no creator */
 export function parseList(list, creatorName) {
   if (!Array.isArray(list) || list.length > 1000) return null;
   const seen = new Set([creatorName]);
@@ -145,14 +158,14 @@ export function parseList(list, creatorName) {
 
 export { isCred };
 
-/** 伪盐：`HMAC-SHA256(serverSecret, projectId + '\n' + username)` 的前 16 字节 */
+/** Pseudo-salt: first 16 bytes of `HMAC-SHA256(serverSecret, projectId + '\n' + username)` */
 export function fakeSalt(serverSecret, projectId, username) {
   return createHmac('sha256', serverSecret).update(`${projectId}\n${username}`, 'utf8').digest().subarray(0, SALT_BYTES).toString('base64url');
 }
 
 /**
  * @param {object} options
- * @param {() => object | null} options.store 取凭证存储；取不到时全部端点回 503 `auth-store`
+ * @param {() => object | null} options.store Fetches credential store; when unavailable, all endpoints return 503 `auth-store`
  * @param {ReturnType<import('./challenges.mjs').createChallenges>} options.challenges
  * @param {ReturnType<import('./rate-limit.mjs').createRateLimiter>} options.limiter
  * @param {'hosted' | 'lan'} options.mode
@@ -164,8 +177,8 @@ export function fakeSalt(serverSecret, projectId, username) {
  * @param {number} [options.maxProjects]
  * @param {number} [options.maxBody]
  * @param {(projectId: string) => void} [options.onCreate]
- * @param {(req) => object | null} [options.authenticate] 握手鉴权（`createHandshakeAuth().authenticate`）；给了才答 `shared/verify`
- * @param {() => object | null} [options.services] 取服务登记表；给了（托管端）才答 `shared/service-challenge`
+ * @param {(req) => object | null} [options.authenticate] Handshake authentication (`createHandshakeAuth().authenticate`); only answers `shared/verify` when provided
+ * @param {() => object | null} [options.services] Fetches service registry; only answers `shared/service-challenge` when provided (hosted side)
  */
 export function createSharedHttp({
   store,
@@ -184,9 +197,9 @@ export function createSharedHttp({
   services = null,
 }) {
   const servicesOf = typeof services === 'function' ? services : () => services;
-  if (mode !== 'hosted' && mode !== 'lan') throw new TypeError("createSharedHttp: mode 只能是 'hosted' 或 'lan'");
+  if (mode !== 'hosted' && mode !== 'lan') throw new TypeError("createSharedHttp: mode must be 'hosted' or 'lan'");
   const storeOf = typeof store === 'function' ? store : () => store;
-  /** 来源 → 最近一小时建项目的时刻 */
+  /** Origin → timestamps of project creations in the last hour */
   const creates = new Map();
 
   const loopbackOf = (req) => {
@@ -251,7 +264,7 @@ export function createSharedHttp({
       throw err;
     }
     log('shared.create', { remote, projectId: rec.projectId, mode: rec.mode });
-    try { onCreate(rec.projectId); } catch { /* 通知失败不影响建项目 */ }
+    try { onCreate(rec.projectId); } catch { /* Notification failure does not affect project creation */ }
     send(res, 201, { ok: true, projectId: rec.projectId, name: rec.name, mode: rec.mode });
   }
 
@@ -273,7 +286,8 @@ export function createSharedHttp({
     if (body === undefined) return;
     if (!isObj(body)) return fail(res, 400, 'bad-request');
     const { projectId, username, deviceId, as } = body;
-    // 保留用户名在这里不报格式错：照名单外的用户名回伪盐，之后的握手失败
+    // Reserved usernames do not report format errors here: return pseudo-salt like usernames not on the
+    // list, and subsequent handshake fails
     if (!isProjectId(projectId) || !isUsernameShape(username) || !isDeviceId(deviceId) || (as !== 'member' && as !== 'creator')) {
       return fail(res, 400, 'bad-request');
     }
@@ -287,7 +301,7 @@ export function createSharedHttp({
     send(res, 200, { ok: true, nonce, salt, kdf: { ...rec.kdf }, mode: rec.mode });
   }
 
-  /** `POST shared/verify { protocols }`〔裁〕：见文件头 */
+  /** `POST shared/verify { protocols }` [ruling]: see file header */
   async function verify(req, res) {
     const remote = remoteOf(req);
     const loopback = loopbackOf(req);
@@ -303,7 +317,8 @@ export function createSharedHttp({
       || !list.some((p) => p.startsWith(AUTH_PREFIX) || p.startsWith(SERVICE_PREFIX))) {
       return fail(res, 400, 'bad-request');
     }
-    // 与这次请求同一个来源、同一套请求头，只把子协议换成体里给的：限速、回环信任都与握手一致
+    // Same origin and request headers as this request, only replacing subprotocols with those given in
+    // body: rate limiting and loopback trust match handshake
     const probe = { method: req.method, url: req.url, socket: req.socket, headers: { ...req.headers, 'sec-websocket-protocol': list.join(', ') } };
     let principal = null;
     try {
@@ -317,8 +332,9 @@ export function createSharedHttp({
   }
 
   /**
-   * `POST shared/service-challenge { service, deviceId }`：托管方服务握手用的一次性随机数，绑定 `('service', service, deviceId)`。
-   * 服务名不在登记表里也照样回一个（不暴露有没有这个服务），之后的握手失败。
+   * `POST shared/service-challenge { service, deviceId }`: one-time nonce for host service handshake,
+   * bound to `('service', service, deviceId)`. Returns one even if service name is not in registry
+   * (does not expose whether the service exists), and subsequent handshake fails.
    */
   async function serviceChallenge(req, res) {
     const remote = remoteOf(req);
@@ -330,16 +346,20 @@ export function createSharedHttp({
     const body = await jsonBody(req, res);
     if (body === undefined) return;
     if (!isObj(body) || !isServiceName(body.service) || !isDeviceId(body.deviceId)) return fail(res, 400, 'bad-request');
-    // 换钥、撤钥在这里生效：有人取挑战就看一眼登记表文件
-    try { servicesOf()?.refresh?.({ force: true }); } catch { /* 读不了按原样 */ }
+    // Key rotation and key revocation take effect here: inspect registry file whenever someone fetches a challenge
+    try { servicesOf()?.refresh?.({ force: true }); } catch { /* Keep as-is if unreadable */ }
     const nonce = challenges.issue(['service', body.service, body.deviceId]);
     send(res, 200, { ok: true, nonce });
   }
 
   /**
-   * 429 `rate-limited` 带 `Retry-After` 头（冷却还剩的秒数，并在 CORS 里放出这个头）；`withBody` 时回包另带 `retryAfter`。
-   * C10a 主会话裁定（2026-09-27）：HTTP 端点被限速回 429 时带这两样，界面照契约第 14 节表 A 写「请 {秒数} 秒后再试」。
-   * 邀请码两个端点两样都带；`shared/challenge` 只带头、回包体照 auth 契约原样（AU8 契约测试逐字比对它，改动留给契约修订后再做）。
+   * 429 `rate-limited` includes `Retry-After` header (cooldown seconds remaining, exposed in CORS);
+   * response additionally includes `retryAfter` when `withBody`.
+   * C10a lead session ruling (2026-09-27): when HTTP endpoints return 429 due to rate limiting, include
+   * both; UI displays "Please try again in {seconds} seconds" per contract section 14 Table A. Both
+   * invite code endpoints include both; `shared/challenge` only includes header, keeping response body
+   * as-is per auth contract (AU8 contract test compares it verbatim; changes deferred to contract
+   * revision).
    */
   function tooMany(res, remote, { withBody = false } = {}) {
     const sec = Math.max(1, Math.ceil(limiter.retryAfterMs?.(remote) / 1000 || 0));
@@ -352,16 +372,25 @@ export function createSharedHttp({
   }
 
   /**
-   * 邀请码的两个端点（C10a 契约第 5 节）：`POST shared/invite/resolve { code }`、`POST shared/invite/redeem { code, username, deviceId }`。
+   * Two endpoints for invite codes (C10a contract section 5): `POST shared/invite/resolve { code }`,
+   * `POST shared/invite/redeem { code, username, deviceId }`.
    *
-   * - 未知、已作废、已过期、次数用完一律 404 `invite-invalid`（一个口径，不让人试探邀请码处在什么状态）；
-   * - 兑换时 `(username, deviceId)` 在禁入表里回 401 `banned`；
-   * - 两种失败都计入第 9 节的口令错误限速（回环来源不计，与挑战一致）；冷却期内回 429（`Retry-After` 头与回包 `retryAfter`）；
-   * - 形状不对的邀请码（不是 43 个 base64url 字符）同样回 404 `invite-invalid`、同样计数；
-   * - 限定进入：用户名在名单里（或是创建者）才扣次数，不在名单的回包相同、不扣（主会话裁定）；
-   * - `resolve` 不扣次数；`redeem` 先核对再扣一次，同一 `userId` 再兑换不重复扣（`invite.mjs` 的 `redeemOn`）；
-   * - 自由进入的兑换回项目口令的 `K`（`kdf` 与 `project: { salt, key }`），客户端据此照常握手；限定进入不回 `K`；
-   * - 不记录请求体：日志里只有来源、项目号与结果，没有邀请码、用户名。
+   * - Unknown, invalidated, expired, or exhausted all return 404 `invite-invalid` (single standard,
+   *   preventing probing of invite code state);
+   * - On redemption, returns 401 `banned` if `(username, deviceId)` is in ban list;
+   * - Both failures count toward section 9 passphrase error rate limiting (loopback origins excluded,
+   *   consistent with challenges); returns 429 during cooldown (`Retry-After` header and response
+   *   `retryAfter`);
+   * - Malformed invite codes (not 43 base64url characters) likewise return 404 `invite-invalid` and
+   *   count toward limits;
+   * - Restricted entry: uses deducted only if username is on list (or is creator); returns identical
+   *   response without deducting if not on list (lead session ruling);
+   * - `resolve` does not deduct uses; `redeem` verifies before deducting once; re-redemptions by same
+   *   `userId` do not deduct again (`redeemOn` in `invite.mjs`);
+   * - Open entry redemption returns project passphrase `K` (`kdf` and `project: { salt, key }`), and
+   *   client performs handshake as usual based on this; restricted entry does not return `K`;
+   * - Request body not logged: log contains only origin, project id, and result, without invite code
+   *   or username.
    */
   async function invite(req, res, st, which) {
     const remote = remoteOf(req);
@@ -380,7 +409,8 @@ export function createSharedHttp({
       log('shared.invite.reject', { remote, route: which, reason: 'invite-invalid' });
       return fail(res, 404, 'invite-invalid');
     };
-    // 形状不对的邀请码也按「无效」回，同样计数：猜码的人从回包里分不出是格式错还是没有这个码
+    // Malformed invite codes also return "invalid" and count toward limits: code guessers cannot
+    // distinguish format errors from nonexistent codes in the response
     if (!isInviteCode(body.code)) return invalid();
     const rec = typeof st.peekByInviteCode === 'function' ? st.peekByInviteCode(body.code) : st.peekByInviteDigest(inviteDigest(st.serverSecret, body.code));
     if (!rec || !rec.invite) return invalid();
@@ -393,7 +423,7 @@ export function createSharedHttp({
     }
     const { username, deviceId } = body;
     const userId = `${username}@${deviceId}`;
-    // 先在副本上试一次：无效就不写盘；同一 userId 兑换过（again）也不写
+    // Try on a replica first: do not write to disk if invalid; do not write if already redeemed by same userId (again)
     const trial = redeemOn(structuredClone(rec.invite), userId, at);
     if (trial === 'invalid') return invalid();
     if ((rec.bans ?? []).some((b) => b.username === username && b.deviceId === deviceId)) {
@@ -401,8 +431,10 @@ export function createSharedHttp({
       log('shared.invite.reject', { remote, route: which, projectId: rec.projectId, reason: 'banned' });
       return fail(res, 401, 'banned');
     }
-    // 限定进入：用户名在名单里（或是创建者）才扣次数；不在名单的回包一模一样、不扣（主会话裁定 2026-09-27：
-    // 兑换时不核对口令，否则拿到链接的人换个设备名就能耗光次数；回包相同，不泄露名单）
+    // Restricted entry: uses deducted only if username is on list (or is creator); returns identical
+    // response without deducting if not on list (lead session ruling 2026-09-27: do not check passphrase
+    // during redemption, otherwise anyone with link could exhaust uses by changing device name;
+    // identical response does not leak list)
     const listed = rec.mode !== 'restricted' || rec.creator.username === username || (rec.list ?? []).some((e) => e.username === username);
     const counted = trial === 'ok' && listed;
     if (counted) st.update(rec.projectId, (d) => { redeemOn(d.invite, userId, at); });
@@ -414,8 +446,9 @@ export function createSharedHttp({
   }
 
   /**
-   * 处理一个请求。`prefix` 是共享端点所在的前缀（独立模式 `''`，挂载模式 `/docservice`）。
-   * 路径不是 `<prefix>/shared/…` 的回 false、什么都不动；是的回 true（已经或将要回包）。
+   * Handle a request. `prefix` is the prefix where shared endpoints reside (standalone mode `''`,
+   * attached mode `/docservice`). Returns false and touches nothing if path is not `<prefix>/shared/…`;
+   * returns true if it is (response already or about to be sent).
    */
   function handle(req, res, prefix = '') {
     let url;

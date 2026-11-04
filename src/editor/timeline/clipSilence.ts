@@ -1,14 +1,18 @@
 /**
- * 时间轴上「这一段一点声音都不出」的判断，桌面版和手机版共用一份。
+ * The check for "this segment on the timeline produces no sound at all", shared by the desktop app and
+ * the mobile app.
  *
- * 判据本身在 kernel（`cardAudioRendition.mjs` 的 `clipGoesSilentBySpeed`）：变速段不出原声，
- * 但挂在它上面的声画一体卡照常出声、音频素材效果卡也出声，所以只有两样都没有才算哑的。
- * 这里只多补一件 kernel 够不着的事：**同步来的定制卡**——在线页面上用户卡的定义不在本机的卡册里，
- * 卡自己声明的内嵌声音只能从 `syncedUserCards()` 里问（别处也是这么补的，见
- * `src/editor/preview/MediaLayers.tsx`、`src/editor/io/exportSounds.ts`）。
+ * The check itself is in the kernel (`clipGoesSilentBySpeed` in `cardAudioRendition.mjs`): a
+ * speed-changed clip plays no original sound, but an audio-visual card attached to it still plays, and so
+ * does an audio media effect card, so it counts as mute only if it has neither.
+ * This adds one thing the kernel cannot reach: **synced custom cards**. On an online page the user
+ * card definitions are not in this machine's card registry, so the embedded sound a card declares can
+ * only be asked from `syncedUserCards()` (elsewhere it is supplemented the same way, see
+ * `src/editor/preview/MediaLayers.tsx`, `src/editor/io/exportSounds.ts`).
  *
- * 放在这一层而不是 kernel：`syncedUserCards` 是卡册（`src/kernel/registry.ts`）的运行期状态，
- * 不属于项目数据；kernel 的那条判据只看项目和传进去的卡片定义，拿它单测才不用起卡册。
+ * It lives in this layer rather than the kernel: `syncedUserCards` is runtime state of the card registry
+ * (`src/kernel/registry.ts`), not project data; the kernel check looks only at the project and the card
+ * definitions passed in, so unit tests of it do not have to start the card registry.
  */
 import { clipGoesSilentBySpeed } from "../../kernel/cardAudioRendition.mjs";
 import { getCard, syncedUserCards } from "../../kernel/registry";

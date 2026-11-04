@@ -4,8 +4,8 @@ import { WordRotate } from "../../cards/magicui/vendor/word-rotate";
 import { fitOr } from "../fit";
 
 /**
- * 文字轮换:从 mu-word-rotate 拆出。
- * 前缀文字加上可无限轮换的后缀词汇。
+ * Word rotate: extracted from mu-word-rotate.
+ * Prefix text plus infinitely rotating suffix words.
  */
 interface Params {
   prefix: string;
@@ -51,10 +51,10 @@ function RotatePart({ params, width, height }: PartProps<Params>) {
 
 export const textRotate: PartDef<Params> = {
   id: "text-rotate",
-  name: "文字轮换",
-  description: "多个词语循环轮换播放",
-  useWhen: "一个固定前缀后面跟多个同级词汇不停循环轮换时使用，适合并列排比；该部件会无限循环播放。",
-  tags: ["轮换", "排比", "词语", "循环"],
+  name: "Word rotate",
+  description: "Several words rotate in a loop",
+  useWhen: "Use when a fixed prefix is followed by several words of the same level that keep rotating in a loop; suited to parallel phrasing; this part plays in an infinite loop.",
+  tags: ["rotate", "parallel phrasing", "words", "Loop"],
   role: "text",
   from: "mu-word-rotate",
   defaults: {
@@ -64,10 +64,10 @@ export const textRotate: PartDef<Params> = {
     holdMs: 1000,
   },
   controls: [
-    { key: "prefix", label: "前缀", type: "text" },
-    { key: "words", label: "轮换词(用|分隔)", type: "text", required: true },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 240, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
-    { key: "holdMs", label: "每词停留(ms)", type: "number", min: 100, max: 5000, step: 100 },
+    { key: "prefix", label: "Prefix", type: "text" },
+    { key: "words", label: "Rotating words (separate with |)", type: "text", required: true },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 240, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
+    { key: "holdMs", label: "Hold per word (ms)", type: "number", min: 100, max: 5000, step: 100 },
   ],
   defaultFrame: { x: 360, y: 440, w: 1200, h: 200 },
   settleMs: () => 250,

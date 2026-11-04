@@ -1,11 +1,15 @@
 import { useId } from "react";
 
 /**
- * 产品标识。
- * 标记是一个被斜切开的方形:实心一半代表已渲染,描边一半代表待处理。
- * 两半共用一条品牌渐变(强调色过渡到紫色,和 --ui-accent-grad 同一条),
- * 渐变按整个方形铺,切开的两块拼起来颜色是连续的。停靠色走 CSS 变量,换皮肤、改强调色都会跟着变。
- * 缝宽随字号等比缩放;16px 以下描边加粗到 2.5。字标用条件字体栈里的窄体,字距 .14em。
+ * The product logo.
+ * The mark is a square cut diagonally: the solid half stands for rendered, and the outlined half stands
+ * for pending.
+ * The two halves share one brand gradient (the emphasis color fading into purple, the same one as
+ * --ui-accent-grad); the gradient is laid across the whole square, so the colors of the two cut pieces
+ * are continuous when put together. The gradient's stop colors go through CSS variables, so changing the
+ * skin or the emphasis color follows along.
+ * The seam width scales in proportion to the font size; below 16px the stroke is thickened to 2.5. The
+ * wordmark uses the condensed face in the conditional font stack, with letter spacing .14em.
  */
 export function LogoMark({ size = 22, mono = false }: { size?: number; mono?: boolean }) {
   const grad = `pc-logo-grad-${useId().replace(/:/g, "")}`;
@@ -35,7 +39,7 @@ export function Logo({
 }: {
   size?: number;
   wordmark?: boolean;
-  /** 副标(VIDEO EDITOR),纵向组合时用 */
+  /** Subtitle (VIDEO EDITOR), used in the vertical lockup */
   sub?: boolean;
   name?: string;
 }) {

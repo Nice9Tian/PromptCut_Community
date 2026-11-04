@@ -1,33 +1,41 @@
 /**
- * 局域网发现（契约 `docs/plan/shared-project-contract.md` 第 4 节；方案的唯一出处 `docs/plan/direct-connect-plan.md`
- * 「设计要点」第 4 条）。只找地址，不做防伪：进入共享项目仍要项目凭证（M6a）。
+ * LAN discovery (Section 4 of contract `docs/plan/shared-project-contract.md`; sole source of plan
+ * is item 4 of "Design key points" in `docs/plan/direct-connect-plan.md`). Finds addresses only,
+ * no forgery protection: joining a shared project still requires project credentials (M6a).
  *
- * 只用 Node 内置的 `node:dgram`、`node:os`（另引仓库内的字段校验）。浏览器不能发 UDP，不用本模块：
- * 浏览器侧只走手填地址与托管端（`../auth/route.mjs`）。
+ * Uses only Node built-ins `node:dgram` and `node:os` (plus in-repo field validation). Browsers
+ * cannot send UDP, so they do not use this module: browser side only uses manually entered
+ * addresses and the hosted side (`../auth/route.mjs`).
  *
- * | 项 | 值（`LAN_DISCOVERY`） |
+ * | Item | Value (`LAN_DISCOVERY`) |
  * |---|---|
- * | 组播 | `239.255.42.99:54887/udp`，TTL 1 |
- * | 兜底 | 查询同时发往每个选中网卡的子网定向广播地址 |
- * | 选网卡 | 已启用、非回环、非链路本地（169.254/16）、有 IPv4（`selectInterfaces`） |
- * | 接收 | 逐网卡 `addMembership(组, 网卡地址)` |
- * | 发送 | 逐网卡 `setMulticastInterface(网卡地址)` 后发送 |
- * | 查询 | `{ magic, v: 1, type: 'query', nonce, name? }`，每 500 ms 发一次，共 3 次 |
- * | 应答 | 单播回查询方 `{ magic, v: 1, type: 'announce', nonce, projectId, name, mode, hostDeviceName, docservice, asset, ttlMs }`，地址取收到查询的那块网卡的 |
- * | 周期通告 | 每 15 s ± 3 s 向组播地址发一次；客户端 45 s 没见到就移除 |
- * | 包大小 | 单包 UTF-8 JSON ≤ 1 KiB，超出不发 |
- * | 网卡变化 | 每 10 s 查一次，变了就重建成员资格 |
+ * | Multicast | `239.255.42.99:54887/udp`, TTL 1 |
+ * | Fallback | Queries are also sent to the subnet-directed broadcast address of each selected interface |
+ * | Interface selection | Enabled, non-loopback, non-link-local (169.254/16), has IPv4 (`selectInterfaces`) |
+ * | Receive | Per-interface `addMembership(group, interfaceAddress)` |
+ * | Send | Sent after per-interface `setMulticastInterface(interfaceAddress)` |
+ * | Query | `{ magic, v: 1, type: 'query', nonce, name? }`, sent every 500 ms, 3 times total |
+ * | Response | Unicast back to querier `{ magic, v: 1, type: 'announce', nonce, projectId, name, mode, hostDeviceName, docservice, asset, ttlMs }`, address taken from interface that received query |
+ * | Periodic announcement | Sent to multicast address every 15 s ± 3 s; removed by client if not seen for 45 s |
+ * | Packet size | Single-packet UTF-8 JSON ≤ 1 KiB; not sent if exceeded |
+ * | Interface change | Checked every 10 s; rebuilds memberships if changed |
  *
- * 「收到查询的那块网卡」：Node 的 dgram 拿不到收包网卡（没有 IP_PKTINFO），按查询方地址与各网卡的子网对上号
- * （`interfaceFor`）。TTL 1 的查询只会来自直连网段，所以子网一定对得上；同一台机器上自己查自己时，查询方地址就是本机某块网卡的地址。
+ * "Interface that received the query": Node dgram cannot obtain the receiving interface (no
+ * IP_PKTINFO), so it matches the querier address against the subnet of each interface
+ * (`interfaceFor`). TTL 1 queries only come from directly connected subnets, so the subnet
+ * will always match; when querying itself on the same machine, the querier address is the address
+ * of one of this machine's interfaces.
  *
- * 导出：
- * - 常量 `LAN_DISCOVERY`；
- * - 纯函数：`selectInterfaces`、`broadcastOf`、`interfaceFor`、`interfaceSignature`、`queryTargets`、`encodePacket`、`parsePacket`、
- *   `buildQuery`、`buildAnnounce`、`nameKey`、`nextAnnounceDelay`；
- * - 主机端 `createLanHost`：广播与应答；
- * - 客户端 `createLanClient`（可常驻收周期通告、带过期）与一次性的 `discoverLan`（查询并收集，给 `route.mjs` 用）；
- *   过期表 `createLanTable`（不碰套接字，`createLanClient` 用它，单测直接验）。
+ * Exports:
+ * - Constant `LAN_DISCOVERY`;
+ * - Pure functions: `selectInterfaces`, `broadcastOf`, `interfaceFor`, `interfaceSignature`,
+ *   `queryTargets`, `encodePacket`, `parsePacket`, `buildQuery`, `buildAnnounce`, `nameKey`,
+ *   `nextAnnounceDelay`;
+ * - Host side `createLanHost`: broadcast and response;
+ * - Client side `createLanClient` (can persist to receive periodic announcements, with expiration)
+ *   and one-shot `discoverLan` (queries and collects, for `route.mjs`);
+ *   expiration table `createLanTable` (does not touch sockets, used by `createLanClient`,
+ *   verified directly by unit tests).
  */
 import dgram from 'node:dgram';
 import os from 'node:os';
@@ -46,19 +54,19 @@ export const LAN_DISCOVERY = Object.freeze({
   EXPIRE_MS: 45_000,
   MAX_PACKET_BYTES: 1024,
   RESCAN_MS: 10_000,
-  /** 一次性发现的总时限（契约第 3 节「限时 3 s」） */
+  /** Total time limit for one-shot discovery (contract Section 3 "3 s limit") */
   DISCOVER_TIMEOUT_MS: 3_000,
-  /** 最后一次查询之后再等多久收应答 */
+  /** How long to wait for responses after the last query */
   DISCOVER_GRACE_MS: 500,
 });
 
 const noop = () => {};
 
-// ---------------------------------------------------------------- 地址与网卡（纯函数）
+// ---------------------------------------------------------------- Addresses and interfaces (pure functions)
 
 const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
-/** 点分 IPv4 → 32 位无符号整数；不合法回 null */
+/** Dotted IPv4 → 32-bit unsigned integer; returns null if invalid */
 export function ipv4ToInt(address) {
   const m = IPV4_RE.exec(String(address ?? ''));
   if (!m) return null;
@@ -73,14 +81,14 @@ export function ipv4ToInt(address) {
 
 export const intToIpv4 = (n) => [24, 16, 8, 0].map((s) => Math.floor(n / 2 ** s) % 256).join('.');
 
-/** 子网定向广播地址；/31、/32 没有广播地址，回 null */
+/** Subnet-directed broadcast address; returns null for /31 and /32 without broadcast addresses */
 export function broadcastOf(address, netmask) {
   const a = ipv4ToInt(address);
   const m = ipv4ToInt(netmask);
   if (a === null || m === null) return null;
   const inv = 0xffffffff - m;
   if (inv <= 1) return null;
-  // (a & m) | ~m，用算术写，避免 32 位有符号位运算的坑
+  // (a & m) | ~m, written arithmetically to avoid pitfalls of 32-bit signed bitwise operations
   return intToIpv4((a - (a % (inv + 1))) + inv);
 }
 
@@ -88,9 +96,10 @@ const isLinkLocal = (address) => /^169\.254\./.test(address);
 const isLoopback4 = (address) => /^127\./.test(address);
 
 /**
- * 选网卡：已启用、非回环、非链路本地、有 IPv4。`os.networkInterfaces()` 只列出已启用（有地址）的网卡。
+ * Select interfaces: enabled, non-loopback, non-link-local, has IPv4.
+ * `os.networkInterfaces()` only lists enabled interfaces (with addresses).
  * @param {ReturnType<typeof os.networkInterfaces>} [nics]
- * @returns {Array<{ name: string, address: string, netmask: string, broadcast: string | null }>} 按名字、地址排序
+ * @returns {Array<{ name: string, address: string, netmask: string, broadcast: string | null }>} Sorted by name and address
  */
 export function selectInterfaces(nics = os.networkInterfaces()) {
   const out = [];
@@ -108,11 +117,12 @@ export function selectInterfaces(nics = os.networkInterfaces()) {
   return out;
 }
 
-/** 网卡列表的指纹：变了就重建成员资格 */
+/** Fingerprint of interface list: rebuilds memberships if changed */
 export const interfaceSignature = (list) => list.map((i) => `${i.name}=${i.address}/${i.netmask}`).join(';');
 
 /**
- * 查询方地址 → 收到查询的那块网卡：先找地址相同的（同一台机器自己查自己），再找同一子网的；都没有回 null。
+ * Querier address → interface that received the query: first check for identical address
+ * (same machine querying itself), then check for same subnet; returns null if neither matches.
  * @param {string} remote
  * @param {ReturnType<typeof selectInterfaces>} list
  */
@@ -130,7 +140,8 @@ export function interfaceFor(remote, list) {
 }
 
 /**
- * 一次查询要发往的目标：每块网卡一条组播（发前 `setMulticastInterface`）、一条子网定向广播。
+ * Targets to send a query to: one multicast per interface (call `setMulticastInterface`
+ * before sending) and one subnet-directed broadcast.
  * @returns {Array<{ iface, address: string, port: number, multicast: boolean }>}
  */
 export function queryTargets(list, { group = LAN_DISCOVERY.GROUP, port = LAN_DISCOVERY.PORT } = {}) {
@@ -142,22 +153,22 @@ export function queryTargets(list, { group = LAN_DISCOVERY.GROUP, port = LAN_DIS
   return out;
 }
 
-/** 下一次周期通告的间隔：15 s ± 3 s（`random` 取 [0, 1)） */
+/** Interval for next periodic announcement: 15 s ± 3 s (`random` in [0, 1)) */
 export const nextAnnounceDelay = (random = Math.random, periodMs = LAN_DISCOVERY.ANNOUNCE_PERIOD_MS, jitterMs = LAN_DISCOVERY.ANNOUNCE_JITTER_MS) =>
   Math.round(periodMs + (random() * 2 - 1) * jitterMs);
 
-// ---------------------------------------------------------------- 包（纯函数）
+// ---------------------------------------------------------------- Packets (pure functions)
 
-/** 项目名比较键：与凭证存储相同（NFC、小写） */
+/** Project name comparison key: identical to credential store (NFC, lowercase) */
 export const nameKey = (name) => String(name).normalize('NFC').toLowerCase();
 
-/** 对象 → UTF-8 JSON；超过 1 KiB 回 null（不发） */
+/** Object → UTF-8 JSON; returns null if over 1 KiB (do not send) */
 export function encodePacket(obj, max = LAN_DISCOVERY.MAX_PACKET_BYTES) {
   const buf = Buffer.from(JSON.stringify(obj), 'utf8');
   return buf.length > max ? null : buf;
 }
 
-/** 契约第 4 节只写了 `nonce`，没限长度：收 1～64 个 URL 安全字符（自己发的是 22 位随机串） */
+/** Contract Section 4 only specifies `nonce` without length limit: accepts 1 to 64 URL-safe characters (own outgoing is a 22-character random string) */
 const NONCE_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -172,7 +183,8 @@ function urlOf(value, protocols) {
 }
 
 /**
- * 收到的包 → 校验过的对象；不认识、超长、字段不对都回 null（丢掉，不回任何东西）。
+ * Received packet → validated object; returns null if unrecognized, over length, or invalid fields
+ * (drop, do not reply with anything).
  * @param {Buffer | Uint8Array | string} buf
  */
 export function parsePacket(buf, max = LAN_DISCOVERY.MAX_PACKET_BYTES) {
@@ -211,12 +223,13 @@ export function buildQuery({ nonce, name } = {}) {
 }
 
 /**
- * 通告（应答与周期通告同形；周期通告没有 nonce）。地址取 `iface.address`。
+ * Announcement (response and periodic announcement share the same shape; periodic announcement
+ * has no nonce). Address is taken from `iface.address`.
  * @param {object} o
  * @param {{ projectId: string, name: string, mode: string }} o.project
  * @param {{ address: string }} o.iface
  * @param {string} o.hostDeviceName
- * @param {number} o.servicePort 编辑器（文档服务与素材服务同在）的端口
+ * @param {number} o.servicePort Port of the editor (housing both document service and asset service)
  */
 export function buildAnnounce({ project, iface, hostDeviceName, servicePort, docPath = '/docservice', assetPath = '/api/asset', nonce = null, ttlMs = LAN_DISCOVERY.EXPIRE_MS }) {
   const hostPort = `${iface.address}:${servicePort}`;
@@ -233,7 +246,7 @@ export function newNonce() {
   return Buffer.from(bytes).toString('base64url');
 }
 
-// ---------------------------------------------------------------- 套接字的公共部分
+// ---------------------------------------------------------------- Shared socket parts
 
 const sendTo = (socket, buf, port, address) => new Promise((resolve) => {
   try {
@@ -243,13 +256,13 @@ const sendTo = (socket, buf, port, address) => new Promise((resolve) => {
   }
 });
 
-/** 按新旧网卡列表增减组播成员资格；回新的列表 */
+/** Add or remove multicast memberships based on old and new interface lists; returns new list */
 function syncMemberships(socket, group, prev, next, log) {
   const had = new Set(prev.map((i) => i.address));
   const want = new Set(next.map((i) => i.address));
   for (const address of had) {
     if (want.has(address)) continue;
-    try { socket.dropMembership(group, address); } catch { /* 网卡已经没了 */ }
+    try { socket.dropMembership(group, address); } catch { /* Interface is already gone */ }
   }
   for (const address of want) {
     if (had.has(address)) continue;
@@ -268,7 +281,7 @@ function openSocket(dgramImpl, { port, bindAddress, onMessage, log }) {
     let bound = false;
     socket.on('error', (err) => {
       if (!bound) {
-        try { socket.close(); } catch { /* 已关 */ }
+        try { socket.close(); } catch { /* Closed */ }
         reject(err);
         return;
       }
@@ -289,22 +302,23 @@ function openSocket(dgramImpl, { port, bindAddress, onMessage, log }) {
   });
 }
 
-// ---------------------------------------------------------------- 主机端
+// ---------------------------------------------------------------- Host side
 
 /**
- * 局域网主机的广播与应答。编辑器（`vite-plugin-docservice.ts`）在有局域网模式的共享项目、且绑了非回环地址时起它，
- * 项目全删掉或编辑器退出时停。
+ * Broadcast and response for LAN host. Started by editor (`vite-plugin-docservice.ts`) when
+ * there are LAN-mode shared projects and a non-loopback address is bound; stopped when all
+ * projects are deleted or editor exits.
  *
  * @param {object} options
- * @param {() => Array<{ projectId: string, name: string, mode: string }>} options.projects 当前要通告的项目
+ * @param {() => Array<{ projectId: string, name: string, mode: string }>} options.projects Current projects to announce
  * @param {string} options.hostDeviceName
- * @param {number} options.servicePort 编辑器端口（文档服务 `/docservice`、素材服务 `/api/asset` 都在它上面）
+ * @param {number} options.servicePort Editor port (houses both document service `/docservice` and asset service `/api/asset`)
  * @param {string} [options.docPath]
  * @param {string} [options.assetPath]
  * @param {string} [options.group]
- * @param {number} [options.port] 绑定的端口，缺省 54887；测试给 0（取回实际端口见 `port()`）
- * @param {number} [options.announcePort] 周期通告发往的端口，缺省同 `port`（`port` 为 0 时取实际绑定的端口）
- * @param {string} [options.bindAddress] 缺省 `0.0.0.0`
+ * @param {number} [options.port] Port to bind, default 54887; pass 0 in tests (see `port()` to retrieve actual port)
+ * @param {number} [options.announcePort] Port to send periodic announcements to, defaults to `port` (uses actual bound port when `port` is 0)
+ * @param {string} [options.bindAddress] Default `0.0.0.0`
  * @param {() => ReturnType<typeof selectInterfaces>} [options.interfaces]
  * @param {number} [options.periodMs]
  * @param {number} [options.jitterMs]
@@ -331,9 +345,9 @@ export function createLanHost({
   dgram: dgramImpl = dgram,
   log = noop,
 } = {}) {
-  if (typeof projects !== 'function') throw new TypeError('createLanHost: projects 必须是函数');
-  if (!isDeviceName(hostDeviceName)) throw new TypeError('createLanHost: hostDeviceName 不合法');
-  if (!Number.isInteger(servicePort) || servicePort <= 0) throw new TypeError('createLanHost: servicePort 必须是端口号');
+  if (typeof projects !== 'function') throw new TypeError('createLanHost: projects must be a function');
+  if (!isDeviceName(hostDeviceName)) throw new TypeError('createLanHost: hostDeviceName is invalid');
+  if (!Number.isInteger(servicePort) || servicePort <= 0) throw new TypeError('createLanHost: servicePort must be a port number');
 
   let socket = null;
   let starting = null;
@@ -341,7 +355,7 @@ export function createLanHost({
   let periodTimer = null;
   let rescanTimer = null;
   let stopped = false;
-  /** 同一轮查询经组播与广播各到一次：按 (nonce, 查询方) 在 250 ms 内只答一次 */
+  /** Same query round arrives once via multicast and once via broadcast: replies only once per (nonce, querier) within 250 ms */
   const recent = new Map();
   const stats = { queries: 0, replies: 0, announces: 0, oversize: 0, sendErrors: 0 };
 
@@ -376,7 +390,7 @@ export function createLanHost({
     }
   }
 
-  /** 周期通告：逐网卡、逐项目发到组播地址 */
+  /** Periodic announcement: sent to multicast address per interface and per project */
   let chain = Promise.resolve();
   function announceNow() {
     chain = chain.then(async () => {
@@ -437,7 +451,7 @@ export function createLanHost({
     stopped = false;
     starting = (async () => {
       const s = await openSocket(dgramImpl, { port, bindAddress, onMessage, log });
-      if (stopped) { try { s.close(); } catch { /* 已关 */ } return; }
+      if (stopped) { try { s.close(); } catch { /* Closed */ } return; }
       socket = s;
       socket.unref?.();
       let list;
@@ -471,7 +485,7 @@ export function createLanHost({
   return {
     start,
     stop,
-    /** 项目有增删：立即通告一次（删掉的项目下一轮起不再出现，客户端 45 s 后过期） */
+    /** Project added or removed: announce immediately once (deleted projects will no longer appear starting next round, expires on client after 45 s) */
     refresh: () => (socket ? announceNow() : Promise.resolve()),
     rescan: () => (socket ? rescan() : false),
     running: () => socket !== null,
@@ -481,20 +495,21 @@ export function createLanHost({
   };
 }
 
-// ---------------------------------------------------------------- 客户端
+// ---------------------------------------------------------------- Client side
 
 /**
- * 见到的主机表（不碰套接字）：按「项目 + 文档服务地址」记，`expireMs`（45 s）与包里的 `ttlMs` 取小者，没再见到就过期。
- * `createLanClient` 用它；本机单测直接用它验过期与续期。
+ * Seen hosts table (does not touch sockets): keyed by "project + document service address",
+ * expires if not seen again using the smaller of `expireMs` (45 s) and `ttlMs` from packet.
+ * Used by `createLanClient`; local unit tests use it directly to verify expiration and renewal.
  *
  * @param {object} [options]
  * @param {() => number} [options.now]
  * @param {number} [options.expireMs]
- * @param {number} [options.startedAt] `firstSeenMs` 从这一刻算起，缺省建表的时刻
- * @param {(hosts: object[]) => void} [options.onChange] 新见到一台、或 `sweep` 移除了几台时调
+ * @param {number} [options.startedAt] `firstSeenMs` counted from this moment, defaults to table creation time
+ * @param {(hosts: object[]) => void} [options.onChange] Called when a new host is seen or several hosts are removed by `sweep`
  */
 export function createLanTable({ now = Date.now, expireMs = LAN_DISCOVERY.EXPIRE_MS, startedAt, onChange = noop } = {}) {
-  /** `${projectId}|${docservice}` → 条目 */
+  /** `${projectId}|${docservice}` → entry */
   const hosts = new Map();
   const t0 = Number.isFinite(startedAt) ? startedAt : now();
   const expired = (h, at) => at - h.lastSeenAt > Math.min(expireMs, h.ttlMs ?? expireMs);
@@ -508,7 +523,7 @@ export function createLanTable({ now = Date.now, expireMs = LAN_DISCOVERY.EXPIRE
       .sort((a, b) => a.firstSeenMs - b.firstSeenMs);
   }
 
-  /** 移除过期的；有移除回 true */
+  /** Remove expired entries; returns true if any were removed */
   function sweep() {
     const at = now();
     let changed = false;
@@ -520,9 +535,10 @@ export function createLanTable({ now = Date.now, expireMs = LAN_DISCOVERY.EXPIRE
   }
 
   /**
-   * 见到一条通告（`parsePacket` 过的，或字段相同的对象）；回是不是新见到的。
+   * Observed an announcement (processed by `parsePacket`, or object with identical fields);
+   * returns whether it was newly observed.
    * @param {{ projectId: string, name: string, mode: string, hostDeviceName: string, docservice: string, asset: string, ttlMs?: number }} msg
-   * @param {string | null} [from] 发包方地址
+   * @param {string | null} [from] Sender packet address
    */
   function see(msg, from = null) {
     const key = `${msg.projectId}|${msg.docservice}`;
@@ -542,14 +558,15 @@ export function createLanTable({ now = Date.now, expireMs = LAN_DISCOVERY.EXPIRE
 }
 
 /**
- * 客户端：发查询、收应答；`listen: true` 时绑组播端口、加入组，常驻收周期通告。
- * 见到的主机按「项目 + 文档服务地址」记，`expireMs`（45 s）没再见到就移除。
+ * Client: sends queries, receives responses; when `listen: true`, binds multicast port, joins group,
+ * and persists to receive periodic announcements. Seen hosts are keyed by "project + document service
+ * address", and removed if not seen again within `expireMs` (45 s).
  *
  * @param {object} [options]
- * @param {boolean} [options.listen] 缺省 false：只绑临时端口，收查询的单播应答
+ * @param {boolean} [options.listen] Default false: binds ephemeral port only, receives unicast query responses
  * @param {string} [options.group]
- * @param {number} [options.port] 查询发往的端口（`listen` 时也是绑定的端口），缺省 54887
- * @param {string} [options.bindAddress] 缺省 `0.0.0.0`
+ * @param {number} [options.port] Port to send queries to (also bound port when `listen` is true), default 54887
+ * @param {string} [options.bindAddress] Default `0.0.0.0`
  * @param {() => ReturnType<typeof selectInterfaces>} [options.interfaces]
  * @param {number} [options.expireMs]
  * @param {number} [options.rescanMs]
@@ -597,7 +614,7 @@ export async function createLanClient({
 
   const list = table.list;
 
-  /** 发一轮查询（每块网卡组播一次、子网广播一次）；回发出的包数与错误 */
+  /** Send a round of queries (multicast once and subnet broadcast once per interface); returns sent packet count and errors */
   async function queryOnce({ nonce, name } = {}) {
     const buf = encodePacket(buildQuery({ nonce, name }));
     const out = { sent: 0, errors: [] };
@@ -617,7 +634,8 @@ export async function createLanClient({
   }
 
   /**
-   * 查询：发 `count` 次、每次隔 `intervalMs`，同一个 nonce。回 `{ sent, errors, interfaces }`。
+   * Query: sends `count` times, spaced by `intervalMs`, with the same nonce.
+   * Returns `{ sent, errors, interfaces }`.
    */
   async function query({ name, count = LAN_DISCOVERY.QUERY_COUNT, intervalMs = LAN_DISCOVERY.QUERY_INTERVAL_MS, nonce = newNonce() } = {}) {
     const total = { sent: 0, errors: [], interfaces: ifaces.map((i) => i.address) };
@@ -649,11 +667,13 @@ export async function createLanClient({
 }
 
 /**
- * 一次性发现：发 3 次查询（每 500 ms），收到最后一次查询之后 `graceMs` 或总时限 `timeoutMs`（缺省 3 s）先到为止。
- * 回 `{ hosts, interfaces, sent, errors, elapsedMs }`；`hosts` 按首次见到的先后排，带 `firstSeenMs`（从开始查找算起）。
- * 找不到任何网卡、套接字打不开，都不抛：`errors` 里写原因，`hosts` 为空。
+ * One-shot discovery: sends 3 queries (every 500 ms), waiting until `graceMs` after receiving
+ * the last query or total time limit `timeoutMs` (default 3 s), whichever comes first.
+ * Returns `{ hosts, interfaces, sent, errors, elapsedMs }`; `hosts` is ordered by first seen,
+ * with `firstSeenMs` (counted from start of discovery). Does not throw if no interfaces are found
+ * or socket cannot be opened: writes reasons to `errors`, `hosts` will be empty.
  *
- * @param {object} [options] 同 `createLanClient`，另加 `name`、`timeoutMs`、`graceMs`、`count`、`intervalMs`
+ * @param {object} [options] Same as `createLanClient`, plus `name`, `timeoutMs`, `graceMs`, `count`, `intervalMs`
  */
 export async function discoverLan({
   name,

@@ -1,6 +1,8 @@
 /**
- * 在线执行用户卡与素材效果卡的隔离策略原文与票据换 cookie 的判定(契约 `docs/plan/online-card-exec-contract.md` 第 3.3、4.1 节)。
- * 跑:node --test src/online/stagePolicy.test.mjs
+ * Original text of the isolation policy for executing user cards and media effect cards online,
+ * and determination of exchanging tickets for cookies (contract `docs/plan/online-card-exec-contract.md`
+ * Sections 3.3 and 4.1).
+ * Run: node --test src/online/stagePolicy.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -43,8 +45,9 @@ test("OCS-P-03 The stage sends no egress allowlist, and keeps the per-origin and
 });
 
 test("OCS-P-04 The editor page adds only one frame-src entry: its own origin, the two stage origins and the third-party login origin, without blob: / data:", () => {
-  // 2026-10-23 加 `https://accounts.google.com`：登录页「通过 Google 继续操作」要在它的 iframe 里画按钮，
-  // 不放行时线上控制台报 `Framing 'https://accounts.google.com/' violates ... frame-src`，按钮根本出不来
+  // 2026-10-23 add `https://accounts.google.com`: login page "Continue with Google" needs to render
+  // a button in its iframe; when not allowed, online console reports
+  // `Framing 'https://accounts.google.com/' violates ... frame-src`, and the button does not appear at all
   const G = "https://accounts.google.com";
   assert.equal(editorCspHeader(["https://s1.x.io", "https://s2.x.io"]), `frame-src 'self' https://s1.x.io https://s2.x.io ${G}`);
   assert.deepEqual(editorSecurityHeaders(["https://s1.x.io", "https://s2.x.io"]), { "content-security-policy": `frame-src 'self' https://s1.x.io https://s2.x.io ${G}` });
@@ -66,7 +69,7 @@ test("OCS-P-05 Shape of the session id and ticket; the handoff address and the b
 test("OCS-P-06 The cookie the ticket is exchanged for: HttpOnly, Secure, SameSite=Strict, valid only on the path segment of this page session, with the same lifetime as the ticket (15 minutes)", () => {
   assert.equal(mediaGrantCookie(SID, TICKET), `${MEDIA_COOKIE}=${TICKET}; Path=/media-s/${SID}/; HttpOnly; Secure; SameSite=Strict; Max-Age=900`);
   assert.equal(MEDIA_COOKIE_MAX_AGE_S, 900);
-  // 本机代理走 http:不带 Secure,别的不变
+  // Local proxy uses http: does not include Secure, everything else unchanged
   assert.equal(mediaGrantCookie(SID, TICKET, { secure: false }), `${MEDIA_COOKIE}=${TICKET}; Path=/media-s/${SID}/; HttpOnly; SameSite=Strict; Max-Age=900`);
 });
 
@@ -79,7 +82,7 @@ test("OCS-P-07 /media-s/ decision, handoff: only accepts a POST from the editor 
   assert.equal(ok.headers["access-control-allow-origin"], EDITOR);
   assert.equal(ok.headers["access-control-allow-credentials"], "true");
   assert.equal(ok.headers["cache-control"], "no-store");
-  // 舞台自己(或别的源)发来:不发 cookie
+  // Sent from stage itself (or another origin): do not send cookie
   for (const origin of ["https://s1.x.io", "https://evil.io", "https://x.io.evil.io", "https://xxio", null, undefined, "null"]) {
     assert.deepEqual(mediaSRoute({ method: "POST", pathname: p, origin, authorization: `Bearer ${TICKET}` }, opts), { kind: "reject", status: 403 }, String(origin));
   }
@@ -99,14 +102,14 @@ test("OCS-P-08 /media-s/ decision, reading media: the cookie is swapped for an A
   assert.equal(mediaSRoute({ method: "HEAD", pathname: p, cookie }, opts).kind, "proxy");
   assert.equal(mediaSRoute({ method: "GET", pathname: `${p}.mp4`, cookie }, opts).path, `/api/asset/media/${HASH}.mp4`);
   for (const method of ["POST", "PUT", "DELETE", "PATCH"]) assert.deepEqual(mediaSRoute({ method, pathname: p, cookie }, opts), { kind: "reject", status: 405 }, method);
-  // 没有 cookie、cookie 不是票据的形状
+  // No cookie, or cookie is not shaped like a ticket
   for (const c of [null, "", "other=1", `${MEDIA_COOKIE}=nope`]) assert.deepEqual(mediaSRoute({ method: "GET", pathname: p, cookie: c }, opts), { kind: "reject", status: 401 }, String(c));
-  // 别的命名空间、子路由、上跳、会话号不对:一律 404
+  // Other namespaces, subroutes, path traversals, incorrect session id: always 404
   for (const bad of [`/media-s/${SID}/snap/${HASH}`, `/media-s/${SID}/px/${HASH}`, `${p}/chunks`, `${p}/0`, `${p}/complete`, `/media-s/${SID}/media/../admin/inventory`,
     `/media-s/${SID}/admin/inventory`, `/media-s/${SID}/media/${HASH.slice(1)}`, `/media-s/short/media/${HASH}`, "/media-s/", `/media-s/${SID}`, `/media-s/${SID}/`]) {
     assert.deepEqual(mediaSRoute({ method: "GET", pathname: bad, cookie }, opts), { kind: "reject", status: 404 }, bad);
   }
-  // 不是这条路由
+  // Not this route
   for (const other of ["/media/api/asset/media/x", "/editor/stage.html", "/media-sx/a", "/"]) assert.deepEqual(mediaSRoute({ method: "GET", pathname: other, cookie }, opts), { kind: "none" }, other);
 });
 
@@ -121,18 +124,20 @@ test("OCS-P-09 the two ticket shapes are each hard-coded: v1.<…>.<…> for leg
   const opts = { editorOrigin: EDITOR };
   const grant = `/media-s/${SID}/_grant`;
   const read = `/media-s/${SID}/media/${HASH}`;
-  const ACCOUNT = "Aa0_-".repeat(8) + "xyz"; // 43 个字符
+  const ACCOUNT = "Aa0_-".repeat(8) + "xyz"; // 43 characters
   assert.equal(ACCOUNT.length, 43);
   assert.equal(isTicketShaped(ACCOUNT), true);
   assert.equal(isTicketShaped(TICKET), true);
-  // 交接:账号票据换成同样属性的 cookie;读素材:cookie 里的账号票据换成 Authorization 头
+  // Handoff: exchange account ticket for cookie with same attributes;
+  // read asset: exchange account ticket in cookie for Authorization header
   const ok = mediaSRoute({ method: "POST", pathname: grant, origin: EDITOR, authorization: `Bearer ${ACCOUNT}` }, opts);
   assert.equal(ok.kind, "grant");
   assert.equal(ok.headers["set-cookie"], `${MEDIA_COOKIE}=${ACCOUNT}; Path=/media-s/${SID}/; HttpOnly; Secure; SameSite=Strict; Max-Age=900`);
   assert.deepEqual(mediaSRoute({ method: "GET", pathname: read, cookie: `${MEDIA_COOKIE}=${ACCOUNT}` }, opts), { kind: "proxy", path: `/api/asset/media/${HASH}`, authorization: `Bearer ${ACCOUNT}` });
-  // 来源、方法的限制对账号票据同样有效
+  // Origin and method restrictions are equally effective for account tickets
   assert.deepEqual(mediaSRoute({ method: "POST", pathname: grant, origin: "https://evil.io", authorization: `Bearer ${ACCOUNT}` }, opts), { kind: "reject", status: 403 });
-  // 不是这两种形状的:长度差一个、带别的字符、两种拼在一起、v1 缺段
+  // Not of these two shapes: off by one in length, contains other characters, two spliced together,
+  // v1 missing segment
   const bad = [ACCOUNT.slice(1), `${ACCOUNT}a`, `${ACCOUNT.slice(0, 42)}.`, `${ACCOUNT.slice(0, 42)}=`, `${ACCOUNT}.${ACCOUNT}`, "v1.abc", "v1..abc", `v2.${ACCOUNT}.abc`, "", "a".repeat(2049)];
   for (const t of bad) {
     assert.equal(isTicketShaped(t), false, JSON.stringify(t.slice(0, 50)));

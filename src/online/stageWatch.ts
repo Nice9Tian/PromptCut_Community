@@ -1,31 +1,41 @@
 /**
- * 在线双舞台两个舞台握手之后的看守(C10 契约第 2 节「握手之后又断」〔裁〕,2026-09-30)。
+ * Watch after handshake between both stages in online dual stage mode (C10 contract section 2
+ * "Disconnect after handshake" [ruling], 2026-09-30).
  *
- * 首次握手在 `STAGE_HANDSHAKE_TIMEOUT_MS` 内握不上才退回同源单舞台(`stageOrigins.ts`)。握上之后某一台卡死、崩溃
- * (跨源 iframe 的渲染进程崩了,父页收不到任何事件,`contentWindow` 也不会关)以前没人管:可见舞台那一台一断,
- * 预览就一直空白或停在旧画面。这里补上:
+ * Only falls back to same-origin single stage (`stageOrigins.ts`) if initial handshake fails
+ * within `STAGE_HANDSHAKE_TIMEOUT_MS`. Previously unhandled if one stage freezes or crashes after
+ * handshaking (cross-origin iframe render process crashed, parent page receives no events, and
+ * `contentWindow` does not close): as soon as visible stage disconnects, preview stays blank
+ * or stuck on stale frame forever. This is addressed here:
  *
- * - **心跳**:每 `STAGE_PING_INTERVAL_MS` 问每台已握手的舞台一次(调用方给 `ping`,Preview 用最便宜的 `size()` RPC);
- *   `STAGE_LOST_AFTER_MS` 内一次回包都没有,就算这一台断了。页面隐藏时不判(后台标签里定时器与舞台都被节流);
- *   父页自己的定时器晚到很多(父页主线程卡住)那一拍也不判,只把计时重新起算。
- * - **先重载那一台**:与原来「卡片代码没换上就整页重载那一台」同一种做法(调用方给 `reload`)。
- * - **重载也握不回来就退回单舞台**:重载后 `STAGE_RECONNECT_TIMEOUT_MS`(与首次握手同为 20 秒)内没等到那一台的
- *   `pc-stage-ready`,或 `STAGE_RELOAD_WINDOW_MS` 里已经重载过 `STAGE_MAX_RELOADS` 次(反复断),调用方的 `fallback`
- *   走首次握不上手时的同一条退回路径(`markStageHandshake("failed")`)。退回之后本看守作废,不再重载任何一台。
+ * - **Heartbeat**: query each handshaked stage once every `STAGE_PING_INTERVAL_MS` (caller provides
+ *   `ping`, Preview uses cheapest `size()` RPC); if there is no response within
+ *   `STAGE_LOST_AFTER_MS`, consider that stage disconnected. Do not evaluate when page is hidden
+ *   (timers and stages are throttled in background tabs); do not evaluate on a tick where parent
+ *   page's own timer arrives very late (parent page main thread blocked), only restarting the timing.
+ * - **Reload that stage first**: same approach as original "reload that stage's entire page if
+ *   card code failed to swap" (caller provides `reload`).
+ * - **Fall back to single stage if reload still fails to re-handshake**: if `pc-stage-ready` from
+ *   that stage is not received within `STAGE_RECONNECT_TIMEOUT_MS` (20 seconds, same as initial
+ *   handshake) after reload, or if `STAGE_MAX_RELOADS` reloads have already occurred within
+ *   `STAGE_RELOAD_WINDOW_MS` (repeated disconnections), caller's `fallback` takes same fallback
+ *   path as when initial handshake fails (`markStageHandshake("failed")`). After fallback, this
+ *   watcher is invalidated and will no longer reload any stage.
  *
- * 数字都是三级机制的参数。本模块属于 render 这一层:不引 editor,时钟与定时器可注入(单测用假时钟)。
+ * All numbers are parameters of the three-tier mechanism. This module belongs to render layer:
+ * no editor imports, clock and timers are injectable (unit tests use fake timers).
  */
 import { STAGE_HANDSHAKE_TIMEOUT_MS, type StageLetter } from "./stageOrigins.ts";
 
-/** 心跳间隔 */
+/** Heartbeat interval */
 export const STAGE_PING_INTERVAL_MS = 5000;
-/** 这么久一次回包都没有,就算这一台断了(三拍心跳;舞台里一次同步的补跑到不了这么长) */
+/** Considered disconnected if no response for this long (three heartbeat ticks; a synchronous catch-up run in the stage cannot take this long) */
 export const STAGE_LOST_AFTER_MS = 15_000;
-/** 重载之后等那一台重新握手的时限:与首次握手相同 */
+/** Time limit to wait for that stage to re-handshake after reload: same as initial handshake */
 export const STAGE_RECONNECT_TIMEOUT_MS = STAGE_HANDSHAKE_TIMEOUT_MS;
-/** 父页的心跳定时器晚到超过这么多,算父页自己卡住,这一拍不判 */
+/** If parent page's heartbeat timer arrives later than this, consider parent page itself blocked and skip evaluating this tick */
 export const STAGE_TICK_LATE_MS = STAGE_PING_INTERVAL_MS * 2;
-/** 反复断:这段时间里重载到第 `STAGE_MAX_RELOADS` 次还要再重载,就直接退回单舞台 */
+/** Repeated disconnections: if another reload is needed after reaching `STAGE_MAX_RELOADS` reloads within this window, directly fall back to single stage */
 export const STAGE_MAX_RELOADS = 3;
 export const STAGE_RELOAD_WINDOW_MS = 10 * 60_000;
 
@@ -33,32 +43,32 @@ type Timer = unknown;
 
 export interface StageWatchDeps {
   ids: readonly StageLetter[];
-  /** 问一次这台舞台还在不在:回 Promise(兑现 = 活着;拒绝或一直不回 = 没回包);回 null = 此刻没有客户端 */
+  /** Check once whether this stage is still alive: returns Promise (fulfilled = alive; rejected or never responds = no response); returns null = no client at the moment */
   ping(id: StageLetter): Promise<unknown> | null;
-  /** 重载这一台(原来的做法:丢掉它的 RPC 客户端、`frame.src = frame.src`) */
+  /** Reload this stage (original approach: discard its RPC client, `frame.src = frame.src`) */
   reload(id: StageLetter, reason: string): void;
-  /** 退回同源单舞台(首次握不上手的同一条路) */
+  /** Fall back to same-origin single stage (same path as initial handshake failure) */
   fallback(reason: string): void;
-  /** 页面隐藏着(不判) */
+  /** Page is hidden (do not evaluate) */
   hidden?(): boolean;
   now?(): number;
   setTimer?(fn: () => void, ms: number): Timer;
   clearTimer?(t: Timer): void;
-  /** 诊断 */
+  /** Diagnostics */
   log?(msg: string): void;
 }
 
 export type StageWatchStatus = "pending" | "alive" | "reloading";
 
 export interface StageWatch {
-  /** 这一台握上手了(`pc-stage-ready`):开始 / 恢复看守 */
+  /** Handshake succeeded for this stage (`pc-stage-ready`): start / resume watch */
   ready(id: StageLetter): void;
-  /** 外部判定这一台断了(例如调用方另有证据):与心跳超时同一条处理 */
+  /** Externally determined that this stage disconnected (e.g. caller has other evidence): same handling as heartbeat timeout */
   lost(id: StageLetter, reason: string): void;
-  /** 退回过了没有 */
+  /** Whether fallback has occurred */
   readonly fellBack: boolean;
   status(id: StageLetter): StageWatchStatus;
-  /** 重载过几次(诊断与测试) */
+  /** How many times reloaded (diagnostics and testing) */
   readonly reloads: number;
   dispose(): void;
 }
@@ -67,7 +77,7 @@ interface Slot {
   status: StageWatchStatus;
   lastAlive: number;
   inflight: boolean;
-  /** 每次 ready / reload 换一代,旧一代的心跳回包不算数 */
+  /** Advance generation on each ready / reload; heartbeat responses from older generations are ignored */
   gen: number;
   deadline: Timer | null;
 }
@@ -98,7 +108,7 @@ export function createStageWatch(deps: StageWatchDeps): StageWatch {
     fellBack = true;
     stopAll();
     log(`Falling back to a single stage: ${reason}`);
-    try { deps.fallback(reason); } catch { /* 调用方坏了也不再重试 */ }
+    try { deps.fallback(reason); } catch { /* Do not retry even if caller failed */ }
   };
 
   const armDeadline = (id: StageLetter, s: Slot) => {
@@ -106,7 +116,7 @@ export function createStageWatch(deps: StageWatchDeps): StageWatch {
     s.deadline = setTimer(() => {
       s.deadline = null;
       if (disposed || s.status !== "reloading" || s.gen !== gen) return;
-      // 页面隐藏期间不判:iframe 的载入与舞台的启动都可能被节流,等回到前台再给一整段时限
+      // Do not evaluate while page is hidden: iframe loading and stage startup may both be throttled; grant a full time window when returning to foreground
       if (hidden()) { armDeadline(id, s); return; }
       fallback(`Stage ${id} reloaded after disconnecting and did not reconnect within ${Math.round(STAGE_RECONNECT_TIMEOUT_MS / 1000)} s`);
     }, STAGE_RECONNECT_TIMEOUT_MS);
@@ -128,7 +138,7 @@ export function createStageWatch(deps: StageWatchDeps): StageWatch {
     s.gen++;
     s.inflight = false;
     log(`Stage ${id} disconnected, reloading it: ${reason}`);
-    try { deps.reload(id, reason); } catch { /* 重载失败照样等时限,到点退回 */ }
+    try { deps.reload(id, reason); } catch { /* Still wait for timeout if reload fails, fall back when time is up */ }
     armDeadline(id, s);
   };
 
@@ -139,7 +149,7 @@ export function createStageWatch(deps: StageWatchDeps): StageWatch {
     const late = t - lastTick > STAGE_TICK_LATE_MS;
     lastTick = t;
     if (hidden() || late) {
-      // 不判:把计时重新起算,免得回到前台 / 父页缓过来的那一拍把活着的舞台判成断开
+      // Skip evaluation: restart timing to avoid treating an alive stage as disconnected on the tick when returning to foreground / parent page recovers
       for (const s of slots.values()) if (s.status === "alive") s.lastAlive = t;
     } else {
       for (const [id, s] of slots) {

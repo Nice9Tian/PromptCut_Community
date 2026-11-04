@@ -1,7 +1,7 @@
 /** Real .proc playback, in an isolated source/cache copy. Input stays read-only.
  * node scripts/verify-playback-project.mjs --project <file.proc> [--seconds 12]
  */
-import './lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import './lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs/promises';
 import { existsSync, lstatSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
@@ -52,13 +52,16 @@ else fetch('/test-project').then(r=>r.json()).then(p=>root.render(<Test project=
 `;
 
 /*
- * app/ 下这几个目录是指回仓库的 junction。out 目录要留给人看,可谁以后递归删它,都会顺着
- * junction 删进仓库(主仓库的 node_modules 就这样被清空过),所以跑完就拆,失败、Ctrl+C 也拆。
- * 只拆链接本身:unlink 删的是 junction 这一项,不进目标目录。拆完确认链接没了、仓库里的目标还在。
- * 必须是同步的:兜底挂在 process 'exit' 上,那里跑不了异步。
+ * These directories under app/ are junctions pointing back to the repository. The out directory
+ * must be kept for people to inspect, but anyone who recursively deletes it in the future would
+ * follow junctions into the repository (node_modules in the main repository was once wiped this way),
+ * so tear them down after running, even on failure or Ctrl+C.
+ * Tear down only the link itself: unlink deletes the junction entry without entering the target
+ * directory. After teardown, confirm the link is gone and the target in the repository still exists.
+ * Must be synchronous: the fallback is hooked on process 'exit', where async operations cannot run.
  */
 const LINKED = ['node_modules', 'public', 'server', 'scripts'];
-/** 建链接时仓库里真有的那几个目标;null = 还没建,或者已经拆过 */
+/** Targets that actually existed in the repository when creating links; null = not created yet or already torn down */
 let linkedTargets = null;
 function unlinkJunctions() {
   if (!linkedTargets) return;
@@ -70,12 +73,12 @@ function unlinkJunctions() {
     const link = path.join(app, folder);
     const st = lstatSync(link, { throwIfNoEntry: false });
     if (!st) continue;
-    if (!st.isSymbolicLink()) { fail(`${link} 不是链接,没动它`); continue; }
-    try { unlinkSync(link); } catch (e) { fail(`拆不掉 ${link}(${e.code || e}):删 ${out} 之前先在 PowerShell 里 [System.IO.Directory]::Delete('${link}')`); continue; }
-    if (lstatSync(link, { throwIfNoEntry: false })) fail(`${link} 拆过了还在`);
+    if (!st.isSymbolicLink()) { fail(`${link} is not a link, left untouched`); continue; }
+    try { unlinkSync(link); } catch (e) { fail(`Cannot remove ${link} (${e.code || e}): before deleting ${out}, run [System.IO.Directory]::Delete('${link}') in PowerShell`); continue; }
+    if (lstatSync(link, { throwIfNoEntry: false })) fail(`${link} is still there after removal`);
     else removed.push(folder);
   }
-  for (const target of targets) if (!existsSync(target)) fail(`拆完之后仓库里的 ${target} 不见了`);
+  for (const target of targets) if (!existsSync(target)) fail(`${target} in the repository is gone after removal`);
   if (removed.length) console.log('UNLINKED', removed.join(','));
 }
 
@@ -88,7 +91,8 @@ if (!worker) {
   await fs.mkdir(app, { recursive: true });
   await fs.cp(path.join(repo, 'src'), path.join(app, 'src'), { recursive: true });
   await fs.copyFile(path.join(repo, 'index.html'), path.join(app, 'index.html'));
-  // 先挂兜底再建链接:建到一半失败也要拆。Ctrl+C 默认不走 'exit',改成正常退出
+  // Hook fallback before creating links: tear down even if creation fails halfway.
+  // Ctrl+C does not trigger 'exit' by default, convert it to normal exit
   linkedTargets = LINKED.map((folder) => path.join(repo, folder)).filter((target) => existsSync(target));
   process.on('exit', unlinkJunctions);
   process.once('SIGINT', () => process.exit(130));
@@ -222,7 +226,7 @@ if (worker) {
     await fs.writeFile(path.join(out,'renders.json'),JSON.stringify(renders,null,2));
     await browser?.close(); await pipeline.close(); await server.close();
     if(remote?.connected){remote.send('close');await new Promise(resolve=>{remote.once('exit',resolve);setTimeout(()=>{remote.kill();resolve();},10000).unref();});}
-    // 两台 vite(本进程和 worker)都关了才拆:worker 的根也是 app/
+    // Tear down only after both vite instances (this process and worker) are closed: worker's root is also app/
     unlinkJunctions();
   }
   console.log('ARTIFACTS',out);

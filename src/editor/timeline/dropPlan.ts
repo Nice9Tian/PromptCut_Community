@@ -8,27 +8,28 @@ import { type DragPayload } from "../dnd";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 「这一拖会落成什么样」的完整描述。dragover 时算一次画成落点预览,drop 时再算一次照着落。
- * 两次用的是同一个函数,所以看到的和落下的一定一致。
+ * The full description of "what this drag will turn into". It is computed once on dragover to draw the drop
+ * preview, and once more on drop to land accordingly.
+ * Both use the same function, so what you see is always what lands.
  */
 export interface DropPlan {
-  /** 落在已有序列 = 序列 id;落在新序列 = null(看 newTrackIndex) */
+  /** Landing on an existing track = the track id; landing on a new track = null (see newTrackIndex) */
   trackId: string | null;
-  /** 新序列插在 tracks 数组的第几位(落在已有序列时为 null) */
+  /** The position in the tracks array where the new track is inserted (null when landing on an existing track) */
   newTrackIndex: number | null;
   start: number;
   end: number;
-  /** ok = 原位落下;shift = 原位被占,顺延到后面的空档;forbidden = 落不下 */
+  /** ok = lands in place; shift = the spot is taken, so it shifts to the next free gap; forbidden = cannot land */
   status: "ok" | "shift" | "forbidden";
-  /** 落点预览上显示的一行说明 */
+  /** One line of explanation shown on the drop preview */
   hint: string;
-  /** 落点预览上显示的名字 */
+  /** The name shown on the drop preview */
   label: string;
 }
 
 export type DropTarget = { trackId: string } | { newTrackIndex: number };
 
-/** 强调落在哪一段上:落点那一刻正下方的片段 */
+/** Emphasis lands on a given span: the clip directly underneath at the moment of the drop */
 export function clipAt(project: Project, trackId: string, sec: number): { id: string; start: number; end: number } | null {
   const track = project.tracks.find((t) => t.id === trackId);
   if (!track || track.locked) return null;
@@ -36,7 +37,7 @@ export function clipAt(project: Project, trackId: string, sec: number): { id: st
   return c ? { id: c.id, start: c.start, end: c.end } : null;
 }
 
-/** 转场落点算出来的结论:落下时照着它调 addTransition */
+/** The conclusion of the transition drop computation: on drop, call addTransition accordingly */
 export interface TransitionPlan {
   kind: "crossfade" | "fadeIn" | "fadeOut";
   aId: string;
@@ -45,9 +46,10 @@ export interface TransitionPlan {
 }
 
 /**
- * 拖着转场在时间轴上晃时的预演:接缝上给交叉溶解,片段两端给淡入 / 淡出,
- * 别的地方明说「拖到片段两端或两段接缝处」。加不上的(中间空着、时长不够)也在这儿就说清楚,
- * 免得松手才报错。
+ * Preview while dragging a transition over the timeline: a crossfade on a seam, fade in / fade out at the
+ * two ends of a clip, and anywhere else it says plainly "drag to either end of a clip or the seam between
+ * two clips". Cases that cannot be added (empty in the middle, duration too short) are also explained
+ * here, to avoid an error only after release.
  */
 export function planTransition(
   project: Project,
@@ -63,7 +65,7 @@ export function planTransition(
   if (!spot) {
     return { plan: null, status: "forbidden", hint: kind === "crossfade" ? tr("Drop where two clips meet end to start") : tr("Drop at the start or end of a clip"), span: null };
   }
-  // 拖的是哪一种就只认哪一种:拖着「淡入」落在接缝上,给的还是淡入(落在后一段的头上)
+  // Only the kind being dragged is accepted: dragging "fade in" onto a seam still gives fade in (at the head of the later clip)
   const wanted = kind === "crossfade" ? spot : { kind, aId: spot.kind === "crossfade" && kind === "fadeIn" ? spot.bId! : spot.aId };
   const d = clampDur(dur);
   if (wanted.kind === "crossfade") {
@@ -82,7 +84,7 @@ export function planTransition(
   const span = side === "fadeIn"
     ? { start: chk.clip.start, end: chk.clip.start + chk.dur }
     : { start: chk.clip.end - chk.dur, end: chk.clip.end };
-  return { plan: { kind: side, aId: chk.clip.id, dur: chk.dur }, status: "ok", hint: `${TRANSITION_LABEL[side]} ${chk.dur.toFixed(1)}s`, span };
+  return { plan: { kind: side, aId: chk.clip.id, dur: chk.dur }, status: "ok", hint: `${tr(TRANSITION_LABEL[side])} ${chk.dur.toFixed(1)}s`, span };
 }
 
 export function planDrop(
@@ -92,7 +94,7 @@ export function planDrop(
   rawSec: number,
   opts: { altKey: boolean; pxPerSec: number; t: number },
 ): DropPlan {
-  // 强调也不占地方:落在哪一段上就给哪一段加
+  // Emphasis takes no space either: it is added to whichever clip it lands on
   if (payload.kind === "emphasis") {
     const base = { label: payload.name, trackId: null as string | null, newTrackIndex: null as number | null };
     if ("newTrackIndex" in target) {
@@ -106,7 +108,7 @@ export function planDrop(
     };
   }
 
-  // 转场不占地方,它绑的是已经在时间轴上的片段 —— 只能落在已有序列上
+  // A transition takes no space; it binds to clips already on the timeline, so it can only land on an existing track
   if (payload.kind === "transition") {
     const base = { label: payload.name, trackId: null as string | null, newTrackIndex: null as number | null };
     if ("newTrackIndex" in target) {
@@ -126,7 +128,7 @@ export function planDrop(
   const start = Math.max(0, snapTime(rawSec, opts.altKey, project, opts.t, undefined, opts.pxPerSec));
   const base = { label: payload.name, trackId: null as string | null, newTrackIndex: null as number | null };
 
-  // 剪辑:放进自己或会循环引用(任意深度)时不接受,落点预览上写明原因(workflow/materials.md「素材库里的剪辑」)
+  // Cut: not accepted when dropping it into itself or when it would create a circular reference (at any depth); the drop preview states the reason (workflow/materials.md "Cuts in the media library")
   if (payload.kind === "cut") {
     const reason = project.activeCutId ? cutCycleReason(project, project.activeCutId, payload.cutId) : null;
     if (reason) {

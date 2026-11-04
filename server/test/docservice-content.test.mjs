@@ -1,11 +1,16 @@
 /**
- * 内容库模块（契约 `docs/plan/docservice-contract.md` 第 2 节、第 3 节，用例 N1～N8）。
- * 跑：node --test server/test/docservice-content.test.mjs
+ * Content store module (contract `docs/plan/docservice-contract.md` sections 2 and 3, test
+ * cases N1-N8).
+ * Run: node --test server/test/docservice-content.test.mjs
  *
- * 只照契约写，不看实现。被测模块用动态 import 取，模块缺失时每条用例各自失败。
- * `createDocService` 独立模式、端口 0、`autoTick: false`；存储用 memory 或临时目录。
- * principal 由测试的 `authenticate` 按查询串 `?user=` 给出（见 `fake-docservice-env.mjs`）。
- * 契约没要求本模块的回包带 `reqId`，测试按回包类型等（同一连接上按顺序一问一答）。
+ * Written strictly against the contract, ignoring implementation. Module under test is loaded via
+ * dynamic import; each test case fails individually if module is missing.
+ * `createDocService` standalone mode, port 0, `autoTick: false`; storage uses memory or temporary
+ * directory.
+ * principal is provided by test `authenticate` via query string `?user=` (see
+ * `fake-docservice-env.mjs`).
+ * The contract does not require responses from this module to include `reqId`; tests wait by
+ * response type (sequential request-response on the same connection).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,12 +34,12 @@ async function start({ store, clock = { t: T0 }, ...moduleOptions } = {}) {
 }
 
 let reqSeq = 0;
-/** 发一条带 reqId 的请求，按回包类型等（reqId 没带回时不至于等到超时），再断言 reqId 原样带回（契约第 10 节第 6 条） */
+/** Send request with reqId, wait by response type (avoids timing out if reqId is not returned), then assert reqId is returned as is (contract section 10 item 6) */
 async function call(c, message, replyType) {
   const reqId = `n-${++reqSeq}`;
   c.send({ ...message, reqId });
   const reply = await untilType(c, [replyType, 'error']);
-  assert.equal(reply.reqId, reqId, `回包要带请求的 reqId：${JSON.stringify(reply).slice(0, 200)}`);
+  assert.equal(reply.reqId, reqId, `the reply must carry the reqId of the request: ${JSON.stringify(reply).slice(0, 200)}`);
   return reply;
 }
 const put = (c, kind, key, body, extra = {}) => call(c, { type: 'content.put', kind, key, body, ...extra }, 'content.stored');
@@ -45,13 +50,13 @@ const changes = (c, ms = 150) => c.quiet(byType('content.changed'), ms);
 
 // ------------------------------------------------------------------ N1
 
-test('N1 put 后 get 取回相同的 body，hash = sha256(JSON.stringify(body))；模块名进 /healthz', async (t) => {
+test('N1 get after put returns the same body, hash = sha256(JSON.stringify(body)); the module name appears in /healthz', async (t) => {
   const env = await start();
   t.after(env.cleanup);
   const c = await env.connect('alice');
   const bodies = [
-    { title: '标题', layers: [{ id: 1, x: 0.5 }, { id: 2, nested: { deep: [true, false, null] } }] },
-    '一段纯文本',
+    { title: 'Title', layers: [{ id: 1, x: 0.5 }, { id: 2, nested: { deep: [true, false, null] } }] },
+    'A piece of plain text',
     12345.5,
     [1, 'two', { three: 3 }],
     true,
@@ -73,138 +78,138 @@ test('N1 put 后 get 取回相同的 body，hash = sha256(JSON.stringify(body))�
       `get ${key}`,
     );
   }
-  // 各 kind 互不串：同一个 key 在别的 kind 下没有
+  // Kinds do not cross-contaminate: same key does not exist under other kinds
   assert.equal((await get(c, 'render-manifest', 'scene/1.json')).missing, true);
   const h = await env.health();
-  assert.ok(Array.isArray(h.modules) && h.modules.includes('content'), `/healthz.modules 要含 content：${JSON.stringify(h.modules)}`);
+  assert.ok(Array.isArray(h.modules) && h.modules.includes('content'), `/healthz.modules must include content: ${JSON.stringify(h.modules)}`);
 
-  // 契约第 10 节第 5 条：不往 /healthz 加字段，只提供 describe()
+  // Contract section 10 item 5: does not add fields to /healthz, only provides describe()
   const bare = await startStandalone({ modules: [] });
   t.after(bare.cleanup);
-  assert.deepEqual(Object.keys(h).sort(), Object.keys(await bare.health()).sort(), '挂上内容库模块后 /healthz 的字段集不变');
+  assert.deepEqual(Object.keys(h).sort(), Object.keys(await bare.health()).sort(), 'the /healthz field set is unchanged after mounting the content store module');
   const d = env.service.describe();
-  assert.ok(Object.hasOwn(d.modules, 'content'), 'describe().modules 里有 content');
-  assert.notEqual(d.modules.content, null, '内容库模块提供 describe()');
+  assert.ok(Object.hasOwn(d.modules, 'content'), 'describe().modules contains content');
+  assert.notEqual(d.modules.content, null, 'the content store module provides describe()');
 });
 
 // ------------------------------------------------------------------ N2
 
-test('N2 card-source 同一键连续 put 三次：rev 为 1、2、3，内容相同也加；其它 kind 没有 rev', async (t) => {
+test('N2 putting the same card-source key three times in a row: rev is 1, 2, 3, incrementing even when the content is identical; other kinds have no rev', async (t) => {
   const env = await start();
   t.after(env.cleanup);
   const c = await env.connect('alice');
   const body = { code: 'export default () => null' };
   const revs = [];
   for (let i = 0; i < 3; i++) revs.push((await put(c, 'card-source', 'cards/title', body)).rev);
-  assert.deepEqual(revs, [1, 2, 3], '内容相同也加');
-  assert.equal((await put(c, 'card-source', 'cards/other', body)).rev, 1, 'rev 按 key 各自从 1 起');
+  assert.deepEqual(revs, [1, 2, 3], 'increments even when the content is identical');
+  assert.equal((await put(c, 'card-source', 'cards/other', body)).rev, 1, 'rev starts from 1 separately for each key');
 
   const item = await get(c, 'card-source', 'cards/title');
-  assert.equal(item.rev, 3, 'get 带当前 rev');
+  assert.equal(item.rev, 3, 'get carries the current rev');
   const listing = await list(c, 'card-source');
-  assert.deepEqual(listing.items.map((x) => [x.key, x.rev]), [['cards/other', 1], ['cards/title', 3]], 'list 带 rev');
+  assert.deepEqual(listing.items.map((x) => [x.key, x.rev]), [['cards/other', 1], ['cards/title', 3]], 'list carries rev');
 
   for (const kind of KINDS.filter((k) => k !== 'card-source')) {
     for (let i = 0; i < 2; i++) {
       const stored = await put(c, kind, 'k', { i });
       assert.equal(stored.type, 'content.stored');
-      assert.ok(!('rev' in stored) || stored.rev === undefined, `${kind} 的 content.stored 没有 rev：${JSON.stringify(stored)}`);
+      assert.ok(!('rev' in stored) || stored.rev === undefined, `content.stored of ${kind} has no rev: ${JSON.stringify(stored)}`);
     }
     const it = await get(c, kind, 'k');
-    assert.ok(!('rev' in it), `${kind} 的 content.item 没有 rev：${JSON.stringify(it)}`);
-    assert.deepEqual(it.body, { i: 1 }, '后写的赢');
+    assert.ok(!('rev' in it), `content.item of ${kind} has no rev: ${JSON.stringify(it)}`);
+    assert.deepEqual(it.body, { i: 1 }, 'the later write wins');
     const ls = await list(c, kind);
-    assert.ok(ls.items.every((x) => !('rev' in x)), `${kind} 的 listing 项没有 rev：${JSON.stringify(ls.items)}`);
+    assert.ok(ls.items.every((x) => !('rev' in x)), `listing items of ${kind} have no rev: ${JSON.stringify(ls.items)}`);
   }
 });
 
 // ------------------------------------------------------------------ N3
 
-test('N3 list 按 prefix 过滤、按 key 升序；恰好 1000 条 truncated: false，超过 1000 条 truncated: true', async (t) => {
+test('N3 list filters by prefix and sorts by key ascending; exactly 1000 items gives truncated: false, more than 1000 gives truncated: true', async (t) => {
   const env = await start();
   t.after(env.cleanup);
   const c = await env.connect('alice');
   for (const key of ['b/2', 'a/2', 'a/10', 'a/1', 'c', 'ab']) await put(c, 'event-detail', key, { key });
-  await put(c, 'render-manifest', 'a/9', {}); // 别的 kind 不出现
+  await put(c, 'render-manifest', 'a/9', {}); // Other kinds do not appear
 
   const all = await list(c, 'event-detail');
-  assert.deepEqual(all.items.map((x) => x.key), ['a/1', 'a/10', 'a/2', 'ab', 'b/2', 'c'], '按 key 升序（字符串比较）');
+  assert.deepEqual(all.items.map((x) => x.key), ['a/1', 'a/10', 'a/2', 'ab', 'b/2', 'c'], 'ascending by key (string comparison)');
   assert.equal(all.truncated, false);
   assert.deepEqual(all.kind, 'event-detail');
-  assert.equal(all.items[0].hash, sha({ key: 'a/1' }), '每项带 hash');
+  assert.equal(all.items[0].hash, sha({ key: 'a/1' }), 'each item carries hash');
   const a = await list(c, 'event-detail', 'a/');
   assert.deepEqual(a.items.map((x) => x.key), ['a/1', 'a/10', 'a/2']);
   assert.deepEqual((await list(c, 'event-detail', 'a')).items.map((x) => x.key), ['a/1', 'a/10', 'a/2', 'ab']);
   assert.deepEqual((await list(c, 'event-detail', 'zzz')).items, []);
 
-  // 1000 条边界：流水线发，逐条收
+  // 1,000-item boundary: send pipelined, receive one by one
   const keys = Array.from({ length: 1001 }, (_, i) => `bulk/${String(i).padStart(4, '0')}`);
   for (const key of keys.slice(0, 1000)) c.send({ type: 'content.put', kind: 'snapshot-manifest', key, body: 1 });
   for (let i = 0; i < 1000; i++) assert.equal((await untilType(c, ['content.stored', 'error'], 5000)).type, 'content.stored');
   const exact = await list(c, 'snapshot-manifest');
   assert.equal(exact.items.length, 1000);
-  assert.equal(exact.truncated, false, '恰好 1000 条不算截断');
+  assert.equal(exact.truncated, false, 'exactly 1000 items does not count as truncated');
 
   await put(c, 'snapshot-manifest', keys[1000], 1);
   const over = await list(c, 'snapshot-manifest');
-  assert.equal(over.items.length, 1000, '最多 1000 条');
+  assert.equal(over.items.length, 1000, 'at most 1000 items');
   assert.equal(over.truncated, true);
-  assert.deepEqual(over.items.map((x) => x.key), keys.slice(0, 1000), '截断时给出升序的前 1000 条');
+  assert.deepEqual(over.items.map((x) => x.key), keys.slice(0, 1000), 'when truncated, the first 1000 items in ascending order are returned');
   const filtered = await list(c, 'snapshot-manifest', 'bulk/100');
-  assert.deepEqual(filtered.items.map((x) => x.key), ['bulk/1000'], '先按 prefix 过滤再截断');
+  assert.deepEqual(filtered.items.map((x) => x.key), ['bulk/1000'], 'filter by prefix first, then truncate');
   assert.equal(filtered.truncated, false);
 });
 
 // ------------------------------------------------------------------ N4
 
-test('N4 没有的键回 content.item { kind, key, missing: true }', async (t) => {
+test('N4 a missing key replies content.item { kind, key, missing: true }', async (t) => {
   const env = await start();
   t.after(env.cleanup);
   const c = await env.connect('alice');
   for (const kind of KINDS) {
     const item = await get(c, kind, 'nope/none');
     assert.deepEqual({ type: item.type, kind: item.kind, key: item.key, missing: item.missing }, { type: 'content.item', kind, key: 'nope/none', missing: true });
-    assert.ok(!('body' in item) || item.body === undefined, '没有 body');
+    assert.ok(!('body' in item) || item.body === undefined, 'no body');
   }
   await put(c, 'card-source', 'exists', { a: 1 });
-  assert.equal((await get(c, 'card-source', 'exists2')).missing, true, '键精确匹配，不按前缀');
+  assert.equal((await get(c, 'card-source', 'exists2')).missing, true, 'keys match exactly, not by prefix');
   assert.notEqual((await get(c, 'card-source', 'exists')).missing, true);
 });
 
 // ------------------------------------------------------------------ N5
 
-test('N5 body 超过 maxBodyBytes 回 too-large，不落任何状态（按 UTF-8 字节数计）', async (t) => {
+test('N5 a body over maxBodyBytes replies too-large and persists no state (counted in UTF-8 bytes)', async (t) => {
   const env = await start({ maxBodyBytes: 100 });
   t.after(env.cleanup);
   const c = await env.connect('alice');
   const w = await env.connect('bob');
   await watch(w, KINDS);
 
-  const exact = 'a'.repeat(98); // JSON.stringify 后 100 字节
+  const exact = 'a'.repeat(98); // 100 bytes after JSON.stringify
   assert.equal(Buffer.byteLength(JSON.stringify(exact)), 100);
-  assert.equal((await put(c, 'card-source', 'edge', exact)).type, 'content.stored', '正好等于上限可以');
+  assert.equal((await put(c, 'card-source', 'edge', exact)).type, 'content.stored', 'exactly at the limit is allowed');
   await w.next(byType('content.changed'));
 
   const tooLong = 'a'.repeat(99);
-  const multiByte = '中'.repeat(33); // 35 个字符、101 字节
+  const multiByte = '中'.repeat(33); // i18n-allow: 35 characters, 101 bytes
   assert.equal(Buffer.byteLength(JSON.stringify(multiByte)), 101);
   const before = env.store.read('content/card-source').length;
   for (const body of [tooLong, multiByte, { big: 'x'.repeat(200) }]) {
     const r1 = await put(c, 'card-source', 'fresh', body);
-    assert.deepEqual({ type: r1.type, reason: r1.reason }, { type: 'error', reason: 'too-large' }, `新键：${JSON.stringify(body).slice(0, 40)}`);
+    assert.deepEqual({ type: r1.type, reason: r1.reason }, { type: 'error', reason: 'too-large' }, `new key: ${JSON.stringify(body).slice(0, 40)}`);
     const r2 = await put(c, 'card-source', 'edge', body);
-    assert.deepEqual({ type: r2.type, reason: r2.reason }, { type: 'error', reason: 'too-large' }, '已有键');
+    assert.deepEqual({ type: r2.type, reason: r2.reason }, { type: 'error', reason: 'too-large' }, 'existing key');
   }
-  assert.equal((await get(c, 'card-source', 'fresh')).missing, true, '新键没落');
+  assert.equal((await get(c, 'card-source', 'fresh')).missing, true, 'the new key was not persisted');
   const edge = await get(c, 'card-source', 'edge');
-  assert.deepEqual({ body: edge.body, rev: edge.rev }, { body: exact, rev: 1 }, '已有键的 body 与 rev 都不变');
+  assert.deepEqual({ body: edge.body, rev: edge.rev }, { body: exact, rev: 1 }, 'body and rev of the existing key are both unchanged');
   assert.deepEqual((await list(c, 'card-source')).items.map((x) => x.key), ['edge']);
-  assert.equal(env.store.read('content/card-source').length, before, '不写日志');
-  assert.deepEqual(await changes(w), [], '不广播');
-  assert.equal((await put(c, 'card-source', 'edge', 'ok')).rev, 2, '之后的正常写入 rev 接着 1 往上');
+  assert.equal(env.store.read('content/card-source').length, before, 'nothing written to the log');
+  assert.deepEqual(await changes(w), [], 'no broadcast');
+  assert.equal((await put(c, 'card-source', 'edge', 'ok')).rev, 2, 'a normal write afterwards continues rev upward from 1');
 });
 
-test('N5 缺省 maxBodyBytes 是 256 KiB', async (t) => {
+test('N5 default maxBodyBytes is 256 KiB', async (t) => {
   const env = await start();
   t.after(env.cleanup);
   const c = await env.connect('alice');
@@ -217,7 +222,7 @@ test('N5 缺省 maxBodyBytes 是 256 KiB', async (t) => {
 
 // ------------------------------------------------------------------ N6
 
-test('N6 content.watch 的连接在覆盖时收到 content.changed，previousActor 正确；没 watch 的收不到', async (t) => {
+test('N6 a connection with content.watch receives content.changed on overwrite, with the correct previousActor; a connection that did not watch receives nothing', async (t) => {
   const env = await start();
   t.after(env.cleanup);
   const alice = await env.connect('alice');
@@ -235,46 +240,46 @@ test('N6 content.watch 的连接在覆盖时收到 content.changed，previousAct
   const pick = (m) => ({ type: m.type, kind: m.kind, key: m.key, hash: m.hash, rev: m.rev });
   const c1 = await w.next(byType('content.changed'));
   assert.deepEqual(pick(c1), { type: 'content.changed', kind: 'card-source', key: 'cards/x', hash: s1.hash, rev: 1 });
-  assert.deepEqual(c1.actor, { userId: 'alice', session: null }, 'actor 来自 principal，没给 session 为 null（契约第 10 节第 4 条）');
-  assert.equal(c1.previousActor, null, '第一次写入 previousActor 为 null');
+  assert.deepEqual(c1.actor, { userId: 'alice', session: null }, 'actor comes from principal, and session is null when not given (contract section 10, item 4)');
+  assert.equal(c1.previousActor, null, 'previousActor is null on the first write');
   await alice.next(byType('content.changed'));
-  // 契约第 10 节第 2 条：同一条请求先回包、后广播
+  // Contract section 10 item 2: for the same request, respond first, then broadcast
   const iStored = alice.all.findIndex((m) => m.type === 'content.stored');
   const iChanged = alice.all.findIndex((m) => m.type === 'content.changed');
-  assert.ok(iStored >= 0 && iChanged > iStored, `content.stored 先于 content.changed：stored@${iStored}、changed@${iChanged}`);
+  assert.ok(iStored >= 0 && iChanged > iStored, `content.stored comes before content.changed: stored@${iStored}, changed@${iChanged}`);
 
-  // bob 覆盖 alice（带 session；正文里自报的 userId 不算数）
+  // bob overwrites alice (with session; self-reported userId in body does not count)
   const b2 = { v: 2 };
   const s2 = await put(bob, 'card-source', 'cards/x', { ...b2, userId: 'mallory' }, { session: 'tab-b', userId: 'mallory' });
   const c2 = await w.next(byType('content.changed'));
   assert.deepEqual(pick(c2), { type: 'content.changed', kind: 'card-source', key: 'cards/x', hash: s2.hash, rev: 2 });
   assert.deepEqual(c2.actor, { userId: 'bob', session: 'tab-b' });
-  assert.deepEqual(c2.previousActor, c1.actor, 'previousActor 是被覆盖的那次写入的 actor');
-  // 被覆盖方（alice）在频道里看到自己被覆盖
+  assert.deepEqual(c2.previousActor, c1.actor, 'previousActor is the actor of the write that was overwritten');
+  // Overwritten party (alice) sees itself overwritten in the channel
   const seenByAlice = await alice.next(byType('content.changed'));
   assert.equal(seenByAlice.previousActor?.userId, 'alice');
   assert.equal(seenByAlice.actor?.userId, 'bob');
-  // session: null 视为没给
+  // session: null is treated as not provided
   await put(alice, 'card-source', 'cards/x', { v: 3 }, { session: null });
   const c3null = await w.next(byType('content.changed'));
-  assert.deepEqual(c3null.actor, { userId: 'alice', session: null }, 'session: null 视为没给');
+  assert.deepEqual(c3null.actor, { userId: 'alice', session: null }, 'session: null counts as not given');
   assert.deepEqual(c3null.previousActor, { userId: 'bob', session: 'tab-b' });
   await alice.next(byType('content.changed'));
-  assert.equal(s2.type, 'content.stored', '覆盖方看 content.stored');
+  assert.equal(s2.type, 'content.stored', 'the overwriting side sees content.stored');
 
-  assert.deepEqual(await changes(otherKind), [], 'watch 别的 kind 的收不到');
-  assert.deepEqual(await changes(idle, 0), [], '没 watch 的收不到');
-  assert.deepEqual(await changes(bob, 0), [], '覆盖方没 watch 也收不到');
+  assert.deepEqual(await changes(otherKind), [], 'a connection watching another kind receives nothing');
+  assert.deepEqual(await changes(idle, 0), [], 'a connection that did not watch receives nothing');
+  assert.deepEqual(await changes(bob, 0), [], 'the overwriting side, which is not watching, receives nothing either');
 
-  // 别的 kind：content.changed 没有 rev；只到 watch 了那个 kind 的连接
+  // Other kinds: content.changed has no rev; only goes to connections watching that kind
   await put(bob, 'snapshot-manifest', 'm', { a: 1 });
   const c3 = await otherKind.next(byType('content.changed'));
   assert.deepEqual({ kind: c3.kind, key: c3.key, previousActor: c3.previousActor }, { kind: 'snapshot-manifest', key: 'm', previousActor: null });
-  assert.ok(!('rev' in c3), `非 card-source 的 content.changed 没有 rev：${JSON.stringify(c3)}`);
-  assert.deepEqual(await changes(w), [], 'watch card-source 的收不到 snapshot-manifest');
+  assert.ok(!('rev' in c3), `content.changed of a non-card-source kind has no rev: ${JSON.stringify(c3)}`);
+  assert.deepEqual(await changes(w), [], 'a connection watching card-source does not receive snapshot-manifest');
 });
 
-test('N6 content.watch 以最后一条为准：是替换，不是累加（契约第 10 节第 3 条）', async (t) => {
+test('N6 content.watch: the last one wins, it replaces rather than accumulates (contract section 10, item 3)', async (t) => {
   const env = await start();
   t.after(env.cleanup);
   const writer = await env.connect('alice');
@@ -289,14 +294,14 @@ test('N6 content.watch 以最后一条为准：是替换，不是累加（契约
   await put(writer, 'snapshot-manifest', 's', 1);
   const got = await w.next(byType('content.changed'));
   assert.equal(got.kind, 'snapshot-manifest');
-  assert.deepEqual(await changes(w), [], '换订阅之后，旧的 kind 不再收到');
-  assert.deepEqual(w.all.filter((m) => m.type === 'content.changed' && m.kind !== 'snapshot-manifest' && m.kind !== 'event-detail'), [], 'card-source 一条都没收到');
-  assert.equal(w.all.filter((m) => m.type === 'content.changed' && m.kind === 'event-detail').length, 1, 'event-detail 只收到换订阅之前的那一条');
+  assert.deepEqual(await changes(w), [], 'after switching the subscription, the old kind is no longer received');
+  assert.deepEqual(w.all.filter((m) => m.type === 'content.changed' && m.kind !== 'snapshot-manifest' && m.kind !== 'event-detail'), [], 'not a single card-source message received');
+  assert.equal(w.all.filter((m) => m.type === 'content.changed' && m.kind === 'event-detail').length, 1, 'only the one event-detail from before the subscription switch is received');
 });
 
 // ------------------------------------------------------------------ N7
 
-test('N7 文件存储重启恢复每个键的最后状态与 rev', async (t) => {
+test('N7 file storage restores the last state and rev of every key after a restart', async (t) => {
   const dir = tempDir(t);
   const { createFileStore } = await loadStore();
   const clock = { t: T0 };
@@ -312,10 +317,10 @@ test('N7 文件存储重启恢复每个键的最后状态与 rev', async (t) => 
 
   for (const kind of ['card-source', 'snapshot-manifest']) {
     const file = join(dir, 'content', `${kind}.ndjson`);
-    assert.ok(existsSync(file), `日志文件在 <dir>/content/<kind>.ndjson：${kind}`);
+    assert.ok(existsSync(file), `log file is at <dir>/content/<kind>.ndjson: ${kind}`);
     const lines = readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
     for (const r of lines) {
-      for (const k of ['kind', 'key', 'hash', 'actor', 'at', 'body']) assert.ok(Object.hasOwn(r, k), `日志行缺 ${k}：${JSON.stringify(r)}`);
+      for (const k of ['kind', 'key', 'hash', 'actor', 'at', 'body']) assert.ok(Object.hasOwn(r, k), `log line is missing ${k}: ${JSON.stringify(r)}`);
       assert.deepEqual(r.actor, { userId: 'alice', session: null });
       assert.equal(r.hash, sha(r.body));
     }
@@ -334,14 +339,14 @@ test('N7 文件存储重启恢复每个键的最后状态与 rev', async (t) => 
   assert.deepEqual((await list(b, 'card-source')).items.map((x) => [x.key, x.rev]), [['k1', 2], ['k2', 1]]);
 
   await watch(b, ['card-source']);
-  assert.equal((await put(b, 'card-source', 'k1', { v: 3 })).rev, 3, 'rev 从恢复值往上加');
+  assert.equal((await put(b, 'card-source', 'k1', { v: 3 })).rev, 3, 'rev continues upward from the restored value');
   const ch = await b.next(byType('content.changed'));
-  assert.equal(ch.previousActor?.userId, 'alice', '恢复出的最后写入者作为 previousActor');
+  assert.equal(ch.previousActor?.userId, 'alice', 'the restored last writer is used as previousActor');
 });
 
 // ------------------------------------------------------------------ N8
 
-test('N8 不认识的 kind 回 bad-message；key、kinds 不合法同样拒绝，状态不变', async (t) => {
+test('N8 an unknown kind replies bad-message; an invalid key or kinds is rejected the same way, state unchanged', async (t) => {
   const env = await start();
   t.after(env.cleanup);
   const c = await env.connect('alice');
@@ -357,12 +362,12 @@ test('N8 不认识的 kind 回 bad-message；key、kinds 不合法同样拒绝�
     const r = await watch(c, kinds);
     assert.deepEqual({ type: r.type, reason: r.reason }, { type: 'error', reason: 'bad-message' }, `content.watch kinds=${JSON.stringify(kinds)}`);
   }
-  // key：1～512 个字符的字符串
+  // key: string of 1-512 characters
   for (const key of ['', 'k'.repeat(513), 5, null, undefined, { k: 1 }]) {
     const r = await put(c, 'card-source', key, 1);
     assert.deepEqual({ type: r.type, reason: r.reason }, { type: 'error', reason: 'bad-message' }, `key=${JSON.stringify(key)?.slice(0, 20)}`);
   }
-  assert.equal((await put(c, 'card-source', 'k'.repeat(512), 1)).type, 'content.stored', '512 个字符可以');
-  assert.deepEqual((await list(c, 'card-source')).items.map((x) => x.key.length), [512], '被拒的都没落');
+  assert.equal((await put(c, 'card-source', 'k'.repeat(512), 1)).type, 'content.stored', '512 characters is allowed');
+  assert.deepEqual((await list(c, 'card-source')).items.map((x) => x.key.length), [512], 'none of the rejected ones were persisted');
   assert.equal(env.store.read('content/card-source').length, 1);
 });

@@ -10,14 +10,15 @@ import { tr } from "../../i18n/index.ts";
 import { shownName } from "../../i18n/names.ts";
 
 /**
- * 序列行头(配色诊断与修正 v2 整屏)。
- * 左边拖动把手,中间名字(双击改名),右边「可见 / 锁定」两个图标——**常驻显示**,
- * 不再悬停才出现:用户要一眼看出哪条被锁了、哪条被藏了,悬停才显示等于藏起了状态。
+ * Track header (color diagnosis and fix v2, full screen).
+ * Drag handle on the left, name in the middle (double-click to rename), and two icons on the right,
+ * "visible / locked": **always shown**, no longer appearing only on hover: users need to see at a glance
+ * which track is locked and which is hidden, and showing them only on hover amounts to hiding the state.
  */
 export function TrackHeader({ track, index }: { track: Track; index: number }) {
   const { trackH } = useTimelineContext();
   const { start: startReorder } = useReorderDrag();
-  // 这个项目只给了只读权限(游客):换序、改名、静音 / 隐藏 / 锁定、删序列都不给
+  // This project only grants read-only permission (guest): reordering, renaming, mute / hide / lock, and deleting tracks are all disallowed
   const ro = useReadOnly();
   const offset = useRowOffset(index, track.id);
   const [isEditing, setIsEditing] = useState(false);
@@ -42,7 +43,7 @@ export function TrackHeader({ track, index }: { track: Track; index: number }) {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY });
   };
-  /** 双击行名改名:只读项目里不给 */
+  /** Double-click the row name to rename: not allowed in a read-only project */
   const startEditing = () => { if (!ro.locked) setIsEditing(true); };
 
   return (

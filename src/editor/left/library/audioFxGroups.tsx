@@ -8,10 +8,10 @@ import { useReadOnly } from "../../readOnly";
 import type { GroupData, GroupItem } from "./groups";
 import { tr } from "../../../i18n/index.ts";
 
-/** 和 Agent 的 apply_audio_fx / remove_audio_fx 同一份校验 */
+/** The same validation as the Agent's apply_audio_fx / remove_audio_fx */
 const tools = createAudioFxTools({ getState, actions });
 
-/** 选中的片段能不能挂音频效果:得是视频或声音素材段,图片和卡片段没有声音 */
+/** Whether the selected clip can take an audio effect: it must be a video or sound media segment; images and card clips have no sound */
 function useSelectedAudioClip() {
   const project = useStore((s) => s.project);
   const selection = useStore((s) => s.selection);
@@ -22,12 +22,13 @@ function useSelectedAudioClip() {
 }
 
 /**
- * 特效 → 音频效果组:项目的音频效果库。
- * 效果大多是 Agent 用 create_audio_fx 建的;这里让人看得到、能挂到选中的视频 / 音频片段上复用、能删。
- * 每条的「挂到选中 / 删除」只在悬停或键盘聚焦时露出来。
+ * Effects → audio effects group: the project's audio effects library.
+ * Most effects are created by the Agent with create_audio_fx; here people can see them, attach
+ * them to the selected video / audio clip for reuse, and delete them.
+ * "Attach to selection / Delete" on each entry only shows on hover or keyboard focus.
  */
 export function useAudioFxGroup(q: string, flash: (text: string, ms?: number) => void): GroupData {
-  // 这个项目只给了只读权限(游客):挂 / 摘音频效果、删效果都是写
+  // This project grants only read-only access (guest): attaching / detaching audio effects and deleting effects are all writes
   const ro = useReadOnly();
   const { project, selClip, selMedia } = useSelectedAudioClip();
   const [armed, setArmed] = useState<string | null>(null);
@@ -121,7 +122,7 @@ export function useAudioFxGroup(q: string, flash: (text: string, ms?: number) =>
     </div>
   );
 
-  // 效果类的参考说明:每种效果是做什么的、有哪些参数和取值范围
+  // Reference notes for effect types: what each effect does, which parameters it has and their value ranges
   const detailBottom = (
     <details className="pc-lib-details">
       <summary>{tr("Effect types (click to expand)")}</summary>
@@ -163,7 +164,7 @@ export function useAudioFxGroup(q: string, flash: (text: string, ms?: number) =>
   };
 }
 
-/** 特效 → 音频预设组:AUDIO_FX_PRESETS,点一条 = 从预设新建(选中了能挂的片段就顺手挂上) */
+/** Effects → audio presets group: AUDIO_FX_PRESETS; clicking an entry = create from the preset (and attach it right away if a clip that can take it is selected) */
 export function useAudioPresetsGroup(q: string, flash: (text: string, ms?: number) => void): GroupData {
   const ro = useReadOnly();
   const { selClip, selMedia } = useSelectedAudioClip();

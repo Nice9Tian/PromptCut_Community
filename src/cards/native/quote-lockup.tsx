@@ -63,12 +63,13 @@ function QuoteLockupCard({ params }: CardProps<Params>) {
 
 export const quoteLockup: CardDef<Params> = {
   id: "quote-lockup",
-  name: "金句定格",
-  description: "逐行揭示的金句引言",
-  useWhen: "口播里出现引号包起来的原话、名人名言时,定格成引言版式,带左侧主色竖线和 author 署名。正文用 `|` 分成 2 到 3 行短句。极短口号用 punch-pill,强调句用 blur-text。",
-  tags: ["金句","引言","引号","定格"],
+  name: "Quote lockup",
+  description: "Punchline quote revealed line by line",
+  useWhen: "When the narration contains exact words in quotation marks or a famous quote, lock it into a quote layout with a primary-color vertical bar on the left and an author credit. Split the body into 2 to 3 short lines with `|`. For very short slogans use punch-pill; for emphasis sentences use blur-text.",
+  tags: ["quotable line","quote","quotation marks","lockup"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -79,13 +80,13 @@ export const quoteLockup: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "quote", label: "金句(用|分行)", type: "text" },
-    { key: "author", label: "署名", type: "text" },
-    { key: "side", label: "靠侧", type: "select", options: [{ value: "left", label: "靠左" }, { value: "right", label: "靠右" }] },
+    { key: "quote", label: "Quote (separate lines with |)", type: "text" },
+    { key: "author", label: "Attribution", type: "text" },
+    { key: "side", label: "Side", type: "select", options: [{ value: "left", label: "Align left" }, { value: "right", label: "Align right" }] },
   ],
   parts: [
-    { id: "quote", label: "金句", role: "list", params: ["quote", "side"], enterMs: 0, settleMs: 960 },
-    { id: "author", label: "署名", role: "text", params: ["author"], enterMs: 740, settleMs: 1340 },
+    { id: "quote", label: "quotable line", role: "list", params: ["quote", "side"], enterMs: 0, settleMs: 960 },
+    { id: "author", label: "Attribution", role: "text", params: ["author"], enterMs: 740, settleMs: 1340 },
   ],
   lifecycle: { settleMs: 1340, after: "hold", exit: ["fade"] },
   timing: (p) => {

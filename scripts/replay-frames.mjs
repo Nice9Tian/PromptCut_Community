@@ -1,31 +1,41 @@
 /**
- * 从 HTML 采样缓存里重截帧 —— 任意顺序、任意子集。
+ * Re-capture frames from HTML sample cache: arbitrary order, arbitrary subset.
  *
- * # 它是干什么的
+ * # What it does
  *
- * `scripts/export-frames.mjs --dom-cache` 在导出那一趟里,每截完一帧就把舞台生成一份 HTML 快照(全部计算样式内联、
- * 动画关掉、id 改名、画布换成同尺寸的图),存到 `<out>/dom/%06d.html.gz`。这个脚本拿这些快照重截:
+ * In the export pass, `scripts/export-frames.mjs --dom-cache` generates an HTML snapshot of the
+ * stage after capturing each frame (all computed styles inlined, animations turned off, ids renamed,
+ * canvases replaced with images of the same dimensions), and saves it to `<out>/dom/%06d.html.gz`.
+ * This script takes these snapshots to re-capture:
  *
- *   - **不需要从第 0 帧顺推**:每一帧的状态就在快照里,想截第几帧就截第几帧;
- *   - **不需要页面时钟、settle、钉动画**:快照里没有任何还在走的钟(实测注入后等 500ms 再截,0/60 帧变化);
- *   - 所以可以乱序、可以只截一部分、可以多开几个进程各截一段。
+ *   - **No need to advance sequentially from frame 0**: the state of each frame is right in the
+ *     snapshot, capture whichever frame you want;
+ *   - **No need for page clock, settle, or pinned animations**: there are no running clocks in the
+ *     snapshot (tested: waiting 500ms after injection before capturing showed 0/60 frame changes);
+ *   - So it can be out of order, capture only a subset, or launch multiple processes to each
+ *     capture a section.
  *
- * 用在「内容没变、只是要再截一遍」的场合:换输出格式、换合成层、预览要渐进铺开、分给多个进程并行。
+ * Used when "content has not changed, just need to re-capture": changing output format, changing
+ * composite layers, progressive rollout for preview, or distributing across multiple processes
+ * in parallel.
  *
- * # 一定要知道的
+ * # What you must know
  *
- * **重放截图和实时截图不是逐字节相同的**:重放时浏览器会按内联的计算样式重新排一遍版,
- * 边缘上有细小残差(实测 rank-bars 35/60 帧相同、最大通道差 71;mu-number-ticker 60/60 相同)。
- * 重放和重放之间是确定的(乱序 vs 倒序 0/60 不同)。所以**同一次交付只走一条路**,
- * 别把一部分实时截的帧和一部分重放的帧拼在一起 —— 接缝会跳。
+ * **Replay captures and live captures are not byte-for-byte identical**: during replay, the
+ * browser re-layouts according to inlined computed styles, leaving subtle residuals on edges
+ * (tested: rank-bars had 35/60 identical frames, max channel difference 71; mu-number-ticker
+ * had 60/60 identical frames). Replay-to-replay is deterministic (out-of-order vs reverse: 0/60
+ * differences). Therefore **only take one path for the same delivery**, never mix frames captured
+ * live with frames replayed: the seams will jitter.
  *
- * # 用法
+ * # Usage
  *
- *   node scripts/replay-frames.mjs --cache out/x/dom --out out/x-replay [--frames 0-99 | --frames 5,9,12] [--shuffle] [--url 导出页]
+ *   node scripts/replay-frames.mjs --cache out/x/dom --out out/x-replay [--frames 0-99 | --frames 5,9,12] [--shuffle] [--url <export page>]
  *
- * 用的是和导出同一个渲染器、同一套启动参数(openBakery),字体和样式表都来自导出页。
+ * Uses the same renderer and startup parameters (openBakery) as export; fonts and stylesheets both
+ * come from the export page.
  */
-import './lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import './lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -33,7 +43,7 @@ import { fileURLToPath } from 'node:url';
 import { captureSnapshot } from '../server/bakery/capture-snapshot.mjs';
 import { openBakery } from '../server/bakery/index.mjs';
 
-/** 解析 --frames:「a-b」或「a,b,c」;不给就是缓存里全部的帧 */
+/** Parse --frames: "a-b" or "a,b,c"; if omitted, defaults to all frames in the cache */
 function pickFrames(spec, available) {
   if (!spec) return available;
   const have = new Set(available);
@@ -45,8 +55,9 @@ function pickFrames(spec, available) {
 }
 
 /**
- * 重截一批帧。返回 { frames, elapsed }。
- * `bakery` 可以由调用方传进来复用(常驻进程里用);不传就自己开一个、用完关掉。
+ * Re-capture a batch of frames. Returns { frames, elapsed }.
+ * `bakery` can be passed in by the caller for reuse (used in resident processes); if omitted,
+ * opens one on its own and closes it after use.
  */
 export async function replayFrames(opts) {
   const cacheDir = opts.cache;
@@ -74,7 +85,7 @@ export async function replayFrames(opts) {
     if (!opts.bakery) await bakery.close();
   }
   const elapsed = (Date.now() - t0) / 1000;
-  console.log(`Replayed ${frames.length} frames in ${elapsed.toFixed(1)}s (${(elapsed * 1000 / Math.max(1, frames.length)).toFixed(1)} ms/帧).`);
+  console.log(`Replayed ${frames.length} frames in ${elapsed.toFixed(1)}s (${(elapsed * 1000 / Math.max(1, frames.length)).toFixed(1)} ms/frame).`);
   return { frames, elapsed };
 }
 
@@ -89,6 +100,6 @@ if (isMain) {
     else if (args[i] === '--url') opts.url = args[++i];
     else if (args[i] === '--shuffle') opts.shuffle = true;
   }
-  if (!opts.cache) { console.error('用法:node scripts/replay-frames.mjs --cache <out>/dom --out <目录> [--frames a-b] [--shuffle]'); process.exit(2); }
+  if (!opts.cache) { console.error('Usage: node scripts/replay-frames.mjs --cache <out>/dom --out <dir> [--frames a-b] [--shuffle]'); process.exit(2); }
   replayFrames(opts).catch((e) => { console.error(e); process.exit(1); });
 }

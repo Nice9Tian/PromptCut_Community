@@ -2,15 +2,15 @@ import { CLOUD_CHAT_TEXT } from "../../ai/chatTexts";
 import type { CloudChatItem } from "../../ai/chatTypes";
 import "./CloudAgentConsentDialog.css";
 
-/** 删除一段云端对话前的确认。文字都在 `src/ai/cloud/chatTexts.ts`（用户 2026-10-13 确认）。 */
+/** Confirmation before deleting a cloud chat. The texts are all in `src/ai/cloud/chatTexts.ts` (user confirmed 2026-10-13). */
 export interface CloudDeleteAsk {
   item: CloudChatItem;
-  /** 一次删除用同一个请求号：没办完（任务还没停稳）时重试沿用它 */
+  /** One deletion uses the same request ID: when it was not completed (task not fully stopped), a retry reuses it */
   requestId: string;
-  /** confirm = 等用户点；working = 已提交、等云端；pending = 任务还没停稳、可重试；error = 被拒或失败 */
+  /** confirm = waiting for the user to click; working = submitted, waiting for the cloud; pending = task not fully stopped, can retry; error = rejected or failed */
   stage: "confirm" | "working" | "pending" | "error";
   text: string | null;
-  /** 删的是别人开的对话（只有项目创建者会走到这里） */
+  /** The chat being deleted was opened by someone else (only the project creator gets here) */
   others: boolean;
 }
 

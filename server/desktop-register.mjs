@@ -1,42 +1,53 @@
 /**
- * 把 PromptCut 的 MCP 服务登记到桌面 APP 的用户级配置(计划 `docs/plan/agent-workflow-plan.md` A4「登记」;风险第 2 条)。
+ * Register PromptCut's MCP service into the desktop app user-level config
+ * (plan `docs/plan/agent-workflow-plan.md` A4 "Register"; risk item 2).
  *
- * 两个目标:
- *   - `claude-code`:Claude Code 的用户级配置 `~/.claude.json` 里的 `mcpServers.promptcut`(Claude 桌面版的「Code」
- *     与命令行共用这一份);
- *   - `codex`:Codex 的 `~/.codex/config.toml` 里的 `[mcp_servers.promptcut]`(Codex 桌面版与命令行共用)。
+ * Two targets:
+ *   - `claude-code`: `mcpServers.promptcut` in Claude Code's user-level config `~/.claude.json`
+ *     (Claude desktop app "Code" shares this with the CLI);
+ *   - `codex`: `[mcp_servers.promptcut]` in Codex's `~/.codex/config.toml`
+ *     (shared between Codex desktop app and CLI).
  *
- * 约定:
- *   - **条目名固定 `promptcut`**,只写 `command` 与 `args`(本机的 node 与 `server/mcp-server.mjs`),**不写端口**:
- *     mcp-server 每次调用按 `%TEMP%\promptcut\port.json` 找用户正在用的那个实例,所以这一条不会把桌面 APP
- *     绑死在某个端口或某个项目上,用户换项目、重开 PromptCut 都不用重登;
- *   - **写之前备份**:整份配置先复制一份到 PromptCut 自己的状态目录(`<skillRoot>/mcp-register/`),
- *     登记记录(写了什么、原来那一条是什么)也放那里;
- *   - **能撤销**:撤销只动 `promptcut` 这一条 —— 原来就有同名条目的还原成原来那条,原来没有的删掉;配置里别的内容
- *     (用户在这期间的其它改动)一律不碰。用户自己改过这一条的,撤销拒绝并说明,不替用户做主;
- *   - **路径可覆盖**:`PROMPTCUT_CLAUDE_CONFIG`、`PROMPTCUT_CODEX_CONFIG`、`PROMPTCUT_SKILL_DIR` 或函数参数,
- *     测试和探针只在临时目录里写,绝不碰用户真实的配置。
+ * Conventions:
+ *   - **Entry name is fixed to `promptcut`**, writing only `command` and `args` (local node and
+ *     `server/mcp-server.mjs`), **no port**: each invocation of mcp-server finds the instance
+ *     currently in use via `%TEMP%\promptcut\port.json`, so this entry will not bind the desktop
+ *     app to a specific port or project; switching projects or restarting PromptCut requires
+ *     no re-registration;
+ *   - **Back up before writing**: copy the entire config to PromptCut's own state directory
+ *     (`<skillRoot>/mcp-register/`), and store registration records (what was written, what the
+ *     original entry was) there as well;
+ *   - **Reversible**: undo only touches the `promptcut` entry: restore original entry if one
+ *     already existed, or delete it if none existed; other contents in the config (user changes
+ *     made during this period) are left untouched. If the user modified this entry themselves,
+ *     undo is rejected with an explanation rather than deciding for the user;
+ *   - **Overridable paths**: `PROMPTCUT_CLAUDE_CONFIG`, `PROMPTCUT_CODEX_CONFIG`,
+ *     `PROMPTCUT_SKILL_DIR`, or function parameters; tests and probes write only to temporary
+ *     directories and never touch actual user configs.
  *
- * 写入一律「临时文件 + 改名」,不留下写了一半的配置。`~/.claude.json` 同时也被正在跑的 Claude Code 读写,
- * 两边恰好同一瞬间写会有一方的改动丢失 —— 这里改完立刻读回核对,核对不上就回错误,备份仍在。
+ * Writes always use "temp file + rename" without leaving partially written configs. `~/.claude.json`
+ * is concurrently read and written by running Claude Code instances; writing at the exact same
+ * instant could cause one side's changes to be lost: here we immediately read back to verify after
+ * writing, returning an error if verification fails while keeping the backup intact.
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { skillRoot } from './skill-gate.mjs';
+import { tr } from './i18n.mjs';
 
 export const ENTRY_NAME = 'promptcut';
 export const TARGETS = Object.freeze(['claude-code', 'codex']);
 const TARGET_LABEL = { 'claude-code': 'Claude Code', codex: 'Codex' };
 
-/** 各目标的配置文件路径 */
+/** Config file paths for each target */
 export function configPathOf(target, { env = process.env, home = os.homedir() } = {}) {
   if (target === 'claude-code') return env.PROMPTCUT_CLAUDE_CONFIG || path.join(home, '.claude.json');
   if (target === 'codex') return env.PROMPTCUT_CODEX_CONFIG || path.join(env.CODEX_HOME || path.join(home, '.codex'), 'config.toml');
-  throw new Error(`不认识的登记目标:${target}(只有 ${TARGETS.join(' / ')})`);
+  throw new Error(tr("Unknown registration target: {0} (only {1})", target, TARGETS.join(' / ')));
 }
 
-/** 备份与登记记录放哪 */
+/** Where backups and registration records are stored */
 export function stateDirOf({ stateDir } = {}) {
   return stateDir || path.join(skillRoot(), 'mcp-register');
 }
@@ -74,9 +85,9 @@ function readJsonConfig(file) {
   try {
     doc = JSON.parse(trimmed);
   } catch (e) {
-    throw new Error(`${file} 不是合法的 JSON(${e.message}),没有改动它。请先修好这个文件再登记。`);
+    throw new Error(tr("{0} is not valid JSON ({1}); it was not modified. Fix the file first, then register again.", file, e.message));
   }
-  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error(`${file} 的内容不是一个对象,没有改动它。`);
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error(tr("The content of {0} is not an object; it was not modified.", file));
   return { text, doc };
 }
 
@@ -86,7 +97,7 @@ const claude = {
     const servers = doc.mcpServers && typeof doc.mcpServers === 'object' ? doc.mcpServers : {};
     return { text, entry: Object.hasOwn(servers, ENTRY_NAME) ? servers[ENTRY_NAME] : null };
   },
-  /** 把条目设成 value(null = 删掉),回新全文 */
+  /** Set entry to value (null = delete), returns new full text */
   write(file, value) {
     const { doc } = readJsonConfig(file);
     const servers = doc.mcpServers && typeof doc.mcpServers === 'object' && !Array.isArray(doc.mcpServers) ? { ...doc.mcpServers } : {};
@@ -98,9 +109,9 @@ const claude = {
   same: (a, b) => JSON.stringify(a) === JSON.stringify(b),
 };
 
-/* ------------------------------------------------------------------ Codex:TOML(只动 promptcut 这一张表,别的原样保留) */
+/* ------------------------------------------------------------------ Codex: TOML (only touches the promptcut table, leaves others intact) */
 
-/** TOML 基本字符串:JSON 的字符串写法在 TOML 里同样合法(\\ \" \uXXXX) */
+/** TOML basic string: JSON string escaping is also valid in TOML (\\ \" \uXXXX) */
 const tomlString = (s) => JSON.stringify(String(s));
 
 function tomlBlock({ command, args }) {
@@ -108,13 +119,15 @@ function tomlBlock({ command, args }) {
 }
 
 const HEADER_RE = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$/;
-/** 表头名去掉引号、空白,好比较:`mcp_servers."promptcut"` → `mcp_servers.promptcut` */
+/** Strip quotes and whitespace from table headers for easy comparison: `mcp_servers."promptcut"` → `mcp_servers.promptcut` */
 const normHeader = (h) => h.split('.').map((p) => p.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')).join('.');
 
 /**
- * 找 promptcut 这张表(连同它的子表 `[mcp_servers.promptcut.env]` 等)在全文里的行范围。
- * 回 { start, end }(end 不含),没有回 null;用了别的写法(`[mcp_servers]` 表里直接写 `promptcut = …` 或
- * 点号键)时抛错,让用户手动处理,不猜。
+ * Find the line range of the promptcut table (along with its subtables like
+ * `[mcp_servers.promptcut.env]`) in the full text. Returns { start, end } (end exclusive),
+ * or null if not found; throws an error if alternative syntax is used (such as writing
+ * `promptcut = …` directly in `[mcp_servers]` or dotted keys), prompting the user to handle
+ * it manually without guessing.
  */
 function findTomlBlock(lines) {
   let start = -1;
@@ -131,14 +144,14 @@ function findTomlBlock(lines) {
     }
     const key = /^\s*("?)([A-Za-z0-9_-]+)\1\s*[.=]/.exec(lines[i]);
     if (current === 'mcp_servers' && key && key[2] === ENTRY_NAME) {
-      throw new Error(`config.toml 的 [mcp_servers] 表里用别的写法定义了 ${ENTRY_NAME}(第 ${i + 1} 行),为了不写坏它,没有改动。请手动删掉那一条后再登记。`);
+      throw new Error(tr("The [mcp_servers] table in config.toml defines {0} in another form (line {1}); to avoid corrupting it, nothing was modified. Delete that entry manually, then register again.", ENTRY_NAME, i + 1));
     }
     if (current === '' && /^\s*mcp_servers\s*\.\s*"?promptcut"?\s*[.=]/.test(lines[i])) {
-      throw new Error(`config.toml 顶层用点号键定义了 mcp_servers.${ENTRY_NAME}(第 ${i + 1} 行),为了不写坏它,没有改动。请手动删掉那一条后再登记。`);
+      throw new Error(tr("config.toml defines mcp_servers.{0} at the top level with a dotted key (line {1}); to avoid corrupting it, nothing was modified. Delete that entry manually, then register again.", ENTRY_NAME, i + 1));
     }
   }
   if (start < 0) return null;
-  // 块尾的空行留给下一张表
+  // Leave blank line at the end of the block for the next table
   while (end > start + 1 && !lines[end - 1].trim()) end--;
   return { start, end };
 }
@@ -161,7 +174,7 @@ const codex = {
       const repl = value === null ? [] : value.split('\n');
       out = [...lines.slice(0, b.start), ...repl, ...lines.slice(b.end)];
       if (value === null) {
-        // 删掉后别留两段连着的空行
+        // Do not leave consecutive blank lines after deletion
         const i = b.start;
         if (i > 0 && i < out.length && !out[i - 1].trim() && !out[i].trim()) out.splice(i, 1);
       }
@@ -181,7 +194,7 @@ const codex = {
 
 const IMPL = { 'claude-code': claude, codex };
 
-/* ------------------------------------------------------------------ 对外 */
+/* ------------------------------------------------------------------ Public */
 
 function recordPath(target, opts) {
   return path.join(stateDirOf(opts), `${target}.json`);
@@ -196,21 +209,23 @@ function readRecord(target, opts) {
 }
 
 /**
- * 这份 MCP 登记该写的命令:本机的 node 与这份代码里的 `server/mcp-server.mjs`。
- * @param {string} root 仓库根(打包后是 runtime/app)
+ * Command that this MCP registration should write: local node and `server/mcp-server.mjs` in this codebase.
+ * @param {string} root Repository root (packaged as runtime/app)
  */
 export function mcpCommand(root, { execPath = process.execPath } = {}) {
   return { command: execPath, args: [path.join(root, 'server', 'mcp-server.mjs')] };
 }
 
 /**
- * 现状:配置文件在哪、有没有 promptcut 条目、是不是这份 PromptCut 写的(命令与脚本一致)、有没有能撤销的登记记录。
+ * Current status: where the config file is, whether the promptcut entry exists, whether it was
+ * written by this PromptCut (command matches script), and whether a reversible registration
+ * record exists.
  * @param {string} target
- * @param {{ command: string, args: string[] }} want 这份 PromptCut 该写的命令
+ * @param {{ command: string, args: string[] }} want Command that this PromptCut should write
  */
 export function registrationStatus(target, want, opts = {}) {
   const impl = IMPL[target];
-  if (!impl) throw new Error(`不认识的登记目标:${target}`);
+  if (!impl) throw new Error(tr("Unknown registration target: {0}", target));
   const file = opts.configPath || configPathOf(target, opts);
   const out = { target, label: TARGET_LABEL[target], file, exists: false, registered: false, current: false, undoable: false, error: null };
   try {
@@ -228,12 +243,13 @@ export function registrationStatus(target, want, opts = {}) {
 }
 
 /**
- * 登记:先备份整份配置,再写 promptcut 条目,读回核对。
- * 已经是同样的条目就什么都不写。原来有别的 promptcut 条目,记下它以便撤销时还原。
+ * Register: back up the entire config first, then write the promptcut entry, and read back
+ * to verify. If the entry is already identical, write nothing. If another promptcut entry
+ * previously existed, record it to restore during undo.
  */
 export function register(target, want, opts = {}) {
   const impl = IMPL[target];
-  if (!impl) throw new Error(`不认识的登记目标:${target}`);
+  if (!impl) throw new Error(tr("Unknown registration target: {0}", target));
   const file = opts.configPath || configPathOf(target, opts);
   const value = impl.build(want);
   const { text, entry } = impl.read(file);
@@ -246,13 +262,13 @@ export function register(target, want, opts = {}) {
     backup = path.join(dir, `${target}-${stamp()}-${path.basename(file)}`);
     fs.writeFileSync(backup, text, 'utf8');
   }
-  // 撤销要还原的是「PromptCut 第一次登记之前」的那一条:已经有记录(重登,比如换了安装位置)就沿用原来那份
+  // Undo restores the entry from "before PromptCut's first registration": if a record already exists (re-registering, e.g. changed install location), keep the original one
   const prev = readRecord(target, opts);
   const previousEntry = prev && prev.file === file ? prev.previousEntry : entry;
   atomicWrite(file, impl.write(file, value));
   const check = impl.read(file);
   if (!impl.same(check.entry, value)) {
-    return { ok: false, file, backup, error: `写完读回核对不上(可能 ${TARGET_LABEL[target]} 同时改了这个文件)。原文件备份在 ${backup ?? '(原来没有这个文件)'},请稍后重试。` };
+    return { ok: false, file, backup, error: tr("Read-back verification after writing failed (maybe {0} modified this file at the same time). The original file is backed up at {1}. Please try again later.", TARGET_LABEL[target], backup ?? tr("(the file did not exist before)")) };
   }
   const record = { target, file, backup, previousEntry, entry: value, registeredAt: new Date().toISOString() };
   atomicWrite(recordPath(target, opts), JSON.stringify(record, null, 2));
@@ -260,22 +276,24 @@ export function register(target, want, opts = {}) {
 }
 
 /**
- * 撤销登记:promptcut 条目还原成登记前的样子(原来没有就删掉)。配置里别的内容不碰。
- * 条目被用户改过(不是当初写的那一条)时拒绝;没有登记记录时,只在条目正是这份 PromptCut 该写的那一条时删掉。
+ * Unregister: restore the promptcut entry to its pre-registration state (delete if it did not
+ * exist). Other contents in the config are left untouched. Rejected if the entry was modified by
+ * the user (not the one originally written); if there is no registration record, only delete if
+ * the entry matches the one this PromptCut should write.
  */
 export function unregister(target, want, opts = {}) {
   const impl = IMPL[target];
-  if (!impl) throw new Error(`不认识的登记目标:${target}`);
+  if (!impl) throw new Error(tr("Unknown registration target: {0}", target));
   const file = opts.configPath || configPathOf(target, opts);
   const rec = readRecord(target, opts);
   const { entry } = impl.read(file);
   const ours = rec && rec.file === file ? rec.entry : impl.build(want);
   if (entry === null) {
-    try { fs.rmSync(recordPath(target, opts), { force: true }); } catch { /* 没有就算了 */ }
+    try { fs.rmSync(recordPath(target, opts), { force: true }); } catch { /* Ignore if absent */ }
     return { ok: true, unchanged: true, file, ...registrationStatus(target, want, opts) };
   }
   if (!impl.same(entry, ours)) {
-    return { ok: false, file, error: `${file} 里的 ${ENTRY_NAME} 条目已经被改过,不是 PromptCut 写的那一条;为了不覆盖你的改动,没有撤销。需要的话请手动删改。` };
+    return { ok: false, file, error: tr("The {1} entry in {0} has been modified and is not the one written by PromptCut; to avoid overwriting your changes, it was not undone. Edit or delete it manually if needed.", file, ENTRY_NAME) };
   }
   const restore = rec && rec.file === file ? rec.previousEntry ?? null : null;
   const dir = stateDirOf(opts);
@@ -284,6 +302,6 @@ export function unregister(target, want, opts = {}) {
   const backup = text !== null ? path.join(dir, `${target}-${stamp()}-before-undo-${path.basename(file)}`) : null;
   if (backup) fs.writeFileSync(backup, text, 'utf8');
   atomicWrite(file, impl.write(file, restore));
-  try { fs.rmSync(recordPath(target, opts), { force: true }); } catch { /* 没有就算了 */ }
+  try { fs.rmSync(recordPath(target, opts), { force: true }); } catch { /* Ignore if absent */ }
   return { ok: true, file, backup, restored: restore !== null, ...registrationStatus(target, want, opts) };
 }

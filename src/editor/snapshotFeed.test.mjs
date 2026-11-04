@@ -1,15 +1,21 @@
 /**
- * 父页快照 / 抑制投递(`snapshotFeed.ts`,C4 / C5 / A3c / K6 的消费方)的单测。跑:
+ * Unit test for parent page snapshot / suppression delivery (`snapshotFeed.ts`, consumer of
+ * C4 / C5 / A3c / K6). Run:
  *   node --experimental-test-module-mocks --test src/editor/snapshotFeed.test.mjs
  *
- * 就绪索引和取字节换成假的快照来源,分派表和镜像键换成假的;选帧(`snapshotPick.mjs`)、
- * 就绪索引的合并(`snapshotSource.ts`)用真的。钉的是:
- *   - 只有判重的活跃卡进 heavy,按就绪索引回溯选帧,缺的报 wanted(最多 8 条);
- *   - K6 降级卡在死素材覆盖「从播放头起 min(fps, 剩余帧)」之前照常活渲;
- *   - 投递基线:增量、摘掉、33 ms 节流、reset 不受节流且带 reset、2 MB 拆包、失败后下次带 reset;
- *   - `pickForSetTime` 同步回手里已有的字节,`awaiting` 只点「有表但没带上快照」的卡;
- *   - settled 把卡从基线里删掉,下次同一帧会重投;
- *   - 抑制集合只在播放中有,并上 K3(b) 的额外抑制。
+ * Ready index and byte fetching are replaced with fake snapshot source; dispatch table and mirror
+ * key replaced with fakes; frame picking (`snapshotPick.mjs`) and ready index merging
+ * (`snapshotSource.ts`) use real ones. Pins down:
+ *   - Only active cards classified as heavy enter heavy, picking frames by backtracking the ready
+ *     index, reporting wanted for missing ones (at most 8 items);
+ *   - K6 downgrade cards live render as usual before dead asset covers "min(fps, remaining frames)
+ *     from playhead";
+ *   - Delivery baseline: delta, detach, 33 ms throttle, reset not throttled and carries reset, 2 MB
+ *     chunking, carries reset next time after failure;
+ *   - `pickForSetTime` synchronously returns bytes in hand, `awaiting` only counts cards "with
+ *     table but without snapshot";
+ *   - settled deletes card from baseline, redelivers next time on the same frame;
+ *   - Suppression set only exists during playback, unioned with additional suppression from K3(b).
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock, beforeEach } from "node:test";
@@ -30,12 +36,15 @@ const {
   MAX_WANTED, SNAPSHOT_THROTTLE_MS, SNAPSHOT_DELIVERY_MAX_BYTES,
 } = feed;
 
-/* ---------------------------------------------------------------- 假环境 */
+/* ---------------------------------------------------------------- Mock environment */
 
 let now = 1000;
 performance.now = () => now;
 
-/** 假快照来源:手动推就绪消息;取字节回 `html:<id>`,可以指定某些 id 的内容 */
+/**
+ * Fake snapshot source: manually push ready messages; fetching bytes returns `html:<id>`, can
+ * specify content for certain ids
+ */
 function fakeSource() {
   const src = {
     push: null,
@@ -51,7 +60,7 @@ function fakeSource() {
   return src;
 }
 
-/** 假舞台客户端:记下每次 setSnapshots,可以让它失败 */
+/** Fake stage client: records each setSnapshots, can make it fail */
 function fakeStage() {
   const st = { calls: [], fail: false };
   st.setSnapshots = async (patch, opts) => {
@@ -80,15 +89,15 @@ beforeEach(() => {
   now += 10_000;
 });
 
-/* ---------------------------------------------------------------- 选帧 */
+/* ---------------------------------------------------------------- Frame selection */
 
-test("只有判重、正在挂载的卡进 heavy;轻卡和不在场的卡不进", () => {
+test("Only cards classified as heavy and currently mounted enter heavy; light cards and cards not present do not", () => {
   const p = project([card("h", 0, 10), card("l", 0, 10), card("gone", 12, 15)]);
   plan = heavyEverywhere("h", "gone");
   assert.deepEqual(planFeed({ project: p, t: 1, playing: false }).heavy, ["h"]);
 });
 
-test("快照退役:planFeed 不再选帧,picks 恒为空,wanted 恒为空", () => {
+test("Snapshots retired: planFeed no longer picks frames, picks is always empty, wanted is always empty", () => {
   const p = project([card("h", 0, 10)]);
   plan = heavyEverywhere("h");
   src.push(layer("h", [[0, 20]]));
@@ -102,7 +111,7 @@ test("快照退役:planFeed 不再选帧,picks 恒为空,wanted 恒为空", () =
   assert.deepEqual(g.wanted, []);
 });
 
-test("html 与 local 快照退役:不选帧、不报缺口", () => {
+test("html and local snapshots retired: no frames are picked, no gaps are reported", () => {
   const p = project([card("h", 0, 10), card("g", 0, 10)]);
   plan = heavyEverywhere("h", "g");
   src.push(layer("h", [[0, 100]], "local"));
@@ -111,7 +120,7 @@ test("html 与 local 快照退役:不选帧、不报缺口", () => {
   assert.deepEqual(f.wanted, []);
 });
 
-test("缺口上报已退役:wanted 恒为空数组", () => {
+test("Gap reporting is retired: wanted is always an empty array", () => {
   const ids = Array.from({ length: 12 }, (_, i) => `h${String(i).padStart(2, "0")}`);
   plan = heavyEverywhere(...ids);
   const f = planFeed({ project: project(ids.map((id) => card(id, 0, 10))), t: 1, playing: false });
@@ -121,22 +130,22 @@ test("缺口上报已退役:wanted 恒为空数组", () => {
 
 /* ---------------------------------------------------------------- K6 */
 
-test("K6:降级卡死素材就绪之前照常活渲,不进 heavy", () => {
+test("K6: before the dead asset of a downgraded card is ready, live render as usual and do not enter heavy", () => {
   const p = project([card("h", 0, 10)]);
   plan = heavyEverywhere("h");
   markPendingDemote("h");
-  // 播放头在第 30 帧:要覆盖 [30, 59](一秒，即第 2、3 分段)才算就绪
+  // Playhead at frame 30: must cover [30, 59] (one second, i.e. segments 2 and 3) to count as ready
   const streamLayer = (ranges, originFrame = 0) => ({ ...layer("h", ranges, "stream"), originFrame });
   src.push(streamLayer([[0, 1]]));
   assert.deepEqual(planFeed({ project: p, t: 1, playing: true }).heavy, []);
   assert.ok(pendingDemotes().has("h"));
   src.push(streamLayer([[0, 3]]));
   assert.deepEqual(planFeed({ project: p, t: 1, playing: true }).heavy, ["h"]);
-  assert.equal(pendingDemotes().has("h"), false, "就绪之后移出 pending");
+  assert.equal(pendingDemotes().has("h"), false, "Removed from pending once ready");
 });
 
-test("K6:片段剩下不到一秒时,覆盖到片尾就算就绪;流要按分段盖住当前位置起的一秒才算(根因 D)", () => {
-  const p = project([card("h", 0, 10)]);   // 300 帧,本地 0..299
+test("K6: when less than a second of the clip remains, covering up to the end of the clip counts as ready; a stream counts only if its segments cover the second starting from the current position (root cause D)", () => {
+  const p = project([card("h", 0, 10)]);   // 300 frames, local 0..299
   plan = heavyEverywhere("h");
   markPendingDemote("h");
   const streamLayer = (ranges, originFrame = 0) => ({ ...layer("h", ranges, "stream"), originFrame });
@@ -147,23 +156,25 @@ test("K6:片段剩下不到一秒时,覆盖到片尾就算就绪;流要按分段
   setSnapshotSource(src);
   syncSnapshotSubscription(() => {});
   markPendingDemote("h");
-  // 流的层带着这条流自己的第一帧(片段从第 0 帧起,所以是 0);分段从它起数
+  // Stream layer carries the stream's own first frame (clip starts from frame 0, so 0); segments
+  // count from it
   src.push(streamLayer([[0, 0]]));
-  assert.deepEqual(planFeed({ project: p, t: 1, playing: true }).heavy, [], "流表有别的段不算:当前位置没料");
-  // 第 1 秒 = 第 30 帧,一秒到第 59 帧 = 第 2、3 段
+  assert.deepEqual(planFeed({ project: p, t: 1, playing: true }).heavy, [], "Other segments in the stream table do not count: there is no data at the current position");
+  // Second 1 = frame 30; one second to frame 59 = segments 2 and 3
   src.push(streamLayer([[2, 3]]));
   assert.deepEqual(planFeed({ project: p, t: 1, playing: true }).heavy, ["h"]);
-  // 没带第一帧的层(改分段规则之前的生产者发的)没法换算:当作没有流
+  // Layer without first frame (sent by producer before segment rule change) cannot convert: treated
+  // as no stream
   src.push(layer("h", [[2, 3]], "stream"));
   markPendingDemote("h");
-  assert.deepEqual(planFeed({ project: p, t: 1, playing: true }).heavy, [], "没带第一帧的流层不算就绪");
+  assert.deepEqual(planFeed({ project: p, t: 1, playing: true }).heavy, [], "A stream layer without its first frame is not ready");
 });
 
-/* ---------------------------------------------------------------- 投递 */
+/* ---------------------------------------------------------------- Delivery */
 
-/* ---------------------------------------------------------------- 投递 */
+/* ---------------------------------------------------------------- Delivery */
 
-test("pickForSetTime:快照退役后恒返回空快照与空 awaiting,不发起取字节", async () => {
+test("pickForSetTime: after snapshots retire it always returns empty snapshots and empty awaiting, and starts no byte fetch", async () => {
   const p = project([card("h", 0, 10)]);
   plan = heavyEverywhere("h");
   src.push(layer("h", [[0, 100]]));
@@ -173,12 +184,12 @@ test("pickForSetTime:快照退役后恒返回空快照与空 awaiting,不发起�
   assert.deepEqual(src.fetched, []);
 });
 
-test("pickForSetTime:没有表的判重卡不 awaiting(等也等不来)", () => {
+test("pickForSetTime: a heavy-classified card without a table is not put in awaiting (it would never arrive anyway)", () => {
   plan = heavyEverywhere("h");
   assert.deepEqual(pickForSetTime({ project: project([card("h", 0, 10)]), t: 1, playing: false }).awaiting, []);
 });
 
-test("deliverSnapshots:快照退役后返回 0,不再向舞台派发快照补丁", async () => {
+test("deliverSnapshots: returns 0 after snapshots retire and no longer dispatches snapshot patches to the stage", async () => {
   const p = project([card("h", 0, 10)]);
   plan = heavyEverywhere("h");
   src.push(layer("h", [[0, 100]]));
@@ -188,7 +199,7 @@ test("deliverSnapshots:快照退役后返回 0,不再向舞台派发快照补丁
   assert.equal(stage.calls.length, 0);
 });
 
-test("deliverSnapshots:播放中投递清空 settled", async () => {
+test("deliverSnapshots: delivery during playback clears settled", async () => {
   const p = project([card("h", 0, 10)]);
   plan = heavyEverywhere("h");
   const stage = fakeStage();
@@ -198,12 +209,12 @@ test("deliverSnapshots:播放中投递清空 settled", async () => {
   assert.deepEqual(suppressedAt({ project: p, t: 1, playing: false }), ["h"]);
 });
 
-test("markBaselineReset:保留向后兼容接口", () => {
+test("markBaselineReset: kept as a backward-compatible interface", () => {
   markBaselineReset("front");
   markBaselineReset("back");
 });
 
-test("settled 状态影响 suppressedAt 与 scrub", () => {
+test("The settled state affects suppressedAt and scrub", () => {
   const p = project([card("h", 0, 10)]);
   plan = heavyEverywhere("h");
   const head = { project: p, t: 1, playing: false };
@@ -215,10 +226,12 @@ test("settled 状态影响 suppressedAt 与 scrub", () => {
 });
 
 /*
- * c10a 契约第 17 节「停下追当前一帧」(2026-10-22 起归「只有一个舞台」):停下时舞台在可见舞台里把当前这一帧逐层追一次,
- * 画好的层收 `settled`,和双舞台一样暂停中不再抑制;下一次 setTime / 播放照常进入抑制。
+ * c10a contract section 17 "Catch up current frame on stop" (under "only one stage" since
+ * 2026-10-22): on stop, stage catches up this current frame layer by layer once in visible stage;
+ * rendered layers receive `settled`, and like dual stage, no longer suppressed during pause;
+ * next setTime / playback enters suppression as usual.
  */
-test("单舞台停下追一帧画好的层(settled)暂停中不再抑制;下一次 setTime 照常进入抑制", () => {
+test("Single stage: a layer that has caught up and drawn a frame after stopping (settled) is no longer suppressed while paused; the next setTime enters suppression as usual", () => {
   const p = project([card("h", 0, 10)]);
   plan = heavyEverywhere("h");
   const head = { project: p, t: 1, playing: false, single: true, sparseOnly: true };
@@ -229,28 +242,28 @@ test("单舞台停下追一帧画好的层(settled)暂停中不再抑制;下一�
   assert.deepEqual(suppressedAt(head), ["h"]);
 });
 
-/* ---------------------------------------------------------------- 抑制 */
+/* ---------------------------------------------------------------- Suppression */
 
-test("重卡抑制集合:播放中为 heavy 并上 K3(b) 的额外抑制;暂停时未 settled 进 scrub", () => {
+test("Heavy-card suppression set: during playback it is heavy plus the extra suppression of K3(b); when paused, cards not yet settled enter scrub", () => {
   const p = project([card("h", 0, 10), card("l", 0, 10)]);
   plan = heavyEverywhere("h");
   assert.deepEqual(suppressedAt({ project: p, t: 1, playing: true }), ["h"]);
   setExtraSuppressed(["l", "h"]);
   assert.deepEqual(suppressedAt({ project: p, t: 1, playing: true }), ["h", "l"]);
-  // 暂停中未 settled 的重卡进 scrub 占位
+  // Heavy cards not settled during pause enter scrub placeholder
   assert.deepEqual(suppressedAt({ project: p, t: 1, playing: false }), ["h"]);
-  // settled 之后暂停中不再抑制
+  // No longer suppressed during pause after settled
   noteSettled("front", ["h"]);
   assert.deepEqual(suppressedAt({ project: p, t: 1, playing: false }), []);
 });
 
-test("快照退役后不再向预渲染进程上报 wanted 缺口", () => {
+test("After snapshots retire, wanted gaps are no longer reported to the prerender process", () => {
   plan = heavyEverywhere("h");
   pickForSetTime({ project: project([card("h", 0, 10)]), t: 1, playing: false });
   assert.deepEqual(wantedPushed, []);
 });
 
-test("最低一档:小尺寸快照退役,picks 恒为空,未就绪重卡在暂停时进 scrub 占位", () => {
+test("Lowest tier: small-size snapshots retired, picks is always empty, and heavy cards not yet ready enter scrub for a placeholder when paused", () => {
   const p = project([card("h", 0, 10)]);
   plan = heavyEverywhere("h");
   src.push(layer("h", [[1, 27], [32, 119]]));
@@ -259,14 +272,14 @@ test("最低一档:小尺寸快照退役,picks 恒为空,未就绪重卡在暂�
   assert.deepEqual(f.scrub, ["h"]);
 });
 
-/* ---------------------------------------------------------------- C10 第 9 节:在线的用户卡、素材效果卡 */
+/* ---------------------------------------------------------------- C10 section 9: online user cards, media effect cards */
 
-test("在线浏览器模式:用户卡、素材效果卡(含同步来的)一律按重卡;停下不认「已精确」;桌面照旧(C10 契约第 9 节,2026-09-29)", async () => {
+test("Online browser mode: user cards and media effect cards (including synced ones) are all treated as heavy cards; \"already exact\" is not honored once stopped; desktop unchanged (C10 contract, section 9, 2026-09-29)", async () => {
   const registry = await import(srcUrl("kernel/registry.ts"));
   const host = await import(srcUrl("render/placeholderHost.ts"));
   registry.registerCards([{ id: "graphish", card: () => null, params: {} }]);
   registry.setUserCardSources({ "mine.tsx": "" }, { mine: "mine.tsx" });
-  registry.setSyncedUserCards([{ id: "synced", name: "同步卡" }]);
+  registry.setSyncedUserCards([{ id: "synced", name: "Synced card" }]);
   const clips = [
     { ...card("u", 0, 10), cardId: "mine" },
     { ...card("g", 0, 10), cardId: "graphish" },
@@ -274,27 +287,30 @@ test("在线浏览器模式:用户卡、素材效果卡(含同步来的)一律�
     card("b", 0, 10),
   ];
   const p = project(clips);
-  // 分派表只判 u、g、b 重:同步卡 s 表里没判重(本机测不了它)
+  // Dispatch table only classifies u, g, b as heavy: synced card s is not classified as heavy in
+  // table (this machine cannot test it)
   plan = heavyEverywhere("u", "g", "b");
   for (const id of ["u", "g", "s", "b"]) src.push(layer(id, [[0, 299]]));
   try {
-    // 桌面:按分派表,同步表不起作用
+    // Desktop: according to dispatch table, sync table has no effect
     host.setOnlineBrowserMode(false);
     assert.deepEqual(planFeed({ project: p, t: 1, playing: true }).heavy, ["b", "g", "u"]);
-    // 在线:四张都按重卡
+    // Online: all four cards are treated as heavy cards
     host.setOnlineBrowserMode(true);
     resetSnapshotFeed(); src = fakeSource(); setSnapshotSource(src); syncSnapshotSubscription(() => {});
     for (const id of ["u", "g", "s", "b"]) src.push(layer(id, [[0, 100]]));
     const got = planFeed({ project: p, t: 5, playing: true });
     assert.deepEqual(got.heavy, ["b", "g", "s", "u"]);
-    assert.equal(got.picks.size, 0, "快照已退役");
-    assert.deepEqual(got.wanted, [], "不再报缺口");
-    assert.deepEqual(suppressedAt({ project: p, t: 5, playing: true }), ["b", "g", "s", "u"], "播放中一律抑制");
+    assert.equal(got.picks.size, 0, "Snapshots are retired");
+    assert.deepEqual(got.wanted, [], "Gaps are no longer reported");
+    assert.deepEqual(suppressedAt({ project: p, t: 5, playing: true }), ["b", "g", "s", "u"], "Always suppressed while playing");
     const stage = fakeStage();
     await deliverSnapshots(stage, "front", { project: p, t: 1, playing: true });
     await settle();
-    assert.equal(src.fetched.length, 0, "不再取快照字节");
-    // 暂停态:舞台报了 settled(停下追到精确)的内置卡不再抑制;本机跑不了的卡停下不追,一直在 scrub 占位
+    assert.equal(src.fetched.length, 0, "Snapshot bytes are no longer fetched");
+    // Paused state: built-in cards that stage reported settled (caught up to precision on stop) are
+    // no longer suppressed; cards that cannot run on this machine do not catch up on stop, staying in
+    // scrub placeholder
     noteSettled("front", ["b", "u", "s"]);
     const paused = planFeed({ project: p, t: 1, playing: false });
     assert.deepEqual(paused.scrub.sort(), ["g", "s", "u"]);

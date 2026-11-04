@@ -1,20 +1,25 @@
 /**
- * see_frames 的合成:卡片层(页面渲的透明 PNG)叠在素材层(ffmpeg 抽的帧)上面。
+ * Composition for see_frames: card layer (transparent PNG rendered by the page) overlaid on top of
+ * media layer (frame extracted by ffmpeg).
  *
- * 为什么不让页面连视频一起渲:导出脚本为了确定性是**逐帧推进虚拟时间**的,看第 t 秒
- * 就得从第 0 帧一路走到第 t 秒那一帧。没有素材时每一帧都判静止,几毫秒一帧;一旦有
- * 视频层在画面里,每一帧都要等 <video> 真的 seek 完(1080p 的 H.264 一次几百毫秒,
- * 一帧要等两三次),第 12 秒就是 360 帧、六七分钟 —— 实测 see_frames 因此 120 秒超时。
- * 所以页面里只渲卡片(帧帧静止,十秒内完),素材那一层用 ffmpeg 直接抽那一帧,
- * 按 ExportView 同样的规则(object-fit: cover、叠放顺序、淡入淡出的不透明度)在这里合成。
+ * Why not let the page render video together with cards: for determinism, export scripts
+ * **advance virtual time frame by frame**; inspecting second t requires stepping all the way
+ * from frame 0 to the frame at second t. When there is no media, every frame is classified as
+ * static, taking a few milliseconds per frame; once a video layer is in the frame, each frame must
+ * wait for <video> to actually finish seeking (1080p H.264 takes hundreds of milliseconds each
+ * time, and a single frame waits two or three times). Second 12 means 360 frames, taking six or
+ * seven minutes: in testing, see_frames timed out at 120 s because of this.
+ * Therefore, the page only renders cards (every frame is static, finished within ten seconds),
+ * while the media layer directly extracts that frame with ffmpeg, composited here following the
+ * same rules as ExportView (object-fit: cover, stacking order, fade-in/fade-out opacity).
  *
- * 纯函数放在这个 .mjs 里,好让 node --test 不经 vite 就能测。
+ * Pure functions are placed in this .mjs so that node --test can test them without going through vite.
  */
 import { PNG } from "pngjs";
 import { clipFilterOpsAt, ffmpegStaticChain } from "../src/kernel/filters.mjs";
 import { mediaTimeAt } from "../src/kernel/clipTime.mjs";
 
-/** 把素材段全部拿掉,只剩卡片:页面里没有 <video>,每一帧都能判静止 */
+/** Strips all media clips, leaving only cards: no <video> in page, every frame classified as static */
 export function cardsOnly(project) {
   return {
     ...project,
@@ -23,7 +28,7 @@ export function cardsOnly(project) {
   };
 }
 
-/** 和 src/kernel/project.ts 的 opacityAt 同一套:整体不透明度 × 淡入 × 淡出 */
+/** Same logic as opacityAt in src/kernel/project.ts: overall opacity × fade-in × fade-out */
 export function opacityAt(clip, t) {
   if (t < clip.start || t >= clip.end) return 0;
   let a = clip.opacity ?? 1;
@@ -35,12 +40,14 @@ export function opacityAt(clip, t) {
 }
 
 /**
- * 第 t 秒画面里该有哪些素材层(从下到上),每层要抽素材的第几秒。
- * 和 kernel/project.ts 的 videoLayersAt 同一个判定,只是多算了 mediaTime。
+ * Which media layers should be in the frame at second t (bottom to top), and which second of media
+ * to extract for each layer. Same check as videoLayersAt in kernel/project.ts, except it also
+ * calculates mediaTime.
  */
 export function mediaLayersAt(project, t) {
   const layers = [];
-  // 和前端一个口径:时间轴上靠上的序列在上层,所以倒着遍历 —— 产出的最后一层压在最上面
+  // Consistent with frontend: higher tracks on the timeline are on upper layers, so iterate
+  // in reverse: the last produced layer sits on top
   for (const tr of [...(project.tracks || [])].reverse()) {
     if (tr.hidden) continue;
     for (const c of tr.clips || []) {
@@ -49,11 +56,14 @@ export function mediaLayersAt(project, t) {
       if (!media || media.kind === "audio") continue;
       const opacity = opacityAt(c, t);
       if (opacity <= 0) continue;
-      // 滤镜:这一刻的数值翻成常量 ffmpeg 滤镜,和预览、导出同一份数值(kernel/filters.mjs)。
-      // 这里的素材层铺满全画面、不认 clip.frame(老问题),所以模糊按画布像素算、不乘框的缩放
+      // Filters: values at this moment are translated into constant ffmpeg filters, sharing values with
+      // preview and export (kernel/filters.mjs).
+      // Here the media layer covers the full frame and ignores clip.frame (legacy issue), so blur is
+      // calculated in canvas pixels without multiplying by the frame scale
       const ops = clipFilterOpsAt(project, c, t);
       const filter = ops ? ffmpegStaticChain(ops) : "";
-      // 素材时刻按 kernel/clipTime.mjs 的统一换算(含片段速度;缺省 1 与原来 off + (t − start) 逐位相同)
+      // Media time uses unified conversion from kernel/clipTime.mjs (including clip speed; default 1 is
+      // bitwise identical to legacy off + (t − start))
       layers.push({ clip: c, media, opacity, mediaTime: mediaTimeAt(c, t), ...(filter ? { filter } : null) });
     }
   }
@@ -61,9 +71,11 @@ export function mediaLayersAt(project, t) {
 }
 
 /**
- * ffmpeg 抽一帧并按 object-fit: cover 铺满 w×h 的滤镜参数。
- * 视频用 -ss 定位(放在 -i 前面,走关键帧快速定位再精确解码到那一帧);图片没有时间轴,不加。
- * filter:mediaLayersAt 给的滤镜串,接在 rgba 之后、不透明度之前(CSS 里 filter 先于 opacity)。
+ * ffmpeg filter parameters to extract a frame and cover w×h via object-fit: cover.
+ * Videos seek with -ss (placed before -i, fast-seeking via keyframe then accurately decoding to
+ * that frame); images have no timeline, omitted.
+ * filter: filter string from mediaLayersAt, appended after rgba and before opacity (in CSS,
+ * filter precedes opacity).
  */
 export function extractArgs({ file, kind, seconds, width, height, opacity, filter, out }) {
   const filters = [
@@ -84,7 +96,10 @@ export function extractArgs({ file, kind, seconds, width, height, opacity, filte
   ];
 }
 
-/** src 叠到 dst 上(非预乘 alpha 的 over),两张同尺寸;尺寸不同就按 dst 的范围裁 */
+/**
+ * Overlays src onto dst (non-premultiplied alpha over), both of same size; crops to dst bounds
+ * if sizes differ
+ */
 export function alphaOver(dst, src) {
   const w = Math.min(dst.width, src.width);
   const h = Math.min(dst.height, src.height);
@@ -107,7 +122,7 @@ export function alphaOver(dst, src) {
   return dst;
 }
 
-/** 素材层(从下到上)和卡片层合成一张透明底的 PNG */
+/** Composites media layers (bottom to top) and card layer into a transparent-background PNG */
 export function composeFrame(width, height, layerPngs, cardsPng) {
   const out = new PNG({ width, height });
   out.data.fill(0);

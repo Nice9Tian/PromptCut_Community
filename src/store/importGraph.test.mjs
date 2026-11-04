@@ -1,12 +1,15 @@
 /**
- * src/store 的模块依赖静态检查。跑:node --test src/store/importGraph.test.mjs
+ * Static check of module dependencies for src/store. Run: node --test src/store/importGraph.test.mjs
  *
- * 这里钉死两条,防的是同一件事 —— 运行时循环依赖带来的初始化顺序错误(TDZ):
- *   - `src/store/actions/*.ts` 不许 import `../project`。project.ts 是把各个 action
- *     对象拼起来的门面,action 反过来 import 它就成了环;现在只在函数体里用所以没炸,
- *     哪天有人在模块顶层用一次就是 TDZ。action 之间要互相调,直接 import 对方的对象。
- *   - `src/store/**` 的运行时 import 图无环(`import type` / `type` 说明符不算,
- *     它们编译后不留下 import)。
+ * Pinned down two rules here, both preventing the same thing: initialization order errors (TDZ)
+ * caused by runtime circular dependencies:
+ *   - `src/store/actions/*.ts` must not import `../project`. project.ts is a facade assembling each
+ *     action object; if an action in turn imports it, that forms a cycle. Currently it is only used
+ *     inside function bodies so it has not broken, but if someone uses it at the module top level
+ *     someday, that triggers TDZ. When actions need to call each other, directly import each other's
+ *     objects.
+ *   - The runtime import graph of `src/store/**` is acyclic (`import type` / `type` specifiers do
+ *     not count; they leave no imports after compilation).
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -16,7 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const STORE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-/** 递归收集 src/store 下的 .ts 源文件(测试自己是 .mjs,不在内) */
+/** Recursively collects .ts source files under src/store (tests themselves are .mjs, not included) */
 function listSources(dir) {
   const out = [];
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -28,9 +31,9 @@ function listSources(dir) {
 }
 
 /**
- * 取出一个文件里所有**运行时**的 import 目标。
- * 跳过 `import type { X } from "..."`,也跳过花括号里每个说明符都写了 `type ` 的那种 ——
- * 这两种编译后不生成 import,构不成运行时的环。
+ * Extracts all **runtime** import targets in a file.
+ * Skips `import type { X } from "..."`, as well as cases where every specifier inside curly braces
+ * is marked with `type `: neither generates an import after compilation, forming no runtime cycle.
  */
 function runtimeImports(src) {
   const targets = [];
@@ -46,12 +49,15 @@ function runtimeImports(src) {
     }
     targets.push(spec);
   }
-  // 纯副作用 import("x")
+  // Pure side-effect import("x")
   for (const m of src.matchAll(/^\s*import\s+["']([^"']+)["'];?\s*$/gm)) targets.push(m[1]);
   return targets;
 }
 
-/** 把相对说明符解析成 src/store 下的绝对文件路径;解析不到(外部模块)返回 null */
+/**
+ * Resolves relative specifiers to absolute file paths under src/store; returns null if
+ * unresolvable (external module).
+ */
 function resolve(fromFile, spec) {
   if (!spec.startsWith(".")) return null;
   const base = path.resolve(path.dirname(fromFile), spec);
@@ -87,7 +93,7 @@ test("The runtime import graph of src/store has no cycles", () => {
   }
 
   const rel = (f) => path.relative(STORE_DIR, f).replace(/\\/g, "/");
-  const state = new Map(); // 0 = 访问中,1 = 已完成
+  const state = new Map(); // 0 = visiting, 1 = completed
   const cycles = [];
   const walk = (node, stack) => {
     if (state.get(node) === 1) return;

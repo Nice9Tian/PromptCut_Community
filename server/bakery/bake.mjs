@@ -1,7 +1,8 @@
 /**
- * 在一个已经开着的 bakery 上逐帧预渲染。
+ * Frame-by-frame prerender on an already-open bakery.
  *
- * 从 scripts/export-frames.mjs 拆出来(纯重构,逐字搬运);预渲染间本身在 ./chrome.mjs。
+ * Split out from scripts/export-frames.mjs (pure refactor, verbatim move); the bakery itself is in
+ * ./chrome.mjs.
  */
 
 import path from 'path';
@@ -13,37 +14,65 @@ import { waitFrameReady } from './frame-ready.mjs';
 import { prepareFrameMedia } from './frame-media.mjs';
 
 /**
- * 推帧补画:推过去、不取图的那一帧也真的画一拍,把图丢掉。
+ * Push-draw: for stepped frames without capturing images, actually draw a tick as well and discard
+ * the image.
  *
- * 为什么(2026-10-14 在导出页上量出来的,`scripts/probes/push-draw-probe.mjs` 能复跑):
- *   - 不带截图的 `beginFrame` 不保证渲染器会跑这一拍的主线程帧。页面上已经有东西画过以后,连着两三拍不带截图,
- *     `requestAnimationFrame` 就一次都不再触发,直到下一次带截图的那一拍(逐步数过原始 rAF:挂上一张卡以后
- *     1 1 1 0 0 0 … 一直是 0;每步后面跟一张丢掉的截图就恢复成每拍都跑)。
- *   - Motion 建动画要等挂载之后的下一次 rAF。所以这种时候挂载的 motion 式卡,动画到下一次真的画帧才建出来:
- *     JS 驱动的那些从那一刻起算(Motion 规定建晚了 40 ms 以上就不追溯),交给 WAAPI 的那些被 `__pcSyncAnims`
- *     锚在更晚的一帧。之后一直落后那么多帧,没有任何检查拦得住。
- *   - 中招的条件不是「上面压着别的层」,是「这张卡挂载的那一拍没有 rAF」:页面上先有一张更早挂载的卡(在上面、
- *     在下面、不重叠都一样),再推过一张中途进场的卡。只导一段(`--frames a-b`)、抽帧(`targetFrames`)、
- *     流的回放段和稀疏那一趟(一页上不止一张卡时)都是这样推的。整段导出每帧都截图,不受影响。
+ * Why (measured on export page on 2026-10-14, runnable via `scripts/probes/push-draw-probe.mjs`):
+ *   - `beginFrame` without screenshots does not guarantee that the renderer will run this tick's
+ *     main-thread frame. Once something has been drawn on the page, after two or three consecutive
+ *     ticks without screenshots, `requestAnimationFrame` stops firing completely until the next tick
+ *     with a screenshot (raw rAF counted step-by-step: after mounting a card, 1 1 1 0 0 0 … stays
+ *     0; following each step with a discarded screenshot restores it to running every tick).
+ *   - Motion waits for the next rAF after mounting to build animations. Therefore, for motion-style
+ *     cards mounted at such times, animations are not built until the next frame that is actually
+ *     drawn: JS-driven ones count from that moment (Motion specifies that if built >40 ms late, it
+ *     does not backdate), while those handed off to WAAPI are anchored to an even later frame by
+ *     `__pcSyncAnims`. From then on, they continuously lag behind by that many frames, and no check
+ *     can catch it.
+ *   - The trigger condition is not "another layer is placed on top", but "there is no rAF on the
+ *     tick when this card is mounted": the page first has an earlier-mounted card (on top,
+ *     underneath, or non-overlapping, it makes no difference), and then pushes through a card that
+ *     enters midway. Stepping through like this happens when exporting only a segment
+ *     (`--frames a-b`), sampling frames (`targetFrames`), during stream replay segments, and during
+ *     the sparse pass (when there is more than one card on a page). Full export captures screenshots
+ *     every frame and is unaffected.
  *
- * 量到的规律(同一支探针的记录):带截图的一拍之后,渲染器还能再跑两三次「画面有变化」的主线程帧,之后就停住等下一次带截图的
- * 一拍;画面没有变化的拍不占这个余量。整段导出每帧一张截图,永远在余量里。
+ * Measured pattern (records from the same probe): after a tick with a screenshot, the renderer can
+ * still run two or three main-thread frames with "visual changes", and then stops to wait for the
+ * next tick with a screenshot; ticks without visual changes do not consume this headroom. Full
+ * export captures a screenshot every frame and is always within the headroom.
  *
- * 做法:推过去的帧在 `step` 之后补一拍带截图的 `beginFrame`(最便宜的 JPEG,立刻丢掉),和「这一帧取了图」时多出来的那一拍
- * 一样。于是页面经历的拍子与整段导出相同,取图的那几帧和整段导出里的同一帧逐像素一致。
- *   - **这一帧画面没有变化就不补**(`pushDrawNeeded`):`step` 判了静止(没有在跑的动画、DOM 没动、没有新的 rAF 请求、
- *     没有可见的 canvas 和视频,见 `ExportView` 的 `__pcStaticProbe`),这一拍也没有报告画面有变化(`hasDamage`),而且这一趟里
- *     前面已经画过一拍。真的画一帧不便宜(1920×1080 的重场景每帧几十毫秒,和取一张图差不多),静止的那些帧不用付。
- *     实际上页面上挂着卡的帧几乎都判「在变」(卡挂着时每帧至少有一处 DOM 改动),省下来的主要是没有卡的那些帧;
- *   - 每帧都取图的那些路(整段导出、接着租约产的满密度分段)一拍都不多走,逐字节不变;
- *   - 预热(`warmUpAt`)不动;预热留下没画的东西由这一趟的第一帧收掉(第一帧一定画,而且和取图的第一帧一样画两拍);
- *   - 素材不在补画的帧上加载(`prepareFrameMedia` 只在真取图的帧前面);丢掉的图不交给 `onFrame`、不写盘、不进编码器。
+ * Solution: for stepped frames, append a `beginFrame` with a screenshot (cheapest JPEG, immediately
+ * discarded) after `step`, identical to the extra tick when "an image is captured for this frame".
+ * Thus the ticks experienced by the page match full export, and frames where images are captured
+ * are pixel-for-pixel identical to the same frame in full export.
+ *   - **Do not push-draw if there is no visual change in this frame** (`pushDrawNeeded`): `step`
+ *     determined static (no running animations, DOM unchanged, no new rAF requests, no visible
+ *     canvas or video; see `ExportView`'s `__pcStaticProbe`), this tick also did not report visual
+ *     changes (`hasDamage`), and a tick has already been drawn earlier in this pass. Actually
+ *     drawing a frame is not cheap (tens of milliseconds per frame for 1920×1080 heavy scenes,
+ *     similar to capturing an image), so static frames do not need to pay for it. In practice,
+ *     frames with mounted cards on the page are almost always judged as "changing" (with cards
+ *     mounted, there is at least one DOM change per frame), so what is saved is mainly frames
+ *     without cards;
+ *   - Paths that capture images every frame (full export, full-density segments produced following
+ *     a lease) do not run a single extra tick, remaining unchanged byte-for-byte;
+ *   - Warm-up (`warmUpAt`) is untouched; unrendered leftovers from warm-up are cleared by the first
+ *     frame of this pass (the first frame is always drawn, and like the first frame capturing an
+ *     image, it draws two ticks);
+ *   - Assets are not loaded on push-draw frames (`prepareFrameMedia` runs only before frames with
+ *     actual image capture); discarded images are not passed to `onFrame`, not written to disk,
+ *     and do not enter the encoder.
  *
- * 并行导出的分片不补(`export-unified.mjs`、`shards.mjs` 给它们传 `pushDraw: false`):分片只在「没有有状态的卡跨着」的帧上切
- * (`src/render/shardPlan.mjs`),切点前面推过去的卡到切点都已经卸掉,不补也对(探针的 shards 一项核对);补的话每个分片要把
- * 前面的帧真的再画一遍,三片比单进程还慢(量过,见报告)。
+ * Shards in parallel export do not push-draw (`export-unified.mjs` and `shards.mjs` pass
+ * `pushDraw: false` to them): shards are only cut at frames where "no stateful cards span across"
+ * (`src/render/shardPlan.mjs`), and cards pushed through prior to the cut point have all been
+ * unmounted by the cut point, so not push-drawing is also correct (verified against the probe's
+ * shards check); if push-drawn, each shard would have to actually redraw all preceding frames,
+ * making three shards slower than a single process (measured, see report).
  *
- * `PROMPTCUT_PUSH_DRAW=0`(或 `opts.pushDraw === false`)关掉,只给探针对照「修之前」用,产品里不设。
+ * `PROMPTCUT_PUSH_DRAW=0` (or `opts.pushDraw === false`) turns it off, used only by probes to
+ * compare with "before fix"; never set in production.
  */
 export const PUSH_DRAW_SHOT = Object.freeze({ format: 'jpeg', quality: 0 });
 export function pushDrawEnabled(opts = {}, env = process.env) {
@@ -51,23 +80,29 @@ export function pushDrawEnabled(opts = {}, env = process.env) {
   return String(env?.PROMPTCUT_PUSH_DRAW ?? '1').trim() !== '0';
 }
 /**
- * 推过去的这一帧要不要补画(见文件头)。`isStatic`:`step` 的返回值;`damaged`:这一帧的拍子里有没有哪一拍报告了画面有变化
- * (`step.last.damaged`);`drawnBefore`:这一趟(或这份租约)里前面画过没有 —— 没画过的第一帧一定画;
- * `previousDrawn`:紧挨着的上一帧画过没有。
+ * Whether to push-draw this stepped frame (see file header). `isStatic`: return value of `step`;
+ * `damaged`: whether any tick in this frame reported visual changes (`step.last.damaged`);
+ * `drawnBefore`: whether drawing occurred earlier in this pass (or this lease): the unrendered first
+ * frame is always drawn; `previousDrawn`: whether the immediately preceding frame was drawn.
  *
- * 报告的变化只在上一帧没画过时才算:带截图的一拍之后,下一拍不带截图的总会报告一次变化(量到的,空页面上也是),那是上一拍的回声。
- * 它是给 `__pcStaticProbe` 看不见的变化(会动的图片之类)兜底的:这样的页面每隔一帧补一拍,渲染器的余量用不完。
+ * Reported changes count only if the previous frame was not drawn: after a tick with a screenshot,
+ * the next tick without a screenshot always reports a change (measured, even on an empty page),
+ * which is an echo of the previous tick. It serves as a fallback for changes invisible to
+ * `__pcStaticProbe` (animated images, etc.): such pages push-draw every other frame, never
+ * exhausting the renderer's headroom.
  */
 export function pushDrawNeeded({ isStatic, damaged, drawnBefore, previousDrawn }) {
   return !drawnBefore || !isStatic || (!!damaged && !previousDrawn);
 }
 /**
- * 画一拍丢掉。`prime`:先多画一拍 —— 只在这一趟的第一帧用(取图的第一帧就是画两拍,见 `captureFrame` 的 `prime`)。
- * 和 `captureFrame` 一样,这一拍没交回画面就在同一个时间点再发,最多四拍;交不回来不报错(这张图本来就不要)。
- * 回一共发了几拍。
+ * Draw a tick and discard it. `prime`: draw an extra tick first: used only on the first frame of
+ * this pass (the first frame capturing an image draws two ticks, see `captureFrame`'s `prime`).
+ * Like `captureFrame`, if this tick does not yield a visual frame, resend at the same timestamp, up
+ * to four ticks; no error is thrown if it fails to yield (this image is discarded anyway). Returns
+ * the total number of ticks issued.
  */
 export async function drawDiscarded(bakery, prime, signal) {
-  const cancelled = () => Object.assign(new Error('已取消'), { cancelled: true });
+  const cancelled = () => Object.assign(new Error('Cancelled'), { cancelled: true });
   let ticks = 0;
   if (prime) {
     if (signal?.aborted) throw cancelled();
@@ -84,17 +119,25 @@ export async function drawDiscarded(bakery, prime, signal) {
 }
 
 /**
- * 在一个已经开着的 bakery 上渲一段帧。返回给 ffmpeg 用的那些参数。
+ * Render a range of frames on an already open bakery. Returns parameters for ffmpeg.
  *
  * opts:
- *   format/quality —— 'png' 带 alpha(导出交付物要),'jpeg' 不带(预览用的预渲染够用)。
- *                     PNG 走 optimizeForSpeed:仍然无损(实测逐字节解码后与普通 PNG 相同),只是压得快、文件大一倍。
- *   staticSkip     —— 画面静止的帧直接复用上一张,连截都不截。判据见 ExportView 的 __pcStaticProbe
- *   verifyEvery    —— 连续复用多少帧就强制真截一张比对一次
- *   targetFrames   —— 只截这几帧; fullFrame 时只回推目标所需卡片的历史
- *   seekFromActiveClips —— false 保留从 0 推进的参考路径,用于逐像素回归比对
- *   glassFrames    —— Set<帧号>:这些帧底下有素材,截完卡片再截一张毛玻璃遮罩(PAGE_PRELUDE 的 __bfGlassOn)
- *                     到 <out>/glass/%06d.png。没有玻璃的帧不写文件;返回值的 glass 里有写了几张、玻璃的模糊量
+ *   format/quality: 'png' with alpha (required for export deliverables), 'jpeg' without (sufficient
+ *                   for preview prerenders).
+ *                   PNG uses optimizeForSpeed: still lossless (benchmarked byte-for-byte identical
+ *                   to standard PNG after decoding), just compresses faster and doubles file size.
+ *   staticSkip:     frames with static visuals directly reuse previous image without capturing.
+ *                   See ExportView's __pcStaticProbe for criteria.
+ *   verifyEvery:    force an actual capture for comparison after consecutively reusing this many
+ *                   frames.
+ *   targetFrames:   capture only these frames; during fullFrame, only steps back through history
+ *                   for cards required by target.
+ *   seekFromActiveClips: false preserves reference path advancing from 0, used for pixel-by-pixel
+ *                   regression comparison.
+ *   glassFrames:    Set<frameNumber>: these frames have assets underneath; after capturing card,
+ *                   capture another frosted-glass mask (PAGE_PRELUDE's __bfGlassOn)
+ *                   to <out>/glass/%06d.png. Frames without glass write no file; return value's
+ *                   glass contains count written and glass blur amount.
  */
 export async function bakeFrames(bakery, opts = {}) {
   const { page, client, beginFrame, waitNet } = bakery;
@@ -107,7 +150,8 @@ export async function bakeFrames(bakery, opts = {}) {
   const ext = format === 'jpeg' ? 'jpg' : 'png';
 
   const framesDir = path.join(outDir, 'frames');
-  // PC_EXPORT_TRACE=1 时每帧记录页面时钟和全部动画状态到 <out>/trace.json,排查确定性问题用
+  // When PC_EXPORT_TRACE=1, records page clock and all animation states per frame
+  // to <out>/trace.json for troubleshooting determinism issues
   const trace = process.env.PC_EXPORT_TRACE ? [] : null;
   await fs.mkdir(framesDir, { recursive: true });
 
@@ -125,9 +169,13 @@ export async function bakeFrames(bakery, opts = {}) {
     endFrame = b;
   }
   /*
-   * 只截这几帧(离散取样)。完整画面从目标所需卡片的最早历史帧顺推;HTML 采样仍覆盖全部历史。
-   * 保留卡片的原始挂载时刻,不跳过区间内的帧,避免按 delta 积分的动画走样。一趟推进沿途截图。
-   * 静态跳过在这种模式下必须关死:lastBuf 可能是几十帧之前的,直接复用就是把时间轴压扁。
+   * Capture only these frames (discrete sampling). The full visual is stepped forward from the
+   * earliest history frame of cards required by target; HTML sampling still covers all history.
+   * Preserves original card mount timestamps without skipping frames in interval, avoiding
+   * distortion in delta-integrated animations. Steps through in a single pass, capturing screenshots
+   * along the way.
+   * Static skip must be disabled in this mode: lastBuf might be from dozens of frames ago, and
+   * reusing it directly would flatten the timeline.
    */
   const targetFrames = Array.isArray(opts.targetFrames) && opts.targetFrames.length
     ? new Set(opts.targetFrames.map((n) => Math.max(0, Math.round(Number(n)))))
@@ -154,7 +202,8 @@ export async function bakeFrames(bakery, opts = {}) {
   }, { clipIds: frameWindow?.clipIds ?? null, time: advanceStartFrame / fps, directTime: directFrameAt(advanceStartFrame) / fps });
   await page.setViewport({ width, height, deviceScaleFactor: 1 });
 
-  // 透明底一次性打开,不用 puppeteer 的 omitBackground(那个每截一张开关一次,开关本身会触发重绘)
+  // Turn on transparent background once, without using puppeteer's omitBackground (which toggles per
+  // capture, and toggling itself triggers repaints)
   if (format !== 'jpeg') {
     await client.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
   }
@@ -163,26 +212,34 @@ export async function bakeFrames(bakery, opts = {}) {
     : { format: 'png', optimizeForSpeed: true };
 
   /*
-   * 生成快照前把 Motion 的 JS 帧循环推一拍。
+   * Step Motion's JS frame loop by one tick before generating snapshots.
    *
-   * 卡片上有两种动画,定住的办法不一样:
-   *   - 交给 WAAPI 的那些(opacity、tween 的 transform)由 __pcSyncAnims 每帧显式钉 currentTime,
-   *     getComputedStyle 立刻反映,快照拿到的就是对的;
-   *   - Motion 自己的 JS 帧循环驱动的那些(spring、MotionValue)只在批处理跑一拍时才把新值
-   *     写进 inline style,没有任何东西钉它。
-   * 而这一拍**只有真正画一帧才会跑**:实测不带截图的 beginFrame(包括 noDisplayUpdates、
-   * 先制造 DOM damage 再发)一律推不动 Motion 的 frameData.timestamp,带 screenshot 的能。
-   * 于是整帧路每帧截图、DOM 总是当前帧的;HTML 快照在截图之前生成,拿到的是上一次画帧时
-   * 写下的旧值 —— 纯采样的 snapshotOnly 一趟里一张图都不截,整段冻在第一帧的相位上
-   * (punch-pill 的弹簧:第 1 帧之后永远是 scale(0.933311),而导出是正确的 1.0678 → 1.0037 → …)。
+   * There are two types of animations on cards, with different ways to pin them:
+   *   - Those handed to WAAPI (opacity, tweened transform) have currentTime explicitly pinned each
+   *     frame by __pcSyncAnims, which getComputedStyle reflects immediately, so snapshots get the
+   *     correct values;
+   *   - Those driven by Motion's own JS frame loop (spring, MotionValue) write new values to inline
+   *     style only when batch processing runs a tick, and nothing pins them.
+   * And this tick **runs only when a frame is actually drawn**: benchmarks show that beginFrame
+   * without screenshots (including noDisplayUpdates, or sending after creating DOM damage)
+   * consistently fails to advance Motion's frameData.timestamp, while those with screenshot can.
+   * Thus the full-frame path captures screenshots every frame and DOM is always for the current
+   * frame; HTML snapshots are generated before screenshots, capturing stale values written during
+   * the previous frame draw: in a pure-sampling snapshotOnly pass where not a single image is
+   * captured, the entire duration is frozen at frame 1's phase (punch-pill spring: scale(0.933311)
+   * forever after frame 1, whereas export correctly produces 1.0678 → 1.0037 → …).
    *
-   * 所以生成快照之前先画一拍、把图丢掉。只加在快照这一侧:整帧导出不生成快照,
-   * 一步也不多走,逐字节基线不受影响。图要最便宜的(jpeg quality 0),反正立刻扔掉。
+   * Therefore, draw a tick and discard the image before generating snapshots. Added only on the
+   * snapshot side: full-frame export does not generate snapshots, takes no extra steps, and byte-for-
+   * byte baseline is unaffected. Use the cheapest image (jpeg quality 0), since it is immediately
+   * discarded anyway.
    *
-   * `prime`:上一个时间点没画过(没截图、也没推过这一拍)时要**画两拍**。只画一拍,
-   * Motion 的值还停在上一次画帧时的相位 —— 实测 punch-pill 只取第 8 帧(前面 0～7 帧只推时间、
-   * 不截图),推一拍后快照里药丸仍是第 1 帧的 `scale(0.933311)`,活渲已经是 `none`。
-   * 和 `captureFrame` 的 `prime` 是同一件事、同一个判据:紧挨着的上一帧画过才能省。
+   * `prime`: if nothing was drawn at the previous timestamp (no screenshot captured, nor was this
+   * tick stepped), **draw two ticks**. If only one tick is drawn, Motion's value remains at the phase
+   * from the previous frame draw: benchmarked on punch-pill capturing only frame 8 (frames 0-7 only
+   * advance time without screenshots), after stepping one tick the pill in snapshot is still frame
+   * 1's `scale(0.933311)`, while live render is already `none`. This is the same issue and criterion
+   * as `captureFrame`'s `prime`: it can only be omitted if the immediately preceding frame was drawn.
    */
   const FLUSH_SHOT = { format: 'jpeg', quality: 0 };
   const flushFrameLoop = async (prime) => {
@@ -190,8 +247,10 @@ export async function bakeFrames(bakery, opts = {}) {
     await beginFrame({ screenshot: FLUSH_SHOT });
   };
 
-  /** 截一张:发一拍并要这一拍的截图。此刻动画已钉住、页面时钟已量化,这一拍里画面不会再变
-   *  prime:上一个时间点没截过图时先截一张丢掉,见 captureFrame。primeCapture:false 只给回归对照用 */
+  /** Capture one: issue a tick and request a screenshot for this tick. At this point animations are
+   *  pinned and page clock is quantized; visuals will not change further in this tick.
+   *  prime: capture and discard an image first if no screenshot was captured at the previous
+   *  timestamp, see captureFrame. primeCapture:false is used only for regression comparisons. */
   const shoot = async (prime = true) => {
     const captureOpts = { prime: prime && opts.primeCapture !== false };
     // MOV/full-scene cache: keep the live scene (including video/image media)
@@ -211,7 +270,8 @@ export async function bakeFrames(bakery, opts = {}) {
         await beginFrame();
         await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       }
-      // prime 只按「上一帧截没截过图」判,不知道 renderPass 这一帧是不是已经推过 —— 宁可多画一拍(幂等)
+      // prime checks only "whether previous frame had screenshot", unaware if renderPass already stepped
+      // this frame: prefer drawing an extra tick (idempotent)
       await flushFrameLoop(prime);
       const snapshot = await page.evaluate(() => window.__pcCreateSnapshot());
       if (snapshot.lossy) throw new Error(`Cannot snapshot ${snapshot.lossy} canvas elements`);
@@ -221,23 +281,28 @@ export async function bakeFrames(bakery, opts = {}) {
     return captureFrame(bakery, shotParams, opts.signal, captureOpts);
   };
 
-  // 一帧怎么推由 createStepper 给(和 bakeStream 共用同一份);截不截图由调用方决定
+  // How to step a frame is provided by createStepper (shared with bakeStream); whether to capture
+  // screenshot is decided by caller
   const step = createStepper(bakery, { fps, directFrameAt, signal: opts.signal, trace });
 
-  // 预热停在本次推帧起点;`frameWindow` 留在这个闭包里,由这里传给 warmUpAt
+  // Warm-up stops at start point of this frame stepping; `frameWindow` stays in this closure, passed
+  // here to warmUpAt
   const warmUp = () => warmUpAt(bakery, step, { startFrame: advanceStartFrame, warmFrames, frameWindow, signal: opts.signal });
 
   const totalFrames = targetFrames ? targetFrames.size : endFrame - startFrame + 1;
   const durationSec = (totalFrames / fps).toFixed(3);
   let reused = 0;
-  // 推帧补画:开没开,以及这一趟为推过去的帧一共多发了几拍(只为诊断和单测)
+  // Push-draw: whether enabled, and total extra ticks issued in this pass for stepped frames
+  // (for diagnostics and unit tests only)
   const pushDraw = pushDrawEnabled(opts);
   let pushDrawn = 0;
 
   /*
-   * HTML 采样缓存(opts.domCache):每截完一帧顺手把舞台生成 HTML 快照,gzip 后写到 <out>/dom/%06d.html.gz。
-   * 之后要重截(换格式、渐进铺开、多进程并行)就走 scripts/replay-frames.mjs,不必再从第 0 帧顺推。
-   * 实测生成快照 10~36 ms/帧,gzip 后 8~15 KB/帧。静态跳过复用的帧,快照也复用上一份。
+   * HTML sampling cache (opts.domCache): after capturing each frame, generate an HTML snapshot of
+   * the stage and write it to <out>/dom/%06d.html.gz after gzip. For subsequent recapturing (changing
+   * formats, progressive rollout, multi-process parallelism), use scripts/replay-frames.mjs without
+   * stepping from frame 0 again. Benchmarked snapshot generation: 10~36 ms/frame, 8~15 KB/frame after
+   * gzip. For frames reused via static skip, snapshots also reuse the previous one.
    */
   const domDir = opts.domCache ? path.join(outDir, 'dom') : null;
   const gzip = domDir ? (await import('node:zlib')).gzipSync : null;
@@ -248,27 +313,30 @@ export async function bakeFrames(bakery, opts = {}) {
   const glassDir = glassFrames ? path.join(outDir, 'glass') : null;
   if (glassDir) await fs.mkdir(glassDir, { recursive: true });
   const glass = { dir: glassDir, list: [], blurs: new Set() };
-  /** 这一帧的毛玻璃遮罩;没有可见的玻璃返回 null。多出来的这一拍时间戳照旧钉着,rAF 循环空转(见 exportClock.ts) */
+  /** Frosted-glass mask for this frame; returns null if there is no visible glass. Timestamp for
+   *  this extra tick remains pinned as usual, with rAF loop idling (see exportClock.ts) */
   const shootGlass = async () => {
     const info = await page.evaluate(() => window.__bfGlassOn());
     if (!info) return null;
     for (const b of info.blurs) glass.blurs.add(b);
     try {
-      // 同一时间点刚截过卡片图,画面已是最新,不用再预热
+      // Card image was just captured at same timestamp, visuals are up to date, no need to warm up again
       return await shoot(false);
     } finally {
       await page.evaluate(() => window.__bfGlassOff());
     }
   };
 
-  /** 跑一遍全部帧。allowSkip 为假时每帧老老实实真截。返回判错的帧号;没判错返回 null。 */
+  /** Run through all frames. When allowSkip is false, faithfully capture every frame. Returns frame
+   *  number of misjudgments, or null if none. */
   const renderPass = async (allowSkip) => {
-    let lastBuf = null;  // 上一张**真截**出来的图
-    let lastShotFrame = null; // 上一张真截对应的帧号:紧挨着的上一帧截过图才能省掉预热
-    let lastDrawnFrame = null; // 上一次带截图的一拍落在哪一帧(真截和生成快照前推的那一拍都算),见 flushFrameLoop
-    let lastDom = null;  // 上一份生成快照的舞台(gzip 过的)
-    let runLen = 0;      // 已经连续复用了几帧
-    // 上一张真截对应的遮罩:undefined = 还没截过(null = 截了,没有玻璃)。静止帧复用卡片图时遮罩也一起复用
+    let lastBuf = null;  // Previous **actually captured** image
+    let lastShotFrame = null; // Frame number of previous actual capture: warm-up can be skipped only if immediately preceding frame was captured
+    let lastDrawnFrame = null; // Which frame the previous tick with a screenshot landed on (counts both actual captures and the tick stepped before snapshot generation), see flushFrameLoop
+    let lastDom = null;  // Stage from previous snapshot generation (gzipped)
+    let runLen = 0;      // Number of consecutive frames reused so far
+    // Mask corresponding to previous actual capture: undefined = not captured yet (null = captured,
+    // no glass). When static frames reuse card images, masks are reused together
     let lastGlass;
     reused = 0;
     pushDrawn = 0;
@@ -286,10 +354,12 @@ export async function bakeFrames(bakery, opts = {}) {
     };
     for (const i of framesInWindow(renderRanges)) {
       /*
-       * 取消只在两帧之间生效:这时上一帧的推进、排空、截图都已经做完,页面不在半路上。
-       * 调用方(render-worker)据此只换一张新页,不必把整个浏览器当成可疑的重开。
+       * Cancellation takes effect only between frames: at this point, stepping, draining, and capturing
+       * for the previous frame are all finished, so the page is not in midway. Callers (render-worker)
+       * can simply replace with a new page based on this, without treating whole browser as suspect and
+       * restarting.
        */
-      if (opts.signal?.aborted) throw Object.assign(new Error('已取消'), { cancelled: true });
+      if (opts.signal?.aborted) throw Object.assign(new Error('Cancelled'), { cancelled: true });
       const wantShot = targetFrames ? targetFrames.has(i) : i >= startFrame;
       const isStatic = await step(i, wantShot);
       const snapshotWanted = domDir || (opts.onSnapshot && (!opts.snapshotFrames || opts.snapshotFrames.has(i)));
@@ -310,7 +380,9 @@ export async function bakeFrames(bakery, opts = {}) {
         console.log(`Exported frame ${i} (${i - startFrame + 1}/${totalFrames})`);
       }
       if (!wantShot || opts.snapshotOnly) {
-        // 推帧补画(见文件头):这一帧不取图,也没有为生成快照画过,画面又有变化,就画一拍丢掉。当它「截过」记账,下一帧不用再先丢一张
+        // Push-draw (see file header): if this frame does not capture an image, was not drawn for snapshot
+        // generation, and visuals have changed, draw a tick and discard it. Accounted as "captured" so next
+        // frame does not need to discard one first
         if (pushDraw && lastDrawnFrame !== i && pushDrawNeeded({ isStatic, damaged: step.last.damaged, drawnBefore: lastDrawnFrame !== null, previousDrawn: lastDrawnFrame === i - 1 })) {
           pushDrawn += await drawDiscarded(bakery, lastDrawnFrame === null, opts.signal);
           lastShotFrame = lastDrawnFrame = i;
@@ -323,7 +395,8 @@ export async function bakeFrames(bakery, opts = {}) {
       if (allowSkip && isStatic && lastBuf) {
         runLen++;
         if (runLen % verifyEvery === 0) {
-          // 便宜的保险:连续复用到第 verifyEvery 帧就强制真截一张比一次。对不上就整趟作废重跑
+          // Cheap insurance: force an actual capture and comparison every verifyEvery consecutive reused
+          // frames. If mismatched, invalidate the entire pass and rerun
           const real = await shoot(lastShotFrame !== i - 1);
           lastShotFrame = lastDrawnFrame = i;
           if (!real.equals(lastBuf)) { await Promise.all(writes.splice(0)); return i; }
@@ -345,7 +418,7 @@ export async function bakeFrames(bakery, opts = {}) {
       // callback is awaited before the next frame, so the screenshot Buffer is
       // released as soon as ffmpeg accepts it and never accumulates in Node.
       if (opts.onFrame) await opts.onFrame(i, buf);
-      // 写盘不挡下一帧 (streaming exports may deliberately skip PNG files)
+      // Writing to disk does not block the next frame (streaming exports may deliberately skip PNG files)
       if (opts.writeFrames !== false) await queueWrite(path.join(framesDir, `${name}.${ext}`), buf);
       if (fresh) lastGlass = undefined;
       if (glassFrames && glassFrames.has(i)) {
@@ -367,7 +440,7 @@ export async function bakeFrames(bakery, opts = {}) {
   let mismatchAt = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) {
-      console.warn(`静态跳过在第 ${mismatchAt} 帧判错(复用的和真截的不一致),禁用跳过重跑一遍`);
+      console.warn(`Static skip misjudged frame ${mismatchAt} (reused frame differs from the real capture), rerunning with skip disabled`);
     }
     await warmUp();
     mismatchAt = await renderPass(staticSkip && attempt === 0);
@@ -376,12 +449,13 @@ export async function bakeFrames(bakery, opts = {}) {
 
   if (trace) await fs.writeFile(path.join(outDir, 'trace.json'), JSON.stringify(trace, null, 1));
   if (domDir) {
-    // 重放要知道画幅、帧率,以及去哪个导出页拿字体和样式表(去掉 timeline 参数:内容全在快照里)
+    // Replay needs aspect ratio, frame rate, and which export page to fetch fonts and stylesheets from
+    // (timeline parameter removed: all content is in snapshots)
     const exportUrl = page.url().replace(/([?&])timeline=[^&]*&?/, '$1').replace(/[?&]$/, '');
     await fs.writeFile(path.join(domDir, 'manifest.json'), JSON.stringify({
       width, height, fps, startFrame, endFrame, themeId: timeline.themeId ?? null, exportUrl, lossyCanvases: domLossy,
     }, null, 1));
-    if (domLossy) console.warn(`HTML 采样缓存:${domLossy} 个画布读不出像素,重放时这些画布是空的`);
+    if (domLossy) console.warn(`HTML sample cache: ${domLossy} canvases could not be read back as pixels, so they will be empty on replay`);
   }
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`Export finished in ${elapsed}s (${totalFrames} frames${reused ? `, ${reused} reused` : ''}${glass.list.length ? `, ${glass.list.length} glass masks` : ''}).`);
@@ -394,39 +468,46 @@ export async function bakeFrames(bakery, opts = {}) {
 }
 
 /**
- * 一帧怎么推(从 `bakeFrames` 抽出来,**逐字搬运**,给 `bakeFrames` 和 `bakeStream` 两处复用 —— G4 第一步)。
+ * How to step a frame (extracted from `bakeFrames`, **ported verbatim**, reused across `bakeFrames`
+ * and `bakeStream`: step 1 of G4).
  *
- * 一帧 = 下发时间 → 等网络 → 排空 → 推一拍(React 提交后的 rAF、Motion 建动画都在这一拍里)→ 等网络
- *       → 排空 → 钉动画 → 排空 → 探针 → 等素材。截不截图由调用方决定。返回这一帧画面静不静止。
+ * One frame = dispatch time → wait for network → drain → step one tick (rAF after React commits
+ * and Motion animation building both occur in this tick) → wait for network → drain → pin
+ * animations → drain → probe → wait for assets. Whether to capture screenshot is decided by
+ * caller. Returns whether visuals are static for this frame.
  *
- * 闭包实际用到的外层量正好是这个签名:`bakery` 解构出的 `page` / `beginFrame` / `waitNet`、
- * `waitFrameReady(bakery, signal)`、`fps`、`directFrameAt` 和 `trace`。`staticSkip` 和
- * `frameWindow` 留在调用方。
+ * Outer variables actually used by closure match this signature: `page` / `beginFrame` / `waitNet`
+ * destructured from `bakery`, `waitFrameReady(bakery, signal)`, `fps`, `directFrameAt`, and `trace`.
+ * `staticSkip` and `frameWindow` remain with caller.
  */
 export function createStepper(bakery, { fps, directFrameAt = frame => frame, signal, trace = null }) {
   const { page, waitNet } = bakery;
-  // 推帧补画要知道这一帧的拍子里有没有哪一拍报告了画面有变化(`hasDamage`);拍子本身照旧,只是把回执看一眼
+  // Push-draw needs to know whether any tick in this frame reported visual changes (`hasDamage`);
+  // ticks themselves run as usual, merely inspecting the receipt
   const beginFrame = async (extra) => { const result = await bakery.beginFrame(extra); if (result?.hasDamage) step.last.damaged = true; return result; };
   const readyHost = { page, beginFrame, waitNet };
   const step = async (frameIndex, wantTrace) => {
     step.last = { frame: frameIndex, damaged: false };
-    // 两个计数器要在推进之前取、推进之后比;取值和下发时间合并成一次 evaluate
+    // Both counters must be retrieved before stepping and compared after stepping; retrieval and
+    // dispatch time are merged into a single evaluate
     const before = await page.evaluate(({ sec, directSec }) => {
       const n = { raf: window.__pcRafCount ?? 0, mut: window.__pcMutationCount ?? 0 };
       window.__pcHideFrameMedia?.();
       window.__pcSetT(sec, directSec);
       return n;
     }, { sec: frameIndex / fps, directSec: directFrameAt(frameIndex) / fps });
-    // 挂载时发出的请求(动态 import、素材)先落地,再推这一拍
+    // Requests issued during mounting (dynamic imports, assets) must settle first before stepping this tick
     await waitNet();
     await page.evaluate(() => window.__bfSettle());
     await beginFrame();
     await waitNet();
     /*
-     * 排空 → 钉动画 → 再排空 → 探针,一次页面内调用做完。
-     * 钉之前排空:这一拍里排队的提交要先落地,新建的动画 __pcSyncAnims 才看得见。
-     * 钉之后再排空:__pcSyncAnims 对越过终点的动画调 finish(),Motion 在 onfinish 回调里把终态写进 style ——
-     * 那是排队的任务,排空后探针的 mut 才看得见它。
+     * Drain → pin animations → drain again → probe, completed in a single in-page call.
+     * Drain before pinning: queued commits in this tick must settle first so newly created animations
+     * are visible to __pcSyncAnims.
+     * Drain again after pinning: __pcSyncAnims calls finish() on animations past end point, Motion
+     * writes final state to style in onfinish callback: that is a queued task, visible to probe's mut
+     * only after draining.
      */
     let probe = await page.evaluate(async () => {
       await window.__bfSettle();
@@ -456,33 +537,40 @@ export function createStepper(bakery, { fps, directFrameAt = frame => frame, sig
       i, perfNow: performance.now(), timelineNow: document.timeline.currentTime, probeMs: window.__pcProbeMs,
       anims: document.getAnimations().map((a) => [a.playState, a.currentTime, a.startTime, a.effect && a.effect.target && a.effect.target.className && String(a.effect.target.className).slice(0, 24)]),
     }), frameIndex));
-    // 再等一次网络:这一拍里新挂的组件发出的请求,requestWillBeSent 事件和 beginFrame 的回复谁先到 Node 没有保证,
-    // 上面那次 waitNet 可能正好看见 0 个在途。经过一次页面内往返,事件已经追上;没有请求时这里不花时间。
+    // Wait for network once more: for requests issued by newly mounted components in this tick, there
+    // is no guarantee whether requestWillBeSent event or beginFrame reply reaches Node first, and the
+    // waitNet above might happen to see 0 in flight. After an in-page round trip, events have caught up;
+    // takes no time when there are no requests.
     await waitNet();
-    // 等就绪时补发的拍子(异步的加载器要靠它们往前走)也经同一个包装:它们报告的画面变化一样要记
+    // Extra ticks issued while waiting for ready (which async loaders rely on to advance) also pass
+    // through the same wrapper: visual changes they report must likewise be recorded
     await waitFrameReady(readyHost, signal);
-    // 四个条件同时成立才算静止,少一个都会渲出坏帧 —— 理由见 ExportView 的 __pcStaticProbe。
-    // finished:这一帧被 __pcSyncAnims 收束的动画数。动画在这一帧跳到终态,画面变了,但收束后 anims 里
-    // 已经没有它、DOM 也没动 —— 只看 anims 会在动画结束那一帧误判静止。
+    // Considered static only when all four conditions hold simultaneously, missing any will render a
+    // corrupted frame: see ExportView's __pcStaticProbe for rationale.
+    // finished: number of animations settled by __pcSyncAnims in this frame. The animation jumps to
+    // final state in this frame, visuals changed, but after settling anims no longer contains it and
+    // DOM did not move: looking only at anims will falsely judge as static in the frame where animation ends.
     const isStatic = !!probe && probe.anims === 0 && probe.finished === 0 && probe.mut === before.mut
       && probe.raf === before.raf && !probe.video && !probe.canvas;
     if (process.env.PC_STATIC_TRACE) {
-      console.log(`  静态判定 帧${frameIndex}: anims=${probe?.anims} finished=${probe?.finished} mut=${before.mut}->${probe?.mut} raf=${before.raf}->${probe?.raf} video=${probe?.video} canvas=${probe?.canvas} => ${isStatic ? '静止' : '在变'}`);
+      console.log(`  static check frame ${frameIndex}: anims=${probe?.anims} finished=${probe?.finished} mut=${before.mut}->${probe?.mut} raf=${before.raf}->${probe?.raf} video=${probe?.video} canvas=${probe?.canvas} => ${isStatic ? 'still' : 'changing'}`);
     }
     step.last.isStatic = isStatic;
     return isStatic;
   };
-  /** 最近一次推的那一帧:`{ frame, damaged, isStatic }`(给推帧补画用) */
+  /** Most recently stepped frame: `{ frame, damaged, isStatic }` (for push-draw) */
   step.last = { frame: null, damaged: false, isStatic: false };
   return step;
 }
 
 /**
- * 预热(从 `bakeFrames` 的 `warmUp` 闭包抽出来,逐字搬运)。
+ * Warm-up (extracted from `bakeFrames`'s `warmUp` closure, ported verbatim).
  *
- * 预热停在本次推帧起点,不能回到 0 挂载无关卡片、重置目标卡的入场相位。
- * 重挂载之后再走一整帧并丢掉:重挂载会让整页失效重绘,让这一次落在丢掉的帧上。
- * `frameWindow` 由调用方传进来(`bakeFrames` 的帧窗规划;`bakeStream` 恒为 null)。
+ * Warm-up stops at start point of this frame stepping, cannot return to 0 to mount irrelevant
+ * cards or reset target card's entrance phase. Step an entire frame and discard after remounting:
+ * remounting invalidates and repaints entire page, letting this fall on discarded frame.
+ * `frameWindow` passed in by caller (frame window planning in `bakeFrames`; always null in
+ * `bakeStream`).
  */
 export async function warmUpAt(bakery, step, { startFrame, warmFrames = 3, frameWindow = null, signal }) {
   const { page, beginFrame } = bakery;
@@ -491,8 +579,9 @@ export async function warmUpAt(bakery, step, { startFrame, warmFrames = 3, frame
   if (frameWindow && !frameWindow.replayClipIds.length) return;
   console.log(`Warm-up ${warmFrames} frames...`);
   for (let i = 0; i < warmFrames; i++) {
-    // 预热也看取消:不看的话,取消要等预热走完、进了逐帧循环才生效,这段时间 worker 其实还占着
-    if (signal?.aborted) throw Object.assign(new Error('已取消'), { cancelled: true });
+    // Warm-up also checks cancellation: otherwise, cancellation takes effect only after warm-up
+    // finishes and enters per-frame loop, keeping worker occupied during this time
+    if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { cancelled: true });
     await step(startFrame, false);
     await beginFrame();
   }
@@ -502,50 +591,64 @@ export async function warmUpAt(bakery, step, { startFrame, warmFrames = 3, frame
   await drawDiscarded(bakery, false, signal);
 }
 
-/** 轨道流的截图参数:带 alpha 的 PNG(ffmpeg 的 image2pipe 吃它),照 bakeFrames 的 PNG 口径 */
+/** Screenshot parameters for track stream: PNG with alpha (consumed by ffmpeg's image2pipe),
+ *  matching bakeFrames's PNG specifications */
 const STREAM_SHOT = { format: 'png', optimizeForSpeed: true };
 
 /**
- * 轨道流的连续出帧(G4 第二步;与 `bakeFrames` 并列,**`bakeFrames` 的行为一字不改**)。
+ * Continuous frame output for track stream (step 2 of G4; alongside `bakeFrames`, **`bakeFrames`
+ * behavior unchanged verbatim**).
  *
- * bakery 上挂一份「流租约」`{ streamSignature, lastFrame, stepper, dirty }`:
+ * Attaches a "stream lease" `{ streamSignature, lastFrame, stepper, dirty }` to bakery:
  *
- *   - **租约匹配**(同一条流、`fromFrame === lastFrame + 1`、没被别人弄脏):跳过
- *     `__pcSetFrameWindow` 和预热,用租约里的 `stepper` 从页面当前状态接着逐帧推
- *     (`window.__pcExportMs` 就是上一帧的值,`__pcSetT` 照常推)。连续生产 N 个分段只付一次换页;
- *   - **否则**(首次、换流、跳段、签名变、`dirty`):走 `bakeFrames` 那套重挂载 ——
- *     `__pcSetFrameWindow(null, …)`(**`clipIds` 恒为 null**:挂载交给 `FrameScene` 的活跃判据,
- *     连续模式里后来才进入的卡照常挂)、预热、从挂载帧起付一次完整回放(不截图)。
+ *   - **Lease match** (same stream, `fromFrame === lastFrame + 1`, not dirtied by others): skip
+ *     `__pcSetFrameWindow` and warm-up, and continue stepping frame-by-frame from current page state
+ *     using `stepper` in lease (`window.__pcExportMs` holds previous frame's value, `__pcSetT` steps
+ *     as usual). Producing N consecutive segments incurs page navigation cost only once;
+ *   - **Otherwise** (first run, stream switch, segment jump, signature change, `dirty`): take
+ *     `bakeFrames` remount path: `__pcSetFrameWindow(null, …)` (**`clipIds` always null**:
+ *     mounting deferred to `FrameScene` activity criteria; cards entering later in continuous mode
+ *     mount as usual), warm-up, and pay for a full replay from mount frame (without capturing
+ *     screenshots).
  *
- * 页面上加载的是**该流的隔离工程**(由调用方在断租约时 `bakery.reset` 进来),所以全员挂载时
- * 页面里也只有这条流的像素;`clip` 再把截图限在 G1 的外扩矩形里。
+ * The page loads the **isolated project for this stream** (brought in via `bakery.reset` by caller
+ * upon broken lease), so even when all members mount, the page contains only pixels from this stream;
+ * `clip` further confines screenshots within G1 expanded bounding box.
  *
  * opts:
- *   streamSignature  流签名(换了就断租约)
- *   fromFrame / toFrame  这一趟要出的**全局**帧(闭区间;一个分段就是 15 帧)
- *   stride           每隔几帧截一张(G2 稀疏分段;1 = 满密度)
- *   mountFrame       这条流各卡最早的挂载帧(`mountFrameOf`);断租约时从 min(它, fromFrame) 起回放
- *   clip             截图矩形 `{ x, y, w, h }`(偶数宽高),见 `captureFrame`
- *   hasMedia         隔离工程里有没有素材层(有才在截图前 `prepareFrameMedia`)
- *   beforeCapture    `(frame) => Promise`:截图之前的钩子(实测实体框用,G1)
- *   capture          `(frame, shoot, { primed }) => Promise`:这一帧怎么取由调用方定(`./capture-canvas.mjs` 的画布直取):
- *                    回什么,`onFrame` 就收到什么;`shoot()` 是原来那一次截图(回 PNG),`primed` 说它会不会先丢一张。
- *                    不给 = 每帧截图
- *   onFrame          `(frame, png) => Promise`:逐帧交出,`await` 就是背压(G4:编码器双缓冲靠它)
- *   signal           只在两帧之间生效
+ *   streamSignature      stream signature (lease breaks if changed)
+ *   fromFrame / toFrame  **global** frames to output in this pass (closed interval; one segment is
+ *                        15 frames)
+ *   stride               capture every N frames (G2 sparse segments; 1 = full density)
+ *   mountFrame           earliest mount frame across cards in this stream (`mountFrameOf`); replayed
+ *                        from min(it, fromFrame) upon broken lease
+ *   clip                 capture rectangle `{ x, y, w, h }` (even width/height), see `captureFrame`
+ *   hasMedia             whether isolated project contains asset layers (only then call
+ *                        `prepareFrameMedia` before capture)
+ *   beforeCapture        `(frame) => Promise`: hook before capture (tested for entity boxes, G1)
+ *   capture              `(frame, shoot, { primed }) => Promise`: how this frame is fetched is
+ *                        decided by caller (canvas direct capture in `./capture-canvas.mjs`):
+ *                        whatever it returns is received by `onFrame`; `shoot()` is original
+ *                        capture (returns PNG), `primed` indicates whether it discards one first.
+ *                        omitted = capture screenshot every frame
+ *   onFrame              `(frame, png) => Promise`: hand off frame-by-frame, `await` provides
+ *                        backpressure (G4: encoder double buffering relies on this)
+ *   signal               takes effect only between frames
  *
- * 回 `{ reset, replayed, captured, captureMs, stepMs, pushDrawn, pushDrawMs }`(给调度器量 `firstMs` / `frameMs` 用;
- * 后两个是推帧补画多发的拍数和花的毫秒,见文件头)。
+ * Returns `{ reset, replayed, captured, captureMs, stepMs, pushDrawn, pushDrawMs }` (for scheduler
+ * to measure `firstMs` / `frameMs`; the latter two are extra ticks issued and milliseconds spent
+ * on push-draw, see file header).
  */
 export async function bakeStream(bakery, opts) {
   const { page, client } = bakery;
   const { streamSignature, fromFrame, toFrame, signal } = opts;
-  if (!streamSignature) throw new Error('bakeStream 要流签名');
-  if (!Number.isInteger(fromFrame) || !Number.isInteger(toFrame) || fromFrame < 0 || toFrame < fromFrame) throw new Error(`bakeStream 帧区间不对:${fromFrame}..${toFrame}`);
+  if (!streamSignature) throw new Error('bakeStream needs a stream signature');
+  if (!Number.isInteger(fromFrame) || !Number.isInteger(toFrame) || fromFrame < 0 || toFrame < fromFrame) throw new Error(`bakeStream frame range is invalid: ${fromFrame}..${toFrame}`);
   const stride = Math.max(1, Math.round(Number(opts.stride) || 1));
-  const cancelled = () => Object.assign(new Error('已取消'), { cancelled: true });
+  const cancelled = () => Object.assign(new Error('Cancelled'), { cancelled: true });
   let lease = bakery.streamLease;
-  // 页面换过(`bakery.reset` 换了一个新 page)也算断:租约里的 stepper 绑的是旧页面
+  // A replaced page (`bakery.reset` replaced with a new page) also counts as broken: stepper in lease
+  // is bound to old page
   const continues = !!lease && !lease.dirty && lease.page === page && lease.streamSignature === streamSignature && fromFrame === lease.lastFrame + 1;
   let reset = false;
   if (!continues) {
@@ -556,7 +659,8 @@ export async function bakeStream(bakery, opts) {
     const height = timeline.height || 1080;
     const startFrame = Math.max(0, Math.min(fromFrame, Number.isInteger(opts.mountFrame) ? opts.mountFrame : fromFrame));
     const stepper = createStepper(bakery, { fps, directFrameAt: frame => frame, signal, trace: null });
-    // 挂载交给 FrameScene 的活跃判据:clipIds 恒为 null(任务书「不做」:bakeStream 带非空 clipIds)
+    // Mounting deferred to FrameScene activity criteria: clipIds is always null (task brief "won't do":
+    // bakeStream with non-empty clipIds)
     await page.evaluate(({ time }) => {
       if (!window.__pcSetFrameWindow) throw new Error('Frame window API is unavailable');
       window.__pcSetFrameWindow(null, time, time);
@@ -564,7 +668,8 @@ export async function bakeStream(bakery, opts) {
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
     forgetCaptureClip(bakery);
     await client.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
-    // 截图矩形在预热之前就定下来:改设备度量会让合成面换尺寸,预热那几拍正好把它推稳
+    // The screenshot rectangle is determined before warmup: changing device metrics resizes the
+    // compositing surface, and those few warmup ticks settle it into place.
     if (opts.clip !== undefined) await applyCaptureClip(bakery, opts.clip);
     await warmUpAt(bakery, stepper, { startFrame, warmFrames: opts.warm ?? 3, frameWindow: null, signal });
     lease = bakery.streamLease = { streamSignature, lastFrame: startFrame - 1, lastShot: null, stepper, dirty: false, fps, page };
@@ -572,7 +677,11 @@ export async function bakeStream(bakery, opts) {
   }
   const stats = { reset, replayed: 0, captured: 0, captureMs: 0, stepMs: 0, pushDrawn: 0, pushDrawMs: 0 };
   const pushDraw = pushDrawEnabled(opts);
-  /** 推帧补画(见文件头):回放的帧、稀疏分段里不取图的帧,画面有变化的各画一拍丢掉;当它「截过」记账,下一帧不用再先丢一张 */
+  /**
+   * Frame-push catch-up paint (see file header): for replayed frames and frames in sparse segments
+   * where images are not captured, paint one tick each and discard it if visuals changed; book them
+   * as "captured", so the next frame does not need to discard one first.
+   */
   const drawPushed = async (frame, isStatic) => {
     if (!pushDraw) return;
     const drawnBefore = lease.lastShot !== null;
@@ -593,14 +702,17 @@ export async function bakeStream(bakery, opts) {
     const shotStarted = Date.now();
     await opts.beforeCapture?.(frame);
     if (opts.hasMedia) await prepareFrameMedia(bakery);
-    // prime 只看「紧挨着的上一帧截没截过」(和 bakeFrames 同一个判据),跨趟也算
+    // prime only checks "whether the immediately preceding frame was captured" (same criterion as
+    // bakeFrames), and counts across passes too.
     const primed = lease.lastShot !== frame - 1;
     const shoot = async () => {
       const shot = await captureFrame(bakery, STREAM_SHOT, signal, { prime: primed, clip: opts.clip ?? null });
       lease.lastShot = frame;
       return shot;
     };
-    // 调用方给了 `capture` 就由它定这一帧怎么取(画布直取,或者调 `shoot()` 照旧截图);没给就是原来那一次截图
+    // If the caller provides `capture`, it decides how to fetch this frame (direct canvas grab, or
+    // call `shoot()` to screenshot as before); if omitted, it falls back to the original single
+    // screenshot.
     const png = opts.capture ? await opts.capture(frame, shoot, { primed }) : await shoot();
     stats.captureMs += Date.now() - shotStarted;
     stats.captured++;
@@ -610,8 +722,9 @@ export async function bakeStream(bakery, opts) {
 }
 
 /**
- * 别的调用(锚帧的 `bakery.reset`、任何 `bakeFrames`)在这个会话上跑过:租约作废(D5 的 `dirty` 位),
- * 下一次 `bakeStream` 当断租约处理、付一次完整回放。
+ * If another call (anchor frame `bakery.reset`, any `bakeFrames`) has run on this session: the
+ * lease is invalidated (the `dirty` bit of D5), and the next `bakeStream` is treated as a broken
+ * lease and pays for a full replay.
  */
 export function dirtyStreamLease(bakery) {
   if (bakery?.streamLease) bakery.streamLease.dirty = true;

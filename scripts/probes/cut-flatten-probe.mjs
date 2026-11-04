@@ -1,30 +1,47 @@
 /**
- * 剪辑段里的卡逐张预渲染(语义 `docs/semantics/mechanism/rendering.md`「剪辑段」的「测量与预渲染:拆开逐卡」;用户 2026-10-21 定)——
- * 真 Chrome、真编码器的端到端探针,**比像素**。
+ * Prerender cards in cut segments card by card (semantics `docs/semantics/mechanism/rendering.md`
+ * "Cut segment" - "Measurement and prerendering: split per card"; user decision, 2026-10-21):
+ * end-to-end probe with real Chrome and real encoder, **comparing pixels**.
  *
  *   node scripts/probes/cut-flatten-probe.mjs (--origin http://127.0.0.1:5440 | --port 5440) [--out <dir>] [--keep] [--json <file>]
  *
- * 给 `--port` 就自己在检出根起一台 dev server(另占 +1、+2 当舞台端口),用完按进程号收掉。本进程里直接起 `FramePipeline`
- * (同预渲染进程的代码),库根放临时目录。
+ * If `--port` is given, it starts a dev server at the checkout root itself (occupying +1 and +2 as
+ * stage ports), and tears it down by PID when done. Directly starts `FramePipeline` in this process
+ * (same code as the prerender process), with store root placed in a temporary directory.
  *
- * 项目(1280×720、30 fps):激活剪辑「主」只有一个剪辑段 S(第 1～5 秒,框 960×540 居中,`cutOffset` 1 秒)引用剪辑「重」;
- * 「重」里:推帧卡 `r6-stateful`(重,0～6 秒;偏移 1 秒落在它中间,要预卷)、轻卡 `punch-pill`(1～3 秒;舞台上不抑制它,活渲)、
- * 剪辑段引用剪辑「里」(两层嵌套),「里」里一张 `punch-pill`(重)。
+ * Project (1280×720, 30 fps): active cut "Main" has only one cut segment S (seconds 1-5, box
+ * 960×540 centered, `cutOffset` 1 second) referencing cut "Heavy"; in "Heavy": frame-push card
+ * `r6-stateful` (heavy, 0-6 seconds; 1-second offset falls in its middle, requiring preroll), light
+ * card `punch-pill` (1-3 seconds; not suppressed on stage, live render), and a cut segment
+ * referencing cut "Inner" (two levels of nesting), with one `punch-pill` (heavy) inside "Inner".
  *
- * 逐条核对:
- *   1. 卡片计划:剪辑段里每张卡各有控件(id `seg-s~h-r6`、`seg-s~h-seg~i-pill`、`seg-s~h-light`),段本身没有;不走整帧 PNG。
- *   2. 流的计划:三张独立卡各一条 `solo: 'flat'` 的单卡流(预渲染集合本由页面的分派表定,探针全部放行),从第 30 帧起到各自露出窗口的末帧;
- *      `r6` 要回放、从嵌套场景挂上那一帧起。
- *   3. 隔离工程:顶层只留 S、被引用剪辑里只留链上的段与目标卡。
- *   4. 稀疏版每个分段一张;满密度每帧都有。
- *   5. 舞台贴流:真舞台(跨源两台)上把两张重卡抑制、发它们的流平面,轻卡照常活渲;停在几帧上截图,与整个项目的活渲导出同一帧比:
- *      最像的是它自己那一帧、框内平均差小;嵌套包裹层上重卡藏活子树、流平面露着,轻卡不抑制。
- *   6. 占位:只抑制、不给流平面时,那张卡的嵌套包裹层里的占位槽位露出来。
- *   7. 失效:改「里」里那张卡的文字,只有它的流键变,`r6` 的不变;激活剪辑里加一条隐藏序列,键都不变。
+ * Check item by item:
+ *   1. Card plan: each card in the cut segment has its own control (ids `seg-s~h-r6`,
+ *      `seg-s~h-seg~i-pill`, `seg-s~h-light`), while the segment itself does not; does not use
+ *      full-frame PNGs.
+ *   2. Stream plan: three standalone cards each have a single-card stream with `solo: 'flat'` (the
+ *      prerender set is normally determined by the page's dispatch table; the probe allows all),
+ *      from frame 30 to the last frame of their respective exposure windows; `r6` needs playback,
+ *      starting from the frame where the nested scene is attached.
+ *   3. Isolated project: only S is kept at the top level, and only the segments and target cards on
+ *      the chain are kept in referenced cuts.
+ *   4. Sparse version: one frame per segment; full density: every frame is present.
+ *   5. Stage stream paste: on real stages (two cross-origin instances), suppress the two heavy cards
+ *      and emit their stream planes, while light cards are live rendered as usual; pause on several
+ *      frames to take screenshots and compare them with the same frame exported via live render of
+ *      the whole project: the closest match is its own frame, with a small average difference inside
+ *      the box; on the nested wrapper layer, heavy cards hide live subtrees while stream planes are
+ *      exposed, and light cards are not suppressed.
+ *   6. Placeholder: when only suppressing without providing stream planes, the placeholder slot in
+ *      that card's nested wrapper layer is exposed.
+ *   7. Invalidation: when changing the text of the card inside "Inner", only its stream key changes
+ *      while that of `r6` remains unchanged; when adding a hidden track to the active cut, no keys
+ *      change.
  *
- * 输出 JSON 结论,过程写 stderr;任何一条不过就以非零退出。耗时只记录。截图写到 `--out`。
+ * Outputs JSON conclusions, writes progress to stderr; exits non-zero if any item fails. Time
+ * elapsed is only recorded. Screenshots are written to `--out`.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -49,7 +66,7 @@ const KEEP = args.includes('--keep');
 const JSON_OUT = flagArg('json', null, args);
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-cut-flatten-probe-${Date.now().toString(36)}`));
 process.env.PROMPTCUT_STREAM_POOL = '1';
-if (!ORIGIN && !PORT) { console.error('要给 --origin <dev server> 或 --port <自己起一台>'); process.exit(2); }
+if (!ORIGIN && !PORT) { console.error('Pass --origin <dev server> or --port <start your own>'); process.exit(2); }
 
 const FPS = 30, WIDTH = 1280, HEIGHT = 720, DURATION = 6;
 const SEG = 'seg-s';
@@ -70,13 +87,13 @@ function projectOf(id, { innerLabel = '里面的药丸', extraTrack = false } = 
     ],
     activeCutId: 'c-main',
     cuts: [
-      { id: 'c-main', name: '主' },
-      { id: 'c-heavy', name: '重', duration: 6, transitions: [], tracks: [
+      { id: 'c-main', name: 'Main' },
+      { id: 'c-heavy', name: 'Heavy', duration: 6, transitions: [], tracks: [
         { id: 'h-0', name: 'h0', clips: [card('h-light', 'punch-pill', 1, 3, { text: '轻卡活渲' }, { frame: { x: 80, y: 560, w: 600, h: 120 } })] },
         { id: 'h-1', name: 'h1', clips: [card('h-r6', 'r6-stateful', 0, 6)] },
         { id: 'h-2', name: 'h2', clips: [segOf('h-seg', 'c-inner', 0, 6)] },
       ] },
-      { id: 'c-inner', name: '里', duration: 6, transitions: [], tracks: [
+      { id: 'c-inner', name: 'Inner', duration: 6, transitions: [], tracks: [
         { id: 'i-1', name: 'i1', clips: [card('i-pill', 'punch-pill', 0, 6, { text: innerLabel }, { frame: { x: 640, y: 80, w: 560, h: 140 } })] },
       ] },
     ],
@@ -93,7 +110,7 @@ async function until(label, fn, timeoutMs, everyMs = 300) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
@@ -106,7 +123,7 @@ function frameStore() {
     rgba(frame) {
       if (cache.has(frame)) return cache.get(frame);
       const data = decodePngRgba(png.get(frame))?.data;
-      if (!data) throw new Error(`解不开第 ${frame} 帧的参照`);
+      if (!data) throw new Error(`Could not resolve the reference for frame ${frame}`);
       cache.set(frame, data);
       if (cache.size > 64) cache.delete(cache.keys().next().value);
       return data;
@@ -127,7 +144,7 @@ function decodedDiff(picture, rect, truth) {
   return e.count ? e.sum / e.count : 0;
 }
 function sampleDiff(a, b) { let sum = 0; for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]); return sum / a.length; }
-/** 整幅 RGBA 两份逐字节不同的字节数 */
+/** Number of bytes differing byte-by-byte between two full RGBA images */
 function bytesDiff(a, b) { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; }
 function rgbOver(buf, bg = [0x20, 0x20, 0x20]) {
   const png = PNG.sync.read(buf);
@@ -138,7 +155,7 @@ function rgbOver(buf, bg = [0x20, 0x20, 0x20]) {
   }
   return { width: png.width, height: png.height, rgb: out };
 }
-/** 两幅 RGB 在框里的平均差 */
+/** Average difference between two RGB images inside the box */
 function rectDiff(a, b, r = FRAME) {
   let sum = 0, n = 0;
   for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) {
@@ -177,7 +194,8 @@ window.__ready = Promise.all([waitReady(document.getElementById('a'), '${oa}'), 
 
 function openPipeline(root, origin, { frozen = false } = {}) {
   const pipeline = new FramePipeline({ root, origin: () => origin, interactive: true, playhead: () => null });
-  // 预渲染集合由页面的分派表定;这里全部放行,轻卡活渲由舞台这一步(不抑制它)来验
+  // The prerender set is determined by the page's dispatch table; here all are allowed through, and
+  // light card live render is verified by this stage step (without suppressing it)
   pipeline.streamPicked = () => true;
   const producer = pipeline.streamProducer();
   producer.attachRoute();
@@ -211,39 +229,39 @@ try {
   const emptyUrl = emptyUrlOf(origin, { width: WIDTH, height: HEIGHT });
   bakery = await openBakery({ url: emptyUrl });
 
-  // ================================================================ 1、2、3:卡片计划、流的计划、隔离工程
+  // ================================================================ 1, 2, 3: Card plan, stream plan, isolated project
   const A = openPipeline(path.join(OUT, 'library-a'), origin);
   pipelines.push(A.pipeline);
   let t0 = Date.now();
   const entry = await A.pipeline.preload(PROJECT);
-  const control = await until('卡片计划里有剪辑段里的卡', () => controlOf(entry), 120_000);
+  const control = await until('the card plan has the cards inside the cut segment', () => controlOf(entry), 120_000);
   const planIds = (entry.cardPlan ?? []).map((c) => c.clipId);
   out.controls = (entry.cardPlan ?? []).map((c) => ({ clipId: c.clipId, cacheable: c.cacheable, frameMode: c.frameMode, compositing: c.compositing, firstFrame: c.sampling?.firstFrame, count: c.count }));
-  check(!!control, '1:卡片计划里有剪辑段里的卡的控件');
-  check([R6, PILL, LIGHT].every((id) => planIds.includes(id)) && !planIds.includes(SEG), '1:剪辑段里每张卡各有控件(含两层嵌套),段本身没有', planIds);
-  check(HEAVY.every((id) => controlOf(entry, id)?.cacheable === false), '1:剪辑段里的卡不走整帧 PNG 那一支(cacheable 为假)');
+  check(!!control, '1: the card plan has controls for the cards inside the cut segment');
+  check([R6, PILL, LIGHT].every((id) => planIds.includes(id)) && !planIds.includes(SEG), '1: every card inside the cut segment has its own control (including the two-level nesting), the segment itself has none', planIds);
+  check(HEAVY.every((id) => controlOf(entry, id)?.cacheable === false), '1: cards inside the cut segment do not take the whole-frame PNG branch (cacheable is false)');
 
-  if (!(await until('稀疏版齐了', () => allAt(A.producer, (s) => !!s), 600_000))) throw new Error(`稀疏版没产完:${JSON.stringify(A.producer.status().log.slice(-8))}`);
+  if (!(await until('all sparse versions ready', () => allAt(A.producer, (s) => !!s), 600_000))) throw new Error(`Sparse versions were not fully produced: ${JSON.stringify(A.producer.status().log.slice(-8))}`);
   await sleep(600);
   out.sparseMs = Date.now() - t0;
   const states = [...A.producer.streams.values()];
   out.specs = states.map(({ spec }) => ({ top: spec.topClipId, kind: spec.kind, plane: spec.plane, solo: spec.solo, originFrame: spec.originFrame, lastFrame: spec.lastFrame, mountFrame: spec.mountFrame, replay: spec.replay, offset: spec.offset, streamKey: spec.streamKey }));
-  check(states.length === 3 && [...HEAVY, LIGHT].every((id) => states.some((s) => s.spec.topClipId === id)), '2:剪辑段里三张独立卡各一条流(含两层嵌套)', out.specs.map((s) => s.top));
-  check(states.every((s) => s.spec.kind === 'card' && s.spec.plane === 'local' && s.spec.solo === 'flat'), '2:都是 solo flat 的单卡流(包裹层坐标)', out.specs);
-  check(states.every((s) => s.spec.originFrame === WANT[0] && s.spec.lastFrame === (s.spec.topClipId === LIGHT ? 89 : WANT[1])), '2:都从第 30 帧起,到露出窗口的末帧(重卡 149、轻卡 89)', out.specs);
+  check(states.length === 3 && [...HEAVY, LIGHT].every((id) => states.some((s) => s.spec.topClipId === id)), '2: the three independent cards in the cut segment each get one stream (including the two-level nesting)', out.specs.map((s) => s.top));
+  check(states.every((s) => s.spec.kind === 'card' && s.spec.plane === 'local' && s.spec.solo === 'flat'), '2: all are solo flat single-card streams (wrapper layer coordinates)', out.specs);
+  check(states.every((s) => s.spec.originFrame === WANT[0] && s.spec.lastFrame === (s.spec.topClipId === LIGHT ? 89 : WANT[1])), '2: all start at frame 30 and end at the last frame of the exposed window (heavy cards 149, light card 89)', out.specs);
   const r6State = states.find((s) => s.spec.topClipId === R6);
-  check(r6State?.spec.replay === true && r6State.spec.mountFrame === 0, '2:r6 要回放,从嵌套场景挂上那一帧(第 0 帧)起', r6State?.spec);
+  check(r6State?.spec.replay === true && r6State.spec.mountFrame === 0, '2: r6 must replay, starting from the frame it mounts in the nested scene (frame 0)', r6State?.spec);
   {
     const iso = r6State?.isolated;
     const shown = (tracks) => (tracks ?? []).filter((t) => !t.hidden).flatMap((t) => t.clips.map((c) => c.id));
     out.isolated = iso && { top: shown(iso.tracks), heavy: shown(iso.cuts.find((c) => c.id === 'c-heavy')?.tracks) };
-    check(JSON.stringify(out.isolated) === JSON.stringify({ top: [SEG], heavy: ['h-r6'] }), '3:隔离工程顶层只留 S、剪辑「重」里只留 r6', out.isolated);
+    check(JSON.stringify(out.isolated) === JSON.stringify({ top: [SEG], heavy: ['h-r6'] }), '3: the isolated project keeps only S at the top level and only r6 in the cut "Heavy"', out.isolated);
   }
   const refDir = path.join(OUT, 'ref-project'); await fs.mkdir(refDir, { recursive: true });
   const truth = await exportFrames(bakery, PROJECT, emptyUrl, WANT[1], refDir);
   for (const f of [31, 75, 149]) await fs.writeFile(path.join(OUT, `export-${f}.png`), toPng(rgbOver(truth.png(f))));
 
-  // ================================================================ 4:稀疏与满密度
+  // ================================================================ 4: Sparse and full density
   const decodeOf = async (state, n, name) => {
     const { spec } = state;
     const { manifest } = state;
@@ -266,12 +284,12 @@ try {
       const same = Math.max(0, ...d.samples.slice(1).map((x) => sampleDiff(x, d.samples[0])));
       if (d.seg.stride !== SPARSE_STRIDE || d.seg.samples !== count || !d.exact || same > 1.5) wrong.push({ top: state.spec.topClipId, n, stride: d.seg.stride, samples: d.seg.samples, count });
     }
-    check(wrong.length === 0, '4:稀疏版每个分段一张', wrong.slice(0, 4));
+    check(wrong.length === 0, '4: the sparse version has one per segment', wrong.slice(0, 4));
   }
   t0 = Date.now();
   A.gate.hold = false;
   A.producer.kick();
-  if (!(await until('满密度齐了', () => (allAt(A.producer, (s) => s?.stride === 1) && !A.producer.workers.size ? true : null), 900_000))) throw new Error(`满密度没产完:${JSON.stringify(A.producer.status().log.slice(-8))}`);
+  if (!(await until('full density complete', () => (allAt(A.producer, (s) => s?.stride === 1) && !A.producer.workers.size ? true : null), 900_000))) throw new Error(`Full density was not fully produced: ${JSON.stringify(A.producer.status().log.slice(-8))}`);
   out.denseMs = Date.now() - t0;
   {
     const wrong = [];
@@ -283,12 +301,12 @@ try {
       frames += d.samples.length;
     }
     out.dense = { frames, wrong: wrong.slice(0, 6) };
-    check(wrong.length === 0 && frames === 2 * (WANT[1] - WANT[0] + 1) + 60, '4:满密度每帧都有', out.dense);
+    check(wrong.length === 0 && frames === 2 * (WANT[1] - WANT[0] + 1) + 60, '4: full density has every frame', out.dense);
   }
 
-  // ================================================================ 5:舞台贴流
+  // ================================================================ 5: Stage stream paste
   const ports = await (await fetch(origin + '/api/stage/ports')).json();
-  if (!ports.ok || !Array.isArray(ports.ports) || ports.ports.length < 2) throw new Error(`舞台端口没起来:${JSON.stringify(ports)}`);
+  if (!ports.ok || !Array.isArray(ports.ports) || ports.ports.length < 2) throw new Error(`Stage ports did not come up: ${JSON.stringify(ports)}`);
   const u = new URL(origin);
   const [originA, originB] = ports.ports.slice(0, 2).map((p) => `${u.protocol}//${u.hostname}:${p}`);
   const HOST_PATH = '/__cut-prerender-probe-host';
@@ -345,7 +363,9 @@ try {
     await sleep(60);
     return { planes, got };
   };
-  // 舞台上真贴的是流:嵌套包裹层上重卡藏活子树(`.pc-suppressed`)、流平面露着;轻卡(第 1～3 秒露出)不抑制、活渲;剪辑段自己不抑制
+  // What is actually pasted on stage is the stream: heavy cards hide live subtrees (`.pc-suppressed`)
+  // on nested wrapper layers, stream planes are exposed; light cards (exposed during seconds 1-3)
+  // are not suppressed and live rendered; the cut segment itself is not suppressed
   const domNow = () => frameA().evaluate((seg, heavy, light) => {
     const at = (id) => document.querySelector(`[data-pc-flat-clip="${id}"]`);
     const shown = (el) => !!el && getComputedStyle(el).display !== 'none';
@@ -359,7 +379,7 @@ try {
     const rows = [];
     for (const f of [31, 47, 75, 100, 133, 149]) {
       const { planes, got } = await seekTo(f);
-      if (!check(planes.length === 2 && got.ms !== null, `5:第 ${f} 帧两条流平面都画出来了`, { planes: planes.length, got })) continue;
+      if (!check(planes.length === 2 && got.ms !== null, `5: both stream planes were drawn at frame ${f}`, { planes: planes.length, got })) continue;
       const stage = await shotStage();
       const scores = [f - 2, f - 1, f, f + 1, f + 2].filter((c) => c >= 0 && c <= WANT[1]).map((c) => [c, rectDiff(stage, rgbOver(truth.png(c)))]).sort((a, b) => a[1] - b[1]);
       rows.push({ frame: f, best: scores[0][0], err: round2(scores.find(([c]) => c === f)[1]), scores: scores.map(([c, v]) => [c, round2(v)]) });
@@ -373,13 +393,13 @@ try {
     }
     out.stageDom ??= await domNow();
     out.stage = rows;
-    check(rows.length === 6 && rows.every((r) => r.best === r.frame), '5:舞台贴流:每一帧最像的是整个项目导出的它自己那一帧', rows.map((r) => [r.frame, r.best, r.err]));
-    check(rows.every((r) => r.err < 4), '5:舞台贴流与活渲导出的平均差 < 4/255(框内)', rows.map((r) => [r.frame, r.err]));
-    check(out.stageDom.heavy.every((h) => h.suppressed && h.plane) && !out.stageDom.segSuppressed, '5:嵌套包裹层上重卡藏活子树、流平面露着,剪辑段本身不抑制', out.stageDom);
-    check(out.stageDom.light.mounted && !out.stageDom.light.suppressed, '5:轻卡在嵌套场景里活渲(不抑制)', out.stageDom.light);
+    check(rows.length === 6 && rows.every((r) => r.best === r.frame), '5: stage stream attach: each frame is most similar to its own frame in the whole-project export', rows.map((r) => [r.frame, r.best, r.err]));
+    check(rows.every((r) => r.err < 4), '5: the mean difference between stage stream attach and the live render export is < 4/255 (inside the box)', rows.map((r) => [r.frame, r.err]));
+    check(out.stageDom.heavy.every((h) => h.suppressed && h.plane) && !out.stageDom.segSuppressed, '5: on the nested wrapper layer, heavy cards hide the live subtree and expose the stream plane, and the cut segment itself is not suppressed', out.stageDom);
+    check(out.stageDom.light.mounted && !out.stageDom.light.suppressed, '5: the light card is live rendered in the nested scene (not suppressed)', out.stageDom.light);
   }
 
-  // ================================================================ 6:没流时显示占位
+  // ================================================================ 6: Show placeholder when there is no stream
   {
     await rpc('setPlaying', false);
     await rpc('setStreamPlanes', []);
@@ -390,19 +410,19 @@ try {
       const slot = document.querySelector(`[data-pc-flat-clip="${id}"] > [data-pc-placeholder-slot]`);
       return { slot: !!slot, hidden: slot ? slot.hidden : null };
     }, PILL);
-    check(out.placeholder.slot && out.placeholder.hidden === false, '6:只抑制、没有流平面:那张卡的嵌套包裹层里显示占位', out.placeholder);
+    check(out.placeholder.slot && out.placeholder.hidden === false, '6: suppression only, no stream plane: the placeholder is shown in that card\'s nested wrapper layer', out.placeholder);
     await fs.writeFile(path.join(OUT, 'stage-placeholder-75.png'), toPng(await shotStage()));
   }
 
-  // ================================================================ 7:失效
+  // ================================================================ 7: Invalidation
   {
     const fpOf = async (project) => {
       const p = new FramePipeline({ root: path.join(OUT, `library-x-${Math.random().toString(36).slice(2, 7)}`), origin: () => origin, interactive: true, playhead: () => null });
       pipelines.push(p);
       p.streamPicked = () => true;
-      p.streamBusy = () => true; // 只要计划,不产
+      p.streamBusy = () => true; // Only plan, do not produce
       const e = await p.preload(project);
-      await until('卡片计划(失效用例)', () => controlOf(e), 120_000);
+      await until('card plan (invalidation case)', () => controlOf(e), 120_000);
       const specs = planStreams(e, { picked: () => true, envFingerprint: 'probe-fp', below: false });
       return Object.fromEntries(HEAVY.map((id) => [id, specs.find((s) => s.topClipId === id)?.streamKey ?? null]));
     };
@@ -410,12 +430,12 @@ try {
     const changed = await fpOf(projectOf('cut-flatten-probe', { innerLabel: '改过的药丸' }));
     const unrelated = await fpOf(projectOf('cut-flatten-probe', { extraTrack: true }));
     out.invalidation = { base: base0, changedInner: changed, unrelated };
-    check(HEAVY.every((id) => !!base0[id]), '7:两张重卡都有流键', base0);
-    check(changed[PILL] && changed[PILL] !== base0[PILL] && changed[R6] === base0[R6], '7:改「里」里那张卡:只有它的流键变,r6 的不变', out.invalidation);
-    check(HEAVY.every((id) => unrelated[id] === base0[id]), '7:激活剪辑里加一条隐藏序列,键都不变', out.invalidation);
+    check(HEAVY.every((id) => !!base0[id]), '7: both heavy cards have stream keys', base0);
+    check(changed[PILL] && changed[PILL] !== base0[PILL] && changed[R6] === base0[R6], '7: editing the card inside "Inner": only its stream key changes, r6\'s does not', out.invalidation);
+    check(HEAVY.every((id) => unrelated[id] === base0[id]), '7: adding a hidden track to the active cut leaves all keys unchanged', out.invalidation);
   }
 } catch (error) {
-  fails.push(`探针出错:${error?.message || error}`);
+  fails.push(`Probe error: ${error?.message || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   try { await browser?.close(); } catch { /* ignore */ }

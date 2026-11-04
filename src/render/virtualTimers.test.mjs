@@ -1,18 +1,22 @@
 /**
- * 虚拟定时器(E4b)的单测。跑:node --test src/render/virtualTimers.test.mjs
+ * Unit tests for virtual timers (E4b). Run: node --test src/render/virtualTimers.test.mjs
  *
- * 钉死四条:
- *   - `tick` 推进时按到期顺序触发,同一时刻按登记顺序;
- *   - `setInterval` 按周期重排,一拍跨过好几个周期时在同一拍里追齐;
- *   - **跳转不结算**(`shift`):跳过的那段里的定时器不触发,每个挂起定时器的**剩余时间保持**;
- *   - `clear` 只认虚拟 id(≥ 1e9),真 id 交回调用方 —— 舞台自身的墙钟定时器靠这条不被张冠李戴地摘掉。
+ * Four rules pinned down:
+ *   - When `tick` advances, trigger in expiration order; at the same timestamp, by registration
+ *     order;
+ *   - `setInterval` reschedules by period; when a single tick crosses multiple periods, catch up
+ *     within the same tick;
+ *   - **Jump without settling** (`shift`): timers in the skipped range do not trigger, and each
+ *     pending timer's **remaining time is preserved**;
+ *   - `clear` only recognizes virtual ids (≥ 1e9), returning real ids to the caller: the stage's
+ *     own wall-clock timers rely on this to avoid being mistakenly removed.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createVirtualTimers, VIRTUAL_TIMER_BASE } from "./virtualTimers.ts";
 
-test("setTimeout:到期才触发,一次性,只跑一遍", () => {
+test("setTimeout: fires only when due, one-shot, runs only once", () => {
   const vt = createVirtualTimers();
   const hits = [];
   vt.set(() => hits.push("a"), 100, [], false, 0);
@@ -23,28 +27,28 @@ test("setTimeout:到期才触发,一次性,只跑一遍", () => {
   assert.equal(vt.size(), 0);
 });
 
-test("同一时刻按登记顺序;不同时刻按到期先后", () => {
+test("same time: in registration order; different times: in order of expiry", () => {
   const vt = createVirtualTimers();
   const order = [];
-  vt.set(() => order.push("晚"), 20, [], false, 0);
-  vt.set(() => order.push("早1"), 10, [], false, 0);
-  vt.set(() => order.push("早2"), 10, [], false, 0);
+  vt.set(() => order.push("late"), 20, [], false, 0);
+  vt.set(() => order.push("early1"), 10, [], false, 0);
+  vt.set(() => order.push("early2"), 10, [], false, 0);
   vt.settle(50);
-  assert.deepEqual(order, ["早1", "早2", "晚"]);
+  assert.deepEqual(order, ["early1", "early2", "late"]);
 });
 
-test("setInterval:每 100 ms 一格,推到第 3 秒恰好 30 格(E4b 的打字机卡)", () => {
+test("setInterval: one step every 100 ms, advancing to second 3 gives exactly 30 steps (E4b typing card)", () => {
   const vt = createVirtualTimers();
   let cells = 0;
   vt.set(() => { cells++; }, 100, [], true, 0);
-  // 30 fps 的拍子,一拍 1000/30 ms,一路推到 3000 ms
+  // 30 fps ticks, 1000/30 ms per tick, advancing all the way to 3000 ms
   const step = 1000 / 30;
   for (let ms = step; ms <= 3000 + 1e-9; ms += step) vt.settle(ms);
   vt.settle(3000);
   assert.equal(cells, 30);
 });
 
-test("setInterval:一拍跨过好几个周期时在同一拍里追齐", () => {
+test("setInterval: when one tick spans several periods, catch up within the same tick", () => {
   const vt = createVirtualTimers();
   let n = 0;
   vt.set(() => { n++; }, 10, [], true, 0);
@@ -52,7 +56,7 @@ test("setInterval:一拍跨过好几个周期时在同一拍里追齐", () => {
   assert.equal(n, 5);
 });
 
-test("回调里再登记的 0 毫秒定时器推到下一拍(自喂循环不会锁死一拍)", () => {
+test("a 0 ms timer registered inside a callback is pushed to the next tick (a self-feeding loop cannot lock up a tick)", () => {
   const vt = createVirtualTimers();
   let n = 0;
   const loop = () => { n++; vt.set(loop, 0, [], false, 0); };
@@ -63,51 +67,51 @@ test("回调里再登记的 0 毫秒定时器推到下一拍(自喂循环不会�
   assert.equal(n, 2);
 });
 
-test("shift:跳转不结算,挂起定时器的剩余时间保持", () => {
+test("shift: seeking does not settle, the remaining time of pending timers is preserved", () => {
   const vt = createVirtualTimers();
   const hits = [];
-  vt.set(() => hits.push("x"), 100, [], false, 0);       // 到期 100
-  vt.set(() => hits.push("i"), 50, [], true, 0);         // 每 50
-  // clock.set(5000):往前跳 5 秒,不结算
+  vt.set(() => hits.push("x"), 100, [], false, 0);       // Expires at 100
+  vt.set(() => hits.push("i"), 50, [], true, 0);         // Every 50
+  // clock.set(5000): jump forward 5 seconds, do not settle
   vt.shift(5000 - 0);
-  assert.deepEqual(hits, [], "跳过的那段里的定时器一个都不触发");
-  // 剩余时间保持:x 还差 100 ms,i 还差 50 ms
+  assert.deepEqual(hits, [], "no timers in the skipped span fire");
+  // Remaining time preserved: x still has 100 ms left, i still has 50 ms left
   assert.equal(vt.settle(5049), 0);
   assert.equal(vt.settle(5050), 1);
   assert.deepEqual(hits, ["i"]);
-  assert.equal(vt.settle(5100), 2, "x 到期 + i 又一格");
+  assert.equal(vt.settle(5100), 2, "x expires + i gets one more tick");
 });
 
-test("shift:往回跳同样不结算、剩余时间保持", () => {
+test("shift: jumping backward does not settle either, remaining time is kept", () => {
   const vt = createVirtualTimers();
   let n = 0;
-  vt.set(() => { n++; }, 200, [], false, 1000);          // 到期 1200
-  vt.shift(0 - 1000);                                    // 拨回 0
+  vt.set(() => { n++; }, 200, [], false, 1000);          // Expires at 1200
+  vt.shift(0 - 1000);                                    // Dial back to 0
   assert.equal(vt.settle(199), 0);
   assert.equal(vt.settle(200), 1);
   assert.equal(n, 1);
 });
 
-test("clear:虚拟 id 摘掉并回 true;真 id 回 false 交给调用方", () => {
+test("clear: a virtual id is removed and returns true; a real id returns false and is left to the caller", () => {
   const vt = createVirtualTimers();
   let n = 0;
   const id = vt.set(() => { n++; }, 10, [], true, 0);
-  assert.ok(id >= VIRTUAL_TIMER_BASE, "虚拟 id 从 1e9 起,和真 setTimeout 的 id 分得开");
+  assert.ok(id >= VIRTUAL_TIMER_BASE, "virtual ids start at 1e9, distinct from real setTimeout ids");
   assert.equal(vt.clear(id), true);
   assert.equal(vt.size(), 0);
   vt.settle(1000);
   assert.equal(n, 0);
-  assert.equal(vt.clear(7), false, "真 id 不归它管");
+  assert.equal(vt.clear(7), false, "real ids are not its concern");
   assert.equal(vt.clear(undefined), false);
 });
 
-test("handler 不是函数就不登记(字符串 eval 那一套不支持)", () => {
+test("a handler that is not a function is not registered (string eval is not supported)", () => {
   const vt = createVirtualTimers();
   assert.equal(vt.set("alert(1)", 0, [], false, 0), 0);
   assert.equal(vt.size(), 0);
 });
 
-test("多余参数原样传给回调(setTimeout(fn, ms, ...args))", () => {
+test("extra arguments are passed through to the callback unchanged (setTimeout(fn, ms, ...args))", () => {
   const vt = createVirtualTimers();
   let got = null;
   vt.set((...a) => { got = a; }, 1, ["p", 2], false, 0);

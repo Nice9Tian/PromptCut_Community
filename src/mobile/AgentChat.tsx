@@ -1,10 +1,10 @@
 /**
- * 手机版 Agent 分页里一个会话的对话页(演示稿的 Agent 页:创造力、消息、操作卡片、引用标记条、输入框)。
+ * Chat page of one session in the mobile app's Agent tab (the Agent page of the demo mockup: creativity, messages, action cards, quote bar, input box).
  *
- * 业务和桌面右栏的云端对话页(`editor/right/CloudAiPanel.tsx`)是同一套:`useCloudChat` 管事件流和发送,
- * 告知确认、对话权限、停止、共有 / 私有、开始页(`useStartPage`)都沿用桌面的做法;只是画法换成演示稿的样子,
- * 并且「引用」不再往输入框里插文字,而是放在输入框上方的标记条里,发送时由 `agentView.withQuotes` 带上。
- * 手机版暂不放的:附件、模型与思考强度下拉、历史对话列表、删除对话、诊断报告(演示稿里没有这些入口,见任务报告)。
+ * The logic is the same as the desktop right rail's cloud chat page (`editor/right/CloudAiPanel.tsx`): `useCloudChat` manages the event stream and sending,
+ * and notice confirmation, chat permissions, stop, shared / private, and the start page (`useStartPage`) all follow the desktop's approach; only the rendering is changed to look like the demo mockup,
+ * and "quote" no longer inserts text into the input box but goes into the bar above the input box, carried along on send by `agentView.withQuotes`.
+ * Not on the mobile app for now: attachments, the model and thinking effort dropdowns, the history chat list, deleting chats, diagnostic reports (the demo mockup has no entry points for these, see the task report).
  */
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MutableRefObject } from "react";
 import "katex/dist/katex.min.css";
@@ -26,10 +26,10 @@ import { tr } from "../i18n/index.ts";
 
 export function AgentChat(props: {
   tabId: string;
-  /** 这一页此刻是不是用户看着的那一页(分页开着、会话标签选中) */
+  /** Whether this page is the one the user is looking at right now (tab open, session tab selected) */
   shown: boolean;
   cloud: CloudAgentState;
-  /** 各会话此刻有几条消息(关会话前判断要不要确认) */
+  /** How many messages each session has right now (to decide whether to confirm before closing a session) */
   counts: MutableRefObject<Map<string, number>>;
 }) {
   const { tabId, shown, cloud, counts } = props;
@@ -38,7 +38,7 @@ export function AgentChat(props: {
   const consent = useSyncExternalStore(subscribeCloudConsent, cloudConsentState, cloudConsentState);
   const [consentOpen, setConsentOpen] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
-  // 断网待发(2026-10-22 用户定,同桌面):断网时发的消息排着、网络恢复后核对最近一条用户消息再自动发出
+  // Queued while offline (user decision, 2026-10-22, same as desktop): messages sent while offline wait in line, and once the network is back, the latest user message is checked and then sent automatically
   const chat = useCloudChat({ tabId, cloud, enabled: true, autoAttach: true, outbox: true });
   const { view } = chat;
   const { tabs } = useAgentTabs();
@@ -53,7 +53,7 @@ export function AgentChat(props: {
   const stillCurrent = () => keyRef.current === qKey && (!cloud.accountMode ||
     (cloudConsentState().accountId === cloud.accountId && cloudConsentState().bindingVersion === consent.bindingVersion));
 
-  /* ---------- 告知确认(同桌面) ---------- */
+  /* ---------- Notice confirmation (same as desktop) ---------- */
   useEffect(() => {
     if (!shown || !cloud.accountMode || !cloud.available || !cloud.projectId || !consent.accountId || consent.accountId !== cloud.accountId) return;
     let dead = false;
@@ -80,7 +80,7 @@ export function AgentChat(props: {
       return accepted;
     } catch (error) {
       if (!stillCurrent()) return false;
-      // 断网读不到告知:不弹告知框,这条消息排着等网络恢复(恢复后发出之前再核一次告知)
+      // Offline, the notice cannot be read: don't show the consent dialog; this message is queued until the network recovers (the notice is checked again before sending after recovery)
       if (opts?.queueable && chat.outbox.transient(error)) return "queue";
       setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable."));
       setConsentOpen(true);
@@ -94,7 +94,7 @@ export function AgentChat(props: {
     );
   };
 
-  /* ---------- 会话状态:对话号、忙不忙、权限 ---------- */
+  /* ---------- Session state: chat id, busy or not, permissions ---------- */
   useEffect(() => { setTabConversation(tabId, chat.conversationId); }, [tabId, chat.conversationId, isDraft]);
   const currentMeta = chat.history.items.find((item) => item.id === chat.conversationId) ?? null;
   const policy = cloudConversationControlPolicy({
@@ -121,7 +121,7 @@ export function AgentChat(props: {
   useEffect(() => {
     if (!cloud.accountMode || !hasMessages) return;
     let live = true;
-    // 断着网时(比如刚排了一条等网络恢复的)静默读:读不到不弹「连不上」
+    // Read silently while offline (e.g. right after queuing one that waits for the network): if the read fails, do not pop up "cannot connect"
     void chat.history.refresh(chat.outbox.offline()).then((ok) => { if (live && ok) setMetadataReadyKey(metadataKey); });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -132,7 +132,7 @@ export function AgentChat(props: {
   const off = !cloud.enabled || chat.info?.enabled === false;
   const [enabling, setEnabling] = useState(false);
 
-  /* ---------- 输入框、引用标记条、开始页 ---------- */
+  /* ---------- Input box, quote bar, start page ---------- */
   const [inputText, setInputText] = useState("");
   const [quotes, setQuotes] = useState<QuoteRef[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -143,14 +143,14 @@ export function AgentChat(props: {
     setInputText("");
     setQuotes([]);
   }, [cloud.accountMode, qKey]);
-  // 输入框随内容长高(最多约五行)
+  // The input box grows with its content (up to about five lines)
   useLayoutEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
     ta.style.height = "auto";
     ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`;
   }, [inputText, shown]);
-  // 选中一项后点「引用」(或预览右键「引用到 AI」):同一个 `pc-quote-clip` 事件,放进标记条而不是输入框
+  // After selecting an item, click "Quote" (or right-click in preview "Quote to AI"): the same `pc-quote-clip` event, put into the bar rather than the input box
   useEffect(() => {
     if (!shown) return;
     const onQuote = (ev: Event) => {
@@ -163,8 +163,8 @@ export function AgentChat(props: {
     return () => window.removeEventListener("pc-quote-clip", onQuote as EventListener);
   }, [shown]);
 
-  /* ---------- 发送与停止 ---------- */
-  // 「发送失败」气泡上的「重新发送」(agentParts 的 UserBubble 发出的事件,带气泡号):是这一页待发清单里的才接
+  /* ---------- Send and stop ---------- */
+  // "Resend" on a "Send failed" bubble (an event emitted by UserBubble in agentParts, carrying the bubble id): only accepted if it is in this page's pending list
   const resendRef = useRef(chat.outbox.resend);
   resendRef.current = chat.outbox.resend;
   useEffect(() => {
@@ -184,7 +184,7 @@ export function AgentChat(props: {
     const ok = await chat.send(text, undefined, staged ?? undefined, null, opts);
     return stillCurrent() && ok;
   };
-  /** 探针与排障的只读口子(同 `window.__pcCloud`):这一页最近一次点发送时的引用和正文,以及引用条此刻的内容 */
+  /** Read-only hook for probes and troubleshooting (same as `window.__pcCloud`): the quotes and body at this page's most recent send click, and the current content of the quote bar */
   const lastSend = useRef<{ text: string; quotes: QuoteRef[] } | null>(null);
   useEffect(() => {
     const w = window as unknown as { __pcMobileAgent?: Record<string, unknown> };
@@ -196,16 +196,16 @@ export function AgentChat(props: {
     if (!body) { taRef.current?.focus(); return; }
     if (creatorReadOnly || view.revoked) return;
     if (off) { chat.notify(cloudErrorText("disabled")); return; }
-    // 已有对话、权限还没读回来:先别发(对话可能是别人的私有对话);新对话没有这个问题,不用等
+    // Existing chat, permissions not read back yet: do not send yet (the chat may be someone else's private chat); a new chat has no such problem, no need to wait
     if (!metadataReady && hasMessages) { toast(tr("Checking chat permissions, wait a moment before sending")); return; }
-    // 开始页上点发送:这时才建第一个会话,这条消息在里面发出去
+    // Send clicked on the start page: only now create the first session, and send this message in it
     start.commit();
     const text = withQuotes(body, quotes);
     const sentQuotes = quotes;
     lastSend.current = { text, quotes: sentQuotes };
     const sentInput = inputText;
     if (cloud.accountMode) {
-      // 账号模式:点发送当场在对话里出气泡、清空输入框(乐观显示);没发出去时气泡标「没有发出去」,原文放回输入框
+      // Account mode: on clicking send, the bubble appears in the chat on the spot and the input box is cleared (optimistic display); if it was not sent, the bubble is marked "Not sent" and the original text goes back into the input box
       const staged = chat.stage(text);
       setInputText((prev) => (prev === sentInput ? "" : prev));
       setQuotes((prev) => (prev === sentQuotes ? [] : prev));
@@ -214,7 +214,8 @@ export function AgentChat(props: {
         setInputText((prev) => prev || body);
         setQuotes((prev) => (prev.length ? prev : sentQuotes));
       };
-      // 断网了,或这个对话里已经有排着等网络的(新发的排在它后面,顺序不乱):不报错,排着,网络恢复后自动发出
+      // Offline, or this chat already has messages queued waiting for the network (new ones go behind them, so
+      // the order stays intact): no error, just queue, and send automatically when the network is back
       if (staged && (chat.outbox.offline() || chat.outbox.mustQueue()) && chat.outbox.enqueue(text, undefined, staged)) return;
       const admitted = await consentForUse({ queueable: Boolean(staged) });
       if (admitted === "queue" && staged && stillCurrent() && chat.outbox.enqueue(text, undefined, staged)) return;
@@ -234,7 +235,7 @@ export function AgentChat(props: {
       setQuotes((prev) => (prev === sentQuotes ? [] : prev));
     }
   };
-  /** 同一个操作重试时沿用请求号(云端 503 一类可以安全重试) */
+  /** When retrying the same operation, reuse the request id (cloud 503s and the like are safe to retry) */
   const reqRef = useRef<{ key: string; id: string } | null>(null);
   const requestId = (key: string) => {
     if (reqRef.current?.key !== key) reqRef.current = { key, id: crypto.randomUUID() };

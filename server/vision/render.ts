@@ -1,8 +1,10 @@
 /**
- * 渲染入口:把「这份项目的这几个时刻」变成 PNG。从 server/vite-plugin-vision.ts 逐字搬来。
+ * Render entry point: turns "these timestamps of this project" into PNGs. Copied verbatim from
+ * server/vite-plugin-vision.ts.
  *
- * **这份模块状态只有这里能写**:`counter`(临时文件名的取号器)。bake.ts 通过 `nextCounter()` 取号,
- * 全进程只有这一个计数器。依赖方向:render → worker-pool / http,单向。
+ * **This module state can only be written here**: `counter` (sequence dispenser for temporary
+ * filenames). bake.ts gets numbers via `nextCounter()`; this is the only counter in the entire
+ * process. Dependency direction: render → worker-pool / http, unidirectional.
  */
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -15,7 +17,7 @@ import type { RenderJob2, Runner } from "./worker-pool";
 
 let counter = 0;
 
-/** 删临时导出目录,删不掉按退避重试(Windows 上渲染子进程刚退、文件可能还占着)。回是否删掉了。 */
+/** Deletes temporary export directory with backoff retry if deletion fails (child process may still hold file on Windows). Returns whether deleted. */
 async function removeTempDir(dir: string): Promise<boolean> {
   for (let attempt = 0; attempt < 5; attempt++) {
     try { await fsp.rm(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 }); return true; }
@@ -24,57 +26,65 @@ async function removeTempDir(dir: string): Promise<boolean> {
   return false;
 }
 
-/** 取一个号。`counter` 只住在本模块,跨模块(bake.ts 的临时文件名)只能通过它取 */
+/** Allocates an ID. `counter` lives only in this module; across modules (bake.ts temporary file names), only access via this */
 export function nextCounter(): number {
   return counter++;
 }
 
-/** 一帧交出去的结果。width / height / transparentRatio 只在做过后处理时才有 */
+/** Result returned for a frame. width / height / transparentRatio are present only after post-processing */
 export interface FrameResult {
   buf: Buffer;
   width?: number | null;
   height?: number | null;
   transparentRatio?: number;
   /**
-   * D3:这一帧的实体矩形(舞台像素坐标,不是缩图坐标)。只在要了 rects 时有;null = 这一帧没量出来。
-   * 某项的 `solid` 为 null 表示那张卡此刻没有实体像素。
+   * D3: Solid rectangles of this frame (stage pixel coordinates, not thumbnail coordinates). Present
+   * only when rects was requested; null = could not measure this frame. An item with `solid` being
+   * null indicates that card has no solid pixels at this moment.
    */
   rects?: EntityRect[] | null;
 }
 
-/** D3:一张卡在这一帧的包裹层外框和实体范围,都是 `[x, y, w, h]` 舞台像素 */
+/** D3: A card's wrapper layer bounding box and solid bounds in this frame, both `[x, y, w, h]` stage pixels */
 export interface EntityRect {
   clipId: string;
   box: [number, number, number, number];
   solid: [number, number, number, number] | null;
 }
 
-/** 渲染的附加选项 */
+/** Additional render options */
 export interface RenderOpts {
-  /** 调用方不要了就拨它:排队的摘掉,在跑的叫停 */
+  /** Triggered if caller aborts: removes queued items and stops running ones */
   signal?: AbortSignal;
-  /** 交出去之前的像素活:shrink = 给模型看的缩图;bg = 压底色(六位十六进制);stats = 数透明像素 */
+  /** Pixel work before returning: shrink = thumbnail for model; bg = underlay color (6-hex); stats = count transparent pixels */
   post?: { shrink?: boolean; bg?: string | null; stats?: boolean };
-  /** 谁来跑:不给就是渲染池 */
+  /** Who runs it: defaults to render pool if omitted */
   runner?: Runner;
   /**
-   * D3:每帧附实体矩形(`FrameResult.rects`),并按 clipId 一行写进 `notes`(工具结果的文字部分)。
-   * 不给就看 `post.shrink`:缩图 = 给模型看的那张(`see_frames`),给模型看的图一律附矩形;
-   * 预渲染贴图、动图这些不缩图的调用方不付这一趟。只在 FramePipeline 那条路上有,`runner` 旁路不量。
+   * D3: Attach solid rectangles to each frame (`FrameResult.rects`), and write one line per clipId
+   * into `notes` (the text part of tool results). If omitted, checks `post.shrink`: thumbnail =
+   * image shown to the model (`see_frames`), and images shown to the model always attach rectangles;
+   * callers that do not shrink images, such as prerendered textures and GIFs, do not pay for this
+   * pass. Available only on the FramePipeline path; the `runner` bypass does not measure.
    */
   rects?: boolean;
   /**
-   * FramePipeline 那条路上排哪条队(`mechanism/rendering.md`「查询渲染与预渲染进程」)。缺省 `"agent"`:Agent 的查询,
-   * 只在 Agent 专用实例上走(`see_frames`、`get_gif` 的 `/render`、`bake_card`)。
-   *   - `"preview"`:用户在 AI 栏点开的操作预览 —— 插在普通预渲染队列所有待办之前,不占用 Agent 的专用实例;
-   *   - `"prerender"`:普通的预渲染(3D 视图的空闲贴图预取)—— 排普通预渲染队列的队尾,Agent 专用实例空闲时可以接。
-   * `runner` 旁路不看它。
+   * Which queue to join on the FramePipeline path (`mechanism/rendering.md` "Query Rendering and
+   * Prerendering Processes"). Defaults to `"agent"`: Agent queries, run only on Agent dedicated
+   * instances (`see_frames`, `/render` for `get_gif`, `bake_card`).
+   *   - `"preview"`: Action preview opened by the user in the AI panel: queued ahead of all pending
+   *     items in the normal prerender queue, without occupying the Agent dedicated instance;
+   *   - `"prerender"`: Normal prerendering (idle texture prefetching for 3D view): queued at the tail
+   *     of the normal prerender queue, which Agent dedicated instances can pick up when idle.
+   * `runner` bypass ignores it.
    */
   lane?: "agent" | "preview" | "prerender";
   /**
-   * 单张卡片画面(`bake_card`、3D 视图的贴图):当场渲出位图,不建帧库条目、不查也不写帧库、不生成快照
-   * (`card-bitmap.ts`;`mechanism/asset-service.md`「不经任务队列的单张卡片画面」)。不附实体矩形。`runner` 旁路不看它
-   * (那条路本来就只在临时目录里出 PNG、用完删)。
+   * Single-card visuals (`bake_card`, textures for 3D view): renders bitmaps on the spot, creating
+   * no frame store entries, neither querying nor writing to the frame store, and generating no
+   * snapshots (`card-bitmap.ts`; `mechanism/asset-service.md` "Single-Card Visuals Without Task
+   * Queue"). Does not attach solid rectangles. The `runner` bypass ignores it (that path only outputs
+   * PNGs in a temporary directory and deletes them after use anyway).
    */
   bitmapOnly?: boolean;
 }
@@ -82,23 +92,27 @@ export interface RenderOpts {
 const fmtBox = (b: readonly number[] | null) => (b ? `[${b.join(", ")}]` : "null");
 
 /**
- * D3 的文字部分:每帧一段,段里按 clipId 一行。坐标是舞台像素(项目的 width × height);
- * 给模型看的图多半缩过,所以两个尺寸都写出来。
+ * Text part of D3: one paragraph per frame, one line per clipId within each paragraph. Coordinates
+ * are in stage pixels (project width × height); images shown to the model are mostly shrunk, so both
+ * dimensions are written out.
  */
 export function entityRectsNote(stage: { width: number; height: number }, fps: number, frames: [number, EntityRect[] | null][], image?: { width?: number | null; height?: number | null }): string {
   const scaled = image?.width && image?.height && (image.width !== stage.width || image.height !== stage.height)
-    ? `图片缩到了 ${image.width}×${image.height},按比例换算` : "和图片像素一致";
-  const head = `实体矩形(舞台 ${stage.width}×${stage.height} 像素坐标 [x, y, w, h],${scaled};box = 片段包裹层外框,solid = 实体像素的范围,solid 为 null = 这张卡此刻没有实体像素):`;
+    ? `Image was scaled down to ${image.width}×${image.height}; converted proportionally` : "Matches the image pixels";
+  const head = `Solid rectangles (pixel coordinates [x, y, w, h] on the ${stage.width}×${stage.height} stage, ${scaled}; box = outer frame of the clip wrapper, solid = extent of the solid pixels, solid null = this card has no solid pixels right now):`;
   const blocks = frames.map(([frame, rects]) => {
     const t = `t=${+(frame / fps).toFixed(3)}s`;
-    if (!rects) return `${t}:没量出来。`;
-    if (!rects.length) return `${t}:画面上没有片段。`;
+    if (!rects) return `${t}: could not be measured.`;
+    if (!rects.length) return `${t}: no clips on screen.`;
     return [`${t}:`, ...rects.map((r) => `${r.clipId} box=${fmtBox(r.box)} solid=${fmtBox(r.solid)}`)].join("\n");
   });
   return [head, ...blocks].join("\n");
 }
 
-/** 给已经渲好的几帧附实体矩形。量不出来不连累图片:记一句话照样交图;只有调用方撤了才往上抛 */
+/**
+ * Attach entity rectangles to already rendered frames. If measurement fails, do not compromise the
+ * image: log a note and deliver the image anyway; only throw upward if the caller aborted.
+ */
 async function attachEntityRects(service: ReturnType<typeof frameService>, project: any, times: number[], result: Map<number, FrameResult>, notes: string[], signal?: AbortSignal): Promise<void> {
   try {
     const measured: Map<number, EntityRect[] | null> = await service.entityRects(project, times, { signal });
@@ -110,37 +124,46 @@ async function attachEntityRects(service: ReturnType<typeof frameService>, proje
   } catch (e: any) {
     if (signal?.aborted) throw e;
     for (const value of result.values()) value.rects = null;
-    notes.push(`实体矩形没量出来(${e?.message || e}),图片不受影响。`);
+    notes.push(`Could not measure the entity rectangle (${e?.message || e}); the image is not affected.`);
   }
 }
 
 /**
- * 跑一次单帧渲染,拿到那一帧的 PNG 字节。
+ * Run a single-frame render to get the PNG bytes of that frame.
  *
- * 默认路径通过 FramePipeline 在同一个 Chrome 页面里渲染完整 FrameScene；视频只在目标截图帧
- * 挂载并 seek。显式选择旧 ffmpeg 兼容旁路时，才会把素材层单独抽帧并合到卡片下面。
+ * By default, FramePipeline renders the complete FrameScene in the same Chrome page; video is
+ * mounted and seeked only at the target snapshot frame. Only when explicitly selecting the legacy
+ * ffmpeg compatibility bypass will frames be extracted separately from the asset layer and
+ * composited below the card.
  */
 /**
- * 单帧就是只要一个时刻的 renderFrames:两条路截出来的画面逐字节相同(单张走 frames `F-F`
- * 也是从第 0 帧推到 F,见 renderFrames 的说明),合成一条就不会出现「单张和批量不是同一张图」。
+ * A single frame is just renderFrames for only one point in time: images captured by both paths
+ * are byte-for-byte identical (single frame via frames `F-F` also pushes from frame 0 to F; see
+ * the notes in renderFrames), so combining them into one avoids cases where "single and batch are
+ * not the same image".
  */
 export async function renderOneFrame(root: string, origin: string, project: any, t: number, notes: string[], priority = 0, o: RenderOpts = {}): Promise<FrameResult> {
   const m = await renderFrames(root, origin, project, [t], notes, priority, o);
   const first = m.values().next().value;
-  if (!first) throw new Error("一帧都没渲出来");
+  if (!first) throw new Error("No frame was rendered");
   return first;
 }
 
 /**
- * 一趟渲**同一份项目的若干个时刻**。返回「帧号 → PNG」。
+ * Render **several points in time for the same project** in one pass. Returns "frame number → PNG".
  *
- * 和 renderOneFrame 的唯一区别是「一趟出几张」。为什么值得单开一条路:导出脚本不管要第几帧
- * 都从第 0 帧顺推(确定性要求 —— 动画的锚点是「首次出现那一帧」,跳着推就没有锚点),
- * 所以渲一张卡的 N 个时刻,分 N 趟就是 N 次重复顺推,是 O(N²);一趟推过去沿途截,推进只付一次。
+ * The only difference from renderOneFrame is "how many images come out in one pass". Why it is
+ * worth opening a dedicated path: the export script pushes forward from frame 0 regardless of
+ * which frame is requested (determinism requirement: the animation anchor is "the frame where it
+ * first appears", and jumping forward has no anchor), so rendering N points in time for a single
+ * card across N passes means N repeated forward pushes, which is O(N²); pushing through in one
+ * pass and capturing along the way pays the advance cost only once.
  *
- * 实测(1920x1080、同一张卡的 7 个时刻):分 7 趟 31.0s → 一趟 2.7s,**11.4 倍**,而且
- * 7 张逐字节相同。单价拆开是:推一帧约 18~23ms,截一张约 78ms,而单独起一趟要 4.0~5.0s。
- * 也就是说同一张卡的第 2 个时刻起,成本从 4400ms 掉到 78ms。
+ * Actual benchmark (1920x1080, 7 points in time for the same card): 7 passes took 31.0s → one pass
+ * took 2.7s, **11.4x**, and all 7 images are byte-for-byte identical. Breaking down unit costs:
+ * pushing one frame takes about 18~23ms, capturing one image takes about 78ms, while starting a
+ * pass on its own takes 4.0~5.0s. That is, starting from the 2nd point in time for the same card,
+ * the cost drops from 4400ms to 78ms.
  */
 export async function renderFrames(root: string, origin: string, project: any, times: number[], notes: string[], priority = 0, o: RenderOpts = {}): Promise<Map<number, FrameResult>> {
   if (!o.runner && o.bitmapOnly) {
@@ -150,7 +173,9 @@ export async function renderFrames(root: string, origin: string, project: any, t
     const scratch = cardBitmapScratch(root);
     for (const [frame, buf] of shots) {
       if (!wantPost) { result.set(frame, { buf, width: project.width, height: project.height }); continue; }
-      // 压底色、数透明像素照旧交给 postFrame(它按文件收发);临时文件放在这条路自己的空目录里,用完就删
+      // Background color application and transparent pixel counting are left to postFrame as usual (it
+      // sends and receives via files); temporary files are placed in this path's own empty directory and
+      // deleted after use
       const stem = path.join(scratch, "post-" + process.pid + "-" + counter++);
       const file = stem + "-input.png", out = stem + ".png";
       try {
@@ -169,7 +194,7 @@ export async function renderFrames(root: string, origin: string, project: any, t
     const frames = await service.see_frames(normalized, times, { signal: o.signal, lane: o.lane ?? "agent" });
     const result = new Map<number, FrameResult>();
     for (const [frame, value] of frames) {
-      if (value.incomplete) throw new Error(`画面尚未就绪：${(value.missing || []).join("、")}`);
+      if (value.incomplete) throw new Error(`Frame not ready yet: ${(value.missing || []).join(", ")}`);
       if (o.post && (o.post.shrink || o.post.bg || o.post.stats)) {
         // The authoritative frame may come from MOV, a mixed control cache,
         // or live rendering. None promises a duplicate in frames/<n>.png.
@@ -187,13 +212,15 @@ export async function renderFrames(root: string, origin: string, project: any, t
     return result;
   }
 
-  // 带上 pid:编辑器进程(热备渲染器)和预渲染进程往同一个 out/ 里写,各自的 counter 都从 0 数
+  // Include pid: the editor process (hot-standby renderer) and prerender process write to the same
+  // out/, and their respective counters both count from 0
   const id = `vision-${process.pid}-${Date.now().toString(36)}-${counter++}`;
   const dir = path.resolve(outRoot(root), `export-${id}`);
   await fsp.mkdir(dir, { recursive: true });
 
   const fps = project.fps || 30;
-  // 帧号必须落在项目时长内,否则脚本会去渲一个空舞台,模型看到一片空白还以为卡没生效
+  // The frame number must fall within the project duration; otherwise, the script renders an empty
+  // stage, and the model sees a blank screen and assumes the card did not take effect
   const maxFrame = Math.max(0, Math.floor((project.duration || 0) * fps) - 1);
   const frames = [...new Set(times.map((t) => Math.min(maxFrame, Math.max(0, Math.round(t * fps)))))].sort((a, b) => a - b);
   const pad = (f: number) => String(f).padStart(6, "0");
@@ -201,7 +228,9 @@ export async function renderFrames(root: string, origin: string, project: any, t
   const finalFile = (f: number) => path.join(dir, `final-${pad(f)}.png`);
 
   try {
-    // 素材层按帧各抽各的,和起 Chrome 渲卡片并行跑(卡片的隔离项目通常没有素材层,这里多半是空的)
+    // The asset layer extracts frames independently per frame, running in parallel with launching
+    // Chrome to render the card (a card's isolated project usually has no asset layer, so this is
+    // mostly empty here)
     const layersPromises = frames.map(() => Promise.resolve([]));
     await fsp.writeFile(path.join(dir, "project.json"), JSON.stringify(project, null, 2), "utf8");
     const relOut = process.env.PROMPTCUT_EXPORT_DIR ? dir : `out/export-${id}`;
@@ -215,8 +244,10 @@ export async function renderFrames(root: string, origin: string, project: any, t
         fps,
       },
       /*
-       * 渲完帧再决定要不要后处理:素材层这时也抽好了。**什么都不用做就返回 null**,
-       * 下面直接读帧文件交出去 —— 原来没有素材层时也要解码再原样编码一遍,纯属白烧。
+       * Decide whether post-processing is needed after rendering the frame: the asset layer is also
+       * extracted by now. **Return null if nothing needs to be done**, and read and deliver the frame
+       * file directly below: previously, even without an asset layer, it decoded and re-encoded as is,
+       * which was purely wasted effort.
        */
       post: async () => {
         const layers = await Promise.all(layersPromises);
@@ -244,8 +275,10 @@ export async function renderFrames(root: string, origin: string, project: any, t
     }
     return out;
   } finally {
-    // 看一眼就够了,不留垃圾:等删完(Windows 上渲染子进程刚退、文件可能还占着,退避重试);
-    // 还是删不掉也不该让这次调用失败,记一笔,下次启动由 sweepExportRoot 按 pid 清
-    if (!(await removeTempDir(dir))) console.warn(`[vision] 临时导出目录删不掉,留给下次启动清理:${dir}`);
+    // A quick look is enough, leave no garbage behind: wait for deletion to finish (on Windows, the
+    // render child process may have just exited and files might still be locked; back off and retry);
+    // if deletion still fails, this call should not fail: log a note, and on next startup
+    // sweepExportRoot will clean it up by pid
+    if (!(await removeTempDir(dir))) console.warn(`[vision] Could not delete the temporary export directory, leaving it for cleanup on next startup: ${dir}`);
   }
 }

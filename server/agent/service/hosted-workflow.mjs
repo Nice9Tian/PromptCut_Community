@@ -1,28 +1,51 @@
 /**
- * 云端 Agent 的后台作业状态与一键流程(`background_job_status`、`auto_workflow`、`auto_workflow_status`;
- * 计划 `docs/plan/cloud-agent-tools-implementation.md` 的 P5 包)。
+ * Cloud Agent background job status and one-click workflow (`background_job_status`,
+ * `auto_workflow`, `auto_workflow_status`; package P5 of the plan
+ * `docs/plan/cloud-agent-tools-implementation.md`).
  *
- * 桌面版里这三个工具由页面执行:`src/mcp/tools/autoWorkflow.ts` 在页面里转写、配卡、铺字幕,作业放在页面的内存表里
- * (`src/mcp/common.ts` 的 `sttJobs` 等),刷新或重启就没了。云节点上没有页面,所以在 Agent 服务一侧另做一份:
+ * In the desktop app, these three tools are executed by the page: `src/mcp/tools/autoWorkflow.ts`
+ * transcribes, configures cards, and lays captions in the page, and jobs are kept in the page's
+ * in-memory tables (`sttJobs`, etc. of `src/mcp/common.ts`), which are lost on refresh or restart.
+ * There is no page on cloud nodes, so a separate implementation is made on the Agent service side:
  *
- *   - **作业状态**:`background_job_status` 查 F0 的作业账本(`tool-jobs.mjs`,SQLite)。转写、镜头识别、主体识别、运动追踪、
- *     各种安装、一键流程都在这一张账本里,只能查**本项目本对话**的;别的项目、别的对话的作业号和不存在的作业号回同一句「找不到」。
- *     账本里只存码,人话由各包已有的说法翻(转写用 `STT_ERROR_TEXT`;镜头、主体用它们写在工作区索引里的 `message`;
- *     追踪这类宿主可以经 `errorTexts` 注入)。重启时跑到一半的是「被中断」。
- *   - **一键流程**:分阶段串起来 —— 语音转写 → 镜头识别 → 主体识别 → 生成字幕与卡片 → 发布预渲染任务。前三个阶段**调用对应工具包的提供方**
- *     (经工厂参数 `providers` 注入的 stt / shots / subject,不重写它们的逻辑),等它们的作业在账本里走完;
- *     「生成字幕与卡片」把桌面版的配卡规则(`autoWorkflow.ts`)搬过来算出一份方案,**一次**经宿主给的 `project.applyEdits` 提交
- *     (带期望的项目版本,整份要么全进要么全不进,所以失败时项目里没有半截提交);「发布预渲染任务」经宿主注入的 `prerender` 接缝。
- *   - **失败不越过**:某一阶段失败、被取消、被中断就停在那里,后面的阶段不做,没做成的阶段不标成完成。依赖的感知能力在这台节点上没就绪
- *     (provider 没配、回 `cloudUnavailable`)时,这一阶段标「用不了」并说明,同样停在那里(宿主可经 `optionalStages` 指定哪些阶段允许没就绪时跳过,
- *     缺省只有「发布预渲染任务」可以),不起占位作业冒充完成。
- *   - **阶段状态持久**:账本记整体的状态、当前阶段、进度;各阶段的状态、对应的子作业号、原因记在这个对话工作区的 `workflow/jobs.json`。
- *     重启后 `auto_workflow_status` 说得清做到哪一阶段、哪一阶段被中断。
- *   - **控制路径**:一键流程登记成这一轮的一个运行资源(`run-resources`),这一轮被停、转私有、Agent 关闭、服务关闭时进来一个中止信号,
- *     正在跑的阶段停下、不再往下一个阶段走、不再提交;每次提交和发布前都重核写权限。底下的子进程由各包自己的登记杀。
+ *   - **Job status**: `background_job_status` queries F0's job ledger (`tool-jobs.mjs`, SQLite).
+ *     Transcription, shot detection, subject detection, motion tracking, various installations,
+ *     and one-click workflows are all in this single ledger, and queries are restricted to **this
+ *     project and this chat** only; job IDs from other projects, other chats, or non-existent job
+ *     IDs return the same "not found". The ledger only stores codes; human-readable text is
+ *     translated using existing phrasing from each package (transcription uses `STT_ERROR_TEXT`;
+ *     shots and subjects use `message` written in their workspace index; for tracking and similar,
+ *     the host can inject via `errorTexts`). Those running midway upon restart are "interrupted".
+ *   - **One-click workflow**: chained across stages: speech transcription → shot detection →
+ *     subject detection → generate captions and cards → publish prerender tasks. The first three
+ *     stages **call the providers of corresponding tool packages** (stt / shots / subject injected
+ *     via factory parameter `providers`, without rewriting their logic), and wait for their jobs
+ *     to finish in the ledger; "Generate captions and cards" ports the card configuration rules
+ *     (`autoWorkflow.ts`) from the desktop app to compute a plan, submitted **at once** via
+ *     `project.applyEdits` provided by the host (carrying expected project version; the entire
+ *     batch either all goes in or none goes in, so there is no partial commit in the project on
+ *     failure); "Publish prerender tasks" goes through the `prerender` seam injected by the host.
+ *   - **No skipping on failure**: If a stage fails, is cancelled, or is interrupted, it stops right
+ *     there; subsequent stages are not executed, and uncompleted stages are not marked as completed.
+ *     When dependent perception capabilities are not ready on this node (provider not configured,
+ *     returns `cloudUnavailable`), this stage is marked "unavailable" with an explanation and
+ *     likewise stops there (the host can specify which stages are allowed to be skipped when not
+ *     ready via `optionalStages`; by default only "Publish prerender tasks" is allowed), without
+ *     spawning placeholder jobs to fake completion.
+ *   - **Stage status persistence**: The ledger records overall status, current stage, and progress;
+ *     the status of each stage, corresponding subjob ID, and reason are recorded in
+ *     `workflow/jobs.json` of this chat workspace. After restart, `auto_workflow_status` can clearly
+ *     report which stage was reached and which stage was interrupted.
+ *   - **Control path**: One-click workflows are registered as a run resource (`run-resources`) for
+ *     this round. When this round is stopped, switched to private, the Agent is closed, or the
+ *     service shuts down, an abort signal arrives; running stages stop, execution does not proceed
+ *     to the next stage, and no further commits are made; write permissions are re-checked before
+ *     each commit and publish. Underlying child processes are killed by each package's own registry.
  *
- * 本文件不引用 `src/`:配卡规则里查「卡片有哪些参数」要用前端内核的 `getCard`,由宿主经工厂参数 `kernel` 注入。
- * 不调用「派生子 Agent」(spawn_agent):云端固定不支持。
+ * This file does not reference `src/`: querying "what parameters a card has" in card configuration
+ * rules requires `getCard` from the front-end kernel, injected by the host via factory parameter
+ * `kernel`.
+ * Does not call "spawn subagent" (`spawn_agent`): permanently unsupported in the cloud.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -33,65 +56,87 @@ export const WORKFLOW_TOOL_NAMES = Object.freeze(['background_job_status', 'auto
 export const WORKFLOW_JOB_KIND = 'workflow.auto';
 export const WORKFLOW_STAGES = Object.freeze(['transcribe', 'shots', 'subjects', 'compose', 'prerender']);
 export const WORKFLOW_STAGE_LABEL = Object.freeze({
-  transcribe: '语音转写', shots: '镜头识别', subjects: '主体识别', compose: '生成字幕与卡片', prerender: '发布预渲染任务',
+  transcribe: 'Speech-to-text', shots: 'Shot detection', subjects: 'Subject detection', compose: 'Generate captions and cards', prerender: 'Publish prerender job',
 });
 
 export const WORKFLOW_DEFAULTS = Object.freeze({
-  /** 桌面版一键流程里同样的 12 */
+  /** Same 12 as in the desktop app one-click workflow */
   defaultMaxCards: 12,
   maxCardsCeiling: 100,
-  /** `auto_workflow` 等多久还没跑完就先回 jobId(与桌面版同一个 50 秒;单次工具调用 60 秒的上限留 10 秒余量) */
+  /**
+   * How long `auto_workflow` waits before returning jobId if not finished yet (same 50 seconds as the
+   * desktop app; leaves a 10-second margin below the 60-second limit for a single tool call)
+   */
   fastWaitMs: 50_000,
-  /** 轮询子作业的间隔 */
+  /** Polling interval for subjobs */
   pollMs: 400,
-  /** 一个阶段最长等多久(子作业自己有时限,这是防卡死的兜底) */
+  /**
+   * Maximum wait time for a stage (subjobs have their own time limits; this is a fallback against
+   * hangs)
+   */
   stageWaitMs: 45 * 60_000,
-  /** 账本进度写入的最小间隔(每次写库要过几道授权) */
+  /**
+   * Minimum interval for writing ledger progress (each database write passes through several
+   * authorization checks)
+   */
   progressMs: 1_500,
-  /** 同时在跑的一键流程数(进程内) */
+  /** Number of concurrently running one-click workflows (in-process) */
   maxRunning: 2,
-  /** 配卡方案提交时项目版本变了,重新读一遍再算的次数 */
+  /**
+   * Number of retries to reread and recalculate when project version changes during card
+   * configuration plan submission
+   */
   composeAttempts: 3,
-  /** `close()` 等后台流程收尾的时限 */
+  /** Time limit for `close()` to wait for background workflow finalization */
   closeMs: 10_000,
-  /** 工作区索引里留多少条 */
+  /** How many entries to retain in the workspace index */
   historyJobs: 20,
-  /** 允许「没就绪」时跳过(而不是停在那里)的阶段:主体识别与发布预渲染任务缺省可选 */
+  /**
+   * Stages allowed to skip (rather than stop there) when "not ready": subject detection and
+   * publishing prerender tasks are optional by default
+   */
   optionalStages: Object.freeze(['subjects', 'prerender']),
 });
 
-/** 进度条上每个阶段占的区间(单调递增;完成时才到 1) */
+/**
+ * Interval occupied by each stage on the progress bar (monotonically increasing; reaches 1 only
+ * upon completion)
+ */
 const BAND = Object.freeze({
   transcribe: [0.02, 0.40], shots: [0.40, 0.55], subjects: [0.55, 0.75], compose: [0.75, 0.92], prerender: [0.92, 0.99],
 });
 
 const JOB_LABEL = Object.freeze({
-  'stt.transcribe': '语音转写', 'stt.install': '语音识别引擎安装', 'shots.detect': '镜头识别',
-  'subject.detect': '主体识别', 'subject.install': '主体识别拓展安装', 'track.points': '运动追踪',
-  'track.install': '运动追踪拓展安装', [WORKFLOW_JOB_KIND]: '一键流程',
+  'stt.transcribe': 'Speech-to-text', 'stt.install': 'Speech-to-text engine install', 'shots.detect': 'Shot detection',
+  'subject.detect': 'Subject detection', 'subject.install': 'Subject detection extension install', 'track.points': 'Motion tracking',
+  'track.install': 'Motion tracking extension install', [WORKFLOW_JOB_KIND]: 'One-click workflow',
 });
 
-/** 各包写的、账本里没有人话的那些码的通用说法;各包自己的说法(转写、工作区索引里的 message、宿主注入的)优先 */
+/**
+ * Generic descriptions for codes written by packages without human-readable text in the ledger;
+ * each package's own phrasing (transcription, message in workspace index, host-injected) takes
+ * precedence
+ */
 export const WORKFLOW_ERROR_TEXT = Object.freeze({
-  FENCE_CANCELLED: '这一轮对话的权限被收回(设为私有、被停止或 Agent 被关闭),作业已取消。',
-  INTERRUPTED_ON_RESTART: 'Agent 服务重启时这个作业正在跑,已中断;可以重新发起。',
-  SERVICE_CLOSING: 'Agent 服务关闭时这个作业正在跑,已中断;可以重新发起。',
-  SHOTS_CANCELLED: '镜头识别已被取消。',
-  SUBJECT_CANCELLED: '主体检测已被取消。',
-  WORKFLOW_CANCELLED: '一键流程被取消了。',
-  STAGE_UNAVAILABLE: '这一阶段依赖的能力在这台云节点上没有就绪,一键流程停在这里。',
-  STAGE_FAILED: '这一阶段没有做成,一键流程停在这里。',
-  STAGE_TIMEOUT: '这一阶段等了太久没有结果,一键流程停在这里(后台作业可能还在跑,用 background_job_status 看)。',
-  STAGE_CANCELLED: '这一阶段的后台作业被取消了,一键流程停在这里。',
-  STAGE_INTERRUPTED: '这一阶段的后台作业被中断了,一键流程停在这里。',
-  EMPTY_TRANSCRIPT: '文字稿是空的,没有可配卡的内容。',
-  MEDIA_MISSING: '素材不在项目里了。',
-  PROJECT_CHANGED: '项目在这期间一直被别人改动,字幕和卡片没有写入(没有半截提交)。可以重新调用 auto_workflow。',
-  COMMIT_FAILED: '字幕和卡片没能写进项目(没有半截提交)。',
-  PUBLISH_FAILED: '字幕和卡片已经写进项目,但发布预渲染任务没有成功。',
+  FENCE_CANCELLED: 'Permission for this chat turn was revoked (set to private, stopped, or the Agent was turned off); the job was cancelled.',
+  INTERRUPTED_ON_RESTART: 'This job was running when the Agent service restarted and was interrupted; you can start it again.',
+  SERVICE_CLOSING: 'This job was running when the Agent service shut down and was interrupted; you can start it again.',
+  SHOTS_CANCELLED: 'Shot detection was cancelled.',
+  SUBJECT_CANCELLED: 'Subject detection was cancelled.',
+  WORKFLOW_CANCELLED: 'The one-click workflow was cancelled.',
+  STAGE_UNAVAILABLE: 'A capability this stage depends on is not ready on this cloud node; the one-click workflow stopped here.',
+  STAGE_FAILED: 'This stage did not succeed; the one-click workflow stopped here.',
+  STAGE_TIMEOUT: 'This stage waited too long without a result; the one-click workflow stopped here (the background job may still be running, check with background_job_status).',
+  STAGE_CANCELLED: 'The background job for this stage was cancelled; the one-click workflow stopped here.',
+  STAGE_INTERRUPTED: 'The background job for this stage was interrupted; the one-click workflow stopped here.',
+  EMPTY_TRANSCRIPT: 'The transcript is empty; there is no content to build cards from.',
+  MEDIA_MISSING: 'The media is no longer in the project.',
+  PROJECT_CHANGED: 'The project kept being modified by others in the meantime, so captions and cards were not written (no partial commit). You can call auto_workflow again.',
+  COMMIT_FAILED: 'Captions and cards could not be written to the project (no partial commit).',
+  PUBLISH_FAILED: 'Captions and cards were written to the project, but publishing the prerender job failed.',
 });
 
-const STATE_TEXT = Object.freeze({ queued: '排队中', running: '进行中', done: '已完成', error: '失败', cancelled: '已取消', interrupted: '被中断' });
+const STATE_TEXT = Object.freeze({ queued: 'Queued', running: 'In progress', done: 'Completed', error: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted' });
 const TERMINAL = new Set(['done', 'error', 'cancelled', 'interrupted']);
 const BAD_JOB = new Set(['error', 'cancelled', 'interrupted']);
 const MEDIA_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,199}$/;
@@ -100,7 +145,7 @@ const JOB_ID_RE = /^job_[0-9a-f-]{36}$/;
 const OUTPUT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/;
 const INDEX_FILE = 'workflow/jobs.json';
 const AUTH_UNAVAILABLE = new Set(['run-authority-unavailable', 'tool-instance-unavailable', 'fence-unavailable', 'authorization-unavailable']);
-/** 这类错误说明授权/栅栏变了(不是作业自己的失败) */
+/** This type of error indicates authorization/fence has changed (not the job's own failure) */
 const REVOKED = /^(forbidden|fence-|authorization-|run-|tool-|stale-revision|terminal-job|job-scope|authority-)/;
 
 const sha = (text) => createHash('sha256').update(text).digest('hex');
@@ -121,18 +166,18 @@ export class WorkflowToolError extends Error {
   }
 }
 
-/* ================================================================== 配卡规则(桌面版 autoWorkflow.ts 的搬运,不引用 src/) */
+/* ================================================================== Card configuration rules (ported from desktop app autoWorkflow.ts, without referencing src/) */
 
 function selectCard(text) {
-  if (/(增长|提升|上涨|翻倍|翻了|下降|降低|减少|涨)/.test(text) && (/[0-9]+(\.[0-9]+)?\s*(%|个|倍|万|亿|次|人|分|点)/.test(text) || /[一二三四五六七八九十百千万亿]+\s*(倍|次|个|人|万|亿|成)/.test(text))) return 'odometer';
-  if (/[0-9]+(\.[0-9]+)?\s*(%|百分|倍|万|亿|次|个|人)/.test(text)) return 'stat-proof';
-  if (/(对比|相比|比起|而不是|vs|VS|versus|不同于|区别|差别)/.test(text)) return 'versus-card';
-  if (/(第一|第二|第三|首先|其次|然后|接着|最后|步骤|流程|第一步)/.test(text)) return 'step-timeline';
-  if (/(要点|清单|包括|分别是|三点|几点|需要|必须)/.test(text)) return 'checklist';
-  if (/[「」『』“”"]/.test(text)) return 'quote-lockup';
-  if (/(记住|关键在于|本质上|一句话|核心是|重点是)/.test(text)) return 'blur-text';
-  if (text.length <= 14 && /[!！]$/.test(text)) return 'punch-pill';
-  if (/(所谓|叫做|叫作|定义|是指|指的是|术语|概念)/.test(text)) return 'term-card';
+  if (/(增长|提升|上涨|翻倍|翻了|下降|降低|减少|涨|\b(?:growth|grew|increase[sd]?|rise|rose|doubled|decline[sd]?|decrease[sd]?|drop(?:ped)?|reduce[sd]?|fell)\b)/i.test(text) && (/[0-9]+(\.[0-9]+)?\s*(%|个|倍|万|亿|次|人|分|点|(?:percent|x|times|thousand|million|billion|people|points|items)\b)/i.test(text) || /[一二三四五六七八九十百千万亿]+\s*(倍|次|个|人|万|亿|成)|\b(one|two|three|four|five|six|seven|eight|nine|ten|hundred|thousand|million|billion)\s+(times|items|people|thousand|million|billion|percent)\b/i.test(text))) return 'odometer'; // i18n-allow
+  if (/[0-9]+(\.[0-9]+)?\s*(%|百分|倍|万|亿|次|个|人|(?:percent|x|times|thousand|million|billion|people|items)\b)/i.test(text)) return 'stat-proof'; // i18n-allow
+  if (/(对比|相比|比起|而不是|不同于|区别|差别|\b(?:vs|versus|compared|compare|comparison|rather than|instead of|unlike|difference)\b)/i.test(text)) return 'versus-card'; // i18n-allow
+  if (/(第一|第二|第三|首先|其次|然后|接着|最后|步骤|流程|第一步|\b(?:first|second|third|firstly|secondly|then|next|finally|step|process)\b)/i.test(text)) return 'step-timeline'; // i18n-allow
+  if (/(要点|清单|包括|分别是|三点|几点|需要|必须|\b(?:key points|checklist|includes|namely|three points|several points|need|must)\b)/i.test(text)) return 'checklist'; // i18n-allow
+  if (/[「」『』“”"]/.test(text)) return 'quote-lockup'; // i18n-allow
+  if (/(记住|关键在于|本质上|一句话|核心是|重点是|\b(?:remember|the key is|essentially|in a word|the core is|the point is)\b)/i.test(text)) return 'blur-text'; // i18n-allow
+  if (text.length <= 14 && /[!！]$/.test(text)) return 'punch-pill'; // i18n-allow
+  if (/(所谓|叫做|叫作|定义|是指|指的是|术语|概念|\b(?:so-called|called|defined as|refers to|means|term|concept)\b)/i.test(text)) return 'term-card'; // i18n-allow
   return null;
 }
 
@@ -154,7 +199,7 @@ function paramsFor(cardId, rawText, getCard) {
     p.kicker = 'DATA';
   } else if (cardId === 'stat-proof') {
     p.value = extractNum(text);
-    const suffixMatch = text.match(/\d+(\.\d+)?([%倍万亿次])/);
+    const suffixMatch = text.match(/\d+(\.\d+)?([%倍万亿次]|(?:x|k|m|bn)\b)/i); // i18n-allow
     p.suffix = suffixMatch ? suffixMatch[2] : '';
     p.prefix = '';
     p.kickerZh = short;
@@ -172,7 +217,7 @@ function paramsFor(cardId, rawText, getCard) {
       p.bSub = snippet;
     }
   } else if (cardId === 'step-timeline' || cardId === 'checklist') {
-    const parts = text.split(/[，。、,]/).map((x) => x.trim()).filter(Boolean);
+    const parts = text.split(/[，。、,]/).map((x) => x.trim()).filter(Boolean); // i18n-allow
     const items = parts.map((x) => x.slice(0, 8)).slice(0, cardId === 'checklist' ? 4 : 5);
     if (cardId === 'step-timeline') p.steps = items.length >= 2 ? items.join('|') : snippet;
     else p.items = items.length >= 2 ? items.join('|') : snippet;
@@ -196,9 +241,13 @@ function paramsFor(cardId, rawText, getCard) {
 }
 
 /**
- * 按文字稿和素材在时间轴上的位置,算出要放的卡和字幕(不碰项目)。与桌面版 `autoWorkflow.ts` 的 pipeline 第 3～7 步逐条相同:
- * 取时间轴上第一条用到这份素材的片段做映射;5～15 秒一组(满 15 秒必断;满 5 秒后遇句末标点、停顿 0.6 秒以上或再加一段会超 15 秒就断);
- * 太短的尾巴并进上一组;每组按关键词选一张卡(选不出的不放),最多 `maxCards` 张;整条文字稿一张 caption-track。
+ * Calculate cards and captions to place based on transcript and asset positions on the timeline
+ * (without touching the project). Identical step-by-step to steps 3-7 of desktop app
+ * `autoWorkflow.ts` pipeline: map to the first clip on the timeline using this asset; 5-15 seconds
+ * per group (must break at 15 seconds; after 5 seconds, break upon sentence-ending punctuation,
+ * pause >= 0.6 seconds, or if adding another segment would exceed 15 seconds); merge short tails
+ * into the previous group; select one card per group based on keywords (omit if none matches), at
+ * most `maxCards` cards; one caption-track for the entire transcript.
  * @param {{ transcript: { segments: Array<{start:number,end:number,text:string}> }, mediaId: string,
  *   tracks?: Array<{ clips?: Array<{ mediaId?: string, start: number, end: number, mediaOffset?: number, speed?: number }> }>,
  *   maxCards?: number, getCard: (id: string) => ({ controls: Array<{ key: string }> } | undefined) }} input
@@ -218,8 +267,10 @@ export function planAutoWorkflowEdits({ transcript, mediaId, tracks = [], maxCar
       break;
     }
   }
-  // 素材秒 → 时间轴秒,含片段速度。与 `src/kernel/clipTime.mjs` 的 timelineTimeAt 同一个式子(Agent 服务进程这一侧不 import src/,
-  // 照抄;不是有限正数的速度按 1,缺省 1 时 ÷ 1 逐位不变),与桌面版 autoWorkflow.ts 相同
+  // Asset seconds → timeline seconds, including clip speed. Same formula as timelineTimeAt in
+  // `src/kernel/clipTime.mjs` (copied directly as the Agent service process side does not import
+  // `src/`; speeds that are not finite positive numbers default to 1, with / 1 bit-exact when
+  // defaulting to 1), same as desktop app autoWorkflow.ts
   const rate = typeof speed === 'number' && Number.isFinite(speed) && speed > 0 ? speed : 1;
   const toTl = (s) => clipStart + (s - mediaOffset) / rate;
   const mappedSegments = [];
@@ -246,7 +297,7 @@ export function planAutoWorkflowEdits({ transcript, mediaId, tracks = [], maxCar
       shouldBreak = true;
     } else if (groupDuration >= 5) {
       const lastChar = seg.text.trim().slice(-1);
-      const isPunctuation = /[。？！；.?!]/.test(lastChar);
+      const isPunctuation = /[。？！；.?!]/.test(lastChar); // i18n-allow
       const nextSeg = mappedSegments[i + 1];
       const gap = nextSeg ? (nextSeg.start - seg.end) : 0;
       const willExceed = nextSeg ? (nextSeg.end - currentGroup[0].start > 15) : false;
@@ -302,81 +353,91 @@ export function planAutoWorkflowEdits({ transcript, mediaId, tracks = [], maxCar
   return { segments: mappedSegments.length, groups: groups.length, cards, caption, skippedByPlan: groups.length - toPlace.length };
 }
 
-/* ================================================================== 提供方 */
+/* ================================================================== Providers */
 
 /**
  * @param {object} d
  * @param {{ authorize(context: object, action: 'read'|'write'): Promise<object>, register(context: object, o: { kind: string, resource: object }): Promise<{ signal: AbortSignal, closed: Promise<void> }> }} d.resources
- *   F0 的运行资源登记器(`createRunResources`)
- * @param {{ start: Function, update: Function, get: Function, checkpointRetained: Function }} d.jobs F0 的 `createToolJobs`
- * @param {(context: object) => object | Promise<object>} d.workspace 这个对话的工作区(`workspace.mjs` 的 `open()`)
- * @param {{ stt?: object|null, shots?: object|null, subject?: object|null }} d.providers 三个感知工具包的提供方
- *   (`createSttTools` / `createShotsTools` / `createSubjectTools` 的返回值:`call(name, args, context, { requestId })`,可选 `cancel(context, jobId)`);
- *   没有就是 null:这台节点没接上这个能力,对应阶段标「用不了」
- * @param {object} d.project 项目一侧的窄接口(G 包接到文档服务的版本预期与操作栅栏):
- *   `getMedia(context, mediaId)` -> 素材记录(要有 `id, name, kind, transcript, shots, subjects`)或 null(与三个感知包用的是同一个);
+ *   F0 run resource registrar (`createRunResources`)
+ * @param {{ start: Function, update: Function, get: Function, checkpointRetained: Function }} d.jobs F0 `createToolJobs`
+ * @param {(context: object) => object | Promise<object>} d.workspace Workspace of this chat (`open()` in `workspace.mjs`)
+ * @param {{ stt?: object|null, shots?: object|null, subject?: object|null }} d.providers Providers for three perception tool packages
+ *   (return value of `createSttTools` / `createShotsTools` / `createSubjectTools`: `call(name, args, context, { requestId })`, optional `cancel(context, jobId)`);
+ *   null if missing: this node is not connected to this capability, and corresponding stage is marked "unavailable"
+ * @param {object} d.project Narrow interface on project side (package G version expectations and operation fences connected to document service):
+ *   `getMedia(context, mediaId)` -> asset record (must have `id, name, kind, transcript, shots, subjects`) or null (same as used by three perception packages);
  *   `getTimeline(context)` -> `{ projectRev, tracks: [{ clips: [{ mediaId, start, end, mediaOffset, speed? }] }] }`;
  *   `applyEdits(context, { jobId, mediaId, commitKey, expectedProjectRev, fenceRevision, cards, caption })`
- *     -> `{ projectRev, clips: Array<{ clipId, start, end } | null>(与 cards 同序,放不下的是 null), captionClipId: string | null, alreadyApplied?: true }`;
- *     在一次 mutate 里做完(整份全进或全不进);版本对不上抛带 `code: 'project-changed'` 的错;`commitKey` 相同且这些片段还在项目里就回 `alreadyApplied`,不重复放;
- *     放完后项目时长要撑到最晚的片段结尾(桌面版同样的收尾)
+ *     -> `{ projectRev, clips: Array<{ clipId, start, end } | null>(same order as cards, null if cannot fit), captionClipId: string | null, alreadyApplied?: true }`;
+ *     completed in a single mutate (all-or-nothing: either all applied or none applied); throws error with `code: 'project-changed'` on version mismatch;
+ *     returns `alreadyApplied` without re-placing if `commitKey` is identical and these clips are still in the project;
+ *     after placement, project duration must extend to the end of the latest clip (same finalization as desktop app)
  * @param {{ publish(context: object, input: { jobId: string, mediaId: string, projectRev: any, clipIds: string[], fenceRevision: number }): Promise<{ published: boolean, reason?: string, planned?: number }> } | null} [d.prerender]
- *   发布预渲染任务的接缝(宿主接到云端 Agent 服务的预渲染发布 `render-request.mjs`);没给就是 null:这个阶段标「用不了」
- * @param {{ getCard: (id: string) => object | undefined }} d.kernel 宿主经 ssr-host 载入缝取来注入(必需)
- * @param {Record<string, Record<string, string>>} [d.errorTexts] 作业种类前缀 → (错误码 → 人话),如 `{ 'track.': { TRACK_TIMEOUT: '…' } }`
- * @param {object} [d.limits] 覆盖 `WORKFLOW_DEFAULTS`
+ *   Seam for publishing prerender tasks (prerender publish `render-request.mjs` connected from host to Cloud Agent service); null if not provided: this stage is marked "unavailable"
+ * @param {{ getCard: (id: string) => object | undefined }} d.kernel Injected by host fetched via ssr-host loader seam (required)
+ * @param {Record<string, Record<string, string>>} [d.errorTexts] Job type prefix → (error code → human-readable text), e.g. `{ 'track.': { TRACK_TIMEOUT: '…' } }`
+ * @param {object} [d.limits] Overrides `WORKFLOW_DEFAULTS`
  */
 export function createWorkflowTools({
   resources, jobs, workspace, providers = {}, project, prerender = null, kernel = null, errorTexts = {},
   limits: limitsIn = {}, now = Date.now, log = () => {},
 } = {}) {
-  const miss = (name) => new WorkflowToolError(`一键流程没有配置全(缺 ${name})。`, { code: 'workflow-unconfigured', status: 503 });
-  if (typeof resources?.authorize !== 'function' || typeof resources?.register !== 'function') throw miss('运行资源登记器');
-  if (!['start', 'update', 'get', 'checkpointRetained'].every((k) => typeof jobs?.[k] === 'function')) throw miss('作业表');
-  if (typeof workspace !== 'function') throw miss('工作区');
-  if (!['getMedia', 'getTimeline', 'applyEdits'].every((k) => typeof project?.[k] === 'function')) throw miss('项目接口');
-  if (typeof kernel?.getCard !== 'function') throw miss('内核函数 getCard(宿主要经 ssr-host 载入缝取来注入 kernel)');
+  const miss = (name) => new WorkflowToolError(`The one-click workflow is not fully configured (missing ${name}).`, { code: 'workflow-unconfigured', status: 503 });
+  if (typeof resources?.authorize !== 'function' || typeof resources?.register !== 'function') throw miss('run resource registrar');
+  if (!['start', 'update', 'get', 'checkpointRetained'].every((k) => typeof jobs?.[k] === 'function')) throw miss('job table');
+  if (typeof workspace !== 'function') throw miss('workspace');
+  if (!['getMedia', 'getTimeline', 'applyEdits'].every((k) => typeof project?.[k] === 'function')) throw miss('project interface');
+  if (typeof kernel?.getCard !== 'function') throw miss('kernel function getCard (the host must fetch it through the ssr-host load seam and inject it into kernel)');
   const cfg = { ...WORKFLOW_DEFAULTS, ...limitsIn };
   const optional = new Set(cfg.optionalStages ?? []);
   const handles = new Set(WORKFLOW_TOOL_NAMES);
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响工具 */ } };
-  /** 这个提供方起来的时刻:早于它更新、却还没结束的作业,是上一次进程留下的 */
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failure does not affect tools */ } };
+  /**
+   * The moment this provider started up: jobs updated earlier than it but not yet finished are left
+   * over from the previous process
+   */
   const bootAt = now();
 
-  /** 正在跑的一键流程(本进程):jobId -> 状态 */
+  /** Running one-click workflows (this process): jobId -> status */
   const live = new Map();
-  /** 同一素材同一时刻只一个一键流程:`项目\0素材` -> jobId */
+  /** Only one one-click workflow per asset at any time: `project\0asset` -> jobId */
   const byMedia = new Map();
   const pending = new Set();
   let reserving = 0;
   let closing = false;
   let closePromise = null;
 
-  /* ---------------------------------------------------------------- 授权 */
+  /* ---------------------------------------------------------------- Authorization */
 
   const forbidden = (action) => new WorkflowToolError(
-    action === 'write' ? '这一轮没有改项目的权限(只读成员、被停止或已转私有),一键流程没有开始。' : '这一轮没有读项目的权限。',
+    action === 'write' ? 'This round has no permission to modify the project (read-only member, stopped, or switched to private), so the one-click workflow did not start.' : 'This round has no permission to read the project.',
     { code: 'workflow-forbidden', status: 403 });
-  const upstream = () => new WorkflowToolError('文档服务暂时联系不上,没法确认这一轮的权限。稍后再试。', { code: 'authority-unavailable', status: 503 });
-  /** 把授权/账本层的错误统一成给模型的错误:403 与 503 分开,不透露更多 */
+  const upstream = () => new WorkflowToolError('The document service is temporarily unreachable, so permissions for this turn cannot be confirmed. Try again later.', { code: 'authority-unavailable', status: 503 });
+  /**
+   * Unify authorization/ledger-layer errors into errors for the model: separate 403 and 503, without
+   * disclosing more
+   */
   function authError(error, action) {
     if (error instanceof WorkflowToolError) return error;
     if (AUTH_UNAVAILABLE.has(error?.code)) return upstream();
     return forbidden(action);
   }
-  /** 账本层(ToolJobs)的错:授权类的按授权说,别的如实说是账本的事 */
+  /**
+   * Ledger-layer (ToolJobs) errors: report authorization errors as authorization, and report others
+   * faithfully as ledger issues
+   */
   function jobsError(error, action) {
     if (error instanceof WorkflowToolError) return error;
     if (AUTH_UNAVAILABLE.has(error?.code)) return upstream();
     if (REVOKED.test(String(error?.code ?? '')) || error?.name === 'ToolContextError' || error?.name === 'RunResourceError') return forbidden(action);
-    return new WorkflowToolError(`一键流程没能登记作业(${error?.code ?? '账本不可用'})。`, { code: 'workflow-job', status: 500 });
+    return new WorkflowToolError(`The one-click workflow could not register the job (${error?.code ?? 'ledger unavailable'}).`, { code: 'workflow-job', status: 500 });
   }
   const authorize = async (context, action) => {
-    if (closing) throw new WorkflowToolError('云端 Agent 服务正在关闭,一键流程不再接新活。', { code: 'workflow-closed', status: 503 });
+    if (closing) throw new WorkflowToolError('The Cloud Agent service is shutting down, and the one-click workflow no longer accepts new work.', { code: 'workflow-closed', status: 503 });
     try { return await resources.authorize(context, action); } catch (error) { throw authError(error, action); }
   };
 
-  /* ---------------------------------------------------------------- 工作区索引(各阶段的状态、子作业号、人话原因) */
+  /* ---------------------------------------------------------------- Workspace index (stage status, subjob IDs, human-readable reasons) */
 
   function readIndexFile(ws, file) {
     try {
@@ -385,7 +446,10 @@ export function createWorkflowTools({
       return Array.isArray(rows) ? rows.filter((r) => r && typeof r === 'object') : [];
     } catch { return []; }
   }
-  /** 先写临时文件再改名:写到一半进程没了,旧索引还是完整的 */
+  /**
+   * Write to a temporary file first then rename: if the process dies midway, the old index remains
+   * intact
+   */
   function writeIndex(ws, rows) {
     const data = JSON.stringify(rows.slice(-cfg.historyJobs));
     const tmp = `${INDEX_FILE}.tmp`;
@@ -405,9 +469,12 @@ export function createWorkflowTools({
   const rowOf = (ws, jobId) => readIndexFile(ws, INDEX_FILE).find((r) => r.jobId === jobId) ?? null;
   const wsOf = async (context) => { try { return await workspace(context); } catch { return null; } };
 
-  /* ---------------------------------------------------------------- 作业的人话 */
+  /* ---------------------------------------------------------------- Human-readable text for jobs */
 
-  /** 其它包的作业为什么失败:先宿主注入的,再转写的表,再镜头/主体写在工作区索引里的 message,最后通用说法 */
+  /**
+   * Why jobs from other packages failed: host-injected first, then transcription table, then message
+   * written by shots/subject in workspace index, finally generic descriptions
+   */
   function reasonOf(ledger, ws) {
     const code = ledger.errorCode;
     if (!code) return null;
@@ -420,17 +487,23 @@ export function createWorkflowTools({
       const row = readIndexFile(ws, file).find((r) => r.jobId === ledger.jobId);
       if (typeof row?.message === 'string' && row.message) return row.message;
     }
-    return WORKFLOW_ERROR_TEXT[code] ?? `作业没有成功(${code})。`;
+    return WORKFLOW_ERROR_TEXT[code] ?? `The job did not succeed (${code}).`;
   }
 
-  /** 账本里非终态、却比这个提供方起来得早、又不是本进程在跑的:上一次进程留下的,按「被中断」说 */
+  /**
+   * Non-terminal jobs in the ledger updated earlier than this provider's startup and not running in
+   * this process: left over from the previous process, reported as "interrupted"
+   */
   function effectiveState(ledger) {
     if (TERMINAL.has(ledger.state)) return { state: ledger.state, errorCode: ledger.errorCode };
     if (ledger.updatedAt < bootAt && !live.has(ledger.jobId)) return { state: 'interrupted', errorCode: ledger.errorCode ?? 'INTERRUPTED_ON_RESTART' };
     return { state: ledger.state, errorCode: ledger.errorCode };
   }
 
-  /** 给模型看的作业状态(账本 + 人话);`done` / `ok` / `error` 与桌面版的 background_job_status 同义 */
+  /**
+   * Job status presented to the model (ledger + human-readable text); `done` / `ok` / `error` are
+   * synonymous with desktop app background_job_status
+   */
   function jobView(ledger, ws) {
     const eff = effectiveState(ledger);
     const view = { ...ledger, state: eff.state, errorCode: eff.errorCode };
@@ -453,13 +526,13 @@ export function createWorkflowTools({
       out.errorCode = view.errorCode ?? null;
       const reason = reasonOf({ ...view, errorCode: view.errorCode ?? (view.state === 'interrupted' ? 'INTERRUPTED_ON_RESTART' : null) }, ws);
       if (reason) out.error = reason;
-      if (view.state === 'interrupted') out.hint = '这个作业被中断了,不会自己接着跑;需要的话重新发起(一键流程会复用已经做完的阶段)。';
-      if (view.state === 'error') out.hint = '失败了就不要继续轮询这个作业号。';
+      if (view.state === 'interrupted') out.hint = 'This job was interrupted and will not resume on its own; start it again if needed (the one-click workflow reuses stages that are already done).';
+      if (view.state === 'error') out.hint = 'If it failed, do not keep polling this job ID.';
     }
     return out;
   }
 
-  /* ---------------------------------------------------------------- 一键流程的状态视图 */
+  /* ---------------------------------------------------------------- One-click workflow status view */
 
   const blankStages = () => Object.fromEntries(WORKFLOW_STAGES.map((s) => [s, { status: 'pending' }]));
 
@@ -467,34 +540,39 @@ export function createWorkflowTools({
     const stages = row?.stages ?? blankStages();
     return WORKFLOW_STAGES.map((name) => {
       const s = { ...(stages[name] ?? { status: 'pending' }) };
-      // 账本说整体已经停了、索引里这一阶段还写着「进行中」(进程在写索引前就没了,或授权被收回写不了):按整体的结局说
+      // The ledger says overall execution has stopped, but this stage in the index is still marked
+      // "in-progress" (process died before writing index, or authorization revoked): report according to
+      // overall outcome
       if (s.status === 'running' && terminalState && terminalState !== 'done') s.status = terminalState === 'error' ? 'error' : terminalState;
       return { stage: name, label: WORKFLOW_STAGE_LABEL[name], ...s };
     });
   }
 
   function phaseText(view, stages) {
-    if (view.state === 'done') return '已完成';
-    if (view.state === 'cancelled') return '已取消';
-    if (view.state === 'interrupted') return '被中断';
-    if (view.state === 'error') return '失败';
+    if (view.state === 'done') return 'Completed';
+    if (view.state === 'cancelled') return 'Cancelled';
+    if (view.state === 'interrupted') return 'Interrupted';
+    if (view.state === 'error') return 'Failed';
     const current = stages.find((s) => s.status === 'running') ?? stages.find((s) => s.stage === view.stage);
-    const names = { transcribe: '转写中', shots: '镜头识别中', subjects: '主体识别中', compose: '配卡中', prerender: '发布预渲染中' };
-    return current ? (names[current.stage] ?? '进行中') : '排队中';
+    const names = { transcribe: 'Transcribing', shots: 'Detecting shots', subjects: 'Detecting subjects', compose: 'Composing cards', prerender: 'Publishing prerender' };
+    return current ? (names[current.stage] ?? 'In progress') : 'Queued';
   }
 
-  /** 一键流程整体的说法:失败/中断/取消时点明停在哪一阶段、后面没做 */
+  /**
+   * Overall description for one-click workflow: indicates which stage stopped and subsequent
+   * unexecuted stages upon failure/interruption/cancellation
+   */
   function workflowError(view, stages, row) {
     if (view.state === 'done' || !TERMINAL.has(view.state)) return null;
     const at = stages.find((s) => ['error', 'unavailable', 'cancelled', 'interrupted'].includes(s.status)) ?? stages.find((s) => s.stage === view.stage);
-    const where = at ? `「${at.label}」阶段` : '某个阶段';
+    const where = at ? `the "${at.label}" stage` : 'a stage';
     const notDone = stages.filter((s) => s.status === 'pending').map((s) => s.label);
-    const after = notDone.length ? `后面的阶段(${notDone.join('、')})没有做。` : '';
+    const after = notDone.length ? `Later stages (${notDone.join(', ')}) were not run.` : '';
     let why = at?.reason;
     if (!why && view.errorCode && WORKFLOW_ERROR_TEXT[view.errorCode]) why = WORKFLOW_ERROR_TEXT[view.errorCode];
-    const verb = { error: '失败了', cancelled: '被取消了', interrupted: '被中断了' }[view.state];
-    const resume = view.state === 'error' && at?.status === 'unavailable' ? '' : '重新调用 auto_workflow 可以接着做:已经做完的阶段(文字稿、镜头、主体)会直接复用。';
-    return `一键流程在${where}${verb}${why ? `:${why}` : '。'}${after}${resume}`.replace(/。。/g, '。');
+    const verb = { error: 'failed', cancelled: 'was cancelled', interrupted: 'was interrupted' }[view.state];
+    const resume = view.state === 'error' && at?.status === 'unavailable' ? '' : 'Call auto_workflow again to continue: stages that are already done (transcript, shots, subjects) will be reused directly.';
+    return [`The one-click workflow at ${where} ${verb}${why ? `: ${String(why).trim().replace(/\.+$/, '')}.` : '.'}`, after, resume].filter(Boolean).join(' ');
   }
 
   function workflowView(ledger, row) {
@@ -522,11 +600,11 @@ export function createWorkflowTools({
       if (gaps.length) out.notDone = gaps;
     }
     if (done && !ok && row?.committed) out.committed = true;
-    if (view.state === 'interrupted') out.hint = '一键流程被中断了。重新调用 auto_workflow 可以接着做:已经做完的阶段(文字稿、镜头、主体)会直接复用,不重做。';
+    if (view.state === 'interrupted') out.hint = 'The one-click workflow was interrupted. Call auto_workflow again to continue: stages that are already done (transcript, shots, subjects) will be reused directly, not redone.';
     return out;
   }
 
-  /* ---------------------------------------------------------------- 账本的写(含「共有已读」变成保留时的检查点) */
+  /* ---------------------------------------------------------------- Ledger writes (including checkpoints when "shared read" becomes retained) */
 
   async function patchJob(state, patch) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -546,24 +624,27 @@ export function createWorkflowTools({
     }
   }
 
-  /** 开作业:同一条消息里同样的请求只开一个;上一个已经失败/取消/中断的,允许换个请求号重新发起 */
+  /**
+   * Start job: start only one for identical requests in the same message; if the previous one has
+   * already failed/cancelled/interrupted, allow reinitiating with a new request id
+   */
   async function startJob(context, digest, base) {
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const started = await jobs.start(context, WORKFLOW_JOB_KIND, digest, `${base}-${attempt}`.slice(0, 128));
       if (!BAD_JOB.has(started.state)) return started;
     }
-    throw new WorkflowToolError('同样的请求已经失败多次,换个参数或稍后再试。', { code: 'too-many-attempts', status: 429 });
+    throw new WorkflowToolError('The same request has already failed several times; change the parameters or try again later.', { code: 'too-many-attempts', status: 429 });
   }
 
-  /* ---------------------------------------------------------------- 阶段 */
+  /* ---------------------------------------------------------------- Stages */
 
-  /** 一个阶段的结局(不是异常) */
+  /** Outcome of a stage (not an exception) */
   const outcome = (status, extra = {}) => ({ status, ...extra });
-  /** 一个阶段没做成,流程停在这里 */
+  /** A stage did not succeed; the workflow stops here */
   class StageStop extends Error {
     constructor(terminal, code, reason, extra = {}) { super(reason); this.terminal = terminal; this.code = code; this.reason = reason; this.extra = extra; }
   }
-  /** 这一轮的授权被收回 / 服务在关 / 被取消:不是任何一个阶段自己的失败 */
+  /** Authorization for this round was revoked / service shutting down / canceled: not a stage's own failure */
   class Halt extends Error {
     constructor(kind) { super(kind); this.kind = kind; }
   }
@@ -574,7 +655,10 @@ export function createWorkflowTools({
     if (job.signal.aborted) throw new Halt('fence');
   }
 
-  /** 等一个子作业在账本里走完。子作业的进度映射到这个阶段在总进度条上的区间 */
+  /**
+   * Wait for a sub-job to finish in the ledger. Sub-job progress maps to this stage's span on the
+   * overall progress bar
+   */
   async function awaitChild(job, name, childJobId, provider) {
     const [from, to] = BAND[name];
     const startedAt = now();
@@ -584,13 +668,13 @@ export function createWorkflowTools({
       try { ledger = await jobs.get(job.context, childJobId); }
       catch (error) {
         if (REVOKED.test(String(error?.code ?? '')) || AUTH_UNAVAILABLE.has(error?.code)) throw new Halt('fence');
-        if (error?.code === 'job-not-found') throw new StageStop('error', 'STAGE_FAILED', '子作业在账本里找不到了。', { childJobId });
+        if (error?.code === 'job-not-found') throw new StageStop('error', 'STAGE_FAILED', 'The child job can no longer be found in the ledger.', { childJobId });
         throw error;
       }
       if (TERMINAL.has(ledger.state)) return ledger;
       const t = now();
       if (t - startedAt > cfg.stageWaitMs) {
-        try { await provider?.cancel?.(job.context, childJobId); } catch { /* 取消不了就留给它自己的时限 */ }
+        try { await provider?.cancel?.(job.context, childJobId); } catch { /* If it cannot be canceled, leave it to its own timeout */ }
         throw new StageStop('error', 'STAGE_TIMEOUT', WORKFLOW_ERROR_TEXT.STAGE_TIMEOUT, { childJobId });
       }
       await maybeProgress(job, from + (to - from) * Math.max(0, Math.min(1, ledger.progress ?? 0)));
@@ -606,7 +690,7 @@ export function createWorkflowTools({
     await patchJob(job.state, { progress: next });
   }
 
-  /** 子作业走完之后:成功回 null,否则抛出这个阶段的停止原因 */
+  /** After the sub-job finishes: return null on success, otherwise throw this stage's stop reason */
   function childVerdict(job, name, ledger, ws) {
     if (ledger.state === 'done') return null;
     const reason = reasonOf(ledger, ws) ?? WORKFLOW_ERROR_TEXT[`STAGE_${ledger.state.toUpperCase()}`];
@@ -615,16 +699,16 @@ export function createWorkflowTools({
     throw new StageStop(kind, code, reason, { childJobId: ledger.jobId, childErrorCode: ledger.errorCode ?? null });
   }
 
-  /** 调一个感知包的提供方,等它的作业走完。三个感知阶段共用 */
+  /** Call a perception package provider and wait for its job to finish. Shared by three perception stages */
   async function perceptionStage(job, name, { providerKey, tool, label, reused, skipped, dataReady }) {
     const media = await project.getMedia(job.context, job.mediaId);
     if (!media) throw new StageStop('error', 'MEDIA_MISSING', WORKFLOW_ERROR_TEXT.MEDIA_MISSING);
     const skip = skipped(media);
     if (skip) return outcome('skipped', { reason: skip });
-    if (reused(media)) return outcome('reused', { reason: '项目里已经有这一步的结果,直接复用。' });
+    if (reused(media)) return outcome('reused', { reason: 'The project already has the result of this step, so it is reused directly.' });
     const provider = providers[providerKey];
     if (!provider || typeof provider.call !== 'function') {
-      return outcome('unavailable', { reason: `这台云节点没有接上${label}。` });
+      return outcome('unavailable', { reason: `This cloud node is not connected to ${label.toLowerCase()}.` });
     }
     checkHalt(job);
     let reply;
@@ -635,40 +719,41 @@ export function createWorkflowTools({
       throw new StageStop('error', 'STAGE_FAILED', String(error?.message ?? error).slice(0, 400));
     }
     if (reply?.ok === false) {
-      return outcome('unavailable', { reason: typeof reply.error === 'string' ? reply.error : `${label}在这台节点上用不了。` });
+      return outcome('unavailable', { reason: typeof reply.error === 'string' ? reply.error : `${label} is unavailable on this node.` });
     }
-    if (reply?.reused === true) return outcome('reused', { reason: '项目里已经有这一步的结果,直接复用。' });
+    if (reply?.reused === true) return outcome('reused', { reason: 'The project already has the result of this step, so it is reused directly.' });
     const childJobId = reply?.jobId;
     if (typeof childJobId !== 'string' || !JOB_ID_RE.test(childJobId)) {
-      throw new StageStop('error', 'STAGE_FAILED', `${label}没有返回作业号,不能确认它做成了。`);
+      throw new StageStop('error', 'STAGE_FAILED', `${label} did not return a job ID, so it cannot be confirmed as done.`);
     }
     job.child = { provider, jobId: childJobId };
     await recordStage(job, name, { status: 'running', childJobId });
     let ledger;
     try { ledger = await awaitChild(job, name, childJobId, provider); } finally { job.child = null; }
     childVerdict(job, name, ledger, job.ws);
-    // 作业说做完了:项目里确实有结果才算(没有就是提交那一步没成,不能冒充完成)
+    // Job reports completed: only counts if results exist in the project (otherwise commit step failed,
+    // cannot fake completion)
     const after = await project.getMedia(job.context, job.mediaId);
-    if (!after || !dataReady(after)) throw new StageStop('error', 'STAGE_FAILED', `${label}的作业显示完成,但项目里没有找到它的结果。`, { childJobId });
+    if (!after || !dataReady(after)) throw new StageStop('error', 'STAGE_FAILED', `The job for ${label.toLowerCase()} shows as complete, but its result was not found in the project.`, { childJobId });
     return outcome('done', { childJobId });
   }
 
   const stageRunners = {
     transcribe: (job) => perceptionStage(job, 'transcribe', {
-      providerKey: 'stt', tool: 'transcribe_media', label: '语音转写',
-      skipped: (m) => (m.kind === 'image' ? '图片没有声音。' : null),
+      providerKey: 'stt', tool: 'transcribe_media', label: 'Speech-to-text',
+      skipped: (m) => (m.kind === 'image' ? 'Images have no sound.' : null),
       reused: (m) => Array.isArray(m.transcript?.segments) && m.transcript.segments.length > 0,
       dataReady: (m) => Array.isArray(m.transcript?.segments),
     }),
     shots: (job) => perceptionStage(job, 'shots', {
-      providerKey: 'shots', tool: 'detect_shots', label: '镜头识别',
-      skipped: (m) => (m.kind !== 'video' ? `${m.kind === 'audio' ? '音频' : '这份素材'}不是视频,没有镜头可分。` : null),
+      providerKey: 'shots', tool: 'detect_shots', label: 'Shot detection',
+      skipped: (m) => (m.kind !== 'video' ? `${m.kind === 'audio' ? 'Audio' : 'This media'} is not a video, so there are no shots to split.` : null),
       reused: (m) => !!m.shots,
       dataReady: (m) => !!m.shots,
     }),
     subjects: (job) => perceptionStage(job, 'subjects', {
-      providerKey: 'subject', tool: 'detect_subjects', label: '主体识别',
-      skipped: (m) => (m.kind === 'audio' ? '音频没有画面可看。' : null),
+      providerKey: 'subject', tool: 'detect_subjects', label: 'Subject detection',
+      skipped: (m) => (m.kind === 'audio' ? 'Audio has no picture to view.' : null),
       reused: (m) => !!m.subjects,
       dataReady: (m) => !!m.subjects,
     }),
@@ -676,7 +761,10 @@ export function createWorkflowTools({
     prerender: (job) => prerenderStage(job),
   };
 
-  /** 生成字幕与卡片:读文字稿和时间轴、算方案、一次提交(带期望的项目版本) */
+  /**
+   * Generate captions and cards: read transcript and timeline, compute plan, commit once (with
+   * expected project version)
+   */
   async function composeStage(job) {
     for (let attempt = 1; attempt <= cfg.composeAttempts; attempt += 1) {
       checkHalt(job);
@@ -690,11 +778,12 @@ export function createWorkflowTools({
         transcript: media.transcript, mediaId: job.mediaId, tracks: timeline?.tracks ?? [], maxCards: job.maxCards, getCard: kernel.getCard,
       });
       if (plan.cards.length === 0 && !plan.caption) {
-        return outcome('done', { reason: '文字稿里没有落在这条素材片段范围内的内容,没有放字幕和卡片。', plan: { ...plan, cards: [] }, applied: null });
+        return outcome('done', { reason: 'The transcript has nothing within this media clip\'s range, so no captions or cards were placed.', plan: { ...plan, cards: [] }, applied: null });
       }
       const commitKey = sha(JSON.stringify({ v: 1, mediaId: job.mediaId, maxCards: job.maxCards,
         transcript: media.transcript.segments.map((s) => [s.start, s.end, s.text]) }));
-      // 提交前重核写权限(被收回就停,不提交);宿主的提交在文档服务的版本预期与操作栅栏下再核一次
+      // Recheck write permissions before commit (halt if revoked, do not commit); host commit rechecks
+      // under document service version expectation and operation fence
       checkHalt(job);
       let fence;
       try { fence = await resources.authorize(job.context, 'write'); } catch { throw new Halt('fence'); }
@@ -711,25 +800,28 @@ export function createWorkflowTools({
           if (attempt < cfg.composeAttempts) continue;
           throw new StageStop('error', 'PROJECT_CHANGED', WORKFLOW_ERROR_TEXT.PROJECT_CHANGED);
         }
-        if (error?.code === 'media-changed' || error?.code === 'media-missing') throw new StageStop('error', 'MEDIA_MISSING', '素材在这期间被换掉或删掉了,字幕和卡片没有写入。');
+        if (error?.code === 'media-changed' || error?.code === 'media-missing') throw new StageStop('error', 'MEDIA_MISSING', 'The media was replaced or deleted in the meantime, so the captions and cards were not written.');
         if (REVOKED.test(String(error?.code ?? '')) || AUTH_UNAVAILABLE.has(error?.code) || error?.status === 403 || error?.status === 503) await revokedCheck(job);
-        throw new StageStop('error', 'COMMIT_FAILED', `${WORKFLOW_ERROR_TEXT.COMMIT_FAILED}${error?.message ? `(${String(error.message).slice(0, 160)})` : ''}`);
+        throw new StageStop('error', 'COMMIT_FAILED', error?.message ? `${WORKFLOW_ERROR_TEXT.COMMIT_FAILED.replace(/\.$/, '')} (${String(error.message).trim().replace(/\.$/, '').slice(0, 160)}).` : WORKFLOW_ERROR_TEXT.COMMIT_FAILED);
       }
       job.row.committed = true;
       return outcome(applied?.alreadyApplied ? 'reused' : 'done', {
-        reason: applied?.alreadyApplied ? '这份文字稿的字幕和卡片已经在项目里了,没有重复放。' : undefined,
+        reason: applied?.alreadyApplied ? 'The captions and cards for this transcript are already in the project, so they were not placed again.' : undefined,
         plan, applied,
       });
     }
     throw new StageStop('error', 'PROJECT_CHANGED', WORKFLOW_ERROR_TEXT.PROJECT_CHANGED);
   }
 
-  /** 发布预渲染任务:云端没有页面,这一步由宿主经接缝交给 Agent 服务的预渲染发布 */
+  /**
+   * Publish prerender task: cloud has no page; host hands this step across seam to Agent service
+   * prerender publishing
+   */
   async function prerenderStage(job) {
     const applied = job.composed?.applied;
-    if (!applied) return outcome('skipped', { reason: '这次没有写入新的字幕和卡片,没有要发布的内容。' });
+    if (!applied) return outcome('skipped', { reason: 'No new captions or cards were written this time, so there is nothing to publish.' });
     if (!prerender || typeof prerender.publish !== 'function') {
-      return outcome('unavailable', { reason: '这台节点没有接预渲染发布,字幕和卡片已经写进项目,预渲染任务没有发布。' });
+      return outcome('unavailable', { reason: 'This node is not connected to prerender publishing. The captions and cards were written to the project, but the prerender task was not published.' });
     }
     const clipIds = [...(applied.clips ?? []).filter(Boolean).map((c) => c.clipId), ...(applied.captionClipId ? [applied.captionClipId] : [])];
     checkHalt(job);
@@ -740,19 +832,19 @@ export function createWorkflowTools({
       reply = await prerender.publish(job.context, { jobId: job.state.jobId, mediaId: job.mediaId, projectRev: applied.projectRev, clipIds, fenceRevision: fence.fenceRevision });
     } catch (error) {
       if (REVOKED.test(String(error?.code ?? '')) || AUTH_UNAVAILABLE.has(error?.code) || error?.status === 403 || error?.status === 503) await revokedCheck(job);
-      throw new StageStop('error', 'PUBLISH_FAILED', `${WORKFLOW_ERROR_TEXT.PUBLISH_FAILED}(${String(error?.message ?? error).slice(0, 160)})`);
+      throw new StageStop('error', 'PUBLISH_FAILED', `${WORKFLOW_ERROR_TEXT.PUBLISH_FAILED.replace(/\.$/, '')} (${String(error?.message ?? error).trim().replace(/\.$/, '').slice(0, 160)}).`);
     }
-    if (reply?.published === true) return outcome('done', { reason: '已把受影响的片段交给预渲染任务发布(攒几秒后发出,渲染结果记在对话的事件里)。', planned: reply.planned });
-    return outcome('unavailable', { reason: typeof reply?.reason === 'string' && reply.reason ? reply.reason : '这个项目现在没有可用的渲染节点,预渲染任务没有发布。' });
+    if (reply?.published === true) return outcome('done', { reason: 'Handed the affected clips to the prerender task for publishing (sent after a few seconds; render results are recorded in the chat events).', planned: reply.planned });
+    return outcome('unavailable', { reason: typeof reply?.reason === 'string' && reply.reason ? reply.reason : 'This project has no available render node right now, so the prerender task was not published.' });
   }
 
-  /** 子进程/提交出了授权类的错:确认是授权真的被收回就停(Halt),不当作阶段失败 */
+  /** Child process/commit auth error: halt if authorization was truly revoked; do not treat as stage failure */
   async function revokedCheck(job) {
     try { await resources.authorize(job.context, 'write'); } catch { throw new Halt('fence'); }
     checkHalt(job);
   }
 
-  /* ---------------------------------------------------------------- 一键流程本体 */
+  /* ---------------------------------------------------------------- One-click workflow core */
 
   async function recordStage(job, name, patch) {
     const prev = job.row.stages[name] ?? { status: 'pending' };
@@ -766,9 +858,12 @@ export function createWorkflowTools({
     saveRow(job.ws, job.row);
   }
 
-  /** 账本的收尾:写不了(授权已收回)不抛——栅栏取消由宿主的 `cancelForFence` 补 */
+  /**
+   * Finalize ledger: do not throw if unwritable (auth revoked); fence cancellation handled by host's
+   * `cancelForFence`
+   */
   async function finishLedger(job, patch) {
-    try { await patchJob(job.state, patch); } catch { /* 交给宿主 */ }
+    try { await patchJob(job.state, patch); } catch { /* Hand over to host */ }
   }
 
   function resultOf(job) {
@@ -802,7 +897,7 @@ export function createWorkflowTools({
     let registration = null;
     try {
       try { registration = await resources.register(job.context, { kind: 'stream', resource: handle }); }
-      catch { return; }                                             // 这一轮已经没有权限:账本交给宿主的取消
+      catch { return; }                                             // No permission for this round: hand ledger over to host cancellation
       job.signal = AbortSignal.any([registration.signal, job.signalOwn.signal]);
       try {
         await patchJob(job.state, { state: 'running', stage: 'transcribe', progress: BAND.transcribe[0] });
@@ -858,20 +953,21 @@ export function createWorkflowTools({
         await finishLedger(job, { state, errorCode: code });
         return;
       }
-      // 不是预料中的停止:授权类的错说明权限被收回(状态交给宿主),别的是这个流程自己的故障
+      // Unexpected stop: auth errors mean permission was revoked (state handed to host); others are this
+      // workflow's own failure
       if (REVOKED.test(String(error?.code ?? '')) || AUTH_UNAVAILABLE.has(error?.code) || error?.name === 'AbortError') return;
       say('agent.workflow.crashed', { message: String(error?.message ?? error).slice(0, 160) });
       const cur = WORKFLOW_STAGES.find((s) => job.row.stages[s]?.status === 'running');
-      if (cur) job.row.stages[cur] = { ...job.row.stages[cur], status: 'error', reason: '一键流程自己出了故障。', finishedAt: now() };
+      if (cur) job.row.stages[cur] = { ...job.row.stages[cur], status: 'error', reason: 'The one-click workflow itself failed.', finishedAt: now() };
       await finishRow(job, { status: 'error', errorCode: 'STAGE_FAILED' });
       await finishLedger(job, { state: 'error', errorCode: 'STAGE_FAILED' });
     } finally {
-      try { handle.destroy(); } catch { /* 已经关了 */ }
+      try { handle.destroy(); } catch { /* Already closed */ }
       if (registration) await Promise.race([registration.closed.catch(() => {}), sleep(5_000).catch(() => {})]);
     }
   }
 
-  /** 索引里只留方案的摘要(卡片的完整参数不进索引) */
+  /** Keep only plan summary in index (full card parameters do not enter index) */
   function slimPlan(plan) {
     if (!plan) return undefined;
     return { segments: plan.segments, groups: plan.groups, skippedByPlan: plan.skippedByPlan,
@@ -896,16 +992,16 @@ export function createWorkflowTools({
   function parseWorkflowArgs(args) {
     rejectUnknown(args, ['mediaId', 'style', 'maxCards']);
     const mediaId = args?.mediaId;
-    if (typeof mediaId !== 'string' || !MEDIA_ID_RE.test(mediaId)) throw new WorkflowToolError('mediaId 必填,是素材的 id(可用 list_media 查看)。', { code: 'bad-args' });
+    if (typeof mediaId !== 'string' || !MEDIA_ID_RE.test(mediaId)) throw new WorkflowToolError('mediaId is required and is the media id (see list_media).', { code: 'bad-args' });
     let style;
     if (args.style !== undefined && args.style !== null) {
-      if (typeof args.style !== 'string' || args.style.length > 200) throw new WorkflowToolError('style 必须是一段不超过 200 字的文字。', { code: 'bad-args' });
+      if (typeof args.style !== 'string' || args.style.length > 200) throw new WorkflowToolError('style must be text of at most 200 characters.', { code: 'bad-args' });
       style = args.style;
     }
     let maxCards = cfg.defaultMaxCards;
     if (args.maxCards !== undefined && args.maxCards !== null) {
       if (typeof args.maxCards !== 'number' || !Number.isInteger(args.maxCards) || args.maxCards < 0 || args.maxCards > cfg.maxCardsCeiling) {
-        throw new WorkflowToolError(`maxCards 必须是 0 到 ${cfg.maxCardsCeiling} 的整数。`, { code: 'bad-args' });
+        throw new WorkflowToolError(`maxCards must be an integer from 0 to ${cfg.maxCardsCeiling}.`, { code: 'bad-args' });
       }
       maxCards = args.maxCards;
     }
@@ -916,9 +1012,9 @@ export function createWorkflowTools({
     const input = parseWorkflowArgs(args);
     await authorize(context, 'write');
     const media = await project.getMedia(context, input.mediaId);
-    if (!media) throw new WorkflowToolError('找不到该素材,可以用 list_media 查。', { code: 'media-not-found', status: 404 });
-    if (media.kind === 'image') throw new WorkflowToolError(`${media.name ?? '这份素材'}是图片,没有声音可转写,一键流程只做视频或音频。`, { code: 'media-kind' });
-    if (media.pending) throw new WorkflowToolError(`${media.name ?? '这份素材'}还没进素材服务(上传没完成或失败),稍后再试或重新导入。`, { code: 'media-pending' });
+    if (!media) throw new WorkflowToolError('Media not found; you can look it up with list_media.', { code: 'media-not-found', status: 404 });
+    if (media.kind === 'image') throw new WorkflowToolError(`${media.name ?? 'This media'} is an image with no sound to transcribe; the one-click workflow only handles video or audio.`, { code: 'media-kind' });
+    if (media.pending) throw new WorkflowToolError(`${media.name ?? 'This media'} is not in the asset service yet (upload incomplete or failed); try again later or re-import it.`, { code: 'media-pending' });
 
     const mediaKey = `${context.projectId}\0${input.mediaId}`;
     const digest = sha(JSON.stringify({ v: 1, mediaId: input.mediaId, style: input.style ?? null, maxCards: input.maxCards }));
@@ -927,11 +1023,11 @@ export function createWorkflowTools({
       const liveJob = live.get(already);
       if (liveJob && liveJob.conversationId === context.conversationId) {
         return { jobId: already, running: true, started: false, alreadyRunning: true, mediaId: input.mediaId, phase: phaseOfLive(liveJob),
-          hint: '这条素材的一键流程已经在跑,用 auto_workflow_status 带上这个 jobId 轮询,不要重复调用。' };
+          hint: 'The one-click workflow for this media is already running. Poll with auto_workflow_status using this jobId; do not call again.' };
       }
-      throw new WorkflowToolError('这条素材正在做一键流程(别的对话发起的),等它跑完再试。', { code: 'workflow-busy', status: 409 });
+      throw new WorkflowToolError('This media is being processed by a one-click workflow (started from another chat); wait for it to finish and try again.', { code: 'workflow-busy', status: 409 });
     }
-    if (live.size + reserving >= cfg.maxRunning) throw new WorkflowToolError('节点上一键流程正在跑的太多了,过一会儿再试。', { code: 'workflow-busy', status: 429 });
+    if (live.size + reserving >= cfg.maxRunning) throw new WorkflowToolError('Too many one-click workflows are running on the node; try again in a moment.', { code: 'workflow-busy', status: 429 });
 
     byMedia.set(mediaKey, 'reserved');
     reserving += 1;
@@ -944,15 +1040,16 @@ export function createWorkflowTools({
     } finally { reserving -= 1; }
     if (closing) {
       byMedia.delete(mediaKey);
-      // 刚登记的作业不留在排队里:标「被中断」,免得重启后看着像还在等
+      // Newly registered jobs do not stay in queue: mark as "interrupted" so restart doesn't look like
+      // still waiting
       if (started.state === 'queued') await jobs.update(context, started.jobId, 0, { state: 'interrupted', errorCode: 'SERVICE_CLOSING' }).catch(() => {});
-      throw new WorkflowToolError('云端 Agent 服务正在关闭,一键流程不再接新活。', { code: 'workflow-closed', status: 503 });
+      throw new WorkflowToolError('The Cloud Agent service is shutting down, and the one-click workflow no longer accepts new work.', { code: 'workflow-closed', status: 503 });
     }
     if (started.state !== 'queued' || live.has(started.jobId)) {
-      // 同一请求的重试:作业已经开了(可能正在跑,也可能已经做完),不再开第二个
+      // Retry of same request: job already started (may be running or finished), do not start a second one
       if (byMedia.get(mediaKey) === 'reserved') byMedia.delete(mediaKey);
       return { jobId: started.jobId, running: started.state === 'queued' || started.state === 'running', started: false, mediaId: input.mediaId, state: started.state,
-        hint: '这一轮里已经发起过同样的一键流程,用 auto_workflow_status 带上这个 jobId 查,不要重复调用。' };
+        hint: 'The same one-click workflow was already started in this turn. Check it with auto_workflow_status using this jobId; do not call again.' };
     }
 
     const ws = await wsOf(context);
@@ -973,13 +1070,13 @@ export function createWorkflowTools({
       .finally(() => { live.delete(started.jobId); if (byMedia.get(mediaKey) === started.jobId) byMedia.delete(mediaKey); pending.delete(job.done); });
     pending.add(job.done);
 
-    // 与桌面版相同:等一小会儿,跑完了直接回完整结果,没跑完先回 jobId
+    // Same as desktop app: wait briefly; if finished return full result, otherwise return jobId first
     const waiting = new AbortController();
     const quick = await Promise.race([job.done.then(() => 'done'), sleep(cfg.fastWaitMs, waiting.signal).then(() => 'slow', () => 'done')]);
     waiting.abort();
     if (quick === 'slow') {
       return { jobId: started.jobId, running: true, started: true, mediaId: input.mediaId, phase: phaseOfLive(job),
-        hint: '素材较长,转写、识别和配卡已在后台继续,请用 auto_workflow_status 带上这个 jobId 轮询,done 为 true 时 result 里就是完整结果;这期间不要重复调用 auto_workflow。' };
+        hint: 'The media is long, so transcription, recognition and card arrangement continue in the background. Poll with auto_workflow_status using this jobId; when done is true, result holds the full result. Do not call auto_workflow again in the meantime.' };
     }
     const status = await statusOf(context, started.jobId);
     if (status.ok) return { ...status.result, jobId: started.jobId, running: false, stages: status.stages, ...(status.notDone ? { notDone: status.notDone } : {}) };
@@ -989,12 +1086,12 @@ export function createWorkflowTools({
 
   const phaseOfLive = (job) => {
     const cur = WORKFLOW_STAGES.find((s) => job.row.stages[s]?.status === 'running');
-    return { transcribe: '转写中', shots: '镜头识别中', subjects: '主体识别中', compose: '配卡中', prerender: '发布预渲染中' }[cur] ?? '排队中';
+    return { transcribe: 'Transcribing', shots: 'Detecting shots', subjects: 'Detecting subjects', compose: 'Composing cards', prerender: 'Publishing prerender' }[cur] ?? 'Queued';
   };
 
-  /* ---------------------------------------------------------------- 状态 */
+  /* ---------------------------------------------------------------- State */
 
-  const notFound = () => new WorkflowToolError('找不到该作业,可能是 jobId 错误、不属于这个对话,或系统已重启。', { code: 'job-not-found', status: 404 });
+  const notFound = () => new WorkflowToolError('Job not found: the jobId may be wrong, may not belong to this chat, or the system may have restarted.', { code: 'job-not-found', status: 404 });
 
   async function ledgerOf(context, jobId) {
     if (typeof jobId !== 'string' || !JOB_ID_RE.test(jobId)) {
@@ -1035,23 +1132,25 @@ export function createWorkflowTools({
 
   function rejectUnknown(args, allowed) {
     if (args === undefined || args === null) return;
-    if (typeof args !== 'object' || Array.isArray(args)) throw new WorkflowToolError('参数必须是一个对象。', { code: 'bad-args' });
+    if (typeof args !== 'object' || Array.isArray(args)) throw new WorkflowToolError('Arguments must be an object.', { code: 'bad-args' });
     const extra = Object.keys(args).filter((k) => !allowed.includes(k));
-    if (extra.length) throw new WorkflowToolError(`不认识的参数:${extra.join('、')}。可用的参数:${allowed.join('、')}。`, { code: 'bad-args' });
+    if (extra.length) throw new WorkflowToolError(`Unknown parameters: ${extra.join(', ')}. Available parameters: ${allowed.join(', ')}.`, { code: 'bad-args' });
   }
 
-  /* ---------------------------------------------------------------- 对外 */
+  /* ---------------------------------------------------------------- External */
 
   async function call(name, args, context, options = {}) {
-    if (!handles.has(name)) throw new WorkflowToolError(`一键流程不处理 ${name}。`, { code: 'unknown-tool', status: 404 });
+    if (!handles.has(name)) throw new WorkflowToolError(`The one-click workflow does not handle ${name}.`, { code: 'unknown-tool', status: 404 });
     if (name === 'background_job_status') return backgroundJobStatus(args, context);
     if (name === 'auto_workflow_status') return autoWorkflowStatus(args, context);
     return autoWorkflow(args, context, options);
   }
 
   /**
-   * 显式取消一个正在跑的一键流程(给宿主和测试用,不是模型工具):阶段停下、不再往下走,正在等的子作业也请它的提供方取消。
-   * 这一轮被停、转私有、Agent 关闭走的是运行资源登记器的中止信号,不经这里。
+   * Explicitly cancel a running one-click workflow (for host and tests, not a model tool): stop stage
+   * and halt progress, requesting the provider to cancel waiting sub-jobs as well.
+   * Stopping this round, making private, or Agent shutdown uses runtime resource registry abort
+   * signals, not this path.
    */
   async function cancel(context, jobId) {
     await authorize(context, 'write');
@@ -1060,14 +1159,16 @@ export function createWorkflowTools({
     job.stopReason ??= 'cancel';
     const child = job.child;
     job.signalOwn.abort('cancel');
-    if (child) { try { await child.provider?.cancel?.(job.context, child.jobId); } catch { /* 子作业自己有时限 */ } }
+    if (child) { try { await child.provider?.cancel?.(job.context, child.jobId); } catch { /* Sub-jobs have their own timeouts */ } }
     await job.done;
     return { cancelled: true };
   }
 
   /**
-   * 关闭:不再接新调用,让所有在跑的一键流程停下(账本记「被中断」),等它们收尾。
-   * 子进程是各感知包的,由它们自己的 `close()` 杀;宿主要先关本提供方、再关它们,这样不会有流程在子包关了之后还想往下走。
+   * Close: reject new calls, stop all running one-click workflows (record "interrupted" in ledger),
+   * and wait for them to finalize.
+   * Child processes belong to each perception package and are killed by their own `close()`; the host
+   * must close this provider first, then them, so no workflow tries to proceed after sub-packages close.
    * @returns {Promise<{ childrenClosed: boolean, streamsClosed: boolean, workPending: number }>}
    */
   function close(reason = 'close') {

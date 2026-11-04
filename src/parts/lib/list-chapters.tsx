@@ -6,9 +6,9 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 章节导航条。
- * 从 chapter-bar 拆出，随时间推进高亮当前章节。
- * 进场: 从上方滑入。
+ * Chapter navigation bar.
+ * Extracted from chapter-bar, highlights current chapter as time progresses.
+ * Entrance: slides in from above.
  */
 interface Params {
   chapters: string;
@@ -23,10 +23,13 @@ interface Params {
 
 function ListChaptersPart({ params, t, width, height, playToken }: PartProps<Params>) {
   /*
-   * 共享布局 id 要带上 playToken。useId() 只解决「同屏两份抢同一个 id」,
-   * 解决不了**重挂载**:`layoutId` 是共享布局,旧节点消失、新节点出现时 Motion 会当成一次过渡,
-   * 让新高亮从旧位置滑过去 —— 而重挂载是重播,不是过渡。而 useId() 在同一个树位置重挂载后是同一个值。
-   * 预览跳转会重挂载、导出每趟都是全新页面,于是同一帧两边不一样(chapter-bar 上实测过,见那边的说明)。
+   * Shared layout id must include playToken. `useId()` only solves "two copies on the same screen
+   * competing for the same id", but cannot solve **remounting**: `layoutId` is for shared layout;
+   * when an old node disappears and a new node appears, Motion treats it as a transition, sliding the
+   * new highlight from the old position: remounting is a replay, not a transition. And `useId()`
+   * produces the same value after remounting at the same tree position. Preview seeks cause remounts
+   * and each export pass is a brand-new page, resulting in differences on the same frame between the
+   * two sides (tested in chapter-bar, see description there).
    */
   const layoutId = `${useId()}-${playToken}`;
   const rawChapters = params.chapters.split("|").filter(Boolean);
@@ -127,10 +130,10 @@ function ListChaptersPart({ params, t, width, height, playToken }: PartProps<Par
 
 export const listChapters: PartDef<Params> = {
   id: "list-chapters",
-  name: "章节导航",
-  description: "常驻顶部的章节进度条",
-  useWhen: "视频分成了几个章节、需要一条常驻的进度指示;chapters 每行格式是「章节名 空格 起始秒数」,漏了秒数进度会失效;横排单行只放得下 3 到 5 个短章节名;这个部件跟着时间轴走,要覆盖整段而不是一小截;totalSec 要填整段时长,它决定最后一章的进度怎么算。",
-  tags: ["章节","导航","进度","常驻"],
+  name: "Chapter navigation",
+  description: "Chapter progress bar pinned to the top",
+  useWhen: "Use when the video is split into several chapters and needs a persistent progress indicator. Each line of chapters has the format \"chapter name, space, start seconds\"; if the seconds are missing, progress breaks. A single horizontal row fits only 3 to 5 short chapter names. This part follows the timeline, so it must cover the whole video rather than a short stretch. Set totalSec to the full duration, as it determines how the last chapter's progress is computed.",
+  tags: ["chapters","navigation","progress","persistent"],
   role: "list",
   from: "chapter-bar",
   defaults: {
@@ -144,14 +147,14 @@ export const listChapters: PartDef<Params> = {
     accent: "",
   },
   controls: [
-    { key: "chapters", label: "章节(名称 秒)", type: "text" },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 120, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
-    { key: "showProgress", label: "显示进度", type: "select", options: [{ value: "true", label: "是" }, { value: "false", label: "否" }] },
-    { key: "progMode", label: "进度模式", type: "select", options: [{ value: "fill", label: "填充" }, { value: "line", label: "底线" }] },
-    { key: "progAccent", label: "进度颜色", type: "color" },
-    { key: "progAlpha", label: "进度透明度", type: "number", step: 0.1 },
-    { key: "totalSec", label: "整段时长(秒)", type: "number", step: 0.5 },
-    { key: "accent", label: "主题色", type: "color" },
+    { key: "chapters", label: "Chapters (name, seconds)", type: "text" },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 120, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
+    { key: "showProgress", label: "Show progress", type: "select", options: [{ value: "true", label: "yes" }, { value: "false", label: "no" }] },
+    { key: "progMode", label: "Progress mode", type: "select", options: [{ value: "fill", label: "Fill" }, { value: "line", label: "Underline" }] },
+    { key: "progAccent", label: "Progress color", type: "color" },
+    { key: "progAlpha", label: "Progress opacity", type: "number", step: 0.1 },
+    { key: "totalSec", label: "Total duration (seconds)", type: "number", step: 0.5 },
+    { key: "accent", label: "Theme color", type: "color" },
   ],
   defaultFrame: { x: 960, y: 120, w: 1000, h: 100, anchor: [0.5, 0.5] },
   settleMs: () => 800,

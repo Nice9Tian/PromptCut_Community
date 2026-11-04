@@ -1,16 +1,16 @@
-"""detect 子命令的降级行为：抽帧失败要留标记、full 档跑不动要退回 light、
-参数写错要说人话。
+"""Downgrade behavior of the detect subcommand: a failed frame grab must leave a marker, a full tier that cannot run must fall back to light,
+and a wrong argument must be reported in plain language.
 
-这里**不需要任何推理引擎**：probe / grab_frame / 三个后端的 detect 全部打桩，
-所以内置解释器（只有 numpy）也能跑完整套。真跑推理的部分在
-test_subject_light.py / test_subject_dino.py 里，缺引擎时跳过。
+**No inference engine is needed here**: probe / grab_frame / the detect of all three backends are stubbed,
+so the built-in interpreter (numpy only) can run the whole suite. The parts that run real inference are in
+test_subject_light.py / test_subject_dino.py, and are skipped when the engine is missing.
 
-为什么值得单独写一个文件：这三条都是「出错时的样子」，而出错路径恰恰是最没人
-手工试过的。校验员实测过的两个坑就在这里 ——
-  - `detect out/test.mp4 --times 0.5,999`（999 超出 5.0s 时长）以前给出
-    {"t":999.0,"boxes":[],"safeSide":"right","occupancy":{四个 0}}，和「这一帧
-    真的没有人」逐字段相同；
-  - DINO 目录缺分词器时 status 报 full 就绪，detect 崩在 transformers 内部。
+Why this deserves a file of its own: all three are "what it looks like when something goes wrong", and the error path is exactly the one nobody
+tries by hand. The two pitfalls the validator hit in real testing are right here:
+  - `detect out/test.mp4 --times 0.5,999` (999 is beyond the 5.0s duration) used to give
+    {"t":999.0,"boxes":[],"safeSide":"right","occupancy":{four 0s}}, which is identical, field by field, to "this frame
+    really has nobody in it";
+  - When the DINO directory lacks the tokenizer, status reports full as ready and detect crashes inside transformers.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from promptcut_subject import dino, frames as F, rtdetr, yunet  # noqa: E402
 
 
 def fake_info(*, light_ready: bool = True, full_ready: bool = True) -> dict:
-    """probe() 的返回值，字段和真的那份一一对应（只是不看磁盘）。"""
+    """The return value of probe(), with fields matching the real one one-to-one (it just doesn't look at the disk)."""
     return {
         "engine": "full" if full_ready else ("light" if light_ready else None),
         "light": {
@@ -59,7 +59,7 @@ ONE_BOX = [{"label": "person", "x": 10, "y": 10, "w": 100, "h": 200, "conf": 0.9
 
 
 class DetectHarness(unittest.TestCase):
-    """把 detect 跑在打桩的世界里，返回 (退出码, stdout 的 JSON 行, stderr)。"""
+    """Run detect in the stubbed world and return (exit code, JSON lines from stdout, stderr)."""
 
     def run_detect(self, argv, *, info=None, grab=None,
                    light=None, full=None):
@@ -102,28 +102,28 @@ class DetectHarness(unittest.TestCase):
 
 
 class TestBadTimes(DetectHarness):
-    """--times 写错是参数错误（退 2），不是「未预期的错误」（退 1）。"""
+    """A wrong --times is an argument error (exit 2), not an "unexpected error" (exit 1)."""
 
     def test_non_numeric_chunk_named_in_message(self):
         code, lines, _ = self.run_detect(["--times", "1.0,abc,2.0"])
         self.assertEqual(code, 2)
         err = self.error_of(lines)
         self.assertIn("abc", err["message"])
-        self.assertIn("1.2,5.4,8.8", err["message"], "得给个能照抄的写法")
-        self.assertNotIn("未预期的错误", err["message"])
+        self.assertIn("1.2,5.4,8.8", err["message"], "It must give a form that can be copied verbatim")
+        self.assertNotIn("unexpected error", err["message"])
 
     def test_all_bad_chunks_listed(self):
-        code, lines, _ = self.run_detect(["--times", "abc,1.0,第二秒"])
+        code, lines, _ = self.run_detect(["--times", "abc,1.0,second-two"])
         self.assertEqual(code, 2)
         msg = self.error_of(lines)["message"]
-        for bad in ("abc", "第二秒"):
+        for bad in ("abc", "second-two"):
             self.assertIn(bad, msg)
 
     def test_nan_and_inf_rejected(self):
-        """float("nan") 不抛异常，但拿去 seek 只会更难查，所以也算写错了。"""
+        """float("nan") does not raise, but using it for a seek would only be harder to debug, so it also counts as a bad value."""
         code, lines, _ = self.run_detect(["--times", "nan,inf"])
         self.assertEqual(code, 2)
-        self.assertIn("不是秒数", self.error_of(lines)["message"])
+        self.assertIn("is not a number of seconds", self.error_of(lines)["message"])
 
     def test_good_times_still_work(self):
         code, lines, _ = self.run_detect(["--times", "1.2, 5.4,8.8"])
@@ -132,33 +132,33 @@ class TestBadTimes(DetectHarness):
 
 
 class TestGrabFailureIsMarked(DetectHarness):
-    """抽帧失败的样本不能和「这一帧真的没有人」长得一模一样。"""
+    """A sample whose frame grab failed must not look exactly like "this frame really has nobody in it"."""
 
     def _grab_fails_at(self, bad_t):
         def grab(ffmpeg, video, t, w, h):
             if abs(t - bad_t) < 1e-6:
-                raise RuntimeError(f"抽 {t:.3f}s 那一帧失败：没有解出数据（时刻超出时长？）")
+                raise RuntimeError(f"Grabbing the frame at {t:.3f}s failed: no data was decoded (time beyond the duration?)")
             return FRAME
         return grab
 
     def test_failed_sample_carries_flag_and_reason(self):
         code, lines, err = self.run_detect(
             ["--times", "0.5,999", "--engine", "light"], grab=self._grab_fails_at(999.0))
-        self.assertEqual(code, 0, "一个时刻抽不出来不该让整批失败")
+        self.assertEqual(code, 0, "One time that cannot be grabbed must not fail the whole batch")
         res = self.result_of(lines)
         ok, bad = res["samples"]
-        self.assertNotIn("failed", ok, "抽出来的那一帧不该带 failed")
+        self.assertNotIn("failed", ok, "A frame that was grabbed must not carry failed")
         self.assertIs(bad["failed"], True)
         self.assertIn("999", bad["reason"])
         self.assertEqual(bad["boxes"], [])
-        # 原因也照旧写一份到 stderr（node 侧的 stderrTail 会转发给界面）
+        # The reason is also written to stderr as before (the stderrTail on the node side forwards it to the UI)
         self.assertIn("999", err)
 
     def test_failed_count_in_result(self):
         code, lines, _ = self.run_detect(
             ["--times", "0.5,900,999", "--engine", "light"],
             grab=lambda ffmpeg, video, t, w, h: (
-                FRAME if t < 100 else (_ for _ in ()).throw(RuntimeError(f"{t} 抽不出来"))))
+                FRAME if t < 100 else (_ for _ in ()).throw(RuntimeError(f"{t} cannot be grabbed"))))
         self.assertEqual(code, 0)
         res = self.result_of(lines)
         self.assertEqual(res["failedCount"], 2)
@@ -170,7 +170,7 @@ class TestGrabFailureIsMarked(DetectHarness):
         self.assertEqual(self.result_of(lines)["failedCount"], 0)
 
     def test_real_empty_frame_has_no_failed_flag(self):
-        """真的没人（检测返回空框）和抽帧失败必须分得开。"""
+        """A frame that really has nobody (detection returns empty boxes) must be distinguishable from a failed frame grab."""
         code, lines, _ = self.run_detect(
             ["--times", "0.5", "--engine", "light"], light=lambda *a, **k: [[]])
         res = self.result_of(lines)
@@ -180,7 +180,7 @@ class TestGrabFailureIsMarked(DetectHarness):
 
 
 class TestFullFallsBackToLight(DetectHarness):
-    """full 档第一帧就推理失败：退回 light 重跑，别崩。"""
+    """Inference fails already on the first frame of the full tier: fall back to light and rerun, do not crash."""
 
     BOOM = RuntimeError("stat: path should be string, bytes, os.PathLike or integer, not NoneType")
 
@@ -190,24 +190,24 @@ class TestFullFallsBackToLight(DetectHarness):
             full=lambda *a, **k: (_ for _ in ()).throw(self.BOOM))
         self.assertEqual(code, 0)
         res = self.result_of(lines)
-        self.assertEqual(res["engine"], "light", "实际跑的是 light")
-        self.assertEqual(res["fellBackFrom"], "full", "但得说清本来该跑 full")
-        self.assertIn("RuntimeError", res["fallbackReason"], "原因要带异常类型")
+        self.assertEqual(res["engine"], "light", "What actually ran is light")
+        self.assertEqual(res["fellBackFrom"], "full", "But it must say that full was supposed to run")
+        self.assertIn("RuntimeError", res["fallbackReason"], "The reason must carry the exception type")
         self.assertIn("NoneType", res["fallbackReason"])
-        self.assertEqual(len(res["samples"]), 3, "退档之后要把**全部**时刻重跑一遍")
+        self.assertEqual(len(res["samples"]), 3, "After falling back a tier, **all** times must be rerun")
         self.assertTrue(all(s["boxes"] for s in res["samples"]))
-        self.assertIn("grounding-dino-tiny", err, "stderr 里要点名 DINO 目录，人才知道去修哪")
+        self.assertIn("grounding-dino-tiny", err, "stderr must name the DINO directory so people know where to fix")
 
     def test_fallback_notes_prompt_was_dropped(self):
-        """带提示词退到 light：light 只认 person/face，这件事必须写出来。"""
+        """Falling back to light with a prompt: light only recognizes person/face, and this must be spelled out."""
         code, lines, _ = self.run_detect(
             ["--times", "0.5", "--engine", "full", "--prompt", "cat . dog ."],
             full=lambda *a, **k: (_ for _ in ()).throw(self.BOOM))
         self.assertEqual(code, 0)
         res = self.result_of(lines)
         self.assertEqual(res["engine"], "light")
-        self.assertIn("提示词", res["fallbackReason"])
-        self.assertEqual(res["prompt"], "cat . dog .", "提示词原样回显，免得分不清这批结果怎么来的")
+        self.assertIn("prompt", res["fallbackReason"])
+        self.assertEqual(res["prompt"], "cat . dog .", "The prompt is echoed back as is, so one can tell how this batch of results came about")
 
     def test_no_fallback_field_on_normal_run(self):
         code, lines, _ = self.run_detect(["--times", "0.5", "--engine", "full"])
@@ -217,7 +217,7 @@ class TestFullFallsBackToLight(DetectHarness):
         self.assertNotIn("fallbackReason", res)
 
     def test_light_not_ready_reports_locatable_error(self):
-        """light 也不可用时只能报错，但那句话得能定位：异常类型 + DINO 目录。"""
+        """When light is also unavailable all it can do is report an error, but that message must be locatable: exception type + DINO directory."""
         code, lines, _ = self.run_detect(
             ["--times", "0.5", "--engine", "full"],
             info=fake_info(light_ready=False, full_ready=True),
@@ -226,34 +226,34 @@ class TestFullFallsBackToLight(DetectHarness):
         err = self.error_of(lines)
         self.assertIn("RuntimeError", err["message"])
         self.assertIn("grounding-dino-tiny", err["message"])
-        self.assertIn("onnxruntime", err["message"], "还要说清 light 为什么也用不了")
-        self.assertIsNotNone(err.get("detail"), "detail 里带完整 status，界面据此提示装哪个包")
-        self.assertNotIn("未预期的错误", err["message"])
+        self.assertIn("onnxruntime", err["message"], "It must also say why light cannot be used either")
+        self.assertIsNotNone(err.get("detail"), "detail carries the full status, from which the UI tells which package to install")
+        self.assertNotIn("unexpected error", err["message"])
 
     def test_light_first_frame_failure_reports_light_paths(self):
         code, lines, _ = self.run_detect(
             ["--times", "0.5", "--engine", "light"],
-            light=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("onnx 图坏了")))
+            light=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("onnx graph is broken")))
         self.assertEqual(code, 3)
         msg = self.error_of(lines)["message"]
         self.assertIn("RuntimeError", msg)
         self.assertIn("yunet.onnx", msg)
 
     def test_failure_after_first_frame_is_not_swallowed(self):
-        """跑到第二帧才炸不算「这一档跑不起来」，退回去重跑没意义，交给兜底报错。"""
+        """Blowing up only at the second frame does not count as "this tier cannot run"; falling back and rerunning is pointless, so leave it to the fallback error report."""
         calls = {"n": 0}
 
         def flaky(*a, **k):
             calls["n"] += 1
             if calls["n"] == 1:
                 return [list(ONE_BOX)]
-            raise RuntimeError("第二帧炸了")
+            raise RuntimeError("The second frame blew up")
 
         code, lines, _ = self.run_detect(
             ["--times", "0.5,1.5", "--engine", "full"], full=flaky)
         self.assertEqual(code, 1)
-        self.assertIn("第二帧炸了", self.error_of(lines)["message"])
-        self.assertIsNone(self.result_of(lines), "半截结果不能当成功结果发出去")
+        self.assertIn("The second frame blew up", self.error_of(lines)["message"])
+        self.assertIsNone(self.result_of(lines), "A half-finished result must not be sent out as a successful one")
 
 
 if __name__ == "__main__":

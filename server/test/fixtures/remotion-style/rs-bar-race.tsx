@@ -1,4 +1,4 @@
-/** remotion 式的框架的示例卡（测试夹具，不进卡片库）：一排柱子从中间往两边长出来，长好后轻轻起伏。 */
+/** Example card for the remotion-style framework (test fixture, not in the card library): a row of bars grows from the middle out to both sides, then gently undulates. */
 import type { CardDef, CardProps } from "../../kernel/types";
 import { Easing, noise, randomPick, randomRange, stagger, staggerDuration, tween } from "../../kernel/remotionStyle";
 
@@ -30,20 +30,20 @@ function BarRace({ params, t = 0 }: CardProps<Params>) {
 
 export const barRace: CardDef<Params> = {
   id: "rs-bar-race",
-  name: "随机柱状起伏",
-  description: "一排高度随机的柱子从中间往两边长出来，长好后轻轻起伏",
+  name: "Random fluctuating bars",
+  description: "A row of bars with random heights grows outward from the middle, then sways gently once fully grown",
   source: "user",
-  useWhen: "框架示例：要一组带种子的随机柱子时用。",
-  tags: ["柱状", "随机", "示例"],
+  useWhen: "Framework example: use when you need a set of seeded random bars.",
+  tags: ["bars", "random", "example"],
   frameMode: "direct",
   defaults: { count: 14, seed: 7, accent: "#ffffff" },
   controls: [
-    { key: "count", label: "柱子个数", type: "number", min: 1, max: 24, step: 1 },
-    { key: "seed", label: "随机种子", type: "number", min: 0, max: 9999, step: 1 },
-    { key: "accent", label: "强调色", type: "color" },
+    { key: "count", label: "Number of bars", type: "number", min: 1, max: 24, step: 1 },
+    { key: "seed", label: "Random seed", type: "number", min: 0, max: 9999, step: 1 },
+    { key: "accent", label: "Emphasis color", type: "color" },
   ],
   Component: BarRace,
-  // 柱子个数可调，最后一根长好的时刻跟着变：落定时刻用 staggerDuration 按个数算（每根 0.7 秒长高再加 0.3 秒起伏淡入）
+  // The number of bars is adjustable and the moment the last bar finishes growing changes with it: compute the settle time from the count with staggerDuration (each bar takes 0.7 seconds to grow, plus 0.3 seconds for the sway to fade in)
   timing: (p) => ({ settleMs: Math.round(staggerDuration(Math.max(1, Math.min(24, Math.round(p.count))), { each: 0.06, from: "center" }, 1.0) * 1000) }),
   lifecycle: { settleMs: 1400, after: "evolve", exit: ["fade"] },
 };

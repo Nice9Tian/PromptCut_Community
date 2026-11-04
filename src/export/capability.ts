@@ -1,17 +1,21 @@
 /**
- * 浏览器逐帧导出的能力探测(`docs/plan/c10a-contract.md` 第 11.1 节「能力探测」「音频」)。
+ * Capability probe for browser frame-by-frame export (`docs/plan/c10a-contract.md` section 11.1
+ * "Capability probe" "Audio").
  *
- * - 视频:HTTPS(安全上下文)、`VideoEncoder`,以及按项目原尺寸与帧率的 `VideoEncoder.isConfigSupported`;
- *   H.264 依次试 `avc1.640028`、`avc1.4D0028`、`avc1.42E028`。都不支持就停下,不提供 PNG 序列替代〔契约裁定〕。
- * - 音频:`AudioEncoder` 支持 AAC(`mp4a.40.2`)就编一条 AAC 轨;不支持就导出没有音轨的视频,开始前提示一次。
+ * - Video: HTTPS (secure context), `VideoEncoder`, and `VideoEncoder.isConfigSupported` matching
+ *   project original size and frame rate;
+ *   try H.264 in sequence: `avc1.640028`, `avc1.4D0028`, `avc1.42E028`. If none is supported,
+ *   stop and do not provide a PNG sequence alternative [contract ruling].
+ * - Audio: if `AudioEncoder` supports AAC (`mp4a.40.2`), encode an AAC track; if not supported,
+ *   export video without an audio track, prompting once before starting.
  *
- * 全局对象可注入(单测给桩)。
+ * Global objects are injectable (stubs for unit tests).
  */
 import { ONLINE_EXPORT_TEXT } from "./text";
 
 export const H264_CODECS = ["avc1.640028", "avc1.4D0028", "avc1.42E028"] as const;
 export const AAC_CODEC = "mp4a.40.2";
-/** 混音与 AAC 轨的采样率、声道(和桌面导出的混音同一口径:48 kHz 立体声) */
+/** Sample rate and channels for mix and AAC track (same standard as desktop export mix: 48 kHz stereo) */
 export const AUDIO_SAMPLE_RATE = 48000;
 export const AUDIO_CHANNELS = 2;
 
@@ -22,7 +26,7 @@ export interface EncoderEnv {
   AudioEncoder?: { isConfigSupported(config: Record<string, unknown>): Promise<Supported> };
 }
 
-/** 按分辨率和帧率估一个码率(H.264,够看清细节又不太大):每像素每帧 0.1 bit,封顶 40 Mbps */
+/** Estimate bitrate from resolution and frame rate (H.264, clear detail, not too large): 0.1 bit/pixel/frame, capped at 40 Mbps */
 export function videoBitrate(width: number, height: number, fps: number): number {
   return Math.min(40_000_000, Math.max(1_000_000, Math.round(width * height * fps * 0.1)));
 }
@@ -37,11 +41,11 @@ export function audioConfigOf(): Record<string, unknown> {
 
 export interface ExportCapability {
   ok: boolean;
-  /** 选中的 H.264 编码串;不支持时为 null */
+  /** Selected H.264 codec string; null when unsupported */
   videoCodec: string | null;
-  /** AAC 能不能编 */
+  /** Whether AAC can be encoded */
   audio: boolean;
-  /** 不能导出时给用户的话(表 C) */
+  /** Message for user when export cannot proceed (Table C) */
   message?: string;
 }
 
@@ -56,7 +60,7 @@ export async function probeExportCapability(
     try {
       const r = await env.VideoEncoder.isConfigSupported(videoConfigOf(codec, width, height, fps));
       if (r?.supported) { videoCodec = codec; break; }
-    } catch { /* 这一个不认,试下一个 */ }
+    } catch { /* Not supported, try the next one */ }
   }
   if (!videoCodec) return fail();
   let audio = false;

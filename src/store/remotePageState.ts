@@ -1,12 +1,16 @@
 /**
- * 别人(另一个页面、Agent 服务端)的改动落到本页面之后,本页面自己的页面状态要跟着调的那几处。
+ * The places where this page's own page state must adjust after changes from others (another page,
+ * Agent server) land on this page.
  *
- * c65-integ2 裁定:`set_project_meta`、`switch_cut`、`add_cut`、`remove_cut` 的写入改在 Agent 服务端执行
- * (D1 判据),页面状态只经页面通道只读地要一次(播放头)。它们原来顺手做的页面状态的「写」——
- * 切剪辑后换播放头、清选区、停播,截断总时长后记下手动值 —— 改由页面看到远端改动时自己推出来。
- * 这样本机两页、成员之间也一样:谁切了剪辑、截断了总时长,别的页面都跟上,而不是被时间轴按内容末尾改回去。
+ * c65-integ2 ruling: writes of `set_project_meta`, `switch_cut`, `add_cut`, `remove_cut` are moved
+ * to execute on Agent server (D1 criterion); page state is requested read-only once via page channel
+ * (playhead). The page state "writes" they previously performed along the way: updating playhead
+ * after switching cuts, clearing selection, pausing playback, recording manual value after
+ * truncating total duration: are now inferred by the page itself upon seeing remote changes.
+ * This works the same between two local pages or between members: whoever switches cuts or truncates
+ * total duration, other pages follow along rather than being reverted by timeline to end of content.
  *
- * 纯函数,不碰 store(`bindStore` 调它再 `set`),好在 node 里测。
+ * Pure function, does not touch store (`bindStore` calls it then `set`), easy to test in node.
  */
 import type { Project } from "../kernel/project";
 import { contentEndOf, manualDurationFor } from "../kernel/duration";
@@ -33,13 +37,17 @@ function clipIds(p: Project): Set<string> {
 }
 
 /**
- * `prev` 是应用远端改动之前本页面的项目,`next` 是之后的。回要写进 store 的页面状态,不用改时回 null。
+ * `prev` is this page's project before applying remote changes, `next` is after. Return page state
+ * to write into store, or null if no change is needed.
  *
- * - 激活的剪辑变了(别人切了剪辑):和本页面自己切剪辑一样 —— 播放头换成目标剪辑上次停放时的(`prev` 里
- *   目标剪辑条目上的 `t`,切过去之后条目上就没有了),停播、清选区、总时长手动值清掉。
- * - 否则总时长变了(别人设了总时长、或别人的时间轴按内容末尾同步了):手动值按新的总时长推 ——
- *   比内容末尾短就是截断(记下),否则跟着内容走(清掉)。与 `setDurationManual` 同一条规则。
- * - 选区里已被删掉的片段摘掉。
+ * - Active cut changed (someone else switched cut): same as this page switching cut itself: update
+ *   playhead to target cut's last parked position (`t` on target cut entry in `prev`, which
+ *   disappears from the entry after switching), pause playback, clear selection, clear manual
+ *   total duration value.
+ * - Otherwise total duration changed (someone set total duration, or someone's timeline synced to
+ *   end of content): infer manual value from new total duration: shorter than end of content means
+ *   truncation (record it), otherwise follow content (clear it). Same rule as `setDurationManual`.
+ * - Remove clips in selection that have already been deleted.
  */
 export function pageStateAfterRemote(prev: Project, next: Project, st: RemotePageStateInput): RemotePageStatePatch | null {
   if (prev === next) return null;

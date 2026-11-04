@@ -1,12 +1,18 @@
 /**
- * 在**渲染页**里替云端 Agent 生成一段卡片声音(`render_card_audio` 的云端路;契约 `docs/plan/cloud-agent-contract.md` 第 9.4c 节)。
+ * Generates a piece of card sound for the Cloud Agent **inside the render page** (the cloud route of
+ * `render_card_audio`; contract `docs/plan/cloud-agent-contract.md` section 9.4c).
  *
- * 云端 Agent 服务的进程不执行卡片代码。它把「项目 × 片段」交给同机的渲染服务(`POST /look` → 工作进程的 `/api/cards/audio`,
- * `server/vite-plugin-cards.ts`),工作进程让渲染页动态载入本模块并调 `renderClipCardAudio`:卡片的 `audio()` 在这一页里求值——
- * 带卡片源码的项目只由按项目隔离的工作进程碰,页面请求闸与出口限制照旧管着这一页。
+ * The process of the Cloud Agent service does not execute card code. It hands "project × clip" to
+ * the render service on the same machine (`POST /look` → the worker process's `/api/cards/audio`,
+ * `server/vite-plugin-cards.ts`), and the worker process has the render page dynamically load this
+ * module and call `renderClipCardAudio`: the card's `audio()` is evaluated in this page. A project
+ * carrying card source is touched only by the worker process isolated per project, and the page
+ * request gate and egress limits keep governing this page as before.
  *
- * 求值、WAV 的写法、身份记录与桌面版(`src/editor/io/cardAudioGeneration.ts`)是同一份函数,所以别的成员的页面按同一算法核对
- * 记录时不会判它过期。本模块静态引入 `../cards`:注册表与声音钩子和本模块在同一棵模块树里。
+ * Evaluation, the way the WAV is written, and the identity record are the same functions as in the
+ * desktop app (`src/editor/io/cardAudioGeneration.ts`), so when another member's page checks the
+ * record by the same algorithm it will not judge it stale. This module statically imports `../cards`:
+ * the registry and the sound hook are in the same module tree as this module.
  */
 import "../cards";
 import type { Project } from "../kernel/project";
@@ -18,7 +24,10 @@ import { requireCardAudioHooks, renderEmbeddedCardWav } from "./cardAudio";
 export interface HostedCardAudioResult {
   ok: true;
   clipId: string;
-  /** 已有的记录还对得上(没传 force):不重算,回它指的素材 */
+  /**
+   * The existing record still matches (force not passed): do not recompute, and return the asset it
+   * points to
+   */
   reusable?: { mediaId: string; hash: string };
   name?: string;
   bytes?: number;
@@ -28,7 +37,10 @@ export interface HostedCardAudioResult {
 
 const sha256Hex = async (bytes: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as unknown as BufferSource))].map((b) => b.toString(16).padStart(2, "0")).join("");
 
-/** 生成好的 WAV 留在这里,由工作进程分块取走(`takeCardAudioChunk`),取完清掉 */
+/**
+ * The generated WAV stays here and is taken away in chunks by the worker process
+ * (`takeCardAudioChunk`), then cleared once it has all been taken
+ */
 let held: Uint8Array | null = null;
 
 export async function renderClipCardAudio(project: Project, clipId: string, options: { force?: boolean; maxBytes?: number } = {}): Promise<HostedCardAudioResult> {
@@ -45,7 +57,7 @@ export async function renderClipCardAudio(project: Project, clipId: string, opti
     try {
       const reusable = resolveCardAudioRendition(project, clip, hooks);
       return { ok: true, clipId, expectedClip, reusable: { mediaId: reusable.media.id, hash: reusable.media.hash! } };
-    } catch { /* 缺失或过期时重新生成 */ }
+    } catch { /* Regenerate when missing or stale */ }
   }
   const rendered = await renderEmbeddedCardWav(project, clip, new AbortController().signal);
   if (options.maxBytes && rendered.wav.byteLength > options.maxBytes) throw new Error("This card audio is too large for the cloud to generate in one pass. Shorten the clip");
@@ -59,7 +71,7 @@ export async function renderClipCardAudio(project: Project, clipId: string, opti
   };
 }
 
-/** 取走一块(base64);`from` 到头时清掉留着的 WAV */
+/** Take one chunk (base64); when `from` reaches the end, the retained WAV is cleared */
 export function takeCardAudioChunk(from: number, size: number): string {
   if (!held) throw new Error("No retained card audio");
   const part = held.subarray(from, Math.min(held.byteLength, from + size));

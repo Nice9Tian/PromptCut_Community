@@ -1,12 +1,14 @@
 /**
- * 逐帧导出的**命令行入口**(`npm run export`)。
+ * **CLI entry point** for frame-by-frame export (`npm run export`).
  *
- * 渲染引擎本身不在这里了:整套库(找 ffmpeg、开预渲染间、逐帧渲、分片、素材解析、整片编排、
- * Chrome 内混音)搬进了 `server/bakery/`,见 `server/bakery/index.mjs`。
- * 这个文件只剩两件事:解析参数,以及把参数交给 `exportFrames`。
+ * The render engine itself is no longer here: the entire suite (locating ffmpeg, opening
+ * prerender rooms, frame-by-frame rendering, chunking, asset parsing, full-video arrangement,
+ * in-Chrome audio mixing) moved into `server/bakery/`; see `server/bakery/index.mjs`.
+ * This file only does two things: parse arguments and pass them to `exportFrames`.
  *
- * 下面那行 `export *` 是给仓库外的老调用方留的兼容转出 —— 仓库内部一律直接
- * import `server/bakery/...`,不要再经过这里。
+ * The `export *` line below is a compatibility re-export kept for legacy callers outside the
+ * repository: inside the repository, always import `server/bakery/...` directly instead of
+ * going through here.
  */
 import { fileURLToPath } from 'url';
 import { exportFrames } from '../server/bakery/index.mjs';
@@ -17,13 +19,13 @@ const isMain = import.meta.url.startsWith('file:') && process.argv[1] === fileUR
 
 if (isMain) {
   const args = process.argv.slice(2);
-  // 默认按机器资源分片；显式 --workers 1 可复现单进程路径。
+  // Chunk by machine resources by default; explicit --workers 1 reproduces the single-process path.
   const opts = { noVideo: false, workers: 'auto' };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--url') opts.url = args[++i];
     else if (args[i] === '--workers') opts.workers = args[++i];
     else if (args[i] === '--media') opts.media = args[++i];
-    else if (args[i] === '--audio') opts.audio = args[++i]; // ffmpeg:不走 Chrome 混音(没有音频效果),对账用
+    else if (args[i] === '--audio') opts.audio = args[++i]; // ffmpeg: does not use Chrome audio mixing (no audio effects), used to reconcile
     else if (args[i] === '--out') opts.out = args[++i];
     else if (args[i] === '--frames') opts.frames = args[++i];
     else if (args[i] === '--fps') opts.fps = parseFloat(args[++i]);

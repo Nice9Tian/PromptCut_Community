@@ -1,3 +1,4 @@
 export const builtinCardSourceFiles: Record<string, string>;
-/** 源码表换过几次(首次装载 0,热更新重跑一次加一) */
+/** Number of times the source code table has changed (0 on initial load, incremented by one
+ * for each hot reload rerun) */
 export function cardSourceFilesVersion(): number;

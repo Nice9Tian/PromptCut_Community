@@ -1,35 +1,46 @@
 /**
- * 桌面应用自动成为共享项目的渲染节点 —— 页面一侧(语义 `product/platforms.md`「渲染节点」:
- * 「加入共享项目的桌面应用自动成为这个项目的渲染节点」)。编辑器进程一侧见 `server/render-node-relay.mjs`,
- * 预渲染进程一侧见 `server/auto-render-node.mjs`。
+ * The desktop app automatically becomes a render node for a shared project: the page side (semantics
+ * `product/platforms.md`, "render node": "a desktop app that joins a shared project automatically
+ * becomes a render node of that project"). For the editor process side see
+ * `server/render-node-relay.mjs`, for the prerender process side see `server/auto-render-node.mjs`.
  *
- * 预渲染进程启动时不知道任何共享项目,页面进入共享项目时把这个项目的共享配置交过去,和素材上传队列同一个思路
- * (`media/assetTiers.ts` 的 `startUploadTarget`):
- * - **交接**:`syncManager.ts` 的 `bind` 接上共享项目时 `POST /api/render-node/bind
- *   { url, projectId, contentId, assetBase?, ticket }`。`url` 是本页面连的那个文档服务(云端、局域网主机、本机都一样),
- *   `ticket` 是本页面在自己的连接上签的 render 角色连接票据(`auth.ticket { kind: 'conn', role: 'render', owner: { kind: 'user' } }`)。
- *   不交项目口令,也不交 `K`。
- * - **素材基址**:本页面挑到了当前项目的素材服务(`assetTiers.ts`)就再交一次(同一个项目只换基址,不重建)。
- * - **票据往返**:预渲染进程每次建新会话要一张新票据(票据两分钟过期),编辑器进程经 HMR 发
- *   `pc:render-node { type: 'ticket', reqId, projectId }`,本页面连着的正是这个项目就签一张交回 `POST /api/render-node/ticket`。
- * - **撤掉**:本页面离开这个项目(回本机空间、取消协作、换开别的项目)时 `POST /api/render-node/unbind { projectId }`。
- *   页面关掉(或桌面版转入后台)不算离开:已建的会话照常用到断开为止,之后等页面回来再续(预渲染进程一侧)。
+ * The prerender process knows no shared project when it starts. When the page enters a shared project
+ * it hands over that project's shared config, the same idea as the media upload queue
+ * (`startUploadTarget` in `media/assetTiers.ts`):
+ * - **Handoff**: when `bind` in `syncManager.ts` attaches a shared project it sends `POST /api/render-node/bind
+ *   { url, projectId, contentId, assetBase?, ticket }`. `url` is the document service this page is
+ *   connected to (cloud, LAN host or local, all the same), `ticket` is a connection ticket with the render
+ *   role that this page signed on its own connection
+ *   (`auth.ticket { kind: 'conn', role: 'render', owner: { kind: 'user' } }`).
+ *   The project passphrase and `K` are not handed over.
+ * - **Asset base**: once this page has picked the asset service of the current project
+ *   (`assetTiers.ts`) it hands over again (for the same project only the base changes, no rebuild).
+ * - **Ticket round trip**: each time the prerender process creates a new session it needs a fresh ticket
+ *   (tickets expire after two minutes). The editor process sends
+ *   `pc:render-node { type: 'ticket', reqId, projectId }` over HMR; if this page is connected to exactly
+ *   that project it signs one and returns it via `POST /api/render-node/ticket`.
+ * - **Revoke**: when this page leaves the project (back to the local space, cancels collaboration,
+ *   opens another project) it sends `POST /api/render-node/unbind { projectId }`.
+ *   Closing the page (or the desktop app moving to background mode) does not count as leaving: sessions
+ *   already built keep being used until they disconnect, and are resumed when the page comes back
+ *   (prerender process side).
  *
- * 在线页面没有编辑器进程,不交接(`syncManager.ts` 只在桌面版调)。开发者开关 `PROMPTCUT_AUTO_RENDER_NODE=0` 在服务端判。
+ * The online page has no editor process, so it does not hand over (`syncManager.ts` calls this only in
+ * the desktop app). The developer switch `PROMPTCUT_AUTO_RENDER_NODE=0` is checked on the server.
  */
 
-/** 在线构建剪枝(写法见 `src/online/pageFlag.ts`):在线构建里本模块的 `/api/render-node/*` 调用整段剪掉 */
+/** Online build pruning (see `src/online/pageFlag.ts` for the syntax): in the online build the whole `/api/render-node/*` call in this module is pruned away */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
 export interface RenderNodeBinding {
   url: string;
   projectId: string;
-  /** 项目文档的 `id`(层表键 `layers:<id>` 用的那个) */
+  /** The `id` of the project document (the one used by the layer table key `layers:<id>`) */
   contentId: string | null;
 }
 
 export interface RenderNodeHooks {
-  /** 在本页面的共享项目连接上签一张 render 连接票据;拿不到就抛 */
+  /** Signs a render connection ticket on this page's shared project connection; throws if it cannot get one */
   ticket: (projectId: string) => Promise<string>;
 }
 
@@ -54,22 +65,24 @@ let clearTimer: NonNullable<RenderNodeDeps["clearTimer"]> = (t) => clearTimeout(
 let current: RenderNodeBinding | null = null;
 let hooks: RenderNodeHooks | null = null;
 let assetBase: string | null = null;
-/** 这个项目的共享配置交过没有;没交之前在等本页面挑素材服务(最多 ASSET_WAIT_MS) */
+/** Whether this project's shared config has been handed over; before that, waits for this page to pick an asset service (at most ASSET_WAIT_MS) */
 let sent = false;
-/** 每次离开或换连接递增；房间 ID 相同也不能沿用旧连接的异步票据。 */
+/** Incremented on every leave or connection change; even with the same room ID, an async ticket from an old connection must not be reused. */
 let generation = 0;
-/** 先等已发出的旧绑定完成，再撤掉/交新绑定，避免 HTTP 完成顺序把节点拉回旧房间。 */
+/** First wait for the old bind that was already sent to finish, then revoke/hand over the new bind, so the HTTP completion order cannot pull the node back to the old room. */
 let bindingWrite: Promise<void> = Promise.resolve();
 let waitTimer: unknown = null;
 let lastAnswer: { at: number; ok: boolean; error?: string } | null = null;
 const counters = { binds: 0, unbinds: 0, tickets: 0, ticketFailures: 0 };
 /**
- * 第一次交接等本页面挑到素材服务再交(`assetTiers.ts` 的 `startUploadTarget`,挑不到也会报一次 null),最多等这么久:
- * 不然预渲染进程起步时不知道推到哪,先落到本机素材服务(探针 A1 实测)。
+ * The first handoff waits until this page has picked an asset service (`startUploadTarget` in
+ * `assetTiers.ts`, which also reports null once if it cannot pick one), for at most this long:
+ * otherwise the prerender process does not know where to push at startup and first falls back to the
+ * local asset service (probe A1 measurement).
  */
 export const ASSET_WAIT_MS = 5_000;
 
-/** 单测用:换掉 HTTP 与计时器 */
+/** For unit tests: replaces HTTP and the timers */
 export function setRenderNodeDeps(deps: RenderNodeDeps): void {
   post = deps.post ?? defaultPost;
   setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
@@ -84,7 +97,7 @@ async function sendBind(withTicket: boolean): Promise<void> {
   const signer = hooks;
   let ticket: string | null = null;
   if (withTicket && signer) {
-    try { ticket = await signer.ticket(b.projectId); } catch { ticket = null; /* 预渲染进程建会话时再来要 */ }
+    try { ticket = await signer.ticket(b.projectId); } catch { ticket = null; /* The prerender process asks again when it creates a session */ }
   }
   const write = bindingWrite.catch(() => undefined).then(async () => {
     const now = current;
@@ -97,7 +110,7 @@ async function sendBind(withTicket: boolean): Promise<void> {
   await write.catch(() => undefined);
 }
 
-/** 第一次交(带票据) */
+/** First handoff (with a ticket) */
 function sendFirst(): void {
   if (sent || !current) return;
   sent = true;
@@ -105,13 +118,13 @@ function sendFirst(): void {
   void sendBind(true);
 }
 
-/** 页面接上了共享项目:把共享配置交给预渲染进程(等本页面挑到素材服务,最多 ASSET_WAIT_MS) */
+/** The page has attached the shared project: hands the shared config to the prerender process (waits for this page to pick an asset service, at most ASSET_WAIT_MS) */
 export function bindRenderNode(b: RenderNodeBinding, h: RenderNodeHooks): void {
   if (ONLINE_BUILD) return;
   hooks = h;
   const same = current && current.url === b.url && current.projectId === b.projectId;
   if (same) {
-    // 同一个项目:只是项目文档的 id 晚到了(加入别人的项目时 store 里的项目稍后才换成文档服务的那份),再交一次,不另签票据
+    // Same project: only the project document id arrived late (when joining someone else's project, the project in the store is replaced by the document service's copy a bit later), hand over again without signing another ticket
     if (current!.contentId === b.contentId || !b.contentId) return;
     current = { ...current!, contentId: b.contentId };
     if (sent) void sendBind(false);
@@ -125,7 +138,7 @@ export function bindRenderNode(b: RenderNodeBinding, h: RenderNodeHooks): void {
   waitTimer = setTimer(() => { waitTimer = null; sendFirst(); }, ASSET_WAIT_MS);
 }
 
-/** 本页面挑到了(或换了)当前共享项目的素材服务基址;null = 没有远程素材服务(本机就是主机,预渲染进程推本机的) */
+/** This page has picked (or changed) the asset service base of the current shared project; null = no remote asset service (this machine is the host, and the prerender process pushes to local) */
 export function noteRenderNodeAssetBase(base: string | null): void {
   if (ONLINE_BUILD) return;
   const next = base ? base.replace(/\/+$/, "") : null;
@@ -139,7 +152,7 @@ export function noteRenderNodeAssetBase(base: string | null): void {
   if (current && next) void sendBind(false);
 }
 
-/** 本页面离开了这个共享项目:撤掉(只撤同一个项目的,别的页面在别的项目上的不受影响) */
+/** This page left this shared project: revoke (only for the same project; other pages on other projects are unaffected) */
 export function unbindRenderNode(projectId: string, reason = "page-left"): void {
   if (ONLINE_BUILD) return;
   if (!current || current.projectId !== projectId) return;
@@ -148,12 +161,12 @@ export function unbindRenderNode(projectId: string, reason = "page-left"): void 
   current = null;
   assetBase = null;
   sent = false;
-  // 还没交出去(在等素材服务)就离开了也照样撤:刷新之前的这个页面可能交过(撤一个没有的是空操作)
+  // Revoke even if it left before handing over (while waiting for the asset service): this page may have handed over before a refresh (revoking one that does not exist is a no-op)
   counters.unbinds++;
   bindingWrite = bindingWrite.catch(() => undefined).then(async () => { await post("/api/render-node/unbind", { projectId, reason }); });
 }
 
-/** 预渲染进程要票据:本页面连着的正是这个项目才答(多个页面时第一个交回的算数) */
+/** The prerender process asks for a ticket: answers only if this page is connected to exactly this project (with several pages, the first one to hand back counts) */
 export async function answerRenderNodeTicket(d: Record<string, unknown>): Promise<void> {
   if (ONLINE_BUILD) return;
   const reqId = typeof d.reqId === "string" ? d.reqId : null;
@@ -176,12 +189,12 @@ export async function answerRenderNodeTicket(d: Record<string, unknown>): Promis
   await post("/api/render-node/ticket", reply);
 }
 
-/** 诊断(探针读 `window.__pcRenderNodeHandoff`):不含票据 */
+/** Diagnostics (the probe reads `window.__pcRenderNodeHandoff`): does not contain the ticket */
 export function renderNodeHandoffDiag() {
   return { bound: current ? { url: current.url, projectId: current.projectId, contentId: current.contentId } : null, sent, assetBase, counters: { ...counters }, lastAnswer };
 }
 
-/* HMR 通道:编辑器进程经它要票据。只在开发服务器给的页面里有(安装版就是开发服务器) */
+/* HMR channel: the editor process asks for tickets through it. Only present in pages served by the dev server (the installed app is a dev server) */
 if (!ONLINE_BUILD && typeof window !== "undefined" && import.meta.hot) {
   import.meta.hot.on("pc:render-node", (d: Record<string, unknown>) => {
     if (d?.type === "ticket") void answerRenderNodeTicket(d);

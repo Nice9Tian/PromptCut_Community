@@ -1,34 +1,45 @@
 /**
- * 云端对话的状态(契约 `docs/plan/cloud-agent-contract.md` 第 2.4、7 节):存在节点上,不依赖发起方的连接。
+ * State of cloud chats (contract `docs/plan/cloud-agent-contract.md` sections 2.4, 7): stored on
+ * nodes, independent of initiator connections.
  *
- * 每个对话一个目录 `tenants/<projectId>/owners/<主人键>/conversations/<对话 id>/`,这里管其中两个文件:
- *   meta.json      标题、状态、lastSeq、最近一轮的 runId、起止时刻、结束原因、发起设备名(临时文件加改名)
- *   events.jsonl   事件记录:每个事件追加一行,带递增的 `seq`(每个对话从 1 起,跨轮连续)
- * (`history.json` 由驱动写,`pending-render.json` 由 `render-request.mjs` 写。)
+ * One directory per chat `tenants/<projectId>/owners/<owner key>/conversations/<chat id>/`, managing
+ * two files here:
+ *   meta.json      title, status, lastSeq, runId of latest round, start/end timestamps,
+ *                  end reason, initiating device name (temp file plus rename)
+ *   events.jsonl   event log: appends one line per event with incrementing `seq` (starting from 1
+ *                  per chat, continuous across rounds)
+ * (`history.json` is written by the driver, `pending-render.json` by `render-request.mjs`.)
  *
- * **事件先存后发**:`emit` 先把事件追加进文件,再发给此刻连着的流。没有任何流连着,事件照样记。
- * **补发与实时无缺无重**:`subscribe` 在同一拍里(同步地)先把 `seq` 大于 `after` 的补发、再把回调挂进实时名单,
- * 而 `emit` 也是同步的,两者之间插不进任何事件。
+ * **Store events before sending**: `emit` first appends the event to file, then sends to
+ * currently connected streams. Even if no stream is connected, events are recorded as usual.
+ * **Replay and real-time without gaps or duplicates**: `subscribe` (synchronously) within the same
+ * tick first replays events with `seq` greater than `after`, then registers callback in the
+ * real-time list; `emit` is also synchronous, so no events can slip between the two.
  *
- * `text`、`thinking` 的增量在一轮结束时在记录里合并成整段(`compact`),免得记录被逐字的增量撑大:合并后的一行是
- * `{ …, delta: <整段>, fromSeq, seq: <最后一个的 seq>, cuts: [每个增量的字符数] }`。补发时按 `cuts` 拆回原来的一个个增量,
- * 所以看的人拿到的事件与实时流逐事件相同,`seq` 仍然连续——合并只是存法,不改变接口。
+ * Deltas of `text` and `thinking` are compacted into a full block at the end of a round to avoid
+ * bloating the log with character-by-character deltas: a compacted line is
+ * `{ …, delta: <full block>, fromSeq, seq: <seq of last>, cuts: [char count of each delta] }`.
+ * When replaying, unpack back into original individual deltas by `cuts`, so the viewer receives
+ * events identical event-for-event to the real-time stream, with `seq` remaining continuous:
+ * compaction is only a storage format and does not change the interface.
  *
- * 本文件不引用 `src/`。
+ * This file does not import `src/`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 
 export const CONVERSATION_STORE_DEFAULTS = Object.freeze({
-  /** 事件记录到这么大就不再记 thinking 与 diagnostic */
+  /** Stop recording thinking and diagnostic once event log reaches this size */
   degradeBytes: 8 * 1024 * 1024,
-  /** 再到这么大这个对话不能再发消息 */
+  /** If it grows to this size, no more messages can be sent in this chat */
   capBytes: 12 * 1024 * 1024,
-  /** 每个主人每个项目最多这么多个对话,满了不让新建、也不自动删历史(2026-10-08 用户定);要新建先由主人自己删旧的 */
+  /** Maximum number of chats per owner per project; when full, no new ones allowed and history
+   * is not auto-deleted (user decision, 2026-10-08); to create new ones, owner must delete old */
   maxPerOwner: 50,
-  /** 内存里最多留这么多个没人看、不在跑的对话(别的用到时再从盘上读) */
+  /** Maximum number of unviewed, idle chats kept in memory (others are re-read from disk when
+   * needed) */
   maxLoadedIdle: 32,
-  /** 没有数据目录(只在内存里)时每个对话最多留多少条 */
+  /** Maximum entries kept per chat when there is no data directory (in memory only) */
   maxEventsInMemory: 5000,
 });
 
@@ -36,7 +47,7 @@ const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const DEGRADED_TYPES = new Set(['thinking', 'diagnostic']);
 const MERGE_TYPES = new Set(['text', 'thinking']);
 
-export const INTERRUPTED_MESSAGE = '云端 Agent 服务中断,这一轮没有做完。已经落地的改动保留在项目里。';
+export const INTERRUPTED_MESSAGE = 'The Cloud Agent service was interrupted and this turn did not finish. Changes already applied are kept in the project.';
 
 function writeJson(file, value) {
   const tmp = `${file}.tmp-${process.pid}`;
@@ -44,7 +55,7 @@ function writeJson(file, value) {
   fs.renameSync(tmp, file);
 }
 
-/** 两个事件除了 delta 与序号之外是否相同(能不能并成一段) */
+/** Whether two events are identical except for delta and sequence number (can merge into one) */
 function sameShape(a, b) {
   const ka = Object.keys(a).filter((k) => k !== 'delta' && k !== 'seq' && k !== 'fromSeq' && k !== 'cuts');
   const kb = Object.keys(b).filter((k) => k !== 'delta' && k !== 'seq' && k !== 'fromSeq' && k !== 'cuts');
@@ -53,7 +64,7 @@ function sameShape(a, b) {
   return true;
 }
 
-/** 把记录里的一行拆回实时流里的那些事件 */
+/** Unpack a line from the log back into individual events in the real-time stream */
 export function* expandEntry(entry) {
   if (!Array.isArray(entry.cuts)) { yield entry; return; }
   const { cuts, fromSeq, delta, seq: _last, ...rest } = entry;
@@ -64,7 +75,8 @@ export function* expandEntry(entry) {
   }
 }
 
-/** 把相邻的 text / thinking 增量并成整段(已经并过的也能接着并);回新数组 */
+/** Merge adjacent text / thinking deltas into full blocks (already merged ones can be merged
+ * further); returns a new array */
 export function mergeDeltas(entries) {
   const out = [];
   for (const e of entries) {
@@ -90,18 +102,20 @@ export function mergeDeltas(entries) {
 
 /**
  * @param {object} o
- * @param {string | null} o.dataDir 数据目录;null 时只在内存里(进程一退就没了,只给不落盘的测试用)
+ * @param {string | null} o.dataDir Data directory; in memory only when null (lost once process
+ *   exits, intended only for tests that do not persist to disk)
  */
 export function createConversationStore({ dataDir = null, now = () => Date.now(), limits: limitsIn = {}, log = () => {} } = {}) {
   const limits = { ...CONVERSATION_STORE_DEFAULTS, ...limitsIn };
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响对话 */ } };
-  /** 「项目\n主人键\n对话 id」→ 对话 */
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failure does not affect chat */ } };
+  /** "project\nowner key\nchat id" → chat */
   const loaded = new Map();
 
   const keyOf = (projectId, ownerKey, id) => `${projectId}\n${ownerKey}\n${id}`;
-  /** 项目号与主人键要当目录名用:只收不会走出 `tenants/` 的 */
+  /** Project id and owner key are used as directory names: accept only those that will not escape
+   * `tenants/` */
   const seg = (name) => {
-    if (typeof name !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(name) || /^\.+$/.test(name)) throw new Error('不能当目录名的标识');
+    if (typeof name !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(name) || /^\.+$/.test(name)) throw new Error('Identifier that cannot be used as a directory name');
     return name;
   };
   const ownerDir = (projectId, ownerKey) => path.join(dataDir, 'tenants', seg(projectId), 'owners', seg(ownerKey), 'conversations');
@@ -116,13 +130,14 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
     }
   }
 
-  /** 读事件记录。末尾没写完的半行(进程被杀时留下的)丢掉,并把文件截到最后一个整行 */
+  /** Read event log. Discard incomplete partial line at the end (left when process was killed)
+   * and truncate file to the last full line */
   function readEvents(file) {
     let buf;
     try { buf = fs.readFileSync(file); } catch { return { entries: [], bytes: 0 }; }
     const end = buf.lastIndexOf(0x0a) + 1;
     if (end < buf.length) {
-      try { fs.truncateSync(file, end); } catch { /* 截不了也照常读 */ }
+      try { fs.truncateSync(file, end); } catch { /* Read as usual even if truncation fails */ }
     }
     const entries = [];
     for (const line of buf.subarray(0, end).toString('utf8').split('\n')) {
@@ -130,7 +145,7 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
       try {
         const e = JSON.parse(line);
         if (e && Number.isSafeInteger(e.seq)) entries.push(e);
-      } catch { /* 坏行跳过 */ }
+      } catch { /* Skip bad lines */ }
     }
     return { entries, bytes: end };
   }
@@ -149,7 +164,7 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
 
   function closeFd(conv) {
     if (conv.fd === null) return;
-    try { fs.closeSync(conv.fd); } catch { /* 已经关了 */ }
+    try { fs.closeSync(conv.fd); } catch { /* Already closed */ }
     conv.fd = null;
   }
 
@@ -158,13 +173,14 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
     if (idle.length <= limits.maxLoadedIdle) return;
     idle.sort((a, b) => a.touched - b.touched);
     for (const c of idle.slice(0, idle.length - limits.maxLoadedIdle)) {
-      if (!dataDir) continue; // 只在内存里的丢了就没了,不丢
+      if (!dataDir) continue; // In-memory data is gone once lost, so do not discard
       closeFd(c);
       loaded.delete(c.key);
     }
   }
 
-  /** 满额:不删任何对话,新建的人拿到带 `code: 'conversation-limit'` 的错误(服务层译成 409) */
+  /** Limit reached: do not delete any chats; the caller creating one receives an error with
+   * `code: 'conversation-limit'` (service layer translates to 409) */
   function assertRoomForNew(projectId, ownerKey) {
     if (listMetas(projectId, ownerKey).length < limits.maxPerOwner) return;
     throw Object.assign(new Error('conversation-limit'), { code: 'conversation-limit' });
@@ -174,7 +190,7 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
     const byId = new Map();
     if (dataDir) {
       let names = [];
-      try { names = fs.readdirSync(ownerDir(projectId, ownerKey)); } catch { /* 还没有任何对话 */ }
+      try { names = fs.readdirSync(ownerDir(projectId, ownerKey)); } catch { /* No chats yet */ }
       for (const name of names) {
         if (!ID_RE.test(name)) continue;
         const m = readMeta(dirOf(projectId, ownerKey, name));
@@ -188,7 +204,8 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
   }
 
   /**
-   * 取一个对话;没有且 `create` 时新建。对话 id 先过字符集检查(它是磁盘路径的最后一段)。
+   * Fetch a chat; create if missing and `create` is true. Chat id passes character set check first
+   * (it is the last segment of the disk path).
    * @returns {object | null}
    */
   function get(projectId, ownerKey, id, { create = false, startedOn = null } = {}) {
@@ -210,14 +227,14 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
     }
     conv = {
       key, id, projectId, ownerKey, dir, meta,
-      /** 记录里的行(合并过的带 fromSeq / cuts) */
+      /** Lines in the log (compacted ones include fromSeq / cuts) */
       entries,
       seq: entries.length ? entries[entries.length - 1].seq : 0,
       bytes,
       fd: null,
-      /** 实时名单:{ cb, userId } */
+      /** Real-time list: { cb, userId } */
       listeners: new Set(),
-      /** 进行中的一轮(由服务管):{ runId, userId, stop(kind, detail) } */
+      /** Active round (managed by service): { runId, userId, stop(kind, detail) } */
       run: null,
       pinned: false,
       touched: now(),
@@ -228,7 +245,8 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
     return conv;
   }
 
-  /** 事件先记下来,再发给此刻连着的流。记录降级后被丢掉的事件回 null(既不记也不发) */
+  /** Record event first, then send to currently connected streams. Events discarded after log
+   * downgrade return null (neither recorded nor sent) */
   function emit(conv, event) {
     if (conv.bytes >= limits.degradeBytes && DEGRADED_TYPES.has(event.type)) return null;
     const ev = { ...event, seq: conv.seq + 1 };
@@ -251,15 +269,17 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
     conv.entries.push(ev);
     conv.touched = now();
     for (const l of [...conv.listeners]) {
-      try { l.cb(ev); } catch { /* 一条流坏了不影响别的 */ }
+      try { l.cb(ev); } catch { /* A broken stream does not affect others */ }
     }
     return ev;
   }
 
   /**
-   * 看一个对话:先补发 `seq` 大于 `after` 的,再接实时的(同一拍里切换)。回退订函数。
-   * @param {{ userId?: string, pageId?: string | null }} [who] 谁在看(判「发起方在线」用);`pageId` 是那张页面自报的页面号
-   *   (反向通道只认发起这一轮的那一张,契约第 28 节)
+   * View a chat: first replay events with `seq` greater than `after`, then switch to real-time
+   * (switched within the same tick). Returns unsubscribe function.
+   * @param {{ userId?: string, pageId?: string | null }} [who] Who is viewing (used to determine
+   *   "initiator online"); `pageId` is the self-reported page id of that page
+   *   (reverse channel only recognizes the one that initiated this round, contract section 28)
    */
   function subscribe(conv, after, cb, who = {}) {
     const from = Number.isSafeInteger(after) && after > 0 ? after : 0;
@@ -271,18 +291,19 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
     conv.listeners.add(l);
     conv.touched = now();
     const off = () => { conv.listeners.delete(l); };
-    // 这条流在实时名单里的那一项(服务据它认「发给哪条流的请求」)
+    // The entry for this stream in the real-time list (service identifies "requests sent to which
+    // stream" based on it)
     off.listener = l;
     return off;
   }
 
-  /** 改状态并落 `meta.json` */
+  /** Update status and persist to `meta.json` */
   function setState(conv, patch) {
     Object.assign(conv.meta, patch);
     saveMeta(conv);
   }
 
-  /** 一轮结束后:把增量并成整段,重写事件记录 */
+  /** After a round ends: merge deltas into full blocks and rewrite the event log */
   function compact(conv) {
     const merged = mergeDeltas(conv.entries);
     if (merged.length === conv.entries.length) { closeFd(conv); return; }
@@ -301,7 +322,8 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
     }
   }
 
-  /** 删一个对话:事件记录、状态、模型历史、预渲染重试清单一起删 */
+  /** Delete a chat: delete event log, status, model history, and prerender retry manifest
+   * together */
   function remove(conv) {
     closeFd(conv);
     for (const l of [...conv.listeners]) conv.listeners.delete(l);
@@ -311,7 +333,7 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
     }
   }
 
-  /** 走一遍盘上所有对话的目录 */
+  /** Traverse all chat directories on disk */
   function* walk() {
     if (!dataDir) return;
     const tenants = path.join(dataDir, 'tenants');
@@ -340,19 +362,21 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
 
     dirOf: (projectId, ownerKey, id) => (dataDir ? dirOf(projectId, ownerKey, id) : null),
 
-    /** 这个主人在这个项目里的对话,最近动过的在前 */
+    /** Chats for this owner in this project, most recently active first */
     list(projectId, ownerKey) {
       return listMetas(projectId, ownerKey).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     },
 
-    /** 这个对话还能不能再发消息(记录封顶) */
+    /** Whether messages can still be sent in this chat (log limit reached) */
     full(conv) {
       return conv.bytes >= limits.capBytes;
     },
 
     /**
-     * 进程起来时调(契约第 7.5 节):盘上状态还是 running 的对话,上一个进程没来得及收尾就没了——标成 interrupted,
-     * 事件记录末尾补一条说明与 `end`。不自动续跑。回被标的对话数。
+     * Called on process startup (contract section 7.5): for chats whose on-disk status is still
+     * running where the previous process exited before finalizing: mark as interrupted, append an
+     * explanation and `end` to the end of the event log. Does not automatically resume. Returns the
+     * number of marked chats.
      */
     recover() {
       let n = 0;
@@ -372,7 +396,8 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
       return n;
     },
 
-    /** 项目删除:这个项目下的对话记录与模型历史全删(用量记录是托管方的账,不在这里) */
+    /** Project deletion: all chat records and model history under this project are deleted (usage
+     * records are the host's accounting, not here) */
     removeProject(projectId) {
       for (const c of [...loaded.values()]) {
         if (c.projectId !== projectId) continue;
@@ -383,7 +408,7 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
       try { fs.rmSync(path.join(dataDir, 'tenants', seg(projectId)), { recursive: true, force: true }); } catch (err) { say('agent.conversation.remove-failed', { message: String(err?.message ?? err).slice(0, 120) }); }
     },
 
-    /** 此刻载入内存的对话(诊断与收尾用) */
+    /** Chats currently loaded into memory (for diagnostics and finalization) */
     loaded: () => [...loaded.values()],
 
     close() {

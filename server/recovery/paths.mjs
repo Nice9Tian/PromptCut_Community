@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { tr } from '../i18n.mjs';
 
 /** Shared by the document service and its asset ticket verifier. */
 export function localDocumentDir(root, env = process.env) {
@@ -16,7 +17,7 @@ export function prepareLocalDocumentDir(root, env = process.env) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const staged = `${target}.migration-${process.pid}-${randomBytes(6).toString('hex')}`;
   fs.cpSync(legacy, staged, { recursive: true, errorOnExist: true, force: false, filter(source) {
-    if (fs.lstatSync(source).isSymbolicLink()) throw new Error('旧协作服务含外部链接，保留原数据，请显式恢复备份');
+    if (fs.lstatSync(source).isSymbolicLink()) throw new Error(tr("The old collaboration service contains external links; the original data is kept, restore the backup explicitly"));
     return true;
   } });
   // A complete directory becomes visible in one rename. Never overwrite a newer stable directory.

@@ -1,33 +1,53 @@
 /**
- * 云端 Agent 的网页操作工具(`web_open`、`web_view`、`web_click`、`web_type`、`web_scroll`、`web_read`、`web_close`;
- * 计划 `docs/plan/cloud-agent-tools-implementation.md` 的 W1 包)。工具名、参数与返回的形状同桌面版(`server/tools/browser.mjs`)。
+ * Web operation tools for Cloud Agent (`web_open`, `web_view`, `web_click`, `web_type`,
+ * `web_scroll`, `web_read`, `web_close`; package W1 of plan
+ * `docs/plan/cloud-agent-tools-implementation.md`). Tool names, parameters, and return shapes
+ * match the desktop app (`server/tools/browser.mjs`).
  *
- * 桌面版里这七个工具由页面转给编辑器进程的 `/api/web/*`,整个进程共用一个有头的浏览器和一份登录态。
- * 云节点上是很多人的很多对话,所以在 Agent 服务一侧另做一份:
+ * In the desktop app, these seven tools are forwarded by the page to `/api/web/*` on the editor
+ * process; the entire process shares a single headed browser and a single login state.
+ * On cloud nodes with many chats across many users, a separate implementation is provided on the
+ * Agent service side:
  *
- *   - **每次调用都带可信的 ToolRunContext**(`tool-context.mjs`,由文档服务确认读过消息后的当前运行授权构造),
- *     动手之前先过 `authorize(read)`,把结果交回去之前再过一次;这一轮被收回(对话设为私有、被停止、Agent 被关)或已经换了新一轮,
- *     旧的调用过不了这两道,页面动不了,结果也拿不走。网页操作不改项目,所以只读成员也能用〔裁〕。
- *   - **每个「项目 × 对话」一个浏览器进程、一份用户数据目录、一个出网代理**(`server/web/hosted/session.mjs`):
- *     两个对话打开同一个站,互相看不到对方的 cookie 与登录态。键只取自可信的运行上下文,工具参数里没有项目、对话、路径。
- *   - **浏览器进程挂到运行资源登记器**(`run-resources.mjs`):这一轮被收回时登记器杀掉整棵进程树;本模块等到进程号真的查不到才算关掉。
- *   - **出网只经出网闸**(`egress.mjs`;代理与各条绕过途径怎么堵见 `server/web/hosted/network.mjs`)。
- *   - **清单带版本**:旧清单的编号、页面变了以后的编号一律拒,不会点到别的元素上(`server/web/hosted/view.mjs`、`hit.mjs`)。
- *   - **不代填口令、验证码、卡号**:桌面版靠工具说明约束模型;云端没人在旁边,`web_type` 遇到这类输入框直接拒〔裁〕。
- *   - **没配浏览器就如实说**:节点配置里没有浏览器的可执行文件时,回「这台节点没有配置浏览器」,不下载、不假装能用。
+ *   - **Every call carries a trusted ToolRunContext** (`tool-context.mjs`, constructed from the
+ *     current run authorization after the document service confirms messages have been read);
+ *     it passes `authorize(read)` before taking action, and passes it once more before handing
+ *     results back. If this round is revoked (chat set to private, stopped, Agent turned off)
+ *     or has advanced to a new round, stale calls fail these two gates: the page cannot be
+ *     manipulated and results cannot be retrieved. Web operations do not modify projects, so
+ *     read-only members can also use them [ruling].
+ *   - **One browser process, one user data directory, and one egress proxy per "project × chat"**
+ *     (`server/web/hosted/session.mjs`): two chats opening the same site cannot see each other's
+ *     cookies or login state. Keys are derived solely from trusted run contexts; tool parameters
+ *     contain no project, chat, or path.
+ *   - **Browser processes attach to the run resources registry** (`run-resources.mjs`): when this
+ *     round is revoked, the registry kills the entire process tree; this module waits until
+ *     process IDs can no longer be found before considering them closed.
+ *   - **Egress goes only through the egress gate** (`egress.mjs`; see
+ *     `server/web/hosted/network.mjs` for how proxies and bypass routes are blocked).
+ *   - **Manifests are versioned**: indices from stale manifests or indices after the page has
+ *     changed are strictly rejected, preventing clicks on unintended elements
+ *     (`server/web/hosted/view.mjs`, `hit.mjs`).
+ *   - **Never autofill passphrases, verification codes, or card numbers**: the desktop app relies
+ *     on tool descriptions to constrain the model; with no human present in the cloud, `web_type`
+ *     outright rejects such input fields [ruling].
+ *   - **Report honestly when no browser is configured**: when the browser executable is missing
+ *     from the node configuration, return "This node has no browser configured"; do not download
+ *     or pretend it is available.
  *
- * 用户数据目录的去留〔裁〕:
+ * Retention of user data directories [ruling]:
  *
- *   | 什么时候                                   | 浏览器进程 | 用户数据目录 |
- *   |--------------------------------------------|------------|--------------|
- *   | `web_close`、闲置超时、为腾名额被换下      | 退出       | 留着(工具说明里写的「登录态还在」) |
- *   | 这一轮被停止、Agent 被关(登记器收回)     | 退出       | 留着(对话还在,下一轮接着用) |
- *   | 对话被设为私有(宿主调 `closeConversation(…, { reason: 'private' })`) | 退出 | **删掉**(换了一批能看这个对话的人,之前攒下的状态不带过去);只留清单版本的计数 |
- *   | 对话被删、项目被删(宿主调 `closeConversation` / `removeProject`)   | 退出 | 删掉 |
- *   | 服务关闭(`close()`)                      | 退出       | 留着;重启后旧浏览器不会复活,打开过的页面与旧清单的编号都作废 |
- *   | 用户数据目录超过上限                       | —          | 关闭时整个删掉 |
+ *   | When                                       | Browser process | User data directory |
+ *   |--------------------------------------------|-----------------|---------------------|
+ *   | `web_close`, idle timeout, swapped out to free capacity | Exit | Kept ("login state persists" as stated in tool descriptions) |
+ *   | This round stopped, Agent turned off (reclaimed by registry) | Exit | Kept (chat still exists, reused in the next round) |
+ *   | Chat set to private (host calls `closeConversation(…, { reason: 'private' })`) | Exit | **Deleted** (the audience allowed to view this chat changed, accumulated state must not carry over); keep only manifest version counter |
+ *   | Chat deleted, project deleted (host calls `closeConversation` / `removeProject`) | Exit | Deleted |
+ *   | Service shutdown (`close()`)               | Exit            | Kept; stale browsers do not revive on restart, opened pages and stale manifest indices are invalidated |
+ *   | User data directory exceeds limit          | -               | Deleted entirely on close |
  *
- * 本文件不引用 `src/`。中央的工具表、实例与接线不在这里(归最后的接线包)。
+ * This file does not import `src/`. The central tool table, instances, and wiring are not here
+ * (belong to the final wiring package).
  */
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -38,40 +58,40 @@ import { launchHostedSession, HostedSessionError, reapOrphan, removeDirFully, re
 
 export const WEB_TOOL_NAMES = Object.freeze(['web_open', 'web_view', 'web_click', 'web_type', 'web_scroll', 'web_read', 'web_close']);
 
-/** 数字都是三级机制的缺省值〔裁〕,部署者可以在节点配置里改 */
+/** All numbers are defaults of the three-tier mechanism [ruling]; deployers can override them in the node configuration */
 export const HOSTED_BROWSER_DEFAULTS = Object.freeze({
-  /** 整个 Agent 服务进程里同时开着的浏览器数 */
+  /** Number of concurrently open browsers across the entire Agent service process */
   maxBrowsers: 2,
-  /** 名额满了时,闲了这么久的浏览器可以被换下(关掉,目录留着) */
+  /** When capacity is full, browsers idle for this long can be swapped out (closed, directory kept) */
   evictIdleMs: 60_000,
-  /** 一个浏览器闲置多久自动关(目录留着) */
+  /** How long a browser can sit idle before closing automatically (directory kept) */
   idleCloseMs: 10 * 60_000,
-  /** 一个页面最多等多久加载出来 */
+  /** Maximum duration to wait for a page to load */
   navigationMs: 30_000,
-  /** 一次工具调用(含加载、动作、截图)的总时限;要小于宿主给工具的 60 秒 */
+  /** Overall timeout for a single tool call (including load, action, screenshot); must be under the 60 seconds given by the host to the tool */
   actionMs: 50_000,
-  /** 点击、回车之后页面开始跳转的,最多等它落地多久 */
+  /** Maximum duration to wait for navigation to settle after clicks or enter presses */
   settleMs: 10_000,
-  /** 起浏览器的时限 */
+  /** Timeout for launching the browser */
   launchMs: 30_000,
-  /** 关浏览器时先让它自己退的时限(把 cookie 落盘) */
+  /** Timeout for allowing the browser to exit gracefully on close (flushing cookies to disk) */
   gracefulCloseMs: 3_000,
-  /** 等进程树真的退出、等目录真的删掉的时限 */
+  /** Timeout for waiting for the process tree to truly exit and directories to truly be deleted */
   closeMs: 10_000,
-  /** 一次最多输入多少字、每个字之间隔多久 */
+  /** Maximum characters typed per call and delay between keystrokes */
   maxTypeChars: 2_000,
   typeDelayMs: 5,
-  /** 打字分小段,每段之前核一次焦点还在那个输入框上。缺省一个字一段:页面中途把焦点挪走时,最多有一个字进了别处 */
+  /** Typing is chunked, verifying focus remains on the target input before each chunk. Defaults to one character per chunk: if the page moves focus mid-typing, at most one character goes elsewhere */
   typeChunkChars: 1,
-  /** `web_read` 一次最多给多少字 */
+  /** Maximum characters returned by `web_read` per call */
   maxReadChars: 20_000,
-  /** 一次最多滚多少页面像素 */
+  /** Maximum page pixels to scroll per call */
   maxScrollPx: 20_000,
-  /** 一个浏览器同时开着的出网隧道数 */
+  /** Number of concurrently open egress tunnels per browser */
   maxTunnels: 64,
-  /** 浏览器的磁盘缓存上限 */
+  /** Browser disk cache limit */
   diskCacheBytes: 64 * 1024 * 1024,
-  /** 一个对话的用户数据目录上限,超了在关闭时整个删掉 */
+  /** User data directory size limit per chat; if exceeded, deleted entirely on close */
   maxProfileBytes: 512 * 1024 * 1024,
 });
 
@@ -89,67 +109,67 @@ const ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 const sleep = (ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); t.unref?.(); });
 const unavailable = (code, error, extra = {}) => ({ ok: false, cloudUnavailable: true, code, error, ...extra });
 
-const NO_BROWSER = '这台节点没有配置浏览器,云端 Agent 做不了网页操作。请告诉用户联系托管方,或在电脑上的 PromptCut 里做这一步。';
-const NOT_OPEN = '云端的浏览器现在没有开着(还没打开过网页,或者它已经被关掉:闲置太久、这一轮被停止、服务重启过)。先用 web_open 打开一条链接;之前清单里的编号都作废了。';
+const NO_BROWSER = 'This node has no browser configured, so the Cloud Agent cannot operate web pages. Tell the user to contact the host, or do this step in PromptCut on their computer.';
+const NOT_OPEN = 'The cloud browser is not open right now (no page has been opened yet, or it was closed: idle too long, this turn was stopped, or the service restarted). Open a link with web_open first; all numbers in the earlier manifest are void.';
 
-/** id 当目录名:去掉不能进路径的字符,再接一段原文的哈希(两个不同的 id 清洗后撞名也分得开) */
+/** Using id as directory name: strip illegal path characters, then append a hash of the original text (keeping different ids distinct even if sanitized names collide) */
 function dirName(id) {
   const safe = String(id).replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_').slice(0, 48);
   return `${safe}-${createHash('sha256').update(String(id)).digest('hex').slice(0, 12)}`;
 }
 
-/** 浏览器目录的根:`<数据目录>/web/` */
+/** Root of browser directories: `<dataDir>/web/` */
 export const hostedBrowserRoot = (dataDir) => path.join(path.resolve(dataDir), 'web');
 
-/** 一个「项目 × 对话」的浏览器目录:`<数据目录>/web/<项目>/<对话>/`(用户数据目录是它下面的 `profile/`) */
+/** Browser directory for a "project × chat": `<dataDir>/web/<project>/<chat>/` (user data directory is `profile/` beneath it) */
 export function hostedBrowserDir(dataDir, { projectId, conversationId }) {
   if (typeof projectId !== 'string' || !ID_RE.test(projectId) || typeof conversationId !== 'string' || !ID_RE.test(conversationId)) {
-    throw new HostedBrowserError('项目或对话的 id 不合法。', { code: 'bad-scope', status: 400 });
+    throw new HostedBrowserError('Invalid project or chat id.', { code: 'bad-scope', status: 400 });
   }
   return path.join(hostedBrowserRoot(dataDir), dirName(projectId), dirName(conversationId));
 }
 
-/** 按原因定用户数据目录留不留(见文件头的表) */
+/** Determine whether to retain the user data directory based on reason (see table at file header) */
 function removeProfileFor(reason) {
   return reason === 'private' || reason === 'conversation-deleted' || reason === 'project-deleted';
 }
-/** 对话、项目没了:连清单版本的计数一起删。只是设为私有:计数留着(模型手里还有旧清单,新浏览器的版本号不能和它撞) */
+/** Chat or project removed: delete manifest version counter as well. Only set to private: retain counter (the model still holds stale manifests; the new browser's version numbers must not collide with them) */
 const removeAllFor = (reason) => reason === 'conversation-deleted' || reason === 'project-deleted';
 
 /**
  * @param {object} d
  * @param {{ authorize(context: object, action: 'read'|'write'): Promise<{ fenceRevision: number, grantState: string }>, register(context: object, o: { kind: string, resource: object }): Promise<{ signal: AbortSignal, closed: Promise<void> }> }} d.resources
- *   运行资源登记器(`createRunResources`)
- * @param {{ admit: Function, admitUrl: Function }} d.egress 出网闸(`createEgressGate`)
- * @param {string} d.dataDir Agent 服务的数据目录;浏览器目录在它下面的 `web/`
- * @param {object} [d.runtime] 部署者提供的节点配置(不是模型给的)
- * @param {string} [d.runtime.executablePath] 浏览器可执行文件的绝对路径;没有就是「没配浏览器」
- * @param {'new'|'shell'} [d.runtime.headless] 无头的哪一种;缺省按文件名判
- * @param {string[]} [d.runtime.extraArgs] 追加的启动参数(Linux 上的沙箱参数等);改代理、开调试口的会被丢掉
- * @param {string[]} [d.runtime.argPrefix] 启动参数打头的那几个
- * @param {object} [d.limits] 覆盖 `HOSTED_BROWSER_DEFAULTS`
+ *   Run resources registry (`createRunResources`)
+ * @param {{ admit: Function, admitUrl: Function }} d.egress Egress gate (`createEgressGate`)
+ * @param {string} d.dataDir Data directory for the Agent service; browser directories are located under `web/` within it
+ * @param {object} [d.runtime] Node configuration provided by the deployer (not from the model)
+ * @param {string} [d.runtime.executablePath] Absolute path to browser executable; absence means "no browser configured"
+ * @param {'new'|'shell'} [d.runtime.headless] Which headless flavor; defaults to filename detection
+ * @param {string[]} [d.runtime.extraArgs] Additional startup arguments (sandbox flags on Linux, etc.); flags modifying proxies or exposing debug ports are dropped
+ * @param {string[]} [d.runtime.argPrefix] Leading startup arguments
+ * @param {object} [d.limits] Overrides for `HOSTED_BROWSER_DEFAULTS`
  * @param {(event: string, fields?: object) => void} [d.log]
- * @param {typeof launchHostedSession} [d.launchSession] 起会话的函数,只给单测换
+ * @param {typeof launchHostedSession} [d.launchSession] Function to launch session, replaced only for unit tests
  */
 export function createHostedBrowserTools({ resources, egress, dataDir, runtime = {}, limits = {}, log = () => {}, puppeteer, now = Date.now, launchSession = launchHostedSession } = {}) {
   if (typeof resources?.authorize !== 'function' || typeof resources?.register !== 'function'
     || typeof egress?.admit !== 'function' || typeof egress?.admitUrl !== 'function'
     || typeof dataDir !== 'string' || !dataDir) {
-    throw new HostedBrowserError('云端网页操作没有配置全(缺运行资源登记器、出网闸或数据目录)。', { code: 'web-unconfigured', status: 503 });
+    throw new HostedBrowserError('Cloud web operation is not fully configured (missing run-resource registrar, egress gate or data directory).', { code: 'web-unconfigured', status: 503 });
   }
   const cfg = { ...HOSTED_BROWSER_DEFAULTS, ...limits };
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响工具 */ } };
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failure does not affect tools */ } };
   const root = hostedBrowserRoot(dataDir);
   const handles = new Set(WEB_TOOL_NAMES);
-  /** 「项目\0对话」→ 会话记录 `{ key, projectId, conversationId, dir, session, bound: Map<contextKey, registration>, timer }` */
+  /** "project\0chat" → session record `{ key, projectId, conversationId, dir, session, bound: Map<contextKey, registration>, timer }` */
   const sessions = new Map();
-  /** 正在起的:同一个对话并发的两次 web_open 共用一次启动 */
+  /** Launching: concurrent web_open calls in the same chat share a single launch */
   const launching = new Map();
-  /** 正在关的(含登记器触发的):`close()` 要等它们 */
+  /** Closing (including registry-triggered ones): `close()` must wait for them */
   const closings = new Set();
-  /** 「项目×对话」→ 这个对话最近一次关闭(含删目录)的 promise。同一个对话的下一次启动、`closeConversation` 都先等它 */
+  /** "project×chat" → promise for this chat's latest close (including directory deletion). The next launch or `closeConversation` for the same chat waits for it first */
   const closingByKey = new Map();
-  /** 关过的会话(已从 `sessions` 摘掉):还在关的、关了却没拿到退出凭据的留在这里,`treeClosed` 与 `closeConversation` 据此回话 */
+  /** Closed sessions (removed from `sessions`): those still closing or closed without an exit receipt remain here; `treeClosed` and `closeConversation` report based on this */
   const retired = new Set();
   let closing = false;
   let closePromise = null;
@@ -161,7 +181,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     return promise;
   }
 
-  /** 一个关过的会话此刻是不是确实没有活着的进程了(关闭当时没核到的,这里重核) */
+  /** Whether a closed session currently has no surviving processes (rechecks processes not confirmed at closing time) */
   function settled(entry) {
     if (entry.lastClose?.exited === true) return true;
     if (!entry.lastClose) return false;
@@ -178,9 +198,9 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     try { return fs.statSync(runtime.executablePath).isFile(); } catch { return false; }
   };
 
-  /* ------------------------------------------------------------------ 启动时清孤儿 */
+  /* ------------------------------------------------------------------ Clean up orphans at startup */
 
-  /** 上一个服务进程留下的浏览器(正常没有:管道一断浏览器自己退)。逐个目录看,还占着的杀掉 */
+  /** Browsers left behind by previous service processes (normally none: browser exits when pipe breaks). Inspect directory by directory and kill any still occupying */
   const swept = (async () => {
     let reaped = 0;
     try {
@@ -188,19 +208,19 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
         if (!project.isDirectory()) continue;
         for (const conversation of fs.readdirSync(path.join(root, project.name), { withFileTypes: true })) {
           if (!conversation.isDirectory()) continue;
-          // 起它的服务进程还活着的不动:滚动重启时旧进程可能还在用它(见 reapOrphan)
+          // Leave untouched if the service process that spawned it is still alive: during rolling restarts, the old process may still be using it (see reapOrphan)
           const result = await reapOrphan(path.join(root, project.name, conversation.name), { timeoutMs: cfg.closeMs, respectLiveOwner: true });
           if (result.found) reaped += 1;
         }
       }
-    } catch { /* 目录还没有:没有孤儿 */ }
+    } catch { /* Directory does not exist yet: no orphans */ }
     if (reaped) say('agent.web.orphans-swept', { count: reaped });
     return reaped;
   })();
 
-  /* ------------------------------------------------------------------ 会话的生死 */
+  /* ------------------------------------------------------------------ Session lifecycle */
 
-  /** 关了但进程号还查得到的次数:有一次,`close()` 就不能说「子进程都关了」 */
+  /** Number of times closed but PID was still found: even once prevents `close()` from claiming "all child processes closed" */
   let leaked = 0;
   function track(promise) {
     closings.add(promise);
@@ -208,7 +228,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     return promise;
   }
 
-  /** 关一个会话并等到有结果。从表里先摘掉:之后的调用看到的是「没开着」 */
+  /** Close a session and wait for the outcome. Detach from table first: subsequent calls will see it as "not open" */
   function retire(entry, { reason, graceful = true, removeProfile = removeProfileFor(reason), removeAll = removeProfile && removeAllFor(reason) } = {}) {
     if (sessions.get(entry.key) === entry) sessions.delete(entry.key);
     if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
@@ -218,7 +238,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     entry.closed = closed;
     closed.then((result) => {
       entry.lastClose = result ?? { exited: false };
-      // 拿到退出凭据的不用再记;没拿到的留着,直到重核通过
+      // Those with exit receipts need not be tracked further; those without are kept until recheck passes
       if (entry.closed === closed && settled(entry)) retired.delete(entry);
     }, () => { entry.lastClose = { exited: false, alivePids: [] }; });
     noteKeyClosing(entry.key, closed);
@@ -237,9 +257,9 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     entry.timer.unref?.();
   }
 
-  /** 腾一个名额:换下闲得最久、而且闲够了的那个;腾不出来回 false */
+  /** Free up a slot: evict the one idle the longest that has idled long enough; returns false if unable to free */
   async function makeRoom() {
-    // 调用方自己已经记在 launching 里了,所以是「不超过」
+    // The caller has already recorded it in launching, so it is "does not exceed"
     if (sessions.size + launching.size <= cfg.maxBrowsers) return true;
     const idle = [...sessions.values()]
       .filter((e) => !e.session.busy && now() - e.session.lastUsedAt >= cfg.evictIdleMs)
@@ -255,10 +275,10 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     if (existing) return existing;
     const task = (async () => {
       await swept;
-      // 这个对话上一个浏览器还在关(含设私有时删目录):等它完。不等的话新浏览器会先读到正在被删的旧 cookie
-      while (closingByKey.has(key)) { try { await closingByKey.get(key); } catch { /* 关闭自己会记结果 */ } }
+      // Previous browser for this chat is still closing (including directory deletion when set to private): wait for it. Without waiting, the new browser could read stale cookies being deleted
+      while (closingByKey.has(key)) { try { await closingByKey.get(key); } catch { /* Closing records the result itself */ } }
       if (!await makeRoom()) {
-        throw new HostedBrowserError('云端同时开着的浏览器已经到上限,这次没有打开。稍后再试;别的对话里用完了浏览器请 web_close。', { code: 'web-busy', status: 429 });
+        throw new HostedBrowserError('The number of browsers open in the cloud at once has reached its limit; this one was not opened. Try again later; if you are done with a browser in another chat, call web_close.', { code: 'web-busy', status: 429 });
       }
       const dir = hostedBrowserDir(dataDir, scope);
       const session = await launchSession({
@@ -274,11 +294,11 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
         now,
       });
       const entry = { key, projectId: scope.projectId, conversationId: scope.conversationId, dir, session, bound: new Map(), contexts: new Set(), pendingHandles: new Set(), timer: null, retired: null, closed: null, lastClose: null };
-      if (closing) { await track(session.close({ graceful: false, reason: 'host-close' })); throw new HostedBrowserError('云端网页操作正在关闭。', { code: 'web-closed', status: 503 }); }
+      if (closing) { await track(session.close({ graceful: false, reason: 'host-close' })); throw new HostedBrowserError('Cloud web operation is shutting down.', { code: 'web-closed', status: 503 }); }
       sessions.set(key, entry);
-      // 浏览器自己没了(崩溃、被系统杀):从表里摘掉并核一遍进程
+      // Browser terminated on its own (crashed, killed by system): detach from table and verify processes
       session.processGone().then(() => {
-        // 进程真的没了:告诉登记器(它等的是 exit 与 close 两个事件),并把挂着的东西都摘掉
+        // Processes truly gone: notify the registry (it waits for exit and close events), and detach all attached resources
         for (const ck of [...entry.bound.keys()]) release(entry, ck);
         for (const handle of entry.pendingHandles) { handle.emit('exit'); handle.emit('close'); }
         if (sessions.get(key) === entry) void retire(entry, { reason: 'exited', graceful: false }).catch(() => {});
@@ -289,7 +309,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     try { return await task; } finally { launching.delete(key); }
   }
 
-  /** 把一个运行上下文从这个浏览器上摘下来:登记器那边当它已经关了(发 exit 与 close),本模块不再听那一轮的信号 */
+  /** Detach a run context from this browser: registry treats it as closed (emitting exit and close), and this module stops listening to signals from that round */
   function release(entry, ck) {
     const bound = entry.bound.get(ck);
     if (!bound) return;
@@ -301,10 +321,15 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
   }
 
   /**
-   * 把浏览器挂到这一轮的运行资源上。登记器在这一轮被收回时调 `kill()`(杀整棵树)并打信号;这里听到信号就把会话收掉、等进程真的退出。
+   * Attach the browser to the run resources of this round. When this round is revoked, the
+   * registry calls `kill()` (killing the whole tree) and signals; receiving the signal here reclaims
+   * the session and waits for the process to truly exit.
    *
-   * 交给登记器的不是浏览器进程本身,而是每一轮一个的小把手:一个对话的浏览器跨很多轮,每一轮都往进程对象上挂监听的话只增不减。
-   * 同一个对话同一时刻只有一轮是当前的(换了新一轮,旧一轮的上下文过不了授权),所以新一轮挂上时把旧的摘掉。
+   * What is handed to the registry is not the browser process itself, but a lightweight handle per
+   * round: a browser for a chat spans many rounds, and attaching listeners directly to the process
+   * object on every round would only grow unbounded.
+   * For any chat, only one round is current at a time (once a new round starts, stale contexts fail
+   * authorization), so attaching a new round detaches the old one.
    */
   async function bind(entry, context) {
     const ck = contextKey(context);
@@ -312,12 +337,12 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     if (had) return had.registration;
     const handle = new EventEmitter();
     handle.kill = () => entry.session.kill();
-    // 登记被拒时(这一轮已经被收回)登记器会调 kill() 并一直等到 exit 与 close:所以把手要先记下,进程一没就能通知到它
+    // When registration is rejected (this round already revoked), registry calls kill() and waits for exit and close: so record the handle first to notify it as soon as the process terminates
     entry.pendingHandles.add(handle);
     let registration;
     try { registration = await resources.register(context, { kind: 'child', resource: handle }); }
     catch (error) {
-      // 登记器已经把浏览器杀了:把这个会话收掉
+      // Registry has already killed the browser: tear down this session
       void retire(entry, { reason: 'fence', graceful: false, removeProfile: false }).catch(() => {});
       throw error;
     }
@@ -332,7 +357,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     return registration;
   }
 
-  /* ------------------------------------------------------------------ 工具 */
+  /* ------------------------------------------------------------------ Tools */
 
   const failure = (error) => {
     if (error instanceof HostedBrowserError) return error;
@@ -345,13 +370,13 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
   };
 
   async function call(name, args, context) {
-    if (!handles.has(name)) throw new HostedBrowserError(`网页操作不处理 ${name}。`, { code: 'unknown-tool', status: 404 });
-    if (closing) throw new HostedBrowserError('云端网页操作正在关闭。', { code: 'web-closed', status: 503 });
+    if (!handles.has(name)) throw new HostedBrowserError(`Web operation does not handle ${name}.`, { code: 'unknown-tool', status: 404 });
+    if (closing) throw new HostedBrowserError('Cloud web operation is shutting down.', { code: 'web-closed', status: 503 });
     if (args !== undefined && args !== null && (typeof args !== 'object' || Array.isArray(args))) {
-      throw new HostedBrowserError('参数必须是一个对象。', { code: 'bad-args' });
+      throw new HostedBrowserError('Arguments must be an object.', { code: 'bad-args' });
     }
     const input = args ?? {};
-    // 第一道:这一轮此刻还算不算数。伪造的、改过的、别的进程发的上下文在这里就抛了,浏览器碰都不碰
+    // First gate: whether this round is still valid right now. Forged, tampered, or contexts from other processes throw here, never touching the browser
     const before = await resources.authorize(context, 'read');
     const scope = { projectId: context.projectId, conversationId: context.conversationId };
     const key = keyOf(scope);
@@ -360,7 +385,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
       const entry = sessions.get(key);
       if (!entry) return { ok: true, closed: true, wasOpen: false };
       const result = await retire(entry, { reason: 'web_close' });
-      if (!result.exited) throw new HostedBrowserError('浏览器进程没有在时限内退出,托管方需要查看节点。', { code: 'web-close-pending', status: 503 });
+      if (!result.exited) throw new HostedBrowserError('The browser process did not exit within the time limit; the host needs to check the node.', { code: 'web-close-pending', status: 503 });
       return { ok: true, closed: true, wasOpen: true };
     }
 
@@ -373,8 +398,8 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     }
     if (!entry) {
       if (name !== 'web_open') return { ok: false, error: NOT_OPEN, notOpen: true };
-      if (typeof input.url !== 'string' || !input.url.trim()) return { ok: false, error: '要给 url' };
-      // 地址本身就不许打开的(非 http(s)、内网、metadata…):当场拒,不为它起一个浏览器
+      if (typeof input.url !== 'string' || !input.url.trim()) return { ok: false, error: 'url is required' };
+      // Disallowed addresses (non-http(s), intranet, metadata…): rejected immediately without launching a browser
       const admitted = await admitWebTarget(egress, input.url);
       if (!admitted.ok) return admitted.result;
       try { entry = await launch(scope); } catch (error) {
@@ -388,10 +413,10 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     }
 
     const registration = await bind(entry, context);
-    // 动页面之前的闸:这一轮被收回(登记器打了信号)、或这个会话已经在收,就不动
+    // Gate before manipulating the page: if this round was revoked (registry signaled) or this session is already tearing down, do nothing
     const guard = () => {
       if (registration.signal.aborted || entry.retired || closing) {
-        throw new HostedBrowserError('这一轮对话的权限已被收回,没有操作网页。', { code: 'run-resource-fenced', status: 403 });
+        throw new HostedBrowserError('Permission for this chat turn has been revoked; the web page was not operated.', { code: 'run-resource-fenced', status: 403 });
       }
     };
     guard();
@@ -406,39 +431,39 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
       else if (name === 'web_scroll') result = await session.scroll(input, { guard });
       else result = await session.read(input);
     } catch (error) {
-      // 动作半路被收回:浏览器已经被杀,报的是「权限被收回」而不是连接断开之类的内部错
+      // Revoked mid-action: browser already killed, reporting "permissions revoked" rather than internal errors like connection closed
       if (registration.signal.aborted || entry.retired === 'fence') {
-        throw new HostedBrowserError('这一轮对话的权限已被收回,网页操作已停止。', { code: 'run-resource-fenced', status: 403 });
+        throw new HostedBrowserError('Permission for this chat turn has been revoked; web operation has stopped.', { code: 'run-resource-fenced', status: 403 });
       }
-      // 出错的回话也是固定句子:异常原文里可能带着页面上的字,不拼进去(日志里也只记异常的类名)。
-      // 不在这里 return:出错的结果同样要过下面「交结果前」的那次授权复核
+      // Error responses also use fixed sentences: original exception may contain text from the page and is omitted (logs only record the exception class name).
+      // Do not return here: error results must equally pass the subsequent authorization recheck before returning results
       const mapped = failure(error);
       if (mapped instanceof HostedBrowserError && mapped.code === 'web-timeout') {
-        result = { ok: false, code: 'ACTION_TIMEOUT', error: `这一步超过 ${Math.round(cfg.actionMs / 1000)} 秒没有完成,已经停下。可以 web_view 看看页面现在的样子,或换一个地址。` };
+        result = { ok: false, code: 'ACTION_TIMEOUT', error: `This step did not finish within ${Math.round(cfg.actionMs / 1000)} seconds and was stopped. Use web_view to see how the page looks now, or try another address.` };
       } else if ((mapped instanceof HostedBrowserError && mapped.code === 'web-closed') || entry.session.closed) {
         result = { ok: false, error: NOT_OPEN, notOpen: true };
       } else if (mapped instanceof HostedBrowserError) {
         throw mapped;
       } else {
         say('agent.web.action-failed', { tool: name, kind: String(error?.name ?? 'Error').slice(0, 40) });
-        result = { ok: false, code: 'ACTION_FAILED', error: '这一步没有做成(浏览器那边出了错)。可以 web_view 看看页面现在的样子,再决定下一步。' };
+        result = { ok: false, code: 'ACTION_FAILED', error: 'This step failed (the browser reported an error). Use web_view to see how the page looks now, then decide the next step.' };
       }
     } finally {
       touch(entry);
     }
-    // 第二道:页面上的东西交回去之前,这一轮还得是当前这一轮、栅栏没动过
+    // Second gate: before returning page data, this round must still be current and the fence unchanged
     const after = await resources.authorize(context, 'read');
     if (after.fenceRevision !== before.fenceRevision || registration.signal.aborted) {
-      throw new HostedBrowserError('这一轮对话的权限在操作期间变了,结果没有交回。', { code: 'run-resource-fenced', status: 403 });
+      throw new HostedBrowserError('Permission for this chat turn changed during the operation; the result was not returned.', { code: 'run-resource-fenced', status: 403 });
     }
     return result;
   }
 
-  /* ------------------------------------------------------------------ 给宿主的口子 */
+  /* ------------------------------------------------------------------ Host entrypoints */
 
   /**
-   * 关掉一个对话的浏览器并等到进程真的退出。对话被设为私有、被删时由宿主调。
-   * @param {{ projectId: string, conversationId: string }} scope 来自鉴权与服务端
+   * Close a chat's browser and wait until processes truly exit. Called by host when chat is set to private or deleted.
+   * @param {{ projectId: string, conversationId: string }} scope From authentication and server
    * @param {{ reason?: 'private'|'stop'|'agent-off'|'conversation-deleted'|'project-deleted'|string, removeProfile?: boolean }} [o]
    * @returns {Promise<{ wasOpen: boolean, exited: boolean, alivePids: number[], profileRemoved: boolean }>}
    */
@@ -446,21 +471,21 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     const dir = hostedBrowserDir(dataDir, scope);
     const key = keyOf(scope);
     const pendingLaunch = launching.get(key);
-    if (pendingLaunch) { try { await pendingLaunch; } catch { /* 没起来就没有要关的 */ } }
+    if (pendingLaunch) { try { await pendingLaunch; } catch { /* Never launched, nothing to close */ } }
     const prior = closingByKey.get(key);
     const task = (async () => {
       let result = { exited: true, alivePids: [], profileRemoved: false };
       const live = sessions.get(key);
-      // 已经被摘掉的(登记器收回、闲置关、换下):它那次关闭可能还在进行,也可能没拿到退出凭据——都以它为准,不拿缺省值充数
+      // Already detached (reclaimed by registry, closed on idle, swapped out): that closing may still be in progress, or it may not have obtained an exit receipt: defer to its result rather than filling in defaults
       const last = live ? null : [...retired].filter((e) => e.key === key).pop() ?? null;
       if (live) result = await retire(live, { reason, graceful: false, removeProfile });
       else if (last) {
         try { result = await retire(last, { reason, graceful: false, removeProfile }); } catch { result = { exited: false, alivePids: [], profileRemoved: false }; }
         result = { ...result, exited: settled(last), alivePids: last.lastClose?.alivePids ?? result.alivePids ?? [] };
-      } else if (prior) { try { await prior; } catch { /* 那次关闭自己记了结果 */ } }
+      } else if (prior) { try { await prior; } catch { /* That close recorded its own result */ } }
       let profileRemoved = result.profileRemoved === true;
       if (removeProfile && !profileRemoved) {
-        // 浏览器没开着,目录是以前留下的:先确认没有残留进程占着,再删
+        // Browser not open, directory left from earlier: verify no lingering processes are occupying it before deleting
         await reapOrphan(dir, { timeoutMs: cfg.closeMs });
         profileRemoved = await removeSessionData(dir, { keepRev: !removeAllFor(reason), timeoutMs: cfg.closeMs });
       }
@@ -470,9 +495,9 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     return task;
   }
 
-  /** 项目被删:它名下所有对话的浏览器关掉、目录删掉 */
+  /** Project deleted: close browsers and delete directories for all chats under it */
   async function removeProject(projectId) {
-    if (typeof projectId !== 'string' || !ID_RE.test(projectId)) throw new HostedBrowserError('项目的 id 不合法。', { code: 'bad-scope' });
+    if (typeof projectId !== 'string' || !ID_RE.test(projectId)) throw new HostedBrowserError('Invalid project id.', { code: 'bad-scope' });
     const mine = [...sessions.values()].filter((e) => e.projectId === projectId);
     const results = await Promise.all(mine.map((e) => retire(e, { reason: 'project-deleted', graceful: false, removeProfile: true })));
     const dir = path.join(root, dirName(projectId));
@@ -480,22 +505,26 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
       for (const conversation of fs.readdirSync(dir, { withFileTypes: true })) {
         if (conversation.isDirectory()) await reapOrphan(path.join(dir, conversation.name), { timeoutMs: cfg.closeMs });
       }
-    } catch { /* 目录没有 */ }
+    } catch { /* Directory does not exist */ }
     const removed = await removeDirFully(dir, { timeoutMs: cfg.closeMs });
     return { closed: results.length, exited: results.every((r) => r.exited), removed };
   }
 
   /**
-   * 这个运行上下文名下的浏览器进程树是不是已经确实没了(给运行资源登记器的 `childTreeWitness` 用)。
-   * 还开着、关闭没拿到退出凭据(记下的进程号还有活着的、进程组里还有活进程)的,都回 false;只有每一次关闭都核到「都退了」才回 true。
+   * Whether the browser process tree under this execution context is indeed gone (used by
+   * the runtime resource registry's `childTreeWitness`).
+   * Returns false if still open or close did not obtain exit proof (recorded PIDs are still alive,
+   * or living processes remain in the process group); returns true only when every close verified
+   * that "all have exited".
    */
   async function treeClosed(context) {
     const ck = contextKey(context);
     for (const entry of sessions.values()) if (entry.bound.has(ck)) return false;
     for (const entry of [...retired]) {
       if (!entry.contexts.has(ck)) continue;
-      try { await entry.closed; } catch { /* 结果记在 lastClose 里 */ }
-      // 关了却没核到「都退了」:重核一次,还是核不到就照实回 false(登记器的回执保持未完成)
+      try { await entry.closed; } catch { /* Result recorded in lastClose */ }
+      // Closed but failed to verify "all have exited": re-verify once; if still unverified, return false
+      // (the registry receipt remains incomplete)
       if (!settled(entry)) return false;
       retired.delete(entry);
     }
@@ -503,8 +532,10 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
   }
 
   /**
-   * 这个对话的云端浏览器此刻开着的网页地址(`hosted-handoff.mjs` 的 `web_handoff` 只用这一个口子)。
-   * 先过这一轮的授权;没有开着的页、浏览器已经退了回 null。只回地址,不回页面内容。
+   * The web page URL currently open in this chat's cloud browser (used exclusively by
+   * `web_handoff` in `hosted-handoff.mjs`).
+   * First checks authorization for this round; returns null if no page is open or the browser has
+   * already exited. Returns only the URL, not page content.
    */
   async function handoffTarget(context) {
     await resources.authorize(context, 'read');
@@ -514,7 +545,10 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     return url && /^https?:///i.test(url) ? { url } : null;
   }
 
-  /** 一个对话的浏览器的出网记录(每个目标放行还是拒绝;给探针、测试与排障取证。主机名只在这里,不进服务日志) */
+  /**
+   * Browser egress log for a chat (whether each target is allowed or denied; for probes, tests,
+   * and troubleshooting forensics. Hostnames stay here only and do not enter service logs).
+   */
   function egressJournal(scope) {
     const entry = sessions.get(keyOf(scope));
     return entry ? entry.session.proxy.journal() : [];
@@ -536,7 +570,8 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
   }
 
   /**
-   * 关闭:不再接新调用,所有浏览器整棵进程树杀掉,等进程号真的查不到、代理关掉。用户数据目录留着。
+   * Close: accepts no new calls, kills the entire process tree of all browsers, waits until PIDs
+   * can no longer be found, and closes proxies. Keeps user data directories.
    * @returns {Promise<{ childrenClosed: boolean, streamsClosed: boolean, workPending: number }>}
    */
   function close(reason = 'close') {

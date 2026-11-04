@@ -1,57 +1,67 @@
 /*
- * 全长导出逐字节相同 —— 基线对账探针(C1「挂载算式统一」/ H7 的验收工具)
+ * Full-length export byte-for-byte identical: baseline reconciliation probe
+ * (acceptance check tool for C1 "Unified Mount Formulas" / H7)
  *
- * 干两件事:
- *   1. run     —— 在指定的仓库树里跑一趟**全长** PNG 导出(不出视频),产物是 <out>/frames/%06d.png;
- *   2. compare —— 把两个 frames 目录逐帧比 sha256,报第一处不同、并对不同的帧数像素差。
+ * Does two things:
+ *   1. run     : runs one pass of **full-length** PNG export in the specified repository tree
+ *                (no video), outputting to <out>/frames/%06d.png;
+ *   2. compare : compares two frames directories frame-by-frame via sha256, reports the first
+ *                difference, and counts pixel differences on differing frames.
  *
- * 为什么 run 要带 --tree:基线跑的必须是 **HEAD 那棵树自己的** scripts/export-frames.mjs(引擎在 server/bakery/)(引擎在 server/bakery/)
- * (这次重构改的就是它),拿工作树的脚本去渲基线就不是 apples-to-apples 了。
- * 所以 run 只负责 `node scripts/export-frames.mjs …`,cwd 指到哪棵树就用哪棵树的代码。
- * cwd 还决定素材目录:server/bakery/media.mjs 的 mediaRootDir() = <cwd>/out/media
- * (PROMPTCUT_EXPORT_DIR 没设时),/@media/<文件名> 两边都得有那份文件。
+ * Why run requires --tree: the baseline must run **HEAD tree's own** scripts/export-frames.mjs
+ * (engine in server/bakery/)(engine in server/bakery/) (which is what this refactor modifies);
+ * rendering the baseline with the working tree's script wouldn't be apples-to-apples.
+ * So run is only responsible for `node scripts/export-frames.mjs …`; whichever tree cwd points to,
+ * that tree's code is used.
+ * cwd also determines the asset directory: mediaRootDir() in server/bakery/media.mjs = <cwd>/out/media
+ * (when PROMPTCUT_EXPORT_DIR is unset); both sides must have that file at /@media/<filename>.
  *
- * ───────────── 这一轮实际跑的命令(照抄即可复现) ─────────────
+ * ───────────── Commands actually run in this round (copy verbatim to reproduce) ─────────────
  *
- * 前置:
- *   # 1) HEAD 的工作树(不动主树的 git 状态)
+ * Prerequisites:
+ *   # 1) HEAD working tree (leaves main tree git state untouched)
  *   git worktree add <scratch>/pc-head 0ba58cb
  *   cmd /c mklink /J <scratch>\pc-head\node_modules C:\Users\admin\Documents\PromptCut\node_modules
- *   # 2) 素材(ffmpeg testsrc2),两棵树的 out/media 各放一份,按文件名取
+ *   # 2) Assets (ffmpeg testsrc2): place one copy in each tree's out/media, fetched by filename
  *   ffmpeg -f lavfi -i "testsrc2=s=320x180:r=30:d=8" -c:v libx264 -pix_fmt yuv420p -g 30 -y pc-baseline-fixture.mp4
- *   cp pc-baseline-fixture.mp4 <主树>/out/media/ ; cp pc-baseline-fixture.mp4 <scratch>/pc-head/out/media/
- *   # 3) 两台 dev server(避开用户的 5190 / 5197;TEMP 指到 scratch,别覆盖全局 port.json)
+ *   cp pc-baseline-fixture.mp4 <main-tree>/out/media/ ; cp pc-baseline-fixture.mp4 <scratch>/pc-head/out/media/
+ *   # 3) Two dev servers (avoid user's 5190 / 5197; point TEMP to scratch, avoid overwriting global port.json)
  *   cd <scratch>/pc-head && TEMP=<scratch>/tmp-head TMP=<scratch>/tmp-head npx vite --port 5215 --strictPort --host 127.0.0.1
- *   cd <主树>          && TEMP=<scratch>/tmp-work TMP=<scratch>/tmp-work npx vite --port 5216 --strictPort --host 127.0.0.1
- *   curl -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5215/@media/pc-baseline-fixture.mp4   # 两边都要 200
+ *   cd <main-tree>       && TEMP=<scratch>/tmp-work TMP=<scratch>/tmp-work npx vite --port 5216 --strictPort --host 127.0.0.1
+ *   curl -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5215/@media/pc-baseline-fixture.mp4   # both sides must return 200
  *
- * 基线(HEAD 那棵树的脚本 + 5215):
+ * Baseline (HEAD tree script + 5215):
  *   node scripts/probes/export-baseline-compare.mjs run \
  *     --tree <scratch>/pc-head --origin http://127.0.0.1:5215 \
  *     --project <scratch>/export-fixture/project.json --out <scratch>/export-fixture/baseline
  *
- * 候选(工作树的脚本 + 5216):
+ * Candidate (working tree script + 5216):
  *   node scripts/probes/export-baseline-compare.mjs run \
  *     --origin http://127.0.0.1:5216 \
  *     --project <scratch>/export-fixture/project.json --out <scratch>/export-fixture/candidate
  *
- * 比对(不同即退出码 1):
+ * Compare (exit code 1 if different):
  *   node scripts/probes/export-baseline-compare.mjs \
  *     --baseline <scratch>/export-fixture/baseline/frames \
  *     --candidate <scratch>/export-fixture/candidate/frames
  *
- * run 之后接着比,一条命令也行:run 里同时给 --baseline。
+ * Comparing immediately after run in a single command is also supported: provide --baseline to run as well.
  *
- * ───────────── 对账口径(docs/guides/compare-pitfalls.md)─────────────
- * - 验收口径是**逐字节**(sha256):PNG 的字节相同 ⟹ 像素相同。像素差只在不同的帧上再算一次,
- *   用来区分「抗锯齿末位差几个像素」和「真的画错了」——两者都算不通过,但结论不一样。
- * - 两边必须同 fps、同分片数、同一条动画路径。这里一律 --workers 1:分片计划(shardPlan)
- *   本身也在重构范围内,分片数不同会把「分片边界重挂载」的差异混进来。
- * - --no-video:验收比的是帧,不是编码产物;ffmpeg / prores 不进对账。
- * - Chrome 参数(--disable-gpu、--font-render-hinting=none、软件光栅化…)都在 server/bakery/chrome.mjs
- *   的 CHROME_ARGS 里,两棵树各自用自己的那份——这正是要比的东西之一,不要在这里覆盖。
+ * ───────────── Reconciliation criteria (docs/guides/compare-pitfalls.md) ─────────────
+ * - Acceptance criteria is **byte-for-byte** (sha256): identical PNG bytes ⟹ identical pixels.
+ *   Pixel differences are recalculated only on differing frames to distinguish between "last-digit
+ *   anti-aliasing differing by a few pixels" and "genuinely drawn wrong": both count as failure,
+ *   but the conclusions differ.
+ * - Both sides must have identical fps, shard count, and animation path. Use --workers 1 across the
+ *   board here: the sharding plan (shardPlan) itself is also within the refactor scope, and differing
+ *   shard counts would introduce differences from "remounting at shard boundaries".
+ * - --no-video: acceptance checks compare frames, not encoded outputs; ffmpeg / prores are not part
+ *   of reconciliation.
+ * - Chrome flags (--disable-gpu, --font-render-hinting=none, software rasterization, etc.) are all
+ *   in CHROME_ARGS in server/bakery/chrome.mjs; each tree uses its own copy: this is one of the
+ *   things being compared, so do not override them here.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -79,18 +89,18 @@ function parseArgs(argv) {
     else if (a === '--help' || a === '-h') opts.help = true;
     else rest.push(a);
   }
-  if (rest.length) throw new Error('看不懂的参数:' + rest.join(' '));
+  if (rest.length) throw new Error('Unrecognized arguments:' + rest.join(' '));
   if (!opts.mode) opts.mode = opts.origin ? 'run' : 'compare';
   return opts;
 }
 
-/** 导出页地址:项目用 data: URL 带进去,和 scripts/verify-*.mjs 一个写法 */
+/** Export page URL: project is passed in via data: URL, same pattern as scripts/verify-*.mjs */
 export function exportUrlOf(origin, project) {
   const timeline = 'data:application/json,' + encodeURIComponent(JSON.stringify(project));
   return `${origin.replace(/\/$/, '')}/?export=1&timeline=${encodeURIComponent(timeline)}`;
 }
 
-/** 跑一趟全长 PNG 导出。cwd = 哪棵树,就用哪棵树的 scripts/export-frames.mjs 和 out/media */
+/** Run one pass of full-length PNG export. Whichever tree cwd points to, use that tree's scripts/export-frames.mjs and out/media */
 export async function runExport({ tree, origin, project, out, fps, workers, frames }) {
   const proj = JSON.parse(await fsp.readFile(project, 'utf8'));
   const url = exportUrlOf(origin, proj);
@@ -100,7 +110,7 @@ export async function runExport({ tree, origin, project, out, fps, workers, fram
   await fsp.rm(path.join(out, 'frames'), { recursive: true, force: true });
   await fsp.mkdir(out, { recursive: true });
   console.log(`[run] cwd=${tree}`);
-  console.log(`[run] node ${args[0]} --url "<${origin}/?export=1&timeline=data:…(${url.length} 字符)>" ${args.slice(3).join(' ')}`);
+  console.log(`[run] node ${args[0]} --url "<${origin}/?export=1&timeline=data:…(${url.length} characters)>" ${args.slice(3).join(' ')}`);
   const t0 = process.hrtime.bigint();
   const code = await new Promise((resolve, reject) => {
     const p = spawn(process.execPath, args, { cwd: tree, stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true });
@@ -110,16 +120,16 @@ export async function runExport({ tree, origin, project, out, fps, workers, fram
   const secs = Number(process.hrtime.bigint() - t0) / 1e9;
   const dir = path.join(out, 'frames');
   const n = fs.existsSync(dir) ? (await fsp.readdir(dir)).filter((f) => f.endsWith('.png')).length : 0;
-  console.log(`[run] 退出码 ${code},${n} 帧,${secs.toFixed(1)} s → ${dir}`);
-  if (code !== 0) throw new Error(`export-frames 退出码 ${code}`);
+  console.log(`[run] exit code ${code}, ${n} frames, ${secs.toFixed(1)} s → ${dir}`);
+  if (code !== 0) throw new Error(`export-frames exit code ${code}`);
   return { framesDir: dir, count: n, seconds: secs };
 }
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
-/** 给的是 <out> 还是 <out>/frames 都认 */
+/** Accepts either <out> or <out>/frames */
 function framesDirOf(dir) {
-  if (!fs.existsSync(dir)) throw new Error('目录不存在:' + dir);
+  if (!fs.existsSync(dir)) throw new Error('Directory does not exist:' + dir);
   const hasPng = fs.readdirSync(dir).some((f) => /\.(png|jpe?g|webp)$/i.test(f));
   if (!hasPng && fs.existsSync(path.join(dir, 'frames'))) return path.join(dir, 'frames');
   return dir;
@@ -127,18 +137,18 @@ function framesDirOf(dir) {
 
 async function listFrames(dir) {
   const names = (await fsp.readdir(dir)).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).sort();
-  if (!names.length) throw new Error('目录里没有帧:' + dir);
+  if (!names.length) throw new Error('No frames in the directory:' + dir);
   return names;
 }
 
-/** 两张 PNG 的像素差。返回不同像素数、最大通道差、以及第一处不同的坐标 */
+/** Pixel difference between two PNGs. Returns differing pixel count, max channel difference, and first differing coordinates */
 async function pixelDiff(fileA, fileB) {
   const { PNG } = await import('pngjs');
   let a, b;
   try { a = PNG.sync.read(await fsp.readFile(fileA)); b = PNG.sync.read(await fsp.readFile(fileB)); }
-  catch (e) { return { error: 'PNG 读不出来:' + e.message }; }
+  catch (e) { return { error: 'Cannot read PNG:' + e.message }; }
   if (a.width !== b.width || a.height !== b.height) {
-    return { error: `尺寸不同 ${a.width}x${a.height} vs ${b.width}x${b.height}` };
+    return { error: `Different sizes ${a.width}x${a.height} vs ${b.width}x${b.height}` };
   }
   let diffPixels = 0, maxChannel = 0, first = null;
   for (let i = 0; i < a.data.length; i += 4) {
@@ -158,12 +168,12 @@ export async function compare(baselineDir, candidateDir, { maxDiffFrames = 5 } =
   candidateDir = framesDirOf(candidateDir);
   const A = await listFrames(baselineDir);
   const B = await listFrames(candidateDir);
-  console.log(`基线   ${baselineDir}  ${A.length} 帧`);
-  console.log(`候选   ${candidateDir}  ${B.length} 帧`);
+  console.log(`Baseline  ${baselineDir}  ${A.length} frames`);
+  console.log(`Candidate ${candidateDir}  ${B.length} frames`);
   const onlyA = A.filter((f) => !B.includes(f));
   const onlyB = B.filter((f) => !A.includes(f));
-  if (onlyA.length) console.log(`只在基线里的帧(${onlyA.length}):${onlyA.slice(0, 10).join(', ')}`);
-  if (onlyB.length) console.log(`只在候选里的帧(${onlyB.length}):${onlyB.slice(0, 10).join(', ')}`);
+  if (onlyA.length) console.log(`Frames only in the baseline (${onlyA.length}): ${onlyA.slice(0, 10).join(', ')}`);
+  if (onlyB.length) console.log(`Frames only in the candidate (${onlyB.length}): ${onlyB.slice(0, 10).join(', ')}`);
   const shared = A.filter((f) => B.includes(f));
   const diffs = [];
   let identical = 0;
@@ -173,21 +183,21 @@ export async function compare(baselineDir, candidateDir, { maxDiffFrames = 5 } =
     if (ba.length === bb.length && ba.equals(bb)) { identical++; continue; }
     diffs.push({ name, shaA: sha256(ba), shaB: sha256(bb), bytesA: ba.length, bytesB: bb.length });
   }
-  console.log(`\n逐字节:相同 ${identical}/${shared.length}${diffs.length ? `,不同 ${diffs.length}` : ''}`);
+  console.log(`\nByte by byte: identical ${identical}/${shared.length}${diffs.length ? `, different ${diffs.length}` : ''}`);
   if (diffs.length) {
-    console.log(`第一处不同:${diffs[0].name}`);
+    console.log(`First difference: ${diffs[0].name}`);
     for (const d of diffs.slice(0, maxDiffFrames)) {
       const px = await pixelDiff(path.join(baselineDir, d.name), path.join(candidateDir, d.name));
       const head = `  ${d.name}  ${d.bytesA}B/${d.bytesB}B  sha ${d.shaA.slice(0, 12)}…/${d.shaB.slice(0, 12)}…`;
-      if (px.error) console.log(head + '  像素差:' + px.error);
-      else console.log(head + `  像素差 ${px.diffPixels}/${px.total}` +
-        `(${(px.diffPixels / px.total * 100).toFixed(4)}%)最大通道差 ${px.maxChannel}` +
-        (px.first ? ` 首处 (${px.first.x},${px.first.y})` : ''));
+      if (px.error) console.log(head + '  Pixel difference:' + px.error);
+      else console.log(head + `  Pixel difference ${px.diffPixels}/${px.total}` +
+        ` (${(px.diffPixels / px.total * 100).toFixed(4)}%) max channel difference ${px.maxChannel}` +
+        (px.first ? ` first at (${px.first.x},${px.first.y})` : ''));
     }
-    if (diffs.length > maxDiffFrames) console.log(`  …另有 ${diffs.length - maxDiffFrames} 帧不同:${diffs.slice(maxDiffFrames, maxDiffFrames + 20).map((d) => d.name).join(', ')}`);
+    if (diffs.length > maxDiffFrames) console.log(`  …and ${diffs.length - maxDiffFrames} more frames differ: ${diffs.slice(maxDiffFrames, maxDiffFrames + 20).map((d) => d.name).join(', ')}`);
   }
   const ok = diffs.length === 0 && !onlyA.length && !onlyB.length && A.length === B.length;
-  console.log(ok ? '\n✅ 全长导出逐字节相同' : '\n❌ 不通过');
+  console.log(ok ? '\n✅ Full-length export is byte-identical' : '\n❌ Failed');
   return { ok, total: shared.length, identical, diffs };
 }
 
@@ -201,12 +211,12 @@ if (isMain) {
   try {
     let candidateDir = opts.candidate;
     if (opts.mode === 'run') {
-      if (!opts.origin || !opts.project || !opts.out) throw new Error('run 需要 --origin --project --out');
+      if (!opts.origin || !opts.project || !opts.out) throw new Error('run requires --origin --project --out');
       const r = await runExport(opts);
       candidateDir = r.framesDir;
     }
     if (opts.baseline) {
-      if (!candidateDir) throw new Error('compare 需要 --candidate(或先 run)');
+      if (!candidateDir) throw new Error('compare requires --candidate (or run first)');
       const r = await compare(opts.baseline, candidateDir, { maxDiffFrames: opts.maxDiffFrames });
       process.exit(r.ok ? 0 : 1);
     }

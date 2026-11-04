@@ -3,9 +3,11 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 3D打字机终端:展示一段代码或命令逐字敲出的过程。
- * 从 terminal-3d 拆出,基于时间的 t 参数直接计算字符数,而不是内部 rAF。
- * 进场:按给定的 cps 逐字打字。
+ * 3D typewriter terminal: displays the process of typing out a piece of code or command character
+ * by character.
+ * Extracted from terminal-3d, directly calculates character count based on time parameter t rather
+ * than internal rAF.
+ * Entrance: types character by character according to the given cps.
  */
 interface Params {
   file: string;
@@ -105,10 +107,10 @@ function MediaTerminalPart({ params, width, height, t }: PartProps<Params>) {
 
 export const mediaTerminal: PartDef<Params> = {
   id: "media-terminal",
-  name: "终端3D",
-  description: "3D终端打字机",
-  useWhen: "演示命令行、代码或技术操作时使用。**行首符号决定颜色**($ 白、# 灰、❯ 青、✓ 绿),排版一半靠它;播放时长 = 总字符数 / cps,clip 太短会打不完;普通文字打字机不要用它。",
-  tags: ["终端", "命令行", "代码", "打字机"],
+  name: "Terminal 3D",
+  description: "3D terminal typewriter",
+  useWhen: "Use when demonstrating command lines, code or technical operations. **The leading symbol of a line determines its color** ($ white, # gray, ❯ cyan, ✓ green), and the layout depends on it half the time. Playback duration = total characters / cps, and a clip that is too short will not finish typing. Do not use it for ordinary typewriter text.",
+  tags: ["terminal", "command line", "code", "Typewriter"],
   role: "media",
   from: "terminal-3d",
   defaults: {
@@ -118,10 +120,10 @@ export const mediaTerminal: PartDef<Params> = {
     size: 0,
   },
   controls: [
-    { key: "file", label: "文件名", type: "text" },
-    { key: "lines", label: "行(|分隔)", type: "text" },
-    { key: "cps", label: "每秒字符", type: "number", min: 5, max: 100, step: 1 },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 120, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
+    { key: "file", label: "File name", type: "text" },
+    { key: "lines", label: "Lines (separated by |)", type: "text" },
+    { key: "cps", label: "Characters per second", type: "number", min: 5, max: 100, step: 1 },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 120, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
   ],
   defaultFrame: { x: 960, y: 540, w: 1200, h: 800, anchor: [0.5, 0.5] },
   settleMs: (p) => (p.lines.split("|").reduce((sum, line) => sum + line.length, 0) / (p.cps > 0 ? p.cps : 20)) * 1000,

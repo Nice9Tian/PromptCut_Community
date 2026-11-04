@@ -1,4 +1,4 @@
-/* SKILL 对话框(登记到桌面 APP、接进来的会话、进入 SKILL)。基础壳用 ui/toolbar.css 的 .pc-dialog,这里只放它自己的东西 */
+/* SKILL dialog (register to the desktop app, connected sessions, enter SKILL). The base shell uses .pc-dialog from ui/toolbar.css; only its own things go here */
 .pc-skill-dialog {
   width: 560px;
   max-width: calc(100vw - 32px);
@@ -12,14 +12,14 @@
   color: var(--ui-fg-muted);
 }
 
-/* 两张登记卡:Claude Code / Codex */
+/* Two registration cards: Claude Code / Codex */
 .pc-skill-providers {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
 .pc-skill-provider {
-  /* 网格项缺省 min-width:auto,长路径会把卡撑出对话框 */
+  /* Grid items default to min-width:auto, so a long path would stretch the card out of the dialog */
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -96,7 +96,7 @@
 }
 .pc-skill-msg.is-err { color: var(--ui-danger); }
 
-/* 登记卡里的状态、配置文件路径、两个按钮 */
+/* The status, the config file path and the two buttons inside a registration card */
 .pc-skill-target-state { font-size: 12px; line-height: 1.5; }
 .pc-skill-target-state.is-ok { color: var(--ui-success); }
 .pc-skill-target-state.is-warn { color: var(--ui-warning, var(--ui-fg)); }
@@ -110,7 +110,7 @@
 }
 .pc-skill-target-acts { display: flex; gap: 6px; margin-top: 4px; }
 
-/* 接进来的桌面 APP 会话:一行一个 */
+/* Desktop app sessions that have connected: one per row */
 .pc-skill-sessions { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
 .pc-skill-session {
   display: flex;

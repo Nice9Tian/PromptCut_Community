@@ -2,24 +2,24 @@ import { actions, getState } from "../../store/project";
 import { useTimelineContext } from "./TimelineContext";
 
 /**
- * 序列换序。拖行头的时候:
- * - 被拖的那条跟着指针走(不带过渡,手感是「粘在手上」)
- * - 让位的那几条按 trackH 平移,带过渡 → 这就是「提前预览 + 滑动动画」
- * - 松手先把被拖的那条滑到目标格再提交,避免落位时闪一下
+ * Track reordering. While dragging a row header:
+ * - the dragged row follows the pointer (no transition, so it feels "stuck to the hand")
+ * - the rows making way shift by trackH, with a transition → this is the "early preview + sliding animation"
+ * - on release, the dragged row first slides to the target slot and then commits, avoiding a flash when it lands
  *
- * 行头和轨道行用的是同一份偏移(useRowOffset),所以整条序列一起动。
+ * The row header and the track row use the same offset (useRowOffset), so the whole track moves together.
  */
 export interface ReorderState {
   id: string;
   from: number;
   to: number;
-  /** 被拖那条相对原位的位移(px) */
+  /** Displacement (px) of the dragged row relative to its original position */
   dy: number;
-  /** 松手后的归位阶段:这时被拖的那条也带过渡 */
+  /** Settling phase after release: the dragged row gets a transition too at this point */
   settling?: boolean;
 }
 
-/** 松手归位的动画时长(ms) */
+/** Duration (ms) of the settle animation after release */
 export const SETTLE_MS = 140;
 
 export function useReorderDrag() {
@@ -27,7 +27,7 @@ export function useReorderDrag() {
 
   const start = (e: React.PointerEvent, index: number, trackId: string) => {
     if (e.button !== 0) return;
-    // 行头上的按钮、改名输入框不触发拖动
+    // Buttons on the row header and the rename input do not start a drag
     if ((e.target as HTMLElement).closest("button, input")) return;
     e.preventDefault();
     const el = e.currentTarget as HTMLElement;
@@ -43,14 +43,14 @@ export function useReorderDrag() {
 
     const onMove = (ev: PointerEvent) => {
       const { dy, to } = compute(ev.clientY);
-      // 抖动一两像素不算拖动,免得点一下就进换序态
+      // A jitter of a pixel or two does not count as a drag, so a single click doesn't enter the reorder state
       if (!moved && Math.abs(dy) < 3) return;
       if (!moved) {
         moved = true;
         try {
           el.setPointerCapture(ev.pointerId);
         } catch {
-          // 没捕获也能拖
+          // Dragging works without capture too
         }
       }
       setReorder({ id: trackId, from: index, to, dy });
@@ -63,11 +63,11 @@ export function useReorderDrag() {
       try {
         el.releasePointerCapture(ev.pointerId);
       } catch {
-        // 已经放开了
+        // Already released
       }
       if (!moved) return;
       const { to } = compute(ev.clientY);
-      // 先滑到目标格(带过渡),动画走完再改文档
+      // Slide to the target slot first (with a transition), and change the document after the animation finishes
       setReorder({ id: trackId, from: index, to, dy: (to - index) * trackH, settling: true });
       window.setTimeout(() => {
         if (to !== index) actions.moveTrack(trackId, to);
@@ -83,7 +83,7 @@ export function useReorderDrag() {
   return { start, reorder };
 }
 
-/** 这一行现在该偏移多少(行头和轨道行共用) */
+/** How much this row should be offset right now (shared by the row header and the track row) */
 export function useRowOffset(index: number, trackId: string) {
   const { reorder, trackH } = useTimelineContext();
   if (!reorder) return { y: 0, dragging: false, animated: true };

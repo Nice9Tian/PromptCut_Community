@@ -1,19 +1,22 @@
 /**
- * 云端 AI 提供方的注册**必须同步、而且在入口**。
+ * Registration of cloud AI providers **must be synchronous, and at the entry point**.
  *
- * 为什么值得单独一条守门：`src/ai/extensions.ts` 那几个 hook 是转发给 `currentProvider` 的，
- * 社区版缺省几乎不调 hook、云端真实现调一大串。**提供方一旦在两次渲染之间被换掉，
- * 同一个组件的 hook 数量就变了**，React 当场抛：
+ * Why this deserves a dedicated gatekeeper: the hooks in `src/ai/extensions.ts` forward to
+ * `currentProvider`; the community edition default barely calls hooks, while the cloud
+ * implementation calls a whole chain. **Once the provider is swapped between two renders, the
+ * number of hooks for the same component changes**, and React throws on the spot:
  *
  *     React has detected a change in the order of Hooks called by AiPanel
  *     TypeError: Cannot read properties of null (reading 'getSnapshot')
  *
- * 2026-10-28 的局域网端到端探针就是这么崩的 —— `AiPanel` 抛出去把半棵树带走，
- * 协作设置那一段根本没渲染，探针等不到邀请链接（而服务端的 invite-create 其实已经成了）。
- * 当时 `extensionsBrowser.ts` 写的是「模块被引到就 void 一个异步 import」，正是在造中途替换。
+ * That is how the LAN end-to-end probe crashed on 2026-10-28: `AiPanel` threw and took down half the
+ * tree; the collaboration settings section was not rendered at all, and the probe never got the
+ * invite link (even though invite-create on the server had actually succeeded). At the time,
+ * `extensionsBrowser.ts` was written as "void an async import as soon as the module is referenced",
+ * which was precisely causing mid-flight replacement.
  *
- * tsc、五道闸门、八千多条单测、两个构建**全都是绿的** —— 这个坑只有真把界面渲染出来才看得见。
- * 所以这里把形状钉住。
+ * tsc, five gates, over eight thousand unit tests, two builds **were all green**: this pitfall is
+ * only visible when the UI is actually rendered. So the shape is pinned down here.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -24,45 +27,47 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
-test("AIEXT-1 云端 AI 表是静态 import，不许异步换上去", () => {
+test("AIEXT-1 The cloud AI table is a static import and must not be swapped in asynchronously", () => {
   const src = read("src/ai/extensionsBrowser.ts");
   assert.ok(
     src.includes('import * as cloudAi from "#promptcut-cloud-ai"'),
-    "要用静态 import 取云端 AI 表：静态的才会在本模块函数体之前求值完，不存在「之后才换上」",
+    "Use a static import to get the cloud AI table: only a static import finishes evaluating before this module's function bodies run, so there is no \"swapped in later\"",
   );
   assert.ok(
     !src.includes("await import(") && !src.includes("void ensure") && !src.includes("Promise"),
-    "这个文件里不许有异步加载：异步 = 渲染之后才换提供方 = 同一个组件的 hook 数量变化 = React 抛错",
+    "No async loading is allowed in this file: async = provider swapped in after render = the same component's hook count changes = React throws",
   );
 });
 
-test("AIEXT-2 注册在入口，不挂在组件上", () => {
+test("AIEXT-2 Registration happens at the entry point, not on a component", () => {
   const boot = read("src/online/pageBoot.ts");
   assert.ok(
     boot.includes("registerAiCloudProviderFromTable()"),
-    "页面启动序列里要调一次 registerAiCloudProviderFromTable()",
+    "registerAiCloudProviderFromTable() must be called once in the page boot sequence",
   );
 
-  // 组件自己不许负责注册：CloudAiPanel 深在树里、还可能懒加载，
-  // 挂在它上面的话注册仍然可能晚于 AiPanel 的首次渲染
+  // Components are not allowed to handle registration themselves: CloudAiPanel is deep in the tree
+  // and may be lazy-loaded; if attached to it, registration could still happen later than AiPanel's
+  // first render
   const panel = read("src/editor/right/CloudAiPanel.tsx");
   assert.ok(
     !panel.includes("extensionsBrowser"),
-    "CloudAiPanel 不许引 extensionsBrowser：注册要在入口，不是「谁 import 到就注册」",
+    "CloudAiPanel must not import extensionsBrowser: registration belongs at the entry point, not \"whoever imports it registers\"",
   );
 });
 
-test("AIEXT-3 注册排在渲染之前", () => {
-  // pageBoot 由 main.tsx 的第二行 import（紧跟渲染时钟），而 createRoot 在 main.tsx 末尾，
-  // 所以只要注册写在 pageBoot 里就一定早于渲染。这条盯住 main.tsx 的那个次序没被人调乱。
+test("AIEXT-3 Registration is ordered before rendering", () => {
+  // pageBoot is imported on line 2 of main.tsx (right after the render clock), while createRoot is at
+  // the end of main.tsx; so as long as registration is in pageBoot, it is guaranteed to precede
+  // rendering. This keeps watch that the order in main.tsx is not messed up.
   const main = read("src/main.tsx");
   const bootAt = main.indexOf("./online/pageBoot");
   const renderAt = main.indexOf("createRoot(");
-  assert.ok(bootAt >= 0, "main.tsx 不再引 ./online/pageBoot 了？启动序列整个没了");
-  assert.ok(renderAt >= 0, "main.tsx 里找不到 createRoot(");
+  assert.ok(bootAt >= 0, "Does main.tsx no longer import ./online/pageBoot? The whole boot sequence is gone");
+  assert.ok(renderAt >= 0, "createRoot( not found in main.tsx");
   assert.ok(
     bootAt < renderAt,
-    "pageBoot 要排在 createRoot 之前：提供方必须在 React 渲染任何东西之前就定下来",
+    "pageBoot must come before createRoot: the provider must be settled before React renders anything",
   );
 });
 

@@ -1,36 +1,47 @@
 /**
- * 缺省托管地址（契约 `docs/plan/shared-project-contract.md` 第 3 节、验收 SP6）。
+ * Default hosted URL (contract `docs/plan/shared-project-contract.md` section 3, acceptance check SP6).
  *
- * 托管端的地址（现在的域名，以及换下来的 IP 与 sslip.io 名字）只写在闭源那份产品声明里（`product.mjs`；公开版没有托管端，
- * 这里拿到的是 `null`）。守门：闭源一侧 `cloud/server/test/hosted-migrate.test.mjs`，公开树 `community-boundary.test.mjs` 的 G6。
- * 别处要托管地址，一律经 `resolveHostedUrl` 取。
+ * Addresses of the hosted side (current domain, as well as replaced IPs and sslip.io names) are
+ * written only in the closed-source product declaration (`product.mjs`; public release has no hosted
+ * side, so it receives `null` here). Gatekeeper: `cloud/server/test/hosted-migrate.test.mjs` on the
+ * closed-source side, G6 in `community-boundary.test.mjs` in the public tree. Anywhere else requiring
+ * the hosted URL must obtain it via `resolveHostedUrl`.
  *
- * 覆盖顺序（先到先得）：
- * 1. 界面上改过的值（C6.5 接上，调用方以 `ui` 传进来）；
- * 2. 否则环境变量 `PROMPTCUT_HOSTED_URL`；
- * 3. 否则 `DEFAULT_HOSTED_URL`。这一版没有托管端时它是空串，调用方按「没有托管端」跳过，不连任何地方。
+ * Override order (highest priority first):
+ * 1. Value modified in the UI (wired in C6.5, passed in by the caller via `ui`);
+ * 2. Otherwise environment variable `PROMPTCUT_HOSTED_URL`;
+ * 3. Otherwise `DEFAULT_HOSTED_URL`. When this version has no hosted side, it is an empty string,
+ *    and caller skips it as "no hosted side" without connecting anywhere.
  *
- * 空串、只有空白、`null`、`undefined` 都算「没设」，往下一级找。设了但不是 `http(s)://` 或 `ws(s)://` 地址的，抛 TypeError：
- * 用户写错的地址不悄悄换成缺省值，免得连到别处还以为连的是自己设的那台。
+ * Empty string, whitespace-only, `null`, and `undefined` are all considered "unset", falling through
+ * to the next tier. If set but not an `http(s)://` or `ws(s)://` URL, throws a TypeError: mistyped
+ * URLs are not silently replaced with the default, avoiding connecting elsewhere while assuming it
+ * connected to the user-configured host.
  *
- * 浏览器与 Node 通用：除产品声明外不引任何模块；浏览器里没有 `process`，第 2 级自然跳过。
+ * Universal across browser and Node: imports no modules except the product declaration; without
+ * `process` in the browser, tier 2 is naturally skipped.
  */
 import { PRODUCT } from './product.mjs';
+import { tr } from '../i18n.mjs';
 
-/** 托管服务的自有域名（2026-10-22 用户定）：以后换机器只改它的 DNS 记录，不用再发客户端 */
+/** Custom domain for hosted service (user decision, 2026-10-22): future migrations only update DNS without releasing a client */
 const HOSTED_HOST = PRODUCT.hosted?.host ?? null;
 
-/** 经节点上 nginx 的 `/hosted` 入口到文档服务；素材服务在同一个源的 `/media` 下 */
+/** Reaches document service via nginx `/hosted` on the node; asset service is under `/media` on the same origin */
 export const DEFAULT_HOSTED_URL = HOSTED_HOST ? `https://${HOSTED_HOST}/hosted` : '';
 
 /**
- * 换下来的托管端地址。旧项目文件、本机记的恢复凭证与托管地址里写的是它们；读进来时一律换成现在的，
- * 用户不用重新认证，存回去时写的就是新地址。
- * - 2026-10-06：阿里云到期不续，托管端换到新云节点（数据整体拷过去）；
- * - 2026-10-22：托管地址从新云节点的 IP 换成自有域名（用户定）。节点上 8787（文档服务）、8788（素材服务）已不对外，
- *   只经 nginx 走 https，所以「IP:8787」「IP:8788」换成新域名下的 `/hosted`、`/media`，协议跟着换成 https / wss；
- *   别的写法（sslip.io 名字、不带这两个端口的 IP）只换主机名，协议、端口、路径不变；
- *   sslip.io 的 s1.、s2. 舞台子域换成声明里的舞台主机名。
+ * Replaced hosted side URLs. These appear in legacy project files, local recovery credentials,
+ * and hosted URLs; when read in, they are replaced with current ones so users do not need to
+ * re-authenticate, and saving writes the new URL.
+ * - 2026-10-06: Alibaba Cloud expired without renewal, hosted side migrated to new cloud node
+ *   (data copied over entirely);
+ * - 2026-10-22: Hosted URL changed from new cloud node IP to custom domain (user decision). Ports
+ *   8787 (document service) and 8788 (asset service) on the node are no longer exposed, routing
+ *   only via nginx over HTTPS, so "IP:8787" and "IP:8788" are replaced with `/hosted` and `/media`
+ *   under the new domain, with protocol updated to HTTPS / WSS; other formats (sslip.io names, IPs
+ *   without these two ports) only replace the hostname, keeping protocol, port, and path unchanged;
+ *   sslip.io s1. and s2. stage subdomains are replaced with stage hostnames from the declaration.
  */
 const RETIRED_IPS = PRODUCT.hosted?.retiredIps ?? [];
 const sslipName = (ip) => `${ip.split('.').join('-')}.sslip.io`;
@@ -38,20 +49,21 @@ const RETIRED_NAMES = RETIRED_IPS.map(sslipName);
 const STAGE_HOSTS = Object.freeze({ ...PRODUCT.hosted?.stageHosts });
 const PORT_PATHS = Object.freeze({ 8787: '/hosted', 8788: '/media' });
 
-/** 主机名一级的对照；直连端口那两种另按 `PORT_PATHS` 换（见上） */
+/** Hostname-level mapping; the two direct port formats are replaced according to `PORT_PATHS` (see above) */
 export const RETIRED_HOSTED_HOSTS = Object.freeze([...RETIRED_IPS, ...RETIRED_NAMES].map((host) => [host, HOSTED_HOST]));
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const IPS = RETIRED_IPS.map(escapeRe).join('|');
 const NAMES = RETIRED_NAMES.map(escapeRe).join('|');
-// 主机名后面只能跟：端口、路径、查询、片段、引号、反斜杠（JSON 里再转义一层）、空白、分隔符，或串尾
+// The hostname can only be followed by: port, path, query, fragment, quote, backslash (escaped once
+// more in JSON), whitespace, delimiter, or end of string
 const END = String.raw`(?=[:/?#"'\\\s,;)\]}<>]|$)`;
 const PORT_RE = new RegExp(String.raw`\b(https?|wss?)://(${IPS}):(8787|8788)(?!\d)`, 'g');
 const STAGE_RE = new RegExp(String.raw`(^|[/@.])(s[12])\.(${NAMES})${END}`, 'g');
 const HOST_RE = new RegExp(String.raw`(^|[/@.])(${IPS}|${NAMES})${END}`, 'g');
 const MARKERS = [...RETIRED_IPS, ...RETIRED_NAMES];
 
-/** 一个字符串里出现的旧托管地址换成现在的；不含旧地址的原样返回 */
+/** Replaces legacy hosted URLs in a string with current ones; returns the string unchanged if it has no legacy URLs */
 export function migrateHostedText(text) {
   if (typeof text !== 'string' || !MARKERS.some((m) => text.includes(m))) return text;
   return text
@@ -61,8 +73,9 @@ export function migrateHostedText(text) {
 }
 
 /**
- * 深拷一份，把其中所有字符串（含对象的键：恢复记录的键是 JSON 串，里面带服务地址）里的旧托管地址换成现在的。
- * 没有要换的就返回原值本身。
+ * Deep clones and replaces legacy hosted URLs in all strings (including object keys: recovery
+ * record keys are JSON strings containing service URLs) with current ones.
+ * Returns the original value itself if nothing needs replacing.
  */
 export function migrateHostedDeep(value) {
   if (typeof value === 'string') return migrateHostedText(value);
@@ -91,17 +104,18 @@ function checked(value, from) {
   try {
     u = new URL(text);
   } catch {
-    throw new TypeError(`托管地址（${from}）不是合法的地址`);
+    throw new TypeError(tr("The hosted address ({0}) is not a valid address", from));
   }
-  if (!['http:', 'https:', 'ws:', 'wss:'].includes(u.protocol)) throw new TypeError(`托管地址（${from}）必须是 http(s):// 或 ws(s)://`);
+  if (!['http:', 'https:', 'ws:', 'wss:'].includes(u.protocol)) throw new TypeError(tr("The hosted address ({0}) must be http(s):// or ws(s)://", from));
   return text.replace(/\/+$/, '');
 }
 
 /**
- * 按覆盖顺序取托管地址和它的来处。
+ * Resolves the hosted URL and its source in override order.
  * @param {object} [options]
- * @param {string | null} [options.ui] 界面上改过的值
- * @param {Record<string, string | undefined>} [options.env] 缺省 `process.env`（浏览器里没有就当空）
+ * @param {string | null} [options.ui] Value modified in the UI
+ * @param {Record<string, string | undefined>} [options.env] Defaults to `process.env` (treated as
+ *   empty in browser)
  * @returns {{ url: string, from: 'ui' | 'env' | 'default' }}
  */
 export function hostedUrlChoice({ ui, env = globalThis.process?.env ?? {} } = {}) {
@@ -111,7 +125,7 @@ export function hostedUrlChoice({ ui, env = globalThis.process?.env ?? {} } = {}
   return { url: DEFAULT_HOSTED_URL, from: 'default' };
 }
 
-/** 只要地址：`hostedUrlChoice(options).url` */
+/** URL only: `hostedUrlChoice(options).url` */
 export function resolveHostedUrl(options) {
   return hostedUrlChoice(options).url;
 }

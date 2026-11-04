@@ -15,25 +15,35 @@ import { createSessionLineForwarder } from "./render-node/session-diag.mjs";
 import { autoRenderNodeOffReason, normalizeBinding, ticketOk } from "./auto-render-node.mjs";
 import { createBindingMemory, createTicketRelay } from "./render-node-relay.mjs";
 import { localPrerenderMode } from "./prerender-mode.mjs";
+import { tr } from "./i18n.mjs";
 
 /**
- * 拉起并看护预渲染进程(docs/archive/topics/decoupling-plan.md 第 3 节「预渲染」,阶段 2)。
+ * Spawns and supervises the prerender process (docs/archive/topics/decoupling-plan.md
+ * Section 3 "Prerender", Phase 2).
  *
- * 编辑器这一端的 dev server 一开始监听,就用同一个 node 起第二个 Vite(vite.prerender.config.ts),
- * 放在另一个端口上,**进程优先级设成低于正常**。之后它拉起的渲染 worker 和 Chrome 都继承这个优先级
- * (Windows 上子进程默认继承父进程的 BELOW_NORMAL),所以 Agent 同时开几个 Chrome 在渲,
- * 系统也会先把 CPU 分给编辑器和界面自己那对热备渲染器。
+ * As soon as the dev server on the editor side starts listening, it spawns a second Vite instance
+ * (vite.prerender.config.ts) using the same node on another port, with **process priority set to
+ * below normal**. The render workers and Chrome instances it spawns inherit this priority
+ * (on Windows, child processes inherit the parent's BELOW_NORMAL by default), so even if the Agent
+ * opens several Chrome instances rendering concurrently, the system still allocates CPU first
+ * to the editor and the UI's own pair of hot-standby renderers.
  *
- * 页面从 /api/prerender/info 拿到它的地址,挂得久的请求(预渲染、动图、导出进度)直接发过去。
+ * The page gets its address from /api/prerender/info, and long-running requests (prerender,
+ * animated GIFs, export progress) are sent directly to it.
  */
 
-/** 连续崩几次就不再重启,免得一个起不来的进程被无限拉起 */
+/**
+ * Stops restarting after several consecutive crashes, avoiding endlessly respawning a process
+ * that fails to start
+ */
 const MAX_RESTARTS = 5;
 
 /**
- * 给预渲染进程挑一个空端口。不能直接 `listen(0)`:动态端口段被改到低段的机器上会拿到
- * 1719、6000、6665 这类「坏端口」,浏览器以 ERR_UNSAFE_PORT 拒绝、Node 的 fetch 报 bad port,
- * 预渲染进程起来了也没人连得上。`listenSafe` 拿到坏端口就换(server/safe-port.mjs)。
+ * Picks an available port for the prerender process. Cannot simply `listen(0)`: machines where
+ * the dynamic port range is shifted low may get "bad ports" like 1719, 6000, or 6665, which
+ * browsers reject with ERR_UNSAFE_PORT and Node fetch reports as bad port; no one can connect
+ * even when the prerender process is up. `listenSafe` switches to another port if it hits a bad
+ * one (server/safe-port.mjs).
  */
 async function freePort(): Promise<number> {
   const s = net.createServer();
@@ -43,11 +53,12 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-/** 编辑器那一端可能被浏览器以哪几种写法打开 —— 预渲染的跨源放行名单 */
+/** Different ways the browser might open the editor side: prerender cross-origin allowlist */
 /**
- * 放行给预渲染进程的源。编辑器自己那个源,**外加两个舞台端口的源**(E1):
- * 舞台 iframe 里的页面打预渲染进程(J3 的快照字节、C3 的 SSE)时带的 Origin 是它自己的源,
- * 不是编辑器的源 —— 漏掉就是一片 403。
+ * Origins allowed for the prerender process. The editor's own origin, **plus origins for the two
+ * stage ports** (E1): when the page inside the stage iframe calls the prerender process (snapshot
+ * bytes in J3, SSE in C3), its Origin header carries its own origin, not the editor's: missing it
+ * results in blanket 403s.
  */
 function editorOrigins(server: ViteDevServer): string[] {
   const addr = server.httpServer?.address() as AddressInfo | null;
@@ -56,14 +67,16 @@ function editorOrigins(server: ViteDevServer): string[] {
 }
 
 /**
- * 起第二个 Vite 用的那个 bin 在哪。
+ * Where the bin used to spawn the second Vite instance is located.
  *
- * 先看 `<root>/node_modules/vite/bin/vite.js`(常规安装),**找不到就按模块解析** ——
- * git worktree 里没有自己的 `node_modules`(Node 会往上走到主仓库那一份),
- * pnpm 的非提升布局同理。写死路径的话这两种情况下预渲染进程根本起不来,
- * 而症状只是「一直没就绪」,很难看出是解析问题。
+ * Check `<root>/node_modules/vite/bin/vite.js` first (standard installation); **resolve as a module
+ * if not found**: a git worktree has no `node_modules` of its own (Node traverses up to the main
+ * repository's copy), and the same applies to pnpm's non-hoisted layout. Hardcoding paths prevents
+ * the prerender process from starting at all in either case, and the only symptom is "never ready",
+ * making it hard to diagnose as a resolution problem.
  *
- * vite 的 `exports` 不放行 `./bin/vite.js`,所以解析主入口再回到包根。
+ * Vite's `exports` does not allow `./bin/vite.js`, so resolve the main entry point and walk back
+ * to the package root.
  */
 function viteBin(root: string): string {
   const local = path.join(root, "node_modules", "vite", "bin", "vite.js");
@@ -79,7 +92,7 @@ function viteBin(root: string): string {
 
 function killTree(child: ChildProcess | null) {
   if (!child || child.exitCode !== null || !child.pid) return;
-  // 预渲染自己还拉着渲染 worker 和 Chrome,只杀它会留孤儿
+  // Prerender also manages render workers and Chrome; killing only it leaves orphans
   if (process.platform === "win32") spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
   else child.kill("SIGKILL");
 }
@@ -95,14 +108,17 @@ export function prerenderPlugin(): Plugin {
         res.setHeader("Content-Type", "application/json; charset=utf-8");
         res.setHeader("Cache-Control", "no-store");
         const s = prerenderState();
-        // `mode`:拉起时给它的模式(`prerender-mode.mjs`),只多一个键
+        // `mode`: mode passed when spawning (`prerender-mode.mjs`), with just one extra key
         res.end(JSON.stringify({ ok: true, url: s.url, ready: s.ready, error: s.error, mode }));
       });
 
       /*
-       * 预渲染进程的模式(docs/semantics/mechanism/rendering.md「查询渲染与预渲染进程」;cloud-task.md I4(a)):
-       * 用户机缺省一个进程,本机有 Agent 时 `full`、没有时 `user`。编辑器进程总挂着本机 Agent(`vite-plugin-ai`),
-       * 所以缺省 `full`;编辑器的环境里显式给了 `PROMPTCUT_PRERENDER_MODE` 就照它(`localPrerenderMode`)。
+       * Mode of the prerender process (docs/semantics/mechanism/rendering.md "Query rendering and
+       * prerender process"; cloud-task.md I4(a)):
+       * User machines default to one process: `full` when a local Agent is present, `user` when not.
+       * The editor process always hosts a local Agent (`vite-plugin-ai`), so it defaults to `full`;
+       * if `PROMPTCUT_PRERENDER_MODE` is explicitly set in the editor environment, follow it
+       * (`localPrerenderMode`).
        */
       const mode = localPrerenderMode(process.env);
 
@@ -111,15 +127,21 @@ export function prerenderPlugin(): Plugin {
       const tail: string[] = [];
 
       /*
-       * ---------------- 桌面应用自动成为共享项目的渲染节点(编辑器进程一侧,`server/render-node-relay.mjs`) ----------------
+       * ---- Desktop app auto-becomes render node for shared projects (editor process side, `server/render-node-relay.mjs`) ----
        *
-       *   POST /api/render-node/bind            页面:进入共享项目 { url, projectId, assetBase?, contentId?, ticket? };记下(票据不记)转给预渲染进程
-       *   POST /api/render-node/unbind          页面:离开项目 / 取消协作 { projectId };转过去撤掉
-       *   POST /api/render-node/ticket          页面:交回连接票据 { reqId, ticket | error }
-       *   POST /api/render-node/ticket-request  预渲染进程(本机、不带 Origin):{ projectId } → { ticket };经 HMR `pc:render-node` 向页面要
-       *   GET  /api/render-node/status          诊断(不含票据)
-       * 预渲染进程崩溃重启、健康检查通过后,照记下的配置再转一次(不带票据)。
-       * 开关 `PROMPTCUT_AUTO_RENDER_NODE=0`(或环境变量已经配好节点)时 bind 回 `{ enabled: false, reason }`,什么都不转。
+       *   POST /api/render-node/bind            Page: enters shared project { url, projectId, assetBase?, contentId?, ticket? };
+       *                                         records (excluding ticket) and forwards to prerender process
+       *   POST /api/render-node/unbind          Page: leaves project / cancels collaboration { projectId };
+       *                                         forwards to tear down
+       *   POST /api/render-node/ticket          Page: returns connection ticket { reqId, ticket | error }
+       *   POST /api/render-node/ticket-request  Prerender process (local, no Origin): { projectId } → { ticket };
+       *                                         requests from page via HMR `pc:render-node`
+       *   GET  /api/render-node/status          Diagnostics (excluding ticket)
+       *
+       * After the prerender process crashes, restarts, and passes health checks, forward recorded
+       * config again (without ticket).
+       * When switch `PROMPTCUT_AUTO_RENDER_NODE=0` (or a node is already configured via environment
+       * variables), bind returns `{ enabled: false, reason }` and forwards nothing.
        */
       const rnLog = (event: string, fields: object = {}) => {
         try { console.info("[render-node]", event, JSON.stringify(fields)); } catch { console.info("[render-node]", event); }
@@ -137,11 +159,13 @@ export function prerenderPlugin(): Plugin {
       };
       const rnBody = (req: any, limit = 16 * 1024) => new Promise<any>((resolve, reject) => {
         let body = "";
-        req.on("data", (c: Buffer) => { body += c; if (body.length > limit) { req.destroy(); reject(new Error("请求体太大")); } });
-        req.on("end", () => { try { resolve(JSON.parse(body || "{}")); } catch { reject(new Error("请求体不是 JSON")); } });
+        req.on("data", (c: Buffer) => { body += c; if (body.length > limit) { req.destroy(); reject(new Error(tr("Request body too large"))); } });
+        req.on("end", () => { try { resolve(JSON.parse(body || "{}")); } catch { reject(new Error("Request body is not JSON")); } });
         req.on("error", reject);
       });
-      /** 转给预渲染进程;它没就绪就算了(就绪后照记下的再转) */
+      /**
+       * Forward to prerender process; ignore if not ready (re-forward from recorded config once ready)
+       */
       const rnForward = async (pathname: string, body: object) => {
         const s = prerenderState();
         if (!s.ready || !s.url) return { ok: true, pending: true };
@@ -149,7 +173,7 @@ export function prerenderPlugin(): Plugin {
           const headers: Record<string, string> = { "Content-Type": "application/json" };
           if (process.env.PROMPTCUT_INTERNAL_TOKEN) headers["x-pc-internal-token"] = process.env.PROMPTCUT_INTERNAL_TOKEN;
           const r = await fetch(s.url + pathname, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000) });
-          return await r.json().catch(() => ({ ok: false, error: `预渲染进程回了非 JSON(HTTP ${r.status})` }));
+          return await r.json().catch(() => ({ ok: false, error: `The prerender process returned non-JSON (HTTP ${r.status})` }));
         } catch (e: any) {
           return { ok: false, pending: true, error: String(e?.message ?? e) };
         }
@@ -190,11 +214,12 @@ export function prerenderPlugin(): Plugin {
             return rnSend(res, rnRelay.answer(input) ? 200 : 404, { ok: true });
           }
           if (route === "/ticket-request") {
-            // 只给本机的预渲染进程(不带 Origin 的服务端请求);浏览器里的页面发来的一律拒(api 守卫之外再挡一道)
-            if (req.headers.origin) return rnSend(res, 403, { ok: false, error: "只给本机进程" });
+            // Only for the local prerender process (server-side requests without Origin); reject all requests
+            // from pages in the browser (an extra guard beyond the api guard)
+            if (req.headers.origin) return rnSend(res, 403, { ok: false, error: "Local processes only" });
             const projectId = typeof input?.projectId === "string" ? input.projectId : "";
             const b = rnMemory.get();
-            if (!b || b.projectId !== projectId) return rnSend(res, 409, { ok: false, code: "not-bound", error: "编辑器没有绑这个项目" });
+            if (!b || b.projectId !== projectId) return rnSend(res, 409, { ok: false, code: "not-bound", error: "The editor is not bound to this project" });
             try {
               const ticket = await rnRelay.request(projectId);
               return rnSend(res, 200, { ok: true, ticket });
@@ -230,14 +255,17 @@ export function prerenderPlugin(): Plugin {
             PROMPTCUT_STAGE_PORTS: stagePorts.join(","),
             PROMPTCUT_INTERNAL_TOKEN: internalToken,
             /*
-             * 编辑器那一端的地址,给镜像插件回拉整份项目用(A7)。帧请求的 body 里只有
-             * `{session, localRev}`,转发丢了或者这个进程刚起来的时候,它就按这个键
-             * 去 `GET /api/data/project?session=&localRev=` 把那一版要回来。
+             * Address of the editor side, used by the mirror plugin to pull back the whole project (A7).
+             * The frame request body only contains `{session, localRev}`; when a forwarded push is dropped
+             * or this process just started up, it uses this key to `GET /api/data/project?session=&localRev=`
+             * and fetch that version back.
              *
-             * 〔裁〕三种模式都带。计划(cloud-task.md I1、I4(a))写的是 `agent` 模式不带、项目由 Agent 服务端推(I2),
-             * 但 I2 的推送还没有:今天本机 Agent 的查询只带 `{session, localRev}`,靠这个地址回拉;素材服务的基址
-             * (`asset-client.ts` 的 `assetServiceOrigin`)也还是它。本机拉起的 `agent` 模式不带它就一张图都查不出来。
-             * 等 I2 的推送与 I3 的「拉起时告诉它素材服务地址」落地,再按计划去掉。
+             * [ruling] Included in all three modes. The plan (cloud-task.md I1, I4(a)) specified that `agent`
+             * mode would not include it and the project would be pushed by the Agent server (I2), but I2's push
+             * is not yet here: today local Agent queries only include `{session, localRev}` and rely on this
+             * address to pull back; the asset service base URL (`assetServiceOrigin` in `asset-client.ts`)
+             * is also still this. Without it, `agent` mode launched locally cannot query a single image.
+             * Remove it as planned once I2 push and I3 "tell asset service address on launch" land.
              */
             PROMPTCUT_EDITOR_URL: editorOrigins(server)[0],
           },
@@ -246,12 +274,14 @@ export function prerenderPlugin(): Plugin {
         });
         try {
           os.setPriority(child.pid!, os.constants.priority.PRIORITY_BELOW_NORMAL);
-        } catch { /* 设不了优先级不影响功能,只是少了一层保护 */ }
+        } catch { /* Failure to set priority does not affect functionality, just loses a layer of protection */ }
         const keep = (c: Buffer) => { tail.push(c.toString()); if (tail.length > 30) tail.shift(); };
         /*
-         * 预渲染进程的输出只留尾巴给崩溃时报错用;其中队列节点与推送队列到文档服务的会话事件行
-         * (`[queue-node] docservice.session.*`,源头已按事件节流,见 `vite-plugin-frames.ts`)转进编辑器进程的日志,
-         * 混沌测试时从编辑器这一侧看得到「脱开、接续、重建」。行里没有会话号与凭证。
+         * Prerender process output only keeps the tail for error reporting on crash; among these,
+         * queue node and session event lines pushing queues to the document service
+         * (`[queue-node] docservice.session.*`, throttled by event at source, see `vite-plugin-frames.ts`)
+         * are forwarded into the editor process logs, so "detach, resume, rebuild" can be seen from
+         * the editor side during chaos tests. Lines contain no session IDs or credentials.
          */
         const forwardOut = createSessionLineForwarder((line: string) => console.info(`[prerender] ${line}`));
         const forwardErr = createSessionLineForwarder((line: string) => console.info(`[prerender] ${line}`));
@@ -259,7 +289,9 @@ export function prerenderPlugin(): Plugin {
         child.stderr?.on("data", keep);
         child.stdout?.on("data", forwardOut);
         child.stderr?.on("data", forwardErr);
-        // 托管方渲染服务的工作进程:预渲染进程里页面请求闸的记录(`[page-gate] …`,源头已限量)原样转出,管理进程的日志里看得到拦了什么
+        // Host render service worker process: records of the page request gate in the prerender process
+        // (`[page-gate] …`, rate-limited at source) are forwarded as-is, showing what was blocked
+        // in the management process logs
         if (process.env.PROMPTCUT_RENDER_BROKER) {
           let gateTail = "";
           child.stdout?.on("data", (c: Buffer) => {
@@ -269,12 +301,14 @@ export function prerenderPlugin(): Plugin {
           });
         }
         /*
-         * 排障用(缺省不开):`PROMPTCUT_PRERENDER_LOG=<文件>` 时把预渲染进程的全部输出原样追加进这个文件,
-         * 每块前带收到的时刻(`docs/archive/agent-reports/AGENT-uc-latency.md` 查换页卡住用)。不设就什么都不做。
+         * For troubleshooting (disabled by default): when `PROMPTCUT_PRERENDER_LOG=<file>`, appends all
+         * output of the prerender process as-is into this file, each chunk prefixed with the received
+         * timestamp (used in `docs/archive/agent-reports/AGENT-uc-latency.md` to investigate tab switching
+         * freezes). Does nothing if unset.
          */
         const fullLog = String(process.env.PROMPTCUT_PRERENDER_LOG || "").trim();
         if (fullLog) {
-          const tee = (c: Buffer) => { try { fs.appendFileSync(fullLog, `@${Date.now()} ${c.toString()}`); } catch { /* 写不了就算了 */ } };
+          const tee = (c: Buffer) => { try { fs.appendFileSync(fullLog, `@${Date.now()} ${c.toString()}`); } catch { /* Ignore if unable to write */ } };
           child.stdout?.on("data", tee);
           child.stderr?.on("data", tee);
         }
@@ -283,14 +317,15 @@ export function prerenderPlugin(): Plugin {
         const me = child;
         me.on("exit", (code) => {
           if (child === me) child = null;
-          setPrerender({ ready: false, error: `预渲染进程退出(代码 ${code}):${tail.join("").trim().slice(-400)}` });
+          setPrerender({ ready: false, error: `Prerender process exited (code ${code}): ${tail.join("").trim().slice(-400)}` });
           if (closing) return;
           const n = prerenderState().restarts + 1;
           setPrerender({ restarts: n });
           if (n <= MAX_RESTARTS) setTimeout(() => { if (!closing) start().catch(() => {}); }, 1000 * n);
         });
 
-        // 就绪 = 它自己的健康检查接口答话(vite-plugin-vision 在 prerender 这一端注册)
+        // Ready = its own health-check endpoint responds (vite-plugin-vision registered on the
+        // prerender side)
         const t0 = Date.now();
         while (child === me && Date.now() - t0 < 120000) {
           try {
@@ -298,24 +333,28 @@ export function prerenderPlugin(): Plugin {
             if (r.ok) {
               setPrerender({ ready: true, error: null, restarts: 0 });
               /*
-               * 它刚起来(或刚崩完重起),手里一份项目都没有。把每个 session 的最新一版
-               * 补推过去,不然下一个帧请求只能靠回拉兜 —— 回拉是一趟额外的往返,
-               * 而且崩溃重启往往正赶上用户在拖时间轴。
+               * It just started up (or just restarted after a crash) and has no projects at hand.
+               * Push the latest version of each session as a catch-up; otherwise, the next frame request must
+               * fall back to a pull-back: a pull-back is an extra round trip, and crash-restarts often coincide
+               * with the user scrubbing the timeline.
                */
               /*
-               * 补推完镜像,再照会话版本登记把 preload 串行重放一遍(Item 4 方案 A):
-               * 预渲染进程只认 preload 带来的会话版本,崩溃重启后靠这一步重新知道每个会话是哪一版,
-               * 页面不用做任何事。重放途中它又重启了(`child !== me`)就停,交给下一轮。
+               * After catch-up pushing the mirror, replay preloads serially according to the session version
+               * registry (Item 4 Option A): the prerender process only recognizes session versions brought by
+               * preload; after a crash and restart, it relies on this step to learn each session's version again,
+               * with no action needed from the page. If it restarts again during replay (`child !== me`), stop
+               * and hand off to the next round.
                */
               void repushMirror(url)
                 .then(() => replayReadySessions(url, () => child === me))
-                .then((results) => { if (results.length) console.log(`[prerender] 重启后重放 preload:${JSON.stringify(results)}`); })
+                .then((results) => { if (results.length) console.log(`[prerender] Replaying preload after restart: ${JSON.stringify(results)}`); })
                 .catch(() => {})
-                // 页面交过共享配置(自动渲染节点):它刚起来,手里没有,照记下的再转一次(不带票据,建会话时它自己来要)
+                // The page submitted shared config (auto render node): it just started up and has none, so
+                // forward again based on the recorded config (without ticket; it requests one when creating a session)
                 .then(() => { if (child === me) rnDeliverRemembered(); });
               return;
             }
-          } catch { /* 还没起来 */ }
+          } catch { /* Not up yet */ }
           await new Promise((r) => setTimeout(r, 300));
         }
       };

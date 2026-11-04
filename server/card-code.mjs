@@ -1,33 +1,47 @@
 /**
- * 卡片代码身份(C6.6 c66-host-cards):用户卡、改动层里改过的卡不再进全局代码版本(`frame-code.mjs`),
- * 改为「这张卡的代码」单独算一个身份,用在三处:
+ * Card code identity (C6.6 c66-host-cards): user cards and cards modified in the overlay layer
+ * no longer enter the global code version (`frame-code.mjs`); instead, a separate identity is
+ * computed for "this card's code", used in three places:
  *
- *   1. **任务要求**:用到这些卡的细任务在 `requires.cardSources` 里写 `{ [cardId]: 身份 }`(`split.mjs`,契约 B.4);
- *   2. **节点能力**:节点的 `cardSourceVersions[cardId]` 回本机此刻这张卡的身份,认领时由 `filter.mjs` 规则 1 比对,
- *      本机没有这份代码(没有这张卡,或版本不同)就不认领、不报错;装上之后下一拍就能认领;
- *   3. **整场景键**:`frameIdentity` 的 `code` = 全局代码版本 + 本项目用到的这些卡的身份(`cardEntryCode`)。
- *      全局代码版本不再覆盖用户卡,整场景的帧库、本地档的内容键(`<entry.key>/<共享键>`)靠这一段区分卡片代码。
- *      共享档的键本来就带这张卡的源码版本(`card-identity.mjs` 的 `sourceVersion`),不受影响。
+ *   1. **Task requirements**: fine-grained tasks that use these cards write
+ *      `{ [cardId]: identity }` in `requires.cardSources` (`split.mjs`, contract B.4);
+ *   2. **Node capabilities**: the node's `cardSourceVersions[cardId]` returns this card's identity
+ *      on this machine right now, compared by rule 1 of `filter.mjs` during claim; if this machine
+ *      does not have this code (does not have this card, or has a different version), it does not
+ *      claim and reports no error; once installed, it can claim on the next tick;
+ *   3. **Whole-scene key**: `frameIdentity`'s `code` = global code version + identities of these
+ *      cards used in this project (`cardEntryCode`). The global code version no longer covers user
+ *      cards; whole-scene frame store and local tier content keys (`<entry.key>/<shared key>`)
+ *      rely on this segment to distinguish card code. Shared tier keys already include this card's
+ *      source version (`sourceVersion` in `card-identity.mjs`), so they are unaffected.
  *
- * 身份怎么算由调用方注入(`identityOf(cardId) → { version, custom } | null`,`vite-plugin-cards.ts` 的
- * `cardCodeIdentity`:定义文件加它一路 import 到的卡片 / 部件文件,改动层优先,换行统一成 LF)。
- * `custom` 为真的卡(用户卡,或闭包里有改动层文件的卡)才进任务要求与整场景键;没改过的内置卡由全局代码版本覆盖。
+ * How identity is computed is injected by the caller
+ * (`identityOf(cardId) → { version, custom } | null`, `cardCodeIdentity` in `vite-plugin-cards.ts`:
+ * definition file plus all card / part files it imports along the way, overlay layer prioritized,
+ * newlines normalized to LF). Only cards where `custom` is true (user cards, or cards with overlay
+ * layer files in their closure) enter task requirements and whole-scene keys; unmodified built-in
+ * cards are covered by the global code version.
  *
- * 缓存:身份按卡缓存,卡片源码一变(`card-overrides.mjs` 的 `onCardSourceChange`,在 Vite 自己作废模块之后才发)
- * 整表清空、`epoch` 加一。刚变过的一小段时间(`settleMs`)里节点一张卡也不报(认领侧宁可晚一拍):
- * 新写进来的卡要等 Vite 的文件监听把模块作废之后,预渲染间载入的才是新代码,早认领就会按旧代码渲。
+ * Caching: identities are cached per card; once card source code changes (`onCardSourceChange` in
+ * `card-overrides.mjs`, emitted only after Vite itself invalidates the module), the entire table
+ * is cleared and `epoch` is incremented. During the short window right after a change (`settleMs`),
+ * the node reports no cards (the claiming side prefers being one tick late): newly written cards
+ * must wait until Vite's file watcher invalidates the module before the new code is loaded during
+ * prerender; claiming too early would render with the old code.
  *
- * 只用 Node 内置模块。
+ * Uses only Node built-in modules.
  */
 import { createHash } from 'node:crypto';
 
-/** 卡片源码变了之后,多久之内节点不报任何卡的身份(见文件头) */
+/** How long after card source changes the node will not report any card identity (see file header) */
 export const CARD_CODE_SETTLE_MS = 1500;
 
 /**
- * 项目用到的卡片 id(升序):所有剪辑(激活的 `tracks`、停放的 `cuts[].tracks`)里片段的 `cardId`,
- * 以及卡片图节点(`cardNodes`,数组或对象)的 `cardId`。口径同页面的 `projectCardIds`(`src/editor/sync/cardSync.ts`)
- * 去掉归属表那一项(归属表是本机的旁表,不属于这一版项目)。
+ * Card ids used in the project (ascending): `cardId` of clips across all cuts (active `tracks`,
+ * parked `cuts[].tracks`), as well as `cardId` of card graph nodes (`cardNodes`, array or object).
+ * Criteria match `projectCardIds` on the page (`src/editor/sync/cardSync.ts`) minus the ownership
+ * table entry (the ownership table is a local side table on this machine, not belonging to this
+ * project version).
  */
 export function projectCardIds(project) {
   const ids = new Set();
@@ -46,13 +60,15 @@ export function projectCardIds(project) {
   return [...ids].sort();
 }
 
-/** 对象按键排序后的稳定 JSON(只处理 `{ string: string }`) */
+/** Stable JSON with object keys sorted (handles `{ string: string }` only) */
 const stableMap = (map) => JSON.stringify(Object.keys(map).sort().map((key) => [key, map[key]]));
 
 /**
- * 整场景键的 `code`:全局代码版本,后面接本项目用到的定制卡身份的摘要。没有定制卡时就是全局代码版本本身。
+ * `code` for the whole-scene key: global code version followed by the digest of custom card
+ * identities used in this project. When there are no custom cards, it is the global code version
+ * itself.
  * @param {string} globalCode  `frameCode(root)`
- * @param {Record<string, string>} versions  `{ cardId: 身份 }`(`customVersions` 的结果)
+ * @param {Record<string, string>} versions  `{ cardId: identity }` (result of `customVersions`)
  */
 export function cardEntryCode(globalCode, versions) {
   const map = versions && typeof versions === 'object' ? versions : {};
@@ -63,12 +79,12 @@ export function cardEntryCode(globalCode, versions) {
 /**
  * @param {object} options
  * @param {(cardId: string) => ({ version: string, custom: boolean } | null | undefined)} options.identityOf
- *   回 undefined 表示算法还没就绪,不缓存
+ *   Returning undefined indicates the algorithm is not ready yet; not cached
  * @param {() => number} [options.now]
  * @param {number} [options.settleMs]
  */
 export function createCardCodeIndex({ identityOf, now = Date.now, settleMs = CARD_CODE_SETTLE_MS } = {}) {
-  if (typeof identityOf !== 'function') throw new TypeError('createCardCodeIndex:identityOf 必须是函数');
+  if (typeof identityOf !== 'function') throw new TypeError('createCardCodeIndex: identityOf must be a function');
   /** cardId → { version, custom } | null */
   const cache = new Map();
   let epoch = 0;
@@ -79,14 +95,18 @@ export function createCardCodeIndex({ identityOf, now = Date.now, settleMs = CAR
     if (cache.has(cardId)) return cache.get(cardId);
     let got;
     try { got = identityOf(cardId); } catch { got = null; }
-    // undefined = 算法还没注入(卡片插件还没起来):不记缓存,下次再问
+    // undefined = algorithm not yet injected (cards plugin not yet up): do not cache, query again next
+    // time
     if (got === undefined) return null;
     const value = got && typeof got.version === 'string' && got.version ? { version: got.version, custom: got.custom === true } : null;
     cache.set(cardId, value);
     return value;
   }
 
-  /** 这些卡里定制卡(用户卡、改过的卡)的 `{ cardId: 身份 }`;找不到定义的卡不列(交给全局代码版本与执行器的核对) */
+  /**
+   * `{ cardId: identity }` for custom cards (user cards, modified cards) among these cards; cards
+   * whose definitions cannot be found are omitted (left to global code version and executor checks)
+   */
   function customVersions(cardIds) {
     const out = {};
     for (const id of cardIds ?? []) {
@@ -99,8 +119,9 @@ export function createCardCodeIndex({ identityOf, now = Date.now, settleMs = CAR
   const settled = () => now() - changedAt >= settleMs;
 
   /**
-   * 节点描述里的 `cardSourceVersions`(契约 B.2 的 `Record<cardId, string[]>`):取哪张卡就当场算哪张。
-   * 卡片源码刚变过、还没稳下来时一律回空数组(见文件头)。
+   * `cardSourceVersions` in the node description (`Record<cardId, string[]>` of contract B.2):
+   * computed on the fly for whichever card is requested. Always returns an empty array when card
+   * source code has just changed and not yet settled (see file header).
    */
   const view = new Proxy(Object.create(null), {
     get(_target, key) {
@@ -115,15 +136,15 @@ export function createCardCodeIndex({ identityOf, now = Date.now, settleMs = CAR
   return {
     identity,
     customVersions,
-    /** 项目用到的定制卡:`{ cardId: 身份 }` */
+    /** Custom cards used in the project: `{ cardId: identity }` */
     projectVersions: (project) => customVersions(projectCardIds(project)),
-    /** 卡片源码变了:清缓存、`epoch` 加一、重新计稳定期 */
+    /** Card source code changed: clear cache, increment `epoch` by one, restart settle period */
     invalidate() {
       cache.clear();
       epoch += 1;
       changedAt = now();
     },
-    /** 马上要改卡片文件(主机装同步来的卡之前调):只重新计稳定期 */
+    /** About to modify card files (called before host installs synced cards): only restarts settle period */
     touch() { changedAt = now(); },
     settled,
     get epoch() { return epoch; },

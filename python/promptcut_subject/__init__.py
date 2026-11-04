@@ -1,22 +1,22 @@
-"""主体检测：画面里人在哪、哪一侧是空的。
+"""Subject detection: where the people are in the frame and which side is empty.
 
-给 AI Agent 配动效卡用 —— 知道人脸和人体的框，才能把卡片放到不遮脸的那一侧。
+For the AI Agent to set up motion graphics cards: only by knowing the face and body boxes can a card be placed on the side that does not cover the face.
 
-分两档：
-  - light：YuNet（人脸，ONNX）+ RT-DETR-R18（人体，ONNX），只要 onnxruntime；
-  - full：light 的全部 + Grounding DINO tiny（开放词汇），要 torch + transformers。
+Two tiers:
+  - light: YuNet (face, ONNX) + RT-DETR-R18 (body, ONNX), only needs onnxruntime;
+  - full: everything in light + Grounding DINO tiny (open vocabulary), needs torch + transformers.
 
-两档的模型都随「拓展库包」发，不走 pip。
+The models of both tiers ship with the "extension library package", not through pip.
 """
 
 __version__ = "1.0.0"
 
-# 视频参数可以是素材服务上的 http(s) 地址:Node 侧经素材服务的接口取字节,不再递本机路径
-# (docs/semantics/product/agent.md「素材与产物」)。解码全在 ffmpeg / ffprobe 子进程里,它们自己按 Range 取。
-# Node 侧按 ACCEPTS_URL 判断这份包认不认地址;老包没有这个标记时,Node 先把字节流到临时文件再递路径。
+# The video argument may be an http(s) address on the asset service: the Node side fetches the bytes through the asset service's API instead of passing a local path
+# (docs/semantics/product/agent.md, "Media and outputs"). All decoding happens inside the ffmpeg / ffprobe subprocesses, which fetch by Range themselves.
+# The Node side checks ACCEPTS_URL to see whether this package accepts addresses; when an old package lacks this marker, Node first streams the bytes into a temporary file and then passes the path.
 ACCEPTS_URL = True
 
 
 def is_media_url(value: str) -> bool:
-    """素材服务上的地址(http / https)。只认这两种协议,别的一律当本机路径看。"""
+    """An address on the asset service (http / https). Only these two protocols are recognized; anything else is treated as a local path."""
     return isinstance(value, str) and value.lower().startswith(("http://", "https://"))

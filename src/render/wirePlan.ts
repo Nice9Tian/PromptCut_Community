@@ -1,21 +1,24 @@
 /**
- * `setPlan` 在线上的形状（E0 / K2）：**集合序列化成数组**。
+ * Wire shape of `setPlan` (E0 / K2): **sets serialized as arrays**.
  *
- * `planPipelines` 回的 `PipelinePlan` 里 `heavy` / `light` / `prerenderSet` 都是 `Set`。
- * 结构化克隆确实搬得动 `Set`，但 RPC 这一面要的是「可结构化克隆**且**换个宿主还认得出来」
- * 的最小形状（E0：协议里不放任何依赖同源的东西），而且将来 L1 的在线浏览器模式会把同一份
- * 表经 JSON 发给 Worker / 云端 —— `Set` 过不了 `JSON.stringify`。所以线上一律数组，
- * 舞台收到之后自己回填成 `Set`，消费侧（K3 / K5，R5）照常用 `pipelineAt`。
+ * In `PipelinePlan` returned by `planPipelines`, `heavy` / `light` / `prerenderSet` are all `Set`s.
+ * Structured clone can indeed transfer `Set`, but the RPC side requires the minimal shape that is
+ * "structured-cloneable **and** recognizable by a different host" (E0: put nothing same-origin
+ * dependent into the protocol), and in the future L1 online browser mode will send the same table
+ * via JSON to Worker / cloud: `Set` cannot pass `JSON.stringify`. Thus wire format is always arrays;
+ * the stage backfills them into `Set`s upon receipt, and consumers (K3 / K5, R5) use `pipelineAt`
+ * as usual.
  *
- * 两个方向都在这里，父页和舞台各 import 一半，省得两处各写一遍序列化顺序。
- * **数组顺序原样保留**：`planPipelines` 建集合时就是从排好序的数组建的（R4a 报告 §2），
- * 这里 `[...set]` 的迭代顺序因此是确定的，两端序列化出来的 JSON 逐字节相同。
+ * Both directions live here; parent page and stage each import half, saving both sides from writing
+ * the serialization order separately. **Array order is preserved as-is**: `planPipelines` builds
+ * sets from pre-sorted arrays (R4a report §2), so iteration order of `[...set]` here is deterministic,
+ * and JSON serialized on both ends is byte-for-byte identical.
  */
 import type { PipelinePlan } from "./pipelinePlan.mjs";
 import { resolveTuning, type PipelineTuning } from "./pipelineTuning.mjs";
 import type { CardCostRecord } from "./cardCostKey.mjs";
 
-/** 线上的分段：集合换成数组 */
+/** Wire segment: sets replaced with arrays */
 export interface WireSegment {
   fromSec: number;
   toSec: number;
@@ -27,33 +30,40 @@ export interface WirePlan {
   segments: WireSegment[];
   prerenderSet: string[];
   /**
-   * clipId → `cardCostKey`（K1 / K2 的 `clipCostIndex`）。
+   * clipId → `cardCostKey` (K1 / K2's `clipCostIndex`).
    *
-   * **舞台非要它不可**：K3 的 (a′) / (a) / (b) 和 K5 的两路都要读那张卡的 `vtOk` /
-   * `seekOk` / `seekMs` / `catchUpMs`，而 `costs` 是按 `identityKey` 索引的、
-   * `CardCostRecord` 里没有 `clipId`（它是内容寻址的，同一张卡的两个片段共用一条）。
-   * 父页在 `clipIdentityOf(project)` 里本来就算好了这一份，搭 `setPlan` 的车捎过去。
+   * **The stage absolutely requires it**: both (a') / (a) / (b) in K3 and the two paths in K5
+   * must read that card's `vtOk` / `seekOk` / `seekMs` / `catchUpMs`, whereas `costs` is indexed
+   * by `identityKey`, and `CardCostRecord` contains no `clipId` (it is content-addressed; two
+   * clips of the same card share one entry). The parent page already computes this in
+   * `clipIdentityOf(project)`, piggybacking on `setPlan`.
    */
   identityKeys?: Record<string, string>;
-  /** clipId → 声明的帧模式（`direct` / `stateful`）；没有成本记录时舞台按它兜底 */
+  /** clipId → declared frame mode (`direct` / `stateful`); stage falls back to it without cost records */
   frameModes?: Record<string, string>;
-  /** K2 的可调系数。舞台用 `clipWeight` 判 (a′) / (a) / (b) 时必须和父页同一份，否则两边分档不一致 */
+  /**
+   * Tunable coefficients for K2. When stage uses `clipWeight` to classify (a') / (a) / (b),
+   * it must share the parent page's copy, otherwise tier assignment diverges between both sides
+   */
   tuning?: PipelineTuning;
 }
 
-/** 舞台手里的那一份：回填成 `Set` 之后就是 `pipelineAt` 认的形状，外加按 clipId 索引好的 `costs` */
+/**
+ * The stage's copy: backfilled into `Set`s to match `pipelineAt`'s expected shape,
+ * plus `costs` indexed by clipId
+ */
 export interface StagePlan {
   plan: PipelinePlan;
   costs: CardCostRecord[];
-  /** clipId → 这张卡的成本记录（没测过的取不到） */
+  /** clipId → cost record for this card (unavailable if not yet measured) */
   byClip: Map<string, CardCostRecord>;
-  /** clipId → 声明的帧模式 */
+  /** clipId → declared frame mode */
   frameModes: Map<string, string>;
-  /** 已解析的可调系数（和父页同一份） */
+  /** Parsed tunable coefficients (same copy as parent page) */
   tuning: PipelineTuning;
 }
 
-/** `planPipelines` 的结果 → 线上的形状。`index` 是 `clipIdentityOf(project)` 的前两项 */
+/** `planPipelines` result → wire shape. `index` is the first two items of `clipIdentityOf(project)` */
 export function wirePlan(
   plan: PipelinePlan,
   index?: { identityKeys?: Record<string, string>; frameModes?: Record<string, string> },
@@ -68,7 +78,7 @@ export function wirePlan(
   };
 }
 
-/** 线上的形状 + `costs` → 舞台手里那一份 */
+/** Wire shape + `costs` → the stage's copy */
 export function reviveStagePlan(wire: WirePlan | null | undefined, costs: CardCostRecord[]): StagePlan {
   const byKey = new Map<string, CardCostRecord>();
   for (const record of costs) if (record && typeof record.identityKey === "string") byKey.set(record.identityKey, record);
@@ -86,7 +96,10 @@ export function reviveStagePlan(wire: WirePlan | null | undefined, costs: CardCo
   };
 }
 
-/** 线上的形状 → `pipelineAt` 认的形状。坏数据一律当空表，不抛——舞台不能因为一份表挂掉 */
+/**
+ * Wire shape → shape expected by `pipelineAt`. Bad data is treated as an empty table without
+ * throwing: the stage cannot crash over a table
+ */
 export function revivePlan(wire: WirePlan | null | undefined): PipelinePlan {
   const segments = Array.isArray(wire?.segments) ? wire.segments : [];
   return {

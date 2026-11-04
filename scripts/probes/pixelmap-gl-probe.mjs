@@ -1,17 +1,21 @@
 /*
- * Probe / 验收:像素映射的 WebGL 后端画出来的,和保留下来的 CPU 参考实现 mapRgba 是不是同一张画面。
+ * Probe / acceptance check: whether visuals rendered by the pixel map WebGL backend match the
+ * preserved CPU reference implementation mapRgba.
  *
- * 为什么要问:R1b 把逐像素的 CPU 循环整体删掉、换成 GLSL 片元着色器(实测 CPU 路线 1080p 每帧
- * 416～483 ms)。预览、导出页、see_frames 三处共用这一份,所以导出的像素基线会变一次 ——
- * 变成什么样必须有数:同一帧 1080p 测试图上逐像素比,差 ≤ 2 级才算换对了。
+ * Why ask: R1b completely removed the pixel-by-pixel CPU loop and replaced it with a GLSL fragment
+ * shader (measured CPU path: 416-483 ms per 1080p frame). Preview, export page, and see_frames
+ * share this single implementation, so the export pixel baseline will shift once: we must know what
+ * it becomes: comparing pixel-by-pixel on the same 1080p test frame, a difference ≤ 2 levels
+ * qualifies as replaced correctly.
  *
- * 跑法:node scripts/probes/pixelmap-gl-probe.mjs [--out <目录>] [--cases 抠色到透明,按位置]
- *   自己起 vite 5199(用户的编辑台在 5190、另一个会话在 5197 / 5191,别碰)。
- *   源图和对照图由 ffmpeg 现做,放在 --out 目录里(默认 out/pixelmap-gl/);
- *   跑分用的 1080p 视频固定放 out/pixelmap-gl/,因为它要由 vite 当静态文件发出去。
+ * How to run: node scripts/probes/pixelmap-gl-probe.mjs [--out <dir>] [--cases color-key-to-transparent,by-position]
+ *   Starts its own Vite on 5199 (user's editor is on 5190, another session is on 5197 / 5191, do not touch).
+ *   Source and comparison images are generated on the fly by ffmpeg, placed in `--out` dir (default out/pixelmap-gl/);
+ *   The 1080p benchmark video is fixed in out/pixelmap-gl/ because it must be served as a static file by Vite.
  *
- * **不能加 --disable-gpu / --enable-unsafe-swiftshader**:这条验收就是要量真 GPU。
- * 报告里会写 UNMASKED_RENDERER_WEBGL,拿到 SwiftShader 就直接判失败。
+ * **Do not add --disable-gpu / --enable-unsafe-swiftshader**: this acceptance check is meant to
+ * measure real GPUs.
+ * The report will include UNMASKED_RENDERER_WEBGL; receiving SwiftShader fails immediately.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -32,15 +36,16 @@ const W = 1920, H = 1080;
 
 fs.mkdirSync(OUT, { recursive: true });
 
-/* ------------------------------------------------------------------ 素材 */
+/* ------------------------------------------------------------------ Assets */
 
 const ff = (args, label) => {
   const r = spawnSync('ffmpeg', ['-y', '-v', 'error', ...args], { windowsHide: true, encoding: 'utf8' });
-  if (r.status !== 0) throw new Error(`ffmpeg ${label} 失败:${r.stderr || r.error?.message}`);
+  if (r.status !== 0) throw new Error(`ffmpeg ${label} failed: ${r.stderr || r.error?.message}`);
 };
 const srcPng = path.join(OUT, 'src-testsrc2.png');
 const tgtPng = path.join(OUT, 'src-target.png');
-// 跑分用的视频要由 vite 服务,所以固定放在仓库里(OUT 可能在仓库外,/@fs 会被 vite 挡掉)
+// Benchmark video must be served by Vite, so it is fixed in the repo (OUT may be outside the repo,
+// and /@fs would be blocked by Vite)
 const CLIP_DIR = path.join(ROOT, 'out', 'pixelmap-gl');
 fs.mkdirSync(CLIP_DIR, { recursive: true });
 const clipMp4 = path.join(CLIP_DIR, 'clip-1080p.mp4');
@@ -62,25 +67,28 @@ const writePng = (file, w, h, data) => {
   fs.writeFileSync(file, PNG.sync.write(png));
 };
 
-/* ------------------------------------------------------------------ 用例 */
+/* ------------------------------------------------------------------ Test cases */
 
 const GREEN = 'smoothstep(0.35,0.8,g-r)*(1-smoothstep(0.15,0.45,b))';
 const CASES = [
-  { name: '抠色到透明', def: { name: '抠绿', where: GREEN, to: 'transparent' } },
-  { name: '抠色到纯色', def: { name: '抠绿填蓝', where: GREEN, to: '#0033ff' } },
-  { name: '按位置渐变选区', def: { name: '斜向', where: 'smoothstep(0.15,0.85,x)*smoothstep(0.1,0.9,y)', to: '#101820' } },
-  { name: '按时间闪烁', def: { name: '闪', where: '0.5+0.5*sin(t*2*PI)', to: '#ffcc00' }, t: 0.37 },
+  { name: 'Key out color to transparent', def: { name: 'Key out green', where: GREEN, to: 'transparent' } },
+  { name: 'Key out color to solid color', def: { name: 'Key out green, fill blue', where: GREEN, to: '#0033ff' } },
+  { name: 'Gradient selection by position', def: { name: 'Diagonal', where: 'smoothstep(0.15,0.85,x)*smoothstep(0.1,0.9,y)', to: '#101820' } },
+  { name: 'Flicker by time', def: { name: 'Flash', where: '0.5+0.5*sin(t*2*PI)', to: '#ffcc00' }, t: 0.37 },
   /*
-   * 这一条会有几个像素对不上,是已知且不可避免的:colorSequence 取色是「对 from 做 RGB 最近邻」,
-   * from = [#000000, #808080, #ffffff] 时,r+g+b 恰好等于 192 的像素到前两个 from 色**精确等距**。
-   * 精确并列时 sequenceTarget 的本意是取靠前那个(严格小于),着色器按这个本意办(见 PC_SEQ_EPS);
-   * 而 mapRgba 在 float64 上让 Math.hypot 的末位舍入替它决定,于是有时取了后一个。
-   * 换句话说这几个像素上**着色器才是对的**。逐像素取色是离散映射,并列点上必然有这种跳变。
+   * A few pixels will not match on this one, which is known and unavoidable: colorSequence color
+   * sampling performs "RGB nearest neighbor on from"; when from = [#000000, #808080, #ffffff],
+   * pixels where r+g+b equals exactly 192 are **exactly equidistant** to the first two from colors.
+   * In an exact tie, sequenceTarget's original intent is to take the earlier one (strictly less
+   * than), and the shader behaves according to this intent (see PC_SEQ_EPS); whereas mapRgba on
+   * float64 lets the least-significant-bit rounding of Math.hypot decide for it, battery sometimes
+   * picking the later one. In other words, on these few pixels **the shader is actually correct**.
+   * Per-pixel color sampling is a discrete mapping, and such jumps are inevitable at tie points.
    */
-  { name: '颜色序列-continuous', tiedNearest: true, def: { name: '连续', where: '1', mode: 'continuous', to: '#fff', colorSequence: { from: ['#000000', '#808080', '#ffffff'], to: ['#001133', '#ffcc88', '#ffffff'] } } },
-  { name: '颜色序列-discrete', def: { name: '离散', where: '1', mode: 'discrete', to: '#fff', colorSequence: { from: ['#000000', '#555555', '#aaaaaa', '#ffffff'], to: ['#ff0000', '#00ff00', '#0000ff', '#ffff00'] } } },
-  { name: '目标是另一段素材', def: { name: '换底', where: `1-(${GREEN})`, to: { kind: 'media', mediaId: 'B', stage: 'origin' } }, target: 'B' },
-  { name: '通道非线性表达式', def: { name: '暗部提亮', where: '1-smoothstep(0,0.35,luma)', to: { kind: 'expr', r: 'r^0.6', g: 'g^0.6', b: 'b^0.6', a: 'a' } } },
+  { name: 'Color sequence-continuous', tiedNearest: true, def: { name: 'Continuous', where: '1', mode: 'continuous', to: '#fff', colorSequence: { from: ['#000000', '#808080', '#ffffff'], to: ['#001133', '#ffcc88', '#ffffff'] } } },
+  { name: 'Color sequence-discrete', def: { name: 'Discrete', where: '1', mode: 'discrete', to: '#fff', colorSequence: { from: ['#000000', '#555555', '#aaaaaa', '#ffffff'], to: ['#ff0000', '#00ff00', '#0000ff', '#ffff00'] } } },
+  { name: 'Target is another media item', def: { name: 'Swap background', where: `1-(${GREEN})`, to: { kind: 'media', mediaId: 'B', stage: 'origin' } }, target: 'B' },
+  { name: 'Channel nonlinear expression', def: { name: 'Brighten shadows', where: '1-smoothstep(0,0.35,luma)', to: { kind: 'expr', r: 'r^0.6', g: 'g^0.6', b: 'b^0.6', a: 'a' } } },
 ];
 
 /* ------------------------------------------------------------------ vite */
@@ -96,13 +104,13 @@ vite.stderr.on('data', (d) => { viteLog += d; });
 const waitHttp = async (url, ms) => {
   const end = Date.now() + ms;
   for (;;) {
-    try { const r = await fetch(url); if (r.status < 500) return; } catch { /* 还没起来 */ }
-    if (Date.now() > end) throw new Error('vite 没起来:\n' + viteLog);
+    try { const r = await fetch(url); if (r.status < 500) return; } catch { /* Not up yet */ }
+    if (Date.now() > end) throw new Error('vite did not start:\n' + viteLog);
     await new Promise((r) => setTimeout(r, 300));
   }
 };
 
-/* ------------------------------------------------------------------ 比对 */
+/* ------------------------------------------------------------------ Comparison */
 
 function compare(a, b) {
   let worst = 0, over1 = 0, over2 = 0, sum = 0;
@@ -130,14 +138,16 @@ try {
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 720 });
-  page.on('pageerror', (e) => console.log('[页面错误]', e.message));
-  page.on('console', (m) => { if (m.type() === 'error') console.log('[页面 console]', m.text()); });
+  page.on('pageerror', (e) => console.log('[page error]', e.message));
+  page.on('console', (m) => { if (m.type() === 'error') console.log('[page console]', m.text()); });
   const HARNESS = `http://127.0.0.1:${PORT}/scripts/probes/pixelmap-gl-harness.html`;
   await page.goto(HARNESS, { waitUntil: 'load', timeout: 120000 });
   await page.waitForFunction('window.__pmReady === true', { timeout: 120000 });
   /*
-   * vite 第一次预打包依赖之后会主动让页面整体重载(「optimized dependencies changed」),
-   * 正好撞在这里就会把执行上下文打掉。先静置一会儿把这一下吃掉,后面每次 evaluate 再兜一层重试。
+   * After Vite pre-bundles dependencies for the first time, it proactively triggers a full page
+   * reload ("optimized dependencies changed"); hitting this right here destroys the execution
+   * context. Idle for a moment first to absorb this, then wrap each evaluate later in a retry layer
+   * as a fallback.
    */
   await new Promise((r) => setTimeout(r, 3000));
   const gzA = gz(SRC.data), gzB = gz(TGT.data);
@@ -150,7 +160,7 @@ try {
     for (let i = 0; ; i++) {
       try { return await page.evaluate(fn, ...args); } catch (e) {
         if (i >= 2 || !/Execution context was destroyed/.test(String(e))) throw e;
-        console.log('[probe] 页面重载了,重新灌源图再来一次');
+        console.log('[probe] the page reloaded, feeding the source images again and retrying');
         await page.waitForFunction('window.__pmReady === true', { timeout: 120000 });
         if (primed) await putSources();
       }
@@ -160,7 +170,7 @@ try {
   const info = await ev(() => window.__pm.info());
   console.log('WebGL:', JSON.stringify(info));
   const software = /swiftshader|software|llvmpipe|basic render/i.test(info?.renderer ?? '');
-  if (software) console.log('!! 拿到的是软件渲染,下面的性能数字不算数');
+  if (software) console.log('!! Got software rendering, the performance numbers below do not count');
 
   await putSources();
   primed = true;
@@ -173,7 +183,7 @@ try {
     const gpuRes = await ev((d, s, tg, tt) => window.__pm.runGpu(d, s, tg, tt), def, 'A', c.target ?? null, t);
     const gpu = ungz(gpuRes.gz);
 
-    // 参考图在 node 这边用同一份源字节、同一个 mapRgba 算
+    // Reference image is computed on the Node side using the same source bytes and mapRgba
     const cpu = new Uint8ClampedArray(SRC.data.length);
     for (let i = 0; i < SRC.data.length; i += 4) {
       const target = c.target ? [TGT.data[i] / 255, TGT.data[i + 1] / 255, TGT.data[i + 2] / 255, TGT.data[i + 3] / 255] : null;
@@ -184,10 +194,10 @@ try {
     }
 
     const cmp = compare(gpu, cpu);
-    const slug = c.name.replace(/[^\w一-龥-]/g, '');
+    const slug = c.name.replace(/[^\w-]/g, '');
     writePng(path.join(OUT, `${slug}-gpu.png`), W, H, gpu);
     writePng(path.join(OUT, `${slug}-cpu.png`), W, H, cpu);
-    // 差值图:放大 32 倍看得见
+    // Diff image: visible when magnified 32x
     const diff = new Uint8ClampedArray(gpu.length);
     for (let i = 0; i < gpu.length; i += 4) {
       for (let k = 0; k < 3; k++) diff[i + k] = Math.min(255, Math.abs(gpu[i + k] - cpu[i + k]) * 32);
@@ -195,35 +205,37 @@ try {
     }
     writePng(path.join(OUT, `${slug}-diff32x.png`), W, H, diff);
 
-    console.log(`${c.name.padEnd(12)} 类=${cls.kind} 最大差=${cmp.worst} >1级=${cmp.over1} >2级=${cmp.over2} 均差=${cmp.mean.toFixed(5)} 直方图0..5=${cmp.hist.join(',')}`);
+    console.log(`${c.name.padEnd(12)} class=${cls.kind} max diff=${cmp.worst} >1 level=${cmp.over1} >2 levels=${cmp.over2} mean diff=${cmp.mean.toFixed(5)} histogram 0..5=${cmp.hist.join(',')}`);
     results.push({ case: c.name, class: cls.kind, tiedNearest: !!c.tiedNearest, def, ...cmp });
   }
 
-  /* ---------------------------------------------------------- 性能 */
-  const benchDef = { id: 'pm-bench', ...normalizePixelMapDef({ name: '抠绿', where: GREEN, to: 'transparent' }) };
+  /* ---------------------------------------------------------- Performance */
+  const benchDef = { id: 'pm-bench', ...normalizePixelMapDef({ name: 'Key out green', where: GREEN, to: 'transparent' }) };
   const perf = await ev((d, u, w, h, n) => window.__pm.bench(d, u, w, h, n),
     benchDef, '/out/pixelmap-gl/clip-1080p.mp4', W, H, 24);
-  console.log('性能(1080p 视频,抠色到透明):预热 ' + perf.warmupMs.toFixed(2) + ' ms;主线程提交 p50 ' + perf.submitP50.toFixed(3) + ' ms / max ' + perf.submitMax.toFixed(3) + ' ms;' +
+  console.log('Performance (1080p video, key out color to transparent): warm-up ' + perf.warmupMs.toFixed(2) + ' ms; main-thread submit p50 ' + perf.submitP50.toFixed(3) + ' ms / max ' + perf.submitMax.toFixed(3) + ' ms;' +
     'GPU ' + (perf.gpuP50 == null ? 'n/a' : 'p50 ' + perf.gpuP50.toFixed(3) + ' ms / max ' + perf.gpuMax.toFixed(3) + ' ms') + '(' + perf.gpuHow + ')');
 
   const report = { at: new Date().toISOString(), webgl: info, software, size: [W, H], cases: results, perf };
   fs.writeFileSync(path.join(OUT, 'pixelmap-gl-probe.json'), JSON.stringify(report, null, 2));
-  console.log('\n数据写到', path.join(OUT, 'pixelmap-gl-probe.json'));
+  console.log('\nData written to', path.join(OUT, 'pixelmap-gl-probe.json'));
 
-  // 标了 tiedNearest 的用例单独说:它超标的像素全在「到两个 from 色精确等距」的并列点上,
-  // 那里着色器按 sequenceTarget 的本意取靠前那个,反而比 mapRgba 更守规矩。
+  // Special note for cases marked tiedNearest: all its out-of-spec pixels are at tie points "exactly
+  // equidistant to two from colors", where the shader takes the earlier one following the original
+  // intent of sequenceTarget, behaving even more strictly than mapRgba.
   for (const r of results.filter((x) => x.tiedNearest && x.worst > 2)) {
-    console.log(`(已知)${r.case}:${r.over2 / 3} 个精确并列的像素取了不同的 from 下标,占 ${(r.over2 / 3 / (W * H) * 100).toFixed(5)}%;见用例上的注释`);
+    console.log(`(known) ${r.case}: ${r.over2 / 3} pixels with exact ties picked different from indices, making up ${(r.over2 / 3 / (W * H) * 100).toFixed(5)}%; see the comment on the case`);
   }
   const bad = results.filter((r) => r.worst > 2 && !r.tiedNearest);
-  if (bad.length) { console.log('!! 超过 2 级的用例:', bad.map((b) => `${b.case}=${b.worst}`).join(' ')); process.exitCode = 1; }
+  if (bad.length) { console.log('!! Cases over 2 levels:', bad.map((b) => `${b.case}=${b.worst}`).join(' ')); process.exitCode = 1; }
 } finally {
   if (browser) await browser.close().catch(() => {});
   /*
-   * Windows 上 vite 是经 npx.cmd + shell 起的,`kill()` 只打到那层 shell,真正占着 5199 的
-   * node 会活下来(实测跑完之后端口还 LISTENING)。所以整棵进程树一起收。
+   * On Windows, Vite is started via npx.cmd + shell, and `kill()` only hits that shell layer, leaving
+   * the Node process that actually occupies 5199 alive (in tests, the port remained LISTENING after
+   * running). Therefore, reap the entire process tree together.
    */
   if (process.platform === 'win32' && vite.pid) spawnSync('taskkill', ['/F', '/T', '/PID', String(vite.pid)], { windowsHide: true, stdio: 'ignore' });
   vite.kill();
-  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 临时目录清不掉不影响结论 */ }
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* Failure to clean up the temporary directory does not affect the conclusion */ }
 }

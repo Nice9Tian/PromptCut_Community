@@ -23,29 +23,30 @@ function BlurFadeCard({ params }: CardProps<Params>) {
 
 export const blurFadeCard: CardDef<Params> = {
   id: "mu-blur-fade",
-  name: "模糊浮现",
-  description: "文字从模糊中浮现",
-  useWhen: "Magic UI 的整块模糊浮现。要词块逐个浮现的节奏感优先用 blur-text。",
-  tags: ["浮现","模糊","文字"],
+  name: "Blur fade",
+  description: "Text fades in from blur",
+  useWhen: "Magic UI's whole-block blur fade. For the rhythm of word chunks fading in one by one, prefer blur-text.",
+  tags: ["fade-in","blur","Text"],
   source: "magicui",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: { text: "你好世界", accent: "", position: "center" },
   controls: [
-    { key: "text", label: "文本", type: "text" },
-    { key: "accent", label: "主色(留空用主题色)", type: "color" },
+    { key: "text", label: "Text", type: "text" },
+    { key: "accent", label: "Main color (leave empty to use theme color)", type: "color" },
     {
       key: "position",
-      label: "位置",
+      label: "Position",
       type: "select",
       options: [
-        { value: "center", label: "居中" },
-        { value: "bottom", label: "底部" },
+        { value: "center", label: "Center" },
+        { value: "bottom", label: "Bottom" },
       ],
     },
   ],
   parts: [
-    { id: "text", label: "文字", role: "text", params: ["text", "accent", "position"], enterMs: 0, settleMs: 400 },
+    { id: "text", label: "Text", role: "text", params: ["text", "accent", "position"], enterMs: 0, settleMs: 400 },
   ],
   lifecycle: { settleMs: 400, after: "hold", exit: ["fade"] },
   Component: BlurFadeCard,

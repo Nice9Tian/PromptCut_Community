@@ -7,20 +7,25 @@ import { magicuiCards } from "./magicui";
 import { nativeCards } from "./native";
 import { userCards, userCardFiles, userCardFileOf, userCardDependencies } from "./user";
 import { assetCards } from "./assets";
-// 部件库(组合卡的零件)和卡片一起装:src/parts/index.ts 自己注册,这里只要确保它被加载
+// The parts library (the building blocks of composite cards) is installed together with the cards:
+// src/parts/index.ts registers itself, and here we only need to make sure it is loaded
 import "../parts";
 import { probeCards } from "./_probe";
 
-// 这个模块会被 HMR 重新执行(新建或修改 src/cards/user/ 下的卡就会触发),
-// 所以每次都从空开始重装一遍:删掉的卡片文件不会赖在库里,重复注册也不会报错。
+// This module is re-executed by HMR (creating or modifying a card under src/cards/user/ triggers it),
+// so every time it reinstalls everything starting from empty: a deleted card file does not linger in
+// the library, and registering twice does not raise an error.
 resetCards();
-// 素材封装卡(Lottie / 粒子目录翻译出来的)和内置卡一起注册:它们是构建时生成的,id 有保留前缀
+// Media wrapper cards (translated from the Lottie / particle catalog) are registered together with
+// the built-in cards: they are generated at build time, and their ids have reserved prefixes
 registerCards([...magicuiCards, ...nativeCards, ...assetCards, ...probeCards]);
 
-// 用户 / AI 建的卡最后注册,并且要先滤掉和内置卡撞车的 id。
-// 这些文件是运行时新增的,一张撞车的卡不该让整个编辑器起不来 ——
-// 建卡这条路不能有「写错一次就打不开软件」的失败模式。
-// create_card 那边也会提前拦一次,这里是兜底。
+// Cards created by the user / AI are registered last, and ids that collide with built-in cards must
+// be filtered out first.
+// These files are added at runtime, and one colliding card must not keep the whole editor from
+// starting: the card-creation route must not have the failure mode "one mistake and the software
+// will not open".
+// create_card also intercepts this once beforehand; this is the fallback.
 const taken = new Set(allCards().map((c) => c.id));
 const safeUserCards = userCards.filter((c) => {
   if (taken.has(c.id)) {
@@ -31,17 +36,22 @@ const safeUserCards = userCards.filter((c) => {
   return true;
 });
 registerCards(safeUserCards);
-// 定制卡源码原文交给注册表,存 .proc 时打包用(为什么不让 procCards 直接 import,见 registry.ts)
+// The original source of custom cards is handed to the registry, for packing when saving .proc (see
+// registry.ts for why procCards does not import it directly)
 setUserCardSources(userCardFiles, userCardFileOf, userCardDependencies);
 
 /**
- * 音频素材效果卡在页面里求值,`src/audio/cardAudio.ts` 要的定义和源码版本从这里注入
- * (模块级,不逐层传参)。每次 HMR 重跑这个模块都会再调一次,`cardAudio` 那边的
- * 版本号跟着 +1 —— 换了卡之后 project 引用不变,靠它让预览重新取块。
+ * Audio media effect cards are evaluated in the page, and the definitions and source versions that
+ * `src/audio/cardAudio.ts` needs are injected from here (at module level, not passed down layer by
+ * layer). Every time HMR reruns this module it is called again, and the version number on the
+ * `cardAudio` side goes up by 1: after the cards are swapped the project reference does not change,
+ * and this is what makes the preview fetch chunks again.
  *
- * `userCardSources()` **每次调用时才取**:`setUserCardSources` 排在 registerCards 之后,
- * 注册时快照下来是空表。源码版本的算法照 ExportView.tsx 那份(第二参是 dependencies,
- * 不是 files —— files 的键是剥掉 `./` 和 `.tsx` 的裸文件名,cardSourceVersion 按 /src/… 路径解析)。
+ * `userCardSources()` is **fetched only at call time**: `setUserCardSources` comes after
+ * registerCards, so a snapshot taken at registration would be an empty table. The algorithm of the
+ * source version follows the one in ExportView.tsx (the second argument is dependencies, not
+ * files: the keys of files are bare file names with `./` and `.tsx` stripped, while
+ * cardSourceVersion resolves by /src/… paths).
  */
 configureCardAudio({
   getCard,
@@ -53,20 +63,24 @@ configureCardAudio({
     const source = file && user.files[file] !== undefined
       ? `user:${cardSourceVersion(card, { ...builtinCardSourceFiles, ...user.dependencies }, `/src/cards/user/${file}.tsx`)}`
       : `builtin:${cardSourceVersion(card, builtinCardSourceFiles)}`;
-    // 整段源码闭包正文过一次同步的非密码学哈希(key() 是同步的,src/ 里没有 node:crypto,
-    // crypto.subtle.digest 是 Promise)
+    // Run the whole source closure text through a synchronous non-cryptographic hash (key() is
+    // synchronous, there is no node:crypto in src/, and crypto.subtle.digest is a Promise)
     return cyrb53(source);
   },
 });
 
 /*
- * 热更新的边界(C6.6 集成 3b):卡片文件一改,热更新沿「卡片 → 本模块」冒上来,在这里接住 ——
- * 本模块重跑一遍(上面从空重装整套卡片),不再往上冒到 Editor、Preview、StageView。
- * 以前冒上去之后,它们的 effect 在 Fast Refresh 里重跑:Preview 的握手 effect 清掉了舞台的 RPC 客户端,
- * 而舞台没重载、不会再发 `pc-stage-ready`,于是舞台停在旧画面,预览就此不再更新。
- * 引用本模块的地方都只是 `import "./cards"` 取副作用,不拿绑定,所以接住之后无需通知它们换引用;
- * 要看新卡的一方经注册表的 `onCardsUpdated` 订阅。通知放在这一批热更新全部落地之后
- * (`vite:afterUpdate`),免得订阅方读到半截(卡片源码表 `cardSourceFiles.mjs` 同一批更新)。
+ * The boundary of hot updates (C6.6 integration 3b): as soon as a card file changes, the hot update
+ * bubbles up along "card → this module" and is caught here: this module reruns (reinstalling the
+ * whole set of cards from empty, above) and no longer bubbles up to Editor, Preview and StageView.
+ * It used to bubble up, and then their effects reran during Fast Refresh: Preview's handshake effect
+ * cleared the stage's RPC client, and since the stage did not reload and would not send
+ * `pc-stage-ready` again, the stage stayed on the old picture and the preview stopped updating.
+ * Every place that references this module only does `import "./cards"` for the side effect and takes
+ * no bindings, so once caught there is no need to tell them to swap references; whoever wants to see
+ * the new cards subscribes through the registry's `onCardsUpdated`. The notification is placed after
+ * this whole batch of hot updates has landed (`vite:afterUpdate`), so subscribers do not read a
+ * half-updated state (the card source table `cardSourceFiles.mjs` is updated in the same batch).
  */
 if (import.meta.hot) {
   const data = import.meta.hot.data as { loaded?: boolean; changed?: boolean };

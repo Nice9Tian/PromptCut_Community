@@ -1,64 +1,84 @@
 /**
- * 成本记录模块（语义 `docs/semantics/mechanism/document-service.md`「成本记录」、`mechanism/rendering.md`「界限搜索与成本记录」；
- * 契约 `docs/plan/c10-contract.md` 第 3 节，分支 `claude/c10-cost`）。
+ * Cost record module (semantics `docs/semantics/mechanism/document-service.md` "Cost Records",
+ * `mechanism/rendering.md` "Bounds Search and Cost Records";
+ * contract `docs/plan/c10-contract.md` Section 3, branch `claude/c10-cost`).
  *
- * 桌面版与所有在线浏览器测完一张卡，把它的活渲单帧耗时写进这里（2026-10-07 用户定）；只有一个舞台的在线页面打开项目时读本项目的
- * 全部记录，按耗时给卡排序、做界限搜索（`src/render/boundarySearch.mjs`）。只放耗时，不放字节。
+ * After the desktop app and all online browsers finish measuring a card, they write its live render
+ * single-frame duration here (user decision, 2026-10-07); online pages with only a single stage read
+ * all records of this project upon opening, sort cards by duration, and run bounds search
+ * (`src/render/boundarySearch.mjs`). Stores only duration, not bytes.
  *
- * # 键与值
+ * # Keys and values
  *
- * - 键：`(identityKey, envFingerprint)`。`identityKey` 是卡片身份（`src/render/cardCostKey.mjs` 的 `cardCostKey`：
- *   参数、源码版本、帧率、审阅表、片段长度），本来就不含测量机器；`envFingerprint` 是测量环境的指纹，
- *   与预渲染结果键同一套（`server/render-node/fingerprint.mjs`：操作系统、GPU 基础类别、Chrome 主版本）。
- * - 值：`stepMs`（活渲单帧耗时，进入判重的那个数）、`samples`（采样帧数）、`measuredAt`（测量时刻，毫秒）、
- *   `mode`（构建模式 `'dev'` / `'build'`）。
- * - **同一个键只留最新一条**：按 `measuredAt` 比，新来的不比已有的旧才替换（同一时刻后到的赢）。这样桌面版在接上
- *   共享项目时补传的旧记录不会盖掉别人刚测的新记录。
+ * - Key: `(identityKey, envFingerprint)`. `identityKey` is card identity (`cardCostKey` in
+ *   `src/render/cardCostKey.mjs`: parameters, source code version, frame rate, review table,
+ *   clip duration), which originally excludes the measuring machine; `envFingerprint` is the
+ *   fingerprint of the measurement environment, sharing the same scheme as the prerender output key
+ *   (`server/render-node/fingerprint.mjs`: OS, base GPU category, Chrome major version).
+ * - Value: `stepMs` (live render single-frame duration, the number fed into classify as heavy),
+ *   `samples` (sample frame count), `measuredAt` (measurement timestamp, ms),
+ *   `mode` (build mode `'dev'` / `'build'`).
+ * - **Only the latest entry is kept for the same key**: compared by `measuredAt`, incoming entries
+ *   replace existing ones only if they are not older (last arrival wins at the same timestamp).
+ *   This ensures old records backfilled when the desktop app connects to a shared project do not
+ *   overwrite freshly measured records from others.
  *
- * # 协议（请求都可带 `reqId`，回包原样带回）
+ * # Protocol (all requests can include `reqId`, echoed back in responses)
  *
  *   cost.put  { projectId, records: [{ identityKey, stepMs, samples, measuredAt, mode }], environment? | envFingerprint? }
  *     → cost.stored { projectId, envFingerprint, count, added, updated, ignored }
- *     环境二选一：`environment` 是页面报的原始值 `{ platform, userAgent, renderer, vendor }`（`src/editor/pageEnvironment.mjs`），
- *     由这里用 `describeEnvironment` 算指纹 —— 页面只报原始值、不自己算，归一规则只有一处；
- *     `envFingerprint` 是已经算好的 16 位小写十六进制（Node 一侧的调用方用）。`ignored` 是比已有记录旧、没替换的条数。
+ *     One of two environments: `environment` is the raw value `{ platform, userAgent, renderer, vendor }`
+ *     reported by the page (`src/editor/pageEnvironment.mjs`), used here to compute fingerprint via
+ *     `describeEnvironment`: pages report only raw values and never compute it themselves, keeping
+ *     normalization rules in a single place; `envFingerprint` is the precomputed 16-character lowercase
+ *     hex (used by callers on the Node side). `ignored` is the count of records older than existing
+ *     entries that were not replaced.
  *
  *   cost.list { projectId, environment? }
  *     → cost.listing { projectId, records: [{ identityKey, envFingerprint, stepMs, samples, measuredAt, mode }], truncated, envFingerprint? }
- *     回本项目的全部记录（按 identityKey、envFingerprint 排好序）。带了 `environment` 时顺带回它的指纹：
- *     界限搜索用它给本机的测量结果做键（「卡片身份 + 本机环境指纹」），不必在页面里另算一遍。
+ *     Returns all records for this project (sorted by identityKey, envFingerprint). When `environment`
+ *     is provided, returns its fingerprint alongside: bounds search uses it as the key for local
+ *     measurement results ("card identity + local environment fingerprint"), without needing to
+ *     recompute it in the page.
  *
- *   出错：`error { reason }`，`reason` 是 `bad-message`（形状不对，整条不落）、`forbidden`（不是这个项目的成员）、
- *   `too-large`（一次写太多，或这个项目的记录已满）、`unsupported`（不认识的类型）。
+ *   Error: `error { reason }`, where `reason` is `bad-message` (invalid shape, nothing persisted),
+ *   `forbidden` (not a member of this project), `too-large` (writing too much at once, or project
+ *   records full), `unsupported` (unrecognized type).
  *
- * # 权限与隔离
+ * # Permissions and isolation
  *
- * 和内容库一样按项目空间各起一份（`spaces.mjs`、`shared-service.mjs` 的 `bundleForSpace`），空间之间互不相通。
- * 在共享项目的空间里只认本项目：`projectId` 必须等于空间名（就是连接凭证里的项目），别的一律 `forbidden`——
- * 成员才能读写本项目的记录。`local` 空间只有本机身份进得来，按 `projectId` 分开存、不另设限制。
+ * Like the content store, an instance is spawned per project space (`spaces.mjs`, `bundleForSpace`
+ * in `shared-service.mjs`); spaces are completely isolated from each other.
+ * In a shared project space, only this project is recognized: `projectId` must equal the space name
+ * (the project in connection credentials), otherwise `forbidden`: only members can read and write
+ * this project's records. Only local identity can enter `local` space, where records are stored
+ * separately by `projectId` without additional restrictions.
  *
- * # 存储
+ * # Storage
  *
- * 每个项目一条追加日志 `costs/<projectId>`（与内容库同一份空间存储），第一次用到时回放，之后只在内存里维护。
- * 每条日志记录都带 `projectId`，回放时按它过滤（Windows 文件名不分大小写，见 `store/index.mjs`）。
+ * Each project has an append log `costs/<projectId>` (sharing the same space store as the content
+ * store), replayed upon first use and maintained only in memory thereafter.
+ * Every log record carries `projectId`, used to filter during replay (Windows filenames are
+ * case-insensitive; see `store/index.mjs`).
  */
 import { createMemoryStore } from '../store/index.mjs';
 import { describeEnvironment } from '../../render-node/fingerprint.mjs';
 import { LOCAL_SPACE } from '../spaces.mjs';
+import { tr } from '../../i18n.mjs';
 
 export const COSTS_MODULE = 'costs';
 
-/** 三级数字（`mechanism/document-service.md`「成本记录」） */
+/** Three-tier numbers (`mechanism/document-service.md` "Cost Records") */
 export const COSTS_LIMITS = Object.freeze({
-  /** 一次 `cost.put` 最多几条 */
+  /** Maximum number of records per `cost.put` */
   MAX_PUT: 500,
-  /** 一个项目最多存几条（卡数 × 环境数；到了上限只许替换已有的键） */
+  /** Max records per project (cards × environments; at limit, only existing keys can be replaced) */
   MAX_RECORDS: 20_000,
-  /** `cost.list` 一次回几条；超了带 `truncated: true`，按测量时刻从新到旧留 */
+  /** Records per `cost.list`; includes `truncated: true` if exceeded, newest to oldest by timestamp */
   MAX_LIST: 5_000,
-  /** 单帧耗时的合理上限（毫秒）；超了当坏形状 */
+  /** Reasonable upper bound for single-frame duration (ms); treated as malformed shape if exceeded */
   MAX_STEP_MS: 600_000,
-  /** 采样帧数的上限 */
+  /** Upper bound on sample frame count */
   MAX_SAMPLES: 1_000_000,
 });
 
@@ -80,59 +100,62 @@ class Refused extends Error {
 const bad = (detail) => { throw new Refused('bad-message', detail); };
 
 function checkProjectId(v) {
-  if (typeof v !== 'string' || !PROJECT_ID_RE.test(v)) bad('projectId 不合法');
+  if (typeof v !== 'string' || !PROJECT_ID_RE.test(v)) bad('projectId is invalid');
   return v;
 }
 
-/** 页面报的原始环境 → 指纹；形状不对抛 bad-message */
+/** Raw environment reported by page → fingerprint; throws bad-message if shape is invalid */
 function fingerprintOfEnvironment(env) {
-  if (!isObj(env)) bad('environment 必须是对象');
+  if (!isObj(env)) bad('environment must be an object');
   for (const k of ['platform', 'userAgent', 'renderer', 'vendor']) {
-    if (env[k] !== undefined && (typeof env[k] !== 'string' || env[k].length > 1024)) bad(`environment.${k} 必须是不超过 1024 个字符的字符串`);
+    if (env[k] !== undefined && (typeof env[k] !== 'string' || env[k].length > 1024)) bad(`environment.${k} must be a string of at most 1024 characters`);
   }
   return describeEnvironment({ platform: env.platform, renderer: env.renderer, vendor: env.vendor, chromeVersion: env.userAgent }).fingerprint;
 }
 
-/** 写入时的环境：`environment` 与 `envFingerprint` 恰好给一个 */
+/** Environment at write time: exactly one of `environment` or `envFingerprint` must be provided */
 function envOfPut(msg) {
   const hasEnv = msg.environment !== undefined;
   const hasFp = msg.envFingerprint !== undefined;
-  if (hasEnv === hasFp) bad('environment 与 envFingerprint 恰好给一个');
+  if (hasEnv === hasFp) bad('Provide exactly one of environment and envFingerprint');
   if (hasFp) {
-    if (typeof msg.envFingerprint !== 'string' || !FINGERPRINT_RE.test(msg.envFingerprint)) bad('envFingerprint 必须是 16 位小写十六进制');
+    if (typeof msg.envFingerprint !== 'string' || !FINGERPRINT_RE.test(msg.envFingerprint)) bad('envFingerprint must be 16 lowercase hex digits');
     return msg.envFingerprint;
   }
   return fingerprintOfEnvironment(msg.environment);
 }
 
-/** 一条记录的形状；只留认得的字段 */
+/** Shape of a single record; keeps only recognized fields */
 function checkRecord(r, i) {
   const at = `records[${i}]`;
-  if (!isObj(r)) bad(`${at} 必须是对象`);
-  if (typeof r.identityKey !== 'string' || !IDENTITY_RE.test(r.identityKey)) bad(`${at}.identityKey 不合法`);
-  if (typeof r.stepMs !== 'number' || !Number.isFinite(r.stepMs) || r.stepMs < 0 || r.stepMs > COSTS_LIMITS.MAX_STEP_MS) bad(`${at}.stepMs 必须是 0～${COSTS_LIMITS.MAX_STEP_MS} 的数`);
-  if (!Number.isSafeInteger(r.samples) || r.samples < 1 || r.samples > COSTS_LIMITS.MAX_SAMPLES) bad(`${at}.samples 必须是 1～${COSTS_LIMITS.MAX_SAMPLES} 的整数`);
-  if (typeof r.measuredAt !== 'number' || !Number.isFinite(r.measuredAt) || r.measuredAt <= 0) bad(`${at}.measuredAt 必须是正数（毫秒时间戳）`);
-  if (!MODES.has(r.mode)) bad(`${at}.mode 只能是 dev / build`);
+  if (!isObj(r)) bad(tr("{0} must be an object", at));
+  if (typeof r.identityKey !== 'string' || !IDENTITY_RE.test(r.identityKey)) bad(`${at}.identityKey is invalid`);
+  if (typeof r.stepMs !== 'number' || !Number.isFinite(r.stepMs) || r.stepMs < 0 || r.stepMs > COSTS_LIMITS.MAX_STEP_MS) bad(`${at}.stepMs must be a number from 0 to ${COSTS_LIMITS.MAX_STEP_MS}`);
+  if (!Number.isSafeInteger(r.samples) || r.samples < 1 || r.samples > COSTS_LIMITS.MAX_SAMPLES) bad(`${at}.samples must be an integer from 1 to ${COSTS_LIMITS.MAX_SAMPLES}`);
+  if (typeof r.measuredAt !== 'number' || !Number.isFinite(r.measuredAt) || r.measuredAt <= 0) bad(`${at}.measuredAt must be a positive number (millisecond timestamp)`);
+  if (!MODES.has(r.mode)) bad(`${at}.mode must be dev / build`);
   return { identityKey: r.identityKey, stepMs: r.stepMs, samples: r.samples, measuredAt: r.measuredAt, mode: r.mode };
 }
 
 const keyOf = (identityKey, envFingerprint) => `${identityKey}\u0000${envFingerprint}`;
 const streamOf = (projectId) => `costs/${projectId}`;
 
-/** 对外的一条记录（去掉写入者等内部字段） */
+/** External record representation (omits internal fields such as writer) */
 const publicOf = (r) => ({ identityKey: r.identityKey, envFingerprint: r.envFingerprint, stepMs: r.stepMs, samples: r.samples, measuredAt: r.measuredAt, mode: r.mode });
 
 /**
  * @param {object} [options]
- * @param {string} [options.space] 这份实例属于哪个空间（`spaces.mjs` 的空间名）；缺省 `local`
- * @param {{ append(stream: string, record: object): void, read(stream: string): object[] }} [options.store] 缺省用内存存储
- * @param {() => number} [options.now] 服务端收到的时刻（只记进日志，不参与「最新」的比较）；缺省 `ctx.now()`
- * @param {object} [options.limits] 覆盖 `COSTS_LIMITS` 的几项（测试用）
+ * @param {string} [options.space] Which space this instance belongs to (space name in `spaces.mjs`);
+ *   defaults to `local`
+ * @param {{ append(stream: string, record: object): void, read(stream: string): object[] }} [options.store]
+ *   Defaults to in-memory store
+ * @param {() => number} [options.now] Timestamp received by server (recorded in log only, not used
+ *   in "latest" comparison); defaults to `ctx.now()`
+ * @param {object} [options.limits] Overrides items in `COSTS_LIMITS` (for testing)
  */
 export function costsModule({ space = LOCAL_SPACE, store = createMemoryStore(), now, limits = {} } = {}) {
   const L = { ...COSTS_LIMITS, ...limits };
-  /** projectId → Map<key, record>；第一次用到时从日志回放 */
+  /** projectId → Map<key, record>; replayed from log upon first use */
   const projects = new Map();
   /** connId → principal */
   const principals = new Map();
@@ -152,11 +175,11 @@ export function costsModule({ space = LOCAL_SPACE, store = createMemoryStore(), 
     return table;
   }
 
-  /** 成员才能读写本项目的记录：共享项目的空间里 projectId 必须就是空间名 */
+  /** Only members read/write project records: in shared space, projectId must match the space name */
   function checkAccess(connId, projectId) {
     const principal = principals.get(connId);
-    if (!principal || principal.scope === 'admin') throw new Refused('forbidden', '这条连接不能读写成本记录');
-    if (space !== LOCAL_SPACE && projectId !== space) throw new Refused('forbidden', '只有这个项目的成员能读写它的成本记录');
+    if (!principal || principal.scope === 'admin') throw new Refused('forbidden', tr("This connection cannot read or write cost records"));
+    if (space !== LOCAL_SPACE && projectId !== space) throw new Refused('forbidden', tr("Only members of this project can read or write its cost records"));
   }
 
   function reply(ctx, connId, message, reqId) {
@@ -168,21 +191,21 @@ export function costsModule({ space = LOCAL_SPACE, store = createMemoryStore(), 
     const projectId = checkProjectId(msg.projectId);
     checkAccess(connId, projectId);
     const envFingerprint = envOfPut(msg);
-    if (!Array.isArray(msg.records) || msg.records.length < 1) bad('records 必须是非空数组');
-    if (msg.records.length > L.MAX_PUT) throw new Refused('too-large', `一次最多写 ${L.MAX_PUT} 条`);
-    // 先整批校验，有一条不对就整条不落
+    if (!Array.isArray(msg.records) || msg.records.length < 1) bad('records must be a non-empty array');
+    if (msg.records.length > L.MAX_PUT) throw new Refused('too-large', `At most ${L.MAX_PUT} records can be written at a time`);
+    // Validate the whole batch first; if any entry is invalid, persist nothing
     const records = msg.records.map(checkRecord);
     const table = tableOf(projectId);
     let added = 0, updated = 0, ignored = 0;
     const at = typeof now === 'function' ? now() : ctx.now();
     const fresh = records.filter((r) => !table.has(keyOf(r.identityKey, envFingerprint)));
-    if (table.size + new Set(fresh.map((r) => r.identityKey)).size > L.MAX_RECORDS) throw new Refused('too-large', `这个项目的成本记录已满（${L.MAX_RECORDS} 条）`);
+    if (table.size + new Set(fresh.map((r) => r.identityKey)).size > L.MAX_RECORDS) throw new Refused('too-large', tr("The cost records of this project are full ({0} records)", L.MAX_RECORDS));
     for (const r of records) {
       const key = keyOf(r.identityKey, envFingerprint);
       const prev = table.get(key);
       if (prev && prev.measuredAt > r.measuredAt) { ignored++; continue; }
       const rec = { projectId, ...r, envFingerprint, at };
-      // 先落日志再改内存：落盘失败时状态不变，核心回 internal
+      // Append to log before updating memory: state remains unchanged on disk failure, core returns internal
       store.append(streamOf(projectId), rec);
       table.set(key, rec);
       if (prev) updated++; else added++;
@@ -221,7 +244,7 @@ export function costsModule({ space = LOCAL_SPACE, store = createMemoryStore(), 
     handle(ctx, connId, msg) {
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '成本记录模块不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The cost records module does not support this message' }, reqId);
       try {
         fn(ctx, connId, msg, reqId);
       } catch (err) {

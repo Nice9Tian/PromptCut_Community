@@ -1,14 +1,22 @@
 /**
- * 父页一侧「暂停和拖动贴流」的单测(`snapshotFeed.ts`;任务书「己三」)。
- * 跑:npm test -- src/editor/snapshotFeedScrub.test.mjs
+ * Unit test for "stream pasting during pause and scrub" on the parent page side (`snapshotFeed.ts`;
+ * task brief "Ji-3").
+ * Run: npm test -- src/editor/snapshotFeedScrub.test.mjs
  *
- * 钉住:
- *   - 不在播放时,这一帧有流的重卡照样发流平面,并且被抑制(`FeedPlan.scrub`);
- *   - **有流不读快照**:就算快照表盖着这一帧,也不选帧、不取字节、不点名 `awaiting`、不报缺口;
- *   - 这一帧所在分段没就绪 / 根本没有流的卡,落回快照这条路(现状),不抑制;
- *   - 追到精确活渲(`settled`)的卡不再抑制,但流平面照发(把播放头下这一帧先解好);下一次 `setTime`、起播照常;
- *   - 组流整条判;超出解码器预算的层抑制着、落到快照;最低一档(只有一个舞台)暂停着照现状不发流平面;
- *   - 片段不从 15 的倍数帧开始:按这条流自己的第一帧换算。
+ * Pin:
+ *   - When not playing, heavy cards that have a stream for this frame still emit stream planes and
+ *     are suppressed (`FeedPlan.scrub`);
+ *   - **Do not read snapshots when streams exist**: even if the snapshot table covers this frame,
+ *     it does not select frames, fetch bytes, name `awaiting`, or report gaps;
+ *   - Cards whose segment for this frame is not ready or that have no stream at all fall back to
+ *     snapshots (current behavior) and are not suppressed;
+ *   - Cards caught up to precise live render (`settled`) are no longer suppressed, but stream
+ *     planes are still emitted as usual (decoding this frame under the playhead first); next
+ *     `setTime` and playback start proceed as usual;
+ *   - Group streams are evaluated as a whole; layers exceeding decoder budget remain suppressed and
+ *     fall back to snapshots; lowest tier (only one stage) does not emit stream planes while paused,
+ *     following current behavior;
+ *   - Clip does not start at a multiple-of-15 frame: converted based on this stream's own first frame.
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock, beforeEach } from "node:test";
@@ -22,8 +30,10 @@ mock.module(srcUrl("render/dataMirror.ts"), { exports: { mirrorKey: () => ({ ses
 
 const feed = await import(srcUrl("editor/snapshotFeed.ts"));
 const { planFeed, pickForSetTime, deliverSnapshots, noteSettled, markAllSettled, suppressedAt, streamPlanesAt, setSnapshotSource, syncSnapshotSubscription, resetSnapshotFeed } = feed;
-// 同屏流的预算是数像素的(`render/streamBudget.mjs`)。这份测试里的卡都是整幅的、项目 30 帧每秒:
-// 同屏放得下的条数由预算算出来(15.04 亿 ÷ (1920 × 2176 × 30) = 12),下面仍叫它 DECODER_BUDGET
+// Budget for streams on the same screen counts pixels (`render/streamBudget.mjs`). Cards in this
+// test are all full-frame, project is 30 frames per second:
+// The count that fits on screen is computed from budget (1.504 billion ÷ (1920 × 2176 × 30) = 12),
+// still called DECODER_BUDGET below
 const { STREAM_PIXEL_RATE_BUDGET, streamCost, stageStreamPixels } = await import(srcUrl("render/streamBudget.mjs"));
 const DECODER_BUDGET = Math.floor(STREAM_PIXEL_RATE_BUDGET / streamCost(stageStreamPixels({ width: 1920, height: 1080 }), 30));
 
@@ -51,51 +61,51 @@ beforeEach(() => {
   now += 10_000;
 });
 
-test("暂停 / 拖动:这一帧有流的重卡发流平面、被抑制;有流不读快照(不选帧、不取字节、不等、不报缺口)", async () => {
+test("Pause / scrub: a heavy card with a stream at this frame sends a stream plane and is suppressed; with a stream no snapshot is read (no frame picked, no bytes fetched, no waiting, no gaps reported)", async () => {
   const p = project([card("h"), card("l")]);
   plan = heavyEverywhere("h");
-  src.push(html("h", [[0, 299]]));               // 快照表盖着每一帧
+  src.push(html("h", [[0, 299]]));               // Snapshot table covers every frame
   src.push(stream("h", [[0, 19]]));
   const head = { project: p, t: at(37), playing: false };
   const f = planFeed(head);
   assert.deepEqual(f.heavy, ["h"]);
   assert.deepEqual(f.streamPlanes, [{ clipIds: ["h"], key: "s-h", ranges: [[0, 19]], originFrame: 0 }]);
   assert.deepEqual(f.scrub, ["h"]);
-  assert.equal(f.picks.size, 0, "有流不读快照");
+  assert.equal(f.picks.size, 0, "With a stream, snapshots are not read");
   assert.deepEqual(f.wanted, []);
   assert.deepEqual(suppressedAt(head), ["h"]);
   assert.deepEqual(streamPlanesAt(head), f.streamPlanes);
   const set = pickForSetTime(head);
-  assert.deepEqual(set, { snapshots: {}, awaiting: [] }, "setTime 不带快照、不点名等快照");
+  assert.deepEqual(set, { snapshots: {}, awaiting: [] }, "setTime carries no snapshots and names none to wait for");
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(src.fetched, [], "快照的字节一个都不取");
+  assert.deepEqual(src.fetched, [], "None of the snapshot bytes are fetched");
   assert.deepEqual(wantedPushed, []);
   const calls = [];
   await deliverSnapshots({ setSnapshots: async (patch) => { calls.push(patch); } }, "front", head);
-  assert.deepEqual(calls, [], "也不投");
+  assert.deepEqual(calls, [], "Nor delivered");
 });
 
-test("这一帧所在分段的流没就绪、或者这张卡根本没有流:重卡进 scrub 占位,不选快照", () => {
+test("The stream of the segment containing this frame is not ready, or this card has no stream at all: the heavy card enters scrub for a placeholder and no snapshot is picked", () => {
   const p = project([card("h"), card("n")]);
   plan = heavyEverywhere("h", "n");
   src.push(html("h", [[0, 299]]));
   src.push(html("n", [[0, 299]]));
-  src.push(stream("h", [[0, 1]]));                // 只有头两个分段(第 0～29 帧)
+  src.push(stream("h", [[0, 1]]));                // Only the first two segments (frames 0-29)
   const head = { project: p, t: at(37), playing: false };
   const f = planFeed(head);
   assert.deepEqual(f.streamPlanes, []);
   assert.deepEqual(f.scrub, ["h", "n"]);
-  assert.equal(f.picks.size, 0, "快照退役,不选快照");
+  assert.equal(f.picks.size, 0, "Snapshots retired, no snapshot is picked");
   assert.deepEqual(suppressedAt(head), ["h", "n"]);
   assert.deepEqual(pickForSetTime(head), { snapshots: {}, awaiting: [] });
-  // 拖回有流的那一段:h 贴流,n 照旧在 scrub 占位
+  // Scrub back to the segment with a stream: h pastes stream, n holds placeholder in scrub as usual
   const back = planFeed({ ...head, t: at(20) });
   assert.deepEqual(back.streamPlanes.map((s) => s.clipIds[0]), ["h"]);
   assert.deepEqual(back.scrub, ["h", "n"]);
   assert.equal(back.picks.size, 0);
 });
 
-test("追到精确活渲(settled)的卡不再抑制,流平面照发(把这一帧先解好);下一次 setTime 重新贴流;起播照常抑制", () => {
+test("A card that has caught up to exact live render (settled) is no longer suppressed and its stream plane is still sent (to decode this frame first); the next setTime pastes the stream again; starting playback suppresses as usual", () => {
   const p = project([card("h")]);
   plan = heavyEverywhere("h");
   src.push(stream("h", [[0, 19]]));
@@ -104,19 +114,20 @@ test("追到精确活渲(settled)的卡不再抑制,流平面照发(把这一帧
   assert.deepEqual(suppressedAt(head), ["h"]);
   noteSettled("front", ["h"]);
   const settled = planFeed(head);
-  assert.deepEqual(settled.scrub, [], "停下就撤兜底:追上的不再盖回去");
-  assert.equal(settled.streamPlanes.length, 1, "流平面留着:舞台拿它把播放头下这一帧先解好");
+  assert.deepEqual(settled.scrub, [], "On stopping, the fallback is withdrawn: cards that have caught up are not covered again");
+  assert.equal(settled.streamPlanes.length, 1, "The stream plane stays: the stage uses it to decode the frame under the playhead first");
   assert.equal(settled.picks.size, 0);
-  // 起播:和暂停着先解好的是同一条平面(舞台不用重建解码器),这时才抑制
+  // Start playback: same plane as the one decoded first while paused (stage does not need to rebuild
+  // decoder), suppressed only at this point
   const playing = { ...head, playing: true };
   assert.deepEqual(streamPlanesAt(playing), settled.streamPlanes);
   assert.deepEqual(suppressedAt(playing), ["h"]);
-  // 再拖一下:上一次的「已精确」作废
+  // Scrub again: previous "precise" is invalidated
   pickForSetTime({ ...head, t: at(52) });
   assert.deepEqual(suppressedAt({ ...head, t: at(52) }), ["h"]);
 });
 
-test("暂停态互换之后整台精确(markAllSettled):一张都不抑制,流平面照发", () => {
+test("After a swap in paused state, the whole stage is exact (markAllSettled): no card is suppressed and the stream planes are still sent", () => {
   const p = project([card("a"), card("b")]);
   plan = heavyEverywhere("a", "b");
   src.push(stream("a", [[0, 19]]));
@@ -128,7 +139,7 @@ test("暂停态互换之后整台精确(markAllSettled):一张都不抑制,流�
   assert.equal(streamPlanesAt(head).length, 2);
 });
 
-test("组流整条判:成员有一张没追上,整组都还抑制着;全追上了才都放开", () => {
+test("Group stream is judged as a whole: if any member has not caught up, the whole group stays suppressed; it is released only when all have caught up", () => {
   const p = project([card("a"), card("b")]);
   plan = heavyEverywhere("a", "b");
   src.push(stream("b", [[0, 19]], { key: "g", groupClipIds: ["a", "b"] }));
@@ -137,19 +148,20 @@ test("组流整条判:成员有一张没追上,整组都还抑制着;全追上�
   assert.deepEqual(f.streamPlanes, [{ clipIds: ["a", "b"], key: "g", ranges: [[0, 19]], originFrame: 0 }]);
   assert.deepEqual(f.scrub, ["a", "b"]);
   noteSettled("front", ["a"]);
-  assert.deepEqual(planFeed(head).scrub, ["a", "b"], "a 先追上:组里还有 b,整组不放");
+  assert.deepEqual(planFeed(head).scrub, ["a", "b"], "a catches up first: b is still in the group, so the whole group is not released");
   noteSettled("front", ["b"]);
   assert.deepEqual(planFeed(head).scrub, []);
-  // 组里有一张这一刻不判重:这一组不贴(各走各的)
+  // One card in the group is not classified as heavy at this moment: this group is not pasted (each
+  // goes its own way)
   plan = heavyEverywhere("a");
   pickForSetTime(head);
   assert.deepEqual(planFeed(head).streamPlanes, []);
-  assert.deepEqual(planFeed(head).scrub, ["a"], "a 没有流但仍是重卡未 settled,进 scrub 占位");
+  assert.deepEqual(planFeed(head).scrub, ["a"], "a has no stream but is still a heavy card not yet settled, so it enters scrub for a placeholder");
   noteSettled("front", ["a"]);
-  assert.deepEqual(planFeed(head).scrub, [], "a settled 之后不再抑制");
+  assert.deepEqual(planFeed(head).scrub, [], "a is no longer suppressed after settled");
 });
 
-test("同屏超出解码器预算:流平面按预算截;超出的那几张也抑制着(占位),不选快照", () => {
+test("Over the decoder budget on one screen: stream planes are cut to the budget; the ones that go over are also suppressed (placeholder) and no snapshot is picked", () => {
   const ids = Array.from({ length: DECODER_BUDGET + 2 }, (_, i) => `c${i}`);
   const p = project(ids.map((id) => card(id)));
   plan = heavyEverywhere(...ids);
@@ -158,11 +170,11 @@ test("同屏超出解码器预算:流平面按预算截;超出的那几张也抑
   const f = planFeed(head);
   assert.equal(f.streamPlanes.length, DECODER_BUDGET);
   assert.deepEqual(f.scrub, [...ids].sort());
-  assert.equal(f.picks.size, 0, "快照退役,不选快照");
-  assert.equal(f.overPlanes.length, 2, "超出预算的标 over");
+  assert.equal(f.picks.size, 0, "Snapshots retired, no snapshot is picked");
+  assert.equal(f.overPlanes.length, 2, "Those over budget are marked over");
 });
 
-test("大于 1080p 或高于 60 帧的项目:同屏 6 条以内不看像素,都发流平面,没有超出预算的层(原来放得过的照样放得过)", () => {
+test("Projects larger than 1080p or above 60 fps: with up to 6 streams on screen the pixels are not checked, all send stream planes, and no layer is over budget (what was let through before is still let through)", () => {
   const ids = ["a", "b", "c", "d"];
   for (const size of [{ width: 3840, height: 2160, fps: 60 }, { width: 3840, height: 2160, fps: 30 }, { width: 2560, height: 1440, fps: 60 }, { width: 1920, height: 1080, fps: 120 }]) {
     const p = { ...project(ids.map((id) => card(id))), ...size };
@@ -172,12 +184,12 @@ test("大于 1080p 或高于 60 帧的项目:同屏 6 条以内不看像素,都�
       const f = planFeed({ project: p, t: 1, playing });
       assert.equal(f.streamPlanes.length, 4, `${size.width}×${size.height}@${size.fps} playing=${playing}`);
       assert.deepEqual(f.overPlanes, []);
-      assert.equal(f.picks.size, 0, "都有流盖着,不读快照");
+      assert.equal(f.picks.size, 0, "All are covered by streams, so no snapshot is read");
     }
   }
 });
 
-test("最低一档:播放、暂停、拖动都发流平面,每条带 first(只解分段第一帧);快照已退役不选小尺寸", () => {
+test("Lowest tier: playback, pause and scrub all send stream planes, each carrying first (decode only the first frame of the segment); snapshots are retired, so no small size is picked", () => {
   const p = project([card("h"), card("n")]);
   plan = heavyEverywhere("h", "n");
   src.push(html("h", [[0, 299]]));
@@ -187,11 +199,12 @@ test("最低一档:播放、暂停、拖动都发流平面,每条带 first(只�
     const f = planFeed({ project: p, t: at(37), playing, single: true, sparseOnly: true });
     assert.deepEqual(f.streamPlanes, [{ clipIds: ["h"], key: "s-h", ranges: [[0, 19]], originFrame: 0, first: true }], `playing=${playing}`);
     assert.deepEqual(f.overPlanes, []);
-    assert.equal(f.picks.size, 0, "小尺寸快照退役");
+    assert.equal(f.picks.size, 0, "Small-size snapshots retired");
   }
-  // 别的档的流平面不带 first(照常逐帧解)
+  // Stream planes of other tiers do not carry first (decoded frame by frame as usual)
   assert.deepEqual(planFeed({ project: p, t: at(37), playing: true }).streamPlanes, [{ clipIds: ["h"], key: "s-h", ranges: [[0, 19]], originFrame: 0 }]);
-  // 这一帧所在分段的流还没就绪(只有第 0、1 段,播放头在第 2 段):不发流平面,不选小尺寸
+  // Stream for the segment containing this frame is not ready yet (only segments 0 and 1, playhead is
+  // at segment 2): do not emit stream plane, do not select small size
   src.push(stream("h", [[0, 1]]));
   const late = planFeed({ project: p, t: at(37), playing: false, single: true, sparseOnly: true });
   assert.deepEqual(late.streamPlanes, []);
@@ -199,10 +212,10 @@ test("最低一档:播放、暂停、拖动都发流平面,每条带 first(只�
   assert.deepEqual(late.scrub, ["h", "n"]);
 });
 
-test("最低一档的预算:小卡同屏只放 4 条(解码器个数),满屏卡只放 2 条(画幅之和);超出的标 over;别的档同样的卡都放得下", () => {
+test("Lowest-tier budget: only 4 small cards on screen (decoder count), only 2 full-screen cards (sum of frame sizes); the excess is marked over; other tiers fit the same cards", () => {
   const ids = ["a", "b", "c", "d", "e", "f"];
   const head = (p, extra = {}) => ({ project: p, t: at(37), playing: true, ...extra });
-  // 六张小卡(框 320×240)
+  // Six small cards (box 320×240)
   const small = project(ids.map((id) => ({ ...card(id), frame: { x: 0, y: 0, w: 320, h: 240 } })));
   plan = heavyEverywhere(...ids);
   for (const id of ids) { src.push(html(id, [[0, 299]])); src.push(stream(id, [[0, 19]])); }
@@ -210,34 +223,35 @@ test("最低一档的预算:小卡同屏只放 4 条(解码器个数),满屏卡�
   assert.deepEqual(s.streamPlanes.map((x) => x.clipIds[0]), ["a", "b", "c", "d"]);
   assert.ok(s.streamPlanes.every((x) => x.first === true));
   assert.deepEqual(s.overPlanes.map((x) => [x.clipIds[0], x.over, "first" in x]), [["e", true, false], ["f", true, false]]);
-  assert.equal(s.picks.size, 0, "小尺寸快照退役");
-  assert.equal(streamPlanesAt(head(small, { single: true, sparseOnly: true })).length, 6, "发给舞台的是放行的 4 条加超出的 2 条(只为摆占位符)");
-  assert.equal(planFeed(head(small)).streamPlanes.length, 6, "别的档:6 条都放");
-  // 六张满屏卡:最低一档放 2 条;60 帧每秒的项目也是 2 条(开销不乘项目帧率)
+  assert.equal(s.picks.size, 0, "Small-size snapshots retired");
+  assert.equal(streamPlanesAt(head(small, { single: true, sparseOnly: true })).length, 6, "What is sent to the stage is the 4 admitted planes plus the 2 over budget (only to lay out placeholders)");
+  assert.equal(planFeed(head(small)).streamPlanes.length, 6, "Other tiers: all 6 are admitted");
+  // Six full-screen cards: lowest tier allows 2; 60 fps projects are also 2 (overhead is not multiplied
+  // by project frame rate)
   for (const fps of [30, 60]) {
     const full = { ...project(ids.map((id) => card(id))), fps };
     const f = planFeed({ project: full, t: 1, playing: true, single: true, sparseOnly: true });
     assert.deepEqual(f.streamPlanes.map((x) => x.clipIds[0]), ["a", "b"], `fps ${fps}`);
     assert.equal(f.overPlanes.length, 4);
-    assert.equal(planFeed({ project: full, t: 1, playing: true }).streamPlanes.length, 6, "别的档:6 条以内不看像素");
+    assert.equal(planFeed({ project: full, t: 1, playing: true }).streamPlanes.length, 6, "Other tiers: up to 6 streams, pixels are not checked");
   }
 });
 
-test("片段从第 100 帧开始(不是 15 的倍数):暂停着按这条流自己的第一帧判这一帧有没有流", () => {
+test("The clip starts at frame 100 (not a multiple of 15): while paused, judge whether this frame has a stream by the stream's own first frame", () => {
   const p = project([card("d", 100 / FPS + 1e-3, 250 / FPS)]);
   plan = heavyEverywhere("d");
-  src.push(stream("d", [[1, 2]], { originFrame: 101 }));   // 第 116～145 帧
+  src.push(stream("d", [[1, 2]], { originFrame: 101 }));   // Frames 116-145
   const streamAt = (frame) => planFeed({ project: p, t: at(frame), playing: false }).streamPlanes.length;
-  assert.equal(streamAt(115), 0, "第 115 帧在第 0 段,没就绪");
+  assert.equal(streamAt(115), 0, "Frame 115 is in segment 0, not ready");
   assert.equal(streamAt(116), 1);
   assert.equal(streamAt(145), 1);
-  assert.equal(streamAt(146), 0, "第 146 帧是第 3 段");
+  assert.equal(streamAt(146), 0, "Frame 146 is segment 3");
 });
 
-test("这台设备跑不了的卡(在线浏览器模式)停下不追:「已精确」对它不成立,暂停着一直贴流", async () => {
+test("A card this device cannot run (online browser mode) does not catch up when stopped: \"already exact\" does not hold for it, and it keeps pasting the stream while paused", async () => {
   const registry = await import(srcUrl("kernel/registry.ts"));
   const host = await import(srcUrl("render/placeholderHost.ts"));
-  registry.setSyncedUserCards([{ id: "synced", name: "同步卡" }]);
+  registry.setSyncedUserCards([{ id: "synced", name: "Synced card" }]);
   const p = project([{ ...card("s"), cardId: "synced" }, card("b")]);
   plan = heavyEverywhere("b");
   try {
@@ -257,7 +271,7 @@ test("这台设备跑不了的卡(在线浏览器模式)停下不追:「已精�
   }
 });
 
-test("无流的纯 remotion 重卡在暂停/拖动时不进 scrub(露出活组件直接算)", async () => {
+test("A pure remotion heavy card without a stream does not enter scrub when paused / scrubbing (the live component is exposed and renders directly)", async () => {
   const registry = await import(srcUrl("kernel/registry.ts"));
   registry.registerCards([
     { id: "pure-remotion", name: "Pure Remotion", frameMode: "direct", Component: () => null },
@@ -266,19 +280,19 @@ test("无流的纯 remotion 重卡在暂停/拖动时不进 scrub(露出活组�
   plan = heavyEverywhere("r");
   const head = { project: p, t: at(37), playing: false };
   const f = planFeed(head);
-  assert.ok(f.heavy.includes("r"), "分派表判重");
-  assert.equal(f.streamPlanes.length, 0, "没有流");
-  assert.deepEqual(f.scrub, [], "纯 remotion 重卡不进 scrub,露出活组件直接算");
+  assert.ok(f.heavy.includes("r"), "Classified as heavy by the dispatch table");
+  assert.equal(f.streamPlanes.length, 0, "No stream");
+  assert.deepEqual(f.scrub, [], "A pure remotion heavy card does not enter scrub; the live component is exposed and renders directly");
 });
 
-test("无流时带 parts 的重卡或 motion 重卡进 scrub 占位(不能误判成 direct)", async () => {
+test("Without a stream, a heavy card with parts or a motion heavy card enters scrub for a placeholder (must not be misjudged as direct)", async () => {
   const registry = await import(srcUrl("kernel/registry.ts"));
   registry.registerCards([
     { id: "motion-card", name: "Motion Card", frameMode: "stateful", Component: () => null },
     { id: "direct-composite", name: "Direct Composite", frameMode: "direct", Component: () => null },
   ]);
-  // 1. motion 重卡 (frameMode: stateful)
-  // 2. 声明 direct 但带 parts 的组合片段 (clipFrameMode 判为 stateful)
+  // 1. motion heavy card (frameMode: stateful)
+  // 2. Composite clip declaring direct but with parts (clipFrameMode classified as stateful)
   const p = project([
     { id: "m", cardId: "motion-card", start: 0, end: 10, params: {} },
     { id: "c_parts", cardId: "direct-composite", start: 0, end: 10, params: {}, parts: [{ id: "p1" }] },
@@ -287,10 +301,10 @@ test("无流时带 parts 的重卡或 motion 重卡进 scrub 占位(不能误判
   const head = { project: p, t: at(37), playing: false };
   const f = planFeed(head);
   assert.deepEqual(f.streamPlanes, []);
-  assert.deepEqual(f.scrub, ["c_parts", "m"], "带 parts 或 stateful 的重卡进 scrub 待占位");
+  assert.deepEqual(f.scrub, ["c_parts", "m"], "A heavy card with parts or stateful enters scrub for a placeholder");
 });
 
-test("无流非 remotion 重卡在没有成本记录或单舞台 vtOk=false 时不进 scrub(防止卡死在占位符)", () => {
+test("A non-remotion heavy card without a stream does not enter scrub when there is no cost record or in single-stage vtOk=false (prevents getting stuck on the placeholder)", () => {
   const p = project([card("unmeasured"), card("single_vtfail")]);
   plan = heavyEverywhere("unmeasured", "single_vtfail");
   feed.setCostResolver(
@@ -302,5 +316,5 @@ test("无流非 remotion 重卡在没有成本记录或单舞台 vtOk=false 时�
   );
   const head = { project: p, t: at(37), playing: false };
   const f = planFeed(head);
-  assert.deepEqual(f.scrub, [], "未测过或单舞台 vtOk=false 不关进 scrub");
+  assert.deepEqual(f.scrub, [], "Unmeasured or single-stage vtOk=false is not locked into scrub");
 });

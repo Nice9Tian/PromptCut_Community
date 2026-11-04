@@ -82,12 +82,13 @@ function UiCalloutCard({ params }: CardProps<Params>) {
 
 export const uiCallout: CardDef<Params> = {
   id: "ui-callout",
-  name: "界面标注",
-  description: "圈出屏幕区域并引出标签",
-  useWhen: "底层是录屏画面、要圈出界面上某块区域并引出标签时用。定位靠 position(居中/底部/靠左/靠右四个锚点)加 offsetX/offsetY 像素偏移,**没有绝对坐标参数**,还要给圈的宽高 ringW/ringH 和引线方向 side。位置说不清就别选,默认会圈在画面正中心。",
-  tags: ["界面","标注","圈选","教程"],
+  name: "UI callout",
+  description: "Circle a screen region and draw out a label",
+  useWhen: "Use when the base layer is a screen recording and you need to circle a region of the interface and draw out a label. Positioning uses position (four anchors: center/bottom/left/right) plus offsetX/offsetY pixel offsets, **there is no absolute coordinate parameter**, and you must also give the ring width and height ringW/ringH and the leader line direction side. If the position can't be described clearly, don't pick this card; by default it circles the exact center of the frame.",
+  tags: ["interface","callout","circle","tutorial"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -100,23 +101,23 @@ export const uiCallout: CardDef<Params> = {
   controls: [
     ...hudControls,
     ...hudOffsetControls,
-    { key: "label", label: "标签文字", type: "text" },
-    { key: "ringW", label: "圈宽(px)", type: "number" },
-    { key: "ringH", label: "圈高(px)", type: "number" },
+    { key: "label", label: "Label text", type: "text" },
+    { key: "ringW", label: "Ring width (px)", type: "number" },
+    { key: "ringH", label: "Ring height (px)", type: "number" },
     {
       key: "side",
-      label: "引线方向",
+      label: "Leader line direction",
       type: "select",
       options: [
-        { value: "left", label: "向左" },
-        { value: "right", label: "向右" },
+        { value: "left", label: "Left" },
+        { value: "right", label: "Right" },
       ],
     },
   ],
   parts: [
-    { id: "ring", label: "圈选框", role: "decor", params: ["ringW", "ringH", "offsetX", "offsetY"], enterMs: 0, settleMs: 600 },
-    { id: "line", label: "引线", role: "decor", params: ["side"], enterMs: 400, settleMs: 900 },
-    { id: "label", label: "标签", role: "text", params: ["label"], enterMs: 900, settleMs: 1300 },
+    { id: "ring", label: "Ring", role: "decor", params: ["ringW", "ringH", "offsetX", "offsetY"], enterMs: 0, settleMs: 600 },
+    { id: "line", label: "Leader line", role: "decor", params: ["side"], enterMs: 400, settleMs: 900 },
+    { id: "label", label: "Label", role: "text", params: ["label"], enterMs: 900, settleMs: 1300 },
   ],
   lifecycle: { settleMs: 1300, after: "hold", exit: ["fade"] },
   Component: UiCalloutCard,

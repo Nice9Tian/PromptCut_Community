@@ -1,8 +1,11 @@
 /**
- * 本机采集代下在页面这一侧(0.7.18,工具包 C1;服务端是 `server/agent/service/collect-bridge.mjs`)的在途状态与取消口。
+ * In-flight status and cancellation handle on the page side for local collection delegated
+ * downloads (0.7.18, toolkit C1; server is `server/agent/service/collect-bridge.mjs`).
  *
- * （原在 `src/ai/cloud/collectBridge.ts` 385-402 行，上移至公开侧 `src/ai/collectDelegationStore.ts`，
- * 供顶栏 `src/editor/TopBar.tsx` 只读订阅在途代下 URL；社区版无云端采集桥挂入时恒为 `null`）
+ * (Originally in `src/ai/cloud/collectBridge.ts` lines 385-402, moved up to public side
+ * `src/ai/collectDelegationStore.ts` for top bar `src/editor/TopBar.tsx` to read-only subscribe to
+ * in-flight delegated download URLs; always `null` in community edition when no cloud collection
+ * bridge is hooked in)
  */
 let activeDelegationUrl: string | null = null;
 const delegationListeners = new Set<() => void>();

@@ -1,15 +1,22 @@
 /**
- * 守门:Node 单测会载入的模块不许静态引用 `src/online/mode.ts`(C10a 集成,主会话 2026-09-27 的约束)。
- * 跑:node --test src/online/modeImportGuard.test.mjs
+ * Gatekeeper: modules loaded by Node unit tests must not statically import `src/online/mode.ts`
+ * (C10a integration, constraint from lead session 2026-09-27).
+ * Run: node --test src/online/modeImportGuard.test.mjs
  *
- * `mode.ts` 的内容按 C10a 契约第 2 节逐字节固定:`import.meta.env.VITE_PC_ONLINE === "1"`。Node 里没有 `import.meta.env`,
- * 谁在 Node 里载到它就当场抛 TypeError(c10a 实现中途踩过:`C65B-V7-01` 载 `io/index.ts` 挂了)。所以:
- *   - 会被单测载入的模块要用 `ONLINE` 的,按需 `await import(".../online/mode")`,或由调用方把 `online` 传进来;
- *   - 单测自己要载一个静态引了 `mode.ts` 的模块,就先 `mock.module(srcUrl("online/mode.ts"), …)` 换成桩。
+ * The content of `mode.ts` is fixed byte-for-byte per C10a contract section 2:
+ * `import.meta.env.VITE_PC_ONLINE === "1"`. Node has no `import.meta.env`, so loading it in Node
+ * immediately throws TypeError (hit halfway through c10a implementation: `C65B-V7-01` loading
+ * `io/index.ts` crashed). Therefore:
+ *   - Modules loaded by unit tests that need `ONLINE` must `await import(".../online/mode")` on
+ *     demand, or have callers pass `online` in;
+ *   - If a unit test itself needs to load a module that statically imports `mode.ts`, replace it
+ *     with a stub first via `mock.module(srcUrl("online/mode.ts"), …)`.
  *
- * 做法:从每个单测文件出发,顺着**静态** import(`import type` 不算,`await import()` 是按需载入、不跟)
- * 走遍会被载入的 `src/` 模块;测试里写了 `mock.module(srcUrl("X"))` 的模块 X 换成了桩,不往下走。
- * 走到 `src/online/mode.ts` 而这个单测没有换掉它,就判红,并给出引用链。
+ * Approach: starting from each unit test file, trace along **static** imports (`import type` does
+ * not count, `await import()` is on-demand loading and is not followed) through all loaded `src/`
+ * modules; module X stubbed with `mock.module(srcUrl("X"))` in the test is replaced with a stub and
+ * not traversed further. If `src/online/mode.ts` is reached and this unit test has not stubbed it
+ * out, fail (mark red) and report the import chain.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -23,16 +30,16 @@ const rel = (abs) => path.relative(ROOT, abs).split(path.sep).join("/");
 const EXTS = ["", ".ts", ".tsx", ".mjs", ".js", "/index.ts", "/index.tsx", "/index.mjs"];
 
 function resolveFrom(fromAbs, spec) {
-  if (!spec.startsWith(".") && !spec.startsWith("/")) return null; // 包名:不管
+  if (!spec.startsWith(".") && !spec.startsWith("/")) return null; // Package name: ignore
   const base = spec.startsWith("/") ? path.join(ROOT, spec) : path.resolve(path.dirname(fromAbs), spec);
   for (const e of EXTS) {
     const p = base + e;
-    try { if (fs.statSync(p).isFile()) return p; } catch { /* 下一个 */ }
+    try { if (fs.statSync(p).isFile()) return p; } catch { /* Next */ }
   }
   return null;
 }
 
-/** 源码里的静态 import / re-export(不含 `import type`、`export type`) */
+/** Static import / re-export in source code (excluding `import type`, `export type`) */
 function staticSpecs(text) {
   const out = [];
   const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
@@ -42,7 +49,7 @@ function staticSpecs(text) {
   return out;
 }
 
-/** 单测文件指向 `src/` 的入口:静态 import、字面量的 `import("…")`、`srcUrl("…")`、`repoUrl('src/…')`、`new URL('…', import.meta.url)` */
+/** Entry points in unit test files pointing to `src/`: static import, literal `import("…")`, `srcUrl("…")`, `repoUrl('src/…')`, `new URL('…', import.meta.url)` */
 function testEntries(fileAbs, text) {
   const entries = [];
   const add = (abs) => { if (abs) entries.push(abs); };
@@ -50,12 +57,12 @@ function testEntries(fileAbs, text) {
   for (const m of text.matchAll(/import\(\s*["']([^"']+)["']\s*\)/g)) add(resolveFrom(fileAbs, m[1]));
   for (const m of text.matchAll(/srcUrl\(\s*["']([^"']+)["']\s*\)/g)) add(resolveFrom(path.join(ROOT, "src", "x"), `./${m[1]}`));
   for (const m of text.matchAll(/repoUrl\(\s*["'](src\/[^"']+)["']\s*\)/g)) add(resolveFrom(path.join(ROOT, "x"), `./${m[1]}`));
-  // new URL(…) 只在直接交给 import() 时算(读文件文本用的 readFileSync(new URL(…)) 不算)
+  // new URL(…) only counts when passed directly to import() (readFileSync(new URL(…)) used to read file text does not count)
   for (const m of text.matchAll(/import\(\s*new URL\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*\)/g)) add(resolveFrom(fileAbs, m[1]));
   return entries;
 }
 
-/** 单测里换成桩的 `src/` 模块 */
+/** `src/` modules stubbed in unit tests */
 function mockedIn(text) {
   const out = new Set();
   for (const m of text.matchAll(/mock\.module\(\s*srcUrl\(\s*["']([^"']+)["']\s*\)/g)) out.add(`src/${m[1]}`);
@@ -71,7 +78,8 @@ const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =
 const testFiles = [
   ...walk(path.join(ROOT, "src")).filter((f) => f.endsWith(".test.mjs")),
   ...fs.readdirSync(path.join(ROOT, "server", "test")).filter((f) => f.endsWith(".test.mjs")).map((f) => path.join(ROOT, "server", "test", f)),
-  // A3 之后闭源的那几摊在 cloud/ 下（公开仓库里没有这个目录）；这道检查原来就管着它们，搬走以后也要接着管
+  // After A3, the closed-source parts live under cloud/ (this directory does not exist in the public
+  // repository); this check originally guarded them, and must continue guarding them after the move
   ...(fs.existsSync(path.join(ROOT, "cloud", "src")) ? walk(path.join(ROOT, "cloud", "src")).filter((f) => f.endsWith(".test.mjs")) : []),
   ...(fs.existsSync(path.join(ROOT, "cloud", "server", "test")) ? fs.readdirSync(path.join(ROOT, "cloud", "server", "test")).filter((f) => f.endsWith(".test.mjs")).map((f) => path.join(ROOT, "cloud", "server", "test", f)) : []),
 ];
@@ -79,7 +87,7 @@ const testFiles = [
 const textCache = new Map();
 const read = (abs) => { if (!textCache.has(abs)) textCache.set(abs, fs.readFileSync(abs, "utf8")); return textCache.get(abs); };
 
-/** 从入口顺着静态 import 走;回「到 mode.ts 的引用链」或 null */
+/** Follow static imports from the entry point; returns "reference chain to mode.ts" or null */
 function chainToMode(entries, mocked) {
   const prev = new Map();
   const queue = [];
@@ -95,8 +103,9 @@ function chainToMode(entries, mocked) {
     }
     if (!/\.(ts|tsx|mjs|js)$/.test(cur)) continue;
     const text = read(cur);
-    // 入口之后一律只跟静态 import:源码里的 await import() 是按需载入;测试辅助件(server/test/*-kit.mjs 等)函数里的
-    // import() 只在用例调到时才载,调它的用例自己负责换桩(c10a-kit.mjs 的 pickDecider 就是这样)
+    // Only follow static imports after the entry point: await import() in source code is loaded on demand;
+    // import() in test helper (server/test/*-kit.mjs etc.) functions is only loaded when called by a test,
+    // and the calling test is responsible for stubbing (like pickDecider in c10a-kit.mjs)
     const next = staticSpecs(text).map((s) => resolveFrom(cur, s));
     for (const n of next) if (n && !prev.has(n)) { prev.set(n, cur); queue.push(n); }
   }
@@ -121,10 +130,10 @@ test("C10A-MODE-02 the gate works on itself: modules that statically import mode
     .filter((f) => /\.(ts|tsx)$/.test(f) && !f.endsWith(".d.ts"))
     .filter((f) => staticSpecs(read(f)).some((s) => rel(resolveFrom(f, s) ?? "") === MODE));
   assert.ok(importers.length >= 3, `modules that statically import mode.ts should be recognized, actual: ${importers.map(rel).join(", ")}`);
-  // 一个假单测:直接载 Preview.tsx(它静态引了 mode.ts),没换桩 → 该判红
+  // A dummy unit test: directly loads Preview.tsx (which statically imports mode.ts), not stubbed → should fail
   const fake = path.join(ROOT, "src", "editor", "fake.test.mjs");
   const chain = chainToMode(testEntries(fake, 'const P = await import("./Preview.tsx");'), new Set());
   assert.ok(chain && chain.at(-1) === MODE, `the fake unit test should reach mode.ts: ${JSON.stringify(chain)}`);
-  // 换了桩就不算
+  // Does not count if stubbed
   assert.equal(chainToMode(testEntries(fake, 'await import(srcUrl("online/mode.ts"))'), new Set([MODE])), null);
 });

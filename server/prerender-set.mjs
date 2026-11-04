@@ -1,42 +1,48 @@
 /**
- * 预渲染集合 `plan.prerenderSet`(pinned 渲染 9)。
+ * Prerender set `plan.prerenderSet` (pinned render 9).
  *
- * **两端同一份纯函数**:`src/render/pipelinePlan.mjs` 的 `planPipelines` 按 K1 的实测成本
- * 贪心分派,**任一位置判重的卡的并集**就是预渲染集合。页面按它决定每拍怎么渲,
- * 预渲染进程按它决定预渲染哪些卡 —— 两端不交换分派表,**只同步 `costs` 和 `tuning`**
- * (K2 末条),所以同一份输入必须在两端算出逐字段相同的表。
+ * **Identical pure function on both sides**: `planPipelines` in `src/render/pipelinePlan.mjs`
+ * greedily dispatches based on measured costs from K1; the **union of cards classified as heavy
+ * at any position** is the prerender set. The page uses it to decide how to render each tick,
+ * and the prerender process uses it to decide which cards to prerender: the two sides do not
+ * exchange dispatch tables, **only synchronizing `costs` and `tuning`** (the last item in K2),
+ * so identical inputs must yield field-by-field identical tables on both sides.
  *
- * # 预渲染进程这一端的三样输入从哪来
+ * # Where the three inputs on the prerender process side come from
  *
- * 1. **`costs` / `tuning`**:`vite-plugin-costs` 两个进程都挂,编辑器进程每次 PUT 之后
- *    把**同一份**原样转过来(`forwardToPrerender`),这边就地落自己那一份;
- *    `loadCosts(root)` / `loadTuning(root)` 读盘。
- * 2. **clipId → `cardCostKey`**:`card-cache.mjs` 的 `plan()` 在算 `snapshotKey` 的同一处
- *    顺手算了 `costKey`(那里才有 graph 的节点和 `sourceVersions`),口径逐字对齐页面侧的
- *    `clipCostIndex`。
- * 3. **分段用的片段表**:controls 自带 `clipId` / `start` / `end`,拼成一份只有这三项的
- *    合成项目喂给 `planPipelines` —— 它只读 `tracks[].clips[]` 的
- *    `id` / `cardId` / `nodeId` / `start` / `end`,别的字段一概不看。
+ * 1. **`costs` / `tuning`**: Both processes mount `vite-plugin-costs`. After each PUT, the editor
+ *    process forwards the **identical copy** as is (`forwardToPrerender`), and this side persists
+ *    its own copy locally; `loadCosts(root)` / `loadTuning(root)` read from disk.
+ * 2. **clipId → `cardCostKey`**: `plan()` in `card-cache.mjs` also computes `costKey` at the same
+ *    place where it computes `snapshotKey` (only there do graph nodes and `sourceVersions` exist),
+ *    with criteria verbatim aligned with `clipCostIndex` on the page side.
+ * 3. **Clip table for segmentation**: controls come with `clipId` / `start` / `end`, assembled
+ *    into a synthetic project with only these three items and fed to `planPipelines`: it reads
+ *    only `id` / `cardId` / `nodeId` / `start` / `end` on `tracks[].clips[]`, ignoring all other
+ *    fields.
  *
- * # `device` 怎么挑
+ * # How `device` is selected
  *
- * `costs` 按 `(identityKey, device)` 去重,而预渲染进程**不知道编辑器那台机器的 `device` 串**
- * (它是页面侧探测出来的:GPU、核数、只有一个舞台、`offscreenGl`、`tuning` 的两项……)。
- * 这里按 `identityKey` 取 `measuredAt` 最新的那一条 —— 同一台机器上通常只有一条;
- * 真有两条(比如离线探针和常驻探针各写了一份)时,最近一次实测更可信。
- * **这是本实现相对任务书的一处补齐**(任务书没写这一端怎么挑 device),见报告。
+ * `costs` is deduplicated by `(identityKey, device)`, but the prerender process **does not know
+ * the `device` string of that editor machine** (it is probed on the page side: GPU, core count,
+ * single stage, `offscreenGl`, two `tuning` items …).
+ * Here it takes the entry with the latest `measuredAt` for the `identityKey`: there is usually only
+ * one on the same machine; if there are indeed two (e.g. offline probe and resident probe each
+ * wrote one), the most recent measurement is more trustworthy.
+ * **This is an addition in this implementation relative to the task brief** (the task brief did
+ * not specify how this side selects device); see report.
  */
 import { loadCosts, loadTuning } from './costs-store.mjs';
 import { planPipelines } from '../src/render/pipelinePlan.mjs';
 
-/** 一张卡(control / 审阅表 capabilities)在**没有分派表**时要不要进预渲染集合 */
+/** Whether a card (control / review table capabilities) enters the prerender set when there is **no dispatch table** */
 export function declaredHeavy(capabilities) {
   const caps = capabilities ?? {};
   if (caps.frameMode === 'direct') return false;
   return caps.frameMode === 'stateful' || caps.need_prerendering === true || caps.needPrerendering === true;
 }
 
-/** 同一个 `identityKey` 有多条(多台 device)时取 `measuredAt` 最新的那一条 */
+/** When the same `identityKey` has multiple entries (multiple devices), takes the one with the latest `measuredAt` */
 export function pickLatestCosts(costs) {
   const byKey = new Map();
   for (const record of costs ?? []) {
@@ -47,7 +53,7 @@ export function pickLatestCosts(costs) {
   return [...byKey.values()];
 }
 
-/** controls → 喂给 `planPipelines` 的合成项目 + 两张索引 */
+/** controls → synthetic project fed to `planPipelines` + two indexes */
 export function planInputsOfControls(controls, fps, cardIdOf = () => undefined) {
   const clips = [];
   const identityKeys = {};
@@ -67,10 +73,11 @@ export function planInputsOfControls(controls, fps, cardIdOf = () => undefined) 
 }
 
 /**
- * card plan(`card-cache.mjs` 的 `plan()`)在手时的预渲染集合 —— 预渲染进程走这条。
+ * Prerender set when a card plan (`plan()` in `card-cache.mjs`) is in hand: the prerender process
+ * takes this path.
  *
  * @param {any[]} controls card plan
- * @param {object} [opts] `fps`、`costs` / `tuning`(不给就从 `root` 读盘)、`root`
+ * @param {object} [opts] `fps`, `costs` / `tuning` (reads from disk via `root` if omitted), `root`
  */
 export function prerenderSetOfPlan(controls, opts = {}) {
   const list = controls ?? [];
@@ -88,7 +95,7 @@ export function prerenderSetOfPlan(controls, opts = {}) {
     || list.some((c) => c?.cardId === 'scene-3d' || c?.definitionId === 'scene-3d' || c?.definitionId === 'def:scene-3d' || cardIdOf(c?.clipId) === 'scene-3d');
   const for3D = Boolean(opts.includeLightCardsFor3D || opts.view3d || (opts.includeLightCardsFor3D !== false && hasScene3d));
 
-  // 一条记录都没有(还没探针过 / 读不到盘)就按声明兜底:和接上 planPipelines 之前的行为一致
+  // If there are no records at all (not yet probed / cannot read from disk), falls back to declarations: consistent with behavior before connecting planPipelines
   if (!costs || !costs.length) {
     const set = new Set();
     for (const control of list) {
@@ -115,8 +122,9 @@ export function prerenderSetOfPlan(controls, opts = {}) {
 }
 
 /**
- * `prerenderSetOf(project, costs, fps)` —— 手里是**项目**而不是 card plan 时用
- * (端到端探针、单测)。`capabilitiesOf` 只在一条记录都没有时用得上(按声明兜底)。
+ * `prerenderSetOf(project, costs, fps)`: used when holding a **project** rather than a card plan
+ * (end-to-end probe, unit tests). `capabilitiesOf` is only used when there are no records at all
+ * (falls back to declarations).
  */
 export function prerenderSetOf(project, costs = null, fps = Number(project?.fps) || 30, capabilitiesOf = () => undefined, opts = {}) {
   const controls = [];

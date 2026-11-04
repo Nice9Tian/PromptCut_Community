@@ -1,13 +1,17 @@
 /**
- * 量 dev server 的冷启动：从起进程到 `GET /` 回 200、到编辑台前台舞台握手完成（沿用 editor-preview-smoke 的判据）各多久。
- * 在 worktree 根目录跑：
+ * Measure dev server cold start: how long from process start to `GET /` returning 200, and to
+ * handshake completion between editor and visible stage (reusing criteria from editor-preview-smoke).
+ * Run in worktree root:
  *
  *   node scripts/probes/cold-start-probe.mjs [--port 5270]
  *
- * 在给定端口上连跑三组「冷 → 热」（还占用端口 +1、+2 当舞台端口）。
- * 冷轮只删本 worktree 的 node_modules/.vite* 缓存；Vite 解析出的 cacheDir 不在本 worktree 里时，不删那份缓存，冷轮改加 --force。
- * 不装任何包。输出 JSON：六轮原始数和冷热两组的中位数。
- * 要在本机沙箱外跑：Vite 的原生模块和 Chrome 都要起子进程。
+ * Runs three consecutive "cold → warm" groups on the given port (also occupies ports +1 and +2 as
+ * stage ports).
+ * Cold rounds only delete node_modules/.vite* cache of this worktree; when cacheDir resolved by
+ * Vite is not inside this worktree, that cache is not deleted and cold rounds add --force instead.
+ * Installs no packages. Output JSON: raw numbers across six rounds and medians for cold and warm
+ * groups.
+ * Must run outside local sandbox: both Vite native modules and Chrome need to spawn child processes.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -97,7 +101,8 @@ async function runOnce(kind, pair, coldMethod) {
     child = spawn('npx', commandArgs, {
       cwd: root, shell: process.platform === 'win32', detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
-      // PROMPTCUT_NO_PORT_FILE=1:不写公共的 %TEMP%\promptcut\port.json(scripts/lib/user-dirs.mjs 的 markNoPortFile)
+      // PROMPTCUT_NO_PORT_FILE=1: do not write shared %TEMP%\promptcut\port.json (markNoPortFile in
+      // scripts/lib/user-dirs.mjs)
       env: { ...process.env, npm_config_offline: 'true', npm_config_yes: 'false', PROMPTCUT_NO_PORT_FILE: '1' },
     });
     activeChild = child;

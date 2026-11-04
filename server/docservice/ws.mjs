@@ -1,16 +1,19 @@
 /**
- * 文档服务用的最小 WebSocket 服务端（RFC 6455），不引第三方依赖。
+ * Minimal WebSocket server for document service (RFC 6455), with no third-party dependencies.
  *
- * 只做文档服务要的那一小块：握手、文本帧（含分片）、ping / pong、关闭握手。二进制帧一律拒收——
- * 这条连接只传小 JSON 消息，素材字节和预渲染产物走素材服务（`docs/semantics/product/document-service.md`「职责」）。
- * 不支持扩展（permessage-deflate 等）：握手时不回 `Sec-WebSocket-Extensions`，客户端就不会用。
+ * Handles only the minimal subset document service needs: handshake, text frames (including
+ * fragmentation), ping / pong, and closing handshake. Binary frames are rejected unconditionally:
+ * this connection only carries small JSON messages; asset bytes and prerender outputs go through
+ * asset service (`docs/semantics/product/document-service.md` "Responsibilities").
+ * Extensions are unsupported (permessage-deflate, etc.): handshake does not reply with
+ * `Sec-WebSocket-Extensions`, so clients will not use them.
  */
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const OP = { CONT: 0x0, TEXT: 0x1, BINARY: 0x2, CLOSE: 0x8, PING: 0x9, PONG: 0xa };
-/** 发出关闭帧后等对端回关闭帧的最长时间，过了就直接断 TCP */
+/** Max time to wait for peer close frame after sending close frame; terminates TCP directly on timeout */
 const CLOSE_WAIT_MS = 2000;
 
 export const CLOSE = Object.freeze({
@@ -18,14 +21,16 @@ export const CLOSE = Object.freeze({
   NO_STATUS: 1005, ABNORMAL: 1006, INVALID_DATA: 1007, TOO_BIG: 1009,
 });
 
-/** HTTP token 字符（RFC 7230）：子协议名只能由这些字符组成，防止拼出多余的响应头 */
+/** HTTP token chars (RFC 7230): subprotocol names may only contain these, preventing extra response headers */
 const TOKEN_CHARS = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
 /**
- * 处理 http 服务 `upgrade` 事件里的握手。成功返回 `WsConnection`；请求不合规就回 400、返回 null。
- * 鉴权、路径、连接数这些由调用方在调它之前判断。
- * `protocol`（可选）：要回显的子协议，写进 `Sec-WebSocket-Protocol`。客户端请求了子协议而服务端不回时，
- * 浏览器会让握手失败，所以调用方在客户端给了约定的子协议时要传它；不是合法 token 的值不回。
+ * Handles handshake in http server `upgrade` event. Returns `WsConnection` on success; replies with
+ * 400 and returns null if the request is non-compliant.
+ * Auth, path, and connection limits should be checked by caller before invoking this.
+ * `protocol` (optional): subprotocol to echo, written to `Sec-WebSocket-Protocol`. When client
+ * requests a subprotocol and server does not reply, browsers fail the handshake, so caller should
+ * pass it when client provides an agreed subprotocol; values that are not valid tokens are not sent.
  */
 export function acceptUpgrade(req, socket, head, { maxPayload, protocol } = {}) {
   const key = req.headers['sec-websocket-key'];
@@ -44,27 +49,30 @@ export function acceptUpgrade(req, socket, head, { maxPayload, protocol } = {}) 
   return new WsConnection(socket, head, maxPayload);
 }
 
-/** 握手阶段拒绝：回一个普通 HTTP 响应后关掉 socket */
+/** Reject during handshake phase: reply with a normal HTTP response and close socket */
 export function rejectUpgrade(socket, status, text) {
   socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
 }
 
 /**
- * 一条已握手的连接。事件：`message(text)`、`pong()`、`drain()`、`close({ code, reason })`（只发一次）。
+ * A handshaked connection. Events: `message(text)`, `pong()`, `drain()`, `close({ code, reason })`
+ * (emitted only once).
  *
- * `drain`：底层写缓冲排空时发出，组装层靠它继续写积压的消息（契约 H.2）。socket 自己的 `drain` 只在某次
- * `write` 越过它的高水位（缺省 16 KiB）之后才来；调用方的高水位可能比它低，所以写出的数据全部交给系统后
- * （写回调里 `writableLength` 归零）也发一次。可能重复，调用方按「现在可以再写」处理即可。
+ * `drain`: emitted when underlying write buffer drains; assembly layer relies on it to resume writing
+ * backlogged messages (contract H.2). The socket's own `drain` only fires after a `write` crosses its
+ * high watermark (default 16 KiB); caller's high watermark may be lower, so it is also emitted once
+ * all written data is handed to the system (`writableLength` reaches zero in write callback).
+ * May duplicate; caller can simply treat it as "can write again now".
  */
 export class WsConnection extends EventEmitter {
   #socket;
   #maxPayload;
   #buf = Buffer.alloc(0);
-  /** 分片消息收到一半时的已收片段 */
+  /** Received fragments when a fragmented message is partially received */
   #frags = null;
   #fragLen = 0;
   #closeSent = false;
-  /** 出了协议错误之后不再解析后续字节 */
+  /** Stop parsing subsequent bytes after a protocol error occurs */
   #dead = false;
   #closeTimer = null;
   #peerClose = { code: CLOSE.ABNORMAL, reason: '' };
@@ -77,10 +85,11 @@ export class WsConnection extends EventEmitter {
     this.remoteAddress = socket.remoteAddress ?? null;
     socket.setNoDelay(true);
     socket.on('data', (chunk) => this.#onData(chunk));
-    // 错误之后一定跟着 close，这里只防止未处理的 error 事件把进程带崩
+    // Errors are always followed by close; this only prevents unhandled error events from crashing the process
     socket.on('error', () => {});
-    // http 服务的 socket 允许半关闭，升级之后没人替我们收尾：对端不发关闭帧就结束 TCP（进程退出等）时，
-    // 这边也结束，好让 close 立刻发生，而不是等心跳超时
+    // HTTP server sockets allow half-closure, and no one cleans up for us after upgrade: when peer ends
+    // TCP without sending a close frame (process exit, etc.), end here too so close occurs immediately
+    // instead of waiting for heartbeat timeout
     socket.on('end', () => {
       this.#dead = true;
       if (!socket.destroyed) socket.end();
@@ -93,12 +102,12 @@ export class WsConnection extends EventEmitter {
     if (head?.length) this.#onData(head);
   }
 
-  /** 底层尚未发出的字节数（契约 H.2 的 `buffered`） */
+  /** Bytes not yet sent by underlying layer (`buffered` in contract H.2) */
   get bufferedAmount() {
     return this.#socket.writableLength;
   }
 
-  /** 发一条文本消息。连接已在关闭中就丢弃，返回 false */
+  /** Send a text message; drops and returns false if connection is already closing */
   send(text) {
     if (this.#closeSent || !this.#socket.writable) return false;
     this.#writeFrame(OP.TEXT, Buffer.from(text, 'utf8'));
@@ -110,7 +119,7 @@ export class WsConnection extends EventEmitter {
     this.#writeFrame(OP.PING, Buffer.alloc(0));
   }
 
-  /** 发起关闭握手：发关闭帧，等对端回关闭帧后断开；对端不回就超时断开 */
+  /** Initiate closing handshake: send close frame, disconnect after peer replies close frame, or disconnect on timeout */
   close(code = CLOSE.NORMAL, reason = '') {
     if (this.#closeSent) return;
     this.#closeSent = true;
@@ -126,8 +135,10 @@ export class WsConnection extends EventEmitter {
   }
 
   /**
-   * 发关闭帧后不等对端回关闭帧，写完就结束 TCP。给「刚握上就要告诉对方为什么关」的场合用（接续失败以 4404 / 4410 / 1002 关闭，
-   * `docs/plan/http-transport-contract.md` 第 16 节）：对端此时没有别的要说，不必占着连接等它回关闭帧
+   * End TCP after writing close frame without waiting for peer reply. Used when "informing peer why
+   * right after handshaking" (resume failure closing with 4404 / 4410 / 1002,
+   * `docs/plan/http-transport-contract.md` section 16): peer has nothing else to say, so no need to
+   * hold connection waiting for its close frame
    */
   closeNow(code = CLOSE.NORMAL, reason = '') {
     this.close(code, reason);
@@ -135,7 +146,7 @@ export class WsConnection extends EventEmitter {
     if (!this.#socket.destroyed) this.#socket.end();
   }
 
-  /** 不走握手直接断开（心跳超时用） */
+  /** Disconnect directly without handshake (used on heartbeat timeout) */
   terminate() {
     this.#socket.destroy();
   }
@@ -159,14 +170,14 @@ export class WsConnection extends EventEmitter {
     this.#socket.write(Buffer.concat([head, payload]), this.#onFlushed);
   }
 
-  /** 写回调：缓冲已排空、且 socket 自己不会再发 `drain` 时，补发一次 `drain` */
+  /** Write callback: emits an extra `drain` when buffer has drained and socket will not emit `drain` again */
   #onFlushed = (err) => {
     const s = this.#socket;
     if (err || s.destroyed || s.writableLength !== 0 || s.writableNeedDrain) return;
     this.emit('drain');
   };
 
-  /** 协议错误：发关闭帧，丢掉后续字节，发完就结束 TCP */
+  /** Protocol error: send close frame, discard subsequent bytes, and end TCP once sent */
   #fail(code, reason) {
     this.#dead = true;
     this.#buf = Buffer.alloc(0);
@@ -188,14 +199,14 @@ export class WsConnection extends EventEmitter {
     }
   }
 
-  /** 从缓冲里切出一整帧；字节不够返回 null */
+  /** Slice a full frame from buffer; returns null if there are insufficient bytes */
   #readFrame() {
     const b = this.#buf;
     if (b.length < 2) return null;
     const fin = (b[0] & 0x80) !== 0;
     const opcode = b[0] & 0x0f;
-    if (b[0] & 0x70) return this.#fail(CLOSE.PROTOCOL, 'RSV 位必须为 0');
-    if (!(b[1] & 0x80)) return this.#fail(CLOSE.PROTOCOL, '客户端帧必须带掩码');
+    if (b[0] & 0x70) return this.#fail(CLOSE.PROTOCOL, 'RSV bits must be 0');
+    if (!(b[1] & 0x80)) return this.#fail(CLOSE.PROTOCOL, 'Client frames must be masked');
     let len = b[1] & 0x7f;
     let off = 2;
     if (len === 126) {
@@ -205,12 +216,12 @@ export class WsConnection extends EventEmitter {
     } else if (len === 127) {
       if (b.length < 10) return null;
       const big = b.readBigUInt64BE(2);
-      if (big > BigInt(this.#maxPayload)) return this.#fail(CLOSE.TOO_BIG, '消息过大');
+      if (big > BigInt(this.#maxPayload)) return this.#fail(CLOSE.TOO_BIG, 'Message too large');
       len = Number(big);
       off = 10;
     }
-    if (opcode >= 0x8 && (!fin || len > 125)) return this.#fail(CLOSE.PROTOCOL, '控制帧不能分片或超过 125 字节');
-    if (len > this.#maxPayload) return this.#fail(CLOSE.TOO_BIG, '消息过大');
+    if (opcode >= 0x8 && (!fin || len > 125)) return this.#fail(CLOSE.PROTOCOL, 'Control frames cannot be fragmented or exceed 125 bytes');
+    if (len > this.#maxPayload) return this.#fail(CLOSE.TOO_BIG, 'Message too large');
     if (b.length < off + 4 + len) return null;
     const mask = b.subarray(off, off + 4);
     const payload = Buffer.from(b.subarray(off + 4, off + 4 + len));
@@ -222,15 +233,15 @@ export class WsConnection extends EventEmitter {
   #onFrame({ fin, opcode, payload }) {
     switch (opcode) {
       case OP.TEXT:
-        if (this.#frags) return this.#fail(CLOSE.PROTOCOL, '上一条分片消息还没收完');
+        if (this.#frags) return this.#fail(CLOSE.PROTOCOL, 'The previous fragmented message is not finished yet');
         if (fin) return this.#deliver(payload);
         this.#frags = [payload];
         this.#fragLen = payload.length;
         return;
       case OP.CONT:
-        if (!this.#frags) return this.#fail(CLOSE.PROTOCOL, '没有正在接收的分片消息');
+        if (!this.#frags) return this.#fail(CLOSE.PROTOCOL, 'No fragmented message is being received');
         this.#fragLen += payload.length;
-        if (this.#fragLen > this.#maxPayload) return this.#fail(CLOSE.TOO_BIG, '消息过大');
+        if (this.#fragLen > this.#maxPayload) return this.#fail(CLOSE.TOO_BIG, 'Message too large');
         this.#frags.push(payload);
         if (fin) {
           const whole = Buffer.concat(this.#frags);
@@ -239,7 +250,7 @@ export class WsConnection extends EventEmitter {
         }
         return;
       case OP.BINARY:
-        return this.#fail(CLOSE.UNSUPPORTED, '只收文本消息');
+        return this.#fail(CLOSE.UNSUPPORTED, 'Only text messages are accepted');
       case OP.PING:
         if (!this.#closeSent && this.#socket.writable) this.#writeFrame(OP.PONG, payload);
         return;
@@ -251,13 +262,13 @@ export class WsConnection extends EventEmitter {
         const reason = payload.length > 2 ? payload.subarray(2).toString('utf8') : '';
         this.#peerClose = { code, reason };
         this.#dead = true;
-        // 对端先发的关闭：回一个关闭帧（1005 不能出现在线上，回 1000）
+        // Peer-initiated close: reply with a close frame (1005 cannot appear on the wire, reply 1000)
         this.close(code === CLOSE.NO_STATUS ? CLOSE.NORMAL : code);
         this.#socket.end();
         return;
       }
       default:
-        return this.#fail(CLOSE.PROTOCOL, `未知的 opcode ${opcode}`);
+        return this.#fail(CLOSE.PROTOCOL, `Unknown opcode ${opcode}`);
     }
   }
 
@@ -267,7 +278,7 @@ export class WsConnection extends EventEmitter {
     try {
       text = this.#decoder.decode(payload);
     } catch {
-      return this.#fail(CLOSE.INVALID_DATA, '文本消息不是合法的 UTF-8');
+      return this.#fail(CLOSE.INVALID_DATA, 'Text message is not valid UTF-8');
     }
     this.emit('message', text);
   }

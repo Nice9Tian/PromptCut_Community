@@ -1,44 +1,48 @@
 /**
- * 进度报告校验模块
- * 供服务端 report_progress 工具使用，验证、规范化和截断 AI 提交的进度报告。
+ * Progress report validation module
+ * Used by the server-side report_progress tool to validate, normalize, and truncate progress
+ * reports submitted by AI.
  *
- * 只拒收真正用不了的参数:
- * - has_done / has_todo / has_problem 是让模型自查的冗余字段,不看,按数组重新算;
- * - final / stage / 三个数组缺省或为 null 都按「没给」处理 —— OpenAI、Gemini 风格的函数调用
- *   常把可选字段填成 null,为这个拒收只会让 Agent 原样重发一遍。
- * 界面(src/ai/progressReport.ts)用同一套规则解析调用参数。CLI 驱动报回来的工具结果分不出拒收,
- * 两边规则不一致的话,界面会把拒收的那次也画成卡片,用户看到两张一样的。
+ * Only rejects parameters that are genuinely unusable:
+ * - has_done / has_todo / has_problem are redundant fields for model self-check; ignored,
+ *   recomputed from arrays;
+ * - final / stage / the three arrays omitted or null are treated as "not provided": OpenAI- and
+ *   Gemini-style function calls often populate optional fields with null, and rejecting for this
+ *   only causes the Agent to resend the exact same payload.
+ * The UI (src/ai/progressReport.ts) parses invocation parameters using the same rules. Tool results
+ * reported back by the CLI driver cannot distinguish rejections; if rules diverge between the two
+ * sides, the UI will also render the rejected attempt as a card, showing the user two identical cards.
  */
 export function validateProgressReport(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    return { ok: false, error: '参数应为对象' };
+    return { ok: false, error: 'Arguments must be an object' };
   }
 
-  // 报错里写「收到的是什么」:typeof 会把 null 和数组都说成 object,Agent 看了没法照着改
+  // State "what was received" in errors: typeof reports both null and arrays as object, so the Agent cannot fix it accordingly
   const kindOf = (v) => (v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v);
   const given = (v) => v !== undefined && v !== null;
 
   if (given(input.final) && typeof input.final !== 'boolean') {
-    return { ok: false, error: `字段 final 应该是布尔值 (boolean),收到的是 ${kindOf(input.final)}` };
+    return { ok: false, error: `Field final must be a boolean, got ${kindOf(input.final)}` };
   }
 
   if (given(input.blocked) && typeof input.blocked !== 'boolean') {
-    return { ok: false, error: `字段 blocked 应该是布尔值 (boolean),收到的是 ${kindOf(input.blocked)}` };
+    return { ok: false, error: `Field blocked must be a boolean, got ${kindOf(input.blocked)}` };
   }
 
   if (given(input.stage) && typeof input.stage !== 'string') {
-    return { ok: false, error: `字段 stage 应该是字符串 (string),收到的是 ${kindOf(input.stage)}` };
+    return { ok: false, error: `Field stage must be a string, got ${kindOf(input.stage)}` };
   }
 
   const normalizeArray = (arr, name) => {
     if (!given(arr)) return { value: [] };
     if (!Array.isArray(arr)) {
-      return { error: `字段 ${name} 应该是字符串数组 (array),收到的是 ${kindOf(arr)}` };
+      return { error: `Field ${name} must be an array of strings, got ${kindOf(arr)}` };
     }
     const result = [];
     for (const [idx, item] of arr.entries()) {
       if (typeof item !== 'string') {
-        return { error: `字段 ${name} 的第 ${idx + 1} 条应为字符串,收到的是 ${kindOf(item)}` };
+        return { error: `Item ${idx + 1} of field ${name} must be a string, got ${kindOf(item)}` };
       }
       const trimmed = item.trim();
       if (trimmed !== '') {
@@ -61,13 +65,14 @@ export function validateProgressReport(input) {
   const problems = problemsRes.value;
 
   if (!done.length && !todo.length && !problems.length && typeof input.final !== 'boolean') {
-    return { ok: false, error: '报告是空的:done / todo / problems 至少填一条,或者给出 final(true 表示整个任务收尾)' };
+    return { ok: false, error: 'The report is empty: fill in at least one of done / todo / problems, or give final (true means the whole task is finished)' };
   }
 
   /*
-   * blocked:停下来等用户回话。它**隐含** final —— 停在这里就是这一轮结束了,
-   * 所以 blocked 为 true 而 final 漏填(或填了 false)时按 final 算,不为这个拒收:
-   * 拒一次要白费一个往返,而丢掉这一位,用户就不知道球在他那边(界面会画成「已暂停」)。
+   * blocked: stops to wait for user reply. It **implies** final: stopping here means this round has
+   * ended, so when blocked is true and final is omitted (or set to false), treat it as final rather
+   * than rejecting for this: rejecting once wastes a round trip, while dropping this bit means the
+   * user does not know the ball is in their court (the UI would render it as "Paused").
    */
   const blocked = input.blocked === true;
   const value = {
@@ -84,7 +89,7 @@ export function validateProgressReport(input) {
   if (typeof input.stage === 'string') {
     const trimmedStage = input.stage.trim();
     if (trimmedStage !== '') {
-      value.stage = Array.from(trimmedStage).slice(0, 12).join(''); // 最多截取 12 个字符
+      value.stage = Array.from(trimmedStage).slice(0, 12).join(''); // Truncate to at most 12 characters
     }
   }
 

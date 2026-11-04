@@ -74,12 +74,13 @@ function TypeShiftCard({ params }: CardProps<Params>) {
 
 export const typeShift: CardDef<Params> = {
   id: "type-shift",
-  name: "排版流",
-  description: "草稿感自动重排版",
-  useWhen: "做标题过渡、想要文字自动重排的草稿感时用。**内容必须多行且有层级**:首行是主标题、`*` 开头是次重点、`—` 开头是署名。单行标题体现不出重排效果。",
-  tags: ["排版","转场","标题","重排"],
+  name: "Typography flow",
+  description: "Draft-style automatic re-typesetting",
+  useWhen: "Use for title transitions when you want a draft-like feel of text re-flowing automatically. **Content must be multi-line with hierarchy**: the first line is the main title, a line starting with `*` is a secondary point, a line starting with `—` is a credit. A single-line title won't show the re-flow effect.",
+  tags: ["typography","Transition","Title","re-flow"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -89,11 +90,11 @@ export const typeShift: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "lines", label: "多行内容(|分行,*次重,—署名)", type: "text" },
-    { key: "shiftAtMs", label: "重排时间(ms)", type: "number", min: 100, max: 2000, step: 100 },
+    { key: "lines", label: "Multi-line content (| splits lines, * secondary, — credit)", type: "text" },
+    { key: "shiftAtMs", label: "Reflow time (ms)", type: "number", min: 100, max: 2000, step: 100 },
   ],
   parts: [
-    { id: "lines", label: "多行内容", role: "list", params: ["lines", "shiftAtMs"], enterMs: 0, settleMs: 1300 },
+    { id: "lines", label: "Multi-line content", role: "list", params: ["lines", "shiftAtMs"], enterMs: 0, settleMs: 1300 },
   ],
   lifecycle: { settleMs: 1300, after: "hold", exit: ["fade"] },
   Component: TypeShiftCard,

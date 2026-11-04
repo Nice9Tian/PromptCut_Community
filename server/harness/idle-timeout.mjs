@@ -1,24 +1,28 @@
 /**
- * 流式请求的超时该按「多久没来数据」算,不是按「一共跑了多久」算。
+ * Streaming request timeouts should be calculated by "how long no data has arrived", not "how long it has run in total".
  *
- * # 起因
+ * # Cause
  *
- * 原来是 `AbortSignal.timeout(120000)` —— 那是**整段请求的墙钟上限**,而且包括读流的时间。
- * 于是一个健康地流了 121 秒的长回合会被硬掐断,界面上一句
- * 「The operation was aborted due to timeout」,前面说到一半的话就停在那儿。
- * 上下文越大、工具越多,一个回合越容易超过两分钟 —— 也就是说**活干得越多越容易被掐**。
+ * Originally `AbortSignal.timeout(120000)`: that was **the wall-clock limit for the entire request**,
+ * including time reading the stream.
+ * Consequently, a long turn streaming healthily for 121 seconds was forcefully cut off, with
+ * "The operation was aborted due to timeout" in the UI, stopping half-spoken text right there.
+ * The larger the context and the more tools there are, the more likely a turn exceeds two minutes:
+ * in other words, **the more work done, the more easily it gets cut off**.
  *
- * # 做法
+ * # Approach
  *
- * 每收到一块数据就把表拨回去。真正卡住(上游不吐字了)才会触发,正常流下去多久都不算超时。
- * 连接阶段同样受它管:发出去之后迟迟没有响应头,也是「没来数据」。
+ * Reset the timer every time a chunk of data is received. Triggers only when genuinely stuck
+ * (upstream stops emitting words); streaming normally never times out regardless of duration.
+ * The connection phase is also governed by it: failing to receive response headers long after sending
+ * also counts as "no data arrived".
  *
- * 包在 fetch 这一层,provider 和 agent 都不用改 —— 它们看到的还是一个普通响应。
+ * Wrapped at the fetch layer, requiring no changes to provider or agent: what they see is still a normal response.
  */
 
-/** 造一个和 `AbortSignal.timeout` 同形状的超时错误,好让上层按老办法认出来 */
+/** Create a timeout error with the same shape as `AbortSignal.timeout`, so upper layers can recognize it the old way */
 function timeoutError(ms) {
-  const e = new Error(`The operation was aborted due to timeout（${Math.round(ms / 1000)} 秒没有收到任何数据）`);
+  const e = new Error(`The operation was aborted due to timeout (no data received for ${Math.round(ms / 1000)} seconds)`);
   e.name = 'TimeoutError';
   return e;
 }
@@ -45,10 +49,10 @@ function toBodyIterator(source) {
 }
 
 /**
- * 把 fetch 包成「闲置超时」的。
+ * Wrap fetch with an "idle timeout".
  *
- * @param fetchImpl 真正发请求的
- * @param idleMs    多久没有任何数据算卡住
+ * @param fetchImpl Function that actually sends the request
+ * @param idleMs    Duration without any data before considering it stuck
  */
 export function withIdleTimeout(fetchImpl, { idleMs = 120000 } = {}) {
   return async function idleTimeoutFetch(url, init) {
@@ -58,7 +62,7 @@ export function withIdleTimeout(fetchImpl, { idleMs = 120000 } = {}) {
     const bump = () => {
       stop();
       timer = setTimeout(() => ac.abort(timeoutError(idleMs)), idleMs);
-      // 这个定时器不该拦着进程退出:请求本身有别的办法结束
+      // This timer should not block process exit: the request itself has other ways to terminate
       timer.unref?.();
     };
 
@@ -73,13 +77,13 @@ export function withIdleTimeout(fetchImpl, { idleMs = 120000 } = {}) {
       throw e;
     }
 
-    // 出错的响应不流,正文由 assertOk 一次读完,表可以停了
+    // Errored responses do not stream; body is read all at once by assertOk, so the timer can be stopped
     if (!res || !res.ok || !res.body) {
       stop();
       return res;
     }
 
-    bump(); // 响应头到了,重新计时:接下来看的是第一块正文来得快不快
+    bump(); // Response headers arrived, restart timer: next is to see whether the first chunk of body arrives promptly
 
     const source = res.body;
     async function* watched() {
@@ -102,11 +106,11 @@ export function withIdleTimeout(fetchImpl, { idleMs = 120000 } = {}) {
     }
 
     /*
-     * 只把 body 换掉,别的字段照抄。
+     * Only replace body, copy other fields as is.
      *
-     * 不用 Proxy 也不改原对象:下游只用到 ok / status / headers / text / body 这几样
-     * (assertOk 和 readSse),明写出来比反射清楚,也不会因为 Response 的某个 getter
-     * 绑在原型上而在包装后炸掉。
+     * Neither use Proxy nor mutate the original object: downstream only uses ok / status / headers / text / body
+     * (assertOk and readSse); writing them out explicitly is clearer than reflection, and avoids blowing up
+     * after wrapping due to some Response getter bound to the prototype.
      */
     return {
       ok: res.ok,

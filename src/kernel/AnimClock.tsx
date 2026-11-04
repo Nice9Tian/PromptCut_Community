@@ -2,13 +2,17 @@ import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { isExportMode } from "./clock";
 
 /**
- * 动画倍速层(预览用):每帧把容器内所有 Web Animations 的 playbackRate 设为 speed。
- * 导出时不做任何事:动画时间由 ExportView 的 __pcSyncAnims 每帧显式钉住,不靠 playbackRate。
+ * Animation speed multiplier layer (for preview): sets playbackRate of all Web Animations in the
+ * container to speed on every frame.
+ * Does nothing during export: animation time is explicitly pinned on every frame by __pcSyncAnims
+ * in ExportView, rather than relying on playbackRate.
  *
- * `style` 是给三维用的口子。看着像是「顺手加个 style 更灵活」,其实是被逼的:
- * CSS 的 `perspective` **只作用于直接子元素**,而这一层正好是卡片 div 的直接父元素。
- * 挂到更外面(比如舞台那一格)透视会静悄悄地失效 —— 卡片照样斜,但平行线还平行,
- * 是仿射拉伸不是透视,而且不报任何错。所以这个参数只该由 Stage 传,别拿它做别的。
+ * `style` is an escape hatch for 3D. While it looks like "conveniently adding style for flexibility",
+ * it was actually forced: CSS `perspective` **only applies to direct children**, and this layer is
+ * precisely the direct parent of the card div. Attaching further outside (such as the stage cell),
+ * perspective silently fails: the card is tilted, but parallel lines remain parallel: it is affine
+ * stretching, not perspective, without throwing any error. So this param should only be passed by
+ * Stage, do not use it for anything else.
  */
 export function AnimClock({ speed = 1, style, children }: { speed?: number; style?: CSSProperties; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);

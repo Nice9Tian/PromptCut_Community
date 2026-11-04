@@ -1,15 +1,21 @@
 /**
- * 编辑页面这一侧合出每张同步卡的运行状态(`docs/plan/online-card-exec-contract.md` 第 8 节;原来的第十种运行状态随旧档位撤销,
- * 2026-10-07 用户定在线浏览器不分身份执行用户卡与素材效果卡)。纯函数。
+ * The editor page side computes the run state of each sync card (`docs/plan/online-card-exec-contract.md`
+ * section 8; the original tenth run state was dropped along with the old tier, and on 2026-10-07 the user
+ * decided that the online browser runs user cards and media effect cards without distinguishing identity).
+ * Pure function.
  *
- * 先后(前面的条件成立就不看后面的):
- *   1. 本页不能执行(站点总开关关了、没有隔离环境)→ `not-isolated`;
- *   2. 这张卡的入口转译不成 → 转译给的状态(`unsupported-syntax` / `missing-module` / `load-error`);
- *   3. 舞台报了这张卡的状态 → 用舞台的(`ready`、`load-error`、`gpu`、`media`、`runtime-error`……);
- *      两个舞台都报了且不一样时取不是 `ready` 的那个(一台运行不了就按运行不了处理,两台画面才一致);
- *   4. 转译成了、舞台还没报 → `loading`;
- *   5. 还没轮到转译(源码刚取到)→ `loading`。
- * 结果写进 `registry.setCardRunStates`;参数面板、时间轴徽标、轻重判定读那里。
+ * Order (once an earlier condition holds, later ones are not checked):
+ *   1. This page cannot execute (the site master switch is off, or there is no isolated environment)
+ *      → `not-isolated`;
+ *   2. The entry of this card cannot be transpiled → the state the transpiler gave
+ *      (`unsupported-syntax` / `missing-module` / `load-error`);
+ *   3. A stage reported a state for this card → use the stage's (`ready`, `load-error`, `gpu`, `media`,
+ *      `runtime-error`, ...); when both stages reported and they differ, take the one that is not `ready`
+ *      (if one cannot run it, treat it as unable to run; only when both render the same picture is it fine);
+ *   4. Transpiled, but no stage has reported yet → `loading`;
+ *   5. Not yet the turn of transpiling (the source was just fetched) → `loading`.
+ * The result is written to `registry.setCardRunStates`; the parameters panel, the timeline badges and the
+ * light/heavy decision read from there.
  */
 import type { CardRunState, SyncedUserCard } from "../../kernel/registry.ts";
 import type { BundleResult } from "../../online/cardRuntime/protocol.ts";
@@ -17,17 +23,17 @@ import { cyrb53 } from "../../render/cyrb53.mjs";
 import { tr } from "../../i18n/index.ts";
 
 export interface EditorRunStateInput {
-  /** 同步表(静态解析出来的卡;`source` 是入口文件的键) */
+  /** Sync table (cards parsed statically; `source` is the key of the entry file) */
   cards: Iterable<SyncedUserCard>;
-  /** 本页能不能执行(`gate.ts` 的 `cardExecAvailable()`) */
+  /** Whether this page can execute (`cardExecAvailable()` in `gate.ts`) */
   available: boolean;
-  /** 不能执行时的说明(站点关了那一句);没有就不写 */
+  /** Explanation for when execution is unavailable (the sentence for a site that is off); omit if there is none */
   blockedDetail?: string | null;
-  /** 转译的结果(每个入口一条) */
+  /** Transpile results (one per entry) */
   bundles: readonly BundleResult[];
-  /** 各舞台报来的状态(卡片 id → 状态);没报过的舞台不在里面 */
+  /** States reported by each stage (card id → state); stages that have not reported are not in it */
   stages?: Iterable<ReadonlyMap<string, CardRunState> | null | undefined>;
-  /** 要几台舞台都报了这张卡才下结论(双舞台给 2:两台画面要一致,只有一台载入好时还算 `loading`;单舞台给 1);缺省 1 */
+  /** How many stages must report this card before a conclusion is drawn (two stages give 2: both pictures must agree, and while only one has loaded it still counts as `loading`; one stage gives 1); defaults to 1 */
   stageCount?: number;
 }
 
@@ -43,15 +49,15 @@ export function editorRunStates(input: EditorRunStateInput): Map<string, CardRun
     if (!bundle) { out.set(card.id, { state: "loading" }); continue; }
     const reported = stages.map((m) => m.get(card.id)).filter((s): s is CardRunState => !!s);
     const bad = reported.find((s) => s.state !== "ready");
-    // 有一台说运行不了就按运行不了(不用等另一台);都说行的要等够台数
+    // If one says it cannot run, treat it as unable to run (no need to wait for the other); those that say OK must wait until enough stages have reported
     if (!bad && reported.length < Math.max(1, input.stageCount ?? 1)) { out.set(card.id, { state: "loading" }); continue; }
-    // 能运行的带上这一代的短签名:成本身份里的源码版本用它(源码或转译器换了,身份跟着换)
+    // Runnable ones carry this generation's short signature: the source version in the cost identity uses it (when the source or the transpiler changes, the identity changes with it)
     out.set(card.id, bad ?? { state: "ready", version: String(cyrb53(String(bundle.bundle?.generation ?? ""))) });
   }
   return out;
 }
 
-/** 参数面板的说明(契约第 8 节的表);`ready`、`loading` 不出说明 */
+/** Explanations for the parameters panel (the table in section 8 of the contract); `ready` and `loading` give no explanation */
 export function runStateMessage(s: CardRunState | undefined): string | null {
   if (!s) return null;
   const d = s.detail ? s.detail : "";

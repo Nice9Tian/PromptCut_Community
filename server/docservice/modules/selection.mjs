@@ -1,3 +1,4 @@
+import { tr } from "../../i18n.mjs";
 /** Project-wide live selections. Only connection principals and an owner-supplied
  * authority callback can name members or authorize a run. Nothing here is durable.
  */
@@ -87,15 +88,25 @@ export function mountSelection({ project, checkAccess, authorizeQuery, now = Dat
       accountName: answer.accountName ?? principal.accountName };
   }
   /**
-   * 问一位在线成员的页面时出的错,算「这一位不算」还是「整次查询失败」。
+   * Whether an error querying an online member's page counts as "this member excluded" or
+   * "entire query failed".
    *
-   * 只跟这一位的凭证有关的,这一位不算(不读它的选区,撤掉它这条连接的在场记录),别的成员照常:
-   *   - 403:没有这个项目的读权限、被移出或被禁、连接的身份和项目对不上、权威答得不像样(`checked` 把答非所问也归成 403);
-   *   - 401:这条连接的登录过期了、被撤销了、凭证对不上。这条连接凭的那一次登录不会再变回有效(页面续了登录是换一条连接、
-   *     重新发选区),所以和 403 一样撤掉记录,不是留着等它好。
-   * 其余一律整次失败(回 `authority-unavailable`,宁可不答也不给一张缺人的表):权威连不上或没同步完(5xx、没有状态码的错,
-   * 含超时)、项目没了或正在搬迁(404、409)、请求本身写错了(400)。这些不是哪一位成员的事,问谁都一样。
-   * 断线不走这里:连接一断它的记录就没了,查询途中断的由调用处核对记录还在不在。
+   * Errors related only to this member's credentials count as this member excluded (does not read
+   * their selection, revokes presence record for this connection), while other members proceed
+   * normally:
+   *   - 403: no read permission for this project, removed or banned, connection identity does not
+   *     match project, authority returned malformed response (`checked` also classifies irrelevant
+   *     answers as 403);
+   *   - 401: login for this connection expired, revoked, or credentials mismatch. The login session
+   *     backing this connection will not become valid again (page renewing login switches to a new
+   *     connection and resends selection), so revokes the record like 403 rather than keeping it
+   *     waiting for recovery.
+   * All others fail the entire query (returns `authority-unavailable`; better to return nothing than
+   * a table with missing members): authority unreachable or sync incomplete (5xx, errors without
+   * status codes including timeouts), project deleted or moving (404, 409), malformed request itself
+   * (400). These are not specific to any single member and apply regardless of who is asked.
+   * Disconnects do not go through here: once connection drops, its record is gone; disconnects mid-query
+   * are checked by caller to see if record still exists.
    */
   const memberLevelFailure = cause => cause?.status === 403 || cause?.status === 401;
   function validatedGrant(grant, projectId, runGrantId) {
@@ -218,7 +229,7 @@ export function mountSelection({ project, checkAccess, authorizeQuery, now = Dat
       if (!member) {
         const username = nameOf(principal);
         member = { accountId, username, isInitiator: accountId === initiator,
-          displayName: accountId === initiator ? `${username}（当前用户）` : username, pages: [] };
+          displayName: accountId === initiator ? tr("{0} (current user)", username) : username, pages: [] };
         members.set(accountId, member);
       }
       member.pages.push({ pageId: entry.pageId, selection: clone(entry.selection),
@@ -230,9 +241,9 @@ export function mountSelection({ project, checkAccess, authorizeQuery, now = Dat
       const username = typeof finalGrant.grant.initiatorName === 'string' && finalGrant.grant.initiatorName.trim()
         ? finalGrant.grant.initiatorName.trim() : initiator;
       members.set(initiator, { accountId: initiator, username, isInitiator: true,
-        displayName: `${username}（当前用户）`, pages: [{ pageId: snapshot.pageId, selection,
+        displayName: tr("{0} (current user)", username), pages: [{ pageId: snapshot.pageId, selection,
           selectionRevision: null, items: itemsOf(selection), live: false, source: 'sent-snapshot',
-          sentAt: snapshot.sentAt, note: '发消息时的选区，非实时' }] });
+          sentAt: snapshot.sentAt, note: tr("Selection at the time the message was sent, not live") }] });
     }
     return { projectId, projectRev, presenceRevision: revisions.get(projectId) ?? 0,
       members: [...members.values()].sort((a, b) => a.accountId.localeCompare(b.accountId)), queriedAt: clock() };

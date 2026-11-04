@@ -4,16 +4,19 @@ import { formatUploadRejectionReason } from "../sync/accountExtensions";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 在线上传队列里有一项被素材服务永久拒掉（游客视频条数满了、文件太大，`mediaUploadQueue.ts` 的 `PERMANENT_REFUSALS`）时
- * 给用户看的那句话（claude/guest-fix〔裁〕，二级；审查 D：原先上传路径上没人用 `accountErrorText` 里的这几句，
- * 用户只看到本机有、云端和别的设备上没有）。那句话本身照 `src/account/client.ts` 的 `accountErrorText`，数从 `GUEST_LIMITS` 拼。
+ * The message shown to the user when an item in the online upload queue is permanently refused by
+ * the asset service (guest video count full, file too large, `PERMANENT_REFUSALS` in
+ * `mediaUploadQueue.ts`) (claude/guest-fix [ruling], level 2; review D: previously nobody on the
+ * upload path used these messages in `accountErrorText`, and the user only saw it present on this
+ * machine but missing in the cloud and on other devices). The message itself follows
+ * `accountErrorText` in `src/account/client.ts`, with the numbers assembled from `GUEST_LIMITS`.
  */
 export function uploadRejectedText(rejection: Pick<MediaUploadRejection, "name" | "code">): string {
   const what = rejection.name ? tr("\"{0}\"", rejection.name) : tr("this media");
   return tr("{0} was not uploaded to the cloud: {1}", what, formatUploadRejectionReason(rejection.code));
 }
 
-/** 编辑台（素材库分区、手机版编辑页）挂一个：有一项被拒就用它自己的提示条说一句 */
+/** Mount one in the editor (media library section, mobile app editor page): when an item is refused, it says so in its own notice bar */
 export function useUploadRejectedNotice(show: (text: string) => void): void {
   useEffect(() => subscribeMediaUploadRejected((rejection) => show(uploadRejectedText(rejection))), [show]);
 }

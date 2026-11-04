@@ -17,7 +17,7 @@ export function beginFrameWork(label: string) {
 export function frameWorkStatus() { return [...work.values()].map(w => ({ label: w.label, error: w.error?.message })); }
 export async function waitForFrameWork() {
   while (work.size) {
-    for (const w of work.values()) if (w.error) throw new Error(`控件尚未就绪 (${w.label}): ${w.error.message}`);
+    for (const w of work.values()) if (w.error) throw new Error(`Control not ready yet (${w.label}): ${w.error.message}`);
     await Promise.all([...work.values()].map(w => w.done));
   }
 }

@@ -1,31 +1,39 @@
 /**
- * 把一段「思考」文本切成**步骤标题**。
+ * Cuts a "thinking" text into **step titles**.
  *
- * # 为什么
+ * # Why
  *
- * 有些模型经中转站发回来的 `<think>` 里装的不是思维链,而是一句话的步骤名:
+ * Some models, via a relay service, send back a `<think>` that holds not a chain of thought but a
+ * one-line step name:
  *
  *   **Clarifying article link and scope**
  *   **Requesting missing webpage link**
  *   **Planning non-destructive timeline design**
  *
- * 短、加粗、动词开头 —— 这是进度条上的字,不是给人读的推理。把整段原样铺在气泡里
- * 会把正文顶开;而藏进「显示思考」开关里又等于什么都没有,用户看不见它在干什么。
- * 所以抽成一行行的步骤,交给界面做成走马灯式的进度显示。
+ * Short, bold, verb-first: this is text for a progress bar, not reasoning meant to be read. Spreading
+ * the whole thing as is in the bubble pushes the body text apart; while hiding it behind the "Show
+ * thinking" switch is as good as nothing, since the user cannot see what it is doing.
+ * So it is extracted into step lines, and handed to the UI to make a ticker-style progress display.
  *
- * # 规则
+ * # Rules
  *
- * 有 `**加粗**` 就按加粗抽,一段里有几条就是几步(模型经常一次吐两三条)。
+ * If there is `**bold**`, extract by bold; however many there are in a passage is however many steps
+ * (the model often emits two or three at a time).
  *
- * 没有加粗的时候要**当心**:那多半是真的思维链(Claude Code / Codex 走自己的思考通道,
- * 吐的是整段推理)。把一段推理的第一行截成 48 字挂上去,得到的是一句没头没尾的残句,
- * 比不显示更糟。所以只有「本来就短、且只有一行」的才当步骤 —— 那种形状只可能是标题。
- * 其余一律返回空,让它照旧走「显示思考」那条路。
+ * When there is no bold, **be careful**: that is mostly a real chain of thought (Claude Code / Codex
+ * use their own thinking channel and emit whole passages of reasoning). Truncating the first line
+ * of a piece of reasoning to 48 characters and hanging it up gives a fragment with no head or tail,
+ * which is worse than showing nothing. So only text that "is short to begin with and has only one
+ * line" counts as a step: only a title can have that shape.
+ * Everything else returns empty and goes down the "Show thinking" path as before.
  */
 
-/** 步骤标题最多显示这么长,超了截断。太长就不是步骤名了,铺开会把气泡撑坏 */
+/**
+ * A step title is shown at most this long and truncated beyond that. Anything longer is not a step
+ * name, and spreading it out would break the bubble
+ */
 const MAX_LEN = 48;
-/** 没有加粗时,整段短于这个长度才当步骤名看待 */
+/** With no bold, the whole passage is treated as a step name only if it is shorter than this length */
 const BARE_STEP_MAX = 40;
 
 function clip(s: string): string {
@@ -34,16 +42,17 @@ function clip(s: string): string {
 }
 
 /**
- * @param text 一段 think 的原文
- * @returns 步骤标题,按出现顺序;没有可显示的内容时返回空数组
+ * @param text the original text of one think passage
+ * @returns the step titles in order of appearance; an empty array when there is nothing to show
  */
 export function thinkingSteps(text: string): string[] {
   const s = String(text ?? "");
   if (!s.trim()) return [];
 
   const bold: string[] = [];
-  // 允许标题里带换行(模型偶尔会把长标题折行),但上限 200 字符 ——
-  // 万一出现落单的 `**`,不许它一路吃到文末去。非贪婪,配上限就够安全了。
+  // Newlines are allowed inside a title (the model occasionally wraps a long title), but with an upper
+  // limit of 200 characters: if a stray `**` appears, it must not eat all the way to the end of the
+  // text. Non-greedy plus the limit is safe enough.
   const re = /\*\*([^*][\s\S]{0,200}?)\*\*/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(s))) {
@@ -53,12 +62,15 @@ export function thinkingSteps(text: string): string[] {
   if (bold.length) return bold;
 
   const lines = s.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
-  if (lines.length !== 1) return [];          // 多行 = 推理,不是标题
-  if (lines[0].length > BARE_STEP_MAX) return []; // 长 = 推理,不是标题
+  if (lines.length !== 1) return [];          // Multiple lines = reasoning, not a title
+  if (lines[0].length > BARE_STEP_MAX) return []; // Long = reasoning, not a title
   return [clip(lines[0])];
 }
 
-/** 一条消息里所有 think 段合起来的步骤列表,顺序保持不变、相邻重复的合并 */
+/**
+ * The step list combined from all think passages in a message; the order is kept and adjacent
+ * duplicates are merged
+ */
 export function stepsOfThinking(texts: string[]): string[] {
   const out: string[] = [];
   for (const t of texts) {
@@ -70,13 +82,15 @@ export function stepsOfThinking(texts: string[]): string[] {
 }
 
 /**
- * 一条消息此刻走到的那一步:所有 think 段里的最后一个步骤标题。
+ * The step a message has reached at this moment: the last step title among all think passages.
  *
- * 输入框上方的思考条带只显示这一行。以前是气泡里竖排整串步骤,几十步之后把气泡撑得很长,
- * 真正要看的「现在」反而沉在最底下。
+ * The thinking strip above the input box shows only this one line. It used to be the whole series
+ * of steps stacked vertically in the bubble, which after dozens of steps made the bubble very long,
+ * and "now", the thing you actually want to see, sank to the very bottom.
  *
- * 只认 kind === "thinking" 的片段,文字、工具、状态片段一律跳过。
- * 没有可显示的步骤(没有思考,或者思考是整段推理)时返回 null,由调用方退回「正在跑哪个工具」。
+ * Only parts with kind === "thinking" are recognized; text, tool and status parts are all skipped.
+ * When there is no step to show (no thinking, or the thinking is a whole passage of reasoning) it
+ * returns null, and the caller falls back to "which tool is running".
  */
 export function currentStep(parts: ReadonlyArray<{ kind: string; text?: string }>): string | null {
   const texts: string[] = [];

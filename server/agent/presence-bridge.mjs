@@ -1,33 +1,50 @@
 /**
- * 编辑器进程与文档服务在场状态之间的桥(计划 `docs/plan/agent-workflow-plan.md` A3 第二阶段)。
+ * Bridge between editor process and document service presence (plan
+ * `docs/plan/agent-workflow-plan.md` A3 Phase 2).
  *
- * 文档服务一侧是 `../docservice/modules/presence.mjs`(只在内存里转发、带过期时间、不进项目历史)。这里:
- *   - **收**:订阅连接(`doc-link.mjs` 兼做订阅的那条)上收到的 `presence.update` / `presence.state` / `presence.message`:
- *       - `kind: 'editing'`:别的成员的页面正在编辑的片段 → A2 看板的另一个来源(`reportRemote`),
- *         Agent 读写到时提示「用户 <成员>正在编辑」;本机页面自己发布的那份按会话号跳过;
- *       - `kind: 'agent'`:别的成员那边的 Agent 声明的范围 → 公告板的名单(`applyRemoteAgent`);本进程发出去的按 `origin` 跳过;
- *       - `kind: 'agent-message'`:发给本机某个 Agent 的消息 → 进它的信箱(与本机 `send_message` 同一条投递路);
- *   - **发**:本机 Agent 声明了范围(公告板的 `onDeclare`)→ 以**这个 Agent 自己的连接**(它的写入身份)`presence.set`;
- *     本机 Agent 给别的成员那边的 Agent 发消息(公告板的 `forwardRemote`)→ `presence.send`。
+ * The document service side is `../docservice/modules/presence.mjs` (forwarded only in memory, with
+ * expiration time, does not enter project history). Here:
+ *   - **Receive**: `presence.update` / `presence.state` / `presence.message` received on
+ *     subscription connection (the one in `doc-link.mjs` that doubles as subscription):
+ *       - `kind: 'editing'`: clips currently edited by other members' pages → another source for
+ *         A2 board (`reportRemote`), showing notice "User <member> is editing" when Agent reads
+ *         or writes; copy published by local page itself is skipped by session number;
+ *       - `kind: 'agent'`: scopes declared by Agents on other members' sides → bulletin board list
+ *         (`applyRemoteAgent`); those sent by this process are skipped by `origin`;
+ *       - `kind: 'agent-message'`: message sent to an Agent on this machine → enters its inbox
+ *         (same delivery path as local `send_message`);
+ *   - **Send**: local Agent declares a scope (bulletin board `onDeclare`) → `presence.set` via
+ *     **this Agent's own connection** (its write identity);
+ *     local Agent sends a message to an Agent on another member's side (bulletin board
+ *     `forwardRemote`) → `presence.send`.
  *
- * **兼容**:旧版文档服务(没有在场状态模块)对这几种消息回 `error { reason: 'unsupported' }`。第一次看到就记下「不支持」,
- * 之后一概不发;不抛错、不断线,只是没有跨设备提示。请求超时、连接没就绪也只是这一次没发出去。
+ * **Compatibility**: legacy document service (without presence module) returns
+ * `error { reason: 'unsupported' }` for these messages. When first seen, record "unsupported", and
+ * never send thereafter; does not throw or disconnect, simply lacks cross-device notices. Request
+ * timeouts or unready connections also only mean this single transmission was not sent.
  *
- * 只依赖本目录的公告板与看板接口;连接由 `doc-link.mjs` 给。
+ * Only depends on bulletin board and board interfaces in this directory; connections are provided by
+ * `doc-link.mjs`.
  */
 import { randomBytes } from 'node:crypto';
 import { BOARD_DEFAULTS } from './agent-board.mjs';
 
 export const PRESENCE_DEFAULTS = Object.freeze({
-  /** Agent 范围的过期时间:与公告板「多久没动静就不算在跑」一致 */
+  /**
+   * Expiration time for Agent scope: consistent with bulletin board "how long without activity before
+   * it is no longer considered running"
+   */
   agentTtlMs: BOARD_DEFAULTS.idleMs,
-  /** 一次请求等回包的上限 */
+  /** Upper limit for waiting for a response to a single request */
   requestTimeoutMs: 5_000,
 });
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-/** 写入身份 → 成员名:共享项目里 userId 是「用户名@设备」,只取用户名;本机空间(local)回 null */
+/**
+ * Write identity → member name: in shared projects, userId is "username@device", extract only
+ * username; local space (local) returns null
+ */
 export function memberOf(actor) {
   const u = typeof actor?.userId === 'string' ? actor.userId : null;
   if (!u || u === 'local' || u === 'anonymous') return null;
@@ -40,19 +57,24 @@ export function memberOf(actor) {
  * @param {ReturnType<import('./doc-link.mjs').createAgentLink>} o.link
  * @param {() => ReturnType<import('./agent-board.mjs').createAgentBoard>} o.board
  * @param {ReturnType<import('./user-editing.mjs').createUserEditingBoard>} [o.editing]
- * @param {(agentKey: string) => number} o.conversationNumberOf 对话 ID → 它在这条 link 上的对话号(`agent-side` 的 `conversationNumber`)
- * @param {(key: string) => string | null} [o.labelOf] 对话 ID → 厂商
+ * @param {(agentKey: string) => number} o.conversationNumberOf chat ID → its chat number on this
+ *   link (`conversationNumber` in `agent-side`)
+ * @param {(key: string) => string | null} [o.labelOf] chat ID → vendor
  * @param {(key: string) => { role?: string | null } | null} [o.infoOf]
- * @param {string} [o.origin] 本进程的标识(自己发出去又收回来的按它跳过)
+ * @param {string} [o.origin] identifier of this process (used to skip messages sent by self and
+ *   received back)
  */
 export function createPresenceBridge({ link, board, editing = null, conversationNumberOf, labelOf = () => null, infoOf = () => null, origin = `ed-${randomBytes(6).toString('base64url')}`, log = () => {}, limits: limitsIn = {} } = {}) {
-  if (!link || typeof board !== 'function' || typeof conversationNumberOf !== 'function') throw new TypeError('createPresenceBridge: 要 link、board、conversationNumberOf');
+  if (!link || typeof board !== 'function' || typeof conversationNumberOf !== 'function') throw new TypeError('createPresenceBridge: requires link, board, conversationNumberOf');
   const L = { ...PRESENCE_DEFAULTS, ...limitsIn };
   const projectId = link.projectId;
-  /** null = 还不知道;true = 文档服务认;false = 旧版文档服务,不再发 */
+  /**
+   * null = not known yet; true = recognized by document service; false = legacy document service, do
+   * not send anymore
+   */
   let supported = null;
   const stats = { sent: 0, failed: 0, received: 0, unsupported: 0 };
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响 */ } };
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failure does not affect operation */ } };
 
   function markReply(reply) {
     if (reply?.type === 'error') {
@@ -69,7 +91,10 @@ export function createPresenceBridge({ link, board, editing = null, conversation
     return true;
   }
 
-  /** 以某个对话的连接发一条;回回包(失败回 null,不抛) */
+  /**
+   * Send one via a specific chat's connection; returns response (returns null on failure, does not
+   * throw)
+   */
   async function request(agentKey, message) {
     if (supported === false) return null;
     let conn;
@@ -97,7 +122,7 @@ export function createPresenceBridge({ link, board, editing = null, conversation
       if (!editing) return;
       const session = isObj(data) && typeof data.session === 'string' ? data.session : null;
       if (data === null) {
-        // 撤销不带 data:按发布者身份里的 session 认
+        // Revocation does not include data: recognized by session in publisher identity
         const s = typeof from?.session === 'string' ? from.session : null;
         if (s) editing.clearRemote(s);
         return;
@@ -121,7 +146,7 @@ export function createPresenceBridge({ link, board, editing = null, conversation
     const local = b.listRaw('').find((a) => a.id === data.to && !a.remote);
     if (!local) return;
     const member = memberOf(from);
-    const who = `Agent ${data.from ?? '?'}(${[data.vendor, member ? `成员 ${member} 那边` : null].filter(Boolean).join(',') || '别的成员那边'})`;
+    const who = `Agent ${data.from ?? '?'} (${[data.vendor, member ? `on member ${member}'s side` : null].filter(Boolean).join(', ') || 'on another member\'s side'})`;
     b.deliver({ from: typeof data.from === 'string' ? data.from : null, fromLabel: who, to: data.to, text: data.text, hops: data.hops });
   }
 
@@ -137,7 +162,8 @@ export function createPresenceBridge({ link, board, editing = null, conversation
         ingestMessage(msg);
         return;
       case 'project.state':
-        // 订阅连接(重新)打开了项目:取一次现有的在场状态(别的成员此刻正在编辑的、别人的 Agent 声明的范围)
+        // Subscription connection (re)opened the project: fetch existing presence once (clips currently
+        // edited by other members, scopes declared by others' Agents)
         void refresh();
         return;
       default:
@@ -153,7 +179,7 @@ export function createPresenceBridge({ link, board, editing = null, conversation
   const bridge = {
     origin,
 
-    /** 本机某个 Agent 的范围(或撤掉:scope 为 null)经它自己的连接发布 */
+    /** Scope of a local Agent (or revoked: scope is null) published via its own connection */
     async publishAgent(agentKey) {
       if (typeof agentKey !== 'string' || !agentKey) return null;
       const b = board();
@@ -168,7 +194,10 @@ export function createPresenceBridge({ link, board, editing = null, conversation
       });
     },
 
-    /** 本机 Agent 发给别的成员那边的 Agent:经发件方自己的连接广播(收件方所在的编辑器进程按 `to` 认) */
+    /**
+     * Local Agent sends to an Agent on another member's side: broadcast via sender's own connection
+     * (the recipient's editor process recognizes it by `to`)
+     */
     forward({ from, to, text, hops }) {
       if (supported === false) return false;
       void request(typeof from === 'string' ? from : '', {
@@ -178,7 +207,10 @@ export function createPresenceBridge({ link, board, editing = null, conversation
       return true;
     },
 
-    /** 立刻打开订阅并取一次(绑上项目时调,不等 Agent 第一次调工具) */
+    /**
+     * Immediately open subscription and fetch once (called when binding project, without waiting for
+     * Agent's first tool call)
+     */
     async start() {
       try {
         link.conversation(conversationNumberOf(''));

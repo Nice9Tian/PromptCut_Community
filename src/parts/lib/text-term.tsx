@@ -5,8 +5,8 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 术语卡:带拼音或英文小注的名词解释。从 term-card 拆出。
- * 英文小注强制大写，定义文本逐字淡入。
+ * Term card: noun explanation with pinyin or English annotations. Extracted from term-card.
+ * English annotations are forced uppercase, and definition text fades in character by character.
  */
 interface Params {
   en: string;
@@ -70,10 +70,10 @@ function TermPart({ params, width, height }: PartProps<Params>) {
 
 export const textTerm: PartDef<Params> = {
   id: "text-term",
-  name: "术语解释卡",
-  description: "带英文小注的大术语与逐字释义",
-  useWhen: "口播下定义、解释专业概念或名词时使用，包含顶部大写英文小注、超大术语名以及逐字打字淡入的解释文本；单纯大标题用 text-title，段落正文用 text-body。",
-  tags: ["术语", "定义", "名词", "解释", "概念"],
+  name: "Term explainer card",
+  description: "Large term with a small English note and character-by-character explanation",
+  useWhen: "Use when the narration gives a definition or explains a technical concept or noun; includes a small uppercase English note at the top, an oversized term name, and explanation text that fades in with a typing effect, character by character; use text-title for a plain large title and text-body for paragraph text.",
+  tags: ["term", "definition", "noun", "explanation", "concept"],
   role: "text",
   from: "term-card",
   defaults: {
@@ -83,10 +83,10 @@ export const textTerm: PartDef<Params> = {
     size: 0,
   },
   controls: [
-    { key: "en", label: "英文小注", type: "text" },
-    { key: "term", label: "术语", type: "text", required: true },
-    { key: "def", label: "定义", type: "text", required: true },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 200, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
+    { key: "en", label: "English note", type: "text" },
+    { key: "term", label: "term", type: "text", required: true },
+    { key: "def", label: "definition", type: "text", required: true },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 200, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
   ],
   defaultFrame: { x: 360, y: 240, w: 1200, h: 560 },
   settleMs: (p) => Math.max(850, p.def.length * 30 + 100),

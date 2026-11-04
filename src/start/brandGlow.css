@@ -1,7 +1,7 @@
 /*
- * 官网首页那层背景光（`BrandGlow.tsx`）的样式。
+ * Styles of the background glow layer of the official website home page (`BrandGlow.tsx`).
  *
- * 单独一个文件、由组件自己 import，理由同 `brandCanvas.css`：`start.css` 这会儿归另一个会话。
+ * A separate file imported by the component itself, for the same reason as `brandCanvas.css`: `start.css` is owned by another session right now.
  */
 
 .ps-brand-glow {
@@ -13,22 +13,22 @@
 }
 
 /*
- * 预渲染那一版（`GlowLoop.tsx` 的 `<video>`）。`cover` 是必须的：
- * 竖版是按 560×1290 渲的，手机视口比它矮也比它窄，`cover` 等距放大后居中裁切，
- * 正好对上这段着色器「以画面中心对齐」的构图（见 `BrandGlow.tsx` 的 refW / refH）。
- * 用 `contain` 或默认的 `fill` 会出黑边或者把光压扁。
+ * The prerendered version (the `<video>` in `GlowLoop.tsx`). `cover` is required:
+ * the portrait version was rendered at 560×1290, a phone viewport is both shorter and narrower than that, and `cover` scales it uniformly and crops it centered,
+ * which exactly matches the composition of this shader "aligned to the center of the frame" (see refW / refH in `BrandGlow.tsx`).
+ * Using `contain` or the default `fill` would produce black borders or squash the glow flat.
  */
 video.ps-glow-loop {
   object-fit: cover;
 }
 
 /*
- * 起不来 WebGL2 时的兜底。底子是官网首页那段 CSS（VisuHive 仓库 `site/assets/home.css` 的 `body`），
- * 数值换成 `BrandGlow.tsx` 里 LOOK 那一组（用户 2026-10-23 调定）。
+ * Fallback for when WebGL2 cannot start. The base is the CSS of the official website home page (`body` in `site/assets/home.css` of the VisuHive repository),
+ * with the values replaced by the LOOK set in `BrandGlow.tsx` (tuned by the user, 2026-10-23).
  *
- * 位置用 `calc(50% ± Npx)` 写，对应 LOOK 的「以屏幕中心对齐」：
- * 偏移 = (位置 − 0.5) × 基准视口（559 × 1290）—— 冷的那团 (−50, −774)，暖的那团 (+324, +232)。
- * 兜底只求「像」，不求逐像素一致：没有抖动，也不飘。
+ * Positions are written as `calc(50% ± Npx)`, corresponding to LOOK's "aligned to the screen center":
+ * offset = (position − 0.5) × reference viewport (559 × 1290): the cool blob (−50, −774), the warm blob (+324, +232).
+ * The fallback only aims to "look similar", not to be pixel-identical: no jitter and no drifting.
  */
 .ps-brand-glow--css {
   background:

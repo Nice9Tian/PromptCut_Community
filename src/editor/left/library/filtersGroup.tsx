@@ -8,13 +8,13 @@ import { useReadOnly } from "../../readOnly";
 import type { GroupData, GroupItem } from "./groups";
 import { tr } from "../../../i18n/index.ts";
 
-/** 和 Agent 的 apply_filter / remove_filter 同一份校验(锁定的序列、卡片段、还挂着就删要确认) */
+/** The same validation as the Agent's apply_filter / remove_filter (locked track, card clip, confirm when deleting while still attached) */
 const tools = createFilterTools({ getState, actions });
 
-/** 滤镜色块卡的高宽比:上面一块样片,下面名字、说明和两个按钮 */
+/** Height-to-width ratio of the filter swatch card: a sample patch on top, the name, description and two buttons below */
 const TILE_ASPECT = 0.75;
 
-/** 一块彩色样片套上滤镜(片段 1 秒处的样子),一眼看出冷暖、黑白、糊不糊 */
+/** A colored sample patch with the filter applied (how the clip looks at 1 second), so warm vs cool, black-and-white, and blurriness are visible at a glance */
 function Swatch({ def, className }: { def: FilterDef; className?: string }) {
   const css = cssFilter(resolveOps(def, undefined, 1, 2), 0.25);
   return (
@@ -30,11 +30,12 @@ function Swatch({ def, className }: { def: FilterDef; className?: string }) {
 }
 
 /**
- * 特效 → 滤镜组:项目的滤镜库。
- * 滤镜大多是 Agent 用 create_filter 建的;这里让人看得到、能挂到选中的视频 / 图片片段上复用、能删。
+ * Effects → filter group: the project's filter library.
+ * Most filters are created by the Agent with create_filter; here people can see them, attach them
+ * to the selected video / image clip for reuse, and delete them.
  */
 export function useFiltersGroup(q: string, flash: (text: string, ms?: number) => void): GroupData {
-  // 这个项目只给了只读权限(游客):挂 / 摘滤镜、删滤镜都是写
+  // This project grants only read-only access (guest): attaching / detaching filters and deleting filters are all writes
   const ro = useReadOnly();
   const project = useStore((s) => s.project);
   const selection = useStore((s) => s.selection);

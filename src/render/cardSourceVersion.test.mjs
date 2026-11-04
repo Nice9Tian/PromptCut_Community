@@ -25,9 +25,9 @@ test('card source version ignores line endings (CRLF and LF checkouts give the s
   const card = { id: 'a', defaults: {}, controls: [] };
   assert.notEqual(crlf['/src/cards/helper.ts'], lf['/src/cards/helper.ts']);
   assert.equal(cardSourceVersion(card, crlf), cardSourceVersion(card, lf));
-  // 用户卡走显式入口那条路也一样
+  // User cards going through the explicit entry path behave the same
   assert.equal(cardSourceVersion(card, crlf, '/src/cards/a.tsx'), cardSourceVersion(card, lf, '/src/cards/a.tsx'));
-  // 内容真变了照样换键
+  // Keys still switch when content actually changes
   const changed = { ...crlf, '/src/cards/helper.ts': 'export const helper=2;\r\n// two\r\n' };
   assert.notEqual(cardSourceVersion(card, changed), cardSourceVersion(card, lf));
 });

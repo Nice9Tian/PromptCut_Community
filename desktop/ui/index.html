@@ -48,7 +48,12 @@
 </head>
 <body>
   <div class="spinner"></div>
-  <div class="label">正在启动 PromptCut…</div>
+  <div class="label" data-t>Starting PromptCut…</div>
   <div id="status"></div>
+  <script src="overlay-summary.js"></script>
+  <script>
+  // Static text follows the system display language, through the same table as the lines pushed by the shell
+  document.querySelectorAll('[data-t]').forEach(function (el) { el.textContent = window.pcOverlay.t(el.textContent); });
+  </script>
 </body>
 </html>

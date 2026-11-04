@@ -1,27 +1,41 @@
 /**
- * 仅供测试，生产代码不得引用。
+ * For testing only; production code must not reference this.
  *
- * C6.5 第一批（c65-kernel、c65-docservice）契约测试的公共件。依据只有 `docs/plan/c65-design.md`
- * 第 2、3、4、6、7、8、10 节与第 11 节 V1～V8；测试方没看实现。
+ * Shared module for the first batch of C6.5 contract tests (c65-kernel, c65-docservice).
+ * Based solely on `docs/plan/c65-design.md` Sections 2, 3, 4, 6, 7, 8, 10 and Section 11 V1~V8;
+ * test authors did not look at the implementation.
  *
- * 设计稿没写死的函数名、模块路径、消息字段名全部集中在本文件，集成时对账只改这里。
- * 每一处假设用「假设 A<n>」标出，报告 `docs/archive/agent-reports/AGENT-c65-tests.md` 按同样的编号列出。
+ * Function names, module paths, and message field names not hardcoded in the design doc are all
+ * centralized in this file, so only this file needs changes when reconciling during integration.
+ * Each assumption is marked as "Assumption A<n>", and listed with the same numbering in the
+ * report `docs/archive/agent-reports/AGENT-c65-tests.md`.
  *
- *   A1  JSON 路径引擎：`server/docservice/json-ops.mjs` 导出 `applyOps(doc, ops)`（设计稿第 11 节点名了文件，没点名函数）。
- *       成功返回新文档（或原地改后返回 undefined / 同一对象，都认）；失败抛错，`err.reason ?? err.code` 为
- *       `'bad-path'`，或返回 `{ ok: false, reason }`。
- *   A2  差异算法：`src/kernel/diffProject.ts` 导出 `diffProject(prev, next) → { ops, inverse }`（设计稿第 2 节写了名字与返回值）。
- *   A3  文档服务项目模块：仍是 `server/docservice/modules/project.mjs` 的 `projectModule({ store, now })`，
- *       升级后接 `project.op`；存储沿用 `store/index.mjs` 的 `createMemoryStore` / `createFileStore({ dir })`。
- *   A4  `project.op` 的回包按 `opId` 对应（`project.op.ok` / `project.op.rejected` 都带 `opId`，设计稿第 3 节）；
- *       `project.state` 按 `projectId` 对应。版本号字段一律叫 `rev`（设计稿第 3 节原文），不是旧的 `projectRev`。
- *   A5  覆盖通知的 `entity` 是字符串路径，如 `/tracks/@t1/clips/@c2`、`/meta`；`by` 是写入身份（actor 对象，
- *       至少带 `userId` 与 `session`，页面连接另带 `deviceId`）。
- *   A6  写入身份 = principal（`userId`、`deviceId`、`role`、`conversation`）+ 消息里的 `session`。测试的 `authenticate`
- *       按查询串 `?user=&dev=&role=&conv=` 给 principal。
- *   A7  页面同步：`src/store/docsync.ts` 导出 `createDocSync(options)`，见下文 `createPage` 的注释。
- *   A8  文件存储下，操作日志是 `<dir>/projects/<projectId>.ops.ndjson`（设计稿第 3 节写的是
- *       `projects/<id>.ops.ndjson`，这里按「存储根目录下」理解）。
+ *   A1  JSON path engine: `server/docservice/json-ops.mjs` exports `applyOps(doc, ops)` (Section 11
+ *       of the design doc named the file, but not the function). On success, returns the new
+ *       document (or modifies in place and returns undefined / the same object; both are
+ *       accepted); on failure, throws an error where `err.reason ?? err.code` is `'bad-path'`,
+ *       or returns `{ ok: false, reason }`.
+ *   A2  Diff algorithm: `src/kernel/diffProject.ts` exports
+ *       `diffProject(prev, next) → { ops, inverse }` (Section 2 of the design doc specified the
+ *       name and return value).
+ *   A3  Document service project module: still `projectModule({ store, now })` in
+ *       `server/docservice/modules/project.mjs`, upgraded to handle `project.op`; storage continues
+ *       to use `createMemoryStore` / `createFileStore({ dir })` from `store/index.mjs`.
+ *   A4  `project.op` responses correspond by `opId` (both `project.op.ok` and `project.op.rejected`
+ *       carry `opId`, Section 3 of design doc); `project.state` corresponds by `projectId`. The
+ *       version number field is always named `rev` (original text in Section 3 of design doc),
+ *       not the legacy `projectRev`.
+ *   A5  The `entity` in overwrite notifications is a string path, such as `/tracks/@t1/clips/@c2`,
+ *       `/meta`; `by` is the write identity (actor object, containing at least `userId` and
+ *       `session`, with page connections additionally carrying `deviceId`).
+ *   A6  Write identity = principal (`userId`, `deviceId`, `role`, `conversation`) + `session` in
+ *       the message. The test's `authenticate` supplies principal based on query string
+ *       `?user=&dev=&role=&conv=`.
+ *   A7  Page sync: `src/store/docsync.ts` exports `createDocSync(options)`, see comments on
+ *       `createPage` below.
+ *   A8  Under file storage, the operation log is `<dir>/projects/<projectId>.ops.ndjson`
+ *       (Section 3 of the design doc wrote `projects/<id>.ops.ndjson`, which is understood here as
+ *       "under storage root directory").
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -32,35 +46,38 @@ import { wsClient, createTcpProxy, sleep, waitFor } from './fake-ws-kit.mjs';
 
 export { sleep, waitFor };
 
-// ================================================================== 被测模块的载入（A1、A2、A3、A7）
+// ================================================================== Loading modules under test (A1, A2, A3, A7)
 
 /** A1 */
 export async function loadJsonOps() {
   const mod = await import('../docservice/json-ops.mjs');
-  assert.equal(typeof mod.applyOps, 'function', `json-ops.mjs 要导出 applyOps；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.applyOps, 'function', `json-ops.mjs must export applyOps; exports: ${Object.keys(mod).join(', ')}`);
   /**
-   * 规整成 `{ ok: true, doc } | { ok: false, reason }`。传进去的就是 `doc` 本身，不替调用方复制：
-   * 原子性用例要看失败后原对象有没有被改。
+   * Normalize to `{ ok: true, doc } | { ok: false, reason }`. Passes `doc` itself without copying
+   * on behalf of the caller: atomicity test cases need to verify whether the original object was
+   * mutated upon failure.
    */
   function apply(doc, ops) {
     let out;
     try {
       out = mod.applyOps(doc, ops);
     } catch (err) {
-      // 集成对账（A1）：引擎内部把格式错叫 `bad-op`，文档服务对外同样回 `bad-path`（c65-ops-spec.md 第 2 节）
+      // Integration reconciliation (A1): the engine internally calls format errors `bad-op`, but the
+      // document service still returns `bad-path` externally (c65-ops-spec.md Section 2)
       const code = err?.reason ?? err?.code ?? String(err?.message ?? err);
       return { ok: false, reason: code === 'bad-op' ? 'bad-path' : code, error: err };
     }
-    // 集成对账（A1）：实际的 `applyOps` 返回 `{ root, effects }`（写时复制，不改传入的文档）
+    // Integration reconciliation (A1): actual `applyOps` returns `{ root, effects }`
+    // (copy-on-write, does not mutate passed-in document)
     if (out && typeof out === 'object' && 'root' in out && Array.isArray(out.effects)) return { ok: true, doc: out.root };
     if (out && typeof out === 'object' && out.ok === false) return { ok: false, reason: out.reason ?? out.code };
     if (out && typeof out === 'object' && out.ok === true && 'doc' in out) return { ok: true, doc: out.doc };
     return { ok: true, doc: out === undefined ? doc : out };
   }
-  /** 复制一份再应用；失败直接断言失败 */
-  function applyClone(doc, ops, what = '应用操作') {
+  /** Make a copy before applying; on failure, assert failure directly */
+  function applyClone(doc, ops, what = 'applying ops') {
     const r = apply(structuredClone(doc), ops);
-    assert.ok(r.ok, `${what}失败：${r.reason}；ops=${JSON.stringify(ops).slice(0, 600)}`);
+    assert.ok(r.ok, `${what} failed: ${r.reason}; ops=${JSON.stringify(ops).slice(0, 600)}`);
     return r.doc;
   }
   return { mod, apply, applyClone };
@@ -69,34 +86,40 @@ export async function loadJsonOps() {
 /** A2 */
 export async function loadDiffProject() {
   const mod = await import('../../src/kernel/diffProject.ts');
-  assert.equal(typeof mod.diffProject, 'function', `diffProject.ts 要导出 diffProject；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.diffProject, 'function', `diffProject.ts must export diffProject; exports: ${Object.keys(mod).join(', ')}`);
   return mod.diffProject;
 }
 
 /** A3 */
 export async function loadProjectModule() {
   const mod = await import('../docservice/modules/project.mjs');
-  assert.equal(typeof mod.projectModule, 'function', `modules/project.mjs 要导出 projectModule；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.projectModule, 'function', `modules/project.mjs must export projectModule; exports: ${Object.keys(mod).join(', ')}`);
   const store = await import('../docservice/store/index.mjs');
   return { projectModule: mod.projectModule, createMemoryStore: store.createMemoryStore, createFileStore: store.createFileStore };
 }
 
 /**
- * A7。集成对账：实际的 `docsync.ts` 导出 `DocSync` 类，传输靠注入（`send` 出、`receive` 进、
- * `connect` / `disconnect` 告诉它连接状态），不自己连网。这里用 Node 的全局 `WebSocket` 包一层，
- * 做出假设 A7 的 `createDocSync(options)` 形状；只翻译接口，不改行为：
- *   - `submit(d, { coalesce })` → `ds.commit(页面当前的项目, { mergeKey: coalesce })`（DocSync 自己再算一遍差异）；
- *   - `undo()` / `redo()` 的 `skipped[].by` 是 `{ actor, session }`，摊平成 `{ ...actor, session }`（A5）；
- *   - `saveWhenConfirmed(write)` → `ds.whenSettled()` 之后 `write(project, rev)`；
- *   - `resolveOffline('replay' | 'discard')` → `ds.replayOffline()` / `ds.discardOffline()`；
- *   - 状态变成 `paused` 时调 `onOfflineConflict(ds.pausedInfo)`；断线后每 50 ms 重连一次。
- * `.ts` 里没写扩展名的相对 import 靠 `src/testing/registerTs.mjs` 的解析钩子（与 src 下的单测相同）。
+ * A7. Integration reconciliation: the actual `docsync.ts` exports the `DocSync` class, with
+ * transport handled via injection (`send` out, `receive` in, `connect` / `disconnect` to notify
+ * connection state), without connecting to the network itself. Here, Node's global `WebSocket`
+ * wraps it to produce the shape of Assumption A7's `createDocSync(options)`; it only adapts the
+ * interface without changing behavior:
+ *   - `submit(d, { coalesce })` → `ds.commit(page's current project, { mergeKey: coalesce })`
+ *     (DocSync computes diff again itself);
+ *   - `skipped[].by` in `undo()` / `redo()` is `{ actor, session }`, flattened into
+ *     `{ ...actor, session }` (A5);
+ *   - `saveWhenConfirmed(write)` → `write(project, rev)` after `ds.whenSettled()`;
+ *   - `resolveOffline('replay' | 'discard')` → `ds.replayOffline()` / `ds.discardOffline()`;
+ *   - when state changes to `paused`, invokes `onOfflineConflict(ds.pausedInfo)`; reconnects
+ *     every 50 ms after disconnection.
+ * Relative imports without extensions in `.ts` rely on resolution hooks from
+ * `src/testing/registerTs.mjs` (same as unit tests under src).
  */
 export async function loadDocSync() {
   await import('../../src/testing/registerTs.mjs');
   const mod = await import('../../src/store/docsync.ts');
   if (typeof mod.createDocSync === 'function') return mod.createDocSync;
-  assert.equal(typeof mod.DocSync, 'function', `docsync.ts 要导出 createDocSync 或 DocSync；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.DocSync, 'function', `docsync.ts must export createDocSync or DocSync; exports: ${Object.keys(mod).join(', ')}`);
   return (options) => docSyncOverWebSocket(mod.DocSync, options);
 }
 
@@ -151,7 +174,7 @@ function docSyncOverWebSocket(DocSync, o) {
     resolveOffline(choice) {
       if (choice === 'replay') ds.replayOffline();
       else if (choice === 'discard') ds.discardOffline();
-      else throw new Error(`不认识的选择：${choice}`);
+      else throw new Error(`unknown choice: ${choice}`);
       return Promise.resolve();
     },
     undo: () => Promise.resolve(undoResult(ds.undo())),
@@ -168,19 +191,19 @@ function docSyncOverWebSocket(DocSync, o) {
   };
 }
 
-// ================================================================== 杂项
+// ================================================================== Miscellaneous
 
 export const T0 = 1_700_000_000_000;
 export const MIN = 60_000;
 
-/** 建临时目录，用例结束时删掉 */
+/** Create temporary directory and delete it when the test case finishes */
 export function tempDir(t, prefix = 'pc-c65-') {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
 
-/** 固定种子的伪随机（mulberry32） */
+/** Pseudo-random with fixed seed (mulberry32) */
 export function rng(seed) {
   let a = seed >>> 0;
   const next = () => {
@@ -202,17 +225,18 @@ export function rng(seed) {
 let opSeq = 0;
 export const newOpId = (tag = 'op') => `${tag}-${process.pid}-${Date.now().toString(36)}-${++opSeq}`;
 
-/** 路径分段（JSON 指针，`~1` → `/`，`~0` → `~`） */
+/** Path segments (JSON Pointer, `~1` → `/`, `~0` → `~`) */
 export function splitPath(path) {
   if (path === '') return [];
-  assert.ok(path.startsWith('/'), `路径要以 / 开头：${path}`);
+  assert.ok(path.startsWith('/'), `path must start with /: ${path}`);
   return path.slice(1).split('/').map((s) => s.replace(/~1/g, '/').replace(/~0/g, '~'));
 }
 
-/** 字符串按 UTF-8 字节数 */
+/** String length in UTF-8 bytes */
 export const bytesOf = (v) => Buffer.byteLength(typeof v === 'string' ? v : JSON.stringify(v), 'utf8');
 
-// ================================================================== 造项目（形状照 src/kernel/project.ts 的 Project）
+// ================================================================== Generate projects
+// (shape follows Project in src/kernel/project.ts)
 
 let clipSeq = 0;
 const freshId = (prefix, r) => `${prefix}${++clipSeq}${r ? `-${r.int(1e6).toString(36)}` : ''}`;
@@ -228,7 +252,7 @@ function randScalar(r) {
   }
 }
 
-/** 任意 JSON 值（深度有限）；数组一律不带 id（整体当一个值） */
+/** Arbitrary JSON value (bounded depth); arrays never have id (treated as a single value as a whole) */
 function randValue(r, depth = 0) {
   const k = depth > 2 ? 0 : r.int(4);
   if (k === 0 || k === 1) return randScalar(r);
@@ -238,7 +262,7 @@ function randValue(r, depth = 0) {
   }
   const o = {};
   const n = r.int(4);
-  for (let i = 0; i < n; i++) o[r.pick(['a', 'b', 'c', 'd/e', 'f~g', '中'])] = randValue(r, depth + 1);
+  for (let i = 0; i < n; i++) o[r.pick(['a', 'b', 'c', 'd/e', 'f~g', 'Medium'])] = randValue(r, depth + 1);
   return o;
 }
 
@@ -252,37 +276,37 @@ export function makeClip(r, id = freshId('c', r)) {
   };
   if (clip.cardId === undefined) delete clip.cardId;
   if (r.chance(0.5)) clip.frame = { x: r.int(1920), y: r.int(1080), w: 400, h: 200 };
-  if (r.chance(0.3)) clip.keyframes = [{ t: 0, v: 0 }, { t: 1, v: r.int(10) }]; // 没有 id 的数组
+  if (r.chance(0.3)) clip.keyframes = [{ t: 0, v: 0 }, { t: 1, v: r.int(10) }]; // Array without id
   if (r.chance(0.2)) clip.filter = { id: `f${r.int(3)}`, values: { amount: r.next() } };
   return clip;
 }
 
 export function makeTrack(r, id = freshId('t', r), nClips = r.int(6)) {
-  return { id, name: `序列 ${id}`, clips: Array.from({ length: nClips }, () => makeClip(r)) };
+  return { id, name: `Track ${id}`, clips: Array.from({ length: nClips }, () => makeClip(r)) };
 }
 
-/** 一个 Project 形状的随机项目 */
+/** A random project matching the Project shape */
 export function makeProject(r, { tracks = 1 + r.int(4), clipsPerTrack } = {}) {
   const p = {
     version: 1,
     id: `p-${r.int(1e9).toString(36)}`,
-    name: `项目 ${r.int(100)}`,
+    name: `Project ${r.int(100)}`,
     width: 1920,
     height: 1080,
     fps: r.pick([24, 25, 30, 60]),
     duration: 10 + r.int(100),
     themeId: r.pick(['midnight', 'paper']),
-    media: Array.from({ length: r.int(4) }, () => ({ id: freshId('m', r), name: `素材${r.int(9)}.mp4`, kind: 'video', duration: r.int(60) })),
+    media: Array.from({ length: r.int(4) }, () => ({ id: freshId('m', r), name: `Media${r.int(9)}.mp4`, kind: 'video', duration: r.int(60) })),
     tracks: Array.from({ length: tracks }, () => makeTrack(r, undefined, clipsPerTrack ?? r.int(6))),
-    filters: Array.from({ length: r.int(3) }, (_, i) => ({ id: `f${i}`, name: `滤镜 ${i}`, params: { amount: r.next() } })),
+    filters: Array.from({ length: r.int(3) }, (_, i) => ({ id: `f${i}`, name: `Filter ${i}`, params: { amount: r.next() } })),
     style: { 'a/b': 1, 'x~y': 'z', nested: { k: [1, 2, 3] } },
   };
-  if (r.chance(0.5)) p.cuts = [{ id: 'cut-1', name: '剪辑 1' }, { id: 'cut-2', name: '剪辑 2', tracks: [makeTrack(r, undefined, 2)], duration: 20 }];
+  if (r.chance(0.5)) p.cuts = [{ id: 'cut-1', name: 'Cut 1' }, { id: 'cut-2', name: 'Cut 2', tracks: [makeTrack(r, undefined, 2)], duration: 20 }];
   if (r.chance(0.3)) p.camera3dFov = 45;
   return p;
 }
 
-/** 对一个对象随机改一处（普通对象的键：改、删、加；换类型） */
+/** Randomly mutate one place in an object (plain object keys: modify, delete, add; change type) */
 function mutateObject(r, o, protect = []) {
   const keys = Object.keys(o).filter((k) => k !== 'id' && !protect.includes(k));
   const which = r.int(4);
@@ -296,10 +320,13 @@ function mutateObject(r, o, protect = []) {
   }
 }
 
-/** 元素全是带 id 的对象的数组（空数组也算）；随机改动可能把 clips 换成别的值，之后就不再当片段表用 */
+/**
+ * Array whose elements are all objects with an id (empty arrays count too); random mutations
+ * may replace clips with another value, after which it is no longer used as a clip table
+ */
 const isIdList = (a) => Array.isArray(a) && a.every((x) => x && typeof x === 'object' && !Array.isArray(x) && typeof x.id === 'string');
 
-/** 带 id 的数组上的随机插、删、挪、换 id */
+/** Random insert, delete, move, and id replacement on arrays with id */
 function mutateIdArray(r, arr, make) {
   const k = r.int(5);
   if (k === 0 || arr.length === 0) { arr.splice(r.int(arr.length + 1), 0, make()); return; }
@@ -309,7 +336,7 @@ function mutateIdArray(r, arr, make) {
   mutateObject(r, arr[r.int(arr.length)]);
 }
 
-/** 在 prev 的副本上随机改 1～6 处，得到 next（prev 不动） */
+/** Randomly mutate 1~6 places on a copy of prev to produce next (prev untouched) */
 export function mutateProject(r, prev) {
   const p = structuredClone(prev);
   const n = 1 + r.int(6);
@@ -325,7 +352,7 @@ export function mutateProject(r, prev) {
         break;
       }
       case 5: {
-        // 片段跨序列挪
+        // Move clip across tracks
         const from = p.tracks.find((t) => isIdList(t.clips) && t.clips.length);
         const to = p.tracks.length ? r.pick(p.tracks) : null;
         if (from && to && isIdList(to.clips)) {
@@ -340,49 +367,49 @@ export function mutateProject(r, prev) {
         if (c) c.keyframes = Array.from({ length: r.int(4) }, (_, j) => ({ t: j, v: r.int(9) }));
         break;
       }
-      default: p.fps = r.pick([24, 25, 30, 60]); p.name = `项目 ${r.int(1000)}`;
+      default: p.fps = r.pick([24, 25, 30, 60]); p.name = `Project ${r.int(1000)}`;
     }
   }
   return p;
 }
 
-/** 固定形状的小项目：一条序列 t1，片段 c1..cN，frame.x = 10*i */
+/** Small project with fixed shape: one track t1, clips c1..cN, frame.x = 10*i */
 export function fixedProject({ clips = 3, tracks = 1 } = {}) {
   return {
     version: 1,
     id: 'p-fixed',
-    name: '固定项目',
+    name: 'Fixed project',
     width: 1920,
     height: 1080,
     fps: 30,
     duration: 30,
     themeId: 'midnight',
     media: [],
-    filters: [{ id: 'f1', name: '滤镜 1', params: { amount: 0.5 } }],
+    filters: [{ id: 'f1', name: 'Filter 1', params: { amount: 0.5 } }],
     tracks: Array.from({ length: tracks }, (_, ti) => ({
       id: `t${ti + 1}`,
-      name: `序列 ${ti + 1}`,
+      name: `Track ${ti + 1}`,
       clips: Array.from({ length: clips }, (_, i) => ({
         id: ti === 0 ? `c${i + 1}` : `t${ti + 1}c${i + 1}`,
         start: i * 3,
         duration: 3,
         cardId: 'title',
-        params: { text: `片段 ${i + 1}` },
+        params: { text: `clip ${i + 1}` },
         frame: { x: 10 * (i + 1), y: 0, w: 100, h: 100 },
       })),
     })),
   };
 }
 
-/** 找片段（只看 tracks） */
+/** Find clip (inspects tracks only) */
 export function clipOf(p, clipId) {
   for (const t of p?.tracks ?? []) for (const c of t.clips ?? []) if (c.id === clipId) return c;
   return undefined;
 }
 
-// ================================================================== 文档服务（A3、A4、A6）
+// ================================================================== Document service (A3, A4, A6)
 
-/** A6：`?user=&dev=&role=&conv=` → principal */
+/** A6: `?user=&dev=&role=&conv=` → principal */
 export function authC65(req) {
   const q = new URL(req.url ?? '/', 'http://localhost').searchParams;
   const user = q.get('user') ?? 'u-default';
@@ -395,8 +422,8 @@ export function authC65(req) {
 }
 
 /**
- * 起一个挂着项目模块的独立文档服务（端口 0、autoTick: false）。
- * `clock.t` 是注入的时间，覆盖通知的 10 分钟按它算。
+ * Start a standalone document service with the project module mounted (port 0, autoTick: false).
+ * `clock.t` is the injected time; the 10 minutes for overwrite notifications are calculated from it.
  * → { service, port, url(who), connect(who), store, clock, cleanup }
  *   who = { user, dev, role, conv }
  */
@@ -443,7 +470,7 @@ export const byType = (type) => (m) => m?.type === type;
 export const isOk = (m) => m?.type === 'project.op.ok';
 export const isRejected = (m) => m?.type === 'project.op.rejected';
 
-/** A4：打开项目，等 project.state */
+/** A4: Open project, wait for project.state */
 export async function openProject(c, projectId, ms = 3000) {
   c.send({ type: 'project.open', projectId, reqId: `open-${newOpId()}` });
   const st = await c.next((m) => m?.type === 'project.state' && m.projectId === projectId, ms);
@@ -451,8 +478,8 @@ export async function openProject(c, projectId, ms = 3000) {
 }
 
 /**
- * A4：提交一批操作，等本批的 ok / rejected（按 opId 对应）。
- * → 回包消息本身
+ * A4: Submit a batch of operations, wait for this batch's ok / rejected (matched by opId).
+ * → The response message itself
  */
 export async function submit(c, { projectId, ops, expectRev, session = 'sess-test', undoOf, opId = newOpId() }, ms = 3000) {
   const msg = { type: 'project.op', projectId, opId, session, ops };
@@ -462,17 +489,17 @@ export async function submit(c, { projectId, ops, expectRev, session = 'sess-tes
   return c.next((m) => (isOk(m) || isRejected(m)) && m.opId === opId, ms);
 }
 
-/** 用根替换把 project 写进去；回 ok 的 rev */
+/** Write project in using root replacement; returns rev from ok */
 export async function seedProject(env, projectId, project, who = { user: 'seeder', dev: 'dev-seed' }) {
   const c = await env.connect(who);
   await openProject(c, projectId);
   const r = await submit(c, { projectId, ops: [{ op: 'set', path: '', value: project }], session: 'seed' });
-  assert.ok(isOk(r), `根替换种子应成功：${JSON.stringify(r)}`);
+  assert.ok(isOk(r), `the root replacement seed should succeed: ${JSON.stringify(r)}`);
   c.close();
   return r.rev;
 }
 
-/** 重新连一条、打开，读服务端当前的 { rev, project } */
+/** Reconnect, open, and read server's current { rev, project } */
 export async function serverState(env, projectId) {
   const c = await env.connect({ user: 'reader', dev: 'dev-reader' });
   const st = await openProject(c, projectId);
@@ -480,39 +507,50 @@ export async function serverState(env, projectId) {
   return { rev: st.rev, project: st.project, writers: st.writers };
 }
 
-/** A5：by 是否是这个写入身份 */
+/** A5: Whether by matches this write identity */
 export function byIs(by, { user, session }) {
   return by && by.userId === user && (session === undefined || by.session === session);
 }
 
-// ================================================================== 页面同步（A7）
+// ================================================================== Page sync (A7)
 
 /**
- * A7：页面同步实例。假设 `createDocSync(options)` 的形状如下（设计稿第 4、6、8 节只写了行为）：
+ * A7: Page sync instance. Assumed shape of `createDocSync(options)` is as follows (Sections 4, 6,
+ * 8 of the design doc only described behavior):
  *
- *   options.url            文档服务的 WebSocket 地址（含查询串，测试的 authenticate 按它定 principal）
+ *   options.url            WebSocket URL of document service (including query string; test's
+ *                          authenticate uses it to determine principal)
  *   options.projectId
- *   options.session        页面会话 id（写入身份的一部分，进每条 project.op）
- *   options.getProject()   读页面当前的项目（store 里的那份）
- *   options.setProject(p)  用别人的操作 / 回滚 / 重放 / 撤销结果换掉页面的项目；**不进撤销栈、不回发**（第 4 节「走 set」）
- *   options.now()          时钟（数字框 300 ms 合并按它算）
- *   options.backup(rec)    存本地备份（第 3 节「先把自己那一版的该实体存成本地备份」、第 8 节「丢弃前先备份」）；
- *                          rec 至少带 `entity` 与 `value`（覆盖时）
- *   options.onOfflineConflict(info)   离线重放第一条被拒、整批停下时调（第 6 节）
+ *   options.session        Page session id (part of write identity, goes into every project.op)
+ *   options.getProject()   Read the page's current project (the copy in store)
+ *   options.setProject(p)  Replace the page's project with others' operations / rollbacks /
+ *                          replays / undo results; **does not enter undo stack, does not send back**
+ *                          (Section 4 "via set")
+ *   options.now()          Clock (used for 300 ms debounce/merge of numeric inputs)
+ *   options.backup(rec)    Store local backup (Section 3 "save one's own version of the entity as
+ *                          a local backup first", Section 8 "backup before discarding");
+ *                          rec has at least `entity` and `value` (when overwritten)
+ *   options.onOfflineConflict(info)   Called when first offline replay is rejected and the whole
+ *                          batch stops (Section 6)
  *
- *   sync.open() → Promise           连上并打开项目，拿到 project.state 后把项目交给 setProject
- *   sync.submit({ ops, inverse }, { coalesce? })   本地改动（core.ts 的 setProject 已先本地落地、算好 diff）
- *   sync.pendingCount() → number    还没拿到 ok 的本地提交数（含离线待发队列）
- *   sync.connected → boolean        当前是否连着
- *   sync.rev → number               最后确认的服务端版本
+ *   sync.open() → Promise           Connect and open project; hand project over to setProject after
+ *                                   receiving project.state
+ *   sync.submit({ ops, inverse }, { coalesce? })   Local modification (core.ts setProject has
+ *                                                  already committed locally and computed diff)
+ *   sync.pendingCount() → number    Number of local submissions that have not yet received ok
+ *                                   (including offline pending queue)
+ *   sync.connected → boolean        Whether currently connected
+ *   sync.rev → number               Last confirmed server version
  *   sync.resolveOffline('replay' | 'discard') → Promise
- *   sync.undo() / sync.redo() → Promise<{ skipped: [{ entity, by }] }>   撤销 / 重做（第 8 节）
+ *   sync.undo() / sync.redo() → Promise<{ skipped: [{ entity, by }] }>   Undo / redo (Section 8)
  *   sync.canUndo() / sync.canRedo() → boolean
- *   sync.saveWhenConfirmed(write) → Promise   所有本地操作都 ok 之后调 write(project, rev)（第 4 节 .proc）
+ *   sync.saveWhenConfirmed(write) → Promise   Call write(project, rev) after all local operations
+ *                                             are ok (Section 4 .proc)
  *   sync.close()
  *
- * 测试用的包装：页面的 store 就是 `page.project` 这一个变量；`page.edit(fn)` 相当于 core.ts 的 setProject：
- * 复制、改、diffProject、本地落地、交给 sync.submit。
+ * Wrapper for testing: page store is just the single variable `page.project`; `page.edit(fn)` is
+ * equivalent to core.ts setProject: copy, mutate, diffProject, apply locally, hand over to
+ * sync.submit.
  */
 export async function createPage(env, { projectId, user, dev = `dev-${user}`, session, via, now = () => env.clock.t, backups = [] }) {
   const createDocSync = await loadDocSync();
@@ -531,9 +569,9 @@ export async function createPage(env, { projectId, user, dev = `dev-${user}`, se
   });
   page.sync = sync;
   await sync.open();
-  await waitFor(() => page.project !== null && page.project !== undefined, 5000, `页面 ${session} 拿到项目`);
+  await waitFor(() => page.project !== null && page.project !== undefined, 5000, `page ${session} gets the project`);
 
-  /** 相当于 core.ts 的 setProject(next)：本地先落地，再把差异交给 docsync */
+  /** Equivalent to core.ts setProject(next): apply locally first, then hand diff over to docsync */
   page.edit = (mutate, opts) => {
     const prev = page.project;
     const next = structuredClone(prev);
@@ -544,8 +582,8 @@ export async function createPage(env, { projectId, user, dev = `dev-${user}`, se
     return d;
   };
   page.pending = () => sync.pendingCount();
-  /** 等本地提交全部确认 */
-  page.settled = (ms = 10_000) => waitFor(() => sync.pendingCount() === 0, ms, `页面 ${session} 的提交全部确认`);
+  /** Wait until all local commits are confirmed */
+  page.settled = (ms = 10_000) => waitFor(() => sync.pendingCount() === 0, ms, `all commits of page ${session} are acknowledged`);
   page.undo = () => sync.undo();
   page.redo = () => sync.redo();
   page.canUndo = () => sync.canUndo();
@@ -557,8 +595,10 @@ export async function createPage(env, { projectId, user, dev = `dev-${user}`, se
 }
 
 /**
- * 可断网的通道：页面经 TCP 代理连文档服务。`offline()` 断掉现有连接并拒绝新连接；`online()` 放行。
- * 页面同步要自己发现断线、自己重连（第 6 节「连不上时照常本地落地」）。
+ * Disconnectable channel: the page connects to the document service via a TCP proxy. `offline()`
+ * closes existing connections and rejects new connections; `online()` allows them through.
+ * Page sync must detect disconnections and reconnect on its own (Section 6, "Save locally as
+ * usual when connection fails").
  */
 export async function createLink(env) {
   const proxy = await createTcpProxy({ target: env.port });
@@ -568,7 +608,7 @@ export async function createLink(env) {
     async offline(page) {
       proxy.mode = 'reject';
       proxy.cutAll();
-      if (page) await waitFor(() => page.sync.connected === false, 5000, '页面发现断线');
+      if (page) await waitFor(() => page.sync.connected === false, 5000, 'the page detects the disconnection');
       else await sleep(200);
     },
     online() { proxy.mode = 'pass'; },
@@ -576,7 +616,7 @@ export async function createLink(env) {
   };
 }
 
-/** 观察者：一条原始连接，打开项目后收集 project.ops（它自己不提交，所以收得到所有人的） */
+/** Observer: a raw connection; opens project and collects project.ops (never commits, receives everyone's) */
 export async function observer(env, projectId) {
   const c = await env.connect({ user: 'watcher', dev: 'dev-watch' });
   await openProject(c, projectId);
@@ -587,8 +627,8 @@ export async function observer(env, projectId) {
   };
 }
 
-/** 三份相等：先 deepEqual（给出差在哪），再逐字节 */
+/** Three copies are equal: first deepEqual (showing differences), then byte-by-byte */
 export function assertSameBytes(a, b, what) {
-  assert.deepEqual(a, b, `${what}：内容不同`);
-  assert.equal(JSON.stringify(a), JSON.stringify(b), `${what}：内容相同但序列化后字节不同（键序不一致）`);
+  assert.deepEqual(a, b, `${what}: content differs`);
+  assert.equal(JSON.stringify(a), JSON.stringify(b), `${what}: content is the same but the serialized bytes differ (key order is inconsistent)`);
 }

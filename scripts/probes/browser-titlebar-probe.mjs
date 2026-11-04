@@ -1,25 +1,34 @@
 import '../lib/no-user-dirs.mjs';
 /**
- * 浏览器版不画应用标题栏(2026-10-22 用户定:不要「显示顶部菜单栏」和 − □ × 三个按钮;桌面版照旧)的探针。
- * 用无头 Chrome 各开一个编辑器页面,看真实 DOM,不靠读源码:
+ * Probe verifying that the browser version does not render the application titlebar
+ * ((user decision, 2026-10-22): omit "Show top menu bar" and the three − □ × buttons; desktop app
+ * unchanged). Opens one editor page each in headless Chrome to inspect the real DOM rather than
+ * reading source code:
  *
  *   node scripts/probes/browser-titlebar-probe.mjs [--online-port 5960] [--desktop-port 5963] [--out out/browser-titlebar]
  *
- * 自己起两台开发服务(`PROMPTCUT_NO_PORT_FILE=1`,不写公共端口文件;端口各占「端口 +1」「+2」当舞台端口,三个连号要空着):
- *   - 在线:`vite --mode online`(编译期常量 `VITE_PC_ONLINE=1`),开 `/?editor`;
- *   - 桌面:`vite`(缺省模式),开 `/?editor`。
+ * Starts two dev servers itself (`PROMPTCUT_NO_PORT_FILE=1`, no shared port file written; each takes
+ * "port + 1" and "+ 2" as stage ports, so three consecutive ports must be free):
+ *   - Online: `vite --mode online` (compile-time constant `VITE_PC_ONLINE=1`), opens `/?editor`;
+ *   - Desktop: `vite` (default mode), opens `/?editor`.
  *
- * 检查(每项一行 JSON `{ check, ok, ... }`,最后一行 `{ summary }`;有失败退出码 1):
- *   O1 在线:编辑器顶栏在(`.pc-bar--main`),页面上没有 `.pc-titlebar`、`.pc-titlebar-menus`、`.pc-titlebar-window-controls`、
- *      `.pc-window-control`,也没有应用菜单(`nav[aria-label="应用菜单"]`)里的按钮。
- *   O2 在线:没有空占位——编辑器顶栏贴在页面最上沿(顶边 y = 0)。
- *   O3 在线:顶栏「⋯」菜单里有:皮肤…、快捷键、关于 PromptCut;点「快捷键」「关于 PromptCut」各弹一次说明(dialog 文字对得上)。
- *   O4 在线:另五项的入口都在顶栏上:撤销、重做、首页、导出视频(按钮在,撤销重做按钮在)。
- *   D1 桌面:`.pc-titlebar` 在,菜单行(文件/编辑/视图/帮助)和三个窗口按钮(最小化/最大化/关闭)都在。
- *   D2 桌面:点「文件」开得出菜单,里面有「导出视频」「返回首页」;点「帮助」开得出,里面有「快捷键」「关于 PromptCut」。
- *   D3 桌面:顶栏「⋯」菜单里没有「快捷键」「关于 PromptCut」(不重复)。
- * 截图写进 `--out`:`online-editor.png`(在线,标题栏两组都不在)、`online-more-menu.png`(在线,「⋯」菜单展开)、
- * `desktop-editor.png`(桌面,两组都在)、`desktop-file-menu.png`(桌面,「文件」菜单展开)。
+ * Checks (one JSON line `{ check, ok, ... }` per item, final line `{ summary }`; exit code 1 on failure):
+ *   O1 Online: editor top bar is present (`.pc-bar--main`), and `.pc-titlebar`, `.pc-titlebar-menus`,
+ *      `.pc-titlebar-window-controls`, and `.pc-window-control` are absent from the page, as are
+ *      buttons in the application menu (`nav[aria-label="Application menu"]`).
+ *   O2 Online: no empty placeholder: editor top bar sits against the top edge of the page (top y = 0).
+ *   O3 Online: top bar "⋯" menu contains: Skin…, Shortcuts, About PromptCut; clicking "Shortcuts"
+ *      and "About PromptCut" each opens a dialog once (dialog text matches).
+ *   O4 Online: entry points for the other five items are on the top bar: Undo, Redo, Home,
+ *      Export video (buttons are present, undo and redo buttons are present).
+ *   D1 Desktop: `.pc-titlebar` is present; menu bar (File/Edit/View/Help) and three window buttons
+ *      (Minimize/Maximize/Close) are all present.
+ *   D2 Desktop: clicking "File" opens its menu containing "Export video" and "Back to home";
+ *      clicking "Help" opens its menu containing "Shortcuts" and "About PromptCut".
+ *   D3 Desktop: top bar "⋯" menu does not contain "Shortcuts" or "About PromptCut" (no duplication).
+ * Screenshots written to `--out`: `online-editor.png` (online, neither titlebar group present),
+ * `online-more-menu.png` (online, "⋯" menu expanded), `desktop-editor.png` (desktop, both groups present),
+ * `desktop-file-menu.png` (desktop, "File" menu expanded).
  */
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
@@ -65,13 +74,13 @@ async function waitHttp(port, ms = 60000) {
   }
   return false;
 }
-const killTree = (child) => { try { spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch { /* 已退出 */ } };
+const killTree = (child) => { try { spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch { /* Exited */ } };
 
 const servers = [startVite(ONLINE_PORT, 'online'), startVite(DESKTOP_PORT, null)];
 let browser;
 try {
   for (const [s, port] of [[servers[0], ONLINE_PORT], [servers[1], DESKTOP_PORT]]) {
-    if (!(await waitHttp(port))) { report('dev-server', false, { port, log: s.getLog().slice(-600) }); throw new Error(`dev server ${port} 没起来`); }
+    if (!(await waitHttp(port))) { report('dev-server', false, { port, log: s.getLog().slice(-600) }); throw new Error(`dev server ${port} did not start`); }
   }
   browser = await puppeteer.launch({ headless: true, args: [...PROBE_CHROME_ARGS, '--window-size=1500,900'], defaultViewport: { width: 1500, height: 900 } });
 
@@ -81,7 +90,7 @@ try {
     page.on('dialog', async (d) => { dialogs.push(d.message()); await d.dismiss(); });
     await page.goto(`http://127.0.0.1:${port}/?editor`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.pc-bar--main', { timeout: 60000 });
-    await sleep(1500); // 让皮肤、布局落定
+    await sleep(1500); // Let skin and layout settle
     return { page, dialogs };
   }
   const textOf = (page, sel) => page.$$eval(sel, (els) => els.map((e) => (e.textContent || '').trim()));
@@ -94,7 +103,7 @@ try {
     return false;
   };
 
-  // ---------------- 在线
+  // ---------------- Online
   {
     const { page, dialogs } = await openEditor(ONLINE_PORT);
     const probe = await page.evaluate(() => ({
@@ -103,38 +112,38 @@ try {
       menus: document.querySelectorAll('.pc-titlebar-menus').length,
       controls: document.querySelectorAll('.pc-titlebar-window-controls').length,
       controlBtns: document.querySelectorAll('.pc-window-control').length,
-      menuButtons: [...document.querySelectorAll('button')].filter((b) => b.classList.contains('pc-titlebar-menu-button') || b.closest('nav[aria-label="应用菜单"]')).map((b) => (b.textContent || '').trim()),
+      menuButtons: [...document.querySelectorAll('button')].filter((b) => b.classList.contains('pc-titlebar-menu-button') || b.closest('nav[aria-label="Application menu"]')).map((b) => (b.textContent || '').trim()),
       barTop: document.querySelector('.pc-bar--main')?.getBoundingClientRect().top,
     }));
-    report('O1 在线:标题栏的菜单行、窗口按钮都不在', probe.online && probe.titlebar === 0 && probe.menus === 0 && probe.controls === 0 && probe.controlBtns === 0 && probe.menuButtons.length === 0, probe);
-    report('O2 在线:顶栏贴页面最上沿,没有空占位', probe.barTop === 0, { barTop: probe.barTop });
+    report('O1 online: the title bar\'s menu row and the window buttons are all absent', probe.online && probe.titlebar === 0 && probe.menus === 0 && probe.controls === 0 && probe.controlBtns === 0 && probe.menuButtons.length === 0, probe);
+    report('O2 online: the top bar sits flush against the top edge of the page, with no empty placeholder', probe.barTop === 0, { barTop: probe.barTop });
     await page.screenshot({ path: path.join(OUT, 'online-editor.png') });
 
-    // O4 另五项入口在顶栏上
+    // O4 Entry points for the other five items are on the top bar
     const entries = await page.evaluate(() => ({
       undo: Boolean(document.querySelector('[data-pc="undo-btn"] button')),
       redo: Boolean(document.querySelector('[data-pc="redo-btn"] button')),
       labels: [...document.querySelectorAll('.pc-bar--main .pc-btn')].map((b) => (b.textContent || '').trim()),
     }));
-    report('O4 在线:撤销、重做、首页、导出视频的入口在顶栏上', entries.undo && entries.redo && entries.labels.includes('首页') && entries.labels.includes('导出视频'), entries);
+    report('O4 online: the entries for Undo, Redo, Home and Export video are on the top bar', entries.undo && entries.redo && entries.labels.includes('home page') && entries.labels.includes('Export video'), entries);
 
-    // O3 「⋯」菜单
-    await page.click('button[title="更多设置"]');
+    // O3 "⋯" menu
+    await page.click('button[title="More settings"]');
     await page.waitForSelector('.pc-more-menu', { timeout: 5000 });
     const items = await textOf(page, '.pc-more-menu .pc-btn');
-    report('O3a 在线:「⋯」菜单里有 皮肤…、快捷键、关于 PromptCut', ['皮肤…', '快捷键', '关于 PromptCut'].every((t) => items.includes(t)), { items });
+    report('O3a online: the "⋯" menu contains Skin…, Keyboard shortcuts, About PromptCut', ['Skin…', 'Keyboard shortcuts', 'About PromptCut'].every((t) => items.includes(t)), { items });
     await page.screenshot({ path: path.join(OUT, 'online-more-menu.png') });
     await page.click('[data-pc="more-shortcuts"]');
     await sleep(300);
-    await page.click('button[title="更多设置"]');
+    await page.click('button[title="More settings"]');
     await page.waitForSelector('[data-pc="more-about"]', { timeout: 5000 });
     await page.click('[data-pc="more-about"]');
     await sleep(300);
-    report('O3b 在线:点「快捷键」「关于 PromptCut」各弹出对应说明', dialogs.length === 2 && dialogs[0].startsWith('空格 播放/暂停') && dialogs[1].startsWith('PromptCut'), { dialogs });
+    report('O3b online: clicking "Keyboard shortcuts" and "About PromptCut" each pops up the matching description', dialogs.length === 2 && dialogs[0].startsWith('Space Play/pause') && dialogs[1].startsWith('PromptCut'), { dialogs });
     await page.close();
   }
 
-  // ---------------- 桌面
+  // ---------------- Desktop
   {
     const { page } = await openEditor(DESKTOP_PORT);
     const probe = await page.evaluate(() => ({
@@ -143,34 +152,35 @@ try {
       controls: [...document.querySelectorAll('.pc-window-control')].map((b) => b.getAttribute('aria-label')),
       barTop: document.querySelector('.pc-bar--main')?.getBoundingClientRect().top,
     }));
-    report('D1 桌面:标题栏、菜单行(文件/编辑/视图/帮助)和三个窗口按钮都在', probe.titlebar === 1 && JSON.stringify(probe.menuButtons) === JSON.stringify(['文件', '编辑', '视图', '帮助']) && JSON.stringify(probe.controls) === JSON.stringify(['最小化', '最大化', '关闭']), probe);
+    report('D1 desktop: the title bar, the menu row (File/Edit/View/Help) and the three window buttons are all present', probe.titlebar === 1 && JSON.stringify(probe.menuButtons) === JSON.stringify(['File', 'Edit', 'View', 'Help']) && JSON.stringify(probe.controls) === JSON.stringify(['Minimize', 'Maximize', 'Close']), probe);
     await page.screenshot({ path: path.join(OUT, 'desktop-editor.png') });
 
-    await clickByText(page, '.pc-titlebar-menu-button', '文件');
+    await clickByText(page, '.pc-titlebar-menu-button', 'File');
     await page.waitForSelector('.pc-titlebar-menu', { timeout: 5000 });
     const fileItems = await textOf(page, '.pc-titlebar-menu .pc-titlebar-menu-item');
     await page.screenshot({ path: path.join(OUT, 'desktop-file-menu.png') });
-    // 菜单开着时鼠标移到别的菜单名上就切过去(onMouseEnter);这里用悬停,点击反而会把刚切过去的又收起
+    // When a menu is open, moving the mouse over another menu name switches to it (onMouseEnter);
+    // hover is used here, as clicking would collapse the menu that was just switched to
     const helpBtn = (await page.$$('.pc-titlebar-menu-button'))[3];
     await helpBtn.hover();
     await sleep(300);
     const helpItems = await textOf(page, '.pc-titlebar-menu .pc-titlebar-menu-item');
-    report('D2 桌面:「文件」菜单里有 导出视频、返回首页;「帮助」菜单里有 快捷键、关于 PromptCut',
-      fileItems.some((t) => t.startsWith('导出视频')) && fileItems.some((t) => t.startsWith('返回首页')) && helpItems.some((t) => t.startsWith('快捷键')) && helpItems.some((t) => t.startsWith('关于 PromptCut')), { fileItems, helpItems });
+    report('D2 desktop: the "File" menu contains Export video, Back to home; the "Help" menu contains Keyboard shortcuts, About PromptCut',
+      fileItems.some((t) => t.startsWith('Export video')) && fileItems.some((t) => t.startsWith('Back to home')) && helpItems.some((t) => t.startsWith('Keyboard shortcuts')) && helpItems.some((t) => t.startsWith('About PromptCut')), { fileItems, helpItems });
 
     await page.keyboard.press('Escape');
     await sleep(300);
     const stillOpen = await page.$$eval('.pc-titlebar-menu', (els) => els.length);
-    await page.click('button[title="更多设置"]');
+    await page.click('button[title="More settings"]');
     try { await page.waitForSelector('.pc-more-menu', { timeout: 5000 }); } catch (e) { await page.screenshot({ path: path.join(OUT, 'debug-d3.png') }); console.log(JSON.stringify({ debug: 'd3', stillOpen })); throw e; }
     const items = await textOf(page, '.pc-more-menu .pc-btn');
-    report('D3 桌面:「⋯」菜单里没有 快捷键、关于 PromptCut(不重复)', !items.includes('快捷键') && !items.includes('关于 PromptCut'), { items });
+    report('D3 desktop: the "⋯" menu does not contain Keyboard shortcuts or About PromptCut (no duplicates)', !items.includes('Keyboard shortcuts') && !items.includes('About PromptCut'), { items });
     await page.close();
   }
 } catch (e) {
   report('probe', false, { error: String(e?.stack || e).slice(0, 800) });
 } finally {
-  try { await browser?.close(); } catch { /* 已关 */ }
+  try { await browser?.close(); } catch { /* Closed */ }
   for (const s of servers) killTree(s);
 }
 const failed = results.filter((r) => !r.ok).length;

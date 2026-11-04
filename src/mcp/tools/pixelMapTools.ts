@@ -1,4 +1,7 @@
-/** MCP / 编辑器共用的像素映射库工具。映射定义由 kernel/pixelMap.mjs 做安全校验。 */
+/**
+ * Pixel map library tools shared by MCP / editor. Mapping definitions are validated for safety by
+ * kernel/pixelMap.mjs.
+ */
 import { findClip, newId, type Project } from "../../kernel/project";
 import { normalizePixelMapDef, classifyPixelMap, type PixelMapDef, type ClipPixelMap } from "../../kernel/pixelMap.mjs";
 import { lookHint } from "./toolEcho";
@@ -26,23 +29,23 @@ export function createPixelMapTools(store: PixelMapStore) {
   const findDef = (p: Project, id: unknown) => {
     const key = text(id);
     const f = (p.pixelMaps ?? []).find((x) => x.id === key);
-    if (!f) throw new Error(`像素映射库里没有 ${key || "(没给 pixelMapId)"}。现有:${(p.pixelMaps ?? []).map((x) => `${x.id}「${x.name}」`).join("、") || "(库是空的)"}`);
+    if (!f) throw new Error(`No ${key || "(no pixelMapId given)"} in the pixel map library. Existing: ${(p.pixelMaps ?? []).map((x) => `${x.id} "${x.name}"`).join(", ") || "(library is empty)"}`);
     return f;
   };
   const mediaClip = (p: Project, clipId: unknown) => {
     const hit = findClip(p, text(clipId));
-    if (!hit) throw new Error(`当前剪辑里没有片段 ${text(clipId) || "(没给 clipId)"}`);
-    if (!hit.clip.mediaId || hit.clip.cardId) throw new Error("像素映射只挂视频 / 图片片段;卡片请用自己的参数");
+    if (!hit) throw new Error(`The current cut has no clip ${text(clipId) || "(no clipId given)"}`);
+    if (!hit.clip.mediaId || hit.clip.cardId) throw new Error("Pixel maps attach only to video / image clips; for cards use their own params");
     const m = p.media.find((x) => x.id === hit.clip.mediaId);
-    if (!m || m.kind === "audio") throw new Error("这一段没有画面,不能挂像素映射");
-    if (hit.track.locked) throw new Error(`这一段所在的序列「${hit.track.name}」锁定着,先解锁`);
+    if (!m || m.kind === "audio") throw new Error("This segment has no picture, a pixel map cannot be attached");
+    if (hit.track.locked) throw new Error(`The track "${hit.track.name}" containing this clip is locked; unlock it first`);
     return hit;
   };
   const media = (p: Project, mediaId: unknown, label: string) => {
     const id = text(mediaId);
     const m = p.media.find((x) => x.id === id);
-    if (!m) throw new Error(`${label} 引用了不存在的素材 ${id || "(空)"}`);
-    if (m.kind === "audio") throw new Error(`${label} 不能引用只有声音的素材「${m.name}」`);
+    if (!m) throw new Error(`${label} references a nonexistent asset ${id || "(empty)"}`);
+    if (m.kind === "audio") throw new Error(`${label} cannot reference the audio-only asset "${m.name}"`);
     return m;
   };
   const validateMediaRefs = (p: Project, def: PixelMapDef) => {
@@ -51,36 +54,41 @@ export function createPixelMapTools(store: PixelMapStore) {
   };
   const summary = (p: Project, def: PixelMapDef) => ({ pixelMapId: def.id, name: def.name, description: def.description, source: def.source, where: def.where, to: def.to, mode: def.mode, colorSequence: def.colorSequence, usedBy: pixelMapUsesOf(p, def.id) });
   /*
-   * 落库之前主动分流(docs/archive/restructure_planning/render_pipeline_restructure.md 3.9)。整帧调色(A)不接:它由 GPU 合成器
-   * 做的滤镜就能完成,不占预览的每拍预算;逐像素的 CPU 实现实测 1080p 每帧 416~483 ms,
-   * 所以这个工具只留给真的要逐像素选区的活(B,走 WebGL 后端)。翻译不了的(C)当场说清楚。
-   * 工具的回包只剩一条 message 能带到模型那边,所以等价 ops 直接拼进错误正文。
+   * Actively screen before storing into the library
+   * (docs/archive/restructure_planning/render_pipeline_restructure.md 3.9). Whole-frame color grading
+   * (A) is rejected: it can be handled by GPU compositor filters without consuming the preview
+   * per-tick budget; pixel-by-pixel CPU implementation benchmarked at 416~483 ms per frame at 1080p,
+   * so this tool is reserved only for tasks truly requiring pixel-by-pixel selection (B, via WebGL
+   * backend). Explain clearly on the spot what cannot be translated (C). The tool response only has
+   * a single message that can be delivered to the model, so equivalent ops are spliced directly into
+   * the error body.
    */
   const gate = (def: PixelMapDef) => {
     const c = classifyPixelMap(def);
     if (c.kind === "A") {
       throw new Error(
-        `这是整帧调色,不该用像素映射:${c.reason}\n` +
-        `改用 create_filter,下面这份 ops 和你写的定义逐像素等价(0~255 全值域最大差 ${c.diff} 级),直接照抄:\n` +
+        `This is whole-frame color grading, so a pixel map should not be used: ${c.reason}\n` +
+        `Use create_filter instead. The ops below are pixel-for-pixel equivalent to your definition (max difference ${c.diff} levels over the full 0~255 range); copy them directly:\n` +
         `create_filter ${JSON.stringify({ name: def.name, ...(def.description ? { description: def.description } : null), ops: c.ops })}\n` +
-        `再用 apply_filter 把它挂到片段上。` +
-        (c.alphaNote ? `\n注意:${c.alphaNote}` : "") +
-        `\n（滤镜由合成器在 GPU 上做、不占预览的每拍预算;像素映射走自己的 WebGL 片元着色器,逐像素算、每张图各编一个 program。）`,
+        `Then use apply_filter to attach it to the clip.` +
+        (c.alphaNote ? `\nNote: ${c.alphaNote}` : "") +
+        `
+(Filters are done by the compositor on the GPU and do not use the preview's per-tick budget; a pixel map runs its own WebGL fragment shader, computed per pixel, with one program compiled for each image.)`,
       );
     }
-    if (c.kind === "C") throw new Error(`这条定义翻译不成着色器:${c.reason}`);
+    if (c.kind === "C") throw new Error(`This definition cannot be translated into a shader: ${c.reason}`);
     return c;
   };
   return {
     listPixelMaps() {
       const p = project();
-      return { ok: true, pixelMaps: (p.pixelMaps ?? []).map((x) => summary(p, x)), stages: ["origin", "after_filters"], modes: ["continuous", "discrete"], expression: "where/to.expr 允许 r g b a luma x y t;函数与普通滤镜相同;不执行 JavaScript" };
+      return { ok: true, pixelMaps: (p.pixelMaps ?? []).map((x) => summary(p, x)), stages: ["origin", "after_filters"], modes: ["continuous", "discrete"], expression: "where/to.expr allow r g b a luma x y t; functions are the same as for ordinary filters; JavaScript is not executed" };
     },
     listMediaEffects(args: any = {}) {
       const p = project();
       const mediaId = text(args.mediaId);
       const clips = p.tracks.flatMap((t) => t.clips.filter((c) => !mediaId || c.mediaId === mediaId).map((c) => ({ clipId: c.id, trackId: t.id, mediaId: c.mediaId, start: c.start, end: c.end, filter: c.filter ?? null, pixelMap: c.pixelMap ?? null, audioFx: c.audioFx ?? null })));
-      return { ok: true, ...(mediaId ? { mediaId } : {}), projectFilters: p.filters ?? [], projectPixelMaps: p.pixelMaps ?? [], projectAudioFx: p.audioFx ?? [], clips, note: "effects 按时间轴连接顺序返回；stage=origin 取原始媒体，stage=after_filters 取对应滤镜后的输出" };
+      return { ok: true, ...(mediaId ? { mediaId } : {}), projectFilters: p.filters ?? [], projectPixelMaps: p.pixelMaps ?? [], projectAudioFx: p.audioFx ?? [], clips, note: "effects are returned in timeline connection order; stage=origin takes the original media, stage=after_filters takes the output after the corresponding filters" };
     },
     createPixelMap(args: any) {
       const base = normalizePixelMapDef(args);
@@ -90,7 +98,7 @@ export function createPixelMapTools(store: PixelMapStore) {
       let appliedTo: string | undefined;
       if (args?.clipId !== undefined) { const hit = mediaClip(project(), args.clipId); store.actions.addPixelMap(def, { clipId: hit.clip.id, pixelMap: { id: def.id } }); appliedTo = hit.clip.id; }
       else store.actions.addPixelMap(def);
-      return { ok: true, pixelMapId: def.id, backend: cls.backend, pixelMap: summary(project(), def), ...(appliedTo ? { appliedTo, look: lookHint(appliedTo) } : null), note: "已创建通用像素映射,按逐像素选区处理(WebGL 片元着色器)。预览、导出和 see_frames 使用同一份定义;完成后用 see_frames 复核。" };
+      return { ok: true, pixelMapId: def.id, backend: cls.backend, pixelMap: summary(project(), def), ...(appliedTo ? { appliedTo, look: lookHint(appliedTo) } : null), note: "Created a general pixel map that processes by per-pixel selection (WebGL fragment shader). Preview, export and see_frames use the same definition; check the result with see_frames when done." };
     },
     updatePixelMap(args: any) {
       const cur = findDef(project(), args?.pixelMapId);
@@ -102,16 +110,16 @@ export function createPixelMapTools(store: PixelMapStore) {
     },
     removePixelMap(args: any) {
       const p = project(); const cur = findDef(p, args?.pixelMapId); const uses = pixelMapUsesOf(p, cur.id);
-      if (uses.length && !args?.force) throw new Error(`「${cur.name}」还挂在 ${uses.length} 段上,请先摘掉或传 force:true 并在 reason 里写明理由`);
-      if (uses.length && args?.force && !text(args.reason)) throw new Error("force 删除必须在 reason 里写明理由,用户会看到这句话");
+      if (uses.length && !args?.force) throw new Error(`"${cur.name}" is still attached to ${uses.length} segments; detach it first, or pass force:true and state the reason in reason`);
+      if (uses.length && args?.force && !text(args.reason)) throw new Error("A force delete must state the reason in reason; the user will see this sentence");
       store.actions.removePixelMap(cur.id);
       return { ok: true, removed: cur.id, name: cur.name, ...(uses.length ? { detached: uses, reason: text(args.reason) } : null) };
     },
     applyPixelMap(args: any) {
       const p = project(); const hit = mediaClip(p, args?.clipId); const id = text(args?.pixelMapId);
-      if (!id) { if (!hit.clip.pixelMap) return { ok: true, clipId: hit.clip.id, note: "这一段本来就没挂像素映射" }; store.actions.setClipPixelMap(hit.clip.id, null); return { ok: true, clipId: hit.clip.id, removed: true }; }
+      if (!id) { if (!hit.clip.pixelMap) return { ok: true, clipId: hit.clip.id, note: "This segment had no pixel map attached in the first place" }; store.actions.setClipPixelMap(hit.clip.id, null); return { ok: true, clipId: hit.clip.id, removed: true }; }
       const def = findDef(p, id); store.actions.setClipPixelMap(hit.clip.id, { id: def.id });
-      return { ok: true, clipId: hit.clip.id, pixelMapId: def.id, summary: summary(project(), def), look: lookHint(hit.clip.id), note: "已挂载。若 to 是媒体,stage 决定取原始像素或滤镜后的像素。" };
+      return { ok: true, clipId: hit.clip.id, pixelMapId: def.id, summary: summary(project(), def), look: lookHint(hit.clip.id), note: "Attached. If to is media, stage decides whether original pixels or post-filter pixels are taken." };
     },
   };
 }

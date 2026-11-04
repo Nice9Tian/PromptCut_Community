@@ -8,8 +8,9 @@ import { useReadOnly } from "../readOnly";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 最下面那条常驻的「新建序列落区」(配色诊断与修正 v2 整屏):26 高,虚线控件描边,
- * 淡强调色底。把卡片或素材拖到这里松手 = 自动新建一条序列,片段落在松手的那个时间点上。
+ * The always-present "new track drop zone" at the very bottom (color diagnosis and fix v2, full screen):
+ * 26 high, dashed control outline, light accent-color background. Releasing a card or media here =
+ * automatically creates a new track, with the clip landing at the time point of the release.
  */
 export function NewTrackZone() {
   const trackCount = useStore((s) => s.project.tracks.length);
@@ -18,7 +19,7 @@ export function NewTrackZone() {
   const { onDragOver, onDragLeave, onDrop, plan } = useDropTarget({ newTrackIndex: trackCount });
 
   const tone = plan ? " is-target" : payload ? " is-armed" : "";
-  // 只读项目(游客)里拖东西进来落不下去,这一条「把卡片 / 素材拖到这里」的邀请就不画
+  // In a read-only project (guest), things dragged in cannot land, so this "drag a card / media here" invitation is not drawn
   const ro = useReadOnly();
   if (ro.locked) return null;
 

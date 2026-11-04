@@ -1,103 +1,145 @@
 /**
- * 轨道流的页面侧:自写 fMP4 解封装、`VideoDecoder` 硬解、WebGL 拆两半合成(R8,任务书 G5)。全部流平面共用一个 WebGL 上下文(`SharedGl`)。
+ * Track streams on the page side: custom fMP4 demuxing, `VideoDecoder` hardware decoding, WebGL
+ * compositing by splitting in half (R8, task brief G5). All stream planes share a single WebGL
+ * context (`SharedGl`).
  *
- * **只在 `front` 角色的舞台文档里跑**(解码器和解码帧预算都在 `front`;`back` 不建 decoder、不画,K5)。
- * 画在 `Stage` 已经渲好的兄弟平面上 —— 单卡流是包裹层里的 `<canvas data-pc-stream-plane>`,
- * 组流和依赖下层的流(都按舞台坐标产)是舞台根下的 `<canvas data-pc-group-plane>`;这里只往那块画布上画、按清单设它的位置和尺寸,
- * **不做外部 `insertBefore`**(任务书「不做」)。
+ * **Runs only in stage documents with the `front` role** (decoders and decoded frame budgets are
+ * both in `front`; `back` does not create decoders or draw, K5).
+ * Draws onto sibling planes already rendered by `Stage`: for single-card streams, this is
+ * `<canvas data-pc-stream-plane>` in the wrapper layer; for group streams and below-dependent
+ * streams (both produced in stage coordinates), this is `<canvas data-pc-group-plane>` under the
+ * stage root; here it only draws onto that canvas and sets its position and size per the manifest,
+ * **does not perform external `insertBefore`** (task brief "do not do").
  *
- * # 硬约束(G0-b 定的数)
+ * # Hard constraints (values set in G0-b)
  *
- *   - **单个 `VideoDecoder` 同时持有的 `VideoFrame` ≤ 8 帧**:攒到 11～12 帧解码器就死锁、`flush()`
- *     永不返回,这是帧数上限、与分辨率无关;
- *   - 在这之上解码帧预算**按字节算**:总量 ≤ 80 MB(上下拼合的编码画面,NV12 按 1.5 字节 / 像素),
- *     每流保底 3 帧;
- *   - 同屏的流按「每秒要解的像素」算预算,另有条数的硬上限(`./streamBudget.mjs`,划分流的一侧用的是同一份);超出的平面不建解码器
- *     (`planesWithinBudget`,父页据它给超出的平面标上 `over`),那一层显示占位符,位置取这条流清单里这一帧所在分段的位置矩形;
- *   - 每流最多 2 个在途请求,分段整段拉;
- *   - `codec` 从 `avcC` 拼(真实 SPS 的 level 随内容变,不能写死);`isConfigSupported` 不校验 level
- *     与分辨率,不拿它当能力判据。
+ *   - **`VideoFrame`s held concurrently by a single `VideoDecoder` ≤ 8 frames**: accumulating 11 to
+ *     12 frames deadlocks the decoder and `flush()` never returns; this is a frame count upper
+ *     limit, independent of resolution;
+ *   - Above this, decoded frame budgets are **calculated by bytes**: total ≤ 80 MB (encoded picture
+ *     spliced top-and-bottom, NV12 at 1.5 bytes / pixel), guaranteed 3 frames per stream;
+ *   - On-screen streams calculate budget by "pixels to decode per second", with an additional hard
+ *     limit on stream count (`./streamBudget.mjs`, stream division side uses the same copy); planes
+ *     exceeding budget do not create decoders (`planesWithinBudget`, parent page marks exceeding
+ *     planes as `over` based on it), that layer displays a placeholder positioned at the position
+ *     rectangle of the segment containing this frame in this stream's manifest;
+ *   - At most 2 in-flight requests per stream, pulling whole segments at a time;
+ *   - `codec` is assembled from `avcC` (actual SPS level changes with content and cannot be
+ *     hardcoded); `isConfigSupported` does not validate level and resolution, and is not used as a
+ *     capability criterion.
  *
- * # 画法
+ * # Rendering method
  *
- * 色半区存的是**预乘色**(G3),共用的上下文按 `premultipliedAlpha: true` 输出,不再做 `rgb × a`;平面的 2D 画布原样取走(见 `SharedGl`);
- * 着色器**钳一次 `rgb = min(rgb, vec3(a))`**(G0-b (5):不钳时透明区的编码噪声原样输出)。
- * 纹理坐标按 `alphaTop = (H + 8) / (2H + 16)`、`half = H / (2H + 16)` 拆两半。
+ * The color half stores **premultiplied color** (G3), shared context outputs with
+ * `premultipliedAlpha: true` without performing `rgb × a` again; the plane's 2D canvas is taken as is
+ * (see `SharedGl`); shader **clamps once with `rgb = min(rgb, vec3(a))`** (G0-b (5): without
+ * clamping, encoding noise in transparent areas is output as is).
+ * Texture coordinates are split into two halves per `alphaTop = (H + 8) / (2H + 16)` and
+ * `half = H / (2H + 16)`.
  *
- * # 时间
+ * # Timing
  *
- * 流从**它自己的第一帧**(`originFrame`,项目帧号)起每 15 帧一段:项目的第 F 帧在第 `floor((F − originFrame) / 15)` 段的
- * 第 `(F − originFrame) % 15` 个样本(换算只在 `./streamSegments.mjs` 一处,产流的一侧用的是同一份)。`originFrame` 由父页随
- * 流平面带来(`StreamPlaneRequest.originFrame`,源头是流的计划),**不从清单取**:清单里那一项记的是产流时的位置。
- * `EncodedVideoChunk.timestamp = F × 1e6 / fps`(微秒,取整;F 是项目帧号)。
+ * The stream is segmented into 15 frames per segment starting from **its own first frame**
+ * (`originFrame`, project frame number): project frame F is at sample `(F − originFrame) % 15` of
+ * segment `floor((F − originFrame) / 15)` (conversion lives only in `./streamSegments.mjs`, stream
+ * production side uses the same copy). `originFrame` is brought by parent page with the stream
+ * plane (`StreamPlaneRequest.originFrame`, originating from stream plan), **not fetched from
+ * manifest**: that item in manifest records the position when the stream was produced.
+ * `EncodedVideoChunk.timestamp = F × 1e6 / fps` (microseconds, rounded; F is project frame number).
  *
- * # 这一拍要的画面画不出来时(播放、暂停、拖动同一套;mechanism/rendering.md「兜底顺序」)
+ * # When this tick's frame cannot be rendered (same for play, pause, scrub; mechanism/rendering.md "fallback order")
  *
- *   - **留着上一张**,最多留一个分段的时长(`HOLD_FRAMES` 帧,按真实时间算);到时还没有新画面才清空流平面,这一层落到占位符。
- *     **播放头从不为它停**。暂停着没有下一拍,所以到时由一个真定时器来清。
- *   - **只解最新要的那一帧**。随机跳到一帧要重置解码器、从它所在分段的关键帧解起;连着跳(拖动)时不打断在途的那一次
- *     (每一步都重置的话一帧也解不出来,最多让它 `SEEK_PATIENCE_MS`),它解到了先画上,再去解**此刻**要的那一帧 ——
- *     中间经过的那些帧从没排过队,也就没有要丢的。
- *   - **稀疏分段里只有重复的画面**(清单里这一段的 `stride` 大于 1:每 `stride` 个样本是同一张)。跳进稀疏段时,
- *     不晚于目标帧的最近一张(`pictureOf`,只往回找)一解出来就先画上,不用一路解到目标帧;不依赖稀疏版多密。
- *   - 画面从无到有、从有到无时叫宿主一次(`onShowingChange`):帧是异步解出来的,暂停着没有下一拍,
- *     占位符撤不撤、活子树藏不藏都靠这一下。
+ *   - **Keep the previous frame**, holding at most the duration of one segment (`HOLD_FRAMES`
+ *     frames, calculated in real time); only clear stream plane if there is still no new picture
+ *     when expired, falling back to a placeholder for this layer.
+ *     **The playhead never stops for it**. When paused there is no next tick, so it is cleared by a
+ *     real timer upon expiration.
+ *   - **Decode only the latest requested frame**. Jumping randomly to a frame requires resetting
+ *     decoder and decoding from keyframe of its segment; when seeking continuously (scrubbing), do
+ *     not interrupt in-flight seek (resetting at every step yields zero frames, allow at most
+ *     `SEEK_PATIENCE_MS`); once decoded, draw it first, then decode frame requested **at this
+ *     moment**: intermediate frames were never queued, so none are dropped.
+ *   - **Sparse segments contain only duplicated pictures** (`stride` in manifest for this segment is
+ *     > 1: every `stride` samples are the same frame). When jumping into a sparse segment, as soon
+ *     as nearest frame no later than target frame (`pictureOf`, searching backward only) is decoded,
+ *     draw it immediately without decoding all the way to target frame; does not depend on how dense
+ *     the sparse version is.
+ *   - Notify host once when pictures appear or disappear (`onShowingChange`): frames decode
+ *     asynchronously, and there is no next tick while paused: dismissing placeholders and hiding
+ *     live subtrees all rely on this notification.
  *
- * # 最低一档:每个分段只解第一帧(`StreamPlaneRequest.first`,`presentFirst`)
+ * # Lowest tier: decode only the first frame of each segment (`StreamPlaneRequest.first`, `presentFirst`)
  *
- * 性能不足的在线浏览器只贴轨道流的稀疏版(2026-10-13 用户定;2026-10-22 起归最低一档)。父页给流平面带上 `first`,这条流就**不管那一段是稀疏还是满密度,
- * 都只解分段的第一帧那一张**,这一段的每一帧都贴它(帧号换算在 `./streamSegments.mjs` 的 `streamFirstFrameOf`):
+ * Online browsers with insufficient performance only paste sparse versions of track streams ((user
+ * decision, 2026-10-13); assigned to lowest tier starting 2026-10-22). When parent page sets `first`
+ * on stream plane, this stream **decodes only the first frame of the segment regardless of whether
+ * that segment is sparse or full density**, and pastes it for every frame in this segment (frame
+ * number conversion in `streamFirstFrameOf` of `./streamSegments.mjs`):
  *
- *   - 一个分段只喂一块(那个关键帧),喂完叫解码器 `flush()` 把它吐出来;同一个解码器同时只有一块在解;
- *   - 画上以后解码输出当场关掉,只留画布上那一张的引用:稳态每条流占 1 帧,换分段的那一下 2 帧(别的档每流 3～8 帧);
- *   - 不往后多解(不预解下一段),不做寻帧、替身那一套 —— 每一块都是关键帧,跳到哪一段都是解一块;
- *   - 解码器连着报错 `FIRST_FRAME_MAX_FAILURES` 次(这条流的编码这台设备解不了)就不再试,这一层落到占位符;
- *   - 别的(留着上一张最多一个分段、清空、换画布重画、占位符的位置)和别的档同一套。
+ *   - Feed only one chunk per segment (that keyframe), call decoder `flush()` after feeding to emit
+ *     it; only one chunk is decoding concurrently on the same decoder;
+ *   - After drawing, immediately close decode output, keeping only a reference to the canvas frame:
+ *     1 frame per stream in steady state, 2 frames during segment switch (3-8 frames per stream in
+ *     other tiers);
+ *   - Do not decode ahead (no pre-decoding next segment), skip frame-seeking and proxy machinery:
+ *     every chunk is a keyframe, seeking to any segment decodes just one chunk;
+ *   - If decoder reports errors `FIRST_FRAME_MAX_FAILURES` consecutive times (this device cannot
+ *     decode this stream's encoding), stop trying and fall back to placeholder for this layer;
+ *   - Everything else (holding previous frame at most one segment, clearing, redrawing on canvas
+ *     switch, placeholder positions) follows the same machinery as other tiers.
  */
 
 import { isStreamOrigin, STREAM_SEGMENT_FRAMES, streamFirstFrameOf, streamSegmentFirstFrame, streamSegmentOf } from "./streamSegments.mjs";
 import { STREAM_COUNT_BUDGET, streamCost, withinStreamBudget, type StreamBudget } from "./streamBudget.mjs";
 
-/** 一个分段的帧数;数和换算都在 `./streamSegments.mjs`,这里只是照旧的名字再导出一次 */
+/** Number of frames per segment; values and conversions are in `./streamSegments.mjs`, re-exported under legacy name */
 export const SEGMENT_FRAMES = STREAM_SEGMENT_FRAMES;
-/** G0-b (4):单个解码器同时持有的帧数上限(硬约束) */
+/** G0-b (4): Upper limit on frames held concurrently by a single decoder (hard constraint) */
 export const MAX_FRAMES_PER_DECODER = 8;
-/** G5:解码帧总预算 */
+/** G5: Total decoded frame budget */
 export const DECODED_BYTES_BUDGET = 80 * 1024 * 1024;
-/** G5:每流保底 */
+/** G5: Guaranteed minimum per stream */
 export const MIN_FRAMES_PER_STREAM = 3;
-/** 同屏流的条数硬上限(预算的口径是数像素,见 `./streamBudget.mjs`;这个名字照旧导出) */
+/** Hard limit on number of on-screen streams (budget is measured in pixels, see `./streamBudget.mjs`; re-exported under legacy name) */
 export const DECODER_BUDGET = STREAM_COUNT_BUDGET;
-/** G5:每流最多 2 个在途请求 */
+/** G5: At most 2 in-flight requests per stream */
 export const MAX_INFLIGHT_PER_STREAM = 2;
-/** 这一拍的画面没画出来时,上一张最多留这么多帧的时长(一个分段;按这条流的帧率换成真实毫秒) */
+/** When this tick's frame cannot be rendered, keep previous frame for at most this many frames (one segment; converted to real ms by stream frame rate) */
 export const HOLD_FRAMES = SEGMENT_FRAMES;
-/** 清单多久可以再问一次(分段会被替换:稀疏 → 满密度) */
+/** How soon the manifest can be queried again (segments will be replaced: sparse → full density) */
 export const MANIFEST_REFRESH_MS = 2000;
 /**
- * 在途的那一次寻帧(重置解码器、从分段的关键帧解到目标帧)最多让它跑这么久不被新的目标打断。
- * 连着拖时每一步都重置解码器的话一帧也解不出来;超过这个数还没解到,新的目标照样重置。
+ * How long an in-flight frame seek (resetting decoder, decoding from segment keyframe to target
+ * frame) is allowed to run at most without being interrupted by a new target.
+ * When scrubbing continuously, resetting decoder at every step yields zero frames; if target is
+ * still not decoded past this threshold, a new target resets it anyway.
  */
 export const SEEK_PATIENCE_MS = 250;
 /**
- * 还没有画面时,在途那一次寻帧解出来的帧(不是此刻要的那一帧)只有「够新」才画上当第一张:这一次寻帧发起到现在不超过这么久。
- * 宿主等第一张画面出来才把活子树藏起来,拿一张旧时刻的帧去换正跟着播放头走的活组件,画面会往回跳一下。
- * (原型 `claude/scrub-streams` 量的:取 50 时快速拖动里第一张画面要等 400 毫秒,取 100 不会。)
+ * When there is no frame yet, the frame decoded by an in-flight frame seek (not the frame requested
+ * at this moment) is drawn as the first frame only if "fresh enough": elapsed time since this frame
+ * seek started does not exceed this duration.
+ * The host waits for the first frame before hiding live subtrees; replacing a live component
+ * tracking the playhead with an old frame causes the picture to jump backward momentarily.
+ * (Measured in prototype `claude/scrub-streams`: at 50, the first frame in rapid scrubbing waits
+ * 400 ms; at 100, it does not.)
  */
 export const FIRST_PICTURE_LAG_MS = 100;
-/** 最低一档(只解分段第一帧):解码器连着报错这么多次,这条流就不再试(落到占位符);解出一帧就清零 */
+/** Lowest tier (decode first frame of segment only): after this many consecutive decoder errors, stop trying this stream (falls back to placeholder); resets after decoding a frame */
 export const FIRST_FRAME_MAX_FAILURES = 3;
-/** 最低一档:送去解的那一块过这么久还没出来(解码器卡住了),重置解码器再送 */
+/** Lowest tier: if the chunk sent for decoding has not returned after this long (decoder stuck), reset decoder and resend */
 export const FIRST_FRAME_STALL_MS = 1000;
 
-/** 真实毫秒:舞台里 `performance.now` / `Date.now` 都被接管成舞台时间,留的口子是 `__pcRealNow`;别处(单测)就是 `Date.now` */
+/** Real milliseconds: `performance.now` / `Date.now` in stage are taken over as stage time, escape hatch is `__pcRealNow`; elsewhere (unit tests) it is `Date.now` */
 const realNow = (): number => {
   const hatch = (globalThis as { __pcRealNow?: () => number }).__pcRealNow;
   return typeof hatch === "function" ? hatch() : Date.now();
 };
 /**
- * 真定时器:暂停着舞台的虚拟时钟不走,虚拟定时器永远不响。没有口子的地方(Node 里的单测)用普通定时器,并且不让它拖住进程:
- * 停在稀疏段上的那个刷新定时器是自己接着排的,流不关它就一直在,单测文件会退不出去。
+ * Real timer: when paused, the stage virtual clock does not tick and virtual timers never fire.
+ * Places without an escape hatch (unit tests in Node) use normal timers without holding the
+ * process: the refresh timer parked on a sparse segment keeps rescheduling itself, persisting
+ * until the stream closes, which would prevent unit test files from exiting.
  */
 const realTimeout = (fn: () => void, ms: number): void => {
   const hatch = (globalThis as { __pcRealSetTimeout?: (cb: () => void, ms?: number) => unknown }).__pcRealSetTimeout;
@@ -105,49 +147,61 @@ const realTimeout = (fn: () => void, ms: number): void => {
   const timer = setTimeout(fn, ms) as unknown as { unref?: () => void };
   if (typeof timer?.unref === "function") timer.unref();
 };
-/** 再拿一份这一帧的引用(和原来那份指同一块解码输出;两份都关了才放回解码器)。单测里的假帧没有 `clone` */
+/** Acquire another reference to this frame (points to same decode output as original; released to decoder only when both closed). Mock frames in unit tests lack `clone` */
 const cloneFrame = (frame: VideoFrame): VideoFrame | null => {
   try { return typeof frame.clone === "function" ? frame.clone() : null; } catch { return null; }
 };
 
 export interface StreamRect { x: number; y: number; w: number; h: number }
 
-/** 父页经 `setStreamPlanes` 发来的一条(C3:由就绪索引里 `kind: 'stream'` 的层合成) */
+/** An entry sent from parent page via `setStreamPlanes` (C3: composited from layers with `kind: 'stream'` in ready index) */
 export interface StreamPlaneRequest {
-  /** 长度 1 = 单卡流或依赖下层的流(看 `plane`);> 1 = 组流(按画家顺序,最后一个在最上面) */
+  /** Length 1 = single-card stream or below-dependent stream (see `plane`); > 1 = group stream (painter's order, last is on top) */
   clipIds: string[];
   /**
-   * `"stage"`:这条只有一张卡的流是按**舞台坐标**产的(依赖下层的流,清单的 `kind` 是 `below`;契约
-   * `prerender-products-contract.md` 第 5.4 节)。它的画布挂在舞台根下(和组流同一种平面),不挂进包裹层:包裹层的位置、
-   * 不透明度、强调都已经画进流里。流里只有目标卡改动过的那一层(预乘色加不透明度),照普通的叠加盖在舞台上活着的下层上面。
-   * 组流不用带(成员多于一张就是舞台坐标)。
+   * `"stage"`: this stream with only one card is produced in **stage coordinates** (below-dependent
+   * stream, manifest `kind` is `below`; contract `prerender-products-contract.md` section 5.4).
+   * Its canvas hangs under stage root (same plane type as group streams) instead of wrapper layer:
+   * wrapper layer position, opacity, and emphasis are already rendered into the stream. The stream
+   * contains only the layer modified by the target card (premultiplied color plus opacity), overlaying
+   * the live lower layer on stage like a normal overlay.
+   * Group streams do not need this (more than one member implies stage coordinates).
    */
   plane?: "stage";
-  /** 流键(就绪索引里那一层的 `key`) */
+  /** Stream key (`key` of that layer in ready index) */
   key?: string;
-  /** 就绪的**分段号**闭区间(C3 的 `stream` 表单位是分段号) */
+  /** Closed interval of ready **segment numbers** (unit in C3 `stream` table is segment number) */
   ranges?: Array<[number, number]>;
   /**
-   * 这条流自己的第一帧(项目帧号):分段从它起每 15 帧一段。来自就绪索引那一层(桌面)/ 层表那一行(在线),
-   * 都是计划的一侧按当前项目给的。没有它的平面不建解码器、不画(`planesWithinBudget`)。
+   * First frame of this stream itself (project frame number): segments run 15 frames each starting
+   * from it. Comes from that layer in ready index (desktop) / that row in layer table (online), both
+   * provided by the planning side per current project. Planes lacking it do not create decoders or
+   * draw (`planesWithinBudget`).
    */
   originFrame?: number;
   /**
-   * 最低一档:这条流每个分段只解第一帧那一张,这一段的每一帧都贴它(文件头「最低一档」)。
-   * 父页按档位带(`src/editor/snapshotFeed.ts`);不带就是照常逐帧解。
+   * Lowest tier: this stream decodes only the first frame of each segment, pasted for every frame in
+   * that segment (see "Lowest tier" in file header).
+   * Attached by parent page based on tier (`src/editor/snapshotFeed.ts`); absent means decoding frame
+   * by frame as usual.
    */
   first?: true;
   /**
-   * 这一拍超出预算(父页用 `planesWithinBudget` 判的,舞台照它办):舞台不为它建解码器、不画,只取它的清单,
-   * 拿这一帧所在分段的位置矩形摆占位符。在线页面这种平面只带清单、不带字节。
+   * Over budget for this tick (determined by parent page using `planesWithinBudget`, stage follows it):
+   * stage does not create decoders or draw for it, fetching only its manifest and positioning a
+   * placeholder using the position rectangle of the segment containing this frame. On online pages,
+   * such planes carry only manifests, not bytes.
    */
   over?: true;
   /**
-   * 在线页面(`docs/plan/browser-stream-task.md` 第七处):这条流的清单由父页随流平面带过来,舞台不自己去取。
-   * 带了它,这条流的字节也只从父页推来的块里拿(`PushedStreamSource`),不碰预渲染进程的地址。桌面不带,照旧。
+   * Online pages (`docs/plan/browser-stream-task.md` item 7): manifest for this stream is brought along
+   * with stream plane by parent page; stage does not fetch it itself.
+   * When attached, bytes for this stream are only retrieved from chunks pushed by parent page
+   * (`PushedStreamSource`), without touching prerender process URLs. Desktop does not attach it and
+   * behaves as before.
    */
   manifest?: StreamManifest;
-  /** 随这一次一起推来的块(哈希 → 字节):清单用到、而这台舞台手里还没有的开头文件与分段(`StreamPlaneSender` 算) */
+  /** Chunks pushed with this update (hash → bytes): head files and segments used by manifest not yet held by this stage (calculated by `StreamPlaneSender`) */
   blocks?: Record<string, ArrayBuffer>;
 }
 
@@ -158,21 +212,21 @@ export interface StreamManifest {
   clipIds: string[];
   fps: number;
   segmentFrames: number;
-  /** 清单里记的第一帧(产这条流时它在项目的第几帧)。只作记录:播放时的换算用流平面带来的 `originFrame` */
+  /** First frame recorded in manifest (project frame number when stream was produced). For record only: playback conversion uses `originFrame` from stream plane */
   originFrame?: number | null;
   bound: StreamRect;
   tight: StreamRect | null;
-  /** 单卡流:包裹层的框在隔离工程里摆到哪儿(平面坐标加它是那份工程的舞台坐标);按舞台坐标产的流是零 */
+  /** Single-card stream: where wrapper layer box is placed in isolated project (plane coords plus this equal project stage coords); zero for streams produced in stage coordinates */
   offset?: { x: number; y: number } | null;
-  /** `hash`:在线页面推来的清单才有,开头文件的内容哈希(字节按它在推来的块里找) */
+  /** `hash`: present only in manifests pushed by online pages, content hash of head file (bytes looked up in pushed chunks by it) */
   inits: Record<string, { codec: string; width: number; height: number; rect: StreamRect; hash?: string }>;
-  /** `file`:桌面是分段的文件名;在线页面推来的清单里是分段的内容哈希(两种都是「换了内容就换名」) */
-  /** `box`:产稀疏版时这个分段量到的位置矩形(收紧的框,平面坐标);没量过的分段不带。占位符照它摆 */
+  /** `file`: segment file name on desktop; segment content hash in manifests pushed by online pages (both follow "rename on content change") */
+  /** `box`: position rectangle measured for this segment when producing sparse version (tight box, plane coordinates); omitted if unmeasured. Placeholders follow it */
   segments: Record<string, { init: string; file: string; stride: number; samples: number; box?: StreamRect | null }>;
 }
 
 /* ======================================================================== *
- * fMP4 解封装
+ * fMP4 demuxing
  * ======================================================================== */
 
 interface Box { type: string; start: number; end: number; header: number }
@@ -210,11 +264,11 @@ function findBox(view: DataView, type: string, start: number, end: number): Box 
   return null;
 }
 
-/** init.mp4 → 解码器配置要的东西。**`codec` 从 `avcC` 拼** */
+/** init.mp4 → required decoder configuration items. **`codec` assembled from `avcC`** */
 export function parseInit(buf: ArrayBuffer): { codec: string; description: Uint8Array; width: number; height: number } {
   const view = new DataView(buf);
   const avcC = findBox(view, "avcC", 0, buf.byteLength);
-  if (!avcC) throw new Error("init.mp4 里没有 avcC");
+  if (!avcC) throw new Error("No avcC in init.mp4");
   const description = new Uint8Array(buf.slice(avcC.start + avcC.header, avcC.end));
   const hex = (n: number) => n.toString(16).padStart(2, "0");
   const codec = `avc1.${hex(description[1])}${hex(description[2])}${hex(description[3])}`;
@@ -230,14 +284,14 @@ export function parseInit(buf: ArrayBuffer): { codec: string; description: Uint8
 
 export interface SegmentSample { offset: number; size: number; isSync: boolean }
 
-/** 一个分段(moof + mdat)→ 样本表。`default-base-is-moof`:偏移以 moof 起点为基 */
+/** One segment (moof + mdat) → sample table. `default-base-is-moof`: offset based from start of moof */
 export function parseSegment(buf: ArrayBuffer): SegmentSample[] {
   const view = new DataView(buf);
   const moof = boxesOf(view, 0, buf.byteLength).find((b) => b.type === "moof");
-  if (!moof) throw new Error("分段里没有 moof");
+  if (!moof) throw new Error("No moof in the segment");
   const tfhd = findBox(view, "tfhd", moof.start + moof.header, moof.end);
   const trun = findBox(view, "trun", moof.start + moof.header, moof.end);
-  if (!tfhd || !trun) throw new Error("分段里没有 tfhd / trun");
+  if (!tfhd || !trun) throw new Error("No tfhd / trun in the segment");
   let defSize = 0, defFlags = 0;
   {
     const p = tfhd.start + tfhd.header;
@@ -272,22 +326,26 @@ export function parseSegment(buf: ArrayBuffer): SegmentSample[] {
   return samples;
 }
 
-/** G5:`timestamp = (originFrame + 分段号 × 15 + 样本序号) × 1e6 / fps` = 项目帧号 × 1e6 / fps */
+/** G5: `timestamp = (originFrame + segmentIndex × 15 + sampleIndex) × 1e6 / fps` = project frame number × 1e6 / fps */
 export const chunkTimestamp = (frame: number, fps: number): number => Math.round((frame * 1e6) / fps);
 export const frameOfTimestamp = (timestamp: number, fps: number): number => Math.round((timestamp * fps) / 1e6);
 
-/** 就绪区间里有没有这一段 */
+/** Whether this segment exists in the ready interval */
 export function rangesHave(ranges: ReadonlyArray<readonly number[]> | undefined, n: number): boolean {
   for (const r of ranges ?? []) if (r[0] <= n && n <= r[1]) return true;
   return false;
 }
 
 /**
- * 父页那一侧的纯算(C3 末段):就绪索引里 `kind: 'stream'` 的层 → `setStreamPlanes` 的实参。
- * 有 `groupClipIds` 的一条 `{ clipIds: groupClipIds }`、没有的 `{ clipIds: [clipId] }`;依赖下层的流那一层带着 `plane: "stage"`,原样带过去;
- * 只给**这一刻被抑制**、而且这一段已经就绪的卡(播放中贴流,K5)。「这一段」按每一层自己的 `originFrame` 换算;
- * 没带 `originFrame` 的层(改分段规则之前的生产者发的)不出流平面。
- * 父页在发 `setSuppressed(H(t))` 的同一处调它(见报告:这一处在 `src/editor/`,不在本任务可改的文件里)。
+ * Pure calculation on the parent page side (C3 end section): layers with `kind: 'stream'` in ready
+ * index → arguments for `setStreamPlanes`.
+ * For entries with `groupClipIds`, `{ clipIds: groupClipIds }`; otherwise `{ clipIds: [clipId] }`;
+ * layers for below-dependent streams carry `plane: "stage"`, passed through as is; only provided to
+ * cards that are **suppressed at this moment** and whose segment is already ready (stream pasting
+ * during playback, K5). "This segment" is converted per each layer's own `originFrame`; layers
+ * without `originFrame` (emitted by producers before segment rule changes) do not yield stream planes.
+ * Called by parent page at the same place where `setSuppressed(H(t))` is sent (see report: this site
+ * is in `src/editor/`, not in files editable in this task).
  */
 export function streamPlanesFor(
   layers: Iterable<{ clipId: string; key: string; ranges: Array<[number, number]>; groupClipIds?: string[]; originFrame?: number; plane?: "stage" }>,
@@ -306,8 +364,10 @@ export function streamPlanesFor(
 }
 
 /**
- * 这一层(就绪索引里 `kind: 'stream'` 的层)在项目的第 `globalFrame` 帧有没有就绪的分段。父页判「这一帧有没有流」只走这一处,
- * 舞台的播放器用同一份换算(`./streamSegments.mjs`)。没带 `originFrame` 的层一律算没有。
+ * Whether this layer (layer with `kind: 'stream'` in ready index) has a ready segment at project
+ * frame `globalFrame`. The parent page only checks here to determine "whether this frame has a stream",
+ * and the stage player uses the same conversion (`./streamSegments.mjs`). Layers without `originFrame`
+ * are consistently treated as having none.
  */
 export function streamLayerHas(layer: { ranges?: ReadonlyArray<readonly number[]>; originFrame?: number }, globalFrame: number): boolean {
   if (!isStreamOrigin(layer.originFrame)) return false;
@@ -315,19 +375,29 @@ export function streamLayerHas(layer: { ranges?: ReadonlyArray<readonly number[]
 }
 
 /**
- * 同屏流的预算(兜底顺序第 1、2 步的预算,mechanism/rendering.md「兜底顺序」):这一拍**真的会建解码器**的那几条平面。
+ * Budget for on-screen streams (budget for steps 1 and 2 of fallback order, mechanism/rendering.md
+ * "fallback order"): planes that **will actually create decoders** for this tick.
  *
- * 只收有流键、带着第一帧(`originFrame`)的(没有键的只占位、不解码;没有第一帧的没法把帧号换成分段号)、没标 `over` 的。
- * 预算的口径在 `./streamBudget.mjs`:同屏 6 条以内不看像素(原来放得过的照样放得过);超过 6 条,每条流的开销(编码画幅乘帧率)
- * 加起来不超过像素预算;条数另有硬上限。
- * `pixelsOf` 给每条平面的编码画幅(父页按当前项目算,`snapshotFeed.ts` 的 `streamPixelsOf`);回不出正数的按一张 1920×1080 的满屏卡算。
- * 按传进来的顺序放:条数到了上限就停;某一条的像素放不下时跳过它接着看后面的(后面更小的还放得下)。
+ * Only accepts planes with a stream key, carrying the first frame (`originFrame`) (planes without
+ * keys only hold places without decoding; planes without first frames cannot convert frame numbers
+ * to segment numbers), and not marked `over`.
+ * Budget metrics are in `./streamBudget.mjs`: up to 6 on-screen streams ignore pixels (what passed
+ * before still passes); beyond 6 streams, the combined cost (encoded aspect ratio multiplied by frame
+ * rate) of each stream must not exceed the pixel budget; with a separate hard limit on stream count.
+ * `pixelsOf` gives encoded aspect ratio for each plane (calculated by parent page per current project,
+ * `streamPixelsOf` in `snapshotFeed.ts`); if non-positive, treated as a 1920×1080 full-screen card.
+ * Admitted in the order passed in: stops when stream count reaches limit; when a stream's pixels
+ * do not fit, skips it and inspects subsequent ones (smaller ones behind it may still fit).
  *
- * **谁超预算由父页判**(`planFeed`):它把超出的平面标上 `over` 再发给舞台,自己也照这个结果决定哪些卡算「有流盖着」。
- * 舞台不重算像素(它手里没有项目的框),照父页标的办,只用这个函数守住条数的硬上限(`STAGE_PLANE_PIXELS`)。
- * 画布还没挂上的平面照样占着它的预算(父页不知道画布到没到),那一拍按流 blank 处理。
+ * **Parent page determines who exceeds budget** (`planFeed`): it marks exceeding planes as `over`
+ * before sending to stage, and uses this result to decide which cards count as "covered by a stream".
+ * Stage does not recompute pixels (it lacks project bounds), following parent page markings and using
+ * this function only to enforce the hard limit on count (`STAGE_PLANE_PIXELS`).
+ * Planes whose canvases are not yet attached still consume their budget (parent page does not know
+ * whether canvas arrived), handled as stream blank for that tick.
  *
- * `budget`:不给就是产品的那一组数;最低一档给 `sparseStreamBudget()`、`fps` 传 `STREAM_BUDGET_MIN_FPS`(`./streamBudget.mjs` 文件头)。
+ * `budget`: if omitted, uses production numbers; lowest tier passes `sparseStreamBudget()` and passes
+ * `STREAM_BUDGET_MIN_FPS` for `fps` (see `./streamBudget.mjs` file header).
  */
 export function planesWithinBudget<P extends { clipIds?: readonly string[]; key?: string; originFrame?: number; over?: boolean }>(
   planes: readonly P[], fps = 30, pixelsOf: (plane: P) => number | null | undefined = () => undefined, budget: StreamBudget = undefined,
@@ -335,16 +405,16 @@ export function planesWithinBudget<P extends { clipIds?: readonly string[]; key?
   const valid = planes.filter((p) => Array.isArray(p?.clipIds) && p.clipIds.length > 0 && typeof p.key === "string" && !!p.key && isStreamOrigin(p.originFrame) && !p.over);
   return withinStreamBudget(valid.map((p) => streamCost(pixelsOf(p), fps)), budget).map((i) => valid[i]);
 }
-/** 舞台一侧过 `planesWithinBudget` 时每条平面报的像素数:小到像素预算永远不会满,只剩条数的硬上限起作用 */
+/** Pixels reported per plane when passing `planesWithinBudget` on stage side: small enough that pixel budget never fills, leaving only hard limit on count effective */
 const STAGE_PLANE_PIXELS = () => 1;
 
-/** 这条平面的画布是不是挂在舞台根下、按舞台坐标画的那一种:组流,和依赖下层的流 */
+/** Whether this plane's canvas hangs under stage root and draws in stage coordinates: group streams and below-dependent streams */
 export function stagePlane(plane: { clipIds?: readonly string[]; plane?: string } | null | undefined): boolean {
   return (plane?.clipIds?.length ?? 0) > 1 || plane?.plane === "stage";
 }
 
 /* ======================================================================== *
- * 字节从哪来
+ * Where bytes come from
  * ======================================================================== */
 
 export interface StreamSource {
@@ -355,24 +425,24 @@ export interface StreamSource {
 
 declare global {
   interface Window {
-    /** 探针用:把流的字节源指到别处(缺省是预渲染进程,和快照字节同源) */
+    /** For probe: point stream byte source elsewhere (defaults to prerender process, sharing source with snapshot bytes) */
     __pcStreamBase?: string;
   }
 }
 
-/** 预渲染进程的源。按需 import(`prerender.ts` 带 React hook,静态 import 会把它拖进这条路) */
+/** Source for prerender process. Dynamic import (`prerender.ts` has React hooks; static import would drag it into this path) */
 const defaultBase = async (): Promise<string> => {
   if (typeof window !== "undefined" && typeof window.__pcStreamBase === "string") return window.__pcStreamBase;
   return (await import("./prerender.ts")).prerenderBase();
 };
 
-/** 本地模式:直连预渲染进程的 `/api/frames/stream/…`(和 C3 的快照字节同源) */
+/** Local mode: direct connection to prerender process `/api/frames/stream/…` (shares source with C3 snapshot bytes) */
 export class HttpStreamSource implements StreamSource {
   private base: () => Promise<string>;
   constructor(base: () => Promise<string> = defaultBase) { this.base = base; }
   private async get(path: string, init: RequestInit): Promise<Response> {
     const res = await fetch((await this.base()) + path, init);
-    if (!res.ok) throw Object.assign(new Error(`轨道流还没就绪:${path}`), { status: res.status });
+    if (!res.ok) throw Object.assign(new Error(`Track stream not ready yet: ${path}`), { status: res.status });
     return res;
   }
   async manifest(key: string, signal?: AbortSignal): Promise<StreamManifest> {
@@ -387,28 +457,43 @@ export class HttpStreamSource implements StreamSource {
 }
 
 /* ======================================================================== *
- * 在线页面:清单与字节由父页推来
+ * Online pages: manifest and bytes pushed by parent page
  * ======================================================================== */
 
 /**
- * 为什么在线页面的舞台不自己去素材服务取流的字节,而由父页取了传过来(2026-10-12 定,理由三条):
+ * Why the stage on the online page does not fetch stream bytes from the asset service itself, but
+ * has the parent page fetch and pass them over (decided 2026-10-12, three reasons):
  *
- *   1. **隔离的跨源舞台取不到。** 它读素材只有自己源上的 `/media-s/<会话号>/media/<哈希>`(`src/online/stagePolicy.mjs` 的
- *      `MEDIA_S_PATH_PATTERN`),预渲染产物所在的 `px/` 不在放行的路径里;要放行得改策略文件、nginx 模板并重新部署舞台源。
- *   2. **票据不能进舞台的脚本。** `px/<哈希>` 要带只读票据的请求头;而收到过票据的舞台文档永久不执行用户卡与素材效果卡
- *      (`online/isolation/execGate.ts`)。让舞台带票据取流,就等于关掉在线执行。
- *   3. **父页本来就有这条路。** 层表、清单、候选的认定、票据续签、并发与超时都在父页的在线来源里(`snapshotSource.ts`);
- *      就绪区间按「字节已在父页」算,流平面发出去时字节跟着到,舞台不用自己等网络,流这一拍画不出来的情形只剩解码没跟上。
+ *   1. **The isolated cross-origin stage cannot fetch them.** When reading assets, it only has
+ *      `/media-s/<session-id>/media/<hash>` on its own origin (`MEDIA_S_PATH_PATTERN` in
+ *      `src/online/stagePolicy.mjs`), and `px/`, where prerender outputs reside, is not among
+ *      allowed paths; allowing it requires changing policy files and nginx templates and
+ *      redeploying the stage origin.
+ *   2. **Tickets cannot enter stage scripts.** `px/<hash>` requires a request header with a
+ *      read-only ticket; and a stage document that has received a ticket permanently refuses to
+ *      execute user cards and media effect cards (`online/isolation/execGate.ts`). Letting the
+ *      stage fetch streams with a ticket is equivalent to disabling online execution.
+ *   3. **The parent page already has this pathway.** Layer tables, manifests, candidate
+ *      qualification, ticket renewals, concurrency, and timeouts are all in the parent page's
+ *      online source (`snapshotSource.ts`); ready intervals are calculated by "bytes already on
+ *      parent page", and bytes arrive along with stream planes when sent, so the stage does not
+ *      need to wait for the network itself, and the only situation where a stream fails to draw on
+ *      this tick is when decoding falls behind.
  *
- * 代价:每块字节多一次 postMessage 的结构化克隆(一段不超过 512 KB)。协议只借现有的 `setStreamPlanes`,不加新的消息种类:
+ * Cost: one extra postMessage structured clone per byte chunk (at most 512 KB per segment). The
+ * protocol only borrows the existing `setStreamPlanes`, without adding new message types:
  *
- *   父页 `StreamPlaneSender.decorate(planes)`:每条平面带上清单;块只带这台舞台还没有的。
- *   舞台 `PushedStreamSource.accept(planes)`:收下新块;**这一次的清单没用到的块当场丢掉**。
+ *   Parent page `StreamPlaneSender.decorate(planes)`: attaches manifests to each plane; chunks
+ *   only include those that this stage does not yet have.
+ *   Stage `PushedStreamSource.accept(planes)`: accepts new chunks; **chunks not used by this batch
+ *   of manifests are discarded on the spot**.
  *
- * 两边按同一条规矩记账(舞台手里的块 = 上一次那批清单用到的块),所以父页不用问舞台缺什么;一次调用失败(舞台在重载)父页清账重发。
+ * Both sides keep books by the same rule (chunks held by the stage = chunks used by the previous
+ * batch of manifests), so the parent page does not need to ask the stage what is missing; if a call
+ * fails (stage is reloading), the parent page clears the books and resends everything.
  */
 
-/** 一份清单用到的块的哈希(开头文件 + 分段);只列形状像哈希的 */
+/** Hashes of chunks used by a manifest (head file + segments); lists only hash-like ones */
 export function manifestBlockHashes(manifest: StreamManifest | null | undefined): string[] {
   const out = new Set<string>();
   for (const seg of Object.values(manifest?.segments ?? {})) {
@@ -420,14 +505,17 @@ export function manifestBlockHashes(manifest: StreamManifest | null | undefined)
 }
 
 const isBuffer = (v: unknown): v is ArrayBuffer => !!v && typeof (v as ArrayBuffer).byteLength === "number" && typeof (v as ArrayBuffer).slice === "function";
-const missingBlock = (what: string) => Object.assign(new Error(`父页还没把这一块推过来:${what}`), { status: 404 });
+const missingBlock = (what: string) => Object.assign(new Error(`The parent page has not pushed this block yet: ${what}`), { status: 404 });
 
-/** 舞台一侧:字节源是父页随流平面推来的块 */
+/** Stage side: byte source is chunks pushed by the parent page along with stream planes */
 export class PushedStreamSource implements StreamSource {
   private manifests = new Map<string, StreamManifest>();
   private blocks = new Map<string, ArrayBuffer>();
 
-  /** 父页的一次 `setStreamPlanes`:记下每条流的清单,收下新块,丢掉这一批清单没用到的块 */
+  /**
+   * A `setStreamPlanes` from the parent page: records each stream's manifest, accepts new chunks,
+   * and discards chunks not used by this batch of manifests
+   */
   accept(planes: readonly StreamPlaneRequest[]): void {
     const manifests = new Map<string, StreamManifest>();
     const keep = new Set<string>();
@@ -442,27 +530,27 @@ export class PushedStreamSource implements StreamSource {
   }
   async manifest(key: string): Promise<StreamManifest> {
     const m = this.manifests.get(key);
-    if (!m) throw missingBlock(`清单 ${key}`);
+    if (!m) throw missingBlock(`manifest ${key}`);
     return m;
   }
   async init(key: string, id: string): Promise<ArrayBuffer> {
     const hash = this.manifests.get(key)?.inits?.[id]?.hash;
     const buf = hash ? this.blocks.get(hash) : undefined;
-    if (!buf) throw missingBlock(`开头文件 ${id}`);
+    if (!buf) throw missingBlock(`head file ${id}`);
     return buf;
   }
   async segment(_key: string, file: string): Promise<ArrayBuffer> {
     const buf = this.blocks.get(file);
-    if (!buf) throw missingBlock(`分段 ${file}`);
+    if (!buf) throw missingBlock(`segment ${file}`);
     return buf;
   }
-  /** 手里有没有这一块(探针、单测看) */
+  /** Whether this chunk is held (inspected by probes and unit tests) */
   has(hash: string): boolean { return this.blocks.has(hash); }
   get size(): number { return this.blocks.size; }
   get bytes(): number { let n = 0; for (const b of this.blocks.values()) n += b.byteLength; return n; }
 }
 
-/** 父页手里一条流的清单与字节(`OnlineSnapshotSource.streamPlane` 给) */
+/** A stream's manifest and bytes held by parent page (from `OnlineSnapshotSource.streamPlane`) */
 export interface StreamPlaneData {
   manifest: StreamManifest;
   blocks: ReadonlyMap<string, Uint8Array | ArrayBuffer>;
@@ -474,8 +562,10 @@ const toArrayBuffer = (bytes: Uint8Array | ArrayBuffer): ArrayBuffer => {
 };
 
 /**
- * 父页一侧:给**一台**舞台发流平面之前过一遍,带上清单和这台舞台还没有的块。一台舞台(一个 RPC 客户端)一个实例。
- * `lookup(key)` 回这条流此刻的清单与字节;回 null 的平面原样发(舞台那边这条流取不到清单,落到快照)。
+ * Parent page side: passes through stream planes before sending them to **one** stage, attaching
+ * manifests and chunks that this stage does not yet have. One instance per stage (one RPC client).
+ * `lookup(key)` returns this stream's manifest and bytes at this moment; planes returning null are
+ * sent as-is (on the stage side, this stream cannot fetch a manifest and falls back to snapshot).
  */
 export class StreamPlaneSender {
   private held = new Set<string>();
@@ -492,13 +582,14 @@ export class StreamPlaneSender {
         ...(p.over ? { over: true as const } : {}), ...(p.first ? { first: true as const } : {}) };
       const data = p.key ? this.lookup(p.key) : null;
       if (!data) { out.push(base); continue; }
-      // 超出预算的平面舞台不解码:只带清单(占位符照它的位置矩形摆),不带字节,也不记进「舞台手里的块」
+      // Planes over budget are not decoded by stage: only manifests are attached (placeholders
+      // placed by position rect), without bytes, and not counted in "chunks held by stage"
       if (p.over) { out.push({ ...base, manifest: data.manifest }); continue; }
       const blocks: Record<string, ArrayBuffer> = {};
       let added = 0;
       for (const hash of manifestBlockHashes(data.manifest)) {
         const bytes = data.blocks.get(hash);
-        if (!bytes) continue;   // 清单列着而字节不在:舞台这一段取不到,那一拍落到快照
+        if (!bytes) continue;   // Listed in manifest but bytes absent: stage cannot fetch this segment; that tick falls to snapshot
         next.add(hash);
         if (this.held.has(hash) || sending.has(hash)) continue;
         sending.add(hash);
@@ -507,25 +598,28 @@ export class StreamPlaneSender {
       }
       out.push({ ...base, manifest: data.manifest, ...(added ? { blocks } : {}) });
     }
-    // 舞台收到之后手里正好是这一批清单用到的块(见 `PushedStreamSource.accept`)
+    // After receiving, the stage holds exactly the chunks used by this batch of manifests (see
+    // `PushedStreamSource.accept`)
     this.held = next;
     return out;
   }
-  /** 这一次没送到(舞台在换、回包丢了):清账,下一次全部重发 */
+  /** Undelivered this time (stage switching, response lost): clear the books, resend all next time */
   reset(): void { this.held = new Set(); }
-  /** 认为舞台手里有几块(单测看) */
+  /** Number of chunks believed to be held by the stage (inspected by unit tests) */
   get heldCount(): number { return this.held.size; }
 }
 
 /* ======================================================================== *
- * WebGL 合成
+ * WebGL composition
  * ======================================================================== */
 
 const VS = `attribute vec2 p; varying vec2 uv;
 void main(){ uv = vec2((p.x + 1.0) * 0.5, (1.0 - p.y) * 0.5); gl_Position = vec4(p, 0.0, 1.0); }`;
 /*
- * 色半区是预乘色:直接输出,**钳一次 rgb ≤ a**(预乘色本来就必须满足的约束;G0-b (5):
- * 不钳时透明区的编码噪声原样输出,彩色杂点最高 146/255,钳后 59)。
+ * Color half is premultiplied color: output directly, **clamp once to rgb ≤ a** (a constraint
+ * that premultiplied color must satisfy originally; G0-b (5): without clamping, encoding noise
+ * in the transparent area outputs as-is, with color noise peaking at 146/255, reduced to 59 after
+ * clamping).
  */
 const FS = `precision mediump float; uniform sampler2D tex; uniform float alphaTop; uniform float half_;
 varying vec2 uv;
@@ -535,9 +629,12 @@ void main(){
   gl_FragColor = vec4(min(rgb, vec3(a)), a);
 }`;
 
-/** 共用的那块离屏画布:建不出来、或丢了上下文迟迟不还时,隔这么久(真实毫秒)再重建一次 */
+/**
+ * Shared offscreen canvas: when creation fails or the lost context is not restored for a long
+ * time, rebuild after this interval (real milliseconds)
+ */
 export const GL_RETRY_MS = 1000;
-/** 接连建不出来时每次把间隔加倍,最长到这么久(别空转) */
+/** If consecutive creations fail, double interval each time, up to this max (avoid spinning) */
 export const GL_RETRY_MAX_MS = 30000;
 
 type GlCanvas = OffscreenCanvas | HTMLCanvasElement;
@@ -548,29 +645,48 @@ const newGlCanvas = (): GlCanvas | null => {
 };
 
 /**
- * **全部流平面共用的一个 WebGL 上下文**(一台舞台一个,`StreamPlayer` 拿着)。
+ * **A single WebGL context shared across all stream planes** (one per stage, held by
+ * `StreamPlayer`).
  *
- * 为什么不是每块平面一个:浏览器一页最多给 16 个 WebGL 上下文,超出的把最早建的那个丢掉、不还
- * (`docs/reports/AGENT-rr-merged-eval.md` 第 4 节:24 层丢 8 个、30 层丢 14 个,丢了的层一帧没画);
- * 舞台里 canvas 卡的共享渲染器、卡片自己的 WebGL 也占名额。
+ * Why not one per plane: a browser gives at most 16 WebGL contexts per page; any beyond that
+ * evicts the earliest created one without restoring it (`docs/reports/AGENT-rr-merged-eval.md`
+ * Section 4: 8 lost out of 24 layers, 14 lost out of 30 layers; lost layers never drew a frame);
+ * the shared renderer of canvas cards and cards' own WebGL in the stage also occupy slots.
  *
- * 做法:一块**不挂进文档**的离屏画布建上下文;每画一帧,把这一帧上传成纹理、照原来的着色器拆两半画到离屏画布的左上角
- * (`rect.w × rect.h`,一比一),平面自己的 2D 画布当场 `drawImage` 取走。选它而不选 `transferToImageBitmap` 加
- * `bitmaprenderer`:后者每次交出去都要给离屏画布重新分配一块后备缓冲,各平面尺寸不同还得每帧改离屏画布的尺寸;
- * 2D 取走是显卡上的一次拷贝,离屏画布只长不缩。画面与每块平面一个上下文时逐像素相同(同一份报告第 4 节,差 0):
- * 离屏画布按预乘色输出(`premultipliedAlpha: true`),2D 画布内部存的也是预乘色,先清空再一比一不缩放地画上去,数值原样过去。
- * 离屏画布不留绘图缓冲(`preserveDrawingBuffer: false`):每次都是先把要的那一块整块画满、同一个任务里当场取走,用不着留;
- * 留着的话每次取走都多一份拷贝(`scripts/probes/stream-budget-probe.mjs` 量的:同屏 30 条小卡流每拍 4.2 毫秒对 3.1 毫秒)。
+ * Approach: an offscreen canvas **not attached to the document** creates the context; for each
+ * frame drawn, that frame is uploaded as a texture and split in half according to the original
+ * shader to draw onto the top-left of the offscreen canvas (`rect.w × rect.h`, 1:1), and the
+ * plane's own 2D canvas fetches it on the spot with `drawImage`. This was chosen over
+ * `transferToImageBitmap` plus `bitmaprenderer`: the latter must reallocate a back buffer for the
+ * offscreen canvas on every handoff, and since planes have different sizes, the offscreen canvas
+ * size would have to change each frame; a 2D fetch is a single copy on the GPU, and the offscreen
+ * canvas only grows, never shrinking. The picture is pixel-by-pixel identical to having one context
+ * per plane (Section 4 of the same report, diff 0): the offscreen canvas outputs in premultiplied
+ * color (`premultipliedAlpha: true`), the 2D canvas also stores premultiplied color internally,
+ * and clearing first then drawing 1:1 without scaling passes values through as-is. The offscreen
+ * canvas does not preserve drawing buffers (`preserveDrawingBuffer: false`): each time, the
+ * needed rect is fully drawn first and fetched immediately within the same task, so there is no
+ * need to keep it; keeping it adds an extra copy on each fetch (measured by
+ * `scripts/probes/stream-budget-probe.mjs`: 30 concurrent small-card streams on screen, 4.2 ms vs
+ * 3.1 ms per tick).
  *
- * 代价(同一支探针,30 帧每秒、704×864 的小卡流,每拍 `present` 的平均毫秒,前面是每块平面一个上下文):1 条 0.20 对 0.28,
- * 6 条 0.57 对 0.80,16 条 1.24 对 1.65;30 条时原来的画法丢 14 个上下文、14 块平面是空的,共用以后 30 块都画、2.74。
- * 折下来每条流每拍多 0.03～0.08 毫秒(多出来的是离屏画布到 2D 画布那一次取走;各轮的数见 `docs/reports/AGENT-rr-pixel-budget.md`)。
- * 还能省:一拍里的各条先画进一张图集、再一起取走(评估报告量的那种画法,每拍基本不多花),没有做。
+ * Cost (same probe, 30 fps, 704×864 small-card streams, average milliseconds per `present` tick,
+ * former is one context per plane): 1 stream 0.20 vs 0.28, 6 streams 0.57 vs 0.80, 16 streams
+ * 1.24 vs 1.65; at 30 streams, the original approach lost 14 contexts with 14 planes empty, whereas
+ * with sharing, all 30 planes draw, taking 2.74. Broken down, that is an extra 0.03 to 0.08 ms per
+ * stream per tick (the overhead is that single fetch from offscreen canvas to 2D canvas; numbers
+ * for each round in `docs/reports/AGENT-rr-pixel-budget.md`). Further savings are possible: draw
+ * streams within a tick into an atlas first, then fetch together (the approach measured in the
+ * evaluation report, adding virtually no cost per tick); not implemented.
  *
- * 上下文丢了(显卡进程重启、名额被别的画布挤掉):平面的 2D 画布不受影响,上一张画面还在;这期间新的一帧画不上,
- * 照「这一拍画不出来」办(留着上一张、到时占位符)。浏览器还回来(`webglcontextrestored`)就重建着色器和纹理;
- * `GL_RETRY_MS` 以后还没还(被挤掉的不还)就扔掉这块离屏画布另建一块;另建也没建出来的,隔一会儿再试(间隔每次加倍,最长
- * `GL_RETRY_MAX_MS`)。每一种都约播放器到点把这一帧再走一遍(暂停着没有下一拍)。
+ * When context is lost (GPU process restarted, slot evicted by another canvas): the plane's 2D
+ * canvas is unaffected, and the previous picture remains; during this time, new frames cannot be
+ * drawn, treated as "cannot draw on this tick" (retain previous picture, use placeholder when time
+ * expires). When the browser restores it (`webglcontextrestored`), rebuild shaders and textures;
+ * if not restored after `GL_RETRY_MS` (evicted ones are never restored), discard this offscreen
+ * canvas and create a new one; if creating anew fails, retry after a while (doubling interval each
+ * time, up to `GL_RETRY_MAX_MS`). In each case, schedule with the player to rerun this frame when
+ * the time comes (when paused, there is no next tick).
  */
 class SharedGl {
   private canvas: GlCanvas | null = null;
@@ -580,14 +696,17 @@ class SharedGl {
   private uHalf: WebGLUniformLocation | null = null;
   private lostAt: number | null = null;
   private failedAt: number | null = null;
-  /** 接连建不出来几次了(建成一次清零);下一次隔多久再试按它加倍 */
+  /** Consecutive creation failure count (cleared on success); retry interval doubles based on this */
   private failures = 0;
   private onLost: () => void;
   private onBack: () => void;
   private onRetry: (ms: number) => void;
   stats = { creates: 0, losses: 0, restores: 0, failures: 0, draws: 0, lastError: "" };
 
-  /** `onRetry(ms)`:这一刻画不了,过 `ms` 毫秒值得再试一次(播放器据此排一个真定时器把这一帧再走一遍;暂停着没有下一拍) */
+  /**
+   * `onRetry(ms)`: cannot draw at this moment; worth retrying after `ms` milliseconds (player
+   * schedules a real timer based on this to replay this frame; when paused, there is no next tick)
+   */
   constructor(onLost: () => void, onBack: () => void, onRetry: (ms: number) => void) {
     this.onLost = onLost;
     this.onBack = onBack;
@@ -596,7 +715,7 @@ class SharedGl {
 
   private get retryMs(): number { return Math.min(GL_RETRY_MAX_MS, GL_RETRY_MS * 2 ** Math.max(0, this.failures - 1)); }
 
-  /** 着色器、顶点、纹理(新建上下文和上下文还回来以后各做一次) */
+  /** Shaders, vertices, and textures (run once after context creation and once after restoration) */
   private setup(gl: WebGLRenderingContext): void {
     const shader = (type: number, src: string) => {
       const s = gl.createShader(type)!;
@@ -640,17 +759,18 @@ class SharedGl {
     const now = realNow();
     if (this.gl && this.lostAt === null) return this.gl;
     if (this.gl) {
-      // 丢了:先等浏览器还;等够了还没还(被别的画布挤掉的不还)就另建
+      // Lost: wait for browser to restore; if not restored after timeout (evicted ones never do), rebuild
       const waited = now - (this.lostAt as number);
       if (waited < GL_RETRY_MS) { this.onRetry(GL_RETRY_MS - waited); return null; }
       this.drop();
     }
-    // 上一次没建出来:隔一会儿再试(接连失败间隔加倍);这期间有人要画,就约好到点再走一遍
+    // Failed to build last time: retry after a while (interval doubles on consecutive failures);
+    // if requested to draw during this period, schedule to rerun once the timer fires
     if (this.failedAt !== null && now - this.failedAt < this.retryMs) { this.onRetry(this.retryMs - (now - this.failedAt)); return null; }
     try {
       const canvas = newGlCanvas();
       const gl = canvas?.getContext("webgl", { premultipliedAlpha: true, alpha: true, preserveDrawingBuffer: false, antialias: false }) as WebGLRenderingContext | null;
-      if (!canvas || !gl) throw new Error("轨道流拿不到 WebGL 上下文");
+      if (!canvas || !gl) throw new Error("Track stream could not get a WebGL context");
       this.setup(gl);
       const target = canvas as unknown as Partial<EventTarget>;
       target.addEventListener?.("webglcontextlost", (e) => {
@@ -683,18 +803,20 @@ class SharedGl {
   }
 
   /**
-   * 把一帧(上下拼合)拆两半、合成预乘色,画到离屏画布左上角的 `w × h`(一比一)。回离屏画布,调用方**当场**取走那一块;
-   * 画不了(没有上下文、上下文丢着)回 null。`w`、`h` 是这一帧所在变体的矩形的宽高。
+   * Splits a frame (top-bottom stacked) in half, composites premultiplied color, and draws to
+   * top-left `w × h` of the offscreen canvas (1:1). Returns offscreen canvas; caller fetches that
+   * rect **on the spot**; returns null if unable to draw (no context, context lost). `w` and `h` are
+   * width and height of the rectangle of the variant containing this frame.
    */
   render(frame: VideoFrame, w: number, h: number): GlCanvas | null {
     const gl = this.ensure();
     const c = this.canvas;
     if (!gl || !c) return null;
-    // 只长不缩:改 WebGL 画布的尺寸要重新分配后备缓冲
+    // Only grows, never shrinks: changing WebGL canvas dimensions reallocates the back buffer
     if (c.width < w) c.width = w;
     if (c.height < h) c.height = h;
     const total = frame.displayHeight || frame.codedHeight;
-    // WebGL 的原点在左下:画布左上角的 w × h
+    // WebGL origin is at bottom-left: w × h at canvas top-left
     gl.viewport(0, c.height - h, w, h);
     gl.uniform1f(this.uAlphaTop, (h + 8) / total);
     gl.uniform1f(this.uHalf, h / total);
@@ -706,7 +828,10 @@ class SharedGl {
     return c;
   }
 
-  /** 舞台退到 `back`:离屏画布缩回最小(放掉后备缓冲),上下文留着,下一次当 `front` 不用重建 */
+  /**
+   * Stage yields to `back`: offscreen canvas shrinks to minimum (releases back buffer); context
+   * is kept so next time it acts as `front` it does not need rebuilding
+   */
   shrink(): void {
     const c = this.canvas;
     if (!c || this.lostAt !== null) return;
@@ -717,7 +842,7 @@ class SharedGl {
   get state(): "none" | "ready" | "lost" { return !this.gl ? "none" : this.lostAt !== null ? "lost" : "ready"; }
 }
 
-/** 一块流平面:自己只有一个 2D 上下文,合成在共用的 `SharedGl` 里做 */
+/** A stream plane: only has a 2D context of its own; compositing is done in shared `SharedGl` */
 class PlaneCompositor {
   readonly canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -727,10 +852,10 @@ class PlaneCompositor {
     this.canvas = canvas;
     this.shared = shared;
     const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("轨道流平面拿不到 2D 上下文");
+    if (!ctx) throw new Error("Track stream plane could not get a 2D context");
     this.ctx = ctx;
   }
-  /** 画布的位置和尺寸 = 流的矩形上界(平面坐标)。只在变了的时候写 */
+  /** Canvas position and size = stream bounding box (plane coordinates). Written only when changed */
   place(bound: StreamRect): void {
     const c = this.canvas;
     if (c.width !== bound.w) c.width = bound.w;
@@ -740,9 +865,12 @@ class PlaneCompositor {
     for (const [k, v] of Object.entries(want)) if (s.getPropertyValue(k) !== v) s.setProperty(k, v);
   }
   /**
-   * 画一帧。`rect` 是这一帧所在变体的矩形(平面坐标),`bound` 是画布覆盖的矩形。共用的上下文这一刻画不了回 false,
-   * **画布上原来那一张原样不动**:画布的位置和尺寸是画得了才改的(改 2D 画布的宽高会把它清空;清单的 `bound` 变了而上下文丢着时,
-   * 先改尺寸的话上一张就没了,账上却还记着有画面)。
+   * Draws a frame. `rect` is the rectangle of the variant containing this frame (plane coordinates),
+   * and `bound` is the rectangle covered by the canvas. Returns false if shared context cannot draw
+   * at this moment, **leaving the original picture on the canvas untouched**: canvas position and
+   * size are updated only when drawing succeeds (changing 2D canvas dimensions clears it; if manifest
+   * `bound` changes while context is lost, resizing first erases the previous picture while books
+   * still record that a picture is present).
    */
   draw(frame: VideoFrame, rect: StreamRect, bound: StreamRect): boolean {
     const src = this.shared.render(frame, rect.w, rect.h);
@@ -750,7 +878,8 @@ class PlaneCompositor {
     this.place(bound);
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    // 一比一、不缩放:离屏画布左上角的 rect.w × rect.h 原样搬到平面上这一帧的矩形里
+    // 1:1, unscaled: rect.w × rect.h from offscreen canvas top-left copied as-is into this frame's
+    // rectangle on the plane
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(src, 0, 0, rect.w, rect.h, rect.x - bound.x, rect.y - bound.y, rect.w, rect.h);
     this.blank = false;
@@ -765,11 +894,15 @@ class PlaneCompositor {
 }
 
 /* ======================================================================== *
- * 一条流
+ * A stream
  * ======================================================================== */
 
 interface HeldFrame { frame: VideoFrame; segment: number }
-/** `rect`:拉这一份字节时清单里它那个变体的矩形(之后清单换了、这一段换成别的变体,手里这份解出来的帧仍按它摆) */
+/**
+ * `rect`: rectangle of its variant in the manifest when fetching these bytes (if manifest
+ * changes later and this segment switches to another variant, decoded frames on hand still lay
+ * out by it)
+ */
 interface SegmentData { buf: ArrayBuffer; samples: SegmentSample[]; init: string; file: string; rect: StreamRect | null }
 
 class StreamTrack {
@@ -792,36 +925,61 @@ class StreamTrack {
   private fetching = new Map<number, Promise<void>>();
   private lastDrawn: number | null = null;
   /**
-   * 画布上现在这一张的另一份引用。包裹层被按片段重挂载(停下追帧的起步)时画布会换成一块新的、空的,
-   * 靠它把刚才那张原样画回去,不等解码;换了画面 / 清空时关掉。
+   * Another reference to the current picture on the canvas. When the wrapper layer is remounted by
+   * clip (stopping frame catch-up start), canvas is replaced with a new empty one; this is relied on
+   * to redraw that picture as-is without waiting for decode; closed when picture changes or clears.
    */
   private shown: { frame: VideoFrame; f: number } | null = null;
   private wantFrame: number | null = null;
-  /** `wantFrame` 换成现在这个值的真实时刻 */
+  /** Real timestamp when `wantFrame` was updated to current value */
   private wantAt = 0;
-  /** 在途的那一次寻帧要解到哪一帧(解出这一帧或更后的帧就清掉)和它发起的真实时刻 */
+  /**
+   * Target frame for in-flight frame seek (cleared once this frame or later is decoded) and the
+   * real timestamp when initiated
+   */
   private seekTarget: number | null = null;
   private seekAt = 0;
-  /** 这一次寻帧以来喂给解码器几块了。一块都还没喂(字节没到、解码器没建)时换目标不花什么,不用让着它 */
+  /**
+   * Number of chunks fed to decoder since this frame seek. When none fed yet (bytes not arrived,
+   * decoder not created), changing target costs little, so no need to yield to it
+   */
   private fedSinceSeek = 0;
-  /** 寻帧之后还没把要的画面画出来(量「从要这一帧到画出来」用) */
+  /**
+   * Requested picture not yet drawn after frame seek (used to measure "from requesting frame to
+   * drawing")
+   */
   private seeking = false;
-  /** 最近一次寻帧:要的哪一帧、从要到画出来的毫秒(只记录;探针量随机跳帧的解码耗时) */
+  /**
+   * Most recent frame seek: target frame, milliseconds from request to drawing (recording only;
+   * probe measures decode latency of random frame jumps)
+   */
   private lastSeek: { frame: number; ms: number } | null = null;
-  /** 稀疏段的替身:寻帧时,不晚于目标帧的最近一张是这一帧 —— 它一解出来就先画上 */
+  /**
+   * Stand-in for sparse segment: during frame seek, the closest frame not later than target
+   * frame is this one: drawn immediately once decoded
+   */
   private standIn: number | null = null;
-  /** 画着的不是要的那一张,从什么时候起(真实毫秒);画上要的那一张就清掉 */
+  /**
+   * Timestamp (real ms) since drawn picture differs from requested one; cleared when requested
+   * picture is drawn
+   */
   private staleSince: number | null = null;
   private staleTimer = false;
   private refreshTimer = false;
-  /** 喂进解码器、还没出来的帧数(`decodeQueueSize` 只数还没交给解码器的,解码器里正在解的不算) */
+  /**
+   * Number of frames fed into decoder but not yet output (`decodeQueueSize` only counts frames
+   * not yet submitted to decoder, excluding those currently decoding)
+   */
   private pending = 0;
   private pumpQueued = false;
   private disposed = false;
-  /** 最低一档:送去解、还没出来的那一块是哪一帧(分段的第一帧),和送的真实时刻 */
+  /**
+   * Lowest tier: which frame is in chunk sent for decoding but not yet output (first frame of
+   * segment), and the real timestamp when sent
+   */
   private firstFed: number | null = null;
   private firstFedAt = 0;
-  /** 最低一档:解码器连着报错几次了(解出一帧就清零) */
+  /** Lowest tier: consecutive decoder error count (cleared once a frame is decoded) */
   private firstFailures = 0;
   bytesPerFrame = 1920 * 2176 * 1.5;
   stats = { decoded: 0, drawn: 0, holds: 0, blanks: 0, seeks: 0, deferred: 0, standIns: 0, seekMaxMs: 0, errors: 0, maxHeld: 0, lastError: "" };
@@ -834,7 +992,7 @@ class StreamTrack {
     if (plane.manifest) this.adoptPushed(plane.manifest);
   }
 
-  /** 父页随平面带来的清单:直接用,不去问字节源 */
+  /** Manifest brought by parent page with plane: use directly without querying byte source */
   private adoptPushed(manifest: StreamManifest): void {
     this.manifest = manifest;
     this.manifestAt = realNow();
@@ -842,28 +1000,44 @@ class StreamTrack {
   }
 
   /**
-   * 清单到了:把**还没有画面的**画布摆到流的矩形上界(被抑制的卡要有一块能点中的框)。上面已经有画面的不动 ——
-   * 改宽高会清空它;下一次画得上的时候 `PlaneCompositor.draw` 自己会摆。
+   * Manifest arrived: places canvases **without pictures yet** at the stream bounding box (suppressed
+   * cards must have a clickable box). Those already with pictures are left untouched: resizing width
+   * and height clears them; `PlaneCompositor.draw` positions them itself next time drawing succeeds.
    */
   private placeBlank(bound: StreamRect): void {
     if (this.lastDrawn !== null) return;
     this.ensureCompositor()?.place(bound);
   }
 
-  /** 这条流的字节从哪来:带了清单的平面只认父页推来的块,否则是播放器的字节源(桌面:预渲染进程) */
+  /**
+   * Where stream bytes come from: planes with manifests only accept chunks pushed by parent
+   * page; otherwise player's byte source (desktop: prerender process)
+   */
   private get bytes(): StreamSource { return this.plane.manifest ? this.player.pushed : this.player.source; }
 
   get key(): string { return this.plane.key ?? ""; }
   private get fps(): number { return this.manifest?.fps || this.player.fps; }
-  /** 这条流自己的第一帧(项目帧号);播放器只收带着它的平面(`StreamPlayer.setPlanes`) */
+  /**
+   * First frame of this stream itself (project frame number); player only accepts planes
+   * carrying it (`StreamPlayer.setPlanes`)
+   */
   private get origin(): number { return this.plane.originFrame as number; }
-  /** 项目帧号 → 这条流的分段号(早于第一帧的是负数,就绪区间里不会有) */
+  /**
+   * Project frame number → segment number for this stream (negative before first frame; none in ready
+   * interval)
+   */
   private segmentOf(f: number): number { return streamSegmentOf(f, this.origin); }
-  /** 这个分段的第一帧(项目帧号) */
+  /** First frame of this segment (project frame number) */
   private segmentStart(seg: number): number { return streamSegmentFirstFrame(seg, this.origin); }
-  /** 最低一档:每个分段只解第一帧(父页随流平面带的 `first`) */
+  /**
+   * Lowest tier: decodes only the first frame of each segment (`first` carried by parent page with
+   * stream plane)
+   */
   private get firstOnly(): boolean { return this.plane.first === true; }
-  /** 此刻占着解码器输出池的帧:手里没关的 + 喂进去还没出来的 + 画布上那一张(它已经不在手里时另算一块) */
+  /**
+   * Frames currently occupying decoder output pool: unclosed on hand + fed in but not yet
+   * output + one on canvas (counted as another chunk when no longer on hand)
+   */
   get heldCount(): number { return this.frames.size + this.pending + (this.shown && !this.frames.has(this.shown.f) ? 1 : 0); }
 
   private ensureCompositor(): PlaneCompositor | null {
@@ -874,8 +1048,10 @@ class StreamTrack {
   }
 
   /**
-   * 异步的料(清单 / init / 分段)到了:按这一拍要的帧再走一遍 `present`。暂停 / 拖动时没有下一拍来叫它,
-   * 不这样的话随机访问会停在「清单刚到、还没开始解」那一步。同一个微任务里只走一次。
+   * Async data (manifest / init / segment) arrived: reruns `present` for the frame needed on this
+   * tick. When paused or scrubbing, there is no next tick to trigger it, and without this, random
+   * access would stall at "manifest just arrived, decode not yet started". Runs only once per
+   * microtask.
    */
   private wakeQueued = false;
   private wake(): void {
@@ -888,17 +1064,19 @@ class StreamTrack {
   }
 
   /**
-   * 同一个流键的就绪区间变了(生产者发布了新分段):下一次 `present` 允许再问一次清单(疑点 G)。
-   * 真的发出去了才清掉 —— 被节流挡回来的话留着,下一拍再试。
+   * Ready interval changed for the same stream key (producer published a new segment): next `present`
+   * is allowed to query manifest once more (suspicion G). Cleared only when actually sent: retained
+   * if throttled back, retried on next tick.
    */
   private manifestDirty = false;
 
   /**
-   * 清单:没有就拉;`force` 时隔 2 秒以上再拉一次(分段会被替换:稀疏 → 满帧)。
-   * 回这一次有没有真的发起。
+   * Manifest: fetched if absent; with `force`, refetched if over 2s elapsed (segments can be
+   * replaced: sparse → full frame). Returns whether this request was actually initiated.
    */
   private loadManifest(force = false): boolean {
-    // 清单由父页推来的流:没有可问的地方,等父页下一次带新的来(`setPlane`)
+    // Streams whose manifests are pushed by parent page: nowhere to query; wait for parent page to
+    // bring a new one next time (`setPlane`)
     if (this.plane.manifest) return false;
     if (!this.key || this.manifestLoading) return false;
     const now = realNow();
@@ -910,16 +1088,20 @@ class StreamTrack {
         if (this.disposed) return;
         this.manifest = m;
         this.manifestAt = realNow();
-        // 清单一到就把画布摆到流的矩形上界:还没画出第一帧时,被抑制的卡也要有一块能点中的框
+        // Once manifest arrives, place canvas at stream bounding box: before first frame is drawn,
+        // suppressed cards must also have a clickable box
         this.placeBlank(m.bound);
         this.wake();
       })
-      .catch(() => { /* 还没就绪:这一层这一拍落到兜底顺序的下一步(快照 / 占位符),下一拍再说 */ })
+      .catch(() => { /*
+ * Not ready yet: this layer falls to next step in fallback order on this tick (snapshot /
+ * placeholder); retry next tick
+ */ })
       .finally(() => { this.manifestLoading = null; });
     return true;
   }
 
-  /** 一个 init(变体)的解码器配置 */
+  /** Decoder configuration for an init (variant) */
   private loadInit(id: string): void {
     if (this.inits.has(id) || this.initLoading.has(id) || !this.key) return;
     const work = this.bytes.init(this.key, id)
@@ -937,7 +1119,7 @@ class StreamTrack {
     this.initLoading.set(id, work);
   }
 
-  /** 分段整段拉,每流最多 2 个在途 */
+  /** Fetch whole segments; at most 2 in-flight per stream */
   private loadSegment(n: number): void {
     if (this.segments.has(n) || this.fetching.has(n) || this.fetching.size >= MAX_INFLIGHT_PER_STREAM || !this.manifest) return;
     const meta = this.manifest.segments[String(n)];
@@ -946,12 +1128,12 @@ class StreamTrack {
       .then((buf) => {
         if (this.disposed) return;
         this.segments.set(n, { buf, samples: parseSegment(buf), init: meta.init, file: meta.file, rect: this.manifest?.inits[meta.init]?.rect ?? null });
-        // 留当前段和它前后各一段,别的扔掉
+        // Keep current segment and one segment before and after; discard others
         for (const k of [...this.segments.keys()]) if (Math.abs(k - n) > 2) this.segments.delete(k);
         this.wake();
       })
       .catch(() => {
-        // 被替换删掉了(G6)或者还没就绪:下一次按新清单拉
+        // Deleted by replacement (G6) or not yet ready: fetch by new manifest next time
         this.loadManifest(true);
       })
       .finally(() => { this.fetching.delete(n); });
@@ -967,7 +1149,8 @@ class StreamTrack {
         this.stats.lastError = String(e?.message || e);
         if (this.decoder === decoder) {
           this.decoder = null; this.configuredInit = null; this.nextFeed = null; this.pending = 0; this.seekTarget = null; this.standIn = null;
-          // 最低一档:送去的那一块没了,记一次失败;没到上限就按此刻要的那一帧再送一次(暂停着没有下一拍来叫)
+          // Lowest tier: sent chunk is gone, record one failure; if below limit, resend for frame
+          // currently needed (when paused, there is no next tick to trigger it)
           if (this.firstOnly) { this.firstFed = null; this.firstFailures++; this.wake(); }
         }
       },
@@ -979,13 +1162,14 @@ class StreamTrack {
     if (this.pending > 0) this.pending--;
     const f = frameOfTimestamp(frame.timestamp, this.fps);
     if (this.firstOnly) { this.onFirstFrame(frame, f); return; }
-    // 在途的那一次寻帧解到了
+    // The in-flight frame seek has resolved
     const reached = this.seekTarget !== null && f >= this.seekTarget;
     if (reached) this.seekTarget = null;
     if (this.disposed) {
       frame.close();
     } else {
-      // 稀疏段的替身:此刻要的那一帧和它是同一张画面,先画上(下面照常处理这一帧:多半比目标帧早,画完就关)
+      // Stand-in for sparse segment: requested frame shares picture with it, draw first (handle this
+      // frame normally below: mostly earlier than target frame, closed after drawing)
       if (this.standIn === f) {
         this.standIn = null;
         if (this.wantFrame !== null && this.wantFrame !== f && this.pictureOf(this.wantFrame) === f && this.drawFrame(frame, f)) this.stats.standIns++;
@@ -996,29 +1180,32 @@ class StreamTrack {
         this.frames.set(f, { frame, segment: this.segmentOf(f) });
         this.stats.decoded++;
         this.stats.maxHeld = Math.max(this.stats.maxHeld, this.heldCount);
-        // 随机访问:目标帧出来了就立刻画,不等下一拍
+        // Random access: draw immediately once target frame is output, without waiting for next tick
         if (this.wantFrame === f) this.drawAt(f);
         /*
-         * 寻帧期间目标又换了(连着拖):解出来的这一帧先画上,画面跟着走;下面再按此刻要的那一帧重新寻。
-         * 还没有画面时只画「够新」的(`FIRST_PICTURE_LAG_MS`):宿主等第一张画面出来才藏活子树。
+         * Target changed again during frame seek (continuous scrubbing): draw this decoded frame first so
+         * picture follows along; re-seek below for the frame needed now. When there is no picture yet, draw
+         * only "recent enough" frames (`FIRST_PICTURE_LAG_MS`): host hides live subtree only after first
+         * picture appears.
          */
         else if (reached && (this.lastDrawn !== null || realNow() - this.seekAt <= FIRST_PICTURE_LAG_MS)) this.drawAt(f);
       }
     }
     if (reached && !this.disposed && this.wantFrame !== null && this.wantFrame !== f) this.wake();
-    // 腾出了位置:接着喂(暂停态没有下一拍来叫它,随机访问要一路解到目标帧)
+    // Space freed up: keep feeding (paused state has no next tick to trigger it; random access
+    // must decode all the way to target frame)
     if (!this.pumpQueued && !this.disposed) {
       this.pumpQueued = true;
       queueMicrotask(() => { this.pumpQueued = false; this.pump(); });
     }
   }
 
-  /** 手里解好的帧全部放掉、解码器重置(下一块必须是关键帧) */
+  /** Release all decoded frames on hand, reset decoder (next chunk must be a keyframe) */
   private resetDecode(): void {
     for (const h of this.frames.values()) h.frame.close();
     this.frames.clear();
     if (this.decoder && this.decoder.state !== "closed") {
-      try { this.decoder.reset(); } catch { /* 已经坏了 */ }
+      try { this.decoder.reset(); } catch { /* Already broken */ }
     }
     this.pending = 0;
     this.configuredInit = null;
@@ -1028,7 +1215,10 @@ class StreamTrack {
     this.firstFed = null;
   }
 
-  /** 跳段 / 起步:从目标所在分段的 IDR 起解,目标之前的帧一出来就关 */
+  /**
+   * Segment jump / start: decode starting from IDR of segment containing target; close frames
+   * before target as soon as they output
+   */
   private seek(f: number): void {
     this.stats.seeks++;
     this.resetDecode();
@@ -1037,14 +1227,18 @@ class StreamTrack {
     this.seekTarget = f;
     this.seekAt = realNow();
     this.seeking = true;
-    // 稀疏段:这一帧和不晚于它的最近一张是同一张画面,那一张先解出来(离关键帧更近)
+    // Sparse segment: this frame and closest frame not later than it share the same picture; that
+    // one decodes first (closer to keyframe)
     const picture = this.pictureOf(f);
     this.standIn = picture !== f ? picture : null;
   }
 
   /**
-   * 这一帧所在分段的变体矩形。手里有这一段的字节时用拉它时记下的矩形:清单重问以后这一段可能已经换成别的变体
-   * (稀疏版按上界产、满密度按收紧矩形产),而换文件只在分段起点做(`pump`),段中间画的还是手里这份解出来的帧。
+   * Variant rectangle of the segment containing this frame. When bytes for this segment are in hand,
+   * use the rectangle recorded when fetching it: after re-querying the manifest, this segment may
+   * have been replaced with another variant (sparse version is produced with upper bounds, full
+   * density with tight rectangles), but file switching only happens at segment starts (`pump`);
+   * mid-segment still draws the frames decoded from what is currently in hand.
    */
   private rectOf(f: number): StreamRect | null {
     const held = this.segments.get(this.segmentOf(f));
@@ -1055,12 +1249,15 @@ class StreamTrack {
   }
 
   /**
-   * 项目的第 F 帧在这条流里是哪一张画面(项目帧号)。满密度的分段就是它自己;稀疏分段(清单里 `stride` 大于 1)里每 `stride` 个样本
-   * 是同一张,取不晚于这一帧的最近一张 —— **只往回找**,不拿后面的。`stride` 不整除分段帧数时不认(没法确定重复是从哪一个样本数起的),
-   * 当成每个样本各是一张,照样解到这一帧自己。
+   * Which frame image (project frame number) in this stream corresponds to project frame F.
+   * Full-density segments are just the frame itself; in sparse segments (`stride` > 1 in the
+   * manifest), every `stride` samples share the same image: take the latest one no later than this
+   * frame: **only search backward**, do not take later ones. If `stride` does not evenly divide the
+   * segment frame count, reject it (cannot determine which sample repetition starts from), treat each
+   * sample as a distinct image, and decode up to this frame itself as usual.
    */
   private pictureOf(f: number): number {
-    // 最低一档:不管这一段多密,都是分段第一帧那一张
+    // Lowest tier: regardless of how dense this segment is, always the first frame of the segment
     if (this.firstOnly) return streamFirstFrameOf(f, this.origin);
     const seg = this.segmentOf(f);
     const stride = this.manifest?.segments[String(seg)]?.stride ?? 1;
@@ -1069,20 +1266,26 @@ class StreamTrack {
     return start + Math.floor((f - start) / stride) * stride;
   }
 
-  /** 画布上现在这一张是不是第 F 帧该有的画面(稀疏段里同一张画面管好几帧) */
+  /**
+   * Whether what is on the canvas right now is the expected image for frame F (in sparse segments,
+   * one image covers multiple frames)
+   */
   private fresh(f: number): boolean {
     return this.lastDrawn !== null && this.pictureOf(this.lastDrawn) === this.pictureOf(f);
   }
 
   private closeShown(): void {
     if (!this.shown) return;
-    try { this.shown.frame.close(); } catch { /* 已经关了 */ }
+    try { this.shown.frame.close(); } catch { /* Already closed */ }
     this.shown = null;
   }
 
   /**
-   * 清单说的坐标系和这块画布对得上:清单写着 `stage` 的流只画在舞台根下的画布上,写着 `local` 的只画在包裹层里的画布上。
-   * 对不上(父页没说这是依赖下层的流、而清单是)就不画 —— 画上去位置和外观都是错的,宁可落到占位符。清单没写的照旧画。
+   * The coordinate system in the manifest matches this canvas: streams marked `stage` in the
+   * manifest are drawn only on the canvas under the stage root; streams marked `local` only on the
+   * canvas inside the wrapper layer. If they do not match (parent page did not state this is a
+   * below-dependent stream, but manifest did), do not draw: drawing results in wrong position and
+   * appearance, so fall back to placeholder instead. Streams omitted in manifest are drawn as usual.
    */
   private get planeFits(): boolean {
     const said = this.manifest?.plane;
@@ -1090,12 +1293,13 @@ class StreamTrack {
     return (said === "stage") === stagePlane(this.plane);
   }
 
-  /** 把一帧画到平面上(这一帧记在项目的第 `f` 帧上) */
+  /** Draw a frame onto the plane (this frame is recorded at project frame `f`) */
   private drawFrame(frame: VideoFrame, f: number): boolean {
     const rect = this.rectOf(f);
     const compositor = this.ensureCompositor();
     if (!rect || !compositor || !this.manifest || !this.planeFits) return false;
-    // 共用的上下文这一刻画不了(丢着):当这一拍没画上,留着上一张(画布的位置和尺寸也不动,见 `PlaneCompositor.draw`)
+    // Shared context cannot draw at this moment (lost): treat this tick as not drawn, keep previous
+    // image (canvas position and size remain unchanged, see `PlaneCompositor.draw`)
     if (!compositor.draw(frame, rect, this.manifest.bound)) return false;
     const was = this.lastDrawn;
     this.lastDrawn = f;
@@ -1114,7 +1318,8 @@ class StreamTrack {
         if (ms > this.stats.seekMaxMs) this.stats.seekMaxMs = ms;
       }
     } else if (this.staleSince !== null) {
-      // 画上的是在途那一次寻帧的结果,不是此刻要的那一张:算有了新画面,留多久从这一刻重新算
+      // What was drawn is the result of the in-flight seek, not the one needed right now: count as having
+      // a new image, and recalculate retention duration from this moment
       this.staleSince = realNow();
     }
     if (was === null) this.player.noteShowing();
@@ -1126,7 +1331,7 @@ class StreamTrack {
     return held ? this.drawFrame(held.frame, f) : false;
   }
 
-  /** 画布换了一块(包裹层重挂载):把刚才那张原样画回去。画不了回 false */
+  /** Canvas replaced (wrapper layer remounted): redraw previous image as is. Returns false if cannot draw */
   private redraw(): boolean {
     const shown = this.shown;
     const rect = shown ? this.rectOf(shown.f) : null;
@@ -1150,9 +1355,11 @@ class StreamTrack {
   }
 
   /**
-   * 这一拍要的画面没画上:留着上一张,最多留一个分段的时长(`HOLD_FRAMES`,真实时间);到时还没有新画面就清空,
-   * 这一层落到占位符(mechanism/rendering.md「兜底顺序」)。第一次进来时排一个真定时器 —— 暂停着没有下一拍,
-   * 不排的话旧画面会一直留着。本来就没有画面的,保持清空。
+   * The image needed for this tick was not drawn: keep the previous image for at most one segment
+   * duration (`HOLD_FRAMES`, real time); if there is still no new image when expired, clear it,
+   * and fall back this layer to placeholders (mechanism/rendering.md "Fallback order"). Schedule a
+   * real timer on first entry: when paused there is no next tick, and without scheduling the old
+   * image would remain indefinitely. If there was originally no image, keep it cleared.
    */
   private miss(): void {
     if (this.lastDrawn === null) { this.blank(); return; }
@@ -1169,30 +1376,44 @@ class StreamTrack {
     }, Math.max(1, holdMs - (now - this.staleSince)) + 20);
   }
 
-  /** 这一拍流画面在不在(画了、或留着上一张)。占位符 T1 按它判 */
+  /**
+   * Whether stream image is present this tick (drawn, or keeping previous). Placeholder T1 is decided
+   * by this
+   */
   get showing(): boolean { return this.lastDrawn !== null; }
 
-  /** 这一拍画的是满帧段还是稀疏段(兜底顺序第 1 / 2 步;探针按它分级)。没画面时 null */
+  /**
+   * Whether this tick draws a full-frame segment or a sparse segment (fallback order steps 1 / 2;
+   * probe classifies by it). null when no image
+   */
   get level(): "dense" | "sparse" | null {
     if (this.lastDrawn === null) return null;
-    // 最低一档贴的一律是分段第一帧那一张(照稀疏版的样子),不看清单里这一段多密
+    // The lowest tier always pastes the first frame of the segment (like the sparse version),
+    // regardless of how dense this segment is in the manifest
     if (this.firstOnly) return "sparse";
     const meta = this.manifest?.segments[String(this.segmentOf(this.lastDrawn))];
     return (meta?.stride ?? 1) > 1 ? "sparse" : "dense";
   }
 
-  /** 实体框(清单的收紧矩形,没有就用上界;平面坐标)。占位符的几何按它摆 */
+  /**
+   * Entity box (tight rectangle from manifest, or upper bound if absent; plane coordinates).
+   * Placeholder geometry is laid out from it
+   */
   get box(): StreamRect | null { return this.manifest ? this.manifest.tight ?? this.manifest.bound : null; }
 
-  /** 这一拍:画第 F 帧(或留着上一张 / 到时清成透明),再往后多解几帧 */
+  /**
+   * This tick: draw frame F (or keep previous image / clear to transparent when expired), then
+   * decode a few frames ahead
+   */
   present(f: number): void {
-    // 停在同一帧上又来一次(暂停着:料到了、定时器到了、父页重发了流平面)
+    // Repeated on the same frame (paused: data arrived, timer fired, or parent page resent stream planes)
     const again = this.wantFrame === f;
     if (!again) this.wantAt = realNow();
     this.wantFrame = f;
     const seg = this.segmentOf(f);
     if (!rangesHave(this.plane.ranges, seg)) {
-      // 这一段还没就绪:这一层落到兜底顺序的下一步(留着上一张,到时占位符),播放头不停
+      // This segment is not ready yet: this layer falls back to next step in fallback order (keep
+      // previous image, then placeholder when expired); playhead does not stop
       this.miss();
       this.dropFrames();
       this.nextFeed = null;
@@ -1206,20 +1427,26 @@ class StreamTrack {
     if (!meta) { this.loadManifest(true); this.miss(); return; }
     if (this.firstOnly) { this.presentFirst(seg); return; }
     /*
-     * 疑点 G:以前只在分段缺失或拉取失败时才再问清单 —— 稀疏段被满帧段替换之后,生产者发的就绪区间
-     * 一个字不变,页面就一直用着稀疏段(旧文件还在 HTTP 缓存里,拉取也不失败)。现在当前段是稀疏段、
-     * 或者同一个流键的就绪区间变了,就按 `MANIFEST_REFRESH_MS` 的节流再问一次;换上的满帧段在
-     * 分段边界接上(`pump` 里比对文件名),不在段中间换,免得接到别的编码的差分帧上。
+     * Question G: previously only re-queried the manifest when a segment was missing or fetch failed:
+     * after a sparse segment is replaced by a full-frame segment, the ready range sent by the producer
+     * does not change by a single character, so the page keeps using the sparse segment (old file is
+     * still in HTTP cache, fetch does not fail either). Now if current segment is a sparse segment, or
+     * ready range for the same stream key changed, re-query with `MANIFEST_REFRESH_MS` throttling;
+     * the replaced full-frame segment splices in at segment boundaries (comparing file names in `pump`),
+     * not mid-segment, to avoid splicing onto delta frames from a different encoding.
      */
     const sparse = (meta.stride ?? 1) > 1;
     if (this.manifestDirty || sparse) {
       if (this.loadManifest(true)) this.manifestDirty = false;
     }
-    // 往回跳(比已经放掉的帧还早)或者往前跳太远(超出已喂进去的一段):从目标所在分段的 IDR 重新解
+    // Jump backward (earlier than released frames) or jump forward too far (beyond fed segment):
+    // decode again from the IDR of the segment containing the target
     let far = this.nextFeed === null || f < this.discardBefore || f > this.nextFeed + SEGMENT_FRAMES;
     /*
-     * 停在同一帧上、而手里这一段的文件已经被换掉了(稀疏 → 满密度):从新文件把这一帧重解一遍,更好的结果自己换上。
-     * 播放中每拍的帧号都在变,不走这里 —— 段中间不换(上面那一条)。
+     * Parked on the same frame while the file for this segment in hand has been replaced (sparse →
+     * full density): decode this frame again from the new file, and the better result replaces it
+     * automatically. During playback the frame number changes every tick, so it does not go through
+     * here: do not switch mid-segment (see note above).
      */
     const data = this.segments.get(seg);
     if (again && !far && data && data.file !== meta.file) {
@@ -1229,9 +1456,12 @@ class StreamTrack {
     if (far) {
       if (this.seekTarget !== null && this.seekTarget !== f && this.fedSinceSeek > 0 && realNow() - this.seekAt < SEEK_PATIENCE_MS) {
         /*
-         * 连着跳(拖动):上一次寻帧已经在解了,不打断它 —— 每一步都重置解码器,一帧也解不出来,画面就不动了。
-         * 它解到之后先画上(`onFrame`),再按那时要的那一帧重新寻(`wake`);这中间要过的帧都不解。
-         * 接着喂的目标是在途的那一帧(`pump`)。上一次还一块都没喂进去(字节没到)的不让:直接换成这一帧。
+         * Consecutive jumps (scrubbing): the previous frame seek is already decoding, do not interrupt it:
+         * resetting the decoder at every step would yield zero frames and freeze the display. Once decoded,
+         * draw it first (`onFrame`), then seek again for the frame requested at that time (`wake`); frames
+         * skipped in between are not decoded. The target to feed next is that in-flight frame (`pump`).
+         * If not a single chunk was fed last time (bytes have not arrived), do not wait: switch directly
+         * to this frame.
          */
         this.stats.deferred++;
         this.miss();
@@ -1241,7 +1471,8 @@ class StreamTrack {
       this.seek(f);
     }
     if (!this.drawAt(f)) {
-      // 没解出来。画布上那一张就是这一帧该有的画面(稀疏段里同一张管好几帧)不算缺;否则留着上一张,限时
+      // Not decoded. If what is on canvas is already the expected image for this frame (sparse segments
+      // share one image across frames), not counted as missing; otherwise keep previous image, timed
       if (this.fresh(f)) this.staleSince = null;
       else this.miss();
     }
@@ -1251,12 +1482,15 @@ class StreamTrack {
   }
 
   /**
-   * 最低一档的一拍(文件头「最低一档」):这一帧所在分段的第一帧那一张已经在画布上就什么都不做;在手里就画;都不在就把那一个关键帧送去解,
-   * 这一拍留着上一张(限时,同别的档)。`present` 已经确认过这一段就绪、清单里有它。
+   * A tick in lowest tier (file header "Lowest tier"): if the first frame image of the segment
+   * containing this frame is already on canvas, do nothing; if in hand, draw it; if neither, send
+   * that keyframe to decode, keeping previous image for this tick (time-limited, same as other
+   * tiers). `present` has already verified that this segment is ready and in the manifest.
    */
   private presentFirst(seg: number): void {
     const p = this.segmentStart(seg);
-    // 不是这一段第一帧的解码输出都不要了(往回拖、跳走以后才出来的)
+    // Discard all decoder outputs that are not the first frame of this segment (emerged after scrubbing
+    // back or jumping away)
     for (const [k, h] of this.frames) if (k !== p) { h.frame.close(); this.frames.delete(k); }
     if (this.manifestDirty && this.loadManifest(true)) this.manifestDirty = false;
     if (this.lastDrawn === p) { this.staleSince = null; this.releaseFirst(p); return; }
@@ -1265,7 +1499,10 @@ class StreamTrack {
     this.feedFirst(seg, p);
   }
 
-  /** 最低一档:画上了,解码输出当场关掉(画布换一块时靠 `shown` 那一份引用画回去) */
+  /**
+   * Lowest tier: once drawn, close decoder output immediately (relies on `shown` reference to redraw
+   * when canvas is replaced)
+   */
   private releaseFirst(p: number): void {
     const held = this.frames.get(p);
     if (!held) return;
@@ -1273,11 +1510,15 @@ class StreamTrack {
     this.frames.delete(p);
   }
 
-  /** 最低一档:把第 `seg` 段的第一个样本(关键帧)送去解。字节、开头文件没到就先去取,到了会再走一遍 `present` */
+  /**
+   * Lowest tier: send the first sample (keyframe) of segment `seg` to decode. If bytes or head file
+   * have not arrived, fetch them first; once arrived, run `present` again.
+   */
   private feedFirst(seg: number, p: number): void {
     if (this.disposed || !this.manifest || this.firstFailures >= FIRST_FRAME_MAX_FAILURES) return;
     if (this.firstFed !== null) {
-      // 有一块在解:同一个解码器同时只解一块。它出来以后(`onFirstFrame`)按那时要的那一帧再来;卡住太久就重置
+      // A chunk is decoding: the same decoder only decodes one chunk at a time. Once it emerges
+      // (`onFirstFrame`), retry for the frame requested at that time; reset if stuck too long
       if (realNow() - this.firstFedAt < FIRST_FRAME_STALL_MS) return;
       this.stats.errors++;
       this.stats.lastError = "first-frame decode stalled";
@@ -1288,7 +1529,8 @@ class StreamTrack {
     const meta = this.manifest.segments[String(seg)];
     if (!meta) return;
     const data = this.segments.get(seg);
-    // 清单里这一段换了文件(稀疏 → 满密度):第一帧是同一张画面,手里有旧的就接着用,不为它再取一次
+    // Segment changed files in manifest (sparse → full density): the first frame is the same image, so
+    // keep using the existing one if in hand without fetching again
     if (!data) { this.loadSegment(seg); return; }
     const init = this.inits.get(data.init);
     if (!init) { this.loadInit(data.init); return; }
@@ -1297,13 +1539,15 @@ class StreamTrack {
     if (!this.decoder || this.decoder.state === "closed") {
       this.decoder = this.newDecoder();
       this.configuredInit = null;
-      // 浏览器没有 `VideoDecoder`:这条流贴不了,落到占位符(父页在最低一档本来就不该发来,`snapshotSource.ts` 的 `decodeSupport`)
+      // Browser lacks `VideoDecoder`: cannot paste this stream, fall back to placeholder (parent page
+      // should not have sent this in lowest tier to begin with, `snapshotSource.ts` `decodeSupport`)
       if (!this.decoder) { this.firstFailures = FIRST_FRAME_MAX_FAILURES; return; }
     }
     const decoder = this.decoder;
     try {
       if (this.configuredInit !== data.init) {
-        // 手机上不指定硬解:硬件解码器开不出来时让浏览器自己退到软解
+        // Do not specify hardware decoding on mobile: let browser fall back to software decoding when
+        // hardware decoder cannot be created
         decoder.configure({ ...init.config, hardwareAcceleration: "no-preference" });
         this.configuredInit = data.init;
         this.bytesPerFrame = init.bytesPerFrame;
@@ -1316,20 +1560,25 @@ class StreamTrack {
       }));
       this.firstFed = p;
       this.firstFedAt = realNow();
-      // 只喂了这一块:叫解码器把它吐出来(有的解码器要等后面的块才出帧)。`flush` 之后下一块必须是关键帧,这一档喂的都是
-      if (typeof decoder.flush === "function") void decoder.flush().catch(() => { /* 被重置 / 关掉了 */ });
+      // Only fed this chunk: tell decoder to output it (some decoders wait for later chunks before
+      // emitting frames). After `flush`, next chunk must be a keyframe; this tier only feeds keyframes
+      if (typeof decoder.flush === "function") void decoder.flush().catch(() => { /* Reset / closed */ });
     } catch (e) {
       this.pending = 0;
       this.firstFed = null;
       this.firstFailures++;
       this.stats.errors++;
       this.stats.lastError = String((e as Error)?.message || e);
-      try { if (decoder.state !== "closed") decoder.close(); } catch { /* 已经坏了 */ }
+      try { if (decoder.state !== "closed") decoder.close(); } catch { /* Already broken */ }
       if (this.decoder === decoder) { this.decoder = null; this.configuredInit = null; }
     }
   }
 
-  /** 最低一档:送去解的那一块出来了。还是此刻要的那一张就画上、关掉;不是(播放头已经走到别的分段)就关掉,按此刻要的再来 */
+  /**
+   * Lowest tier: the chunk sent to decode has emerged. If still the one needed right now, draw and
+   * close; otherwise (playhead already moved to another segment), close and retry for what is
+   * currently needed.
+   */
   private onFirstFrame(frame: VideoFrame, f: number): void {
     if (this.firstFed === f) this.firstFed = null;
     if (this.disposed) { frame.close(); return; }
@@ -1343,13 +1592,16 @@ class StreamTrack {
     }
     this.frames.set(f, { frame, segment: this.segmentOf(f) });
     this.stats.maxHeld = Math.max(this.stats.maxHeld, this.heldCount);
-    // 画不上(共用的上下文丢着)就先留在手里,下一拍 / 上下文回来时再画
+    // Cannot draw (shared context lost): keep in hand for now, draw on next tick or when context returns
     if (this.drawAt(f)) this.releaseFirst(f);
   }
 
   /**
-   * 停在稀疏段上:隔一会儿自己再问一次清单。满密度的分段产出来以后换上,不等用户操作(product/rendering.md「兜底顺序」);
-   * 就绪区间不会因为这一步变,父页不会来叫。清单由父页推来的流不用(父页带着新清单重发流平面时会再走一遍 `present`)。
+   * Parked on a sparse segment: re-query manifest periodically on its own. Replace once full-density
+   * segment is produced, without waiting for user action (product/rendering.md "Fallback order");
+   * the ready range will not change because of this step, so parent page will not call. Streams whose
+   * manifest is pushed by parent page do not need this (parent page resending stream planes with a
+   * new manifest will run `present` again).
    */
   private armRefresh(): void {
     if (this.refreshTimer || this.plane.manifest) return;
@@ -1357,14 +1609,19 @@ class StreamTrack {
     realTimeout(() => {
       this.refreshTimer = false;
       if (this.disposed || this.wantFrame === null) return;
-      // 这一会儿播放头没动(暂停着):再走一遍(问清单、换文件;还是稀疏的话 `present` 会再排下一次)。
-      // 还在动(播放、拖动)就不插手 —— 但要接着排:它一停下就没有人再来叫了
+      // Playhead did not move for a while (paused): run again (query manifest, switch files; if
+      // still sparse, `present` schedules next).
+      // Still moving (playing, scrubbing), do not intervene, but keep scheduling: once it stops,
+      // nobody will call again
       if (realNow() - this.wantAt >= MANIFEST_REFRESH_MS) this.present(this.wantFrame);
       else this.armRefresh();
     }, MANIFEST_REFRESH_MS + 50);
   }
 
-  /** 放掉目标之前的帧;之后才解出来的更早的帧一出来就关(`discardBefore` 只增不减) */
+  /**
+   * Release frames before target; earlier frames decoded afterwards are closed immediately
+   * (`discardBefore` only increases).
+   */
   private releaseBefore(f: number): void {
     for (const [k, h] of this.frames) {
       if (k < f) { h.frame.close(); this.frames.delete(k); }
@@ -1377,21 +1634,24 @@ class StreamTrack {
     this.frames.clear();
   }
 
-  /** 往解码器里喂:喂到「持有 + 队列里的」达到本流的配额,或者看得够远了 */
+  /** Feed into decoder: feed until "held + queued" reaches this stream's quota, or looked far enough ahead */
   pump(): void {
     if (this.disposed || this.nextFeed === null || !this.manifest || this.wantFrame === null) return;
     const cap = this.player.capFor(this);
     /*
-     * 喂到哪:平时往此刻要的那一帧后面多看两个分段。有在途的寻帧、而此刻要的已经是别的帧(连着拖)时,只喂到在途的那一帧为止 ——
-     * 它一解到就要按此刻要的那一帧重新寻,多喂的都白解,还会白取后面的分段。
+     * How far to feed: normally look ahead two segments beyond the frame currently needed. When there
+     * is an in-flight seek and the frame needed right now has moved to another frame (scrubbing
+     * continuously), feed only up to that in-flight frame: once decoded, a new seek starts for the frame
+     * needed at that moment; extra fed frames are wasted decoding, and would fetch later segments in vain.
      */
     const chasing = this.seekTarget !== null && this.seekTarget !== this.wantFrame;
     const horizon = chasing ? (this.seekTarget as number) : this.wantFrame + 2 * SEGMENT_FRAMES;
     let guard = 0;
     for (;;) {
       if (this.nextFeed === null || this.nextFeed > horizon || guard++ >= 64) break;
-      // 目标帧之前的那些(随机访问从 IDR 解过来的)一出来就关,不占配额 —— 只守住单个解码器 8 帧的硬上限;
-      // 目标帧及以后的要留着画,按本流的配额喂
+      // Frames before target (decoded from IDR for random access) close immediately upon emission without
+      // taking quota: only enforce the 8-frame hard limit per decoder;
+      // frames at or after target are kept for drawing, fed according to this stream's quota
       const limit = this.nextFeed < this.discardBefore ? MAX_FRAMES_PER_DECODER : cap;
       if (this.heldCount >= limit) break;
       const seg = this.segmentOf(this.nextFeed);
@@ -1399,7 +1659,8 @@ class StreamTrack {
       const meta = this.manifest.segments[String(seg)];
       if (!meta) { this.loadManifest(true); break; }
       const data = this.segments.get(seg);
-      // 清单里这一段换了文件(稀疏 → 满帧,疑点 G):只在分段起点换,段中间接着用手里这份(差分帧不能跨编码)
+      // Segment changed files in manifest (sparse → full frame, question G): switch only at segment
+      // starts, continue using copy in hand mid-segment (delta frames cannot cross encodings)
       const replaced = !!data && data.file !== meta.file && this.nextFeed === this.segmentStart(seg);
       if (!data || replaced) {
         if (data) this.segments.delete(seg);
@@ -1423,7 +1684,7 @@ class StreamTrack {
         }
         this.configuredInit = data.init;
         this.bytesPerFrame = init.bytesPerFrame;
-        // 换了变体必须从这一段的 IDR 起
+        // Variant changes must start from this segment's IDR
         const segStart = this.segmentStart(seg);
         if (this.nextFeed !== segStart) this.nextFeed = segStart;
       }
@@ -1454,7 +1715,8 @@ class StreamTrack {
   }
 
   setPlane(plane: StreamPlaneRequest, canvas: HTMLCanvasElement): void {
-    // 换了流,或者同一条流被摆到了别的帧上(第一帧变了:手里解好的帧是按旧位置记的项目帧号):从头来
+    // Stream changed, or same stream was placed at different frames (first frame changed: decoded
+    // frames in hand are indexed by old project frame numbers): start over
     if (plane.key !== this.plane.key || plane.originFrame !== this.plane.originFrame || !!plane.first !== !!this.plane.first) {
       this.firstFailures = 0;
       this.manifest = null;
@@ -1462,16 +1724,17 @@ class StreamTrack {
       this.resetDecode();
       this.nextFeed = null;
       this.discardBefore = 0;
-      // 画布上那一张是旧流的(输入变了,或者帧号对不上了):不留
+      // Canvas image belongs to old stream (input changed, or frame numbers mismatched): do not keep
       this.blank();
     } else if (JSON.stringify(plane.ranges ?? []) !== JSON.stringify(this.plane.ranges ?? [])) {
-      // 同键、就绪区间变了:生产者发布了新分段,清单可能也换了(疑点 G)
+      // Same key, ready range changed: producer published new segments, manifest may have changed too (question G)
       this.manifestDirty = true;
     }
     this.plane = plane;
     if (canvas !== this.canvas) {
       this.canvas = canvas;
-      // 包裹层重挂载(停下追帧的起步)换了一块新的空画布:把刚才那张原样画回去,不等解码
+      // Wrapper layer remounted (start of stopping frame catch-up) with a new empty canvas: redraw
+      // previous image as is, without waiting for decode
       if (!this.redraw()) {
         const was = this.lastDrawn;
         this.lastDrawn = null;
@@ -1480,7 +1743,8 @@ class StreamTrack {
         if (was !== null) this.player.noteShowing();
       }
     }
-    // 父页带来了新的清单(多了分段、某一段换了文件):当场换上;换了文件的段在分段起点接上(`pump` 里比对文件名)
+    // Parent page brought a new manifest (added segments, segment changed file): swap immediately;
+    // segments with changed files splice in at segment starts (compare file names in `pump`)
     if (plane.manifest && plane.manifest !== this.manifest) this.adoptPushed(plane.manifest);
   }
 
@@ -1489,7 +1753,7 @@ class StreamTrack {
     for (const h of this.frames.values()) h.frame.close();
     this.frames.clear();
     this.closeShown();
-    try { if (this.decoder && this.decoder.state !== "closed") this.decoder.close(); } catch { /* 已经关了 */ }
+    try { if (this.decoder && this.decoder.state !== "closed") this.decoder.close(); } catch { /* Already closed */ }
     this.decoder = null;
     this.compositor?.clear();
     this.compositor = null;
@@ -1499,28 +1763,35 @@ class StreamTrack {
   diag() {
     return { id: this.id, key: this.key, pushed: !!this.plane.manifest, held: this.frames.size, queue: this.decoder?.decodeQueueSize ?? 0,
       decoder: this.decoder?.state ?? null, nextFeed: this.nextFeed, lastDrawn: this.lastDrawn,
-      // 要哪一帧、画着的是哪一张画面(稀疏段里是不晚于那一帧的最近一张)、是不是留着的旧画面、在途的寻帧、上一次寻帧的耗时
+      // Requested frame, currently drawn image (in sparse segments, latest one no later than that frame),
+      // whether it is a retained old image, in-flight seek, duration of last seek
       want: this.wantFrame, picture: this.lastDrawn === null ? null : this.pictureOf(this.lastDrawn), level: this.level,
-      // 画着的那一张所在的分段在清单里多密(1 = 满密度;最低一档不管它多密都只解第一帧)
+      // Density in manifest of segment containing drawn image (1 = full density; lowest tier only decodes
+      // first frame regardless of density)
       stride: this.lastDrawn === null ? null : this.manifest?.segments[String(this.segmentOf(this.lastDrawn))]?.stride ?? null,
       stale: this.staleSince !== null, seekTarget: this.seekTarget, lastSeek: this.lastSeek,
       segments: [...this.segments.keys()], manifest: !!this.manifest, bound: this.manifest?.bound ?? null,
-      // 画在哪种平面上(舞台根下 / 包裹层里),清单是哪一种流、和这块平面对不对得上
+      // Which plane type drawn on (under stage root / in wrapper layer), which stream type manifest
+      // specifies, and whether it matches this plane
       plane: stagePlane(this.plane) ? "stage" : "local", kind: this.manifest?.kind ?? null, fits: this.planeFits,
       cap: this.player.capFor(this), first: this.firstOnly, firstFailures: this.firstFailures, ...this.stats };
   }
 }
 
-/** 是不是一个位置矩形(四个有限数,宽高为正) */
+/** Whether this is a position rectangle (four finite numbers, positive width and height) */
 const isRect = (r: unknown): r is StreamRect => {
   const v = r as StreamRect | null;
   return !!v && typeof v === "object" && [v.x, v.y, v.w, v.h].every(Number.isFinite) && v.w > 0 && v.h > 0;
 };
 
 /**
- * 超出预算的一条流:不建解码器、不画,只拿着它的清单,给占位符报「这一帧所在分段的位置矩形」(清单里 `segments[n].box`,
- * 产稀疏版时每个分段量的收紧的框)。清单由父页带来(在线页面)就用带来的;没带(桌面)就问字节源,这一帧所在的分段还没有
- * 位置矩形时隔 `MANIFEST_REFRESH_MS` 再问一次。取不到清单、分段没量过的回 null,占位符照老办法定位。
+ * A stream exceeding budget: does not create decoders, does not draw, only holds its manifest,
+ * reporting to placeholders the "position rectangle of the segment containing this frame"
+ * (`segments[n].box` in manifest, the tight box measured for each segment when producing sparse
+ * version). If manifest is brought by parent page (online page), use what was brought; if not
+ * (desktop), query byte source; if segment containing this frame has no position rectangle yet,
+ * re-query after `MANIFEST_REFRESH_MS`. Returns null if manifest cannot be fetched or segment was
+ * unmeasured; placeholders position via old method.
  */
 class OverPlane {
   plane: StreamPlaneRequest;
@@ -1541,19 +1812,24 @@ class OverPlane {
     if (plane.manifest) this.manifest = plane.manifest;
   }
 
-  /** 这一帧所在分段的位置矩形(平面坐标:单卡流是包裹层自己的坐标,按舞台坐标产的流是舞台坐标);没有回 null */
+  /**
+   * Position rectangle of the segment containing this frame (plane coordinates: single-card stream
+   * uses wrapper layer coordinates, stage-coordinate stream uses stage coordinates); null if none
+   */
   boxAt(f: number): StreamRect | null {
     const m = this.manifest;
     if (!m || !isStreamOrigin(this.plane.originFrame)) return null;
-    // 清单说的坐标系和父页说的对不上的不用(同 `StreamTrack.planeFits`)
+    // Discard if coordinate system in manifest does not match parent page (same as `StreamTrack.planeFits`)
     if ((m.plane === "stage" || m.plane === "local") && (m.plane === "stage") !== stagePlane(this.plane)) return null;
     const box = m.segments?.[String(streamSegmentOf(f, this.plane.originFrame))]?.box;
     return isRect(box) ? box : null;
   }
 
   /**
-   * 每拍叫一次:没有清单就取;手里的清单还没有这一帧所在的分段(清单是旧的)就隔一会儿再问。清单里已经有这一段、只是没有位置矩形
-   * (没量过的分段,以后也不会有)的不再问。父页带清单来的不问,等它带新的来。
+   * Called every tick: fetch manifest if missing; if manifest in hand does not contain the segment
+   * for this frame yet (stale manifest), re-query after a delay. If segment is already in manifest
+   * but lacks a position rectangle (unmeasured segments will not have one later either), do not ask
+   * again. If manifest is brought by parent page, do not query; wait for it to bring a new one.
    */
   tick(f: number): void {
     if (this.plane.manifest || this.loading || !this.plane.key) return;
@@ -1564,7 +1840,7 @@ class OverPlane {
     this.loading = true;
     this.player.source.manifest(this.plane.key)
       .then((m) => { if (!this.disposed) { this.manifest = m; this.player.noteBoxes(); } })
-      .catch(() => { /* 还没有清单:占位符照老办法定位,过一会儿再问 */ })
+      .catch(() => { /* No manifest yet: placeholders position via old method, re-query after a while */ })
       .finally(() => { this.loading = false; });
   }
 }
@@ -1572,12 +1848,15 @@ class OverPlane {
 const planeId = (plane: StreamPlaneRequest) => `${plane.clipIds.join(",")}#${plane.key ?? ""}${plane.plane === "stage" ? "@stage" : ""}`;
 
 /* ======================================================================== *
- * 舞台上的全部流
+ * All streams on stage
  * ======================================================================== */
 
 export class StreamPlayer {
   readonly source: StreamSource;
-  /** 父页随流平面推来的清单与字节(在线页面);桌面的平面不带清单,这里一直是空的 */
+  /**
+   * Manifest and bytes pushed by parent page with stream planes (online page); desktop planes omit
+   * manifest, so always empty here
+   */
   readonly pushed = new PushedStreamSource();
   fps = 30;
   private root: () => Element | null;
@@ -1588,27 +1867,35 @@ export class StreamPlayer {
   private lastFrame: number | null = null;
   private onShowingChange: (() => void) | null;
   private showingQueued = false;
-  /** 超出预算的流(片段 id → 那一条;组流的每个成员都指向同一条) */
+  /** Streams exceeding budget (clip id → that stream; group stream members all point to the same one) */
   private over = new Map<string, OverPlane>();
   private onBoxChange: (() => void) | null;
   private boxesQueued = false;
   private boxesSig = "";
   private onContextLost: (() => void) | null;
-  /** 全部流平面共用的那个 WebGL 上下文(头一次真的要画时才建;`back` 角色的舞台从不画,也就不建) */
+  /**
+   * WebGL context shared across all stream planes (created only when first actually drawing; stages
+   * with `back` role never draw, so not created)
+   */
   readonly gl: SharedGl;
 
   constructor({ root, source = new HttpStreamSource(), onShowingChange, onContextLost, onBoxChange }: {
     root: () => Element | null; source?: StreamSource;
     /**
-     * 某条流的画面从无到有、或从有到无(异步解出来了、留到时限清空了)时叫一次;同一个微任务里只叫一次。
-     * 暂停着没有下一拍:宿主靠它撤占位符、把等着第一张画面的活子树藏起来。
+     * Called when a stream image appears or disappears (asynchronously decoded, or expired and
+     * cleared); called only once in the same microtask. When paused there is no next tick: host relies
+     * on it to dismiss placeholders and hide live subtrees waiting for the first frame image.
      */
     onShowingChange?: () => void;
-    /** 共用的 WebGL 上下文丢了(那块画布不在文档里,事件到不了 `document`;在线页面靠它报「运行中出事了」) */
+    /**
+     * Shared WebGL context lost (canvas not in document, events cannot reach `document`; online page
+     * uses it to report "Runtime error occurred")
+     */
     onContextLost?: () => void;
     /**
-     * 超出预算的层的位置矩形变了(清单到了、播放头进了下一个分段)时叫一次;同一个微任务里只叫一次。
-     * 占位符的几何是宿主渲染时取的(`boxOf` / `stageBoxOf`),宿主靠它重取一遍。
+     * Called when the position rectangle of an over-budget layer changes (manifest arrived, playhead
+     * entered next segment); called only once in the same microtask. Placeholder geometry is fetched
+     * during host rendering (`boxOf` / `stageBoxOf`), host relies on it to re-fetch.
      */
     onBoxChange?: () => void;
   }) {
@@ -1618,8 +1905,10 @@ export class StreamPlayer {
     this.onContextLost = onContextLost ?? null;
     this.onBoxChange = onBoxChange ?? null;
     /*
-     * 共用的上下文丢了 / 回来了:把这一帧再走一遍(暂停着没有下一拍)。丢了以后浏览器不一定还(被别的画布挤掉的不还),
-     * 所以丢的那一刻另排一个真定时器,到 `GL_RETRY_MS` 再走一遍 —— 那时 `SharedGl` 会另建一块。
+     * Shared context lost / restored: run this frame again (when paused there is no next tick). Once
+     * lost, browser might not restore it (those evicted by other canvases are not restored), so the
+     * moment it is lost, schedule a separate real timer to run again at `GL_RETRY_MS`: `SharedGl` will
+     * create a new one then.
      */
     this.gl = new SharedGl(
       () => { this.onContextLost?.(); this.retryLater(GL_RETRY_MS); },
@@ -1629,8 +1918,10 @@ export class StreamPlayer {
   }
 
   /**
-   * 过 `ms` 毫秒把这一帧再走一遍(共用的上下文丢着、或者没建出来)。同时只排一个;到点时没有要画的流(停了、没有轨道)就不再排,
-   * 还画不了的话 `SharedGl` 会再约下一次(间隔加倍),不会空转。
+   * Run this frame again after `ms` milliseconds (shared context is lost, or not yet created). Only
+   * one scheduled at a time; when it fires, if there are no streams to draw (stopped, no tracks), do
+   * not schedule further; if still unable to draw, `SharedGl` schedules next attempt (doubled
+   * interval) to avoid spinning.
    */
   private retryPending = false;
   private retryLater(ms: number): void {
@@ -1639,13 +1930,16 @@ export class StreamPlayer {
     realTimeout(() => { this.retryPending = false; this.represent(); }, Math.max(1, ms) + 20);
   }
 
-  /** 把上一拍要的那一帧再走一遍(共用的上下文回来了) */
+  /** Run the frame requested on the last tick again (shared context restored) */
   private represent(): void {
     if (this.stopped || this.proxy || this.lastFrame === null) return;
     for (const track of this.tracks.values()) track.present(this.lastFrame);
   }
 
-  /** 轨道报:画面有无变了。攒到微任务里叫宿主(`present` 的循环里不重入宿主) */
+  /**
+   * Track reports: image presence changed. Batched into microtask to notify host (avoid re-entering
+   * host in `present` loop)
+   */
   noteShowing(): void {
     if (!this.onShowingChange || this.showingQueued) return;
     this.showingQueued = true;
@@ -1655,7 +1949,10 @@ export class StreamPlayer {
     });
   }
 
-  /** 超出预算的层的位置矩形可能变了:攒到微任务里,真的变了才叫宿主 */
+  /**
+   * Position rectangle of over-budget layer may have changed: batched into microtask, notify host
+   * only if actually changed
+   */
   noteBoxes(): void {
     if (!this.onBoxChange || this.boxesQueued) return;
     this.boxesQueued = true;
@@ -1664,7 +1961,8 @@ export class StreamPlayer {
       if (this.stopped) return;
       const f = this.lastFrame ?? 0;
       let sig = "";
-      // 只记有矩形的:没有矩形的层占位符照老办法定位,多一条少一条都不用宿主重取
+      // Only record those with rectangles: layers without rectangles position placeholders via old
+      // method, adding or removing them does not require host re-fetch
       for (const [id, o] of this.over) { const b = o.boxAt(f); if (b) sig += `${id}:${b.x},${b.y},${b.w},${b.h};`; }
       if (sig === this.boxesSig) return;
       this.boxesSig = sig;
@@ -1672,7 +1970,10 @@ export class StreamPlayer {
     });
   }
 
-  /** 超出预算的平面(父页标了 `over` 的):只记下来取清单,不建解码器 */
+  /**
+   * Over-budget planes (marked `over` by parent page): only recorded to fetch manifest, without
+   * creating decoders
+   */
   private setOver(planes: readonly StreamPlaneRequest[]): void {
     const before = new Map<string, OverPlane>();
     for (const o of this.over.values()) before.set(planeId(o.plane), o);
@@ -1691,14 +1992,16 @@ export class StreamPlayer {
   }
 
   /**
-   * 父页的 `setStreamPlanes`。只存,下一次 `present` 才绑画布(画布要等 React 提交之后才在)。
-   * `over`:这一拍超出预算的平面(不解码,只为占位符取位置矩形);`planes` 里标了 `over` 的也算。
+   * `setStreamPlanes` from parent page. Only stores; binds canvas on next `present` (canvas exists
+   * only after React commit). `over`: planes exceeding budget this tick (not decoded, only used to
+   * fetch position rectangles for placeholders); planes marked `over` in `planes` also count.
    */
   setPlanes(planes: readonly StreamPlaneRequest[], fps: number, over: readonly StreamPlaneRequest[] = []): void {
     const usable = (p: StreamPlaneRequest) => Array.isArray(p?.clipIds) && p.clipIds.length > 0 && typeof p.key === "string" && !!p.key && isStreamOrigin(p.originFrame);
     this.setOver([...over, ...planes.filter((p) => p?.over)].filter(usable));
     const list = planes.filter((p) => usable(p) && !p.over);
-    // 在线页面:先收下随平面推来的块(没用到的旧块当场丢),平面自己不留着字节
+    // Online page: take chunks pushed with planes first (discard unused old chunks immediately), planes
+    // themselves do not retain bytes
     this.pushed.accept(list);
     this.planes = list.map((p) => {
       if (!p.blocks) return p;
@@ -1707,33 +2010,43 @@ export class StreamPlayer {
     });
     this.fps = Math.max(1, fps || 30);
     this.stopped = false;
-    // 不再要的流当场关掉(解码器、持有的 VideoFrame):暂停时父页发一张空表,下一拍不一定还会来
+    // Close unneeded streams immediately (decoders, held VideoFrames): when paused parent page sends
+    // an empty table, next tick might not come
     const keep = new Set(this.planes.map(planeId));
     for (const [id, track] of this.tracks) {
       if (!keep.has(id)) { track.dispose(); this.tracks.delete(id); }
     }
   }
 
-  /** 实体模式开着时 `.pc-proxy` 连流平面一起藏,这里停解码、不占解码帧预算(E7 第 4 条) */
+  /**
+   * When solid mode is on, `.pc-proxy` is hidden along with stream planes; stop decoding here, taking
+   * no decoded frame budget (E7 item 4)
+   */
   setProxy(on: boolean): void {
     this.proxy = !!on;
     if (this.proxy) this.disposeAll();
   }
 
-  /** 平面画布的引用缓存(P4 性能修正):`sync()` 每拍对每条流都从场景根 querySelector 一遍太贵 */
+  /**
+   * Plane canvas reference cache (P4 performance fix): `sync()` running querySelector from scene
+   * root for each stream every tick is too expensive
+   */
   private canvasCache = new Map<string, HTMLCanvasElement>();
 
   private canvasOf(plane: StreamPlaneRequest): HTMLCanvasElement | null {
     const root = this.root();
     if (!root) return null;
-    // 单卡流的画布在它的包裹层里;组流和依赖下层的流的画布在舞台根下(`Stage` 的 `[data-pc-group-plane]`)
+    // Canvas for single-card stream is in its wrapper layer; canvases for group streams and
+    // below-dependent streams are under stage root (`[data-pc-group-plane]` in `Stage`)
     const single = !stagePlane(plane);
     const key = plane.clipIds.join(",");
     const hit = this.canvasCache.get(key);
-    // 还在场景里、仍挂在同一个包裹层(单卡流)/ 同一个组(组流)下就直接用
+    // Still in the scene and still mounted under the same wrapper layer (single-card stream) / same
+    // group (group stream): use directly
     if (hit && hit.isConnected && root.contains(hit)
       && (single ? (hit.parentElement?.getAttribute("data-pc-clip") === key || hit.parentElement?.getAttribute("data-pc-flat-clip") === key) : hit.getAttribute("data-pc-stream-group") === key)) return hit;
-    // 剪辑段里的卡(`kernel/cutFlatten.mjs` 的虚拟片段):包裹层在嵌套场景里,挂的是 `data-pc-flat-clip`
+    // A card inside a cut segment (the virtual clip of `kernel/cutFlatten.mjs`): in a nested scene the
+    // wrapper layer carries `data-pc-flat-clip`
     const found = single
       ? (root.querySelector<HTMLCanvasElement>(`[data-pc-clip="${CSS.escape(key)}"] > canvas[data-pc-stream-plane]`)
         ?? root.querySelector<HTMLCanvasElement>(`[data-pc-flat-clip="${CSS.escape(key)}"] > canvas[data-pc-stream-plane]`))
@@ -1744,14 +2057,15 @@ export class StreamPlayer {
     return found;
   }
 
-  /** 场景根(组流藏 / 露成员快照平面时用) */
+  /** Scene root (used when group streams hide / show member snapshot planes) */
   rootElement(): Element | null {
     return this.root();
   }
 
   /**
-   * 把平面和画布对上:新来的建流,没了的关掉。超出预算的平面父页已经标了 `over`,不在 `this.planes` 里(`setPlanes`);
-   * 这里只再守一次条数的硬上限。
+   * Match planes to canvases: create streams for new ones, close gone ones. Over-budget planes were
+   * already marked `over` by the parent page and are not in `this.planes` (`setPlanes`);
+   * here we only guard the hard upper limit on the count once more.
    */
   private sync(): void {
     const want = new Map<string, { plane: StreamPlaneRequest; canvas: HTMLCanvasElement }>();
@@ -1771,8 +2085,9 @@ export class StreamPlayer {
   }
 
   /**
-   * 这一拍(K4 的节拍循环、或暂停 / 拖动的 `setTime`)。同步:手里有这一帧就当场画上,
-   * 没有就留着上一张或透明,再把后面几帧的解码排上 —— **从不阻塞调用方**。
+   * This tick (K4's tick loop, or `setTime` during pause / scrub). Synchronous: if this frame is
+   * on hand, draw it immediately; if not, keep the previous one or transparent, then schedule decoding
+   * for the next few frames: **never blocks the caller**.
    */
   present(sec: number): void {
     if (this.stopped || this.proxy) return;
@@ -1783,14 +2098,14 @@ export class StreamPlayer {
     for (const track of this.tracks.values()) track.present(f);
     if (this.over.size) {
       for (const o of new Set(this.over.values())) o.tick(f);
-      // 播放头进了下一个分段,位置矩形可能换了
+      // Playhead entered the next segment; position rectangle may have changed
       if (moved) this.noteBoxes();
     }
   }
 
   /**
-   * 本流的持有上限:字节预算按流均分(≤ 80 MB 总量),夹在 [3, 8] 之间 ——
-   * 8 是单个解码器的硬上限(G0-b (4)),3 是每流保底(G5)。
+   * Hold limit for this stream: byte budget evenly split across streams (≤ 80 MB total), clamped
+   * between [3, 8]: 8 is the hard limit for a single decoder (G0-b (4)), 3 is the per-stream floor (G5).
    */
   capFor(track: StreamTrack): number {
     const n = Math.max(1, this.tracks.size);
@@ -1803,7 +2118,7 @@ export class StreamPlayer {
     this.tracks.clear();
   }
 
-  /** `setRole('back')`:停下、`close()` 全部 `VideoFrame`、清掉画布(E0 的清理全集第 3 条) */
+  /** `setRole('back')`: stop, `close()` all `VideoFrame`, clear canvas (item 3 in E0 complete cleanup) */
   stop(): void {
     this.stopped = true;
     this.planes = [];
@@ -1815,8 +2130,10 @@ export class StreamPlayer {
   }
 
   /**
-   * 这一拍流画面在的那些卡(组流算到每个成员头上)。占位符 T1:被抑制、这一拍流 blank、
-   * 又没挂快照的层才显示占位符 —— 在 `present` 之后当拍读(`StageView` 的 `refreshPlaceholders`)。
+   * Cards whose stream visual is present this tick (group streams count toward each member).
+   * Placeholder T1: only layers that are suppressed, have a blank stream this tick, and have no
+   * snapshot attached show placeholders: read on the same tick after `present`
+   * (`StageView`'s `refreshPlaceholders`).
    */
   showingClips(): Set<string> {
     const out = new Set<string>();
@@ -1828,7 +2145,10 @@ export class StreamPlayer {
     return out;
   }
 
-  /** 这一拍每张卡的流画面是满帧段还是稀疏段(只列有画面的;探针用) */
+  /**
+   * Whether each card's stream visual this tick is a full-frame or sparse segment
+   * (lists only those with visuals; for probes).
+   */
   levels(): Map<string, "dense" | "sparse"> {
     const out = new Map<string, "dense" | "sparse">();
     if (this.stopped || this.proxy) return out;
@@ -1839,7 +2159,11 @@ export class StreamPlayer {
     return out;
   }
 
-  /** 预算以内的单卡流的实体框(清单的收紧矩形,没有就用上界;包裹层坐标 = 平面坐标)。组流、依赖下层的流的框在舞台坐标里,不回 */
+  /**
+   * Entity box for single-card streams within budget (manifest's tight rectangle, or upper bound
+   * if none; wrapper layer coordinates = plane coordinates). Boxes for group streams and
+   * below-dependent streams are in stage coordinates and not returned.
+   */
   boxOf(clipId: string): StreamRect | null {
     for (const track of this.tracks.values()) {
       if (!stagePlane(track.plane) && track.plane.clipIds[0] === clipId) return track.box;
@@ -1848,8 +2172,10 @@ export class StreamPlayer {
   }
 
   /**
-   * **超出预算的**单卡流:清单里这一帧所在分段的位置矩形(包裹层坐标);没量过、没有清单回 null。和 `boxOf` 分开回:
-   * 这个矩形只管这一帧,宿主不该把它记下来留到以后用。组流、依赖下层的流见 `stageBoxOf`。
+   * **Over-budget** single-card streams: position rectangle for the segment containing this frame
+   * in the manifest (wrapper layer coordinates); returns null if unmeasured or without a manifest.
+   * Returned separately from `boxOf`: this rectangle only applies to this frame, and the host
+   * should not cache it for later use. For group streams and below-dependent streams, see `stageBoxOf`.
    */
   overBoxOf(clipId: string): StreamRect | null {
     const over = this.over.get(clipId);
@@ -1858,8 +2184,10 @@ export class StreamPlayer {
   }
 
   /**
-   * 超出预算的组流里,这一帧有位置矩形的那几组的成员(每组按画家顺序,最后一个在最上面)。整组只有一个矩形(成员的并集),
-   * 宿主只让其中一个成员显示占位符(4:不然 N 个成员叠 N 块同样的框)。
+   * Members of groups with a position rectangle for this frame among over-budget group streams
+   * (each group in painter's order, last one on top). The entire group has only one rectangle
+   * (union of members); the host only allows one member to display a placeholder (4: otherwise
+   * N members would stack N identical boxes).
    */
   overGroups(): string[][] {
     const out: string[][] = [];
@@ -1871,8 +2199,10 @@ export class StreamPlayer {
   }
 
   /**
-   * 超出预算、按舞台坐标产的流(组流、依赖下层的流)这一帧所在分段的位置矩形,**舞台坐标**(清单里的矩形加清单的 `offset`,
-   * 这种流的 `offset` 是零)。宿主要自己换到包裹层的坐标再给占位符。别的情形回 null。
+   * Position rectangle for the segment containing this frame for over-budget streams produced in
+   * stage coordinates (group streams, below-dependent streams), in **stage coordinates** (rectangle
+   * in the manifest plus manifest `offset`; `offset` is zero for such streams). The host must convert
+   * it to wrapper layer coordinates before passing to the placeholder. Returns null in other cases.
    */
   stageBoxOf(clipId: string): StreamRect | null {
     const over = this.over.get(clipId);
@@ -1883,10 +2213,13 @@ export class StreamPlayer {
     return { x: box.x + (Number(off?.x) || 0), y: box.y + (Number(off?.y) || 0), w: box.w, h: box.h };
   }
 
-  /** 这一拍有超出预算的平面在(没有流平面时宿主据此还要每拍叫 `present`:位置矩形跟着播放头换) */
+  /**
+   * Over-budget planes exist this tick (when there are no stream planes, the host still calls
+   * `present` every tick based on this: position rectangles change with the playhead).
+   */
   get hasOver(): boolean { return this.over.size > 0; }
 
-  /** 此刻持有的解码帧字节(验收「解码帧总内存 ≤ 80 MB」看它) */
+  /** Decoded frame bytes currently held (checked by the acceptance check "total decoded frame memory ≤ 80 MB") */
   heldBytes(): number {
     let bytes = 0;
     for (const track of this.tracks.values()) bytes += track.heldCount * track.bytesPerFrame;

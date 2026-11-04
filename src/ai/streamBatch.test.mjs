@@ -1,17 +1,17 @@
 /**
- * Batched application of streaming deltas. 跑:node --test src/ai/streamBatch.test.mjs
+ * Batched application of streaming deltas. Run: node --test src/ai/streamBatch.test.mjs
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { appendTextPart, appendThinkingPart, applyDeltas, isDeltaEvent } from "./streamBatch.ts";
 
-const base = { id: "a", role: "assistant", text: "开头", parts: [{ kind: "text", text: "开头" }] };
+const base = { id: "a", role: "assistant", text: "Start", parts: [{ kind: "text", text: "Start" }] };
 const events = [
-  { type: "text", delta: "第一" },
-  { type: "text", delta: "句。" },
-  { type: "thinking", delta: "想一想" },
-  { type: "thinking", delta: "再想" },
-  { type: "text", delta: "第二句" },
+  { type: "text", delta: "First" },
+  { type: "text", delta: "Sentence." },
+  { type: "thinking", delta: "Think" },
+  { type: "thinking", delta: "Again" },
+  { type: "text", delta: "SecondSentence" },
 ];
 
 test("applying a batch equals applying each delta on its own, in order", () => {
@@ -23,13 +23,13 @@ test("applying a batch equals applying each delta on its own, in order", () => {
   for (const ev of events) sequential = applyDeltas(sequential, [ev], (m) => ({ ...m, traced: (m.traced || 0) + 1 }));
 
   assert.deepEqual(batched, sequential);
-  assert.equal(batched.text, "开头第一句。第二句");
+  assert.equal(batched.text, "StartFirstSentence.SecondSentence");
   assert.deepEqual(batched.parts, [
-    { kind: "text", text: "开头第一句。" },
-    { kind: "thinking", text: "想一想再想" },
-    { kind: "text", text: "第二句" },
+    { kind: "text", text: "StartFirstSentence." },
+    { kind: "thinking", text: "ThinkAgain" },
+    { kind: "text", text: "SecondSentence" },
   ]);
-  assert.deepEqual(recorded, ["第一", "句。", "想一想", "再想", "第二句"]);
+  assert.deepEqual(recorded, ["First", "Sentence.", "Think", "Again", "SecondSentence"]);
   assert.equal(batched.traced, 5);
 });
 

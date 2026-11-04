@@ -1,17 +1,25 @@
 /**
- * 聊天页右边的拓展栏(用户 2026-10-23 定):标题栏右上角那颗按钮开关它。
+ * The side panel on the right of the chat page (user decision, 2026-10-23): the button at the top right
+ * of the title bar toggles it.
  *
- * 段落都能折叠 —— 形式参考用户给的那张 IDE 面板图(分段标题 + 段里一行行),内容按软件里已有的说法来:
- *   1. **画面**:这个项目的真画面(`VibeStage.tsx`,即编辑界面的预览),播放条叠在画面里;段头右上角是「详细编辑」;
- *   2. **这次改动**:用户要求先归档(见下面的 `SHOW_CHANGES`);
- *   2b. **聊天**(用户 2026-10-26 定,issue #4):只在「详细编辑」展开时**新建**出来的一张卡
- *      (`ExtChatPanel.tsx`)。详细编辑要占满整个聊天区(连输入框一起),聊天就搬到这条栏里来;
- *      它吃掉这条栏剩下的高度,上面两段照常摊开。收起详细编辑,这张卡跟着消失。
- *   3. **修改前 / 修改后**:这条对话里带前后画面的改动(Agent 每次建卡、改卡、删卡留下的画面记录,
- *      `src/editor/right/ToolVisual.tsx` 的 `useVisualRecord`,经云端 Agent 服务按当前对话的权限取),选一条切着看。
- *      两个标签的叫法照 `src/editor/right/chat/OpDetailPreview.tsx` 的「修改前」「修改后」。
+ * Sections can all be collapsed: the form follows the IDE panel picture the user gave (section title +
+ * one row per line inside), and the content follows terms already used in the software:
+ *   1. **Picture**: this project's real picture (`VibeStage.tsx`, i.e. the editor's preview), with the
+ *      playback bar overlaid on the picture; at the top right of the section header is "Detail editing";
+ *   2. **This change**: the user asked to archive it first (see `SHOW_CHANGES` below);
+ *   2b. **Chat** (user decision, 2026-10-26, issue #4): a card **newly created** only while "Detail
+ *      editing" is expanded (`ExtChatPanel.tsx`). Detail editing takes up the whole chat area (the input
+ *      box included), so the chat moves into this rail;
+ *      it takes the height left over in this rail, and the two sections above spread out as usual.
+ *      Collapsing detail editing makes this card disappear with it.
+ *   3. **Before / after**: changes in this chat that carry before and after pictures (the picture
+ *      records the Agent leaves each time it creates, edits or deletes a card,
+ *      `useVisualRecord` in `src/editor/right/ToolVisual.tsx`, fetched through the Cloud Agent service
+ *      with the permissions of the current chat); pick one and flip between them.
+ *      The two tabs are named after "Before" and "After" in `src/editor/right/chat/OpDetailPreview.tsx`.
  *
- * 2026-10-23 接上业务层(`docs/reports/AGENT-claude-vibe-wire.md`)。取不到画面记录时如实写原因,不放占位图。
+ * 2026-10-23: connected to the business layer (`docs/reports/AGENT-claude-vibe-wire.md`). When the
+ * picture record cannot be fetched, the reason is stated truthfully; no placeholder image is shown.
  */
 import { useMemo, useState } from "react";
 import type { JSX } from "react";
@@ -27,15 +35,17 @@ import { WidthGrip } from "./WidthGrip";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 「这次改动」那一段先归档,默认不显示 —— **这是用户 2026-10-23 要求的**,
- * 用户给的理由:改动已经显示在每次聊天的气泡里了(Agent 消息下面那一块「Agent 操作」),右边再列一遍是重复。
- * 记录另见 `docs/plan/user-decisions-2026-10-23.md`。接业务层时这一段没有接(它本来就不显示),要加回来先问用户。
+ * The "This change" section is archived first and not shown by default: **this was requested by the user
+ * on 2026-10-23**. The user's reason: changes are already shown in the bubble of each chat (the "Agent
+ * actions" block under the Agent message), so listing them again on the right is a duplicate.
+ * The record is also in `docs/plan/user-decisions-2026-10-23.md`. This section was not connected when the
+ * business layer was wired (it is not shown anyway); ask the user before adding it back.
  */
 const SHOW_CHANGES = false;
 
 function section(key: string, title: string, open: boolean, toggle: () => void, body: JSX.Element, right?: JSX.Element): JSX.Element {
   return (
-    // 钩子名带 `sec-`:不带的话「画面」这一段会和里面那颗播放键(`start-ext-play`)撞同一个名字
+    // The hook name carries `sec-`: without it the "Picture" section would collide on the same name with the play button inside it (`start-ext-play`)
     <section className="ps-ext-sec" data-pc={`start-ext-sec-${key}`} data-open={open}>
       <div className="ps-card-head">
         <button type="button" className="ps-card-toggle" aria-expanded={open} onClick={toggle}>
@@ -49,7 +59,7 @@ function section(key: string, title: string, open: boolean, toggle: () => void, 
   );
 }
 
-/** 这条对话里留了画面记录的改动(新增 / 删除 / 修改三类),从新到旧 */
+/** Changes in this chat that left a picture record (three kinds: added / deleted / modified), newest first */
 interface DiffEntry {
   key: string;
   visualId: string;
@@ -104,19 +114,20 @@ function DiffView(props: { entry: DiffEntry }): JSX.Element {
 }
 
 export function ChatSidePanel(props: {
-  /** 这条对话的消息:修改前 / 修改后从这里找带画面记录的改动 */
+  /** Messages of this chat: before / after finds the changes with picture records here */
   messages: readonly ChatMessage[];
-  /** 「详细编辑」展开着:舞台在那边,这里不再挂第二份 */
+  /** "Detail editing" is expanded: the stage is over there, so a second copy is not mounted here */
   detailOpen: boolean;
   /**
-   * 详细编辑展开、这条栏又开着时,在这里新建一块聊天面板(`ExtChatPanel.tsx`);
-   * 人把这条栏收了就是 `null`,输入框掉回聊天列底部(用户 2026-10-26 定)。
+   * When detail editing is expanded and this rail is open, a new chat panel (`ExtChatPanel.tsx`) is
+   * created here; if the user collapses this rail it is `null`, and the input box drops back to the bottom
+   * of the chat column (user decision, 2026-10-26).
    */
   chatPanel: { composer: JSX.Element; whyNot: string | null; onBack: () => void } | null;
   onNote: (text: string) => void;
-  /** 「画面」段头那颗「详细编辑」:展开占满聊天区的编辑视图(`DetailEdit.tsx`) */
+  /** The "Detail editing" button in the "Picture" section header: expands the editing view that fills the chat area (`DetailEdit.tsx`) */
   onDetail: () => void;
-  /** 宽度:和左边那栏一样能拖、记在本机 */
+  /** Width: draggable like the left rail, and remembered on this machine */
   width: number;
   onWidth: (px: number) => void;
   onWidthCommit: (px: number) => void;
@@ -132,7 +143,7 @@ export function ChatSidePanel(props: {
 
   return (
     <aside className="ps-ext" data-pc="start-ext" style={{ flexBasis: `${props.width}px` }}>
-      {/* 左边那条缝:平时不画线,鼠标压上来才亮 */}
+      {/* The seam on the left: no line normally, it lights up only when the mouse presses on it */}
       <WidthGrip spec={EXT_WIDTH} side="left" width={props.width} label={tr("Side panel width")} pc="start-ext-grip"
         onWidth={props.onWidth} onWidthCommit={props.onWidthCommit} onWidthNudge={props.onWidthNudge} />
       {section(
@@ -143,7 +154,7 @@ export function ChatSidePanel(props: {
         props.detailOpen ? (
           <p className="ps-ext-todo">{tr("The picture is being shown in \"Detail editing\".")}</p>
         ) : (
-          // 播放条叠在画面里(用户 2026-10-23 定):省掉画框下面那一条的高度
+          // The playback bar is overlaid on the picture (user decision, 2026-10-23): saves the height of the bar under the frame
           <VibeStage className="ps-ext-frame" pc="start-ext-stage">
             <div className="ps-stage-over">
               <button type="button" className="ps-ext-play" data-pc="start-ext-play" aria-label={playing ? tr("Pause") : tr("Play")} onClick={() => actions.togglePlay()}>
@@ -161,7 +172,7 @@ export function ChatSidePanel(props: {
             </div>
           </VibeStage>
         ),
-        // 段头右上角那颗:原来这儿是画框里的全屏键,用户 2026-10-23 换成这个
+        // The button at the top right of the section header: this used to be the fullscreen button in the frame; the user replaced it with this on 2026-10-23
         <button type="button" className="ps-ext-action" data-pc="start-ext-detail" onClick={props.onDetail}>{tr("Detail editing")}</button>,
       )}
 
@@ -192,7 +203,7 @@ export function ChatSidePanel(props: {
         ),
       )}
 
-      {/* 详细编辑展开时新建出来的那一块:摆在最后,吃掉这条栏剩下的高度 */}
+      {/* The block newly created when detail editing is expanded: placed last, taking the height left over in this rail */}
       {props.chatPanel && (
         <ExtChatPanel
           messages={props.messages}

@@ -5,8 +5,9 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 金句引言:多行金句伴随左侧主色竖线逐行揭示。从 quote-lockup 拆出。
- * 不含署名，署名单独作为 text-author 部件。
+ * Punchline quote: multi-line punchline revealed line by line alongside a left vertical bar in
+ * primary color. Extracted from quote-lockup.
+ * Does not include attribution; attribution is separate as the text-author part.
  */
 interface Params {
   quote: string;
@@ -60,10 +61,10 @@ function QuotePart({ params, width, height }: PartProps<Params>) {
 
 export const textQuote: PartDef<Params> = {
   id: "text-quote",
-  name: "金句定格",
-  description: "逐行揭示的多行金句引言",
-  useWhen: "口播里出现引号包起来的原话、名人名言时使用，带左侧主色标线逐行滑入；搭配 text-author 使用以展示署名；极短口号用 text-pill，强调句用 text-blur。",
-  tags: ["金句", "引言", "引号", "定格", "名言"],
+  name: "Quote lockup",
+  description: "Multi-line punchy quote revealed line by line",
+  useWhen: "Use when the narration contains a verbatim quote in quotation marks or a famous saying; lines slide in one by one with an accent-colored rule on the left; pair with text-author to show the attribution; use text-pill for very short slogans and text-blur for emphasis sentences.",
+  tags: ["quotable line", "quote", "quotation marks", "lockup", "famous saying"],
   role: "list",
   from: "quote-lockup",
   defaults: {
@@ -72,9 +73,9 @@ export const textQuote: PartDef<Params> = {
     accent: "",
   },
   controls: [
-    { key: "quote", label: "金句(用|分行)", type: "text", required: true },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 200, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
-    { key: "accent", label: "竖线颜色(留空用主题色)", type: "color" },
+    { key: "quote", label: "Quote (separate lines with |)", type: "text", required: true },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 200, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
+    { key: "accent", label: "Rule color (leave empty to use theme color)", type: "color" },
   ],
   defaultFrame: { x: 200, y: 340, w: 1000, h: 360 },
   settleMs: (p) => (Math.max(1, p.quote.split("|").filter(Boolean).length) - 1) * 180 + 600,

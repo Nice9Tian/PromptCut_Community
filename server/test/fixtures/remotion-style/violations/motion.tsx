@@ -1,4 +1,7 @@
-/** 违规样例（测试夹具，不进卡片库）：Motion 的动画与弹簧。建卡时应当被拒绝并指出行号。 */
+/**
+ * Violation example (test fixture, not added to the card library): Motion animations and springs.
+ * Should be rejected during card creation, pointing to the line number.
+ */
 import "../../kernel/remotionStyle";
 import { motion, useSpring } from "motion/react";
 import type { CardDef, CardProps } from "../../kernel/types";
@@ -12,9 +15,9 @@ function C({ params }: CardProps<Params>) {
   );
 }
 export const card: CardDef<Params> = {
-  id: "rs-bad-motion", name: "Motion 的动画与弹簧", description: "remotion 式的规矩的违规样例", source: "user",
+  id: "rs-bad-motion", name: "Motion animations and springs", description: "Violation example of the remotion-style rules", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };

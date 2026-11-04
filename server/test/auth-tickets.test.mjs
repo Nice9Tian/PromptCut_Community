@@ -1,9 +1,10 @@
 /**
- * M6a 共享项目：素材票据（契约 `docs/plan/auth-contract.md` 第 8 节，用例 AU7）。
- * 跑：node --test server/test/auth-tickets.test.mjs
+ * M6a shared project: asset tickets (contract `docs/plan/auth-contract.md` section 8, test case AU7).
+ * Run: node --test server/test/auth-tickets.test.mjs
  *
- * 只照契约写，不看实现。素材服务与文档服务同一进程、共用凭证存储（`host.auth`），接法是测试方的假设，
- * 集中在 `auth-kit.mjs` 文件头。
+ * Written strictly against the contract, ignoring implementation. The asset service and document
+ * service are in the same process, sharing credential store (`host.auth`); wiring is a test
+ * assumption, centralized in the `auth-kit.mjs` file header.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,28 +29,28 @@ async function setup(t, { mode = 'free' } = {}) {
 
 const read = (env, hash, headers = {}, query = '', method = 'GET') => env.asset(`media/${hash}${query}`, { remote: LAN, headers, method });
 
-test('AU7 票据形状：v1.<负载>.<签名>；负载字段齐全；素材票据有效期不超过 15 分钟', async (t) => {
+test('AU7 ticket shape: v1.<payload>.<signature>; payload fields complete; asset ticket lifetime is at most 15 minutes', async (t) => {
   const { member, proj, dev } = await setup(t);
   const r = await ticketOf(member, { kind: 'asset', access: 'rw' });
   assert.match(r.ticket, /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
   assert.ok(r.ticket.length <= 2048);
   const { body } = parseTicket(r.ticket);
-  for (const k of ['kid', 'k', 'p', 'u', 'r', 'g', 'ug', 'exp', 'iat']) assert.ok(k in body, `负载有 ${k}：${JSON.stringify(body)}`);
+  for (const k of ['kid', 'k', 'p', 'u', 'r', 'g', 'ug', 'exp', 'iat']) assert.ok(k in body, `payload has ${k}: ${JSON.stringify(body)}`);
   assert.equal(body.k, 'asset');
   assert.equal(body.r, 'rw');
   assert.equal(body.p, proj.projectId);
   assert.equal(body.u, `zoe@${dev.deviceId}`);
-  assert.ok(body.exp - body.iat <= 15 * 60_000 && body.exp > body.iat, `有效期：${body.exp - body.iat}`);
+  assert.ok(body.exp - body.iat <= 15 * 60_000 && body.exp > body.iat, `lifetime: ${body.exp - body.iat}`);
   assert.equal(r.exp, body.exp);
   const ro = parseTicket((await ticketOf(member, { kind: 'asset', access: 'r' })).ticket).body;
   assert.equal(ro.r, 'r');
 });
 
-test('AU7 读：Bearer 或查询串票据 → 200；Range 206；查询串票据的响应带 no-store 与 no-referrer', async (t) => {
+test('AU7 read: Bearer or query-string ticket → 200; Range 206; the response for a query-string ticket carries no-store and no-referrer', async (t) => {
   const { env, blob, member } = await setup(t);
   const ro = (await ticketOf(member, { kind: 'asset', access: 'r' })).ticket;
   const rw = (await ticketOf(member, { kind: 'asset', access: 'rw' })).ticket;
-  for (const [what, tk] of [['只读', ro], ['读写', rw]]) {
+  for (const [what, tk] of [['read-only', ro], ['read-write', rw]]) {
     const g = await read(env, blob.hash, bearer(tk));
     assert.equal(g.status, 200, `Bearer ${what}`);
     assert.deepEqual(g.buf, blob.bytes);
@@ -60,99 +61,99 @@ test('AU7 读：Bearer 或查询串票据 → 200；Range 206；查询串票据�
     assert.deepEqual(rg.buf, blob.bytes.subarray(10, 20));
   }
   const q = await read(env, blob.hash, {}, `?t=${encodeURIComponent(ro)}`);
-  assert.equal(q.status, 200, '查询串只读票据');
+  assert.equal(q.status, 200, 'query-string read-only ticket');
   assert.deepEqual(q.buf, blob.bytes);
   assert.equal(q.headers.get('cache-control'), 'no-store');
   assert.equal(q.headers.get('referrer-policy'), 'no-referrer');
   const qr = await read(env, blob.hash, { Range: 'bytes=0-9' }, `?t=${encodeURIComponent(ro)}`);
-  assert.equal(qr.status, 206, '查询串 + Range');
+  assert.equal(qr.status, 206, 'query string + Range');
 });
 
-test('AU7 读：无票据、签名错、负载被改、查询串用读写票据 → 401 unauthorized', async (t) => {
+test('AU7 read: no ticket, wrong signature, tampered payload, read-write ticket in the query string → 401 unauthorized', async (t) => {
   const { env, blob, member } = await setup(t);
   const ro = (await ticketOf(member, { kind: 'asset', access: 'r' })).ticket;
   const rw = (await ticketOf(member, { kind: 'asset', access: 'rw' })).ticket;
   const cases = [
-    ['无票据', {}, ''],
-    ['签名错', bearer(flipSignature(ro)), ''],
-    ['负载被改（延长 exp）', bearer(tamperTicket(ro, { exp: parseTicket(ro).body.exp + 3_600_000 })), ''],
-    ['负载被改（r → rw）', bearer(tamperTicket(ro, { r: 'rw' })), ''],
-    ['不是票据', bearer('garbage'), ''],
-    ['查询串签名错', {}, `?t=${encodeURIComponent(flipSignature(ro))}`],
-    ['查询串用读写票据', {}, `?t=${encodeURIComponent(rw)}`],
-    ['超长票据', bearer(`v1.${'A'.repeat(2100)}.AAAA`), ''],
+    ['no ticket', {}, ''],
+    ['wrong signature', bearer(flipSignature(ro)), ''],
+    ['payload tampered (extended exp)', bearer(tamperTicket(ro, { exp: parseTicket(ro).body.exp + 3_600_000 })), ''],
+    ['payload tampered (r → rw)', bearer(tamperTicket(ro, { r: 'rw' })), ''],
+    ['not a ticket', bearer('garbage'), ''],
+    ['wrong signature in the query string', {}, `?t=${encodeURIComponent(flipSignature(ro))}`],
+    ['read-write ticket in the query string', {}, `?t=${encodeURIComponent(rw)}`],
+    ['overlong ticket', bearer(`v1.${'A'.repeat(2100)}.AAAA`), ''],
   ];
   for (const [what, headers, query] of cases) {
     const r = await read(env, blob.hash, headers, query);
-    assert.equal(r.status, 401, `${what}：${r.status}`);
+    assert.equal(r.status, 401, `${what}: ${r.status}`);
     assert.deepEqual(r.json, { ok: false, error: 'unauthorized' }, what);
     const h = await read(env, blob.hash, headers, query, 'HEAD');
     assert.equal(h.status, 401, `HEAD ${what}`);
   }
 });
 
-test('AU7 读：过期（15 分钟 + 30 s 偏差，注入时钟）→ 401；偏差之内仍有效；同一段播放的每个 Range 都重新核对', async (t) => {
+test('AU7 read: expiry (15 minutes + 30 s skew, injected clock) → 401; still valid within the skew; every Range of the same playback is verified again', async (t) => {
   const { env, blob, member } = await setup(t);
   const tk = (await ticketOf(member, { kind: 'asset', access: 'r' })).ticket;
   const { exp } = parseTicket(tk).body;
   const until = exp - Date.now();
   env.clock.advance(until + 20_000);
   const r1 = await read(env, blob.hash, { ...bearer(tk), Range: 'bytes=0-9' });
-  assert.equal(r1.status, 206, '过期后 20 s（30 s 偏差之内）仍有效');
+  assert.equal(r1.status, 206, 'still valid 20 s after expiry (within the 30 s skew)');
   env.clock.advance(15_000);
   const r2 = await read(env, blob.hash, { ...bearer(tk), Range: 'bytes=10-19' });
-  assert.equal(r2.status, 401, '过期 35 s：下一个 Range 请求 401');
+  assert.equal(r2.status, 401, '35 s after expiry: the next Range request returns 401');
   const r3 = await read(env, blob.hash, {}, `?t=${encodeURIComponent(tk)}`);
-  assert.equal(r3.status, 401, '查询串同样过期');
+  assert.equal(r3.status, 401, 'the query string expires the same way');
 });
 
-test('AU7 写：无票据、只读票据、签名错、查询串 → 401 / 403；读写票据照常写', async (t) => {
+test('AU7 write: no ticket, read-only ticket, wrong signature, query string → 401 / 403; a read-write ticket writes as usual', async (t) => {
   const { env, member } = await setup(t);
   const ro = (await ticketOf(member, { kind: 'asset', access: 'r' })).ticket;
   const rw = (await ticketOf(member, { kind: 'asset', access: 'rw' })).ticket;
 
   const none = await remotePut(env, LAN);
-  assert.equal(none.status, 401, '无票据写');
+  assert.equal(none.status, 401, 'write with no ticket');
   assert.deepEqual(none.json, { ok: false, error: 'unauthorized' });
   const bad = await remotePut(env, LAN, bearer(flipSignature(rw)));
-  assert.equal(bad.status, 401, '签名错写');
+  assert.equal(bad.status, 401, 'write with a wrong signature');
   const readOnly = await remotePut(env, LAN, bearer(ro));
-  assert.equal(readOnly.status, 403, '只读票据写');
+  assert.equal(readOnly.status, 403, 'write with a read-only ticket');
   assert.deepEqual(readOnly.json, { ok: false, error: 'forbidden' });
   const byQuery = await remotePut(env, LAN, {}, `?t=${encodeURIComponent(rw)}`);
-  assert.equal(byQuery.status, 401, '查询串用于写入一律不认');
+  assert.equal(byQuery.status, 401, 'a query string is never accepted for writes');
   const byQueryRo = await remotePut(env, LAN, {}, `?t=${encodeURIComponent(ro)}`);
-  assert.equal(byQueryRo.status, 401, '查询串只读票据写');
+  assert.equal(byQueryRo.status, 401, 'write with a read-only ticket in the query string');
 
   const ok = await remotePut(env, LAN, bearer(rw));
-  assert.equal(ok.status, 200, `读写票据写：${ok.buf.toString()}`);
-  // complete 也要票据
+  assert.equal(ok.status, 200, `write with a read-write ticket: ${ok.buf.toString()}`);
+  // complete also requires a ticket
   const hash = ok.json.hash;
   const c0 = await env.asset(`media/${hash}/complete`, { method: 'POST', remote: LAN });
-  assert.equal(c0.status, 401, 'complete 无票据');
+  assert.equal(c0.status, 401, 'complete with no ticket');
   const c1 = await env.asset(`media/${hash}/complete`, { method: 'POST', remote: LAN, headers: bearer(ro) });
-  assert.equal(c1.status, 403, 'complete 只读票据');
+  assert.equal(c1.status, 403, 'complete with a read-only ticket');
   const c2 = await env.asset(`media/${hash}/complete`, { method: 'POST', remote: LAN, headers: bearer(rw) });
-  assert.equal(c2.status, 200, `complete 读写票据：${c2.buf.toString()}`);
+  assert.equal(c2.status, 200, `complete with a read-write ticket: ${c2.buf.toString()}`);
 });
 
-test('AU7 项目代数变了（set-password）→ 旧票据 401；新票据可用', async (t) => {
+test('AU7 project generation changed (set-password) → old ticket returns 401; new ticket works', async (t) => {
   const { env, blob, member, creator, proj } = await setup(t);
   const old = (await ticketOf(member, { kind: 'asset', access: 'r' })).ticket;
   assert.equal((await read(env, blob.hash, bearer(old))).status, 200);
   const r = await adminOp(creator, proj, 'set-password', { project: credential('rotated') });
   assert.equal(r.type, 'shared.admin.ok', JSON.stringify(r));
   const after = await read(env, blob.hash, bearer(old));
-  assert.equal(after.status, 401, 'set-password 后旧票据 401');
+  assert.equal(after.status, 401, 'old ticket returns 401 after set-password');
   assert.deepEqual(after.json, { ok: false, error: 'unauthorized' });
-  assert.equal((await read(env, blob.hash, {}, `?t=${encodeURIComponent(old)}`)).status, 401, '查询串同样');
-  // 在线连接不断，仍能要新票据
+  assert.equal((await read(env, blob.hash, {}, `?t=${encodeURIComponent(old)}`)).status, 401, 'same for the query string');
+  // While the online connection remains active, new tickets can still be requested
   const fresh = (await ticketOf(member, { kind: 'asset', access: 'r' })).ticket;
-  assert.ok(parseTicket(fresh).body.g > parseTicket(old).body.g, '新票据带新的项目代数');
+  assert.ok(parseTicket(fresh).body.g > parseTicket(old).body.g, 'new ticket carries the new project generation');
   assert.equal((await read(env, blob.hash, bearer(fresh))).status, 200);
 });
 
-test('AU7 项目代数变了（set-list）→ 名单里其余人的旧票据也 401', async (t) => {
+test('AU7 project generation changed (set-list) → old tickets of the others on the list also return 401', async (t) => {
   const { env, blob, member, creator, proj } = await setup(t, { mode: 'restricted' });
   const old = (await ticketOf(member, { kind: 'asset', access: 'r' })).ticket;
   const r = await adminOp(creator, proj, 'set-list', { list: [credential('bob-pw', 'bob'), credential('new-pw', 'newbie')] });
@@ -160,31 +161,31 @@ test('AU7 项目代数变了（set-list）→ 名单里其余人的旧票据也 
   assert.equal((await read(env, blob.hash, bearer(old))).status, 401);
 });
 
-test('AU7 用户代数变了（kick）→ 被踢者旧票据 401，别人的不受影响', async (t) => {
+test('AU7 user generation changed (kick) → old ticket of the kicked member returns 401, tickets of others are unaffected', async (t) => {
   const { env, blob, member, creator, proj, dev } = await setup(t);
   const other = await join(env, proj, { username: 'yan', remote: '192.168.1.79' });
   const mine = (await ticketOf(member, { kind: 'asset', access: 'r' })).ticket;
   const theirs = (await ticketOf(other, { kind: 'asset', access: 'r' })).ticket;
   const r = await adminOp(creator, proj, 'kick', { username: 'zoe', deviceId: dev.deviceId });
   assert.equal(r.type, 'shared.admin.ok', JSON.stringify(r));
-  assert.equal((await read(env, blob.hash, bearer(mine))).status, 401, '被踢者');
-  assert.equal((await read(env, blob.hash, bearer(theirs))).status, 200, '别人');
+  assert.equal((await read(env, blob.hash, bearer(mine))).status, 401, 'kicked member');
+  assert.equal((await read(env, blob.hash, bearer(theirs))).status, 200, 'Someone else');
 });
 
-test('AU7 回环来源不带票据照常读写；集群令牌不再用于素材服务', async (t) => {
+test('AU7 loopback source reads and writes as usual without a ticket; the cluster token is no longer used for the asset service', async (t) => {
   const env = await hostFor(t, { assets: true, clusterToken: randomToken() });
   const blob = await uploadLocal(env);
   const g = await env.asset(`media/${blob.hash}`);
-  assert.equal(g.status, 200, '回环读');
+  assert.equal(g.status, 200, 'loopback read');
   assert.deepEqual(g.buf, blob.bytes);
   const token = env.clusterToken;
   const w = await remotePut(env, LAN, bearer(token));
-  assert.equal(w.status, 401, '非回环凭集群令牌写 → 401（C5 退役）');
+  assert.equal(w.status, 401, 'non-loopback write with the cluster token → 401 (C5 retired)');
   const r = await env.asset(`media/${blob.hash}`, { remote: LAN, headers: bearer(token) });
-  assert.equal(r.status, 401, '非回环凭集群令牌读 → 401');
+  assert.equal(r.status, 401, 'non-loopback read with the cluster token → 401');
 });
 
-test('AU7 票据能读这台服务上任何已知哈希（不限定哈希）；另一个项目的票据同样能读', async (t) => {
+test('AU7 a ticket can read any known hash on this service (no hash restriction); a ticket from another project can read it too', async (t) => {
   const { env, member } = await setup(t);
   const a = await uploadLocal(env);
   const b = await uploadLocal(env);
@@ -197,7 +198,7 @@ test('AU7 票据能读这台服务上任何已知哈希（不限定哈希）；�
   assert.equal((await read(env, a.hash, bearer(tk2))).status, 200);
 });
 
-test('AU7 CORS：预检的 Access-Control-Allow-Headers 含 Authorization', async (t) => {
+test('AU7 CORS: the preflight Access-Control-Allow-Headers includes Authorization', async (t) => {
   const env = await hostFor(t, { assets: true });
   const r = await env.asset('media/0000000000000000000000000000000000000000000000000000000000000000', {
     method: 'OPTIONS', remote: LAN, headers: { Origin: 'http://192.168.1.5:5173', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' },
@@ -207,12 +208,12 @@ test('AU7 CORS：预检的 Access-Control-Allow-Headers 含 Authorization', asyn
   assert.equal(r.headers.get('access-control-allow-origin'), '*');
 });
 
-test('AU7 带票据请求的访问日志只记路径，不记查询串', async (t) => {
+test('AU7 the access log for requests carrying a ticket records only the path, not the query string', async (t) => {
   const { env, blob, member } = await setup(t);
   const tk = (await ticketOf(member, { kind: 'asset', access: 'r' })).ticket;
   await read(env, blob.hash, {}, `?t=${encodeURIComponent(tk)}`);
   await read(env, blob.hash, bearer(tk));
   const all = env.logs.map((l) => JSON.stringify(l)).join('\n');
-  assert.ok(!all.includes(tk), '日志里不出现票据原文');
-  assert.ok(!all.includes(parseTicket(tk).payload), '日志里不出现票据负载段');
+  assert.ok(!all.includes(tk), 'The raw ticket does not appear in the log');
+  assert.ok(!all.includes(parseTicket(tk).payload), 'The ticket payload segment does not appear in the log');
 });

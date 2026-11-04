@@ -1,6 +1,6 @@
 /**
- * 手机版 Agent 分页里一个会话的对话页的画法(演示稿 `prototypes/mobile-ui-demo/` 的 Agent 页):创造力一行、消息区、输入区。
- * 只管画与消息区的贴底跟随;数据与动作由 `AgentChat.tsx` 给(云端对话、告知确认、权限、发送),这样探针也能不接云端、直接用假消息画一页(`agent-harness.tsx`)。
+ * How the chat page of one session in the mobile app's Agent tab is rendered (the Agent page of the demo mockup `prototypes/mobile-ui-demo/`): creativity row, message area, input area.
+ * It only handles rendering and the message area's stick-to-bottom following; data and actions come from `AgentChat.tsx` (cloud chat, notice confirmation, permissions, sending), so a probe can also render a page straight from fake messages without a cloud connection (`agent-harness.tsx`).
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import type { ChatMessage } from "../ai/types";
@@ -14,7 +14,7 @@ import { AgentRound, QuoteBar, StartHero, UserBubble } from "./agentParts";
 import { isUserBubble, ordinals, type QuoteRef } from "./agentView";
 import { tr } from "../i18n/index.ts";
 
-/** 演示稿输入框上方那排快捷提问:点一下把这句话放进输入框(不直接发送) */
+/** The row of quick questions above the demo mockup's input box: tap one to put the sentence into the input box (not sent directly) */
 export const QUICKS: readonly (readonly [string, string])[] = [
   [tr("Grander title"), tr("Make the opening title more grand")],
   [tr("Add transition"), tr("Add a transition to the second clip")],
@@ -26,25 +26,25 @@ export const PLACEHOLDER = tr("Tell the Agent what you want to change…");
 
 export interface AgentChatViewProps {
   tabId: string;
-  /** 这一页此刻是不是用户看着的那一页 */
+  /** Whether this page is the one the user is looking at right now */
   shown: boolean;
-  /** Agent 气泡上的小字(会话标签的名字) */
+  /** Small text on an Agent bubble (the name of the session tab) */
   who: string;
   messages: readonly ChatMessage[];
-  /** 开始页(本项目一个会话都没有) */
+  /** Start page (this project has no session at all) */
   start: { draft: boolean; animated: boolean; guide: StartGuide; onPickPreset: () => void };
   level: CreativityLevel;
   levelDisabled: boolean;
   onLevel: (lv: CreativityLevel) => void;
-  /** 「共有对话 / 私有对话」小标签;空串不画 */
+  /** Small "shared chat / private chat" label; an empty string renders nothing */
   visLabel: string;
   canToggleVisibility: boolean;
   onToggleVisibility: () => void;
-  /** 创造力一行下面的提示条(托管端没有 Agent、被关、重连中、页面提示) */
+  /** Notice bar below the creativity row (hosted side has no Agent, disabled, reconnecting, page notices) */
   banners?: ReactNode;
-  /** 对话里在排队的消息数 */
+  /** Number of queued messages in the chat */
   queued: number;
-  /** 创建者只读:不画输入区 */
+  /** Creator is read-only: the input area is not rendered */
   readOnly: boolean;
   quotes: readonly QuoteRef[];
   onRemoveQuote: (id: string) => void;
@@ -54,16 +54,16 @@ export interface AgentChatViewProps {
   inputDisabled: boolean;
   onSend: () => void;
   onStop: () => void;
-  /** 在跑、输入框又是空的:发送钮换成停止 */
+  /** Running and the input box is empty: the send button turns into stop */
   stopMode: boolean;
   onPickExample: (text: string) => void;
-  /** 挂在这页最上面的东西(告知确认框) */
+  /** Things pinned at the very top of this page (the notice confirmation dialog) */
   dialog?: ReactNode;
 }
 
 export function AgentChatView(p: AgentChatViewProps) {
   const { messages } = p;
-  // 这个项目只给了只读权限(游客):对话历史照常读,但不能发消息;输入区换成一句说明
+  // This project only grants read-only permission (guest): chat history is read as usual, but messages cannot be sent; the input area is replaced by a one-line note
   const ro = useReadOnly();
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -76,7 +76,7 @@ export function AgentChatView(p: AgentChatViewProps) {
     for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "assistant") return messages[i].id;
     return null;
   }, [messages]);
-  // 用户刚发了一条:贴底跟着看;平时只有本来就在底部时才跟,往上翻着看就不拽
+  // The user just sent one: stick to the bottom and follow; normally follow only when already at the bottom, and do not yank when scrolled up to read
   const last = messages[messages.length - 1];
   const lastMine = last?.role === "user" ? last.id : null;
   useEffect(() => { if (lastMine) stick.current = true; }, [lastMine]);

@@ -1,7 +1,8 @@
 /**
- * `/@media` 路由发文件(`server/vite-plugin-media.ts` 的 `serveFile`):文件在「取大小」与「开始读」之间没了,
- * 不能把整个编辑器进程带崩(原来读流的 error 没人接,进程退出,页面上随后的请求全是 Failed to fetch)。
- * 跑:npm test -- server/test/media-serve-file.test.mjs
+ * `/@media` route serves files (`serveFile` in `server/vite-plugin-media.ts`): if file disappears
+ * between "getting size" and "starting read", it must not crash the entire editor process (previously
+ * read stream error was unhandled, process exited, subsequent requests on page all Failed to fetch).
+ * Run: npm test -- server/test/media-serve-file.test.mjs
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -40,7 +41,10 @@ function compileTs(absFile) {
 }
 const { serveFile } = await import(compileTs(path.join(ROOT, 'server', 'vite-plugin-media.ts')));
 
-/** 起一台只发这一个文件的服务;`beforeBody` 在响应头写出的那一刻(取完大小、还没开始读)调用 */
+/**
+ * Start a service that only serves this file; `beforeBody` is called when response headers
+ * are written (after getting size, before reading starts)
+ */
 async function serve(file, beforeBody) {
   const server = http.createServer((req, res) => {
     if (beforeBody) {
@@ -56,12 +60,12 @@ async function serve(file, beforeBody) {
 const bytes = Buffer.alloc(300_000, 7);
 const fresh = (name) => { const f = path.join(OUT, name); fs.writeFileSync(f, bytes); return f; };
 
-test('SF1 文件不存在:回 404,不抛', async () => {
+test('SF1 file does not exist: answers 404 without throwing', async () => {
   const r = await fetch(await serve(path.join(OUT, 'nope.wav')));
   assert.equal(r.status, 404);
 });
 
-test('SF2 取完大小、开始读之前文件被删:进程不崩,这一条响应照样读完', async () => {
+test('SF2 file deleted after its size is fetched and before reading starts: the process does not crash, and this response is still read to the end', async () => {
   const file = fresh('gone-200.wav');
   const uncaught = [];
   const onErr = (e) => uncaught.push(e);
@@ -71,13 +75,13 @@ test('SF2 取完大小、开始读之前文件被删:进程不崩,这一条响�
     assert.equal(r.status, 200);
     const got = Buffer.from(await r.arrayBuffer());
     await new Promise((res) => setTimeout(res, 50));
-    assert.deepEqual(uncaught, [], '读流的 error 不得冒成未捕获异常');
+    assert.deepEqual(uncaught, [], 'An error from the read stream must not surface as an uncaught exception');
     assert.equal(got.length, bytes.length);
     assert.equal(fs.existsSync(file), false);
   } finally { process.off('uncaughtException', onErr); }
 });
 
-test('SF3 Range 请求同样:删文件后进程不崩,区间字节数对', async () => {
+test('SF3 same for Range requests: the process does not crash after the file is deleted, and the byte count of the range is right', async () => {
   const file = fresh('gone-206.wav');
   const uncaught = [];
   const onErr = (e) => uncaught.push(e);
@@ -93,7 +97,7 @@ test('SF3 Range 请求同样:删文件后进程不崩,区间字节数对', async
   } finally { process.off('uncaughtException', onErr); }
 });
 
-test('SF4 HEAD 与越界 Range 不留打开的句柄(文件随后删得掉)', async () => {
+test('SF4 HEAD and out-of-range Range leave no open handle (the file can be deleted afterwards)', async () => {
   const file = fresh('head.wav');
   const url = await serve(file);
   const h = await fetch(url, { method: 'HEAD' });

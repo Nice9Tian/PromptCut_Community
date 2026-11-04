@@ -1,5 +1,5 @@
 /** Isolated real MOV/Chrome regression. node scripts/verify-playback.mjs */
-import './lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import './lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -136,7 +136,7 @@ try {
   console.log('PASS: live scheduler heartbeat / pause', pipeline.playback.status().metrics);
   await page.goto(origin + '/retry-test');
   await page.waitForFunction(() => window.seeAttempts >= 2 && [...document.images].some(img => img.complete && img.naturalWidth === 160), { timeout: 15000 });
-  assert.equal(await page.evaluate(() => [...document.querySelectorAll('[role="status"]')].some(el => el.textContent.includes('连接中断'))), false);
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll('[role="status"]')].some(el => el.textContent.includes('Connection lost'))), false);
   console.log('PASS: paused preview retries a backend outage without a seek or reload');
   await fs.writeFile(path.join(out, 'result.json'), JSON.stringify({ probe: probe(), streamed, metrics: pipeline.playback.status().metrics }, null, 2));
 } finally {

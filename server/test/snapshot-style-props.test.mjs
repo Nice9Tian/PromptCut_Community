@@ -1,14 +1,19 @@
 /**
- * 差异样式内联的属性表对账(底稿 A2(8))(任务书:「清单以 Chrome 实测为准:用父子两层干净元素逐个属性验
- * 『父设了非初始值、子跟不跟』,与清单不符就失败」)。
+ * Property table reconciliation for differential style inlining (draft A2(8)) (task brief: "The
+ * manifest is based on Chrome actual measurements: verify property by property with two clean
+ * parent-child layers 'whether the child follows when parent sets a non-initial value', and fail
+ * if it does not match the manifest").
  *
- * 实测那一步在 `scripts/probes/inherited-props-probe.mjs` 里跑(要真 Chrome,`npm test`
- * 没有 DOM、也不该在单测里起浏览器)。这里对的是**那一趟跑出来的结果**:
- * 下面两张表是 2026-09-19 在 Chrome 152 上跑出来的原文
- * (`out/inherited-props.json` 的 `inherited` / `notInherited`,已排掉布局解析值属性 ——
- *  给父元素设 width、块级子元素的**使用值**跟着变,那是布局不是继承)。
+ * That actual measurement step runs in `scripts/probes/inherited-props-probe.mjs` (requires real
+ * Chrome; `npm test` has no DOM and should not launch a browser in unit tests). What is reconciled
+ * here is **the results produced from that pass**:
+ * The two tables below are raw text run on Chrome 152 on 2026-09-19 (`inherited` / `notInherited`
+ * in `out/inherited-props.json`, with layout resolved value properties excluded: setting width on
+ * parent element causes block-level child's **used value** to change with it; that is layout, not
+ * inheritance).
  *
- * 改 `INHERITED_PROPS` 的人要么让它继续满足这两条,要么重跑探针、把这里的两张表一起换掉。
+ * Anyone modifying `INHERITED_PROPS` must either keep it satisfying these two conditions, or rerun
+ * the probe and replace both tables here together.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +22,7 @@ import {
   isInheritedProp, snapLayoutUnits, isCurrentAnimation, isRelevantAnimation, serializeTransformList,
 } from '../../src/render/snapshot/snapshotStyleProps.mjs';
 
-/** Chrome 152 实测「确实继承」的属性(103 个里排掉 width / inline-size 两个布局解析值) */
+/** Chrome 152 measured "truly inherited" properties (excluding width / inline-size out of 103) */
 const CHROME_INHERITED = [
   '-webkit-border-horizontal-spacing', '-webkit-border-vertical-spacing', '-webkit-font-smoothing',
   '-webkit-locale', '-webkit-tap-highlight-color', '-webkit-text-fill-color', '-webkit-text-security',
@@ -40,7 +45,10 @@ const CHROME_INHERITED = [
   'visibility', 'widows', 'word-break', 'word-spacing', 'writing-mode',
 ];
 
-/** 同一趟实测里「确实不继承」的属性。只抽了会被误写进表的那几类留在这里做反向卡口。 */
+/**
+ * Properties in the same pass that "truly do not inherit". Only categories prone to being
+ * mistakenly written into the table are kept here as a reverse check.
+ */
 const CHROME_NOT_INHERITED = [
   'align-items', 'animation-name', 'appearance', 'backdrop-filter', 'background-color', 'background-image',
   'border-bottom-color', 'border-bottom-style', 'border-top-left-radius', 'box-shadow', 'clip-path',
@@ -52,117 +60,124 @@ const CHROME_NOT_INHERITED = [
   'vertical-align', 'view-transition-name', 'will-change', 'z-index', 'zoom',
 ];
 
-test('表里的每一项都不是 Chrome 实测的「不继承」', () => {
+test('No entry in the table is one that Chrome measures as "not inherited"', () => {
   const wrong = CHROME_NOT_INHERITED.filter((p) => INHERITED_PROPS.has(p));
-  assert.deepEqual(wrong, [], `这些属性 Chrome 说不继承,写进 INHERITED_PROPS 会拿它们和父值比:${wrong.join(', ')}`);
+  assert.deepEqual(wrong, [], `Chrome says these properties are not inherited; putting them in INHERITED_PROPS would compare them with the parent value: ${wrong.join(', ')}`);
 });
 
-test('Chrome 实测继承的属性一个不缺 —— 缺了顶层元素就漏内联', () => {
+test('No property that Chrome measures as inherited is missing: if one is missing, the top-level element misses inlining', () => {
   const missing = CHROME_INHERITED.filter((p) => !INHERITED_PROPS.has(p));
-  assert.deepEqual(missing, [], `快照顶层元素靠这张表决定内联哪些继承属性,缺一项重放时就会从别人那里继承:${missing.join(', ')}`);
+  assert.deepEqual(missing, [], `The snapshot top-level element uses this table to decide which inherited properties to inline; if one is missing, on replay it will inherit from someone else: ${missing.join(', ')}`);
 });
 
-test('两张表不重叠:布局解析值属性一律全内联,不该同时按继承属性判', () => {
+test('The two tables do not overlap: layout-resolved-value properties are always fully inlined, and must not also be judged as inherited properties', () => {
   const both = [...LAYOUT_USED_VALUE_PROPS].filter((p) => INHERITED_PROPS.has(p));
   assert.deepEqual(both, []);
 });
 
-test('表里没有简写、没有大写、没有重复', () => {
+test('The table has no shorthands, no uppercase, no duplicates', () => {
   const list = [...INHERITED_PROPS];
   assert.equal(new Set(list).size, list.length);
-  for (const prop of list) assert.equal(prop, prop.toLowerCase(), `${prop} 要写成 getComputedStyle 给的小写连字符形式`);
-  // 常见简写一律不写进表:getComputedStyle 枚举的是 longhand,写简写永远命不中
+  for (const prop of list) assert.equal(prop, prop.toLowerCase(), `${prop} must be written in the lowercase hyphenated form that getComputedStyle gives`);
+  // Common shorthands are never written into the table: getComputedStyle enumerates longhands;
+  // shorthands will never match
   for (const shorthand of ['font', 'list-style', 'text-emphasis', 'border', 'margin', 'padding', 'background'])
-    assert.equal(INHERITED_PROPS.has(shorthand), false, `${shorthand} 是简写`);
+    assert.equal(INHERITED_PROPS.has(shorthand), false, `${shorthand} is a shorthand`);
 });
 
-test('自定义属性按继承处理', () => {
+test('Custom properties are treated as inherited', () => {
   assert.equal(isInheritedProp('--pc-accent'), true);
   assert.equal(isInheritedProp('color'), true);
   assert.equal(isInheritedProp('display'), false);
 });
 
 /*
- * 下面几条对的是「重放逐字节等于活渲」那几处(docs/archive/restructure_planning/reports/replay-mismatch-report.md
- * 第二轮 §12、第三轮 §13):几何按 1/64 px 对齐、动画撑起的合成层补 will-change、变换全精度写回。
+ * The items below reconcile those places where "replay equals live render byte-for-byte"
+ * (docs/archive/restructure_planning/reports/replay-mismatch-report.md Round 2 §12, Round 3 §13):
+ * geometry aligned to 1/64 px, adding will-change for composite layers kept alive by animations,
+ * and writing back transforms at full precision.
  */
 
-test('1/64 对齐:6 位有效数字丢掉的那一点补回原值', () => {
-  // 实测的三个宽度:316.15625 / 484.65625 / 381.3125,getComputedStyle 分别给 316.156 / 484.656 / 381.312
+test('1/64 alignment: the bit lost by 6 significant digits is restored to the original value', () => {
+  // Three measured widths: 316.15625 / 484.65625 / 381.3125, getComputedStyle gives 316.156 /
+  // 484.656 / 381.312 respectively
   assert.equal(snapLayoutUnits('316.156px'), '316.15625px');
   assert.equal(snapLayoutUnits('484.656px'), '484.65625px');
   assert.equal(snapLayoutUnits('381.312px'), '381.3125px');
-  // 本来就在网格上的原样不动
+  // Those already on the grid are left untouched
   assert.equal(snapLayoutUnits('352.125px'), '352.125px');
   assert.equal(snapLayoutUnits('0px'), '0px');
   assert.equal(snapLayoutUnits('-16.0625px'), '-16.0625px');
 });
 
-test('1/64 对齐:10000 px 以内每一格都能从 6 位有效数字还原回来', () => {
+test('1/64 alignment: within 10000 px every step can be recovered from 6 significant digits', () => {
   const sig6 = (v) => String(Number(v.toPrecision(6)));
   for (let n = 0; n < 64 * 10000; n += 997) {
     const exact = n / 64;
     assert.equal(snapLayoutUnits(sig6(exact) + 'px'), exact + 'px', `${exact} → ${sig6(exact)}`);
-    if (exact) assert.equal(snapLayoutUnits('-' + sig6(exact) + 'px'), -exact + 'px');   // Chrome 不会给出 -0px
+    if (exact) assert.equal(snapLayoutUnits('-' + sig6(exact) + 'px'), -exact + 'px');   // Chrome will not produce -0px
   }
 });
 
-test('1/64 对齐:只改 px 数,别的原样', () => {
+test('1/64 snapping: only the px values change, everything else stays as is', () => {
   assert.equal(snapLayoutUnits('auto'), 'auto');
   assert.equal(snapLayoutUnits('none'), 'none');
   assert.equal(snapLayoutUnits('50%'), '50%');
-  // grid-template-* 的使用值是一串轨道,逐个对齐
+  // Used value of grid-template-* is a series of tracks, aligned one by one
   assert.equal(snapLayoutUnits('105.5px 210.656px'), '105.5px 210.65625px');
   assert.equal(snapLayoutUnits('[a] 10.047px [b] 20px'), '[a] 10.046875px [b] 20px');
   assert.equal(snapLayoutUnits('-0.001px'), '0px');
 });
 
-test('对齐的属性都是布局解析值,不含浮点的 transform 一族', () => {
+test('Snapped properties are all layout-resolved values and exclude the floating-point transform family', () => {
   for (const prop of ['transform', 'transform-origin', 'perspective-origin'])
-    assert.equal(LAYOUT_UNIT_PROPS.has(prop), false, `${prop} 是浮点,不在 LayoutUnit 网格上`);
-  // 物理写法全在 LAYOUT_USED_VALUE_PROPS 里(逻辑写法是额外补的)
+    assert.equal(LAYOUT_UNIT_PROPS.has(prop), false, `${prop} is floating point, not on the LayoutUnit grid`);
+  // Physical properties are all in LAYOUT_USED_VALUE_PROPS (logical properties supplemented additionally)
   const physical = [...LAYOUT_UNIT_PROPS].filter((p) => !/-(block|inline)(-|$)/.test(p));
   for (const prop of physical) assert.ok(LAYOUT_USED_VALUE_PROPS.has(prop), `${prop}`);
-  // 继承属性不会进来(继承属性和父值比,对齐会让比较失真)
+  // Inherited properties will not enter (inherited properties are compared with parent values;
+  // alignment would distort the comparison)
   assert.deepEqual([...LAYOUT_UNIT_PROPS].filter((p) => INHERITED_PROPS.has(p)), []);
 });
 
-test('会提合成层的动画属性:透明度、变换一族、滤镜', () => {
+test('Animated properties that promote a compositing layer: opacity, the transform family, filter', () => {
   for (const prop of ['opacity', 'transform', 'translate', 'rotate', 'scale', 'filter', 'backdrop-filter'])
     assert.ok(COMPOSITED_ANIMATION_PROPS.has(prop), prop);
   for (const prop of ['color', 'width', 'background-color', 'clip-path'])
     assert.equal(COMPOSITED_ANIMATION_PROPS.has(prop), false, prop);
 });
 
-test('current 动画:活跃段里(暂停的也算)是,放完的不是', () => {
+test('current animation: true within the active phase (paused ones count too), false once finished', () => {
   const t = (localTime, extra = {}) => ({ localTime, endTime: 1000, delay: 0, activeDuration: 1000, ...extra });
-  // __pcSyncAnims 钉住的动画:暂停在活跃段中间
+  // Animation pinned by __pcSyncAnims: paused in the middle of active phase
   assert.equal(isCurrentAnimation(t(500), 1, 'paused'), true);
   assert.equal(isCurrentAnimation(t(0), 1, 'paused'), true);
-  // 到了终点:正向播放时终点归 after 段,不算
+  // Reached the end point: in forward playback the end point belongs to after phase, does not count
   assert.equal(isCurrentAnimation(t(1000), 1, 'paused'), false);
   assert.equal(isCurrentAnimation(t(1000), 1, 'finished'), false);
   assert.equal(isCurrentAnimation(t(1500), 1, 'paused'), false);
-  // 活跃段里但已经 finished(不该出现,出现了也按规范不算在播)
+  // In the active phase but already finished (should not happen; if it does, according to the spec
+  // it is not considered playing)
   assert.equal(isCurrentAnimation(t(500), 1, 'finished'), false);
-  // 没有时间(idle)
+  // No time (idle)
   assert.equal(isCurrentAnimation(t(null), 1, 'idle'), false);
 });
 
-test('current 动画:delay 里看播放方向,无限循环一直是', () => {
+test('current animation: during the delay phase it depends on the playback direction, an infinite loop is always current', () => {
   const delayed = { localTime: 100, endTime: 1500, delay: 500, activeDuration: 1000 };
-  assert.equal(isCurrentAnimation(delayed, 1, 'paused'), true);   // 正向、还没开始:current
-  assert.equal(isCurrentAnimation(delayed, -1, 'paused'), false); // 反向、在开始前:不是
-  // 反向播放在结束后是 current
+  assert.equal(isCurrentAnimation(delayed, 1, 'paused'), true);   // Forward, not yet started: current
+  assert.equal(isCurrentAnimation(delayed, -1, 'paused'), false); // Reverse, before start: no
+  // Reverse playback is current after ending
   assert.equal(isCurrentAnimation({ localTime: 1200, endTime: 1000, delay: 0, activeDuration: 1000 }, -1, 'running'), true);
-  // 反向播放时 before-active 边界点归 before 段
+  // In reverse playback, the before-active boundary point belongs to the before phase
   assert.equal(isCurrentAnimation({ localTime: 0, endTime: 1000, delay: 0, activeDuration: 1000 }, -1, 'running'), false);
   assert.equal(isCurrentAnimation({ localTime: 1e9, endTime: Infinity, delay: 0, activeDuration: Infinity }, 1, 'paused'), true);
 });
 
 /*
- * serializeTransformList 在页面里吃的是 Typed OM 的对象(`computedStyleMap().get('transform')`),
- * 按构造函数名分派。Node 里没有 Typed OM,这里用同名的类造一样形状的对象。
+ * In the page, serializeTransformList consumes Typed OM objects (`computedStyleMap().get('transform')`),
+ * dispatched by constructor name. Node has no Typed OM, so classes of the same name create objects
+ * with the same shape here.
  */
 class CSSUnitValue { constructor(value, unit) { this.value = value; this.unit = unit; } }
 class CSSMathSum { constructor(...values) { this.values = values; this.operator = 'sum'; } }
@@ -175,33 +190,35 @@ class CSSSkewX { constructor(ax) { this.ax = ax; this.is2D = true; } }
 class CSSPerspective { constructor(length) { this.length = length; this.is2D = false; } }
 class CSSMatrixComponent { constructor(matrix) { this.matrix = matrix; this.is2D = matrix.is2D; } }
 
-test('变换:数值全精度写回,不再折成 6 位有效数字的矩阵', () => {
-  // odometer 第 9 帧:getComputedStyle 给 matrix(1, 0, 0, 1, 0, -2156.5),真实值是 -2156.501953125
+test('Transform: values are written back at full precision, no longer folded into a matrix of 6 significant digits', () => {
+  // odometer frame 9: getComputedStyle gives matrix(1, 0, 0, 1, 0, -2156.5), actual value is -2156.501953125
   assert.equal(serializeTransformList([new CSSTranslate(px(0), px(-2156.501953125))]), 'translate(0px, -2156.501953125px)');
-  // punch-pill 第 5 帧的弹簧值
+  // Spring value of punch-pill frame 5
   assert.equal(serializeTransformList([new CSSScale(num(1.0004741549491882), num(1.0004741549491882))]),
     'scale(1.0004741549491882, 1.0004741549491882)');
-  // 百分比原样留着:重放时对着同一个(已内联)的盒子再解析一遍
+  // Percentages are preserved as is: resolved again against the same (already inlined) box during replay
   assert.equal(serializeTransformList([new CSSTranslate(new CSSUnitValue(-50, 'percent'), new CSSUnitValue(-50, 'percent')), new CSSScale(num(0.8), num(0.8))]),
     'translate(-50%, -50%) scale(0.8, 0.8)');
 });
 
-test('变换:保留函数形式 —— 90° 的整数倍、绕坐标轴的旋转不折成矩阵', () => {
-  // 折成矩阵是 matrix(6.12323e-17, -1, 1, 6.12323e-17, 0, 0):残下 1e-17,不再是轴对齐变换
+test('Transform: keep the function form. Rotations by integer multiples of 90° and around a coordinate axis are not folded into a matrix', () => {
+  // Collapsing into a matrix yields matrix(6.12323e-17, -1, 1, 6.12323e-17, 0, 0): leaves a residual
+  // 1e-17, no longer an axis-aligned transform
   assert.equal(serializeTransformList([new CSSRotate(deg(-90))]), 'rotate(-90deg)');
-  // terminal-3d 的 rotateY(-8deg):折成矩阵是 cos / sin 的 6 位有效数字
+  // terminal-3d rotateY(-8deg): collapsing into a matrix yields 6 significant digits of cos / sin
   assert.equal(serializeTransformList([new CSSRotate(num(0), num(1), num(0), deg(-8))]), 'rotateY(-8deg)');
   assert.equal(serializeTransformList([new CSSRotate(num(1), num(0), num(0), deg(30))]), 'rotateX(30deg)');
   assert.equal(serializeTransformList([new CSSRotate(num(0), num(0), num(1), deg(30))]), 'rotateZ(30deg)');
   assert.equal(serializeTransformList([new CSSRotate(num(1), num(1), num(0), deg(30))]), 'rotate3d(1, 1, 0, 30deg)');
-  // 3D 的平移 / 缩放保持 3D:translateZ(0) 折成矩阵是 2D 的单位阵,那一层合成层就没了
+  // 3D translation / scale stays 3D: collapsing translateZ(0) into a matrix produces a 2D identity
+  // matrix, losing that compositing layer
   assert.equal(serializeTransformList([new CSSTranslate(px(0), px(0), px(0))]), 'translate3d(0px, 0px, 0px)');
   assert.equal(serializeTransformList([new CSSScale(num(1), num(1), num(2))]), 'scale3d(1, 1, 2)');
   assert.equal(serializeTransformList([new CSSSkew(deg(10), deg(0)), new CSSSkewX(deg(5))]), 'skew(10deg, 0deg) skewX(5deg)');
   assert.equal(serializeTransformList([new CSSPerspective(px(800)), new CSSRotate(num(0), num(1), num(0), deg(45))]), 'perspective(800px) rotateY(45deg)');
 });
 
-test('变换:矩阵分量按 2D / 3D 写', () => {
+test('Transform: matrix components are written as 2D / 3D', () => {
   const m2 = { is2D: true, a: 1, b: 0.5, c: -0.5, d: 1, e: 10.25, f: -3.125 };
   assert.equal(serializeTransformList([new CSSMatrixComponent(m2)]), 'matrix(1, 0.5, -0.5, 1, 10.25, -3.125)');
   const m3 = { is2D: false };
@@ -210,36 +227,37 @@ test('变换:矩阵分量按 2D / 3D 写', () => {
   assert.equal(serializeTransformList([new CSSMatrixComponent(m3)]), 'matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -0.00125, 0, 0, 0, 1)');
 });
 
-test('变换:认不出的分量或数值一律返回 null,调用方退回计算值', () => {
-  // calc() 这类不是单一数值
+test('Transform: any unrecognized component or value returns null and the caller falls back to the computed value', () => {
+  // Things like calc() are not a single numerical value
   assert.equal(serializeTransformList([new CSSTranslate(new CSSMathSum(px(10), new CSSUnitValue(50, 'percent')), px(0))]), null);
-  // 不认识的分量
+  // Unrecognized component
   class CSSSomethingNew { constructor() { this.is2D = true; } }
   assert.equal(serializeTransformList([new CSSTranslate(px(1), px(2)), new CSSSomethingNew()]), null);
   // perspective(none)
   assert.equal(serializeTransformList([new CSSPerspective({ value: 'none' })]), null);
-  // 非有限数
+  // Non-finite number
   assert.equal(serializeTransformList([new CSSTranslate(px(NaN), px(0))]), null);
   assert.equal(serializeTransformList([]), null);
 });
 
-test('relevant 动画(Blink 提合成层的判据):照 Chrome 152 实测表,current 或 in effect 都算', () => {
-  // delay 400 / duration 800 的透明度动画暂停在各个时刻;progress 是 getComputedTiming() 在各种 fill 下给的值
+test('relevant animation (Blink\'s criterion for promoting a compositing layer): per the Chrome 152 measured table, current or in effect both count', () => {
+  // Opacity animation with delay 400 / duration 800 paused at various points in time; progress is
+  // the value returned by getComputedTiming() under various fill options
   const t = (localTime, progress) => ({ localTime, endTime: 1200.0000000000002, delay: 400, activeDuration: 800, progress });
   const end = 1200.0000000000002;
-  // fill: both —— delay 里、活跃段、结尾、结尾之后都提层
+  // fill: both: promotes layer during delay, active phase, end, and after end
   assert.equal(isRelevantAnimation(t(100, 0), 1, 'paused'), true);
   assert.equal(isRelevantAnimation(t(800, 0.5), 1, 'paused'), true);
-  assert.equal(isRelevantAnimation(t(end, 1), 1, 'paused'), true);   // stat-proof 第 12 帧就是这一格
+  assert.equal(isRelevantAnimation(t(end, 1), 1, 'paused'), true);   // stat-proof frame 12 is exactly this case
   assert.equal(isRelevantAnimation(t(1500, 1), 1, 'paused'), true);
-  assert.equal(isRelevantAnimation(t(end, 1), 1, 'finished'), true);  // finish() 之后仍提
-  // fill: none —— delay 里(正向播放,current)提;结尾、结尾之后不提
+  assert.equal(isRelevantAnimation(t(end, 1), 1, 'finished'), true);  // Still promoted after finish()
+  // fill: none: promoted during delay (forward playback, current); not promoted at end or after end
   assert.equal(isRelevantAnimation(t(100, null), 1, 'paused'), true);
   assert.equal(isRelevantAnimation(t(end, null), 1, 'paused'), false);
   assert.equal(isRelevantAnimation(t(1500, null), 1, 'paused'), false);
-  // fill: backwards —— 结尾之后不提;fill: forwards —— 结尾之后提
+  // fill: backwards: not promoted after end; fill: forwards: promoted after end
   assert.equal(isRelevantAnimation(t(1500, null), 1, 'paused'), false);
   assert.equal(isRelevantAnimation(t(1500, 1), 1, 'paused'), true);
-  // 只看 current 会漏掉的正是「放完了、靠 fill 停在终态」
+  // Looking only at current misses precisely "playback finished, staying at end state via fill"
   assert.equal(isCurrentAnimation(t(end, 1), 1, 'paused'), false);
 });

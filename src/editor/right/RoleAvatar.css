@@ -1,4 +1,4 @@
-/* 小方块头像。直角、细描边，和整屏的风格一致 */
+/* Small square avatar. Right angles and a thin outline, consistent with the style of the whole screen */
 .pc-role-avatar {
   flex: 0 0 auto;
   display: inline-flex;
@@ -12,8 +12,8 @@
 }
 
 /*
- * 头像单独占一行（用户要求「换一行显示」）：名字跟在旁边，正文从下一行开始。
- * 不做成浮在文字左边的那种——右栏很窄，浮起来会把正文挤成一条细缝。
+ * The avatar takes its own row (the user asked for "show it on a separate line"): the name follows beside it, and the body text starts on the next row.
+ * It is not made the kind that floats to the left of the text: the right rail is narrow, and floating would squeeze the body text into a thin slit.
  */
 .pc-role-header {
   display: flex;

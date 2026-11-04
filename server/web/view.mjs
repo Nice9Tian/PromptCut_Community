@@ -1,57 +1,67 @@
 /**
- * 「让模型看见网页」的那一层:一张图 + 一份可点清单。
+ * The layer that "lets the model see the webpage": an image + a clickable manifest.
  *
- * ## 为什么不是只给图,也不是只给树
+ * ## Why not image-only, and why not tree-only
  *
- * 实测(MDN 的 fetch 文档页,视口 1280x800):
- *   - 完整 a11y 树:1362 个节点、193k 字符 ≈ 48k token。看两次上下文就满了。
- *   - 只留视口内可交互的:47 个 ≈ 620 token。
- *   - 800 长边的截图 ≈ 640 token。
- * 图 + 清单合计约 1.2k token,比整棵树便宜近 40 倍,而且模型同时有视觉和能调用的把手。
+ * Measured in practice (MDN fetch doc page, 1280x800 viewport):
+ *   - Full a11y tree: 1362 nodes, 193k characters ≈ 48k tokens. Context fills up after two reads.
+ *   - Keep only interactive elements in viewport: 47 elements ≈ 620 tokens.
+ *   - Screenshot with 800px long edge ≈ 640 tokens.
+ * Image + manifest totals about 1.2k tokens, nearly 40x cheaper than the full tree, while giving
+ * the model both vision and callable handles.
  *
- * 分工是:**图负责「读」,清单负责「点」**,两边不重复。清单里只有可交互元素,静态
- * 文字一个都不放 —— 那些字在图上,再抄一遍就是白花钱。
+ * The division of labor: **image handles "reading", manifest handles "clicking"**, with no overlap
+ * between the two. The manifest contains only interactive elements, leaving out all static text:
+ * that text is in the image, copying it again would just waste money.
  *
- * ## 为什么长边缩到 800 而不是固定 800x600
+ * ## Why scale the long edge to 800 rather than fixing at 800x600
  *
- * 固定尺寸会改变宽高比(1280x800 是 1.6,800x600 是 1.33),图被横向压扁,模型报的坐标
- * 还原回页面时两个轴的比例不一样,很容易错。长边匹配 + 等比缩放之后**只有一个 scale**,
- * 正反变换都是乘除同一个数。
+ * Fixed dimensions change the aspect ratio (1280x800 is 1.6, 800x600 is 1.33), squishing the image
+ * horizontally; when restoring coordinates reported by the model back to the page, different axis
+ * ratios make errors likely. Matching the long edge + uniform scaling yields **only a single scale**,
+ * so forward and reverse transforms both multiply or divide by the same number.
  *
- * ## 为什么用 clip.scale 缩,而不是 deviceScaleFactor,更不是截完再 resize
+ * ## Why scale with clip.scale instead of deviceScaleFactor, let alone resizing after capture
  *
- * 三条路都试过:
- *   - 截完用 pngjs 缩:纯 CPU 重采样,把主线程堵住(见 server/harness/README 对同步操作的态度);
- *   - 改 `deviceScaleFactor` 再截:**踩过坑**。有头窗口下 setViewport 是一次真实的窗口
- *     resize,页面正在跳转时它会挂住 —— 实测 `web_view` 卡满 45 秒超时才返回,而且
- *     一次 capture 要来回改两次(截前设、截后还原),等于两次 resize;
- *   - `clip.scale`:Chrome 在合成阶段直接出缩好的位图,**视口一动不动**,没有 resize、
- *     没有布局回流、没有还原步骤。就是它。
+ * We tried all three approaches:
+ *   - Resizing with pngjs after capture: pure CPU resampling, blocking the main thread (see
+ *     attitude toward synchronous operations in server/harness/README);
+ *   - Changing `deviceScaleFactor` before capturing: **learned the hard way**. In a headed window,
+ *     setViewport is a real window resize; while the page is navigating, it hangs: in actual
+ *     testing, `web_view` blocked for the full 45-second timeout before returning, and a single
+ *     capture requires two round trips (set before capturing, restore after), effectively two resizes;
+ *   - `clip.scale`: Chrome outputs the scaled bitmap directly during the compositing phase,
+ *     **the viewport stays completely still**, with no resize, no layout reflow, and no restoration
+ *     step. This is the way.
  *
- * 顺带一个好处:视口不变,elementFromPoint 的坐标系自然也不变,命中检测不会因为
- * 截图这个动作而偏。
+ * An added benefit: when the viewport does not change, the coordinate system for elementFromPoint
+ * naturally stays unchanged too, so hit testing will not skew due to the screenshot action.
  */
 import { VIEWPORT, IMAGE_LONG_EDGE } from './browser.mjs';
 
-/** 图坐标 = 页面坐标 x scale。永不放大 —— 视口比 800 还小的时候原样给 */
+/** Image coordinates = page coordinates x scale. Never upscaled: returned as-is when the viewport is smaller than 800 */
 export function scaleOf(viewport = VIEWPORT) {
   return Math.min(1, IMAGE_LONG_EDGE / Math.max(viewport.width, viewport.height));
 }
 
 /**
- * 这一页**现在实际多大**。截图和命中检测都必须用它,不能各自回退到常量。
+ * **Actual current size** of this page. Both screenshots and hit testing must use it, rather than
+ * falling back to their own constants.
  *
- * `page.viewport()` 在有仿真时返回我们设的那个尺寸,但**没有仿真时返回 null**。
- * 壳模式(agent 的浏览器是 Tauri 主窗口里的子 webview)下,web_handoff 把面板交给
- * 用户时会 `setViewport(null)` 解除仿真、让 webview 跟着面板走 —— 这时候如果还按
- * 常量 1280x800 算,会出两个错,而且是两种不同的坏法:
+ * `page.viewport()` returns our configured dimensions when emulation is active, but **returns null
+ * without emulation**. In shell mode (the agent browser is a child webview in the Tauri main window),
+ * when web_handoff hands the panel to the user, it calls `setViewport(null)` to remove emulation so
+ * the webview tracks the panel: calculating with the constant 1280x800 at this point causes two bugs,
+ * in two different ways:
  *
- *   1. **截图**:clip 比真实视口大,puppeteer 为此打开 captureBeyondViewport,
- *      那会把设备指标仿真又套回去 —— 用户正在操作的面板当场错位;
- *   2. **命中检测**:图坐标按 1280x800 反算,而页面其实是别的尺寸,
- *      **点击会静默落到错误的位置**。这个比错位更坏,因为它不报错。
+ *   1. **Screenshots**: clip is larger than the actual viewport, so puppeteer turns on
+ *      captureBeyondViewport, reapplying device metrics emulation: the panel the user is
+ *      interacting with instantly misaligns;
+ *   2. **Hit testing**: image coordinates are converted back using 1280x800 while the page is
+ *      actually a different size, **clicks silently land in the wrong spot**. This is worse than
+ *      misalignment because it throws no errors.
  *
- * 所以两边都从这里取,量不出来才退回常量。
+ * Therefore both sides fetch from here, only falling back to constants when measurement is unavailable.
  */
 export async function liveViewport(page) {
   const vp = page.viewport();
@@ -59,43 +69,48 @@ export async function liveViewport(page) {
   try {
     const m = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
     if (m && m.width > 0 && m.height > 0) return m;
-  } catch { /* 页面崩了 / 评估不了 —— 退回常量总比抛出去强 */ }
+  } catch { /* Page crashed / cannot evaluate: falling back to constants is better than throwing */ }
   return VIEWPORT;
 }
 
-/** 清单最多给这么多条。密集页面(后台系统、商品列表)一屏能有几百个,全给等于没给 */
+/** Manifest limit. Dense pages (admin systems, product lists) can have hundreds per screen; returning all is like returning none */
 const MAX_ITEMS = 60;
 
 /**
- * 页面里跑的那半:给可交互元素打 uid,并量出它们在图上的包围盒。
+ * The half running inside the page: tags interactive elements with a uid and measures their
+ * bounding boxes on the image.
  *
- * 打在 DOM 上的 `data-pcuid` 是 view 和 hit 之间唯一的约定 —— click_at 的命中检测靠它
- * 把「点到的那个元素」翻回 uid。每次 capture 都重编号,所以编号只对最近一次截图有效;
- * 工具描述里必须写明这一点,不然模型会拿三轮前的 e7 来点。
+ * The `data-pcuid` set on the DOM is the only contract between view and hit: `click_at` hit testing
+ * relies on it to translate "the clicked element" back to a uid. Each capture renumbers elements,
+ * so IDs are only valid for the most recent screenshot; this must be explicitly stated in the tool
+ * description, otherwise the model will attempt to click `e7` from three rounds ago.
  */
-/* c8 ignore start — 这个函数体是序列化后送进页面执行的,不在 node 里跑 */
+/* c8 ignore start: this function body is serialized and sent into the page for execution, not run in node */
 function tagAndList(scale, maxItems) {
   const SEL = 'a[href],button,input,select,textarea,summary,'
     + '[role=button],[role=link],[role=tab],[role=checkbox],[role=menuitem],[contenteditable=true]';
-  // 上一轮的标记要清掉:页面可能没跳转只是滚动了,残留的 uid 会让命中检测指到已经不在视口的元素
+  // Clear marks from the previous round: the page may not have navigated, only scrolled; leftover
+  // uids cause hit testing to point to elements no longer in the viewport
   for (const el of document.querySelectorAll('[data-pcuid]')) el.removeAttribute('data-pcuid');
 
   /**
-   * 这个元素在它自己的位置上**真的点得到吗**。
+   * Can this element **actually be clicked** at its location?
    *
-   * 光看 getBoundingClientRect 是不够的:它返回的是布局位置,**祖先的 overflow 裁剪
-   * 不体现在里面**。MDN 侧边栏那种「元素排在那儿、但被祖先裁掉了」的情况,rect 看着
-   * 完全正常,elementsFromPoint 却根本扫不到它 —— 清单里留着它就是给模型一个
-   * 点不动的编号,正是本仓库那条「模型看得见但调不动」最怕的东西(见
-   * server/test/tool-schema.test.mjs 里三处对齐的注释)。
+   * Simply checking getBoundingClientRect is not enough: it returns layout position, **ancestor overflow
+   * clipping is not reflected in it**. In cases like the MDN sidebar where "an element is positioned
+   * there but clipped by an ancestor", the rect looks completely normal, yet elementsFromPoint cannot
+   * detect it at all: keeping it in the manifest gives the model an unclickable ID, exactly what this
+   * repository fears most under the "model can see it but cannot invoke it" rule (see the three aligned
+   * comments in server/test/tool-schema.test.mjs).
    *
-   * 探中心加四个内缩点:中心被别的东西压住是常事(图标上盖一层 tooltip),
-   * 只要有一个点能落回自己(或自己的后代)就算点得到。
+   * Probe the center plus four inset points: the center being covered by something else is common (e.g.
+   * a tooltip covering an icon); as long as one point lands on the element itself (or its descendant),
+   * it counts as clickable.
    *
-   * 返回 'ok' | 'covered' | 'ghost':
-   *   - covered 是「在,但被上层盖着」—— 留着并标出来,模型得知道有这么个按钮,
-   *     只是要先把上面那层关掉;
-   *   - ghost 是「压根扫不到」—— 直接丢掉,留着只会骗模型。
+   * Returns 'ok' | 'covered' | 'ghost':
+   *   - covered is "present, but covered by an upper layer": keep and mark it; the model needs to know
+   *     this button exists, but must close the overlay layer first;
+   *   - ghost is "completely undetectable": drop it directly; keeping it only misleads the model.
    */
   const reachability = (el, r) => {
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -111,7 +126,7 @@ function tagAndList(scale, maxItems) {
       const stack = document.elementsFromPoint(x, y);
       for (const hit of stack) {
         if (hit === el || el.contains(hit)) return 'ok';
-        // 扫到了别的东西但自己也在这条 z 轴上 → 被盖住,不是不存在
+        // Detected something else, but this element is also on the z-axis → covered, not absent
         if (stack.includes(el)) return 'covered';
       }
     }
@@ -122,8 +137,9 @@ function tagAndList(scale, maxItems) {
   for (const el of document.querySelectorAll(SEL)) {
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) continue;
-    // 完全在视口外的丢掉;**跨边界的留着** —— 被上边裁掉一半的元素在图上看得见,
-    // 清单里没有的话模型会以为那儿什么都没有
+    // Drop elements completely outside the viewport; **keep those straddling the boundary**: elements
+    // half-clipped by the top are visible in the image; if missing from the manifest, the model will
+    // think nothing is there
     if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) continue;
     const st = getComputedStyle(el);
     if (st.visibility === 'hidden' || st.display === 'none' || st.pointerEvents === 'none') continue;
@@ -132,12 +148,13 @@ function tagAndList(scale, maxItems) {
     vis.push({ el, r, covered: reach === 'covered' });
   }
 
-  // 阅读顺序:先按行分档(24px 一档,约一行文字),档内按 x。这样清单的顺序和图上
-  // 从上到下、从左到右的视觉顺序一致,模型对照着扫就行,不用在 DOM 顺序里乱翻
+  // Reading order: first bucket by line (24px per tier, about one line of text), then sort by x within
+  // each tier. This aligns the manifest order with the visual top-to-bottom, left-to-right order in the
+  // image, so the model can scan against it without rummaging through DOM order
   vis.sort((a, b) => (Math.floor(a.r.top / 24) - Math.floor(b.r.top / 24)) || (a.r.left - b.r.left));
 
   const total = vis.length;
-  // 超上限时按面积留大的:小图标点错了代价小,大按钮才是主路径
+  // When exceeding limit, keep larger elements by area: misclicking small icons has low cost, large buttons are the primary path
   const kept = total <= maxItems
     ? vis
     : vis.slice().sort((a, b) => b.r.width * b.r.height - a.r.width * a.r.height).slice(0, maxItems)
@@ -157,13 +174,13 @@ function tagAndList(scale, maxItems) {
       n: name,
       b: [px(o.r.left), px(o.r.top), px(o.r.right), px(o.r.bottom)],
     };
-    // 输入框要告诉模型里面现在有什么,不然它不知道该不该先清空
+    // Tell the model what is currently in the input box, otherwise it will not know whether to clear it first
     if (o.el.tagName === 'INPUT' || o.el.tagName === 'TEXTAREA') {
       row.v = String(o.el.value || '').slice(0, 30);
       if (o.el.type) row.it = o.el.type;
     }
-    // 被上层盖住:留在清单里(模型得知道有这个按钮),但要标出来 —— 直接点会打在
-    // 上面那层身上,正确动作是先把弹窗/横幅关掉
+    // Covered by an upper layer: keep in the manifest (the model needs to know this button exists)
+    // but mark it: clicking directly hits the layer above; the correct action is to close the popup/banner first
     if (o.covered) row.covered = true;
     return row;
   });
@@ -172,24 +189,27 @@ function tagAndList(scale, maxItems) {
 /* c8 ignore stop */
 
 /**
- * 截一屏 + 出清单。返回的 image 用 `__image` 包着 —— 那是 harness/agent.mjs 认的形状,
- * 它会把图从 JSON 里摘出来单独挂到消息末尾(base64 留在 JSON 里会被当普通文本灌进历史)。
+ * Captures a screenshot + outputs a manifest. The returned `image` is wrapped in `__image`: that is
+ * the shape recognized by `harness/agent.mjs`, which extracts the image from the JSON and attaches
+ * it separately to the end of the message (base64 left in the JSON would be fed into history as plain text).
  */
 export async function captureView(page, { maxItems = MAX_ITEMS, quality = 70 } = {}) {
-  // 用实测尺寸,不回退常量 —— 壳模式下用户操作面板时视口仿真是解除的,
-  // 按常量算会 clip 出界并把仿真套回去,当场把用户正在看的画面弄错位
+  // Use measured dimensions, do not fall back to constants: in shell mode, viewport emulation is removed
+  // when the user interacts with the panel; calculating with constants causes clip to go out of bounds
+  // and reapplies emulation, immediately misaligning the screen the user is viewing
   const viewport = await liveViewport(page);
   const scale = scaleOf(viewport);
 
-  // 跳转还没落地时截图会等到天荒地老(踩过:卡满 45 秒超时)。等一下 readyState,
-  // 等不到也照样往下走 —— 半张图也比一句超时有用,而且有些站永远到不了 complete。
+  // Taking a screenshot before navigation settles will wait forever (experienced: hung for the full
+  // 45-second timeout). Wait a moment for readyState, but proceed regardless if it times out: half an
+  // image is still more useful than a timeout error, and some sites never reach complete.
   await page.waitForFunction(() => document.readyState !== 'loading', { timeout: 8000 })
-    .catch(() => { /* 超时就按现状截,别把整个动作拖垮 */ });
+    .catch(() => { /* On timeout, capture current state as-is; don't drag down the entire action */ });
 
   const { items, total, url, title } = await page.evaluate(tagAndList, scale, maxItems);
 
-  // clip.scale 让 Chrome 在合成阶段就把图缩好,**视口一动不动**。
-  // 不用 deviceScaleFactor 的原因见文件头。
+  // clip.scale lets Chrome scale the image during compositing, **the viewport stays completely still**.
+  // See file header for why deviceScaleFactor is not used.
   const base64 = await page.screenshot({
     type: 'webp',
     quality,
@@ -204,9 +224,9 @@ export async function captureView(page, { maxItems = MAX_ITEMS, quality = 70 } =
     image: { width: img.width, height: img.height },
     clickable: items,
     ...(total > items.length
-      ? { omitted: total - items.length, note: `视口内还有 ${total - items.length} 个可交互元素没列出(按面积留了最大的 ${items.length} 个)。滚动后重新 web_view,或者告诉我你要找什么。` }
+      ? { omitted: total - items.length, note: `${total - items.length} more interactive elements in the viewport are not listed (the largest ${items.length} by area were kept). Scroll and run web_view again, or tell me what you are looking for.` }
       : {}),
-    hint: `图是 ${img.width}x${img.height};clickable 里的 b 是元素在这张图上的像素包围盒 [x1,y1,x2,y2]。编号只对本次截图有效,滚动或跳转后必须重新 web_view。`,
+    hint: `The image is ${img.width}x${img.height}; b in clickable is the element's pixel bounding box on this image [x1,y1,x2,y2]. The numbers are valid only for this screenshot; after scrolling or navigating you must run web_view again.`,
     __image: { base64, mime: 'image/webp' },
   };
 }

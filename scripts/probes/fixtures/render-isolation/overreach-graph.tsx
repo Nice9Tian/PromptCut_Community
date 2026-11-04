@@ -1,9 +1,13 @@
 /**
- * 越权探测卡的素材效果卡形态（测试夹具，防御性测试，不是攻击代码；定义见 `docs/plan/sound-online-render-task.md`「越权探测卡」一节）。
+ * Media effect card form of overreach probe card (test fixture, defensive test, not attack code;
+ * defined in `docs/plan/sound-online-render-task.md` section "Overreach probe card").
  *
- * `card()` 第一次被求值时把同一份固定清单（`overreach-probe-lib.ts`）跑一遍并报告（结果的标签带 `-graph`）。
- * 渲染节点报的能力位是 `graphCards: false`，但服务端现在分不出一张卡是不是素材效果卡（切分时 `requires.graphCards` 恒为假），
- * 所以含素材效果卡的片段照样被认领、`card()` 照样在渲染页里求值——探针把这一点如实记下（结果里的 `graph`），并对它的结果做同样的断言。
+ * When `card()` is evaluated for the first time, it runs the same fixed manifest
+ * (`overreach-probe-lib.ts`) and reports (result tags include `-graph`). Render node reports
+ * capability bit `graphCards: false`, but the server currently cannot distinguish whether a card
+ * is a media effect card (during splitting, `requires.graphCards` is always false), so clips
+ * containing media effect cards are still claimed and `card()` is still evaluated in render page:
+ * probe records this faithfully (`graph` in results) and makes same assertions on its results.
  */
 import type { CardDef } from "../../kernel/types";
 import { glsl } from "../../render/cards/graphValues";
@@ -17,9 +21,9 @@ let started = false;
 
 export const overreachGraph: CardDef<any> = {
   id: "overreach-graph",
-  name: "越权探测卡（素材效果卡）",
-  description: "隔离验收用的测试夹具：素材效果卡形态的同一份固定清单，只读、只报告",
-  tags: ["探针"],
+  name: "Overreach probe card (media effect card)",
+  description: "Test fixture for the isolation acceptance check: the same fixed manifest in media effect card form, read-only, report-only",
+  tags: ["probe"],
   kind: "animation",
   frameMode: "direct",
   defaults: { ctx: null },

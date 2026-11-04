@@ -1,14 +1,14 @@
 /**
- * AI 栏的「Agent 操作记录」(D2,c65-design.md 第 7 节:页面 AI 栏按事件 id 更新对应记录,列表虚拟化)。
+ * The AI panel's "Agent action log" (D2, c65-design.md section 7: the page's AI panel updates the matching record by event id, with a virtualized list).
  *
- * 数据是文档服务项目频道上的工具调用事件(`events.event`,Agent 服务端每个工具调用发「创建」「完成」两条),
- * syncManager 按 `eventId` 合成一条记录、只留摘要;完整参数在内容库,不在这里拉。
- * 不论这次调用来自本页面的聊天、命令行(`/api/mcp/call`)、别的页面还是共享项目里别人的 Agent,都会出现在这里。
+ * The data is tool-call events on the document service's project channel (`events.event`; for each tool call the Agent server sends two, "created" and "completed"),
+ * which syncManager merges by `eventId` into one record keeping only a summary; full parameters are in the content store and are not pulled here.
+ * It appears here whether the call came from this page's chat, the command line (`/api/mcp/call`), another page, or someone else's Agent in a shared project.
  *
- * 写进了项目的那一条(完成事件带 `opId`)有「撤销这步」(c65-undo-draft.md 第 4 节):不二次确认,不是最新一步也能点,
- * 撤成功后变灰「已撤销」;以本页面的身份提交逆操作 + `undoOf`,进用户自己的撤销栈(c65-design.md 第 8 节裁定)。
+ * An entry that was written into the project (the completed event carries `opId`) has "Undo this step" (c65-undo-draft.md section 4): no second confirmation, clickable even if it is not the latest step,
+ * and after a successful undo it turns gray and reads "Undone"; the inverse operation is submitted as this page's identity + `undoOf`, into the user's own undo stack (ruled in c65-design.md section 8).
  *
- * 列表虚拟化:行高固定,只渲染可见的几行(加上下各几行余量),记录再多也只有十几个 DOM 节点。
+ * List virtualization: rows have a fixed height and only the visible rows (plus a few above and below as margin) are rendered, so even with many records there are only a dozen or so DOM nodes.
  */
 import { useMemo, useRef, useState, type UIEvent } from "react";
 import { agentOpOfEvent, displayNames, eventRecordList, me, revertAgentOp, useSync, type EventRecord } from "./syncManager";
@@ -33,7 +33,7 @@ function writeOpen(v: boolean) {
   try {
     localStorage.setItem(OPEN_KEY, v ? "1" : "0");
   } catch {
-    /* 存不了就只在这一次有效 */
+    /* If it cannot be saved, it only applies this once */
   }
 }
 

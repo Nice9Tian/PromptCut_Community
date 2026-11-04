@@ -1,11 +1,15 @@
 /**
- * 把内容库同步来的卡片源码转成舞台能执行的包(`docs/plan/online-card-exec-contract.md` 第 1、2 节)。
- * 在**编辑页面**里跑:只读文本、不执行(Sucrase 不用 `eval`)。按需载入(这一串带着 Sucrase 与 Tailwind 编译器)。
+ * Transpiles card source synced from content store into bundles executable by stage
+ * (`docs/plan/online-card-exec-contract.md` Sections 1, 2). Runs in the **editor page**: reads text
+ * only, does not execute (Sucrase does not use `eval`). Loaded on demand (this chain bundles
+ * Sucrase and the Tailwind compiler).
  *
- * 一个文件:写法预检 → Sucrase(`typescript`、`jsx`、`imports`,JSX 用 automatic 运行时)→ CommonJS 文本,
- * 再把里面每个 `require("<说明符>")` 解析到包、同步来的源码、页面自带的内置模块或样式(`resolve.ts`)。
- * 一张卡:从入口文件起跟着同步来的相对导入收齐闭包,任何一步不成就给出这张卡的运行状态
- * (`unsupported-syntax` / `missing-module`),不出包。
+ * Per file: syntax precheck → Sucrase (`typescript`, `jsx`, `imports`, JSX uses automatic runtime)
+ * → CommonJS text, then resolves each `require("<specifier>")` inside to a bundle, synced source,
+ * built-in module bundled with page, or styles (`resolve.ts`).
+ * Per card: starting from the entry file, gathers the closure by following synced relative imports;
+ * if any step fails, produces runtime state for the card (`unsupported-syntax` / `missing-module`)
+ * without emitting a bundle.
  */
 import { transform } from "sucrase";
 import { unsupportedSyntax } from "./precheck.ts";
@@ -15,9 +19,9 @@ import { classCandidates, type CardCssCompiler } from "./tailwind.ts";
 import type { BundleResult, CardBundle, CardModule, CardRunState, ResolvedImport } from "./protocol.ts";
 import { tr } from "../../i18n/index.ts";
 
-/** 单个文件的上限(字符);超过不转 */
+/** Limit for a single file (characters); skipped if exceeded */
 export const MAX_SOURCE_CHARS = 512 * 1024;
-/** 一张卡的闭包最多多少个同步来的文件(与 `onlineCardSources.ts` 的 `CARD_SOURCE_MAX_DEPS` 同数) */
+/** Maximum synced files in a single card's closure (same value as `CARD_SOURCE_MAX_DEPS` in `onlineCardSources.ts`) */
 export const MAX_CLOSURE_FILES = 200;
 
 export type FileResult =
@@ -26,7 +30,7 @@ export type FileResult =
 
 const firstLine = (err: unknown) => String((err as Error)?.message ?? err).split("\n")[0].slice(0, 200);
 
-/** 转译结果里 `require("…")` 的说明符(Sucrase 的 `imports` 转换只生成字符串字面量的 `require`) */
+/** Specifier in `require("…")` within transpile output (Sucrase `imports` transform produces only string-literal `require` calls) */
 export function requireSpecifiers(js: string): string[] {
   const out = new Set<string>();
   for (const m of js.matchAll(/\brequire\(\s*(['"])([^'"\n]+)\1\s*\)/g)) out.add(m[2]);
@@ -34,8 +38,11 @@ export function requireSpecifiers(js: string): string[] {
 }
 
 /**
- * 转一个文件。`key` 用来报错、给转译器当文件名，以及算「把顶层锁成只读」那一段里的相对路径。
- * `lockSuffix`：要接在源码末尾的那一段（`remotionLock.mjs`）；不给就现算。该锁的卡才有，别的卡是空串、源码原样。
+ * Transpiles a single file. `key` is used for reporting errors, as filename for the transpiler, and
+ * to compute the relative path in the "lock top-level to read-only" snippet.
+ * `lockSuffix`: snippet to append at end of source code (`remotionLock.mjs`); computed on the fly
+ * if omitted. Present only for cards that need locking; for other cards it is an empty string and
+ * source is kept as is.
  */
 export function transpileCardFile(key: string, source: string, lockSuffix?: string): FileResult {
   if (typeof source !== "string") return { ok: false, state: { state: "load-error", detail: tr("Source unavailable"), file: key } };
@@ -54,26 +61,26 @@ export function transpileCardFile(key: string, source: string, lockSuffix?: stri
 }
 
 export interface BundleInput {
-  /** 在线卡片运行时版本 */
+  /** Online card runtime version */
   runtime: string;
-  /** 入口文件的键 */
+  /** Key of entry file */
   entry: string;
-  /** 内容库里这个键的正文与哈希;没有回 null */
+  /** Content and hash for this key in the content store; returns null if absent */
   read: (key: string) => { body: string; hash: string } | null;
-  /** 页面自带的内置模块表里有没有这个路径 */
+  /** Whether this path exists in the table of built-in modules bundled with the page */
   hasBuiltin: (path: string) => boolean;
-  /** Tailwind 补生成;不给就不生成(`tailwind` 为空串) */
+  /** Tailwind supplemental generation; omitted means no generation (`tailwind` is empty string) */
   css?: CardCssCompiler;
-  /** 单个文件的转译缓存(按「运行时版本 + 键 + 哈希」;`transpileCache.ts`) */
+  /** Transpile cache for single files (keyed by "runtime version + key + hash"; `transpileCache.ts`) */
   cache?: { get: (key: string, hash: string) => FileResult | undefined; set: (key: string, hash: string, value: FileResult) => void };
 }
 
-/** 这一代的签名:运行时版本 + 闭包里每个文件的键与哈希(按键排序) */
+/** Signature of this generation: runtime version + key and hash of each file in closure (sorted by key) */
 export function generationOf(runtime: string, files: Iterable<readonly [string, string]>): string {
   return `${runtime}|${[...files].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([k, h]) => `${k}@${h}`).join("|")}`;
 }
 
-/** 一张卡:入口加闭包 → 包,或这张卡的运行状态 */
+/** Per card: entry plus closure → bundle, or runtime state for this card */
 export async function bundleCard(input: BundleInput): Promise<BundleResult> {
   const { runtime, entry, read, hasBuiltin, css, cache } = input;
   const env: ResolveEnv = { hasSynced: (k) => read(k) != null, hasBuiltin };
@@ -93,9 +100,12 @@ export async function bundleCard(input: BundleInput): Promise<BundleResult> {
     if (!file) return fail({ state: "missing-module", detail: key, file: entry });
     hashes.set(key, file.hash);
     /*
-     * 该锁的卡(声明成 remotion 式并且引用了框架)在源码末尾接一句「把顶层锁成只读」,转出来的文本与不接时不同,
-     * 所以它在转译缓存里另用一个键(内容哈希后面带一个标记):别的卡的键不变,旧缓存照常命中;
-     * 该锁的卡不会命中「没接这一段」时存下的旧结果。运行时版本(`version.ts`)因此不用动。
+     * Cards that need locking (declared as remotion-style and referencing the framework) append a
+     * statement to "lock top-level to read-only" at end of source, producing transpiled text different
+     * from when omitted; therefore, it uses a distinct key in the transpile cache (with a tag after
+     * the content hash): keys for other cards remain unchanged, hitting old cache as usual;
+     * cards that need locking will not hit old results saved without this snippet appended.
+     * Runtime version (`version.ts`) therefore does not need to change.
      */
     const lockSuffix = remotionLockSuffix(key, file.body);
     const cacheHash = lockSuffix ? `${file.hash}${REMOTION_LOCK_CACHE_TAG}` : file.hash;
@@ -123,7 +133,7 @@ export async function bundleCard(input: BundleInput): Promise<BundleResult> {
   }
   let tailwind = "";
   if (css) {
-    try { tailwind = await css(classCandidates(sources)); } catch { tailwind = ""; /* 样式补不出来不挡执行:卡照常跑,只是缺新类名的样式 */ }
+    try { tailwind = await css(classCandidates(sources)); } catch { tailwind = ""; /* Failure to generate styles does not block execution: cards run as usual, merely lacking styles for new class names */ }
   }
   return { ok: true, entry, bundle: { runtime, entry, modules, styles, tailwind, generation: generationOf(runtime, hashes) } };
 }

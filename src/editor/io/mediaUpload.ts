@@ -11,47 +11,55 @@ import { classifyFileDetailed } from "./mediaKinds";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」)。在线浏览器模式没有本机内容库与转码:
- * 导入媒体置灰(C10 契约第 10 节),素材小尺寸补转也不跑(`Preview` 按 `ONLINE` 不起)。下面几个入口在在线构建里直接回空,
- * 背后的 /api/media/upload、adopt、tiers 调用一起剪掉(M8 遗留 L24)。
+ * Compile-time constant of the online build (usage and rationale in "online build pruning" of
+ * `src/online/pageFlag.ts`). Online browser mode has no local content store and no transcoding:
+ * import media is grayed out (C10 contract, section 10), and the small-variant backfill of media does not
+ * run either (`Preview` does not start it under `ONLINE`). The entry points below simply return empty in
+ * the online build, and the /api/media/upload, adopt and tiers calls behind them are pruned together
+ * (M8 leftover L24).
  */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
 /**
- * 导入 = 先入库再引用(A1)。
+ * Import = ingest first, then reference (A1).
  *
- * **为什么不在页面里算哈希**:素材键是文件内容的 sha256,4 GB 的视频在主线程上读一遍
- * 就是几秒的长任务,连 Worker 里读也要把整份字节搬进页面内存。这里改成把 File 直接
- * 交给 fetch 当 body —— 浏览器从磁盘流式发出去,页面一份字节都不持有;服务端
- * (server/vite-plugin-media.ts 的 storeMediaStream)边落盘边 update sha256,同样是
- * 常数内存、没有长任务。算完回一个 `<hash>`,素材地址就是 /@media/<hash>。
- * 于是主线程和 dev server 的事件循环在整个导入期间都是空的,时间轴照常能编辑。
+ * **Why the hash is not computed in the page**: the asset key is the sha256 of the file content, and
+ * reading a 4 GB video once on the main thread is a long task of several seconds; even reading in a Worker
+ * would move the whole byte content into page memory. Instead the File is handed directly to fetch as the
+ * body: the browser streams it from disk and the page holds none of the bytes; the server
+ * (storeMediaStream in server/vite-plugin-media.ts) updates the sha256 while writing to disk, again with
+ * constant memory and no long task. When done it returns a `<hash>`, and the asset address is
+ * /@media/<hash>. So the main thread and the dev server event loop stay free during the whole import, and
+ * the timeline remains editable as usual.
  *
- * 上传期间素材先挂 `pending: true`、`url: ""`:素材层画「上传中」占位,
- * 不会再出现一个渲染进程 / 导出进程够不着的 blob: 地址。
+ * During upload the asset is first marked `pending: true`, `url: ""`: the media layer draws an
+ * "uploading" placeholder, and a blob: address that the render process / export process cannot reach
+ * never appears again.
  */
 
 export interface UploadedMedia {
   hash: string;
   ext: string;
   name: string;
-  /** 本地内容库里的绝对路径(迁移期的老代码还在看它) */
+  /** Absolute path in the local content store (old code from the migration period still reads it) */
   path?: string;
   /** /@media/<hash> */
   url: string;
   bytes: number;
-  /** 库里本来就有同样内容 */
+  /** The library already had the same content */
   deduped?: boolean;
   /**
-   * C6.6 两档(只有视频有):`original` 就是 `hash`(缺 faststart 的已经重封装过,哈希是重封装后的),
-   * `small` 是素材小尺寸哈希;素材小尺寸还在本机后台转时是 null、`smallState` 是 pending,由 watchSmallTier 补上。
+   * C6.6 two tiers (video only): `original` is just `hash` (those missing faststart have already been
+   * remuxed, and the hash is the one after remuxing), `small` is the small-variant hash; while the small
+   * variant is still being transcoded locally in the background it is null and `smallState` is pending, to
+   * be filled in by watchSmallTier.
    */
   tiers?: { original: string; small: string | null };
-  /** 素材小尺寸的状态:pending / ready / failed / none(没有视频流) */
+  /** State of the small variant: pending / ready / failed / none (no video stream) */
   smallState?: string;
 }
 
-/** 服务端回包里的两档字段 → UploadedMedia 的那两项 */
+/** The two tier fields in the server response → those two items of UploadedMedia */
 function tiersOf(data: { tiers?: { original?: unknown; small?: unknown }; small?: unknown }): Pick<UploadedMedia, "tiers" | "smallState"> {
   const t = data?.tiers;
   if (!t || typeof t.original !== "string") return {};
@@ -62,8 +70,9 @@ function tiersOf(data: { tiers?: { original?: unknown; small?: unknown }; small?
 }
 
 /**
- * 在线浏览器端导入素材：页面直接计算内容哈希并分片上传到素材服务，
- * 视频在浏览器内转出小尺寸 MP4，按「所有小尺寸先传、再传原尺寸」入队。
+ * Import media on the online browser side: the page computes the content hash directly and uploads in
+ * chunks to the asset service; videos are transcoded in the browser into a small MP4, and queued as
+ * "all small variants first, then the original".
  */
 export async function uploadOnlineMediaFile(
   file: File,
@@ -121,7 +130,7 @@ export async function uploadOnlineMediaFile(
         };
       }
     } else {
-      // 图片与音频：没有小尺寸档，直接算 SHA-256 并进上传队列
+      // Images and audio: no small tier, compute SHA-256 directly and enter the upload queue
       const originalHash = await sha256Blob(file);
       const tiers = { original: originalHash, small: null };
       await enqueueOnlineMedia({
@@ -145,7 +154,7 @@ export async function uploadOnlineMediaFile(
   }
 }
 
-/** 把一个 File 流进本地内容库,拿回它的内容哈希。失败给 null(调用方负责提示) */
+/** Stream a File into the local content store and get back its content hash. Gives null on failure (the caller is responsible for notifying) */
 export async function uploadMediaFile(
   file: File,
   opts?: { transcode?: typeof transcodeVideoSmall; forceOnline?: boolean },
@@ -154,7 +163,8 @@ export async function uploadMediaFile(
     return uploadOnlineMediaFile(file, opts);
   }
   try {
-    // tiers=1:视频在服务端做 faststart 判定(缺了就同容器重封装),并在后台生成素材小尺寸(C6.6)
+    // tiers=1: for video the server does the faststart check (remux in the same container if missing) and
+    // generates the small variant in the background (C6.6)
     const res = await fetch(`/api/media/upload/${encodeURIComponent(file.name)}?tiers=1`, { method: "POST", body: file });
     if (!res.ok) {
       console.warn(`[io] Failed to upload asset (HTTP ${res.status}): ${file.name}`);
@@ -182,21 +192,25 @@ export async function uploadMediaFile(
 }
 
 /**
- * 给一个**已经在服务端素材目录里**的文件补算内容键(素材收集下载好的那种)。
+ * Compute the content key for a file that is **already in the server asset directory** (the kind
+ * downloaded by media collection).
  *
- * 不上传 —— 文件本来就在服务端,几百 MB 再往回传一遍纯属浪费;服务端就地流式
- * 算 sha256 并把它挂进内容库(见 vite-plugin-media.ts 的 adoptMediaFile)。
- * 失败给 null,那条素材就按没有 hash 的迁移期素材走(仍然能按文件名播)。
+ * No upload: the file is already on the server, and sending hundreds of MB back again is pure waste; the
+ * server computes the sha256 in place as a stream and attaches it to the content store (see adoptMediaFile
+ * in vite-plugin-media.ts). On failure gives null, and that media is handled like a migration-period asset
+ * without a hash (it can still play by file name).
  */
 export async function adoptServerMedia(filePath: string): Promise<UploadedMedia | null> {
   return (await adoptServerMediaVerdict(filePath)).up;
 }
 
 /**
- * 编辑器进程对「这个文件取不取得到」的回答,只有两种算明确的「没有」:
- * - `absent`:404,确实没有这个文件(以及落到页面回退的 html);
- * - `outside`:403 且带 `X-PC-Media-Verdict: outside`,路径不在素材目录里,这个接口永远不会给(另一台机器上的路径多半如此)。
- * 其余一律 `unsure`:别的 403、5xx、限速、请求本身出错 —— 没读成不等于不存在,不据此认定缺失。
+ * The editor process's answer to "can this file be fetched"; only two count as a definite "no":
+ * - `absent`: 404, the file really does not exist (including html that falls through to the page fallback);
+ * - `outside`: 403 with `X-PC-Media-Verdict: outside`, the path is not in the asset directory and this
+ *   endpoint will never serve it (paths from another machine are mostly like this).
+ * Everything else is `unsure`: other 403s, 5xx, rate limiting, errors in the request itself. Failing to
+ * read does not mean it does not exist, so we do not conclude it is missing from this.
  */
 export type MediaVerdict = "found" | "absent" | "outside" | "unsure";
 export function mediaVerdictOf(res: { ok: boolean; status: number; headers: { get(name: string): string | null } }): MediaVerdict {
@@ -207,7 +221,7 @@ export function mediaVerdictOf(res: { ok: boolean; status: number; headers: { ge
 }
 const HTML_TYPE = new RegExp("text/html", "i");
 
-/** 同 adoptServerMedia,另带判词:没拿到时分得清是「没有」还是「说不清」 */
+/** Same as adoptServerMedia, with an extra verdict: when nothing is obtained, it tells "does not exist" from "cannot tell" */
 export async function adoptServerMediaVerdict(filePath: string): Promise<{ up: UploadedMedia | null; verdict: MediaVerdict }> {
   if (ONLINE_BUILD) return { up: null, verdict: "unsure" };
   try {
@@ -236,16 +250,18 @@ export async function adoptServerMediaVerdict(filePath: string): Promise<{ up: U
 }
 
 /**
- * 入库结果写回素材表。
+ * Write the ingest result back to the media table.
  *
- * 走 `actions.updateMedia`(不进撤销栈:撤销管的是时间轴,不该把「素材传完了」这件事也收进去),
- * 拷一份新对象写回。**不许原地改** store 里那条记录:共享项目里 store 的项目就是 docsync 的
- * 本地副本,原地改过的字段 diffProject 看不出变化,hash / tiers / pending 就到不了文档服务,
- * 别的设备上这条素材永远是 pending(C6.6 T9 就是这么发现的)。
+ * Goes through `actions.updateMedia` (not onto the undo stack: undo governs the timeline and should not
+ * take in "media finished uploading" as well), and writes back a copy as a new object. **Do not modify in
+ * place** the record in the store: in a shared project the store's project is the local copy of docsync,
+ * and fields changed in place are invisible to diffProject, so hash / tiers / pending never reach the
+ * document service, and on other devices this media stays pending forever (this is how C6.6 T9 found it).
  *
- * 传失败时不退回 blob: —— 那种地址渲染进程和导出进程都打不开,留着只会在更远的
- * 地方炸(见 importAssets.ts 的说明)。素材留空地址、pending 落回 false,
- * 素材层就是透明的,用户重新导入即可。
+ * When the upload fails, do not fall back to blob:. That kind of address cannot be opened by the render
+ * process or the export process, and keeping it only blows up somewhere farther away (see the notes in
+ * importAssets.ts). The asset keeps an empty address and pending goes back to false, so the media layer
+ * is transparent, and the user just imports it again.
  */
 export function applyUploadedMedia(mediaId: string, up: UploadedMedia | null, { imported = true }: { imported?: boolean } = {}): void {
   const media = getState().project.media.find((m) => m.id === mediaId);
@@ -256,32 +272,36 @@ export function applyUploadedMedia(mediaId: string, up: UploadedMedia | null, { 
     patch.hash = up.hash;
     patch.ext = up.ext || undefined;
     patch.size = up.bytes || undefined;
-    // 两档(C6.6):项目里只记两个哈希,不记同步状态(传没传完只问素材服务的 chunks)
+    // Two tiers (C6.6): the project records only two hashes, not the sync state (whether the upload is
+    // finished is only asked of the asset service's chunks)
     if (up.tiers) patch.tiers = up.tiers.small ? { original: up.tiers.original, small: up.tiers.small } : { original: up.tiers.original };
   }
   actions.updateMedia(mediaId, patch);
   if (up?.tiers && !up.tiers.small && up.smallState === "pending") watchSmallTier(mediaId, up.tiers.original);
-  // 导入完成(所有导入路径都汇到这里):共享项目里按哈希交给上传队列,上传目标还没就绪的先记下(见 BackfillHooks.afterImport)
+  // Import done (all import paths converge here): in a shared project, hand it to the upload queue by hash; if the upload target is not ready yet, note it down first (see BackfillHooks.afterImport)
   if (up && imported && importHook) {
     const fresh = getState().project.media.find((m) => m.id === mediaId);
-    if (fresh) { try { void Promise.resolve(importHook(fresh)).catch(() => {}); } catch { /* 挂的事出错不影响导入 */ } }
+    if (fresh) { try { void Promise.resolve(importHook(fresh)).catch(() => {}); } catch { /* An error in the attached work does not affect the import */ } }
   }
 }
 
-/** `startTierBackfill` 挂上的 `hooks.afterImport`;没挂(在线构建、单测)就不做 */
+/** `hooks.afterImport` attached by `startTierBackfill`; if not attached (online build, unit tests) nothing is done */
 let importHook: ((media: MediaAsset) => unknown) | null = null;
 
-/** 素材小尺寸在本机后台转码,每隔这么久问一次 */
+/** The small variant is transcoded locally in the background; ask once every this long */
 const SMALL_POLL_MS = 2000;
-/** 最多问这么久 */
+/** Ask for at most this long */
 const SMALL_POLL_LIMIT_MS = 6 * 60 * 60 * 1000;
 const watching = new Set<string>();
 
 /**
- * 素材小尺寸好了就把它的哈希写进 `project.media[i].tiers.small`(C6.6)。问的是本机的
- * `GET /api/media/tiers?hashes=<素材原尺寸>`(本机转码的登记,不是同步状态)。素材被删了、素材原尺寸换了、
- * 转码失败或确定没有素材小尺寸就停。只在编辑器会话里跑:页面关了就不再问(素材小尺寸照样在本机生成、照样上传,
- * 只是这条素材的项目记录里没有 small,别的设备按「还没有素材小尺寸时直接拉素材原尺寸」处理)。
+ * Once the small variant is ready, write its hash into `project.media[i].tiers.small` (C6.6). What is
+ * asked is the local `GET /api/media/tiers?hashes=<original variant>` (the local transcoding registry,
+ * not the sync state). Stop when the media is deleted, its original variant changed, transcoding failed,
+ * or it is certain there is no small variant. Runs only within an editor session: once the page is closed
+ * it asks no more (the small variant is still generated locally and uploaded as usual, only this media's
+ * project record has no small; other devices handle it as "fetch the original variant directly while
+ * there is no small variant yet").
  */
 export function watchSmallTier(mediaId: string, original: string): void {
   if (ONLINE_BUILD || onlinePage()) return;
@@ -301,7 +321,7 @@ export function watchSmallTier(mediaId: string, original: string): void {
       const item = data?.items?.[original];
       state = typeof item?.state === "string" ? item.state : null;
       small = typeof item?.small === "string" ? item.small : null;
-    } catch { /* 下一次再问 */ }
+    } catch { /* Ask again next time */ }
     if (state === "ready" && small) {
       writeSmallTier(mediaId, original, small);
       return stop();
@@ -312,22 +332,25 @@ export function watchSmallTier(mediaId: string, original: string): void {
   setTimeout(() => { void tick(); }, SMALL_POLL_MS);
 }
 
-/* ---------------- 打开项目时补转素材小尺寸(C6.6 设计稿第 9 节第 2 条) ---------------- */
+/* ---------------- Backfill small variants when a project is opened (C6.6 design draft, section 9, item 2) ---------------- */
 
-/** 这一页已经问过补转的素材原尺寸哈希(同一会话里不重复问;素材小尺寸在转的由 watchSmallTier 接着盯) */
+/** Original-variant hashes for which this page has already asked for backfill (not asked again within the same session; those whose small variant is being transcoded are kept watched by watchSmallTier) */
 const backfillAsked = new Set<string>();
 
 /**
- * 项目里缺 `tiers.small`、按哈希入库的视频:请编辑器进程补转(`POST /api/media/tiers/backfill`)。
- * 本地内容库里有这份素材原尺寸的才转(没有的回 `absent`,不为了转素材小尺寸去拉素材原尺寸),转好补写 `tiers.small`。
- * 页面在素材小尺寸好之前关了,下次打开再补。没有本机编辑器(在线浏览器模式)时请求失败,什么都不做。
- * 回这次问了几份。
+ * Videos in the project that lack `tiers.small` and were ingested by hash: ask the editor process to
+ * backfill-transcode them (`POST /api/media/tiers/backfill`). Only those whose original variant is in the
+ * local content store are transcoded (those not there return `absent`; we do not fetch an original
+ * variant just to transcode a small variant), and once transcoded `tiers.small` is written back. If the
+ * page closes before the small variant is ready, it is backfilled the next time the project is opened.
+ * With no local editor (online browser mode) the request fails and nothing is done.
+ * Returns how many were asked this time.
  */
 export async function backfillSmallTiers(project = getState().project): Promise<number> {
-  if (ONLINE_BUILD || onlinePage() || isViewOnly()) return 0; // 在线页面没有本机转码;只读页面不改项目
+  if (ONLINE_BUILD || onlinePage() || isViewOnly()) return 0; // Online pages have no local transcoding; read-only pages do not change the project
   const want: { mediaId: string; hash: string; name: string }[] = [];
   for (const m of project.media ?? []) {
-    // 认定过「确认缺失」的不问:内容库里没有它,转不出小尺寸
+    // Those already judged "confirmed missing" are not asked: the content store does not have them, so no small variant can be made
     if (m.kind !== "video" || m.pending || m.tiers?.small || confirmedMissing(m)) continue;
     const hash = String(m.tiers?.original ?? m.hash ?? "").toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(hash) || backfillAsked.has(hash)) continue;
@@ -356,7 +379,7 @@ export async function backfillSmallTiers(project = getState().project): Promise<
   return want.length;
 }
 
-/** 把素材小尺寸哈希写进这条素材的 `tiers`(素材原尺寸没换过才写);写法同 applyUploadedMedia 的说明 */
+/** Write the small-variant hash into this media's `tiers` (only if its original variant has not changed); for the approach see the notes of applyUploadedMedia */
 function writeSmallTier(mediaId: string, original: string, small: string): void {
   const fresh = getState().project.media.find((m) => m.id === mediaId);
   if (!fresh || (fresh.tiers?.original ?? fresh.hash) !== original || fresh.tiers?.small) return;
@@ -364,24 +387,28 @@ function writeSmallTier(mediaId: string, original: string, small: string): void 
 }
 
 /**
- * 打开项目(以及素材表变了)时补转素材小尺寸,回停止函数。预览挂上时调。
- * 同一份素材原尺寸一个页面会话里只问一次;素材表没变就不问。
- * 同一时机在后台补入库没有哈希的老素材(`ingestUnhashedMedia`):本机取不到文件的标「(缺失)」,
- * 做完交给 `hooks.afterIngest`(放云端时补上哈希的进上传队列,见 `sync/backfillUpload.ts`)。
+ * Backfill small variants when a project is opened (and when the media table changes), returning a stop
+ * function. Called when the preview is attached.
+ * The same original variant is asked only once per page session; if the media table has not changed, no ask.
+ * At the same moment, ingest old media without a hash in the background (`ingestUnhashedMedia`): those whose
+ * file the local machine cannot get are marked "(missing)"; when done, hand over to `hooks.afterIngest`
+ * (those whose hash was filled in while hosted in the cloud enter the upload queue, see `sync/backfillUpload.ts`).
  */
 export function startTierBackfill(hooks: BackfillHooks = {}): () => void {
   if (ONLINE_BUILD) return () => {};
   const myImportHook = hooks.afterImport ?? null;
   importHook = myImportHook;
   const background = async () => {
-    // 本机取不到文件的标「(缺失)」。只在本机项目里判:共享项目里不标(见 BackfillHooks.shared);还带着协作关联、只是没连上的
-    // (断网、要认证、等主机)也不判 —— 那时只在远端有的素材本机没有是常态,判了还会随重连同步给所有成员(见 BackfillHooks.associated)。
-    // 检查中途项目变了(换了项目、连上了、进了云端项目)就停手,不把这一轮的结论写进去。
+    // Those whose file the local machine cannot get are marked "(missing)". Judged only in local projects: not marked in shared projects
+    // (see BackfillHooks.shared); also not judged when it still carries a collaboration association and is merely not connected
+    // (offline, authentication needed, waiting for the host), since then it is normal for media that exists only remotely to be absent locally,
+    // and a verdict would also be synced to all members on reconnect (see BackfillHooks.associated).
+    // If the project changes midway through the check (switched project, got connected, entered a cloud project), stop and do not write this round's conclusion.
     const local = () => !hooks.shared?.() && !hooks.associated?.();
     const started = loadMark();
     const allowed = () => local() && sameLoad(started);
     const r = await ingestUnhashedMedia({ background: true, markMissing: local(), allowed });
-    // 带哈希、本地内容库里却没有的(另一台机器存的 .proc)同样标;共享项目里本机没有是常态,不判
+    // Those with a hash but absent from the local content store (a .proc stored by another machine) are marked the same way; in shared projects it is normal for the local machine not to have them, so no verdict
     if (allowed()) await checkHashedMedia({ allowed });
     await hooks.afterIngest?.(r);
   };
@@ -391,14 +418,14 @@ export function startTierBackfill(hooks: BackfillHooks = {}): () => void {
     const media = getState().project.media;
     if (media === lastMedia) return;
     lastMedia = media;
-    // 打开项目的那一阵先让路(测量、首帧),稍后再问
+    // While the project is just being opened, yield first (measurement, first frame), ask later
     if (timer) clearTimeout(timer);
-    // 没有哈希的老素材先补入库(老项目自己愈合),再补转素材小尺寸;补入库写回素材表会再触发一次 check,新补上的视频也会被问到
+    // Backfill-ingest old media without a hash first (old projects heal themselves), then backfill small variants; writing back to the media table after ingest triggers another check, so newly added videos get asked too
     timer = setTimeout(() => { timer = null; void background().catch(() => {}); void backfillSmallTiers(); }, 1500);
   };
   const unsub = subscribe(check);
   check();
-  // 过期的云端项目刚转成本地项目:素材表没换(内容原样),但它现在是本机项目了,重新判一遍
+  // A stale cloud project was just turned into a local project: the media table did not change (content as is), but it is now a local project, so judge again
   const again = () => { lastMedia = null; ingestBackgroundFailed.clear(); check(); };
   recheckers.add(again);
   return () => { recheckers.delete(again); unsub(); if (timer) clearTimeout(timer); if (importHook === myImportHook) importHook = null; };
@@ -407,35 +434,42 @@ export function startTierBackfill(hooks: BackfillHooks = {}): () => void {
 const recheckers = new Set<() => void>();
 onGoneConversion(() => { for (const again of [...recheckers]) again(); });
 
-/** 这一刻载入的是哪个项目(`loadProject` 每次加一);后台检查跨着几次请求,回来时用它看项目换没换 */
+/** Which project is loaded at this moment (`loadProject` adds one each time); the background check spans several requests, and uses this on return to see whether the project changed */
 const loadMark = () => ({ token: getState().projectLoadToken, id: getState().project.id });
 const sameLoad = (mark: ReturnType<typeof loadMark>) => getState().projectLoadToken === mark.token && getState().project.id === mark.id;
 
-/* ---------------- 补入库:没有哈希、但本机还取得到字节的老素材 ---------------- */
+/* ---------------- Backfill: old assets with no hash whose bytes this machine can still get ---------------- */
 
 /*
- * 老项目里有一批素材只有 `path`、地址是 `/api/media/file?path=…` 或 `/@media/<文件名>`,没有内容哈希
- * (0.7.7 之前生成的配音、迁移期导入的素材)。按哈希挑素材的两处 —— 打包保存 `.procp`(procp.ts 的 mediaEntries)
- * 和开启「放云端」时交给上传队列(assetTiers.ts 的 existingMediaItems)—— 都只认哈希,这些素材就被悄悄漏掉了。
- * 语义 `product/asset-service.md`「入库这一步不能省」:这里把它们补进本地内容库。
+ * Some assets in old projects only have a `path`, with the URL `/api/media/file?path=…` or `/@media/<file name>`,
+ * and no content hash (voiceovers generated before 0.7.7, assets imported during the migration period).
+ * The two places that pick assets by hash (saving a `.procp` package, `mediaEntries` in procp.ts, and handing
+ * assets to the upload queue when "move to cloud" is on, `existingMediaItems` in assetTiers.ts) only recognize
+ * hashes, so these assets were silently left out.
+ * Semantics `product/asset-service.md`, "the ingest step cannot be skipped": this code backfills them into
+ * the local content store.
  *
- * 怎么补:能指到素材目录里那个文件的(有 `path`,或地址里带 `path=`),走 `adoptServerMedia`
- * (服务端就地算哈希、硬链接进内容库,一份字节都不往回传);服务端不收那条路径(不在素材目录内、换了机器
- * 路径对不上)时,经现有读接口(`/api/media/file?path=…`、`/@media/<文件名>`)取回字节再走 `uploadMediaFile` 入库。
- * 结果用 `applyUploadedMedia` 写回素材表(换新对象,不原地改)。
+ * How: if the file in the asset directory can be located (it has a `path`, or its URL contains `path=`), go
+ * through `adoptServerMedia` (the server computes the hash in place and hard-links the file into the content
+ * store, so no bytes are sent back). If the server does not accept that path (not inside the asset directory,
+ * or the path does not match after moving to another machine), fetch the bytes through the existing read
+ * endpoints (`/api/media/file?path=…`, `/@media/<file name>`) and ingest them with `uploadMediaFile`.
+ * The result is written back to the asset table with `applyUploadedMedia` (a new object, no in-place edits).
  *
- * 三处调用:打包前、放云端交给上传队列之前、打开项目后在后台(`startTierBackfill` 同一时机)。
- * 在线构建与只读页面不做(没有本机内容库、不改项目)。
+ * Three call sites: before packaging, before handing assets to the upload queue for "move to cloud", and in
+ * the background after a project opens (same moment as `startTierBackfill`).
+ * The online build and read-only pages do not do this (no local content store, and they do not modify the
+ * project).
  */
 
 const HASH_RE = /^[0-9a-f]{64}$/i;
 
-/** 这条素材有合法的内容哈希 */
+/** This asset has a valid content hash */
 export function hasMediaHash(m: { hash?: string } | null | undefined): boolean {
   return HASH_RE.test(String(m?.hash ?? ""));
 }
 
-/** 一条素材在本机可能取得到字节的地方:先试的路径(adopt)、再试的读地址(取字节再入库) */
+/** Places where this machine may be able to get an asset's bytes: the path to try first (adopt), then the read URLs (fetch bytes, then ingest) */
 export function localSourcesOf(m: Pick<MediaAsset, "path" | "url" | "name">): { paths: string[]; urls: string[] } {
   const paths: string[] = [];
   const urls: string[] = [];
@@ -443,7 +477,7 @@ export function localSourcesOf(m: Pick<MediaAsset, "path" | "url" | "name">): { 
   const addUrl = (u: string) => { if (u && !urls.includes(u)) urls.push(u); };
   const url = String(m.url || "");
   if (url.startsWith("/api/media/file?")) {
-    try { addPath(new URLSearchParams(url.slice(url.indexOf("?") + 1)).get("path")); } catch { /* 地址坏了就只看 path */ }
+    try { addPath(new URLSearchParams(url.slice(url.indexOf("?") + 1)).get("path")); } catch { /* If the URL is broken, look only at path */ }
   }
   addPath(m.path);
   if (url.startsWith("/api/media/file?")) addUrl(url);
@@ -456,7 +490,7 @@ export function localSourcesOf(m: Pick<MediaAsset, "path" | "url" | "name">): { 
   return { paths, urls };
 }
 
-/** 地址本身就是 `/@media/<hash>`(内容寻址)时的那个哈希 */
+/** The hash when the URL itself is `/@media/<hash>` (content-addressed) */
 function hashInUrl(url: string | undefined): string | null {
   const u = String(url || "");
   if (!u.startsWith("/@media/")) return null;
@@ -471,10 +505,12 @@ function uploadNameOf(m: Pick<MediaAsset, "name" | "path">): string {
 }
 
 /**
- * 补一条:能 adopt 就 adopt,不行再取字节上传。都不行 `up` 为 null。
- * `unreachable`:每条路径、每个读地址都**明确**答了「没有」(判词见 `mediaVerdictOf`:404、落到页面回退、路径不在素材目录里)
- * —— 本机确实取不到这个文件;别的非 2xx(没权限、5xx、限速)、取到了字节但上传失败、请求本身出错(编辑器进程不在)都不算,
- * 那时说不清文件在不在。
+ * Backfill one asset: adopt if possible, otherwise fetch the bytes and upload. If neither works, `up` is null.
+ * `unreachable`: every path and every read URL **explicitly** answered "not there" (for the verdict see
+ * `mediaVerdictOf`: 404, falling through to the page fallback, path outside the asset directory)
+ * — this machine really cannot get the file. Other non-2xx responses (no permission, 5xx, rate limit), bytes
+ * fetched but upload failed, and request errors (the editor process is not running) do not count, because
+ * then it is unclear whether the file exists.
  */
 async function ingestOne(m: MediaAsset): Promise<{ up: UploadedMedia | null; unreachable: boolean }> {
   const { paths, urls } = localSourcesOf(m);
@@ -488,78 +524,90 @@ async function ingestOne(m: MediaAsset): Promise<{ up: UploadedMedia | null; unr
     try {
       const res = await fetch(u);
       const verdict = mediaVerdictOf(res);
-      // 明确没有(404、页面回退、路径不在素材目录里):看下一个地址;别的失败是没读成,说不清
+      // Explicitly not there (404, page fallback, path outside the asset directory): try the next URL; any other failure means the read did not succeed, so it is unclear
       if (verdict === "unsure") { unsure = true; continue; }
       if (verdict !== "found") continue;
-      // 兜底:落到页面回退(index.html)的不是素材
+      // Safety net: a response that falls through to the page fallback (index.html) is not an asset
       if (/text\/html/i.test(res.headers.get("content-type") || "")) continue;
-      unsure = true; // 字节取到了:文件在,只是没入上库
+      unsure = true; // Bytes fetched: the file exists, it just was not ingested
       const blob = await res.blob();
       const up = await uploadMediaFile(new File([blob], uploadNameOf(m)));
       if (up) return { up, unreachable: false };
-    } catch { unsure = true; /* 下一个地址 */ }
+    } catch { unsure = true; /* Next URL */ }
   }
   return { up: null, unreachable: !unsure && urls.length > 0 };
 }
 
 export interface IngestResult {
-  /** 这次补上哈希的素材 id */
+  /** IDs of the assets that got a hash this time */
   ingested: string[];
   /**
-   * 补不上的素材。`unreachable`:本机经读接口确实取不到这个文件(见 ingestOne);
-   * 没有这个标记的是说不清(字节取到了但入库失败、编辑器进程不在、连地址都没有)。
+   * Assets that could not be backfilled. `unreachable`: this machine really cannot get the file through the
+   * read endpoints (see ingestOne);
+   * entries without this flag are unclear (bytes fetched but ingest failed, the editor process is not running,
+   * or there is no URL at all).
    */
   failed: { id: string; name: string; unreachable?: boolean }[];
 }
 
 /**
- * 打开项目后的后台检查可以挂的两件事(由 `Preview` 传进 `startTierBackfill`,见 `sync/backfillUpload.ts`)。
- * 这里不直接引同步层:`syncManager` 在 Node 单测里加载不了,也免得 io 反过来依赖 sync。
+ * Two things the background check after opening a project can hook into (passed by `Preview` to
+ * `startTierBackfill`, see `sync/backfillUpload.ts`).
+ * It does not import the sync layer directly: `syncManager` cannot be loaded in Node unit tests, and this
+ * also avoids making io depend on sync.
  */
 export interface BackfillHooks {
   /**
-   * 这个文件是不是还带着协作关联(连没连上都算)。带着就不认定缺失:没连上时本机没有远端的素材是常态,
-   * 认定了会写进待同步的内容,重连后发给所有成员。
+   * Whether this file still carries a collaboration link (connected or not). If it does, do not judge assets
+   * missing: while disconnected it is normal for this machine not to have the remote assets, and judging them
+   * would write into the content waiting to sync and send it to all members after reconnecting.
    */
   associated?: () => boolean;
-  /** 当前是不是共享项目。共享项目里不给素材标「(缺失)」:取不取得到是这台机器的事,不该同步给别的成员 */
+  /** Whether this is currently a shared project. In a shared project, assets are not marked "(missing)": whether they can be fetched is up to this machine and should not be synced to other members */
   shared?: () => boolean;
-  /** 后台补入库做完之后(放云端时把补上哈希的交给上传队列、补不上的列给用户) */
+  /** After the background backfill finishes (when "move to cloud" is on, hand the newly hashed assets to the upload queue and list the ones that could not be backfilled to the user) */
   afterIngest?: (r: IngestResult) => unknown;
   /**
-   * 一条素材导入完成、写回了哈希之后(`applyUploadedMedia`;用户导入、配音、素材收集都经这里)。共享项目里用它把
-   * 素材按哈希交给上传队列:打开共享项目后、编辑器进程拿到上传目标之前导入的,编辑器进程那一侧的入队看到的是本机目标、
-   * 当空操作丢掉,要由页面记下、就绪后补交(`media/assetTiers.ts` 的 queueImportedMedia)。
+   * After an asset import completes and the hash is written back (`applyUploadedMedia`; user imports,
+   * voiceovers and media collection all go through here). In a shared project it is used to hand assets to the
+   * upload queue by hash: for assets imported after the shared project opens but before the editor process gets
+   * the upload target, the enqueue on the editor process side sees a local target and drops it as a no-op, so
+   * the page has to remember them and hand them over once ready (queueImportedMedia in `media/assetTiers.ts`).
    */
   afterImport?: (media: MediaAsset) => unknown;
 }
 
-/** 同一来源正在补的(打包与后台同时触发时只补一次) */
+/** Sources currently being backfilled (when packaging and the background trigger at the same time, backfill only once) */
 const ingestInflight = new Map<string, Promise<{ up: UploadedMedia | null; unreachable: boolean }>>();
-/** 后台补过、没补上的来源:同一会话里后台不再反复试(打包、放云端照样再试一次) */
+/** Sources the background tried to backfill and failed: within the same session the background does not retry (packaging and "move to cloud" still try once more) */
 const ingestBackgroundFailed = new Set<string>();
 
 /**
- * 把素材表里没有合法哈希、本机还取得到字节的条目补进本地内容库,并写回哈希。
- * 还在导入(`pending`)的不动:入库由导入那一路负责。回补上了哪些、哪些补不上。
- * `background`:打开项目后在后台做,补不上的记下来,同一会话里后台不再试。
- * `markMissing`:本机确实取不到文件的(`unreachable`),照打开项目时的老规矩标「(缺失)」:清空地址、名字前面加标记
- * (`mediaUrls.ts` 的 restoreMediaUrls;空地址的素材预览和导出都跳过,不再拿一个打不开的地址去等)。`path` 留着,
- * 换回有这个文件的机器、或文件放回原处后,下一次补入库照样补得上(补上时去掉标记)。
+ * Backfill into the local content store the entries in the asset table that have no valid hash but whose
+ * bytes this machine can still get, and write the hashes back.
+ * Entries still importing (`pending`) are left alone: ingest is the import path's job. Returns which ones
+ * were backfilled and which could not be.
+ * `background`: done in the background after opening a project; failures are recorded and the background
+ * does not retry within the same session.
+ * `markMissing`: files this machine really cannot get (`unreachable`) are marked "(missing)" following the
+ * old rule used when opening a project: clear the URL and prefix the name with a marker
+ * (restoreMediaUrls in `mediaUrls.ts`; assets with an empty URL are skipped by preview and export, so nothing
+ * waits on a URL that cannot be opened). `path` is kept, so after switching back to a machine that has the
+ * file, or after the file is put back in place, the next backfill still succeeds (the marker is removed then).
  */
 export async function ingestUnhashedMedia(opts: { background?: boolean; markMissing?: boolean; allowed?: () => boolean } = {}): Promise<IngestResult> {
   const out: IngestResult = { ingested: [], failed: [] };
   if (ONLINE_BUILD || isViewOnly()) return out;
-  // 等请求的那一阵项目可能换了:回来再认定缺失之前先看一眼还许不许(`allowed`),并且始终不跨项目写
+  // The project may have changed while waiting for requests: before judging missing again, check whether it is still allowed (`allowed`), and never write across projects
   const mark = loadMark();
   const mayMark = () => !!opts.markMissing && sameLoad(mark) && (opts.allowed?.() ?? true);
   const media = getState().project.media ?? [];
   const byId = new Map(media.map((m) => [m.id, m]));
-  // 同一来源(同一文件)的几条记录一起补
+  // Several records from the same source (same file) are backfilled together
   const groups = new Map<string, MediaAsset[]>();
   for (const m of media) {
     if (m.pending || hasMediaHash(m)) continue;
-    // 「只要声音」的那份和源视频指着同一个文件:源视频有哈希就直接用它的
+    // The "audio only" copy points to the same file as the source video: if the source video has a hash, use it directly
     const src = m.soundOf ? byId.get(m.soundOf) : undefined;
     const direct = src && hasMediaHash(src) ? String(src.hash).toLowerCase() : hashInUrl(m.url);
     if (direct) {
@@ -574,7 +622,7 @@ export async function ingestUnhashedMedia(opts: { background?: boolean; markMiss
     const key = paths[0] ?? urls[0] ?? "";
     if (!key) {
       out.failed.push({ id: m.id, name: m.name });
-      // 没有哈希、没有路径、也没有读得到的地址(打开时已被清空的失效地址):没有任何线索能找回它,同样认定缺失
+      // No hash, no path, and no readable URL (a dead URL already cleared on open): nothing to recover it with, so likewise judge it missing
       if (mayMark() && !m.url && !m.soundOf) markMediaMissing(m.id);
       continue;
     }
@@ -589,7 +637,7 @@ export async function ingestUnhashedMedia(opts: { background?: boolean; markMiss
       ingestInflight.set(key, p);
     }
     const { up, unreachable } = await p;
-    if (!sameLoad(mark)) return out; // 项目换了:这一轮到此为止,什么都不写
+    if (!sameLoad(mark)) return out; // The project changed: this round ends here, write nothing
     if (!up) {
       if (opts.background) ingestBackgroundFailed.add(key);
       for (const m of list) {
@@ -601,11 +649,11 @@ export async function ingestUnhashedMedia(opts: { background?: boolean; markMiss
     ingestBackgroundFailed.delete(key);
     for (const m of list) {
       const fresh = getState().project.media.find((x) => x.id === m.id);
-      if (!fresh || hasMediaHash(fresh)) continue; // 期间被删了,或别处已经补上
-      // 派生的声音不挂视频的两档
-      // 补上哈希的交给上传队列走 hooks.afterIngest(queueBackfilledMedia),这里不再按「导入」交一遍
+      if (!fresh || hasMediaHash(fresh)) continue; // Deleted in the meantime, or already backfilled elsewhere
+      // Two tiers where derived audio is not attached to the video
+      // Newly hashed assets go to the upload queue through hooks.afterIngest (queueBackfilledMedia), so they are not handed over again here as "import"
       applyUploadedMedia(m.id, fresh.soundOf ? { ...up, tiers: undefined, smallState: undefined } : up, { imported: false });
-      // 以前在别的机器上被标过「(缺失)」、现在取到了:去掉标记,连同「确认缺失」的记录(占位随之消失)
+      // Previously marked "(missing)" on another machine and now fetched: remove the marker, together with the "confirmed missing" record (the placeholder disappears with it)
       if (hasMissingMark(fresh.name) || fresh.missingMaterial) actions.updateMedia(m.id, { name: nameWithoutMissing(fresh.name), missingMaterial: undefined });
       out.ingested.push(m.id);
     }
@@ -613,20 +661,25 @@ export async function ingestUnhashedMedia(opts: { background?: boolean; markMiss
   return out;
 }
 
-/** 问过、本地内容库里有的素材原尺寸哈希(哈希不可变,有了就一直有;没有的每轮再问,期间可能被导入进来) */
+/** Original-size hashes of assets that were asked about and are in the local content store (hashes are immutable, once present always present; absent ones are asked again each round, since they may be imported in the meantime) */
 const hashPresent = new Set<string>();
 
 /**
- * 带哈希的素材在本地内容库里有没有这份字节(`GET /api/media/local?hashes=…`,素材服务的现有接口)。只在本机项目里调:
- * 共享项目里本机没有是常态(按需从远程素材服务拉)。
- * - 没有的标「(缺失)」(同 markMediaMissing:清空地址、名字加标记;哈希留着,下次打开照样按哈希找);
- * - 以前标过、现在有了的(导入了同样内容的文件、打开了带这份字节的包)去掉标记、换回 `/@media/<hash>`。
- * 编辑器进程答不上来时什么都不改。回标了哪些、恢复了哪些。
+ * Whether the local content store has the bytes of hashed assets (`GET /api/media/local?hashes=…`, an
+ * existing endpoint of the asset service). Only called in local projects:
+ * in a shared project it is normal for this machine not to have them (pulled from the remote asset service
+ * on demand).
+ * - Those that are absent are marked "(missing)" (same as markMediaMissing: clear the URL, add a marker to
+ *   the name; the hash is kept, so the next open still looks them up by hash);
+ * - Those that were marked before and are now present (a file with the same content was imported, or a
+ *   package carrying these bytes was opened) get the marker removed and `/@media/<hash>` restored.
+ * If the editor process cannot answer, nothing is changed. Returns which ones were re-marked and which were
+ * restored.
  */
 export async function checkHashedMedia(opts: { allowed?: () => boolean } = {}): Promise<{ missing: string[]; restored: string[] }> {
   const out = { missing: [] as string[], restored: [] as string[] };
   if (ONLINE_BUILD || isViewOnly()) return out;
-  // 下面要等好几次请求;期间换了项目(或不再许认定)就停手,不把这一轮的结论写进别的项目
+  // Several requests must be awaited below; if the project changes in the meantime (or judging is no longer allowed), stop and do not write this round's conclusions into another project
   const mark = loadMark();
   const go = () => sameLoad(mark) && (opts.allowed?.() ?? true);
   const hashOf = (m: MediaAsset) => String(m.tiers?.original || m.hash || "").toLowerCase();
@@ -644,13 +697,13 @@ export async function checkHashedMedia(opts: { allowed?: () => boolean } = {}): 
       if (!Array.isArray(body?.hashes)) continue;
       for (const h of body.hashes) hashPresent.add(String(h).toLowerCase());
       for (const h of part) answered.add(h);
-    } catch { /* 编辑器进程不在:这一批不判 */ }
+    } catch { /* Editor process is not running: do not judge this batch */ }
   }
   if (!go()) return out;
-  // 内容库里没有的,再按原来记的本机路径找一次(素材找回的先后:包里落库的、内容库里已有的都先于它,见 `workflow/materials.md`):
-  // 文件还在原处、内容也对得上,就地挂回内容库,不算缺失;原处的文件内容变了(哈希对不上)记下来,弹窗里单独说明。
+  // For those not in the content store, look once more by the local path recorded originally (order of asset recovery: assets stored from the package and assets already in the content store both come before it, see `workflow/materials.md`):
+  // if the file is still in place and its content matches, hook it back into the content store in place, and it does not count as missing; if the file in place has changed (hash mismatch), record it and explain it separately in the dialog.
   const changed = new Set<string>();
-  /** 按原路径找的时候没读成(没权限、5xx、请求出错)的:说不清文件在不在,这一轮不认定 */
+  /** Those that could not be read when looked up by the original path (no permission, 5xx, request error): unclear whether the file exists, so not judged this round */
   const unsure = new Set<string>();
   const triedPath = new Set<string>();
   for (const m of getState().project.media ?? []) {
@@ -678,10 +731,10 @@ ${m.path}`);
         out.restored.push(m.id);
       }
     } else if (answered.has(h) && !unsure.has(h)) {
-      // 已经认定过、记录也还对得上的不重复写(保存重开后就是这种:占位一直在,不再弹窗)
+      // Already judged and the record still matches: do not write again (this is the case after save and reopen: the placeholder stays, no more dialog)
       if (hasMissingMark(m.name) && confirmedMissing(m)) continue;
       console.warn(`[io] Missing asset: ${m.name} (${m.hash})`);
-      // 地址留着按哈希的那一个(存盘重开后 restoreMediaUrls 给的也是它,记录才对得上);画面、声音、导出见到记录就不去取它
+      // Keep the hash-based URL (restoreMediaUrls also gives this one after save and reopen, so the record matches); picture, sound and export do not try to fetch it when they see the record
       const name = hasMissingMark(m.name) ? m.name : `${MISSING_NAME_MARK}${m.name}`;
       actions.updateMedia(m.id, { url, name, missingMaterial: missingRecordOf({ ...m, url, name }) });
       out.missing.push(m.id);
@@ -694,13 +747,16 @@ ${m.path}`);
 
 const nameWithoutMissing = withoutMissingMark;
 
-/** 没有哈希、没有路径的素材认定缺失后用的地址:只为不留空(时间轴的出声清单不收空地址的素材),谁也不会真去取它 */
+/** URL used after an asset with no hash and no path is judged missing: only so it is not left empty (the timeline's sounding manifest skips assets with an empty URL); nobody will actually fetch it */
 const NOWHERE_URL = "/@media/__missing__";
 
 /**
- * 「确认缺失」的记录(形状见 `MediaAsset.missingMaterial`):只在本机项目里、编辑器进程明确答了「没有」之后写。
- * 记下认定那一刻素材的类别、名字、地址、哈希、路径,画面与声音的占位核对这几项与素材现状逐字相同才启用;
- * 视频按画面与声音都缺记(素材不在,没法知道它本来有没有声音),图片只有画面,声音素材只有声音。
+ * The "confirmed missing" record (shape: see `MediaAsset.missingMaterial`): written only in local projects,
+ * after the editor process explicitly answered "not there".
+ * It records the asset's kind, name, URL, hash and path at the moment of judging; the picture and sound
+ * placeholders are enabled only if these match the asset's current state verbatim.
+ * A video is recorded as missing both picture and sound (the asset is gone, so there is no way to know
+ * whether it had sound), an image has only picture, and an audio asset has only sound.
  */
 function missingRecordOf(m: MediaAsset): NonNullable<MediaAsset["missingMaterial"]> {
   return {
@@ -710,20 +766,20 @@ function missingRecordOf(m: MediaAsset): NonNullable<MediaAsset["missingMaterial
   };
 }
 
-/** 标「(缺失)」:清空地址、名字加标记(换新对象写回;已经标过的不重复加) */
+/** Mark "(missing)": clear the URL and add a marker to the name (written back as a new object; already marked ones are not marked again) */
 function markMediaMissing(mediaId: string): void {
   const fresh = getState().project.media.find((x) => x.id === mediaId);
   if (!fresh || hasMediaHash(fresh) || fresh.pending) return;
   const name = hasMissingMark(fresh.name) ? fresh.name : `${MISSING_NAME_MARK}${fresh.name}`;
   if (name === fresh.name && confirmedMissing(fresh)) return;
   console.warn(`[io] Missing asset: ${fresh.name} (${fresh.path || fresh.url})`);
-  // 地址不清空:留着原来的读地址(存盘重开后 restoreMediaUrls 按 path 给的还是它),没有就给一个不存在的占位地址
+  // Do not clear the URL: keep the original read URL (restoreMediaUrls gives this one by path after save and reopen), and if there is none, give a nonexistent placeholder URL
   const url = fresh.url || NOWHERE_URL;
   actions.updateMedia(mediaId, { url, name, missingMaterial: missingRecordOf({ ...fresh, url, name }) });
   publishMissingMaterials([{ id: fresh.id, name: nameWithoutMissing(fresh.name), kind: fresh.kind }]);
 }
 
-/** 单测用 */
+/** For unit tests */
 export function resetTierBackfillForTest(): void {
   importHook = null;
   backfillAsked.clear();

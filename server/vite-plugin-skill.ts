@@ -2,20 +2,27 @@ import type { Plugin, ViteDevServer } from "vite";
 import type { ServerResponse, IncomingMessage } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { tr } from "./i18n.mjs";
 
 /**
- * SKILL:桌面 APP 经 MCP 直连用户正在用的项目(计划 `docs/plan/agent-workflow-plan.md` A4)。这里管两件事:
+ * SKILL: desktop app connects directly via MCP to the project currently used by the user (plan
+ * `docs/plan/agent-workflow-plan.md` A4). Two things are handled here:
  *
- *   1. **登记到桌面 APP**:把 PromptCut 的 MCP 服务写进 Claude Code / Codex 的用户级配置(`server/desktop-register.mjs`:
- *      条目名固定 `promptcut`、不写端口、写之前备份、能撤销)。
- *        GET  /api/skill/desktop-register                              → { ok, command, targets: [现状…] }
- *        POST /api/skill/desktop-register { target, action: "register" | "unregister" } → { ok, …现状 }
- *      桌面 APP 那边每个会话起一份 `server/mcp-server.mjs`,按端口文件连到这个实例;身份、权限、SKILL 闸、写入都在
- *      `server/vite-plugin-ai.ts` 的 `/api/mcp/call` 里。
- *   2. **按路径打开 .proc**(POST /api/skill/open-path):双击文件、桌面壳启动参数走这里。先复制到 `.pc-work/opened/`
- *      再给前端,原文件不占、不改。和 SKILL 无关,历史原因挂在同一条路由下。
+ *   1. **Register with the desktop app**: write PromptCut's MCP service into user-level configs
+ *      for Claude Code / Codex (`server/desktop-register.mjs`: entry name fixed to `promptcut`,
+ *      no port written, backed up before writing, reversible).
+ *        GET  /api/skill/desktop-register                              → { ok, command, targets: [current status…] }
+ *        POST /api/skill/desktop-register { target, action: "register" | "unregister" } → { ok, …current status }
+ *      On the desktop app side, each session launches an instance of `server/mcp-server.mjs` and
+ *      connects to this instance via the port file; identity, permissions, the SKILL gate, and
+ *      writes are all in `/api/mcp/call` in `server/vite-plugin-ai.ts`.
+ *   2. **Open .proc by path** (POST /api/skill/open-path): double-clicking a file and desktop shell
+ *      startup arguments go through here. Copied to `.pc-work/opened/` first before handing to
+ *      the frontend; the original file is not locked or modified. Unrelated to SKILL, mounted under
+ *      the same route for historical reasons.
  *
- * 原来这里是「任务目录 + 无头实例 + 深链拉起桌面 app 新对话 + 回来三方合并」那一套,A4 归档(git 历史里有)。
+ * Originally, this was the "task directory + headless instance + deep link launching a new desktop
+ * app chat + returning for a three-way merge" workflow, archived in A4 (preserved in git history).
  */
 
 function sendJson(res: ServerResponse, code: number, data: unknown) {
@@ -33,33 +40,35 @@ function readBody(req: IncomingMessage, limit = 64 * 1024 * 1024): Promise<strin
       body += c;
       if (body.length > limit) {
         req.destroy();
-        reject(new Error("请求太大"));
+        reject(new Error("Request too large"));
       }
     });
     req.on("end", () => resolve(body));
-    req.on("error", () => reject(new Error("读取请求体失败")));
+    req.on("error", () => reject(new Error(tr("Failed to read request body"))));
   });
 }
 
 /**
- * 按磁盘路径打开一份 .proc:双击文件、桌面壳启动参数都走这里。
- * **先复制到 .pc-work/opened/ 再读副本**:原文件不被占用、不被改,双击一份别人正在编辑的
- * .proc 不会互相踩。
+ * Open a .proc by disk path: double-clicking a file and desktop shell startup arguments go here.
+ * **Copy to .pc-work/opened/ first then read the replica**: the original file is not occupied or
+ * modified, and double-clicking a .proc currently being edited by someone else will not collide.
  */
 async function openPath(root: string, req: IncomingMessage, res: ServerResponse) {
   const { path: raw } = JSON.parse((await readBody(req)) || "{}");
   const src = path.resolve(String(raw || ""));
-  if (!/\.(proc|json)$/i.test(src)) return sendJson(res, 400, { ok: false, error: "只认 .proc / .json" });
-  if (!fs.existsSync(src)) return sendJson(res, 404, { ok: false, error: `文件不存在:${src}` });
+  if (!/\.(proc|json)$/i.test(src)) return sendJson(res, 400, { ok: false, error: "Only .proc / .json are accepted" });
+  if (!fs.existsSync(src)) return sendJson(res, 404, { ok: false, error: `File does not exist: ${src}` });
   const text = fs.readFileSync(src, "utf8");
   /*
-   * 内容必须**长得像一份 PromptCut 项目**才回给调用方。
+   * Content must **look like a PromptCut project** before returning it to the caller.
    *
-   * 这里不能按目录设白名单 —— 双击磁盘上任意位置的 .proc 本来就是这条路要支持的事。
-   * 但光校验后缀不够:`.json` 什么都能是,而这个接口是把文件内容原样回出去的。
-   * 机器上一堆带凭据的 .json(Codex 的登录态就是其中之一),路径又都是固定的。
-   * 同源卡口(vite-plugin-api-guard)已经挡掉了跨站页面,这一道防的是同源里的注入
-   * (比如聊天记录渲染出来的脚本)—— 它拿这个接口读不到不是项目的东西。
+   * A directory allowlist cannot be set here: double-clicking a .proc anywhere on disk is
+   * inherently what this path must support. But validating the extension alone is not enough:
+   * `.json` can be anything, and this endpoint returns the file content as is. There are numerous
+   * credential-bearing `.json` files on the machine (Codex login state is one of them), and their
+   * paths are fixed. The same-origin guard (vite-plugin-api-guard) already blocks cross-site pages;
+   * this line defends against same-origin injection (such as scripts rendered from chat history):
+   * it cannot use this endpoint to read things that are not projects.
    */
   const doc = JSON.parse(text) as Record<string, unknown>;
   const looksLikeProject =
@@ -67,7 +76,7 @@ async function openPath(root: string, req: IncomingMessage, res: ServerResponse)
     (doc?.project && typeof doc.project === "object") ||
     (doc?.version === 1 && Array.isArray(doc?.tracks));
   if (!looksLikeProject) {
-    return sendJson(res, 400, { ok: false, error: "这个文件不是 PromptCut 项目" });
+    return sendJson(res, 400, { ok: false, error: tr("This file is not a PromptCut project") });
   }
   const name = path.basename(src);
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
@@ -78,10 +87,10 @@ async function openPath(root: string, req: IncomingMessage, res: ServerResponse)
   return sendJson(res, 200, { ok: true, text, name, copy, original: src });
 }
 
-/** 登记模块按修改时间重新加载:改了它不用重启 dev server(Node 的 ESM 缓存按 URL 记) */
+/** Registration module reloads based on mtime: modifying it requires no dev server restart (Node ESM caches by URL) */
 async function loadRegister() {
   const url = new URL("./desktop-register.mjs", import.meta.url);
-  try { url.searchParams.set("t", String(fs.statSync(url).mtimeMs)); } catch { /* 打包后读不到 mtime 就用缓存 */ }
+  try { url.searchParams.set("t", String(fs.statSync(url).mtimeMs)); } catch { /* Fall back to cache if mtime cannot be read after bundling */ }
   return import(url.href);
 }
 
@@ -95,8 +104,8 @@ export function skillPlugin(): Plugin {
         const url = new URL(req.url || "/", "http://localhost");
         const parts = url.pathname.replace(/^\/+/, "").split("/").filter(Boolean);
         try {
-          // POST /api/skill/open-path —— 挂在同一条路由里:connect 按前缀匹配,
-          // 单独注册 /api/skill/open-path 会被这条先截住,永远走不到
+          // POST /api/skill/open-path: mounted under the same route: connect matches by prefix,
+          // so registering /api/skill/open-path separately would be intercepted by this one first and never reached
           if (parts[0] === "open-path" && req.method === "POST") return await openPath(root, req, res);
 
           if (parts[0] === "desktop-register" && parts.length === 1) {
@@ -108,13 +117,13 @@ export function skillPlugin(): Plugin {
             if (req.method === "POST") {
               const body = JSON.parse((await readBody(req, 8192)) || "{}");
               const target = String(body.target || "");
-              if (!reg.TARGETS.includes(target)) return sendJson(res, 400, { ok: false, error: `target 只能是 ${reg.TARGETS.join(" / ")}` });
+              if (!reg.TARGETS.includes(target)) return sendJson(res, 400, { ok: false, error: `target must be one of ${reg.TARGETS.join(" / ")}` });
               if (body.action === "register") return sendJson(res, 200, reg.register(target, want));
               if (body.action === "unregister") return sendJson(res, 200, reg.unregister(target, want));
-              return sendJson(res, 400, { ok: false, error: "action 只能是 register / unregister" });
+              return sendJson(res, 400, { ok: false, error: "action must be register / unregister" });
             }
           }
-          return sendJson(res, 404, { ok: false, error: "没有这个接口" });
+          return sendJson(res, 404, { ok: false, error: "API not available" });
         } catch (e) {
           return sendJson(res, 400, { ok: false, error: (e as Error).message });
         }

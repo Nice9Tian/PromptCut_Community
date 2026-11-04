@@ -1,32 +1,55 @@
 /**
- * 云端 Agent 的主体识别(`subject_status`、`subject_install`、`detect_subjects`、`list_subjects`;
- * 拆包表 `docs/plan/cloud-agent-tools-implementation.md` 的 P4)。
+ * Subject detection for Cloud Agent (`subject_status`, `subject_install`, `detect_subjects`,
+ * `list_subjects`; package breakdown table P4 in `docs/plan/cloud-agent-tools-implementation.md`).
  *
- * 桌面版里这四个工具打编辑器进程的 `/api/subject/*`(`server/vite-plugin-subject.ts`),作业放在 RAM 里,结果由页面写回项目。
- * 云节点上没有编辑器进程,这里照同一份命令行与 JSONL 约定起同一个 Python 包(`promptcut_subject`,隔离模式起),规矩是:
+ * In the desktop app, these four tools call `/api/subject/*` on the editor process
+ * (`server/vite-plugin-subject.ts`), jobs are stored in RAM, and results are written back to the
+ * project by the page. There is no editor process on cloud nodes; here we launch the same Python
+ * package (`promptcut_subject`, launched in isolated mode) following the same command-line and
+ * JSONL conventions, with the rules:
  *
- *   - **上下文只来自 F0**:每个调用带的 `context` 是 `tool-context.mjs` 发的可信八字段;每次读素材、起进程、写项目之前,
- *     都用 `run-resources.mjs` 的 `authorize` 重验 doc 的当前 grant / fence,不信工具参数里的任何项目或路径;
- *   - **素材只经 `project-assets.mjs` 的 `openRead`**(带哈希核对)取到这个对话的工作目录(`subject/<作业号>/`),
- *     跑完删;Python 只读这份本地文件,并且加 `--local-only`,ffmpeg / ffprobe 只准读本地文件;
- *   - **子进程只经工作区的受限子进程起**(`workspace.mjs` 的 `spawn`:环境变量白名单、不弹窗口、起成一棵杀得掉的进程树),并登记到
- *     `run-resources.mjs`(kind `child`):这一轮被停、转私有、Agent 关闭、服务关闭时,进程树真被杀掉、`exit` 与 `close` 都到了才算关
- *     (杀树、等收尾、登记用公共实现 `runner.mjs`);
- *   - **Python 用隔离模式起**(`-I`,`runner.mjs` 的 `isolatedPythonArgs`):工作目录是对话工作区,里面是成员和模型弄进来的文件,
- *     不让它排进模块搜索路径;包目录与受控安装的目录只来自部署配置,经引导代码递进去;
- *   - **作业记在 `tool-jobs.mjs` 的持久账本里**(`subject.detect` / `subject.install`):服务重启后 `running` 变 `interrupted`,
- *     不是「找不到」;账本只存状态与进度,中文的失败原因与采样点数等放在对话工作区的 `subject/jobs.json`;
- *   - **结果写项目素材的当前版本**:`project.setMediaSubjects` 带上取字节时的 `mediaRev` 做版本预期,素材中途被换掉就丢弃这次结果,
- *     不写;写之前再验一次 write 权限(只读成员在起作业之前就被拒);
- *   - **没有兜底档**:两档都用不了(`engine` 为 null)就如实回「用不了」,不起一个注定失败的作业;
- *     light 档不假称提示词生效,full 档缺权重如实报告。
+ *   - **Context comes only from F0**: each call carries `context` with the trusted eight fields
+ *     issued by `tool-context.mjs`; before reading assets, spawning processes, or writing to
+ *     projects each time, re-verify current doc grant / fence using `authorize` from
+ *     `run-resources.mjs`, trusting no project or path in tool arguments;
+ *   - **Assets are fetched only via `openRead` in `project-assets.mjs`** (with hash verification)
+ *     into the working directory of this chat (`subject/<job id>/`), deleted after the run;
+ *     Python reads only this local file and adds `--local-only`, ffmpeg / ffprobe are only
+ *     allowed to read local files;
+ *   - **Child processes are spawned only via workspace restricted child process** (`spawn` in
+ *     `workspace.mjs`: environment variable allowlist, no popups, spawned as a killable process
+ *     tree), and registered to `run-resources.mjs` (kind `child`): when stopped in this round,
+ *     switched to private, Agent closed, or service closed, considered closed only after the
+ *     process tree is truly killed and both `exit` and `close` have arrived (killing trees, waiting
+ *     for cleanup, and registration use shared implementation `runner.mjs`);
+ *   - **Python is launched in isolated mode** (`-I`, `isolatedPythonArgs` in `runner.mjs`): the
+ *     working directory is the chat workspace, containing files brought in by members and the model,
+ *     prevented from entering module search paths; package directories and controlled installation
+ *     directories come only from deployment config, passed in via bootstrap code;
+ *   - **Jobs are recorded in persistent ledger of `tool-jobs.mjs`** (`subject.detect` /
+ *     `subject.install`): `running` becomes `interrupted` after service restart, not "not found";
+ *     the ledger stores only status and progress, Chinese failure reasons and sample counts are
+ *     placed in `subject/jobs.json` of the chat workspace;
+ *   - **Results are written to current version of project asset**: `project.setMediaSubjects`
+ *     carries `mediaRev` from byte retrieval as version expectation; if asset is swapped mid-way,
+ *     discard this result without writing; re-verify write permissions before writing (read-only
+ *     members are rejected before starting the job);
+ *   - **No fallback tier**: if neither tier is usable (`engine` is null), report "unavailable"
+ *     truthfully without starting a job doomed to fail; light tier does not falsely claim prompt
+ *     takes effect, and full tier reports missing weights truthfully.
  *
- * **`subject_install` 在云端受限**:只装包内锁定的清单(部署者可给一份锁版本的 `requirements`),不收任何 pip 参数;
- * 没有配 `pylibs` 与 `requirements` 就不装(回「用不了」)。full 档(torch + 690 MB 权重)本来就不走在线装,只随部署送达。
+ * **`subject_install` is restricted in the cloud**: installs only the locked manifest inside the
+ * package (deployers can provide a locked-version `requirements`), accepts no pip arguments;
+ * do not install if `pylibs` and `requirements` are not configured (returns "unavailable"). The full
+ * tier (torch + 690 MB weights) never goes through online installation anyway, delivered only with
+ * deployment.
  *
- * 表里本包列的四个工具名在 `SUBJECT_TOOL_NAMES`。工具总表(`cloud-tools.mjs`)的接线归 G 包,本文件不碰它。
- * 纯 Node,不引用浏览器,也不直接 import `src/`(独立入口对前端代码只经 `server/agent/ssr-host.mjs` 的载入缝):
- * 取采样时刻与建议位置要的内核函数由宿主经 `kernel` 参数注入,没注入就是「没配置全」,工厂直接拒绝。
+ * The four tool names listed for this package in the table are in `SUBJECT_TOOL_NAMES`. Wiring for
+ * the master tool table (`cloud-tools.mjs`) belongs to package G, untouched by this file. Pure Node,
+ * without referencing browser, nor directly importing `src/` (standalone entry points access frontend
+ * code only through the loading seam in `server/agent/ssr-host.mjs`): Kernel functions needed to
+ * obtain sample times and suggested positions are injected by the host via the `kernel` parameter;
+ * if not injected, it is considered "incompletely configured", and the factory rejects directly.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -36,25 +59,25 @@ import { isolatedPythonArgs, splitRoots, superviseChild } from './runner.mjs';
 export const SUBJECT_TOOL_NAMES = Object.freeze(['subject_status', 'subject_install', 'detect_subjects', 'list_subjects']);
 
 export const SUBJECT_DEFAULTS = Object.freeze({
-  /** `status` 子进程的时限(full 档要 import torch,冷启动慢) */
+  /** Time limit for `status` child process (full tier imports torch, cold start is slow) */
   statusMs: 45_000,
-  /** 状态结果缓存多久(每次 status 都要起一个 Python) */
+  /** How long status results are cached (each status spawns a Python process) */
   statusCacheMs: 15_000,
-  /** 一个检测作业的时限:每帧 perFrameMs、下限 minDetectMs(与桌面版同一组数) */
+  /** Time limit for a detection job: perFrameMs per frame, lower bound minDetectMs (same set of numbers as desktop app) */
   perFrameMs: 20_000,
   minDetectMs: 120_000,
-  /** 在线安装 light 档的时限 */
+  /** Time limit for online installation of light tier */
   installMs: 10 * 60_000,
-  /** 把素材取到工作目录:大小与时限 */
+  /** Fetch asset into workspace directory: size and timeout */
   maxFetchBytes: 1024 * 1024 * 1024,
   fetchMs: 5 * 60_000,
-  /** 整个进程同时在跑的检测作业 */
+  /** Detection jobs running concurrently across the entire process */
   maxRunning: 2,
-  /** 进度写账本的最小间隔 */
+  /** Minimum interval for writing progress to the ledger */
   progressMinMs: 400,
-  /** 工作区索引里留多少条作业 */
+  /** How many jobs to keep in the workspace index */
   historyJobs: 20,
-  /** 提示词最长 */
+  /** Maximum prompt length */
   maxPromptChars: 300,
 });
 
@@ -66,46 +89,46 @@ export class SubjectToolError extends Error {
   }
 }
 
-const NOT_CONFIGURED = '这台云节点没有配置主体识别(Python 解释器与模型权重由部署者提供,云端 Agent 不能往节点上装)。'
-  + '位置和遮挡的判断请退回 see_frames 看真实画面,不要凭空猜「人在左边」;或请用户联系托管方,或在电脑上的 PromptCut 里检测。';
-const NO_ENGINE = '这台云节点上主体识别两档都用不了(依赖或权重没装好),没有兜底档。'
-  + '位置和遮挡的判断请退回 see_frames 看真实画面,不要假装检测过;请用户联系托管方补装。';
-const INSTALL_OFF = '云端 Agent 在这台节点上不能安装主体识别:节点没有给「受控安装」配置(锁定版本的依赖清单与安装目录),'
-  + '模型也不能自己指定 pip 参数。请告诉用户联系托管方,或在电脑上的 PromptCut 里安装。';
+const NOT_CONFIGURED = 'This cloud node has no subject detection configured (the Python interpreter and model weights are provided by the deployer, and the Cloud Agent cannot install them on the node).'
+  + ' For position and occlusion judgments, fall back to see_frames and look at the real frames, and do not guess "the person is on the left"; or ask the user to contact the host, or to run detection in PromptCut on their computer.';
+const NO_ENGINE = 'Neither subject detection tier works on this cloud node (dependencies or weights are not installed properly), and there is no fallback tier.'
+  + ' For position and occlusion judgments, fall back to see_frames and look at the real frames, and do not pretend detection was run; ask the user to contact the host to install it.';
+const INSTALL_OFF = 'The Cloud Agent cannot install subject detection on this node: the node has no "controlled install" configuration (a version-pinned dependency manifest and install directory), '
+  + 'and the model cannot specify pip arguments itself. Tell the user to contact the host, or to install it in PromptCut on their computer.';
 
 const MEDIA_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,199}$/;
 const REQUEST_RE = /^[A-Za-z0-9_-]{8,128}$/;
 const OUTPUT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/;
 const INDEX_FILE = 'subject/jobs.json';
 const RESERVED = Symbol('reserved');
-/** 进程没起来时没有登记,也就没有取消信号:给一个永远不响的 */
+/** When process has not started, there is no registration and thus no abort signal: provide one that never fires */
 const NEVER_ABORTED = Object.freeze({ aborted: false });
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 
 /**
- * 节点上的主体识别配置(部署决定)。
+ * Subject detection configuration on the node (deployment decision).
  *
- *   PROMPTCUT_AGENT_SUBJECT_PYTHON       装了依赖的 Python 解释器(绝对路径)。配了主体识别才可用
- *   PROMPTCUT_AGENT_SUBJECT_MODELS       权重目录(绝对路径;yunet.onnx、rtdetr_r18vd.onnx、grounding-dino-tiny/)
- *   PROMPTCUT_AGENT_SUBJECT_PYLIBS       可选:受控安装的目标目录(同时进 Python 的模块搜索路径)
- *   PROMPTCUT_AGENT_SUBJECT_REQUIREMENTS 可选:受控安装用的锁定版本清单(绝对路径);与 PYLIBS 都给了才允许 `subject_install`
- *   PROMPTCUT_AGENT_SUBJECT_WHEELHOUSE   可选:受控安装只从这个本地轮子目录装(`pip --no-index --find-links`),不连网
- *   PROMPTCUT_FFMPEG                     ffmpeg 的绝对路径,取它所在目录进 PATH
+ *   PROMPTCUT_AGENT_SUBJECT_PYTHON       Python interpreter with dependencies installed (absolute path). Subject detection is available only when configured
+ *   PROMPTCUT_AGENT_SUBJECT_MODELS       Weights directory (absolute path; yunet.onnx, rtdetr_r18vd.onnx, grounding-dino-tiny/)
+ *   PROMPTCUT_AGENT_SUBJECT_PYLIBS       Optional: target directory for controlled installation (also enters Python module search paths)
+ *   PROMPTCUT_AGENT_SUBJECT_REQUIREMENTS Optional: locked version manifest for controlled installation (absolute path); `subject_install` is allowed only when both this and PYLIBS are provided
+ *   PROMPTCUT_AGENT_SUBJECT_WHEELHOUSE   Optional: controlled installation installs only from this local wheel directory (`pip --no-index --find-links`), without network access
+ *   PROMPTCUT_FFMPEG                     Absolute path to ffmpeg, its directory is prepended to PATH
  */
 export function readSubjectConfig(env, { root }) {
   const python = env.PROMPTCUT_AGENT_SUBJECT_PYTHON;
   if (typeof python !== 'string' || !python) return null;
-  if (!path.isAbsolute(python) || !fs.existsSync(python)) return { error: 'PROMPTCUT_AGENT_SUBJECT_PYTHON 要是存在的解释器的绝对路径' };
+  if (!path.isAbsolute(python) || !fs.existsSync(python)) return { error: 'PROMPTCUT_AGENT_SUBJECT_PYTHON must be the absolute path of an existing interpreter' };
   const modelsDir = env.PROMPTCUT_AGENT_SUBJECT_MODELS;
   if (typeof modelsDir !== 'string' || !path.isAbsolute(modelsDir) || !fs.existsSync(modelsDir)) {
-    return { error: 'PROMPTCUT_AGENT_SUBJECT_MODELS 要是存在的权重目录的绝对路径' };
+    return { error: 'PROMPTCUT_AGENT_SUBJECT_MODELS must be the absolute path of an existing weights directory' };
   }
   const pylibs = env.PROMPTCUT_AGENT_SUBJECT_PYLIBS;
   const requirements = env.PROMPTCUT_AGENT_SUBJECT_REQUIREMENTS;
   if (requirements && (!path.isAbsolute(requirements) || !fs.existsSync(requirements))) {
-    return { error: 'PROMPTCUT_AGENT_SUBJECT_REQUIREMENTS 要是存在的清单文件的绝对路径' };
+    return { error: 'PROMPTCUT_AGENT_SUBJECT_REQUIREMENTS must be the absolute path of an existing manifest file' };
   }
-  if (pylibs && !path.isAbsolute(pylibs)) return { error: 'PROMPTCUT_AGENT_SUBJECT_PYLIBS 要是绝对路径' };
+  if (pylibs && !path.isAbsolute(pylibs)) return { error: 'PROMPTCUT_AGENT_SUBJECT_PYLIBS must be an absolute path' };
   const ffmpegDir = env.PROMPTCUT_FFMPEG && path.isAbsolute(env.PROMPTCUT_FFMPEG) ? path.dirname(env.PROMPTCUT_FFMPEG) : null;
   return {
     python, modelsDir,
@@ -124,14 +147,14 @@ const jsonLines = (onEvent) => {
       const line = buf.slice(0, i).trim();
       buf = buf.slice(i + 1);
       if (!line) continue;
-      try { const ev = JSON.parse(line); if (ev && typeof ev === 'object') onEvent(ev); } catch { /* 不是 JSON 的行不要 */ }
+      try { const ev = JSON.parse(line); if (ev && typeof ev === 'object') onEvent(ev); } catch { /* Discard non-JSON lines */ }
     }
   };
   feed.flush = () => { if (buf.trim()) feed('\n'); };
   return feed;
 };
 
-/** 框按面积取前几个并取整(与桌面版 `topBoxes` 同一口径) */
+/** Take top boxes by area and round to integers (same standard as desktop app `topBoxes`) */
 function topBoxes(boxes, limit = 4) {
   return [...boxes].sort((a, b) => b.w * b.h - a.w * a.h).slice(0, limit).map((b) => ({
     label: b.label, x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h), conf: Math.round(b.conf * 100) / 100,
@@ -140,16 +163,16 @@ function topBoxes(boxes, limit = 4) {
 
 /**
  * @param {object} d
- * @param {object | null} d.config `readSubjectConfig` 的结果;没有就是 null(工具如实回「没配」)
- * @param {object} d.resources `run-resources.mjs` 的 `createRunResources`(register / signalFor / authorize / verifyFence)
- * @param {object} d.assets `project-assets.mjs` 的 `createProjectAssets`(只用 `openRead`)
- * @param {object} d.jobs `tool-jobs.mjs` 的 `createToolJobs`(它的 authorize / verifyFence 由宿主接到同一个 `resources`)
- * @param {(context: object) => (object | Promise<object>)} d.workspace 这个对话的工作区(`workspace.mjs` 的 `open()` 的结果)
- * @param {object} d.project 项目一侧的窄接口(G 包接到 doc 的版本预期与操作栅栏):
- *   `getMedia(context, mediaId)` -> 项目当前副本里的素材记录或 null(带 `mediaRev` 更好);
- *   `setMediaSubjects(context, { mediaId, expectedMediaRev, subjects, jobId })` -> `{ projectRev? }`,版本对不上抛带 `code: 'media-changed'` 的错
- * @param {{ startProxy(): Promise<{ url: string, close(): Promise<void> }> } | null} [d.egress] 受控安装连网时才要
- * @param {object} d.kernel 宿主经 ssr-host 载入缝取来注入:`{ MAX_SUBJECT_TIMES, subjectSampleTimes, suggestPosition }`(必需)
+ * @param {object | null} d.config Result of `readSubjectConfig`; null if missing (tools report "not configured" truthfully)
+ * @param {object} d.resources `createRunResources` in `run-resources.mjs` (register / signalFor / authorize / verifyFence)
+ * @param {object} d.assets `createProjectAssets` in `project-assets.mjs` (uses only `openRead`)
+ * @param {object} d.jobs `createToolJobs` in `tool-jobs.mjs` (its authorize / verifyFence are wired by host to the same `resources`)
+ * @param {(context: object) => (object | Promise<object>)} d.workspace Workspace for this chat (result of `open()` in `workspace.mjs`)
+ * @param {object} d.project Narrow interface on project side (package G wires version expectation and operation fence to doc):
+ *   `getMedia(context, mediaId)` -> asset record in the current replica of the project, or null (better with `mediaRev`);
+ *   `setMediaSubjects(context, { mediaId, expectedMediaRev, subjects, jobId })` -> `{ projectRev? }`, throws error with `code: 'media-changed'` on version mismatch
+ * @param {{ startProxy(): Promise<{ url: string, close(): Promise<void> }> } | null} [d.egress] Required only when controlled installation connects to network
+ * @param {object} d.kernel Injected by host via ssr-host loading seam: `{ MAX_SUBJECT_TIMES, subjectSampleTimes, suggestPosition }` (required)
  */
 export function createSubjectTools({
   config = null, resources, assets, jobs, workspace, project, egress = null,
@@ -157,15 +180,18 @@ export function createSubjectTools({
 } = {}) {
   for (const [name, dep, methods] of [['resources', resources, ['register', 'authorize']], ['assets', assets, ['openRead']],
     ['jobs', jobs, ['start', 'update', 'get', 'checkpointRetained']], ['project', project, ['getMedia', 'setMediaSubjects']]]) {
-    if (!dep || methods.some((m) => typeof dep[m] !== 'function')) throw new SubjectToolError(`主体识别缺少依赖:${name}`, 'subject-unconfigured');
+    if (!dep || methods.some((m) => typeof dep[m] !== 'function')) throw new SubjectToolError(`Subject detection is missing a dependency: ${name}`, 'subject-unconfigured');
   }
-  if (typeof workspace !== 'function') throw new SubjectToolError('主体识别缺少依赖:workspace', 'subject-unconfigured');
+  if (typeof workspace !== 'function') throw new SubjectToolError('Subject detection is missing a dependency: workspace', 'subject-unconfigured');
   for (const [name, type] of [['MAX_SUBJECT_TIMES', 'number'], ['subjectSampleTimes', 'function'], ['suggestPosition', 'function']]) {
-    if (typeof kernel?.[name] !== type) throw new SubjectToolError(`主体识别没配置全:缺内核项 ${name}(宿主要经 ssr-host 载入缝取来注入 kernel)`, 'subject-unconfigured');
+    if (typeof kernel?.[name] !== type) throw new SubjectToolError(`Subject detection is not fully configured: missing kernel item ${name} (the host must inject the kernel via the ssr-host loading seam)`, 'subject-unconfigured');
   }
   const limits = { ...SUBJECT_DEFAULTS, ...limitsIn };
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响工具 */ } };
-  /** `config.args` 只给单测与探针(把解释器整个换成替身脚本);正式的一律隔离模式,包目录来自部署配置 */
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failure does not affect tools */ } };
+  /**
+   * `config.args` is only for unit tests and probes (replaces interpreter entirely with a stub
+   * script); production always uses isolated mode, package directory comes from deployment config.
+   */
   const stubArgs = config && Array.isArray(config.args) && config.args.length ? config.args : null;
   const globalArgs = config ? ['--models-dir', config.modelsDir, '--local-only'] : [];
   const pythonArgv = (subArgs) => (stubArgs
@@ -173,36 +199,40 @@ export function createSubjectTools({
     : isolatedPythonArgs('promptcut_subject', { roots: splitRoots(config.pythonPath), args: [...globalArgs, ...subArgs] }));
   const loadKernel = async () => kernel;
 
-  /** 正在跑的作业(本进程):jobId -> 状态。close 要等它们的子进程真关 */
+  /** Running jobs (this process): jobId -> status. close must wait for child processes to actually close */
   const live = new Map();
-  /** 同一素材同一时刻只一个检测作业:`项目\0素材` -> jobId */
+  /** Only one detection job per asset at a time: `project\0media` -> jobId */
   const byMedia = new Map();
   let installLive = null;
-  /** 正在登记账本、还没进 live 的检测作业数(两个并发调用不能同时越过上限检查) */
+  /**
+   * Number of detection jobs registering in ledger and not yet live (two concurrent calls cannot
+   * bypass the limit check at the same time).
+   */
   let reserving = 0;
   let installSummary = null;
   let statusCache = null;
   let closing = false;
   const settled = new Set();
-  /** 本进程起的、还没关的 Python 子进程(含 status):close 要全部杀掉并等它们真关 */
+  /** Python child processes spawned by this process and not yet closed (including status): close must kill all of them and wait for them to truly close */
   const children = new Set();
 
   const authorize = async (context, action) => {
-    if (closing) throw new SubjectToolError('云端 Agent 服务正在关闭,主体识别不再接新活。', 'subject-closing');
+    if (closing) throw new SubjectToolError('The Cloud Agent service is shutting down and subject detection no longer accepts new work.', 'subject-closing');
     try { return await resources.authorize(context, action); }
     catch (error) {
       if (error instanceof SubjectToolError) throw error;
-      // 文档服务联系不上:fail closed,但说清是「上游不可用」(503),不是「没权限」(403)
+      // Cannot reach document service: fail closed, but clarify it is "upstream unavailable" (503),
+      // not "no permission" (403)
       if (['run-authority-unavailable', 'tool-instance-unavailable', 'fence-unavailable', 'authorization-unavailable'].includes(error?.code)) {
-        throw Object.assign(new SubjectToolError('文档服务暂时联系不上,没法确认这一轮的权限,主体识别没有开始。稍后再试。', 'authority-unavailable'), { status: 503 });
+        throw Object.assign(new SubjectToolError('The document service is temporarily unreachable, so permissions for this turn could not be confirmed and subject detection did not start. Try again later.', 'authority-unavailable'), { status: 503 });
       }
-      throw Object.assign(new SubjectToolError(action === 'write' ? '这一轮没有写项目的权限(只读成员、被停止或已转私有),主体识别没有开始。' : '这一轮没有读项目的权限,主体识别没有开始。', 'subject-forbidden'), { status: 403 });
+      throw Object.assign(new SubjectToolError(action === 'write' ? 'This turn has no permission to write to the project (read-only member, stopped, or switched to private), so subject detection did not start.' : 'This turn has no permission to read the project, so subject detection did not start.', 'subject-forbidden'), { status: 403 });
     }
   };
 
   const workspaceKey = (context) => `${context.projectId}\0${context.conversationId}`;
 
-  /* ---------------------------------------------------------------- 工作区索引(中文原因、采样点数等账本不存的东西) */
+  /* ---------------------------------------------------------------- Workspace index (things not stored in the ledger such as Chinese reasons and sample counts) */
 
   function readIndex(ws) {
     try {
@@ -211,7 +241,7 @@ export function createSubjectTools({
       return Array.isArray(rows) ? rows.filter((r) => r && typeof r === 'object') : [];
     } catch { return []; }
   }
-  /** 读-改-写在一个同步段里完成,同一进程内不会交错 */
+  /** Read-modify-write is completed in a synchronous block; will not interleave within same process */
   function mutateIndex(ws, mutate) {
     try {
       const rows = readIndex(ws);
@@ -220,16 +250,19 @@ export function createSubjectTools({
     } catch (err) { say('agent.subject.index-failed', { message: String(err?.message ?? err).slice(0, 120) }); }
   }
 
-  /* ---------------------------------------------------------------- 起 Python */
+  /* ---------------------------------------------------------------- Start Python */
 
   /**
-   * 起一次 `promptcut_subject <子命令>`(隔离模式)。登记到 run-resources(整棵进程树真关了才算关),
-   * 逐行读 JSONL。回 `{ done, kill, signal, closed }`:`done` 解析成 `{ code, events, stderrTail, timedOut }`。
+   * Spawns `promptcut_subject <subcommand>` once (isolated mode). Registers with run-resources
+   * (only considered closed once the entire process tree is truly closed), and reads JSONL line by
+   * line. Returns `{ done, kill, signal, closed }`: `done` resolves to
+   * `{ code, events, stderrTail, timedOut }`.
    */
   async function runPython(context, ws, subArgs, { timeoutMs, env: extraEnv = {}, onEvent = () => {} } = {}) {
     if (!config) throw new SubjectToolError(NOT_CONFIGURED, 'subject-unavailable');
     const pathKey = Object.keys(process.env).find((k) => /^path$/i.test(k)) ?? 'PATH';
-    // PYTHON* 环境变量在隔离模式下不生效(无缓冲、UTF-8、不写字节码、包目录都由命令行给),这里不设
+    // PYTHON* environment variables have no effect in isolated mode (unbuffered, UTF-8, no bytecode,
+    // and package directory are all supplied via command line), so they are not set here
     const env = {
       ...(config.ffmpegDir ? { [pathKey]: `${config.ffmpegDir}${path.delimiter}${process.env[pathKey] ?? ''}` } : {}),
       ...extraEnv,
@@ -248,8 +281,8 @@ export function createSubjectTools({
         },
       });
     } catch {
-      // 登记被拒:superviseChild 已经杀掉整棵树并等它收干净
-      throw new SubjectToolError('这一轮已经没有权限继续(被停止、转私有或 Agent 关闭),主体识别进程没有启动。', 'subject-forbidden');
+      // Registration rejected: superviseChild already killed the entire tree and waited for cleanup
+      throw new SubjectToolError('This turn no longer has permission to continue (stopped, switched to private, or the Agent was shut down), so the subject detection process was not started.', 'subject-forbidden');
     }
     const done = run.done.then((end) => {
       feed.flush();
@@ -263,16 +296,16 @@ export function createSubjectTools({
     return { done, kill: entry.kill, signal: run.signal ?? NEVER_ABORTED, closed: entry.closed };
   }
 
-  /** 路径与盘符不回给模型 */
+  /** Paths and drive letters are not returned to the model */
   const scrub = (text, ws) => {
     let out = String(text ?? '');
     let workDir = null;
     try { workDir = ws?.dir?.() ?? null; } catch { workDir = null; }
-    if (workDir) out = out.split(workDir).join('<工作目录>');
+    if (workDir) out = out.split(workDir).join('<working directory>');
     for (const secret of [config?.modelsDir, config?.python, ...(config?.pythonPath ?? '').split(path.delimiter), config?.install?.pylibs, config?.install?.requirements, config?.install?.wheelhouse].filter(Boolean)) {
-      out = out.split(secret).join('<节点目录>');
+      out = out.split(secret).join('<node directory>');
     }
-    return out.replace(/[A-Za-z]:\\[^\s'",)]+/g, '<节点目录>');
+    return out.replace(/[A-Za-z]:\\[^\s'",)]+/g, '<node directory>');
   };
 
   /* ---------------------------------------------------------------- subject_status */
@@ -288,13 +321,13 @@ export function createSubjectTools({
 
   function statusHint(engine) {
     return engine === 'full'
-      ? 'full 档:YuNet + RT-DETR + Grounding DINO,能按任意文字提示找目标(prompt 生效)。'
+      ? 'full tier: YuNet + RT-DETR + Grounding DINO, can find targets from any text prompt (prompt takes effect).'
       : engine === 'light'
-        ? 'light 档:YuNet(人脸) + RT-DETR(人体),只认 person 和 face,prompt 不生效。要按任意词找目标(猫、手机、红色的车)得有 full 档。'
-        : '两档都用不了,这台机器上检测不了主体。位置和遮挡的判断退回 see_frames 看图,不要凭空猜「人在左边」。';
+        ? 'light tier: YuNet (faces) + RT-DETR (bodies), recognizes only person and face, prompt has no effect. To find targets by arbitrary words (cat, phone, red car) you need the full tier.'
+        : 'Neither tier is usable, so subjects cannot be detected on this machine. For position and occlusion, fall back to viewing images with see_frames; do not guess "the person is on the left" without evidence.';
   }
 
-  /** 查一次档位(缓存几秒)。回 `{ ok, ready, engine, detail?, reason? }`,不抛 */
+  /** Check tier once (cached a few seconds). Returns `{ ok, ready, engine, detail?, reason? }`, never throws */
   async function readStatus(context, ws, { fresh = false } = {}) {
     if (!config) return { ok: true, ready: false, engine: null, reason: NOT_CONFIGURED };
     if (!fresh && statusCache && now() - statusCache.at < limits.statusCacheMs) return statusCache.value;
@@ -307,7 +340,7 @@ export function createSubjectTools({
     let value;
     if (!ev) {
       const tail = result.stderrTail.slice(-2).join(' ');
-      value = { ok: true, ready: false, engine: null, reason: result.timedOut ? '查主体识别状态超时' : scrub(tail || '解释器没有返回可解析的状态', ws) };
+      value = { ok: true, ready: false, engine: null, reason: result.timedOut ? 'Subject detection status check timed out' : scrub(tail || 'The interpreter returned no parseable status', ws) };
     } else {
       const detail = trimDetail(ev, ws);
       value = { ok: true, ready: detail.engine !== null, engine: detail.engine, detail, version: ev.version };
@@ -329,11 +362,13 @@ export function createSubjectTools({
     };
   }
 
-  /* ---------------------------------------------------------------- 账本更新 */
+  /* ---------------------------------------------------------------- Ledger update */
 
   /**
-   * 一个作业的账本句柄:更新串行(revision 精确),共有已读任务进入 retained 后自动补一次检查点。
-   * 作业已经是终态(被栅栏取消)时回 `{ terminal: true }`,调用方据此收手。
+   * A job's ledger handle: updates are serialized (exact revision); automatically adds a checkpoint
+   * once shared read tasks enter retained.
+   * Returns `{ terminal: true }` when the job is already in a terminal state (cancelled by fence),
+   * signaling caller to stop.
    */
   function tracker(context, jobId, startRevision = 0) {
     let revision = startRevision;
@@ -373,11 +408,11 @@ export function createSubjectTools({
 
   const mediaIdOf = (args) => {
     const id = args?.mediaId;
-    if (typeof id !== 'string' || !MEDIA_ID_RE.test(id)) throw new SubjectToolError('mediaId 必填,是素材的 id(可用 list_media 查看)', 'bad-args');
+    if (typeof id !== 'string' || !MEDIA_ID_RE.test(id)) throw new SubjectToolError('mediaId is required, it is the id of the media (see list_media)', 'bad-args');
     return id;
   };
 
-  const notFound = (id) => new SubjectToolError(`找不到素材 ${String(id).slice(0, 80)}(没有这个 id,或它不在当前项目里)`, 'media-not-found');
+  const notFound = (id) => new SubjectToolError(`Media ${String(id).slice(0, 80)} not found (no such id, or it is not in the current project)`, 'media-not-found');
 
   async function detectSubjects(context, args, options = {}) {
     await authorize(context, 'write');
@@ -386,8 +421,8 @@ export function createSubjectTools({
     const ws = await workspace(context);
     const media = await project.getMedia(context, mediaId);
     if (!media) throw notFound(mediaId);
-    if (media.kind === 'audio') throw new SubjectToolError(`${media.name} 是音频,没有画面可看`, 'media-kind');
-    if (media.pending) throw new SubjectToolError(`${media.name} 还没进素材服务(上传没完成或失败),稍后再试或重新导入`, 'media-pending');
+    if (media.kind === 'audio') throw new SubjectToolError(`${media.name} is audio, there is no picture to view`, 'media-kind');
+    if (media.pending) throw new SubjectToolError(`${media.name} is not in the asset service yet (upload incomplete or failed), try again later or re-import`, 'media-pending');
 
     const prompt = cleanPrompt(args?.prompt);
     const promptChanged = !!media.subjects && prompt !== (media.subjects.prompt ?? '');
@@ -402,9 +437,9 @@ export function createSubjectTools({
         failedCount: media.subjects.failedCount ?? 0,
         prompt: media.subjects.prompt,
         ...(cannotAnswerPrompt
-          ? { engineNote: '已有结果是 light 档跑的,label 只有 person / face,答不了提示词里别的名词;这台机器现在也只能跑 light,所以没有重测。有 full 档之后再传 force:true 重测。' }
+          ? { engineNote: 'The existing result was produced with the light tier, and its labels are only person / face, so it cannot answer other nouns in the prompt; this machine can currently only run light, so no re-detection was done. Once the full tier is available, pass force:true to re-detect.' }
           : null),
-        hint: '这个素材已经检测过了,直接用 list_subjects 取结果,或用 list_shots 看每个镜头的 suggestedPosition;要重测传 force:true',
+        hint: 'This media has already been detected. Use list_subjects to get the result, or list_shots to see each shot\'s suggestedPosition; to re-detect, pass force:true',
       };
     }
     if (status.engine === null) return { ok: false, cloudUnavailable: true, error: NO_ENGINE, detail: status.detail ?? undefined, reason: status.reason };
@@ -413,12 +448,12 @@ export function createSubjectTools({
     const autoRaw = k.subjectSampleTimes(media, Number.MAX_SAFE_INTEGER).length;
     let times;
     if (Array.isArray(args?.times) && args.times.length > 0) {
-      if (args.times.length > max) throw new SubjectToolError(`一次最多 ${max} 个采样时刻(收到 ${args.times.length} 个),请分批`, 'bad-args');
+      if (args.times.length > max) throw new SubjectToolError(`At most ${max} sample time${max === 1 ? '' : 's'} per call (received ${args.times.length}), please split into batches`, 'bad-args');
       times = args.times.map(Number).filter((t) => Number.isFinite(t) && t >= 0).sort((a, b) => a - b);
     } else times = k.subjectSampleTimes(media);
-    if (times.length === 0) throw new SubjectToolError('算不出采样时刻,素材可能没有时长信息;可以自己传 times', 'bad-args');
+    if (times.length === 0) throw new SubjectToolError('Cannot compute sample times, the media may have no duration info; you can pass times yourself', 'bad-args');
     const sampledNote = !args?.times && autoRaw > times.length
-      ? `素材偏长或镜头偏碎,采样已从 ${autoRaw} 点降到 ${times.length} 点(上限 ${max});镜头级的结论会更粗,approximate 为 true 的镜头会变多。`
+      ? `The media is long or its shots are fragmented, so sampling was reduced from ${autoRaw} point${autoRaw === 1 ? '' : 's'} to ${times.length} point${times.length === 1 ? '' : 's'} (limit ${max}); shot-level conclusions will be coarser and more shots will have approximate set to true.`
       : undefined;
     const engine = status.engine;
     const msPerFrame = engine === 'full' ? 3000 : 500;
@@ -430,41 +465,42 @@ export function createSubjectTools({
     if (already) {
       const liveJob = live.get(already);
       if (liveJob && liveJob.digest === digest && liveJob.conversationId === context.conversationId) {
-        return { jobId: already, started: false, alreadyRunning: true, mediaId, samples: times.length, engine, hint: '同样的主体检测已经在跑,用 list_subjects 轮询,不要重复启动。' };
+        return { jobId: already, started: false, alreadyRunning: true, mediaId, samples: times.length, engine, hint: 'The same subject detection is already running, poll with list_subjects, do not start it again.' };
       }
-      throw new SubjectToolError('这个素材正在做另一次主体检测,等它跑完(用 list_subjects 轮询)再换参数重测。', 'subject-busy');
+      throw new SubjectToolError('This media is running another subject detection; wait for it to finish (poll with list_subjects) before re-detecting with different parameters.', 'subject-busy');
     }
-    if (live.size + reserving >= limits.maxRunning) throw new SubjectToolError('节点上主体检测正在跑的作业太多了,过一会儿再试。', 'subject-busy');
+    if (live.size + reserving >= limits.maxRunning) throw new SubjectToolError('Too many subject detection jobs are running on the node, try again in a moment.', 'subject-busy');
 
     const requestId = REQUEST_RE.test(options.requestId ?? '') ? options.requestId : `sd_${randomUUID().replace(/-/g, '')}`;
-    // 先占位再 await:同一素材的两个并发调用,第二个看到占位就回 busy
+    // Place placeholder before await: of two concurrent calls on same asset,
+    // second sees placeholder and returns busy
     byMedia.set(mediaKey, RESERVED);
     reserving += 1;
     let started;
     try { started = await jobs.start(context, 'subject.detect', digest, requestId); }
     catch (error) {
       byMedia.delete(mediaKey);
-      throw new SubjectToolError(`主体检测没能登记作业(${error?.code ?? '账本不可用'})`, 'subject-job');
+      throw new SubjectToolError(`Subject detection could not register the job (${error?.code ?? 'ledger unavailable'})`, 'subject-job');
     } finally { reserving -= 1; }
     if (closing) {
       byMedia.delete(mediaKey);
       void tracker(context, started.jobId).patch({ state: 'interrupted', errorCode: 'SERVICE_CLOSING' });
-      throw new SubjectToolError('云端 Agent 服务正在关闭,主体识别不再接新活。', 'subject-closing');
+      throw new SubjectToolError('The Cloud Agent service is shutting down and subject detection no longer accepts new work.', 'subject-closing');
     }
     const result = {
       jobId: started.jobId, started: true, mediaId,
       samples: times.length,
-      sampledFrom: media.shots ? '按镜头(每个镜头 20%/50%/80%)' : '每 2 秒一点(这段素材还没做镜头识别)',
+      sampledFrom: media.shots ? 'By shot (20%/50%/80% of each shot)' : 'One point every 2 seconds (shot detection has not been run on this media)',
       ...(sampledNote ? { sampledNote } : null),
       engine, etaSeconds,
-      ...(staleEngine ? { staleEngine: true, engineNote: '上一批结果是 light 档跑的,答不了提示词,所以这次重测(不是复用)' } : null),
-      hint: '主体检测已在后台开始,用 list_subjects 轮询该 mediaId;'
-        + `预计 ${etaSeconds} 秒左右(engine=${engine},实测 light 约 0.5 秒/帧、full 约 3 秒/帧)。`
-        + `${engine === 'full' ? 'full 档慢,隔 10 秒问一次就够' : '隔 3 秒问一次就够'},别每秒都问。`
-        + '跑完之后 list_shots 的每个镜头会带上 subject 和 suggestedPosition。',
+      ...(staleEngine ? { staleEngine: true, engineNote: 'The previous batch of results was produced with the light tier and cannot answer the prompt, so this run re-detected (not reused)' } : null),
+      hint: 'Subject detection has started in background mode, poll that mediaId with list_subjects; '
+        + `estimated about ${etaSeconds} second${etaSeconds === 1 ? '' : 's'} (engine=${engine}, measured: light about 0.5 s/frame, full about 3 s/frame).`
+        + ` ${engine === 'full' ? 'The full tier is slow, asking once every 10 seconds is enough' : 'Asking once every 3 seconds is enough'}, do not ask every second.`
+        + ' After it finishes, each shot from list_shots will carry subject and suggestedPosition.',
     };
     if (started.state !== 'queued' || live.has(started.jobId)) {
-      // 同一 requestId 的重试:作业已经开了,不再开第二个
+      // Retry with same requestId: job is already started, do not start a second one
       if (byMedia.get(mediaKey) === RESERVED) byMedia.delete(mediaKey);
       return { ...result, started: false, alreadyRunning: started.state === 'queued' || started.state === 'running', state: started.state };
     }
@@ -484,7 +520,11 @@ export function createSubjectTools({
     return result;
   }
 
-  /** 作业的收尾:账本一笔、工作区索引一笔。账本写不了(权限已撤)也不抛——栅栏取消由宿主的 `cancelForFence` 补 */
+  /**
+   * Finalizing the job: one entry in ledger, one in workspace index. Does not throw even if ledger
+   * cannot be written (permissions revoked): fence cancellation is supplemented by host's
+   * `cancelForFence`.
+   */
   async function finishJob(job, ws, track, { state, errorCode, message, extra = {} }) {
     const patch = { state, ...(errorCode ? { errorCode } : {}), ...(state === 'done' ? { progress: 1 } : {}), ...(extra.outputRefs ? { outputRefs: extra.outputRefs } : {}) };
     const applied = await track.patch(patch);
@@ -505,11 +545,11 @@ export function createSubjectTools({
       const first = await track.patch({ state: 'running', stage: 'fetch', progress: 0 });
       if (!first.ok) return;
 
-      // 1) 取素材字节(带哈希核对)到工作目录
+      // 1) Fetch asset bytes (with hash verification) to working directory
       let read;
       try { read = await assets.openRead(context, mediaId); }
       catch (error) {
-        const message = error?.status === 404 || error?.message === 'asset-missing' ? '素材的字节在素材服务上找不到(上传没完成或已被清理)。' : `取素材失败(${scrub(error?.code ?? error?.message ?? error).slice(0, 80)})。`;
+        const message = error?.status === 404 || error?.message === 'asset-missing' ? 'The media bytes were not found on the asset service (upload did not finish or was cleaned up).' : `Failed to fetch media (${scrub(error?.code ?? error?.message ?? error).slice(0, 80)}).`;
         return await finishJob(job, ws, track, { state: 'error', errorCode: 'MEDIA_FETCH_FAILED', message });
       }
       const mediaRev = read.mediaRev;
@@ -519,13 +559,13 @@ export function createSubjectTools({
       job.abortFetch = () => read.stream.destroy();
       const writer = ws.writer(mediaFile);
       let fetched = 0;
-      const fetchTimer = setTimeout(() => { fetchError = new SubjectToolError('取素材超时', 'fetch-timeout'); read.stream.destroy(); }, limits.fetchMs);
+      const fetchTimer = setTimeout(() => { fetchError = new SubjectToolError('Media fetch timed out', 'fetch-timeout'); read.stream.destroy(); }, limits.fetchMs);
       fetchTimer.unref?.();
       try {
         for await (const piece of read.stream) {
-          if (abortedBySignal()) throw new SubjectToolError('已取消', 'cancelled');
+          if (abortedBySignal()) throw new SubjectToolError('Cancelled', 'cancelled');
           fetched += piece.length;
-          if (fetched > limits.maxFetchBytes) throw new SubjectToolError('素材太大,云端主体检测取不下来', 'too-large');
+          if (fetched > limits.maxFetchBytes) throw new SubjectToolError('Media is too large, cloud subject detection cannot fetch it', 'too-large');
           writer.write(piece);
         }
         if (fetchError) throw fetchError;
@@ -534,14 +574,14 @@ export function createSubjectTools({
         writer.abort();
         read.stream.destroy();
         await read.closed.catch(() => {});
-        if (abortedBySignal()) return await finishJob(job, ws, track, { state: job.cancelRequested === 'close' || closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SUBJECT_CANCELLED', message: '主体检测已被取消。' });
-        const message = error?.code === 'too-large' ? '素材太大,云端主体检测取不下来。' : error?.code === 'fetch-timeout' ? '取素材超时。' : `取素材失败(${scrub(error?.code ?? error?.message ?? error).slice(0, 80)})。`;
+        if (abortedBySignal()) return await finishJob(job, ws, track, { state: job.cancelRequested === 'close' || closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SUBJECT_CANCELLED', message: 'Subject detection was cancelled.' });
+        const message = error?.code === 'too-large' ? 'Media is too large, cloud subject detection cannot fetch it.' : error?.code === 'fetch-timeout' ? 'Fetching media timed out.' : `Failed to fetch media (${scrub(error?.code ?? error?.message ?? error).slice(0, 80)}).`;
         return await finishJob(job, ws, track, { state: 'error', errorCode: error?.code === 'cancelled' ? 'SUBJECT_CANCELLED' : 'MEDIA_FETCH_FAILED', message });
       } finally { clearTimeout(fetchTimer); job.abortFetch = null; }
       await read.closed.catch(() => {});
-      if (abortedBySignal()) return await finishJob(job, ws, track, { state: closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SUBJECT_CANCELLED', message: '主体检测已被取消。' });
+      if (abortedBySignal()) return await finishJob(job, ws, track, { state: closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SUBJECT_CANCELLED', message: 'Subject detection was cancelled.' });
 
-      // 2) 起 Python 抽帧检测
+      // 2) Spawn Python for frame-extraction detection
       await track.patch({ stage: 'detect', progress: 0.1 });
       mutateIndex(ws, (rows) => { const row = rows.find((r) => r.jobId === job.jobId); if (row) row.status = 'running'; });
       const limitMs = Math.max(limits.minDetectMs, times.length * limits.perFrameMs);
@@ -568,7 +608,7 @@ export function createSubjectTools({
           },
         });
       } catch (error) {
-        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SUBJECT_FAILED', message: scrub(error?.message ?? '主体检测进程没能启动', ws) });
+        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SUBJECT_FAILED', message: scrub(error?.message ?? 'The subject detection process failed to start', ws) });
       }
       job.kill = run.kill;
       if (abortedBySignal()) run.kill();
@@ -577,34 +617,35 @@ export function createSubjectTools({
       job.kill = null;
 
       if (abortedBySignal() || run.signal.aborted) {
-        return await finishJob(job, ws, track, { state: closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SUBJECT_CANCELLED', message: closing ? '主体检测被服务关闭中断,没有结果。可以重新调 detect_subjects(force:true)。' : '主体检测已被取消。' });
+        return await finishJob(job, ws, track, { state: closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SUBJECT_CANCELLED', message: closing ? 'Subject detection was interrupted by service shutdown and has no result. You can call detect_subjects(force:true) again.' : 'Subject detection was cancelled.' });
       }
       if (outcome.timedOut) {
-        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SUBJECT_TIMEOUT', message: `主体检测超时(超过 ${Math.round(limitMs / 1000)} 秒),已强制结束。可以减少 times 的个数,或先用 subject_status 确认档位(full 档很慢)。` });
+        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SUBJECT_TIMEOUT', message: `Subject detection timed out (over ${Math.round(limitMs / 1000)} second${Math.round(limitMs / 1000) === 1 ? '' : 's'}) and was force-stopped. You can reduce the number of times, or first confirm the tier with subject_status (the full tier is very slow).` });
       }
       if (!resultEvent) {
-        const message = scrub(errorEvent?.message || outcome.stderrTail.join('\n').trim() || (outcome.code === 0 ? '主体检测没有返回结果' : `主体检测进程异常退出(代码 ${outcome.code})`), ws).slice(0, 400);
+        const message = scrub(errorEvent?.message || outcome.stderrTail.join('\n').trim() || (outcome.code === 0 ? 'Subject detection returned no result' : `The subject detection process exited abnormally (code ${outcome.code})`), ws).slice(0, 400);
         return await finishJob(job, ws, track, { state: 'error', errorCode: 'SUBJECT_FAILED', message });
       }
       let subjects;
       try { subjects = toSubjects(resultEvent, prompt, now()); }
       catch (error) { return await finishJob(job, ws, track, { state: 'error', errorCode: 'SUBJECT_FAILED', message: error.message }); }
 
-      // 3) 写项目素材的当前版本(带取字节时的 mediaRev 做版本预期)
+      // 3) Write current version of project asset (with mediaRev when fetching bytes as expected version)
       const committing = await track.patch({ stage: 'commit', progress: 0.97 });
       if (!committing.ok) {
-        // 账本已被栅栏取消(终态),或权限已撤、账本写不了:都不写项目
-        return await finishJob(job, ws, track, { state: 'cancelled', errorCode: 'FENCE_CANCELLED', message: '这一轮已不能写项目(被停止、转私有或权限变了),检测结果没有写入。' });
+        // If ledger was cancelled by fence (terminal state), or permissions revoked and ledger
+        // cannot be written: do not write to project
+        return await finishJob(job, ws, track, { state: 'cancelled', errorCode: 'FENCE_CANCELLED', message: 'This round can no longer write to the project (it was stopped, made private, or permissions changed); the detection result was not written.' });
       }
       try { await authorize(context, 'write'); }
-      catch { return await finishJob(job, ws, track, { state: 'cancelled', errorCode: 'FENCE_CANCELLED', message: '这一轮已不能写项目(被停止、转私有或权限变了),检测结果没有写入。' }); }
-      if (abortedBySignal()) return await finishJob(job, ws, track, { state: closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SUBJECT_CANCELLED', message: '主体检测已被取消,结果没有写入。' });
+      catch { return await finishJob(job, ws, track, { state: 'cancelled', errorCode: 'FENCE_CANCELLED', message: 'This round can no longer write to the project (it was stopped, made private, or permissions changed); the detection result was not written.' }); }
+      if (abortedBySignal()) return await finishJob(job, ws, track, { state: closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SUBJECT_CANCELLED', message: 'Subject detection was cancelled, the result was not written.' });
       try { await project.setMediaSubjects(context, { mediaId, expectedMediaRev: mediaRev, subjects, jobId: job.jobId }); }
       catch (error) {
         const changed = error?.code === 'media-changed';
         return await finishJob(job, ws, track, {
           state: 'error', errorCode: changed ? 'MEDIA_CHANGED' : 'COMMIT_REJECTED',
-          message: changed ? '检测期间这个素材被换掉或重新导入了,这次结果对不上新素材,已丢弃。请重新调 detect_subjects。' : `检测结果没能写进项目(${scrub(error?.code ?? error?.message ?? '被拒绝', ws).slice(0, 80)})。`,
+          message: changed ? 'This media was replaced or re-imported during detection, so the result no longer matches the new media and was discarded. Please call detect_subjects again.' : `The detection result could not be written to the project (${scrub(error?.code ?? error?.message ?? 'rejected', ws).slice(0, 80)}).`,
         });
       }
       const ref = OUTPUT_ID_RE.test(mediaId) ? mediaId : sha(mediaId).slice(0, 32);
@@ -615,16 +656,16 @@ export function createSubjectTools({
         },
       });
     } finally {
-      if (mediaFile) { try { ws.remove(mediaFile); } catch { /* 留给对话删除时清 */ } try { fs.rmSync(path.dirname(ws.resolve(mediaFile)), { recursive: true, force: true }); } catch { /* 同上 */ } }
+      if (mediaFile) { try { ws.remove(mediaFile); } catch { /* Left to be cleaned up when chat is deleted */ } try { fs.rmSync(path.dirname(ws.resolve(mediaFile)), { recursive: true, force: true }); } catch { /* Same as above */ } }
     }
   }
 
-  /** Python 的 result 事件 -> 项目里 `MediaAsset.subjects` 的形状(与 `src/ai/subject.ts` 的 `waitForSubjects` 同一口径) */
+  /** Python result event -> shape of `MediaAsset.subjects` in project (aligned with `waitForSubjects` in `src/ai/subject.ts`) */
   function toSubjects(ev, prompt, at) {
     const samples = Array.isArray(ev.samples) ? ev.samples : null;
     const sampleOk = (s) => s && typeof s === 'object' && Number.isFinite(s.t) && Array.isArray(s.boxes)
       && (s.failed === true || (['left', 'right', 'top', 'bottom'].includes(s.safeSide) && s.occupancy && typeof s.occupancy === 'object'));
-    if (!samples || samples.length === 0 || !samples.every(sampleOk)) throw new SubjectToolError('主体检测返回的结果格式不对,已丢弃。', 'bad-result');
+    if (!samples || samples.length === 0 || !samples.every(sampleOk)) throw new SubjectToolError('The result returned by subject detection has an invalid format and was discarded.', 'bad-result');
     const failedCount = Number.isFinite(Number(ev.failedCount)) ? Number(ev.failedCount) : samples.filter((s) => s.failed).length;
     return {
       engine: ev.engine === 'full' ? 'full' : 'light',
@@ -640,7 +681,7 @@ export function createSubjectTools({
 
   /* ---------------------------------------------------------------- list_subjects */
 
-  const INTERRUPTED = '上一次主体检测被服务重启或关闭中断了,没有结果。可以重新调 detect_subjects(传 force:true)。';
+  const INTERRUPTED = 'The previous subject detection was interrupted by a service restart or shutdown and has no result. You can call detect_subjects again (pass force:true).';
 
   async function listSubjects(context, args) {
     await authorize(context, 'read');
@@ -653,7 +694,8 @@ export function createSubjectTools({
     if (row) {
       let ledger = null;
       try { ledger = await jobs.get(context, row.jobId); } catch { ledger = null; }
-      // 账本是主;但作业已经收尾而账本没写成(权限已撤,账本等宿主的栅栏取消)时,以工作区索引里的终态为准
+      // Ledger is primary; but if job has finalized and ledger was not written (permissions revoked,
+      // host fences such as ledger cancelled), final state in workspace index prevails
       const finished = ['done', 'error', 'cancelled', 'interrupted'];
       const state = !ledger
         ? (row.status === 'queued' || row.status === 'running' ? 'interrupted' : row.status)
@@ -662,12 +704,12 @@ export function createSubjectTools({
         const percent = Math.max(0, Math.min(99, Math.round((ledger?.progress ?? 0) * 100)));
         return {
           running: true, percent, engine: row.engine,
-          ...(media.subjects ? { stale: true, staleNote: '上一批结果还在,但新一次检测正在跑,这里不给样本;跑完再调一次本工具' } : null),
+          ...(media.subjects ? { stale: true, staleNote: 'The previous batch of results is still there, but a new detection is running, so no samples are given here; call this tool again after it finishes' } : null),
         };
       }
       if (state === 'error' || state === 'cancelled' || state === 'interrupted') {
-        const message = row.message || (state === 'interrupted' ? INTERRUPTED : '上一次主体检测没有成功。');
-        throw new SubjectToolError(media.subjects ? `${message}(项目里还留着更早成功的一批结果,不是这次的。)` : message, `job-${state}`);
+        const message = row.message || (state === 'interrupted' ? INTERRUPTED : 'The previous subject detection did not succeed.');
+        throw new SubjectToolError(media.subjects ? `${message} (An earlier successful batch of results is still kept in the project; it is not from this run.)` : message, `job-${state}`);
       }
     }
     if (!media.subjects) return null;
@@ -676,10 +718,10 @@ export function createSubjectTools({
       running: false,
       engine: s.engine,
       engineNote: s.engine === 'full'
-        ? 'Grounding DINO,label 是提示词里的名词;prompt 为空时按 person . face . 找'
-        : 'YuNet + RT-DETR 的 light 档,只认 person 和 face,提示词不生效(原样回显在 prompt 里)',
+        ? 'Grounding DINO. The label is the noun in the prompt; when the prompt is empty it searches for person . face .'
+        : 'The light tier of YuNet + RT-DETR. It only recognizes person and face; the prompt has no effect (it is echoed back unchanged in prompt)',
       ...(s.fellBackFrom
-        ? { fellBackFrom: s.fellBackFrom, fallbackNote: `本来要跑 full 档,中途退回了 light:${s.fallbackReason ?? '原因未知'}。所以 prompt 没生效,label 只可能是 person / face。` }
+        ? { fellBackFrom: s.fellBackFrom, fallbackNote: `Was supposed to run the full tier but fell back to light midway: ${String(s.fallbackReason ?? 'unknown reason').replace(/\.$/, '')}. So prompt had no effect, and label can only be person / face.` }
         : null),
       prompt: s.prompt,
       width: s.width,
@@ -688,12 +730,12 @@ export function createSubjectTools({
       samples: s.samples.map((sm) => ({
         t: sm.t,
         ...(sm.failed
-          ? { failed: true, reason: sm.reason ?? '这一帧没抽出来', boxes: [], boxCount: 0 }
+          ? { failed: true, reason: sm.reason ?? 'This frame could not be extracted', boxes: [], boxCount: 0 }
           : { safeSide: sm.safeSide, ...k.suggestPosition(sm.safeSide, sm.occupancy), occupancy: sm.occupancy, boxes: topBoxes(sm.boxes), boxCount: sm.boxes.length }),
       })),
-      hint: '坐标是原始视频像素(和 width/height 同一套)。要按镜头排卡片就直接看 list_shots,那边每个镜头已经把这些采样按镜头折好了。'
-        + 'suggestedPosition 可直接填进卡片的 params.position(只会是 left / right / bottom,不会返回 center);为 null 表示四档都被人物占住,'
-        + '看 suggestedOccupancy 和 warning,那一刻没有不遮人的位置。failed 为 true 的采样是抽帧失败,不是「这一帧没有人」,不要拿它下结论。',
+      hint: 'Coordinates are in original video pixels (the same system as width/height). To arrange cards by shot, look at list_shots directly; there each shot already has these samples grouped by shot.'
+        + ' suggestedPosition can be filled directly into a card\'s params.position (it is only ever left / right / bottom, never center); null means all four tiers are occupied by people,'
+        + ' check suggestedOccupancy and warning: at that moment there is no position that avoids covering people. A sample with failed set to true means frame extraction failed, not "there is no person in this frame"; do not draw conclusions from it.',
     };
   }
 
@@ -703,17 +745,17 @@ export function createSubjectTools({
     await authorize(context, 'write');
     if (!config) return { ok: false, cloudUnavailable: true, error: NOT_CONFIGURED };
     if (!config.install) return { ok: false, cloudUnavailable: true, error: INSTALL_OFF };
-    if (installLive) return { jobId: installLive.jobId ?? null, started: false, alreadyRunning: true, hint: '主体识别正在安装,用 subject_status 看 engine 有没有变。不要重复启动。' };
+    if (installLive) return { jobId: installLive.jobId ?? null, started: false, alreadyRunning: true, hint: 'Subject recognition is being installed; use subject_status to see whether engine has changed. Do not start it again.' };
     const ws = await workspace(context);
     const status = await readStatus(context, ws, { fresh: true });
-    if (status.engine) return { ok: true, ready: true, alreadyInstalled: true, engine: status.engine, hint: `这台云节点已经有 ${status.engine} 档,不用装。` };
-    if (installLive) return { jobId: installLive.jobId ?? null, started: false, alreadyRunning: true, hint: '主体识别正在安装,用 subject_status 看 engine 有没有变。不要重复启动。' };
+    if (status.engine) return { ok: true, ready: true, alreadyInstalled: true, engine: status.engine, hint: `This cloud node already has the ${status.engine} tier; no need to install.` };
+    if (installLive) return { jobId: installLive.jobId ?? null, started: false, alreadyRunning: true, hint: 'Subject recognition is being installed; use subject_status to see whether engine has changed. Do not start it again.' };
 
     const requestId = REQUEST_RE.test(options.requestId ?? '') ? options.requestId : `si_${randomUUID().replace(/-/g, '')}`;
     let started;
-    installLive = { jobId: null }; // 占位:两个并发的 subject_install 只有一个能往下走
+    installLive = { jobId: null }; // Placeholder: only one of two concurrent subject_install calls can proceed
     try { started = await jobs.start(context, 'subject.install', sha('subject.install:light'), requestId); }
-    catch (error) { installLive = null; throw new SubjectToolError(`主体识别安装没能登记作业(${error?.code ?? '账本不可用'})`, 'subject-job'); }
+    catch (error) { installLive = null; throw new SubjectToolError(`Subject recognition install could not register a job (${error?.code ?? 'ledger unavailable'})`, 'subject-job'); }
     if (started.state !== 'queued' || closing) {
       installLive = null;
       return { jobId: started.jobId, started: false, state: started.state };
@@ -727,8 +769,8 @@ export function createSubjectTools({
     settled.add(job.done);
     return {
       jobId: started.jobId, started: true,
-      hint: '主体检测 light 档正在受控安装(只装部署者锁定的 onnxruntime 清单,不收任何 pip 参数)。用 subject_status 看 engine 有没有变成 light;不要重复启动。'
-        + '装完还可能缺权重文件(yunet.onnx / rtdetr_r18vd.onnx),那由部署者放进节点的权重目录,返回里会说。',
+      hint: 'The subject detection light tier is being installed in controlled mode (it only installs the onnxruntime manifest locked by the deployer and accepts no pip arguments). Use subject_status to see whether engine has become light; do not start it again.'
+        + ' After installing, weight files (yunet.onnx / rtdetr_r18vd.onnx) may still be missing; the deployer puts them in the node\'s weights directory, and the response will say so.',
     };
   }
 
@@ -775,13 +817,13 @@ export function createSubjectTools({
         return;
       }
       if (outcome.timedOut) {
-        installSummary = { state: 'error', finishedAt: now(), message: `安装超时(超过 ${Math.round(limits.installMs / 1000)} 秒),已强制结束。` };
+        installSummary = { state: 'error', finishedAt: now(), message: `Install timed out (over ${Math.round(limits.installMs / 1000)} second${Math.round(limits.installMs / 1000) === 1 ? '' : 's'}) and was forcibly terminated.` };
         await track.patch({ state: 'error', errorCode: 'SUBJECT_TIMEOUT' });
         return;
       }
       if (!installed) {
         const pipTail = logTail.filter((l) => /error|no matching|could not/i.test(l)).slice(-2).join(' ');
-        const message = scrub([errorEvent?.message || `安装进程退出码 ${outcome.code}`, pipTail].filter(Boolean).join(' '), ws).slice(0, 500);
+        const message = scrub([errorEvent?.message || `Install process exit code ${outcome.code}`, pipTail].filter(Boolean).join(' '), ws).slice(0, 500);
         installSummary = { state: 'error', finishedAt: now(), message };
         await track.patch({ state: 'error', errorCode: 'SUBJECT_INSTALL_FAILED' });
         return;
@@ -793,7 +835,7 @@ export function createSubjectTools({
     }
   }
 
-  /* ---------------------------------------------------------------- 对外 */
+  /* ---------------------------------------------------------------- External */
 
   const handlers = {
     subject_status: (context) => subjectStatus(context),
@@ -805,17 +847,21 @@ export function createSubjectTools({
   return Object.freeze({
     handles: new Set(SUBJECT_TOOL_NAMES),
     /**
-     * @param {string} name 工具名
-     * @param {object} args 模型给的参数(只收 mediaId / times / prompt / force)
-     * @param {object} context F0 发的可信八字段
-     * @param {{ requestId?: string }} [options] 宿主给的幂等号(工具调用 id);同一号重试不会开第二个作业
+     * @param {string} name Tool name
+     * @param {object} args Arguments from model (accepts only mediaId / times / prompt / force)
+     * @param {object} context Trusted 8 fields issued by F0
+     * @param {{ requestId?: string }} [options] Idempotency key from host (tool call id); retrying
+     *   with the same id will not start a second job
      */
     call(name, args, context, options = {}) {
       const handler = Object.hasOwn(handlers, name) ? handlers[name] : null;
-      if (!handler) return Promise.reject(new SubjectToolError(`主体识别不处理 ${String(name).slice(0, 60)}`, 'unknown-tool'));
+      if (!handler) return Promise.reject(new SubjectToolError(`Subject recognition does not handle ${String(name).slice(0, 60)}`, 'unknown-tool'));
       return Promise.resolve().then(() => handler(context, args ?? {}, options));
     },
-    /** 取消本对话的一个检测作业(宿主的控制路径与单测用;不是模型能调的工具)。回子进程已关的凭据 */
+    /**
+     * Cancels a detection job for this chat (for host control path and unit tests; not a tool
+     * callable by model). Returns receipt that child process has closed.
+     */
     async cancel(context, jobId) {
       await authorize(context, 'write');
       const job = live.get(jobId);

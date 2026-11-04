@@ -1,59 +1,65 @@
 /**
- * 创造力等级(`docs/semantics/user-workflow.md`「创造力等级」):决定一个 Agent 对话能改到多深。
+ * Creativity level (`docs/semantics/user-workflow.md` "Creativity level"): determines how deeply an
+ * Agent chat can make modifications.
  *
- *   - 低:只用已有的卡片和效果,只改参数;测量只用内置方法;
- *   - 中:在已有卡片和效果的基础上,可以改它们的代码或表达式,但不新建;
- *   - 高:可以新建任意卡片和效果,可以写自定义测量代码。
+ *   - Low: only use existing cards and effects, only modify parameters; measurement only uses
+ *     built-in methods;
+ *   - Medium: based on existing cards and effects, can modify their code or expressions, but cannot
+ *     create new ones;
+ *   - High: can create arbitrary cards and effects, can write custom measurement code.
  *
- * 项目有一个默认等级(`Project.creativity`),在项目设置里选,出厂为「高」—— 字段缺省(旧项目)一律按「高」。
- * AI 栏每个对话默认取项目的等级,可以单独改(覆盖值只存在本机页签里,计划 `agent-workflow-plan.md` 第 4 节第 3 条);
- * 桌面 APP 的会话跟随项目的等级。
+ * Projects have a default level (`Project.creativity`), chosen in project settings, factory default
+ * is "high": when the field is missing (legacy projects), always treat as "high".
+ * Each chat in the AI panel defaults to the project's level and can be modified individually
+ * (override values only exist in the local tab, plan `agent-workflow-plan.md` section 4 item 3);
+ * desktop app sessions follow the project's level.
  *
- * 为什么是 `.mjs`:页面(项目设置、AI 栏)和服务端(工具入口的闸门 `server/agent/creativity-gate.mjs`)
- * 用同一份等级定义,Node 直接 import 不了 `.ts`。
+ * Why `.mjs`: pages (project settings, AI panel) and the server (tool entry gate
+ * `server/agent/creativity-gate.mjs`) use the same level definition, and Node cannot import `.ts`
+ * directly.
  */
 
-/** 从低到高 */
+/** From low to high */
 export const CREATIVITY_LEVELS = Object.freeze(['low', 'medium', 'high']);
 
-/** 出厂等级,也是项目缺这个字段时的等级 */
+/** Factory level, also the level when the project lacks this field */
 export const DEFAULT_CREATIVITY = 'high';
 
-/** 给人看的名字 */
-export const CREATIVITY_LABEL = Object.freeze({ low: '低', medium: '中', high: '高' });
+/** The human-readable name */
+export const CREATIVITY_LABEL = Object.freeze({ low: 'Low', medium: 'Medium', high: 'High' });
 
-/** 选项上的短说明(下拉框放不下整句) */
-export const CREATIVITY_SHORT = Object.freeze({ low: '只改参数', medium: '可改代码和表达式', high: '可新建卡片和效果' });
+/** Short description on options (dropdown cannot fit full sentences) */
+export const CREATIVITY_SHORT = Object.freeze({ low: 'Parameters only', medium: 'Can edit code and expressions', high: 'Can create new cards and effects' });
 
-/** 每一档允许什么(项目设置、AI 栏的提示和闸门的报错共用这几句) */
+/** What each tier allows (shared by project settings, AI panel prompts, and gate errors) */
 export const CREATIVITY_HINT = Object.freeze({
-  low: '只用已有的卡片和效果,只改参数;测量只用内置方法',
-  medium: '可以改已有卡片和效果的代码或表达式,但不新建',
-  high: '可以新建任意卡片和效果,可以写自定义测量代码',
+  low: 'Use only existing cards and effects, change only parameters; measure only with built-in methods',
+  medium: 'May change the code or expressions of existing cards and effects, but not create new ones',
+  high: 'May create any card and effect, and may write custom measurement code',
 });
 
-/** 合法等级原样回,其它(缺省、拼错、旧数据)回 null */
+/** Returns valid levels as is, returns null for others (missing, typos, legacy data) */
 export function normalizeCreativity(value) {
   return typeof value === 'string' && CREATIVITY_LEVELS.includes(value) ? value : null;
 }
 
-/** 项目的默认等级:字段缺省或不认识时按出厂的「高」 */
+/** Project default level: falls back to factory "high" when field is missing or unrecognized */
 export function projectCreativity(project) {
   return normalizeCreativity(project?.creativity) ?? DEFAULT_CREATIVITY;
 }
 
-/** 一个对话实际生效的等级:对话自己的覆盖值优先,没有就跟项目 */
+/** Effective level for a chat: chat's own override takes precedence, otherwise follows the project */
 export function effectiveCreativity(override, projectLevel) {
   return normalizeCreativity(override) ?? normalizeCreativity(projectLevel) ?? DEFAULT_CREATIVITY;
 }
 
-/** 等级的序号(低 0、中 1、高 2),不认识的当「高」 */
+/** Level index (low 0, medium 1, high 2); unrecognized treated as "high" */
 export function creativityRank(level) {
   const i = CREATIVITY_LEVELS.indexOf(level);
   return i < 0 ? CREATIVITY_LEVELS.length - 1 : i;
 }
 
-/** `current` 够不够 `required` */
+/** Whether `current` satisfies `required` */
 export function creativityAllows(current, required) {
   return creativityRank(normalizeCreativity(current) ?? DEFAULT_CREATIVITY) >= creativityRank(normalizeCreativity(required) ?? 'low');
 }

@@ -1,4 +1,4 @@
-// node --test server/test/idle-timeout.test.mjs —— 流式请求的「闲置超时」
+// node --test server/test/idle-timeout.test.mjs: "idle timeout" for streaming requests
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -6,7 +6,7 @@ const { withIdleTimeout } = await import('../harness/idle-timeout.mjs');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** 造一个流:按 gaps 给的间隔逐块吐出来 */
+/** Create a stream: emit chunk by chunk according to intervals given by gaps */
 function streamOf(gaps) {
   return {
     ok: true, status: 200, statusText: 'OK',
@@ -25,15 +25,16 @@ async function drain(res) {
   return out;
 }
 
-test('一直在吐数据:流多久都不算超时 —— 这正是原来那个总时长上限掐错的场景', async () => {
-  // 每 40ms 一块、共 8 块 = 320ms,远超 100ms 的闲置阈值,但每一块都把表拨回去了
+test('data keeps flowing: a stream never times out however long it runs. This is exactly the case the old total-duration cap cut off wrongly', async () => {
+  // One chunk every 40ms, 8 chunks in total = 320ms, far exceeding the 100ms idle threshold, but each
+  // chunk reset the clock
   const f = withIdleTimeout(async () => streamOf([40, 40, 40, 40, 40, 40, 40, 40]), { idleMs: 100 });
   const res = await f('u', {});
   const chunks = await drain(res);
-  assert.equal(chunks.length, 8, '正常流下去不该被掐断');
+  assert.equal(chunks.length, 8, 'a healthy stream should not be cut off');
 });
 
-test('真的卡住了才超时:一块都不来就报 TimeoutError', async () => {
+test('only a real stall times out: if not a single chunk arrives, TimeoutError is reported', async () => {
   const f = withIdleTimeout(
     (url, init) => new Promise((_res, rej) => {
       init.signal.addEventListener('abort', () => rej(init.signal.reason), { once: true });
@@ -42,12 +43,12 @@ test('真的卡住了才超时:一块都不来就报 TimeoutError', async () => 
   );
   await assert.rejects(() => f('u', {}), (e) => {
     assert.equal(e.name, 'TimeoutError');
-    assert.match(e.message, /没有收到任何数据/);
+    assert.match(e.message, /no data received/);
     return true;
   });
 });
 
-test('流中途断供超过阈值:抛超时,而不是悄悄结束', async () => {
+test('the stream stops supplying data midway past the threshold: a timeout is thrown instead of quietly ending', async () => {
   const f = withIdleTimeout(async (url, init) => ({
     ok: true, status: 200, headers: { get: () => null }, text: async () => '', json: async () => ({}),
     body: (async function* () {
@@ -59,7 +60,7 @@ test('流中途断供超过阈值:抛超时,而不是悄悄结束', async () => 
   await assert.rejects(async () => { for await (const _ of res.body) { /* drain */ } }, /TimeoutError|timeout/i);
 });
 
-test('调用方自己的 signal 照样管用(用户点停止)', async () => {
+test('The caller\'s own signal still works (user clicks stop)', async () => {
   const ac = new AbortController();
   const f = withIdleTimeout(
     (url, init) => new Promise((_res, rej) => {
@@ -72,15 +73,15 @@ test('调用方自己的 signal 照样管用(用户点停止)', async () => {
   await assert.rejects(() => p, /stopped/);
 });
 
-test('错误响应原样透出去,不包也不改 —— assertOk 还要读它的正文', async () => {
+test('Error responses pass through as is, neither wrapped nor changed: assertOk still has to read their body', async () => {
   const err = { ok: false, status: 429, headers: { get: () => null }, text: async () => 'busy' };
   const f = withIdleTimeout(async () => err, { idleMs: 50 });
   const res = await f('u', {});
-  assert.equal(res, err, '非 2xx 直接原样返回');
+  assert.equal(res, err, 'Non-2xx is returned directly, as is');
   assert.equal(await res.text(), 'busy');
 });
 
-test('包装之后 ok / status / headers 这些还在 —— 下游只认这几样', async () => {
+test('After wrapping, ok / status / headers are still there: downstream only looks at these', async () => {
   const f = withIdleTimeout(async () => streamOf([5]), { idleMs: 500 });
   const res = await f('u', {});
   assert.equal(res.ok, true);

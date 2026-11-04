@@ -1,21 +1,28 @@
 /**
- * 起 GL Worker(R9 M2)。舞台 / 导出页的 `glHost`(路线 1)和编辑器父页(路线 2)都经这里起。
+ * Spawns the GL Worker (R9 M2). Both `glHost` of the stage / export page (Route 1) and editor parent
+ * page (Route 2) spawn through here.
  *
- * **为什么不直接 `new Worker(new URL('./glWorker.ts', import.meta.url))`**:那样 Worker 的主脚本是
- * 页面自己发的请求,而它的收尾事件(`loadingFinished`)在 CDP 里报到 Worker 自己的 target 上 ——
- * 导出页的 `waitNet`(`server/bakery/chrome.mjs`)在页面的 Network 域里看到它一直「在路上」,
- * 每一帧白等满 30 秒然后报错(实测)。所以页面只起一个 `blob:` 的引导脚本,真正的模块由 Worker 自己去取,
- * 那个请求记在 Worker 的 target 上,不挂在页面的账上。
+ * **Why not `new Worker(new URL('./glWorker.ts', import.meta.url))` directly**: in that case, the
+ * Worker's main script is a request issued by the page itself, while its completion event
+ * (`loadingFinished`) is reported to the Worker's own target in CDP: `waitNet`
+ * (`server/bakery/chrome.mjs`) on the export page sees it as constantly "in flight" in the page's
+ * Network domain, waiting the full 30 seconds per frame in vain and erroring (empirically tested).
+ * Therefore the page only spawns a `blob:` bootstrap script; the real module is fetched by the
+ * Worker itself, and that request is recorded on the Worker's target, not charged to the page.
  *
- * 舞台加固收走了全局的 `Worker`(不让卡片代码自己起后台线程),这里经 `spawnRuntimeWorker` 用守卫安装前留在模块闭包里的原生构造函数起。
- * 开发态 vite 把 Worker 当 ES 模块服务 → 引导脚本用 `import`;构建产物里 Worker 缺省打成 iife → `importScripts`。
+ * Stage hardening removes global `Worker` (preventing card code from spawning background threads
+ * itself); here it spawns via `spawnRuntimeWorker` using the native constructor preserved in the
+ * module closure before the guard was installed. In development vite serves Workers as ES modules →
+ * bootstrap script uses `import`; in build outputs Workers default to IIFE → `importScripts`.
  */
 import workerUrl from "./glWorker.ts?worker&url";
 import { spawnRuntimeWorker } from "../../online/isolation/scopeGuard.ts";
 
 /**
- * 在线的跨源舞台若带 Trusted Types(`require-trusted-types-for 'script'`),blob Worker 继承它:
- * Worker 里 `importScripts` 要先有缺省策略。只在本文档已经有缺省策略时才加这一句,别处引导脚本一个字不变。
+ * If an online cross-origin stage carries Trusted Types (`require-trusted-types-for 'script'`), the
+ * blob Worker inherits it: `importScripts` in the Worker requires a default policy first. Add this
+ * statement only when this document already has a default policy; elsewhere the bootstrap script
+ * remains completely unchanged.
  */
 export function trustedTypesPrelude(): string {
   const tt = (globalThis as { trustedTypes?: { defaultPolicy?: unknown } }).trustedTypes;

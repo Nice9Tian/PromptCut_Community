@@ -1,46 +1,53 @@
-// 对应 claude-quickstarts/agents/utils/schema.py
+// Corresponds to claude-quickstarts/agents/utils/schema.py
 
 /**
- * 清洗 schema 使其符合不同厂商的要求
+ * Clean schema to meet requirements of different vendors
  */
 /**
- * @param opts.compat 「参数兼容模式」:按 Gemini 的 `Schema` 类型清洗。不传就按 vendor 推:gemini 家开,其余关。
- *   为什么要和 vendor 分开:走 OpenAI 兼容接口(Router、第三方网关)也可能接的是 Gemini 模型,
- *   厂商字段写的是 openai,schema 却得按 Gemini 的规矩来 —— 由调用方按模型名或用户开关决定。
+ * @param opts.compat "Parameter compatibility mode": cleans according to Gemini's `Schema` type.
+ *   If omitted, inferred from vendor: enabled for Gemini, disabled for others.
+ *   Why separate from vendor: routing through OpenAI-compatible endpoints (routers, third-party gateways)
+ *   might also connect to Gemini models, where the vendor field says openai, but schema must follow
+ *   Gemini rules: decided by caller based on model name or user toggle.
  */
 
 /**
- * Gemini 的 `Schema` 到底有哪些字段 —— 取自 v1beta 的 discovery 契约
- * (`$discovery/rest?version=v1beta` 里 Schema 那个 definition),不是猜的:
+ * What fields Gemini's `Schema` actually has: taken from the v1beta discovery contract
+ * (the Schema definition in `$discovery/rest?version=v1beta`), not guessed:
  *
  *   type format title description default example nullable enum
  *   minLength maxLength pattern minimum maximum minItems maxItems
  *   minProperties maxProperties required properties items anyOf propertyOrdering
  *
- * 所以「Gemini 只认最窄的子集」这句话本身是**过时的**。这里只删真的不在清单里的那几个,
- * 别的一律留着 —— 多删的代价不是"保险",是实打实的能力损失,见下面 KEEP 的说明。
+ * Therefore, the claim that "Gemini only recognizes the narrowest subset" is itself **outdated**.
+ * Here we only delete those truly not in the manifest, keeping everything else: the cost of
+ * over-deleting is not "insurance", but a real loss of capability; see the KEEP notes below.
  */
 const GEMINI_UNKNOWN_KEYS = [
   '$schema',
-  // 这是唯一一条真正的硬限制,而且正是「自由对象表达不出来」的根源(见下面那段)
+  // This is the only true hard limit, and the exact root cause of "free-form objects cannot be expressed"
+  // (see the section below)
   'additionalProperties',
-  // 清单里只有单数 example;复数的改写成单数,不是丢掉
+  // Manifest only has singular example; rewrite plural into singular instead of dropping
   'examples',
-  // 清单里只有 minimum / maximum;开区间改写成闭区间近似,不是丢掉
+  // Manifest only has minimum / maximum; rewrite open intervals to closed interval approximations, do not drop
   'exclusiveMinimum',
   'exclusiveMaximum',
 ];
 
 /**
- * 曾经也被删、但其实 Gemini 认的:`title` `default` `minItems` `maxItems`。
+ * Previously deleted as well, but actually recognized by Gemini: `title` `default` `minItems`
+ * `maxItems`.
  *
- * `title` 那条删出过真实的损害:`card-params-schema.mjs` 把「卡片参数」这个自由对象
- * 展开成一串 `anyOf` 分支、每个分支用 `title: card.id` 标明是哪张卡 —— 那是模型认出
- * 「该填哪张卡的参数」的**唯一线索**,在这里被删掉了。也就是说兼容模式一边宣称
- * 「Gemini 传不了参数」,一边在拆掉这个项目已经写好的解法。
+ * Deleting `title` caused real damage: `card-params-schema.mjs` expands the free-form object "card
+ * parameters" into a series of `anyOf` branches, each labeled with `title: card.id` to indicate
+ * which card it is: that was the model's **only clue** to recognize "which card's parameters to
+ * fill in", and it was deleted here. In other words, compatibility mode claimed that "Gemini cannot
+ * pass parameters" while tearing down the solution already built in this project.
  *
- * `format` 也留着,但要过滤取值:Gemini 只认 NUMBER 的 float/double、INTEGER 的 int32/int64、
- * STRING 的 enum/date-time。`uri` / `email` / `uuid` 这类传过去会 400,所以按白名单剔。
+ * Keep `format` as well, but filter its values: Gemini only recognizes float/double for NUMBER,
+ * int32/int64 for INTEGER, and enum/date-time for STRING. Passing types like `uri` / `email` /
+ * `uuid` returns 400, so filter them against an allowlist.
  */
 const GEMINI_FORMATS = new Set(['float', 'double', 'int32', 'int64', 'enum', 'date-time']);
 
@@ -52,30 +59,34 @@ export function sanitizeSchema(schema, vendor, opts = {}) {
     if (!node || typeof node !== 'object' || Array.isArray(node)) return;
 
     if (compat) {
-      // 复数 examples 改写成单数 example,别白丢一个 few-shot 提示
+      // Rewrite plural examples to singular example; do not needlessly drop a few-shot prompt
       if (node.examples !== undefined && node.example === undefined && Array.isArray(node.examples) && node.examples.length) {
         node.example = node.examples[0];
       }
-      // 开区间没有对应字段,退成闭区间:约束松一点,总好过整条约束消失
+      // Open intervals have no corresponding fields, fall back to closed intervals:
+      // a looser constraint is better than the entire constraint disappearing
       if (node.exclusiveMinimum !== undefined && node.minimum === undefined) node.minimum = node.exclusiveMinimum;
       if (node.exclusiveMaximum !== undefined && node.maximum === undefined) node.maximum = node.exclusiveMaximum;
       for (const k of GEMINI_UNKNOWN_KEYS) delete node[k];
-      // format 留着,但只留 Gemini 认的那几个取值
+      // Keep format, but only keep the values recognized by Gemini
       if (node.format !== undefined && !GEMINI_FORMATS.has(node.format)) delete node.format;
     }
 
     /*
-     * 嵌套的自由对象(没写 properties)要保持自由。
-     * 以前这里补一个空的 properties,等于把「任意对象」改写成「没有任何字段的对象」——
-     * 模型照着这个 schema 只能交出 {}。补 additionalProperties: true 把「随便填」说明白。
+     * Nested free-form objects (without properties) must stay free-form.
+     * Previously, an empty properties was added here, which was equivalent to rewriting "any object"
+     * into "an object without any fields": following this schema, the model could only return {}.
+     * Adding additionalProperties: true makes "fill in anything" clear.
      *
-     * **兼容模式下没有等价写法**:Gemini 的 Schema 里没有 additionalProperties,
-     * 而它要求 object 必须有 properties,所以只能退回空对象。
+     * **No equivalent syntax in compatibility mode**: Gemini's Schema lacks additionalProperties,
+     * and it requires object to have properties, so it can only fall back to an empty object.
      *
-     * 这条退化在实际链路上基本走不到,因为真正的解法在别处:`card-params-schema.mjs`
-     * 在发请求那一刻把「卡片参数」展开成一串 `anyOf` 分支(每张卡一个,分支里是真实字段),
-     * 根本不需要表达「字段不固定的对象」。走到这一条只剩一种情况 —— 卡片列表拿不到、
-     * 展开失败的兜底。所以说明留着,但别再拿它当「Gemini 传不了参数」的论据。
+     * This degradation is practically never reached on the actual execution path, because the real
+     * solution lies elsewhere: `card-params-schema.mjs` expands "card parameters" into a series of
+     * `anyOf` branches at the moment the request is sent (one per card, with actual fields inside
+     * the branch), without any need to express "objects with unfixed fields". Reaching this line
+     * leaves only one case: a fallback when the card list cannot be retrieved and expansion fails.
+     * So keep the explanation, but stop using it as an argument that "Gemini cannot pass parameters".
      */
     if (node.type === 'object' && !node.properties && !node.anyOf && !node.oneOf) {
       if (compat) node.properties = {};
@@ -110,7 +121,7 @@ export function sanitizeSchema(schema, vendor, opts = {}) {
 }
 
 /**
- * 将内部 Tool 形状转成三家 API 的工具声明
+ * Convert internal Tool shapes into tool declarations for the three provider APIs
  */
 export function toolToVendor(tool, vendor, opts = {}) {
   const { name, description, inputSchema } = tool;

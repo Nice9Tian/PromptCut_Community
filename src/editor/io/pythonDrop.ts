@@ -1,28 +1,32 @@
 import { tr } from "../../i18n/index.ts";
 /**
- * 旧 `.proc` 里的 Python 卡**不向前兼容**(用户决定,滤镜、转场、音效在内)。
+ * Python cards in an old `.proc` are **not forward compatible** (user decision; this includes
+ * filters, transitions and sound effects).
  *
- * Python 卡运行时整套已经归档到 `archive/python-cards/`,仓库里不再有
- * 隔离运行时的 HTTP 接口、浏览器侧的宿主组件、`adapter: 'python'` 节点。所以打开一份带 Python 卡的
- * 旧项目时,在原始 JSON **转成 `Project` 之前**就把它们丢掉:
+ * The whole Python card runtime has been archived to `archive/python-cards/`; the repo no longer has
+ * the HTTP endpoint of the isolated runtime, the browser-side host component, or `adapter: 'python'`
+ * nodes. So when opening an old project that contains Python cards, they are dropped from the raw
+ * JSON **before it is converted to a `Project`**:
  *
- * - `cardDefinitions` **整个字段**删掉 —— 不是只删 python 条目。`proc.ts` 的
- *   `{ ...createEmptyProject(), ...project, id }` 会把原始 JSON 里的它原样铺进
- *   `Project`,再原样存回下一份 `.proc`,留着就是一个永远传下去的死字段;
- * - `cardNodes` 里 `adapter: 'python'` 的节点直接丢弃;
- * - 引用这些节点的片段清掉 `nodeId` —— 素材段回到普通素材段(原生音轨自然恢复出声),
- *   只有 `nodeId` 没有 `cardId` 的纯 python 片段既没节点也没 `cardId`,被
- *   `flattenOverlay`(`src/kernel/project.ts`)跳过,不显示、也不报错。
+ * - The `cardDefinitions` **whole field** is deleted, not just the python entries. The
+ *   `{ ...createEmptyProject(), ...project, id }` in `proc.ts` spreads whatever is in the raw JSON
+ *   into the `Project` as is and saves it back as is into the next `.proc`; leaving it would be a
+ *   dead field passed down forever;
+ * - Nodes in `cardNodes` with `adapter: 'python'` are discarded outright;
+ * - Clips that reference those nodes have `nodeId` cleared: a media clip goes back to a plain media
+ *   clip (the native audio track naturally regains sound), while a pure python clip with only a
+ *   `nodeId` and no `cardId` has neither node nor `cardId`, is skipped by
+ *   `flattenOverlay` (`src/kernel/project.ts`), and is neither shown nor reported as an error.
  *
- * 不做占位卡、不做 `list_cards` 提示、不自动翻译。
+ * No placeholder cards, no `list_cards` hint, no automatic translation.
  */
 
-/** 丢弃的**实例**张数(被删掉的 python 节点数)——用户看得见消失的就是它们。 */
+/** Number of discarded **instances** (the number of python nodes deleted): these are what the user sees disappear. */
 export function dropPythonNodes(raw: unknown): number {
   if (!raw || typeof raw !== "object") return 0;
   const project = raw as Record<string, any>;
 
-  // 整个字段删掉,不是只删 python 条目
+  // Delete the whole field, not just the python entries
   delete project.cardDefinitions;
 
   const nodes: any[] = Array.isArray(project.cardNodes) ? project.cardNodes : [];
@@ -40,13 +44,14 @@ export function dropPythonNodes(raw: unknown): number {
 }
 
 /*
- * 通知栏:丢了几张只提示**一次**。和素材分类迁移(`mediaMigrationBus.ts`)同一套做法 ——
- * 加载路径是纯逻辑,攒在这里,由界面那一侧取走并显示。
+ * Notification bar: the count of dropped cards is shown only **once**. Same approach as the media
+ * category migration (`mediaMigrationBus.ts`): the load path is pure logic and accumulates here,
+ * and the UI side takes it and displays it.
  */
 let pending = 0;
 const EVENT = "pc-python-nodes-dropped";
 
-/** 加载路径调它;界面没挂起来(无头实例、单元测试)时只是攒着,不报错。 */
+/** Called by the load path; when the UI is not mounted (headless instance, unit tests) it only accumulates and reports no error. */
 export function publishPythonDrop(count: number): void {
   if (!(count > 0)) return;
   pending += count;
@@ -65,7 +70,7 @@ export function onPythonDrops(listener: () => void): () => void {
   return () => window.removeEventListener(EVENT, listener);
 }
 
-/** 通知栏那句话。只有一处,免得两边写得不一样。 */
+/** The message for the notification bar. Defined in one place only, so the two sides do not word it differently. */
 export function pythonDropMessage(count: number): string {
   return tr("{0} Python cards were disabled and are no longer shown", count);
 }

@@ -1,10 +1,13 @@
 /**
- * M7-T：E5（纯浏览器只见本人任务，分发与认领两层）与 B2（纯浏览器只认领 light / medium 共享档快照任务）。
- * 依据：`docs/plan/m7-contract.md` 第 3.1、3.2 节，验收 M7-A1～A3；`render-queue-contract.md` A.9、B.2。
- * 这两条的零件已在代码里（契约第 0 节第 1～3 行），所以本文件不设门、现在就跑，守回归；D9、D4 的加严在各自的门后面。
- * 跑：node --experimental-test-module-mocks --test server/test/m7-e5-b2.test.mjs
+ * M7-T: E5 (pure browser sees only own tasks, across dispatch and claim layers) and B2 (pure browser
+ * only claims light / medium shared tier snapshot tasks).
+ * Basis: `docs/plan/m7-contract.md` sections 3.1, 3.2, acceptance checks M7-A1 to A3;
+ * `render-queue-contract.md` A.9, B.2.
+ * Parts for these two are already in code (contract section 0, lines 1-3), so this file sets no gate
+ * and runs now to guard against regressions; tightenings for D9 and D4 are behind their respective gates.
+ * Run: node --experimental-test-module-mocks --test server/test/m7-e5-b2.test.mjs
  *
- * 时钟一律是假时钟，没有真实计时断言。
+ * Clocks are all fake clocks; no real-time assertions.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +22,7 @@ const FP = 'aaaaaaaaaaaaaaaa';
 const OTHER_FP = 'bbbbbbbbbbbbbbbb';
 const TASK_MSGS = ['queue.snapshot', 'task.opened', 'task.taken', 'task.closed'];
 
-/** 某连接收到的、提到这些任务 id 的消息（快照里列出的也算） */
+/** Messages received by a connection mentioning these task ids (including those listed in snapshots) */
 function mentions(rig, connId, ids) {
   const set = new Set(ids);
   const out = [];
@@ -34,17 +37,18 @@ function mentions(rig, connId, ids) {
   return out;
 }
 
-/* ================================================================== E5 分发（M7-A1） */
+/* ================================================================== E5 Dispatch (M7-A1) */
 
-test('E5 分发：A 一整轮发布、切分、认领、完成期间，别人（另一用户，或同名不同设备）的纯浏览器节点收到 A 的任务消息 0 条；A 自己的纯浏览器看得见（对照）', () => {
+test('E5 distribution: during A\'s whole round of publishing, splitting, claiming and completing, other people\'s (another user\'s, or one with the same name on a different device) browser-only nodes receive 0 task messages from A; A\'s own browser-only node can see them (control)', () => {
   const rig = createDocQueueRig();
-  // A 的页面（发布方）与 A 的桌面节点（切分、执行）
+  // A's page (publisher) and A's desktop node (split, execute)
   rig.connect('pageA', memberPrincipal({ username: 'zoe', device: 'devA', role: 'page' }));
   rig.send('pageA', { type: 'publisher.hello', publisherId: 'pub-A' });
   rig.connect('pcA', memberPrincipal({ username: 'zoe', device: 'devA' }));
   rig.send('pcA', { type: 'node.hello', nodeId: 'pc-A', profile: 'pc', envFingerprint: FP });
   rig.send('pcA', { type: 'publisher.hello', publisherId: 'pc-A' });
-  // 三个纯浏览器节点：别的用户 B、与 A 同名不同设备的 B'、A 自己（对照）
+  // Three pure browser nodes: another user B, B' with same name as A on different device, A itself
+  // (control)
   const browsers = [
     ['brB', memberPrincipal({ username: 'bob', device: 'devB' }), 'n-bob'],
     ['brB2', memberPrincipal({ username: 'zoe', device: 'devB' }), 'n-zoe-b'],
@@ -56,7 +60,8 @@ test('E5 分发：A 一整轮发布、切分、认领、完成期间，别人（
     rig.send(conn, { type: 'queue.watch', projects: ['p1'] });
   }
 
-  // 发布清单计划 → pc 认领 → 切出两段细任务（继承 A 的身份）→ 认领、续约、完成
+  // Publish manifest plan → pc claims → splits into two fine-grained tasks (inherits A's identity)
+  // → claim, renew lease, complete
   const plan = clipsPlan();
   rig.send('pageA', { type: 'task.publish', tasks: [plan] });
   rig.send('pcA', { type: 'queue.watch', projects: ['p1'] });
@@ -74,14 +79,15 @@ test('E5 分发：A 一整轮发布、切分、认领、完成期间，别人（
   rig.advance(5_000); rig.tick();
 
   const ids = [plan.id, ...fine.map((t) => t.id)];
-  assert.deepEqual(mentions(rig, 'brB', ids), [], '另一用户的纯浏览器不该收到 A 的任务消息');
-  assert.deepEqual(mentions(rig, 'brB2', ids), [], '同名不同设备（userId 不同）的纯浏览器不该收到 A 的任务消息');
-  // 对照：A 自己的纯浏览器看得见细任务（身份继承自 plan，契约 A.4 末段）
+  assert.deepEqual(mentions(rig, 'brB', ids), [], 'Another user\'s browser-only node should not receive A\'s task messages');
+  assert.deepEqual(mentions(rig, 'brB2', ids), [], 'A browser-only node with the same name on a different device (different userId) should not receive A\'s task messages');
+  // Control: A's own pure browser can see fine-grained tasks (identity inherited from plan, contract
+  // A.4 last paragraph)
   const own = new Set(mentions(rig, 'brA', ids).map((m) => m.id));
-  for (const t of fine) assert.ok(own.has(t.id), `A 自己的纯浏览器应看得见 ${t.id}`);
+  for (const t of fine) assert.ok(own.has(t.id), `A's own browser-only node should see ${t.id}`);
 });
 
-test('E5 分发：后 watch 的别人的纯浏览器，queue.snapshot 里没有 A 的 open 任务；A 自己的有', () => {
+test('E5 distribution: for another user\'s browser-only node that watches later, queue.snapshot has none of A\'s open tasks; A\'s own has them', () => {
   const rig = createDocQueueRig();
   rig.connect('pageA', memberPrincipal({ username: 'zoe', device: 'devA', role: 'page' }));
   rig.send('pageA', { type: 'publisher.hello', publisherId: 'pub-A' });
@@ -97,9 +103,9 @@ test('E5 分发：后 watch 的别人的纯浏览器，queue.snapshot 里没有 
   assert.deepEqual(snapOf('b3', 'zoe', 'devA').tasks.map((t) => t.id).sort(), tasks.map((t) => t.id).sort());
 });
 
-/* ================================================================== E5 认领（M7-A2） */
+/* ================================================================== E5 Claim (M7-A2) */
 
-test('E5 认领：别人的纯浏览器拿 A 的任务 id 认领一律回 forbidden，且不带 state / version；A 自己认领 plan 回 plan-profile', () => {
+test('E5 claim: another user\'s browser-only node claiming with A\'s task id always gets forbidden, without state / version; A\'s own claim of a plan returns plan-profile', () => {
   const rig = createDocQueueRig();
   rig.connect('pageA', memberPrincipal({ username: 'zoe', device: 'devA', role: 'page' }));
   rig.send('pageA', { type: 'publisher.hello', publisherId: 'pub-A' });
@@ -113,12 +119,12 @@ test('E5 认领：别人的纯浏览器拿 A 的任务 id 认领一律回 forbid
     for (const t of [snap, plan]) {
       const r = rig.ask(conn, { type: 'task.claim', id: t.id, expectVersion: 1 });
       assert.equal(r?.type, 'task.claim-rejected', JSON.stringify(r));
-      assert.equal(r.reason, 'forbidden', `${username}@${device} 认领 ${t.kind}：${JSON.stringify(r)}`);
-      assert.equal('state' in r, false, `forbidden 不带 state：${JSON.stringify(r)}`);
-      assert.equal('version' in r, false, `forbidden 不带 version：${JSON.stringify(r)}`);
+      assert.equal(r.reason, 'forbidden', `${username}@${device} claims ${t.kind}: ${JSON.stringify(r)}`);
+      assert.equal('state' in r, false, `forbidden carries no state: ${JSON.stringify(r)}`);
+      assert.equal('version' in r, false, `forbidden carries no version: ${JSON.stringify(r)}`);
     }
   }
-  // 任务仍 open、没人认领
+  // Task remains open, unclaimed
   const d = rig.describe();
   for (const t of [snap, plan]) assert.equal(d.tasks.find((x) => x.id === t.id).state, 'open');
 
@@ -127,10 +133,10 @@ test('E5 认领：别人的纯浏览器拿 A 的任务 id 认领一律回 forbid
   const r = rig.ask('a', { type: 'task.claim', id: plan.id, expectVersion: 1 });
   assert.deepEqual([r?.type, r?.reason], ['task.claim-rejected', 'plan-profile'], JSON.stringify(r));
   const own = rig.ask('a', { type: 'task.claim', id: snap.id, expectVersion: 1 });
-  assert.equal(own?.type, 'task.claimed', `本人的 medium 快照照常认领：${JSON.stringify(own)}`);
+  assert.equal(own?.type, 'task.claimed', `The user's own medium snapshot is claimed as usual: ${JSON.stringify(own)}`);
 });
 
-test("E5：纯浏览器 watch 'all' 与摘要订阅一律 forbidden", () => {
+test("E5: browser-only watch 'all' and summary subscriptions are always forbidden", () => {
   const rig = createDocQueueRig();
   rig.connect('b', memberPrincipal({ username: 'bob', device: 'devB' }));
   rig.send('b', { type: 'node.hello', nodeId: 'n-b', profile: 'browser', envFingerprint: FP });
@@ -140,44 +146,44 @@ test("E5：纯浏览器 watch 'all' 与摘要订阅一律 forbidden", () => {
   assert.deepEqual([sum?.type, sum?.reason], ['error', 'forbidden'], JSON.stringify(sum));
 });
 
-/* ================================================================== B2（M7-A3） */
+/* ================================================================== B2 (M7-A3) */
 
 const BROWSER_NODE = (userId) => ({
   profile: 'browser', userId, envFingerprint: FP, codeVersions: ['cv-1'], cardSourceVersions: {},
   capabilities: { transcode: false, streams: false, userCards: false, graphCards: false },
 });
 
-/** B2 的任务表：[任务, 该不该被纯浏览器认领, 说明] —— 全是本人（zoe@devA）的任务，除非另写 */
+/** B2 task table: [task, whether pure browser should claim it, note]: all own (zoe@devA) tasks unless noted otherwise */
 function b2Tasks() {
   return [
-    [snapTask({ contentKey: 'light', fp: FP, weight: 'light' }), true, 'light 共享档快照'],
-    [snapTask({ contentKey: 'medium', fp: FP, weight: 'medium' }), true, 'medium 共享档快照'],
-    [snapTask({ contentKey: 'heavy', fp: FP, weight: 'heavy' }), false, 'heavy 快照'],
-    [snapTask({ contentKey: 'canvas', fp: FP, weight: 'heavy', input: { canvasHeavy: true } }), false, 'canvasHeavy（切分方记 heavy）'],
-    [snapTask({ contentKey: 'local', fp: FP, weight: 'heavy', tier: 'local', input: { entryKey: 'e1', contentKey: 'e1/local' } }), false, '本地档（切分方记 heavy）'],
+    [snapTask({ contentKey: 'light', fp: FP, weight: 'light' }), true, 'light shared-tier snapshot'],
+    [snapTask({ contentKey: 'medium', fp: FP, weight: 'medium' }), true, 'medium shared-tier snapshot'],
+    [snapTask({ contentKey: 'heavy', fp: FP, weight: 'heavy' }), false, 'heavy snapshot'],
+    [snapTask({ contentKey: 'canvas', fp: FP, weight: 'heavy', input: { canvasHeavy: true } }), false, 'canvasHeavy (the splitter records heavy)'],
+    [snapTask({ contentKey: 'local', fp: FP, weight: 'heavy', tier: 'local', input: { entryKey: 'e1', contentKey: 'e1/local' } }), false, 'local tier (the splitter records heavy)'],
     [streamTask({ fp: FP }), false, '轨道流'],
     [clipsPlan(), false, 'plan'],
-    [snapTask({ contentKey: 'usercard', fp: FP, requires: { userCards: true } }), false, '用户卡'],
+    [snapTask({ contentKey: 'usercard', fp: FP, requires: { userCards: true } }), false, 'user card'],
     [snapTask({ contentKey: 'graph', fp: FP, requires: { graphCards: true } }), false, '素材效果卡'],
-    [snapTask({ contentKey: 'modded', fp: FP, requires: { cardSources: { motion: 'user:abc' } } }), false, '改过源码的卡'],
-    [snapTask({ contentKey: 'oldcode', fp: FP, requires: { codeVersion: 'cv-0' } }), false, '代码版本不同'],
-    [snapTask({ contentKey: 'otherfp', fp: OTHER_FP }), false, '别的环境指纹'],
-    [snapTask({ contentKey: 'transcode', fp: FP, requires: { transcode: true } }), false, '要转码'],
+    [snapTask({ contentKey: 'modded', fp: FP, requires: { cardSources: { motion: 'user:abc' } } }), false, 'card with modified source'],
+    [snapTask({ contentKey: 'oldcode', fp: FP, requires: { codeVersion: 'cv-0' } }), false, 'different code version'],
+    [snapTask({ contentKey: 'otherfp', fp: OTHER_FP }), false, 'other environment fingerprint'],
+    [snapTask({ contentKey: 'transcode', fp: FP, requires: { transcode: true } }), false, 'needs transcoding'],
   ];
 }
 
-test('B2 节点侧过滤：纯浏览器只收 light / medium 共享档快照，heavy、流、plan、本地档、用户卡、素材效果卡、改过源码的卡一律不收', () => {
+test('B2 node-side filter: a browser-only node accepts only light / medium shared-tier snapshots; heavy, streams, plans, local tier, user cards, media effect cards and cards with modified source are never accepted', () => {
   const node = BROWSER_NODE('zoe@devA');
   for (const [task, want, what] of b2Tasks()) {
     const withUser = { ...task, source: { ...task.source, userId: 'zoe@devA' } };
-    assert.equal(checkClaimable(withUser, node).ok, want, `${what}：${JSON.stringify(checkClaimable(withUser, node))}`);
+    assert.equal(checkClaimable(withUser, node).ok, want, `${what}: ${JSON.stringify(checkClaimable(withUser, node))}`);
   }
-  // 别人的 medium 快照：规则 0 挡
+  // Medium snapshots from others: blocked by rule 0
   const other = { ...snapTask({ fp: FP }), source: { projectId: 'p1', projectRev: 1, userId: 'zoe@devB' } };
   assert.equal(checkClaimable(other, node).ok, false);
 });
 
-test('B2 跑满 60 s：真队列 + 纯浏览器节点会话，禁收的任务被认领 0 次，light / medium 本人任务照常认领并完成，别人的 0 次', () => {
+test('B2 full 60 s run: real queue + browser-only node session, forbidden tasks are claimed 0 times, the user\'s own light / medium tasks are claimed and completed as usual, and others\' tasks are claimed 0 times', () => {
   const dq = createDirectQueue();
   const claims = new Map();
   const node = BROWSER_NODE('zoe@devA');
@@ -188,13 +194,13 @@ test('B2 跑满 60 s：真队列 + 纯浏览器节点会话，禁收的任务被
   };
   session = createNodeSession({
     nodeId: 'n-br', node, now: dq.now, send: toQueue, projects: ['p1'],
-    // 认领到就立刻做完（B2 只看认领了什么）
+    // Complete immediately once claimed (B2 only inspects what was claimed)
     onTask: (task, { token }) => queueMicrotask(() => session.complete(task.id, { v: 1 })),
   });
   dq.route('br', (m) => session.receive(m));
   dq.q.connect('br', { userId: 'zoe@devA', tenantId: 'p1' });
 
-  // 发布方：本人的全部任务，外加别人的两段 medium（同一项目）
+  // Publisher: all own tasks, plus two medium segments from others (same project)
   dq.q.connect('pageA', { userId: 'zoe@devA', tenantId: 'p1' });
   dq.q.handle('pageA', { type: 'publisher.hello', publisherId: 'pub-A' });
   dq.q.connect('pageB', { userId: 'zoe@devB', tenantId: 'p1' });
@@ -206,7 +212,7 @@ test('B2 跑满 60 s：真队列 + 纯浏览器节点会话，禁收的任务被
   session.start();
 
   return (async () => {
-    // 60 s，每 500 ms 一拍；每拍后让出一次，让 onTask 里排的 complete 落定
+    // 60 s, one tick every 500 ms; yield once after each tick to let complete queued in onTask settle
     for (let t = 0; t <= 60_000; t += 500) {
       session.tick();
       await new Promise((r) => setImmediate(r));
@@ -217,36 +223,37 @@ test('B2 跑满 60 s：真队列 + 纯浏览器节点会话，禁收的任务被
     for (const [task, want, what] of table) {
       const n = claims.get(task.id) ?? 0;
       if (want) {
-        assert.equal(n, 1, `${what} 应认领恰好一次，实际 ${n}`);
-        assert.equal(d.tasks.find((x) => x.id === task.id)?.state, 'done', `${what} 应完成`);
+        assert.equal(n, 1, `${what} should be claimed exactly once, actual ${n}`);
+        assert.equal(d.tasks.find((x) => x.id === task.id)?.state, 'done', `${what} should complete`);
       } else {
-        assert.equal(n, 0, `${what} 应被纯浏览器认领 0 次，实际 ${n}`);
+        assert.equal(n, 0, `${what} should be claimed 0 times by the browser-only node, actual ${n}`);
       }
     }
-    for (const t of others) assert.equal(claims.get(t.id) ?? 0, 0, '别人的任务认领 0 次');
+    for (const t of others) assert.equal(claims.get(t.id) ?? 0, 0, 'Other users\' tasks are claimed 0 times');
   })();
 });
 
-/* ================================================================== D4（节点自选：只收独立卡） */
+/* ================================================================== D4 (Node option: only receive standalone cards) */
 
-test('D4 纯浏览器只收独立卡：compositing 不是 independent 的 medium 快照不收（K7）', gateOpts(filterIndependentGate()), () => {
+test('D4 a browser-only node accepts only independent cards: medium snapshots whose compositing is not independent are not accepted (K7)', gateOpts(filterIndependentGate()), () => {
   const node = BROWSER_NODE('zoe@devA');
   const mk = (compositing) => {
     const t = snapTask({ contentKey: `c-${compositing}`, fp: FP, input: compositing === undefined ? {} : { compositing } });
     if (compositing === undefined) delete t.input.compositing;
     return { ...t, source: { ...t.source, userId: 'zoe@devA' } };
   };
-  assert.equal(checkClaimable(mk('independent'), node).ok, true, 'independent 收');
+  assert.equal(checkClaimable(mk('independent'), node).ok, true, 'independent is accepted');
   for (const c of ['sourceDependent', 'belowDependent', 'unknown', undefined]) {
-    assert.equal(checkClaimable(mk(c), node).ok, false, `compositing=${c} 不收`);
+    assert.equal(checkClaimable(mk(c), node).ok, false, `compositing=${c} is not accepted`);
   }
-  // 只对纯浏览器加严：pc 照旧
+  // Tightened only for pure browsers: pc remains as before
   const pc = { ...node, profile: 'pc', editing: false };
-  assert.equal(checkClaimable(mk('sourceDependent'), pc).ok, true, 'pc 不受 D4 影响');
+  assert.equal(checkClaimable(mk('sourceDependent'), pc).ok, true, 'pc is not affected by D4');
 });
 
-// 主会话裁定（2026-09-28，对测试方的问题 1）：节点侧 filter.mjs 补「纯浏览器只收 tier: shared」一条（规则 7），这条改成真跑
-test('D4 纯浏览器只收 tier: shared：标 medium 的本地档任务也不收（filter.mjs 规则 7）', gateOpts(filterIndependentGate()), () => {
+// Lead session ruling (2026-09-28, for tester question 1): node-side filter.mjs adds "pure browser
+// only receives tier: shared" (rule 7); this test is changed to actually run
+test('D4 a browser-only node accepts only tier: shared: a local-tier task marked medium is not accepted either (filter.mjs rule 7)', gateOpts(filterIndependentGate()), () => {
   const node = BROWSER_NODE('zoe@devA');
   const t = snapTask({ contentKey: 'local-m', fp: FP, weight: 'medium', tier: 'local', input: { entryKey: 'e1', contentKey: 'e1/local-m' } });
   assert.equal(checkClaimable({ ...t, source: { ...t.source, userId: 'zoe@devA' } }, node).ok, false);

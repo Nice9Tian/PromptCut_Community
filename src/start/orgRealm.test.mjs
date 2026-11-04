@@ -1,13 +1,16 @@
 /**
- * 本地分组与云端分组(`src/start/vibeOrg.ts`)。跑:npm test -- src/start/orgRealm.test.mjs
+ * Local groups and cloud groups (`src/start/vibeOrg.ts`). Run: npm test -- src/start/orgRealm.test.mjs
  *
- * 用户 2026-10-23 定:「分本地分组(桌面版的本地 Agent)和云端分组。云端分组存云端,本地分组存本地。
- * 本地项目放不进云端的分组(反之云端也放不进本地)」。这里盯四件事:
- *   ORGR-01/02 本地分组只收本机项目、云端分组只收云端项目;
- *   ORGR-03/04 跨着放被拦住,并给出说明(整理信息原样不动);右键菜单里另一套的分组置灰并说明;
- *   ORGR-05/06/07 两套分组的存储键互不覆盖,内容里的标记对不上就不认,分套之前的老键认一次;
- *   ORGR-08 游客没有云端那一份:没有范围就读不到也存不了;
- *   ORGR-09/10 云端分组的说法(接上云端、老服务端改口)与清理。
+ * (user decision, 2026-10-23): "Split into local groups (local Agent in desktop app) and cloud
+ * groups. Cloud groups are stored in the cloud, local groups are stored locally. Local projects
+ * cannot be placed into cloud groups (and vice versa for cloud into local)". Four things verified:
+ *   ORGR-01/02 Local groups only accept local projects, cloud groups only accept cloud projects;
+ *   ORGR-03/04 Cross-placing is blocked with an explanation (organization data left intact);
+ *     groups of the other set are grayed out in context menu with an explanation;
+ *   ORGR-05/06/07 Storage keys for both group sets do not overwrite each other; rejected if markers
+ *     in content do not match; old keys before splitting sets are recognized once;
+ *   ORGR-08 Guests have no cloud copy: cannot read or store without a realm;
+ *   ORGR-09/10 Cloud group wording (connecting to cloud, old server changed phrasing) and cleanup.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +19,7 @@ import {
   moveRefusal, moveTargetsFor, orgKey, orgWhereText, parseOrg, pruneOrg, saveOrg, withGroups, withProjects,
 } from './vibeOrg.ts';
 
-/** 一个最小的 localStorage:node 里没有,用例自己装一个,每条用例换一份干净的 */
+/** A minimal localStorage: not in node, test cases set up their own, fresh copy per test */
 function installStorage(initial = {}) {
   const map = new Map(Object.entries(initial));
   globalThis.localStorage = {
@@ -43,11 +46,11 @@ test('ORGR-01 local groups only take local projects: cloud projects mixed into t
   const list = mergeProjects(org, mixed);
   assert.deepEqual(list.map((p) => p.id), ['20261023-aaaaaa', '20261023-bbbbbb']);
   assert.ok(list.every((p) => p.realm === 'local'));
-  // 本机项目放进本地分组:成功
+  // Local project placed into local group: success
   const out = moveProject(org, list[0], id);
   assert.equal(out.refused, null);
   assert.equal(out.org.projects[0].groupId, id);
-  // 云端项目哪怕有人硬塞进写回清单,也进不了本地那一份
+  // Even if someone forces a cloud project into writeback manifest, it cannot enter the local copy
   const cloudList = mergeProjects(addGroup(emptyOrg('cloud'), 'x').org, cloudProjects);
   const stuffed = withProjects(out.org, [...list, ...cloudList]);
   assert.deepEqual(stuffed.projects.map((p) => p.id).sort(), ['20261023-aaaaaa', '20261023-bbbbbb']);
@@ -62,7 +65,7 @@ test('ORGR-02 cloud groups only take cloud projects: local drafts mixed into the
   const out = moveProject(org, list[1], id);
   assert.equal(out.refused, null);
   assert.equal(out.org.projects[0].groupId, id);
-  // 本地那一套的分组也不会被云端这一份收下
+  // Groups from the local set will not be accepted by the cloud copy either
   assert.deepEqual(withGroups(org, [{ id: 'gx', name: 'From local', realm: 'local' }]).groups, []);
 });
 
@@ -79,10 +82,10 @@ test('ORGR-03 cross-realm placement is blocked with an explanation: local projec
   assert.equal(b.refused, 'A cloud project cannot be placed into a local group: cloud groups hold cloud projects, and local groups hold local projects.');
   assert.equal(b.org, localOrg.org);
 
-  // 「移出分组」(groupId = null)对跨套的项目也一样不许碰这一份
+  // "Remove from group" (groupId = null) likewise cannot touch this copy for cross-realm projects
   assert.ok(moveProject(cloudOrg.org, { id: '20261023-aaaaaa', realm: 'local' }, null).refused);
 
-  // 说明那一句只由两套是否相同决定
+  // That explanation sentence is determined solely by whether the two sets are the same
   assert.equal(moveRefusal('cloud', 'cloud'), null);
   assert.equal(moveRefusal('local', 'local'), null);
   assert.ok(moveRefusal('local', 'cloud') && moveRefusal('cloud', 'local'));
@@ -110,14 +113,14 @@ test('ORGR-04 right-click "Move to group": groups of the same realm are clickabl
 
 test('ORGR-05 storage keys of the two group realms never overwrite each other: the prefixes differ, so no scope name can collide with the other side; each writes its own and reads back its own', () => {
   const store = installStorage();
-  // 键:前缀分开,哪怕范围名被取成对面的样子
+  // Keys: prefixes are separated, even if realm name is named after the other side
   assert.notEqual(orgKey('local', 'x'), orgKey('cloud', 'x'));
   assert.notEqual(orgKey('local', 'cloud.x'), orgKey('cloud', 'x'));
   assert.notEqual(orgKey('local', LOCAL_ORG_SCOPE), orgKey('cloud', LOCAL_ORG_SCOPE));
   assert.ok(orgKey('local', 'z').startsWith('pc.start.org.local.'));
   assert.ok(orgKey('cloud', 'z').startsWith('pc.start.org.cloud.'));
 
-  // 同一个范围名各存一份:谁也没盖掉谁
+  // Store one copy each under the same realm name: neither overwrites the other
   const l = addGroup(emptyOrg('local'), 'Local group', () => 'l1').org;
   const c = addGroup(emptyOrg('cloud'), 'Cloud group', () => 'c1').org;
   saveOrg('same', l);
@@ -126,7 +129,7 @@ test('ORGR-05 storage keys of the two group realms never overwrite each other: t
   assert.deepEqual(loadOrg('local', 'same').groups.map((g) => g.name), ['Local group']);
   assert.deepEqual(loadOrg('cloud', 'same').groups.map((g) => g.name), ['Cloud group']);
 
-  // 真实的两个范围:桌面版固定一份,云端按账号各一份
+  // The two real realms: desktop app has a fixed copy, cloud has one copy per account
   const a1 = cloudOrgScope('acc_000000000000000000000001');
   const a2 = cloudOrgScope('acc_000000000000000000000002');
   saveOrg(LOCAL_ORG_SCOPE, addGroup(emptyOrg('local'), 'D', () => 'd1').org);
@@ -135,7 +138,7 @@ test('ORGR-05 storage keys of the two group realms never overwrite each other: t
   assert.deepEqual(loadOrg('local', LOCAL_ORG_SCOPE).groups.map((g) => g.name), ['D']);
   assert.deepEqual(loadOrg('cloud', a1).groups.map((g) => g.name), ['A1']);
   assert.deepEqual(loadOrg('cloud', a2).groups.map((g) => g.name), ['A2']);
-  // 存下去的内容带着自己是哪一套
+  // Stored content carries which set it belongs to
   assert.equal(JSON.parse(store.get(orgKey('local', LOCAL_ORG_SCOPE))).realm, 'local');
   assert.equal(JSON.parse(store.get(orgKey('cloud', a1))).realm, 'cloud');
 });
@@ -144,15 +147,15 @@ test('ORGR-06 a mismatched marker in the content is rejected: a key whose cloud 
   const cloudBlob = JSON.stringify(addGroup(emptyOrg('cloud'), 'Cloud group', () => 'c1').org);
   const localBlob = JSON.stringify(addGroup(emptyOrg('local'), 'Local group', () => 'l1').org);
   installStorage({
-    [orgKey('local', LOCAL_ORG_SCOPE)]: cloudBlob, // 云端的内容躺在本地的键里
-    [orgKey('cloud', 'acc:me')]: localBlob, // 本地的内容躺在云端的键里
+    [orgKey('local', LOCAL_ORG_SCOPE)]: cloudBlob, // Cloud content sitting in a local key
+    [orgKey('cloud', 'acc:me')]: localBlob, // Local content sitting in a cloud key
   });
   assert.deepEqual(loadOrg('local', LOCAL_ORG_SCOPE), emptyOrg('local'));
   assert.deepEqual(loadOrg('cloud', 'acc:me'), emptyOrg('cloud'));
   assert.deepEqual(parseOrg(cloudBlob, 'local'), emptyOrg('local'));
   assert.deepEqual(parseOrg(localBlob, 'cloud'), emptyOrg('cloud'));
   assert.equal(parseOrg(cloudBlob, 'cloud').groups[0].name, 'Cloud group');
-  // 每个分组的标记由整份的套给:读出来的分组都带着这一套的 realm
+  // Group tags are assigned by the whole set: read groups all carry this set's realm
   assert.ok(groupsOf(parseOrg(localBlob, 'local')).every((g) => g.realm === 'local'));
 });
 
@@ -168,7 +171,7 @@ test('ORGR-07 the old key written before the realm split (pc.start.org.<scope>, 
   saveOrg(LOCAL_ORG_SCOPE, l);
   assert.ok(store.has(orgKey('local', LOCAL_ORG_SCOPE)));
   assert.equal(store.get('pc.start.org.desktop'), legacy, 'Old key untouched');
-  // 新键有了就以新键为准,不再回头读老键
+  // Once the new key exists, follow the new key and no longer read back the old key
   saveOrg(LOCAL_ORG_SCOPE, addGroup(l, 'New one', () => 'n1').org);
   assert.deepEqual(loadOrg('local', LOCAL_ORG_SCOPE).groups.map((g) => g.name), ['Old group', 'New one']);
 });
@@ -194,7 +197,7 @@ test('ORGR-09 cloud group wording: when connected to the cloud it says "Stored i
 test('ORGR-10 cleanup: for projects no longer in the list, entries with no organization info are removed and their chats are removed with them; entries with organization info are kept; if the list was not fetched, nothing is cleaned', () => {
   const org = {
     ...emptyOrg('cloud'),
-    groups: [{ id: 'g', name: '组' }],
+    groups: [{ id: 'g', name: 'Group' }],
     projects: [
       { id: 'live', groupId: null },
       { id: 'gone-plain', groupId: null },

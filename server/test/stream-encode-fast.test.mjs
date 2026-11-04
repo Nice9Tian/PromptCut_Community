@@ -1,13 +1,16 @@
 /**
- * 轨道流分段编码提速(`docs/archive/agent-reports/AGENT-perf-encode.md`)的单测:
- *   - 新滤镜链与旧写法(`streamFilterIdentity`)送进编码器的 YUV 逐字节相同(yuv420p、nv12 两种尾巴);
- *   - 分段签名里的编码参数哈希不变(盘上已有的分段不作废);
- *   - `endsWithCompleteMfra` 的判定;
- *   - 预先拉起的编码进程:领用后补拉、产出和现拉的逐字节相同、`finish()` 见到 mfra 就交字节;
- *     ffmpeg 出错时照旧报错;关掉开关不留进程。
- *   - 整条命令行(输入端不攒包 + 新滤镜链)编出的 fMP4 与改写前的命令行逐字节相同;帧一到就开工
- *     (`docs/archive/agent-reports/AGENT-perf-encode-2.md`)。
- * 需要 ffmpeg 的几条在没有 ffmpeg 的机器上跳过。
+ * Unit test for track stream segment encoding speedup (`docs/archive/agent-reports/AGENT-perf-encode.md`):
+ *   - YUV fed to encoder from new filterchain is byte-for-byte identical to legacy code
+ *     (`streamFilterIdentity`) (two tails: yuv420p, nv12);
+ *   - Encoding parameter hash in segment signature unchanged (existing segments on disk not invalidated);
+ *   - Judgment of `endsWithCompleteMfra`;
+ *   - Pre-spawned encoding processes: replenished after claim, output is byte-for-byte identical
+ *     to on-demand spawned processes, `finish()` yields bytes upon seeing mfra; ffmpeg errors reported
+ *     as usual; no processes remain when switch is turned off;
+ *   - fMP4 encoded by full command line (no packet buffering at input + new filterchain) is byte-for-byte
+ *     identical to pre-rewrite command line; starts immediately once frames arrive
+ *     (`docs/archive/agent-reports/AGENT-perf-encode-2.md`).
+ * Cases requiring ffmpeg are skipped on machines without ffmpeg.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +25,7 @@ import { encoderParamsHash, splitFmp4, segmentInfo } from '../frame-stream.mjs';
 const ffmpegOk = spawnSync('ffmpeg', ['-version'], { windowsHide: true }).status === 0;
 after(() => dropStreamEncoderSpares());
 
-/** 合成帧:随机 RGBA(覆盖全部 alpha 值与颜色组合)+ 渐变 + 全透明 / 全不透明块 */
+/** Synthetic frame: random RGBA (all alpha and color combinations) + gradient + transparent/opaque blocks */
 function synthPngs(width, height, count, seed0 = 7) {
   let seed = seed0;
   const rnd = () => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed >>> 16) & 255; };
@@ -42,23 +45,26 @@ function synthPngs(width, height, count, seed0 = 7) {
   return out;
 }
 
-/** 同一批 PNG 过一条滤镜链,拿送进编码器之前的原始 YUV(`threads`:滤镜图切片线程数,0 = ffmpeg 缺省) */
+/**
+ * Same batch of PNGs through filterchain, getting raw YUV before encoder (`threads`: slice
+ * threads, 0 = ffmpeg default)
+ */
 function filtered(filter, pngs, threads = 0) {
   return execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-filter_complex_threads', String(threads), '-reinit_filter', '0', '-f', 'image2pipe', '-c:v', 'png',
     '-framerate', '30', '-i', 'pipe:0', '-filter_complex', filter, '-f', 'rawvideo', 'pipe:1'],
   { input: Buffer.concat(pngs), maxBuffer: 1 << 28, windowsHide: true });
 }
 
-test('新滤镜链只少了中间转换,字面上仍是 G3 的那几步', () => {
+test('The new filter chain only drops the intermediate conversion; literally it is still G3\'s steps', () => {
   const f = streamFilter('yuv420p');
   assert.match(f, /^\[0:v\]format=gbrap,split=2\[p\]\[a\];\[p\]premultiply=inplace=1,/);
-  assert.doesNotMatch(f, /premultiply=inplace=1,split/, '分叉在预乘之后会让 alphaextract 前面自动插一趟反预乘');
+  assert.doesNotMatch(f, /premultiply=inplace=1,split/, 'Splitting after premultiply makes an unpremultiply pass get inserted automatically before alphaextract');
   assert.match(f, /scale=out_range=tv:out_color_matrix=bt709,format=yuv420p$/);
   assert.match(streamFilter('nv12'), /format=nv12$/);
   assert.notEqual(streamFilter('yuv420p'), streamFilterIdentity('yuv420p'));
 });
 
-test('滤镜切片线程数:按核数封顶 8', () => {
+test('Filter slice thread count: capped at 8 by core count', () => {
   assert.equal(streamFilterThreads(16, {}), 8);
   assert.equal(streamFilterThreads(32), 8);
   assert.equal(streamFilterThreads(8), 8);
@@ -66,50 +72,50 @@ test('滤镜切片线程数:按核数封顶 8', () => {
   assert.equal(streamFilterThreads(1), 1);
   assert.equal(streamFilterThreads(0), 1);
   assert.equal(streamFilterThreads(NaN), 1);
-  assert.equal(streamFilterThreads(16, { PROMPTCUT_STREAM_FILTER_THREADS: '0' }), 0, '0 = 交给 ffmpeg');
+  assert.equal(streamFilterThreads(16, { PROMPTCUT_STREAM_FILTER_THREADS: '0' }), 0, '0 = leave it to ffmpeg');
   assert.equal(streamFilterThreads(16, { PROMPTCUT_STREAM_FILTER_THREADS: '12' }), 12);
-  assert.equal(streamFilterThreads(16, { PROMPTCUT_STREAM_FILTER_THREADS: 'x' }), 8, '不是数字就不理');
+  assert.equal(streamFilterThreads(16, { PROMPTCUT_STREAM_FILTER_THREADS: 'x' }), 8, 'Ignored if not a number');
 });
 
-test('分段签名里的编码参数哈希和改写前相同(已有分段不作废)', () => {
-  // 改写前(main 2c7cee2)按 streamFilter 字面算出来的值
+test('The encoding-parameter hash in the segment signature is the same as before the rewrite (existing segments are not invalidated)', () => {
+  // Value calculated from streamFilter literal before rewrite (main 2c7cee2)
   assert.equal(encoderParamsHash('libx264'), 'de84562fd4660af1');
   assert.equal(encoderParamsHash('h264_mf'), 'e8429af745c908c0');
   assert.equal(encoderParamsHash('h264_nvenc'), '71b4b8bd213000a1');
 });
 
-test('新滤镜链与旧写法送进编码器的 YUV 逐字节相同', { skip: !ffmpegOk && '没有 ffmpeg', timeout: 120_000 }, () => {
+test('The YUV that the new filter chain feeds the encoder is byte-identical to the old formulation\'s', { skip: !ffmpegOk && 'No ffmpeg', timeout: 120_000 }, () => {
   for (const [w, h] of [[256, 64], [330, 190]]) {
     const pngs = synthPngs(w, h, 3, w + h);
     for (const pixFmt of new Set(Object.values(STREAM_ENCODERS).map(s => s.pixFmt))) {
       const a = filtered(streamFilterIdentity(pixFmt), pngs);
       const b = filtered(streamFilter(pixFmt), pngs);
-      assert.equal(a.length, 3 * w * 2 * (h + 8) * 1.5, `${w}x${h} ${pixFmt}: 帧大小`);
-      assert.ok(a.equals(b), `${w}x${h} ${pixFmt}: 新旧滤镜链的输出不同`);
-      // 切片线程数不改产出(命令行按核数封顶 8,机器不同片数不同)
-      for (const threads of [1, 3]) assert.ok(filtered(streamFilter(pixFmt), pngs, threads).equals(a), `${w}x${h} ${pixFmt}: ${threads} 片的输出不同`);
+      assert.equal(a.length, 3 * w * 2 * (h + 8) * 1.5, `${w}x${h} ${pixFmt}: frame size`);
+      assert.ok(a.equals(b), `${w}x${h} ${pixFmt}: new and old filter chains produce different output`);
+      // Slice thread count does not alter output (CLI caps at 8 by core count, slice count varies by machine)
+      for (const threads of [1, 3]) assert.ok(filtered(streamFilter(pixFmt), pngs, threads).equals(a), `${w}x${h} ${pixFmt}: output differs with ${threads} slices`);
     }
   }
 });
 
-/* ------------------------------------------------------------ mfra 收尾判定 */
+/* ------------------------------------------------------------ mfra finalization check */
 
 const box = (type, size = 8) => { const b = Buffer.alloc(size); b.writeUInt32BE(size, 0); b.write(type, 4, 'latin1'); return b; };
 
-test('endsWithCompleteMfra:恰好以完整的 mfra 收尾才算', () => {
+test('endsWithCompleteMfra: counts only if it ends exactly with a complete mfra', () => {
   const body = [box('ftyp', 16), box('moov', 24), box('moof', 32), box('mdat', 40)];
   assert.equal(endsWithCompleteMfra(Buffer.concat([...body, box('mfra', 20)])), true);
-  assert.equal(endsWithCompleteMfra(Buffer.concat(body)), false, '还没写 trailer');
-  assert.equal(endsWithCompleteMfra(Buffer.concat([...body, box('mfra', 20)]).subarray(0, 16 + 24 + 32 + 40 + 12)), false, 'mfra 只到了一半');
-  assert.equal(endsWithCompleteMfra(Buffer.concat([...body, box('mfra', 20), Buffer.from([0, 0])])), false, 'mfra 后面还有字节');
+  assert.equal(endsWithCompleteMfra(Buffer.concat(body)), false, 'trailer not written yet');
+  assert.equal(endsWithCompleteMfra(Buffer.concat([...body, box('mfra', 20)]).subarray(0, 16 + 24 + 32 + 40 + 12)), false, 'Only half of mfra is present');
+  assert.equal(endsWithCompleteMfra(Buffer.concat([...body, box('mfra', 20), Buffer.from([0, 0])])), false, 'There are bytes after mfra');
   assert.equal(endsWithCompleteMfra(Buffer.alloc(0)), false);
   const large = Buffer.alloc(24); large.writeUInt32BE(1, 0); large.write('mfra', 4, 'latin1'); large.writeBigUInt64BE(24n, 8);
-  assert.equal(endsWithCompleteMfra(Buffer.concat([box('ftyp', 16), large])), true, '64 位尺寸');
+  assert.equal(endsWithCompleteMfra(Buffer.concat([box('ftyp', 16), large])), true, '64-bit size');
   const zero = box('mfra', 8); zero.writeUInt32BE(0, 0);
-  assert.equal(endsWithCompleteMfra(Buffer.concat([box('ftyp', 16), zero])), false, '尺寸 0(到文件尾)不算收尾');
+  assert.equal(endsWithCompleteMfra(Buffer.concat([box('ftyp', 16), zero])), false, 'Size 0 (to end of file) does not count as an ending');
 });
 
-/* ------------------------------------------------------------ 预先拉起的编码进程 */
+/* ------------------------------------------------------------ Pre-spawned encoding processes */
 
 async function encode(pngs, opts) {
   const enc = openStreamSegmentEncoder('ffmpeg', { encoder: 'libx264', fps: 30, ...opts });
@@ -117,52 +123,55 @@ async function encode(pngs, opts) {
   return enc.finish();
 }
 
-test('开关:缺省开,PROMPTCUT_STREAM_PREWARM=0 关', () => {
+test('Switch: on by default, PROMPTCUT_STREAM_PREWARM=0 turns it off', () => {
   assert.equal(streamPrewarmEnabled({}), true);
   assert.equal(streamPrewarmEnabled({ PROMPTCUT_STREAM_PREWARM: '0' }), false);
   assert.equal(streamPrewarmEnabled({ PROMPTCUT_STREAM_PREWARM: '1' }), true);
 });
 
-test('预先拉起的进程:领用后补拉一个,产出和现拉的逐字节相同,finish 交的字节以 mfra 收尾', { skip: !ffmpegOk && '没有 ffmpeg', timeout: 120_000 }, async () => {
+test('Pre-started process: after one is taken another is started to replace it, output is byte-identical to one started on demand, and the bytes handed over by finish end with mfra', { skip: !ffmpegOk && 'No ffmpeg', timeout: 120_000 }, async () => {
   dropStreamEncoderSpares();
   const pngs = synthPngs(320, 180, 15, 99);
   const cold = await encode(pngs, { prewarm: false });
-  assert.equal(streamEncoderSpareCount(), 0, '关着开关不拉备用进程');
+  assert.equal(streamEncoderSpareCount(), 0, 'With the switch off, no spare process is started');
   const first = await encode(pngs, { prewarm: true });
   await new Promise(r => setTimeout(r, 300));
-  assert.equal(streamEncoderSpareCount(), 1, '开一个之后池里补了一个');
+  assert.equal(streamEncoderSpareCount(), 1, 'After opening one, the pool refilled one');
   const second = await encode(pngs, { prewarm: true });
   await new Promise(r => setTimeout(r, 300));
-  assert.equal(streamEncoderSpareCount(), 1, '领走一个又补一个,池里始终只留一个');
+  assert.equal(streamEncoderSpareCount(), 1, 'Each time one is taken another is refilled, so the pool always keeps just one');
   for (const [name, out] of [['cold', cold], ['first', first], ['second', second]]) {
-    assert.ok(endsWithCompleteMfra(out.bytes), `${name}: 以 mfra 收尾`);
+    assert.ok(endsWithCompleteMfra(out.bytes), `${name}: ends with mfra`);
     assert.equal(out.written, 15);
     const { init, segments } = splitFmp4(out.bytes);
-    assert.ok(init.length > 0, `${name}: 有 init`);
+    assert.ok(init.length > 0, `${name}: has init`);
     assert.equal(segments.length, 1);
     const info = segmentInfo(segments[0]);
-    assert.equal(info.sampleCount, 15, `${name}: 15 个样本`);
+    assert.equal(info.sampleCount, 15, `${name}: 15 samples`);
     assert.equal(info.firstSampleIsSync, true);
   }
-  assert.ok(first.bytes.equals(cold.bytes), '预拉的进程产出与现拉的相同');
-  assert.ok(second.bytes.equals(cold.bytes), '领用的备用进程产出与现拉的相同');
+  assert.ok(first.bytes.equals(cold.bytes), 'Output of the pre-started process matches the on-demand one');
+  assert.ok(second.bytes.equals(cold.bytes), 'Output of the spare process that was taken matches the on-demand one');
   dropStreamEncoderSpares();
   assert.equal(streamEncoderSpareCount(), 0);
 });
 
-test('ffmpeg 出错时 finish 照旧报错(备用进程也一样)', { skip: !ffmpegOk && '没有 ffmpeg', timeout: 60_000 }, async () => {
+test('When ffmpeg fails, finish still reports the error as before (same for a spare process)', { skip: !ffmpegOk && 'No ffmpeg', timeout: 60_000 }, async () => {
   dropStreamEncoderSpares();
   for (const prewarm of [false, true, true]) {
     const enc = openStreamSegmentEncoder('ffmpeg', { encoder: 'libx264', fps: 30, prewarm });
     await enc.write(Buffer.from('this is not a png at all'.repeat(64))).catch(() => {});
-    await assert.rejects(enc.finish(), /ffmpeg\(libx264\)退出码|EPIPE|EOF/, `prewarm=${prewarm}`);
+    await assert.rejects(enc.finish(), /ffmpeg\(libx264\) exit code|EPIPE|EOF/, `prewarm=${prewarm}`);
   }
   dropStreamEncoderSpares();
 });
 
-/* ------------------------------------------------------------ 整条命令行 */
+/* ------------------------------------------------------------ Full command line */
 
-/** 改写前(main e27fa520)的完整命令行:输入端缺省探测 5 MB、帧级多线程解码,滤镜链是 `streamFilterIdentity` 那条 */
+/**
+ * Full CLI before rewrite (main e27fa520): default 5 MB probe, frame-level multithreading,
+ * `streamFilterIdentity` chain
+ */
 function legacySegmentArgs(fps = 30) {
   return ['-y', '-hide_banner', '-loglevel', 'error',
     '-reinit_filter', '0', '-f', 'image2pipe', '-c:v', 'png', '-framerate', String(fps), '-i', 'pipe:0',
@@ -174,26 +183,27 @@ function legacySegmentArgs(fps = 30) {
     '-f', 'mp4', 'pipe:1'];
 }
 
-test('整条命令行编出的 fMP4 与改写前逐字节相同', { skip: !ffmpegOk && '没有 ffmpeg', timeout: 180_000 }, () => {
+test('The fMP4 encoded by the whole command line is byte-identical to before the rewrite', { skip: !ffmpegOk && 'No ffmpeg', timeout: 180_000 }, () => {
   const run = (args, pngs) => execFileSync('ffmpeg', args, { input: Buffer.concat(pngs), maxBuffer: 1 << 28, windowsHide: true });
   for (const [w, h] of [[320, 180], [642, 362]]) {
     const pngs = synthPngs(w, h, 15, w * 7 + h);
     const before = run(legacySegmentArgs(30), pngs);
     const after = run(streamSegmentArgs({ encoder: 'libx264', fps: 30 }), pngs);
-    assert.ok(before.length > 1000, `${w}x${h}: 旧命令行有产出`);
-    assert.ok(after.equals(before), `${w}x${h}: 新旧命令行的 fMP4 不同(${after.length} vs ${before.length})`);
+    assert.ok(before.length > 1000, `${w}x${h}: old command line produced output`);
+    assert.ok(after.equals(before), `${w}x${h}: fMP4 differs between new and old command lines (${after.length} vs ${before.length})`);
   }
 });
 
-test('帧一到就开工:还没关 stdin,编码器已经开始出字节', { skip: !ffmpegOk && '没有 ffmpeg', timeout: 60_000 }, async () => {
+test('Starts working as soon as a frame arrives: before stdin is closed, the encoder is already emitting bytes', { skip: !ffmpegOk && 'No ffmpeg', timeout: 60_000 }, async () => {
   dropStreamEncoderSpares();
   const pngs = synthPngs(320, 180, 15, 5);
   const enc = openStreamSegmentEncoder('ffmpeg', { encoder: 'libx264', fps: 30, prewarm: false });
-  // 只喂 3 帧、不关 stdin:改写前 ffmpeg 要先读够 5 MB 才开工,整段凑不够,这里会一直是 0
+  // Feed only 3 frames without closing stdin: before rewrite ffmpeg had to read 5 MB before starting;
+  // not enough for the full segment, so this stays 0
   for (const png of pngs.slice(0, 3)) await enc.write(png);
   const deadline = Date.now() + 20_000;
   while (enc.received === 0 && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
-  assert.ok(enc.received > 0, '喂了 3 帧、stdin 没关,ffmpeg 还一个字节都没出(输入端在攒包)');
+  assert.ok(enc.received > 0, 'Fed 3 frames with stdin not closed, ffmpeg has not emitted a single byte yet (the input side is buffering packets)');
   for (const png of pngs.slice(3)) await enc.write(png);
   const out = await enc.finish();
   const { segments } = splitFmp4(out.bytes);

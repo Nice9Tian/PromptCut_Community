@@ -1,6 +1,8 @@
 /**
- * 网关把一次工具调用拆成两条(实跑:gemini-3.8-flash 经 openlux 的 OpenAI 兼容口):
- * 前一条 set_position 参数为空,后一条参数齐全但名字为空、id 也不同。provider 要把它们合回一次。
+ * The gateway splits one tool call into two (actual run: gemini-3.8-flash via openlux's
+ * OpenAI-compatible endpoint):
+ * the first has empty set_position arguments; the second has complete arguments but an empty name
+ * and a different id. The provider must merge them back into one.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,11 +26,11 @@ async function toolUses(toolCalls) {
   ];
   const p = createProvider({ apiKey: 'k', model: 'm', baseUrl: 'http://x/v1' }, { fetchImpl: fakeFetch(chunks) });
   const out = [];
-  for await (const ev of p.stream([{ role: 'user', content: [{ type: 'text', text: '挪一下' }] }], [], '', undefined)) if (ev.type === 'tool_use') out.push(ev);
+  for await (const ev of p.stream([{ role: 'user', content: [{ type: 'text', text: 'Move it a bit' }] }], [], '', undefined)) if (ev.type === 'tool_use') out.push(ev);
   return out;
 }
 
-test('「有名无参」后面紧跟「无名有参」:合成一次调用', async () => {
+test('"name, no arguments" immediately followed by "arguments, no name": merged into one call', async () => {
   const uses = await toolUses([
     { index: 0, id: 'call_a', type: 'function', function: { name: 'set_position', arguments: '{}' } },
     { index: 1, id: 'call_b', type: 'function', function: { arguments: '{"clipId":"c-6","x":1500,"y":600}' } },
@@ -38,7 +40,7 @@ test('「有名无参」后面紧跟「无名有参」:合成一次调用', asyn
   assert.deepEqual(uses[0].input, { clipId: 'c-6', x: 1500, y: 600 });
 });
 
-test('正常的两个并行调用各自有名字:不合并', async () => {
+test('two normal parallel calls each have a name: not merged', async () => {
   const uses = await toolUses([
     { index: 0, id: 'call_a', type: 'function', function: { name: 'get_project', arguments: '{}' } },
     { index: 1, id: 'call_b', type: 'function', function: { name: 'list_media', arguments: '{}' } },

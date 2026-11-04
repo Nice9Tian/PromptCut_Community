@@ -1,9 +1,10 @@
 /**
- * C3 就绪索引的单测。跑:node --test server/test/ready-index.test.mjs
+ * Unit test for C3 ready index. Run: node --test server/test/ready-index.test.mjs
  *
- * 消息形状是这一层唯一的对外契约(页面照它建 `readyIndex`),所以三种消息的字段
- * 逐字钉死;「每次发全量、不发增量」也在这里保住 —— 发成增量的话,一条消息丢了
- * 页面那张表就永远缺一段,而 SSE 没有补发机制。
+ * Message shape is the only external contract at this layer (the page builds `readyIndex`
+ * from it), so fields of all three message types are nailed down verbatim; "always send full
+ * updates, never deltas" is also preserved here: if sent as deltas, losing a message means that
+ * table on the page is permanently missing a segment, and SSE has no retransmission mechanism.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,9 +17,9 @@ test('tier names map onto the wire kinds (three-way synonym)', () => {
   assert.equal(kindOfTier('local'), 'local');
   assert.equal(kindOfTier('none'), null);
   assert.equal(kindOfTier(undefined), null);
-  // 'stream' 是 R8 的,类型里留位即可
+  // 'stream' is for R8, just reserving a slot in the type is sufficient
   assert.deepEqual(READY_KINDS, ['html', 'local', 'stream']);
-  // 线上的 key:共享档就是共享键;本地档自带一个斜杠(`<entry.key>/<共享键>`)
+  // Key on the wire: shared tier is the shared key; local tier comes with a slash (`<entry.key>/<shared key>`)
   assert.equal(wireSnapshotKey('shared', 'ENTRY', 'KEY'), 'KEY');
   assert.equal(wireSnapshotKey('local', 'ENTRY', 'KEY'), 'ENTRY/KEY');
   assert.equal(wireSnapshotKey('local', undefined, 'KEY'), null);
@@ -33,7 +34,7 @@ test('a new subscriber gets reset first, then one full layer message per layer',
   const { seen } = collect(index);
   assert.equal(seen[0].type, 'reset');
   assert.equal(seen[0].localRev, 7);
-  assert.deepEqual(seen.slice(1).map(m => m.type), ['layer', 'layer'], '先 reset 再 layer');
+  assert.deepEqual(seen.slice(1).map(m => m.type), ['layer', 'layer'], 'reset first, then layer');
   assert.deepEqual(seen[1], { type: 'layer', clipId: 'a', kind: 'html', key: 'KA', ranges: [[0, 3]] });
   assert.deepEqual(seen[2], { type: 'layer', clipId: 'b', kind: 'local', key: 'KB', ranges: [[0, 0]] });
 });
@@ -43,14 +44,16 @@ test('layer messages are always the full range table, and ranges grow as frames 
   const { seen } = collect(index);
   index.addFrames({ clipId: 'a', kind: 'html', key: 'KA', frames: [0, 1, 2, 3] });
   index.addFrames({ clipId: 'a', kind: 'html', key: 'KA', frames: [4, 5, 6, 7] });
-  // 第二条不是「新增 4~7」,是「现在有 0~7」—— 丢了第一条也不会永远缺一段
+  // The second message is not "added 4~7", but "now has 0~7":
+  // losing the first one will not leave a segment permanently missing
   assert.deepEqual(seen.at(-1), { type: 'layer', clipId: 'a', kind: 'html', key: 'KA', ranges: [[0, 7]] });
   index.addFrames({ clipId: 'a', kind: 'html', key: 'KA', frames: [[12, 13]] });
-  assert.deepEqual(seen.at(-1).ranges, [[0, 7], [12, 13]], '真的洞留着');
-  // 同一张卡的 stream 表和 html 表并存、互不覆盖
+  assert.deepEqual(seen.at(-1).ranges, [[0, 7], [12, 13]], 'real gaps are kept');
+  // The stream table and html table for the same card coexist without overwriting each other
   index.addFrames({ clipId: 'a', kind: 'stream', key: 'SA', frames: [[0, 2]] });
   assert.deepEqual(index.list().map(l => `${l.clipId}/${l.kind}`).sort(), ['a/html', 'a/stream']);
-  // 键变了(卡的参数改了)就从头记,不把旧键的区间接上去
+  // If the key changes (card parameters changed), record from scratch;
+  // do not append intervals from the old key
   index.addFrames({ clipId: 'a', kind: 'html', key: 'KA2', frames: [[0, 1]] });
   assert.deepEqual(seen.at(-1), { type: 'layer', clipId: 'a', kind: 'html', key: 'KA2', ranges: [[0, 1]] });
 });
@@ -67,7 +70,7 @@ test('reset clears the table and tells the page to clear its own; done is sent o
   index.markDone();
   assert.deepEqual(seen.at(-1), { type: 'done', localRev: 9 });
   assert.equal(seen.filter(m => m.type === 'done').length, 1);
-  // reset 之后 done 重新武装
+  // After reset, done is rearmed
   index.reset(10);
   index.markDone();
   assert.deepEqual(seen.at(-1), { type: 'done', localRev: 10 });
@@ -77,26 +80,27 @@ test('F5: disk scan stages key → ranges, and nothing is published until the ca
   const index = createReadyIndex();
   const { seen } = collect(index);
   seen.length = 0;
-  // 扫盘只得到「键 → 区间」:目录名是剥掉 clipId 的共享键
+  // Disk scan only yields "key -> interval": directory name is the shared key stripped of clipId
   index.stageByKey({ kind: 'html', key: 'SHARED-KEY', ranges: [[0, 40]] });
   index.stageByKey({ kind: 'local', key: 'ENTRY/BLUR-KEY', ranges: [[0, 4], [9, 9]] });
-  assert.deepEqual(seen, [], '项目没到之前一条 layer 都不发');
+  assert.deepEqual(seen, [], 'no layer is sent before the project arrives');
   assert.deepEqual(index.list(), []);
-  // 项目到位 → 重算 card plan → 用 control.clipId ↔ control.snapshotKey 反查
+  // Project in place -> recalculate card plan -> reverse lookup using control.clipId ↔ control.snapshotKey
   const claimed = index.claim([
     { clipId: 'clip-1', kind: 'html', key: 'SHARED-KEY' },
     { clipId: 'clip-2', kind: 'local', key: wireSnapshotKey('local', 'ENTRY', 'BLUR-KEY') },
     { clipId: 'clip-3', kind: 'html', key: 'NOT-ON-DISK' },
     { clipId: 'clip-4', kind: null, key: 'SHARED-KEY' },
   ], 12);
-  assert.equal(claimed, 2, '盘上没有的键和不产快照的档都不认领');
-  // 先一条 reset,再对每一层发一条全量 layer(C3 本来就是全量语义,不加新端点)
+  assert.equal(claimed, 2, 'keys not on disk and tiers that produce no snapshots are not claimed');
+  // First send a reset, then send a full layer for each layer
+  // (C3 already has full-state semantics, without adding new endpoints)
   assert.deepEqual(seen[0], { type: 'reset', localRev: 12 });
   assert.deepEqual(seen.slice(1), [
     { type: 'layer', clipId: 'clip-1', kind: 'html', key: 'SHARED-KEY', ranges: [[0, 40]] },
     { type: 'layer', clipId: 'clip-2', kind: 'local', key: 'ENTRY/BLUR-KEY', ranges: [[0, 4], [9, 9]] },
   ]);
-  // 之后新连上来的页面直接拿到重建好的那份
+  // Later newly connected pages directly receive the rebuilt copy
   const later = collect(index);
   assert.deepEqual(later.seen.map(m => m.type), ['reset', 'layer', 'layer']);
 });
@@ -114,25 +118,25 @@ test('setLayer publishes a whole table (the group-stream shape carries groupClip
 test('unsubscribing stops delivery and a throwing subscriber cannot block the others', () => {
   const index = createReadyIndex();
   const good = [];
-  index.subscribe(() => { throw new Error('这个订阅者断了'); });
+  index.subscribe(() => { throw new Error('this subscriber is broken'); });
   const off = index.subscribe(m => good.push(m));
   index.addFrames({ clipId: 'a', kind: 'html', key: 'K', frames: [0] });
   assert.equal(good.at(-1).type, 'layer');
   off();
   index.addFrames({ clipId: 'a', kind: 'html', key: 'K', frames: [1] });
   assert.equal(good.at(-1).ranges.length, 1);
-  assert.deepEqual(good.at(-1).ranges, [[0, 0]], '退订之后不再收');
+  assert.deepEqual(good.at(-1).ranges, [[0, 0]], 'nothing is received after unsubscribing');
 });
 
-test('依赖下层的流的层带着 streamKind 与 inputSig 发出去;别的层、别的档位不带;认领没带时留着同键原来那一层的', () => {
+test('the layer of a stream that depends on the layer below is sent out carrying streamKind and inputSig; other layers and other tiers do not carry them; when a claim carries none, the original layer with the same key keeps its own', () => {
   const index = createReadyIndex();
   const { seen } = collect(index);
-  // 发层:四个口子都原样带出去
+  // Publish layer: all four ports are passed through as-is
   index.setLayer({ clipId: 'g', kind: 'stream', key: 'B1', ranges: [[0, 2]], originFrame: 55, streamKind: 'below', inputSig: 's1-abc' });
   assert.deepEqual(seen.at(-1), { type: 'layer', clipId: 'g', kind: 'stream', key: 'B1', ranges: [[0, 2]], originFrame: 55, streamKind: 'below', inputSig: 's1-abc' });
   index.addFrames({ clipId: 'g', kind: 'stream', key: 'B1', frames: [3], originFrame: 55, streamKind: 'below', inputSig: 's1-abc' });
   assert.deepEqual(seen.at(-1), { type: 'layer', clipId: 'g', kind: 'stream', key: 'B1', ranges: [[0, 3]], originFrame: 55, streamKind: 'below', inputSig: 's1-abc' });
-  // 没有签名的只带种类;不认识的种类、不是流的档位都不带
+  // Those without signatures only carry kind; unknown kinds and tiers that are not streams are excluded
   index.setLayer({ clipId: 'h', kind: 'stream', key: 'B2', ranges: [[0, 0]], originFrame: 0, streamKind: 'below' });
   assert.deepEqual(seen.at(-1), { type: 'layer', clipId: 'h', kind: 'stream', key: 'B2', ranges: [[0, 0]], originFrame: 0, streamKind: 'below' });
   index.setLayer({ clipId: 'c', kind: 'stream', key: 'C1', ranges: [[0, 0]], originFrame: 0, streamKind: 'card', inputSig: 's1-zzz' });
@@ -140,17 +144,18 @@ test('依赖下层的流的层带着 streamKind 与 inputSig 发出去;别的层
   index.setLayer({ clipId: 'g', kind: 'html', key: 'H1', ranges: [[0, 0]], streamKind: 'below', inputSig: 's1-abc' });
   assert.deepEqual(seen.at(-1), { type: 'layer', clipId: 'g', kind: 'html', key: 'H1', ranges: [[0, 0]] });
 
-  // 认领(不 reset 的那一种):带了就用认领表的;没带、键没变就留着原来的;签名换了算变了、要重发
+  // Claim (the non-reset kind): use the claim table's if provided; if not provided and key has not
+  // changed, keep the original; if signature changed, treat as changed and resend
   index.stageByKey({ kind: 'stream', key: 'B1', ranges: [[0, 5]] });
   const before = seen.length;
   assert.equal(index.absorb([{ clipId: 'g', kind: 'stream', key: 'B1', originFrame: 55 }]), 1);
   assert.deepEqual(seen.at(-1), { type: 'layer', clipId: 'g', kind: 'stream', key: 'B1', ranges: [[0, 5]], originFrame: 55, streamKind: 'below', inputSig: 's1-abc' });
-  assert.equal(index.absorb([{ clipId: 'g', kind: 'stream', key: 'B1', originFrame: 55, streamKind: 'below', inputSig: 's1-abc' }]), 0, '什么都没变:不重发');
+  assert.equal(index.absorb([{ clipId: 'g', kind: 'stream', key: 'B1', originFrame: 55, streamKind: 'below', inputSig: 's1-abc' }]), 0, 'nothing changed: not resent');
   assert.equal(index.absorb([{ clipId: 'g', kind: 'stream', key: 'B1', originFrame: 55, streamKind: 'below', inputSig: 's1-new' }]), 1);
   assert.equal(seen.at(-1).inputSig, 's1-new');
   assert.equal(seen.length, before + 2);
 
-  // 认领(先 reset 的那一种)
+  // Claim (the kind that resets first)
   const fresh = createReadyIndex();
   fresh.stageByKey({ kind: 'stream', key: 'B1', ranges: [[0, 1]] });
   const got = collect(fresh);

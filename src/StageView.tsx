@@ -44,11 +44,14 @@ import {
 } from "./render/placeholderHost";
 
 /*
- * 在线浏览器模式(product/platforms.md「在线浏览器模式」):在线构建(`ONLINE`)恒开;桌面上由舞台地址的 `platform=browser`
- * 显式打开(截图和探针用,编辑页的同名参数经 `stageSrc` 转发过来)。开着时这台设备跑不了的卡(用户卡、素材效果卡)不挂组件,
- * 照贴预渲染结果,什么都贴不上才显示 `unsupported` 占位(C10 契约第 9 节)。
+ * Online browser mode (product/platforms.md, "Online browser mode"): always on in the online build
+ * (`ONLINE`); on desktop it is turned on explicitly by `platform=browser` in the stage address
+ * (for screenshots and probes; the editor page's parameter of the same name is forwarded through
+ * `stageSrc`). When on, cards this device cannot run (user cards, media effect cards) do not mount
+ * their component but get the prerender output pasted instead, and only if nothing can be pasted
+ * is an `unsupported` placeholder shown (C10 contract, section 9).
  */
-try { setOnlineBrowserMode(ONLINE || new URLSearchParams(location.search).get("platform") === "browser"); } catch { /* 没有 location:导出 / 单测 */ }
+try { setOnlineBrowserMode(ONLINE || new URLSearchParams(location.search).get("platform") === "browser"); } catch { /* No location: export / unit tests */ }
 import { PLACEHOLDER_SHOW_DELAY_MS } from "./render/placeholder/contract";
 import { measureLocalContentBox, type CanvasPixels } from "./render/contentBox";
 import { createGlHost } from "./render/gl/glHost";
@@ -72,98 +75,121 @@ import "./cards";
 import { tr as trText } from "./i18n/index.ts";
 
 /**
- * 渲染面(?stage=1)。编辑器把它放在一个 iframe 里,只下发「现在是时间轴的第几秒」,
- * 由它渲染出那一秒的画面。它自己不按墙上时钟播:时间被 stageClock 接管,
- * 卡片的 Motion 帧循环和 rAF 都由这里显式推进,所以
- *   - 拖播放头到片段中间 = 直接出那一刻的画面(不会从头重播一遍进场动画)
- *   - 播放 = 编辑器每帧下发新的 t,这里推进一帧
- * 和导出视图(?export=1)是同一套办法、同一份卡片代码,预览所见 = 导出所得。
+ * The render surface (?stage=1). The editor puts it in an iframe and only sends down "which second
+ * of the timeline it is now"; the surface renders the picture of that second. It does not play by
+ * the wall clock: time is taken over by stageClock, and the card's Motion frame loop and rAF are
+ * both advanced explicitly here, so
+ *   - dragging the playhead into the middle of a clip = directly produces the picture of that
+ *     moment (the entrance animation is not replayed from the start)
+ *   - playing = the editor sends a new t every frame, and this advances one frame
+ * It is the same approach and the same card code as the export view (?export=1), so what the
+ * preview shows = what the export gives.
  *
- * **和父页只经 postMessage RPC 说话(E0,见 render/stageRpc.ts),时间一律秒。**
- * 角色(`front` / `back`)是运行时状态(J4):同一份代码,`front` 是可见的播放器舞台,
- * `back` 是探针 / 补跑用的后台舞台。**查询串里的 `id=A` / `id=B` 只是实例名,不是角色**
- * (E1);默认角色是 `front`,父页握手之后立刻用 `setRole` 把两个实例各就各位。
- * `render` 和带 `probe: true` 的 `setTime` 有**角色闸门**:不是 `back` 就回
- * `{ aborted: true, reason: 'role' }`,父页当错误、不重发。
+ * **It talks to the parent page only through postMessage RPC (E0, see render/stageRpc.ts), and
+ * time is always in seconds.**
+ * The role (`front` / `back`) is runtime state (J4): same code, `front` is the visible player
+ * stage, and `back` is the background stage used for probes / catch-up runs. **`id=A` / `id=B` in
+ * the query string are only instance names, not roles** (E1); the default role is `front`, and
+ * right after the handshake the parent page uses `setRole` to put the two instances in place.
+ * `render` and `setTime` with `probe: true` have a **role gate**: if the role is not `back` they
+ * reply `{ aborted: true, reason: 'role' }`, and the parent page treats it as an error and does
+ * not resend.
  *
- * 两条路:
- *   - `setTime(t)`:暂停 / 拖动时父页发它。**不重挂载、不递增 playToken**:时钟拨过去、提交 React、
- *     钉动画 —— 任何 dt 都一样(唯一例外:往前且不到半秒,按连续播放同步推几帧)。
- *     stateful 卡往回拖 / 远跳之后的组件状态是错的,第 4 步由快照平面盖住(C3 / C4);
- *     direct 卡、素材层、`data-pc-local-frame`、命中测试都跟着它走。
- *   - `render(t, { jump })`:只给后台舞台(K1 探针):重挂载 + 从挂载帧逐帧推到 t,
- *     Promise 在推完之后才 resolve;被新的 render / setProject 掐掉时按 `superseded` / `project` 回。
+ * Two paths:
+ *   - `setTime(t)`: sent by the parent page when pausing / dragging. **No remount, no increment of
+ *     playToken**: the clock is moved over, React commits, animations are pinned; any dt behaves
+ *     the same (the only exception: moving forward by less than half a second, which advances a
+ *     few frames synchronously as continuous playback).
+ *     After a stateful card is dragged backward / jumps far, its component state is wrong, and
+ *     step 4 covers it with the snapshot plane (C3 / C4);
+ *     direct cards, the media layer, `data-pc-local-frame` and hit testing all follow it.
+ *   - `render(t, { jump })`: only for the background stage (K1 probe): remount, then advance frame
+ *     by frame from the mount frame to t; the Promise resolves only after the advance is done; when
+ *     cut off by a new render / setProject it replies `superseded` / `project`.
  *
- * `?preview=legacy`:保留旧路(setProject 立刻按跳转重算这一帧),给对比和回退用。
+ * `?preview=legacy`: keeps the old path (setProject recomputes this frame immediately by jump), for
+ * comparison and fallback.
  */
 
 const isStageRoute = typeof window !== "undefined" && new URLSearchParams(location.search).has("stage");
 const LEGACY = typeof window !== "undefined" && new URLSearchParams(location.search).get("preview") === "legacy";
 /**
- * 舞台内容走哪条路(R3)。**`?preview=stage` 由父页写进 iframe 的 src**
- * (`editor/previewMode.ts` 的 `stageSrc`),只有真的开了双舞台的那一次才带。
+ * Which path the stage content takes (R3). **`?preview=stage` is written into the iframe's src by
+ * the parent page** (`stageSrc` in `editor/previewMode.ts`), and is only included when dual stages
+ * are really on.
  *
- * 带了 = 渲 `FrameScene` 的 **live 变体**:素材层在舞台里(E7 第 1 条)、六个平面 prop 生效。
- * 不带(缺省,今天用户手里那份编辑台)= 照旧只渲 `Stage`,一个字都不变。
+ * Included = render the **live variant** of `FrameScene`: the media layer is in the stage (E7,
+ * item 1), and the six plane props take effect.
+ * Not included (the default, the editor in users' hands today) = render only `Stage` as before,
+ * not a single word changed.
  */
 const LIVE = typeof window !== "undefined" && new URLSearchParams(location.search).get("preview") === "stage";
 
 /**
- * 重卡被点名抑制、它的轨道流还没画出第一帧时,先不藏它原来的画面,最多等这么久(mechanism/rendering.md「兜底顺序」:
- * 「起播和跳转后的第一拍,流的第一帧画出来之前不藏这张卡原来的画面」);到时还没有就照常藏起来,这一层落到占位符。
- * 流的第一帧实测 80～130 毫秒出来(取清单、取分段、建解码器;原型 `claude/scrub-streams` 量的)。
+ * When a heavy card is named for suppression and its track stream has not yet drawn the first
+ * frame, do not hide its original picture yet; wait at most this long (mechanism/rendering.md,
+ * "Fallback order": "on the first beat after playback starts or a jump, do not hide the card's
+ * original picture before the stream's first frame is drawn"). If there is still nothing by then,
+ * hide it as usual, and this layer falls back to the placeholder.
+ * The stream's first frame measured 80-130 ms (fetching the manifest, fetching segments, building
+ * the decoder; measured by the prototype `claude/scrub-streams`).
  */
 const STREAM_FIRST_WAIT_MS = 500;
 
 /**
- * K4 的节拍按**绝对时刻**排:`nextDue = playStart + n × 1000 / fps`。等到 `nextDue − 这个值`
- * 就开工 —— 真 rAF 的粒度是一个垂直同步(60 Hz 上 16.6 ms),差这一点点不该再多等一整帧。
+ * The K4 beats are scheduled by **absolute time**: `nextDue = playStart + n × 1000 / fps`. Start
+ * working once it is `nextDue − this value`: real rAF has the granularity of one vertical sync
+ * (16.6 ms at 60 Hz), and being short by this little should not wait a whole extra frame.
  */
 const BEAT_SLACK_MS = 1;
 
 /**
- * 武装停(`pause({ atSec })`)的兜底(真墙钟,E4b)。武装的那一拍正常情况下几十毫秒就到,
- * 但要是循环因为别的原因卡住了,RPC 不能永不回包 —— 超时按「循环此刻停在哪儿」回。
+ * Fallback for the armed stop (`pause({ atSec })`) (real wall clock, E4b). Normally the armed beat
+ * arrives within tens of milliseconds, but if the loop gets stuck for some other reason, the RPC
+ * must not never reply: on timeout it replies with "where the loop is stopped right now".
  */
 const ARM_TIMEOUT_MS = 5000;
 
-/** 按片段追帧每推这么多步就让出一个宏任务(E4 的调用约定) */
+/** Per-clip frame catch-up yields a macrotask every this many steps (E4 calling convention) */
 const CATCHUP_YIELD_STEPS = 8;
 
-/** E3:拖动中向后重推节流到每 100 ms 至多一次,其间保持上一状态 */
+/** E3: backward re-advance during dragging is throttled to at most once per 100 ms, keeping the previous state in between */
 const SCRUB_REPUSH_MS = 100;
-// 时间必须在任何卡片挂载之前接管
+// Time must be taken over before any card mounts
 const clock = isStageRoute ? installStageClock() : null;
 const pinner = createAnimationPinner();
 
-/** 时间差小于这个值(秒)且往前走,当成连续播放,只推进不重挂载 */
+/** If the time difference is below this value (seconds) and moves forward, treat it as continuous playback: only advance, no remount */
 const CONTINUOUS_MAX = 0.5;
 
-/** 改参数停手多久之后重算这一帧(毫秒)—— 只在 legacy 路上用 */
+/** How long to wait after parameter edits stop before recomputing this frame (milliseconds); only used on the legacy path */
 const SETTLE_MS = 200;
 
-/** 「这一帧长什么样」只取决于这些;它变了才需要重挂载重跑,改卡片参数不算(legacy 路) */
+/** What "this frame looks like" depends only on these; only when they change is a remount and rerun needed, and changing card parameters does not count (legacy path) */
 function layoutKeyOf(p: Project): string {
   const clips = flattenOverlay(p).clips.map((c) => `${c.id}:${c.cardId}:${c.start}:${c.end}`).join("|");
   return `${p.width}x${p.height}#${p.themeId}#${clips}`;
 }
 
-/** 真墙钟:接管之后 performance.now 是舞台时间,量耗时要用 stageClock 留下的那份 */
+/** Real wall clock: after the takeover performance.now is stage time, so to measure elapsed time use the copy that stageClock left behind */
 const realNow = () => (window.__pcRealNow ?? (() => Date.now()))();
-/** 探针只需跨一个真实任务边界让异步 DOM 更新落地；后台 iframe 的真实 rAF 可能被节流到每秒一次。 */
+/** The probe only needs to cross one real task boundary to let async DOM updates land; the real rAF of a background iframe may be throttled to once per second. */
 const probeTaskBoundary = () => new Promise<void>((resolve) => {
   const channel = new MessageChannel();
   channel.port1.onmessage = () => { channel.port1.close(); channel.port2.close(); resolve(); };
   channel.port2.postMessage(null);
 });
 /**
- * 等一次真帧,但**不许无限等**(K4 的节拍循环用)。
+ * Wait for one real frame, but **never wait forever** (used by the K4 beat loop).
  *
- * 跨源 iframe 被浏览器判成「不可见」时(滚出视口、被整块盖住、窗口挪到屏幕外)rAF 会被
- * 节流到零 —— 实测 `editor-preview-smoke --stage` 里可见舞台走完第一拍就再也没有下一帧,
- * 节拍循环永远挂在这里:`pause()` 回不了包、`play()` 等不到上一轮收摊、K5 的武装停等不到
- * `frame(T)`,整条链一起僵住。总规则是「永远不等」,所以超时就当这一帧已经画过,
- * 循环照常往下走(画面来不及渲是允许的退化,循环僵死不是)。
+ * When a cross-origin iframe is judged "invisible" by the browser (scrolled out of the viewport,
+ * fully covered, window moved off screen), rAF is throttled to zero: measured in
+ * `editor-preview-smoke --stage`, the visible stage finishes its first beat and then never gets
+ * another frame, and the beat loop hangs here forever: `pause()` cannot reply, `play()` cannot
+ * wait for the previous round to wrap up, K5's armed stop cannot wait for `frame(T)`, and the
+ * whole chain freezes together. The overall rule is "never wait forever", so on timeout we treat
+ * this frame as already drawn and the loop carries on as usual (a frame that cannot be rendered in
+ * time is an acceptable degradation; a dead loop is not).
  */
 const realRafOrAfter = (ms: number) => new Promise<boolean>((resolve) => {
   let done = false;
@@ -172,15 +198,18 @@ const realRafOrAfter = (ms: number) => new Promise<boolean>((resolve) => {
   (window.__pcRealSetTimeout ?? window.setTimeout.bind(window))(() => finish(false), ms);
 });
 
-/** 连着这么多拍都等不到真帧,就认定这个 iframe 被节流了,此后不再为它等 */
+/** If this many beats in a row cannot get a real frame, conclude that this iframe is throttled, and stop waiting for it from then on */
 const RAF_MISS_GIVEUP = 3;
-/** 判定被节流之后,每拍只象征性地让一个宏任务(Motion 解析关键帧要一个任务边界) */
+/** After it is judged throttled, each beat only yields one macrotask nominally (Motion needs a task boundary to parse keyframes) */
 const RAF_GIVEUP_MS = 4;
 /**
- * **舞台自身的墙钟定时器一律用真实的**(E4b)。`window.setTimeout` 被 `stageClock` 换成了
- * 登记在虚拟时钟上的 fake timer —— 暂停态虚拟时钟不动,用它的话 `.pc-awaiting` 的 500 ms 兜底
- * 一辈子不响、卡片永久隐身;legacy 那条 `SETTLE_MS` 防抖同理会永远不触发。
- * 虚拟定时器的 id 从 1e9 起,所以被接管后的 `clearTimeout` 对真 id 会自己转交回去,直接用即可。
+ * **The stage's own wall-clock timers always use the real ones** (E4b). `window.setTimeout` has
+ * been replaced by `stageClock` with a fake timer registered on the virtual clock: the virtual
+ * clock does not move while paused, so if it were used, the 500 ms fallback of `.pc-awaiting` would
+ * never fire and the card would stay invisible forever; the legacy `SETTLE_MS` debounce would
+ * likewise never trigger.
+ * Virtual timer ids start from 1e9, so after the takeover `clearTimeout` hands real ids back on its
+ * own; just use it directly.
  */
 const realSetTimeout = (cb: () => void, ms: number): number =>
   (window.__pcRealSetTimeout ?? window.setTimeout.bind(window))(cb, ms);
@@ -189,8 +218,10 @@ const isProjectPatch = (v: unknown): v is ProjectPatch =>
   !!v && typeof v === "object" && (((v as ProjectPatch).kind === "full" && "project" in (v as object)) || ((v as ProjectPatch).kind === "tracks" && "order" in (v as object)));
 
 /**
- * 两份项目之间变了的卡片段(按对象引用比:store 是不可变更新,没动过的 clip 引用不变)。
- * 新增 / 删除的也算变了。只看卡片段:素材段由视频层画,和舞台无关。(legacy 路用)
+ * The card clips that changed between two projects (compared by object reference: the store updates
+ * immutably, and the reference of an untouched clip does not change). Added / deleted ones count
+ * as changed too. Only card clips are looked at: media clips are drawn by the video layer and have
+ * nothing to do with the stage. (Used by the legacy path)
  */
 function changedCardClips(prev: Project | null, next: Project): { id: string; start: number; end: number }[] {
   const before = new Map<string, unknown>();
@@ -220,11 +251,11 @@ export default function StageView() {
   const [t, setT] = useState(0);
   const [token, setToken] = useState(1);
   /*
-   * 实体模式开关。只有 ?stage=1&proxy=1 这条路能打开(见 render/solidMode.ts),
-   * 导出页 ?export=1 拿不到它 —— 退化方向必须是「慢但正确」。
+   * Solid mode switch. Only the ?stage=1&proxy=1 path can turn it on (see render/solidMode.ts), and
+   * the export page ?export=1 cannot get it: the direction of degradation must be "slow but correct".
    */
   const [proxy, setProxy] = useState(false);
-  /** 场景根:带 data-pc-scene 的那个 relative div。实体几何(solid.ts)的一切查询都从它出发 */
+  /** Scene root: the relative div with data-pc-scene. Every query of the solid geometry (solid.ts) starts from it */
   const rootRef = useRef<HTMLDivElement>(null);
   const ref = useRef({
     project: null as Project | null,
@@ -235,121 +266,143 @@ export default function StageView() {
     role: "front" as StageRole,
     job: undefined as BackJob | undefined,
     wantedSettle: false,
-    /** K2 的分派表(已回填成 `Set`)+ K1 的每卡记录。查询走下面的 `pipelineOf` */
+    /** The K2 dispatch table (already backfilled into a `Set`) + the K1 per-card record. Queries go through `pipelineOf` below */
     plan: null as StagePlan | null,
     /*
-     * 下面这几个集合**一律整份替换,不就地改**:`Stage` 靠「上一次 render 的 suppressed 集合」
-     * 判「谁刚进入抑制」,就地 mutate 的话它看到的前后两份是同一个对象,永远判不出变化。
+     * The sets below are **always replaced as a whole, never mutated in place**: `Stage` relies on "the
+     * suppressed set of the last render" to decide "who just entered suppression"; if it is mutated
+     * in place, the before and after copies it sees are the same object, and it can never detect a
+     * change.
      */
     snapshots: new Map<string, string>() as ReadonlyMap<string, string>,
     /**
-     * 实际生效的抑制集合 = 父页发来的(`parentSuppressed`)减去单舞台停下追一帧正在画 / 已画好的(`settleLive`)。
-     * 读抑制的地方(渲染、占位符、钉动画要跳过谁)一律读这一份;两份源头变了由 `applySuppressed` 重算。
+     * The suppressed set actually in effect = what the parent page sent (`parentSuppressed`) minus what
+     * the single-stage settle catch-up is drawing / has drawn (`settleLive`). Every place that reads
+     * suppression (rendering, placeholders, who to skip when pinning animations) reads this one copy;
+     * when either of the two sources changes, `applySuppressed` recomputes it.
      */
     suppressed: new Set<string>() as ReadonlySet<string>,
-    /** 父页经 `setSuppressed` 发来的那一份(原样) */
+    /** The copy the parent page sent via `setSuppressed` (as is) */
     parentSuppressed: new Set<string>() as ReadonlySet<string>,
     /**
-     * 单舞台停下追当前一帧(`settleLayers`,`render/settleFrame.ts`):正在画和已经画好的层。它们不再按父页的抑制藏起来;
-     * 下一次 `setTime` / `play` / `setRole` 清空(下一次播放回到播放时的样子)。没画好(被打断)的从这里拿掉,回到抑制(兜底)。
+     * Single-stage settle catch-up to the current frame (`settleLayers`, `render/settleFrame.ts`): the
+     * layers being drawn and already drawn. They are no longer hidden by the parent page's suppression;
+     * cleared by the next `setTime` / `play` / `setRole` (the next playback returns to how it looks
+     * during playback). Those that are not drawn (interrupted) are removed from here and go back to
+     * suppression (fallback).
      */
     settleLive: new Set<string>() as ReadonlySet<string>,
-    /** 上一次停下追一帧的结果(诊断 `__pcStageDiag().lastSettle`) */
+    /** The result of the last settle catch-up (diagnostics: `__pcStageDiag().lastSettle`) */
     lastSettle: null as SettleResult | null,
     streamPlanes: [] as readonly StreamPlaneGroup[],
     /**
-     * 父页点名抑制了、挂着流平面、但流还没画出第一帧的卡 → 从什么时候起等的(真实毫秒)。这段时间**不藏它原来的画面**
-     * (藏了那一层就是空的),等流画出来(`StreamPlayer` 的 `onShowingChange`)或 `STREAM_FIRST_WAIT_MS` 到了再藏。
+     * For a card that the parent page named for suppression, that has a stream plane attached, but
+     * whose stream has not yet drawn the first frame → since when it has been waiting (real
+     * milliseconds). During this time **its original picture is not hidden** (hiding it would leave
+     * that layer empty); hide it once the stream is drawn (`onShowingChange` of `StreamPlayer`) or
+     * `STREAM_FIRST_WAIT_MS` is reached.
      */
     streamWaiting: new Map<string, number>() as ReadonlyMap<string, number>,
     streamWaitTimer: 0,
-    /** 停下追帧被上面那一条推后的卡:流的第一帧画出来(或到时)再起步,这之前露着的是跳之前那一刻的画面 */
+    /** Cards whose settle catch-up was postponed by the item above: start once the stream's first frame is drawn (or on timeout); until then, what is shown is the picture from the moment before the jump */
     deferredSettle: new Map<string, { target: number; fps: number; gen: number }>(),
-    /** 组流里先追上的成员:留在 `settling` 里(不可见、时间钉在目标帧),等同组此刻在场的都追上了一起露出来 */
+    /** Members of a group stream that catch up first: kept in `settling` (invisible, time pinned at the target frame), and revealed together once everything in the same group that is present now has caught up */
     settledHeld: new Set<string>() as ReadonlySet<string>,
-    /** 这一帧的快照还没到、先藏着等的片段(E0 的 `setTime({ awaiting })`) */
+    /** Clips whose snapshot for this frame has not arrived yet and are hidden while waiting (`setTime({ awaiting })` of E0) */
     awaiting: new Set<string>() as ReadonlySet<string>,
-    /** 正在用子树虚拟时间追帧的片段 → 它此刻的全局舞台毫秒(K5 第一路,R5 才填) */
+    /** Clips currently doing frame catch-up with subtree virtual time → their current global stage milliseconds (K5 first path, only filled in R5) */
     settling: new Map<string, number>() as ReadonlyMap<string, number>,
-    /** K3:按片段重挂载的代数(空表时 `Stage` 退回整舞台 playToken) */
+    /** K3: the generation of per-clip remounts (when the table is empty, `Stage` falls back to the whole-stage playToken) */
     remountGen: new Map<string, number>() as ReadonlyMap<string, number>,
-    /** 正在跑的按片段追帧(K3(a) / K3(b) / K5 第一路共用一套驱动) */
+    /** Per-clip frame catch-up currently running (K3(a) / K3(b) / K5 first path share one driver) */
     catchUps: new Map<string, { clipId: string; stageMs: number; targetMs: number; stepMs: number; announce: boolean; gen: number }>(),
-    /** 这个片段上一次的目标帧号(K3(a′):目标帧变小 = 向后跳,要先走重挂载定位配方) */
+    /** The previous target frame number of this clip (K3(a′): a smaller target frame = a backward jump, which must first take the remount-and-locate recipe) */
     lastTargetFrame: new Map<string, number>(),
-    /** 这个片段上一次重推的真实时刻(E3:拖动中向后重推节流到每 100 ms 至多一次) */
+    /** The real time of this clip's previous re-advance (E3: backward re-advance during dragging is throttled to at most once per 100 ms) */
     repushAt: new Map<string, number>(),
-    /** 上一拍活跃的卡(K3(b):播放头**刚进入**哪张卡) */
+    /** The cards active on the previous beat (K3(b): which card the playhead **just entered**) */
     lastActive: new Set<string>() as ReadonlySet<string>,
     scrubbing: false,
     playing: false,
     mediaT: 0,
     localHashes: [] as readonly string[],
-    /** K4 的节拍循环停着没有(`setRole('back')` / `pause()` 要能停它) */
+    /** Whether the K4 beat loop is stopped (`setRole('back')` / `pause()` must be able to stop it) */
     beatPaused: true,
-    /** 循环真的还在跑(`pause()` 置了 `beatPaused` 之后本拍还要走完) */
+    /** Whether the loop is really still running (after `pause()` sets `beatPaused`, the current beat still has to finish) */
     beatRunning: false,
-    /** 最后一拍的 `sec`:`pause()` 回包的 `stoppedAt` */
+    /** The `sec` of the last beat: the `stoppedAt` in the `pause()` reply */
     beatLastSec: 0,
-    /** 最后一拍的**帧序号**(武装停按它比,不比浮点) */
+    /** The **frame number** of the last beat (the armed stop compares by it, not by floating point) */
     beatLastFrame: -1,
-    /** 武装停(`pause({ atSec })`):post 完这一拍就停 */
+    /** Armed stop (`pause({ atSec })`): stop once this beat has been posted */
     beatArmed: null as { frame: number; atSec: number; resolve: (r: PlayReply) => void; timer: number } | null,
-    /** 等循环停下来的那些 `pause()` 调用 */
+    /** The `pause()` calls waiting for the loop to stop */
     beatWaiters: [] as ((r: PlayReply) => void)[],
-    /** K6 的一秒窗口:每拍的总耗时和每张卡的耗时(都用 `__pcRealNow`) */
+    /** The K6 one-second window: the total time of each beat and the time of each card (all using `__pcRealNow`) */
     k6: createK6State(),
-    /** 这一拍每张卡的 React 渲染耗时(`<Profiler>` 报的,每拍清空) */
+    /** The React render time of each card on this beat (reported by `<Profiler>`, cleared every beat) */
     cardCost: new Map<string, number>(),
     pending: null as PendingRender | null,
   });
   /**
-   * 平面状态(快照 / 抑制 / 流 / 等待 / 追帧)改了就敲一下,让这一帧重渲。
-   * 真值放在 `ref.current` 里 —— RPC 方法要能**同步**读到最新值,React state 做不到;
-   * 而渲染只要一个「变了」的信号,读的仍是 `ref.current`。
+   * Poke it whenever plane state (snapshot / suppression / stream / awaiting / catch-up) changes, so
+   * this frame re-renders. The source of truth lives in `ref.current`: RPC methods must be able to
+   * read the latest value **synchronously**, which React state cannot do; rendering only needs a
+   * "changed" signal, and still reads `ref.current`.
    */
   const [, bumpPlanes] = useReducer((n: number) => n + 1, 0);
   /**
-   * 第一路追帧的代数(K5):`setRole('back')` 和任何新的 `setTime` / `play` / `setProject`
-   * 都递增它,把可见舞台里正在进行的子树追帧中止掉。R5 往里填实现时不用再动这里。
+   * The generation of the first-path catch-up (K5): `setRole('back')` and any new `setTime` / `play` /
+   * `setProject` all increment it, aborting the subtree catch-up in progress in the visible stage.
+   * When R5 fills in the implementation, this place does not need to be touched again.
    */
   const catchUpGen = useRef(0);
-  /** 落定补拍的代数:又渲了一帧就作废上一次挂着的补拍(见 settle 的说明) */
+  /** The generation of the settle follow-up shot: when another frame is rendered, the follow-up shot left pending last time is invalidated (see the notes on settle) */
   const settleGen = useRef(0);
-  /** 渲染代数:又来一次渲染 / 换项目就作废上一次还在飞的异步补跑;和 RPC 请求一一对应 */
+  /** The render generation: when another render comes in / the project is switched, the async catch-up run still in flight from last time is invalidated; it corresponds one to one with RPC requests */
   const renderGen = useRef(0);
   /**
-   * 换了几次项目。两趟布尔探针那一支不走 `abortPending`(它自己 `return`,不是 resolve
-   * 挂着的那个 pending),所以要另有一样东西分得清「被 `setProject` 掐的」和「被新 `render`
-   * 掐的」—— 两者的重发规矩不一样(E0:`'project'` 重发,`'superseded'` 丢弃)。
+   * How many times the project has been switched. The two-pass boolean probe branch does not go
+   * through `abortPending` (it `return`s on its own, rather than resolving the pending one that is
+   * hanging), so something else is needed to tell apart "cut off by `setProject`" from "cut off by a
+   * new `render`": their resend rules differ (E0: `'project'` is resent, `'superseded'` is dropped).
    */
   const projectGen = useRef(0);
 
   /*
-   * 卡片图(H3):素材效果卡的输入在这里解。projectCardGraph 对悬空输入会 throw
-   * (删片段不清 cardNodes),所以包 try —— 一张坏卡不能让整台舞台卸载。
-   * 放在 `if (!project) return null` 之前:hooks 不能条件调用。
+   * Card graph (H3): the inputs of media effect cards are resolved here. projectCardGraph throws on a
+   * dangling input (deleting a clip does not clean up cardNodes), so wrap it in try: one bad card must
+   * not unmount the whole stage. Placed before `if (!project) return null`: hooks cannot be called
+   * conditionally.
    */
   /*
-   * 卡片代码换了(热更新在 `cards/index.ts` 接住、重装了整套卡片,C6.6 集成 3b):本组件不在热更新链上,
-   * 靠这个版本号重渲,卡片按新定义重新挂上;卡片图也按新定义重解。项目、时间、RPC 都不动。
+   * Card code changed (hot reload is caught in `cards/index.ts`, which reinstalled the whole set of cards,
+   * C6.6 integration 3b): this component is not on the hot-reload chain, so it re-renders on this version
+   * number, the cards are mounted again with the new definitions, and the card graph is re-resolved with
+   * the new definitions too. Project, time and RPC stay untouched.
    */
   const cardsGen = useSyncExternalStore(onCardsUpdated, cardsVersion, cardsVersion);
-  // 按新卡重渲提交之后告诉父页换到了哪一版(父页等两个舞台都报到才排重测,`editor/stageCards.ts`)
+  // After the re-render for the new cards is committed, tell the parent page which version we switched to
+  // (the parent page waits for both stages to report in before scheduling the re-measurement,
+  // `editor/stageCards.ts`)
   useEffect(() => {
     if (cardsGen > 0) postStageCards(cardsStamp());
   }, [cardsGen]);
-  // 在线舞台里运行时载入的用户卡与素材效果卡换了一批(`online/cardRuntime/stageRuntime.ts`):卡片图按新定义重解。桌面运行环境里这个数恒为 0
+  // The user cards and media effect cards loaded at runtime in the online stage changed
+  // (`online/cardRuntime/stageRuntime.ts`): the card graph is re-resolved with the new definitions.
+  // In the desktop runtime this number is always 0
   const runtimeGen = useSyncExternalStore(onRuntimeCardsChanged, runtimeCardsGen, runtimeCardsGen);
   const graph = useMemo(() => {
     if (!project) return undefined;
     try {
-      // 变速段的素材节点补上倍率(kernel/clipTime.mjs 的 withMediaRates;没有变速段时原样)
+      // Add the rate to media nodes of speed-change segments (withMediaRates in kernel/clipTime.mjs;
+      // unchanged when there are no speed-change segments)
       return withMediaRates(project, projectCardGraph(project, getCard));
     } catch {
       return undefined;
     }
-    // cardsGen:卡片定义换了,图也要重解;runtimeGen:在线舞台里运行时载入的卡换了(桌面恒为 0)
+    // cardsGen: card definitions changed, so the graph must be re-resolved; runtimeGen: the cards loaded at
+    // runtime in the online stage changed (always 0 on desktop)
   }, [project, cardsGen, runtimeGen]);
 
   useEffect(() => {
@@ -361,9 +414,10 @@ export default function StageView() {
   }, []);
 
   /**
-   * 全局钉动画时要跳过谁(K5 第一路 / E7 第 5 条):正在用子树虚拟时间追帧(`.pc-settling`)
-   * 和被抑制(`.pc-suppressed`)的片段,它们的动画不能被全局时钟拨回去。
-   * 收的是**包裹层**(`[data-pc-clip]`),`pinner.sync` 对每条动画取目标元素往上最近的那个查表。
+   * Who to skip when pinning animations globally (K5 path 1 / E7 item 5): clips that are doing frame
+   * catch-up with subtree virtual time (`.pc-settling`) and clips that are suppressed (`.pc-suppressed`).
+   * Their animations must not be set back by the global clock. What is collected is the **wrapper layer**
+   * (`[data-pc-clip]`); for each animation, `pinner.sync` looks up the nearest one above the target element.
    */
   const skipWrappers = useCallback((): ReadonlySet<Element> | undefined => {
     const { settling, suppressed } = ref.current;
@@ -379,9 +433,11 @@ export default function StageView() {
   }, []);
 
   /**
-   * 素材层画出一帧了(K5 第 (4) 步)。**只有 `back` 报**:父页要的是「后台舞台的素材也到位了,
-   * 可以互换」这一条;可见舞台在播放时每帧都有新的视频帧,照报就是每秒几十条 postMessage。
-   * 父页按 `event.source` 只认当前 `back` 发来的 `mediaReady`,这里再把源头收一道。
+   * The media layer has drawn a frame (K5 step (4)). **Only `back` reports it**: what the parent page needs
+   * is the single fact "the media of the background stage is also in place, so the stages can be swapped".
+   * The visible stage gets a new video frame every frame during playback, so reporting each one would mean
+   * dozens of postMessage calls per second. The parent page only accepts a `mediaReady` sent by the current
+   * `back` according to `event.source`, and here we filter at the source once more.
    */
   const onMediaFrame = useCallback(() => {
     if (ref.current.role !== "back") return;
@@ -389,8 +445,9 @@ export default function StageView() {
   }, []);
 
   /**
-   * 这一拍这张卡花了多少毫秒(K6)。`FrameScene` 的 live 路给每个片段套了一个
-   * `<Profiler>`,一拍里同一个片段可能提交不止一次,所以是累加;每拍开头清空。
+   * How many milliseconds this card took in this tick (K6). The live path of `FrameScene` wraps every clip
+   * in a `<Profiler>`, and the same clip may commit more than once within a tick, so the values are
+   * accumulated; they are cleared at the start of each tick.
    */
   const onCardCost = useCallback((clipId: string, ms: number) => {
     const cur = ref.current.cardCost;
@@ -401,26 +458,35 @@ export default function StageView() {
     if (!clock) return;
 
     /*
-     * 轨道流的解码与合成(R8 / G5)。**只在 `front` 角色下工作**:`setRole('back')` 停掉它、
-     * `close()` 全部 `VideoFrame`;`back` 不收 `streamPlanes`,也就不建 decoder、不画(K5)。
-     * 它往 `Stage` 已经渲好的 `[data-pc-stream-plane]` / `[data-pc-group-plane]` 上画。
+     * Decoding and compositing of track streams (R8 / G5). **Only works in the `front` role**: `setRole('back')`
+     * stops it and `close()`s all `VideoFrame`s; `back` does not receive `streamPlanes`, so it builds no
+     * decoder and draws nothing (K5). It draws onto the `[data-pc-stream-plane]` / `[data-pc-group-plane]`
+     * elements that `Stage` has already rendered.
      */
     /*
-     * 字节从哪来:桌面直连预渲染进程(缺省的字节源);在线页面没有预渲染进程,清单与字节由父页随流平面推来
-     * (理由见 `streamPlayer.ts`「在线页面:清单与字节由父页推来」)—— 这里给一个只认推来的块的源,
-     * 没带清单的平面(父页还没取到)在它这里取不到东西,不会去请求不存在的预渲染进程。
+     * Where bytes come from: on desktop, a direct connection to the prerender process (the default byte
+     * source); the online page has no prerender process, and the manifest and bytes are pushed by the parent
+     * page along with the stream plane (reason in `streamPlayer.ts`, "Online page: manifest and bytes are
+     * pushed by the parent page"). Here we provide a source that only recognizes pushed chunks; a plane
+     * without a manifest (the parent page has not fetched it yet) gets nothing from it, and it never requests
+     * a prerender process that does not exist.
      */
-    /** 某条流的画面有无变了(异步解出第一帧、留到时限清空);实现在下面,等用到的函数都定义了再接上 */
+    /** Whether the picture of a stream changed (first frame decoded asynchronously, cleared when the time limit passes); implemented below, wired up once all the functions it uses are defined */
     let onStreamShowing: () => void = () => {};
     const player = new StreamPlayer({ root: () => rootRef.current, ...(ONLINE ? { source: new PushedStreamSource() } : {}), onShowingChange: () => onStreamShowing(),
-      // 超出预算的层的位置矩形变了(清单到了、播放头进了下一个分段):占位符的几何是渲染时取的,提交一次让它重取
+      // The position rectangle of an over-budget layer changed (the manifest arrived, or the playhead entered
+      // the next segment): the placeholder geometry is read at render time, so commit once to make it read again
       onBoxChange: () => onStreamBoxes() });
     let onStreamBoxes: () => void = () => {};
     /*
-     * 占位符的几何首选流清单里的矩形(mechanism/rendering.md「重管线:预渲染」;`placeholderHost` 的 `geometryFor`)。
-     * 超出预算的层取这一帧所在分段的位置矩形:单卡流的是包裹层自己的坐标,直接用;组流、依赖下层的流的是舞台坐标,
-     * 按屏幕上量到的包裹层位置换过来(换不了的回 null,照老办法定位)。这个矩形只管这一帧,和预算以内的流的框分开给
-     * (那一种会被记下来留到以后用,这一种不记)。
+     * The placeholder geometry prefers the rectangle in the stream manifest (mechanism/rendering.md, "Heavy
+     * pipeline: prerender"; `geometryFor` of `placeholderHost`). An over-budget layer takes the position
+     * rectangle of the segment this frame falls in: for a single-card stream it is the coordinates of the
+     * wrapper layer itself, used directly; for a group stream or a stream that depends on lower layers it is
+     * in stage coordinates, converted using the wrapper layer position measured on screen (null is returned
+     * when conversion is impossible, and positioning falls back to the old way). This rectangle only applies
+     * to this frame and is provided separately from the box of an in-budget stream (that kind is recorded
+     * for later use, this kind is not recorded).
      */
     setStreamBoxSource((clipId) => player.boxOf(clipId));
     setOverBoxSource((clipId) => {
@@ -435,24 +501,34 @@ export default function StageView() {
     });
 
     /*
-     * canvas 卡的共享 WebGL 渲染器(R9 M2)。`stageId` 是实例名(`A` / `B`),**和角色无关**:
-     * 互换角色时它不变,Worker 里这个舞台那份图集区域跟着实例走,不跟着角色走。
-     * 路线先按宿主能力的缺省建,收到项目后按 `project.glRoute` 的生效值改(`setProject`)。
-     * 路线 2 的端口由父页在握手之后、任何 RPC 之前经 `{ type: 'gl-port' }` 交来(下面那个监听)。
+     * The shared WebGL renderer for canvas cards (R9 M2). `stageId` is the instance name (`A` / `B`),
+     * **independent of the role**: it does not change when the roles are swapped, and the atlas region of this
+     * stage in the Worker follows the instance, not the role. The route is first built from the default of the
+     * host capability, and once the project arrives it is changed to the effective value of `project.glRoute`
+     * (`setProject`). The port for route 2 is handed over by the parent page via `{ type: 'gl-port' }` after
+     * the handshake and before any RPC (the listener below).
      */
     const caps = detectHostCapabilities({ online: ONLINE });
-    // 最低一档(父页在 src 里给 `lowest=1`)起手就只用小尺寸;远程素材服务的基址与票据、素材闸门的结果等父页 `setMediaPolicy` 下发
+    // At the lowest tier (the parent page gives `lowest=1` in src), start by using only small sizes; the base
+    // URL and ticket of the remote asset service, the result of the asset gate, etc. are sent down by the
+    // parent page via `setMediaPolicy`
     setMediaTierPolicy({ smallOnly: caps.lowest, online: ONLINE });
     /*
-     * 主线程画布丢了 WebGL 上下文:素材效果卡的图形能力按「运行中丢过上下文」算不够(`cardRuntime`,契约 4.3)。
-     * 它不再用来判整台设备的性能(原来的「运行中整体降档」2026-10-07 用户定撤销),只在线页面接。
-     * 事件不冒泡,在 document 上按捕获阶段接;OffscreenCanvas 在 Worker 里丢上下文不经这里(glHost 自己有退路)。
+     * The main-thread canvas lost its WebGL context: the graphics capability of media effect cards is counted
+     * as insufficient because "a context was lost while running" (`cardRuntime`, contract 4.3). It is no longer
+     * used to judge the performance of the whole device (the earlier "overall downgrade while running" was
+     * revoked by user decision, 2026-10-07), and is only hooked up on the online page. The event does not
+     * bubble, so it is caught in the capture phase on document; a context lost by an OffscreenCanvas in the
+     * Worker does not come through here (glHost has its own fallback).
      */
     const onContextLost = () => { cardExec.runtime?.noteContextLost(); };
     if (ONLINE) document.addEventListener("webglcontextlost", onContextLost, true);
     /*
-     * 素材闸门的网速(`render/netSpeed.ts`):看素材实际下载的快慢,慢就先拉小尺寸、再拉原尺寸替换,快就只拉原尺寸;使用中随时切换。
-     * 素材是这一台舞台自己读的,所以在舞台里看、写进这一台的取档策略;切换时报父页一声(查看口)。只在线页面。
+     * Network speed of the asset gate (`render/netSpeed.ts`): it watches how fast assets actually download;
+     * if slow, it first pulls the small size and then pulls the original size to replace it, and if fast, it
+     * pulls only the original size; it can switch at any time during use. Assets are read by this stage
+     * itself, so we watch it in the stage and write it into this stage's tier policy; when it switches, the
+     * parent page is notified (viewing port). Online page only.
      */
     const stopNetSpeed = ONLINE ? startNetSpeed((st) => {
       setMediaTierPolicy({ smallFirst: st.smallFirst });
@@ -460,11 +536,20 @@ export default function StageView() {
       postStageEvent({ type: "net-speed", mbps: st.mbps, samples: st.samples, smallFirst: st.smallFirst });
     }) : () => {};
     /*
-     * 在线执行同步来的用户卡与素材效果卡(`docs/plan/online-card-exec-contract.md` 第 2、3、4、8 节)。编辑页面经 `loadUserCards` 发来转译好的包;
-     * 这里只在**本文档自己的执行闸门**开着时执行(`online/isolation/execGate.ts`:是跨源舞台入口、自检通过、父页点头、从没见过票据、没出过加固拦下的事):
-     *   - 画面那一半还要本文档的出口由浏览器拦(`cardVisualExecAllowed`;〔裁:主会话 2026-10-06〕只靠脚本加固的浏览器上不执行画面);
-     *   - 声音那一半在这一台起的后台线程里执行(线程从 blob 地址引导,继承本文档的策略),只有父页点名的那一台(实例 B)起。
-     * 闸门晚开:包先记着,开了再执行;闸门关上(出了加固拦下的事):已载入的全部撤下。加载器与声音宿主都按需载入,桌面构建里整段剪掉。
+     * Execute the user cards and media effect cards synced over (`docs/plan/online-card-exec-contract.md`,
+     * sections 2, 3, 4 and 8). The editor page sends the transpiled bundle via `loadUserCards`; here it is
+     * executed only when **this document's own execution gate** is open (`online/isolation/execGate.ts`: it is
+     * a cross-origin stage entry, the self-check passed, the parent page gave its approval, no ticket has ever
+     * been seen, and no hardening block has occurred):
+     *   - the visual half also requires that this document's egress is blocked by the browser
+     *     (`cardVisualExecAllowed`; [ruling: lead session 2026-10-06] visuals are not executed in a browser
+     *     that relies only on script hardening);
+     *   - the audio half runs in a background thread started on this machine (the thread is bootstrapped from
+     *     a blob URL and inherits this document's policy), and only the one the parent page names (instance B)
+     *     starts it.
+     * When the gate opens late: the bundle is remembered first and executed once it opens; when the gate
+     * closes (a hardening block occurred): everything already loaded is taken down. The loader and the audio
+     * host are both loaded on demand, and the whole section is cut out of desktop builds.
      */
     const cardExec: { bundles: CardBundle[] | null; sound: boolean; runtime: StageCardRuntime | null; soundHost: StageSound | null; seq: number; stopped: boolean } =
       { bundles: null, sound: false, runtime: null, soundHost: null, seq: 0, stopped: false };
@@ -493,7 +578,8 @@ export default function StageView() {
               longSide: () => Math.max(ref.current.project?.width ?? 1920, ref.current.project?.height ?? 1080),
               onStates: (states, graph) => {
                 postStageEvent({ type: "card-states", states, graph, visual: true });
-                // 能运行的卡换了一批:重渲一次(活组件挂上 / 撤下、占位符重算)
+                // The set of runnable cards changed: re-render once (live components mounted / unmounted, placeholders
+                // recomputed)
                 commitPlanes();
               },
             });
@@ -504,7 +590,8 @@ export default function StageView() {
           cardExec.runtime?.dispose(); cardExec.runtime = null;
           postStageEvent({ type: "card-states", states: [], graph: "unknown", visual: false });
         }
-        // 没有同步来的卡就不起声音线程(也不报声音状态):项目里没有用户卡、素材效果卡时这一台与以前一样安静
+        // With no synced cards, no audio thread is started (and no audio status is reported): when the project
+        // has no user cards or media effect cards, this machine is as silent as before
         if (cardExec.sound && (bundles.length > 0 || cardExec.soundHost)) {
           if (!cardExec.soundHost) {
             const [m, sp] = await Promise.all([import("./online/cardRuntime/stageSound"), import("./online/cardRuntime/soundSpawn")]);
@@ -522,8 +609,10 @@ export default function StageView() {
     };
     const offCardExecGate = ONLINE ? subscribeStageExecGate(() => { void applyCardBundles(); }) : () => {};
     /*
-     * 在线页面的路线由父页按舞台闸门定(起手看 src 里的 `gl=`,试第三级时经 `setGlRoute` 换),不看项目选项;
-     * 桌面运行环境照旧按项目选项(`setProject` 里 `resolveGlRoute(project.glRoute)`),缺省路线 1。
+     * On the online page the route is decided by the parent page according to the stage gate (it starts from
+     * `gl=` in src, and switches via `setGlRoute` when trying the third tier), not by project options;
+     * the desktop runtime still follows the project options (`resolveGlRoute(project.glRoute)` in
+     * `setProject`), with route 1 as the default.
      */
     let onlineGlRoute: "perDocument" | "shared" = caps.glRoute ?? "perDocument";
     const gl = createGlHost({ stageId: caps.stageId, compact: caps.compact, route: ONLINE ? onlineGlRoute : resolveGlRoute(null) });
@@ -534,27 +623,33 @@ export default function StageView() {
       gl.acceptPort(d.port ?? e.ports[0] ?? null);
     };
     window.addEventListener("message", onGlPort);
-    /** 严格的一拍:探针、生成快照、补跑落定都等它(没有 gl 平面时回 `undefined`,不多让一次微任务) */
+    /** A strict tick: probes, generate snapshots and the settle catch-up all wait for it (returns `undefined` when there is no gl plane, so as not to cost an extra microtask) */
     const glStrict = (sec: number) => gl.beat({ strict: true, t: sec }) ?? undefined;
     const presentStreams = (sec: number) => {
-      // 没有流平面、但有超出预算的层时也要走:它们的位置矩形跟着播放头换
+      // This must also run when there is no stream plane but there are over-budget layers: their position
+      // rectangles change with the playhead
       if (ref.current.role !== "front" || (!ref.current.streamPlanes.length && !player.hasOver)) return;
       player.present(sec);
     };
 
     /*
-     * 补一拍「落定」。**同步补跑完的那一瞬间,Motion 还没把新值写回 DOM。**
+     * Add one more tick of "settle". **At the moment the synchronous catch-up finishes, Motion has not yet
+     * written the new values back to the DOM.**
      *
-     * Motion 的 JS 动画(transform 这类)确实挂在我们接管的 rAF 上 —— 手动 tick 能推动它,
-     * 推出来的值和导出逐位相同。但它解析关键帧要**跨一个任务边界**:实测在同一个 JS 任务里
-     * 再补多少拍都没用,让出一个微任务之后只补一拍就够。而跳转那条路是一个同步块跑完的,
-     * 于是补跑结束时卡片还停在 initial 那一帧。
+     * Motion's JS animations (things like transform) are indeed hooked on the rAF that we took over: a manual
+     * tick can drive them, and the values they produce are bit-for-bit identical to export. But resolving the
+     * keyframes **crosses a task boundary**: in practice, no number of extra ticks within the same JS task
+     * helps, while after yielding one microtask a single extra tick is enough. The jump path, however, runs to
+     * completion as one synchronous block, so when the catch-up ends the card is still stuck on the initial
+     * frame.
      *
-     * 实测 chapter-bar 第 9 帧:导出 translateY(-8.65515px),预览 translateY(-120px)——
-     * 进场条整个悬在画面外,而且不报错。补上这一拍之后两边逐位相同。
-     * 导出那边不需要这个:它每一帧都是真实的浏览器帧,任务边界白捡。
+     * Measured on frame 9 of chapter-bar: export gives translateY(-8.65515px), preview gives
+     * translateY(-120px): the whole entrance bar hangs outside the picture, with no error reported. After
+     * adding this tick, both sides are bit-for-bit identical. Export does not need this: every one of its
+     * frames is a real browser frame, so the task boundary comes for free.
      *
-     * 时间不动(还是 target),所以这一拍只让写回发生,不会让动画多走。
+     * Time does not move (it is still target), so this tick only lets the write-back happen and does not make
+     * the animation advance further.
      */
     const settle = (target: number) => {
       const gen = ++settleGen.current;
@@ -567,20 +662,25 @@ export default function StageView() {
     };
 
     /*
-     * 真渲之后采一次墨色(实体模式的色块要用)。
+     * Sample the ink color once after a real render (the solid mode color blocks need it).
      *
-     * 「每次真渲都是一次采样机会」—— 用得越久,实体模式越准:用户改了主色、换了文案,
-     * 方块跟着变。播放中是实体模式,不会走到这里,所以不会拖慢播放。
-     * 防抖是因为连续拖播放头会一帧一个 setTime,而采样要遍历每张卡的所有元素读 computed style。
+     * "Every real render is a sampling opportunity": the longer it is used, the more accurate solid mode
+     * gets: when the user changes the main color or swaps the copy, the blocks follow. During playback it is
+     * solid mode and never gets here, so playback is not slowed down. It is debounced because continuously
+     * dragging the playhead produces one setTime per frame, while sampling has to walk all the elements of
+     * every card and read computed style.
      */
     let sampleTimer = 0;
     let inkTimer = 0;
     /**
-     * 占位符的第二个几何来源:这张卡上次活渲时的墨迹框(`measureContentBox`,相对包裹层)。
-     * 只在停下来之后防抖量一次(播放 / 拖动中不量 —— 那时正是占位符要顶上的时候,量到的是兜底画面),
-     * 被抑制 / 等快照 / 追帧的卡子树藏着,跳过。量不到的不记(`noteInkBox` 丢掉 null),几何退回徽标。
+     * The second geometry source for the placeholder: the ink box of this card at its last live render
+     * (`measureContentBox`, relative to the wrapper layer). It is measured once, debounced, after things stop
+     * (not during playback / dragging: that is exactly when the placeholder has to step in, and what would be
+     * measured is the fallback picture). Card subtrees that are suppressed / waiting for a snapshot / doing
+     * frame catch-up are hidden and skipped. Anything that cannot be measured is not recorded (`noteInkBox`
+     * drops null), and the geometry falls back to the badge.
      */
-    /** 当场把此刻活渲着的每张卡的墨迹框量一遍(被抑制 / 等快照 / 追帧的子树藏着,跳过) */
+    /** Measure the ink box of every card that is live-rendering right now, on the spot (subtrees that are suppressed / waiting for a snapshot / doing frame catch-up are hidden and skipped) */
     const measureInkBoxesNow = () => {
       const root = rootRef.current;
       if (!root) return;
@@ -609,13 +709,14 @@ export default function StageView() {
       }, 120);
     };
 
-    /** 这张卡包裹层里的占位槽位(`Stage` 挂的;没挂着回 null) */
-    /** 槽位引用缓存(P4 性能修正):每拍都 querySelector 一遍太贵;还挂在原包裹层下就直接用 */
+    /** The placeholder slot inside the wrapper layer of this card (mounted by `Stage`; null if not mounted) */
+    /** Slot reference cache (P4 performance fix): running querySelector every tick is too expensive; if it is still under the original wrapper layer, use it directly */
     const slotCache = new Map<string, HTMLElement>();
     const slotOf = (clipId: string): HTMLElement | null => {
       const hit = slotCache.get(clipId);
       if (hit && hit.isConnected && (hit.parentElement?.getAttribute("data-pc-clip") === clipId || hit.parentElement?.getAttribute("data-pc-flat-clip") === clipId)) return hit;
-      // 剪辑段里的卡(`kernel/cutFlatten.mjs` 的虚拟片段):包裹层在嵌套场景里,挂的是 `data-pc-flat-clip`
+      // A card inside a cut segment (the virtual clip of `kernel/cutFlatten.mjs`): in a nested scene the
+      // wrapper layer carries `data-pc-flat-clip`
       const el = rootRef.current?.querySelector<HTMLElement>(`[data-pc-clip="${CSS.escape(clipId)}"] > [${PLACEHOLDER_SLOT_ATTR}]`)
         ?? rootRef.current?.querySelector<HTMLElement>(`[data-pc-flat-clip="${CSS.escape(clipId)}"] > [${PLACEHOLDER_SLOT_ATTR}]`) ?? null;
       if (el) slotCache.set(clipId, el);
@@ -625,8 +726,10 @@ export default function StageView() {
     };
     const NO_CLIPS: ReadonlySet<string> = new Set();
     /**
-     * 这份项目里这台设备跑不了的片段(在线浏览器模式下的用户卡、素材效果卡;`localOnlyClipIds`)。按项目引用、注册表与同步表的代数记忆化;
-     * 模式关着(桌面)恒为空集合,不多花一次遍历。
+     * The clips in this project that this device cannot run (user cards and media effect cards in online
+     * browser mode; `localOnlyClipIds`). Memoized by the project reference and the generations of the registry
+     * and the sync table; when the mode is off (desktop) it is always the empty set, so there is no extra
+     * traversal.
      */
     let localOnlyMemo: { project: unknown; reg: number; synced: number; ids: ReadonlySet<string> } | null = null;
     const localOnlyAll = (): ReadonlySet<string> => {
@@ -638,7 +741,7 @@ export default function StageView() {
       localOnlyMemo = { project: p, reg, synced, ids };
       return ids;
     };
-    /** 此刻在场的那几张(口径同 `Stage`:含 LEAD) */
+    /** The ones present right now (same criterion as `Stage`: includes LEAD) */
     const localOnlyAt = (sec: number): ReadonlySet<string> => {
       const all = localOnlyAll();
       if (!all.size) return NO_CLIPS;
@@ -650,11 +753,13 @@ export default function StageView() {
       return out;
     };
     /**
-     * 按这一拍的状态切占位符(product/rendering.md「兜底顺序」;T1~T4 的判据在 `placeholderHost.placeholderWanted`)。
-     * **只切槽位的 `hidden`,不经 React 提交**;满 120 ms 才可见由占位组件的 CSS 负责。
-     * T1 的「流这一拍 blank」按 `player.showingClips()` 当拍读 —— 所以每拍在 `presentStreams` 之后叫它。
-     * 这台设备跑不了的卡(`localOnlyAt`)贴不上快照 / 流时显示 `unsupported`。
-     * 没有任何来不及的层、也没有显示着的占位符时一个 DOM 查询都不做。
+     * Switch placeholders according to the state of this tick (product/rendering.md, "Fallback order"; the
+     * criteria for T1~T4 are in `placeholderHost.placeholderWanted`). **Only toggles the slot's `hidden`,
+     * without going through a React commit**; showing only after a full 120 ms is handled by the CSS of the
+     * placeholder component. The "stream is blank this tick" of T1 is read from `player.showingClips()` for
+     * the current tick, so call this after `presentStreams` every tick. A card this device cannot run
+     * (`localOnlyAt`) shows `unsupported` when it cannot be attached to a snapshot / stream. When there is no
+     * late layer and no placeholder on display, not a single DOM query is made.
      */
     const refreshPlaceholders = (): void => {
       if (!placeholdersEnabled()) return;
@@ -662,21 +767,26 @@ export default function StageView() {
       const unsupported = localOnlyAt(ref.current.t);
       if (!suppressed.size && !awaiting.size && !settling.size && !unsupported.size && !shownPlaceholders().size) return;
       const streamShowing = ref.current.streamPlanes.length ? player.showingClips() : NO_CLIPS;
-      // 停下追帧时这张卡的流平面还画着:它不算「不可见地追帧」(T3),不显示占位符
+      // While stopped for frame catch-up, the stream plane of this card is still being drawn: it does not count
+      // as catching up "invisibly" (T3), and no placeholder is shown
       let settlingBlank = settling;
       if (settling.size && streamShowing.size) settlingBlank = new Map([...settling].filter(([id]) => !streamShowing.has(id)));
       const wanted = placeholderWanted({ suppressed, snapshots, awaiting, settling: settlingBlank, streamShowing, unsupported });
       /*
-       * 超出预算的组流:整组只有一个位置矩形(成员的并集),每个成员的占位符都会铺在它上面。只留这一拍要显示占位符的成员里
-       * 最上面的那一张(画家顺序里最后一个),其余的不显示。这一组这一帧没有位置矩形时不动(各自照老办法定位)。
+       * Over-budget group stream: the whole group has just one position rectangle (the union of its members),
+       * and the placeholder of every member would be laid over it. Keep only the topmost one among the members
+       * that want a placeholder this tick (the last one in painter's order), and do not show the rest. When this
+       * group has no position rectangle this frame, do nothing (each is positioned the old way on its own).
        */
       if (wanted.size > 1 && player.hasOver) keepTopOfGroups(wanted, player.overGroups());
       applyPlaceholders(wanted, slotOf);
     };
 
     /**
-     * 验收探针的逐拍记录(`scripts/probes/preview-fallback-probe.mjs`):`window.__pcFallbackTrace` 是数组时,
-     * 每拍记下被抑制的每张卡落在兜底顺序的哪一级,以及这一拍主线程干活的毫秒数。不是数组时什么都不做。
+     * Per-tick record for the acceptance probe (`scripts/probes/preview-fallback-probe.mjs`): when
+     * `window.__pcFallbackTrace` is an array, each tick records which level of the fallback order every
+     * suppressed card landed on, and how many milliseconds the main thread worked in this tick. When it is
+     * not an array, it does nothing.
      */
     const traceFallback = (sec: number, workMs: number): void => {
       const log = (window as unknown as { __pcFallbackTrace?: unknown[] }).__pcFallbackTrace;
@@ -695,14 +805,14 @@ export default function StageView() {
       if (log.length > 20000) log.splice(0, log.length - 20000);
     };
 
-    /** 平面状态改了:同步一次 React 提交,让这一帧就带上新的类和平面;占位符跟着这一次的状态切 */
+    /** The plane state changed: sync one React commit so that this frame already carries the new classes and planes; placeholders switch with the state of this commit */
     const commitPlanes = () => {
       flushSync(() => bumpPlanes());
       refreshPlaceholders();
     };
     onStreamBoxes = () => { if (ref.current.role === "front") commitPlanes(); };
 
-    /** 掐掉还在飞的 render:回包按 reason 给,不允许静默丢 */
+    /** Cut off the render still in flight: the reply is given by reason, and silently dropping it is not allowed */
     const abortPending = (reason: "superseded" | "project") => {
       const p = ref.current.pending;
       if (!p) return;
@@ -711,13 +821,15 @@ export default function StageView() {
     };
 
     /**
-     * 此刻活跃的卡里最早的那个挂载帧(秒)。
+     * The earliest mount frame (in seconds) among the currently active cards.
      *
-     * **挂载时刻必须落在帧格上** —— 不然「预览所见 = 导出所得」在每个卡片入点都破一次。
+     * **The mount time must land on the frame grid**: otherwise "what you see in preview = what you get in
+     * export" breaks once at every card entry point.
      *
-     * 导出是一帧一帧推的:一张卡在第一个 ≥ start-LEAD 的**帧**上挂载,时间原点就是那一帧,
-     * 而不是 start-LEAD 本身。挂载帧统一由 frameWindow.mjs 的 mountFrameOf 给
-     * (预览、导出、分片同一个算式)。夹一下:target 本身不在帧格上时,对齐后可能反超它。
+     * Export advances frame by frame: a card mounts on the first **frame** >= start-LEAD, and the time origin
+     * is that frame, not start-LEAD itself. The mount frame is given uniformly by mountFrameOf in
+     * frameWindow.mjs (the same formula for preview, export and sharding). Clamp it: when target itself is
+     * not on the frame grid, the aligned value may overshoot it.
      */
     const mountSecOf = (target: number, fps: number): number => {
       const p = ref.current.project;
@@ -728,8 +840,9 @@ export default function StageView() {
     };
 
     /**
-     * 重挂载定位:把此刻活跃的卡全部重挂载,时钟拨到它们里最早的挂载帧,空跑两拍。
-     * 返回从哪一秒起推。render(jump) 用;legacy 的 setProject 也走它。
+     * Remount positioning: remount all currently active cards, set the clock to the earliest mount frame among
+     * them, and idle-run two ticks. Returns the second from which to advance. Used by render(jump); the legacy
+     * setProject also goes through it.
      */
     const remountAt = (target: number, fps: number): number => {
       const from = mountSecOf(target, fps);
@@ -740,15 +853,19 @@ export default function StageView() {
         setT(from);
       });
       /*
-       * **在 from 这一刻空跑两拍**,不是笔误。
+       * **Idle-running two ticks at the moment `from` is not a typo.**
        *
-       * 第一拍跑卡片自己注册的 rAF —— 那里面才会把动画建起来(数字滚动的 useSpring 就是在
-       * 这一拍里 .set() 的)。Motion 建完动画要到**下一拍**才做第一次推进,所以只跑一拍的话,
-       * 补跑的第一格被拿去当了动画的起跑线,整条动画比导出慢一帧。
+       * The first tick runs the rAF callbacks the cards registered themselves: only there are the animations
+       * built (the useSpring of the number roll calls .set() in this tick). Motion makes its first advance only
+       * on the **next tick** after building an animation, so if only one tick is run, the first step of the
+       * catch-up is taken as the animation's starting line, and the whole animation ends up one frame slower
+       * than export.
        *
-       * 导出那边是白捡的:预热阶段先在挂载点空跑了一帧(warmUp 里 __pcRestartCards 之后那次
-       * step(0)),等正式第 0 帧渲的时候动画早就上好膛了。这里补上同一拍,两边起跑线才一致。
-       * 两拍的时刻相同,delta 为 0,不会让动画多走 —— 只是把「建立」和「推进」分开。
+       * Export gets this for free: in the warm-up phase it first idle-runs one frame at the mount point (the
+       * step(0) right after __pcRestartCards in warmUp), so by the time the real frame 0 is rendered the
+       * animation is already loaded and ready. Adding the same tick here makes the starting lines on both sides
+       * match. The two ticks are at the same moment, with delta 0, so the animation does not advance further:
+       * it only separates "build" from "advance".
        */
       clock.tick(from * 1000);
       clock.tick(from * 1000);
@@ -757,8 +874,8 @@ export default function StageView() {
     };
 
     /**
-     * legacy 路的跳转渲染(?preview=legacy):重挂载 + 异步逐帧补跑到 target,不回包。
-     * 和第 3 步之前的 renderAt 一样;新路不走它。
+     * Jump rendering for the legacy path (?preview=legacy): remount + asynchronous frame-by-frame catch-up to
+     * target, with no reply. Same as renderAt before step 3; the new path does not use it.
      */
     const legacyJump = (target: number) => {
       const p = ref.current.project;
@@ -782,9 +899,9 @@ export default function StageView() {
       })();
     };
 
-    /* ------------------------------------------ K3 / K5 第一路:按片段的子树虚拟时间追帧 */
+    /* ------------------------------------------ K3 / K5 path 1: per-clip subtree virtual-time frame catch-up */
 
-    /** 项目里这个片段(入点出点) */
+    /** This clip in the project (in point, out point) */
     const clipById = (clipId: string): { id: string; start: number; end: number } | null => {
       const p = ref.current.project;
       if (!p) return null;
@@ -792,16 +909,19 @@ export default function StageView() {
       return null;
     };
 
-    /** 这张卡的包裹层(`Stage` 挂的 `[data-pc-clip]`) */
+    /** The wrapper layer of this card (the `[data-pc-clip]` mounted by `Stage`) */
     const wrapOf = (clipId: string): Element | null => {
       const root = rootRef.current;
       return root ? clipWrapper(root, clipId) : null;
     };
 
     /**
-     * 实际生效的抑制集合 = 父页发来的,减去单舞台停下追一帧正在画 / 已画好的(`settleLive`),
-     * 再减去流还没画出第一帧、先不藏的(`streamWaiting`)。
-     * 只改 `ref.current`,不提交;调用方随后的那次提交(`commitPlanes` / `flushSync`)一起生效。整份换新(`Stage` 按引用判)。
+     * The effective suppressed set = the one sent by the parent page, minus those that the single stage is
+     * drawing / has already drawn with a stop-and-catch-up frame (`settleLive`), minus those whose stream has
+     * not yet drawn its first frame and are not hidden for now (`streamWaiting`). It only changes
+     * `ref.current` and does not commit; the commit the caller makes right afterwards (`commitPlanes` /
+     * `flushSync`) takes effect together. The whole set is replaced with a new one (`Stage` compares by
+     * reference).
      */
     const applySuppressed = (): void => {
       const parent = ref.current.parentSuppressed;
@@ -810,14 +930,14 @@ export default function StageView() {
       ref.current.suppressed = live.size || waiting.size ? new Set([...parent].filter((id) => !live.has(id) && !waiting.has(id))) : parent;
     };
 
-    /* ------------------------------------------ 重卡贴轨道流:等第一帧、追上以后撤抑制 */
+    /* ------------------------------------------ Heavy card attached to a track stream: wait for the first frame, lift suppression after catching up */
 
-    /** 这张卡此刻挂着的流平面(它自己的单卡流,或它所在的组流);没有回 null */
+    /** The stream plane this card currently has mounted (its own single-card stream, or the group stream it belongs to); null if none */
     const planeOf = (clipId: string): StreamPlaneGroup | null => {
       for (const g of ref.current.streamPlanes) if (g.clipIds.includes(clipId)) return g;
       return null;
     };
-    /** 换一份 `streamWaiting`(整份换新),并按最早到时的那一张排真定时器:流一直画不出来也不能让原来的画面一直露着 */
+    /** Replace `streamWaiting` (the whole set), and schedule a real timer by the earliest deadline: even if a stream never gets drawn, the original picture must not stay exposed forever */
     const setStreamWaiting = (next: ReadonlyMap<string, number>): void => {
       ref.current.streamWaiting = next;
       window.clearTimeout(ref.current.streamWaitTimer);
@@ -827,14 +947,17 @@ export default function StageView() {
       ref.current.streamWaitTimer = realSetTimeout(() => {
         ref.current.streamWaitTimer = 0;
         const now = realNow();
-        // 到时限流还没画面:照父页说的藏起来,这一层落到占位符(兜底顺序尽头)
+        // The time limit passed and the stream still has no picture: hide it as the parent page said, and this
+        // layer falls to the placeholder (the end of the fallback order)
         endStreamWaiting([...ref.current.streamWaiting].filter(([, since]) => now - since >= STREAM_FIRST_WAIT_MS - 1).map(([id]) => id));
         if (ref.current.streamWaiting.size) setStreamWaiting(ref.current.streamWaiting);
       }, Math.max(1, earliest + STREAM_FIRST_WAIT_MS - realNow()));
     };
     /**
-     * 这几张卡不再等流的第一帧(流画出来了、到时了、流平面撤了):现在真的藏起来(父页还点着名的),同一次提交里画面从原来的换成流。
-     * 被推后的停下追帧(`deferredSettle`)这时起步。
+     * These cards no longer wait for the first frame of the stream (the stream was drawn, time ran out, or the
+     * stream plane was removed): now really hide them (the ones the parent page still names), and in the same
+     * commit the picture switches from the original to the stream. The stop-and-catch-up that was postponed
+     * (`deferredSettle`) starts at this point.
      */
     const endStreamWaiting = (ids: readonly string[]): void => {
       const rest = new Map(ref.current.streamWaiting);
@@ -853,10 +976,11 @@ export default function StageView() {
         const task = startCatchUp(id, d.target * 1000, d.fps, true);
         if (task) { started = true; void runCatchUpAsync(task); }
       }
-      // 追帧的起步重挂载了包裹层,流的画布换了一块:当场把画面画回去(`streamPlayer` 的 `redraw`)
+      // The start of the catch-up remounted the wrapper layer, and the stream's canvas was replaced: redraw the
+      // picture on the spot (`redraw` of `streamPlayer`)
       if (started) { presentStreams(ref.current.t); refreshPlaceholders(); }
     };
-    /** 这几张卡不再被抑制(舞台自己撤:它们追到精确活渲了)。只改 `ref.current`,调用方提交 */
+    /** These cards are no longer suppressed (the stage lifts it itself: they caught up to the exact live render). Only changes `ref.current`; the caller commits */
     const unsuppress = (ids: readonly string[]): void => {
       const parent = new Set(ref.current.parentSuppressed);
       let changed = false;
@@ -870,13 +994,20 @@ export default function StageView() {
       applySuppressed();
     };
     /**
-     * 这张卡追到精确活渲了:它的抑制由舞台自己撤,和摘 `.pc-settling` 同一次提交(父页收到 `settled` 再撤的话,中间那一个来回
-     * 里它会先落回 `.pc-suppressed`、子树没有布局盒,刚追好的状态就废了)。流平面不撤:不抑制的卡的流平面是藏着的(`Stage`),
-     * 留着它把播放头下这一帧先解好,按下播放头一拍就有;父页照旧发着它。回这一次该报 `settled` 的卡。
+     * This card caught up to the exact live render: its suppression is lifted by the stage itself, in the same
+     * commit that removes `.pc-settling` (if it waited for the parent page to lift it after receiving
+     * `settled`, then during the round trip in between it would first fall back to `.pc-suppressed`, the
+     * subtree would have no layout box, and the state just caught up would be wasted). The stream plane is not
+     * removed: the stream plane of a card that is not suppressed is hidden (`Stage`), and keeping it lets the
+     * frame under the playhead be decoded first, so it is ready the moment the playhead is pressed down; the
+     * parent page keeps sending it as before. Returns the cards that should report `settled` this time.
      *
-     * **组流整组一起撤**:组里各卡的外观画在同一条流里,不能只撤一张。先追上的成员留在 `.pc-settling` 的样子里
-     * (不可见、有布局盒、时间钉在目标帧),等组里此刻在场的都追上了一起露出来、一起报。
-     * 单舞台停下追一帧画好的层另有 `settleLive` 管着,不动父页的那一份。
+     * **A group stream is lifted as a whole group**: the appearance of the cards in the group is drawn in the
+     * same stream, so lifting just one is not allowed. A member that catches up first stays in the
+     * `.pc-settling` state (invisible, has a layout box, time pinned to the target frame), and when everyone
+     * in the group present right now has caught up, they are revealed together and report together. Layers
+     * that were drawn with a single-stage stop-and-catch-up frame are managed separately by `settleLive`, and
+     * the parent page's copy is left untouched.
      */
     const releaseSettled = (clipId: string, targetMs: number): string[] => {
       if (ref.current.settleLive.has(clipId) || !ref.current.parentSuppressed.has(clipId)) return [clipId];
@@ -901,27 +1032,29 @@ export default function StageView() {
     };
     onStreamShowing = () => {
       if (ref.current.role !== "front") return;
-      // 等着的卡里流画出来了的那几张:现在真的藏起原来的画面(同一个任务里换成流,中间不空)
+      // Among the waiting cards, the ones whose stream has been drawn: now really hide the original picture
+      // (swap to the stream in the same task, with no gap in between)
       if (ref.current.streamWaiting.size) {
         const showing = player.showingClips();
         const done = [...ref.current.streamWaiting.keys()].filter((id) => showing.has(id));
         if (done.length) { endStreamWaiting(done); return; }
       }
-      // 画面有无变了,占位符跟着切:暂停着没有下一拍来刷(帧是异步解出来的)
+      // The picture changed, and the placeholder switches with it: while paused there is no next tick to
+      // refresh it (frames are decoded asynchronously)
       refreshPlaceholders();
     };
     const setSettleLive = (next: ReadonlySet<string>): void => {
       ref.current.settleLive = next;
       applySuppressed();
     };
-    /** 下一次跳转 / 播放 / 转后台:停下追一帧画的层全部回到父页的抑制(贴预渲染结果)。回有没有变 */
+    /** On the next jump / playback / switch to background: all layers drawn with a stop-and-catch-up frame go back to the parent page's suppression (attached to the prerender output). Returns whether anything changed */
     const clearSettleLive = (): boolean => {
       if (!ref.current.settleLive.size) return false;
       setSettleLive(new Set());
       return true;
     };
 
-    /** `settling` 表整份换一个(`Stage` 按引用判「谁刚变」) */
+    /** `settling` means the whole set is swapped for a new one (`Stage` judges "who just changed" by reference) */
     const setSettlingAt = (clipId: string, stageMs: number | null): void => {
       const next = new Map(ref.current.settling);
       if (stageMs === null) next.delete(clipId);
@@ -930,26 +1063,29 @@ export default function StageView() {
     };
 
     /**
-     * **重挂载定位配方**,片段粒度(K3;K3(a′) 向后跳、K3(a) 的重推、K5 第一路的起步都用它)。
-     * 一步都不许省:
+     * **Remount-and-pin recipe**, per clip (K3; K3(a') backward jumps, K3(a) re-stepping and the start of
+     * K5 path one all use it). Not a single step may be skipped:
      *
-     *   `resetIn(包裹层)` → 重挂载(`remountGen` 递增)+ `flushSync`
-     *   → `clock.tick(clock.now())` **两次** → `pinner.syncIn(包裹层, mountMs)`
+     *   `resetIn(wrapper)` → remount (`remountGen` increments) + `flushSync`
+     *   → `clock.tick(clock.now())` **twice** → `pinner.syncIn(wrapper, mountMs)`
      *
-     * `tick` 传**当前全局毫秒**、不是 `mountMs`:`tick(ms)` 先 `now = ms` 再排空 rAF 队列,
-     * 传 `mountMs` 会把可见舞台的全局时钟拨回挂载帧、settle 结束后没人还原,
-     * 下一次 `play` 第一拍要同步补 6000 ms。传当前值时钟不动,只是把队列排空 ——
-     * 第一拍跑卡片自己注册的 rAF 把动画建起来,第二拍让 Motion 做第一次推进。
+     * `tick` gets the **current global milliseconds**, not `mountMs`: `tick(ms)` sets `now = ms` first and
+     * then drains the rAF queue. Passing `mountMs` would wind the visible stage's global clock back to the
+     * mount frame, nobody restores it after settle ends, and the first beat of the next `play` would have
+     * to catch up 6000 ms synchronously. With the current value the clock does not move, the queue is
+     * only drained: the first beat runs the rAFs the card registered itself to build the animation, and
+     * the second beat lets Motion make its first advance.
      *
-     * 最后钉一次**挂载帧**锚点:`patchAnimate` 让新动画出生即 `pause()` + `currentTime = 0`,
-     * 少了这一次锚点会记成目标毫秒、画面停在第 0 帧。
+     * Finally pin the **mount frame** anchor once: `patchAnimate` makes a new animation `pause()` and set
+     * `currentTime = 0` as soon as it is born. Without this anchor, the target milliseconds would be
+     * recorded and the picture would stop at frame 0.
      *
-     * **配方到钉挂载帧锚点为止**,之后怎么走由调用方定。
+     * **The recipe ends at pinning the mount frame anchor**; what happens afterwards is up to the caller.
      */
     const remountClipRecipe = (clipId: string, mountMs: number): Element | null => {
       const before = wrapOf(clipId);
       if (before) pinner.resetIn(before);
-      // 组件这一次要按**挂载帧**渲(`Stage` 的 `localTOf` 读 `settling`),所以先写表再提交
+      // This time the component must render at the **mount frame** (`localTOf` in `Stage` reads `settling`), so write the table first, then commit
       setSettlingAt(clipId, mountMs);
       const next = new Map(ref.current.remountGen);
       next.set(clipId, (next.get(clipId) ?? 0) + 1);
@@ -962,42 +1098,47 @@ export default function StageView() {
       return after;
     };
 
-    /** 一次按片段的追帧 */
+    /** A per-clip frame catch-up */
     interface CatchUpTask {
       clipId: string;
-      /** 已经推到的全局舞台毫秒 */
+      /** Global stage milliseconds already stepped to */
       stageMs: number;
       targetMs: number;
       stepMs: number;
-      /** 追上之后 post `{ type: 'settled', clipIds: [clipId] }`(K5 第一路 / 重卡才要) */
+      /** After catching up, post `{ type: 'settled', clipIds: [clipId] }` (needed for K5 path one / heavy cards) */
       announce: boolean;
       gen: number;
-      /** canvas 卡追到了、正在等这一拍的 `done`(R9 M3):等到之前不摘 `.pc-settling` */
+      /** The canvas card has caught up and is waiting for this beat's `done` (R9 M3): until then, do not remove `.pc-settling` */
       finishing?: boolean;
-      /** 收摊时叫(单舞台停下追一帧用:没追上的层在同一次提交里回到抑制) */
+      /** Called on wrap-up (single stage stops to catch up one frame: layers that did not catch up go back to suppression in the same commit) */
       onEnd?: (caughtUp: boolean) => void;
     }
 
-    /** 追帧被中止 / 追完:摘 `.pc-settling` */
+    /** Frame catch-up aborted / finished: remove `.pc-settling` */
     const endCatchUp = (task: CatchUpTask, caughtUp: boolean): void => {
-      // 先让调用方改完抑制集合(`settleLive`),和摘 `.pc-settling` 同一次提交:没追上的层不会露出一帧旧的活组件
+      // First let the caller update the suppression set (`settleLive`), in the same commit as removing `.pc-settling`: layers that did not catch up never expose a frame of the stale live component
       const onEnd = task.onEnd;
       task.onEnd = undefined;
-      try { onEnd?.(caughtUp); } catch { /* 收摊回调出错不影响收摊 */ }
+      try { onEnd?.(caughtUp); } catch { /* An error in the wrap-up callback does not affect the wrap-up */ }
       task.finishing = false;
       /*
-       * 这一次追帧已经收过摊,或者已经被同一张卡后来的那一次顶掉了:不再动表里那一条和 `.pc-settling`。
-       * 连着两次「停下」(刚暂停时父页常常隔一两毫秒发两次带 settle 的 `setTime`)就会走到这里:前一次的循环被 `abortCatchUps` 收过摊,
-       * 它让出的那个宏任务醒来发现代数变了,又来收一次 —— 以前这一下把后来那一次的表项和 `.pc-settling` 一起摘了,那张卡的子树
-       * 掉一拍布局盒(回到 `.pc-suppressed` 的 `display: none`),CSS 动画被取消、从那一步重新起跑,
-       * 追完以后露出来的画面落后好几帧(`scrub-stream-probe` 第 3 步实测落后 10 帧)。
+       * This frame catch-up has already wrapped up, or was superseded by a later one for the same card:
+       * do not touch that table entry or `.pc-settling` again.
+       * Two consecutive "stops" lead here (right after a pause the parent page often sends two `setTime`
+       * calls with settle within a millisecond or two): the earlier loop was wrapped up by
+       * `abortCatchUps`, and when the macrotask it yielded wakes up and finds the generation changed, it
+       * wraps up again. Before, that removed the later one's table entry and `.pc-settling` together, so
+       * that card's subtree dropped its layout box for a beat (back to `display: none` of
+       * `.pc-suppressed`), the CSS animation was cancelled and restarted from that step, and the picture
+       * shown after catching up lagged several frames (step 3 of `scrub-stream-probe` measured a lag of
+       * 10 frames).
        */
       if (ref.current.catchUps.get(task.clipId) !== task) return;
       ref.current.catchUps.delete(task.clipId);
       setSettlingAt(task.clipId, null);
       let announce: string[] = [];
       if (caughtUp && task.announce) {
-        // 贴着流的卡:抑制也由舞台自己撤(组流等整组),同一次提交
+        // Cards attached to a stream: the stage itself also lifts suppression (group streams wait for the whole group), in the same commit
         announce = releaseSettled(task.clipId, task.targetMs);
       }
       commitPlanes();
@@ -1005,11 +1146,13 @@ export default function StageView() {
     };
 
     /**
-     * 往前推几步。**只推它子树的本地时间**:每步 `stageMs += 1000 / fps`,
-     * `pinner.syncIn(包裹层, stageMs)` + 给该组件 `t = stageMs / 1000`(`settling` 表)+ `flushSync`。
-     * **全局时钟不动**,全局的 `pinner.sync(nowMs, skip)` 跳过 `.pc-settling` 子树(`skipWrappers`)。
+     * Step forward a few steps. **Only advances the local time of its subtree**: each step does
+     * `stageMs += 1000 / fps`, `pinner.syncIn(wrapper, stageMs)`, gives that component
+     * `t = stageMs / 1000` (the `settling` table) and `flushSync`.
+     * **The global clock does not move**; the global `pinner.sync(nowMs, skip)` skips `.pc-settling`
+     * subtrees (`skipWrappers`).
      *
-     * 回 `true` 表示追上了(或被中止),调用方该收摊。
+     * Returns `true` when caught up (or aborted); the caller should wrap up.
      */
     const advanceCatchUp = (task: CatchUpTask, steps: number): boolean => {
       if (task.gen !== catchUpGen.current) {
@@ -1026,11 +1169,14 @@ export default function StageView() {
       }
       if (task.stageMs < task.targetMs) return false;
       /*
-       * 追到目标那一步:锚点本来就在全局基上,交回全局 `pinner.sync` 天然连续,
-       * 不需要额外动作 —— 摘了 `.pc-settling` 它就是精确的活组件。
+       * At the target step: the anchor is already on the global base, so handing back to the global
+       * `pinner.sync` is naturally continuous and needs no extra action: once `.pc-settling` is removed,
+       * it is exactly the live component.
        *
-       * **canvas 卡要先等这一拍的 `done`**(R9 M3):追帧中间步不发 `beat`(被 `.pc-settling` 藏着),
-       * 追上那一步发一拍、等位图贴上,再摘 `.pc-settling` —— 否则曝光的是上一拍的旧位图。
+       * **A canvas card must first wait for this beat's `done`** (R9 M3): intermediate catch-up steps send
+       * no `beat` (they are hidden by `.pc-settling`); the step that catches up sends one beat, waits for
+       * the bitmap to be applied, and only then removes `.pc-settling`. Otherwise the stale bitmap of the
+       * previous beat gets exposed.
        */
       if (glPlanes.has(task.clipId)) {
         const pending = gl.beat({ strict: true, t: task.targetMs / 1000 });
@@ -1049,8 +1195,8 @@ export default function StageView() {
     };
 
     /**
-     * 一路推到底,**每 8 步让出一个宏任务**(E4;让出点检查 `catchUpGen`)。
-     * K3(b) 的跳转 / 拖动、K5 第一路的暂停态追帧走它。
+     * Step all the way through, **yielding a macrotask every 8 steps** (E4; the yield point checks
+     * `catchUpGen`). Used by K3(b) jumps / drags and the paused-state frame catch-up of K5 path one.
      */
     const runCatchUpAsync = async (task: CatchUpTask): Promise<void> => {
       const breathe = () => new Promise<void>((r) => realSetTimeout(r, 0));
@@ -1061,16 +1207,18 @@ export default function StageView() {
     };
 
     /**
-     * 一拍内推完(K3(a)):帧间**只让微任务**、不让宏任务 —— 微任务之间浏览器不绘制,
-     * 所以中间态一帧都画不出来。`catchUpMs` 是估计值,所以带**墙钟兜底**:
-     * 累计超过 `1000 / fps` 还没推完就改走 (b)(K3:不让主线程被估错的卡长时间占住)。
+     * Step everything within one beat (K3(a)): between frames yield **only microtasks**, never
+     * macrotasks. The browser does not paint between microtasks, so no intermediate state can be drawn.
+     * `catchUpMs` is an estimate, so this comes with a **wall-clock fallback**: if the accumulated time
+     * exceeds `1000 / fps` before finishing, switch to (b) (K3: do not let a misestimated card hog the
+     * main thread for long).
      */
     const runCatchUpSync = async (task: CatchUpTask, budgetMs: number): Promise<void> => {
       const started = realNow();
       for (;;) {
         if (advanceCatchUp(task, 1)) return;
         if (realNow() - started > budgetMs) {
-          // 改走 (b):后面的步数每 8 步让一个宏任务,画面继续被 `.pc-settling` 藏着
+          // Switch to (b): the remaining steps yield a macrotask every 8 steps, and the picture stays hidden by `.pc-settling`
           void runCatchUpAsync(task);
           return;
         }
@@ -1078,7 +1226,7 @@ export default function StageView() {
       }
     };
 
-    /** 登记一个追帧任务:先走重挂载定位配方,再从挂载帧逐步推 */
+    /** Register a frame catch-up task: run the remount-and-pin recipe first, then step from the mount frame */
     const startCatchUp = (clipId: string, targetMs: number, fps: number, announce: boolean): CatchUpTask | null => {
       const clip = clipById(clipId);
       if (!clip) return null;
@@ -1093,10 +1241,14 @@ export default function StageView() {
     };
 
     /**
-     * 单舞台停下追一帧(`render/settleFrame.ts`)的一层:把它从抑制里放出来、在 `.pc-settling` 下不可见地画到 `targetMs`
-     * (直接定位的一步到位,推帧卡从入点逐帧推),画好了撤兜底(`endCatchUp(true)`:post `settled`)。
-     * 画的时候兜底照常显示(占位符的 T3 管)。
-     * 不设时限时 `deadline` 是 `Infinity`;给了时限(测试、诊断)到点还没画好:这一层回到抑制(贴预渲染结果或占位符),直到下一次停下。
+     * One layer of the single-stage stop-and-catch-up-a-frame (`render/settleFrame.ts`): release it from
+     * suppression and draw it invisibly under `.pc-settling` up to `targetMs` (direct pinning is done in
+     * one step, frame-stepping cards step frame by frame from the entry point), and once drawn, remove
+     * the fallback (`endCatchUp(true)`: post `settled`).
+     * While drawing, the fallback is still displayed as usual (governed by T3 of the placeholder).
+     * Without a time limit, `deadline` is `Infinity`; with a time limit (tests, diagnostics), if it is
+     * not drawn by then: this layer goes back to suppression (showing the prerender output or the
+     * placeholder) until the next stop.
      */
     const drawSettleLayer = async (item: SettleItem, deadline: number, targetMs: number, fps: number): Promise<DrawOutcome> => {
       const { clipId } = item;
@@ -1105,7 +1257,7 @@ export default function StageView() {
       let timedOut = false;
       const onEnd = (caughtUp: boolean) => {
         ended = caughtUp;
-        // 没画好(到时限 / 被打断)的层回到父页的抑制;画好的留在 settleLive 里,直到下一次跳转或播放
+        // Layers not drawn (time limit reached / interrupted) return to the parent page's suppression; drawn ones stay in settleLive until the next jump or playback
         if (!caughtUp && ref.current.settleLive.has(clipId)) {
           const rest = new Set(ref.current.settleLive);
           rest.delete(clipId);
@@ -1115,11 +1267,11 @@ export default function StageView() {
       setSettleLive(new Set([...ref.current.settleLive, clipId]));
       let task: CatchUpTask | null = null;
       if (item.kind === "catchup") {
-        // 推帧卡:重挂载定位配方 + 从入点逐帧推(同 K5 第一路),每 8 步让一次宏任务
+        // Frame-stepping card: remount-and-pin recipe + step frame by frame from the entry point (same as K5 path one), yielding a macrotask every 8 steps
         task = startCatchUp(clipId, targetMs, fps, true);
       }
       if (!task) {
-        // 直接定位:不可见地钉到目标,一次提交画好
+        // Direct pinning: pin invisibly to the target, drawn in a single commit
         const old = ref.current.catchUps.get(clipId);
         if (old) endCatchUp(old, false);
         setSettlingAt(clipId, targetMs);
@@ -1130,8 +1282,8 @@ export default function StageView() {
         ref.current.catchUps.set(clipId, task);
       }
       task.onEnd = onEnd;
-      // 画的时候兜底照常显示:暂停着没有下一拍来刷占位符,这里刷一次(T3:不可见地追帧、又没有快照或流在画的层显示占位符;
-      // 「停下以后先显示占位……渲好一层替换一层」,`product/platforms.md` 的最低一档)
+      // While drawing, the fallback is still displayed as usual: while paused there is no next beat to refresh the placeholder, so refresh it once here (T3: layers that catch up invisibly and have
+      // no snapshot or stream drawing show the placeholder; "after stopping, show the placeholder first ... replace layer by layer as each is rendered", the lowest tier in `product/platforms.md`)
       refreshPlaceholders();
       const breathe = () => new Promise<void>((r) => realSetTimeout(r, 0));
       for (;;) {
@@ -1142,16 +1294,16 @@ export default function StageView() {
           endCatchUp(task, false);
           continue;
         }
-        // 追上那一步 canvas 卡要等这一拍的 `done`(`finishing`),等的时候照样看时限
+        // At the catch-up step the canvas card must wait for this beat's `done` (`finishing`); while waiting, still check the time limit
         advanceCatchUp(task, CATCHUP_YIELD_STEPS);
         if (ended !== null) continue;
         await breathe();
       }
     };
 
-    /** 全部中止(新的 `setTime` / `play` / `setProject` / `setRole` / `setSuppressed` 都走它) */
+    /** Abort everything (a new `setTime` / `play` / `setProject` / `setRole` / `setSuppressed` all go through it) */
     const abortCatchUps = (): void => {
-      // 推后还没起步的、组流里先追上等着同组的,一并作废(后者回到抑制:流还贴着)
+      // Those pushed back and not yet started, and those in a group stream that caught up first and wait for their group, are all voided (the latter go back to suppression: the stream is still attached)
       ref.current.deferredSettle.clear();
       if (ref.current.settledHeld.size) {
         for (const id of ref.current.settledHeld) setSettlingAt(id, null);
@@ -1163,24 +1315,25 @@ export default function StageView() {
     };
 
     /**
-     * K4 每一拍多推几步(K3(b) 的播放态追帧):每拍除本拍那一帧外最多再多推
-     * `CATCHUP_STEPS_PER_BEAT` 步本地时间(即最快 5 倍速)。每拍的追帧成本按实测计入
-     * K6 的一秒窗口 —— 追帧把窗口顶爆就由 K6 降最贵的那张。
+     * K4 steps a few extra steps per beat (playing-state frame catch-up of K3(b)): besides that beat's
+     * own frame, at most `CATCHUP_STEPS_PER_BEAT` more steps of local time per beat (i.e. up to 5x
+     * speed). The catch-up cost of each beat is counted in K6's one-second window by measurement: if
+     * catch-up blows the window, K6 downgrades the most expensive card.
      */
     const stepCatchUps = (fps: number): void => {
       if (!ref.current.catchUps.size) return;
       const nowMs = ref.current.t * 1000;
       for (const task of [...ref.current.catchUps.values()]) {
-        // 播放中目标跟着播放头走:不然追上的那一刻它已经落后了
+        // During playback the target follows the playhead: otherwise it would already be behind at the moment of catching up
         task.targetMs = Math.max(task.targetMs, nowMs);
         task.stepMs = 1000 / fps;
         advanceCatchUp(task, CATCHUP_STEPS_PER_BEAT);
       }
     };
 
-    /* ------------------------------------------------ K3:三条跳转路 */
+    /* ------------------------------------------------ K3: three jump paths */
 
-    /** 这一刻活跃的**卡**片段(口径同 `Stage`:含 LEAD) */
+    /** **Card** clips active at this moment (same scope as `Stage`: includes LEAD) */
     const cardClipsAt = (sec: number): { id: string; start: number; end: number }[] => {
       const p = ref.current.project;
       if (!p) return [];
@@ -1192,9 +1345,11 @@ export default function StageView() {
     const mountMsOf = (clip: { start: number; end: number }, fps: number): number => (mountFrameOf(clip, fps) / fps) * 1000;
 
     /**
-     * 这张卡走哪一档 —— 用的是 K2 的 `clipWeight`,**和父页、预渲染进程同一份纯函数**
-     * (`tuning` 随 `setPlan` 一起下来,两边系数一致)。
-     * `tier`: `direct` / `seek`(a′) / `catchup-a`(a) / `catchup-b`(b) / `capped` / `over-catchup` / 声明兜底。
+     * Which tier this card takes: uses K2's `clipWeight`, **the same pure function as the parent page
+     * and the prerender process** (`tuning` comes down together with `setPlan`, so the coefficients on
+     * both sides match).
+     * `tier`: `direct` / `seek`(a') / `catchup-a`(a) / `catchup-b`(b) / `capped` / `over-catchup` /
+     * declared fallback.
      */
     const tierOf = (clipId: string, fps: number) => {
       const sp = ref.current.plan;
@@ -1202,7 +1357,7 @@ export default function StageView() {
       return { tier: clipWeight(record, sp?.frameModes.get(clipId), fps, sp?.tuning).tier as string, record };
     };
 
-    /** 拖动中向后重推的节流(E3):这张卡刚推过就保持上一状态 */
+    /** Throttle for backward re-stepping while dragging (E3): a card stepped just now keeps its previous state */
     const repushAllowed = (clipId: string, now: number): boolean => {
       if (!ref.current.scrubbing) return true;
       const last = ref.current.repushAt.get(clipId);
@@ -1212,9 +1367,10 @@ export default function StageView() {
     };
 
     /**
-     * K5 第一路的起步:`setTime(t, { settle: true })` 之后,`vtOk` 的**重卡**在可见舞台里
-     * 用子树虚拟时间追到精确活渲。`vtOk = false` 的由父页走第二路(整场景在后台补跑后互换),
-     * 舞台这边什么都不做。
+     * Start of K5 path one: after `setTime(t, { settle: true })`, **heavy cards** with `vtOk` catch up to
+     * the exact live render in the visible stage using subtree virtual time. Cards with `vtOk = false`
+     * take path two via the parent page (the whole scene is run in the background, then swapped), and
+     * the stage does nothing here.
      */
     const routeSettle = (target: number, fps: number, onlySuppressed = false): void => {
       const plan = ref.current.plan?.plan ?? null;
@@ -1224,18 +1380,18 @@ export default function StageView() {
       for (const clip of cardClipsAt(target)) {
         if (onlySuppressed && (!ref.current.suppressed.has(clip.id) || ref.current.catchUps.has(clip.id))) continue;
         if (pipelineAt(plan, clip.id, target) !== "heavy") continue;
-        // 这台设备跑不了的卡停下不追(没有组件可追),快照照贴着
+        // A card this device cannot run does not catch up on stop (no component to catch up); the snapshot stays attached
         if (localOnly.has(clip.id)) continue;
         const { record } = tierOf(clip.id, fps);
         if (record?.vtOk !== true) continue;
-        // 它的流还没画出第一帧、原来的画面还露着:追帧一起步子树就不可见了,所以等流的第一帧画出来(或到时)再追(`endStreamWaiting`)
+        // Its stream has not drawn the first frame and the old picture is still showing: once catch-up starts the subtree becomes invisible, so wait for the stream's first frame to be drawn (or the time limit) and then catch up (`endStreamWaiting`)
         if (ref.current.streamWaiting.has(clip.id)) {
           ref.current.deferredSettle.set(clip.id, { target, fps, gen: catchUpGen.current });
           continue;
         }
         const mountMs = mountMsOf(clip, fps);
         if (mountMs >= targetMs) {
-          // 停在挂载帧上（例如 t = 0 或片段起点）：此刻本来就是精确的初始帧，不需要追帧，立即解除抑制并报 settled
+          // Stopped on the mount frame (e.g. t = 0 or a clip's start): this moment is already the exact initial frame, so no catch-up is needed; lift suppression immediately and report settled
           const announced = releaseSettled(clip.id, targetMs);
           immediateSettled.push(...announced);
           continue;
@@ -1250,16 +1406,20 @@ export default function StageView() {
     };
 
     /**
-     * K3 的三条跳转路(远跳 / 向后那一支;向前且 `dt < CONTINUOUS_MAX` 的连续路在 `setTime` 里
-     * 已经由全局 `advanceTo` 走完了)。**可见舞台里永远看不到推帧过程。**
+     * K3's three jump paths (the far-jump / backward branch; the continuous path for forward jumps with
+     * `dt < CONTINUOUS_MAX` has already been completed by the global `advanceTo` inside `setTime`).
+     * **The stepping process is never visible in the visible stage.**
      *
-     * - **(a′) `seekOk` 且 `seekMs ≤ B`**:直接定位。向前不用做什么(全局 `pinner.sync` 已经钉过);
-     *   **向后**要先走重挂载定位配方 —— 越过结尾的动画被 `finish()` 收了、此后永久跳过,
-     *   不重挂载就停在终态。
-     * - **(a) `catchUpMs ≤ B`**:按片段重挂载 + 从 `mountFrameOf` 逐帧推,帧间**只让微任务**
-     *   (中间态一帧都画不出来),带墙钟兜底,超了改走 (b)。
-     * - **(b)**:`vtOk` 的在可见舞台里用子树虚拟时间追(每 8 步让宏任务,追上摘 `.pc-settling`);
-     *   `vtOk = false` 的走 K5 第二路(父页的事)。
+     * - **(a') `seekOk` and `seekMs ≤ B`**: pin directly. Forward needs nothing (the global
+     *   `pinner.sync` has already pinned); **backward** must first run the remount-and-pin recipe:
+     *   animations past the end were collected by `finish()` and are skipped forever after, so without
+     *   a remount it would stay at the final state.
+     * - **(a) `catchUpMs ≤ B`**: remount per clip + step frame by frame from `mountFrameOf`, between
+     *   frames yield **only microtasks** (no intermediate state can be drawn), with a wall-clock
+     *   fallback; if exceeded, switch to (b).
+     * - **(b)**: cards with `vtOk` catch up in the visible stage using subtree virtual time (yield a
+     *   macrotask every 8 steps, remove `.pc-settling` once caught up); those with `vtOk = false` take
+     *   K5 path two (the parent page's job).
      */
     const routeJump = (target: number, fps: number): void => {
       const targetMs = target * 1000;
@@ -1270,15 +1430,15 @@ export default function StageView() {
         const prevFrame = ref.current.lastTargetFrame.get(clip.id);
         const backwards = prevFrame !== undefined && targetFrame < prevFrame;
         ref.current.lastTargetFrame.set(clip.id, targetFrame);
-        // 重卡在跳转里贴快照,追到活渲是 `settle` 的事(routeSettle)
+        // Heavy cards attach a snapshot during a jump; catching up to the live render is the job of `settle` (routeSettle)
         if (pipelineAt(plan, clip.id, target) === "heavy") continue;
         const { tier, record } = tierOf(clip.id, fps);
-        if (tier === "direct" || tier === "declared-light") continue;   // 随机访问:跟着 setTime 走
+        if (tier === "direct" || tier === "declared-light") continue;   // Random access: follows setTime
         if (tier === "seek") {
           if (!backwards) continue;
           if (!repushAllowed(clip.id, now)) continue;
           const wrap = remountClipRecipe(clip.id, mountMsOf(clip, fps));
-          // 一步到位:钉目标毫秒,组件 `t` 交回全局(把它从 `settling` 里拿掉)
+          // One step: pin the target milliseconds, hand the component's `t` back to global (remove it from `settling`)
           setSettlingAt(clip.id, null);
           if (wrap) pinner.syncIn(wrap, targetMs);
           commitPlanes();
@@ -1291,7 +1451,7 @@ export default function StageView() {
           continue;
         }
         if (tier === "catchup-b") {
-          if (record?.vtOk !== true) continue;   // 第二路由父页发起
+          if (record?.vtOk !== true) continue;   // Path two is initiated by the parent page
           if (!repushAllowed(clip.id, now)) continue;
           const task = startCatchUp(clip.id, targetMs, fps, false);
           if (task) void runCatchUpAsync(task);
@@ -1300,8 +1460,9 @@ export default function StageView() {
     };
 
     /**
-     * 播放头**刚进入**一张 (b) 档 `vtOk` 轻卡:让它从 `mountFrameOf` 起追(K3(b))。
-     * 追上之前这一层透明 —— 轻卡没有快照平面,`.pc-settling` 是 `visibility: hidden`。
+     * The playhead has **just entered** a tier (b) `vtOk` light card: make it catch up from
+     * `mountFrameOf` (K3(b)). This layer is transparent until it catches up: light cards have no
+     * snapshot plane, and `.pc-settling` is `visibility: hidden`.
      */
     const enterCatchUps = (sec: number, fps: number): void => {
       const plan = ref.current.plan?.plan ?? null;
@@ -1318,40 +1479,44 @@ export default function StageView() {
       ref.current.lastActive = active;
     };
 
-    /* ------------------------------------------------ K1 的两趟布尔探针(vtOk / seekOk / seekMs) */
+    /* ------------------------------------------------ K1's two-pass boolean probe (vtOk / seekOk / seekMs) */
 
     /**
-     * 这一张卡的包裹层(`Stage.tsx` 挂的 `[data-pc-clip]`)。
+     * The wrapper of this card (`[data-pc-clip]` mounted by `Stage.tsx`).
      *
-     * 探针**只在缩水项目上跑**(K1:一条轨道一个 clip),所以舞台里恰好一棵卡片子树,
-     * 第一个匹配就是最外层那个包裹层 —— 组合卡的部件包裹层嵌在它里面,
-     * `getAnimations({ subtree: true })` 一并覆盖。`:not([data-pc-media])` 排掉素材层
-     * (`FrameScene` 的素材层也带 `data-pc-clip`)。
+     * The probe **only runs on a shrunken project** (K1: one clip per track), so the stage has exactly
+     * one card subtree, and the first match is the outermost wrapper: the part wrappers of a composite
+     * card are nested inside it, and `getAnimations({ subtree: true })` covers them all. `:not([data-pc-media])`
+     * excludes the media layer (the media layer of `FrameScene` also carries `data-pc-clip`).
      */
     const probeWrap = (): Element | null =>
       rootRef.current?.querySelector("[data-pc-clip]:not([data-pc-media])") ?? null;
 
     /**
-     * **K3 的「重挂载定位配方」,片段粒度**(K1 的两趟布尔探针复位用;K3(a′) 向后跳、
-     * K5 第一路起步是 R5 的事,用的是同一段)。一步都不许省:
+     * **K3's "remount-and-pin recipe", per clip** (used to reset K1's two-pass boolean probe; K3(a')
+     * backward jumps and the start of K5 path one are R5's business and use the same code). Not a single
+     * step may be skipped:
      *
-     *   `resetIn(包裹层)` → 重挂载(`remountGen` / 这里是 `playToken`)
-     *   → `clock.tick(clock.now())` **两次** → `pinner.syncIn(包裹层, mountMs)`
+     *   `resetIn(wrapper)` → remount (`remountGen` / here it is `playToken`)
+     *   → `clock.tick(clock.now())` **twice** → `pinner.syncIn(wrapper, mountMs)`
      *
-     * 为什么要复位:计时趟已经把这张卡推到了片段最后一帧,越过结尾的动画被
-     * `pinAnimations` 的 `finish()` 收了、此后永久跳过 —— 不复位就是在终态实例上比对,
-     * 两个布尔必然记 `false`。
+     * Why reset: the timing pass has already stepped this card to the clip's last frame, and animations
+     * past the end were collected by `pinAnimations`' `finish()` and are skipped forever after. Without
+     * a reset the comparison runs on a final-state instance, and both booleans would necessarily be
+     * recorded as `false`.
      *
-     * 为什么 `tick` 传 `clock.now()` 而不是 `mountMs`:`tick(ms)` 先 `now = ms` 再排空 rAF 队列,
-     * 传别的值等于把全局时钟拨走。这里上一行刚 `clock.set(mountMs)`,两者正好相等,
-     * 写成 `clock.now()` 是为了和 K3 里「当前全局毫秒」那条统一。
+     * Why `tick` gets `clock.now()` and not `mountMs`: `tick(ms)` sets `now = ms` first and then drains
+     * the rAF queue, so passing anything else amounts to winding the global clock away. Here the
+     * previous line just did `clock.set(mountMs)`, so the two are exactly equal; writing `clock.now()`
+     * keeps it consistent with the "current global milliseconds" rule in K3.
      *
-     * 为什么最后要钉一次挂载帧锚点:`patchAnimate` 让新动画出生即 `pause()` + `currentTime = 0`,
-     * 少了这一次,锚点会记成第一次 `syncIn` 的目标毫秒,画面停在第 0 帧。
+     * Why pin the mount frame anchor at the end: `patchAnimate` makes a new animation `pause()` and set
+     * `currentTime = 0` as soon as it is born. Without this, the anchor would be recorded as the target
+     * milliseconds of the first `syncIn`, and the picture would stop at frame 0.
      */
     const remountClipAt = (mountSec: number): Element | null => {
       const before = probeWrap();
-      // 探针的缩水项目里只有这一张卡,没有包裹层(还没挂上)时退回整份重建
+      // The probe's shrunken project holds only this one card; when there is no wrapper (not mounted yet), fall back to a full rebuild
       if (before) pinner.resetIn(before);
       else pinner.reset();
       clock.set(mountSec * 1000);
@@ -1367,12 +1532,16 @@ export default function StageView() {
     };
 
     /**
-     * 此刻这张卡的控件 HTML(比对的那一份)。`lossy > 0` 时回 null ——
-     * WebGL 画布读不出像素、两趟都是空画布,比对没有意义,K1 明写这时两个布尔一律记 `false`。
-     * 组合卡有多个控件,按文档序拼起来一起比(两趟序列化的是同一棵树,顺序一致)。
-     * 分隔符用一条 HTML 注释:`compareSnapshotHtml` 的词法分析把它当一个 comment 记号逐字比,
-     * 两边都有、位置一样,不会影响判定;比用不可打印字符省心(源码里留不可打印字符会让
-     * git 把整个文件当二进制,而 R3 正在同时改这个文件)。
+     * The control HTML of this card right now (the one being compared). Returns null when `lossy > 0`:
+     * a WebGL canvas cannot read back pixels and both passes are empty canvases, so the comparison is
+     * meaningless; K1 states explicitly that in this case both booleans are always recorded as `false`.
+     * A composite card has several controls, joined in document order and compared together (both
+     * passes serialize the same tree, so the order is consistent).
+     * The separator is an HTML comment: the lexer of `compareSnapshotHtml` treats it as one comment
+     * token and compares it verbatim; it is present on both sides at the same position, so it does not
+     * affect the verdict. This is less trouble than a non-printable character (leaving non-printable
+     * characters in source makes git treat the whole file as binary, and R3 is editing this file at the
+     * same time).
      */
     const probeControlHtml = (): string | null => {
       const root = rootRef.current;
@@ -1383,24 +1552,32 @@ export default function StageView() {
     };
 
     /**
-     * 两趟布尔探针(K1 / pinned 划分轴一「如何区分 SeekOK」)。四趟,各自先走复位配方:
+     * Two-pass boolean probe (K1 / pinned partition axis one "how to tell SeekOK"). Four passes, each
+     * running the reset recipe first:
      *
-     *   1. **基线趟**:全局时钟从挂载帧逐帧推 8 帧,第 8 帧的控件 HTML 留在**内存里**
-     *      (K1:不依赖父页回传)。推法和计时 / 快照趟逐字一致 —— 同一个 `advanceToAsync`、
-     *      同一组 `onFrame` / `afterFrame`,否则比的就不是同一件事了。
-     *   2. **`vtOk` 趟**:**不动全局时钟**,只 `pinner.syncIn(包裹层, 该帧的全局舞台毫秒)`
-     *      + 给组件本地 `t`,推 8 帧。全局 rAF 队列没人排空,读全局帧循环时间戳的
-     *      Motion JS 动画因此推不动 —— 这正是 `vtOk = false` 要抓的那一类。
-     *      帧间同样只让微任务(和基线趟的 `advanceToAsync` 一致),不多让也不少让。
-     *   3. **`seekOk` 趟**:一步钉到第 8 帧(不经 1～7 帧),再比。
-     *   4. **`seekMs`**:从第 0 帧直接钉到片段最后一帧,`__pcRealNow` 量这一次的墙钟。
+     *   1. **Baseline pass**: the global clock steps 8 frames from the mount frame, and the control HTML
+     *      of frame 8 is kept **in memory** (K1: does not depend on the parent page sending it back).
+     *      The stepping is verbatim the same as the timing / snapshot passes: the same
+     *      `advanceToAsync`, the same `onFrame` / `afterFrame`, otherwise it would not be comparing the
+     *      same thing.
+     *   2. **`vtOk` pass**: **does not move the global clock**, only `pinner.syncIn(wrapper, global
+     *      stage milliseconds of that frame)` + gives the component a local `t`, 8 frames. Nobody drains
+     *      the global rAF queue, so Motion JS animations that read the global frame loop timestamp
+     *      cannot advance: this is exactly the kind `vtOk = false` is meant to catch.
+     *      Between frames it likewise yields only microtasks (same as `advanceToAsync` in the baseline
+     *      pass), no more and no less.
+     *   3. **`seekOk` pass**: pin to frame 8 in one step (skipping frames 1-7), then compare.
+     *   4. **`seekMs`**: pin directly from frame 0 to the clip's last frame, and `__pcRealNow` measures
+     *      the wall clock of this run.
      *
-     * 「给组件本地 `t`」在这里就是 `setT` —— 缩水项目里只有这一张卡,舞台的全局 `t` 就是它的
-     * 本地时间基。R5 要在整份项目上对**单张**卡做同样的事时才需要 `Stage` 的 `settling` prop
-     * (K5 第一路),探针不需要,所以这一步不碰 `Stage.tsx`。
+     * "Give the component a local `t`" here is `setT`: the shrunken project has only this one card, so
+     * the stage's global `t` is its local time base. Only when R5 does the same on a **single** card in
+     * the whole project is the `settling` prop of `Stage` needed (K5 path one); the probe does not need
+     * it, so this step does not touch `Stage.tsx`.
      *
-     * 各趟 `PROBE_BOOL_FRAMES` 帧或 `PROBE_BOOL_MS` 毫秒封顶;比对趟超了记 `false`,
-     * 量 `seekMs` 那一趟超了记 `null`。**生成的快照一律不 post `probe-frame`**(K1)。
+     * Each pass is capped at `PROBE_BOOL_FRAMES` frames or `PROBE_BOOL_MS` milliseconds; a comparison
+     * pass that exceeds it records `false`, and the pass that measures `seekMs` records `null` when
+     * exceeded. **Generated snapshots never post `probe-frame`** (K1).
      */
     const runBooleanProbe = async (lastSec: number, fps: number, gen: number): Promise<{ booleans?: ProbeBooleans; aborted?: true }> => {
       const step = 1000 / fps;
@@ -1409,8 +1586,10 @@ export default function StageView() {
       const frames = PROBE_BOOL_FRAMES;
       const stale = () => gen !== renderGen.current;
       /**
-       * 帧间让出一个宏任务:让父页的 RPC 消息、iframe 自己的 resize 有机会进来(趟与趟之间用)。
-       * 后台活停着时(C10 契约第 2 节)就在趟与趟之间等,不在一趟里面停(一趟的墙钟就是量的数)。
+       * Yield a macrotask between frames: so the parent page's RPC messages and the iframe's own resize
+       * have a chance to get in (used between passes).
+       * When background work is paused (section 2 of the C10 contract), wait between passes, not in the
+       * middle of one (the wall clock of a pass is the number being measured).
        */
       const breathe = async () => {
         await new Promise<void>((r) => (window.__pcRealSetTimeout ?? window.setTimeout)(r, 0));
@@ -1418,7 +1597,7 @@ export default function StageView() {
         if (g) await g;
       };
 
-      /* ---- 1. 基线趟:全局时钟推 8 帧 ---- */
+      /* ---- 1. Baseline pass: global clock steps 8 frames ---- */
       { const g = backGate(stale); if (g) await g; }
       if (stale()) return { aborted: true };
       remountClipAt(mountSec);
@@ -1435,12 +1614,12 @@ export default function StageView() {
         },
       });
       if (stale()) return { aborted: true };
-      // canvas 卡:比对前这一帧的位图要贴上(R9 M3:K1 探针生成快照的每一帧都发 beat)
+      // canvas card: before comparing, this frame's bitmap must be applied (R9 M3: every frame of the K1 probe's snapshot generation sends a beat)
       await glStrict(clock.now() / 1000);
-      // 第 8 帧之前就被截断的卡没有基线,两个布尔一律记 false、不比对(K1)
+      // A card truncated before frame 8 has no baseline: both booleans are always recorded as false, no comparison (K1)
       const baseline = pushed >= frames ? probeControlHtml() : null;
 
-      /* ---- 2. vtOk 趟:只推子树虚拟时间 ---- */
+      /* ---- 2. vtOk pass: only steps subtree virtual time ---- */
       await breathe();
       if (stale()) return { aborted: true };
       let vtHtml: string | null = null;
@@ -1449,7 +1628,7 @@ export default function StageView() {
         const vtStarted = realNow();
         let done = 0;
         for (let k = 1; k <= frames; k++) {
-          // 和基线趟的 advanceToAsync 一样:帧间只让微任务(Motion 解析关键帧要一个边界)
+          // Same as advanceToAsync in the baseline pass: between frames only yield microtasks (Motion needs a boundary to resolve keyframes)
           await Promise.resolve();
           if (stale()) return { aborted: true };
           if (realNow() - vtStarted > PROBE_BOOL_MS) break;
@@ -1465,7 +1644,7 @@ export default function StageView() {
       }
       const vtOk = baseline !== null && vtHtml !== null && compareSnapshotHtml(baseline, vtHtml).same;
 
-      /* ---- 3. seekOk 趟:一步钉到第 8 帧 ---- */
+      /* ---- 3. seekOk pass: pin to frame 8 in one step ---- */
       await breathe();
       if (stale()) return { aborted: true };
       let seekHtml: string | null = null;
@@ -1480,7 +1659,7 @@ export default function StageView() {
       }
       const seekOk = baseline !== null && seekHtml !== null && compareSnapshotHtml(baseline, seekHtml).same;
 
-      /* ---- 4. seekMs:第 0 帧直接钉到最后一帧的墙钟 ---- */
+      /* ---- 4. seekMs: wall clock of pinning from frame 0 straight to the last frame ---- */
       await breathe();
       if (stale()) return { aborted: true };
       const wrap = remountClipAt(mountSec);
@@ -1494,15 +1673,18 @@ export default function StageView() {
       return { booleans: { vtOk, seekOk, seekMs: elapsed > PROBE_BOOL_MS ? null : elapsed } };
     };
 
-    /* ------------------------------------------------------------------ K4 节拍器 */
+    /* ------------------------------------------------------------------ K4 metronome */
 
     /**
-     * 这一拍的账(K6 的一秒窗口),顺带判要不要降级(**只降不升**)。每张卡的耗时来自
-     * `<Profiler>`(`FrameScene` 的 live 路每个片段一个,E7),每拍清空一次。
+     * The accounting for this beat (K6's one-second window), also deciding whether to downgrade
+     * (**downgrade only, never upgrade**). Each card's elapsed time comes from `<Profiler>` (one per clip
+     * on the live path of `FrameScene`, E7) and is cleared every beat.
      *
-     * 超时怎么算、`pendingDemote` 的卡为什么不计入、降哪一张,都在 `beatLoop.mjs` 的
-     * `noteK6Beat`。降了一张就 post `{ type: 'demote', clipId }`,父页查旧记录整条 PUT
-     * `{ ...旧记录, capped: true, demoted: true }`。「最贵」按实测算、不按探针的 `stepMs`。
+     * How overtime is computed, why `pendingDemote` cards are not counted, and which card is downgraded
+     * are all in `noteK6Beat` of `beatLoop.mjs`. After downgrading one card, post
+     * `{ type: 'demote', clipId }`, and the parent page looks up the old record and PUTs the whole
+     * `{ ...old record, capped: true, demoted: true }`. "Most expensive" is by measurement, not by the
+     * probe's `stepMs`.
      */
     const noteBeat = (beatCost: number, fps: number, sec: number): void => {
       const worst = noteK6Beat(ref.current.k6, {
@@ -1517,10 +1699,12 @@ export default function StageView() {
     };
 
     /**
-     * 停下节拍循环,并把等着的 `pause()` 回包落定。
+     * Stop the beat loop and settle the waiting `pause()` replies.
      *
-     * **三处入口**:`pause()`(立即停)、武装停到达、`setRole('back')` / 播放到头。
-     * 不管从哪儿来,挂着的 RPC 都必须回包 —— 循环停了没人再去 resolve 它们。
+     * **Three entry points**: `pause()` (stop immediately), an armed stop being reached, and
+     * `setRole('back')` / playback reaching the end.
+     * Whichever way we got here, pending RPCs must be answered: once the loop stops, nobody is left to
+     * resolve them.
      */
     const settleBeatWaiters = (): void => {
       const armed = ref.current.beatArmed;
@@ -1535,29 +1719,32 @@ export default function StageView() {
       for (const resolve of waiters) resolve({ ok: true, stoppedAt });
     };
 
-    /** 停循环(`setRole('back')`、`pause()`、播放到头都走它) */
+    /** Stop the loop (`setRole('back')`, `pause()` and playback reaching the end all go through it) */
     const stopBeat = (): void => {
       ref.current.beatPaused = true;
       if (!ref.current.beatRunning) settleBeatWaiters();
     };
 
     /**
-     * 节拍循环(K4)。**只有 `front` 跑**,每拍:
+     * Beat loop (K4). **Only `front` runs it**. Each beat:
      *
-     *   `t += 1 / fps` → `clock.advanceTo(t × 1000, { step: 1000 / fps })` 推轻卡并提交
-     *   → 贴平面(平面状态在 `ref` 里,和 `setT` 同一次提交) → 等**真实**一帧
-     *   → 补一拍落定(`clock.tick` + `pinner.sync`,让 Motion 把新值写回 DOM)
-     *   → post `{ type: 'frame', sec }` → 下一拍。
+     *   `t += 1 / fps` → `clock.advanceTo(t × 1000, { step: 1000 / fps })` advances light cards and commits
+     *   → attach planes (plane state lives in a `ref`, committed together with `setT`) → wait for a **real** frame
+     *   → one extra settle beat (`clock.tick` + `pinner.sync`, so Motion writes the new values back to the DOM)
+     *   → post `{ type: 'frame', sec }` → next beat.
      *
-     * **节拍按绝对时刻排**:`nextDue = playStart + n × 1000 / fps`(`__pcRealNow`),
-     * 一拍的活干完之后 `await __pcRealRaf()` 直到 `__pcRealNow() ≥ nextDue − 1 ms`。
-     * 60 Hz 屏上一次 rAF 只有 16.6 ms,30 fps 等一次等不满一拍,所以是个循环;
-     * 24 / 25 fps 自然落成 2 / 3 帧交替,均值仍是 1000 / fps。
+     * **Beats are scheduled on absolute time**: `nextDue = playStart + n × 1000 / fps` (`__pcRealNow`).
+     * After a beat's work is done, `await __pcRealRaf()` until `__pcRealNow() ≥ nextDue − 1 ms`.
+     * On a 60 Hz screen one rAF is only 16.6 ms, so at 30 fps a single wait does not fill a beat, hence
+     * the loop; 24 / 25 fps naturally settle into an alternating 2 / 3 frame pattern, and the average is
+     * still 1000 / fps.
      *
-     * **慢帧就等**:只有**这一拍的活本身**超过了 `nextDue` 才把时间轴整体后移
-     * (`playStart += 超出量`),不补、不跳帧、不往前冲 —— 所以连续两条 `frame` 的
-     * `sec` 差恒为 1/fps。等 rAF 那一下的粒度溢出**不后移**:每拍都后移一点的话,
-     * 30 fps 以外的帧率会被一路推成「每拍整数个垂直同步」,均值就不是 1000/fps 了。
+     * **A slow frame waits**: only when **the beat's own work** overruns `nextDue` is the whole timeline
+     * shifted back (`playStart += overrun`). No catching up, no frame skipping, no rushing ahead, so the
+     * `sec` difference between two consecutive `frame` messages is always 1/fps. Overshoot caused by the
+     * granularity of waiting for rAF does **not** shift: if every beat shifted a little, any frame rate
+     * other than 30 fps would be pushed along to "a whole number of vsyncs per beat", and the average
+     * would no longer be 1000/fps.
      */
     const runBeatLoop = async (fromSec: number): Promise<void> => {
       const p = ref.current.project;
@@ -1565,59 +1752,64 @@ export default function StageView() {
       const fps = Math.max(1, p.fps || 30);
       const period = 1000 / fps;
       const duration = Math.max(0, Number(p.duration) || 0);
-      /** 平时等真帧的上限:一拍,至少 20 ms */
+      /** Upper bound for normally waiting on a real frame: one beat, at least 20 ms */
       const rafBudget = Math.max(20, period);
-      /** 连着几拍没等到真帧了(被节流的 iframe 会一直等不到) */
+      /** How many beats in a row got no real frame (a throttled iframe never gets one) */
       let rafMisses = 0;
-      // 拍序号按帧格算,`sec` 一律是 `帧号 / fps` —— 连续累加浮点会飘
+      // The beat index counts frame slots and `sec` is always `frame number / fps`: accumulating floats drifts
       const fromFrame = Math.round(fromSec * fps);
       let playStart = realNow();
       ref.current.beatRunning = true;
       try {
         for (let n = 1; ; n++) {
-          // 每拍开头查 `paused` / 角色(E0)
+          // Check `paused` / role at the start of each beat (E0)
           if (ref.current.beatPaused || ref.current.role !== "front") break;
           const { sec, frame, ended } = beatAt(fromFrame, n, fps, duration);
           const beatStarted = realNow();
 
-          /* ---- 一拍的活 ---- */
+          /* ---- One beat's work ---- */
           ref.current.t = sec;
           ref.current.cardCost.clear();
           flushSync(() => setT(sec));
           clock.advanceTo(sec * 1000, { step: period, onFrame: (ms) => pinner.sync(ms, skipWrappers()) });
-          // 重卡贴流(K5 / G5):这一拍的帧手里有就当场画上,没有就留着上一张或透明 —— 从不等它
+          // Attach heavy cards to the stream (K5 / G5): if the frame for this beat is at hand, draw it now; otherwise keep the previous one or leave it transparent. Never wait for it
           presentStreams(sec);
-          // K3(b) 的播放态追帧:这一拍除了本拍那一帧,再多推几步它自己的本地时间
+          // K3(b) frame catch-up in play state: besides this beat's own frame, push its local time a few more steps
           enterCatchUps(sec, fps);
           stepCatchUps(fps);
-          // 兜底顺序的尽头(T1~T4):流这一拍 blank、又没挂快照的层显示占位符;当拍判,不等下一次分派
+          // End of the fallback order (T1~T4): a layer whose stream is blank this beat and has no snapshot attached shows a placeholder; decided in the same beat, without waiting for the next dispatch
           refreshPlaceholders();
           traceFallback(sec, realNow() - beatStarted);
           /*
-           * canvas 卡(R9 M3,一拍的顺序写死):DOM 提交完 → `beat` → **`await done`(慢帧就等在这里)**
-           * → 位图贴到各平面(`glHost` 里做)→ 等真帧 → post `frame`。`done` 偶有几十毫秒的尖峰,
-           * 等它就是 K4 的「慢帧就等」:这一拍变长,下面的排拍把时间轴整体后移,不跳帧。
-           * Worker 真卡死时 `glHost` 1 秒后放行,平面留上一张,循环不会挂住。
+           * Canvas card (R9 M3, the order within a beat is fixed): DOM commit done → `beat` → **`await done`
+           * (a slow frame waits here)** → bitmaps attached to the planes (done inside `glHost`) → wait for a
+           * real frame → post `frame`. `done` occasionally spikes by tens of milliseconds; waiting for it is
+           * K4's "a slow frame waits": this beat gets longer, the beat scheduling below shifts the whole
+           * timeline back, and no frame is skipped. If the Worker is truly stuck, `glHost` lets go after
+           * 1 second, the planes keep the previous bitmap, and the loop does not hang.
            */
           const glBeat = gl.beat({ t: sec });
           if (glBeat) await glBeat;
           /*
-           * 等真实一帧,**带超时**(见 `realRafOrAfter`)。连着几拍都等不到就认定这个 iframe
-           * 被浏览器节流了 —— 那时画面本来就不在刷,再为它等只会把拍长拖成节流周期;
-           * 改成只让一个宏任务(Motion 解析关键帧要的是任务边界,不是真帧)。
+           * Wait for a real frame, **with a timeout** (see `realRafOrAfter`). If no real frame arrives for
+           * several beats in a row, conclude that the browser has throttled this iframe: nothing is being
+           * repainted anyway, and waiting for it would only stretch the beat to the throttle period.
+           * Switch to yielding a single macrotask (Motion needs a task boundary to resolve keyframes, not a
+           * real frame).
            */
           const painted = await realRafOrAfter(rafMisses >= RAF_MISS_GIVEUP ? RAF_GIVEUP_MS : rafBudget);
           rafMisses = painted ? 0 : rafMisses + 1;
           /*
-           * 补一拍落定。`settle()` 排的是微任务,而这里本来就在 `await` 之后 ——
-           * 直接同步做完即可,顺手作废还挂着的那一次(又渲了一帧,上一次补拍不作数)。
+           * One extra settle beat. `settle()` schedules a microtask, and we are already right after an `await`
+           * here, so just do it synchronously and, while at it, invalidate the one still pending (another
+           * frame was rendered, so the previous extra beat does not count).
            */
           settleGen.current++;
           clock.tick(sec * 1000);
           pinner.sync(sec * 1000, skipWrappers());
           const beatCost = realNow() - beatStarted;
 
-          // post `frame` 之前再查一次角色(E0):互换那一拍新 `back` 不能还在报
+          // Check the role once more before posting `frame` (E0): on the beat of a swap, the new `back` must not still report
           if (ref.current.role !== "front") break;
           ref.current.beatLastSec = sec;
           ref.current.beatLastFrame = frame;
@@ -1628,11 +1820,11 @@ export default function StageView() {
           postStageEvent({ type: "frame", sec });
           noteBeat(beatCost, fps, sec);
 
-          // 武装停(E0):post 完 `frame(atSec)` 那一拍就停在那一帧,平面不摘
+          // Armed stop (E0): stop on the very frame where `frame(atSec)` was just posted; the planes are not removed
           const armed = ref.current.beatArmed;
           if (armed && ref.current.beatLastFrame >= armed.frame) break;
 
-          /* ---- 等到下一拍的绝对时刻 ---- */
+          /* ---- Wait for the absolute time of the next beat ---- */
           const next = scheduleNextBeat(playStart, n, period, realNow());
           playStart = next.playStart;
           const { nextDue } = next;
@@ -1651,15 +1843,17 @@ export default function StageView() {
     };
 
     /*
-     * 后台活的开始 / 停止(C10 契约第 2 节):编辑器页判空闲,经 `setBackWork` 发来。停着时后台活在帧与帧之间等
-     * (不推、不丢),恢复了接着推;被新的 render / setProject 掐掉(`stale`)也不再等。桌面运行环境从不发它,永远开着。
+     * Start / stop of background work (C10 contract section 2): the editor page decides it is idle and sends it via
+     * `setBackWork`. While stopped, background work waits between frames (no pushing, no dropping) and
+     * resumes pushing when restarted; being cut off by a new render / setProject (`stale`) also ends the wait.
+     * The desktop runtime never sends it, so it is always on.
      */
     const backWork = { on: true, waiters: new Set<() => void>() };
     const backGate = (stale: () => boolean): Promise<void> | undefined => {
       if (backWork.on || ref.current.role !== "back") return undefined;
       return new Promise<void>((resolve) => {
         const done = () => { backWork.waiters.delete(done); clearInterval(poll); resolve(); };
-        // 掐断(新的 render、setProject)或角色变了也要放行,不然 RPC 永不回包
+        // Also release when cut off (new render, setProject) or when the role changed, otherwise the RPC is never answered
         const poll = (window.__pcRealSetInterval ?? window.setInterval.bind(window))(() => {
           if (backWork.on || stale() || ref.current.role !== "back") done();
         }, 50) as unknown as number;
@@ -1669,31 +1863,44 @@ export default function StageView() {
 
 
     /*
-     * M7 生成快照(`bakeFrame`,契约第 4.3 节):代数(`bakeCancel`、新的一帧作废在飞的那一帧)与顺推的接续点
-     * (上一帧推到了哪一帧、在哪份项目上;项目换了对象就接不上,从头推)。
+     * M7 generate snapshots (`bakeFrame`, contract section 4.3): the generation (`bakeCancel`; a new frame
+     * invalidates the one in flight) and the resume point of forward pushing (which frame the previous
+     * frame was pushed to, and on which project; if the project changed to another object it cannot
+     * resume, so push from the start).
      */
     let bakeGen = 0;
     let bakeCursor: { project: Project; clipId: string; frame: number } | null = null;
-    /** 落定时看舞台的 DOM 这一轮变没变(只在 `bakeSettle` 里挂着) */
+    /** While settling, check whether the stage's DOM changed in this round (only attached inside `bakeSettle`) */
     let bakeMutations: MutationObserver | null = null;
-    /** 落定最多做几轮(同导出页的 `settleDom`) */
+    /** Maximum number of settle rounds (same as `settleDom` on the export page) */
     const BAKE_SETTLE_ROUNDS = 4;
     /**
-     * 把已经排下、还没提交的 React 更新提交完(`bakeFrame` 推的每一帧都做,见那里的 `frameEnd`)。
+     * Commit the React updates that are already scheduled but not yet committed (done for every frame
+     * pushed by `bakeFrame`, see `frameEnd` there).
      *
-     * 卡片在每帧的回调里改状态(进度值、打了几个字、第几个词)、Motion 在动画结束的回调里换人,React 都不当场提交,
-     * 交给调度器排到后面的宏任务里。不管它的话,这次提交落在哪一帧就看两帧之间隔了多久:顺着做时快照里是上一帧的值,
-     * 从头推时又是这一帧的;换进来的元素哪一帧开始动也跟着差一帧(`docs/reports/AGENT-rr-a1-verify.md`「原因三」)。
-     * 导出页每帧都排空(`snapshotSettle.ts` 的 `settleDom`),这里是同一件事。
+     * Cards change state in each frame's callback (progress value, how many characters have been typed,
+     * which word is current), and Motion swaps elements in the animation-end callback. React does not
+     * commit any of these on the spot; it leaves them to the scheduler to run in a later macrotask. If
+     * left alone, which frame the commit lands on depends on how much time passed between two frames:
+     * when pushing in order the snapshot holds the previous frame's values, and when pushing from the
+     * start it holds this frame's. The frame at which a swapped-in element starts to animate is also off
+     * by one (`docs/reports/AGENT-rr-a1-verify.md`, "Cause 3"). The export page drains every frame
+     * (`settleDom` in `snapshotSettle.ts`); this is the same thing.
      *
-     * 一轮两步:
-     *   1. 让出一个宏任务。改状态的那一下常常藏在一串 Promise 回调后面(Motion 的「全部退场动画播完」),
-     *      微任务链走完它才真的发生;一个宏任务的边界把这条链排空。
-     *   2. 同步提交一次(`flushSync` 带一次真的状态变化)。这一次渲染会把同一棵树上排着的更新一起做掉,
-     *      提交之后的副作用(Motion 在那里起新动画)也当场跑完。**不靠等调度器**:它的任务排在哪条消息后面、
-     *      提交完要不要先让浏览器画一帧再跑副作用,都不归这里管;同步提交则只由这里说了算,每次都落在这一帧的时刻上。
-     * 这一轮里 DOM 变了就再做一轮(副作用里可能又改了状态),不变就够了;最多 `BAKE_SETTLE_ROUNDS` 轮。
-     * 让出用 MessageChannel 不用定时器:连着等的定时器每次至少 4 毫秒,后台页面的定时器还会被浏览器降速。
+     * One round has two steps:
+     *   1. Yield one macrotask. The state change is often hidden behind a chain of Promise callbacks
+     *      (Motion's "all exit animations finished"), and it only really happens once the microtask
+     *      chain has run through; the boundary of one macrotask drains that chain.
+     *   2. Commit synchronously once (`flushSync` with one real state change). This render also does the
+     *      other updates queued on the same tree, and the effects after the commit (where Motion starts
+     *      new animations) also run to completion right there. **It does not rely on waiting for the
+     *      scheduler**: which message its task is queued behind, and whether the browser paints a frame
+     *      before running the effects after the commit, are not under our control here; a synchronous
+     *      commit is decided only here and always lands at this frame's time.
+     * If the DOM changed in this round, do another round (an effect may change state again); if it did
+     * not change, that is enough. At most `BAKE_SETTLE_ROUNDS` rounds.
+     * The yield uses MessageChannel instead of timers: chained timers wait at least 4 ms each, and the
+     * browser also throttles timers in background pages.
      */
     const bakeSettle = async (): Promise<void> => {
       const root = rootRef.current;
@@ -1712,18 +1919,22 @@ export default function StageView() {
       }
     };
     /**
-     * 舞台这一侧的生成快照诊断(契约第 7 节「舞台」,`__pcStageDiag().bake`):逐帧耗时(不含被门挡住的时长)、
-     * 被门挡住的时长单记、从头推的次数、没成的原因计数。
+     * Generate-snapshots diagnostics on the stage side (contract section 7, "Stage",
+     * `__pcStageDiag().bake`): per-frame time (excluding time blocked by the gate), time blocked by the
+     * gate recorded separately, the number of pushes from the start, and counts of failure reasons.
      */
     const bakeStats = { frames: 0, ms: [] as number[], pausedMs: 0, remounts: 0, smallMs: [] as number[], errors: {} as Record<string, number> };
     const bakeFail = <R extends { ok: false; reason: string }>(r: R): R => { bakeStats.errors[r.reason] = (bakeStats.errors[r.reason] ?? 0) + 1; return r; };
     const q = (xs: number[], p: number) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return Math.round(s[Math.min(s.length - 1, Math.floor(p * s.length))] * 10) / 10; };
-    /** 就绪闸的上限(照预渲染 `waitFrameReady`:控件异步活、字体、图片都就绪才生成快照) */
+    /** Upper bound of the readiness gate (follows prerender `waitFrameReady`: snapshots are generated only once control async work, fonts and images are all ready) */
     const BAKE_READY_MAX_MS = 20_000;
     /**
-     * 每帧生成快照之前的就绪闸(M7 探针 P2 之后主会话裁定,照预渲染 `server/bakery/frame-ready.mjs` 的 `waitFrameReady`):
-     * 控件的异步活、字体、图片都就绪才生成快照;等的时候照样给同一时刻的拍(不推时间,靠 rAF 装载的控件要拍才走得动);
-     * 控件报错、或 `BAKE_READY_MAX_MS` 之内没就绪,回不就绪 —— 这一段 `fail`,不出空白帧。
+     * Readiness gate before generating each frame's snapshot (ruled by the lead session after M7 probe
+     * P2, following `waitFrameReady` in prerender `server/bakery/frame-ready.mjs`): snapshots are generated
+     * only once control async work, fonts and images are all ready. While waiting, beats at the same
+     * moment are still issued (time is not pushed; controls loaded via rAF need beats to make progress).
+     * If a control reports an error, or is not ready within `BAKE_READY_MAX_MS`, report not ready:
+     * this segment is `fail`, and no blank frame is produced.
      */
     const bakeReady = async (stale: () => boolean): Promise<{ ok: true } | { ok: false; detail: string }> => {
       const t0 = realNow();
@@ -1732,11 +1943,11 @@ export default function StageView() {
       const gate = (async () => {
         do {
           await waitForFrameWork();
-          // 先排一次版,新挂上的文字才会开始装字体
+          // Lay out once first, so newly attached text starts loading its fonts
           document.documentElement.getBoundingClientRect();
           await document.fonts.ready;
           await Promise.all([...document.images].filter((img) => img.getAttribute("src") || img.getAttribute("srcset")).map((img) => img.decode().catch(() => {})));
-          // 一个装载做完可能在 React 提交里又挂上另一个控件
+          // A finished load may attach another control during the React commit
         } while (frameWorkStatus().length > 0 || document.fonts.status !== "loaded");
       })().catch((e) => { failure = String((e as Error)?.message ?? e); }).finally(() => { done = true; });
       while (!done) {
@@ -1755,10 +1966,12 @@ export default function StageView() {
 
     const api: StageRpcApi = {
       /**
-       * 换项目文档。patch 复用 A7 的 changedClips 结构,合并时**保持未变片段的对象引用**
-       * (applyProjectPatch 就是这么做的);full 带 reset。
-       * 两种角色都**不再**按跳转重算这一帧:front 只更新项目(第 4 步 D5 接「按 changedClips
-       * 让变了的层重新查索引」);back 在飞的探针推帧被掐断后回 { aborted, reason: 'project' }。
+       * Swap the project document. A patch reuses A7's changedClips structure, and when merging it
+       * **keeps the object references of unchanged clips** (which is what applyProjectPatch does); full
+       * comes with reset.
+       * Neither role **recomputes** this frame on a jump any more: front only updates the project (step 4,
+       * D5 hooks up "re-look up the index for layers changed per changedClips"); back, when its in-flight
+       * probe push is cut off, replies { aborted, reason: 'project' }.
        */
       async setProject(next, opts = {}) {
         const prev = ref.current.project;
@@ -1773,24 +1986,24 @@ export default function StageView() {
           full = next;
         }
         if (opts.reset || full !== prev) {
-          // clipId 会在不同项目里复用,不清掉就会张冠李戴
+          // clipId is reused across projects; if not cleared, things get mixed up
           if (full !== prev) { resetInk(); resetPlaceholderGeometry(); }
         }
         const prevKey = ref.current.layoutKey;
         const nextKey = layoutKeyOf(full);
         ref.current.project = full;
         ref.current.layoutKey = nextKey;
-        // R9:项目选项的路线(生效值;切了就重建 glHost 那一侧的连接,M2 / 约束第 1 条)。在线页面的路线跟舞台闸门走,不看项目选项
+        // R9: route of the project options (effective value; on a switch, rebuild the connection on the glHost side, M2 / constraint 1). The online page's route follows the stage gate, not the project options
         gl.setRoute(ONLINE ? onlineGlRoute : resolveGlRoute(full.glRoute));
         flushSync(() => setProject(full));
-        // 画幅可能变了:素材效果卡的图形能力(最大纹理尺寸那一条)按新的长边重判
+        // The aspect ratio may have changed: re-judge the graphics capability of media effect cards (the max texture size rule) against the new long edge
         if (!prev || prev.width !== full.width || prev.height !== full.height) cardExec.runtime?.refreshGraph();
         window.clearTimeout(ref.current.settle);
-        // 项目变了,在飞的补跑作废:探针会按新项目重发
+        // The project changed, so the in-flight catch-up run is invalidated: the probe will resend against the new project
         renderGen.current++;
         projectGen.current++;
         abortPending("project");
-        // 换项目同样中止第一路追帧(K5:五个 RPC 各递增一次)
+        // Changing the project also aborts the first-path frame catch-up (K5: each of the five RPCs increments once)
         catchUpGen.current++;
         abortCatchUps();
         if (LEGACY) {
@@ -1808,25 +2021,29 @@ export default function StageView() {
       },
 
       /**
-       * 拨到 tSec(暂停 / 拖动的唯一入口)。独立路径,不复用 render:
-       *   clock.set → flushSync(setT) → pinner.sync → settle。不递增 playToken,组件实例不变。
-       * 唯一例外:往前且不到 CONTINUOUS_MAX 秒,按连续播放用 advanceTo 同步推几帧(≤ 30 步)。
-       * 远跳或向后一律不 advanceTo(会同步空转几百次 tick)。
-       * probe: 一律走跳转路径(量的必须是单帧),跨任务边界后生成控件快照,回包带 elapsedMs。
+       * Seek to tSec (the only entry point for pause / drag). A separate path that does not reuse render:
+       *   clock.set → flushSync(setT) → pinner.sync → settle. It does not increment playToken, and the component instances stay the same.
+       * The only exception: when going forward by less than CONTINUOUS_MAX seconds, push a few frames
+       * synchronously with advanceTo as in continuous playback (≤ 30 steps).
+       * Far jumps or going backward never use advanceTo (it would spin through hundreds of ticks synchronously).
+       * probe: always takes the jump path (what is measured must be a single frame), generates control
+       * snapshots after crossing a task boundary, and the reply carries elapsedMs.
        *
-       * **`snapshots` / `awaiting` 和 `t` 在同一次 React 提交里生效**(E0):拖过一张 stateful 卡的
-       * 入点时,新挂载的组件和它的快照平面同帧出现,不闪初始态。所以这两样在 `flushSync(setT)`
-       * **之前**写进 `ref.current` —— 渲染读的就是它。`settle` 是 K5 的暂停态活渲(R5)。
+       * **`snapshots` / `awaiting` take effect in the same React commit as `t`** (E0): when dragging past
+       * the in-point of a stateful card, the newly mounted component and its snapshot plane appear in the
+       * same frame, with no flash of the initial state. So both are written into `ref.current`
+       * **before** `flushSync(setT)`, since rendering reads from there. `settle` is K5's paused-state live render (R5).
        */
       async setTime(tSec, opts = {}) {
         /*
-         * 角色闸门(E1)。带 `probe: true` 的这一支量的是 K1 的成绩,只有后台舞台能接 ——
-         * 可见舞台正在给用户播画面,在它上面跑探针既量不准(要和用户的交互抢主线程),
-         * 又会把画面拨到探针的时刻去。不带 `probe` 的 `setTime` 两种角色都收
-         * (拖动发给 `front`、D4 的页面侧测量发给 `back`),所以闸门只挡 `probe`。
+         * Role gate (E1). The branch with `probe: true` measures K1's results, and only the background stage
+         * can take it: the visible stage is playing the picture for the user, so running a probe on it would
+         * neither measure accurately (it would compete with the user's interaction for the main thread) nor
+         * seek the picture to the probe's time. A `setTime` without `probe` is accepted by both roles
+         * (dragging is sent to `front`, D4's page-side measurement is sent to `back`), so the gate only blocks `probe`.
          */
         if (opts.probe && ref.current.role !== "back") return { aborted: true, reason: "role" as const };
-        // 后台活停着(C10 契约第 2 节):探针的这一帧等恢复了再量(等的时间不算进耗时)
+        // Background work is stopped (C10 contract section 2): this frame of the probe waits until it resumes before measuring (the waiting time is not counted in the elapsed time)
         if (opts.probe) { const g = backGate(() => ref.current.role !== "back"); if (g) await g; }
         const target = Math.max(0, Number(tSec) || 0);
         const started = realNow();
@@ -1836,18 +2053,18 @@ export default function StageView() {
         ref.current.t = target;
         ref.current.wantedSettle = !!opts.settle;
         if (!p) return { path: "set" } satisfies SetTimeReply;
-        // 暂停 / 拖动时来了 setTime,就没有「还在飞的补跑」这回事了
+        // When a setTime arrives during pause / drag, there is no such thing as an "in-flight catch-up run"
         renderGen.current++;
         abortPending("superseded");
-        // 新的 setTime 中止正在进行的第一路追帧(K5:五个 RPC 各递增一次)
+        // A new setTime aborts the first-path frame catch-up in progress (K5: each of the five RPCs increments once)
         catchUpGen.current++;
-        // 单舞台:上一次停下画好的层回到抑制(拖动、跳转时贴预渲染结果;停下时父页再发 settleLayers)
+        // Single stage: layers drawn at the last stop go back to suppressed (on drag and jump, attach the prerender output; on stop, the parent page sends settleLayers again)
         clearSettleLive();
         abortCatchUps();
         const fps = Math.max(1, p.fps || 30);
 
         if (!opts.probe && dt >= 0 && dt < CONTINUOUS_MAX) {
-          // 连续播放:接着往下跑一两帧就行(≤ 30 步,同步)。轻卡跟着全局时钟走,K3 不用再分路
+          // Continuous playback: just keep running a frame or two (≤ 30 steps, synchronous). Light cards follow the global clock, so K3 needs no further path split
           flushSync(() => setT(target));
           clock.advanceTo(target * 1000, { step: 1000 / fps, maxCatchUp: CONTINUOUS_MAX * 1000, onFrame: (ms) => pinner.sync(ms, skipWrappers()) });
           for (const clip of cardClipsAt(target)) ref.current.lastTargetFrame.set(clip.id, Math.round(target * fps));
@@ -1856,7 +2073,7 @@ export default function StageView() {
           if (opts.settle) routeSettle(target, fps);
           presentStreams(target);
           refreshPlaceholders();
-          // 同步的 advanceTo 不逐步发 beat,只在它结束后发一次带终点 t 的(K3(a) / M3)
+          // A synchronous advanceTo does not send beats step by step; it sends one only after it finishes, carrying the end t (K3(a) / M3)
           void gl.beat({ t: target });
           return { path: "continuous" } satisfies SetTimeReply;
         }
@@ -1867,24 +2084,24 @@ export default function StageView() {
         settle(target);
         scheduleSample();
         if (!opts.probe) {
-          // K3 的三条跳转路;`settle: true` 时再起 K5 第一路
+          // K3's three jump paths; with `settle: true`, start K5's first path afterwards
           routeJump(target, fps);
           if (opts.settle) routeSettle(target, fps);
           presentStreams(target);
           refreshPlaceholders();
-          // `setTime` 落定那一帧发一拍(M3;点时间轴一次只发这一拍)
+          // Send one beat on the frame where `setTime` settles (M3; clicking the timeline once sends only this one beat)
           void gl.beat({ t: target });
         }
         if (opts.probe) {
           /*
-           * K1 的四个数(任务书 3.8)。`stepMs` 在任务边界之前取；异步提交和生成快照
-           * 的等待都不属于活渲单帧成本。
+           * K1's four numbers (task brief 3.8). `stepMs` is taken before the task boundary; async commits and
+           * the waiting for generating snapshots are not part of the single-frame cost of live render.
            */
-          // canvas 卡的 `stepMs` 含 `beat → done` 往返(M4):两条路线量级不同,所以路线进 `device`
+          // The canvas card's `stepMs` includes the `beat → done` round trip (M4): the two routes differ in magnitude, so the route goes into `device`
           const glDone = await (gl.beat({ strict: true, measure: true, t: target }) ?? undefined);
           const stepMs = realNow() - started;
-          // 快照读 computed style 时会同步刷新样式；GL 位图已由严格 beat 等到。
-          // 真 rAF 在隐藏的后台舞台可能一秒才来一次，逐样本等待会把 16 帧拖成 16 秒。
+          // Reading computed style for a snapshot flushes styles synchronously; the GL bitmap has already been awaited by the strict beat.
+          // A real rAF in a hidden background stage may arrive only once per second, and waiting per sample would stretch 16 frames into 16 seconds.
           await probeTaskBoundary();
           const root = rootRef.current;
           const snap = root ? createSnapshot(root).timing : { inlineMs: 0, rasterMs: 0, serializeMs: 0 };
@@ -1896,24 +2113,26 @@ export default function StageView() {
       },
 
       /**
-       * 后台舞台的补跑(K1 探针 / K3(b) 续推)。
-       *   jump: true  —— 重挂载并从 mountFrameOf 推到 tSec;
-       *                  `probe: 'snapshot'`(或 `true`)每推一帧就生成控件快照并 post `probe-frame`,
-       *                  maxFrames 到或累计墙钟超过 B(1000/fps×70%)就截断;
-       *                  `probe: 'time'` 只推进、不生成快照、不 post,按 PROBE_MAX_FRAMES /
-       *                  PROBE_MAX_MS 封顶,回包带每帧的活渲耗时 `steps`(K1 的计时趟)。
-       *                  截断都回 { aborted: true, reason: 'timeout', elapsedMs, frames, truncated: true }。
-       *   jump 缺省   —— 续推:不重挂载、不动 playToken,从 clock.now() 推到 tSec;
-       *                  tSec 在当前时刻之前直接回 { aborted, reason: 'superseded' }。
-       * Promise 在推完之后才 resolve;被新 render 掐掉回 'superseded',被 setProject 掐掉回 'project'。
+       * Catch-up run on the background stage (K1 probe / K3(b) continued push).
+       *   jump: true  - remount and push from mountFrameOf to tSec;
+       *                 `probe: 'snapshot'` (or `true`) generates control snapshots after each pushed frame and posts `probe-frame`,
+       *                 and truncates once maxFrames is reached or the accumulated wall clock exceeds B (1000/fps×70%);
+       *                 `probe: 'time'` only advances, with no snapshots and no post, capped by PROBE_MAX_FRAMES /
+       *                 PROBE_MAX_MS, and the reply carries the per-frame live render time `steps` (K1's timing pass).
+       *                 Every truncation replies { aborted: true, reason: 'timeout', elapsedMs, frames, truncated: true }.
+       *   jump omitted - continued push: no remount, no touching playToken, push from clock.now() to tSec;
+       *                 if tSec is before the current time, reply { aborted, reason: 'superseded' } directly.
+       * The Promise resolves only after the push finishes; being cut off by a new render replies 'superseded', and by setProject replies 'project'.
        */
       async render(tSec, opts = {}) {
         /*
-         * 角色闸门(E1)。`render` 会重挂载整台戏、逐帧推过去 —— 落在可见舞台上就是
-         * 用户眼前的画面从入点重播一遍。父页本来就只发给 `back`,这道闸门是**兜底**:
-         * 角色互换(K5)那一拍父页手里的「谁是 back」可能比舞台晚一步,宁可回
-         * `{ aborted: true, reason: 'role' }` 让父页当错误,也不能让可见舞台开始推帧。
-         * 父页收到 `role` 不重发 —— 重发也还是同一个角色。
+         * Role gate (E1). `render` remounts the whole show and pushes through it frame by frame; landing on
+         * the visible stage, that would replay the picture in front of the user from the in-point. The
+         * parent page only ever sends to `back` anyway, so this gate is a **fallback**: on the beat of a role
+         * swap (K5), the parent page's idea of "who is back" may lag the stage by one step, and we would
+         * rather reply `{ aborted: true, reason: 'role' }` and let the parent page treat it as an error than
+         * let the visible stage start pushing frames. The parent page does not resend on `role`: resending
+         * would hit the same role anyway.
          */
         if (ref.current.role !== "back") return { aborted: true, reason: "role" } satisfies RenderReply;
         const target = Math.max(0, Number(tSec) || 0);
@@ -1930,16 +2149,17 @@ export default function StageView() {
         window.clearTimeout(ref.current.settle);
 
         /*
-         * 两趟布尔探针走自己那一支:它不是「推到 tSec」,而是四趟各自复位再比对
-         * (K1)。`tSec` 在这里的含义是**片段最后一帧**,只用来量 `seekMs`。
-         * 掐断和别的探针一样按 `renderGen` 判,回 `superseded` / `project`。
+         * The two-pass boolean probe takes its own branch: it is not "push to tSec" but four passes, each
+         * reset and then compared (K1). `tSec` here means the **clip's last frame** and is only used to
+         * measure `seekMs`. Cutting off is judged by `renderGen` like the other probes, replying
+         * `superseded` / `project`.
          */
         if (probeMode === "booleans") {
           const pg = projectGen.current;
           const out = await runBooleanProbe(target, fps, gen);
           const elapsedMs = realNow() - started;
           if (out.aborted || gen !== renderGen.current) {
-            // 和别的路一样:被 setProject 掐的回 'project',被新 render 掐的回 'superseded'
+            // Same as the other paths: cut off by setProject replies 'project', cut off by a new render replies 'superseded'
             return { aborted: true, reason: projectGen.current !== pg ? "project" : "superseded", elapsedMs } satisfies RenderReply;
           }
           scheduleSample();
@@ -1952,18 +2172,19 @@ export default function StageView() {
           remountAt(target, fps);
           remounted = true;
         } else if (target * 1000 < clock.now()) {
-          // 续推不支持倒退
+          // Continued push does not support going backward
           return { aborted: true, reason: "superseded", elapsedMs: realNow() - started } satisfies RenderReply;
         }
 
         let frames = 0;
         let truncated = false;
-        /* 计时趟:每帧的活渲耗时(提交 React → 跑 rAF 回调 → 钉动画),帧间让出的时间不算进来 */
+        /* Timing pass: per-frame live render time (commit React → run rAF callbacks → pin animations); time yielded between frames is not counted */
         const steps: number[] = [];
         let frameStarted = 0;
         /*
-         * 后台活停着的时间(C10 契约第 2 节):不算进探针的封顶与耗时。在线的后台舞台逐帧让一个宏任务(`setTimeout(0)`),
-         * 帧与帧之间查停止标志;桌面照旧每 8 帧让一次,从不停。
+         * Time while background work is stopped (C10 contract section 2): not counted in the probe's cap or
+         * elapsed time. The online background stage yields one macrotask per frame (`setTimeout(0)`) and
+         * checks the stop flag between frames; the desktop app still yields once every 8 frames and never stops.
          */
         let pausedMs = 0;
         const wall = () => realNow() - started - pausedMs;
@@ -1984,9 +2205,11 @@ export default function StageView() {
               abort: () => {
                 if (gen !== renderGen.current) return true;
                 /*
-                 * 计时趟**不按一拍预算截断**(任务书 K1):那样 61 张推帧卡全部只推得了 1～10 帧,
-                 * catchUpMs 靠含挂载成本的前几帧外推、偏大 1.7～3.6 倍。这里的封顶只为长片段留,
-                 * 剩下的帧由父页按「首帧实测 + 其余帧中位数 × 剩余帧数」外推。
+                 * The timing pass **is not truncated by the one-beat budget** (task brief K1): otherwise all 61
+                 * frame-pushing cards would push only 1-10 frames, and catchUpMs, extrapolated from the first few
+                 * frames that include mount cost, would come out 1.7-3.6 times too high. The cap here is kept only
+                 * for long clips; the remaining frames are extrapolated by the parent page as "first-frame
+                 * measurement + median of the other frames × remaining frame count".
                  */
                 if (timing) {
                   if (frames >= maxFrames || wall() > PROBE_MAX_MS) {
@@ -2006,16 +2229,17 @@ export default function StageView() {
                 if (!timing) return;
                 frames++;
                 /*
-                 * canvas 卡(R9 M3 / M4):K1 探针的每一帧都发 beat、等 done —— 计时趟的每帧耗时含这段往返
-                 * (`stepMs` 的口径)。
-                 * 没有 gl 平面时 `glStrict` 回 `undefined`,这一帧和以前一模一样同步走完。
+                 * Canvas card (R9 M3 / M4): every frame of the K1 probe sends a beat and waits for done, so the
+                 * per-frame time of the timing pass includes this round trip (the definition of `stepMs`).
+                 * When there is no gl plane, `glStrict` returns `undefined`, and this frame completes synchronously
+                 * exactly as before.
                  */
                 const glDone = glStrict(ms / 1000);
                 if (glDone) return glDone.then(() => { steps.push(realNow() - frameStarted); });
                 steps.push(realNow() - frameStarted);
               },
             });
-            if (gen !== renderGen.current) return; // 已被 abortPending 按 reason 回包
+            if (gen !== renderGen.current) return; // Already answered by abortPending according to reason
             ref.current.pending = null;
             const elapsedMs = wall();
             if (truncated) {
@@ -2028,13 +2252,15 @@ export default function StageView() {
             settle(target);
             scheduleSample();
             ref.current.t = target;
-            // K5 第二路补跑到目标的那一帧(中间帧不发,同步 advanceTo 的豁免同理):位图贴上再回包
+            // The frame where K5's second-path catch-up run reaches the target (intermediate frames are not sent, same as the synchronous advanceTo exemption): attach the bitmaps, then reply
             if (!timing) {
               await glStrict(target);
               if (gen !== renderGen.current) return;
               /*
-               * 补跑到目标拍时整台戏正是精确活渲:趁这时把墨迹框量好(Item 7)。互换之后这一台转正,
-               * 占位符的实体框已经在手,不必等转正后的补量 —— 那一刻被抑制 / 不可见的卡也不会退成徽标。
+               * When the catch-up run reaches the target beat, the whole show is exactly in precise live render:
+               * take the chance to measure the ink boxes (Item 7). After a swap this stage becomes the front one,
+               * and the placeholder's solid box is already in hand, with no need to wait for a measurement after
+               * the promotion; cards that are suppressed / invisible at that moment will not fall back to a badge either.
                */
               measureInkBoxesNow();
             }
@@ -2057,19 +2283,20 @@ export default function StageView() {
         return { width: p?.width ?? 1920, height: p?.height ?? 1080 };
       },
       async setProxy(on) {
-        // 只有显式带了 ?proxy=1 的页面才允许开。导出页永远进不来这一条。
+        // Only pages that explicitly carry ?proxy=1 are allowed to turn this on. The export page can never reach this branch.
         if (!proxyAllowed()) return { ok: true as const };
         const want = !!on;
         if (want === ref.current.proxy) return { ok: true as const };
         ref.current.proxy = want;
         if (want) ensureProxyStyle();
         /*
-         * 从实体切回真渲的那一刻要采一次样,而不是切进实体时采 ——
-         * 实体模式下画面上只有色块,量它等于把上一次的结论抄一遍再劣化。
-         * 采样排在这一帧提交之后(真卡已经画出来了),所以放 flushSync 后面。
+         * Sample at the moment of switching from solid back to real rendering, not when switching into solid:
+         * in solid mode the picture holds only color blocks, and measuring it would just copy the previous
+         * conclusion and degrade it.
+         * Sampling is scheduled after this frame's commit (the real card has already been drawn), so it goes after flushSync.
          */
         flushSync(() => setProxy(want));
-        // 实体模式开着时 `.pc-proxy` 连流平面一起藏:停解码,不占解码帧预算(E7 第 4 条)
+        // While solid mode is on, `.pc-proxy` hides the stream planes too: stop decoding, and do not use up the decoded-frame budget (E7 item 4)
         player.setProxy(want);
         if (!want) {
           const root = rootRef.current;
@@ -2078,30 +2305,37 @@ export default function StageView() {
         return { ok: true as const };
       },
       /**
-       * 角色是运行时状态(J4)。收到 `back` 就地转成后台舞台,**组件不重挂载** ——
-       * 互换(K5)靠的正是「同一棵树换个身份」,重挂载等于把追了半天的状态扔掉。
+       * The role is runtime state (J4). On receiving `back` the stage turns into a background stage in
+       * place, **without remounting the component**: the swap (K5) relies on exactly "the same tree
+       * taking a different identity", and remounting would throw away all the state it spent so long
+       * catching up.
        *
-       * 清理的全集(E0 的 `setRole` 那条,两条互换路都不再逐条列):
-       *   1. 停 K4 的节拍循环(循环每拍开头和 post `frame` 之前都查 `beatPaused` / 角色);
-       *   2. 清空 `suppressed` / `snapshots` / `streamPlanes` —— `back` 永远不收它们的非空集合;
-       *   3. 停 `streamPlayer` 并 `close()` 所有 `VideoFrame`(R8 的轨道流);
-       *   4. 去掉全部平面和类(快照 / 抑制 / 等待 / 追帧);
-       *   5. 中止可见舞台里正在进行的第一路追帧(`catchUpGen` 递增)并清空 `settling` / `awaiting`。
-       * R3 把第 2、4、5 条接到真实状态上(平面本体已经有了);循环本体(第 1 条)在 R5,
-       * `streamPlayer`(第 3 条)在 R8。
+       * The full cleanup set (the `setRole` entry in E0; neither swap path lists them one by one again):
+       *   1. Stop the K4 beat loop (the loop checks `beatPaused` / the role at the start of every beat
+       *      and before posting `frame`);
+       *   2. Clear `suppressed` / `snapshots` / `streamPlanes`: `back` never accepts non-empty sets
+       *      of them;
+       *   3. Stop `streamPlayer` and `close()` all `VideoFrame`s (R8 track streams);
+       *   4. Remove all planes and classes (snapshot / suppressed / waiting / frame catch-up);
+       *   5. Abort the first frame catch-up path running in the visible stage (`catchUpGen` increments)
+       *      and clear `settling` / `awaiting`.
+       * R3 wires items 2, 4 and 5 to real state (the planes themselves already exist); the loop itself
+       * (item 1) lands in R5, and `streamPlayer` (item 3) in R8.
        *
-       * `bake` 在本地模式不支持(预渲染者是预渲染进程),回 `unsupported`、不抛。
+       * `bake` is not supported in local mode (the prerender process does the prerendering); it replies
+       * `unsupported` and does not throw.
        */
       async setRole(role, opts = {}) {
-        // `bake`:本地模式不支持(预渲染者是预渲染进程);在线构建的后台舞台兼做纯浏览器节点(M7 契约 D3)
+        // `bake`: not supported in local mode (the prerender process does the prerendering); the background stage of the online build doubles as a pure-browser node (M7 contract D3)
         if (role === "back" && opts.job === "bake" && !ONLINE) return { ok: false, reason: "unsupported" as const };
         /*
-         * K5 (6):**从 `back` 转正**的舞台要报一次 `settled`(`clipIds` 为空数组)。
+         * K5 (6): a stage **promoted from `back`** must report `settled` once (`clipIds` is an empty array).
          *
-         * 判据是「上一刻是不是 `back`」,**不看工作项** —— 单飞队列在补跑那个活做完之后
-         * 会把工作项交还成 `'probe'`(`stageJobs` 的 `pump`),那条 `setRole('back', { job: 'probe' })`
-         * 和互换的 `setRole('front')` 是两条并行的 RPC,谁先到没有保证。按工作项判的话
-         * 交还先到就永远报不出 `settled`,父页那边等到超时。
+         * The criterion is "was it `back` a moment ago", **not the job**: after the single-flight queue
+         * finishes the catch-up run, it hands the job back as `'probe'` (`pump` in `stageJobs`), and that
+         * `setRole('back', { job: 'probe' })` and the swap's `setRole('front')` are two parallel RPCs with
+         * no guarantee which arrives first. If we judged by job, whenever the hand-back arrives first
+         * `settled` would never be reported, and the parent page would wait until timeout.
          */
         const wasBack = ref.current.role === "back";
         ref.current.role = role;
@@ -2109,9 +2343,9 @@ export default function StageView() {
         gl.setRole(role);
         if (role === "back") {
           ref.current.wantedSettle = false;
-          // 1. 停 K4 的节拍循环(挂着的 pause() 回包一并落定)
+          // 1. Stop the K4 beat loop (any pending pause() reply is settled along with it)
           stopBeat();
-          // R9:放掉这个 stageId 在 Worker 里的那份图集(互换时 stageId 不变,只清这一份)
+          // R9: release this stageId's atlas in the Worker (stageId does not change on swap, only this one is cleared)
           gl.release();
           ref.current.snapshots = new Map();
           ref.current.suppressed = new Set();
@@ -2121,42 +2355,44 @@ export default function StageView() {
           ref.current.deferredSettle.clear();
           ref.current.settledHeld = new Set();
           ref.current.streamPlanes = [];
-          // 3. 停 `streamPlayer` 并 `close()` 全部 `VideoFrame`(R8)
+          // 3. Stop `streamPlayer` and `close()` all `VideoFrame`s (R8)
           player.stop();
           ref.current.settling = new Map();
           ref.current.catchUps.clear();
           ref.current.lastActive = new Set();
           catchUpGen.current++;
-          // 后台舞台永远没有占位符(product/rendering.md「兜底顺序」):先撤下,再关掉 —— 这一次提交里槽位一起摘掉
+          // The background stage never has a placeholder (product/rendering.md "Fallback order"): take it down first, then close it; the slots are removed together in this one commit
           hideAllPlaceholders(slotOf);
           setPlaceholdersEnabled(false);
           removePlaceholderStyle();
           setCatchingUpClips([]);
-          // 同一次提交里把全部平面和类去掉 —— 互换那一拍新 `back` 不能还盖着旧画面
+          // Remove all planes and classes in the same commit: on the swap beat, the new `back` must not still cover the old picture
           commitPlanes();
         } else {
-          // 人看的预览(live 舞台页、`front`)才挂占位平面;导出页 / 预渲染页不经这里,永远没有
+          // Only previews a person looks at (the live stage page, `front`) mount the placeholder plane; the export page / prerender page do not go through here and never have one
           if (LIVE && !placeholdersEnabled()) {
             setPlaceholdersEnabled(true);
             commitPlanes();
           }
-          // 墨迹框是每个舞台自己量的:刚转正的这一台(K5 互换)手里没有,趁它此刻是精确活渲量一次
+          // Each stage measures its own ink box: the one just promoted (K5 swap) has none, so measure once while it is an exact live render
           scheduleInkBoxes();
-          // K5 (6):新 `front` post 一次 `{ type: 'settled', sec, clipIds: [] }`
+          // K5 (6): the new `front` posts `{ type: 'settled', sec, clipIds: [] }` once
           if (wasBack) postStageEvent({ type: "settled", sec: ref.current.t, clipIds: [] });
         }
         return { ok: true };
       },
       /**
-       * K2 的分派表 + K1 的每卡记录(E0)。父页在 `costs` / 项目 / `tuning` 变了时算好发过来,
-       * **集合在线上是数组**(`wirePlan.ts`),这里回填成 `Set`,消费侧照常用 `pipelineAt`。
+       * K2's dispatch table + K1's per-card records (E0). The parent page computes and sends them when
+       * `costs` / the project / `tuning` change; **sets are arrays on the wire** (`wirePlan.ts`) and are
+       * restored to `Set`s here, so the consuming side still uses `pipelineAt` as usual.
        *
-       * `back` 也收得下(只是存着不用):角色转正(K5 (5) / K3(b) (5))时父页会在
-       * `setRole('front')` 之后的同一批里先补发一次,那时它就派上用场了。
+       * `back` can accept it too (it only stores it without using it): when the role is promoted
+       * (K5 (5) / K3(b) (5)), the parent page first resends it once in the same batch after
+       * `setRole('front')`, and that is when it comes in handy.
        *
-       * 消费它的是 K3 / K5(R5):`pipelineAt(plan, clipId, t)` 决定这一拍活渲还是贴死素材,
-       * `costs` 里的 `vtOk` / `seekOk` / `catchUpMs` 决定走 (a′) / (a) / (b) 和 K5 的两路。
-       * 这一步只把表存进来、并把查询口子放好。
+       * Its consumers are K3 / K5 (R5): `pipelineAt(plan, clipId, t)` decides whether this beat is a live
+       * render or a pasted static media, and `vtOk` / `seekOk` / `catchUpMs` in `costs` decide between
+       * (a′) / (a) / (b) and K5's two paths. This step only stores the table and sets up the query hook.
        */
       async setPlan(plan) {
         const wire = (plan?.plan ?? null) as WirePlan | null;
@@ -2169,10 +2405,12 @@ export default function StageView() {
         return { ok: true as const };
       },
       /**
-       * K4:可见舞台是节拍器。`play(fromSec)` 只是**起**循环 —— 立刻回包,不等第一拍,
-       * 父页拿它的回包时刻当「相邻两条 `frame` 的到达间隔」的起点(`mediaStalled`)。
+       * K4: the visible stage is the metronome. `play(fromSec)` only **starts** the loop: it replies
+       * immediately without waiting for the first beat, and the parent page takes its reply time as the
+       * starting point of "the arrival interval between two adjacent `frame`s" (`mediaStalled`).
        *
-       * 只有 `front` 跑:`back` 要么在做探针、要么在补跑,起循环会把它的时钟一路推走。
+       * Only `front` runs: `back` is either doing a probe or a catch-up run, and starting a loop would
+       * keep pushing its clock forward.
        */
       async play(fromSec) {
         if (ref.current.role !== "front") return { ok: false, reason: "role" };
@@ -2180,7 +2418,7 @@ export default function StageView() {
         const p = ref.current.project;
         if (!p) return { ok: false, reason: "no-project" };
         const from = Math.max(0, Number(fromSec) || 0);
-        // 连着来两条 `play`:先让上一轮收摊,不然两个循环会各推各的时钟
+        // Two `play`s in a row: let the previous round wrap up first, or the two loops would each push their own clock
         if (ref.current.beatRunning) {
           ref.current.beatPaused = true;
           await new Promise<PlayReply>((resolve) => { ref.current.beatWaiters.push(resolve); });
@@ -2191,9 +2429,9 @@ export default function StageView() {
         ref.current.k6.beats = [];
         ref.current.lastActive = new Set();
         ref.current.beatPaused = false;
-        // 按下播放同样中止第一路追帧(K5:五个 RPC 各递增一次)
+        // Pressing play likewise aborts the first frame catch-up path (K5: each of the five RPCs increments once)
         catchUpGen.current++;
-        // 单舞台:下一次播放回到播放时的样子(最低一档只贴预渲染结果)
+        // Single stage: the next playback returns to how it looked during playback (the lowest tier only pastes the prerender output)
         const hadLive = clearSettleLive();
         abortCatchUps();
         if (hadLive) commitPlanes();
@@ -2201,13 +2439,16 @@ export default function StageView() {
         return { ok: true, stoppedAt: from };
       },
       /**
-       * `pause()` 立即停:**本拍走完、post 完这一拍的 `frame` 后**停,回 `{ stoppedAt }`
-       * (= 最后一拍的 `sec`)。循环已经停着(`ended` 之后、重复 `pause()`)立即回最后一拍。
+       * `pause()` stops immediately: it stops **after this beat finishes and its `frame` is posted**,
+       * and replies `{ stoppedAt }` (= the `sec` of the last beat). If the loop is already stopped (after
+       * `ended`, or a repeated `pause()`), it replies with the last beat immediately.
        *
-       * `pause({ atSec })` 是**武装停**(K3(b) 的播放态互换用):post 完 `frame(atSec)`
-       * 那一拍就停在那一帧、平面不摘,回 `{ stoppedAt: atSec }`。那一拍**已经 post 过**
-       * (当前拍序号 ≥ `atSec` 的拍序号,**等号也算过了**)时不停、回 `{ passed: true }` ——
-       * 否则永远等不到那一拍、RPC 永不回包。拍序号按帧号比,不比浮点。
+       * `pause({ atSec })` is an **armed stop** (used by K3(b)'s swap during playback): it stops on the
+       * beat right after `frame(atSec)` is posted, staying on that frame with the planes kept, and
+       * replies `{ stoppedAt: atSec }`. If that beat has **already been posted** (the current beat index
+       * ≥ the beat index of `atSec`, **equality counts as passed**), it does not stop and replies
+       * `{ passed: true }`; otherwise the beat would never come and the RPC would never reply. Beat
+       * indexes are compared by frame number, not by floats.
        */
       async pause(opts = {}) {
         const atSec = opts?.atSec;
@@ -2216,7 +2457,7 @@ export default function StageView() {
         if (typeof atSec === "number" && Number.isFinite(atSec)) {
           const frame = Math.round(atSec * fps);
           if (ref.current.beatLastFrame >= frame) return { ok: true, passed: true };
-          // 只保留最后一次武装:上一次作废(按 `passed` 回,告诉父页别再等它)
+          // Keep only the last armed stop: the previous one is voided (reply with `passed`, telling the parent page to stop waiting for it)
           const prev = ref.current.beatArmed;
           if (prev) {
             window.clearTimeout(prev.timer);
@@ -2224,7 +2465,7 @@ export default function StageView() {
             prev.resolve({ ok: true, passed: true });
           }
           return await new Promise<PlayReply>((resolve) => {
-            // 兜底用**真** setTimeout(E4b):循环要是卡住了,RPC 不能永不回包
+            // The fallback uses a **real** setTimeout (E4b): if the loop gets stuck, the RPC must not go without a reply forever
             const timer = realSetTimeout(() => {
               if (ref.current.beatArmed?.timer !== timer) return;
               ref.current.beatArmed = null;
@@ -2239,24 +2480,35 @@ export default function StageView() {
         });
       },
       /**
-       * 播放中被判重的卡(E7 第 5 条):`Stage` 给包裹层加 `.pc-suppressed`、藏子树,
-       * 传给组件的那个 `t` 冻在抑制开始那一刻;包裹层留在布局树里,几何不变,
-       * `rects()` / `hitTest` 照常点得中它。
+       * Cards judged as duplicates during playback (E7 item 5): `Stage` adds `.pc-suppressed` to the
+       * wrapper and hides the subtree, and the `t` passed to the component is frozen at the moment
+       * suppression began; the wrapper stays in the layout tree with its geometry unchanged, so
+       * `rects()` / `hitTest` can still hit it as usual.
        *
-       * **`.pc-suppressed` 与 `.pc-settling` 互斥**:K6 在追帧中途把一张卡降为重时走的就是这条,
-       * 所以这里先把它从 `settling` 里删掉、并递增 `catchUpGen` 中止那一路追帧,再同一次提交里
-       * 加上抑制 —— 两个类不会同帧共存。
+       * **`.pc-suppressed` and `.pc-settling` are mutually exclusive**: this is the path K6 takes when it
+       * downgrades a card to heavy in the middle of a frame catch-up, so here we first delete it from
+       * `settling` and increment `catchUpGen` to abort that catch-up path, then add suppression in the
+       * same commit; the two classes never coexist in the same frame.
        */
       async setSuppressed(clipIds) {
         const before = ref.current.suppressed;
         ref.current.parentSuppressed = new Set(clipIds);
         /*
-         * 这一次**新**点名的卡,挂着流平面而流还没画出第一帧:先不藏它原来的画面(`streamWaiting`),等流画出来再藏
-         * (起播、跳转、拖动起步都走这里;父页先发流平面、再发抑制)。已经藏着的、流已经有画面的(暂停着先解好了)照常当场藏。
-         * 没有流平面的卡(没有流、超出解码器预算、等后台补跑互换的轻卡)不等。
-         * **只有一个舞台时不等**(精简模式与最低一档:舞台闸门没到双舞台的设备,和「只贴稀疏版」同一批,原低内存档那一批):
-         * 重卡播放、拖动时一律不活渲(这台设备跑不动;等的那几拍里活组件照跑,每拍都要算它,流的解码输出反而排在后面出不来)。
-         * 流的第一张没到之前这一层先空着(占位符过 120 毫秒才显示)。看舞台能力表的 `compact`(只有一个舞台),最低一档另看取档策略的 `smallOnly`。
+         * A card **newly** named this time that has a stream plane mounted while the stream has not yet
+         * drawn its first frame: do not hide its original picture yet (`streamWaiting`), and hide it once
+         * the stream is drawn (starting playback, seeking and the start of a drag all go through here; the
+         * parent page sends the stream plane first, then the suppression). Cards already hidden, or whose
+         * stream already has a picture (decoded in advance while paused), are hidden on the spot as usual.
+         * Cards without a stream plane (no stream, over the decoder budget, or light cards waiting for the
+         * background catch-up run to swap) do not wait.
+         * **With only one stage, do not wait** (compact mode and the lowest tier: devices whose startup
+         * test gate did not reach dual stage, in the same batch as "paste the sparse version only" and the
+         * former low-memory tier): heavy cards are never live-rendered during playback or dragging (this
+         * device cannot keep up; during the waiting beats the live components keep running and must be
+         * computed on every beat, so the stream's decoded output ends up queued behind and cannot come
+         * out). Until the stream's first frame arrives, this layer stays empty (the placeholder shows only
+         * after 120 ms). See `compact` in the stage capability table (only one stage); the lowest tier
+         * additionally looks at `smallOnly` in the tier policy.
          */
         {
           const showing = ref.current.streamPlanes.length ? player.showingClips() : NO_CLIPS;
@@ -2271,17 +2523,17 @@ export default function StageView() {
           }
           if (waiting.size || ref.current.streamWaiting.size) setStreamWaiting(waiting);
         }
-        // 单舞台停下追一帧正在画 / 画好的层不按父页的抑制藏;下面按生效的那一份判
+        // Single stage, stopping to catch up one frame: layers being drawn / already drawn are not hidden by the parent page's suppression; below, judge by the one in effect
         applySuppressed();
         const next = ref.current.suppressed;
-        // T4:被抑制、这一刻判轻的卡在等后台补跑互换(占位符的 reason 用;显隐判据不看它)
+        // T4: a suppressed card judged light at this moment is waiting for the background catch-up run to swap (used for the placeholder's reason; the show/hide criterion does not look at it)
         {
           const plan = ref.current.plan?.plan ?? null;
           setCatchingUpClips([...next].filter((id) => pipelineAt(plan, id, ref.current.t) === "light"));
         }
         /*
-         * K6:被切进 `suppressed` 就说明死素材就绪了,从 `pendingDemote` 里移出 ——
-         * 它此后是重卡,本来就不参加 K6 的判定。
+         * K6: being switched into `suppressed` means the static media is ready, so remove it from
+         * `pendingDemote`: from then on it is a heavy card and does not take part in K6's judgment anyway.
          */
         if (ref.current.k6.pending.size) {
           const rest = new Set(ref.current.k6.pending);
@@ -2292,9 +2544,13 @@ export default function StageView() {
           const rest = new Map(ref.current.settling);
           let changed = false;
           /*
-           * 打断的是轻卡的追帧(K6 把追帧中的轻卡降为重)。停下以后追精确活渲的重卡(`announce` 的那种)不打断:它本来就贴着流、
-           * 被点着名,父页重发抑制集合(别的卡变了;或者它上一次追上的 `settled` 迟到,父页按新位置又把它点上)都不该让它停在流上 ——
-           * 它追上时照常由 `releaseSettled` 撤抑制。组流里先追上、等着同组的成员同理。
+           * What gets interrupted is the frame catch-up of light cards (K6 downgrades a light card in
+           * frame catch-up to heavy). Heavy cards that chase an exact live render after stopping (the kind
+           * from `announce`) are not interrupted: they already stick to the stream and are named, and the
+           * parent page resending the suppression set (another card changed; or the `settled` of its last
+           * catch-up arrived late and the parent page names it again by the new position) must not make it
+           * stop on the stream; when it catches up, `releaseSettled` lifts the suppression as usual. The
+           * same goes for members that catch up first in a group stream and wait for their group mates.
            */
           for (const id of next) {
             if (ref.current.catchUps.get(id)?.announce || ref.current.settledHeld.has(id)) continue;
@@ -2309,11 +2565,16 @@ export default function StageView() {
         return { ok: true as const };
       },
       /**
-       * 单舞台停下追当前一帧(纯的部分在 `render/settleFrame.ts`)。父页在暂停、点击或拖动松开、
-       * 播放到头的那次 `setTime` 之后发。当前这一帧的所有卡(重卡也画)按「直接定位的先、推帧卡要推的帧少的先」一层层活渲,
-       * 画好一层撤一层兜底、换上活渲;不设时限(`timeoutMs` 只给测试与诊断)。本页跑不了的用户卡、素材效果卡不追:有这一帧的
-       * 预渲染结果就贴,没有才显示 `unsupported` 占位(2026-09-29 用户改语义)。
-       * 新的 `setTime` / `play` / `setProject` / `setRole` 递增 `catchUpGen`,这一次随之收摊、回 `ok: false`。
+       * Single stage stops to catch up the current frame (the pure part is in `render/settleFrame.ts`).
+       * The parent page sends it after the `setTime` on pause, on click or drag release, and when
+       * playback reaches the end. All cards of the current frame (heavy cards are drawn too) are live
+       * rendered layer by layer, "direct-seek ones first, and among frame-pushing cards the ones needing
+       * fewer pushed frames first"; each time a layer is drawn, its fallback is removed and the live
+       * render swapped in; there is no time limit (`timeoutMs` is only for tests and diagnostics). User
+       * cards and media effect cards that this page cannot run are not caught up: if a prerender output
+       * exists for this frame it is pasted, otherwise an `unsupported` placeholder is shown (semantics
+       * changed by the user, 2026-09-29). A new `setTime` / `play` / `setProject` / `setRole`
+       * increments `catchUpGen`, and this run wraps up accordingly and replies `ok: false`.
        */
       async settleLayers(tSec, opts = {}) {
         const timeoutMs = clampSettleTimeout(opts?.timeoutMs);
@@ -2323,7 +2584,7 @@ export default function StageView() {
         if (ref.current.role !== "front") return empty("role");
         const p = ref.current.project;
         if (!p) return empty("no-project");
-        // 父页发它之前刚 setTime 过这一秒;对不上(又拨走了)、或者在播,就不追
+        // The parent page had just done `setTime` to this second before sending it; if it no longer matches (seeked away again) or playback is running, do not catch up
         if (ref.current.beatRunning || Math.abs(ref.current.t - sec) > 1e-6) return empty("superseded");
         const fps = Math.max(1, p.fps || 30);
         const targetMs = sec * 1000;
@@ -2333,7 +2594,7 @@ export default function StageView() {
         for (const clip of cardClipsAt(sec)) {
           const c = clip as { id: string; start: number; end: number; cardId?: string; parts?: unknown[]; params?: unknown };
           const def = c.cardId ? getCard(c.cardId) : undefined;
-          // 这台设备跑不了的卡(用户卡、素材效果卡)不追:有这一帧的预渲染结果就贴着,没有就是 `unsupported` 占位
+          // Cards this device cannot run (user cards, media effect cards) are not caught up: paste the prerender output of this frame if there is one, otherwise it is an `unsupported` placeholder
           const unsupported = unsupportedHere(c.cardId, def);
           const mountFrame = mountFrameOf(clip, fps);
           const frameMode = def ? clipFrameMode(c as never, def) : undefined;
@@ -2350,9 +2611,12 @@ export default function StageView() {
         return result;
       },
       /**
-       * G1 的流平面分组;渲染位置在 `Stage`(包裹层里 / 舞台根下),解码与合成在 `streamPlayer`。
-       * 每条带流键 `key` 和就绪的分段号 `ranges`(C3 的 `stream` 表);不带 `key` 的只占位、不解码。
-       * **`back` 不收非空集合**(K5:三个集合只发给 `front`),收到也只清空。
+       * G1's stream plane groups; the render position is in `Stage` (inside the wrapper / under the stage
+       * root), and decoding and compositing are in `streamPlayer`. Each entry carries a stream key `key`
+       * and the ready segment numbers `ranges` (C3's `stream` table); entries without `key` only hold
+       * a place and do not decode.
+       * **`back` does not accept non-empty sets** (K5: the three sets are sent only to `front`); if it
+       * receives them, it only clears.
        */
       async setStreamPlanes(planes) {
         if (ref.current.role !== "front") {
@@ -2362,7 +2626,7 @@ export default function StageView() {
           return { ok: true as const };
         }
         const sent = (Array.isArray(planes) ? planes : []).filter((g) => Array.isArray(g?.clipIds) && g.clipIds.length);
-        // 父页标了 `over` 的是这一拍超出预算的:不挂流平面、不建解码器,只交给播放器取清单(占位符照清单里的位置矩形摆)
+        // Those the parent page marked `over` exceed the budget on this beat: no stream plane is mounted and no decoder built; they are only handed to the player to fetch the manifest (the placeholder is placed by the position rectangle in the manifest)
         const incoming = sent.filter((g) => !g.over);
         const over = sent.filter((g) => g.over).map((g) => ({
           clipIds: g.clipIds.map(String),
@@ -2378,43 +2642,46 @@ export default function StageView() {
           clipIds: g.clipIds.map(String),
           ...(typeof g.key === "string" && g.key ? { key: g.key } : {}),
           ...(Array.isArray(g.ranges) ? { ranges: g.ranges.map((r) => [Number(r[0]), Number(r[1])] as [number, number]) } : {}),
-          // 这条流自己的第一帧:播放器按它把帧号换成分段号(`render/streamSegments.mjs`);不带的平面播放器不收
+          // This stream's own first frame: the player uses it to convert frame numbers into segment numbers (`render/streamSegments.mjs`); planes without it are not accepted by the player
           ...(Number.isInteger(g.originFrame) && (g.originFrame as number) >= 0 ? { originFrame: g.originFrame as number } : {}),
-          // 依赖下层的流:按舞台坐标产,画布挂在舞台根下(`Stage` 的 `[data-pc-group-plane]`),不挂进包裹层
+          // A stream that depends on a lower layer: produced in stage coordinates, with the canvas mounted under the stage root (`[data-pc-group-plane]` of `Stage`), not inside the wrapper
           ...(g.plane === "stage" ? { plane: "stage" as const } : {}),
         }));
         /*
-         * 在线页面的流平面另带清单与字节(`streamPlayer.ts` 的 `PushedStreamSource`),播放中每取到一段就来一次;
-         * `Stage` 只看每条平面的 `clipIds`,分组没变就不为它多做一次 React 提交(占位符的显隐下面照样当场重算)。桌面照旧每次都提交。
+         * The stream plane of an online page additionally carries the manifest and bytes (`PushedStreamSource` in
+         * `streamPlayer.ts`), and arrives once per fetched segment during playback; `Stage` only looks at
+         * each plane's `clipIds`, and if the grouping did not change it does not do an extra React commit
+         * for it (the placeholder's show/hide is still recomputed on the spot below). The desktop app
+         * still commits every time.
          */
         if (!ONLINE || groupsOf(ref.current.streamPlanes) !== before) commitPlanes();
         const fps = Math.max(1, ref.current.project?.fps || 30);
-        // 清单与字节只交给播放器,不进 `ref.current.streamPlanes`(那一份会进 React 的 props)
+        // The manifest and bytes go only to the player, not into `ref.current.streamPlanes` (that copy goes into React's props)
         player.setPlanes(ref.current.streamPlanes.map((p, i) => {
           const g = incoming[i];
           const manifest = g.manifest && typeof g.manifest === "object" && g.manifest.bound && g.manifest.segments && g.manifest.inits ? g.manifest : null;
-          // 最低一档:父页带的 `first`(每个分段只解第一帧)只交给播放器,和清单、字节一样不进 React 的 props
+          // Lowest tier: the `first` the parent page carries (decode only the first frame of each segment) goes only to the player, and like the manifest and bytes does not go into React's props
           const base = g.first === true ? { ...p, first: true as const } : p;
           return manifest ? { ...base, manifest, ...(g.blocks && typeof g.blocks === "object" ? { blocks: g.blocks } : {}) } : base;
         }), fps, over);
-        // 等着流画出第一帧的卡,流平面撤了:不再等(父页还点着名的当场藏起来,落到快照 / 占位符)
+        // Cards waiting for the stream to draw its first frame, whose stream plane was removed: stop waiting (those the parent page still names are hidden on the spot, falling back to the snapshot / placeholder)
         if (ref.current.streamWaiting.size) {
           const gone = [...ref.current.streamWaiting.keys()].filter((id) => !planeOf(id));
           if (gone.length) endStreamWaiting(gone);
         }
-        // 画布刚随这次提交挂上:当场画一次,不等下一拍
+        // The canvas was just mounted with this commit: draw once on the spot, without waiting for the next beat
         presentStreams(ref.current.t);
         refreshPlaceholders();
         return { ok: true as const };
       },
-      /** 手按着播放头拖:素材层 seek 放疏一点(`mediaSync` 的 SCRUB_SEEK_MIN_MS) */
+      /** Dragging the playhead by hand: the media layer's seek is made sparser (`SCRUB_SEEK_MIN_MS` of `mediaSync`) */
       async setScrubbing(on) {
         ref.current.scrubbing = !!on;
         if (on) ref.current.wantedSettle = false;
         commitPlanes();
         return { ok: true as const };
       },
-      /** **只管素材层**(`VideoTrack` 的 `playing`):不碰 K4 的节拍循环,那个只由 play / pause / setRole 起停 */
+      /** **Governs the media layer only** (`playing` of `VideoTrack`): it does not touch K4's beat loop, which is started and stopped only by play / pause / setRole */
       async setPlaying(on) {
         ref.current.playing = !!on;
         if (on) ref.current.wantedSettle = false;
@@ -2422,9 +2689,11 @@ export default function StageView() {
         return { ok: true as const };
       },
       /**
-       * 素材层跟的时刻。平时等于 `t`;K5 第二路补跑时父页单独给 `back` 下发目标拍 ——
-       * `VideoTrack` 见偏差过了 `PAUSED_SEEK_SEC` 就补注册一次 rVFC,出画即 post `mediaReady`,
-       * 不用等满 300 ms 兜底。
+       * The moment the media layer follows. Normally equal to `t`; during K5's second-path catch-up run,
+       * the parent page sends `back` the target beat separately:
+       * when `VideoTrack` sees the deviation exceed `PAUSED_SEEK_SEC` it registers rVFC once more and
+       * posts `mediaReady` as soon as the picture appears, with no need to wait out the full 300 ms
+       * fallback.
        */
       async setMediaT(tSec) {
         ref.current.mediaT = Number(tSec) || 0;
@@ -2432,8 +2701,10 @@ export default function StageView() {
         return { ok: true as const };
       },
       /**
-       * A1 的换档集合:当前连接的素材服务报 `complete` 的哈希(C6.6,父页每 2 秒轮询后下发)。
-       * 变了就当场重渲一次:暂停中也要换档(`VideoTrack` 的双缓冲)。
+       * A1's tier-switch set: the hashes that the currently connected asset service reports as `complete`
+       * (C6.6, sent down by the parent page after polling every 2 seconds).
+       * When it changes, re-render once on the spot: tiers must switch even while paused (the double
+       * buffering of `VideoTrack`).
        */
       async setBackWork(on) {
         backWork.on = !!on;
@@ -2441,33 +2712,63 @@ export default function StageView() {
         return { ok: true as const };
       },
       /**
-       * M7 生成快照的一帧(契约第 4.3、4.4 节;协议见 `stageRpc.ts` 的 `BakeFrameRequest`)。项目是父页经 `pushProject('back', …)`
-       * 灌进来的隔离单卡工程,目标片段是唯一可见输出,本地帧 n 就是全局帧 n。
+       * One frame of M7 generate snapshots (contract sections 4.3 and 4.4; for the protocol see
+       * `BakeFrameRequest` in `stageRpc.ts`). The project is an isolated single-card project fed in by
+       * the parent page via `pushProject('back', …)`, the target clip is the only visible output, and
+       * local frame n is global frame n.
        *
-       * 推帧:`seq`(缺省)接着上一帧顺推,接不上才从头推 —— 探针 P2 证明对 DOM 独立卡(含 Motion)与桌面 4 帧一批从头推等价、
-       * 便宜 4～7 倍(画布卡不等价,节点侧与切分都不让它进浏览器);`batch4` 批起点按 4 帧对齐、每批从头推(同桌面 `fillCardControls`)。帧与帧之间让一个宏任务、查后台活的停止标志(停着的时长记进 `pausedMs`,不算耗时);
-       * 不受一拍预算截断。到了这一帧先过就绪闸,再生成快照、取本控件的 HTML:有读不出像素的画布(`lossy`)回 `lossy`
-       * (父页按不可重试失败交回,同 `server/bakery/bake.mjs`)。
+       * Frame pushing: `seq` (the default) continues pushing from the previous frame and pushes from the
+       * start only when it cannot continue. Probe P2 proved that for DOM-independent cards (including
+       * Motion) this is equivalent to the desktop app's 4-frames-per-batch push from the start, and 4-7x
+       * cheaper (canvas cards are not equivalent, and neither the node side nor the splitting lets them
+       * into the browser); `batch4` batch starts are aligned to 4 frames and every batch pushes from the
+       * start (same as the desktop app's `fillCardControls`). Between frames it yields one macrotask and
+       * checks the background job's stop flag (stopped time is recorded in `pausedMs` and not counted as
+       * elapsed time); it is not cut off by a beat budget. On reaching this frame it first passes the
+       * readiness gate, then generates the snapshot and takes this control's HTML: if there is a canvas
+       * whose pixels cannot be read (`lossy`), it replies `lossy` (the parent page hands it back as a
+       * non-retryable failure, same as `server/bakery/bake.mjs`).
        *
-       * **接续**(`prerender-products-contract.md` 第 2.3 节):上一帧不晚于这一帧就接着推(隔若干帧取一张时,中间的帧只推不生成快照),
-       * 同一帧再要一次不再推;舞台时钟不在上一帧的时刻上(别人拨过)、项目或片段换了,就从头推。`batch4` 另要求两帧在同一批里。
+       * **Continuation** (`prerender-products-contract.md` section 2.3): if the previous frame is not
+       * later than this one, it continues pushing (when taking one frame every few frames, the frames in
+       * between are only pushed and no snapshot is generated); asking for the same frame again does not
+       * push again; if the stage clock is not at the previous frame's time (someone seeked it), or the
+       * project or clip changed, it pushes from the start. `batch4` additionally requires the two frames
+       * to be in the same batch.
        *
-       * **顺着做和从头推得到同一帧**:两条路推的每一帧(挂载帧也算)走同一套 `frameEnd` —— 提交这一帧排下的 React 更新
-       * (`bakeSettle`)→ 钉动画(拨到结尾的当场交付结束回调,`pinAnimations.ts`)→ 有动画结束就再提交一次(结束回调里换人、写回终值)→ 等 GL 位图。
-       * 一帧做完时没有挂着没提交的更新,所以两帧之间隔了多久(顺着做隔着生成快照和一次 RPC 往返,从头推只隔一个宏任务)
-       * 不影响结果;每一帧的时刻由舞台时钟按帧号直接算(`stageClock.ts` 的 `frameGrid`),从哪一帧起推都是同一个数。
+       * **Continuing and pushing from the start yield the same frame**: every frame pushed by either path
+       * (the mount frame too) goes through the same `frameEnd`: commit the React updates queued by this
+       * frame (`bakeSettle`) → pin animations (deliver end callbacks on the spot when seeked to the end,
+       * `pinAnimations.ts`) → if any animation ended, commit once more (swap in the end callback, write
+       * back the final value) → wait for the GL bitmap. When a frame is done, no uncommitted update is
+       * left hanging, so how long passes between two frames (continuing spans the snapshot generation and
+       * one RPC round trip, pushing from the start spans only one macrotask) does not affect the result;
+       * each frame's time is computed directly from the frame number by the stage clock (`frameGrid` in
+       * `stageClock.ts`), so it is the same number no matter which frame the push starts from.
        *
-       * **remotion 式的卡不回放**(同上契约第 4.2 节):隔离工程里唯一那张卡声明成 remotion 式(画面只由时间和参数决定)时,
-       * 直接把时钟拨到这一帧、提交、跑这一帧的一拍,不重挂载、不从挂载帧逐帧推;回包的 `remounted` 恒为 `false`。
+       * **Remotion-style cards are not replayed** (same contract section 4.2): when the only card in the
+       * isolated project is declared remotion-style (the picture is determined by time and parameters
+       * only), it seeks the clock directly to this frame, commits, and runs one beat of this frame,
+       * without remounting or pushing frame by frame from the mount frame; `remounted` in the reply is
+       * always `false`.
        *
-       * 要像素(`req.pixels`,浏览器节点产轨道流用):生成快照之后照小尺寸那条路按原尺寸把矩形那一块画成位图(`bakeSmall.ts` 的
-       * `renderSnapshotBitmap`),随 `bake-frame` 事件转移给父页;画不出来回 `pixels-failed`。`req.html === false` 时事件不带 HTML 字节。
+       * For pixels (`req.pixels`, used by browser nodes to produce track streams): after generating the
+       * snapshot, follow the small-size path and draw the rectangle region at the original size into a
+       * bitmap (`renderSnapshotBitmap` in `bakeSmall.ts`), transferred to the parent page with the
+       * `bake-frame` event; if it cannot be drawn, reply `pixels-failed`. When `req.html === false`, the
+       * event carries no HTML bytes.
        *
-       * **剪辑段里的卡**(片段 id 是摊平出来的虚拟片段,〔裁〕R02:在线浏览器也替剪辑段里的重卡产流):灌进来的是带着剪辑段链的隔离工程
-       * (`online/bakeTask.ts` 的 `isolatedBakeProject`),时间不平移,所以本地帧 n 是项目帧 `req.frameBase + n`;顶层只有那个剪辑段,
-       * 一律从挂载帧逐帧推(嵌套场景里的卡按段的预卷挂上,不走直接拨到那一支);快照取这张卡在嵌套场景里的包裹层
-       * (`[data-pc-flat-clip]`,`createSnapshot` 的 `flatControls`)。包裹层的本地帧按卡自己的起点算(露出窗口可以截了头),
-       * 核对时按同一个式子算期望值,允许差一帧(两边的浮点次序不同)。顶层的卡一个字不变。
+       * **Cards inside a cut segment** (the clip id is a flattened virtual clip, [ruling] R02: the online
+       * browser also produces streams for heavy cards inside cut segments): what is fed in is an isolated
+       * project carrying the cut segment chain (`isolatedBakeProject` in `online/bakeTask.ts`), and time
+       * is not shifted, so local frame n is project frame `req.frameBase + n`; the top level has only that
+       * cut segment, and always pushes frame by frame from the mount frame (cards in a nested scene mount
+       * by the segment's pre-roll and do not seek directly to that branch); the snapshot takes this
+       * card's wrapper in the nested scene (`[data-pc-flat-clip]`, `flatControls` of `createSnapshot`).
+       * The wrapper's local frame is computed from the card's own start (the reveal window may be cut at
+       * the head), and when verifying, the expected value is computed with the same formula, allowing
+       * one frame of difference (the floating-point order differs on the two sides). Top-level cards are
+       * unchanged by a single character.
        */
       async bakeFrame(req) {
         if (!ONLINE || !clock) return { ok: false, reason: "unsupported" } satisfies BakeFrameReply;
@@ -2481,7 +2782,7 @@ export default function StageView() {
         if (!clip) return { ok: false, reason: "no-clip" } satisfies BakeFrameReply;
         const fps = Math.max(1, p.fps || 30);
         const n = Math.max(0, Math.floor(Number(req.localFrame) || 0));
-        // 剪辑段里的卡:本地帧 0 是项目的第 `frameBase` 帧;顶层的卡是 0(本地帧就是全局帧)
+        // Card inside a cut segment: local frame 0 is the project's frame `frameBase`; a top-level card is 0 (local frame is global frame)
         const base = flat ? Math.max(0, Math.floor(Number(req.frameBase) || 0)) : 0;
         const g = n + base;
         const sec = g / fps;
@@ -2492,22 +2793,24 @@ export default function StageView() {
         const cur = bakeCursor;
         bakeCursor = null;
         const targetMs = sec * 1000;
-        // 隔离工程里唯一那张卡是 remotion 式:画面只由时间和参数决定,直接拨到这一帧。
-        // 判据和预渲染进程给流定「要不要回放」的那一条相同(`server/frame-stream.mjs` 的 `streamNeedsReplay`):
-        // 取卡的能力表里的写法,声明了要预渲染的、认不出来的卡一律按有状态处理(宁可多推,不可画错)
+        // The only card in the isolated project is remotion-style: the picture is determined by time and parameters only, so seek directly to this frame.
+        // The criterion is the same as the one the prerender process uses to decide whether a stream "needs replay" (`streamNeedsReplay` in `server/frame-stream.mjs`):
+        // use the notation in the capability table of the fetched card; cards declared to need prerender, and cards that cannot be recognized, are always treated as stateful (better to push too much than to draw wrong)
         const def = clip.cardId ? getCard(clip.cardId) : undefined;
         const caps = def && !unsupportedHere(clip.cardId, def) ? cardCapabilities(def as never, { ...def.defaults, ...clip.params }, clip.parts as never) : null;
         const direct = !flat && !!caps && caps.frameMode === "direct" && caps.need_prerendering !== true
           && p.tracks.filter((tr) => !tr.hidden).flatMap((tr) => tr.clips).length === 1;
-        // 接得上:舞台还挂着这份项目的这个片段,时钟就停在上一帧的时刻上(接续点记的是全局帧;顶层的卡全局帧就是本地帧)
+        // Can continue: the stage still mounts this clip of this project and the clock stops at the previous frame's time (the continuation point records the global frame; for a top-level card the global frame is the local frame)
         const held = !!cur && cur.project === p && cur.clipId === req.clipId && Math.abs(clock.now() - (cur.frame / fps) * 1000) < 1e-6;
         const continuing = !direct && held && cur.frame <= g
           && (req.mode !== "batch4" || (g % 4 !== 0 && Math.floor(cur.frame / 4) === Math.floor(g / 4)));
         /**
-         * 一帧收尾(挂载帧、推过的每一帧、直接拨到的那一帧都走它,两条路一样):这一帧的回调跑完以后,
-         * 提交排下的 React 更新 → 钉动画并当场交付结束回调 → 有动画在这一帧结束就再提交一次 → 等 GL 位图。
-         * 和导出页一帧的顺序相同(`server/bakery/bake.mjs` 的 `createStepper`:排空 → 钉动画 → 排空)。
-         * 中途被作废就停手,不去钉新一帧的动画。
+         * Frame wrap-up (the mount frame, every pushed frame and the directly seeked frame all go through
+         * it, the two paths alike): after this frame's callbacks finish run,
+         * commit the queued React updates → pin animations and deliver end callbacks on the spot → if any
+         * animation ended in this frame, commit once more → wait for the GL bitmap.
+         * Same order as one frame of the export page (`createStepper` in `server/bakery/bake.mjs`: drain →
+         * pin animations → drain). If invalidated midway, stop and do not pin the animations of the new frame.
          */
         const frameEnd = async (ms: number): Promise<void> => {
           await bakeSettle();
@@ -2529,7 +2832,7 @@ export default function StageView() {
           await frameEnd(targetMs);
         } else {
           if (!continuing) {
-            // 从头推:别的在飞的补跑 / 探针作废(单飞队列本来就不会让它们并存,这里兜底)
+            // Push from the start: other in-flight catch-up runs / probes are invalidated (the single-flight queue never lets them coexist anyway, this is a safety net)
             renderGen.current++;
             abortPending("superseded");
             await frameEnd(remountAt(sec, fps) * 1000);
@@ -2537,8 +2840,8 @@ export default function StageView() {
           if (!stale()) await clock.advanceToAsync(targetMs, {
             step: 1000 / fps,
             fps,
-            // 从挂载帧一帧不落地推到这一帧:不传的话缺省的 6 秒补跑上限会把起点削掉(那是给可见舞台跳转「只求不卡」用的),
-            // 生成出来的就不是这一帧该有的状态。测量、互换、整场景补跑同样传 Infinity
+            // Push from the mount frame to this frame without dropping a frame: if not passed, the default 6-second catch-up cap would trim off the start (that is for the visible stage's seek, "just don't stutter"),
+            // and what is generated would not be the state this frame should have. Measurement, swap and whole-scene catch-up runs likewise pass Infinity
             maxCatchUp: Infinity,
             yieldEvery: 1,
             gate: () => {
@@ -2553,7 +2856,7 @@ export default function StageView() {
           });
         }
         if (stale()) return { ok: false, reason: "cancelled" } satisfies BakeFrameReply;
-        // 时钟没落在这一帧上(不该发生:每一步都按帧号算,最后一步就是这一帧的时刻):不拿别的时刻的画面充数,按可重试交回
+        // The clock did not land on this frame (should not happen: every step is computed by frame number, and the last step is this frame's time): do not pass off a picture from another time, hand it back as retryable
         if (Math.abs(clock.now() - targetMs) > 1e-6) return bakeFail({ ok: false, reason: "cancelled", detail: trText("Stage clock is at {0} ms, this frame is at {1} ms", clock.now(), targetMs) } satisfies BakeFrameReply);
         ref.current.t = sec;
         const t0 = realNow();
@@ -2566,7 +2869,7 @@ export default function StageView() {
         if (snap.lossy) return bakeFail({ ok: false, reason: "lossy", detail: trText("{0} canvases with unreadable pixels", snap.lossy) } satisfies BakeFrameReply);
         const own = snap.controls.find((c) => c.id === req.clipId);
         if (!own) return bakeFail({ ok: false, reason: "no-control" } satisfies BakeFrameReply);
-        // 剪辑段里的卡:包裹层的本地帧从卡自己的起点算 = 这一刻 − (露出起点 − 截掉的那一截)
+        // Card inside a cut segment: the wrapper's local frame is computed from the card's own start = this moment − (reveal start − the cut-off portion)
         const wantFrame = flat ? Math.round((sec - (clip.start - (Number((clip as { flat?: { lead?: number } }).flat?.lead) || 0))) * fps) : n;
         if (flat ? Math.abs(own.frame - wantFrame) > 1 : own.frame !== n) return bakeFail({ ok: false, reason: "frame-mismatch", detail: trText("The local frame of the generate snapshots step is {0}, expected {1}", own.frame, wantFrame) } satisfies BakeFrameReply);
         const bytes = new TextEncoder().encode(own.html);
@@ -2588,8 +2891,8 @@ export default function StageView() {
           }
           pixelsMs = realNow() - p0;
         }
-        /** 这一帧不交了(被作废、小尺寸没成):位图还没转移走,关掉 */
-        const dropPixels = () => { try { pixels?.bitmap.close(); } catch { /* 已经关了 */ } };
+        /** This frame is not handed in (invalidated, or the small size did not succeed): the bitmap has not been transferred away yet, so close it */
+        const dropPixels = () => { try { pixels?.bitmap.close(); } catch { /* Already closed */ } };
         let small: { hash: string; bytes: number; webp: ArrayBuffer } | null = null;
         let smallMs = 0;
         if (req.small) {
@@ -2629,11 +2932,11 @@ export default function StageView() {
         bakeCursor = null;
         return { ok: true as const };
       },
-      /** 在线执行同步来的用户卡与素材效果卡:收下编辑页面发来的包(全量);执行不执行看本文档自己的闸门(见上面 `applyCardBundles`) */
+      /** User cards and media effect cards synced by online execution: accept the bundle sent by the editor page (full set); whether to execute is decided by this document's own gate (see `applyCardBundles` above) */
       async loadUserCards(bundles, opts = {}) {
         if (import.meta.env.VITE_PC_ONLINE !== "1") return { ok: false, reason: "unsupported" as const };
         const gate = stageExecGate();
-        // 不是跨源舞台入口的文档(同源单舞台、编辑页面):不记、不执行
+        // A document that is not a cross-origin stage entry (same-origin single stage, editor page): do not record, do not execute
         if (gate.reason === "not-stage") return { ok: false, reason: "unsupported" as const };
         cardExec.bundles = Array.isArray(bundles) ? (bundles as CardBundle[]) : [];
         cardExec.sound = opts?.sound === true;
@@ -2645,8 +2948,10 @@ export default function StageView() {
         return cardExec.soundHost.render(request);
       },
       /**
-       * 在线页面读内容库卡片源码得到的「已知但本机不能运行」的用户卡(C10 契约第 9 节「识别」)。舞台是另一份文档,
-       * 由父页发一份过来进本页的注册表;变了就重渲一次(这些片段改挂快照 / 流平面与 `unsupported` 占位)。
+       * User cards "known but not runnable on this machine" that the online page learned by reading the
+       * card source in the content store (C10 contract section 9 "Recognition"). The stage is a separate
+       * document; the parent page sends a copy over into this page's registry; when it changes, re-render
+       * once (these clips switch to mounting snapshot / stream planes and `unsupported` placeholders).
        */
       async setSyncedUserCards(entries) {
         const changed = setSyncedUserCards(Array.isArray(entries) ? entries : []);
@@ -2654,27 +2959,30 @@ export default function StageView() {
         return { ok: true as const, changed };
       },
       /**
-       * 父页的预览缩放倍数(桌面与在线都发):占位符按它补偿,屏幕上看得清(`placeholderFit.ts`:沙漏只抵消预览缩放)。变了就重渲一次(`Stage` 给占位组件换 `fit`)。
-       * 占位符只在人看的预览里挂(导出、预渲染、后台舞台没有),这里只改预览。
+       * Preview zoom factor from the parent page (sent by both desktop and online): the placeholder
+       * compensates by it so it stays legible on screen (`placeholderFit.ts`: the hourglass only cancels
+       * the preview zoom). On change, re-render once (`Stage` gives the placeholder component a new `fit`).
+       * The placeholder is mounted only in the preview people look at (not in export, prerender or the
+       * background stage), so this only changes the preview.
        */
       async setViewScale(scale) {
         if (setPlaceholderViewScale(scale) && placeholdersEnabled()) commitPlanes();
         return { ok: true as const };
       },
       async setMediaPolicy(next) {
-        // 最低一档只进不出:起手的 `lowest=1` 不被父页的 false 盖掉
-        // 执行闸门(契约 `online-card-exec-contract.md` 第 3.1 节):带票据的策略让本文档永久不执行用户卡;闸门开过之后再来的票据不收
+        // The lowest tier is enter-only: the initial `lowest=1` is not overwritten by the parent page's false
+        // Execution gate (contract `online-card-exec-contract.md`, section 3.1): a policy carrying a ticket makes this document never run user cards; tickets arriving after the gate has opened are rejected
         const gate = ONLINE ? noteMediaPolicy({ ticket: next?.remote?.ticket ?? null, cardExec: next?.cardExec }) : { acceptTicket: true };
         const remote = next?.remote && !gate.acceptTicket && next.remote.ticket ? { ...next.remote, ticket: null } : next?.remote ?? null;
         const decode = typeof next?.decodeMaxPixels === "number" && Number.isFinite(next.decodeMaxPixels) && next.decodeMaxPixels > 0 ? next.decodeMaxPixels : null;
-        // 网速(`smallFirst`)由这一台自己看(`netSpeed.ts`),父页不给;给了(测试)才照它
+        // Network speed (`smallFirst`) is judged by this machine itself (`netSpeed.ts`); the parent page does not supply it; if one is given (tests), use that
         setMediaTierPolicy({ smallOnly: caps.lowest || next?.smallOnly === true, decodeMaxPixels: decode, smallFirst: typeof next?.smallFirst === "boolean" ? next.smallFirst : netSpeedState().smallFirst, remote });
         commitPlanes();
         return { ok: true as const };
       },
       /**
-       * 在线页面换 canvas 卡的渲染路线(舞台闸门试第三级时父页发 `perDocument`;语义 `mechanism/platforms.md`「舞台闸门的步骤」)。
-       * 原地换(`glHost.setRoute` 拆掉旧连接、下一拍按新路线接上),不重建舞台、不重灌项目。桌面运行环境的路线跟项目选项走,这里不收。
+       * The online page switches the render route of canvas cards (the parent page sends `perDocument` when the stage gate tries the third level; semantics: `mechanism/platforms.md`, "Stage gate steps").
+       * Switched in place (`glHost.setRoute` tears down the old connection and reconnects with the new route on the next tick), without rebuilding the stage or reloading the project. The route of the desktop runtime follows the project options, so it is not accepted here.
        */
       async setGlRoute(route) {
         if (!ONLINE || (route !== "perDocument" && route !== "shared")) return { ok: true as const, route: onlineGlRoute, mode: gl.diag().mode };
@@ -2692,7 +3000,7 @@ export default function StageView() {
         return { ok: true as const };
       },
       /**
-       * HTML 快照已由己二撤掉，留作空桩兼容旧接口。
+       * The HTML snapshot has been removed by Jier; this is left as an empty stub for compatibility with the old interface.
        */
       async setSnapshots(_patch, _opts = {}) {
         return { ok: true as const, bytes: 0 };
@@ -2701,23 +3009,26 @@ export default function StageView() {
 
     const stopRpc = serveStageRpc(api);
     window.__pcStage = api;
-    // K1 探针 / L1 / probe-frame 生成快照都在舞台页调它;导出页挂的是同一个 createSnapshot(J1)。
-    // 场景根就是 rootRef 指着的那个 [data-pc-scene] div(不走 document.querySelector:预渲染页上 #root 只是 display:none)。
+    // The K1 probe / L1 / probe-frame generate snapshots all call it on the stage page; the export page mounts the same createSnapshot (J1).
+    // The scene root is the [data-pc-scene] div that rootRef points to (not via document.querySelector: on the prerender page #root is just display:none).
     window.__pcCreateSnapshot = () => {
       const root = rootRef.current;
       if (!root) throw new Error(trText("stage: there is no project yet, nothing to generate snapshots for"));
       return createSnapshot(root);
     };
     /*
-     * K2 的表的查询口子。R5 的 K3 / K5 在舞台内部直接读 `ref.current.plan`,
-     * 挂在 window 上这一份是给验收探针和 puppeteer 看的(表到没到、这一刻判轻还是判重)。
-     * 没有表时 `pipelineAt` 回 `'heavy'` —— 保守侧,和「没有记录按声明兜底」同一个方向。
+     * Query hook for the K2 table. K3 / K5 of R5 read `ref.current.plan` directly inside the stage;
+     * this copy on window is for the acceptance probe and puppeteer to look at (whether the table has
+     * arrived, whether this moment is judged light or heavy).
+     * With no table, `pipelineAt` returns `'heavy'`: the conservative side, the same direction as
+     * "no record falls back to the declaration".
      */
     window.__pcStagePlan = () => ref.current.plan;
     /*
-     * 验收探针的观察口(K4 / K3 / K5 / K6):跨源摸不到 iframe 的 document,
-     * 所以把「此刻的内部状态」摊成一个可结构化克隆的对象,探针用 CDP 在舞台上下文里读。
-     * 只读,没有副作用。
+     * Observation hook for the acceptance probe (K4 / K3 / K5 / K6): the iframe's document cannot be
+     * reached cross-origin, so "the current internal state" is flattened into a structured-cloneable
+     * object, which the probe reads in the stage context via CDP.
+     * Read-only, no side effects.
      */
     window.__pcStageDiag = () => ({
       role: ref.current.role,
@@ -2730,7 +3041,7 @@ export default function StageView() {
       armedFrame: ref.current.beatArmed?.frame ?? null,
       settling: [...ref.current.settling.keys()],
       suppressed: [...ref.current.suppressed],
-      /** 单舞台停下追一帧:正在画 / 画好的层、上一次的结果 */
+      /** Single stage stops to catch up one frame: the layer being drawn / already drawn, and the last result */
       settleLive: [...ref.current.settleLive],
       lastSettle: ref.current.lastSettle,
       snapshots: [...ref.current.snapshots.keys()],
@@ -2740,32 +3051,32 @@ export default function StageView() {
       pendingDemote: [...ref.current.k6.pending],
       k6Beats: ref.current.k6.beats.length,
       k6Over: ref.current.k6.beats.reduce((n, b) => n + b.over, 0),
-      /** 最后一拍每张卡的耗时(`<Profiler>` 报的);K6 挑「最贵的那张」就按它 */
+      /** Time spent by each card in the last tick (reported by `<Profiler>`); K6 picks "the most expensive one" by it */
       cardCost: [...ref.current.cardCost.entries()],
-      /** R8:流平面与解码器的状态(持有的帧数 / 字节、每条流画了几帧、当前变体……) */
+      /** R8: state of the stream plane and decoder (frames / bytes held, frames drawn per stream, current variant, ...) */
       streamPlanes: ref.current.streamPlanes.map((g) => ({ clipIds: g.clipIds, key: g.key ?? null, ranges: g.ranges ?? null, originFrame: g.originFrame ?? null, plane: g.plane ?? null })),
-      /** 贴轨道流:父页点名抑制了、流还没画出第一帧、原来的画面先没藏的卡;被推后的停下追帧;组流里先追上等着同组的 */
+      /** Cards attached to a track stream: suppressed by name by the parent page, the stream has not drawn its first frame yet, and the original picture has not been hidden; frame catch-up that was deferred; within a group stream, the card that catches up first waits for the rest of its group */
       parentSuppressed: [...ref.current.parentSuppressed],
       streamWaiting: [...ref.current.streamWaiting.keys()],
       deferredSettle: [...ref.current.deferredSettle.keys()],
       settledHeld: [...ref.current.settledHeld],
       streams: player.diag(),
-      /** R9:共享 WebGL 渲染器这一侧的状态(路线、连接方式、往返耗时、超时次数……) */
+      /** R9: state on the shared WebGL renderer side (route, connection type, round-trip time, timeout count, ...) */
       gl: gl.diag(),
-      /** 兜底顺序尽头:此刻显示着占位符的卡 */
+      /** End of the fallback order: the card currently showing a placeholder */
       placeholders: [...shownPlaceholders()],
-      /** M7 生成快照(契约第 7 节「舞台」):逐帧耗时不含被门挡住的时长,后者单记 */
+      /** M7 generate snapshots (contract section 7, "Stage"): per-frame time excludes time blocked by the gate, which is recorded separately */
       bake: {
         frames: bakeStats.frames, frameMs: { p50: q(bakeStats.ms, 0.5), p95: q(bakeStats.ms, 0.95) }, pausedMs: Math.round(bakeStats.pausedMs),
         remounts: bakeStats.remounts, smallMs: { p50: q(bakeStats.smallMs, 0.5), p95: q(bakeStats.smallMs, 0.95) }, errors: { ...bakeStats.errors },
         cursor: bakeCursor ? { clipId: bakeCursor.clipId, frame: bakeCursor.frame } : null,
       },
     });
-    // 探针用:问 Worker 要它那一侧的诊断(上下文数、纹理上传次数、图集尺寸)
+    // For the probe: ask the Worker for its own side's diagnostics (context count, texture upload count, atlas size)
     (window as unknown as Record<string, unknown>).__pcGlWorkerDiag = () => gl.workerDiag();
     window.__pcStagePipelineAt = (clipId: string, tSec: number) => pipelineAt(ref.current.plan?.plan ?? null, clipId, tSec);
     postStageReady(caps);
-    // 跨源舞台的自检结果排在握手之后发(`online/isolation/stageGuard.ts`);别的文档什么都不发
+    // The self-check result of the cross-origin stage is sent after the handshake (`online/isolation/stageGuard.ts`); other documents send nothing
     if (ONLINE) announceStageIsolation();
     return () => {
       stopRpc();
@@ -2794,8 +3105,9 @@ export default function StageView() {
   if (!project) return null;
   const timeline = flattenOverlay(project, graph);
   /*
-   * 组流平面挂在组里**此刻活跃的最上面那张卡**那一层(G1)。live 路每个片段一个单片段 `Stage`,
-   * 哪张卡此刻在场只有这里知道;`timeline.clips` 已经是画家顺序(最后一个在最上面)。
+   * The group stream plane is attached at the layer of **the topmost card currently active** in the group (G1).
+   * On the live path each clip gets a single-clip `Stage`, so only here is it known which card is
+   * present right now; `timeline.clips` is already in painter's order (the last one is on top).
    */
   const streamPlanes = ref.current.streamPlanes.some((g) => g.clipIds.length > 1)
     ? ref.current.streamPlanes.map((g) => {
@@ -2817,22 +3129,25 @@ export default function StageView() {
         height: project.height,
         overflow: "hidden",
         background: "transparent",
-        // 和 ExportView 读同一处(Timeline),不是各读各的 project —— 见 Timeline.themeId 的说明
+        // Reads from the same place as ExportView (Timeline), not each reading the project separately; see the note on Timeline.themeId
         ...themeStyle(timeline.themeId),
         /*
-         * 三维的 perspective **不在这里**。这一格和卡片之间还隔着 Stage 的根和 AnimClock
-         * 两层 div,而 CSS 的 perspective 只作用于直接子元素 —— 挂在这里等于没挂
-         * (实测卡片高度纹丝不动,rotateY 只剩仿射拉伸,而且不报错)。
-         * 它挂在 render/Stage.tsx 里卡片的直接父元素上,预览和导出共用同一处。
+         * The 3D perspective is **not here**. Between this cell and the card there are still two layers of
+         * div, the Stage root and AnimClock, and CSS perspective only affects direct children, so setting
+         * it here is the same as not setting it
+         * (measured: the card height does not budge, rotateY is left as a mere affine stretch, and no error is reported).
+         * It is set in render/Stage.tsx on the card's direct parent, shared by preview and export.
          */
       }}
     >
       {LIVE ? (
         /*
-         * E7:舞台页渲 `FrameScene` 的**活播放变体** —— 素材层在舞台里(第 1 条)、
-         * 卡片活跃判据用 `cardMountedAt`(第 2 条)、六个平面 prop 原样透传(第 3～5 条)。
-         * `graph` 就是上面那个 `useMemo`:**漏传的话** `graphVisualNode` 恒为 false、
-         * 素材段被画两层,而且 `timeline.graph` 为空、素材效果卡解不出输入,编译器不会拦。
+         * E7: the stage page renders the **live playback variant** of `FrameScene`: the media layer is inside
+         * the stage (item 1), card activity is judged by `cardMountedAt` (item 2), and the six plane props
+         * are passed through as is (items 3-5).
+         * `graph` is the `useMemo` above: **if it is not passed**, `graphVisualNode` is always false,
+         * the media clip is drawn on two layers, and `timeline.graph` is empty so the media effect card
+         * cannot resolve its input; the compiler will not catch it.
          */
         <FrameScene
           project={project}

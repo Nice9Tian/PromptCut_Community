@@ -1,7 +1,7 @@
-"""云端 Agent 服务起 promptcut_subject 时用的三个全局选项和 install --requirements。
+"""The three global options the Cloud Agent service uses when it launches promptcut_subject, plus install --requirements.
 
-工作区起子进程时环境变量按白名单重建(一个 PROMPTCUT_* 都不传),所以模型目录、依赖目录
-走命令行;素材是成员传的,ffmpeg / ffprobe 要被限制在本地文件。这里不需要任何推理引擎。
+When the workspace launches a subprocess it rebuilds the environment variables from an allowlist (not a single PROMPTCUT_* is passed), so the model directory and the dependency directory
+go through the command line; the media is passed in by members, so ffmpeg / ffprobe must be restricted to local files. No inference engine is needed here.
 """
 
 from __future__ import annotations

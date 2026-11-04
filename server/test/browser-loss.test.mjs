@@ -39,13 +39,13 @@ test('a lost browser is retried and the later attempt result is returned', async
   const logs = [];
   const result = await retryOnBrowserLoss(async (attempt) => {
     seen.push(attempt);
-    if (attempt === 0) throw Object.assign(targetClosed(), { browserExit: '退出码 0xC0000409' });
+    if (attempt === 0) throw Object.assign(targetClosed(), { browserExit: 'exit code 0xC0000409' });
     return 'ok';
-  }, { label: '分片 0-99', log: (line) => logs.push(line) });
+  }, { label: 'shard 0-99', log: (line) => logs.push(line) });
   assert.equal(result, 'ok');
   assert.deepEqual(seen, [0, 1]);
   assert.equal(logs.length, 1);
-  assert.match(logs[0], /分片 0-99.*0xC0000409.*第 2\/3 次/);
+  assert.match(logs[0], /shard 0-99.*0xC0000409.*attempt 2\/3/);
 });
 
 test('other failures are not retried', async () => {
@@ -57,10 +57,10 @@ test('other failures are not retried', async () => {
 
 test('the final error names the shard and the exit code and keeps the cause', async () => {
   let calls = 0;
-  const lost = Object.assign(targetClosed(), { browserExit: '退出码 0xC0000409' });
+  const lost = Object.assign(targetClosed(), { browserExit: 'exit code 0xC0000409' });
   await assert.rejects(
-    retryOnBrowserLoss(async () => { calls++; throw lost; }, { attempts: 2, label: '分片 100-199', log: () => {} }),
-    (e) => /分片 100-199/.test(e.message) && /0xC0000409/.test(e.message) && /重试 1 次/.test(e.message) && e.cause === lost,
+    retryOnBrowserLoss(async () => { calls++; throw lost; }, { attempts: 2, label: 'shard 100-199', log: () => {} }),
+    (e) => /shard 100-199/.test(e.message) && /0xC0000409/.test(e.message) && /retrying with a fresh Chrome 1 times/.test(e.message) && e.cause === lost,
   );
   assert.equal(calls, 2);
 });
@@ -92,12 +92,12 @@ test('a failed write is delivered again by the next attempt', async () => {
 });
 
 test('the exit status is read after the process reports it', async () => {
-  assert.equal(await browserExitNote({ process: () => fakeProcess({ exitCode: 3221226505 }) }), '退出码 0xC0000409');
-  assert.equal(await browserExitNote({ process: () => fakeProcess({ exitCode: -1073740791 }) }), '退出码 0xC0000409');
+  assert.equal(await browserExitNote({ process: () => fakeProcess({ exitCode: 3221226505 }) }), 'exit code 0xC0000409');
+  assert.equal(await browserExitNote({ process: () => fakeProcess({ exitCode: -1073740791 }) }), 'exit code 0xC0000409');
   const late = fakeProcess();
   setTimeout(() => { late.exitCode = 3221225477; late.emit('exit', late.exitCode, null); }, 10);
-  assert.equal(await browserExitNote({ process: () => late }), '退出码 0xC0000005');
-  assert.equal(await browserExitNote({ process: () => fakeProcess({ signalCode: 'SIGKILL' }) }), '信号 SIGKILL');
+  assert.equal(await browserExitNote({ process: () => late }), 'exit code 0xC0000005');
+  assert.equal(await browserExitNote({ process: () => fakeProcess({ signalCode: 'SIGKILL' }) }), 'signal SIGKILL');
   assert.equal(await browserExitNote({ process: () => fakeProcess() }, 5), '');
   assert.equal(await browserExitNote({ process: () => null }), '');
 });
@@ -105,7 +105,7 @@ test('the exit status is read after the process reports it', async () => {
 test('useBakery describes a lost browser before closing it, and always closes', async () => {
   const events = [];
   await assert.rejects(useBakery(fakeBakery({ exitCode: 3221226505, events }), async () => { throw targetClosed(); }),
-    (e) => e.browserLost === true && e.browserExit === '退出码 0xC0000409');
+    (e) => e.browserLost === true && e.browserExit === 'exit code 0xC0000409');
   assert.deepEqual(events, ['close']);
   assert.equal(await useBakery(fakeBakery({ events }), async () => 7), 7);
   assert.deepEqual(events, ['close', 'close']);
@@ -128,7 +128,7 @@ test('an error thrown after the browser disconnected is a loss and is retried', 
 test('with the browser still connected, other errors and cancellations are not marked', async () => {
   await assert.rejects(useBakery(fakeBakery(), async () => { throw detachedFrame(); }),
     (e) => e.browserLost === undefined && !isBrowserLoss(e));
-  const cancelled = Object.assign(new Error('已取消'), { cancelled: true });
+  const cancelled = Object.assign(new Error('Cancelled'), { cancelled: true });
   await assert.rejects(useBakery(fakeBakery({ connected: false }), async () => { throw cancelled; }),
     (e) => e === cancelled && e.browserLost === undefined);
 });

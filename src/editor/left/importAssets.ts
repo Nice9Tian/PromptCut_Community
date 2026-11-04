@@ -10,18 +10,22 @@ import { viewOnlyText } from "../io/viewOnly";
 export type AssetKind = MediaAsset["kind"];
 
 /**
- * 「导入素材」用的通用导入:按内容类型分别登记成 video / audio / image 素材,
- * 让它们各自落到素材库对应的分页里；类型冲突或无法识别的文件会被拒绝。
+ * Generic import for "Import media": registers files by content type as video / audio / image
+ * assets, so each lands in the matching tab of the media library; files with a conflicting or
+ * unrecognized type are rejected.
  *
- * 视频那一路直接复用 io 里的 importVideoFiles —— 它除了登记素材还会把 File 存进 io 的私有表
- * (导出和语音转写靠 getMediaFile 取原文件)、并把片段放到播放头处,自己另写一套只会和它走岔。
- * 音频和图片在 io 里没有对应入口(importVideoFiles 的 kind 是写死的 "video"),所以在这里登记,
- * 但**登记完必须调 registerMediaFile 把原始 File 交回 io** —— 语音转写和导出都靠
- * io.getMediaFile 取原文件,漏了这一步,导入的 mp3 转写时会报「素材文件不在内存里」。
- * 不会提示是导入漏登记造成的。
+ * The video path reuses importVideoFiles from io directly. Besides registering the asset, it also
+ * stores the File in io's private table (export and speech-to-text fetch the original file via
+ * getMediaFile) and puts the clip at the playhead; writing a separate version here would only
+ * drift from it. Audio and images have no matching entry point in io (the kind of
+ * importVideoFiles is hardcoded to "video"), so they are registered here,
+ * but **after registering you must call registerMediaFile to hand the original File back to io**:
+ * speech-to-text and export both fetch the original file via io.getMediaFile, and if this step is
+ * missed, an imported mp3 fails at transcription with "asset file is not in memory".
+ * Nothing hints that the cause is a missed registration on import.
  */
 
-/** 文件选择器的 accept:MIME 通配打头,再补一串后缀,免得系统不认 MIME 时把文件灰掉 */
+/** accept for the file picker: MIME wildcards first, then a list of extensions, so the file isn't greyed out when the system doesn't recognize the MIME type */
 export const MEDIA_ACCEPT = [
   "video/*",
   "audio/*",
@@ -33,7 +37,7 @@ export { classifyFileDetailed, EXT_KIND, KIND_LABEL } from "../io/mediaKinds";
 export type { FileClassification } from "../io/mediaKinds";
 export const classifyFile = (file: File): AssetKind | null => classifyFileDetailed(file).kind;
 
-/** 探测元数据都给 5 秒上限:坏文件不该把整批导入卡死,拿不到就留空,后面按默认时长处理 */
+/** Metadata probing is capped at 5 seconds: a bad file must not stall the whole batch import; if nothing comes back, leave it empty and fall back to the default duration later */
 function withTimeout<T>(run: (settle: (v: T) => void) => void, fallback: T): Promise<T> {
   return new Promise((resolve) => {
     let done = false;
@@ -74,13 +78,16 @@ function probeImage(url: string, name: string): Promise<{ width?: number; height
 }
 
 /**
- * 登记一条音频 / 图片素材。
+ * Registers one audio / image asset.
  *
- * 素材地址一律是 /@media/<内容哈希>(A1),不留 blob: ——
- * 渲染进程和导出进程都在浏览器之外,够不着 blob:,而 io 里那张「blob → File」的表是私有的,
- * 外面登记的素材进不去。blob: 只在这里当一次性的探测地址(探时长 / 宽高),探完就撤。
- * 入库(上传 + 算哈希)期间素材先挂 pending,素材层画「上传中」占位;
- * 失败不退回 blob:,留空地址(见 io/mediaUpload.ts)。
+ * The asset address is always /@media/<content hash> (A1), never blob: ...
+ * the render process and the export process both live outside the browser and cannot reach blob:,
+ * and the "blob → File" table in io is private, so assets registered outside never get into it.
+ * blob: is used here only as a throwaway probe address (to get duration / width and height),
+ * and is revoked once probing is done.
+ * While storing (upload + hashing) is in progress, the asset stays pending and the media layer
+ * draws an "Uploading" placeholder; on failure it does not fall back to blob:, it leaves the
+ * address empty (see io/mediaUpload.ts).
  */
 export async function registerAsset(file: File, kind: "audio" | "image"): Promise<string> {
   const blobUrl = URL.createObjectURL(file);
@@ -103,16 +110,17 @@ export async function registerAsset(file: File, kind: "audio" | "image"): Promis
 
 export interface ImportResult {
   counts: Record<AssetKind, number>;
-  /** 认不出类型、被跳过的文件名 */
+  /** Names of files skipped because their type could not be recognized */
   skipped: string[];
-  /** 第一个收下的文件属于哪一类,用来把用户带到对应分页 */
+  /** Category of the first accepted file, used to take the user to the matching tab */
   firstKind: AssetKind | null;
-  /** 类型冲突或完全无法识别的文件，以及给用户的修复建议 */
+  /** Files with a conflicting type or no recognizable type at all, plus fix suggestions for the user */
   rejected: string[];
 }
 
 export async function importMediaFiles(files: FileList | File[]): Promise<ImportResult> {
-  // 只读项目(游客):导入素材是写。按钮已置灰,走到这里是拖放之类没盖到的路
+  // Read-only project (guest): importing media is a write. The button is already greyed out; reaching here means a
+  // path not covered, such as drag and drop
   if (blockedByReadOnly()) throw new Error(viewOnlyText());
   const releaseHold = holdOnlineQueueOriginals();
   try {

@@ -1,7 +1,9 @@
 /**
- * 带共享项目的文档服务，真端口（0）跑（实现方自测；契约 `docs/plan/auth-contract.md` 第 4～10 节）：
- * HTTP 端点、空间隔离、成员列表、创建者操作、票据、角色限制、管理接口限制、挂载模式。
- * 跑：node --test server/test/auth-impl-service.test.mjs
+ * Document service with shared projects, running on real port (0) (implementer self-test;
+ * contract `docs/plan/auth-contract.md` sections 4-10):
+ * HTTP endpoints, space isolation, member list, creator operations, tickets, role restrictions,
+ * admin interface restrictions, attached mode.
+ * Run: node --test server/test/auth-impl-service.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +21,7 @@ const post = (base, route, body, headers = {}) => fetch(`${httpBaseOf(base)}/sha
 const cred = () => ({ salt: crypto.randomBytes(16).toString('base64url'), key: crypto.randomBytes(32).toString('base64url') });
 const createBody = (name, extra = {}) => ({ name, mode: 'free', kdf: FAST_KDF, creator: { username: 'alice', ...cred() }, project: cred(), ...extra });
 
-/** 在一条连接上做一次创建者操作：取挑战、按口令派生 K、算证明 */
+/** Perform a creator operation on a connection: fetch challenge, derive K from passphrase, compute proof */
 async function adminOp(c, { projectId, creator = 'alice', password = 'creator-pw', op, fields = {}, reqId = `adm-${op}-${Math.random()}` }) {
   c.send({ type: 'shared.challenge', reqId: `${reqId}-ch` });
   const ch = await c.next(byReq(`${reqId}-ch`));
@@ -30,7 +32,7 @@ async function adminOp(c, { projectId, creator = 'alice', password = 'creator-pw
   return c.next(byReq(reqId), 4000);
 }
 
-test('HTTP：create 两种模式、409 同名（大小写 / NFC）、400、lookup、challenge 的真盐与伪盐、404、预检、413、no-store', async (t) => {
+test('HTTP: create in both modes, 409 for the same name (case / NFC), 400, lookup, real salt and fake salt in challenge, 404, preflight, 413, no-store', async (t) => {
   const s = await startSharedService({ mode: 'hosted' });
   t.after(() => s.close());
   const r1 = await post(s.base, 'create', createBody('Café'));
@@ -60,14 +62,14 @@ test('HTTP：create 两种模式、409 同名（大小写 / NFC）、400、looku
 
   const ch = await requestChallenge({ base: s.base, projectId: p2.projectId, username: 'bob', deviceId: newDeviceId('c') });
   assert.equal(Buffer.from(ch.nonce, 'base64url').length, 32);
-  assert.equal(ch.salt, s.store.peek(p2.projectId).list[0].salt, '名单内：名单这一条的盐');
+  assert.equal(ch.salt, s.store.peek(p2.projectId).list[0].salt, 'on the list: the salt of that list entry');
   const f1 = await requestChallenge({ base: s.base, projectId: p2.projectId, username: 'mallory', deviceId: newDeviceId('c') });
   const f2 = await requestChallenge({ base: s.base, projectId: p2.projectId, username: 'mallory', deviceId: newDeviceId('c') });
-  assert.equal(f1.salt, f2.salt, '伪盐：同一用户名每次一样');
-  assert.equal(Buffer.from(f1.salt, 'base64url').length, 16, '形状与真盐相同');
+  assert.equal(f1.salt, f2.salt, 'fake salt: the same for the same username every time');
+  assert.equal(Buffer.from(f1.salt, 'base64url').length, 16, 'same shape as a real salt');
   assert.deepEqual(Object.keys(f1).sort(), Object.keys(ch).sort());
   const fc = await requestChallenge({ base: s.base, projectId: p1.projectId, username: 'bob', deviceId: newDeviceId('c'), as: 'creator' });
-  assert.notEqual(fc.salt, s.store.peek(p1.projectId).creator.salt, '不是创建者：伪盐');
+  assert.notEqual(fc.salt, s.store.peek(p1.projectId).creator.salt, 'not the creator: fake salt');
   assert.equal((await post(s.base, 'challenge', { projectId: 'sp_aaaaaaaaaaaaaaaaaaaaaaaaaa', username: 'u', deviceId: newDeviceId('c'), as: 'member' })).status, 404);
   assert.equal((await post(s.base, 'challenge', { projectId: p1.projectId, username: 'u', deviceId: 'short', as: 'member' })).status, 400);
 
@@ -77,7 +79,7 @@ test('HTTP：create 两种模式、409 同名（大小写 / NFC）、400、looku
   assert.match(pre.headers.get('access-control-allow-headers'), /content-type/i);
 });
 
-test('HTTP：托管端同一来源每小时 10 个，第 11 次 429；整台服务上限；挑战在冷却期回 429', async (t) => {
+test('HTTP: hosted side allows 10 per hour from the same source, the 11th returns 429; service-wide cap; challenge returns 429 during the cooldown period', async (t) => {
   const s = await startSharedService({ mode: 'hosted', limits: { maxProjects: 12 } });
   t.after(() => s.close());
   for (let i = 0; i < 10; i++) assert.equal((await post(s.base, 'create', createBody(`n${i}`))).status, 201);
@@ -89,9 +91,9 @@ test('HTTP：托管端同一来源每小时 10 个，第 11 次 429；整台服�
   t.after(() => s2.close());
   assert.equal((await post(s2.base, 'create', createBody('a'))).status, 201);
   assert.equal((await post(s2.base, 'create', createBody('b'))).status, 201);
-  assert.equal((await post(s2.base, 'create', createBody('c'))).status, 429, '整台服务到上限');
+  assert.equal((await post(s2.base, 'create', createBody('c'))).status, 429, 'the whole service reaches the cap');
 
-  // 冷却：错 5 次之后挑战回 429
+  // Cooldown: challenge returns 429 after 5 failures
   const s3 = await startSharedService({ mode: 'hosted' });
   t.after(() => s3.close());
   const p = await createProject(s3.base, { password: 'right' });
@@ -104,7 +106,7 @@ test('HTTP：托管端同一来源每小时 10 个，第 11 次 429；整台服�
   assert.equal(blocked.status, 429);
 });
 
-test('挂载模式（局域网主机）：共享端点在 /docservice/shared/ 下；非回环建项目 403、回环 201；集群令牌一律不认', async (t) => {
+test('mounted mode (LAN host): shared endpoints are under /docservice/shared/; creating a project returns 403 from non-loopback and 201 from loopback; the cluster token is never accepted', async (t) => {
   let loop = false;
   const token = randomToken();
   const s = await startSharedService({ mode: 'lan', isLoopback: () => loop, clusterToken: token });
@@ -117,18 +119,18 @@ test('挂载模式（局域网主机）：共享端点在 /docservice/shared/ �
   assert.equal((await post(s.base, 'create', createBody('lan'))).status, 201);
   const hs = await rawHandshake(s.port, { protocols: ['promptcut.v1', `promptcut.token.${token}`], path: '/docservice' });
   hs.sock.destroy();
-  assert.equal(hs.status, 401, '挂载模式不认令牌（回环也一样）');
+  assert.equal(hs.status, 401, 'mounted mode does not accept tokens (same for loopback)');
   const local = await rawHandshake(s.port, { protocols: ['promptcut.v1'], path: '/docservice' });
   local.sock.destroy();
-  assert.equal(local.status, 101, '回环什么都不带：本机身份');
+  assert.equal(local.status, 101, 'loopback with nothing: local identity');
   loop = false;
   const remote = await rawHandshake(s.port, { protocols: ['promptcut.v1'], path: '/docservice' });
   remote.sock.destroy();
-  assert.equal(remote.status, 401, '局域网来的什么都不带：401');
-  assert.equal(remote.rawHead.includes('no-credential'), false, '响应里不说原因');
+  assert.equal(remote.status, 401, 'from the LAN with nothing: 401');
+  assert.equal(remote.rawHead.includes('no-credential'), false, 'response does not state the reason');
 });
 
-test('空间隔离：两个项目的成员与本机空间，频道名相同也不串；存储在 tenants/<projectId>/ 下，local 沿用数据目录', async (t) => {
+test('space isolation: members of two projects and the local space do not leak into each other even with the same channel names; storage is under tenants/<projectId>/, local keeps using the data directory', async (t) => {
   let loop = false;
   const s = await startSharedService({ mode: 'hosted', isLoopback: () => loop });
   t.after(() => s.close());
@@ -152,23 +154,23 @@ test('空间隔离：两个项目的成员与本机空间，频道名相同也�
   const ann = await ca.next(byReq('an'));
   assert.equal(ann.projectRev, 1);
   await ca.next(byType('content.changed'));
-  assert.deepEqual(await cb.quiet(() => true, 200), [], 'b 收到 0 条');
-  assert.deepEqual(await cl.quiet(() => true, 50), [], '本机空间收到 0 条');
+  assert.deepEqual(await cb.quiet(() => true, 200), [], 'b receives 0 messages');
+  assert.deepEqual(await cl.quiet(() => true, 50), [], 'local space receives 0 messages');
   cb.send({ type: 'content.get', reqId: 'g', kind: 'card-source', key: 'k' });
-  assert.equal((await cb.next(byReq('g'))).missing, true, 'b 看不到 a 的内容');
+  assert.equal((await cb.next(byReq('g'))).missing, true, 'b cannot see the content of a');
   cl.send({ type: 'project.announce', reqId: 'an2', projectId: 'same-id', digest: 'b'.repeat(64) });
-  assert.equal((await cl.next(byReq('an2'))).projectRev, 1, '本机空间自己从 1 起');
+  assert.equal((await cl.next(byReq('an2'))).projectRev, 1, 'local space starts from 1 on its own');
 
   const dir = s.dir;
-  assert.ok(fs.existsSync(path.join(dir, 'tenants', a.projectId, 'content')), '共享空间的存储');
-  assert.ok(fs.existsSync(path.join(dir, 'projects')), 'local 空间沿用数据目录');
+  assert.ok(fs.existsSync(path.join(dir, 'tenants', a.projectId, 'content')), 'storage of the shared space');
+  assert.ok(fs.existsSync(path.join(dir, 'projects')), 'local space keeps using the data directory');
   assert.equal(fs.existsSync(path.join(dir, 'tenants', b.projectId, 'content')), false);
   const channels = Object.keys(s.service.describe().channels);
   assert.ok(channels.includes(`content:@${a.projectId}/card-source`), channels.join(','));
-  assert.ok(channels.includes('content:card-source'), 'local 频道名不变');
+  assert.ok(channels.includes('content:card-source'), 'local channel names are unchanged');
 });
 
-test('成员列表：按用户名 + 设备聚合，同名不同设备都带设备名；一台走后恢复；watch 收到变化；标签', async (t) => {
+test('member list: grouped by username + device, same name on different devices all carry the device name; reverts after one leaves; watch receives changes; tags', async (t) => {
   const s = await startSharedService({ mode: 'hosted' });
   t.after(() => s.close());
   const p = await createProject(s.base, { password: 'pw' });
@@ -189,7 +191,7 @@ test('成员列表：按用户名 + 设备聚合，同名不同设备都带设�
     page1.send({ type: 'shared.members', reqId: `m${Math.random()}` });
     const r = await page1.next(byType('shared.members.list'));
     return r.devices.length === 2 && r.devices.find((d) => d.deviceId === d1)?.conns.length === 3 ? r : null;
-  }, 3000, '两台设备');
+  }, 3000, 'two devices');
   const row1 = list.devices.find((d) => d.deviceId === d1);
   assert.equal(row1.displayName, 'bob (Bob-A)');
   assert.equal(list.devices.find((d) => d.deviceId === d2).displayName, 'bob (Bob-B)');
@@ -199,10 +201,10 @@ test('成员列表：按用户名 + 设备聚合，同名不同设备都带设�
   assert.equal(row1.creator, false);
   assert.notEqual(s.store.peek(p.projectId).creator.username, 'bob');
   page2.close();
-  await waitFor(() => page1.all.some((m) => m.type === 'shared.members.list' && m.devices.length === 1 && m.devices[0].displayName === 'bob'), 3000, '走了一台，恢复成只显示用户名');
+  await waitFor(() => page1.all.some((m) => m.type === 'shared.members.list' && m.devices.length === 1 && m.devices[0].displayName === 'bob'), 3000, 'one left, reverts to showing only the username');
 });
 
-test('角色：page 发 node.hello 回 forbidden、render 可以；agent 的写入 actor 带对话号；成员不能登记服务地址但能订阅', async (t) => {
+test('roles: page sending node.hello returns forbidden, render is allowed; the actor of an agent write carries a chat number; members cannot register service addresses but can subscribe', async (t) => {
   const s = await startSharedService({ mode: 'hosted' });
   t.after(() => s.close());
   const p = await createProject(s.base, { password: 'pw' });
@@ -230,7 +232,7 @@ test('角色：page 发 node.hello 回 forbidden、render 可以；agent 的写�
   assert.equal((await page.next(byReq('sw'))).type, 'service.endpoints');
 });
 
-test('票据：连接票据让另一条连接以同一身份、render 角色进入；本机身份要不到票据；素材票据能被同一存储核对', async (t) => {
+test('tickets: a connection ticket lets another connection in with the same identity and the render role; a local identity cannot get a ticket; an asset ticket can be verified by the same store', async (t) => {
   let loop = false;
   const s = await startSharedService({ mode: 'hosted', isLoopback: () => loop });
   t.after(() => s.close());
@@ -246,7 +248,7 @@ test('票据：连接票据让另一条连接以同一身份、render 角色进�
   const second = wsClient(s.url, ticketProtocols(ok.ticket));
   t.after(() => second.close());
   await second.opened;
-  const conn = await waitFor(() => s.service.describe().conns.find((c) => c.principal.role === 'render'), 2000, 'render 连接');
+  const conn = await waitFor(() => s.service.describe().conns.find((c) => c.principal.role === 'render'), 2000, 'render connection');
   assert.deepEqual(conn.principal, {
     userId: `bob@${dev}`, tenantId: p.projectId, scope: 'member', username: 'bob', deviceId: dev, deviceName: 'Bob-PC',
     creator: false, role: 'render', conversation: null, owner: { kind: 'agent', c: 3 },
@@ -259,16 +261,16 @@ test('票据：连接票据让另一条连接以同一身份、render 角色进�
   const asset = await page.next(byReq('a'));
   const verifier = createAssetTicketVerifier({ store: s.store });
   assert.deepEqual(verifier.verify(asset.ticket), { ok: true, access: 'r', projectId: p.projectId, userId: `bob@${dev}` });
-  assert.equal(verifier.verify(ok.ticket).ok, false, '连接票据不能当素材票据');
+  assert.equal(verifier.verify(ok.ticket).ok, false, 'a connection ticket cannot be used as an asset ticket');
   loop = true;
   const local = wsClient(s.url, ['promptcut.v1']);
   t.after(() => local.close());
   await local.opened;
   local.send({ type: 'auth.ticket', reqId: 'l', kind: 'asset' });
-  assert.equal((await local.next(byReq('l'))).reason, 'forbidden', '本机 local 身份要不到票据');
+  assert.equal((await local.next(byReq('l'))).reason, 'forbidden', 'local identity cannot get a ticket');
 });
 
-test('创建者操作：不带证明、证明错、非创建者口令一律 forbidden 并计限速；五种 op 带证明都生效', async (t) => {
+test('creator operations: no proof, wrong proof, and a non-creator passphrase are all forbidden and counted toward rate limiting; all five ops take effect with a proof', async (t) => {
   const s = await startSharedService({ mode: 'hosted' });
   t.after(() => s.close());
   const p = await createProject(s.base, { password: 'pw' });
@@ -279,33 +281,35 @@ test('创建者操作：不带证明、证明错、非创建者口令一律 forb
   await Promise.all([bob.opened, alice.opened]);
 
   bob.send({ type: 'shared.admin', reqId: 'x', op: 'delete' });
-  assert.equal((await bob.next(byReq('x'))).reason, 'forbidden', '不带证明');
-  assert.equal((await adminOp(bob, { projectId: p.projectId, op: 'kick', password: 'pw', fields: { username: 'x', deviceId: newDeviceId('z') } })).reason, 'forbidden', '拿项目口令冒充');
+  assert.equal((await bob.next(byReq('x'))).reason, 'forbidden', 'no proof');
+  assert.equal((await adminOp(bob, { projectId: p.projectId, op: 'kick', password: 'pw', fields: { username: 'x', deviceId: newDeviceId('z') } })).reason, 'forbidden', 'impersonating with the project passphrase');
   bob.send({ type: 'shared.challenge', reqId: 'c' });
   const ch = await bob.next(byReq('c'));
   bob.send({ type: 'shared.admin', reqId: 'y', op: 'delete', proof: { nonce: ch.nonce, m: crypto.randomBytes(32).toString('base64url') } });
-  assert.equal((await bob.next(byReq('y'))).reason, 'forbidden', '证明错');
-  // 证明对，但 nonce 是别的连接取的：不认
+  assert.equal((await bob.next(byReq('y'))).reason, 'forbidden', 'wrong proof');
+  // Proof is correct, but nonce was fetched by another connection: rejected
   alice.send({ type: 'shared.challenge', reqId: 'c2' });
   const ch2 = await alice.next(byReq('c2'));
   const key = await deriveKey('creator-pw', ch2.salt, ch2.kdf);
   bob.send({ type: 'shared.admin', reqId: 'z', op: 'unban', username: 'q', deviceId: newDeviceId('q'), proof: { nonce: ch2.nonce, m: await adminProof({ key, projectId: p.projectId, username: 'alice', op: 'unban', nonce: ch2.nonce }) } });
-  assert.equal((await bob.next(byReq('z'))).reason, 'forbidden', 'nonce 须由同一连接取');
+  assert.equal((await bob.next(byReq('z'))).reason, 'forbidden', 'nonce must be fetched by the same connection');
 
-  // 知道创建者口令的普通成员：证明对就成功（特权绑口令，不绑连接的身份）
+  // Regular member who knows creator passphrase: succeeds if proof is correct (privilege is bound
+  // to passphrase, not connection identity)
   const gen = s.store.peek(p.projectId).generation;
   const np = await makeCredential('pw2', FAST_KDF);
   assert.equal((await adminOp(bob, { projectId: p.projectId, op: 'set-password', fields: { project: np } })).type, 'shared.admin.ok');
   assert.equal(s.store.peek(p.projectId).generation, gen + 1);
-  assert.equal(bob.ws.readyState, WebSocket.OPEN, '改口令时在线连接不断');
+  assert.equal(bob.ws.readyState, WebSocket.OPEN, 'live connections stay up when the passphrase is changed');
   const bad = await join(s.base, { projectId: p.projectId, username: 'carol', deviceId: newDeviceId('ac'), password: 'pw' }).catch((e) => e);
-  await assert.rejects(bad.opened, '旧口令进不来');
+  await assert.rejects(bad.opened, 'old passphrase cannot get in');
   const good = await join(s.base, { projectId: p.projectId, username: 'carol', deviceId: newDeviceId('ac'), password: 'pw2' });
   await good.opened;
   good.close();
-  assert.equal((await adminOp(alice, { projectId: p.projectId, op: 'set-list', fields: { list: [] } })).reason, 'bad-message', '自由进入没有名单');
+  assert.equal((await adminOp(alice, { projectId: p.projectId, op: 'set-list', fields: { list: [] } })).reason, 'bad-message', 'open entry has no list');
 
-  // kick：连接以 4003 关闭、票据立即失效、再进 401；unban 后能进
+  // kick: connection closes with 4003, ticket is invalidated immediately, subsequent entry gets 401;
+  // can enter after unban
   bob.send({ type: 'auth.ticket', reqId: 'at', kind: 'asset', access: 'rw' });
   const bobTicket = (await bob.next(byReq('at'))).ticket;
   const verifier = createAssetTicketVerifier({ store: s.store });
@@ -314,15 +318,15 @@ test('创建者操作：不带证明、证明错、非创建者口令一律 forb
   const closed = await bob.closed;
   assert.equal(closed.code, 4003);
   assert.equal(closed.reason, 'kicked');
-  assert.equal(verifier.verify(bobTicket).ok, false, '被踢者的票据立即失效');
+  assert.equal(verifier.verify(bobTicket).ok, false, 'ticket of the kicked member is invalidated immediately');
   const again = await join(s.base, { projectId: p.projectId, username: 'bob', deviceId: devBob, password: 'pw2' });
-  await assert.rejects(again.opened, '禁入表');
+  await assert.rejects(again.opened, 'ban list');
   assert.equal((await adminOp(alice, { projectId: p.projectId, op: 'unban', fields: { username: 'bob', deviceId: devBob } })).type, 'shared.admin.ok');
   const back = await join(s.base, { projectId: p.projectId, username: 'bob', deviceId: devBob, password: 'pw2' });
   await back.opened;
   back.close();
 
-  // delete：全空间 4004、记录与数据删掉、名字释放
+  // delete: entire space 4004, records and data deleted, name released
   alice.send({ type: 'content.put', reqId: 'cp', kind: 'card-source', key: 'k', body: 1 });
   await alice.next(byReq('cp'));
   const tenantDir = path.join(s.dir, 'tenants', p.projectId);
@@ -333,12 +337,12 @@ test('创建者操作：不带证明、证明错、非创建者口令一律 forb
   assert.equal((await watcher.closed).code, 4004);
   assert.equal((await alice.closed).code, 4004);
   assert.equal(s.store.peek(p.projectId), null);
-  await waitFor(() => !fs.existsSync(tenantDir), 2000, '空间数据删掉');
+  await waitFor(() => !fs.existsSync(tenantDir), 2000, 'space data deleted');
   const lk = await fetch(`${httpBaseOf(s.base)}/shared/lookup?name=${encodeURIComponent(p.name)}`);
-  assert.equal(lk.status, 404, '名字释放');
+  assert.equal(lk.status, 404, 'name released');
 });
 
-test('创建者操作：限定进入的 set-list 移出某人——他的连接以 4003 removed 关闭，再进 401；创建者不受影响', async (t) => {
+test('creator operations: set-list under restricted entry removes someone (their connection closes with 4003 removed, re-entry returns 401); the creator is unaffected', async (t) => {
   const s = await startSharedService({ mode: 'hosted' });
   t.after(() => s.close());
   const p = await createProject(s.base, { mode: 'restricted', list: [{ username: 'bob', password: 'bpw' }, { username: 'carol', password: 'cpw' }] });
@@ -358,9 +362,10 @@ test('创建者操作：限定进入的 set-list 移出某人——他的连接�
   assert.equal(alice.ws.readyState, WebSocket.OPEN);
   const again = await join(s.base, { projectId: p.projectId, username: 'bob', deviceId: devBob, password: 'bpw' });
   await assert.rejects(again.opened);
-  assert.equal((await adminOp(alice, { projectId: p.projectId, op: 'set-password', fields: { project: await makeCredential('x', FAST_KDF) } })).reason, 'bad-message', '限定进入没有项目口令');
-  // 冷却：同一来源（测试里都是同一个地址）上面 bob 名单外的一次握手算一次失败，再错 4 次创建者证明就进冷却，
-  // 之后取挑战回 rate-limited
+  assert.equal((await adminOp(alice, { projectId: p.projectId, op: 'set-password', fields: { project: await makeCredential('x', FAST_KDF) } })).reason, 'bad-message', 'restricted entry has no project passphrase');
+  // Cooldown: from the same origin (all the same address in tests), a handshake outside the list for
+  // bob counts as one failure; 4 more creator proof failures trigger cooldown, after which fetching
+  // challenges returns rate-limited
   for (let i = 0; i < 4; i++) assert.equal((await adminOp(carol, { projectId: p.projectId, op: 'unban', password: 'nope', fields: { username: 'q', deviceId: newDeviceId('q') } })).reason, 'forbidden');
   carol.send({ type: 'shared.challenge', reqId: 'cool' });
   assert.equal((await carol.next(byReq('cool'))).reason, 'rate-limited');

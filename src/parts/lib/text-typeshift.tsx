@@ -5,8 +5,9 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 排版流文字:草稿感多行文字自动重排定型。从 type-shift 拆出。
- * 支持首行主标题、星号次重点、横线署名层级。
+ * Type-shift text: draft-feel multi-line text that automatically reflows and settles. Extracted
+ * from type-shift.
+ * Supports first-line main title, asterisk sub-emphasis, and dash attribution hierarchy.
  */
 interface Params {
   lines: string;
@@ -94,10 +95,10 @@ function TypeShiftPart({ params, width, height }: PartProps<Params>) {
 
 export const textTypeshift: PartDef<Params> = {
   id: "text-typeshift",
-  name: "排版流",
-  description: "多行草稿感文字在指定延时后自动重排定型",
-  useWhen: "段落转场、展现多层级内容重排的视觉冲击时使用；内容必须多行：首行为大字主标题、*开头为次重点、—开头为署名；单行或普通要点直接用 text-title 或 list-pins。",
-  tags: ["排版", "转场", "标题", "重排", "草稿"],
+  name: "Typography flow",
+  description: "Multi-line draft-style text that automatically reflows and settles after a given delay",
+  useWhen: "Use for section transitions and for the visual impact of multi-level content reflowing; the content must be multi-line: the first line is the large main title, lines starting with * are secondary highlights, lines starting with — are attributions; for a single line or ordinary bullet points, use text-title or list-pins directly.",
+  tags: ["typography", "Transition", "Title", "re-flow", "Draft"],
   role: "list",
   from: "type-shift",
   defaults: {
@@ -107,10 +108,10 @@ export const textTypeshift: PartDef<Params> = {
     accent: "",
   },
   controls: [
-    { key: "lines", label: "多行内容(|分行,*次重,—署名)", type: "text", required: true },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 200, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
-    { key: "shiftAtMs", label: "重排时间(ms)", type: "number", min: 100, max: 2000, step: 100 },
-    { key: "accent", label: "首行高亮色(留空用主题色)", type: "color" },
+    { key: "lines", label: "Multi-line content (| splits lines, * secondary, — credit)", type: "text", required: true },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 200, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
+    { key: "shiftAtMs", label: "Reflow time (ms)", type: "number", min: 100, max: 2000, step: 100 },
+    { key: "accent", label: "First-line highlight color (leave empty to use theme color)", type: "color" },
   ],
   defaultFrame: { x: 200, y: 280, w: 1000, h: 500 },
   settleMs: (p) => p.shiftAtMs + 400,

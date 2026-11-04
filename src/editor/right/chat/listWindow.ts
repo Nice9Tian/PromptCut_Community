@@ -1,33 +1,39 @@
 /**
- * 聊天记录列表的窗口化(MessageList 用):只渲染可视区附近的几条,其余用占位高度撑住滚动条。
+ * Windowing of the chat history list (used by MessageList): only render the few items near the visible area, and use placeholder height to hold up the scrollbar for the rest.
  *
- * 这里只放纯函数,不碰 DOM,单测在 listWindow.test.mjs。
+ * Only pure functions here, no DOM; unit tests are in listWindow.test.mjs.
  *
- * 坐标约定:「内容坐标」从第一条的顶边算起(不含滚动区的上内边距)。第 i 条占 [off[i], off[i] + h[i]),
- * 条与条之间隔 gap(滚动区是 flex 列、`gap: 12px`),所以 off[i + 1] = off[i] + h[i] + gap。
- * 消息高度不固定:量过的按实测(ResizeObserver),没量过的按估计。
+ * Coordinate convention: "content coordinates" are counted from the top edge of the first item (excluding the top padding of the scroll area). Item i occupies [off[i], off[i] + h[i]),
+ * with a gap between items (the scroll area is a flex column, `gap: 12px`), so off[i + 1] = off[i] + h[i] + gap.
+ * Message heights are not fixed: measured ones use the actual measurement (ResizeObserver), unmeasured ones use an estimate.
  */
 
-/** 滚动区 .ai-messages 的 gap 与上下内边距(chat.css),两处要一致 */
+/** The gap and top/bottom padding of the scroll area .ai-messages (chat.css); the two places must match */
 export const LIST_GAP = 12;
 export const LIST_PAD = 12;
-/** 离底部不超过这么多 px 就算「在底部」,来了新内容接着贴底 */
+/** Within this many px of the bottom counts as "at the bottom", and new content keeps sticking to the bottom */
 export const BOTTOM_SLACK = 40;
 /**
- * 条数不超过这么多就全渲染〔裁〕:平常长度的对话和窗口化之前一模一样,浏览器的页内查找(Ctrl+F)也照旧找得到每一条。
- * 只有很长的历史才窗口化,那正是全渲染真卡的地方(2000 条实测每次滚动都有 50～109 ms 的长任务)。
- * 原来定 40,主会话审查时提到 150:三级机制的改动不该让用户在平常长度的对话里看出区别。
+ * Render every entry when the count is at most this [ruling]: a chat of ordinary length behaves
+ * exactly as before windowing, and the browser's in-page find (Ctrl+F) still finds every entry.
+ * Only very long histories are windowed, which is where full rendering really lags (with 2000
+ * entries, every scroll had a 50-109 ms long task in measurements).
+ * It was originally 40; the lead session's review raised it to 150: the three-level mechanism
+ * change should not let users notice a difference in chats of ordinary length.
  */
 export const WINDOW_MIN_ENTRIES = 150;
 
-/** 这么多条要不要窗口化 */
+/** Whether this many entries should be windowed */
 export function shouldWindow(n: number, min: number = WINDOW_MIN_ENTRIES): boolean {
   return n > min;
 }
-/** 窗口里最多这么多条(不算强制渲染的):小气泡很密时余量也不会把节点数撑上去 */
+/** Max entries in the window (not counting forced renders): keeps the node count down even when small bubbles are dense */
 export const WINDOW_MAX_ENTRIES = 44;
 
-/** 每一条的前缀偏移:长度 n + 1,off[i] 是第 i 条的顶边;off[n] - gap 是内容总高(n = 0 时为 0) */
+/**
+ * Prefix offset of every entry: length n + 1, off[i] is the top edge of entry i;
+ * off[n] - gap is the total content height (0 when n = 0)
+ */
 export function prefixOffsets(heights: readonly number[], gap: number = LIST_GAP): number[] {
   const off = new Array<number>(heights.length + 1);
   off[0] = 0;
@@ -35,13 +41,13 @@ export function prefixOffsets(heights: readonly number[], gap: number = LIST_GAP
   return off;
 }
 
-/** 内容总高 */
+/** Total content height */
 export function contentHeight(off: readonly number[], gap: number = LIST_GAP): number {
   const n = off.length - 1;
   return n <= 0 ? 0 : off[n] - gap;
 }
 
-/** 第一个满足 pred 的下标(pred 单调:前面 false 后面 true);都不满足回 n */
+/** Index of the first entry satisfying pred (pred is monotonic: false first, then true); returns n if none does */
 function lowerBound(n: number, pred: (i: number) => boolean): number {
   let lo = 0;
   let hi = n;
@@ -53,28 +59,32 @@ function lowerBound(n: number, pred: (i: number) => boolean): number {
   return lo;
 }
 
-/** 和内容坐标区间 [top, bottom) 有交集的条:[first, last)。区间落在两条之间的空隙里时回一个空区间 */
+/**
+ * Entries intersecting the content coordinate range [top, bottom): [first, last).
+ * Returns an empty range when the range falls in the gap between two entries
+ */
 export function rangeInView(off: readonly number[], top: number, bottom: number, gap: number = LIST_GAP): { first: number; last: number } {
   const n = off.length - 1;
-  // 底边(off[i + 1] - gap)在 top 以下的第一条
+  // First entry whose bottom edge (off[i + 1] - gap) is below top
   const first = lowerBound(n, (i) => off[i + 1] - gap > top);
-  // 顶边在 bottom 以下(含)的第一条
+  // First entry whose top edge is at or below bottom
   const last = Math.max(first, lowerBound(n, (i) => off[i] >= bottom));
   return { first, last };
 }
 
 export interface ViewState {
-  /** 滚动区的 scrollTop(含上内边距) */
+  /** scrollTop of the scroll area (including top padding) */
   scrollTop: number;
-  /** 滚动区的可视高度 */
+  /** Visible height of the scroll area */
   clientHeight: number;
-  /** 此刻贴着底:按「滚到底」来算窗口,流式变长时窗口跟着末尾走 */
+  /** Currently stuck to the bottom: compute the window as if scrolled to the bottom, so the window follows the end while streaming grows */
   stick: boolean;
 }
 
 /**
- * 要渲染的窗口 [first, last):可视区里的几条,再往上下各扩到 overscan px,但总条数不超过 maxEntries
- * (可视区本身的条数不受这个上限约束,上下余量交替扩,先扩下面)。
+ * The window to render [first, last): the entries in the visible area, extended above and below by
+ * overscan px each, with at most maxEntries entries in total (the entries in the visible area are
+ * not bound by this limit; the margins above and below grow alternately, below first).
  */
 export function windowRange(
   off: readonly number[],
@@ -88,14 +98,14 @@ export function windowRange(
   if (n <= 0) return { first: 0, last: 0 };
   const total = contentHeight(off, gap);
   const h = Math.max(0, view.clientHeight);
-  // 贴底时按「滚到底」算:scrollTop = pad + total + pad - clientHeight
+  // When stuck to the bottom, compute as if scrolled to the bottom: scrollTop = pad + total + pad - clientHeight
   const scrollTop = view.stick ? Math.max(0, total + 2 * pad - h) : Math.max(0, view.scrollTop);
   const top = scrollTop - pad;
   const bottom = top + h;
   const vis = rangeInView(off, top, bottom, gap);
   let first = vis.first;
   let last = vis.last;
-  // 可视区正好落在空隙里(或内容比可视区矮):至少留一条,余量从它往两边扩
+  // The visible area falls exactly in a gap (or the content is shorter than the visible area): keep at least one entry and grow the margins from it to both sides
   if (first >= last) {
     first = Math.min(first, n - 1);
     last = first + 1;
@@ -116,12 +126,16 @@ export function windowRange(
 
 export type Segment =
   | { kind: "item"; index: number }
-  /** 占位:代表 [from, to) 这几条;高度 = 它们的高度加上它们之间的 gap(占位自己和下一条之间的 gap 由 flex 给) */
+  /**
+   * Spacer: stands for entries [from, to); height = their heights plus the gaps between them
+   * (the gap between the spacer itself and the next entry is provided by flex)
+   */
   | { kind: "spacer"; from: number; to: number; height: number };
 
 /**
- * 渲染计划:窗口里的条 + 强制渲染的条(流式中的那条、有焦点的、用户动过的)按顺序排好,
- * 中间没渲染的连续几条各用一个占位顶住。
+ * Render plan: the entries in the window plus the force-rendered entries (the one streaming, the
+ * focused ones, the ones the user touched) in order, with each run of consecutive unrendered
+ * entries held up by one spacer.
  */
 export function planSegments(off: readonly number[], first: number, last: number, forced: Iterable<number>, gap: number = LIST_GAP): Segment[] {
   const n = off.length - 1;
@@ -143,14 +157,16 @@ export function planSegments(off: readonly number[], first: number, last: number
   return out;
 }
 
-/** 滚动区此刻算不算在底部 */
+/** Whether the scroll area currently counts as at the bottom */
 export function isAtBottom(scrollHeight: number, scrollTop: number, clientHeight: number, slack: number = BOTTOM_SLACK): boolean {
   return scrollHeight - scrollTop - clientHeight <= slack;
 }
 
 /**
- * 最近动过的几条(点过、按过键):保持渲染,展开到哪一页、确认层开没开这类气泡自己的状态不因滚远了被卸载而丢。
- * 新的放最后,超过 cap 丢最早的。返回新数组(原数组不变)。
+ * The few most recently touched entries (clicked, key pressed): kept rendered, so a bubble's own
+ * state, such as which page it is expanded to or whether a confirmation layer is open, is not lost
+ * when scrolling far away unmounts it.
+ * The newest goes last, and the oldest is dropped beyond cap. Returns a new array (the original is unchanged).
  */
 export function touchRecent(list: readonly string[], key: string, cap: number): string[] {
   const next = list.filter((k) => k !== key);
@@ -159,11 +175,14 @@ export function touchRecent(list: readonly string[], key: string, cap: number): 
 }
 
 /**
- * 高度记账:按条的 key 记实测高度,没量过的按估计值。
+ * Height bookkeeping: measured heights are recorded by entry key, and unmeasured entries use an estimate.
  *
- * 估计值每类只定一次:同类量满 freezeAfter 条时取它们的平均值,之后不再变(之前用缺省值)。
- * 不用一直跟着变的平均值:没量过的往往有上千条,平均值每动一点,它们的总高就跟着动几千像素,
- * 滚动条忽长忽短,离底部的距离也跟着跳。定下来之后总高只在某条真的量到时变它自己那一点。
+ * The estimate is fixed once per kind: when freezeAfter entries of a kind have been measured, it
+ * takes their average and never changes afterwards (the default value is used before that).
+ * A continuously moving average is not used: there are often thousands of unmeasured entries, so
+ * every small change in the average moves their total height by thousands of pixels, the scrollbar
+ * grows and shrinks, and the distance from the bottom jumps too. Once fixed, the total height
+ * changes only by the small amount of an entry that was actually measured.
  */
 export class HeightBook {
   private readonly heights = new Map<string, number>();
@@ -178,7 +197,7 @@ export class HeightBook {
     this.freezeAfter = freezeAfter;
   }
 
-  /** 记一次实测;高度变了(差超过半个像素)回 true */
+  /** Record one measurement; returns true if the height changed (by more than half a pixel) */
   set(key: string, kind: string, h: number): boolean {
     if (!(h >= 0) || !Number.isFinite(h)) return false;
     const old = this.heights.get(key);
@@ -220,7 +239,7 @@ export class HeightBook {
     return this.heights.get(key) ?? this.estimate(kind);
   }
 
-  /** 丢掉不在 keep 里的记录(对话换了、消息被回退掉):不然切来切去一直涨 */
+  /** Drop records not in keep (chat switched, messages rolled back): otherwise it keeps growing as you switch back and forth */
   prune(keep: ReadonlySet<string>): void {
     for (const k of [...this.heights.keys()]) {
       if (keep.has(k)) continue;

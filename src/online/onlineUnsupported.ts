@@ -1,10 +1,10 @@
 import { tr } from "../i18n/index.ts";
 
 /**
- * 在线浏览器模式里置灰的入口悬停时的说明(C10 契约第 10 节、第 17 节表 A):
- * 「在线浏览器模式暂不支持{入口名}，请在电脑上的 PromptCut 里使用。」
- * 入口名用用户在界面上看到的叫法(「导入媒体」「语音识别」「配音」……)。
- * 单独放一个文件:声音 Worker 会引 `pageFlag.ts`,不能顺带把翻译表载进 Worker。
+ * Hover explanation for disabled entries in online browser mode (C10 contract section 10, section 17 table A):
+ * "{entryName} is not yet supported in online browser mode. Please use PromptCut on desktop."
+ * Entry names use UI labels seen by users ("Import media", "Speech-to-text", "Voiceover"…).
+ * Placed in a separate file: audio Worker imports `pageFlag.ts`, cannot load translation table into Worker.
  */
 export function onlineUnsupported(entry: string): string {
   return tr("{0} is not supported in online browser mode yet. Please use it in PromptCut on your computer.", entry);

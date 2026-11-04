@@ -1,28 +1,37 @@
 /**
- * 音频效果的节点图:把 kernel/audioFx.mjs 里「这一刻每个参数是多少」接成 Web Audio 节点。
+ * The node graph of audio effects: wires "what each parameter is at this moment" from
+ * kernel/audioFx.mjs into Web Audio nodes.
  *
- * 预览(src/audio/previewAudio.ts,实时 AudioContext)和导出(src/audio/renderMix.ts,OfflineAudioContext)
- * 都调这里的 buildFxChain —— 同一份代码、同一套 DSP,所以编辑台听到的就是导出的。这是整个音频效果系统
- * 成立的前提,别在两边各写一份。
+ * Both the preview (src/audio/previewAudio.ts, live AudioContext) and the export
+ * (src/audio/renderMix.ts, OfflineAudioContext) call buildFxChain here: the same code and the same
+ * DSP, so what is heard in the editor is what is exported. This is the premise on which the whole
+ * audio effects system stands; do not write a copy on each side.
  *
- * # 每种效果怎么接
- *   gain        GainNode,gain = 10^(db/20)
- *   highpass /  BiquadFilterNode。注意规范里这两种的 Q 是**分贝**(峰值量),不是传统 Q:
- *   lowpass     Q_dB = 20·log10(q)。q = 0.707 → -3.01 dB 就是 Butterworth,实测和 ffmpeg highpass=w=0.707 差 -91.8 dB
- *   peaking     BiquadFilterNode,Q 是传统 Q,gain 是 dB
- *   lowshelf /  BiquadFilterNode,只有 frequency 和 gain
+ * # How each effect is wired
+ *   gain        GainNode, gain = 10^(db/20)
+ *   highpass /  BiquadFilterNode. Note that in the spec the Q of these two is in **decibels** (peak
+ *   lowpass     amount), not the traditional Q: Q_dB = 20·log10(q). q = 0.707 → -3.01 dB is
+ *               Butterworth, and measured it differs from ffmpeg highpass=w=0.707 by -91.8 dB
+ *   peaking     BiquadFilterNode, Q is the traditional Q, gain is in dB
+ *   lowshelf /  BiquadFilterNode, only frequency and gain
  *   highshelf
- *   compressor  DynamicsCompressorNode。Chrome 会自动补偿增益(makeup,见规范 full_range_makeup_gain^0.6),
- *               压过的人声会比原来响一点 —— 这通常正是想要的,保留
- *   limiter     同一个节点,threshold = ceiling、knee 0、ratio 20、attack 1 ms、release 100 ms,
- *               再接一个 GainNode 把上面那个自动补偿**抵消掉**,不然峰值会超过 ceiling 约半个 dB
- *   delay       input → dry(1-mix) → out;input → DelayNode → wet(mix) → out;delay → feedback → delay
- *   reverb      input → dry(1-mix) → out;input → ConvolverNode(合成的脉冲响应,normalize=false) → wet(mix) → out。
- *               decay 决定脉冲响应的长度,换 decay 要重建节点,所以它不随时间变(表达式里写了也按初值)
+ *   compressor  DynamicsCompressorNode. Chrome compensates the gain automatically (makeup, see spec
+ *               full_range_makeup_gain^0.6), so compressed vocals come out a bit louder than the
+ *               original: this is usually exactly what is wanted, so it is kept
+ *   limiter     the same node, threshold = ceiling, knee 0, ratio 20, attack 1 ms, release 100 ms,
+ *               followed by a GainNode that **cancels** the automatic compensation above, otherwise
+ *               peaks would exceed the ceiling by about half a dB
+ *   delay       input → dry(1-mix) → out; input → DelayNode → wet(mix) → out; delay → feedback → delay
+ *   reverb      input → dry(1-mix) → out; input → ConvolverNode (synthesized impulse response,
+ *               normalize=false) → wet(mix) → out. decay determines the length of the impulse
+ *               response, and changing decay requires rebuilding the node, so it does not vary with
+ *               time (even if an expression writes one, the initial value is used)
  *   pan         StereoPannerNode
  *
- * 参数随时间变:apply(values, when) 把每一步的参数写到 AudioParam 上。预览每帧调、when 省略 →
- * setTargetAtTime 平滑到位(20 ms,免得拉链噪声);导出按固定步长排自动化、when 给绝对时间 → setValueAtTime。
+ * Parameters vary over time: apply(values, when) writes each step's parameters to the AudioParams.
+ * The preview calls it every frame with when omitted → setTargetAtTime smooths to the target (20 ms,
+ * to avoid zipper noise); the export schedules automation at a fixed step with when given as an
+ * absolute time → setValueAtTime.
  */
 
 import { AUDIO_FX_KINDS, isNeutralOp, resolveAudioOps, reverbImpulse, type AudioFxDef, type ResolvedAudioOp } from "../kernel/audioFx.mjs";
@@ -31,16 +40,18 @@ export interface FxChain {
   input: AudioNode;
   output: AudioNode;
   /**
-   * 这一刻的参数写到节点上。when 省略 = 现在(预览,setTargetAtTime 平滑过渡);给绝对秒数 = 排自动化(导出):
-   * ramp 为 true 从上一点线性过渡到这一点(a-rate 参数用),false 是 setValueAtTime(第一点、以及 k-rate 的压缩器参数)
+   * Writes this moment's parameters to the nodes. when omitted = now (preview, smoothed with
+   * setTargetAtTime); an absolute number of seconds = schedule automation (export):
+   * ramp true transitions linearly from the previous point to this one (for a-rate parameters), and
+   * false is setValueAtTime (the first point, and the compressor's k-rate parameters)
    */
   setTime(t: number, d: number, when?: number, ramp?: boolean): void;
-  /** 有没有随时间变的参数;没有的话调用方只需 setTime 一次 */
+  /** Whether any parameter varies over time; if none, the caller only needs to call setTime once */
   animated: boolean;
   dispose(): void;
 }
 
-/** 一步接好的节点:apply 把这一步的数值写进去 */
+/** The nodes wired for one step: apply writes this step's values into them */
 interface Stage {
   input: AudioNode;
   output: AudioNode;
@@ -61,9 +72,9 @@ function setParam(p: AudioParam, v: number, when: number | undefined, ctx: BaseA
   }
 }
 
-/* ---------------------------------------------------------------- 混响脉冲响应缓存 */
+/* ---------------------------------------------------------------- Reverb impulse response cache */
 
-// 同一个 context 里同一个 decay 只合成一次(一条 2 秒的尾巴是 96000 × 2 个样本)
+// In the same context, the same decay is synthesized only once (a 2-second tail is 96000 × 2 samples)
 const irCache = new WeakMap<BaseAudioContext, Map<number, AudioBuffer>>();
 function irBufferFor(ctx: BaseAudioContext, decay: number): AudioBuffer {
   let m = irCache.get(ctx);
@@ -81,8 +92,9 @@ function irBufferFor(ctx: BaseAudioContext, decay: number): AudioBuffer {
 }
 
 /**
- * 规范里 DynamicsCompressor 的自动补偿增益:full_range_gain = 压缩曲线在 0 dBFS 处的线性输出,
- * makeup = (1 / full_range_gain)^0.6。限幅器要把它抵消掉,ceiling 才是真的上限。
+ * The automatic makeup gain of DynamicsCompressor in the spec: full_range_gain = the linear output of
+ * the compression curve at 0 dBFS, makeup = (1 / full_range_gain)^0.6. The limiter has to cancel it
+ * out for the ceiling to be the real upper limit.
  */
 function compressorMakeupDb(thresholdDb: number, kneeDb: number, ratio: number): number {
   const x = 0; // 0 dBFS
@@ -96,7 +108,7 @@ function compressorMakeupDb(thresholdDb: number, kneeDb: number, ratio: number):
   return -0.6 * y; // dB
 }
 
-/* ---------------------------------------------------------------- 每种效果 */
+/* ---------------------------------------------------------------- Each effect */
 
 function stageOf(ctx: BaseAudioContext, op: ResolvedAudioOp): Stage {
   const { kind, values } = op;
@@ -154,8 +166,10 @@ function stageOf(ctx: BaseAudioContext, op: ResolvedAudioOp): Stage {
     const trim = ctx.createGain();
     cp.connect(trim);
     /*
-     * ratio 是 20 不是无穷:0 dBFS 进来稳态输出是 ceiling + (0 - ceiling)/20,比 ceiling 高 -ceiling/20 dB
-     * (ceiling -12 时高 0.6 dB,实测 0.85)。把这一截也从 trim 里减掉;瞬态(attack 1 ms、没有前瞻)仍可能穿过去。
+     * ratio is 20, not infinity: with 0 dBFS coming in, the steady-state output is
+     * ceiling + (0 - ceiling)/20, which is -ceiling/20 dB above the ceiling (0.6 dB higher at
+     * ceiling -12, measured 0.85). This stretch is also subtracted from the trim; transients
+     * (attack 1 ms, no lookahead) can still get through.
      */
     const trimDb = (ceiling: number) => -compressorMakeupDb(ceiling, 0, 20) + ceiling / 20;
     const set = (v: Record<string, number>, when: number | undefined, c: BaseAudioContext) => {
@@ -192,7 +206,7 @@ function stageOf(ctx: BaseAudioContext, op: ResolvedAudioOp): Stage {
     const dry = ctx.createGain();
     const wet = ctx.createGain();
     const cv = ctx.createConvolver();
-    cv.normalize = false; // 脉冲响应已经按能量归一(kernel/audioFx.mjs 的 reverbImpulse)
+    cv.normalize = false; // The impulse response is already normalized by energy (reverbImpulse in kernel/audioFx.mjs)
     cv.buffer = irBufferFor(ctx, values.decay);
     inp.connect(dry).connect(out);
     inp.connect(cv).connect(wet).connect(out);
@@ -211,11 +225,13 @@ function stageOf(ctx: BaseAudioContext, op: ResolvedAudioOp): Stage {
   throw new Error(`Unknown audio effect kind ${String(kind)}`);
 }
 
-/* ---------------------------------------------------------------- 整条链 */
+/* ---------------------------------------------------------------- The whole chain */
 
 /**
- * 按效果定义接一条链。中性的步骤(增益 0 dB、混响 mix 0……)在**不随时间变**时直接省掉,
- * 全省掉就是一个直通 GainNode。随时间变的一律接上 —— 现在中性不代表下一秒也中性。
+ * Wires a chain from the effect definitions. Neutral steps (gain 0 dB, reverb mix 0, ...) are simply
+ * omitted when they **do not vary over time**, and omitting all of them leaves a pass-through
+ * GainNode. Anything that varies over time is always wired in: being neutral now does not mean it
+ * will be neutral a second later.
  */
 export function buildFxChain(ctx: BaseAudioContext, def: AudioFxDef, clipParams: Record<string, number> | undefined, d: number, animated: boolean): FxChain {
   const initial = resolveAudioOps(def, clipParams, 0, d);
@@ -243,13 +259,16 @@ export function buildFxChain(ctx: BaseAudioContext, def: AudioFxDef, clipParams:
       });
     },
     dispose() {
-      for (const s of live) for (const n of s.nodes) { try { n.disconnect(); } catch { /* 已经断了 */ } }
-      if (!live.length) { try { input.disconnect(); } catch { /* 同上 */ } }
+      for (const s of live) for (const n of s.nodes) { try { n.disconnect(); } catch { /* Already disconnected */ } }
+      if (!live.length) { try { input.disconnect(); } catch { /* Same as above */ } }
     },
   };
 }
 
-/** 同一个效果 + 同一份片段参数才能复用一条链;定义改了(update_audio_fx 是整份替换)key 就变 */
+/**
+ * A chain can be reused only for the same effect + the same clip parameters; when the definition
+ * changes (update_audio_fx replaces the whole thing) the key changes
+ */
 export function fxChainKey(def: AudioFxDef, clipParams: Record<string, number> | undefined, d: number): string {
   return `${def.id}|${JSON.stringify(def.ops)}|${JSON.stringify(def.params ?? null)}|${JSON.stringify(clipParams ?? null)}|${Math.round(d * 1000)}`;
 }

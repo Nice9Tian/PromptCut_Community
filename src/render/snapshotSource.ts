@@ -5,92 +5,120 @@ import { SEGMENT_FRAMES, type StreamManifest, type StreamRect } from "./streamPl
 import { isStreamOrigin, streamSegmentOf } from "./streamSegments.mjs";
 
 /**
- * J3 舞台侧的快照来源接口。
+ * Snapshot source interface on the stage side for J3.
  *
- * 页面里消费快照的**两处** —— C3 就绪索引的 SSE 订阅、C4 取快照字节的
- * `GET ${prerenderBase()}/api/frames/snapshot/<kind>/<key>/<localFrame>` —— 收口到
- * 这一个文件。`StageView` / `Preview` 不直接 `fetch` 快照、不直接 `new EventSource`:
- * 在线浏览器模式(L2)换成 `IdbSnapshotSource` 时,消费方一行都不用改。
+ * The **two places** consuming snapshots in the page: the C3 ready index SSE subscription and C4
+ * fetching snapshot bytes via
+ * `GET ${prerenderBase()}/api/frames/snapshot/<kind>/<key>/<localFrame>`, are consolidated into
+ * this single file. `StageView` / `Preview` do not `fetch` snapshots directly or `new EventSource`
+ * directly: when switching to `IdbSnapshotSource` in online browser mode (L2), consumers do not
+ * need to change a single line.
  *
- * 本地模式的实现是 `HttpSnapshotSource`:**直连预渲染进程**(和 SSE 同源,同走
- * `PROMPTCUT_CORS_ORIGINS`;编辑器进程不代理)。断线按 1s / 2s / 4s / 8s(封顶 8s)
- * 退避重连**同一条 SSE**,重连成功时服务端照 F5 的做法先发 `reset` 再发全量 `layer` ——
- * 和 F5 共用一条恢复路径,没有轮询端点。
+ * The local mode implementation is `HttpSnapshotSource`: **connects directly to the prerender
+ * process** (same origin as SSE, routed via `PROMPTCUT_CORS_ORIGINS`; not proxied by the editor
+ * process). On disconnect, it backs off at 1s / 2s / 4s / 8s (capped at 8s) to reconnect to
+ * **the same SSE**. On successful reconnect, the server follows the F5 practice of sending `reset`
+ * first, then a full `layer`: sharing a recovery path with F5, with no polling endpoint.
  *
- * **这一层只负责「拿得到」**:33 ms 的换 DOM 节流、`setSnapshots` 的投递基线、
- * 一次投递 ≤ 2 MB 的拆分都是父页消费方的事(R5)。所以接口做成了两个无状态的动词
- * 加一个订阅,消费方想怎么排程就怎么排程。
+ * **This layer is only responsible for "getting it"**: the 33 ms DOM swapping throttle,
+ * `setSnapshots` delivery baseline, and splitting deliveries to ≤ 2 MB per batch are all the parent
+ * page consumer's responsibility (R5). Therefore, the interface is designed as two stateless
+ * verbs plus a subscription, allowing consumers to schedule however they want.
  */
 
 export type { ReadyKind, ReadyLayer, ReadyRange, PickedSnapshot };
 
-/** C3 的三种消息,形状定死 */
+/** Three message types of C3; shapes are fixed */
 export type ReadyMessage =
   | { type: "reset"; localRev: number }
   | { type: "layer"; clipId: string; kind: ReadyKind; key: string; ranges: ReadyRange[]; groupClipIds?: string[];
-      /** `stream` 层才有:这条流自己的第一帧(项目帧号),分段从它起每 15 帧一段(`streamSegments.mjs`) */
+      /**
+       * Only present on `stream` layers: the stream's own first frame (project frame number); segments
+       * start from it every 15 frames (`streamSegments.mjs`)
+       */
       originFrame?: number;
-      /** 依赖下层的流才有(`server/frame-stream.mjs` 的 `belowLayerMark`):这条流按舞台坐标产,平面挂在舞台根下 */
+      /**
+       * Only present on below-dependent streams (`belowLayerMark` in `server/frame-stream.mjs`): this
+       * stream is produced in stage coordinates, with its plane mounted under the stage root
+       */
       streamKind?: "below";
-      /** 依赖下层的流才有:产这条流的那一版项目的输入签名(`streamInputSig.mjs`);父页按当前项目算的对不上就不贴 */
+      /**
+       * Only present on below-dependent streams: the input signature of the project version that produced
+       * this stream (`streamInputSig.mjs`); if it does not match what the parent page computes for the
+       * current project, it will not be pasted
+       */
       inputSig?: string }
   | { type: "done"; localRev: number };
 
 export interface SnapshotSource {
-  /** 订阅就绪索引。返回退订函数;重连、`reset` 都在实现里处理掉 */
+  /**
+   * Subscribe to the ready index. Returns an unsubscribe function; reconnects and `reset` are
+   * handled within the implementation
+   */
   subscribeReady(session: string, localRev: number, onMessage: (m: ReadyMessage) => void): () => void;
-  /** 取一帧快照的 HTML。缺帧抛(那一层按缺料处理,C4 会选更早的一帧) */
+  /**
+   * Fetch HTML for a snapshot frame. Throws if the frame is missing (that layer is treated as
+   * missing material, and C4 will select an earlier frame)
+   */
   fetchSnapshot(kind: ReadyKind, key: string, localFrame: number, signal?: AbortSignal): Promise<string>;
 }
 
-/** A3c / J3:页面内存缓存 64 条,LRU */
+/** A3c / J3: page in-memory cache of 64 entries, LRU */
 export const SNAPSHOT_CACHE_MAX = 64;
-/** J3:断线重连的退避,封顶 8 秒 */
+/** J3: backoff for reconnecting on disconnect, capped at 8 seconds */
 export const RECONNECT_BACKOFF_MS = [1000, 2000, 4000, 8000];
 
 /**
- * 拼快照地址。`kind` 为 `local` 时 `key` 是 `<entry.key>/<共享键>`、**自带一个斜杠**
- * (C3),所以按段 `encodeURIComponent`,不能对整个 `key` 编码 —— 整编会把那个斜杠
- * 变成 `%2F`,服务端的路由正则就配不上了。
+ * Construct snapshot URL. When `kind` is `local`, `key` is `<entry.key>/<sharedKey>`, which
+ * **contains a slash** (C3). Therefore, `encodeURIComponent` per segment; do not encode the
+ * entire `key`: encoding the whole thing turns that slash into `%2F`, which fails to match the
+ * server's routing regex.
  */
 export function snapshotPath(kind: ReadyKind, key: string, localFrame: number): string {
   const segments = String(key).split("/").filter(Boolean).map(encodeURIComponent).join("/");
   return `/api/frames/snapshot/${encodeURIComponent(kind)}/${segments}/${localFrame}`;
 }
 
-/** 就绪索引的页面侧形状(C3):同一张重卡的 `stream` 表和 `html` 表并存、互不覆盖 */
+/**
+ * Page-side shape of the ready index (C3): the `stream` table and `html` table for the same heavy
+ * card coexist without overwriting each other
+ */
 export type ReadyIndex = Map<string, Map<ReadyKind, { key: string; ranges: ReadyRange[]; groupClipIds?: string[]; originFrame?: number; streamKind?: "below"; inputSig?: string }>>;
 
 /**
- * 把一条消息应用到页面的 `readyIndex`。`reset` 清表,`layer` 整层替换
- * (C3 是全量语义 —— 不能合并,否则卡的参数变了之后旧区间会赖着不走)。
+ * Apply a message to the page's `readyIndex`. `reset` clears the table, `layer` replaces the whole
+ * layer (C3 uses full semantics: cannot merge, otherwise old intervals linger after card parameters
+ * change).
  */
 export function applyReadyMessage(index: ReadyIndex, message: ReadyMessage): ReadyIndex {
   if (message.type === "reset") { index.clear(); return index; }
   if (message.type !== "layer") return index;
   let byKind = index.get(message.clipId);
   if (!byKind) { byKind = new Map(); index.set(message.clipId, byKind); }
-  // 组流(R8 / G1)的层带 `groupClipIds`:父页按它合成一条 `{ clipIds: groupClipIds }` 的流平面
-  // `stream` 层另带这条流的第一帧(`originFrame`):父页与舞台按它把帧号换成分段号
+  // Group stream (R8 / G1) layers carry `groupClipIds`: the parent page synthesizes a
+  // `{ clipIds: groupClipIds }` stream plane from it
+  // `stream` layers also carry the stream's first frame (`originFrame`): the parent page and stage
+  // convert frame numbers to segment numbers using it
   byKind.set(message.kind, { key: message.key, ranges: message.ranges, ...(message.groupClipIds?.length ? { groupClipIds: [...message.groupClipIds] } : {}),
     ...(isStreamOrigin(message.originFrame) ? { originFrame: message.originFrame } : {}),
-    // 依赖下层的流的两项(只有 `stream` 层认):按舞台坐标贴、输入签名
+    // Two items for below-dependent streams (recognized only by `stream` layers): paste in stage
+    // coordinates, input signature
     ...(message.kind === "stream" && message.streamKind === "below"
       ? { streamKind: "below" as const, ...(typeof message.inputSig === "string" && message.inputSig ? { inputSig: message.inputSig } : {}) } : {}) });
   return index;
 }
 
-/** 就绪索引里取一层;没有就 null(那一层这一拍透明) */
+/** Get a layer from the ready index; null if absent (that layer is transparent for this tick) */
 export function layerOf(index: ReadyIndex, clipId: string, kind: ReadyKind): ReadyLayer | null {
   const hit = index.get(clipId)?.get(kind);
   return hit ? { clipId, kind, key: hit.key, ranges: hit.ranges } : null;
 }
 
 /**
- * 内存 LRU:`Map` 的插入序就是使用序,命中就删了再放回去。
+ * In-memory LRU: `Map` insertion order is usage order; delete and reinsert on hit.
  *
- * (这个文件里不用 TS 的「构造函数参数属性」`constructor(private x)` —— 那是
- * 非类型语法,Node 的类型擦除跑不了,单测就 import 不进来。)
+ * (This file does not use TS "constructor parameter properties" `constructor(private x)`: that is
+ * non-type syntax that Node's type erasure cannot run, preventing unit tests from importing it.)
  */
 class SnapshotCache {
   private map = new Map<string, string>();
@@ -113,16 +141,17 @@ class SnapshotCache {
 }
 
 /**
- * 预渲染进程的源。**按需 import** `./prerender.ts`:那个模块带 React hook
- * (`usePrerenderBase`),静态 import 会把 React 拖进这条本该只有 fetch 的路
- * (以及 Node 侧的单测)。调用方自己传 `base` 时这一行永远不跑。
+ * Origin of the prerender process. **Import `./prerender.ts` on demand**: that module carries a
+ * React hook (`usePrerenderBase`), and a static import would drag React into this path that should
+ * only involve fetch (as well as Node-side unit tests). When the caller passes `base` explicitly,
+ * this line never runs.
  */
 const defaultBase = async (): Promise<string> => (await import("./prerender.ts")).prerenderBase();
 
-/** 本地模式:直连预渲染进程 */
+/** Local mode: connects directly to the prerender process */
 export class HttpSnapshotSource implements SnapshotSource {
   private cache = new SnapshotCache();
-  /** 同一帧同时被两处要到时只飞一次 */
+  /** Only fly once when the same frame is requested by two places simultaneously */
   private inflight = new Map<string, Promise<string>>();
   private base: () => Promise<string>;
 
@@ -137,9 +166,11 @@ export class HttpSnapshotSource implements SnapshotSource {
     const connect = async () => {
       if (stopped) return;
       /*
-       * D5「同源退回删除」:拿不到预渲染的源就**不连**,退避之后重新问。
-       * 以前这里退回空串(同源),EventSource 于是连到编辑器自己的源上 ——
-       * 那里没有这个端点,连上就错、错了又重连,白占一条连接还把真实故障藏起来。
+       * D5 "same-origin fallback removal": if the prerender origin cannot be obtained, **do not
+       * connect**; back off and query again. Previously, this fell back to an empty string (same-origin),
+       * causing EventSource to connect to the editor's own origin: that endpoint does not exist there, so
+       * it failed upon connection, reconnected upon failure, wasting a connection and hiding the real
+       * failure.
        */
       let base: string;
       try { base = await this.base(); } catch { return retry(); }
@@ -154,12 +185,13 @@ export class HttpSnapshotSource implements SnapshotSource {
       source.onmessage = (event: MessageEvent) => {
         if (stopped) return;
         try { onMessage(JSON.parse(String(event.data)) as ReadyMessage); }
-        catch { /* 半条消息:下一条全量 layer 会把这一层补回来 */ }
+        catch { /* Partial message: the next full layer will restore this layer */ }
       };
       source.onerror = () => {
-        // EventSource 自己也会重连,但它不会重新问 `prerenderBase()` —— 预渲染崩了
-        // 会换一个新端口,所以这里自己关掉、退避、重新问地址再连。
-        try { source?.close(); } catch { /* 已经关了 */ }
+        // EventSource reconnects on its own, but it will not query `prerenderBase()` again: if the
+        // prerender crashes, it will switch to a new port, so here we close it manually, back off,
+        // re-query the address, and reconnect.
+        try { source?.close(); } catch { /* Already closed */ }
         source = null;
         retry();
       };
@@ -177,7 +209,7 @@ export class HttpSnapshotSource implements SnapshotSource {
       stopped = true;
       if (timer !== null) clearTimeout(timer);
       timer = null;
-      try { source?.close(); } catch { /* 已经关了 */ }
+      try { source?.close(); } catch { /* Already closed */ }
       source = null;
     };
   }
@@ -191,7 +223,7 @@ export class HttpSnapshotSource implements SnapshotSource {
     const work = (async () => {
       const base = await this.base();
       const res = await fetch(base + snapshotPath(kind, key, localFrame), { signal, cache: "force-cache" });
-      if (!res.ok) throw Object.assign(new Error(`快照还没就绪:${id}`), { status: res.status });
+      if (!res.ok) throw Object.assign(new Error(`Snapshot is not ready yet: ${id}`), { status: res.status });
       const html = await res.text();
       this.cache.set(id, html);
       return html;
@@ -200,71 +232,123 @@ export class HttpSnapshotSource implements SnapshotSource {
     return work;
   }
 
-  /** 项目换版之后把缓存丢掉(键是内容寻址的,所以平时不需要) */
+  /** Drop the cache after a project version change (keys are content-addressed, so this is normally unnecessary) */
   clearCache() { this.cache.clear(); }
   get cacheSize() { return this.cache.size; }
 }
 
 /* ======================================================================== *
- * 在线浏览器模式:从素材服务读预渲染小尺寸(`docs/plan/c10a-contract.md` 第 9 节「在线页面拉取」)
+ * Online browser mode: read prerender small size from asset service
+ * (`docs/plan/c10a-contract.md` section 9 "Online page fetch")
  * ======================================================================== */
 
 /**
- * 在线页面没有预渲染进程,也就没有 SSE 就绪索引、没有 `/api/frames/snapshot`。它这样拿重层的画面:
+ * An online page has no prerender process, so it has no SSE ready index and no
+ * `/api/frames/snapshot`. It fetches frames for heavy layers like this:
  *
- * 1. **层表**:渲染节点认下一版 card plan 时写进内容库的一条(`snapshot-manifest` 类,键 `layers:<项目 id>`,
- *    `server/artifact-transfer.mjs` 的 `layerMapOf`):每张重卡的线上键、清单的结果键、采样窗口。页面按项目 id 取它,
- *    每 `LAYER_MAP_POLL_MS` 再取一次(改了一处之后,渲染节点重渲、换键,页面跟着换)。
- * 2. **清单**:只取「当前播放头前后各 `PREFETCH_SEC` 秒」落在哪几段的清单(`<resultKey>:<from>-<to>`,段长是层表的 `span`),
- *    每段一份;清单里的 `small` 表就是这一段有哪些帧的小位图、各自的哈希。还没满的清单每 `MANIFEST_POLL_MS` 再取。
- * 3. **就绪**:每层的就绪区间 = 已取到的清单里有小位图的帧,照 C3 的 `layer` 消息(全量语义)交给订阅方 ——
- *    和本地模式同一条消费路(`snapshotFeed` 的选帧、兜底、投递一行不改)。原尺寸不算:小尺寸就绪不是原尺寸就绪,
- *    在线页面也从不拉原尺寸。
- * 4. **取字节**:`GET <素材服务>/px/<hash>`(只读票据,`Authorization` 头),包成一张铺满快照平面的 `<img>`
- *    (data URL,不用 blob URL:舞台是另一个文档,父页撤销 blob 时舞台上的图会断)。
- * 5. **缓存**:只在内存里按 LRU 存小尺寸,上限 `ONLINE_CACHE_MAX_BYTES`(64 MiB,契约第 8 节〔裁〕,不做 IndexedDB)。
- *    预取:播放头前后各 2 秒、当前可见的重层。导出前 `clearCache()` 释放(契约第 11.1 节)。
+ * 1. **Layer table**: An entry written into the content store when a render node claims the next
+ *    card plan (`snapshot-manifest` kind, key `layers:<project id>`, `layerMapOf` in
+ *    `server/artifact-transfer.mjs`): the online key, manifest result key, and sampling window for
+ *    each heavy card. The page fetches it by project id and fetches it again every
+ *    `LAYER_MAP_POLL_MS` (after an edit, the render node rerenders and switches keys, and the page
+ *    follows).
+ * 2. **Manifest**: Only fetches manifests for segments that fall within "`PREFETCH_SEC` seconds
+ *    before and after the current playhead" (`<resultKey>:<from>-<to>`, where segment length is the
+ *    layer table's `span`), one per segment; the `small` table in the manifest lists which frames
+ *    in this segment have small bitmaps and their respective hashes. Manifests that are not yet
+ *    full are fetched again every `MANIFEST_POLL_MS`.
+ * 3. **Ready**: The ready interval for each layer = frames with small bitmaps in the retrieved
+ *    manifests, delivered to subscribers according to C3's `layer` message (full semantics):
+ *    the same consumption path as local mode (without changing a single line of frame selection,
+ *    fallback, or delivery in `snapshotFeed`). Original size does not count: small-size readiness is
+ *    not original-size readiness, and the online page never pulls original size anyway.
+ * 4. **Fetch bytes**: `GET <asset service>/px/<hash>` (read-only ticket, `Authorization` header),
+ *    wrapped into an `<img>` that fills the snapshot plane (data URL, not blob URL: the stage is a
+ *    separate document, and revoking a blob on the parent page breaks the image on the stage).
+ * 5. **Cache**: Stores small size only in memory via LRU, capped at `ONLINE_CACHE_MAX_BYTES`
+ *    (64 MiB, contract section 8 [ruling], no IndexedDB). Prefetch: 2 seconds before and after the
+ *    playhead for currently visible heavy layers. Released via `clearCache()` before export
+ *    (contract section 11.1).
  *
- * 6. **轨道流**(`docs/plan/browser-stream-task.md` 第六处;各档都取,只贴稀疏版时的不同见第 7 条):层表另带一张 `streams` 表(每条流一行:成员、候选的结果键、
- *    分段范围、每份清单几段)。页面按播放头附近的分段去内容库取流清单(`render-manifest`,键 `<结果键>:<起>-<止>`),清单里列着的
- *    开头文件与分段按哈希从素材服务取到本页内存(`px/<hash>`,同一张只读票据);**字节到了本页的分段才算就绪**,照 C3 的
- *    `layer` 消息(`kind: 'stream'`,单位是分段号,组流带 `groupClipIds`)交给订阅方 —— 和桌面的就绪索引同一种消息,`snapshotFeed` 不用改。
- *    舞台不自己取:父页发流平面时把清单和字节一起带过去(`streamPlane`,配 `streamPlayer.ts` 的 `StreamPlaneSender`)。
- *    候选的认定、输入签名过期的处理照快照层的规矩;流这一段没取到时这一层照旧每拍换快照。
+ * 6. **Track stream** (`docs/plan/browser-stream-task.md` item 6; fetched across all tiers, see
+ *    item 7 for differences when pasting only the sparse version): The layer table additionally
+ *    carries a `streams` table (one row per stream: member, candidate result keys, segment range,
+ *    and segments per manifest). The page fetches stream manifests (`render-manifest`, key
+ *    `<result key>:<from>-<to>`) from the content store based on segments near the playhead, and
+ *    fetches head files and segments listed in the manifest from the asset service into this page's
+ *    memory by hash (`px/<hash>`, using the same read-only ticket); **only segments whose bytes have
+ *    reached this page are considered ready**, delivered to subscribers according to C3's `layer`
+ *    message (`kind: 'stream'`, unit is segment number, group stream includes `groupClipIds`): the
+ *    same message as desktop's ready index, requiring no changes to `snapshotFeed`. The stage does
+ *    not fetch them on its own: the parent page passes both the manifest and bytes when sending the
+ *    stream plane (`streamPlane`, paired with `StreamPlaneSender` in `streamPlayer.ts`). Candidate
+ *    qualification and input signature expiration handling follow the rules of the snapshot layer;
+ *    if this segment of the stream has not been fetched, this layer continues to switch snapshots
+ *    every tick as usual.
  *
- * 7. **只有一个舞台时只贴轨道流的稀疏版**(2026-10-13 用户定「性能不足时只贴稀疏版、同时活着的解码器给得少」;2026-10-22 起归只有一个舞台的页面(精简模式与最低一档),
- *    `mechanism/platforms.md`「三道闸门」〔裁〕):取流的路和别的档是同一条(层表、清单、分段),
- *    舞台那边每个分段只解第一帧(`streamPlayer.ts` 的 `presentFirst`)。这里只有三处不同:
- *      - 先问浏览器解不解得了(`StreamDecodeSupport`):没有 `VideoDecoder` 就一条流都不取、不发;某个开头文件的编码配置
- *        `isConfigSupported` 说不行,用它的分段不取、不算就绪 —— 父页那边就是「这张卡没有流」,落到占位符;
- *      - 流字节在本页内存里留得少(`SPARSE_STREAM_CACHE_MAX_BYTES`);
- *      - 分段**整段取**:只要第一帧,但块按内容哈希存取、取回来要核哈希,取不了半块。稀疏的分段本来就只有一张图加十几个几乎为空的
- *        重复帧,整段约等于第一帧;满密度的分段多取了后面 14 个差分帧(用不上),代价是这部分流量。
- *    预渲染小尺寸那条路(上面第 2～5 条的 `small`)原样留着作过渡。〔撤快照时删:`small` 那一档连同 `tier` 的分支〕
+ * 7. **Only paste the sparse version of track streams when there is only one stage**
+ *    ((user decision, 2026-10-13) "paste only the sparse version when performance is insufficient,
+ *    and allocate fewer active decoders"; from 2026-10-22, applies to pages with only one stage
+ *    (lite mode and lowest tier), `mechanism/platforms.md` "Three gates" [ruling]): The stream
+ *    fetching path is the same as in other tiers (layer table, manifest, segment); on the stage
+ *    side, each segment decodes only the first frame (`presentFirst` in `streamPlayer.ts`). There
+ *    are only three differences here:
+ *      - First asks the browser whether it can decode (`StreamDecodeSupport`): if there is no
+ *        `VideoDecoder`, no stream is fetched or sent; if `isConfigSupported` reports that a head
+ *        file's encoding configuration is unsupported, segments using it are not fetched and not
+ *        counted as ready: on the parent page side, this means "this card has no stream", falling
+ *        back to a placeholder;
+ *      - Keeps fewer stream bytes in this page's memory (`SPARSE_STREAM_CACHE_MAX_BYTES`);
+ *      - Segments are **fetched as whole segments**: only the first frame is needed, but chunks are
+ *        accessed by content hash and must be verified after retrieval, so half a chunk cannot be
+ *        fetched. A sparse segment originally contains only one image plus a dozen nearly empty
+ *        duplicate frames, so the whole segment is roughly equivalent to the first frame; a
+ *        full-density segment fetches an extra 14 subsequent delta frames (unused), at the cost of
+ *        this extra bandwidth.
+ *    The prerender small-size path (`small` in items 2-5 above) is kept as is for transition.
+ *    [delete when snapshots are removed: the `small` tier along with the `tier` branch]
  *
- * 文档服务与素材服务都经注入的依赖访问(页面里由 `Preview` 接到 `assetTiers.ts` 的 `docRequest` / `assetAuthHeaders`),
- * 这里不认识 `/api`,单测注入假的。
+ * Both the document service and asset service are accessed via injected dependencies (wired on the
+ * page from `Preview` to `docRequest` / `assetAuthHeaders` in `assetTiers.ts`); this file has no
+ * knowledge of `/api`, and unit tests inject fakes.
  */
 
-/** 在线页面的小尺寸缓存上限(契约第 8 节〔裁〕) */
+/** Small-size cache cap for online pages (contract section 8 [ruling]) */
 export const ONLINE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
-/** 预取范围:播放头前后各这么多秒(契约第 9 节) */
+/** Prefetch range: this many seconds before and after the playhead (contract section 9) */
 export const PREFETCH_SEC = 2;
-/** 层表多久再取一次 */
+/** How often to refetch the layer table */
 export const LAYER_MAP_POLL_MS = 3000;
-/** 还没满的清单多久再取一次 */
+/** How often to refetch manifests that are not yet full */
 export const MANIFEST_POLL_MS = 2000;
-/** 同时在飞的小位图请求 */
+/** Concurrent in-flight small-bitmap requests */
 export const ONLINE_FETCH_CONCURRENCY = 4;
-/** 层表在内容库里的键前缀(与 `server/artifact-transfer.mjs` 的 `LAYER_MAP_PREFIX` 同值) */
+/**
+ * Layer table key prefix in the content store (same value as `LAYER_MAP_PREFIX` in
+ * `server/artifact-transfer.mjs`)
+ */
 export const LAYER_MAP_PREFIX = "layers:";
-/** 轨道流的分段字节在本页内存里最多留这么多(按最近用过的留;三级数字:6 条流、每条前后 6 段、每段不超过 512 KB 约 18 MiB,留三倍余量) */
+/**
+ * Track stream segment bytes retained in this page's memory at most (retained by most recently
+ * used; tier-3 numbers: 6 streams, 6 segments before and after each, at most 512 KB per segment is
+ * ~18 MiB, keeping 3x headroom)
+ */
 export const STREAM_CACHE_MAX_BYTES = 64 * 1024 * 1024;
-/** 只贴稀疏版时:流字节在本页内存里最多留这么多(三级数字:4 条流、每条播放头前后 6 段、每段不超过 512 KB 约 12 MiB) */
+/**
+ * When only pasting sparse version: stream bytes retained in this page's memory at most (tier-3
+ * numbers: 4 streams, 6 segments before and after the playhead each, at most 512 KB per segment is
+ * ~12 MiB)
+ */
 export const SPARSE_STREAM_CACHE_MAX_BYTES = 16 * 1024 * 1024;
-/** 轨道流预取:播放头所在分段往回这么多段(刚播过的那一段留着,往回拖一点不用重取) */
+/**
+ * Track stream prefetch: this many segments back from the playhead's segment (retaining the segment
+ * just played so scrubbing back a bit does not require refetching)
+ */
 export const STREAM_BEHIND_SEGMENTS = 1;
-/** 一块流字节取失败之后,过这么久才再取(缺块、票据过期:不每一轮都打素材服务) */
+/**
+ * How long to wait before retrying after failing to fetch a stream byte chunk (missing chunks,
+ * expired ticket: avoid hitting the asset service on every round)
+ */
 export const STREAM_RETRY_MS = 2000;
 
 export interface OnlineLayer {
@@ -274,124 +358,145 @@ export interface OnlineLayer {
   resultKey: string;
   firstFrame: number;
   count: number;
-  /** 层表 v 2(C10 契约第 18 节第 3 条):共享档的内容键;v 1 或取不到为 null */
+  /**
+   * Layer table v2 (C10 contract section 18 item 3): content key for the shared tier; null for v1 or
+   * when unavailable
+   */
   contentKey?: string | null;
-  /** 层表 v 2:产出这一层的环境的指纹;v 1 或取不到为 null */
+  /** Layer table v2: fingerprint of the environment that produced this layer; null for v1 or when unavailable */
   envFingerprint?: string | null;
   /**
-   * 层表 v 3(M7 契约 D12):这一层的候选 —— 切分方自己的、纯浏览器的,各是一种环境出的一套键;层上的 `resultKey` /
-   * `envFingerprint` / `key` 就是第一个候选。哪一份活着由页面按 `task.done` 与清单认定(`layerRefOf` 的 `alive`)。
-   * v 2 没有这一项,当作一个候选(`layerCandidates`)。
+   * Layer table v3 (M7 contract D12): candidates for this layer: the splitter's own, pure browser's,
+   * each being a set of keys from one environment; `resultKey` / `envFingerprint` / `key` on the layer
+   * is the first candidate. Which one is active is determined by the page based on `task.done` and
+   * the manifest (`alive` in `layerRefOf`). v2 does not have this field and is treated as a single
+   * candidate (`layerCandidates`).
    */
   candidates?: LayerCandidate[];
   /**
-   * 〔裁〕stale-layer:生成这一层的片段输入的签名(`layerInputSig.mjs`)。页面按当前项目算同一个签名,对不上就是旧参数的层,
-   * 不贴(C10 契约第 9 节)。旧节点写的层表没有这一项:照旧贴。
+   * [ruling] stale-layer: signature of the clip input that generated this layer
+   * (`layerInputSig.mjs`). The page calculates the same signature from the current project; if it
+   * does not match, it is a layer with stale parameters and will not be pasted (C10 contract section
+   * 9). Layer tables written by older nodes do not have this field: paste as before.
    */
   inputSig?: string | null;
 }
 
-/** 层表 v 3 的一个候选(M7 契约 D12):一种环境出的一套键 */
+/** A candidate for layer table v3 (M7 contract D12): a set of keys produced by one environment */
 export interface LayerCandidate {
   envFingerprint: string;
   resultKey: string;
-  /** 就绪索引线上的键 */
+  /** Key on the ready index wire */
   key: string;
 }
 
-/** 轨道流的一个候选:一种环境产的一条流。流在就绪索引线上的键就是结果键 */
+/**
+ * A candidate for a track stream: a stream produced by one environment. The stream's key on the
+ * ready index wire is the result key
+ */
 export interface StreamCandidate {
   envFingerprint: string;
   resultKey: string;
 }
 
 /**
- * 层表 `streams` 表的一行(`server/artifact-transfer.mjs` 的 `layerStreamsOf`):一条轨道流。
- * 流清单在内容库里按 `<结果键>:<起>-<止>` 存,分段号从 0 起每 `segmentsPerTask` 段一份、最后一份到 `lastSegment`。
- * 分段号是这条流自己的:从它的第一帧 `originFrame`(项目帧号)起每 15 帧一段(`streamSegments.mjs`)。
+ * A row in the layer table's `streams` table (`layerStreamsOf` in `server/artifact-transfer.mjs`): a
+ * track stream.
+ * Stream manifests are stored in the content store as `<resultKey>:<start>-<end>`, one per
+ * `segmentsPerTask` segments starting from segment 0, with the last manifest up to `lastSegment`.
+ * The segment number is specific to this stream: one segment every 15 frames starting from its
+ * first frame `originFrame` (project frame number) (`streamSegments.mjs`).
  */
 export interface OnlineStream {
-  /** 就绪消息挂在哪张卡上:单卡流是它自己,组流是组里最上面那张 */
+  /** Which card the ready message attaches to: itself for a single-card stream, topmost card in the group for a group stream */
   topClipId: string;
-  /** 成员(画家顺序,最后一个在最上面)。依赖下层的流只有目标卡一张(算进键里的下层不列,页面按当前项目自己找) */
+  /** Members (painter's order, the last one is on top). A below-dependent stream has only the target card (lower layers factored into the key are not listed; the page finds them on its own from the current project) */
   clipIds: string[];
   /**
-   * `below`:依赖下层的流(毛玻璃这一类卡;`docs/plan/prerender-products-contract.md` 第 5 节)。流里只有目标卡改动过的那一层,
-   * 按舞台坐标产(`plane` 是 `stage`);就绪消息带 `streamKind: "below"`,父页据此发 `plane: "stage"` 的流平面。
+   * `below`: below-dependent stream (cards like frosted glass; `docs/plan/prerender-products-contract.md`
+   * section 5). The stream contains only the layer modified by the target card, produced in stage
+   * coordinates (`plane` is `stage`); ready message carries `streamKind: "below"`, based on which the
+   * parent page emits a stream plane with `plane: "stage"`.
    */
   kind: "card" | "group" | "below";
   plane: "local" | "stage";
   contentKey: string;
-  /** 候选:切分实际出键的那几种环境,再补上写层表的节点自己的。哪一份活着的认定同快照层 */
+  /** Candidates: environments that actually produced keys during splitting, plus the layer-table-writing node's own. Determining which one is alive follows the snapshot layer */
   candidates: StreamCandidate[];
-  /** 这条流自己的第一帧(项目帧号):层表那一行带的,由写层表的一侧按当时的项目给 */
+  /** The first frame of this stream itself (project frame number): carried by that row in the layer table, provided by the side writing the layer table according to the project at that time */
   originFrame: number;
-  /** 恒为 0(层表的行里不写它;留着是因为取清单按「从 firstSegment 到 lastSegment」分份) */
+  /** Always 0 (not written in layer table rows; kept because fetching manifests is partitioned by "from firstSegment to lastSegment") */
   firstSegment: number;
   lastSegment: number;
   segmentsPerTask: number;
-  /** 生成这条流的项目输入的签名(`streamInputSig.mjs`);页面算的对不上就不播。没有这一项照播 */
+  /** Signature of the project input that generated this stream (`streamInputSig.mjs`); if what the page calculates does not match, do not play. If this item is absent, play anyway */
   inputSig?: string | null;
 }
 
 export interface LayerMap {
-  /** 层表的版本(`server/artifact-transfer.mjs` 的 `LAYER_MAP_VERSION`);没写当 1 */
+  /** Layer table version (`LAYER_MAP_VERSION` in `server/artifact-transfer.mjs`); treated as 1 if omitted */
   v: number;
   projectId: string | null;
   fps: number;
   span: number;
   layers: OnlineLayer[];
-  /** 轨道流表;旧节点写的层表没有这一项,解析成空表(页面行为和以前一样) */
+  /** Track stream table; layer tables written by older nodes lack this entry, parsed as an empty table (page behavior as before) */
   streams: OnlineStream[];
 }
 
-/** 在线页面认的层表版本(C10 契约第 18 节第 3 条);只贴稀疏版时(`small`)v 1、v 2 都认 */
+/** Layer table versions recognized by the online page (C10 contract section 18, item 3); recognizes both v 1 and v 2 when pasting sparse version only (`small`) */
 export const LAYER_MAP_V2 = 2;
-/** 层表 v 3(M7 契约 D12):每层带候选;v 2 的字段照旧(等于第一个候选),旧读法照样能读 */
+/** Layer table v 3 (M7 contract D12): each layer carries candidates; v 2 fields remain as before (equal to the first candidate), legacy reader still reads as usual */
 export const LAYER_MAP_V3 = 3;
-/** 页面认得的层表版本;不认得的 `v` 整张当没有 */
+/** Layer table versions recognized by the page; if `v` is unrecognized, the entire table is treated as absent */
 export const KNOWN_LAYER_MAP_VERSIONS = [1, 2, 3] as const;
 
 export interface OnlineSnapshotDeps {
-  /** 文档服务上的一次请求(`content.get`);没连上就抛 */
+  /** A request on the document service (`content.get`); throws if connection fails */
   request(msg: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>>;
-  /** 远程素材服务的 API 基址(形如 `https://host/media/api/asset`);还没有给 null */
+  /** Base API URL for the remote asset service (formatted like `https://host/media/api/asset`); null if not yet available */
   assetBase(): string | null;
-  /** 带只读素材票据的请求头 */
+  /** Request headers with a read-only asset ticket */
   authHeaders(): Promise<Record<string, string>>;
   fetch?: typeof fetch;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (t: unknown) => void;
-  /** 单次内容库请求的兜底超时；连接实现也应自行超时 */
+  /** Fallback timeout for a single content store request; connection implementations should also time out on their own */
   requestTimeoutMs?: number;
-  /** 取单张小位图的兜底超时 */
+  /** Fallback timeout for fetching a single small bitmap */
   assetTimeoutMs?: number;
   /**
-   * 要知道整段覆盖情况的层(C10 契约第 9 节:这台设备跑不了的卡要看预渲染结果
-   * 覆盖没覆盖整段)。这些层的清单不只取播放头那一窗口,整段每一段都取(慢一点,`COVERAGE_POLL_MS`);不给就只取窗口。
+   * Layers that need to know whole-clip coverage (C10 contract section 9: cards that cannot run on
+   * this device must check whether prerender output covers the entire clip). Manifests for these
+   * layers are fetched not only for the playhead window, but for every segment across the whole
+   * clip (slower, `COVERAGE_POLL_MS`); if omitted, fetches only the window.
    */
   coverageLayer?: (clipId: string) => boolean;
 }
 
 /**
- * 层过期(输入签名对不上,stale-layer)之后,多久之内当「新结果在路上」:这段时间里父页不确认缺料(用户卡、素材效果卡显示沙漏、
- * 时间轴不出徽标),等渲染节点按新输入重写层表;过了还没等到就和「层表里没有这一层」一样确认缺料(图标、徽标)。三级数字。
+ * After a layer expires (input signature mismatch, stale-layer), how long to treat it as "new
+ * results on the way": during this period the parent page does not confirm missing (user cards and
+ * media effect cards show an hourglass, timeline does not show a badge), waiting for the render
+ * node to rewrite the layer table based on new inputs; if this duration elapses, confirm missing
+ * just like "layer not in layer table" (icon, badge). Level 3 number.
  */
 export const STALE_AWAIT_MS = 15_000;
 
-/** 整段覆盖:还没取齐的清单多久再取一次(窗口之外的段) */
+/** Whole-clip coverage: how often to re-fetch manifests that are not yet complete (segments outside the window) */
 export const COVERAGE_POLL_MS = 5000;
-/** 整段覆盖:一轮最多取这么多份窗口之外的清单(长片段分几轮取完,不一下子打满内容库) */
+/** Whole-clip coverage: maximum manifests outside the window fetched per round (long clips fetched across rounds to avoid overwhelming the content store) */
 export const COVERAGE_FETCHES_PER_TICK = 16;
 
 /**
- * 一个片段的预渲染结果覆盖了多少:还不知道(层表没取到,或者有哪一段的清单从没取到过)/ 没有可用的层 /
- * 有层但没覆盖整段 / 整段都有(这一档的帧)。
+ * How much of a clip's prerender output is covered: unknown yet (layer table not fetched, or
+ * manifest for some segment was never fetched) / no usable layer / layer exists but does not cover
+ * the entire clip / entire clip covered (frames for this tier).
  */
 export type LayerCoverage = "unknown" | "none" | "partial" | "full";
 
-/** 层表 v 3 的候选表:只留三项都是非空字符串的,坏项跳过 */
+/** Candidate table for layer table v 3: keep only entries where all three items are non-empty strings; corrupt entries skipped */
 function candidatesOf(raw: unknown): LayerCandidate[] {
   if (!Array.isArray(raw)) return [];
   const out: LayerCandidate[] = [];
@@ -405,8 +510,9 @@ function candidatesOf(raw: unknown): LayerCandidate[] {
 }
 
 /**
- * 这一层的候选(M7 契约 D12):v 3 的 `candidates`;v 2(或 v 3 的层没写候选、候选全坏)当作一个候选 —— 层自己的键与指纹;
- * v 1、缺指纹的层没有候选。
+ * Candidates for this layer (M7 contract D12): `candidates` in v 3; v 2 (or a v 3 layer with no
+ * candidates or all candidates corrupt) is treated as one candidate: the layer's own key and
+ * fingerprint; v 1 and layers missing fingerprints have no candidates.
  */
 export function layerCandidates(layer: OnlineLayer): LayerCandidate[] {
   if (layer.candidates?.length) return layer.candidates.map((c) => ({ ...c }));
@@ -415,9 +521,14 @@ export function layerCandidates(layer: OnlineLayer): LayerCandidate[] {
 }
 
 /**
- * 层表的 `streams` 表:形状不对的行跳过,不抛;不是数组回空表。
- * 只认带 `originFrame` 的行:没有它的行是改分段规则之前的节点写的(分段按项目帧号数),照现在的换算贴上去画面会错位。
- * 依赖下层的流(`kind: "below"`)只认「一个成员、舞台坐标」的行:形状不对的贴上去位置会错,跳过(当作这张卡没有流)。
+ * The `streams` table in the layer table: rows with incorrect shapes are skipped without throwing;
+ * returns an empty table if not an array.
+ * Only recognizes rows with `originFrame`: rows lacking it were written by nodes prior to changing
+ * segmentation rules (segments counted by project frame numbers); pasting them with current
+ * conversion causes visual misalignment.
+ * Below-dependent streams (`kind: "below"`) only recognize rows with "one member, stage
+ * coordinates": pasting those with incorrect shapes causes wrong positioning, so skip them
+ * (treated as if this card has no stream).
  */
 export function parseLayerStreams(raw: unknown): OnlineStream[] {
   if (!Array.isArray(raw)) return [];
@@ -448,8 +559,10 @@ export function parseLayerStreams(raw: unknown): OnlineStream[] {
 }
 
 /**
- * 一条流落在分段号 `[loSeg, hiSeg]`(闭区间)里的那几份清单的范围:从 `firstSegment` 起每 `segmentsPerTask` 段一份、最后一份到
- * `lastSegment`(与 `server/render-node/split.mjs`、推送队列同一种切法)。
+ * The range of manifests for a stream falling within segment numbers `[loSeg, hiSeg]` (closed
+ * interval): one manifest per `segmentsPerTask` segments starting from `firstSegment`, with the
+ * last one reaching `lastSegment` (same splitting approach as `server/render-node/split.mjs` and
+ * the push queue).
  */
 export function streamSpansInWindow(row: Pick<OnlineStream, "firstSegment" | "lastSegment" | "segmentsPerTask">, loSeg: number, hiSeg: number): Array<[number, number]> {
   const lo = Math.max(row.firstSegment, loSeg), hi = Math.min(row.lastSegment, hiSeg);
@@ -460,11 +573,12 @@ export function streamSpansInWindow(row: Pick<OnlineStream, "firstSegment" | "la
   return out;
 }
 
-/** 内容库回包里的层表;形状不对回 null */
+/** Layer table in content store response; returns null if shape is invalid */
 export function parseLayerMap(body: unknown): LayerMap | null {
   const b = body as { v?: unknown; kind?: unknown; projectId?: unknown; fps?: unknown; span?: unknown; layers?: unknown; streams?: unknown } | null;
   if (!b || b.kind !== "layer-map" || !Array.isArray(b.layers)) return null;
-  // 不认得的版本整张当没有(C10 契约第 18 节第 3 条);没写版本的是 v 1(C10a 的形状)
+  // Unrecognized versions treat the entire table as absent (C10 contract section 18, item 3);
+  // omitted version is treated as v 1 (shape of C10a)
   const v = b.v === undefined ? 1 : Number(b.v);
   if (!(KNOWN_LAYER_MAP_VERSIONS as readonly number[]).includes(v)) return null;
   const span = Math.max(1, Math.floor(Number(b.span) || 60));
@@ -483,16 +597,20 @@ export function parseLayerMap(body: unknown): LayerMap | null {
       ...(candidates.length ? { candidates } : {}),
       ...(inputSig ? { inputSig } : {}) });
   }
-  // 轨道流表是 v 3 起才可能有的(候选的概念从 v 3 起);更早的版本不读
+  // Track stream tables only exist starting from v 3 (concept of candidates introduced in v 3);
+  // earlier versions are not read
   const streams = v >= LAYER_MAP_V3 ? parseLayerStreams(b.streams) : [];
   return { v, projectId: typeof b.projectId === "string" ? b.projectId : null, fps: Number(b.fps) || 30, span, layers, streams };
 }
 
 /**
- * 这一层在这一档能不能用(C10 契约第 5 节、第 18 节第 3 条):
- *   - 取预渲染原尺寸(`original`):只认 v 2、且带 `contentKey` 与 `envFingerprint` 的层 —— 页面不算键,
- *     部署的 `/editor` 与渲染节点代码版本对不上、层表缺这两项时,这一层按「没有预渲染结果」处理(占位、暂停活渲),不报错;
- *   - 只贴稀疏版时(`small`):v 1、v 2 都认。
+ * Whether this layer is usable in this tier (C10 contract section 5, section 18 item 3):
+ *   - Fetching original-size prerender (`original`): only recognizes layers that are v 2 and
+ *     carry `contentKey` and `envFingerprint`: the page does not compute keys; when deployed
+ *     `/editor` and render node code versions mismatch, or layer table lacks these two items, this
+ *     layer is treated as "no prerender output" (placeholder, pause live render) without throwing
+ *     errors;
+ *   - When only pasting sparse version (`small`): recognizes both v 1 and v 2.
  */
 export function usableLayer(map: Pick<LayerMap, "v">, layer: OnlineLayer, { anyVersion = false }: { anyVersion?: boolean } = {}): boolean {
   if (anyVersion) return true;
@@ -500,13 +618,21 @@ export function usableLayer(map: Pick<LayerMap, "v">, layer: OnlineLayer, { anyV
 }
 
 /**
- * 层表里某个片段那一层(`original` 口径):层表对得上回 `{ …, contentKey, envFingerprint }`;对不上(不认得的版本、v 1、
- * 缺内容键、缺指纹、没这一层、层表坏)回 null,不抛。`table` 收内容库回包的 body 或已解析的层表。
+ * The layer for a clip in the layer table (`original` spec):
+ * returns `{ …, contentKey, envFingerprint }` if the layer table matches; returns null without
+ * throwing if it mismatches (unrecognized version, v 1, missing content key, missing fingerprint,
+ * layer absent, corrupt layer table). `table` accepts the content store response body or an
+ * already-parsed layer table.
  *
- * 层表 v 3(M7 契约 D12):`opts.alive` 是页面认定活着的结果键(由 `task.done` 与清单得出)。候选里有活着的,
- * 就整份换成那个候选(结果键、指纹、线上键同出一个候选,不混);没有 `alive` 或认不出时回层上的(第一个候选)。
- * v 2 不看 `alive`。
- * `opts.inputSig`(stale-layer):页面按当前项目算的这个片段的输入签名;这一层带签名而且对不上(旧参数的层)回 null。
+ * Layer table v 3 (M7 contract D12): `opts.alive` is the result key recognized as alive by the page
+ * (derived from `task.done` and manifests). If any candidate is alive, replace the whole thing with
+ * that candidate (result key, fingerprint, and online key all come from the same candidate, never
+ * mixed); returns the one on the layer (the first candidate) if there is no `alive` or it cannot be
+ * identified.
+ * v 2 ignores `alive`.
+ * `opts.inputSig` (stale-layer): input signature for this clip calculated by the page from the
+ * current project; returns null if this layer has a signature and it mismatches (layer with
+ * outdated parameters).
  */
 export function layerRefOf(table: unknown, clipId: string, opts: { anyVersion?: boolean; alive?: ReadonlySet<string>; inputSig?: string | null } = {}): OnlineLayer | null {
   let map: LayerMap | null = null;
@@ -528,7 +654,7 @@ export function layerRefOf(table: unknown, clipId: string, opts: { anyVersion?: 
   return usableLayer(map, layer, opts) ? layer : null;
 }
 
-/** 一层落在 `[fromGlobal, toGlobal]`(全局帧,闭区间)的那几段:本地帧 0 起每 `span` 帧一段、最后一段到 `count - 1` */
+/** Segments of a layer falling within `[fromGlobal, toGlobal]` (global frames, closed interval): one segment every `span` frames starting from local frame 0, with the last segment reaching `count - 1` */
 export function segmentsInWindow(layer: Pick<OnlineLayer, "firstFrame" | "count">, span: number, fromGlobal: number, toGlobal: number): Array<[number, number]> {
   const lo = Math.max(0, fromGlobal - layer.firstFrame);
   const hi = Math.min(layer.count - 1, toGlobal - layer.firstFrame);
@@ -538,7 +664,7 @@ export function segmentsInWindow(layer: Pick<OnlineLayer, "firstFrame" | "count"
   return out;
 }
 
-/** 帧号表 → 合并好的闭区间 */
+/** Frame number list → merged closed intervals */
 export function framesToRanges(frames: Iterable<number>): ReadyRange[] {
   const sorted = [...new Set(frames)].filter((n) => Number.isInteger(n) && n >= 0).sort((a, b) => a - b);
   const out: [number, number][] = [];
@@ -550,7 +676,7 @@ export function framesToRanges(frames: Iterable<number>): ReadyRange[] {
   return out as unknown as ReadyRange[];
 }
 
-/** 小位图包成一张铺满快照平面的图(快照平面是包裹层里 inset:0 的一层,小位图画的正是包裹层的框) */
+/** Small bitmap wrapped into an image covering the snapshot plane (snapshot plane is an inset:0 layer in the wrapper layer; small bitmap draws exactly the wrapper layer box) */
 export function smallSnapshotHtml(dataUrl: string): string {
   return `<img data-pc-small-snapshot="" alt="" src="${dataUrl}" style="position:absolute;left:0;top:0;width:100%;height:100%;display:block;pointer-events:none">`;
 }
@@ -562,7 +688,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(s);
 }
 
-/** 按字节计的 LRU(data URL 的长度就是它在内存里的大小的量级) */
+/** Byte-counted LRU (length of data URL is the order of magnitude of its size in memory) */
 export class ByteLru {
   private map = new Map<string, string>();
   private bytes = 0;
@@ -592,7 +718,7 @@ export class ByteLru {
   clear(): void { this.map.clear(); this.bytes = 0; }
 }
 
-/** 按字节计的 LRU,存原始字节(轨道流的开头文件与分段) */
+/** Byte-counted LRU storing raw bytes (head files and segments of track streams) */
 export class BlockLru {
   private map = new Map<string, Uint8Array>();
   private bytes = 0;
@@ -605,7 +731,7 @@ export class BlockLru {
     this.map.set(id, hit);
     return hit;
   }
-  /** 放进去;回这一次被挤掉的键 */
+  /** Inserts an entry; returns the key evicted this time */
   set(id: string, value: Uint8Array): string[] {
     const old = this.map.get(id);
     if (old !== undefined) { this.bytes -= old.byteLength; this.map.delete(id); }
@@ -626,22 +752,22 @@ export class BlockLru {
   clear(): void { this.map.clear(); this.bytes = 0; }
 }
 
-/** 流清单里的一个开头文件(变体) */
+/** A head file in a stream manifest (variant) */
 interface StreamInitMeta { hash: string; codec: string; width: number; height: number; rect: StreamRect }
-/** 流清单里的一个分段 */
+/** A segment in a stream manifest */
 interface StreamSegMeta { hash: string; init: string; stride: number; samples: number }
-/** 一份流清单(`render-manifest`,`<结果键>:<起>-<止>`)取回来之后的样子 */
+/** What a stream manifest (`render-manifest`, `<resultKey>:<start>-<end>`) looks like after being fetched */
 interface StreamManifestState {
   resultKey: string;
   header: { kind: "card" | "group" | "below"; plane: "local" | "stage"; clipIds: string[]; fps: number; bound: StreamRect; tight: StreamRect | null } | null;
   inits: Map<string, StreamInitMeta>;
   segments: Map<number, StreamSegMeta>;
-  /** 这一份里每个分段都有、而且都是满密度的:不必再取(稀疏段以后会被满密度的换掉,所以还要再取) */
+  /** Every segment in this manifest is present and full density: no need to fetch again (sparse segments will be replaced by full-density ones later, so they need to be fetched again) */
   full: boolean;
   fetchedAt: number;
   sig: string;
 }
-/** 选定了候选的一条流 */
+/** A stream with a selected candidate */
 interface ChosenStream { row: OnlineStream; resultKey: string; envFingerprint: string }
 
 const HASH_RE = /^[0-9a-f]{64}$/;
@@ -652,7 +778,7 @@ const rectOf = (r: unknown): StreamRect | null => {
   return [x, y, w, h].every((n) => typeof n === "number" && Number.isFinite(n)) && (w as number) > 0 && (h as number) > 0 ? { x: x as number, y: y as number, w: w as number, h: h as number } : null;
 };
 
-/** 内容库回的一份流清单 → 状态;形状不对的开头文件、分段跳过。`seg` 是这份清单该盖住的分段范围 */
+/** A stream manifest returned by content store → status; head files and segments with invalid shapes skipped. `seg` is the segment range this manifest should cover */
 function parseStreamManifest(body: unknown, resultKey: string, seg: [number, number], now: number): StreamManifestState {
   const b = body as { kind?: unknown; resultKey?: unknown; header?: Record<string, unknown>; inits?: Record<string, Record<string, unknown>>; segments?: Record<string, Record<string, unknown>> } | null;
   const state: StreamManifestState = { resultKey, header: null, inits: new Map(), segments: new Map(), full: false, fetchedAt: now, sig: "" };
@@ -682,7 +808,7 @@ function parseStreamManifest(body: unknown, resultKey: string, seg: [number, num
   return state;
 }
 
-/** 取回来的字节是不是这个哈希(浏览器没有 WebCrypto 时不核,当是) */
+/** Whether fetched bytes match this hash (not verified when browser lacks WebCrypto; assumed matching) */
 async function bytesMatchHash(bytes: Uint8Array, hash: string): Promise<boolean> {
   const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
   if (!subtle) return true;
@@ -696,7 +822,7 @@ async function bytesMatchHash(bytes: Uint8Array, hash: string): Promise<boolean>
   }
 }
 
-/** 每份项目(不可变对象)一张「流 → 签名」的缓存 */
+/** A "stream → signature" cache per project (immutable object) */
 const streamSigCache = new WeakMap<object, Map<string, string | null>>();
 function cachedStreamSig(project: unknown, row: Pick<OnlineStream, "clipIds" | "kind">): string | null {
   if (!project || typeof project !== "object") return null;
@@ -710,22 +836,25 @@ function cachedStreamSig(project: unknown, row: Pick<OnlineStream, "clipIds" | "
 }
 
 interface ManifestState {
-  /** 本地帧 → 小位图哈希 */
+  /** Local frame → small bitmap hash */
   small: Map<number, string>;
-  /** 本地帧 → 原尺寸 HTML 快照哈希(`frames` 表) */
+  /** Local frame → original-size HTML snapshot hash (`frames` table) */
   frames: Map<number, string>;
-  /** 这一段每一帧都有这一档了:不必再取 */
+  /** Every frame in this segment already has this tier: no need to fetch again */
   full: boolean;
   fetchedAt: number;
 }
 
 /**
- * 在线来源取哪一档(C10 契约第 5 节):`original` 取预渲染原尺寸(`snap/<hash>` 的 HTML 快照);`small` 是只贴稀疏版时:
- * 轨道流只贴稀疏版(文件头第 7 条),快照那一路取 `px/<hash>` 的小位图(预渲染小尺寸 2026-10-13 起停产,这一路取不到东西,留到撤快照时删)。
+ * Which tier the online source fetches (C10 contract section 5): `original` fetches original-size
+ * prerender (HTML snapshots at `snap/<hash>`); `small` is when pasting sparse version only: track
+ * streams paste sparse version only (file header item 7), and the snapshot path fetches small
+ * bitmaps at `px/<hash>` (small-size prerender was discontinued on 2026-10-13; nothing can be
+ * fetched from this path, kept until snapshots are removed).
  */
 export type OnlineTier = "small" | "original";
 
-/** 页面内快照库 L2 用到的那几样(`src/online/l2.ts` 的 `L2Store`;这里只列接口,不引实现) */
+/** Items used by in-page snapshot store L2 (`L2Store` in `src/online/l2.ts`; only lists interfaces here, does not import implementation) */
 export interface L2Like {
   putBlock(key: string, bytes: Uint8Array | ArrayBuffer, type?: string): Promise<unknown>;
   getBlock(key: string): Promise<{ bytes: Uint8Array; type: string } | null>;
@@ -736,15 +865,16 @@ export interface L2Like {
 }
 
 /**
- * 只贴稀疏版时问「这台浏览器解不解得了轨道流」用的两样(文件头第 7 条)。别的档不问(照现状)。单测注入假的。
+ * Two items used when pasting sparse version only to query "whether this browser can decode track
+ * streams" (file header item 7). Other tiers are not queried (as-is). Unit tests inject mocks.
  */
 export interface StreamDecodeSupport {
-  /** 浏览器有没有 `VideoDecoder` */
+  /** Whether the browser has `VideoDecoder` */
   available(): boolean;
-  /** 这一种编码配置(流清单里开头文件那一项的 `codec` 与编码画幅)解不解得了 */
+  /** Whether this encoding configuration (the `codec` and encoded aspect ratio of the head file item in the stream manifest) can be decoded */
   supports(config: { codec: string; codedWidth: number; codedHeight: number }): Promise<boolean>;
 }
-/** 缺省:问浏览器自己。`isConfigSupported` 抛错、回不出结果都算不行;没有这个方法的旧实现只看有没有 `VideoDecoder` */
+/** Default: queries browser itself. If `isConfigSupported` throws or returns no result, it is considered unsupported; older implementations without this method only check for `VideoDecoder` */
 export const browserDecodeSupport: StreamDecodeSupport = {
   available: () => typeof (globalThis as { VideoDecoder?: unknown }).VideoDecoder === "function",
   supports: async (config) => {
@@ -757,23 +887,23 @@ export const browserDecodeSupport: StreamDecodeSupport = {
 };
 
 export interface OnlineSourceOptions {
-  /** 没有 L2 时的内存缓存上限(C10a 的 64 MiB) */
+  /** In-memory cache upper limit when there is no L2 (64 MiB in C10a) */
   maxBytes?: number;
   tier?: OnlineTier;
-  /** 只贴稀疏版时问浏览器解不解得了流(缺省 `browserDecodeSupport`) */
+  /** Queries whether browser can decode streams when pasting sparse version only (defaults to `browserDecodeSupport`) */
   decodeSupport?: StreamDecodeSupport;
-  /** 页面内快照库 L2(C10 契约第 4 节);给了就把块存进它,内存里只留一小份刚用过的 */
+  /** In-page snapshot store L2 (C10 contract section 4); if provided, chunks are stored into it, keeping only a small recently-used portion in memory */
   store?: L2Like | Promise<L2Like | null> | null;
 }
 
-/** 等 L2 打开最多这么久(毫秒),打不开就照内存走 */
+/** Maximum wait time for L2 to open (milliseconds); falls back to memory if it fails to open */
 export const STORE_WAIT_MS = 5000;
-/** 有 L2 时内存里只留这么多刚用过的(免得同一窗口里反复解码 / 反复读库) */
+/** When L2 is present, keep only this many recently used items in memory (to avoid repeatedly decoding / reading the store within the same window) */
 export const ONLINE_HOT_CACHE_BYTES = 16 * 1024 * 1024;
 
 const textDecoder = typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
 
-/** 在线实现(见上) */
+/** Online implementation (see above) */
 export class OnlineSnapshotSource implements SnapshotSource {
   private deps: OnlineSnapshotDeps;
   private cache: ByteLru;
@@ -783,21 +913,21 @@ export class OnlineSnapshotSource implements SnapshotSource {
   private mapSig = "";
   private manifests = new Map<string, ManifestState>();
   private manifestFlying = new Set<string>();
-  /** 轨道流:各份流清单(`<结果键>:<起>-<止>` → 状态) */
+  /** Track streams: stream manifests (`<resultKey>:<start>-<end>` → status) */
   private streamManifests = new Map<string, StreamManifestState>();
-  /** 轨道流:已取到本页的开头文件与分段(哈希 → 字节) */
+  /** Track streams: head files and segments fetched to this page (hash → bytes) */
   private streamBlocks = new BlockLru(STREAM_CACHE_MAX_BYTES);
   private streamFlying = new Map<string, Promise<void>>();
-  /** 取失败的块:哈希 → 失败的时刻(过 `STREAM_RETRY_MS` 再取) */
+  /** Failed chunks: hash → failure timestamp (re-fetched after `STREAM_RETRY_MS`) */
   private streamFailedAt = new Map<string, number>();
   private streamPlaneMemo = new Map<string, { rev: number; plane: { manifest: StreamManifest; blocks: Map<string, Uint8Array> } | null }>();
-  /** 流的清单或字节变了就加一:父页据此重发流平面(同一段换了文件时就绪区间一个字不变,光比区间看不出来) */
+  /** Incremented whenever stream manifests or bytes change: parent page re-emits stream plane based on this (when files swap for the same segment, ready interval is unchanged, so interval comparison alone cannot detect it) */
   streamRev = 0;
-  /** 各层最后发出去的就绪(`<kind>:<clipId>` → 签名与撤层要用的键);层不能用了(过期、没了)就发空层撤掉 */
+  /** Latest ready emitted by each layer (`<kind>:<clipId>` → signature and key to retract layer); if a layer is unusable (expired, gone), emit an empty layer to retract */
   private emitted = new Map<string, { sig: string; clipId: string; kind: ReadyKind; key: string }>();
-  /** 页面此刻的项目(按它算各片段的输入签名,stale-layer);没给就不比签名 */
+  /** Current project on the page (used to calculate input signatures of clips, stale-layer); if omitted, signatures are not compared */
   private inputProject: unknown = null;
-  /** 过期的层:片段 → 从哪一刻起(层的签名与页面的签名那一对没变就不重计) */
+  /** Expired layers: clip → timestamp from which it expired (not recalculated if the pair of layer signature and page signature has not changed) */
   private staleSince = new Map<string, { key: string; since: number; expired: boolean }>();
   private listeners = new Set<(m: ReadyMessage) => void>();
   private timer: unknown = null;
@@ -812,24 +942,25 @@ export class OnlineSnapshotSource implements SnapshotSource {
   private store: L2Like | null = null;
   private storeOff: (() => void) | null = null;
   /**
-   * L2 还在打开时先别取:不然第一轮预取在库打开之前就发出去,关掉再开时已在库里的块又被请求一遍(C10-A2)。
-   * 最多等 `STORE_WAIT_MS`,打不开就照内存走。
+   * Do not fetch while L2 is still opening: otherwise the first round of prefetching is sent before
+   * the store opens, causing chunks already in the store to be requested again upon reopening
+   * (C10-A2). Waits up to `STORE_WAIT_MS`; falls back to memory if it cannot open.
    */
   private storeWait: Promise<unknown> | null = null;
-  /** 原尺寸:每层(按结果键)已在 L2 里的本地帧(`ranges` 表的镜像) */
+  /** Original size: local frames already in L2 for each layer (by result key) (mirror of `ranges` table) */
   private inStore = new Map<string, Set<number>>();
   private rangesLoaded = new Set<string>();
-  /** 取到一张新的块之后叫(宿主据此重投一次) */
+  /** Called after fetching a new chunk (host resubmits based on this) */
   onFetched: (() => void) | null = null;
-  /** 层表取回来过没有(取到了,或者内容库回「没有这一项」);取之前判不了哪些层缺产物 */
+  /** Whether the layer table has ever been fetched (fetched, or content store returned "no such entry"); cannot determine which layers lack artifacts before fetching */
   private mapKnown = false;
-  /** 覆盖情况可能变了(层表换了、清单到了)时叫的订阅方 */
+  /** Subscribers called when coverage may have changed (layer table changed, manifest arrived) */
   private coverageListeners = new Set<() => void>();
   readonly stats = { mapFetches: 0, manifestFetches: 0, smallFetches: 0, smallBytes: 0, snapFetches: 0, snapBytes: 0, l2Hits: 0, errors: 0,
     streamManifestFetches: 0, streamFetches: 0, streamBytes: 0, streamFailures: 0 };
 
   private decodeSupport: StreamDecodeSupport;
-  /** 只贴稀疏版时:开头文件(按哈希)的编码配置这台浏览器解不解得了;在问的是 null */
+  /** When pasting sparse version only: whether this browser can decode head file encoding configuration (by hash); null while querying */
   private initDecodable = new Map<string, boolean | null>();
 
   constructor(deps: OnlineSnapshotDeps, { maxBytes = ONLINE_CACHE_MAX_BYTES, tier = "small", store = null, decodeSupport = browserDecodeSupport }: OnlineSourceOptions = {}) {
@@ -844,33 +975,33 @@ export class OnlineSnapshotSource implements SnapshotSource {
         this.store = s;
         this.storeOff = s.subscribeReady((e) => this.onStoreReady(e.layerKey, e.ranges));
         this.rangesLoaded.clear();
-      }, () => { /* 打不开 L2:照内存走 */ });
+      }, () => { /* Cannot open L2: fall back to memory */ });
       this.storeWait = Promise.race([opened, new Promise((r) => setTimeout(r, STORE_WAIT_MS))]).then(() => { this.storeWait = null; });
     }
   }
 
   private now(): number { return (this.deps.now ?? Date.now)(); }
-  /** 只贴稀疏版时(只有一个舞台;层表 v 1 也认) */
+  /** When pasting sparse version only (only one stage; also recognizes layer table v 1) */
   private get sparseOnly(): boolean { return this.tier === "small"; }
 
-  /** 这一档此刻能用的层(`original` 只认 v 2 且两项齐的层;输入签名对不上的旧层不算) */
+  /** Usable layers in this tier at this moment (`original` only recognizes v 2 layers with both items present; outdated layers with mismatching input signatures excluded) */
   private layers(): OnlineLayer[] {
     const map = this.map;
     if (!map) return [];
     return map.layers.map((l) => this.chosen(map, l)).filter((l) => usableLayer(map, l, { anyVersion: this.sparseOnly }) && !this.stale(l));
   }
 
-  /** 页面按当前项目算的这个片段的输入签名;没给项目回 null(不比) */
+  /** Input signature calculated by the page for this clip from current project; returns null if project omitted (no comparison) */
   private pageSig(clipId: string): string | null {
     return this.inputProject ? cachedClipInputSig(this.inputProject, clipId) : null;
   }
 
-  /** 这一层是旧输入的结果(层带签名,页面也算得出,两者不同) */
+  /** This layer is the result of outdated inputs (layer carries signature, page can also calculate one, and both differ) */
   private stale(layer: OnlineLayer): boolean {
     return !!layer.inputSig && inputSigStale(layer.inputSig, this.pageSig(layer.clipId));
   }
 
-  /** 层表里这个片段那一层过期了(这一档本来能用、只是输入对不上) */
+  /** The layer for this clip in the layer table has expired (originally usable in this tier, but inputs mismatch) */
   private staleLayerOf(clipId: string): OnlineLayer | null {
     const map = this.map;
     if (!map) return null;
@@ -882,7 +1013,7 @@ export class OnlineSnapshotSource implements SnapshotSource {
     return null;
   }
 
-  /** 记下哪些层过期、从哪一刻起;不再过期的删掉。回「过期集合变了没有」 */
+  /** Records which layers have expired and from what timestamp; removes those no longer expired. Returns "whether the expired set has changed" */
   private noteStale(): boolean {
     const map = this.map;
     const now = this.now();
@@ -901,7 +1032,7 @@ export class OnlineSnapshotSource implements SnapshotSource {
     return changed;
   }
 
-  /** 过期的层还在「新结果在路上」那段时间里(`STALE_AWAIT_MS`) */
+  /** Whether the expired layer is still within the "new results on the way" period (`STALE_AWAIT_MS`) */
   private staleAwaiting(clipId: string): boolean {
     if (!this.staleLayerOf(clipId)) return false;
     const rec = this.staleSince.get(clipId);
@@ -910,24 +1041,32 @@ export class OnlineSnapshotSource implements SnapshotSource {
   }
 
   /**
-   * 页面此刻的项目(stale-layer):按它算各片段的输入签名,与层表里每层的 `inputSig` 比对,对不上的旧层马上撤掉
-   * (就绪区间发空,页面按兜底顺序显示占位或活渲),对上了(改回原来的参数)照贴。项目换了新对象才重算。
+   * The project at this moment on the page (stale-layer): calculate the input signature of each clip
+   * from it and compare with `inputSig` of each layer in the layer table; stale layers that do not
+   * match are immediately removed (empty ready ranges are emitted, and the page displays placeholders
+   * or live renders in fallback order); matching layers (parameters reverted to original) are pasted
+   * as usual. Recomputed only when the project becomes a new object.
    */
   setInputs(project: unknown): void {
     const next = project && typeof project === "object" ? project : null;
     if (next === this.inputProject) return;
     this.inputProject = next;
     const changed = this.noteStale();
-    // 流的输入签名跟着项目变:过期的流在 publishLayers 里撤掉(发空层),对回来了照发
+    // Stream input signatures change with the project: stale streams are removed in publishLayers
+    // (emit empty layers), and emitted as usual once they match again
     this.streamPlaneMemo.clear();
     this.publishLayers();
     if (changed) this.coverageChanged();
   }
 
   /*
-   * 层表 v 3 的候选(M7 契约 D12):哪一份活着由本页按队列推来的 `task.done`(活)与 `task.failed { error: 'superseded' }`
-   * (那一份作废了 —— 另一份活着,不是失败)认定。认定活着的候选优先;都没认定时取第一个没作废的;全作废或没有候选照旧用层上的。
-   * 选定之后整份换成那个候选(`layerRefOf` 的 `alive`,结果键、指纹、线上键同出一个候选)。
+   * Candidates of layer table v 3 (M7 contract D12): which copy is alive is determined by this page
+   * based on `task.done` (alive) and `task.failed { error: 'superseded' }` (that copy is invalidated:
+   * another copy is alive, not a failure) pushed from the queue. Candidates determined to be alive
+   * take priority; when none is determined, take the first non-invalidated one; if all are invalidated
+   * or there are no candidates, use the one on the layer as before. Once selected, replace the entire
+   * thing with that candidate (`alive` of `layerRefOf`; result key, fingerprint, and online key all
+   * come from the same candidate).
    */
   private aliveKeys = new Set<string>();
   private deadKeys = new Set<string>();
@@ -940,14 +1079,17 @@ export class OnlineSnapshotSource implements SnapshotSource {
   }
 
   /**
-   * 队列推给本页(作为发布方)的 `task.done` / `task.failed`(M7 D12):完成的结果键认定活着,`superseded` 作废的那一份当死。
-   * 认定变了就马上重发各层(换了候选的层整层换键)。别的消息不理。
+   * `task.done` / `task.failed` pushed to this page (as publisher) by the queue (M7 D12): completed
+   * result keys are determined to be alive, and the copy invalidated by `superseded` is treated as
+   * dead. Once the determination changes, immediately re-emit all layers (layers that changed
+   * candidates replace keys across the whole layer). Ignore other messages.
    */
   noteQueueEvent(msg: { type?: unknown; id?: unknown; resultKey?: unknown; error?: unknown }): void {
     const id = typeof msg?.id === "string" ? msg.id : "";
     const keyOf = () => {
       if (typeof msg.resultKey === "string" && msg.resultKey) return msg.resultKey;
-      // 细任务 id:`<kind>:<resultKey>:<from>-<to>`;稀疏流任务的 id 末尾多一段 `:sparse`(`server/render-queue/messages.mjs` 的 `taskIdOf`)
+      // Fine-grained task id: `<kind>:<resultKey>:<from>-<to>`; sparse stream task ids have an extra
+      // `:sparse` segment at the end (`taskIdOf` in `server/render-queue/messages.mjs`)
       const m = /^(?:snapshot|stream):(.+):\d+-\d+(?::sparse)?$/.exec(id);
       return m ? m[1] : null;
     };
@@ -962,12 +1104,12 @@ export class OnlineSnapshotSource implements SnapshotSource {
     if (changed) { this.publishLayers(); this.kick(); }
   }
 
-  /** 本页自己产出并完成了这一段(纯浏览器节点):这个结果键活着 */
+  /** This page produced and completed this segment itself (pure browser node): this result key is alive */
   markAlive(resultKey: string): void {
     this.noteQueueEvent({ type: "task.done", resultKey });
   }
 
-  /** 看哪个项目(层表的键);换了项目就清表重来 */
+  /** Checks which project (the key of the layer table); if the project changes, clear the table and start over */
   setProject(projectId: string | null): void {
     const next = projectId || null;
     if (next === this.projectId) return;
@@ -989,8 +1131,9 @@ export class OnlineSnapshotSource implements SnapshotSource {
   }
 
   /**
-   * 队列报了 `task.done`(C10 契约第 7 节「页面订阅 task.done,并入层表与就绪」):不等下一轮轮询,马上重取层表、
-   * 还没满的清单也重取。
+   * The queue reported `task.done` (C10 contract section 7 "Page subscribes to task.done, merged into
+   * layer table and ready"): without waiting for the next polling round, immediately re-fetch the
+   * layer table and also re-fetch manifests that are not yet full.
    */
   refresh(): void {
     this.lastMapAt = -Infinity;
@@ -999,7 +1142,7 @@ export class OnlineSnapshotSource implements SnapshotSource {
     this.kick();
   }
 
-  /** 播放头挪了:取这一窗口的清单,预取这一窗口可见重层的块 */
+  /** Playhead moved: fetch manifests for this window, prefetch chunks for visible heavy layers in this window */
   focus(t: number, fps: number): void {
     this.playhead = { t: Number(t) || 0, fps: Math.max(1, Number(fps) || 30) };
     this.kick();
@@ -1007,14 +1150,14 @@ export class OnlineSnapshotSource implements SnapshotSource {
 
   subscribeReady(_session: string, _localRev: number, onMessage: (m: ReadyMessage) => void): () => void {
     this.listeners.add(onMessage);
-    // 新订阅方:先 reset,再把手里已有的层全量发一遍(C3 的恢复路)
-    try { onMessage({ type: "reset", localRev: 0 }); } catch { /* 订阅方坏了 */ }
+    // New subscriber: reset first, then emit all layers currently in hand once (recovery path in C3)
+    try { onMessage({ type: "reset", localRev: 0 }); } catch { /* The subscriber is broken */ }
     for (const layer of this.layers()) {
-      try { onMessage(this.layerMessage(layer)); } catch { /* 同上 */ }
+      try { onMessage(this.layerMessage(layer)); } catch { /* Same as above */ }
     }
     for (const s of this.streamsNow()) {
       const msg = this.streamMessage(s);
-      if (msg.type === "layer" && msg.ranges.length) { try { onMessage(msg); } catch { /* 同上 */ } }
+      if (msg.type === "layer" && msg.ranges.length) { try { onMessage(msg); } catch { /* Same as above */ } }
     }
     this.kick();
     return () => { this.listeners.delete(onMessage); };
@@ -1024,28 +1167,34 @@ export class OnlineSnapshotSource implements SnapshotSource {
     if (this.storeWait) await this.storeWait;
     if (this.tier === "original") {
       const hit = this.frameOf(kind, key, localFrame);
-      if (!hit) throw Object.assign(new Error(`没有这一帧的预渲染原尺寸:${kind}/${key}/${localFrame}`), { status: 404 });
+      if (!hit) throw Object.assign(new Error(`No full-size prerender for this frame: ${kind}/${key}/${localFrame}`), { status: 404 });
       const cached = this.cache.get(`snap/${hit.hash}`);
       if (cached !== undefined) return cached;
       return this.fetchOriginal(hit.hash, hit.layer, localFrame, signal);
     }
     const hash = this.smallHashOf(kind, key, localFrame);
-    if (!hash) throw Object.assign(new Error(`没有这一帧的预渲染小尺寸:${kind}/${key}/${localFrame}`), { status: 404 });
+    if (!hash) throw Object.assign(new Error(`No small-size prerender for this frame: ${kind}/${key}/${localFrame}`), { status: 404 });
     const hit = this.cache.get(hash);
     if (hit !== undefined) return smallSnapshotHtml(hit);
     return smallSnapshotHtml(await this.fetchSmall(hash, signal));
   }
 
   /**
-   * 这个片段的预渲染结果覆盖了多少(C10 契约第 9 节,时间轴徽标用):层表还没取到 → `unknown`;这一档没有可用的层 → `none`;
-   * 层在,但有哪一段的清单从没取到过 → `unknown`;每一段的清单都取到过、有哪一段这一档的帧不齐 → `partial`;每一段都齐 → `full`。
-   * 「齐」看清单(结果在素材服务里),不看字节有没有取到本页。整段的清单由 `coverageLayer` 点名的层才取(见 `loadWindow`)。
-   * 徽标只在确认没覆盖整段(`none` / `partial`)时出;`unknown` 不出(刚打开页面时不闪)。
+   * How much prerender output covers this clip (C10 contract section 9, used by timeline badge):
+   * layer table not yet fetched → `unknown`; no available layer for this tier → `none`; layer exists,
+   * but the manifest of some segment has never been fetched → `unknown`; manifests of all segments
+   * have been fetched, but some segment has incomplete frames for this tier → `partial`; all segments
+   * are complete → `full`.
+   * "Complete" checks manifests (results are in the asset service), not whether bytes have been
+   * fetched to this page. Manifests for the whole clip are only fetched for layers designated by
+   * `coverageLayer` (see `loadWindow`).
+   * The badge is only shown when confirmed not covering the whole clip (`none` / `partial`);
+   * `unknown` does not show (does not flash when just opening the page).
    */
   coverage(clipId: string): LayerCoverage {
     if (!this.mapKnown) return "unknown";
     const layer = this.layers().find((l) => l.clipId === clipId);
-    // 旧输入的层:新结果在路上的那段时间里还不知道(不出徽标)
+    // Layers with stale input: not yet known while new results are on the way (do not show badge)
     if (!layer) return this.staleAwaiting(clipId) ? "unknown" : "none";
     const span = this.map?.span ?? 60;
     let partial = false;
@@ -1060,15 +1209,19 @@ export class OnlineSnapshotSource implements SnapshotSource {
   }
 
   /**
-   * 父页能不能确认「这个片段这一帧没有可贴的预渲染结果」(C10 契约第 9 节;2026-10-21 起舞台一律显示沙漏,不再据此换图标):
-   * 层表已经取到、这片段没有可用的层;或者这一帧所在那一段的清单已经取到、这一帧(这一档)不在里面。
-   * 层表没取到、清单没到、清单里有而字节还在路上,都不算确认(舞台显示普通加载占位)。
-   * `localFrame` 按片段本地帧,夹进层的帧数里。
+   * Whether the parent page can confirm "there is no applicable prerender output for this frame of
+   * this clip" (C10 contract section 9; from 2026-10-21 the stage always displays an hourglass and
+   * no longer switches icons based on this): layer table has been fetched and this clip has no
+   * available layer; or the manifest of the segment containing this frame has been fetched and this
+   * frame (for this tier) is not in it. Layer table not fetched, manifest not arrived, or present in
+   * manifest while bytes are still on the way, none count as confirmed (stage displays normal loading
+   * placeholder). `localFrame` uses clip-local frames, clamped into the layer's frame count.
    */
   frameConfirmedMissing(clipId: string, localFrame: number): boolean {
     if (!this.mapKnown) return false;
     const layer = this.layers().find((l) => l.clipId === clipId);
-    // 旧输入的层(stale-layer):渲染节点还没按新输入重写层表的那段时间里不确认(沙漏),过了 `STALE_AWAIT_MS` 才确认
+    // Layers with stale input (stale-layer): not confirmed (hourglass) while the render node has not
+    // rewritten the layer table for the new input; confirmed only after `STALE_AWAIT_MS` has passed
     if (!layer) return !this.staleAwaiting(clipId);
     if (layer.count <= 0) return true;
     const f = Math.min(layer.count - 1, Math.max(0, Math.round(Number(localFrame) || 0)));
@@ -1077,35 +1230,41 @@ export class OnlineSnapshotSource implements SnapshotSource {
     return !(this.tier === "original" ? st.frames : st.small).has(f);
   }
 
-  /** 覆盖情况可能变了就叫 `cb`(层表换了、清单到了);回退订函数 */
+  /** Calls `cb` when coverage may have changed (layer table changed, manifest arrived); returns unsubscribe function */
   subscribeCoverage(cb: () => void): () => void {
     this.coverageListeners.add(cb);
     return () => { this.coverageListeners.delete(cb); };
   }
 
   private coverageChanged() {
-    for (const l of [...this.coverageListeners]) { try { l(); } catch { /* 订阅方坏了 */ } }
+    for (const l of [...this.coverageListeners]) { try { l(); } catch { /* The subscriber is broken */ } }
   }
 
   /**
-   * 层表里列着的片段(c10a 契约第 17 节「预渲染重试」按清单判产物:不在层表里的判重层,素材服务里就没有它的产物)。
-   * 层表还没取回来过回 null(判不了);内容库里没有层表回空集合(一层都没有)。
+   * Clips listed in the layer table (c10a contract section 17 "Prerender retry" determines artifacts
+   * by manifest: for layers classified as heavy not in the layer table, the asset service has no
+   * artifacts for them). Returns null if the layer table has never been fetched back (cannot
+   * determine); returns an empty set if there is no layer table in the content store (not a single
+   * layer).
    */
   layerClipIds(): ReadonlySet<string> | null {
     if (!this.mapKnown) return null;
     return new Set(this.layers().map((l) => l.clipId));
   }
 
-  /** 此刻的层表(探针用);还没有回 null */
+  /** Current layer table (used by probe); returns null if not yet available */
   layerMap(): LayerMap | null {
     return this.map;
   }
 
-  /** 导出前释放缓存(契约第 11.1 节):内存里那一份;L2 是可重建的缓存库,不动 */
+  /**
+   * Releases cache before export (contract section 11.1): the in-memory copy; L2 is a rebuildable
+   * cache store, leave untouched
+   */
   clearCache(): void { this.cache.clear(); }
   get cacheBytes(): number { return this.cache.total; }
   get cacheSize(): number { return this.cache.size; }
-  /** 探针用:此刻的层表与各层就绪帧数 */
+  /** Used by probe: current layer table and ready frame count of each layer */
   debug() {
     const usable = this.layers();
     return {
@@ -1128,17 +1287,20 @@ export class OnlineSnapshotSource implements SnapshotSource {
     };
   }
 
-  /* ---------------- 轨道流(对外) ---------------- */
+  /* ---------------- Track stream (external) ---------------- */
 
   /**
-   * 父页给舞台发流平面时要带过去的东西(`streamPlayer.ts` 的 `StreamPlaneSender` 来问):这条流(就绪索引线上的键 = 结果键)此刻的清单
-   * 与字节。清单只列字节已在本页的分段(与发出去的就绪区间同一个口径),分段的 `file` 就是它的哈希,开头文件另带 `hash`;
-   * `blocks` 是清单用到的全部块。这条流不在层表里、过期了、或一段都没取到回 null。
+   * Items to pass when the parent page sends a stream plane to the stage (queried by
+   * `StreamPlaneSender` in `streamPlayer.ts`): the current manifest and bytes for this stream (key on
+   * ready index line = result key). The manifest only lists segments whose bytes are already on this
+   * page (same criteria as emitted ready ranges); the segment's `file` is its hash, and the head
+   * file additionally carries `hash`; `blocks` are all chunks used by the manifest. Returns null if
+   * this stream is not in the layer table, is stale, or not a single segment has been fetched.
    */
   streamPlane(key: string): { manifest: StreamManifest; blocks: Map<string, Uint8Array> } | null {
     const memo = this.streamPlaneMemo.get(key);
     if (memo && memo.rev === this.streamRev) {
-      // 用到的块算最近用过(不让正在播的这几段被挤掉)
+      // Used chunks count as recently used (preventing segments currently playing from being evicted)
       if (memo.plane) for (const hash of memo.plane.blocks.keys()) this.streamBlocks.get(hash);
       return memo.plane;
     }
@@ -1161,20 +1323,20 @@ export class OnlineSnapshotSource implements SnapshotSource {
     this.storeOff = null;
   }
 
-  /** 单测用:手动跑一轮(取层表、取窗口里的清单、预取) */
+  /** Unit test use: manually run a round (fetch layer table, fetch manifests in window, prefetch) */
   async tickNow(): Promise<void> { await this.tick(); }
 
-  /** 单测用:等在飞的取块都落定 */
+  /** Unit test use: wait for all in-flight chunk fetches to settle */
   async idle(): Promise<void> {
     for (let i = 0; i < 50 && (this.inflight.size || this.streamFlying.size || this.active || this.queue.length); i++) {
       await Promise.allSettled([...this.inflight.values(), ...this.streamFlying.values()]);
     }
   }
 
-  /* ---------------- 内部 ---------------- */
+  /* ---------------- Internal ---------------- */
 
   private emit(m: ReadyMessage) {
-    for (const l of [...this.listeners]) { try { l(m); } catch { /* 订阅方坏了不影响别人 */ } }
+    for (const l of [...this.listeners]) { try { l(m); } catch { /* A broken subscriber must not affect others */ } }
   }
 
   private manifestKey(layer: OnlineLayer, seg: [number, number]) { return `${layer.resultKey}:${seg[0]}-${seg[1]}`; }
@@ -1193,7 +1355,8 @@ export class OnlineSnapshotSource implements SnapshotSource {
       const st = this.manifests.get(this.manifestKey(layer, this.segOf(layer, from)));
       if (!st) continue;
       if (this.tier === "original") {
-        // 写入即就绪(C10 契约第 4 节):清单里有、块也已写进 L2 的帧才算就绪;没有 L2 时退回「清单里有」
+        // Ready on write (C10 contract section 4): frames count as ready only if present in the manifest
+        // and chunks are already written to L2; falls back to "present in the manifest" when without L2
         for (const f of st.frames.keys()) if (!this.store || have?.has(f)) out.push(f);
       } else {
         for (const f of st.small.keys()) out.push(f);
@@ -1206,7 +1369,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
     return { type: "layer", clipId: layer.clipId, kind: layer.kind, key: layer.key, ranges: framesToRanges(this.readyFrames(layer)) };
   }
 
-  /** 各层的就绪区间变了才发(全量语义);发过、现在不能用了的层(输入对不上、这一档不认了)发空层撤掉 */
+  /**
+   * Emitted only when ready ranges of layers change (full semantics); layers previously emitted but
+   * now unusable (mismatched inputs, tier no longer recognized) are removed by emitting empty layers.
+   */
   private publishLayers() {
     const live = new Set<string>();
     for (const layer of this.layers()) {
@@ -1219,12 +1385,13 @@ export class OnlineSnapshotSource implements SnapshotSource {
       this.emitted.set(id, { sig, clipId: layer.clipId, kind: layer.kind, key: layer.key });
       this.emit(msg);
     }
-    // 轨道流:每条流一层(`kind: 'stream'`,区间单位是分段号)。一段都没取到的不发;发过、现在没了的在下面撤掉
+    // Track stream: one layer per stream (`kind: 'stream'`, range unit is segment number). Do not emit
+    // if not even a single segment was fetched; previously emitted ones now gone are removed below
     for (const s of this.streamsNow()) {
       const msg = this.streamMessage(s);
       if (msg.type !== "layer" || !msg.ranges.length) continue;
       const id = `stream:${s.row.topClipId}`;
-      if (live.has(id)) continue;   // 同一张卡在表里列了两行:只认第一行
+      if (live.has(id)) continue;   // The same card is listed in two rows in the table: recognize only the first row
       live.add(id);
       const sig = `${msg.key}|${JSON.stringify(msg.ranges)}|${msg.groupClipIds?.join(",") ?? ""}|${msg.originFrame ?? ""}|${msg.streamKind ?? ""}|${msg.inputSig ?? ""}`;
       if (this.emitted.get(id)?.sig === sig) continue;
@@ -1238,7 +1405,7 @@ export class OnlineSnapshotSource implements SnapshotSource {
     }
   }
 
-  /** L2 的 `ranges` 写入了(写入即就绪):更新镜像,重发就绪 */
+  /** L2 `ranges` written (ready on write): update mirror, re-emit readiness */
   private onStoreReady(layerKey: string, ranges: Array<[number, number]>) {
     const set = new Set<number>();
     for (const [a, b] of ranges) for (let f = a; f <= b; f++) set.add(f);
@@ -1246,7 +1413,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
     if (this.layers().some((l) => l.resultKey === layerKey)) this.publishLayers();
   }
 
-  /** 层表到了:把每层已在 L2 里的区间读进镜像(关掉再开时,已在库里的块不再请求) */
+  /**
+   * Layer table arrived: read ranges already in L2 for each layer into the mirror (when closed and
+   * reopened, chunks already in store will not be requested again).
+   */
   private async loadStoreRanges(): Promise<void> {
     const store = this.store;
     if (!store || this.tier !== "original") return;
@@ -1275,8 +1445,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
   }
 
   /**
-   * 原尺寸:这一帧的 HTML 快照哈希与它所在的那一层。一层只取层表记录的那一种环境的帧(C10 契约第 5 节):
-   * 清单按层表那一层的结果键取,而结果键就是「内容键 × 那个环境的指纹」。
+   * Original size: HTML snapshot hash of this frame and the layer it belongs to. A layer only
+   * fetches frames for that environment recorded in the layer table (C10 contract section 5):
+   * manifests are fetched by the layer's result key in the layer table, and the result key is
+   * "content key × that environment's fingerprint".
    */
   private frameOf(kind: ReadyKind, key: string, localFrame: number): { hash: string; layer: OnlineLayer } | null {
     for (const layer of this.layers()) {
@@ -1300,7 +1472,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
     this.timer = set(() => { this.timer = null; void this.tick(); }, ms);
   }
 
-  /** 跑一轮;正在跑就记一笔、跑完再跑一轮(播放头、项目在这一轮里又变了) */
+  /**
+   * Run a round; if currently running, record a note and run another round when finished (the
+   * playhead or project changed again during this round).
+   */
   private tick(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     if (this.running) { this.again = true; return this.running; }
@@ -1319,7 +1494,8 @@ export class OnlineSnapshotSource implements SnapshotSource {
   private async tickOnce(): Promise<void> {
     if (this.storeWait) await this.storeWait;
     const now = this.now();
-    // 过期的层等满 `STALE_AWAIT_MS` 还没等到新层:从「在路上」转成确认缺料,叫覆盖订阅方重算(图标、徽标)
+    // Stale layers waiting for full `STALE_AWAIT_MS` without a new layer: transition from "on the way"
+    // to confirmed missing, notifying coverage subscribers to recompute (icons, badges)
     let expired = false;
     for (const rec of this.staleSince.values()) {
       if (!rec.expired && now - rec.since >= STALE_AWAIT_MS) { rec.expired = true; expired = true; }
@@ -1335,16 +1511,18 @@ export class OnlineSnapshotSource implements SnapshotSource {
     this.prefetchStreams();
   }
 
-  /* ---------------- 轨道流(内部) ---------------- */
+  /* ---------------- Track stream (internal) ---------------- */
 
-  /** 这条流是旧输入的结果(行里带签名,页面也算得出,两者不同) */
+  /** This stream is the result of stale input (row carries signature, page can also compute it, and the two differ) */
   private streamStale(row: OnlineStream): boolean {
     return !!row.inputSig && !!this.inputProject && streamSigStale(row.inputSig, cachedStreamSig(this.inputProject, row));
   }
 
   /**
-   * 只贴稀疏版时:用这个开头文件的流这台浏览器贴不贴得了(文件头第 7 条)。别的档恒为 true。头一次问到时去问浏览器,
-   * 问完之前当不行(那几段先不取、不算就绪),问到「行」再重发就绪。
+   * When only pasting sparse versions: whether this browser can paste streams using this head file
+   * (item 7 in file header). Other tiers are always true. When asked for the first time, query the
+   * browser; treat as unsupported until answered (do not fetch those segments yet, not counted as
+   * ready), and re-emit readiness once answered "ok".
    */
   private decodable(init: StreamInitMeta): boolean {
     if (!this.sparseOnly) return true;
@@ -1363,8 +1541,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
   }
 
   /**
-   * 此刻能用的流(只贴稀疏版时要浏览器有 `VideoDecoder`,没有就照没有流办),各自选定一个候选:认定活着的优先,都没认定时取第一个没作废的,
-   * 全作废照旧用第一个 —— 同快照层的 `chosen`。旧输入的流不算。
+   * Currently usable streams (when only pasting sparse versions, requires browser `VideoDecoder`; if
+   * missing, treat as no streams), each selecting one candidate: those determined alive take priority;
+   * when none determined, take the first non-invalidated one; if all invalidated, use the first as
+   * before: same as `chosen` in snapshot layers. Streams with stale input do not count.
    */
   private streamsNow(): ChosenStream[] {
     const map = this.map;
@@ -1381,7 +1561,7 @@ export class OnlineSnapshotSource implements SnapshotSource {
 
   private streamManifestKey(resultKey: string, seg: [number, number]) { return `${resultKey}:${seg[0]}-${seg[1]}`; }
 
-  /** 第 n 段在哪一份清单里(那份清单取到过才有) */
+  /** Which manifest segment n is in (only available if that manifest was fetched) */
   private streamSegment(s: ChosenStream, n: number): { seg: StreamSegMeta; init: StreamInitMeta; state: StreamManifestState } | null {
     const span = streamSpansInWindow(s.row, n, n)[0];
     if (!span) return null;
@@ -1391,7 +1571,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
     return state && seg && init ? { seg, init, state } : null;
   }
 
-  /** 这条流就绪的分段号:清单里列着、而且分段与它的开头文件的字节都已在本页 */
+  /**
+   * Ready segment numbers of this stream: listed in manifest, and bytes for both segment and its head
+   * file are already on this page.
+   */
   private streamReady(s: ChosenStream): number[] {
     const out: number[] = [];
     for (const state of this.streamManifests.values()) {
@@ -1406,9 +1589,13 @@ export class OnlineSnapshotSource implements SnapshotSource {
   }
 
   /**
-   * 依赖下层的流另带两项(同桌面预渲染进程发的那一层,`server/frame-stream.mjs` 的 `belowLayerMark`):`streamKind: "below"` ——
-   * 父页据此发 `plane: "stage"` 的流平面(`src/editor/snapshotFeed.ts` 的 `streamLayers`),舞台把它挂在舞台根下、按舞台坐标贴;
-   * `inputSig` —— 层表那一行带的输入签名,父页按 store 里当前的项目再比一次(项目一改当场撤,不等本来源收到新项目重发就绪)。
+   * Below-dependent streams carry two additional items (same as the layer emitted by desktop
+   * prerender process, `belowLayerMark` in `server/frame-stream.mjs`): `streamKind: "below"`:
+   * parent page uses this to emit a `plane: "stage"` stream plane (`streamLayers` in
+   * `src/editor/snapshotFeed.ts`), and the stage mounts it under stage root and pastes in stage
+   * coordinates; `inputSig`: input signature carried by that row in the layer table; parent page
+   * compares again against current project in store (removed immediately when project changes,
+   * without waiting for this source to receive new project and re-emit readiness).
    */
   private streamMessage(s: ChosenStream): ReadyMessage {
     return { type: "layer", clipId: s.row.topClipId, kind: "stream", key: s.resultKey, ranges: framesToRanges(this.streamReady(s)),
@@ -1416,19 +1603,25 @@ export class OnlineSnapshotSource implements SnapshotSource {
       ...(s.row.kind === "below" ? { streamKind: "below" as const, ...(s.row.inputSig ? { inputSig: s.row.inputSig } : {}) } : {}) };
   }
 
-  /** 流的清单或字节变了:记一笔、重发就绪、叫宿主重投(流平面要带上新到的字节) */
+  /**
+   * Manifest or bytes of stream changed: record a note, re-emit readiness, and ask host to re-emit
+   * (stream plane needs to carry newly arrived bytes).
+   */
   private streamChanged(): void {
     this.streamRev++;
     this.streamPlaneMemo.clear();
     if (this.stopped) return;
     this.publishLayers();
-    try { this.onFetched?.(); } catch { /* 宿主坏了 */ }
+    try { this.onFetched?.(); } catch { /* The host is broken */ }
   }
 
   /**
-   * 播放头这一窗口落在**这条流**的哪几个分段:往回 `STREAM_BEHIND_SEGMENTS` 段,往前 `PREFETCH_SEC` 秒。回 `[lo, hi, cur]`,
-   * `cur` 是播放头所在的分段号。分段号是每条流自己的(从它的第一帧起数),所以窗口按流各算各的;播放头还没到这条流、
-   * 往前这几秒也够不着它时 `hi` 是负数,这条流这一轮什么都不取。
+   * Which segments of **this stream** the playhead window falls into: `STREAM_BEHIND_SEGMENTS`
+   * segments backward, `PREFETCH_SEC` seconds forward. Returns `[lo, hi, cur]`, where `cur` is the
+   * segment number containing the playhead. Segment numbers are specific to each stream (counted from
+   * its first frame), so windows are calculated individually per stream; when the playhead has not
+   * reached this stream and these forward seconds cannot reach it either, `hi` is negative, and this
+   * stream fetches nothing in this round.
    */
   private streamWindow(row: Pick<OnlineStream, "originFrame">): [number, number, number] {
     const fps = this.map?.fps || this.playhead.fps;
@@ -1437,7 +1630,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
     return [Math.max(0, cur - STREAM_BEHIND_SEGMENTS), streamSegmentOf(g + Math.ceil(PREFETCH_SEC * fps), row.originFrame), cur];
   }
 
-  /** 取这一窗口里各条流的清单(没取过的、还没满的隔 `MANIFEST_POLL_MS` 再取) */
+  /**
+   * Fetch manifests for streams in this window (unfetched or not yet full manifests are fetched again
+   * every `MANIFEST_POLL_MS`).
+   */
   private async loadStreamWindow(now: number): Promise<void> {
     const map = this.map;
     const streams = this.streamsNow();
@@ -1465,7 +1661,8 @@ export class OnlineSnapshotSource implements SnapshotSource {
         const next = reply?.type === "content.item" && !reply.missing
           ? parseStreamManifest(reply.body, resultKey, seg, this.now())
           : parseStreamManifest(null, resultKey, seg, this.now());
-        // 内容库这一次没回(或回了个空的)而手里有:留着手里的,只记下取过的时刻
+        // Content store returned nothing this time (or returned empty) while we have it in hand: keep what
+        // is in hand, and only record the fetch timestamp
         if (!next.segments.size && prev?.segments.size) { prev.fetchedAt = this.now(); return; }
         if (!prev || prev.sig !== next.sig) changed = true;
         this.streamManifests.set(key, next);
@@ -1478,7 +1675,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
     if (changed && this.map === map && !this.stopped) this.streamChanged();
   }
 
-  /** 预取:这一窗口里各条流的分段与它们的开头文件,离播放头近的先取;已在本页的、在飞的、刚失败过的不取 */
+  /**
+   * Prefetch: segments and head files for each stream in this window, fetching those closer to the
+   * playhead first; do not fetch those already on this page, in-flight, or recently failed.
+   */
   private prefetchStreams(): void {
     const map = this.map;
     if (!map || !this.deps.assetBase()) return;
@@ -1497,9 +1697,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
       for (let n = Math.max(lo, s.row.firstSegment); n <= Math.min(hi, s.row.lastSegment); n++) {
         const hit = this.streamSegment(s, n);
         if (!hit) continue;
-        // 只贴稀疏版时:这台浏览器解不了的编码(或者还没问完)不取它的字节
+        // When only pasting sparse versions: do not fetch bytes for codecs this browser cannot decode
+        // (or has not finished querying)
         if (!this.decodable(hit.init)) continue;
-        // 往回的那一段排在往前的后面
+        // The backward segment is ordered after the forward segments
         const dist = n >= cur ? n - cur : hi - cur + (cur - n);
         want(hit.init.hash, dist);
         want(hit.seg.hash, dist);
@@ -1514,14 +1715,17 @@ export class OnlineSnapshotSource implements SnapshotSource {
     }
   }
 
-  /** 取一块流字节(`px/<hash>`,只读票据),核对哈希后放进本页内存;失败记下时刻,过一会儿再取 */
+  /**
+   * Fetch a chunk of stream bytes (`px/<hash>`, read-only ticket), verify hash and put into page
+   * memory; on failure, record timestamp and retry after a short while.
+   */
   private fetchStreamBlock(hash: string): void {
     if (this.streamBlocks.has(hash) || this.streamFlying.has(hash)) return;
     const work = new Promise<void>((resolve) => {
       this.queue.push(async () => {
         try {
           const block = await this.fetchAsset("px", hash);
-          if (!(await bytesMatchHash(block.bytes, hash))) throw new Error(`流字节与哈希对不上:${hash}`);
+          if (!(await bytesMatchHash(block.bytes, hash))) throw new Error(`Stream bytes do not match the hash: ${hash}`);
           if (this.stopped) return;
           this.stats.streamFetches++;
           this.stats.streamBytes += block.bytes.length;
@@ -1542,7 +1746,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
     this.streamFlying.set(hash, work);
   }
 
-  /** `streamPlane` 的本体:把这条流各份清单里字节已在本页的分段合成一份舞台认得的清单 */
+  /**
+   * Core of `streamPlane`: synthesizes segments from each manifest of this stream whose bytes are
+   * already on this page into a manifest recognized by the stage.
+   */
   private buildStreamPlane(key: string): { manifest: StreamManifest; blocks: Map<string, Uint8Array> } | null {
     const s = this.streamsNow().find((x) => x.resultKey === key);
     if (!s) return null;
@@ -1566,7 +1773,7 @@ export class OnlineSnapshotSource implements SnapshotSource {
         blocks.set(init.hash, initBytes);
         used = true;
       }
-      // 头(矩形上界、收紧矩形)取最近取到的那一份清单的
+      // Header (rectangle upper bound, tight rectangle) is taken from the most recently fetched manifest
       if (used && state.fetchedAt >= headerAt) { header = state.header; headerAt = state.fetchedAt; }
     }
     if (!header || !blocks.size) return null;
@@ -1582,7 +1789,7 @@ export class OnlineSnapshotSource implements SnapshotSource {
     let timer: ReturnType<typeof setTimeout>;
     return Promise.race([
       this.deps.request(msg, ms),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("内容库请求超时")), ms); }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Content store request timed out")), ms); }),
     ]).finally(() => clearTimeout(timer));
   }
 
@@ -1596,7 +1803,8 @@ export class OnlineSnapshotSource implements SnapshotSource {
     if (this.projectId !== projectId || this.stopped) return;
     this.stats.mapFetches++;
     if (reply?.type !== "content.item" || reply.missing) {
-      // 内容库明确回「没有」:渲染节点还没写过层表,这个项目一层产物都没有
+      // Content store explicitly returned "none": render node has not written the layer table yet, and
+      // this project has no layer artifacts at all
       if (reply?.type === "content.item") this.mapKnown = true;
       return;
     }
@@ -1612,19 +1820,22 @@ export class OnlineSnapshotSource implements SnapshotSource {
     for (const old of prevLayers) {
       const id = `${old.kind}:${old.clipId}`;
       if (alive.has(id)) continue;
-      // 这张卡不在层表里了(改判轻、删了、这一档不认了):发一条空层,把页面表里的旧区间撤掉
+      // Card is no longer in layer table (reclassified as light, deleted, tier unrecognized): emit an
+      // empty layer to remove stale ranges in the page table
       this.emitted.delete(id);
       this.emit({ type: "layer", clipId: old.clipId, kind: old.kind, key: old.key, ranges: [] });
     }
     this.noteStale();
     this.streamRev++;
     this.streamPlaneMemo.clear();
-    // 换了键的层(重渲之后):就绪区间按新键重算、全量发;新键的清单还没到时区间是空的,页面按兜底顺序显示占位
+    // Layers with changed keys (after re-render): ready ranges recomputed by new key and emitted in
+    // full; ranges are empty when manifests for new key have not arrived yet, and page displays
+    // placeholders in fallback order
     this.publishLayers();
     this.coverageChanged();
   }
 
-  /** 播放头这一窗口(前后各 `PREFETCH_SEC` 秒)的全局帧区间 */
+  /** Global frame range of playhead window (`PREFETCH_SEC` seconds both before and after) */
   private windowFrames(): [number, number] {
     const fps = this.map?.fps || this.playhead.fps;
     const g = Math.max(0, Math.floor(this.playhead.t * fps + 1e-6));
@@ -1647,7 +1858,8 @@ export class OnlineSnapshotSource implements SnapshotSource {
         wanted.push({ seg, key });
       }
     }
-    // 整段覆盖(`coverageLayer` 点名的层):窗口之外的段也取,慢一点、一轮有上限
+    // Full clip coverage (layers designated by `coverageLayer`): segments outside window are also
+    // fetched, slower, with a per-round cap
     let extra = 0;
     for (const layer of this.deps.coverageLayer ? this.layers() : []) {
       if (!this.deps.coverageLayer!(layer.clipId)) continue;
@@ -1704,7 +1916,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
     }
   }
 
-  /** 预取:这一窗口里当前可见的重层、这一档有块的帧,离播放头近的先取;已在 L2 里的不再请求 */
+  /**
+   * Prefetch: visible heavy layers in this window with chunked frames in this tier, fetching those
+   * closer to the playhead first; chunks already in L2 will not be requested again.
+   */
   private prefetchWindow() {
     const map = this.map;
     if (!map || !this.deps.assetBase()) return;
@@ -1720,7 +1935,8 @@ export class OnlineSnapshotSource implements SnapshotSource {
           if (!hit) continue;
           const id = `snap/${hit.hash}`;
           if (this.store?.hasBlock(id)) {
-            // 块已在库里(同一内容别的层取过、或上次打开取过):不请求,补记这一层的就绪
+            // Chunk already in store (fetched by another layer for same content, or on last open): do not
+            // request, backfill readiness for this layer
             if (!this.inStore.get(layer.resultKey)?.has(local)) void this.store.putRange(layer.resultKey, local, local).catch(() => {});
             continue;
           }
@@ -1736,12 +1952,12 @@ export class OnlineSnapshotSource implements SnapshotSource {
     for (const w of wanted) {
       if (seen.has(w.hash)) continue;
       seen.add(w.hash);
-      if (this.tier === "original") void this.fetchOriginal(w.hash, w.layer, w.local).catch(() => { /* 下一轮再取 */ });
-      else void this.fetchSmall(w.hash).catch(() => { /* 下一轮再取 */ });
+      if (this.tier === "original") void this.fetchOriginal(w.hash, w.layer, w.local).catch(() => { /* Fetch in the next round */ });
+      else void this.fetchSmall(w.hash).catch(() => { /* Fetch in the next round */ });
     }
   }
 
-  /** 从素材服务取一块(凭只读票据);超时、中止都算失败 */
+  /** Fetch a chunk from asset service (with read-only ticket); both timeout and abort count as failure */
   private async fetchAsset(ns: "px" | "snap", hash: string, signal?: AbortSignal): Promise<{ bytes: Uint8Array; type: string }> {
     const controller = new AbortController();
     const abort = () => controller.abort();
@@ -1753,17 +1969,17 @@ export class OnlineSnapshotSource implements SnapshotSource {
       return await Promise.race([
         (async () => {
           const base = this.deps.assetBase();
-          if (!base) throw new Error("还没有远程素材服务");
+          if (!base) throw new Error("There is no remote asset service yet");
           const headers = await this.deps.authHeaders();
           const f = this.deps.fetch ?? fetch;
           const res = await f(`${base.replace(/\/+$/, "")}/${ns}/${hash}`, { headers, signal: controller.signal, cache: "force-cache" });
-          if (!res.ok) throw Object.assign(new Error(`取不到 ${ns}/${hash}:${res.status}`), { status: res.status });
+          if (!res.ok) throw Object.assign(new Error(`Could not fetch ${ns}/${hash}: ${res.status}`), { status: res.status });
           const bytes = new Uint8Array(await res.arrayBuffer());
           const fallback = ns === "px" ? "image/webp" : "text/html";
           const type = (res.headers.get("content-type") || fallback).split(";")[0].trim() || fallback;
           return { bytes, type };
         })(),
-        new Promise<never>((_, reject) => { deadline = setTimeout(() => { controller.abort(); reject(new Error("素材请求超时")); }, ms); }),
+        new Promise<never>((_, reject) => { deadline = setTimeout(() => { controller.abort(); reject(new Error("Asset request timed out")); }, ms); }),
       ]);
     } finally {
       if (deadline !== null) clearTimeout(deadline);
@@ -1783,13 +1999,13 @@ export class OnlineSnapshotSource implements SnapshotSource {
             block = await this.fetchAsset("px", hash, signal);
             this.stats.smallFetches++;
             this.stats.smallBytes += block.bytes.length;
-            // 只贴稀疏版时的 L2 只存小尺寸(C10 契约第 4 节)
+            // When only pasting sparse versions, L2 only stores small size (C10 contract section 4)
             if (this.store) void this.store.putBlock(`px/${hash}`, block.bytes, block.type).catch(() => {});
           }
           const url = `data:${block.type || "image/webp"};base64,${bytesToBase64(block.bytes)}`;
           this.cache.set(hash, url);
           resolve(url);
-          try { this.onFetched?.(); } catch { /* 宿主坏了 */ }
+          try { this.onFetched?.(); } catch { /* The host is broken */ }
         } catch (e) {
           this.stats.errors++;
           reject(e);
@@ -1802,8 +2018,9 @@ export class OnlineSnapshotSource implements SnapshotSource {
   }
 
   /**
-   * 原尺寸(C10 契约第 5 节「流程」):可见范围的重层 → 按层表取清单 → 缺的块凭只读票据从素材服务拉 → 写 L2 →
-   * `ranges` 就绪 → 可见舞台下一拍换上。块在 L2 里就不请求。
+   * Original size (C10 contract section 5 "Flow"): heavy layers in visible range → fetch manifests by
+   * layer table → pull missing chunks from asset service with read-only tickets → write to L2 →
+   * `ranges` ready → visible stage swaps in on next tick. Chunks in L2 are not requested.
    */
   private fetchOriginal(hash: string, layer: OnlineLayer, localFrame: number, signal?: AbortSignal): Promise<string> {
     const id = `snap/${hash}`;
@@ -1822,10 +2039,11 @@ export class OnlineSnapshotSource implements SnapshotSource {
           }
           const html = textDecoder ? textDecoder.decode(block.bytes) : String.fromCharCode(...block.bytes);
           this.cache.set(id, html);
-          // 写入即就绪:这一层这一帧记进 ranges;L2 通知之后本来源重发就绪(onStoreReady)
+          // Ready on write: record this frame of this layer into ranges; after L2 notification, this source
+          // re-emits readiness (onStoreReady)
           if (this.store && !this.inStore.get(layer.resultKey)?.has(localFrame)) await this.store.putRange(layer.resultKey, localFrame, localFrame).catch(() => {});
           resolve(html);
-          try { this.onFetched?.(); } catch { /* 宿主坏了 */ }
+          try { this.onFetched?.(); } catch { /* The host is broken */ }
         } catch (e) {
           this.stats.errors++;
           reject(e);
@@ -1846,7 +2064,10 @@ export class OnlineSnapshotSource implements SnapshotSource {
   }
 }
 
-/** 此刻在用的在线来源(导出前释放它的小尺寸缓存:契约第 11.1 节);没有给 null */
+/**
+ * Online source currently in use (release its small-size cache before export: contract section 11.1);
+ * returns null if none.
+ */
 let activeOnline: OnlineSnapshotSource | null = null;
 export function setActiveOnlineSource(src: OnlineSnapshotSource | null): void {
   activeOnline = src;

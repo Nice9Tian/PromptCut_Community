@@ -1,32 +1,43 @@
 /**
- * 导出专用的逐帧位图(`../export-frames.mjs`)在节点编排这一层要的几样:认任务、认计划、切分给的名次、计划完成时回给页面的索引。
- * 纯函数,不引文件系统、不引 `node:crypto`(`local-node.mjs`、`split.mjs` 引它)。
+ * Items needed by export-dedicated frame-by-frame bitmaps (`../export-frames.mjs`) at the node
+ * arrangement layer: task identification, plan identification, rank assigned by splitting, and
+ * index returned to the page upon plan completion.
+ * Pure function, does not import the file system or `node:crypto` (`local-node.mjs` and
+ * `split.mjs` import it).
  */
 
-/** 导出位图任务的名次:用户正等着导出,排在锚帧(50)、稀疏流(30)、普通任务(10)前面 */
+/** Rank of export bitmap tasks: user is waiting for export, ahead of anchor frames (50), sparse streams (30), normal tasks (10) */
 export const EXPORT_FRAMES_PRIORITY = 60;
-/** 计划完成时回给页面的索引的版本 */
+/** Version of the index returned to the page upon plan completion */
 export const EXPORT_INDEX_VERSION = 1;
 
 const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-/** 这个任务(入站任务、TaskView、sink 收到的引用)是不是导出位图任务:流任务,`input.exportFrames` 为真 */
+/** Whether task (inbound, TaskView, ref received by sink) is export bitmap task: stream task, truthy `input.exportFrames` */
 export const isExportFramesTask = task => isObj(task) && task.kind === 'stream' && isObj(task.input) && task.input.exportFrames === true;
 
-/** 清单计划是不是只为导出发的(`input.exportOnly: true`):只切导出位图任务,不切快照、不切轨道流、不写层表 */
+/** Whether manifest plan is export-only (`input.exportOnly: true`): splits only export bitmap tasks, no snapshots, no track streams, no layer tables */
 export const isExportOnlyPlan = task => isObj(task) && task.kind === 'plan' && isObj(task.input) && task.input.exportOnly === true;
 
 /**
- * 只为导出的计划完成时回给页面的索引(随 `task.complete` 的 `result.exportIndex`,页面从 `task.done` 读):
+ * Index returned to the page when an export-only plan completes (sent with `result.exportIndex`
+ * of `task.complete`; the page reads it from `task.done`):
  *
  *   { v, projectRev, streams: [{ clipId, kind, plane, solo?, resultKey, envFingerprint, originFrame, lastFrame, lastSegment, segmentsPerTask,
  *                                fps, rect, offset, inputSig?, tasks }], unsupported: [{ clipId, reason }] }
  *
- * `tasks`:这条流的每一份导出位图任务原样带上(发布时的那一份)。页面等清单的时候隔一会儿把还没到的任务原样再发布一次:
- * 回包里的状态告诉它任务失败了没有(失败的不会再有通知);任务已经不在了(页面断线太久,订阅被清、任务被删)就此重建。
+ * `tasks`: Carries each export bitmap task for this stream as-is (the copy from publishing).
+ * While waiting for the manifest, the page re-publishes tasks that have not arrived yet as-is at
+ * intervals: the status in the response indicates whether the task has failed (failed tasks receive
+ * no further notifications); if the task no longer exists (the page was disconnected too long,
+ * subscriptions cleared, tasks deleted), it is rebuilt accordingly.
  *
- * `streams` 只列任务全部发布成功的那几条(每条流的每一段任务都在 `published` 里);没发全的记进 `unsupported`(`publish-failed`)。
- * `projectRev` 是切分实际按的那一版(项目往前走了时不是计划指的那一版);页面拿 `inputSig` 和自己手里那一版项目算的比。
+ * `streams` only lists streams whose tasks were all published successfully (every segment task for
+ * each stream is in `published`); those not fully published are recorded in `unsupported`
+ * (`publish-failed`).
+ * `projectRev` is the version actually used for splitting (when the project has advanced, it is not
+ * the version specified by the plan); the page compares `inputSig` against the value computed from
+ * its own project version.
  */
 export function exportIndexOf({ exportStreams = [], exportUnsupported = [], published = [], projectRev = null, segmentsPerTask }) {
   const per = Math.max(1, Math.floor(Number(segmentsPerTask) || 0) || 8);

@@ -17,9 +17,12 @@ interface Params extends HudParams {
 
 function StatProofCard({ params }: CardProps<Params>) {
   const v = useMotionValue(0);
-  // 数字直接同步写进 DOM,不走 React state:导出时每帧截图前 React 的异步提交会和截图抢跑,
-  // 实测 10~15% 的帧数字停在上一帧的值,导两遍不一样。同步写就落在 Motion 的同一次 rAF 里。
-  // 写法照 magicui/vendor/number-ticker.tsx;初值写死在 JSX 里,免得重挂载后首帧空一下。
+  // The number is written into the DOM synchronously, not through React state: during export React's
+  // asynchronous commit races with the screenshot before each frame, and in testing 10~15% of frames
+  // had the number stuck at the previous frame's value, so two exports differed. Writing synchronously
+  // lands it in the same rAF as Motion's.
+  // The approach follows magicui/vendor/number-ticker.tsx; the initial value is hardcoded in the JSX,
+  // so the first frame after a remount is not blank for a moment.
   const numRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -77,12 +80,13 @@ function StatProofCard({ params }: CardProps<Params>) {
 
 export const statProof: CardDef<Params> = {
   id: "stat-proof",
-  name: "数字实证",
-  description: "巨型数字滚动及中英注脚",
-  useWhen: "口播里出现要当证据用的核心数字(+80%、3 倍、2 万)时,用巨型数字配前后缀、中英引导字和中英数据来源注脚做实证版式。数值取整显示。只想要机械翻牌滚轮手感的大整数计数用 odometer。",
-  tags: ["数字","实证","数据","注脚"],
+  name: "Stat proof",
+  description: "Giant number roll-up with bilingual footnotes",
+  useWhen: "When the narration cites a key number as evidence (+80%, 3x, 20,000), use a giant number with prefix/suffix, bilingual lead-in text and a bilingual data-source footnote for an evidence layout. Values are shown rounded. For large integer counts that only need a mechanical flip-wheel feel, use odometer.",
+  tags: ["number","evidence","data","footnote"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,
@@ -97,19 +101,19 @@ export const statProof: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "kicker", label: "英文引导字", type: "text" },
-    { key: "kickerZh", label: "中文引导字", type: "text" },
-    { key: "value", label: "目标数值", type: "number" },
-    { key: "prefix", label: "前缀", type: "text" },
-    { key: "suffix", label: "后缀", type: "text" },
-    { key: "footEn", label: "英文注脚", type: "text" },
-    { key: "footZh", label: "中文注脚", type: "text" },
-    { key: "countMs", label: "动画时长(ms)", type: "number", min: 100, max: 1800, step: 100 },
+    { key: "kicker", label: "English lead-in text", type: "text" },
+    { key: "kickerZh", label: "Chinese lead-in text", type: "text" },
+    { key: "value", label: "Target value", type: "number" },
+    { key: "prefix", label: "Prefix", type: "text" },
+    { key: "suffix", label: "Suffix", type: "text" },
+    { key: "footEn", label: "English footnote", type: "text" },
+    { key: "footZh", label: "Chinese footnote", type: "text" },
+    { key: "countMs", label: "Animation duration (ms)", type: "number", min: 100, max: 1800, step: 100 },
   ],
   parts: [
-    { id: "title", label: "引导字", role: "group", params: ["kicker", "kickerZh"], enterMs: 0, settleMs: 600 },
-    { id: "value", label: "数值", role: "text", params: ["value", "prefix", "suffix", "countMs"], enterMs: 0, settleMs: 1200 },
-    { id: "foot", label: "注脚", role: "group", params: ["footEn", "footZh"], enterMs: 400, settleMs: 1200 },
+    { id: "title", label: "Lead-in text", role: "group", params: ["kicker", "kickerZh"], enterMs: 0, settleMs: 600 },
+    { id: "value", label: "Value", role: "text", params: ["value", "prefix", "suffix", "countMs"], enterMs: 0, settleMs: 1200 },
+    { id: "foot", label: "footnote", role: "group", params: ["footEn", "footZh"], enterMs: 400, settleMs: 1200 },
   ],
   lifecycle: { settleMs: 1200, after: "hold", exit: ["fade"] },
   Component: StatProofCard,

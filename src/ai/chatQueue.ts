@@ -2,14 +2,16 @@ import { useSyncExternalStore } from "react";
 import type { ChatAttachment } from "./types.ts";
 
 /**
- * 每个 AI 分页一份的输入队列:Agent 正在跑时用户又交了一句,就先排在这里,
- * 这一轮真正落定后由 useAiChat 发出队首(见 useAiChat 里的 pumpQueue)。
+ * An input queue per AI tab: when the user submits another message while the Agent is running,
+ * it is queued here first; after this round has truly settled, useAiChat dispatches the head
+ * of the queue (see pumpQueue in useAiChat).
  *
- * 只放内存,不持久化:队列是「这会儿打算接着说的话」,刷新页面或关掉分页就不该还在,
- * 否则一打开编辑器就有几句陈年旧话自己发出去。
+ * Kept only in memory, not persisted: the queue represents "what you intend to say next right
+ * now"; it should not remain after refreshing the page or closing the tab, otherwise reopening
+ * the editor would automatically send several stale messages.
  *
- * 分两层:下面的 withXxx 是不碰任何全局状态的纯函数(单测直接测它们);
- * 再往下是按分页 id 存的模块级 store 和 React hook。
+ * Two layers: withXxx below are pure functions that touch no global state (unit tests test them
+ * directly); further below are module-level stores keyed by tab id and React hooks.
  */
 
 export interface QueuedItem {
@@ -22,35 +24,36 @@ export interface QueuedItem {
 export interface QueueState {
   items: QueuedItem[];
   /**
-   * 用户点了「停止」(或回退打断了运行)之后队列暂停:一轮结束也不自动发,
-   * 等用户点「继续」。队列清空时自动解除。
+   * Queue pauses after the user clicks "Stop" (or a rollback interrupts the run): does not send
+   * automatically when a round finishes, waiting for user to click "Continue". Automatically
+   * cleared when the queue is emptied.
    */
   paused: boolean;
 }
 
 export const EMPTY_QUEUE: QueueState = Object.freeze({ items: Object.freeze([]) as unknown as QueuedItem[], paused: false });
 
-/* ---------------- 纯函数核心 ---------------- */
+/* ---------------- Pure function core ---------------- */
 
-/** 追加到队尾 */
+/** Append to the end of the queue */
 export function withEnqueued(s: QueueState, item: QueuedItem): QueueState {
   return { ...s, items: [...s.items, item] };
 }
 
-/** 删掉某一条;删空了顺手解除暂停 */
+/** Delete an item; clear pause when emptied */
 export function withRemoved(s: QueueState, id: string): QueueState {
   if (!s.items.some((x) => x.id === id)) return s;
   const items = s.items.filter((x) => x.id !== id);
   return { items, paused: items.length ? s.paused : false };
 }
 
-/** 改某一条的文字 / 附件 */
+/** Modify text / attachments of an item */
 export function withUpdated(s: QueueState, id: string, patch: Partial<Pick<QueuedItem, "text" | "attachments">>): QueueState {
   if (!s.items.some((x) => x.id === id)) return s;
   return { ...s, items: s.items.map((x) => (x.id === id ? { ...x, ...patch } : x)) };
 }
 
-/** 取出队首:返回 [队首, 剩下的队列];空队列返回 [undefined, 原样] */
+/** Dequeue head: returns [head, remaining queue]; empty queue returns [undefined, as is] */
 export function withShifted(s: QueueState): [QueuedItem | undefined, QueueState] {
   if (!s.items.length) return [undefined, s];
   const [head, ...rest] = s.items;
@@ -58,12 +61,12 @@ export function withShifted(s: QueueState): [QueuedItem | undefined, QueueState]
 }
 
 export function withPaused(s: QueueState, paused: boolean): QueueState {
-  // 空队列没有「暂停」可言
+  // An empty queue cannot be "paused"
   const next = paused && s.items.length > 0;
   return s.paused === next ? s : { ...s, paused: next };
 }
 
-/* ---------------- 按分页存的 store ---------------- */
+/* ---------------- Store per tab ---------------- */
 
 const queues = new Map<string, QueueState>();
 const listeners = new Set<() => void>();
@@ -96,7 +99,7 @@ export function enqueue(tabId: string, input: { text: string; attachments?: Chat
   return item;
 }
 
-/** 删掉一条,返回被删的那条(没有就是 undefined) */
+/** Delete an item and return the deleted item (or undefined if not found) */
 export function remove(tabId: string, id: string): QueuedItem | undefined {
   const s = getQueueState(tabId);
   const hit = s.items.find((x) => x.id === id);
@@ -126,7 +129,7 @@ export function setPaused(tabId: string, paused: boolean): void {
   commit(tabId, withPaused(getQueueState(tabId), paused));
 }
 
-/** 任意分页的队列变了都会通知;useSyncExternalStore 按快照引用判断自己那一页变没变 */
+/** Notifies whenever any tab queue changes; useSyncExternalStore determines if its own tab changed by snapshot reference */
 export function subscribe(fn: () => void): () => void {
   listeners.add(fn);
   return () => { listeners.delete(fn); };
@@ -136,7 +139,7 @@ export function useQueue(tabId: string): QueueState {
   return useSyncExternalStore(subscribe, () => getQueueState(tabId), () => getQueueState(tabId));
 }
 
-/** 只给测试用 */
+/** For testing only */
 export function _resetQueues(): void {
   queues.clear();
   counter = 0;

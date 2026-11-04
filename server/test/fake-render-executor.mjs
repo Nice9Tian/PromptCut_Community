@@ -1,43 +1,53 @@
 /**
- * 仅供测试与进程内集成，生产代码不得引用。
+ * For testing and in-process integration only; production code must not import this.
  *
- * 可编排的假执行器（契约 `docs/plan/render-queue-contract.md` D.1 的 `executor`、D.3），外加它用的假时钟。
+ * Scriptable fake executor supporting arrangement (contract `docs/plan/render-queue-contract.md`
+ * D.1 `executor`, D.3), plus the fake clock it uses.
  *
- *   executor.plan(planTask, { signal })               → Promise<PlanContext>（测试给定）
+ *   executor.plan(planTask, { signal })               → Promise<PlanContext> (test-provided)
  *   executor.render(task, { signal, progress })       → Promise<artifacts>
  *
- * 所有等待都按注入的假时钟推进，不用真实计时器：`createTimerClock` 的 `sleep(ms, signal)` 在测试调
- * `advance` / `set` 把时钟推过到期时刻时兑现；`signal` 中止时立即以 `AbortError` 拒绝。
+ * All waits advance according to the injected fake clock, without using real timers:
+ * `createTimerClock`'s `sleep(ms, signal)` resolves when the test calls `advance` / `set` to advance
+ * the clock past expiration time; rejected immediately with `AbortError` when `signal` aborts.
  *
- * 一个执行器由多个节点共用：`forNode(nodeId)` 给出绑定了节点身份的 D.1 接口，调用记录里带 `nodeId`，
- * 编排规则也可以按节点区分。编排（`on(match, behavior)`，按添加顺序取第一条匹配且还有次数的规则）：
+ * An executor is shared by multiple nodes: `forNode(nodeId)` provides the D.1 interface bound
+ * to node identity; call records include `nodeId`, and arrangement rules can also be
+ * distinguished by node. Arrangement (`on(match, behavior)`, picks the first matching rule in
+ * addition order that still has remaining runs):
  *
- *   match     任务 id（字符串）| RegExp（对 id）| (task, { nodeId, call }) => boolean（call 是这个 id 第几次 render，从 1 起）
+ *   match     task id (string) | RegExp (on id) | (task, { nodeId, call }) => boolean (call is the
+ *             1-based render count for this id)
  *   behavior  {
- *     durationMs,          耗时（缺省按构造参数，1000）
- *     progressEveryMs,     进度步长：每隔这么久报一次进度（缺省 250），报的是已做完的帧数
- *     fail: { retryable = true, message = 'render-failed', afterMs },   到时抛错；retryable === false 时错误带 retryable: false
- *     hang: true | { afterProgress: n },   卡死：先报 n 次进度（缺省 0），然后永不返回、也不再报进度，
- *                                          而且不理会中止——直到测试调 release()，那时照常返回产物（「迟到的结果」）
- *     times,               这条规则用几次（缺省不限）
+ *     durationMs,          duration (defaults to constructor argument, 1000)
+ *     progressEveryMs,     progress step: reports progress at this interval (defaults to 250),
+ *                          reporting completed frame count
+ *     fail: { retryable = true, message = 'render-failed', afterMs },   throws when due; when
+ *                          retryable === false, error carries retryable: false
+ *     hang: true | { afterProgress: n },   hang: first reports progress n times (defaults to 0),
+ *                          then never returns and stops reporting progress, while ignoring
+ *                          aborts: until test calls release(), at which point artifacts are
+ *                          returned as usual ("late result")
+ *     times,               how many times this rule applies (defaults to unlimited)
  *   }
  *
- * 没有规则匹配时按缺省耗时、缺省步长正常完成。
+ * When no rule matches, completes normally with default duration and default step.
  */
 
-/** 测试的起始时刻（与 fake-render-queue-env.mjs 的 T0 相同，不从 0 起）。 */
+/** Starting time for tests (same as T0 in fake-render-queue-env.mjs, does not start from 0). */
 export const T0 = 1_000_000;
 
 function abortError(signal) {
   const reason = signal?.reason;
-  const error = new Error(`aborted${reason instanceof Error ? `：${reason.message}` : ''}`);
+  const error = new Error(`aborted${reason instanceof Error ? `: ${reason.message}` : ''}`);
   error.name = 'AbortError';
   return error;
 }
 
 /**
- * 带定时器的假时钟：`now()`、`advance(ms)`、`set(t)`、`sleep(ms, signal)`。
- * 推进时钟时按到期先后兑现到期的 `sleep`（兑现后的续体在微任务里跑，测试要让出一次事件循环才看得到）。
+ * Fake clock with timer: `now()`, `advance(ms)`, `set(t)`, `sleep(ms, signal)`.
+ * Advancing the clock resolves expired `sleep` calls in expiration order (resolved continuations
+ * run in microtasks; tests need to yield the event loop once to observe them).
  */
 export function createTimerClock(start = T0) {
   let t = start;
@@ -73,12 +83,12 @@ export function createTimerClock(start = T0) {
         timers.push(timer);
       });
     },
-    /** 还没到期的 sleep 个数 */
+    /** Count of unexpired sleep calls */
     pendingTimers: () => timers.length,
   };
 }
 
-/** 任务的帧数：快照是本地帧数，轨道流每段 15 帧（设计第 2 节）。 */
+/** Task frame count: snapshots use local frame count; track stream is 15 frames per segment (design Section 2). */
 function framesOf(task) {
   const r = task?.range;
   if (!r) return 1;
@@ -100,7 +110,7 @@ export function createFakeExecutor({
   durationMs = 1_000,
   progressEveryMs = 250,
 } = {}) {
-  if (!clock || typeof clock.sleep !== 'function') throw new TypeError('createFakeExecutor：clock 须是 createTimerClock() 的实例');
+  if (!clock || typeof clock.sleep !== 'function') throw new TypeError('createFakeExecutor: clock must be an instance of createTimerClock()');
   const rules = [];
   const calls = [];
   const hung = [];
@@ -170,7 +180,7 @@ export function createFakeExecutor({
             await clock.sleep(every, signal);
             report(Math.min(total, i));
           }
-          // 卡死：不报进度，也不理会中止，直到测试 release()
+          // Hang: does not report progress and ignores abort, until test calls release()
           call.state = 'hung';
           await new Promise(resolve => hung.push({ call, resolve }));
           call.late = true;
@@ -204,15 +214,15 @@ export function createFakeExecutor({
   }
 
   return {
-    /** 绑定节点身份的 D.1 执行器接口 */
+    /** D.1 executor interface bound to node identity */
     forNode: bind,
-    /** 加一条编排规则，返回规则本身（`hits` 记命中次数） */
+    /** Adds an arrangement rule and returns the rule itself (`hits` records hit count) */
     on(match, behavior = {}) {
       const rule = { match, behavior, remaining: behavior.times ?? Infinity, hits: 0 };
       rules.push(rule);
       return rule;
     },
-    /** 放开卡死的调用（可按 `id` / `nodeId` 筛），它们随后照常返回产物。返回放开的个数。 */
+    /** Releases hung calls (filterable by `id` / `nodeId`), which then return artifacts as usual. Returns released count. */
     release({ id, nodeId } = {}) {
       let n = 0;
       for (let i = hung.length - 1; i >= 0; i--) {
@@ -224,15 +234,15 @@ export function createFakeExecutor({
       }
       return n;
     },
-    /** 调用记录（可按 kind / id / nodeId 筛），按开始先后 */
+    /** Call records (filterable by kind / id / nodeId), in start order */
     calls({ kind, id, nodeId } = {}) {
       return calls.filter(c => (kind === undefined || c.kind === kind) && (id === undefined || c.id === id)
         && (nodeId === undefined || c.nodeId === nodeId)).map(c => ({ ...c, progress: [...c.progress] }));
     },
     renderCount: id => calls.filter(c => c.kind === 'render' && c.id === id).length,
-    /** 此刻卡着的调用 */
+    /** Currently hung calls */
     hung: () => hung.map(h => ({ ...h.call, progress: [...h.call.progress] })),
-    /** progress 回调抛出的异常 */
+    /** Exceptions thrown by progress callbacks */
     errors: () => errors.slice(),
   };
 }

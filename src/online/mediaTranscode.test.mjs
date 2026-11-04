@@ -7,7 +7,7 @@ test("smallVideoDimensions: scales proportionally to fit within 800×600 with bo
   // 1080p (1920×1080) -> 800×450
   assert.deepEqual(smallVideoDimensions(1920, 1080), { width: 800, height: 450 });
 
-  // 竖屏 9:16 (1080×1920) -> 338×600 或 336×600，两者均 <= 800×600 且偶数
+  // Vertical 9:16 (1080×1920) -> 338×600 or 336×600, both <= 800×600 and even
   const v = smallVideoDimensions(1080, 1920);
   assert.ok(v.width <= 800 && v.height <= 600);
   assert.equal(v.width % 2, 0);
@@ -17,16 +17,16 @@ test("smallVideoDimensions: scales proportionally to fit within 800×600 with bo
   // 4:3 (1600×1200) -> 800×600
   assert.deepEqual(smallVideoDimensions(1600, 1200), { width: 800, height: 600 });
 
-  // 本身较小 (640×480 <= 800×600): 不放大
+  // Already small (640×480 <= 800×600): do not upscale
   assert.deepEqual(smallVideoDimensions(640, 480), { width: 640, height: 480 });
 
-  // 奇数尺寸 (801×599) -> 偶数 (800×598)
+  // Odd dimensions (801×599) -> even (800×598)
   const odd = smallVideoDimensions(801, 599);
   assert.ok(odd.width <= 800 && odd.height <= 600);
   assert.equal(odd.width % 2, 0);
   assert.equal(odd.height % 2, 0);
 
-  // 异常尺寸保护
+  // Abnormal dimension protection
   const fallback = smallVideoDimensions(0, -100);
   assert.equal(fallback.width, 800);
   assert.equal(fallback.height % 2, 0);
@@ -40,7 +40,7 @@ test("Sha256 & sha256Blob: bit-for-bit identical to node:crypto results", async 
     crypto.randomBytes(64).toString("hex"),
     crypto.randomBytes(127).toString("hex"),
     crypto.randomBytes(256).toString("hex"),
-    crypto.randomBytes(1024 * 1024).toString("hex"), // 1MB 文本
+    crypto.randomBytes(1024 * 1024).toString("hex"), // 1MB text
   ];
 
   for (const text of cases) {
@@ -50,7 +50,7 @@ test("Sha256 & sha256Blob: bit-for-bit identical to node:crypto results", async 
     assert.equal(actual, expected, `Hash mismatch: text length = ${text.length}`);
   }
 
-  // 二进制分块数据
+  // Binary chunked data
   const binary = crypto.randomBytes(5 * 1024 * 1024 + 1234); // 5MB+
   const expectedBin = crypto.createHash("sha256").update(binary).digest("hex");
   const actualBin = await sha256Blob(new Blob([binary]));
@@ -59,7 +59,7 @@ test("Sha256 & sha256Blob: bit-for-bit identical to node:crypto results", async 
 
 test("transcodeVideoSmall: without VideoEncoder, downgrades gracefully and returns null, no throw", async () => {
   const dummyBlob = new Blob([crypto.randomBytes(100)], { type: "video/mp4" });
-  // 在未注入 WebCodecs 的 Node 环境下直接运行
+  // Run directly in a Node environment without injected WebCodecs
   const result = await transcodeVideoSmall(dummyBlob, {
     env: { VideoEncoder: undefined, VideoFrame: undefined },
   });
@@ -98,7 +98,7 @@ test("transcodeVideoSmall: normal WebCodecs + mp4Mux simulation produces a valid
     readyState: 4,
     videoWidth: 1920,
     videoHeight: 1080,
-    duration: 0.1, // 约 2-3 帧
+    duration: 0.1, // About 2-3 frames
     currentTime: 0,
     addEventListener(event, cb) {
       if (event === "loadedmetadata" || event === "seeked") setTimeout(cb, 5);
@@ -106,7 +106,7 @@ test("transcodeVideoSmall: normal WebCodecs + mp4Mux simulation produces a valid
     removeEventListener() {},
   };
 
-  // 构造标准 avcC (AVCDecoderConfigurationRecord)
+  // Construct standard avcC (AVCDecoderConfigurationRecord)
   const avcC = new Uint8Array([
     1, 0x64, 0, 0x28, 0xff, 0xe1, 0, 10,
     0x27, 0x64, 0, 0x28, 0xac, 0x2b, 0x40, 0x3c, 0x1, 0x13,
@@ -125,7 +125,7 @@ test("transcodeVideoSmall: normal WebCodecs + mp4Mux simulation produces a valid
     configure() {}
     encode(frame, opts) {
       encodedCount++;
-      const sample = new Uint8Array([0, 0, 0, 5, 0x65, 1, 2, 3, 4]); // 4 字节前缀 + NAL
+      const sample = new Uint8Array([0, 0, 0, 5, 0x65, 1, 2, 3, 4]); // 4-byte prefix + NAL
       const meta = encodedCount === 1 ? { decoderConfig: { codec: "avc1.640028", description: avcC } } : {};
       this.init.output({
         byteLength: sample.length,

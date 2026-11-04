@@ -1,11 +1,11 @@
 export const partsTools = [
   {
     name: "list_parts",
-    description: "列出**部件库**里可用的部件(组合卡的零件:标题、要点列表、环形指标、排行条、Lottie……)。不带参数返回摘要(id、name、description、useWhen 什么时候用、role、tags、参数名列表),带 partId 再调一次拿完整 controls / defaults / defaultFrame。部件只能放进组合卡(cardId \"composite\"):add_composite 建卡时一次给 parts,或建完用 add_part 逐个加。",
+    description: "List the parts available in the **parts library** (the components of composite cards: title, bullet list, ring metric, ranking bar, Lottie...). Without arguments it returns a summary (id, name, description, useWhen for when to use it, role, tags, list of parameter names); call again with partId to get the full controls / defaults / defaultFrame. Parts can only be placed in a composite card (cardId \"composite\"): give parts all at once when creating the card with add_composite, or add them one by one with add_part after creating it.",
     inputSchema: {
       type: "object",
       properties: {
-        partId: { type: "string", description: "只要这一个部件的完整 schema" },
+        partId: { type: "string", description: "Only the full schema of this one part" },
         detail: { type: "string", enum: ["summary", "full"] }
       }
     },
@@ -13,14 +13,14 @@ export const partsTools = [
   },
   {
     name: "add_composite",
-    description: "在时间轴上加一张**组合卡**:由部件库里的部件自由搭出来的卡,每个部件有自己的框(相对卡的画布,默认 1920×1080)、参数和进场时机 enterMs。parts 可以一次给全(每项 { partId, params?, frame?, enterMs?, label?, children? }),也可以先建空的再 add_part。返回新建 clip 的封装(get_clip 的格式,parts 里每个实例带 id、画面位置 world 和落定时刻)、look 和 timeline。之后改它用 add_part / set_part / remove_part / move_part,或 set_clip 整棵写回。",
+    description: "Add a **composite card** to the timeline: a card freely assembled from parts in the parts library; each part has its own box (relative to the card's canvas, default 1920×1080), parameters and entrance timing enterMs. parts can be given all at once (each item { partId, params?, frame?, enterMs?, label?, children? }), or you can create an empty card first and then use add_part. Returns the wrapper of the new clip (the get_clip format; each instance in parts carries id, on-screen position world and settle time), look and timeline. Afterwards edit it with add_part / set_part / remove_part / move_part, or write the whole tree back with set_clip.",
     inputSchema: {
       type: "object",
       properties: {
         start: { type: "number" },
-        duration: { type: "number", description: "秒,默认 3" },
+        duration: { type: "number", description: "Seconds, default 3" },
         trackId: { type: "string" },
-        parts: { type: "array", items: { type: "object" }, description: "部件实例列表;partId 必填,其余可省(frame 省略用部件的 defaultFrame)" }
+        parts: { type: "array", items: { type: "object" }, description: "List of part instances; partId is required, the rest are optional (if frame is omitted the part's defaultFrame is used)" }
       },
       required: ["start"]
     },
@@ -28,14 +28,14 @@ export const partsTools = [
   },
   {
     name: "add_part",
-    description: "往组合卡里加一个部件实例。partId 来自 list_parts;params 只写要改的,其余用部件默认值;frame 省略用部件的 defaultFrame(相对父框的框:x / y 是锚点位置(像素),w / h 尺寸,anchor [ax, ay] 默认 [0,0],scale、rotate 可选;null 铺满父框);enterMs 相对父级进场的毫秒;parentId 省略 = 放在根,给了就成为那个实例的子部件(子部件的框相对父部件的框);index 省略 = 追加。返回新实例 id 和整张卡的封装。",
+    description: "Add a part instance to a composite card. partId comes from list_parts; params only needs the values to change, the rest use the part defaults; if frame is omitted, the part's defaultFrame is used (a box relative to the parent frame: x / y are the anchor position (pixels), w / h are the size, anchor [ax, ay] defaults to [0,0], scale and rotate are optional; null fills the parent frame); enterMs is the entrance time in milliseconds relative to the parent; if parentId is omitted = place at the root, if given the part becomes a child of that instance (a child part's frame is relative to its parent part's frame); if index is omitted = append. Returns the new instance id and the wrapper of the whole card.",
     inputSchema: {
       type: "object",
       properties: {
         clipId: { type: "string" },
         partId: { type: "string" },
         params: { type: "object" },
-        frame: { type: "object", description: "相对父框的框:x / y 是锚点位置(像素),w / h 尺寸,anchor [ax, ay] 默认 [0,0],scale、rotate 可选;null 铺满父框" },
+        frame: { type: "object", description: "A box relative to the parent frame: x / y are the anchor position (pixels), w / h are the size, anchor [ax, ay] defaults to [0,0], scale and rotate are optional; null fills the parent frame" },
         enterMs: { type: "number" },
         label: { type: "string" },
         parentId: { type: "string" },
@@ -47,14 +47,14 @@ export const partsTools = [
   },
   {
     name: "set_part",
-    description: "改组合卡里一个部件实例:params(稀疏合并)、frame(整个替换,null 铺满父框)、enterMs、label。partInstanceId 是 get_clip 里 parts[].id。返回整张卡的封装。",
+    description: "Edit a part instance in a composite card: params (sparse merge), frame (replaced as a whole, null fills the parent frame), enterMs, label. partInstanceId is parts[].id in get_clip. Returns the wrapper of the whole card.",
     inputSchema: {
       type: "object",
       properties: {
         clipId: { type: "string" },
         partInstanceId: { type: "string" },
         params: { type: "object" },
-        frame: { type: "object", description: "相对父框的框:x / y 是锚点位置(像素),w / h 尺寸,anchor [ax, ay] 默认 [0,0],scale、rotate 可选;要铺满父框传 { clear: true }" },
+        frame: { type: "object", description: "A box relative to the parent frame: x / y are the anchor position (pixels), w / h are the size, anchor [ax, ay] defaults to [0,0], scale and rotate are optional; to fill the parent frame pass { clear: true }" },
         enterMs: { type: "number" },
         label: { type: "string" }
       },
@@ -64,7 +64,7 @@ export const partsTools = [
   },
   {
     name: "remove_part",
-    description: "从组合卡里删掉一个部件实例(连同它的子部件)。返回整张卡的封装。",
+    description: "Delete a part instance from a composite card (together with its child parts). Returns the wrapper of the whole card.",
     inputSchema: {
       type: "object",
       properties: { clipId: { type: "string" }, partInstanceId: { type: "string" } },
@@ -74,10 +74,10 @@ export const partsTools = [
   },
   {
     name: "move_part",
-    description: "把组合卡里的部件实例挪到别的父级 / 别的次序:parentId 为 null 或省略 = 根;index 省略 = 末尾。次序靠后的画在上面。不能挪进自己的子树。",
+    description: "Move a part instance in a composite card to a different parent / a different order: parentId null or omitted = root; index omitted = end. Later items in the order are drawn on top. A part cannot be moved into its own subtree.",
     inputSchema: {
       type: "object",
-      properties: { clipId: { type: "string" }, partInstanceId: { type: "string" }, parentId: { type: "string", description: "目标父实例 id;省略或传空串 = 根" }, index: { type: "number" } },
+      properties: { clipId: { type: "string" }, partInstanceId: { type: "string" }, parentId: { type: "string", description: "Target parent instance id; omit or pass an empty string = root" }, index: { type: "number" } },
       required: ["clipId", "partInstanceId"]
     },
     side: "agent"

@@ -1,20 +1,28 @@
 /**
- * 编辑界面的「只读」：这个项目只给了只读权限（游客进别人的项目就是这样，2026-10-23 用户定）时，
- * 改项目的控件置灰并说明原因，而不是让人点了才被服务端拒、看到一串莫名其妙的错误。
+ * The editor's "read-only" state: when this project is granted read-only access only (this is what happens when a
+ * guest enters someone else's project, user decision 2026-10-23),
+ * controls that modify the project are greyed out with the reason explained, instead of letting people click and
+ * only then get rejected by the server and see a baffling error.
  *
- * 判断只来自 `io/viewOnly.ts` 的 `viewOnlyReason()`，这里不另存一份：
- *   - `'read-only-member'`：这个项目没给你写的权限。**本文件管的就是这一种**；
- *   - `'observe'`（`?observe=1` 打开的只读查看页）：它原来怎么处理还怎么处理（保存按钮禁用、顶栏徽标），不并进这里，
- *     所以这里的函数在 observe 下一律回「没锁」。
+ * The decision comes only from `viewOnlyReason()` in `io/viewOnly.ts`; no copy is stored here:
+ *   - `'read-only-member'`: this project gives you no write permission. **This file handles exactly this case**;
+ *   - `'observe'` (the read-only viewer page opened with `?observe=1`): it keeps being handled as before (save button
+ *     disabled, top bar badge) and is not merged in here,
+ *     so the functions here always return "not locked" under observe.
  *
- * 只读不等于看不了：播放、预览、翻时间轴、选中片段看它的参数、读 Agent 对话历史、导出，都照常。
- * 导出为什么放开：导出只读项目、把成片写到本机，不改项目，也不碰云端的项目文档。
+ * Read-only does not mean unusable: playback, preview, scrolling the timeline, selecting a clip to see its
+ * parameters, reading Agent chat history, and export all work as usual.
+ * Why export is allowed: exporting a read-only project writes the final video to this machine, does not change the
+ * project, and does not touch the project document in the cloud.
  *
- * 这不是权限，是让界面别让人白做一遍：真正拦住写的是服务端（`server/account/authority.mjs`、
- * `server/docservice/modules/project.mjs`），这一份被绕过去也改不动云端的项目。
+ * This is not permission control, it just keeps the UI from making people do work in vain: what really blocks
+ * writes is the server (`server/account/authority.mjs`,
+ * `server/docservice/modules/project.mjs`); even if this layer is bypassed, the cloud project still cannot be changed.
  *
- * 组件里用 `useReadOnly()`（权限变化时重渲）；不在组件里的处理函数用 `readOnlyCore.ts` 的 `memberReadOnlyNow()`。
- * 禁用的控件挂 `ro.why` 当悬停说明——那一句永远是 `viewOnlyText()`，各处不自己编。
+ * In components use `useReadOnly()` (re-renders when permission changes); for handlers outside components use
+ * `memberReadOnlyNow()` from `readOnlyCore.ts`.
+ * Disabled controls carry `ro.why` as the hover explanation; that sentence is always `viewOnlyText()`, and no
+ * place makes up its own.
  */
 import { useSyncExternalStore } from "react";
 import { memberReadOnlyNow, readOnlyState, type ReadOnlyState } from "./readOnlyCore";
@@ -22,10 +30,14 @@ import { memberReadOnlyNow, readOnlyState, type ReadOnlyState } from "./readOnly
 export { memberReadOnlyNow, readOnlyState, blockedByReadOnly, type ReadOnlyState } from "./readOnlyCore";
 
 /*
- * 权限是 `syncManager` 进 / 退项目时拨的（`setProjectAccess`），它每次更新同步状态都会通知订阅方。
- * 这里**按需**载入同步管理再订阅它，不静态引用：时间轴、左栏这些组件会被 Node 单测载入，而同步管理一路引到
- * `src/online/mode.ts`（Node 里没有 `import.meta.env`），静态引用会让守门测试（`online/modeImportGuard.test.mjs`）判红。
- * 订阅落地之前权限可能已经变过，所以落地后通知一次，让读到旧值的组件重新算（值没变的不会重渲）。
+ * Permission is set by `syncManager` when entering / leaving a project (`setProjectAccess`), and it notifies
+ * subscribers on every sync state update.
+ * Here the sync manager is loaded **on demand** and then subscribed to, not referenced statically: components such
+ * as the timeline and left rail are loaded by Node unit tests, while the sync manager leads all the way to
+ * `src/online/mode.ts` (Node has no `import.meta.env`), and a static reference would turn the gatekeeper test
+ * (`online/modeImportGuard.test.mjs`) red.
+ * Permission may already have changed before the subscription lands, so notify once after it lands, letting
+ * components that read the old value recompute (no re-render if the value is unchanged).
  */
 const listeners = new Set<() => void>();
 let attach: Promise<void> | null = null;
@@ -44,12 +56,12 @@ function subscribe(l: () => void): () => void {
   return () => { listeners.delete(l); };
 }
 
-/** 只要布尔值的地方（读出来的是布尔值，权限不变就不重渲） */
+/** For places that only need a boolean (the value read is a boolean, so no re-render if permission is unchanged) */
 export function useMemberReadOnly(): boolean {
   return useSyncExternalStore(subscribe, memberReadOnlyNow, memberReadOnlyNow);
 }
 
-/** 组件里读只读状态：`locked` 是否锁着，`why` 置灰说明，`title(own)` 悬停说明 */
+/** Read the read-only state in a component: `locked` is whether it is locked, `why` is the greyed-out explanation, `title(own)` is the hover explanation */
 export function useReadOnly(): ReadOnlyState {
   return readOnlyState(useMemberReadOnly());
 }

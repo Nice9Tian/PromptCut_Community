@@ -1,23 +1,26 @@
 /**
- * 参数面板与时间轴副标题看的「这张卡的参数长什么样」(纯函数,单测直接载入)。
+ * What "this card's parameters look like", as seen by the parameters panel and the timeline subtitle
+ * (pure function, loaded directly by unit tests).
  *
- * 先查注册表里能跑的定义(`getCard`);查不到时,在线页面从内容库同步来的用户卡还有一份只读视图(`syncedCardView`,
- * 从源码静态解析出的名字、说明、默认值与控件,没有组件;C10 契约第 9 节「片段照常可以改参数」)。两边都没有回 undefined。
+ * First look up the runnable definition in the registry (`getCard`); if it is not found, a user card synced
+ * from the content store on the online page also has a read-only view (`syncedCardView`: name,
+ * description, defaults and controls statically parsed from the source, no component; C10 contract
+ * section 9, "clips can still have parameters edited as usual"). If neither exists, return undefined.
  */
 import type { CardDef, Control } from "../../kernel/types";
 import type { SkippedControl, SyncedCardView } from "../../kernel/registry";
 import { onlineUnsupported } from "../../online/onlineUnsupported";
 import { tr } from "../../i18n/index.ts";
 
-/** 面板要的那几样:能跑的定义与同步来的视图都满足 */
+/** What the panel needs: both a runnable definition and a synced view satisfy it */
 export interface ParamsCardView {
   name: string;
   description?: string;
   defaults: Record<string, unknown>;
   controls: Control[];
-  /** 只有同步视图有:源码里有控件没认出来 */
+  /** Only on the synced view: the source has controls that were not recognized */
   controlsIncomplete?: boolean;
-  /** 只有同步视图有:没认出来的控件逐条 */
+  /** Only on the synced view: the unrecognized controls, one entry each */
   skippedControls?: SkippedControl[];
 }
 
@@ -29,14 +32,15 @@ export function paramsCardView(
   return lookup.getCard(cardId) ?? lookup.syncedCardView(cardId);
 }
 
-/** 没有控件可画时的那句话 */
+/** The sentence shown when there are no controls to draw */
 export const NO_PARAMS_TEXT = tr("This card has no adjustable parameters");
-/** 源码里有控件、在线一个都认不出来时用的入口名(`onlineUnsupported` 那句的中间) */
+/** Entry name used when the source has controls but none are recognized online (the middle of the `onlineUnsupported` sentence) */
 export const ONLINE_PARAMS_ENTRY = tr("changing this card's parameters");
 
 /**
- * 参数面板画不出控件时显示什么;有控件可画回 null。同步来的卡源码里写了控件、却一个都没解析出来时,
- * 说明「在线浏览器模式暂不支持修改这张卡的参数…」,不说「没有可调参数」(它其实有)。
+ * What to show when the parameters panel cannot draw controls; returns null if there are controls to draw.
+ * When a synced card's source declares controls but none were parsed, say "Online browser mode does not
+ * yet support editing this card's parameters…" rather than "no adjustable parameters" (it does have some).
  */
 export function paramsEmptyText(view: ParamsCardView | undefined): string | null {
   if (view && Array.isArray(view.controls) && view.controls.length > 0) return null;
@@ -44,22 +48,23 @@ export function paramsEmptyText(view: ParamsCardView | undefined): string | null
   return NO_PARAMS_TEXT;
 }
 
-/** 源码里的控件只认出一部分时,面板在认出的控件下面加的那一行用的入口名 */
+/** Entry name used in the line the panel adds below the recognized controls when only some of the source's controls were recognized */
 export const ONLINE_PARAMS_REST_ENTRY = tr("changing this card's remaining parameters");
 
 /**
- * 同步来的卡控件只认出一部分(比如展开了从别的文件引进来的控件):照常画认出的那些,下面加一行提示;
- * 其余情形(全认出、一个都没认出、能跑的定义)回 null。
+ * A synced card's controls were only partly recognized (e.g. after expanding controls imported from another
+ * file): draw the recognized ones as usual and add a hint line below;
+ * in all other cases (all recognized, none recognized, runnable definition) return null.
  */
 export function paramsPartialText(view: ParamsCardView | undefined): string | null {
   if (!view?.controlsIncomplete || !Array.isArray(view.controls) || view.controls.length === 0) return null;
   return onlineUnsupported(ONLINE_PARAMS_REST_ENTRY);
 }
 
-/** 面板上最多逐条列几个没认出的控件(其余的说「等 N 条」) */
+/** Maximum number of unrecognized controls the panel lists one by one (the rest are summarized as "and N more") */
 export const SKIPPED_LIST_MAX = 5;
 
-/** 一个没认出的控件在面板上怎么称呼:「标签」(key),没有就用 key,再没有就说「一个控件」 */
+/** How an unrecognized control is named on the panel: its "label" (key), else the key, else "a control" */
 function skippedName(s: SkippedControl): string {
   if (s.label && s.key) return tr("\"{0}\" ({1})", s.label, s.key);
   if (s.label) return tr("\"{0}\"", s.label);
@@ -68,18 +73,19 @@ function skippedName(s: SkippedControl): string {
 }
 
 /**
- * 同步来的卡有控件没认出来时,在「在线浏览器模式暂不支持修改…」那句下面说明是哪几条、为什么(C10 契约第 9 节〔裁〕2026-09-30);
- * 没有逐条记录(旧页面、能跑的定义)回 null。
+ * When a synced card has unrecognized controls, explain under the "Online browser mode does not yet support
+ * editing…" sentence which ones and why (C10 contract section 9 [ruling 2026-09-30]);
+ * return null when there is no per-item record (old pages, runnable definitions).
  */
 export function paramsSkippedText(view: ParamsCardView | undefined): string | null {
   const list = view?.controlsIncomplete && Array.isArray(view.skippedControls) ? view.skippedControls : [];
   if (!list.length) return null;
   const shown = list.slice(0, SKIPPED_LIST_MAX).map((s) => `${skippedName(s)}:${s.reason}`);
-  const more = list.length > SKIPPED_LIST_MAX ? tr("; and {0} more", list.length) : "";
+  const more = list.length > SKIPPED_LIST_MAX ? tr("; {0} in total", list.length) : "";
   return tr("Unrecognized parameters: {0}{1}", shown.join(";"), more);
 }
 
-/** 时间轴副标题:第一个文字控件的当前值 → 卡片说明 → 空 */
+/** Timeline subtitle: current value of the first text control → card description → empty */
 export function clipSubtitleOf(view: ParamsCardView | undefined, params: Record<string, unknown> | undefined): string {
   if (!view) return "";
   const textControl = (view.controls ?? []).find((c) => c.type === "text");

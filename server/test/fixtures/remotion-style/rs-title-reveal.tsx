@@ -1,4 +1,4 @@
-/** remotion 式的框架的示例卡（测试夹具，不进卡片库）：标题逐字弹入，下划线随后展开。 */
+/** Example card for the remotion-style framework (test fixture, not in the card library): the title pops in character by character, then the underline expands. */
 import type { CardDef, CardProps } from "../../kernel/types";
 import { Easing, interpolate, interpolateColors, spring, springDuration, stagger, staggerDuration, tween } from "../../kernel/remotionStyle";
 
@@ -39,18 +39,18 @@ function TitleReveal({ params, t = 0 }: CardProps<Params>) {
 
 export const titleReveal: CardDef<Params> = {
   id: "rs-title-reveal",
-  name: "逐字弹入标题",
-  description: "标题一个字一个字弹上来，随后一条下划线从左展开",
+  name: "Character-by-character pop-in title",
+  description: "The title pops up one character at a time, then an underline unfolds from the left",
   source: "user",
-  useWhen: "框架示例：要一行大标题逐字出现时用。",
-  tags: ["标题", "示例"],
+  useWhen: "Framework example: use when a single-line large title should appear character by character.",
+  tags: ["title", "example"],
   frameMode: "direct",
-  defaults: { text: "由 t 直接算", accent: "#ffd166", size: 132, each: 0.07 },
+  defaults: { text: "Computed directly from t", accent: "#ffd166", size: 132, each: 0.07 },
   controls: [
-    { key: "text", label: "文字", type: "text" },
-    { key: "accent", label: "主色", type: "color" },
-    { key: "size", label: "字号", type: "number", min: 24, max: 240, step: 4 },
-    { key: "each", label: "每个字相隔(秒)", type: "number", min: 0, max: 0.5, step: 0.01 },
+    { key: "text", label: "Text", type: "text" },
+    { key: "accent", label: "Primary color", type: "color" },
+    { key: "size", label: "Font size", type: "number", min: 24, max: 240, step: 4 },
+    { key: "each", label: "Interval between characters (seconds)", type: "number", min: 0, max: 0.5, step: 0.01 },
   ],
   Component: TitleReveal,
   timing: (p) => ({ settleMs: Math.round((staggerDuration([...p.text].length, { each: p.each }, springDuration(POP)) + 0.8) * 1000) }),

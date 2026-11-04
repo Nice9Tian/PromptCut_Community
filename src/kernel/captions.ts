@@ -1,39 +1,44 @@
 /**
- * 字幕行:把字幕卡 `lines` 参数里那一坨字符串,变成时间轴能画、能拖的一条条段落。
+ * Caption lines: turns the string blob in the caption card's `lines` parameter into paragraphs
+ * that the timeline can draw and drag.
  *
- * 字幕在这个项目里一直是「一张 caption-track 卡盖住整段,内容全塞进它的 lines 参数」。
- * 画面上没问题(卡片自己按时间切换当前句),但时间轴上只剩一个色块 —— 每句话从几秒到
- * 几秒、哪句压到了哪个镜头上,一概看不见,也没法拖。这里把那串文本解析成结构化的行,
- * 时间轴据此在字幕卡内部画出一条条子段落,拖动 / 改字再写回同一个字符串。
+ * Captions in this project have always been "a single caption-track card covering the whole cut,
+ * with all content packed into its lines parameter." On screen this is fine (the card switches the
+ * current sentence on its own based on time), but the timeline is left with only a single color
+ * block: you cannot see from what second to what second each sentence runs, which sentence overlaps
+ * which shot, and you cannot drag them. Here, that text string is parsed into structured lines,
+ * from which the timeline draws sub-segments inside the caption card, writing back to the same
+ * string after dragging or editing text.
  *
- * 存储格式没变(仍然是 `起|止|中|英`,换行或 `//` 分条,秒数相对 clip 起点),
- * 所以老项目文件、fill_captions、卡片组件三边都不用动。
+ * Storage format remains unchanged (still `start|end|zh|en`, separated by newlines or `//`, with seconds
+ * relative to clip start), so legacy project files, fill_captions, and card components all remain
+ * untouched.
  *
- * 纯字符串和数字计算,不碰 store、不碰 DOM。
+ * Pure string and numeric calculations, does not touch store or DOM.
  */
 
 import { timelineSpanOf, timelineTimeAt } from "./clipTime.mjs";
 
-/** 一条字幕。start / end 是**相对字幕卡起点**的秒数,和 lines 里写的一样 */
+/** A caption. start / end are seconds **relative to caption card start**, matching lines */
 export interface CaptionLine {
   start: number;
   end: number;
-  /** 主字幕(中文行)。用 *星号* 包住的词会被卡片按主色高亮 */
+  /** Main caption (Chinese line). Words enclosed in *asterisks* are highlighted in primary color by card */
   zh: string;
-  /** 副字幕(英文行),可以是空串 */
+  /** Secondary caption (English line), can be empty string */
   en: string;
 }
 
-/** 字幕卡的 cardId。判断「这段是不是字幕」都走 isCaptionClip,别到处写字符串 */
+/** cardId of caption card. Use isCaptionClip to check if clip is a caption, don't hardcode strings */
 export const CAPTION_CARD_ID = "caption-track";
 
-/** 字幕专用序列的名字。auto_workflow / add_clip 建字幕卡时都往这条上放 */
-export const CAPTION_TRACK_NAME = "字幕";
+/** Dedicated caption track name. auto_workflow / add_clip place caption cards on this track */
+export const CAPTION_TRACK_NAME = "Captions";
 
-/** 一条字幕最短多久(秒):再短就点不中也读不完 */
+/** Minimum caption duration (seconds): shorter captions cannot be clicked or read */
 export const MIN_CAPTION_DUR = 0.2;
 
-/** 这段是不是字幕卡 */
+/** Whether this clip is a caption card */
 export function isCaptionClip(clip: { cardId?: string } | null | undefined): boolean {
   return !!clip && clip.cardId === CAPTION_CARD_ID;
 }
@@ -43,14 +48,15 @@ function num(v: string): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
-/** 一行里不能出现 `|` 和换行,否则写回去就把格式冲散了 */
+/** A line cannot contain `|` or newlines, otherwise writing back breaks the format */
 function clean(s: string): string {
   return s.replace(/[\r\n|]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 /**
- * 解析 lines。坏行(秒数不是数、起止反了、整行空)直接丢掉 —— 时间轴宁可少画一条,
- * 也不要画一条 NaN 宽的块出来。解析完按起点排序,后面所有下标都以排序后的为准。
+ * Parses lines. Bad lines (seconds not a number, start/end reversed, entire line empty) are
+ * dropped directly: the timeline would rather draw one fewer line than draw a block with NaN width.
+ * Sorted by start after parsing; all subsequent indices are based on sorted order.
  */
 export function parseCaptions(raw: unknown): CaptionLine[] {
   if (typeof raw !== "string" || raw.trim() === "") return [];
@@ -73,7 +79,7 @@ function round(n: number): string {
   return (Math.round(n * 100) / 100).toFixed(2);
 }
 
-/** 写回 lines 参数。格式和 fill_captions 生成的完全一致(末尾那根 `|` 是留给英文行的) */
+/** Write back to lines parameter. Format matches fill_captions output exactly (trailing `|` is for English line) */
 export function formatCaptions(lines: CaptionLine[]): string {
   return [...lines]
     .sort((x, y) => x.start - y.start)
@@ -81,27 +87,28 @@ export function formatCaptions(lines: CaptionLine[]): string {
     .join("\n");
 }
 
-/** 从一段字幕卡里取出它的行 */
+/** Extract lines from a caption card clip */
 export function captionsOf(clip: { params?: Record<string, unknown> } | null | undefined): CaptionLine[] {
   return parseCaptions(clip?.params?.lines);
 }
 
-/** 此刻(相对 clip 起点的秒)该显示第几条;没有就是 -1。和卡片组件一个口径 */
+/** Caption index to display at this moment (seconds relative to clip start); -1 if none. Matches card component */
 export function captionIndexAt(lines: CaptionLine[], tRel: number): number {
   return lines.findIndex((l) => tRel >= l.start && tRel < l.end);
 }
 
-/** 一条字幕在时间轴上的绝对位置 */
+/** Absolute position of a caption on the timeline */
 export interface CaptionSpan extends CaptionLine {
   index: number;
-  /** 时间轴上的绝对秒 */
+  /** Absolute seconds on the timeline */
   from: number;
   to: number;
 }
 
 /**
- * 字幕卡里的行 → 时间轴上的绝对位置。超出卡片时段的部分裁掉;整条都在卡外的直接不给
- * (卡片本来也不会显示它们,时间轴上画出来只会让人以为那句会播)。
+ * Lines in caption card → absolute positions on timeline. Parts exceeding card time span are
+ * trimmed; lines entirely outside card are omitted directly (the card would not display them
+ * anyway, and drawing them on the timeline would mislead people into thinking they play).
  */
 export function captionSpans(clip: { start: number; end: number; params?: Record<string, unknown> }): CaptionSpan[] {
   const dur = clip.end - clip.start;
@@ -116,8 +123,9 @@ export function captionSpans(clip: { start: number; end: number; params?: Record
 }
 
 /**
- * 一条字幕能挪到哪:卡片内、且不越过左右邻居。
- * 时间轴上拖动时先问它,拖到头就贴住,不会拖出一条压着别人的字幕。
+ * Where a caption can be moved: within card and without crossing left or right neighbors.
+ * Queried first when dragging on timeline; snaps to edge when reaching boundary, preventing
+ * a caption from dragging over another.
  */
 export function captionBounds(lines: CaptionLine[], index: number, dur: number): { min: number; max: number } {
   const prev = index > 0 ? lines[index - 1] : null;
@@ -126,11 +134,12 @@ export function captionBounds(lines: CaptionLine[], index: number, dur: number):
 }
 
 /**
- * 改一条字幕(挪位置、改时长、改文字)。
+ * Modifies a caption (move position, change duration, edit text).
  *
- * 时间会被夹进 `captionBounds` 给的范围,并保证至少 MIN_CAPTION_DUR 长;
- * 只给 start 就理解成「整条平移」,长度不变(和时间轴上拖动条的手感一致)。
- * 返回新数组和这条改完之后排到了第几位 —— 顺序可能因为平移而变。
+ * Time is clamped within the range given by `captionBounds`, guaranteed to be at least
+ * MIN_CAPTION_DUR long; providing only start is interpreted as "shift entire line", keeping
+ * duration unchanged (matching the feel of dragging bars on the timeline).
+ * Returns new array and the updated index of this item: order may change due to translation.
  */
 export function editCaption(
   lines: CaptionLine[],
@@ -146,7 +155,7 @@ export function editCaption(
   if (patch.start !== undefined || patch.end !== undefined) {
     const { min, max } = captionBounds(lines, index, dur);
     if (patch.start !== undefined && patch.end === undefined) {
-      // 只给起点 = 平移:长度留住,顶到邻居就贴住
+      // Only start provided = shift: preserve duration, clamp against neighbors when hitting boundary
       const len = cur.end - cur.start;
       start = Math.max(min, Math.min(patch.start, Math.max(min, max - len)));
       end = Math.min(max, start + len);
@@ -167,15 +176,16 @@ export function editCaption(
   return { lines: out, index: out.indexOf(next) };
 }
 
-/** 删掉一条 */
+/** Delete a caption */
 export function removeCaption(lines: CaptionLine[], index: number): CaptionLine[] {
   if (index < 0 || index >= lines.length) return lines;
   return lines.filter((_, i) => i !== index);
 }
 
 /**
- * 插一条新字幕。给的时段会被挤进最近的空当里:落点被占住就往后找,
- * 一直到卡片末尾都塞不下就返回 index -1(调用方据此提示「这儿没地方了」)。
+ * Inserts a new caption. The provided interval is squeezed into the nearest gap: if drop target
+ * is occupied, searches forward; if it cannot fit all the way to card end, returns index -1
+ * (caller prompts "No space here" accordingly).
  */
 export function insertCaption(
   lines: CaptionLine[],
@@ -186,7 +196,7 @@ export function insertCaption(
   const len = Math.max(MIN_CAPTION_DUR, (at.end ?? want + 2) - want);
   const sorted = [...lines].sort((x, y) => x.start - y.start);
 
-  // 从落点往后找第一个放得下的空当(含最后一条之后到卡片末尾)
+  // Search forward from drop target for first gap that fits (including after last caption to card end)
   let cursor = want;
   for (const l of sorted) {
     if (l.end <= cursor) continue;
@@ -206,39 +216,41 @@ export function insertCaption(
   return { lines: out, index: out.indexOf(line) };
 }
 
-/** 时间轴上引用了某份素材的一段(只要算时间用得到的那几个字段) */
+/** A clip on the timeline referencing media (only fields needed for time calculation) */
 export interface MediaPlacement {
   start: number;
   end: number;
   mediaId?: string;
   mediaOffset?: number;
-  /** 片段速度(缺省 1),见 kernel/clipTime.mjs */
+  /** Clip speed (default 1), see kernel/clipTime.mjs */
   speed?: number;
 }
 
 /**
- * 素材内的第几秒 → 时间轴上的第几秒。
+ * Second within media → second on timeline.
  *
- * 文字稿的秒数是**素材内**的,时间轴上这段素材可能被挪到了第 30 秒、还从第 8 秒开始播。
- * 不换算就直接当时间轴秒用,字幕会整体错位 —— 素材放在开头且没修头时两者恰好相等,
- * 所以这个坑很久都没被踩出来。落在素材没被用到的部分就返回 null(那句话根本不会播)。
+ * Transcript seconds are **within media**; on the timeline, this media clip might have been moved
+ * to second 30 and play starting from second 8. Using them as timeline seconds without conversion
+ * will offset captions globally: when media is placed at the start without trimming the head, both
+ * happen to be equal, which is why this pitfall went unnoticed for a long time. Returns null if it
+ * falls within an unused part of media (that sentence will not play at all).
  */
 export function mapMediaTime(clips: MediaPlacement[], mediaId: string, mediaSec: number): number | null {
   return placeMediaTime(clips, mediaId, mediaSec)?.tl ?? null;
 }
 
-/** 同 mapMediaTime,另回落在哪一段上(要按那一段的速度换算句长) */
+/** Like mapMediaTime, also returns which clip it falls into (to convert line duration using clip speed) */
 function placeMediaTime(clips: MediaPlacement[], mediaId: string, mediaSec: number): { tl: number; clip: MediaPlacement } | null {
   for (const c of clips) {
     if (c.mediaId !== mediaId) continue;
-    // 素材秒 → 时间轴秒按 kernel/clipTime.mjs 的统一换算(含片段速度)
+    // Media seconds → timeline seconds uses unified conversion in kernel/clipTime.mjs (including clip speed)
     const tl = timelineTimeAt(c, mediaSec);
     if (tl >= c.start - 1e-6 && tl < c.end) return { tl, clip: c };
   }
   return null;
 }
 
-/** 文字稿里的一段(只要这三个字段) */
+/** A segment in the transcript (only these three fields needed) */
 export interface TranscriptLike {
   start: number;
   end: number;
@@ -246,11 +258,15 @@ export interface TranscriptLike {
 }
 
 /**
- * 一份文字稿 → 一张字幕卡该有的内容:铺多长、每条什么时候出。
+ * A transcript → the intended content of a caption card: how long it spans, when each item
+ * appears.
  *
- * 段落先按 mapMediaTime 换算到时间轴上,再整体减去卡片起点变成相对秒。
- * range 不给就按「这份文字稿在时间轴上铺开的范围」自己算(也就是新建卡片时用的时段)。
- * 没有一段落在范围内时返回空 lines,调用方据此报错,而不是建一张空字幕卡。
+ * Paragraphs are first converted to the timeline via mapMediaTime, then the card start is subtracted
+ * overall to become relative seconds.
+ * If range is not provided, calculate it from "the span of this transcript on the timeline"
+ * (which is the time span used when creating a new card).
+ * When no paragraph falls within range, returns empty lines; the caller reports an error
+ * accordingly, rather than creating an empty caption card.
  */
 export function captionsFromTranscript(
   clips: MediaPlacement[],
@@ -263,7 +279,9 @@ export function captionsFromTranscript(
     const hit = placeMediaTime(clips, mediaId, s.start);
     if (hit == null) continue;
     const from = hit.tl;
-    // 末尾那一刻正好落在 clip 边界上,mapMediaTime 会判成「不在里面」,所以止点自己按时长推(素材时长按那一段的速度折成时间轴时长)
+    // If the final moment falls right on the clip boundary, mapMediaTime treats it as "not inside",
+    // so calculate the end point from duration (asset duration converted to timeline duration by that
+    // segment's speed)
     const to = from + timelineSpanOf(hit.clip, Math.max(0, s.end - s.start));
     const text = clean(s.text);
     if (!text || to <= from) continue;
@@ -281,8 +299,8 @@ export function captionsFromTranscript(
   return { from, to, lines };
 }
 
-/** 给人看的一句话:「第 3 条 · 1.20–3.40s · 大家好」 */
+/** A human-readable line: "Item 3 · 1.20–3.40s · Hello everyone" */
 export function describeCaption(l: CaptionLine, index: number): string {
-  const text = l.zh || l.en || "(空)";
-  return `第 ${index + 1} 条 · ${round(l.start)}–${round(l.end)}s · ${text.slice(0, 20)}`;
+  const text = l.zh || l.en || "(empty)";
+  return `Caption ${index + 1} · ${round(l.start)}–${round(l.end)}s · ${text.slice(0, 20)}`;
 }

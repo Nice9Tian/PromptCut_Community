@@ -1,10 +1,13 @@
 /**
- * 主体检测的前端胶水：查档位、起作业、轮询、把结果折成 Subjects。
+ * Frontend glue for subject detection: check the tier, start the job, poll, and fold the result into
+ * Subjects.
  *
- * 检测跑在服务端（YuNet + RT-DETR，装了 full 档再加 Grounding DINO），这边只
- * 负责等和存。和运动追踪不同的是：结果**要写进项目文档**（MediaAsset.subjects）。
- * 采样时刻是按镜头算出来的、对同一段素材是稳定的，存下来下次就不用重跑；
- * 而追踪的查询点每次现指，存了只会让工程文件无限膨胀。
+ * Detection runs on the server (YuNet + RT-DETR, plus Grounding DINO when the full tier is
+ * installed); this side only waits and stores. Unlike motion tracking, the result **must be written
+ * into the project document** (MediaAsset.subjects). The sampling times are computed per shot and
+ * are stable for the same media, so once stored there is no need to rerun next time; the tracking
+ * query points, by contrast, are pointed out fresh each time, and storing them would only make the
+ * project file grow without bound.
  */
 import { readSseStream } from "../editor/io/stt";
 import type { PerceptionMediaRef } from "./perceptionMedia";
@@ -13,7 +16,10 @@ import { tr } from "../i18n/index.ts";
 
 export interface SubjectJobState {
   status: "running" | "done" | "error";
-  /** 作业跑完前是 undefined —— 哪一档由 Python 侧选，结果回来才知道 */
+  /**
+   * undefined until the job finishes: which tier is used is chosen on the Python side and only known
+   * when the result comes back
+   */
   engine?: "light" | "full";
   percent: number;
   message?: string;
@@ -21,19 +27,23 @@ export interface SubjectJobState {
   height?: number;
   prompt?: string;
   samples?: SubjectSample[];
-  /** 抽帧失败的采样个数。undefined = 服务端没报(老版本),和 0 不是一回事 */
+  /**
+   * Number of samples whose frame extraction failed. undefined = the server did not report it (old
+   * version), which is not the same as 0
+   */
   failedCount?: number;
-  /** 本来要跑 full、中途退回 light 时是 "full" */
+  /** "full" when it was meant to run full but fell back to light midway */
   fellBackFrom?: "full";
   fallbackReason?: string;
 }
 
 /**
- * 能跑到哪一档。
+ * Which tier it can run at.
  *
- * **没有兜底档**：engine 为 null 就是真的检测不了（没装依赖或没有 Python），
- * 这一点和运动追踪不一样。调用方遇到 null 要退回「看图判断」，
- * 不要假装还有一个降级引擎在跑。
+ * **There is no fallback tier**: engine being null means detection really cannot be done (the
+ * dependencies are not installed or there is no Python), which differs from motion tracking. When a
+ * caller meets null it should fall back to "judge by looking at the image", and not pretend that a
+ * downgraded engine is still running.
  */
 export async function subjectStatus(): Promise<{
   ready: boolean;
@@ -46,7 +56,10 @@ export async function subjectStatus(): Promise<{
   return r.json();
 }
 
-/** 只发素材标识,服务端经素材服务取字节(见 perceptionMedia.ts) */
+/**
+ * Send only the asset identifier; the server fetches the bytes through the asset service (see
+ * perceptionMedia.ts)
+ */
 export async function startSubjectDetection(
   media: PerceptionMediaRef,
   times: number[],
@@ -69,20 +82,26 @@ export async function pollSubjectJob(jobId: string): Promise<SubjectJobState> {
   return data.job as SubjectJobState;
 }
 
-/** 取消一个跑着的作业。服务端会 taskkill /F /T 杀掉整棵进程树(python + 它起的 ffmpeg) */
+/**
+ * Cancel a running job. The server kills the whole process tree with taskkill /F /T (python + the
+ * ffmpeg it started)
+ */
 export async function cancelSubjectJob(jobId: string): Promise<void> {
   await fetch(`/api/subject/job/${jobId}/cancel`, { method: "POST" }).catch(() => {});
 }
 
 /**
- * 等一个作业跑完。轮询间隔 1 秒 —— 一个采样是一次 ffmpeg seek 加一次前向，
- * light 档几十毫秒、full 档几百毫秒，二三十个采样通常几秒到十几秒。
+ * Wait for a job to finish. The polling interval is 1 second: one sample is one ffmpeg seek plus one
+ * forward pass, tens of milliseconds at the light tier and a few hundred at the full tier, so twenty
+ * or thirty samples usually take from a few seconds to a dozen or so.
  *
- * **必须有总时限**：这里以前是 `for(;;)` 死循环，Python 一旦卡住（ffmpeg 在坏文件上
- * 死等）作业永远停在 running，这个 Promise 就永远不 resolve，调用方的进度条转到天荒
- * 地老。默认 20 分钟 = 服务端上限（每帧 20 秒 × 200 帧最多 ~67 分钟）之下的一个
- * 现实数：full 档满配实测约 9 分钟，20 分钟已是两倍余量。超时就主动取消并抛错，
- * 让 subjectJobs 那边的 error 分支接住，list_shots 才能告诉模型「别再轮询了」。
+ * **A total time limit is required**: this used to be a `for(;;)` infinite loop, and once Python hung
+ * (ffmpeg waiting forever on a bad file) the job stayed in running forever, this Promise never
+ * resolved, and the caller's progress bar spun until the end of time. The default of 20 minutes is
+ * a realistic number below the server's cap (20 seconds per frame × 200 frames is at most ~67
+ * minutes): a fully configured full tier was measured at about 9 minutes, so 20 minutes is already a
+ * twofold margin. On timeout it cancels proactively and throws, so the error branch on the
+ * subjectJobs side catches it and list_shots can tell the model "stop polling".
  */
 export async function waitForSubjects(
   jobId: string,
@@ -95,7 +114,7 @@ export async function waitForSubjects(
       await cancelSubjectJob(jobId);
       throw new Error(
         tr("Subject detection did not finish within {0} minutes and was canceled.", Math.round(timeoutMs / 60000))
-        + tr("You can reduce the sampling points (pass times yourself), or first confirm the tier with subject_status: the full tier is an order of magnitude slower than light."),
+        + tr(" You can reduce the sampling points (pass times yourself), or first confirm the tier with subject_status: the full tier is an order of magnitude slower than light."),
       );
     }
     const job = await pollSubjectJob(jobId);
@@ -103,17 +122,18 @@ export async function waitForSubjects(
     if (job.status === "error") throw new Error(job.message || tr("Subject detection failed"));
     if (job.status === "done") {
       return {
-        // 跑完却没报 engine，只可能是 Python 侧的 result 事件缺字段。认成 light
-        // 是**保守**的那一侧：调用方会据此知道「提示词没生效，只有 person/face」，
-        // 反过来误标成 full 会让人以为按提示词找过目标了。
+        // Finishing without reporting engine can only mean the result event on the Python side is missing a
+        // field. Treating it as light is the **conservative** side: the caller will thereby know "the prompt
+        // did not take effect, only person/face", while mislabeling it as full the other way round would
+        // make people think the targets were searched for according to the prompt.
         engine: job.engine ?? "light",
         createdAt: new Date().toISOString(),
         prompt: job.prompt ?? "",
         width: job.width ?? 0,
         height: job.height ?? 0,
         samples: job.samples ?? [],
-        // 服务端没报 failedCount 时(老版本 Python)自己数一遍,别留 undefined ——
-        // 读取侧要拿它决定「这段结论是几个采样撑起来的」。
+        // When the server did not report failedCount (old-version Python), count it ourselves, and do not
+        // leave undefined: the reading side uses it to decide "how many samples this conclusion rests on".
         failedCount: job.failedCount ?? (job.samples ?? []).filter((s) => s.failed).length,
         ...(job.fellBackFrom === "full"
           ? { fellBackFrom: "full" as const, fallbackReason: job.fallbackReason }
@@ -125,12 +145,14 @@ export async function waitForSubjects(
 }
 
 /**
- * 装主体检测的 light 档（onnxruntime，约 30 MB）。
+ * Installs the light tier of subject detection (onnxruntime, about 30 MB).
  *
- * full 档（torch + transformers + 690 MB 的 Grounding DINO 权重）不走在线装，
- * 只随拓展库包发 —— 在线装那么大一坨，中断一次就得从头来。
+ * The full tier (torch + transformers + the 690 MB Grounding DINO weights) is not installed online
+ * and ships only with the extension library package: installing such a huge lump online means
+ * starting over from scratch after a single interruption.
  *
- * 流式读 pip 日志而不是等它跑完再回：中间一声不吭的话分不清是在装还是卡死了。
+ * It reads the pip log as a stream instead of waiting for it to finish before replying: if nothing
+ * is shown in between, there is no telling whether it is installing or hung.
  */
 export async function installSubject(
   onLog?: (line: string) => void,
@@ -150,16 +172,20 @@ export async function installSubject(
       log.push(line);
       onLog?.(line);
     } else if (ev.event === "installed") {
-      // 依赖装完了,但 YuNet / RT-DETR 的权重不在 requirements 里,只随拓展库包发。
-      // 这不是失败,是「还差一步」,得和真正的安装失败分开报。
+      // The dependencies are installed, but the YuNet / RT-DETR weights are not in requirements and ship
+      // only with the extension library package.
+      // This is not a failure but "one step short", and must be reported separately from a real install
+      // failure.
       needsModel = !!ev.needsModel;
-      // SttEvent 里的 model 是听写的模型名(string),和这里的对象同名不同型,
-      // 就地窄化一下,不去动那个共用的事件类型
+      // The model in SttEvent is the speech-to-text model name (string), with the same name but a
+      // different type from the object here, so narrow it in place instead of touching that shared event
+      // type
       modelPath = (ev as unknown as { model?: { path?: string } }).model?.path;
     } else if (ev.event === "error") {
       ok = false;
-      // stderr 里才是有用的那句(pip 的真实报错、缺什么文件),message 往往只是
-      // 「进程退出码 N」。只取 message 的话,用户看到的永远是一句没法照着做的话。
+      // The useful line is in stderr (pip's actual error, which file is missing), while message is often
+      // just "process exit code N". If only message were used, the user would always see a sentence they
+      // cannot act on.
       const msg = ev.message ?? tr("Install failed");
       const detail = typeof ev.stderr === "string" ? ev.stderr.trim() : "";
       const full = detail ? `${msg}\n${detail}` : msg;

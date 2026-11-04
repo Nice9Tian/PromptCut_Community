@@ -1,25 +1,43 @@
 /**
- * 账号模式下「发起人自己的页面」的反向通道(计划 `docs/plan/cloud-agent-tools-implementation.md` 的 W2 包)。
+ * Reverse channel for "initiator's own page" in account mode (package W2 of plan
+ * `docs/plan/cloud-agent-tools-implementation.md`).
  *
- * 云端 Agent 没有界面。它要动用户的播放头(`user_interface_seek`、`user_interface_play`、`user_interface_pause`)或把网页交给本人(`user_interface_web_handoff`)时,
- * 经这里让「发这条消息的那个人、发消息时用的那张页面」替它执行,再把结果交回来。旧的一版(非账号模式)在
- * `create-agent-service.mjs` 的 `pageCall` 里,页面号是请求体自报的;这里把两头都绑到文档服务确认过的东西上:
+ * Cloud Agent has no UI. When it needs to move the user's playhead (`user_interface_seek`,
+ * `user_interface_play`, `user_interface_pause`) or hand off a web page to the user themselves
+ * (`user_interface_web_handoff`), it uses this channel to have "the person who sent this message,
+ * on the page used when sending the message" execute on its behalf, and return the result. The
+ * older version (non-account mode) was in `pageCall` of `create-agent-service.mjs`, where page ID
+ * was self-reported in the request body; here both ends are bound to things confirmed by the
+ * document service:
  *
- *   - **发起人、发起页都从文档服务的当前运行授权里取**:`runClient.checkAccess` 回的 `runGrant.accountId` 与
- *     `runGrant.selectionSnapshot.pageId`(发消息时文档服务核过「这张页面此刻连着、属于这次登录」才记下的页面号)。
- *     `requestPage` 的 `initiatorAccountId`、`pageId` 两个参数只是调用方的**断言**,与授权对不上就拒绝,不能用来挑页面;
- *     工具参数、页面交回的请求体都指定不了页面。
- *   - **「现在确实在线」要两样同时成立**:文档服务的在场表里这张页面此刻连着(`presence`,即全员选区那条查询),
- *     并且这张页面有一条到 Agent 服务的事件流挂在这个对话上(`attach`,身份是 HTTP 层核过委托票据的账号)。
- *     同一个账号的别的页面(页面号不同)、别的成员的页面(账号不同)都不算。
- *   - **请求只写给那一条流**,带一个只出现在那条流上的一次性随机数;不进事件记录、不补发。
- *   - **交回时全部重核**:交的人是发起人且此刻仍读得到这个对话、对话的权限版本没变、页面号与一次性随机数对得上、
- *     这一轮的授权仍是当前的且没换过栅栏版本、没过时限、请求还在等。任何一样不对都拒收,等待的工具按「发起方不在线」收掉,
- *     不把页面交来的内容当结果。同一份结果重复交回是幂等的。
- *   - **请求的状态落盘**(SQLite):重启后还在等的标成 `interrupted`,之后查得到、交回时也说得清,不会凭内存里的表消失。
+ *   - **Both initiator and initiating page are retrieved from the document service's current run
+ *     grant**: `runGrant.accountId` and `runGrant.selectionSnapshot.pageId` returned by
+ *     `runClient.checkAccess` (page ID recorded by the document service when sending the message
+ *     only after verifying "this page is currently connected and belongs to this login session").
+ *     The two arguments `initiatorAccountId` and `pageId` of `requestPage` are merely the caller's
+ *     **assertions**; if they do not match the grant, it is rejected and cannot be used to pick a
+ *     page; neither tool arguments nor request bodies submitted by the page can specify a page.
+ *   - **"Currently online" requires two conditions to hold simultaneously**: in the document
+ *     service's presence table, this page is currently connected (`presence`, i.e. the all-member
+ *     selection query), and this page has an event stream to the Agent service attached to this
+ *     chat (`attach`, identity verified at the HTTP layer with a delegation ticket). Other pages of
+ *     the same account (different pageId) or pages of other members (different account) do not
+ *     count.
+ *   - **Requests are written only to that single stream**, with a nonce that appears only on that
+ *     stream; not recorded in event logs, not retransmitted.
+ *   - **Fully re-verified upon submission**: the submitter is the initiator and can still read this
+ *     chat, chat ACL revision has not changed, pageId matches the nonce, the grant for this round
+ *     is still current with no fence revision change, not expired, and the request is still
+ *     pending. If anything does not match, it is rejected; waiting tools are closed out as
+ *     "initiator offline", and content submitted by the page is not accepted as the result.
+ *     Duplicate submissions of the same result are idempotent.
+ *   - **Request state is persisted to disk** (SQLite): requests still pending after restart are
+ *     marked `interrupted`, making them queryable later and explainable upon submission, rather
+ *     than vanishing with in-memory tables.
  *
- * 本文件不挂路由、不发事件、不认票据:事件流的 `attach`、交回的 `acceptResult` 由宿主(最后的接线包)接到
- * `server/agent-service/http.mjs`。不引用 `src/`。
+ * This file registers no routes, emits no events, and validates no tickets: event stream `attach`
+ * and submission `acceptResult` are wired to `server/agent-service/http.mjs` by the host (final
+ * wiring package). Does not reference `src/`.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -29,32 +47,35 @@ import { initiatorOffline } from './cloud-tools.mjs';
 import { modelToolName, pageToolName } from '../../tools/ui-names.mjs';
 
 /**
- * 经这条通道让发起页执行的**内部操作名**(请求里的 `tool`)。没有 `get_selection`:账号模式下它走文档服务的全员选区查询,不读单张页面。
- * 模型侧的工具名 2026-10-21 起带 `user_interface_` 前缀(`server/tools/ui-names.mjs`),这里保持旧名:0.7.18 的页面只认这几个
+ * **Internal operation names** (`tool` in requests) executed by the initiating page via this
+ * channel. Does not include `get_selection`: in account mode it uses the document service's
+ * all-member selection query, and does not read a single page.
+ * Model-side tool names carry `user_interface_` prefix since 2026-10-21
+ * (`server/tools/ui-names.mjs`); older names are kept here: 0.7.18 pages only recognize these few
  */
 export const PAGE_BRIDGE_TOOLS = Object.freeze(['seek', 'play', 'pause', 'web_handoff']);
-/** 页面控制三件(本文件的工具提供方处理;模型侧的名字);`user_interface_web_handoff` 的提供方在 `hosted-handoff.mjs` */
+/** Three page control tools (handled by this file's tool provider; model-side names); provider for `user_interface_web_handoff` is in `hosted-handoff.mjs` */
 export const PAGE_CONTROL_TOOL_NAMES = Object.freeze(['user_interface_seek', 'user_interface_play', 'user_interface_pause']);
-/** 事件与交回请求体的版本号(旧通道没有这个字段) */
+/** Version number of events and submission request bodies (older channel did not have this field) */
 export const PAGE_REQUEST_VERSION = 2;
 
 export const PAGE_BRIDGE_DEFAULTS = Object.freeze({
-  /** 请求发出后最多等页面多久(数字沿用旧通道的 `pageMs`) */
+  /** Maximum time to wait for the page after request is sent (number carries over `pageMs` from the older channel) */
   pageMs: 15_000,
-  /** 文档服务说页面在、但它到 Agent 服务的事件流还没挂上(刚发完消息、正在重连)时,最多等它多久(沿用 `pageAttachMs`) */
+  /** When document service says the page is present but its event stream to Agent service is not yet attached (just sent message, reconnecting), maximum wait time (carries over `pageAttachMs`) */
   attachMs: 3_000,
-  /** 调用方给的时限再长也不超过这么久 */
+  /** Caller-supplied timeout never exceeds this duration no matter how long */
   maxPageMs: 60_000,
-  /** 页面交回的内容上限 */
+  /** Upper limit on content submitted by the page */
   maxResultBytes: 64 * 1024,
-  /** 已经结束的请求记录留多久 */
+  /** How long completed request records are retained */
   retainMs: 7 * 24 * 3600_000,
-  /** `web_handoff` 的说明文字、地址的长度上限 */
+  /** Length cap for `web_handoff` description text and URL */
   maxReasonChars: 200,
   maxUrlChars: 2048,
 });
 
-/** 请求的状态。`pending` 之外都是终态 */
+/** Request state. Everything other than `pending` is a terminal state */
 export const PAGE_REQUEST_STATES = Object.freeze(['pending', 'answered', 'offline', 'expired', 'cancelled', 'interrupted', 'rejected']);
 
 export class PageBridgeError extends Error {
@@ -69,9 +90,9 @@ const fail = (code, status = 400) => { throw new PageBridgeError(code, status); 
 
 const CONTEXT_KEYS = Object.freeze(['projectId', 'conversationId', 'runId', 'runGrantId', 'instanceId', 'instanceGeneration', 'senderAccountId', 'messageId']);
 const REFERENCE = /^[A-Za-z0-9_.:-]{1,128}$/;
-/** 页面号:文档服务在场表里的那个(`server/docservice/modules/selection.mjs` 的同一条规矩) */
+/** Page ID: the one in document service presence table (same rule as `server/docservice/modules/selection.mjs`) */
 export const BRIDGE_PAGE_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
-/** 请求号:页面那一侧(`src/ai/cloud/pageRequests.ts`)认的形状 */
+/** Request id: shape recognized by the page side (`src/ai/cloud/pageRequests.ts`) */
 export const BRIDGE_REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 
@@ -89,8 +110,9 @@ function canonicalContext(value) {
 }
 
 /**
- * 按本机同样的规矩查参数,多带的字段一律拒绝(不是丢掉):模型给的参数里不该有页面号、账号、项目。
- * 回发给页面的那一份。
+ * Validate arguments by the same rules as on this machine; extra fields are always rejected (not
+ * dropped): arguments supplied by model must not include page ID, account, or project.
+ * The copy sent back to the page.
  */
 export function checkedPageArgs(tool, args, limits = PAGE_BRIDGE_DEFAULTS) {
   if (!PAGE_BRIDGE_TOOLS.includes(tool)) fail('page-tool-unknown', 404);
@@ -116,7 +138,7 @@ export function checkedPageArgs(tool, args, limits = PAGE_BRIDGE_DEFAULTS) {
     if (typeof a.url !== 'string' || a.url.length > limits.maxUrlChars) fail('bad-args');
     let parsed;
     try { parsed = new URL(a.url); } catch { fail('bad-args'); }
-    // 只交公开的网页地址;地址里带账号口令的不交
+    // Only submit public web addresses; do not submit addresses containing account passphrases
     if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) fail('bad-args');
     out.url = parsed.href;
   }
@@ -124,10 +146,15 @@ export function checkedPageArgs(tool, args, limits = PAGE_BRIDGE_DEFAULTS) {
 }
 
 /**
- * 别的工具包加在这条通道上的请求(C1 的本机采集代下用):`{ 工具名: { args(宿主给的参数) => 发给页面的参数, answer?(页面交回的答案) => 留下的答案 } }`。
- * 只加不改:名字不能与 `PAGE_BRIDGE_TOOLS` 重;发起人与发起页的绑定、交回时的重核、落盘、幂等都是本文件原来那一套。
- * `args` 不合规矩时自己抛错;`answer` 抛错或回的不是答案时这一次按拒收办(工具得到「发起方不在线」,页面得到 422),
- * 页面交来的那一份不落盘。
+ * Requests added to this channel by other tool packages (used by C1 proxying local media collection
+ * downloads): `{ toolName: { args(args given by host) => args sent to page,
+ * answer?(answer submitted by page) => retained answer } }`.
+ * Add only, no modifications: names must not conflict with `PAGE_BRIDGE_TOOLS`; initiator and
+ * initiating page binding, re-verification upon submission, disk persistence, and idempotency all
+ * follow this file's original mechanism.
+ * Throws its own error when `args` violates rules; when `answer` throws or does not return an
+ * answer, this attempt is treated as rejected (tool receives "initiator offline", page receives
+ * 422), and the copy submitted by the page is not persisted to disk.
  */
 function checkedExtraTools(value) {
   const out = new Map();
@@ -181,18 +208,24 @@ function openLedger(databasePath, now, retainMs) {
   );`);
   db.exec('CREATE INDEX IF NOT EXISTS page_requests_run ON page_requests (project_id, conversation_id, run_id);');
   const at = Number(now());
-  // 上一个进程还在等的:它的等待者已经不在了,之后到的结果也不该再被收下
+  // Still pending from the previous process: its waiter is no longer present, and results arriving later should not be accepted
   db.prepare("UPDATE page_requests SET state='interrupted', reason='agent-restart', updated_at=? WHERE state='pending'").run(at);
   db.prepare("DELETE FROM page_requests WHERE state <> 'pending' AND updated_at < ?").run(at - retainMs);
   return db;
 }
 
 /**
- * 这一轮的权威信息从哪来:缺省向文档服务取当前授权,并从里面取发送者与发消息时的页面号。任何对不上都拒绝。
- * 单独做成一个口子,是因为账号模式的生产形态里「跑这一轮的进程」(一条任务一个工作进程,授权登记在它名下)与
- * 「接着页面事件流的进程」(主服务)可以不是同一个:反向通道放在主服务里时,宿主换一个 `runAuthority`
- * (向持有这一轮登记的工作进程问同样的东西)即可,本文件其余部分不变。回的形状固定:
- * `{ accountId, pageId, fenceRevision, grantState }`;授权不在抛 `PageBridgeError`(403),上游不可达抛 503。
+ * Where authoritative information for this round comes from: by default fetches the current grant
+ * from document service, and retrieves sender and page ID at message time from it. Any mismatch
+ * is rejected.
+ * Designed as a separate interface because in the production topology of account mode, "the
+ * process running this round" (one worker process per task, with grant registered under its name)
+ * and "the process attached to the page event stream" (main service) may not be the same: when the
+ * reverse channel is in the main service, the host only needs to substitute `runAuthority` (asking
+ * the worker process holding this round's registration for the same data), while the rest of this
+ * file remains unchanged. Return shape is fixed:
+ * `{ accountId, pageId, fenceRevision, grantState }`; throws `PageBridgeError` (403) if grant is
+ * absent, throws 503 if upstream is unreachable.
  */
 export function createRunPageAuthority({ resources, runClient } = {}) {
   if (typeof resources?.authorize !== 'function' || typeof runClient?.checkAccess !== 'function') fail('page-bridge-configuration', 503);
@@ -233,24 +266,29 @@ export function createRunPageAuthority({ resources, runClient } = {}) {
 
 /**
  * @param {object} o
- * @param {string} o.databasePath 请求记录的 SQLite 文件(私有数据目录里)
+ * @param {string} o.databasePath SQLite file for request records (in private data directory)
  * @param {{ current(context: object): Promise<{accountId: string, pageId: string|null, fenceRevision: number, grantState: string}>, signalFor?(context: object): AbortSignal|null }} [o.runAuthority]
- *   这一轮的权威信息;不给就用 `createRunPageAuthority({ resources, runClient })`(本进程持有这一轮的授权登记时)
+ *   Authoritative information for this round; if omitted, uses `createRunPageAuthority({ resources, runClient })`
+ *   (when this process holds grant registration for this round)
  * @param {{ authorize(context: object, action: 'read'|'write'): Promise<{allowed: true, fenceRevision: number, grantState: string}>, signalFor?(context: object): AbortSignal }} [o.resources]
- *   F0 的运行资源登记器(`run-resources.mjs`):每次都向文档服务重核当前授权与实例登记
+ *   Run resource registry of F0 (`run-resources.mjs`): re-verifies current grant and instance
+ *   registration with document service every time
  * @param {{ checkAccess(input: {projectId: string, runGrantId: string, action: string}): Promise<object> }} [o.runClient]
- *   文档服务的运行授权接口;这里只用它取授权里的发送者与发消息时的页面号
+ *   Run grant API of document service; used here only to retrieve sender and page ID at message
+ *   time from grant
  * @param {(context: object) => Promise<{members: Array<{accountId: string, isInitiator: boolean, pages: Array<{pageId: string, live: boolean}>}>}>} o.presence
- *   文档服务的在场表(全员选区查询 `selection.query` 的回答);取不到按不在线办
+ *   Document service presence table (response to all-member selection query `selection.query`);
+ *   treated as offline if unavailable
  * @param {(identity: object, conversationId: string) => Promise<{allowed: boolean, aclRevision: number}>} o.checkSubmitter
- *   交回的人此刻读不读得到这个对话(HTTP 层对事件流用的同一个核对);取不到按拒收办
+ *   Whether the submitter can currently read this chat (same check used by HTTP layer for event
+ *   stream); treated as rejected if unavailable
  */
 export function createPageBridge({ databasePath, resources, runClient, runAuthority = null, presence, checkSubmitter, limits: limitOverrides = {}, now = Date.now, log = () => {}, randomNonce = () => randomBytes(18).toString('base64url'), extraTools = null } = {}) {
   if (typeof presence !== 'function' || typeof checkSubmitter !== 'function' || typeof now !== 'function') fail('page-bridge-configuration', 503);
   const extra = checkedExtraTools(extraTools);
   const authority = runAuthority ?? createRunPageAuthority({ resources, runClient });
   if (typeof authority?.current !== 'function') fail('page-bridge-configuration', 503);
-  /** 每次都重取;回的东西形状不对一律当作授权不在 */
+  /** Refetched every time; if returned shape is incorrect, treated as absent grant in all cases */
   async function current(context) {
     const value = await authority.current(context);
     if (!value || typeof value.accountId !== 'string' || !REFERENCE.test(value.accountId) || value.accountId !== context.senderAccountId ||
@@ -260,15 +298,15 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
   }
   const limits = Object.freeze({ ...PAGE_BRIDGE_DEFAULTS, ...limitOverrides });
   const db = openLedger(databasePath, now, limits.retainMs);
-  const say = (event, fields) => { try { log(event, fields); } catch { /* 日志的事 */ } };
+  const say = (event, fields) => { try { log(event, fields); } catch { /* Logging concerns */ } };
 
-  /** request_key -> 正在办的这一次(从进来到有终态) */
+  /** request_key -> currently active request (from ingress to terminal state) */
   const inflight = new Map();
-  /** request_key -> 已经发给页面、在等交回的 */
+  /** request_key -> already sent to page, awaiting submission */
   const waiting = new Map();
   /** `${projectId}\n${conversationId}` -> Set<listener> */
   const streams = new Map();
-  /** 等某张页面挂上事件流的 */
+  /** Waiting for a page to attach an event stream */
   const attachWaiters = new Set();
   let closed = false;
 
@@ -283,7 +321,7 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
   function outcomeOfRow(row) {
     if (row.state === 'answered') {
       let answer = null;
-      try { answer = JSON.parse(row.answer); } catch { /* 记录坏了按没交回办 */ }
+      try { answer = JSON.parse(row.answer); } catch { /* Corrupted records are treated as not submitted */ }
       if (answer && typeof answer.ok === 'boolean') return Object.freeze({ delivered: true, answer });
       return offline('answer-unreadable', 'rejected');
     }
@@ -330,7 +368,7 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
     try {
       db.prepare("UPDATE page_requests SET state=?, reason=?, answer_digest=?, answer=?, updated_at=? WHERE request_key=? AND state='pending'")
         .run(state, reason ?? null, extra.answerDigest ?? null, extra.answer ?? null, Number(now()), waiter.key);
-    } catch { /* 关库之后:等待者照常收掉 */ }
+    } catch { /* After database closes: waiters are closed out as usual */ }
     waiter.resolve(outcome);
     return true;
   }
@@ -347,14 +385,14 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
 
   async function issue(context, input, key) {
     const binding = await current(context);
-    // 调用方给的发起人与页面号只是断言:与文档服务的授权对不上就是有人想挑页面
+    // Initiator and page ID given by caller are merely assertions: mismatch with document service grant means someone is trying to cherry-pick pages
     if (input.initiatorAccountId !== binding.accountId || input.pageId !== binding.pageId) fail('page-binding-mismatch', 403);
     const refuse = (why) => { record(context, binding, input, key, 'offline', why); say('agent.page.offline', { tool: input.tool, why }); return offline(why); };
     if (binding.pageId === null) return refuse('no-page');
-    // 发起人被踢出或退出登录后,这一轮可以按「已读共有任务」保留着跑,但已经没有「他的页面」了
+    // After initiator is kicked or logs out, this round can keep running as a "read shared task", but "their page" no longer exists
     if (binding.grantState !== 'active') return refuse('initiator-revoked');
     const live = await pageLive(context, binding);
-    // 在场表取不到(文档服务没答)也按不在线办,不猜
+    // Treated as offline if presence table cannot be fetched (document service did not reply), no guessing
     if (live !== true) return refuse(live === null ? 'presence-unavailable' : 'page-not-live');
     const remaining = () => input.deadline - Number(now());
     let listener = listenerFor(context.projectId, context.conversationId, binding.accountId, binding.pageId);
@@ -362,7 +400,7 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
       listener = await waitForAttach(context.projectId, context.conversationId, binding.accountId, binding.pageId, Math.min(limits.attachMs, remaining()), input.signal);
       if (closed) fail('page-bridge-closed', 503);
       if (!listener) return refuse('page-not-attached');
-      // 等的这一会儿里授权可能变了,发之前再核一遍
+      // Grant may have changed while waiting; re-verify once more before sending
       const again = await current(context);
       if (again.accountId !== binding.accountId || again.pageId !== binding.pageId || again.fenceRevision !== binding.fenceRevision || again.grantState !== 'active') return refuse('run-changed');
       if (listener.gone) return refuse('page-disconnected');
@@ -388,7 +426,7 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
       if (signal.aborted) handler();
     };
     watch(input.signal);
-    try { watch(authority.signalFor?.(context)); } catch { /* 这一轮没有登记过资源:没有可听的信号 */ }
+    try { watch(authority.signalFor?.(context)); } catch { /* No resources registered for this round: no signals to listen to */ }
     if (!waiter.settled) {
       say('agent.page.request', { projectId: context.projectId, runId: context.runId, tool: input.tool });
       try {
@@ -400,10 +438,14 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
   }
 
   /**
-   * 让发起页执行一次。回 `{ delivered: true, answer: { ok, result?, error? } }`(页面交回了,做没做成看 `answer.ok`)
-   * 或 `{ delivered: false, offline: true, why, state }`(发起方不在线、超时、被取消、结果被拒收)。
-   * 授权已经不在、断言对不上、参数不合规矩时抛 `PageBridgeError`。
-   * 同一个 `requestId` 重复调用回同一个结果,不会让页面执行两次;同号不同内容回 `idempotency-conflict`。
+   * Have the initiating page execute once. Returns
+   * `{ delivered: true, answer: { ok, result?, error? } }` (page submitted; check `answer.ok` for
+   * success) or `{ delivered: false, offline: true, why, state }` (initiator offline, timed out,
+   * cancelled, or result rejected).
+   * Throws `PageBridgeError` when grant no longer exists, assertion mismatches, or arguments violate
+   * rules.
+   * Repeated calls with the same `requestId` return the same result and do not execute twice on
+   * page; same ID with different content returns `idempotency-conflict`.
    */
   function requestPage(request) {
     if (closed) return Promise.reject(new PageBridgeError('page-bridge-closed', 503));
@@ -434,16 +476,19 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
     } catch (error) { return Promise.reject(error); }
   }
 
-  /** 这一轮的发起人与发起页(从文档服务的当前授权里取)。工具提供方拿它去调 `requestPage` */
+  /** Initiator and initiating page for this round (retrieved from current grant in document service). Tool provider uses it to call `requestPage` */
   async function initiator(contextValue) {
     const binding = await current(canonicalContext(contextValue));
     return { initiatorAccountId: binding.accountId, pageId: binding.pageId, grantState: binding.grantState };
   }
 
   /**
-   * 一张页面的事件流挂到一个对话上。`identity` 必须是 HTTP 层核过委托票据的账号身份;`pageId` 是页面自报的在场页面号
-   * (自报不要紧:请求只发给与文档服务授权里那个页面号相同、且账号相同的流)。不合格的页面号回 null(只是看)。
-   * `aclRevision` 是挂上时这个对话的权限版本(HTTP 层读对话时拿到的)。
+   * Attaches a page's event stream to a chat. `identity` must be the account identity verified with a
+   * delegation ticket at the HTTP layer; `pageId` is the presence page ID self-reported by the page
+   * (self-reporting is safe: requests are only sent to streams matching both the page ID in document
+   * service grant and the account). Returns null for unqualified page IDs (view-only).
+   * `aclRevision` is the permission revision of this chat when attached (obtained by HTTP layer when
+   * reading chat).
    * @returns {{ detach(): void, update(next: { aclRevision: number }): void } | null}
    */
   function attach({ identity, conversationId, pageId, aclRevision, send } = {}) {
@@ -462,7 +507,7 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
       for (const waiter of [...old.waiters]) { settle(waiter, 'offline', why, offline(why)); say('agent.page.offline', { tool: 'page', why }); }
       if (!set.size && streams.get(key) === set) streams.delete(key);
     };
-    // 同一张页面重连:旧的那条流已经没用了,发在它上面还没交回的按断开收掉
+    // Same page reconnecting: the older stream is no longer useful; unsubmitted requests sent over it are closed out as disconnected
     for (const old of [...set]) if (old.accountId === listener.accountId && old.pageId === listener.pageId) drop(old, 'page-disconnected');
     set.add(listener);
     if (streams.get(key) !== set) streams.set(key, set);
@@ -478,10 +523,15 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
   const gone = () => new PageBridgeError('page-request-gone', 410);
 
   /**
-   * 页面交回一次请求的结果。`identity` 是 HTTP 层核过委托票据的账号身份(不是请求体里的)。
-   * 成功回 `{ ok: true }`(重复交回同一份回 `{ ok: true, duplicate: true }`)。
-   * 不是这次请求的发起页(账号、页面号、一次性随机数任何一样不对)、或根本没有这个请求:同一个 410 `page-request-gone`,不说是哪样,也不影响在等的那一次。
-   * 是发起页但已经收不下了:410 `page-request-<状态>`(过期、被取消、重启中断、被拒)。
+   * The page submits the result of a request. `identity` is the account identity verified with a
+   * delegation ticket at the HTTP layer (not from request body).
+   * Returns `{ ok: true }` on success (duplicate submission of the same result returns
+   * `{ ok: true, duplicate: true }`).
+   * Not the initiating page of this request (mismatch in account, page ID, or nonce), or request does
+   * not exist at all: same 410 `page-request-gone`, without disclosing which, and does not affect the
+   * pending request.
+   * Is the initiating page but can no longer be accepted: 410 `page-request-<state>` (expired,
+   * cancelled, restart-interrupted, rejected).
    */
   async function acceptResult({ identity, conversationId, body } = {}) {
     if (closed) fail('page-bridge-closed', 503);
@@ -499,7 +549,7 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
 
     let answer = { ok: body.ok, ...(body.result !== undefined ? { result: body.result } : {}),
       ...(body.error !== undefined ? { error: body.error.slice(0, 300) } : {}), ...(body.code !== undefined ? { code: body.code.slice(0, 64) } : {}) };
-    // 扩展工具自己规定页面交回的形状:只留它认的字段再落盘;形状不对的整份不收(下面按拒收办)
+    // Extension tools define their own shape for page submissions: only recognized fields are kept before persisting to disk; entire submission is rejected if shape is incorrect (handled below as rejection)
     let invalid = false;
     const shape = extra.get(row.tool)?.answer;
     if (shape) {
@@ -511,7 +561,7 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
     const answerDigest = sha256(text);
     const terminal = (found) => {
       if (found.state === 'answered') {
-        // 同一份结果重复交回(页面没收到 200 又交了一次):幂等,不再有任何效果
+        // Duplicate submission of the same result (page submitted again after missing 200): idempotent, has no further effect
         if (found.answer_digest === answerDigest) return { ok: true, duplicate: true };
         fail('page-result-conflict', 409);
       }
@@ -538,30 +588,37 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
     }
     if (Number(now()) > row.deadline_at) { settle(waiter, 'expired', 'deadline', offline('deadline', 'expired')); fail('page-request-expired', 410); }
 
-    // 交的人此刻还读得到这个对话吗(被踢出、对话被别人转成私有之后读不到);对话的权限版本变了也拒收
+    // Can the submitter still read this chat at this moment (cannot read after being kicked or the
+    // chat was made private by someone else); also reject if the chat's permission version changed
     let access = null;
     try { access = await checkSubmitter(identity, conversationId); } catch { access = null; }
     if (access?.allowed !== true || !Number.isSafeInteger(access.aclRevision)) return reject('submitter-denied');
     if (access.aclRevision !== row.acl_revision) {
-      // 对话在请求发出之后换过权限(共有转私有等):这一次不收;这条流之后的请求按新的版本算
+      // The chat changed permissions after the request was sent (shared to private, etc.): do not
+      // accept this time; subsequent requests on this stream count against the new version
       if (waiter.listener && !waiter.listener.gone) waiter.listener.aclRevision = access.aclRevision;
       return reject('conversation-changed');
     }
-    // 这一轮的授权:必须仍是当前的、仍是发起人本人有效的、栅栏版本没换过、页面号没变
+    // Authorization for this round: must still be current, still valid for the initiator themself,
+    // fence version hasn't changed, and page id hasn't changed
     let binding = null;
     try { binding = await current(waiter.context); } catch { binding = null; }
     if (!binding) return reject('run-revoked');
     if (binding.grantState !== 'active') return reject('initiator-revoked');
     if (binding.fenceRevision !== row.fence_revision) return reject('fence-changed');
     if (binding.accountId !== row.initiator_account_id || binding.pageId !== row.page_id) return reject('page-binding-changed');
-    // 核对期间可能已经超时、被取消、那条流断了、或另一次交回先到了
+    // During verification, it may have timed out, been canceled, that stream disconnected, or another
+    // return arrived first
     if (waiter.settled) { const latest = rowOf(key); if (latest) return terminal(latest); throw gone(); }
     if (Number(now()) > row.deadline_at) { settle(waiter, 'expired', 'deadline', offline('deadline', 'expired')); fail('page-request-expired', 410); }
     settle(waiter, 'answered', null, Object.freeze({ delivered: true, answer }), { answerDigest, answer: text });
     return { ok: true };
   }
 
-  /** 这一轮结束或被叫停(说完、被停、被撤销、出错):在等的全部收掉,之后交回的拒收。宿主在收尾与控制通道里调 */
+  /**
+   * When this round ends or is halted (finished, stopped, canceled, errored): clean up all waiting
+   * ones, reject returns that arrive later. Called by the host in finalize and control channels.
+   */
   function cancelRun(scope, reason = 'run-ended') {
     let count = 0;
     for (const waiter of [...waiting.values()]) {
@@ -575,7 +632,10 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
     return count;
   }
 
-  /** 一次请求现在的状态(重启后也查得到)。按当前授权核对读权限,只回本项目本对话的 */
+  /**
+   * Current status of a request (queried even after restart). Check read permissions against
+   * current authorization, only returning for this project and this chat.
+   */
   async function status(contextValue, requestId) {
     const context = canonicalContext(contextValue);
     if (typeof requestId !== 'string' || !BRIDGE_REQUEST_ID_RE.test(requestId)) fail('bad-request-id');
@@ -592,7 +652,7 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
     for (const entry of [...attachWaiters]) entry.done(null);
     for (const set of streams.values()) for (const listener of set) listener.gone = true;
     streams.clear();
-    try { db.close(); } catch { /* 已经关了 */ }
+    try { db.close(); } catch { /* Already closed */ }
     say('agent.page.closed', { reason });
     return { streamsClosed: true, workPending: waiting.size };
   }
@@ -604,31 +664,36 @@ export function createPageBridge({ databasePath, resources, runClient, runAuthor
 }
 
 /**
- * `user_interface_seek`、`user_interface_play`、`user_interface_pause` 三个工具的提供方(形状同别的工具包:`handles` / `call(name, args, context)` / `close(reason)`)。
- * 给模型的回答与旧通道同一份话:做成回页面的结果,发起方不在线回 `cloud-tools.mjs` 的 `initiatorOffline`。
- * `call` 的第四个参数可带 `{ requestId, signal }`:宿主重试同一次工具调用时给同一个请求号,页面不会执行两次。
- * `onPlayhead(context, t)`:`seek` 做成后通知宿主把这个对话记着的播放头改成新的(切剪辑的工具用它)。
+ * Provider for the three tools `user_interface_seek`, `user_interface_play`, and
+ * `user_interface_pause` (same shape as other tool packages: `handles` /
+ * `call(name, args, context)` / `close(reason)`).
+ * Replies to the model match the old channel: return the page result; if the initiator is
+ * offline, return `initiatorOffline` from `cloud-tools.mjs`.
+ * The fourth argument to `call` can take `{ requestId, signal }`: when host retries the same tool
+ * call, give the same request id so the page does not execute twice.
+ * `onPlayhead(context, t)`: after `seek` succeeds, notify host to update the playhead remembered
+ * for this chat to the new one (used by tools that switch cuts).
  */
 export function createPageControlTools({ bridge, onPlayhead = null, now = Date.now, newRequestId = () => randomBytes(16).toString('base64url') } = {}) {
   if (typeof bridge?.requestPage !== 'function' || typeof bridge?.initiator !== 'function') fail('page-bridge-configuration', 503);
   const handles = new Set(PAGE_CONTROL_TOOL_NAMES);
   async function call(nameIn, args, context, options = {}) {
-    // 模型侧的名字(新旧都认);发给页面的是旧的内部操作名
+    // Model-side names (accepts both old and new); sent to the page is the old internal operation name
     const name = modelToolName(nameIn);
     if (!handles.has(name)) fail('page-tool-unknown', 404);
     const wire = pageToolName(name);
     let send;
     try { send = checkedPageArgs(wire, args, bridge.limits); } catch (error) {
       if (error?.code !== 'bad-args') throw error;
-      return { ok: false, error: wire === 'seek' ? `${name} 要给 t(秒,不小于 0 的数)。` : `${name} 不接受参数。` };
+      return { ok: false, error: wire === 'seek' ? `${name} needs t (seconds, a number not less than 0).` : `${name} does not accept parameters.` };
     }
     const who = await bridge.initiator(context);
     const out = await bridge.requestPage({ run: context, initiatorAccountId: who.initiatorAccountId, pageId: who.pageId, tool: wire, args: send,
       requestId: options.requestId ?? newRequestId(), deadline: Number(now()) + bridge.limits.pageMs, ...(options.signal ? { signal: options.signal } : {}) });
     if (!out.delivered) return initiatorOffline(name);
     const answer = out.answer;
-    if (answer.ok !== true) return { ok: false, error: String(answer.error || `${name} 在发起人的页面上没有做成`) };
-    if (wire === 'seek' && typeof onPlayhead === 'function') { try { await onPlayhead(context, send.t); } catch { /* 宿主的事 */ } }
+    if (answer.ok !== true) return { ok: false, error: String(answer.error || `${name} did not succeed on the initiator's page`) };
+    if (wire === 'seek' && typeof onPlayhead === 'function') { try { await onPlayhead(context, send.t); } catch { /* Host responsibility */ } }
     return answer.result && typeof answer.result === 'object' && !Array.isArray(answer.result) ? answer.result : { ok: true };
   }
   return Object.freeze({ handles, call, async close() { return { childrenClosed: true, streamsClosed: true, workPending: 0 }; } });

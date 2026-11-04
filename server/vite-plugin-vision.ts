@@ -7,41 +7,48 @@ import { registerEditorSide, registerPrerenderSide } from "./vision/routes";
 export { bakeTarget } from "./vision/bake";
 
 /**
- * 给模型一双眼睛:把「时间轴第 t 秒长什么样」渲染成一张图交回去。
+ * Give the model eyes: render "what the timeline looks like at second t" into an image and return it.
  *
- * 为什么不在浏览器里截:编辑器的预览是一个 iframe(?stage=1),页面脚本没有任何
- * 办法把 iframe 的画面读成位图。所以只能在服务端渲染。
+ * Why not capture in the browser: editor preview is an iframe (?stage=1), and page scripts have no
+ * way to read the iframe frame into a bitmap. Therefore, it can only be rendered on the server.
  *
- * 为什么直接复用 server/bakery/ 而不是自己再起一个 puppeteer:
- * 那个脚本里那套虚拟时钟、动画钉位、素材预热的做法是导出确定性的**全部**依据
- * (见它文件头的说明)。另起一套的话「模型看到的画面」和「用户导出的画面」会
- * 悄悄分叉 —— 那比没有视觉更糟:模型会照着一张不存在的画面去改。代价是每次要起
- * 一个 Chrome(几秒),对一次调用几次的看图来说可以接受。
+ * Why directly reuse server/bakery/ instead of starting another puppeteer instance:
+ * the virtual clock, animation pinning, and asset preheating practices in that script form the
+ * **entire** basis for export determinism (see explanation in its file header). Starting a separate
+ * system would cause "what the model sees" and "what the user exports" to quietly diverge:
+ * that is worse than having no vision, as the model would make changes based on a non-existent
+ * image. The cost is launching a Chrome instance each time (a few seconds), which is acceptable for
+ * viewing images a few times per call.
  */
 
 /*
- * 给模型看的图:缩到长边 768、透明处铺中间调棋盘格。实现和理由都搬到了 server/png-post.mjs ——
- * 那是逐像素的同步活,由渲染 worker 在自己的进程里做,不再占这个进程的事件循环。
+ * Images for the model: scaled down to max edge 768, transparent areas overlaid with a mid-tone
+ * checkerboard. Implementation and rationale were moved to server/png-post.mjs:
+ * that is pixel-by-pixel synchronous work handled by render workers in their own processes, no longer
+ * occupying this process's event loop.
  *
- * 为什么是棋盘格而不是纯色底(原来的说明,留在这里):以前垫的是近黑的纯色,**深色的卡片贴上去
- * 等于消失**,"什么都没有"和"有一张深色的卡"长得一模一样。真实案例(诊断报告
- * 对话诊断-20260909-045354):一张深色金属的三维 logo 卡,模型连着看了 20 次 see_frames,
- * 以为卡没渲出来,把同样的 5 次调用原样重复了三轮。换成棋盘格,透明的地方才露出格子。
+ * Why a checkerboard instead of a solid color background (original explanation, preserved here):
+ * previously backed by a near-black solid color, **dark cards placed on top effectively vanished**,
+ * "nothing there" and "there is a dark card" looked identical. Real case (diagnostic report
+ * chat-diagnostic-20260909-045354): for a 3D logo card with dark metal, the model inspected
+ * see_frames 20 times in a row, thought the card was not rendered, and repeated the same 5 calls
+ * verbatim for three rounds. Switched to a checkerboard, so transparent areas reveal the grid pattern.
  */
 export function visionPlugin(): Plugin {
   return {
     name: "promptcut-vision",
     configureServer(server: ViteDevServer) {
       const root = server.config.root;
-      // 卡片源码一变,两端各自的渲染 worker 都要扔掉备用页
+      // When card source changes, render workers on both sides must discard spare pages
       onCardSourceChange(() => invalidateWorkers());
       /*
-       * 服务关掉(包括改了配置依赖、vite 在同一个进程里重启)就把这个进程拉起的渲染 worker 全杀掉。
-       * 重启会重新加载这个模块,旧模块手里的 worker 就没人管了 —— 常驻的那几个(热备、前台)永不闲置退出,
-       * 每重启一次漏两个 Chrome。
+       * When the service shuts down (including config dependency changes, vite restarting in the same
+       * process), kill all render workers spawned by this process. Restarting reloads this module,
+       * leaving workers held by the old module unmanaged: resident ones (hot standby, foreground) never
+       * exit on idle, leaking two Chrome instances on every restart.
        */
       server.httpServer?.on("close", () => {
-        for (const w of [...renderWorkers]) killWorker(w, new Error("服务已关闭"));
+        for (const w of [...renderWorkers]) killWorker(w, new Error("Service shut down"));
       });
 
       if (!isPrerender) {
