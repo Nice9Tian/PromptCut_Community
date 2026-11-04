@@ -31,15 +31,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/vibe.webp" width="900" alt="PromptCut 氛围式：左边项目列表，中间和 Agent 的对话，右边渲染出来的画面">
+  <img src="docs/assets/vibe-zh-CN.webp" width="900" alt="PromptCut 氛围式：左边项目列表，中间和 Agent 的对话，右边渲染出来的画面">
 </p>
 
 PromptCut 是一个 AI 视频剪辑工作台：用自然语言指挥 Agent 完成剪辑，也可以自己动手剪辑、调整参数，两者可以并行。
 
 **本仓库是社区版**：在本机和局域网里用——桌面应用与本机浏览器；同一个局域网里的另一台电脑或手机可以扫码加入共享项目、一起编辑。社区版不需要注册账号。网站账号、云端项目、托管服务和网页在线版留在闭源的商业版里。
-
-> [!NOTE]
-> 软件界面目前只有中文。英文和日文正在做，见 [issue #6](https://github.com/Nice9Tian/PromptCut_Community/issues/6)。
 
 ## 工作方式
 
@@ -52,7 +49,7 @@ PromptCut 是一个 AI 视频剪辑工作台：用自然语言指挥 Agent 完�
 | **SKILL** | 只在桌面版提供。桌面上的 Agent 经 MCP 接入，编辑界面默认关闭，软件转入后台运行；你随时可以打开界面一起改。 |
 
 <p align="center">
-  <img src="docs/assets/classic.webp" width="900" alt="PromptCut 传统式：左边素材库，中间预览，右边 AI 栏，下方时间轴">
+  <img src="docs/assets/classic-zh-CN.webp" width="900" alt="PromptCut 传统式：左边素材库，中间预览，右边 AI 栏，下方时间轴">
 </p>
 
 ## 能做什么
@@ -66,6 +63,7 @@ PromptCut 是一个 AI 视频剪辑工作台：用自然语言指挥 Agent 完�
 | **渲染与出片** | 预渲染生成快照、本机 Chrome 逐帧渲染、ffmpeg 合成成片。 |
 | **素材** | 本地导入、从网页链接抓取（yt-dlp）、镜头切换识别、主体检测、运动追踪、语音转文字。 |
 | **局域网共享** | 把项目共享到同一个局域网里，另一台电脑或手机扫码加入，两边实时同步；手机上有专门的界面。 |
+| **多语言** | 界面有英文、简体中文、日语三种。第一次打开按系统语言选，之后随时可以在语言菜单里切换，切换后回到原来打开的项目。 |
 | **桌面版** | Tauri v2 外壳，把 Node、Chrome for Testing、ffmpeg、内置 Python 打成一个 Windows 安装包。 |
 
 ## 跑起来
