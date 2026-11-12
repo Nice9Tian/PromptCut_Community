@@ -329,6 +329,7 @@ export function startDataMirror(): () => void {
   started = true;
   localRev = 1;
   let lastProject = getState().project;
+  let lastMedia = lastProject?.media;
   let lastPlaying = getState().playing;
   schedule(0);
   schedulePlayhead(0);
@@ -336,10 +337,14 @@ export function startDataMirror(): () => void {
   const off = subscribe(() => {
     const s = getState();
     if (s.project !== lastProject) {
-      // Revision number follows the **reference**: it is the frame request key and can only be incremented here
+      // Revision number follows the **reference**: it is the frame request key and can only be incremented here.
+      // Push immediately when `project.media` changes so the local stage port allowlist knows new asset hashes before
+      // stage iframes request `/@media/<hash>`.
+      const mediaChanged = s.project?.media !== lastMedia;
       lastProject = s.project;
+      lastMedia = s.project?.media;
       localRev++;
-      schedule(250);
+      schedule(mediaChanged ? 0 : 250);
     }
     if (!s.playing && (lastPlaying || s.t !== pushedT)) {
       // Do not push t during playback; push once only when stopped (or when scrubbing the playhead while paused)
@@ -413,3 +418,38 @@ export async function alignMirror(): Promise<{ session: string; localRev: number
   if (localRev !== pushedRev) await flushDataMirror();
   return { session, localRev };
 }
+
+function collectMediaHashes(project: Project | null | undefined, into?: Set<string>): Set<string> {
+  const out = into ?? new Set<string>();
+  if (!project || !Array.isArray(project.media)) return out;
+  for (const m of project.media) {
+    if (typeof m.hash === "string" && m.hash) out.add(m.hash.toLowerCase());
+    if (typeof m.tiers?.original === "string" && m.tiers.original) out.add(m.tiers.original.toLowerCase());
+    if (typeof m.tiers?.small === "string" && m.tiers.small) out.add(m.tiers.small.toLowerCase());
+    if (typeof m.url === "string") {
+      const match = /\/@media\/([0-9a-fA-F]{64})/i.exec(m.url);
+      if (match) out.add(match[1].toLowerCase());
+    }
+  }
+  return out;
+}
+
+/**
+ * Ensure the local editor mirror has received any `/@media/<hash>` entries referenced by `project`
+ * before a stage iframe mounts `<video>` / `<img>` against the stage-port allowlist (`server/stage-gate.mjs`).
+ */
+export async function alignMirrorForStageMedia(project: Project): Promise<void> {
+  if (!started && !isMirrorPage()) return;
+  const needed = collectMediaHashes(project);
+  if (needed.size === 0) return;
+  if (pushedProject && pushedRev >= 0) {
+    const known = collectMediaHashes(pushedProject);
+    let allKnown = true;
+    for (const h of needed) {
+      if (!known.has(h)) { allKnown = false; break; }
+    }
+    if (allKnown) return;
+  }
+  await alignMirror();
+}
+

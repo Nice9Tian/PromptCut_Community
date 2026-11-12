@@ -149,3 +149,139 @@ export function wheelZoomFactor(deltaY: number, deltaMode = 0): number {
 export function panBy(view: View2D, project: Size, box: Size, dx: number, dy: number): View2D {
   return clampPan({ ...view, tx: view.tx + dx, ty: view.ty + dy, auto: false }, project, box);
 }
+
+/* ── Framed preview (Vibe mode "Detail editing", issue #15) ───────────────────
+ *
+ * Unlike Classic mode's free canvas (which leaves a 16px margin, zooms below 100%, and lets you drag
+ * the picture until only 48px remain), Vibe mode's preview stage IS the video frame:
+ *   - 100% = fitted to the stage box (`framedFitScale`, zero margin), and zoom is bounded to [100%, 800%];
+ *   - All four edges of the scaled video must cover the fitted frame (`[fitLeft, fitRight] × [fitTop, fitBottom]`),
+ *     so the video never shrinks below the frame or pulls inward leaving empty black gaps inside the frame.
+ */
+
+export const MIN_FRAMED_ZOOM = 1;
+export const MAX_FRAMED_ZOOM = 8;
+const FRAMED_FIT_EPS = 1e-6;
+
+/** Scale that fits the project into `box` with zero margin (100% in framed mode) */
+export function framedFitScale(project: Size, box: Size): number {
+  const pw = Math.max(1, project.width);
+  const ph = Math.max(1, project.height);
+  const bw = Math.max(1, box.width);
+  const bh = Math.max(1, box.height);
+  return Math.max(1e-6, Math.min(bw / pw, bh / ph));
+}
+
+export const clampFramedZoom = (zoom: number): number =>
+  Math.min(MAX_FRAMED_ZOOM, Math.max(MIN_FRAMED_ZOOM, zoom));
+
+export function clampFramedScale(scale: number, project: Size, box: Size): number {
+  const fit = framedFitScale(project, box);
+  return Math.min(fit * MAX_FRAMED_ZOOM, Math.max(fit * MIN_FRAMED_ZOOM, scale));
+}
+
+export const framedFitView = (project: Size, box: Size): View2D => ({
+  scale: framedFitScale(project, box),
+  tx: 0,
+  ty: 0,
+  auto: true,
+});
+
+export function isFramedFitted(view: View2D, project: Size, box: Size): boolean {
+  const fit = framedFitScale(project, box);
+  return view.scale <= fit * (1 + FRAMED_FIT_EPS) && Math.abs(view.tx) <= 0.5 && Math.abs(view.ty) <= 0.5;
+}
+
+/** Zoom ratio relative to the fitted frame (`1` = 100%, `2` = 200%) */
+export function framedZoomRatio(view: View2D, project: Size, box: Size): number {
+  return clampFramedZoom(view.scale / framedFitScale(project, box));
+}
+
+export function framedZoomPercent(view: View2D, project: Size, box: Size): number {
+  return Math.max(100, Math.round(framedZoomRatio(view, project, box) * 100));
+}
+
+/**
+ * Clamp scale and pan so the scaled video completely covers the fitted frame rectangle:
+ *   left <= fitLeft, right >= fitRight, top <= fitTop, bottom >= fitBottom.
+ * Because both `frameOrigin` and the fitted frame are centered in `box`, this reduces on each axis
+ * to `|tx| <= (scale - fit) * project.width / 2` and `|ty| <= (scale - fit) * project.height / 2`.
+ */
+export function clampFramedPan(view: View2D, project: Size, box: Size): View2D {
+  const fit = framedFitScale(project, box);
+  const scale = clampFramedScale(view.scale, project, box);
+  if (scale <= fit * (1 + FRAMED_FIT_EPS)) {
+    return { scale: fit, tx: 0, ty: 0, auto: view.auto };
+  }
+  const pw = Math.max(1, project.width);
+  const ph = Math.max(1, project.height);
+  const maxTx = Math.max(0, ((scale - fit) * pw) / 2);
+  const maxTy = Math.max(0, ((scale - fit) * ph) / 2);
+  return {
+    ...view,
+    scale,
+    tx: Math.min(maxTx, Math.max(-maxTx, view.tx)),
+    ty: Math.min(maxTy, Math.max(-maxTy, view.ty)),
+  };
+}
+
+/** Cursor-anchored zoom bounded to `[100%, 800%]` of the fitted frame, keeping all four edges covering the frame */
+export function framedZoomAt(
+  view: View2D,
+  project: Size,
+  box: Size,
+  cursor: { x: number; y: number },
+  nextScale: number,
+): View2D {
+  const fit = framedFitScale(project, box);
+  const scale = clampFramedScale(nextScale, project, box);
+  if (scale <= fit * (1 + FRAMED_FIT_EPS)) {
+    if (view.scale === fit && view.tx === 0 && view.ty === 0 && view.auto) return view;
+    return { scale: fit, tx: 0, ty: 0, auto: true };
+  }
+  if (scale === view.scale) return view;
+  const p = toStagePoint(view, project, box, cursor);
+  const originX = cursor.x - p.x * scale;
+  const originY = cursor.y - p.y * scale;
+  return clampFramedPan(
+    {
+      scale,
+      tx: originX - (box.width - project.width * scale) / 2,
+      ty: originY - (box.height - project.height * scale) / 2,
+      auto: false,
+    },
+    project,
+    box,
+  );
+}
+
+/** Pan inside a zoomed framed preview; no-op while fitted at 100% so `auto` stays true */
+export function framedPanBy(view: View2D, project: Size, box: Size, dx: number, dy: number): View2D {
+  if (isFramedFitted(view, project, box)) return view;
+  return clampFramedPan({ ...view, tx: view.tx + dx, ty: view.ty + dy, auto: false }, project, box);
+}
+
+/** Recompute framed view when the stage container or project dimensions resize, preserving relative zoom % and clamping pan */
+export function resizeFramedView(
+  view: View2D,
+  project: Size,
+  prevLayout: { project: Size; box: Size } | null,
+  nextBox: Size,
+): View2D {
+  if (view.auto || !prevLayout) return framedFitView(project, nextBox);
+  const prevFit = framedFitScale(prevLayout.project, prevLayout.box);
+  const zoom = clampFramedZoom(view.scale / prevFit);
+  if (zoom <= MIN_FRAMED_ZOOM + FRAMED_FIT_EPS) return framedFitView(project, nextBox);
+  const nextScale = framedFitScale(project, nextBox) * zoom;
+  const ratio = view.scale > 0 ? nextScale / view.scale : 1;
+  return clampFramedPan(
+    {
+      scale: nextScale,
+      tx: view.tx * ratio,
+      ty: view.ty * ratio,
+      auto: false,
+    },
+    project,
+    nextBox,
+  );
+}

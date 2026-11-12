@@ -87,7 +87,7 @@ html.pc-has-menubar .pc-bar-fade {
   display: inline-block;
   overflow: hidden;
   white-space: nowrap;
-  max-width: 120px;
+  max-width: 220px;
   opacity: 1;
   transition: max-width 160ms cubic-bezier(0.16, 1, 0.3, 1),
     opacity 120ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -95,6 +95,10 @@ html.pc-has-menubar .pc-bar-fade {
 .pc-btn--collapsed .pc-btn-label {
   max-width: 0;
   opacity: 0;
+}
+.pc-more-menu .pc-btn-label {
+  max-width: none;
+  overflow: visible;
 }
 .pc-btn svg {
   color: var(--ui-fg-muted);

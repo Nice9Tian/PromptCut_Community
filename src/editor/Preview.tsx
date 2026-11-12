@@ -10,7 +10,8 @@ import { actions, getState, useStore } from "../store/project";
 import { findClip, type Project } from "../kernel/project";
 import { nudgeFrame } from "../kernel/layout";
 import { createStageRpc, type HostCapabilities, type StageGraphCapability, type StageMediaPolicy, type StageRpcClient } from "../render/stageRpc";
-import { frontStage, onStageEvent, pushProject, releaseStageClient, setStageClient, swapStageClients, syncProject, whenStageReady } from "./stageBridge";
+import { frontStage, onStageEvent, pushProject, releaseStageClient, setBeforeFullStagePush, setStageClient, swapStageClients, syncProject, whenStageReady } from "./stageBridge";
+import { alignMirrorForStageMedia } from "../render/dataMirror";
 import { bindStageCards, noteStageCards, noteStageFresh } from "./stageCards";
 import { INITIAL_ROLE_OF, STAGE_IDS, dualStage, interimStage, liveStage, singleLiveStage, stageOrigins, stageSrc, stageTargetOrigin, type StageId } from "./previewMode";
 import { ControlBar } from "./preview/ControlBar";
@@ -18,7 +19,7 @@ import { ToolBar, ToolType } from "./preview/ToolBar";
 import { useMemberReadOnly } from "./readOnly";
 import { PreviewContextMenu } from "./preview/PreviewContextMenu";
 import { cardRunState, getCard, onCardRunStatesChanged, onSyncedUserCardsChanged, setCardRunStates, syncedUserCards, type CardRunState } from "../kernel/registry";
-import { fitView, frameOrigin, panBy, wheelZoomFactor, zoomAt, type View2D } from "./preview/viewport2d";
+import { fitView, frameOrigin, framedFitView, framedPanBy, framedZoomAt, framedZoomPercent, isFramedFitted, panBy, resizeFramedView, wheelZoomFactor, zoomAt, type Size, type View2D } from "./preview/viewport2d";
 import "./preview/preview.css";
 import { atFrameGrid } from "../render/frameGrid";
 import { contentStartOf } from "./timeline/utils";
@@ -94,6 +95,7 @@ setCostResolver((proj, clipId) => {
   const key = clipIdentityOf(proj).identityKeys[clipId];
   return key ? currentCosts().find((r) => r.identityKey === key) : undefined;
 }, () => dualStage());
+setBeforeFullStagePush(alignMirrorForStageMedia);
 
 /**
  * Local reuse for single-stage boundary search ("card identity + this machine's environment fingerprint" → single-frame time measured on this machine; `boundarySearch.mjs`).
@@ -219,9 +221,16 @@ try { setOnlineBrowserMode(ONLINE || new URLSearchParams(location.search).get("p
  *
  * Video layer: find the media clip that should be playing with videoClipAt, switch the source when src changes, and seek when the time is off (>0.2s).
  */
-export function Preview(props: { variant?: "mobile" } = {}) {
-  /** The mobile app UI (`src/mobile/`) only wants the picture: no 2D/3D tab, toolbar or playback bar are mounted, and playback and seek are driven by the mobile app's own controls calling the same store actions */
+export function Preview(props: { variant?: "mobile" | "framed" } = {}) {
+  /**
+   * `mobile` (`src/mobile/`, `ChatSidePanel.tsx`) and `framed` (Vibe mode `DetailEdit.tsx`) both mount only the
+   * picture without Classic mode's 2D/3D tabs, tool row or playback bar (`compact`).
+   * `mobile` stays fitted without hijacking wheel scrolling; `framed` enables bounded [100%, 800%] zoom,
+   * four-edge-clamped pan, and the top-right percentage + "Fit" control (issue #15).
+   */
   const mobile = props.variant === "mobile";
+  const framed = props.variant === "framed";
+  const compact = mobile || framed;
 
   const project = useStore((s) => s.project);
   // C6.6: the tier-switch set of the two-tier media (while the preview is mounted, ask the current asset service every 2 seconds)
@@ -776,85 +785,173 @@ export function Preview(props: { variant?: "mobile" } = {}) {
    * the frame is first placed at the top left. Layout effects run synchronously **before** the
    * browser paints and trigger a re-render, so the user never sees that frame.
    */
+  const prevFramedLayoutRef = useRef<{ project: Size; box: Size } | null>(null);
+
+  const measureStageBox = (el: HTMLElement, entryRect?: DOMRectReadOnly) => {
+    const r = el.getBoundingClientRect();
+    if (entryRect && entryRect.width >= 1 && entryRect.height >= 1) {
+      return { width: entryRect.width, height: entryRect.height, rect: r };
+    }
+    // Ancestor entrance animations (e.g. `.ps-detail`'s `scale(0.97)`) shrink `getBoundingClientRect()` without
+    // re-firing ResizeObserver when the animation finishes; fall back to unscaled clientWidth/Height when skewed.
+    const cw = el.clientWidth;
+    const ch = el.clientHeight;
+    const skewed = cw >= 1 && ch >= 1 && (Math.abs(r.width - cw) > 1 || Math.abs(r.height - ch) > 1);
+    return {
+      width: skewed ? cw : r.width,
+      height: skewed ? ch : r.height,
+      rect: r,
+    };
+  };
+
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return;
-    const measure = () => {
-      const r = el.getBoundingClientRect();
-      if (r.width < 1 || r.height < 1) return;
-      setBoxSize({ width: r.width, height: r.height });
-      if (camRef.current.auto) setCam(fitView(project, r, mobile ? 0 : undefined));
+    const applyBox = (b: { width: number; height: number }) => {
+      if (b.width < 1 || b.height < 1) return;
+      const nextBox = { width: b.width, height: b.height };
+      const projSize = { width: project.width, height: project.height };
+      setBoxSize(nextBox);
+      if (framed) {
+        const nextCam = resizeFramedView(camRef.current, projSize, prevFramedLayoutRef.current, nextBox);
+        prevFramedLayoutRef.current = { project: projSize, box: nextBox };
+        camRef.current = nextCam;
+        setCam(nextCam);
+      } else if (camRef.current.auto) {
+        const nextCam = fitView(projSize, nextBox, compact ? 0 : undefined);
+        camRef.current = nextCam;
+        setCam(nextCam);
+      }
     };
-    measure();
-    const ro = new ResizeObserver(measure);
+    applyBox(measureStageBox(el));
+    const ro = new ResizeObserver((entries) => applyBox(measureStageBox(el, entries[0]?.contentRect)));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [project.width, project.height, view]);
+  }, [project.width, project.height, view, framed, compact]);
 
-  /** Go back to "fit window". Clicking that badge in the tool row comes here */
+  /** Go back to "fit window". Clicking that badge in the tool row or the top-right framed pill comes here */
   const fitToWindow = useCallback(() => {
     const el = boxRef.current;
     if (!el) return;
-    const r = el.getBoundingClientRect();
-    if (r.width < 1 || r.height < 1) return;
-    setCam(fitView({ width: project.width, height: project.height }, r, mobile ? 0 : undefined));
-  }, [project.width, project.height]);
+    const b = measureStageBox(el);
+    if (b.width < 1 || b.height < 1) return;
+    const nextBox = { width: b.width, height: b.height };
+    const projSize = { width: project.width, height: project.height };
+    const nextCam = framed ? framedFitView(projSize, nextBox) : fitView(projSize, nextBox, compact ? 0 : undefined);
+    if (framed) prevFramedLayoutRef.current = { project: projSize, box: nextBox };
+    camRef.current = nextCam;
+    setCam(nextCam);
+  }, [project.width, project.height, framed, compact]);
 
   /*
-   * Wheel zoom + middle-button drag to pan.
+   * Wheel zoom + drag to pan.
    *
    * Why not React's onWheel: since React 17 the wheel is bound as a **passive** listener, so calling
    * preventDefault inside it not only has no effect but also logs a console warning:
    * the wheel then scrolls the whole panel while it zooms the view. We have to call
    * addEventListener ourselves and explicitly turn passive off.
    *
-   * The only dependency is the aspect ratio: cam is read through a ref to get the latest value,
-   * otherwise every zoom step would unbind and rebind the listener.
+   * `mobile` (phone editor + side-panel thumbnail) skips wheel/pan binding so scrolling the side panel works
+   * normally; `framed` (Vibe DetailEdit) clamps zoom to [100%, 800%] and allows both middle-drag and
+   * zoomed-in left-drag panning while keeping all four video edges covering the frame.
    */
   useEffect(() => {
+    if (mobile) return;
     const el = boxRef.current;
     if (!el) return;
-    const box = () => el.getBoundingClientRect();
     const size = { width: project.width, height: project.height };
 
     const onWheel = (e: WheelEvent) => {
+      if ((e.target as Element | null)?.closest?.('[data-pc="preview-zoom"]')) return;
       e.preventDefault();
-      const r = box();
+      const m = measureStageBox(el);
+      if (m.width < 1 || m.height < 1) return;
       const factor = wheelZoomFactor(e.deltaY, e.deltaMode);
       if (factor === 1) return;
+      const sx = m.rect.width > 0 ? m.width / m.rect.width : 1;
+      const sy = m.rect.height > 0 ? m.height / m.rect.height : 1;
+      const cursor = { x: (e.clientX - m.rect.left) * sx, y: (e.clientY - m.rect.top) * sy };
+      const nextBox = { width: m.width, height: m.height };
       const cur = camRef.current;
-      setCam(zoomAt(cur, size, r, { x: e.clientX - r.left, y: e.clientY - r.top }, cur.scale * factor));
+      const nextCam = framed
+        ? framedZoomAt(cur, size, nextBox, cursor, cur.scale * factor)
+        : zoomAt(cur, size, nextBox, cursor, cur.scale * factor);
+      if (nextCam !== cur) {
+        camRef.current = nextCam;
+        setCam(nextCam);
+      }
     };
 
     /*
-     * Middle-button drag: hold and drag to move the canvas. The left button is left to the select /
-     * move tool (which exits on its own when button !== 0), the right button to the menu, so panning
-     * only accepts the middle button: each of the three buttons does one thing, no modifier keys.
+     * Middle-button drag: hold and drag to move the canvas in both Classic and framed modes.
+     * In framed mode (`DetailEdit`), where Classic's move/text toolbar is absent, left-button drag (>= 4px)
+     * also pans whenever zoomed above 100%, while clicks (< 4px) still select/deselect stage cards.
      */
+    const PAN_DRAG_PX = 4;
     let panning = false;
+    let leftPending = false;
+    let panPointerId = -1;
+    let startX = 0;
+    let startY = 0;
     let lastX = 0;
     let lastY = 0;
     const onDown = (e: PointerEvent) => {
-      if (e.button !== 1) return;
-      // On many browsers the middle button means "autoscroll"; if not intercepted, that round scroll cursor pops up
-      e.preventDefault();
-      panning = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
-      // Capture the pointer so the drag keeps following even outside the preview area. If the pointer is already gone
-      // (released even before this line) this throws, and that should not interrupt the drag
-      try { el.setPointerCapture(e.pointerId); } catch { /* If capture fails, never mind: dragging still works, it just breaks when leaving the area */ }
-      el.style.cursor = "grabbing";
+      if ((e.target as Element | null)?.closest?.('[data-pc="preview-zoom"]')) return;
+      if (e.button === 1) {
+        // On many browsers the middle button means "autoscroll"; if not intercepted, that round scroll cursor pops up
+        e.preventDefault();
+        panning = true;
+        leftPending = false;
+        panPointerId = e.pointerId;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        // Capture the pointer so the drag keeps following even outside the preview area
+        try { el.setPointerCapture(e.pointerId); } catch { /* Already released */ }
+        el.style.cursor = "grabbing";
+        return;
+      }
+      if (framed && e.button === 0) {
+        const m = measureStageBox(el);
+        if (m.width < 1 || m.height < 1) return;
+        if (isFramedFitted(camRef.current, size, { width: m.width, height: m.height })) return;
+        leftPending = true;
+        panPointerId = e.pointerId;
+        startX = lastX = e.clientX;
+        startY = lastY = e.clientY;
+      }
     };
     const onMove = (e: PointerEvent) => {
+      if (e.pointerId !== panPointerId) return;
+      if (leftPending) {
+        if (Math.hypot(e.clientX - startX, e.clientY - startY) < PAN_DRAG_PX) return;
+        leftPending = false;
+        panning = true;
+        try { el.setPointerCapture(e.pointerId); } catch { /* Already released */ }
+        el.style.cursor = "grabbing";
+      }
       if (!panning) return;
-      const dx = e.clientX - lastX;
-      const dy = e.clientY - lastY;
+      const m = measureStageBox(el);
+      if (m.width < 1 || m.height < 1) return;
+      const sx = m.rect.width > 0 ? m.width / m.rect.width : 1;
+      const sy = m.rect.height > 0 ? m.height / m.rect.height : 1;
+      const dx = (e.clientX - lastX) * sx;
+      const dy = (e.clientY - lastY) * sy;
       lastX = e.clientX;
       lastY = e.clientY;
-      setCam(panBy(camRef.current, size, box(), dx, dy));
+      const nextBox = { width: m.width, height: m.height };
+      const cur = camRef.current;
+      const nextCam = framed
+        ? framedPanBy(cur, size, nextBox, dx, dy)
+        : panBy(cur, size, nextBox, dx, dy);
+      if (nextCam !== cur) {
+        camRef.current = nextCam;
+        setCam(nextCam);
+      }
     };
     const stopPan = (e: PointerEvent) => {
+      if (e.pointerId !== panPointerId) return;
+      leftPending = false;
+      panPointerId = -1;
       if (!panning) return;
       panning = false;
       try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch { /* Already released */ }
@@ -877,7 +974,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       el.removeEventListener("pointercancel", stopPan);
       el.removeEventListener("auxclick", onAux);
     };
-  }, [project.width, project.height, view]);
+  }, [project.width, project.height, view, mobile, framed]);
 
   /*
    * Render surface ready: once mounted it posts a message over (carrying J4's host capability table);
@@ -2725,7 +2822,31 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     const startX = e.clientX;
     const startY = e.clientY;
     const pointerId = e.pointerId;
-    try { overlay.setPointerCapture(pointerId); } catch { /* The pointer is already gone, but the hit can still be computed */ }
+    if (framed && !isFramedFitted(camRef.current, project, boxSize ?? { width: project.width, height: project.height })) {
+      // While zoomed in framed mode, dragging >= 4px pans on `boxRef`; do not steal pointer capture or fire selection on a pan drag.
+      const panned = await new Promise<boolean>((resolve) => {
+        const cleanup = () => {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onEnd);
+          window.removeEventListener("pointercancel", onEnd);
+        };
+        const onMove = (ev: PointerEvent) => {
+          if (ev.pointerId !== pointerId) return;
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) >= 4) { cleanup(); resolve(true); }
+        };
+        const onEnd = (ev: PointerEvent) => {
+          if (ev.pointerId !== pointerId) return;
+          cleanup();
+          resolve(Math.hypot(ev.clientX - startX, ev.clientY - startY) >= 4);
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onEnd);
+        window.addEventListener("pointercancel", onEnd);
+      });
+      if (panned) return;
+    } else {
+      try { overlay.setPointerCapture(pointerId); } catch { /* The pointer is already gone, but the hit can still be computed */ }
+    }
 
     // Events during the await are recorded first
     let lastX = startX;
@@ -2858,10 +2979,13 @@ export function Preview(props: { variant?: "mobile" } = {}) {
 
   /** Where in the window the frame's top-left corner should go. Not placed until the window size is measured (that frame passes before paint) */
   const frameXY = boxSize ? frameOrigin(cam, project, boxSize) : null;
+  const effectiveBox = boxSize ?? { width: project.width, height: project.height };
+  const framedFitted = framed ? isFramedFitted(cam, project, effectiveBox) : true;
+  const framedPct = framed ? framedZoomPercent(cam, project, effectiveBox) : 100;
 
   return (
-    <div className={mobile ? "pc-pv pc-pv--mobile" : "pc-pv"} data-pc="preview">
-      {!mobile && <div className="pc-pv-tabs" data-pc="preview-tabs">
+    <div className={compact ? (framed ? "pc-pv pc-pv--mobile pc-pv--framed" : "pc-pv pc-pv--mobile") : "pc-pv"} data-pc="preview">
+      {!compact && <div className="pc-pv-tabs" data-pc="preview-tabs">
         {([["2d", "2D"], ["3d", "3D"]] as const).map(([id, label]) => (
           <button
             key={id}
@@ -2877,7 +3001,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
       {online && <CostSearchGate />}
       {online && gateViewerWanted() && <GateViewer />}
 
-      {view === "2d" && !mobile && <ToolBar tool={tool} onToolChange={setTool} zoom={cam.scale} fitted={cam.auto} onFit={fitToWindow} />}
+      {view === "2d" && !compact && <ToolBar tool={tool} onToolChange={setTool} zoom={cam.scale} fitted={cam.auto} onFit={fitToWindow} />}
 
       {/*
         * **The 2D page resides permanently under the 3D page; it is only hidden, not unmounted.**
@@ -2908,6 +3032,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         ref={boxRef}
         className="pc-pv-stage"
         data-pc="preview-2d"
+        data-zoomed={framed && !framedFitted ? "true" : undefined}
         aria-hidden={view === "3d" || undefined}
         inert={view === "3d"}
         style={view === "3d" ? { position: "absolute", inset: 0, opacity: 0, pointerEvents: "none" } : undefined}
@@ -3099,10 +3224,25 @@ export function Preview(props: { variant?: "mobile" } = {}) {
             })}
           </div>
         </div>
+        {framed && (
+          <div className="pc-pv-zoom-bar" data-pc="preview-zoom" role="group" aria-label={trText("Zoom")}>
+            <span className="pc-pv-zoom-pct" data-pc="preview-zoom-pct">{`${framedPct}%`}</span>
+            <button
+              type="button"
+              className="pc-pv-zoom-fit"
+              data-pc="preview-zoom-fit"
+              disabled={framedFitted}
+              onClick={fitToWindow}
+              title={trText("Fit window")}
+            >
+              {trText("Fit")}
+            </button>
+          </div>
+        )}
       </div>
       </div>
 
-      {!mobile && <ControlBar />}
+      {!compact && <ControlBar />}
       
       {contextMenu && (
         <PreviewContextMenu

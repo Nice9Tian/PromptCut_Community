@@ -7,6 +7,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 
 import {
   SECTION_IDS,
@@ -25,6 +26,8 @@ import {
   withActive,
   sameLayout,
 } from "./railLayout.ts";
+import { RAIL_W, railWidthFor } from "../sideRails.ts";
+import { translate } from "../../i18n/index.ts";
 
 const A = (id) => agentItem(id);
 const L = (left, right, active = {}) => ({
@@ -283,4 +286,30 @@ test("Cut group: dragging the whole group to the other side keeps the selected i
   const synced = syncAgents(L([...SECTION_IDS], [A("t2"), CUTS_ITEM], { right: A("t2") }), ["main"]);
   assert.deepEqual(synced.layout.right.includes(CUTS_ITEM), true);
   assert.equal(synced.layout.active.right === CUTS_ITEM, false);
+});
+
+test("Rail width per locale stays synced with studio.css and fits every rail tab label on a single line", () => {
+  const css = fs.readFileSync(new URL("../../skins/studio.css", import.meta.url), "utf8");
+  assert.match(css, /:root\s*\{[^}]*--ui-rail-w:\s*64px;/);
+  assert.match(css, /:root\[lang="en"\]\s*\{[^}]*--ui-rail-w:\s*80px;/);
+  assert.match(css, /:root\[lang="ja"\]\s*\{[^}]*--ui-rail-w:\s*88px;/);
+  assert.equal(railWidthFor("zh-CN"), 64);
+  assert.equal(railWidthFor("en"), 80);
+  assert.equal(railWidthFor("ja"), 88);
+  assert.equal(RAIL_W, railWidthFor("en"));
+
+  const labels = ["Media library", "Animation", "Effects", "Edit", "Captions", "Script", "Start"];
+  for (const locale of ["en", "zh-CN", "ja"]) {
+    const fontSize = locale === "ja" ? 10 : 11;
+    // Item pill width is railWidth - 8px, minus 4px inner horizontal padding
+    const budget = railWidthFor(locale) - 12;
+    for (const key of labels) {
+      const text = translate(locale, key);
+      const estPx = [...text].reduce((sum, ch) => {
+        if (ch.charCodeAt(0) > 0xff) return sum + fontSize;
+        return sum + fontSize * (" il1.,:;|!'".includes(ch) ? 0.28 : 0.52);
+      }, 0);
+      assert.ok(estPx <= budget, `${locale} rail label "${text}" (${estPx.toFixed(1)}px) exceeds ${budget}px`);
+    }
+  }
 });

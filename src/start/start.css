@@ -885,14 +885,17 @@
 
 .ps-detail-stage {
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
+  container-type: size;
   display: grid;
   place-items: center;
 }
 .ps-detail-screen {
   position: relative;
-  height: 100%;
+  width: min(100cqw, calc(100cqh * var(--stage-w, 16) / var(--stage-h, 9)));
   max-width: 100%;
+  max-height: 100%;
   aspect-ratio: 16 / 9;
   border-radius: 8px;
 }
@@ -1625,6 +1628,7 @@
 .ps-stage { position: relative; overflow: hidden; background: #000; }
 .ps-stage .pc-pv--mobile { position: absolute; inset: 0; padding: 0; gap: 0; height: auto; }
 .ps-stage .pc-pv--mobile .pc-pv-stage { border-radius: 0; }
+.ps-stage .pc-pv--mobile .pc-pv-frame { border: 0; }
 .ps-stage .pc-pv--mobile .pc-pv-corner { display: none; }
 .ps-stage-over { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; }
 .ps-ext-frame-img { background: var(--fill-subtle); }
