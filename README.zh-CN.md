@@ -96,7 +96,7 @@ Python 侧（语音转文字、镜头识别、主体检测、追踪、素材收�
 | 术语 | [docs/semantics/glossary.md](docs/semantics/glossary.md) |
 | 为什么这样设计 | [docs/rationale/](docs/rationale/) |
 | 排障、对账等操作知识 | [docs/guides/](docs/guides/) |
-| 怎么参与 | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| 怎么参与 | [CONTRIBUTING.md](CONTRIBUTING.md)。PR、issue 和提交信息一律用英文 |
 
 <details>
 <summary><strong>关于指向本仓库之外的引用</strong></summary>
@@ -113,7 +113,7 @@ Python 侧（语音转文字、镜头识别、主体检测、追踪、素材收�
 <details>
 <summary><strong>给 coding agent 的入口</strong></summary>
 
-本仓库**不放** `AGENTS.md` 和 `CLAUDE.md`：这两个文件会被各家工具无条件注入上下文，把本项目的协作习惯塞进别人的 Agent。需要的话自己在工作副本里建一份，内容照抄下面这段就够，别提交（`.gitignore` 已挡掉）：
+[`AGENTS.md`](AGENTS.md) 刻意写得很短。这个文件会被各家工具无条件注入上下文，所以里面只放不管用什么工具都得守的规矩，现在只有一条：**PR、issue 和提交信息一律用英文**。本项目自己的协作习惯不写进去，仓库也不放 `CLAUDE.md`，免得塞进别人的 Agent。想让自己的 Agent 一上来多知道一些，就在工作副本里建一份 `CLAUDE.md`，内容照抄下面这段，别提交（`.gitignore` 已挡掉）：
 
 ````markdown
 # PromptCut

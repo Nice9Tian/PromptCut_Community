@@ -4,6 +4,8 @@ about: Something is wrong
 labels: bug
 ---
 
+<!-- Please write in English. -->
+
 ## What happens
 
 <!-- What you saw. For problems that affect the picture, attach a screenshot or an exported frame. -->

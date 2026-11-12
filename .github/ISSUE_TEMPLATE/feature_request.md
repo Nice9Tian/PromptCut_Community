@@ -4,6 +4,8 @@ about: Something you want
 labels: enhancement
 ---
 
+<!-- Please write in English. -->
+
 ## What you want to be able to do
 
 <!-- Say what you want to achieve, not the implementation you guess at. -->

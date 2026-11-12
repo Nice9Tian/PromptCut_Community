@@ -54,7 +54,8 @@ If your PR touches anything visual (rendering, cards, preview, export), **includ
 ## Submitting
 
 - **One PR, one thing.** Split drive-by refactors into their own PR.
-- **Say what changed and why** in the commit message. Chinese or English is fine.
+- **Write in English.** Pull requests, issues and commit messages are in English: titles, descriptions and comments alike (from 2026-11-13; earlier history stays as it is).
+- **Say what changed and why** in the commit message. Subjects take the form `<type>: <what was done>`; the types are listed in [docs/semantics/guide_files/git_and_release.md](docs/semantics/guide_files/git_and_release.md).
 - **Sign off (DCO):** every commit needs a `Signed-off-by` line; `git commit -s` adds it. It states that you have the right to contribute that code under MIT. There is no CLA and nothing else to sign.
 - **Match the surrounding code**: comment density, naming, idiom. This repository comments much more heavily than most, and the comments are part of the real documentation — please write new code to the same density.
 

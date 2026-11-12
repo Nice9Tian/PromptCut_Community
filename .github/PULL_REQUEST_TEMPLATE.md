@@ -1,4 +1,4 @@
-<!-- Chinese or English is fine -->
+<!-- Please write in English: the title, this description and the commit messages. -->
 
 ## What changed
 
