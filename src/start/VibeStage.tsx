@@ -13,17 +13,24 @@
  * When the project is not connected yet (the store does not hold a cloud project) it is not mounted, and
  * the caller supplies an empty state.
  */
-import type { JSX, ReactNode } from "react";
+import type { CSSProperties, JSX, ReactNode } from "react";
 import { Preview } from "../editor/Preview";
 import { ProbeGate } from "../editor/ProbeGate";
 import { useStore } from "../store/project";
 
-export function VibeStage(props: { className?: string; children?: ReactNode; pc?: string }): JSX.Element {
+export function VibeStage(props: { className?: string; children?: ReactNode; pc?: string; zoomable?: boolean }): JSX.Element {
   const w = useStore((s) => s.project.width);
   const h = useStore((s) => s.project.height);
+  const sw = w > 0 ? w : 16;
+  const sh = h > 0 ? h : 9;
+  const style = {
+    aspectRatio: `${sw} / ${sh}`,
+    "--stage-w": sw,
+    "--stage-h": sh,
+  } as CSSProperties;
   return (
-    <div className={`ps-stage${props.className ? ` ${props.className}` : ""}`} data-pc={props.pc ?? "start-stage"} style={{ aspectRatio: `${w > 0 ? w : 16} / ${h > 0 ? h : 9}` }}>
-      <Preview variant="mobile" />
+    <div className={`ps-stage${props.className ? ` ${props.className}` : ""}`} data-pc={props.pc ?? "start-stage"} style={style}>
+      <Preview variant={props.zoomable ? "framed" : "mobile"} />
       <ProbeGate />
       {props.children}
     </div>

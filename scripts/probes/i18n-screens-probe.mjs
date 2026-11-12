@@ -4,7 +4,7 @@ import '../lib/no-user-dirs.mjs';
  * Interface language acceptance: walks every Vibe mode screen and the Classic editor in English,
  * Simplified Chinese and Japanese, and takes a screenshot of each.
  *
- *   node scripts/probes/i18n-screens-probe.mjs [--out <folder>] [--editor http://127.0.0.1:5213]
+ *   node scripts/probes/i18n-screens-probe.mjs [--out <folder>] [--port <port>] [--editor http://127.0.0.1:5213]
  *
  * Without --editor it starts its own dev server with temporary project, chat and config folders.
  * With --editor it uses that server as it is, so give it one with disposable data.
@@ -45,10 +45,12 @@ const SAMPLE_AGENT = 'The first cut is on the timeline.';
 
 let server = null;
 let editor = arg('--editor', '');
+const port = Number(arg('--port', '0')) || undefined;
 if (!editor) {
   const box = fs.mkdtempSync(path.join(os.tmpdir(), 'i18n-screens-'));
   fs.writeFileSync(path.join(box, 'ai.json'), JSON.stringify({ defaultProvider: 'claude' }));
   server = await startDevServer({
+    port,
     env: { PROMPTCUT_AI_CONFIG: path.join(box, 'ai.json'), PROMPTCUT_PROJECTS_DIR: path.join(box, 'projects'), PROMPTCUT_CHATS_DIR: path.join(box, 'chats') },
     logFile: path.join(box, 'vite.log'),
   });
@@ -82,6 +84,22 @@ async function inspect(page) {
       const s = getComputedStyle(el);
       if (s.overflowX !== 'visible' && s.textOverflow !== 'ellipsis' && el.scrollWidth > el.clientWidth + 2) cut.push(el.textContent.trim().slice(0, 50));
       if (s.textOverflow === 'ellipsis' && el.scrollWidth > el.clientWidth + 2 && !el.title) cut.push('…' + el.textContent.trim().slice(0, 50));
+    }
+    // Uncollapsed button label spans use overflow:hidden for collapse transitions and must not clip text
+    for (const span of document.querySelectorAll('button:not(.pc-btn--collapsed) .pc-btn-label')) {
+      if (!visible(span) || !span.textContent.trim()) continue;
+      if (span.scrollWidth > span.clientWidth + 1) cut.push(span.textContent.trim().slice(0, 50));
+    }
+    // Vertical rail labels must sit on a single line and fit inside their .pc-rail-item pill
+    for (const span of document.querySelectorAll('.pc-dock-rail .pc-rail-item span:not(.pc-rr-glyph)')) {
+      if (!visible(span) || !span.textContent.trim()) continue;
+      const btn = span.closest('.pc-rail-item');
+      if (!btn) continue;
+      const sr = span.getBoundingClientRect();
+      const br = btn.getBoundingClientRect();
+      if (sr.height > 18 || sr.width > br.width - 1 || span.scrollWidth > span.clientWidth + 1) {
+        cut.push(span.textContent.trim().slice(0, 50));
+      }
     }
     return { texts: [...new Set(texts)], cut: [...new Set(cut)] };
   });

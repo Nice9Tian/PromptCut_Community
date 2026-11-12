@@ -133,7 +133,7 @@ export function DetailEdit(props: {
       </header>
 
       <div className="ps-detail-stage">
-        <VibeStage className="ps-detail-screen" pc="start-detail-stage" />
+        <VibeStage className="ps-detail-screen" pc="start-detail-stage" zoomable />
       </div>
 
       <div className="ps-detail-transport">

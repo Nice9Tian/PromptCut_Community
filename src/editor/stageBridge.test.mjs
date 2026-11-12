@@ -180,3 +180,22 @@ test("releaseStageClient: a client that is in no slot is a no-op (it must not re
   bridge.releaseStageClient(old);
   assert.equal(frontStage(), cur);
 });
+
+test("setBeforeFullStagePush runs before full project resets and does not run for track-only patches", async () => {
+  const events = [];
+  bridge.setBeforeFullStagePush(async (proj) => { events.push(`hook:${proj.name}`); });
+  const c = fakeClient("front");
+  c.setProject = async function (proj, opts) {
+    events.push(`send:${opts?.reset ? "full" : "patch"}`);
+    this.calls.push({ project: proj, opts });
+    return { ok: true };
+  };
+  setStageClient("front", c);
+  const p1 = project("first", [{ id: "c1", cardId: "punch-pill", start: 0, end: 5, params: {} }]);
+  await syncProject("front", p1);
+  const p2 = { ...p1, tracks: [{ id: "tr", clips: [{ id: "c1", cardId: "punch-pill", start: 0, end: 6, params: {} }] }] };
+  await syncProject("front", p2);
+  const p3 = { ...p2, media: [{ id: "m1", kind: "video", name: "a.mp4", url: "/@media/abc" }] };
+  await syncProject("front", p3);
+  assert.deepEqual(events, ["hook:first", "send:full", "send:patch", "hook:first", "send:full"]);
+});

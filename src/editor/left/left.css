@@ -1400,7 +1400,7 @@
 /* ── Import from cloud drive (StorageImportButton)─────────────────────────────── */
 /* Secondary button: same height and corner radius as the primary button, outlined and not filled: on the media page "Import media" is the primary action */
 .pc-btn-ghost {
-  height: 36px;
+  min-height: 36px;
   border-radius: var(--ui-radius, 6px);
   background: transparent;
   color: var(--ui-fg, #F2F1F6);
@@ -1409,10 +1409,19 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 0 16px;
+  padding: 6px 12px;
   font-size: 14px;
   font-weight: 500;
+  line-height: 1.25;
+  box-sizing: border-box;
   cursor: pointer;
+}
+.pc-btn-ghost svg {
+  flex: none;
+}
+:root[lang="ja"] .pc-left-head .pc-btn-ghost {
+  padding: 6px 8px;
+  font-size: 11.5px;
 }
 .pc-btn-ghost.is-block {
   width: 100%;

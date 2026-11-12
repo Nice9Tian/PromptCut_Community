@@ -1,6 +1,6 @@
 import { agentColorFor } from "./agentColor";
 import { palettes, semantic, type Palette, type PaletteSide } from "./palettes";
-import { tr } from "../i18n/index.ts";
+import { getLocale, tr } from "../i18n/index.ts";
 
 /**
  * Window skin = a set of --ui-* variables written to <html> at runtime by useSkin; skins.css only
@@ -150,7 +150,8 @@ function sideToVars(side: PaletteSide, mode: SkinMode): Record<string, string> {
     "ui-radius-lg": "8px",
     "ui-radius-xl": "10px",
     "ui-gap": "8px",
-    "ui-rail-w": "64px",
+    "ui-rail-w": getLocale() === "ja" ? "88px" : getLocale() === "en" ? "80px" : "64px",
+    "ui-rail-label-size": getLocale() === "ja" ? "10px" : "11px",
     "pc-cube-s": "64px",
     "pc-cube-gap": "8px",
     "ui-focus-ring": "0 0 0 2px var(--ui-accent)",
