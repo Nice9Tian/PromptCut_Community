@@ -7,6 +7,7 @@ import { DEFAULT_CARD_DUR } from "../../kernel/project";
 import { clearDragPayload, MIME_CARD, setDragPayload } from "../dnd";
 import { PreviewCard } from "./PreviewCard";
 import { usePreviewZoom, zoomFor } from "./previewZoom";
+import { AnimationThumb } from "./AnimationThumb";
 import { tr } from "../../i18n/index.ts";
 
 /**
@@ -33,11 +34,10 @@ export function CardCell({ def, fill, aspect }: { def: CardDef<any>; fill?: bool
   // How long the animation is: the settle time declared by the card (computed with default parameters), or 1.5s if there is none
   const animMs = animMsOf(def);
   /*
-   * Media effect cards (`card` / `audio`) have no React component and can't run in the library: hovering doesn't
-   * switch to an animated preview, and the static placeholder with name + description stays shown.
-   * Measuring the bounding box is skipped too (there is no DOM to measure).
+   * Media effect cards (`card` / `audio`) and non-DOM canvas cards (`webgl` / `2d`) cannot mount bare inside a DOM
+   * preview stage without their GPU host, so hovering keeps their rendered representative-frame thumbnail visible.
    */
-  const live = hot && typeof def.Component === "function";
+  const live = hot && typeof def.Component === "function" && (!def.canvas || def.canvas.kind === "dom2d");
   // When `live` is true it must be a function; JSX can't hold a non-null assertion, so take it once here
   const Live = def.Component!;
   const zoom = usePreviewZoom(`card:${def.id}`, stageRef, live, animMs);
@@ -74,12 +74,7 @@ export function CardCell({ def, fill, aspect }: { def: CardDef<any>; fill?: bool
 
   const preview = (
     <div ref={viewRef} className="absolute inset-0">
-      {!live && (
-        <div className="pc-lib-card-text">
-          <div className="pc-lib-card-name">{tr(def.name)}</div>
-          <div className="pc-lib-card-desc">{def.description && tr(def.description)}</div>
-        </div>
-      )}
+      {!live && <AnimationThumb kind="card" def={def} />}
       {live && box.w > 0 && box.h > 0 && (
         <div data-pc="preview" className="absolute inset-0 overflow-hidden bg-black/60 pointer-events-none" style={{ ...themeStyle(project.themeId) }}>
           <div
@@ -111,8 +106,7 @@ export function CardCell({ def, fill, aspect }: { def: CardDef<any>; fill?: bool
     <PreviewCard
       attrs={{ "data-pc-card": def.id }}
       title={tr(def.name)}
-      // When not hovered the name is already in the picture area; the title bar only overlays the bottom edge once the animation starts running
-      caption="hover"
+      caption="always"
       preview={preview}
       hoverDelayMs={180}
       onHover={setHot}

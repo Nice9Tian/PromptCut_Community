@@ -11,6 +11,7 @@ import Shell from "./Shell";
 import ExportView from "./ExportView";
 import AudioMixView from "./AudioMixView";
 import StageView from "./StageView";
+import ThumbStageView from "./ThumbStageView";
 import { installFocusZoomReset } from "./ui/focusZoomReset";
 import { mountUpdateNotice } from "./editor/sync/UpdateNotice";
 // The LAN default member source and join source are registered at the **entry** (see the file header of editor/sync/lanBoot.ts):
@@ -23,7 +24,7 @@ import { registerLanDefaults } from "./editor/sync/lanBoot";
 // No StrictMode: its double mount interrupts Motion entrance animations with a delay (the card stays at initial and does not move).
 // In the online build `?stage` is still needed: the same-origin single stage is an iframe of this page with `?stage=1` (src/editor/previewMode.ts)
 const q = new URLSearchParams(location.search);
-const view = q.has("audioMix") ? <AudioMixView /> : q.has("export") ? <ExportView /> : q.has("stage") ? <StageView /> : q.has("proto") ? <App /> : <Shell />;
+const view = q.has("audioMix") ? <AudioMixView /> : q.has("export") ? <ExportView /> : q.has("stage") ? (q.has("thumb") ? <ThumbStageView /> : <StageView />) : q.has("proto") ? <App /> : <Shell />;
 // After a mobile browser auto-zooms on tapping an input, pull back to 100% on blur (see ui/focusZoomReset.ts)
 // There is no LAN in online browser mode: members and join are handled by the real implementation registered through the cloud table
 if (!ONLINE) registerLanDefaults();
