@@ -233,10 +233,11 @@ export function sampleTimesFor(clip: TimedClip, motion: CardMotion, opts: Sample
  * makes every step a cache miss, and so sends one prerender request per step.
  */
 export function texKeyOf(clip: TimedClip, bakeT: number): string {
+  const cutTracks = (clip as { cut?: { project?: { tracks?: unknown } } }).cut?.project?.tracks;
   return [
     clip.id,
     clip.cardId,
-    JSON.stringify(clip.params ?? {}),
+    JSON.stringify(cutTracks !== undefined ? { params: clip.params ?? {}, cutTracks } : (clip.params ?? {})),
     `${clip.frame?.w ?? "-"}x${clip.frame?.h ?? "-"}`,
     `@${bakeT.toFixed(3)}`,
   ].join("|");

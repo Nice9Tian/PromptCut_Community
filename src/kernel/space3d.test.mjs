@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   cameraFor, perspectivePx, fovForDistance, clampFov,
   stageToWorld, worldToStage, projectStage,
+  BOARD_NEAR_RATIO, boardNearDistance, boardWorldCorners, boardCameraDepthRange, isBoardBehindCamera,
   DEFAULT_FOV_DEG,
 } from "./space3d.ts";
 import { frameCss } from "./layout.ts";
@@ -140,4 +141,59 @@ test("Reconcile with a real browser: the transform assembled by frameCss lands e
 
   // The nearer edge must be taller: this is the criterion for \"whether perspective is present\"
   assert.ok(L.scale > 1 && R.scale < 1, `Left should be near and right far, got ${L.scale} / ${R.scale}`);
+});
+
+test("boardNearDistance scales with camera distance while preserving cameraFor().near === 1", () => {
+  const camHd = cameraFor(HD, 40);
+  const camVert = cameraFor(VERT, 40);
+  assert.equal(camHd.near, 1);
+  near(boardNearDistance(HD, 40), camHd.distance * BOARD_NEAR_RATIO, 1e-9);
+  near(boardNearDistance(VERT, 40), camVert.distance * BOARD_NEAR_RATIO, 1e-9);
+  assert.ok(boardNearDistance(VERT, 40) > boardNearDistance(HD, 40));
+});
+
+test("isBoardBehindCamera culls boards at or past the near plane and behind the camera", () => {
+  const d = cameraFor(HD, 40).distance;
+  const n = boardNearDistance(HD, 40);
+  // Well in front of the camera and near plane -> visible
+  assert.equal(isBoardBehindCamera({ x: 960, y: 540, w: 400, h: 225, anchor: [0.5, 0.5], translateZ: 0 }, HD, 40), false);
+  assert.equal(isBoardBehindCamera({ x: 960, y: 540, w: 400, h: 225, anchor: [0.5, 0.5], translateZ: 600 }, HD, 40), false);
+  assert.equal(isBoardBehindCamera({ x: 960, y: 540, w: 400, h: 225, anchor: [0.5, 0.5], translateZ: d - n - 1 }, HD, 40), false);
+  // Exactly on the near plane, on the camera plane, and behind the camera -> culled
+  assert.equal(isBoardBehindCamera({ x: 960, y: 540, w: 400, h: 225, anchor: [0.5, 0.5], translateZ: d - n }, HD, 40), true);
+  assert.equal(isBoardBehindCamera({ x: 960, y: 540, w: 400, h: 225, anchor: [0.5, 0.5], translateZ: d }, HD, 40), true);
+  assert.equal(isBoardBehindCamera({ x: 960, y: 540, w: 400, h: 225, anchor: [0.5, 0.5], translateZ: d + 250 }, HD, 40), true);
+});
+
+test("Tilted board straddling the near plane stays visible until all corners pass behind near", () => {
+  const d = cameraFor(HD, 40).distance;
+  const n = boardNearDistance(HD, 40);
+  // Center is at the camera plane (z = d), but wide rotateY(60deg) puts the far edge well deeper than d - n
+  const straddling = { x: 960, y: 540, w: 1200, h: 400, anchor: [0.5, 0.5], rotateY: 60, translateZ: d };
+  const range1 = boardCameraDepthRange(straddling, HD, 40);
+  assert.ok(range1.minDepth < 0 && range1.maxDepth > n);
+  assert.equal(isBoardBehindCamera(straddling, HD, 40), false);
+
+  // Pushing further past the camera until even the far edge crosses near -> culled
+  const fullyPast = { ...straddling, translateZ: d + 800 };
+  const range2 = boardCameraDepthRange(fullyPast, HD, 40);
+  assert.ok(range2.maxDepth <= n);
+  assert.equal(isBoardBehindCamera(fullyPast, HD, 40), true);
+});
+
+test("isBoardBehindCamera respects custom walk-through / orbited CameraPose3D and cropped subBox", () => {
+  const n = boardNearDistance(HD, 40);
+  // Camera walked forward past z=0 to z=-300 looking toward -z: a board at z=0 is now behind the camera
+  const walkedPose = { position: [0, 0, -300], forward: [0, 0, -1], near: n };
+  assert.equal(isBoardBehindCamera({ translateZ: 0 }, HD, 40, walkedPose), true);
+  assert.equal(isBoardBehindCamera({ translateZ: -700 }, HD, 40, walkedPose), false);
+
+  // Cropped subBox restricts depth range to the opaque content region of a tilted full-stage board
+  const tiltedFull = { x: 960, y: 540, w: 1920, h: 1080, anchor: [0.5, 0.5], rotateY: 45, translateZ: 1100 };
+  // Left edge (subBox x in [0, 0.1]) is swung toward +z (closer than near), while right edge (x in [0.85, 0.95]) is swung inward
+  assert.equal(isBoardBehindCamera(tiltedFull, HD, 40, undefined, { x: 0.0, y: 0.4, w: 0.1, h: 0.2 }), true);
+  assert.equal(isBoardBehindCamera(tiltedFull, HD, 40, undefined, { x: 0.85, y: 0.4, w: 0.1, h: 0.2 }), false);
+
+  const corners = boardWorldCorners(tiltedFull, HD, { x: 0.25, y: 0.25, w: 0.5, h: 0.5 });
+  assert.equal(corners.length, 4);
 });
