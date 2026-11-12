@@ -1,0 +1,57 @@
+{
+  "name": "promptcut-harness",
+  "version": "0.1.0",
+  "description": "Zero-dependency Node.js Agent runtime harness supporting Anthropic, OpenAI-compatible, and Gemini streaming APIs, skills, code-cache truncation salvage, review loops, and conversation compaction.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./agent": "./agent.mjs",
+    "./history": "./history.mjs",
+    "./loop": "./loop.mjs",
+    "./loop-prompts": "./loop-prompts.mjs",
+    "./compact": "./compact.mjs",
+    "./skills": "./skills.mjs",
+    "./code-cache": "./code-cache.mjs",
+    "./tools": "./tools/index.mjs",
+    "./tools/*": "./tools/*.mjs",
+    "./providers/*": "./providers/*.mjs",
+    "./schema": "./schema.mjs",
+    "./tool-protocol": "./tool-protocol.mjs",
+    "./retry-fetch": "./retry-fetch.mjs",
+    "./idle-timeout": "./idle-timeout.mjs",
+    "./model-limits": "./model-limits.mjs",
+    "./output-speed": "./output-speed.mjs",
+    "./think-tags": "./think-tags.mjs",
+    "./partial-json": "./partial-json.mjs",
+    "./truncation": "./truncation.mjs",
+    "./env-snapshot": "./env-snapshot.mjs",
+    "./smoke": "./smoke.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "*.mjs",
+    "providers/*.mjs",
+    "tools/*.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "smoke": "node smoke.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "agent",
+    "llm",
+    "harness",
+    "anthropic",
+    "openai",
+    "gemini",
+    "skills",
+    "tool-calling"
+  ]
+}

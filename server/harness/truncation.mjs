@@ -15,14 +15,14 @@
 import { salvageToolCall, parsePartialObject } from './partial-json.mjs';
 
 const fieldsOf = (args) => parsePartialObject(args ?? '').fields;
-import { tailLines, validCodeCacheName, CODE_CACHE_REF } from '../tools/code-cache.mjs';
+import { tailLines, validCodeCacheName, CODE_CACHE_REF } from './code-cache.mjs';
 
 const DIRECT = new Set(['code_cache_append', 'code_cache_write']);
 const short = (value, max) => { const s = JSON.stringify(value); return s.length > max ? `${s.slice(0, max)}…(rest omitted)` : s; };
 
 /**
  * @param {Array<{ id?: string, name: string, args: string }>} partials Incomplete tool calls (tool_use_partial delivered by the provider)
- * @param {ReturnType<import('../tools/code-cache.mjs').createCodeCacheStore> | null} store
+ * @param {ReturnType<import('./code-cache.mjs').createCodeCacheStore> | null} store
  * @returns {{ progress: boolean, saved: Array<object>, note: string, status: string }}
  */
 export function salvageTruncation(partials, store, { cause = 'length' } = {}) {

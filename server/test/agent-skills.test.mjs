@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { BUILTIN_SKILLS_DIR, SKILL_LIMITS, loadSkillCatalog, loadSkillTool, parseSkillMd, skillCatalogPrompt } from '../tools/agent-skills.mjs';
-import { buildTools } from '../harness/tools/index.mjs';
+import { buildTools } from '../agent/build-promptcut-tools.mjs';
 import { tools as mcpTools } from '../mcp-tools.mjs';
 import { startRun } from '../runners/api.mjs';
 

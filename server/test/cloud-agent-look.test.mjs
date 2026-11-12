@@ -24,7 +24,7 @@ import { ownerKeyOf } from '../agent/service/create-agent-service.mjs';
 import {
   CLOUD_TOOL_PLAN, CLOUD_OPEN_TOOLS, CLOUD_OPEN_TOOLS_NO_LOOK, CLOUD_LOOK_TOOLS, CLOUD_SYSTEM_NOTE, cloudSystemNote, cloudLookResult, lookUnavailable, checkCloudTool,
 } from '../agent/service/cloud-tools.mjs';
-import { buildTools } from '../harness/tools/index.mjs';
+import { buildTools } from '../agent/build-promptcut-tools.mjs';
 import { waitFor } from './fake-ws-kit.mjs';
 import { project, script, startKit } from './cloud-agent-kit.mjs';
 
