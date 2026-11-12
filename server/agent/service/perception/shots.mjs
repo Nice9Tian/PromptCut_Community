@@ -418,13 +418,13 @@ export function createShotsTools({
       const runtimeOk = ev.runtime?.installed === true;
       const modelOk = ev.model?.exists === true;
       const missing = [
-        !runtimeOk && `onnxruntime is not installed${ev.runtime?.error ? `(${scrub(ev.runtime.error, ws).slice(0, 120)})` : ''}`,
-        !modelOk && 'The weights file transnetv2.onnx is not in the node\'s weights directory',
+        !runtimeOk && `onnxruntime is not installed${ev.runtime?.error ? ` (${scrub(ev.runtime.error, ws).slice(0, 120)})` : ''}`,
+        !modelOk && 'the weights file transnetv2.onnx is not in the node\'s weights directory',
       ].filter(Boolean);
       value = {
         ready: ev.ready === true && runtimeOk && modelOk,
         why: 'not-ready',
-        ...(missing.length ? { reason: `TransNetV2 is unavailable: ${missing.join(';')}.` } : null),
+        ...(missing.length ? { reason: `TransNetV2 is unavailable: ${missing.join('; ')}.` } : null),
         detail: {
           runtime: { installed: runtimeOk, version: ev.runtime?.version ?? null },
           model: { exists: modelOk, ...(Number.isFinite(ev.model?.bytes) ? { bytes: ev.model.bytes } : {}) },
@@ -489,7 +489,7 @@ export function createShotsTools({
     return id;
   };
   const notFound = (id) => new ShotsToolError(`Media ${String(id).slice(0, 80)} not found (no such id, or it is not in the current project)`, 'media-not-found');
-  const KIND_NAME = { image: 'Image', audio: 'audio', video: 'Video' };
+  const KIND_NAME = { image: 'an image', audio: 'audio', video: 'a video' };
 
   async function detectShots(context, args, options = {}) {
     await authorize(context, 'write');
@@ -498,7 +498,7 @@ export function createShotsTools({
     const media = await project.getMedia(context, mediaId);
     if (!media) throw notFound(mediaId);
     if (media.kind !== 'video') {
-      throw new ShotsToolError(`${media.name} is not a video${KIND_NAME[media.kind] ? `(is ${KIND_NAME[media.kind]})` : ''}, so there are no shots to split`, 'media-kind');
+      throw new ShotsToolError(`${media.name} is not a video${KIND_NAME[media.kind] ? ` (it is ${KIND_NAME[media.kind]})` : ''}, so there are no shots to split`, 'media-kind');
     }
     if (media.pending) throw new ShotsToolError(`${media.name} is not in the asset service yet (upload incomplete or failed), try again later or re-import`, 'media-pending');
     if (!config) return { ok: false, cloudUnavailable: true, error: NOT_CONFIGURED };
@@ -605,10 +605,10 @@ export function createShotsTools({
     await run.closed;
     job.kill = null;
     if (job.cancelRequested || closing || run.signal.aborted) return { ok: false, cancelled: true };
-    if (end.timedOut) return { ok: false, message: `Reading media info timed out (over ${Math.round(limits.probeMs / 1000)} seconds), forcibly terminated.` };
+    if (end.timedOut) return { ok: false, message: `Reading media info timed out (over ${Math.round(limits.probeMs / 1000)} second${Math.round(limits.probeMs / 1000) === 1 ? '' : 's'}), forcibly terminated.` };
     if (end.code !== 0) {
       const tail = scrub(end.stderrTail.join(' ').trim(), ws).slice(0, 300);
-      return { ok: false, message: `ffprobe could not read video info from this file${tail ? `(${tail})` : ''}. The file may be corrupt or not a video.` };
+      return { ok: false, message: `ffprobe could not read video info from this file${tail ? ` (${tail})` : ''}. The file may be corrupt or not a video.` };
     }
     let info;
     try { info = JSON.parse(out); } catch { return { ok: false, message: 'Failed to parse ffprobe output.' }; }
@@ -706,7 +706,7 @@ export function createShotsTools({
     if (end.timedOut) return { ok: false, timedOut: true };
     if (end.code !== 0) {
       const tail = scrub(end.stderrTail.slice(-3).join(' '), ws).slice(0, 300);
-      return { ok: false, message: `ffmpeg exit code ${end.code}${tail ? `:${tail}` : ''}` };
+      return { ok: false, message: `ffmpeg exit code ${end.code}${tail ? `: ${tail}` : ''}` };
     }
     try { return { ok: true, shots: shotsFromScdet(hits, meta.duration > 0 ? meta.duration : lastOut, now()) }; }
     catch (error) { return { ok: false, message: error.message }; }
@@ -758,7 +758,7 @@ export function createShotsTools({
     const stopped = () => job.cancelRequested || closing;
     const cancelledNote = (suffix = '') => ({
       state: closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SHOTS_CANCELLED',
-      message: closing ? `Shot detection was interrupted by service shutdown, no result. You can call detect_shots(force:true) again.${suffix}` : `Shot detection was cancelled.${suffix}`,
+      message: closing ? `Shot detection was interrupted by service shutdown, no result. You can call detect_shots(force:true) again.${suffix ? ` ${suffix.trimStart()}` : ''}` : `Shot detection was cancelled.${suffix ? ` ${suffix.trimStart()}` : ''}`,
     });
     try {
       const first = await track.patch({ state: 'running', stage: 'fetch', progress: 0 });
@@ -806,7 +806,7 @@ export function createShotsTools({
       const meta = await probeVideo(job, ws, mediaFile);
       if (meta.cancelled || stopped()) return await finishJob(job, ws, track, cancelledNote());
       if (!meta.ok) {
-        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_FAILED', message: `Shot detection failed: ${meta.message}${FALLBACK_HINT}` });
+        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_FAILED', message: `Shot detection failed: ${String(meta.message).replace(/\.$/, '')}. ${FALLBACK_HINT}` });
       }
 
       // 3) Select tier and detect. If model tier has too many frames it will exhaust memory,
@@ -815,7 +815,7 @@ export function createShotsTools({
       let scdetWhy = job.scdetWhy;
       if (engine === 'transnetv2' && meta.duration * meta.fps > limits.maxModelFrames) {
         engine = 'scdet';
-        scdetWhy = `The media is too long (about ${Math.round(meta.duration / 60)} minutes); the model tier has to decode the whole video into small frames in memory, so it falls back to ffmpeg's scdet.`;
+        scdetWhy = `The media is too long (about ${Math.round(meta.duration / 60)} minute${Math.round(meta.duration / 60) === 1 ? '' : 's'}); the model tier has to decode the whole video into small frames in memory, so it falls back to ffmpeg's scdet.`;
       }
       const limitMs = Math.min(limits.maxDetectMs, Math.max(limits.minDetectMs, (meta.duration || 0) * limits.perSecondMs));
       await track.patch({ stage: 'detect', progress: 0.1 });
@@ -843,10 +843,10 @@ export function createShotsTools({
 
       if (outcome.cancelled || stopped()) return await finishJob(job, ws, track, cancelledNote());
       if (outcome.timedOut) {
-        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_TIMEOUT', message: `Shot detection timed out (over ${limitMs < 10_000 ? Number((limitMs / 1000).toFixed(1)) : Math.round(limitMs / 1000)} seconds), forcibly terminated. The media may be too long.${FALLBACK_HINT}` });
+        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_TIMEOUT', message: `Shot detection timed out (over ${limitMs < 10_000 ? Number((limitMs / 1000).toFixed(1)) : Math.round(limitMs / 1000)} second${(limitMs < 10_000 ? Number((limitMs / 1000).toFixed(1)) : Math.round(limitMs / 1000)) === 1 ? '' : 's'}), forcibly terminated. The media may be too long. ${FALLBACK_HINT}` });
       }
       if (!outcome.ok) {
-        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_FAILED', message: `Shot detection failed: ${outcome.message}. ${FALLBACK_HINT}` });
+        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_FAILED', message: `Shot detection failed: ${String(outcome.message).replace(/\.$/, '')}. ${FALLBACK_HINT}` });
       }
       const shots = outcome.shots;
 
@@ -937,7 +937,7 @@ export function createShotsTools({
     if (!media) throw notFound(mediaId);
     const ws = await workspace(context);
     const row = [...readIndex(ws)].reverse().find((r) => r.kind === 'detect' && r.mediaId === mediaId);
-    const older = media.shots ? '(The project still holds an earlier successful batch of results, not from this run.)' : '';
+    const older = media.shots ? ' (The project still holds an earlier successful batch of results, not from this run.)' : '';
     if (row) {
       const { state, ledger } = await stateOf(context, row, live.has(row.jobId));
       if (state === 'queued' || state === 'running') {
@@ -970,7 +970,7 @@ export function createShotsTools({
       running: false,
       engine: media.shots.engine,
       engineNote,
-      ...(doneRow?.fellBackFrom ? { fellBackFrom: doneRow.fellBackFrom, fallbackNote: `Was supposed to run TransNetV2 but hit an error midway and fell back to scdet: ${doneRow.fallbackReason ?? 'unknown reason'}. So this batch of results contains hard cuts only.` } : null),
+      ...(doneRow?.fellBackFrom ? { fellBackFrom: doneRow.fellBackFrom, fallbackNote: `Was supposed to run TransNetV2 but hit an error midway and fell back to scdet: ${String(doneRow.fallbackReason ?? 'unknown reason').replace(/\.$/, '')}. So this batch of results contains hard cuts only.` } : null),
       shots: media.shots.shots.map((s) => ({ ...s, subject: subjectDigest(k, k.subjectForRange(media.subjects, s.start, s.end), stage) })),
       transitions: media.shots.transitions.map(({ thumbs: _thumbs, ...rest }) => rest),
     };
@@ -979,11 +979,11 @@ export function createShotsTools({
     if (subjectJob?.error) {
       return {
         ...result,
-        subjectHint: `Last subject detection failed: ${subjectJob.error}.`
-          + (media.subjects ? 'The subject of each shot below comes from an earlier successful batch, not this one.' : '')
-          + 'First call subject_status and check engine: null means neither tier works on this machine (there is no fallback tier), '
+        subjectHint: `Last subject detection failed: ${String(subjectJob.error).replace(/\.$/, '')}.`
+          + (media.subjects ? ' The subject of each shot below comes from an earlier successful batch, not this one.' : '')
+          + ' First call subject_status and check engine: null means neither tier works on this machine (there is no fallback tier), '
           + "fall back to see_frames({ source: 'timeline', t }) and judge from the real frames where the person is, **do not keep polling this tool**; "
-          + 'Only when engine is not null is it worth calling detect_subjects with force:true to retry.',
+          + 'only when engine is not null is it worth calling detect_subjects with force:true to retry.',
       };
     }
     if (subjectJob?.pending) {
@@ -1000,7 +1000,7 @@ export function createShotsTools({
         ...result,
         subjectEngine: media.subjects.engine,
         subjectFailedCount: media.subjects.failedCount ?? 0,
-        subjectHint: `Subject detection finished, but none of the ${media.subjects.samples.length} samples in this batch is usable`
+        subjectHint: `Subject detection finished, but none of the ${media.subjects.samples.length} sample${media.subjects.samples.length === 1 ? '' : 's'} in this batch is usable`
           + ' (all frame extractions failed, see subjectFailedCount), so every subject is null. This does not mean "there is nobody in the frame".'
           + " Re-measure with detect_subjects by passing different times, or fall back to see_frames({ source: 'timeline', t }) and look at the image.",
       };
@@ -1012,11 +1012,11 @@ export function createShotsTools({
       ...(media.subjects.fellBackFrom
         ? {
           subjectFellBackFrom: media.subjects.fellBackFrom,
-          subjectFallbackNote: `Was supposed to run the full tier but fell back to light midway: ${media.subjects.fallbackReason ?? 'unknown reason'}. So prompt had no effect, and label can only be person / face.`,
+          subjectFallbackNote: `Was supposed to run the full tier but fell back to light midway: ${String(media.subjects.fallbackReason ?? 'unknown reason').replace(/\.$/, '')}. So prompt had no effect, and label can only be person / face.`,
         }
         : null),
       subjectHint: 'Each shot\'s subject.suggestedPosition can be filled directly into the card\'s params.position (it is only ever left / right / bottom, never center); boxes are person boxes in original video pixels.'
-        + 'suggestedPosition being null means all four tiers are occupied by people (see suggestedOccupancy and warning); that shot has no position that avoids people, so do not force one.'
+        + ' suggestedPosition being null means all four tiers are occupied by people (see suggestedOccupancy and warning); that shot has no position that avoids people, so do not force one.'
         + ' Whether it can be filled is determined by the controls of list_cards({cardId}); if the card does not support the value, switch to another card, and do not fall back to the default center, which is exactly where the face is.',
     };
   }

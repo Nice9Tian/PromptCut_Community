@@ -31,15 +31,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/vibe.webp" width="900" alt="PromptCut in Vibe mode: projects on the left, the chat with the agent in the middle, the rendered picture on the right">
+  <img src="docs/assets/vibe-en.webp" width="900" alt="PromptCut in Vibe mode: projects on the left, the chat with the agent in the middle, the rendered picture on the right">
 </p>
 
 PromptCut is an AI video-editing workbench: you direct an agent in plain language, and you can also cut and tune parameters by hand — both at the same time, on the same project.
 
 **This is the community edition**, for your own machine and your local network: the desktop app and a local browser. Another computer or a phone on the same network can scan a code to join a shared project and edit with you. There is nothing to sign up for. Website accounts, cloud projects, hosted services and the hosted web build stay in the closed commercial edition.
-
-> [!NOTE]
-> The app's interface is still Chinese-only today, as the screenshot shows. English and Japanese are in progress, see [issue #6](https://github.com/Nice9Tian/PromptCut_Community/issues/6).
 
 ## Ways to work
 
@@ -52,7 +49,7 @@ You can switch between these on the same project at any time, and nothing is los
 | **SKILL mode** | Desktop app only. An agent running in your desktop connects over MCP while the editor stays closed and PromptCut runs in the background. Open the editor whenever you want to step in. |
 
 <p align="center">
-  <img src="docs/assets/classic.webp" width="900" alt="PromptCut in Classic mode: media library on the left, preview in the middle, AI panel on the right, timeline below">
+  <img src="docs/assets/classic-en.webp" width="900" alt="PromptCut in Classic mode: media library on the left, preview in the middle, AI panel on the right, timeline below">
 </p>
 
 ## What it does
@@ -66,6 +63,7 @@ You can switch between these on the same project at any time, and nothing is los
 | **Rendering and output** | Prerendered snapshots, frame-by-frame rendering in a local Chrome, and a final video composed with ffmpeg. |
 | **Media** | Local import, fetching from web links (yt-dlp), shot-boundary detection, subject detection, point tracking and speech-to-text. |
 | **LAN sharing** | Share a project on your local network. Another computer or a phone scans a code to join and both sides stay in sync. Phones get their own interface. |
+| **Languages** | The interface comes in English, Simplified Chinese and Japanese. It follows your system language the first time and can be switched from the language menu at any time; your open project stays where it was. |
 | **Desktop app** | A Tauri v2 shell that packages Node, Chrome for Testing, ffmpeg and a bundled Python into a single Windows installer. |
 
 ## Getting started

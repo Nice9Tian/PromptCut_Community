@@ -56,7 +56,7 @@ export const WORKFLOW_TOOL_NAMES = Object.freeze(['background_job_status', 'auto
 export const WORKFLOW_JOB_KIND = 'workflow.auto';
 export const WORKFLOW_STAGES = Object.freeze(['transcribe', 'shots', 'subjects', 'compose', 'prerender']);
 export const WORKFLOW_STAGE_LABEL = Object.freeze({
-  transcribe: 'Speech-to-text', shots: 'Shot detection', subjects: 'subject detection', compose: 'Generate captions and cards', prerender: 'Publish prerender job',
+  transcribe: 'Speech-to-text', shots: 'Shot detection', subjects: 'Subject detection', compose: 'Generate captions and cards', prerender: 'Publish prerender job',
 });
 
 export const WORKFLOW_DEFAULTS = Object.freeze({
@@ -108,8 +108,8 @@ const BAND = Object.freeze({
 
 const JOB_LABEL = Object.freeze({
   'stt.transcribe': 'Speech-to-text', 'stt.install': 'Speech-to-text engine install', 'shots.detect': 'Shot detection',
-  'subject.detect': 'subject detection', 'subject.install': 'Subject detection extension install', 'track.points': 'Motion tracking',
-  'track.install': 'Motion tracking extension install', [WORKFLOW_JOB_KIND]: 'one-click workflow',
+  'subject.detect': 'Subject detection', 'subject.install': 'Subject detection extension install', 'track.points': 'Motion tracking',
+  'track.install': 'Motion tracking extension install', [WORKFLOW_JOB_KIND]: 'One-click workflow',
 });
 
 /**
@@ -136,7 +136,7 @@ export const WORKFLOW_ERROR_TEXT = Object.freeze({
   PUBLISH_FAILED: 'Captions and cards were written to the project, but publishing the prerender job failed.',
 });
 
-const STATE_TEXT = Object.freeze({ queued: 'Queued', running: 'In progress', done: 'Completed', error: 'failed', cancelled: 'Cancelled', interrupted: 'Interrupted' });
+const STATE_TEXT = Object.freeze({ queued: 'Queued', running: 'In progress', done: 'Completed', error: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted' });
 const TERMINAL = new Set(['done', 'error', 'cancelled', 'interrupted']);
 const BAD_JOB = new Set(['error', 'cancelled', 'interrupted']);
 const MEDIA_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,199}$/;
@@ -552,7 +552,7 @@ export function createWorkflowTools({
     if (view.state === 'done') return 'Completed';
     if (view.state === 'cancelled') return 'Cancelled';
     if (view.state === 'interrupted') return 'Interrupted';
-    if (view.state === 'error') return 'failed';
+    if (view.state === 'error') return 'Failed';
     const current = stages.find((s) => s.status === 'running') ?? stages.find((s) => s.stage === view.stage);
     const names = { transcribe: 'Transcribing', shots: 'Detecting shots', subjects: 'Detecting subjects', compose: 'Composing cards', prerender: 'Publishing prerender' };
     return current ? (names[current.stage] ?? 'In progress') : 'Queued';
@@ -567,12 +567,12 @@ export function createWorkflowTools({
     const at = stages.find((s) => ['error', 'unavailable', 'cancelled', 'interrupted'].includes(s.status)) ?? stages.find((s) => s.stage === view.stage);
     const where = at ? `the "${at.label}" stage` : 'a stage';
     const notDone = stages.filter((s) => s.status === 'pending').map((s) => s.label);
-    const after = notDone.length ? `Later stages (${notDone.join(', ')}) were not run. ` : '';
+    const after = notDone.length ? `Later stages (${notDone.join(', ')}) were not run.` : '';
     let why = at?.reason;
     if (!why && view.errorCode && WORKFLOW_ERROR_TEXT[view.errorCode]) why = WORKFLOW_ERROR_TEXT[view.errorCode];
     const verb = { error: 'failed', cancelled: 'was cancelled', interrupted: 'was interrupted' }[view.state];
     const resume = view.state === 'error' && at?.status === 'unavailable' ? '' : 'Call auto_workflow again to continue: stages that are already done (transcript, shots, subjects) will be reused directly.';
-    return `The one-click workflow at ${where} ${verb}${why ? `:${why}` : '.'}${after}${resume}`.replace(/\.\./g, '.');
+    return [`The one-click workflow at ${where} ${verb}${why ? `: ${String(why).trim().replace(/\.+$/, '')}.` : '.'}`, after, resume].filter(Boolean).join(' ');
   }
 
   function workflowView(ledger, row) {
@@ -708,7 +708,7 @@ export function createWorkflowTools({
     if (reused(media)) return outcome('reused', { reason: 'The project already has the result of this step, so it is reused directly.' });
     const provider = providers[providerKey];
     if (!provider || typeof provider.call !== 'function') {
-      return outcome('unavailable', { reason: `This cloud node is not connected to ${label}.` });
+      return outcome('unavailable', { reason: `This cloud node is not connected to ${label.toLowerCase()}.` });
     }
     checkHalt(job);
     let reply;
@@ -734,7 +734,7 @@ export function createWorkflowTools({
     // Job reports completed: only counts if results exist in the project (otherwise commit step failed,
     // cannot fake completion)
     const after = await project.getMedia(job.context, job.mediaId);
-    if (!after || !dataReady(after)) throw new StageStop('error', 'STAGE_FAILED', `The job for ${label} shows as complete, but its result was not found in the project.`, { childJobId });
+    if (!after || !dataReady(after)) throw new StageStop('error', 'STAGE_FAILED', `The job for ${label.toLowerCase()} shows as complete, but its result was not found in the project.`, { childJobId });
     return outcome('done', { childJobId });
   }
 
@@ -747,12 +747,12 @@ export function createWorkflowTools({
     }),
     shots: (job) => perceptionStage(job, 'shots', {
       providerKey: 'shots', tool: 'detect_shots', label: 'Shot detection',
-      skipped: (m) => (m.kind !== 'video' ? `${m.kind === 'audio' ? 'audio' : 'This media'} is not a video, so there are no shots to split.` : null),
+      skipped: (m) => (m.kind !== 'video' ? `${m.kind === 'audio' ? 'Audio' : 'This media'} is not a video, so there are no shots to split.` : null),
       reused: (m) => !!m.shots,
       dataReady: (m) => !!m.shots,
     }),
     subjects: (job) => perceptionStage(job, 'subjects', {
-      providerKey: 'subject', tool: 'detect_subjects', label: 'subject detection',
+      providerKey: 'subject', tool: 'detect_subjects', label: 'Subject detection',
       skipped: (m) => (m.kind === 'audio' ? 'Audio has no picture to view.' : null),
       reused: (m) => !!m.subjects,
       dataReady: (m) => !!m.subjects,
@@ -802,7 +802,7 @@ export function createWorkflowTools({
         }
         if (error?.code === 'media-changed' || error?.code === 'media-missing') throw new StageStop('error', 'MEDIA_MISSING', 'The media was replaced or deleted in the meantime, so the captions and cards were not written.');
         if (REVOKED.test(String(error?.code ?? '')) || AUTH_UNAVAILABLE.has(error?.code) || error?.status === 403 || error?.status === 503) await revokedCheck(job);
-        throw new StageStop('error', 'COMMIT_FAILED', `${WORKFLOW_ERROR_TEXT.COMMIT_FAILED}${error?.message ? `(${String(error.message).slice(0, 160)})` : ''}`);
+        throw new StageStop('error', 'COMMIT_FAILED', error?.message ? `${WORKFLOW_ERROR_TEXT.COMMIT_FAILED.replace(/\.$/, '')} (${String(error.message).trim().replace(/\.$/, '').slice(0, 160)}).` : WORKFLOW_ERROR_TEXT.COMMIT_FAILED);
       }
       job.row.committed = true;
       return outcome(applied?.alreadyApplied ? 'reused' : 'done', {
@@ -832,7 +832,7 @@ export function createWorkflowTools({
       reply = await prerender.publish(job.context, { jobId: job.state.jobId, mediaId: job.mediaId, projectRev: applied.projectRev, clipIds, fenceRevision: fence.fenceRevision });
     } catch (error) {
       if (REVOKED.test(String(error?.code ?? '')) || AUTH_UNAVAILABLE.has(error?.code) || error?.status === 403 || error?.status === 503) await revokedCheck(job);
-      throw new StageStop('error', 'PUBLISH_FAILED', `${WORKFLOW_ERROR_TEXT.PUBLISH_FAILED}(${String(error?.message ?? error).slice(0, 160)})`);
+      throw new StageStop('error', 'PUBLISH_FAILED', `${WORKFLOW_ERROR_TEXT.PUBLISH_FAILED.replace(/\.$/, '')} (${String(error?.message ?? error).trim().replace(/\.$/, '').slice(0, 160)}).`);
     }
     if (reply?.published === true) return outcome('done', { reason: 'Handed the affected clips to the prerender task for publishing (sent after a few seconds; render results are recorded in the chat events).', planned: reply.planned });
     return outcome('unavailable', { reason: typeof reply?.reason === 'string' && reply.reason ? reply.reason : 'This project has no available render node right now, so the prerender task was not published.' });
