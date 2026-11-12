@@ -170,7 +170,8 @@ test("RR6 Preview context menu: when read-only, \"Delete\" and \"Quote to AI\" a
 test("RR7 Track row header: when read-only, the mute / hide / lock buttons are disabled and the hover text is that one sentence; read-write and observe unchanged", async () => {
   const icon = () => null;
   const { TrackHeader } = await load("./timeline/TrackHeader.tsx", {
-    "../../store/project": { actions: { updateTrack() {}, removeTrack() {} } },
+    "../../kernel/project": { activeCutKind: () => "2d" },
+    "../../store/project": { actions: { updateTrack() {}, removeTrack() {} }, useStore: (sel) => sel({ project: {} }) },
     "./ContextMenu": { ContextMenu: () => null },
     "./TimelineContext": { useTimelineContext: () => ({ trackH: 44 }) },
     "./useReorder": { useReorderDrag: () => ({ start() {} }), useRowOffset: () => ({ dragging: false, y: 0, animated: false }) },

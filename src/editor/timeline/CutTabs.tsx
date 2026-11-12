@@ -5,10 +5,11 @@ import type { CutKind } from "../../kernel/camera.mjs";
 import { closeTab, openTab, openTabs, saveTabs, setTabs, useCutTabsVersion } from "./cutTabsState";
 import { memberReadOnlyNow } from "../readOnlyCore";
 import { useReadOnly } from "../readOnly";
-import { ONLINE } from "../../online/mode";
 import "./cut-tabs.css";
 import { tr } from "../../i18n/index.ts";
 import { shownName } from "../../i18n/names.ts";
+
+const ONLINE = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
 /** Film strip: one frame inside a rounded square, with three perforations on each side */
 export function IconFilm({ size = 12 }: { size?: number }) {
