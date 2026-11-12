@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { getLocale, type Locale } from "../i18n/index.ts";
 
 /**
  * Whether the drawer / panel beside the left and right vertical rails is collapsed.
@@ -7,8 +8,15 @@ import { useSyncExternalStore } from "react";
  */
 export type RailSide = "left" | "right";
 
+/** Rail width (px) per UI language, kept in lockstep with --ui-rail-w in skins.ts and studio.css */
+export function railWidthFor(locale: Locale): number {
+  if (locale === "ja") return 88;
+  if (locale === "en") return 80;
+  return 64;
+}
+
 /** Width of the rail itself (px), corresponds to --ui-rail-w in studio.css */
-export const RAIL_W = 64;
+export const RAIL_W = railWidthFor(getLocale());
 
 const keyOf = (side: RailSide) => `pc.rail.${side}.collapsed`;
 
