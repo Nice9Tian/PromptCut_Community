@@ -140,6 +140,54 @@ function ingest(e: Record<string, unknown>) {
   });
 }
 
+export interface PresenceMessageEnvelope {
+  projectId: string;
+  from: {
+    userId?: string;
+    username?: string;
+    deviceId?: string;
+    deviceName?: string;
+    displayName?: string;
+    creator?: boolean;
+    role?: string;
+    session?: string | null;
+  };
+  data: Record<string, unknown>;
+  at: number;
+}
+
+const messageListeners = new Set<(msg: PresenceMessageEnvelope) => void>();
+
+export function subscribePresenceMessages(fn: (msg: PresenceMessageEnvelope) => void): () => void {
+  messageListeners.add(fn);
+  return () => {
+    messageListeners.delete(fn);
+  };
+}
+
+export async function sendPresenceMessage(data: Record<string, unknown>, session?: string): Promise<boolean> {
+  const c = current;
+  if (!c || unsupported.has(c.link)) return false;
+  try {
+    const reply = await c.link.request(
+      {
+        type: "presence.send",
+        projectId: c.projectId,
+        ...(session ? { session } : {}),
+        data,
+      },
+      5000,
+    );
+    markReply(c.link, reply);
+    return (
+      (reply?.type === "presence.ok" || reply?.type === "presence.send.ok") &&
+      (typeof reply.delivered !== "number" || reply.delivered > 0)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** `presence.*` from syncManager's side-channel messages is delivered here */
 export function receivePresence(msg: Record<string, unknown>): void {
   if (!current || (msg.projectId !== undefined && msg.projectId !== current.projectId)) return;
@@ -151,6 +199,16 @@ export function receivePresence(msg: Record<string, unknown>): void {
     for (const e of msg.entries) if (e && typeof e === "object") ingest(e as Record<string, unknown>);
     emit();
     if (msg.entries.some((e) => (e as { key?: unknown } | null)?.key === CLOUD_RUN_KEY)) emitCloudRuns();
+  } else if (msg.type === "presence.message" && msg.data && typeof msg.data === "object") {
+    const env: PresenceMessageEnvelope = {
+      projectId: String(msg.projectId ?? current.projectId),
+      from: (msg.from && typeof msg.from === "object" ? msg.from : {}) as PresenceMessageEnvelope["from"],
+      data: msg.data as Record<string, unknown>,
+      at: typeof msg.at === "number" ? msg.at : Date.now(),
+    };
+    for (const fn of [...messageListeners]) {
+      try { fn(env); } catch { /* ignore listener errors */ }
+    }
   }
 }
 

@@ -2,7 +2,7 @@ import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import type { Plugin } from "vite";
-import { apiPath, clientAddressOf, isLoopbackAddress, isLocalOrigin, remoteTagOf } from "./http-guard.mjs";
+import { apiPath, clientAddressOf, fromLocalClient, isLoopbackAddress, isLocalOrigin, remoteTagOf } from "./http-guard.mjs";
 import { prepareLocalDocumentDir, recoveryDir } from "./recovery/paths.mjs";
 import { buildExtensions } from "./vite-plugin-hosted-gate";
 import { mediaDir } from "./vite-plugin-media";
@@ -64,6 +64,8 @@ const HEALTH_PATH = "/api/docservice/healthz";
 const SHARED_PREFIX = `${WS_PATH}/shared/`;
 const DEVICE_PATH = "/api/docservice/device";
 const DISCOVER_PATH = "/api/docservice/lan-discover";
+const LAN_DISCOVER_ALL_PATH = "/api/lan/discover";
+const DATA_SERVER_PREFIX = "/api/data-server/";
 
 type Log = (event: string, fields: object) => void;
 
@@ -247,6 +249,8 @@ export function docservicePlugin(): Plugin {
 
       let service: { health(): object; close(): Promise<void> } | null = null;
       let handleShared: ((req: IncomingMessage, res: ServerResponse) => boolean) | null = null;
+      let localDataDir = "";
+      let localStore: any = null;
       let storeMissing = false;
       // Host side of LAN discovery (contract `docs/plan/shared-project-contract.md` Section 4):
       // called back by shared endpoints when projects are created or deleted
@@ -259,10 +263,12 @@ export function docservicePlugin(): Plugin {
           import("./recovery/http.mjs"),
         ]);
         const dataDir = prepareLocalDocumentDir(server.config.root);
+        localDataDir = dataDir;
         // Credential store: in-process singleton, asset service retrieves the same copy by directory
         let store: object | null = null;
         try {
           store = credentialStoreFor(path.join(dataDir, "auth"), { log });
+          localStore = store;
         } catch (err) {
           storeMissing = true;
           log("config.error", { reason: "auth-store", message: errText(err) });
@@ -358,6 +364,160 @@ export function docservicePlugin(): Plugin {
         } catch (err) {
           log("docservice.error", { stage: p, message: errText(err) });
           return sendJson(res, 500, { ok: false, error: "internal" }, false);
+        }
+      });
+
+      // Wildcard & filtered LAN discovery for Team Project discovery (`GET /api/lan/discover?name=&timeoutMs=`)
+      server.middlewares.use(async (req, res, next) => {
+        const p = apiPath(req.url);
+        if (p !== LAN_DISCOVER_ALL_PATH) return next();
+        const method = String(req.method || "GET").toUpperCase();
+        if (method !== "GET") {
+          res.statusCode = 405;
+          res.setHeader("Allow", "GET");
+          res.end();
+          return;
+        }
+        if (!fromLocalClient(req)) return sendJson(res, 403, { ok: false, error: "forbidden" }, false);
+        try {
+          const u = new URL(req.url ?? "/", "http://localhost");
+          const rawName = (u.searchParams.get("name") ?? "").trim();
+          const rawTimeout = Number(u.searchParams.get("timeoutMs"));
+          const timeoutMs = Number.isFinite(rawTimeout) ? Math.min(3000, Math.max(400, Math.round(rawTimeout))) : 1200;
+          const [{ discoverLan }, { localDeviceInfo }] = await Promise.all([
+            import("./lan/discovery.mjs"),
+            import("./auth/device.mjs"),
+          ]);
+          const addr = httpServer.address();
+          const bound = addr && typeof addr !== "string" ? addr.address : null;
+          const port = addr && typeof addr !== "string" ? addr.port : null;
+          const lanHost = !!bound && !isLoopbackListen(bound);
+          const device = localDeviceInfo();
+          const r = await discoverLan({ ...(rawName ? { name: rawName } : {}), timeoutMs });
+          const localList: Array<{ projectId: string; name: string; mode: string }> = localStore?.list?.() ?? [];
+          const filteredLocal = rawName
+            ? localList.filter((item) => item.name.trim().toLowerCase() === rawName.toLowerCase())
+            : localList;
+          return sendJson(res, 200, {
+            ok: true,
+            lanHost,
+            lanHostRequested: lanHostRequested(),
+            deviceName: device.deviceName,
+            hosts: r.hosts,
+            localProjects: port
+              ? filteredLocal.map((item) => ({
+                  ...item,
+                  hostDeviceName: device.deviceName,
+                  base: `http://127.0.0.1:${port}/docservice`,
+                  local: true,
+                }))
+              : [],
+            errors: r.errors,
+            elapsedMs: r.elapsedMs,
+          }, false);
+        } catch (err) {
+          log("docservice.error", { stage: "lan-discover-all", message: errText(err) });
+          return sendJson(res, 500, { ok: false, error: "internal" }, false);
+        }
+      });
+
+      // Local Data Server status, commit log, member account management, and creator handover routes (`/api/data-server/*`)
+      server.middlewares.use(async (req, res, next) => {
+        const p = apiPath(req.url);
+        if (!p.startsWith(DATA_SERVER_PREFIX)) return next();
+        if (!fromLocalClient(req)) return sendJson(res, 403, { ok: false, error: "forbidden" }, false);
+        const sub = p.slice(DATA_SERVER_PREFIX.length - 1);
+        const method = String(req.method || "GET").toUpperCase();
+        try {
+          const [{ localDeviceInfo }, ds] = await Promise.all([
+            import("./auth/device.mjs"),
+            import("./data-server.mjs"),
+          ]);
+          const addr = httpServer.address();
+          const bound = addr && typeof addr !== "string" ? addr.address : null;
+          const port = addr && typeof addr !== "string" ? addr.port : null;
+          const lanHost = !!bound && !isLoopbackListen(bound);
+          const device = localDeviceInfo();
+
+          if (method === "GET" && sub === "/status") {
+            const u = new URL(req.url ?? "/", "http://localhost");
+            const projectId = u.searchParams.get("projectId") ?? "";
+            const contentId = u.searchParams.get("contentId") ?? "";
+            return sendJson(res, 200, ds.inspectLocalDataServer({
+              store: localStore,
+              dataDir: localDataDir,
+              device,
+              lanHost,
+              port,
+              projectId,
+              contentId,
+            }), false);
+          }
+
+          if (method !== "POST") {
+            res.statusCode = 405;
+            res.setHeader("Allow", "GET, POST");
+            res.end();
+            return;
+          }
+
+          let raw = "";
+          for await (const chunk of req) {
+            raw += chunk;
+            if (raw.length > 256 * 1024) return sendJson(res, 413, { ok: false, error: "too-large" }, false);
+          }
+          const body = JSON.parse(raw || "{}");
+
+          if (sub === "/export-handover") {
+            const pkg = ds.exportHandoverPackage({ store: localStore, projectId: body.projectId });
+            return sendJson(res, 200, { ok: true, roomAuth: pkg }, false);
+          }
+          if (sub === "/adopt") {
+            const adopted = ds.adoptDataServerProject({
+              store: localStore,
+              roomAuth: body.roomAuth,
+              lanSync: () => lan.sync(),
+            });
+            return sendJson(res, 200, {
+              ...adopted,
+              base: port ? `http://127.0.0.1:${port}/docservice` : null,
+              hostDeviceName: device.deviceName,
+            }, false);
+          }
+          if (sub === "/relinquish") {
+            const removed = ds.relinquishLocalDataServer({
+              store: localStore,
+              projectId: body.projectId,
+              lanSync: () => lan.sync(),
+            });
+            return sendJson(res, 200, { ok: true, removed }, false);
+          }
+          if (sub === "/members") {
+            await ds.mutateDataServerMembers({
+              store: localStore,
+              projectId: body.projectId,
+              action: body.action,
+              username: body.username,
+              password: body.password,
+              access: body.access,
+              mode: body.mode,
+              projectPassword: body.projectPassword,
+              deviceId: body.deviceId,
+            });
+            return sendJson(res, 200, ds.inspectLocalDataServer({
+              store: localStore,
+              dataDir: localDataDir,
+              device,
+              lanHost,
+              port,
+              projectId: body.projectId,
+            }), false);
+          }
+          return sendJson(res, 404, { ok: false, error: "no-endpoint" }, false);
+        } catch (err: any) {
+          const code = err?.code ?? "bad-request";
+          const status = code === "not-local-host" ? 404 : 400;
+          return sendJson(res, status, { ok: false, code, error: errText(err) }, false);
         }
       });
 

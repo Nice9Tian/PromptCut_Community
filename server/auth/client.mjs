@@ -192,7 +192,13 @@ export async function createSharedProject({ base, name, mode, creator, password,
   if (mode === 'free') body.project = await makeCredential(password, kdf);
   if (mode === 'restricted') {
     body.list = [];
-    for (const item of list ?? []) body.list.push({ username: item.username, ...(await makeCredential(item.password, kdf)) });
+    for (const item of list ?? []) {
+      body.list.push({
+        username: item.username,
+        ...(await makeCredential(item.password, kdf)),
+        ...(item.access === 'r' ? { access: 'r' } : {}),
+      });
+    }
   }
   const r = await postJson(fetch, `${httpBaseOf(base)}/shared/create`, body);
   return { projectId: r.projectId, name: r.name, mode: r.mode };

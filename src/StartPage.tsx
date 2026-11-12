@@ -3,7 +3,7 @@ import type { JSX, ReactNode } from "react";
 import "./StartPage.css";
 import { Logo } from "./ui/Logo";
 import { LanguageMenu } from "./ui/LanguageMenu";
-import { listDrafts, openDraft, deleteDraft, newDraftId, setActiveDraftId } from "./editor/io/drafts";
+import { listDrafts, openDraft, deleteDraft, newDraftId, saveDraft, setActiveDraftId } from "./editor/io/drafts";
 import type { DraftInfo } from "./editor/io/drafts";
 import { newProject, loadProc, PROC_EXT } from "./editor/io/proc";
 import { PROCP_EXT, isProcpFile, loadProcpFile } from "./editor/io/procp";
@@ -35,6 +35,9 @@ function AccountProjectsSlot(props: { online: boolean; onEnterEditor: () => void
 }
 import { OnlineStart } from "./start/OnlineStart";
 import { DesktopStart } from "./start/DesktopStart";
+import { NewProjectDialog, type ExistingDraftTarget, type NewProjectInitialView } from "./start/NewProjectDialog";
+import { RATIO_SIZE } from "./start/format";
+import type { Ratio } from "./start/types";
 import { tr } from "./i18n/index.ts";
 
 /** Write a byte count in a human-readable form. Export outputs and the prerender cache easily reach tens of GB, so it stops at G */
@@ -206,6 +209,11 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [newDialog, setNewDialog] = useState<{
+    open: boolean;
+    view: NewProjectInitialView;
+    draft: ExistingDraftTarget | null;
+  }>({ open: false, view: "local", draft: null });
   const fileInput = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -223,10 +231,38 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
   useEffect(() => { void refresh(); }, [refresh]);
 
   const startNew = () => {
-    newProject(tr("Untitled"));
-    // The new project has not been written to disk yet; after entering the editor, "Save project" writes it as a draft
-    setActiveDraftId(newDraftId());
+    setNewDialog({ open: true, view: "local", draft: null });
+  };
+
+  const handleCreateLocal = async ({ name, ratio }: { name: string; ratio: Ratio }) => {
+    const projName = name || tr("Untitled");
+    const id = newDraftId();
+    newProject(projName);
+    if (ratio !== "16:9") {
+      actions.setProjectMeta({ ...RATIO_SIZE[ratio] });
+    }
+    setActiveDraftId(id);
+    await saveDraft(id);
+    actions.markSaved(`${projName}${PROC_EXT}`);
     onEnterEditor();
+  };
+
+  const convertDraft = async (draft: DraftInfo, targetView: "cloud" | "team") => {
+    setBusy(draft.id);
+    setError("");
+    try {
+      await openDraft(draft.id);
+      setActiveDraftId(draft.id);
+      setNewDialog({
+        open: true,
+        view: targetView,
+        draft: { id: draft.id, name: draft.name },
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : tr("Failed to open"));
+    } finally {
+      setBusy("");
+    }
   };
 
   const open = async (id: string) => {
@@ -336,6 +372,26 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
                     {humanDate(d.updatedAt)} · {humanSize(d.size)} · {humanDuration(d.duration)}
                   </div>
                 </div>
+                <div className="sp-draft-actions">
+                  <button
+                    type="button"
+                    className="sp-draft-act"
+                    data-pc="draft-switch-online"
+                    disabled={d.broken || busy === d.id}
+                    onClick={() => void convertDraft(d, "cloud")}
+                  >
+                    {tr("Switch to online project")}
+                  </button>
+                  <button
+                    type="button"
+                    className="sp-draft-act"
+                    data-pc="draft-convert-team"
+                    disabled={d.broken || busy === d.id}
+                    onClick={() => void convertDraft(d, "team")}
+                  >
+                    {tr("Convert to team project")}
+                  </button>
+                </div>
                 <button className="sp-draft-del" title={tr("Delete this draft")} onClick={() => void remove(d)}>
                   ✕
                 </button>
@@ -346,6 +402,15 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
 
         <StorageSection />
       </main>
+
+      <NewProjectDialog
+        open={newDialog.open}
+        initialView={newDialog.view}
+        existingDraft={newDialog.draft}
+        onClose={() => setNewDialog((prev) => ({ ...prev, open: false }))}
+        onCreateLocal={handleCreateLocal}
+        onEnteredShared={onEnterEditor}
+      />
 
       <input
         ref={fileInput}

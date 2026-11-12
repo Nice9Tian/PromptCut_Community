@@ -92,6 +92,13 @@ async function enterEditor(page) {
     }
     (n || el)?.click();
   });
+  await page.waitForFunction(
+    () => !!document.querySelector('[data-pc="editor"]') || !!document.querySelector('[data-pc="new-project-local-confirm"]'),
+    { timeout: 60000 },
+  );
+  await page.evaluate(() => {
+    document.querySelector('[data-pc="new-project-local-confirm"]')?.click();
+  });
   await page.waitForFunction(() => !!window.__pcPreviewBoxes, { timeout: 60000 });
 }
 

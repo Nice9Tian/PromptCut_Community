@@ -17890,5 +17890,817 @@
  "Can’t reach the account service. Check your connection and try again.": {
   "zh": "连不上账号服务，检查一下网络再试。",
   "ja": "アカウントサービスに接続できません。接続を確認してもう一度お試しください。"
+ },
+ "\"{0}\" agreed. Enter the 6-digit pairing code shown on that machine:": {
+  "zh": "“{0}”已同意。请输入该设备上显示的 6 位配对码：",
+  "ja": "「{0}」が同意しました。その端末に表示されている 6 桁のペアリングコードを入力してください："
+ },
+ "\"{0}\" declined the data server handover request.": {
+  "zh": "“{0}”拒绝了成为数据服务器的移交请求。",
+  "ja": "「{0}」がデータサーバー引き継ぎリクエストを拒否しました。"
+ },
+ "6-digit pairing code": {
+  "zh": "6 位配对码",
+  "ja": "6 桁のペアリングコード"
+ },
+ "A project named \"{0}\" already exists on that online server.": {
+  "zh": "该在线服务器上已存在名为“{0}”的项目。",
+  "ja": "そのオンラインサーバーには「{0}」という名前のプロジェクトが既に存在します。"
+ },
+ "A team project named \"{0}\" already exists. Choose a different name.": {
+  "zh": "已存在名为“{0}”的团队项目，请换一个名称。",
+  "ja": "「{0}」という名前のチームプロジェクトは既に存在します。別の名前を指定してください。"
+ },
+ "Account": {
+  "zh": "账号",
+  "ja": "アカウント"
+ },
+ "Account list": {
+  "zh": "成员名单",
+  "ja": "メンバーリスト"
+ },
+ "Account username": {
+  "zh": "账号用户名",
+  "ja": "アカウントユーザー名"
+ },
+ "Activating local data server for \"{0}\"…": {
+  "zh": "正在为“{0}”启用本机数据服务器…",
+  "ja": "「{0}」のローカルデータサーバーを有効化しています…"
+ },
+ "Add account": {
+  "zh": "添加账号",
+  "ja": "アカウントを追加"
+ },
+ "Add by invite link": {
+  "zh": "通过邀请链接添加",
+  "ja": "招待リンクで追加"
+ },
+ "Add invite link": {
+  "zh": "添加邀请链接",
+  "ja": "招待リンクを追加"
+ },
+ "Add joined project": {
+  "zh": "添加已加入项目",
+  "ja": "参加済みプロジェクトを追加"
+ },
+ "Add member": {
+  "zh": "添加成员",
+  "ja": "メンバーを追加"
+ },
+ "Add team member accounts now, or manage them later from the Data Server panel.": {
+  "zh": "可现在添加团队成员账号，也可稍后在数据服务器面板中管理。",
+  "ja": "今すぐチームメンバーのアカウントを追加するか、後でデータサーバーパネルから管理できます。"
+ },
+ "Added \"{0}\" to render server.": {
+  "zh": "已将“{0}”添加到渲染服务器。",
+  "ja": "「{0}」をレンダーサーバーに追加しました。"
+ },
+ "Added member \"{0}\" with generated password: {1}": {
+  "zh": "已添加成员“{0}”，自动生成密码：{1}",
+  "ja": "メンバー「{0}」を追加しました（自動生成パスワード：{1}）"
+ },
+ "After you agree, both machines must verify a 6-digit pairing code before hosting is transferred.": {
+  "zh": "点击同意后，双方电脑还需要验证 6 位配对码才会完成托管移交。",
+  "ja": "同意した後、両方の端末で 6 桁のペアリングコードを確認してからホストが移行されます。"
+ },
+ "Agree": {
+  "zh": "同意",
+  "ja": "同意する"
+ },
+ "Another creator device": {
+  "zh": "另一台创建者设备",
+  "ja": "別の作成者デバイス"
+ },
+ "Approve data server handover?": {
+  "zh": "是否同意移交数据服务器？",
+  "ja": "データサーバーの引き継ぎに同意しますか？"
+ },
+ "Auto-generate if empty": {
+  "zh": "留空则自动生成",
+  "ja": "空欄の場合は自動生成"
+ },
+ "Back to More": {
+  "zh": "返回“更多”",
+  "ja": "「その他」に戻る"
+ },
+ "Back to account cloud": {
+  "zh": "返回账号云端",
+  "ja": "アカウントクラウドに戻る"
+ },
+ "Become data server": {
+  "zh": "成为数据服务器",
+  "ja": "データサーバーになる"
+ },
+ "Become data server (member accounts & project document)": {
+  "zh": "成为数据服务器（成员账号&项目文档）",
+  "ja": "データサーバーになる（メンバーアカウント＆プロジェクト文書）"
+ },
+ "Become render server": {
+  "zh": "成为渲染服务器",
+  "ja": "レンダーサーバーになる"
+ },
+ "Blocked devices ({0})": {
+  "zh": "已封禁设备（{0}）",
+  "ja": "ブロック済みデバイス（{0}）"
+ },
+ "Bound": {
+  "zh": "已绑定",
+  "ja": "バインド済み"
+ },
+ "Bound invite project \"{0}\" to render server.": {
+  "zh": "已通过邀请链接绑定项目“{0}”到渲染服务器。",
+  "ja": "招待リンクのプロジェクト「{0}」をレンダーサーバーにバインドしました。"
+ },
+ "Bound projects": {
+  "zh": "已绑定项目",
+  "ja": "バインド中のプロジェクト"
+ },
+ "Can edit": {
+  "zh": "可编辑",
+  "ja": "編集可能"
+ },
+ "Checking cloud account configuration…": {
+  "zh": "正在检查云端账号配置…",
+  "ja": "クラウドアカウント設定を確認中…"
+ },
+ "Completed tasks": {
+  "zh": "已完成任务",
+  "ja": "完了タスク"
+ },
+ "Completed {0} / Claimed {1}": {
+  "zh": "完成 {0} / 领取 {1}",
+  "ja": "完了 {0} / 取得 {1}"
+ },
+ "Confirm pairing & transfer": {
+  "zh": "确认配对并移交",
+  "ja": "ペアリングを確認して移行"
+ },
+ "Confirmed (waiting for peer)": {
+  "zh": "本机已确认（等待对方）",
+  "ja": "確認済み（相手端末を待機中）"
+ },
+ "Connecting…": {
+  "zh": "连接中…",
+  "ja": "接続中…"
+ },
+ "Convert \"{0}\" to team project": {
+  "zh": "将“{0}”转为团队项目",
+  "ja": "「{0}」をチームプロジェクトに変換"
+ },
+ "Convert project": {
+  "zh": "转换项目",
+  "ja": "プロジェクトを変換"
+ },
+ "Convert to team project": {
+  "zh": "转为团队项目",
+  "ja": "チームプロジェクトに変換"
+ },
+ "Could not add project to render server.": {
+  "zh": "无法将项目添加到渲染服务器。",
+  "ja": "プロジェクトをレンダーサーバーに追加できませんでした。"
+ },
+ "Could not create cloud project ({0}).": {
+  "zh": "无法创建云端项目（{0}）。",
+  "ja": "クラウドプロジェクトを作成できませんでした（{0}）。"
+ },
+ "Could not create cloud project.": {
+  "zh": "无法创建云端项目。",
+  "ja": "クラウドプロジェクトを作成できませんでした。"
+ },
+ "Could not create local project.": {
+  "zh": "无法创建本地项目。",
+  "ja": "ローカルプロジェクトを作成できませんでした。"
+ },
+ "Could not create team project ({0}).": {
+  "zh": "无法创建团队项目（{0}）。",
+  "ja": "チームプロジェクトを作成できませんでした（{0}）。"
+ },
+ "Could not create team project.": {
+  "zh": "无法创建团队项目。",
+  "ja": "チームプロジェクトを作成できませんでした。"
+ },
+ "Could not export room credentials from original host.": {
+  "zh": "无法从原主机导出房间凭据。",
+  "ja": "元のホストからルーム認証情報をエクスポートできませんでした。"
+ },
+ "Could not join \"{0}\" ({1}). Check your account credentials.": {
+  "zh": "无法加入“{0}”（{1}），请检查账号凭据。",
+  "ja": "「{0}」に参加できませんでした（{1}）。アカウント情報を確認してください。"
+ },
+ "Could not join project via invite link.": {
+  "zh": "无法通过邀请链接加入项目。",
+  "ja": "招待リンクからプロジェクトに参加できませんでした。"
+ },
+ "Could not reach the online server ({0}). Verify the server URL or start a hosted service.": {
+  "zh": "无法连接在线服务器（{0}），请检查服务地址或启动在线托管服务。",
+  "ja": "オンラインサーバーに接続できませんでした（{0}）。サーバーURLを確認してください。"
+ },
+ "Could not reach the original creator machine. Ensure the original creator project window is online.": {
+  "zh": "无法联系原来的项目创建机器，请确保原创建机器的项目窗口在线。",
+  "ja": "元のプロジェクト作成マシンに接続できませんでした。元の作成マシンのウィンドウがオンラインであることを確認してください。"
+ },
+ "Could not regenerate invite link.": {
+  "zh": "无法重新生成邀请链接。",
+  "ja": "招待リンクを再生成できませんでした。"
+ },
+ "Could not remove member account.": {
+  "zh": "无法移除成员账号。",
+  "ja": "メンバーアカウントを削除できませんでした。"
+ },
+ "Could not save member account.": {
+  "zh": "无法保存成员账号。",
+  "ja": "メンバーアカウントを保存できませんでした。"
+ },
+ "Could not start local data server ({0}).": {
+  "zh": "无法启动本机数据服务器（{0}）。",
+  "ja": "ローカルデータサーバーを起動できませんでした（{0}）。"
+ },
+ "Could not switch entry mode.": {
+  "zh": "无法切换准入模式。",
+  "ja": "参加モードを切り替えられませんでした。"
+ },
+ "Create cloud project": {
+  "zh": "创建云端项目",
+  "ja": "クラウドプロジェクトを作成"
+ },
+ "Create local project": {
+  "zh": "创建本地项目",
+  "ja": "ローカルプロジェクトを作成"
+ },
+ "Create team project": {
+  "zh": "创建团队项目",
+  "ja": "チームプロジェクトを作成"
+ },
+ "Creates a personal project stored on this computer with zero account setup.": {
+  "zh": "在本机创建个人项目，无需额外管理账号。",
+  "ja": "アカウント設定なしで、このパソコンに保存される個人プロジェクトを作成します。"
+ },
+ "Creating…": {
+  "zh": "创建中…",
+  "ja": "作成中…"
+ },
+ "Creator account": {
+  "zh": "创建者账号",
+  "ja": "作成者アカウント"
+ },
+ "Creator device \"{0}\" is requesting to become the data server (member accounts & project document) for \"{1}\". Do you agree?": {
+  "zh": "创建者设备“{0}”请求成为项目“{1}”的数据服务器（成员账号&项目文档）。是否同意？",
+  "ja": "作成者デバイス「{0}」がプロジェクト「{1}」のデータサーバー（メンバーアカウント＆プロジェクト文書）になることを要求しています。同意しますか？"
+ },
+ "Creator password is not cached in this session; manage invite links in Project settings.": {
+  "zh": "当前会话未缓存创建者密码，请在“项目设置”中管理邀请链接。",
+  "ja": "このセッションには作成者パスワードが保存されていません。プロジェクト設定から招待リンクを管理してください。"
+ },
+ "Current project": {
+  "zh": "当前项目",
+  "ja": "現在のプロジェクト"
+ },
+ "Currently connected ({0})": {
+  "zh": "当前在线（{0}）",
+  "ja": "現在接続中（{0}）"
+ },
+ "Data server (member accounts & project document)": {
+  "zh": "数据服务器（成员账号&项目文档）",
+  "ja": "データサーバー（メンバーアカウント＆プロジェクト文書）"
+ },
+ "Data server handover completed. This machine is no longer hosting the room.": {
+  "zh": "数据服务器移交已完成，本机不再托管该房间。",
+  "ja": "データサーバーの引き継ぎが完了しました。このマシンはルームのホストを終了しました。"
+ },
+ "Data server panel": {
+  "zh": "数据服务器面板",
+  "ja": "データサーバーパネル"
+ },
+ "Data server role transferred to the verified creator window.": {
+  "zh": "数据服务器角色已移交至通过验证的创建者窗口。",
+  "ja": "データサーバーの役割を確認済みの作成者ウィンドウへ移行しました。"
+ },
+ "Dedup {0} · Failed {1}": {
+  "zh": "去重 {0} · 失败 {1}",
+  "ja": "重複除外 {0} · 失敗 {1}"
+ },
+ "Document modification history": {
+  "zh": "项目文档修改记录",
+  "ja": "プロジェクト文書の変更履歴"
+ },
+ "Document update": {
+  "zh": "文档更新",
+  "ja": "文書の更新"
+ },
+ "Enter a creator account username and password.": {
+  "zh": "请输入创建者账号用户名和密码。",
+  "ja": "作成者アカウントのユーザー名とパスワードを入力してください。"
+ },
+ "Enter a member username.": {
+  "zh": "请输入成员用户名。",
+  "ja": "メンバーのユーザー名を入力してください。"
+ },
+ "Enter both Project ID and service URL.": {
+  "zh": "请同时填写项目标识和服务地址。",
+  "ja": "プロジェクトIDとサービスURLの両方を入力してください。"
+ },
+ "Enter joined project details manually": {
+  "zh": "手动填写已加入项目连接信息",
+  "ja": "参加済みプロジェクトの接続情報を手動入力"
+ },
+ "Enter the 6-digit pairing code.": {
+  "zh": "请输入 6 位数字配对码。",
+  "ja": "6 桁のペアリングコードを入力してください。"
+ },
+ "Enter the team project name to search on WAN.": {
+  "zh": "请输入要在外网查找的团队项目名称。",
+  "ja": "WAN で検索するチームプロジェクト名を入力してください。"
+ },
+ "Enter this 6-digit pairing code on \"{0}\", then confirm below:": {
+  "zh": "请在“{0}”上输入以下 6 位配对码，并在下方确认：",
+  "ja": "「{0}」で次の 6 桁のペアリングコードを入力し、下で確定してください："
+ },
+ "Enter your cloud account username and password.": {
+  "zh": "请输入云端账号用户名和密码。",
+  "ja": "クラウドアカウントのユーザー名とパスワードを入力してください。"
+ },
+ "Enter your member account username and password.": {
+  "zh": "请输入成员账号用户名和密码。",
+  "ja": "メンバーアカウントのユーザー名とパスワードを入力してください。"
+ },
+ "Executes background prerender and snapshot tasks for bound projects and reports live throughput.": {
+  "zh": "为已绑定项目后台执行预渲染与生成快照任务，并实时统计吞吐数据。",
+  "ja": "バインドされたプロジェクトのバックグラウンド事前レンダリングとスナップショット生成を実行し、スループットを表示します。"
+ },
+ "Failed to activate local data server.": {
+  "zh": "启用本机数据服务器失败。",
+  "ja": "ローカルデータサーバーの有効化に失敗しました。"
+ },
+ "Failed to provision local data server.": {
+  "zh": "初始化本机数据服务器失败。",
+  "ja": "ローカルデータサーバーの準備に失敗しました。"
+ },
+ "Frames rendered": {
+  "zh": "已渲染帧数",
+  "ja": "レンダリング済みフレーム数"
+ },
+ "Generate invite link": {
+  "zh": "生成邀请链接",
+  "ja": "招待リンクを生成"
+ },
+ "Generated a fresh invite link.": {
+  "zh": "已生成新的邀请链接。",
+  "ja": "新しい招待リンクを生成しました。"
+ },
+ "Handover could not be completed.": {
+  "zh": "无法完成数据服务器移交。",
+  "ja": "データサーバーの引き継ぎを完了できませんでした。"
+ },
+ "Hide manual project entry": {
+  "zh": "收起手动填写",
+  "ja": "手動入力を閉じる"
+ },
+ "Host this personal project on an online document service so you can access it across devices.": {
+  "zh": "将该个人项目托管至在线文档服务，以便跨设备访问与编辑。",
+  "ja": "この個人プロジェクトをオンライン文書サービスに配置し、複数デバイスからアクセスできるようにします。"
+ },
+ "Hosting on this machine": {
+  "zh": "本机托管中",
+  "ja": "このマシンでホスト中"
+ },
+ "In-flight tasks": {
+  "zh": "进行中任务",
+  "ja": "実行中タスク"
+ },
+ "Initial project document snapshot is active (r{0}). Subsequent edits from any connected editor will appear here.": {
+  "zh": "初始项目文档已就绪（r{0}），后续来自任意编辑器的修改记录将在此展示。",
+  "ja": "プロジェクト文書の初期状態が有効です（r{0}）。以降の編集履歴はここに記録されます。"
+ },
+ "Join own project in editor": {
+  "zh": "用编辑器加入自己的项目",
+  "ja": "エディターで自分のプロジェクトに参加"
+ },
+ "Join team project": {
+  "zh": "加入团队项目",
+  "ja": "チームプロジェクトに参加"
+ },
+ "Joined project": {
+  "zh": "已加入项目",
+  "ja": "参加済みプロジェクト"
+ },
+ "LAN (this machine)": {
+  "zh": "内网（本机托管）",
+  "ja": "LAN（このマシン）"
+ },
+ "LAN / WAN discovery": {
+  "zh": "内网/外网发现",
+  "ja": "LAN / WAN 検出"
+ },
+ "LAN broadcast active": {
+  "zh": "内网广播已开启",
+  "ja": "LAN ブロードキャスト有効"
+ },
+ "Latest revision r{0} · {1} commits": {
+  "zh": "当前版本 r{0} · {1} 条修改记录",
+  "ja": "最新リビジョン r{0} · {1} 件の履歴"
+ },
+ "Leave blank for open projects": {
+  "zh": "开放项目可留空",
+  "ja": "公開プロジェクトは空欄可"
+ },
+ "Local data server was provisioned, but joining as creator failed ({0}).": {
+  "zh": "本机数据服务器已就绪，但以创建者身份加入失败（{0}）。",
+  "ja": "ローカルデータサーバーは準備されましたが、作成者としての参加に失敗しました（{0}）。"
+ },
+ "Local document service active": {
+  "zh": "本机文档服务运行中",
+  "ja": "ローカル文書サービス稼働中"
+ },
+ "Local project": {
+  "zh": "本地项目",
+  "ja": "ローカルプロジェクト"
+ },
+ "Manage member accounts and document modification history on this machine": {
+  "zh": "在本机管理成员账号与项目文档修改记录",
+  "ja": "このマシンでメンバーアカウントとプロジェクト文書の変更履歴を管理します"
+ },
+ "Manage member accounts with edit or read-only access, and discover projects across LAN or WAN.": {
+  "zh": "管理可编辑或只读成员账号，并支持内网/外网项目发现。",
+  "ja": "編集・閲覧メンバーアカウントを管理し、LAN や WAN 上のプロジェクトを検出します。"
+ },
+ "Member accounts": {
+  "zh": "成员账号管理",
+  "ja": "メンバーアカウント管理"
+ },
+ "Member accounts (required for team access)": {
+  "zh": "成员账号管理（团队访问凭据）",
+  "ja": "メンバーアカウント（チーム参加に必要）"
+ },
+ "Member password": {
+  "zh": "成员密码",
+  "ja": "メンバーパスワード"
+ },
+ "Member username": {
+  "zh": "成员用户名",
+  "ja": "メンバーユーザー名"
+ },
+ "Member username must differ from the creator username.": {
+  "zh": "成员用户名不能与创建者用户名相同。",
+  "ja": "メンバーのユーザー名は作成者と別のものにしてください。"
+ },
+ "Missing handover package from original host.": {
+  "zh": "缺少来自原创建机器的移交数据包。",
+  "ja": "元のホストからの引き継ぎパッケージが見つかりません。"
+ },
+ "Modified paths / entities": {
+  "zh": "修改内容 / 实体",
+  "ja": "変更箇所 / エンティティ"
+ },
+ "Network discovery & hosting": {
+  "zh": "网络发现与托管方式",
+  "ja": "ネットワーク検出とホスト先"
+ },
+ "No LAN team projects discovered yet. Click \"Scan LAN\" or search a WAN server by project name.": {
+  "zh": "暂未发现内网团队项目，可点击“扫描内网”或按名称搜索外网服务器。",
+  "ja": "LAN 上のチームプロジェクトはまだ見つかっていません。「LAN をスキャン」するか、WAN サーバーをプロジェクト名で検索してください。"
+ },
+ "No member accounts added yet. Add accounts above to grant team members edit or read-only access.": {
+  "zh": "尚未添加成员账号。可在上方添加账号并分配可编辑或只读权限。",
+  "ja": "メンバーアカウントはまだありません。上からアカウントを追加して編集または閲覧権限を付与できます。"
+ },
+ "No projects bound yet. Add an already-joined project or paste an invite link above.": {
+  "zh": "尚未绑定任何项目。请在上方添加已加入项目或粘贴邀请链接。",
+  "ja": "バインドされたプロジェクトはまだありません。参加済みプロジェクトを追加するか、招待リンクを貼り付けてください。"
+ },
+ "No render records yet. Tasks executed by this machine will appear here automatically.": {
+  "zh": "暂无渲染记录，本机执行的预渲染与快照任务会自动显示在此处。",
+  "ja": "レンダリング履歴はまだありません。このマシンが実行したタスクが自動的に表示されます。"
+ },
+ "No unbound local or recently joined projects found automatically. You can enter a joined project's connection details below or switch to \"Add invite link\".": {
+  "zh": "未自动发现尚未绑定的本地或近期已加入项目，可在下方手动填写连接信息，或切换到“添加邀请链接”。",
+  "ja": "未バインドの参加済みプロジェクトは見つかりませんでした。下で接続情報を入力するか、「招待リンクを追加」に切り替えてください。"
+ },
+ "Online": {
+  "zh": "在线",
+  "ja": "オンライン"
+ },
+ "Online service URL": {
+  "zh": "在线服务地址",
+  "ja": "オンラインサービスURL"
+ },
+ "Only the project creator can become the data server.": {
+  "zh": "只有项目创建者账号才能成为数据服务器。",
+  "ja": "データサーバーになれるのはプロジェクト作成者のみです。"
+ },
+ "Open password": {
+  "zh": "统一密码",
+  "ja": "共通パスワード"
+ },
+ "Open the render server data panel: inspect throughput, add already-joined projects, or bind via invite link.": {
+  "zh": "打开渲染服务器数据面板：查看吞吐记录、添加已加入项目，或添加邀请链接。",
+  "ja": "レンダーサーバーのデータパネルを開き、スループットの確認、参加済みプロジェクトの追加、招待リンクの登録を行います。"
+ },
+ "Ops": {
+  "zh": "操作数",
+  "ja": "操作数"
+ },
+ "Original creator machine": {
+  "zh": "原项目创建机器",
+  "ja": "元の作成マシン"
+ },
+ "Pairing code does not match. Check the 6-digit code on the original machine.": {
+  "zh": "配对码不匹配，请核对原创建机器上显示的 6 位数字。",
+  "ja": "ペアリングコードが一致しません。元のマシンに表示されている 6 桁のコードを確認してください。"
+ },
+ "Pairing code verified. Waiting for \"{0}\" to confirm transfer…": {
+  "zh": "配对码已验证通过，正在等待“{0}”确认完成移交…",
+  "ja": "ペアリングコードを確認しました。「{0}」での移行確定を待っています…"
+ },
+ "Password (auto if blank)": {
+  "zh": "密码（留空自动生成）",
+  "ja": "パスワード（空欄で自動生成）"
+ },
+ "Password (for restricted projects)": {
+  "zh": "成员密码（名单制项目必填）",
+  "ja": "パスワード（制限付きプロジェクト用）"
+ },
+ "Password (optional)": {
+  "zh": "密码（选填）",
+  "ja": "パスワード（任意）"
+ },
+ "Paste a project invite link first.": {
+  "zh": "请先粘贴项目邀请链接。",
+  "ja": "先にプロジェクトの招待リンクを貼り付けてください。"
+ },
+ "Permission": {
+  "zh": "权限",
+  "ja": "権限"
+ },
+ "Personal draft, no account needed": {
+  "zh": "个人项目，无需管理账号",
+  "ja": "個人下書き・アカウント不要"
+ },
+ "Personal online workspace": {
+  "zh": "个人在线云端工作区",
+  "ja": "個人オンラインワークスペース"
+ },
+ "Prerender ready": {
+  "zh": "预渲染就绪",
+  "ja": "事前レンダリング準備完了"
+ },
+ "Project \"{0}\" uses a member list. Enter a member username and password below.": {
+  "zh": "项目“{0}”启用了成员名单，请在下方填写成员用户名和密码。",
+  "ja": "プロジェクト「{0}」はメンバーリスト制です。下にメンバーのユーザー名とパスワードを入力してください。"
+ },
+ "Project \"{0}\" · Host: {1} · {2}": {
+  "zh": "项目“{0}” · 主机：{1} · {2}",
+  "ja": "プロジェクト「{0}」 · ホスト：{1} · {2}"
+ },
+ "Project ID": {
+  "zh": "项目 ID",
+  "ja": "プロジェクトID"
+ },
+ "Project not found on WAN server, or server unreachable.": {
+  "zh": "未在该外网服务器上找到同名团队项目，或服务器不可达。",
+  "ja": "WAN サーバー上にプロジェクトが見つからないか、サーバーに接続できません。"
+ },
+ "Project owner · Full document & server administration": {
+  "zh": "项目创建者 · 拥有完整文档与服务器管理权限",
+  "ja": "プロジェクト作成者 · 文書およびサーバーの全管理権限"
+ },
+ "Project type": {
+  "zh": "项目类型",
+  "ja": "プロジェクトの種類"
+ },
+ "Read-only": {
+  "zh": "只读",
+  "ja": "閲覧のみ"
+ },
+ "Recent session": {
+  "zh": "近期加入",
+  "ja": "最近のセッション"
+ },
+ "Removed member account \"{0}\".": {
+  "zh": "已移除成员账号“{0}”。",
+  "ja": "メンバーアカウント「{0}」を削除しました。"
+ },
+ "Render node username": {
+  "zh": "渲染节点用户名",
+  "ja": "レンダーノード名"
+ },
+ "Render records": {
+  "zh": "渲染记录",
+  "ja": "レンダリング履歴"
+ },
+ "Render server": {
+  "zh": "渲染服务器",
+  "ja": "レンダーサーバー"
+ },
+ "Render server & team project": {
+  "zh": "渲染服务器、团队项目",
+  "ja": "レンダーサーバー・チームプロジェクト"
+ },
+ "Render server panel": {
+  "zh": "渲染服务器面板",
+  "ja": "レンダーサーバーパネル"
+ },
+ "Return to editor": {
+  "zh": "返回编辑器",
+  "ja": "エディターに戻る"
+ },
+ "Rev": {
+  "zh": "版本",
+  "ja": "版"
+ },
+ "Saved member account \"{0}\".": {
+  "zh": "已保存成员账号“{0}”。",
+  "ja": "メンバーアカウント「{0}」を保存しました。"
+ },
+ "Saved room": {
+  "zh": "本机已存房间",
+  "ja": "保存済みルーム"
+ },
+ "Scan LAN": {
+  "zh": "扫描内网",
+  "ja": "LAN をスキャン"
+ },
+ "Scanning LAN…": {
+  "zh": "正在扫描内网…",
+  "ja": "LAN をスキャン中…"
+ },
+ "Scanning local network for team projects…": {
+  "zh": "正在扫描局域网中的团队项目…",
+  "ja": "ローカルネットワーク上のチームプロジェクトを検出中…"
+ },
+ "Search WAN": {
+  "zh": "搜索外网",
+  "ja": "WAN を検索"
+ },
+ "Segment prerender": {
+  "zh": "片段预渲染",
+  "ja": "セグメント事前レンダリング"
+ },
+ "Select a discovered LAN or WAN team project first.": {
+  "zh": "请先选择一个内网或外网发现的团队项目。",
+  "ja": "検出された LAN または WAN のチームプロジェクトを選択してください。"
+ },
+ "Server roles": {
+  "zh": "服务器角色",
+  "ja": "サーバーの役割"
+ },
+ "Service URL": {
+  "zh": "服务地址",
+  "ja": "サービスURL"
+ },
+ "Set password for open entry": {
+  "zh": "设置开放加入密码",
+  "ja": "公開参加用パスワードを設定"
+ },
+ "Shared project password": {
+  "zh": "项目共享密码",
+  "ja": "共有プロジェクトパスワード"
+ },
+ "Sign in as project creator": {
+  "zh": "以项目创建者身份加入",
+  "ja": "プロジェクト作成者として参加"
+ },
+ "Sign in to your cloud account first, or choose a custom online server.": {
+  "zh": "请先登录云端账号，或切换为自定义在线服务器。",
+  "ja": "先にクラウドアカウントへサインインするか、カスタムオンラインサーバーを選択してください。"
+ },
+ "Sign in to your cloud account to create an online project:": {
+  "zh": "登录云端账号以创建个人在线项目：",
+  "ja": "オンラインプロジェクトを作成するにはクラウドアカウントにサインインしてください："
+ },
+ "Sign-in failed. Check your account credentials.": {
+  "zh": "登录失败，请检查账号和密码。",
+  "ja": "サインインに失敗しました。認証情報を確認してください。"
+ },
+ "Signed in as \"{0}\". The project will be synced to your personal cloud workspace ({1}).": {
+  "zh": "已登录账号“{0}”，项目将同步至你的个人云端空间（{1}）。",
+  "ja": "「{0}」としてサインイン中です。個人クラウドワークスペース（{1}）に同期されます。"
+ },
+ "Snapshot frames": {
+  "zh": "生成快照帧",
+  "ja": "スナップショット生成"
+ },
+ "Standby": {
+  "zh": "待命",
+  "ja": "待機中"
+ },
+ "Starting…": {
+  "zh": "启动中…",
+  "ja": "起動中…"
+ },
+ "Status": {
+  "zh": "状态",
+  "ja": "状態"
+ },
+ "Stream segment": {
+  "zh": "流式分段",
+  "ja": "ストリームセグメント"
+ },
+ "Switch \"{0}\" to online project": {
+  "zh": "将“{0}”换为在线项目",
+  "ja": "「{0}」をオンラインプロジェクトに切り替え"
+ },
+ "Switch to online project": {
+  "zh": "换为在线项目",
+  "ja": "オンラインプロジェクトに切り替え"
+ },
+ "Switch to the render server panel to view render records, throughput, and bound projects": {
+  "zh": "切换为渲染服务器数据面板，展示渲染记录、吞吐与绑定项目",
+  "ja": "レンダーサーバーパネルに切り替え、レンダリング履歴やスループットを表示します"
+ },
+ "Switched room to member account allowlist mode.": {
+  "zh": "已切换为成员账号名单模式。",
+  "ja": "メンバーアカウントリストモードに切り替えました。"
+ },
+ "Switched room to shared project password mode.": {
+  "zh": "已切换为统一项目密码模式。",
+  "ja": "共通プロジェクトパスワードモードに切り替えました。"
+ },
+ "Task type": {
+  "zh": "任务类型",
+  "ja": "タスク種別"
+ },
+ "Team project": {
+  "zh": "团队项目",
+  "ja": "チームプロジェクト"
+ },
+ "The requesting machine has verified the pairing code.": {
+  "zh": "请求方机器已完成配对码验证。",
+  "ja": "要求元の端末がペアリングコードを確認しました。"
+ },
+ "This machine is now the active data server for \"{0}\".": {
+  "zh": "本机已成为项目“{0}”的数据服务器。",
+  "ja": "このマシンが「{0}」のデータサーバーになりました。"
+ },
+ "Throughput": {
+  "zh": "渲染吞吐",
+  "ja": "スループット"
+ },
+ "Transferring…": {
+  "zh": "移交中…",
+  "ja": "移行中…"
+ },
+ "Unblock": {
+  "zh": "解除封禁",
+  "ja": "ブロック解除"
+ },
+ "Use a custom hosted server URL instead": {
+  "zh": "改用自定义在线服务地址",
+  "ja": "カスタムオンラインサーバーURLを使用する"
+ },
+ "Username (optional)": {
+  "zh": "用户名（选填）",
+  "ja": "ユーザー名（任意）"
+ },
+ "Verify pairing code": {
+  "zh": "验证配对码",
+  "ja": "ペアリングコードを確認"
+ },
+ "WAN / Hosted server": {
+  "zh": "外网 / 托管服务器",
+  "ja": "WAN / ホストサーバー"
+ },
+ "WAN project name": {
+  "zh": "外网项目名称",
+  "ja": "WAN プロジェクト名"
+ },
+ "WAN server URL": {
+  "zh": "外网服务地址",
+  "ja": "WAN サーバーURL"
+ },
+ "Waiting for the original creator machine of \"{0}\" to approve the handover request…": {
+  "zh": "正在等待“{0}”的原项目创建机器同意移交请求…",
+  "ja": "「{0}」の元の作成マシンが引き継ぎに同意するのを待っています…"
+ },
+ "Waiting for the requesting machine to enter the 6-digit code…": {
+  "zh": "正在等待请求方机器输入 6 位配对码…",
+  "ja": "要求元の端末が 6 桁のペアリングコードを入力するのを待っています…"
+ },
+ "Worker starting": {
+  "zh": "渲染进程启动中",
+  "ja": "ワーカー起動中"
+ },
+ "You can switch any personal project to an online project or convert it into a team project later from project management.": {
+  "zh": "个人项目可在项目管理中随时“换为在线项目”或“转为团队项目”。",
+  "ja": "個人プロジェクトは後からいつでもプロジェクト管理でオンライン切り替えやチーム変換ができます。"
+ },
+ "e.g. editor_alice": {
+  "zh": "例如：alice",
+  "ja": "例：alice"
+ },
+ "{0} bound projects": {
+  "zh": "{0} 个已绑定项目",
+  "ja": "{0} 件のバインド中プロジェクト"
+ },
+ "{0} frames · {1} segs": {
+  "zh": "{0} 帧 · {1} 段",
+  "ja": "{0} フレーム · {1} セグメント"
+ },
+ "{0} recent tasks": {
+  "zh": "最近 {0} 条任务",
+  "ja": "直近 {0} 件のタスク"
+ },
+ "{0} segments/min": {
+  "zh": "{0} 段/分钟",
+  "ja": "{0} セグメント/分"
  }
 }

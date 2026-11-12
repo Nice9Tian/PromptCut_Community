@@ -137,13 +137,13 @@ export function parseCreate(body) {
     for (const e of entries) {
       if (!isCred(e) || !isUsername(e.username) || seen.has(e.username)) return null;
       seen.add(e.username);
-      out.list.push({ username: e.username, salt: e.salt, key: e.key });
+      out.list.push({ username: e.username, salt: e.salt, key: e.key, ...(e.access === 'r' ? { access: 'r' } : {}) });
     }
   }
   return out;
 }
 
-/** Validate list (also used by `set-list`): `[{ username, salt, key }]`, no duplicate names, no creator */
+/** Validate list (also used by `set-list`): `[{ username, salt, key, access? }]`, no duplicate names, no creator */
 export function parseList(list, creatorName) {
   if (!Array.isArray(list) || list.length > 1000) return null;
   const seen = new Set([creatorName]);
@@ -151,7 +151,7 @@ export function parseList(list, creatorName) {
   for (const e of list) {
     if (!isCred(e) || !isUsername(e.username) || seen.has(e.username)) return null;
     seen.add(e.username);
-    out.push({ username: e.username, salt: e.salt, key: e.key });
+    out.push({ username: e.username, salt: e.salt, key: e.key, ...(e.access === 'r' ? { access: 'r' } : {}) });
   }
   return out;
 }

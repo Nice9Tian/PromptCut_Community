@@ -26,7 +26,15 @@ import { offlineUnsent, offlineUnsentText, unsentAtRisk } from "./onlineStatus";
 import { takeLeaveAllowance } from "./leavePrompt";
 import { foldLine, NOTICE_FOLD_AT, undoNoticeTitle } from "../undoNotice";
 import { ConflictMergeDialog } from "./ConflictMerge";
+import { DataServerPanel } from "./DataServerPanel";
+import { RenderServerPanel } from "./RenderServerPanel";
+import {
+  handoverActions,
+  setActiveServerPanel,
+  useServerRole,
+} from "./dataServerHandover";
 import "./sync.css";
+import "./ServerPanels.css";
 import { tr } from "../../i18n/index.ts";
 
 /** How long the notice bar stays (draft: disappears after about 8 seconds, with a close button) */
@@ -252,6 +260,255 @@ function OfflineUnsentNotice() {
  * appears when the offline batch cannot compute per-item differences, and normally the conflict
  * merge window takes over.
  */
+function DesktopServerRoleOverlays() {
+  const activePanel = useServerRole((s) => s.activePanel);
+  const renderRoleEnabled = useServerRole((s) => s.renderRoleEnabled);
+  const dataServerIds = useServerRole((s) => s.dataServerProjectIds);
+  const incoming = useServerRole((s) => s.incoming);
+  const outgoing = useServerRole((s) => s.outgoing);
+  const sharedId = useSync((v) => v.shared?.projectId ?? null);
+  const [codeInput, setCodeInput] = useState("");
+
+  useEffect(() => {
+    if (outgoing?.phase === "enter-code") {
+      setCodeInput("");
+    }
+  }, [outgoing?.phase]);
+
+  const isDataServerHere = Boolean(sharedId && dataServerIds.includes(sharedId));
+
+  return (
+    <>
+      {activePanel === "render"
+        ? createPortal(
+            <RenderServerPanel mode="workspace" onBack={() => setActiveServerPanel(null)} />,
+            document.body,
+          )
+        : null}
+
+      {activePanel === "data"
+        ? createPortal(
+            <DataServerPanel onOpenEditor={() => setActiveServerPanel(null)} />,
+            document.body,
+          )
+        : null}
+
+      {activePanel === null && (isDataServerHere || renderRoleEnabled)
+        ? createPortal(
+            <button
+              type="button"
+              className="pc-srv-pill"
+              data-pc="server-role-pill"
+              onClick={() => setActiveServerPanel(isDataServerHere ? "data" : "render")}
+            >
+              <span className="pc-srv-pill-dot" aria-hidden="true" />
+              <span>
+                {isDataServerHere ? tr("Data server panel") : tr("Render server panel")}
+              </span>
+            </button>,
+            document.body,
+          )
+        : null}
+
+      {incoming
+        ? createPortal(
+            <div className="pc-dialog-mask" style={{ zIndex: 10200 }}>
+              <div
+                className="pc-dialog pc-sync-dialog"
+                role="dialog"
+                aria-modal="true"
+                data-pc="handover-approval-dialog"
+              >
+                <div className="pc-dialog-title">
+                  {incoming.phase === "prompt"
+                    ? tr("Approve data server handover?")
+                    : tr("Verify pairing code")}
+                </div>
+                <div className="pc-dialog-body">
+                  {incoming.phase === "prompt" ? (
+                    <>
+                      <div style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+                        {tr(
+                          "Creator device \"{0}\" is requesting to become the data server (member accounts & project document) for \"{1}\". Do you agree?",
+                          incoming.fromDeviceName,
+                          incoming.projectName,
+                        )}
+                      </div>
+                      <div className="pc-sync-hint">
+                        {tr("After you agree, both machines must verify a 6-digit pairing code before hosting is transferred.")}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+                        {tr("Enter this 6-digit pairing code on \"{0}\", then confirm below:", incoming.fromDeviceName)}
+                      </div>
+                      <div className="pc-handover-code-box" data-pc="handover-host-code">
+                        {incoming.code}
+                      </div>
+                      <div className="pc-sync-hint" data-pc="handover-host-status">
+                        {incoming.requesterVerified
+                          ? tr("The requesting machine has verified the pairing code.")
+                          : tr("Waiting for the requesting machine to enter the 6-digit code…")}
+                      </div>
+                      {incoming.error ? (
+                        <div className="pc-sync-err" role="alert">{incoming.error}</div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+                <div className="pc-dialog-foot">
+                  {incoming.phase === "prompt" ? (
+                    <>
+                      <button
+                        type="button"
+                        className="pc-btn"
+                        data-pc="handover-decline"
+                        onClick={() => void handoverActions.declineIncoming()}
+                      >
+                        {tr("Decline")}
+                      </button>
+                      <button
+                        type="button"
+                        className="pc-btn pc-btn--primary"
+                        data-pc="handover-agree"
+                        onClick={() => void handoverActions.agreeIncoming()}
+                      >
+                        {tr("Agree")}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="pc-btn"
+                        data-pc="handover-decline"
+                        disabled={incoming.completing}
+                        onClick={() => void handoverActions.declineIncoming()}
+                      >
+                        {tr("Cancel")}
+                      </button>
+                      <button
+                        type="button"
+                        className="pc-btn pc-btn--primary"
+                        data-pc="handover-host-confirm"
+                        disabled={incoming.completing || incoming.hostConfirmed}
+                        onClick={() => void handoverActions.confirmHostPairing()}
+                      >
+                        {incoming.completing
+                          ? tr("Transferring…")
+                          : incoming.hostConfirmed
+                            ? tr("Confirmed (waiting for peer)")
+                            : tr("Confirm pairing & transfer")}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {outgoing
+        ? createPortal(
+            <div className="pc-dialog-mask" style={{ zIndex: 10200 }}>
+              <div
+                className="pc-dialog pc-sync-dialog"
+                role="dialog"
+                aria-modal="true"
+                data-pc="handover-requester-dialog"
+              >
+                <div className="pc-dialog-title">
+                  {tr("Become data server")}
+                </div>
+                <div className="pc-dialog-body">
+                  {outgoing.phase === "waiting-approval" && (
+                    <div style={{ fontSize: 13.5, lineHeight: 1.55 }} data-pc="handover-waiting">
+                      {tr("Waiting for the original creator machine of \"{0}\" to approve the handover request…", outgoing.projectName)}
+                    </div>
+                  )}
+                  {outgoing.phase === "enter-code" && (
+                    <>
+                      <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+                        {tr("\"{0}\" agreed. Enter the 6-digit pairing code shown on that machine:", outgoing.hostDeviceName)}
+                      </div>
+                      <div className="pc-sync-field">
+                        <label htmlFor="pc-handover-code">{tr("6-digit pairing code")}</label>
+                        <input
+                          id="pc-handover-code"
+                          className="pc-dialog-input pc-handover-code-input"
+                          data-pc="handover-code-input"
+                          inputMode="numeric"
+                          maxLength={6}
+                          value={outgoing.submittedCode ?? codeInput}
+                          disabled={Boolean(outgoing.submittedCode)}
+                          placeholder="000000"
+                          onChange={(e) => setCodeInput(e.target.value.replace(/\D+/g, "").slice(0, 6))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !outgoing.submittedCode) {
+                              void handoverActions.submitPairingCode(codeInput);
+                            }
+                          }}
+                        />
+                      </div>
+                      {outgoing.submittedCode ? (
+                        <div className="pc-sync-hint" data-pc="handover-requester-verified">
+                          {tr("Pairing code verified. Waiting for \"{0}\" to confirm transfer…", outgoing.hostDeviceName)}
+                        </div>
+                      ) : null}
+                      {outgoing.error ? (
+                        <div className="pc-sync-err" data-pc="handover-code-error" role="alert">{outgoing.error}</div>
+                      ) : null}
+                    </>
+                  )}
+                  {outgoing.phase === "adopting" && (
+                    <div style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+                      {tr("Activating local data server for \"{0}\"…", outgoing.projectName)}
+                    </div>
+                  )}
+                  {outgoing.phase === "declined" && (
+                    <div className="pc-sync-err" role="alert">
+                      {tr("\"{0}\" declined the data server handover request.", outgoing.hostDeviceName)}
+                    </div>
+                  )}
+                  {outgoing.phase === "error" && (
+                    <div className="pc-sync-err" role="alert">
+                      {outgoing.message}
+                    </div>
+                  )}
+                </div>
+                <div className="pc-dialog-foot">
+                  <button
+                    type="button"
+                    className="pc-btn"
+                    data-pc="handover-cancel"
+                    disabled={outgoing.phase === "adopting"}
+                    onClick={() => handoverActions.cancelOutgoing()}
+                  >
+                    {outgoing.phase === "declined" || outgoing.phase === "error" ? tr("Close") : tr("Cancel")}
+                  </button>
+                  {outgoing.phase === "enter-code" && !outgoing.submittedCode ? (
+                    <button
+                      type="button"
+                      className="pc-btn pc-btn--primary"
+                      data-pc="handover-verify-submit"
+                      disabled={codeInput.length !== 6}
+                      onClick={() => void handoverActions.submitPairingCode(codeInput)}
+                    >
+                      {tr("Verify pairing code")}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
+
 export function SyncOverlays(props: { offlineDialog?: boolean } = {}) {
   const notice = useSync((v) => v.notice);
   return (
@@ -259,6 +516,7 @@ export function SyncOverlays(props: { offlineDialog?: boolean } = {}) {
       {notice ? <UndoNoticeBar n={notice} /> : null}
       <Toasts />
       {ONLINE ? <OfflineUnsentNotice /> : null}
+      {!ONLINE ? <DesktopServerRoleOverlays /> : null}
       {props.offlineDialog === false ? null : <OfflineDialog />}
       {props.offlineDialog === false ? null : <ConflictMergeDialog />}
       <BlockingDialog />

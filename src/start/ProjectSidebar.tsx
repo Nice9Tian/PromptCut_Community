@@ -87,6 +87,9 @@ export interface TreeOps {
   reorder: (kind: TreeKind, dragId: string, overId: string, place: Place) => void;
   /** Move a project to a group (null means move out of the group) */
   move: (projectId: string, groupId: string | null) => void;
+  /** Desktop personal local projects: switch to online project or convert to team project (Issue #7) */
+  switchOnline?: (projectId: string) => void;
+  convertTeam?: (projectId: string) => void;
   /** Which items of this row cannot be done, and why */
   blocked: (kind: TreeKind, id: string) => { rename?: MenuBlock; remove?: MenuBlock; pin?: MenuBlock; archive?: MenuBlock };
 }
@@ -772,6 +775,8 @@ export function ProjectSidebar(props: {
             archiveBlocked={blocked.archive}
             moveTargets={moveTargets}
             onMove={(gid) => props.ops.move(menu.id, gid)}
+            onSwitchOnline={project && !archived && props.ops.switchOnline ? () => props.ops.switchOnline!(menu.id) : undefined}
+            onConvertTeam={project && !archived && props.ops.convertTeam ? () => props.ops.convertTeam!(menu.id) : undefined}
             onClose={() => setMenu(null)}
             onRename={() => setRenaming({ kind: menu.kind, id: menu.id, name: menu.name })}
             onPin={() => props.ops.pin(menu.kind, menu.id)}

@@ -76,6 +76,9 @@ export function RowMenu(props: {
    */
   moveTargets?: MoveTarget[];
   onMove?: (groupId: string | null) => void;
+  /** Desktop personal local projects: switch to online project or convert to team project (Issue #7) */
+  onSwitchOnline?: () => void;
+  onConvertTeam?: () => void;
 }): JSX.Element {
   const box = useRef<HTMLDivElement>(null);
 
@@ -119,7 +122,8 @@ export function RowMenu(props: {
   const vw = typeof window === "undefined" ? 1280 : window.innerWidth;
   const vh = typeof window === "undefined" ? 800 : window.innerHeight;
   const left = Math.min(props.at.x, vw - MENU.w - MENU.pad);
-  const h = MENU.h + (props.moveTargets?.length ?? 0) * ITEM_H;
+  const extraProjectItems = (props.onSwitchOnline ? 1 : 0) + (props.onConvertTeam ? 1 : 0);
+  const h = MENU.h + ((props.moveTargets?.length ?? 0) + extraProjectItems) * ITEM_H;
   const top = Math.max(MENU.pad, Math.min(props.at.y, vh - h - MENU.pad));
 
   const item = (label: string, onPick: () => void, extra?: { danger?: boolean; pc?: string; blocked?: MenuBlock }) => (
@@ -155,6 +159,9 @@ export function RowMenu(props: {
       {props.moveTargets && props.onMove && props.moveTargets.length > 0 && <div className="ps-menu-sep" />}
       {props.moveTargets && props.onMove && props.moveTargets.map((g) =>
         item(g.id === null ? tr("Remove from group") : tr("Move to \"{0}\"", g.name), () => props.onMove!(g.id), { pc: "start-menu-move", blocked: g.blocked }))}
+      {(props.onSwitchOnline || props.onConvertTeam) && <div className="ps-menu-sep" />}
+      {props.onSwitchOnline && item(tr("Switch to online project"), props.onSwitchOnline, { pc: "start-menu-switch-online" })}
+      {props.onConvertTeam && item(tr("Convert to team project"), props.onConvertTeam, { pc: "start-menu-convert-team" })}
       <div className="ps-menu-sep" />
       {item(tr("Delete"), props.onDelete, { danger: true, pc: "start-menu-delete", blocked: props.deleteBlocked })}
     </div>

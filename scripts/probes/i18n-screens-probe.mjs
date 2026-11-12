@@ -148,8 +148,13 @@ async function walk(locale) {
   await sleep(800);
   await shot('home');
 
-  // A new project lands on its chat page. The chat is seeded so a filled page gets checked too.
+  // A new project opens the desktop New Project dialog first, then lands on its chat page.
   await click('start-side-new');
+  await sleep(600);
+  if (await page.$('[data-pc="new-project-local-confirm"]')) {
+    await shot('new-project-dialog');
+    await click('new-project-local-confirm');
+  }
   await sleep(6000);
   await page.evaluate(async (user, agent) => {
     const lc = await import('/src/ai/liveChat.ts');
