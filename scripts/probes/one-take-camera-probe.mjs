@@ -27,7 +27,7 @@
  *        Scene3DView Camera / Space mode toggle.
  *      - MCP create_card monolith gate and apply_card pre-overlay scene-host gate reject invalid calls.
  */
-import "../lib/no-user-dirs.mjs";
+import '../lib/no-user-dirs.mjs';
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";

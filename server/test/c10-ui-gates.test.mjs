@@ -231,10 +231,12 @@ const STORAGE_PATHS = [];
 const ACCOUNT_PATHS = [
   '/api/account/cloud-agent-consent',
   '/api/account/editor/', '/api/account/editor/renew', '/api/account/editor/session',
+  '/api/account/email/confirm', '/api/account/email/start',
   '/api/account/login', '/api/account/logout', '/api/account/me', '/api/account/projects',
+  '/api/account/register',
   // 2026-10-23 third-party login (Google): fetch which methods are enabled (GET config), login and
   // initial registration (POST).
-  // In the same category as the eight items above, all being official website account service
+  // In the same category as the items above, all being official website account service
   // endpoints; `src/online/apiGuard.ts` allows them strictly item-by-item with fixed methods, and
   // does not allow `third-party/unlink`
   '/api/account/third-party/config', '/api/account/third-party/login', '/api/account/third-party/register',
@@ -263,7 +265,7 @@ function assertRatchet(paths, baseline) {
   assert.deepEqual(paths.filter((p) => p.startsWith('/api/account/')), ACCOUNT_PATHS, 'The account entries in the output manifest are registered exactly, one by one');
   assert.deepEqual(paths.filter((p) => p.startsWith('/api/media/storage/')), STORAGE_PATHS, 'No cloud drive paths may appear in the online build output');
 }
-test('C10-RA-01 legacy local /api entries only shrink and never grow, account entry points are a fixed 11, and there are no duplicates', { skip: ratchet.ok ? false : ratchet.reason }, () => {
+test('C10-RA-01 legacy local /api entries only shrink and never grow, account entry points are a fixed 14, and there are no duplicates', { skip: ratchet.ok ? false : ratchet.reason }, () => {
   const list = JSON.parse(fs.readFileSync(repoPath(RATCHET_FILE), 'utf8'));
   const baseline = JSON.parse(fs.readFileSync(repoPath(RATCHET_BASELINE), 'utf8'));
   assertRatchet(list.paths, baseline);

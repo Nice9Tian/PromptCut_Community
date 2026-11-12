@@ -1,5 +1,5 @@
 {
- "note": "仅供测试。旧本机API棘轮基线原从claude/c10a-integ@5b2fccc拷来并逐步删除归档接口；2026-10-09继续只删到当前在线产物的19条旧本机路径，后续仍只减不增。accountPaths单独记录已批准的0.7.18账号入口8条字面量，新增唯一首次云端Agent告知路由，由c10-ui-gates.test.mjs固定精确集合并拒未知account路径；不能用旧基线或editor/动态字面量放宽账号许可。C10A-API-03仍逐条核实际产物与清单相等。2026-10-23 账号入口由 8 条增到 11 条：新增第三方登录（Google）的 third-party/config（GET）、third-party/login 与 third-party/register（POST），仍是逐条精确登记，unlink 不在内。",
+ "note": "仅供测试。旧本机API棘轮基线原从claude/c10a-integ@5b2fccc拷来并逐步删除归档接口；2026-10-09继续只删到当前在线产物的19条旧本机路径，后续仍只减不增。accountPaths单独记录已批准的0.7.18账号入口8条字面量，新增唯一首次云端Agent告知路由，由c10-ui-gates.test.mjs固定精确集合并拒未知account路径；不能用旧基线或editor/动态字面量放宽账号许可。C10A-API-03仍逐条核实际产物与清单相等。2026-10-23 账号入口由 8 条增到 11 条：新增第三方登录（Google）的 third-party/config（GET）、third-party/login 与 third-party/register（POST），仍是逐条精确登记，unlink 不在内。2026-11-12 登录弹窗（#16）账号入口由 11 条增到 14 条：新增官网账号注册 register、email/start 与 email/confirm（POST）。",
  "source": "claude/c10a-integ@5b2fccc:server/test/c10a-online-api-paths.json",
  "projectAccountPaths": [
   "/hosted/shared/account/members"
@@ -31,10 +31,13 @@
   "/api/account/editor/",
   "/api/account/editor/renew",
   "/api/account/editor/session",
+  "/api/account/email/confirm",
+  "/api/account/email/start",
   "/api/account/login",
   "/api/account/logout",
   "/api/account/me",
   "/api/account/projects",
+  "/api/account/register",
   "/api/account/third-party/config",
   "/api/account/third-party/login",
   "/api/account/third-party/register"
