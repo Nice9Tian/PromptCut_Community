@@ -208,7 +208,7 @@ function prepareTarget(req: ThumbStageRequest): {
 
   const def = getCard(req.id);
   if (!def) return null;
-  if (ONLINE && unsupportedHere(def.id, def)) {
+  if (unsupportedHere(def.id, def)) {
     const timeline: Timeline = { fps, width, height, duration: 2, themeId: req.themeId, clips: [] };
     return { timeline, candidates: [{ t: 0, phase: 0.62 }], fastDirect: true, unsupported: true };
   }

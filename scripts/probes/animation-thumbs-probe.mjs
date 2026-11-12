@@ -29,10 +29,11 @@ import { flagArg } from './probe-connect.mjs';
 import { startDevServer } from '../lib/dev-server.mjs';
 
 const PORT = Number(flagArg('port', 5230));
-if (!flagArg('origin', null) && (PORT < 5230 || PORT > 5239)) {
-  throw new Error(`Port ${PORT} is outside the dedicated 5230-5239 range assigned to animation-thumbs-probe`);
+if (!flagArg('origin', null) && PORT >= 5190 && PORT <= 5192) {
+  throw new Error(`Port ${PORT} is reserved for the user's live PromptCut instance (5190-5192)`);
 }
 const GIVEN_ORIGIN = flagArg('origin', null);
+const SHOTS_DIR = flagArg('shots', null);
 const KEEP = process.argv.includes('--keep');
 
 const EXPECTED_GROUPS = ['user-cards', 'magicui', 'native', 'parts', 'lottie', 'particles'];
@@ -322,6 +323,10 @@ try {
     overviewThumbs.length >= EXPECTED_GROUPS.length && badOverview.length === 0,
     { count: overviewThumbs.length, badOverview: badOverview.slice(0, 5) },
   );
+  if (SHOTS_DIR) {
+    fs.mkdirSync(SHOTS_DIR, { recursive: true });
+    await page.screenshot({ path: path.join(SHOTS_DIR, 'overview.png') });
+  }
 
   /* ── 2. Every item in all 6 Animation groups (Run 1) ────────────────────────────── */
   const run1ByKey = new Map();
@@ -335,6 +340,14 @@ try {
       `[data-pc="animations"] [data-pc-open-group="${groupId}"]`,
       90_000,
     );
+    if (SHOTS_DIR && (groupId === 'magicui' || groupId === 'lottie' || groupId === 'particles')) {
+      await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (el) el.scrollTop = 0;
+      }, `[data-pc="animations"] [data-pc-open-group="${groupId}"]`);
+      await sleep(180);
+      await page.screenshot({ path: path.join(SHOTS_DIR, `group-${groupId}.png`) });
+    }
     totalTilesRun1 += items.length;
     const invalid = items.filter(
       (x) => !x.ready || (x.mode !== 'dom' && x.mode !== 'img') || !x.nonBlank || !Number.isFinite(x.t) || !(x.score > 0),
