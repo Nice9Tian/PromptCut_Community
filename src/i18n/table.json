@@ -3801,7 +3801,7 @@
  },
  "Forgot password": {
   "zh": "忘记密码",
-  "ja": "パスワードを忘れた場合"
+  "ja": "パスワードを忘れた"
  },
  "Found media in an old project whose category did not match the file extension; moved to the matching tab:": {
   "zh": "发现旧项目中有素材分类与文件扩展名不一致，已移动到对应分页：",
@@ -7500,7 +7500,7 @@
   "ja": "サイドバーの幅"
  },
  "Sign in": {
-  "zh": "登录账号",
+  "zh": "登录",
   "ja": "ログイン"
  },
  "Sign in to an account or enter as a guest first.": {
@@ -17730,5 +17730,165 @@
  "Auto": {
   "zh": "自动",
   "ja": "自動"
+ },
+ "Sign in to VisuHive": {
+  "zh": "登录 VisuHive",
+  "ja": "VisuHive にログイン"
+ },
+ "One account for the website, web app and desktop app": {
+  "zh": "一个账号，官网、网页版和桌面版通用",
+  "ja": "1 つのアカウントで、公式サイト・Web 版・デスクトップ版を使えます"
+ },
+ "Account login": {
+  "zh": "账号登录",
+  "ja": "アカウントでログイン"
+ },
+ "Sign up with email": {
+  "zh": "邮箱注册",
+  "ja": "メールで登録"
+ },
+ "Can’t reach Google right now. Use account login or sign up with email instead.": {
+  "zh": "连不上 Google，这一步暂时用不了，用账号登录或邮箱注册吧。",
+  "ja": "Google に接続できません。アカウントでログインするか、メールで登録してください。"
+ },
+ "By continuing you accept the {0} and have read the {1}.": {
+  "zh": "继续即表示你接受{0}，并已读过{1}。",
+  "ja": "続行すると、{0}に同意し、{1}を読んだものとみなされます。"
+ },
+ "Terms of Service": {
+  "zh": "服务条款",
+  "ja": "利用規約"
+ },
+ "Privacy Policy": {
+  "zh": "隐私政策",
+  "ja": "プライバシーポリシー"
+ },
+ "Continue as guest": {
+  "zh": "以游客身份进入",
+  "ja": "ゲストとして続ける"
+ },
+ "Signing in…": {
+  "zh": "正在登录…",
+  "ja": "ログイン中…"
+ },
+ "No account? Sign up with email": {
+  "zh": "没有账号？邮箱注册",
+  "ja": "アカウントがない方はメールで登録"
+ },
+ "Email": {
+  "zh": "邮箱",
+  "ja": "メールアドレス"
+ },
+ "3–24 characters: letters, digits, _ or -. Unique across the site and can’t be changed later.": {
+  "zh": "3 到 24 个字，可以用文字、数字、下划线和短横线。全站唯一，注册后不能改。",
+  "ja": "3〜24 文字。文字・数字・アンダースコア・ハイフンが使えます。サイト全体で一意で、登録後は変更できません。"
+ },
+ "Re-enter password": {
+  "zh": "再输一次密码",
+  "ja": "パスワード（確認）"
+ },
+ "Signing up…": {
+  "zh": "正在注册…",
+  "ja": "登録中…"
+ },
+ "Sign up and send code": {
+  "zh": "注册并发送验证码",
+  "ja": "登録して確認コードを送る"
+ },
+ "Already have an account? Sign in": {
+  "zh": "已经有账号？登录",
+  "ja": "アカウントをお持ちの方はログイン"
+ },
+ "Verify your email": {
+  "zh": "验证邮箱",
+  "ja": "メールアドレスの確認"
+ },
+ "We sent a code to {0}. It’s valid for 10 minutes.": {
+  "zh": "验证码已发到 {0}，10 分钟内有效。",
+  "ja": "{0} に確認コードを送りました。有効期限は 10 分です。"
+ },
+ "Your account is ready and you’re signed in.": {
+  "zh": "账号已经建好，也已登录。",
+  "ja": "アカウントを作成し、ログインしました。"
+ },
+ "Verification code": {
+  "zh": "验证码",
+  "ja": "確認コード"
+ },
+ "Send code": {
+  "zh": "发送验证码",
+  "ja": "確認コードを送る"
+ },
+ "Link it later on your account page": {
+  "zh": "以后再在账号页绑定",
+  "ja": "あとでアカウントページで登録する"
+ },
+ "Choose an account name": {
+  "zh": "起一个账号名",
+  "ja": "アカウント名を決める"
+ },
+ "Signing in with {0}. Account names are unique and can’t be changed for now.": {
+  "zh": "用 {0} 登录。账号名全站唯一，注册后先不支持改名。",
+  "ja": "{0} でログインします。アカウント名はサイト全体で一意で、今のところ登録後に変更できません。"
+ },
+ "Create account": {
+  "zh": "创建账号",
+  "ja": "アカウントを作成"
+ },
+ "The two passwords don’t match.": {
+  "zh": "两次输入的密码不一样。",
+  "ja": "2 回入力したパスワードが一致しません。"
+ },
+ "Sign-up failed. Please try again.": {
+  "zh": "注册没成功，请再试一次。",
+  "ja": "登録できませんでした。もう一度お試しください。"
+ },
+ "Couldn’t send the code. Please try again.": {
+  "zh": "验证码没发出去，请再试一次。",
+  "ja": "確認コードを送れませんでした。もう一度お試しください。"
+ },
+ "The code is wrong or has expired.": {
+  "zh": "验证码不对或已经过期。",
+  "ja": "確認コードが違うか、有効期限が切れています。"
+ },
+ "Wrong account name or password.": {
+  "zh": "账号名或密码不对。",
+  "ja": "アカウント名またはパスワードが違います。"
+ },
+ "The password must be at least 8 characters.": {
+  "zh": "密码至少 8 位。",
+  "ja": "パスワードは 8 文字以上にしてください。"
+ },
+ "That account name can’t be used. Use 3–24 letters, digits, _ or -.": {
+  "zh": "这个账号名不能用：要 3 到 24 个字，只能用文字、数字、下划线和短横线。",
+  "ja": "このアカウント名は使えません。3〜24 文字で、文字・数字・アンダースコア・ハイフンだけが使えます。"
+ },
+ "That account name is taken. Try another one.": {
+  "zh": "这个账号名已经有人用了，换一个吧。",
+  "ja": "このアカウント名はすでに使われています。別の名前にしてください。"
+ },
+ "That email is already linked to another account.": {
+  "zh": "这个邮箱已经绑定了别的账号。",
+  "ja": "このメールアドレスはすでに別のアカウントに登録されています。"
+ },
+ "That doesn’t look like an email address.": {
+  "zh": "邮箱地址不对。",
+  "ja": "メールアドレスの形式が正しくありません。"
+ },
+ "Too many tries. Wait a few minutes and try again.": {
+  "zh": "试得太频繁了，过一会儿再来。",
+  "ja": "試行回数が多すぎます。しばらく待ってからもう一度お試しください。"
+ },
+ "Sending email isn’t available right now.": {
+  "zh": "邮件功能暂时不可用。",
+  "ja": "現在メールを送信できません。"
+ },
+ "The email couldn’t be sent. Try again later.": {
+  "zh": "验证码邮件没发出去，过一会儿再试。",
+  "ja": "確認コードのメールを送れませんでした。しばらくしてからもう一度お試しください。"
+ },
+ "Can’t reach the account service. Check your connection and try again.": {
+  "zh": "连不上账号服务，检查一下网络再试。",
+  "ja": "アカウントサービスに接続できません。接続を確認してもう一度お試しください。"
  }
 }

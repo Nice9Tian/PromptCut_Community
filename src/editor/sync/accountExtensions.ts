@@ -183,6 +183,19 @@ export interface CloudAccountClient {
   thirdPartyProviders(): Promise<ThirdPartyProvider[]>;
   loginWithThirdParty(provider: string, token: string, remember: boolean): Promise<ThirdPartyLogin>;
   registerWithThirdParty(ticket: string, name: string, remember: boolean): Promise<Account>;
+  /**
+   * Email sign-up, done as the account service's existing steps (it has no email-only registration;
+   * issue #2, 2026-11-03): first `register` (`POST /api/account/register {name,password}`, which also
+   * signs in, like `login`), then `startEmail` (`POST /api/account/email/start {email,password}`, sends a
+   * code), then `confirmEmail` (`POST /api/account/email/confirm {code}`).
+   * **Optional**: a client without `register` makes the login dialog hide "Sign up with email".
+   * A failure throws an Error whose `code` is the service's error code (`name-taken`, `email-taken`,
+   * `bad-code`, `mail-off`…) and whose `message` is the service's own text; the dialog maps the code to
+   * interface text and falls back to the message (`src/start/accountErrors.ts`).
+   */
+  register?(name: string, password: string): Promise<Account>;
+  startEmail?(email: string, password: string): Promise<void>;
+  confirmEmail?(code: string): Promise<void>;
   logout(): Promise<void>;
   cloudAgentConsent(): Promise<CloudAgentConsent>;
   acceptCloudAgentConsent(requestId?: string): Promise<CloudAgentConsent>;
