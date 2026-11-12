@@ -61,6 +61,10 @@ try {
     for (let i = 0; i < 4 && n; i++) { if (n.tagName === 'BUTTON' || n.getAttribute('role') === 'button' || n.onclick) break; n = n.parentElement; }
     n?.click();
   });
+  await page.waitForFunction(() => !!document.querySelector('[data-pc="editor"]') || !!document.querySelector('[data-pc="new-project-local-confirm"]'), { timeout: 60000 });
+  await page.evaluate(() => {
+    document.querySelector('[data-pc="new-project-local-confirm"]')?.click();
+  });
   await page.waitForSelector('button[aria-label="AI settings"]', { timeout: 60000 });
   await page.click('button[aria-label="AI settings"]');
   await page.waitForSelector('.ais-dialog [data-entry="claude"]');

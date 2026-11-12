@@ -14,6 +14,7 @@ import { listenSafe } from "./safe-port.mjs";
 import { createSessionLineForwarder } from "./render-node/session-diag.mjs";
 import { autoRenderNodeOffReason, normalizeBinding, ticketOk } from "./auto-render-node.mjs";
 import { createBindingMemory, createTicketRelay } from "./render-node-relay.mjs";
+import { createRenderServerPool } from "./render-server-pool.mjs";
 import { localPrerenderMode } from "./prerender-mode.mjs";
 import { tr } from "./i18n.mjs";
 
@@ -147,6 +148,7 @@ export function prerenderPlugin(): Plugin {
         try { console.info("[render-node]", event, JSON.stringify(fields)); } catch { console.info("[render-node]", event); }
       };
       const rnMemory = createBindingMemory();
+      const rsPool = createRenderServerPool();
       const rnRelay = createTicketRelay({
         send: (data: object) => server.ws.send({ type: "custom", event: "pc:render-node", data }),
         hasPage: () => { const n = (server.ws as any)?.clients?.size; return typeof n === "number" ? n > 0 : true; },
@@ -199,6 +201,7 @@ export function prerenderPlugin(): Plugin {
             try { binding = normalizeBinding(input); } catch (e: any) { return rnSend(res, 400, { ok: false, error: e?.message || String(e) }); }
             const prev = rnMemory.get();
             rnMemory.set(binding);
+            rsPool.syncCurrentBinding(binding, { name: typeof input?.name === "string" ? input.name : undefined });
             if (!prev || prev.projectId !== binding.projectId || prev.url !== binding.url) rnLog("bind", { projectId: binding.projectId, url: binding.url, assetBase: binding.assetBase, contentId: binding.contentId });
             const r = await rnForward("/api/frames/render-node", { ...binding, ...(ticketOk(input.ticket) ? { ticket: input.ticket } : {}) });
             return rnSend(res, 200, { enabled: true, ...r });
@@ -206,6 +209,7 @@ export function prerenderPlugin(): Plugin {
           if (route === "/unbind") {
             const projectId = typeof input?.projectId === "string" ? input.projectId : null;
             const cleared = rnMemory.clear(projectId);
+            rsPool.syncCurrentBinding(rnMemory.get());
             if (cleared) rnLog("unbind", { projectId, reason: typeof input?.reason === "string" ? input.reason.slice(0, 40) : null });
             const r = await rnForward("/api/frames/render-node/unbind", { projectId, reason: typeof input?.reason === "string" ? input.reason.slice(0, 40) : "page-left" });
             return rnSend(res, 200, { cleared, ...r });
@@ -228,6 +232,90 @@ export function prerenderPlugin(): Plugin {
             }
           }
           return rnSend(res, 404, { ok: false, error: "Unknown render-node operation" });
+        })();
+      });
+
+      const fetchPrerenderJson = async (pathname: string) => {
+        const s = prerenderState();
+        if (!s.ready || !s.url) return null;
+        try {
+          const headers: Record<string, string> = {};
+          if (process.env.PROMPTCUT_INTERNAL_TOKEN) headers["x-pc-internal-token"] = process.env.PROMPTCUT_INTERNAL_TOKEN;
+          const r = await fetch(s.url + pathname, { headers, signal: AbortSignal.timeout(2500) });
+          return r.ok ? await r.json().catch(() => null) : null;
+        } catch {
+          return null;
+        }
+      };
+
+      server.middlewares.use("/api/render-server", (req, res, next) => {
+        const route = (req.url || "/").split("?")[0];
+        if (req.method === "GET" && route === "/status") {
+          void (async () => {
+            rsPool.syncCurrentBinding(rnMemory.get());
+            const s = prerenderState();
+            const [nodeStatus, queueSummary, diag] = await Promise.all([
+              fetchPrerenderJson("/api/frames/render-node"),
+              fetchPrerenderJson("/api/frames/queue"),
+              fetchPrerenderJson("/api/frames/diagnostics"),
+            ]);
+            const claims = Array.isArray(diag?.queue?.claims) ? diag.queue.claims : [];
+            for (const c of claims) {
+              if (!c || typeof c.id !== "string") continue;
+              rsPool.recordTask({
+                id: `claim:${c.id}`,
+                projectId: c.projectId || nodeStatus?.projectId || rnMemory.get()?.projectId || "local",
+                kind: c.kind || "render",
+                status: c.outcome === "failed" ? "failed" : c.outcome ? "completed" : "running",
+                frames: Number(c.frames) || 0,
+                segments: Number(c.segments) || (c.kind === "stream" ? 1 : 0),
+                startedAt: Number.isFinite(c.claimedAt) ? c.claimedAt : undefined,
+                finishedAt: Number.isFinite(c.finishedAt) ? c.finishedAt : undefined,
+                durationMs: Number.isFinite(c.durationMs) ? c.durationMs : undefined,
+              });
+            }
+            return rnSend(res, 200, {
+              ...rsPool.status({
+                nodeStatus: nodeStatus ?? { enabled: autoRenderNodeOffReason(process.env) === null, bound: !!rnMemory.get(), ...(rnMemory.get() ?? {}) },
+                queueSummary,
+                prerenderReady: s.ready,
+              }),
+              mode,
+            });
+          })();
+          return;
+        }
+        if (req.method !== "POST") return next();
+        void (async () => {
+          let input: any;
+          try { input = await rnBody(req, 32 * 1024); } catch (e: any) { return rnSend(res, 400, { ok: false, error: e?.message || String(e) }); }
+          if (route === "/add") {
+            try {
+              const project = input?.kind === "invite"
+                ? await rsPool.addInviteProject(input)
+                : await rsPool.addJoinedProject(input);
+              return rnSend(res, 200, { ok: true, project });
+            } catch (e: any) {
+              const code = e?.code ?? e?.reason ?? "bad-request";
+              const status = Number.isInteger(e?.status) ? e.status : code === "password-required" ? 401 : 400;
+              return rnSend(res, status, {
+                ok: false,
+                code,
+                error: e?.message || String(e),
+                ...(e?.project ? { project: e.project } : {}),
+                ...(e?.retryAfter ? { retryAfter: e.retryAfter } : {}),
+              });
+            }
+          }
+          if (route === "/remove") {
+            const removed = await rsPool.removeProject(input?.projectId);
+            return rnSend(res, 200, { ok: true, removed });
+          }
+          if (route === "/record") {
+            const record = rsPool.recordTask(input);
+            return rnSend(res, 200, { ok: true, record });
+          }
+          return rnSend(res, 404, { ok: false, error: "Unknown render-server operation" });
         })();
       });
 
@@ -362,7 +450,7 @@ export function prerenderPlugin(): Plugin {
       server.httpServer?.once("listening", () => {
         start().catch((e) => setPrerender({ ready: false, error: e?.message || String(e) }));
       });
-      const stop = () => { closing = true; killTree(child); };
+      const stop = () => { closing = true; void rsPool.close(); killTree(child); };
       server.httpServer?.on("close", stop);
       process.once("exit", stop);
     },

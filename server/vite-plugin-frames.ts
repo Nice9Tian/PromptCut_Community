@@ -1817,10 +1817,34 @@ export function framesPlugin(): Plugin {
             noteInteraction(root);   // M6c X5: playback clock is an interactive frame request; local queue nodes do not claim new tasks within 500 ms
             return json(200, await service.updatePlayback(project, input, { borrow, release }));
           }
+          const reportRenderRecord = (payload: Record<string, unknown>) => {
+            const editorUrl = String(process.env.PROMPTCUT_EDITOR_URL || "").trim().replace(/\/+$/, "");
+            if (!editorUrl) return;
+            void fetch(`${editorUrl}/api/render-server/record`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(1500),
+            }).catch(() => {});
+          };
           if (url.pathname === "/see") {
             const lane = input.lane === "agent" ? "agent" : input.lane === "background" ? "background" : "user";
             if (lane === "user") noteInteraction(root);   // M6c X5: scrubbing to fetch frames is an interactive frame request
+            const startedAt = Date.now();
             const frames = await service.see_frames(project, input.times || [0], { lane, signal: requestSignal(req, res) });
+            const finishedAt = Date.now();
+            reportRenderRecord({
+              id: `see:${entry.key.slice(0, 12)}:${startedAt}`,
+              projectId: autoNodes.get(root)?.status()?.projectId ?? project.id ?? "local",
+              projectName: project.name || undefined,
+              kind: "see-frames",
+              status: "completed",
+              frames: frames.size,
+              segments: 1,
+              startedAt,
+              finishedAt,
+              durationMs: Math.max(1, finishedAt - startedAt),
+            });
             // `mov` is always null: full.mov for the whole scene is no longer produced (legacy full-frame
             // channel Proposal B [ruling]); the field is kept for legacy pages and probes to recognize the shape
             return json(200, { key: entry.key, incomplete: [...frames.values()].some((value: any) => value.incomplete),
@@ -1841,9 +1865,24 @@ export function framesPlugin(): Plugin {
              * no usable projectId), produce locally on this machine (`queue: false`). When the switch is off,
              * `queueNodes` is empty, and calls here remain verbatim as before.
              */
+            const startedAt = Date.now();
             const queueNode = queueNodes.get(root);
             const viaQueue = queueNode?.active() ? await queueNode.publish(preloadSession!, project, entry.key, source) : undefined;
             await service.preload(project, { session: preloadSession!, localRev: input.localRev, ticket: preloadTicket, ...(viaQueue === undefined ? {} : { queue: viaQueue }) });
+            const finishedAt = Date.now();
+            const sampledCount = Math.max(1, entry.html.size || Math.floor(project.duration * (project.fps || 30)));
+            reportRenderRecord({
+              id: `preload:${entry.key.slice(0, 12)}`,
+              projectId: autoNodes.get(root)?.status()?.projectId ?? project.id ?? "local",
+              projectName: project.name || undefined,
+              kind: "preload",
+              status: "completed",
+              frames: sampledCount,
+              segments: Math.max(1, Math.ceil(sampledCount / Math.max(1, project.fps || 30))),
+              startedAt,
+              finishedAt,
+              durationMs: Math.max(1, finishedAt - startedAt),
+            });
             // Report to the editor process to register (Proposal A): after this process crashes and restarts,
             // the editor replays preload according to the table.
             // Only report the version actually accepted by this session right now: requests superseded by

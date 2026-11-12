@@ -4,6 +4,15 @@ import { useBackdropClose } from "../ui/backdropClose";
 import { actions, useStore } from "../store/project";
 import "./ProjectSettingsDialog.css";
 import { CollabSection, type CollabHandle } from "./sync/CollabSection";
+import { ONLINE } from "../online/mode";
+import { useSync } from "./sync/syncManager";
+import {
+  activateRenderServerMode,
+  canBecomeDataServer,
+  getServerRoleSnapshot,
+  initiateBecomeDataServer,
+} from "./sync/dataServerHandover";
+import "./sync/ServerPanels.css";
 import { ReadOnlyFence } from "./ReadOnlyFence";
 import { useReadOnly } from "./readOnly";
 import { CREATIVITY_HINT, CREATIVITY_LABEL, CREATIVITY_LEVELS, CREATIVITY_SHORT, DEFAULT_CREATIVITY, normalizeCreativity, projectCreativity, type CreativityLevel } from "../kernel/creativity.mjs";
@@ -82,6 +91,44 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
   const collabRef = useRef<CollabHandle>(null);
   // This project was given read-only permission (guest): settings are shown as usual but cannot be changed, "OK" is greyed out, and only "Close" remains
   const ro = useReadOnly();
+  const syncKind = useSync((v) => v.kind);
+  const syncShared = useSync((v) => v.shared);
+  const syncAssoc = useSync((v) => v.association);
+  const [roleBusy, setRoleBusy] = useState(false);
+  const [roleError, setRoleError] = useState("");
+
+  const showBecomeDataServer = !ONLINE && canBecomeDataServer({
+    online: ONLINE,
+    kind: syncKind,
+    shared: syncShared,
+    association: syncAssoc,
+  });
+
+  const handleBecomeRenderServer = () => {
+    setRoleError("");
+    void activateRenderServerMode();
+    onClose();
+  };
+
+  const handleBecomeDataServer = async () => {
+    if (roleBusy) return;
+    setRoleBusy(true);
+    setRoleError("");
+    try {
+      const trimmedName = name.trim();
+      if (!ro.locked && trimmedName && trimmedName !== curName) {
+        actions.setProjectMeta({ name: trimmedName });
+      }
+      const res = await initiateBecomeDataServer();
+      if (res.error && !getServerRoleSnapshot().outgoing) {
+        setRoleError(res.error);
+        return;
+      }
+      onClose();
+    } finally {
+      setRoleBusy(false);
+    }
+  };
 
   const currentRes = RESOLUTION_MAP[ratio][orientation];
 
@@ -291,6 +338,44 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
           </div>
           </ReadOnlyFence>
           <CollabSection ref={collabRef} open={open} />
+          {!ONLINE ? (
+            <div className="pc-settings-roles" data-pc="settings-server-roles">
+              <div className="pc-sync-group-title">{tr("Server roles")}</div>
+              <div className="pc-settings-roles-grid">
+                <button
+                  type="button"
+                  className="pc-settings-role-btn"
+                  data-pc="settings-become-render-server"
+                  disabled={roleBusy}
+                  onClick={handleBecomeRenderServer}
+                >
+                  <span className="pc-settings-role-text">
+                    <b>{tr("Become render server")}</b>
+                    <small>{tr("Switch to the render server panel to view render records, throughput, and bound projects")}</small>
+                  </span>
+                  <span aria-hidden="true">›</span>
+                </button>
+                {showBecomeDataServer ? (
+                  <button
+                    type="button"
+                    className="pc-settings-role-btn"
+                    data-pc="settings-become-data-server"
+                    disabled={roleBusy}
+                    onClick={() => void handleBecomeDataServer()}
+                  >
+                    <span className="pc-settings-role-text">
+                      <b>{tr("Become data server (member accounts & project document)")}</b>
+                      <small>{tr("Manage member accounts and document modification history on this machine")}</small>
+                    </span>
+                    <span aria-hidden="true">›</span>
+                  </button>
+                ) : null}
+              </div>
+              {roleError ? (
+                <div className="pc-sync-err" data-pc="settings-role-error" role="alert">{roleError}</div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <div className="pc-dialog-foot">
           <button type="button" className="pc-btn" onClick={handleCancel}>

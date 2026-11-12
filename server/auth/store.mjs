@@ -248,7 +248,7 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
         ticketKey: b64urlEncode(randomBytes(32)),
       };
       if (mode === 'free') rec.project = { salt: project.salt, key: project.key };
-      else rec.list = list.map((e) => ({ username: e.username, salt: e.salt, key: e.key }));
+      else rec.list = list.map((e) => ({ username: e.username, salt: e.salt, key: e.key, ...(e.access === 'r' ? { access: 'r' } : {}) }));
       persist(rec);
       records.set(projectId, rec);
       names.set(nameKey(name), projectId);

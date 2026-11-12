@@ -52,7 +52,9 @@ export const delegationDigest = (ticket) => createHash('sha256').update(String(t
 export function memberAccess(record, username, creator = false) {
   if (creator === true) return 'rw';
   const list = Array.isArray(record?.readonly) ? record.readonly : [];
-  return list.includes(username) ? 'r' : 'rw';
+  if (list.includes(username)) return 'r';
+  if (Array.isArray(record?.list) && record.list.some((e) => e.username === username && e.access === 'r')) return 'r';
+  return 'rw';
 }
 
 /** Takes the lesser of the two permissions */

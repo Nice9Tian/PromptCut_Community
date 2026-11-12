@@ -132,6 +132,8 @@ try {
   /* -- Navigate to Vibe mode, create local project -- */
   await page.goto(`${origin}/?ui=vibe&nosetup=1`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await clickPc('start-side-new');
+  await page.waitForSelector(sel('new-project-local-confirm'), { timeout: 15_000 });
+  await clickPc('new-project-local-confirm');
   await page.waitForSelector(sel('start-ext-detail'), { timeout: 60_000 });
   await sleep(900);
 

@@ -236,7 +236,7 @@ export interface EnableOptions {
   /** Project password for open entry */
   projectPassword?: string;
   /** List for restricted entry */
-  list?: { username: string; password: string }[];
+  list?: { username: string; password: string; access?: "r" | "rw" }[];
   /** Host address (for cloud hosting); if omitted, taken in override order */
   hostedUrl?: string | null;
 }

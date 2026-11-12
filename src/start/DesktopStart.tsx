@@ -44,6 +44,7 @@ import type { OrgEntry, OrgState, SeenMeta } from "./vibeOrg";
 import { LOCAL_ORG_SCOPE, addGroup, groupNoteText, groupsOf, loadOrg, mergeChats, mergeProjects, moveProject, saveOrg, withChats, withGroups, withProjects } from "./vibeOrg";
 import { useVibeLocal } from "./useVibeLocal";
 import { RATIO_SIZE, projectNameFromPrompt } from "./format";
+import { NewProjectDialog, type ExistingDraftTarget, type NewProjectInitialView } from "./NewProjectDialog";
 import type { Ratio, VibeChat, VibeGroup, VibeProject } from "./types";
 import "./start.css";
 
@@ -100,6 +101,11 @@ export function DesktopStart(props: {
   const [pending, setPending] = useState<PendingPrompt | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
+  const [newDialog, setNewDialog] = useState<{
+    open: boolean;
+    view: NewProjectInitialView;
+    draft: ExistingDraftTarget | null;
+  }>({ open: false, view: "local", draft: null });
   const fileInput = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -264,9 +270,39 @@ export function DesktopStart(props: {
 
   const createBlank = () => {
     setNotice("");
+    setNewDialog({ open: true, view: "local", draft: null });
+  };
+
+  const handleDialogCreateLocal = async ({ name, ratio }: { name: string; ratio: Ratio }) => {
+    setNotice("");
     setBusy(true);
-    void createLocal(tr("Untitled"))
-      .catch((e: unknown) => setNotice(e instanceof Error ? e.message : tr("Creating the project did not succeed.")))
+    try {
+      const id = await createLocal(name || tr("Untitled"));
+      if (ratio !== "16:9") {
+        actions.setProjectMeta({ ...RATIO_SIZE[ratio] });
+        await saveDraft(id);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openConvertForProject = (projectId: string, targetView: "cloud" | "team") => {
+    const proj = projects.find((x) => x.id === projectId);
+    const title = proj?.name || tr("Untitled");
+    setNotice("");
+    setBusy(true);
+    const prior = openId && dirty ? save(openId) : Promise.resolve(true);
+    void prior
+      .then(() => (openId === projectId ? Promise.resolve() : openDraft(projectId).then(() => { setActiveDraftId(projectId); setOpenId(projectId); })))
+      .then(() => {
+        setNewDialog({
+          open: true,
+          view: targetView,
+          draft: { id: projectId, name: title },
+        });
+      })
+      .catch((e: unknown) => setNotice(e instanceof Error ? e.message : tr("This project cannot be opened.")))
       .finally(() => setBusy(false));
   };
 
@@ -352,6 +388,8 @@ export function DesktopStart(props: {
       if (out.refused) { setNotice(out.refused); return; }
       setOrg(() => out.org);
     },
+    switchOnline: (projectId) => openConvertForProject(projectId, "cloud"),
+    convertTeam: (projectId) => openConvertForProject(projectId, "team"),
     blocked: (kind, id) => {
       if (kind === "group") return {};
       if (kind === "project") return { rename: tr("In this version, renaming a project requires Classic mode: do it in the editor.") };
@@ -569,6 +607,14 @@ export function DesktopStart(props: {
         config={vibe.ai.config}
         onSaveConfig={vibe.ai.saveConfig}
         onClearKey={vibe.ai.clearKey}
+      />
+      <NewProjectDialog
+        open={newDialog.open}
+        initialView={newDialog.view}
+        existingDraft={newDialog.draft}
+        onClose={() => setNewDialog((prev) => ({ ...prev, open: false }))}
+        onCreateLocal={handleDialogCreateLocal}
+        onEnteredShared={props.onEnterEditor}
       />
     </div>
   );
