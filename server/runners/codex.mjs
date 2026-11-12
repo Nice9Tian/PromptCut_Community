@@ -88,7 +88,7 @@ import { tr } from '../i18n.mjs';
 
 export function startRun(opts) {
   if (opts.toolProtocol) {
-    return runTextProtocolLoop({ startRun: _startRun, opts, onEvent: opts.onEvent });
+    return runTextProtocolLoop({ startRun: _startRun, opts, onEvent: opts.onEvent, tools });
   }
 
   let abortRef = { abort: () => {} };
@@ -116,7 +116,7 @@ export function startRun(opts) {
   const donePromise = run.done.then((res) => {
     if (rejected && !authFailed && !cancelled) {
       opts.onEvent({ type: 'status', text: tr("Native tool was rejected, retrying with text protocol") });
-      const nextRun = runTextProtocolLoop({ startRun: _startRun, opts, onEvent: opts.onEvent });
+      const nextRun = runTextProtocolLoop({ startRun: _startRun, opts, onEvent: opts.onEvent, tools });
       abortRef.abort = nextRun.abort;
       return nextRun.done;
     }

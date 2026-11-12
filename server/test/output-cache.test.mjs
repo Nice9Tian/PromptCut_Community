@@ -17,7 +17,7 @@ import { parsePartialObject, salvageToolCall } from '../harness/partial-json.mjs
 import { createCodeCacheStore, codeCacheTools, resolveCodeCacheRefs, CODE_CACHE_TOOL_NAMES } from '../tools/code-cache.mjs';
 import { salvageTruncation } from '../harness/truncation.mjs';
 import { Agent } from '../harness/agent.mjs';
-import { buildTools } from '../harness/tools/index.mjs';
+import { buildTools } from '../agent/build-promptcut-tools.mjs';
 import { CLOUD_OPEN_TOOLS } from '../agent/service/cloud-tools.mjs';
 import * as openai from '../harness/providers/openai.mjs';
 import * as anthropic from '../harness/providers/anthropic.mjs';

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CLOUD_OPEN_TOOLS, CLOUD_SYSTEM_NOTE, CLOUD_TOOL_PLAN, checkCloudTool } from '../agent/service/cloud-tools.mjs';
-import { buildTools } from '../harness/tools/index.mjs';
+import { buildTools } from '../agent/build-promptcut-tools.mjs';
 import { project, script, startKit } from './cloud-agent-kit.mjs';
 
 const alice = { projectId: 'p-spawn-disabled', userId: 'alice@device', username: 'alice', deviceName: 'device', creator: true };

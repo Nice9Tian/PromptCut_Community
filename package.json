@@ -5,6 +5,8 @@
   "type": "module",
   "_comment_imports": "The four below are aliases of the browser-side cloud extension packages (docs/plan/community-boundary.md, section 2). Here they always point to empty stubs, identical word for word in both repositories and with no closed-source path anywhere; what actually points to the closed-source loading table is the plugin server/vite-plugin-cloud-seams.ts (resolveId + enforce:pre, which overrides this). Why keep a fallback layer here anyway: places that do not mount that plugin (the vite started by the probe itself, raw Node) used to be a **hard failure**: the browser-side transform returned 500 outright instead of downgrading gracefully to the community edition. With this layer, a forgotten plugin downgrades at worst to \"cloud extensions not installed\" and cannot kill the page.",
   "imports": {
+    "#promptcut-harness": "./server/harness/index.mjs",
+    "#promptcut-harness/*": "./server/harness/*",
     "#promptcut-cloud-ai": "./src/community/cloudSeamStub.ts",
     "#promptcut-cloud-account": "./src/community/cloudSeamStub.ts",
     "#promptcut-cloud-account-ui": "./src/community/cloudSeamStub.ts",

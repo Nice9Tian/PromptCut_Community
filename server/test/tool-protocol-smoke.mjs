@@ -1,4 +1,5 @@
 import { runTextProtocolLoop } from '../harness/tool-protocol.mjs';
+import { tools } from '../mcp-tools.mjs';
 import { startRun } from './fake-runner.mjs';
 
 process.env.PROMPTCUT_TEST_PROTOCOL = '1';
@@ -22,7 +23,7 @@ async function main() {
     }
   };
 
-  const run = runTextProtocolLoop({ startRun, opts, onEvent: opts.onEvent });
+  const run = runTextProtocolLoop({ startRun, opts, onEvent: opts.onEvent, tools });
   await run.done;
   
   console.log("=== Event log ===");
@@ -37,7 +38,7 @@ async function main() {
   // Assertions
   let passed = true;
   const statusEvents = events.filter(e => e.type === 'status');
-  if (statusEvents.some(e => e.text === 'Text protocol reached the 8-round limit')) {
+  if (statusEvents.some(e => e.text === 'Text protocol reached the limit of 8 rounds')) {
      console.log("✅ 8-round limit took effect");
   } else {
      console.log("❌ 8-round limit did not take effect");
@@ -54,7 +55,7 @@ async function main() {
   
   const toolResultEvents = events.filter(e => e.type === 'tool_result');
   const unregistered = toolResultEvents.filter(e => e.name === 'bad_tool');
-  if (unregistered.length > 0 && unregistered[0].ok === false && unregistered[0].summary.includes('not registered')) {
+  if (unregistered.length > 0 && unregistered[0].ok === false && /unregistered|not registered/i.test(unregistered[0].summary)) {
      console.log("✅ Unregistered tool was rejected");
   } else {
      console.log("❌ Unregistered tool was not rejected correctly");

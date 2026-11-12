@@ -1,9 +1,26 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 const FENCE_OPEN = '```promptcut-tool';
 const FENCE_CLOSE = '```';
+
+export const DEFAULT_PROTOCOL_TEMPLATE = [
+  'You currently have no native tools available. When you need to call an editor tool, write in your reply a triple-backtick fence whose language marker is `promptcut-tool`, containing a JSON object in the following format:',
+  '',
+  '```promptcut-tool',
+  '{',
+  '  "name": "tool name",',
+  '  "input": {',
+  '    "parameter name": "parameter value"',
+  '  }',
+  '}',
+  '```',
+  '',
+  '- You can write several such fences in one reply; they are executed in order of appearance.',
+  '- Stop once you have written it and wait for the result; do not pretend you already know the result.',
+  '- The result will be sent to you as the next user message.',
+  '',
+  'List of available tools:',
+  '',
+  '<!--TOOLS-->',
+].join('\n');
 
 /** Length of the longest suffix of s that is also a prefix of marker */
 function pendingPrefixLen(s, marker) {
@@ -90,12 +107,12 @@ export function parseToolBlocks(text) {
       blocks.push({
         name: parsed.name,
         input: parsed.input || {},
-        raw
+        raw,
       });
     } catch (e) {
       blocks.push({
         error: `JSON parse failed: ${e.message}`,
-        raw
+        raw,
       });
     }
   }
@@ -106,36 +123,42 @@ export function hasToolBlocks(text) {
   return /```promptcut-tool\s*([\s\S]*?)```/.test(text);
 }
 
-export async function executeToolBlocks(blocks, callTool) {
+/**
+ * Execute parsed fenced tool blocks via `callTool`.
+ * When `tools` is provided as an array of `{ name }` descriptors or tool name strings, unregistered
+ * tool names are rejected before calling `callTool`.
+ */
+export async function executeToolBlocks(blocks, callTool, { tools = null } = {}) {
   const results = [];
-  const { tools } = await import(new URL('../mcp-tools.mjs', import.meta.url).href);
-  const toolNames = tools.map(t => t.name);
+  const allowedNames = Array.isArray(tools)
+    ? new Set(tools.map((t) => (typeof t === 'string' ? t : t?.name)).filter(Boolean))
+    : null;
 
   for (const block of blocks) {
     if (block.error) {
       results.push({ name: block.name || 'unknown', ok: false, error: block.error });
       continue;
     }
-    
-    if (!toolNames.includes(block.name)) {
-      results.push({ name: block.name, ok: false, error: `Unregistered tool ${block.name}` });
+
+    if (!block.name || (allowedNames && !allowedNames.has(block.name))) {
+      results.push({ name: block.name || 'unknown', ok: false, error: `Unregistered tool ${block.name}` });
       continue;
     }
-    
+
     try {
       const result = await callTool(block.name, block.input);
       let text = '';
       let files = undefined;
-      
+
       if (typeof result === 'object' && result !== null) {
         if (Array.isArray(result.files)) {
-          files = result.files.map(f => (typeof f === 'string' ? f : f.path)).filter(Boolean);
+          files = result.files.map((f) => (typeof f === 'string' ? f : f.path)).filter(Boolean);
         }
         text = JSON.stringify(result, null, 2);
       } else {
         text = String(result);
       }
-      
+
       results.push({ name: block.name, ok: true, text, files });
     } catch (e) {
       results.push({ name: block.name, ok: false, error: String(e) });
@@ -157,23 +180,17 @@ export function formatResultsAsUserMessage(results) {
   return output.trim();
 }
 
-export async function renderProtocolPrompt() {
-  const mdPath = fileURLToPath(new URL('../ai-tool-protocol.md', import.meta.url));
-  let md = fs.readFileSync(mdPath, 'utf-8');
-  
-  const { tools } = await import(new URL('../mcp-tools.mjs', import.meta.url).href);
-  
+export async function renderProtocolPrompt({ tools = [], template = DEFAULT_PROTOCOL_TEMPLATE } = {}) {
   let toolsDesc = '';
-  for (const t of tools) {
+  for (const t of tools || []) {
     toolsDesc += `### ${t.name}\\n- Description: ${t.description}\\n- Parameters: ${JSON.stringify(t.inputSchema)}\\n\\n`;
   }
-  
-  return md.replace('<!--TOOLS-->', toolsDesc.trim());
+  return String(template).replace('<!--TOOLS-->', toolsDesc.trim());
 }
 
-export function runTextProtocolLoop({ startRun, opts, onEvent }) {
-  let currentOpts = { ...opts };
-  
+export function runTextProtocolLoop({ startRun, opts, onEvent, tools = opts?.protocolTools ?? opts?.tools ?? null, template = DEFAULT_PROTOCOL_TEMPLATE }) {
+  const currentOpts = { ...opts };
+
   currentOpts.mcp = undefined;
   /*
    * Round limit for the text protocol path. Usually 8 rounds; when "deep autonomy" is enabled,
@@ -187,12 +204,12 @@ export function runTextProtocolLoop({ startRun, opts, onEvent }) {
   let loopCount = 0;
   let finalAbort = () => {};
   let aborted = false;
-  
-  const donePromise = new Promise(async (resolve, reject) => {
+
+  const donePromise = new Promise(async (resolve) => {
     try {
-      const protocolPrompt = await renderProtocolPrompt();
+      const protocolPrompt = await renderProtocolPrompt({ tools: tools || [], template });
       currentOpts.systemPrompt = currentOpts.systemPrompt + '\n\n' + protocolPrompt;
-      
+
       while (loopCount < maxLoops) {
         if (aborted) { resolve(); return; }
         loopCount++;
@@ -203,14 +220,12 @@ export function runTextProtocolLoop({ startRun, opts, onEvent }) {
         let lastSessionId = currentOpts.sessionId;
         let lastUsage = undefined;
         let runError = null;
-        
+
         const run = startRun({
           ...currentOpts,
           onEvent: (ev) => {
             if (ev.type === 'text') {
               // Original text goes into collectedText for parseToolBlocks; the copy forwarded to the UI must have fences stripped.
-              // Must return here: previously missed, text fell into the else below and was forwarded as is,
-              // causing users to see fences and bare JSON in replies (which markdown also rendered as an empty dark code block).
               collectedText += ev.delta;
               const visible = fence.push(ev.delta);
               if (visible) onEvent({ ...ev, delta: visible });
@@ -228,11 +243,11 @@ export function runTextProtocolLoop({ startRun, opts, onEvent }) {
             } else {
               onEvent(ev);
             }
-          }
+          },
         });
-        
+
         finalAbort = run.abort;
-        
+
         try {
           await run.done;
         } catch (e) {
@@ -246,36 +261,36 @@ export function runTextProtocolLoop({ startRun, opts, onEvent }) {
         if (aborted) { resolve(); return; }
         const tail = fence.flush();
         if (tail) onEvent({ type: 'text', delta: tail });
-        
+
         if (runError) {
-           resolve();
-           return;
+          resolve();
+          return;
         }
-        
+
         if (!hasToolBlocks(collectedText)) {
           onEvent({ type: 'done', sessionId: lastSessionId, usage: lastUsage });
           resolve();
           return;
         }
-        
+
         const blocks = parseToolBlocks(collectedText);
-        
+
         for (const b of blocks) {
-           if (b.name) onEvent({ type: 'tool_call', name: b.name, input: b.input });
+          if (b.name) onEvent({ type: 'tool_call', name: b.name, input: b.input });
         }
-        
-        const results = await executeToolBlocks(blocks, opts.callTool);
-        
+
+        const results = await executeToolBlocks(blocks, opts.callTool, { tools });
+
         for (const res of results) {
-           onEvent({ type: 'tool_result', name: res.name || 'unknown', ok: res.ok, summary: res.text || res.error, files: res.files });
+          onEvent({ type: 'tool_result', name: res.name || 'unknown', ok: res.ok, summary: res.text || res.error, files: res.files });
         }
-        
+
         const nextPrompt = formatResultsAsUserMessage(results);
-        
+
         currentOpts.prompt = nextPrompt;
         currentOpts.sessionId = lastSessionId;
       }
-      
+
       // Send this only to the UI, not into the model context: deep autonomy requires that "the model cannot see rounds",
       // not that "the user also cannot see why it stopped"
       onEvent({ type: 'status', text: `Text protocol reached the limit of ${maxLoops} rounds` });
@@ -284,17 +299,15 @@ export function runTextProtocolLoop({ startRun, opts, onEvent }) {
     } catch (e) {
       /*
        * Reporting once is enough: error has already been sent to the UI here, and rejecting it again
-       * causes catch on `await run.done` in /api/ai/chat to write the exact same message to SSE again,
-       * resulting in users seeing two identical error lines (as seen in diagnostic reports).
-       * Treat it as cleanup once sent, so the caller does not think it remains unhandled.
+       * causes callers awaiting `run.done` to emit a duplicate error event.
        */
       onEvent({ type: 'error', message: String(e) });
       resolve();
     }
   });
-  
+
   return {
     abort: () => { aborted = true; finalAbort(); },
-    done: donePromise
+    done: donePromise,
   };
 }
