@@ -21,6 +21,10 @@ export const visionHandlers = {
      * untouched. When t is omitted, takes the playhead from when that cut was last left.
      */
     if (args?.cutId !== undefined && args?.cutId !== null && typeof args.cutId !== "string") throw new Error("cutId must be a string (the cut id from list_cuts); if omitted, the currently active cut is used.");
+    if (args?.view !== undefined && args?.view !== null && args.view !== "camera" && args.view !== "space") {
+      throw new Error(`view must be "camera" or "space", received ${JSON.stringify(args.view)}`);
+    }
+    const view = args?.view === "space" ? "space" : args?.view === "camera" ? "camera" : undefined;
     const look = cutLookView(state.project, args?.cutId);
     const project = look.project;
     const playheadT = look.active ? state.t : (look.parkedT ?? 0);
@@ -38,6 +42,7 @@ export const visionHandlers = {
           project,
           t: t ?? (args?.clipId ? undefined : playheadT),
           clipId: args?.clipId,
+          ...(view ? { view } : {}),
         }),
         signal: AbortSignal.timeout(180000),
       });
@@ -59,12 +64,12 @@ export const visionHandlers = {
       const res = await fetch(await prerenderUrl("/api/vision/snapshot"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project, times, clipId: args?.clipId }),
+        body: JSON.stringify({ project, times, clipId: args?.clipId, ...(view ? { view } : {}) }),
         signal: AbortSignal.timeout(180000),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error || `Failed to render frame (HTTP ${res.status})`);
-      return { ok: true, frames: data.frames, note: data.note, __images: data.__images, cut: look.cut };
+      return { ok: true, frames: data.frames, note: data.note, ...(data.view ? { view: data.view } : {}), __images: data.__images, cut: look.cut };
     }
     return snap(typeof args?.t === "number" ? args.t : undefined);
   },

@@ -5,6 +5,8 @@ import type { Project, TrackClip } from "./project";
 import { findClip } from "./project.ts";
 import { visualBox, worldOf, type Box, type Size, type WorldPlacement } from "./layout.ts";
 import { validateCardParams } from "./cardParams.ts";
+import { has3DFrameExpr, normalizeFrameExprMap, type FrameExprMap } from "./frameExpr.mjs";
+import { activeCutKind, effectiveCamera3dFov, type CutKind } from "./camera.mjs";
 
 /**
  * Card contract (clip envelope): the only external representation of a card on the timeline.
@@ -73,6 +75,8 @@ export interface ClipEnvelope {
   frame: {
     /** Saved local box; null = fill the stage */
     local: ClipFrame | null;
+    /** Optional per-field time expressions ("t", "d", "p") overriding static local fields */
+    expr?: FrameExprMap | null;
     /** Absolute screen position calculated from local, read-only; ignored when writing back */
     world: WorldPlacement;
   };
@@ -210,9 +214,9 @@ export function envelopeOf(project: Project, clip: TrackClip, card: CardDef<any>
   const motion = clip.motion;
   const timing = timingOf(card, params);
   const staticLc = card?.lifecycle ?? DEFAULT_LIFECYCLE;
-  // 3D: visualBox must be calculated using project camera projection; otherwise cards placed
+  // 3D: visualBox must be calculated using active cut / project camera projection; otherwise cards placed
   // in space report 2D positions in get_clip
-  const world = worldOf(clip.frame, stage, project.camera3dFov);
+  const world = worldOf(clip.frame, stage, effectiveCamera3dFov(project));
   // Composite card: structure and timing come from part instance tree, not card declaration
   const composite = isComposite(clip);
   // Part positioning uses **unprojected** box (see notes in compositePartsOf): used by renderer side
@@ -234,7 +238,11 @@ export function envelopeOf(project: Project, clip: TrackClip, card: CardDef<any>
       ...(composite ? { composite: true } : {}),
     },
     time: { start: clip.start, end: clip.end, duration: round3(clip.end - clip.start) },
-    frame: { local: clip.frame ?? null, world },
+    frame: {
+      local: clip.frame ?? null,
+      ...(clip.frameExpr ? { expr: { ...clip.frameExpr } } : {}),
+      world,
+    },
     blend: { opacity: clip.opacity ?? 1, fadeIn: clip.fadeIn ?? 0, fadeOut: clip.fadeOut ?? 0 },
     motion: motion ? { attached: true, mediaId: motion.mediaId, whenHidden: motion.whenHidden } : { attached: false },
     parts: comp ? comp.parts : partsOf(card, params, timing),
@@ -258,6 +266,7 @@ export interface EnvelopeWriter {
   setClipParams(clipId: string, params: Record<string, unknown>, opts?: { merge?: boolean }): void;
   moveClip(clipId: string, patch: { start?: number; end?: number }): void;
   setClipFrame(clipId: string, frame: ClipFrame | undefined): void;
+  setClipFrameExpr?(clipId: string, expr: FrameExprMap | undefined): void;
   updateClip(clipId: string, patch: { opacity?: number; fadeIn?: number; fadeOut?: number }): void;
   /** Replace the entire part instance tree of a composite card */
   setClipParts?(clipId: string, parts: PartInstance[]): void;
@@ -310,14 +319,25 @@ const FRAME_KEYS = new Set(["x", "y", "w", "h", "anchor", "scale", "rotate", "ro
  * it back can bypass it just the same (verified writable in testing). Any path that can modify
  * frame goes through applyEnvelope or framePatchFromArgs; guarding both places ensures true safety.
  */
-export function assertNo3dOnMedia(clip: TrackClip, frame: ClipFrame | undefined): void {
-  if (!frame || !(clip as { mediaId?: string }).mediaId) return;
-  const used = (["rotateX", "rotateY", "translateZ"] as const).filter((k) => frame[k] !== undefined && frame[k] !== 0);
+export function assertNo3dOnMedia(
+  clip: TrackClip,
+  frame: ClipFrame | undefined,
+  opts?: { cutKind?: CutKind; frameExpr?: FrameExprMap | undefined },
+): void {
+  if (!(clip as { mediaId?: string }).mediaId) return;
+  if (opts?.cutKind === "3d") return;
+  const usedStatic = frame
+    ? (["rotateX", "rotateY", "translateZ"] as const).filter((k) => frame[k] !== undefined && frame[k] !== 0)
+    : [];
+  const usedExpr = opts?.frameExpr && has3DFrameExpr(opts.frameExpr)
+    ? (["rotateX", "rotateY", "translateZ"] as const).filter((k) => !!opts.frameExpr?.[k])
+    : [];
+  const used = [...new Set([...usedStatic, ...usedExpr])];
   if (!used.length) return;
   throw new Error(
-    `${used.join(" / ")} only works on cards; this clip is a media clip (video / image).` +
-    ` The default Chrome preview, export and see_frames share the same pipeline, but the compatibility bypass with explicit --media=ffmpeg still does not support media 3D.` +
-    `To make media look 3D, put it inside a card and arrange it there, or export it as an image asset first. Position / size / flat rotation are fully supported for media.`,
+    `In a 2D cut, ${used.join(" / ")} only works on cards; this clip is a media clip (video / image).` +
+    ` Switch this cut to "3d" with set_cut_kind({ kind: "3d" }) so media clips render as 3D boards, or put the media inside a card.` +
+    ` Position / size / flat rotation are fully supported for media in 2D cuts.`,
   );
 }
 function validateFrame(raw: unknown): ClipFrame | undefined {
@@ -416,13 +436,22 @@ export function applyEnvelope(
     if (s !== current.time.start || e !== current.time.end) nextTime = { start: s, end: e };
   }
 
+  const cutKind = activeCutKind(project);
   let nextFrame: { set: boolean; frame: ClipFrame | undefined } | undefined;
+  let nextFrameExpr: { set: boolean; expr: FrameExprMap | undefined } | undefined;
   if (env.frame !== undefined) {
-    if (!isObj(env.frame)) throw new Error("frame must be an object { local, world }; only local is writable");
+    if (!isObj(env.frame)) throw new Error("frame must be an object { local, expr?, world }; only local and expr are writable");
     if ("local" in env.frame) {
       const f = validateFrame(env.frame.local);
-      assertNo3dOnMedia(hit.clip, f);
+      assertNo3dOnMedia(hit.clip, f, { cutKind });
       if (JSON.stringify(f ?? null) !== JSON.stringify(current.frame.local)) nextFrame = { set: true, frame: f };
+    }
+    if ("expr" in env.frame) {
+      const ex = normalizeFrameExprMap(env.frame.expr);
+      assertNo3dOnMedia(hit.clip, undefined, { cutKind, frameExpr: ex });
+      if (JSON.stringify(ex ?? null) !== JSON.stringify(hit.clip.frameExpr ?? null)) {
+        nextFrameExpr = { set: true, expr: ex };
+      }
     }
   }
 
@@ -463,6 +492,11 @@ export function applyEnvelope(
   if (nextFrame) {
     writer.setClipFrame(clipId, nextFrame.frame);
     changed.push("frame");
+  }
+  if (nextFrameExpr) {
+    if (!writer.setClipFrameExpr) throw new Error("Editing frame.expr is not supported by this writer");
+    writer.setClipFrameExpr(clipId, nextFrameExpr.expr);
+    if (!changed.includes("frame")) changed.push("frame");
   }
   if (nextBlend) {
     writer.updateClip(clipId, nextBlend);

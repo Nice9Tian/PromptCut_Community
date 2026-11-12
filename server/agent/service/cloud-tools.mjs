@@ -82,7 +82,9 @@ export const CLOUD_TOOL_PLAN = Object.freeze({
   // require playhead; if initiator is online, use playhead when sending message; if offline, record
   // as 0 and note; the two cut segment tools (2026-10-20) execute synchronously on replica
   list_transitions: { mode: R }, add_transition: { mode: R }, remove_transition: { mode: R }, list_cuts: { mode: R }, rename_cut: { mode: R },
-  user_interface_switch_cut: { mode: R }, add_cut: { mode: R }, remove_cut: { mode: R }, add_cut_segment: { mode: R }, set_cut_segment: { mode: R },
+  user_interface_switch_cut: { mode: R }, add_cut: { mode: R }, set_cut_kind: { mode: R }, remove_cut: { mode: R }, add_cut_segment: { mode: R }, set_cut_segment: { mode: R },
+  list_cameras: { mode: R }, add_camera: { mode: R }, update_camera: { mode: R }, remove_camera: { mode: R },
+  prerender_cut_to_2d: { mode: P, why: 'Pre-rendering a 3D cut to a 2D MP4 asset requires the local prerender service and is not wired up on the cloud node yet' },
   // audio(19)
   set_clip_volume: { mode: R }, set_clip_muted: { mode: R }, separate_audio: { mode: R }, create_audio: { mode: R },
   list_audio_fx: { mode: R }, create_audio_fx: { mode: R }, update_audio_fx: { mode: R }, remove_audio_fx: { mode: R }, apply_audio_fx: { mode: R },

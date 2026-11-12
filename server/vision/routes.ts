@@ -11,6 +11,7 @@
  */
 import fs from "node:fs";
 import fsp from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -19,6 +20,13 @@ import { isolateClip } from "../vision-project.mjs";
 import { overLimit } from "../http-guard.mjs";
 import { exportsRunning } from "../render-pool-state.mjs";
 import { proxyToPrerender } from "../prerender-client.mjs";
+import { assetServiceOrigin } from "../asset-client";
+import { ingestFile } from "../media-ingest.mjs";
+import { buildAudioPlan, buildFfmpegArgs, playableAudioPlan } from "../bakery/mux-audio.mjs";
+import { ffprobeOf } from "../bakery/ffmpeg.mjs";
+import { switchCut, normalizeCuts } from "../../src/kernel/cuts.ts";
+import { contentEndOf } from "../../src/kernel/duration.ts";
+import { activeCutEntry, cutKindOf } from "../../src/kernel/camera.mjs";
 import { EXTRACT_TIMEOUT_MS, ffmpegCommand, mediaHashOf, mediaSourceOf } from "./ffmpeg-frames";
 import { abortOnClose, originOf, outRoot, resolveMediaUrls, sendJson } from "./http";
 import { enqueue, maxConcurrentRenders, renderRunning } from "./render-queue";
@@ -415,12 +423,15 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
         req.on("end", async () => {
           if (over) return;
           try {
-            const { project, t, clipId, times } = JSON.parse(body || "{}");
+            const { project, t, clipId, times, view } = JSON.parse(body || "{}");
             // If the caller disconnects (the Agent gave up waiting, or the page canceled the request), stop
             // rendering: remove queued items and halt running ones
             const signal = abortOnClose(res);
             if (!project || !Array.isArray(project.tracks)) {
               return sendJson(res, 400, { ok: false, error: "Missing project" });
+            }
+            if (view !== undefined && view !== "camera" && view !== "space") {
+              return sendJson(res, 400, { ok: false, error: `view must be "camera" or "space", got ${JSON.stringify(view)}` });
             }
 
             const resolved = resolveMediaUrls(project);
@@ -439,6 +450,11 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
               // will see a semi-transparent intermediate state.
               if (!Number.isFinite(at)) at = (iso.clip.start + iso.clip.end) / 2;
               notes.push(iso.context ? `Rendered clip ${clipId}, keeping the composite background below it that it needs.` : `Showing only clip ${clipId}; other clips are kept only as invisible input dependencies.`);
+            } else if (view === "space" || view === "camera") {
+              target = { ...target, _renderView: view };
+              if (view === "space") {
+                notes.push("Rendered in Space overview mode (showing spatial layout and active camera frustum; use view=\"camera\" for the actual output frame).");
+              }
             }
             if (!Number.isFinite(at)) at = 0;
 
@@ -498,6 +514,7 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
               });
               return sendJson(res, 200, {
                 ok: true,
+                view: clipId ? "clip" : (view === "space" ? "space" : "camera"),
                 frames,
                 // The asset layer extracts frames independently per frame; when a file cannot be fetched, every
                 // frame logs the exact same message: deduplicate
@@ -531,6 +548,7 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
               ok: true,
               t: at,
               clipId: clipId || null,
+              view: clipId ? "clip" : (view === "space" ? "space" : "camera"),
               width,
               height,
               // D3: entity rectangles (stage pixel coordinates); the text portion has already been written into
@@ -787,6 +805,150 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
             sendJson(res, 200, { ok: true, ...out });
           } catch (e: any) {
             sendJson(res, 500, { ok: false, error: e?.message || String(e) });
+          }
+        });
+      });
+
+      /**
+       * POST /api/vision/prerender-cut { project, cutId?, name? }:
+       * Renders a 3D cut deterministically frame-by-frame into an H.264 `.mp4` video and ingests it into
+       * the asset service content store so callers can create a new 2D cut referencing that video while
+       * preserving the original 3D cut untouched (Issue #12 Section 6 / Open item 11.e).
+       */
+      server.middlewares.use("/api/vision/prerender-cut", (req, res) => {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST only" });
+        let body = "";
+        let over = false;
+        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "Request body exceeds 64MB"); });
+        req.on("end", async () => {
+          if (over) return;
+          let tmpDir: string | null = null;
+          try {
+            const { project, cutId, name } = JSON.parse(body || "{}");
+            if (!project || !Array.isArray(project.tracks)) {
+              return sendJson(res, 400, { ok: false, error: "Missing project" });
+            }
+            const ffmpeg = ffmpegCommand();
+            if (!ffmpeg) {
+              return sendJson(res, 500, { ok: false, error: "ffmpeg not found on this machine" });
+            }
+            const signal = abortOnClose(res);
+            const normalized = normalizeCuts(project);
+            const targetId = typeof cutId === "string" && cutId ? cutId : normalized.activeCutId!;
+            const targetMeta = (normalized.cuts ?? []).find((c) => c.id === targetId);
+            if (!targetMeta) {
+              return sendJson(res, 404, { ok: false, error: `Cut not found ${targetId}` });
+            }
+            if (cutKindOf(targetMeta) !== "3d") {
+              return sendJson(res, 400, { ok: false, error: `Cut "${targetMeta.name}" is already a 2D cut; only 3D cuts can be pre-rendered to a 2D cut.` });
+            }
+            const switched = switchCut(normalized, targetId, 0).project;
+            const fps = Math.max(1, switched.fps || 30);
+            const contentEnd = contentEndOf(switched.tracks);
+            const rawDur = contentEnd > 0
+              ? Math.min(switched.duration || contentEnd, contentEnd)
+              : Math.min(switched.duration || 1, 2);
+            const dur = Math.max(1 / fps, rawDur);
+            const totalFrames = Math.max(1, Math.round(dur * fps));
+            const times = Array.from({ length: totalFrames }, (_, f) => f / fps);
+            const resolved = resolveMediaUrls({ ...switched, duration: totalFrames / fps }).project;
+            const notes: string[] = [];
+            const shots = await enqueue(
+              () => renderFrames(root, originOf(server), resolved, times, notes, 1, { signal, lane: "preview" }),
+              1,
+              60000,
+              signal,
+            );
+            const bufs: Buffer[] = [];
+            let lastBuf: Buffer | null = null;
+            for (let f = 0; f < totalFrames; f++) {
+              const hit = shots.get(f)?.buf ?? lastBuf;
+              if (hit) {
+                lastBuf = hit;
+                bufs.push(hit);
+              }
+            }
+            if (!bufs.length) {
+              return sendJson(res, 500, { ok: false, error: "No frames were rendered for the 3D cut" });
+            }
+
+            tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pc-prerender-cut-"));
+            const videoMp4 = path.join(tmpDir, "video.mp4");
+            await new Promise<void>((resolve, reject) => {
+              const args = [
+                "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "image2pipe", "-vcodec", "png", "-framerate", String(fps), "-i", "-",
+                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart",
+                videoMp4,
+              ];
+              const proc = spawn(ffmpeg, args, { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
+              let errText = "";
+              proc.stderr.on("data", (d) => { errText += d; });
+              proc.on("error", reject);
+              proc.stdin.on("error", () => { /* handled by close code */ });
+              proc.on("close", (code) => {
+                if (code === 0 && fs.existsSync(videoMp4)) resolve();
+                else reject(new Error(`ffmpeg video encode exited with code ${code}${errText ? `: ${errText.trim().slice(-300)}` : ""}`));
+              });
+              (async () => {
+                for (const buf of bufs) {
+                  if (!proc.stdin.write(buf)) {
+                    await new Promise<void>((r) => proc.stdin.once("drain", () => r()));
+                  }
+                }
+                proc.stdin.end();
+              })().catch((e) => {
+                try { proc.kill(); } catch {}
+                reject(e);
+              });
+            });
+
+            let finalMp4 = videoMp4;
+            try {
+              const rawPlan = buildAudioPlan(resolved, tmpDir, fs.existsSync, (m: any) => mediaSourceOf(m));
+              const nonCardPlan = rawPlan.filter((p: any) => !p.cardAudio);
+              const audioPlan = nonCardPlan.length ? playableAudioPlan(nonCardPlan, ffprobeOf(ffmpeg)) : [];
+              if (audioPlan.length > 0) {
+                const muxedMp4 = path.join(tmpDir, "muxed.mp4");
+                const muxArgs = buildFfmpegArgs(videoMp4, audioPlan, muxedMp4, totalFrames / fps);
+                await new Promise<void>((resolve, reject) => {
+                  const proc = spawn(ffmpeg, ["-hide_banner", "-loglevel", "error", ...muxArgs], {
+                    stdio: ["ignore", "ignore", "pipe"],
+                    windowsHide: true,
+                  });
+                  let errText = "";
+                  proc.stderr.on("data", (d) => { errText += d; });
+                  proc.on("error", reject);
+                  proc.on("close", (code) => {
+                    if (code === 0 && fs.existsSync(muxedMp4)) resolve();
+                    else reject(new Error(`ffmpeg audio mux exited with code ${code}${errText ? `: ${errText.trim().slice(-300)}` : ""}`));
+                  });
+                });
+                finalMp4 = muxedMp4;
+              }
+            } catch {
+              // Keep silent video if optional audio mux fails
+            }
+
+            const baseLabel = String(name || `${targetMeta.name}-2d`).replace(/[^\w\u4e00-\u9fff\u3040-\u30ff.-]+/g, "-").replace(/^-+|-+$/g, "") || "cut-2d";
+            const fileName = baseLabel.toLowerCase().endsWith(".mp4") ? baseLabel : `${baseLabel}.mp4`;
+            const ingested = await ingestFile({
+              file: finalMp4,
+              name: fileName,
+              origin: assetServiceOrigin,
+            });
+            sendJson(res, 200, {
+              ok: true,
+              ...ingested,
+              duration: totalFrames / fps,
+              width: resolved.width || 1920,
+              height: resolved.height || 1080,
+            });
+          } catch (e: any) {
+            sendJson(res, 500, { ok: false, error: e?.message || String(e) });
+          } finally {
+            if (tmpDir) await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
           }
         });
       });

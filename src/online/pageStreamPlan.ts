@@ -61,6 +61,8 @@ import { belowTargets, frame3d, mountClipOf, soloStreamKind, streamEligible } fr
 import { groupStreams, localStreamPixels, stageStreamPixels, streamCost, STREAM_COUNT_BUDGET, type StreamBudget, type StreamGroupItem } from "../render/streamBudget.mjs";
 import { reviewedCard } from "../kernel/frameMode.mjs";
 import { flatPlanProject } from "../kernel/cutFlatten.mjs";
+import { activeCutKind } from "../kernel/camera.mjs";
+import { has3DFrameExpr, hasAnimatedFrameSize } from "../kernel/frameExpr.mjs";
 import type { NodeTask, StreamTaskInput } from "./browserNode.ts";
 
 /**
@@ -444,13 +446,14 @@ export function isMotionCard(controlOrSpec: { writing?: string; frameMode?: stri
 
 
 /** Why this card produces no stream on the page (for diagnostics); returns null if it can produce */
-export function pageStreamBlock(control: PageControl, at: { clip: AnyClip; track: AnyTrack } | undefined, sourceVersions: Readonly<Record<string, string>>): string | null {
+export function pageStreamBlock(control: PageControl, at: { clip: AnyClip; track: AnyTrack } | undefined, sourceVersions: Readonly<Record<string, string>>, project?: Record<string, any> | null): string | null {
   if (!at) return "no-clip";
   if (at.track.hidden || at.track.sourceOnly) return "hidden-track";
   if (!at.clip.cardId) return "not-card";
   // Stream eligibility (`streamEligible`): standalone card, bounding box has no 3D, has frames
   if (control.compositing !== "independent") return "not-independent";
-  if (frame3d(at.clip.frame)) return "frame-3d";
+  if (hasAnimatedFrameSize(at.clip.frameExpr)) return "frame-expr-size";
+  if (project?.cutKind === "3d" || activeCutKind(project as any) === "3d" || frame3d(at.clip.frame) || has3DFrameExpr(at.clip.frameExpr)) return "frame-3d";
   if (!Number.isInteger(control.count) || control.count <= 0) return "no-frames";
   // Whether the browser can do it (`browserEligible` in `split.mjs`): stateful/need_prerendering
   // (light cards do not produce streams), not a canvas card
@@ -529,8 +532,8 @@ export async function planPageStreams(o: {
   for (const control of controls) {
     if (!listed.has(control.clipId)) continue;
     const at = where.get(control.clipId);
-    if (!at || !streamEligible(control, at.clip, at.track)) {
-      const block = pageStreamBlock(control, at, value.sourceVersions ?? {}) ?? "not-eligible";
+    if (!at || !streamEligible(control, at.clip, at.track, project)) {
+      const block = pageStreamBlock(control, at, value.sourceVersions ?? {}, project) ?? "not-eligible";
       const solo = at && !soloSeen.has(control.clipId) ? soloStreamKind(control, at.clip, at.track, project) : null;
       if (at && solo) {
         const first = control.sampling.firstFrame;
@@ -555,7 +558,7 @@ export async function planPageStreams(o: {
   const stageCost = streamCost(stageStreamPixels(stage), fps);
   // Below-dependent streams: emitted by default by the splitter (`belowStreamsEnabled`, env var can
   // only be disabled on the prerender process side), and the page computes following the default
-  for (const b of belowTargets(controls, { picked: (id) => listed.has(id), where, fps, total, orderOf, taken: soloSeen })) fixed.push({ from: b.from, to: b.to, cost: stageCost });
+  for (const b of belowTargets(controls, { picked: (id) => listed.has(id), where, fps, total, orderOf, taken: soloSeen, project })) fixed.push({ from: b.from, to: b.to, cost: stageCost });
   const grouped = groupStreams(singles, layers, o.budget, fixed, stageCost);
   const codeVersion = streamCodeVersion(codes);
   const environment = (value.environment ?? {}) as Record<string, unknown>;
@@ -589,7 +592,7 @@ export async function planPageStreams(o: {
   for (const g of grouped) {
     if (g.clipIds.length !== 1) { for (const id of g.clipIds) skipped[id] = "grouped"; continue; }
     const m = byClip.get(g.clipIds[0])!;
-    const block = pageStreamBlock(m.control, where.get(m.control.clipId), value.sourceVersions ?? {});
+    const block = pageStreamBlock(m.control, where.get(m.control.clipId), value.sourceVersions ?? {}, project);
     if (block) { skipped[m.control.clipId] = block; continue; }
     await emit(m.control, m.clip, m.to);
   }

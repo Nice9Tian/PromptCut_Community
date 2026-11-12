@@ -42,6 +42,7 @@
  */
 import { cardCostKey } from './cardCostKey.mjs';
 import { resolveTuning } from './pipelineTuning.mjs';
+import { activeCutKind } from '../kernel/camera.mjs';
 
 /**
  * Fixed cost (ms) of pasting one frame of dead asset per tick for a heavy card. `unknown` cards
@@ -82,7 +83,8 @@ function cardClipsOf(project) {
       if (!isCardClip(clip)) continue;
       const start = Number(clip.start), end = Number(clip.end);
       if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
-      clips.push({ id: clip.id, cardId: clip.cardId, nodeId: clip.nodeId, start, end });
+      const in3dCut = clip.in3dCut === true || clip.flat?.in3dCut === true;
+      clips.push({ id: clip.id, cardId: clip.cardId, nodeId: clip.nodeId, start, end, ...(in3dCut ? { in3dCut: true } : null) });
     }
   }
   return clips.sort((a, b) => byId(a.id, b.id));
@@ -305,14 +307,14 @@ export function planPipelines(project, costs, fps, opts = {}) {
 
   const hasScene3d = clips.some((c) => cardIdOfClip(c) === 'scene-3d' || c.cardId === 'scene-3d' || c.nodeId === 'scene-3d')
     || mirrorClips.some((c) => c?.cardId === 'scene-3d');
-  const for3D = opts.includeLightCardsFor3D === true || opts.view3d === true || (opts.includeLightCardsFor3D !== false && hasScene3d);
-  if (for3D) {
-    for (const clip of clips) {
-      const cid = cardIdOfClip(clip);
-      if (cid === 'scene-3d' || clip.cardId === 'scene-3d' || clip.nodeId === 'scene-3d') continue;
-      if (isIndependentCard(clip, opts)) {
-        prerender.add(clip.id);
-      }
+  const is3DCut = opts.cutKind === '3d' || project?.cutKind === '3d' || activeCutKind(project) === '3d' || activeCutKind(mirror?.project) === '3d';
+  const for3D = opts.includeLightCardsFor3D === true || opts.view3d === true || is3DCut || (opts.includeLightCardsFor3D !== false && hasScene3d);
+  for (const clip of clips) {
+    if (!for3D && clip.in3dCut !== true) continue;
+    const cid = cardIdOfClip(clip);
+    if (cid === 'scene-3d' || clip.cardId === 'scene-3d' || clip.nodeId === 'scene-3d') continue;
+    if (isIndependentCard(clip, opts)) {
+      prerender.add(clip.id);
     }
   }
 

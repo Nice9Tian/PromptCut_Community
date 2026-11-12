@@ -47,6 +47,7 @@ import { cardJson } from "../kernel/cardGraph.mjs";
 import { hashString } from "./changedClips.mjs";
 import { clipInputSig } from "./layerInputSig.mjs";
 import { flatPlanProject } from "../kernel/cutFlatten.mjs";
+import { hasFrameExpr } from "../kernel/frameExpr.mjs";
 
 /** Version of signature algorithm; increment by one when signature inputs change */
 export const STREAM_INPUT_SIG_VERSION = 1;
@@ -133,7 +134,7 @@ function belowInputs(project, clipId, fps, total) {
   const describe = (id, clip) => {
     const sig = clipInputSig(project, id);
     if (!sig) return null;
-    return { id, sig, window: windowOf(clip, fps, total), frame: clip.frame, opacity: clip.opacity, fadeIn: clip.fadeIn, fadeOut: clip.fadeOut, motion: clip.motion };
+    return { id, sig, window: windowOf(clip, fps, total), frame: clip.frame, ...(hasFrameExpr(clip.frameExpr) ? { frameExpr: clip.frameExpr } : {}), opacity: clip.opacity, fadeIn: clip.fadeIn, fadeOut: clip.fadeOut, motion: clip.motion };
   };
   const target = describe(clipId, found.clip);
   if (!target) return null;
@@ -187,7 +188,7 @@ export function streamInputs(raw, stream) {
     const { clip } = at;
     members.push({
       id, sig, window: windowOf(clip, fps, total),
-      ...(group ? { frame: clip.frame, opacity: clip.opacity, fadeIn: clip.fadeIn, fadeOut: clip.fadeOut, motion: clip.motion } : {}),
+      ...(group ? { frame: clip.frame, ...(hasFrameExpr(clip.frameExpr) ? { frameExpr: clip.frameExpr } : {}), opacity: clip.opacity, fadeIn: clip.fadeIn, fadeOut: clip.fadeOut, motion: clip.motion } : {}),
     });
   }
   if (!group) return { v: STREAM_INPUT_SIG_VERSION, kind: "card", members };

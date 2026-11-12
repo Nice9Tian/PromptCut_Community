@@ -46,6 +46,7 @@
 import { cardJson } from "../kernel/cardGraph.mjs";
 import { hashString } from "./changedClips.mjs";
 import { speedKeyPart } from "../kernel/clipTime.mjs";
+import { stripOuterFrameExpr } from "../kernel/frameExpr.mjs";
 
 /** Version of signature algorithm; increment by one when signature inputs change */
 export const LAYER_INPUT_SIG_VERSION = 1;
@@ -111,6 +112,7 @@ export function clipInputs(project, clipId) {
       filter: clip.filter, filterDef: clip.filter ? libraryEntry(project?.filters, clip.filter) : undefined,
       pixelMap: clip.pixelMap, pixelMapDef: clip.pixelMap ? libraryEntry(project?.pixelMaps, clip.pixelMap) : undefined,
       size: isObj(clip.frame) ? { w: clip.frame.w, h: clip.frame.h } : undefined,
+      ...(stripOuterFrameExpr(clip.frameExpr) ? { sizeExpr: stripOuterFrameExpr(clip.frameExpr) } : null),
       duration: (Number(clip.end) || 0) - start,
       phase: phaseOf(start, fps),
       node: typeof clip.nodeId === "string" && clip.nodeId ? describeNode(clip.nodeId, inner, start) : undefined,

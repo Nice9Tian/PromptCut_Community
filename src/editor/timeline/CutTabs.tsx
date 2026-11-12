@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { actions, getState, useStore } from "../../store/project";
 import { listCuts } from "../../kernel/cuts";
+import type { CutKind } from "../../kernel/camera.mjs";
 import { closeTab, openTab, openTabs, saveTabs, setTabs, useCutTabsVersion } from "./cutTabsState";
 import { memberReadOnlyNow } from "../readOnlyCore";
 import { useReadOnly } from "../readOnly";
+import { ONLINE } from "../../online/mode";
 import "./cut-tabs.css";
 import { tr } from "../../i18n/index.ts";
-import { shownName, shownNameOf } from "../../i18n/names.ts";
+import { shownName } from "../../i18n/names.ts";
 
 /** Film strip: one frame inside a rounded square, with three perforations on each side */
 export function IconFilm({ size = 12 }: { size?: number }) {
@@ -56,6 +58,8 @@ export function CutTabBar() {
   const projectId = project.id ?? "";
   const tabs = openTabs(projectId, ids, active);
   const [editing, setEditing] = useState<string | null>(null);
+  const [prerendering, setPrerendering] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const ro = useReadOnly();
 
   // Write the result back to local storage after aligning with the project (add the active one, drop the deleted ones)
@@ -66,6 +70,9 @@ export function CutTabBar() {
   }, [projectId, key]);
 
   const byId = new Map(cuts.map((c) => [c.id, c]));
+  const activeEntry = active ? byId.get(active) : undefined;
+  const activeKind: CutKind = activeEntry?.kind === "3d" ? "3d" : "2d";
+
   const close = (id: string) => {
     // Read-only: closing the active tab would also switch to the adjacent cut (a write), so it is not offered; closing other tabs only collapses them in the UI, so that works as usual
     if (ro.locked && id === active) return;
@@ -75,13 +82,27 @@ export function CutTabBar() {
     if (r.switchTo) actions.switchCut(r.switchTo);
   };
 
+  const handlePrerenderTo2D = async () => {
+    if (ro.locked || ONLINE || prerendering || !active) return;
+    setPrerendering(true);
+    setNotice(null);
+    try {
+      const res = await actions.prerenderCutTo2D(active, { switchTo: false });
+      openCutInTimeline(res.cut.id);
+    } catch (e: any) {
+      setNotice(e?.message || String(e));
+    } finally {
+      setPrerendering(false);
+    }
+  };
+
   return (
     <div className="pc-tl-cuts" data-pc="cut-tabs" role="tablist" aria-label={tr("Open cuts")}>
       {tabs.map((id) => {
         const c = byId.get(id);
         if (!c) return null;
         return (
-          <Tab key={id} id={id} name={c.name} active={c.active} canClose={tabs.length > 1} locked={ro.locked} why={ro.why}
+          <Tab key={id} id={id} name={c.name} kind={c.kind === "3d" ? "3d" : "2d"} active={c.active} canClose={tabs.length > 1} locked={ro.locked} why={ro.why}
             editing={editing === id} onEdit={() => setEditing(id)} onDone={() => setEditing(null)}
             onClose={() => close(id)} />
         );
@@ -95,12 +116,57 @@ export function CutTabBar() {
           <path d="M8 3v10M3 8h10" />
         </svg>
       </button>
+      <button type="button" className="pc-tl-cut-add-kind" data-pc="cut-add-3d" title={ro.title(tr("Create a 3D cut and open it"))} aria-label={tr("New 3D cut")} disabled={ro.locked}
+        onClick={() => {
+          const cut = actions.addCut(undefined, { switchTo: false, kind: "3d" });
+          openCutInTimeline(cut.id);
+        }}>
+        +3D
+      </button>
+
+      <div className="pc-tl-cut-actions">
+        {notice && (
+          <span className="pc-tl-cut-notice" title={notice} onClick={() => setNotice(null)}>
+            {notice}
+          </span>
+        )}
+        {active && activeKind === "2d" && (
+          <button
+            type="button"
+            className="pc-tl-cut-mode-btn"
+            data-pc="cut-switch-3d"
+            disabled={ro.locked}
+            title={ro.title(tr("Losslessly switch this 2D cut into a 3D cut (depth-sorted boards and 3D camera lane)"))}
+            onClick={() => actions.setCutKind(active, "3d")}
+          >
+            {tr("Switch to 3D cut")}
+          </button>
+        )}
+        {active && activeKind === "3d" && (
+          <button
+            type="button"
+            className="pc-tl-cut-mode-btn is-3d"
+            data-pc="prerender-cut-2d"
+            disabled={ro.locked || ONLINE || prerendering}
+            title={
+              ro.locked
+                ? ro.why
+                : ONLINE
+                  ? tr("Pre-rendering a 3D cut to a 2D cut requires the desktop rendering service")
+                  : tr("Render this 3D cut into an MP4 video asset and create a new 2D cut with it, keeping the 3D cut untouched")
+            }
+            onClick={handlePrerenderTo2D}
+          >
+            {prerendering ? tr("Pre-rendering...") : tr("Pre-render to 2D cut")}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
-function Tab({ id, name, active, canClose, locked, why, editing, onEdit, onDone, onClose }: {
-  id: string; name: string; active: boolean; canClose: boolean;
+function Tab({ id, name, kind, active, canClose, locked, why, editing, onEdit, onDone, onClose }: {
+  id: string; name: string; kind: CutKind; active: boolean; canClose: boolean;
   /** Read-only project: neither switching (changing the active cut) nor renaming is offered; why is the grayed-out explanation */
   locked: boolean; why: string;
   editing: boolean; onEdit: () => void; onDone: () => void; onClose: () => void;
@@ -142,6 +208,7 @@ function Tab({ id, name, active, canClose, locked, why, editing, onEdit, onDone,
         ) : (
           <span className="pc-tl-cut-name">{shownName(name)}</span>
         )}
+        <span className={`pc-tl-cut-kind is-${kind}`} data-pc-cut-kind={kind}>{kind.toUpperCase()}</span>
       </div>
       {canClose ? (
         <button type="button" className="pc-tl-cut-x" data-pc="cut-tab-close" title={locked && active ? why : tr("Close this tab (the cut is not deleted)")} aria-label={tr("Close tab for {0}", name)}

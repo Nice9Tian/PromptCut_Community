@@ -1,5 +1,6 @@
 import { useLayoutEffect, useReducer, useRef, useSyncExternalStore } from "react";
 import { frameCss } from "../kernel/layout";
+import { resolveClipFrameAt } from "../kernel/frameExpr.mjs";
 import { isImageMedia, type MediaAsset, type Project, type TrackClip } from "../kernel/project";
 import type { FilterDef } from "../kernel/filters.mjs";
 import { clipSpeed, mediaSpanOf } from "../kernel/clipTime.mjs";
@@ -389,7 +390,11 @@ export function VideoTrack({
    * Previously the media layer did not recognize this field, so setting video positions wrote the data
    * but nothing moved; only cards showed any effect.
    */
-  const boxOf = (clip: TrackClip | null) => ({ position: "absolute" as const, overflow: "hidden" as const, ...frameCss(clip?.frame, stage) });
+  const effFrameOf = (clip: TrackClip | null) =>
+    clip?.frameExpr
+      ? resolveClipFrameAt(clip.frame, clip.frameExpr, Math.max(0, t - clip.start), clip.end - clip.start)
+      : clip?.frame;
+  const boxOf = (clip: TrackClip | null) => ({ position: "absolute" as const, overflow: "hidden" as const, ...frameCss(effFrameOf(clip), stage) });
   const image = cur && !missing && isImageMedia(cur.media) && cur.media.url && playbackUrl(cur.media, localHashes) ? cur : null;
   // A1: Assets not yet stored (uploading + computing hash while writing to disk) have no address;
   // this layer renders an "Uploading" placeholder: do not attach an empty src (an empty src is

@@ -32,11 +32,11 @@ export const cutsTools = [
   },
   {
     name: "list_cuts",
-    description: "List all cuts (timelines) in the project. **When the clip the user wants you to change is in another cut, check this tool's result first, do not user_interface_switch_cut**: clips in inactive cuts (id, cardId / label, start and end, track) are in the returned `parkedCuts`; take the clipId and hand it straight to update_clip etc. to edit in place. A project can have multiple cuts; a new project has only \"Cut 1\", the rest are created by the user or by you (add_cut). The user switches and opens them in the tab bar above the timeline and in the \"Cuts\" group of the media library. **Tools such as add_clip / track / export / get_layout only act on the currently active cut** (the one with active:true; see_frames can take a cutId to view other cuts), and the tracks in get_project are also its content. **But editing existing clips in other cuts does not need user_interface_switch_cut**: the `parkedCuts` in the result already lists the clips of each parked cut (with a cap when there are too many, and it will point you to the next step); to get everything in one cut, pass `cutId` to this tool and it returns that cut's timeline overview (clip ids, start and end) in addition. Once you have the clipId, hand it straight to update_clip / set_clip / get_clip / set_position / set_rect / align / nudge / set_emphasis / set_clip_volume / set_clip_muted; they edit the clip in that cut in place, **without switching the active cut** (the active cut is shared state, and switching flips the interface of every member at once, so do not switch if you can avoid it). **Viewing its frames does not need a switch either**: pass cutId to see_frames. Only call user_interface_switch_cut when you need to add / delete / split / duplicate clips in another cut (tools whose names start with user_interface_ act on the user's interface). A cut can be placed into another cut as a **cut segment** (add_cut_segment), by reference rather than by copy. Returns each cut's id, name, active, trackCount, clipCount, duration, plus referencedBy (which segments of which cuts reference it) and references (which cuts the cut segments inside it reference).",
+    description: "List all cuts (timelines) in the project. **When the clip the user wants you to change is in another cut, check this tool's result first, do not user_interface_switch_cut**: clips in inactive cuts (id, cardId / label, start and end, track) are in the returned `parkedCuts`; take the clipId and hand it straight to update_clip etc. to edit in place. A project can have multiple cuts; a new project has only \"Cut 1\", the rest are created by the user or by you (add_cut). Each cut is either a **2D cut** (`kind: \"2d\"`, default: flat canvas + track stacking, optional 2D camera pan/zoom/rotate, captions stay screen-locked) or a **3D cut** (`kind: \"3d\"`: perspective 3D space with true depth occlusion, 3D camera dolly/truck/orbit/FOV on the camera lane, and both cards and video/image media placed as 3D boards). The user switches and opens cuts in the tab bar above the timeline and in the \"Cuts\" group of the media library. **Tools such as add_clip / track / export / get_layout only act on the currently active cut** (the one with active:true; see_frames and list_cameras / add_camera / update_camera / remove_camera / set_cut_kind / prerender_cut_to_2d can take a cutId to act on other cuts without switching), and the tracks in get_project are also its content. **But editing existing clips in other cuts does not need user_interface_switch_cut**: the `parkedCuts` in the result already lists the clips of each parked cut (with a cap when there are too many, and it will point you to the next step); to get everything in one cut, pass `cutId` to this tool and it returns that cut's timeline overview (clip ids, start and end, kind, cameras) in addition. Once you have the clipId, hand it straight to update_clip / set_clip / get_clip / set_position / set_rect / align / nudge / set_emphasis / set_clip_volume / set_clip_muted; they edit the clip in that cut in place, **without switching the active cut**. **Viewing its frames does not need a switch either**: pass cutId to see_frames. Only call user_interface_switch_cut when you need to add / delete / split / duplicate clips in another cut. A cut can be placed into another cut as a **cut segment** (add_cut_segment), by reference rather than by copy. Returns each cut's id, name, kind (\"2d\" | \"3d\"), active, trackCount, clipCount, cameraCount, duration, optional spaceWidth/spaceHeight/camera3dFov, plus referencedBy and references.",
     inputSchema: {
       type: "object",
       properties: {
-        cutId: { type: "string", description: "If given, additionally return this cut's timeline overview (ids, start and end of each track and clip) without switching to it; to change an existing clip inside it, take the clipId and hand it straight to update_clip etc." }
+        cutId: { type: "string", description: "If given, additionally return this cut's timeline overview (ids, start and end of each track and clip, plus camera clips) without switching to it; to change an existing clip inside it, take the clipId and hand it straight to update_clip etc." }
       }
     },
     side: "agent"
@@ -59,14 +59,131 @@ export const cutsTools = [
   },
   {
     name: "add_cut",
-    description: "Create a new cut (default name Cut N), with two empty tracks and a duration of 30 seconds. **Create only, no switch**: the active cut stays the same and nobody's interface moves; returns the new cut's id." +
-      " To put things into it: to add clips you must first user_interface_switch_cut to it (this moves every member's interface, use it only when the user explicitly asks to switch or it is unavoidable);" +
-      "or place it into the current cut as a cut segment (add_cut_segment). When the user says \"start another timeline / make another version\", this is it.",
+    description: "Create a new cut (default name Cut N), with two empty tracks and a duration of 30 seconds. `kind` selects `\"2d\"` (default: 2D canvas + track layering) or `\"3d\"` (3D perspective space where cards and video/image media stand in space with depth occlusion and 3D camera movement). **Create only, no switch**: the active cut stays the same and nobody's interface moves; returns the new cut's id and kind." +
+      " To put things into it: to add track clips you must first user_interface_switch_cut to it (camera clips can be added directly by passing cutId to add_camera), or place it into the current cut as a cut segment (add_cut_segment). For a 3D walkthrough segment inside a 2D video, create a `\"3d\"` cut, build the walkthrough there, and place it into the main `\"2d\"` cut via `add_cut_segment` so captions and HUD in the outer 2D cut stay screen-locked on top.",
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string" }
+        name: { type: "string" },
+        kind: { type: "string", enum: ["2d", "3d"], description: "\"2d\" (default) or \"3d\"" },
+        spaceWidth: { type: "number", description: "[2D cuts] Optional virtual canvas width in pixels when panning across a wider 2D canvas than the output frame" },
+        spaceHeight: { type: "number", description: "[2D cuts] Optional virtual canvas height in pixels when panning across a taller 2D canvas than the output frame" },
+        camera3dFov: { type: "number", description: "[3D cuts] Default field of view in degrees (5~120, default 40) when no active camera clip overrides fovDeg" }
       }
+    },
+    side: "agent"
+  },
+  {
+    name: "set_cut_kind",
+    description: "Set a cut's spatial kind (`\"2d\"` or `\"3d\"`) and optional cut-level space metadata (`spaceWidth`, `spaceHeight`, `camera3dFov`). Converting `\"2d\" -> \"3d\"` is lossless (all existing clips sit on z = 0 facing the default straight-on 3D camera). Converting a `\"3d\"` cut back to `\"2d\"` is **never** done by overwriting in place because 3D depth occlusion, `translateZ`/`rotateX`/`rotateY` boards, and 3D camera moves have no lossless 2D track equivalent: passing `kind: \"2d\"` on a 3D cut is rejected and directs you to `prerender_cut_to_2d`, which pre-renders the 3D cut to an `.mp4` media asset in a new 2D cut while preserving the original 3D cut untouched.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cutId: { type: "string", description: "Target cut id from list_cuts; defaults to the currently active cut" },
+        kind: { type: "string", enum: ["2d", "3d"], description: "\"2d\" or \"3d\"" },
+        spaceWidth: { type: "number", description: "[2D cuts] Optional virtual 2D canvas width in pixels" },
+        spaceHeight: { type: "number", description: "[2D cuts] Optional virtual 2D canvas height in pixels" },
+        camera3dFov: { type: "number", description: "[3D cuts] Default 3D camera FOV in degrees (5~120)" }
+      },
+      required: ["kind"]
+    },
+    side: "agent"
+  },
+  {
+    name: "prerender_cut_to_2d",
+    description: "Pre-render a `\"3d\"` cut's exact camera output (picture + audio mix) into an `.mp4` video asset in the media library, and create a new `\"2d\"` cut with that video clip placed on Track 1, **keeping the original `\"3d\"` cut completely untouched** so you or the user can always go back and edit the 3D space later. Does not switch the active cut. Returns the new 2D cut, the imported media asset, and the placed Track 1 clip.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cutId: { type: "string", description: "Id of the 3D cut to pre-render (from list_cuts); defaults to the currently active cut" },
+        name: { type: "string", description: "Optional name for the new 2D cut (defaults to \"<3D cut name> (2D)\")" }
+      }
+    },
+    side: "agent",
+    timeoutMs: 180000
+  },
+  {
+    name: "list_cameras",
+    description: "List all camera clips on a cut's dedicated camera lane (`cut.cameras`). Defaults to the currently active cut, or pass `cutId` to inspect another cut without switching. Returns the cut's `kind` (`\"2d\"` | `\"3d\"`), default uncovered pose, and each camera clip's `id`, `name`, `row` (higher row overrides lower row when active simultaneously), `start`, `end`, `enabled`, and `params`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cutId: { type: "string", description: "Cut id from list_cuts; defaults to the currently active cut" }
+      }
+    },
+    side: "agent"
+  },
+  {
+    name: "add_camera",
+    description: "Add a camera clip to a cut's dedicated camera lane (`cut.cameras`) to drive a continuous one-take camera move across multiple timeline clips. Camera clips **do not** extend `contentEnd` (deleting all track clips shrinks duration even if a camera clip spans 0..60). Within the same `row` (default 0), camera clips cannot overlap (adjacent touching `end === next.start` is allowed); when multiple rows are active at the same moment `t` (`start <= t < end`), the **highest `row` wins** (upper row overrides lower row). Moments not covered by any enabled camera clip fall back to the cut's default pose (2D: `x=0, y=0, zoom=1, rotate=0`; 3D: straight-on `(0, 0, cameraDistance(height, fovDeg))`, `rx=0, ry=0, rz=0`). Every parameter accepts either a **number** OR a deterministic **expression string** in `t` (seconds into this camera clip), `d` (camera clip duration), and `p = t/d` (0..1): for **2D cuts** `params` takes `{ x, y, zoom, rotate }` (captions on `caption-track` stay screen-locked and never pan away!); for **3D cuts** `params` takes `{ x, y, z, rx, ry, rz, fovDeg }`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cutId: { type: "string", description: "Target cut id from list_cuts; defaults to the currently active cut" },
+        name: { type: "string", description: "Optional display label for the camera clip on the timeline" },
+        row: { type: "number", description: "0-based camera lane row (default 0). Higher row overrides lower row at overlapping times" },
+        start: { type: "number", description: "Start time in seconds (>= 0)" },
+        end: { type: "number", description: "End time in seconds (> start)" },
+        enabled: { type: "boolean", description: "Default true; false disables this camera clip without deleting it" },
+        params: {
+          type: "object",
+          description: "Camera pose fields (numbers or t/d/p expression strings such as \"1920 * p\" or \"1500 - 2200 * p\"). 2D cut keys: x, y, zoom (>0), rotate (deg). 3D cut keys: x, y, z, rx, ry, rz (deg), fovDeg (5~120)."
+        },
+        x: { anyOf: [{ type: "number" }, { type: "string" }], description: "Convenience shorthand for params.x (number or t/d/p expression)" },
+        y: { anyOf: [{ type: "number" }, { type: "string" }], description: "Convenience shorthand for params.y (number or t/d/p expression)" },
+        z: { anyOf: [{ type: "number" }, { type: "string" }], description: "[3D cut] Convenience shorthand for params.z (number or t/d/p expression)" },
+        rx: { anyOf: [{ type: "number" }, { type: "string" }], description: "[3D cut] Convenience shorthand for params.rx pitch in degrees (number or t/d/p expression)" },
+        ry: { anyOf: [{ type: "number" }, { type: "string" }], description: "[3D cut] Convenience shorthand for params.ry yaw in degrees (number or t/d/p expression)" },
+        rz: { anyOf: [{ type: "number" }, { type: "string" }], description: "[3D cut] Convenience shorthand for params.rz roll in degrees (number or t/d/p expression)" },
+        fovDeg: { anyOf: [{ type: "number" }, { type: "string" }], description: "[3D cut] Convenience shorthand for params.fovDeg (5~120, number or t/d/p expression)" },
+        zoom: { anyOf: [{ type: "number" }, { type: "string" }], description: "[2D cut] Convenience shorthand for params.zoom (> 0, number or t/d/p expression)" },
+        rotate: { anyOf: [{ type: "number" }, { type: "string" }], description: "[2D cut] Convenience shorthand for params.rotate in degrees (number or t/d/p expression)" }
+      },
+      required: ["start", "end"]
+    },
+    side: "agent"
+  },
+  {
+    name: "update_camera",
+    description: "Update an existing camera clip's timing (`start`, `end`), `row`, `name`, `enabled`, or `params` (numbers or `t`/`d`/`p` expression strings; pass `null` inside `params` to clear a parameter back to default). Validates same-row non-overlap and expression syntax.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cameraId: { type: "string", description: "Camera clip id from list_cameras or add_camera" },
+        cutId: { type: "string", description: "Target cut id from list_cuts; defaults to the currently active cut" },
+        name: { type: "string" },
+        row: { type: "number", description: "0-based camera lane row (higher row overrides lower row)" },
+        start: { type: "number" },
+        end: { type: "number" },
+        enabled: { type: "boolean" },
+        params: {
+          type: "object",
+          description: "Camera pose patch (numbers, t/d/p expression strings, or null to reset a key)"
+        },
+        x: { anyOf: [{ type: "number" }, { type: "string" }], description: "Convenience shorthand for params.x" },
+        y: { anyOf: [{ type: "number" }, { type: "string" }], description: "Convenience shorthand for params.y" },
+        z: { anyOf: [{ type: "number" }, { type: "string" }], description: "[3D cut] Convenience shorthand for params.z" },
+        rx: { anyOf: [{ type: "number" }, { type: "string" }], description: "[3D cut] Convenience shorthand for params.rx" },
+        ry: { anyOf: [{ type: "number" }, { type: "string" }], description: "[3D cut] Convenience shorthand for params.ry" },
+        rz: { anyOf: [{ type: "number" }, { type: "string" }], description: "[3D cut] Convenience shorthand for params.rz" },
+        fovDeg: { anyOf: [{ type: "number" }, { type: "string" }], description: "[3D cut] Convenience shorthand for params.fovDeg" },
+        zoom: { anyOf: [{ type: "number" }, { type: "string" }], description: "[2D cut] Convenience shorthand for params.zoom" },
+        rotate: { anyOf: [{ type: "number" }, { type: "string" }], description: "[2D cut] Convenience shorthand for params.rotate" }
+      },
+      required: ["cameraId"]
+    },
+    side: "agent"
+  },
+  {
+    name: "remove_camera",
+    description: "Remove a camera clip from a cut's dedicated camera lane.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cameraId: { type: "string", description: "Camera clip id from list_cameras" },
+        cutId: { type: "string", description: "Target cut id from list_cuts; defaults to the currently active cut" }
+      },
+      required: ["cameraId"]
     },
     side: "agent"
   },

@@ -28,6 +28,9 @@ import type { PlaceholderReason } from "./placeholder/contract";
 import { CutSegmentScene } from "./CutSegmentScene";
 import { cutOf, envelopeAt } from "../kernel/cutSegments";
 import { FLAT_SEP } from "../kernel/cutFlatten.mjs";
+import { resolveClipFrameAt } from "../kernel/frameExpr.mjs";
+import { camera2DCssTransform, resolveCamera2DAt } from "../kernel/camera.mjs";
+import { isCaptionClip } from "../kernel/captions";
 
 setMaxAnimated(maxAnimated);
 
@@ -136,7 +139,7 @@ function guardRuntimeCard(cardId: string | undefined, body: ReactNode): ReactNod
  * `clip.id + playToken` as key; entering the interval remounts them to play from the beginning
  * (consistent with behavior during export).
  */
-export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, snapshots, suppressed, streamPlanes, remountGen, settling, awaiting, mountClock = false, nested = false, flatPrefix }: {
+export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, snapshots, suppressed, streamPlanes, remountGen, settling, awaiting, mountClock = false, nested = false, flatPrefix, overflowVisible = false }: {
   timeline: Timeline; t: number; directT?: number; playToken: number; speed?: number; proxy?: ProxyRender;
   /**
    * Nested stage inside a cut segment (`CutSegmentScene`): wrapper layers attach
@@ -163,6 +166,7 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
    * only at the start point, both following `t`.
    */
   mountClock?: boolean;
+  overflowVisible?: boolean;
 } & StagePlaneProps) {
   const timeOf = (c: Timeline['clips'][number]) => clipFrameMode(c, getCard(c.cardId)) === 'direct' ? directT : t;
   /**
@@ -275,60 +279,11 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
     return () => cancelAnimationFrame(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guardKey]);
-  return (
-    <div
-      ref={stageRef}
-      className="pc-stage"
-      style={{ position: "relative", width: timeline.width, height: timeline.height, overflow: "hidden", background: "transparent" }}
-    >
-      {/*
-        3D perspective is attached to this layer, not the stage cell: CSS `perspective`
-        **only applies to direct child elements**, and the card div's direct parent is this AnimClock layer.
-        Moving it one level outward silently fails (tested: card height does not change at all, rotateY is
-        reduced to affine stretching), and the outer cell has overflow:hidden, which forces transform-style
-        back to flat.
-
-        Placing it in Stage rather than individual views ensures preview and export follow the same path:
-        StageView / ExportView both only receive Timeline; omitting it in either results in "perspective
-        in preview, none in export", and that divergence throws no errors.
-
-        The perspective value is the distance from the camera to the z=0 plane, identical to the number
-        and unit in three.js (see kernel/space3d.ts): layer A and layer B align without calibration thanks
-        to this. When 3D is disabled, no properties are added: exports of legacy projects have a
-        pixel-by-pixel baseline.
-
-        **transform-style: preserve-3d is intentionally omitted here.** Intuition suggests "adding it when
-        enabling 3D", but empirical tests show it does something completely different (perspective 618, a
-        card with translateZ(-300)):
-
-          Without perspective       Card projected width 300.00   In front on screen is the later DOM node
-          perspective + preserve-3d Card projected width 201.96   In front on screen becomes the closer z card
-          perspective only          Card projected width 201.96   In front on screen is still the later DOM node
-
-        The projected widths in the two rows are identical: it **contributes nothing to perspective**;
-        its sole effect is changing sibling cards from "stacking by DOM order" to "sorting by z-depth".
-        That directly overturns two hardcoded conventions in this design: stacking order depends solely
-        on track (trackId), and cards do not interpenetrate. If added, when an Agent pushes the topmost
-        card inward (negative translateZ), it would immediately be covered by all cards beneath: contrary
-        to what the tool description promises.
-
-        It also alters pixels of **cards untouched by 3D**: for a card with only scale+rotate, screenshot
-        sha256 is identical between "3D disabled" and "perspective only", but changes once preserve-3d is
-        added. In other words, as soon as set_camera3d is called, all other cards on screen switch
-        rasterization paths.
-      */}
-      <AnimClock
-        speed={speed}
-        style={
-          timeline.camera3dFov
-            ? {
-                perspective: `${perspectivePx({ width: timeline.width, height: timeline.height }, timeline.camera3dFov)}px`,
-                perspectiveOrigin: "50% 50%",
-              }
-            : undefined
-        }
-      >
-        {active.map((clip, i) => {
+  const hasStandaloneCam2D = Boolean(timeline.cameras?.some((c) => c && c.enabled !== false));
+  const standaloneCamStyle = hasStandaloneCam2D
+    ? camera2DCssTransform(resolveCamera2DAt(timeline.cameras, directT), { width: timeline.width, height: timeline.height })
+    : null;
+  const renderClip = (clip: Timeline["clips"][number], i: number) => {
           const def = getCard(clip.cardId);
           /*
            * This device cannot run this card (user cards and media effect cards in online browser mode;
@@ -432,6 +387,10 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
            * `settling` is only passed on stage; export page and legacy remain unchanged by a single character.
            */
           const settlingMs = settling?.get(pid);
+          const localFrameT = settlingMs !== undefined ? Math.max(0, settlingMs / 1000 - clip.start) : Math.max(0, cardT - clip.start);
+          const effFrame = clip.frameExpr
+            ? resolveClipFrameAt(clip.frame, clip.frameExpr, localFrameT, clip.end - clip.start)
+            : clip.frame;
           const localFrame = Math.round(((settlingMs !== undefined ? settlingMs / 1000 : cardT) - clip.start) * timeline.fps);
           /*
            * Canvas card (R9 M1): clips with a `canvas` contract (except `dom2d`) render an extra gl plane
@@ -440,7 +399,7 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
            * placeholder, not catching up). Size = clip entity box.
            */
           const glContract = !unsupported && def?.canvas && def.canvas.kind !== "dom2d" ? def.canvas : null;
-          const glBox = glContract ? frameBox(clip.frame, timeline) : null;
+          const glBox = glContract ? frameBox(effFrame, timeline) : null;
           // Group stream members, target cards of below-dependent streams: no stream plane in wrapper layer;
           // `hitTest` / `bounds` fall back to wrapper layer box for them
           // (G1 "Hit testing and entity boxes for group stream planes")
@@ -455,7 +414,7 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
               data-pc-frame-mode={clipFrameMode(clip, def)}
               className={cls || undefined}
               style={{
-                ...frameCss(clip.frame, timeline, m ? { dx: m.dx, dy: m.dy } : undefined),
+                ...frameCss(effFrame, timeline, m ? { dx: m.dx, dy: m.dy } : undefined),
                 ...(op < 1 ? { opacity: op } : null),
                 ...(filter ? { filter } : null),
                 /*
@@ -492,7 +451,7 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
               {seg ? (
                 <CutSegmentScene seg={seg} start={clip.start} localT={localTOf(clip, t)}
                   localDirectT={settling?.has(pid) || frozenT.current.has(pid) ? localTOf(clip, t) : Math.max(0, directT - clip.start)}
-                  playToken={gen} size={frameBox(clip.frame, timeline)}
+                  playToken={gen} size={frameBox(effFrame, timeline)}
                   /* The cards inside each look up suppression, stream plane, and placeholder by
                    * "segment id~card clip id" (`kernel/cutFlatten.mjs`); export page and prerender page
                    * pass no planes, unchanged by a single character */
@@ -505,7 +464,7 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
               ) : clip.cardId === "composite" && clip.parts?.length ? (
                 // Composite card: part instance tree renders level by level; canvas size is this card's box
                 // (no box = entire stage)
-                <PartTree parts={clip.parts} size={frameBox(clip.frame, timeline)} t={localTOf(clip, t)} playToken={gen} />
+                <PartTree parts={clip.parts} size={frameBox(effFrame, timeline)} t={localTOf(clip, t)} playToken={gen} />
               ) : def!.card ? (
                 // Media effect card: passes through Stage, has wrapper layer;
                 // hitTest / rects / snapshots / suppression all as usual
@@ -581,19 +540,46 @@ export function Stage({ timeline, t, directT = t, playToken, speed = 1, proxy, s
                  * both desktop and online). Cards this device cannot run also show an hourglass (results produced
                  * by render nodes).
                  */
-                const size = frameBox(clip.frame, timeline);
+                const size = frameBox(effFrame, timeline);
                 const geometry = geometryFor(pid, size);
                 const reason = unsupported ? "awaiting" : placeholderReasonOf(pid);
                 return (
                   <div {...{ [PLACEHOLDER_SLOT_ATTR]: "" }} hidden style={{ position: "absolute", inset: 0 }}>
                     <PlaceholderPlane clipId={pid} geometry={geometry} reason={reason}
-                      fit={placeholderFitFor(pid, reason, geometry, size, clip.frame?.scale ?? 1)} />
+                      fit={placeholderFitFor(pid, reason, geometry, size, effFrame?.scale ?? 1)} />
                   </div>
                 );
               })() : null}
             </div>
           );
-        })}
+        };
+  return (
+    <div
+      ref={stageRef}
+      className="pc-stage"
+      style={{ position: "relative", width: timeline.width, height: timeline.height, overflow: overflowVisible ? "visible" : "hidden", background: "transparent" }}
+    >
+      <AnimClock
+        speed={speed}
+        style={
+          timeline.camera3dFov
+            ? {
+                perspective: `${perspectivePx({ width: timeline.width, height: timeline.height }, timeline.camera3dFov)}px`,
+                perspectiveOrigin: "50% 50%",
+              }
+            : undefined
+        }
+      >
+        {hasStandaloneCam2D ? (
+          <>
+            <div data-pc-camera2d="" style={{ position: "absolute", inset: 0, overflow: "visible", ...(standaloneCamStyle ?? {}) }}>
+              {active.map((clip, i) => (isCaptionClip(clip) ? null : renderClip(clip, i)))}
+            </div>
+            {active.map((clip, i) => (isCaptionClip(clip) ? renderClip(clip, i) : null))}
+          </>
+        ) : (
+          active.map(renderClip)
+        )}
       </AnimClock>
       {/*
         Group stream plane (G1: a single stream covers multiple adjacent heavy cards). It spans clips and

@@ -57,6 +57,7 @@ type ExportWindow = Window & typeof globalThis & {
   __pcCreateSnapshot?: () => { html: string; lossy?: number | boolean };
   __pcPrepareFrameMedia?: () => Promise<void>;
   __pcHideFrameMedia?: () => void;
+  __pcRender3DCut?: () => Promise<void>;
   __pcLoadProject?: (p: unknown, o?: unknown) => Promise<void>;
   /** Export page: table receiving synced user cards (online export mounts their wrapper layers so they can be replaced with original-size prerender) */
   __pcSetSyncedUserCards?: (entries: unknown[]) => void;
@@ -558,6 +559,24 @@ export class ExportCompositor {
     await this.stepTo(frame, fps);
     this.stats.stepMs += performance.now() - t0;
 
+    const has3DCut = !!doc.querySelector("canvas[data-pc-3d-cut]");
+    if (has3DCut) {
+      const offMedia = [...doc.querySelectorAll<HTMLVideoElement | HTMLImageElement>("[data-pc-3d-offscreen] video[data-pc-media-src], [data-pc-3d-offscreen] img[data-pc-media-src]")];
+      if (offMedia.length) {
+        for (const el of offMedia) if (!el.crossOrigin) el.crossOrigin = "anonymous";
+        const ticket = this.opts.freshTicket?.() ?? null;
+        if (ticket) {
+          for (const el of offMedia) {
+            const src = el.getAttribute("data-pc-media-src") ?? "";
+            const next = withTicket(src, ticket);
+            if (next !== src) { el.setAttribute("data-pc-media-src", next); this.stats.ticketSwaps++; }
+          }
+        }
+        await this.w.__pcPrepareFrameMedia?.();
+      }
+      await this.w.__pcRender3DCut?.();
+    }
+
     t0 = performance.now();
     const snap = this.w.__pcCreateSnapshot!();
     if (snap.lossy) throw new Error(trText("This frame has a canvas whose pixels can't be read, so it can't be exported"));
@@ -596,7 +615,8 @@ export class ExportCompositor {
 
     // Media: load original size for this frame, draw to image and replace placeholder (cross-origin media must use CORS, otherwise canvas is tainted)
     t0 = performance.now();
-    const live = [...doc.querySelectorAll<HTMLVideoElement | HTMLImageElement>("[data-pc-scene] video[data-pc-media-src], [data-pc-scene] img[data-pc-media-src]")];
+    const live = [...doc.querySelectorAll<HTMLVideoElement | HTMLImageElement>("[data-pc-scene] video[data-pc-media-src], [data-pc-scene] img[data-pc-media-src]")]
+      .filter((el) => !el.closest("[data-pc-3d-offscreen]"));
     if (live.length) {
       for (const el of live) if (!el.crossOrigin) el.crossOrigin = "anonymous";
       const ticket = this.opts.freshTicket?.() ?? null;
@@ -620,6 +640,8 @@ export class ExportCompositor {
         if (url) { img.setAttribute("src", url); this.stats.mediaFrames++; }
         hole.replaceWith(img);
       });
+      this.w.__pcHideFrameMedia?.();
+    } else if (has3DCut) {
       this.w.__pcHideFrameMedia?.();
     }
     this.stats.mediaMs += performance.now() - t0;

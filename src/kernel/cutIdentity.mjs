@@ -21,13 +21,43 @@ function activeIdOf(p) {
   return p.activeCutId && cuts.some((c) => c.id === p.activeCutId) ? p.activeCutId : cuts[0].id;
 }
 
+function extraCutMeta(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const out = {};
+  if (entry.kind === '3d') out.kind = '3d';
+  if (typeof entry.camera3dFov === 'number' && Number.isFinite(entry.camera3dFov)) out.camera3dFov = entry.camera3dFov;
+  if (typeof entry.spaceWidth === 'number' && Number.isFinite(entry.spaceWidth)) out.spaceWidth = entry.spaceWidth;
+  if (typeof entry.spaceHeight === 'number' && Number.isFinite(entry.spaceHeight)) out.spaceHeight = entry.spaceHeight;
+  if (Array.isArray(entry.cameras) && entry.cameras.length > 0) out.cameras = entry.cameras;
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Render-affecting metadata on the active cut (`kind`, `camera3dFov`, `spaceWidth`, `spaceHeight`, `cameras`)
+ * plus ephemeral `_renderView` when set to `"space"`.
+ * Returns `null` when everything is at legacy 2D defaults so legacy project cache keys stay byte-identical.
+ */
+export function activeCutRenderMeta(p) {
+  if (!p || typeof p !== 'object') return null;
+  const id = activeIdOf(p);
+  const cuts = Array.isArray(p.cuts) ? p.cuts : [];
+  const entry = id ? cuts.find((c) => c?.id === id) : undefined;
+  const base = extraCutMeta(entry);
+  const view = p._renderView && p._renderView !== 'camera' ? p._renderView : undefined;
+  if (!base && !view) return null;
+  return { ...(base || {}), ...(view ? { renderView: view } : {}) };
+}
+
 function contentOf(p, cutId) {
   const cuts = Array.isArray(p?.cuts) ? p.cuts : [];
   const entry = cuts.find((c) => c?.id === cutId);
   if (!entry) return null;
-  if (cutId === activeIdOf(p)) return { id: cutId, tracks: p.tracks ?? [], duration: p.duration, transitions: p.transitions ?? [] };
+  const meta = extraCutMeta(entry);
+  if (cutId === activeIdOf(p)) {
+    return { id: cutId, tracks: p.tracks ?? [], duration: p.duration, transitions: p.transitions ?? [], ...(meta || {}) };
+  }
   if (!Array.isArray(entry.tracks)) return null;
-  return { id: cutId, tracks: entry.tracks, duration: entry.duration, transitions: entry.transitions ?? [] };
+  return { id: cutId, tracks: entry.tracks, duration: entry.duration, transitions: entry.transitions ?? [], ...(meta || {}) };
 }
 
 function targetsOf(tracks) {

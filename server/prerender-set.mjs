@@ -34,6 +34,7 @@
  */
 import { loadCosts, loadTuning } from './costs-store.mjs';
 import { planPipelines } from '../src/render/pipelinePlan.mjs';
+import { activeCutKind } from '../src/kernel/camera.mjs';
 
 /** Whether a card (control / review table capabilities) enters the prerender set when there is **no dispatch table** */
 export function declaredHeavy(capabilities) {
@@ -64,7 +65,7 @@ export function planInputsOfControls(controls, fps, cardIdOf = () => undefined) 
     const start = Number(control.start), end = Number(control.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
     const cardId = control.cardId ?? cardIdOf(clipId);
-    clips.push({ id: clipId, cardId, nodeId: control.nodeId ?? clipId, start, end });
+    clips.push({ id: clipId, cardId, nodeId: control.nodeId ?? clipId, start, end, ...(control.in3dCut === true ? { in3dCut: true } : null) });
     if (typeof control.costKey === 'string') identityKeys[clipId] = control.costKey;
     const mode = control.frameMode ?? control.capabilities?.frameMode;
     if (typeof mode === 'string') frameModes[clipId] = mode;
@@ -93,7 +94,8 @@ export function prerenderSetOfPlan(controls, opts = {}) {
 
   const hasScene3d = mirrorClips.some((c) => c?.cardId === 'scene-3d')
     || list.some((c) => c?.cardId === 'scene-3d' || c?.definitionId === 'scene-3d' || c?.definitionId === 'def:scene-3d' || cardIdOf(c?.clipId) === 'scene-3d');
-  const for3D = Boolean(opts.includeLightCardsFor3D || opts.view3d || (opts.includeLightCardsFor3D !== false && hasScene3d));
+  const is3DCut = opts.cutKind === '3d' || opts.project?.cutKind === '3d' || activeCutKind(opts.project) === '3d' || activeCutKind(mirror?.project) === '3d';
+  const for3D = Boolean(opts.includeLightCardsFor3D || opts.view3d || is3DCut || (opts.includeLightCardsFor3D !== false && hasScene3d));
 
   // If there are no records at all (not yet probed / cannot read from disk), falls back to declarations: consistent with behavior before connecting planPipelines
   if (!costs || !costs.length) {
@@ -102,7 +104,7 @@ export function prerenderSetOfPlan(controls, opts = {}) {
       if (!control?.clipId) continue;
       const cardId = control.cardId ?? cardIdOf(control.clipId);
       if (declaredHeavy(control.capabilities)) set.add(control.clipId);
-      else if (for3D && cardId !== 'scene-3d') {
+      else if ((for3D || control.in3dCut === true) && cardId !== 'scene-3d') {
         const comp = control.compositing ?? control.capabilities?.compositing ?? 'independent';
         if (comp === 'independent') set.add(control.clipId);
       }
@@ -113,8 +115,9 @@ export function prerenderSetOfPlan(controls, opts = {}) {
   const { project, identityKeys, frameModes } = planInputsOfControls(list, fps, cardIdOf);
   return planPipelines(project, pickLatestCosts(costs), fps, {
     tuning, identityKeys, frameModes,
+    cutKind: is3DCut ? '3d' : opts.cutKind,
     includeLightCardsFor3D: for3D,
-    view3d: opts.view3d ?? (for3D ? true : undefined),
+    view3d: opts.view3d,
     capabilities: opts.capabilities ?? Object.fromEntries(list.map((c) => [c.clipId, c.capabilities])),
     compositing: opts.compositing,
     isIndependent: opts.isIndependent,
@@ -133,6 +136,7 @@ export function prerenderSetOf(project, costs = null, fps = Number(project?.fps)
       if (!clip?.id || !(clip.cardId || clip.nodeId)) continue;
       controls.push({
         clipId: clip.id, cardId: clip.cardId, nodeId: clip.nodeId ?? clip.id, start: clip.start, end: clip.end,
+        ...(clip.flat?.in3dCut === true || clip.in3dCut === true ? { in3dCut: true } : null),
         costKey: opts.identityKeys?.[clip.id],
         capabilities: capabilitiesOf(clip) ?? { frameMode: clip.mode },
         frameMode: opts.frameModes?.[clip.id],
@@ -140,7 +144,8 @@ export function prerenderSetOf(project, costs = null, fps = Number(project?.fps)
     }
   }
   return prerenderSetOfPlan(controls, {
-    fps, costs, tuning: opts.tuning, root: opts.root,
+    fps, costs, tuning: opts.tuning, root: opts.root, project,
+    cutKind: opts.cutKind,
     includeLightCardsFor3D: opts.includeLightCardsFor3D ?? opts.view3d,
     view3d: opts.view3d,
     capabilities: opts.capabilities,

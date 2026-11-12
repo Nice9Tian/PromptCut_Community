@@ -9,6 +9,26 @@ import { isAudiovisualCard, assertAudiovisualCardKind } from './cardAudioRenditi
 const isGraphCard = def => !!def && (typeof def.card === 'function' || typeof def.audio === 'function');
 
 /**
+ * Pre-overlay cards (`overlay: "pre"` / `overlayKind: "pre"`, such as camera/lighting overlays on a
+ * 3D scene host) inject parameters BEFORE the host scene renders rather than consuming its output
+ * bitmap downstream. Attempting to attach a pre-overlay to an ordinary DOM card or media clip has no
+ * scene to inspect and is rejected with an actionable message pointing to the cut's camera lane.
+ */
+const isPreOverlayCard = def => !!def && (def.overlay === 'pre' || def.overlayKind === 'pre');
+
+const isSceneHostClip = (project, clip, getCard) => {
+  if (!clip) return false;
+  if (clip.cardId === 'scene-3d') return true;
+  const hostDef = clip.cardId ? getCard(clip.cardId) : undefined;
+  if (hostDef && (hostDef.sceneHost === true || hostDef.kind === 'scene3d')) return true;
+  if (typeof clip.cutId === 'string' && clip.cutId) {
+    const refCut = (project?.cuts || []).find(c => c.id === clip.cutId);
+    if (refCut && refCut.kind === '3d') return true;
+  }
+  return false;
+};
+
+/**
  * Pure DOM card (has components, no card / audio). The first version of media effect cards does
  * not accept its output.
  */
@@ -25,6 +45,42 @@ const isDomCard = def => !!def && !isGraphCard(def);
 export function applyCardDefinition(project, args, getCard = () => undefined) {
   const definition = getCard(args.cardId);
   if (!definition) throw new Error(`Unknown card: ${args.cardId}`);
+  if (isPreOverlayCard(definition)) {
+    if (!args.clipId) {
+      throw new Error(
+        `Pre-overlay card "${definition.id}" requires clipId targeting an existing scene host (such as scene-3d or a 3D cut segment). For timeline camera moves on a 2D or 3D cut, use add_camera / update_camera on the cut's camera lane instead.`,
+      );
+    }
+    const next = structuredClone(project);
+    const clip = next.tracks?.flatMap(t => t.clips ?? []).find(c => c.id === args.clipId);
+    if (!clip) throw new Error(`Unknown clip: ${args.clipId}`);
+    if (!isSceneHostClip(next, clip, getCard)) {
+      const targetDesc = clip.mediaId
+        ? 'a media clip'
+        : clip.cutId
+          ? 'a 2D cut segment'
+          : `card "${clip.cardId || clip.id}"`;
+      throw new Error(
+        `Pre-overlay card "${definition.id}" can only attach to a scene host (such as scene-3d or a 3D cut segment), not ${targetDesc} (an ordinary card or media clip has no 3D scene to inject into). For timeline camera moves on a 2D or 3D cut, use add_camera / update_camera on the cut's camera lane instead.`,
+      );
+    }
+    const list = Array.isArray(clip.preOverlays) ? [...clip.preOverlays] : [];
+    const idx = list.findIndex(entry => (args.nodeId && entry.id === args.nodeId) || entry.cardId === definition.id);
+    const nodeId = args.nodeId || (idx >= 0 ? list[idx].id : crypto.randomUUID());
+    const entry = {
+      id: nodeId,
+      cardId: definition.id,
+      params: {
+        ...(definition.defaults || {}),
+        ...(idx >= 0 ? list[idx].params : {}),
+        ...(args.params || {}),
+      },
+    };
+    if (idx >= 0) list[idx] = entry;
+    else list.push(entry);
+    clip.preOverlays = list;
+    return { project: next, clipId: clip.id, nodeId };
+  }
   if (!isGraphCard(definition)) throw new Error('This definition uses the existing card adapter');
   assertAudiovisualCardKind(definition);
   const next = structuredClone(project);
@@ -180,10 +236,22 @@ export function applyCardDefinition(project, args, getCard = () => undefined) {
  * @param {(id: string) => any} getCard Registry card lookup function (same as applyCardDefinition)
  * @returns {{ project: object, nodeId: string, nextNodeId: string | null, removed: boolean }}
  */
-export function detachCardNode(project, clipId, getCard = () => undefined) {
+export function detachCardNode(project, clipId, getCard = () => undefined, targetNodeId = undefined) {
   const next = structuredClone(project);
   const clip = next.tracks?.flatMap(track => track.clips ?? []).find(c => c.id === clipId);
   if (!clip) throw new Error(`Unknown clip: ${clipId}`);
+  if (Array.isArray(clip.preOverlays) && clip.preOverlays.length > 0) {
+    const preIdx = targetNodeId
+      ? clip.preOverlays.findIndex(e => e.id === targetNodeId)
+      : !clip.nodeId
+        ? clip.preOverlays.length - 1
+        : -1;
+    if (preIdx >= 0) {
+      const [removed] = clip.preOverlays.splice(preIdx, 1);
+      if (clip.preOverlays.length === 0) delete clip.preOverlays;
+      return { project: next, nodeId: removed.id, nextNodeId: clip.nodeId ?? null, removed: true };
+    }
+  }
   const nodeId = clip.nodeId;
   if (!nodeId) throw new Error('This segment has no media effect card attached');
   const node = (next.cardNodes || []).find(n => n.id === nodeId);

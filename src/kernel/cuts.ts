@@ -14,6 +14,16 @@
 import { newId, type Cut, type Project, type Track } from "./project.ts";
 import { activeCutIdOf, cutCycleReason, cutDuration, cutReferences, stripCutReferences } from "./cutSegments.ts";
 import { contentEndOf, effectiveDuration, manualDurationFor } from "./duration.ts";
+import {
+  assertCameraLaneNoOverlap,
+  cutKindOf,
+  mergeCameraParams,
+  sortCameraClips,
+  validateCameraParams,
+  type CameraClip,
+  type CameraClipParams,
+  type CutKind,
+} from "./camera.mjs";
 
 /**
  * Default cut count: new projects and legacy files without a `cuts` field only get "Cut 1" added;
@@ -86,7 +96,8 @@ export function normalizeCuts(p: Project): Project {
 
 /** Summary for media library / tab bar / `list_cuts`. Active cut numbers come from `Project.tracks` */
 export function listCuts(p: Project): {
-  id: string; name: string; active: boolean; trackCount: number; clipCount: number; duration: number;
+  id: string; name: string; kind?: CutKind; cameraCount?: number; camera3dFov?: number; spaceWidth?: number; spaceHeight?: number;
+  active: boolean; trackCount: number; clipCount: number; duration: number;
   /** Cuts that directly reference this cut (which segments in each) */
   referencedBy: { cutId: string; name: string; clipIds: string[] }[];
   /** Which cuts are directly referenced by cut segments in this cut */
@@ -101,6 +112,11 @@ export function listCuts(p: Project): {
     return {
       id: c.id,
       name: c.name,
+      ...(c.kind ? { kind: c.kind } : {}),
+      ...(c.cameras?.length ? { cameraCount: c.cameras.length } : {}),
+      ...(c.camera3dFov !== undefined ? { camera3dFov: c.camera3dFov } : {}),
+      ...(c.spaceWidth !== undefined ? { spaceWidth: c.spaceWidth } : {}),
+      ...(c.spaceHeight !== undefined ? { spaceHeight: c.spaceHeight } : {}),
       active,
       trackCount: tracks.length,
       clipCount: tracks.reduce((n, t) => n + t.clips.length, 0),
@@ -153,12 +169,32 @@ export function switchCut(p: Project, cutId: string, t: number): { project: Proj
   };
 }
 
-/** Creates a new parked cut (without switching). Name defaults to Cut N */
-export function addCut(p: Project, name?: string): { project: Project; cut: Cut } {
+/** Creates a new parked cut (without switching). Name defaults to Cut N; kind defaults to "2d" */
+export function addCut(
+  p: Project,
+  name?: string,
+  opts?: { kind?: CutKind; spaceWidth?: number; spaceHeight?: number; camera3dFov?: number },
+): { project: Project; cut: Cut } {
   const q = normalizeCuts(p);
+  if (opts?.kind !== undefined && opts.kind !== "2d" && opts.kind !== "3d") {
+    throw new Error(`Cut kind must be "2d" or "3d", got ${JSON.stringify(opts.kind)}`);
+  }
+  if (opts?.spaceWidth !== undefined && (typeof opts.spaceWidth !== "number" || !Number.isFinite(opts.spaceWidth) || opts.spaceWidth <= 0)) {
+    throw new Error(`spaceWidth must be a positive number, got ${JSON.stringify(opts.spaceWidth)}`);
+  }
+  if (opts?.spaceHeight !== undefined && (typeof opts.spaceHeight !== "number" || !Number.isFinite(opts.spaceHeight) || opts.spaceHeight <= 0)) {
+    throw new Error(`spaceHeight must be a positive number, got ${JSON.stringify(opts.spaceHeight)}`);
+  }
+  if (opts?.camera3dFov !== undefined && (typeof opts.camera3dFov !== "number" || !Number.isFinite(opts.camera3dFov) || opts.camera3dFov <= 0)) {
+    throw new Error(`camera3dFov must be a positive number, got ${JSON.stringify(opts.camera3dFov)}`);
+  }
   const cut: Cut = {
     id: newId("cut"),
     name: (name ?? "").trim() || nextCutName(q.cuts!),
+    ...(opts?.kind ? { kind: opts.kind } : {}),
+    ...(opts?.spaceWidth !== undefined ? { spaceWidth: Math.round(opts.spaceWidth) } : {}),
+    ...(opts?.spaceHeight !== undefined ? { spaceHeight: Math.round(opts.spaceHeight) } : {}),
+    ...(opts?.camera3dFov !== undefined ? { camera3dFov: opts.camera3dFov } : {}),
     tracks: emptyTracks(),
     duration: DEFAULT_CUT_DURATION,
     transitions: [],
@@ -363,21 +399,220 @@ function settleCutDuration(before: { tracks: Track[]; duration: number }, afterT
 export function foldCutEdit(real: Project, edited: Project, cutId: string): Project {
   const activeId = activeCutIdOf(real)!;
   const realTarget = real.cuts!.find((c) => c.id === cutId)!;
+  const editedTarget = (edited.cuts ?? []).find((c) => c.id === cutId);
   const realActiveEntry = real.cuts!.find((c) => c.id === activeId)!;
   const beforeDuration = typeof realTarget.duration === "number" && realTarget.duration > 0 ? realTarget.duration : DEFAULT_CUT_DURATION;
   const duration = settleCutDuration({ tracks: realTarget.tracks!, duration: beforeDuration }, edited.tracks, edited.duration);
   // If entry originally lacked transitions key and remains empty, avoid creating an extra key
   const nowT = edited.transitions ?? [];
   const transitions = realTarget.transitions !== undefined ? nowT : nowT.length ? nowT : undefined;
+  const mergedMeta = editedTarget
+    ? {
+        ...(editedTarget.kind !== undefined ? { kind: editedTarget.kind } : {}),
+        ...(editedTarget.camera3dFov !== undefined ? { camera3dFov: editedTarget.camera3dFov } : {}),
+        ...(editedTarget.spaceWidth !== undefined ? { spaceWidth: editedTarget.spaceWidth } : {}),
+        ...(editedTarget.spaceHeight !== undefined ? { spaceHeight: editedTarget.spaceHeight } : {}),
+        ...(editedTarget.cameras !== undefined ? { cameras: editedTarget.cameras } : {}),
+      }
+    : {};
   const entry: Cut = {
     ...realTarget,
+    ...mergedMeta,
     tracks: edited.tracks,
     ...(duration === beforeDuration && realTarget.duration === undefined ? {} : { duration }),
     ...(transitions === undefined ? {} : { transitions }),
   };
+  if (editedTarget) {
+    if (editedTarget.kind === undefined) delete entry.kind;
+    if (editedTarget.camera3dFov === undefined) delete entry.camera3dFov;
+    if (editedTarget.spaceWidth === undefined) delete entry.spaceWidth;
+    if (editedTarget.spaceHeight === undefined) delete entry.spaceHeight;
+    if (editedTarget.cameras === undefined) delete entry.cameras;
+  }
   const cuts = (edited.cuts ?? real.cuts!).map((c) => (c.id === activeId ? realActiveEntry : c.id === cutId ? entry : c));
   const out: Project = { ...edited, tracks: real.tracks, duration: real.duration, cuts, activeCutId: real.activeCutId };
   if (real.transitions === undefined) delete out.transitions;
   else out.transitions = real.transitions;
   return out;
+}
+
+/* ---------- Cut kind, cut metadata, and dedicated camera lane ---------- */
+
+/**
+ * Switch cut kind (`"2d" -> "3d"` is lossless; `"3d" -> "2d"` is forbidden in-place because it would
+ * silently discard 3D depth occlusion, 3D camera keyframes, and `scene-3d` cards — use `prerender_cut_to_2d` instead).
+ */
+export function setCutKindInProject(p: Project, cutId: string | undefined, kind: CutKind): Project {
+  if (kind !== "2d" && kind !== "3d") {
+    throw new Error(`Cut kind must be "2d" or "3d", got ${JSON.stringify(kind)}`);
+  }
+  const q = normalizeCuts(p);
+  const targetId = cutId || q.activeCutId!;
+  const target = q.cuts!.find((c) => c.id === targetId);
+  if (!target) throw new Error(`Cut not found ${targetId}`);
+  const prevKind = cutKindOf(target);
+  if (prevKind === kind) return q;
+  if (prevKind === "3d" && kind === "2d") {
+    throw new Error(
+      `Cannot directly overwrite 3D cut "${target.name}" into a 2D cut (that would discard 3D depth occlusion and 3D camera moves). ` +
+        `Use prerender_cut_to_2d (or "Pre-render to 2D cut" in the cut bar) to render a new 2D cut while preserving "${target.name}".`,
+    );
+  }
+  const cuts = q.cuts!.map((c) => {
+    if (c.id !== targetId) return c;
+    return { ...c, kind: "3d" as const };
+  });
+  return { ...q, cuts };
+}
+
+export function setCutMetaInProject(
+  p: Project,
+  cutId: string | undefined,
+  patch: { camera3dFov?: number | null; spaceWidth?: number | null; spaceHeight?: number | null },
+): Project {
+  const q = normalizeCuts(p);
+  const targetId = cutId || q.activeCutId!;
+  const target = q.cuts!.find((c) => c.id === targetId);
+  if (!target) throw new Error(`Cut not found ${targetId}`);
+  const cuts = q.cuts!.map((c) => {
+    if (c.id !== targetId) return c;
+    const next: Cut = { ...c };
+    if ("camera3dFov" in patch) {
+      if (patch.camera3dFov === undefined || patch.camera3dFov === null) delete next.camera3dFov;
+      else next.camera3dFov = patch.camera3dFov;
+    }
+    if ("spaceWidth" in patch) {
+      if (patch.spaceWidth === undefined || patch.spaceWidth === null) delete next.spaceWidth;
+      else {
+        if (typeof patch.spaceWidth !== "number" || !Number.isFinite(patch.spaceWidth) || patch.spaceWidth <= 0) {
+          throw new Error(`spaceWidth must be a positive number, got ${JSON.stringify(patch.spaceWidth)}`);
+        }
+        next.spaceWidth = Math.round(patch.spaceWidth);
+      }
+    }
+    if ("spaceHeight" in patch) {
+      if (patch.spaceHeight === undefined || patch.spaceHeight === null) delete next.spaceHeight;
+      else {
+        if (typeof patch.spaceHeight !== "number" || !Number.isFinite(patch.spaceHeight) || patch.spaceHeight <= 0) {
+          throw new Error(`spaceHeight must be a positive number, got ${JSON.stringify(patch.spaceHeight)}`);
+        }
+        next.spaceHeight = Math.round(patch.spaceHeight);
+      }
+    }
+    return next;
+  });
+  return { ...q, cuts };
+}
+
+export function listCamerasInCut(
+  p: Project,
+  cutId?: string,
+): { cutId: string; cutName: string; cutKind: CutKind; cameras: CameraClip[] } {
+  const q = normalizeCuts(p);
+  const targetId = cutId || q.activeCutId!;
+  const target = q.cuts!.find((c) => c.id === targetId);
+  if (!target) throw new Error(`Cut not found ${targetId}`);
+  return {
+    cutId: target.id,
+    cutName: target.name,
+    cutKind: cutKindOf(target),
+    cameras: sortCameraClips(target.cameras),
+  };
+}
+
+export function addCameraToCut(
+  p: Project,
+  cutId: string | undefined,
+  input: {
+    id?: string;
+    name?: string;
+    row?: number;
+    start: number;
+    end: number;
+    enabled?: boolean;
+    params?: Record<string, number | string>;
+  },
+): { project: Project; camera: CameraClip } {
+  const q = normalizeCuts(p);
+  const targetId = cutId || q.activeCutId!;
+  const target = q.cuts!.find((c) => c.id === targetId);
+  if (!target) throw new Error(`Cut not found ${targetId}`);
+  const kind = cutKindOf(target);
+  const row = input.row ?? 0;
+  assertCameraLaneNoOverlap(target.cameras, { start: input.start, end: input.end, row, name: input.name });
+  const params = validateCameraParams(input.params ?? {}, kind) as CameraClipParams;
+  const existingCount = (target.cameras ?? []).length;
+  const camera: CameraClip = {
+    id: input.id ?? newId("cam"),
+    name: (input.name ?? "").trim() || `Camera ${existingCount + 1}`,
+    ...(row > 0 ? { row } : {}),
+    start: input.start,
+    end: input.end,
+    ...(input.enabled === false ? { enabled: false } : {}),
+    params,
+  };
+  const nextCameras = sortCameraClips([...(target.cameras ?? []), camera]);
+  const cuts = q.cuts!.map((c) => (c.id === targetId ? { ...c, cameras: nextCameras } : c));
+  return { project: { ...q, cuts }, camera };
+}
+
+export function updateCameraInCut(
+  p: Project,
+  cutId: string | undefined,
+  cameraId: string,
+  patch: {
+    name?: string;
+    row?: number;
+    start?: number;
+    end?: number;
+    enabled?: boolean;
+    params?: Record<string, number | string | null>;
+  },
+): { project: Project; camera: CameraClip } {
+  const q = normalizeCuts(p);
+  const targetId = cutId || q.activeCutId!;
+  const target = q.cuts!.find((c) => c.id === targetId);
+  if (!target) throw new Error(`Cut not found ${targetId}`);
+  const cameras = target.cameras ?? [];
+  const prev = cameras.find((c) => c.id === cameraId);
+  if (!prev) throw new Error(`Camera ${JSON.stringify(cameraId)} not found in cut "${target.name}"`);
+  const kind = cutKindOf(target);
+  const start = patch.start !== undefined ? patch.start : prev.start;
+  const end = patch.end !== undefined ? patch.end : prev.end;
+  const row = patch.row !== undefined ? patch.row : (prev.row ?? 0);
+  const name = patch.name !== undefined ? patch.name.trim() || prev.name : prev.name;
+  assertCameraLaneNoOverlap(cameras, { start, end, row, name }, cameraId);
+  const params = patch.params !== undefined ? mergeCameraParams(prev.params, patch.params, kind) : { ...prev.params };
+  const enabled = patch.enabled !== undefined ? patch.enabled : prev.enabled;
+  const updated: CameraClip = {
+    id: prev.id,
+    ...(name ? { name } : {}),
+    ...(row > 0 ? { row } : {}),
+    start,
+    end,
+    ...(enabled === false ? { enabled: false } : {}),
+    params,
+  };
+  const nextCameras = sortCameraClips(cameras.map((c) => (c.id === cameraId ? updated : c)));
+  const cuts = q.cuts!.map((c) => (c.id === targetId ? { ...c, cameras: nextCameras } : c));
+  return { project: { ...q, cuts }, camera: updated };
+}
+
+export function removeCameraFromCut(p: Project, cutId: string | undefined, cameraId: string): Project {
+  const q = normalizeCuts(p);
+  const targetId = cutId || q.activeCutId!;
+  const target = q.cuts!.find((c) => c.id === targetId);
+  if (!target) throw new Error(`Cut not found ${targetId}`);
+  const cameras = target.cameras ?? [];
+  if (!cameras.some((c) => c.id === cameraId)) {
+    throw new Error(`Camera ${JSON.stringify(cameraId)} not found in cut "${target.name}"`);
+  }
+  const rest = cameras.filter((c) => c.id !== cameraId);
+  const cuts = q.cuts!.map((c) => {
+    if (c.id !== targetId) return c;
+    if (rest.length) return { ...c, cameras: rest };
+    const { cameras: _drop, ...without } = c;
+    return without;
+  });
+  return { ...q, cuts };
 }

@@ -6,9 +6,42 @@ import { listCuts, resolveCut } from "../../kernel/cuts";
 import { parkedCutsIndex } from "../../kernel/agentScopes.mjs";
 import { getCard } from "../../kernel/registry";
 import { cutContent, activeCutIdOf } from "../../kernel/cutSegments";
+import {
+  activeCutKind,
+  CAMERA_2D_KEYS,
+  CAMERA_3D_KEYS,
+  cutKindOf,
+  defaultCamera2D,
+  defaultCamera3D,
+  type CutKind,
+} from "../../kernel/camera.mjs";
 import { removeCutGate } from "./cutSegments";
 
 import { clipGuard, filterTools, pixelMapTools } from "../common";
+
+const CAMERA_SHORTHAND_KEYS = ["x", "y", "z", "rx", "ry", "rz", "fovDeg", "zoom", "rotate"] as const;
+
+function extractCameraParams(args: Record<string, unknown> | undefined): Record<string, number | string | null> | undefined {
+  if (!args) return undefined;
+  const out: Record<string, number | string | null> = {};
+  let touched = false;
+  if (args.params !== undefined) {
+    if (typeof args.params !== "object" || args.params === null || Array.isArray(args.params)) {
+      throw new Error("params must be an object mapping camera fields to numbers or expression strings");
+    }
+    for (const [k, v] of Object.entries(args.params as Record<string, unknown>)) {
+      out[k] = v as number | string | null;
+      touched = true;
+    }
+  }
+  for (const k of CAMERA_SHORTHAND_KEYS) {
+    if (args[k] !== undefined && !Object.hasOwn(out, k)) {
+      out[k] = args[k] as number | string | null;
+      touched = true;
+    }
+  }
+  return touched ? out : undefined;
+}
 
 export const effectsHandlers = {
   listFilters: () => filterTools.listFilters(),
@@ -60,7 +93,11 @@ export const effectsHandlers = {
   // update_clip / set_clip / get_clip / set_rect… can modify directly by clipId (see mcp/clipCut.ts)
   listCuts: (args) => {
     const p = getState().project;
-    const out: Record<string, unknown> = { activeCutId: p.activeCutId, cuts: listCuts(p) };
+    const out: Record<string, unknown> = {
+      activeCutId: p.activeCutId,
+      activeCutKind: activeCutKind(p),
+      cuts: listCuts(p).map((c) => ({ ...c, kind: c.kind ?? "2d" })),
+    };
     if (args?.cutId !== undefined) {
       const cut = resolveCut(p, { cutId: String(args.cutId) });
       const content = cutContent(p, cut.id);
@@ -68,7 +105,17 @@ export const effectsHandlers = {
       // The digest here is the content of another cut assembled using p; the "other cut" hint is
       // meaningless for it
       const { otherCuts: _drop, ...digest } = timelineDigest({ ...p, tracks: content.tracks, duration: content.duration });
-      out.timeline = { cutId: cut.id, name: cut.name, active: cut.id === activeCutIdOf(p), ...digest };
+      out.timeline = {
+        cutId: cut.id,
+        name: cut.name,
+        kind: cutKindOf(cut),
+        active: cut.id === activeCutIdOf(p),
+        ...(cut.spaceWidth ? { spaceWidth: cut.spaceWidth } : null),
+        ...(cut.spaceHeight ? { spaceHeight: cut.spaceHeight } : null),
+        ...(cut.camera3dFov ? { camera3dFov: cut.camera3dFov } : null),
+        cameras: cut.cameras ?? [],
+        ...digest,
+      };
     } else {
       // When no cut is specified, list clips from all parked cuts directly (with an upper limit):
       // once the model obtains clipId, it does not need to call user_interface_switch_cut just to
@@ -93,12 +140,159 @@ export const effectsHandlers = {
   // Create only, do not switch (user decision, 2026-10-21): switching the active cut affects all
   // members' UIs; to switch, call user_interface_switch_cut separately
   addCut: (args) => {
-    const cut = actions.addCut(args?.name, { switchTo: false });
+    if (args?.kind !== undefined && args.kind !== "2d" && args.kind !== "3d") {
+      throw new Error(`kind must be "2d" or "3d", received ${JSON.stringify(args.kind)}`);
+    }
+    const cut = actions.addCut(args?.name, {
+      switchTo: false,
+      kind: args?.kind,
+      spaceWidth: args?.spaceWidth,
+      spaceHeight: args?.spaceHeight,
+      camera3dFov: args?.camera3dFov,
+    });
+    clipGuard.noteMutation();
+    const p = getState().project;
+    const kind = cutKindOf(cut);
+    return {
+      ok: true,
+      cut: {
+        id: cut.id,
+        name: cut.name,
+        kind,
+        ...(cut.spaceWidth ? { spaceWidth: cut.spaceWidth } : null),
+        ...(cut.spaceHeight ? { spaceHeight: cut.spaceHeight } : null),
+        ...(cut.camera3dFov ? { camera3dFov: cut.camera3dFov } : null),
+      },
+      activeCutId: p.activeCutId,
+      cuts: listCuts(p),
+      note: `Created ${kind.toUpperCase()} cut "${cut.name}" (${cut.id}) without switching to it; the active cut is unchanged. To add track clips into it, run user_interface_switch_cut (or add camera clips directly by passing cutId to add_camera); or use add_cut_segment to place it into the current cut as a cut segment.`,
+    };
+  },
+  setCutKind: (args) => {
+    const kind = String(args?.kind ?? "") as CutKind;
+    if (kind !== "2d" && kind !== "3d") {
+      throw new Error(`kind must be "2d" or "3d", received ${JSON.stringify(args?.kind)}`);
+    }
+    const p0 = getState().project;
+    const cut = args?.cutId ? resolveCut(p0, { cutId: String(args.cutId) }) : resolveCut(p0, { cutId: activeCutIdOf(p0) });
+    actions.setCutKind(cut.id, kind);
+    if (args?.spaceWidth !== undefined || args?.spaceHeight !== undefined || args?.camera3dFov !== undefined) {
+      actions.setCutMeta(cut.id, {
+        ...(args.spaceWidth !== undefined ? { spaceWidth: args.spaceWidth } : {}),
+        ...(args.spaceHeight !== undefined ? { spaceHeight: args.spaceHeight } : {}),
+        ...(args.camera3dFov !== undefined ? { camera3dFov: args.camera3dFov } : {}),
+      });
+    }
     clipGuard.noteMutation();
     const p = getState().project;
     return {
-      ok: true, cut: { id: cut.id, name: cut.name }, activeCutId: p.activeCutId, cuts: listCuts(p),
-      note: `Created "${cut.name}" (${cut.id}) without switching to it; the active cut is unchanged. To add clips into it, first run user_interface_switch_cut (this moves every member's interface); or use add_cut_segment to place it into the current cut as a cut segment.`,
+      ok: true,
+      cutId: cut.id,
+      name: cut.name,
+      kind,
+      activeCutId: p.activeCutId,
+      cuts: listCuts(p),
+    };
+  },
+  prerenderCutTo2D: async (args) => {
+    const p0 = getState().project;
+    const sourceCut = args?.cutId ? resolveCut(p0, { cutId: String(args.cutId) }) : resolveCut(p0, { cutId: activeCutIdOf(p0) });
+    const { cut, media, clip } = await actions.prerenderCutTo2D(sourceCut.id, { switchTo: false, name: args?.name });
+    clipGuard.noteMutation();
+    const p = getState().project;
+    return {
+      ok: true,
+      sourceCutId: sourceCut.id,
+      cut: { id: cut.id, name: cut.name, kind: "2d" as const },
+      media: { id: media.id, name: media.name, cardUrl: media.url, duration: media.duration, width: media.width, height: media.height },
+      clipId: clip.id,
+      activeCutId: p.activeCutId,
+      cuts: listCuts(p),
+      note: `Pre-rendered 3D cut "${sourceCut.name}" into video asset "${media.name}" and placed it on Track 1 of new 2D cut "${cut.name}" (${cut.id}). The original 3D cut "${sourceCut.name}" (${sourceCut.id}) was kept untouched.`,
+    };
+  },
+  listCameras: (args) => {
+    const p = getState().project;
+    const cut = args?.cutId ? resolveCut(p, { cutId: String(args.cutId) }) : resolveCut(p, { cutId: activeCutIdOf(p) });
+    const kind = cutKindOf(cut);
+    const { cameras } = actions.listCameras(cut.id);
+    return {
+      ok: true,
+      cutId: cut.id,
+      name: cut.name,
+      kind,
+      cutKind: kind,
+      allowedParams: kind === "3d" ? [...CAMERA_3D_KEYS] : [...CAMERA_2D_KEYS],
+      defaultPose: kind === "3d" ? defaultCamera3D(p, cut) : defaultCamera2D(),
+      cameras,
+    };
+  },
+  addCamera: (args) => {
+    const p0 = getState().project;
+    const cut = args?.cutId ? resolveCut(p0, { cutId: String(args.cutId) }) : resolveCut(p0, { cutId: activeCutIdOf(p0) });
+    const params = extractCameraParams(args as unknown as Record<string, unknown>);
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        if (v === null) throw new Error(`add_camera params.${k} cannot be null; omit unset fields or pass a number / expression string`);
+      }
+    }
+    const camera = actions.addCamera(
+      {
+        name: args.name,
+        row: args.row,
+        start: args.start,
+        end: args.end,
+        enabled: args.enabled,
+        params: (params ?? {}) as Record<string, number | string>,
+      },
+      cut.id,
+    );
+    clipGuard.noteMutation();
+    return {
+      ok: true,
+      cutId: cut.id,
+      kind: cutKindOf(cut),
+      cameraId: camera.id,
+      camera,
+      cameras: actions.listCameras(cut.id).cameras,
+    };
+  },
+  updateCamera: (args) => {
+    const p0 = getState().project;
+    const cut = args?.cutId ? resolveCut(p0, { cutId: String(args.cutId) }) : resolveCut(p0, { cutId: activeCutIdOf(p0) });
+    const params = extractCameraParams(args as unknown as Record<string, unknown>);
+    const camera = actions.updateCamera(
+      String(args.cameraId),
+      {
+        ...(args.name !== undefined ? { name: args.name } : {}),
+        ...(args.row !== undefined ? { row: args.row } : {}),
+        ...(args.start !== undefined ? { start: args.start } : {}),
+        ...(args.end !== undefined ? { end: args.end } : {}),
+        ...(args.enabled !== undefined ? { enabled: args.enabled } : {}),
+        ...(params !== undefined ? { params } : {}),
+      },
+      cut.id,
+    );
+    clipGuard.noteMutation();
+    return {
+      ok: true,
+      cutId: cut.id,
+      kind: cutKindOf(cut),
+      cameraId: camera.id,
+      camera,
+      cameras: actions.listCameras(cut.id).cameras,
+    };
+  },
+  removeCamera: (args) => {
+    const p0 = getState().project;
+    const cut = args?.cutId ? resolveCut(p0, { cutId: String(args.cutId) }) : resolveCut(p0, { cutId: activeCutIdOf(p0) });
+    actions.removeCamera(String(args.cameraId), cut.id);
+    clipGuard.noteMutation();
+    return {
+      ok: true,
+      removed: String(args.cameraId),
+      cutId: cut.id,
+      cameras: actions.listCameras(cut.id).cameras,
     };
   },
   renameCut: (args) => {

@@ -2,6 +2,8 @@ import { type TrackResult } from "../ai/track";
 import { getState, actions } from "../store/project";
 import { getCard } from "../kernel/registry";
 import { assertNo3dOnMedia, envelopeOf, isComposite } from "../kernel/envelope";
+import { activeCutKind, effectiveCamera3dFov } from "../kernel/camera.mjs";
+import type { FrameExprMap } from "../kernel/frameExpr.mjs";
 import type { PartInstance } from "../kernel/types";
 import { CAPTION_CARD_ID } from "../kernel/captions";
 import { findClip, suggestPosition, type SubjectBox, type SubjectRangeInfo } from "../kernel/project";
@@ -117,9 +119,17 @@ export async function measureContentBoxes(clipIds: string[]): Promise<Map<string
  * contentBox, call get_layout (contentLayoutOf) separately.
  */
 export function frameLayoutOf(clipId: string) {
-  const hit = findClip(getState().project, clipId);
+  const p = getState().project;
+  const hit = findClip(p, clipId);
   const frame = (hit?.clip as { frame?: ClipFrame } | undefined)?.frame;
-  return { clipId, local: frame ?? null, world: worldOf(frame, stageSize(), getState().project.camera3dFov) };
+  const frameExpr = hit?.clip?.frameExpr;
+  const fov = activeCutKind(p) === "3d" ? effectiveCamera3dFov(p) : p.camera3dFov;
+  return {
+    clipId,
+    local: frame ?? null,
+    ...(frameExpr && Object.keys(frameExpr).length ? { frameExpr } : null),
+    world: worldOf(frame, stageSize(), fov),
+  };
 }
 
 /** frameLayoutOf + measured contentBox (measures all clipIds in a single round trip, see measureContentBoxes) */
@@ -164,9 +174,19 @@ export function withFrame(clipId: string, next: (prev: ClipFrame | undefined, st
  * assertNo3dOnMedia in kernel/envelope.ts, which also guards the set_clip path:
  * both paths share the same check and wording to avoid modifying only one place in the future.
  */
-export function reject3dOnMedia(clipId: string, args: { rotateX?: number; rotateY?: number; translateZ?: number }) {
-  const hit = findClip(getState().project, clipId);
-  if (hit) assertNo3dOnMedia(hit.clip, args as ClipFrame);
+export function reject3dOnMedia(
+  clipId: string,
+  args: { rotateX?: number | string; rotateY?: number | string; translateZ?: number | string },
+  frameExpr?: FrameExprMap | null,
+) {
+  const p = getState().project;
+  const hit = findClip(p, clipId);
+  if (!hit) return;
+  const numeric3d: Partial<ClipFrame> = {};
+  if (typeof args.rotateX === "number") numeric3d.rotateX = args.rotateX;
+  if (typeof args.rotateY === "number") numeric3d.rotateY = args.rotateY;
+  if (typeof args.translateZ === "number") numeric3d.translateZ = args.translateZ;
+  assertNo3dOnMedia(hit.clip, numeric3d as ClipFrame, { cutKind: activeCutKind(p), frameExpr: frameExpr ?? undefined });
 }
 
 /** State of background STT tasks (MCP tools return jobId immediately; results rely on polling) */

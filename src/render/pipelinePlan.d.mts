@@ -61,6 +61,8 @@ export interface PlanPipelinesOptions {
   includeLightCardsFor3D?: boolean;
   /** Shorthand for `includeLightCardsFor3D` */
   view3d?: boolean;
+  /** Declared kind of the active cut (`"2d"` or `"3d"`). When `"3d"`, standalone light cards are also included in `prerenderSet`. */
+  cutKind?: '2d' | '3d';
   /** Capability table / function to determine whether a card is a standalone card; when omitted, all except `scene-3d` are included */
   isIndependent?: ((clip: any) => boolean) | null;
   compositing?: ClipIndex<string> | ((clip: any) => string | undefined) | null;

@@ -18702,5 +18702,205 @@
  "{0} segments/min": {
   "zh": "{0} 段/分钟",
   "ja": "{0} セグメント/分"
+ },
+ "Camera": {
+  "zh": "摄像机",
+  "ja": "カメラ"
+ },
+ "Space": {
+  "zh": "空间",
+  "ja": "空間"
+ },
+ "Camera view: live output camera frame of this 3D cut": {
+  "zh": "摄像机视图：此 3D 剪辑的实时输出画面",
+  "ja": "カメラビュー：この3Dカットの出力カメラ映像"
+ },
+ "Space view: orbit freely in 3D space with the live output camera frustum": {
+  "zh": "空间视图：在 3D 空间自由环绕查看，并显示输出摄像机视锥",
+  "ja": "空間ビュー：出力カメラの視錐台を表示して3D空間を自由に回転確認"
+ },
+ "3D cut board": {
+  "zh": "3D 剪辑面板",
+  "ja": "3Dカットボード"
+ },
+ "Keyframe expressions": {
+  "zh": "关键帧表达式",
+  "ja": "キーフレーム式"
+ },
+ "Animate placement deterministically using t (local seconds), d (clip duration), p (0..1).": {
+  "zh": "使用 t（片段内秒数）、d（片段时长）、p（0..1 进度）确定性地驱动位置动画。",
+  "ja": "t（クリップ内秒数）、d（クリップ長）、p（0..1進行度）で配置を決定論的にアニメーション化します。"
+ },
+ "Active cut": {
+  "zh": "当前剪辑",
+  "ja": "現在のカット"
+ },
+ "Canvas space": {
+  "zh": "画布空间",
+  "ja": "キャンバス空間"
+ },
+ "Default 3D FOV": {
+  "zh": "默认 3D 视场角",
+  "ja": "既定の3D視野角"
+ },
+ "Create a 3D cut and open it": {
+  "zh": "新建 3D 剪辑并打开",
+  "ja": "3Dカットを作成して開く"
+ },
+ "Switch to 3D cut": {
+  "zh": "切换为 3D 剪辑",
+  "ja": "3Dカットに切り替え"
+ },
+ "Camera frustum": {
+  "zh": "摄像机视锥",
+  "ja": "カメラ視錐台"
+ },
+ "New 3D cut": {
+  "zh": "新建 3D 剪辑",
+  "ja": "新規3Dカット"
+ },
+ "Losslessly switch this 2D cut into a 3D cut (depth-sorted boards and 3D camera lane)": {
+  "zh": "将此 2D 剪辑无损切换为 3D 剪辑（按深度遮挡面板并启用 3D 摄像机栏）",
+  "ja": "この2Dカットをロスレスで3Dカットに切り替え（奥行きソートと3Dカメラレーン）"
+ },
+ "Pre-rendering a 3D cut to a 2D cut requires the desktop rendering service": {
+  "zh": "将 3D 剪辑预渲染为 2D 剪辑需要桌面渲染服务",
+  "ja": "3Dカットを2Dカットにプリレンダーするにはデスクトップ描画サービスが必要です"
+ },
+ "Render this 3D cut into an MP4 video asset and create a new 2D cut with it, keeping the 3D cut untouched": {
+  "zh": "将此 3D 剪辑预渲染为 MP4 视频素材并以此新建 2D 剪辑，原 3D 剪辑保持不变",
+  "ja": "この3DカットをMP4動画素材としてレンダリングし、元の3Dカットを残したまま新しい2Dカットを作成します"
+ },
+ "Pre-rendering...": {
+  "zh": "预渲染中…",
+  "ja": "プリレンダー中…"
+ },
+ "Pre-render to 2D cut": {
+  "zh": "预渲染为 2D 剪辑",
+  "ja": "2Dカットへプリレンダー"
+ },
+ "In a 3D cut, occlusion follows 3D depth rather than track order; tracks only group clips and break equal-depth ties": {
+  "zh": "在 3D 剪辑中，遮挡关系由 3D 深度决定而非轨道顺序；轨道仅用于分组与同深度并列排序",
+  "ja": "3Dカットでは遮蔽はトラック順ではなく3D奥行きに従います。トラックは整理と同奥行きの順序付けにのみ使われます"
+ },
+ "Camera card": {
+  "zh": "摄像机卡片",
+  "ja": "カメラカード"
+ },
+ "Cut not found {0}": {
+  "zh": "未找到剪辑 {0}",
+  "ja": "カットが見つかりません: {0}"
+ },
+ "Cut \"{0}\" is already a 2D cut; only 3D cuts need pre-rendering to a 2D cut": {
+  "zh": "剪辑「{0}」已是 2D 剪辑；仅 3D 剪辑需要预渲染为 2D 剪辑",
+  "ja": "カット「{0}」は既に2Dカットです。2Dカットへのプリレンダーが必要なのは3Dカットのみです"
+ },
+ "Pre-rendered 3D cut response is missing asset hash": {
+  "zh": "3D 剪辑预渲染响应缺少素材哈希",
+  "ja": "プリレンダーされた3Dカットの応答にアセットハッシュがありません"
+ },
+ "Pre-rendering 3D cut failed (HTTP {0})": {
+  "zh": "预渲染 3D 剪辑失败（HTTP {0}）",
+  "ja": "3Dカットのプリレンダーに失敗しました（HTTP {0}）"
+ },
+ "Project changed while pre-rendering; aborted applying result": {
+  "zh": "预渲染期间工程已变更，已放弃写入结果",
+  "ja": "プリレンダー中にプロジェクトが変更されたため、結果の適用を中止しました"
+ },
+ "Pan X": {
+  "zh": "平移 X",
+  "ja": "パン X"
+ },
+ "Pan Y": {
+  "zh": "平移 Y",
+  "ja": "パン Y"
+ },
+ "Pos X": {
+  "zh": "位置 X",
+  "ja": "位置 X"
+ },
+ "Pos Y": {
+  "zh": "位置 Y",
+  "ja": "位置 Y"
+ },
+ "Pos Z": {
+  "zh": "位置 Z",
+  "ja": "位置 Z"
+ },
+ "Pitch X": {
+  "zh": "俯仰 X",
+  "ja": "ピッチ X"
+ },
+ "Yaw Y": {
+  "zh": "偏航 Y",
+  "ja": "ヨー Y"
+ },
+ "Roll Z": {
+  "zh": "滚转 Z",
+  "ja": "ロール Z"
+ },
+ "FOV": {
+  "zh": "视场角",
+  "ja": "視野角"
+ },
+ "3D Camera Clip": {
+  "zh": "3D 摄像机片段",
+  "ja": "3Dカメラクリップ"
+ },
+ "2D Camera Clip": {
+  "zh": "2D 摄像机片段",
+  "ja": "2Dカメラクリップ"
+ },
+ "Enabled": {
+  "zh": "启用",
+  "ja": "有効"
+ },
+ "Higher row overrides lower row when intervals overlap": {
+  "zh": "时间区间重叠时，上方行覆盖下方行",
+  "ja": "区間が重なる場合、上の行が下の行を上書きします"
+ },
+ "Row": {
+  "zh": "行",
+  "ja": "行"
+ },
+ "Upper row overrides lower row": {
+  "zh": "上方行覆盖下方行",
+  "ja": "上の行が下の行を上書き"
+ },
+ "Pose & Expressions": {
+  "zh": "姿态与表达式",
+  "ja": "姿勢と式"
+ },
+ "Enter a number or an expression in t (clip seconds), d (clip duration), p (0..1 progress).": {
+  "zh": "输入数值或含 t（片段秒数）、d（片段时长）、p（0..1 进度）的表达式。",
+  "ja": "数値、または t（クリップ秒数）・d（クリップ長）・p（0..1進行度）を使った式を入力します。"
+ },
+ "Delete camera": {
+  "zh": "删除摄像机",
+  "ja": "カメラを削除"
+ },
+ "Camera lane ({0} cut): upper row overrides lower row; uncovered moments use the default straight-on view": {
+  "zh": "摄像机栏（{0} 剪辑）：上方行覆盖下方行；未覆盖时刻使用默认正视视角",
+  "ja": "カメラレーン（{0}カット）：上の行が下の行を上書きし、未配置の時間帯は既定の正面視点になります"
+ },
+ "Add camera clip at playhead": {
+  "zh": "在播放头处添加摄像机片段",
+  "ja": "再生ヘッド位置にカメラクリップを追加"
+ },
+ "Add camera clip": {
+  "zh": "添加摄像机片段",
+  "ja": "カメラクリップを追加"
+ },
+ "Enable camera": {
+  "zh": "启用摄像机",
+  "ja": "カメラを有効化"
+ },
+ "Disable camera": {
+  "zh": "禁用摄像机",
+  "ja": "カメラを無効化"
+ },
+ "Duplicate on upper override row": {
+  "zh": "复制到上方覆盖行",
+  "ja": "上のオーバーライド行に複製"
  }
 }

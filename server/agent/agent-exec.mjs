@@ -558,6 +558,10 @@ export function createAgentExecutor({
   async function seeFrames(args, conv, toolDef) {
     const snap = await readSnapshot(conv);
     const { source, cutId, ...rest } = args || {};
+    if (rest.view !== undefined && rest.view !== null && rest.view !== 'camera' && rest.view !== 'space') {
+      throw new Error(`view must be "camera" or "space", received ${JSON.stringify(rest.view)}`);
+    }
+    const view = rest.view === 'space' ? 'space' : rest.view === 'camera' ? 'camera' : undefined;
     // cutId (user decision, 2026-10-21): viewing inactive cuts does not require switching.
     // Render receives project view with "that cut treated as active"; view is only used for this image
     // output, does not write replica, does not commit, does not change activeCutId; render side sees
@@ -565,13 +569,13 @@ export function createAgentExecutor({
     const look = seeFramesView(snap.project, cutId);
     const times = Array.isArray(rest.times) ? rest.times.filter((x) => typeof x === 'number').slice(0, 10) : [];
     const body = times.length
-      ? { project: look.project, times, clipId: rest.clipId }
-      : { project: look.project, t: typeof rest.t === 'number' ? rest.t : (rest.clipId ? undefined : (look.active ? playhead() : look.parkedT)), clipId: rest.clipId };
+      ? { project: look.project, times, clipId: rest.clipId, ...(view ? { view } : {}) }
+      : { project: look.project, t: typeof rest.t === 'number' ? rest.t : (rest.clipId ? undefined : (look.active ? playhead() : look.parkedT)), clipId: rest.clipId, ...(view ? { view } : {}) };
     // cutLook: image output must render using this view (account mode therefore does not hand off
     // to member devices: member page renders against its own project, cannot view other cuts)
     const data = await prerenderPost('/api/vision/snapshot', body, { timeoutMs: toolDef?.timeoutMs || 180_000, ...(look.active ? {} : { cutLook: true }) });
     if (!data?.ok) throw new Error(data?.error || 'Failed to render the frame');
-    let result = times.length ? { ok: true, frames: data.frames, note: data.note, __images: data.__images } : data;
+    let result = times.length ? { ok: true, frames: data.frames, note: data.note, ...(data.view ? { view: data.view } : {}), __images: data.__images } : data;
     result = { ...result, cut: look.cut };
     const images = [];
     if (data.__image?.base64) images.push({ mime: data.__image.mime, base64: data.__image.base64, label: typeof data.t === 'number' ? `t=${data.t}s` : '' });
@@ -690,6 +694,22 @@ export function createAgentExecutor({
         return { ...projectView(snap.project), rev: snap.rev };
       }
       if (tool === 'see_frames' && args?.source !== undefined && args.source !== 'timeline') return undefined;
+      if (tool === 'prerender_cut_to_2d') {
+        if (!prerenderPost) return undefined;
+        const snap = await readSnapshot(conv);
+        const look = seeFramesView(snap.project, args?.cutId);
+        if (look.project.cutKind !== '3d' && (snap.project.cuts ?? []).find((c) => c.id === look.cut.id)?.kind !== '3d') {
+          throw new Error(`Cut "${look.cut.name}" is already a 2D cut; only 3D cuts need pre-rendering to a 2D cut`);
+        }
+        const data = await prerenderPost(
+          '/api/vision/prerender-cut',
+          { project: snap.project, cutId: look.cut.id, name: args?.name },
+          { timeoutMs: toolDef?.timeoutMs || 180_000 },
+        );
+        if (!data?.ok) throw new Error(data?.error || 'Failed to pre-render 3D cut');
+        return runRoute(tool, args ?? {}, conv, ctx, (host) =>
+          host.commitPrerenderedCutTo2D(look.cut.id, data, { switchTo: false, name: args?.name }));
+      }
       const reader = READERS[tool];
       if (reader) {
         if (!prerenderPost && tool !== 'get_layout') return undefined;

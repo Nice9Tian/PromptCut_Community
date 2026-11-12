@@ -159,7 +159,7 @@ test('Render, custom measurement and sound effect generation tools with relaxed 
   const withTimeout = mcpTools.filter((t) => t.timeoutMs);
   // Pin only the list, not the order: after tool tables were split by domain into server/tools/,
   // the sequence is determined by aggregation order and has no semantic meaning
-  assert.deepEqual(withTimeout.map((t) => t.name).sort(), ['bake_card', 'get_gif', 'measure_audio_js', 'render_card_audio', 'see_frames', 'sound_generate']);
+  assert.deepEqual(withTimeout.map((t) => t.name).sort(), ['bake_card', 'get_gif', 'measure_audio_js', 'prerender_cut_to_2d', 'render_card_audio', 'see_frames', 'sound_generate']);
   for (const t of withTimeout.filter((x) => !['measure_audio_js', 'sound_generate', 'render_card_audio'].includes(x.name))) assert.ok(t.timeoutMs > 120000, `${t.name} must be greater than the 120-second render limit in vite-plugin-vision`);
   assert.ok(withTimeout.find(t => t.name === 'sound_generate').timeoutMs >= 120000, 'The sound effect tool waits for Worker synthesis and asset ingestion, keeping a 120-second budget');
   assert.ok(withTimeout.find(t => t.name === 'render_card_audio').timeoutMs >= 120000, 'Audio-visual card sound waits for chunked generation and asset ingestion, keeping a 120-second budget');

@@ -12,4 +12,5 @@ export function detachCardNode(
   project: Project,
   clipId: string,
   getCard?: (id: string) => unknown,
+  targetNodeId?: string,
 ): { project: Project; nodeId: string; nextNodeId: string | null; removed: boolean };

@@ -52,7 +52,7 @@ export const TOP_FIELDS = [
   "cardNodes", "style",
 ];
 
-import { reachableCutContents } from "../kernel/cutIdentity.mjs";
+import { activeCutRenderMeta, reachableCutContents } from "../kernel/cutIdentity.mjs";
 
 /** Recalculation count (cache misses). Used by tests to prove "the same set of references will not recalculate" */
 const stats = { fields: 0, tracks: 0, clips: 0, values: 0 };
@@ -132,6 +132,8 @@ export function projectHash(project) {
     // projects without cut segments do not change the hash by a single byte
     const cutRefs = reachableCutContents(project);
     if (cutRefs.length) parts.push("cutRefs:" + hashString(JSON.stringify(cutRefs)));
+    const cutMeta = activeCutRenderMeta(project);
+    if (cutMeta) parts.push("cutMeta:" + hashString(JSON.stringify(cutMeta)));
     h = hashString(parts.join("|"));
     fieldsCache.set(project, h);
   }

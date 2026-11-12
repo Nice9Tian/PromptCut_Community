@@ -475,6 +475,26 @@ export default function ExportView() {
       await stageStepTo(frame, fps);
       stats.stepMs = performance.now() - t0;
 
+      const has3DCut = !!document.querySelector("canvas[data-pc-3d-cut]");
+      if (has3DCut) {
+        const offMedia = [...document.querySelectorAll<HTMLVideoElement | HTMLImageElement>("[data-pc-3d-offscreen] video[data-pc-media-src], [data-pc-3d-offscreen] img[data-pc-media-src]")];
+        if (offMedia.length) {
+          for (const el of offMedia) if (!el.crossOrigin) el.crossOrigin = "anonymous";
+          if (freshTicket) {
+            for (const el of offMedia) {
+              const src = el.getAttribute("data-pc-media-src") ?? "";
+              const next = withTicket(src, freshTicket);
+              if (next !== src) {
+                el.setAttribute("data-pc-media-src", next);
+                stats.ticketSwaps++;
+              }
+            }
+          }
+          await window.__pcPrepareFrameMedia?.();
+        }
+        await window.__pcRender3DCut?.();
+      }
+
       t0 = performance.now();
       const snap = window.__pcCreateSnapshot!();
       if (snap.lossy) throw new Error(trText("This frame has a canvas whose pixels can't be read, so it can't be exported"));
@@ -498,7 +518,8 @@ export default function ExportView() {
       }
 
       t0 = performance.now();
-      const live = [...document.querySelectorAll<HTMLVideoElement | HTMLImageElement>("[data-pc-scene] video[data-pc-media-src], [data-pc-scene] img[data-pc-media-src]")];
+      const live = [...document.querySelectorAll<HTMLVideoElement | HTMLImageElement>("[data-pc-scene] video[data-pc-media-src], [data-pc-scene] img[data-pc-media-src]")]
+        .filter((el) => !el.closest("[data-pc-3d-offscreen]"));
       const holes = [...tpl.content.querySelectorAll<HTMLElement>("video[data-pc-media-src], img[data-pc-media-src]")];
       if (live.length) {
         for (const el of live) if (!el.crossOrigin) el.crossOrigin = "anonymous";
@@ -530,6 +551,8 @@ export default function ExportView() {
           }
           hole.replaceWith(img);
         });
+        window.__pcHideFrameMedia?.();
+      } else if (has3DCut) {
         window.__pcHideFrameMedia?.();
       }
       stats.mediaMs = performance.now() - t0;

@@ -1,7 +1,7 @@
 import type { Project } from "../kernel/project";
 import { invalidatePrerenderBase, prerenderUrl } from "./prerender";
 import { alignMirror, resyncDataMirror } from "./dataMirror";
-import { reachableCutContents } from "../kernel/cutIdentity.mjs";
+import { activeCutRenderMeta, reachableCutContents } from "../kernel/cutIdentity.mjs";
 
 export type FrameTarget = "user" | "prerender";
 export type FrameLane = "user" | "inter_face" | "agent" | "background" | "archive" | "playback";
@@ -16,7 +16,8 @@ const signatureFields = (project: Project) => JSON.stringify([project.width, pro
 // signatures without cut segments remain unchanged by a single byte
 const signature = (project: Project) => {
   const cutRefs = reachableCutContents(project);
-  return signatureFields(project) + (cutRefs.length ? JSON.stringify(cutRefs) : "");
+  const cutMeta = activeCutRenderMeta(project);
+  return signatureFields(project) + (cutRefs.length ? JSON.stringify(cutRefs) : "") + (cutMeta ? JSON.stringify(cutMeta) : "");
 };
 let saved: { signature: string; snapshots: string } | null = null;
 let restorePending: Promise<void> | null = null;

@@ -63,6 +63,7 @@ import { prepareFrameMedia } from './bakery/frame-media.mjs';
 import { findFfmpeg, openStreamSegmentEncoder, pickStreamEncoder, STREAM_ENCODERS, streamFilterIdentity, STREAM_SEGMENT_FRAMES } from './bakery/ffmpeg.mjs';
 import { reachableMediaIds } from '../src/kernel/cutIdentity.mjs';
 import { flatPlanProject, isolatedFlatProject } from '../src/kernel/cutFlatten.mjs';
+import { stripOuterFrameExpr } from '../src/kernel/frameExpr.mjs';
 import { mountFrameOf } from '../src/render/frameWindow.mjs';
 import { resolveFrameSize } from '../src/kernel/frameSize.mjs';
 import { cardStreamIdentity } from './card-identity.mjs';
@@ -611,7 +612,7 @@ export function planStreams(entry, { picked = () => true, budget = STREAM_DECODE
     if (!picked(control.clipId)) continue;
     const at = where.get(control.clipId);
     if (!at) continue;
-    const flat = streamEligible(control, at.clip, at.track);
+    const flat = streamEligible(control, at.clip, at.track, project);
     const solo = flat ? null : soloStreamKind(control, at.clip, at.track, project);
     if (!flat && !solo) continue;
     if (solo && soloSeen.has(control.clipId)) continue;
@@ -632,7 +633,7 @@ export function planStreams(entry, { picked = () => true, budget = STREAM_DECODE
   // Target cards of below-dependent streams (empty when `below: false`): do not participate in
   // group stream merging, but each consumes one decoder. Cards that have already formed solo streams
   // no longer produce such streams
-  const belows = below ? belowTargets(plan, { picked, where, fps, total, orderOf, taken: soloSeen }) : [];
+  const belows = below ? belowTargets(plan, { picked, where, fps, total, orderOf, taken: soloSeen, project }) : [];
   // For streams produced in stage coordinates (group streams, below-dependent streams),
   // the rectangle upper bound is the entire frame
   const stageCost = streamCost(stageStreamPixels(stage), fps);
@@ -800,7 +801,17 @@ export function isolatedStreamProject(project, spec) {
       tracks.push({ ...structuredClone(track), id, hidden: true, sourceOnly: true, clips: structuredClone(siblings) });
     }
   }
-  return { ...structuredClone(project), tracks, _cardRender: { mode: 'final', frames: {}, missing: {} } };
+  const cloned = structuredClone(project);
+  if (spec.plane === 'local' && Array.isArray(cloned.cuts)) {
+    delete cloned.cutKind;
+    for (const c of cloned.cuts) {
+      if (c && (!cloned.activeCutId || c.id === cloned.activeCutId)) {
+        delete c.kind;
+        delete c.cameras;
+      }
+    }
+  }
+  return { ...cloned, tracks, _cardRender: { mode: 'final', frames: {}, missing: {} } };
 }
 
 /**
@@ -816,6 +827,9 @@ function mountClipOf(clip) {
 function localClip(clip, spec) {
   const out = structuredClone(clip);
   delete out.motion; delete out.opacity; delete out.fadeIn; delete out.fadeOut; delete out.emphasis;
+  const sizeExpr = stripOuterFrameExpr(clip.frameExpr);
+  if (sizeExpr) out.frameExpr = sizeExpr;
+  else delete out.frameExpr;
   const size = resolveFrameSize(clip.frame, spec.stage);
   // Top-left of the box = (x, y) - anchor offset; when anchor is [0,0], it is (x, y) itself
   out.frame = clip.frame || spec.offset.x || spec.offset.y

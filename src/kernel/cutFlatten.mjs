@@ -66,9 +66,10 @@ function contentOf(p, cutId) {
   const cuts = Array.isArray(p?.cuts) ? p.cuts : [];
   const entry = cuts.find((c) => c?.id === cutId);
   if (!entry) return null;
-  if (cutId === activeIdOf(p)) return { tracks: p.tracks ?? [], duration: Number(p.duration) || 0 };
+  const kind = entry?.kind === '3d' ? '3d' : '2d';
+  if (cutId === activeIdOf(p)) return { tracks: p.tracks ?? [], duration: Number(p.duration) || 0, kind };
   if (!Array.isArray(entry.tracks)) return null;
-  return { tracks: entry.tracks, duration: typeof entry.duration === 'number' && entry.duration > 0 ? entry.duration : FALLBACK_CUT_DURATION };
+  return { tracks: entry.tracks, duration: typeof entry.duration === 'number' && entry.duration > 0 ? entry.duration : FALLBACK_CUT_DURATION, kind };
 }
 
 /** Whether the project's active cut has cut segments to flatten */
@@ -96,7 +97,8 @@ function expandSegment(project, seg, ctx, out, trackIdPrefix) {
   const chain = [...ctx.chain, { id: seg.id, cutId, start, end, cutOffset: offset }];
   const mount = ctx.mount ?? Math.max(0, segStart - offset);
   const idPrefix = `${ctx.idPrefix}${seg.id}${FLAT_SEP}`;
-  const inner = { shift, from, to, chain, mount, idPrefix, path: [...ctx.path, cutId] };
+  const in3dCut = Boolean(ctx.in3dCut || content.kind === '3d');
+  const inner = { shift, from, to, chain, mount, idPrefix, in3dCut, path: [...ctx.path, cutId] };
   for (const track of content.tracks) {
     if (!track || track.hidden || track.sourceOnly) continue;
     const trackId = `${trackIdPrefix}${FLAT_SEP}${seg.id}${FLAT_SEP}${track.id}`;
@@ -111,7 +113,7 @@ function expandSegment(project, seg, ctx, out, trackIdPrefix) {
       const vs = Math.max(from, s), ve = Math.min(to, e);
       if (!(ve > vs + EPS)) continue;
       const lead = vs - s;
-      const v = { ...c, id: `${idPrefix}${c.id}`, start: vs, end: ve, flat: { lead, chain, mount } };
+      const v = { ...c, id: `${idPrefix}${c.id}`, start: vs, end: ve, flat: { lead, chain, mount, ...(in3dCut ? { in3dCut: true } : null) } };
       // Advance asset start per clip speed for trimmed portion (kernel/clipTime.mjs; when default 1, lead × 1 = lead, bitwise unchanged)
       if (c.mediaId && lead > 0) v.mediaOffset = (Number(c.mediaOffset) || 0) + lead * clipSpeed(c);
       clips.push(v);
@@ -192,7 +194,7 @@ export function withFlatNodes(flatProject, graph) {
 /** Strip the cut segment's own appearance: box (nested scene fills frame 1:1), opacity, fade, emphasis, motion path */
 function bareSegment(seg) {
   const out = structuredClone(seg);
-  delete out.frame; delete out.opacity; delete out.fadeIn; delete out.fadeOut; delete out.emphasis; delete out.motion;
+  delete out.frame; delete out.frameExpr; delete out.opacity; delete out.fadeIn; delete out.fadeOut; delete out.emphasis; delete out.motion;
   return out;
 }
 
@@ -233,9 +235,16 @@ export function isolatedFlatProject(project, clipId, localize = (c) => structure
   const innerId = clipId.slice(prefix.length);
   const root = structuredClone(project);
   root.tracks = isolateTracks(root.tracks, f.chain[0].id, bareSegment);
+  const rootActiveId = activeIdOf(root);
+  if (rootActiveId && Array.isArray(root.cuts)) {
+    const activeCut = root.cuts.find((c) => c?.id === rootActiveId);
+    if (activeCut) { delete activeCut.kind; delete activeCut.cameras; }
+  }
   for (let i = 0; i < f.chain.length; i++) {
     const entry = (root.cuts ?? []).find((c) => c?.id === f.chain[i].cutId);
     if (!entry || !Array.isArray(entry.tracks)) return null;
+    delete entry.kind;
+    delete entry.cameras;
     const last = i === f.chain.length - 1;
     entry.tracks = isolateTracks(entry.tracks, last ? innerId : f.chain[i + 1].id, last ? localize : bareSegment);
   }

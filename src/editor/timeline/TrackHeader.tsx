@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Track } from "../../kernel/project";
-import { actions } from "../../store/project";
+import { activeCutKind, Track } from "../../kernel/project";
+import { actions, useStore } from "../../store/project";
 import { ContextMenu } from "./ContextMenu";
 import { useTimelineContext } from "./TimelineContext";
 import { useReorderDrag, useRowOffset } from "./useReorder";
@@ -17,6 +17,7 @@ import { shownName } from "../../i18n/names.ts";
  */
 export function TrackHeader({ track, index }: { track: Track; index: number }) {
   const { trackH } = useTimelineContext();
+  const is3dCut = useStore((s) => activeCutKind(s.project) === "3d");
   const { start: startReorder } = useReorderDrag();
   // This project only grants read-only permission (guest): reordering, renaming, mute / hide / lock, and deleting tracks are all disallowed
   const ro = useReadOnly();
@@ -75,6 +76,15 @@ export function TrackHeader({ track, index }: { track: Track; index: number }) {
             shownName(track.name)
           )}
         </div>
+        {is3dCut && (
+          <span
+            data-pc="track-depth-hint"
+            className="pc-track-depth-badge"
+            title={tr("In a 3D cut, occlusion follows 3D depth rather than track order; tracks only group clips and break equal-depth ties")}
+          >
+            {tr("Depth")}
+          </span>
+        )}
         {(track.muted || mutedClips > 0) && <span className="pc-track-mute-summary" title={track.muted ? tr("Whole track is muted") : tr("{0} clips muted; zoom in on the timeline to see each segment's marker", mutedClips)}>
           {track.muted ? tr("Muted") : tr("{0} muted", mutedClips)}
         </span>}

@@ -17,6 +17,17 @@ So take these three steps first:
 
 "The color is wrong", "the copy needs changing" and "the position needs moving" are all matters of adjusting parameters; do not create a new card for them.
 
+### 0.1 Structure of the film
+
+A card is **one reusable visual subject or graphic beat**, never an entire multi-scene film, multi-room walkthrough, or camera rig:
+
+- **Never put multiple scenes, rooms, chapters, or shots into one card**, and **never hardcode a camera keyframe array (`CAM_KEYS`, `CAMERA_PATH`, `SCENES`, `SHOTS`) inside a card's TSX source**. `create_card` checks for monolith schedules and embedded camera rigs and rejects them on the spot.
+- Instead, build the film's structure on the timeline:
+  1. Place each visual board, title, chart, or video/image media item as **its own clip** on a `"2d"` or `"3d"` cut (`add_cut({ kind: "3d" })`, `add_clip`, `set_position` with numbers or `t`/`d`/`p` `frameExpr` expressions).
+  2. Drive continuous one-take camera motion on the cut's dedicated **camera lane** with `add_camera` / `update_camera` (`x, y, zoom, rotate` on 2D cuts; `x, y, z, rx, ry, rz, fovDeg` on 3D cuts, each accepting numbers or `t`/`d`/`p` expressions).
+  3. Keep screen-locked captions (`caption-track`) and 2D HUD overlays in a `"2d"` cut (and embed `"3d"` cuts inside it via `add_cut_segment`, or pre-render a `"3d"` cut to an `.mp4` asset in a new `"2d"` cut via `prerender_cut_to_2d`).
+  4. Pre-overlay cards (`overlay: "pre"`) only attach to true 3D scene hosts (`scene-3d` or a `"3d"` cut segment); `apply_card` rejects attaching a pre-overlay to an ordinary DOM card or media clip.
+
 ## 1. Two styles: pick one before creating a card
 
 Every PromptCut card picks one of two styles (motion graphics cards and media effect cards alike); **both are official styles and neither is recommended over the other**, so choose according to what the picture needs. Whichever you choose, write `frameMode` as the corresponding literal in the card definition object (the exported `CardDef`; see section 4.1 for its fields). **`frameMode` is required**: leaving it out when creating the card is rejected, and writing it as a variable or a computed value is also rejected (the card creation check must read directly from the source which one you chose).

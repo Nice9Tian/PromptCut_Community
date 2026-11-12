@@ -247,6 +247,21 @@ export async function bakeFrames(bakery, opts = {}) {
     await beginFrame({ screenshot: FLUSH_SHOT });
   };
 
+  const render3DCut = async () => {
+    let done = false;
+    let failure;
+    const pending = page.evaluate(() => window.__pcRender3DCut?.())
+      .catch((e) => { failure = e; })
+      .finally(() => { done = true; });
+    while (!done) {
+      await beginFrame();
+      if (!done) await new Promise((r) => setTimeout(r, 4));
+    }
+    await pending;
+    if (failure) throw failure;
+    await beginFrame();
+  };
+
   /** Capture one: issue a tick and request a screenshot for this tick. At this point animations are
    *  pinned and page clock is quantized; visuals will not change further in this tick.
    *  prime: capture and discard an image first if no screenshot was captured at the previous
@@ -258,26 +273,43 @@ export async function bakeFrames(bakery, opts = {}) {
     // never be used as the full-frame movie source.
     if (opts.fullFrame) {
       await prepareFrameMedia(bakery);
+      if (await page.evaluate(() => !!document.querySelector("canvas[data-pc-3d-cut]"))) {
+        await flushFrameLoop(prime);
+        await render3DCut();
+      }
       return captureFrame(bakery, shotParams, opts.signal, captureOpts);
     }
     if (!opts.glassFrames) {
-      // Pixel maps rasterize a hidden source video into a canvas. Load only the
-      // requested frame before creating the HTML snapshot; otherwise __pcCreateSnapshot would copy
-      // an empty canvas into the snapshot and every cache replay would stay blank.
-      const hasPixelMap = await page.evaluate(() => !!document.querySelector("canvas[data-pc-pixel-map]"));
-      if (hasPixelMap) {
+      // Pixel maps and 3D cuts rasterize hidden source media into canvases before creating the HTML snapshot.
+      const { hasPixelMap, has3DCut } = await page.evaluate(() => ({
+        hasPixelMap: !!document.querySelector("canvas[data-pc-pixel-map]"),
+        has3DCut: !!document.querySelector("canvas[data-pc-3d-cut]"),
+      }));
+      if (hasPixelMap || has3DCut) {
         await prepareFrameMedia(bakery);
-        await beginFrame();
-        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        if (hasPixelMap) {
+          await beginFrame();
+          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        }
       }
       // prime checks only "whether previous frame had screenshot", unaware if renderPass already stepped
       // this frame: prefer drawing an extra tick (idempotent)
       await flushFrameLoop(prime);
+      if (has3DCut) {
+        await render3DCut();
+      }
       const snapshot = await page.evaluate(() => window.__pcCreateSnapshot());
+      if (has3DCut) {
+        await page.evaluate(() => window.__pcHideFrameMedia?.());
+      }
       if (snapshot.lossy) throw new Error(`Cannot snapshot ${snapshot.lossy} canvas elements`);
       return captureSnapshot(bakery, snapshot.html, shotParams);
     }
     await prepareFrameMedia(bakery);
+    if (await page.evaluate(() => !!document.querySelector("canvas[data-pc-3d-cut]"))) {
+      await flushFrameLoop(prime);
+      await render3DCut();
+    }
     return captureFrame(bakery, shotParams, opts.signal, captureOpts);
   };
 
