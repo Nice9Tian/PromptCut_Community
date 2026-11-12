@@ -12,6 +12,7 @@ import { PartTree } from "../../render/PartTree";
 import { themeStyle } from "../../themes";
 import { PreviewCard } from "./PreviewCard";
 import { usePreviewZoom, zoomFor } from "./previewZoom";
+import { AnimationThumb } from "./AnimationThumb";
 import { tr } from "../../i18n/index.ts";
 
 /**
@@ -93,12 +94,7 @@ export function PartCell({ def, fill, aspect }: { def: PartDef<any>; fill?: bool
 
   const view = (
     <div ref={viewRef} className="absolute inset-0">
-      {!hot && (
-        <div className="pc-lib-card-text">
-          <div className="pc-lib-card-name">{tr(def.name)}</div>
-          <div className="pc-lib-card-desc">{def.description && tr(def.description)}</div>
-        </div>
-      )}
+      {!hot && <AnimationThumb kind="part" def={def} />}
       {hot && box.w > 0 && box.h > 0 && (
         <div data-pc="preview" className="absolute inset-0 overflow-hidden bg-black/60 pointer-events-none" style={{ ...themeStyle(project.themeId) }}>
           <div
@@ -131,7 +127,7 @@ export function PartCell({ def, fill, aspect }: { def: PartDef<any>; fill?: bool
       attrs={{ "data-pc-part-cell": def.id }}
       title={tr(def.name)}
       subtitle={def.role}
-      caption="hover"
+      caption="always"
       preview={view}
       hoverDelayMs={180}
       onHover={setHot}

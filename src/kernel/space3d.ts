@@ -42,6 +42,8 @@
  * to CSS; both are "looks wrong but hard to say why" bugs.
  */
 
+import { resolveFrameSize } from "./frameSize.mjs";
+
 /** Default perspective strength. 40° is steady; 50° is pronounced; 30° is close to orthographic */
 export const DEFAULT_FOV_DEG = 40;
 
@@ -186,4 +188,181 @@ export function projectStage(
     y: cy + (p.y - cy) * scale,
     scale,
   };
+}
+
+/**
+ * Near-clip fraction of camera focal distance `d` for 2D boards placed in 3D space.
+ *
+ * `cameraFor().near` stays 1 stage pixel so genuine 3D geometry (`scene-3d`) can approach the lens,
+ * whereas a flat DOM board at `d - z = 1 px` scales by `d / 1 ≈ 1484×` (at 1080p, 40° fov) and swells
+ * across the entire frame right before crossing `z = d`. Clipping boards at `0.15 · d` caps perspective
+ * magnification at `~6.7×` and culls boards cleanly before and after crossing the camera plane.
+ */
+export const BOARD_NEAR_RATIO = 0.15;
+
+/** Structural frame subset accepted by 3D board helpers (kept independent of `types.ts` and `layout.ts`). */
+export interface BoardFrame3D {
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  anchor?: readonly [number, number];
+  scale?: number;
+  rotate?: number;
+  rotateX?: number;
+  rotateY?: number;
+  translateZ?: number;
+}
+
+/** Normalized `[0..1]` content rectangle within a board (origin at top-left, matching `alphaBox`). */
+export interface BoardSubBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Optional camera pose override for walk-through or orbited viewpoints; defaults to `cameraFor(stage, fovDeg)`. */
+export interface CameraPose3D {
+  /** Camera position in world coordinates (default: `[0, 0, distance]`) */
+  position?: WorldPoint;
+  /** Unit vector along the camera's line of sight (default: `[0, 0, -1]`) */
+  forward?: WorldPoint;
+  /** Near-clip distance along `forward` in stage pixels (default: `boardNearDistance(stage, fovDeg)`) */
+  near?: number;
+}
+
+/** Near-clip distance (stage pixels) for 2D boards viewed through the stage camera. */
+export function boardNearDistance(stage: StageSize, fovDeg?: number): number {
+  const cam = cameraFor(stage, fovDeg);
+  return Math.max(cam.near, cam.distance * BOARD_NEAR_RATIO);
+}
+
+function unitForward(fwd: WorldPoint | undefined): WorldPoint {
+  if (!fwd) return [0, 0, -1];
+  const len = Math.hypot(fwd[0], fwd[1], fwd[2]);
+  if (!(len > 1e-9)) return [0, 0, -1];
+  return [nz(fwd[0] / len), nz(fwd[1] / len), nz(fwd[2] / len)];
+}
+
+/**
+ * World coordinates of the four corners of a placed board (top-left → top-right → bottom-right → bottom-left).
+ *
+ * Uses the exact transform chain of `frameCss` / `visualBox` (`rotate → scale → rotateY → rotateX → translateZ`
+ * around the anchor, then `stageToWorld`), optionally restricted to a normalized `[0..1]` `subBox` when the
+ * board geometry has been cropped to its non-transparent content box.
+ */
+export function boardWorldCorners(
+  frame: BoardFrame3D | undefined,
+  stage: StageSize,
+  subBox?: BoardSubBox,
+): [WorldPoint, WorldPoint, WorldPoint, WorldPoint] {
+  const size = resolveFrameSize(frame as any, stage);
+  const w = size.w;
+  const h = size.h;
+  const fx = frame?.x ?? 0;
+  const fy = frame?.y ?? 0;
+  const ax = frame?.anchor?.[0] ?? 0;
+  const ay = frame?.anchor?.[1] ?? 0;
+  const scale = frame?.scale ?? 1;
+  const rotate = frame?.rotate ?? 0;
+  const rotateX = frame?.rotateX ?? 0;
+  const rotateY = frame?.rotateY ?? 0;
+  const translateZ = frame?.translateZ ?? 0;
+
+  const baseLeft = fx - ax * w;
+  const baseTop = fy - ay * h;
+  const left = subBox ? baseLeft + subBox.x * w : baseLeft;
+  const top = subBox ? baseTop + subBox.y * h : baseTop;
+  const bw = subBox ? subBox.w * w : w;
+  const bh = subBox ? subBox.h * h : h;
+
+  const rad = (rotate * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const rx = (rotateX * Math.PI) / 180;
+  const ry = (rotateY * Math.PI) / 180;
+  const cosX = Math.cos(rx);
+  const sinX = Math.sin(rx);
+  const cosY = Math.cos(ry);
+  const sinY = Math.sin(ry);
+  const has3d = !!(rotateX || rotateY || translateZ);
+
+  const rawCorners: [number, number][] = [
+    [left, top],
+    [left + bw, top],
+    [left + bw, top + bh],
+    [left, top + bh],
+  ];
+
+  const out = rawCorners.map(([cxi, cyi]) => {
+    const dx0 = (cxi - fx) * scale;
+    const dy0 = (cyi - fy) * scale;
+    let x = dx0 * cos - dy0 * sin;
+    let y = dx0 * sin + dy0 * cos;
+    let z = 0;
+    if (has3d) {
+      const nx = x * cosY + z * sinY;
+      z = -x * sinY + z * cosY;
+      x = nx;
+      const ny = y * cosX - z * sinX;
+      z = y * sinX + z * cosX;
+      y = ny;
+      z += translateZ;
+    }
+    return stageToWorld({ x: fx + x, y: fy + y, z }, stage);
+  });
+
+  return out as [WorldPoint, WorldPoint, WorldPoint, WorldPoint];
+}
+
+/**
+ * Signed depth range of a placed board along the camera's forward ray (`> 0` in front of the camera,
+ * `<= 0` on or behind the camera plane).
+ */
+export function boardCameraDepthRange(
+  frame: BoardFrame3D | undefined,
+  stage: StageSize,
+  fovDeg?: number,
+  pose?: CameraPose3D,
+  subBox?: BoardSubBox,
+): { minDepth: number; maxDepth: number; centerDepth: number; near: number } {
+  const cam = cameraFor(stage, fovDeg);
+  const pos = pose?.position ?? cam.position;
+  const fwd = unitForward(pose?.forward);
+  const near = pose?.near ?? Math.max(cam.near, cam.distance * BOARD_NEAR_RATIO);
+  const corners = boardWorldCorners(frame, stage, subBox);
+  let minDepth = Infinity;
+  let maxDepth = -Infinity;
+  let sum = 0;
+  for (const c of corners) {
+    const d = (c[0] - pos[0]) * fwd[0] + (c[1] - pos[1]) * fwd[1] + (c[2] - pos[2]) * fwd[2];
+    if (d < minDepth) minDepth = d;
+    if (d > maxDepth) maxDepth = d;
+    sum += d;
+  }
+  return {
+    minDepth: nz(minDepth),
+    maxDepth: nz(maxDepth),
+    centerDepth: nz(sum / 4),
+    near: nz(near),
+  };
+}
+
+/**
+ * Whether a placed 2D board has passed behind (or into the near-clip zone of) the camera and must be culled.
+ *
+ * Returns `true` once every corner of the board lies at or behind the near plane (`maxDepth <= near`),
+ * while tilted boards that straddle `near` rely on the matching camera near plane (`boardNearDistance`)
+ * to clip the near portion without exploding perspective scale.
+ */
+export function isBoardBehindCamera(
+  frame: BoardFrame3D | undefined,
+  stage: StageSize,
+  fovDeg?: number,
+  pose?: CameraPose3D,
+  subBox?: BoardSubBox,
+): boolean {
+  const { maxDepth, near } = boardCameraDepthRange(frame, stage, fovDeg, pose, subBox);
+  return maxDepth <= near;
 }

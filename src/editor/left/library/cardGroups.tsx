@@ -8,6 +8,7 @@ import { isCardVisible, loadScopes, readVisibility, usedCardIds, type CardVisibi
 import { useStore } from "../../../store/project";
 import { CardCell } from "../CardCell";
 import { PartCell } from "../PartCell";
+import { AnimationThumb } from "../AnimationThumb";
 import { ThumbTile } from "./ThumbTile";
 import type { GroupData, GroupItem } from "./groups";
 import { tr } from "../../../i18n/index.ts";
@@ -102,9 +103,18 @@ export function usePartsList(q: string): PartDef<any>[] {
 
 const THUMBS = 8;
 
-/** A card that is not hovered is just "name + description", and the thumbnail is drawn the same way */
-const cardThumbs = (list: { id: string; name: string; description: string }[]): GroupItem[] =>
-  list.slice(0, THUMBS).map((def) => ({ id: def.id, node: <ThumbTile name={tr(def.name)} desc={def.description && tr(def.description)} /> }));
+/** Representative-frame thumbnails for overview group boxes */
+const cardThumbs = (list: AnyCard[]): GroupItem[] =>
+  list.slice(0, THUMBS).map((def) => ({
+    id: def.id,
+    node: <ThumbTile title={tr(def.name)} preview={<AnimationThumb kind="card" def={def} />} />,
+  }));
+
+const partThumbs = (list: PartDef<any>[]): GroupItem[] =>
+  list.slice(0, THUMBS).map((def) => ({
+    id: def.id,
+    node: <ThumbTile title={tr(def.name)} preview={<AnimationThumb kind="part" def={def} />} />,
+  }));
 
 /** Contents of the six card groups (custom cards / Magic UI / built-in cards / parts library / Lottie / particle backgrounds) */
 export function useCardGroups(
@@ -140,7 +150,7 @@ export function useCardGroups(
       native: { items: cards(native), thumbs: cardThumbs(native), emptyDetail: none },
       parts: {
         items: parts.map((def) => ({ id: def.id, node: <PartCell def={def} fill /> })),
-        thumbs: cardThumbs(parts),
+        thumbs: partThumbs(parts),
         emptyDetail: <div className="pc-left-note">{searching ? tr("No matching parts") : tr("The parts library is empty")}</div>,
       },
       lottie: { items: cards(lottie), thumbs: cardThumbs(lottie), emptyDetail: none },
