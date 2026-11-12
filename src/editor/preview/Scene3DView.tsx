@@ -3,8 +3,9 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { useBakePrefetch, beginForegroundBake, endForegroundBake, canonFrameT } from "./useBakePrefetch";
 import { clipFingerprint, markBaked, momentId } from "./bakeCoverage";
 import { measureImageBox, worthCropping } from "./alphaBox";
-import { flattenOverlay, type Project } from "../../kernel/project";
-import { placeClip3D } from "./place3d";
+import { cardOpacityAt, flattenOverlay, type Project } from "../../kernel/project";
+import { CUT_SEGMENT_CARD, cutOf } from "../../kernel/cutSegments";
+import { placeClip3D, sortBoardsByDepth, type SortableBoard3D } from "./place3d";
 import { frustum2d } from "./frustum2d";
 import { getCard } from "../../kernel/registry";
 import { actions, useStore } from "../../store/project";
@@ -12,7 +13,14 @@ import {
   addLights, applyTexture, geometryOf, materialOf, poseMesh, radiusFor, shapeOf,
   type Scene3DParams,
 } from "../../cards/native/scene3dObject";
-import { cameraFor, DEFAULT_FOV_DEG, stageToWorld } from "../../kernel/space3d";
+import {
+  boardNearDistance,
+  cameraFor,
+  DEFAULT_FOV_DEG,
+  isBoardBehindCamera,
+  type BoardSubBox,
+  type CameraPose3D,
+} from "../../kernel/space3d";
 import { motionOf, pickBakeT, sampleTimesFor, texKeyOf, type TimedClip } from "./bakeTime";
 import { isScrubbing, subscribeScrub } from "../timeline/useScrub";
 import { ONLINE } from "../../online/mode";
@@ -80,6 +88,7 @@ const loadMods = (): Promise<[ThreeMod, OrbitMod]> =>
 
 /** Placeholder color when there is no texture. Semi-transparent, so you can tell at a glance "this one is still rendering" */
 const PROXY_COLOR = 0x64748b;
+const PROXY_OPACITY = 0.45;
 
 /**
  * URL → already-decoded texture. **Reused across scene rebuilds.**
@@ -230,16 +239,20 @@ export function Scene3DView({ project, t }: Props) {
    * backwards (floor), so what you see is always a moment that **has already happened**, at most
    * 0.25 seconds off, and never shows a frame that has not been played yet.
    */
+  const clipMotionOf = (c: TimedClip) =>
+    c.cardId === CUT_SEGMENT_CARD || cutOf(c)
+      ? { settleMs: 0, after: "evolve" as const }
+      : motionOf(getCard(c.cardId) as any, c.params);
   /** The **native-frame-rate** slot for the playhead's current moment: the frame that will actually appear in the final video */
   const fineTOf = (c: TimedClip) => {
-    const motion = motionOf(getCard(c.cardId) as any, c.params);
+    const motion = clipMotionOf(c);
     const fps = Math.max(1, projRef.current.fps || 30);
     return canonFrameT(pickBakeT(c, motion, t, { stepSec: 1 / fps }), c.start, fps);
   };
   const bakeTOf = (c: TimedClip) => {
     const fine = fineTOf(c);
     if (moments.current.has(texKeyOf(c, fine))) return fine;
-    const motion = motionOf(getCard(c.cardId) as any, c.params);
+    const motion = clipMotionOf(c);
     const fps = Math.max(1, projRef.current.fps || 30);
     return canonFrameT(pickBakeT(c, motion, t), c.start, fps);
   };
@@ -351,10 +364,15 @@ export function Scene3DView({ project, t }: Props) {
   const wantedMoments = useMemo(() => {
     const out: { clipId: string; t: number; start: number; end: number; tier: "coarse" | "full"; fine: boolean }[] = [];
     const fps = Math.max(1, project.fps || 30);
+    const stageSize = { width: project.width, height: project.height };
     for (const c of flattenOverlay(project).clips) {
-      // A media clip is already a bitmap and needs no rendering; scene-3d is real geometry in this view, so it needs none either
-      if ((c as any).mediaId || c.cardId === "scene-3d") continue;
-      const motion = motionOf(getCard(c.cardId) as any, c.params);
+      // Media clips are bitmaps, scene-3d is real geometry, and boards behind the camera are culled
+      if ((c as any).mediaId || c.cardId === "scene-3d" || isBoardBehindCamera(c.frame, stageSize, project.camera3dFov)) continue;
+      const motion = clipMotionOf(c as TimedClip);
+      const seg = cutOf(c);
+      const visStart = seg ? seg.from : c.start;
+      const visEnd = seg ? Math.min(c.end, c.start + Math.max(0, seg.duration - seg.offset)) : c.end;
+      if (!(visEnd > visStart)) continue;
       /*
        * Deduplicate by the **quantized moment**: a point like 0.5 seconds lies on the slots of both
        * tiers, and without deduplication it would be queued twice, and the server computes the same key
@@ -363,8 +381,9 @@ export function Scene3DView({ project, t }: Props) {
       const slots = new Map<number, { t: number; tier: "coarse" | "full"; fine: boolean }>();
       // Low-frame-rate tier (one slot per 0.25 seconds): first cover the whole video with it, at a cost of only a fraction of the native frame rate
       for (const raw of sampleTimesFor(c as TimedClip, motion)) {
-        const t = canonFrameT(raw, c.start, fps);
-        slots.set(t, { t, tier: "coarse", fine: false });
+        if (raw < visStart - 1e-6 || raw >= visEnd) continue;
+        const qt = canonFrameT(raw, c.start, fps);
+        slots.set(qt, { t: qt, tier: "coarse", fine: false });
       }
       /*
        * Native-frame-rate tier: frame by frame. **It is only rendered after the low-frame-rate tier has
@@ -375,13 +394,14 @@ export function Scene3DView({ project, t }: Props) {
        */
       const frames = Math.ceil((c.end - c.start) * fps) + 2;
       for (const raw of sampleTimesFor(c as TimedClip, motion, { stepSec: 1 / fps, maxPerClip: frames })) {
-        const t = canonFrameT(raw, c.start, fps);
-        const had = slots.get(t);
+        if (raw < visStart - 1e-6 || raw >= visEnd) continue;
+        const qt = canonFrameT(raw, c.start, fps);
+        const had = slots.get(qt);
         // Both tiers land on this moment: for queueing it counts as low frame rate (rendered first), but it is also one slot of the per-frame tier
         if (had) had.fine = true;
-        else slots.set(t, { t, tier: "full", fine: true });
+        else slots.set(qt, { t: qt, tier: "full", fine: true });
       }
-      for (const s of slots.values()) out.push({ clipId: c.id, start: c.start, end: c.end, ...s });
+      for (const s of slots.values()) out.push({ clipId: c.id, start: visStart, end: visEnd, ...s });
     }
     return out;
   }, [project]);
@@ -407,6 +427,10 @@ export function Scene3DView({ project, t }: Props) {
   const sig = active.map(buildKey).join("|");
   // Which moments should be shown. When it changes, only refetch images, without rebuilding the scene
   const momentSig = active.map(momentKey).join("|");
+  const stageSizeNow = { width: project.width, height: project.height };
+  const culledSig = active
+    .map((c) => (isBoardBehindCamera(c.frame, stageSizeNow, project.camera3dFov) ? "1" : "0"))
+    .join("");
 
   /* ── Build the scene ───────────────────────────────────────────── */
   useEffect(() => {
@@ -430,7 +454,8 @@ export function Scene3DView({ project, t }: Props) {
      * With this starting point, "rotated off" can always be brought back.
      */
     const cam = cameraFor(stage, project.camera3dFov ?? DEFAULT_FOV_DEG);
-    const camera = new THREE.PerspectiveCamera(cam.fovDeg, w / h, 1, cam.distance * 40);
+    const nearClip = boardNearDistance(stage, project.camera3dFov ?? DEFAULT_FOV_DEG);
+    const camera = new THREE.PerspectiveCamera(cam.fovDeg, w / h, nearClip, cam.distance * 40);
     // If it has been rotated, keep using the last camera position; only if not, use the final video's camera position (see the note on the pose ref)
     camera.position.set(...(pose.current?.pos ?? cam.position));
 
@@ -446,6 +471,8 @@ export function Scene3DView({ project, t }: Props) {
         target: controls.target.toArray() as [number, number, number],
       };
     });
+    const onOrbitEnd = () => setBakeGen((g) => g + 1);
+    controls.addEventListener("end", onOrbitEnd);
     controls.update();
 
     scene.add(new THREE.AmbientLight(0xffffff, 2.2));
@@ -504,12 +531,19 @@ export function Scene3DView({ project, t }: Props) {
       clipId: string;
       mesh: any;
       mat: any;
-      pl: any;
+      pl: ReturnType<typeof placeClip3D>;
       canvas: HTMLCanvasElement | null;
       canvasTex: any;
       cropped: boolean;
+      subBox: BoardSubBox | undefined;
       boundSig: string;
       mode: "proxy" | "stream" | "exact";
+    }[] = [];
+    const scene3dItems: {
+      clipId: string;
+      mesh: any;
+      mat: any;
+      hasTex: boolean;
     }[] = [];
 
     const cropToCanvasBound = (b: typeof boards[number], cv: HTMLCanvasElement) => {
@@ -533,6 +567,7 @@ export function Scene3DView({ project, t }: Props) {
       const dy = H / 2 - (by + bh / 2);
       b.mesh.position.set(b.pl.meshOffset[0] + dx, b.pl.meshOffset[1] + dy, b.pl.meshOffset[2]);
       b.cropped = true;
+      b.subBox = W > 0 && H > 0 ? { x: bx / W, y: by / H, w: bw / W, h: bh / H } : undefined;
     };
 
     posers.current = [];
@@ -540,29 +575,131 @@ export function Scene3DView({ project, t }: Props) {
     const pickables: any[] = [];
     // Placement is recomputed every frame, so references to these groups must be kept
     const placed: { clipId: string; pivot: any; inner: any; spin: any; tilt: any; mesh: any }[] = [];
+    const meshByClipId = new Map<string, any>();
+    const marks = new Map<string, any>();
+    const camDir = new THREE.Vector3();
 
     /*
-     * Painter's-order index. **What covers what depends only on track order, not on Z**: this is a
-     * convention hard-coded on the final video side.
+     * Synchronize placement, timeline envelopes (`cardOpacityAt` + nested `cutEnv`), near-plane culling
+     * (`isBoardBehindCamera`), and back-to-front depth sorting (`sortBoardsByDepth`).
      *
-     * The final video (Stage.tsx) deliberately does **not** set `transform-style: preserve-3d`; there
-     * is a measured three-row table there. With it, sibling cards go from "stacked in DOM order" to
-     * "sorted by z depth", so when the Agent pushes the topmost card back a little (negative
-     * translateZ), it is immediately covered by every card below it, the opposite of what the tool
-     * description promises.
-     *
-     * In this view, the board material is transparent, and three.js sorts the transparent queue with
-     * reversePainterSortStable: without a renderOrder it **sorts by z**, and
-     * `tilt.position.z = pl.translateZ` already gives each card its own z. That means translateZ
-     * used to dominate occlusion here, exactly the opposite of the final video, and without any
-     * error. Pinning the painter's order explicitly puts both sides under the same rule.
+     * In 3D cuts (`docs/semantics/product/project-model.md`), occlusion follows camera-space depth
+     * rather than track order, while equal-depth planes break ties by track order. All translucent
+     * boards keep `depthWrite: false` and receive explicit `renderOrder` from `sortBoardsByDepth`.
      */
+    const syncSceneState = () => {
+      const projNow = projRef.current;
+      const tNow = tRef.current;
+      const stageNow = { width: projNow.width, height: projNow.height };
+      const flatClips = flattenOverlay(projNow).clips;
+      const liveById = new Map<string, { clip: (typeof flatClips)[number]; trackOrder: number }>();
+      flatClips.forEach((c, idx) => liveById.set(c.id, { clip: c, trackOrder: idx }));
+
+      const plById = new Map<string, ReturnType<typeof placeClip3D>>();
+      for (const q of placed) {
+        const entry = liveById.get(q.clipId);
+        if (!entry) continue;
+        const pl2 = placeClip3D(entry.clip.frame, stageNow);
+        plById.set(q.clipId, pl2);
+        q.pivot.position.set(...pl2.pivot);
+        q.inner.rotation.z = pl2.rollZ;
+        q.inner.scale.setScalar(pl2.scale);
+        q.spin.rotation.y = pl2.spinY;
+        q.tilt.rotation.x = pl2.tiltX;
+        q.tilt.position.z = pl2.translateZ;
+      }
+      for (const poseFn of posers.current) poseFn(tNow);
+
+      camera.updateMatrixWorld();
+      camera.getWorldDirection(camDir);
+      const poseNow: CameraPose3D = {
+        position: [camera.position.x, camera.position.y, camera.position.z],
+        forward: [camDir.x, camDir.y, camDir.z],
+        near: camera.near,
+      };
+
+      const sortInput: SortableBoard3D[] = [];
+
+      for (const b of boards) {
+        const entry = liveById.get(b.clipId);
+        const pl2 = plById.get(b.clipId);
+        if (pl2) {
+          b.pl = pl2;
+          if (b.cropped && b.subBox) {
+            const W = pl2.size.width;
+            const H = pl2.size.height;
+            const dx = (b.subBox.x + b.subBox.w / 2) * W - W / 2;
+            const dy = H / 2 - (b.subBox.y + b.subBox.h / 2) * H;
+            b.mesh.position.set(pl2.meshOffset[0] + dx, pl2.meshOffset[1] + dy, pl2.meshOffset[2]);
+          } else {
+            b.mesh.position.set(...pl2.meshOffset);
+          }
+        }
+        const inRange = !!entry && tNow >= entry.clip.start && tNow < entry.clip.end;
+        const op = inRange && entry ? cardOpacityAt(entry.clip, tNow) : 0;
+        const subBox = b.cropped ? b.subBox : undefined;
+        const culled = !entry || isBoardBehindCamera(entry.clip.frame, stageNow, projNow.camera3dFov, poseNow, subBox);
+        const visible = !culled && op > 0;
+        b.mesh.visible = visible;
+        b.mat.transparent = true;
+        b.mat.depthWrite = false;
+        b.mat.opacity = b.mode === "proxy" ? PROXY_OPACITY * op : op;
+        if (visible && entry) {
+          sortInput.push({
+            id: b.clipId,
+            frame: entry.clip.frame,
+            trackOrder: entry.trackOrder,
+            subBox,
+          });
+        }
+      }
+
+      for (const s of scene3dItems) {
+        const entry = liveById.get(s.clipId);
+        const pl2 = plById.get(s.clipId);
+        if (pl2) s.mesh.position.set(...pl2.meshOffset);
+        const inRange = !!entry && tNow >= entry.clip.start && tNow < entry.clip.end;
+        const op = inRange && entry ? cardOpacityAt(entry.clip, tNow) : 0;
+        const culled = !entry || isBoardBehindCamera(entry.clip.frame, stageNow, projNow.camera3dFov, poseNow);
+        const visible = !culled && op > 0;
+        s.mesh.visible = visible;
+        const wantTransparent = s.hasTex || op < 1;
+        if (s.mat.transparent !== wantTransparent) {
+          s.mat.transparent = wantTransparent;
+          s.mat.needsUpdate = true;
+        }
+        s.mat.depthWrite = !wantTransparent;
+        s.mat.opacity = op;
+        if (visible && entry) {
+          sortInput.push({
+            id: s.clipId,
+            frame: entry.clip.frame,
+            trackOrder: entry.trackOrder,
+          });
+        }
+      }
+
+      const sorted = sortBoardsByDepth(sortInput, stageNow, projNow.camera3dFov, poseNow);
+      for (const item of sorted) {
+        const m = meshByClipId.get(item.id);
+        if (m) m.renderOrder = item.renderOrder;
+      }
+
+      for (const [id, box] of marks) {
+        const targetMesh = meshByClipId.get(id);
+        box.visible = id === selRef.current && !!targetMesh?.visible;
+        if (box.visible) box.update();
+      }
+      frustum.visible = frustumRef.current;
+      edge.visible = !frustumRef.current;
+    };
+
     let order = 0;
 
     for (const clip of active) {
       // All the signs are in place3d.ts, where unit tests pin them down (see its notes)
       const pl = placeClip3D(clip.frame, stage);
-      const renderOrder = order++;
+      const renderOrder = ++order;
 
       // The chain of placement groups is shared: both flat boards and real 3D objects hang inside it
       const pivot = new THREE.Group();
@@ -596,21 +733,26 @@ export function Scene3DView({ project, t }: Props) {
         const mat = materialOf(THREE, params);
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.set(...pl.meshOffset);
-        // Without a texture it is opaque (goes through the opaque queue and writes its own depth), and
-        // renderOrder only affects draw order, not the result;
-        // once applyTexture turns it transparent, it is in the same queue as the boards, and then this line is required
         mesh.renderOrder = renderOrder;
         inner.add(mesh);
         mesh.userData.clipId = clip.id;
+        meshByClipId.set(clip.id, mesh);
         pickables.push(mesh);
         disposables.push(geo, mat);
+
+        const sItem = { clipId: clip.id, mesh, mat, hasTex: false };
+        scene3dItems.push(sItem);
 
         // The light distance scale is copied from the card: it uses the distance of the camera on its own canvas
         const camD = cameraFor({ width: pl.size.width, height: pl.size.height }, params.fov > 0 ? params.fov : (project.camera3dFov ?? DEFAULT_FOV_DEG)).distance;
         addLights(THREE, inner, params.light, camD);
 
         if (params.texture) {
-          const tex = applyTexture(THREE, mat, params.texture, () => renderer.render(scene, camera));
+          const tex = applyTexture(THREE, mat, params.texture, () => {
+            sItem.hasTex = true;
+            syncSceneState();
+            renderer.render(scene, camera);
+          });
           if (tex) disposables.push(tex);
         }
 
@@ -626,15 +768,16 @@ export function Scene3DView({ project, t }: Props) {
       const mat = new THREE.MeshBasicMaterial({
         color: PROXY_COLOR,
         transparent: true,
-        opacity: 0.45,
+        opacity: PROXY_OPACITY,
         side: THREE.DoubleSide,
         depthWrite: false,
       });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(...pl.meshOffset);
-      mesh.renderOrder = renderOrder;   // See the "painter order" note above
+      mesh.renderOrder = renderOrder;
       inner.add(mesh);
       mesh.userData.clipId = clip.id;
+      meshByClipId.set(clip.id, mesh);
       pickables.push(mesh);
       disposables.push(geo, mat);
 
@@ -652,17 +795,7 @@ export function Scene3DView({ project, t }: Props) {
         disposables.push(canvasTex);
       }
 
-      const boardState: {
-        clipId: string;
-        mesh: any;
-        mat: any;
-        pl: any;
-        canvas: HTMLCanvasElement | null;
-        canvasTex: any;
-        cropped: boolean;
-        boundSig: string;
-        mode: "proxy" | "stream" | "exact";
-      } = {
+      const boardState: typeof boards[number] = {
         clipId: clip.id,
         mesh,
         mat,
@@ -670,6 +803,7 @@ export function Scene3DView({ project, t }: Props) {
         canvas: canvas ?? null,
         canvasTex,
         cropped: false,
+        subBox: undefined,
         boundSig: "",
         mode: "proxy",
       };
@@ -708,16 +842,17 @@ export function Scene3DView({ project, t }: Props) {
        */
       const cropToContent = (tex: any) => {
         const box = measureImageBox(tex.image);
-        const W = pl.size.width, H = pl.size.height;
+        const W = boardState.pl.size.width, H = boardState.pl.size.height;
         boardState.boundSig = "";
         if (!worthCropping(box) || !box) {
+          boardState.subBox = undefined;
           if (boardState.cropped) {
             const nextGeo = new THREE.PlaneGeometry(W, H);
             const old = mesh.geometry;
             mesh.geometry = nextGeo;
             old.dispose();
             disposables.push(nextGeo);
-            mesh.position.set(...pl.meshOffset);
+            mesh.position.set(...boardState.pl.meshOffset);
             tex.repeat.set(1, 1);
             tex.offset.set(0, 0);
             tex.needsUpdate = true;
@@ -738,26 +873,27 @@ export function Scene3DView({ project, t }: Props) {
          */
         const dx = (box.x + box.w / 2) * W - W / 2;
         const dy = H / 2 - (box.y + box.h / 2) * H;   // three's y points up, image coordinates point down
-        mesh.position.set(pl.meshOffset[0] + dx, pl.meshOffset[1] + dy, pl.meshOffset[2]);
+        mesh.position.set(boardState.pl.meshOffset[0] + dx, boardState.pl.meshOffset[1] + dy, boardState.pl.meshOffset[2]);
         // The texture shows only this region. three's UV origin is at the bottom left, so y must be flipped
         tex.repeat.set(box.w, box.h);
         tex.offset.set(box.x, 1 - box.y - box.h);
         tex.needsUpdate = true;
         boardState.cropped = true;
+        boardState.subBox = { x: box.x, y: box.y, w: box.w, h: box.h };
       };
 
-      /** Finishing after applying: crop to the content box and restore the opaque white base (the reverse of the placeholder block setup) */
+      /** Finishing after applying: crop to the content box, restore the white tint, sync opacity/cull/depth, and render */
       const dressUp = (tex: any) => {
         cropToContent(tex);
         mat.color.set(0xffffff);
-        mat.opacity = 1;
+        mat.depthWrite = false;
+        syncSceneState();
         renderer.render(scene, camera);
       };
       const apply = (url: string, precise = false) => {
         if (!precise) return; // The prerender path carries no moment: the image it gives goes only into the cache, not onto the board
         boundUrl = url;
         texInUse.add(url);
-        boardState.mode = "exact";
         /*
          * **Apply decoded textures directly, without going through TextureLoader again.**
          *
@@ -768,9 +904,11 @@ export function Scene3DView({ project, t }: Props) {
          */
         const hit = texCache.get(url);
         if (hit) {
+          boardState.mode = "exact";
           mat.map = hit;
           // A prerendered card has a transparent background; without transparent on, the surroundings turn into black blocks (same reason as in applyTexture)
           mat.transparent = true;
+          mat.depthWrite = false;
           mat.needsUpdate = true;
           cacheTexture(url, hit); // Move it to the end of the queue: it is the most recently used
           dressUp(hit);
@@ -778,6 +916,8 @@ export function Scene3DView({ project, t }: Props) {
         }
         applyTexture(THREE, mat, url, (loaded: any) => {
           cacheTexture(url, loaded);
+          if (boundUrl !== url) return;
+          boardState.mode = "exact";
           dressUp(loaded);
         });
         /*
@@ -798,29 +938,36 @@ export function Scene3DView({ project, t }: Props) {
           canvasTex.needsUpdate = true;
           mat.map = canvasTex;
           mat.color.set(0xffffff);
-          mat.opacity = 1;
           mat.transparent = true;
+          mat.depthWrite = false;
           mat.needsUpdate = true;
           boardState.mode = "stream";
+          syncSceneState();
           renderer.render(scene, camera);
           return;
         }
         if (boardState.cropped) {
-          const nextGeo = new THREE.PlaneGeometry(pl.size.width, pl.size.height);
+          const nextGeo = new THREE.PlaneGeometry(boardState.pl.size.width, boardState.pl.size.height);
           const old = mesh.geometry;
           mesh.geometry = nextGeo;
           old.dispose();
           disposables.push(nextGeo);
-          mesh.position.set(...pl.meshOffset);
+          mesh.position.set(...boardState.pl.meshOffset);
           boardState.cropped = false;
+          boardState.subBox = undefined;
           boardState.boundSig = "";
         }
         boardState.mode = "proxy";
-        if (!mat.map) return;
+        if (!mat.map) {
+          syncSceneState();
+          renderer.render(scene, camera);
+          return;
+        }
         mat.map = null;
         mat.color.set(PROXY_COLOR);
-        mat.opacity = 0.45;
+        mat.depthWrite = false;
         mat.needsUpdate = true;
+        syncSceneState();
         renderer.render(scene, camera);
       };
       swap.current.set(clip.id, apply);
@@ -852,7 +999,7 @@ export function Scene3DView({ project, t }: Props) {
         -((e.clientY - r.top) / r.height) * 2 + 1,
       );
       raycaster.setFromCamera(ndc, camera);
-      const hit = raycaster.intersectObjects(pickables, false)[0];
+      const hit = raycaster.intersectObjects(pickables.filter((m) => m.visible), false)[0];
       // Clicking on empty space does not clear the selection: if it did, a casual click on the 3D tab would lose the card being edited on the left
       const id = hit?.object?.userData?.clipId;
       if (id) actions.select([id]);
@@ -861,7 +1008,6 @@ export function Scene3DView({ project, t }: Props) {
     renderer.domElement.addEventListener("pointerup", onUp);
 
     /* Outline the selected board: leave its own material alone and add a separate wireframe child object; deselecting just deletes it */
-    const marks = new Map<string, any>();
     for (const m of pickables) {
       const box = new THREE.BoxHelper(m, 0x22d3ee);
       box.visible = false;
@@ -869,6 +1015,8 @@ export function Scene3DView({ project, t }: Props) {
       marks.set(m.userData.clipId, box);
       disposables.push(box.geometry, box.material as any);
     }
+    syncSceneState();
+    renderer.render(scene, camera);
 
     let lastPlanesSig = "";
     const activeIds = new Set(active.filter((c) => c.cardId !== "scene-3d").map((c) => c.id));
@@ -910,8 +1058,8 @@ export function Scene3DView({ project, t }: Props) {
               b.canvasTex.offset.set(0, 0);
               b.mat.map = b.canvasTex;
               b.mat.color.set(0xffffff);
-              b.mat.opacity = 1;
               b.mat.transparent = true;
+              b.mat.depthWrite = false;
               b.mat.needsUpdate = true;
               b.mode = "stream";
             }
@@ -926,12 +1074,13 @@ export function Scene3DView({ project, t }: Props) {
                 disposables.push(nextGeo);
                 b.mesh.position.set(...b.pl.meshOffset);
                 b.cropped = false;
+                b.subBox = undefined;
                 b.boundSig = "";
               }
               b.mat.map = null;
               b.mat.color.set(PROXY_COLOR);
-              b.mat.opacity = 0.45;
               b.mat.transparent = true;
+              b.mat.depthWrite = false;
               b.mat.needsUpdate = true;
               b.mode = "proxy";
             }
@@ -949,8 +1098,8 @@ export function Scene3DView({ project, t }: Props) {
               b.canvasTex.offset.set(0, 0);
               b.mat.map = b.canvasTex;
               b.mat.color.set(0xffffff);
-              b.mat.opacity = 1;
               b.mat.transparent = true;
+              b.mat.depthWrite = false;
               b.mat.needsUpdate = true;
               b.mode = "stream";
             }
@@ -964,48 +1113,24 @@ export function Scene3DView({ project, t }: Props) {
               disposables.push(nextGeo);
               b.mesh.position.set(...b.pl.meshOffset);
               b.cropped = false;
+              b.subBox = undefined;
               b.boundSig = "";
             }
             b.mat.map = null;
             b.mat.color.set(PROXY_COLOR);
-            b.mat.opacity = 0.45;
             b.mat.transparent = true;
+            b.mat.depthWrite = false;
             b.mat.needsUpdate = true;
             b.mode = "proxy";
           }
         }
       }
-      // Spinning 3D objects follow the timeline: the pose is a pure function of t, so placing them once per frame from the current t is enough
       /*
-       * Re-place everything once per frame from the latest project. The cost is just a few matrices, but
-       * in return the scene is **not rebuilt** while you drag a slider in the "3D" panel: no rebuild
-       * means no geometry is recreated and no textures are reloaded, so dragging stays smooth.
+       * Re-place everything once per frame from the latest project, evaluate canonical clip + nested cut
+       * opacity envelopes, cull boards behind the near plane, and sort translucent boards back-to-front
+       * by camera-space depth without rebuilding the scene.
        */
-      for (const q of placed) {
-        const c = projRef.current.tracks.flatMap((tr: any) => tr.clips).find((x: any) => x.id === q.clipId);
-        if (!c) continue;
-        const pl2 = placeClip3D(c.frame, { width: projRef.current.width, height: projRef.current.height });
-        q.pivot.position.set(...pl2.pivot);
-        q.inner.rotation.z = pl2.rollZ;
-        q.inner.scale.setScalar(pl2.scale);
-        q.spin.rotation.y = pl2.spinY;
-        q.tilt.rotation.x = pl2.tiltX;
-        q.tilt.position.z = pl2.translateZ;
-      }
-      for (const pose of posers.current) pose(tRef.current);
-      for (const [id, box] of marks) { box.visible = id === selRef.current; if (box.visible) box.update(); }
-      /*
-       * The view frame only toggles visibility and does not rebuild the scene (see where it is built
-       * above for the reason).
-       *
-       * While it is on, hide the gray `edge` outline: the cone's base is the **same rectangle** as
-       * that outline, and two overlapping lines fight each other (same depth, so which one is on top
-       * is up to the GPU's mood). Also, one gray ring plus one yellow ring should not be two colors.
-       * When it is on, the whole cone is yellow; when it is off, put the gray ring back as a permanent
-       * reference.
-       */
-      frustum.visible = frustumRef.current;
-      edge.visible = !frustumRef.current;
+      syncSceneState();
       renderer.render(scene, camera);
       raf = requestAnimationFrame(tick);
     };
@@ -1022,11 +1147,15 @@ export function Scene3DView({ project, t }: Props) {
     ro.observe(el);
 
     gl.current = {
-      render: () => renderer.render(scene, camera),
+      render: () => {
+        syncSceneState();
+        renderer.render(scene, camera);
+      },
       dispose: () => {
         cancelAnimationFrame(raf);
         renderer.domElement.removeEventListener("pointerdown", onDown);
         renderer.domElement.removeEventListener("pointerup", onUp);
+        controls.removeEventListener("end", onOrbitEnd);
         ro.disconnect();
         controls.dispose();
         /*
@@ -1052,11 +1181,24 @@ export function Scene3DView({ project, t }: Props) {
     // Do not send foreground render requests during playback; textures come straight from the track stream. Not while dragging either
     if (playing || scrubbing) { setPending(0); setBakingAt(null); return; }
     /*
-     * Only ask for textures for **2D cards**. A scene-3d card is real geometry in this view and needs
-     * no texture. At first it was not excluded, so every open rendered one image for nothing
-     * (4.7~6.5 seconds each) and nobody used the result.
+     * Only ask for textures for **visible 2D cards**. `scene-3d` is real geometry, and boards behind the
+     * camera near plane are culled before drawing so they should not tie up foreground renders either.
      */
-    const flat = active.filter((c) => c.cardId !== "scene-3d");
+    const curStage = { width: project.width, height: project.height };
+    const curPose: CameraPose3D | undefined = pose.current
+      ? {
+          position: pose.current.pos,
+          forward: [
+            pose.current.target[0] - pose.current.pos[0],
+            pose.current.target[1] - pose.current.pos[1],
+            pose.current.target[2] - pose.current.pos[2],
+          ],
+          near: boardNearDistance(curStage, project.camera3dFov ?? DEFAULT_FOV_DEG),
+        }
+      : undefined;
+    const flat = active.filter(
+      (c) => c.cardId !== "scene-3d" && !isBoardBehindCamera(c.frame, curStage, project.camera3dFov, curPose),
+    );
     const need: typeof flat = [];
     for (const c of flat) {
       const url = moments.current.get(momentKey(c));
@@ -1200,12 +1342,12 @@ export function Scene3DView({ project, t }: Props) {
     // momentSig is in the dependencies: dragging the timeline to another moment needs to fetch the image again. But it is **not in the
     // dependencies of the effect that builds the scene**, so it only swaps material.map and the scene is not rebuilt.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig, momentSig, parked, bakeGen, scrubbing, playing]);
+  }, [sig, momentSig, culledSig, parked, bakeGen, scrubbing, playing]);
 
   /* ── As soon as a prerendered texture arrives, store it in the per-moment cache so it is ready when that moment comes ── */
   useEffect(() => {
     if (!prefetch.ready.size) return;
-    const all = projRef.current.tracks.flatMap((tr: any) => tr.clips ?? []);
+    const all = flattenOverlay(projRef.current).clips;
     for (const [id, url] of prefetch.ready) {
       // The prerender key is `<clipId>@<t>` (see momentId in useBakePrefetch). A clipId never contains @
       const at = id.lastIndexOf("@");

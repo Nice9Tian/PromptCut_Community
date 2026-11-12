@@ -242,18 +242,24 @@ test("Trimming a bit should change the fingerprint: the length is part of the ca
   assert.equal(clipFingerprint(moved), clipFingerprint(base), "The whole clip moved, the length is unchanged, still the same image");
 });
 
-test("The fingerprint is a denylist: changing any field on a clip other than the position must invalidate", () => {
+test("The fingerprint is a denylist: changing pixel-producing fields invalidates, while 3D board material envelopes do not", () => {
   const base = { id: "c1", cardId: "odometer", params: { to: 1 }, start: 0, end: 4 };
-  // All of these enter the server cache key (bakeTarget only strips frame); missing any causes
-  // "still green after modification"
+  // These enter the server cache key; missing any causes "still green after modification"
   for (const [fieldName, editedClip] of [
     ["emphasis", { ...base, emphasis: { kind: "shadow" } }],
     ["motion", { ...base, motion: { pathId: "p1" } }],
-    ["fadeIn", { ...base, fadeIn: 0.5 }],
-    ["opacity", { ...base, opacity: 0.5 }],
     ["parts", { ...base, parts: [{ id: "p" }] }],
   ]) {
     assert.notEqual(clipFingerprint(editedClip), clipFingerprint(base), `Changing ${fieldName} must invalidate`);
+  }
+  // Opacity and fades are stripped by bakeTarget and applied on the 3D board material via cardOpacityAt,
+  // avoiding double-attenuation and frozen fades on hold cards while keeping prerendered textures reusable.
+  for (const [fieldName, editedClip] of [
+    ["opacity", { ...base, opacity: 0.5 }],
+    ["fadeIn", { ...base, fadeIn: 0.5 }],
+    ["fadeOut", { ...base, fadeOut: 0.75 }],
+  ]) {
+    assert.equal(clipFingerprint(editedClip), clipFingerprint(base), `Changing ${fieldName} must reuse the unattenuated board texture`);
   }
 });
 

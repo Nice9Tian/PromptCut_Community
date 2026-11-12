@@ -1,7 +1,7 @@
 import type { Clip, Timeline } from "./types";
 import type { SoundEffectRecipe } from "./soundEffects";
-import { cutSegmentRender, CUT_SEGMENT_CARD, type CutRenderProject, type TimelineCutClip } from "./cutSegments.ts";
-import { envelopeAt } from "./cutAudio.mjs";
+import { cutOf, cutSegmentRender, CUT_SEGMENT_CARD, type CutRenderProject, type TimelineCutClip } from "./cutSegments.ts";
+import { envelopeAt, type CutEnvelope } from "./cutAudio.mjs";
 import { cardClockOffset, clipSpeed } from "./clipTime.mjs";
 
 /** Regenerable sound effect recipe. reuseKey is synthesis input identity, not WAV content hash. */
@@ -518,13 +518,14 @@ export function flattenOverlay(p: Project, graph?: Timeline["graph"]): Timeline 
         if (!cut) continue;
         // Pre-roll: the timeline clip starts earlier than the segment's start
         // (cut.from − (cutOffset − cut.offset)), and the part revealed still starts from cut.from
-        const seg: TimelineCutClip = {
+        const seg: TimelineCutClip & { cutEnv?: CutEnvelope[] } = {
           id: c.id, cardId: CUT_SEGMENT_CARD, start: c.start - (Math.max(0, c.cutOffset ?? 0) - cut.offset), end: c.end, params: {}, cut,
           ...(c.frame ? { frame: c.frame } : null),
           ...(c.opacity !== undefined ? { opacity: c.opacity } : null),
           ...(c.emphasis ? { emphasis: c.emphasis } : null),
           ...(c.fadeIn ? { fadeIn: c.fadeIn } : null),
           ...(c.fadeOut ? { fadeOut: c.fadeOut } : null),
+          ...(c.cutEnv?.length ? { cutEnv: c.cutEnv } : null),
         };
         clips.push(seg);
         continue;
@@ -533,7 +534,7 @@ export function flattenOverlay(p: Project, graph?: Timeline["graph"]): Timeline 
       // motion must be carried over: it is only used **during playback**, and if it is dropped here
       // the binding looks saved and the timeline shows it as bound, yet neither the preview nor the
       // export moves at all.
-      clips.push({
+      const cardClip: Clip & { cutEnv?: CutEnvelope[] } = {
         id: c.id, cardId: c.cardId, start: c.start, end: c.end, params: c.params,
         // The typing visuals and the WAV share the source event time; after a split it must not restart
         // from the first character.
@@ -560,7 +561,11 @@ export function flattenOverlay(p: Project, graph?: Timeline["graph"]): Timeline 
         // Part tree of a composite card: Stage renders from it; if it is dropped, the composite card is an
         // empty card
         ...(c.parts?.length ? { parts: c.parts } : null),
-      });
+        // Outer cut-segment envelopes on derived clips (never persisted; kept out of types.ts so audio
+        // card source closure hashes do not move)
+        ...(c.cutEnv?.length ? { cutEnv: c.cutEnv } : null),
+      };
+      clips.push(cardClip);
     }
   }
   // Only carry this key when 3D is actually on: the timeline object of an old project must stay
@@ -571,14 +576,25 @@ export function flattenOverlay(p: Project, graph?: Timeline["graph"]): Timeline 
 /** Which media clip should play at a given time (first matching media clip in track order) */
 /** Opacity of a clip at time t, fades included. Returns 0 outside the range. */
 export function opacityAt(clip: Clip, t: number): number {
+  const seg = cutOf(clip);
+  if (seg) {
+    // Cut segment on a timeline: clip.start may be shifted earlier by pre-roll, while seg.from is the
+    // visible start and seg.duration caps the referenced cut's visible span.
+    if (t < seg.from || t >= clip.end) return 0;
+    const localT = seg.offset + (t - clip.start);
+    if (localT < 0 || localT >= seg.duration) return 0;
+    let a = envelopeAt({ start: seg.from, end: clip.end, opacity: clip.opacity, fadeIn: clip.fadeIn, fadeOut: clip.fadeOut }, t);
+    const env = (clip as TrackClip).cutEnv;
+    if (env) for (const e of env) a *= envelopeAt(e, t);
+    return Math.max(0, Math.min(1, a));
+  }
   if (t < clip.start || t >= clip.end) return 0;
   let a = clip.opacity ?? 1;
   const fin = clip.fadeIn ?? 0;
   const fout = clip.fadeOut ?? 0;
   if (fin > 0 && t < clip.start + fin) a *= (t - clip.start) / fin;
   if (fout > 0 && t > clip.end - fout) a *= (clip.end - t) / fout;
-  // Clip expanded from a cut segment (only present in the derived audio project): multiply in the
-  // envelopes of the outer segments
+  // Clip expanded from a cut segment: multiply in the envelopes of the outer segments
   const env = (clip as TrackClip).cutEnv;
   if (env) for (const e of env) a *= envelopeAt(e, t);
   return Math.max(0, Math.min(1, a));
@@ -589,7 +605,12 @@ export function opacityAt(clip: Clip, t: number): number {
  * Stage touches nothing at all, so the export of an old project stays byte-for-byte unchanged
  */
 export function hasOpacityControls(clip: Clip): boolean {
-  return clip.opacity !== undefined || (clip.fadeIn ?? 0) > 0 || (clip.fadeOut ?? 0) > 0;
+  return (
+    clip.opacity !== undefined ||
+    (clip.fadeIn ?? 0) > 0 ||
+    (clip.fadeOut ?? 0) > 0 ||
+    (((clip as TrackClip).cutEnv?.length ?? 0) > 0)
+  );
 }
 
 /**
@@ -599,8 +620,11 @@ export function hasOpacityControls(clip: Clip): boolean {
  * frame of the entrance animation. So t is clamped into [start, end) before computing: during the
  * early mount period it takes the value at the moment of start, which is 0 if there is a fade-in
  * (a fade-in starts from 0 anyway) and opacity itself if there is none.
+ *
+ * Cut segments (`cutOf(clip)`) keep pre-roll before `seg.from` and overrun past `seg.duration` at 0.
  */
 export function cardOpacityAt(clip: Clip, t: number): number {
+  if (cutOf(clip)) return opacityAt(clip, t);
   const tt = Math.max(clip.start, Math.min(t, clip.end - 1e-6));
   return opacityAt(clip, tt);
 }
