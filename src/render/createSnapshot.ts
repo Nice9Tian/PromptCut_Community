@@ -117,19 +117,72 @@ const nowMs = (): number => (window.__pcRealNow ?? Date.now)();
  * pruned in the clone, and corresponding items in both arrays are removed together (maintaining
  * one-to-one correspondence), hiding it from style inlining, rasterization, and serialization.
  */
+const PRUNE_SELECTOR = `${PLACEHOLDER_SELECTOR}, [data-pc-3d-offscreen]`;
+
 function cloneScene(root: Element): { clone: Element; orig: Element[]; copy: Element[] } {
   const orig = [root, ...root.querySelectorAll("*")];
   const clone = root.cloneNode(true) as Element;
   const copy = [clone, ...clone.querySelectorAll("*")];
-  if (!root.querySelector(PLACEHOLDER_SELECTOR)) return { clone, orig, copy };
+  if (!root.querySelector(PRUNE_SELECTOR)) return { clone, orig, copy };
   const keepOrig: Element[] = [];
   const keepCopy: Element[] = [];
   for (let i = 0; i < orig.length; i++) {
-    const placeholder = orig[i].closest(PLACEHOLDER_SELECTOR);
-    if (!placeholder) { keepOrig.push(orig[i]); keepCopy.push(copy[i]); continue; }
-    if (placeholder === orig[i]) copy[i].remove();
+    const pruned = orig[i].closest(PRUNE_SELECTOR);
+    if (!pruned || !root.contains(pruned) || pruned === root) {
+      keepOrig.push(orig[i]);
+      keepCopy.push(copy[i]);
+      continue;
+    }
+    if (pruned === orig[i]) copy[i].remove();
   }
   return { clone, orig: keepOrig, copy: keepCopy };
+}
+
+let embedCanvas: HTMLCanvasElement | null = null;
+function embedMediaIntoClone(orig: Element[], copy: Element[], styleAsImg: (el: Element) => string): void {
+  for (let i = 0; i < orig.length; i++) {
+    const from = orig[i] as HTMLElement;
+    if (from.tagName !== "IMG" && from.tagName !== "VIDEO") continue;
+    const to = copy[i] as HTMLElement;
+    if (from.tagName === "IMG") {
+      const img = from as HTMLImageElement;
+      const curSrc = img.getAttribute("src") || "";
+      if (curSrc.startsWith("data:") && !from.dataset?.pcMediaSrc) continue;
+      if (!img.complete || !(img.naturalWidth > 0 && img.naturalHeight > 0)) continue;
+      const c = embedCanvas ?? (embedCanvas = document.createElement("canvas"));
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const ctx = c.getContext("2d");
+      if (!ctx) continue;
+      ctx.clearRect(0, 0, c.width, c.height);
+      try {
+        ctx.drawImage(img, 0, 0);
+        to.setAttribute("src", c.toDataURL("image/png"));
+        to.style.visibility = "visible";
+      } catch {
+        // Leave original element untouched if cross-origin tainted
+      }
+      continue;
+    }
+    const vid = from as HTMLVideoElement;
+    if (!(vid.readyState >= 2 && vid.videoWidth > 0 && vid.videoHeight > 0)) continue;
+    const c = embedCanvas ?? (embedCanvas = document.createElement("canvas"));
+    c.width = vid.videoWidth;
+    c.height = vid.videoHeight;
+    const ctx = c.getContext("2d");
+    if (!ctx) continue;
+    ctx.clearRect(0, 0, c.width, c.height);
+    try {
+      ctx.drawImage(vid, 0, 0);
+      const repl = document.createElement("img");
+      repl.setAttribute("src", c.toDataURL("image/png"));
+      repl.setAttribute("style", styleAsImg(from));
+      repl.style.visibility = "visible";
+      to.replaceWith(repl);
+    } catch {
+      // Leave original element untouched if tainted
+    }
+  }
 }
 
 /**
@@ -205,7 +258,7 @@ function serializeScene(root: Element, clone: Element, flatControls = false): { 
   return { html, controls };
 }
 
-export function createSnapshot(root: Element | null, opts?: { flatControls?: boolean }): SceneSnapshot {
+export function createSnapshot(root: Element | null, opts?: { flatControls?: boolean; embedMedia?: boolean }): SceneSnapshot {
   if (!root) return { html: "", lossy: 0, controls: [], timing: { inlineMs: 0, rasterMs: 0, serializeMs: 0 } };
 
   const t0 = nowMs();
@@ -223,7 +276,11 @@ export function createSnapshot(root: Element | null, opts?: { flatControls?: boo
   const { lossy } = rasterizeCanvas(orig, copy, (el) => styles.styleAs(el, "IMG", HTML_NS));
   const t2 = nowMs();
 
-  stripMedia(orig, copy);
+  if (opts?.embedMedia) {
+    embedMediaIntoClone(orig, copy, (el) => styles.styleAs(el, "IMG", HTML_NS));
+  } else {
+    stripMedia(orig, copy);
+  }
   const { html, controls } = serializeScene(root, clone, opts?.flatControls === true);
   const t3 = nowMs();
 

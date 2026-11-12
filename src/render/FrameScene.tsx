@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Stage, type ProxyRender, type StagePlaneProps } from "./Stage";
-import { flattenOverlay, isImageMedia, nextVideoLayerAfter, opacityAt, videoLayersAt, type MediaAsset, type Project, type TrackClip } from "../kernel/project";
+import { activeCutKind, cutSpaceSize, effectiveCamera3dFov, flattenOverlay, isImageMedia, nextVideoLayerAfter, opacityAt, videoLayersAt, type MediaAsset, type Project, type TrackClip } from "../kernel/project";
 import type { Timeline } from "../kernel/types";
-import { frameCss } from "../kernel/layout";
+import { frameCss, visualBox } from "../kernel/layout";
+import { resolveClipFrameAt } from "../kernel/frameExpr.mjs";
+import { activeCutEntry, camera2DCssTransform, resolveCamera2DAt } from "../kernel/camera.mjs";
+import { isCaptionClip } from "../kernel/captions";
+import { Cut3DScene } from "./Cut3DScene";
 import { emphasisFilter } from "../kernel/emphasis";
 import { clipFilterOpsAt, cssFilter } from "../kernel/filters.mjs";
 import { pixelMapOfClip } from "../kernel/pixelMap.mjs";
@@ -290,7 +294,9 @@ export function FrameScene({
     const hit = timelineCache.current.get(clip);
     if (hit && hit.project === project && hit.tr === tr && hit.graph === graph) return hit.timeline;
     // Graphs **cannot** be computed from cropped version (only 1 track and 1 clip kept, cross-clip inputs cannot resolve): host computes and brings in as is.
-    const timeline = { ...flattenOverlay({ ...project, tracks: [{ ...tr, clips: [clip] }] }), graph } as Timeline;
+    // Strip `cameras` / `renderView` on FrameScene's single-clip Stage wrapper: FrameScene itself owns the 2D camera layer and caption exemption across all tracks.
+    const { cameras: _cam, renderView: _rv, ...flat } = flattenOverlay({ ...project, tracks: [{ ...tr, clips: [clip] }] });
+    const timeline = { ...flat, graph } as Timeline;
     timelineCache.current.set(clip, { project, tr, graph, timeline });
     return timeline;
   };
@@ -298,113 +304,213 @@ export function FrameScene({
   const clipAttr = nested ? "data-pc-nested-clip" : "data-pc-clip";
   // Nested cut segment scenes are rendered with the same asset variant (CutSegmentScene)
   const host = { live, mediaT, playing, scrubbing, localHashes: hashes };
-  return <SceneHostContext.Provider value={host}>{tracks.map((tr, index) => {
-    const curOf = (trackId: string) => layers.find((l) => l.trackId === trackId && !takenByOther(l.clip) && !replaced(l.clip.id)) ?? null;
-    // Whether visual clips (video / image) exist on this track. If none, do not mount VideoTrack to avoid two extra empty <video>
-    const hasVisual = tr.clips.some((c) => {
-      if (!c.mediaId || takenByOther(c)) return false;
-      const m = project.media.find((x) => x.id === c.mediaId);
-      return !!m && m.kind !== "audio";
-    });
-    return <div key={tr.id} {...(nested ? { "data-pc-nested-track": tr.id } : { "data-pc-track": tr.id })} style={{ position: "absolute", inset: 0, zIndex: index }}>
-      {live && hasVisual ? (
-        <VideoTrack
+  const usesPlanes = !!(snapshots || suppressed || streamPlanes || remountGen || settling || awaiting);
+
+  if (activeCutKind(project) === "3d") {
+    if (live && !nested) {
+      return (
+        <SceneHostContext.Provider value={host}>
+          <div data-pc-3d-live-host="" style={{ position: "absolute", inset: 0 }} />
+        </SceneHostContext.Provider>
+      );
+    }
+    return (
+      <SceneHostContext.Provider value={host}>
+        <Cut3DScene
           project={project}
-          cur={curOf(tr.id)}
-          next={nexts.find((n) => n.trackId === tr.id) ?? null}
-          t={mediaT}
+          t={t}
+          directT={directT}
+          playToken={playToken}
+          graph={graph}
+          live={live}
+          mediaT={mediaT}
           playing={playing}
           scrubbing={scrubbing}
-          // Stage is always muted: audio stays in the editor main document (MediaLayers's audioOnly)
-          muted
-          stage={stageSize}
-          filters={project.filters}
-          onMediaFrame={onMediaFrame}
           localHashes={hashes}
+          flatPrefix={flatPrefix}
+          planes={usesPlanes ? { snapshots, suppressed, streamPlanes, remountGen, settling, awaiting } : undefined}
         />
-      ) : null}
-      {live ? layers.filter((l) => l.trackId === tr.id && !graphVisualNode(graph, l.clip.nodeId) && !replaced(l.clip.id) && !confirmedMissingVisual(l.media)
-        && !!pixelMapOfClip(project, l.clip)).map(({ clip, media, opacity }) => {
-        const def = pixelMapOfClip(project, clip)!;
-        const ops = project.filters?.length ? clipFilterOpsAt(project, clip, mediaT) : null;
-        const filter = [ops ? cssFilter(ops) : "", emphasisFilter(clip.emphasis) || ""].filter(Boolean).join(" ");
-        const style = { display: "block", width: "100%", height: "100%", objectFit: "cover" as const, opacity, filter: filter || undefined };
-        return <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-media="" data-pc-local-frame={Math.round((mediaT - clip.start) * project.fps)} style={{ position: "absolute", overflow: "hidden", ...frameCss(clip.frame, project) }}>
-          <PixelMappedMedia media={media as MediaAsset} clip={clip} t={mediaT} project={project} style={style} def={def} live playing={playing} scrubbing={scrubbing} localHashes={hashes} />
-        </div>;
-      }) : null}
-      {!live && layers.filter(l => l.trackId === tr.id && !graphVisualNode(graph, l.clip.nodeId) && !replaced(l.clip.id) && !confirmedMissingVisual(l.media)).map(({ clip, media, opacity }) => {
-        const ops = project.filters?.length ? clipFilterOpsAt(project, clip, t) : null;
-        const filter = [ops ? cssFilter(ops) : "", emphasisFilter(clip.emphasis) || ""].filter(Boolean).join(" ");
-        const style = { display: "block", width: "100%", height: "100%", objectFit: "cover" as const, opacity, filter: filter || undefined };
-        // data-pc-media: Selector for controls relies on it to exclude the asset layer when generating snapshots (see render/createSnapshot.ts)
-        return <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-media="" data-pc-local-frame={Math.round((t - clip.start) * project.fps)} style={{ position: "absolute", overflow: "hidden", ...frameCss(clip.frame, project) }}>
-          {pixelMapOfClip(project, clip) ? (() => {
-            const def = pixelMapOfClip(project, clip)!;
-            return <PixelMappedMedia media={media} clip={clip} t={t} project={project} style={style} def={def} />;
-          })() : isImageMedia(media) ? <img data-pc-media-src={media.url} alt="" style={{ ...style, visibility: "hidden" }} /> :
-            <video muted playsInline preload="none" data-pc-media-src={media.url}
-              data-pc-media-time={exportMediaTime(clip, t)}
-              style={{ ...style, visibility: "hidden" }} />}
-        </div>;
-      })}
-      {tr.clips.map((clip, clipIndex) => {
-        // Cut segment: Active criterion looks at copy handed over by flattenOverlay (start includes preroll, frame-push criteria from referenced cut), not original segment on track
-        if (clip.cutId) {
-          const seg = legacyTimeline(tr, clip).clips[0];
-          if (!seg || !active(seg as TrackClip)) return null;
-        } else if (!active(clip)) return null;
-        const layerStyle: React.CSSProperties = { position: "absolute", inset: 0, zIndex: clipIndex };
-        const media = clip.mediaId ? project.media.find((item) => item.id === clip.mediaId) : undefined;
-        if (media && confirmedMissingVisual(media)) {
-          if (live && !takenByOther(clip)) return null; // The live VideoTrack owns ordinary visual media layers.
-          const sceneTime = live ? mediaT : t;
-          return <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-media="" data-pc-confirmed-missing="1"
-            style={{ ...layerStyle, ...frameCss(clip.frame, project), opacity: opacityAt(clip, sceneTime), filter: filterOf(clip, project.filters, sceneTime), pointerEvents: "none" }}>
-            <MissingMaterial name={missingMaterialLabel(media)} />
+      </SceneHostContext.Provider>
+    );
+  }
+
+  const effFrameOf = (clip: TrackClip, atT: number) =>
+    clip.frameExpr
+      ? resolveClipFrameAt(clip.frame, clip.frameExpr, Math.max(0, atT - clip.start), clip.end - clip.start)
+      : clip.frame;
+
+  const renderTrackList = (opts: { includeMedia: boolean; clipFilter?: (clip: TrackClip) => boolean; overflowVisible?: boolean; zOffset?: number }) =>
+    tracks.map((tr, index) => {
+      if (opts.clipFilter && !opts.includeMedia && !tr.clips.some((c) => opts.clipFilter!(c))) return null;
+      const curOf = (trackId: string) => layers.find((l) => l.trackId === trackId && !takenByOther(l.clip) && !replaced(l.clip.id)) ?? null;
+      // Whether visual clips (video / image) exist on this track. If none, do not mount VideoTrack to avoid two extra empty <video>
+      const hasVisual = opts.includeMedia && tr.clips.some((c) => {
+        if (!c.mediaId || takenByOther(c)) return false;
+        const m = project.media.find((x) => x.id === c.mediaId);
+        return !!m && m.kind !== "audio";
+      });
+      return <div key={tr.id} {...(nested ? { "data-pc-nested-track": tr.id } : { "data-pc-track": tr.id })} style={{ position: "absolute", inset: 0, zIndex: (opts.zOffset ?? 0) + index }}>
+        {live && hasVisual ? (
+          <VideoTrack
+            project={project}
+            cur={curOf(tr.id)}
+            next={nexts.find((n) => n.trackId === tr.id) ?? null}
+            t={mediaT}
+            playing={playing}
+            scrubbing={scrubbing}
+            // Stage is always muted: audio stays in the editor main document (MediaLayers's audioOnly)
+            muted
+            stage={stageSize}
+            filters={project.filters}
+            onMediaFrame={onMediaFrame}
+            localHashes={hashes}
+          />
+        ) : null}
+        {opts.includeMedia && live ? layers.filter((l) => l.trackId === tr.id && !graphVisualNode(graph, l.clip.nodeId) && !replaced(l.clip.id) && !confirmedMissingVisual(l.media)
+          && !!pixelMapOfClip(project, l.clip)).map(({ clip, media, opacity }) => {
+          const def = pixelMapOfClip(project, clip)!;
+          const ops = project.filters?.length ? clipFilterOpsAt(project, clip, mediaT) : null;
+          const filter = [ops ? cssFilter(ops) : "", emphasisFilter(clip.emphasis) || ""].filter(Boolean).join(" ");
+          const style = { display: "block", width: "100%", height: "100%", objectFit: "cover" as const, opacity, filter: filter || undefined };
+          return <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-media="" data-pc-local-frame={Math.round((mediaT - clip.start) * project.fps)} style={{ position: "absolute", overflow: "hidden", ...frameCss(effFrameOf(clip, mediaT), project) }}>
+            <PixelMappedMedia media={media as MediaAsset} clip={clip} t={mediaT} project={project} style={style} def={def} live playing={playing} scrubbing={scrubbing} localHashes={hashes} />
           </div>;
-        }
-        if (replaced(clip.id)) {
-          const url = cached(clip.id);
-          // Cached controls are full-stage PNGs. Their placement and motion have
-          // already been baked by the capture, so applying frameCss here would
-          // transform them twice. Opacity and fades are baked there as well.
-          return url
-            ? <div key={clip.id} {...{ [clipAttr]: clip.id }} style={layerStyle}>
-              <img data-pc-cached-control={clip.id} src={url} alt="" style={{ display: "block", width: "100%", height: "100%" }} />
-            </div>
-            : <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-incomplete={clip.id} style={{ ...layerStyle, ...frameCss(clip.frame, project), border: "2px dashed #dcb66a", boxSizing: "border-box", display: "grid", placeItems: "center", background: "#1e273050", opacity: opacityAt(clip, directT) }}>
-              <span style={{ color: "#fff", fontSize: 28 }}>⌛</span>
+        }) : null}
+        {opts.includeMedia && !live && layers.filter(l => l.trackId === tr.id && !graphVisualNode(graph, l.clip.nodeId) && !replaced(l.clip.id) && !confirmedMissingVisual(l.media)).map(({ clip, media, opacity }) => {
+          const ops = project.filters?.length ? clipFilterOpsAt(project, clip, t) : null;
+          const filter = [ops ? cssFilter(ops) : "", emphasisFilter(clip.emphasis) || ""].filter(Boolean).join(" ");
+          const style = { display: "block", width: "100%", height: "100%", objectFit: "cover" as const, opacity, filter: filter || undefined };
+          // data-pc-media: Selector for controls relies on it to exclude the asset layer when generating snapshots (see render/createSnapshot.ts)
+          return <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-media="" data-pc-local-frame={Math.round((t - clip.start) * project.fps)} style={{ position: "absolute", overflow: "hidden", ...frameCss(effFrameOf(clip, t), project) }}>
+            {pixelMapOfClip(project, clip) ? (() => {
+              const def = pixelMapOfClip(project, clip)!;
+              return <PixelMappedMedia media={media} clip={clip} t={t} project={project} style={style} def={def} />;
+            })() : isImageMedia(media) ? <img data-pc-media-src={media.url} alt="" style={{ ...style, visibility: "hidden" }} /> :
+              <video muted playsInline preload="none" data-pc-media-src={media.url}
+                data-pc-media-time={exportMediaTime(clip, t)}
+                style={{ ...style, visibility: "hidden" }} />}
+          </div>;
+        })}
+        {tr.clips.map((clip, clipIndex) => {
+          if (opts.clipFilter && !opts.clipFilter(clip)) return null;
+          // Cut segment: Active criterion looks at copy handed over by flattenOverlay (start includes preroll, frame-push criteria from referenced cut), not original segment on track
+          if (clip.cutId) {
+            const seg = legacyTimeline(tr, clip).clips[0];
+            if (!seg || !active(seg as TrackClip)) return null;
+          } else if (!active(clip)) return null;
+          const layerStyle: React.CSSProperties = { position: "absolute", inset: 0, zIndex: clipIndex };
+          const media = clip.mediaId ? project.media.find((item) => item.id === clip.mediaId) : undefined;
+          if (media && confirmedMissingVisual(media)) {
+            if (!opts.includeMedia || (live && !takenByOther(clip))) return null; // The live VideoTrack owns ordinary visual media layers.
+            const sceneTime = live ? mediaT : t;
+            return <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-media="" data-pc-confirmed-missing="1"
+              style={{ ...layerStyle, ...frameCss(effFrameOf(clip, sceneTime), project), opacity: opacityAt(clip, sceneTime), filter: filterOf(clip, project.filters, sceneTime), pointerEvents: "none" }}>
+              <MissingMaterial name={missingMaterialLabel(media)} />
             </div>;
-        }
-        const timeline = legacyTimeline(tr, clip);
-        // Media has already been painted below this block. A one-clip Stage
-        // keeps each legacy card at its original track position while retaining
-        // Stage's direct-child perspective and glass/backdrop context.
-        // E7 items 3-5: `proxy` and six plane props are passed through as is to each internal single-clip
-        // `Stage`. The `placeholder` path passes none of them (the host never provided them), and not a
-        // single character of DOM changes.
-        if (!timeline.clips.length) return null;
-        const stage = (
-          <Stage timeline={timeline} t={t} directT={directT} playToken={playToken} nested={nested} flatPrefix={flatPrefix}
-            proxy={proxy} snapshots={snapshots} suppressed={suppressed} streamPlanes={streamPlanes}
-            remountGen={remountGen} settling={settling} awaiting={awaiting} />
-        );
-        /*
-         * Per-card duration for K6. **Whether to add these two siblings is determined by `live`, not by
-         * whether `onCardCost` is present**: adding or removing a sibling midway causes React to reconcile
-         * by position and remount the card, losing anchor points. `placeholder` (export / legacy) never
-         * adds them, leaving DOM and render path completely unchanged (`CostMark` itself returns `null`,
-         * so the live path DOM has not a single extra node either).
-         */
-        return (
-          <div key={clip.id} {...(nested ? null : { "data-pc-native-layer": clip.id })} style={layerStyle}>
-            {live ? <CostMark at={(now) => { costMarkAt = now; }} /> : null}
-            {stage}
-            {live ? <CostMark at={(now) => onCardCost?.(clip.id, now - costMarkAt)} /> : null}
+          }
+          if (replaced(clip.id)) {
+            const url = cached(clip.id);
+            return url
+              ? <div key={clip.id} {...{ [clipAttr]: clip.id }} style={layerStyle}>
+                <img data-pc-cached-control={clip.id} src={url} alt="" style={{ display: "block", width: "100%", height: "100%" }} />
+              </div>
+              : <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-incomplete={clip.id} style={{ ...layerStyle, ...frameCss(effFrameOf(clip, directT), project), border: "2px dashed #dcb66a", boxSizing: "border-box", display: "grid", placeItems: "center", background: "#1e273050", opacity: opacityAt(clip, directT) }}>
+                <span style={{ color: "#fff", fontSize: 28 }}>⌛</span>
+              </div>;
+          }
+          const timeline = legacyTimeline(tr, clip);
+          if (!timeline.clips.length) return null;
+          const stage = (
+            <Stage timeline={timeline} t={t} directT={directT} playToken={playToken} nested={nested} flatPrefix={flatPrefix}
+              overflowVisible={opts.overflowVisible}
+              proxy={proxy} snapshots={snapshots} suppressed={suppressed} streamPlanes={streamPlanes}
+              remountGen={remountGen} settling={settling} awaiting={awaiting} />
+          );
+          return (
+            <div key={clip.id} {...(nested ? null : { "data-pc-native-layer": clip.id })} style={layerStyle}>
+              {live ? <CostMark at={(now) => { costMarkAt = now; }} /> : null}
+              {stage}
+              {live ? <CostMark at={(now) => onCardCost?.(clip.id, now - costMarkAt)} /> : null}
+            </div>
+          );
+        })}
+      </div>;
+    });
+
+  const activeEntry = activeCutEntry(project);
+  const isSpaceView = project._renderView === "space";
+  const has2DCamera = Boolean(activeEntry?.cameras?.some((c) => c && c.enabled !== false));
+
+  if (isSpaceView) {
+    const camTime = live ? mediaT : t;
+    const cam2d = resolveCamera2DAt(activeEntry?.cameras, camTime);
+    const space = cutSpaceSize(project, activeEntry);
+    const fov = effectiveCamera3dFov(project, activeEntry);
+    let minX = 0, minY = 0, maxX = space.width, maxY = space.height;
+    const includeRect = (x0: number, y0: number, w: number, h: number) => {
+      if (!Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(w) || !Number.isFinite(h)) return;
+      if (x0 < minX) minX = x0;
+      if (y0 < minY) minY = y0;
+      if (x0 + w > maxX) maxX = x0 + w;
+      if (y0 + h > maxY) maxY = y0 + h;
+    };
+    const camW = project.width / Math.max(1e-3, cam2d.zoom);
+    const camH = project.height / Math.max(1e-3, cam2d.zoom);
+    const camLeft = project.width / 2 + cam2d.x - camW / 2;
+    const camTop = project.height / 2 + cam2d.y - camH / 2;
+    includeRect(camLeft, camTop, camW, camH);
+    for (const tr of tracks) {
+      for (const c of tr.clips) {
+        if (isCaptionClip(c) || !active(c)) continue;
+        const vb = visualBox(effFrameOf(c, clipTime(c)), stageSize, fov);
+        includeRect(vb.left, vb.top, vb.width, vb.height);
+      }
+    }
+    const spanX = Math.max(1, maxX - minX);
+    const spanY = Math.max(1, maxY - minY);
+    const fitScale = Math.min((project.width * 0.88) / spanX, (project.height * 0.88) / spanY);
+    const tx = project.width / 2 - ((minX + maxX) / 2) * fitScale;
+    const ty = project.height / 2 - ((minY + maxY) / 2) * fitScale;
+    const borderPx = Math.max(2, 3 / fitScale);
+    return (
+      <SceneHostContext.Provider value={host}>
+        <div data-pc-space2d="" style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#0f172a" }}>
+          <div style={{ position: "absolute", left: 0, top: 0, width: project.width, height: project.height, transformOrigin: "0 0", transform: `translate(${tx}px, ${ty}px) scale(${fitScale})` }}>
+            <div style={{ position: "absolute", left: 0, top: 0, width: space.width, height: space.height, border: `${Math.max(1, 1.5 / fitScale)}px dashed #64748b`, boxSizing: "border-box", pointerEvents: "none" }} />
+            {renderTrackList({ includeMedia: true, clipFilter: (c) => !isCaptionClip(c), overflowVisible: true })}
+            <div data-pc-camera2d-gizmo="" style={{
+              position: "absolute",
+              left: camLeft,
+              top: camTop,
+              width: camW,
+              height: camH,
+              border: `${borderPx}px solid #f59e0b`,
+              boxSizing: "border-box",
+              pointerEvents: "none",
+              zIndex: tracks.length + 10,
+              ...(cam2d.rotate !== 0 ? { transform: `rotate(${cam2d.rotate}deg)` } : null),
+            }} />
           </div>
-        );
-      })}
-    </div>;
-  })}</SceneHostContext.Provider>;
+          {renderTrackList({ includeMedia: false, clipFilter: (c) => isCaptionClip(c), zOffset: tracks.length + 20 })}
+        </div>
+      </SceneHostContext.Provider>
+    );
+  }
+
+  if (has2DCamera) {
+    const cam2d = resolveCamera2DAt(activeEntry?.cameras, live ? mediaT : t);
+    const camStyle = camera2DCssTransform(cam2d, stageSize);
+    return (
+      <SceneHostContext.Provider value={host}>
+        <div data-pc-camera2d-viewport="" style={{ position: "absolute", left: 0, top: 0, width: project.width, height: project.height, overflow: "hidden" }}>
+          <div data-pc-camera2d="" style={{ position: "absolute", left: 0, top: 0, width: project.width, height: project.height, ...(camStyle ?? {}) }}>
+            {renderTrackList({ includeMedia: true, clipFilter: (c) => !isCaptionClip(c), overflowVisible: true })}
+          </div>
+        </div>
+        {renderTrackList({ includeMedia: false, clipFilter: (c) => isCaptionClip(c), zOffset: tracks.length + 1 })}
+      </SceneHostContext.Provider>
+    );
+  }
+
+  return <SceneHostContext.Provider value={host}>{renderTrackList({ includeMedia: true })}</SceneHostContext.Provider>;
 }

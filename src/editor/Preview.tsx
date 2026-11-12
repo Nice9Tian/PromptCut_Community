@@ -7,7 +7,7 @@ import { MediaLayers } from "./preview/MediaLayers";
 import { Scene3DView } from "./preview/Scene3DView";
 import { themeStyle } from "../themes";
 import { actions, getState, useStore } from "../store/project";
-import { findClip, type Project } from "../kernel/project";
+import { activeCutKind, findClip, type Project } from "../kernel/project";
 import { nudgeFrame } from "../kernel/layout";
 import { createStageRpc, type HostCapabilities, type StageGraphCapability, type StageMediaPolicy, type StageRpcClient } from "../render/stageRpc";
 import { frontStage, onStageEvent, pushProject, releaseStageClient, setBeforeFullStagePush, setStageClient, swapStageClients, syncProject, whenStageReady } from "./stageBridge";
@@ -379,6 +379,12 @@ export function Preview(props: { variant?: "mobile" | "framed" } = {}) {
    * 2D breaks its contract.
    */
   const [view, setView] = useState<"2d" | "3d">("2d");
+  const is3DCut = activeCutKind(project) === "3d";
+  useEffect(() => {
+    setView("2d");
+  }, [project.activeCutId]);
+  const show3DScene = is3DCut || view === "3d";
+  const scene3DMode: "camera" | "space" = is3DCut && view === "2d" ? "camera" : "space";
   const [pickedTool, setTool] = useState<ToolType>("select");
   // This project was given read-only permission (guest): moving and editing text are writes, so the tool always falls back to "select" (click to select and view parameters only); the two on the toolbar are also grayed out
   const readOnlyProject = useMemberReadOnly();
@@ -2986,13 +2992,18 @@ export function Preview(props: { variant?: "mobile" | "framed" } = {}) {
   return (
     <div className={compact ? (framed ? "pc-pv pc-pv--mobile pc-pv--framed" : "pc-pv pc-pv--mobile") : "pc-pv"} data-pc="preview">
       {!compact && <div className="pc-pv-tabs" data-pc="preview-tabs">
-        {([["2d", "2D"], ["3d", "3D"]] as const).map(([id, label]) => (
+        {([["2d", is3DCut ? trText("Camera") : "2D"], ["3d", is3DCut ? trText("Space") : "3D"]] as const).map(([id, label]) => (
           <button
             key={id}
             type="button"
+            data-pc-view={is3DCut ? (id === "2d" ? "camera" : "space") : id}
             className={view === id ? "is-on" : undefined}
             onClick={() => setView(id)}
-            title={id === "2d" ? trText("Final video preview: what you see is what you export") : trText("3D view: orbit around like in Blender to see how these cards are arranged in space")}
+            title={
+              id === "2d"
+                ? (is3DCut ? trText("Camera view: live output camera frame of this 3D cut") : trText("Final video preview: what you see is what you export"))
+                : (is3DCut ? trText("Space view: orbit freely in 3D space with the live output camera frustum") : trText("3D view: orbit around like in Blender to see how these cards are arranged in space"))
+            }
           >
             {label}
           </button>
@@ -3001,7 +3012,7 @@ export function Preview(props: { variant?: "mobile" | "framed" } = {}) {
       {online && <CostSearchGate />}
       {online && gateViewerWanted() && <GateViewer />}
 
-      {view === "2d" && !compact && <ToolBar tool={tool} onToolChange={setTool} zoom={cam.scale} fitted={cam.auto} onFit={fitToWindow} />}
+      {!show3DScene && !compact && <ToolBar tool={tool} onToolChange={setTool} zoom={cam.scale} fitted={cam.auto} onFit={fitToWindow} />}
 
       {/*
         * **The 2D page resides permanently under the 3D page; it is only hidden, not unmounted.**
@@ -3023,9 +3034,14 @@ export function Preview(props: { variant?: "mobile" | "framed" } = {}) {
       <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
       {/* Tier bubble: shown once above the preview window after the stage gate finishes and the editor is entered, and disappears automatically after a few seconds (`TierBubble.tsx`) */}
       {online && <TierBubble ready={stageReady > 0} />}
-      {view === "3d" && (
+      {show3DScene && (
         <div className="pc-pv-stage" style={{ position: "relative" }}>
-          <Scene3DView project={project} t={t} />
+          <Scene3DView
+            project={project}
+            t={t}
+            mode={scene3DMode}
+            onSelectCamera={(id) => (actions as any).selectCamera?.(id)}
+          />
         </div>
       )}
       <div
@@ -3033,9 +3049,9 @@ export function Preview(props: { variant?: "mobile" | "framed" } = {}) {
         className="pc-pv-stage"
         data-pc="preview-2d"
         data-zoomed={framed && !framedFitted ? "true" : undefined}
-        aria-hidden={view === "3d" || undefined}
-        inert={view === "3d"}
-        style={view === "3d" ? { position: "absolute", inset: 0, opacity: 0, pointerEvents: "none" } : undefined}
+        aria-hidden={show3DScene || undefined}
+        inert={show3DScene}
+        style={show3DScene ? { position: "absolute", inset: 0, opacity: 0, pointerEvents: "none" } : undefined}
       >
         <div
           className="pc-pv-frame pc-checker"

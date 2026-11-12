@@ -27,6 +27,8 @@ export interface EditorState {
   playToken: number;
   /** Selected clip ids (multi-selection allowed; first is primary) */
   selection: string[];
+  /** Selected camera clip id on the active cut's camera lane (mutually exclusive with clip selection) */
+  selectedCameraId: string | null;
   /** Project file path (null if unsaved) */
   filePath: string | null;
   dirty: boolean;
@@ -70,6 +72,7 @@ export let state: EditorState = {
   playing: false,
   playToken: 1,
   selection: [],
+  selectedCameraId: null,
   filePath: null,
   dirty: false,
   durationManual: null,

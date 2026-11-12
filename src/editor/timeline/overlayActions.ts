@@ -66,7 +66,7 @@ export function detachOverlay(
   if (item.kind === "pixelMap") return store.setClipPixelMap(clip.id, null);
   if (item.kind === "audioFx") return store.setClipAudioFx(clip.id, null);
   if (item.kind === "card" && store.editCardProject) {
-    store.editCardProject((project) => detachCardNode(project, clip.id, getCard).project);
+    store.editCardProject((project) => detachCardNode(project, clip.id, getCard, item.upstream ? item.refId : undefined).project);
     return true;
   }
   return false;

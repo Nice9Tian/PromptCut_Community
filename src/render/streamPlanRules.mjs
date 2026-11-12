@@ -14,6 +14,8 @@
  * `capabilities.compositing`); `clip` and `track` are clips and tracks in the project.
  */
 import { mountFrameOf } from './frameWindow.mjs';
+import { has3DFrameExpr, hasAnimatedFrameSize } from '../kernel/frameExpr.mjs';
+import { activeCutKind } from '../kernel/camera.mjs';
 
 /** Outer box uses 3D transform (at least one of `rotateX`, `rotateY`, `translateZ` is non-zero) */
 export const frame3d = frame => !!(frame?.rotateX || frame?.rotateY || frame?.translateZ);
@@ -23,19 +25,22 @@ export const frame3d = frame => !!(frame?.rotateX || frame?.rotateY || frame?.tr
  * with adjacent standalone cards into group streams). **Accepts only `independent`**: frosted glass
  * (`belowDependent`) needs to sample lower layers; `unknown` is always treated as `belowDependent`
  * (G1 "Which cards do not enter streams"). Source-dependent cards (transitions, media effect cards
- * connected to media) and standalone cards whose frame uses 3D are not here: they also produce
- * single-card streams, but form solo streams without merging into group streams; criteria are in
- * `soloStreamKind` below.
+ * connected to media) and standalone cards whose frame uses 3D (or belong to a `"3d"` cut) are not here:
+ * they also produce single-card streams, but form solo streams without merging into group streams;
+ * criteria are in `soloStreamKind` below.
  */
-export function streamEligible(control, clip, track) {
+export function streamEligible(control, clip, track, project = null) {
   if (!control?.clipId || !clip || !track) return false;
   if (track.hidden || track.sourceOnly) return false;
   if (!clip.cardId) return false;
   // Cards flattened from cut segments form solo streams (`'flat'` in `soloStreamKind`) and do not merge into group streams
   if (clip.flat) return false;
+  // In a 3D cut, each card is textured onto its own 3D board and must never merge into a 2D stage group stream
+  if (project?.cutKind === '3d' || activeCutKind(project) === '3d') return false;
+  if (hasAnimatedFrameSize(clip.frameExpr)) return false;
   const compositing = control.capabilities?.compositing ?? control.compositing;
   if (compositing !== 'independent') return false;
-  if (frame3d(clip.frame)) return false;
+  if (frame3d(clip.frame) || has3DFrameExpr(clip.frameExpr)) return false;
   return Number.isInteger(control.count) && control.count > 0;
 }
 
@@ -131,12 +136,14 @@ export function soloStreamKind(control, clip, track, project) {
   if (!control?.clipId || !clip || !track) return null;
   if (track.hidden || track.sourceOnly) return null;
   if (!clip.cardId) return null;
+  if (hasAnimatedFrameSize(clip.frameExpr)) return null;
   if (!(Number.isInteger(control.count) && control.count > 0)) return null;
   const compositing = control.capabilities?.compositing ?? control.compositing;
   // Cards flattened from cut segments (`kernel/cutFlatten.mjs`, clips with `flat`): standalone cards form solo streams (see `'flat'` above); others do not produce streams
   if (clip.flat) return compositing === 'independent' ? 'flat' : null;
   if (compositing === 'sourceDependent') return 'source';
-  if (compositing === 'independent') return frame3d(clip.frame) ? 'spatial' : null;
+  const is3DCut = project?.cutKind === '3d' || activeCutKind(project) === '3d';
+  if (compositing === 'independent') return (is3DCut || frame3d(clip.frame) || has3DFrameExpr(clip.frameExpr)) ? 'spatial' : null;
   if (compositing === 'belowDependent') return null;
   return graphCardWithInputs(project, clip) ? 'source' : null;
 }
@@ -191,13 +198,15 @@ export function mountClipOf(clip) {
  * with 3D form solo streams `soloStreamKind`); source-dependent cards depend on `rules`.
  * Cannot be true simultaneously with `streamEligible`.
  */
-export function belowStreamEligible(control, clip, track, rules = BELOW_STREAM_RULES) {
+export function belowStreamEligible(control, clip, track, rules = BELOW_STREAM_RULES, project = null) {
   if (!control?.clipId || !clip || !track) return false;
   if (track.hidden || track.sourceOnly) return false;
   if (!clip.cardId) return false;
+  if (project?.cutKind === '3d' || activeCutKind(project) === '3d') return false;
+  if (hasAnimatedFrameSize(clip.frameExpr)) return false;
   // Cards flattened from cut segments do not produce below-dependent streams (frosted glass in nested scenes live renders as before; [ruling] R01 2026-10-23 was overruled, treated as unfeasible)
   if (clip.flat) return false;
-  const spatial = frame3d(clip.frame);
+  const spatial = frame3d(clip.frame) || has3DFrameExpr(clip.frameExpr);
   if (spatial && rules?.frame3d !== true) return false;
   const compositing = control.capabilities?.compositing ?? control.compositing;
   if (compositing === 'independent') return false;
@@ -212,13 +221,13 @@ export function belowStreamEligible(control, clip, track, rules = BELOW_STREAM_R
  * `where`: clip id → `{ clip, track }`; `orderOf`: clip id → painter's order;
  * `taken`: cards that already formed solo streams (no longer produce this stream).
  */
-export function belowTargets(plan, { picked, where, fps, total, orderOf, taken = null }) {
+export function belowTargets(plan, { picked, where, fps, total, orderOf, taken = null, project = null }) {
   const out = [];
   const seen = new Set();
   for (const control of plan) {
     if (!control?.clipId || seen.has(control.clipId) || taken?.has(control.clipId) || !picked(control.clipId)) continue;
     const at = where.get(control.clipId);
-    if (!at || !belowStreamEligible(control, at.clip, at.track)) continue;
+    if (!at || !belowStreamEligible(control, at.clip, at.track, BELOW_STREAM_RULES, project)) continue;
     const firstFrame = control.sampling?.firstFrame ?? Math.ceil(at.clip.start * fps - 1e-9);
     const lastFrame = Math.min(total - 1, firstFrame + control.count - 1);
     if (lastFrame < firstFrame) continue;

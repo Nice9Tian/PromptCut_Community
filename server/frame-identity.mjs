@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { reachableCutContents, reachableMediaIds } from '../src/kernel/cutIdentity.mjs';
+import { activeCutRenderMeta, reachableCutContents, reachableMediaIds } from '../src/kernel/cutIdentity.mjs';
 export function stableJson(value) {
   if (Array.isArray(value)) return '[' + value.map(stableJson).join(',') + ']';
   if (value && typeof value === 'object') return '{' + Object.keys(value).sort().filter(k => value[k] !== undefined).map(k => JSON.stringify(k) + ':' + stableJson(value[k])).join(',') + '}';
@@ -14,9 +14,27 @@ export const digest = value => createHash('sha256').update(stableJson(value)).di
 export function frameIdentity(project, code = '') {
   const { width, height, fps, duration, themeId, camera3dFov, tracks, media, filters, pixelMaps, cardNodes, style } = project;
   const refs = reachableCutContents(project, tracks);
+  const cutMeta = activeCutRenderMeta(project);
   // v3: direct React subtitles compute their transitions from local time.
   // Old HTML/MOV entries must not retain the previous Motion-based phase.
-  return digest({ pipeline: 4, code, width, height, fps, duration, themeId, camera3dFov, tracks, media, filters, pixelMaps, cardNodes, style, cutRefs: refs.length ? refs : undefined });
+  return digest({
+    pipeline: 4,
+    code,
+    width,
+    height,
+    fps,
+    duration,
+    themeId,
+    camera3dFov,
+    tracks,
+    media,
+    filters,
+    pixelMaps,
+    cardNodes,
+    style,
+    cutRefs: refs.length ? refs : undefined,
+    cutMeta: cutMeta || undefined,
+  });
 }
 export function trackPrefixes(project, code = '') {
   return [...project.tracks].reverse().filter(t => !t.hidden).map((track, i, bottomUp) => {

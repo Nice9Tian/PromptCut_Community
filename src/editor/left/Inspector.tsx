@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { useStore, actions } from "../../store/project";
-import { findClip } from "../../kernel/project";
+import { activeCutKind, findClip } from "../../kernel/project";
+import { activeCutEntry, defaultCutFovDeg } from "../../kernel/camera.mjs";
 import { getCard, allCards, onSyncedUserCardsChanged, syncedCardView, syncedUserCardsGen } from "../../kernel/registry";
 import { paramsCardView } from "./paramsView";
 import { ParamsForm } from "./ParamsForm";
@@ -8,6 +9,7 @@ import { PartsForm } from "./PartsForm";
 import { isComposite } from "../../kernel/envelope";
 import { CodeTab } from "./CodeTab";
 import { Frame3DForm } from "./Frame3DForm";
+import { CameraInspector } from "./CameraInspector";
 import { ClipFilterForm } from "./ClipFilterForm";
 import { ClipSpeedForm } from "./ClipSpeedForm";
 import { ClipAudioFxForm } from "./ClipAudioFxForm";
@@ -28,16 +30,73 @@ import { tr } from "../../i18n/index.ts";
  */
 export function Inspector({ tab }: { tab: "form" | "code" }) {
   const selId = useStore(s => s.selection[0]);
+  const selectedCameraId = useStore(s => s.selectedCameraId);
   const project = useStore(s => s.project);
   // The user card table synced from the online browser changed (a new card was synced, or a control changed in the source): the parameters panel follows
   useSyncExternalStore(onSyncedUserCardsChanged, syncedUserCardsGen);
+
+  const cutEntry = activeCutEntry(project);
+  const cutKind = activeCutKind(project);
+  const selectedCam = selectedCameraId ? (cutEntry?.cameras ?? []).find(c => c.id === selectedCameraId) : null;
+  if (selectedCam) {
+    return <ReadOnlyFence><CameraInspector key={selectedCam.id} camera={selectedCam} cutKind={cutKind} /></ReadOnlyFence>;
+  }
 
   const hit = selId ? findClip(project, selId) : null;
 
   if (!hit) {
     return (
-      <div className="flex-1 flex items-center justify-center p-4 text-center text-xs pc-left-muted">
-        {tr("Click a clip on the timeline, or click a card under \"Animation\" to add one")}
+      <div className="flex-1 flex flex-col justify-between p-4 text-xs pc-left-muted">
+        <div className="flex-1 flex items-center justify-center text-center">
+          {tr("Click a clip on the timeline, or click a card under \"Animation\" to add one")}
+        </div>
+        <ReadOnlyFence>
+          <div data-pc="cut-space-inspector" className="pt-3 pc-left-divider flex flex-col gap-2 text-[11px]">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold pc-left-strong">{tr("Active cut")}</span>
+              <span className="pc-left-faint font-mono">{cutKind.toUpperCase()}</span>
+            </div>
+            {cutKind === "2d" ? (
+              <div className="flex items-center gap-2">
+                <span className="shrink-0">{tr("Canvas space")}</span>
+                <NumberField
+                  attrs={{ "data-pc": "cut-space-width" }}
+                  step={10}
+                  min={64}
+                  digits={0}
+                  value={cutEntry?.spaceWidth ?? project.width}
+                  onCommit={(v) => actions.setCutMeta(undefined, { spaceWidth: v === project.width ? null : v })}
+                  className="w-16 pc-left-input is-sm"
+                />
+                <span>×</span>
+                <NumberField
+                  attrs={{ "data-pc": "cut-space-height" }}
+                  step={10}
+                  min={64}
+                  digits={0}
+                  value={cutEntry?.spaceHeight ?? project.height}
+                  onCommit={(v) => actions.setCutMeta(undefined, { spaceHeight: v === project.height ? null : v })}
+                  className="w-16 pc-left-input is-sm"
+                />
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="shrink-0">{tr("Default 3D FOV")}</span>
+                <NumberField
+                  attrs={{ "data-pc": "cut-default-fov" }}
+                  step={1}
+                  min={15}
+                  max={90}
+                  digits={0}
+                  value={defaultCutFovDeg(project, cutEntry)}
+                  onCommit={(v) => actions.setCutMeta(undefined, { camera3dFov: Math.max(15, Math.min(90, v)) })}
+                  className="w-16 pc-left-input is-sm"
+                />
+                <span className="pc-left-faint">°</span>
+              </div>
+            )}
+          </div>
+        </ReadOnlyFence>
       </div>
     );
   }
@@ -65,6 +124,7 @@ export function Inspector({ tab }: { tab: "form" | "code" }) {
         {(media?.kind === "video" || media?.kind === "audio") && <ClipSpeedForm key={clip.id} clip={clip} />}
         {media && (media.kind === "video" || media.kind === "image") && <ClipFilterForm clip={clip} />}
         {media && (media.kind === "video" || media.kind === "audio") && <ClipAudioFxForm clip={clip} />}
+        {media && (media.kind === "video" || media.kind === "image") && <Frame3DForm clip={clip} />}
         </ReadOnlyFence>
       </div>
     );

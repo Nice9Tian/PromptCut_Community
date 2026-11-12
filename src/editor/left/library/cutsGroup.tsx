@@ -63,11 +63,18 @@ export function useCutsGroup(q: string, flash: (text: string, ms?: number) => vo
       items,
       thumbs,
       detailTop: (
-        <button type="button" className="pc-btn-primary is-block pc-lib-cut-new" data-pc="lib-cut-add"
-          disabled={ro.locked} title={ro.title()}
-          onClick={() => { const cut = actions.addCut(undefined, { switchTo: false }); openCutInTimeline(cut.id); }}>
-          {tr("New cut")}
-        </button>
+        <div className="flex gap-1.5 pc-lib-cut-new">
+          <button type="button" className="pc-btn-primary flex-1" data-pc="lib-cut-add"
+            disabled={ro.locked} title={ro.title()}
+            onClick={() => { const cut = actions.addCut(undefined, { switchTo: false }); openCutInTimeline(cut.id); }}>
+            {tr("New cut")}
+          </button>
+          <button type="button" className="pc-btn-primary" data-pc="lib-cut-add-3d"
+            disabled={ro.locked} title={ro.title(tr("Create a 3D cut and open it"))}
+            onClick={() => { const cut = actions.addCut(undefined, { switchTo: false, kind: "3d" }); openCutInTimeline(cut.id); }}>
+            +3D
+          </button>
+        </div>
       ),
       emptyHint: tr("No cuts yet"),
       emptyDetail: <div className="pc-left-note">{tr("No matching cuts")}</div>,
@@ -81,6 +88,7 @@ export function useCutsGroup(q: string, flash: (text: string, ms?: number) => vo
     const off = ro.locked ? { disabled: true, title: ro.why } : null;
     return [
       { label: tr("Open on the timeline"), onClick: () => openCutInTimeline(id), ...off },
+      ...(row.kind !== "3d" ? [{ label: tr("Switch to 3D cut"), onClick: () => actions.setCutKind(id, "3d"), ...off }] : []),
       { label: tr("Rename"), onClick: () => setRenaming(id), ...off },
       {
         label: tr("Delete cut"), danger: true, disabled: rows.length <= 1,
@@ -163,6 +171,9 @@ function CutTile({ row, canDelete, renaming, locked, why, onRename, onRenamed, o
       onDragEnd={() => clearDragPayload()}
     >
       <span className="pc-tl-cut-glyph" style={{ position: "absolute", top: 8, left: 8 }}><IconFilm size={12} /></span>
+      <span className={`pc-tl-cut-kind is-${row.kind === "3d" ? "3d" : "2d"}`} style={{ position: "absolute", top: 7, left: 24 }}>
+        {row.kind === "3d" ? "3D" : "2D"}
+      </span>
       {renaming ? (
         <input className="pc-tl-cut-input" value={draft} autoFocus aria-label={tr("Cut name")}
           onFocus={(e) => e.currentTarget.select()}

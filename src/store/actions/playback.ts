@@ -57,6 +57,9 @@ export const playback = {
 
   /* ---------- Selection ---------- */
   select(ids: string[]) {
-    set({ selection: ids });
+    set({ selection: ids, ...(ids.length > 0 ? { selectedCameraId: null } : {}) });
+  },
+  selectCamera(cameraId: string | null) {
+    set({ selectedCameraId: cameraId, ...(cameraId ? { selection: [] } : {}) });
   },
 };

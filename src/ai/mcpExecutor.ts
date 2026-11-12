@@ -64,8 +64,8 @@ export interface EditorApi {
    * Card-level addressing (the root node of the scene graph). When part-level is added, add a node
    * parameter; the signature does not need to change
    */
-  setPosition(args: { clipId: string; space?: "world" | "local"; x?: number; y?: number; w?: number; h?: number; anchor?: [number, number]; scale?: number; rotate?: number; rotateX?: number; rotateY?: number; translateZ?: number; clear?: boolean; clamp?: boolean }): any;
-  setRect(args: { clipId: string; x1: number; y1: number; x2: number; y2: number; mode?: "fit" | "canvas"; align?: [number, number] }): any;
+  setPosition(args: { clipId: string; space?: "world" | "local"; x?: number | string; y?: number | string; w?: number | string; h?: number | string; anchor?: [number, number]; scale?: number | string; rotate?: number | string; rotateX?: number | string; rotateY?: number | string; translateZ?: number | string; frameExpr?: Record<string, string | null>; clearFrameExpr?: boolean; clear?: boolean; clamp?: boolean }): any;
+  setRect(args: { clipId: string; x1: number; y1: number; x2: number; y2: number; mode?: "fit" | "canvas"; align?: [number, number]; frameExpr?: Record<string, string | null>; clearFrameExpr?: boolean }): any;
   align(args: { clipId: string; h?: "left" | "center" | "right"; v?: "top" | "center" | "bottom"; margin?: number }): any;
   nudge(args: { clipId: string; dx?: number; dy?: number; scaleBy?: number; rotateBy?: number; clamp?: boolean }): any;
   /** Async: contentBox needs a round trip to the stage (D4, page side). Write tools are still synchronous */
@@ -127,9 +127,15 @@ export interface EditorApi {
   // Multiple cuts (timelines). All other clip / track tools act only on the currently active one
   listCuts(args?: { cutId?: string }): any;
   switchCut(args: { cutId?: string; name?: string }): any;
-  addCut(args?: { name?: string }): any;
+  addCut(args?: { name?: string; kind?: "2d" | "3d"; spaceWidth?: number; spaceHeight?: number; camera3dFov?: number }): any;
+  setCutKind(args: { cutId?: string; kind: "2d" | "3d"; spaceWidth?: number; spaceHeight?: number; camera3dFov?: number }): any;
+  prerenderCutTo2D(args?: { cutId?: string; name?: string }): Promise<any>;
   renameCut(args: { cutId: string; name: string }): any;
   removeCut(args: { cutId: string; force?: boolean; reason?: string }): any;
+  listCameras(args?: { cutId?: string }): any;
+  addCamera(args: { cutId?: string; name?: string; row?: number; start: number; end: number; enabled?: boolean; params?: Record<string, number | string>; x?: number | string; y?: number | string; z?: number | string; rx?: number | string; ry?: number | string; rz?: number | string; fovDeg?: number | string; zoom?: number | string; rotate?: number | string }): any;
+  updateCamera(args: { cameraId: string; cutId?: string; name?: string; row?: number; start?: number; end?: number; enabled?: boolean; params?: Record<string, number | string | null>; x?: number | string; y?: number | string; z?: number | string; rx?: number | string; ry?: number | string; rz?: number | string; fovDeg?: number | string; zoom?: number | string; rotate?: number | string }): any;
+  removeCamera(args: { cameraId: string; cutId?: string }): any;
   /**
    * Place a cut segment referencing another cut in the active cut (either cutId or name); throws
    * with an explanation when it would be placed into itself or form a circular reference
@@ -195,7 +201,7 @@ export interface EditorApi {
    * changes go through editCard
    */
   inspectCardDom(args: { clipId: string; t?: number; ref?: number | string; depth?: number }): Promise<any>;
-  seePreview(args: { t?: number; clipId?: string; times?: number[]; cutId?: string }): Promise<any>;
+  seePreview(args: { t?: number; clipId?: string; times?: number[]; cutId?: string; view?: "camera" | "space" }): Promise<any>;
   seeSequences(args: { mediaId: string; page?: number; perPage?: number; grid?: number; scene?: number; from?: number; to?: number }): Promise<any>;
   cardAuthoringGuide(): Promise<any>;
 }
@@ -212,7 +218,9 @@ const TIMELINE_TOOLS = new Set([
   "create_filter", "update_filter", "remove_filter", "apply_filter",
   "create_pixel_map", "update_pixel_map", "remove_pixel_map", "apply_pixel_map",
   "create_audio_fx", "update_audio_fx", "remove_audio_fx", "apply_audio_fx",
-  "user_interface_switch_cut", "add_cut", "set_theme", "voice_generate", "sound_generate",
+  "user_interface_switch_cut", "add_cut", "set_cut_kind", "prerender_cut_to_2d",
+  "add_camera", "update_camera", "remove_camera",
+  "set_theme", "voice_generate", "sound_generate",
 ]);
 
 /**

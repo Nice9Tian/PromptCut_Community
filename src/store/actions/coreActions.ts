@@ -19,7 +19,7 @@ export const coreActions = {
     const project = loader ? loader(normalized) : sync ? sync.load(normalized) : normalized;
     // lastCamera3dFov is tied to the project and must be cleared when switching projects, otherwise
     // 3D perspective will bleed over
-    set({ project, projectLoadToken: state.projectLoadToken + 1, filePath, dirty: false, t: 0, playing: false, selection: [], playToken: state.playToken + 1, durationManual: null, lastCamera3dFov: null });
+    set({ project, projectLoadToken: state.projectLoadToken + 1, filePath, dirty: false, t: 0, playing: false, selection: [], selectedCameraId: null, playToken: state.playToken + 1, durationManual: null, lastCamera3dFov: null });
   },
   newProject(name?: string) {
     coreActions.loadProject(createEmptyProject(name));

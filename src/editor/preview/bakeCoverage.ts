@@ -21,6 +21,8 @@
  * the part already rendered. So split into segments by moment and paint them one by one.
  */
 
+import { stripOuterFrameExpr } from "../../kernel/frameExpr.mjs";
+
 export interface CoverageSegment {
   start: number;
   end: number;
@@ -258,11 +260,14 @@ export function clipFingerprint(c: {
     start: _start,
     end: _end,
     frame: _frame,
+    frameExpr: rawFrameExpr,
     opacity: _opacity,
     fadeIn: _fadeIn,
     fadeOut: _fadeOut,
-    ...rest
+    ...restBase
   } = c as Record<string, unknown> & typeof c;
+  const sizeExpr = stripOuterFrameExpr(rawFrameExpr as any);
+  const rest = sizeExpr ? { ...restBase, frameExpr: sizeExpr } : restBase;
   const dur = Math.max(0, (Number(c.end) || 0) - (Number(c.start) || 0));
   return [
     JSON.stringify(rest),

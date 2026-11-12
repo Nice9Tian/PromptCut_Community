@@ -1,23 +1,25 @@
 export const layoutTools = [
   {
     name: "set_position",
-    description: "Position a card: place its anchor at a coordinate on the frame, with optional size, scale and rotation. **This is the proper way to put any card at any position**: it is no longer limited by the card's built-in position tiers (center/bottom/…), and there is no need to swap cards just for position. Coordinate system: stage pixels, origin at top left; at 1920×1080 the center is 960,540. anchor decides which point in the box x,y refers to ([0,0] top left, [0.5,0.5] center, [1,1] bottom right), and scale and rotation also pivot around it; for example, to put the card center at the middle of the left half of the screen: { x:480, y:540, anchor:[0.5,0.5] }. Only the fields passed are changed, the rest are kept; pass clear:true to restore filling the whole screen. w/h are the card's **canvas** size (most cards are designed for 1920×1080; shrinking the canvas does not shrink the content, use scale to shrink the whole). space is equivalent for card-level world/local (the parent coordinate system is the stage); it will only differ at part level in the future. **3D**: rotateX / rotateY / translateZ place the card in space, but call set_camera3d first to enable perspective, otherwise you get an affine stretch, not perspective. Returns the layout's local / world and look; for the solid box contentBox, call get_layout separately.",
+    description: "Position a card (or media board in a 3D cut): place its anchor at a coordinate on the frame, with optional size, scale, rotation, 3D pose, and deterministic per-frame keyframe expressions (`frameExpr`). **This is the proper way to put any card at any position**: it is no longer limited by the card's built-in position tiers (center/bottom/…), and there is no need to swap cards just for position. Coordinate system: stage pixels, origin at top left; at 1920×1080 the center is 960,540. anchor decides which point in the box x,y refers to ([0,0] top left, [0.5,0.5] center, [1,1] bottom right), and scale and rotation also pivot around it; for example, to put the card center at the middle of the left half of the screen: { x:480, y:540, anchor:[0.5,0.5] }. **Keyframe expressions**: any of x, y, w, h, scale, rotate, rotateX, rotateY, translateZ can be passed as an expression string in `t` (seconds into the clip), `d` (clip duration), and `p = t/d` (0..1) — or grouped under `frameExpr` — to animate position/scale/3D pose smoothly over time! Only the fields passed are changed, the rest are kept; pass clear:true to restore filling the whole screen (and clear expressions), or clearFrameExpr:true to clear only expressions. w/h are the card's **canvas** size (most cards are designed for 1920×1080; shrinking the canvas does not shrink the content, use scale to shrink the whole). **3D**: in a `\"3d\"` cut (`add_cut({ kind: \"3d\" })` or `set_cut_kind({ kind: \"3d\" })`), perspective and true depth occlusion are always on and **both cards and video/image media clips** can be placed as 3D boards; in a `\"2d\"` cut, call `set_camera3d` first to enable perspective and 3D fields apply only to cards. Returns the layout's local / world, frameExpr (if any), and look; for the solid box contentBox, call get_layout separately.",
     inputSchema: {
       type: "object",
       properties: {
         clipId: { type: "string" },
         space: { type: "string", enum: ["world", "local"], description: "Default local; the two are equivalent at card level" },
-        x: { type: "number", description: "Horizontal coordinate of the anchor (pixels)" },
-        y: { type: "number", description: "Vertical coordinate of the anchor (pixels)" },
-        w: { type: "number", description: "Canvas width (pixels), omitted = stage width" },
-        h: { type: "number", description: "Canvas height (pixels), omitted = stage height" },
+        x: { anyOf: [{ type: "number" }, { type: "string" }], description: "Horizontal coordinate of the anchor (pixels, or t/d/p expression string)" },
+        y: { anyOf: [{ type: "number" }, { type: "string" }], description: "Vertical coordinate of the anchor (pixels, or t/d/p expression string)" },
+        w: { anyOf: [{ type: "number" }, { type: "string" }], description: "Canvas width (pixels > 0, or t/d/p expression string), omitted = stage width" },
+        h: { anyOf: [{ type: "number" }, { type: "string" }], description: "Canvas height (pixels > 0, or t/d/p expression string), omitted = stage height" },
         anchor: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "[ax, ay], 0~1; default [0,0]" },
-        scale: { type: "number", description: "Scale around the anchor, default 1" },
-        rotate: { type: "number", description: "Rotation around the anchor, in degrees, clockwise, default 0. This is an **in-plane** rotation" },
-        rotateX: { type: "number", description: "3D: flip around the horizontal axis, in degrees. Positive = **top edge tilts inward, bottom edge lifts toward the viewer** (like leaning a sign backward). **Enable 3D with set_camera3d first**, otherwise you only get an affine stretch instead of perspective. **Only works on cards**; media clips (video/image) are rejected" },
-        rotateY: { type: "number", description: "3D: flip around the vertical axis, in degrees. Positive = **right edge turns inward, left edge turns toward the viewer**. Likewise requires set_camera3d first, and likewise only works on cards" },
-        translateZ: { type: "number", description: "3D: translate along depth, in stage pixels. Positive moves toward the viewer (larger), negative moves inward (smaller). Likewise requires set_camera3d first, and likewise only works on cards. Note that pushing too far forward crosses the camera: when translateZ approaches the \"camera distance\" (set_camera3d tells you this number), the card grows to fill the whole frame or even larger" },
-        clear: { type: "boolean", description: "true = delete the box and restore full-screen fill" },
+        scale: { anyOf: [{ type: "number" }, { type: "string" }], description: "Scale around the anchor (> 0, or t/d/p expression string), default 1" },
+        rotate: { anyOf: [{ type: "number" }, { type: "string" }], description: "In-plane rotation around the anchor in degrees, clockwise (number or t/d/p expression string), default 0" },
+        rotateX: { anyOf: [{ type: "number" }, { type: "string" }], description: "3D: flip around the horizontal axis, in degrees (number or t/d/p expression string). Positive = top edge tilts inward. In a 3D cut works on both cards and media boards; in a 2D cut call set_camera3d first and only works on cards" },
+        rotateY: { anyOf: [{ type: "number" }, { type: "string" }], description: "3D: flip around the vertical axis, in degrees (number or t/d/p expression string). Positive = right edge turns inward" },
+        translateZ: { anyOf: [{ type: "number" }, { type: "string" }], description: "3D: translate along depth, in stage pixels (number or t/d/p expression string). Positive moves toward the default viewer, negative moves deeper into space" },
+        frameExpr: { type: "object", description: "Map of keyframe expressions for frame fields (x, y, w, h, scale, rotate, rotateX, rotateY, translateZ) using variables t, d, p; pass null on a key to clear that expression" },
+        clearFrameExpr: { type: "boolean", description: "true = clear all frame keyframe expressions on this clip while keeping static frame numbers" },
+        clear: { type: "boolean", description: "true = delete the box (and any frameExpr) and restore full-screen fill" },
         clamp: { type: "boolean", description: "true = after computing, clamp the visible box back inside the stage so the card does not leave the frame" }
       },
       required: ["clipId"]
@@ -26,7 +28,7 @@ export const layoutTools = [
   },
   {
     name: "set_rect",
-    description: "Place a card into a rectangle on the frame (two diagonal corner points, any order). **Preferred way to put a card on the \"empty side\"**. mode defaults to fit: the canvas stays as is and is scaled as a whole to just fit inside the rectangle, keeping its proportions, and aligned inside the rectangle per align (centered by default). Most cards are designed at 1920×1080, so after scaling the content is guaranteed to be inside the rectangle. With mode: canvas the canvas becomes the rectangle itself (the content is laid out again by the card's own rules and may overflow; use it only when you really need to change the canvas size). Returns the layout's local / world (check world.visualBox) and look, without contentBox. It edits the same box as set_position / align / nudge, just expressed differently.",
+    description: "Place a card into a rectangle on the frame (two diagonal corner points, any order), with optional `frameExpr` keyframe expressions. **Preferred way to put a card on the \"empty side\"**. mode defaults to fit: the canvas stays as is and is scaled as a whole to just fit inside the rectangle, keeping its proportions, and aligned inside the rectangle per align (centered by default). Most cards are designed at 1920×1080, so after scaling the content is guaranteed to be inside the rectangle. With mode: canvas the canvas becomes the rectangle itself (the content is laid out again by the card's own rules and may overflow; use it only when you really need to change the canvas size). Returns the layout's local / world (check world.visualBox), frameExpr (if any), and look, without contentBox. It edits the same box as set_position / align / nudge, just expressed differently.",
     inputSchema: {
       type: "object",
       properties: {
@@ -34,7 +36,9 @@ export const layoutTools = [
         x1: { type: "number" }, y1: { type: "number" },
         x2: { type: "number" }, y2: { type: "number" },
         mode: { type: "string", enum: ["fit", "canvas"], description: "Default fit" },
-        align: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Where to sit in the rectangle: [0,0] top left, [0.5,0.5] center (default), [1,1] bottom right" }
+        align: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Where to sit in the rectangle: [0,0] top left, [0.5,0.5] center (default), [1,1] bottom right" },
+        frameExpr: { type: "object", description: "Optional keyframe expressions (x, y, w, h, scale, rotate, rotateX, rotateY, translateZ) in t, d, p" },
+        clearFrameExpr: { type: "boolean", description: "true = clear all frame keyframe expressions on this clip" }
       },
       required: ["clipId", "x1", "y1", "x2", "y2"]
     },
@@ -84,12 +88,9 @@ export const layoutTools = [
   {
     name: "set_camera3d",
     description:
-      "Turn 3D perspective on / off, and adjust its strength. **This is the only 3D switch**, one tier per project, not per card." +
-      " While it is off, rotateX / rotateY / translateZ in set_position only produce an affine stretch: the card is skewed but with no near-large far-small effect, so it looks like a sticker rather than standing in space." +
-      " Once on, the stage becomes a perspective space: the screen plane is z=0, positive translateZ comes toward the viewer (larger), negative goes inward (smaller)." +
+      "Configure 3D perspective field of view (`fovDeg`). In a **2D cut** (`kind: \"2d\"`), this turns stage 3D perspective on / off for card tilts (`rotateX` / `rotateY` / `translateZ` without full 3D depth occlusion or camera movement); in a **3D cut** (`kind: \"3d\"`), perspective is always active and `fovDeg` sets the cut's default 3D camera FOV (used whenever no active `CameraClip` on the camera lane overrides `fovDeg`; for moving the 3D camera over time, use `add_camera` / `update_camera`)." +
       "\n\n" +
-      "Strength is adjusted with fovDeg (field of view), **there is no \"camera distance\" parameter**: the distance is derived from fov and canvas height (d = H / (2·tan(fov/2)))." +
-      " It is designed this way because a portrait project has a canvas height of 1920 and a landscape one 1080, so the same distance gives completely different perspective strength in the two aspect ratios, while fov is directly \"how strong the perspective is\" and needs no retuning when the aspect ratio changes." +
+      "Strength is adjusted with fovDeg (field of view), **there is no \"camera distance\" parameter**: the default straight-on camera distance is derived from fov and canvas height (d = H / (2·tan(fov/2)))." +
       " Tiers: **30° restrained** (close to orthographic, suits tidy information layouts), **40° default**, **50~60° noticeable** (a card has depth as soon as it turns), **80° and above is fisheye**, with exaggerated distortion at the corners." +
       "\n\n" +
       "After changing it, always check the real frames with see_frames: perspective strength can only be judged by eye, not calculated.",
@@ -98,7 +99,7 @@ export const layoutTools = [
       properties: {
         enabled: {
           type: "boolean",
-          description: "true = turn 3D on (when fovDeg is not passed at the same time: if this project was tuned before it returns to that value, otherwise it uses the default 40°); false = turn it off, back to pure 2D. Existing rotateX/rotateY/translateZ on cards are not cleared, they just no longer have perspective",
+          description: "true = turn 3D perspective on; false = turn 3D perspective off on a 2D cut (cannot be turned off on a 3D cut, where perspective is intrinsic to the cut kind)",
         },
         fovDeg: {
           type: "number",

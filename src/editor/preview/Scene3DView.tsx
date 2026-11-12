@@ -1,12 +1,23 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
+import { Stage } from "../../render/Stage";
+import { isCaptionClip } from "../../kernel/captions";
+import type { Timeline } from "../../kernel/types";
 import { useBakePrefetch, beginForegroundBake, endForegroundBake, canonFrameT } from "./useBakePrefetch";
 import { clipFingerprint, markBaked, momentId } from "./bakeCoverage";
 import { measureImageBox, worthCropping } from "./alphaBox";
-import { cardOpacityAt, flattenOverlay, type Project } from "../../kernel/project";
+import { activeCutKind, cardOpacityAt, flattenBoards3D, isImageMedia, MEDIA_BOARD_CARD, opacityAt, type Board3DClip, type Project, type TrackClip } from "../../kernel/project";
 import { CUT_SEGMENT_CARD, cutOf } from "../../kernel/cutSegments";
 import { placeClip3D, sortBoardsByDepth, type SortableBoard3D } from "./place3d";
-import { frustum2d } from "./frustum2d";
+import { cameraFrustum3D, frustum2d } from "./frustum2d";
+import { resolveClipFrameAt } from "../../kernel/frameExpr.mjs";
+import { activeCutEntry, defaultCutFovDeg, resolveCamera3DAt } from "../../kernel/camera.mjs";
+import { clipSpeed } from "../../kernel/clipTime.mjs";
+import { clipFilterOpsAt, cssFilter } from "../../kernel/filters.mjs";
+import { emphasisFilter } from "../../kernel/emphasis";
+import { driveMedia, filterOf, releaseMedia, targetTimeOf } from "../../render/mediaDrive";
+import { playbackUrl } from "../../render/mediaTier";
+import { tierHashes } from "../media/assetTiers";
 import { getCard } from "../../kernel/registry";
 import { actions, useStore } from "../../store/project";
 import {
@@ -136,11 +147,22 @@ interface Props {
   project: Project;
   /** Current moment on the timeline (seconds) */
   t: number;
+  /** `"camera"` renders through the cut's active 3D output camera; `"space"` enables OrbitControls inspection with camera frustum gizmo. */
+  mode?: "camera" | "space";
+  /** Invoked when clicking the active 3D camera gizmo in `"space"` mode. */
+  onSelectCamera?: (cameraId: string) => void;
 }
 
-export function Scene3DView({ project, t }: Props) {
+export function Scene3DView({ project, t, mode = "space", onSelectCamera }: Props) {
+  const outerRef = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
+  const captionOverlayRef = useRef<HTMLDivElement>(null);
   const streamHost = useRef<HTMLDivElement>(null);
+  const mediaHost = useRef<HTMLDivElement>(null);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const onSelectCameraRef = useRef(onSelectCamera);
+  onSelectCameraRef.current = onSelectCamera;
   const selected = useStore((s) => s.selection[0]);
   const playing = useStore((s) => s.playing);
   const playingRef = useRef(playing);
@@ -173,8 +195,14 @@ export function Scene3DView({ project, t }: Props) {
    * selection outline selRef).
    */
   const [frustumOn, setFrustumOn] = useState(false);
+  const [spaceGizmoHidden, setSpaceGizmoHidden] = useState(false);
   const frustumRef = useRef(frustumOn);
   frustumRef.current = frustumOn;
+  const spaceGizmoHiddenRef = useRef(spaceGizmoHidden);
+  spaceGizmoHiddenRef.current = spaceGizmoHidden;
+  const selectedCameraId = useStore((s) => (s as any).selectedCameraId as string | null | undefined);
+  const selectedCameraRef = useRef(selectedCameraId ?? null);
+  selectedCameraRef.current = selectedCameraId ?? null;
   /*
    * Fingerprint of "what this card looks like", carrying only what **determines pixels**: which card,
    * what parameters, how big the canvas is.
@@ -292,6 +320,8 @@ export function Scene3DView({ project, t }: Props) {
    * once) does not wait an extra beat because of it.
    */
   const scrubbing = useSyncExternalStore(subscribeScrub, isScrubbing, isScrubbing);
+  const scrubbingRef = useRef(scrubbing);
+  scrubbingRef.current = scrubbing;
   const [parked, setParked] = useState(false);
   useEffect(() => {
     setParked(false);
@@ -311,7 +341,11 @@ export function Scene3DView({ project, t }: Props) {
    */
   const moments = useRef(new Map<string, string>());
   /** The scene set, like the scene-3d card, must be disposed explicitly: WebGL resources are not managed by the GC */
-  const gl = useRef<{ dispose: () => void; render: () => void } | null>(null);
+  const gl = useRef<{ dispose: () => void; render: () => void; syncSize: () => void } | null>(null);
+  useEffect(() => {
+    gl.current?.syncSize();
+    gl.current?.render();
+  }, [mode]);
   /**
    * Lets a texture be swapped in immediately once it is ready: clipId → swap function.
    *
@@ -361,13 +395,22 @@ export function Scene3DView({ project, t }: Props) {
    * scheduling round, and it depends only on the project content, not on the playhead. The playhead
    * only decides **which one to render first**, and that is bakePlan's job.
    */
+  const effFrameAt = (c: { start: number; end: number; frame?: Board3DClip["frame"]; frameExpr?: Board3DClip["frameExpr"] }, atT: number) =>
+    c.frameExpr
+      ? resolveClipFrameAt(c.frame, c.frameExpr, Math.max(0, atT - c.start), c.end - c.start)
+      : c.frame;
+
   const wantedMoments = useMemo(() => {
     const out: { clipId: string; t: number; start: number; end: number; tier: "coarse" | "full"; fine: boolean }[] = [];
     const fps = Math.max(1, project.fps || 30);
     const stageSize = { width: project.width, height: project.height };
-    for (const c of flattenOverlay(project).clips) {
-      // Media clips are bitmaps, scene-3d is real geometry, and boards behind the camera are culled
-      if ((c as any).mediaId || c.cardId === "scene-3d" || isBoardBehindCamera(c.frame, stageSize, project.camera3dFov)) continue;
+    const cutEntry = activeCutEntry(project);
+    const defFov = defaultCutFovDeg(project, cutEntry);
+    const hasMovingCam = Boolean(cutEntry?.cameras?.length);
+    for (const c of flattenBoards3D(project)) {
+      // Media clips are live/decoded bitmaps, scene-3d is real geometry, and statically culled boards are skipped
+      if (c.cardId === MEDIA_BOARD_CARD || c.cardId === "scene-3d") continue;
+      if (!c.frameExpr && !hasMovingCam && isBoardBehindCamera(c.frame, stageSize, defFov)) continue;
       const motion = clipMotionOf(c as TimedClip);
       const seg = cutOf(c);
       const visStart = seg ? seg.from : c.start;
@@ -418,18 +461,16 @@ export function Scene3DView({ project, t }: Props) {
     return () => { dead = true; };
   }, []);
 
-  const timeline = flattenOverlay(project);
-  const active = timeline.clips.filter((c) => t >= c.start && t < c.end);
-  // Which cards exist at this moment and what each looks like: rebuild the scene only when this changes. **Deliberately excludes the moment**:
-  // if it were included, dragging the timeline within one card would rebuild the whole scene at every
-  // slot crossed (all geometry rebuilt, all textures reloaded, and a new WebGL context opened, with a
-  // browser limit of about 16). Changing the moment only changes material.map, with no rebuild needed.
+  const allBoards = useMemo(() => flattenBoards3D(project), [project]);
+  const active = allBoards.filter((c) => t >= c.start && t < c.end);
   const sig = active.map(buildKey).join("|");
-  // Which moments should be shown. When it changes, only refetch images, without rebuilding the scene
-  const momentSig = active.map(momentKey).join("|");
+  const momentSig = active.filter((c) => c.cardId !== MEDIA_BOARD_CARD).map(momentKey).join("|");
   const stageSizeNow = { width: project.width, height: project.height };
+  const activeCutNow = activeCutEntry(project);
+  const defFovNow = defaultCutFovDeg(project, activeCutNow);
+  const cam3dNow = resolveCamera3DAt(activeCutNow?.cameras, stageSizeNow, t, defFovNow);
   const culledSig = active
-    .map((c) => (isBoardBehindCamera(c.frame, stageSizeNow, project.camera3dFov) ? "1" : "0"))
+    .map((c) => (isBoardBehindCamera(effFrameAt(c, t), stageSizeNow, cam3dNow.fovDeg, { position: cam3dNow.position, forward: cam3dNow.forward, near: cam3dNow.near }) ? "1" : "0"))
     .join("");
 
   /* ── Build the scene ───────────────────────────────────────────── */
@@ -437,9 +478,11 @@ export function Scene3DView({ project, t }: Props) {
     const el = host.current;
     if (!mods || !el) return;
     const [THREE, { OrbitControls }] = mods;
-    const w = Math.max(1, el.clientWidth);
-    const h = Math.max(1, el.clientHeight);
+    const outerEl = outerRef.current || el;
+    const w = Math.max(1, el.clientWidth || outerEl.clientWidth);
+    const h = Math.max(1, el.clientHeight || outerEl.clientHeight);
     const stage = { width: project.width, height: project.height };
+    const initDefFov = defaultCutFovDeg(project, activeCutEntry(project));
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
@@ -453,19 +496,17 @@ export function Scene3DView({ project, t }: Props) {
      * you see on open matches the 2D view; after that OrbitControls lets you rotate away from here.
      * With this starting point, "rotated off" can always be brought back.
      */
-    const cam = cameraFor(stage, project.camera3dFov ?? DEFAULT_FOV_DEG);
-    const nearClip = boardNearDistance(stage, project.camera3dFov ?? DEFAULT_FOV_DEG);
-    const camera = new THREE.PerspectiveCamera(cam.fovDeg, w / h, nearClip, cam.distance * 40);
-    // If it has been rotated, keep using the last camera position; only if not, use the final video's camera position (see the note on the pose ref)
+    const cam = cameraFor(stage, initDefFov);
+    const nearClip = boardNearDistance(stage, initDefFov);
+    const camera = new THREE.PerspectiveCamera(cam.fovDeg, w / h, nearClip, Math.max(cam.distance * 40, 20000));
     camera.position.set(...(pose.current?.pos ?? cam.position));
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(...(pose.current?.target ?? [0, 0, 0]));
     controls.enableDamping = true;
-    // Record it as soon as the user rotates. OrbitControls' change fires every time it moves the
-    // camera, including the damping frames, so after release the final position recorded is always
-    // the last one.
+    controls.enabled = modeRef.current === "space";
     controls.addEventListener("change", () => {
+      if (modeRef.current !== "space") return;
       pose.current = {
         pos: camera.position.toArray() as [number, number, number],
         target: controls.target.toArray() as [number, number, number],
@@ -473,15 +514,60 @@ export function Scene3DView({ project, t }: Props) {
     });
     const onOrbitEnd = () => setBakeGen((g) => g + 1);
     controls.addEventListener("end", onOrbitEnd);
-    controls.update();
+    if (modeRef.current === "space") controls.update();
+
+    const syncViewportSize = () => {
+      const outEl = outerRef.current || el;
+      const ow = Math.max(1, outEl.clientWidth);
+      const oh = Math.max(1, outEl.clientHeight);
+      if (modeRef.current === "camera") {
+        const aspect = Math.max(1e-6, projRef.current.width / Math.max(1, projRef.current.height));
+        let vw = ow;
+        let vh = vw / aspect;
+        if (vh > oh) {
+          vh = oh;
+          vw = vh * aspect;
+        }
+        vw = Math.max(1, Math.round(vw));
+        vh = Math.max(1, Math.round(vh));
+        el.style.left = `${Math.round((ow - vw) / 2)}px`;
+        el.style.top = `${Math.round((oh - vh) / 2)}px`;
+        el.style.width = `${vw}px`;
+        el.style.height = `${vh}px`;
+        el.style.right = "auto";
+        el.style.bottom = "auto";
+        const capEl = captionOverlayRef.current;
+        if (capEl) {
+          const pw = Math.max(1, projRef.current.width);
+          const ph = Math.max(1, projRef.current.height);
+          capEl.style.left = `${Math.round((ow - vw) / 2)}px`;
+          capEl.style.top = `${Math.round((oh - vh) / 2)}px`;
+          capEl.style.width = `${pw}px`;
+          capEl.style.height = `${ph}px`;
+          capEl.style.transformOrigin = "0 0";
+          capEl.style.transform = `scale(${vw / pw})`;
+        }
+        camera.aspect = aspect;
+        camera.updateProjectionMatrix();
+        renderer.setSize(vw, vh, false);
+      } else {
+        el.style.left = "0";
+        el.style.top = "0";
+        el.style.right = "0";
+        el.style.bottom = "0";
+        el.style.width = "auto";
+        el.style.height = "auto";
+        const nw = Math.max(1, el.clientWidth || ow);
+        const nh = Math.max(1, el.clientHeight || oh);
+        camera.aspect = nw / nh;
+        camera.updateProjectionMatrix();
+        renderer.setSize(nw, nh, false);
+      }
+    };
+    syncViewportSize();
 
     scene.add(new THREE.AmbientLight(0xffffff, 2.2));
 
-    /*
-     * Outline of the screen plane (z=0). Without it there is no reference at all: after a couple of
-     * rotations you can't tell which side is the "front".
-     * Drawn as a wireframe rather than a solid face: a solid face would hide cards with negative z.
-     */
     const edge = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.PlaneGeometry(stage.width, stage.height)),
       new THREE.LineBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.5 }),
@@ -490,33 +576,32 @@ export function Scene3DView({ project, t }: Props) {
 
     const disposables: { dispose: () => void }[] = [edge.geometry, edge.material as any];
 
-    /*
-     * The "2D view frustum": a four-sided pyramid with its **apex at the 2D camera and its base at the
-     * aspect-ratio frame** (geometry in frustum2d.ts).
-     *
-     * The `edge` loop above only says "the frame is on this plane", not **where it is viewed from**:
-     * and after a couple of rotations, "is this card actually in the picture" can only be judged by
-     * the line-of-sight direction.
-     *
-     * All eight lines of the pyramid are **the same amber**: the four base edges and the four ribs
-     * are two parts of the same thing, and splitting them into two colors would make people think
-     * they are two different things. Amber is distinguishable from both the selection outline's cyan
-     * (0x22d3ee) and the frame outline's blue-gray (0x64748b).
-     *
-     * **Build it once and leave it there, toggled with visible**, and not in the effect dependencies:
-     * if it were, clicking the button would rebuild the whole scene: all geometry rebuilt, all
-     * textures reloaded, and a new WebGL context opened (limit about 16).
-     */
+    const frustumMat = new THREE.LineBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.9 });
     const frustum = new THREE.LineSegments(
       new THREE.BufferGeometry().setAttribute(
         "position",
-        new THREE.Float32BufferAttribute(frustum2d(stage, project.camera3dFov).positions, 3),
+        new THREE.Float32BufferAttribute(frustum2d(stage, initDefFov).positions, 3),
       ),
-      new THREE.LineBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.9 }),
+      frustumMat,
     );
     frustum.visible = frustumRef.current;
     scene.add(frustum);
-    disposables.push(frustum.geometry, frustum.material as any);
+    disposables.push(frustum.geometry, frustumMat as any);
+
+    const camGizmoGeo = new THREE.BoxGeometry(
+      Math.max(28, stage.width * 0.03),
+      Math.max(20, stage.height * 0.025),
+      Math.max(36, stage.width * 0.035),
+    );
+    const camGizmoMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, wireframe: false });
+    const camGizmo = new THREE.Mesh(camGizmoGeo, camGizmoMat);
+    camGizmo.userData.isCameraGizmo = true;
+    camGizmo.visible = false;
+    scene.add(camGizmo);
+    disposables.push(camGizmoGeo, camGizmoMat);
+    let lastFrustumSig = "";
+    let lastAppliedMode = modeRef.current;
+
     swap.current = new Map();
     proxy.current = new Map();
 
@@ -538,6 +623,15 @@ export function Scene3DView({ project, t }: Props) {
       subBox: BoardSubBox | undefined;
       boundSig: string;
       mode: "proxy" | "stream" | "exact";
+    }[] = [];
+    const mediaBoards: {
+      clipId: string;
+      mesh: any;
+      mat: any;
+      pl: ReturnType<typeof placeClip3D>;
+      texCanvas: HTMLCanvasElement;
+      canvasTex: any;
+      lastDrawSig: string;
     }[] = [];
     const scene3dItems: {
       clipId: string;
@@ -571,9 +665,7 @@ export function Scene3DView({ project, t }: Props) {
     };
 
     posers.current = [];
-    // For picking: each mesh remembers which clip it belongs to (that is what three's userData is for)
     const pickables: any[] = [];
-    // Placement is recomputed every frame, so references to these groups must be kept
     const placed: { clipId: string; pivot: any; inner: any; spin: any; tilt: any; mesh: any }[] = [];
     const meshByClipId = new Map<string, any>();
     const marks = new Map<string, any>();
@@ -582,24 +674,67 @@ export function Scene3DView({ project, t }: Props) {
     /*
      * Synchronize placement, timeline envelopes (`cardOpacityAt` + nested `cutEnv`), near-plane culling
      * (`isBoardBehindCamera`), and back-to-front depth sorting (`sortBoardsByDepth`).
-     *
-     * In 3D cuts (`docs/semantics/product/project-model.md`), occlusion follows camera-space depth
-     * rather than track order, while equal-depth planes break ties by track order. All translucent
-     * boards keep `depthWrite: false` and receive explicit `renderOrder` from `sortBoardsByDepth`.
      */
     const syncSceneState = () => {
       const projNow = projRef.current;
       const tNow = tRef.current;
       const stageNow = { width: projNow.width, height: projNow.height };
-      const flatClips = flattenOverlay(projNow).clips;
-      const liveById = new Map<string, { clip: (typeof flatClips)[number]; trackOrder: number }>();
-      flatClips.forEach((c, idx) => liveById.set(c.id, { clip: c, trackOrder: idx }));
+      const cutNow = activeCutEntry(projNow);
+      const defFov = defaultCutFovDeg(projNow, cutNow);
+      const cam3d = resolveCamera3DAt(cutNow?.cameras, stageNow, tNow, defFov);
+      const is3DCut = activeCutKind(projNow) === "3d";
+      const curMode = modeRef.current;
+
+      if (curMode !== lastAppliedMode) {
+        lastAppliedMode = curMode;
+        syncViewportSize();
+        if (curMode === "space") {
+          const defCam = cameraFor(stageNow, defFov);
+          camera.fov = defFov;
+          camera.near = boardNearDistance(stageNow, defFov);
+          camera.far = Math.max(defCam.distance * 40, 20000);
+          camera.rotation.set(0, 0, 0);
+          const defaultSpacePos: [number, number, number] = is3DCut
+            ? [
+                -defCam.distance * 0.9,
+                defCam.distance * 0.42,
+                Math.max(defCam.distance * 1.4, cam3d.position[2] + defCam.distance * 0.6),
+              ]
+            : defCam.position;
+          camera.position.set(...(pose.current?.pos ?? defaultSpacePos));
+          controls.target.set(...(pose.current?.target ?? [0, 0, 0]));
+          camera.updateProjectionMatrix();
+          controls.enabled = true;
+          controls.update();
+        }
+      }
+
+      if (curMode === "camera") {
+        controls.enabled = false;
+        const aspect = Math.max(1e-6, stageNow.width / Math.max(1, stageNow.height));
+        if (camera.fov !== cam3d.fovDeg || camera.near !== cam3d.near || Math.abs(camera.aspect - aspect) > 1e-5) {
+          camera.fov = cam3d.fovDeg;
+          camera.near = cam3d.near;
+          camera.far = Math.max(cam3d.far, 20000);
+          camera.aspect = aspect;
+          camera.updateProjectionMatrix();
+        }
+        camera.position.set(...cam3d.position);
+        camera.rotation.order = "YXZ";
+        camera.rotation.set((cam3d.rx * Math.PI) / 180, (cam3d.ry * Math.PI) / 180, (cam3d.rz * Math.PI) / 180);
+      } else {
+        controls.enabled = true;
+      }
+
+      const flatClips = flattenBoards3D(projNow);
+      const liveById = new Map<string, { clip: Board3DClip; effFrame: Board3DClip["frame"]; trackOrder: number }>();
+      flatClips.forEach((c, idx) => liveById.set(c.id, { clip: c, effFrame: effFrameAt(c, tNow), trackOrder: idx }));
 
       const plById = new Map<string, ReturnType<typeof placeClip3D>>();
       for (const q of placed) {
         const entry = liveById.get(q.clipId);
         if (!entry) continue;
-        const pl2 = placeClip3D(entry.clip.frame, stageNow);
+        const pl2 = placeClip3D(entry.effFrame, stageNow);
         plById.set(q.clipId, pl2);
         q.pivot.position.set(...pl2.pivot);
         q.inner.rotation.z = pl2.rollZ;
@@ -617,6 +752,7 @@ export function Scene3DView({ project, t }: Props) {
         forward: [camDir.x, camDir.y, camDir.z],
         near: camera.near,
       };
+      const fovForCull = curMode === "camera" ? cam3d.fovDeg : defFov;
 
       const sortInput: SortableBoard3D[] = [];
 
@@ -624,6 +760,13 @@ export function Scene3DView({ project, t }: Props) {
         const entry = liveById.get(b.clipId);
         const pl2 = plById.get(b.clipId);
         if (pl2) {
+          if (!b.cropped && (Math.abs(pl2.size.width - b.pl.size.width) > 0.5 || Math.abs(pl2.size.height - b.pl.size.height) > 0.5)) {
+            const nextGeo = new THREE.PlaneGeometry(pl2.size.width, pl2.size.height);
+            const old = b.mesh.geometry;
+            b.mesh.geometry = nextGeo;
+            old.dispose();
+            disposables.push(nextGeo);
+          }
           b.pl = pl2;
           if (b.cropped && b.subBox) {
             const W = pl2.size.width;
@@ -638,7 +781,7 @@ export function Scene3DView({ project, t }: Props) {
         const inRange = !!entry && tNow >= entry.clip.start && tNow < entry.clip.end;
         const op = inRange && entry ? cardOpacityAt(entry.clip, tNow) : 0;
         const subBox = b.cropped ? b.subBox : undefined;
-        const culled = !entry || isBoardBehindCamera(entry.clip.frame, stageNow, projNow.camera3dFov, poseNow, subBox);
+        const culled = !entry || isBoardBehindCamera(entry.effFrame, stageNow, fovForCull, poseNow, subBox);
         const visible = !culled && op > 0;
         b.mesh.visible = visible;
         b.mat.transparent = true;
@@ -647,9 +790,40 @@ export function Scene3DView({ project, t }: Props) {
         if (visible && entry) {
           sortInput.push({
             id: b.clipId,
-            frame: entry.clip.frame,
+            frame: entry.effFrame,
             trackOrder: entry.trackOrder,
             subBox,
+          });
+        }
+      }
+
+      for (const mb of mediaBoards) {
+        const entry = liveById.get(mb.clipId);
+        const pl2 = plById.get(mb.clipId);
+        if (pl2) {
+          if (Math.abs(pl2.size.width - mb.pl.size.width) > 0.5 || Math.abs(pl2.size.height - mb.pl.size.height) > 0.5) {
+            const nextGeo = new THREE.PlaneGeometry(pl2.size.width, pl2.size.height);
+            const old = mb.mesh.geometry;
+            mb.mesh.geometry = nextGeo;
+            old.dispose();
+            disposables.push(nextGeo);
+          }
+          mb.pl = pl2;
+          mb.mesh.position.set(...pl2.meshOffset);
+        }
+        const inRange = !!entry && tNow >= entry.clip.start && tNow < entry.clip.end;
+        const op = inRange && entry ? cardOpacityAt(entry.clip, tNow) : 0;
+        const culled = !entry || isBoardBehindCamera(entry.effFrame, stageNow, fovForCull, poseNow);
+        const visible = !culled && op > 0;
+        mb.mesh.visible = visible;
+        mb.mat.transparent = true;
+        mb.mat.depthWrite = false;
+        mb.mat.opacity = op;
+        if (visible && entry) {
+          sortInput.push({
+            id: mb.clipId,
+            frame: entry.effFrame,
+            trackOrder: entry.trackOrder,
           });
         }
       }
@@ -660,7 +834,7 @@ export function Scene3DView({ project, t }: Props) {
         if (pl2) s.mesh.position.set(...pl2.meshOffset);
         const inRange = !!entry && tNow >= entry.clip.start && tNow < entry.clip.end;
         const op = inRange && entry ? cardOpacityAt(entry.clip, tNow) : 0;
-        const culled = !entry || isBoardBehindCamera(entry.clip.frame, stageNow, projNow.camera3dFov, poseNow);
+        const culled = !entry || isBoardBehindCamera(entry.effFrame, stageNow, fovForCull, poseNow);
         const visible = !culled && op > 0;
         s.mesh.visible = visible;
         const wantTransparent = s.hasTex || op < 1;
@@ -673,13 +847,13 @@ export function Scene3DView({ project, t }: Props) {
         if (visible && entry) {
           sortInput.push({
             id: s.clipId,
-            frame: entry.clip.frame,
+            frame: entry.effFrame,
             trackOrder: entry.trackOrder,
           });
         }
       }
 
-      const sorted = sortBoardsByDepth(sortInput, stageNow, projNow.camera3dFov, poseNow);
+      const sorted = sortBoardsByDepth(sortInput, stageNow, fovForCull, poseNow);
       for (const item of sorted) {
         const m = meshByClipId.get(item.id);
         if (m) m.renderOrder = item.renderOrder;
@@ -687,24 +861,42 @@ export function Scene3DView({ project, t }: Props) {
 
       for (const [id, box] of marks) {
         const targetMesh = meshByClipId.get(id);
-        box.visible = id === selRef.current && !!targetMesh?.visible;
+        box.visible = curMode === "space" && id === selRef.current && !!targetMesh?.visible;
         if (box.visible) box.update();
       }
-      frustum.visible = frustumRef.current;
-      edge.visible = !frustumRef.current;
+
+      const showCamGizmo = curMode === "space" && (is3DCut ? !spaceGizmoHiddenRef.current : frustumRef.current);
+      if (showCamGizmo) {
+        const fSig = `${stageNow.width}x${stageNow.height}:${cam3d.position.join(",")}:${cam3d.rx},${cam3d.ry},${cam3d.rz}:${cam3d.fovDeg}`;
+        if (fSig !== lastFrustumSig) {
+          lastFrustumSig = fSig;
+          frustum.geometry.setAttribute(
+            "position",
+            new THREE.Float32BufferAttribute(cameraFrustum3D(stageNow, cam3d).positions, 3),
+          );
+          frustum.geometry.computeBoundingSphere();
+        }
+        const isCamSel = Boolean(cam3d.activeClipId && selectedCameraRef.current === cam3d.activeClipId);
+        const gizmoColor = isCamSel ? 0x22d3ee : 0xf59e0b;
+        frustumMat.color.setHex(gizmoColor);
+        camGizmoMat.color.setHex(gizmoColor);
+        camGizmo.position.set(...cam3d.position);
+        camGizmo.rotation.order = "YXZ";
+        camGizmo.rotation.set((cam3d.rx * Math.PI) / 180, (cam3d.ry * Math.PI) / 180, (cam3d.rz * Math.PI) / 180);
+      }
+      frustum.visible = showCamGizmo;
+      camGizmo.visible = showCamGizmo && is3DCut;
+      edge.visible = curMode === "space" && !showCamGizmo;
     };
 
     let order = 0;
 
     for (const clip of active) {
-      // All the signs are in place3d.ts, where unit tests pin them down (see its notes)
-      const pl = placeClip3D(clip.frame, stage);
+      const pl = placeClip3D(effFrameAt(clip, tRef.current), stage);
       const renderOrder = ++order;
 
-      // The chain of placement groups is shared: both flat boards and real 3D objects hang inside it
       const pivot = new THREE.Group();
       pivot.position.set(...pl.pivot);
-      // From inside to outside: roll → scale → spin → tilt → translate, the same order as frameCss
       const inner = new THREE.Group();
       inner.rotation.z = pl.rollZ;
       inner.scale.setScalar(pl.scale);
@@ -718,6 +910,44 @@ export function Scene3DView({ project, t }: Props) {
       pivot.add(tilt);
       scene.add(pivot);
       placed.push({ clipId: clip.id, pivot, inner, spin, tilt, mesh: null });
+
+      if (clip.cardId === MEDIA_BOARD_CARD && clip.media) {
+        const texCanvas = document.createElement("canvas");
+        texCanvas.width = Math.max(1, Math.round(pl.size.width));
+        texCanvas.height = Math.max(1, Math.round(pl.size.height));
+        const canvasTex = new THREE.CanvasTexture(texCanvas);
+        canvasTex.colorSpace = THREE.SRGBColorSpace;
+        canvasTex.minFilter = THREE.LinearFilter;
+        canvasTex.magFilter = THREE.LinearFilter;
+        canvasTex.generateMipmaps = false;
+        const geo = new THREE.PlaneGeometry(pl.size.width, pl.size.height);
+        const mat = new THREE.MeshBasicMaterial({
+          map: canvasTex,
+          color: 0xffffff,
+          transparent: true,
+          opacity: 1,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(...pl.meshOffset);
+        mesh.renderOrder = renderOrder;
+        inner.add(mesh);
+        mesh.userData.clipId = clip.id;
+        meshByClipId.set(clip.id, mesh);
+        pickables.push(mesh);
+        disposables.push(geo, mat, canvasTex);
+        mediaBoards.push({
+          clipId: clip.id,
+          mesh,
+          mat,
+          pl,
+          texCanvas,
+          canvasTex,
+          lastDrawSig: "",
+        });
+        continue;
+      }
 
       const def = getCard(clip.cardId);
 
@@ -743,8 +973,7 @@ export function Scene3DView({ project, t }: Props) {
         const sItem = { clipId: clip.id, mesh, mat, hasTex: false };
         scene3dItems.push(sItem);
 
-        // The light distance scale is copied from the card: it uses the distance of the camera on its own canvas
-        const camD = cameraFor({ width: pl.size.width, height: pl.size.height }, params.fov > 0 ? params.fov : (project.camera3dFov ?? DEFAULT_FOV_DEG)).distance;
+        const camD = cameraFor({ width: pl.size.width, height: pl.size.height }, params.fov > 0 ? params.fov : initDefFov).distance;
         addLights(THREE, inner, params.light, camD);
 
         if (params.texture) {
@@ -756,7 +985,6 @@ export function Scene3DView({ project, t }: Props) {
           if (tex) disposables.push(tex);
         }
 
-        // Spinning objects must follow the timeline: the pose is a pure function of the seconds "relative to this card's start"
         const start = clip.start;
         posers.current.push((now: number) => poseMesh(mesh, params, Math.max(0, now - start)));
         poseMesh(mesh, params, Math.max(0, t - start));
@@ -999,8 +1227,26 @@ export function Scene3DView({ project, t }: Props) {
         -((e.clientY - r.top) / r.height) * 2 + 1,
       );
       raycaster.setFromCamera(ndc, camera);
-      const hit = raycaster.intersectObjects(pickables.filter((m) => m.visible), false)[0];
-      // Clicking on empty space does not clear the selection: if it did, a casual click on the 3D tab would lose the card being edited on the left
+      const candidates = [
+        ...(camGizmo.visible ? [camGizmo] : []),
+        ...pickables.filter((m) => m.visible),
+      ];
+      const hit = raycaster.intersectObjects(candidates, false)[0];
+      if (hit?.object?.userData?.isCameraGizmo) {
+        const pNow = projRef.current;
+        const cutNow = activeCutEntry(pNow);
+        const c3 = resolveCamera3DAt(
+          cutNow?.cameras,
+          { width: pNow.width, height: pNow.height },
+          tRef.current,
+          defaultCutFovDeg(pNow, cutNow),
+        );
+        if (c3.activeClipId) {
+          onSelectCameraRef.current?.(c3.activeClipId);
+          (actions as any).selectCamera?.(c3.activeClipId);
+        }
+        return;
+      }
       const id = hit?.object?.userData?.clipId;
       if (id) actions.select([id]);
     };
@@ -1019,11 +1265,13 @@ export function Scene3DView({ project, t }: Props) {
     renderer.render(scene, camera);
 
     let lastPlanesSig = "";
-    const activeIds = new Set(active.filter((c) => c.cardId !== "scene-3d").map((c) => c.id));
+    const activeIds = new Set(
+      active.filter((c) => c.cardId !== "scene-3d" && c.cardId !== MEDIA_BOARD_CARD).map((c) => c.id),
+    );
 
     let raf = 0;
     const tick = () => {
-      controls.update();
+      if (modeRef.current === "space") controls.update();
 
       // Sync the track stream with the 3D boards
       const ready = currentReadyIndex();
@@ -1049,6 +1297,66 @@ export function Scene3DView({ project, t }: Props) {
       const showing = player.showingClips();
 
       const isPlay = playingRef.current;
+
+      if (mediaBoards.length > 0 && mediaHost.current) {
+        const pNow = projRef.current;
+        const allLive = flattenBoards3D(pNow);
+        for (const mb of mediaBoards) {
+          const bClip = allLive.find((x) => x.id === mb.clipId);
+          if (!bClip?.media) continue;
+          const mediaEl = mediaHost.current.querySelector<HTMLVideoElement | HTMLImageElement>(
+            `[data-pc-3d-media="${CSS.escape(mb.clipId)}"]`,
+          );
+          if (!mediaEl) continue;
+          let sw = 0;
+          let sh = 0;
+          let tTag = "";
+          if (mediaEl instanceof HTMLVideoElement) {
+            driveMedia(mediaEl, {
+              target: targetTimeOf(bClip as unknown as TrackClip, tRef.current),
+              playing: isPlay,
+              volume: 0,
+              scrubbing: scrubbingRef.current,
+              rate: clipSpeed(bClip as unknown as TrackClip),
+            });
+            if (mediaEl.readyState >= 2) {
+              sw = mediaEl.videoWidth;
+              sh = mediaEl.videoHeight;
+              tTag = mediaEl.currentTime.toFixed(4);
+            }
+          } else if (mediaEl.complete && mediaEl.naturalWidth > 0) {
+            sw = mediaEl.naturalWidth;
+            sh = mediaEl.naturalHeight;
+            tTag = "img";
+          }
+          if (sw > 0 && sh > 0) {
+            const bw = Math.max(1, Math.round(mb.pl.size.width));
+            const bh = Math.max(1, Math.round(mb.pl.size.height));
+            if (mb.texCanvas.width !== bw || mb.texCanvas.height !== bh) {
+              mb.texCanvas.width = bw;
+              mb.texCanvas.height = bh;
+            }
+            const cssFilt = filterOf(bClip as unknown as TrackClip, pNow.filters, tRef.current) ?? "";
+            const drawSig = `${bw}x${bh}:${tTag}:${cssFilt}`;
+            if (isPlay || drawSig !== mb.lastDrawSig) {
+              mb.lastDrawSig = drawSig;
+              const ctx = mb.texCanvas.getContext("2d");
+              if (ctx) {
+                ctx.clearRect(0, 0, bw, bh);
+                ctx.save();
+                if (cssFilt) ctx.filter = cssFilt;
+                const sc = Math.max(bw / sw, bh / sh);
+                const dw = sw * sc;
+                const dh = sh * sc;
+                ctx.drawImage(mediaEl, (bw - dw) / 2, (bh - dh) / 2, dw, dh);
+                ctx.restore();
+                mb.canvasTex.needsUpdate = true;
+              }
+            }
+          }
+        }
+      }
+
       for (const b of boards) {
         if (isPlay) {
           if (showing.has(b.clipId) && b.canvasTex && b.canvas) {
@@ -1086,9 +1394,6 @@ export function Scene3DView({ project, t }: Props) {
             }
           }
         } else {
-          // Paused: if an exact PNG snapshot already exists, keep exact;
-          // if there is no exact snapshot yet but the stream frame is available, keep the stream frame transition;
-          // if neither exists, show a semi-transparent placeholder block
           if (b.mode === "exact") {
             // An exact PNG snapshot already exists, keep it
           } else if (showing.has(b.clipId) && b.canvasTex && b.canvas) {
@@ -1125,111 +1430,80 @@ export function Scene3DView({ project, t }: Props) {
           }
         }
       }
-      /*
-       * Re-place everything once per frame from the latest project, evaluate canonical clip + nested cut
-       * opacity envelopes, cull boards behind the near plane, and sort translucent boards back-to-front
-       * by camera-space depth without rebuilding the scene.
-       */
       syncSceneState();
       renderer.render(scene, camera);
       raf = requestAnimationFrame(tick);
     };
-    // This view is for people to rotate and look at, and it does not go into the export, so using the real rAF has no determinism problem
     raf = requestAnimationFrame(tick);
 
     const ro = new ResizeObserver(() => {
-      const nw = Math.max(1, el.clientWidth);
-      const nh = Math.max(1, el.clientHeight);
-      camera.aspect = nw / nh;
-      camera.updateProjectionMatrix();
-      renderer.setSize(nw, nh, false);
+      syncViewportSize();
     });
-    ro.observe(el);
+    ro.observe(outerEl);
 
     gl.current = {
+      syncSize: syncViewportSize,
       render: () => {
         syncSceneState();
         renderer.render(scene, camera);
       },
       dispose: () => {
         cancelAnimationFrame(raf);
+        if (mediaHost.current) {
+          for (const v of Array.from(mediaHost.current.querySelectorAll("video"))) {
+            releaseMedia(v);
+          }
+        }
         renderer.domElement.removeEventListener("pointerdown", onDown);
         renderer.domElement.removeEventListener("pointerup", onUp);
         controls.removeEventListener("end", onOrbitEnd);
         ro.disconnect();
         controls.dispose();
-        /*
-         * All boards in this scene are gone, so clear the "textures in use": if we don't, these URLs
-         * will block eviction forever, the cache only grows and never shrinks, and video memory keeps
-         * climbing. The textures themselves are not in disposables (ownership belongs to texCache).
-         */
         texInUse.clear();
         for (const d of disposables) d.dispose?.();
         renderer.dispose();
-        // dispose() does not release the WebGL context. The browser limit is about 16, and beyond that it silently drops the oldest (same pitfall as scene-3d)
         renderer.forceContextLoss();
         renderer.domElement.remove();
       },
     };
     return () => { gl.current?.dispose(); gl.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    // t is deliberately not in the dependencies: the pose is updated every frame by the render loop from tRef, and adding it would rebuild the whole scene every frame
-  }, [mods, sig, project.width, project.height, project.camera3dFov]);
+  }, [mods, sig, project.width, project.height, project.camera3dFov, project.activeCutId]);
 
   /* ── Apply the texture for whichever moment we switch to; if there is none, fall back to the placeholder block first, then render ── */
   useEffect(() => {
-    // Do not send foreground render requests during playback; textures come straight from the track stream. Not while dragging either
     if (playing || scrubbing) { setPending(0); setBakingAt(null); return; }
-    /*
-     * Only ask for textures for **visible 2D cards**. `scene-3d` is real geometry, and boards behind the
-     * camera near plane are culled before drawing so they should not tie up foreground renders either.
-     */
     const curStage = { width: project.width, height: project.height };
-    const curPose: CameraPose3D | undefined = pose.current
-      ? {
-          position: pose.current.pos,
-          forward: [
-            pose.current.target[0] - pose.current.pos[0],
-            pose.current.target[1] - pose.current.pos[1],
-            pose.current.target[2] - pose.current.pos[2],
-          ],
-          near: boardNearDistance(curStage, project.camera3dFov ?? DEFAULT_FOV_DEG),
-        }
-      : undefined;
+    const cutNow = activeCutEntry(project);
+    const defFov = defaultCutFovDeg(project, cutNow);
+    const c3Now = resolveCamera3DAt(cutNow?.cameras, curStage, t, defFov);
+    const curFov = mode === "camera" ? c3Now.fovDeg : defFov;
+    const curPose: CameraPose3D | undefined =
+      mode === "camera"
+        ? { position: c3Now.position, forward: c3Now.forward, near: c3Now.near }
+        : pose.current
+          ? {
+              position: pose.current.pos,
+              forward: [
+                pose.current.target[0] - pose.current.pos[0],
+                pose.current.target[1] - pose.current.pos[1],
+                pose.current.target[2] - pose.current.pos[2],
+              ],
+              near: boardNearDistance(curStage, defFov),
+            }
+          : undefined;
     const flat = active.filter(
-      (c) => c.cardId !== "scene-3d" && !isBoardBehindCamera(c.frame, curStage, project.camera3dFov, curPose),
+      (c) =>
+        c.cardId !== "scene-3d" &&
+        c.cardId !== MEDIA_BOARD_CARD &&
+        !isBoardBehindCamera(effFrameAt(c, t), curStage, curFov, curPose),
     );
     const need: typeof flat = [];
     for (const c of flat) {
       const url = moments.current.get(momentKey(c));
-      // If we have this moment, apply it (this also covers "drag back to the moment just now": cache hit, no re-render at all)
       if (url) swap.current.get(c.id)?.(url, true);
-      // If not, fall back to the placeholder block (or keep the stream frame transition), and record that a render is needed
       else { proxy.current.get(c.id)?.(); need.push(c); }
     }
-    /*
-     * Which ones to render this round, and for which moment each. Two cases:
-     *   need is non-empty: the board currently shows a placeholder block, so render by bakeTOf. That
-     *                may be the coarse tier (one cell per 0.25 seconds), which pays off
-     *                while dragging: one image covers a whole region, so we don't spend four or
-     *                five seconds rendering at every position we land on.
-     *   need is empty but the playhead has **stopped**: a picture is already there, but it may only
-     *                be the stand-in. The user is staring at it, so prerender retries the
-     *                playhead's own frame (measured: when stopped on frame 121, 3D had
-     *                frame 120, a full frame off from 2D).
-     * Don't fill in while dragging (saves renders); fill in once stopped (it has to be exact).
-     */
-    /*
-     * **While the hand is still down, stop here: textures are still swapped (those in the cache are
-     * applied immediately), but nothing is rendered.**
-     *
-     * The loop above has already applied what should be applied and fallen back to placeholder
-     * blocks where needed, and that is free. What comes below is the part that costs money: every
-     * cell we drag past would send a render, each tying up a Chrome for several seconds, and they
-     * would render positions the user only flashed past. After release, scrubbing becomes false and
-     * this effect runs again right away; only then does rendering really start. We render wherever
-     * the user stops, and not a single render is wasted.
-     */
     if (scrubbing) { setPending(0); setBakingAt(null); return; }
     const asks = need.length
       ? need.map((c) => ({ clip: c, at: bakeTOf(c) }))
@@ -1237,12 +1511,6 @@ export function Scene3DView({ project, t }: Props) {
         ? flat.filter((c) => !moments.current.has(texKeyOf(c, fineTOf(c)))).map((c) => ({ clip: c, at: fineTOf(c) }))
         : [];
     if (!asks.length) {
-      /*
-       * Nothing needs rendering (dragged back to an already prerendered place). **The "rendering" flag
-       * must be cleared here.** The previous effect run was killed by cleanup (dead), and the cleanup
-       * line in its finally carries a `!dead` check, so it does not run. If we don't clear it here,
-       * the picture is already good but the hint keeps showing "Rendering second X".
-       */
       setPending(0);
       setBakingAt(null);
       return;
@@ -1250,49 +1518,17 @@ export function Scene3DView({ project, t }: Props) {
     let dead = false;
     setPending(asks.length);
     setBakingAt(asks[0].at);
-    /*
-     * **When we switch to another moment, abort the previous request.**
-     *
-     * The consequence of not aborting was measured: moving the playhead 8 times in a row in an
-     * unprerendered region sent 9 foreground render requests, with 4 pending at the same time. The
-     * browser gives only about 6 connections per origin; once they are full,
-     * **even the GET for an already rendered texture cannot get in**, hence "dragging back to an
-     * already prerendered place does not refresh either, and has to wait for the earlier
-     * unfinished render to complete first".
-     *
-     * Aborting wastes nothing: the server does not stop because of it, and concurrent requests with
-     * the same key are merged (see bakeInFlight in bakeOne), so the image is still written to disk.
-     * The next time it is needed, it hits the cache directly.
-     */
     const ac = new AbortController();
-    /*
-     * Tell prerender to yield. Server rendering is serial; if prerender is occupying it, this one,
-     * the one the user is staring at right now, has to wait four or five seconds more behind it.
-     * It was meant to speed things up, but instead it causes a stall.
-     */
     beginForegroundBake();
     (async () => {
       try {
-        /*
-         * Foreground rendering goes through the **editor's own resident hot-standby renderer** (two
-         * Chromes taking turns, see uiRenderer in vite-plugin-vision), not the prerender pool: the one
-         * the user is staring at has the highest priority and should not wait behind the Agent or
-         * prerender for even a millisecond.
-         */
         const res = await fetch("/api/ui-render/bake-batch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             project,
-            // What we want is the moment the **playhead at this instant** snaps to a cell, not the clip midpoint (see bakeTime.ts)
             clips: asks.map((a) => ({ clipId: a.clip.id, t: a.at })),
             size: 1024,
-            /*
-             * Jump the queue. The user is staring at this board waiting for it to become a real image, and
-             * the queue may hold a long run of prerenders nobody is waiting for. Measured: without jumping
-             * the queue it takes 19.5 seconds to show a picture; with it, the worst case is waiting for the
-             * one currently running (about 5 seconds).
-             */
             priority: 1,
           }),
           signal: ac.signal,
@@ -1304,34 +1540,14 @@ export function Scene3DView({ project, t }: Props) {
         }
         for (const b of data.baked ?? []) {
           const a = asks.find((x) => x.clip.id === b.clipId);
-          /*
-           * **Whatever is rendered always goes into the cache, even if the playhead has already moved
-           * away** (dead). This image took four or five seconds to render and its key is "that moment";
-           * if we threw it away, dragging back would make us wait all over again.
-           * But only apply it to the board while the playhead is still on this moment: if it has moved
-           * away and we still apply it, what is applied is the picture of another moment.
-           */
-          // Store it under **the moment we asked for**, not momentKey: when prerender retries the exact frame, the two keys are not the same
           if (a) moments.current.set(texKeyOf(a.clip, a.at), b.url);
-          // Compute momentKey after storing: once the exact frame is in the cache, bakeTOf switches to it, which matches here, and it gets swapped in
           if (!dead && a && texKeyOf(a.clip, a.at) === momentKey(a.clip)) swap.current.get(b.clipId)?.(b.url, true);
-          /*
-           * **Also tell the progress bar on the timeline.**
-           *
-           * Foreground live rendering and idle prerender are two separate paths, and the coverage table
-           * used to be written only by the prerender one. So after the foreground render finished and the
-           * picture had already become a real image, that segment on the timeline was still empty: it had
-           * to wait for the next inventory round (a few seconds at most) to be filled in, which looked
-           * like "the bar is half a beat slow". Adding this line makes both paths record it.
-           */
           markBaked([momentId(b.clipId, a ? a.at : b.t)]);
         }
         if (dead) return;
-        // If rendering succeeded, let this effect run another round: what just landed may only be the coarse-tier image, and once stopped we still need to fill in the exact frame
         if (data.baked?.length) setBakeGen((g) => g + 1);
         if (data.failed?.length) setErr(tr("{0} failed to render: {1}", data.failed.length, data.failed[0].error));
       } catch (e: any) {
-        // One killed by cleanup does not count as an error: that means the user moved the playhead away, so there is no reason to wait for it any more
         if (!dead && e?.name !== "AbortError") setErr(String(e?.message || e));
       } finally {
         endForegroundBake();
@@ -1339,48 +1555,64 @@ export function Scene3DView({ project, t }: Props) {
       }
     })();
     return () => { dead = true; ac.abort(); };
-    // momentSig is in the dependencies: dragging the timeline to another moment needs to fetch the image again. But it is **not in the
-    // dependencies of the effect that builds the scene**, so it only swaps material.map and the scene is not rebuilt.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig, momentSig, culledSig, parked, bakeGen, scrubbing, playing]);
+  }, [sig, momentSig, culledSig, parked, bakeGen, scrubbing, playing, mode]);
 
   /* ── As soon as a prerendered texture arrives, store it in the per-moment cache so it is ready when that moment comes ── */
   useEffect(() => {
     if (!prefetch.ready.size) return;
-    const all = flattenOverlay(projRef.current).clips;
+    const all = flattenBoards3D(projRef.current);
     for (const [id, url] of prefetch.ready) {
-      // The prerender key is `<clipId>@<t>` (see momentId in useBakePrefetch). A clipId never contains @
       const at = id.lastIndexOf("@");
       if (at < 0) continue;
       const clipId = id.slice(0, at);
       const mt = Number(id.slice(at + 1));
-      const c = all.find((x: any) => x.id === clipId);
+      const c = all.find((x) => x.id === clipId);
       if (!c || !Number.isFinite(mt)) continue;
-      const k = texKeyOf(c, mt);
+      const k = texKeyOf(c as TimedClip, mt);
       if (moments.current.get(k) === url) continue;
       moments.current.set(k, url);
-      /*
-       * **Swap it in only if it is exactly the moment this board should show right now.**
-       * Prerender renders many moments across the whole video; if we took any one of them and applied
-       * it to the board, what we applied would be the picture of another moment. That is exactly the
-       * bug being fixed.
-       */
-      if (k === momentKey(c)) swap.current.get(clipId)?.(url, true);
+      if (k === momentKey(c as TimedClip)) swap.current.get(clipId)?.(url, true);
     }
-    // momentSig is in the dependencies: the prerender output and "which moment to show right now" are
-    // two values that can both change, and a change in either one means reconciling again
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefetch.ready, momentSig]);
 
+  const is3DCutView = activeCutKind(project) === "3d";
+  const gizmoShown = is3DCutView ? !spaceGizmoHidden : frustumOn;
+  const captionTimeline = useMemo<Timeline | null>(() => {
+    if (!is3DCutView || mode !== "camera") return null;
+    const caps = [...project.tracks]
+      .reverse()
+      .filter((tr) => !tr.hidden)
+      .flatMap((tr) => tr.clips.filter((c) => isCaptionClip(c)));
+    if (!caps.length) return null;
+    return {
+      width: Math.max(1, project.width),
+      height: Math.max(1, project.height),
+      fps: project.fps,
+      duration: project.duration,
+      clips: caps,
+      ...(project.themeId ? { themeId: project.themeId } : null),
+    };
+  }, [is3DCutView, mode, project]);
+
+  useLayoutEffect(() => {
+    gl.current?.syncSize();
+  }, [captionTimeline, mode]);
+
   return (
-    /*
-     * The background is a checkerboard, not black. The canvas has alpha:true, and areas with nothing
-     * drawn used to show the near-black panel color directly, so "a dark card" and "nothing here"
-     * looked exactly the same; the checker cells tell these two cases apart.
-     * The gray and the cell size are aligned value by value with the see_frames side (see the notes
-     * on .pc-3d-checker).
-     */
-    <div className="pc-3d-checker" style={{ position: "relative", width: "100%", height: "100%", minHeight: 200 }}>
+    <div
+      ref={outerRef}
+      className={mode === "space" ? "pc-3d-checker" : undefined}
+      data-pc-3d-mode={mode}
+      style={{
+        position: "relative",
+        width: "100%",
+        height: "100%",
+        minHeight: 200,
+        background: mode === "camera" ? "#090b10" : undefined,
+      }}
+    >
       {/* Hidden track stream canvas container, used by StreamPlayer to decode and provide the material source */}
       <div
         ref={streamHost}
@@ -1394,40 +1626,65 @@ export function Scene3DView({ project, t }: Props) {
           pointerEvents: "none",
         }}
       >
-        {active.filter((c) => c.cardId !== "scene-3d").map((c) => (
+        {active.filter((c) => c.cardId !== "scene-3d" && c.cardId !== MEDIA_BOARD_CARD).map((c) => (
           <div key={c.id} data-pc-clip={c.id}>
             <canvas data-pc-stream-plane="" />
           </div>
         ))}
       </div>
-      <div ref={host} style={{ position: "absolute", inset: 0 }} />
+      {/* Hidden live media elements driving 3D media board textures */}
+      <div
+        ref={mediaHost}
+        aria-hidden="true"
+        style={{
+          position: "fixed",
+          left: -100000,
+          top: -100000,
+          width: 1,
+          height: 1,
+          overflow: "hidden",
+          pointerEvents: "none",
+        }}
+      >
+        {active.filter((c) => c.cardId === MEDIA_BOARD_CARD && c.media).map((c) => {
+          const m = c.media!;
+          const src = playbackUrl(m, tierHashes());
+          return isImageMedia(m) ? (
+            <img key={c.id} data-pc-3d-media={c.id} src={src} crossOrigin="anonymous" alt="" />
+          ) : (
+            <video key={c.id} data-pc-3d-media={c.id} src={src} crossOrigin="anonymous" muted playsInline preload="auto" />
+          );
+        })}
+      </div>
+      <div
+        ref={host}
+        className={mode === "camera" ? "pc-3d-checker" : undefined}
+        style={{ position: "absolute", inset: 0 }}
+      />
+      {captionTimeline && (
+        <div
+          ref={captionOverlayRef}
+          data-pc="scene3d-caption-layer"
+          style={{ position: "absolute", left: 0, top: 0, overflow: "hidden", pointerEvents: "none" }}
+        >
+          <Stage timeline={captionTimeline} t={t} directT={t} playToken={0} nested />
+        </div>
+      )}
 
-      {/*
-        "2D view box" toggle. Placed in the top-right corner: the bar in the bottom-left is prerender
-        progress; avoid competing for space. Only shown after loading finishes (mods in place, scene
-        built): clicking it when the scene does not yet exist does nothing.
-      */}
-      {mods && (
+      {mods && mode === "space" && (
         <button
           type="button"
-          /*
-           * **Do not attach `.pc-3d-note` again** (it used to be attached). That class means "a status hint
-           * floating over the cells", and looking up the "Rendering..." one by it would match this button
-           * too: someone has already stepped on this once while writing a test.
-           * Looking alike is no reason to share a class name: the same background and rounded corners can
-           * be combined into one rule in CSS.
-           */
-          className={`pc-3d-toggle${frustumOn ? " is-on" : ""}`}
+          className={`pc-3d-toggle${gizmoShown ? " is-on" : ""}`}
           style={{ position: "absolute", right: 10, top: 10 }}
-          aria-pressed={frustumOn}
-          onClick={() => setFrustumOn((v) => !v)}
+          aria-pressed={gizmoShown}
+          onClick={() => (is3DCutView ? setSpaceGizmoHidden((v) => !v) : setFrustumOn((v) => !v))}
           title={
-            project.camera3dFov
-              ? tr("Draws the pyramid that the 2D page camera opens up to the frame edges (field of view {0}°): use it to tell whether a card is actually in the final video frame", project.camera3dFov)
+            defFovNow !== DEFAULT_FOV_DEG
+              ? tr("Draws the pyramid that the 2D page camera opens up to the frame edges (field of view {0}°): use it to tell whether a card is actually in the final video frame", defFovNow)
               : tr("Draws the pyramid that the 2D page camera opens up to the frame edges. This project has no field of view set, so the default {0}° is used (the same camera as the 3D page opening view)", DEFAULT_FOV_DEG)
           }
         >
-          {tr("2D view frame")}
+          {is3DCutView ? tr("Camera frustum") : tr("2D view frame")}
         </button>
       )}
       {(pending > 0 || err) && !playing && (

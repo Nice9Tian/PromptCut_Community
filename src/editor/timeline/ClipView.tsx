@@ -111,7 +111,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   const nodeLib = useStore((s) => s.project.cardNodes);
   const overlays = useMemo(
     () => overlaysOfClip(getState().project, clip, { cardName: (id) => shownNameOf(knownCardName(id)) }),
-    [filterLib, pixelMapLib, audioFxLib, nodeLib, clip.filter, clip.pixelMap, clip.audioFx, clip.nodeId],
+    [filterLib, pixelMapLib, audioFxLib, nodeLib, clip.preOverlays, clip.filter, clip.pixelMap, clip.audioFx, clip.nodeId],
   );
 
   const [dragState, setDragState] = useState<{ start: number; end: number; trackId: string; forbidden: boolean } | null>(null);

@@ -859,6 +859,12 @@ export function checkCardSource(
     if (n1 > n0) {
       errors.push("Do not write compositing: 'independent' in the source: \"draws only itself, can be prerendered alone in the cloud\" is a review conclusion decided by the review sheet src/cards/capabilities.json; writing it here has no effect.");
     }
+    if (!hints.vendored) {
+      const prevMono = hints.before ? new Set(checkMonolithCard(hints.before)) : new Set<string>();
+      for (const err of checkMonolithCard(source)) {
+        if (!prevMono.has(err)) errors.push(err);
+      }
+    }
   }
 
   /*
@@ -919,6 +925,62 @@ export function checkCardSource(
   for (const x of findings) errors.push(`${TIER_LABEL[String(x.tier)]} ${x.rule}:${x.detail}`);
 
   return { ok: errors.length === 0, errors, findings };
+}
+
+/**
+ * Monolith gate ("Structure of the film"): rejects self-authored visual DOM cards that cram a
+ * multi-scene / multi-room film schedule or hardcoded camera keyframe rig into a single TSX card
+ * instead of decomposing boards onto timeline clips and camera moves onto `cut.cameras`.
+ */
+export function checkMonolithCard(source: string): string[] {
+  if (typeof source !== 'string' || !/\bComponent\s*:/.test(source)) return [];
+  const errors: string[] = [];
+  const hasParts = /\bparts\s*:\s*\[/.test(source);
+  const hasEmptyControls = /\bcontrols\s*:\s*\[\s*\]/.test(source);
+
+  // 1. Embedded camera keyframe / camera rig schedule inside a card
+  const namedCamRig = /\b(?:const|let|var)\s+(?:CAM_KEYS|CAMERA_KEYFRAMES|CAMERA_KEYS|CAMERA_PATH|CAM_PATH|CAM_WAYPOINTS|CAMERA_WAYPOINTS|CAMERA_RIG|CAM_TRACK)\b/i.test(source);
+  const camKeyframeEntries = source.match(/\{[^{}\n]{0,220}\b(?:t|time|at|start|sec)\s*:\s*\d+(?:\.\d+)?[^{}\n]{0,220}\b(?:camX|camY|camZ|cameraX|cameraY|cameraZ|lookAtX|lookAtY|lookAtZ)\s*:/g) || [];
+  if (namedCamRig || camKeyframeEntries.length >= 3) {
+    errors.push(
+      '[monolith] Do not embed a camera keyframe table or camera rig inside a single card. Place each visual board as its own clip on a 2D or 3D cut (`add_cut({ kind: "3d" })`, `set_position`), and drive continuous camera movement on the cut\'s dedicated camera lane (`add_camera` / `update_camera`).',
+    );
+  }
+
+  // 2. Embedded multi-scene / multi-shot / multi-room / chapter schedule inside a single card
+  const sceneArrayMatch = /\b(?:const|let|var)\s+(?:SCENES|SCENE_LIST|SCENE_SCHEDULE|SCENE_TIMELINE|SHOTS|SHOT_LIST|CHAPTERS|ROOMS|ACTS)\s*(?::[^=]+)?=\s*\[([\s\S]*?)\];/i.exec(source);
+  const sceneArrayObjects = sceneArrayMatch ? (sceneArrayMatch[1].match(/\{[^{}]*\}/g) || []).length : 0;
+
+  const timedRanges = [...source.matchAll(/\{[^{}\n]{0,240}\b(?:start|from|t0|enterAt)\s*:\s*(\d+(?:\.\d+)?)[^{}\n]{0,240}\b(?:end|to|t1|exitAt)\s*:\s*(\d+(?:\.\d+)?)[^{}\n]{0,240}\}/g)];
+  const maxRangeEnd = timedRanges.reduce((m, r) => Math.max(m, Number(r[2]) || 0), 0);
+
+  const timeBranchThresholds = new Set<number>();
+  for (const m of source.matchAll(/\bt\s*(?:<|<=|>|>=)\s*(\d+(?:\.\d+)?)\b/g)) {
+    const sec = Number(m[1]);
+    if (Number.isFinite(sec) && sec > 0) timeBranchThresholds.add(sec);
+  }
+  const maxBranchSec = timeBranchThresholds.size ? Math.max(...timeBranchThresholds) : 0;
+
+  const settleMatch = /\bsettleMs\s*:\s*(\d+)\b/.exec(source);
+  const settleMs = settleMatch ? Number(settleMatch[1]) : 0;
+
+  const monolithMeta = /\b(?:useWhen|description)\s*:\s*["'`][^"'`]*(?:entire\s+(?:video|film|timeline)|whole\s+(?:video|film|show)|full[- ]length\s+video|all\s+\d+\s+(?:scenes|rooms|shots|chapters))\b/i.test(source);
+
+  if (
+    !hasParts && (
+      sceneArrayObjects >= 3
+      || (timedRanges.length >= 4 && maxRangeEnd >= 10)
+      || (timeBranchThresholds.size >= 5 && maxBranchSec >= 15)
+      || (settleMs > 15000 && hasEmptyControls)
+      || monolithMeta
+    )
+  ) {
+    errors.push(
+      '[monolith] Do not pack multiple scenes, rooms, chapters, or a full-film timeline schedule into a single card (`SCENES` / `SHOTS` / multi-stage `t` branches). Author one reusable visual subject per card with editable `controls` (and `parts` when multi-part), place each beat as its own timeline clip (`add_clip`, `set_position` / `frameExpr`), and coordinate camera movement with `add_camera` / `update_camera` on a 2D or 3D cut.',
+    );
+  }
+
+  return errors;
 }
 
 /**

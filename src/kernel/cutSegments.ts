@@ -201,7 +201,11 @@ export function cutViewProject(p: Project, cutId: string): Project | null {
     duration: content.duration,
     transitions: content.transitions,
     activeCutId: cutId,
-    cuts: (p.cuts ?? []).map((c) => (c.id === cutId ? { id: c.id, name: c.name } : c)) as Cut[],
+    cuts: (p.cuts ?? []).map((c) => {
+      if (c.id !== cutId) return c;
+      const { tracks: _t, duration: _d, transitions: _x, t: _pt, ...rest } = c;
+      return rest;
+    }) as Cut[],
   };
 }
 
@@ -331,8 +335,12 @@ export function cutSubProject(p: CutRenderProject, cutId: string): CutRenderProj
     duration: content.duration,
     transitions: content.transitions,
     activeCutId: cutId,
-    // In sub-project, the "active" cut is the referenced one: entry carries no content (content is on tracks), matching cuts.ts storage
-    cuts: p.cuts.map((c) => (c.id === cutId ? { id: c.id, name: c.name } : c)) as Cut[],
+    // In sub-project, the "active" cut is the referenced one: entry carries no tracks/duration/transitions, while preserving kind/cameras/space/fov
+    cuts: p.cuts.map((c) => {
+      if (c.id !== cutId) return c;
+      const { tracks: _t, duration: _d, transitions: _x, t: _pt, ...rest } = c;
+      return rest;
+    }) as Cut[],
     cutPath: [...path, cutId],
   };
   byKey.set(key, { deps, sub });

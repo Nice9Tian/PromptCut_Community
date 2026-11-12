@@ -1,5 +1,6 @@
 import { findClip } from "../../kernel/project";
 import { normalizeEmphasis, type ClipEmphasis } from "../../kernel/emphasis";
+import { mergeFrameExpr, type FrameExprKey, type FrameExprMap } from "../../kernel/frameExpr.mjs";
 import type { ClipFrame, ClipMotion, PartInstance } from "../../kernel/types";
 
 import { state, setProject, updateTrack } from "../core";
@@ -105,5 +106,32 @@ export const properties = {
       }),
     })));
     return true;
+  },
+  /**
+   * Sets / merges / clears per-property keyframe expressions (`t`, `d`, `p`) on a clip's bounding box.
+   * Validates expressions synchronously via `mergeFrameExpr` (throws `FilterExprError` on syntax or domain errors).
+   * Passing `null` clears all expressions on the clip; passing `{ x: null }` clears only `x`.
+   */
+  setClipFrameExpr(
+    clipId: string,
+    patch: Record<string, string | null | undefined> | null | undefined,
+    clearKeys: readonly FrameExprKey[] = [],
+  ): FrameExprMap | undefined {
+    const p = state.project;
+    const hit = findClip(p, clipId);
+    if (!hit) throw new Error(tr("Clip {0} not found", clipId));
+    const next = mergeFrameExpr(hit.clip.frameExpr, patch, clearKeys);
+    setProject(updateTrack(p, hit.track.id, (t) => ({
+      ...t,
+      clips: t.clips.map((c) => {
+        if (c.id !== clipId) return c;
+        if (!next) {
+          const { frameExpr: _drop, ...rest } = c;
+          return rest;
+        }
+        return { ...c, frameExpr: next };
+      }),
+    })));
+    return next;
   },
 };

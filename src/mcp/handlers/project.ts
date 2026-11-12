@@ -2,6 +2,7 @@ import { EditorApi } from "../../ai/mcpExecutor";
 import { getState, actions } from "../../store/project";
 import { findClip } from "../../kernel/project";
 import { cameraFor, clampFov, DEFAULT_FOV_DEG, MAX_FOV_DEG, MIN_FOV_DEG } from "../../kernel/space3d";
+import { activeCutKind, effectiveCamera3dFov } from "../../kernel/camera.mjs";
 import { mediaCardUrl } from "../../ai/mediaRef";
 import { parkedCutsIndex } from "../../kernel/agentScopes.mjs";
 import { getCard } from "../../kernel/registry";
@@ -125,6 +126,42 @@ export const projectHandlers = {
       throw new Error(`fovDeg must be a finite number (${MIN_FOV_DEG}~${MAX_FOV_DEG}), got ${JSON.stringify(args.fovDeg)}`);
     }
     const turnOff = args?.enabled === false;
+    const is3dCut = activeCutKind(getState().project) === "3d";
+    if (is3dCut) {
+      if (turnOff) {
+        throw new Error(
+          "Cannot turn off 3D perspective on a 3D cut: perspective and depth occlusion are intrinsic to kind \"3d\". To produce a 2D cut from this 3D cut, use prerender_cut_to_2d.",
+        );
+      }
+      if (!hasFov && args?.enabled !== true) {
+        const cur = getState().project;
+        const fovNow = effectiveCamera3dFov(cur);
+        const camNow = cameraFor({ width: cur.width, height: cur.height }, fovNow);
+        return {
+          ok: true,
+          enabled: true,
+          cutKind: "3d",
+          fovDeg: fovNow,
+          cameraDistancePx: Math.round(camNow.distance),
+          hint: "Active cut is a 3D cut (perspective is always on). Pass fovDeg to set this cut's default 3D camera FOV, or use add_camera / update_camera to animate camera pose and fovDeg over time.",
+        };
+      }
+      const fov = clampFov(hasFov ? args.fovDeg : effectiveCamera3dFov(getState().project));
+      actions.setCutMeta(undefined, { camera3dFov: fov });
+      const cur = getState().project;
+      const cam = cameraFor({ width: cur.width, height: cur.height }, fov);
+      return {
+        ok: true,
+        enabled: true,
+        cutKind: "3d",
+        fovDeg: fov,
+        ...(hasFov && fov !== args.fovDeg
+          ? { clamped: `fovDeg was clamped to ${fov} (allowed ${MIN_FOV_DEG}~${MAX_FOV_DEG})` }
+          : null),
+        cameraDistancePx: Math.round(cam.distance),
+        hint: "Updated this 3D cut's default camera FOV (used whenever no active camera clip on the camera lane overrides fovDeg). Check the result with see_frames.",
+      };
+    }
     if (turnOff) {
       /*
        * When turning off, save the adjusted fov aside. If not saved, "turn off to compare, then turn back

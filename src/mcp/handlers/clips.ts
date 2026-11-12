@@ -6,6 +6,7 @@ import { validateCardParams } from "../../kernel/cardParams";
 import { timingLock } from "../../kernel/transitions";
 import { describeEmphasis } from "../../kernel/emphasis";
 import { CAPTION_CARD_ID } from "../../kernel/captions";
+import { FRAME_EXPR_KEYS } from "../../kernel/frameExpr.mjs";
 import { findClip } from "../../kernel/project";
 import { timelineDigest, lookHint, paramsEcho } from "../tools/toolEcho";
 
@@ -138,6 +139,7 @@ export const clipsHandlers = {
         setClipParams: (id, params, opts) => actions.setClipParams(id, params, opts),
         moveClip: (id, patch) => actions.moveClip(id, patch),
         setClipFrame: (id, frame) => actions.setClipFrame(id, frame),
+        setClipFrameExpr: (id, expr) => actions.setClipFrameExpr(id, expr ?? null, [...FRAME_EXPR_KEYS]),
         updateClip: (id, patch) => actions.updateClip(id, patch),
         setClipParts: (id, parts) => actions.setClipParts(id, parts),
       },

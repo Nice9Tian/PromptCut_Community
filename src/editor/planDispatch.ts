@@ -26,6 +26,7 @@
  *   and we already hold the record).
  */
 import { flatPlanProject } from "../kernel/cutFlatten.mjs";
+import { activeCutKind } from "../kernel/camera.mjs";
 import type { Project } from "../kernel/project";
 import type { CardCostRecord } from "../render/cardCostKey.mjs";
 import { clipWeight, planPipelines, type PipelinePlan } from "../render/pipelinePlan.mjs";
@@ -127,7 +128,12 @@ function recompute(): void {
    */
   // Replace each cut segment with the cards inside it (`kernel/cutFlatten.mjs`): cards in a cut segment are dispatched together with the cards on the parent timeline. Unchanged when there are no cut segments
   const planned = knownCardsOnly(flatPlanProject(project));
-  const opts3D = view3d ? { includeLightCardsFor3D: true, view3d: true } : {};
+  const cutKind = activeCutKind(project);
+  const opts3D = {
+    cutKind,
+    ...(view3d || cutKind === "3d" ? { includeLightCardsFor3D: true } : {}),
+    ...(view3d ? { view3d: true } : {}),
+  };
   const light = searchLight && forcedHeavy.size ? [...searchLight].filter((k) => !forcedHeavy.has(k)) : searchLight;
   const judge = search ? { searchLight: light ?? [] } : {};
   const planCosts = forcedHeavy.size ? withForcedHeavy(costs, forcedHeavy) : costs;

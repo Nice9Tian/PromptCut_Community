@@ -85,6 +85,25 @@ interface Libs {
 /** The things attached to this clip, in processing order */
 export function overlaysOfClip(project: Project, clip: TrackClip, libs: Libs): OverlayItem[] {
   const out: OverlayItem[] = [];
+  if (Array.isArray(clip.preOverlays)) {
+    for (const pre of clip.preOverlays) {
+      if (!pre || typeof pre.cardId !== "string") continue;
+      const summary = Object.entries(pre.params ?? {})
+        .slice(0, 3)
+        .map(([k, v]) => `${k}=${String(v)}`)
+        .join(", ");
+      out.push({
+        kind: "card",
+        refId: pre.id,
+        name: (pre.cardId && libs.cardName(pre.cardId)) || pre.cardId || tr("Camera card"),
+        value: summary,
+        upstream: true,
+        off: !!pre.off,
+        canToggle: false,
+        canDetach: true,
+      });
+    }
+  }
   const pm = clip.pixelMap ? (project.pixelMaps ?? []).find((d) => d.id === clip.pixelMap!.id) : undefined;
   const pmItem: OverlayItem | null = pm
     ? { kind: "pixelMap", refId: pm.id, name: pm.name, value: pm.description || pm.where || "",

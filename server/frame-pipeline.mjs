@@ -2893,7 +2893,7 @@ export class FramePipeline {
     entry.cardPlan = plan;
     // K2 / K6: Actually compute from the planPipelines table (costs / tuning forwarded by the editor
     // process, landing in the local copy)
-    entry.basePrerenderSet = prerenderSetOfPlan(plan, { fps: Number(entry.project?.fps) || 30, root: this.dataRoot });
+    entry.basePrerenderSet = prerenderSetOfPlan(plan, { fps: Number(entry.project?.fps) || 30, root: this.dataRoot, project: entry.project });
     entry.prerenderSet = entry.basePrerenderSet;
     // c10a contract section 17: Merge in clips registered for prerender retry (`addBackfill`)
     this.applyBackfill(entry);

@@ -3,6 +3,54 @@ import type { SoundEffectRecipe } from "./soundEffects";
 import { cutOf, cutSegmentRender, CUT_SEGMENT_CARD, type CutRenderProject, type TimelineCutClip } from "./cutSegments.ts";
 import { envelopeAt, type CutEnvelope } from "./cutAudio.mjs";
 import { cardClockOffset, clipSpeed } from "./clipTime.mjs";
+import type { FrameExprMap } from "./frameExpr.mjs";
+import {
+  activeCutEntry,
+  activeCutKind,
+  cutKindOf,
+  cutSpaceSize,
+  defaultCutFovDeg,
+  effectiveCamera3dFov,
+  type CameraClip,
+  type CutKind,
+  type ResolvedCamera2D,
+  type ResolvedCamera3D,
+} from "./camera.mjs";
+
+export {
+  activeCutEntry,
+  activeCutKind,
+  cutKindOf,
+  cutSpaceSize,
+  defaultCutFovDeg,
+  effectiveCamera3dFov,
+  type CameraClip,
+  type CutKind,
+  type FrameExprMap,
+  type ResolvedCamera2D,
+  type ResolvedCamera3D,
+};
+
+export interface PreOverlayAttachment {
+  id: string;
+  cardId: string;
+  params: Record<string, unknown>;
+  off?: boolean;
+}
+
+declare module "./types" {
+  interface Clip {
+    frameExpr?: FrameExprMap;
+    preOverlays?: PreOverlayAttachment[];
+  }
+  interface Timeline {
+    cutKind?: CutKind;
+    cameras?: CameraClip[];
+    spaceWidth?: number;
+    spaceHeight?: number;
+    renderView?: "camera" | "space";
+  }
+}
 
 /** Regenerable sound effect recipe. reuseKey is synthesis input identity, not WAV content hash. */
 export interface SoundEffectLink {
@@ -358,6 +406,15 @@ import type { Transition } from "./transitions.ts";
 export interface Cut {
   id: string;
   name: string;
+  /** Declared spatial compositor kind ("2d" default; never guessed from content) */
+  kind?: CutKind;
+  /** Cut-level 3D vertical field of view in degrees (falls back to legacy project.camera3dFov, then 40) */
+  camera3dFov?: number;
+  /** Optional 2D cut canvas space dimensions when larger than the output frame */
+  spaceWidth?: number;
+  spaceHeight?: number;
+  /** Dedicated camera lane clips (ignored by contentEndOf; higher row overrides lower row) */
+  cameras?: CameraClip[];
   /** Only when parked; undefined for the active one, whose content is in Project.tracks */
   tracks?: Track[];
   duration?: number;
@@ -454,6 +511,8 @@ export interface Project {
    * See kernel/audioFx.mjs.
    */
   audioFx?: import("./audioFx.mjs").AudioFxDef[];
+  /** Ephemeral render viewpoint override ("camera" default | "space" whole-cut inspection for see_frames). */
+  _renderView?: "camera" | "space";
 }
 
 /**
@@ -521,6 +580,7 @@ export function flattenOverlay(p: Project, graph?: Timeline["graph"]): Timeline 
         const seg: TimelineCutClip & { cutEnv?: CutEnvelope[] } = {
           id: c.id, cardId: CUT_SEGMENT_CARD, start: c.start - (Math.max(0, c.cutOffset ?? 0) - cut.offset), end: c.end, params: {}, cut,
           ...(c.frame ? { frame: c.frame } : null),
+          ...(c.frameExpr ? { frameExpr: c.frameExpr } : null),
           ...(c.opacity !== undefined ? { opacity: c.opacity } : null),
           ...(c.emphasis ? { emphasis: c.emphasis } : null),
           ...(c.fadeIn ? { fadeIn: c.fadeIn } : null),
@@ -548,6 +608,7 @@ export function flattenOverlay(p: Project, graph?: Timeline["graph"]): Timeline 
         // Same for frame: it is only used when the Stage lays out cards, and if it is dropped here
         // set_position becomes "written but takes no effect".
         ...(c.frame ? { frame: c.frame } : null),
+        ...(c.frameExpr ? { frameExpr: c.frameExpr } : null),
         // Opacity / fades must be carried over too: previously only the video layer honored these three
         // fields, so setting them on a card clip was the same as not setting them, and the model's "lower
         // the opacity to avoid the person" trick was a no-op on cards. Stage now applies them via
@@ -568,9 +629,90 @@ export function flattenOverlay(p: Project, graph?: Timeline["graph"]): Timeline 
       clips.push(cardClip);
     }
   }
-  // Only carry this key when 3D is actually on: the timeline object of an old project must stay
-  // exactly the same as before
-  return { width: p.width, height: p.height, fps: p.fps, duration: p.duration, clips, ...(p.camera3dFov ? { camera3dFov: p.camera3dFov } : null), ...(p.themeId ? { themeId: p.themeId } : null), ...(graph ? { graph } : null) };
+  const activeEntry = activeCutEntry(p);
+  const cutKind = cutKindOf(activeEntry);
+  const effFov = effectiveCamera3dFov(p, activeEntry);
+  // Only carry extra keys when actually active/non-default: legacy 2D project timeline objects stay byte-identical
+  return {
+    width: p.width,
+    height: p.height,
+    fps: p.fps,
+    duration: p.duration,
+    clips,
+    ...(effFov ? { camera3dFov: effFov } : null),
+    ...(cutKind === "3d" ? { cutKind: "3d" as const } : null),
+    ...(activeEntry?.cameras?.length ? { cameras: activeEntry.cameras } : null),
+    ...(activeEntry?.spaceWidth ? { spaceWidth: activeEntry.spaceWidth } : null),
+    ...(activeEntry?.spaceHeight ? { spaceHeight: activeEntry.spaceHeight } : null),
+    ...(p._renderView && p._renderView !== "camera" ? { renderView: p._renderView } : null),
+    ...(p.themeId ? { themeId: p.themeId } : null),
+    ...(graph ? { graph } : null),
+  };
+}
+
+/** Synthetic cardId marker for image / video media clips placed as 3D boards in 3D cuts. */
+export const MEDIA_BOARD_CARD = "@media";
+
+export interface Board3DClip extends Clip {
+  cut?: import("./cutSegments.ts").CutSegmentRender;
+  cutEnv?: CutEnvelope[];
+  mediaId?: string;
+  media?: MediaAsset;
+  mediaOffset?: number;
+  speed?: number;
+  filter?: import("./filters.mjs").ClipFilter;
+  pixelMap?: import("./pixelMap.mjs").ClipPixelMap;
+  emphasis?: import("./emphasis").ClipEmphasis;
+  trackId?: string;
+  label?: string;
+}
+
+/**
+ * Flatten all visual items (cards, nested cut segments, AND image/video media clips) in painter/track
+ * order (`0` = bottom track, `N - 1` = top track) for 3D scene rendering (`Scene3DView` & `Cut3DScene`).
+ */
+export function flattenBoards3D(p: Project): Board3DClip[] {
+  const overlayById = new Map<string, Clip>();
+  for (const c of flattenOverlay(p).clips) overlayById.set(c.id, c);
+
+  const boards: Board3DClip[] = [];
+  for (const tr of [...p.tracks].reverse()) {
+    if (tr.hidden) continue;
+    for (const c of tr.clips) {
+      if (c.cardId === "caption-track") continue;
+      if (c.cutId || c.cardId) {
+        const mapped = overlayById.get(c.id);
+        if (mapped) boards.push({ ...mapped, trackId: tr.id, ...(c.label ? { label: c.label } : null) });
+        continue;
+      }
+      if (!c.mediaId) continue;
+      const media = p.media.find((m) => m.id === c.mediaId);
+      if (!media || media.kind === "audio") continue;
+      boards.push({
+        id: c.id,
+        cardId: MEDIA_BOARD_CARD,
+        start: c.start,
+        end: c.end,
+        params: {},
+        mediaId: c.mediaId,
+        media,
+        ...(c.mediaOffset !== undefined ? { mediaOffset: c.mediaOffset } : null),
+        ...(c.speed !== undefined ? { speed: c.speed } : null),
+        ...(c.filter ? { filter: c.filter } : null),
+        ...(c.pixelMap ? { pixelMap: c.pixelMap } : null),
+        ...(c.emphasis ? { emphasis: c.emphasis } : null),
+        ...(c.frame ? { frame: c.frame } : null),
+        ...(c.frameExpr ? { frameExpr: c.frameExpr } : null),
+        ...(c.opacity !== undefined ? { opacity: c.opacity } : null),
+        ...(c.fadeIn ? { fadeIn: c.fadeIn } : null),
+        ...(c.fadeOut ? { fadeOut: c.fadeOut } : null),
+        ...(c.cutEnv?.length ? { cutEnv: c.cutEnv } : null),
+        trackId: tr.id,
+        label: c.label || media.name,
+      });
+    }
+  }
+  return boards;
 }
 
 /** Which media clip should play at a given time (first matching media clip in track order) */

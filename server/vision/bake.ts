@@ -17,6 +17,8 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { isolateClip } from "../vision-project.mjs";
+import { stripOuterFrameExpr } from "../../src/kernel/frameExpr.mjs";
+import { activeCutEntry } from "../../src/kernel/camera.mjs";
 import { cardCodeHash } from "../card-overrides.mjs";
 import { assetServiceOrigin } from "../asset-client";
 import { BAKE_INDEX_DIR, createBakeStore } from "../bake-store.mjs";
@@ -193,15 +195,16 @@ export function bakeTarget(
   // Keep at least one frame: zero-length clips cannot advance any frame; renders an empty image without error
   const lenFrames = Math.max(1, Math.round(((iso.clip.end ?? 0) - (iso.clip.start ?? 0)) * fps));
   const len = lenFrames / fps;
-  // Strip frame and outer opacity/fades (same rule as localClip in frame-stream.mjs): 3D boards apply
-  // cardOpacityAt on the material, so baking fades into the PNG would square opacity and freeze hold cards.
-  const { frame: _dropFrame, opacity: _dropOpacity, fadeIn: _dropFadeIn, fadeOut: _dropFadeOut, ...bare } = iso.clip;
+  // Strip frame, outer pose frameExpr, and outer opacity/fades (same rule as localClip in frame-stream.mjs):
+  // 3D boards apply cardOpacityAt and resolveClipFrameAt on the mesh/material, so baking outer pose or fades into the PNG would apply them twice.
+  const { frame: _dropFrame, frameExpr: rawFrameExpr, opacity: _dropOpacity, fadeIn: _dropFadeIn, fadeOut: _dropFadeOut, ...bare } = iso.clip;
+  const sizeExpr = stripOuterFrameExpr(rawFrameExpr);
   const lead = iso.clip.cutId ? BAKE_LEAD + Math.max(0, Number(iso.clip.cutOffset) || 0) : BAKE_LEAD;
   /*
    * The key is computed from this plainClip, so **repositioning here makes the key truly position-agnostic**.
    * Changing only at without changing start/end on clip is not enough: those two fields still enter the hash.
    */
-  const plainClip = { ...bare, start: lead, end: lead + len };
+  const plainClip = { ...bare, ...(sizeExpr ? { frameExpr: sizeExpr } : {}), start: lead, end: lead + len };
   const box = {
     w: Math.max(1, Math.round(iso.clip?.frame?.w ?? project.width)),
     h: Math.max(1, Math.round(iso.clip?.frame?.h ?? project.height)),
@@ -287,8 +290,15 @@ export function bakeTarget(
    * length, whereas here only one clip remains), with one extra frame of margin: renderFrames clamps
    * frame numbers to duration*fps-1, which would miss one frame right at the end.
    */
+  const outerActiveId = activeCutEntry(iso.project)?.id;
+  const targetCuts = iso.clip.cutId && Array.isArray(iso.project.cuts)
+    ? iso.project.cuts.map((c: any) => (c?.id === outerActiveId ? { ...c, kind: "2d", cameras: undefined } : c))
+    : undefined;
   const target = {
     ...iso.project,
+    cuts: targetCuts,
+    cutKind: undefined,
+    _renderView: undefined,
     // **Lay out by actual container size**, not by texture size (see explanation above)
     width: renderBox.width,
     height: renderBox.height,

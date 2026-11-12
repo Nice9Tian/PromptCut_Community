@@ -259,5 +259,24 @@ export async function loadSsrHost(load, { apiBase } = {}) {
     contentEnd() {
       return duration.contentEndOf(core.getState().project.tracks ?? []);
     },
+    /** Commit a pre-rendered 3D cut `.mp4` asset into a new 2D cut on the loaded project replica */
+    commitPrerenderedCutTo2D(cutId, data, opts = {}) {
+      const sourceId = cutId || core.getState().project.activeCutId;
+      const sourceCut = (core.getState().project.cuts ?? []).find((c) => c.id === sourceId);
+      const { cut, media, clip } = store.actions.applyPrerenderedCutTo2D(cutId, data, { switchTo: false, ...opts });
+      common.clipGuard.noteMutation();
+      const listed = editorApi.listCuts();
+      const p = core.getState().project;
+      return {
+        ok: true,
+        sourceCutId: sourceCut?.id ?? sourceId,
+        cut: { id: cut.id, name: cut.name, kind: '2d' },
+        media: { id: media.id, name: media.name, cardUrl: media.url, duration: media.duration, width: media.width, height: media.height },
+        clipId: clip.id,
+        activeCutId: p.activeCutId,
+        cuts: listed.cuts,
+        note: `Pre-rendered 3D cut "${sourceCut?.name ?? sourceId}" into video asset "${media.name}" and placed it on Track 1 of new 2D cut "${cut.name}" (${cut.id}). The original 3D cut was kept untouched.`,
+      };
+    },
   };
 }

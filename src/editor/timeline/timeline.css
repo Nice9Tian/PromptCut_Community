@@ -783,3 +783,103 @@
 .pc-ov-chip.is-off .n { text-decoration: line-through; }
 .pc-tl-ctxmenu-item.is-dim { opacity: 0.6; }
 .pc-tl-ctxmenu-item.is-dim .lb { text-decoration: line-through; }
+
+/* ── Dedicated Camera Lane & 3D Depth Hint ────────────────────────────── */
+.pc-tl-camera-hdr {
+  border-bottom: 1px solid var(--ui-border);
+  background: color-mix(in oklab, #38bdf8 6%, var(--ui-panel, #18181b));
+}
+.pc-tl-camera-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #38bdf8;
+  flex-shrink: 0;
+}
+.pc-tl-camera-kind {
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.14);
+}
+.pc-tl-camera-lane {
+  border-bottom: 1px solid var(--ui-border);
+  background: color-mix(in oklab, #38bdf8 4%, var(--ui-bg, #111114));
+}
+.pc-tl-camera-subsep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: color-mix(in oklab, var(--ui-border) 55%, transparent);
+  pointer-events: none;
+}
+.pc-camera-clip {
+  position: absolute;
+  display: flex;
+  align-items: stretch;
+  border-radius: 5px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background: rgba(14, 116, 144, 0.38);
+  color: #e0f2fe;
+  font-size: 11px;
+  cursor: grab;
+  overflow: hidden;
+  box-sizing: border-box;
+  z-index: 10;
+}
+.pc-camera-clip:hover {
+  background: rgba(14, 116, 144, 0.52);
+}
+.pc-camera-clip.is-selected {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px #38bdf8, 0 2px 8px rgba(56, 189, 248, 0.25);
+  z-index: 15;
+}
+.pc-camera-clip.is-disabled {
+  opacity: 0.45;
+  border-style: dashed;
+}
+.pc-camera-handle {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: ew-resize;
+  background: rgba(56, 189, 248, 0.18);
+}
+.pc-camera-handle:hover {
+  background: rgba(56, 189, 248, 0.55);
+}
+.pc-camera-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.pc-camera-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pc-camera-summary {
+  font-family: var(--ui-font-mono, monospace);
+  font-size: 9.5px;
+  opacity: 0.78;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pc-track-depth-badge {
+  flex: none;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #7dd3fc;
+  background: rgba(56, 189, 248, 0.14);
+  white-space: nowrap;
+}

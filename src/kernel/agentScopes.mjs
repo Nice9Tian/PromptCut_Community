@@ -192,6 +192,8 @@ export function parkedCutsIndex(project, opts = {}) {
     out.push({
       cutId: c.id,
       name: c.name,
+      ...(c.kind === "3d" ? { kind: "3d" } : null),
+      ...(Array.isArray(c.cameras) && c.cameras.length > 0 ? { cameraCount: c.cameras.length } : null),
       duration: round2(typeof c.duration === "number" && c.duration > 0 ? c.duration : 30),
       trackCount: tracks.length,
       clipCount: flat.length,

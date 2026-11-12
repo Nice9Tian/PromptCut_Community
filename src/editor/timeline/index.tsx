@@ -14,6 +14,7 @@ import { xOfTime, HEADER_W_MIN, HEADER_W_MAX, TAIL_SLACK_PX, contentEndOf } from
 import { effectiveDuration } from "../../kernel/duration";
 import { useDurationFollowsContent } from "./durationSync";
 import { TrackRow } from "./TrackRow";
+import { CameraLaneHeader, CameraLaneRow } from "./CameraLane";
 import { Ruler, RULER_H } from "./Ruler";
 import { InsertZones } from "./InsertZones";
 import { NewTrackZone } from "./NewTrackZone";
@@ -82,6 +83,7 @@ function TimelineInner() {
           <div className="pc-tl-hdr flex-shrink-0 sticky top-0 bg-neutral-950 z-40" style={{ height: RULER_H }} aria-hidden="true" />
           {/* An empty row is added below the ruler, which together with the ruler is exactly one track height (follows the current row height); the track area on the right gets the same filler */}
           <div className="pc-tl-toprow flex-shrink-0" style={{ height: topGapH }} aria-hidden="true" />
+          <CameraLaneHeader />
 
           {/* Row headers form their own layer (isolation): a row header being dragged (z-40) only overrides other row headers within this layer, and never covers the sticky header above */}
           <div className="flex-1 flex flex-col" style={{ isolation: "isolate" }}>
@@ -116,6 +118,7 @@ function TimelineInner() {
           </div>
           {/* As tall as the empty row in the left row header column: the clip layer (.pc-tl-rows below) shifts down as a whole, and position calculations inside the layer are relative to itself, so they are unaffected */}
           <div className="pc-tl-toprow flex-shrink-0" style={{ height: topGapH }} aria-hidden="true" />
+          <CameraLaneRow />
           {/*
             The clip layer forms its own layer (isolation): z-indices for selected clip (z-20), drop target
             preview (z-30), insertion seam (z-40), dragging row (z-40), and lock overlay (z-50) are compared

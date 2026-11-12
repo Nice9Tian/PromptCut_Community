@@ -7,7 +7,9 @@ import { snapshotTier } from './snapshot-store.mjs';
 import { MovFrameStore } from './frame-mov.mjs';
 import { findFfmpeg } from './bakery/index.mjs';
 import { resultKeyOf } from './render-node/fingerprint.mjs';
-import { isFlatClipId } from '../src/kernel/cutFlatten.mjs';
+import { flatPlanProject, isFlatClipId } from '../src/kernel/cutFlatten.mjs';
+import { activeCutEntry, activeCutKind } from '../src/kernel/camera.mjs';
+import { hasFrameExpr } from '../src/kernel/frameExpr.mjs';
 
 const exists = file => fs.access(file).then(() => true, () => false);
 
@@ -74,6 +76,17 @@ export class CardFrameCache {
      * to another card).
      */
     const unknownClips = new Set(Array.isArray(value?.unknownClipIds) ? value.unknownClipIds : []);
+    const flatProj = flatPlanProject(this.project);
+    const clipById = new Map();
+    for (const track of flatProj?.tracks ?? []) {
+      for (const clip of track?.clips ?? []) {
+        if (clip && typeof clip.id === 'string' && !clipById.has(clip.id)) clipById.set(clip.id, clip);
+      }
+    }
+    const activeCut = activeCutEntry(this.project);
+    const is3DCut = this.project?.cutKind === '3d' || activeCutKind(this.project) === '3d';
+    const has2DCameras = !is3DCut && Array.isArray(activeCut?.cameras) && activeCut.cameras.length > 0;
+    const isSpaceView = this.project?._renderView === 'space';
     const controls = [];
     for (const output of graph.outputs) {
       if (output?.clipId && unknownClips.has(output.clipId)) continue;
@@ -81,26 +94,12 @@ export class CardFrameCache {
       const definition = definitions.get(node?.definitionId);
       const caps = output.capabilities || node?.capabilities || node?.definition?.capabilities || definition || {};
       const compositing = caps.compositing || node?.compositing || 'unknown';
-      // A Chrome implementation has to opt in.  We retain non-independent
-      // records too, because required context/unknown cards need explicit
-      // foreground missing state and a full-scene required producer.
-      // A3a / C2 note (allow in step 4): snapshots of transition cards (`sourceDependent`) are also
-      // content-addressed and should enter the shared tier, but cannot be allowed prematurely **here**.
-      // `cacheable` is not just "can it be cached"; it simultaneously governs two things taking effect
-      // today: (1) `fillCardControls` tosses this card into `isolatedCardProject` to render separately;
-      // (2) `renderState` treats rendered output as the correct result and sends it to the foreground.
-      // Currently, isolated projects only translate the target clip without carrying source clips on the
-      // dependency chain (the `graph` parameter and `−phase − target.start` offset in A3a are step 4), so
-      // transition cards receive empty inputs inside: allowing them now is equivalent to saving and
-      // dispatching empty frames as dead assets. Therefore, tier selection (`snapshotTier`) recognizes
-      // `sourceDependent`, but `cacheable` does not; after step 4 hooks up the isolated project
-      // dependency chain, change this to:
-      // `compositing === 'independent' || compositing === 'sourceDependent'`.
-      // Cards flattened from cut segments (virtual clips, `src/kernel/cutFlatten.mjs`): only produce
-      // single-card track streams ('flat' for `soloStreamKind`) and do not take the full-frame PNG branch
-      // here: the isolated single-card project for that branch looks for cards in the real project by clip
-      // id, and virtual clips are not there
-      const cacheable = compositing === 'independent' && !isFlatClipId(output.clipId);
+      const clipId = output.clipId || node?.clipId;
+      const rawClip = clipId ? clipById.get(clipId) : undefined;
+      const cardId = node?.cardId ?? rawClip?.cardId;
+      const isCaption = cardId === 'caption-track';
+      // Full-stage PNG controls cannot represent 3D boards, space-overview framing, or 2D camera pans on non-caption clips.
+      const cacheable = compositing === 'independent' && !isFlatClipId(output.clipId) && !is3DCut && !isSpaceView && !(has2DCameras && !isCaption);
       const start = Number(output.start ?? node?.start ?? 0), end = Number(output.end ?? node?.end ?? start);
       if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
       const sampling = cardSampling(start, this.fps);
@@ -113,7 +112,8 @@ export class CardFrameCache {
       if (!nodeKey) continue;
       // Output appearance belongs in the key: clipping frame, opacity/fades
       // and motion change pixels even if the underlying node stays identical.
-      const appearance = { frame: output.frame, opacity: output.opacity, fadeIn: output.fadeIn, fadeOut: output.fadeOut, motion: output.motion,
+      const appearance = { frame: output.frame, ...(hasFrameExpr(rawClip?.frameExpr) ? { frameExpr: rawClip.frameExpr } : {}),
+        opacity: output.opacity, fadeIn: output.fadeIn, fadeOut: output.fadeOut, motion: output.motion,
         width: this.project.width, height: this.project.height };
       // M4: content keys (content-only, algorithm in `card-identity.mjs` unchanged) and result keys
       // (content key × environment fingerprint) are kept separately. Disk persistence, routing, and ready
@@ -166,7 +166,8 @@ export class CardFrameCache {
       // `costKey` is not multiplied by fingerprint: cost records have separate device criteria (`device`
       // field); the key recognizes only the card and source version
       controls.push({ key, snapshotKey, contentKey, streamMemberKey, cacheContentKey, envFingerprint: fp, costKey, frameMode: caps.frameMode, tier: snapshotTier(caps), capabilities: caps,
-        clipId: output.clipId || node?.clipId, nodeId: output.nodeId, start, end, count, sampling, compositing, cacheable,
+        clipId, ...(cardId ? { cardId } : {}), ...(rawClip?.flat?.in3dCut === true ? { in3dCut: true } : {}),
+        nodeId: output.nodeId, start, end, count, sampling, compositing, cacheable,
         needPrerendering: caps.need_prerendering === true || caps.needPrerendering === true || node?.need_prerendering === true || node?.needPrerendering === true, appearance });
     }
     return controls;
