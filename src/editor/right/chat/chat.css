@@ -64,7 +64,7 @@
 .pc-rr-dot {
   position: absolute;
   top: 9px;
-  right: 14px;
+  left: calc(50% + 7px);
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -129,9 +129,9 @@
 @keyframes pc-rr-flow {
   to { transform: rotate(1turn); }
 }
-/* Labels longer than 4 characters are truncated in JS; add an ellipsis fallback here, to stop a wider font from pushing past 56px */
+/* Labels longer than 4 characters are truncated in JS; add an ellipsis fallback here, to stop a wider font from pushing past the rail item width */
 .pc-rail-item .pc-rr-label {
-  max-width: 52px;
+  max-width: calc(var(--ui-rail-w, 64px) - 12px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -14,6 +14,18 @@
 }
 
 /* ── rail: vertical icon bar, transparent background showing the canvas ─────────────────────────────── */
+:root {
+  --ui-rail-w: 64px;
+  --ui-rail-label-size: 11px;
+}
+:root[lang="en"] {
+  --ui-rail-w: 80px;
+}
+:root[lang="ja"] {
+  --ui-rail-w: 88px;
+  --ui-rail-label-size: 10px;
+}
+
 .pc-rail {
   width: var(--ui-rail-w, 64px);
   display: flex;
@@ -24,9 +36,9 @@
   padding: 8px 0;
 }
 
-/* rail item: a 56px square button, with a 22px icon (svg) on top and an 11px label (span) below, default secondary text color */
+/* rail item: 56px tall button with 4px outer rail margin on each side, a 22px icon (svg) on top and a single-line label (span) below */
 .pc-rail-item {
-  width: 56px;
+  width: calc(var(--ui-rail-w, 64px) - 8px);
   height: 56px;
   border-radius: var(--ui-radius-lg, 8px);
   color: var(--ui-fg-muted, #A6A4B2);
@@ -39,7 +51,8 @@
   position: relative;
   border: none;
   cursor: pointer;
-  padding: 0;
+  padding: 0 2px;
+  box-sizing: border-box;
 }
 .pc-rail-item:not(.is-on):not(:disabled):hover {
   background-color: var(--ui-panel-2, #2C2B34);
@@ -78,10 +91,12 @@
 .pc-rail-item svg {
   width: 22px;
   height: 22px;
+  flex-shrink: 0;
 }
 .pc-rail-item span {
-  font-size: 11px;
-  line-height: 1;
+  font-size: var(--ui-rail-label-size, 11px);
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 /* Divider line inside the rail */

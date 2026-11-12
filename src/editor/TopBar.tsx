@@ -772,9 +772,9 @@ export function TopBar() {
           className="pc-more-menu"
           style={{
             top: (moreBtnRect?.bottom ?? 36) + 4,
-            // The menu is anchored to the right end of the button and expands leftward, so it does not
-            // overflow the screen in narrow windows
-            left: Math.max(8, Math.min((moreBtnRect?.right ?? 0) - 200, window.innerWidth - 208)),
+            // The menu is anchored to the right end of the button and expands leftward, so longer
+            // localized labels fit naturally while staying on-screen in narrow windows
+            right: Math.max(8, window.innerWidth - Math.max(220, moreBtnRect?.right ?? 220)),
           }}
         >
           <button
