@@ -10,7 +10,8 @@ import { actions, getState, useStore } from "../store/project";
 import { findClip, type Project } from "../kernel/project";
 import { nudgeFrame } from "../kernel/layout";
 import { createStageRpc, type HostCapabilities, type StageGraphCapability, type StageMediaPolicy, type StageRpcClient } from "../render/stageRpc";
-import { frontStage, onStageEvent, pushProject, releaseStageClient, setStageClient, swapStageClients, syncProject, whenStageReady } from "./stageBridge";
+import { frontStage, onStageEvent, pushProject, releaseStageClient, setBeforeFullStagePush, setStageClient, swapStageClients, syncProject, whenStageReady } from "./stageBridge";
+import { alignMirrorForStageMedia } from "../render/dataMirror";
 import { bindStageCards, noteStageCards, noteStageFresh } from "./stageCards";
 import { INITIAL_ROLE_OF, STAGE_IDS, dualStage, interimStage, liveStage, singleLiveStage, stageOrigins, stageSrc, stageTargetOrigin, type StageId } from "./previewMode";
 import { ControlBar } from "./preview/ControlBar";
@@ -94,6 +95,7 @@ setCostResolver((proj, clipId) => {
   const key = clipIdentityOf(proj).identityKeys[clipId];
   return key ? currentCosts().find((r) => r.identityKey === key) : undefined;
 }, () => dualStage());
+setBeforeFullStagePush(alignMirrorForStageMedia);
 
 /**
  * Local reuse for single-stage boundary search ("card identity + this machine's environment fingerprint" → single-frame time measured on this machine; `boundarySearch.mjs`).

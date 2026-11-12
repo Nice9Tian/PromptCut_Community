@@ -222,12 +222,27 @@ export interface GateSnapshot {
   step: CrashStep | null;
 }
 
-/** Reads browser environment (only Chromium-based browsers have `userAgentData`, `deviceMemory`) */
-export function readGateEnv(): Pick<GateEnv, "platform" | "deviceMemory" | "identity"> {
-  const nav = (typeof navigator !== "undefined" ? navigator : null) as (Navigator & { userAgentData?: { platform?: string; mobile?: boolean }; deviceMemory?: number }) | null;
-  const platform = typeof nav?.userAgentData?.platform === "string" ? nav.userAgentData.platform : null;
+export interface GateNavigatorLike {
+  userAgent?: string;
+  maxTouchPoints?: number;
+  userAgentData?: { platform?: string; mobile?: boolean };
+  deviceMemory?: number;
+}
+
+/**
+ * Reads browser environment (`userAgentData` and `deviceMemory` are exposed only in secure contexts;
+ * on non-HTTPS origins such as LAN HTTP deployments, fall back to `Android` in `userAgent` so low-memory
+ * Android devices still stay at a single stage instead of probing dual stages).
+ */
+export function readGateEnv(navOverride?: GateNavigatorLike | null): Pick<GateEnv, "platform" | "deviceMemory" | "identity"> {
+  const nav = (navOverride !== undefined ? navOverride : (typeof navigator !== "undefined" ? navigator : null)) as GateNavigatorLike | null;
+  const ua = nav?.userAgent ?? "";
+  const uaDataPlatform = typeof nav?.userAgentData?.platform === "string" && nav.userAgentData.platform.length > 0
+    ? nav.userAgentData.platform
+    : null;
+  const platform = uaDataPlatform ?? (/android/i.test(ua) ? "Android" : null);
   const deviceMemory = typeof nav?.deviceMemory === "number" ? nav.deviceMemory : null;
-  const identity = judgeDeviceKind({ ua: nav?.userAgent ?? "", uaData: nav?.userAgentData ?? null, maxTouchPoints: nav?.maxTouchPoints ?? 0 });
+  const identity = judgeDeviceKind({ ua, uaData: nav?.userAgentData ?? null, maxTouchPoints: nav?.maxTouchPoints ?? 0 });
   return { platform, deviceMemory, identity };
 }
 

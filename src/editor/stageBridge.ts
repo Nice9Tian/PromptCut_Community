@@ -80,6 +80,13 @@ function pushedOf(client: StageRpcClient): Pushed {
 /** Event subscribers (fed only after filtering by role) */
 const eventListeners = new Set<(e: StageEvent, role: StageRole) => void>();
 
+/** Optional hook run before a full project reset push so local mirror state aligns before the stage requests `/@media/<hash>` */
+let beforeFullProjectPush: ((project: Project) => Promise<void>) | null = null;
+
+export function setBeforeFullStagePush(fn: ((project: Project) => Promise<void>) | null): void {
+  beforeFullProjectPush = fn;
+}
+
 /**
  * Register / unregister a stage client. When replacing an iframe, register the new one first and then
  * dispose the old one; the baseline is replaced together with the client.
@@ -224,8 +231,15 @@ function send(role: StageRole, project: Project, force: boolean): Promise<void> 
       mine.project = project;
       return;
     }
-    if (!patch || patch.kind === "full") await client.setProject(project, { reset: true });
-    else await client.setProject(patch);
+    if (!patch || patch.kind === "full") {
+      if (beforeFullProjectPush) {
+        try { await beforeFullProjectPush(project); } catch { /* Mirror failure must not block stage preview */ }
+        if (client.disposed) return;
+      }
+      await client.setProject(project, { reset: true });
+    } else {
+      await client.setProject(patch);
+    }
     mine.project = project;
   };
   const next = mine.chain.then(run, run);
@@ -278,4 +292,5 @@ export function resetStageBridge(): void {
   }
   pushedBy = new WeakMap();
   eventListeners.clear();
+  beforeFullProjectPush = null;
 }

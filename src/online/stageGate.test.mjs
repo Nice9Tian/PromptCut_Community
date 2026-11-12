@@ -43,7 +43,7 @@ import {
   CRASH_LOG_KEY, CRASH_TAB_KEY, CRASH_WINDOW_MS, HEARTBEAT_MS, emptyLog, judgeLoad, looksCrashed, readCrashLog, writeCrashLog, freshTab,
 } from "./crashLog.ts";
 import {
-  ANDROID_TRY_MEMORY_GIB, BENCHMARK_KEY, GUARD_BASE_MS, beginStageGate, decideStageGate, guardMsOf, levelAfterCrash,
+  ANDROID_TRY_MEMORY_GIB, BENCHMARK_KEY, GUARD_BASE_MS, beginStageGate, decideStageGate, guardMsOf, levelAfterCrash, readGateEnv,
 } from "./stageGate.ts";
 import { resetTierForTest, tierState } from "./onlineTier.ts";
 
@@ -349,3 +349,39 @@ test("SG-17 measurement started while still at some step of the stage gate, and 
     assert.equal(s.log().tabs[s.g.tab].step.kind, "running");
   } finally { s.g.dispose(); }
 });
+
+test("SG-18 readGateEnv falls back to Android userAgent on non-HTTPS origins without userAgentData", () => {
+  const androidHttp = readGateEnv({
+    userAgent: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36",
+    maxTouchPoints: 5,
+  });
+  assert.equal(androidHttp.platform, "Android");
+  assert.equal(androidHttp.deviceMemory, null);
+  const dHttp = decideStageGate(emptyLog(V), NOT, env({ ...androidHttp }));
+  assert.deepEqual([dHttp.target, dHttp.fixed, dHttp.reason], [1, true, "android-memory"]);
+
+  const androidHttps8Gb = readGateEnv({
+    userAgent: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36",
+    userAgentData: { platform: "Android", mobile: true },
+    deviceMemory: 8,
+    maxTouchPoints: 5,
+  });
+  assert.equal(androidHttps8Gb.platform, "Android");
+  assert.equal(androidHttps8Gb.deviceMemory, 8);
+  const dHttps = decideStageGate(emptyLog(V), NOT, env({ ...androidHttps8Gb }));
+  assert.deepEqual([dHttps.target, dHttps.fixed], [3, false]);
+
+  const safariIos = readGateEnv({
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    maxTouchPoints: 5,
+  });
+  assert.equal(safariIos.platform, null);
+
+  const linuxUaDataOverrides = readGateEnv({
+    userAgent: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+    userAgentData: { platform: "Linux", mobile: false },
+    deviceMemory: 4,
+  });
+  assert.equal(linuxUaDataOverrides.platform, "Linux");
+});
+
