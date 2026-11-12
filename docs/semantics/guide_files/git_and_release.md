@@ -4,8 +4,9 @@
 
 ## 提交
 
-- 提交信息用中文，开头写类别，冒号后写做了什么。常用类别：文档、探针、重构、修、测试、合并。
-- 分支合并进 main 用 `--no-ff`（在 GitHub 上合 PR 时选 "Create a merge commit"），合并提交写成「合并 <分支或步骤名>:摘要」。
+- **语言**：公开仓库 PromptCut_Community 的提交信息、PR、issue 一律用英文，标题、正文、评论都是（2026-11-13 起，之前的历史不改）。继承这份代码的私有仓库里，只属于它自己的提交、PR、issue 用什么语言由它自己定；从这里同步过去的提交保持原样。
+- 提交信息开头写类别，冒号后写做了什么：`<type>: <what was done>`。常用类别：`feat`（新功能）、`fix`（修缺陷）、`refactor`（重构）、`docs`（文档）、`test`（测试）、`probe`（探针）。
+- 分支合并进 main 用 `--no-ff`（在 GitHub 上合 PR 时选 "Create a merge commit"），合并提交写成 `Merge <branch or step name>: <summary>`。
 - 提交 PR 之前自己先过一遍，三项都要：`npm run build` 成功；这次改动影响范围内的测试零失败；本次改到的功能，其对应探针通过，结果写成一个文件附在 PR 里（范围怎么算、探针结果怎么写见 `verification.md`）。不推进 `release`，`release` 只在发版时动。
 
 ## release 分支

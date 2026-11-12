@@ -59,8 +59,7 @@ docs/local.md
 # Local state log left in the main checkout after the multi-machine workflow was invalidated (the handover log was excerpted into docs/archive/handover-log-2026-09.md)
 docs/auto_long_work/local.md
 
-# Agent entry point built locally (see README "Entry point for coding agents"): every tool injects it unconditionally, so it is not committed
-/AGENTS.md
+# AGENTS.md is committed and kept minimal (see README "For coding agents"). CLAUDE.md is the agent entry point people build locally: every tool injects it unconditionally, so it is not committed
 /CLAUDE.md
 # Short-form requirements for tools that cannot read the local rules (codex, agy, etc.), generated locally, not committed
 /my_agent/

@@ -96,7 +96,7 @@ The documentation is written in Chinese. `docs/semantics/` is the project's **co
 | Glossary | [docs/semantics/glossary.md](docs/semantics/glossary.md) |
 | Design rationale | [docs/rationale/](docs/rationale/) |
 | Troubleshooting and operational know-how | [docs/guides/](docs/guides/) |
-| How to contribute | [CONTRIBUTING.en.md](CONTRIBUTING.en.md) |
+| How to contribute | [CONTRIBUTING.en.md](CONTRIBUTING.en.md). Pull requests, issues and commit messages are written in English |
 
 <details>
 <summary><strong>References that point outside this repository</strong></summary>
@@ -113,7 +113,7 @@ Both kinds are kept deliberately: they record where a decision came from, and th
 <details>
 <summary><strong>For coding agents</strong></summary>
 
-This repository deliberately ships no `AGENTS.md` or `CLAUDE.md`: tools inject those files into context unconditionally, which would push this project's working habits into other people's agents. If you want one, create it in your working copy with the text below and do not commit it (`.gitignore` already covers it):
+[`AGENTS.md`](AGENTS.md) is kept deliberately small. Tools inject that file into context unconditionally, so it carries only rules that every contribution must follow, whichever tool wrote it. Today that is one rule: **pull requests, issues and commit messages are written in English**. This project's working habits are not in it, and there is no `CLAUDE.md`, so they are not pushed into other people's agents. If you want your agent to start with more, put the text below in a `CLAUDE.md` in your working copy and do not commit it (`.gitignore` already covers it):
 
 ````markdown
 # PromptCut

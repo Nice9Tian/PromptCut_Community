@@ -96,7 +96,7 @@ Python 側（音声文字起こし、ショット検出、被写体検出、ト�
 | 用語集 | [docs/semantics/glossary.md](docs/semantics/glossary.md) |
 | 設計の理由 | [docs/rationale/](docs/rationale/) |
 | トラブルシューティングと運用の知識 | [docs/guides/](docs/guides/) |
-| コントリビュートの方法 | [CONTRIBUTING.en.md](CONTRIBUTING.en.md)（英語） |
+| コントリビュートの方法 | [CONTRIBUTING.en.md](CONTRIBUTING.en.md)（英語）。プルリクエスト、issue、コミットメッセージは英語で書きます |
 
 <details>
 <summary><strong>このリポジトリの外を指す参照について</strong></summary>
@@ -113,7 +113,7 @@ Python 側（音声文字起こし、ショット検出、被写体検出、ト�
 <details>
 <summary><strong>コーディングエージェント向けの入口</strong></summary>
 
-このリポジトリには `AGENTS.md` と `CLAUDE.md` を**置いていません**。これらのファイルは各ツールが無条件にコンテキストへ読み込むため、このプロジェクトの作業習慣が他の人のエージェントに持ち込まれてしまいます。必要な場合は、作業コピーに下の内容で作成してください。コミットはしないでください（`.gitignore` で除外済みです）。
+[`AGENTS.md`](AGENTS.md) は意図的に短くしてあります。このファイルは各ツールが無条件にコンテキストへ読み込むため、どのツールで作業しても守るべきルールだけを載せています。現在は 1 つだけです：**プルリクエスト、issue、コミットメッセージは英語で書く**。このプロジェクト独自の作業習慣は載せておらず、`CLAUDE.md` も置いていないため、他の人のエージェントに持ち込まれることはありません。自分のエージェントにもう少し前提を与えたい場合は、作業コピーに下の内容で `CLAUDE.md` を作成してください。コミットはしないでください（`.gitignore` で除外済みです）。
 
 ````markdown
 # PromptCut
