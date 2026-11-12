@@ -13,7 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Agent, isUserMessageCall } from '../harness/agent.mjs';
-import { buildTools } from '../harness/tools/index.mjs';
+import { buildTools } from '../agent/build-promptcut-tools.mjs';
 import { createAgentBoard } from '../agent/agent-board.mjs';
 
 const REPORT = { name: 'report_progress', description: 'r', inputSchema: { type: 'object', properties: {} }, async execute(input) { return { ok: true, report: input }; } };

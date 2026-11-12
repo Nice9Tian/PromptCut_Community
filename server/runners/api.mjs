@@ -30,9 +30,10 @@ export function lessonsStore() {
   };
 }
 import { MessageHistory } from '../harness/history.mjs';
-import { buildTools } from '../harness/tools/index.mjs';
+import { buildTools } from '../agent/build-promptcut-tools.mjs';
 import { resolveMaxOutput } from '../harness/model-limits.mjs';
 import { createCodeCacheStore } from '../tools/code-cache.mjs';
+import { modelToolName } from '../tools/ui-names.mjs';
 import { createRetryingFetch } from '../harness/retry-fetch.mjs';
 import { outputSpeedBookFor, withOutputSpeed } from '../harness/output-speed.mjs';
 import { BUILTIN_SKILLS_DIR, loadSkillCatalog, skillCatalogPrompt } from '../tools/agent-skills.mjs';
@@ -428,6 +429,7 @@ export function startRun(opts) {
       signal: abortController.signal,
       history,
       codeCache,
+      toolNameMapper: modelToolName,
       /*
        * Callbacks before and after each model request (gate and usage records for the hosted tier). When
        * `opts.checkpoint` is true, history is persisted to disk before each request starting from the
@@ -487,6 +489,7 @@ export function startRun(opts) {
             provider, tools, system: systemPrompt, userText: opts.prompt,
             maxIterations, deepAuto: !!opts.deepAuto, maxInputTokens: agent.maxInputTokens,
             signal: abortController.signal, history, lessonsStore: lessonsStore(), codeCache,
+            toolNameMapper: modelToolName,
             onEvent: (ev) => { for (const e of presentLoopEvent(ev)) safeOnEvent(e); },
           })
         : await agent.run(opts.prompt);

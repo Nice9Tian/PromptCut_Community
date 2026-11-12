@@ -243,7 +243,7 @@ export function clipFingerprint(c: {
    * A whitelist has another flaw: whoever adds a field to Clip later will not think of adding it
    * here, and the omission reports no error.
    *
-   * So it is reversed: apart from the three below, **everything else goes into the fingerprint**.
+   * So it is reversed: apart from the ones stripped by `bakeTarget`, **everything else goes into the fingerprint**.
    *   - `start` is excluded on its own: moving does not change pixels (bakeTarget moves the clip to
    *     a fixed starting line before rendering), so a move should not invalidate coverage. The
    *     position change is absorbed by the ClipCoverage.start shift.
@@ -251,8 +251,18 @@ export function clipFingerprint(c: {
    *     changes the key (the key carries the frame count within the clip), so it must invalidate.
    *   - `frame` takes only w×h: that is the layout size, which changes pixels; x/y/rotation/scale do
    *     not (the whole frame is stripped during prerender).
+   *   - `opacity` / `fadeIn` / `fadeOut` are stripped during prerender and applied on the 3D board
+   *     material at display time, so tuning fades or opacity does not invalidate prerendered textures.
    */
-  const { start: _start, end: _end, frame: _frame, ...rest } = c as Record<string, unknown> & typeof c;
+  const {
+    start: _start,
+    end: _end,
+    frame: _frame,
+    opacity: _opacity,
+    fadeIn: _fadeIn,
+    fadeOut: _fadeOut,
+    ...rest
+  } = c as Record<string, unknown> & typeof c;
   const dur = Math.max(0, (Number(c.end) || 0) - (Number(c.start) || 0));
   return [
     JSON.stringify(rest),

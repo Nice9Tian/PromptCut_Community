@@ -193,12 +193,15 @@ export function bakeTarget(
   // Keep at least one frame: zero-length clips cannot advance any frame; renders an empty image without error
   const lenFrames = Math.max(1, Math.round(((iso.clip.end ?? 0) - (iso.clip.start ?? 0)) * fps));
   const len = lenFrames / fps;
-  const { frame: _dropFrame, ...bare } = iso.clip;
+  // Strip frame and outer opacity/fades (same rule as localClip in frame-stream.mjs): 3D boards apply
+  // cardOpacityAt on the material, so baking fades into the PNG would square opacity and freeze hold cards.
+  const { frame: _dropFrame, opacity: _dropOpacity, fadeIn: _dropFadeIn, fadeOut: _dropFadeOut, ...bare } = iso.clip;
+  const lead = iso.clip.cutId ? BAKE_LEAD + Math.max(0, Number(iso.clip.cutOffset) || 0) : BAKE_LEAD;
   /*
    * The key is computed from this plainClip, so **repositioning here makes the key truly position-agnostic**.
    * Changing only at without changing start/end on clip is not enough: those two fields still enter the hash.
    */
-  const plainClip = { ...bare, start: BAKE_LEAD, end: BAKE_LEAD + len };
+  const plainClip = { ...bare, start: lead, end: lead + len };
   const box = {
     w: Math.max(1, Math.round(iso.clip?.frame?.w ?? project.width)),
     h: Math.max(1, Math.round(iso.clip?.frame?.h ?? project.height)),
@@ -237,7 +240,7 @@ export function bakeTarget(
    * The actual frame to render: starting line + intra-clip frame number. **Used by both key and
    * rendering**, thus independent of absolute position.
    */
-  const at = BAKE_LEAD + relFrames / fps;
+  const at = lead + relFrames / fps;
   /**
    * The t returned to the caller: **must be the absolute moment requested**, not the relocated one above.
    *
@@ -263,7 +266,7 @@ export function bakeTarget(
    * bytes remain in the asset service and are evicted by capacity limits.
    */
   const key = createHash("sha1")
-    .update(JSON.stringify({ clip: plainClip, graph: iso.clip.nodeId ? { nodes: project.cardNodes, media: project.media, tracks: project.tracks, style: project.style } : undefined, theme: project.themeId, at, renderBox, fit, bg: rgb ? rgb[1].toLowerCase() : null, code: cardCodeHash(iso.clip.cardId), graphCode: graphCardCode(project, iso.clip.nodeId), store: BAKE_STORE_VERSION }))
+    .update(JSON.stringify({ clip: plainClip, ...(iso.clip.cutId ? { cuts: project.cuts } : {}), graph: iso.clip.nodeId ? { nodes: project.cardNodes, media: project.media, tracks: project.tracks, style: project.style } : undefined, theme: project.themeId, at, renderBox, fit, bg: rgb ? rgb[1].toLowerCase() : null, code: cardCodeHash(iso.clip.cardId), graphCode: graphCardCode(project, iso.clip.nodeId), store: BAKE_STORE_VERSION }))
     .digest("hex").slice(0, 12);
   /*
    * Legacy filename format (previously located in the asset catalog as `bake-<clipId>-<key>.png`).
@@ -289,7 +292,7 @@ export function bakeTarget(
     // **Lay out by actual container size**, not by texture size (see explanation above)
     width: renderBox.width,
     height: renderBox.height,
-    duration: BAKE_LEAD + len + 1 / fps,
+    duration: lead + len + 1 / fps,
     tracks: iso.project.tracks.map((tr: any) => ({ ...tr, clips: tr.clips.map((c: any) => c.id === clipId ? plainClip : c) })),
   };
   return { iso, plainClip, renderBox, target, at, askedT, rgb, key, name };

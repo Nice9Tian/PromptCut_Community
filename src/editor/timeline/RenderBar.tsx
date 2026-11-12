@@ -8,6 +8,7 @@ import {
 } from "../preview/bakeCoverage";
 import { xOfTime } from "./utils";
 import { tr as trText } from "../../i18n/index.ts";
+import { isBoardBehindCamera } from "../../kernel/space3d";
 
 /** Progress bar height (px). Enough to be seen, without crowding the timeline */
 export const RENDER_H = 2;
@@ -94,9 +95,10 @@ export function RenderBar() {
    */
   const idle = useMemo(() => {
     const busy: { start: number; end: number }[] = [];
+    const stageSize = { width: project?.width ?? 1920, height: project?.height ?? 1080 };
     for (const tr of project?.tracks ?? []) {
       for (const c of tr.clips ?? []) {
-        if ((c as any).mediaId || c.cardId === "scene-3d") continue; // These two kinds need no rendering
+        if ((c as any).mediaId || c.cardId === "scene-3d" || isBoardBehindCamera(c.frame, stageSize, project?.camera3dFov)) continue;
         busy.push({ start: c.start, end: c.end });
       }
     }

@@ -27,6 +27,9 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { expandEntry, mergeDeltas } from '../../harness/compact.mjs';
+
+export { expandEntry, mergeDeltas };
 
 export const CONVERSATION_STORE_DEFAULTS = Object.freeze({
   /** Stop recording thinking and diagnostic once event log reaches this size */
@@ -45,7 +48,6 @@ export const CONVERSATION_STORE_DEFAULTS = Object.freeze({
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const DEGRADED_TYPES = new Set(['thinking', 'diagnostic']);
-const MERGE_TYPES = new Set(['text', 'thinking']);
 
 export const INTERRUPTED_MESSAGE = 'The Cloud Agent service was interrupted and this turn did not finish. Changes already applied are kept in the project.';
 
@@ -53,51 +55,6 @@ function writeJson(file, value) {
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, JSON.stringify(value), { encoding: 'utf8', mode: 0o600 });
   fs.renameSync(tmp, file);
-}
-
-/** Whether two events are identical except for delta and sequence number (can merge into one) */
-function sameShape(a, b) {
-  const ka = Object.keys(a).filter((k) => k !== 'delta' && k !== 'seq' && k !== 'fromSeq' && k !== 'cuts');
-  const kb = Object.keys(b).filter((k) => k !== 'delta' && k !== 'seq' && k !== 'fromSeq' && k !== 'cuts');
-  if (ka.length !== kb.length) return false;
-  for (const k of ka) if (a[k] !== b[k]) return false;
-  return true;
-}
-
-/** Unpack a line from the log back into individual events in the real-time stream */
-export function* expandEntry(entry) {
-  if (!Array.isArray(entry.cuts)) { yield entry; return; }
-  const { cuts, fromSeq, delta, seq: _last, ...rest } = entry;
-  let off = 0;
-  for (let i = 0; i < cuts.length; i += 1) {
-    yield { ...rest, delta: delta.slice(off, off + cuts[i]), seq: fromSeq + i };
-    off += cuts[i];
-  }
-}
-
-/** Merge adjacent text / thinking deltas into full blocks (already merged ones can be merged
- * further); returns a new array */
-export function mergeDeltas(entries) {
-  const out = [];
-  for (const e of entries) {
-    const prev = out[out.length - 1];
-    if (prev && MERGE_TYPES.has(e.type) && prev.type === e.type && typeof e.delta === 'string' && typeof prev.delta === 'string' && sameShape(prev, e)) {
-      const prevFrom = prev.fromSeq ?? prev.seq;
-      const eFrom = e.fromSeq ?? e.seq;
-      if (eFrom === prev.seq + 1) {
-        out[out.length - 1] = {
-          ...prev,
-          delta: prev.delta + e.delta,
-          fromSeq: prevFrom,
-          seq: e.seq,
-          cuts: [...(prev.cuts ?? [prev.delta.length]), ...(e.cuts ?? [e.delta.length])],
-        };
-        continue;
-      }
-    }
-    out.push(e);
-  }
-  return out;
 }
 
 /**

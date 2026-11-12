@@ -1,6 +1,5 @@
 import { MessageHistory } from './history.mjs';
-import { modelToolName } from '../tools/ui-names.mjs';
-import { resolveCodeCacheRefs, CODE_CACHE_REF } from '../tools/code-cache.mjs';
+import { resolveCodeCacheRefs, CODE_CACHE_REF } from './code-cache.mjs';
 import { salvageTruncation } from './truncation.mjs';
 
 const canonical = value => JSON.stringify(value, (_key, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]])) : v);
@@ -113,10 +112,11 @@ export class Agent {
    * actual token count reported by API in each round (see history.fitTokens); when omitted, fall back
    * to legacy character-count truncation.
    */
-  constructor({ provider, system, tools, maxIterations = 24, deepAuto = false, maxInputTokens = 0, onEvent, signal, history, onModelCall = null, codeCache = null }) {
+  constructor({ provider, system, tools, maxIterations = 24, deepAuto = false, maxInputTokens = 0, onEvent, signal, history, onModelCall = null, codeCache = null, toolNameMapper = null }) {
     Object.assign(this, { provider, system, tools, maxIterations, deepAuto, maxInputTokens, signal });
+    this.toolNameMapper = typeof toolNameMapper === 'function' ? toolNameMapper : (name) => name;
     /*
-     * Code cache space (server/tools/code-cache.mjs, A07 2026-10-22): when provided, (1) strings
+     * Code cache space (./code-cache.mjs, A07 2026-10-22): when provided, (1) strings
      * written entirely as `@code_cache:name` in tool arguments are replaced with content prior
      * to invocation; (2) when a response is truncated, unfinished tool arguments are stored into
      * the code cache, allowing the model to continue writing. When omitted, behavior remains
@@ -352,9 +352,8 @@ export class Agent {
       // Multiple calls still share one model round trip.
       for (const call of calls) {
         checkAbort(this.signal);
-        // Tools that mutate the UI were renamed (user_interface_ prefix, 2026-10-21): history of older
-        // chats still uses old names, recognize normally when the model invokes old names
-        const tool = this.tools.find(t => t.name === call.name) ?? this.tools.find(t => t.name === modelToolName(call.name));
+        // Allow host-configured alias mapping (e.g. legacy tool names in saved session history)
+        const tool = this.tools.find(t => t.name === call.name) ?? this.tools.find(t => t.name === this.toolNameMapper(call.name));
         const begin = Date.now();
         this.onEvent({ type: 'tool_call', callId: call.id, round, name: call.name, input: call.input });
         const toolHeartbeat = setInterval(() => progress(round, 'executing', `Running ${call.name}, waited ${Math.floor((Date.now() - begin) / 1000)} s…`), 5000);

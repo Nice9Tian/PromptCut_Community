@@ -65,3 +65,83 @@ test("flattenOverlay carries opacity / fadeIn / fadeOut into the timeline; keys 
   assert.equal("opacity" in b, false);
   assert.equal("fadeIn" in b, false);
 });
+
+test("hasOpacityControls: non-empty cutEnv counts as active opacity control; empty cutEnv does not", () => {
+  assert.equal(hasOpacityControls(clip({ cutEnv: [] })), false);
+  assert.equal(hasOpacityControls(clip({ cutEnv: [{ start: 0, end: 10, opacity: 0.5 }] })), true);
+});
+
+test("opacityAt and cardOpacityAt multiply nested cutEnv envelopes without duplicating envelope math", () => {
+  // Inner clip: [2, 5], opacity 0.8, fadeIn 1s -> at t=2.5 inner is 0.4, at t=3.5 inner is 0.8
+  // Outer cutEnv #1: [1, 6], opacity 0.5, fadeIn 2s -> at t=2.5 env1 is 0.5 * (1.5 / 2) = 0.375; at t=3.5 env1 is 0.5
+  // Outer cutEnv #2: [0, 5], fadeOut 2s -> at t=2.5 env2 is 1; at t=3.5 env2 is (5 - 3.5) / 2 = 0.75
+  const c = clip({
+    opacity: 0.8,
+    fadeIn: 1,
+    cutEnv: [
+      { start: 1, end: 6, opacity: 0.5, fadeIn: 2 },
+      { start: 0, end: 5, fadeOut: 2 },
+    ],
+  });
+  assert.ok(Math.abs(opacityAt(c, 2.5) - 0.4 * 0.375 * 1) < 1e-9);
+  assert.ok(Math.abs(cardOpacityAt(c, 2.5) - 0.4 * 0.375 * 1) < 1e-9);
+  assert.ok(Math.abs(opacityAt(c, 3.5) - 0.8 * 0.5 * 0.75) < 1e-9);
+  assert.ok(Math.abs(cardOpacityAt(c, 3.5) - 0.8 * 0.5 * 0.75) < 1e-9);
+});
+
+test("flattenOverlay preserves cutEnv on derived clips and computes @cut segment envelopes with pre-roll and overrun", () => {
+  const p = {
+    version: 1,
+    name: "p",
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    duration: 10,
+    themeId: "t",
+    media: [],
+    activeCutId: "main",
+    cuts: [
+      { id: "main", name: "Main", duration: 10, tracks: [] },
+      {
+        id: "sub",
+        name: "Sub",
+        duration: 2.5,
+        tracks: [{ id: "st1", name: "SubTrack", clips: [clip({ id: "inner", start: 0, end: 2.5 })] }],
+      },
+    ],
+    tracks: [
+      {
+        id: "t1",
+        name: "MainTrack",
+        clips: [
+          {
+            id: "seg1",
+            cutId: "sub",
+            cutOffset: 0.5,
+            start: 2,
+            end: 5,
+            opacity: 0.8,
+            fadeIn: 1,
+            fadeOut: 1,
+            cutEnv: [{ start: 0, end: 10, opacity: 0.5 }],
+          },
+          clip({ id: "derived", cutEnv: [{ start: 1, end: 6, opacity: 0.75 }] }),
+        ],
+      },
+    ],
+  };
+  const tl = flattenOverlay(p);
+  const seg = tl.clips.find((c) => c.id === "seg1");
+  const derived = tl.clips.find((c) => c.id === "derived");
+  assert.ok(seg, "Cut segment must appear in flattened overlay");
+  assert.ok(seg.start < 2, "Pre-roll shifts timeline start before visible segment start (2s)");
+  // During pre-roll (before seg.from = 2.0), opacity must be strictly 0
+  assert.equal(cardOpacityAt(seg, 1.95), 0);
+  // Mid fade-in at t=2.5: segment fade (0.5 / 1.0) * 0.8 * outer cutEnv 0.5 = 0.2
+  assert.ok(Math.abs(cardOpacityAt(seg, 2.5) - 0.2) < 1e-9);
+  // Plateau at t=3.2 (localT = 0.5 + (3.2 - seg.start) -> 0.5 + 1.2 = 1.7 < 2.5): 0.8 * 0.5 = 0.4
+  assert.ok(Math.abs(cardOpacityAt(seg, 3.2) - 0.4) < 1e-9);
+  // Overrun past sub cut duration (localT >= 2.5 -> t >= 4.0): strictly 0
+  assert.equal(cardOpacityAt(seg, 4.1), 0);
+  assert.deepEqual(derived.cutEnv, [{ start: 1, end: 6, opacity: 0.75 }]);
+});
