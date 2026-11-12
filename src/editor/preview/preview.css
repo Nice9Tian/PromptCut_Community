@@ -376,3 +376,54 @@
   border-color: #f59e0b;
   color: #f59e0b;
 }
+
+/* ── Framed preview zoom badge + Fit button (Vibe mode Detail editing, issue #15) ── */
+.pc-pv--framed .pc-pv-stage[data-zoomed="true"] {
+  cursor: grab;
+}
+.pc-pv-zoom-bar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 4px 3px 8px;
+  border-radius: var(--ui-radius, 6px);
+  border: 1px solid var(--ui-border);
+  background: color-mix(in srgb, var(--ui-panel) 88%, transparent);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 28%);
+  user-select: none;
+}
+.pc-pv-zoom-pct {
+  font-family: var(--ui-font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-fg);
+  white-space: nowrap;
+}
+.pc-pv-zoom-fit {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-sm, 4px);
+  padding: 2px 7px;
+  font-family: var(--ui-font);
+  font-size: 11px;
+  line-height: 1.4;
+  background: var(--ui-accent-soft);
+  color: color-mix(in oklab, var(--ui-accent) 80%, var(--ui-fg));
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pc-pv-zoom-fit:hover:not(:disabled) {
+  border-color: var(--ui-accent);
+  color: var(--ui-fg);
+}
+.pc-pv-zoom-fit:disabled {
+  cursor: default;
+  background: var(--ui-panel-2);
+  color: var(--ui-fg-faint);
+}
