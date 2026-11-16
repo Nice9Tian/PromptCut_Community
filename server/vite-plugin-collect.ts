@@ -34,6 +34,7 @@ import fs from "fs";
 import { spawn, type ChildProcess } from "child_process";
 import { randomUUID } from "crypto";
 import { buildEnv, dataDir, findPython, pipeToSse, readBody, spawnPython, pythonMissing } from "./vite-plugin-stt";
+import { killTreePosix } from "./process-tree.mjs";
 import { assetServiceOrigin } from "./asset-client";
 import { ingestFile } from "./media-ingest.mjs";
 import { findBundledChrome } from "./vite-plugin-web";
@@ -130,11 +131,15 @@ function sendJson(res: ServerResponse, code: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
+/**
+ * Kill the whole process tree of a job: yt-dlp starts ffmpeg to merge streams, and killing only
+ * the interpreter would leave that ffmpeg running. taskkill /T on Windows, `killTreePosix` elsewhere.
+ */
 function killTree(child: ChildProcess): void {
   try {
     if (process.platform === "win32" && child.pid) {
       spawn("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore", windowsHide: true });
-    } else {
+    } else if (killTreePosix(child.pid).length === 0) {
       child.kill("SIGKILL");
     }
   } catch { /* Already exited */ }

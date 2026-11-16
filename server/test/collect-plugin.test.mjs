@@ -28,6 +28,8 @@ function compile(srcRel, outName, rewrites = []) {
   for (const [from, to] of rewrites) src = src.split(from).join(to);
   // server/i18n.mjs is not copied into the scratch folder: point the import back at the real file
   src = src.replace(/from (['"])(?:\.\.?\/)+i18n\.mjs\1/g, (_m, q) => `from ${q}${pathToFileURL(path.join(ROOT, 'server', 'i18n.mjs')).href}${q}`);
+  // Same for server/process-tree.mjs (imported by the stt and collect plugins)
+  src = src.replace(/from (['"])\.\/process-tree\.mjs\1/g, (_m, q) => `from ${q}${pathToFileURL(path.join(ROOT, 'server', 'process-tree.mjs')).href}${q}`);
   const js = ts.transpileModule(src, {
     compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
   }).outputText;
