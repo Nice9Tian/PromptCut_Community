@@ -244,8 +244,10 @@ async function main() {
   const problem = apiProblem(ai);
   if (problem) log(`⚠ Direct API is not configured correctly: ${problem}. Sending this run will fail immediately`);
   // Python lookup order for transcription matches findPython in server/vite-plugin-stt.ts
-  const python = [process.env.PROMPTCUT_PYTHON, path.join(REPO, 'desktop', 'src-tauri', 'runtime', 'python', 'python.exe'),
-    path.join(REPO, 'python', '.venv', 'Scripts', 'python.exe')].find((p) => p && fs.existsSync(p));
+  const venv = path.join(REPO, 'python', '.venv');
+  const python = [process.env.PROMPTCUT_PYTHON, ...(process.platform === 'win32'
+    ? [path.join(REPO, 'desktop', 'src-tauri', 'runtime', 'python', 'python.exe'), path.join(venv, 'Scripts', 'python.exe')]
+    : [path.join(venv, 'bin', 'python3'), path.join(venv, 'bin', 'python')])].find((p) => p && fs.existsSync(p));
   const missing = ['pylibs', 'models'].filter((d) => !process.env[`PROMPTCUT_${d.toUpperCase()}`] && !fs.existsSync(path.join(REPO, 'out', d)));
   if (!python) log('⚠ Python for transcription not found: transcribing in chat fails immediately (/api/stt/status returns 503). To use the one from the main checkout, set PROMPTCUT_PYTHON, PROMPTCUT_PYLIBS, PROMPTCUT_MODELS');
   else if (missing.length) log(`⚠ This working copy has no out/${missing.join(', out/')}: transcribing in a chat will install it on the fly (several GB). To reuse the one from the main checkout, set PROMPTCUT_PYLIBS / PROMPTCUT_MODELS`);
