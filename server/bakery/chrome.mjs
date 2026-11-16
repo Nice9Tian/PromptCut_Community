@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import path from 'path';
 import fsSync from 'node:fs';
 import { launchHealthyChrome } from './chrome-health.mjs';
+import { noSandboxReason, withSandboxHint } from '../chrome-sandbox.mjs';
 
 /**
  * Frame-by-frame export: beginFrame backend.
@@ -85,27 +86,10 @@ const BASE_CHROME_ARGS = [
   '--enable-unsafe-swiftshader',
 ];
 
-/**
- * Whether to disable Chrome's sandbox (`docs/plan/hosted-render-contract.md` section 7.3; task brief
- * "Chrome automatically includes sandbox flags in root or containers"):
- * Chrome refuses to launch with sandbox as root, and containers usually lack the user namespaces
- * it requires. Evaluated only on **Linux**: never added on Windows or macOS, keeping desktop app
- * launch arguments identical to before. Returns the reason in three cases, otherwise null:
- *   - `PROMPTCUT_CHROME_NO_SANDBOX=1` (explicitly requested); set to `0` to never add it;
- *   - Process runs as root (`getuid() === 0`);
- *   - Inside a container (`/.dockerenv` or `/run/.containerenv` exists).
- * Arguments can all be injected, so unit tests do not need to switch platforms.
- */
-export function noSandboxReason({ platform = process.platform, env = process.env, getuid = process.getuid?.bind(process), exists = fsSync.existsSync } = {}) {
-  if (platform !== 'linux') return null;
-  if (env.PROMPTCUT_CHROME_NO_SANDBOX === '0') return null;
-  if (env.PROMPTCUT_CHROME_NO_SANDBOX === '1') return 'env';
-  let uid = null;
-  try { uid = typeof getuid === 'function' ? getuid() : null; } catch { uid = null; }
-  if (uid === 0) return 'root';
-  try { if (exists('/.dockerenv') || exists('/run/.containerenv')) return 'container'; } catch { /* If unable to check, assume not in a container */ }
-  return null;
-}
+// When Chrome may run without its sandbox is decided in one place for every launch site:
+// `server/chrome-sandbox.mjs`. `noSandboxReason` is re-exported here because callers and tests
+// have always imported it from this file.
+export { noSandboxReason };
 
 /**
  * Arguments used to launch Chrome this time: the fixed set, plus `--no-sandbox` (Linux root /
@@ -462,7 +446,8 @@ export async function openBakery(opts = {}) {
   try {
     browser = await launchHealthyChrome({ launch });
   } catch (e) {
-    if (!/could not find/i.test(e?.message || '')) throw e;
+    // Chrome's sandbox could not start (stock Ubuntu 23.10+): say why and what to do about it
+    if (!/could not find/i.test(e?.message || '')) throw withSandboxHint(e);
     /*
      * Install a copy on the fly if not found. Why this step is needed: the update patch only includes
      * runtime/app (the Node side), not runtime/chrome; users upgrading via patches from 0.3.x only

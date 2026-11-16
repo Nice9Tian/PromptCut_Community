@@ -46,6 +46,7 @@
 import { randomUUID } from "node:crypto";
 import vm from "node:vm";
 import { tr } from "./i18n.mjs";
+import { sandboxArgsFor, withSandboxHint } from "./chrome-sandbox.mjs";
 
 /**
  * Performs V8 syntax parsing only (never executed), extracting exact line and column numbers
@@ -225,7 +226,10 @@ export function clampTimeout(ms, limits = SANDBOX_LIMITS) {
  */
 async function defaultLaunch(limits) {
   const { default: puppeteer } = await import("puppeteer");
-  const args = sandboxChromeArgs(limits);
+  // This Chrome runs code written by the user or the model, so its own sandbox is only turned off
+  // on an explicit PROMPTCUT_CHROME_NO_SANDBOX=1, never just because the process is root or in a
+  // container (`server/chrome-sandbox.mjs`), and that is logged.
+  const args = [...sandboxChromeArgs(limits), ...sandboxArgsFor("the custom measurement sandbox", { untrustedContent: true })];
   try {
     return await puppeteer.launch({ headless: "shell", protocolTimeout: 60_000, args });
   } catch (e) {
@@ -265,7 +269,9 @@ export function createAudioSandbox({ launch = defaultLaunch, limits: override = 
     try {
       return await browserP;
     } catch (e) {
-      throw new SandboxError("no-chrome", "The custom measurement sandbox could not start (Chrome not found or failed to launch): " + (e?.message || e));
+      // Chrome's own sandbox failing (stock Ubuntu 23.10+) gets the reason and the fix instead of Chrome's stack of text
+      const cause = withSandboxHint(e, { untrustedContent: true });
+      throw new SandboxError("no-chrome", "The custom measurement sandbox could not start (Chrome not found or failed to launch): " + (cause?.message || cause));
     }
   }
   function resetBrowser() {

@@ -10,6 +10,7 @@ import fs from 'fs/promises';
 import fsSync from 'node:fs';
 import { spawn } from 'child_process';
 import { MISSING_MATERIAL_WAV } from './mux-audio.mjs';
+import { sandboxArgsFor, withSandboxHint } from '../chrome-sandbox.mjs';
 
 /** Confirmed missing audio always reads the fixed software resource, never project media/path data. */
 export function audioClipInput(entry) {
@@ -71,7 +72,12 @@ export async function mixAudioInChrome({ ffmpegCmd, outDir, plan, project, pageU
   await fs.writeFile(path.join(audioDir, 'plan.json'), JSON.stringify(mixPlan));
 
   console.log('Mixing ' + clips.length + ' audio clip(s) in Chrome...');
-  const browser = await puppeteer.launch({ headless: 'shell', protocolTimeout: 120000, args: ['--window-position=-32000,-32000', '--disable-gpu', '--autoplay-policy=no-user-gesture-required'] });
+  // The mix page is this app's own, so the sandbox rule is the same as for frame export
+  // (`server/chrome-sandbox.mjs`): off as root, in a container, or when asked for explicitly.
+  const browser = await puppeteer.launch({
+    headless: 'shell', protocolTimeout: 120000,
+    args: ['--window-position=-32000,-32000', '--disable-gpu', '--autoplay-policy=no-user-gesture-required', ...sandboxArgsFor('the audio mix', { log: (line) => console.log(line) })],
+  }).catch((e) => { throw withSandboxHint(e); });
   let result;
   try {
     const session = await browser.target().createCDPSession();
