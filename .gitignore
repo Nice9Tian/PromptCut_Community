@@ -11,6 +11,8 @@ desktop/.cache
 desktop/src-tauri/runtime
 __pycache__/
 *.pyc
+# Development virtual environment for the Python side (CONTRIBUTING, "Developing on Linux")
+python/.venv/
 tsconfig.tsbuildinfo
 
 # AI assistant: session history and the attachment working folder of each session (server/vite-plugin-chats.ts)

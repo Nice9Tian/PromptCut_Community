@@ -51,6 +51,41 @@ If your PR touches anything visual (rendering, cards, preview, export), **includ
 
 `scripts/probes/` holds per-feature probes — small end-to-end programs that drive a real browser. When you change a feature, run its probe and paste the output into the PR.
 
+## Developing on Linux
+
+The project was written on Windows, and CI ran only there until recently. `npm run build` and the test suite also run on Linux; the list below is what a Linux machine needs that a Windows one does not. It was checked on Ubuntu 26.04 with Node 24. Linux problems that are still open are in the issue tracker (search for "Linux"), and the `test-linux` job in `.github/workflows/test.yml` shows the current state.
+
+**ffmpeg** has to be on `PATH` (`sudo apt install ffmpeg`). Export and the audio tools use it, and so do the tests for them.
+
+**Chrome's sandbox (Ubuntu 23.10 and later).** Ubuntu only lets programs that have an AppArmor profile create unprivileged user namespaces, which Chrome's sandbox needs. It ships a profile for Google Chrome, but not for the Chrome that puppeteer downloads during `npm ci`, so that Chrome dies with `No usable sandbox!`. Give it the same profile Ubuntu gives its own:
+
+```bash
+cache="${PUPPETEER_CACHE_DIR:-$HOME/.cache/puppeteer}"
+sed -e "s|^profile chrome [^ ]* |profile chrome-puppeteer $cache/{chrome,chrome-headless-shell}/linux-*/chrome{,-headless-shell}-linux64/{chrome,chrome-headless-shell} |" \
+    -e 's|<local/chrome>|<local/chrome-puppeteer>|' /etc/apparmor.d/chrome | sudo tee /etc/apparmor.d/chrome-puppeteer
+sudo apparmor_parser -r /etc/apparmor.d/chrome-puppeteer
+```
+
+The profile is tied to a path. With the default cache that path is in your home directory, so anything copied there may create user namespaces too. If that matters on your machine, keep the browsers in a directory only root can write (`PUPPETEER_CACHE_DIR`) and point the profile at it. `PROMPTCUT_CHROME_NO_SANDBOX=1` starts Chrome without its sandbox instead; treat it as a last resort.
+
+**No display.** The assistant's web browser (`server/web/browser.mjs`) opens a real Chrome window, so on a machine without a desktop session start the dev server under a virtual display: `xvfb-run -a npm run dev`. The test suite does not need one.
+
+**Python.** Speech-to-text, media collect, and shot, subject and motion detection run on Python. There is no bundled interpreter on Linux, so make a virtual environment and tell the dev server where it is:
+
+```bash
+python3 -m venv python/.venv
+# Make the packages in python/ importable from the environment. Speech-to-text starts Python with -I,
+# which ignores PYTHONPATH, so a .pth file is what makes them visible.
+python/.venv/bin/python -c "import pathlib, sysconfig; pathlib.Path(sysconfig.get_paths()['purelib'], 'promptcut-src.pth').write_text(str(pathlib.Path('python').resolve()) + '\n')"
+export PROMPTCUT_PYTHON="$PWD/python/.venv/bin/python3"
+```
+
+On Debian and Ubuntu `python3 -m venv` needs the `python3-venv` package. This does not install the heavy libraries. Speech-to-text and media collect install theirs (whisper, yt-dlp) into `out/pylibs` from their own panels.
+
+**The dev port.** `npm run dev` listens on 5190 and refuses to start if it is taken. For a second checkout on the same machine, start vite yourself on another port: `npx vite --port 5191 --strictPort --host 0.0.0.0`.
+
+**AI command-line tools.** One-click install in the AI service panel is Windows only. Install Claude Code, Codex or Antigravity yourself; they are found on `PATH` or in `~/.local/bin`.
+
 ## Submitting
 
 - **One PR, one thing.** Split drive-by refactors into their own PR.
