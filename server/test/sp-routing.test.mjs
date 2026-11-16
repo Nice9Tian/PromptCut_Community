@@ -15,8 +15,10 @@
  *   SPR-6*  Default hosted address (gatekeeper: appears only in hosted-default.mjs in source code;
  *           three override orders)
  *
- * UDP binds only to 127.0.0.1 (no firewall holes opened), network interface list injected as a
- * single loopback interface. Run: node --test server/test/sp-routing.test.mjs
+ * The network interface list is injected as a single loopback interface, so group membership and
+ * every packet sent stay on loopback. On Windows the UDP sockets also bind to 127.0.0.1 (no
+ * firewall prompt); on Linux and macOS they bind to 0.0.0.0, see `UDP_BIND`.
+ * Run: node --test server/test/sp-routing.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,6 +42,17 @@ import { DEFAULT_HOSTED_URL, hostedUrlChoice, resolveHostedUrl } from '../auth/h
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const LO = Object.freeze([{ name: 'lo-test', address: '127.0.0.1', netmask: '255.0.0.0', broadcast: null }]);
 const lo = () => LO;
+/**
+ * Address the test's UDP sockets bind to.
+ *
+ * The discovery queries and the periodic announcements go to a multicast group. On Linux and
+ * macOS a socket bound to a unicast address (127.0.0.1) is only handed datagrams addressed to that
+ * address, so it never sees them, even with the group joined on the loopback interface; bound to
+ * 0.0.0.0 with the same membership it does. Windows delivers them either way, and there binding
+ * to 127.0.0.1 keeps the firewall from asking about a listening socket. The product binds to
+ * 0.0.0.0 on every platform (`server/lan/discovery.mjs`).
+ */
+const UDP_BIND = process.platform === 'win32' ? '127.0.0.1' : '0.0.0.0';
 const PID = 'sp_abcdefghijklmnopqrstuvwxyz';
 
 delete process.env.PROMPTCUT_HOSTED_URL;
@@ -288,7 +301,7 @@ async function loHost(t, { projects = [{ projectId: PID, name: 'Demo', mode: 'fr
   const state = { projects };
   const logs = [];
   const host = createLanHost({
-    projects: () => state.projects, hostDeviceName: 'PC-1', servicePort: 5190, port: 0, bindAddress: '127.0.0.1', interfaces: lo,
+    projects: () => state.projects, hostDeviceName: 'PC-1', servicePort: 5190, port: 0, bindAddress: UDP_BIND, interfaces: lo,
     log: (e, f) => logs.push({ e, ...f }), ...opts,
   });
   await host.start();
@@ -299,7 +312,7 @@ async function loHost(t, { projects = [{ projectId: PID, name: 'Demo', mode: 'fr
 test('SPR-4d two dgram sockets: query (500 ms × 3) → unicast reply, filtered by name, discovery time ≤ 5 s', async (t) => {
   const { host } = await loHost(t, { projects: [{ projectId: PID, name: 'Demo', mode: 'free' }, { projectId: 'sp_bbbbbbbbbbbbbbbbbbbbbbbbbb', name: 'Other', mode: 'restricted' }] });
   const t0 = Date.now();
-  const r = await discoverLan({ name: 'DEMO', port: host.port(), bindAddress: '127.0.0.1', interfaces: lo });
+  const r = await discoverLan({ name: 'DEMO', port: host.port(), bindAddress: UDP_BIND, interfaces: lo });
   const took = Date.now() - t0;
   assert.ok(took <= 5000, `discovery took ${took} ms`);
   assert.ok(r.elapsedMs >= 1000 && r.elapsedMs <= 3000, `collection window ${r.elapsedMs} ms (3 queries, 500 ms apart, then wait another 500 ms)`);
@@ -312,15 +325,15 @@ test('SPR-4d two dgram sockets: query (500 ms × 3) → unicast reply, filtered 
   assert.ok(h.firstSeenMs < 500, `the first query already gets a reply: ${h.firstSeenMs} ms`);
   assert.equal(host.stats().queries, 3);
   assert.equal(host.stats().replies, 3, 'every query is answered (the resends are there to offset packet loss)');
-  const all = await discoverLan({ port: host.port(), bindAddress: '127.0.0.1', interfaces: lo, count: 1, graceMs: 200 });
+  const all = await discoverLan({ port: host.port(), bindAddress: UDP_BIND, interfaces: lo, count: 1, graceMs: 200 });
   assert.deepEqual(all.hosts.map((x) => x.name).sort(), ['Demo', 'Other'], 'no name: all projects');
-  const none = await discoverLan({ name: 'nope', port: host.port(), bindAddress: '127.0.0.1', interfaces: lo, count: 1, graceMs: 200 });
+  const none = await discoverLan({ name: 'nope', port: host.port(), bindAddress: UDP_BIND, interfaces: lo, count: 1, graceMs: 200 });
   assert.deepEqual(none.hosts, []);
 });
 
 test('SPR-4e when the same query round arrives twice via multicast and broadcast, it is answered only once; a stopped host cannot be found; no throw when there are no network interfaces', async (t) => {
   const { host } = await loHost(t);
-  const c = await createLanClient({ port: host.port(), bindAddress: '127.0.0.1', interfaces: lo });
+  const c = await createLanClient({ port: host.port(), bindAddress: UDP_BIND, interfaces: lo });
   t.after(() => c.close());
   await c.query({ name: 'Demo', count: 2, intervalMs: 0, nonce: 'same-nonce-0001' });
   await waitFor(() => host.stats().queries === 2, 2000, 'two queries');
@@ -330,16 +343,16 @@ test('SPR-4e when the same query round arrives twice via multicast and broadcast
   const port = host.port();
   await host.stop();
   assert.equal(host.running(), false);
-  const r = await discoverLan({ name: 'Demo', port, bindAddress: '127.0.0.1', interfaces: lo, count: 1, graceMs: 200 });
+  const r = await discoverLan({ name: 'Demo', port, bindAddress: UDP_BIND, interfaces: lo, count: 1, graceMs: 200 });
   assert.deepEqual(r.hosts, []);
-  const empty = await discoverLan({ name: 'Demo', port, bindAddress: '127.0.0.1', interfaces: () => [] });
+  const empty = await discoverLan({ name: 'Demo', port, bindAddress: UDP_BIND, interfaces: () => [] });
   assert.deepEqual(empty.errors, [{ reason: 'no-interface' }]);
 });
 
 test('SPR-4f periodic announcements (15 s ± 3 s, shortened here) reach the resident client; removed if not seen for 45 s; no more announcements after the project is deleted', async (t) => {
   let skew = 0;
   const changes = [];
-  const c = await createLanClient({ listen: true, port: 0, bindAddress: '127.0.0.1', interfaces: lo, now: () => Date.now() + skew, onChange: (l) => changes.push(l.length) });
+  const c = await createLanClient({ listen: true, port: 0, bindAddress: UDP_BIND, interfaces: lo, now: () => Date.now() + skew, onChange: (l) => changes.push(l.length) });
   t.after(() => c.close());
   const { host, state } = await loHost(t, { announcePort: c.port(), periodMs: 80, jitterMs: 20 });
   await waitFor(() => c.list().length === 1, 2000, 'periodic announcement');
@@ -369,14 +382,14 @@ test('SPR-4g network interface changes: re-checking adds or drops membership and
   list = [];
   assert.equal(host.rescan(), true);
   assert.deepEqual(host.interfaces(), []);
-  const r = await discoverLan({ name: 'Demo', port: host.port(), bindAddress: '127.0.0.1', interfaces: lo, count: 1, graceMs: 200 });
+  const r = await discoverLan({ name: 'Demo', port: host.port(), bindAddress: UDP_BIND, interfaces: lo, count: 1, graceMs: 200 });
   assert.deepEqual(r.hosts, [], 'the host has no network interface: it does not reply even when a query arrives (it does not know which interface\'s address to use)');
   list = LO;
   const n = host.stats().announces;
   assert.equal(host.rescan(), true);
   await waitFor(() => host.stats().announces > n, 2000, 'announces immediately once the network interface is back');
   assert.ok(logs.some((l) => l.e === 'lan.interfaces'));
-  const back = await discoverLan({ name: 'Demo', port: host.port(), bindAddress: '127.0.0.1', interfaces: lo, count: 1, graceMs: 200 });
+  const back = await discoverLan({ name: 'Demo', port: host.port(), bindAddress: UDP_BIND, interfaces: lo, count: 1, graceMs: 200 });
   assert.equal(back.hosts.length, 1);
 });
 
@@ -445,7 +458,7 @@ test('SPR-4i after discovery, join with project credentials (document service mo
   const p = await createProject(lan.base, { name: 'LanDemo', password: 'lan-pw' });
   loop = false;
   const host = createLanHost({
-    projects: () => lan.store.list(), hostDeviceName: 'PC-host', servicePort: lan.port, port: 0, bindAddress: '127.0.0.1', interfaces: lo,
+    projects: () => lan.store.list(), hostDeviceName: 'PC-host', servicePort: lan.port, port: 0, bindAddress: UDP_BIND, interfaces: lo,
   });
   await host.start();
   t.after(() => host.stop());
@@ -453,7 +466,7 @@ test('SPR-4i after discovery, join with project credentials (document service mo
   const t0 = Date.now();
   const found = await findSharedProject({
     name: 'landemo', hostedUrl: null,
-    lan: { discover: (o) => discoverLan({ ...o, port: host.port(), bindAddress: '127.0.0.1', interfaces: lo }) },
+    lan: { discover: (o) => discoverLan({ ...o, port: host.port(), bindAddress: UDP_BIND, interfaces: lo }) },
   });
   const tookMs = Date.now() - t0;
   assert.ok(tookMs <= 5000, `discovery ${tookMs} ms`);
