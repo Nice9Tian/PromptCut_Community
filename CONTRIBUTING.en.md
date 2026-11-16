@@ -84,7 +84,7 @@ On Debian and Ubuntu `python3 -m venv` needs the `python3-venv` package. This do
 
 **The dev port.** `npm run dev` listens on 5190 and refuses to start if it is taken. For a second checkout on the same machine, start vite yourself on another port: `npx vite --port 5191 --strictPort --host 0.0.0.0`.
 
-**AI command-line tools.** One-click install in the AI service panel is Windows only. Install Claude Code, Codex or Antigravity yourself; they are found on `PATH` or in `~/.local/bin`.
+**AI command-line tools.** One-click install in the AI service panel works on Linux and macOS as well: it runs each vendor's official shell installer. Claude Code lands in `~/.local/bin`; Codex and Antigravity go into the app's own directory, `~/promptcut/cli`. Tools you installed yourself are found on `PATH` or in `~/.local/bin`.
 
 ## Submitting
 

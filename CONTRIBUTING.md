@@ -84,7 +84,7 @@ Debian 和 Ubuntu 上 `python3 -m venv` 需要先装 `python3-venv`。这一步�
 
 **开发端口。** `npm run dev` 监听 5190，被占用就拒绝启动。同一台机器上的第二个检出要自己换端口起 vite：`npx vite --port 5191 --strictPort --host 0.0.0.0`。
 
-**AI 命令行工具。** AI 服务面板里的一键安装只支持 Windows。Claude Code、Codex、Antigravity 请自己安装；装在 `PATH` 或 `~/.local/bin` 里就能被找到。
+**AI 命令行工具。** AI 服务面板里的一键安装在 Linux 和 macOS 上也能用，跑的是各家官方的 shell 安装脚本：Claude Code 装到 `~/.local/bin`，Codex 和 Antigravity 装到应用自己的目录 `~/promptcut/cli`。自己装的工具放在 `PATH` 或 `~/.local/bin` 里也能被找到。
 
 ## 提交规范
 
