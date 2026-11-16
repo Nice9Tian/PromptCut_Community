@@ -24,9 +24,10 @@ test.after(() => {
 });
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
 async function until(fn) { for (let i = 0; i < 100; i++) { if (fn()) return; await tick(); } assert.fail('timed out'); }
-// One-click install exists on Windows only (`installPlanFor`). The install tests below drive it
-// with a fake `launch`, so they select the Windows branch explicitly and run on every system, the
-// same way the `resolveCli` tests pass `platform: 'win32'`.
+// One-click install differs by platform (`installPlanFor`: PowerShell on Windows, a shell script on
+// macOS and Linux). The generic install tests below drive it with a fake `launch`, so they select
+// the Windows flavour explicitly and run on every system, the same way the `resolveCli` tests pass
+// `platform: 'win32'`. The shell flavour has its own tests further down.
 function fakeService(options = {}) {
   const calls = [];
   const service = createSetupService({
@@ -130,26 +131,84 @@ test('deduplicates clicks and tracks providers independently', async () => {
   service.dispose(); await tick();
 });
 
-test('one-click install is offered on Windows only; elsewhere the job fails with that message and starts nothing', async () => {
+test('one-click install: PowerShell installer on Windows, the vendor\'s shell installer on macOS and Linux, nothing elsewhere', async () => {
   for (const id of ['claude', 'codex', 'agy']) {
-    assert.match(installPlanFor(id, { platform: 'win32' }).url, /^https:\/\/[a-z.]+\/.*install\.ps1$/);
-    for (const platform of ['linux', 'darwin']) assert.equal(installPlanFor(id, { platform }), null);
+    const win = installPlanFor(id, { platform: 'win32' });
+    assert.equal(win.script, 'powershell');
+    assert.match(win.url, /^https:\/\/[a-z.]+\/.*install\.ps1$/);
+    for (const platform of ['linux', 'darwin']) {
+      const posix = installPlanFor(id, { platform });
+      assert.equal(posix.script, 'sh');
+      assert.equal(posix.url, win.url.replace(/\.ps1$/, '.sh'), 'the same vendor address, the shell flavour');
+      assert.equal(posix.label, win.label);
+    }
+    for (const platform of ['freebsd', 'aix', 'sunos']) assert.equal(installPlanFor(id, { platform }), null);
   }
+  // The interpreter each vendor's script asks for in its first line
+  assert.deepEqual(['claude', 'codex', 'agy'].map(id => installPlanFor(id, { platform: 'linux' }).shell), ['bash', 'sh', 'bash']);
   assert.equal(installPlanFor('api', { platform: 'win32' }), null);
-  assert.match(manualHintFor('codex', { platform: 'linux' }), /Windows only/);
-  assert.doesNotMatch(manualHintFor('nope', { platform: 'win32' }), /Windows only/);
-  assert.doesNotMatch(manualHintFor('api', { platform: 'linux' }), /Windows only/);
+  assert.equal(installPlanFor('__proto__', { platform: 'linux' }), null);
+  assert.match(manualHintFor('codex', { platform: 'freebsd' }), /supports Windows, macOS and Linux/);
+  for (const platform of ['win32', 'linux', 'darwin']) assert.doesNotMatch(manualHintFor('nope', { platform }), /supports Windows/);
+  assert.doesNotMatch(manualHintFor('api', { platform: 'freebsd' }), /supports Windows/);
 
+  // A platform with no installer: the job fails saying so, and nothing is started
+  const { service, calls } = fakeService({ platform: 'freebsd' });
+  service.start('codex', 'install');
+  await until(() => service.list()[0].state === 'failed');
+  assert.match(service.list()[0].message, /supports Windows, macOS and Linux/);
+  assert.equal(calls.length, 0, 'no installer is started');
+  // Login is not tied to the platform
+  service.start('claude', 'login'); await until(() => calls.length === 1);
+  service.dispose(); await tick();
+});
+
+test('shell installer (macOS / Linux): what is started for each provider', async () => {
+  const managed = process.env.PROMPTCUT_CLI_HOME;
   for (const platform of ['linux', 'darwin']) {
     const { service, calls } = fakeService({ platform });
-    service.start('codex', 'install');
-    await until(() => service.list()[0].state === 'failed');
-    assert.match(service.list()[0].message, /Windows only/);
-    assert.equal(calls.length, 0, 'no installer is started');
-    // Login is not tied to the platform
-    service.start('claude', 'login'); await until(() => calls.length === 1);
+    const jobs = Object.fromEntries(['claude', 'codex', 'agy'].map(id => [id, service.start(id, 'install')]));
+    await until(() => calls.length === 3);
+    const by = Object.fromEntries(calls.map(call => [call.child.setupJob.provider, call]));
+
+    for (const [id, shell] of [['claude', 'bash'], ['codex', 'sh'], ['agy', 'bash']]) {
+      const { command, args, opts } = by[id];
+      assert.equal(command, '/bin/sh');
+      assert.equal(args[0], '-c');
+      const [, script, name, url, file, interpreter, ...extra] = args;
+      assert.equal(name, 'promptcut-install');
+      assert.equal(url, installPlanFor(id, { platform }).url);
+      assert.equal(file, path.join(managed, 'installers', `${id}-${jobs[id].id}.sh`));
+      assert.equal(interpreter, shell);
+      // Nothing variable is part of the script text: the address, the file (its path has spaces
+      // and an ampersand here) and the arguments are positional parameters
+      assert.ok(!script.includes('http') && !script.includes(managed), 'the script text carries no address or path');
+      assert.match(script, /exec "\$shell" "\$file" "\$@"/);
+      assert.equal(opts.detached, true, 'its own process group, so a cancel stops everything it started');
+      assert.equal(opts.stdio[0], 'ignore');
+      if (id === 'agy') {
+        const stage = path.join(managed, 'installers', `agy-${jobs.agy.id}`);
+        assert.deepEqual(extra, ['--dir', stage], 'agy installs into a staging directory');
+        assert.equal(opts.env.HOME, path.join(stage, 'home'), 'and gets a throwaway HOME for its shell-profile edits');
+        assert.equal(fs.statSync(opts.env.HOME).isDirectory(), true);
+      } else {
+        assert.deepEqual(extra, []);
+        assert.equal(opts.env.HOME, process.env.HOME, `${id} installs into the real home`);
+      }
+    }
+    assert.equal(by.codex.opts.env.CODEX_NON_INTERACTIVE, '1');
+    assert.equal(by.codex.opts.env.CODEX_INSTALL_DIR, path.join(managed, 'codex'));
+    assert.equal(by.claude.opts.env.CODEX_INSTALL_DIR, undefined);
     service.dispose(); await tick();
   }
+
+  // Windows is unchanged: PowerShell, no process group
+  const { service, calls } = fakeService({ platform: 'win32' });
+  service.start('agy', 'install'); await until(() => calls.length === 1);
+  assert.equal(calls[0].command, 'powershell.exe');
+  assert.equal(calls[0].opts.detached, undefined);
+  assert.equal(calls[0].opts.env.HOME, process.env.HOME);
+  service.dispose(); await tick();
 });
 
 test('spawn error is reported, and retry creates a fresh job', async () => {
@@ -429,4 +488,120 @@ test('real child process: the pasted code arrives on its stdin, and an unfinishe
   await until(() => cancelled.list()[0]?.acceptsCode === true);
   cancelled.cancel('claude');
   await until(() => cancelled.list()[0].state === 'failed');
+});
+
+// ---------------------------------------------------------------------------------------------
+// The shell wrapper for real (macOS / Linux): /bin/sh, curl or wget, a process group. The
+// "vendor installers" are scripts this test serves from its own HTTP server; no vendor is contacted.
+
+const hasProgram = name => { try { execFileSync('sh', ['-c', `command -v ${name}`], { stdio: 'ignore' }); return true; } catch { return false; } };
+const SHELL_TESTS_SKIPPED = process.platform === 'win32' ? 'the shell installer is for macOS and Linux'
+  : !(hasProgram('curl') || hasProgram('wget')) ? 'neither curl nor wget is installed' : false;
+
+/** Serves installer scripts by path; `failFirst` paths answer 500 once before serving */
+async function installerServer(t, scripts, { failFirst = [] } = {}) {
+  const http = await import('node:http');
+  const hits = {};
+  const server = http.createServer((req, res) => {
+    hits[req.url] = (hits[req.url] || 0) + 1;
+    if (failFirst.includes(req.url) && hits[req.url] === 1) { res.statusCode = 500; res.end('try again'); return; }
+    if (!Object.hasOwn(scripts, req.url)) { res.statusCode = 404; res.end(); return; }
+    res.setHeader('content-type', 'text/x-sh');
+    res.end(scripts[req.url]);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.closeAllConnections?.(); server.close(resolve); }));
+  return { origin: `http://127.0.0.1:${server.address().port}`, hits };
+}
+/** A service with the real `launch` whose installers come from `origin`; verification runs the installed file */
+function realShellService(origin, paths, options = {}) {
+  return createSetupService({
+    platform: process.platform,
+    planFor: (id) => ({ id, label: id, url: origin + paths[id], script: 'sh', shell: id === 'codex' ? 'sh' : 'bash', command: 'test' }),
+    verifyAuth: async () => ({ loggedIn: true }), timeoutMs: 20_000, ...options,
+  });
+}
+const settled = async (service, provider) => { for (let i = 0; i < 800; i++) { const job = service.list().find(j => j.provider === provider); if (job.state !== 'running') return job; await tick(); } assert.fail('the install job did not finish'); };
+const fakeBinary = version => `#!/bin/sh\necho "${version}"\n`;
+
+test('shell installer, real run: downloads (with a retry), installs codex into the managed directory and verifies it', { skip: SHELL_TESTS_SKIPPED }, async (t) => {
+  const managed = process.env.PROMPTCUT_CLI_HOME;
+  const record = path.join(root, 'codex-run.txt');
+  const { origin, hits } = await installerServer(t, {
+    // What the vendor's script does with the two variables it is given, reduced to its effect
+    '/codex/install.sh': `#!/bin/sh\nset -e\n[ "$CODEX_NON_INTERACTIVE" = "1" ]\nmkdir -p "$CODEX_INSTALL_DIR"\ncat > "$CODEX_INSTALL_DIR/codex" <<'BIN'\n${fakeBinary('codex-cli 9.9.9')}BIN\nchmod +x "$CODEX_INSTALL_DIR/codex"\nprintf '%s|%s' "$#" "$0" > '${record}'\necho "installed codex"\n`,
+  }, { failFirst: ['/codex/install.sh'] });
+  const service = realShellService(origin, { codex: '/codex/install.sh' });
+  const started = service.start('codex', 'install');
+  const job = await settled(service, 'codex');
+  assert.equal(job.state, 'succeeded', job.message);
+  assert.equal(hits['/codex/install.sh'], 2, 'the first download failed and was retried');
+  const installed = path.join(managed, 'codex', 'codex');
+  assert.equal(execFileSync(installed, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 9.9.9');
+  assert.equal(resolveCli('codex'), installed, 'and the CLI lookup finds it there');
+  const downloaded = path.join(managed, 'installers', `codex-${started.id}.sh`);
+  assert.equal(fs.readFileSync(record, 'utf8'), `0|${downloaded}`, 'run as a file, with no extra arguments');
+  assert.equal(fs.existsSync(downloaded), false, 'the downloaded installer is deleted afterwards');
+  assert.match(job.logs.join(''), /installed codex/);
+  service.dispose(); await tick();
+});
+
+test('shell installer, real run: agy goes through a staging directory with its own HOME, then into the managed directory', { skip: SHELL_TESTS_SKIPPED }, async (t) => {
+  const managed = process.env.PROMPTCUT_CLI_HOME;
+  const record = path.join(root, 'agy-run.txt');
+  const { origin } = await installerServer(t, {
+    // Like the vendor's: takes --dir, writes the binary there, then edits the shell profile in $HOME
+    '/cli/install.sh': `#!/bin/bash\nset -euo pipefail\n[ "$1" = "--dir" ]\ndir="$2"\nmkdir -p "$dir"\ncat > "$dir/agy" <<'BIN'\n${fakeBinary('agy 1.2.3')}BIN\nchmod +x "$dir/agy"\necho "export PATH=$dir:\\$PATH" >> "$HOME/.bashrc"\nprintf '%s\\n%s\\n' "$HOME" "$dir" > '${record}'\n`,
+  });
+  // A broken binary already in the managed directory: the vendor's installer would skip it, the staged install replaces it
+  fs.mkdirSync(path.join(managed, 'agy'), { recursive: true });
+  fs.writeFileSync(path.join(managed, 'agy', 'agy'), 'broken', { mode: 0o755 });
+  const realProfile = path.join(process.env.HOME ?? root, '.bashrc');
+  const profileBefore = fs.existsSync(realProfile) ? fs.readFileSync(realProfile, 'utf8') : null;
+
+  const service = realShellService(origin, { agy: '/cli/install.sh' });
+  const started = service.start('agy', 'install');
+  const job = await settled(service, 'agy');
+  assert.equal(job.state, 'succeeded', job.message);
+  const stage = path.join(managed, 'installers', `agy-${started.id}`);
+  assert.deepEqual(fs.readFileSync(record, 'utf8').trim().split('\n'), [path.join(stage, 'home'), stage], 'the installer saw the throwaway HOME and the staging directory');
+  assert.equal(fs.existsSync(stage), false, 'the staging directory, with that HOME and its profile edits, is gone');
+  assert.equal(execFileSync(path.join(managed, 'agy', 'agy'), ['--version'], { encoding: 'utf8' }).trim(), 'agy 1.2.3', 'the managed binary was replaced and is executable');
+  assert.equal(fs.existsSync(realProfile) ? fs.readFileSync(realProfile, 'utf8') : null, profileBefore, 'the real shell profile is untouched');
+  service.dispose(); await tick();
+});
+
+test('shell installer, real run: a failing installer and a missing one are reported with what they printed', { skip: SHELL_TESTS_SKIPPED }, async (t) => {
+  const { origin, hits } = await installerServer(t, { '/bad/install.sh': '#!/bin/sh\necho "disk full" >&2\nexit 3\n' });
+  const service = realShellService(origin, { codex: '/bad/install.sh', claude: '/missing/install.sh' });
+  service.start('codex', 'install');
+  const failed = await settled(service, 'codex');
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.message, /Installer exited \(3\)[\s\S]*disk full/);
+
+  // 404 three times (two seconds apart), then give up
+  service.start('claude', 'install');
+  const missing = await settled(service, 'claude');
+  assert.equal(missing.state, 'failed');
+  assert.equal(hits['/missing/install.sh'], 3);
+  assert.match(missing.message, /Could not download/);
+  service.dispose(); await tick();
+});
+
+test('shell installer, real run: cancelling stops the installer and everything it started', { skip: SHELL_TESTS_SKIPPED }, async (t) => {
+  const pidFile = path.join(root, 'installer-child.pid');
+  const { origin } = await installerServer(t, { '/slow/install.sh': `#!/bin/sh\nsleep 300 &\necho $! > '${pidFile}'\nwait\n` });
+  const service = realShellService(origin, { codex: '/slow/install.sh' });
+  service.start('codex', 'install');
+  await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, 'utf8').trim());
+  const child = Number(fs.readFileSync(pidFile, 'utf8'));
+  t.after(() => { try { process.kill(child, 'SIGKILL'); } catch { /* Already gone, as it should be */ } });
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  assert.equal(alive(child), true);
+  service.cancel('codex');
+  const job = await settled(service, 'codex');
+  assert.equal(job.state, 'failed');
+  assert.match(job.message, /Canceled/);
+  await until(() => !alive(child));
+  service.dispose(); await tick();
 });

@@ -14975,9 +14975,9 @@
   "zh": "离线操作记录无效",
   "ja": "オフライン操作の記録が無効です"
  },
- "One-click install currently supports Windows only.": {
-  "zh": "目前一键安装支持 Windows。",
-  "ja": "ワンクリックインストールは現在Windowsのみ対応しています。"
+ "One-click install supports Windows, macOS and Linux.": {
+  "zh": "一键安装支持 Windows、macOS 和 Linux。",
+  "ja": "ワンクリックインストールはWindows、macOS、Linuxに対応しています。"
  },
  "Only claude / codex have a quota window": {
   "zh": "只有 claude / codex 有额度窗口",
