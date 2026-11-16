@@ -26,13 +26,29 @@
  *               browser of another chat: do not kill; confirmed to be browser for this directory:
  *               kill; on Windows, lock is held exclusively but owner cannot be identified: report
  *               faithfully as still occupied
+ *   W1-PROC-06  The browser's temporary directory off Windows is short enough for Chrome's
+ *               singleton socket whatever the session directory is; a system temporary directory
+ *               that is itself too long falls back to `/tmp`; Windows keeps `.tmp` under the
+ *               session directory
+ *   W1-PROC-07  Deleting a browser temporary directory: only a `pcb-XXXXXX` directory directly
+ *               under a candidate directory; cleaning up a leftover deletes the one recorded in
+ *               the registry file, and leaves it alone while the launching service is alive
+ *   W1-PROC-08  A browser that aborts while starting: the reason it printed is in the log, the
+ *               temporary directory it was given is deleted (this one starts a process: a shell
+ *               script standing in for the browser, so it is skipped on Windows)
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { procStat, pidLive, liveGroupMembers, browserGroupLive, processCommandLine, commandLineUsesProfile, browserHoldsProfile, reapOrphan } from '../web/hosted/session.mjs';
+import {
+  procStat, pidLive, liveGroupMembers, browserGroupLive, processCommandLine, commandLineUsesProfile, browserHoldsProfile, reapOrphan,
+  socketPathLimit, singletonSocketPathLength, browserTempBases, createBrowserTempDir, removeBrowserTempDir, launchStderrSummary,
+  launchHostedSession, HostedSessionError,
+} from '../web/hosted/session.mjs';
+import { createEgressGate } from '../agent/service/egress.mjs';
+import { HOSTED_BROWSER_DEFAULTS } from '../agent/service/hosted-browser.mjs';
 
 /** Creates a mock /proc: `{ pid: { comm, state, ppid, pgrp, cmdline? } }` */
 export function fakeProc(t, table) {
@@ -255,4 +271,179 @@ test('W1-PROC-05 a browser whose launching service process is still alive: the s
   // Starting a new browser in this chat (without flags): clean up even if the old process is alive:
   // two browsers cannot use the same directory, and document service now only recognizes the new process
   assert.deepEqual((await run('launch-time', 77, {})).killed, [7101]);
+});
+
+/** What Chrome appends to its temporary directory for the singleton socket */
+const SOCKET_TAIL = '/org.chromium.Chromium.XXXXXX/SingletonSocket';
+const POSIX_ONLY = process.platform === 'win32' ? 'creates directories under /tmp, which Windows does not have' : false;
+
+test('W1-PROC-06 the socket path limit and which directory the temporary directory goes in', () => {
+  assert.equal(socketPathLimit('linux'), 107);
+  assert.equal(socketPathLimit('darwin'), 103);
+  assert.equal(singletonSocketPathLength('/tmp'), '/tmp/pcb-XXXXXX'.length + SOCKET_TAIL.length);
+  assert.ok(singletonSocketPathLength('/tmp') <= socketPathLimit('darwin'), '/tmp fits on every platform');
+  // macOS's own temporary directory leaves no room, which is why /tmp is the second candidate
+  assert.ok(singletonSocketPathLength('/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T') > socketPathLimit('darwin'));
+  assert.deepEqual(browserTempBases({ tmpdir: () => '/tmp' }), ['/tmp']);
+  if (process.platform !== 'win32') assert.deepEqual(browserTempBases({ tmpdir: () => '/var/tmp/' }), ['/var/tmp', '/tmp']);
+});
+
+test('W1-PROC-06 Windows keeps .tmp under the session directory', (t) => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-w1-tmp-'));
+  t.after(() => fs.rmSync(sessionDir, { recursive: true, force: true }));
+  const temp = createBrowserTempDir(sessionDir, { platform: 'win32' });
+  assert.deepEqual(temp, { dir: path.join(sessionDir, '.tmp'), own: false });
+  assert.equal(fs.statSync(temp.dir).isDirectory(), true);
+});
+
+test('W1-PROC-06 off Windows the temporary directory is short whatever the session directory is', { skip: POSIX_ONLY }, (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-w1-tmp-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // The shape of a real one: <dataDir>/web/<project>/<chat>
+  const sessionDir = path.join(root, 'agent', 'web', 'sp_example-8ed356bb7d2b', 'conversation_example-ecef2ab1a126');
+  fs.mkdirSync(sessionDir, { recursive: true });
+  assert.ok((path.join(sessionDir, '.tmp') + SOCKET_TAIL).length > socketPathLimit('linux'), 'the old location is past the limit');
+
+  const temp = createBrowserTempDir(sessionDir, { platform: 'linux', tmpdir: () => root });
+  t.after(() => fs.rmSync(temp.dir, { recursive: true, force: true }));
+  assert.equal(temp.own, true);
+  assert.equal(path.dirname(temp.dir), root);
+  assert.match(path.basename(temp.dir), /^pcb-[A-Za-z0-9]{6}$/);
+  assert.ok((temp.dir + SOCKET_TAIL).length <= socketPathLimit('linux'));
+  assert.equal(fs.statSync(temp.dir).mode & 0o777, 0o700, 'private to the service user');
+  assert.equal(fs.existsSync(path.join(sessionDir, '.tmp')), false, 'nothing is created in the session directory');
+
+  // The service's own TMPDIR is long: fall back to /tmp instead of failing
+  const long = path.join(root, 'x'.repeat(60));
+  fs.mkdirSync(long);
+  const fallback = createBrowserTempDir(sessionDir, { platform: 'linux', tmpdir: () => long });
+  t.after(() => fs.rmSync(fallback.dir, { recursive: true, force: true }));
+  assert.equal(path.dirname(fallback.dir), '/tmp');
+
+  // The preferred one cannot be written (does not exist): the next candidate is used
+  const missing = createBrowserTempDir(sessionDir, { platform: 'linux', tmpdir: () => path.join(root, 'gone') });
+  t.after(() => fs.rmSync(missing.dir, { recursive: true, force: true }));
+  assert.equal(path.dirname(missing.dir), '/tmp');
+});
+
+test('W1-PROC-07 deleting a temporary directory only touches a pcb-XXXXXX directory directly under a candidate directory', (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pc-w1-tmp-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const deps = { tmpdir: () => root };
+  const make = (...parts) => { const dir = path.join(root, ...parts); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'f'), 'x'); return dir; };
+
+  const good = make('pcb-Ab12Cd');
+  assert.equal(removeBrowserTempDir(good, deps), true);
+  assert.equal(fs.existsSync(good), false);
+  assert.equal(removeBrowserTempDir(good, deps), true, 'already gone counts as gone');
+
+  for (const [why, dir] of [
+    ['another name', make('other-Ab12Cd')],
+    ['a longer name with the same prefix', make('pcb-Ab12Cd-profile')],
+    ['one level down', make('nested', 'pcb-Ab12Cd')],
+    ['the candidate directory itself', root],
+  ]) {
+    assert.equal(removeBrowserTempDir(dir, deps), false, why);
+    assert.equal(fs.existsSync(dir), true, why);
+  }
+  assert.equal(removeBrowserTempDir('pcb-Ab12Cd', deps), false, 'a relative path');
+  assert.equal(removeBrowserTempDir([root, 'nested', '..', 'pcb-Zz99Zz'].join(path.sep), deps), false, 'a path that is not normalised');
+  assert.equal(removeBrowserTempDir(null, deps), false);
+
+  // A file with the right name, and a directory owned by someone else: left alone
+  const file = path.join(root, 'pcb-File00');
+  fs.writeFileSync(file, 'x');
+  assert.equal(removeBrowserTempDir(file, deps), false);
+  const foreign = make('pcb-Other0');
+  assert.equal(removeBrowserTempDir(foreign, { ...deps, getuid: () => fs.statSync(foreign).uid + 1 }), false);
+  assert.equal(fs.existsSync(foreign), true);
+
+  if (process.platform !== 'win32') {
+    // A link with the right name pointing at a real directory: neither is deleted
+    const target = make('target');
+    const link = path.join(root, 'pcb-Link00');
+    fs.symlinkSync(target, link);
+    assert.equal(removeBrowserTempDir(link, deps), false);
+    assert.equal(fs.existsSync(path.join(target, 'f')), true);
+  }
+});
+
+test('W1-PROC-07 cleaning up a leftover deletes its recorded temporary directory, but not while the launching service is alive', async (t) => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-w1-tmp-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const run = async (name, { browserAlive, options = {} }) => {
+    const sessionDir = path.join(base, name);
+    const profile = path.join(sessionDir, 'profile');
+    fs.mkdirSync(profile, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'owner.json'), JSON.stringify({ servicePid: 77, browserPid: 7101, pids: [7101], tmpDir: `/tmp/pcb-${name}` }));
+    const table = { 77: 'node /srv/agent/main.mjs' };
+    if (browserAlive) table[7101] = `/opt/chrome --headless=new --user-data-dir=${profile}`;
+    const removed = [];
+    const result = await reapOrphan(sessionDir, { timeoutMs: 1_000, ...options, deps: {
+      platform: 'linux', selfPid: 4000, holder: () => ({ held: false, pid: null }), commandLine: async (pid) => table[pid] ?? null,
+      alive: (pid) => pid in table, kill: (pid) => { delete table[pid]; }, killTree: () => {}, removeTemp: (dir) => { removed.push(dir); return true; },
+    } });
+    return { result, removed, registered: fs.existsSync(path.join(sessionDir, 'owner.json')) };
+  };
+  // The browser exited on its own after the service died (the usual case): only the directory is left
+  const exited = await run('exited', { browserAlive: false });
+  assert.deepEqual(exited.removed, ['/tmp/pcb-exited']);
+  assert.equal(exited.registered, false);
+  // The browser is still there: killed, then its directory deleted
+  const killed = await run('killed', { browserAlive: true });
+  assert.deepEqual(killed.result.killed, [7101]);
+  assert.deepEqual(killed.removed, ['/tmp/pcb-killed']);
+  // Rolling restart: the old service is still using that browser, so its directory stays too
+  const overlap = await run('overlap', { browserAlive: true, options: { respectLiveOwner: true } });
+  assert.equal(overlap.result.liveOwner, true);
+  assert.deepEqual(overlap.removed, []);
+  assert.equal(overlap.registered, true);
+});
+
+test('W1-PROC-08 what is kept of standard error when the browser fails to start', () => {
+  const sandbox = '[438988:438988:1117/061523.123456:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:129] No usable sandbox! If you are running on Ubuntu 23.10+ ...';
+  assert.equal(
+    launchStderrSummary(`\n[1:1:1117/061523.000001:ERROR:dbus/bus.cc:408] Failed to connect to the bus\n${sandbox}\n`),
+    '[FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:129] No usable sandbox! If you are running on Ubuntu 23.10+ ...',
+    'FATAL lines win, and the pid / time prefix is dropped',
+  );
+  assert.equal(launchStderrSummary('a\nb\r\nc\nd\n'), 'b | c | d', 'no FATAL line: the last three');
+  assert.equal(launchStderrSummary(''), '');
+  assert.equal(launchStderrSummary(undefined), '');
+  assert.equal(launchStderrSummary(`[FATAL:x.cc:1] ${'y'.repeat(2_000)}`).length, 600);
+});
+
+test('W1-PROC-08 a browser that aborts while starting: its reason is logged and its temporary directory deleted', { skip: POSIX_ONLY }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-w1-tmp-'));
+  const savedTmp = process.env.TMPDIR;
+  process.env.TMPDIR = root; // The service's temporary directory: where the browser's own one is created
+  t.after(() => {
+    if (savedTmp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = savedTmp;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  // Stands in for Chrome aborting the way it does when the socket path is too long: says why on
+  // standard error (with the temporary directory it was given), then exits before the pipe answers
+  const fake = path.join(root, 'fake-chrome');
+  fs.writeFileSync(fake, '#!/bin/sh\necho "[1:1:1117/000000.000000:ERROR:noise.cc:1] unrelated" >&2\necho "[1:1:1117/000000.000001:FATAL:chrome/browser/process_singleton_posix.cc:313] Socket path too long: $TMPDIR/org.chromium.Chromium.aVTYfZ/SingletonSocket." >&2\nexit 1\n', { mode: 0o755 });
+  const sessionDir = path.join(root, 'agent', 'web', 'sp_example-8ed356bb7d2b', 'conversation_example-ecef2ab1a126');
+  const logs = [];
+  await assert.rejects(
+    launchHostedSession({
+      sessionDir, executablePath: fake, gate: createEgressGate({ testAllow: [] }), limits: { ...HOSTED_BROWSER_DEFAULTS, launchMs: 10_000, closeMs: 2_000 },
+      puppeteer: { defaultArgs: async () => [], connect: () => new Promise(() => {}) },
+      log: (event, fields) => logs.push({ event, ...fields }),
+    }),
+    (err) => err instanceof HostedSessionError && err.code === 'launch-failed',
+  );
+  const failed = logs.filter((l) => l.event === 'agent.web.launch-failed');
+  assert.equal(failed.length, 1);
+  assert.match(failed[0].stderr, /^\[FATAL:chrome\/browser\/process_singleton_posix\.cc:313\] Socket path too long: /);
+  assert.doesNotMatch(failed[0].stderr, /unrelated/);
+  // The directory the browser was told to use: short, under the service's temporary directory, and gone now
+  const given = /too long: (\S+)\/org\.chromium/.exec(failed[0].stderr)?.[1];
+  assert.equal(path.dirname(given), root);
+  assert.match(path.basename(given), /^pcb-[A-Za-z0-9]{6}$/);
+  assert.equal(fs.existsSync(given), false);
+  assert.deepEqual(fs.readdirSync(root).filter((name) => name.startsWith('pcb-')), []);
+  assert.equal(fs.existsSync(path.join(sessionDir, '.tmp')), false);
 });
