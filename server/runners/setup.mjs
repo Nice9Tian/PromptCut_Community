@@ -38,9 +38,11 @@ export function normalizeAuthCode(input) {
 }
 
 // One tracked job per provider. Duplicate clicks attach to the existing job.
-// `platform` only decides whether one-click install is offered (`installPlanFor`); it is a
-// parameter so the install tests, which use a fake `launch`, run the same on every system.
-export function createSetupService({ launch = spawn, verifyAuth = probeAuth, verifyInstall, verifyVersion = async exe => (await import('./index.mjs')).probeVersion(exe), timeoutMs = 600000, platform = process.platform } = {}) {
+// `platform` decides which installer one-click install uses (`installPlanFor`: PowerShell on
+// Windows, the vendor's shell script on macOS and Linux); it is a parameter so the install tests,
+// which use a fake `launch`, can run either flavour on every system. `planFor` is replaced only by
+// the test that runs the real shell wrapper against an installer served from the test itself.
+export function createSetupService({ launch = spawn, verifyAuth = probeAuth, verifyInstall, verifyVersion = async exe => (await import('./index.mjs')).probeVersion(exe), timeoutMs = 600000, platform = process.platform, planFor = installPlanFor } = {}) {
   const jobs = new Map();
   const children = new Set();
   const append = (job, text) => {
@@ -82,6 +84,11 @@ export function createSetupService({ launch = spawn, verifyAuth = probeAuth, ver
           const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
           killer.on('error', () => { if (!settled) child.kill(); });
           killer.on('exit', code => { if (code && !settled) child.kill(); });
+        } else if (options.detached && child.pid) {
+          // Started as the leader of its own process group (the shell installer, which runs
+          // curl, the vendor's script and the downloaded binary): stop the whole group, or those
+          // would carry on after a cancel or a timeout.
+          try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill(); }
         } else child.kill();
       };
       child.stopSetup = stop;
@@ -108,12 +115,57 @@ export function createSetupService({ launch = spawn, verifyAuth = probeAuth, ver
     });
   }
 
+  /**
+   * Windows: download the vendor's PowerShell installer and run it.
+   * agy's installer skips an existing binary, even if it is broken, so it installs into
+   * `stage` and the caller verifies that before replacing the managed installation.
+   */
+  async function runPowerShellInstaller(job, plan, { file, env, stage }) {
+    const extra = stage ? ` --dir ${psLiteral(stage)} --skip-path --skip-aliases` : '';
+    const script = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); ` +
+      `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; ` +
+      `for ($attempt=0; $attempt -lt 3; $attempt++) { try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 120 -Uri ${psLiteral(plan.url)} -OutFile ${psLiteral(file)}; break } catch { if ($attempt -eq 2) { throw }; Start-Sleep -Seconds 2 } }; ` +
+      `& ${psLiteral(file)}${extra}; if ($LASTEXITCODE) { exit $LASTEXITCODE }`;
+    const readableScript = `try { & { ${script} } *>&1 | Out-String -Stream | ForEach-Object { [Console]::WriteLine($_) }; if ($LASTEXITCODE) { exit $LASTEXITCODE } } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`;
+    await run(job, 'powershell.exe', encodedPowerShell(readableScript), { env });
+  }
+
+  /**
+   * macOS / Linux: download the vendor's shell installer and run it, the same two steps as on
+   * Windows. The URL, the file and the installer's own arguments reach the shell as positional
+   * parameters, never spliced into the script text. Downloading goes through curl or wget (the
+   * vendors' scripts need one of them anyway, and both honour the proxy variables people set).
+   *
+   * The installer runs in its own process group, so cancelling stops curl, the script and the
+   * binary it downloaded together (see `stop` in `run`).
+   */
+  async function runShellInstaller(job, plan, { file, env, stage }) {
+    const script = [
+      'url="$1"; file="$2"; shell="$3"; shift 3',
+      'if command -v curl >/dev/null 2>&1; then fetch() { curl -fsSL --max-time 120 -o "$file" "$url"; }',
+      'elif command -v wget >/dev/null 2>&1; then fetch() { wget -q -T 120 -O "$file" "$url"; }',
+      'else echo "Either curl or wget is required to download the installer, and neither is installed." >&2; exit 1; fi',
+      'attempt=1; until fetch; do if [ "$attempt" -ge 3 ]; then echo "Could not download $url" >&2; exit 1; fi; attempt=$((attempt + 1)); sleep 2; done',
+      'exec "$shell" "$file" "$@"',
+    ].join('\n');
+    // agy: its shell installer has no switch to leave the shell profile alone (the PowerShell one
+    // has --skip-path --skip-aliases). It writes PATH and aliases for whatever --dir it was given,
+    // which here is a staging directory that is deleted afterwards. Give that run a HOME inside the
+    // staging directory, so those edits and its download cache never reach the user's own files.
+    const extra = stage ? ['--dir', stage] : [];
+    const runEnv = stage ? { ...env, HOME: path.join(stage, 'home') } : env;
+    if (stage) fs.mkdirSync(runEnv.HOME, { recursive: true });
+    await run(job, '/bin/sh', ['-c', script, 'promptcut-install', plan.url, file, plan.shell, ...extra], { env: runEnv, detached: true });
+  }
+
   async function install(job) {
-    const plan = installPlanFor(job.provider, { platform });
+    const plan = planFor(job.provider, { platform });
     if (!plan) throw new Error(manualHintFor(job.provider, { platform }));
+    const posix = plan.script === 'sh';
+    const exeName = name => name + (posix ? '' : '.exe');
     const dir = path.join(setupRoot(), 'installers');
     fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, `${job.provider}-${job.id}.ps1`);
+    const file = path.join(dir, `${job.provider}-${job.id}.${posix ? 'sh' : 'ps1'}`);
     const env = cliEnv(job.provider);
     if (job.provider === 'codex') {
       env.CODEX_NON_INTERACTIVE = '1';
@@ -122,31 +174,29 @@ export function createSetupService({ launch = spawn, verifyAuth = probeAuth, ver
     // agy's installer skips an existing binary, even if it is broken. Stage a
     // fresh binary and verify it before replacing the managed installation.
     const agyStage = path.join(dir, `agy-${job.id}`);
-    const extra = job.provider === 'agy' ? ` --dir ${psLiteral(agyStage)} --skip-path --skip-aliases` : '';
-    const script = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); ` +
-      `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; ` +
-      `for ($attempt=0; $attempt -lt 3; $attempt++) { try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 120 -Uri ${psLiteral(plan.url)} -OutFile ${psLiteral(file)}; break } catch { if ($attempt -eq 2) { throw }; Start-Sleep -Seconds 2 } }; ` +
-      `& ${psLiteral(file)}${extra}; if ($LASTEXITCODE) { exit $LASTEXITCODE }`;
+    const stage = job.provider === 'agy' ? agyStage : null;
     job.message = tr("Downloading and installing the official CLI…");
-    const readableScript = `try { & { ${script} } *>&1 | Out-String -Stream | ForEach-Object { [Console]::WriteLine($_) }; if ($LASTEXITCODE) { exit $LASTEXITCODE } } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`;
     try {
-      await run(job, 'powershell.exe', encodedPowerShell(readableScript), { env });
+      await (posix ? runShellInstaller : runPowerShellInstaller)(job, plan, { file, env, stage });
       if (job.provider === 'agy' && !verifyInstall) {
-        const staged = path.join(agyStage, 'agy.exe');
+        const staged = path.join(agyStage, exeName('agy'));
         await verifyVersion(staged);
         if (job.cancelRequested) throw new Error('Cancelled');
         const target = path.join(setupRoot(), 'agy');
         fs.mkdirSync(target, { recursive: true });
-        fs.copyFileSync(staged, path.join(target, 'agy.exe'));
+        fs.copyFileSync(staged, path.join(target, exeName('agy')));
+        if (posix) fs.chmodSync(path.join(target, 'agy'), 0o755);
       }
     } finally {
       try { fs.unlinkSync(file); } catch {}
-      try { fs.unlinkSync(path.join(agyStage, 'agy.exe')); fs.rmdirSync(agyStage); } catch {}
+      // Windows leaves only the binary in the staging directory; the shell installer's run also
+      // leaves the throwaway HOME there
+      try { if (posix) fs.rmSync(agyStage, { recursive: true, force: true }); else { fs.unlinkSync(path.join(agyStage, 'agy.exe')); fs.rmdirSync(agyStage); } } catch {}
     }
     job.message = tr("Verifying the installation…");
     if (verifyInstall) await verifyInstall(job.provider);
     else {
-      const exe = job.provider === 'claude' ? resolveCli('claude') : path.join(setupRoot(), job.provider, `${job.provider}.exe`);
+      const exe = job.provider === 'claude' ? resolveCli('claude') : path.join(setupRoot(), job.provider, exeName(job.provider));
       await verifyVersion(exe);
     }
     if (job.cancelRequested) throw new Error('Cancelled');
