@@ -10,7 +10,7 @@ jobs:
     # The commercial edition inherits this code and carries this file along too; it does not run in private repositories.
     if: ${{ !github.event.repository.private }}
     # This project's scripts are written for Windows (PowerShell, windowsHide, local Chrome path),
-    # so this is the job that has to be green. Linux runs in `test-linux` below.
+    # so CI runs there. Linux runs in `test-linux` below; both have to be green.
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -35,13 +35,10 @@ jobs:
       - name: Unit tests
         run: npm test
 
-  # The same checks on Ubuntu. Some tests still fail there for reasons tracked in the issues that
-  # mention Linux, so for now a failure here does not fail the workflow: it is here so that Linux
-  # regressions are visible instead of unnoticed. Remove `continue-on-error` once this job is green.
+  # The same checks on Ubuntu, so that a change that only breaks Linux is noticed here.
   test-linux:
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
-    continue-on-error: true
     timeout-minutes: 30
 
     steps:
