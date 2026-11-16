@@ -284,8 +284,12 @@ test('W1-PROC-06 the socket path limit and which directory the temporary directo
   assert.ok(singletonSocketPathLength('/tmp') <= socketPathLimit('darwin'), '/tmp fits on every platform');
   // macOS's own temporary directory leaves no room, which is why /tmp is the second candidate
   assert.ok(singletonSocketPathLength('/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T') > socketPathLimit('darwin'));
-  assert.deepEqual(browserTempBases({ tmpdir: () => '/tmp' }), ['/tmp']);
-  if (process.platform !== 'win32') assert.deepEqual(browserTempBases({ tmpdir: () => '/var/tmp/' }), ['/var/tmp', '/tmp']);
+  // The candidate list is only ever built off Windows, and it resolves the system directory the
+  // way the running platform does ('/tmp' is 'D:\\tmp' to Windows), so it is checked there only
+  if (process.platform !== 'win32') {
+    assert.deepEqual(browserTempBases({ tmpdir: () => '/tmp' }), ['/tmp']);
+    assert.deepEqual(browserTempBases({ tmpdir: () => '/var/tmp/' }), ['/var/tmp', '/tmp']);
+  }
 });
 
 test('W1-PROC-06 Windows keeps .tmp under the session directory', (t) => {
