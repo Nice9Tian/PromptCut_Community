@@ -10,7 +10,7 @@ jobs:
     # The commercial edition inherits this code and carries this file along too; it does not run in private repositories.
     if: ${{ !github.event.repository.private }}
     # This project's scripts are written for Windows (PowerShell, windowsHide, local Chrome path),
-    # So CI also runs on Windows. Linux has not been verified.
+    # so this is the job that has to be green. Linux runs in `test-linux` below.
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -28,6 +28,48 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Type check
+        run: npx tsc -b
+
+      - name: Unit tests
+        run: npm test
+
+  # The same checks on Ubuntu. Some tests still fail there for reasons tracked in the issues that
+  # mention Linux, so for now a failure here does not fail the workflow: it is here so that Linux
+  # regressions are visible instead of unnoticed. Remove `continue-on-error` once this job is green.
+  test-linux:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      # Tests that export the final video need ffmpeg on PATH
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Ubuntu 23.10+ only lets programs with an AppArmor profile create user namespaces, which
+      # Chrome's sandbox needs. Ubuntu ships a profile for /opt/google/chrome; this makes the same
+      # one for the Chrome that puppeteer downloaded during `npm ci` (CONTRIBUTING.en.md,
+      # "Developing on Linux"). Skipped on an image without that profile.
+      - name: Let puppeteer's Chrome use its sandbox
+        run: |
+          if [ ! -f /etc/apparmor.d/chrome ]; then echo "No /etc/apparmor.d/chrome on this image, nothing to do"; exit 0; fi
+          cache="${PUPPETEER_CACHE_DIR:-$HOME/.cache/puppeteer}"
+          sed -e "s|^profile chrome [^ ]* |profile chrome-puppeteer $cache/{chrome,chrome-headless-shell}/linux-*/chrome{,-headless-shell}-linux64/{chrome,chrome-headless-shell} |" \
+              -e 's|<local/chrome>|<local/chrome-puppeteer>|' /etc/apparmor.d/chrome | sudo tee /etc/apparmor.d/chrome-puppeteer
+          sudo apparmor_parser -r /etc/apparmor.d/chrome-puppeteer
 
       - name: Type check
         run: npx tsc -b

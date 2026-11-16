@@ -53,7 +53,7 @@ If your PR touches anything visual (rendering, cards, preview, export), **includ
 
 ## Developing on Linux
 
-The project was written on Windows, and CI runs only there. `npm run build` and the test suite also run on Linux; the list below is what a Linux machine needs that a Windows one does not. It was checked on Ubuntu 26.04 with Node 24. Linux problems that are still open are in the issue tracker (search for "Linux").
+The project was written on Windows, and CI ran only there until recently. `npm run build` and the test suite also run on Linux; the list below is what a Linux machine needs that a Windows one does not. It was checked on Ubuntu 26.04 with Node 24. Linux problems that are still open are in the issue tracker (search for "Linux"), and the `test-linux` job in `.github/workflows/test.yml` shows the current state.
 
 **ffmpeg** has to be on `PATH` (`sudo apt install ffmpeg`). Export and the audio tools use it, and so do the tests for them.
 

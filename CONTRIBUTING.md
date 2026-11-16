@@ -53,7 +53,7 @@ npm test src/你改的/那个.test.mjs   # 也可以只跑一部分
 
 ## 在 Linux 上开发
 
-这个项目是在 Windows 上写的，CI 也只在 Windows 上跑。`npm run build` 和测试在 Linux 上同样能跑；下面列的是 Linux 机器比 Windows 多要准备的东西，在 Ubuntu 26.04、Node 24 上验证过。还没解决的 Linux 问题在 issue 里（搜 "Linux"）。
+这个项目是在 Windows 上写的，CI 原先也只在 Windows 上跑。`npm run build` 和测试在 Linux 上同样能跑；下面列的是 Linux 机器比 Windows 多要准备的东西，在 Ubuntu 26.04、Node 24 上验证过。还没解决的 Linux 问题在 issue 里（搜 "Linux"），现状看 `.github/workflows/test.yml` 里的 `test-linux` 任务。
 
 **ffmpeg** 要在 `PATH` 上（`sudo apt install ffmpeg`）。导出和音频工具要用它，它们的测试也要用。
 
