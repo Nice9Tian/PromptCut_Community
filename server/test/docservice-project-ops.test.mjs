@@ -468,21 +468,33 @@ test('DS-P11 (V2, server side) two pages each submit 200 random edits interleave
 
   async function editor(name, seed) {
     const c = await env.connect(`user=${name}&role=page`);
-    const st = await open(c);
-    const me = { view: st.project, rev: st.rev, accepted: 0, rejected: 0 };
+    // The listener goes on before `open`, not after it. The other editor's first edit can be
+    // broadcast right behind this one's `project.open` reply; when both frames arrive in one read
+    // (the usual case on Linux loopback), the WebSocket client dispatches both `message` events
+    // before the `await open(c)` below resumes, and a listener attached after it never sees that
+    // edit. Until the snapshot is known the ops are held; then those newer than it are applied.
+    let me = null;
+    const early = [];
     let pending = null;
+    const onOps = (m) => {
+      assert.equal(m.rev, me.rev + 1, `ops received by ${name} are in consecutive rev order`);
+      me.view = applyOps(me.view, m.ops).root;
+      me.rev = m.rev;
+    };
     c.ws.addEventListener('message', (e) => {
       const m = JSON.parse(e.data);
       if (m.type === 'project.ops') {
-        assert.equal(m.rev, me.rev + 1, `ops received by ${name} are in consecutive rev order`);
-        me.view = applyOps(me.view, m.ops).root;
-        me.rev = m.rev;
+        if (me) onOps(m);
+        else early.push(m);
       } else if (m.type === 'project.op.ok' && pending && m.opId === pending.opId) {
         assert.equal(m.rev, me.rev + 1, `the ok of ${name} comes after the ops before it`);
         me.view = applyOps(me.view, pending.ops).root;
         me.rev = m.rev;
       }
     });
+    const st = await open(c);
+    me = { view: st.project, rev: st.rev, accepted: 0, rejected: 0 };
+    for (const m of early) if (m.rev > me.rev) onOps(m);
     const rand = rng(seed);
     for (let n = 0; n < 200; n += 1) {
       const ops = randomOps(me.view, rand, name, n);
