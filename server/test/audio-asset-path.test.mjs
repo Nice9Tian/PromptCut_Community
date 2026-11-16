@@ -19,8 +19,8 @@
  *   AR-4  Custom measurement: decoded PCM is byte-for-byte identical to direct file reading (single
  *         file, clip window, timeline mix, mono); results via sandbox measureJs are identical;
  *   AR-5  Large files and segmented fetching: ~35 MB wav (stored as 5 chunks), clip tier measures
- *         2 seconds at 150 seconds, bytes transmitted via asset service are far fewer than the
- *         entire file;
+ *         2 seconds at 150 seconds: ffmpeg requests the file from where the clip is, and no request
+ *         that starts earlier gets anywhere near it;
  *   AR-6  Asset service unreachable: loudness measurement returns 502 with error stating reason,
  *         custom measurement returns kind asset-service; timeline tier is not treated as "skipped";
  *   AR-7  Asset missing on asset service (404): still "asset file does not exist" / no-media,
@@ -131,11 +131,14 @@ async function startService() {
   const stats = { requests: [], bytes: 0 };
   const front = await listen((req, res) => {
     const up = http.request(new URL(req.url, svc.origin), { method: req.method, headers: req.headers }, (r) => {
-      stats.requests.push({ method: req.method, url: req.url, range: req.headers.range || null, status: r.statusCode });
+      const entry = { method: req.method, url: req.url, range: req.headers.range || null, status: r.statusCode, bytes: 0 };
+      stats.requests.push(entry);
       res.writeHead(r.statusCode, r.headers);
-      // Count bytes actually delivered to client; when client (ffmpeg) disconnects after reading enough,
-      // upstream connection also closes
-      r.on('data', (d) => { if (!res.destroyed) stats.bytes += d.length; });
+      // Count the bytes handed to the client's connection, in total and per request; when the client
+      // (ffmpeg) disconnects after reading enough, the upstream connection closes too. This is what
+      // was written into the socket, not what the client consumed: the kernel's socket buffers take
+      // a few MB per connection before a hang-up is noticed, more on Linux than on Windows.
+      r.on('data', (d) => { if (!res.destroyed) { stats.bytes += d.length; entry.bytes += d.length; } });
       res.on('close', () => r.destroy());
       r.pipe(res);
     });
@@ -285,10 +288,22 @@ test('AR-5 large files and fetching in parts: the clip tier fetches only the par
   assert.equal(JSON.stringify(now), JSON.stringify(before));
   const ranged = service.stats.requests.filter((r) => r.range && r.range !== 'bytes=0-0');
   assert.ok(ranged.length >= 1, 'ffmpeg seeks using Range:' + JSON.stringify(service.stats.requests));
-  // Requests may be open ranges (bytes=N-), and ffmpeg disconnects once it has read enough; the
-  // actual transferred bytes are far fewer than the entire file
-  t.diagnostic(`file ${size} bytes; ${service.stats.bytes} bytes transferred through the asset service; requests ${JSON.stringify(service.stats.requests.map((r) => r.range))}`);
-  assert.ok(service.stats.bytes < size / 4, `${service.stats.bytes} bytes transferred through the asset service, file ${size} bytes`);
+  t.diagnostic(`file ${size} bytes; ${service.stats.bytes} bytes transferred through the asset service; requests ${JSON.stringify(service.stats.requests.map((r) => `${r.range} (${r.bytes})`))}`);
+  // "Only the parts it needs" is checked on where the requests start and how far each one got, not
+  // on the total transferred. The requests are open ranges (bytes=N-) that ffmpeg hangs up on once
+  // it has read enough, so the total counts whatever fit into the socket buffers before each
+  // hang-up: a few hundred KB on Windows, about 12 MB of this file on Linux. What does not depend
+  // on buffering:
+  //   1. ffmpeg jumped to the clip: one request starts where second 150 of 180 is in the file;
+  //   2. nothing read its way there: every request that starts before that point was hung up on
+  //      long before reaching it.
+  const starts = ranged.map((r) => ({ ...r, start: Number(/^bytes=(\d+)-/.exec(r.range)?.[1]) })).filter((r) => Number.isFinite(r.start));
+  const clipAt = size * (body.offset / 180);
+  const seek = starts.filter((r) => r.start > clipAt - size / 100 && r.start < clipAt + size / 100).sort((a, b) => a.start - b.start)[0];
+  assert.ok(seek, `a request starts at the clip (about byte ${Math.round(clipAt)}): ${JSON.stringify(starts.map((r) => r.start))}`);
+  for (const r of starts.filter((x) => x.start < seek.start)) {
+    assert.ok(r.start + r.bytes < seek.start / 2, `the request from byte ${r.start} stopped far short of the clip: ${r.bytes} bytes sent, clip at byte ${seek.start}`);
+  }
 
   // Custom measurement of the same clip: PCM is byte-for-byte identical
   const args = (src) => filePcmArgs({ file: src, offset: 150, duration: 2, sampleRate: 48000, channels: 2 });
