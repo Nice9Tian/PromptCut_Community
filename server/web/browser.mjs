@@ -27,6 +27,7 @@
  */
 import path from 'node:path';
 import fs from 'node:fs';
+import { sandboxArgsFor, withSandboxHint } from '../chrome-sandbox.mjs';
 
 /** Viewport is fixed to this size so image coordinate scaling is constant; see scaleOf in view.mjs */
 export const VIEWPORT = { width: 1280, height: 800 };
@@ -265,7 +266,8 @@ export async function getBrowser({ dataDir, puppeteer, executablePath } = {}) {
           + ' Close the other window, or call web_close there first and try again.',
         );
       }
-      throw e;
+      // Chrome's own sandbox could not start (stock Ubuntu 23.10+): say why and what to do
+      throw withSandboxHint(e, { untrustedContent: true });
     });
 
     const browser = await launch({
@@ -292,6 +294,9 @@ export async function getBrowser({ dataDir, puppeteer, executablePath } = {}) {
         '--mute-audio',
         '--disable-sync',
         '--disable-features=Translate,MediaRouter,ForYouFre,SigninPromo,ChromeWhatsNewUI',
+        // This browser loads arbitrary sites, so its sandbox goes off only on an explicit
+        // PROMPTCUT_CHROME_NO_SANDBOX=1 (Linux), and that is logged (`server/chrome-sandbox.mjs`)
+        ...sandboxArgsFor('the in-app web browser', { untrustedContent: true }),
         // Do **not** add the export determinism parameters here; see file header for rationale
       ],
       defaultViewport: null,   // Let the page viewport follow the window, rather than having puppeteer wrap another layer
