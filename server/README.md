@@ -82,7 +82,7 @@ MCP 工具 `collect_login / collect_login_check / collect_logout`。验证：`no
 
 前端胶水在 `src/ai/collect.ts`；MCP 工具 `collect_status / collect_install / collect_probe / collect_download / collect_job` 的实现在 `src/editor/right/index.tsx`，下完自动用 `importVideoFromServer`（`src/editor/io/index.ts`）登记进素材库、放到视频轨，不再上传一遍。角色卡 `src/ai/roles/collector.md`（素材收集员）。
 
-验证：`node --test server/test/collect-plugin.test.mjs`（用 `server/test/fake-collect.cmd` 冒充 Python，不联网）；真实链路见 python/README.md 的实测记录。
+验证：`node --test server/test/collect-plugin.test.mjs`（用 `server/test/fake-collect.cmd` 冒充 Python，Linux / macOS 上用内容相同的 `fake-collect.sh`，不联网）；真实链路见 python/README.md 的实测记录。
 
 ## 登录状态探测（server/runners/auth.mjs）
 - Claude：以 `claude auth status` 的 JSON 为准。
