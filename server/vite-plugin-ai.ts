@@ -19,6 +19,7 @@ import { prerenderPost } from './prerender-client.mjs';
 // reads the latest version of the current editor page session
 import { latestMirror, latestPlayhead } from './vite-plugin-mirror';
 import { tr } from './i18n.mjs';
+import { ensureAppTempDir, sessionHistoryDir } from './app-temp.mjs';
 
 
 /**
@@ -64,8 +65,7 @@ export default function vitePluginAi(): Plugin {
             if (host === '::' || host === '0.0.0.0') {
               host = '127.0.0.1';
             }
-            const tmpDir = path.join(os.tmpdir(), 'promptcut');
-            fs.mkdirSync(tmpDir, { recursive: true });
+            const tmpDir = ensureAppTempDir();
             fs.writeFileSync(path.join(tmpDir, 'port.json'), JSON.stringify({
               port,
               host,
@@ -385,7 +385,7 @@ export default function vitePluginAi(): Plugin {
              * nothing can be seen in the UI (see 81f255b). Reporting "how many segments, how many items each,
              * how recent" is the only physical evidence of such invisible crosstalk. Contains no chat content.
              */
-            sessions: env.inspectSessionStore(),
+            sessions: env.inspectSessionStore(sessionHistoryDir()),
             providers,
             providersRefreshed: refresh,
             config: publicConfig(),

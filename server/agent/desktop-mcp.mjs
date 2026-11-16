@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { tr } from '../i18n.mjs';
+import { appTempDir } from '../app-temp.mjs';
 
 /** Known clients: `clientInfo.name` → vendor id and human-readable name */
 const KNOWN_CLIENTS = [
@@ -95,7 +96,7 @@ function argValue(argv, name) {
 
 /** Shared port file location: written when editor starts (`server/vite-plugin-ai.ts`), not by test/probe editors */
 export function defaultPortFile(tmpdir = os.tmpdir()) {
-  return path.join(tmpdir, 'promptcut', 'port.json');
+  return path.join(appTempDir({ tmpdir }), 'port.json');
 }
 
 /**

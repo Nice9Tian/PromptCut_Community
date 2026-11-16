@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { spawnCli, resolveExe, lineSplitter, probeVersion } from './index.mjs';
 import { execFileSync } from 'node:child_process';
 
@@ -66,6 +65,7 @@ export async function getClaudeProvider() {
 
 import { runTextProtocolLoop } from '../harness/tool-protocol.mjs';
 import { tr } from '../i18n.mjs';
+import { ensureAppTempDir } from '../app-temp.mjs';
 
 export function startRun(opts) {
   if (opts.toolProtocol) {
@@ -118,8 +118,7 @@ function _startRun(opts) {
   ];
   
   if (opts.mcp) {
-    const tempDir = path.join(os.tmpdir(), 'promptcut');
-    fs.mkdirSync(tempDir, { recursive: true });
+    const tempDir = ensureAppTempDir();
     const mcpConfigPath = path.join(tempDir, 'mcp-claude.json');
     
     const mcpConfig = {
@@ -147,8 +146,7 @@ function _startRun(opts) {
    * and this fallback path never succeeded once. stdin is already occupied by the user message, so
    * write a temporary file and delete it after running.
    */
-  const promptDir = path.join(os.tmpdir(), 'promptcut');
-  fs.mkdirSync(promptDir, { recursive: true });
+  const promptDir = ensureAppTempDir();
   const promptFile = path.join(promptDir, `claude-system-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.md`);
   fs.writeFileSync(promptFile, `${opts.systemPrompt}\n${CLAUDE_ADDENDUM}`, 'utf8');
   args.push('--append-system-prompt-file', promptFile);

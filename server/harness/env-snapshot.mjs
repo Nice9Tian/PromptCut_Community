@@ -22,7 +22,11 @@ const PARSE_LIMIT = 8 * 1024 * 1024;
 /** Maximum number of files to inspect in detail (newest to oldest): only count the rest */
 const PARSE_COUNT = 20;
 
-/** Default storage location for session history, must match the one in runners/api.mjs */
+/**
+ * Storage location for session history when the harness is used on its own. PromptCut passes its
+ * own directory instead (`sessionHistoryDir()` in server/app-temp.mjs), which off Windows is a
+ * different, per-user one.
+ */
 export function sessionStoreDir(tmp = os.tmpdir()) {
   return path.join(tmp, 'promptcut', 'harness-sessions');
 }
