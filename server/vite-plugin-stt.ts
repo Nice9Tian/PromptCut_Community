@@ -3,7 +3,7 @@ import type { Connect } from "vite";
 import type { ServerResponse } from "http";
 import path from "path";
 import fs from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { spawn, ChildProcess } from "child_process";
 import { tr } from "./i18n.mjs";
 
@@ -29,16 +29,55 @@ export const pythonMissing = (): string =>
   tr("Bundled Python not found. The official installer ships with it; if it is missing, the install is probably corrupted or it was deleted by antivirus software, so reinstall once; ") +
   tr("If you are developing in the repo, run npm run prepare-python to assemble it.");
 
-/** Search for the bundled Python interpreter path in document order; returns null if not found */
-export function findPython(root: string): string | null {
+/**
+ * Where an interpreter may be, in the order they are tried (after `PROMPTCUT_PYTHON`).
+ *
+ * Windows: the bundled one under `desktop/src-tauri/runtime/python`, then a development venv at
+ * `python/.venv`, which keeps its interpreter in `Scripts\python.exe`.
+ * Linux / macOS: there is no bundled interpreter, only the development venv, and a venv there keeps
+ * its interpreter in `bin/` (`python3`, with `python` as a link to it).
+ *
+ * `platform` can be passed in so tests on one system can check the other's layout.
+ */
+export function pythonCandidates(root: string, platform: NodeJS.Platform = process.platform): string[] {
+  const venv = path.join(root, "python", ".venv");
+  if (platform === "win32") {
+    return [
+      path.join(root, "desktop", "src-tauri", "runtime", "python", "python.exe"),
+      path.join(venv, "Scripts", "python.exe"),
+    ];
+  }
+  return [path.join(venv, "bin", "python3"), path.join(venv, "bin", "python")];
+}
+
+/** Search for the Python interpreter path in document order; returns null if not found */
+export function findPython(root: string, platform: NodeJS.Platform = process.platform): string | null {
   if (process.env.PROMPTCUT_PYTHON) {
     if (existsSync(process.env.PROMPTCUT_PYTHON)) return process.env.PROMPTCUT_PYTHON;
   }
-  const candidate1 = path.join(root, "desktop", "src-tauri", "runtime", "python", "python.exe");
-  if (existsSync(candidate1)) return candidate1;
-  const candidate2 = path.join(root, "python", ".venv", "Scripts", "python.exe");
-  if (existsSync(candidate2)) return candidate2;
+  for (const candidate of pythonCandidates(root, platform)) {
+    if (existsSync(candidate)) return candidate;
+  }
   return null;
+}
+
+/**
+ * The `site-packages` directories that belong to an interpreter, judged from where it is.
+ *
+ * Windows: `Lib\site-packages` next to the interpreter, which is where the bundled one keeps them
+ * (unchanged; a Windows venv keeps them one level up, so for it every package counts as missing
+ * and `buildEnv` adds the source directory, which works).
+ * Linux / macOS: the interpreter is `<prefix>/bin/python3` and the packages are in
+ * `<prefix>/lib/python3.X/site-packages`; the version directory is found by listing `lib/` rather
+ * than by asking the interpreter, so this stays a file check with no process started.
+ */
+export function sitePackagesDirs(pythonPath: string, platform: NodeJS.Platform = process.platform): string[] {
+  const pythonDir = path.dirname(pythonPath);
+  if (platform === "win32") return [path.join(pythonDir, "Lib", "site-packages")];
+  const lib = path.join(pythonDir, "..", "lib");
+  let names: string[] = [];
+  try { names = readdirSync(lib); } catch { /* No lib/ next to bin/: not a venv or an install prefix */ }
+  return names.filter((name) => /^python3(\.\d+)?$/.test(name)).sort().map((name) => path.join(lib, name, "site-packages"));
 }
 
 /**
@@ -115,8 +154,9 @@ export async function buildEnv(root: string, pythonPath: string): Promise<NodeJS
   // but lacks the later-added promptcut_shots; checking only the former skips the entire block, causing
   // shot detection to always report No module named.
   const PACKAGES = ["promptcut_stt", "promptcut_shots", "promptcut_track", "promptcut_subject", "promptcut_collect"];
+  const sitePackages = sitePackagesDirs(pythonPath);
   const missing = PACKAGES.filter(
-    (pkg) => !existsSync(path.join(pythonDir, "Lib", "site-packages", pkg)),
+    (pkg) => !sitePackages.some((dir) => existsSync(path.join(dir, pkg))),
   );
 
   let pythonPathEnv = pyLibs;
