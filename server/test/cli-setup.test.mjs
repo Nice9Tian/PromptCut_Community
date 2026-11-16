@@ -8,6 +8,7 @@ import { PassThrough } from 'node:stream';
 import { execFileSync, spawn } from 'node:child_process';
 import { resolveCli, cliCommand, cliEnv } from '../runners/cli-runtime.mjs';
 import { createSetupService, authUrlFrom, normalizeAuthCode } from '../runners/setup.mjs';
+import { installPlanFor, manualHintFor } from '../runners/install.mjs';
 import { probeAuth } from '../runners/auth.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'promptcut-cli-test-'));
@@ -23,9 +24,13 @@ test.after(() => {
 });
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
 async function until(fn) { for (let i = 0; i < 100; i++) { if (fn()) return; await tick(); } assert.fail('timed out'); }
+// One-click install exists on Windows only (`installPlanFor`). The install tests below drive it
+// with a fake `launch`, so they select the Windows branch explicitly and run on every system, the
+// same way the `resolveCli` tests pass `platform: 'win32'`.
 function fakeService(options = {}) {
   const calls = [];
   const service = createSetupService({
+    platform: 'win32',
     launch(command, args, opts) {
       const child = new EventEmitter();
       child.stdout = new PassThrough(); child.stderr = new PassThrough();
@@ -123,6 +128,28 @@ test('deduplicates clicks and tracks providers independently', async () => {
   await until(() => service.list()[0].state === 'succeeded');
   assert.equal(service.list()[1].state, 'running');
   service.dispose(); await tick();
+});
+
+test('one-click install is offered on Windows only; elsewhere the job fails with that message and starts nothing', async () => {
+  for (const id of ['claude', 'codex', 'agy']) {
+    assert.match(installPlanFor(id, { platform: 'win32' }).url, /^https:\/\/[a-z.]+\/.*install\.ps1$/);
+    for (const platform of ['linux', 'darwin']) assert.equal(installPlanFor(id, { platform }), null);
+  }
+  assert.equal(installPlanFor('api', { platform: 'win32' }), null);
+  assert.match(manualHintFor('codex', { platform: 'linux' }), /Windows only/);
+  assert.doesNotMatch(manualHintFor('nope', { platform: 'win32' }), /Windows only/);
+  assert.doesNotMatch(manualHintFor('api', { platform: 'linux' }), /Windows only/);
+
+  for (const platform of ['linux', 'darwin']) {
+    const { service, calls } = fakeService({ platform });
+    service.start('codex', 'install');
+    await until(() => service.list()[0].state === 'failed');
+    assert.match(service.list()[0].message, /Windows only/);
+    assert.equal(calls.length, 0, 'no installer is started');
+    // Login is not tied to the platform
+    service.start('claude', 'login'); await until(() => calls.length === 1);
+    service.dispose(); await tick();
+  }
 });
 
 test('spawn error is reported, and retry creates a fresh job', async () => {

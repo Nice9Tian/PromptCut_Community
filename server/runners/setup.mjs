@@ -38,7 +38,9 @@ export function normalizeAuthCode(input) {
 }
 
 // One tracked job per provider. Duplicate clicks attach to the existing job.
-export function createSetupService({ launch = spawn, verifyAuth = probeAuth, verifyInstall, verifyVersion = async exe => (await import('./index.mjs')).probeVersion(exe), timeoutMs = 600000 } = {}) {
+// `platform` only decides whether one-click install is offered (`installPlanFor`); it is a
+// parameter so the install tests, which use a fake `launch`, run the same on every system.
+export function createSetupService({ launch = spawn, verifyAuth = probeAuth, verifyInstall, verifyVersion = async exe => (await import('./index.mjs')).probeVersion(exe), timeoutMs = 600000, platform = process.platform } = {}) {
   const jobs = new Map();
   const children = new Set();
   const append = (job, text) => {
@@ -107,8 +109,8 @@ export function createSetupService({ launch = spawn, verifyAuth = probeAuth, ver
   }
 
   async function install(job) {
-    const plan = installPlanFor(job.provider);
-    if (!plan) throw new Error(manualHintFor(job.provider));
+    const plan = installPlanFor(job.provider, { platform });
+    if (!plan) throw new Error(manualHintFor(job.provider, { platform }));
     const dir = path.join(setupRoot(), 'installers');
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `${job.provider}-${job.id}.ps1`);
