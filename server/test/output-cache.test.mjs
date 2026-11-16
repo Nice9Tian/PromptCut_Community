@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { sessionHistoryDir } from '../app-temp.mjs';
 
 import { modelOutputLimit, resolveMaxOutput, usesMaxCompletionTokens, lowerOutputAfter400, swapOutputParamAfter400, UNKNOWN_OUTPUT_TOKENS } from '../harness/model-limits.mjs';
 import { parsePartialObject, salvageToolCall } from '../harness/partial-json.mjs';
@@ -329,7 +330,7 @@ function runMock(script, { codeCacheDir, sessionId }) {
     });
   });
 }
-const historyOf = (sid) => path.join(os.tmpdir(), 'promptcut', 'harness-sessions', `${sid}.json`);
+const historyOf = (sid) => path.join(sessionHistoryDir(), `${sid}.json`);
 
 test('end to end: create_card source is truncated halfway → saved into a code block → the model appends the rest → the reference is handed to create_card, and the card source is complete', async () => {
   const dir = tmp('e2e');

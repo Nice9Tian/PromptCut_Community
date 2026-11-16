@@ -18,12 +18,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { sessionHistoryDir } from '../app-temp.mjs';
 
 const { startRun } = await import('../runners/api.mjs');
 
-const historyFileOf = (sid) => path.join(os.tmpdir(), 'promptcut', 'harness-sessions', `${sid}.json`);
+const historyFileOf = (sid) => path.join(sessionHistoryDir(), `${sid}.json`);
 
 function run(sessionId, fetchImpl, extra = {}) {
   const events = [];

@@ -127,7 +127,7 @@ POST `/api/ai/config` 时:`api.profiles.custom / router` 各写各的;老写法�
 
 ## 端口发现顺序
 1. 环境变量 `PROMPTCUT_PORT`。
-2. `%TEMP%\promptcut\port.json`。该锁文件现在除了 `port` 外还带有 `host` 字段（桥实际监听地址，`::` 或 `0.0.0.0` 会被规范化成 `127.0.0.1`）。`mcp-server.mjs` 调用桥的探测请求地址顺序为：锁文件 `host` → `127.0.0.1` → `[::1]` → `localhost`，**并且只有遇到 ECONNREFUSED 才会回退至下一个地址**。为避免因 Windows 系统下 `localhost` 可能只解析到 IPv6 `::1` 导致双栈连接失败，`server/vite.ai.config.ts` 已强制将 `server.host` 固定成 `127.0.0.1`。
+2. `%TEMP%\promptcut\port.json`。Linux 和 macOS 上临时目录是所有用户共用的，这个目录按用户分开：`<临时目录>/promptcut-<uid>/port.json`（`server/app-temp.mjs`）。该锁文件现在除了 `port` 外还带有 `host` 字段（桥实际监听地址，`::` 或 `0.0.0.0` 会被规范化成 `127.0.0.1`）。`mcp-server.mjs` 调用桥的探测请求地址顺序为：锁文件 `host` → `127.0.0.1` → `[::1]` → `localhost`，**并且只有遇到 ECONNREFUSED 才会回退至下一个地址**。为避免因 Windows 系统下 `localhost` 可能只解析到 IPv6 `::1` 导致双栈连接失败，`server/vite.ai.config.ts` 已强制将 `server.host` 固定成 `127.0.0.1`。
 3. 默认 5177。
 
 ## 运行测试

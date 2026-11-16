@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { sessionHistoryDir } from '../app-temp.mjs';
 import http from 'node:http';
 
 import * as openai from '../harness/providers/openai.mjs';
@@ -410,7 +411,7 @@ function runAgainst(port, { codeCacheDir, sessionId, outputSpeedFile, retry = { 
     });
   });
 }
-const historyOf = (sid) => path.join(os.tmpdir(), 'promptcut', 'harness-sessions', `${sid}.json`);
+const historyOf = (sid) => path.join(sessionHistoryDir(), `${sid}.json`);
 
 for (const mode of ['error-event', 'socket']) {
   test(`End-to-end (local fake gateway, ${mode === 'socket' ? 'dropping the connection directly' : 'sending an error event in the stream'}): create_card is cut off by the gateway midway through writing the source → saved into a code block → keeps writing → @code_cache: handed to create_card, source complete`, async () => {
