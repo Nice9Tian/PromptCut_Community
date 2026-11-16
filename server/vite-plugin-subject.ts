@@ -23,6 +23,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 
 import { buildEnv, findPython, pipeToSse, readBody, spawnPython } from "./vite-plugin-stt";
+import { killTreePosix } from "./process-tree.mjs";
 import { createAssetSourceResolver } from "./audio-source.mjs";
 import { assetServiceOrigin } from "./asset-client";
 import { mediaSourceOf } from "./vision/ffmpeg-frames";
@@ -290,6 +291,8 @@ async function runDetectionOn(
  * On Windows, child.kill() only kills python.exe itself; ffmpeg spawned by it becomes an
  * orphan and continues to hold files and CPU; taskkill /F /T is what reaps children and
  * grandchildren together. That is what stt does (killJob), copied verbatim here.
+ * Linux / macOS have the same problem with a plain kill; there `killTreePosix` collects the
+ * descendants from the process table and signals them together with the root.
  */
 function killTree(pid: number | undefined): void {
   if (!pid) return;
@@ -297,7 +300,7 @@ function killTree(pid: number | undefined): void {
     if (process.platform === "win32") {
       spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true }).unref();
     } else {
-      process.kill(pid, "SIGKILL");
+      killTreePosix(pid);
     }
   } catch { /* The process may have just exited on its own; failing to kill it is not an error */ }
 }

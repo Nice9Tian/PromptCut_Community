@@ -6,6 +6,7 @@ import fs from "fs/promises";
 import { existsSync } from "fs";
 import { spawn, ChildProcess } from "child_process";
 import { tr } from "./i18n.mjs";
+import { killTreePosix } from "./process-tree.mjs";
 
 // Running jobs: jobId → child process
 const activeJobs = new Map<string, ChildProcess>();
@@ -252,14 +253,17 @@ export function readBody(req: Connect.IncomingMessage): Promise<Buffer> {
   });
 }
 
-/** Recursively kill child process tree on Windows */
+/**
+ * Kill a job's whole process tree: taskkill /T on Windows, `killTreePosix` elsewhere (the Python
+ * job starts ffmpeg and pip itself; killing only the interpreter would leave those running).
+ */
 function killJob(jobId: string): boolean {
   const child = activeJobs.get(jobId);
   if (!child) return false;
   try {
     if (process.platform === "win32" && child.pid) {
       spawn("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore", windowsHide: true });
-    } else {
+    } else if (killTreePosix(child.pid).length === 0) {
       child.kill("SIGKILL");
     }
   } catch { /* ignore */ }
