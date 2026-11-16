@@ -1,5 +1,6 @@
-// Media collection plugin: interface shape, job table, error paths. Uses fake-collect.cmd to mock
-// Python, without networking or installing yt-dlp. Run command:
+// Media collection plugin: interface shape, job table, error paths. Uses a fake interpreter to mock
+// Python (fake-collect.cmd on Windows, its twin fake-collect.sh elsewhere), without networking or
+// installing yt-dlp. Run command:
 // node --test server/test/collect-plugin.test.mjs
 //
 // The plugin is .ts, transpiled here with typescript to a temp directory before import (same pattern
@@ -63,7 +64,18 @@ const { saveCookies } = await import(cookiesUrl);
 
 // Mock Python: the plugin invokes it as -m promptcut_collect <subcommand>, and it replays fixed
 // JSONL based on the subcommand
-process.env.PROMPTCUT_PYTHON = path.join(ROOT, 'server', 'test', 'fake-collect.cmd');
+// (a batch file on Windows; elsewhere a shell script that prints the same lines. The script is run
+// from a copy in the temp directory that is marked executable here, so the test does not depend on
+// the checkout having kept the file mode.)
+function fakeInterpreter() {
+  const dir = path.join(ROOT, 'server', 'test');
+  if (process.platform === 'win32') return path.join(dir, 'fake-collect.cmd');
+  const copy = path.join(OUT, 'fake-collect.sh');
+  fs.copyFileSync(path.join(dir, 'fake-collect.sh'), copy);
+  fs.chmodSync(copy, 0o755);
+  return copy;
+}
+process.env.PROMPTCUT_PYTHON = fakeInterpreter();
 // Project root uses a temp directory: buildEnv creates pylibs / models under <root>/out
 const FAKE_ROOT = path.join(OUT, 'root');
 fs.mkdirSync(FAKE_ROOT, { recursive: true });
@@ -75,7 +87,7 @@ const harness = createAssetHarness();
 const assetSvc = await harness.serve({ stores: 'default' });
 process.env.PROMPTCUT_EDITOR_URL = assetSvc.origin;
 after(async () => { await harness.cleanup(); delete process.env.PROMPTCUT_EDITOR_URL; });
-/** Content written into --out-dir by fake-collect.cmd (echo includes CRLF) */
+/** Content written into --out-dir by the fake interpreter (CRLF at the end: the .cmd's echo adds it, and the .sh writes the same bytes) */
 const FAKE_BYTES = Buffer.from('fake video bytes\r\n');
 
 const { collectPlugin } = await import(collectUrl);
@@ -227,8 +239,11 @@ test('MI-6 download: when the asset service is unreachable the job reports an er
     srv.listen(0, '127.0.0.1', () => { const o = `http://127.0.0.1:${srv.address().port}`; srv.close(() => resolve(o)); });
   });
   const privateTmp = fs.mkdtempSync(path.join(OUT, 'os-tmp-'));
-  const saved = { url: process.env.PROMPTCUT_EDITOR_URL, TEMP: process.env.TEMP, TMP: process.env.TMP };
-  Object.assign(process.env, { PROMPTCUT_EDITOR_URL: gone, TEMP: privateTmp, TMP: privateTmp });
+  // os.tmpdir() reads TEMP / TMP on Windows and TMPDIR first elsewhere. Variables that were not set
+  // are deleted again afterwards: assigning undefined to process.env stores the string "undefined",
+  // which os.tmpdir() would then return to every later test.
+  const saved = { PROMPTCUT_EDITOR_URL: process.env.PROMPTCUT_EDITOR_URL, TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR };
+  Object.assign(process.env, { PROMPTCUT_EDITOR_URL: gone, TEMP: privateTmp, TMP: privateTmp, TMPDIR: privateTmp });
   try {
     const r = await call(fn, 'POST', '/api/collect/download', { url: 'BV1FAKE00030' });
     const job = await waitJob(fn, r.json.jobId);
@@ -236,7 +251,7 @@ test('MI-6 download: when the asset service is unreachable the job reports an er
     assert.ok(job.message.includes(`Asset service unreachable (${gone})`), job.message);
     assert.equal(job.items.length, 0);
   } finally {
-    Object.assign(process.env, { PROMPTCUT_EDITOR_URL: saved.url, TEMP: saved.TEMP, TMP: saved.TMP });
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   }
   const own = path.join(FAKE_ROOT, 'out', 'media');
   assert.deepEqual(fs.existsSync(own) ? fs.readdirSync(own) : [], []);
