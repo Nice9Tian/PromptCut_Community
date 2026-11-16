@@ -18,6 +18,9 @@
  *   - **Environment variables rebuilt against an allowlist** (`childEnv` in `workspace.mjs`):
  *     the browser process contains no configuration or credentials of the Agent service, and no
  *     system proxy variables.
+ *   - **Its own temporary directory**: on Windows `.tmp/` under the session directory; elsewhere a
+ *     short private directory under the system one (`createBrowserTempDir`), because Chrome puts a
+ *     Unix socket in it and socket paths are capped at about 100 characters.
  *   - **All downloads rejected**; newly opened tabs are merged back into the current page;
  *     dialogs popped up by pages are automatically closed (no one is there to click them, leaving
  *     them open would freeze the page).
@@ -39,6 +42,7 @@
  */
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { VIEWPORT } from '../browser.mjs';
 import { read as desktopRead } from '../session.mjs';
@@ -88,6 +92,8 @@ export async function removeSessionData(sessionDir, { keepRev = false, timeoutMs
  * and chrome-headless-shell do not recognize it.
  */
 export const HOSTED_BROWSER_ARG_PREFIX = Object.freeze(['--disable-field-trial-config']);
+/** How much of the browser's standard error is kept while it starts */
+const STDERR_TAIL_CHARS = 4_000;
 
 export class HostedSessionError extends Error {
   /** @param {string} code */
@@ -350,6 +356,103 @@ export async function browserHoldsProfile(pid, userDataDir, { commandLine = proc
   return commandLineUsesProfile(await commandLine(pid), userDataDir, platform);
 }
 
+/**
+ * Chrome's temporary directory on Linux / macOS.
+ *
+ * Full Chrome creates its process-singleton socket at
+ * `$TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket`. A Unix socket path must fit in
+ * `sockaddr_un.sun_path` (108 bytes on Linux, 104 on macOS and the BSDs, one of them for the
+ * terminating NUL); when it does not, Chrome aborts with "Socket path too long" before the debugging
+ * pipe answers. `<sessionDir>/.tmp` is past that limit for every real data directory (the part
+ * after the session directory alone is 50 characters), so off Windows the browser gets a short
+ * directory of its own instead: `<system temp>/pcb-XXXXXX`, created by `mkdtemp` (random name,
+ * mode 0700). It is still one directory per browser process and is deleted when that process is
+ * gone, so what one chat's browser writes there is no more visible to another chat than before.
+ *
+ * Windows has no such socket and keeps `<sessionDir>/.tmp`.
+ */
+export const BROWSER_TEMP_PREFIX = 'pcb-';
+const BROWSER_TEMP_NAME = /^pcb-[A-Za-z0-9]{6}$/;
+/** What Chrome appends to its temporary directory to form the socket path (`X` = random characters) */
+const SINGLETON_SOCKET_TAIL = '/org.chromium.Chromium.XXXXXX/SingletonSocket';
+
+/** Longest Unix socket path the platform accepts, in bytes (not counting the terminating NUL) */
+export function socketPathLimit(platform = process.platform) {
+  return platform === 'linux' || platform === 'android' ? 107 : 103;
+}
+
+/** Length in bytes of the singleton socket path Chrome would use with a `pcb-XXXXXX` directory under `base` */
+export function singletonSocketPathLength(base) {
+  return Buffer.byteLength(path.posix.join(base, `${BROWSER_TEMP_PREFIX}XXXXXX`)) + SINGLETON_SOCKET_TAIL.length;
+}
+
+/**
+ * Directories a browser temporary directory may be created in, in order of preference: the
+ * system one (follows the service's own `TMPDIR`), then `/tmp` for when that one is itself long
+ * (macOS: `/var/folders/…/T` leaves no room).
+ */
+export function browserTempBases({ tmpdir = os.tmpdir } = {}) {
+  return [...new Set([path.resolve(tmpdir()), '/tmp'])];
+}
+
+/**
+ * Create the temporary directory for one browser process.
+ * @param {string} sessionDir
+ * @param {{ platform?: string, tmpdir?: () => string }} [deps] for unit tests only
+ * @returns {{ dir: string, own: boolean }} `own`: lives outside the session directory, so whoever
+ *   launched the browser deletes it (`removeBrowserTempDir`)
+ * @throws {Error} when no candidate directory is short enough or none can be written; the message
+ *   says which and is meant for the log
+ */
+export function createBrowserTempDir(sessionDir, { platform = process.platform, tmpdir = os.tmpdir } = {}) {
+  if (platform === 'win32') {
+    const dir = path.join(sessionDir, '.tmp');
+    fs.mkdirSync(dir, { recursive: true });
+    return { dir, own: false };
+  }
+  const limit = socketPathLimit(platform);
+  const bases = browserTempBases({ tmpdir });
+  const reasons = [];
+  for (const base of bases) {
+    const length = singletonSocketPathLength(base);
+    if (length > limit) { reasons.push(`${base}: socket path would be ${length} bytes, limit ${limit}`); continue; }
+    try { return { dir: fs.mkdtempSync(path.join(base, BROWSER_TEMP_PREFIX)), own: true }; }
+    catch (err) { reasons.push(`${base}: ${err?.code ?? err?.message ?? err}`); }
+  }
+  throw new Error(`no usable temporary directory for the browser (${reasons.join('; ')})`);
+}
+
+/**
+ * Delete a browser temporary directory created by `createBrowserTempDir`.
+ * The path may come from the registry file of a previous service process, so it is checked
+ * before anything is deleted: a `pcb-XXXXXX` directory directly under one of the candidate
+ * directories, a real directory (not a link), owned by this user. Anything else is left alone.
+ * @returns {boolean} whether it is gone
+ */
+export function removeBrowserTempDir(dir, { tmpdir = os.tmpdir, getuid = process.getuid?.bind(process) } = {}) {
+  if (typeof dir !== 'string' || !path.isAbsolute(dir) || path.resolve(dir) !== dir) return false;
+  if (!BROWSER_TEMP_NAME.test(path.basename(dir)) || !browserTempBases({ tmpdir }).includes(path.dirname(dir))) return false;
+  let stat;
+  try { stat = fs.lstatSync(dir); } catch (err) { return err?.code === 'ENOENT'; }
+  if (!stat.isDirectory()) return false;
+  if (typeof getuid === 'function' && stat.uid !== getuid()) return false;
+  try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 }); } catch { /* See the result below */ }
+  return !fs.existsSync(dir);
+}
+
+/**
+ * What to keep of the browser's standard error when it failed to start: the lines Chrome marked
+ * FATAL (the reason it aborted: no usable sandbox, socket path too long, missing library), or
+ * failing that the last few lines. The `[pid:tid:date/time:` prefix is dropped. Only called for a
+ * browser that never opened a page, so there is no page content in it.
+ */
+export function launchStderrSummary(text, { maxLines = 3, maxChars = 600 } = {}) {
+  const lines = String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    .map((l) => l.replace(/^\[\d+:\d+:\d{4}\/\d{6}\.\d+:/, '['));
+  const fatal = lines.filter((l) => /^\[FATAL:|\bFATAL\b/.test(l));
+  return (fatal.length ? fatal : lines).slice(-maxLines).join(' | ').slice(0, maxChars);
+}
+
 /** Non-Windows: singleton lock in the user data directory (a symlink plus two accompanying files). They remain on disk after the browser is force-killed */
 const SINGLETON_FILES = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
 
@@ -366,18 +469,25 @@ const SINGLETON_FILES = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
  * @param {string} sessionDir
  * @param {{ timeoutMs?: number, respectLiveOwner?: boolean, deps?: object }} [o] `respectLiveOwner`:
  *   Do not touch if the service process that spawned it is still alive (for startup cleanup);
- *   `deps` for unit tests only: `holder`, `commandLine`, `alive`, `kill`, `killTree`, `platform`, `selfPid`
+ *   `deps` for unit tests only: `holder`, `commandLine`, `alive`, `kill`, `killTree`, `platform`, `selfPid`,
+ *   `removeTemp`
  * @returns {Promise<{ found: boolean, killed: number[], stillHeld: boolean }>}
  */
 export async function reapOrphan(sessionDir, { timeoutMs = 8_000, respectLiveOwner = false, deps = {} } = {}) {
   const {
     holder = profileHolder, commandLine = processCommandLine, alive = pidLive, platform = process.platform,
     kill = (pid) => process.kill(pid, 'SIGKILL'), killTree: killTreeOf = killProcessTree, selfPid = process.pid,
+    removeTemp = removeBrowserTempDir,
   } = deps;
   const userDataDir = path.join(sessionDir, 'profile');
-  const forget = () => { try { fs.rmSync(path.join(sessionDir, OWNER_FILE), { force: true }); } catch { /* Safe to ignore if deletion fails */ } };
   let owner = null;
   try { owner = JSON.parse(fs.readFileSync(path.join(sessionDir, OWNER_FILE), 'utf8')); } catch { /* Not registered */ }
+  // Forgetting a browser also deletes the temporary directory it was given outside the session
+  // directory (non-Windows, see `createBrowserTempDir`): its process is gone, nothing else uses it
+  const forget = () => {
+    if (owner?.tmpDir) removeTemp(owner.tmpDir);
+    try { fs.rmSync(path.join(sessionDir, OWNER_FILE), { force: true }); } catch { /* Safe to ignore if deletion fails */ }
+  };
   const lock = holder(userDataDir);
   const candidates = [...new Set([lock.pid, owner?.browserPid].filter((pid) => Number.isSafeInteger(pid) && pid > 0))];
   let browserPid = null;
@@ -501,7 +611,6 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
   try { if (!fs.statSync(executablePath).isFile()) throw new Error('not a file'); } catch { throw new HostedSessionError('browser-missing', 'No browser is configured on this node'); }
   const userDataDir = path.join(sessionDir, 'profile');
   fs.mkdirSync(userDataDir, { recursive: true });
-  fs.mkdirSync(path.join(sessionDir, '.tmp'), { recursive: true });
 
   // Browser left by previous process still occupies this directory: clean it up first; if not, do
   // not launch (two browsers cannot share a directory)
@@ -510,7 +619,17 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
   if (orphan.stillHeld) throw new HostedSessionError('profile-busy', 'The browser directory of this chat is held by a leftover browser process, so the browser was not opened this time.');
 
   const mode = headless ?? (/headless[-_]shell/i.test(path.basename(executablePath)) ? 'shell' : 'new');
-  const proxy = await startBrowserProxy({ gate, maxTunnels: limits.maxTunnels, log });
+  // The browser's temporary directory (short and outside the session directory off Windows, see
+  // `createBrowserTempDir`). Created after the leftover of the previous process is cleaned up,
+  // deleted by `dropTemp` once this browser's processes are gone.
+  let temp;
+  try { temp = createBrowserTempDir(sessionDir); } catch (err) {
+    say('agent.web.launch-failed', { message: String(err?.message ?? err).slice(0, 300) });
+    throw new HostedSessionError('launch-failed', 'The cloud browser failed to start. Tell the user to contact the host to check the node.');
+  }
+  const dropTemp = () => { if (temp.own) removeBrowserTempDir(temp.dir); };
+  let proxy;
+  try { proxy = await startBrowserProxy({ gate, maxTunnels: limits.maxTunnels, log }); } catch (err) { dropTemp(); throw err; }
   const extra = filterExtraArgs(extraArgs);
   if (extra.dropped.length) say('agent.web.extra-args-dropped', { count: extra.dropped.length });
   // Leading arguments and deployer-appended arguments go through the same filter
@@ -540,13 +659,33 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
   let browser;
   let proc;
   let transport = null;
+  /** The end of what the browser wrote to standard error while starting (kept for the failure log only) */
+  let stderrTail = '';
+  let launching = true;
+  const launchFailure = (err) => {
+    const fields = { message: String(err?.message ?? err).slice(0, 160) };
+    const stderr = launchStderrSummary(stderrTail);
+    if (stderr) fields.stderr = stderr;
+    return fields;
+  };
   try {
     // Only use two things from it: compute default launch arguments and connect over pipe. Use
     // puppeteer-core if available (without browser-downloading half); fall back to puppeteer if not
     const pptr = puppeteer ?? (await import('puppeteer-core').catch(() => import('puppeteer'))).default;
     const base = await pptr.defaultArgs({ headless: mode === 'shell' ? 'shell' : true, userDataDir, args: ownArgs });
     args = [...prefix.args, ...base, '--remote-debugging-pipe'];
-    proc = spawnBrowser(executablePath, args, { cwd: sessionDir, env: childEnv(sessionDir), stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
+    // Standard error is read only off Windows, and only kept until the browser is up: it is where
+    // Chrome says why it aborted ("No usable sandbox!", "Socket path too long"), which the pipe
+    // only reports as "Target closed". On Windows it stays discarded: Chrome hands a piped
+    // standard error down to its child processes there, which would change when `close` arrives.
+    proc = spawnBrowser(executablePath, args, {
+      cwd: sessionDir,
+      env: childEnv(sessionDir, { TMPDIR: temp.dir, TEMP: temp.dir, TMP: temp.dir }),
+      stdio: ['ignore', 'ignore', process.platform === 'win32' ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+    });
+    proc.stderr?.setEncoding?.('utf8');
+    proc.stderr?.on('data', (chunk) => { if (launching) stderrTail = (stderrTail + chunk).slice(-STDERR_TAIL_CHARS); });
+    proc.stderr?.on('error', () => { /* The browser went away while writing */ });
     const started = whenClosed(proc);
     if (!proc.pid || !proc.stdio?.[3] || !proc.stdio?.[4]) throw new Error('browser did not start');
     transport = new PipeTransport(proc.stdio[3], proc.stdio[4]);
@@ -558,7 +697,8 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
     if (proc?.pid) { killTree(proc); await Promise.race([whenClosed(proc), sleep(limits.closeMs)]); }
     try { transport?.close(); } catch { /* Already closed */ }
     await proxy.close();
-    say('agent.web.launch-failed', { message: String(err?.message ?? err).slice(0, 160) });
+    dropTemp();
+    say('agent.web.launch-failed', launchFailure(err));
     throw new HostedSessionError('launch-failed', 'The cloud browser failed to start. Tell the user to contact the host to check the node.');
   }
 
@@ -669,9 +809,13 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
     killAll();
     await Promise.race([processGone(), sleep(limits.closeMs)]);
     await proxy.close();
-    say('agent.web.launch-failed', { message: String(err?.message ?? err).slice(0, 160) });
+    dropTemp();
+    say('agent.web.launch-failed', launchFailure(err));
     throw new HostedSessionError('launch-failed', 'The cloud browser failed to start. Tell the user to contact the host to check the node.');
   }
+  // Up and answering: from here on standard error is drained and dropped (pages are about to load)
+  launching = false;
+  stderrTail = '';
 
   /** Refresh process tree PIDs (render processes change with navigations) */
   async function refreshPids() {
@@ -681,7 +825,7 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
       const current = new Set(browserPid ? [browserPid] : []);
       for (const p of info?.processInfo ?? []) if (Number.isSafeInteger(p?.id) && p.id > 0) current.add(p.id);
       pids = current;
-      fs.writeFileSync(path.join(sessionDir, OWNER_FILE), JSON.stringify({ servicePid: process.pid, browserPid, pids: [...pids], at: now() }));
+      fs.writeFileSync(path.join(sessionDir, OWNER_FILE), JSON.stringify({ servicePid: process.pid, browserPid, pids: [...pids], ...(temp.own ? { tmpDir: temp.dir } : {}), at: now() }));
     } catch { /* If unavailable, use the existing one */ }
     return [...pids];
   }
@@ -1072,6 +1216,8 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
       try { browser.disconnect(); } catch { /* Already disconnected */ }
       try { transport.close(); } catch { /* Already closed */ }
       const proxyClosed = await proxy.close();
+      // The temporary directory goes with the process, whether or not the profile is kept
+      dropTemp();
       let profileRemoved = false;
       let profileBytes = null;
       if (removeProfile || removeAll) profileRemoved = await wipe();
@@ -1095,6 +1241,8 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
   return {
     sessionDir,
     userDataDir,
+    /** The browser's temporary directory (deleted on close when it is outside the session directory) */
+    tempDir: temp.dir,
     mode,
     args,
     browserPid,
