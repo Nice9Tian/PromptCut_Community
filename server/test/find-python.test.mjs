@@ -30,7 +30,9 @@ const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-find-python-'));
 after(() => fs.rmSync(OUT, { recursive: true, force: true }));
 
 let src = fs.readFileSync(path.join(ROOT, 'server', 'vite-plugin-stt.ts'), 'utf8');
-src = src.replace(/from (['"])(?:\.\.?\/)+i18n\.mjs\1/g, (_m, q) => `from ${q}${pathToFileURL(path.join(ROOT, 'server', 'i18n.mjs')).href}${q}`);
+// The transpiled copy lives in a temp directory: point its imports of sibling .mjs files (i18n.mjs
+// today) back at the real ones in server/
+src = src.replace(/from (['"])\.\/([\w-]+\.mjs)\1/g, (_m, q, name) => `from ${q}${pathToFileURL(path.join(ROOT, 'server', name)).href}${q}`);
 fs.writeFileSync(path.join(OUT, 'stt.mjs'), ts.transpileModule(src, { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText);
 const { findPython, pythonCandidates, sitePackagesDirs, buildEnv, spawnPython } = await import(pathToFileURL(path.join(OUT, 'stt.mjs')).href);
 
