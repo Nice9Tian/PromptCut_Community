@@ -23,7 +23,40 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
-const CLAIM_DIR = path.join(os.tmpdir(), 'promptcut-test-port-claims');
+const SHARED_CLAIM_DIR = path.join(os.tmpdir(), 'promptcut-test-port-claims');
+
+/**
+ * Where claims are recorded.
+ *
+ * Ports belong to the machine, not to a user, so there is one directory for every user of it:
+ * world-writable with the sticky bit, like `/tmp` itself. Created with the default mode it belonged
+ * to whoever ran the tests first, nobody else could record a claim, and "failure to record does not
+ * block" hid that: two accounts on one Linux machine picked the same ports and got EADDRINUSE in a
+ * different test on every run. The owner of such a directory opens it up here. Anyone else who
+ * still cannot write to it uses a directory of their own, which covers the files of one `npm test`
+ * running side by side but not two users at once.
+ *
+ * Windows is unchanged: `%TEMP%` already belongs to one user.
+ */
+export function claimDirFor({ shared = SHARED_CLAIM_DIR, uid = process.getuid?.(), platform = process.platform } = {}) {
+  const posix = platform !== 'win32' && uid != null;
+  try {
+    fs.mkdirSync(shared, { recursive: true });
+    if (!posix) return shared;
+    const st = fs.statSync(shared);
+    if (st.uid === uid && (st.mode & 0o1777) !== 0o1777) fs.chmodSync(shared, 0o1777);
+    fs.accessSync(shared, fs.constants.W_OK | fs.constants.X_OK);
+    return shared;
+  } catch {
+    if (!posix) return shared; // Unavailable: claims are skipped, as before
+    const own = `${shared}-${uid}`;
+    try { fs.mkdirSync(own, { recursive: true, mode: 0o700 }); } catch { /* Unavailable as well: claims are skipped */ }
+    return own;
+  }
+}
+
+let claimDir;
+const CLAIM_DIR = () => (claimDir ??= claimDirFor());
 /**
  * How long a record lasts: much longer than the "picked to occupied" gap, yet short enough that
  * concurrently recorded ports only occupy a small fraction of this range.
@@ -36,11 +69,11 @@ function sweepClaims() {
   if (swept) return;
   swept = true;
   try {
-    fs.mkdirSync(CLAIM_DIR, { recursive: true });
+    const dir = CLAIM_DIR();
     const now = Date.now();
-    for (const name of fs.readdirSync(CLAIM_DIR)) {
-      const file = path.join(CLAIM_DIR, name);
-      try { if (now - fs.statSync(file).mtimeMs > CLAIM_MS) fs.unlinkSync(file); } catch { /* Just cleaned up by another process */ }
+    for (const name of fs.readdirSync(dir)) {
+      const file = path.join(dir, name);
+      try { if (now - fs.statSync(file).mtimeMs > CLAIM_MS) fs.unlinkSync(file); } catch { /* Just cleaned up by another process, or another user's record (the sticky bit keeps it until its owner sweeps) */ }
     }
   } catch { /* Directory unavailable: do not record, proceed with original approach */ }
 }
@@ -51,7 +84,7 @@ function sweepClaims() {
  */
 function claimPort(port) {
   sweepClaims();
-  const file = path.join(CLAIM_DIR, String(port));
+  const file = path.join(CLAIM_DIR(), String(port));
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try { fs.writeFileSync(file, String(process.pid), { flag: 'wx' }); return true; }
     catch (error) {
@@ -59,7 +92,7 @@ function claimPort(port) {
       try {
         if (Date.now() - fs.statSync(file).mtimeMs <= CLAIM_MS) return false;
         fs.unlinkSync(file); // Expired: clean up and record again
-      } catch { /* Just cleaned up or re-recorded by another process: try again */ }
+      } catch { /* Just cleaned up or re-recorded by another process, or an expired record of another user that only its owner may remove: try again, then pick another port */ }
     }
   }
   return false;
