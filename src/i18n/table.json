@@ -18902,5 +18902,117 @@
  "Duplicate on upper override row": {
   "zh": "复制到上方覆盖行",
   "ja": "上のオーバーライド行に複製"
+ },
+ "A media effect card draws this clip's picture, so it can't be cropped or mirrored": {
+  "zh": "这一段的画面由素材效果卡绘制，不能裁剪或镜像",
+  "ja": "このクリップの映像は素材エフェクトカードが描いているため、トリミングや反転はできません"
+ },
+ "Only video and image clips can be cropped or mirrored": {
+  "zh": "只有视频和图片片段可以裁剪或镜像",
+  "ja": "トリミングと反転ができるのは動画と画像のクリップだけです"
+ },
+ "Move the playhead inside the selected clip to split it": {
+  "zh": "把播放头移到选中的片段里面才能分割",
+  "ja": "分割するには再生ヘッドを選択中のクリップの中に移動してください"
+ },
+ "A transition locks this clip's timing: delete the transition to split it": {
+  "zh": "这一段挂着转场，时间关系已锁定：先删除转场才能分割",
+  "ja": "トランジションがこのクリップのタイミングを固定しています。分割するにはトランジションを削除してください"
+ },
+ "Audio clips have no picture to rotate": {
+  "zh": "音频片段没有画面可以旋转",
+  "ja": "音声クリップには回転できる映像がありません"
+ },
+ "Frame expressions drive this clip's box: change its rotation there (Edit panel)": {
+  "zh": "这一段的框由框表达式驱动：请在编辑分区的表达式里改旋转",
+  "ja": "このクリップの枠はフレーム式で動いています。回転は編集パネルの式で変更してください"
+ },
+ "Split {0} clips at the playhead ({1})": {
+  "zh": "在播放头处分割 {0} 个片段（{1}）",
+  "ja": "再生ヘッドの位置で {0} 個のクリップを分割（{1}）"
+ },
+ "Split at the playhead ({0})": {
+  "zh": "在播放头处分割（{0}）",
+  "ja": "再生ヘッドの位置で分割（{0}）"
+ },
+ "Split ({0}): select a clip under the playhead first": {
+  "zh": "分割（{0}）：先选中播放头下的片段",
+  "ja": "分割（{0}）：まず再生ヘッドの下のクリップを選択してください"
+ },
+ "Mirror is on: click to turn it off": {
+  "zh": "已镜像：点击取消镜像",
+  "ja": "反転中：クリックで反転を解除"
+ },
+ "Mirror the picture left to right": {
+  "zh": "左右镜像画面",
+  "ja": "映像を左右反転"
+ },
+ "Mirror: select a video or image clip first": {
+  "zh": "镜像：先选中视频或图片片段",
+  "ja": "反転：まず動画か画像のクリップを選択してください"
+ },
+ "Rotate 90° clockwise": {
+  "zh": "顺时针旋转 90°",
+  "ja": "時計回りに90°回転"
+ },
+ "Rotate: select a clip first": {
+  "zh": "旋转：先选中片段",
+  "ja": "回転：まずクリップを選択してください"
+ },
+ "Crop the picture": {
+  "zh": "裁剪画面",
+  "ja": "映像をトリミング"
+ },
+ "Crop: select a video or image clip first": {
+  "zh": "裁剪：先选中视频或图片片段",
+  "ja": "トリミング：まず動画か画像のクリップを選択してください"
+ },
+ "Select a single clip to crop": {
+  "zh": "裁剪一次只能选一个片段",
+  "ja": "トリミングするクリップを1つだけ選択してください"
+ },
+ "Edit tools": {
+  "zh": "剪辑工具",
+  "ja": "編集ツール"
+ },
+ "Mirror": {
+  "zh": "镜像",
+  "ja": "反転"
+ },
+ "Crop": {
+  "zh": "裁剪",
+  "ja": "トリミング"
+ },
+ "Free": {
+  "zh": "自由",
+  "ja": "自由"
+ },
+ "Original": {
+  "zh": "原始比例",
+  "ja": "元の比率"
+ },
+ "The picture could not be loaded": {
+  "zh": "画面加载失败",
+  "ja": "映像を読み込めませんでした"
+ },
+ "Cropped size {0} × {1} px": {
+  "zh": "裁剪后尺寸 {0} × {1} px",
+  "ja": "トリミング後のサイズ {0} × {1} px"
+ },
+ "Loading the picture…": {
+  "zh": "正在加载画面…",
+  "ja": "映像を読み込み中…"
+ },
+ "Reset crop": {
+  "zh": "重置裁剪",
+  "ja": "トリミングをリセット"
+ },
+ "Crop area": {
+  "zh": "裁剪区域",
+  "ja": "トリミング範囲"
+ },
+ "{0}% × {1}% of the picture": {
+  "zh": "画面的 {0}% × {1}%",
+  "ja": "映像の {0}% × {1}%"
  }
 }

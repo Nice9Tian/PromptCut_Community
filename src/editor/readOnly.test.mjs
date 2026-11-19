@@ -69,7 +69,7 @@ test("RO3 The grayed-out explanation is always viewOnlyText(); when not locked, 
   reset();
 });
 
-test("RO4 Shortcut gate: when read-only, Delete / Backspace / undo / redo do not reach the editor; the space key and keys typed in input boxes are not blocked", () => {
+test("RO4 Shortcut gate: when read-only, Delete / Backspace / undo / redo / split do not reach the editor; the space key and keys typed in input boxes are not blocked", () => {
   const press = (init) => ({ key: "", ctrlKey: false, metaKey: false, shiftKey: false, target: { tagName: "DIV" }, ...init });
   // Pure check: which keys are "project modification keys" (without checking locks)
   assert.equal(keys.isProjectEditKey(press({ key: "Delete" })), true);
@@ -77,6 +77,10 @@ test("RO4 Shortcut gate: when read-only, Delete / Backspace / undo / redo do not
   assert.equal(keys.isProjectEditKey(press({ key: "z", ctrlKey: true })), true);
   assert.equal(keys.isProjectEditKey(press({ key: "Z", ctrlKey: true, shiftKey: true })), true);
   assert.equal(keys.isProjectEditKey(press({ key: "y", metaKey: true })), true);
+  assert.equal(keys.isProjectEditKey(press({ key: "b", ctrlKey: true })), true, "Ctrl+B splits at the playhead");
+  assert.equal(keys.isProjectEditKey(press({ key: "B", metaKey: true })), true);
+  assert.equal(keys.isProjectEditKey(press({ key: "b" })), false);
+  assert.equal(keys.isProjectEditKey(press({ key: "b", ctrlKey: true, shiftKey: true })), false);
   assert.equal(keys.isProjectEditKey(press({ key: " " })), false, "Space is play / pause, and it must work when read-only too");
   assert.equal(keys.isProjectEditKey(press({ key: "ArrowLeft" })), false);
   assert.equal(keys.isProjectEditKey(press({ key: "Delete", target: { tagName: "INPUT" } })), false, "The delete key in an input box belongs to the input box");

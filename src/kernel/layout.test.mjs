@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import {
   resolveFrame, frameBox, worldOf, localFromWorld, framePatchFromArgs, frameCss,
   visualBox, rectToFrame, alignToFrame, alignIsInvisible, nudgeFrame,
-  clampToStage, rectForSafeSide,
+  clampToStage, rectForSafeSide, recenterFrame, rotateFrameBy,
 } from "./layout.ts";
 
 const STAGE = { width: 1920, height: 1080 };
@@ -385,3 +385,45 @@ test("3D: world should not gain rotateX / rotateY / translateZ (they are local q
   const w = worldOf({ x: 10, y: 20, w: 100, h: 50, rotateY: 30 }, { width: 1920, height: 1080 }, 40);
   assert.deepEqual(Object.keys(w).sort(), ["anchor", "box", "h", "rotate", "scale", "visualBox", "w", "x", "y"]);
 });
+
+/*
+ * recenterFrame / rotateFrameBy: the timeline's Rotate and Crop buttons. Moving the anchor to the box's
+ * center must not move a single pixel (visualBox unchanged, 3D and perspective included), and Rotate must
+ * turn the clip in place.
+ */
+const sameBox = (a, b) => { for (const k of ["left", "top", "width", "height"]) assert.ok(Math.abs(a[k] - b[k]) < 1e-6, `${k}: ${a[k]} vs ${b[k]}`); };
+
+test("recenterFrame: anchor to the center without moving the box (no frame, corner anchor, scaled, rotated, 3D with perspective)", () => {
+  const frames = [
+    undefined,
+    { x: 100, y: 80, w: 640, h: 360 },
+    { x: 300, y: 200, w: 640, h: 360, anchor: [0, 1], scale: 0.5, rotate: 30 },
+    { x: 960, y: 540, w: 800, h: 450, anchor: [0.2, 0.7], scale: 1.3, rotate: -75, rotateX: 25, rotateY: -40, translateZ: 120 },
+  ];
+  for (const f of frames) {
+    const c = recenterFrame(f, STAGE);
+    assert.deepEqual(c.anchor, [0.5, 0.5]);
+    sameBox(visualBox(c, STAGE), visualBox(f, STAGE));
+    sameBox(visualBox(c, STAGE, 40), visualBox(f, STAGE, 40));
+  }
+  const filled = recenterFrame(undefined, STAGE);
+  assert.deepEqual(filled, { x: 960, y: 540, w: 1920, h: 1080, anchor: [0.5, 0.5] }, "no frame: the stage-filling box, centered; no 3D keys appear");
+});
+
+test("rotateFrameBy: 90° per click about the box's own center, kept in [0, 360), a full turn drops the key", () => {
+  let f;
+  const seen = [];
+  for (let i = 0; i < 4; i++) {
+    f = rotateFrameBy(f, STAGE, 90);
+    seen.push(f.rotate);
+    const b = visualBox(f, STAGE);
+    assert.ok(Math.abs(b.left + b.width / 2 - 960) < 1e-6 && Math.abs(b.top + b.height / 2 - 540) < 1e-6, "the center does not move");
+  }
+  assert.deepEqual(seen, [90, 180, 270, undefined]);
+  assert.equal(rotateFrameBy({ x: 0, y: 0, rotate: 300 }, STAGE, 90).rotate, 30);
+  assert.equal(rotateFrameBy({ x: 0, y: 0, rotate: -30 }, STAGE, 90).rotate, 60);
+  const quarter = rotateFrameBy(undefined, STAGE, 90);
+  sameBox(visualBox(quarter, STAGE), { left: 960 - 540, top: 540 - 960, width: 1080, height: 1920 });
+  assert.throws(() => rotateFrameBy(undefined, STAGE, NaN), /deg/);
+});
+

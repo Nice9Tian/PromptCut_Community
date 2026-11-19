@@ -225,3 +225,19 @@ test("buildComposeArgs: without an explicit font, the confirmed-missing text pro
   const layers = [{ clip: { id: "lost", mediaId: "v1", start: 0, end: 1, frame: { x: 0, y: 0, w: 640, h: 360, anchor: [0, 0], scale: 1, rotate: 0 } }, media, src: null, missingMaterial: true }];
   assert.throws(() => buildComposeArgs({ width: 1920, height: 1080, fps: 30, startFrame: 0, endFrame: 29, cardsPattern: "f/%06d.png", layers, out: "o.mp4" }), /requires an explicit Chinese font file/);
 });
+
+test("buildComposeArgs: crop cuts the cropped part out before the cover step; mirror flips the filled box before emphasis; a plain clip is unchanged", () => {
+  const p = {
+    ...project,
+    tracks: [{ id: "t1", name: "Upper", clips: [
+      { id: "cm", mediaId: "i1", start: 0, end: 5, params: {}, crop: { x: 0.25, y: 0.1, w: 0.5, h: 0.8 }, flipX: true, emphasis: { kind: "shadow", dx: 10 } },
+      { id: "cp", mediaId: "v1", start: 5, end: 10, params: {} },
+    ] }],
+  };
+  const layers = composeLayers(p).map((l) => ({ ...l, src: `/m/${l.media.name}`, hasAlpha: true, colorSpace: "bt709" }));
+  const { graph } = buildComposeArgs({ width: 1920, height: 1080, fps: 30, startFrame: 0, endFrame: 299, cardsPattern: "f/%06d.png", layers, out: "o.mp4" });
+  assert.match(graph, /trim=start_pts=0:end_pts=150,crop=w=round\(iw\*0\.5\):h=round\(ih\*0\.8\):x=round\(iw\*0\.25\):y=round\(ih\*0\.1\):exact=1,scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,format=gbrap,hflip\[m2\]/);
+  assert.ok(graph.indexOf("hflip") < graph.indexOf("alphaextract"), "the shadow is cast after the flip, so it keeps its direction");
+  assert.match(graph, /trim=start_pts=150:end_pts=300,scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,format=gbrap\[m3\]/);
+  assert.equal((graph.match(/hflip/g) || []).length, 1);
+});

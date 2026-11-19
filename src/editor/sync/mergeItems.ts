@@ -401,7 +401,7 @@ export function thingLabel(ref: ThingRef, value: unknown): string {
 const PROP_LABEL: Record<string, string> = {
   "@time": trText("Time"), "@track": trText("Track"),
   opacity: trText("Opacity"), fadeIn: trText("Fade in"), fadeOut: trText("Fade out"), label: trText("Name"), mediaOffset: trText("Media start"), speed: trText("Speed"), audioMuted: trText("Muted"), audioVolume: trText("Volume"),
-  filter: trText("Filters"), pixelMap: trText("Pixel map"), audioFx: trText("Audio effects"), emphasis: trText("Emphasis"), motion: trText("Motion path"), parts: trText("Part"), cardId: trText("Cards"),
+  filter: trText("Filters"), pixelMap: trText("Pixel map"), crop: trText("Crop"), flipX: trText("Mirror"), audioFx: trText("Audio effects"), emphasis: trText("Emphasis"), motion: trText("Motion path"), parts: trText("Part"), cardId: trText("Cards"),
   mediaId: trText("media"), cutId: trText("Referenced cut"), cutOffset: trText("Cut start"), soundEffect: trText("Sound effect"), embeddedAudio: trText("Embedded audio"), cardAudio: trText("Card audio"), nodeId: trText("Nodes"),
   "frame.x": trText("Position X"), "frame.y": trText("Position Y"), "frame.w": trText("Width"), "frame.h": trText("High"), "frame.scale": trText("Scale"), "frame.rotate": trText("Rotate"),
   "frame.anchor": trText("Anchor"), "frame.rotateX": trText("X-axis flip"), "frame.rotateY": trText("Y-axis flip"), "frame.translateZ": trText("Depth"),

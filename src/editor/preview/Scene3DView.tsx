@@ -17,6 +17,7 @@ import { clipFilterOpsAt, cssFilter } from "../../kernel/filters.mjs";
 import { emphasisFilter } from "../../kernel/emphasis";
 import { driveMedia, filterOf, releaseMedia, targetTimeOf } from "../../render/mediaDrive";
 import { playbackUrl } from "../../render/mediaTier";
+import { drawMediaPicture } from "../../render/mediaPicture";
 import { tierHashes } from "../media/assetTiers";
 import { getCard } from "../../kernel/registry";
 import { actions, useStore } from "../../store/project";
@@ -1337,7 +1338,8 @@ export function Scene3DView({ project, t, mode = "space", onSelectCamera }: Prop
               mb.texCanvas.height = bh;
             }
             const cssFilt = filterOf(bClip as unknown as TrackClip, pNow.filters, tRef.current) ?? "";
-            const drawSig = `${bw}x${bh}:${tTag}:${cssFilt}`;
+            // Crop and mirror are in the signature too: changing them while paused must repaint the texture
+            const drawSig = `${bw}x${bh}:${tTag}:${cssFilt}:${bClip.flipX ? "m" : ""}${bClip.crop ? JSON.stringify(bClip.crop) : ""}`;
             if (isPlay || drawSig !== mb.lastDrawSig) {
               mb.lastDrawSig = drawSig;
               const ctx = mb.texCanvas.getContext("2d");
@@ -1345,10 +1347,8 @@ export function Scene3DView({ project, t, mode = "space", onSelectCamera }: Prop
                 ctx.clearRect(0, 0, bw, bh);
                 ctx.save();
                 if (cssFilt) ctx.filter = cssFilt;
-                const sc = Math.max(bw / sw, bh / sh);
-                const dw = sw * sc;
-                const dh = sh * sc;
-                ctx.drawImage(mediaEl, (bw - dw) / 2, (bh - dh) / 2, dw, dh);
+                // Cover, with the clip's crop and mirror: the same painting as the export's 3D path
+                drawMediaPicture(ctx, mediaEl, { width: sw, height: sh }, { width: bw, height: bh }, bClip);
                 ctx.restore();
                 mb.canvasTex.needsUpdate = true;
               }

@@ -374,6 +374,14 @@ test('BL-key-pixelmap the pixel map of lower-layer media: the cache content key 
   assert.deepEqual(extra.pixelMap, { id: 'pm1' });
   assert.deepEqual(extra.media, [['m2', 'h2']]);
   assert.deepEqual(belowLayerExtra({ pixelMaps: [], media: [] }, { pixelMap: { id: 'gone' } }), { pixelMap: { id: 'gone' }, def: null, media: [] });
+  // Crop and mirror of a lower media layer are drawn by the media layer, outside the card graph too
+  const mirrored = edit((p) => { clipOf(p, 'vid').flipX = true; });
+  assert.equal(vidKey(mirrored), vidKey(project()), 'the card graph does not see the mirror');
+  assert.notEqual(keyOf(mirrored), keyOf(project()), 'mirroring a lower layer changes the key');
+  assert.notEqual(sigOf(mirrored), sigOf(project()), 'and the input signature');
+  const cropped = edit((p) => { clipOf(p, 'vid').crop = { x: 0, y: 0, w: 0.5, h: 0.5 }; });
+  assert.notEqual(keyOf(cropped), keyOf(project()), 'cropping a lower layer changes the key');
+  assert.deepEqual(belowLayerExtra(project(), { flipX: true, crop: { x: 0, y: 0, w: 0.5, h: 0.5 } }), { crop: { x: 0, y: 0, w: 0.5, h: 0.5 }, flipX: true });
 });
 
 test('BL-key-other the key also carries: aspect ratio, frame rate, code version, environment (result key only), and the card source version of every layer; the version number of what the stream holds is in the digest', () => {

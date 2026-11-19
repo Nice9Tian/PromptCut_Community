@@ -1,10 +1,12 @@
 /**
  * Toolbar row at the top of the timeline (color diagnosis and fix v2, full screen).
- * Row height segments (small / medium / large, the selected cell filled with the accent color) · monospace
- * small text "Row height 44px" · divider ·
+ * Edit tools (split, mirror, rotate, crop; `EditTools.tsx`) · divider ·
+ * row height segments (small / medium / large, the selected cell filled with the accent color) · monospace
+ * small text "Row height 44px" ·
  * on the right "Zoom" + a 96px slider (log scale, 10–1000 px/s).
  */
 import { useTimelineContext } from "./TimelineContext";
+import { EditTools } from "./EditTools";
 import { type RowSize, ROW_SIZE_H } from "./utils";
 import { tr } from "../../i18n/index.ts";
 
@@ -27,6 +29,8 @@ export function Toolbar() {
 
   return (
     <div className="pc-tl-bar" data-pc="timeline-toolbar">
+      <EditTools />
+      <span className="pc-tl-sep" aria-hidden="true" />
       <div className="pc-tl-seg" role="group" aria-label={tr("Row height")}>
         {options.map((opt) => (
           <button

@@ -17,8 +17,9 @@
  * Included in signature (aligned with "the project data half" in `cardSnapshotIdentity` of the
  * shared snapshot key `server/card-identity.mjs`):
  *   - Clip: `cardId`, `params`, `parts`, `emphasis`, `mediaId`, `mediaOffset`, speed `speed`
- *     (when not 1), `filter`, `pixelMap`, box width/height (`frame.w` / `frame.h`), duration
- *     (`end - start`), sampling phase (fractional part of `start` in the frame grid);
+ *     (when not 1), `filter`, `pixelMap`, crop and mirror (`crop`, `flipX`, when set), box
+ *     width/height (`frame.w` / `frame.h`), duration (`end - start`), sampling phase (fractional
+ *     part of `start` in the frame grid);
  *   - Library entries referenced by clip: the entry in `project.filters` / `project.pixelMaps`,
  *     asset `hash` (or id if absent);
  *   - Media effect card (`nodeId`): this node in `project.cardNodes` and nodes reachable along
@@ -111,6 +112,10 @@ export function clipInputs(project, clipId) {
       media: clip.mediaId === undefined ? undefined : mediaEntry ? (mediaEntry.hash ?? mediaEntry.id) : null,
       filter: clip.filter, filterDef: clip.filter ? libraryEntry(project?.filters, clip.filter) : undefined,
       pixelMap: clip.pixelMap, pixelMapDef: clip.pixelMap ? libraryEntry(project?.pixelMaps, clip.pixelMap) : undefined,
+      // Crop and mirror change the picture inside the box (kernel/mediaPicture.mjs). Only present when
+      // set, so the signature of every clip without them is unchanged verbatim (no version bump)
+      ...(isObj(clip.crop) ? { crop: clip.crop } : null),
+      ...(clip.flipX === true ? { flipX: true } : null),
       size: isObj(clip.frame) ? { w: clip.frame.w, h: clip.frame.h } : undefined,
       ...(stripOuterFrameExpr(clip.frameExpr) ? { sizeExpr: stripOuterFrameExpr(clip.frameExpr) } : null),
       duration: (Number(clip.end) || 0) - start,

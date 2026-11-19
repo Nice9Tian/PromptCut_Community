@@ -5,6 +5,7 @@ import { cloneCardClipInstance } from "../../kernel/cardAuthoring.mjs";
 import type { PartInstance } from "../../kernel/types";
 import { fadeOwner, groupOf, MIN_TRANSITION_DUR, timingLock, transitionsOf, transitionsOfClip, type Transition } from "../../kernel/transitions";
 import { cutDuration } from "../../kernel/cutSegments";
+import { splitBlock } from "../../kernel/clipEditRules";
 import { CLIP_SPEED_MAX, CLIP_SPEED_MIN, clipSpeed, mediaOffsetAfter, mediaSpanOf, normalizeSpeed, speedInRange, speedLabel, withSpeed } from "../../kernel/clipTime.mjs";
 
 import {
@@ -16,7 +17,8 @@ import {
   shiftClipsBy,
   sortClips,
   resolveOverlap,
-  placeOrShift, pickTrack
+  placeOrShift, pickTrack,
+  withMerge,
 } from "../core";
 import { tr as trText } from "../../i18n/index.ts";
 
@@ -422,15 +424,15 @@ export const clips = {
     set({ selection: [clip.id] });
     return clip;
   },
-  /** Split clip in two at t */
+  /**
+   * Split clip in two at t; returns the second half (new id), or null when the split is refused.
+   * What is refused (too close to an end, a transition attached, a locked track) is `splitBlock` in
+   * kernel/clipEditRules.ts, the same rule that enables the timeline's Split button.
+   */
   splitClip(clipId: string, t: number): TrackClip | null {
     const p = state.project;
     const hit = findClip(p, clipId);
-    if (!hit || t <= hit.clip.start + 0.05 || t >= hit.clip.end - 0.05) return null;
-    // Splitting creates an extra clip out of nowhere, causing transition ends to mismatch:
-    // delete transitions first
-    if (timingLock(p, clipId)) return null;
-    if (hit.track.locked || p.tracks.some(track => track.locked && track.clips.some(c => c.soundEffect?.sourceClipId === clipId))) return null;
+    if (!hit || splitBlock(p, clipId, t)) return null;
     const left: TrackClip = { ...hit.clip, end: t };
     // Media start point of the second half advances by clip speed (kernel/clipTime.mjs; default 1 is
     // bitwise identical to original off + (t − start)), carrying speed as is
@@ -454,6 +456,23 @@ export const clips = {
     })) })) };
     setProject(next);
     return right;
+  },
+  /**
+   * The timeline's Split (Ctrl+B): split every listed clip that the playhead `t` is inside, as **one**
+   * undo step, and select the second halves, the pieces now under the playhead, so moving on and
+   * splitting again keeps cutting the same material. Clips that cannot be split at `t` (`splitBlock`)
+   * are skipped; the selection is left alone when nothing was split. Returns the second halves.
+   */
+  splitClips(clipIds: string[], t: number): TrackClip[] {
+    const rights: TrackClip[] = [];
+    withMerge({ key: `split-clips:${newId("s")}`, windowMs: Infinity }, () => {
+      for (const id of clipIds) {
+        const right = clips.splitClip(id, t);
+        if (right) rights.push(right);
+      }
+    });
+    if (rights.length) set({ selection: rights.map((c) => c.id) });
+    return rights;
   },
 
   setClipParams(clipId: string, params: Record<string, unknown>, opts: { merge?: boolean } = { merge: true }) {

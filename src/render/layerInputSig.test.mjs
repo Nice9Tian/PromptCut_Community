@@ -104,6 +104,12 @@ test("SIG-3 Changing things that go into the snapshot changes the signature", ()
   assert.notEqual(clipInputSig({ ...p, filters: [{ id: "f1", name: "blur", ops: [{ op: "blur", r: 5 }] }] }, "v"), vs);
   assert.notEqual(clipInputSig({ ...p, media: [{ ...p.media[0], hash: "e".repeat(64) }] }, "v"), vs, "Asset bytes changed");
   assert.equal(clipInputSig({ ...p, media: [{ ...p.media[0], url: "/@media/xyz" }] }, "v"), vs, "Asset URL rewriting (renderProject) does not count");
+  // Crop and mirror change the media picture: they count, and taking them off gives the old signature back
+  const cropped = withClip(p, "v", (c) => ({ ...c, crop: { x: 0, y: 0, w: 0.5, h: 0.5 } }));
+  assert.notEqual(clipInputSig(cropped, "v"), vs, "crop");
+  assert.notEqual(clipInputSig(withClip(cropped, "v", (c) => ({ ...c, crop: { x: 0.5, y: 0, w: 0.5, h: 0.5 } })), "v"), clipInputSig(cropped, "v"), "a different crop");
+  assert.notEqual(clipInputSig(withClip(p, "v", (c) => ({ ...c, flipX: true })), "v"), vs, "mirror");
+  assert.equal(clipInputSig(withClip(cropped, "v", ({ crop: _c, ...c }) => c), "v"), vs, "no crop key = the signature from before crop existed");
 });
 
 test("SIG-4 Media effect card: changing an upstream node or upstream clip changes the downstream; a cycle does not loop forever", () => {

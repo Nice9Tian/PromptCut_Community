@@ -7,7 +7,6 @@ import { resolveClipFrameAt } from "../kernel/frameExpr.mjs";
 import { activeCutEntry, camera2DCssTransform, resolveCamera2DAt } from "../kernel/camera.mjs";
 import { isCaptionClip } from "../kernel/captions";
 import { Cut3DScene } from "./Cut3DScene";
-import { emphasisFilter } from "../kernel/emphasis";
 import { clipFilterOpsAt, cssFilter } from "../kernel/filters.mjs";
 import { pixelMapOfClip } from "../kernel/pixelMap.mjs";
 import { clipSpeed, mediaTimeAt } from "../kernel/clipTime.mjs";
@@ -23,6 +22,7 @@ import { playbackUrl } from "./mediaTier";
 import { confirmedMissingVisual, missingMaterialLabel } from "../audio/missingMaterial";
 import { MissingMaterial } from "./MissingMaterial";
 import { SceneHostContext } from "./CutSegmentScene";
+import { mediaFilterCss, mediaFitCss } from "./mediaPicture";
 
 const NO_HASHES: readonly string[] = [];
 
@@ -369,19 +369,19 @@ export function FrameScene({
         {opts.includeMedia && live ? layers.filter((l) => l.trackId === tr.id && !graphVisualNode(graph, l.clip.nodeId) && !replaced(l.clip.id) && !confirmedMissingVisual(l.media)
           && !!pixelMapOfClip(project, l.clip)).map(({ clip, media, opacity }) => {
           const def = pixelMapOfClip(project, clip)!;
-          const ops = project.filters?.length ? clipFilterOpsAt(project, clip, mediaT) : null;
-          const filter = [ops ? cssFilter(ops) : "", emphasisFilter(clip.emphasis) || ""].filter(Boolean).join(" ");
-          const style = { display: "block", width: "100%", height: "100%", objectFit: "cover" as const, opacity, filter: filter || undefined };
-          return <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-media="" data-pc-local-frame={Math.round((mediaT - clip.start) * project.fps)} style={{ position: "absolute", overflow: "hidden", ...frameCss(effFrameOf(clip, mediaT), project) }}>
+          // Crop and mirror apply to the pixel-map canvas like to a plain media element (`mediaPicture.ts`)
+          const frame = effFrameOf(clip, mediaT);
+          const style = { ...mediaFitCss(clip, media, frame, project), opacity, filter: mediaFilterCss(clip, project.filters, mediaT) };
+          return <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-media="" data-pc-local-frame={Math.round((mediaT - clip.start) * project.fps)} style={{ position: "absolute", overflow: "hidden", ...frameCss(frame, project) }}>
             <PixelMappedMedia media={media as MediaAsset} clip={clip} t={mediaT} project={project} style={style} def={def} live playing={playing} scrubbing={scrubbing} localHashes={hashes} />
           </div>;
         }) : null}
         {opts.includeMedia && !live && layers.filter(l => l.trackId === tr.id && !graphVisualNode(graph, l.clip.nodeId) && !replaced(l.clip.id) && !confirmedMissingVisual(l.media)).map(({ clip, media, opacity }) => {
-          const ops = project.filters?.length ? clipFilterOpsAt(project, clip, t) : null;
-          const filter = [ops ? cssFilter(ops) : "", emphasisFilter(clip.emphasis) || ""].filter(Boolean).join(" ");
-          const style = { display: "block", width: "100%", height: "100%", objectFit: "cover" as const, opacity, filter: filter || undefined };
+          // The same placement as the live stage (`mediaPicture.ts`): crop and mirror, or the old cover style without them
+          const frame = effFrameOf(clip, t);
+          const style = { ...mediaFitCss(clip, media, frame, project), opacity, filter: mediaFilterCss(clip, project.filters, t) };
           // data-pc-media: Selector for controls relies on it to exclude the asset layer when generating snapshots (see render/createSnapshot.ts)
-          return <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-media="" data-pc-local-frame={Math.round((t - clip.start) * project.fps)} style={{ position: "absolute", overflow: "hidden", ...frameCss(effFrameOf(clip, t), project) }}>
+          return <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-media="" data-pc-local-frame={Math.round((t - clip.start) * project.fps)} style={{ position: "absolute", overflow: "hidden", ...frameCss(frame, project) }}>
             {pixelMapOfClip(project, clip) ? (() => {
               const def = pixelMapOfClip(project, clip)!;
               return <PixelMappedMedia media={media} clip={clip} t={t} project={project} style={style} def={def} />;

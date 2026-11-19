@@ -8,6 +8,7 @@ import { describeEmphasis } from "../../kernel/emphasis";
 import { CAPTION_CARD_ID } from "../../kernel/captions";
 import { FRAME_EXPR_KEYS } from "../../kernel/frameExpr.mjs";
 import { findClip } from "../../kernel/project";
+import { normalizeCrop, pictureEditBlock } from "../../kernel/mediaPicture.mjs";
 import { timelineDigest, lookHint, paramsEcho } from "../tools/toolEcho";
 
 import { stageSize, clipGuard } from "../common";
@@ -15,6 +16,27 @@ import { segmentInfo } from "./cutSegments";
 import { inClipCut, assertClipNotParked, clipMissingError } from "../clipCut";
 
 type Args<K extends keyof EditorApi> = Parameters<EditorApi[K]>[0];
+
+/**
+ * `flipX` / `crop` of update_clip, validated (kernel/mediaPicture.mjs): only video / image clips not
+ * drawn by a media effect card, not on a locked track. Throws with a reason the Agent can act on.
+ * A crop of {x:0, y:0, w:1, h:1} (or null) asks for the whole picture again.
+ */
+function pictureArgs(args: Args<"updateClip">): { flipX?: boolean; crop?: { x: number; y: number; w: number; h: number } | null } {
+  if (args.flipX === undefined && args.crop === undefined) return {};
+  if (args.flipX !== undefined && typeof args.flipX !== "boolean") throw new Error(`flipX must be true or false, got ${JSON.stringify(args.flipX)}`);
+  const project = getState().project;
+  const hit = findClip(project, args.clipId);
+  if (!hit) throw clipMissingError(args.clipId);
+  const block = pictureEditBlock(project, hit.clip);
+  if (block === "effect-card") throw new Error("A media effect card draws this clip's picture, so flipX / crop would not show: change the picture in the media effect card instead");
+  if (block) throw new Error("flipX / crop only apply to video and image clips");
+  if (hit.track.locked) throw new Error(`Track ${hit.track.id} is locked; unlock it first (update_track locked:false)`);
+  if (args.crop === undefined) return { flipX: args.flipX };
+  const crop = normalizeCrop(args.crop);
+  if (!crop.ok) throw new Error(crop.error);
+  return { ...(args.flipX !== undefined ? { flipX: args.flipX } : null), crop: crop.crop };
+}
 
 export const clipsHandlers = {
   addClip: (args) => {
@@ -41,6 +63,8 @@ export const clipsHandlers = {
   },
   updateClip: /* @__PURE__ */ inClipCut((args: Args<"updateClip">) => {
     rejectAudioVolumeKeys(args, "update_clip");
+    // Crop / mirror: checked before anything is written, so a bad crop does not leave half an edit behind
+    const picture = pictureArgs(args);
     if (args.params || args.cardId !== undefined) {
       const hit = findClip(getState().project, args.clipId);
       if (!hit) throw clipMissingError(args.clipId);
@@ -102,10 +126,17 @@ export const clipsHandlers = {
       actions.moveClip(args.clipId, { start: args.start, end: args.end, trackId: args.trackId });
     }
     if (args.cardId !== undefined) actions.setClipCard(args.clipId, args.cardId);
+    if (picture.flipX !== undefined) actions.setClipsFlipX([args.clipId], picture.flipX);
+    const cropped = picture.crop !== undefined ? actions.cropClip(args.clipId, picture.crop) : null;
+    if (cropped && !cropped.ok) throw new Error(cropped.error);
     clipGuard.noteMutation();
+    const after = findClip(getState().project, args.clipId)?.clip;
     return {
       ok: true, clipId: args.clipId, look: lookHint(args.clipId), timeline: timelineDigest(getState().project),
-      ...(args.params ? paramsEcho(paramsBefore, findClip(getState().project, args.clipId)?.clip.params) : null),
+      ...(args.params ? paramsEcho(paramsBefore, after?.params) : null),
+      ...(picture.flipX !== undefined ? { flipX: !!after?.flipX } : null),
+      // The box follows a crop (the cropped part shows whole at its own aspect ratio), so echo both
+      ...(cropped ? { crop: after?.crop ?? null, frame: after?.frame ?? null } : null),
       ...(lock ? { movedGroup: lock.members, note: "This clip has a transition attached, so the whole group moved together" } : {}),
     };
   }),

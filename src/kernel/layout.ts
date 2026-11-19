@@ -509,6 +509,59 @@ export function rectForSafeSide(side: SafeSide, parent: Size, margin = 40): Rect
   }
 }
 
+/**
+ * The same placement with the anchor moved to the box center: the box lands on exactly the same
+ * pixels (`visualBox` does not change), but scale and rotation now turn around the center. The
+ * timeline's Rotate and Crop buttons start from this, so a clip turns and reshapes in place instead
+ * of swinging around a corner (the default anchor is the top-left corner).
+ *
+ * The anchor moves along the same chain as `frameCss` / `visualBox` (2D rotation → scale → rotateY
+ * → rotateX → translateZ). With 3D tilt the box center leaves the screen plane; that depth goes
+ * into translateZ, so the perspective projection stays the same too. A 2D frame gets no translateZ.
+ * The result always carries w / h: the anchor offset is measured in them.
+ */
+export function recenterFrame(frame: ClipFrame | undefined, parent: Size): ClipFrame {
+  const f = resolveFrame(frame, parent);
+  // Anchor → box center, in the box's own coordinates (already scaled; uniform scale commutes with rotation)
+  const vx = (0.5 - f.anchor[0]) * f.w * f.scale;
+  const vy = (0.5 - f.anchor[1]) * f.h * f.scale;
+  const rad = (f.rotate * Math.PI) / 180;
+  let x = vx * Math.cos(rad) - vy * Math.sin(rad);
+  let y = vx * Math.sin(rad) + vy * Math.cos(rad);
+  let z = 0;
+  if (frameIs3D(f)) {
+    const ry = (f.rotateY * Math.PI) / 180;
+    const rx = (f.rotateX * Math.PI) / 180;
+    const nx = x * Math.cos(ry) + z * Math.sin(ry);
+    z = -x * Math.sin(ry) + z * Math.cos(ry);
+    x = nx;
+    const ny = y * Math.cos(rx) - z * Math.sin(rx);
+    z = y * Math.sin(rx) + z * Math.cos(rx);
+    y = ny;
+  }
+  return {
+    ...frame,
+    x: f.x + x,
+    y: f.y + y,
+    w: f.w,
+    h: f.h,
+    anchor: [0.5, 0.5],
+    ...(z !== 0 ? { translateZ: f.translateZ + z } : null),
+  };
+}
+
+/**
+ * Turn the box by `deg` degrees (clockwise) about its own center, keeping its position: the
+ * timeline's Rotate button (90° per click). The angle is kept in [0, 360); a full turn back to 0
+ * drops the key.
+ */
+export function rotateFrameBy(frame: ClipFrame | undefined, parent: Size, deg: number): ClipFrame {
+  if (typeof deg !== "number" || !Number.isFinite(deg)) throw new Error(`deg must be a finite number, got ${JSON.stringify(deg)}`);
+  const { rotate, ...rest } = recenterFrame(frame, parent);
+  const turned = Math.round(((((rotate ?? 0) + deg) % 360) + 360) % 360 * 1e6) / 1e6 % 360;
+  return turned === 0 ? rest : { ...rest, rotate: turned };
+}
+
 /** Add/subtract on top of existing values: add pixels to position, multiply scale, add angles to rotation */
 export function nudgeFrame(
   d: { dx?: number; dy?: number; scaleBy?: number; rotateBy?: number },

@@ -853,16 +853,24 @@ function localClip(clip, spec) {
  * Project data not covered by a layer's cached content key (`control.cacheContentKey`) that would
  * still alter the layer's visual; returns undefined if none (this entry will not appear in the digest).
  *
- * Currently there is only one such item: **pixel maps** attached to media clips (`clip.pixelMap`,
- * the corresponding definition in the project, and other assets referenced in the definition).
+ * Two such items, both on media clips:
+ *   - **pixel maps** (`clip.pixelMap`, the corresponding definition in the project, and other assets
+ *     referenced in the definition);
+ *   - **crop and mirror** (`clip.crop`, `clip.flipX`; kernel/mediaPicture.mjs), drawn by the media
+ *     layer itself.
  * Cached content keys originate from the card graph (`projectCardGraph` in `src/kernel/cardGraph.mjs`),
- * which chains only filters, audio effects, and emphasis into nodes, leaving pixel maps out of the graph;
- * without supplementing this item, modifying a lower-layer asset's pixel map would leave the
- * below-dependent stream's key unchanged, causing the stale stream to keep being pasted.
+ * which chains only filters, audio effects, and emphasis into nodes, leaving these out of the graph;
+ * without supplementing them, modifying a lower-layer asset's pixel map, crop or mirror would leave
+ * the below-dependent stream's key unchanged, causing the stale stream to keep being pasted.
+ * Each item appears only when set, so the key of a layer without them is unchanged verbatim.
  */
 export function belowLayerExtra(project, clip) {
+  const picture = {
+    ...(clip?.crop && typeof clip.crop === 'object' ? { crop: clip.crop } : null),
+    ...(clip?.flipX === true ? { flipX: true } : null),
+  };
   const ref = clip?.pixelMap;
-  if (!ref) return undefined;
+  if (!ref) return Object.keys(picture).length ? picture : undefined;
   const def = (project?.pixelMaps ?? []).find(x => x?.id === ref.id) ?? null;
   const ids = new Set();
   const walk = value => {
@@ -878,7 +886,7 @@ export function belowLayerExtra(project, clip) {
     const m = (project?.media ?? []).find(x => x?.id === id);
     return [id, m ? (m.hash ?? m.url ?? m.path ?? null) : null];
   });
-  return { pixelMap: ref, def, media };
+  return { pixelMap: ref, def, media, ...picture };
 }
 
 /**

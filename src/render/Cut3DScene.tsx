@@ -28,6 +28,7 @@ import { emphasisFilter } from "../kernel/emphasis";
 import { pixelMapOfClip, type PixelMapDef } from "../kernel/pixelMap.mjs";
 import { drawPixelMap } from "./pixelMapGl";
 import { driveMedia, releaseMedia, targetTimeOf } from "./mediaDrive";
+import { drawMediaPicture } from "./mediaPicture";
 import { playbackUrl } from "./mediaTier";
 import { cardMountedAt } from "./frameWindow.mjs";
 import { clipFrameMode } from "../kernel/frameMode.mjs";
@@ -535,14 +536,10 @@ export function Cut3DScene({
           ? clipFilterOpsAt(proj, board as unknown as TrackClip, bt)
           : null;
         const filterStr = [ops ? cssFilter(ops) : "", emphasisFilter(board.emphasis) || ""].filter(Boolean).join(" ");
-        const coverScale = Math.max(bw / sw, bh / sh);
-        const dw = sw * coverScale;
-        const dh = sh * coverScale;
-        const dx = (bw - dw) / 2;
-        const dy = (bh - dh) / 2;
         tx.clearRect(0, 0, bw, bh);
         if (filterStr) tx.filter = filterStr;
-        tx.drawImage(srcEl, dx, dy, dw, dh);
+        // Cover, with the clip's crop and mirror (`mediaPicture.ts`, the same placement as the 2D page)
+        drawMediaPicture(tx, srcEl, { width: sw, height: sh }, { width: bw, height: bh }, board);
         tx.filter = "none";
 
         const tex = new THREE.CanvasTexture(texCanvas);

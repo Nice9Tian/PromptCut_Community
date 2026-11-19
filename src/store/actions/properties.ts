@@ -1,6 +1,8 @@
 import { findClip } from "../../kernel/project";
 import { normalizeEmphasis, type ClipEmphasis } from "../../kernel/emphasis";
 import { mergeFrameExpr, type FrameExprKey, type FrameExprMap } from "../../kernel/frameExpr.mjs";
+import { rotateFrameBy } from "../../kernel/layout";
+import { rotateBlock } from "../../kernel/clipEditRules";
 import type { ClipFrame, ClipMotion, PartInstance } from "../../kernel/types";
 
 import { state, setProject, updateTrack } from "../core";
@@ -106,6 +108,29 @@ export const properties = {
       }),
     })));
     return true;
+  },
+  /**
+   * Turn these clips by `deg` degrees (clockwise) about their own centers, keeping where they are on
+   * screen, as one undo step: the timeline's Rotate button (90° per click). `rotateFrameBy` in
+   * kernel/layout.ts does the geometry. Clips `rotateBlock` refuses (audio, frame expressions, locked
+   * track) are left alone. Returns the ids that turned.
+   */
+  rotateClips(clipIds: string[], deg: number): string[] {
+    const p = state.project;
+    const stage = { width: p.width, height: p.height };
+    let next = p;
+    const changed: string[] = [];
+    for (const id of new Set(clipIds)) {
+      const hit = findClip(next, id);
+      if (!hit || rotateBlock(next, hit.clip, hit.track)) continue;
+      next = updateTrack(next, hit.track.id, (t) => ({
+        ...t,
+        clips: t.clips.map((c) => (c.id === id ? { ...c, frame: rotateFrameBy(c.frame, stage, deg) } : c)),
+      }));
+      changed.push(id);
+    }
+    if (changed.length) setProject(next);
+    return changed;
   },
   /**
    * Sets / merges / clears per-property keyframe expressions (`t`, `d`, `p`) on a clip's bounding box.
