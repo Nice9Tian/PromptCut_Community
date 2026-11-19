@@ -407,3 +407,46 @@ export function IconPalette(p: IconProps) {
     </Stroked>
   );
 }
+
+/*
+ * Timeline edit tools (editor/timeline/EditTools.tsx): split, mirror, rotate, crop. Same stroke spec as
+ * the rest; each one draws what the button does to a clip.
+ */
+/** Split at the playhead: the playhead line between the two halves of a clip */
+export function IconSplit(p: IconProps) {
+  return (
+    <Stroked {...p}>
+      <path d="M12 3v18" />
+      <path d="M8.5 7H4v10h4.5M15.5 7H20v10h-4.5" />
+    </Stroked>
+  );
+}
+/** Mirror: a shape and its reflection across a dashed axis */
+export function IconMirror(p: IconProps) {
+  return (
+    <Stroked {...p}>
+      <path d="M12 3v2.5M12 9.5v2M12 15.5v2M12 20.5V21" />
+      <path d="M9 6.5v11H3.5z" />
+      <path d="M15 6.5v11h5.5z" />
+    </Stroked>
+  );
+}
+/** Rotate 90° clockwise: a frame with a clockwise arrow over its corner */
+export function IconRotate(p: IconProps) {
+  return (
+    <Stroked {...p}>
+      <path d="M4 10h10v10H4z" />
+      <path d="M9 6a8 8 0 0 1 11 7.5" />
+      <path d="M22.5 11l-2.5 2.5-2.5-2.5" />
+    </Stroked>
+  );
+}
+/** Crop: two crossing corner brackets */
+export function IconCrop(p: IconProps) {
+  return (
+    <Stroked {...p}>
+      <path d="M7 3v14h14" />
+      <path d="M3 7h14v14" />
+    </Stroked>
+  );
+}

@@ -1,0 +1,125 @@
+/* Timeline edit tools (EditTools.tsx) and the crop dialog (CropDialog.tsx). Kept out of timeline.css, which is long already. */
+
+/* The four tool buttons at the left of the toolbar row: 32 square .pc-tl-iconbtn (timeline.css), packed close together */
+.pc-tl-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -8px;
+}
+.pc-tl-tool[aria-disabled="true"] {
+  color: var(--ui-fg-faint);
+  cursor: default;
+  opacity: 0.55;
+}
+.pc-tl-tool[aria-disabled="true"]:hover {
+  background: transparent;
+}
+.pc-tl-tool:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -2px;
+}
+
+/* ── Crop dialog: same frame as the clip volume dialog (timeline.css), wider for the picture ── */
+.pc-crop-dialog {
+  margin: auto;
+  width: min(720px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-xl, 12px);
+  background: var(--ui-bg-2);
+  color: var(--ui-fg);
+  box-shadow: 0 12px 48px #0008;
+  font-size: 13px;
+}
+.pc-crop-dialog::backdrop { background: #0008; }
+.pc-crop-dialog h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+.pc-crop-dialog p { margin: 10px 0; color: var(--ui-fg-muted); font-size: 12px; }
+.pc-crop-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The picture area: a size container, so the picture can be "as wide as fits, no taller than the area" (cqh) */
+.pc-crop-stage {
+  container-type: size;
+  height: min(360px, 50vh);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ui-bg);
+  border-radius: var(--ui-radius, 6px);
+}
+.pc-crop-picture {
+  position: relative;
+  overflow: hidden;
+  max-height: 100%;
+  background: #000;
+  touch-action: none;
+  user-select: none;
+}
+.pc-crop-picture img,
+.pc-crop-picture video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: fill;
+  pointer-events: none;
+}
+/* The crop rectangle: the picture outside it is dimmed by its own spread shadow (clipped by the picture), thirds inside */
+.pc-crop-rect {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid #fff;
+  box-shadow: 0 0 0 9999px #000a;
+  cursor: move;
+  background:
+    linear-gradient(#fff6, #fff6) 33.333% 0 / 1px 100% no-repeat,
+    linear-gradient(#fff6, #fff6) 66.667% 0 / 1px 100% no-repeat,
+    linear-gradient(#fff6, #fff6) 0 33.333% / 100% 1px no-repeat,
+    linear-gradient(#fff6, #fff6) 0 66.667% / 100% 1px no-repeat;
+}
+/* Inside the border: outside it the picture clips the ring wherever the rectangle touches an edge */
+.pc-crop-rect:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: -3px; }
+.pc-crop-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  background: #fff;
+  border: 1px solid #0006;
+  border-radius: 2px;
+}
+.pc-crop-handle.is-nw { left: 0; top: 0; cursor: nwse-resize; }
+.pc-crop-handle.is-n { left: 50%; top: 0; cursor: ns-resize; }
+.pc-crop-handle.is-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.pc-crop-handle.is-e { left: 100%; top: 50%; cursor: ew-resize; }
+.pc-crop-handle.is-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.pc-crop-handle.is-s { left: 50%; top: 100%; cursor: ns-resize; }
+.pc-crop-handle.is-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.pc-crop-handle.is-w { left: 0; top: 50%; cursor: ew-resize; }
+
+/* Aspect ratio presets: the row-height segment control of the toolbar (.pc-tl-seg), as a row of its own */
+.pc-crop-ratios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+.pc-crop-ratios button {
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ui-fg-muted);
+  background: var(--ui-panel-2);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius, 6px);
+  cursor: pointer;
+}
+.pc-crop-ratios button:hover { color: var(--ui-fg); }
+.pc-crop-ratios button.is-on { color: var(--ui-accent-fg); background: var(--ui-accent); border-color: var(--ui-accent); }
+.pc-crop-meta { font-family: var(--ui-font-mono); }
+.pc-crop-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.pc-crop-actions button { padding: 6px 12px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius, 6px); cursor: pointer; }
+.pc-crop-actions button[type=submit] { background: var(--ui-accent-grad); color: white; }
+.pc-crop-actions button:disabled { opacity: .4; cursor: default; }

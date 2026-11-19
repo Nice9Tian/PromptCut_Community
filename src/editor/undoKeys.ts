@@ -3,6 +3,7 @@
  * Ctrl/Cmd+Shift+Z and Ctrl/Cmd+Y redo; it does not count when focus is in an input, a text area
  * or an editable element (left to the input itself). Pure function, used by the keydown handler
  * in `Editor.tsx`, and driven directly by unit tests.
+ * Also the timeline's split, Ctrl/Cmd+B (`splitKey`, handled in `timeline/EditTools.tsx`).
  */
 export type UndoRedo = "undo" | "redo";
 
@@ -28,4 +29,13 @@ export function undoRedoKey(e: KeyLike): UndoRedo | null {
   if (k === "z") return e.shiftKey ? "redo" : "undo";
   if (k === "y" && !e.shiftKey) return "redo";
   return null;
+}
+
+/**
+ * Ctrl/Cmd+B: split the selected clips at the playhead (the timeline toolbar's Split). Not with
+ * Shift or Alt, and not while typing.
+ */
+export function splitKey(e: KeyLike & { altKey?: boolean }): boolean {
+  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || isTypingTarget(e.target)) return false;
+  return (e.key ?? "").toLowerCase() === "b";
 }

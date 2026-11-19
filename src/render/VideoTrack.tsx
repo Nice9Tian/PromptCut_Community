@@ -11,6 +11,7 @@ import { chooseTier, hashFromUrl, playbackUrl } from "./mediaTier";
 import { playabilityVersion, subscribePlayability } from "./playability";
 import { confirmedMissingVisual, missingMaterialLabel } from "../audio/missingMaterial";
 import { MissingMaterial } from "./MissingMaterial";
+import { mediaFilterCss, mediaFitCss } from "./mediaPicture";
 
 /**
  * Visual layer of a track (video / image). E7 rule 1: media layer moved into stage, rendered by
@@ -395,6 +396,9 @@ export function VideoTrack({
       ? resolveClipFrameAt(clip.frame, clip.frameExpr, Math.max(0, t - clip.start), clip.end - clip.start)
       : clip?.frame;
   const boxOf = (clip: TrackClip | null) => ({ position: "absolute" as const, overflow: "hidden" as const, ...frameCss(effFrameOf(clip), stage) });
+  /** The media element inside the box: crop and mirror (`mediaPicture.ts`); a clip without them gets the old cover style */
+  const fitOf = (clip: TrackClip | null) =>
+    mediaFitCss(clip, clip ? project.media.find((m) => m.id === clip.mediaId) : undefined, effFrameOf(clip), stage);
   const image = cur && !missing && isImageMedia(cur.media) && cur.media.url && playbackUrl(cur.media, localHashes) ? cur : null;
   // A1: Assets not yet stored (uploading + computing hash while writing to disk) have no address;
   // this layer renders an "Uploading" placeholder: do not attach an empty src (an empty src is
@@ -430,7 +434,7 @@ export function VideoTrack({
               muted={muted}
               playsInline
               preload="auto"
-              style={{ display: "block", width: "100%", height: "100%", objectFit: "cover", opacity, filter: clip ? filterOf(clip, filters, t) : undefined }}
+              style={{ ...fitOf(clip), opacity, filter: clip ? mediaFilterCss(clip, filters, t) : undefined }}
             />
           </div>
         );
@@ -440,7 +444,7 @@ export function VideoTrack({
       </div>}
       {image && (
         <div key={`${image.clip.id}:${awaiting ? "wait" : "ok"}`} data-pc-clip={image.clip.id} data-pc-media="" style={boxOf(image.clip)}>
-          <img src={playbackUrl(image.media, localHashes) || undefined} alt="" style={{ display: "block", width: "100%", height: "100%", objectFit: "cover", opacity: image.opacity, filter: filterOf(image.clip, filters, t) }} />
+          <img src={playbackUrl(image.media, localHashes) || undefined} alt="" style={{ ...fitOf(image.clip), opacity: image.opacity, filter: mediaFilterCss(image.clip, filters, t) }} />
         </div>
       )}
       {uploading && (

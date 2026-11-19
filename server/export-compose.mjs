@@ -37,6 +37,9 @@
  *     with object-fit: cover. The legacy export page ignored frame (always filled full screen),
  *     causing export and preview to mismatch; here we follow preview. Media clips do not allow
  *     3D (assertNo3dOnMedia in kernel/envelope.ts).
+ *   - Crop and mirror (`clip.crop`, `clip.flipX`): the cropped part is cut out of the source before
+ *     the cover step and the filled box is flipped before filters and emphasis, matching
+ *     render/mediaPicture.ts (numbers shared through kernel/mediaPicture.mjs).
  *   - Emphasis: see comments on emphasisOps below.
  *   - Frosted glass on cards (backdrop-filter): see the mask parameter in buildComposeArgs.
  *
@@ -46,6 +49,7 @@
 
 import { ffmpegChain, ffmpegStages, ffmpegStaticChain, filterOfClip, isAnimated, resolveOps, sendcmdScript } from "../src/kernel/filters.mjs";
 import { clipSpeed, mediaTimeAt } from "../src/kernel/clipTime.mjs";
+import { ffmpegCropFilter } from "../src/kernel/mediaPicture.mjs";
 import { tr as trText } from "./i18n.mjs";
 
 /** Same criteria as ExportView / flattenOverlay: all visual media clips (video + image) from bottom to top, regardless of time */
@@ -415,10 +419,17 @@ export function buildComposeArgs(opts) {
       `fps=${fps}:round=up`,
       `trim=start_pts=${a}:end_pts=${b + 1}`,
     ];
+    // Crop (kernel/mediaPicture.mjs; the page does the same in render/mediaPicture.ts): cut the cropped
+    // part out of the source first, so the cover step below makes that part cover the box
+    const sourceCrop = isMissing ? "" : ffmpegCropFilter(clip.crop);
+    if (sourceCrop) chain.push(sourceCrop);
     // cover: scale proportionally to cover the box, then crop centered. Untagged video color space is
     // decoded as untagged (consistent with Chrome's assumption for HD assets)
     const matrix = !isImage && (!layer.colorSpace || layer.colorSpace === "unknown") ? `:in_color_matrix=${untagged}` : "";
     chain.push(`scale=${p.w}:${p.h}:force_original_aspect_ratio=increase${matrix}`, `crop=${p.w}:${p.h}`, "format=gbrap");
+    // Mirror: flip the filled box, before filters and emphasis, so an emphasis shadow keeps its
+    // direction (on the page the shadow likewise belongs to the box, not to the picture)
+    if (clip.flipX && !isMissing) chain.push("hflip");
     if (isMissing) {
       const file = `${String(opts.sidecarDir || ".").replace(/\\/g, "/")}/missing-${k}.txt`;
       const name = String(layer.missingMaterialName || media.missingMaterial?.original?.name || media.name || media.id).replace(/[\r\n\u0000-\u001f]/g, " ")

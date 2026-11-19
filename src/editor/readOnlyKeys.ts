@@ -1,6 +1,6 @@
 /**
- * The shortcut gate for read-only projects (`readOnly.ts`): Delete / Backspace deleting the selected clip and
- * Ctrl+Z / Ctrl+Y undo and redo all modify the project.
+ * The shortcut gate for read-only projects (`readOnly.ts`): Delete / Backspace deleting the selected clip,
+ * Ctrl+Z / Ctrl+Y undo and redo, and Ctrl+B splitting at the playhead all modify the project.
  * These keys are handled by `src/Editor.tsx` in the window's bubble phase (criterion: focus is not in an input),
  * and that file is not owned by this part,
  * so they are intercepted first in the window's **capture phase**: when read-only, these keys never reach it. Keys
@@ -9,7 +9,7 @@
  * Same approach as `saveLock.ts`: it is attached as soon as the module loads (the earlier, the further ahead of
  * other listeners on the same target), and does nothing when not locked.
  */
-import { isTypingTarget, undoRedoKey } from "./undoKeys";
+import { isTypingTarget, splitKey, undoRedoKey } from "./undoKeys";
 import { memberReadOnlyNow } from "./readOnlyCore";
 
 interface KeyLike {
@@ -23,7 +23,7 @@ interface KeyLike {
 /** Whether this key press is a "project-modifying shortcut" (looks only at the key, not at the lock) */
 export function isProjectEditKey(e: KeyLike): boolean {
   if (isTypingTarget(e.target)) return false;
-  if (undoRedoKey(e)) return true;
+  if (undoRedoKey(e) || splitKey(e)) return true;
   return e.key === "Delete" || e.key === "Backspace";
 }
 

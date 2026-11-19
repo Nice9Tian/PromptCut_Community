@@ -20,6 +20,7 @@ import { sound } from "./actions/sound";
 import { captions } from "./actions/captions";
 import { cuts } from "./actions/cuts";
 import { properties } from "./actions/properties";
+import { picture } from "./actions/picture";
 
 export const actions = {
   ...coreActions,
@@ -34,4 +35,5 @@ export const actions = {
   ...captions,
   ...cuts,
   ...properties,
+  ...picture,
 };

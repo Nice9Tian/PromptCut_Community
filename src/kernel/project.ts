@@ -355,6 +355,19 @@ export interface TrackClip extends Clip {
   /** Generic pixel map: references one entry in project.pixelMaps. Only video / image clips have it. */
   pixelMap?: import("./pixelMap.mjs").ClipPixelMap;
   /**
+   * Crop of the picture (the timeline's Crop): the part of the source picture that is shown, in
+   * fractions of its width and height (0~1, origin top-left, measured before mirroring). The cropped
+   * part covers the clip's box the way a whole picture does (object-fit: cover). Only video / image
+   * clips; absent = the whole picture, never stored as {0,0,1,1}. kernel/mediaPicture.mjs.
+   */
+  crop?: import("./mediaPicture.mjs").ClipCrop;
+  /**
+   * Mirror (the timeline's Mirror): the picture flipped left ↔ right inside the clip's box; the box
+   * itself (position, size, rotation) does not move, and emphasis shadows keep their direction.
+   * Only video / image clips; written only as `true`, the key is removed when mirroring is turned off.
+   */
+  flipX?: boolean;
+  /**
    * Attached audio effect: references one entry in project.audioFx + the parameter values for this
    * clip. Only video / audio clips have it. See kernel/audioFx.mjs
    */
@@ -662,6 +675,9 @@ export interface Board3DClip extends Clip {
   speed?: number;
   filter?: import("./filters.mjs").ClipFilter;
   pixelMap?: import("./pixelMap.mjs").ClipPixelMap;
+  /** Crop and mirror of the media picture (TrackClip.crop / flipX), painted onto the board's texture */
+  crop?: import("./mediaPicture.mjs").ClipCrop;
+  flipX?: boolean;
   emphasis?: import("./emphasis").ClipEmphasis;
   trackId?: string;
   label?: string;
@@ -700,6 +716,8 @@ export function flattenBoards3D(p: Project): Board3DClip[] {
         ...(c.speed !== undefined ? { speed: c.speed } : null),
         ...(c.filter ? { filter: c.filter } : null),
         ...(c.pixelMap ? { pixelMap: c.pixelMap } : null),
+        ...(c.crop ? { crop: c.crop } : null),
+        ...(c.flipX ? { flipX: true } : null),
         ...(c.emphasis ? { emphasis: c.emphasis } : null),
         ...(c.frame ? { frame: c.frame } : null),
         ...(c.frameExpr ? { frameExpr: c.frameExpr } : null),

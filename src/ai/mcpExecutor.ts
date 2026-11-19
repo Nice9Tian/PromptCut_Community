@@ -59,7 +59,7 @@ export interface EditorApi {
   listMedia(): any;
   getSelection(): any;
   addClip(args: { cardId: string; start: number; duration?: number; trackId?: string; params?: any }): any;
-  updateClip(args: { clipId: string; start?: number; end?: number; cardId?: string; params?: any; opacity?: number; fadeIn?: number; fadeOut?: number; label?: string; trackId?: string }): any;
+  updateClip(args: { clipId: string; start?: number; end?: number; cardId?: string; params?: any; opacity?: number; fadeIn?: number; fadeOut?: number; label?: string; trackId?: string; flipX?: boolean; crop?: { x: number; y: number; w: number; h: number } | null }): any;
   /**
    * Card-level addressing (the root node of the scene graph). When part-level is added, add a node
    * parameter; the signature does not need to change
