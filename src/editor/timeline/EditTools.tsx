@@ -2,7 +2,7 @@
  * The edit tools at the left of the timeline toolbar: Split (Ctrl+B), Mirror, Rotate, Crop
  * (workflow/editing.md "User interactive correction").
  *
- * What each button acts on and why one is greyed out is `editToolStates` (`editTools.ts`); the edits
+ * What each button acts on and why one is greyed out is `editToolStates` (`editToolStates.ts`); the edits
  * are store actions (`splitClips`, `setClipsFlipX`, `rotateClips`, `cropClip`), so several selected
  * clips change in one undo step and the Agent sees the same data (`update_clip` writes crop / mirror).
  * The toolbar is part of the timeline, so the tools are wherever the timeline is mounted: the editor
@@ -16,7 +16,7 @@ import { actions, getState, useStore } from "../../store/project";
 import { useReadOnly } from "../readOnly";
 import { blockedByReadOnly } from "../readOnlyCore";
 import { splitKey } from "../undoKeys";
-import { editToolStates, type EditToolState } from "./editTools";
+import { editToolStates, type EditToolState } from "./editToolStates";
 import { CropDialog } from "./CropDialog";
 import { IconCrop, IconMirror, IconRotate, IconSplit } from "../../ui/icons";
 import { tr } from "../../i18n/index.ts";

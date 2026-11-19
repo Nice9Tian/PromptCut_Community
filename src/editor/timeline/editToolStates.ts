@@ -1,7 +1,7 @@
 /**
  * What the timeline's edit tools (Split, Mirror, Rotate, Crop; `EditTools.tsx`) would act on right
  * now, and what each button's tooltip says: a pure function of the project, the selection and the
- * playhead, unit-tested (`editTools.test.mjs`).
+ * playhead, unit-tested (`editToolStates.test.mjs`).
  *
  * The rules themselves are the store's (`splitBlock` / `rotateBlock` in kernel/clipEditRules.ts,
  * `pictureEditBlock` in kernel/mediaPicture.mjs), so a button is enabled exactly when its action would

@@ -1,12 +1,12 @@
 /**
- * Which clips the timeline's edit tools act on, and what a greyed-out button says (editTools.ts).
- * Run: node --test src/editor/timeline/editTools.test.mjs
+ * Which clips the timeline's edit tools act on, and what a greyed-out button says (editToolStates.ts).
+ * Run: node --test src/editor/timeline/editToolStates.test.mjs
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { editToolStates } = await import(srcUrl("editor/timeline/editTools.ts"));
+const { editToolStates } = await import(srcUrl("editor/timeline/editToolStates.ts"));
 
 const clip = (id, extra = {}) => ({ id, cardId: "", params: {}, start: 0, end: 10, ...extra });
 const project = (tracks, extra = {}) => ({
