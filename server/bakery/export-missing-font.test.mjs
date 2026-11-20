@@ -22,6 +22,6 @@ test("confirmed-missing Chinese proxy prefers the deployed Noto Sans CJK", () =>
 });
 
 test("reports a resource error when no usable platform Chinese font exists", () => {
-  assert.throws(() => findMissingMaterialFontFile({ platform: "linux", exists: () => false }), /requires a Chinese proxy font/);
+  assert.throws(() => findMissingMaterialFontFile({ platform: "linux", exists: () => false }), /needs a Chinese fallback font/);
 });
 
