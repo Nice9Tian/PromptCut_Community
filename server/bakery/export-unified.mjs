@@ -1,34 +1,13 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { bakeFrames } from './bake.mjs';
 import { openBakery } from './chrome.mjs';
 import { findFfmpeg, streamPngVideo } from './ffmpeg.mjs';
 import { resolveWorkers } from './shards.mjs';
 import { resumableSink, retryOnBrowserLoss, useBakery } from './browser-loss.mjs';
-import { planShardRanges } from '../../src/render/shardPlan.mjs';
-
-function concatPath(file) {
-  return String(file).replace(/\\/g, '/').replace(/'/g, "'\\''");
-}
-
-/** Join independently encoded part movies without decoding them again. */
-async function concatVideos(ffmpeg, parts, output) {
-  if (!parts.length) throw new Error('No export shards to merge');
-  const list = output + '.concat.txt';
-  await fs.writeFile(list, parts.map((file) => `file '${concatPath(path.resolve(file))}'`).join('\n') + '\n', 'utf8');
-  try {
-    await new Promise((resolve, reject) => {
-      const proc = spawn(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list,
-        '-c', 'copy', output], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
-      let stderr = '';
-      proc.stderr.on('data', (d) => { stderr = (stderr + d).slice(-8000); });
-      proc.on('error', reject);
-      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Failed to merge export shards (ffmpeg ${code}): ${stderr}`)));
-    });
-  } finally { await fs.rm(list, { force: true }); }
-}
+// Join independently encoded part movies without decoding them again (shared via ./children.mjs).
+import { concatVideos } from './children.mjs';
+import { planShardRanges, shardPushDrawFrom } from '../../src/render/shardPlan.mjs';
 
 /** Card clips of a project with an unknown frame mode, which the planner treats
  * as stateful. Used only when the export page cannot report modes. */
@@ -36,6 +15,31 @@ export function projectCardClips(project) {
   return (project.tracks || []).filter(track => !track.hidden)
     .flatMap(track => (track.clips || []).filter(clip => clip.cardId || clip.nodeId))
     .map(clip => ({ id: clip.id, start: Number(clip.start), end: Number(clip.end) }));
+}
+
+async function openSingleShardStreams({ enabled, ffmpeg, out, project, fps, startFrame, endFrame, liveComposeFactory }) {
+  if (!enabled) return null;
+  const overlayFile = path.join(out, 'overlay.mov');
+  const overlay = streamPngVideo(ffmpeg, overlayFile, fps);
+  let compose = null;
+  try {
+    if (liveComposeFactory) {
+      compose = await liveComposeFactory({
+        width: project.width || 1920, height: project.height || 1080, fps,
+        startFrame, endFrame, framesDir: path.join(out, 'frames'), ext: 'png',
+      });
+    }
+  } catch (error) {
+    await overlay.abort().catch(() => {});
+    throw error;
+  }
+  return {
+    overlayFile,
+    hasCompose: !!compose,
+    write: (buf) => Promise.all([overlay.write(buf), compose?.write(buf)]),
+    finish: () => Promise.all([overlay.finish(), compose?.finish()]),
+    abort: () => Promise.all([overlay.abort().catch(() => {}), compose?.abort().catch(() => {})]),
+  };
 }
 
 /** Stream each shard through Chrome/bakeFrames without retaining the HTML archive. */
@@ -52,17 +56,19 @@ export async function exportUnified(project, opts) {
   // Only the export page knows each card's frame mode, so it plans the cuts.
   // That page then renders the first shard instead of costing another Chrome.
   let plannerBakery = null;
+  let planClips = null;
   let ranges = [[startFrame, endFrame]];
-  let partVideos = false, ffmpeg = null, partsDir = null;
+  let partVideos = false, singleOverlay = false, ffmpeg = null, partsDir = null;
   try {
     if (!targetFrames && requestedWorkers > 1) {
       plannerBakery = await openBakery({ ...opts, url: opts.url });
-      const clips = await plannerBakery.page.evaluate(() => window.__pcClipFrameModes?.() ?? null);
-      ranges = planShardRanges(clips ?? projectCardClips(project), startFrame, endFrame, fps, requestedWorkers);
+      planClips = (await plannerBakery.page.evaluate(() => window.__pcClipFrameModes?.() ?? null)) ?? projectCardClips(project);
+      ranges = planShardRanges(planClips, startFrame, endFrame, fps, requestedWorkers);
       console.log(`Shard export: ${ranges.length} segments ${ranges.map(([a, b]) => `${a}-${b}`).join(' ')}`);
     }
     partVideos = !opts.noVideo && ranges.length > 1 && !targetFrames;
-    ffmpeg = partVideos ? await findFfmpeg() : null;
+    singleOverlay = !!opts.streamSingleOverlay && ranges.length === 1 && !partVideos && !opts.noVideo && !targetFrames && !opts.frames && !opts.onFrame;
+    ffmpeg = (partVideos || singleOverlay) ? await findFfmpeg() : null;
     partsDir = partVideos ? path.join(out, 'parts') : null;
     if (partsDir) await fs.mkdir(partsDir, { recursive: true });
   } catch (error) {
@@ -72,7 +78,9 @@ export async function exportUnified(project, opts) {
   const started = Date.now();
   let completed = 0;
   let first = null;
+  let singleStreams = null;
   const shardProgress = new Map();
+  const { streamSingleOverlay: _sso, liveComposeFactory, ...bakePassOpts } = opts;
   const render = async ([a, b], shardIndex) => {
     // Shard 0 owns the planner's Chrome until it hands it to useBakery. If the
     // shard fails before that (e.g. its part directory cannot be created), close it.
@@ -87,14 +95,23 @@ export async function exportUnified(project, opts) {
     let stream = null;
     try {
       if (partsDir) await fs.mkdir(partDir, { recursive: true });
-      stream = partFile ? streamPngVideo(ffmpeg, partFile, fps) : null;
+      if (partFile) stream = streamPngVideo(ffmpeg, partFile, fps);
+      else if (singleOverlay) {
+        singleStreams = await openSingleShardStreams({
+          enabled: true, ffmpeg, out, project, fps, startFrame: a, endFrame: b, liveComposeFactory,
+        });
+      }
     } catch (error) {
       await releasePlanner();
       throw error;
     }
     // A lost Chrome (server/bakery/browser-loss.mjs) restarts the shard from its safe
     // cut in a new browser; frames already delivered are not written twice.
-    const deliver = stream ? (_frame, buf) => stream.write(buf) : opts.onFrame;
+    const deliver = stream
+      ? (_frame, buf) => stream.write(buf)
+      : singleStreams
+        ? (_frame, buf) => singleStreams.write(buf)
+        : bakePassOpts.onFrame;
     const sink = deliver ? resumableSink(deliver) : null;
     let finished = false;
     try {
@@ -102,21 +119,26 @@ export async function exportUnified(project, opts) {
         sink?.begin();
         const usePlanner = attempt === 0 && shardIndex === 0 && plannerBakery && !plannerHandedOver;
         if (usePlanner) plannerHandedOver = true;
-        const bakery = usePlanner ? plannerBakery : await openBakery({ ...opts, url: opts.url });
+        const bakery = usePlanner ? plannerBakery : await openBakery({ ...bakePassOpts, url: bakePassOpts.url });
+        // Frame-push catch-up drawing (header of `bake.mjs`): from the second shard onward, cuts with no
+        // stateful cards spanning across them skip catch-up (`pushDraw: false`) because earlier cards have
+        // already been unmounted; cuts within a newly mounted card's pre-mount lead (`shardPushDrawFrom`)
+        // catch up only from `pushDrawFrom` instead of redrawing all earlier frames. The first shard runs
+        // as usual (when exporting only one section, cards on frames before it might still be alive).
+        const leadDrawFrom = shardIndex > 0 && typeof bakePassOpts.pushDraw !== 'boolean'
+          ? shardPushDrawFrom(planClips, a, fps) : null;
+        const pushOpts = shardIndex > 0 && typeof bakePassOpts.pushDraw !== 'boolean'
+          ? (leadDrawFrom === null ? { pushDraw: false } : { pushDraw: true, pushDrawFrom: leadDrawFrom })
+          : {};
         return useBakery(bakery, () => bakeFrames(bakery, {
           // This movie is the final browser composition. The HTML-only snapshot
           // path intentionally omits video sources and cannot produce its frames.
-          ...opts, fullFrame: true, out: partDir, url: opts.url, frames: `${a}-${b}`, workers: 1, onProgressLog: false,
+          ...bakePassOpts, fullFrame: true, out: partDir, url: bakePassOpts.url, frames: `${a}-${b}`, workers: 1, onProgressLog: false,
           // A static-skip mismatch re-runs the whole pass, which would stream
           // the frames before the mismatch a second time.
           ...(sink ? { onFrame: sink.write, staticSkip: false } : {}),
           ...(stream ? { writeFrames: false } : {}),
-          // Frame-push catch-up drawing (header of `bake.mjs`): no catch-up from the second shard onward:
-          // cut points only land on frames with no stateful cards spanning across them, and cards pushed
-          // earlier have all been unmounted by the cut point; catching up would require each shard to
-          // actually redraw earlier frames. The first shard runs as usual (when exporting only one section,
-          // cards on frames before it might still be alive).
-          ...(shardIndex > 0 && typeof opts.pushDraw !== 'boolean' ? { pushDraw: false } : {}),
+          ...pushOpts,
           quiet: true,
           onProgress: (frame) => {
             const local = Math.max(0, Math.min(b, frame) - a + 1);
@@ -129,11 +151,13 @@ export async function exportUnified(project, opts) {
         }));
       }, { label: `Shard ${a}-${b}` });
       if (stream) { await stream.finish(); finished = true; }
+      if (singleStreams) { await singleStreams.finish(); finished = true; }
       result.part = { startFrame: a, endFrame: b, file: partFile };
       first ||= result;
       return result;
     } catch (error) {
       if (stream && !finished) await stream.abort().catch(() => {});
+      if (singleStreams && !finished) await singleStreams.abort().catch(() => {});
       await releasePlanner();
       throw error;
     }
@@ -155,6 +179,8 @@ export async function exportUnified(project, opts) {
     durationSec: (allFrames.length / fps).toFixed(3), reused: results.reduce((n, r) => n + (r.reused || 0), 0),
     elapsed: ((Date.now() - started) / 1000).toFixed(1),
     cardsVideo,
+    cardsVideoStreamed: singleStreams?.overlayFile ?? null,
+    previewStreamed: !!singleStreams?.hasCompose,
     parts: results.map((r) => r.part).filter(Boolean),
     glass: { dir: first?.glass?.dir ?? null, list: results.flatMap(r => r.glass?.list || []), blurs: [...new Set(results.flatMap(r => r.glass?.blurs || []))] },
   };

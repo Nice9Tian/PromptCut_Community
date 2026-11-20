@@ -12,15 +12,25 @@
  */
 import { fileURLToPath } from 'url';
 import { exportFrames } from '../server/bakery/index.mjs';
+import { killTrackedChildren } from '../server/bakery/children.mjs';
 
 export * from '../server/bakery/index.mjs';
 
 const isMain = import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url);
 
 if (isMain) {
+  const controller = new AbortController();
+  const handleSignal = (code) => {
+    controller.abort();
+    killTrackedChildren();
+    process.exit(code);
+  };
+  process.once('SIGTERM', () => handleSignal(143));
+  process.once('SIGINT', () => handleSignal(130));
+
   const args = process.argv.slice(2);
   // Chunk by machine resources by default; explicit --workers 1 reproduces the single-process path.
-  const opts = { noVideo: false, workers: 'auto' };
+  const opts = { noVideo: false, workers: 'auto', signal: controller.signal };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--url') opts.url = args[++i];
     else if (args[i] === '--workers') opts.workers = args[++i];
@@ -38,6 +48,7 @@ if (isMain) {
     else if (args[i] === '--target-frames') opts.targetFrames = args[++i].split(',').map(Number).filter(Number.isFinite);
   }
   exportFrames(opts).catch(e => {
+    killTrackedChildren();
     console.error(e);
     process.exit(1);
   });

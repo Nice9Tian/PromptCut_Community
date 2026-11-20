@@ -20,7 +20,7 @@ export async function waitFrameReady(bakery, signal) {
   while (!done) {
     // Usually the gate completes without an extra tick. Async loaders that
     // depend on rAF must get ticks while their promise is pending.
-    await Promise.race([task, new Promise(resolve => setTimeout(resolve, 4))]);
+    await Promise.race([task, new Promise(resolve => setTimeout(resolve, 1))]);
     if (signal?.aborted) throw Object.assign(new Error('Frame request cancelled'), { cancelled: true });
     if (!done) {
       if (Date.now() - start > 20000) throw new Error('Controls, fonts or images were not ready within 20 seconds, screenshot stopped');

@@ -70,6 +70,12 @@ import { prepareFrameMedia } from './frame-media.mjs';
  * unmounted by the cut point, so not push-drawing is also correct (verified against the probe's
  * shards check); if push-drawn, each shard would have to actually redraw all preceding frames,
  * making three shards slower than a single process (measured, see report).
+ * The one exception is a cut inside a stateful card's pre-mount lead (`shardCutCandidates` allows
+ * it, `shardPushDrawFrom` says from where): that shard push-draws from `pushDrawFrom`, a couple of
+ * frames before the card mounts, so the card's Motion/WAAPI animations are built on the same ticks
+ * as in a single pass. Frames before `pushDrawFrom` are stepped with `noDisplayUpdates` (see
+ * `createStepper`): no card alive at the cut has seen them, so skipping their raster cannot change
+ * a captured frame.
  *
  * `PROMPTCUT_PUSH_DRAW=0` (or `opts.pushDraw === false`) turns it off, used only by probes to
  * compare with "before fix"; never set in production.
@@ -116,6 +122,42 @@ export async function drawDiscarded(bakery, prime, signal) {
     if (result?.screenshotData) break;
   }
   return ticks;
+}
+
+async function shootSnapshotInPage({ bakery, shotParams, prime, flushFrameLoop, render3DCut }) {
+  const { page, beginFrame } = bakery;
+  // Pixel maps and 3D cuts rasterize hidden source media into canvases before creating the HTML snapshot.
+  const { hasPixelMap, has3DCut } = await page.evaluate(() => ({
+    hasPixelMap: !!document.querySelector("canvas[data-pc-pixel-map]"),
+    has3DCut: !!document.querySelector("canvas[data-pc-3d-cut]"),
+  }));
+  if (hasPixelMap || has3DCut) {
+    await prepareFrameMedia(bakery);
+    if (hasPixelMap) {
+      await beginFrame();
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    }
+  }
+  // prime checks only "whether previous frame had screenshot", unaware if renderPass already stepped
+  // this frame: prefer drawing an extra tick (idempotent)
+  await flushFrameLoop(prime);
+  if (has3DCut) await render3DCut();
+  if (typeof page.evaluateHandle !== 'function') {
+    const snapshot = await page.evaluate(() => window.__pcCreateSnapshot());
+    if (has3DCut) await page.evaluate(() => window.__pcHideFrameMedia?.());
+    if (snapshot.lossy) throw new Error(`Cannot snapshot ${snapshot.lossy} canvas elements`);
+    return captureSnapshot(bakery, snapshot.html, shotParams);
+  }
+  const snapHandle = await page.evaluateHandle((hideMediaAfter) => {
+    const snap = window.__pcCreateSnapshot();
+    if (hideMediaAfter) window.__pcHideFrameMedia?.();
+    return snap;
+  }, has3DCut);
+  try {
+    return await captureSnapshot(bakery, snapHandle, shotParams);
+  } finally {
+    await snapHandle.dispose().catch(() => {});
+  }
 }
 
 /**
@@ -271,46 +313,16 @@ export async function bakeFrames(bakery, opts = {}) {
     // MOV/full-scene cache: keep the live scene (including video/image media)
     // visible. HTML snapshots deliberately remove video sources, so they can
     // never be used as the full-frame movie source.
-    if (opts.fullFrame) {
-      await prepareFrameMedia(bakery);
-      if (await page.evaluate(() => !!document.querySelector("canvas[data-pc-3d-cut]"))) {
+    if (opts.fullFrame || opts.glassFrames) {
+      const hasMedia = await prepareFrameMedia(bakery);
+      const has3DCut = await page.evaluate(() => !!document.querySelector("canvas[data-pc-3d-cut]"));
+      if (has3DCut) {
         await flushFrameLoop(prime);
         await render3DCut();
       }
-      return captureFrame(bakery, shotParams, opts.signal, captureOpts);
+      return captureFrame(bakery, shotParams, opts.signal, { ...captureOpts, skipReady: !hasMedia && !has3DCut });
     }
-    if (!opts.glassFrames) {
-      // Pixel maps and 3D cuts rasterize hidden source media into canvases before creating the HTML snapshot.
-      const { hasPixelMap, has3DCut } = await page.evaluate(() => ({
-        hasPixelMap: !!document.querySelector("canvas[data-pc-pixel-map]"),
-        has3DCut: !!document.querySelector("canvas[data-pc-3d-cut]"),
-      }));
-      if (hasPixelMap || has3DCut) {
-        await prepareFrameMedia(bakery);
-        if (hasPixelMap) {
-          await beginFrame();
-          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-        }
-      }
-      // prime checks only "whether previous frame had screenshot", unaware if renderPass already stepped
-      // this frame: prefer drawing an extra tick (idempotent)
-      await flushFrameLoop(prime);
-      if (has3DCut) {
-        await render3DCut();
-      }
-      const snapshot = await page.evaluate(() => window.__pcCreateSnapshot());
-      if (has3DCut) {
-        await page.evaluate(() => window.__pcHideFrameMedia?.());
-      }
-      if (snapshot.lossy) throw new Error(`Cannot snapshot ${snapshot.lossy} canvas elements`);
-      return captureSnapshot(bakery, snapshot.html, shotParams);
-    }
-    await prepareFrameMedia(bakery);
-    if (await page.evaluate(() => !!document.querySelector("canvas[data-pc-3d-cut]"))) {
-      await flushFrameLoop(prime);
-      await render3DCut();
-    }
-    return captureFrame(bakery, shotParams, opts.signal, captureOpts);
+    return shootSnapshotInPage({ bakery, shotParams, prime, flushFrameLoop, render3DCut });
   };
 
   // How to step a frame is provided by createStepper (shared with bakeStream); whether to capture
@@ -327,6 +339,7 @@ export async function bakeFrames(bakery, opts = {}) {
   // Push-draw: whether enabled, and total extra ticks issued in this pass for stepped frames
   // (for diagnostics and unit tests only)
   const pushDraw = pushDrawEnabled(opts);
+  const pushDrawFrom = Number.isInteger(opts.pushDrawFrom) ? opts.pushDrawFrom : 0;
   let pushDrawn = 0;
 
   /*
@@ -393,8 +406,9 @@ export async function bakeFrames(bakery, opts = {}) {
        */
       if (opts.signal?.aborted) throw Object.assign(new Error('Cancelled'), { cancelled: true });
       const wantShot = targetFrames ? targetFrames.has(i) : i >= startFrame;
-      const isStatic = await step(i, wantShot);
       const snapshotWanted = domDir || (opts.onSnapshot && (!opts.snapshotFrames || opts.snapshotFrames.has(i)));
+      const fastAdvance = !wantShot && !snapshotWanted && !(pushDraw && i >= pushDrawFrom);
+      const isStatic = await step(i, wantShot, fastAdvance);
       if (snapshotWanted) {
         await flushFrameLoop(lastDrawnFrame !== i - 1);
         lastDrawnFrame = i;
@@ -415,7 +429,7 @@ export async function bakeFrames(bakery, opts = {}) {
         // Push-draw (see file header): if this frame does not capture an image, was not drawn for snapshot
         // generation, and visuals have changed, draw a tick and discard it. Accounted as "captured" so next
         // frame does not need to discard one first
-        if (pushDraw && lastDrawnFrame !== i && pushDrawNeeded({ isStatic, damaged: step.last.damaged, drawnBefore: lastDrawnFrame !== null, previousDrawn: lastDrawnFrame === i - 1 })) {
+        if (pushDraw && i >= pushDrawFrom && lastDrawnFrame !== i && pushDrawNeeded({ isStatic, damaged: step.last.damaged, drawnBefore: lastDrawnFrame !== null, previousDrawn: lastDrawnFrame === i - 1 })) {
           pushDrawn += await drawDiscarded(bakery, lastDrawnFrame === null, opts.signal);
           lastShotFrame = lastDrawnFrame = i;
         }
@@ -517,8 +531,9 @@ export function createStepper(bakery, { fps, directFrameAt = frame => frame, sig
   // Push-draw needs to know whether any tick in this frame reported visual changes (`hasDamage`);
   // ticks themselves run as usual, merely inspecting the receipt
   const beginFrame = async (extra) => { const result = await bakery.beginFrame(extra); if (result?.hasDamage) step.last.damaged = true; return result; };
-  const readyHost = { page, beginFrame, waitNet };
-  const step = async (frameIndex, wantTrace) => {
+  const step = async (frameIndex, wantTrace, noDisplayUpdates = false) => {
+    const tickArg = noDisplayUpdates ? { noDisplayUpdates: true } : undefined;
+    const readyHost = { page, beginFrame: (extra) => beginFrame(extra ?? tickArg), waitNet };
     step.last = { frame: frameIndex, damaged: false };
     // Both counters must be retrieved before stepping and compared after stepping; retrieval and
     // dispatch time are merged into a single evaluate
@@ -531,7 +546,7 @@ export function createStepper(bakery, { fps, directFrameAt = frame => frame, sig
     // Requests issued during mounting (dynamic imports, assets) must settle first before stepping this tick
     await waitNet();
     await page.evaluate(() => window.__bfSettle());
-    await beginFrame();
+    await beginFrame(tickArg);
     await waitNet();
     /*
      * Drain → pin animations → drain again → probe, completed in a single in-page call.
@@ -555,7 +570,7 @@ export function createStepper(bakery, { fps, directFrameAt = frame => frame, sig
       // and a random seek differs from a sequential export by one subtitle frame.
       const finished = probe.finished;
       for (let pass = 0; pass < 2; pass++) {
-        await beginFrame();
+        await beginFrame(tickArg);
         probe = await page.evaluate(async () => {
           await window.__bfSettle();
           window.__pcSyncAnims?.();

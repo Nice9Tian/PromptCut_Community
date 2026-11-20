@@ -225,3 +225,17 @@ test("buildComposeArgs: without an explicit font, the confirmed-missing text pro
   const layers = [{ clip: { id: "lost", mediaId: "v1", start: 0, end: 1, frame: { x: 0, y: 0, w: 640, h: 360, anchor: [0, 0], scale: 1, rotate: 0 } }, media, src: null, missingMaterial: true }];
   assert.throws(() => buildComposeArgs({ width: 1920, height: 1080, fps: 30, startFrame: 0, endFrame: 29, cardsPattern: "f/%06d.png", layers, out: "o.mp4" }), /requires an explicit Chinese font file/);
 });
+
+
+test("buildComposeArgs: streamed card inputs (image2pipe PNG and NUT pipe) omit -nostdin and preserve filtergraph", async () => {
+  const { escapeTeePath } = await import("../bakery/ffmpeg.mjs");
+  assert.equal(escapeTeePath("C:\\out\\a[1]:b.mov"), "C\\:/out/a\\[1\\]\\:b.mov");
+
+  const pngPipe = build({ cardsPipe: true });
+  assert.ok(!pngPipe.args.includes("-nostdin"));
+  assert.ok(pngPipe.args.includes("image2pipe"));
+
+  const nutPipe = build({ cardsNutPipe: true });
+  assert.ok(!nutPipe.args.includes("-nostdin"));
+  assert.ok(nutPipe.args.includes("nut"));
+});
