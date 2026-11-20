@@ -293,10 +293,13 @@ try {
   const oldBase = base;
   const pid = await (async () => {
     // Prerender process was spawned by editor process, so it is the tree we started. Find its PID by port.
+    // Only the listening socket names it: plain `lsof -ti tcp:<port>` also lists every process
+    // connected to that port, this probe included (fetch keeps its connections alive), and the
+    // first PID it printed could be the probe itself, which then SIGKILLed itself at this step.
     const port = new URL(oldBase).port;
     const { execSync } = await import('node:child_process');
     try {
-      const text = execSync(process.platform === 'win32' ? `netstat -ano -p tcp` : `lsof -ti tcp:${port}`, { windowsHide: true, encoding: 'utf8' });
+      const text = execSync(process.platform === 'win32' ? `netstat -ano -p tcp` : `lsof -ti tcp:${port} -sTCP:LISTEN`, { windowsHide: true, encoding: 'utf8' });
       if (process.platform !== 'win32') return Number(text.trim().split(/\s+/)[0]);
       const line = text.split(/\r?\n/).find(l => l.includes(`127.0.0.1:${port}`) && l.includes('LISTENING'));
       return line ? Number(line.trim().split(/\s+/).pop()) : null;
