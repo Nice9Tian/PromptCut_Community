@@ -189,6 +189,29 @@ async function waitForCanvas(stage: StageRpcClient, clipId: string): Promise<voi
 }
 
 /**
+ * Why one measurement produced no per-frame time:
+ * - `interrupted`: the stage is switching (role changed, iframe replaced) — says nothing about speed;
+ * - `stalled`: the stage did not keep up — a call judged by duration timed out, or the probe cap was
+ *   hit before a single frame was pushed;
+ * - `error`: anything else (the stage reported an error, empty reply).
+ */
+export type MeasureMissReason = "interrupted" | "stalled" | "error";
+export interface MeasureMiss {
+  miss: MeasureMissReason;
+  detail: string;
+  /** No reply came at all (a call judged by duration timed out): it may have been dropped by an in-place reload, so it is worth measuring again */
+  noReply?: true;
+}
+
+/** Sort an error thrown by a stage call (`createStageRpc`: "timed out" for calls judged by duration, "detached" when the iframe went away) */
+export function missOfError(err: unknown): MeasureMiss {
+  const detail = err instanceof Error ? err.message : String(err);
+  if (/timed out/i.test(detail)) return { miss: "stalled", detail, noReply: true };
+  if (/detached/i.test(detail)) return { miss: "interrupted", detail };
+  return { miss: "error", detail };
+}
+
+/**
  * In the stage (already switched to `back`), measure the live render per-frame time of one card:
  * timing only, no snapshots generated. Returns `{ stepMs, samples }`, or null if it cannot be
  * measured; returns `'retry'` if interrupted by a project reload.
@@ -199,6 +222,30 @@ export async function measureOnce(
   pushProject: (project: Project) => Promise<void>,
   tuning: PipelineTuning,
 ): Promise<{ stepMs: number; samples: number } | null | "retry"> {
+  const r = await measureOnceDetailed(stage, job, pushProject, tuning);
+  return r === "retry" || "stepMs" in r ? r : null;
+}
+
+/** Same as `measureOnce`, but says why there is no result (`MeasureMiss`); stage call errors are caught and sorted too */
+export async function measureOnceDetailed(
+  stage: StageRpcClient,
+  job: MeasureJob,
+  pushProject: (project: Project) => Promise<void>,
+  tuning: PipelineTuning,
+): Promise<{ stepMs: number; samples: number } | MeasureMiss | "retry"> {
+  try {
+    return await measureSteps(stage, job, pushProject, tuning);
+  } catch (err) {
+    return missOfError(err);
+  }
+}
+
+async function measureSteps(
+  stage: StageRpcClient,
+  job: MeasureJob,
+  pushProject: (project: Project) => Promise<void>,
+  tuning: PipelineTuning,
+): Promise<{ stepMs: number; samples: number } | MeasureMiss | "retry"> {
   await pushProject(job.project);
   await stage.setTime(0);
   await sleep(MOUNT_SETTLE_MS);
@@ -216,7 +263,7 @@ export async function measureOnce(
     const frames = [...picks].sort((a, b) => a - b);
     for (const n of frames) {
       const r = await stage.setTime(n / job.fps, { probe: true });
-      if (isSetTimeAborted(r)) return null;
+      if (isSetTimeAborted(r)) return { miss: "interrupted", detail: `setTime aborted: ${r.reason}` };
       steps.push(Number(r.stepMs) || 0);
     }
     totalFrames = frames.length;
@@ -227,12 +274,12 @@ export async function measureOnce(
     const timePass = await stage.render(lastSec, { jump: true, probe: "time", maxCatchUp: Infinity, maxFrames: PROBE_MAX_FRAMES });
     if (isAborted(timePass)) {
       if (timePass.reason === "project" || timePass.reason === "superseded") return "retry";
-      if (timePass.reason !== "timeout") return null;
+      if (timePass.reason !== "timeout") return { miss: "interrupted", detail: `render aborted: ${timePass.reason}` };
       truncated = true; // Hit the cap: the normal path for long clips, computed from the frames already pushed
     }
     for (const s of (timePass as { steps?: number[] }).steps ?? []) steps.push(Number(s) || 0);
   }
-  if (!steps.length) return null;
+  if (!steps.length) return truncated ? { miss: "stalled", detail: "probe cap reached before the first frame" } : { miss: "error", detail: "no frames measured" };
   const summary = summarizeProbe({ kind, steps, inline: [], raster: [], serialize: [], totalFrames, truncated }, tuning);
   return { stepMs: Number(summary.stepMs.toFixed(3)), samples: steps.length };
 }
@@ -338,26 +385,32 @@ function createLease(deps: CostSearchDeps, estimate: number, jobs: Map<string, M
   let leased: StageRpcClient | null = null;
   let done = 0;
   const fresh: SharedCostInput[] = [];
+  /** Why the last `measure` gave no result (null when it gave one); read by the baseline card */
+  let lastMiss: MeasureMiss | null = null;
   const measure = async (key: string): Promise<{ stepMs: number; samples: number } | null> => {
+    lastMiss = null;
     const job = jobs.get(key);
     const stage = deps.stage();
-    if (!job || !stage) return null;
+    if (!job || !stage) { lastMiss = { miss: "interrupted", detail: job ? "no stage" : "no job" }; return null; }
     if (!leased) {
       setState({ measuring: true, done: 0, estimate, card: job.cardId });
-      if (deps.borrow !== false) { try { await stage.setRole("back", { job: "probe" }); } catch { return null; } }
+      if (deps.borrow !== false) { try { await stage.setRole("back", { job: "probe" }); } catch (err) { lastMiss = { ...missOfError(err), miss: "interrupted" }; return null; } }
       leased = stage;
     }
     setState({ card: job.cardId, done });
     try { deps.beforeMeasure?.(key, job.cardId); } catch { /* Failing to save a crash record does not block measurement */ }
     try {
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        const r = await measureOnce(stage, job, deps.pushProject, tuning);
+        const r = await measureOnceDetailed(stage, job, deps.pushProject, tuning);
         if (r === "retry") continue;
-        if (r) fresh.push({ identityKey: key, stepMs: r.stepMs, samples: r.samples, measuredAt: Date.now(), mode: deps.mode ?? "build" });
+        if (!("stepMs" in r)) { lastMiss = r; return null; }
+        fresh.push({ identityKey: key, stepMs: r.stepMs, samples: r.samples, measuredAt: Date.now(), mode: deps.mode ?? "build" });
         return r;
       }
+      lastMiss = { miss: "interrupted", detail: `reloaded ${MAX_ATTEMPTS} times while measuring` };
       return null;
-    } catch {
+    } catch (err) {
+      lastMiss = missOfError(err);
       return null;
     } finally {
       try { deps.afterMeasure?.(key); } catch { /* Same as above */ }
@@ -375,7 +428,7 @@ function createLease(deps: CostSearchDeps, estimate: number, jobs: Map<string, M
     setState({ measuring: false, card: null });
     try { await deps.restore(); } catch { /* The caller handles it itself */ }
   };
-  return { measure, end, fresh };
+  return { measure, end, fresh, lastMiss: () => lastMiss };
 }
 
 async function publishMeasured(deps: CostSearchDeps, fresh: SharedCostInput[]): Promise<void> {
@@ -457,18 +510,38 @@ export function benchmarkJob(): MeasureJob {
 }
 
 export interface BenchmarkOutcome {
-  /** `ok` can run, `slow` cannot run (goes to the lowest tier), `unknown` was not measured (the stage is switching, interrupted): does not count as unable to run */
+  /**
+   * `ok` can run, `slow` cannot run (goes to the lowest tier), `unknown` was not measured (the stage is
+   * switching, interrupted, or reported an error): does not count as unable to run.
+   * A stage that cannot keep up while measuring the baseline card (`stalled`: it replied that the probe
+   * cap was hit before the first frame, or did not answer twice in a row) counts as `slow`: it has no
+   * per-frame time because it is too slow, not because it was interrupted.
+   */
   verdict: "ok" | "slow" | "unknown";
   stepMs: number | null;
   budgetMs: number;
   scale: number;
+  /** No per-frame time: why (`MeasureMiss`); absent when measured */
+  miss?: MeasureMissReason;
+  detail?: string;
 }
 
-/** Judged from the per-frame time: per-frame time × cost multiplier > budget B means it cannot run */
-export function benchmarkVerdict(stepMs: number | null, tuning: PipelineTuning = resolveTuning(null)): BenchmarkOutcome {
+/**
+ * How many times in a row the stage may not answer at all (`stalled` with `noReply`) before the baseline
+ * card counts as unable to run: one missing reply may have been dropped by an in-place reload. A stage
+ * that replies "probe cap hit before the first frame" is not measured again: that reply is the evidence,
+ * and measuring again would push the verdict past the tier bubble's wait (`BUBBLE_WAIT_MS`).
+ */
+export const BENCHMARK_STALLS = 2;
+
+/** Judged from the per-frame time: per-frame time × cost multiplier > budget B means it cannot run; with no per-frame time, only a stalled stage counts as unable to run */
+export function benchmarkVerdict(stepMs: number | null, tuning: PipelineTuning = resolveTuning(null), miss?: MeasureMiss): BenchmarkOutcome {
   const budgetMs = budgetOf(BENCHMARK_FPS);
   const scale = tuning.COST_SCALE;
-  if (stepMs === null || !Number.isFinite(stepMs)) return { verdict: "unknown", stepMs: null, budgetMs, scale };
+  if (stepMs === null || !Number.isFinite(stepMs)) {
+    const why = miss ?? { miss: "interrupted" as const, detail: "not measured" };
+    return { verdict: why.miss === "stalled" ? "slow" : "unknown", stepMs: null, budgetMs, scale, miss: why.miss, detail: why.detail };
+  }
   return { verdict: stepMs * scale > budgetMs ? "slow" : "ok", stepMs, budgetMs, scale };
 }
 
@@ -478,6 +551,8 @@ export function benchmarkVerdict(stepMs: number | null, tuning: PipelineTuning =
  * when false (there is a background stage): the caller supplies `stage` and `pushProject` in the
  * background stage's single-flight queue. Before and after measuring, a crash record is left via
  * `beforeMeasure` / `afterMeasure`.
+ * A stage that did not answer is measured again, up to `BENCHMARK_STALLS` in a row; a reload interruption
+ * (`'retry'`) is measured again up to `MAX_ATTEMPTS` times, as for other cards.
  */
 export async function runBenchmark(deps: Pick<CostSearchDeps, "stage" | "pushProject" | "restore" | "currentProject" | "beforeMeasure" | "afterMeasure" | "tuning"> & { borrow: boolean }): Promise<BenchmarkOutcome> {
   const tuning = resolveTuning(deps.tuning ?? null);
@@ -486,21 +561,32 @@ export async function runBenchmark(deps: Pick<CostSearchDeps, "stage" | "pushPro
   if (deps.borrow) {
     const lease = createLease({ ...deps, mode: "build" } as unknown as CostSearchDeps, 1, new Map([[key, job]]), tuning);
     let r: { stepMs: number } | null = null;
-    try { r = await lease.measure(key); } finally { await lease.end(); }
-    return benchmarkVerdict(r?.stepMs ?? null, tuning);
+    let miss: MeasureMiss | null = null;
+    try {
+      for (let stalls = 0; stalls < BENCHMARK_STALLS; stalls++) {
+        r = await lease.measure(key);
+        miss = lease.lastMiss();
+        if (r || !miss?.noReply) break;
+      }
+    } finally { await lease.end(); }
+    return benchmarkVerdict(r?.stepMs ?? null, tuning, miss ?? undefined);
   }
   const stage = deps.stage();
-  if (!stage) return benchmarkVerdict(null, tuning);
+  if (!stage) return benchmarkVerdict(null, tuning, { miss: "interrupted", detail: "no stage" });
   try { deps.beforeMeasure?.(key, BENCHMARK_CARD_ID); } catch { /* Failing to save does not block */ }
   try {
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const r = await measureOnce(stage, job, deps.pushProject, tuning);
-      if (r === "retry") continue;
-      return benchmarkVerdict(r?.stepMs ?? null, tuning);
+    let reloads = 0;
+    let stalls = 0;
+    for (;;) {
+      const r = await measureOnceDetailed(stage, job, deps.pushProject, tuning);
+      if (r === "retry") {
+        if (++reloads < MAX_ATTEMPTS) continue;
+        return benchmarkVerdict(null, tuning, { miss: "interrupted", detail: `reloaded ${MAX_ATTEMPTS} times while measuring` });
+      }
+      if ("stepMs" in r) return benchmarkVerdict(r.stepMs, tuning);
+      if (r.miss === "stalled" && r.noReply && ++stalls < BENCHMARK_STALLS) continue;
+      return benchmarkVerdict(null, tuning, r);
     }
-    return benchmarkVerdict(null, tuning);
-  } catch {
-    return benchmarkVerdict(null, tuning);
   } finally {
     try { deps.afterMeasure?.(key); } catch { /* Same as above */ }
   }

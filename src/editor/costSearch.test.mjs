@@ -21,6 +21,10 @@
  *   LS-08 After bounds search completes for two stages, the section producing sparse versions for
  *          cards classified as heavy: holdCostSearchMask raises overlay with progress,
  *          releaseCostSearchMask dismisses it
+ *   LS-09 Baseline card (runBenchmark): measured → judged by the per-frame time; a stage that cannot
+ *          keep up (replies "probe cap hit before the first frame", or a call judged by duration times
+ *          out twice in a row) → slow (lowest tier); interrupted (role, detached, reloaded MAX_ATTEMPTS times, no
+ *          stage) or a stage error → unknown; the reason is in `miss` / `detail`
  *
  * Run: npm test -- src/editor/costSearch.test.mjs
  */
@@ -271,4 +275,108 @@ test("LS-08 The overlay stays up during the stretch that produces the sparse ver
   L.releaseCostSearchMask();
   assert.equal(seen.length, n, "Taking it down when it is not up sends no notification");
   off();
+});
+
+/**
+ * Scripted stage for the baseline card: each measurement takes the next entry of `script`:
+ * a number = measured with this per-frame time; "stall" = probe cap hit before the first frame;
+ * "rpc-timeout" = setTime(0) times out (`createStageRpc`'s duration judgement); "role" / "project" =
+ * render aborted with that reason; "detached" = the call is rejected as detached; "boom" = stage error.
+ */
+function scriptedStage(script, log) {
+  let i = 0;
+  let role = "front";
+  let next = null;
+  return {
+    calls: () => i,
+    async setRole(r) { role = r; log.push(`role:${r}`); return { ok: true }; },
+    async setTime(_t, opts = {}) {
+      if (opts.probe) return { path: "set", stepMs: 1 };
+      next = script[Math.min(i, script.length - 1)];
+      i++;
+      if (next === "rpc-timeout") throw new Error("stage rpc setTime: timed out");
+      if (next === "detached") throw new Error("stage rpc: detached");
+      if (next === "boom") throw new Error("card threw");
+      return { path: "set" };
+    },
+    async render(t) {
+      log.push(`render:${role}`);
+      if (typeof next === "number") return { remounted: true, caughtUpAtSec: t, elapsedMs: next * 60, stepMs: next, steps: Array.from({ length: 60 }, () => next) };
+      if (next === "stall") return { aborted: true, reason: "timeout", elapsedMs: 612, stepMs: 612, frames: 0, truncated: true, steps: [] };
+      return { aborted: true, reason: next };
+    },
+    async rectsWithBounds() { return []; },
+  };
+}
+
+function benchDeps(script, { borrow = false, stage: withStage = true } = {}) {
+  const log = [];
+  const stage = scriptedStage(script, log);
+  let restores = 0;
+  const marks = [];
+  return {
+    stage,
+    log,
+    restores: () => restores,
+    marks,
+    d: {
+      borrow,
+      stage: () => (withStage ? stage : null),
+      pushProject: async () => {},
+      restore: () => { restores++; },
+      currentProject: () => ({ version: 1, tracks: [] }),
+      beforeMeasure: (key) => marks.push(`before:${key}`),
+      afterMeasure: (key) => marks.push(`after:${key}`),
+    },
+  };
+}
+
+test("LS-09 Baseline card: measured → judged by per-frame time; a stage that cannot keep up → slow; interrupted or erroring → unknown, with the reason", async () => {
+  L.resetCostSearch();
+  const budget = 1000 / L.BENCHMARK_FPS * 0.7;
+  const cases = [
+    { script: [0.5], verdict: "ok", calls: 1 },
+    { script: [60], verdict: "slow", calls: 1 },
+    { script: ["stall", 0.5], verdict: "slow", miss: "stalled", calls: 1, note: "the stage replied it could not push a frame: not measured again" },
+    { script: ["rpc-timeout", 0.5], verdict: "ok", calls: 2, note: "no reply may be one dropped by an in-place reload: measured again" },
+    { script: ["rpc-timeout", "rpc-timeout"], verdict: "slow", miss: "stalled", calls: 2 },
+    { script: ["rpc-timeout", "stall"], verdict: "slow", miss: "stalled", calls: 2 },
+    { script: ["role"], verdict: "unknown", miss: "interrupted", calls: 1 },
+    { script: ["detached"], verdict: "unknown", miss: "interrupted", calls: 1 },
+    { script: ["project", "project", "project"], verdict: "unknown", miss: "interrupted", calls: 3 },
+    { script: ["project", 0.5], verdict: "ok", calls: 2 },
+    { script: ["boom"], verdict: "unknown", miss: "error", calls: 1 },
+    { script: ["rpc-timeout", "boom"], verdict: "unknown", miss: "error", calls: 2 },
+  ];
+  for (const borrow of [false, true]) {
+    for (const c of cases) {
+      const { d, stage, log, restores, marks } = benchDeps(c.script, { borrow });
+      const out = await L.runBenchmark(d);
+      const what = `${borrow ? "borrow" : "background"} ${JSON.stringify(c.script)}`;
+      assert.equal(out.verdict, c.verdict, what);
+      assert.equal(out.miss, c.miss, what);
+      assert.equal(stage.calls(), c.calls, `${what}: measured ${c.calls} times`);
+      assert.equal(out.budgetMs, budget);
+      if (c.miss) { assert.equal(out.stepMs, null, what); assert.ok(out.detail, `${what}: detail says why`); }
+      else assert.equal(out.detail, undefined, what);
+      assert.ok(marks.length >= 2 && marks[0] === "before:@benchmark" && marks.at(-1) === "after:@benchmark", `${what}: crash record left and cleared`);
+      if (borrow) {
+        assert.equal(log[0], "role:back", what);
+        assert.equal(log.at(-1), "role:front", `${what}: the visible stage is switched back`);
+        assert.equal(restores(), 1, what);
+        assert.ok(log.filter((x) => x.startsWith("render:")).every((x) => x === "render:back"), what);
+      } else {
+        assert.equal(log.filter((x) => x.startsWith("role:")).length, 0, `${what}: the background stage is not switched`);
+      }
+    }
+  }
+  const none = await L.runBenchmark(benchDeps([0.5], { stage: false }).d);
+  assert.equal(none.verdict, "unknown");
+  assert.equal(none.miss, "interrupted");
+  // `measureOnce` keeps its old shape: no result is null
+  const { stage } = benchDeps(["stall"]);
+  assert.equal(await L.measureOnce(stage, L.benchmarkJob(), async () => {}, { COST_SCALE: 1, STEP_MIN_SAMPLES: 16 }), null);
+  // Without a reason, no per-frame time is still unknown (callers that pass only null)
+  assert.equal(L.benchmarkVerdict(null).verdict, "unknown");
+  assert.equal(L.benchmarkVerdict(null, undefined, { miss: "stalled", detail: "x" }).verdict, "slow");
 });

@@ -45,8 +45,11 @@
  *   S14 Read-only inspection port: `?gates=1` shows tier, stage gates, crash records, without credentials
  *   S15 Lowest tier (`?tier=low`): cards suppressed during playback, no on-demand render; after
  *       stopping, catches up frame-by-frame per layer (no time limit)
- *   S16 Baseline card cannot run (stage CPU throttled 30x; any slower exceeds bubble wait limit
- *       and risks inconclusive results): enters lowest tier "low-spec mode"
+ *   S16 Baseline card cannot run (stage CPU throttled 100x, `--s16-rate`): enters lowest tier
+ *       "low-spec mode". The card takes 0.2-2 ms a frame unthrottled, so 30x can legitimately pass the
+ *       23.3 ms budget on a fast PC; a stage too slow to push even one frame counts as cannot run
+ *       (`benchmark.miss: "stalled"`). `benchmarkMs` is how long the verdict took after release: the
+ *       bubble waits at most 15 s for it
  *   S17 Kill page process while testing a card -> on reload, this card is among crashed cards and
  *       is not re-tested, treated directly as heavy card
  *   S18 Kill while loading original-size asset (during recorded period) -> reload lowers decoding
@@ -75,6 +78,7 @@ const DIST = path.resolve(flagArg('dist', 'dist-online', args));
 const BASE = Number(flagArg('base-port', '5870', args));
 const OUT = path.resolve(flagArg('out', path.join(os.tmpdir(), `stage-gate-${Date.now().toString(36)}`), args));
 const ONLY = (flagArg('only', '', args) || '').split(',').filter(Boolean);
+const S16_RATE = Number(flagArg('s16-rate', '100', args));
 fs.mkdirSync(OUT, { recursive: true });
 
 const fails = [];
@@ -459,15 +463,17 @@ try {
     const page = await newPage('desktop');
     await enter(page);
     await waitDone(page);
-    // Stage gate stops at "one set of each renderer ready" step, throttles both stages by 30x, then
-    // unblocks: tests baseline card after completion
+    // Stage gate stops at "one set of each renderer ready" step, throttles both stages by S16_RATE,
+    // then unblocks: tests baseline card after completion
     await reload(page, 'gateHold=separate-ready');
     await until(async () => { const x = await gates(page); return x?.step?.kind === 'stage' && x.step.what === 'separate-ready' ? x : null; }, 90_000, 100);
-    await throttleAll(page, 30);
+    await throttleAll(page, S16_RATE);
+    const released = Date.now();
     await page.evaluate(() => window.__pcGateRelease?.());
-    const g = await until(async () => { const x = await gates(page); return x?.tier?.benchmark && x.tier.benchmark !== 'pending' ? x : null; }, 240_000, 500);
+    const g = await until(async () => { const x = await gates(page); return x?.tier?.benchmark && x.tier.benchmark !== 'pending' ? x : null; }, 240_000, 200);
+    const benchmarkMs = Date.now() - released;
     await throttleAll(page, 1);
-    scenes.S16 = { ...(scenes.S16 ?? { checks: 0, failed: 0 }), benchmark: g?.benchmark, tier: g?.tier, step: (await gates(page))?.step, driverError: (await gates(page))?.driverError };
+    scenes.S16 = { ...(scenes.S16 ?? { checks: 0, failed: 0 }), rate: S16_RATE, benchmarkMs, benchmark: g?.benchmark, tier: g?.tier, step: (await gates(page))?.step, driverError: (await gates(page))?.driverError };
     check('S16', g?.tier?.benchmark === 'slow' && g.tier.lowest === 'benchmark', 'the baseline card cannot run: lowest tier', g?.benchmark);
     const b = await bubbleText(page, 30_000);
     check('S16', b === TEXT.low, 'Bubble: low-spec mode', b);
