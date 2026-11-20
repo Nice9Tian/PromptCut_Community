@@ -56,7 +56,7 @@ import { createIsolatedSoundLink, type IsolatedSoundLink } from "./io/isolatedSo
 import { holdMeasureForCardSources, measureGateDiag, measureGateOpen, releaseMeasureGate, setMeasureGateLink } from "./measureGate";
 import { setCoverageSource } from "./onlineCoverage";
 import { currentCosts, currentPlan, judgedPlan, lightCostAt, onPlanUpdated, planSearch, planSearchLight, searchJudged, sendPlanTo, setPlanDeadMs, setPlanForcedHeavy, setPlanLowest, setPlanSearch, setPlanSearchLight } from "./planDispatch";
-import { benchmarkVerdict, costSearchMeasuring, costSearchState, holdCostSearchMask, measureNewCards, reclassify, releaseCostSearchMask, runBenchmark, runCostSearch, type BenchmarkOutcome, type CostSearchOutcome } from "./costSearch";
+import { benchmarkVerdict, costSearchMeasuring, costSearchState, holdCostSearchMask, measureNewCards, missOfError, reclassify, releaseCostSearchMask, runBenchmark, runCostSearch, type BenchmarkOutcome, type CostSearchOutcome } from "./costSearch";
 import { runBackJob } from "./stageJobs";
 import { CostSearchGate } from "./CostSearchGate";
 import { SHARED_COST_RELAY_MS, SharedCostRelay, listSharedCosts, publishSharedCosts, toSharedInput, type SharedCostInput } from "./sharedCosts";
@@ -1229,9 +1229,10 @@ export function Preview(props: { variant?: "mobile" | "framed" } = {}) {
         out = await runBackJob("measure", (ctx) => runBenchmark({
           borrow: false, stage: () => ctx.stage, pushProject: (p) => pushProject("back", p, { reset: true }), currentProject: () => getState().project,
           restore: () => {}, beforeMeasure: searchMeasureHooks.before, afterMeasure: searchMeasureHooks.after,
-        })).catch(() => benchmarkVerdict(null));
+        })).catch((err) => benchmarkVerdict(null, undefined, missOfError(err)));
       }
       setBenchmarkInfo(out);
+      if (out.miss) console.warn(`[preview] baseline card not measured (${out.miss}): ${out.detail ?? ""} -> ${out.verdict}`);
       if (out.verdict === "slow") stageGate()?.benchmarkSlow();
       setBenchmark(out.verdict === "slow" ? "slow" : out.verdict === "ok" ? "ok" : "skipped");
     })();
