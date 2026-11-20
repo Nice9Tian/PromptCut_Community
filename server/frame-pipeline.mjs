@@ -2590,6 +2590,27 @@ export class FramePipeline {
     void Promise.resolve(queue.enqueue({ kind: 'stream', resultKey: spec.streamKey, range: { from, to } }, PUSH_LOW)).catch(() => {});
     return true;
   }
+  /**
+   * Catch-up push of track streams on page handoff (`backfillPush` in `server/vite-plugin-frames.ts`):
+   * the push hook only enqueues a segment when it is **written** (`storeSegment` in `frame-stream.mjs`),
+   * so segments this machine produced before the desktop joined the shared project would never reach
+   * the asset service. For the streams this machine produces in this version (the own rows of the
+   * layer table, `layerMapStreamOptions`; streams only issued to other fingerprints are skipped),
+   * enqueues every segment already in the local stream store; the push queue deduplicates and skips
+   * chunks already on the asset service. Returns how many segments were enqueued.
+   */
+  async enqueueExistingStreams(entry) {
+    const producer = this.streamProducer();
+    if (!this.pushQueue || !producer || !entry) return 0;
+    let n = 0;
+    for (const spec of this.layerMapStreamOptions(entry).streams ?? []) {
+      if (spec?.ownCandidate === false || !spec.streamKey) continue;
+      let manifest = null;
+      try { manifest = await producer.manifestOf(spec.streamKey); } catch { manifest = null; }
+      for (const k of Object.keys(manifest?.segments ?? {})) if (this.enqueueStreamPush(spec, Number(k))) n++;
+    }
+    return n;
+  }
   streamLocksPath() {
     return typeof this.root === 'string' && this.root ? path.join(this.root, 'stream-locks.json') : null;
   }

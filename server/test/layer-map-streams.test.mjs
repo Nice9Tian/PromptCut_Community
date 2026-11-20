@@ -528,3 +528,32 @@ test('Cards in the manifest plan that depend on lower layers: the splitter issue
     assert.deepEqual(maps[maps.length - 1].body.streams.map((r) => [r.topClipId, r.kind, r.candidates.map((c) => c.envFingerprint)]), [['clip-g', 'below', [PIPE_FP]]]);
   });
 });
+
+test('Page handoff catch-up (enqueueExistingStreams): every segment already in the local stream store for this machine\'s own streams of this version enters the push queue; streams only issued to others and streams with nothing on disk push nothing', async () => {
+  await withPipeline('on', async ({ make }) => {
+    const pushed = [];
+    const pipeline = make({ pushQueue: { putLayerMap: () => true, enqueue: (item) => { pushed.push(item); } } });
+    const entry = pipelineEntry({ base: ['clip-a', 'clip-b'] });
+    const own = pipeline.layerMapStreamOptions(entry).streams;
+    const a = own.find((s) => s.topClipId === 'clip-a');
+    assert.ok(a?.streamKey, 'clip-a has a stream of its own on this machine');
+    // clip-a: segments 0, 1 and 9 produced before handoff; clip-b: nothing on disk yet
+    await pipeline.streamProducer().store.save({ version: STREAM_CODE_VERSION, streamKey: a.streamKey, kind: 'card', plane: 'local', clipIds: ['clip-a'], inits: {}, segments: { 0: { stride: 1 }, 1: { stride: 15 }, 9: { stride: 1 } } });
+    assert.equal(await pipeline.enqueueExistingStreams(entry), 3);
+    const per = QUEUE_DEFAULTS.STREAM_SEGMENTS;
+    assert.deepEqual(pushed.map((p) => [p.kind, p.resultKey, p.range.from]), [['stream', a.streamKey, 0], ['stream', a.streamKey, 0], ['stream', a.streamKey, Math.floor(9 / per) * per]],
+      'Each segment is enqueued as the push bucket holding it (the queue deduplicates)');
+    // A stream this machine does not produce (only issued to the browser) is not pushed from here
+    pushed.length = 0;
+    const issuedOnly = { ...pipelineEntry({ base: [] }), key: 'entry-2' };
+    assert.equal(await pipeline.enqueueExistingStreams(issuedOnly), 0);
+    assert.deepEqual(pushed, []);
+  });
+});
+
+test('No push queue (not bound to a shared project): enqueueExistingStreams does nothing', async () => {
+  await withPipeline('on', async ({ make }) => {
+    const pipeline = make({ pushQueue: null });
+    assert.equal(await pipeline.enqueueExistingStreams(pipelineEntry({ base: ['clip-a'] })), 0);
+  });
+});

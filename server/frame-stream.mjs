@@ -2347,6 +2347,10 @@ export class StreamProducer {
    * chunks must be downloaded (`applyResult` only downloads missing ones accordingly).
    * Returns `{ segments: [n…], hashes: [hash…] }`. Read-only, does not modify state.
    */
+  /** This stream's manifest as held now: in memory, else read from the local stream store; null when there is none */
+  async manifestOf(streamKey) {
+    return this.streams.get(streamKey)?.manifest ?? await this.store.load(streamKey);
+  }
   async adoptionNeeds(result) {
     await this.ownership?.assert();
     if (this.ownership && result?.projectId !== this.ownership.projectId) throw Object.assign(new Error('project-mismatch'), { code: 'project-mismatch' });
