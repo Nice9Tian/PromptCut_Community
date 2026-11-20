@@ -1397,15 +1397,15 @@ async function requestPageTicket(projectId: string): Promise<string> {
 
 /**
  * Re-pushes layers that were already in the local frame store before page handoff (user had opened
- * and rendered this project before handoff): push queue enqueues only when frames are **written into**
- * the frame store; existing frames hit by preload after handoff are not rewritten, and without
- * catch-up they would never reach the asset service, nor would the layer table be written.
- * Only catches up for this project (`entry.project.id === contentId`; not pushed if page has not
- * submitted `contentId` yet, pushed on next tick once submitted), once per entry: writes layer table
- * once (`publishLayerMap`), and existing snapshot frames for each card enter push queue by segment
- * (`enqueueSnapshotPush`, queue deduplicates itself, chunks already on asset service are skipped).
- * Track streams are not pushed: online pages do not use track streams (`product/platforms.md`
- * "online browser mode").
+ * and rendered this project before handoff): push queue enqueues only when segments are **written
+ * into** the frame store; segments produced before handoff are not rewritten, and without catch-up
+ * they would never reach the asset service, so other members and nodes could not use them
+ * (`product/platforms.md` "online browser mode": pages take others' prerendered track streams from the
+ * asset service). Only catches up for this project (`entry.project.id === contentId`; not pushed if
+ * page has not submitted `contentId` yet, pushed on next tick once submitted), once per entry: writes
+ * layer table once (`publishLayerMap`), and existing track stream segments of this version enter the
+ * push queue (`enqueueExistingStreams`, queue deduplicates itself, chunks already on asset service
+ * are skipped). Per-card snapshots are no longer produced (2026-10-13), so there is nothing else to push.
  */
 async function backfillPush(service: FramePipeline, auto: AutoLink, done: Set<string>) {
   const pipeline: any = service;
@@ -1422,7 +1422,10 @@ async function backfillPush(service: FramePipeline, auto: AutoLink, done: Set<st
     if (entry.project?.id !== auto.contentId) continue;
     done.add(entry.key);
     try { pipeline.publishLayerMap(entry); } catch { /* Cannot write layer table */ }
-    autoLog("render-node.backfill", { projectId: auto.projectId, entryKey: String(entry.key).slice(0, 12), controls: entry.cardPlan.length, frames: 0, segments: 0 });
+    let segments = 0;
+    try { segments = await pipeline.enqueueExistingStreams(entry); } catch { segments = 0; }
+    queued += segments;
+    autoLog("render-node.backfill", { projectId: auto.projectId, entryKey: String(entry.key).slice(0, 12), controls: entry.cardPlan.length, segments });
   }
   return queued;
 }
