@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { toolToVendor, sanitizeSchema } from '../harness/schema.mjs';
+import { toolToVendor, sanitizeSchema } from 'promptcut-harness/schema';
 import { tools as mcpTools } from '../mcp-tools.mjs';
 import { TOOL_ROUTES } from '../../src/mcp/routes.mjs';
 import { modelToolName } from '../tools/ui-names.mjs';

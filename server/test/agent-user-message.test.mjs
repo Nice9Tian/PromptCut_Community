@@ -12,7 +12,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Agent, isUserMessageCall } from '../harness/agent.mjs';
+import { Agent, isUserMessageCall } from 'promptcut-harness/agent';
 import { buildTools } from '../agent/build-promptcut-tools.mjs';
 import { createAgentBoard } from '../agent/agent-board.mjs';
 
@@ -118,7 +118,7 @@ test('Via the MCP route (CLI driver, bulletin board): send_message to user answe
 });
 
 test('When a tool fails, the debug info (debug) and the error code are handed to the model together, with credentials stripped and truncated', async () => {
-  const { toolErrorResult, TOOL_DEBUG_CHARS } = await import('../harness/agent.mjs');
+  const { toolErrorResult, TOOL_DEBUG_CHARS } = await import('promptcut-harness/agent');
   const debug = { card: 'user-card-1', line: 42, stage: 'render', pageError: 'ReferenceError: x is not defined',
     token: 'abc', headers: { Authorization: 'Bearer abcdef123456' }, note: 'key sk-ABCDEFGHIJKLMNOP and ticket v1.AAAAAAAAAAAAAAAAAAAA.BBBB' };
   const r = toolErrorResult(Object.assign(new Error('Render timed out'), { code: 'look-timeout', debug }));

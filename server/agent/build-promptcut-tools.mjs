@@ -1,5 +1,5 @@
 /**
- * PromptCut binding layer for `server/harness/tools/index.mjs`.
+ * PromptCut binding layer for `promptcut-harness/tools/index.mjs`.
  *
  * Supplies PromptCut's MCP tool manifest (`mcp-tools.mjs`), background job polling rules
  * (`auto_workflow`, `stt_install`, `transcribe_media`), and dynamic `list_cards` / `list_parts`
@@ -7,7 +7,7 @@
  */
 import { tools as mcpTools } from '../mcp-tools.mjs';
 import { injectCardParams, injectPartParams } from '../card-params-schema.mjs';
-import { buildTools as buildHarnessTools } from '../harness/tools/index.mjs';
+import { buildTools as buildHarnessTools } from 'promptcut-harness/tools';
 
 export const PROMPTCUT_JOB_WAITER = {
   tools: ['auto_workflow', 'stt_install', 'transcribe_media'],

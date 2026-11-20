@@ -19,8 +19,8 @@
  *   the frontend treats seeing done as the whole process ending, and seeing session causes it to
  *   use a role's session to resume the next message.
  */
-import { runReviewLoop, presentLoopEvent, SUBMIT_DEFS } from '../harness/loop.mjs';
-import { READ_ONLY_TOOLS } from '../harness/loop-prompts.mjs';
+import { runReviewLoop, presentLoopEvent, SUBMIT_DEFS } from 'promptcut-harness/loop';
+import { READ_ONLY_TOOLS } from 'promptcut-harness/loop-prompts';
 import { lessonsStore } from './api.mjs';
 import { tr } from '../i18n.mjs';
 

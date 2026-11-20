@@ -1,5 +1,5 @@
 import { startRun } from '../runners/api.mjs';
-import { createTextEditorTool } from '../harness/tools/textEditor.mjs';
+import { createTextEditorTool } from 'promptcut-harness/tools/textEditor';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -298,7 +298,7 @@ async function main() {
       if (content.includes('xoxb-')) throw new Error(`Secret leaked in ${file}`);
     };
     
-    const harnessDir = path.join(__dirname, '..', 'harness');
+    const harnessDir = path.dirname(fileURLToPath(import.meta.resolve('promptcut-harness')));
     const walk = (dir) => {
       for (const item of fs.readdirSync(dir)) {
         const full = path.join(dir, item);

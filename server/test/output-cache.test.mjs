@@ -13,16 +13,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { sessionHistoryDir } from '../app-temp.mjs';
 
-import { modelOutputLimit, resolveMaxOutput, usesMaxCompletionTokens, lowerOutputAfter400, swapOutputParamAfter400, UNKNOWN_OUTPUT_TOKENS } from '../harness/model-limits.mjs';
-import { parsePartialObject, salvageToolCall } from '../harness/partial-json.mjs';
+import { modelOutputLimit, resolveMaxOutput, usesMaxCompletionTokens, lowerOutputAfter400, swapOutputParamAfter400, UNKNOWN_OUTPUT_TOKENS } from 'promptcut-harness/model-limits';
+import { parsePartialObject, salvageToolCall } from 'promptcut-harness/partial-json';
 import { createCodeCacheStore, codeCacheTools, resolveCodeCacheRefs, CODE_CACHE_TOOL_NAMES } from '../tools/code-cache.mjs';
-import { salvageTruncation } from '../harness/truncation.mjs';
-import { Agent } from '../harness/agent.mjs';
+import { salvageTruncation } from 'promptcut-harness/truncation';
+import { Agent } from 'promptcut-harness/agent';
 import { buildTools } from '../agent/build-promptcut-tools.mjs';
 import { CLOUD_OPEN_TOOLS } from '../agent/service/cloud-tools.mjs';
-import * as openai from '../harness/providers/openai.mjs';
-import * as anthropic from '../harness/providers/anthropic.mjs';
-import * as gemini from '../harness/providers/gemini.mjs';
+import * as openai from 'promptcut-harness/providers/openai';
+import * as anthropic from 'promptcut-harness/providers/anthropic';
+import * as gemini from 'promptcut-harness/providers/gemini';
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), `pc-oc-${p}-`));
 const rm = (d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* Cleanup */ } };

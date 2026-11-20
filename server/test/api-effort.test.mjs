@@ -15,7 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { createProvider } = await import('../harness/providers/openai.mjs');
+const { createProvider } = await import('promptcut-harness/providers/openai');
 
 /** Intercept request body, then return minimal SSE to let stream() finish normally */
 function spyFetch(seen) {

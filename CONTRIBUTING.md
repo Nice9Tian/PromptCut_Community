@@ -24,7 +24,8 @@ English: [CONTRIBUTING.en.md](CONTRIBUTING.en.md)。
 | `src/cards/`、`server/catalog/`（卡片与内置库） | 欢迎 PR，**最容易上手** |
 | `src/skins/`、`src/themes/`、`src/ui/` | 欢迎 PR |
 | `src/mcp/`、`src/voice/` | 欢迎 PR |
-| `server/bakery/`、`server/harness/`、`server/runners/`、`server/vision/`、`server/voice/`、`server/render-queue/` | 欢迎 PR |
+| `server/bakery/`、`server/runners/`、`server/vision/`、`server/voice/`、`server/render-queue/` | 欢迎 PR |
+| Agent 循环、模型接入、skill、对话压缩 | 在单独的仓库 [promptcut-harness](https://github.com/Nice9Tian/promptcut-harness) 里（本仓库依赖的 npm 包），这部分的 PR 提到那边；这里的 `server/agent/`、`server/runners/` 只放把它接到 PromptCut 上的那一层 |
 | `python/`、`scripts/`、`docs/` | 欢迎 PR |
 | `src/editor/`（含 `sync/`、`right/`）、`src/start/`、`src/ai/` | 欢迎 PR |
 | `src/online/`、`src/mobile/`、`server/auth/`、`server/lan/`（局域网共享与手机界面） | 欢迎 PR |

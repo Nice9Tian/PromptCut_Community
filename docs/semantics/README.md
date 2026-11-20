@@ -34,7 +34,7 @@
 | 卡片、部件（`src/cards/`、`src/parts/`） | `product/cards.md`；改实现再读 `mechanism/cards.md` |
 | 项目数据、时间轴、效果库（`src/kernel/`、`src/store/`） | `product/project-model.md` |
 | 编辑界面（`src/editor/`） | `user-workflow.md`、`workflow/editing.md` |
-| Agent 与工具（`src/ai/`、`src/mcp/`、`server/tools/`、`server/runners/`、`server/harness/`） | `product/agent.md`、`workflow/production.md`；改实现再读 `mechanism/agent.md` |
+| Agent 与工具（`src/ai/`、`src/mcp/`、`server/tools/`、`server/runners/`，以及 npm 包 `promptcut-harness`：Agent 循环与模型接入，在它自己的仓库里） | `product/agent.md`、`workflow/production.md`；改实现再读 `mechanism/agent.md` |
 | 素材导入、感知类工具（`server/vite-plugin-media.ts` 等、`python/`） | `workflow/materials.md`、`product/asset-service.md`；改实现再读 `mechanism/asset-service.md` |
 | 文档服务、素材服务、云端、协作 | `product/document-service.md`、`product/asset-service.md`、`product/hosting.md`；改实现再读同名的 `mechanism/` |
 | 桌面壳、平台差异（`desktop/`） | `product/platforms.md`；改实现再读 `mechanism/platforms.md` |

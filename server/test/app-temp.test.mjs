@@ -57,8 +57,9 @@ test('APPTMP-4 a link or a file of that name is refused, not followed', { skip: 
 });
 
 test('APPTMP-5 nothing else under server/ builds <tmp>/promptcut by hand', () => {
-  // The harness keeps its own default for when it is used without PromptCut (env-snapshot.mjs).
-  const allowed = new Set(['server/app-temp.mjs', 'server/harness/env-snapshot.mjs']);
+  // (The harness keeps its own default for when it is used without PromptCut. It is an npm package
+  // now, promptcut-harness, and no longer under server/.)
+  const allowed = new Set(['server/app-temp.mjs']);
   const offenders = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

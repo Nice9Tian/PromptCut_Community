@@ -145,7 +145,7 @@ const SKIP_DIRS = new Set([
    */
   ".worktrees",
   "release",
-  // Text tools from the AI harness drop files here (server/harness/tools/textEditor.mjs,
+  // Text tools from the AI harness drop files here (promptcut-harness/tools/textEditor.mjs,
   // server/vite-plugin-cards.ts). Running the AI panel on dev machines leaves .md/.txt/.json/.png
   // written by models. The filename blocklist above only blocks .mp4/.mov/.webm/.log and misses these:
   // unblocked, they ship in the installer and land in the user's export directory after installation.

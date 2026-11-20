@@ -1180,7 +1180,7 @@ export function createAgentInstance(env) {
           // based on clues (see callPairing above)
           callPairing,
           // meta.callId: the tool_use id from the direct API path (passed in from
-          // server/harness/tools/index.mjs); events include it, and the AI panel matches against it
+          // promptcut-harness/tools/index.mjs); events include it, and the AI panel matches against it
           callTool: async (name, args, meta) => await callToolInternal(name, args, agentId || undefined, typeof meta?.callId === 'string' ? meta.callId : undefined),
           onEvent: (ev) => {
             if (ev.type === 'done' || ev.type === 'error') hasDone = true;
