@@ -69,7 +69,7 @@ export async function getAgyProvider() {
   return { id: 'agy', label: 'Antigravity', available, version, path: exePath, note };
 }
 
-import { runTextProtocolLoop } from '../harness/tool-protocol.mjs';
+import { runTextProtocolLoop } from 'promptcut-harness/tool-protocol';
 import { tools } from '../mcp-tools.mjs';
 import { tr } from '../i18n.mjs';
 

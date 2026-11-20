@@ -15,18 +15,18 @@ import path from 'node:path';
 import { sessionHistoryDir } from '../app-temp.mjs';
 import http from 'node:http';
 
-import * as openai from '../harness/providers/openai.mjs';
-import * as anthropic from '../harness/providers/anthropic.mjs';
-import * as gemini from '../harness/providers/gemini.mjs';
-import { STREAM_CUT } from '../harness/providers/base.mjs';
-import { Agent } from '../harness/agent.mjs';
+import * as openai from 'promptcut-harness/providers/openai';
+import * as anthropic from 'promptcut-harness/providers/anthropic';
+import * as gemini from 'promptcut-harness/providers/gemini';
+import { STREAM_CUT } from 'promptcut-harness/providers/base';
+import { Agent } from 'promptcut-harness/agent';
 import { createCodeCacheStore } from '../tools/code-cache.mjs';
-import { salvageTruncation } from '../harness/truncation.mjs';
-import { resolveMaxOutput } from '../harness/model-limits.mjs';
+import { salvageTruncation } from 'promptcut-harness/truncation';
+import { resolveMaxOutput } from 'promptcut-harness/model-limits';
 import {
   createOutputSpeedBook, outputSpeedBookFor, withOutputSpeed, conservativeSpeed, _resetOutputSpeedBooks,
   OUTPUT_TIME_BUDGET_S, DEFAULT_TOKENS_PER_SECOND, MIN_SAMPLE_OUTPUT_TOKENS, MIN_SPEED_CAP, GATEWAY_REQUEST_LIMIT_S,
-} from '../harness/output-speed.mjs';
+} from 'promptcut-harness/output-speed';
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), `pc-sc-${p}-`));
 const rm = (d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* Cleanup */ } };

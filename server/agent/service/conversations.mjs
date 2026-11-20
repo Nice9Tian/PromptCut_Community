@@ -27,7 +27,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { expandEntry, mergeDeltas } from '../../harness/compact.mjs';
+import { expandEntry, mergeDeltas } from 'promptcut-harness/compact';
 
 export { expandEntry, mergeDeltas };
 

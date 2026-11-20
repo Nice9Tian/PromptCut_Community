@@ -18,7 +18,7 @@ import { tr } from "../i18n/index.ts";
  *
  * What this adds is that context: the mode, the project and its media, the number of visible chat
  * messages, and the backend session id.
- * The server half (Node process state, session file cabinet) is in server/harness/env-snapshot.mjs.
+ * The server half (Node process state, session file cabinet) is in promptcut-harness/env-snapshot.mjs.
  *
  * # Why it is a pure function
  *

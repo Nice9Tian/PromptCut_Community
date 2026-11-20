@@ -1,4 +1,4 @@
-import { runTextProtocolLoop } from '../harness/tool-protocol.mjs';
+import { runTextProtocolLoop } from 'promptcut-harness/tool-protocol';
 import { tools } from '../mcp-tools.mjs';
 import { startRun } from './fake-runner.mjs';
 

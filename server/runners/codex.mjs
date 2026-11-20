@@ -83,7 +83,7 @@ export async function getCodexProvider() {
   return { id: 'codex', label: 'Codex', available, version, path: exePath, note };
 }
 
-import { runTextProtocolLoop } from '../harness/tool-protocol.mjs';
+import { runTextProtocolLoop } from 'promptcut-harness/tool-protocol';
 import { tr } from '../i18n.mjs';
 
 export function startRun(opts) {

@@ -316,7 +316,7 @@ export default function vitePluginAi(): Plugin {
             import(new URL('./ai-config.mjs', import.meta.url).href),
             import(new URL('./runners/cli-runtime.mjs', import.meta.url).href),
             import(new URL('./runners/machine-id.mjs', import.meta.url).href),
-            import(new URL('./harness/env-snapshot.mjs', import.meta.url).href),
+            import('promptcut-harness/env-snapshot'),
             getRunner(),
           ]);
           res.setHeader('Cache-Control', 'no-store');

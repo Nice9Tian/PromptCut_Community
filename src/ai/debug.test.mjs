@@ -72,7 +72,7 @@ test("Walk through nested structures and arrays together", () => {
 });
 
 /*
- * Environment snapshots (ai/envReport.ts + server/harness/env-snapshot.mjs) also use the same
+ * Environment snapshots (ai/envReport.ts + promptcut-harness/env-snapshot.mjs) also use the same
  * sanitization pipeline. It contains nothing but paths: project files, asset catalog, cwd, tmpdir:
  * every one contains a username. This part was added later, and sanitization is "the step most
  * easily forgotten when adding fields", so a dedicated test is pinned here.

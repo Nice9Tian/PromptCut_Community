@@ -25,7 +25,7 @@
  *
  * We tried all three approaches:
  *   - Resizing with pngjs after capture: pure CPU resampling, blocking the main thread (see
- *     attitude toward synchronous operations in server/harness/README);
+ *     attitude toward synchronous operations in promptcut-harness/README);
  *   - Changing `deviceScaleFactor` before capturing: **learned the hard way**. In a headed window,
  *     setViewport is a real window resize; while the page is navigating, it hangs: in actual
  *     testing, `web_view` blocked for the full 45-second timeout before returning, and a single

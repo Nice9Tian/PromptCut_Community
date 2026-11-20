@@ -33,7 +33,7 @@ AI 面板的分页栏、Agent 之间的范围声明与互相通知（`declare_sc
 
 * Claude Code / Codex 驱动的额度记账与熔断,`GET /api/ai/quota` 看当前额度;机制说明见 [server/runners/QUOTA.md](runners/QUOTA.md)。
 
-### 参数兼容模式（server/harness/schema.mjs）
+### 参数兼容模式（promptcut-harness/schema.mjs）
 
 * 工具参数的 JSON Schema 有两档：完整的（Claude / GPT 系吃得下 `additionalProperties`、`default`、`format` 这些）和 Gemini 那套最窄的子集。清洗由 `sanitizeSchema(schema, vendor, { compat })` 做，`compat` 和厂商字段解耦——走 OpenAI 兼容接口的 Router 也可能接的是 Gemini。
 * 前端请求带 `schemaCompat`：`on` / `off` 是定论，`auto` 由 `server/runners/api.mjs` 按厂商字段和模型名（含 gemini 就开）再推一次。AI 面板模型栏的「参数兼容」按钮：Claude Code / Codex 和模型名带 claude / gpt / o 系的锁死关，Antigravity 和模型名带 gemini 的锁死开，别家模型用户自己点（策略在 `src/ai/modelOptions.ts` 的 `compatPolicy`）。三条 CLI 路本来就各自走原生协议，这个开关只影响 API 直连 / Router。

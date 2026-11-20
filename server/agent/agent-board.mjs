@@ -404,7 +404,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       if (!text) throw new Error('text is required');
       if (!to) throw new Error('to is required: the chat ID of the recipient Agent, look it up with list_agents; use all to send to every other Agent; use user to speak to the user');
       // Speak to the user (user decision, 2026-10-20): the UI renders text from the tool call into this round's
-      // bubble; the bulletin board does not deliver it (server/harness/tools/userMessage.mjs)
+      // bubble; the bulletin board does not deliver it (promptcut-harness/tools/userMessage.mjs)
       if (to.toLowerCase() === 'user') return { ok: true, shown: true, note: 'Shown in the user\'s chat bubble' };
       const targets = to === 'all' ? liveAgents().filter((a) => a.id !== key).map((a) => a.id) : [to];
       if (targets.length === 0) return { ok: false, error: 'No other Agent is running' };

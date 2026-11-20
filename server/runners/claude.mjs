@@ -63,7 +63,7 @@ export async function getClaudeProvider() {
   return { id: 'claude', label: 'Claude Code', available, version, path: exePath, note };
 }
 
-import { runTextProtocolLoop } from '../harness/tool-protocol.mjs';
+import { runTextProtocolLoop } from 'promptcut-harness/tool-protocol';
 import { tr } from '../i18n.mjs';
 import { ensureAppTempDir } from '../app-temp.mjs';
 

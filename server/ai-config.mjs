@@ -84,7 +84,7 @@ function getDefaults() {
       /** Which path the currently active Key comes from: custom / router / "" (not set) */
       source: '',
       model: '',
-      /** Cap on the single-output limit; 0 = use the model's maximum limit (user decision, 2026-10-22, "default to maximum", `server/harness/model-limits.mjs`) */
+      /** Cap on the single-output limit; 0 = use the model's maximum limit (user decision, 2026-10-22, "default to maximum", `promptcut-harness/model-limits.mjs`) */
       maxTokens: 0,
       /**
        * Connection configurations for each of the two paths: custom API manually entered, and imported

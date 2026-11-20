@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Agent } from '../harness/agent.mjs';
+import { Agent } from 'promptcut-harness/agent';
 
 /** A model that only ever calls tools and never finalizes: use it to push the loop to the limit */
 function neverStops() {

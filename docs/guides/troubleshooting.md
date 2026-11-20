@@ -7,7 +7,7 @@
 | 探针失败，页面里只有一个舞台 iframe | 舞台端口（+1、+2）被占，退回同源单舞台 | 换一段三个连号都空的端口重起 |
 | 探针结果 `reloaded` 为真，或耗时忽高忽低 | 热更新重载；同时有别的改动在落盘 | 等仓库安静后复跑 |
 | 探针跑的还是旧代码 | 长时间热更新后，舞台 iframe 停在旧模块上 | 重启 dev server |
-| 改了 `server/harness/` 或 `server/runners/` 不生效 | runner 是动态引入的，Node 缓存着旧模块 | 重启 dev server |
+| 改了 `server/runners/` 不生效 | runner 是动态引入的，Node 缓存着旧模块 | 重启 dev server |
 | 导出途中失败，页面等不到就绪 | 测量期间 `server/*.ts` 或 `scripts/export-*.mjs` 被改，dev server 重启了 | 测量期间别改这些文件，别人改也会触发 |
 | 无头模式下帧间隔约 100 ms | 无头 Chrome 的 rAF 退到 10 Hz | 带 `--disable-gpu-vsync --disable-frame-rate-limit`，或在有头模式下量 |
 | 导出比对第一趟差几十帧 | 字体预热 | 丢掉冷启动那一趟 |

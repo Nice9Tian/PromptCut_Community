@@ -24,7 +24,8 @@ This repository is upstream: the closed commercial edition and the Lite edition 
 | `src/cards/`, `server/catalog/` (cards and the built-in library) | PRs welcome — **easiest place to start** |
 | `src/skins/`, `src/themes/`, `src/ui/` | PRs welcome |
 | `src/mcp/`, `src/voice/` | PRs welcome |
-| `server/bakery/`, `server/harness/`, `server/runners/`, `server/vision/`, `server/voice/`, `server/render-queue/` | PRs welcome |
+| `server/bakery/`, `server/runners/`, `server/vision/`, `server/voice/`, `server/render-queue/` | PRs welcome |
+| The Agent loop, model providers, skills and compaction | Live in their own repository, [promptcut-harness](https://github.com/Nice9Tian/promptcut-harness) (an npm package this one depends on). Send those PRs there; `server/agent/` and `server/runners/` here hold only what binds it to PromptCut |
 | `python/`, `scripts/`, `docs/` | PRs welcome |
 | `src/editor/` (including `sync/` and `right/`), `src/start/`, `src/ai/` | PRs welcome |
 | `src/online/`, `src/mobile/`, `server/auth/`, `server/lan/` (LAN sharing and the phone UI) | PRs welcome |
