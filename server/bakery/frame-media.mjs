@@ -9,14 +9,22 @@ export async function prepareFrameMedia(bakery) {
   // The decoder can need compositor ticks to deliver loadeddata/seeked in headless-shell.
   let done = false;
   let failure;
-  const pending = bakery.page.evaluate(() => window.__pcPrepareFrameMedia?.())
-    .catch(e => { failure = e; }).finally(() => { done = true; });
+  let hasMedia = true;
+  const pending = bakery.page.evaluate(async () => {
+    const scope = document.getElementById('pc-frame-snapshot') || document;
+    const any = !!scope.querySelector('video[data-pc-media-src], img[data-pc-media-src]');
+    await window.__pcPrepareFrameMedia?.();
+    return any;
+  }).then(v => { hasMedia = v !== false; }).catch(e => { failure = e; }).finally(() => { done = true; });
+  await Promise.race([pending, new Promise(r => setTimeout(r, 1))]);
   while (!done) {
     await bakery.beginFrame();
-    if (!done) await new Promise(r => setTimeout(r, 4));
+    if (!done) await Promise.race([pending, new Promise(r => setTimeout(r, 1))]);
   }
   await pending;
   if (failure) throw failure;
+  if (!hasMedia) return false;
   // Every video's frame has been presented; commit it before the screenshot.
   await bakery.beginFrame();
+  return true;
 }

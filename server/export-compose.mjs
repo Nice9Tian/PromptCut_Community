@@ -322,7 +322,8 @@ export function buildComposeArgs(opts) {
   const frames = endFrame - startFrame + 1;
   const dur = +(frames / fps).toFixed(3);
   const t0 = startFrame / fps;
-  const args = ["-y", "-hide_banner", "-nostdin"];
+  const usesStdin = !!(opts.cardsPipe || opts.cardsNutPipe);
+  const args = usesStdin ? ["-y", "-hide_banner"] : ["-y", "-hide_banner", "-nostdin"];
   /*
    * Every input includes -reinit_filter 0: do not rebuild the entire filtergraph when input frame
    * format changes midway.
@@ -340,7 +341,9 @@ export function buildComposeArgs(opts) {
   // Input 0: background; 1: cards (or already stream-encoded card video); 2: mask (optional);
   // then one input per asset clip
   args.push(...R, "-f", "lavfi", "-i", `color=c=${bg}:s=${width}x${height}:r=${fps}:d=${dur}`);
-  if (opts.cardsVideo) args.push(...R, "-i", opts.cardsVideo);
+  if (opts.cardsNutPipe) args.push(...R, "-f", "nut", "-i", "pipe:0");
+  else if (opts.cardsPipe) args.push(...R, "-f", "image2pipe", "-c:v", "png", "-framerate", String(fps), "-i", "pipe:0");
+  else if (opts.cardsVideo) args.push(...R, "-i", opts.cardsVideo);
   else args.push(...R, "-framerate", String(fps), "-start_number", String(startFrame), "-i", cardsPattern);
   let next = 2;
   let maskIn = -1;

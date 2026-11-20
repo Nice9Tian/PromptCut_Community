@@ -3,6 +3,7 @@ import path from 'path';
 import fsSync from 'node:fs';
 import { launchHealthyChrome } from './chrome-health.mjs';
 import { noSandboxReason, withSandboxHint } from '../chrome-sandbox.mjs';
+import { trackBrowser } from './children.mjs';
 
 /**
  * Frame-by-frame export: beginFrame backend.
@@ -467,6 +468,7 @@ export async function openBakery(opts = {}) {
     browser = await launchHealthyChrome({ launch });
   }
 
+  trackBrowser(browser);
   let session;
   try {
     session = await newSession(browser, url);

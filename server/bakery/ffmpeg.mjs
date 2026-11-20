@@ -9,6 +9,7 @@ import os from 'os';
 import path from 'path';
 import zlib from 'zlib';
 import { spawn } from 'child_process';
+import { trackChild } from './children.mjs';
 
 /**
  * Local ffmpeg: use it if on PATH; if not, fall back to the one installed via winget
@@ -30,14 +31,23 @@ export async function findFfmpeg() {
 
 const ffprobeOf = (ffmpegCmd) => ffmpegCmd.replace(/ffmpeg(.exe)?$/i, (m) => m.toLowerCase().startsWith('ffmpeg.exe') ? 'ffprobe.exe' : 'ffprobe');
 
+export function escapeTeePath(file) {
+  return String(file).replace(/\\/g, '/').replace(/([:'[\]|])/g, '\\$1');
+}
+
 /** Encode incoming screenshots immediately so Node retains at most one PNG.
  * The movie must hold exactly the frames written: a shorter file shifts every
  * later shard in the concatenated export, so a mismatch is an error.
  */
-export function streamPngVideo(ffmpeg, file, fps) {
-  const proc = spawn(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-progress', 'pipe:2', '-f', 'image2pipe', '-vcodec', 'png',
-    '-framerate', String(fps), '-i', 'pipe:0', '-an', '-c:v', 'prores_ks', '-profile:v', '4444',
-    '-pix_fmt', 'yuva444p10le', file], { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
+export function streamPngVideo(ffmpeg, file, fps, opts = {}) {
+  const teeNut = !!opts.teeNutStdout;
+  const outArgs = teeNut
+    ? ['-map', '0:v', '-an', '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le',
+      '-f', 'tee', `[f=mov]${escapeTeePath(path.resolve(file))}|[f=nut]pipe:1`]
+    : ['-an', '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', file];
+  const proc = trackChild(spawn(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-progress', 'pipe:2',
+    '-f', 'image2pipe', '-vcodec', 'png', '-framerate', String(fps), '-i', 'pipe:0', ...outArgs],
+  { stdio: ['pipe', teeNut ? 'pipe' : 'ignore', 'pipe'], windowsHide: true }));
   let stderr = '', partial = '', inputError = null, written = 0;
   const progress = {};
   proc.stderr.on('data', d => {
@@ -50,6 +60,7 @@ export function streamPngVideo(ffmpeg, file, fps) {
     }
   });
   proc.stdin.on('error', e => { inputError = e; });
+  proc.stdout?.on('error', e => { inputError ||= e; });
   const done = new Promise((resolve, reject) => {
     proc.on('error', reject);
     proc.on('close', code => {
@@ -59,6 +70,7 @@ export function streamPngVideo(ffmpeg, file, fps) {
   });
   done.catch(() => {});
   return {
+    stdout: proc.stdout,
     async write(buffer) {
       if (inputError) throw inputError;
       await new Promise((resolve, reject) => proc.stdin.write(buffer, e => e ? reject(e) : resolve()));
@@ -73,7 +85,7 @@ export function streamPngVideo(ffmpeg, file, fps) {
         throw new Error(`${file}: wrote ${written} frames but ffmpeg encoded ${progress.frame ?? 'unknown'} (drop=${progress.drop_frames}, dup=${progress.dup_frames}) ${stderr}`);
       }
     },
-    async abort() { proc.stdin.destroy(); proc.kill(); await done.catch(() => {}); },
+    async abort() { proc.stdin.destroy(); proc.stdout?.destroy(); proc.kill(); await done.catch(() => {}); },
   };
 }
 
@@ -86,7 +98,7 @@ export function streamPngVideo(ffmpeg, file, fps) {
  */
 function runFfmpegProgress(ffmpegCmd, args, onFrame, stallMs = Number(process.env.PC_COMPOSE_STALL_MS) || 45000) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(ffmpegCmd, ['-progress', 'pipe:1', '-nostats', '-loglevel', 'warning', ...args], { stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true });
+    const proc = trackChild(spawn(ffmpegCmd, ['-progress', 'pipe:1', '-nostats', '-loglevel', 'warning', ...args], { stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true }));
     let buf = '';
     let last = -1;
     let lastChange = Date.now();
@@ -124,6 +136,64 @@ function runFfmpegProgress(ffmpegCmd, args, onFrame, stallMs = Number(process.en
       reject(e);
     });
   });
+}
+
+export function streamComposeFfmpeg(ffmpegCmd, args, opts = {}) {
+  const stallMs = opts.stallMs ?? (Number(process.env.PC_COMPOSE_STALL_MS) || 45000);
+  const proc = trackChild(spawn(ffmpegCmd, ['-progress', 'pipe:1', '-nostats', '-loglevel', 'warning', ...args],
+    { stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true }));
+  let buf = '', last = -1, lastChange = Date.now(), stalled = false, inputError = null;
+  const dog = setInterval(() => {
+    if (Date.now() - lastChange > stallMs) { stalled = true; proc.kill(); }
+  }, 2000);
+  proc.stdin.on('error', e => { inputError = e; });
+  if (opts.stdinStream) {
+    opts.stdinStream.on('data', () => { lastChange = Date.now(); });
+    opts.stdinStream.pipe(proc.stdin);
+  }
+  proc.stdout.on('data', (d) => {
+    buf += d;
+    let k;
+    while ((k = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, k).trim();
+      buf = buf.slice(k + 1);
+      const m = /^frame=(\d+)$/.exec(line);
+      if (m && Number(m[1]) !== last) {
+        last = Number(m[1]);
+        lastChange = Date.now();
+        opts.onFrame?.(last);
+      }
+    }
+  });
+  const done = new Promise((resolve, reject) => {
+    proc.on('error', (e) => { clearInterval(dog); reject(e); });
+    proc.on('close', (code) => {
+      clearInterval(dog);
+      if (stalled) reject(Object.assign(new Error(`ffmpeg compositing made no progress for ${stallMs / 1000} seconds (stuck at frame ${Math.max(0, last)}), aborted`), { stalled: true }));
+      else if (code === 0) resolve();
+      else reject(inputError || new Error(`ffmpeg (media compositing) exited with code ${code}`));
+    });
+  });
+  done.catch(() => {});
+  return {
+    stdin: proc.stdin,
+    async write(chunk) {
+      if (inputError) throw inputError;
+      lastChange = Date.now();
+      await new Promise((resolve, reject) => proc.stdin.write(chunk, e => e ? reject(e) : resolve()));
+    },
+    async finish() {
+      if (!opts.stdinStream) proc.stdin.end();
+      await done;
+    },
+    async abort() {
+      clearInterval(dog);
+      if (opts.stdinStream) opts.stdinStream.unpipe(proc.stdin);
+      proc.stdin.destroy();
+      proc.kill();
+      await done.catch(() => {});
+    },
+  };
 }
 
 export { ffprobeOf, runFfmpegProgress };

@@ -25,12 +25,12 @@ import { pngIntegrityError } from './png-integrity.mjs';
  * shot on this machine). `clip: null` restores the full viewport. Callers that
  * never pass `clip` are unaffected: no CDP call is made for them.
  */
-export async function captureFrame(bakery, screenshot, signal, { prime = true, clip } = {}) {
+export async function captureFrame(bakery, screenshot, signal, { prime = true, primeScreenshot, skipReady = false, clip } = {}) {
   if (clip !== undefined) await applyCaptureClip(bakery, clip);
-  if (bakery.page) await waitFrameReady(bakery, signal);
+  if (!skipReady && bakery.page) await waitFrameReady(bakery, signal);
   if (prime) {
     if (signal?.aborted) throw Object.assign(new Error('Frame request cancelled'), { cancelled: true });
-    await bakery.beginFrame({ screenshot });
+    await bakery.beginFrame({ screenshot: primeScreenshot || screenshot });
   }
   let corruption = null;
   for (let attempt = 0; attempt < 4; attempt++) {

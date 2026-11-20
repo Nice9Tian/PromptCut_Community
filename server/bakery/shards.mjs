@@ -7,9 +7,11 @@
 
 import path from 'path';
 import fs from 'fs/promises';
-import { planShardRanges } from '../../src/render/shardPlan.mjs';
+import { planShardRanges, shardPushDrawFrom } from '../../src/render/shardPlan.mjs';
 import { openBakery } from './chrome.mjs';
 import { bakeFrames } from './bake.mjs';
+import { streamPngVideo } from './ffmpeg.mjs';
+import { concatVideos, createOrderedFramePipe } from './children.mjs';
 
 /*
  * Multi-process sharding (docs/archive/topics/render-rebuild-plan.md Stage 5).
@@ -81,9 +83,87 @@ export async function resolveWorkers(w) {
   return Math.max(1, Math.min(4, byCpu, byMem));
 }
 
+async function createShardOverlayStreams({ ffmpeg, outDir, shardCount, fps }) {
+  if (!ffmpeg) return null;
+  const overlayFile = path.join(outDir, 'overlay.mov');
+  if (shardCount === 1) {
+    const stream = streamPngVideo(ffmpeg, overlayFile, fps);
+    return {
+      write: (_k, buf) => stream.write(buf),
+      finish: async () => { await stream.finish(); return overlayFile; },
+      abort: () => stream.abort().catch(() => {}),
+    };
+  }
+  const partsDir = path.join(outDir, 'parts');
+  const files = [];
+  const streams = [];
+  try {
+    await fs.mkdir(partsDir, { recursive: true });
+    for (let k = 0; k < shardCount; k++) {
+      const partDir = path.join(partsDir, String(k).padStart(3, '0'));
+      await fs.mkdir(partDir, { recursive: true });
+      const file = path.join(partDir, 'overlay.mov');
+      files.push(file);
+      streams.push(streamPngVideo(ffmpeg, file, fps));
+    }
+  } catch (error) {
+    await Promise.all(streams.map((s) => s.abort().catch(() => {})));
+    await fs.rm(partsDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return {
+    write: (k, buf) => streams[k].write(buf),
+    async finish() {
+      await Promise.all(streams.map((s) => s.finish()));
+      await concatVideos(ffmpeg, files, overlayFile);
+      await fs.rm(partsDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => {});
+      return overlayFile;
+    },
+    async abort() {
+      await Promise.all(streams.map((s) => s.abort().catch(() => {})));
+      await fs.rm(partsDir, { recursive: true, force: true }).catch(() => {});
+    },
+  };
+}
+
+async function runShardedBake({ bakeries, shards, clips, fps, opts, overlayStreams, orderedPipe }) {
+  const { overlayFfmpeg: _ov, liveComposeFactory: _lc, ...passOpts } = opts;
+  // Frame-advancing catch-up rendering (`bake.mjs` header): skipped from second shard onward when no
+  // stateful card spans the split point (cards advanced before it are already unmounted), and limited
+  // to `pushDrawFrom..a-1` when cutting across a newly mounted card's pre-mount lead, for the same
+  // reason as `export-unified.mjs`
+  return Promise.all(shards.map(async ([a, b], k) => {
+    let flushDone;
+    const flushed = new Promise((r) => { flushDone = r; });
+    const hasHook = !!(overlayStreams || orderedPipe || passOpts.onFrame);
+    const onFrame = hasHook ? async (frame, buf) => {
+      if (overlayStreams) await overlayStreams.write(k, buf);
+      if (orderedPipe) await orderedPipe.push(frame, buf, flushed);
+      if (passOpts.onFrame) await passOpts.onFrame(frame, buf);
+    } : undefined;
+    const leadDrawFrom = k > 0 && typeof passOpts.pushDraw !== 'boolean' ? shardPushDrawFrom(clips, a, fps) : null;
+    const pushOpts = k > 0 && typeof passOpts.pushDraw !== 'boolean'
+      ? (leadDrawFrom === null ? { pushDraw: false } : { pushDraw: true, pushDrawFrom: leadDrawFrom })
+      : {};
+    try {
+      return await bakeFrames(bakeries[k], {
+        ...passOpts,
+        frames: `${a}-${b}`,
+        ...(hasHook ? { onFrame } : {}),
+        ...pushOpts,
+      });
+    } finally {
+      flushDone();
+    }
+  }));
+}
+
 async function bakeSharded(opts, n) {
+  const outDir = opts.out || 'out';
   const first = await openBakery(opts);
   const bakeries = [first];
+  let overlayStreams = null;
+  let liveCompose = null;
   try {
     const timeline = await first.page.evaluate(() => window.__pcTimeline);
     if (!timeline) throw new Error('Timeline not found');
@@ -93,15 +173,34 @@ async function bakeSharded(opts, n) {
     if (opts.frames) [start, end] = opts.frames.split('-').map(Number);
     // Same cut policy as the unified export; flattened clips without a reported
     // mode are treated as stateful.
-    const clips = await first.page.evaluate(() => window.__pcClipFrameModes?.() ?? null);
-    const shards = planShardRanges(clips ?? (timeline.clips || []), start, end, fps, n);
+    const clips = (await first.page.evaluate(() => window.__pcClipFrameModes?.() ?? null)) ?? (timeline.clips || []);
+    const shards = planShardRanges(clips, start, end, fps, n);
     console.log(`Shard export: ${shards.length} processes, segments ${shards.map(([a, b]) => `${a}-${b}`).join(' ')}`);
-    while (bakeries.length < shards.length) bakeries.push(await openBakery(opts));
+    if (shards.length > 1) {
+      const opened = await Promise.allSettled(Array.from({ length: shards.length - 1 }, () => openBakery(opts)));
+      for (const r of opened) {
+        if (r.status === 'fulfilled') bakeries.push(r.value);
+      }
+      const failed = opened.find((r) => r.status === 'rejected');
+      if (failed) throw failed.reason;
+    }
+    overlayStreams = await createShardOverlayStreams({ ffmpeg: opts.overlayFfmpeg, outDir, shardCount: shards.length, fps });
+    if (opts.liveComposeFactory) {
+      liveCompose = await opts.liveComposeFactory({
+        width: timeline.width || 1920, height: timeline.height || 1080, fps,
+        startFrame: start, endFrame: end, framesDir: path.join(outDir, 'frames'), ext: opts.format === 'jpeg' ? 'jpg' : 'png',
+      });
+    }
+    const orderedPipe = liveCompose ? createOrderedFramePipe({
+      startFrame: start, endFrame: end, framesDir: path.join(outDir, 'frames'),
+      ext: opts.format === 'jpeg' ? 'jpg' : 'png', write: (buf) => liveCompose.write(buf),
+    }) : null;
     const t0 = Date.now();
-    // Frame-advancing catch-up rendering (`bake.mjs` header): skipped from second shard onward, for the
-    // same reason as `export-unified.mjs` (cards advanced before split point are unmounted by then)
-    const results = await Promise.all(shards.map(([a, b], k) => bakeFrames(bakeries[k], { ...opts, frames: `${a}-${b}`,
-      ...(k > 0 && typeof opts.pushDraw !== 'boolean' ? { pushDraw: false } : {}) })));
+    const results = await runShardedBake({ bakeries, shards, clips, fps, opts, overlayStreams, orderedPipe });
+    const [cardsVideoStreamed] = await Promise.all([
+      overlayStreams ? overlayStreams.finish() : null,
+      (async () => { if (orderedPipe) await orderedPipe.finish(); if (liveCompose) await liveCompose.finish(); })(),
+    ]);
     const r0 = results[0];
     const totalFrames = end - start + 1;
     const merged = {
@@ -110,6 +209,8 @@ async function bakeSharded(opts, n) {
       durationSec: (totalFrames / r0.fps).toFixed(3),
       reused: results.reduce((s, r) => s + (r.reused || 0), 0),
       elapsed: ((Date.now() - t0) / 1000).toFixed(1),
+      cardsVideoStreamed,
+      previewStreamed: !!liveCompose,
       glass: {
         dir: r0.glass?.dir ?? null,
         list: results.flatMap((r) => r.glass?.list || []),
@@ -124,6 +225,9 @@ async function bakeSharded(opts, n) {
     }
     console.log(`Shard export finished: ${totalFrames} frames, ${merged.elapsed}s.`);
     return merged;
+  } catch (error) {
+    await Promise.all([overlayStreams?.abort(), liveCompose?.abort().catch(() => {})]);
+    throw error;
   } finally {
     await Promise.all(bakeries.map((b) => b.close().catch(() => {})));
   }
