@@ -28,6 +28,7 @@
  *   { ok, ..., fails: [] }.
  */
 import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
+import { killTreePosix } from '../../server/process-tree.mjs';
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
 import fs from 'node:fs';
@@ -110,7 +111,7 @@ async function stopAll() {
     // The editor also keeps prerender processes and Chrome running: terminate along with the process
     // tree (only terminate this tree spawned by itself)
     if (process.platform === 'win32') spawn('taskkill', ['/PID', String(c.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-    else c.kill('SIGKILL');
+    else killTreePosix(c.pid);
     await Promise.race([exited, sleep(10_000)]);
     say('stopped', { name: p.name, pid: c.pid });
   }

@@ -55,6 +55,7 @@
  * by probe) and is not printed to output.
  */
 import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
+import { killTreePosix } from '../../server/process-tree.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -195,7 +196,7 @@ function viteBin() {
 function killTree(child) {
   if (!child || child.exitCode !== null || !child.pid) return;
   if (process.platform === 'win32') spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-  else child.kill('SIGKILL');
+  else killTreePosix(child.pid);
 }
 const exited = (child, ms = 20_000) => new Promise((resolve) => {
   if (!child || child.exitCode !== null) return resolve(child?.exitCode ?? null);

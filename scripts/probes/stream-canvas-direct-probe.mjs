@@ -47,6 +47,7 @@
  * Output JSON conclusion, write progress to stderr; exit non-zero if any check fails.
  */
 import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import { killTreePosix } from '../../server/process-tree.mjs';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
@@ -457,7 +458,7 @@ try {
     // Only terminate the process tree it spawned
     if (process.platform === 'win32') {
       await new Promise((resolve) => { const k = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); k.on('close', resolve); k.on('error', resolve); });
-    } else child.kill('SIGKILL');
+    } else killTreePosix(child.pid);
   }
   try { fsSync.rmSync(TMP, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* ignore */ }
   if (!KEEP) {

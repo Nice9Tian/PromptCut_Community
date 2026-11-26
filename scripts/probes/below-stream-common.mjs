@@ -15,6 +15,7 @@
  * the first segment where it is not yet on the page.
  */
 import '../lib/no-user-dirs.mjs'; // First import: a dev server will be started here, not inheriting external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import { killTreePosix } from '../../server/process-tree.mjs';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import http from 'node:http';
@@ -111,7 +112,7 @@ export async function startDevServer({ port, dataDir, tag = 'below' }) {
     if (child.exitCode !== null) return;
     if (process.platform === 'win32') {
       await new Promise((resolve) => { const k = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); k.on('close', resolve); k.on('error', resolve); });
-    } else child.kill('SIGKILL');
+    } else killTreePosix(child.pid);
   };
   const deadline = Date.now() + 180_000;
   for (;;) {

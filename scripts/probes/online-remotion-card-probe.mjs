@@ -51,6 +51,7 @@
  * R6 The page has no errors.
  */
 import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import { killTreePosix } from '../../server/process-tree.mjs';
 import puppeteer from 'puppeteer';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -269,7 +270,7 @@ try {
   if (child?.pid && child.exitCode === null) {
     // Only terminate the process tree spawned by itself
     if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 15000 });
-    else child.kill('SIGKILL');
+    else killTreePosix(child.pid);
   }
   if (!KEEP_TEMP) { try { fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* Left for the system to clean */ } }
 }

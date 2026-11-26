@@ -33,6 +33,7 @@
  * `ready-index-probe.mjs`).
  */
 import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import { killTreePosix } from '../../server/process-tree.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -108,7 +109,7 @@ async function startEditor() {
 function stopEditor() {
   if (!editor || editor.exitCode !== null || !editor.pid) return;
   if (process.platform === 'win32') spawn('taskkill', ['/PID', String(editor.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-  else editor.kill('SIGKILL');
+  else killTreePosix(editor.pid);
 }
 const prerenderUrl = async () => {
   const info = await json(EDITOR + '/api/prerender/info');
