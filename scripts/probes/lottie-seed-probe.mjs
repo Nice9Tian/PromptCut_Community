@@ -160,6 +160,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
+import { dirOrTemp } from './probe-tmp.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const arg = (name, dflt) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : dflt; };
@@ -170,7 +171,7 @@ if (!Number.isInteger(PORT) || PORT < 20000 || PORT > 65000) throw new Error('--
 const LOTTIE_WEB_VERIFIED = '5.13.0';
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const BEFORE = arg('--before', '7e7ae968');
-const OUT = arg('--out', fs.mkdtempSync(path.join(os.tmpdir(), 'pc-lottie-seed-')));
+const OUT = dirOrTemp(arg('--out'), 'pc-lottie-seed-');
 fs.mkdirSync(OUT, { recursive: true });
 const SKIP_SWEEP = flag('--skip-sweep');
 const CATALOG = path.join(ROOT, 'server', 'catalog', 'lottie');

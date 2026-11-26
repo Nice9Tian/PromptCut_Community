@@ -8,7 +8,6 @@
  * node scripts/probes/card-policy-particles-probe.mjs --port 5908 [--out <TMP>] [--before 461206a3]
  */
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -17,10 +16,11 @@ import { createServer } from 'vite';
 import puppeteer from 'puppeteer';
 import { PNG } from 'pngjs';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
+import { dirOrTemp } from './probe-tmp.mjs';
 const arg=(k,d)=>process.argv.includes(k)?process.argv[process.argv.indexOf(k)+1]:d;
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const PORT=Number(arg('--port',5908)), ORIGIN=`http://127.0.0.1:${PORT}`;
-const OUT=arg('--out',fs.mkdtempSync(path.join(os.tmpdir(),'pc-policy-particles-')));fs.mkdirSync(OUT,{recursive:true});
+const OUT=dirOrTemp(arg('--out'),'pc-policy-particles-');fs.mkdirSync(OUT,{recursive:true});
 const BEFORE=arg('--before','461206a3');
 const sources={old:execFileSync('git',['show',`${BEFORE}:src/cards/native/particles.tsx`],{cwd:ROOT,encoding:'utf8',windowsHide:true}),current:fs.readFileSync(path.join(ROOT,'src/cards/native/particles.tsx'),'utf8')};
 const nasa=JSON.parse(fs.readFileSync(path.join(ROOT,'server/catalog/particles/nasa.json'),'utf8'));

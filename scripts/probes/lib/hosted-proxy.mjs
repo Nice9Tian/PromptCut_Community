@@ -47,6 +47,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { editorSecurityHeaders, mediaSRoute, stageSecurityHeaders } from '../../../src/online/stagePolicy.mjs';
+import { dirOrTemp } from '../probe-tmp.mjs';
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm' };
 const LEGACY_HEADERS = Object.freeze({ 'origin-agent-cluster': '?1', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' });
@@ -217,10 +218,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const arg = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt; };
   const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
   const basePort = Number(arg('--base-port', 5750)), docPort = Number(arg('--doc-port', 8780)), assetPort = Number(arg('--asset-port', 8781));
-  const os = await import('node:os');
   const { randomBytes } = await import('node:crypto');
   const { startProbeServices } = await import('./probe-services.mjs');
-  const dataDir = arg('--data-dir', fs.mkdtempSync(path.join(os.tmpdir(), 'pc-hosted-proxy-')));
+  const dataDir = dirOrTemp(arg('--data-dir'), 'pc-hosted-proxy-');
   const o = proxyOrigins(basePort);
   // Same as the hosted side, do not trust loopback: all requests incoming through the proxy verify tickets
   await startProbeServices({ dataDir, docPort, assetPort, host: '127.0.0.1', trustLoopback: false, clusterToken: randomBytes(32).toString('base64url'),

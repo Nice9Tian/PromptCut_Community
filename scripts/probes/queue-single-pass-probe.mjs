@@ -32,15 +32,15 @@
 import '../lib/no-user-dirs.mjs';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { PNG } from 'pngjs';
+import { dirOrTemp } from './probe-tmp.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = String(arg('--origin', 'http://127.0.0.1:5740')).replace(/\/+$/, '');
-const OUT = path.resolve(arg('--out', fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-probe-'))));
+const OUT = path.resolve(dirOrTemp(arg('--out'), 'qsp-probe-'));
 const SECONDS = Number(arg('--seconds', 4));
 const FPS = 30;
 const SPAN = 60;
