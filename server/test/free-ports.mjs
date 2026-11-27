@@ -12,7 +12,7 @@
  * occupies it later gets EADDRINUSE (empirically observed when the machine is busy and multiple
  * full test suites run concurrently: 16 concurrent `move-guard.test.mjs` runs produced 1 asset
  * child process reporting `EADDRINUSE` out of 32 runs). Therefore, the selected port is recorded
- * separately in the temporary directory (`<tmpdir>/promptcut-test-port-claims/<port>`, created
+ * separately in the real system temporary directory (`<tmpdir>/promptcut-test-port-claims/<port>`, created
  * exclusively); if another process sees an active claim that has not expired, it picks a
  * different one. This record only exists to cover that gap and is invalidated after `CLAIM_MS`
  * without needing to be released; if recording fails (e.g. unwriteable directory), it acts as if
@@ -20,10 +20,12 @@
  */
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
+import { sharedTmpDir } from './test-tmp-sandbox.mjs';
 
-const SHARED_CLAIM_DIR = path.join(os.tmpdir(), 'promptcut-test-port-claims');
+// `sharedTmpDir`, not `os.tmpdir()`: `npm test` gives each test process a private TMPDIR
+// (server/test/test-tmp-sandbox.mjs), and claims there would be seen by no other run.
+const SHARED_CLAIM_DIR = path.join(sharedTmpDir(), 'promptcut-test-port-claims');
 
 /**
  * Where claims are recorded.

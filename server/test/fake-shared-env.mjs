@@ -31,8 +31,14 @@ let devSeq = 0;
 /** A valid deviceId */
 export const deviceId = (tag = 'dev') => `${tag}-${String(++devSeq).padStart(4, '0')}-abcdefghij`.replace(/[^A-Za-z0-9_-]/g, '-');
 
+const made = new Set();
+process.once('exit', () => { for (const dir of made) fs.rmSync(dir, { recursive: true, force: true }); });
+
+/** A fresh temporary directory, removed when the test process exits (tests share it per file). */
 export function tempDir(prefix = 'pc-shared-') {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.add(dir);
+  return dir;
 }
 
 export async function startSharedService({
