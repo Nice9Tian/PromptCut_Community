@@ -50,6 +50,7 @@
  * Chrome); `--keep` leaves them running and does not delete the temp directory.
  */
 import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR, and set PROMPTCUT_NO_PORT_FILE=1
+import { killTreePosix } from '../../server/process-tree.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -135,7 +136,7 @@ async function startEditor() {
 function stopEditor() {
   if (!editor || editor.exitCode !== null || !editor.pid) return;
   if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(editor.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-  else editor.kill('SIGKILL');
+  else killTreePosix(editor.pid);
 }
 
 /* ---- Counting remote asset service (same as bake-asset-probe.mjs): chunked upload, reconcile, finalize, retrieve ---- */

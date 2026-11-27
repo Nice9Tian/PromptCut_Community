@@ -39,6 +39,7 @@
  * code 1 on failure.
  */
 import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
+import { killTreePosix } from '../../server/process-tree.mjs';
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
 import fs from 'node:fs';
@@ -168,7 +169,7 @@ async function stopEditor() {
   if (editorProc && editorProc.exitCode === null && editorProc.pid) {
     const exited = new Promise((r) => editorProc.once('exit', r));
     if (process.platform === 'win32') spawn('taskkill', ['/PID', String(editorProc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-    else editorProc.kill('SIGKILL');
+    else killTreePosix(editorProc.pid);
     await Promise.race([exited, sleep(10_000)]);
     say('editor.stopped', { pid: editorProc.pid });
   }

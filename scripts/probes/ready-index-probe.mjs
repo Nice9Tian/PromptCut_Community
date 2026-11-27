@@ -26,7 +26,8 @@
  *   node scripts/probes/ready-index-probe.mjs [--port 5231] [--out <dir>] [--keep]
  *
  * `--keep-out` preserves current temporary artifacts but not dev server; `--keep` is a legacy debug flag.
- * Cleans up by default on success; on failure, leaves length-limited and sensitive-value-filtered diagnostic evidence.
+ * Cleans up by default on success and when stopped by Ctrl+C / SIGTERM; on failure, leaves length-limited and sensitive-value-filtered
+ * diagnostic evidence (the diagnostic file and cost records, not the frame library).
  *
  * Duration recorded only (verification.md "duration recorded only, not used as gate"): this probe has
  * no time gate; elapsed time for each wait is recorded into the `TIMINGS` line and `timings` in the
@@ -34,6 +35,7 @@
  * out with no result is still counted as failure.
  */
 import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
+import { killTreePosix } from '../../server/process-tree.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -57,7 +59,10 @@ const EXPORT_DIR = path.resolve(args.includes('--out') ? args[args.indexOf('--ou
 const LIBRARY = path.join(EXPORT_DIR, 'frame-library');
 /** Cost records (`card-costs.json`) also land in the temporary directory; see `startEditor` */
 const DATA_DIR = path.join(EXPORT_DIR, 'data');
+/** The editor's children (prerender process, Chrome with its `puppeteer_dev_chrome_profile-*`) get their temp dir here too, so a hard kill leaves nothing in the system temp dir */
+const TMP_DIR = path.join(EXPORT_DIR, 'tmp');
 fsSync.mkdirSync(DATA_DIR, { recursive: true });
+fsSync.mkdirSync(TMP_DIR, { recursive: true });
 /** (9) Self-written cost record is attached to this fake device (server treats it only as an opaque string) */
 const PROBE_DEVICE = 'r6-probe-device';
 
@@ -179,7 +184,7 @@ async function startEditor() {
     // Cold cache: outputs land in a newly created temp directory, prerender child process inherits this variable
     // Cost records are also isolated to temp directory: (9) must write a few records itself, cannot pollute repo's
     // out/card-costs.json, nor let records left by R1 / R4 in repo affect "fallback to declaration when no records"
-    env: { ...process.env, PROMPTCUT_EXPORT_DIR: EXPORT_DIR, PROMPTCUT_DATA_DIR: DATA_DIR } });
+    env: { ...process.env, PROMPTCUT_EXPORT_DIR: EXPORT_DIR, PROMPTCUT_DATA_DIR: DATA_DIR, TMPDIR: TMP_DIR, TEMP: TMP_DIR, TMP: TMP_DIR } });
   const keep = c => { const text = c.toString(); editorLog.push(text); if (editorLog.length > 400) editorLog.shift(); };
   editor.stdout.on('data', keep);
   editor.stderr.on('data', keep);
@@ -189,7 +194,16 @@ function stopEditor() {
   if (!editor || editor.exitCode !== null || !editor.pid) return;
   // The editor process also holds the prerender process and Chrome; killing only it will leave orphans
   if (process.platform === 'win32') spawn('taskkill', ['/PID', String(editor.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-  else editor.kill('SIGKILL');
+  else killTreePosix(editor.pid);
+}
+
+// Ctrl+C or a plain `kill` must not leave the ~185 MB export directory behind (SIGKILL cannot be caught; the editor's temp dir is inside it, so nothing leaks elsewhere)
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () => {
+    stopEditor();
+    if (!KEEP && !KEEP_OUT) { try { fsSync.rmSync(EXPORT_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }); } catch { /* Windows handle */ } }
+    process.exit(1);
+  });
 }
 
 /** Address of the prerender process right now (it picks a new free port if it crashes). */
@@ -459,8 +473,13 @@ try {
       out.diagnosticWriteError = safeDiagnosticText(error?.message || String(error), 1000);
     }
   }
-  if (KEEP || KEEP_OUT || fails.length) out.kept = EXPORT_DIR;
-  else { await delay(500); await fs.rm(EXPORT_DIR, { recursive: true, force: true }).catch(() => {}); }
+  if (KEEP || KEEP_OUT) out.kept = EXPORT_DIR;
+  else if (fails.length) {
+    // The diagnostic file and the cost records are what is worth keeping; the frame library is ~185 MB and the temp dir is scratch
+    await delay(500);
+    for (const dir of [LIBRARY, TMP_DIR]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    out.kept = EXPORT_DIR;
+  } else { await delay(500); await fs.rm(EXPORT_DIR, { recursive: true, force: true }).catch(() => {}); }
 }
 
 out.fails = fails;

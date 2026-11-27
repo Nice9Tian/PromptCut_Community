@@ -40,6 +40,7 @@
  * or delete.
  */
 import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import { killTreePosix } from '../../server/process-tree.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -143,7 +144,7 @@ function cleanup() {
   if (KEEP) return;
   if (editor && editor.exitCode === null && editor.pid) {
     if (process.platform === 'win32') spawn('taskkill', ['/PID', String(editor.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-    else editor.kill('SIGKILL');
+    else killTreePosix(editor.pid);
   }
 }
 

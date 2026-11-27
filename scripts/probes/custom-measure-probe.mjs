@@ -26,6 +26,7 @@
  * delete temporary directory.
  */
 import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR, and set PROMPTCUT_NO_PORT_FILE=1
+import { killTreePosix } from '../../server/process-tree.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -96,7 +97,7 @@ function stopEditor() {
   if (!editor || editor.exitCode !== null || !editor.pid) return;
   // Entire process tree: prerender process and sandboxed Chrome spawned by the editor are its descendants
   if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(editor.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-  else editor.kill('SIGKILL');
+  else killTreePosix(editor.pid);
 }
 
 const mcpCall = async (tool, callArgs, agent) => {

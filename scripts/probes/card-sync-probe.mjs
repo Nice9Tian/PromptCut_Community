@@ -45,6 +45,7 @@
  *   ok requires installMs ≤ 5000 and all verification checks pass.
  */
 import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
+import { killTreePosix } from '../../server/process-tree.mjs';
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
 import { createTimings } from './probe-timings.mjs';
@@ -154,7 +155,7 @@ async function stopAll() {
     // Editor also holds prerender process and Chrome: terminate together with process tree
     // (only the trees started by this probe)
     if (process.platform === 'win32') spawn('taskkill', ['/PID', String(c.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-    else c.kill('SIGKILL');
+    else killTreePosix(c.pid);
     await Promise.race([exited, sleep(10_000)]);
     say('stopped', { name: p.name, pid: c.pid });
   }

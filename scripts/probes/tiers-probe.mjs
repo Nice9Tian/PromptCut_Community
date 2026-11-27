@@ -45,6 +45,7 @@
  * The last line of output is a single line of JSON: `{ ok, imports, queueOrder, remote, t4, fails }`.
  */
 import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
+import { killTreePosix } from '../../server/process-tree.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -90,7 +91,7 @@ function viteBin() {
 function killTree(child) {
   if (!child || child.exitCode !== null || !child.pid) return;
   if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-  else child.kill('SIGKILL');
+  else killTreePosix(child.pid);
 }
 const portFree = async (port) => {
   const net = await import('node:net');
