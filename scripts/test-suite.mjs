@@ -19,11 +19,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { describeLeftovers, emptyDir, findEscaped, formatReport, sandboxEnv, STRICT_ENV } from '../server/test/test-tmp-sandbox.mjs';
 import { canRecoverInitialRun, exitDescription, retryReason, rootSummaryCounts, summarizeTestEvents } from './test-suite-policy.mjs';
 
 const root = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const reporter = path.join(root, 'scripts', 'test-event-reporter.mjs');
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'promptcut-test-'));
+const realTmp = os.tmpdir();
+const temp = fs.mkdtempSync(path.join(realTmp, 'promptcut-test-'));
+// Every test process uses this as its temporary directory; see server/test/test-tmp-sandbox.mjs
+const sandbox = path.join(temp, 'tmp');
+fs.mkdirSync(sandbox);
+const startedAt = Date.now();
+const leaks = [];
 /*
  * Tests to run by default.
  *
@@ -103,12 +110,13 @@ async function run(testFiles, attempt) {
   const report = path.join(temp, `events-${attempt}.ndjson`);
   const args = [...baseArgs, '--test-reporter=spec', '--test-reporter-destination=stdout', `--test-reporter=${pathToFileURL(reporter).href}`, `--test-reporter-destination=${report}`, ...testFiles];
   const code = await new Promise((resolve) => {
-    const child = spawn(process.execPath, args, { cwd: root, stdio: 'inherit', windowsHide: true });
+    const child = spawn(process.execPath, args, { cwd: root, stdio: 'inherit', windowsHide: true, env: sandboxEnv(sandbox, realTmp) });
     const dog = watchdog(child.pid);
     child.once('close', () => clearInterval(dog));
     child.once('error', (error) => { console.error(`Failed to start test process: ${error.message}`); resolve(1); });
     child.once('close', (exitCode, signal) => resolve(signal ? 1 : exitCode ?? 1));
   });
+  collectLeftovers(attempt);
   let events = [];
   if (fs.existsSync(report)) {
     try {
@@ -119,6 +127,22 @@ async function run(testFiles, attempt) {
     }
   }
   return { code, events, files: summarizeTestEvents(events, root), reportError: !fs.existsSync(report) };
+}
+
+// What a run left in the sandbox is listed (the tests that still lack their own cleanup) and removed.
+function collectLeftovers(attempt) {
+  const left = describeLeftovers(sandbox);
+  if (left.count) leaks.push({ attempt, ...left });
+  emptyDir(sandbox);
+}
+
+/** Prints what leaked; true when it should fail the run (`PROMPTCUT_TEST_TMP_STRICT=1`). */
+function reportLeaks() {
+  for (const leak of leaks) console.error(`\n⚠ Temporary files left by tests (run "${leak.attempt}"; removed by the suite):\n${formatReport('  sandbox', leak)}`);
+  let escaped = [];
+  try { escaped = findEscaped(realTmp, startedAt, temp); } catch { /* unreadable: nothing to report */ }
+  if (escaped.length) console.error(`\n⚠ Entries that appeared in ${realTmp} outside the sandbox (a test wrote to a fixed path, or another run of this user is going): ${escaped.join(', ')}`);
+  return process.env[STRICT_ENV] === '1' && (leaks.length > 0 || escaped.length > 0);
 }
 
 function note(file, attempt, retriable) {
@@ -181,8 +205,12 @@ async function main() {
 try {
   process.exitCode = await main();
   reportKilled();
+  if (reportLeaks() && !process.exitCode) {
+    console.error(`✖ Failing because ${STRICT_ENV}=1 and tests left temporary files`);
+    process.exitCode = 1;
+  }
 } finally {
-  const relative = path.relative(path.resolve(os.tmpdir()), temp);
+  const relative = path.relative(path.resolve(realTmp), temp);
   if (!relative.startsWith('promptcut-test-') || relative.includes(path.sep)) throw new Error(`Refusing to clean up a temp directory that does not belong to this test run: ${temp}`);
   fs.rmSync(temp, { recursive: true, force: true });
 }
